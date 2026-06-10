@@ -7,7 +7,7 @@
   "packageManager": "yarn@4.15.0",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build",
+    "build": "yarn build:worklet && vue-tsc --noEmit && vite build",
     "build:worklet": "vite build --config vite.worklet.config.ts",
     "preview": "vite preview",
     "copy:wasm": "./scripts/copy-wasm.sh",
