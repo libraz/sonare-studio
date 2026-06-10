@@ -19,6 +19,28 @@ type EngineProcessorOptions = SonareRealtimeEngineWorkletProcessorOptions & {
 
 const SYNC_TYPES = new Set(['syncClips', 'syncMarkers', 'syncMetronome', 'syncAutomation']);
 
+// The AudioWorkletGlobalScope has no URL constructor, but the bundled Emscripten
+// glue computes a wasm path with `new URL(..., import.meta.url)` during init even
+// though the bytes always arrive via processorOptions.wasmBinary and the resulting
+// href is never fetched. A minimal href-carrying stub keeps that bookkeeping alive.
+if (typeof (globalThis as { URL?: unknown }).URL === 'undefined') {
+  class WorkletUrlStub {
+    readonly href: string;
+    constructor(path: unknown, base?: unknown) {
+      const p = String(path);
+      if (base === undefined || /^(?:[a-z]+:)?\/\//i.test(p) || /^(?:data|blob):/i.test(p)) {
+        this.href = p;
+      } else {
+        this.href = `${String(base).replace(/[^/]*$/, '')}${p}`;
+      }
+    }
+    toString(): string {
+      return this.href;
+    }
+  }
+  (globalThis as { URL?: unknown }).URL = WorkletUrlStub;
+}
+
 /**
  * AudioWorklet module entry, bundled into the self-contained
  * public/sonare-engine-worklet.js (the worklet scope cannot load external imports).
