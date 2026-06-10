@@ -3,6 +3,7 @@ import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import LevelMeter from '@/components/LevelMeter.vue';
 import InfoLine from '@/components/piano-roll/InfoLine.vue';
 import PianoRollEditor from '@/components/piano-roll/PianoRollEditor.vue';
+import ScorePanel from '@/components/score/ScorePanel.vue';
 import { useMusicTyping } from '@/composables/useMusicTyping';
 import { useStepInput } from '@/composables/useStepInput';
 import { useTransport } from '@/composables/useTransport';
@@ -328,6 +329,20 @@ const SNAP_CHOICES = [
   { value: 32, label: '1/32' },
 ];
 
+// --- Score panel ---------------------------------------------------------------
+
+/** Whether the read-only score panel is shown below the piano roll. */
+const scoreVisible = ref(false);
+
+function toggleScorePanel(): void {
+  scoreVisible.value = !scoreVisible.value;
+}
+
+/** Seek requests coming from clicks on engraved notes in the score panel. */
+function onScoreSeek(ppq: number): void {
+  transport.seekPpq(ppq);
+}
+
 function selectAllNotes(): void {
   if (!store.initialized) return;
   setSelection(store.notes.map((note) => note.id));
@@ -371,6 +386,11 @@ function onGlobalKeyDown(event: KeyboardEvent): void {
   if (meta && lower === 'g') {
     event.preventDefault();
     store.snapEnabled = !store.snapEnabled;
+    return;
+  }
+  if (meta && lower === 'e') {
+    event.preventDefault();
+    toggleScorePanel();
     return;
   }
   if (meta) return;
@@ -481,6 +501,15 @@ onBeforeUnmount(async () => {
     <main class="editor-dock">
       <div class="dock-tabs">
         <button type="button" class="dock-tab active">Piano Roll</button>
+        <button
+          type="button"
+          class="dock-tab dock-tab-toggle"
+          :class="{ active: scoreVisible }"
+          title="Toggle the score panel (Cmd+E)"
+          @click="toggleScorePanel"
+        >
+          Score
+        </button>
       </div>
       <section class="dock-body">
         <div class="editor-toolbar">
@@ -552,6 +581,12 @@ onBeforeUnmount(async () => {
         </div>
         <InfoLine />
         <PianoRollEditor class="piano-roll-host" :position-ppq="() => positionPpq" />
+        <ScorePanel
+          v-if="scoreVisible"
+          class="score-host"
+          :position-ppq="() => positionPpq"
+          @seek="onScoreSeek"
+        />
       </section>
     </main>
 
@@ -670,6 +705,10 @@ onBeforeUnmount(async () => {
   box-shadow: inset 0 -2px 0 #60a5fa;
 }
 
+.dock-tab-toggle {
+  cursor: pointer;
+}
+
 .dock-body {
   flex: 1;
   min-height: 0;
@@ -702,6 +741,13 @@ onBeforeUnmount(async () => {
 .piano-roll-host {
   flex: 1;
   min-height: 0;
+}
+
+/* The score panel borrows vertical space from the roll; closing it hands the
+   full editor height back to the piano roll. */
+.score-host {
+  flex: 0 0 42%;
+  min-height: 220px;
 }
 
 .diagnostics {
