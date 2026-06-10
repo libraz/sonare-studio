@@ -37,6 +37,8 @@ async function runAction(action: () => Promise<void>): Promise<void> {
   }
 }
 
+const ctxState = ref('');
+
 /** Creates the engine and meter bridge (requires a user gesture for the AudioContext). */
 function startEngine(): Promise<void> {
   return runAction(async () => {
@@ -44,6 +46,33 @@ function startEngine(): Promise<void> {
     const h = await createEngine();
     handle.value = h;
     bridge.value = createMeterBridge(h);
+    ctxState.value = h.ctx.state;
+    h.ctx.addEventListener('statechange', () => {
+      ctxState.value = h.ctx.state;
+    });
+    // A worklet crash during process() is otherwise silent — surface it.
+    h.engine.node.onprocessorerror = () => {
+      errorMessage.value = 'Engine worklet processor crashed during processing (onprocessorerror).';
+    };
+  });
+}
+
+/** Plays a plain oscillator beep directly into the destination, bypassing the engine. */
+function playTestTone(): Promise<void> {
+  return runAction(async () => {
+    const h = handle.value;
+    if (!h) throw new Error('Start the engine first.');
+    if (h.ctx.state === 'suspended') await h.ctx.resume();
+    const osc = h.ctx.createOscillator();
+    const gain = h.ctx.createGain();
+    gain.gain.value = 0.2;
+    osc.frequency.value = 440;
+    osc.connect(gain).connect(h.ctx.destination);
+    osc.start();
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    osc.stop();
+    osc.disconnect();
+    gain.disconnect();
   });
 }
 
@@ -132,6 +161,9 @@ onBeforeUnmount(async () => {
       <button type="button" :disabled="busy || handle !== null" @click="startEngine">
         Start engine
       </button>
+      <button type="button" :disabled="busy || !handle" @click="playTestTone">
+        Test tone (1 s, bypasses engine)
+      </button>
       <ul v-if="handle">
         <li>mode: <strong>{{ handle.capabilities.mode }}</strong></li>
         <li>runtimeTarget: <strong>{{ handle.capabilities.runtimeTarget }}</strong></li>
@@ -139,6 +171,9 @@ onBeforeUnmount(async () => {
         <li v-if="handle.capabilities.degradedReason">
           degradedReason: <strong>{{ handle.capabilities.degradedReason }}</strong>
         </li>
+        <li>ctx.state: <strong>{{ ctxState }}</strong></li>
+        <li>ctx.sampleRate: <strong>{{ handle.ctx.sampleRate }}</strong> Hz</li>
+        <li>destination channels: <strong>{{ handle.ctx.destination.maxChannelCount }}</strong></li>
       </ul>
     </section>
 
