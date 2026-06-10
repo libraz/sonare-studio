@@ -6,7 +6,9 @@ import {
   type MidiNote,
   makeDemoNotes,
   midiClipCacheKey,
+  normalizeGain,
   noteEventsFromNotes,
+  peakAmplitude,
   prerenderMidiClip,
   scheduleMidiClip,
 } from '@/engine/instruments';
@@ -208,5 +210,27 @@ describe('scheduleMidiClip', () => {
     expect(channels).toHaveLength(2);
     expect(channels[0]).toBeInstanceOf(Float32Array);
     expect(startPpq).toBe(4);
+  });
+});
+
+describe('peakAmplitude / normalizeGain', () => {
+  it('returns the max absolute sample across channels', () => {
+    const channels = [new Float32Array([0.1, -0.4, 0.2]), new Float32Array([0.05, 0.3, -0.25])];
+    expect(peakAmplitude(channels)).toBeCloseTo(0.4, 6);
+  });
+
+  it('returns 0 for empty buffers', () => {
+    expect(peakAmplitude([new Float32Array(0), new Float32Array(0)])).toBe(0);
+  });
+
+  it('computes the gain reaching the target peak', () => {
+    expect(normalizeGain(0.25, 0.5)).toBeCloseTo(2, 6);
+    expect(normalizeGain(1, 0.5)).toBeCloseTo(0.5, 6);
+  });
+
+  it('caps the gain and falls back to unity on unusable peaks', () => {
+    expect(normalizeGain(1e-9, 0.5)).toBe(24);
+    expect(normalizeGain(0, 0.5)).toBe(1);
+    expect(normalizeGain(Number.NaN, 0.5)).toBe(1);
   });
 });

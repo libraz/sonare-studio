@@ -26,7 +26,52 @@ export interface PrerenderMidiClipOptions {
 }
 
 /** Options for {@link scheduleMidiClip}; sampleRate defaults to the engine context rate. */
-export type ScheduleMidiClipOptions = Partial<PrerenderMidiClipOptions>;
+export type ScheduleMidiClipOptions = Partial<PrerenderMidiClipOptions> & {
+  /**
+   * Peak level the scheduled clip is normalized to via the engine's per-clip
+   * gain (the cached render itself is untouched). Synth bounces can be quiet
+   * (the default e-piano phrase peaks around -23 dBFS), so this defaults to
+   * 0.5 (-6 dBFS). Pass null to schedule at the rendered level.
+   */
+  targetPeak?: number | null;
+};
+
+/** Default peak level clips are normalized to when scheduling (-6 dBFS). */
+const DEFAULT_TARGET_PEAK = 0.5;
+
+/** Gain ceiling for normalization, so a near-silent render is not blown up. */
+const MAX_NORMALIZE_GAIN = 24;
+
+/**
+ * Returns the maximum absolute sample value across all channels.
+ *
+ * @param channels Planar audio buffers.
+ * @returns Peak amplitude (0 for empty buffers).
+ */
+export function peakAmplitude(channels: ReadonlyArray<Float32Array>): number {
+  let peak = 0;
+  for (const channel of channels) {
+    for (const sample of channel) {
+      const a = Math.abs(sample);
+      if (a > peak) peak = a;
+    }
+  }
+  return peak;
+}
+
+/**
+ * Computes the clip gain that normalizes a rendered peak to a target peak.
+ *
+ * @param peak Measured peak amplitude of the render.
+ * @param targetPeak Desired peak after the engine applies the clip gain.
+ * @returns A gain in (0, MAX_NORMALIZE_GAIN]; 1 when the peak is unusable.
+ */
+export function normalizeGain(peak: number, targetPeak: number): number {
+  if (!Number.isFinite(peak) || peak <= 0 || !Number.isFinite(targetPeak) || targetPeak <= 0) {
+    return 1;
+  }
+  return Math.min(targetPeak / peak, MAX_NORMALIZE_GAIN);
+}
 
 /** A note-on or note-off boundary derived from a {@link MidiNote} list. */
 export interface NoteEvent {
@@ -241,7 +286,9 @@ export async function scheduleMidiClip(
     tempoBpm: options.tempoBpm,
     preset: options.preset,
   });
-  return handle.engine.addClip(trackId, channels, startPpq);
+  const targetPeak = options.targetPeak === undefined ? DEFAULT_TARGET_PEAK : options.targetPeak;
+  const gain = targetPeak === null ? 1 : normalizeGain(peakAmplitude(channels), targetPeak);
+  return handle.engine.addClip(trackId, channels, startPpq, { gain });
 }
 
 /**
