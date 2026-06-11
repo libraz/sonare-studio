@@ -8,6 +8,10 @@
  * can be imported through the media browser and placed as an audio clip with
  * a drawn waveform, and a take recorded from the fake microphone lands as a
  * clip (via the dev-only window.__sonareDebug hook exposed by App.vue).
+ * It then checks the mixer tab (one strip per track plus master), the device
+ * rack (instrument change and insert add/bypass re-schedule the project, and
+ * two synth presets render different audio), and the step sequencer (a baked
+ * pattern replaces the active clip's notes).
  *
  * Playwright is resolved from /tmp/node_modules. Usage:
  *   yarn dev --port 5199   # in the project root, in the background
@@ -281,6 +285,16 @@ try {
   });
   console.info('engine started');
 
+  // Start-silent guard: with clips scheduled but the transport stopped, the
+  // engine output meter must stay at silence until Play.
+  await page.waitForTimeout(800);
+  const idlePeakDb = await page.evaluate(() => window.__sonareDebug.meterPeakDb());
+  if (idlePeakDb !== null && idlePeakDb > -90) {
+    fail(`engine not silent after start (transport stopped): peak ${idlePeakDb} dB`);
+  } else {
+    console.info(`engine silent after start: peak ${idlePeakDb} dB`);
+  }
+
   // Move the playhead away from the imported clip, then arm the audio track.
   const arrangeBox2 = await page.locator('.arrangement-canvas').boundingBox();
   await page.mouse.click(arrangeBox2.x + 300, arrangeBox2.y + 14);
@@ -304,6 +318,148 @@ try {
   );
   console.info(`recorded take landed as a clip: ${clipsBeforeRecord} -> ${clipsBeforeRecord + 1}`);
   await page.click('.transport-bar button:has-text("Stop")');
+
+  // --- Mixer tab: one channel strip per track plus the master strip -----------
+
+  await page.click('.dock-tabs button:has-text("Mixer")');
+  await page.waitForSelector('.mixer-strips .channel-strip', { timeout: 10000 });
+  const stripCount = await page.locator('.mixer-strips .channel-strip').count();
+  const mixerTrackCount = await page.evaluate(() => window.__sonareDebug.trackCount());
+  if (stripCount !== mixerTrackCount + 1) {
+    fail(`expected ${mixerTrackCount} track strips + master, got ${stripCount} strips`);
+  } else {
+    console.info(`mixer shows ${mixerTrackCount} track strips + master`);
+  }
+
+  // --- Device rack: changing the instrument re-bounces the project ------------
+
+  // Select the demo MIDI clip (lane 1 at PPQ 0) so the active track is MIDI.
+  const arrangeBox3 = await page.locator('.arrangement-canvas').boundingBox();
+  await page.mouse.click(arrangeBox3.x + 20, arrangeBox3.y + 28 + 28);
+  await page.waitForFunction(() => window.__sonareDebug.activeClipId() !== -1, null, {
+    timeout: 5000,
+  });
+
+  await page.click('.transport-bar .devices-toggle');
+  await page.waitForSelector('.device-rack .instrument-button', { timeout: 10000 });
+  console.info('device rack opened for the active MIDI track');
+
+  // Let the post-recording reschedule settle before capturing the baseline.
+  await page.waitForFunction(
+    () =>
+      window.__sonareDebug.applyPending() === false &&
+      window.__sonareDebug.scheduledClipIds().length > 0,
+    null,
+    { timeout: 20000 },
+  );
+  const idsBeforeInstrument = await page.evaluate(() =>
+    JSON.stringify(window.__sonareDebug.scheduledClipIds()),
+  );
+
+  await page.click('.device-rack .instrument-button');
+  await page.waitForSelector('.instrument-picker .preset-option', { timeout: 10000 });
+  const presetName = await page.evaluate(() => {
+    const names = [...document.querySelectorAll('.instrument-picker .preset-option')].map((el) =>
+      (el.textContent ?? '').trim(),
+    );
+    return names.find((name) => name === 'saw-lead') ?? names.find((name) => name !== 'e-piano');
+  });
+  if (!presetName) {
+    fail('no alternative synth preset offered by the instrument picker');
+  } else {
+    await page
+      .locator('.instrument-picker .preset-option')
+      .filter({ hasText: new RegExp(`^${presetName}$`) })
+      .first()
+      .click();
+    await page.waitForFunction(
+      (before) =>
+        window.__sonareDebug.applyPending() === false &&
+        JSON.stringify(window.__sonareDebug.scheduledClipIds()) !== before,
+      idsBeforeInstrument,
+      { timeout: 30000 },
+    );
+    const instruments = await page.evaluate(() => window.__sonareDebug.trackInstruments());
+    if (!instruments.includes(presetName)) {
+      fail(`expected a track bound to "${presetName}", got ${JSON.stringify(instruments)}`);
+    } else {
+      console.info(`instrument changed to "${presetName}" and the project re-scheduled`);
+    }
+  }
+
+  // Two presets must render audibly different buffers through the real wasm.
+  const probeA = await page.evaluate(() => window.__sonareDebug.renderProbe('e-piano'));
+  const probeB = await page.evaluate(
+    (name) => window.__sonareDebug.renderProbe(name),
+    presetName ?? 'saw-lead',
+  );
+  if (probeA.frames === 0 || probeB.frames === 0 || probeA.hash === probeB.hash) {
+    fail(`presets render identical audio: ${JSON.stringify({ probeA, probeB })}`);
+  } else {
+    console.info(
+      `render probe differs: e-piano ${probeA.hash} (peak ${probeA.peak.toFixed(4)}) vs ` +
+        `${presetName} ${probeB.hash} (peak ${probeB.peak.toFixed(4)})`,
+    );
+  }
+
+  // --- Device rack: adding and bypassing an insert re-schedules ---------------
+
+  const insertChoice = await page.evaluate(() => {
+    const values = [...document.querySelectorAll('.device-rack .add-insert option')]
+      .map((el) => el.value)
+      .filter((value) => value.length > 0);
+    return (
+      values.find((value) => value === 'saturation.softClipper') ??
+      values.find((value) => value.startsWith('dynamics.')) ??
+      values[0] ??
+      null
+    );
+  });
+  if (!insertChoice) {
+    fail('device rack offers no insert processors');
+  } else {
+    const idsBeforeInsert = await page.evaluate(() =>
+      JSON.stringify(window.__sonareDebug.scheduledClipIds()),
+    );
+    await page.selectOption('.device-rack .add-insert', insertChoice);
+    await page.waitForFunction(
+      (before) =>
+        window.__sonareDebug.applyPending() === false &&
+        JSON.stringify(window.__sonareDebug.scheduledClipIds()) !== before,
+      idsBeforeInsert,
+      { timeout: 30000 },
+    );
+    console.info(`insert "${insertChoice}" added and the project re-scheduled`);
+
+    const idsBeforeBypass = await page.evaluate(() =>
+      JSON.stringify(window.__sonareDebug.scheduledClipIds()),
+    );
+    await page.click('.device-rack .insert-power');
+    await page.waitForFunction(
+      (before) =>
+        window.__sonareDebug.applyPending() === false &&
+        JSON.stringify(window.__sonareDebug.scheduledClipIds()) !== before,
+      idsBeforeBypass,
+      { timeout: 30000 },
+    );
+    console.info('insert bypass toggled and the project re-scheduled');
+  }
+
+  // --- Steps tab: bake a 4-step pattern into the active clip ------------------
+
+  await page.click('.dock-tabs button:has-text("Steps")');
+  await page.waitForSelector('.step-sequencer [data-test="apply"]:not([disabled])', {
+    timeout: 10000,
+  });
+  for (const step of [0, 4, 8, 12]) {
+    await page.click(`.step-grid .grid-cell[data-row="0"][data-step="${step}"]`);
+  }
+  const notesBeforeApply = await page.evaluate(() => window.__sonareDebug.noteCount());
+  await page.click('.step-sequencer [data-test="apply"]');
+  await page.waitForFunction(() => window.__sonareDebug.noteCount() === 4, null, {
+    timeout: 10000,
+  });
+  console.info(`step pattern applied: ${notesBeforeApply} -> 4 notes`);
 
   if (process.exitCode !== 1) console.info('E2E SMOKE PASS');
 } catch (err) {

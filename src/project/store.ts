@@ -3,6 +3,13 @@ import { computed, ref } from 'vue';
 import { ensureWasm } from '@/lib/wasm';
 import { audioAssetUri } from '@/persistence/assets';
 import type { Project, ProjectMidiEvent } from '@/wasm/index.js';
+import { cloneInstrument } from './instrument';
+import {
+  cloneMixerState,
+  cloneStrip,
+  createDefaultMixerState,
+  type ProjectMixerState,
+} from './mixer';
 import type { DocumentClip, ProjectDocument } from './serialization';
 import {
   type ClipKind,
@@ -409,6 +416,8 @@ export const useProjectStore = defineStore('project', () => {
   const markers = ref<EditorMarker[]>([]);
   /** Arrangement sections (app-level), ordered by startPpq. */
   const sections = ref<EditorSection[]>([]);
+  /** Project mixer state: master strip + buses (app-level metadata). */
+  const mixer = ref<ProjectMixerState>(createDefaultMixerState());
   /** Id of the active (focused) track (-1 when there is none). */
   const activeTrackId = ref(-1);
   /** Id of the active MIDI clip edited by the piano roll (-1 when none). */
@@ -660,6 +669,7 @@ export const useProjectStore = defineStore('project', () => {
     project = created;
     audioSourceIds = new Map();
     projectName.value = DEFAULT_PROJECT_NAME;
+    mixer.value = createDefaultMixerState();
     tracks.value = [
       {
         id: trackId,
@@ -723,7 +733,7 @@ export const useProjectStore = defineStore('project', () => {
       let firstClipId = -1;
       doc.tracks.forEach((track, index) => {
         const trackId = created.addTrack({ kind: track.kind, name: track.name });
-        trackMirror.push({
+        const mirrorEntry: EditorTrack = {
           id: trackId,
           name: track.name,
           color: track.color || TRACK_COLOR_PALETTE[index % TRACK_COLOR_PALETTE.length],
@@ -733,7 +743,13 @@ export const useProjectStore = defineStore('project', () => {
           volume: track.volume,
           pan: track.pan,
           order: index,
-        });
+        };
+        // Instrument and mixer strip are app metadata introduced by schema
+        // version 3; older documents simply have neither (defaults apply).
+        if (track.instrument !== undefined)
+          mirrorEntry.instrument = cloneInstrument(track.instrument);
+        if (track.mixer !== undefined) mirrorEntry.mixer = cloneStrip(track.mixer);
+        trackMirror.push(mirrorEntry);
         for (const clip of track.clips) {
           const isAudio = clip.kind === 'audio' && typeof clip.assetId === 'string';
           let newClipId: number;
@@ -802,6 +818,7 @@ export const useProjectStore = defineStore('project', () => {
       project = created;
       audioSourceIds = loadedSourceIds;
       projectName.value = doc.name || DEFAULT_PROJECT_NAME;
+      mixer.value = doc.mixer ? cloneMixerState(doc.mixer) : createDefaultMixerState();
       tracks.value = trackMirror;
       clips.value = [];
       markers.value = doc.markers.map((marker) => ({
@@ -864,6 +881,7 @@ export const useProjectStore = defineStore('project', () => {
     clips.value = [];
     markers.value = [];
     sections.value = [];
+    mixer.value = createDefaultMixerState();
     activeTrackId.value = -1;
     clipId.value = -1;
     clipStartPpq.value = 0;
@@ -884,6 +902,7 @@ export const useProjectStore = defineStore('project', () => {
     clips,
     markers,
     sections,
+    mixer,
     activeTrackId,
     clipId,
     clipStartPpq,

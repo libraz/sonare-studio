@@ -1,0 +1,180 @@
+/**
+ * Mixer model: per-track channel strips, a master strip and optional send
+ * buses.
+ *
+ * The state is app-level metadata (the wasm Project has no per-track mixer
+ * API and the realtime engine node exposes no channel-strip commands), so it
+ * lives on the store mirror and is persisted by the project document (schema
+ * version 3).
+ *
+ * What is AUDIBLE with the current engine (applied offline while scheduling,
+ * see src/project/scheduling.ts):
+ * - track strip gainDb (folded into the engine per-clip gain),
+ * - track strip pan (balance law baked into the scheduled buffers),
+ * - track strip inserts and EQ (one-shot wasm processors applied to the
+ *   prerendered/loaded buffers),
+ * - master gainDb and pan (linear operations commute with summing, so they
+ *   are folded/baked into every scheduled clip).
+ *
+ * What is UI-ONLY in this iteration:
+ * - master inserts/EQ (nonlinear bus DSP cannot honestly be applied per clip
+ *   before the engine sums them),
+ * - buses and sends (the engine has no bus routing for prerendered clips).
+ */
+
+import type { EqBand } from '@/wasm/index.js';
+import { canonicalJson, fnv1a32Hex } from './hash';
+
+/** One insert effect slot referencing the wasm processor catalog by name. */
+export interface InsertSlot {
+  /** Processor catalog name (e.g. 'dynamics.compressor', 'saturation.tape'). */
+  processor: string;
+  /** Parameter overrides passed to the processor (camelCase keys). */
+  params: Record<string, number | boolean>;
+  /** False bypasses the slot without losing its parameters. */
+  enabled: boolean;
+}
+
+/** One send from a strip to a mixer bus (UI-only in this iteration). */
+export interface StripSend {
+  /** Destination bus id (must exist in the project mixer state). */
+  busId: string;
+  /** Send level in dB. */
+  levelDb: number;
+  /** False mutes the send without removing it. */
+  enabled: boolean;
+}
+
+/** Channel EQ as a list of libsonare EqBand descriptors. */
+export interface StripEq {
+  /** False bypasses the whole EQ. */
+  enabled: boolean;
+  /** Up to 24 bands (StreamingEqualizer band slots). */
+  bands: EqBand[];
+}
+
+/** One channel strip (per track, master, or a bus). */
+export interface MixerStrip {
+  /** Strip gain in dB (0 = unity). */
+  gainDb: number;
+  /** Stereo balance in [-1, 1] (0 = centered). */
+  pan: number;
+  /** Insert chain, applied in order. */
+  inserts: InsertSlot[];
+  /** Sends to mixer buses (UI-only in this iteration). */
+  sends: StripSend[];
+  /** Channel EQ; absent = no EQ. */
+  eq?: StripEq;
+}
+
+/** One send bus (UI-only in this iteration). */
+export interface MixerBus {
+  /** Stable bus id (unique within the project). */
+  id: string;
+  /** Display name. */
+  name: string;
+  /** Bus gain in dB (0 = unity). */
+  gainDb: number;
+}
+
+/** Project-wide mixer state: the master strip plus optional buses. */
+export interface ProjectMixerState {
+  /** Master strip (gainDb/pan audible; inserts/EQ UI-only). */
+  master: MixerStrip;
+  /** Send buses (UI-only in this iteration). */
+  buses: MixerBus[];
+}
+
+/** Lowest accepted strip gain in dB. */
+export const MIN_STRIP_GAIN_DB = -96;
+
+/** Highest accepted strip gain in dB. */
+export const MAX_STRIP_GAIN_DB = 24;
+
+/** Builds a neutral strip: unity gain, centered, no inserts/sends/EQ. */
+export function createDefaultStrip(): MixerStrip {
+  return { gainDb: 0, pan: 0, inserts: [], sends: [] };
+}
+
+/** Builds the default project mixer state: a neutral master, no buses. */
+export function createDefaultMixerState(): ProjectMixerState {
+  return { master: createDefaultStrip(), buses: [] };
+}
+
+/** Deep-copies a strip (strips are plain JSON data). */
+export function cloneStrip(strip: MixerStrip): MixerStrip {
+  return JSON.parse(JSON.stringify(strip)) as MixerStrip;
+}
+
+/** Deep-copies the project mixer state. */
+export function cloneMixerState(state: ProjectMixerState): ProjectMixerState {
+  return JSON.parse(JSON.stringify(state)) as ProjectMixerState;
+}
+
+/** True when a strip is neutral (no audible or UI-only deviation). */
+export function isDefaultStrip(strip: MixerStrip): boolean {
+  return (
+    strip.gainDb === 0 &&
+    strip.pan === 0 &&
+    strip.inserts.length === 0 &&
+    strip.sends.length === 0 &&
+    strip.eq === undefined
+  );
+}
+
+/** True when the project mixer state is entirely default. */
+export function isDefaultMixerState(state: ProjectMixerState): boolean {
+  return isDefaultStrip(state.master) && state.buses.length === 0;
+}
+
+/**
+ * Converts decibels to a linear amplitude factor.
+ *
+ * @param db Gain in dB.
+ * @returns Linear factor (1 for 0 dB).
+ */
+export function dbToLinear(db: number): number {
+  return 10 ** (db / 20);
+}
+
+/** Clamps a pan value to [-1, 1]. */
+export function clampPan(pan: number): number {
+  return Math.min(1, Math.max(-1, pan));
+}
+
+/** True when an EQ is active: enabled with at least one non-bypassed band. */
+export function eqIsActive(eq: StripEq | undefined): boolean {
+  if (!eq?.enabled) return false;
+  return eq.bands.some((band) => band.enabled !== false && band.bypassed !== true);
+}
+
+/**
+ * True when a strip carries buffer-level DSP (enabled inserts or an active
+ * EQ). Gain and pan are excluded: they are applied as cheap per-schedule
+ * operations outside the processed-buffer cache.
+ */
+export function stripHasDsp(strip: MixerStrip | undefined): boolean {
+  if (!strip) return false;
+  if (strip.inserts.some((slot) => slot.enabled)) return true;
+  return eqIsActive(strip.eq);
+}
+
+/**
+ * Deterministic identity segment for processed-buffer cache keys: hashes the
+ * DSP-relevant strip content (enabled inserts in order with their params,
+ * plus the active EQ bands). Gain and pan are excluded on purpose (see
+ * {@link stripHasDsp}).
+ *
+ * @param strip Strip to identify (undefined = neutral).
+ * @returns A stable key segment ('none' for strips without DSP).
+ */
+export function stripCacheSegment(strip: MixerStrip | undefined): string {
+  if (!strip || !stripHasDsp(strip)) return 'none';
+  const identity = {
+    inserts: strip.inserts
+      .filter((slot) => slot.enabled)
+      .map((slot) => ({ processor: slot.processor, params: slot.params })),
+    eq: eqIsActive(strip.eq) ? strip.eq?.bands : null,
+  };
+  return fnv1a32Hex(canonicalJson(identity));
+}

@@ -45,6 +45,10 @@ export const PIANO_ROLL_COLORS = {
   laneBackground: '#181a20',
   /** Velocity lane reference lines (25/50/75%). */
   laneRule: 'rgba(255, 255, 255, 0.06)',
+  /** Zero line of bipolar parameter lanes. */
+  laneCenter: 'rgba(255, 255, 255, 0.18)',
+  /** In-flight value readout while a lane drag runs. */
+  laneValueText: '#9aa1ad',
 } as const;
 
 /** Default track color applied to notes until per-track colors exist. */

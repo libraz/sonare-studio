@@ -8,6 +8,24 @@ import type { DocumentClip, DocumentNote, DocumentTrack, ProjectDocument } from 
 import { PROJECT_DOCUMENT_SCHEMA_VERSION } from './serialization';
 import { TRACK_COLOR_PALETTE } from './types';
 
+/**
+ * NativeSynth preset names used by template instruments. The catalog is only
+ * enumerable at runtime (synthPresetNames()), so templates stick to names
+ * shipped by the current libsonare build; the prerender path degrades any
+ * name missing from the runtime catalog to the default preset.
+ */
+const PRESET = {
+  drums: 'drum-kit',
+  bass: 'sub-bass',
+  ePiano: 'e-piano',
+  guitar: 'electric-guitar',
+  pad: 'warm-pad',
+  lead: 'saw-lead',
+  pluck: 'pluck',
+  organ: 'organ',
+  brass: 'brass',
+} as const;
+
 /** Names of the built-in templates accepted by {@link createTemplate}. */
 export const TEMPLATE_NAMES = [
   'empty',
@@ -43,9 +61,13 @@ function emptyClip(name: string): DocumentClip {
   };
 }
 
-/** Builds one MIDI track with a single empty clip. */
-function midiTrack(name: string, color: string): DocumentTrack {
-  return {
+/**
+ * Builds one MIDI track with a single empty clip. When a synth preset name is
+ * given the track carries it as its instrument; otherwise the track renders
+ * with the default preset.
+ */
+function midiTrack(name: string, color: string, preset?: string): DocumentTrack {
+  const track: DocumentTrack = {
     name,
     color,
     kind: 'midi',
@@ -55,6 +77,8 @@ function midiTrack(name: string, color: string): DocumentTrack {
     pan: 0,
     clips: [emptyClip(name)],
   };
+  if (preset !== undefined) track.instrument = { kind: 'synth-preset', preset };
+  return track;
 }
 
 /** Builds a document skeleton shared by all templates. */
@@ -71,9 +95,9 @@ function baseDocument(name: string, tracks: DocumentTrack[]): ProjectDocument {
   };
 }
 
-/** Builds tracks from (name, color) pairs. */
-function tracksFrom(entries: ReadonlyArray<readonly [string, string]>): DocumentTrack[] {
-  return entries.map(([name, color]) => midiTrack(name, color));
+/** Builds tracks from (name, color, optional synth preset) tuples. */
+function tracksFrom(entries: ReadonlyArray<readonly [string, string, string?]>): DocumentTrack[] {
+  return entries.map(([name, color, preset]) => midiTrack(name, color, preset));
 }
 
 /**
@@ -92,43 +116,43 @@ export function createTemplate(name: TemplateName): ProjectDocument {
       return baseDocument(
         'Band',
         tracksFrom([
-          ['Drums', '#f87171'],
-          ['Bass', '#fbbf24'],
-          ['Piano', '#60a5fa'],
-          ['Guitar', '#34d399'],
-          ['Vocal', '#f472b6'],
+          ['Drums', '#f87171', PRESET.drums],
+          ['Bass', '#fbbf24', PRESET.bass],
+          ['Piano', '#60a5fa', PRESET.ePiano],
+          ['Guitar', '#34d399', PRESET.guitar],
+          ['Vocal', '#f472b6', PRESET.pad],
         ]),
       );
     case 'gm-orchestra':
       return baseDocument(
         'GM orchestra',
         tracksFrom([
-          ['Violins I', '#60a5fa'],
-          ['Violins II', '#3b82f6'],
-          ['Violas', '#818cf8'],
-          ['Cellos', '#a78bfa'],
-          ['Contrabasses', '#7c3aed'],
-          ['Flutes', '#34d399'],
-          ['Oboes', '#2dd4bf'],
-          ['Clarinets', '#4ade80'],
-          ['Bassoons', '#16a34a'],
-          ['Horns', '#fbbf24'],
-          ['Trumpets', '#fb923c'],
-          ['Trombones', '#f97316'],
-          ['Tuba', '#d97706'],
-          ['Timpani', '#f87171'],
-          ['Percussion', '#ef4444'],
+          ['Violins I', '#60a5fa', PRESET.pad],
+          ['Violins II', '#3b82f6', PRESET.pad],
+          ['Violas', '#818cf8', PRESET.pad],
+          ['Cellos', '#a78bfa', PRESET.pad],
+          ['Contrabasses', '#7c3aed', PRESET.bass],
+          ['Flutes', '#34d399', PRESET.organ],
+          ['Oboes', '#2dd4bf', PRESET.organ],
+          ['Clarinets', '#4ade80', PRESET.organ],
+          ['Bassoons', '#16a34a', PRESET.organ],
+          ['Horns', '#fbbf24', PRESET.brass],
+          ['Trumpets', '#fb923c', PRESET.brass],
+          ['Trombones', '#f97316', PRESET.brass],
+          ['Tuba', '#d97706', PRESET.brass],
+          ['Timpani', '#f87171', PRESET.drums],
+          ['Percussion', '#ef4444', PRESET.drums],
         ]),
       );
     case 'programming':
       return baseDocument(
         'Programming',
         tracksFrom([
-          ['Lead Synth', '#60a5fa'],
-          ['Pad', '#a78bfa'],
-          ['Pluck', '#34d399'],
-          ['Synth Bass', '#fbbf24'],
-          ['Drums', '#f87171'],
+          ['Lead Synth', '#60a5fa', PRESET.lead],
+          ['Pad', '#a78bfa', PRESET.pad],
+          ['Pluck', '#34d399', PRESET.pluck],
+          ['Synth Bass', '#fbbf24', PRESET.bass],
+          ['Drums', '#f87171', PRESET.drums],
         ]),
       );
     case 'transcription':

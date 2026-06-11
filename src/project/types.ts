@@ -1,4 +1,6 @@
 import type { MidiNote } from '@/engine/instruments';
+import type { TrackInstrument } from './instrument';
+import type { MixerStrip } from './mixer';
 
 /**
  * One note in the piano-roll editor mirror.
@@ -82,8 +84,8 @@ export function isAudioClip(clip: Pick<EditorClip, 'kind'>): boolean {
  * One track in the arrangement mirror.
  *
  * `id`, `name` and `kind` are owned by the wasm Project (write through the
- * commands layer); `color`, `mute`, `solo`, `volume`, `pan` and `order` are
- * app-level metadata the Project has no API for.
+ * commands layer); `color`, `mute`, `solo`, `volume`, `pan`, `order`,
+ * `instrument` and `mixer` are app-level metadata the Project has no API for.
  */
 export interface EditorTrack {
   /** Stable track id allocated by the wasm Project. */
@@ -100,10 +102,20 @@ export interface EditorTrack {
   solo: boolean;
   /** Linear track volume (>= 0, 1 = unity; folded into clip gain on schedule). */
   volume: number;
-  /** Stereo pan in [-1, 1] (app-level; not applied to playback yet). */
+  /** Stereo pan in [-1, 1] (app-level legacy field; the mixer strip pan is the audible pan). */
   pan: number;
   /** Display order index; always equals the track's index in the mirror. */
   order: number;
+  /**
+   * Instrument rendering the track's MIDI clips (app-level metadata); absent
+   * = the default synth preset (see src/project/instrument.ts).
+   */
+  instrument?: TrackInstrument;
+  /**
+   * Mixer channel strip (app-level metadata); absent = a neutral strip (see
+   * src/project/mixer.ts for what is audible vs UI-only).
+   */
+  mixer?: MixerStrip;
 }
 
 /**

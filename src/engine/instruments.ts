@@ -1,4 +1,11 @@
 import { ensureWasm } from '@/lib/wasm';
+import { loadFont as loadStoredFont } from '@/project/fonts';
+import {
+  DEFAULT_SYNTH_PRESET,
+  instrumentCacheSegment,
+  type TrackInstrument,
+} from '@/project/instrument';
+import type { ProjectMidiEvent } from '@/wasm/index.js';
 import type { EngineHandle } from './engine';
 
 /** One note of a MIDI phrase, positioned in quarter-note pulses (PPQ). */
@@ -23,6 +30,16 @@ export interface PrerenderMidiClipOptions {
   tempoBpm?: number;
   /** NativeSynth preset name rendered via bounceWithSynthInstrument (default 'e-piano'). */
   preset?: string;
+  /**
+   * Full instrument descriptor (preset, editable synth patch, or SoundFont).
+   * Takes precedence over `preset`, which remains as the simple form.
+   */
+  instrument?: TrackInstrument;
+  /**
+   * SoundFont loader for 'sf2' instruments; defaults to the OPFS font store
+   * (src/project/fonts.ts). Injectable for tests.
+   */
+  loadFont?: (fontId: string) => Promise<Uint8Array>;
 }
 
 /** Options for {@link scheduleMidiClip}; sampleRate defaults to the engine context rate. */
@@ -34,6 +51,17 @@ export type ScheduleMidiClipOptions = Partial<PrerenderMidiClipOptions> & {
    * 0.5 (-6 dBFS). Pass null to schedule at the rendered level.
    */
   targetPeak?: number | null;
+  /**
+   * Hook applied to the cached render before peak measurement and scheduling
+   * (the project layer uses it for offline channel-strip DSP and pan baking).
+   * Must not mutate the input buffers; return fresh buffers instead.
+   */
+  processChannels?: (channels: Float32Array[]) => Float32Array[];
+  /**
+   * Extra linear gain multiplied onto the engine per-clip gain after
+   * normalization (the project layer folds strip/master gain through it).
+   */
+  extraGain?: number;
 };
 
 /** Default peak level clips are normalized to when scheduling (-6 dBFS). */
@@ -88,8 +116,17 @@ export interface NoteEvent {
 }
 
 const DEFAULT_TEMPO_BPM = 120;
-const DEFAULT_PRESET = 'e-piano';
 const CACHE_KEY_VERSION = 'v1';
+
+/**
+ * Resolves the effective instrument of a render: the full descriptor when
+ * given, otherwise the simple preset option wrapped as a 'synth-preset'
+ * instrument (default 'e-piano').
+ */
+function resolveInstrument(options: PrerenderMidiClipOptions): TrackInstrument {
+  if (options.instrument) return options.instrument;
+  return { kind: 'synth-preset', preset: options.preset ?? DEFAULT_SYNTH_PRESET };
+}
 
 /** Prerendered stereo buffers keyed by {@link midiClipCacheKey}. */
 const renderCache = new Map<string, Float32Array[]>();
@@ -166,10 +203,11 @@ export function noteEventsFromNotes(notes: ReadonlyArray<MidiNote>): NoteEvent[]
  * Computes a deterministic cache key for a prerendered MIDI clip.
  *
  * The key covers everything that influences the rendered audio: note content
- * (order-insensitive), tempo, instrument preset, and sample rate.
+ * (order-insensitive), tempo, instrument identity (preset name, hashed patch
+ * content, or SoundFont id + bank/program), and sample rate.
  *
  * @param notes Notes of the phrase.
- * @param options Render options (sampleRate required; tempo/preset use defaults).
+ * @param options Render options (sampleRate required; tempo/instrument use defaults).
  * @returns A stable string key.
  */
 export function midiClipCacheKey(
@@ -177,15 +215,13 @@ export function midiClipCacheKey(
   options: PrerenderMidiClipOptions,
 ): string {
   const tempoBpm = options.tempoBpm ?? DEFAULT_TEMPO_BPM;
-  const preset = options.preset ?? DEFAULT_PRESET;
+  const instrument = instrumentCacheSegment(resolveInstrument(options));
   const canonical = notes
     .map((n) => `${n.startPpq}:${n.durationPpq}:${n.note}:${n.velocity}:${n.channel ?? 0}`)
     .sort()
     .join(';');
   const hash = fnv1a32(canonical).toString(16).padStart(8, '0');
-  return `${CACHE_KEY_VERSION}|sr=${options.sampleRate}|bpm=${tempoBpm}|preset=${encodeURIComponent(
-    preset,
-  )}|n=${notes.length}|${hash}`;
+  return `${CACHE_KEY_VERSION}|sr=${options.sampleRate}|bpm=${tempoBpm}|${instrument}|n=${notes.length}|${hash}`;
 }
 
 /**
@@ -211,9 +247,54 @@ export function deinterleave(interleaved: Float32Array, channelCount = 2): Float
   return channels;
 }
 
+type WasmModule = typeof import('@/wasm/index.js');
+
+/**
+ * Validates a synth preset name against the runtime catalog when the module
+ * exposes it, degrading unknown names to the default preset so a stale
+ * document or template renders audibly instead of throwing. Modules without
+ * the catalog function (older builds, test mocks) pass names through.
+ */
+function resolvePresetName(wasm: WasmModule, preset: string): string {
+  const list = (wasm as { synthPresetNames?: () => string[] }).synthPresetNames;
+  if (typeof list !== 'function') return preset;
+  try {
+    const bare = preset.startsWith('va:') ? preset.slice(3) : preset;
+    return list().includes(bare) ? preset : DEFAULT_SYNTH_PRESET;
+  } catch {
+    return preset;
+  }
+}
+
+/**
+ * Builds the MIDI bank-select/program-change events injected at PPQ 0 for an
+ * SF2 instrument with an explicit bank or program, one set per channel the
+ * phrase uses.
+ */
+function sf2ProgramEvents(
+  wasm: WasmModule,
+  instrument: Extract<TrackInstrument, { kind: 'sf2' }>,
+  channels: ReadonlyArray<number>,
+): ProjectMidiEvent[] {
+  if (instrument.bank === undefined && instrument.program === undefined) return [];
+  const program = instrument.program ?? 0;
+  const events: ProjectMidiEvent[] = [];
+  for (const channel of channels) {
+    if (instrument.bank !== undefined && typeof wasm.Project.midiBankProgram === 'function') {
+      const bankMsb = (instrument.bank >> 7) & 0x7f;
+      const bankLsb = instrument.bank & 0x7f;
+      events.push(...wasm.Project.midiBankProgram(0, 0, channel, bankMsb, bankLsb, program));
+    } else {
+      events.push(wasm.Project.midiProgram(0, 0, channel, program));
+    }
+  }
+  return events;
+}
+
 /**
  * Renders a MIDI phrase offline to planar stereo audio using the libsonare
- * NativeSynth instrument, caching results by content.
+ * instrument selected by the options (NativeSynth preset or patch, or a
+ * stored SoundFont), caching results by content.
  *
  * The render length is auto-derived by the bounce (including the synth release
  * tail), so the returned buffers may extend slightly past the last note-off.
@@ -238,24 +319,43 @@ export async function prerenderMidiClip(
 
   const wasm = await ensureWasm();
   const tempoBpm = options.tempoBpm ?? DEFAULT_TEMPO_BPM;
-  const preset = options.preset ?? DEFAULT_PRESET;
+  const instrument = resolveInstrument(options);
   const events = noteEventsFromNotes(notes);
   const lengthPpq = Math.max(1, Math.ceil(events[events.length - 1].ppq));
+
+  // SoundFont bytes are loaded before the scratch project exists so a missing
+  // font fails fast without touching wasm state.
+  let fontData: Uint8Array | null = null;
+  if (instrument.kind === 'sf2') {
+    const load = options.loadFont ?? loadStoredFont;
+    fontData = await load(instrument.fontId);
+  }
 
   const project = new wasm.Project();
   try {
     project.setSampleRate(options.sampleRate);
     project.setTempoSegments([{ startPpq: 0, bpm: tempoBpm }]);
     const { clipId } = project.addMidiClip(0, lengthPpq);
-    project.setMidiEvents(
-      clipId,
-      events.map((e) =>
-        e.kind === 'on'
-          ? wasm.Project.midiNoteOn(e.ppq, 0, e.channel, e.note, e.velocity)
-          : wasm.Project.midiNoteOff(e.ppq, 0, e.channel, e.note),
-      ),
+    const noteEvents = events.map((e) =>
+      e.kind === 'on'
+        ? wasm.Project.midiNoteOn(e.ppq, 0, e.channel, e.note, e.velocity)
+        : wasm.Project.midiNoteOff(e.ppq, 0, e.channel, e.note),
     );
-    const interleaved = project.bounceWithSynthInstrument(preset, { numChannels: 2 });
+    let interleaved: Float32Array;
+    if (instrument.kind === 'sf2') {
+      project.loadSoundFont(fontData as Uint8Array);
+      const usedChannels = [...new Set(events.map((e) => e.channel))];
+      const programEvents = sf2ProgramEvents(wasm, instrument, usedChannels);
+      project.setMidiEvents(clipId, [...programEvents, ...noteEvents]);
+      interleaved = project.bounceWithSf2Instrument({}, { numChannels: 2 });
+    } else {
+      project.setMidiEvents(clipId, noteEvents);
+      const patch =
+        instrument.kind === 'synth-patch'
+          ? instrument.patch
+          : resolvePresetName(wasm, instrument.preset);
+      interleaved = project.bounceWithSynthInstrument(patch, { numChannels: 2 });
+    }
     const channels = deinterleave(interleaved, 2);
     renderCache.set(key, channels);
     return channels;
@@ -285,10 +385,14 @@ export async function scheduleMidiClip(
     sampleRate: options.sampleRate ?? handle.ctx.sampleRate,
     tempoBpm: options.tempoBpm,
     preset: options.preset,
+    instrument: options.instrument,
+    loadFont: options.loadFont,
   });
+  const processed = options.processChannels ? options.processChannels(channels) : channels;
   const targetPeak = options.targetPeak === undefined ? DEFAULT_TARGET_PEAK : options.targetPeak;
-  const gain = targetPeak === null ? 1 : normalizeGain(peakAmplitude(channels), targetPeak);
-  return handle.engine.addClip(trackId, channels, startPpq, { gain });
+  const baseGain = targetPeak === null ? 1 : normalizeGain(peakAmplitude(processed), targetPeak);
+  const gain = baseGain * (options.extraGain ?? 1);
+  return handle.engine.addClip(trackId, processed, startPpq, { gain });
 }
 
 /**

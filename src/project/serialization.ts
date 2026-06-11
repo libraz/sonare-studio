@@ -10,6 +10,14 @@
  */
 
 import { clearHistory } from './commands';
+import { cloneInstrument, type TrackInstrument } from './instrument';
+import {
+  cloneMixerState,
+  cloneStrip,
+  isDefaultMixerState,
+  type MixerStrip,
+  type ProjectMixerState,
+} from './mixer';
 import { getProject, useProjectStore } from './store';
 import type { ClipKind, EditorClip, EditorNote, TrackKind } from './types';
 
@@ -25,11 +33,17 @@ import type { ClipKind, EditorClip, EditorNote, TrackKind } from './types';
  *   present (clips simply stay silent until the asset is restored). A future
  *   .szd revision can bundle referenced assets as extra zip entries (e.g.
  *   "assets/<id>.pcm" + "assets/<id>.json") without a schema change.
+ * - 3: tracks carry an optional `instrument` (NativeSynth preset/patch or a
+ *   SoundFont reference) and an optional `mixer` channel strip; the document
+ *   carries an optional project `mixer` state (master strip + buses).
+ *   SoundFont binaries live in the OPFS font store (src/project/fonts.ts),
+ *   referenced by id only. All new fields are omitted when default, so v1/v2
+ *   documents load unchanged with defaults injected.
  *
  * Loaders accept any version up to this one; version-1 documents load
  * unchanged (every clip is MIDI).
  */
-export const PROJECT_DOCUMENT_SCHEMA_VERSION = 2;
+export const PROJECT_DOCUMENT_SCHEMA_VERSION = 3;
 
 /** One note inside a document clip (an {@link EditorNote} without its id). */
 export type DocumentNote = Omit<EditorNote, 'id'>;
@@ -80,6 +94,10 @@ export interface DocumentTrack {
   pan: number;
   /** Clips on this track, ordered by timeline start. */
   clips: DocumentClip[];
+  /** Track instrument; absent (schema < 3) = the default synth preset. */
+  instrument?: TrackInstrument;
+  /** Mixer channel strip; absent (schema < 3) = a neutral strip. */
+  mixer?: MixerStrip;
 }
 
 /** One timeline marker of the document. */
@@ -140,6 +158,8 @@ export interface ProjectDocument {
   markers: DocumentMarker[];
   /** Arrangement sections ordered by start position. */
   sections: DocumentSection[];
+  /** Project mixer state; absent (schema < 3 or all-default) = defaults. */
+  mixer?: ProjectMixerState;
 }
 
 /** Deep-copies a clip mirror entry into the document shape (no session ids). */
@@ -185,24 +205,29 @@ function toDocumentNote(note: EditorNote): DocumentNote {
 export function serializeProject(): ProjectDocument {
   const store = useProjectStore();
   const project = getProject();
-  return {
+  const doc: ProjectDocument = {
     schemaVersion: PROJECT_DOCUMENT_SCHEMA_VERSION,
     name: store.projectName,
     sampleRate: project.getSampleRate(),
     tempoSegments: store.tempoSegments.map((segment) => ({ ...segment })),
     timeSignatures: store.timeSignatures.map((segment) => ({ ...segment })),
-    tracks: store.tracks.map((track) => ({
-      name: track.name,
-      color: track.color,
-      kind: track.kind,
-      mute: track.mute,
-      solo: track.solo,
-      volume: track.volume,
-      pan: track.pan,
-      clips: store.clips
-        .filter((clip) => clip.trackId === track.id)
-        .map((clip) => toDocumentClip(clip)),
-    })),
+    tracks: store.tracks.map((track) => {
+      const out: DocumentTrack = {
+        name: track.name,
+        color: track.color,
+        kind: track.kind,
+        mute: track.mute,
+        solo: track.solo,
+        volume: track.volume,
+        pan: track.pan,
+        clips: store.clips
+          .filter((clip) => clip.trackId === track.id)
+          .map((clip) => toDocumentClip(clip)),
+      };
+      if (track.instrument !== undefined) out.instrument = cloneInstrument(track.instrument);
+      if (track.mixer !== undefined) out.mixer = cloneStrip(track.mixer);
+      return out;
+    }),
     markers: store.markers.map((marker) => ({ ppq: marker.ppq, name: marker.name })),
     sections: store.sections.map((section) => ({
       name: section.name,
@@ -211,6 +236,10 @@ export function serializeProject(): ProjectDocument {
       endPpq: section.endPpq,
     })),
   };
+  // The project mixer state is omitted while it is entirely default, so
+  // documents from mixer-less sessions look exactly like older ones.
+  if (!isDefaultMixerState(store.mixer)) doc.mixer = cloneMixerState(store.mixer);
+  return doc;
 }
 
 /**

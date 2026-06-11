@@ -9,8 +9,23 @@
  */
 
 import type { EngineHandle } from '@/engine/engine';
-import { type MidiNote, scheduleMidiClip } from '@/engine/instruments';
+import {
+  type MidiNote,
+  midiClipCacheKey,
+  type PrerenderMidiClipOptions,
+  type ScheduleMidiClipOptions,
+  scheduleMidiClip,
+} from '@/engine/instruments';
+import { ensureWasm } from '@/lib/wasm';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
+import { clampPan, dbToLinear, type MixerStrip, stripCacheSegment, stripHasDsp } from './mixer';
+import {
+  applyBalancePan,
+  applyStripDsp,
+  copyChannels,
+  type StripEqualizer,
+  type StripProcessorDeps,
+} from './mixer-dsp';
 import { useProjectStore } from './store';
 import type { EditorClip, EditorTrack } from './types';
 import { clipKind } from './types';
@@ -204,6 +219,82 @@ export function resampleChannelsLinear(
   });
 }
 
+/**
+ * Strip-processed buffers keyed by render identity + strip identity, so
+ * re-scheduling an unchanged project re-runs no insert/EQ DSP. Pan and gain
+ * are excluded from the cache (applied per schedule).
+ */
+const processedRenderCache = new Map<string, Float32Array[]>();
+
+/** Clears the strip-processed buffer cache (tests, memory pressure). */
+export function clearStripProcessingCache(): void {
+  processedRenderCache.clear();
+}
+
+/**
+ * Builds the strip DSP seam from the loaded wasm module. Returns null when
+ * the module exposes no one-shot stereo processor (older builds, minimal test
+ * mocks); strips then degrade to gain/pan only.
+ */
+async function defaultStripDsp(): Promise<StripProcessorDeps | null> {
+  const wasm = (await ensureWasm()) as unknown as {
+    masteringProcessStereo?: (
+      name: never,
+      left: Float32Array,
+      right: Float32Array,
+      sampleRate?: number,
+      params?: Record<string, number | boolean>,
+    ) => { left: Float32Array; right: Float32Array };
+    StreamingEqualizer?: new (config: {
+      sampleRate: number;
+      maxBlockSize: number;
+    }) => StripEqualizer;
+  };
+  const processStereo = wasm.masteringProcessStereo;
+  if (typeof processStereo !== 'function') return null;
+  const deps: StripProcessorDeps = {
+    processStereo: (name, left, right, sampleRate, params) => {
+      const out = processStereo(name as never, left, right, sampleRate, params);
+      return { left: out.left, right: out.right };
+    },
+  };
+  const Equalizer = wasm.StreamingEqualizer;
+  if (typeof Equalizer === 'function') {
+    deps.createEqualizer = (config) => new Equalizer(config);
+  }
+  return deps;
+}
+
+/**
+ * Returns a hook that applies a strip's insert/EQ chain (cached by render +
+ * strip identity) and bakes the combined pan into a fresh copy.
+ */
+function makeStripProcessor(
+  cacheKey: string,
+  sampleRate: number,
+  strip: MixerStrip | undefined,
+  deps: StripProcessorDeps | null,
+  pan: number,
+): (channels: Float32Array[]) => Float32Array[] {
+  return (channels) => {
+    let out = channels;
+    if (strip && deps && stripHasDsp(strip)) {
+      const key = `${cacheKey}|strip=${stripCacheSegment(strip)}`;
+      const cached = processedRenderCache.get(key);
+      if (cached) {
+        out = cached;
+      } else {
+        out = applyStripDsp(out, sampleRate, strip, deps);
+        processedRenderCache.set(key, out);
+      }
+    }
+    // Pan always works on a copy: the cached buffers stay pan-free so one
+    // processed render serves every pan position.
+    if (pan !== 0) out = applyBalancePan(copyChannels(out), pan);
+    return out;
+  };
+}
+
 /** One clip scheduled by {@link scheduleProjectClips}. */
 export interface ScheduledProjectClip {
   /** Engine clip id (pass to engine.removeClip to unschedule). */
@@ -236,6 +327,12 @@ export interface ScheduleProjectClipsOptions {
    * Injectable for tests and alternative storage backends.
    */
   loadAudioAsset?: (assetId: string) => Promise<LoadedAudioAsset>;
+  /**
+   * Strip DSP seam: undefined derives the processors from the wasm module
+   * (only when some audible track actually carries insert/EQ DSP), null
+   * disables strip DSP entirely (gain/pan still apply). Injectable for tests.
+   */
+  stripDsp?: StripProcessorDeps | null;
 }
 
 /**
@@ -255,8 +352,16 @@ export interface ScheduleProjectClipsOptions {
  * with gain = clip gain x track volume — never loudness-normalized. Clips
  * whose asset is missing or unreadable are skipped silently.
  *
- * Track pan and clip looping are not applied (no engine support for
- * prerendered clips).
+ * Mixer state is applied offline (the engine node has no channel-strip
+ * surface): a track's instrument selects the MIDI bounce, strip gain (and the
+ * master strip gain) multiplies the engine per-clip gain, strip pan plus
+ * master pan are baked into the buffers as a balance law, and the track
+ * strip's enabled inserts/EQ run over the buffers through the wasm one-shot
+ * processors (results cached by render + strip identity). Master inserts/EQ,
+ * buses and sends are UI-only in this iteration.
+ *
+ * The legacy track.pan field and clip looping are not applied (no engine
+ * support for prerendered clips).
  *
  * The caller owns unscheduling: keep the returned list and call
  * engine.removeClip(engineClipId) for each entry before re-scheduling.
@@ -273,14 +378,32 @@ export async function scheduleProjectClips(
   const tempoBpm = options.tempoBpm ?? store.tempoBpm;
   const basePeak = options.targetPeak === undefined ? DEFAULT_TARGET_PEAK : options.targetPeak;
   const loadAudio = options.loadAudioAsset ?? loadAsset;
+  const master = store.mixer.master;
+  const masterGain = dbToLinear(master.gainDb);
+  // Resolve the wasm DSP seam only when an audible track actually needs it,
+  // so DSP-less projects never touch the processor module.
+  const anyStripDsp = store.tracks.some(
+    (track) => isTrackAudible(track, store.tracks) && stripHasDsp(track.mixer),
+  );
+  const dsp =
+    options.stripDsp !== undefined
+      ? options.stripDsp
+      : anyStripDsp
+        ? await defaultStripDsp()
+        : null;
   const scheduled: ScheduledProjectClip[] = [];
   for (const track of store.tracks) {
     if (!isTrackAudible(track, store.tracks)) continue;
+    const strip = track.mixer;
+    const stripGain = strip ? dbToLinear(strip.gainDb) : 1;
+    const extraGain = stripGain * masterGain;
+    const pan = clampPan((strip?.pan ?? 0) + master.pan);
+    const hasDsp = stripHasDsp(strip) && dsp !== null;
     const clips = store.clips.filter((clip) => clip.trackId === track.id);
     for (const clip of clips) {
       if (clipKind(clip) === 'audio') {
         if (!clip.assetId) continue;
-        const gain = track.volume * clip.gain;
+        const gain = track.volume * clip.gain * extraGain;
         if (gain <= 0) continue;
         let asset: LoadedAudioAsset;
         try {
@@ -306,6 +429,12 @@ export async function scheduleProjectClips(
         const targetRate = options.sampleRate ?? handle.ctx.sampleRate;
         channels = resampleChannelsLinear(channels, asset.meta.sampleRate, targetRate);
         if (channels.length === 0 || channels[0].length === 0) continue;
+        if (hasDsp || pan !== 0) {
+          const cacheKey =
+            `audio|${clip.assetId}|off=${clip.sourceOffsetPpq}|len=${clip.lengthPpq}` +
+            `|bpm=${tempoBpm}|fi=${clip.fadeInPpq ?? 0}|fo=${clip.fadeOutPpq ?? 0}|sr=${targetRate}`;
+          channels = makeStripProcessor(cacheKey, targetRate, strip, dsp, pan)(channels);
+        }
         const engineClipId = handle.engine.addClip(
           engineTrackId(track.id),
           channels,
@@ -319,17 +448,36 @@ export async function scheduleProjectClips(
       if (notes.length === 0) continue;
       const targetPeak = basePeak === null ? null : basePeak * track.volume * clip.gain;
       if (targetPeak !== null && targetPeak <= 0) continue;
+      const midiOptions: ScheduleMidiClipOptions = {
+        ...(options.sampleRate !== undefined ? { sampleRate: options.sampleRate } : {}),
+        ...(options.preset !== undefined ? { preset: options.preset } : {}),
+        ...(track.instrument !== undefined ? { instrument: track.instrument } : {}),
+        tempoBpm,
+        targetPeak,
+      };
+      if (extraGain !== 1) midiOptions.extraGain = extraGain;
+      if (hasDsp || pan !== 0) {
+        const renderRate = options.sampleRate ?? handle.ctx.sampleRate;
+        const renderOptions: PrerenderMidiClipOptions = {
+          sampleRate: renderRate,
+          tempoBpm,
+          ...(options.preset !== undefined ? { preset: options.preset } : {}),
+          ...(track.instrument !== undefined ? { instrument: track.instrument } : {}),
+        };
+        midiOptions.processChannels = makeStripProcessor(
+          midiClipCacheKey(notes, renderOptions),
+          renderRate,
+          strip,
+          dsp,
+          pan,
+        );
+      }
       const engineClipId = await scheduleMidiClip(
         handle,
         engineTrackId(track.id),
         notes,
         clip.startPpq,
-        {
-          ...(options.sampleRate !== undefined ? { sampleRate: options.sampleRate } : {}),
-          ...(options.preset !== undefined ? { preset: options.preset } : {}),
-          tempoBpm,
-          targetPeak,
-        },
+        midiOptions,
       );
       scheduled.push({ engineClipId, clipId: clip.id, trackId: track.id });
     }

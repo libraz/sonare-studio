@@ -135,6 +135,7 @@ export function useAutosave(options: UseAutosaveOptions = {}): UseAutosaveReturn
         store.sections,
         store.tempoSegments,
         store.timeSignatures,
+        store.mixer,
       ] as const,
     () => {
       if (store.initialized) scheduleSave();

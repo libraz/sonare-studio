@@ -56,9 +56,9 @@ describe('project serialization with audio clips (schema v2)', () => {
     await store.init();
   });
 
-  it('writes schema version 2', () => {
-    expect(PROJECT_DOCUMENT_SCHEMA_VERSION).toBe(2);
-    expect(serializeProject().schemaVersion).toBe(2);
+  it('writes the current schema version (>= 2, audio clips supported)', () => {
+    expect(PROJECT_DOCUMENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(2);
+    expect(serializeProject().schemaVersion).toBe(PROJECT_DOCUMENT_SCHEMA_VERSION);
   });
 
   it('serializes audio clips with kind, assetId and fades (no PCM payload)', async () => {
@@ -141,7 +141,7 @@ describe('project serialization with audio clips (schema v2)', () => {
     expect(store.clips[0].notes.map((n) => n.pitch)).toEqual([64]);
     // Re-serializing upgrades to the current schema with explicit midi kinds.
     const upgraded = serializeProject();
-    expect(upgraded.schemaVersion).toBe(2);
+    expect(upgraded.schemaVersion).toBe(PROJECT_DOCUMENT_SCHEMA_VERSION);
     expect(upgraded.tracks[0].clips[0].kind).toBe('midi');
   });
 

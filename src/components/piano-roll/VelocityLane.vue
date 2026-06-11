@@ -1,9 +1,22 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { setSelection, updateNotes } from '@/project/commands';
-import type { EditorNote } from '@/project/types';
+import type { EditorNote, EditorNoteUpdate } from '@/project/types';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
+import {
+  barsInSpan,
+  formatLaneValue,
+  type LaneBar,
+  type LaneParamId,
+  laneBarRect,
+  laneParamSpec,
+  laneUpdateForValue,
+  laneValueFromY,
+  noteLaneValue,
+  quantizeLaneValue,
+  rampValueAt,
+} from './lane-params';
 import {
   DEFAULT_NOTE_COLOR,
   getCanvasContext,
@@ -13,10 +26,14 @@ import {
 } from './theme';
 
 /**
- * Velocity lane below the note grid: one draggable bar per note, horizontally
- * aligned with the grid through the shared TimelineRange. Dragging a bar sets
- * the velocity of the grabbed note (and of the whole selection when the
- * grabbed note is selected); the edit commits as one undo step on release.
+ * Parameter lane below the note grid: one draggable bar per note, horizontally
+ * aligned with the grid through the shared TimelineRange. The `param` prop
+ * selects which note field the bars show (note-on velocity by default; see
+ * lane-params.ts for the catalog). Dragging a bar sets the value of the
+ * grabbed note (and of the whole selection when the grabbed note is
+ * selected); sweeping the pointer across other bars paints each touched note,
+ * and alt-drag draws a linear value ramp from the gesture anchor to the
+ * pointer. Every gesture commits as one undo step on release.
  */
 
 const props = defineProps<{
@@ -26,12 +43,14 @@ const props = defineProps<{
   revision: number;
   /** Shared frame batcher for canvas redraws. */
   painter: Painter;
-  /** Notes whose velocities are shown. */
+  /** Notes whose parameter values are shown. */
   notes: EditorNote[];
   /** Selected note ids. */
   selection: Set<number>;
   /** Per-note color resolver (single track color by default). */
   noteColor?: NoteColorFn;
+  /** Note field shown by the bars; defaults to note-on velocity. */
+  param?: LaneParamId;
 }>();
 
 const wrapper = ref<HTMLDivElement | null>(null);
@@ -42,28 +61,48 @@ const layerId = Math.random().toString(36).slice(2, 8);
 
 const COLORS = PIANO_ROLL_COLORS;
 
-/** In-flight velocity overrides per note id while a drag runs. */
+const paramId = computed<LaneParamId>(() => props.param ?? 'velocity');
+const spec = computed(() => laneParamSpec(paramId.value));
+
+/** In-flight value overrides per note id while a drag runs. */
 const preview = shallowRef<Map<number, number> | null>(null);
 
 let widthPx = 0;
 let heightPx = 0;
-let dragTargets: number[] | null = null;
+
+/**
+ * Active gesture. `uniform` drags the grabbed selection to one value (the
+ * historical velocity-lane behavior), `paint` follows a single note
+ * vertically and sweeps values onto every bar the pointer crosses, `line` is
+ * the alt-drag ramp tool anchored at the pointer-down position.
+ */
+type DragState =
+  | { mode: 'uniform'; targets: number[] }
+  | { mode: 'paint'; lastX: number; lastValue: number; lastId: number }
+  | { mode: 'line'; anchorX: number; anchorValue: number };
+
+let drag: DragState | null = null;
+
+/** Last pointer value of the running drag, for the corner readout. */
+let dragValue: number | null = null;
 
 function schedule(): void {
   props.painter.schedule(`velocity-lane-${layerId}`, draw);
 }
 
-/** Computes the x extent of a note's velocity bar in viewport px. */
+/** Computes the x extent of a note's bar column in viewport px. */
 function barGeometry(note: EditorNote): { x: number; w: number } {
   const x = props.range.ppqToX(note.startPpq);
   const endX = props.range.ppqToX(note.startPpq + note.durationPpq);
   return { x, w: Math.max(3, Math.min(8, endX - x - 1)) };
 }
 
-/** Maps a lane-local y coordinate to a velocity (1..127, top = 127). */
-function velocityFromY(y: number): number {
-  if (heightPx <= 0) return 1;
-  return Math.min(127, Math.max(1, Math.round((1 - y / heightPx) * 127)));
+/** Bar columns of all notes in note order (topmost hit target last). */
+function laneBars(): LaneBar[] {
+  return props.notes.map((note) => {
+    const { x, w } = barGeometry(note);
+    return { id: note.id, x, w };
+  });
 }
 
 function draw(): void {
@@ -72,12 +111,18 @@ function draw(): void {
   const ctx = getCanvasContext(el);
   if (!ctx) return;
   const range = props.range;
+  const param = paramId.value;
+  const bipolar = spec.value.bipolar;
 
   ctx.fillStyle = COLORS.laneBackground;
   ctx.fillRect(0, 0, widthPx, heightPx);
   ctx.fillStyle = COLORS.laneRule;
   for (const fraction of [0.25, 0.5, 0.75]) {
     ctx.fillRect(0, Math.round(heightPx * fraction), widthPx, 1);
+  }
+  if (bipolar) {
+    ctx.fillStyle = COLORS.laneCenter;
+    ctx.fillRect(0, Math.round(heightPx / 2), widthPx, 1);
   }
 
   const colorOf = props.noteColor ?? ((): string => DEFAULT_NOTE_COLOR);
@@ -88,18 +133,26 @@ function draw(): void {
     }
     const { x, w } = barGeometry(note);
     if (x + w < 0 || x > widthPx) continue;
-    const velocity = overrides?.get(note.id) ?? note.velocity;
-    const barH = Math.max(2, (velocity / 127) * (heightPx - 2));
+    const value = overrides?.get(note.id) ?? noteLaneValue(param, note);
+    const rect = laneBarRect(param, value, heightPx);
     const selected = props.selection.has(note.id);
     ctx.globalAlpha = selected ? 1 : 0.7;
     ctx.fillStyle = colorOf(note);
-    ctx.fillRect(x, heightPx - barH, w, barH);
+    ctx.fillRect(x, rect.y, w, rect.h);
     if (selected) {
+      // Emphasis cap on the value end of the bar (outer edge for bipolar).
+      const capY = bipolar && value < 0 ? rect.y + rect.h - 2 : rect.y;
       ctx.fillStyle = COLORS.noteSelectedBorder;
-      ctx.fillRect(x, heightPx - barH, w, 2);
+      ctx.fillRect(x, capY, w, 2);
     }
   }
   ctx.globalAlpha = 1;
+
+  if (dragValue !== null) {
+    ctx.fillStyle = COLORS.laneValueText;
+    ctx.font = '10px system-ui, sans-serif';
+    ctx.fillText(formatLaneValue(param, dragValue), 6, 12);
+  }
 }
 
 /** Finds the topmost note whose bar column contains the x coordinate. */
@@ -117,50 +170,104 @@ function localPoint(event: PointerEvent): { x: number; y: number } {
   return { x: event.clientX - (rect?.left ?? 0), y: event.clientY - (rect?.top ?? 0) };
 }
 
+/**
+ * Paint step: bars crossed since the last move get values interpolated along
+ * the pointer path, then the bar under the pointer (or the last touched one,
+ * so plain vertical drags keep following) tracks the pointer value exactly.
+ */
+function applyPaint(state: Extract<DragState, { mode: 'paint' }>, x: number, value: number): void {
+  const param = paramId.value;
+  const next = new Map(preview.value ?? []);
+  for (const bar of barsInSpan(laneBars(), state.lastX, x)) {
+    const ramped = rampValueAt(state.lastX, state.lastValue, x, value, bar.x + bar.w / 2);
+    next.set(bar.id, quantizeLaneValue(param, ramped));
+  }
+  const currentId = hitBar(x)?.id ?? state.lastId;
+  next.set(currentId, value);
+  preview.value = next;
+  state.lastX = x;
+  state.lastValue = value;
+  state.lastId = currentId;
+}
+
+/** Line-tool step: rebuilds the preview as a ramp from the anchor. */
+function applyLine(state: Extract<DragState, { mode: 'line' }>, x: number, value: number): void {
+  const param = paramId.value;
+  const next = new Map<number, number>();
+  for (const bar of barsInSpan(laneBars(), state.anchorX, x)) {
+    const ramped = rampValueAt(state.anchorX, state.anchorValue, x, value, bar.x + bar.w / 2);
+    next.set(bar.id, quantizeLaneValue(param, ramped));
+  }
+  preview.value = next;
+}
+
 function onPointerDown(event: PointerEvent): void {
   if (event.button !== 0) return;
   const point = localPoint(event);
+  const value = laneValueFromY(paramId.value, point.y, heightPx);
+  if (event.altKey) {
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    drag = { mode: 'line', anchorX: point.x, anchorValue: value };
+    dragValue = value;
+    applyLine(drag, point.x, value);
+    schedule();
+    return;
+  }
   const hit = hitBar(point.x);
   if (!hit) return;
   (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
   if (props.selection.has(hit.id)) {
-    dragTargets = [...props.selection];
+    const targets = [...props.selection];
+    drag = { mode: 'uniform', targets };
+    preview.value = new Map(targets.map((id) => [id, value]));
   } else {
-    dragTargets = [hit.id];
     setSelection([hit.id]);
+    drag = { mode: 'paint', lastX: point.x, lastValue: value, lastId: hit.id };
+    preview.value = new Map([[hit.id, value]]);
   }
-  const velocity = velocityFromY(point.y);
-  preview.value = new Map(dragTargets.map((id) => [id, velocity]));
+  dragValue = value;
   schedule();
 }
 
 function onPointerMove(event: PointerEvent): void {
-  if (!dragTargets) return;
-  const velocity = velocityFromY(localPoint(event).y);
-  preview.value = new Map(dragTargets.map((id) => [id, velocity]));
+  if (!drag) return;
+  const point = localPoint(event);
+  const value = laneValueFromY(paramId.value, point.y, heightPx);
+  if (drag.mode === 'uniform') {
+    preview.value = new Map(drag.targets.map((id) => [id, value]));
+  } else if (drag.mode === 'paint') {
+    applyPaint(drag, point.x, value);
+  } else {
+    applyLine(drag, point.x, value);
+  }
+  dragValue = value;
   schedule();
 }
 
 function onPointerUp(): void {
-  if (!dragTargets) return;
+  if (!drag) return;
+  const param = paramId.value;
   const overrides = preview.value;
-  const targets = dragTargets;
-  dragTargets = null;
+  drag = null;
+  dragValue = null;
   preview.value = null;
   if (overrides) {
     const byId = new Map(props.notes.map((note) => [note.id, note]));
-    const updates = targets.flatMap((id) => {
-      const velocity = overrides.get(id);
+    const updates: EditorNoteUpdate[] = [];
+    for (const [id, value] of overrides) {
       const note = byId.get(id);
-      return velocity !== undefined && note && note.velocity !== velocity ? [{ id, velocity }] : [];
-    });
+      if (!note) continue;
+      const update = laneUpdateForValue(param, note, value);
+      if (update) updates.push(update);
+    }
     if (updates.length > 0) updateNotes(updates);
   }
   schedule();
 }
 
 function onPointerCancel(): void {
-  dragTargets = null;
+  drag = null;
+  dragValue = null;
   preview.value = null;
   schedule();
 }
@@ -186,8 +293,15 @@ onBeforeUnmount(() => {
   resizeObserver = null;
 });
 
+// Switching tabs discards any in-flight gesture preview.
+watch(paramId, () => {
+  drag = null;
+  dragValue = null;
+  preview.value = null;
+});
+
 watch(
-  () => [props.revision, props.notes, props.selection] as const,
+  () => [props.revision, props.notes, props.selection, paramId.value] as const,
   () => schedule(),
 );
 </script>

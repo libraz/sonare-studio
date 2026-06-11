@@ -119,6 +119,7 @@ export class FakeProject {
   private nextClipId = 1;
   private nextMarkerId = 1;
   private deleted = false;
+  private soundFont: Uint8Array | null = null;
 
   static midiNoteOn(
     ppq: number,
@@ -138,6 +139,26 @@ export class FakeProject {
     velocity = 0,
   ): FakeEvent {
     return { ppq, data0: pack(group, 0x8, channel, note, velocity), data1: 0 };
+  }
+
+  static midiProgram(ppq: number, group: number, channel: number, program: number): FakeEvent {
+    return { ppq, data0: pack(group, 0xc, channel, program, 0), data1: 0 };
+  }
+
+  static midiBankProgram(
+    ppq: number,
+    group: number,
+    channel: number,
+    bankMsb: number,
+    bankLsb: number,
+    program: number,
+  ): FakeEvent[] {
+    // Bank select CC0/CC32 followed by the program change, like the binding.
+    return [
+      { ppq, data0: pack(group, 0xb, channel, 0, bankMsb), data1: 0 },
+      { ppq, data0: pack(group, 0xb, channel, 32, bankLsb), data1: 0 },
+      FakeProject.midiProgram(ppq, group, channel, program),
+    ];
   }
 
   /** Pushes one history entry, then applies the mutation. */
@@ -438,6 +459,29 @@ export class FakeProject {
     return this.state.tracks.length;
   }
 
+  /** Records the SoundFont bytes (not part of the undo history). */
+  loadSoundFont(data: Uint8Array): void {
+    this.soundFont = new Uint8Array(data);
+  }
+
+  clearSoundFont(): void {
+    this.soundFont = null;
+  }
+
+  soundFontPresetCount(): number {
+    return this.soundFont ? 1 : 0;
+  }
+
+  /** Deterministic stereo render stand-in (3 frames, interleaved L/R). */
+  bounceWithSynthInstrument(_instrument?: unknown, _options?: unknown): Float32Array {
+    return new Float32Array([0.25, -0.25, 0.5, -0.5, 0.75, -0.75]);
+  }
+
+  /** Deterministic SF2 render stand-in (2 frames, interleaved L/R). */
+  bounceWithSf2Instrument(_instrument?: unknown, _options?: unknown): Float32Array {
+    return new Float32Array([0.2, -0.2, 0.4, -0.4]);
+  }
+
   exportSmf(): Uint8Array {
     // Deterministic placeholder: a MIDI header chunk tag plus content counts.
     return new Uint8Array([0x4d, 0x54, 0x68, 0x64, this.state.clips.length & 0xff]);
@@ -486,11 +530,93 @@ export function scalePitchClassEnabled(
   return ((modeMask >> ((((pitchClass - root) % 12) + 12) % 12)) & 1) === 1;
 }
 
+/** Synth preset names the fake catalog reports (subset of the real build). */
+export const FAKE_SYNTH_PRESETS = [
+  'sine',
+  'saw-lead',
+  'square-lead',
+  'e-piano',
+  'acoustic-piano',
+  'warm-pad',
+  'sub-bass',
+  'pluck',
+  'organ',
+  'brass',
+  'electric-guitar',
+  'drum-kit',
+] as const;
+
+/** Insert parameter names per processor the fake catalog reports. */
+export const FAKE_INSERT_PARAMS: Record<string, string[]> = {
+  'dynamics.compressor': [
+    'thresholdDb',
+    'ratio',
+    'attackMs',
+    'releaseMs',
+    'kneeDb',
+    'makeupGainDb',
+  ],
+  'eq.tilt': ['tiltDb', 'pivotHz'],
+  'saturation.tape': ['driveDb', 'saturation', 'outputGainDb'],
+  'stereo.imager': ['width', 'outputGainDb'],
+};
+
+/** Mirrors synthPresetNames for catalog-aware code paths. */
+export function fakeSynthPresetNames(): string[] {
+  return [...FAKE_SYNTH_PRESETS];
+}
+
+/** Mirrors synthPresetPatch: known presets return a patch, unknown throw. */
+export function fakeSynthPresetPatch(name: string): Record<string, unknown> {
+  const bare = name.startsWith('va:') ? name.slice(3) : name;
+  if (!(FAKE_SYNTH_PRESETS as readonly string[]).includes(bare)) {
+    throw new Error(`unknown synth preset: ${name}`);
+  }
+  return { preset: bare, cutoffHz: 12000, resonanceQ: 0.9, ampSustain: 0.6, gain: 0.8 };
+}
+
+/**
+ * Identity StreamingEqualizer stand-in (copies its input through). The
+ * production seam only constructs, configures bands, processes once and
+ * deletes; nothing here needs real filtering.
+ */
+export class FakeStreamingEqualizer {
+  setBand(_index: number, _band: object): void {}
+  processStereo(
+    left: Float32Array,
+    right: Float32Array,
+  ): { left: Float32Array; right: Float32Array } {
+    return { left: new Float32Array(left), right: new Float32Array(right) };
+  }
+  delete(): void {}
+}
+
 /** Builds a fake module compatible with the `@/lib/wasm` ensureWasm result. */
 export function createFakeWasmModule(): typeof import('@/wasm/index.js') {
   return {
     Project: FakeProject,
     scalePitchClassEnabled,
     init: async () => {},
+    synthPresetNames: fakeSynthPresetNames,
+    synthPresetPatch: fakeSynthPresetPatch,
+    masteringInsertNames: () => Object.keys(FAKE_INSERT_PARAMS),
+    masteringInsertParamNames: (name: string) => FAKE_INSERT_PARAMS[name] ?? [],
+    // Pass-through one-shot stereo processor: copies the input unchanged.
+    masteringProcessStereo: (
+      _name: string,
+      left: Float32Array,
+      right: Float32Array,
+      sampleRate = 48000,
+      _params?: Record<string, number | boolean>,
+    ) => ({
+      left: new Float32Array(left),
+      right: new Float32Array(right),
+      sampleRate,
+      inputLufs: 0,
+      outputLufs: 0,
+      appliedGainDb: 0,
+      latencySamples: 0,
+    }),
+    StreamingEqualizer: FakeStreamingEqualizer,
   } as unknown as typeof import('@/wasm/index.js');
 }

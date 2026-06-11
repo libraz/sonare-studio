@@ -1,5 +1,22 @@
 import { audioAssetUri, loadAssetMeta } from '@/persistence/assets';
 import {
+  cloneInstrument,
+  instrumentEquals,
+  type TrackInstrument,
+  validateTrackInstrument,
+} from './instrument';
+import {
+  cloneMixerState,
+  cloneStrip,
+  createDefaultStrip,
+  type InsertSlot,
+  MAX_STRIP_GAIN_DB,
+  MIN_STRIP_GAIN_DB,
+  type MixerStrip,
+  type ProjectMixerState,
+  type StripEq,
+} from './mixer';
+import {
   allocateMarkerId,
   allocateNoteId,
   allocateSectionId,
@@ -41,14 +58,15 @@ const MAX_HISTORY = 100;
  * Project.undo()/redo() is authoritative for everything the Project stores
  * (track/clip structure, names, timing, note events, tempo, meter). These
  * snapshots restore what the Project does not know about: editor note ids,
- * track colors/mute/solo/volume/pan/order, clip names, markers, sections and
- * the active track/clip.
+ * track colors/mute/solo/volume/pan/order/instrument/mixer, clip names,
+ * markers, sections, the project mixer state and the active track/clip.
  */
 interface MirrorSnapshot {
   tracks: EditorTrack[];
   clips: EditorClip[];
   markers: EditorMarker[];
   sections: EditorSection[];
+  mixer: ProjectMixerState;
   activeTrackId: number;
   activeClipId: number;
 }
@@ -72,6 +90,14 @@ function cloneNotes(notes: ReadonlyArray<EditorNote>): EditorNote[] {
   return notes.map((note) => ({ ...note }));
 }
 
+/** Deep-copies a track mirror entry (instrument/mixer are nested objects). */
+function cloneTrack(track: EditorTrack): EditorTrack {
+  const next: EditorTrack = { ...track };
+  if (track.instrument !== undefined) next.instrument = cloneInstrument(track.instrument);
+  if (track.mixer !== undefined) next.mixer = cloneStrip(track.mixer);
+  return next;
+}
+
 /** Deep-copies a clip mirror entry. */
 function cloneClip(clip: EditorClip): EditorClip {
   return { ...clip, notes: cloneNotes(clip.notes) };
@@ -80,10 +106,11 @@ function cloneClip(clip: EditorClip): EditorClip {
 /** Captures the current mirror state for undo/redo restoration. */
 function captureSnapshot(store: ReturnType<typeof useProjectStore>): MirrorSnapshot {
   return {
-    tracks: store.tracks.map((track) => ({ ...track })),
+    tracks: store.tracks.map(cloneTrack),
     clips: store.clips.map(cloneClip),
     markers: store.markers.map((marker) => ({ ...marker })),
     sections: store.sections.map((section) => ({ ...section })),
+    mixer: cloneMixerState(store.mixer),
     activeTrackId: store.activeTrackId,
     activeClipId: store.clipId,
   };
@@ -98,14 +125,52 @@ function restoreSnapshot(
   store: ReturnType<typeof useProjectStore>,
   snapshot: MirrorSnapshot,
 ): void {
-  store.tracks = snapshot.tracks.map((track) => ({ ...track }));
+  store.tracks = snapshot.tracks.map(cloneTrack);
   store.clips = snapshot.clips.map(cloneClip);
   store.markers = snapshot.markers.map((marker) => ({ ...marker }));
   store.sections = snapshot.sections.map((section) => ({ ...section }));
+  store.mixer = cloneMixerState(snapshot.mixer);
   store.activeTrackId = snapshot.activeTrackId;
   store.clipId = snapshot.activeClipId;
   const hints = new Map(snapshot.clips.map((clip) => [clip.id, clip.notes]));
   store.refresh(hints);
+}
+
+/** Pushes a finished history entry, trimming overflow and dropping redo. */
+function pushHistory(entry: HistoryEntry): void {
+  undoStack.push(entry);
+  if (undoStack.length > MAX_HISTORY) undoStack.shift();
+  redoStack.length = 0;
+}
+
+/**
+ * A continuous-drag gesture in flight: non-commit edits update the mirror
+ * but defer their history entry; the entry's `before` snapshot is the state
+ * captured when the gesture started.
+ */
+interface PendingGesture {
+  key: string;
+  before: MirrorSnapshot;
+}
+
+let pendingGesture: PendingGesture | null = null;
+
+/** True when an uncommitted gesture with this key is in flight. */
+function hasPendingGesture(key: string): boolean {
+  return pendingGesture !== null && pendingGesture.key === key;
+}
+
+/**
+ * Closes any uncommitted gesture into one history entry. Called before every
+ * unrelated command and before undo/redo, so a drag interrupted by another
+ * edit still undoes as a single step.
+ */
+function flushPendingGesture(): void {
+  if (!pendingGesture) return;
+  const store = useProjectStore();
+  const before = pendingGesture.before;
+  pendingGesture = null;
+  pushHistory({ projectEdits: 0, before, after: captureSnapshot(store) });
 }
 
 /**
@@ -116,14 +181,49 @@ function restoreSnapshot(
  * history entries the action produced.
  */
 function execute<T>(projectEdits: number, action: () => T): T {
+  flushPendingGesture();
   const store = useProjectStore();
   const before = captureSnapshot(store);
   const result = action();
   const after = captureSnapshot(store);
-  undoStack.push({ projectEdits, before, after });
-  if (undoStack.length > MAX_HISTORY) undoStack.shift();
-  redoStack.length = 0;
+  pushHistory({ projectEdits, before, after });
   return result;
+}
+
+/** Options shared by commands that support continuous-drag coalescing. */
+export interface CommandGestureOptions {
+  /**
+   * Pass false while a drag is in flight: the edit is applied to the mirror
+   * immediately but merged into one pending history entry. The final call of
+   * the gesture (commit omitted or true) closes the entry, so the whole drag
+   * undoes in a single step. Interleaving any other command (or undo/redo)
+   * also closes the pending entry.
+   */
+  commit?: boolean;
+}
+
+/**
+ * Runs an app-metadata-only command (no wasm Project edits) with optional
+ * gesture coalescing: same-key non-commit calls share one history entry whose
+ * `before` snapshot is the gesture start.
+ */
+function executeApp<T>(action: () => T, gesture?: { key: string; commit: boolean }): T {
+  const store = useProjectStore();
+  if (gesture && !gesture.commit) {
+    if (pendingGesture && pendingGesture.key !== gesture.key) flushPendingGesture();
+    if (!pendingGesture) pendingGesture = { key: gesture.key, before: captureSnapshot(store) };
+    // The mirror diverges from the last committed entry, so redo is stale.
+    redoStack.length = 0;
+    return action();
+  }
+  if (gesture && pendingGesture && pendingGesture.key === gesture.key) {
+    const before = pendingGesture.before;
+    pendingGesture = null;
+    const result = action();
+    pushHistory({ projectEdits: 0, before, after: captureSnapshot(store) });
+    return result;
+  }
+  return execute(0, action);
 }
 
 /** Throws RangeError when a note has out-of-range or non-finite fields. */
@@ -531,6 +631,403 @@ export function reorderTracks(orderedIds: ReadonlyArray<number>): void {
       const track = byId.get(id) as EditorTrack;
       return { ...track, order: index };
     });
+    store.refresh();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Instrument / mixer commands (app-level metadata, execute(0)-style)
+// ---------------------------------------------------------------------------
+
+/**
+ * Sets a track's instrument as one undoable edit. Instruments are app-level
+ * metadata applied when the track's MIDI clips are prerendered.
+ *
+ * @param trackId Id of the track.
+ * @param instrument New instrument, or null to clear back to the default
+ *   synth preset.
+ * @param options Gesture coalescing (quick-control drags edit patch fields
+ *   continuously).
+ */
+export function setTrackInstrument(
+  trackId: number,
+  instrument: TrackInstrument | null,
+  options?: CommandGestureOptions,
+): void {
+  const store = useProjectStore();
+  const track = requireTrack(store, trackId);
+  if (instrument !== null) validateTrackInstrument(instrument);
+  const key = `track-instrument:${trackId}`;
+  const current = track.instrument ?? null;
+  const unchanged =
+    instrument === null
+      ? current === null
+      : current !== null && instrumentEquals(current, instrument);
+  if (unchanged && !hasPendingGesture(key)) return;
+  executeApp(
+    () => {
+      store.tracks = store.tracks.map((t) => {
+        if (t.id !== trackId) return t;
+        if (instrument === null) {
+          const { instrument: _dropped, ...rest } = t;
+          return rest;
+        }
+        return { ...t, instrument: cloneInstrument(instrument) };
+      });
+      store.refresh();
+    },
+    { key, commit: options?.commit ?? true },
+  );
+}
+
+/** Addresses a mixer strip: a track id, or 'master' for the master strip. */
+export type MixerStripTarget = number | 'master';
+
+/** Returns the current strip of a target (a neutral strip when absent). */
+function currentStrip(
+  store: ReturnType<typeof useProjectStore>,
+  target: MixerStripTarget,
+): MixerStrip {
+  if (target === 'master') return store.mixer.master;
+  const track = requireTrack(store, target);
+  return track.mixer ?? createDefaultStrip();
+}
+
+/** Writes a strip back onto its target (track mirror or master). */
+function writeStrip(
+  store: ReturnType<typeof useProjectStore>,
+  target: MixerStripTarget,
+  strip: MixerStrip,
+): void {
+  if (target === 'master') {
+    store.mixer = { ...store.mixer, master: strip };
+    return;
+  }
+  store.tracks = store.tracks.map((t) => (t.id === target ? { ...t, mixer: strip } : t));
+}
+
+/** Returns the insert slot at an index, or throws RangeError. */
+function requireInsert(strip: MixerStrip, index: number): InsertSlot {
+  if (!Number.isInteger(index) || index < 0 || index >= strip.inserts.length) {
+    throw new RangeError(`Unknown insert index: ${index}`);
+  }
+  return strip.inserts[index];
+}
+
+/**
+ * Sets a strip's gain as one undoable edit. Strip gain is audible: it is
+ * folded into the engine per-clip gain when (re)scheduling.
+ *
+ * @param target Track id or 'master'.
+ * @param gainDb New gain in dB (finite, within [-96, 24]).
+ * @param options Gesture coalescing for fader drags.
+ */
+export function setStripGain(
+  target: MixerStripTarget,
+  gainDb: number,
+  options?: CommandGestureOptions,
+): void {
+  const store = useProjectStore();
+  const strip = currentStrip(store, target);
+  if (!Number.isFinite(gainDb) || gainDb < MIN_STRIP_GAIN_DB || gainDb > MAX_STRIP_GAIN_DB) {
+    throw new RangeError(
+      `Strip gain must be within [${MIN_STRIP_GAIN_DB}, ${MAX_STRIP_GAIN_DB}] dB, got ${gainDb}`,
+    );
+  }
+  const key = `strip-gain:${String(target)}`;
+  if (strip.gainDb === gainDb && !hasPendingGesture(key)) return;
+  executeApp(
+    () => {
+      writeStrip(store, target, { ...cloneStrip(strip), gainDb });
+      store.refresh();
+    },
+    { key, commit: options?.commit ?? true },
+  );
+}
+
+/**
+ * Sets a strip's pan as one undoable edit. Strip pan is audible: a balance
+ * law is baked into the scheduled buffers when (re)scheduling.
+ *
+ * @param target Track id or 'master'.
+ * @param pan New balance in [-1, 1].
+ * @param options Gesture coalescing for knob drags.
+ */
+export function setStripPan(
+  target: MixerStripTarget,
+  pan: number,
+  options?: CommandGestureOptions,
+): void {
+  const store = useProjectStore();
+  const strip = currentStrip(store, target);
+  if (!Number.isFinite(pan) || pan < -1 || pan > 1) {
+    throw new RangeError(`Strip pan must be in [-1, 1], got ${pan}`);
+  }
+  const key = `strip-pan:${String(target)}`;
+  if (strip.pan === pan && !hasPendingGesture(key)) return;
+  executeApp(
+    () => {
+      writeStrip(store, target, { ...cloneStrip(strip), pan });
+      store.refresh();
+    },
+    { key, commit: options?.commit ?? true },
+  );
+}
+
+/**
+ * Appends an insert slot to a strip as one undoable edit. The processor is a
+ * wasm catalog name (masteringProcessorNames / masteringInsertNames); track
+ * inserts are applied offline while scheduling, master inserts are UI-only
+ * in this iteration.
+ *
+ * @param target Track id or 'master'.
+ * @param processor Processor catalog name (non-empty).
+ * @param params Initial parameter overrides (camelCase keys).
+ * @returns The index of the new slot.
+ */
+export function addInsert(
+  target: MixerStripTarget,
+  processor: string,
+  params: Record<string, number | boolean> = {},
+): number {
+  const store = useProjectStore();
+  const strip = currentStrip(store, target);
+  if (typeof processor !== 'string' || processor.length === 0) {
+    throw new RangeError('Insert processor name must not be empty');
+  }
+  validateInsertParams(params);
+  return executeApp(() => {
+    const next = cloneStrip(strip);
+    next.inserts = [...next.inserts, { processor, params: { ...params }, enabled: true }];
+    writeStrip(store, target, next);
+    store.refresh();
+    return next.inserts.length - 1;
+  });
+}
+
+/** Throws RangeError when an insert params record carries bad values. */
+function validateInsertParams(params: Record<string, number | boolean>): void {
+  for (const [name, value] of Object.entries(params)) {
+    if (name.length === 0) throw new RangeError('Insert param name must not be empty');
+    if (typeof value === 'number' && !Number.isFinite(value)) {
+      throw new RangeError(`Insert param "${name}" must be finite, got ${value}`);
+    }
+    if (typeof value !== 'number' && typeof value !== 'boolean') {
+      throw new RangeError(`Insert param "${name}" must be a number or boolean`);
+    }
+  }
+}
+
+/**
+ * Removes an insert slot as one undoable edit.
+ *
+ * @param target Track id or 'master'.
+ * @param index Slot index (later slots shift down).
+ */
+export function removeInsert(target: MixerStripTarget, index: number): void {
+  const store = useProjectStore();
+  const strip = currentStrip(store, target);
+  requireInsert(strip, index);
+  executeApp(() => {
+    const next = cloneStrip(strip);
+    next.inserts = next.inserts.filter((_, i) => i !== index);
+    writeStrip(store, target, next);
+    store.refresh();
+  });
+}
+
+/**
+ * Enables or bypasses an insert slot as one undoable edit.
+ *
+ * @param target Track id or 'master'.
+ * @param index Slot index.
+ * @param enabled New enabled state.
+ */
+export function setInsertEnabled(target: MixerStripTarget, index: number, enabled: boolean): void {
+  const store = useProjectStore();
+  const strip = currentStrip(store, target);
+  const slot = requireInsert(strip, index);
+  if (slot.enabled === enabled) return;
+  executeApp(() => {
+    const next = cloneStrip(strip);
+    next.inserts[index] = { ...next.inserts[index], enabled };
+    writeStrip(store, target, next);
+    store.refresh();
+  });
+}
+
+/**
+ * Sets one parameter of an insert slot as one undoable edit.
+ *
+ * @param target Track id or 'master'.
+ * @param index Slot index.
+ * @param param Parameter name (camelCase, see masteringInsertParamNames).
+ * @param value New value (finite number or boolean).
+ * @param options Gesture coalescing for knob drags.
+ */
+export function setInsertParam(
+  target: MixerStripTarget,
+  index: number,
+  param: string,
+  value: number | boolean,
+  options?: CommandGestureOptions,
+): void {
+  const store = useProjectStore();
+  const strip = currentStrip(store, target);
+  const slot = requireInsert(strip, index);
+  if (param.length === 0) throw new RangeError('Insert param name must not be empty');
+  if (typeof value === 'number' && !Number.isFinite(value)) {
+    throw new RangeError(`Insert param "${param}" must be finite, got ${value}`);
+  }
+  const key = `insert-param:${String(target)}:${index}:${param}`;
+  if (slot.params[param] === value && !hasPendingGesture(key)) return;
+  executeApp(
+    () => {
+      const next = cloneStrip(strip);
+      next.inserts[index] = {
+        ...next.inserts[index],
+        params: { ...next.inserts[index].params, [param]: value },
+      };
+      writeStrip(store, target, next);
+      store.refresh();
+    },
+    { key, commit: options?.commit ?? true },
+  );
+}
+
+/**
+ * Replaces a strip's EQ as one undoable edit. Track EQ is applied offline
+ * while scheduling; master EQ is UI-only in this iteration.
+ *
+ * @param target Track id or 'master'.
+ * @param eq New EQ state, or null to remove the EQ.
+ * @param options Gesture coalescing for band drags.
+ */
+export function setStripEq(
+  target: MixerStripTarget,
+  eq: StripEq | null,
+  options?: CommandGestureOptions,
+): void {
+  const store = useProjectStore();
+  const strip = currentStrip(store, target);
+  if (eq !== null && !Array.isArray(eq.bands)) {
+    throw new RangeError('Strip EQ requires a bands array');
+  }
+  const key = `strip-eq:${String(target)}`;
+  executeApp(
+    () => {
+      const next = cloneStrip(strip);
+      if (eq === null) delete next.eq;
+      else next.eq = JSON.parse(JSON.stringify(eq)) as StripEq;
+      writeStrip(store, target, next);
+      store.refresh();
+    },
+    { key, commit: options?.commit ?? true },
+  );
+}
+
+/**
+ * Adds, updates or removes a send from a strip to a bus as one undoable edit.
+ * Sends are UI-only in this iteration (the engine has no bus routing for
+ * prerendered clips).
+ *
+ * @param target Track id or 'master'.
+ * @param busId Destination bus id (must exist).
+ * @param send New level/enabled state, or null to remove the send.
+ */
+export function setSend(
+  target: MixerStripTarget,
+  busId: string,
+  send: { levelDb: number; enabled?: boolean } | null,
+): void {
+  const store = useProjectStore();
+  const strip = currentStrip(store, target);
+  if (!store.mixer.buses.some((bus) => bus.id === busId)) {
+    throw new RangeError(`Unknown mixer bus id: ${busId}`);
+  }
+  if (send !== null && !Number.isFinite(send.levelDb)) {
+    throw new RangeError(`Send level must be finite, got ${send.levelDb}`);
+  }
+  executeApp(() => {
+    const next = cloneStrip(strip);
+    const existing = next.sends.findIndex((s) => s.busId === busId);
+    if (send === null) {
+      if (existing >= 0) next.sends = next.sends.filter((s) => s.busId !== busId);
+    } else {
+      const entry = { busId, levelDb: send.levelDb, enabled: send.enabled ?? true };
+      if (existing >= 0) next.sends[existing] = entry;
+      else next.sends = [...next.sends, entry];
+    }
+    writeStrip(store, target, next);
+    store.refresh();
+  });
+}
+
+/** Optional fields for {@link addMixerBus}. */
+export interface AddMixerBusInput {
+  /** Bus id; defaults to the first free "bus-N". */
+  id?: string;
+  /** Display name; defaults to the id. */
+  name?: string;
+}
+
+/**
+ * Adds a mixer bus as one undoable edit (UI-only send destination in this
+ * iteration).
+ *
+ * @param input Optional id/name overrides.
+ * @returns The bus id.
+ */
+export function addMixerBus(input: AddMixerBusInput = {}): string {
+  const store = useProjectStore();
+  let id = input.id;
+  if (id !== undefined) {
+    if (id.length === 0) throw new RangeError('Mixer bus id must not be empty');
+    if (store.mixer.buses.some((bus) => bus.id === id)) {
+      throw new RangeError(`Mixer bus id already exists: ${id}`);
+    }
+  } else {
+    let n = 1;
+    while (store.mixer.buses.some((bus) => bus.id === `bus-${n}`)) n++;
+    id = `bus-${n}`;
+  }
+  const busId = id;
+  const name = input.name ?? busId;
+  return executeApp(() => {
+    store.mixer = {
+      ...store.mixer,
+      buses: [...store.mixer.buses, { id: busId, name, gainDb: 0 }],
+    };
+    store.refresh();
+    return busId;
+  });
+}
+
+/**
+ * Removes a mixer bus as one undoable edit; sends targeting the bus are
+ * removed from every strip (tracks and master).
+ *
+ * @param busId Id of the bus to remove.
+ */
+export function removeMixerBus(busId: string): void {
+  const store = useProjectStore();
+  if (!store.mixer.buses.some((bus) => bus.id === busId)) {
+    throw new RangeError(`Unknown mixer bus id: ${busId}`);
+  }
+  executeApp(() => {
+    const dropSends = (strip: MixerStrip): MixerStrip => {
+      if (!strip.sends.some((send) => send.busId === busId)) return strip;
+      const next = cloneStrip(strip);
+      next.sends = next.sends.filter((send) => send.busId !== busId);
+      return next;
+    };
+    store.tracks = store.tracks.map((track) =>
+      track.mixer ? { ...track, mixer: dropSends(track.mixer) } : track,
+    );
+    store.mixer = {
+      master: dropSends(store.mixer.master),
+      buses: store.mixer.buses.filter((bus) => bus.id !== busId),
+    };
     store.refresh();
   });
 }
@@ -1124,6 +1621,7 @@ export function setTimeSignatures(segments: ReadonlyArray<TimeSignatureSegment>)
  * @returns True when an edit was undone, false when the history was empty.
  */
 export function undo(): boolean {
+  flushPendingGesture();
   const entry = undoStack.pop();
   if (!entry) return false;
   const store = useProjectStore();
@@ -1141,6 +1639,7 @@ export function undo(): boolean {
  * @returns True when an edit was redone, false when nothing was undone.
  */
 export function redo(): boolean {
+  flushPendingGesture();
   const entry = redoStack.pop();
   if (!entry) return false;
   const store = useProjectStore();
@@ -1153,7 +1652,7 @@ export function redo(): boolean {
 
 /** True when at least one edit can be undone. */
 export function canUndo(): boolean {
-  return undoStack.length > 0;
+  return undoStack.length > 0 || pendingGesture !== null;
 }
 
 /** True when at least one undone edit can be redone. */
@@ -1165,4 +1664,5 @@ export function canRedo(): boolean {
 export function clearHistory(): void {
   undoStack.length = 0;
   redoStack.length = 0;
+  pendingGesture = null;
 }

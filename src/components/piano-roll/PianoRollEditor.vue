@@ -14,6 +14,7 @@ import { useProjectStore } from '@/project/store';
 import { createPainter } from '@/ui/canvas/painter';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
 import KeyboardColumn from './KeyboardColumn.vue';
+import { LANE_PARAMS, type LaneParamId } from './lane-params';
 import NoteGridCanvas from './NoteGridCanvas.vue';
 import { buildGhostNotes, contentCenterPitch, type GhostNote } from './overlay';
 import { DEFAULT_NOTE_COLOR, type NoteColorFn } from './theme';
@@ -22,8 +23,10 @@ import VelocityLane from './VelocityLane.vue';
 
 /**
  * Piano roll editor: fixed keyboard column on the left, scrollable/zoomable
- * note grid in the center, velocity lane at the bottom and minimal custom
- * scrollbars, all sharing one TimelineRange so they pan and zoom together.
+ * note grid in the center, a multi-parameter note lane at the bottom
+ * (velocity / length / start offset / off-velocity / channel, switched by the
+ * tab strip in the lane header) and minimal custom scrollbars, all sharing
+ * one TimelineRange so they pan and zoom together.
  *
  * All note edits go through src/project/commands.ts; the project store is the
  * read model. The optional `positionPpq` getter drives the playhead.
@@ -77,6 +80,9 @@ const gridPpq = computed(() => 4 / store.snapDivision);
 
 /** Whether the multi-track ghost overlay is drawn. */
 const overlayEnabled = ref(true);
+
+/** Note parameter shown in the bottom lane (tab strip in the lane header). */
+const laneParam = ref<LaneParamId>('velocity');
 
 /** Read-only ghost notes from all non-active clips (empty when overlay off). */
 const ghostNotes = computed<GhostNote[]>(() =>
@@ -346,7 +352,19 @@ onBeforeUnmount(() => {
       >
         <div class="scroll-thumb scroll-thumb-v" :style="vThumbStyle" />
       </div>
-      <div class="cell-velocity-label">VEL</div>
+      <div class="cell-velocity-label">
+        <button
+          v-for="laneSpec in LANE_PARAMS"
+          :key="laneSpec.id"
+          type="button"
+          class="lane-tab"
+          :class="{ 'lane-tab-active': laneParam === laneSpec.id }"
+          :title="laneSpec.title"
+          @click="laneParam = laneSpec.id"
+        >
+          {{ laneSpec.label }}
+        </button>
+      </div>
       <VelocityLane
         class="cell-velocity"
         :range="range"
@@ -354,6 +372,7 @@ onBeforeUnmount(() => {
         :painter="painter"
         :notes="store.notes"
         :selection="store.selection"
+        :param="laneParam"
       />
       <div class="cell-corner" />
       <div class="cell-hscroll-spacer" />
@@ -486,13 +505,36 @@ onBeforeUnmount(() => {
 .cell-velocity-label {
   grid-area: 2 / 1;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  font: 600 10px system-ui, sans-serif;
-  letter-spacing: 0.08em;
-  color: #5b6270;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
+  padding: 2px;
   background: #181a20;
   border-top: 1px solid rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+
+.lane-tab {
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: #5b6270;
+  font: 600 9px system-ui, sans-serif;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+
+.lane-tab:hover {
+  background: #1c1f26;
+  color: #9aa1ad;
+}
+
+.lane-tab-active {
+  background: #1c1f26;
+  color: #e2e6ed;
 }
 
 .cell-velocity {

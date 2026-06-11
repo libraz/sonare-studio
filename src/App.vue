@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import ArrangementView from '@/components/arrangement/ArrangementView.vue';
+import DeviceRack from '@/components/devices/DeviceRack.vue';
 import LevelMeter from '@/components/LevelMeter.vue';
 import ProjectListsPanel from '@/components/lists/ProjectListsPanel.vue';
 import MediaBrowser from '@/components/media/MediaBrowser.vue';
+import MixerPanel from '@/components/mixer/MixerPanel.vue';
 import InfoLine from '@/components/piano-roll/InfoLine.vue';
 import PianoRollEditor from '@/components/piano-roll/PianoRollEditor.vue';
 import NewProjectDialog from '@/components/project/NewProjectDialog.vue';
 import SampleEditor from '@/components/sample-editor/SampleEditor.vue';
 import ScorePanel from '@/components/score/ScorePanel.vue';
+import StepSequencer from '@/components/step-sequencer/StepSequencer.vue';
 import { useAutosave } from '@/composables/useAutosave';
 import { useMusicTyping } from '@/composables/useMusicTyping';
 import { useRecording } from '@/composables/useRecording';
@@ -167,6 +170,7 @@ watch(
       store.sections,
       store.tempoSegments,
       store.timeSignatures,
+      store.mixer,
     ] as const,
   () => {
     if (store.initialized) dirty.value = true;
@@ -760,9 +764,35 @@ function onDividerPointerUp(): void {
   }
 }
 
+// --- Right zone: device rack ---------------------------------------------------
+
+/** localStorage key persisting the device-rack panel visibility. */
+const DEVICE_RACK_OPEN_KEY = 'sonare-studio.deviceRackOpen';
+
+function readStoredDeviceRackOpen(): boolean {
+  try {
+    return window.localStorage.getItem(DEVICE_RACK_OPEN_KEY) === '1';
+  } catch {
+    // Storage access can be denied; start collapsed.
+    return false;
+  }
+}
+
+/** Whether the device-rack panel on the right side is shown. */
+const deviceRackOpen = ref(readStoredDeviceRackOpen());
+
+function toggleDeviceRack(): void {
+  deviceRackOpen.value = !deviceRackOpen.value;
+  try {
+    window.localStorage.setItem(DEVICE_RACK_OPEN_KEY, deviceRackOpen.value ? '1' : '0');
+  } catch {
+    // Persisting the panel state is best-effort only.
+  }
+}
+
 // --- Editor dock tabs ----------------------------------------------------------
 
-type DockTab = 'roll' | 'lists' | 'media' | 'sample';
+type DockTab = 'roll' | 'mixer' | 'steps' | 'lists' | 'media' | 'sample';
 
 /** Active editor-dock tab. */
 const dockTab = ref<DockTab>('roll');
@@ -914,6 +944,52 @@ onMounted(async () => {
       armedTrackId: () => recording.armedTrackId.value,
       isRecording: () => recording.isRecording.value,
       projectName: () => store.projectName,
+      activeTrackId: () => store.activeTrackId,
+      activeClipId: () => store.clipId,
+      applyPending: () => applyPending.value,
+      scheduledClipIds: () => scheduledClips.map((clip) => clip.engineClipId),
+      trackInstruments: () =>
+        store.tracks.map((track) =>
+          track.instrument === undefined
+            ? null
+            : track.instrument.kind === 'synth-preset'
+              ? track.instrument.preset
+              : track.instrument.kind,
+        ),
+      trackInsertCounts: () => store.tracks.map((track) => track.mixer?.inserts.length ?? 0),
+      meterPeakDb: () => {
+        const latest = bridge.value?.latest;
+        return latest ? Math.max(latest.peakDbL, latest.peakDbR) : null;
+      },
+      // Renders one note with the given synth preset and returns an audio
+      // signature, so automation can verify two presets produce different sound.
+      renderProbe: async (preset: string) => {
+        const sampleRate = handle.value?.ctx.sampleRate ?? 48000;
+        const channels = await prerenderMidiClip(
+          [{ note: 60, velocity: 100, startPpq: 0, durationPpq: 0.5 }],
+          { sampleRate, preset },
+        );
+        let sum = 0;
+        let count = 0;
+        // FNV-1a over the samples quantized to 16 bit, so float noise does
+        // not destabilize the signature.
+        let hash = 0x811c9dc5;
+        for (const channel of channels) {
+          for (const sample of channel) {
+            sum += Math.abs(sample);
+            count += 1;
+            const q = Math.max(-32768, Math.min(32767, Math.round(sample * 32767))) & 0xffff;
+            hash = Math.imul(hash ^ (q & 0xff), 0x01000193);
+            hash = Math.imul(hash ^ (q >> 8), 0x01000193);
+          }
+        }
+        return {
+          frames: channels[0]?.length ?? 0,
+          peak: peakAmplitude(channels),
+          mean: count > 0 ? sum / count : 0,
+          hash: (hash >>> 0).toString(16),
+        };
+      },
     };
   }
   try {
@@ -1075,6 +1151,15 @@ onBeforeUnmount(async () => {
         {{ formatSeconds(positionSeconds) }} s · {{ positionPpq.toFixed(2) }} PPQ
         <span v-if="isPlaying">▶</span>
       </span>
+      <button
+        type="button"
+        class="devices-toggle"
+        :class="{ active: deviceRackOpen }"
+        title="Toggle the device rack panel"
+        @click="toggleDeviceRack"
+      >
+        Devices
+      </button>
       <span class="bar-spacer" />
       <span v-if="autosave.lastSavedAt.value" class="autosave-state">
         {{ formatSavedAt(autosave.lastSavedAt.value) }}
@@ -1084,7 +1169,8 @@ onBeforeUnmount(async () => {
 
     <p v-if="errorMessage" class="error-box" role="alert">{{ errorMessage }}</p>
 
-    <main class="workspace">
+    <main class="main-row">
+      <div class="workspace">
       <section
         class="arrange-zone"
         :style="{ flexBasis: `${arrangeHeight}px` }"
@@ -1122,6 +1208,22 @@ onBeforeUnmount(async () => {
             @click="dockTab = 'roll'"
           >
             Piano Roll
+          </button>
+          <button
+            type="button"
+            class="dock-tab dock-tab-toggle"
+            :class="{ active: dockTab === 'mixer' }"
+            @click="dockTab = 'mixer'"
+          >
+            Mixer
+          </button>
+          <button
+            type="button"
+            class="dock-tab dock-tab-toggle"
+            :class="{ active: dockTab === 'steps' }"
+            @click="dockTab = 'steps'"
+          >
+            Steps
           </button>
           <button
             type="button"
@@ -1238,6 +1340,14 @@ onBeforeUnmount(async () => {
             @seek="onSeek"
           />
         </section>
+        <section v-show="dockTab === 'mixer'" class="dock-body">
+          <MixerPanel class="mixer-host" :bridge="bridge" />
+        </section>
+        <section v-show="dockTab === 'steps'" class="dock-body dock-body-scroll">
+          <!-- Kept alive via v-show: the step pattern is session-local
+               component state and must survive tab switches. -->
+          <StepSequencer />
+        </section>
         <section v-show="dockTab === 'lists'" class="dock-body">
           <ProjectListsPanel
             class="lists-host"
@@ -1268,6 +1378,11 @@ onBeforeUnmount(async () => {
           </p>
         </section>
       </section>
+      </div>
+
+      <aside v-if="deviceRackOpen" class="right-zone" aria-label="Device rack panel">
+        <DeviceRack />
+      </aside>
     </main>
 
     <details class="diagnostics">
@@ -1535,11 +1650,34 @@ onBeforeUnmount(async () => {
   font-size: 12px;
 }
 
-.workspace {
+.main-row {
   flex: 1;
   min-height: 0;
   display: flex;
+}
+
+.workspace {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
   flex-direction: column;
+}
+
+.right-zone {
+  flex: none;
+  width: 300px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid #000;
+  overflow: hidden;
+}
+
+.devices-toggle.active {
+  color: #e2e6ee;
+  border-color: #60a5fa;
+  box-shadow: inset 0 -2px 0 #60a5fa;
 }
 
 .arrange-zone {
@@ -1627,6 +1765,15 @@ onBeforeUnmount(async () => {
 .piano-roll-host {
   flex: 1;
   min-height: 0;
+}
+
+.mixer-host {
+  flex: 1;
+  min-height: 0;
+}
+
+.dock-body-scroll {
+  overflow: auto;
 }
 
 /* The score panel borrows vertical space from the roll; closing it hands the
