@@ -1,5 +1,5 @@
-import type { Ref } from 'vue';
-import { getCurrentScope, onScopeDispose, ref, watch } from 'vue';
+import type { MaybeRefOrGetter, Ref } from 'vue';
+import { getCurrentScope, onScopeDispose, ref, toValue, watch } from 'vue';
 import {
   loadProject,
   OpfsUnavailableError,
@@ -18,8 +18,11 @@ const DEFAULT_SLOT_NAME = 'autosave';
 
 /** Options accepted by {@link useAutosave}. */
 export interface UseAutosaveOptions {
-  /** Debounce delay in milliseconds between the last change and the write. */
-  intervalMs?: number;
+  /**
+   * Debounce delay in milliseconds between the last change and the write.
+   * Accepts a ref/getter so a live user preference applies to the next save.
+   */
+  intervalMs?: MaybeRefOrGetter<number>;
   /** OPFS project name used as the autosave slot. */
   slotName?: string;
 }
@@ -67,7 +70,7 @@ export interface UseAutosaveReturn {
  * @returns Reactive autosave state plus saveNow/restoreAutosave actions.
  */
 export function useAutosave(options: UseAutosaveOptions = {}): UseAutosaveReturn {
-  const intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
+  const resolveIntervalMs = (): number => toValue(options.intervalMs) ?? DEFAULT_INTERVAL_MS;
   const slotName = options.slotName ?? DEFAULT_SLOT_NAME;
   const store = useProjectStore();
 
@@ -118,7 +121,7 @@ export function useAutosave(options: UseAutosaveOptions = {}): UseAutosaveReturn
     timer = setTimeout(() => {
       timer = null;
       void runSave();
-    }, intervalMs);
+    }, resolveIntervalMs());
   };
 
   // The persisted state surface of the store mirror. Every mutating command
@@ -136,6 +139,8 @@ export function useAutosave(options: UseAutosaveOptions = {}): UseAutosaveReturn
         store.tempoSegments,
         store.timeSignatures,
         store.mixer,
+        store.scoreAnnotations,
+        store.displayTransposeSemitones,
       ] as const,
     () => {
       if (store.initialized) scheduleSave();

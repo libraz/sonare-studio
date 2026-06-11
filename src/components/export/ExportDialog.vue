@@ -24,6 +24,7 @@ import {
 } from '@/export/options';
 import type { WavBitDepth } from '@/export/wav';
 import type { ProjectDocument } from '@/project/serialization';
+import { wrapTabFocus } from '@/ui/settings/focus-trap';
 import type { ExportRenderOptions } from '@/workers/export.worker';
 
 /**
@@ -97,10 +98,19 @@ function resolveEncoders(): AudioEncoder[] {
   return props.encoders ? [...props.encoders] : listEncoders();
 }
 
+/** Element focused before the dialog opened, restored on close. */
+let previousFocus: HTMLElement | null = null;
+
 watch(
   () => props.open,
   (open) => {
-    if (!open) return;
+    if (!open) {
+      if (previousFocus?.isConnected) previousFocus.focus();
+      previousFocus = null;
+      return;
+    }
+    const active = document.activeElement;
+    previousFocus = active instanceof HTMLElement ? active : null;
     // Fresh state per session: new defaults seeded from the project name.
     model.value = createDefaultExportOptions(props.projectName);
     encoderList.value = resolveEncoders();
@@ -232,6 +242,7 @@ function onClose(): void {
 }
 
 function onKeydown(event: KeyboardEvent): void {
+  if (dialogRef.value !== null && wrapTabFocus(event, dialogRef.value)) return;
   if (event.key !== 'Escape') return;
   event.preventDefault();
   if (busy.value) {

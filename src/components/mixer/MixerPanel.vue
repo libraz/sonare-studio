@@ -103,6 +103,8 @@ onBeforeUnmount(() => {
           type="button"
           class="toolbar-button"
           title="Mixer view options"
+          aria-haspopup="menu"
+          :aria-expanded="menuOpen"
           @click="menuOpen = !menuOpen"
         >
           View ▾
@@ -134,6 +136,7 @@ onBeforeUnmount(() => {
               type="button"
               class="view-menu-bus-remove"
               title="Remove bus (and its sends)"
+              :aria-label="`Remove bus ${bus.name}`"
               @click="onRemoveBus(bus.id)"
             >
               ×

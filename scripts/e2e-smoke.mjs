@@ -15,6 +15,11 @@
  * added to the project chain change the rendered mixdown bytes), the audio
  * export dialog (a 16-bit WAV download with an audible peak and a loudness
  * report), and the DAWproject export (a zip with a project.xml entry).
+ * It also asserts cross-origin isolation, dismisses the first-run welcome
+ * tour, applies a score annotation through the annotate palette, opens the
+ * shortcut help with '?', remaps a shortcut in the settings dialog (with
+ * localStorage persistence across the reload and a reset back to defaults),
+ * and applies the named workspace layout presets.
  *
  * Playwright is resolved from /tmp/node_modules; fflate from the project's
  * own node_modules. Usage:
@@ -103,6 +108,27 @@ try {
   const seededCount = await page.evaluate(() => window.__sonareDebug.noteCount());
   console.info(`store initialized, seeded notes: ${seededCount}`);
 
+  // The app must be cross-origin isolated (COOP/COEP) so SharedArrayBuffer
+  // and the realtime engine's shared-memory transport are available.
+  const isolated = await page.evaluate(() => globalThis.crossOriginIsolated === true);
+  if (!isolated) {
+    fail('crossOriginIsolated is not true (COOP/COEP headers missing)');
+  } else {
+    console.info('crossOriginIsolated: true');
+  }
+
+  // First run: the welcome tour auto-opens. Skip it (which stores the seen
+  // flag, keeping it away after reloads) before driving the canvases below.
+  await page.waitForSelector('.tour-tooltip', { timeout: 10000 });
+  await page.click('.tour-tooltip .tour-skip');
+  await page.waitForSelector('.tour-overlay', { state: 'detached', timeout: 5000 });
+  const tourSeen = await page.evaluate(() => localStorage.getItem('sonare-studio.tourSeen'));
+  if (tourSeen !== '1') {
+    fail(`welcome tour seen flag not stored: ${JSON.stringify(tourSeen)}`);
+  } else {
+    console.info('welcome tour auto-opened on first run and was dismissed');
+  }
+
   // The note grid renders two stacked canvases; assert nonzero size.
   const canvas = page.locator('.note-grid canvas').first();
   await canvas.waitFor({ state: 'visible', timeout: 10000 });
@@ -144,6 +170,116 @@ try {
   } else {
     console.info(`score page indicator: ${indicator}`);
   }
+
+  // --- Score annotations: apply a dynamic from the annotate palette ----------
+
+  const dynamsBefore = await page.locator('.score-body svg g.dynam').count();
+  if (dynamsBefore !== 0) {
+    fail(`expected no dynamics glyphs before annotating, got ${dynamsBefore}`);
+  }
+  await page.click('.score-toolbar button:has-text("Annotate")');
+  await page.locator('.score-body svg g.note').first().click();
+  await page.waitForSelector('.annotation-palette', { timeout: 5000 });
+  await page
+    .locator('.annotation-palette .palette-dynamics')
+    .filter({ hasText: /^f$/ })
+    .first()
+    .click();
+  // The annotation command re-transcribes (debounced) and the engraved SVG
+  // must come back containing a dynamics glyph. MIDI itself never changes.
+  await page.waitForFunction(
+    () => document.querySelectorAll('.score-body svg g.dynam').length > 0,
+    null,
+    { timeout: 60000 },
+  );
+  console.info('score annotation engraved: dynamics glyph rendered in the SVG');
+  await page.click('.annotation-palette button[aria-label="Close annotation palette"]');
+  await page.click('.score-toolbar button:has-text("Annotate")');
+  await page.waitForSelector('.annotation-palette', { state: 'detached', timeout: 5000 });
+  console.info('annotate mode toggled off, palette closed');
+
+  // --- Shortcut help overlay: '?' opens, Escape closes, focus returns --------
+
+  await page.click('.dock-tabs button:has-text("Piano Roll")');
+  await page.keyboard.press('?');
+  await page.waitForSelector('[role="dialog"][aria-label="Keyboard shortcuts"]', {
+    timeout: 5000,
+  });
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('[role="dialog"][aria-label="Keyboard shortcuts"]', {
+    state: 'detached',
+    timeout: 5000,
+  });
+  const focusAfterHelp = await page.evaluate(() => document.activeElement?.textContent?.trim());
+  if (focusAfterHelp !== 'Piano Roll') {
+    fail(`focus did not return to the trigger after closing help: "${focusAfterHelp}"`);
+  } else {
+    console.info("shortcut help opened with '?', closed with Escape, focus restored");
+  }
+
+  // --- Settings: remap a shortcut by key capture and verify it works ---------
+
+  await page.click('.settings-button');
+  await page.waitForSelector('[role="dialog"][aria-label="Settings"]', { timeout: 5000 });
+  await page.click('[role="dialog"][aria-label="Settings"] [role="tab"]:has-text("Shortcuts")');
+  await page.click('tr[data-action-id="view.toggleScorePanel"] button[aria-label^="Change keys"]');
+  await page.keyboard.press('F9');
+  const remapKeys = await page.evaluate(() => {
+    const raw = localStorage.getItem('sonare-studio.shortcuts');
+    return raw ? (JSON.parse(raw).overrides?.['view.toggleScorePanel'] ?? null) : null;
+  });
+  if (JSON.stringify(remapKeys) !== JSON.stringify(['f9'])) {
+    fail(`shortcut override not stored: ${JSON.stringify(remapKeys)}`);
+  }
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('[role="dialog"][aria-label="Settings"]', {
+    state: 'detached',
+    timeout: 5000,
+  });
+  // The remapped key drives the action immediately: F9 toggles the score panel.
+  await page.keyboard.press('F9');
+  await page.waitForSelector('.score-host', { state: 'detached', timeout: 5000 });
+  await page.keyboard.press('F9');
+  await page.waitForSelector('.score-host', { timeout: 5000 });
+  console.info('shortcut remapped to F9 via key capture and verified live');
+
+  // --- Named layouts: presets rearrange the workspace -------------------------
+
+  await page.click('.menu-trigger:has-text("Layout")');
+  await page.locator('.menu-pop [role="menuitem"]').filter({ hasText: /^Mix$/ }).click();
+  await page.waitForFunction(
+    () => document.querySelector('.arrange-zone')?.style.flexBasis === '180px',
+    null,
+    { timeout: 5000 },
+  );
+  const mixTabActive = await page.evaluate(() =>
+    document.querySelector('.dock-tabs button.active')?.textContent?.trim(),
+  );
+  const rackOpenAfterMix = await page.evaluate(
+    () => document.querySelector('.right-zone') !== null,
+  );
+  if (mixTabActive !== 'Mixer' || rackOpenAfterMix) {
+    fail(`Mix layout not applied: tab=${mixTabActive} rackOpen=${rackOpenAfterMix}`);
+  } else {
+    console.info('Mix layout applied: mixer tab, 180px arrangement, rack closed');
+  }
+  await page.click('.menu-trigger:has-text("Layout")');
+  await page
+    .locator('.menu-pop [role="menuitem"]')
+    .filter({ hasText: /^Compose$/ })
+    .click();
+  await page.waitForSelector('.right-zone', { timeout: 5000 });
+  const composeTabActive = await page.evaluate(() =>
+    document.querySelector('.dock-tabs button.active')?.textContent?.trim(),
+  );
+  if (composeTabActive !== 'Piano Roll') {
+    fail(`Compose layout not applied: tab=${composeTabActive}`);
+  } else {
+    console.info('Compose layout applied: piano roll tab, device rack open');
+  }
+  // Close the rack again so the device-rack step below starts from closed.
+  await page.click('.transport-bar .devices-toggle');
+  await page.waitForSelector('.right-zone', { state: 'detached', timeout: 5000 });
 
   // Add a MIDI track via the arrangement header column's add-track menu.
   await page.click('.track-headers .add-track');
@@ -195,6 +331,39 @@ try {
   } else {
     console.info('project restored after reload: 2 track headers');
   }
+
+  // The shortcut override must survive the reload (localStorage) and still
+  // drive the action; the per-row reset must then restore the default.
+  const persistedKeys = await page.evaluate(() => {
+    const raw = localStorage.getItem('sonare-studio.shortcuts');
+    return raw ? (JSON.parse(raw).overrides?.['view.toggleScorePanel'] ?? null) : null;
+  });
+  if (JSON.stringify(persistedKeys) !== JSON.stringify(['f9'])) {
+    fail(`shortcut override lost across reload: ${JSON.stringify(persistedKeys)}`);
+  }
+  await page.keyboard.press('F9');
+  await page.waitForSelector('.score-host', { timeout: 5000 });
+  await page.keyboard.press('F9');
+  await page.waitForSelector('.score-host', { state: 'detached', timeout: 5000 });
+  console.info('remapped shortcut persisted across reload and still works');
+
+  await page.click('.settings-button');
+  await page.waitForSelector('[role="dialog"][aria-label="Settings"]', { timeout: 5000 });
+  await page.click('[role="dialog"][aria-label="Settings"] [role="tab"]:has-text("Shortcuts")');
+  await page.click('tr[data-action-id="view.toggleScorePanel"] button[aria-label^="Reset keys"]');
+  const afterReset = await page.evaluate(() => {
+    const raw = localStorage.getItem('sonare-studio.shortcuts');
+    return raw ? (JSON.parse(raw).overrides?.['view.toggleScorePanel'] ?? null) : null;
+  });
+  if (afterReset !== null) {
+    fail(`shortcut reset did not clear the override: ${JSON.stringify(afterReset)}`);
+  }
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('[role="dialog"][aria-label="Settings"]', {
+    state: 'detached',
+    timeout: 5000,
+  });
+  console.info('shortcut reset restored the default binding');
 
   // --- Audio: import a generated WAV through the media browser ---------------
 

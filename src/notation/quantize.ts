@@ -94,6 +94,12 @@ export interface QuantizeOptions {
    * treble otherwise (and for empty input).
    */
   clef?: NotatedClef;
+  /**
+   * Display transpose in semitones applied to engraved pitches only (the
+   * input notes are never modified — this is a non-destructive view shift).
+   * Shifted pitches clamp to the MIDI range 0-127. Defaults to 0.
+   */
+  displayTransposeSemitones?: number;
 }
 
 /** A note after grid quantization and clip clamping. */
@@ -111,6 +117,8 @@ interface VoiceUnit {
   pitches: number[];
   startPpq: number;
   endPpq: number;
+  /** Editor note ids merged into this unit (ascending, deduplicated). */
+  ids: number[];
 }
 
 /** A representable duration slice produced by decomposition. */
@@ -131,6 +139,7 @@ interface ResolvedOptions {
   partId: string;
   partName: string;
   clef?: NotatedClef;
+  displayTransposeSemitones: number;
 }
 
 /** All 21 representable note values, longest first, with their PPQ lengths. */
@@ -210,6 +219,12 @@ function resolveOptions(options: QuantizeOptions): ResolvedOptions {
   if (!Number.isInteger(maxVoices) || maxVoices < 1 || maxVoices > 4) {
     throw new RangeError(`quantizeToScore: maxVoices must be an integer in 1..4, got ${maxVoices}`);
   }
+  const displayTransposeSemitones = options.displayTransposeSemitones ?? 0;
+  if (!Number.isInteger(displayTransposeSemitones)) {
+    throw new RangeError(
+      `quantizeToScore: displayTransposeSemitones must be an integer, got ${displayTransposeSemitones}`,
+    );
+  }
   const grid = snapToStep(divisionPpq, SIXTY_FOURTH_PPQ);
   const start = snapToStep(clipStartPpq, SIXTY_FOURTH_PPQ);
   const length = snapToStep(clipLengthPpq, SIXTY_FOURTH_PPQ);
@@ -228,6 +243,7 @@ function resolveOptions(options: QuantizeOptions): ResolvedOptions {
     partId: options.partId ?? 'P1',
     partName: options.partName ?? '',
     clef: options.clef,
+    displayTransposeSemitones,
   };
 }
 
@@ -240,7 +256,7 @@ function resolveOptions(options: QuantizeOptions): ResolvedOptions {
  * outside the clip are dropped. The input is never mutated.
  */
 function quantizeToGrid(notes: readonly EditorNote[], opts: ResolvedOptions): GridNote[] {
-  const { grid, clipStartPpq: cs, clipEndPpq: ce } = opts;
+  const { grid, clipStartPpq: cs, clipEndPpq: ce, displayTransposeSemitones: shift } = opts;
   const out: GridNote[] = [];
   for (const note of notes) {
     let start = cs + snapToStep(note.startPpq - cs, grid);
@@ -255,7 +271,9 @@ function quantizeToGrid(notes: readonly EditorNote[], opts: ResolvedOptions): Gr
     if (start >= ce - EPSILON) continue; // Starts at/after the clip end: drop.
     if (end > ce + EPSILON) end = ce; // Sounds past the clip end: clamp.
     if (end - start <= EPSILON) continue;
-    out.push({ pitch: note.pitch, startPpq: start, endPpq: end, id: note.id });
+    // Display transpose shifts the engraved pitch only; the input is untouched.
+    const pitch = Math.min(127, Math.max(0, note.pitch + shift));
+    out.push({ pitch, startPpq: start, endPpq: end, id: note.id });
   }
   // Deterministic order: onset, then higher pitch first, then editor id.
   out.sort((a, b) => a.startPpq - b.startPpq || b.pitch - a.pitch || a.id - b.id);
@@ -284,6 +302,7 @@ function clusterChords(notes: GridNote[]): VoiceUnit[] {
       if (used[a]) continue;
       const top = group[a];
       const pitches = new Set<number>([top.pitch]);
+      const ids = new Set<number>([top.id]);
       used[a] = true;
       for (let b = a + 1; b < group.length; b++) {
         if (used[b]) continue;
@@ -292,6 +311,7 @@ function clusterChords(notes: GridNote[]): VoiceUnit[] {
           top.pitch - group[b].pitch <= CHORD_PITCH_SPAN
         ) {
           pitches.add(group[b].pitch);
+          ids.add(group[b].id);
           used[b] = true;
         }
       }
@@ -299,6 +319,7 @@ function clusterChords(notes: GridNote[]): VoiceUnit[] {
         pitches: [...pitches].sort((x, y) => x - y),
         startPpq: top.startPpq,
         endPpq: top.endPpq,
+        ids: [...ids].sort((x, y) => x - y),
       });
     }
     i = j;
@@ -361,6 +382,7 @@ function separateVoices(units: VoiceUnit[], maxVoices: number): VoiceUnit[][] {
       if (Math.abs(last.startPpq - unit.startPpq) <= EPSILON) {
         // Same onset: widen the sounding event into a chord.
         last.pitches = [...new Set([...last.pitches, ...unit.pitches])].sort((a, b) => a - b);
+        last.ids = [...new Set([...last.ids, ...unit.ids])].sort((a, b) => a - b);
         last.endPpq = Math.max(last.endPpq, unit.endPpq);
       } else {
         // Later onset: cut the sounding event short and start the new one.
@@ -538,6 +560,7 @@ function splitUnitsIntoMeasures(
         value: piece.value,
         tieStart: k < pieces.length - 1,
         tieStop: k > 0,
+        sourceIds: [...unit.ids],
       });
     });
   }

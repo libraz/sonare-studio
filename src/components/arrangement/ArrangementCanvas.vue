@@ -17,7 +17,7 @@ import {
 import { audioAssetMergedPeaks, requestAudioAsset } from '@/ui/arrangement/audio-clip-data';
 import { FADE_HANDLE_SIZE_PX, fadeHandleXs } from '@/ui/arrangement/audio-fades';
 import { clipContentMode, densityBuckets, miniNoteRects } from '@/ui/arrangement/clip-content';
-import { barLengthPpq, rulerTicks } from '@/ui/arrangement/ruler';
+import { barLengthPpq, createRulerTickCache } from '@/ui/arrangement/ruler';
 import type { ClipInteractions, ClipModifiers } from '@/ui/arrangement/use-clip-interactions';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
@@ -88,6 +88,9 @@ const overlayCanvas = ref<HTMLCanvasElement | null>(null);
 /** Unique painter layer suffix so several surfaces can share one painter. */
 const layerId = Math.random().toString(36).slice(2, 8);
 
+/** Ruler ticks, cached: the grid and ruler request them twice per repaint. */
+const cachedRulerTicks = createRulerTickCache();
+
 const COLORS = ARRANGEMENT_COLORS;
 
 /** Minimum clip width in px before the name label is drawn. */
@@ -156,7 +159,12 @@ function drawLanes(ctx: CanvasRenderingContext2D, w: number, h: number): void {
 /** Draws beat/bar gridlines over the lane area. */
 function drawGrid(ctx: CanvasRenderingContext2D, h: number): void {
   const range = props.range;
-  const ticks = rulerTicks(props.timeSignatures, range.startPpq, range.endPpq, range.pxPerPpq);
+  const ticks = cachedRulerTicks(
+    props.timeSignatures,
+    range.startPpq,
+    range.endPpq,
+    range.pxPerPpq,
+  );
   for (const tick of ticks) {
     ctx.fillStyle = tick.kind === 'bar' ? COLORS.gridBar : COLORS.gridBeat;
     ctx.fillRect(Math.round(range.ppqToX(tick.ppq)), RULER_HEIGHT_PX, 1, h - RULER_HEIGHT_PX);
@@ -397,7 +405,12 @@ function drawRuler(ctx: CanvasRenderingContext2D, w: number): void {
     }
   }
 
-  const ticks = rulerTicks(props.timeSignatures, range.startPpq, range.endPpq, range.pxPerPpq);
+  const ticks = cachedRulerTicks(
+    props.timeSignatures,
+    range.startPpq,
+    range.endPpq,
+    range.pxPerPpq,
+  );
   ctx.font = '10px system-ui, sans-serif';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
@@ -600,8 +613,8 @@ function onDoubleClick(event: MouseEvent): void {
     @pointercancel="onPointerCancel"
     @dblclick="onDoubleClick"
   >
-    <canvas ref="baseCanvas" class="arrangement-layer" />
-    <canvas ref="overlayCanvas" class="arrangement-layer" />
+    <canvas ref="baseCanvas" class="arrangement-layer" role="img" aria-label="Arrangement timeline" />
+    <canvas ref="overlayCanvas" class="arrangement-layer" aria-hidden="true" />
   </div>
 </template>
 

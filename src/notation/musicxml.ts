@@ -10,6 +10,7 @@
  * on any particular whitespace beyond well-formedness.
  */
 
+import type { NoteArticulation, NoteDynamics } from '@/project/annotations';
 import {
   type NotatedChordSymbol,
   type NotatedClef,
@@ -55,6 +56,106 @@ const CHORD_QUALITY_KIND: ReadonlyMap<number, string> = new Map([
   [15, 'dominant-ninth'],
 ]);
 
+/** MusicXML articulation element per annotation marking. */
+const ARTICULATION_XML: Readonly<Record<NoteArticulation, string>> = {
+  staccato: '<staccato/>',
+  accent: '<accent/>',
+  tenuto: '<tenuto/>',
+  marcato: '<strong-accent/>',
+};
+
+/** Highest `<slur>` number-level allowed by MusicXML. */
+const MAX_SLUR_NUMBER = 16;
+
+/**
+ * Display annotations resolved onto engraved events. Built once per
+ * serialization from {@link NotatedScore.noteAnnotations}: each annotated
+ * editor note id is mapped to its "attack" event (the first piece of a tie
+ * chain carrying the id in `sourceIds`); ids without an attack event
+ * (deleted notes, notes outside the notated window) are silently ignored.
+ */
+interface AnnotationIndex {
+  /** Dynamics marking to emit as a `<direction>` right before the event. */
+  dynamics: Map<NotatedEvent, NoteDynamics>;
+  /** Articulation to emit inside the event's `<notations>`. */
+  articulations: Map<NotatedEvent, NoteArticulation>;
+  /** Slur numbers starting on the event. */
+  slurStarts: Map<NotatedEvent, number[]>;
+  /** Slur numbers stopping on the event. */
+  slurStops: Map<NotatedEvent, number[]>;
+}
+
+/** Appends a value to a keyed list inside a map. */
+function pushMapped<K>(map: Map<K, number[]>, key: K, value: number): void {
+  const list = map.get(key);
+  if (list === undefined) map.set(key, [value]);
+  else list.push(value);
+}
+
+/**
+ * Resolves score annotations onto events (see {@link AnnotationIndex}).
+ *
+ * Slurs are validated here: the target must resolve to a different event
+ * that starts strictly after the source, otherwise the slur is dropped.
+ * Overlapping slurs receive distinct MusicXML number-levels so start/stop
+ * pairs match unambiguously.
+ */
+function buildAnnotationIndex(score: NotatedScore): AnnotationIndex {
+  const index: AnnotationIndex = {
+    dynamics: new Map(),
+    articulations: new Map(),
+    slurStarts: new Map(),
+    slurStops: new Map(),
+  };
+  const annotations = score.noteAnnotations;
+  if (annotations === undefined) return index;
+  const attackByNoteId = new Map<number, NotatedEvent>();
+  for (const part of score.parts) {
+    for (const measure of part.measures) {
+      for (const voice of measure.voices) {
+        for (const event of voice.events) {
+          if (event.kind !== 'note' || event.tieStop || event.sourceIds === undefined) continue;
+          for (const id of event.sourceIds) {
+            if (!attackByNoteId.has(id)) attackByNoteId.set(id, event);
+          }
+        }
+      }
+    }
+  }
+  const slurs: Array<{ start: NotatedEvent; stop: NotatedEvent }> = [];
+  for (const [idKey, annotation] of Object.entries(annotations)) {
+    const event = attackByNoteId.get(Number(idKey));
+    if (event === undefined) continue; // Orphaned annotation: ignore.
+    if (annotation.dynamics !== undefined) index.dynamics.set(event, annotation.dynamics);
+    if (annotation.articulation !== undefined) {
+      index.articulations.set(event, annotation.articulation);
+    }
+    if (annotation.slurToNoteId !== undefined) {
+      const target = attackByNoteId.get(annotation.slurToNoteId);
+      if (
+        target !== undefined &&
+        target !== event &&
+        target.startPpq > event.startPpq + PPQ_EPSILON
+      ) {
+        slurs.push({ start: event, stop: target });
+      }
+    }
+  }
+  slurs.sort((a, b) => a.start.startPpq - b.start.startPpq || a.stop.startPpq - b.stop.startPpq);
+  const active: Array<{ endPpq: number; number: number }> = [];
+  for (const slur of slurs) {
+    for (let i = active.length - 1; i >= 0; i--) {
+      if (active[i].endPpq <= slur.start.startPpq + PPQ_EPSILON) active.splice(i, 1);
+    }
+    let number = 1;
+    while (active.some((entry) => entry.number === number) && number < MAX_SLUR_NUMBER) number++;
+    active.push({ endPpq: slur.stop.startPpq, number });
+    pushMapped(index.slurStarts, slur.start, number);
+    pushMapped(index.slurStops, slur.stop, number);
+  }
+  return index;
+}
+
 /** Replacement table for XML-reserved characters. */
 const XML_ESCAPES: Readonly<Record<string, string>> = {
   '&': '&amp;',
@@ -95,6 +196,11 @@ export function escapeXml(text: string): string {
  *   `<harmony>` at the start of their containing measure with an `<offset>`
  *   for mid-measure positions. Symbols without a valid `rootPc` (0-11) and
  *   symbols outside the measure grid are skipped.
+ * - Display annotations (`score.noteAnnotations`) resolve onto the attack
+ *   event of each annotated note: dynamics become a `<direction>` right
+ *   before the note, articulations and slurs go inside the first chord
+ *   note's `<notations>`. Annotations whose note (or slur target) no longer
+ *   maps to an event are skipped silently.
  *
  * @param score The display-only score to serialize.
  * @returns A complete MusicXML document string (newline-separated).
@@ -112,9 +218,10 @@ export function serializeMusicXml(score: NotatedScore): string {
     );
   }
   lines.push('</part-list>');
+  const annotations = buildAnnotationIndex(score);
   score.parts.forEach((part, partIndex) => {
     const chordSymbols = partIndex === 0 ? (score.chordSymbols ?? []) : [];
-    serializePart(lines, part, score, chordSymbols);
+    serializePart(lines, part, score, chordSymbols, annotations);
   });
   lines.push('</score-partwise>');
   return lines.join('\n');
@@ -128,6 +235,7 @@ function serializePart(
   part: NotatedPart,
   score: NotatedScore,
   chordSymbols: ReadonlyArray<NotatedChordSymbol>,
+  annotations: AnnotationIndex,
 ): void {
   const staffMap = part.clef === 'grand' ? buildStaffMap(part) : undefined;
   const symbolsByMeasure = groupChordSymbolsByMeasure(chordSymbols, part.measures);
@@ -142,6 +250,7 @@ function serializePart(
       prevTimeSig,
       symbolsByMeasure.get(measure.index) ?? [],
       staffMap,
+      annotations,
     );
     prevTimeSig = measure.timeSig;
   }
@@ -160,6 +269,7 @@ function serializeMeasure(
   prevTimeSig: NotatedTimeSig | undefined,
   chordSymbols: ReadonlyArray<NotatedChordSymbol>,
   staffMap: ReadonlyMap<NotatedEvent, StaffNumber> | undefined,
+  annotations: AnnotationIndex,
 ): void {
   lines.push(`<measure number="${measure.index + 1}">`);
   const attributes = measureAttributesXml(measure, part.clef, score, prevTimeSig);
@@ -177,7 +287,7 @@ function serializeMeasure(
     if (voiceIndex > 0) {
       lines.push(`<backup><duration>${measureDivisions}</duration></backup>`);
     }
-    serializeVoice(lines, voice, measure, score, staffMap);
+    serializeVoice(lines, voice, measure, score, staffMap, annotations);
   });
   lines.push('</measure>');
 }
@@ -242,6 +352,7 @@ function serializeVoice(
   measure: NotatedMeasure,
   score: NotatedScore,
   staffMap: ReadonlyMap<NotatedEvent, StaffNumber> | undefined,
+  annotations: AnnotationIndex,
 ): void {
   const measureRest = isWholeMeasureRest(voice, measure);
   for (const event of voice.events) {
@@ -249,7 +360,15 @@ function serializeVoice(
     if (event.kind === 'rest') {
       lines.push(restXml(event, measure, score, measureRest, staff));
     } else {
-      pushNoteEvent(lines, event, score, staff);
+      const dynamics = annotations.dynamics.get(event);
+      if (dynamics !== undefined) {
+        // Dynamics are directions emitted right before the note they apply to.
+        const staffXml = staff === undefined ? '' : `<staff>${staff}</staff>`;
+        lines.push(
+          `<direction placement="below"><direction-type><dynamics><${dynamics}/></dynamics></direction-type>${staffXml}</direction>`,
+        );
+      }
+      pushNoteEvent(lines, event, score, staff, annotations);
     }
   }
 }
@@ -293,22 +412,24 @@ function restXml(
 /**
  * Appends the `<note>` elements of a note/chord event. Stacked pitches after
  * the first carry `<chord/>`; tie flags are emitted on every pitch of a
- * chord (ties are per-event in the model).
+ * chord (ties are per-event in the model). Annotation notations (slurs and
+ * articulations) are emitted on the first chord note only.
  */
 function pushNoteEvent(
   lines: string[],
   event: NotatedEvent,
   score: NotatedScore,
   staff: StaffNumber | undefined,
+  annotations: AnnotationIndex,
 ): void {
   const duration = ppqToDivisions(event.durationPpq, score.divisions);
   const ties = tieXml(event);
-  const notations = tiedNotationsXml(event);
   const dots = '<dot/>'.repeat(event.value.dots);
   const staffXml = staff === undefined ? '' : `<staff>${staff}</staff>`;
   event.pitches.forEach((midi, pitchIndex) => {
     const chord = pitchIndex > 0 ? '<chord/>' : '';
     const pitch = pitchXml(spellPitch(midi, score.keyFifths));
+    const notations = notationsXml(event, annotations, pitchIndex === 0);
     lines.push(
       `<note>${chord}${pitch}<duration>${duration}</duration>${ties}<voice>${event.voice}</voice><type>${event.value.base}</type>${dots}${staffXml}${notations}</note>`,
     );
@@ -338,18 +459,35 @@ function tieXml(event: NotatedEvent): string {
 }
 
 /**
- * Builds the `<notations><tied/></notations>` fragment for an event, or an
- * empty string when the event carries no ties.
+ * Builds the `<notations>` element of one `<note>`, or an empty string when
+ * there is nothing to notate. Tied marks appear on every chord note; slurs
+ * and articulations only on the first chord note (`isFirstPitch`).
  */
-function tiedNotationsXml(event: NotatedEvent): string {
-  let tied = '';
+function notationsXml(
+  event: NotatedEvent,
+  annotations: AnnotationIndex,
+  isFirstPitch: boolean,
+): string {
+  let inner = '';
   if (event.tieStop) {
-    tied += '<tied type="stop"/>';
+    inner += '<tied type="stop"/>';
   }
   if (event.tieStart) {
-    tied += '<tied type="start"/>';
+    inner += '<tied type="start"/>';
   }
-  return tied === '' ? '' : `<notations>${tied}</notations>`;
+  if (isFirstPitch) {
+    for (const number of annotations.slurStops.get(event) ?? []) {
+      inner += `<slur type="stop" number="${number}"/>`;
+    }
+    for (const number of annotations.slurStarts.get(event) ?? []) {
+      inner += `<slur type="start" number="${number}"/>`;
+    }
+    const articulation = annotations.articulations.get(event);
+    if (articulation !== undefined) {
+      inner += `<articulations>${ARTICULATION_XML[articulation]}</articulations>`;
+    }
+  }
+  return inner === '' ? '' : `<notations>${inner}</notations>`;
 }
 
 /**

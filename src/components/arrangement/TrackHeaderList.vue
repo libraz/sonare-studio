@@ -223,6 +223,8 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
           type="button"
           class="add-track"
           title="Add a track"
+          aria-haspopup="menu"
+          :aria-expanded="addMenuOpen"
           @click="addMenuOpen = !addMenuOpen"
         >
           + Track ▾
@@ -247,6 +249,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
           <div
             class="track-grip"
             title="Drag to reorder"
+            aria-hidden="true"
             @click.stop
             @pointerdown.stop="onGripPointerDown(track, index, $event)"
             @pointermove="onGripPointerMove"
@@ -260,6 +263,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
             class="track-swatch"
             :style="{ background: track.color }"
             title="Cycle track color"
+            :aria-label="`Cycle color of ${track.name}`"
             @click.stop="cycleColor(track)"
           />
           <div class="track-main">
@@ -272,6 +276,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                 ref="nameInput"
                 v-model="editName"
                 class="track-name-input"
+                aria-label="Track name"
                 @click.stop
                 @keydown.enter.prevent="commitRename"
                 @keydown.escape.prevent="cancelRename"
@@ -284,6 +289,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                 type="button"
                 class="track-delete"
                 title="Delete track"
+                :aria-label="`Delete track ${track.name}`"
                 @click.stop="onDelete(track)"
               >
                 ×
@@ -296,6 +302,8 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                 class="toggle arm"
                 :class="{ on: isArmed(track) }"
                 title="Record arm"
+                :aria-label="`Record arm ${track.name}`"
+                :aria-pressed="isArmed(track)"
                 @click="onToggleArm(track)"
               >
                 R
@@ -305,6 +313,8 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                 class="toggle mute"
                 :class="{ on: track.mute }"
                 title="Mute"
+                :aria-label="`Mute ${track.name}`"
+                :aria-pressed="track.mute"
                 @click="setTrackMute(track.id, !track.mute)"
               >
                 M
@@ -314,6 +324,8 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                 class="toggle solo"
                 :class="{ on: track.solo }"
                 title="Solo"
+                :aria-label="`Solo ${track.name}`"
+                :aria-pressed="track.solo"
                 @click="setTrackSolo(track.id, !track.solo)"
               >
                 S
@@ -326,6 +338,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                 step="0.01"
                 :value="track.volume"
                 :title="`Volume ${track.volume.toFixed(2)}`"
+                :aria-label="`Volume of ${track.name}`"
                 @change="onVolumeChange(track, $event)"
               />
               <input
@@ -336,6 +349,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                 step="0.01"
                 :value="track.pan"
                 :title="`Pan ${track.pan.toFixed(2)}`"
+                :aria-label="`Pan of ${track.name}`"
                 @change="onPanChange(track, $event)"
               />
             </div>

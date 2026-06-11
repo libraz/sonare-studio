@@ -130,6 +130,8 @@ onBeforeUnmount(() => {
           class="toggle mute"
           :class="{ on: track.mute }"
           title="Mute"
+          :aria-label="`Mute ${name}`"
+          :aria-pressed="track.mute"
           @click="setTrackMute(track.id, !track.mute)"
         >
           M
@@ -139,6 +141,8 @@ onBeforeUnmount(() => {
           class="toggle solo"
           :class="{ on: track.solo }"
           title="Solo"
+          :aria-label="`Solo ${name}`"
+          :aria-pressed="track.solo"
           @click="setTrackSolo(track.id, !track.solo)"
         >
           S

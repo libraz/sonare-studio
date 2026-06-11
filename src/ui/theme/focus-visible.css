@@ -1,0 +1,11 @@
+/*
+ * Shared keyboard-focus outline for the dark theme.
+ *
+ * Uses :where() so the rule has zero specificity: components that already
+ * define their own focus-visible treatment (fader, knob, piano-roll root)
+ * keep winning without any changes.
+ */
+:where(button, select, input, textarea, [role='slider'], [tabindex]):focus-visible {
+  outline: 1px solid #60a5fa;
+  outline-offset: 1px;
+}

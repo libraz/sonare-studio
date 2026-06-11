@@ -332,8 +332,8 @@ function onDoubleClick(event: MouseEvent): void {
     @pointercancel="onPointerCancel"
     @dblclick="onDoubleClick"
   >
-    <canvas ref="baseCanvas" class="note-grid-layer" />
-    <canvas ref="overlayCanvas" class="note-grid-layer" />
+    <canvas ref="baseCanvas" class="note-grid-layer" role="img" aria-label="Piano roll note grid" />
+    <canvas ref="overlayCanvas" class="note-grid-layer" aria-hidden="true" />
   </div>
 </template>
 

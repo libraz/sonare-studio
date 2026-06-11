@@ -11,6 +11,8 @@
  * absolute (measured from the score origin), not measure-relative.
  */
 
+import type { ScoreNoteAnnotation } from '@/project/annotations';
+
 /** Base (undotted) note duration, from whole note down to 64th note. */
 export type NoteValueBase = 'whole' | 'half' | 'quarter' | 'eighth' | '16th' | '32nd' | '64th';
 
@@ -168,6 +170,12 @@ export interface NotatedEvent {
   tieStart: boolean;
   /** True when this event continues a tie from the previous event. */
   tieStop: boolean;
+  /**
+   * Editor note ids whose quantized notes produced this event (absent for
+   * rests). Used only to attach display annotations to engraved notes; the
+   * pipeline never writes through these ids back to MIDI data.
+   */
+  sourceIds?: number[];
 }
 
 /** All events of one voice within one measure, in onset order. */
@@ -247,4 +255,10 @@ export interface NotatedScore {
   divisions: number;
   /** Optional chord symbols, sorted by `ppq`, shared by all parts. */
   chordSymbols?: NotatedChordSymbol[];
+  /**
+   * Optional display annotations keyed by editor note id, resolved against
+   * {@link NotatedEvent.sourceIds}. Ids matching no event (e.g. annotations
+   * of deleted notes) are ignored by the serializer.
+   */
+  noteAnnotations?: Readonly<Record<number, ScoreNoteAnnotation>>;
 }

@@ -319,6 +319,7 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
           type="button"
           class="tool-button"
           data-test="row-shift-left"
+          aria-label="Shift row left"
           @click="shiftSelectedRow(-1)"
         >
           ◀
@@ -327,6 +328,7 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
           type="button"
           class="tool-button"
           data-test="row-shift-right"
+          aria-label="Shift row right"
           @click="shiftSelectedRow(1)"
         >
           ▶

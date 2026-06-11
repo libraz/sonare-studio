@@ -240,6 +240,7 @@ function onLaneDoubleClick(event: MouseEvent): void {
         ref="nameInput"
         v-model="editName"
         class="section-name-input"
+        aria-label="Section name"
         @click.stop
         @pointerdown.stop
         @keydown.enter.prevent="commitRename"

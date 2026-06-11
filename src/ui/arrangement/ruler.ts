@@ -188,3 +188,50 @@ export function rulerTicks(
   ticks.sort((a, b) => a.ppq - b.ppq);
   return ticks;
 }
+
+/**
+ * Creates a single-entry cache over {@link rulerTicks}.
+ *
+ * The arrangement base layer requests the same ticks twice per repaint (lane
+ * gridlines and the ruler strip) and repeatedly across repaints while the
+ * view is unchanged, so a one-slot cache removes the recomputation. The meter
+ * array is compared by identity: the store mirror is replaced wholesale on
+ * every edit, so identity equality implies content equality.
+ *
+ * @param compute Tick generator (injectable for tests).
+ * @returns Getter with the {@link rulerTicks} signature minus options.
+ */
+export function createRulerTickCache(
+  compute: (
+    meter: ReadonlyArray<MeterSegment>,
+    startPpq: number,
+    endPpq: number,
+    pxPerPpq: number,
+  ) => RulerTick[] = rulerTicks,
+): (
+  meter: ReadonlyArray<MeterSegment>,
+  startPpq: number,
+  endPpq: number,
+  pxPerPpq: number,
+) => RulerTick[] {
+  let cachedMeter: ReadonlyArray<MeterSegment> | null = null;
+  let cachedStartPpq = Number.NaN;
+  let cachedEndPpq = Number.NaN;
+  let cachedPxPerPpq = Number.NaN;
+  let cachedTicks: RulerTick[] = [];
+  return (meter, startPpq, endPpq, pxPerPpq) => {
+    if (
+      meter !== cachedMeter ||
+      startPpq !== cachedStartPpq ||
+      endPpq !== cachedEndPpq ||
+      pxPerPpq !== cachedPxPerPpq
+    ) {
+      cachedTicks = compute(meter, startPpq, endPpq, pxPerPpq);
+      cachedMeter = meter;
+      cachedStartPpq = startPpq;
+      cachedEndPpq = endPpq;
+      cachedPxPerPpq = pxPerPpq;
+    }
+    return cachedTicks;
+  };
+}

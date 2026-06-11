@@ -3,6 +3,12 @@ import { computed, ref } from 'vue';
 import { ensureWasm } from '@/lib/wasm';
 import { audioAssetUri } from '@/persistence/assets';
 import type { Project, ProjectMidiEvent } from '@/wasm/index.js';
+import {
+  annotationsFromDocument,
+  DISPLAY_TRANSPOSE_MAX,
+  DISPLAY_TRANSPOSE_MIN,
+  type ScoreAnnotations,
+} from './annotations';
 import { cloneInstrument } from './instrument';
 import {
   cloneMixerState,
@@ -446,6 +452,14 @@ export const useProjectStore = defineStore('project', () => {
     rootPc: 0,
     modeMask: MAJOR_MODE_MASK,
   });
+  /**
+   * Display-only score annotations keyed by clip id then editor note id
+   * (app-level metadata; never written to the Project or to MIDI data).
+   * Entries whose note no longer exists are ignored by the score pipeline.
+   */
+  const scoreAnnotations = ref<ScoreAnnotations>({});
+  /** Score display transpose in semitones (engraving only; MIDI is never changed). */
+  const displayTransposeSemitones = ref(0);
   /** True once init() has created the Project and the default track/clip. */
   const initialized = ref(false);
 
@@ -693,6 +707,8 @@ export const useProjectStore = defineStore('project', () => {
     tempoBpm.value = DEFAULT_TEMPO_BPM;
     notes.value = [];
     selection.value = new Set();
+    scoreAnnotations.value = {};
+    displayTransposeSemitones.value = 0;
     initialized.value = true;
     refresh();
   }
@@ -855,6 +871,23 @@ export const useProjectStore = defineStore('project', () => {
         }
         return next;
       });
+      // Score annotations are content-addressed in the document; re-associate
+      // them onto the freshly assigned editor note ids per clip.
+      const nextAnnotations: ScoreAnnotations = {};
+      for (const clip of clips.value) {
+        const meta = clipMeta.get(clip.id);
+        if (!meta?.scoreAnnotations || meta.scoreAnnotations.length === 0) continue;
+        const byNote = annotationsFromDocument(meta.scoreAnnotations, clip.notes);
+        if (Object.keys(byNote).length > 0) nextAnnotations[clip.id] = byNote;
+      }
+      scoreAnnotations.value = nextAnnotations;
+      const transpose = doc.score?.displayTransposeSemitones ?? 0;
+      displayTransposeSemitones.value =
+        Number.isInteger(transpose) &&
+        transpose >= DISPLAY_TRANSPOSE_MIN &&
+        transpose <= DISPLAY_TRANSPOSE_MAX
+          ? transpose
+          : 0;
     } catch (error) {
       // Keep the previous Project alive when the document fails to replay.
       if (project !== created) created.delete();
@@ -894,6 +927,8 @@ export const useProjectStore = defineStore('project', () => {
     snapDivision.value = DEFAULT_SNAP_DIVISION;
     snapEnabled.value = true;
     scaleHighlight.value = { enabled: true, rootPc: 0, modeMask: MAJOR_MODE_MASK };
+    scoreAnnotations.value = {};
+    displayTransposeSemitones.value = 0;
   }
 
   return {
@@ -915,6 +950,8 @@ export const useProjectStore = defineStore('project', () => {
     snapDivision,
     snapEnabled,
     scaleHighlight,
+    scoreAnnotations,
+    displayTransposeSemitones,
     initialized,
     highlightedPitchClasses,
     selectedNotes,

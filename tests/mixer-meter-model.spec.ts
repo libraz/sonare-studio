@@ -3,6 +3,7 @@ import {
   advanceMeterChannel,
   CLIP_THRESHOLD_DB,
   createMeterChannel,
+  isMeterAtFloor,
   METER_MIN_DB,
   meterFraction,
   PEAK_DECAY_DB_PER_S,
@@ -111,5 +112,29 @@ describe('meterFraction', () => {
     expect(meterFraction(-200)).toBe(0);
     expect(meterFraction(Number.NEGATIVE_INFINITY)).toBe(0);
     expect(meterFraction(Number.NaN)).toBe(0);
+  });
+});
+
+describe('isMeterAtFloor', () => {
+  it('is true only when peak, RMS and hold all rest at the floor', () => {
+    expect(isMeterAtFloor(METER_MIN_DB, METER_MIN_DB, METER_MIN_DB)).toBe(true);
+    expect(isMeterAtFloor(-12, METER_MIN_DB, METER_MIN_DB)).toBe(false);
+    expect(isMeterAtFloor(METER_MIN_DB, -12, METER_MIN_DB)).toBe(false);
+    expect(isMeterAtFloor(METER_MIN_DB, METER_MIN_DB, -12)).toBe(false);
+  });
+
+  it('respects a custom floor', () => {
+    expect(isMeterAtFloor(-90, -90, -90, -90)).toBe(true);
+    expect(isMeterAtFloor(-89, -90, -90, -90)).toBe(false);
+  });
+
+  it('becomes true once a silent channel has fully decayed', () => {
+    const model = createMeterChannel();
+    advanceMeterChannel(model, { peakDb: -6, rmsDb: -12 }, 0.016, 0);
+    expect(isMeterAtFloor(model.peakDb, model.rmsDb, model.holdDb)).toBe(false);
+    // Decay well past the hold time with silent targets.
+    advanceMeterChannel(model, SILENT, 10, PEAK_HOLD_MS + 10_000);
+    advanceMeterChannel(model, SILENT, 10, PEAK_HOLD_MS + 20_000);
+    expect(isMeterAtFloor(model.peakDb, model.rmsDb, model.holdDb)).toBe(true);
   });
 });

@@ -158,6 +158,8 @@ function freqNorm(band: EqBand): number {
         class="eq-power"
         :class="{ on: eq?.enabled }"
         :title="eq?.enabled ? 'Bypass EQ' : 'Enable EQ'"
+        aria-label="EQ power"
+        :aria-pressed="eq?.enabled === true"
         @click="onTogglePower"
       />
       <span class="eq-title">EQ</span>

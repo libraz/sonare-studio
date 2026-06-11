@@ -114,7 +114,7 @@ watch(
 
 <template>
   <div ref="wrapper" class="keyboard-column">
-    <canvas ref="canvas" class="keyboard-canvas" />
+    <canvas ref="canvas" class="keyboard-canvas" role="img" aria-label="Piano keyboard" />
   </div>
 </template>
 

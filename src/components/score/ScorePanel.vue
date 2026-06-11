@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, shallowRef, watch, watchEffect } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch, watchEffect } from 'vue';
 import {
   canonicalizeChordSymbols,
   type EstimatedChordSymbol,
@@ -12,7 +12,22 @@ import { keyToKeyFifths } from '@/notation/pitch-spelling';
 import { downloadBlob, exportPdf, type PageLayout, printScore } from '@/notation/print';
 import { quantizeToScore } from '@/notation/quantize';
 import { type LayoutOptions, VerovioClient } from '@/notation/verovio';
-import { setSelection } from '@/project/commands';
+import {
+  DISPLAY_TRANSPOSE_MAX,
+  DISPLAY_TRANSPOSE_MIN,
+  NOTE_ARTICULATIONS,
+  NOTE_DYNAMICS,
+  type NoteArticulation,
+  type NoteDynamics,
+  type ScoreNoteAnnotation,
+} from '@/project/annotations';
+import {
+  clearNoteAnnotation,
+  type NoteAnnotationUpdate,
+  setDisplayTranspose,
+  setNoteAnnotation,
+  setSelection,
+} from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { MAJOR_MODE_MASK } from '@/project/types';
 import type { Key } from '@/wasm/index.js';
@@ -72,6 +87,38 @@ const DQ_CHOICES: ReadonlyArray<DqChoice> = [
 
 const dqKey = ref('16');
 const chordsEnabled = ref(false);
+
+// --- Annotation state ----------------------------------------------------------
+
+/** Display labels for the articulation palette buttons. */
+const ARTICULATION_LABELS: Readonly<Record<NoteArticulation, string>> = {
+  staccato: 'Stacc.',
+  accent: 'Accent',
+  tenuto: 'Ten.',
+  marcato: 'Marc.',
+};
+
+/** Display transpose choices offered in the layout popover (semitones). */
+const TRANSPOSE_CHOICES: ReadonlyArray<number> = Array.from(
+  { length: DISPLAY_TRANSPOSE_MAX - DISPLAY_TRANSPOSE_MIN + 1 },
+  (_, i) => DISPLAY_TRANSPOSE_MIN + i,
+);
+
+/** True while the Annotate tool is active (note clicks open the palette). */
+const annotateEnabled = ref(false);
+/** Editor note id the floating palette currently edits (null = closed). */
+const annotationNoteId = ref<number | null>(null);
+/** Palette position relative to the score body wrapper, in pixels. */
+const palettePos = ref({ x: 0, y: 0 });
+/** True while waiting for the slur target click ("slur to next selected"). */
+const slurArmed = ref(false);
+
+/** Current annotation of the palette's target note (empty when none). */
+const annotationCurrent = computed<ScoreNoteAnnotation>(() => {
+  const id = annotationNoteId.value;
+  if (id === null) return {};
+  return store.scoreAnnotations[store.clipId]?.[id] ?? {};
+});
 
 /** Page formats offered in the layout popover, in millimeters. */
 const PAGE_FORMATS = {
@@ -175,7 +222,13 @@ async function transcribe(): Promise<void> {
       clipLengthPpq: store.clipLengthPpq,
       clef: 'grand',
       partName: 'Piano',
+      // Engraving-only transpose; the underlying MIDI notes never change.
+      displayTransposeSemitones: store.displayTransposeSemitones,
     });
+    const annotations = store.scoreAnnotations[store.clipId];
+    if (annotations && Object.keys(annotations).length > 0) {
+      score.noteAnnotations = { ...annotations };
+    }
     if (chordsEnabled.value) {
       // Chord symbols are best-effort: any wasm failure degrades silently to
       // a score without harmony instead of failing the whole render.
@@ -398,11 +451,11 @@ function quantizedOnsetPpq(note: { startPpq: number; durationPpq: number }): num
 }
 
 /**
- * Selects the editor notes a clicked score note stands for: primarily notes
+ * Resolves the editor notes a clicked score note stands for: primarily notes
  * whose quantized onset matches the note's qstamp; when none match (e.g. the
  * tail of a tie chain), notes whose raw interval contains the position.
  */
-function selectNotesAt(ppq: number): void {
+function noteIdsAt(ppq: number): number[] {
   const exact: number[] = [];
   const sounding: number[] = [];
   for (const note of store.notes) {
@@ -410,7 +463,7 @@ function selectNotesAt(ppq: number): void {
     if (onset !== null && Math.abs(onset - ppq) < ONSET_MATCH_EPSILON_PPQ) exact.push(note.id);
     if (note.startPpq <= ppq && ppq < note.startPpq + note.durationPpq) sounding.push(note.id);
   }
-  setSelection(exact.length > 0 ? exact : sounding);
+  return exact.length > 0 ? exact : sounding;
 }
 
 /** Click on an engraved note: seek the transport and select the source notes. */
@@ -422,8 +475,88 @@ function onSvgClick(event: MouseEvent): void {
   const entry = timemap.find((e) => e.on?.includes(group.id));
   if (!entry) return;
   const ppq = store.clipStartPpq + entry.qstamp;
+  const ids = noteIdsAt(ppq);
+  if (annotateEnabled.value) onAnnotateClick(event, ids);
   emit('seek', ppq);
-  selectNotesAt(ppq);
+  setSelection(ids);
+}
+
+// --- Annotation palette ------------------------------------------------------------
+
+/**
+ * Annotate-mode note click: completes an armed slur (click A, "Slur…",
+ * click B), otherwise retargets the floating palette at the clicked note.
+ */
+function onAnnotateClick(event: MouseEvent, ids: number[]): void {
+  const clicked = ids[0];
+  if (clicked === undefined) {
+    closePalette();
+    return;
+  }
+  if (slurArmed.value && annotationNoteId.value !== null && clicked !== annotationNoteId.value) {
+    slurArmed.value = false;
+    applyAnnotation({ slurToNoteId: clicked });
+    return;
+  }
+  slurArmed.value = false;
+  annotationNoteId.value = clicked;
+  const wrap = svgHost.value?.parentElement;
+  const rect = wrap?.getBoundingClientRect();
+  palettePos.value = {
+    x: event.clientX - (rect?.left ?? 0) + 8,
+    y: event.clientY - (rect?.top ?? 0) + 8,
+  };
+}
+
+/** Applies a field-wise annotation edit to the palette's target note. */
+function applyAnnotation(update: NoteAnnotationUpdate): void {
+  const id = annotationNoteId.value;
+  if (id === null) return;
+  try {
+    setNoteAnnotation(store.clipId, id, update);
+    error.value = '';
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
+}
+
+/** Toggles a dynamics marking on the target note (same value clears it). */
+function toggleDynamics(value: NoteDynamics): void {
+  applyAnnotation({ dynamics: annotationCurrent.value.dynamics === value ? null : value });
+}
+
+/** Toggles an articulation marking on the target note (same value clears it). */
+function toggleArticulation(value: NoteArticulation): void {
+  applyAnnotation({ articulation: annotationCurrent.value.articulation === value ? null : value });
+}
+
+/** Removes every annotation of the target note. */
+function clearAnnotation(): void {
+  const id = annotationNoteId.value;
+  if (id === null) return;
+  try {
+    clearNoteAnnotation(store.clipId, id);
+    error.value = '';
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
+}
+
+/** Closes the floating palette and disarms any pending slur. */
+function closePalette(): void {
+  annotationNoteId.value = null;
+  slurArmed.value = false;
+}
+
+/** Layout popover change handler for the display transpose select. */
+function onTransposeChange(event: Event): void {
+  const value = Number((event.target as HTMLSelectElement).value);
+  try {
+    setDisplayTranspose(value);
+    error.value = '';
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
 }
 
 // --- Reactive re-transcription -----------------------------------------------------
@@ -439,8 +572,27 @@ function scheduleRetranscribe(): void {
 // The note mirror is replaced wholesale on every command, so identity
 // tracking fires once per edit. Option changes re-transcribe immediately.
 watch(() => store.notes, scheduleRetranscribe);
+// Annotations and display transpose are replaced wholesale by their commands
+// too; both only affect engraving, so they re-transcribe debounced like edits.
+watch([() => store.scoreAnnotations, () => store.displayTransposeSemitones], scheduleRetranscribe);
 watch([dqKey, chordsEnabled, () => store.scaleHighlight], () => void transcribe(), { deep: true });
 watch([pageFormat, landscape, pageMarginMm, scalePercent, spacingStaff], () => void applyLayout());
+watch(annotateEnabled, (enabled) => {
+  if (!enabled) closePalette();
+});
+// The palette targets a note of the active clip; close it on clip switches
+// and when its note disappears (deleted or replaced by other edits).
+watch(
+  () => store.clipId,
+  () => closePalette(),
+);
+watch(
+  () => store.notes,
+  (notes) => {
+    const id = annotationNoteId.value;
+    if (id !== null && !notes.some((note) => note.id === id)) closePalette();
+  },
+);
 
 onMounted(() => {
   client.value = new VerovioClient();
@@ -460,7 +612,7 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="score-panel">
-    <div class="score-toolbar">
+    <div class="score-toolbar" role="toolbar" aria-label="Score tools">
       <label class="bar-field" title="Display quantize: changes the engraved view only, never the MIDI data">
         DQ
         <select v-model="dqKey">
@@ -484,8 +636,19 @@ onBeforeUnmount(() => {
         <input v-model="chordsEnabled" type="checkbox" />
         Chords
       </label>
+      <button
+        type="button"
+        :class="{ active: annotateEnabled }"
+        :aria-pressed="annotateEnabled"
+        title="Annotate: click an engraved note to add dynamics, articulations and slurs (display-only, never changes MIDI)"
+        @click="annotateEnabled = !annotateEnabled"
+      >
+        Annotate
+      </button>
       <div class="layout-host">
-        <button type="button" @click="layoutOpen = !layoutOpen">Layout</button>
+        <button type="button" aria-haspopup="true" :aria-expanded="layoutOpen" @click="layoutOpen = !layoutOpen">
+          Layout
+        </button>
         <div v-if="layoutOpen" class="layout-popover">
           <label class="layout-row">
             Page
@@ -514,13 +677,26 @@ onBeforeUnmount(() => {
             Staff spacing
             <input v-model.number="spacingStaff" type="number" min="0" max="48" step="1" />
           </label>
+          <label
+            class="layout-row"
+            title="Shifts the engraved pitches only — the MIDI notes are never changed"
+          >
+            Transpose (st)
+            <select :value="store.displayTransposeSemitones" @change="onTransposeChange">
+              <option v-for="n in TRANSPOSE_CHOICES" :key="n" :value="n">
+                {{ n > 0 ? `+${n}` : String(n) }}
+              </option>
+            </select>
+          </label>
         </div>
       </div>
       <span class="bar-spacer" />
       <button type="button" :disabled="page <= 1 || loading" aria-label="Previous page" @click="gotoPage(page - 1)">
         ◀
       </button>
-      <span class="score-page-indicator">{{ pageCount > 0 ? `${page} / ${pageCount}` : '– / –' }}</span>
+      <span class="score-page-indicator" aria-live="polite">
+        {{ pageCount > 0 ? `${page} / ${pageCount}` : '– / –' }}
+      </span>
       <button
         type="button"
         :disabled="page >= pageCount || loading"
@@ -539,9 +715,72 @@ onBeforeUnmount(() => {
     <p v-if="error" class="score-error" role="alert">{{ error }}</p>
     <div class="score-body-wrap">
       <!-- biome-ignore lint/security/noDangerouslySetInnerHtml: SVG produced locally by the Verovio worker -->
-      <div ref="svgHost" class="score-body" @click="onSvgClick" v-html="svg" />
+      <div
+        ref="svgHost"
+        class="score-body"
+        role="img"
+        aria-label="Engraved score"
+        @click="onSvgClick"
+        v-html="svg"
+      />
       <div v-if="loading" class="score-loading">Engraving…</div>
       <div v-else-if="!svg" class="score-empty">No score yet — press Transcribe.</div>
+      <div
+        v-if="annotateEnabled && annotationNoteId !== null"
+        class="annotation-palette"
+        role="dialog"
+        aria-label="Note annotations"
+        :style="{ left: `${palettePos.x}px`, top: `${palettePos.y}px` }"
+      >
+        <div class="palette-row">
+          <button
+            v-for="d in NOTE_DYNAMICS"
+            :key="d"
+            type="button"
+            class="palette-dynamics"
+            :class="{ active: annotationCurrent.dynamics === d }"
+            :aria-pressed="annotationCurrent.dynamics === d"
+            @click="toggleDynamics(d)"
+          >
+            {{ d }}
+          </button>
+        </div>
+        <div class="palette-row">
+          <button
+            v-for="a in NOTE_ARTICULATIONS"
+            :key="a"
+            type="button"
+            :class="{ active: annotationCurrent.articulation === a }"
+            :aria-pressed="annotationCurrent.articulation === a"
+            @click="toggleArticulation(a)"
+          >
+            {{ ARTICULATION_LABELS[a] }}
+          </button>
+        </div>
+        <div class="palette-row">
+          <button
+            type="button"
+            :class="{ active: slurArmed }"
+            :aria-pressed="slurArmed"
+            title="Slur to another note: arm, then click the target note in the score"
+            @click="slurArmed = !slurArmed"
+          >
+            {{ slurArmed ? 'Click target…' : 'Slur…' }}
+          </button>
+          <button
+            v-if="annotationCurrent.slurToNoteId !== undefined"
+            type="button"
+            title="Remove the slur starting on this note"
+            @click="applyAnnotation({ slurToNoteId: null })"
+          >
+            Unslur
+          </button>
+          <button type="button" title="Remove all annotations of this note" @click="clearAnnotation">
+            Clear
+          </button>
+          <button type="button" aria-label="Close annotation palette" @click="closePalette">×</button>
+        </div>
+      </div>
     </div>
   </section>
 </template>
@@ -662,6 +901,41 @@ onBeforeUnmount(() => {
   fill: #2563eb;
   color: #2563eb;
   stroke: #2563eb;
+}
+
+.score-toolbar button.active {
+  background: #2563eb;
+  color: #fff;
+}
+
+.annotation-palette {
+  position: absolute;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.45rem 0.5rem;
+  background: #1b1e25;
+  border: 1px solid #000;
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  font-size: 11px;
+}
+
+.palette-row {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.annotation-palette button.active {
+  background: #2563eb;
+  color: #fff;
+}
+
+.palette-dynamics {
+  font-style: italic;
+  font-weight: 600;
+  min-width: 1.8rem;
 }
 
 .score-loading,

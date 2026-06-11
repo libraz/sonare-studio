@@ -158,6 +158,8 @@ onBeforeUnmount(() => {
           class="insert-power"
           :class="{ on: slot.enabled }"
           :title="slot.enabled ? 'Bypass insert' : 'Enable insert'"
+          :aria-label="`${humanizeInsertName(slot.processor)} power`"
+          :aria-pressed="slot.enabled"
           @click="onToggleEnabled(index)"
         />
         <button
@@ -173,6 +175,7 @@ onBeforeUnmount(() => {
           type="button"
           class="insert-remove"
           title="Remove insert"
+          :aria-label="`Remove ${humanizeInsertName(slot.processor)}`"
           @click="onRemove(index)"
         >
           ×
@@ -194,7 +197,14 @@ onBeforeUnmount(() => {
       </div>
     </template>
     <div ref="addMenu" class="insert-add-wrap">
-      <button type="button" class="insert-add" title="Add insert" @click="openAddMenu">
+      <button
+        type="button"
+        class="insert-add"
+        title="Add insert"
+        aria-haspopup="menu"
+        :aria-expanded="addMenuOpen"
+        @click="openAddMenu"
+      >
         + Insert
       </button>
       <div v-if="addMenuOpen" class="insert-catalog" role="menu">

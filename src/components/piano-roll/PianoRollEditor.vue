@@ -13,6 +13,7 @@ import {
 import { useProjectStore } from '@/project/store';
 import { createPainter } from '@/ui/canvas/painter';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
+import { createNoteExtentCache } from './content-extent';
 import KeyboardColumn from './KeyboardColumn.vue';
 import { LANE_PARAMS, type LaneParamId } from './lane-params';
 import NoteGridCanvas from './NoteGridCanvas.vue';
@@ -162,13 +163,12 @@ watch(
   () => centerOnActiveClip(),
 );
 
+/** Extent of the note content, cached per note-mirror identity. */
+const noteExtentPpq = createNoteExtentCache();
+
 /** Total horizontal content extent in PPQ (clip length, notes and view). */
 function contentPpq(): number {
-  let maxEnd = store.clipLengthPpq;
-  for (const note of store.notes) {
-    maxEnd = Math.max(maxEnd, note.startPpq + note.durationPpq);
-  }
-  return Math.max(maxEnd, range.endPpq);
+  return Math.max(store.clipLengthPpq, noteExtentPpq(store.notes), range.endPpq);
 }
 
 function onWheel(event: WheelEvent): void {
@@ -297,6 +297,7 @@ onBeforeUnmount(() => {
     ref="root"
     class="piano-roll-editor"
     tabindex="0"
+    aria-label="Piano roll editor"
     @keydown="onKeyDown"
     @wheel.prevent="onWheel"
     @pointerdown="onRootPointerDown"
@@ -352,7 +353,7 @@ onBeforeUnmount(() => {
       >
         <div class="scroll-thumb scroll-thumb-v" :style="vThumbStyle" />
       </div>
-      <div class="cell-velocity-label">
+      <div class="cell-velocity-label" role="tablist" aria-label="Note lane parameter">
         <button
           v-for="laneSpec in LANE_PARAMS"
           :key="laneSpec.id"
@@ -360,6 +361,8 @@ onBeforeUnmount(() => {
           class="lane-tab"
           :class="{ 'lane-tab-active': laneParam === laneSpec.id }"
           :title="laneSpec.title"
+          role="tab"
+          :aria-selected="laneParam === laneSpec.id"
           @click="laneParam = laneSpec.id"
         >
           {{ laneSpec.label }}

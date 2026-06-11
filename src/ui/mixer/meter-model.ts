@@ -98,3 +98,23 @@ export function meterFraction(db: number, minDb = METER_MIN_DB): number {
   if (!Number.isFinite(db)) return 0;
   return Math.min(1, Math.max(0, (db - minDb) / (0 - minDb)));
 }
+
+/**
+ * True when a meter channel is visually at rest: displayed peak, RMS and the
+ * hold marker have all decayed to the floor. While every channel of a meter
+ * is at the floor consecutive frames render identically, so drawing
+ * components can skip the canvas repaint until levels rise again.
+ *
+ * @param peakDb Displayed peak level in dB.
+ * @param rmsDb Displayed RMS level in dB.
+ * @param holdDb Peak-hold marker level in dB.
+ * @param minDb Meter floor (default {@link METER_MIN_DB}).
+ */
+export function isMeterAtFloor(
+  peakDb: number,
+  rmsDb: number,
+  holdDb: number,
+  minDb = METER_MIN_DB,
+): boolean {
+  return peakDb <= minDb && rmsDb <= minDb && holdDb <= minDb;
+}

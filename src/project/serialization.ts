@@ -9,6 +9,12 @@
  * (addTrack/addClip/setMidiEvents/...), which rebuilds an equivalent Project.
  */
 
+import {
+  annotationsToDocument,
+  type ClipScoreAnnotations,
+  type DocumentNoteAnnotation,
+  type DocumentScoreSettings,
+} from './annotations';
 import { clearHistory } from './commands';
 import { cloneInstrument, type TrackInstrument } from './instrument';
 import {
@@ -39,6 +45,12 @@ import type { ClipKind, EditorClip, EditorNote, TrackKind } from './types';
  *   SoundFont binaries live in the OPFS font store (src/project/fonts.ts),
  *   referenced by id only. All new fields are omitted when default, so v1/v2
  *   documents load unchanged with defaults injected.
+ *   Additionally (still version 3, additive): clips may carry optional
+ *   display-only `scoreAnnotations` (content-addressed, see
+ *   src/project/annotations.ts) and the document may carry an optional
+ *   `score` settings block. Both are omitted when empty/default, so every
+ *   existing version-3 document remains valid and loaders that predate the
+ *   fields simply ignore them.
  *
  * Loaders accept any version up to this one; version-1 documents load
  * unchanged (every clip is MIDI).
@@ -74,6 +86,11 @@ export interface DocumentClip {
   fadeInPpq?: number;
   /** Fade-out length in PPQ (> 0 when present); audio clips only. */
   fadeOutPpq?: number;
+  /**
+   * Display-only score annotations of this clip's notes, content-addressed
+   * (editor note ids are session-scoped); omitted when the clip has none.
+   */
+  scoreAnnotations?: DocumentNoteAnnotation[];
 }
 
 /** One track of the document, with its clips. */
@@ -160,10 +177,15 @@ export interface ProjectDocument {
   sections: DocumentSection[];
   /** Project mixer state; absent (schema < 3 or all-default) = defaults. */
   mixer?: ProjectMixerState;
+  /** Score display settings; absent = defaults (no display transpose). */
+  score?: DocumentScoreSettings;
 }
 
 /** Deep-copies a clip mirror entry into the document shape (no session ids). */
-function toDocumentClip(clip: EditorClip): DocumentClip {
+function toDocumentClip(
+  clip: EditorClip,
+  annotations?: Readonly<ClipScoreAnnotations>,
+): DocumentClip {
   const out: DocumentClip = {
     name: clip.name,
     startPpq: clip.startPpq,
@@ -178,6 +200,11 @@ function toDocumentClip(clip: EditorClip): DocumentClip {
   if (clip.assetId !== undefined) out.assetId = clip.assetId;
   if (clip.fadeInPpq !== undefined) out.fadeInPpq = clip.fadeInPpq;
   if (clip.fadeOutPpq !== undefined) out.fadeOutPpq = clip.fadeOutPpq;
+  if (annotations !== undefined) {
+    // Annotations are re-addressed by note content (orphans drop out here).
+    const entries = annotationsToDocument(annotations, clip.notes);
+    if (entries.length > 0) out.scoreAnnotations = entries;
+  }
   return out;
 }
 
@@ -222,7 +249,7 @@ export function serializeProject(): ProjectDocument {
         pan: track.pan,
         clips: store.clips
           .filter((clip) => clip.trackId === track.id)
-          .map((clip) => toDocumentClip(clip)),
+          .map((clip) => toDocumentClip(clip, store.scoreAnnotations[clip.id])),
       };
       if (track.instrument !== undefined) out.instrument = cloneInstrument(track.instrument);
       if (track.mixer !== undefined) out.mixer = cloneStrip(track.mixer);
@@ -239,6 +266,10 @@ export function serializeProject(): ProjectDocument {
   // The project mixer state is omitted while it is entirely default, so
   // documents from mixer-less sessions look exactly like older ones.
   if (!isDefaultMixerState(store.mixer)) doc.mixer = cloneMixerState(store.mixer);
+  // Score display settings are likewise omitted while default.
+  if (store.displayTransposeSemitones !== 0) {
+    doc.score = { displayTransposeSemitones: store.displayTransposeSemitones };
+  }
   return doc;
 }
 

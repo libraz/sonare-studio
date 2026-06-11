@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   barRangeAt,
+  createRulerTickCache,
   type MeterSegment,
   nearestBarPpq,
   type RulerTick,
@@ -116,5 +117,44 @@ describe('nearestBarPpq', () => {
     ];
     // The bar [4, 6) is truncated; 5.5 is closer to 6 than to 4.
     expect(nearestBarPpq(meter, 5.5)).toBe(6);
+  });
+});
+
+describe('createRulerTickCache', () => {
+  it('computes once for repeated calls with identical arguments (cache hits)', () => {
+    const compute = vi.fn(rulerTicks);
+    const cached = createRulerTickCache(compute);
+
+    const first = cached(FOUR_FOUR, 0, 16, 50);
+    const second = cached(FOUR_FOUR, 0, 16, 50);
+    const third = cached(FOUR_FOUR, 0, 16, 50);
+
+    expect(compute).toHaveBeenCalledTimes(1);
+    expect(second).toBe(first);
+    expect(third).toBe(first);
+    expect(first).toEqual(rulerTicks(FOUR_FOUR, 0, 16, 50));
+  });
+
+  it('recomputes when the view changes', () => {
+    const compute = vi.fn(rulerTicks);
+    const cached = createRulerTickCache(compute);
+
+    cached(FOUR_FOUR, 0, 16, 50);
+    cached(FOUR_FOUR, 4, 20, 50);
+    cached(FOUR_FOUR, 4, 20, 25);
+
+    expect(compute).toHaveBeenCalledTimes(3);
+  });
+
+  it('recomputes when the meter array identity changes', () => {
+    const compute = vi.fn(rulerTicks);
+    const cached = createRulerTickCache(compute);
+    const otherMeter: MeterSegment[] = [{ startPpq: 0, numerator: 3, denominator: 4 }];
+
+    cached(FOUR_FOUR, 0, 16, 50);
+    const ticks = cached(otherMeter, 0, 16, 50);
+
+    expect(compute).toHaveBeenCalledTimes(2);
+    expect(ticks).toEqual(rulerTicks(otherMeter, 0, 16, 50));
   });
 });

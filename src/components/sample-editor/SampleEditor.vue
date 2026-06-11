@@ -558,7 +558,7 @@ onBeforeUnmount(() => {
       @pointercancel="onPointerUp"
       @wheel.prevent="onWheel"
     >
-      <canvas ref="canvasRef" class="wave-canvas" />
+      <canvas ref="canvasRef" class="wave-canvas" role="img" aria-label="Audio waveform" />
       <div v-if="busy || loading" class="busy">{{ busy ? 'Processing…' : 'Loading…' }}</div>
     </div>
     <div class="history">

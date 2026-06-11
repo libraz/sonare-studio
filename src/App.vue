@@ -8,15 +8,23 @@ import ProjectListsPanel from '@/components/lists/ProjectListsPanel.vue';
 import MasteringPanel from '@/components/mastering/MasteringPanel.vue';
 import MediaBrowser from '@/components/media/MediaBrowser.vue';
 import MixerPanel from '@/components/mixer/MixerPanel.vue';
+import HintCard from '@/components/onboarding/HintCard.vue';
+import type { TourStep } from '@/components/onboarding/tour-steps';
+import WelcomeTour from '@/components/onboarding/WelcomeTour.vue';
 import InfoLine from '@/components/piano-roll/InfoLine.vue';
 import PianoRollEditor from '@/components/piano-roll/PianoRollEditor.vue';
 import NewProjectDialog from '@/components/project/NewProjectDialog.vue';
 import SampleEditor from '@/components/sample-editor/SampleEditor.vue';
 import ScorePanel from '@/components/score/ScorePanel.vue';
+import SettingsDialog from '@/components/settings/SettingsDialog.vue';
+import ShortcutsHelp from '@/components/settings/ShortcutsHelp.vue';
 import StepSequencer from '@/components/step-sequencer/StepSequencer.vue';
+import { useAppSettings } from '@/composables/useAppSettings';
 import { useAutosave } from '@/composables/useAutosave';
+import { useLayouts } from '@/composables/useLayouts';
 import { useMusicTyping } from '@/composables/useMusicTyping';
 import { useRecording } from '@/composables/useRecording';
+import { useShortcuts } from '@/composables/useShortcuts';
 import { useStepInput } from '@/composables/useStepInput';
 import { useTransport } from '@/composables/useTransport';
 import { useWebMidi } from '@/composables/useWebMidi';
@@ -69,6 +77,8 @@ import {
 import { useProjectStore } from '@/project/store';
 import { makeDemoDocument, type TemplateName } from '@/project/templates';
 import { clipKind, isAudioClip } from '@/project/types';
+import { createFocusTrap, type FocusTrap } from '@/ui/settings/focus-trap';
+import { ARRANGE_HEIGHT_MAX_PX, type LayoutBindings } from '@/ui/settings/layouts';
 import type { RealtimeEngine } from '@/wasm/index.js';
 
 /**
@@ -112,11 +122,42 @@ const ctxState = ref('');
 
 const store = useProjectStore();
 const stepInput = useStepInput();
-const autosave = useAutosave();
+
+// --- User preferences ----------------------------------------------------------
+
+const appSettings = useAppSettings();
+const shortcuts = useShortcuts();
+
+// Editor-only boot defaults sourced from the user preferences.
+store.snapEnabled = appSettings.settings.snapDefault;
+
+// The autosave quiet period follows the preference live (read per schedule).
+const autosave = useAutosave({ intervalMs: () => appSettings.settings.autosaveIntervalMs });
+
+/** Destructive-action gate; returns true directly when confirmations are off. */
+function confirmAction(message: string): boolean {
+  return !appSettings.settings.confirmDestructive || window.confirm(message);
+}
 
 // --- Recording -----------------------------------------------------------------
 
 const recording = useRecording(() => handle.value, transport);
+
+// The count-in preference seeds the session; popover edits write back through
+// the settings store so the value persists, and the watcher mirrors it here.
+recording.countInBars.value = appSettings.settings.countInBars;
+watch(
+  () => appSettings.settings.countInBars,
+  (bars) => {
+    recording.countInBars.value = bars;
+  },
+);
+if (appSettings.settings.monitorDefault) recording.setMonitor(true);
+
+/** Record-popover count-in select: persists the choice as a preference. */
+function onCountInChange(event: Event): void {
+  appSettings.set('countInBars', Number((event.target as HTMLSelectElement).value));
+}
 
 /** Armed-track list mirrored down to the arrangement track headers. */
 const armedTrackIds = computed(() =>
@@ -177,6 +218,8 @@ watch(
       store.tempoSegments,
       store.timeSignatures,
       store.mixer,
+      store.scoreAnnotations,
+      store.displayTransposeSemitones,
     ] as const,
   () => {
     if (store.initialized) dirty.value = true;
@@ -207,7 +250,7 @@ async function bootProject(): Promise<void> {
       const stored = await listProjects();
       if (
         stored.some((info) => info.name === AUTOSAVE_SLOT) &&
-        window.confirm('Restore the autosaved project from your last session?')
+        confirmAction('Restore the autosaved project from your last session?')
       ) {
         restored = await autosave.restoreAutosave();
       }
@@ -230,6 +273,30 @@ const newDialogOpen = ref(false);
 const openDialogOpen = ref(false);
 const storedProjects = ref<StoredProjectInfo[]>([]);
 
+// Open-project dialog modality: trap Tab inside and restore focus on close.
+const openDialogRef = ref<HTMLElement | null>(null);
+let openDialogTrap: FocusTrap | null = null;
+
+watch(openDialogOpen, (open) => {
+  if (open) {
+    void nextTick(() => {
+      if (openDialogRef.value === null) return;
+      openDialogTrap = createFocusTrap(openDialogRef.value);
+      openDialogTrap.activate();
+    });
+  } else {
+    openDialogTrap?.deactivate();
+    openDialogTrap = null;
+  }
+});
+
+function onOpenDialogKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    openDialogOpen.value = false;
+  }
+}
+
 function closeProjectMenu(): void {
   projectMenuOpen.value = false;
 }
@@ -239,13 +306,19 @@ function isOutsidePress(root: HTMLElement | null, event: PointerEvent): boolean 
   return root !== null && event.target instanceof Node && !root.contains(event.target);
 }
 
-/** Closes the project menu and record popover on any press outside of them. */
+/** Closes the transport-bar popovers on any press outside of them. */
 function onWindowPointerDown(event: PointerEvent): void {
   if (projectMenuOpen.value && isOutsidePress(projectMenuRoot.value, event)) {
     closeProjectMenu();
   }
   if (recordMenuOpen.value && isOutsidePress(recordMenuRoot.value, event)) {
     recordMenuOpen.value = false;
+  }
+  if (layoutMenuOpen.value && isOutsidePress(layoutMenuRoot.value, event)) {
+    layoutMenuOpen.value = false;
+  }
+  if (helpMenuOpen.value && isOutsidePress(helpMenuRoot.value, event)) {
+    helpMenuOpen.value = false;
   }
 }
 
@@ -278,7 +351,7 @@ function openOpenDialog(): void {
 
 /** Confirms discarding unsaved changes before a destructive load. */
 function confirmDiscard(): boolean {
-  return !dirty.value || window.confirm('Discard unsaved changes in the current project?');
+  return !dirty.value || confirmAction('Discard unsaved changes in the current project?');
 }
 
 function openStoredProject(name: string): void {
@@ -294,7 +367,7 @@ function openStoredProject(name: string): void {
 }
 
 function deleteStoredProject(name: string): void {
-  if (!window.confirm(`Delete the saved project "${name}"?`)) return;
+  if (!confirmAction(`Delete the saved project "${name}"?`)) return;
   void runAction(async () => {
     await deleteProject(name);
     await refreshStoredProjects();
@@ -786,6 +859,25 @@ function readStoredArrangeHeight(): number {
 const arrangeHeight = ref(readStoredArrangeHeight());
 
 let dividerDrag: { startY: number; startHeight: number } | null = null;
+let dividerRaf = 0;
+let dividerPendingY = 0;
+
+/** Largest height the split allows for the current window. */
+function maxArrangeHeight(): number {
+  return Math.max(ARRANGE_MIN_HEIGHT, window.innerHeight - 240);
+}
+
+function clampArrangeHeight(next: number): number {
+  return Math.min(maxArrangeHeight(), Math.max(ARRANGE_MIN_HEIGHT, next));
+}
+
+function persistArrangeHeight(): void {
+  try {
+    window.localStorage.setItem(ARRANGE_HEIGHT_KEY, String(Math.round(arrangeHeight.value)));
+  } catch {
+    // Persisting the height is best-effort only.
+  }
+}
 
 function onDividerPointerDown(event: PointerEvent): void {
   if (event.button !== 0) return;
@@ -793,21 +885,42 @@ function onDividerPointerDown(event: PointerEvent): void {
   dividerDrag = { startY: event.clientY, startHeight: arrangeHeight.value };
 }
 
+// Pointer moves are coalesced to one height write per animation frame: each
+// write changes flexBasis and reflows both canvas zones, so writing on every
+// pointer event would trigger repeated canvas backing-store reallocations.
 function onDividerPointerMove(event: PointerEvent): void {
   if (!dividerDrag) return;
-  const max = Math.max(ARRANGE_MIN_HEIGHT, window.innerHeight - 240);
-  const next = dividerDrag.startHeight + (event.clientY - dividerDrag.startY);
-  arrangeHeight.value = Math.min(max, Math.max(ARRANGE_MIN_HEIGHT, next));
+  dividerPendingY = event.clientY;
+  if (dividerRaf !== 0) return;
+  dividerRaf = requestAnimationFrame(() => {
+    dividerRaf = 0;
+    if (!dividerDrag) return;
+    arrangeHeight.value = clampArrangeHeight(
+      dividerDrag.startHeight + (dividerPendingY - dividerDrag.startY),
+    );
+  });
 }
 
 function onDividerPointerUp(): void {
   if (!dividerDrag) return;
   dividerDrag = null;
-  try {
-    window.localStorage.setItem(ARRANGE_HEIGHT_KEY, String(Math.round(arrangeHeight.value)));
-  } catch {
-    // Persisting the height is best-effort only.
+  if (dividerRaf !== 0) {
+    cancelAnimationFrame(dividerRaf);
+    dividerRaf = 0;
   }
+  persistArrangeHeight();
+}
+
+/** Keyboard resize for the split divider (role=separator). */
+function onDividerKeydown(event: KeyboardEvent): void {
+  const step = event.shiftKey ? 4 : 16;
+  let delta = 0;
+  if (event.key === 'ArrowUp') delta = -step;
+  else if (event.key === 'ArrowDown') delta = step;
+  else return;
+  event.preventDefault();
+  arrangeHeight.value = clampArrangeHeight(arrangeHeight.value + delta);
+  persistArrangeHeight();
 }
 
 // --- Right zone: device rack ---------------------------------------------------
@@ -851,6 +964,109 @@ function toggleScorePanel(): void {
   if (scoreVisible.value) dockTab.value = 'roll';
 }
 
+// --- Settings, shortcut help, named layouts, welcome tour -----------------------
+
+const settingsOpen = ref(false);
+const helpOpen = ref(false);
+const helpMenuOpen = ref(false);
+const helpMenuRoot = ref<HTMLElement | null>(null);
+const layoutMenuOpen = ref(false);
+const layoutMenuRoot = ref<HTMLElement | null>(null);
+const tourRef = ref<InstanceType<typeof WelcomeTour> | null>(null);
+
+const namedLayouts = useLayouts();
+
+/** Shell layout refs handed to the named-layout feature and settings dialog. */
+const layoutBindings: LayoutBindings = {
+  arrangeHeightPx: arrangeHeight,
+  dockTab,
+  deviceRackOpen,
+  scoreOpen: scoreVisible,
+};
+
+/** Applies a named layout and persists the keys the shell already stores. */
+function applyNamedLayout(name: string): void {
+  layoutMenuOpen.value = false;
+  if (!namedLayouts.apply(name, layoutBindings)) return;
+  persistArrangeHeight();
+  try {
+    window.localStorage.setItem(DEVICE_RACK_OPEN_KEY, deviceRackOpen.value ? '1' : '0');
+  } catch {
+    // Persisting the panel state is best-effort only.
+  }
+}
+
+/** "Save current…" in the Layout menu: snapshots the zones under a new name. */
+function saveCurrentLayoutAction(): void {
+  layoutMenuOpen.value = false;
+  const name = window.prompt('Save layout as:')?.trim();
+  if (!name) return;
+  if (!namedLayouts.saveCurrent(name, layoutBindings)) {
+    errorMessage.value = namedLayouts.isPreset(name)
+      ? `"${name}" is a built-in preset name; choose another.`
+      : 'Could not save the layout (too many saved layouts).';
+  }
+}
+
+function openShortcutsHelp(): void {
+  helpMenuOpen.value = false;
+  helpOpen.value = true;
+}
+
+function openWelcomeTour(): void {
+  helpMenuOpen.value = false;
+  tourRef.value?.open();
+}
+
+/** Welcome tour stops, anchored to stable shell selectors. */
+const TOUR_STEPS: TourStep[] = [
+  {
+    id: 'engine',
+    target: '.engine-start',
+    title: 'Start the engine',
+    body: 'Opens the audio device. Nothing sounds yet — playback only begins when you press Play.',
+  },
+  {
+    id: 'transport',
+    target: '.transport-bar',
+    title: 'Transport bar',
+    body: 'Play, record, tempo, loop, layouts and the project menu live here.',
+  },
+  {
+    id: 'arrange',
+    target: '.arrange-zone',
+    title: 'Arrangement',
+    body: 'Tracks and clips on the timeline. Double-click an empty lane to create a clip.',
+  },
+  {
+    id: 'dock',
+    target: '.dock-tabs',
+    title: 'Editor dock',
+    body: 'Switch between the piano roll, mixer, mastering, step sequencer and more.',
+    placement: 'top',
+  },
+  {
+    id: 'roll',
+    target: '.piano-roll-host',
+    title: 'Piano roll',
+    body: 'Double-click to create notes, drag to move or resize them. Every edit is undoable.',
+    placement: 'top',
+  },
+  {
+    id: 'score',
+    target: '.dock-tab-score',
+    title: 'Score view',
+    body: 'Engraves the active clip as notation — display-only, your MIDI never changes.',
+    placement: 'top',
+  },
+  {
+    id: 'menu',
+    target: '.project-menu',
+    title: 'Project menu',
+    body: 'New, open, save, audio import and all export options.',
+  },
+];
+
 function selectAllNotes(): void {
   if (!store.initialized) return;
   setSelection(store.notes.map((note) => note.id));
@@ -891,85 +1107,88 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 /**
- * Global shortcuts. Events already consumed closer to their target (piano
- * roll undo/delete, music typing keys) arrive with defaultPrevented and are
- * skipped, so nothing fires twice.
+ * Runs the shell action bound to a shortcut registry id.
+ *
+ * @returns True when the action ran (the caller prevents the default); false
+ *   when its guard failed and the key should fall through untouched.
+ */
+function runShortcutAction(actionId: string): boolean {
+  switch (actionId) {
+    case 'transport.togglePlayback':
+      togglePlayback();
+      return true;
+    case 'transport.toggleLoop':
+      toggleLoop();
+      return true;
+    case 'project.save':
+      saveProjectAction();
+      return true;
+    case 'edit.undo':
+      undo();
+      return true;
+    case 'edit.redo':
+      redo();
+      return true;
+    case 'edit.selectAllNotes':
+      selectAllNotes();
+      return true;
+    case 'edit.quantizeSelection':
+      quantizeSelection();
+      return true;
+    case 'edit.deleteSelectedNotes':
+      if (store.selection.size === 0) return false;
+      deleteSelectedNotes();
+      return true;
+    case 'arrange.duplicateClip': {
+      // Duplicate the selected arrangement clip right after itself.
+      const clip = store.activeClip;
+      if (!clip) return false;
+      duplicateClip(clip.id, clip.startPpq + clip.lengthPpq);
+      return true;
+    }
+    case 'arrange.splitClipAtPlayhead':
+      arrangementRef.value?.cutAtPlayhead();
+      return true;
+    case 'arrange.deleteClip':
+      if (store.clipId === -1) {
+        // No clip selected: fall through to the note selection, preserving
+        // the historic Backspace behavior in the arrangement zone.
+        if (store.selection.size === 0) return false;
+        deleteSelectedNotes();
+        return true;
+      }
+      deleteClip(store.clipId);
+      return true;
+    case 'view.toggleSnap':
+      store.snapEnabled = !store.snapEnabled;
+      return true;
+    case 'view.toggleScorePanel':
+      toggleScorePanel();
+      return true;
+    case 'app.settings':
+      settingsOpen.value = true;
+      return true;
+    case 'help.shortcuts':
+      helpOpen.value = true;
+      return true;
+    default:
+      return false;
+  }
+}
+
+/**
+ * Global shortcuts, resolved through the remappable registry. Events already
+ * consumed closer to their target (piano roll undo/delete, music typing keys,
+ * dialog keys) arrive with defaultPrevented and are skipped, so nothing fires
+ * twice. The focus zone picks the scope so shared keys (Delete, Cmd+D, B)
+ * disambiguate between arrangement clips and piano-roll notes.
  */
 function onGlobalKeyDown(event: KeyboardEvent): void {
   if (event.defaultPrevented || isEditableTarget(event.target)) return;
-  const meta = event.metaKey || event.ctrlKey;
-  const key = event.key;
-  const lower = key.toLowerCase();
-  if (meta && lower === 'z') {
-    event.preventDefault();
-    if (event.shiftKey) redo();
-    else undo();
-    return;
-  }
-  if (meta && lower === 'a') {
-    event.preventDefault();
-    selectAllNotes();
-    return;
-  }
-  if (meta && lower === 'd') {
-    // Duplicate the selected arrangement clip right after itself.
-    const clip = store.activeClip;
-    if (focusZone.value === 'arrange' && clip) {
-      event.preventDefault();
-      duplicateClip(clip.id, clip.startPpq + clip.lengthPpq);
-    }
-    return;
-  }
-  if (meta && lower === 's') {
-    event.preventDefault();
-    saveProjectAction();
-    return;
-  }
-  if (meta && lower === 'g') {
-    event.preventDefault();
-    store.snapEnabled = !store.snapEnabled;
-    return;
-  }
-  if (meta && lower === 'e') {
-    event.preventDefault();
-    toggleScorePanel();
-    return;
-  }
-  if (meta) return;
-  if (key === ' ') {
-    event.preventDefault();
-    togglePlayback();
-    return;
-  }
-  if (lower === 'q') {
-    event.preventDefault();
-    quantizeSelection();
-    return;
-  }
-  if (lower === 'l') {
-    event.preventDefault();
-    toggleLoop();
-    return;
-  }
-  if (lower === 'b') {
-    // Split the clip under the playhead (arrangement focus only).
-    if (focusZone.value === 'arrange') {
-      event.preventDefault();
-      arrangementRef.value?.cutAtPlayhead();
-    }
-    return;
-  }
-  if (key === 'Backspace' || key === 'Delete') {
-    if (focusZone.value === 'arrange' && store.clipId !== -1) {
-      event.preventDefault();
-      deleteClip(store.clipId);
-      return;
-    }
-    if (store.selection.size > 0) {
-      event.preventDefault();
-      deleteSelectedNotes();
-    }
-  }
+  const scope = focusZone.value === 'arrange' ? 'arrangement' : 'editor';
+  const actionId = shortcuts.match(event, scope);
+  if (actionId === null) return;
+  if (runShortcutAction(actionId)) event.preventDefault();
 }
 
 // --- Lifecycle ----------------------------------------------------------------
@@ -1074,6 +1293,12 @@ onMounted(async () => {
 onBeforeUnmount(async () => {
   window.removeEventListener('keydown', onGlobalKeyDown);
   window.removeEventListener('pointerdown', onWindowPointerDown);
+  openDialogTrap?.deactivate();
+  openDialogTrap = null;
+  if (dividerRaf !== 0) {
+    cancelAnimationFrame(dividerRaf);
+    dividerRaf = 0;
+  }
   if (applyTimer !== null) {
     clearTimeout(applyTimer);
     applyTimer = null;
@@ -1089,32 +1314,48 @@ onBeforeUnmount(async () => {
   <div class="app-shell">
     <header class="transport-bar">
       <span class="app-title">sonare studio</span>
-      <div ref="projectMenuRoot" class="project-menu">
-        <button type="button" class="menu-trigger" @click="projectMenuOpen = !projectMenuOpen">
+      <div ref="projectMenuRoot" class="project-menu" @keydown.escape="closeProjectMenu">
+        <button
+          type="button"
+          class="menu-trigger"
+          aria-haspopup="menu"
+          :aria-expanded="projectMenuOpen"
+          @click="projectMenuOpen = !projectMenuOpen"
+        >
           Project ▾
         </button>
-        <div v-if="projectMenuOpen" class="menu-pop">
-          <button type="button" @click="openNewDialog">New…</button>
-          <button type="button" :disabled="!opfsAvailable" @click="openOpenDialog">Open…</button>
+        <div v-if="projectMenuOpen" class="menu-pop" role="menu" aria-label="Project menu">
+          <button type="button" role="menuitem" @click="openNewDialog">New…</button>
+          <button type="button" role="menuitem" :disabled="!opfsAvailable" @click="openOpenDialog">
+            Open…
+          </button>
           <button
             type="button"
             class="menu-save"
+            role="menuitem"
             :disabled="!opfsAvailable"
             title="Save to browser storage (Cmd+S)"
             @click="saveProjectAction"
           >
             Save
           </button>
-          <button type="button" :disabled="!opfsAvailable" @click="saveProjectAsAction">
+          <button
+            type="button"
+            role="menuitem"
+            :disabled="!opfsAvailable"
+            @click="saveProjectAsAction"
+          >
             Save As…
           </button>
           <hr class="menu-rule" />
-          <button type="button" @click="importAudioAction">Import audio…</button>
+          <button type="button" role="menuitem" @click="importAudioAction">Import audio…</button>
           <hr class="menu-rule" />
-          <button type="button" @click="exportSzdAction">Export .szd</button>
-          <button type="button" @click="exportSmfAction">Export SMF</button>
-          <button type="button" @click="openExportDialog">Export Audio…</button>
-          <button type="button" @click="exportDawprojectAction">Export DAWproject</button>
+          <button type="button" role="menuitem" @click="exportSzdAction">Export .szd</button>
+          <button type="button" role="menuitem" @click="exportSmfAction">Export SMF</button>
+          <button type="button" role="menuitem" @click="openExportDialog">Export Audio…</button>
+          <button type="button" role="menuitem" @click="exportDawprojectAction">
+            Export DAWproject
+          </button>
         </div>
       </div>
       <input
@@ -1130,13 +1371,18 @@ onBeforeUnmount(async () => {
       <span class="project-name" :title="store.projectName">
         {{ store.projectName }}<span v-if="dirty" class="dirty-dot" title="Unsaved changes">•</span>
       </span>
-      <button type="button" :disabled="busy || handle !== null" @click="startEngine">
+      <button
+        type="button"
+        class="engine-start"
+        :disabled="busy || handle !== null"
+        @click="startEngine"
+      >
         Start engine
       </button>
       <button type="button" :disabled="!handle" @click="togglePlayback">
         {{ isPlaying ? 'Stop' : 'Play' }}
       </button>
-      <div ref="recordMenuRoot" class="record-group">
+      <div ref="recordMenuRoot" class="record-group" @keydown.escape="recordMenuOpen = false">
         <button
           type="button"
           class="record-button"
@@ -1144,6 +1390,8 @@ onBeforeUnmount(async () => {
             recording: recording.isRecording.value,
             'counting-in': recording.isCountingIn.value,
           }"
+          aria-label="Record"
+          :aria-pressed="recording.isRecording.value"
           :disabled="!handle || (!recording.isRecording.value && recording.armedTrackId.value === null)"
           :title="
             recording.isRecording.value
@@ -1157,12 +1405,20 @@ onBeforeUnmount(async () => {
         <button
           type="button"
           class="record-settings"
+          aria-label="Recording settings"
+          aria-haspopup="true"
+          :aria-expanded="recordMenuOpen"
           title="Recording settings"
           @click="recordMenuOpen = !recordMenuOpen"
         >
           ▾
         </button>
-        <div v-if="recordMenuOpen" class="menu-pop record-pop">
+        <div
+          v-if="recordMenuOpen"
+          class="menu-pop record-pop"
+          role="group"
+          aria-label="Recording settings"
+        >
           <label class="bar-field">
             <input
               type="checkbox"
@@ -1173,10 +1429,12 @@ onBeforeUnmount(async () => {
           </label>
           <label class="bar-field">
             Count-in
-            <select v-model.number="recording.countInBars.value">
+            <select :value="recording.countInBars.value" @change="onCountInChange">
               <option :value="0">Off</option>
               <option :value="1">1 bar</option>
               <option :value="2">2 bars</option>
+              <option :value="3">3 bars</option>
+              <option :value="4">4 bars</option>
             </select>
           </label>
         </div>
@@ -1226,10 +1484,65 @@ onBeforeUnmount(async () => {
         type="button"
         class="devices-toggle"
         :class="{ active: deviceRackOpen }"
+        :aria-pressed="deviceRackOpen"
         title="Toggle the device rack panel"
         @click="toggleDeviceRack"
       >
         Devices
+      </button>
+      <div ref="layoutMenuRoot" class="project-menu" @keydown.escape="layoutMenuOpen = false">
+        <button
+          type="button"
+          class="menu-trigger"
+          aria-haspopup="menu"
+          :aria-expanded="layoutMenuOpen"
+          title="Workspace layouts (presets and saved layouts)"
+          @click="layoutMenuOpen = !layoutMenuOpen"
+        >
+          Layout ▾
+        </button>
+        <div v-if="layoutMenuOpen" class="menu-pop" role="menu" aria-label="Layout menu">
+          <button
+            v-for="layout in namedLayouts.layouts.value"
+            :key="layout.name"
+            type="button"
+            role="menuitem"
+            @click="applyNamedLayout(layout.name)"
+          >
+            {{ layout.name }}
+          </button>
+          <hr class="menu-rule" />
+          <button type="button" role="menuitem" @click="saveCurrentLayoutAction">
+            Save current…
+          </button>
+        </div>
+      </div>
+      <div ref="helpMenuRoot" class="project-menu" @keydown.escape="helpMenuOpen = false">
+        <button
+          type="button"
+          class="menu-trigger"
+          aria-haspopup="menu"
+          :aria-expanded="helpMenuOpen"
+          @click="helpMenuOpen = !helpMenuOpen"
+        >
+          Help ▾
+        </button>
+        <div v-if="helpMenuOpen" class="menu-pop" role="menu" aria-label="Help menu">
+          <button type="button" role="menuitem" @click="openShortcutsHelp">
+            Keyboard shortcuts (?)
+          </button>
+          <button type="button" role="menuitem" @click="openWelcomeTour">Welcome tour</button>
+        </div>
+      </div>
+      <button
+        type="button"
+        class="settings-button"
+        aria-label="Settings"
+        aria-haspopup="dialog"
+        title="Settings (Cmd+,)"
+        @click="settingsOpen = true"
+      >
+        ⚙
       </button>
       <span class="bar-spacer" />
       <span v-if="autosave.lastSavedAt.value" class="autosave-state">
@@ -1263,19 +1576,27 @@ onBeforeUnmount(async () => {
         class="split-divider"
         role="separator"
         aria-orientation="horizontal"
-        title="Drag to resize the arrangement"
+        aria-label="Resize the arrangement zone"
+        :aria-valuenow="Math.round(arrangeHeight)"
+        :aria-valuemin="ARRANGE_MIN_HEIGHT"
+        :aria-valuemax="ARRANGE_HEIGHT_MAX_PX"
+        tabindex="0"
+        title="Drag or use the arrow keys to resize the arrangement"
         @pointerdown="onDividerPointerDown"
         @pointermove="onDividerPointerMove"
         @pointerup="onDividerPointerUp"
         @pointercancel="onDividerPointerUp"
+        @keydown="onDividerKeydown"
       />
 
       <section class="editor-dock" @pointerdown.capture="focusZone = 'editor'">
-        <div class="dock-tabs">
+        <div class="dock-tabs" role="tablist" aria-label="Editor panels">
           <button
             type="button"
             class="dock-tab dock-tab-toggle"
             :class="{ active: dockTab === 'roll' }"
+            role="tab"
+            :aria-selected="dockTab === 'roll'"
             @click="dockTab = 'roll'"
           >
             Piano Roll
@@ -1284,6 +1605,8 @@ onBeforeUnmount(async () => {
             type="button"
             class="dock-tab dock-tab-toggle"
             :class="{ active: dockTab === 'mixer' }"
+            role="tab"
+            :aria-selected="dockTab === 'mixer'"
             @click="dockTab = 'mixer'"
           >
             Mixer
@@ -1292,6 +1615,8 @@ onBeforeUnmount(async () => {
             type="button"
             class="dock-tab dock-tab-toggle"
             :class="{ active: dockTab === 'mastering' }"
+            role="tab"
+            :aria-selected="dockTab === 'mastering'"
             @click="dockTab = 'mastering'"
           >
             Mastering
@@ -1300,6 +1625,8 @@ onBeforeUnmount(async () => {
             type="button"
             class="dock-tab dock-tab-toggle"
             :class="{ active: dockTab === 'steps' }"
+            role="tab"
+            :aria-selected="dockTab === 'steps'"
             @click="dockTab = 'steps'"
           >
             Steps
@@ -1308,6 +1635,8 @@ onBeforeUnmount(async () => {
             type="button"
             class="dock-tab dock-tab-toggle"
             :class="{ active: dockTab === 'lists' }"
+            role="tab"
+            :aria-selected="dockTab === 'lists'"
             @click="dockTab = 'lists'"
           >
             Lists
@@ -1316,6 +1645,8 @@ onBeforeUnmount(async () => {
             type="button"
             class="dock-tab dock-tab-toggle"
             :class="{ active: dockTab === 'media' }"
+            role="tab"
+            :aria-selected="dockTab === 'media'"
             @click="dockTab = 'media'"
           >
             Media
@@ -1324,14 +1655,17 @@ onBeforeUnmount(async () => {
             type="button"
             class="dock-tab dock-tab-toggle"
             :class="{ active: dockTab === 'sample' }"
+            role="tab"
+            :aria-selected="dockTab === 'sample'"
             @click="dockTab = 'sample'"
           >
             Sample
           </button>
           <button
             type="button"
-            class="dock-tab dock-tab-toggle"
+            class="dock-tab dock-tab-toggle dock-tab-score"
             :class="{ active: scoreVisible }"
+            :aria-pressed="scoreVisible"
             title="Toggle the score panel (Cmd+E)"
             @click="toggleScorePanel"
           >
@@ -1410,6 +1744,15 @@ onBeforeUnmount(async () => {
               {{ !handle ? 'engine off' : applyPending ? 'pending…' : `${scheduledCount} clip(s)` }}
             </span>
           </div>
+          <HintCard
+            v-if="!handle"
+            class="engine-hint"
+            message="The audio engine is off — edits work now, but nothing sounds until it runs and you press Play."
+          >
+            <template #action>
+              <button type="button" :disabled="busy" @click="startEngine">Start engine</button>
+            </template>
+          </HintCard>
           <InfoLine />
           <PianoRollEditor class="piano-roll-host" :position-ppq="() => positionPpq" />
           <ScorePanel
@@ -1462,9 +1805,11 @@ onBeforeUnmount(async () => {
             @asset-created="onAssetCreated"
             @apply-asset="onApplyAsset"
           />
-          <p v-else class="dock-empty">
-            Select an audio clip in the arrangement to edit its audio here.
-          </p>
+          <HintCard
+            v-else
+            title="Sample editor"
+            message="Select an audio clip in the arrangement to edit its audio here."
+          />
         </section>
       </section>
       </div>
@@ -1490,9 +1835,8 @@ onBeforeUnmount(async () => {
       </div>
       <p v-if="renderInfo">{{ renderInfo }}</p>
       <p class="diag-shortcuts">
-        Shortcuts: Space play/stop · Q quantize · L loop · B split clip at playhead (arrangement) ·
-        Delete remove notes / selected clip · Cmd+Z undo · Cmd+Shift+Z redo · Cmd+A select all ·
-        Cmd+D duplicate clip (arrangement) · Cmd+S save · Cmd+G snap · Cmd+E score
+        Shortcuts: press ? for the full cheatsheet. Keys are remappable in Settings (⚙) →
+        Shortcuts.
       </p>
       <ul v-if="handle">
         <li>mode: <strong>{{ handle.capabilities.mode }}</strong></li>
@@ -1529,7 +1873,15 @@ onBeforeUnmount(async () => {
       class="modal-overlay"
       @click.self="openDialogOpen = false"
     >
-      <div class="modal" role="dialog" aria-label="Open project">
+      <div
+        ref="openDialogRef"
+        class="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Open project"
+        tabindex="-1"
+        @keydown="onOpenDialogKeydown"
+      >
         <h2 class="modal-title">Open project</h2>
         <ul class="stored-list">
           <li v-for="info in storedProjects" :key="info.name" class="stored-row">
@@ -1560,6 +1912,16 @@ onBeforeUnmount(async () => {
         </div>
       </div>
     </div>
+
+    <SettingsDialog
+      :open="settingsOpen"
+      :layout-bindings="layoutBindings"
+      @close="settingsOpen = false"
+    />
+
+    <ShortcutsHelp :open="helpOpen" @close="helpOpen = false" />
+
+    <WelcomeTour ref="tourRef" :steps="TOUR_STEPS" />
   </div>
 </template>
 
@@ -1779,6 +2141,27 @@ onBeforeUnmount(async () => {
   box-shadow: inset 0 -2px 0 #60a5fa;
 }
 
+.settings-button {
+  font-size: 14px;
+  line-height: 1;
+  padding: 0.2rem 0.45rem;
+}
+
+/* Slim, row-shaped variant of the hint card: the editor dock is short on
+   small windows, so the engine hint must not steal piano-roll height. */
+.engine-hint {
+  flex: none;
+  flex-direction: row;
+  justify-content: center;
+  max-width: none;
+  margin: 0.3rem 0.75rem 0;
+  padding: 0.3rem 0.75rem;
+}
+
+.engine-hint :deep(.hint-action) {
+  margin-top: 0;
+}
+
 .arrange-zone {
   flex: 0 0 auto;
   min-height: 120px;
@@ -1797,7 +2180,8 @@ onBeforeUnmount(async () => {
   touch-action: none;
 }
 
-.split-divider:hover {
+.split-divider:hover,
+.split-divider:focus-visible {
   background: #1b2330;
 }
 
@@ -1900,13 +2284,6 @@ onBeforeUnmount(async () => {
 .sample-host {
   flex: 1;
   min-height: 0;
-}
-
-.dock-empty {
-  margin: 0;
-  padding: 0.75rem;
-  font-size: 12px;
-  color: #5b6270;
 }
 
 .modal-overlay {

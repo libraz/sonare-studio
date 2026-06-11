@@ -2,6 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import type { ProjectDocument } from '@/project/serialization';
 import { createTemplate, TEMPLATE_NAMES, type TemplateName } from '@/project/templates';
+import { wrapTabFocus } from '@/ui/settings/focus-trap';
 
 /**
  * Modal template picker for creating a new project. Lists the built-in
@@ -43,11 +44,20 @@ const dialogRef = ref<HTMLElement | null>(null);
 /** Fresh document of the selected template, used for the track preview. */
 const preview = computed<ProjectDocument>(() => createTemplate(selected.value));
 
+/** Element focused before the dialog opened, restored on close. */
+let previousFocus: HTMLElement | null = null;
+
 watch(
   () => props.open,
-  (open) => {
-    if (!open) return;
-    void nextTick(() => dialogRef.value?.focus());
+  (open, wasOpen) => {
+    if (open && !wasOpen) {
+      const active = document.activeElement;
+      previousFocus = active instanceof HTMLElement ? active : null;
+      void nextTick(() => dialogRef.value?.focus());
+    } else if (!open && wasOpen) {
+      if (previousFocus?.isConnected) previousFocus.focus();
+      previousFocus = null;
+    }
   },
 );
 
@@ -68,6 +78,7 @@ function moveSelection(delta: number): void {
 }
 
 function onKeydown(event: KeyboardEvent): void {
+  if (dialogRef.value !== null && wrapTabFocus(event, dialogRef.value)) return;
   switch (event.key) {
     case 'Escape':
       event.preventDefault();

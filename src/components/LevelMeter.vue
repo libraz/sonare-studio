@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { METER_SILENCE_DB, type MeterBridge } from '@/engine/meters';
+import { isMeterAtFloor } from '@/ui/mixer/meter-model';
 
 const props = withDefaults(
   defineProps<{
@@ -39,6 +40,8 @@ interface ChannelState {
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 let rafId = 0;
 let lastTs = 0;
+/** True once the floor state was painted; idle frames are then skipped. */
+let idleFrameDrawn = false;
 const channels: ChannelState[] = [
   { peak: METER_SILENCE_DB, rms: METER_SILENCE_DB, hold: METER_SILENCE_DB, holdAt: 0 },
   { peak: METER_SILENCE_DB, rms: METER_SILENCE_DB, hold: METER_SILENCE_DB, holdAt: 0 },
@@ -53,6 +56,8 @@ function resizeCanvas(): void {
   canvas.height = Math.round(props.height * dpr);
   canvas.style.width = `${props.width}px`;
   canvas.style.height = `${props.height}px`;
+  // Resizing clears the backing store, so the next frame must repaint.
+  idleFrameDrawn = false;
 }
 
 /** Maps a dB value to a y coordinate (0 dB at top, minDb at bottom). */
@@ -143,6 +148,14 @@ function draw(ts: number): void {
   const levels = props.bridge?.latest;
   updateChannel(channels[0], levels?.peakDbL ?? props.minDb, levels?.rmsDbL ?? props.minDb, dt, ts);
   updateChannel(channels[1], levels?.peakDbR ?? props.minDb, levels?.rmsDbR ?? props.minDb, dt, ts);
+
+  // Silent meters render identically every frame: paint the floor state once,
+  // then skip the canvas work until levels rise again.
+  const atFloor = channels.every((state) =>
+    isMeterAtFloor(state.peak, state.rms, state.hold, props.minDb),
+  );
+  if (atFloor && idleFrameDrawn) return;
+  idleFrameDrawn = atFloor;
 
   const dpr = window.devicePixelRatio || 1;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);

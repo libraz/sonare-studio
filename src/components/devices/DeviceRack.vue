@@ -346,11 +346,13 @@ function selectInsert(index: number): void {
           class="instrument-button"
           :class="{ selected: selectedDevice === 'instrument' }"
           :title="'Change instrument'"
+          aria-haspopup="dialog"
+          :aria-expanded="pickerOpen"
           @click="onInstrumentClick"
         >
           <span class="instrument-kind">{{ instrumentKindLabel(instrument) }}</span>
           <span class="instrument-name">{{ instrumentCaption }}</span>
-          <span class="instrument-caret">▾</span>
+          <span class="instrument-caret" aria-hidden="true">▾</span>
         </button>
 
         <div v-if="pickerOpen" class="instrument-picker" role="dialog" aria-label="Instrument picker">
@@ -498,6 +500,8 @@ function selectInsert(index: number): void {
               class="insert-power"
               :class="{ on: insertSlot.enabled }"
               :title="insertSlot.enabled ? 'Bypass insert' : 'Enable insert'"
+              :aria-label="`${insertLabel(insertSlot.processor)} power`"
+              :aria-pressed="insertSlot.enabled"
               @click="onToggleInsert(index)"
             >
               ●
@@ -515,6 +519,7 @@ function selectInsert(index: number): void {
               type="button"
               class="insert-remove"
               title="Remove insert"
+              :aria-label="`Remove ${insertLabel(insertSlot.processor)}`"
               @click="onRemoveInsert(index)"
             >
               ×

@@ -22,6 +22,7 @@ import {
   sanitizePatchDraft,
 } from '@/ui/devices/patch-draft';
 import { resolveSynthEnums } from '@/ui/devices/synth-enums';
+import { wrapTabFocus } from '@/ui/settings/focus-trap';
 import type { SynthEnumTables, SynthPatch } from '@/wasm/index.js';
 
 /**
@@ -92,10 +93,24 @@ function buildDraft(): void {
   error.value = '';
 }
 
+/** Element focused before the dialog opened, restored on close. */
+let previousFocus: HTMLElement | null = null;
+
 watch(
   () => [props.open, props.trackId] as const,
-  ([open]) => {
-    if (!open) return;
+  ([open], previous) => {
+    const wasOpen = previous?.[0] === true;
+    if (!open) {
+      if (wasOpen) {
+        if (previousFocus?.isConnected) previousFocus.focus();
+        previousFocus = null;
+      }
+      return;
+    }
+    if (!wasOpen) {
+      const active = document.activeElement;
+      previousFocus = active instanceof HTMLElement ? active : null;
+    }
     refreshEnums();
     buildDraft();
     void nextTick(() => {
@@ -292,6 +307,7 @@ function onClose(): void {
 }
 
 function onKeydown(event: KeyboardEvent): void {
+  if (dialogRef.value !== null && wrapTabFocus(event, dialogRef.value)) return;
   if (event.key === 'Escape') {
     event.preventDefault();
     onClose();
@@ -372,7 +388,14 @@ function onKeydown(event: KeyboardEvent): void {
 
         <section class="patch-section" aria-label="Amp envelope">
           <h3 class="section-title">AMP ENV</h3>
-          <canvas ref="envelopeCanvas" class="envelope-canvas" width="168" height="48" />
+          <canvas
+            ref="envelopeCanvas"
+            class="envelope-canvas"
+            width="168"
+            height="48"
+            role="img"
+            aria-label="Amp envelope curve"
+          />
           <label v-for="field in ampFields" :key="field.id" class="field-row">
             <span class="field-label">{{ field.label }}</span>
             <input

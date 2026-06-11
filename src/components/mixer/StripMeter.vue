@@ -4,6 +4,7 @@ import type { MeterBridge } from '@/engine/meters';
 import {
   advanceMeterChannel,
   createMeterChannel,
+  isMeterAtFloor,
   METER_MIN_DB,
   type MeterChannelModel,
   meterFraction,
@@ -43,6 +44,8 @@ const YELLOW_BELOW_DB = -6;
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 let rafId = 0;
 let lastTs = 0;
+/** True once the floor state was painted; idle frames are then skipped. */
+let idleFrameDrawn = false;
 const channels: MeterChannelModel[] = [
   createMeterChannel(props.minDb),
   createMeterChannel(props.minDb),
@@ -66,6 +69,8 @@ function resizeCanvas(): void {
   canvas.height = Math.round(props.height * dpr);
   canvas.style.width = `${props.width}px`;
   canvas.style.height = `${props.height}px`;
+  // Resizing clears the backing store, so the next frame must repaint.
+  idleFrameDrawn = false;
 }
 
 /** dB to y inside the bar area (below the clip LED). */
@@ -170,6 +175,13 @@ function draw(ts: number): void {
     props.minDb,
   );
   clipped.value = channels[0].clipped || channels[1].clipped;
+  // Silent meters render identically every frame: paint the floor state once,
+  // then skip the canvas work until levels rise again.
+  const atFloor = channels.every((model) =>
+    isMeterAtFloor(model.peakDb, model.rmsDb, model.holdDb, props.minDb),
+  );
+  if (atFloor && idleFrameDrawn) return;
+  idleFrameDrawn = atFloor;
   const dpr = window.devicePixelRatio || 1;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   drawFrame(ctx);
@@ -179,6 +191,8 @@ function onClick(): void {
   if (props.placeholder) return;
   for (const channel of channels) resetMeterClip(channel);
   clipped.value = false;
+  // The clip LED changed; force a repaint even when the bars are at rest.
+  idleFrameDrawn = false;
 }
 
 onMounted(() => {

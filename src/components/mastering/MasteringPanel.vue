@@ -419,6 +419,8 @@ onBeforeUnmount(() => {
           class="preset-button"
           :class="{ set: chain.preset !== undefined }"
           title="Mastering preset"
+          aria-haspopup="menu"
+          :aria-expanded="presetMenuOpen"
           @click="togglePresetMenu"
         >
           {{ presetLabel }} ▾
@@ -467,12 +469,14 @@ onBeforeUnmount(() => {
             @drop="onDrop(index)"
             @dragend="onDragEnd"
           >
-            <span class="chain-drag" title="Drag to reorder">⋮⋮</span>
+            <span class="chain-drag" title="Drag to reorder" aria-hidden="true">⋮⋮</span>
             <button
               type="button"
               class="chain-power"
               :class="{ on: slot.enabled }"
               :title="slot.enabled ? 'Bypass processor' : 'Enable processor'"
+              :aria-label="`${humanizeInsertName(slot.processor)} power`"
+              :aria-pressed="slot.enabled"
               @click="onToggleEnabled(index)"
             />
             <button
@@ -489,6 +493,7 @@ onBeforeUnmount(() => {
               type="button"
               class="chain-remove"
               title="Remove processor"
+              :aria-label="`Remove ${humanizeInsertName(slot.processor)}`"
               @click="onRemove(index)"
             >
               ×
@@ -510,7 +515,14 @@ onBeforeUnmount(() => {
           </div>
         </template>
         <div ref="addMenuEl" class="chain-add-wrap">
-          <button type="button" class="chain-add" title="Add processor" @click="toggleAddMenu">
+          <button
+            type="button"
+            class="chain-add"
+            title="Add processor"
+            aria-haspopup="menu"
+            :aria-expanded="addMenuOpen"
+            @click="toggleAddMenu"
+          >
             + Processor
           </button>
           <div v-if="addMenuOpen" class="chain-catalog" role="menu">
@@ -555,6 +567,8 @@ onBeforeUnmount(() => {
               :class="{ active: variant === 'processed' }"
               :disabled="!previewState?.processed"
               title="With mastering chain"
+              aria-label="Preview with mastering chain"
+              :aria-pressed="variant === 'processed'"
               @click="onSelectVariant('processed')"
             >
               A
@@ -565,6 +579,8 @@ onBeforeUnmount(() => {
               :class="{ active: variant === 'bypassed' }"
               :disabled="!previewState?.bypassed"
               title="Chain bypassed"
+              aria-label="Preview with chain bypassed"
+              :aria-pressed="variant === 'bypassed'"
               @click="onSelectVariant('bypassed')"
             >
               B

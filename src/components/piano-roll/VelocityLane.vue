@@ -315,7 +315,7 @@ watch(
     @pointerup="onPointerUp"
     @pointercancel="onPointerCancel"
   >
-    <canvas ref="canvas" class="velocity-canvas" />
+    <canvas ref="canvas" class="velocity-canvas" role="img" aria-label="Note parameter lane" />
   </div>
 </template>
 
