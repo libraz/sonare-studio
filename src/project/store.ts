@@ -1,9 +1,11 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { ensureWasm } from '@/lib/wasm';
+import { audioAssetUri } from '@/persistence/assets';
 import type { Project, ProjectMidiEvent } from '@/wasm/index.js';
-import type { ProjectDocument } from './serialization';
+import type { DocumentClip, ProjectDocument } from './serialization';
 import {
+  type ClipKind,
   DEFAULT_SECTION_COLOR,
   type EditorClip,
   type EditorMarker,
@@ -48,6 +50,12 @@ let project: Project | null = null;
 let nextNoteId = 1;
 let nextMarkerId = 1;
 let nextSectionId = 1;
+// Audio sources are registered on the wasm Project once per asset; this map
+// remembers the Project-side source id per asset id for the current Project
+// instance (reset whenever the Project is replaced). It is advisory: callers
+// must re-validate entries against project.sourceCount() because undo can
+// roll source registrations back (see addAudioClip in src/project/commands.ts).
+let audioSourceIds = new Map<string, number>();
 
 /**
  * Returns the live wasm Project handle.
@@ -82,6 +90,36 @@ export function allocateMarkerId(): number {
 /** Allocates a fresh editor section id (monotonic, never reused in a session). */
 export function allocateSectionId(): number {
   return nextSectionId++;
+}
+
+/**
+ * Returns the wasm Project source id previously registered for an asset, or
+ * undefined. Entries can be stale after undo; validate against
+ * project.sourceCount() before reuse.
+ */
+export function getAudioSourceId(assetId: string): number | undefined {
+  return audioSourceIds.get(assetId);
+}
+
+/** Records the wasm Project source id registered for an asset. */
+export function setAudioSourceId(assetId: string, sourceId: number): void {
+  audioSourceIds.set(assetId, sourceId);
+}
+
+/**
+ * Placeholder inline PCM attached when registering an audio clip source.
+ *
+ * The binding rejects non-MIDI clips without non-empty audio data, while the
+ * app streams the real PCM from the asset store at schedule time
+ * (src/project/scheduling.ts) — sources are by-reference via their
+ * "asset:<id>" URI. One silent frame keeps the wasm-side copy minimal.
+ */
+export function placeholderSourceAudio(): {
+  audio: Float32Array;
+  audioChannels: number;
+  audioSampleRate: number;
+} {
+  return { audio: new Float32Array(1), audioChannels: 1, audioSampleRate: DEFAULT_SAMPLE_RATE };
 }
 
 /** UMP message-type nibble for MIDI 1.0 channel-voice words. */
@@ -119,6 +157,12 @@ interface SerializedTrack {
   name: string;
 }
 
+/** Shape of one serialized clip fade (the binding nests length and curve). */
+interface SerializedClipFade {
+  length_ppq?: number;
+  curve?: number;
+}
+
 /** Shape of one serialized clip inside the Project JSON document. */
 interface SerializedClip {
   id: number;
@@ -129,6 +173,22 @@ interface SerializedClip {
   gain: number;
   loop_mode: number;
   loop_length_ppq: number;
+  /** Flat fade lengths (older bindings); omitted when not serialized. */
+  fade_in_ppq?: number;
+  fade_out_ppq?: number;
+  /** Nested fade objects (current binding); omitted when not serialized. */
+  fade_in?: SerializedClipFade;
+  fade_out?: SerializedClipFade;
+}
+
+/** Reads a clip fade length from either serialized form, or null. */
+function serializedFadePpq(
+  flat: number | undefined,
+  nested: SerializedClipFade | undefined,
+): number | null {
+  if (typeof flat === 'number') return flat;
+  if (nested && typeof nested.length_ppq === 'number') return nested.length_ppq;
+  return null;
 }
 
 /** Minimal slice of the Project JSON document this store reads. */
@@ -519,7 +579,7 @@ export const useProjectStore = defineStore('project', () => {
           (activeHints && serialized.id === clipId.value ? activeHints : null) ??
           previous?.notes ??
           [];
-        return {
+        const entry: EditorClip = {
           id: serialized.id,
           trackId: serialized.track_id,
           name: previous?.name ?? `Clip ${serialized.id}`,
@@ -531,6 +591,20 @@ export const useProjectStore = defineStore('project', () => {
           loopLengthPpq: serialized.loop_length_ppq ?? 0,
           notes: assignNoteIds(pairEventsIntoNotes(events), hints),
         };
+        // Clip kind and asset reference are app-level mirror metadata (the
+        // Project document does not expose them); fade lengths prefer the
+        // serialized values when the binding reports them.
+        if (previous?.kind !== undefined) entry.kind = previous.kind;
+        if (previous?.assetId !== undefined) entry.assetId = previous.assetId;
+        const fadeIn =
+          serializedFadePpq(serialized.fade_in_ppq, serialized.fade_in) ?? previous?.fadeInPpq ?? 0;
+        if (fadeIn > 0) entry.fadeInPpq = fadeIn;
+        const fadeOut =
+          serializedFadePpq(serialized.fade_out_ppq, serialized.fade_out) ??
+          previous?.fadeOutPpq ??
+          0;
+        if (fadeOut > 0) entry.fadeOutPpq = fadeOut;
+        return entry;
       });
     nextClips.sort(
       (a, b) =>
@@ -584,6 +658,7 @@ export const useProjectStore = defineStore('project', () => {
       lengthPpq: DEFAULT_CLIP_LENGTH_PPQ,
     });
     project = created;
+    audioSourceIds = new Map();
     projectName.value = DEFAULT_PROJECT_NAME;
     tracks.value = [
       {
@@ -643,7 +718,8 @@ export const useProjectStore = defineStore('project', () => {
         created.setTimeSignatures(doc.timeSignatures.map((s) => ({ ...s })));
       }
       const trackMirror: EditorTrack[] = [];
-      const clipNames = new Map<number, string>();
+      const clipMeta = new Map<number, DocumentClip>();
+      const loadedSourceIds = new Map<string, number>();
       let firstClipId = -1;
       doc.tracks.forEach((track, index) => {
         const trackId = created.addTrack({ kind: track.kind, name: track.name });
@@ -659,29 +735,72 @@ export const useProjectStore = defineStore('project', () => {
           order: index,
         });
         for (const clip of track.clips) {
-          const newClipId = created.addClip({
-            trackId,
-            isMidi: true,
-            startPpq: clip.startPpq,
-            lengthPpq: clip.lengthPpq,
-            sourceOffsetPpq: clip.sourceOffsetPpq,
-            gain: clip.gain,
-          });
+          const isAudio = clip.kind === 'audio' && typeof clip.assetId === 'string';
+          let newClipId: number;
+          if (isAudio) {
+            const assetId = clip.assetId as string;
+            const existingSource = loadedSourceIds.get(assetId);
+            if (existingSource === undefined) {
+              // First clip of this asset registers the by-reference source
+              // (with the placeholder PCM the binding insists on).
+              newClipId = created.addClip({
+                trackId,
+                isMidi: false,
+                startPpq: clip.startPpq,
+                lengthPpq: clip.lengthPpq,
+                sourceOffsetPpq: clip.sourceOffsetPpq,
+                gain: clip.gain,
+                ...placeholderSourceAudio(),
+                sourceUri: audioAssetUri(assetId),
+              });
+              loadedSourceIds.set(assetId, created.sourceCount());
+            } else {
+              // Later clips register a throwaway placeholder source and are
+              // rebound to the asset's shared source right after.
+              newClipId = created.addClip({
+                trackId,
+                isMidi: false,
+                startPpq: clip.startPpq,
+                lengthPpq: clip.lengthPpq,
+                sourceOffsetPpq: clip.sourceOffsetPpq,
+                gain: clip.gain,
+                ...placeholderSourceAudio(),
+              });
+              created.setClipSource(newClipId, existingSource);
+            }
+            if ((clip.fadeInPpq ?? 0) > 0 || (clip.fadeOutPpq ?? 0) > 0) {
+              created.setClipFade(
+                newClipId,
+                { lengthPpq: clip.fadeInPpq ?? 0 },
+                { lengthPpq: clip.fadeOutPpq ?? 0 },
+              );
+            }
+          } else {
+            newClipId = created.addClip({
+              trackId,
+              isMidi: true,
+              startPpq: clip.startPpq,
+              lengthPpq: clip.lengthPpq,
+              sourceOffsetPpq: clip.sourceOffsetPpq,
+              gain: clip.gain,
+            });
+            if (clip.notes.length > 0) {
+              // notesToProjectEvents reads the module-scope wasm handle, which
+              // is already set above.
+              created.setMidiEvents(newClipId, notesToProjectEvents(clip.notes));
+            }
+          }
           if (clip.loopEnabled) {
             created.setClipLoop(newClipId, 'loop', clip.loopLengthPpq || clip.lengthPpq);
           }
-          if (clip.notes.length > 0) {
-            // notesToProjectEvents reads the module-scope wasm handle, which
-            // is already set above.
-            created.setMidiEvents(newClipId, notesToProjectEvents(clip.notes));
-          }
-          clipNames.set(newClipId, clip.name);
+          clipMeta.set(newClipId, clip);
           if (firstClipId < 0) firstClipId = newClipId;
         }
       });
 
       if (project) project.delete();
       project = created;
+      audioSourceIds = loadedSourceIds;
       projectName.value = doc.name || DEFAULT_PROJECT_NAME;
       tracks.value = trackMirror;
       clips.value = [];
@@ -704,12 +823,21 @@ export const useProjectStore = defineStore('project', () => {
       selection.value = new Set();
       initialized.value = true;
       refresh();
-      // Clip names are app metadata: apply them after refresh built the clip
-      // mirror from the Project.
-      clips.value = clips.value.map((clip) => ({
-        ...clip,
-        name: clipNames.get(clip.id) ?? clip.name,
-      }));
+      // Clip names, kinds and asset references are app metadata: apply them
+      // after refresh built the clip mirror from the Project.
+      clips.value = clips.value.map((clip) => {
+        const meta = clipMeta.get(clip.id);
+        if (!meta) return clip;
+        const next: EditorClip = { ...clip, name: meta.name };
+        const kind: ClipKind = meta.kind === 'audio' ? 'audio' : 'midi';
+        if (kind === 'audio') {
+          next.kind = 'audio';
+          if (meta.assetId !== undefined) next.assetId = meta.assetId;
+          if ((meta.fadeInPpq ?? 0) > 0) next.fadeInPpq = meta.fadeInPpq as number;
+          if ((meta.fadeOutPpq ?? 0) > 0) next.fadeOutPpq = meta.fadeOutPpq as number;
+        }
+        return next;
+      });
     } catch (error) {
       // Keep the previous Project alive when the document fails to replay.
       if (project !== created) created.delete();
@@ -726,6 +854,7 @@ export const useProjectStore = defineStore('project', () => {
       project.delete();
       project = null;
     }
+    audioSourceIds = new Map();
     nextNoteId = 1;
     nextMarkerId = 1;
     nextSectionId = 1;

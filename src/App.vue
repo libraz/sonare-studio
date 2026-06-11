@@ -1,14 +1,17 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import ArrangementView from '@/components/arrangement/ArrangementView.vue';
 import LevelMeter from '@/components/LevelMeter.vue';
 import ProjectListsPanel from '@/components/lists/ProjectListsPanel.vue';
+import MediaBrowser from '@/components/media/MediaBrowser.vue';
 import InfoLine from '@/components/piano-roll/InfoLine.vue';
 import PianoRollEditor from '@/components/piano-roll/PianoRollEditor.vue';
 import NewProjectDialog from '@/components/project/NewProjectDialog.vue';
+import SampleEditor from '@/components/sample-editor/SampleEditor.vue';
 import ScorePanel from '@/components/score/ScorePanel.vue';
 import { useAutosave } from '@/composables/useAutosave';
 import { useMusicTyping } from '@/composables/useMusicTyping';
+import { useRecording } from '@/composables/useRecording';
 import { useStepInput } from '@/composables/useStepInput';
 import { useTransport } from '@/composables/useTransport';
 import { useWebMidi } from '@/composables/useWebMidi';
@@ -20,7 +23,9 @@ import {
   prerenderMidiClip,
 } from '@/engine/instruments';
 import { createMeterBridge, type MeterBridge } from '@/engine/meters';
+import { describeError } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
+import { loadAssetMeta } from '@/persistence/assets';
 import { downloadSzd, pickAndReadSzd } from '@/persistence/local-file';
 import {
   deleteProject,
@@ -31,12 +36,16 @@ import {
   saveProject,
 } from '@/persistence/opfs';
 import { decodeSzd, encodeSzd } from '@/persistence/szd';
+import { decodeAndIngest } from '@/project/audio-import';
 import {
+  addAudioClip,
+  addAudioTrack,
   deleteClip,
   deleteNotes,
   duplicateClip,
   quantizeSelection,
   redo,
+  setActiveClip,
   setSelection,
   setTempoSegments,
   undo,
@@ -50,6 +59,7 @@ import {
 } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { makeDemoDocument, type TemplateName } from '@/project/templates';
+import { clipKind, isAudioClip } from '@/project/types';
 import type { RealtimeEngine } from '@/wasm/index.js';
 
 /**
@@ -95,6 +105,36 @@ const store = useProjectStore();
 const stepInput = useStepInput();
 const autosave = useAutosave();
 
+// --- Recording -----------------------------------------------------------------
+
+const recording = useRecording(() => handle.value, transport);
+
+/** Armed-track list mirrored down to the arrangement track headers. */
+const armedTrackIds = computed(() =>
+  recording.armedTrackId.value === null ? [] : [recording.armedTrackId.value],
+);
+
+// Recording problems (mic denied, rejected arm, ingest failure) surface in
+// the shared error box like every other shell action.
+watch(recording.error, (message) => {
+  if (message) errorMessage.value = message;
+});
+
+/** (Dis)arm requests re-emitted from the arrangement track headers. */
+function onArmTrack(trackId: number, armed: boolean): void {
+  recording.arm(armed ? trackId : null);
+}
+
+/** Record button: starts a take, or ends it (the clip lands; playback keeps rolling). */
+function toggleRecord(): void {
+  if (recording.isRecording.value) void recording.stopRecord();
+  else void recording.record();
+}
+
+/** Record-settings popover (input monitor + count-in length). */
+const recordMenuOpen = ref(false);
+const recordMenuRoot = ref<HTMLElement | null>(null);
+
 /** Runs an async UI action, surfacing any thrown error in the error box. */
 async function runAction(action: () => Promise<void>): Promise<void> {
   if (busy.value) return;
@@ -103,7 +143,7 @@ async function runAction(action: () => Promise<void>): Promise<void> {
   try {
     await action();
   } catch (err) {
-    errorMessage.value = err instanceof Error ? err.message : String(err);
+    errorMessage.value = describeError(err);
   } finally {
     busy.value = false;
   }
@@ -162,7 +202,7 @@ async function bootProject(): Promise<void> {
         restored = await autosave.restoreAutosave();
       }
     } catch (err) {
-      errorMessage.value = err instanceof Error ? err.message : String(err);
+      errorMessage.value = describeError(err);
     }
   }
   if (!restored) {
@@ -184,12 +224,18 @@ function closeProjectMenu(): void {
   projectMenuOpen.value = false;
 }
 
-/** Closes the project menu on any press outside of it. */
+/** True when the press landed outside the given popover root. */
+function isOutsidePress(root: HTMLElement | null, event: PointerEvent): boolean {
+  return root !== null && event.target instanceof Node && !root.contains(event.target);
+}
+
+/** Closes the project menu and record popover on any press outside of them. */
 function onWindowPointerDown(event: PointerEvent): void {
-  if (!projectMenuOpen.value) return;
-  const root = projectMenuRoot.value;
-  if (root && event.target instanceof Node && !root.contains(event.target)) {
+  if (projectMenuOpen.value && isOutsidePress(projectMenuRoot.value, event)) {
     closeProjectMenu();
+  }
+  if (recordMenuOpen.value && isOutsidePress(recordMenuRoot.value, event)) {
+    recordMenuOpen.value = false;
   }
 }
 
@@ -307,6 +353,105 @@ function exportSmfAction(): void {
   });
 }
 
+// --- Audio assets in the project ------------------------------------------------
+
+const audioImportInput = ref<HTMLInputElement | null>(null);
+
+/**
+ * Places a stored audio asset as a new clip at the playhead on the first
+ * audio track with room for it (the Project rejects overlapping clips on one
+ * track; a new audio track is created when none fits) and selects it.
+ */
+async function placeAssetAtPlayhead(assetId: string): Promise<number> {
+  const meta = await loadAssetMeta(assetId);
+  const startPpq = Math.max(0, positionPpq.value);
+  const lengthPpq = (meta.numFrames / meta.sampleRate) * (store.tempoBpm / 60);
+  const overlaps = (trackId: number): boolean =>
+    store.clips.some(
+      (clip) =>
+        clip.trackId === trackId &&
+        clip.startPpq < startPpq + lengthPpq &&
+        startPpq < clip.startPpq + clip.lengthPpq,
+    );
+  const audioTrack = store.tracks.find((track) => track.kind === 'audio' && !overlaps(track.id));
+  const trackId = audioTrack ? audioTrack.id : addAudioTrack();
+  const newClipId = await addAudioClip({ trackId, assetId, startPpq, lengthPpq, name: meta.name });
+  setActiveClip(newClipId);
+  return newClipId;
+}
+
+/** "Add" from the media browser: drop the asset into the arrangement. */
+function onAddAssetToProject(assetId: string): void {
+  void runAction(async () => {
+    await placeAssetAtPlayhead(assetId);
+  });
+}
+
+/** Project menu "Import audio…": opens the audio file picker. */
+function importAudioAction(): void {
+  closeProjectMenu();
+  audioImportInput.value?.click();
+}
+
+/** Decodes the picked audio files into assets and places each at the playhead. */
+function onAudioImportChange(event: Event): void {
+  const input = event.target as HTMLInputElement;
+  const files = Array.from(input.files ?? []);
+  input.value = '';
+  if (files.length === 0) return;
+  void runAction(async () => {
+    for (const file of files) {
+      const meta = await decodeAndIngest(file);
+      await placeAssetAtPlayhead(meta.id);
+    }
+  });
+}
+
+/** Asset id behind the selected audio clip (drives the Sample editor tab). */
+const sampleAssetId = computed(() => {
+  const clip = store.activeClip;
+  return clip && isAudioClip(clip) && clip.assetId ? clip.assetId : null;
+});
+
+/**
+ * Replaces an audio clip with one referencing another asset at the same
+ * placement and selects the replacement. The closest available source rebind
+ * today: an add + delete (two undo steps).
+ */
+async function swapClipAsset(clipId: number, assetId: string): Promise<void> {
+  const clip = store.clips.find((c) => c.id === clipId);
+  if (!clip) return;
+  const placement = {
+    trackId: clip.trackId,
+    startPpq: clip.startPpq,
+    lengthPpq: clip.lengthPpq,
+    gain: clip.gain,
+    name: clip.name,
+  };
+  // Delete first: the Project rejects overlapping clips on one track, and
+  // the replacement lands exactly where the original was.
+  deleteClip(clipId);
+  const newClipId = await addAudioClip({ assetId, ...placement });
+  setActiveClip(newClipId);
+}
+
+/** A sample-editor edit stored a new asset version: offer to rebind the clip. */
+function onAssetCreated(newAssetId: string, sourceAssetId: string): void {
+  const clip = store.activeClip;
+  if (!clip || !isAudioClip(clip) || clip.assetId !== sourceAssetId) return;
+  if (!window.confirm('Use the edited audio for the selected clip?')) return;
+  const clipId = clip.id;
+  void runAction(() => swapClipAsset(clipId, newAssetId));
+}
+
+/** Explicit "Use in project" from the sample editor: rebind without asking. */
+function onApplyAsset(assetId: string): void {
+  const clip = store.activeClip;
+  if (!clip || !isAudioClip(clip) || clip.assetId === assetId) return;
+  const clipId = clip.id;
+  void runAction(() => swapClipAsset(clipId, assetId));
+}
+
 function formatSavedAt(date: Date): string {
   return `saved ${date.toLocaleTimeString()}`;
 }
@@ -347,7 +492,7 @@ async function applyToEngine(): Promise<void> {
     scheduledClips = next;
     scheduledCount.value = next.length;
   } catch (err) {
-    errorMessage.value = err instanceof Error ? err.message : String(err);
+    errorMessage.value = describeError(err);
   }
 }
 
@@ -410,7 +555,7 @@ async function previewNote(pitch: number, velocity: number): Promise<void> {
     };
     source.start();
   } catch (err) {
-    errorMessage.value = err instanceof Error ? err.message : String(err);
+    errorMessage.value = describeError(err);
   }
 }
 
@@ -541,7 +686,7 @@ function applyTempo(): void {
         : [{ startPpq: 0, bpm }];
     setTempoSegments(segments);
   } catch (err) {
-    errorMessage.value = err instanceof Error ? err.message : String(err);
+    errorMessage.value = describeError(err);
   }
 }
 
@@ -617,7 +762,7 @@ function onDividerPointerUp(): void {
 
 // --- Editor dock tabs ----------------------------------------------------------
 
-type DockTab = 'roll' | 'lists';
+type DockTab = 'roll' | 'lists' | 'media' | 'sample';
 
 /** Active editor-dock tab. */
 const dockTab = ref<DockTab>('roll');
@@ -764,6 +909,10 @@ onMounted(async () => {
       initialized: () => store.initialized,
       trackCount: () => store.tracks.length,
       clipCount: () => store.clips.length,
+      clipKinds: () => store.clips.map((clip) => clipKind(clip)),
+      audioClipCount: () => store.clips.filter((clip) => isAudioClip(clip)).length,
+      armedTrackId: () => recording.armedTrackId.value,
+      isRecording: () => recording.isRecording.value,
       projectName: () => store.projectName,
     };
   }
@@ -773,7 +922,7 @@ onMounted(async () => {
     bootPromise = bootProject();
     await bootPromise;
   } catch (err) {
-    errorMessage.value = err instanceof Error ? err.message : String(err);
+    errorMessage.value = describeError(err);
   }
 });
 
@@ -815,10 +964,22 @@ onBeforeUnmount(async () => {
             Save As…
           </button>
           <hr class="menu-rule" />
+          <button type="button" @click="importAudioAction">Import audio…</button>
+          <hr class="menu-rule" />
           <button type="button" @click="exportSzdAction">Export .szd</button>
           <button type="button" @click="exportSmfAction">Export SMF</button>
         </div>
       </div>
+      <input
+        ref="audioImportInput"
+        class="hidden-file-input"
+        type="file"
+        multiple
+        accept="audio/*"
+        aria-hidden="true"
+        tabindex="-1"
+        @change="onAudioImportChange"
+      />
       <span class="project-name" :title="store.projectName">
         {{ store.projectName }}<span v-if="dirty" class="dirty-dot" title="Unsaved changes">•</span>
       </span>
@@ -828,6 +989,61 @@ onBeforeUnmount(async () => {
       <button type="button" :disabled="!handle" @click="togglePlayback">
         {{ isPlaying ? 'Stop' : 'Play' }}
       </button>
+      <div ref="recordMenuRoot" class="record-group">
+        <button
+          type="button"
+          class="record-button"
+          :class="{
+            recording: recording.isRecording.value,
+            'counting-in': recording.isCountingIn.value,
+          }"
+          :disabled="!handle || (!recording.isRecording.value && recording.armedTrackId.value === null)"
+          :title="
+            recording.isRecording.value
+              ? 'Stop recording (the take lands as a clip)'
+              : 'Record onto the armed audio track'
+          "
+          @click="toggleRecord"
+        >
+          ●
+        </button>
+        <button
+          type="button"
+          class="record-settings"
+          title="Recording settings"
+          @click="recordMenuOpen = !recordMenuOpen"
+        >
+          ▾
+        </button>
+        <div v-if="recordMenuOpen" class="menu-pop record-pop">
+          <label class="bar-field">
+            <input
+              type="checkbox"
+              :checked="recording.monitorEnabled.value"
+              @change="recording.setMonitor(!recording.monitorEnabled.value)"
+            />
+            Monitor input
+          </label>
+          <label class="bar-field">
+            Count-in
+            <select v-model.number="recording.countInBars.value">
+              <option :value="0">Off</option>
+              <option :value="1">1 bar</option>
+              <option :value="2">2 bars</option>
+            </select>
+          </label>
+        </div>
+        <span
+          v-if="recording.armedTrackId.value !== null"
+          class="input-level"
+          title="Microphone input level"
+        >
+          <span
+            class="input-level-fill"
+            :style="{ width: `${Math.min(1, recording.inputLevel.value) * 100}%` }"
+          />
+        </span>
+      </div>
       <label class="bar-field">
         Tempo
         <input
@@ -880,7 +1096,9 @@ onBeforeUnmount(async () => {
           :loop-enabled="loopEnabled"
           :loop-start-ppq="loopStartPpq"
           :loop-end-ppq="loopEndPpq"
+          :armed-track-ids="armedTrackIds"
           @seek="onSeek"
+          @arm="onArmTrack"
         />
       </section>
 
@@ -912,6 +1130,22 @@ onBeforeUnmount(async () => {
             @click="dockTab = 'lists'"
           >
             Lists
+          </button>
+          <button
+            type="button"
+            class="dock-tab dock-tab-toggle"
+            :class="{ active: dockTab === 'media' }"
+            @click="dockTab = 'media'"
+          >
+            Media
+          </button>
+          <button
+            type="button"
+            class="dock-tab dock-tab-toggle"
+            :class="{ active: dockTab === 'sample' }"
+            @click="dockTab = 'sample'"
+          >
+            Sample
           </button>
           <button
             type="button"
@@ -1010,6 +1244,28 @@ onBeforeUnmount(async () => {
             :position-ppq="() => positionPpq"
             @seek="onSeek"
           />
+        </section>
+        <section v-show="dockTab === 'media'" class="dock-body">
+          <!-- Remounted per open so the asset list picks up recordings and
+               menu imports made while the tab was hidden. -->
+          <MediaBrowser
+            v-if="dockTab === 'media'"
+            class="media-host"
+            @add-to-project="onAddAssetToProject"
+          />
+        </section>
+        <section v-show="dockTab === 'sample'" class="dock-body">
+          <SampleEditor
+            v-if="sampleAssetId"
+            :key="sampleAssetId"
+            :asset-id="sampleAssetId"
+            class="sample-host"
+            @asset-created="onAssetCreated"
+            @apply-asset="onApplyAsset"
+          />
+          <p v-else class="dock-empty">
+            Select an audio clip in the arrangement to edit its audio here.
+          </p>
         </section>
       </section>
     </main>
@@ -1192,6 +1448,69 @@ onBeforeUnmount(async () => {
   white-space: nowrap;
 }
 
+.record-group {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.record-button {
+  color: #ef4444;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.record-button:disabled {
+  color: #5b6270;
+}
+
+.record-button.recording {
+  background: #3b1219;
+  border-color: #ef4444;
+  animation: record-blink 1s steps(2, start) infinite;
+}
+
+.record-button.counting-in {
+  animation: record-blink 0.25s steps(2, start) infinite;
+}
+
+@keyframes record-blink {
+  50% {
+    color: #7a1d1d;
+  }
+}
+
+.record-settings {
+  font-size: 10px;
+  padding: 0.2rem 0.3rem;
+}
+
+.record-pop {
+  gap: 0.4rem;
+  padding: 0.5rem 0.6rem;
+}
+
+.input-level {
+  width: 56px;
+  height: 8px;
+  background: #1d2027;
+  border: 1px solid #2a2e37;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.input-level-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #34d399, #fbbf24 75%, #ef4444);
+  transition: width 60ms linear;
+}
+
+.hidden-file-input {
+  display: none;
+}
+
 .tempo-input {
   width: 4.5rem;
 }
@@ -1320,6 +1639,23 @@ onBeforeUnmount(async () => {
 .lists-host {
   flex: 1;
   min-height: 0;
+}
+
+.media-host {
+  flex: 1;
+  min-height: 0;
+}
+
+.sample-host {
+  flex: 1;
+  min-height: 0;
+}
+
+.dock-empty {
+  margin: 0;
+  padding: 0.75rem;
+  font-size: 12px;
+  color: #5b6270;
 }
 
 .modal-overlay {

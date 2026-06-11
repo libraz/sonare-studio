@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { onBeforeUnmount, ref, watch } from 'vue';
 import {
+  addAudioTrack,
   addTrack,
   removeTrack,
   renameTrack,
@@ -13,13 +14,16 @@ import {
   setTrackVolume,
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
-import { type EditorTrack, TRACK_COLOR_PALETTE } from '@/project/types';
+import { type EditorTrack, TRACK_COLOR_PALETTE, type TrackKind } from '@/project/types';
 
 /**
  * Track header column of the arrangement view: one header per track lane with
- * a color swatch, editable name (double-click), mute/solo toggles, volume and
- * pan mini sliders, inline delete and pointer-drag reordering via the grip.
- * All edits go through src/project/commands.ts; the store is the read model.
+ * a kind icon, color swatch, editable name (double-click), record-arm (audio
+ * tracks), mute/solo toggles, volume and pan mini sliders, inline delete and
+ * pointer-drag reordering via the grip. All edits go through
+ * src/project/commands.ts; the store is the read model. Record-arm state is
+ * owned by the shell and only mirrored here via the `armedTrackIds` prop and
+ * the `arm` emit.
  */
 
 const props = defineProps<{
@@ -29,9 +33,25 @@ const props = defineProps<{
   scrollY: number;
   /** Top spacer height aligning the first lane with the canvas ruler, in px. */
   rulerOffset: number;
+  /** Ids of record-armed tracks (recording state is owned by the shell). */
+  armedTrackIds?: readonly number[];
+}>();
+
+const emit = defineEmits<{
+  /** Request to (dis)arm a track for recording. */
+  arm: [trackId: number, armed: boolean];
 }>();
 
 const store = useProjectStore();
+
+/** Glyph shown in front of the track name per track kind. */
+const TRACK_KIND_GLYPHS: Record<TrackKind, string> = { audio: '∿', midi: '♪', aux: '⇄' };
+/** Tooltip label per track kind. */
+const TRACK_KIND_LABELS: Record<TrackKind, string> = {
+  audio: 'Audio track',
+  midi: 'MIDI track',
+  aux: 'Aux track',
+};
 
 /** Surfaced when a command rejects (e.g. empty rename). */
 const error = ref('');
@@ -104,10 +124,41 @@ function onDelete(track: EditorTrack): void {
   removeTrack(track.id);
 }
 
-function onAddTrack(): void {
-  const trackId = addTrack();
+/** True when the shell reports the track as record-armed. */
+function isArmed(track: EditorTrack): boolean {
+  return props.armedTrackIds?.includes(track.id) ?? false;
+}
+
+function onToggleArm(track: EditorTrack): void {
+  emit('arm', track.id, !isArmed(track));
+}
+
+// --- Add-track menu ----------------------------------------------------------
+
+const addMenuOpen = ref(false);
+const addMenu = ref<HTMLDivElement | null>(null);
+
+function onAddTrack(kind: 'midi' | 'audio'): void {
+  addMenuOpen.value = false;
+  const trackId = kind === 'audio' ? addAudioTrack() : addTrack();
   setActiveTrack(trackId);
 }
+
+/** Closes the add-track menu when the pointer goes down outside of it. */
+function onDocumentPointerDown(event: PointerEvent): void {
+  if (!(event.target instanceof Node) || !addMenu.value?.contains(event.target)) {
+    addMenuOpen.value = false;
+  }
+}
+
+watch(addMenuOpen, (open) => {
+  if (open) document.addEventListener('pointerdown', onDocumentPointerDown, true);
+  else document.removeEventListener('pointerdown', onDocumentPointerDown, true);
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onDocumentPointerDown, true);
+});
 
 // --- Drag reordering -------------------------------------------------------
 
@@ -167,9 +218,20 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
 <template>
   <div class="track-headers">
     <div class="headers-top" :style="{ height: `${props.rulerOffset}px` }">
-      <button type="button" class="add-track" title="Add a MIDI track" @click="onAddTrack">
-        + Track
-      </button>
+      <div ref="addMenu" class="add-track-menu">
+        <button
+          type="button"
+          class="add-track"
+          title="Add a track"
+          @click="addMenuOpen = !addMenuOpen"
+        >
+          + Track ▾
+        </button>
+        <div v-if="addMenuOpen" class="add-track-items" role="menu">
+          <button type="button" role="menuitem" @click="onAddTrack('midi')">+ MIDI track</button>
+          <button type="button" role="menuitem" @click="onAddTrack('audio')">+ Audio track</button>
+        </div>
+      </div>
     </div>
     <p v-if="error" class="headers-error" role="alert">{{ error }}</p>
     <div class="headers-viewport">
@@ -202,6 +264,9 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
           />
           <div class="track-main">
             <div class="track-name-row">
+              <span class="track-kind" :title="TRACK_KIND_LABELS[track.kind]">
+                {{ TRACK_KIND_GLYPHS[track.kind] }}
+              </span>
               <input
                 v-if="editingTrackId === track.id"
                 ref="nameInput"
@@ -225,6 +290,16 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
               </button>
             </div>
             <div class="track-controls" @click.stop>
+              <button
+                v-if="track.kind === 'audio'"
+                type="button"
+                class="toggle arm"
+                :class="{ on: isArmed(track) }"
+                title="Record arm"
+                @click="onToggleArm(track)"
+              >
+                R
+              </button>
               <button
                 type="button"
                 class="toggle mute"
@@ -290,6 +365,10 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
   flex: none;
 }
 
+.add-track-menu {
+  position: relative;
+}
+
 .add-track {
   font: 600 10px system-ui, sans-serif;
   color: #c8cdd6;
@@ -301,6 +380,35 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
 }
 
 .add-track:hover {
+  background: #242832;
+}
+
+.add-track-items {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  min-width: 110px;
+  background: #1d2027;
+  border: 1px solid #2a2e37;
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.add-track-items button {
+  font: 600 10px system-ui, sans-serif;
+  color: #c8cdd6;
+  background: transparent;
+  border: none;
+  padding: 5px 8px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.add-track-items button:hover {
   background: #242832;
 }
 
@@ -381,6 +489,12 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
   gap: 4px;
 }
 
+.track-kind {
+  flex: none;
+  font: 10px system-ui, sans-serif;
+  color: #5b6270;
+}
+
 .track-name {
   flex: 1;
   min-width: 0;
@@ -438,6 +552,12 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
   border-radius: 3px;
   padding: 0;
   cursor: pointer;
+}
+
+.toggle.arm.on {
+  color: #fff;
+  background: #ef4444;
+  border-color: #ef4444;
 }
 
 .toggle.mute.on {

@@ -1,9 +1,13 @@
+import { audioAssetUri, loadAssetMeta } from '@/persistence/assets';
 import {
   allocateMarkerId,
   allocateNoteId,
   allocateSectionId,
+  getAudioSourceId,
   getProject,
   notesToProjectEvents,
+  placeholderSourceAudio,
+  setAudioSourceId,
   useProjectStore,
 } from './store';
 import {
@@ -18,6 +22,7 @@ import {
   type TempoSegment,
   type TimeSignatureSegment,
   TRACK_COLOR_PALETTE,
+  type TrackKind,
 } from './types';
 
 /** Default note-on velocity for newly created notes. */
@@ -170,6 +175,19 @@ function requireClip(store: ReturnType<typeof useProjectStore>, clipId: number):
 }
 
 /**
+ * Copies app-level audio metadata (kind, asset reference) from a source clip
+ * onto a derived clip mirror entry (duplicate/split results). Fades are not
+ * copied: the Project owns them for clips it derives.
+ */
+function withAudioMetadata(target: EditorClip, source: EditorClip): EditorClip {
+  if (source.kind === undefined && source.assetId === undefined) return target;
+  const next: EditorClip = { ...target };
+  if (source.kind !== undefined) next.kind = source.kind;
+  if (source.assetId !== undefined) next.assetId = source.assetId;
+  return next;
+}
+
+/**
  * Applies a new note list to the active clip as one undoable edit: validates,
  * replaces the clip's events in the Project (setMidiEvents = one entry on the
  * project history), then refreshes the mirror using `nextNotes` as id hints.
@@ -312,12 +330,14 @@ export interface AddTrackInput {
   name?: string;
   /** Display color; defaults to the next palette color. */
   color?: string;
+  /** Track content kind (defaults to 'midi'). */
+  kind?: TrackKind;
 }
 
 /**
- * Adds a MIDI track as one undoable edit.
+ * Adds a track as one undoable edit (MIDI unless `input.kind` says otherwise).
  *
- * @param input Optional name/color overrides.
+ * @param input Optional name/color/kind overrides.
  * @returns The stable track id allocated by the Project.
  */
 export function addTrack(input: AddTrackInput = {}): number {
@@ -326,15 +346,16 @@ export function addTrack(input: AddTrackInput = {}): number {
   const name = input.name ?? `Track ${store.tracks.length + 1}`;
   const color =
     input.color ?? TRACK_COLOR_PALETTE[store.tracks.length % TRACK_COLOR_PALETTE.length];
+  const kind = input.kind ?? 'midi';
   return execute(1, () => {
-    const trackId = project.addTrack({ kind: 'midi', name });
+    const trackId = project.addTrack({ kind, name });
     store.tracks = [
       ...store.tracks,
       {
         id: trackId,
         name,
         color,
-        kind: 'midi',
+        kind,
         mute: false,
         solo: false,
         volume: 1,
@@ -346,6 +367,17 @@ export function addTrack(input: AddTrackInput = {}): number {
     store.refresh();
     return trackId;
   });
+}
+
+/**
+ * Adds an audio track as one undoable edit (shorthand for
+ * {@link addTrack} with kind 'audio').
+ *
+ * @param input Optional name/color overrides.
+ * @returns The stable track id allocated by the Project.
+ */
+export function addAudioTrack(input: Omit<AddTrackInput, 'kind'> = {}): number {
+  return addTrack({ ...input, kind: 'audio' });
 }
 
 /**
@@ -567,6 +599,110 @@ export function addMidiClip(input: AddMidiClipInput): number {
   });
 }
 
+/** Fields for {@link addAudioClip}. */
+export interface AddAudioClipInput {
+  /** Id of the track the clip belongs to. */
+  trackId: number;
+  /** Audio asset id from src/persistence/assets.ts. */
+  assetId: string;
+  /** Timeline start in PPQ (>= 0). Defaults to 0. */
+  startPpq?: number;
+  /**
+   * Clip length in PPQ (> 0). Defaults to the full asset duration converted
+   * at the current project tempo (which requires the asset metadata to be
+   * loadable from the asset store).
+   */
+  lengthPpq?: number;
+  /** Linear playback gain (>= 0). Defaults to 1. */
+  gain?: number;
+  /** Clip display name (app-level); defaults to "Clip N". */
+  name?: string;
+}
+
+/**
+ * Adds an audio clip referencing a stored asset as one undoable edit.
+ *
+ * The wasm Project registers one audio source per asset: the first clip of an
+ * asset registers a by-reference source (sourceUri "asset:<id>", two entries
+ * on the Project history, like addMidiClip), later clips of the same asset
+ * are rebound to that source via Project.setClipSource (three entries). Undo
+ * reverts the whole command at once either way.
+ *
+ * The clip's PCM stays in the asset store; playback loads it when scheduling
+ * (src/project/scheduling.ts).
+ *
+ * @param input Clip placement, asset reference and optional overrides.
+ * @returns The stable clip id allocated by the Project.
+ */
+export async function addAudioClip(input: AddAudioClipInput): Promise<number> {
+  const store = useProjectStore();
+  const project = getProject();
+  requireTrack(store, input.trackId);
+  if (typeof input.assetId !== 'string' || input.assetId.length === 0) {
+    throw new RangeError('Audio clip assetId must not be empty');
+  }
+  const startPpq = input.startPpq ?? 0;
+  validatePpq(startPpq, 'Clip startPpq');
+  if (input.gain !== undefined && (!Number.isFinite(input.gain) || input.gain < 0)) {
+    throw new RangeError(`Clip gain must be finite and >= 0, got ${input.gain}`);
+  }
+  let lengthPpq = input.lengthPpq;
+  if (lengthPpq === undefined) {
+    // Default length: the asset's duration in beats at the current tempo.
+    const meta = await loadAssetMeta(input.assetId);
+    lengthPpq = (meta.numFrames / meta.sampleRate) * (store.tempoBpm / 60);
+  }
+  if (!Number.isFinite(lengthPpq) || lengthPpq <= 0) {
+    throw new RangeError(`Clip lengthPpq must be finite and > 0, got ${lengthPpq}`);
+  }
+  const finalLengthPpq = lengthPpq;
+  const gain = input.gain ?? 1;
+  // Reuse the asset's registered source when it is still on the Project
+  // (undo may have rolled the registration back; then re-register).
+  const known = getAudioSourceId(input.assetId);
+  const sourceId =
+    known !== undefined && known >= 1 && known <= project.sourceCount() ? known : undefined;
+  return execute(sourceId === undefined ? 2 : 3, () => {
+    const newClipId = project.addClip({
+      trackId: input.trackId,
+      isMidi: false,
+      startPpq,
+      lengthPpq: finalLengthPpq,
+      gain,
+      // The binding requires non-empty inline audio on every clip-source
+      // registration; the real PCM stays in the asset store (the source is
+      // by-reference via its "asset:<id>" URI).
+      ...placeholderSourceAudio(),
+      ...(sourceId === undefined ? { sourceUri: audioAssetUri(input.assetId) } : {}),
+    });
+    if (sourceId === undefined) {
+      setAudioSourceId(input.assetId, project.sourceCount());
+    } else {
+      project.setClipSource(newClipId, sourceId);
+    }
+    // Seed the mirror entry so refresh keeps the kind/asset metadata.
+    store.clips = [
+      ...store.clips,
+      {
+        id: newClipId,
+        trackId: input.trackId,
+        name: input.name ?? `Clip ${newClipId}`,
+        startPpq,
+        lengthPpq: finalLengthPpq,
+        sourceOffsetPpq: 0,
+        gain,
+        loopEnabled: false,
+        loopLengthPpq: 0,
+        notes: [],
+        kind: 'audio',
+        assetId: input.assetId,
+      },
+    ];
+    store.refresh();
+    return newClipId;
+  });
+}
+
 /**
  * Removes a clip as one undoable edit. When the active clip is removed, the
  * first remaining clip of the active track becomes active.
@@ -638,10 +774,13 @@ export function duplicateClip(clipId: number, newStartPpq: number): number {
   const source = requireClip(store, clipId);
   validatePpq(newStartPpq, 'Clip startPpq');
   const name = source.name;
+  const sourceMeta = { ...source };
   return execute(1, () => {
     const copyId = project.duplicateClip(clipId, newStartPpq);
     store.refresh();
-    store.clips = store.clips.map((c) => (c.id === copyId ? { ...c, name } : c));
+    store.clips = store.clips.map((c) =>
+      c.id === copyId ? withAudioMetadata({ ...c, name }, sourceMeta) : c,
+    );
     return copyId;
   });
 }
@@ -670,10 +809,13 @@ export function splitClip(clipId: number, splitPpq: number): number {
     );
   }
   const name = source.name;
+  const sourceMeta = { ...source };
   return execute(1, () => {
     const rightId = project.splitClip(clipId, splitPpq);
     store.refresh();
-    store.clips = store.clips.map((c) => (c.id === rightId ? { ...c, name } : c));
+    store.clips = store.clips.map((c) =>
+      c.id === rightId ? withAudioMetadata({ ...c, name }, sourceMeta) : c,
+    );
     return rightId;
   });
 }
@@ -739,6 +881,47 @@ export function setClipGain(clipId: number, gain: number): void {
   execute(1, () => {
     project.setClipGain(clipId, gain);
     store.refresh();
+  });
+}
+
+/**
+ * Sets a clip's fade-in/fade-out lengths as one undoable edit (delegates to
+ * Project.setClipFade). Pass undefined or 0 to clear a fade. Playback applies
+ * fades to audio clips only (src/project/scheduling.ts multiplies the buffer
+ * edges); the prerendered MIDI path ignores them.
+ *
+ * @param clipId Id of the clip.
+ * @param fadeInPpq Fade-in length in PPQ (finite, >= 0; 0/undefined = none).
+ * @param fadeOutPpq Fade-out length in PPQ (finite, >= 0; 0/undefined = none).
+ */
+export function setClipFades(clipId: number, fadeInPpq?: number, fadeOutPpq?: number): void {
+  const store = useProjectStore();
+  const project = getProject();
+  requireClip(store, clipId);
+  for (const [value, label] of [
+    [fadeInPpq, 'Clip fadeInPpq'],
+    [fadeOutPpq, 'Clip fadeOutPpq'],
+  ] as const) {
+    if (value !== undefined && (!Number.isFinite(value) || value < 0)) {
+      throw new RangeError(`${label} must be finite and >= 0, got ${value}`);
+    }
+  }
+  const fadeIn = fadeInPpq ?? 0;
+  const fadeOut = fadeOutPpq ?? 0;
+  execute(1, () => {
+    project.setClipFade(clipId, { lengthPpq: fadeIn }, { lengthPpq: fadeOut });
+    store.refresh();
+    // Mirror fallback for bindings that do not serialize fades in toJson():
+    // pin the values we just set (0 clears the field).
+    store.clips = store.clips.map((c) => {
+      if (c.id !== clipId) return c;
+      const { fadeInPpq: _oldIn, fadeOutPpq: _oldOut, ...rest } = c;
+      return {
+        ...rest,
+        ...(fadeIn > 0 ? { fadeInPpq: fadeIn } : {}),
+        ...(fadeOut > 0 ? { fadeOutPpq: fadeOut } : {}),
+      };
+    });
   });
 }
 

@@ -40,6 +40,12 @@ export const ARRANGEMENT_COLORS = {
   rulerLabel: '#8b93a3',
   /** Loop range band on the ruler. */
   loopOverlay: 'rgba(96, 165, 250, 0.28)',
+  /** Shade over the attenuated corner of an audio clip fade. */
+  fadeOverlay: 'rgba(0, 0, 0, 0.38)',
+  /** Fade ramp line over an audio clip waveform. */
+  fadeRamp: 'rgba(243, 245, 249, 0.55)',
+  /** Fade handle triangle at an audio clip's top corners. */
+  fadeHandle: 'rgba(232, 235, 240, 0.9)',
   /** Marker flag and stem. */
   markerFlag: '#fbbf24',
   /** Marker name label. */

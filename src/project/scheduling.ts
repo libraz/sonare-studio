@@ -1,17 +1,23 @@
 /**
  * Project-wide playback scheduling: prerenders and schedules every audible
- * MIDI clip of every track into the engine. The single-implicit-track flow
- * (scheduleMidiClip with one clip) remains the degenerate case.
+ * MIDI clip and loads/schedules every audible audio clip of every track into
+ * the engine. The single-implicit-track flow (scheduleMidiClip with one clip)
+ * remains the degenerate case.
+ *
+ * Nothing here produces sound by itself: engine.addClip only places content
+ * on the engine timeline, which stays silent until the transport plays.
  */
 
 import type { EngineHandle } from '@/engine/engine';
 import { type MidiNote, scheduleMidiClip } from '@/engine/instruments';
+import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import { useProjectStore } from './store';
 import type { EditorClip, EditorTrack } from './types';
+import { clipKind } from './types';
 
 /**
- * Default peak level scheduled clips are normalized to (-6 dBFS), matching
- * the scheduleMidiClip default.
+ * Default peak level scheduled MIDI clips are normalized to (-6 dBFS),
+ * matching the scheduleMidiClip default. Audio clips are never normalized.
  */
 const DEFAULT_TARGET_PEAK = 0.5;
 
@@ -68,6 +74,136 @@ export function clipPlaybackNotes(clip: EditorClip): MidiNote[] {
     }));
 }
 
+/**
+ * Converts a PPQ span to seconds at a constant tempo.
+ *
+ * @param ppq Span in quarter-note PPQ.
+ * @param tempoBpm Tempo in BPM (> 0).
+ * @returns Span in seconds.
+ */
+export function ppqToSeconds(ppq: number, tempoBpm: number): number {
+  return (ppq * 60) / tempoBpm;
+}
+
+/**
+ * Cuts an audio clip's source window out of the asset buffers: the window
+ * [sourceOffsetPpq, sourceOffsetPpq + lengthPpq) is converted to frames at
+ * the asset sample rate (constant tempo) and sliced per channel, clamped to
+ * the available frames. The returned buffers are fresh copies.
+ *
+ * @param channels Planar asset channel buffers.
+ * @param sampleRate Asset sample rate in Hz.
+ * @param sourceOffsetPpq Offset of the clip window into the source, in PPQ.
+ * @param lengthPpq Clip window length in PPQ.
+ * @param tempoBpm Tempo used to convert PPQ to time.
+ * @returns One sliced copy per channel (possibly zero-length).
+ */
+export function sliceAudioClipWindow(
+  channels: ReadonlyArray<Float32Array>,
+  sampleRate: number,
+  sourceOffsetPpq: number,
+  lengthPpq: number,
+  tempoBpm: number,
+): Float32Array[] {
+  const frames = channels[0]?.length ?? 0;
+  const start = Math.min(
+    frames,
+    Math.max(0, Math.round(ppqToSeconds(sourceOffsetPpq, tempoBpm) * sampleRate)),
+  );
+  const count = Math.max(0, Math.round(ppqToSeconds(lengthPpq, tempoBpm) * sampleRate));
+  const end = Math.min(frames, start + count);
+  return channels.map((channel) => channel.slice(start, end));
+}
+
+/**
+ * Applies linear fade-in/fade-out ramps to the buffer edges in place.
+ *
+ * The engine clip options for fades are not part of the typed API, so fades
+ * are baked into the scheduled buffer instead: the first fade-in frame is
+ * silent and the ramp reaches unity right after the fade (multiplier i/n for
+ * frame i of n); the fade-out mirrors that (the last frame is silent). Fades
+ * longer than the buffer are clamped to its length.
+ *
+ * @param channels Planar buffers to modify (typically fresh slices).
+ * @param sampleRate Buffer sample rate in Hz.
+ * @param tempoBpm Tempo used to convert fade PPQ to time.
+ * @param fadeInPpq Fade-in length in PPQ (0 = none).
+ * @param fadeOutPpq Fade-out length in PPQ (0 = none).
+ * @returns The same channel array, for chaining.
+ */
+export function applyAudioClipFades(
+  channels: Float32Array[],
+  sampleRate: number,
+  tempoBpm: number,
+  fadeInPpq: number,
+  fadeOutPpq: number,
+): Float32Array[] {
+  const frames = channels[0]?.length ?? 0;
+  if (frames === 0) return channels;
+  const inFrames = Math.min(
+    frames,
+    Math.max(0, Math.round(ppqToSeconds(fadeInPpq, tempoBpm) * sampleRate)),
+  );
+  const outFrames = Math.min(
+    frames,
+    Math.max(0, Math.round(ppqToSeconds(fadeOutPpq, tempoBpm) * sampleRate)),
+  );
+  for (const channel of channels) {
+    for (let i = 0; i < inFrames; i++) {
+      channel[i] *= i / inFrames;
+    }
+    for (let i = 0; i < outFrames; i++) {
+      channel[frames - 1 - i] *= i / outFrames;
+    }
+  }
+  return channels;
+}
+
+/**
+ * Linearly resamples planar buffers to a new sample rate (endpoint-preserving
+ * interpolation). Adequate for playback-rate matching; offline DSP-grade
+ * resampling is out of scope here.
+ *
+ * @param channels Planar buffers at `sourceRate`.
+ * @param sourceRate Source sample rate in Hz (> 0).
+ * @param targetRate Target sample rate in Hz (> 0).
+ * @returns New planar buffers at `targetRate` (the input when rates match).
+ */
+export function resampleChannelsLinear(
+  channels: Float32Array[],
+  sourceRate: number,
+  targetRate: number,
+): Float32Array[] {
+  if (sourceRate === targetRate) return channels;
+  if (
+    !Number.isFinite(sourceRate) ||
+    sourceRate <= 0 ||
+    !Number.isFinite(targetRate) ||
+    targetRate <= 0
+  ) {
+    throw new RangeError(`Sample rates must be finite and > 0, got ${sourceRate} -> ${targetRate}`);
+  }
+  return channels.map((channel) => {
+    const frames = channel.length;
+    if (frames === 0) return new Float32Array(0);
+    const outFrames = Math.max(1, Math.round((frames * targetRate) / sourceRate));
+    const out = new Float32Array(outFrames);
+    if (outFrames === 1 || frames === 1) {
+      out.fill(channel[0]);
+      return out;
+    }
+    const step = (frames - 1) / (outFrames - 1);
+    for (let i = 0; i < outFrames; i++) {
+      const pos = i * step;
+      const idx = Math.floor(pos);
+      const frac = pos - idx;
+      const next = Math.min(frames - 1, idx + 1);
+      out[i] = channel[idx] + (channel[next] - channel[idx]) * frac;
+    }
+    return out;
+  });
+}
+
 /** One clip scheduled by {@link scheduleProjectClips}. */
 export interface ScheduledProjectClip {
   /** Engine clip id (pass to engine.removeClip to unschedule). */
@@ -87,23 +223,40 @@ export interface ScheduleProjectClipsOptions {
   /** NativeSynth preset name; defaults to the scheduleMidiClip default. */
   preset?: string;
   /**
-   * Base peak level per clip before track volume and clip gain are applied
-   * (default 0.5 = -6 dBFS). Pass null to schedule at the rendered level;
-   * track volume and clip gain are then NOT applied (the engine has no
-   * separate track-gain control for prerendered clips).
+   * Base peak level per MIDI clip before track volume and clip gain are
+   * applied (default 0.5 = -6 dBFS). Pass null to schedule at the rendered
+   * level; track volume and clip gain are then NOT applied (the engine has no
+   * separate track-gain control for prerendered clips). Audio clips ignore
+   * this option entirely: they always play at their native level times
+   * (clip gain x track volume).
    */
   targetPeak?: number | null;
+  /**
+   * Audio asset loader (defaults to the OPFS asset store's loadAsset).
+   * Injectable for tests and alternative storage backends.
+   */
+  loadAudioAsset?: (assetId: string) => Promise<LoadedAudioAsset>;
 }
 
 /**
- * Schedules every audible MIDI clip of every track into the engine.
+ * Schedules every audible clip of every track into the engine.
  *
  * Audibility follows {@link isTrackAudible} (solo-any => only solo tracks,
- * mute => skip). Track volume and clip gain are folded into the per-clip
- * normalization target (the engine exposes only per-clip gain for
- * prerendered audio), so volume 0.5 plays the clip 6 dB below the base peak.
- * Empty clips and fully attenuated clips are skipped. Track pan and clip
- * looping are not applied (no engine support for prerendered clips).
+ * mute => skip).
+ *
+ * MIDI clips are prerendered and normalized: track volume and clip gain are
+ * folded into the per-clip normalization target (the engine exposes only
+ * per-clip gain for prerendered audio), so volume 0.5 plays the clip 6 dB
+ * below the base peak. Empty clips and fully attenuated clips are skipped.
+ *
+ * Audio clips load their asset from the asset store, slice the source window
+ * (sourceOffsetPpq/lengthPpq at the schedule tempo), bake fades into the
+ * buffer edges, resample to the engine rate when needed, and are scheduled
+ * with gain = clip gain x track volume — never loudness-normalized. Clips
+ * whose asset is missing or unreadable are skipped silently.
+ *
+ * Track pan and clip looping are not applied (no engine support for
+ * prerendered clips).
  *
  * The caller owns unscheduling: keep the returned list and call
  * engine.removeClip(engineClipId) for each entry before re-scheduling.
@@ -119,11 +272,49 @@ export async function scheduleProjectClips(
   const store = useProjectStore();
   const tempoBpm = options.tempoBpm ?? store.tempoBpm;
   const basePeak = options.targetPeak === undefined ? DEFAULT_TARGET_PEAK : options.targetPeak;
+  const loadAudio = options.loadAudioAsset ?? loadAsset;
   const scheduled: ScheduledProjectClip[] = [];
   for (const track of store.tracks) {
     if (!isTrackAudible(track, store.tracks)) continue;
     const clips = store.clips.filter((clip) => clip.trackId === track.id);
     for (const clip of clips) {
+      if (clipKind(clip) === 'audio') {
+        if (!clip.assetId) continue;
+        const gain = track.volume * clip.gain;
+        if (gain <= 0) continue;
+        let asset: LoadedAudioAsset;
+        try {
+          asset = await loadAudio(clip.assetId);
+        } catch {
+          // Missing or unreadable asset: leave the clip silent.
+          continue;
+        }
+        let channels = sliceAudioClipWindow(
+          asset.channels,
+          asset.meta.sampleRate,
+          clip.sourceOffsetPpq,
+          clip.lengthPpq,
+          tempoBpm,
+        );
+        channels = applyAudioClipFades(
+          channels,
+          asset.meta.sampleRate,
+          tempoBpm,
+          clip.fadeInPpq ?? 0,
+          clip.fadeOutPpq ?? 0,
+        );
+        const targetRate = options.sampleRate ?? handle.ctx.sampleRate;
+        channels = resampleChannelsLinear(channels, asset.meta.sampleRate, targetRate);
+        if (channels.length === 0 || channels[0].length === 0) continue;
+        const engineClipId = handle.engine.addClip(
+          engineTrackId(track.id),
+          channels,
+          clip.startPpq,
+          { gain },
+        );
+        scheduled.push({ engineClipId, clipId: clip.id, trackId: track.id });
+        continue;
+      }
       const notes = clipPlaybackNotes(clip);
       if (notes.length === 0) continue;
       const targetPeak = basePeak === null ? null : basePeak * track.volume * clip.gain;

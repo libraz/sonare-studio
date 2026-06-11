@@ -4,14 +4,19 @@
  * Drives a headless Chrome against a running dev server and verifies that the
  * piano roll renders, double-click creates a note, Cmd+Z undoes it, the score
  * panel engraves, a track and a clip can be created in the arrangement view,
- * and a project saved to OPFS is restored after a page reload (via the
- * dev-only window.__sonareDebug hook exposed by App.vue).
+ * a project saved to OPFS is restored after a page reload, a generated WAV
+ * can be imported through the media browser and placed as an audio clip with
+ * a drawn waveform, and a take recorded from the fake microphone lands as a
+ * clip (via the dev-only window.__sonareDebug hook exposed by App.vue).
  *
  * Playwright is resolved from /tmp/node_modules. Usage:
  *   yarn dev --port 5199   # in the project root, in the background
  *   node scripts/e2e-smoke.mjs [baseUrl]
  */
+import { writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const require = createRequire('/tmp/node_modules/');
 const { chromium } = require('playwright');
@@ -24,10 +29,41 @@ function fail(message) {
   process.exitCode = 1;
 }
 
+/** Builds a mono 16-bit PCM WAV file containing a sine tone. */
+function makeWavBytes(seconds, frequencyHz, sampleRate = 44100, amplitude = 0.8) {
+  const frames = Math.round(seconds * sampleRate);
+  const data = Buffer.alloc(frames * 2);
+  for (let i = 0; i < frames; i++) {
+    const sample = Math.sin((2 * Math.PI * frequencyHz * i) / sampleRate) * amplitude;
+    data.writeInt16LE(Math.round(sample * 32767), i * 2);
+  }
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0);
+  header.writeUInt32LE(36 + data.length, 4);
+  header.write('WAVE', 8);
+  header.write('fmt ', 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20); // PCM
+  header.writeUInt16LE(1, 22); // mono
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * 2, 28); // byte rate
+  header.writeUInt16LE(2, 32); // block align
+  header.writeUInt16LE(16, 34); // bits per sample
+  header.write('data', 36);
+  header.writeUInt32LE(data.length, 40);
+  return Buffer.concat([header, data]);
+}
+
 const browser = await chromium.launch({
   headless: true,
   channel: 'chrome',
-  args: ['--autoplay-policy=no-user-gesture-required', '--mute-audio'],
+  args: [
+    '--autoplay-policy=no-user-gesture-required',
+    '--mute-audio',
+    // Fake microphone for the recording flow (tone generator, auto-granted).
+    '--use-fake-device-for-media-stream',
+    '--use-fake-ui-for-media-stream',
+  ],
 });
 
 try {
@@ -99,8 +135,9 @@ try {
     console.info(`score page indicator: ${indicator}`);
   }
 
-  // Add a track via the arrangement header column.
+  // Add a MIDI track via the arrangement header column's add-track menu.
   await page.click('.track-headers .add-track');
+  await page.click('.add-track-items button:has-text("MIDI track")');
   await page.waitForFunction(() => window.__sonareDebug.trackCount() === 2, null, {
     timeout: 5000,
   });
@@ -148,6 +185,125 @@ try {
   } else {
     console.info('project restored after reload: 2 track headers');
   }
+
+  // --- Audio: import a generated WAV through the media browser ---------------
+
+  const wavPath = join(tmpdir(), 'sonare-e2e-tone.wav');
+  writeFileSync(wavPath, makeWavBytes(0.5, 440));
+
+  await page.click('.dock-tabs button:has-text("Media")');
+  await page.setInputFiles('.media-browser .file-input', wavPath);
+  const assetRow = page.locator('.media-browser .asset-row', { hasText: 'sonare-e2e-tone' });
+  await assetRow.first().waitFor({ state: 'visible', timeout: 20000 });
+  console.info('audio asset imported: media browser row visible');
+
+  // "Add" places the asset at the playhead, creating an audio track.
+  const tracksBeforeAdd = await page.evaluate(() => window.__sonareDebug.trackCount());
+  const clipsBeforeAdd = await page.evaluate(() => window.__sonareDebug.clipCount());
+  await assetRow.first().locator('.add-button').click();
+  await page.waitForFunction(
+    (before) => window.__sonareDebug.clipCount() === before + 1,
+    clipsBeforeAdd,
+    { timeout: 10000 },
+  );
+  const audioClips = await page.evaluate(() => window.__sonareDebug.audioClipCount());
+  const clipKinds = await page.evaluate(() => window.__sonareDebug.clipKinds());
+  if (audioClips !== 1 || clipKinds[clipKinds.length - 1] !== 'audio') {
+    fail(`expected one audio clip, got audioClipCount=${audioClips} kinds=${clipKinds}`);
+  } else {
+    console.info(`audio clip added: ${clipsBeforeAdd} -> ${clipsBeforeAdd + 1} (kind audio)`);
+  }
+  const tracksAfterAdd = await page.evaluate(() => window.__sonareDebug.trackCount());
+  if (tracksAfterAdd !== tracksBeforeAdd + 1) {
+    fail(`expected an audio track to be created (${tracksBeforeAdd} -> ${tracksAfterAdd})`);
+  } else {
+    console.info('audio track auto-created for the asset');
+  }
+
+  // The clip sits at PPQ 0 on the last lane; once the asset loads, waveform
+  // columns paint colors there that an empty stretch of the same lane lacks.
+  const laneIndex = tracksAfterAdd - 1;
+  const deadline = Date.now() + 20000;
+  let waveformStats = { novelColors: 0, litPixels: 0 };
+  while (Date.now() < deadline) {
+    waveformStats = await page.evaluate((lane) => {
+      const canvas = document.querySelector('.arrangement-canvas canvas');
+      if (!(canvas instanceof HTMLCanvasElement)) return { novelColors: 0, litPixels: 0 };
+      const ctx = canvas.getContext('2d');
+      const scaleX = canvas.width / canvas.clientWidth;
+      const scaleY = canvas.height / canvas.clientHeight;
+      const laneTop = 28 + lane * 56;
+      const read = (cssX) =>
+        ctx.getImageData(
+          Math.round(cssX * scaleX),
+          Math.round((laneTop + 4) * scaleY),
+          Math.max(1, Math.round(8 * scaleX)),
+          Math.max(1, Math.round(48 * scaleY)),
+        );
+      const colorCounts = (img) => {
+        const counts = new Map();
+        for (let i = 0; i < img.data.length; i += 4) {
+          const key = (img.data[i] << 16) | (img.data[i + 1] << 8) | img.data[i + 2];
+          counts.set(key, (counts.get(key) ?? 0) + 1);
+        }
+        return counts;
+      };
+      // 0.5 s at 120 BPM is 1 PPQ = 10 px at the default zoom; compare the
+      // clip body against an empty stretch of the same lane.
+      const clipColors = colorCounts(read(1));
+      const emptyColors = colorCounts(read(canvas.clientWidth * 0.8));
+      let novelColors = 0;
+      let litPixels = 0;
+      for (const [color, count] of clipColors) {
+        if (emptyColors.has(color)) continue;
+        novelColors += 1;
+        litPixels += count;
+      }
+      return { novelColors, litPixels };
+    }, laneIndex);
+    // At least the clip fill plus waveform columns, covering most of the body.
+    if (waveformStats.novelColors >= 2 && waveformStats.litPixels >= 100) break;
+    await page.waitForTimeout(250);
+  }
+  if (waveformStats.novelColors < 2 || waveformStats.litPixels < 100) {
+    fail(`audio clip waveform not drawn: ${JSON.stringify(waveformStats)}`);
+  } else {
+    console.info(
+      `audio waveform drawn: ${waveformStats.novelColors} clip color(s), ${waveformStats.litPixels} px`,
+    );
+  }
+
+  // --- Audio: record from the fake microphone --------------------------------
+
+  await page.click('.transport-bar button:has-text("Start engine")');
+  await page.waitForSelector('.transport-bar button:not([disabled]):has-text("Play")', {
+    timeout: 60000,
+  });
+  console.info('engine started');
+
+  // Move the playhead away from the imported clip, then arm the audio track.
+  const arrangeBox2 = await page.locator('.arrangement-canvas').boundingBox();
+  await page.mouse.click(arrangeBox2.x + 300, arrangeBox2.y + 14);
+  await page.click(`.track-headers .track-header:nth-child(${laneIndex + 1}) .toggle.arm`);
+  await page.waitForFunction(() => window.__sonareDebug.armedTrackId() !== null, null, {
+    timeout: 5000,
+  });
+  console.info('audio track armed');
+
+  const clipsBeforeRecord = await page.evaluate(() => window.__sonareDebug.audioClipCount());
+  await page.click('.transport-bar .record-button');
+  await page.waitForFunction(() => window.__sonareDebug.isRecording() === true, null, {
+    timeout: 20000,
+  });
+  await page.waitForTimeout(1000);
+  await page.click('.transport-bar .record-button');
+  await page.waitForFunction(
+    (before) => window.__sonareDebug.audioClipCount() === before + 1,
+    clipsBeforeRecord,
+    { timeout: 20000 },
+  );
+  console.info(`recorded take landed as a clip: ${clipsBeforeRecord} -> ${clipsBeforeRecord + 1}`);
+  await page.click('.transport-bar button:has-text("Stop")');
 
   if (process.exitCode !== 1) console.info('E2E SMOKE PASS');
 } catch (err) {

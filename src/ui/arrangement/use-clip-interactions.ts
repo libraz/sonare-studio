@@ -1,7 +1,8 @@
 /**
  * Pointer interaction logic for arrangement clips: click selection, drag move
- * (horizontal snap + vertical lane change), edge trims, alt/option-drag
- * duplication and double-click clip creation on empty lanes.
+ * (horizontal snap + vertical lane change), edge trims (optionally clamped to
+ * source bounds), audio-clip fade-handle drags, alt/option-drag duplication
+ * and double-click clip creation on empty lanes.
  *
  * Framework-light on purpose: only Vue refs for observable state, all
  * mutations through an injected command set, so the gesture logic is
@@ -9,6 +10,7 @@
  */
 
 import { type Ref, ref } from 'vue';
+import { clampFadePpq, type FadeEdge, hitTestFadeHandles } from './audio-fades';
 import {
   type ArrangeClipRect,
   type ClipHitZone,
@@ -41,6 +43,12 @@ export interface ArrangeClip {
   startPpq: number;
   /** Clip length in PPQ (> 0). */
   lengthPpq: number;
+  /** Clip content kind; absent = 'midi'. Fade handles exist on audio clips. */
+  kind?: 'midi' | 'audio';
+  /** Fade-in length in PPQ (audio clips; absent = 0). */
+  fadeInPpq?: number;
+  /** Fade-out length in PPQ (audio clips; absent = 0). */
+  fadeOutPpq?: number;
 }
 
 /** View contract for the gestures; adds the lane count to the hit-test view. */
@@ -62,8 +70,18 @@ export interface ClipInteractionCommands {
   moveClip(clipId: number, newStartPpq: number, newTrackId?: number): void;
   trimClip(clipId: number, newStartPpq: number, newLengthPpq: number): void;
   duplicateClip(clipId: number, newStartPpq: number): number;
-  /** Creates an empty clip and returns its id. */
-  createClip(trackId: number, startPpq: number, lengthPpq: number): number;
+  /** Creates an empty clip and returns its id (null = creation not allowed). */
+  createClip(trackId: number, startPpq: number, lengthPpq: number): number | null;
+  /** Sets both fade lengths of an audio clip (0 clears). Enables fade handles. */
+  setClipFades?(clipId: number, fadeInPpq: number, fadeOutPpq: number): void;
+}
+
+/** Timeline bounds trims of a clip must stay inside (see getSourceBounds). */
+export interface ClipSourceBounds {
+  /** Lowest allowed clip start in PPQ. */
+  minStartPpq: number;
+  /** Highest allowed clip end in PPQ. */
+  maxEndPpq: number;
 }
 
 /** Configuration for {@link useClipInteractions}. */
@@ -80,6 +98,11 @@ export interface UseClipInteractionsOptions {
   getBarRange(ppq: number): ClipBarRange;
   /** Mutation commands invoked when gestures commit. */
   commands: ClipInteractionCommands;
+  /**
+   * Returns the source bounds trims of a clip must respect (e.g. an audio
+   * clip's backing asset extent), or null for unbounded trimming.
+   */
+  getSourceBounds?(clipId: number): ClipSourceBounds | null;
   /** Drag start threshold in px. Default {@link DEFAULT_CLIP_DRAG_THRESHOLD_PX}. */
   dragThresholdPx?: number;
   /** Px distance from a clip edge treated as a trim handle. */
@@ -102,6 +125,16 @@ export interface ClipDragPreview {
   copy: boolean;
 }
 
+/** Resolved fade lengths of an in-flight fade drag, for rendering only. */
+export interface ClipFadePreview {
+  /** Id of the clip whose fades are being dragged. */
+  clipId: number;
+  /** Current fade-in length in PPQ (0 = none). */
+  fadeInPpq: number;
+  /** Current fade-out length in PPQ (0 = none). */
+  fadeOutPpq: number;
+}
+
 /** CSS cursor reflecting what a pointer press at the hovered point would do. */
 export type ClipCursor = 'default' | 'pointer' | 'move' | 'copy' | 'ew-resize';
 
@@ -109,6 +142,8 @@ export type ClipCursor = 'default' | 'pointer' | 'move' | 'copy' | 'ew-resize';
 export interface ClipInteractions {
   /** In-flight drag geometry, or null when no drag is running. */
   previewClip: Ref<ClipDragPreview | null>;
+  /** In-flight fade-drag values, or null when no fade drag is running. */
+  previewFades: Ref<ClipFadePreview | null>;
   /** Cursor to show over the arrangement lanes. */
   cursor: Ref<ClipCursor>;
   /** Handles pointerdown on the lane area (point in local px). */
@@ -145,7 +180,14 @@ interface TrimGesture {
   origin: ArrangeClip;
 }
 
-type Gesture = { kind: 'none' } | PendingGesture | MoveGesture | TrimGesture;
+interface FadeGesture {
+  kind: 'fade';
+  edge: FadeEdge;
+  start: ClipPoint;
+  origin: ArrangeClip;
+}
+
+type Gesture = { kind: 'none' } | PendingGesture | MoveGesture | TrimGesture | FadeGesture;
 
 /** Rounds a PPQ position to the nearest multiple of `step`, clamped to >= 0. */
 function snapToStep(ppq: number, step: number): number {
@@ -165,6 +207,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
   const minLength = options.minLengthPpq ?? DEFAULT_MIN_CLIP_LENGTH_PPQ;
 
   const previewClip = ref<ClipDragPreview | null>(null);
+  const previewFades = ref<ClipFadePreview | null>(null);
   const cursor = ref<ClipCursor>('default');
 
   let gesture: Gesture = { kind: 'none' };
@@ -190,6 +233,64 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
       });
     }
     return rects;
+  }
+
+  /**
+   * Finds the topmost audio clip whose fade handle is under the point. Fade
+   * handles only exist when the embedder provides the setClipFades command.
+   */
+  function fadeHandleHit(point: ClipPoint): { clip: ArrangeClip; edge: FadeEdge } | null {
+    if (!commands.setClipFades) return null;
+    const laneByTrack = new Map(options.getTrackIds().map((id, index) => [id, index]));
+    const clips = options.getClips();
+    for (let i = clips.length - 1; i >= 0; i--) {
+      const clip = clips[i];
+      if (clip.kind !== 'audio') continue;
+      const laneIndex = laneByTrack.get(clip.trackId);
+      if (laneIndex === undefined) continue;
+      const left = view.ppqToX(clip.startPpq);
+      const right = view.ppqToX(clip.startPpq + clip.lengthPpq);
+      const pxPerPpq = clip.lengthPpq > 0 ? (right - left) / clip.lengthPpq : 0;
+      const edge = hitTestFadeHandles(
+        point,
+        { left, right, top: view.laneTop(laneIndex) },
+        clip.fadeInPpq ?? 0,
+        clip.fadeOutPpq ?? 0,
+        pxPerPpq,
+      );
+      if (edge) return { clip, edge };
+    }
+    return null;
+  }
+
+  /** Resolves the snapped, clamped fade lengths for the dragged fade handle. */
+  function fadeTarget(
+    g: FadeGesture,
+    point: ClipPoint,
+    modifiers: ClipModifiers,
+  ): { fadeInPpq: number; fadeOutPpq: number } {
+    const bypass = modifiers.meta === true;
+    const step = options.getGridPpq();
+    const delta = view.xToPpq(point.x) - view.xToPpq(g.start.x);
+    const length = g.origin.lengthPpq;
+    const originIn = g.origin.fadeInPpq ?? 0;
+    const originOut = g.origin.fadeOutPpq ?? 0;
+    // The fade boundary (not the fade length) snaps to the grid.
+    if (g.edge === 'in') {
+      const boundary = g.origin.startPpq + originIn + delta;
+      const snapped = bypass ? boundary : snapToStep(boundary, step);
+      return {
+        fadeInPpq: clampFadePpq(snapped - g.origin.startPpq, length, originOut),
+        fadeOutPpq: originOut,
+      };
+    }
+    const endPpq = g.origin.startPpq + length;
+    const boundary = endPpq - originOut + delta;
+    const snapped = bypass ? boundary : snapToStep(boundary, step);
+    return {
+      fadeInPpq: originIn,
+      fadeOutPpq: clampFadePpq(endPpq - snapped, length, originIn),
+    };
   }
 
   /** Resolves the snapped, clamped move target for the dragged clip. */
@@ -220,19 +321,34 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     const step = options.getGridPpq();
     const rawDelta = view.xToPpq(point.x) - view.xToPpq(g.start.x);
     const originEnd = g.origin.startPpq + g.origin.lengthPpq;
+    const bounds = options.getSourceBounds?.(g.origin.id) ?? null;
     if (g.edge === 'end') {
-      const target = bypass ? originEnd + rawDelta : snapToStep(originEnd + rawDelta, step);
+      let target = bypass ? originEnd + rawDelta : snapToStep(originEnd + rawDelta, step);
+      if (bounds) target = Math.min(target, bounds.maxEndPpq);
       const end = Math.max(g.origin.startPpq + minLength, target);
       return { startPpq: g.origin.startPpq, lengthPpq: end - g.origin.startPpq };
     }
-    const target = bypass
+    let target = bypass
       ? Math.max(0, g.origin.startPpq + rawDelta)
       : snapToStep(g.origin.startPpq + rawDelta, step);
+    if (bounds) target = Math.max(target, bounds.minStartPpq);
     const startPpq = Math.min(originEnd - minLength, target);
     return { startPpq, lengthPpq: originEnd - startPpq };
   }
 
   function onPointerDown(point: ClipPoint, modifiers: ClipModifiers = {}): void {
+    const fadeHit = fadeHandleHit(point);
+    if (fadeHit) {
+      commands.selectClip(fadeHit.clip.id);
+      cursor.value = 'ew-resize';
+      gesture = {
+        kind: 'fade',
+        edge: fadeHit.edge,
+        start: point,
+        origin: { ...fadeHit.clip },
+      };
+      return;
+    }
     const hit = hitTestClip(toRects(), point, view, hitOptions());
     if (!hit) {
       gesture = { kind: 'none' };
@@ -272,8 +388,17 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
 
   function onPointerMove(point: ClipPoint, modifiers: ClipModifiers = {}): void {
     if (gesture.kind === 'none') {
+      if (fadeHandleHit(point)) {
+        cursor.value = 'ew-resize';
+        return;
+      }
       const hit = hitTestClip(toRects(), point, view, hitOptions());
       cursor.value = hit ? (hit.zone === 'body' ? 'pointer' : 'ew-resize') : 'default';
+      return;
+    }
+    if (gesture.kind === 'fade') {
+      const fades = fadeTarget(gesture, point, modifiers);
+      previewFades.value = { clipId: gesture.origin.id, ...fades };
       return;
     }
     if (gesture.kind === 'pending') {
@@ -307,7 +432,17 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     const g = gesture;
     gesture = { kind: 'none' };
     previewClip.value = null;
+    previewFades.value = null;
     cursor.value = 'default';
+    if (g.kind === 'fade') {
+      const fades = fadeTarget(g, point, modifiers);
+      const originIn = g.origin.fadeInPpq ?? 0;
+      const originOut = g.origin.fadeOutPpq ?? 0;
+      if (fades.fadeInPpq === originIn && fades.fadeOutPpq === originOut) return;
+      // One command call per gesture so the whole drag is one undo entry.
+      commands.setClipFades?.(g.origin.id, fades.fadeInPpq, fades.fadeOutPpq);
+      return;
+    }
     if (g.kind === 'move') {
       const target = moveTarget(g, point, modifiers);
       const moved = target.startPpq !== g.origin.startPpq;
@@ -336,17 +471,19 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     const ppq = Math.max(0, view.xToPpq(point.x));
     const bar = options.getBarRange(ppq);
     const id = commands.createClip(trackIds[lane], bar.startPpq, bar.lengthPpq);
-    commands.selectClip(id);
+    if (id !== null) commands.selectClip(id);
   }
 
   function cancel(): void {
     gesture = { kind: 'none' };
     previewClip.value = null;
+    previewFades.value = null;
     cursor.value = 'default';
   }
 
   return {
     previewClip,
+    previewFades,
     cursor,
     onPointerDown,
     onPointerMove,

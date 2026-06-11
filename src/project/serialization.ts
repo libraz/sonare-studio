@@ -11,10 +11,25 @@
 
 import { clearHistory } from './commands';
 import { getProject, useProjectStore } from './store';
-import type { EditorNote, TrackKind } from './types';
+import type { ClipKind, EditorClip, EditorNote, TrackKind } from './types';
 
-/** Current schema version written by {@link serializeProject}. */
-export const PROJECT_DOCUMENT_SCHEMA_VERSION = 1;
+/**
+ * Current schema version written by {@link serializeProject}.
+ *
+ * Version history:
+ * - 1: MIDI-only clips.
+ * - 2: clips carry an optional `kind` ('midi' | 'audio'; absent = 'midi'),
+ *   audio clips reference an asset by `assetId` and may carry fade lengths.
+ *   Audio PCM lives in the OPFS asset store (src/persistence/assets.ts), not
+ *   in the document; loading a document does not require the assets to be
+ *   present (clips simply stay silent until the asset is restored). A future
+ *   .szd revision can bundle referenced assets as extra zip entries (e.g.
+ *   "assets/<id>.pcm" + "assets/<id>.json") without a schema change.
+ *
+ * Loaders accept any version up to this one; version-1 documents load
+ * unchanged (every clip is MIDI).
+ */
+export const PROJECT_DOCUMENT_SCHEMA_VERSION = 2;
 
 /** One note inside a document clip (an {@link EditorNote} without its id). */
 export type DocumentNote = Omit<EditorNote, 'id'>;
@@ -35,8 +50,16 @@ export interface DocumentClip {
   loopEnabled: boolean;
   /** Loop length in PPQ (0 = full clip window). */
   loopLengthPpq: number;
-  /** Note content in source-relative PPQ. */
+  /** Note content in source-relative PPQ (empty for audio clips). */
   notes: DocumentNote[];
+  /** Clip content kind; absent (schema version 1) = 'midi'. */
+  kind?: ClipKind;
+  /** Audio asset id resolved against the OPFS asset store; audio clips only. */
+  assetId?: string;
+  /** Fade-in length in PPQ (> 0 when present); audio clips only. */
+  fadeInPpq?: number;
+  /** Fade-out length in PPQ (> 0 when present); audio clips only. */
+  fadeOutPpq?: number;
 }
 
 /** One track of the document, with its clips. */
@@ -119,6 +142,25 @@ export interface ProjectDocument {
   sections: DocumentSection[];
 }
 
+/** Deep-copies a clip mirror entry into the document shape (no session ids). */
+function toDocumentClip(clip: EditorClip): DocumentClip {
+  const out: DocumentClip = {
+    name: clip.name,
+    startPpq: clip.startPpq,
+    lengthPpq: clip.lengthPpq,
+    sourceOffsetPpq: clip.sourceOffsetPpq,
+    gain: clip.gain,
+    loopEnabled: clip.loopEnabled,
+    loopLengthPpq: clip.loopLengthPpq,
+    notes: clip.notes.map(toDocumentNote),
+    kind: clip.kind ?? 'midi',
+  };
+  if (clip.assetId !== undefined) out.assetId = clip.assetId;
+  if (clip.fadeInPpq !== undefined) out.fadeInPpq = clip.fadeInPpq;
+  if (clip.fadeOutPpq !== undefined) out.fadeOutPpq = clip.fadeOutPpq;
+  return out;
+}
+
 /** Deep-copies a note, dropping the editor id. */
 function toDocumentNote(note: EditorNote): DocumentNote {
   const out: DocumentNote = {
@@ -159,16 +201,7 @@ export function serializeProject(): ProjectDocument {
       pan: track.pan,
       clips: store.clips
         .filter((clip) => clip.trackId === track.id)
-        .map((clip) => ({
-          name: clip.name,
-          startPpq: clip.startPpq,
-          lengthPpq: clip.lengthPpq,
-          sourceOffsetPpq: clip.sourceOffsetPpq,
-          gain: clip.gain,
-          loopEnabled: clip.loopEnabled,
-          loopLengthPpq: clip.loopLengthPpq,
-          notes: clip.notes.map(toDocumentNote),
-        })),
+        .map((clip) => toDocumentClip(clip)),
     })),
     markers: store.markers.map((marker) => ({ ppq: marker.ppq, name: marker.name })),
     sections: store.sections.map((section) => ({

@@ -7,6 +7,15 @@ import {
   strokeRoundRect,
 } from '@/components/piano-roll/theme';
 import type { EditorClip, EditorMarker, EditorTrack, TimeSignatureSegment } from '@/project/types';
+import { isAudioClip } from '@/project/types';
+import {
+  audioWindowFractions,
+  peaksBucketCount,
+  peaksBucketsPerSecond,
+  waveformColumns,
+} from '@/ui/arrangement/audio-clip-content';
+import { audioAssetMergedPeaks, requestAudioAsset } from '@/ui/arrangement/audio-clip-data';
+import { FADE_HANDLE_SIZE_PX, fadeHandleXs } from '@/ui/arrangement/audio-fades';
 import { clipContentMode, densityBuckets, miniNoteRects } from '@/ui/arrangement/clip-content';
 import { barLengthPpq, rulerTicks } from '@/ui/arrangement/ruler';
 import type { ClipInteractions, ClipModifiers } from '@/ui/arrangement/use-clip-interactions';
@@ -20,10 +29,12 @@ import { ARRANGEMENT_COLORS, colorWithAlpha, RULER_HEIGHT_PX } from './theme';
  * overlay. Rendering is split into a base layer (ruler, lanes, clips) and an
  * overlay layer (playhead) so playhead motion does not redraw the clips.
  *
- * Clip bodies show mini-notes at high zoom and per-bar density blocks at low
- * zoom. Clip gestures are delegated to the shared interactions state machine;
- * pressing the ruler seeks (and scrubs) the transport via the `ruler-seek`
- * emit.
+ * MIDI clip bodies show mini-notes at high zoom and per-bar density blocks at
+ * low zoom; audio clip bodies show a min/max waveform (with fade ramps and
+ * fade handles) once their asset is loaded, and a placeholder centerline
+ * before that. Clip gestures are delegated to the shared interactions state
+ * machine; pressing the ruler seeks (and scrubs) the transport via the
+ * `ruler-seek` emit.
  */
 
 const props = defineProps<{
@@ -59,6 +70,8 @@ const props = defineProps<{
   interactions: ClipInteractions;
   /** Playhead position getter in PPQ; omit to hide the playhead. */
   positionPpq?: () => number;
+  /** Constant tempo in BPM used to map audio asset time onto PPQ (default 120). */
+  tempoBpm?: number;
 }>();
 
 const emit = defineEmits<{
@@ -179,7 +192,9 @@ function drawClip(
   const hasNameStrip = hPx >= 26 && wPx >= MIN_NAME_WIDTH_PX;
   const contentTop = hasNameStrip ? y + NAME_STRIP_PX : y + 2;
   const contentH = hPx - (hasNameStrip ? NAME_STRIP_PX + 2 : 4);
-  if (contentH > 2 && source.notes.length > 0) {
+  if (contentH > 2 && isAudioClip(source)) {
+    drawAudioWaveform(ctx, source, track.color, x, wPx, contentTop, contentH);
+  } else if (contentH > 2 && source.notes.length > 0) {
     if (clipContentMode(range.pxPerPpq) === 'mini-notes') {
       ctx.fillStyle = colorWithAlpha(track.color, 0.95);
       for (const rect of miniNoteRects(source.notes, source.sourceOffsetPpq, source.lengthPpq)) {
@@ -206,6 +221,9 @@ function drawClip(
       }
     }
   }
+  if (isAudioClip(source)) {
+    drawAudioFades(ctx, source, x, y, wPx, hPx);
+  }
   if (hasNameStrip) {
     ctx.fillStyle = COLORS.clipName;
     ctx.font = '10px system-ui, sans-serif';
@@ -218,6 +236,132 @@ function drawClip(
   ctx.lineWidth = selected ? 1.5 : 1;
   ctx.strokeStyle = selected ? COLORS.clipSelectedBorder : COLORS.clipBorder;
   strokeRoundRect(ctx, x + 0.5, y + 0.5, wPx - 1, hPx - 1, 3);
+}
+
+/**
+ * Draws an audio clip's min/max waveform from the cached peak envelope of its
+ * asset, picking the pyramid level from the horizontal zoom. While the asset
+ * is still loading a placeholder centerline is drawn and a repaint is
+ * scheduled for when the load settles.
+ */
+function drawAudioWaveform(
+  ctx: CanvasRenderingContext2D,
+  source: EditorClip,
+  color: string,
+  x: number,
+  wPx: number,
+  contentTop: number,
+  contentH: number,
+): void {
+  const range = props.range;
+  const centerY = contentTop + contentH / 2;
+  const asset = source.assetId ? requestAudioAsset(source.assetId, scheduleBase) : null;
+  if (!asset || !source.assetId) {
+    ctx.fillStyle = colorWithAlpha(color, 0.45);
+    ctx.fillRect(x, centerY - 0.5, wPx, 1);
+    return;
+  }
+  const visibleLeft = Math.max(x, 0);
+  const visibleRight = Math.min(x + wPx, range.widthPx);
+  if (visibleRight <= visibleLeft || !(wPx > 0)) return;
+  const tempoBpm = props.tempoBpm ?? 120;
+  const meta = asset.meta;
+  const pxPerSecond = range.pxPerPpq * (tempoBpm / 60);
+  const bucketCount = peaksBucketCount(
+    meta.numFrames,
+    meta.sampleRate,
+    peaksBucketsPerSecond(pxPerSecond),
+  );
+  const peaks = audioAssetMergedPeaks(source.assetId, asset, bucketCount);
+  const window = audioWindowFractions(
+    source.sourceOffsetPpq,
+    source.lengthPpq,
+    tempoBpm,
+    meta.numFrames,
+    meta.sampleRate,
+  );
+  // Map only the on-screen slice of the clip window to pixel columns.
+  const span = window.endFrac - window.startFrac;
+  const columnCount = Math.max(1, Math.round(visibleRight - visibleLeft));
+  const columns = waveformColumns(
+    peaks,
+    window.startFrac + ((visibleLeft - x) / wPx) * span,
+    window.startFrac + ((visibleRight - x) / wPx) * span,
+    columnCount,
+  );
+  ctx.fillStyle = colorWithAlpha(color, 0.9);
+  const half = contentH / 2;
+  for (let j = 0; j < columns.length; j++) {
+    const col = columns[j];
+    const top = centerY - col.max * half;
+    const height = Math.max(1, (col.max - col.min) * half);
+    ctx.fillRect(visibleLeft + j, top, 1, height);
+  }
+}
+
+/** Draws the fade ramps, shaded corners and top fade handles of an audio clip. */
+function drawAudioFades(
+  ctx: CanvasRenderingContext2D,
+  source: EditorClip,
+  x: number,
+  y: number,
+  wPx: number,
+  hPx: number,
+): void {
+  const preview = props.interactions.previewFades.value;
+  const fades =
+    preview && preview.clipId === source.id
+      ? preview
+      : { fadeInPpq: source.fadeInPpq ?? 0, fadeOutPpq: source.fadeOutPpq ?? 0 };
+  const pxPerPpq = props.range.pxPerPpq;
+  const bottom = y + hPx;
+  const fadeInPx = Math.min(wPx, fades.fadeInPpq * pxPerPpq);
+  const fadeOutPx = Math.min(wPx, fades.fadeOutPpq * pxPerPpq);
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = COLORS.fadeRamp;
+  if (fadeInPx > 0) {
+    ctx.fillStyle = COLORS.fadeOverlay;
+    ctx.beginPath();
+    ctx.moveTo(x, bottom);
+    ctx.lineTo(x, y);
+    ctx.lineTo(x + fadeInPx, y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(x, bottom);
+    ctx.lineTo(x + fadeInPx, y);
+    ctx.stroke();
+  }
+  if (fadeOutPx > 0) {
+    ctx.fillStyle = COLORS.fadeOverlay;
+    ctx.beginPath();
+    ctx.moveTo(x + wPx, bottom);
+    ctx.lineTo(x + wPx, y);
+    ctx.lineTo(x + wPx - fadeOutPx, y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(x + wPx - fadeOutPx, y);
+    ctx.lineTo(x + wPx, bottom);
+    ctx.stroke();
+  }
+  if (wPx >= FADE_HANDLE_SIZE_PX * 2) {
+    const xs = fadeHandleXs(x, x + wPx, fades.fadeInPpq, fades.fadeOutPpq, pxPerPpq);
+    drawFadeHandle(ctx, xs.inX, y);
+    drawFadeHandle(ctx, xs.outX, y);
+  }
+}
+
+/** Draws one downward-pointing fade handle triangle at the clip top edge. */
+function drawFadeHandle(ctx: CanvasRenderingContext2D, handleX: number, top: number): void {
+  const half = FADE_HANDLE_SIZE_PX / 2;
+  ctx.fillStyle = COLORS.fadeHandle;
+  ctx.beginPath();
+  ctx.moveTo(handleX - half, top + 1);
+  ctx.lineTo(handleX + half, top + 1);
+  ctx.lineTo(handleX, top + 1 + FADE_HANDLE_SIZE_PX);
+  ctx.closePath();
+  ctx.fill();
 }
 
 /** Draws all clips, applying the in-flight drag preview when present. */
@@ -382,7 +526,9 @@ watch(
     props.loopEnabled,
     props.loopStartPpq,
     props.loopEndPpq,
+    props.tempoBpm,
     props.interactions.previewClip.value,
+    props.interactions.previewFades.value,
   ],
   scheduleAll,
 );

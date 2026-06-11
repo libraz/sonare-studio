@@ -61,6 +61,23 @@ export interface EditorNoteUpdate {
 /** Track content kind, mirroring the wasm ProjectTrackKind string forms. */
 export type TrackKind = 'audio' | 'midi' | 'aux';
 
+/** Clip content kind: MIDI clips carry notes, audio clips reference an asset. */
+export type ClipKind = 'midi' | 'audio';
+
+/**
+ * Returns the effective content kind of a clip mirror entry; clips created
+ * before audio support (or by plain MIDI commands) have no `kind` field and
+ * default to 'midi'.
+ */
+export function clipKind(clip: Pick<EditorClip, 'kind'>): ClipKind {
+  return clip.kind ?? 'midi';
+}
+
+/** True when a clip mirror entry is an audio clip. */
+export function isAudioClip(clip: Pick<EditorClip, 'kind'>): boolean {
+  return clipKind(clip) === 'audio';
+}
+
 /**
  * One track in the arrangement mirror.
  *
@@ -118,6 +135,14 @@ export interface EditorClip {
   loopLengthPpq: number;
   /** Note content recovered from the Project, with editor-assigned ids. */
   notes: EditorNote[];
+  /** Clip content kind; absent = 'midi' (see {@link clipKind}). */
+  kind?: ClipKind;
+  /** Audio asset id (src/persistence/assets.ts); audio clips only. */
+  assetId?: string;
+  /** Fade-in length in PPQ (> 0 when present); audio clips only. */
+  fadeInPpq?: number;
+  /** Fade-out length in PPQ (> 0 when present); audio clips only. */
+  fadeOutPpq?: number;
 }
 
 /** One timeline marker (app-level; the Project has no marker removal API). */

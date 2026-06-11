@@ -188,6 +188,130 @@ describe('useClipInteractions double-click', () => {
   });
 });
 
+interface AudioSetup {
+  interactions: ReturnType<typeof useClipInteractions>;
+  commands: Setup['commands'] & { setClipFades: ReturnType<typeof vi.fn> };
+  clips: ArrangeClip[];
+}
+
+/**
+ * One audio clip (id 2) at x [40, 120) on lane 0 with a 1-PPQ fade-in: the
+ * fade-in handle sits at x = 50, the fade-out handle at x = 120.
+ */
+function makeAudioSetup(bounds: { minStartPpq: number; maxEndPpq: number } | null): AudioSetup {
+  const clips: ArrangeClip[] = [
+    { id: 2, trackId: 10, startPpq: 4, lengthPpq: 8, kind: 'audio', fadeInPpq: 1 },
+  ];
+  const commands = {
+    selectClip: vi.fn(),
+    moveClip: vi.fn(),
+    trimClip: vi.fn(),
+    duplicateClip: vi.fn(() => 99),
+    createClip: vi.fn(() => null),
+    setClipFades: vi.fn(),
+  };
+  const interactions = useClipInteractions({
+    view,
+    getClips: () => clips,
+    getTrackIds: () => [10, 20],
+    getGridPpq: () => 1,
+    getBarRange: (ppq) => ({ startPpq: Math.floor(ppq / 4) * 4, lengthPpq: 4 }),
+    getSourceBounds: () => bounds,
+    commands,
+  });
+  return { interactions, commands, clips };
+}
+
+describe('useClipInteractions audio trim bounds', () => {
+  it('clamps an end trim to the asset end', () => {
+    const { interactions, commands } = makeAudioSetup({ minStartPpq: 2, maxEndPpq: 14 });
+    interactions.onPointerDown({ x: 119, y: 25 }); // trim-end zone
+    interactions.onPointerMove({ x: 200, y: 25 }); // way past the asset end
+    expect(interactions.previewClip.value).toMatchObject({ startPpq: 4, lengthPpq: 10 });
+    interactions.onPointerUp({ x: 200, y: 25 });
+    expect(commands.trimClip).toHaveBeenCalledWith(2, 4, 10);
+  });
+
+  it('clamps a start trim to source offset zero', () => {
+    const { interactions, commands } = makeAudioSetup({ minStartPpq: 2, maxEndPpq: 14 });
+    interactions.onPointerDown({ x: 41, y: 25 }); // trim-start zone
+    interactions.onPointerMove({ x: 0, y: 25 });
+    interactions.onPointerUp({ x: 0, y: 25 });
+    expect(commands.trimClip).toHaveBeenCalledWith(2, 2, 10);
+  });
+
+  it('trims freely when no bounds are provided', () => {
+    const { interactions, commands } = makeAudioSetup(null);
+    interactions.onPointerDown({ x: 119, y: 25 });
+    interactions.onPointerMove({ x: 200, y: 25 });
+    interactions.onPointerUp({ x: 200, y: 25 });
+    expect(commands.trimClip).toHaveBeenCalledWith(2, 4, 16);
+  });
+});
+
+describe('useClipInteractions fade handles', () => {
+  it('selects the clip and shows a resize cursor on a fade handle', () => {
+    const { interactions, commands } = makeAudioSetup(null);
+    interactions.onPointerMove({ x: 50, y: 3 });
+    expect(interactions.cursor.value).toBe('ew-resize');
+    interactions.onPointerDown({ x: 50, y: 3 });
+    expect(commands.selectClip).toHaveBeenCalledWith(2);
+  });
+
+  it('drags the fade-in handle with boundary snapping and one commit', () => {
+    const { interactions, commands } = makeAudioSetup(null);
+    interactions.onPointerDown({ x: 50, y: 3 });
+    interactions.onPointerMove({ x: 70, y: 3 }); // boundary 5 -> 7 PPQ
+    expect(interactions.previewFades.value).toEqual({ clipId: 2, fadeInPpq: 3, fadeOutPpq: 0 });
+    interactions.onPointerUp({ x: 70, y: 3 });
+    expect(commands.setClipFades).toHaveBeenCalledTimes(1);
+    expect(commands.setClipFades).toHaveBeenCalledWith(2, 3, 0);
+    expect(interactions.previewFades.value).toBeNull();
+  });
+
+  it('clamps the fade-in to the clip length', () => {
+    const { interactions, commands } = makeAudioSetup(null);
+    interactions.onPointerDown({ x: 50, y: 3 });
+    interactions.onPointerMove({ x: 300, y: 3 });
+    interactions.onPointerUp({ x: 300, y: 3 });
+    expect(commands.setClipFades).toHaveBeenCalledWith(2, 8, 0);
+  });
+
+  it('drags the fade-out handle from the clip end', () => {
+    const { interactions, commands } = makeAudioSetup(null);
+    interactions.onPointerDown({ x: 119, y: 3 }); // fade-out handle at x = 120
+    interactions.onPointerMove({ x: 99, y: 3 }); // boundary 12 -> 10 PPQ
+    expect(interactions.previewFades.value).toEqual({ clipId: 2, fadeInPpq: 1, fadeOutPpq: 2 });
+    interactions.onPointerUp({ x: 99, y: 3 });
+    expect(commands.setClipFades).toHaveBeenCalledWith(2, 1, 2);
+  });
+
+  it('commits nothing when the fades come back unchanged', () => {
+    const { interactions, commands } = makeAudioSetup(null);
+    interactions.onPointerDown({ x: 50, y: 3 });
+    interactions.onPointerUp({ x: 50, y: 3 });
+    expect(commands.setClipFades).not.toHaveBeenCalled();
+  });
+
+  it('leaves clicks below the handle band to the body/trim gestures', () => {
+    const { interactions, commands } = makeAudioSetup(null);
+    interactions.onPointerDown({ x: 50, y: 25 });
+    interactions.onPointerMove({ x: 70, y: 25 });
+    interactions.onPointerUp({ x: 70, y: 25 });
+    expect(commands.setClipFades).not.toHaveBeenCalled();
+    expect(commands.moveClip).toHaveBeenCalledWith(2, 6, undefined);
+  });
+});
+
+describe('useClipInteractions create rejection', () => {
+  it('does not select anything when createClip returns null', () => {
+    const { interactions, commands } = makeAudioSetup(null);
+    interactions.onDoubleClick({ x: 200, y: 25 }); // empty space on lane 0
+    expect(commands.createClip).toHaveBeenCalledWith(10, 20, 4);
+    expect(commands.selectClip).not.toHaveBeenCalled();
+  });
+});
+
 describe('useClipInteractions feedback and cancel', () => {
   it('reflects the hover zone in the cursor', () => {
     const { interactions } = makeSetup();

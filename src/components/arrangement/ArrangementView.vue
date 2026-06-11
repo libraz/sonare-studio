@@ -5,10 +5,14 @@ import {
   duplicateClip,
   moveClip,
   setActiveClip,
+  setClipFades,
   splitClip,
   trimClip,
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
+import { isAudioClip } from '@/project/types';
+import { assetLengthPpq, audioClipSourceBounds } from '@/ui/arrangement/audio-clip-content';
+import { getLoadedAudioAsset } from '@/ui/arrangement/audio-clip-data';
 import { barRangeAt } from '@/ui/arrangement/ruler';
 import {
   type ClipInteractionsView,
@@ -47,11 +51,15 @@ const props = defineProps<{
   loopStartPpq?: number;
   /** Transport loop end in PPQ. */
   loopEndPpq?: number;
+  /** Ids of record-armed tracks (recording state is owned by the shell). */
+  armedTrackIds?: readonly number[];
 }>();
 
 const emit = defineEmits<{
   /** Request to move the transport playhead to an absolute PPQ position. */
   seek: [ppq: number];
+  /** Request to (dis)arm a track for recording (re-emitted from the headers). */
+  arm: [trackId: number, armed: boolean];
 }>();
 
 const store = useProjectStore();
@@ -104,18 +112,39 @@ const laneView: ClipInteractionsView = {
   },
 };
 
+/**
+ * Trim bounds of a non-looping audio clip against its backing asset; null
+ * (unbounded) for MIDI clips, looping clips and assets not yet loaded.
+ */
+function sourceBoundsFor(clipId: number) {
+  const clip = store.clips.find((c) => c.id === clipId);
+  if (!clip || !isAudioClip(clip) || !clip.assetId || clip.loopEnabled) return null;
+  const asset = getLoadedAudioAsset(clip.assetId);
+  if (!asset) return null;
+  const assetPpq = assetLengthPpq(asset.meta.numFrames, asset.meta.sampleRate, store.tempoBpm);
+  return audioClipSourceBounds(clip, assetPpq);
+}
+
 const interactions = useClipInteractions({
   view: laneView,
   getClips: () => store.clips,
   getTrackIds: () => store.tracks.map((track) => track.id),
   getGridPpq: () => gridPpq.value,
   getBarRange: (ppq) => barRangeAt(store.timeSignatures, ppq),
+  getSourceBounds: sourceBoundsFor,
   commands: {
     selectClip: (clipId) => setActiveClip(clipId),
     moveClip,
     trimClip,
     duplicateClip,
-    createClip: (trackId, startPpq, lengthPpq) => addMidiClip({ trackId, startPpq, lengthPpq }),
+    // Double-click creation makes empty MIDI clips; audio clips come from
+    // imports/recording, so audio (and aux) lanes do not create on click.
+    createClip: (trackId, startPpq, lengthPpq) => {
+      const track = store.tracks.find((t) => t.id === trackId);
+      if (track?.kind !== 'midi') return null;
+      return addMidiClip({ trackId, startPpq, lengthPpq });
+    },
+    setClipFades,
   },
 });
 
@@ -212,6 +241,8 @@ onBeforeUnmount(() => {
         :lane-height="LANE_HEIGHT_PX"
         :scroll-y="scrollY"
         :ruler-offset="RULER_HEIGHT_PX"
+        :armed-track-ids="props.armedTrackIds ?? []"
+        @arm="(trackId, armed) => emit('arm', trackId, armed)"
       />
       <div ref="canvasCell" class="cell-canvas" @wheel.prevent="onWheel">
         <ArrangementCanvas
@@ -229,6 +260,7 @@ onBeforeUnmount(() => {
           :loop-enabled="props.loopEnabled ?? false"
           :loop-start-ppq="props.loopStartPpq ?? 0"
           :loop-end-ppq="props.loopEndPpq ?? 0"
+          :tempo-bpm="store.tempoBpm"
           :interactions="interactions"
           :position-ppq="props.positionPpq"
           @view-resize="onCanvasResize"

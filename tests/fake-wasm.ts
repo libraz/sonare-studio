@@ -7,9 +7,13 @@
  *   midi_content, tempo_segments, time_signatures, markers).
  * - The undo history granularity matches the real binding: most edits push
  *   one history entry; addClip pushes two (source registration + clip add)
- *   and addMidiClip pushes three (source + track + clip).
+ *   and addMidiClip pushes three (source + track + clip). setClipSource and
+ *   setClipFade push one entry each.
  * - splitClip partitions MIDI events between the halves and tracks source
  *   offsets the way the real Project does.
+ * - addClip registers one source per call (inline audio fields or a
+ *   by-reference sourceUri are recorded on it); sourceCount() reports the
+ *   total and source ids are allocated as 1, 2, 3, ... in registration order.
  */
 
 interface FakeEvent {
@@ -34,6 +38,17 @@ interface FakeClip {
   loop_mode: number;
   loop_length_ppq: number;
   source_id: number;
+  fade_in_ppq: number;
+  fade_out_ppq: number;
+}
+
+/** One registered audio/MIDI source (inline audio or by-reference URI). */
+interface FakeSource {
+  id: number;
+  uri?: string;
+  audioFrames?: number;
+  audioChannels?: number;
+  audioSampleRate?: number;
 }
 
 interface FakeMarker {
@@ -50,6 +65,7 @@ interface FakeState {
   midi: Map<number, FakeEvent[]>;
   markers: FakeMarker[];
   sourceCount: number;
+  sources: Map<number, FakeSource>;
 }
 
 /** Packs a UMP MIDI 1.0 channel-voice word with the real binding layout. */
@@ -80,6 +96,7 @@ function cloneState(state: FakeState): FakeState {
     midi: new Map([...state.midi].map(([id, events]) => [id, events.map((e) => ({ ...e }))])),
     markers: state.markers.map((m) => ({ ...m })),
     sourceCount: state.sourceCount,
+    sources: new Map([...state.sources].map(([id, source]) => [id, { ...source }])),
   };
 }
 
@@ -94,6 +111,7 @@ export class FakeProject {
     midi: new Map(),
     markers: [],
     sourceCount: 0,
+    sources: new Map(),
   };
   private history: FakeState[] = [];
   private future: FakeState[] = [];
@@ -193,11 +211,29 @@ export class FakeProject {
     lengthPpq: number;
     sourceOffsetPpq?: number;
     gain?: number;
+    audio?: Float32Array;
+    audioChannels?: number;
+    audioSampleRate?: number;
+    sourceUri?: string;
   }): number {
+    // The real binding rejects non-MIDI clips without inline audio data
+    // (by-reference sources still carry a placeholder buffer).
+    if (desc.isMidi === false && (desc.audio === undefined || desc.audio.length === 0)) {
+      throw new Error('audio clip requires non-empty inline audio data');
+    }
     // The real binding registers a source first (one history entry), then
     // adds the clip (a second entry).
     const sourceId = this.edit(() => {
       this.state.sourceCount += 1;
+      const source: FakeSource = { id: this.state.sourceCount };
+      if (desc.sourceUri !== undefined) source.uri = desc.sourceUri;
+      if (desc.audio !== undefined) {
+        const channels = desc.audioChannels ?? 1;
+        source.audioChannels = channels;
+        source.audioFrames = Math.floor(desc.audio.length / channels);
+        source.audioSampleRate = desc.audioSampleRate ?? 48000;
+      }
+      this.state.sources.set(this.state.sourceCount, source);
       return this.state.sourceCount;
     });
     return this.edit(() => {
@@ -212,9 +248,38 @@ export class FakeProject {
         loop_mode: 0,
         loop_length_ppq: 0,
         source_id: sourceId,
+        fade_in_ppq: 0,
+        fade_out_ppq: 0,
       });
-      this.state.midi.set(id, []);
+      if (desc.isMidi !== false) this.state.midi.set(id, []);
       return id;
+    });
+  }
+
+  /** Number of audio/MIDI sources registered on the project. */
+  sourceCount(): number {
+    return this.state.sourceCount;
+  }
+
+  /** Rebinds a clip to an already-registered source (one history entry). */
+  setClipSource(clipId: number, sourceId: number): void {
+    this.edit(() => {
+      const clip = this.requireClip(clipId);
+      if (!this.state.sources.has(sourceId)) throw new Error(`unknown source ${sourceId}`);
+      clip.source_id = sourceId;
+    });
+  }
+
+  /** Sets a clip's fade-in/out lengths (one history entry). */
+  setClipFade(
+    clipId: number,
+    fadeIn?: { lengthPpq?: number },
+    fadeOut?: { lengthPpq?: number },
+  ): void {
+    this.edit(() => {
+      const clip = this.requireClip(clipId);
+      if (fadeIn !== undefined) clip.fade_in_ppq = fadeIn.lengthPpq ?? 0;
+      if (fadeOut !== undefined) clip.fade_out_ppq = fadeOut.lengthPpq ?? 0;
     });
   }
 
@@ -275,8 +340,13 @@ export class FakeProject {
         loop_mode: clip.loop_mode,
         loop_length_ppq: clip.loop_length_ppq,
         source_id: clip.source_id,
+        // The fade-out travels with the right half; the left keeps the
+        // fade-in only.
+        fade_in_ppq: 0,
+        fade_out_ppq: clip.fade_out_ppq,
       });
       clip.length_ppq = leftLength;
+      clip.fade_out_ppq = 0;
       const events = this.state.midi.get(clipId) ?? [];
       this.state.midi.set(
         clipId,
