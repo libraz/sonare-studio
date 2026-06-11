@@ -2,8 +2,10 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import ArrangementView from '@/components/arrangement/ArrangementView.vue';
 import DeviceRack from '@/components/devices/DeviceRack.vue';
+import ExportDialog from '@/components/export/ExportDialog.vue';
 import LevelMeter from '@/components/LevelMeter.vue';
 import ProjectListsPanel from '@/components/lists/ProjectListsPanel.vue';
+import MasteringPanel from '@/components/mastering/MasteringPanel.vue';
 import MediaBrowser from '@/components/media/MediaBrowser.vue';
 import MixerPanel from '@/components/mixer/MixerPanel.vue';
 import InfoLine from '@/components/piano-roll/InfoLine.vue';
@@ -26,6 +28,10 @@ import {
   prerenderMidiClip,
 } from '@/engine/instruments';
 import { createMeterBridge, type MeterBridge } from '@/engine/meters';
+import { renderMixdownInWorker } from '@/export/client';
+import { dawprojectFilename, exportDawproject } from '@/export/dawproject';
+import type { MixdownRangePpq } from '@/export/mixdown';
+import { encodeWav } from '@/export/wav';
 import { describeError } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
 import { loadAssetMeta } from '@/persistence/assets';
@@ -345,15 +351,55 @@ function exportSmfAction(): void {
   closeProjectMenu();
   void runAction(async () => {
     const result = exportProjectSmf();
-    const blob = new Blob([new Uint8Array(result.bytes)], { type: 'audio/midi' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = result.filename;
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(url);
+    downloadBlobFile(
+      new Blob([new Uint8Array(result.bytes)], { type: 'audio/midi' }),
+      result.filename,
+    );
+  });
+}
+
+// --- Audio export / DAWproject ---------------------------------------------------
+
+/** Whether the audio export dialog is shown. */
+const exportDialogOpen = ref(false);
+
+/** Transport loop window as a PPQ range for the export dialog (null = no usable loop). */
+const exportLoopRegion = computed<MixdownRangePpq | null>(() =>
+  loopEnabled.value && loopEndPpq.value > loopStartPpq.value
+    ? { startPpq: loopStartPpq.value, endPpq: loopEndPpq.value }
+    : null,
+);
+
+function openExportDialog(): void {
+  closeProjectMenu();
+  exportDialogOpen.value = true;
+}
+
+/** Last file handed to the download seam (read by the dev test hook). */
+let lastDownload: { filename: string; blob: Blob } | null = null;
+
+/** Shared download seam: transient anchor around an object URL. */
+function downloadBlobFile(blob: Blob, filename: string): void {
+  if (import.meta.env.DEV) lastDownload = { filename, blob };
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** Project menu "Export DAWproject": interchange zip with the audio assets embedded. */
+function exportDawprojectAction(): void {
+  closeProjectMenu();
+  void runAction(async () => {
+    const bytes = await exportDawproject(serializeProject(), { includeAudio: true });
+    downloadBlobFile(
+      new Blob([new Uint8Array(bytes)], { type: 'application/zip' }),
+      dawprojectFilename(store.projectName),
+    );
   });
 }
 
@@ -792,7 +838,7 @@ function toggleDeviceRack(): void {
 
 // --- Editor dock tabs ----------------------------------------------------------
 
-type DockTab = 'roll' | 'mixer' | 'steps' | 'lists' | 'media' | 'sample';
+type DockTab = 'roll' | 'mixer' | 'mastering' | 'steps' | 'lists' | 'media' | 'sample';
 
 /** Active editor-dock tab. */
 const dockTab = ref<DockTab>('roll');
@@ -957,6 +1003,29 @@ onMounted(async () => {
               : track.instrument.kind,
         ),
       trackInsertCounts: () => store.tracks.map((track) => track.mixer?.inserts.length ?? 0),
+      masteringProcessors: () =>
+        (store.mixer.masteringChain?.processors ?? []).map((slot) => slot.processor),
+      lastDownload: () => lastDownload,
+      // Renders the project mixdown through the export worker and returns an
+      // audio signature, so automation can verify the real render path and
+      // that toggling the master chain changes the bytes.
+      exportProbe: async (includeMasterChain = true) => {
+        const result = await renderMixdownInWorker(serializeProject(), { includeMasterChain })
+          .result;
+        const wav = encodeWav(result.channels, result.sampleRate, { bitDepth: 16 });
+        let hash = 0x811c9dc5;
+        for (const byte of wav) hash = Math.imul(hash ^ byte, 0x01000193);
+        return {
+          totalFrames: result.totalFrames,
+          sampleRate: result.sampleRate,
+          peakDb: result.report.peakDb,
+          truePeakDb: result.report.truePeakDb ?? null,
+          lufs: result.report.lufs ?? null,
+          wavBytes: wav.length,
+          riff: String.fromCharCode(wav[0], wav[1], wav[2], wav[3]),
+          hash: (hash >>> 0).toString(16),
+        };
+      },
       meterPeakDb: () => {
         const latest = bridge.value?.latest;
         return latest ? Math.max(latest.peakDbL, latest.peakDbR) : null;
@@ -1044,6 +1113,8 @@ onBeforeUnmount(async () => {
           <hr class="menu-rule" />
           <button type="button" @click="exportSzdAction">Export .szd</button>
           <button type="button" @click="exportSmfAction">Export SMF</button>
+          <button type="button" @click="openExportDialog">Export Audio…</button>
+          <button type="button" @click="exportDawprojectAction">Export DAWproject</button>
         </div>
       </div>
       <input
@@ -1220,6 +1291,14 @@ onBeforeUnmount(async () => {
           <button
             type="button"
             class="dock-tab dock-tab-toggle"
+            :class="{ active: dockTab === 'mastering' }"
+            @click="dockTab = 'mastering'"
+          >
+            Mastering
+          </button>
+          <button
+            type="button"
+            class="dock-tab dock-tab-toggle"
             :class="{ active: dockTab === 'steps' }"
             @click="dockTab = 'steps'"
           >
@@ -1343,6 +1422,16 @@ onBeforeUnmount(async () => {
         <section v-show="dockTab === 'mixer'" class="dock-body">
           <MixerPanel class="mixer-host" :bridge="bridge" />
         </section>
+        <section v-show="dockTab === 'mastering'" class="dock-body">
+          <!-- Kept alive via v-show: the A/B preview renders and playback are
+               session-local panel state and must survive tab switches. -->
+          <MasteringPanel
+            class="mastering-host"
+            :loop-enabled="loopEnabled"
+            :loop-start-ppq="loopStartPpq"
+            :loop-end-ppq="loopEndPpq"
+          />
+        </section>
         <section v-show="dockTab === 'steps'" class="dock-body dock-body-scroll">
           <!-- Kept alive via v-show: the step pattern is session-local
                component state and must survive tab switches. -->
@@ -1423,6 +1512,16 @@ onBeforeUnmount(async () => {
       :unsaved-changes="dirty"
       @create="onCreateProject"
       @cancel="newDialogOpen = false"
+    />
+
+    <ExportDialog
+      :open="exportDialogOpen"
+      :get-document="serializeProject"
+      :project-name="store.projectName"
+      :has-loop="exportLoopRegion !== null"
+      :loop-region="exportLoopRegion"
+      :download="downloadBlobFile"
+      @close="exportDialogOpen = false"
     />
 
     <div
@@ -1768,6 +1867,11 @@ onBeforeUnmount(async () => {
 }
 
 .mixer-host {
+  flex: 1;
+  min-height: 0;
+}
+
+.mastering-host {
   flex: 1;
   min-height: 0;
 }

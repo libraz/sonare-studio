@@ -10,10 +10,14 @@
  * clip (via the dev-only window.__sonareDebug hook exposed by App.vue).
  * It then checks the mixer tab (one strip per track plus master), the device
  * rack (instrument change and insert add/bypass re-schedule the project, and
- * two synth presets render different audio), and the step sequencer (a baked
- * pattern replaces the active clip's notes).
+ * two synth presets render different audio), the step sequencer (a baked
+ * pattern replaces the active clip's notes), the mastering tab (processors
+ * added to the project chain change the rendered mixdown bytes), the audio
+ * export dialog (a 16-bit WAV download with an audible peak and a loudness
+ * report), and the DAWproject export (a zip with a project.xml entry).
  *
- * Playwright is resolved from /tmp/node_modules. Usage:
+ * Playwright is resolved from /tmp/node_modules; fflate from the project's
+ * own node_modules. Usage:
  *   yarn dev --port 5199   # in the project root, in the background
  *   node scripts/e2e-smoke.mjs [baseUrl]
  */
@@ -24,6 +28,8 @@ import { join } from 'node:path';
 
 const require = createRequire('/tmp/node_modules/');
 const { chromium } = require('playwright');
+const projectRequire = createRequire(new URL('../node_modules/', import.meta.url));
+const { unzipSync } = projectRequire('fflate');
 
 const baseUrl = process.argv[2] ?? 'http://localhost:5199';
 
@@ -460,6 +466,167 @@ try {
     timeout: 10000,
   });
   console.info(`step pattern applied: ${notesBeforeApply} -> 4 notes`);
+
+  // --- Mastering tab: add processors to the project mastering chain -----------
+
+  await page.click('.dock-tabs button:has-text("Mastering")');
+  await page.waitForSelector('.mastering-panel .chain-add', { timeout: 10000 });
+  // A brickwall limiter (rack add flow), plus tape saturation whose defaults
+  // are audibly non-transparent so the chain provably changes the mixdown.
+  for (const processorLabel of [/^Brickwall Limiter$/, /^Tape$/]) {
+    await page.click('.mastering-panel .chain-add');
+    await page.waitForSelector('.chain-catalog .catalog-item', { timeout: 10000 });
+    await page
+      .locator('.chain-catalog .catalog-item')
+      .filter({ hasText: processorLabel })
+      .first()
+      .click();
+  }
+  const masteringChain = await page.evaluate(() => window.__sonareDebug.masteringProcessors());
+  if (
+    masteringChain.length !== 2 ||
+    !masteringChain.includes('dynamics.brickwallLimiter') ||
+    !masteringChain.includes('saturation.tape')
+  ) {
+    fail(`unexpected mastering chain: ${JSON.stringify(masteringChain)}`);
+  } else {
+    console.info(`mastering chain set: ${masteringChain.join(', ')}`);
+  }
+
+  // Real-wasm export probe: the worker render must be non-silent and the
+  // master chain must change the encoded bytes. The first call initializes
+  // the wasm inside the export worker.
+  const probeOn = await page.evaluate(() => window.__sonareDebug.exportProbe(true));
+  const probeOff = await page.evaluate(() => window.__sonareDebug.exportProbe(false));
+  if (probeOn.riff !== 'RIFF' || probeOn.totalFrames <= 0 || !(probeOn.peakDb > -40)) {
+    fail(`export probe not an audible WAV: ${JSON.stringify(probeOn)}`);
+  } else if (probeOn.hash === probeOff.hash) {
+    fail(`mastering chain has no effect on export bytes: ${probeOn.hash}`);
+  } else {
+    console.info(
+      `export probe: peak ${probeOn.peakDb.toFixed(1)} dBFS, chain on/off bytes differ ` +
+        `(${probeOn.hash} vs ${probeOff.hash})`,
+    );
+  }
+
+  // --- Export dialog: WAV 16-bit mixdown download -----------------------------
+
+  await page.click('.project-menu .menu-trigger');
+  await page.click('.menu-pop button:has-text("Export Audio…")');
+  await page.waitForSelector('.dialog .export-button:not([disabled])', { timeout: 10000 });
+  // Defaults are WAV / 16-bit / 48 kHz / whole project / master chain on.
+  await page.click('.dialog .export-button');
+  await page.waitForSelector('.dialog .export-report', { timeout: 120000 });
+  const reportPeakText = ((await page.locator('.dialog .report-peak').textContent()) ?? '').trim();
+  const reportPeakDb = Number.parseFloat(reportPeakText);
+  if (!Number.isFinite(reportPeakDb) || reportPeakDb <= -40) {
+    fail(`loudness report peak not audible: "${reportPeakText}"`);
+  } else {
+    console.info(`export dialog loudness report rendered: peak ${reportPeakText}`);
+  }
+
+  // The shell's download seam records the last file; parse the WAV in-page.
+  const wavInfo = await page.evaluate(async () => {
+    const download = window.__sonareDebug.lastDownload();
+    if (!download) return null;
+    const bytes = new Uint8Array(await download.blob.arrayBuffer());
+    const view = new DataView(bytes.buffer);
+    const tag = (off) => String.fromCharCode(...bytes.subarray(off, off + 4));
+    let offset = 12;
+    let dataOffset = -1;
+    let dataLength = 0;
+    while (offset + 8 <= bytes.length) {
+      const id = tag(offset);
+      const length = view.getUint32(offset + 4, true);
+      if (id === 'data') {
+        dataOffset = offset + 8;
+        dataLength = length;
+        break;
+      }
+      offset += 8 + length + (length % 2);
+    }
+    let peak = 0;
+    for (let i = dataOffset; i + 1 < dataOffset + dataLength; i += 2) {
+      const sample = Math.abs(view.getInt16(i, true)) / 32768;
+      if (sample > peak) peak = sample;
+    }
+    return {
+      filename: download.filename,
+      byteLength: bytes.length,
+      riff: tag(0),
+      wave: tag(8),
+      dataOffset,
+      dataLength,
+      peak,
+    };
+  });
+  if (!wavInfo) {
+    fail('no download captured for the audio export');
+  } else if (
+    wavInfo.riff !== 'RIFF' ||
+    wavInfo.wave !== 'WAVE' ||
+    !wavInfo.filename.endsWith('.wav')
+  ) {
+    fail(`exported file is not a WAV: ${JSON.stringify(wavInfo)}`);
+  } else if (
+    wavInfo.dataOffset < 0 ||
+    wavInfo.dataLength <= 0 ||
+    wavInfo.dataOffset + wavInfo.dataLength > wavInfo.byteLength
+  ) {
+    fail(`exported WAV data chunk is implausible: ${JSON.stringify(wavInfo)}`);
+  } else if (!(20 * Math.log10(wavInfo.peak) > -40)) {
+    fail(`exported WAV is too quiet: peak ${wavInfo.peak}`);
+  } else {
+    console.info(
+      `exported WAV verified: ${wavInfo.filename}, ${wavInfo.byteLength} bytes, ` +
+        `data ${wavInfo.dataLength} bytes, peak ${(20 * Math.log10(wavInfo.peak)).toFixed(1)} dBFS`,
+    );
+  }
+  await page.click('.dialog .close-button');
+
+  // --- DAWproject export: zip magic + project.xml entry ------------------------
+
+  await page.click('.project-menu .menu-trigger');
+  await page.click('.menu-pop button:has-text("Export DAWproject")');
+  await page.waitForFunction(
+    () => window.__sonareDebug.lastDownload()?.filename.endsWith('.dawproject') === true,
+    null,
+    { timeout: 60000 },
+  );
+  const dawDownload = await page.evaluate(async () => {
+    const download = window.__sonareDebug.lastDownload();
+    const bytes = new Uint8Array(await download.blob.arrayBuffer());
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    }
+    return { filename: download.filename, base64: btoa(binary) };
+  });
+  const dawBytes = new Uint8Array(Buffer.from(dawDownload.base64, 'base64'));
+  if (
+    dawBytes[0] !== 0x50 ||
+    dawBytes[1] !== 0x4b ||
+    dawBytes[2] !== 0x03 ||
+    dawBytes[3] !== 0x04
+  ) {
+    fail(`DAWproject download is not a zip: ${dawBytes.slice(0, 4)}`);
+  } else {
+    const entries = unzipSync(dawBytes);
+    const names = Object.keys(entries);
+    const projectXml = entries['project.xml']
+      ? Buffer.from(entries['project.xml']).toString('utf8')
+      : '';
+    if (!projectXml.includes('<Project')) {
+      fail(`DAWproject zip is missing a project.xml document: entries ${names.join(', ')}`);
+    } else if (!entries['metadata.xml']) {
+      fail(`DAWproject zip is missing metadata.xml: entries ${names.join(', ')}`);
+    } else {
+      console.info(
+        `DAWproject exported: ${dawDownload.filename}, ${dawBytes.length} bytes, ` +
+          `entries [${names.join(', ')}]`,
+      );
+    }
+  }
 
   if (process.exitCode !== 1) console.info('E2E SMOKE PASS');
 } catch (err) {

@@ -27,14 +27,14 @@ import {
   type StripProcessorDeps,
 } from './mixer-dsp';
 import { useProjectStore } from './store';
-import type { EditorClip, EditorTrack } from './types';
+import type { EditorClip, EditorNote, EditorTrack } from './types';
 import { clipKind } from './types';
 
 /**
  * Default peak level scheduled MIDI clips are normalized to (-6 dBFS),
  * matching the scheduleMidiClip default. Audio clips are never normalized.
  */
-const DEFAULT_TARGET_PEAK = 0.5;
+export const DEFAULT_TARGET_PEAK = 0.5;
 
 /** The mute/solo subset of a track relevant to audibility. */
 export type TrackAudibilityState = Pick<EditorTrack, 'mute' | 'solo'>;
@@ -69,14 +69,27 @@ export function engineTrackId(trackId: number): string {
 }
 
 /**
+ * The note-window subset of a clip needed to derive its playback notes:
+ * satisfied by editor mirror clips and by document clips alike.
+ */
+export interface ClipNoteWindow {
+  /** Offset of the clip window into its source, in PPQ. */
+  sourceOffsetPpq: number;
+  /** Clip window length in PPQ. */
+  lengthPpq: number;
+  /** Source-relative note content. */
+  notes: ReadonlyArray<Omit<EditorNote, 'id'>>;
+}
+
+/**
  * Extracts a clip's audible notes in clip-local PPQ: notes are stored in
  * source coordinates, so the clip window [sourceOffsetPpq, sourceOffsetPpq +
  * lengthPpq) is selected (by note start) and shifted to start at 0.
  *
- * @param clip Clip mirror entry.
+ * @param clip Clip mirror or document entry.
  * @returns Engine-facing notes relative to the clip start.
  */
-export function clipPlaybackNotes(clip: EditorClip): MidiNote[] {
+export function clipPlaybackNotes(clip: ClipNoteWindow): MidiNote[] {
   const windowEnd = clip.sourceOffsetPpq + clip.lengthPpq;
   return clip.notes
     .filter((note) => note.startPpq >= clip.sourceOffsetPpq && note.startPpq < windowEnd)
@@ -234,9 +247,10 @@ export function clearStripProcessingCache(): void {
 /**
  * Builds the strip DSP seam from the loaded wasm module. Returns null when
  * the module exposes no one-shot stereo processor (older builds, minimal test
- * mocks); strips then degrade to gain/pan only.
+ * mocks); strips then degrade to gain/pan only. Shared with the offline
+ * mixdown renderer (src/export/mixdown.ts).
  */
-async function defaultStripDsp(): Promise<StripProcessorDeps | null> {
+export async function defaultStripDsp(): Promise<StripProcessorDeps | null> {
   const wasm = (await ensureWasm()) as unknown as {
     masteringProcessStereo?: (
       name: never,
@@ -266,10 +280,28 @@ async function defaultStripDsp(): Promise<StripProcessorDeps | null> {
 }
 
 /**
- * Returns a hook that applies a strip's insert/EQ chain (cached by render +
- * strip identity) and bakes the combined pan into a fresh copy.
+ * Deterministic processed-buffer cache key for an audio clip render: covers
+ * everything that shapes the buffer fed to the strip processor (asset, source
+ * window, tempo, fades and target sample rate). Shared by live scheduling and
+ * the offline mixdown renderer so both reuse the same processed buffers.
  */
-function makeStripProcessor(
+export function audioClipProcessingCacheKey(
+  clip: Pick<EditorClip, 'assetId' | 'sourceOffsetPpq' | 'lengthPpq' | 'fadeInPpq' | 'fadeOutPpq'>,
+  tempoBpm: number,
+  sampleRate: number,
+): string {
+  return (
+    `audio|${clip.assetId}|off=${clip.sourceOffsetPpq}|len=${clip.lengthPpq}` +
+    `|bpm=${tempoBpm}|fi=${clip.fadeInPpq ?? 0}|fo=${clip.fadeOutPpq ?? 0}|sr=${sampleRate}`
+  );
+}
+
+/**
+ * Returns a hook that applies a strip's insert/EQ chain (cached by render +
+ * strip identity) and bakes the combined pan into a fresh copy. Shared with
+ * the offline mixdown renderer (src/export/mixdown.ts).
+ */
+export function makeStripProcessor(
   cacheKey: string,
   sampleRate: number,
   strip: MixerStrip | undefined,
@@ -430,9 +462,7 @@ export async function scheduleProjectClips(
         channels = resampleChannelsLinear(channels, asset.meta.sampleRate, targetRate);
         if (channels.length === 0 || channels[0].length === 0) continue;
         if (hasDsp || pan !== 0) {
-          const cacheKey =
-            `audio|${clip.assetId}|off=${clip.sourceOffsetPpq}|len=${clip.lengthPpq}` +
-            `|bpm=${tempoBpm}|fi=${clip.fadeInPpq ?? 0}|fo=${clip.fadeOutPpq ?? 0}|sr=${targetRate}`;
+          const cacheKey = audioClipProcessingCacheKey(clip, tempoBpm, targetRate);
           channels = makeStripProcessor(cacheKey, targetRate, strip, dsp, pan)(channels);
         }
         const engineClipId = handle.engine.addClip(

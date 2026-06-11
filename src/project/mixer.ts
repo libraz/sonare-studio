@@ -20,6 +20,10 @@
  * - master inserts/EQ (nonlinear bus DSP cannot honestly be applied per clip
  *   before the engine sums them),
  * - buses and sends (the engine has no bus routing for prerendered clips).
+ *
+ * Offline mixdown/export renders (src/export/mixdown.ts) additionally apply
+ * master inserts/EQ honestly (they own the summed bus) and the project-level
+ * mastering chain, which live playback never runs.
  */
 
 import type { EqBand } from '@/wasm/index.js';
@@ -67,6 +71,24 @@ export interface MixerStrip {
   eq?: StripEq;
 }
 
+/**
+ * Project-level mastering chain applied to the summed stereo mixdown after
+ * the master strip — offline export/preview renders only (the realtime engine
+ * has no master-bus insert point, so live playback never runs it).
+ *
+ * The preset names a wasm mastering preset (masteringPresetNames catalog) and
+ * is applied as a whole chain (masterAudioStereo); the wasm API exposes no
+ * per-preset stage list, so the preset stays a single opaque step. The
+ * processor slots run after the preset, in order, through the same one-shot
+ * stereo processors used by channel-strip inserts.
+ */
+export interface MasteringChainState {
+  /** Wasm mastering preset name; absent = no preset stage. */
+  preset?: string;
+  /** Processor slots applied after the preset, in order. */
+  processors: InsertSlot[];
+}
+
 /** One send bus (UI-only in this iteration). */
 export interface MixerBus {
   /** Stable bus id (unique within the project). */
@@ -83,6 +105,8 @@ export interface ProjectMixerState {
   master: MixerStrip;
   /** Send buses (UI-only in this iteration). */
   buses: MixerBus[];
+  /** Mastering chain for offline mixdown renders; absent = none. */
+  masteringChain?: MasteringChainState;
 }
 
 /** Lowest accepted strip gain in dB. */
@@ -101,9 +125,19 @@ export function createDefaultMixerState(): ProjectMixerState {
   return { master: createDefaultStrip(), buses: [] };
 }
 
+/** Builds an empty mastering chain: no preset, no processors. */
+export function createDefaultMasteringChain(): MasteringChainState {
+  return { processors: [] };
+}
+
 /** Deep-copies a strip (strips are plain JSON data). */
 export function cloneStrip(strip: MixerStrip): MixerStrip {
   return JSON.parse(JSON.stringify(strip)) as MixerStrip;
+}
+
+/** Deep-copies a mastering chain (chains are plain JSON data). */
+export function cloneMasteringChain(chain: MasteringChainState): MasteringChainState {
+  return JSON.parse(JSON.stringify(chain)) as MasteringChainState;
 }
 
 /** Deep-copies the project mixer state. */
@@ -122,9 +156,28 @@ export function isDefaultStrip(strip: MixerStrip): boolean {
   );
 }
 
+/** True when a mastering chain is empty (no preset and no processors). */
+export function isDefaultMasteringChain(chain: MasteringChainState | undefined): boolean {
+  if (!chain) return true;
+  return chain.preset === undefined && chain.processors.length === 0;
+}
+
+/**
+ * True when a mastering chain would actually process audio: a preset is set
+ * or at least one processor slot is enabled.
+ */
+export function masteringChainIsActive(chain: MasteringChainState | undefined): boolean {
+  if (!chain) return false;
+  return chain.preset !== undefined || chain.processors.some((slot) => slot.enabled);
+}
+
 /** True when the project mixer state is entirely default. */
 export function isDefaultMixerState(state: ProjectMixerState): boolean {
-  return isDefaultStrip(state.master) && state.buses.length === 0;
+  return (
+    isDefaultStrip(state.master) &&
+    state.buses.length === 0 &&
+    isDefaultMasteringChain(state.masteringChain)
+  );
 }
 
 /**

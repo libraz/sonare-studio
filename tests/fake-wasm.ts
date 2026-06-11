@@ -561,6 +561,14 @@ export const FAKE_INSERT_PARAMS: Record<string, string[]> = {
   'stereo.imager': ['width', 'outputGainDb'],
 };
 
+/** Mastering preset names the fake catalog reports (subset of the real build). */
+export const FAKE_MASTERING_PRESETS = ['pop', 'edm', 'acoustic', 'hipHop', 'speech'] as const;
+
+/** Mirrors masteringPresetNames for catalog-aware code paths. */
+export function fakeMasteringPresetNames(): string[] {
+  return [...FAKE_MASTERING_PRESETS];
+}
+
 /** Mirrors synthPresetNames for catalog-aware code paths. */
 export function fakeSynthPresetNames(): string[] {
   return [...FAKE_SYNTH_PRESETS];
@@ -573,6 +581,84 @@ export function fakeSynthPresetPatch(name: string): Record<string, unknown> {
     throw new Error(`unknown synth preset: ${name}`);
   }
   return { preset: bare, cutoffHz: 12000, resonanceQ: 0.9, ampSustain: 0.6, gain: 0.8 };
+}
+
+/** Sample peak of one buffer (helper for the metering fakes). */
+function fakePeak(samples: Float32Array): number {
+  let peak = 0;
+  for (const sample of samples) {
+    const a = Math.abs(sample);
+    if (a > peak) peak = a;
+  }
+  return peak;
+}
+
+/** Mirrors meteringPeakDb: sample peak in dBFS (-Infinity for silence). */
+export function fakeMeteringPeakDb(samples: Float32Array, _sampleRate = 48000): number {
+  const peak = fakePeak(samples);
+  return peak > 0 ? 20 * Math.log10(peak) : Number.NEGATIVE_INFINITY;
+}
+
+/**
+ * Mirrors meteringTruePeakDb's shape; the fake skips oversampling and
+ * reports the plain sample peak.
+ */
+export function fakeMeteringTruePeakDb(
+  samples: Float32Array,
+  _sampleRate = 48000,
+  _oversampleFactor = 0,
+): number {
+  return fakeMeteringPeakDb(samples);
+}
+
+/**
+ * Mirrors the lufs() result shape with a deterministic energy-based estimate
+ * (no K-weighting/gating; integratedLufs = -0.691 + 10*log10(mean square)).
+ */
+export function fakeLufs(
+  samples: Float32Array,
+  _sampleRate = 48000,
+): { integratedLufs: number; momentaryLufs: number; shortTermLufs: number; loudnessRange: number } {
+  let sum = 0;
+  for (const sample of samples) sum += sample * sample;
+  const meanSquare = samples.length > 0 ? sum / samples.length : 0;
+  const loudness = meanSquare > 0 ? -0.691 + 10 * Math.log10(meanSquare) : Number.NEGATIVE_INFINITY;
+  return {
+    integratedLufs: loudness,
+    momentaryLufs: loudness,
+    shortTermLufs: loudness,
+    loudnessRange: 0,
+  };
+}
+
+/**
+ * Mirrors masterAudioStereo's result envelope; the fake applies no DSP and
+ * copies the input through (preset chains need the real wasm).
+ */
+export function fakeMasterAudioStereo(
+  left: Float32Array,
+  right: Float32Array,
+  sampleRate = 48000,
+  _presetName?: string,
+  _overrides?: Record<string, number | boolean> | null,
+): {
+  left: Float32Array;
+  right: Float32Array;
+  sampleRate: number;
+  inputLufs: number;
+  outputLufs: number;
+  appliedGainDb: number;
+  stages: string[];
+} {
+  return {
+    left: new Float32Array(left),
+    right: new Float32Array(right),
+    sampleRate,
+    inputLufs: 0,
+    outputLufs: 0,
+    appliedGainDb: 0,
+    stages: [],
+  };
 }
 
 /**
@@ -601,6 +687,7 @@ export function createFakeWasmModule(): typeof import('@/wasm/index.js') {
     synthPresetPatch: fakeSynthPresetPatch,
     masteringInsertNames: () => Object.keys(FAKE_INSERT_PARAMS),
     masteringInsertParamNames: (name: string) => FAKE_INSERT_PARAMS[name] ?? [],
+    masteringPresetNames: fakeMasteringPresetNames,
     // Pass-through one-shot stereo processor: copies the input unchanged.
     masteringProcessStereo: (
       _name: string,
@@ -618,5 +705,9 @@ export function createFakeWasmModule(): typeof import('@/wasm/index.js') {
       latencySamples: 0,
     }),
     StreamingEqualizer: FakeStreamingEqualizer,
+    masterAudioStereo: fakeMasterAudioStereo,
+    meteringPeakDb: fakeMeteringPeakDb,
+    meteringTruePeakDb: fakeMeteringTruePeakDb,
+    lufs: fakeLufs,
   } as unknown as typeof import('@/wasm/index.js');
 }

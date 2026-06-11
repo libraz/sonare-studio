@@ -19,6 +19,7 @@
     "verify": "yarn lint && yarn test && yarn build"
   },
   "dependencies": {
+    "@breezystack/lamejs": "^1.2.7",
     "fflate": "^0.8",
     "jspdf": "^4.2.1",
     "pinia": "^3",
