@@ -1,0 +1,194 @@
+/**
+ * .szd project file codec: a zip archive (via fflate) holding the plain-JSON
+ * ProjectDocument plus a small metadata entry. This module is pure byte
+ * transformation — it never touches the store, the wasm Project, the clock or
+ * any browser storage; callers provide timestamps and handle I/O
+ * (src/persistence/opfs.ts, src/persistence/local-file.ts).
+ */
+
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
+import { PROJECT_DOCUMENT_SCHEMA_VERSION, type ProjectDocument } from '@/project/serialization';
+
+/** File extension used by project archives. */
+export const SZD_FILE_EXTENSION = '.szd';
+
+/** Application identifier written into the archive metadata. */
+export const SZD_APP_ID = 'sonare-studio';
+
+/** Zip entry name of the serialized project document. */
+const PROJECT_ENTRY = 'project.json';
+
+/** Zip entry name of the archive metadata. */
+const META_ENTRY = 'meta.json';
+
+/**
+ * Fixed zip-entry timestamp used when the caller provides no savedAt, keeping
+ * encoding deterministic (zip DOS times only cover 1980-2099, so the Unix
+ * epoch cannot serve as the neutral value).
+ */
+const DEFAULT_ZIP_MTIME = '2000-01-01T12:00:00Z';
+
+/** Caller-provided metadata for {@link encodeSzd} (the encoder reads no clock). */
+export interface SzdEncodeMeta {
+  /** Save timestamp as an ISO 8601 string; omitted when the caller has none. */
+  savedAt?: string;
+}
+
+/** Shape of the meta.json entry inside a .szd archive. */
+export interface SzdMetaDocument {
+  /** Project document schema version, duplicated for cheap inspection. */
+  schemaVersion: number;
+  /** Application identifier; see {@link SZD_APP_ID}. */
+  app: string;
+  /** Save timestamp as an ISO 8601 string, when the writer provided one. */
+  savedAt?: string;
+}
+
+/** Error thrown by {@link decodeSzd} when bytes are not a usable .szd archive. */
+export class SzdFormatError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SzdFormatError';
+  }
+}
+
+/**
+ * Encodes a project document into .szd bytes.
+ *
+ * The archive contains `project.json` (the document) and `meta.json`
+ * ({@link SzdMetaDocument}). Encoding is deterministic for a given input:
+ * zip entry timestamps derive from `meta.savedAt` (epoch zero when absent).
+ *
+ * @param doc Document from serializeProject() or a template.
+ * @param meta Optional caller-provided metadata (e.g. the save timestamp).
+ * @returns Zip archive bytes ready for OPFS or a file download.
+ */
+export function encodeSzd(doc: ProjectDocument, meta: SzdEncodeMeta = {}): Uint8Array {
+  const metaDoc: SzdMetaDocument = {
+    schemaVersion: doc.schemaVersion,
+    app: SZD_APP_ID,
+  };
+  if (meta.savedAt !== undefined) metaDoc.savedAt = meta.savedAt;
+  return zipSync(
+    {
+      [PROJECT_ENTRY]: strToU8(JSON.stringify(doc)),
+      [META_ENTRY]: strToU8(JSON.stringify(metaDoc)),
+    },
+    { mtime: meta.savedAt ?? DEFAULT_ZIP_MTIME },
+  );
+}
+
+/** Parses a zip entry as JSON, mapping failures to {@link SzdFormatError}. */
+function parseEntryJson(bytes: Uint8Array, entryName: string): unknown {
+  try {
+    return JSON.parse(strFromU8(bytes));
+  } catch {
+    throw new SzdFormatError(`Invalid project file: ${entryName} is not valid JSON`);
+  }
+}
+
+/**
+ * Validates the decoded project.json shape, throwing helpful errors. Only the
+ * top-level structure is checked here; deeper validation happens when the
+ * document is replayed through the Project API on load.
+ */
+function validateDocument(value: unknown): ProjectDocument {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new SzdFormatError('Invalid project file: project.json is not a JSON object');
+  }
+  const doc = value as Partial<ProjectDocument>;
+  const version = doc.schemaVersion;
+  if (typeof version !== 'number' || !Number.isInteger(version) || version < 1) {
+    throw new SzdFormatError(`Invalid project file: bad schema version (${String(version)})`);
+  }
+  if (version > PROJECT_DOCUMENT_SCHEMA_VERSION) {
+    throw new SzdFormatError(
+      `This project uses schema version ${version}, but this app supports up to ` +
+        `${PROJECT_DOCUMENT_SCHEMA_VERSION}; it was likely saved by a newer app version`,
+    );
+  }
+  if (typeof doc.name !== 'string' || typeof doc.sampleRate !== 'number') {
+    throw new SzdFormatError('Invalid project file: missing project name or sample rate');
+  }
+  for (const field of [
+    'tempoSegments',
+    'timeSignatures',
+    'tracks',
+    'markers',
+    'sections',
+  ] as const) {
+    if (!Array.isArray(doc[field])) {
+      throw new SzdFormatError(`Invalid project file: "${field}" is not an array`);
+    }
+  }
+  return doc as ProjectDocument;
+}
+
+/**
+ * Decodes .szd bytes back into a project document.
+ *
+ * @param bytes Archive bytes produced by {@link encodeSzd}.
+ * @returns The contained project document, schema-checked.
+ * @throws SzdFormatError when the bytes are not a zip archive, the project
+ *   entry is missing or malformed, the schema version is unsupported, or the
+ *   archive was written by a different application.
+ */
+export function decodeSzd(bytes: Uint8Array): ProjectDocument {
+  let entries: Record<string, Uint8Array>;
+  try {
+    entries = unzipSync(bytes);
+  } catch {
+    throw new SzdFormatError('Invalid project file: not a readable .szd (zip) archive');
+  }
+
+  // Reject archives written by other apps when their metadata says so; absent
+  // or unreadable metadata is tolerated (project.json alone is sufficient).
+  const metaBytes = entries[META_ENTRY];
+  if (metaBytes) {
+    let metaDoc: unknown = null;
+    try {
+      metaDoc = JSON.parse(strFromU8(metaBytes));
+    } catch {
+      // Tolerated: meta.json is advisory.
+    }
+    if (typeof metaDoc === 'object' && metaDoc !== null) {
+      const app = (metaDoc as Partial<SzdMetaDocument>).app;
+      if (typeof app === 'string' && app !== SZD_APP_ID) {
+        throw new SzdFormatError(`Invalid project file: written by another application (${app})`);
+      }
+    }
+  }
+
+  const projectBytes = entries[PROJECT_ENTRY];
+  if (!projectBytes) {
+    throw new SzdFormatError(`Invalid project file: missing ${PROJECT_ENTRY} entry`);
+  }
+  return validateDocument(parseEntryJson(projectBytes, PROJECT_ENTRY));
+}
+
+/**
+ * Reads the metadata entry of a .szd archive without validating the document
+ * (useful for listings that show save timestamps).
+ *
+ * @param bytes Archive bytes produced by {@link encodeSzd}.
+ * @returns The metadata, or null when absent or unreadable.
+ */
+export function readSzdMeta(bytes: Uint8Array): SzdMetaDocument | null {
+  let entries: Record<string, Uint8Array>;
+  try {
+    entries = unzipSync(bytes);
+  } catch {
+    return null;
+  }
+  const metaBytes = entries[META_ENTRY];
+  if (!metaBytes) return null;
+  try {
+    const value = JSON.parse(strFromU8(metaBytes)) as unknown;
+    if (typeof value !== 'object' || value === null) return null;
+    const meta = value as Partial<SzdMetaDocument>;
+    if (typeof meta.schemaVersion !== 'number' || typeof meta.app !== 'string') return null;
+    return meta as SzdMetaDocument;
+  } catch {
+    return null;
+  }
+}

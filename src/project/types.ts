@@ -58,6 +58,127 @@ export interface EditorNoteUpdate {
   offVelocity?: number;
 }
 
+/** Track content kind, mirroring the wasm ProjectTrackKind string forms. */
+export type TrackKind = 'audio' | 'midi' | 'aux';
+
+/**
+ * One track in the arrangement mirror.
+ *
+ * `id`, `name` and `kind` are owned by the wasm Project (write through the
+ * commands layer); `color`, `mute`, `solo`, `volume`, `pan` and `order` are
+ * app-level metadata the Project has no API for.
+ */
+export interface EditorTrack {
+  /** Stable track id allocated by the wasm Project. */
+  id: number;
+  /** Track display name (stored in the Project, renameTrack). */
+  name: string;
+  /** Display color as a CSS color string (app-level metadata). */
+  color: string;
+  /** Track content kind; only 'midi' tracks carry editable clips today. */
+  kind: TrackKind;
+  /** Playback mute flag (app-level; applied when (re)scheduling clips). */
+  mute: boolean;
+  /** Playback solo flag (app-level; applied when (re)scheduling clips). */
+  solo: boolean;
+  /** Linear track volume (>= 0, 1 = unity; folded into clip gain on schedule). */
+  volume: number;
+  /** Stereo pan in [-1, 1] (app-level; not applied to playback yet). */
+  pan: number;
+  /** Display order index; always equals the track's index in the mirror. */
+  order: number;
+}
+
+/**
+ * One clip in the arrangement mirror.
+ *
+ * All timing/gain/loop fields mirror the wasm Project clip; `name` is
+ * app-level metadata. Note PPQ values inside `notes` are source-relative:
+ * the audible window is [sourceOffsetPpq, sourceOffsetPpq + lengthPpq),
+ * mapped to the timeline at startPpq.
+ */
+export interface EditorClip {
+  /** Stable clip id allocated by the wasm Project. */
+  id: number;
+  /** Id of the owning track. */
+  trackId: number;
+  /** Clip display name (app-level metadata). */
+  name: string;
+  /** Timeline start of the clip, in PPQ. */
+  startPpq: number;
+  /** Clip length in PPQ. */
+  lengthPpq: number;
+  /** Offset of the clip window into its source, in PPQ (split/trim adjust it). */
+  sourceOffsetPpq: number;
+  /** Linear playback gain (>= 0). */
+  gain: number;
+  /** True when the clip loops its window. */
+  loopEnabled: boolean;
+  /** Loop length in PPQ (0 = full clip window). */
+  loopLengthPpq: number;
+  /** Note content recovered from the Project, with editor-assigned ids. */
+  notes: EditorNote[];
+}
+
+/** One timeline marker (app-level; the Project has no marker removal API). */
+export interface EditorMarker {
+  /** Stable editor-assigned marker id. */
+  id: number;
+  /** Marker position in PPQ (>= 0). */
+  ppq: number;
+  /** Marker display name. */
+  name: string;
+}
+
+/** One arrangement section (app-level metadata; the Project has no section API). */
+export interface EditorSection {
+  /** Stable editor-assigned section id. */
+  id: number;
+  /** Section display name. */
+  name: string;
+  /** Display color as a CSS color string. */
+  color: string;
+  /** Section start in PPQ (>= 0). */
+  startPpq: number;
+  /** Section end in PPQ (> startPpq). */
+  endPpq: number;
+}
+
+/** One tempo segment, mirroring the wasm ProjectTempoSegment input shape. */
+export interface TempoSegment {
+  /** Segment start in PPQ. */
+  startPpq: number;
+  /** Tempo in BPM at the segment start (> 0). */
+  bpm: number;
+  /** Optional ramp end tempo in BPM (omitted/0 = constant tempo). */
+  endBpm?: number;
+}
+
+/** One time-signature segment, mirroring ProjectTimeSignatureSegment. */
+export interface TimeSignatureSegment {
+  /** Segment start in PPQ. */
+  startPpq: number;
+  /** Beats per bar (positive integer). */
+  numerator: number;
+  /** Beat unit (positive integer, e.g. 4 or 8). */
+  denominator: number;
+}
+
+/** Default colors cycled through when tracks are created without one. */
+export const TRACK_COLOR_PALETTE: readonly string[] = [
+  '#60a5fa', // blue
+  '#f87171', // red
+  '#34d399', // green
+  '#fbbf24', // amber
+  '#a78bfa', // violet
+  '#f472b6', // pink
+  '#2dd4bf', // teal
+  '#fb923c', // orange
+];
+
+/** Default color for sections created without one. */
+export const DEFAULT_SECTION_COLOR = '#64748b';
+
 /** Scale highlight configuration for the piano roll key lane. */
 export interface ScaleHighlightConfig {
   /** Whether scale highlighting is active; when false no pitch class is highlighted. */

@@ -3,6 +3,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { EditorNote } from '@/project/types';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
+import { type GhostNote, hitTestGhost, isNoteInView } from './overlay';
 import {
   DEFAULT_NOTE_COLOR,
   fillRoundRect,
@@ -49,11 +50,15 @@ const props = defineProps<{
   positionPpq?: () => number;
   /** Per-note color resolver (single track color by default). */
   noteColor?: NoteColorFn;
+  /** Read-only ghost notes from non-active clips, drawn under the notes. */
+  ghostNotes?: GhostNote[];
 }>();
 
 const emit = defineEmits<{
   /** Fired after the grid viewport was resized and the range re-clamped. */
   'view-resize': [widthPx: number, heightPx: number];
+  /** Fired when a pointer press lands on a ghost note (read-only overlay). */
+  'ghost-activate': [ghost: GhostNote];
 }>();
 
 const wrapper = ref<HTMLDivElement | null>(null);
@@ -142,16 +147,30 @@ function drawBase(): void {
     ctx.fillRect(Math.max(0, clipEndX), 0, w - Math.max(0, clipEndX), h);
   }
 
+  const viewWindow = {
+    startPpq: range.startPpq,
+    endPpq: range.endPpq,
+    minPitch: lowPitch,
+    maxPitch: highPitch,
+  };
+  const noteH = Math.max(2, range.rowHeight - 2);
+
+  // Ghost notes from non-active clips draw under the editable notes.
+  for (const ghost of props.ghostNotes ?? []) {
+    if (!isNoteInView(ghost, viewWindow)) continue;
+    const y = range.pitchToY(ghost.pitch);
+    const x = range.ppqToX(ghost.startPpq);
+    const ghostW = Math.max(2, ghost.durationPpq * range.pxPerPpq - 1);
+    ctx.fillStyle = ghost.color;
+    fillRoundRect(ctx, x, y + 1, ghostW, noteH, 2);
+  }
+
   // Notes: gesture preview replaces the store mirror while dragging.
   const list = props.interactions.previewNotes.value ?? props.notes;
   const colorOf = props.noteColor ?? ((): string => DEFAULT_NOTE_COLOR);
-  const noteH = Math.max(2, range.rowHeight - 2);
   for (const note of list) {
-    if (note.startPpq + note.durationPpq <= range.startPpq || note.startPpq >= range.endPpq) {
-      continue;
-    }
+    if (!isNoteInView(note, viewWindow)) continue;
     const y = range.pitchToY(note.pitch);
-    if (y + range.rowHeight < 0 || y > h) continue;
     const x = range.ppqToX(note.startPpq);
     const noteW = Math.max(2, note.durationPpq * range.pxPerPpq - 1);
     // Negative ids mark in-flight duplicate copies; render them as selected.
@@ -246,6 +265,8 @@ watch(
     props.highlightedPitchClasses,
     props.gridPpq,
     props.clipLengthPpq,
+    props.ghostNotes,
+    props.noteColor,
     props.interactions.previewNotes.value,
   ],
   scheduleAll,
@@ -268,7 +289,18 @@ function modifiers(event: MouseEvent): InteractionModifiers {
 function onPointerDown(event: PointerEvent): void {
   if (event.button !== 0) return;
   (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-  props.interactions.onPointerDown(localPoint(event), modifiers(event));
+  const point = localPoint(event);
+  const mods = modifiers(event);
+  // A press on a ghost note requests track/clip activation instead of an
+  // editing gesture; alt keeps the current track and edits normally.
+  if (!mods.alt) {
+    const ghost = hitTestGhost(props.notes, props.ghostNotes ?? [], point, props.range);
+    if (ghost) {
+      emit('ghost-activate', ghost);
+      return;
+    }
+  }
+  props.interactions.onPointerDown(point, mods);
 }
 
 function onPointerMove(event: PointerEvent): void {

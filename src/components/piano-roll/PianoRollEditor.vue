@@ -1,11 +1,22 @@
 <script setup lang="ts">
-import { computed, markRaw, onBeforeUnmount, onMounted, ref } from 'vue';
-import { addNote, deleteNotes, redo, setSelection, undo, updateNotes } from '@/project/commands';
+import { computed, markRaw, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import {
+  addNote,
+  deleteNotes,
+  redo,
+  setActiveClip,
+  setActiveTrack,
+  setSelection,
+  undo,
+  updateNotes,
+} from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { createPainter } from '@/ui/canvas/painter';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
 import KeyboardColumn from './KeyboardColumn.vue';
 import NoteGridCanvas from './NoteGridCanvas.vue';
+import { buildGhostNotes, contentCenterPitch, type GhostNote } from './overlay';
+import { DEFAULT_NOTE_COLOR, type NoteColorFn } from './theme';
 import { useNoteInteractions } from './use-note-interactions';
 import VelocityLane from './VelocityLane.vue';
 
@@ -16,6 +27,11 @@ import VelocityLane from './VelocityLane.vue';
  *
  * All note edits go through src/project/commands.ts; the project store is the
  * read model. The optional `positionPpq` getter drives the playhead.
+ *
+ * The grid edits the active clip and can overlay the other clips' notes as
+ * read-only ghosts in their track colors; clicking a ghost activates its
+ * track and clip (alt-click keeps the current track). The overlay toggle and
+ * a track-color legend live in a slim bar above the grid.
  */
 
 const props = defineProps<{
@@ -59,6 +75,43 @@ function bump(): void {
 /** Snap grid step in PPQ derived from the store's divisions-per-whole-note. */
 const gridPpq = computed(() => 4 / store.snapDivision);
 
+/** Whether the multi-track ghost overlay is drawn. */
+const overlayEnabled = ref(true);
+
+/** Read-only ghost notes from all non-active clips (empty when overlay off). */
+const ghostNotes = computed<GhostNote[]>(() =>
+  overlayEnabled.value
+    ? buildGhostNotes({
+        clips: store.clips,
+        tracks: store.tracks,
+        activeClipId: store.clipId,
+      })
+    : [],
+);
+
+/**
+ * Color resolver for the editable notes: the active track's color at full
+ * saturation. A new function identity per color change keeps the grid's
+ * redraw watcher firing.
+ */
+const noteColor = computed<NoteColorFn>(() => {
+  const color = store.activeTrack?.color ?? DEFAULT_NOTE_COLOR;
+  return () => color;
+});
+
+/** Activates a ghost note's track + clip and selects that note. */
+function onGhostActivate(ghost: GhostNote): void {
+  setActiveClip(ghost.clipId);
+  setSelection([ghost.noteId]);
+}
+
+/** Legend chip click: focuses the track (activates its first clip, if any). */
+function onLegendClick(trackId: number): void {
+  // Re-clicking the active track keeps the currently active clip.
+  if (trackId === store.activeTrackId) return;
+  setActiveTrack(trackId);
+}
+
 const interactions = useNoteInteractions({
   view: range,
   getNotes: () => store.notes,
@@ -85,6 +138,23 @@ function onGridResize(): void {
   }
   bump();
 }
+
+/** Re-centers the view vertically on the active clip's note content. */
+function centerOnActiveClip(): void {
+  if (range.heightPx <= 1) return;
+  const center = contentCenterPitch(store.notes);
+  if (center === null) return;
+  const rowTop = (127 - center) * range.rowHeight;
+  range.setScrollY(rowTop + range.rowHeight / 2 - range.heightPx / 2);
+  bump();
+}
+
+// Follow active-clip switches: re-center vertically on the new content while
+// preserving the horizontal scroll position.
+watch(
+  () => store.clipId,
+  () => centerOnActiveClip(),
+);
 
 /** Total horizontal content extent in PPQ (clip length, notes and view). */
 function contentPpq(): number {
@@ -226,6 +296,26 @@ onBeforeUnmount(() => {
     @pointerdown="onRootPointerDown"
   >
     <p v-if="error" class="piano-roll-error" role="alert">{{ error }}</p>
+    <div class="roll-toolbar">
+      <label class="overlay-toggle">
+        <input v-model="overlayEnabled" type="checkbox" />
+        Overlay
+      </label>
+      <div class="track-legend">
+        <button
+          v-for="track in store.tracks"
+          :key="track.id"
+          type="button"
+          class="legend-chip"
+          :class="{ 'legend-chip-active': track.id === store.activeTrackId }"
+          :title="track.name"
+          @click="onLegendClick(track.id)"
+        >
+          <span class="chip-swatch" :style="{ background: track.color }" />
+          <span class="chip-name">{{ track.name }}</span>
+        </button>
+      </div>
+    </div>
     <div class="piano-roll-layout">
       <KeyboardColumn class="cell-keyboard" :range="range" :revision="revision" :painter="painter" />
       <div ref="gridCell" class="cell-grid">
@@ -240,7 +330,10 @@ onBeforeUnmount(() => {
           :clip-length-ppq="store.clipLengthPpq"
           :interactions="interactions"
           :position-ppq="props.positionPpq"
+          :note-color="noteColor"
+          :ghost-notes="ghostNotes"
           @view-resize="onGridResize"
+          @ghost-activate="onGhostActivate"
         />
       </div>
       <div
@@ -301,6 +394,70 @@ onBeforeUnmount(() => {
   background: #3b1219;
   color: #ffb4b4;
   font: 12px/1.4 system-ui, sans-serif;
+}
+
+.roll-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.25rem 0.5rem;
+  background: #14161b;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.4);
+  font: 12px/1.4 system-ui, sans-serif;
+}
+
+.overlay-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  white-space: nowrap;
+  cursor: pointer;
+  color: #9aa1ad;
+}
+
+.track-legend {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.legend-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.1rem 0.45rem;
+  border: 1px solid transparent;
+  border-radius: 9999px;
+  background: transparent;
+  color: #9aa1ad;
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.legend-chip:hover {
+  background: #1c1f26;
+}
+
+.legend-chip-active {
+  border-color: #3a4150;
+  background: #1c1f26;
+  color: #e2e6ed;
+}
+
+.chip-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.chip-name {
+  max-width: 9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .piano-roll-layout {

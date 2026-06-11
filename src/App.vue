@@ -1,9 +1,13 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
+import { nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
+import ArrangementView from '@/components/arrangement/ArrangementView.vue';
 import LevelMeter from '@/components/LevelMeter.vue';
+import ProjectListsPanel from '@/components/lists/ProjectListsPanel.vue';
 import InfoLine from '@/components/piano-roll/InfoLine.vue';
 import PianoRollEditor from '@/components/piano-roll/PianoRollEditor.vue';
+import NewProjectDialog from '@/components/project/NewProjectDialog.vue';
 import ScorePanel from '@/components/score/ScorePanel.vue';
+import { useAutosave } from '@/composables/useAutosave';
 import { useMusicTyping } from '@/composables/useMusicTyping';
 import { useStepInput } from '@/composables/useStepInput';
 import { useTransport } from '@/composables/useTransport';
@@ -11,31 +15,48 @@ import { useWebMidi } from '@/composables/useWebMidi';
 import { createEngine, type EngineHandle } from '@/engine/engine';
 import {
   type MidiNote,
-  makeDemoNotes,
   normalizeGain,
   peakAmplitude,
   prerenderMidiClip,
-  scheduleMidiClip,
 } from '@/engine/instruments';
 import { createMeterBridge, type MeterBridge } from '@/engine/meters';
 import { ensureWasm } from '@/lib/wasm';
+import { downloadSzd, pickAndReadSzd } from '@/persistence/local-file';
 import {
-  addNote,
-  clearHistory,
+  deleteProject,
+  isOpfsAvailable,
+  listProjects,
+  loadProject,
+  type StoredProjectInfo,
+  saveProject,
+} from '@/persistence/opfs';
+import { decodeSzd, encodeSzd } from '@/persistence/szd';
+import {
+  deleteClip,
   deleteNotes,
+  duplicateClip,
   quantizeSelection,
   redo,
   setSelection,
+  setTempoSegments,
   undo,
 } from '@/project/commands';
+import { exportProjectSmf } from '@/project/export';
+import { type ScheduledProjectClip, scheduleProjectClips } from '@/project/scheduling';
+import {
+  loadProjectDocument,
+  type ProjectDocument,
+  serializeProject,
+} from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
-import { editorNotesToMidiNotes, midiNoteToNewEditorNote } from '@/project/types';
+import { makeDemoDocument, type TemplateName } from '@/project/templates';
 import type { RealtimeEngine } from '@/wasm/index.js';
 
 /**
- * Single-window app shell: a transport bar on top, the editor dock with the
- * piano roll below, and a collapsible diagnostics section for the engine test
- * bench. Edits are bounced to the engine as audio via the prerender loop.
+ * Single-window app shell: a transport bar with the project menu on top, the
+ * arrangement view (track headers + clip timeline) in the middle, and the
+ * editor dock (piano roll / lists tabs) below, separated by a draggable
+ * divider. Edits are bounced to the engine per clip via the prerender loop.
  */
 
 const version = ref('…');
@@ -43,7 +64,7 @@ const isolated = ref(globalThis.crossOriginIsolated === true);
 const errorMessage = ref('');
 const busy = ref(false);
 
-/** Delay after the last edit before the clip is re-bounced to the engine. */
+/** Delay after the last edit before the project is re-bounced to the engine. */
 const APPLY_DEBOUNCE_MS = 400;
 /** Preview note length for music typing / MIDI echo, in PPQ. */
 const PREVIEW_DURATION_PPQ = 0.5;
@@ -55,7 +76,16 @@ const handle = shallowRef<EngineHandle | null>(null);
 const bridge = shallowRef<MeterBridge | null>(null);
 
 const transport = useTransport(() => handle.value);
-const { isPlaying, positionSeconds, positionPpq, tempo, loopEnabled, metronomeEnabled } = transport;
+const {
+  isPlaying,
+  positionSeconds,
+  positionPpq,
+  tempo,
+  loopEnabled,
+  loopStartPpq,
+  loopEndPpq,
+  metronomeEnabled,
+} = transport;
 
 const tempoInput = ref(tempo.value);
 const renderInfo = ref('');
@@ -63,6 +93,7 @@ const ctxState = ref('');
 
 const store = useProjectStore();
 const stepInput = useStepInput();
+const autosave = useAutosave();
 
 /** Runs an async UI action, surfacing any thrown error in the error box. */
 async function runAction(action: () => Promise<void>): Promise<void> {
@@ -78,24 +109,218 @@ async function runAction(action: () => Promise<void>): Promise<void> {
   }
 }
 
-// --- Project seeding --------------------------------------------------------
+// --- Unsaved-changes tracking -------------------------------------------------
 
-/** Initializes the project store and seeds the demo phrase into an empty clip. */
-async function initProject(): Promise<void> {
-  await store.init({ ...(handle.value ? { sampleRate: handle.value.ctx.sampleRate } : {}) });
-  if (store.notes.length === 0) {
-    for (const note of makeDemoNotes()) {
-      addNote(midiNoteToNewEditorNote(note));
+/** True when the project changed since the last save/load. */
+const dirty = ref(false);
+
+// The persisted mirror refs are replaced wholesale by every command, so
+// identity watching is the canonical change signal (same set useAutosave
+// watches; editor-only state is excluded).
+watch(
+  () =>
+    [
+      store.projectName,
+      store.tracks,
+      store.clips,
+      store.markers,
+      store.sections,
+      store.tempoSegments,
+      store.timeSignatures,
+    ] as const,
+  () => {
+    if (store.initialized) dirty.value = true;
+  },
+);
+
+/** Clears the dirty flag after the change watcher saw the latest mutation. */
+async function markClean(): Promise<void> {
+  await nextTick();
+  dirty.value = false;
+}
+
+// --- Startup ------------------------------------------------------------------
+
+/** OPFS slot name the autosave composable writes to. */
+const AUTOSAVE_SLOT = 'autosave';
+
+let bootPromise: Promise<void> | null = null;
+
+/**
+ * First-boot project flow: offer to restore an existing autosave, otherwise
+ * load the demo document (the legacy first-run content).
+ */
+async function bootProject(): Promise<void> {
+  let restored = false;
+  if (isOpfsAvailable()) {
+    try {
+      const stored = await listProjects();
+      if (
+        stored.some((info) => info.name === AUTOSAVE_SLOT) &&
+        window.confirm('Restore the autosaved project from your last session?')
+      ) {
+        restored = await autosave.restoreAutosave();
+      }
+    } catch (err) {
+      errorMessage.value = err instanceof Error ? err.message : String(err);
     }
-    // The seed is the editing baseline, not an undoable user action.
-    clearHistory();
   }
+  if (!restored) {
+    await loadProjectDocument(makeDemoDocument());
+  }
+  await markClean();
+}
+
+// --- Project menu / persistence -------------------------------------------------
+
+const opfsAvailable = isOpfsAvailable();
+const projectMenuOpen = ref(false);
+const projectMenuRoot = ref<HTMLElement | null>(null);
+const newDialogOpen = ref(false);
+const openDialogOpen = ref(false);
+const storedProjects = ref<StoredProjectInfo[]>([]);
+
+function closeProjectMenu(): void {
+  projectMenuOpen.value = false;
+}
+
+/** Closes the project menu on any press outside of it. */
+function onWindowPointerDown(event: PointerEvent): void {
+  if (!projectMenuOpen.value) return;
+  const root = projectMenuRoot.value;
+  if (root && event.target instanceof Node && !root.contains(event.target)) {
+    closeProjectMenu();
+  }
+}
+
+function openNewDialog(): void {
+  closeProjectMenu();
+  newDialogOpen.value = true;
+}
+
+function onCreateProject(payload: { document: ProjectDocument; template: TemplateName }): void {
+  newDialogOpen.value = false;
+  void runAction(async () => {
+    await loadProjectDocument(payload.document);
+    await markClean();
+  });
+}
+
+async function refreshStoredProjects(): Promise<void> {
+  if (!opfsAvailable) {
+    storedProjects.value = [];
+    return;
+  }
+  storedProjects.value = (await listProjects()).filter((info) => info.name !== AUTOSAVE_SLOT);
+}
+
+function openOpenDialog(): void {
+  closeProjectMenu();
+  openDialogOpen.value = true;
+  void runAction(refreshStoredProjects);
+}
+
+/** Confirms discarding unsaved changes before a destructive load. */
+function confirmDiscard(): boolean {
+  return !dirty.value || window.confirm('Discard unsaved changes in the current project?');
+}
+
+function openStoredProject(name: string): void {
+  if (!confirmDiscard()) return;
+  void runAction(async () => {
+    const bytes = await loadProject(name);
+    await loadProjectDocument(decodeSzd(bytes));
+    // Keep Save writing back to the slot the project was opened from.
+    store.projectName = name;
+    await markClean();
+    openDialogOpen.value = false;
+  });
+}
+
+function deleteStoredProject(name: string): void {
+  if (!window.confirm(`Delete the saved project "${name}"?`)) return;
+  void runAction(async () => {
+    await deleteProject(name);
+    await refreshStoredProjects();
+  });
+}
+
+function importSzdFile(): void {
+  if (!confirmDiscard()) return;
+  void runAction(async () => {
+    const picked = await pickAndReadSzd();
+    if (!picked) return;
+    await loadProjectDocument(decodeSzd(picked.bytes));
+    await markClean();
+    openDialogOpen.value = false;
+  });
+}
+
+/** Saves the project to OPFS and refreshes the autosave slot to match. */
+async function saveToOpfs(name: string): Promise<void> {
+  const doc = serializeProject();
+  const bytes = encodeSzd(doc, { savedAt: new Date().toISOString() });
+  await saveProject(name, bytes);
+  // A crash right after a manual save should restore the saved state.
+  await autosave.saveNow();
+  await markClean();
+}
+
+function saveProjectAction(): void {
+  closeProjectMenu();
+  void runAction(async () => {
+    await saveToOpfs(store.projectName);
+  });
+}
+
+function saveProjectAsAction(): void {
+  closeProjectMenu();
+  const name = window.prompt('Save project as:', store.projectName)?.trim();
+  if (!name) return;
+  void runAction(async () => {
+    store.projectName = name;
+    await saveToOpfs(name);
+  });
+}
+
+function exportSzdAction(): void {
+  closeProjectMenu();
+  void runAction(async () => {
+    const bytes = encodeSzd(serializeProject(), { savedAt: new Date().toISOString() });
+    downloadSzd(store.projectName, bytes);
+  });
+}
+
+function exportSmfAction(): void {
+  closeProjectMenu();
+  void runAction(async () => {
+    const result = exportProjectSmf();
+    const blob = new Blob([new Uint8Array(result.bytes)], { type: 'audio/midi' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = result.filename;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  });
+}
+
+function formatSavedAt(date: Date): string {
+  return `saved ${date.toLocaleTimeString()}`;
+}
+
+function formatSize(bytes: number): string {
+  return bytes >= 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${bytes} B`;
 }
 
 // --- Edit-to-sound loop (prerender bounce) ----------------------------------
 
-/** Engine clip id of the last applied editor bounce, or null. */
-const editorClipId = ref<number | null>(null);
+/** Clips currently scheduled in the engine from the last apply. */
+let scheduledClips: ScheduledProjectClip[] = [];
+/** Number of clips scheduled by the last apply (display only). */
+const scheduledCount = ref(0);
 /** True while edits exist that have not been bounced to the engine yet. */
 const applyPending = ref(false);
 
@@ -103,9 +328,9 @@ let applyGeneration = 0;
 let applyTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
- * Re-bounces the edited clip and swaps it into the engine, replacing the
- * previous editor clip. Stale async results (superseded by a newer apply or
- * an engine restart) are discarded.
+ * Re-bounces every audible project clip and swaps the set into the engine,
+ * replacing the previously scheduled clips. Stale async results (superseded
+ * by a newer apply or an engine restart) are discarded.
  */
 async function applyToEngine(): Promise<void> {
   const h = handle.value;
@@ -113,22 +338,14 @@ async function applyToEngine(): Promise<void> {
   const generation = ++applyGeneration;
   applyPending.value = false;
   try {
-    let clipId: number | null = null;
-    if (store.notes.length > 0) {
-      clipId = await scheduleMidiClip(
-        h,
-        'editor',
-        editorNotesToMidiNotes(store.notes),
-        store.clipStartPpq,
-        { tempoBpm: tempo.value },
-      );
-    }
+    const next = await scheduleProjectClips(h);
     if (generation !== applyGeneration || handle.value !== h) {
-      if (clipId !== null) h.engine.removeClip(clipId);
+      for (const clip of next) h.engine.removeClip(clip.engineClipId);
       return;
     }
-    if (editorClipId.value !== null) h.engine.removeClip(editorClipId.value);
-    editorClipId.value = clipId;
+    for (const clip of scheduledClips) h.engine.removeClip(clip.engineClipId);
+    scheduledClips = next;
+    scheduledCount.value = next.length;
   } catch (err) {
     errorMessage.value = err instanceof Error ? err.message : String(err);
   }
@@ -145,11 +362,12 @@ function scheduleApply(): void {
   }, APPLY_DEBOUNCE_MS);
 }
 
-// The store mirror is replaced wholesale on every command, so identity
-// tracking fires once per edit (including undo/redo). Tempo changes also
-// require a re-bounce because the render tempo is baked into the audio.
-watch(() => store.notes, scheduleApply);
-watch(tempo, scheduleApply);
+// The mirror arrays are replaced wholesale per command, so identity tracking
+// fires once per edit (including undo/redo). Clips cover note/clip/tempo
+// edits (every project command rebuilds them); tracks cover mute/solo/volume
+// metadata, which changes which clips are audible and at what level.
+watch(() => store.clips, scheduleApply);
+watch(() => store.tracks, scheduleApply);
 
 /** Applies the pending edits to the engine immediately. */
 function applyNow(): void {
@@ -255,8 +473,9 @@ function startEngine(): Promise<void> {
     h.engine.node.onprocessorerror = () => {
       errorMessage.value = 'Engine worklet processor crashed during processing (onprocessorerror).';
     };
-    await initProject();
-    transport.setTempo(tempo.value);
+    if (bootPromise) await bootPromise;
+    await store.init({ sampleRate: h.ctx.sampleRate });
+    transport.setTempo(store.tempoBpm);
     await applyToEngine();
   });
 }
@@ -301,20 +520,124 @@ function togglePlayback(): void {
   else transport.play();
 }
 
+/**
+ * Commits the tempo input to the project tempo map (first segment) so the
+ * change is undoable and persisted; the transport follows via the
+ * store.tempoBpm watcher below.
+ */
 function applyTempo(): void {
   const bpm = Number(tempoInput.value);
-  if (Number.isFinite(bpm) && bpm > 0) {
+  if (!Number.isFinite(bpm) || bpm <= 0) return;
+  if (!store.initialized) {
     transport.setTempo(bpm);
+    return;
+  }
+  try {
+    const segments =
+      store.tempoSegments.length > 0
+        ? store.tempoSegments.map((segment, index) =>
+            index === 0 ? { ...segment, bpm } : { ...segment },
+          )
+        : [{ startPpq: 0, bpm }];
+    setTempoSegments(segments);
+  } catch (err) {
+    errorMessage.value = err instanceof Error ? err.message : String(err);
   }
 }
 
+// The project tempo map is authoritative: edits from the tempo input, the
+// lists editor, undo/redo and project loads all land here, then drive the
+// transport rate and the bounce (scheduleApply fires via the clips watcher).
+watch(
+  () => store.tempoBpm,
+  (bpm) => {
+    tempoInput.value = bpm;
+    if (handle.value) transport.setTempo(bpm);
+  },
+);
+
 function toggleLoop(): void {
-  const endPpq = store.clipLengthPpq > 0 ? store.clipLengthPpq : 8;
+  const endPpq = Math.max(8, ...store.clips.map((clip) => clip.startPpq + clip.lengthPpq));
   transport.setLoop(0, endPpq, !loopEnabled.value);
 }
 
 function formatSeconds(s: number): string {
   return s.toFixed(2);
+}
+
+/** Seek requests from the arrangement ruler/sections, score and marker list. */
+function onSeek(ppq: number): void {
+  transport.seekPpq(ppq);
+}
+
+// --- Layout: arrangement/editor split ------------------------------------------
+
+/** localStorage key persisting the arrangement zone height. */
+const ARRANGE_HEIGHT_KEY = 'sonare-studio.arrangeHeightPx';
+const ARRANGE_MIN_HEIGHT = 120;
+const ARRANGE_DEFAULT_HEIGHT = 260;
+
+function readStoredArrangeHeight(): number {
+  try {
+    const value = Number(window.localStorage.getItem(ARRANGE_HEIGHT_KEY));
+    if (Number.isFinite(value) && value >= ARRANGE_MIN_HEIGHT) return value;
+  } catch {
+    // Storage access can be denied; fall through to the default.
+  }
+  return ARRANGE_DEFAULT_HEIGHT;
+}
+
+/** Arrangement zone height in px (the editor dock takes the rest). */
+const arrangeHeight = ref(readStoredArrangeHeight());
+
+let dividerDrag: { startY: number; startHeight: number } | null = null;
+
+function onDividerPointerDown(event: PointerEvent): void {
+  if (event.button !== 0) return;
+  (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  dividerDrag = { startY: event.clientY, startHeight: arrangeHeight.value };
+}
+
+function onDividerPointerMove(event: PointerEvent): void {
+  if (!dividerDrag) return;
+  const max = Math.max(ARRANGE_MIN_HEIGHT, window.innerHeight - 240);
+  const next = dividerDrag.startHeight + (event.clientY - dividerDrag.startY);
+  arrangeHeight.value = Math.min(max, Math.max(ARRANGE_MIN_HEIGHT, next));
+}
+
+function onDividerPointerUp(): void {
+  if (!dividerDrag) return;
+  dividerDrag = null;
+  try {
+    window.localStorage.setItem(ARRANGE_HEIGHT_KEY, String(Math.round(arrangeHeight.value)));
+  } catch {
+    // Persisting the height is best-effort only.
+  }
+}
+
+// --- Editor dock tabs ----------------------------------------------------------
+
+type DockTab = 'roll' | 'lists';
+
+/** Active editor-dock tab. */
+const dockTab = ref<DockTab>('roll');
+
+/** Whether the read-only score panel is shown below the piano roll. */
+const scoreVisible = ref(false);
+
+function toggleScorePanel(): void {
+  scoreVisible.value = !scoreVisible.value;
+  if (scoreVisible.value) dockTab.value = 'roll';
+}
+
+function selectAllNotes(): void {
+  if (!store.initialized) return;
+  setSelection(store.notes.map((note) => note.id));
+}
+
+function deleteSelectedNotes(): void {
+  if (store.selection.size === 0) return;
+  deleteNotes([...store.selection]);
 }
 
 // --- Editor toolbar ----------------------------------------------------------
@@ -329,31 +652,15 @@ const SNAP_CHOICES = [
   { value: 32, label: '1/32' },
 ];
 
-// --- Score panel ---------------------------------------------------------------
-
-/** Whether the read-only score panel is shown below the piano roll. */
-const scoreVisible = ref(false);
-
-function toggleScorePanel(): void {
-  scoreVisible.value = !scoreVisible.value;
-}
-
-/** Seek requests coming from clicks on engraved notes in the score panel. */
-function onScoreSeek(ppq: number): void {
-  transport.seekPpq(ppq);
-}
-
-function selectAllNotes(): void {
-  if (!store.initialized) return;
-  setSelection(store.notes.map((note) => note.id));
-}
-
-function deleteSelectedNotes(): void {
-  if (store.selection.size === 0) return;
-  deleteNotes([...store.selection]);
-}
-
 // --- App-level keyboard shortcuts ---------------------------------------------
+
+/**
+ * Last zone the user pressed into; disambiguates shared shortcuts (Delete,
+ * Cmd+D, B) between arrangement clips and piano-roll notes.
+ */
+const focusZone = ref<'arrange' | 'editor'>('editor');
+
+const arrangementRef = ref<InstanceType<typeof ArrangementView> | null>(null);
 
 /** True when the event originates from a text-editing element. */
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -383,6 +690,20 @@ function onGlobalKeyDown(event: KeyboardEvent): void {
     selectAllNotes();
     return;
   }
+  if (meta && lower === 'd') {
+    // Duplicate the selected arrangement clip right after itself.
+    const clip = store.activeClip;
+    if (focusZone.value === 'arrange' && clip) {
+      event.preventDefault();
+      duplicateClip(clip.id, clip.startPpq + clip.lengthPpq);
+    }
+    return;
+  }
+  if (meta && lower === 's') {
+    event.preventDefault();
+    saveProjectAction();
+    return;
+  }
   if (meta && lower === 'g') {
     event.preventDefault();
     store.snapEnabled = !store.snapEnabled;
@@ -409,7 +730,20 @@ function onGlobalKeyDown(event: KeyboardEvent): void {
     toggleLoop();
     return;
   }
+  if (lower === 'b') {
+    // Split the clip under the playhead (arrangement focus only).
+    if (focusZone.value === 'arrange') {
+      event.preventDefault();
+      arrangementRef.value?.cutAtPlayhead();
+    }
+    return;
+  }
   if (key === 'Backspace' || key === 'Delete') {
+    if (focusZone.value === 'arrange' && store.clipId !== -1) {
+      event.preventDefault();
+      deleteClip(store.clipId);
+      return;
+    }
     if (store.selection.size > 0) {
       event.preventDefault();
       deleteSelectedNotes();
@@ -421,25 +755,31 @@ function onGlobalKeyDown(event: KeyboardEvent): void {
 
 onMounted(async () => {
   window.addEventListener('keydown', onGlobalKeyDown);
-  try {
-    const wasm = await ensureWasm();
-    version.value = wasm.version();
-    await initProject();
-  } catch (err) {
-    errorMessage.value = err instanceof Error ? err.message : String(err);
-  }
+  window.addEventListener('pointerdown', onWindowPointerDown);
   if (import.meta.env.DEV) {
     // Test hook for browser automation (dev builds only).
     (window as { __sonareDebug?: unknown }).__sonareDebug = {
       noteCount: () => store.notes.length,
       selectionCount: () => store.selection.size,
       initialized: () => store.initialized,
+      trackCount: () => store.tracks.length,
+      clipCount: () => store.clips.length,
+      projectName: () => store.projectName,
     };
+  }
+  try {
+    const wasm = await ensureWasm();
+    version.value = wasm.version();
+    bootPromise = bootProject();
+    await bootPromise;
+  } catch (err) {
+    errorMessage.value = err instanceof Error ? err.message : String(err);
   }
 });
 
 onBeforeUnmount(async () => {
   window.removeEventListener('keydown', onGlobalKeyDown);
+  window.removeEventListener('pointerdown', onWindowPointerDown);
   if (applyTimer !== null) {
     clearTimeout(applyTimer);
     applyTimer = null;
@@ -455,6 +795,33 @@ onBeforeUnmount(async () => {
   <div class="app-shell">
     <header class="transport-bar">
       <span class="app-title">sonare studio</span>
+      <div ref="projectMenuRoot" class="project-menu">
+        <button type="button" class="menu-trigger" @click="projectMenuOpen = !projectMenuOpen">
+          Project ▾
+        </button>
+        <div v-if="projectMenuOpen" class="menu-pop">
+          <button type="button" @click="openNewDialog">New…</button>
+          <button type="button" :disabled="!opfsAvailable" @click="openOpenDialog">Open…</button>
+          <button
+            type="button"
+            class="menu-save"
+            :disabled="!opfsAvailable"
+            title="Save to browser storage (Cmd+S)"
+            @click="saveProjectAction"
+          >
+            Save
+          </button>
+          <button type="button" :disabled="!opfsAvailable" @click="saveProjectAsAction">
+            Save As…
+          </button>
+          <hr class="menu-rule" />
+          <button type="button" @click="exportSzdAction">Export .szd</button>
+          <button type="button" @click="exportSmfAction">Export SMF</button>
+        </div>
+      </div>
+      <span class="project-name" :title="store.projectName">
+        {{ store.projectName }}<span v-if="dirty" class="dirty-dot" title="Unsaved changes">•</span>
+      </span>
       <button type="button" :disabled="busy || handle !== null" @click="startEngine">
         Start engine
       </button>
@@ -470,7 +837,7 @@ onBeforeUnmount(async () => {
           max="300"
           step="1"
           class="tempo-input"
-          :disabled="!handle"
+          :disabled="!store.initialized"
           @change="applyTempo"
         />
         BPM
@@ -493,100 +860,157 @@ onBeforeUnmount(async () => {
         <span v-if="isPlaying">▶</span>
       </span>
       <span class="bar-spacer" />
+      <span v-if="autosave.lastSavedAt.value" class="autosave-state">
+        {{ formatSavedAt(autosave.lastSavedAt.value) }}
+      </span>
       <LevelMeter :bridge="bridge" :width="120" :height="36" />
     </header>
 
     <p v-if="errorMessage" class="error-box" role="alert">{{ errorMessage }}</p>
 
-    <main class="editor-dock">
-      <div class="dock-tabs">
-        <button type="button" class="dock-tab active">Piano Roll</button>
-        <button
-          type="button"
-          class="dock-tab dock-tab-toggle"
-          :class="{ active: scoreVisible }"
-          title="Toggle the score panel (Cmd+E)"
-          @click="toggleScorePanel"
-        >
-          Score
-        </button>
-      </div>
-      <section class="dock-body">
-        <div class="editor-toolbar">
-          <label class="bar-field">
-            Snap
-            <select v-model.number="store.snapDivision">
-              <option v-for="choice in SNAP_CHOICES" :key="choice.value" :value="choice.value">
-                {{ choice.label }}
-              </option>
-            </select>
-          </label>
-          <label class="bar-field" title="Toggle grid snapping (Cmd+G)">
-            <input v-model="store.snapEnabled" type="checkbox" />
-            Snap on
-          </label>
-          <button
-            type="button"
-            :disabled="store.selection.size === 0"
-            title="Quantize selected note starts (Q)"
-            @click="quantizeSelection()"
-          >
-            Quantize
-          </button>
-          <label class="bar-field">
-            <input v-model="store.scaleHighlight.enabled" type="checkbox" />
-            Scale highlight
-          </label>
-          <label class="bar-field" title="QWERTY keys play and enter notes">
-            <input :checked="musicTyping.enabled.value" type="checkbox" @change="toggleMusicTyping" />
-            Music typing
-          </label>
-          <label class="bar-field" title="Entered notes are written at the step cursor">
-            <input :checked="stepInput.armed.value" type="checkbox" @change="toggleStepInput" />
-            Step input
-          </label>
-          <span v-if="stepInput.armed.value" class="step-cursor">
-            @ {{ stepInput.cursorPpq.value.toFixed(2) }} PPQ
-          </span>
-          <label class="bar-field">
-            MIDI in
-            <select v-model="webMidi.selectedInputId.value">
-              <option :value="null">All inputs</option>
-              <option v-for="input in webMidi.inputs.value" :key="input.id" :value="input.id">
-                {{ input.name ?? input.id }}
-              </option>
-            </select>
-          </label>
-          <button
-            v-if="!webMidi.connected.value"
-            type="button"
-            :disabled="busy"
-            @click="connectWebMidi"
-          >
-            Connect MIDI
-          </button>
-          <button v-else type="button" @click="webMidi.disconnect()">Disconnect MIDI</button>
-          <span class="bar-spacer" />
-          <button
-            type="button"
-            :disabled="!handle || !store.initialized"
-            title="Bounce the edited clip to the engine now"
-            @click="applyNow"
-          >
-            Apply to engine
-          </button>
-          <span class="apply-state">
-            {{ !handle ? 'engine off' : applyPending ? 'pending…' : editorClipId !== null ? `clip #${editorClipId}` : 'empty' }}
-          </span>
-        </div>
-        <InfoLine />
-        <PianoRollEditor class="piano-roll-host" :position-ppq="() => positionPpq" />
-        <ScorePanel
-          v-if="scoreVisible"
-          class="score-host"
+    <main class="workspace">
+      <section
+        class="arrange-zone"
+        :style="{ flexBasis: `${arrangeHeight}px` }"
+        @pointerdown.capture="focusZone = 'arrange'"
+      >
+        <ArrangementView
+          ref="arrangementRef"
           :position-ppq="() => positionPpq"
-          @seek="onScoreSeek"
+          :loop-enabled="loopEnabled"
+          :loop-start-ppq="loopStartPpq"
+          :loop-end-ppq="loopEndPpq"
+          @seek="onSeek"
         />
+      </section>
+
+      <div
+        class="split-divider"
+        role="separator"
+        aria-orientation="horizontal"
+        title="Drag to resize the arrangement"
+        @pointerdown="onDividerPointerDown"
+        @pointermove="onDividerPointerMove"
+        @pointerup="onDividerPointerUp"
+        @pointercancel="onDividerPointerUp"
+      />
+
+      <section class="editor-dock" @pointerdown.capture="focusZone = 'editor'">
+        <div class="dock-tabs">
+          <button
+            type="button"
+            class="dock-tab dock-tab-toggle"
+            :class="{ active: dockTab === 'roll' }"
+            @click="dockTab = 'roll'"
+          >
+            Piano Roll
+          </button>
+          <button
+            type="button"
+            class="dock-tab dock-tab-toggle"
+            :class="{ active: dockTab === 'lists' }"
+            @click="dockTab = 'lists'"
+          >
+            Lists
+          </button>
+          <button
+            type="button"
+            class="dock-tab dock-tab-toggle"
+            :class="{ active: scoreVisible }"
+            title="Toggle the score panel (Cmd+E)"
+            @click="toggleScorePanel"
+          >
+            Score
+          </button>
+        </div>
+        <section v-show="dockTab === 'roll'" class="dock-body">
+          <div class="editor-toolbar">
+            <label class="bar-field">
+              Snap
+              <select v-model.number="store.snapDivision">
+                <option v-for="choice in SNAP_CHOICES" :key="choice.value" :value="choice.value">
+                  {{ choice.label }}
+                </option>
+              </select>
+            </label>
+            <label class="bar-field" title="Toggle grid snapping (Cmd+G)">
+              <input v-model="store.snapEnabled" type="checkbox" />
+              Snap on
+            </label>
+            <button
+              type="button"
+              :disabled="store.selection.size === 0"
+              title="Quantize selected note starts (Q)"
+              @click="quantizeSelection()"
+            >
+              Quantize
+            </button>
+            <label class="bar-field">
+              <input v-model="store.scaleHighlight.enabled" type="checkbox" />
+              Scale highlight
+            </label>
+            <label class="bar-field" title="QWERTY keys play and enter notes">
+              <input
+                :checked="musicTyping.enabled.value"
+                type="checkbox"
+                @change="toggleMusicTyping"
+              />
+              Music typing
+            </label>
+            <label class="bar-field" title="Entered notes are written at the step cursor">
+              <input :checked="stepInput.armed.value" type="checkbox" @change="toggleStepInput" />
+              Step input
+            </label>
+            <span v-if="stepInput.armed.value" class="step-cursor">
+              @ {{ stepInput.cursorPpq.value.toFixed(2) }} PPQ
+            </span>
+            <label class="bar-field">
+              MIDI in
+              <select v-model="webMidi.selectedInputId.value">
+                <option :value="null">All inputs</option>
+                <option v-for="input in webMidi.inputs.value" :key="input.id" :value="input.id">
+                  {{ input.name ?? input.id }}
+                </option>
+              </select>
+            </label>
+            <button
+              v-if="!webMidi.connected.value"
+              type="button"
+              :disabled="busy"
+              @click="connectWebMidi"
+            >
+              Connect MIDI
+            </button>
+            <button v-else type="button" @click="webMidi.disconnect()">Disconnect MIDI</button>
+            <span class="bar-spacer" />
+            <button
+              type="button"
+              :disabled="!handle || !store.initialized"
+              title="Bounce all project clips to the engine now"
+              @click="applyNow"
+            >
+              Apply to engine
+            </button>
+            <span class="apply-state">
+              {{ !handle ? 'engine off' : applyPending ? 'pending…' : `${scheduledCount} clip(s)` }}
+            </span>
+          </div>
+          <InfoLine />
+          <PianoRollEditor class="piano-roll-host" :position-ppq="() => positionPpq" />
+          <ScorePanel
+            v-if="scoreVisible"
+            class="score-host"
+            :position-ppq="() => positionPpq"
+            @seek="onSeek"
+          />
+        </section>
+        <section v-show="dockTab === 'lists'" class="dock-body">
+          <ProjectListsPanel
+            class="lists-host"
+            :position-ppq="() => positionPpq"
+            @seek="onSeek"
+          />
+        </section>
       </section>
     </main>
 
@@ -605,6 +1029,11 @@ onBeforeUnmount(async () => {
         </button>
       </div>
       <p v-if="renderInfo">{{ renderInfo }}</p>
+      <p class="diag-shortcuts">
+        Shortcuts: Space play/stop · Q quantize · L loop · B split clip at playhead (arrangement) ·
+        Delete remove notes / selected clip · Cmd+Z undo · Cmd+Shift+Z redo · Cmd+A select all ·
+        Cmd+D duplicate clip (arrangement) · Cmd+S save · Cmd+G snap · Cmd+E score
+      </p>
       <ul v-if="handle">
         <li>mode: <strong>{{ handle.capabilities.mode }}</strong></li>
         <li>runtimeTarget: <strong>{{ handle.capabilities.runtimeTarget }}</strong></li>
@@ -617,6 +1046,50 @@ onBeforeUnmount(async () => {
         <li>destination channels: <strong>{{ handle.ctx.destination.maxChannelCount }}</strong></li>
       </ul>
     </details>
+
+    <NewProjectDialog
+      :open="newDialogOpen"
+      :unsaved-changes="dirty"
+      @create="onCreateProject"
+      @cancel="newDialogOpen = false"
+    />
+
+    <div
+      v-if="openDialogOpen"
+      class="modal-overlay"
+      @click.self="openDialogOpen = false"
+    >
+      <div class="modal" role="dialog" aria-label="Open project">
+        <h2 class="modal-title">Open project</h2>
+        <ul class="stored-list">
+          <li v-for="info in storedProjects" :key="info.name" class="stored-row">
+            <button
+              type="button"
+              class="stored-load"
+              :title="`Load ${info.name}`"
+              @click="openStoredProject(info.name)"
+            >
+              {{ info.name }}
+            </button>
+            <span class="stored-size">{{ formatSize(info.size) }}</span>
+            <button
+              type="button"
+              class="stored-delete"
+              :title="`Delete ${info.name}`"
+              @click="deleteStoredProject(info.name)"
+            >
+              Delete
+            </button>
+          </li>
+          <li v-if="storedProjects.length === 0" class="stored-empty">No saved projects.</li>
+        </ul>
+        <div class="modal-actions">
+          <button type="button" @click="importSzdFile">Import .szd…</button>
+          <span class="bar-spacer" />
+          <button type="button" @click="openDialogOpen = false">Close</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -644,6 +1117,71 @@ onBeforeUnmount(async () => {
   font-weight: 700;
   letter-spacing: 0.04em;
   margin-right: 0.5rem;
+}
+
+.project-menu {
+  position: relative;
+}
+
+.menu-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  min-width: 10rem;
+  background: #1d2027;
+  border: 1px solid #2a2e37;
+  border-radius: 6px;
+  padding: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+.menu-pop button {
+  text-align: left;
+  background: none;
+  border: none;
+  color: #c8cdd6;
+  font-size: 12px;
+  padding: 0.4rem 0.6rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.menu-pop button:hover:not(:disabled) {
+  background: #242832;
+}
+
+.menu-pop button:disabled {
+  color: #5b6270;
+  cursor: default;
+}
+
+.menu-rule {
+  border: none;
+  border-top: 1px solid #2a2e37;
+  margin: 4px 0;
+}
+
+.project-name {
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: #8b93a3;
+}
+
+.dirty-dot {
+  color: #fbbf24;
+  margin-left: 0.2rem;
+}
+
+.autosave-state {
+  font-size: 11px;
+  color: #5b6270;
+  white-space: nowrap;
 }
 
 .bar-field {
@@ -676,6 +1214,35 @@ onBeforeUnmount(async () => {
   padding: 0.5rem 0.75rem;
   white-space: pre-wrap;
   font-size: 12px;
+}
+
+.workspace {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.arrange-zone {
+  flex: 0 0 auto;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.split-divider {
+  flex: none;
+  height: 6px;
+  background: #101216;
+  border-top: 1px solid #000;
+  border-bottom: 1px solid #000;
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.split-divider:hover {
+  background: #1b2330;
 }
 
 .editor-dock {
@@ -750,6 +1317,103 @@ onBeforeUnmount(async () => {
   min-height: 220px;
 }
 
+.lists-host {
+  flex: 1;
+  min-height: 0;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.modal {
+  width: 26rem;
+  max-width: calc(100vw - 2rem);
+  max-height: calc(100vh - 4rem);
+  overflow: auto;
+  background: #14161b;
+  border: 1px solid #2a2e37;
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.modal-title {
+  margin: 0 0 0.75rem;
+  font-size: 14px;
+  color: #e2e6ee;
+}
+
+.stored-list {
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stored-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.stored-load {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: #1d2027;
+  border: 1px solid #2a2e37;
+  border-radius: 4px;
+  color: #c8cdd6;
+  font-size: 12px;
+  padding: 0.35rem 0.6rem;
+  cursor: pointer;
+}
+
+.stored-load:hover {
+  background: #242832;
+}
+
+.stored-size {
+  font-size: 11px;
+  color: #5b6270;
+  white-space: nowrap;
+}
+
+.stored-delete {
+  background: none;
+  border: none;
+  color: #8b93a3;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.stored-delete:hover {
+  color: #ffb4b4;
+}
+
+.stored-empty {
+  font-size: 12px;
+  color: #5b6270;
+  padding: 0.35rem 0;
+}
+
+.modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .diagnostics {
   background: #101216;
   border-top: 1px solid #000;
@@ -768,5 +1432,10 @@ onBeforeUnmount(async () => {
   display: flex;
   gap: 0.5rem;
   margin: 0.5rem 0;
+}
+
+.diag-shortcuts {
+  font-size: 11px;
+  color: #5b6270;
 }
 </style>

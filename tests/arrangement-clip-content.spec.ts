@@ -1,0 +1,97 @@
+import { describe, expect, it } from 'vitest';
+import {
+  type ClipNoteSpan,
+  clipContentMode,
+  densityBuckets,
+  MIN_MINI_NOTE_PITCH_SPAN,
+  MINI_NOTES_MIN_PX_PER_BEAT,
+  miniNoteRects,
+} from '@/ui/arrangement/clip-content';
+
+const note = (startPpq: number, durationPpq: number, pitch: number): ClipNoteSpan => ({
+  startPpq,
+  durationPpq,
+  pitch,
+});
+
+describe('clipContentMode', () => {
+  it('switches to mini-notes exactly at the px-per-beat threshold', () => {
+    expect(clipContentMode(MINI_NOTES_MIN_PX_PER_BEAT)).toBe('mini-notes');
+    expect(clipContentMode(MINI_NOTES_MIN_PX_PER_BEAT - 0.01)).toBe('density');
+    expect(clipContentMode(1000)).toBe('mini-notes');
+    expect(clipContentMode(0)).toBe('density');
+  });
+});
+
+describe('miniNoteRects', () => {
+  it('maps note time into window-relative unit coordinates', () => {
+    const rects = miniNoteRects([note(0, 2, 60)], 0, 8);
+    expect(rects).toHaveLength(1);
+    expect(rects[0].u).toBe(0);
+    expect(rects[0].uWidth).toBeCloseTo(0.25);
+  });
+
+  it('clips notes to the audible window', () => {
+    const rects = miniNoteRects([note(-1, 2, 60), note(7, 4, 60)], 0, 8);
+    expect(rects).toHaveLength(2);
+    expect(rects[0].u).toBe(0);
+    expect(rects[0].uWidth).toBeCloseTo(1 / 8);
+    expect(rects[1].u).toBeCloseTo(7 / 8);
+    expect(rects[1].uWidth).toBeCloseTo(1 / 8);
+  });
+
+  it('drops notes entirely outside the window', () => {
+    expect(miniNoteRects([note(10, 1, 60)], 0, 8)).toEqual([]);
+    expect(miniNoteRects([note(0, 2, 60)], 4, 4)).toEqual([]);
+  });
+
+  it('pads a narrow pitch range to the minimum span and centers it', () => {
+    const rects = miniNoteRects([note(0, 1, 60)], 0, 4);
+    expect(rects[0].vHeight).toBeCloseTo(1 / MIN_MINI_NOTE_PITCH_SPAN);
+    // A single pitch sits centered: v + vHeight/2 = 0.5.
+    expect(rects[0].v + rects[0].vHeight / 2).toBeCloseTo(0.5);
+  });
+
+  it('scales a wide pitch range to the full clip height', () => {
+    const rects = miniNoteRects([note(0, 1, 50), note(1, 1, 70)], 0, 4);
+    const span = 70 - 50 + 1;
+    expect(rects[0].vHeight).toBeCloseTo(1 / span);
+    // Higher pitch renders at the top.
+    expect(rects[1].v).toBeCloseTo(0);
+    expect(rects[0].v).toBeCloseTo(20 / span);
+  });
+
+  it('returns nothing for an empty note list or degenerate window', () => {
+    expect(miniNoteRects([], 0, 8)).toEqual([]);
+    expect(miniNoteRects([note(0, 1, 60)], 0, 0)).toEqual([]);
+  });
+});
+
+describe('densityBuckets', () => {
+  it('counts notes per bucket and normalizes to the peak', () => {
+    const notes = [note(0, 1, 60), note(4, 1, 62), note(5, 1, 64), note(14, 1, 66)];
+    expect(densityBuckets(notes, 0, 16, 4)).toEqual([0.5, 1, 0, 0.5]);
+  });
+
+  it('credits a note to every bucket it overlaps', () => {
+    expect(densityBuckets([note(3, 2, 60)], 0, 16, 4)).toEqual([1, 1, 0, 0]);
+  });
+
+  it('covers a window that is not a whole number of buckets', () => {
+    expect(densityBuckets([note(9, 0.5, 60)], 0, 10, 4)).toEqual([0, 0, 1]);
+  });
+
+  it('honors the window start offset', () => {
+    // The window starts at source PPQ 8; a note at 9 lands in bucket 0.
+    expect(densityBuckets([note(9, 1, 60)], 8, 8, 4)).toEqual([1, 0]);
+  });
+
+  it('returns all-zero buckets for an empty clip', () => {
+    expect(densityBuckets([], 0, 16, 4)).toEqual([0, 0, 0, 0]);
+  });
+
+  it('returns nothing for non-positive window or bucket sizes', () => {
+    expect(densityBuckets([note(0, 1, 60)], 0, 0, 4)).toEqual([]);
+    expect(densityBuckets([note(0, 1, 60)], 0, 16, 0)).toEqual([]);
+  });
+});

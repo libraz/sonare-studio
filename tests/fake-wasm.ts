@@ -1,0 +1,426 @@
+/**
+ * Shared in-memory stand-in for the libsonare wasm module, used by specs that
+ * exercise the project store/commands without real wasm.
+ *
+ * The fake mimics the behaviors the production code depends on:
+ * - toJson() emits the real snake_case document shape (tracks, clips,
+ *   midi_content, tempo_segments, time_signatures, markers).
+ * - The undo history granularity matches the real binding: most edits push
+ *   one history entry; addClip pushes two (source registration + clip add)
+ *   and addMidiClip pushes three (source + track + clip).
+ * - splitClip partitions MIDI events between the halves and tracks source
+ *   offsets the way the real Project does.
+ */
+
+interface FakeEvent {
+  ppq: number;
+  data0: number;
+  data1: number;
+}
+
+interface FakeTrack {
+  id: number;
+  kind: number;
+  name: string;
+}
+
+interface FakeClip {
+  id: number;
+  track_id: number;
+  start_ppq: number;
+  length_ppq: number;
+  source_offset_ppq: number;
+  gain: number;
+  loop_mode: number;
+  loop_length_ppq: number;
+  source_id: number;
+}
+
+interface FakeMarker {
+  id: number;
+  ppq: number;
+  name: string;
+}
+
+interface FakeState {
+  tempoSegments: Array<{ startPpq: number; bpm: number; endBpm: number }>;
+  timeSignatures: Array<{ startPpq: number; numerator: number; denominator: number }>;
+  tracks: FakeTrack[];
+  clips: FakeClip[];
+  midi: Map<number, FakeEvent[]>;
+  markers: FakeMarker[];
+  sourceCount: number;
+}
+
+/** Packs a UMP MIDI 1.0 channel-voice word with the real binding layout. */
+function pack(
+  group: number,
+  status: number,
+  channel: number,
+  data1: number,
+  data2: number,
+): number {
+  return (
+    ((0x2 << 28) | (group << 24) | (status << 20) | (channel << 16) | (data1 << 8) | data2) >>> 0
+  );
+}
+
+function trackKindOrdinal(kind: unknown): number {
+  if (kind === 'audio' || kind === 0) return 0;
+  if (kind === 'aux' || kind === 2) return 2;
+  return 1;
+}
+
+function cloneState(state: FakeState): FakeState {
+  return {
+    tempoSegments: state.tempoSegments.map((s) => ({ ...s })),
+    timeSignatures: state.timeSignatures.map((s) => ({ ...s })),
+    tracks: state.tracks.map((t) => ({ ...t })),
+    clips: state.clips.map((c) => ({ ...c })),
+    midi: new Map([...state.midi].map(([id, events]) => [id, events.map((e) => ({ ...e }))])),
+    markers: state.markers.map((m) => ({ ...m })),
+    sourceCount: state.sourceCount,
+  };
+}
+
+/** In-memory Project stand-in; see the module doc comment for fidelity notes. */
+export class FakeProject {
+  private sampleRate = 48000;
+  private state: FakeState = {
+    tempoSegments: [],
+    timeSignatures: [],
+    tracks: [],
+    clips: [],
+    midi: new Map(),
+    markers: [],
+    sourceCount: 0,
+  };
+  private history: FakeState[] = [];
+  private future: FakeState[] = [];
+  private nextTrackId = 1;
+  private nextClipId = 1;
+  private nextMarkerId = 1;
+  private deleted = false;
+
+  static midiNoteOn(
+    ppq: number,
+    group: number,
+    channel: number,
+    note: number,
+    velocity: number,
+  ): FakeEvent {
+    return { ppq, data0: pack(group, 0x9, channel, note, velocity), data1: 0 };
+  }
+
+  static midiNoteOff(
+    ppq: number,
+    group: number,
+    channel: number,
+    note: number,
+    velocity = 0,
+  ): FakeEvent {
+    return { ppq, data0: pack(group, 0x8, channel, note, velocity), data1: 0 };
+  }
+
+  /** Pushes one history entry, then applies the mutation. */
+  private edit<T>(mutate: () => T): T {
+    this.history.push(cloneState(this.state));
+    this.future.length = 0;
+    return mutate();
+  }
+
+  setSampleRate(sampleRate: number): void {
+    this.sampleRate = sampleRate;
+  }
+
+  getSampleRate(): number {
+    return this.sampleRate;
+  }
+
+  setTempoSegments(
+    segments: ReadonlyArray<{ startPpq: number; bpm: number; endBpm?: number }>,
+  ): void {
+    this.edit(() => {
+      this.state.tempoSegments = segments.map((s) => ({
+        startPpq: s.startPpq,
+        bpm: s.bpm,
+        endBpm: s.endBpm ?? 0,
+      }));
+    });
+  }
+
+  setTimeSignatures(
+    segments: ReadonlyArray<{ startPpq: number; numerator: number; denominator: number }>,
+  ): void {
+    this.edit(() => {
+      this.state.timeSignatures = segments.map((s) => ({ ...s }));
+    });
+  }
+
+  addTrack(desc: { kind?: unknown; name?: string } = {}): number {
+    return this.edit(() => {
+      const id = this.nextTrackId++;
+      this.state.tracks.push({
+        id,
+        kind: trackKindOrdinal(desc.kind),
+        name: desc.name ?? '',
+      });
+      return id;
+    });
+  }
+
+  removeTrack(trackId: number): void {
+    this.edit(() => {
+      this.state.tracks = this.state.tracks.filter((t) => t.id !== trackId);
+      const dropped = this.state.clips.filter((c) => c.track_id === trackId);
+      for (const clip of dropped) this.state.midi.delete(clip.id);
+      this.state.clips = this.state.clips.filter((c) => c.track_id !== trackId);
+    });
+  }
+
+  renameTrack(trackId: number, name: string): void {
+    this.edit(() => {
+      const track = this.state.tracks.find((t) => t.id === trackId);
+      if (!track) throw new Error(`unknown track ${trackId}`);
+      track.name = name;
+    });
+  }
+
+  addClip(desc: {
+    trackId: number;
+    isMidi?: boolean;
+    startPpq?: number;
+    lengthPpq: number;
+    sourceOffsetPpq?: number;
+    gain?: number;
+  }): number {
+    // The real binding registers a source first (one history entry), then
+    // adds the clip (a second entry).
+    const sourceId = this.edit(() => {
+      this.state.sourceCount += 1;
+      return this.state.sourceCount;
+    });
+    return this.edit(() => {
+      const id = this.nextClipId++;
+      this.state.clips.push({
+        id,
+        track_id: desc.trackId,
+        start_ppq: desc.startPpq ?? 0,
+        length_ppq: desc.lengthPpq,
+        source_offset_ppq: desc.sourceOffsetPpq ?? 0,
+        gain: desc.gain ?? 1,
+        loop_mode: 0,
+        loop_length_ppq: 0,
+        source_id: sourceId,
+      });
+      this.state.midi.set(id, []);
+      return id;
+    });
+  }
+
+  addMidiClip(startPpq: number, lengthPpq: number): { trackId: number; clipId: number } {
+    const trackId = this.edit(() => {
+      const id = this.nextTrackId++;
+      this.state.tracks.push({ id, kind: 1, name: 'midi' });
+      return id;
+    });
+    const clipId = this.addClip({ trackId, isMidi: true, startPpq, lengthPpq });
+    return { trackId, clipId };
+  }
+
+  private requireClip(clipId: number): FakeClip {
+    const clip = this.state.clips.find((c) => c.id === clipId);
+    if (!clip) throw new Error(`unknown clip ${clipId}`);
+    return clip;
+  }
+
+  removeClip(clipId: number): void {
+    this.edit(() => {
+      this.requireClip(clipId);
+      this.state.clips = this.state.clips.filter((c) => c.id !== clipId);
+      this.state.midi.delete(clipId);
+    });
+  }
+
+  moveClip(clipId: number, newStartPpq: number, newTrackId?: number): void {
+    this.edit(() => {
+      const clip = this.requireClip(clipId);
+      clip.start_ppq = newStartPpq;
+      if (newTrackId !== undefined) clip.track_id = newTrackId;
+    });
+  }
+
+  trimClip(clipId: number, newStartPpq: number, newLengthPpq: number): void {
+    this.edit(() => {
+      const clip = this.requireClip(clipId);
+      clip.source_offset_ppq += newStartPpq - clip.start_ppq;
+      clip.start_ppq = newStartPpq;
+      clip.length_ppq = newLengthPpq;
+    });
+  }
+
+  splitClip(clipId: number, splitPpq: number): number {
+    return this.edit(() => {
+      const clip = this.requireClip(clipId);
+      const id = this.nextClipId++;
+      const leftLength = splitPpq - clip.start_ppq;
+      const splitSourcePpq = clip.source_offset_ppq + leftLength;
+      this.state.clips.push({
+        id,
+        track_id: clip.track_id,
+        start_ppq: splitPpq,
+        length_ppq: clip.length_ppq - leftLength,
+        source_offset_ppq: splitSourcePpq,
+        gain: clip.gain,
+        loop_mode: clip.loop_mode,
+        loop_length_ppq: clip.loop_length_ppq,
+        source_id: clip.source_id,
+      });
+      clip.length_ppq = leftLength;
+      const events = this.state.midi.get(clipId) ?? [];
+      this.state.midi.set(
+        clipId,
+        events.filter((e) => e.ppq < splitSourcePpq),
+      );
+      this.state.midi.set(
+        id,
+        events.filter((e) => e.ppq >= splitSourcePpq).map((e) => ({ ...e })),
+      );
+      return id;
+    });
+  }
+
+  duplicateClip(clipId: number, newStartPpq: number): number {
+    return this.edit(() => {
+      const clip = this.requireClip(clipId);
+      const id = this.nextClipId++;
+      this.state.clips.push({ ...clip, id, start_ppq: newStartPpq });
+      this.state.midi.set(
+        id,
+        (this.state.midi.get(clipId) ?? []).map((e) => ({ ...e })),
+      );
+      return id;
+    });
+  }
+
+  setClipGain(clipId: number, gain: number): void {
+    this.edit(() => {
+      this.requireClip(clipId).gain = gain;
+    });
+  }
+
+  setClipLoop(clipId: number, loopMode: string | number, loopLengthPpq?: number): void {
+    this.edit(() => {
+      const clip = this.requireClip(clipId);
+      clip.loop_mode = loopMode === 'loop' || loopMode === 1 ? 1 : 0;
+      clip.loop_length_ppq = clip.loop_mode === 1 ? (loopLengthPpq ?? 0) : 0;
+    });
+  }
+
+  setMidiEvents(clipId: number, events: ReadonlyArray<FakeEvent>): void {
+    this.edit(() => {
+      this.requireClip(clipId);
+      this.state.midi.set(
+        clipId,
+        events.map((e) => ({ ppq: e.ppq, data0: e.data0, data1: e.data1 ?? 0 })),
+      );
+    });
+  }
+
+  setMarker(markerId: number, ppq: number, name: string): number {
+    return this.edit(() => {
+      if (markerId === 0) {
+        const id = this.nextMarkerId++;
+        this.state.markers.push({ id, ppq, name });
+        return id;
+      }
+      const marker = this.state.markers.find((m) => m.id === markerId);
+      if (marker) {
+        marker.ppq = ppq;
+        marker.name = name;
+      } else {
+        this.state.markers.push({ id: markerId, ppq, name });
+      }
+      return markerId;
+    });
+  }
+
+  undo(): void {
+    const previous = this.history.pop();
+    if (!previous) return;
+    this.future.push(cloneState(this.state));
+    this.state = previous;
+  }
+
+  redo(): void {
+    const next = this.future.pop();
+    if (!next) return;
+    this.history.push(cloneState(this.state));
+    this.state = next;
+  }
+
+  snapToGrid(ppq: number, strength = 1): number {
+    const target = Math.round(ppq);
+    return ppq + (target - ppq) * strength;
+  }
+
+  trackCount(): number {
+    return this.state.tracks.length;
+  }
+
+  exportSmf(): Uint8Array {
+    // Deterministic placeholder: a MIDI header chunk tag plus content counts.
+    return new Uint8Array([0x4d, 0x54, 0x68, 0x64, this.state.clips.length & 0xff]);
+  }
+
+  exportClipFile(): Uint8Array {
+    return new Uint8Array([0x53, 0x4d, 0x46, 0x32, this.state.clips.length & 0xff]);
+  }
+
+  toJson(): string {
+    return JSON.stringify({
+      sample_rate: this.sampleRate,
+      tempo_segments: this.state.tempoSegments.map((s) => ({
+        start_ppq: s.startPpq,
+        bpm: s.bpm,
+        end_bpm: s.endBpm,
+        start_sample: 0,
+      })),
+      time_signatures: this.state.timeSignatures.map((s) => ({
+        start_ppq: s.startPpq,
+        numerator: s.numerator,
+        denominator: s.denominator,
+      })),
+      tracks: this.state.tracks.map((t) => ({ id: t.id, kind: t.kind, name: t.name })),
+      clips: this.state.clips.map((c) => ({ ...c })),
+      markers: this.state.markers.map((m) => ({ ...m })),
+      midi_content: Object.fromEntries(
+        [...this.state.midi].map(([id, events]) => [String(id), events.map((e) => ({ ...e }))]),
+      ),
+      version: 1,
+    });
+  }
+
+  delete(): void {
+    if (this.deleted) throw new Error('Project deleted twice');
+    this.deleted = true;
+  }
+}
+
+/** Mirrors libsonare's scale helper for highlightedPitchClasses tests. */
+export function scalePitchClassEnabled(
+  root: number,
+  modeMask: number,
+  pitchClass: number,
+): boolean {
+  return ((modeMask >> ((((pitchClass - root) % 12) + 12) % 12)) & 1) === 1;
+}
+
+/** Builds a fake module compatible with the `@/lib/wasm` ensureWasm result. */
+export function createFakeWasmModule(): typeof import('@/wasm/index.js') {
+  return {
+    Project: FakeProject,
+    scalePitchClassEnabled,
+    init: async () => {},
+  } as unknown as typeof import('@/wasm/index.js');
+}

@@ -1,0 +1,527 @@
+import { createPinia, setActivePinia } from 'pinia';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  addMidiClip,
+  addNote,
+  addTrack,
+  canRedo,
+  canUndo,
+  clearHistory,
+  deleteClip,
+  duplicateClip,
+  moveClip,
+  redo,
+  removeMarker,
+  removeTrack,
+  renameClip,
+  renameTrack,
+  reorderTracks,
+  setActiveClip,
+  setActiveTrack,
+  setClipGain,
+  setClipLoop,
+  setMarker,
+  setSections,
+  setTempoSegments,
+  setTimeSignatures,
+  setTrackColor,
+  setTrackMute,
+  setTrackPan,
+  setTrackSolo,
+  setTrackVolume,
+  splitClip,
+  trimClip,
+  undo,
+} from '@/project/commands';
+import { useProjectStore } from '@/project/store';
+
+vi.mock('@/lib/wasm', async () => {
+  const { createFakeWasmModule } = await import('./fake-wasm');
+  const fakeModule = createFakeWasmModule();
+  return { ensureWasm: async () => fakeModule };
+});
+
+describe('project commands (tracks, clips, markers, sections, tempo)', () => {
+  let store: ReturnType<typeof useProjectStore>;
+
+  beforeEach(async () => {
+    setActivePinia(createPinia());
+    store = useProjectStore();
+    store.dispose();
+    clearHistory();
+    await store.init();
+  });
+
+  describe('track commands', () => {
+    it('addTrack appends a track with palette defaults and is undoable', () => {
+      const trackId = addTrack({ name: 'Bass' });
+      expect(store.tracks).toHaveLength(2);
+      const track = store.tracks.find((t) => t.id === trackId);
+      expect(track).toMatchObject({
+        name: 'Bass',
+        kind: 'midi',
+        mute: false,
+        solo: false,
+        volume: 1,
+        pan: 0,
+        order: 1,
+      });
+      expect(track?.color.length).toBeGreaterThan(0);
+
+      expect(undo()).toBe(true);
+      expect(store.tracks).toHaveLength(1);
+      expect(redo()).toBe(true);
+      expect(store.tracks.find((t) => t.id === trackId)?.name).toBe('Bass');
+    });
+
+    it('addTrack honors an explicit color', () => {
+      const trackId = addTrack({ name: 'Lead', color: '#123456' });
+      expect(store.tracks.find((t) => t.id === trackId)?.color).toBe('#123456');
+    });
+
+    it('removeTrack drops the track and its clips; undo restores app metadata and note ids', () => {
+      const trackId = store.tracks[0].id;
+      const noteId = addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+      setTrackColor(trackId, '#abcdef');
+      setTrackMute(trackId, true);
+
+      removeTrack(trackId);
+      expect(store.tracks).toHaveLength(0);
+      expect(store.clips).toHaveLength(0);
+      expect(store.clipId).toBe(-1);
+      expect(store.activeTrackId).toBe(-1);
+      expect(store.notes).toEqual([]);
+
+      expect(undo()).toBe(true);
+      const restored = store.tracks.find((t) => t.id === trackId);
+      expect(restored).toMatchObject({ color: '#abcdef', mute: true });
+      expect(store.notes.map((n) => n.id)).toEqual([noteId]);
+    });
+
+    it('removing the active track makes the first remaining track and clip active', () => {
+      const firstTrackId = store.tracks[0].id;
+      const firstClipId = store.clipId;
+      const secondTrackId = addTrack({ name: 'Second' });
+      const secondClipId = addMidiClip({ trackId: secondTrackId, lengthPpq: 8 });
+      setActiveClip(secondClipId);
+      removeTrack(secondTrackId);
+      expect(store.activeTrackId).toBe(firstTrackId);
+      expect(store.clipId).toBe(firstClipId);
+    });
+
+    it('renameTrack delegates to the Project and is undoable', () => {
+      const trackId = store.tracks[0].id;
+      renameTrack(trackId, 'Keys');
+      expect(store.tracks[0].name).toBe('Keys');
+      expect(undo()).toBe(true);
+      expect(store.tracks[0].name).toBe('Piano');
+      expect(() => renameTrack(trackId, '')).toThrow(RangeError);
+    });
+
+    it('rename to the same name is a no-op that pushes no history', () => {
+      const trackId = store.tracks[0].id;
+      const depth = canUndo();
+      renameTrack(trackId, store.tracks[0].name);
+      expect(canUndo()).toBe(depth);
+    });
+
+    it('setTrackColor / mute / solo / volume / pan are app-level and undoable', () => {
+      const trackId = store.tracks[0].id;
+      setTrackColor(trackId, '#ff0000');
+      setTrackMute(trackId, true);
+      setTrackSolo(trackId, true);
+      setTrackVolume(trackId, 0.5);
+      setTrackPan(trackId, -0.25);
+      expect(store.tracks[0]).toMatchObject({
+        color: '#ff0000',
+        mute: true,
+        solo: true,
+        volume: 0.5,
+        pan: -0.25,
+      });
+
+      undo(); // pan
+      undo(); // volume
+      undo(); // solo
+      expect(store.tracks[0]).toMatchObject({ mute: true, solo: false, volume: 1, pan: 0 });
+      undo(); // mute
+      undo(); // color
+      expect(store.tracks[0].mute).toBe(false);
+      expect(store.tracks[0].color).not.toBe('#ff0000');
+    });
+
+    it('setTrackVolume and setTrackPan validate their ranges', () => {
+      const trackId = store.tracks[0].id;
+      expect(() => setTrackVolume(trackId, -0.1)).toThrow(RangeError);
+      expect(() => setTrackVolume(trackId, Number.NaN)).toThrow(RangeError);
+      expect(() => setTrackPan(trackId, 1.5)).toThrow(RangeError);
+      expect(() => setTrackPan(trackId, -2)).toThrow(RangeError);
+    });
+
+    it('setting the same mute/solo value pushes no history entry', () => {
+      const trackId = store.tracks[0].id;
+      setTrackMute(trackId, false);
+      setTrackSolo(trackId, false);
+      expect(canUndo()).toBe(false);
+    });
+
+    it('reorderTracks permutes the mirror order and is undoable', () => {
+      const a = store.tracks[0].id;
+      const b = addTrack({ name: 'B' });
+      const c = addTrack({ name: 'C' });
+      reorderTracks([c, a, b]);
+      expect(store.tracks.map((t) => t.id)).toEqual([c, a, b]);
+      expect(store.tracks.map((t) => t.order)).toEqual([0, 1, 2]);
+      expect(undo()).toBe(true);
+      expect(store.tracks.map((t) => t.id)).toEqual([a, b, c]);
+    });
+
+    it('reorderTracks rejects non-permutations', () => {
+      const a = store.tracks[0].id;
+      const b = addTrack({ name: 'B' });
+      expect(() => reorderTracks([a])).toThrow(RangeError);
+      expect(() => reorderTracks([a, a])).toThrow(RangeError);
+      expect(() => reorderTracks([a, 9999])).toThrow(RangeError);
+      expect(() => reorderTracks([b, a, 9999])).toThrow(RangeError);
+    });
+
+    it('commands targeting an unknown track throw RangeError', () => {
+      expect(() => removeTrack(9999)).toThrow(RangeError);
+      expect(() => renameTrack(9999, 'X')).toThrow(RangeError);
+      expect(() => setTrackMute(9999, true)).toThrow(RangeError);
+    });
+  });
+
+  describe('clip commands', () => {
+    it('addMidiClip places a named clip and one undo removes it entirely', () => {
+      const trackId = store.tracks[0].id;
+      const clipId = addMidiClip({ trackId, startPpq: 8, lengthPpq: 16, name: 'Verse' });
+      const clip = store.clips.find((c) => c.id === clipId);
+      expect(clip).toMatchObject({
+        trackId,
+        name: 'Verse',
+        startPpq: 8,
+        lengthPpq: 16,
+        gain: 1,
+        loopEnabled: false,
+      });
+
+      expect(undo()).toBe(true);
+      expect(store.clips.some((c) => c.id === clipId)).toBe(false);
+      expect(redo()).toBe(true);
+      expect(store.clips.find((c) => c.id === clipId)?.name).toBe('Verse');
+    });
+
+    it('addMidiClip validates placement and the owning track', () => {
+      const trackId = store.tracks[0].id;
+      expect(() => addMidiClip({ trackId: 9999, lengthPpq: 8 })).toThrow(RangeError);
+      expect(() => addMidiClip({ trackId, startPpq: -1, lengthPpq: 8 })).toThrow(RangeError);
+      expect(() => addMidiClip({ trackId, lengthPpq: 0 })).toThrow(RangeError);
+    });
+
+    it('deleteClip removes the clip and falls back to the next clip of the track', () => {
+      const trackId = store.tracks[0].id;
+      const firstClipId = store.clipId;
+      const noteId = addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+      const secondClipId = addMidiClip({ trackId, startPpq: 32, lengthPpq: 8 });
+
+      deleteClip(firstClipId);
+      expect(store.clips.map((c) => c.id)).toEqual([secondClipId]);
+      expect(store.clipId).toBe(secondClipId);
+      expect(store.notes).toEqual([]);
+
+      expect(undo()).toBe(true);
+      expect(store.clips.map((c) => c.id)).toEqual([firstClipId, secondClipId]);
+      expect(store.clipId).toBe(firstClipId);
+      expect(store.notes.map((n) => n.id)).toEqual([noteId]);
+    });
+
+    it('renameClip is app-level metadata and undoable', () => {
+      const clipId = store.clipId;
+      renameClip(clipId, 'Chorus');
+      expect(store.activeClip?.name).toBe('Chorus');
+      expect(undo()).toBe(true);
+      expect(store.activeClip?.name).not.toBe('Chorus');
+      expect(() => renameClip(clipId, '')).toThrow(RangeError);
+    });
+
+    it('moveClip changes the start position and optionally the track', () => {
+      const clipId = store.clipId;
+      const otherTrackId = addTrack({ name: 'Other' });
+      moveClip(clipId, 4);
+      expect(store.activeClip?.startPpq).toBe(4);
+      moveClip(clipId, 8, otherTrackId);
+      expect(store.activeClip).toMatchObject({ startPpq: 8, trackId: otherTrackId });
+      expect(undo()).toBe(true);
+      expect(store.activeClip).toMatchObject({ startPpq: 4 });
+      expect(() => moveClip(clipId, -1)).toThrow(RangeError);
+      expect(() => moveClip(clipId, 0, 9999)).toThrow(RangeError);
+    });
+
+    it('duplicateClip copies notes and the display name; undo removes the copy', () => {
+      const clipId = store.clipId;
+      addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+      renameClip(clipId, 'Riff');
+      const copyId = duplicateClip(clipId, 32);
+      const copy = store.clips.find((c) => c.id === copyId);
+      expect(copy).toMatchObject({ name: 'Riff', startPpq: 32 });
+      expect(copy?.notes).toHaveLength(1);
+      expect(copy?.notes[0]).toMatchObject({ pitch: 60 });
+      // The copy's notes get fresh editor ids.
+      expect(copy?.notes[0].id).not.toBe(store.notes[0].id);
+
+      expect(undo()).toBe(true);
+      expect(store.clips.some((c) => c.id === copyId)).toBe(false);
+    });
+
+    it('splitClip partitions notes between the halves and is undoable', () => {
+      const clipId = store.clipId;
+      const leftNoteId = addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+      addNote({ pitch: 64, startPpq: 4, durationPpq: 1 });
+      renameClip(clipId, 'Phrase');
+
+      const rightId = splitClip(clipId, 2);
+      const left = store.clips.find((c) => c.id === clipId);
+      const right = store.clips.find((c) => c.id === rightId);
+      expect(left).toMatchObject({ startPpq: 0, lengthPpq: 2 });
+      expect(right).toMatchObject({ name: 'Phrase', startPpq: 2, lengthPpq: 30 });
+      expect(right?.sourceOffsetPpq).toBe(2);
+      expect(left?.notes.map((n) => n.pitch)).toEqual([60]);
+      expect(right?.notes.map((n) => n.pitch)).toEqual([64]);
+
+      expect(undo()).toBe(true);
+      const whole = store.clips.find((c) => c.id === clipId);
+      expect(whole?.lengthPpq).toBe(32);
+      expect(whole?.notes.map((n) => n.pitch)).toEqual([60, 64]);
+      expect(whole?.notes[0].id).toBe(leftNoteId);
+    });
+
+    it('splitClip rejects positions outside the clip body', () => {
+      const clipId = store.clipId;
+      expect(() => splitClip(clipId, 0)).toThrow(RangeError);
+      expect(() => splitClip(clipId, 32)).toThrow(RangeError);
+      expect(() => splitClip(clipId, 100)).toThrow(RangeError);
+    });
+
+    it('trimClip adjusts start, length and source offset and is undoable', () => {
+      const clipId = store.clipId;
+      trimClip(clipId, 2, 16);
+      expect(store.activeClip).toMatchObject({
+        startPpq: 2,
+        lengthPpq: 16,
+        sourceOffsetPpq: 2,
+      });
+      expect(undo()).toBe(true);
+      expect(store.activeClip).toMatchObject({ startPpq: 0, lengthPpq: 32, sourceOffsetPpq: 0 });
+      expect(() => trimClip(clipId, -1, 16)).toThrow(RangeError);
+      expect(() => trimClip(clipId, 0, 0)).toThrow(RangeError);
+    });
+
+    it('setClipLoop defaults the loop length to the clip length and is undoable', () => {
+      const clipId = store.clipId;
+      setClipLoop(clipId, true);
+      expect(store.activeClip).toMatchObject({ loopEnabled: true, loopLengthPpq: 32 });
+      setClipLoop(clipId, true, 8);
+      expect(store.activeClip).toMatchObject({ loopEnabled: true, loopLengthPpq: 8 });
+      setClipLoop(clipId, false);
+      expect(store.activeClip).toMatchObject({ loopEnabled: false, loopLengthPpq: 0 });
+      undo();
+      expect(store.activeClip?.loopEnabled).toBe(true);
+      expect(() => setClipLoop(clipId, true, 0)).toThrow(RangeError);
+    });
+
+    it('setClipGain validates and writes through to the Project', () => {
+      const clipId = store.clipId;
+      setClipGain(clipId, 0.25);
+      expect(store.activeClip?.gain).toBe(0.25);
+      expect(undo()).toBe(true);
+      expect(store.activeClip?.gain).toBe(1);
+      expect(() => setClipGain(clipId, -1)).toThrow(RangeError);
+      expect(() => setClipGain(clipId, Number.NaN)).toThrow(RangeError);
+    });
+
+    it('commands targeting an unknown clip throw RangeError', () => {
+      expect(() => deleteClip(9999)).toThrow(RangeError);
+      expect(() => moveClip(9999, 0)).toThrow(RangeError);
+      expect(() => setClipGain(9999, 1)).toThrow(RangeError);
+    });
+  });
+
+  describe('active track / clip selection', () => {
+    it('setActiveClip retargets the note mirror without touching the history', () => {
+      const trackId = store.tracks[0].id;
+      const firstClipId = store.clipId;
+      const noteId = addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+      const secondClipId = addMidiClip({ trackId, startPpq: 32, lengthPpq: 8 });
+      clearHistory();
+
+      setActiveClip(secondClipId);
+      expect(canUndo()).toBe(false);
+      expect(store.clipId).toBe(secondClipId);
+      expect(store.notes).toEqual([]);
+      expect(store.selection.size).toBe(0);
+
+      // Non-active clip content stays mirrored on the clip entry.
+      expect(store.clips.find((c) => c.id === firstClipId)?.notes.map((n) => n.id)).toEqual([
+        noteId,
+      ]);
+
+      // Edits now land in the newly active clip.
+      addNote({ pitch: 72, startPpq: 0, durationPpq: 1 });
+      expect(store.clips.find((c) => c.id === secondClipId)?.notes).toHaveLength(1);
+      expect(store.clips.find((c) => c.id === firstClipId)?.notes).toHaveLength(1);
+    });
+
+    it('setActiveTrack activates the first clip of the track (or none)', () => {
+      const firstTrackId = store.tracks[0].id;
+      const firstClipId = store.clipId;
+      const emptyTrackId = addTrack({ name: 'Empty' });
+
+      setActiveTrack(emptyTrackId);
+      expect(store.activeTrackId).toBe(emptyTrackId);
+      expect(store.clipId).toBe(-1);
+      expect(store.notes).toEqual([]);
+
+      setActiveTrack(firstTrackId);
+      expect(store.clipId).toBe(firstClipId);
+      expect(() => setActiveTrack(9999)).toThrow(RangeError);
+    });
+  });
+
+  describe('marker and section commands', () => {
+    it('setMarker creates, updates and sorts markers; removeMarker deletes; both undoable', () => {
+      const a = setMarker(null, 8, 'Chorus');
+      const b = setMarker(0, 0, 'Intro');
+      expect(store.markers.map((m) => m.name)).toEqual(['Intro', 'Chorus']);
+
+      setMarker(a, 16, 'Chorus 2');
+      expect(store.markers.find((m) => m.id === a)).toMatchObject({ ppq: 16, name: 'Chorus 2' });
+
+      removeMarker(b);
+      expect(store.markers.map((m) => m.id)).toEqual([a]);
+
+      undo(); // removeMarker
+      expect(store.markers).toHaveLength(2);
+      undo(); // marker update
+      expect(store.markers.find((m) => m.id === a)).toMatchObject({ ppq: 8, name: 'Chorus' });
+
+      expect(() => setMarker(9999, 0, 'X')).toThrow(RangeError);
+      expect(() => setMarker(null, -1, 'X')).toThrow(RangeError);
+    });
+
+    it('removeMarker is a silent no-op for unknown ids', () => {
+      removeMarker(9999);
+      expect(canUndo()).toBe(false);
+    });
+
+    it('setSections replaces the sorted list, keeps explicit ids, and is undoable', () => {
+      setSections([
+        { name: 'Chorus', startPpq: 16, endPpq: 32 },
+        { name: 'Verse', startPpq: 0, endPpq: 16, color: '#112233' },
+      ]);
+      expect(store.sections.map((s) => s.name)).toEqual(['Verse', 'Chorus']);
+      expect(store.sections[0].color).toBe('#112233');
+      const keepId = store.sections[1].id;
+
+      setSections([{ id: keepId, name: 'Drop', startPpq: 8, endPpq: 24 }]);
+      expect(store.sections).toHaveLength(1);
+      expect(store.sections[0]).toMatchObject({ id: keepId, name: 'Drop' });
+
+      undo();
+      expect(store.sections.map((s) => s.name)).toEqual(['Verse', 'Chorus']);
+      undo();
+      expect(store.sections).toEqual([]);
+
+      expect(() => setSections([{ name: 'Bad', startPpq: 4, endPpq: 4 }])).toThrow(RangeError);
+      expect(() => setSections([{ name: 'Bad', startPpq: -1, endPpq: 4 }])).toThrow(RangeError);
+    });
+  });
+
+  describe('tempo and meter commands', () => {
+    it('setTempoSegments replaces the tempo map and mirrors the first BPM', () => {
+      setTempoSegments([
+        { startPpq: 0, bpm: 90 },
+        { startPpq: 16, bpm: 140, endBpm: 160 },
+      ]);
+      expect(store.tempoBpm).toBe(90);
+      expect(store.tempoSegments).toEqual([
+        { startPpq: 0, bpm: 90 },
+        { startPpq: 16, bpm: 140, endBpm: 160 },
+      ]);
+      expect(undo()).toBe(true);
+      expect(store.tempoBpm).toBe(120);
+    });
+
+    it('setTempoSegments validates its input', () => {
+      expect(() => setTempoSegments([])).toThrow(RangeError);
+      expect(() => setTempoSegments([{ startPpq: 0, bpm: 0 }])).toThrow(RangeError);
+      expect(() =>
+        setTempoSegments([
+          { startPpq: 8, bpm: 100 },
+          { startPpq: 8, bpm: 120 },
+        ]),
+      ).toThrow(RangeError);
+    });
+
+    it('setTimeSignatures replaces the meter map and is undoable', () => {
+      setTimeSignatures([
+        { startPpq: 0, numerator: 3, denominator: 4 },
+        { startPpq: 12, numerator: 7, denominator: 8 },
+      ]);
+      expect(store.timeSignatures).toEqual([
+        { startPpq: 0, numerator: 3, denominator: 4 },
+        { startPpq: 12, numerator: 7, denominator: 8 },
+      ]);
+      expect(undo()).toBe(true);
+      expect(store.timeSignatures).toEqual([]);
+    });
+
+    it('setTimeSignatures validates its input', () => {
+      expect(() => setTimeSignatures([])).toThrow(RangeError);
+      expect(() => setTimeSignatures([{ startPpq: 0, numerator: 0, denominator: 4 }])).toThrow(
+        RangeError,
+      );
+      expect(() => setTimeSignatures([{ startPpq: 0, numerator: 4, denominator: 0 }])).toThrow(
+        RangeError,
+      );
+      expect(() =>
+        setTimeSignatures([
+          { startPpq: 4, numerator: 4, denominator: 4 },
+          { startPpq: 4, numerator: 3, denominator: 4 },
+        ]),
+      ).toThrow(RangeError);
+    });
+  });
+
+  describe('mixed undo across project-backed and app-only commands', () => {
+    it('replays each command kind in reverse order', () => {
+      const trackId = store.tracks[0].id;
+      const noteId = addNote({ pitch: 60, startPpq: 0, durationPpq: 1 }); // project edit
+      setTrackColor(trackId, '#aa0000'); // app-only edit
+      renameTrack(trackId, 'Grand'); // project edit
+      setMarker(null, 4, 'Hit'); // app-only edit
+
+      undo();
+      expect(store.markers).toEqual([]);
+      expect(store.tracks[0].name).toBe('Grand');
+      undo();
+      expect(store.tracks[0].name).toBe('Piano');
+      expect(store.tracks[0].color).toBe('#aa0000');
+      undo();
+      expect(store.tracks[0].color).not.toBe('#aa0000');
+      expect(store.notes.map((n) => n.id)).toEqual([noteId]);
+      undo();
+      expect(store.notes).toEqual([]);
+      expect(canUndo()).toBe(false);
+
+      redo();
+      redo();
+      redo();
+      redo();
+      expect(canRedo()).toBe(false);
+      expect(store.notes.map((n) => n.id)).toEqual([noteId]);
+      expect(store.tracks[0]).toMatchObject({ name: 'Grand', color: '#aa0000' });
+      expect(store.markers.map((m) => m.name)).toEqual(['Hit']);
+    });
+  });
+});

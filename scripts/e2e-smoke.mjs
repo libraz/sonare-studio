@@ -1,8 +1,10 @@
 /**
- * E2E smoke test for the piano roll editor.
+ * E2E smoke test for the studio shell.
  *
  * Drives a headless Chrome against a running dev server and verifies that the
- * editor renders, double-click creates a note, and Cmd+Z undoes it (via the
+ * piano roll renders, double-click creates a note, Cmd+Z undoes it, the score
+ * panel engraves, a track and a clip can be created in the arrangement view,
+ * and a project saved to OPFS is restored after a page reload (via the
  * dev-only window.__sonareDebug hook exposed by App.vue).
  *
  * Playwright is resolved from /tmp/node_modules. Usage:
@@ -31,6 +33,18 @@ const browser = await chromium.launch({
 try {
   const page = await browser.newPage();
   page.on('pageerror', (err) => console.error('pageerror:', err.message));
+
+  // The shell offers to restore an autosave with a confirm() on boot. Decline
+  // on the first load (start from the demo project) and accept after the
+  // OPFS-save step below so the reload restores the saved state.
+  let acceptRestore = false;
+  page.on('dialog', (dialog) => {
+    if (dialog.type() === 'confirm' && dialog.message().includes('Restore')) {
+      void (acceptRestore ? dialog.accept() : dialog.dismiss());
+    } else {
+      void dialog.accept();
+    }
+  });
 
   await page.goto(baseUrl, { waitUntil: 'load' });
 
@@ -83,6 +97,56 @@ try {
     fail(`unexpected score page indicator: "${indicator}"`);
   } else {
     console.info(`score page indicator: ${indicator}`);
+  }
+
+  // Add a track via the arrangement header column.
+  await page.click('.track-headers .add-track');
+  await page.waitForFunction(() => window.__sonareDebug.trackCount() === 2, null, {
+    timeout: 5000,
+  });
+  const headerCount = await page.locator('.track-headers .track-header').count();
+  if (headerCount !== 2) {
+    fail(`expected 2 track headers after adding a track, got ${headerCount}`);
+  } else {
+    console.info('track added: 2 track headers');
+  }
+
+  // Double-click lane 2 of the arrangement canvas to create a one-bar clip.
+  const clipsBefore = await page.evaluate(() => window.__sonareDebug.clipCount());
+  const arrangeCanvas = page.locator('.arrangement-canvas');
+  await arrangeCanvas.waitFor({ state: 'visible', timeout: 5000 });
+  const arrangeBox = await arrangeCanvas.boundingBox();
+  if (!arrangeBox || arrangeBox.width <= 0 || arrangeBox.height <= 0) {
+    fail(`arrangement canvas has no size: ${JSON.stringify(arrangeBox)}`);
+  }
+  // Lane 2 starts below the 28 px ruler plus one 56 px lane; aim mid-lane.
+  await page.mouse.dblclick(arrangeBox.x + arrangeBox.width * 0.3, arrangeBox.y + 28 + 56 + 28);
+  await page.waitForFunction(
+    (before) => window.__sonareDebug.clipCount() === before + 1,
+    clipsBefore,
+    { timeout: 5000 },
+  );
+  console.info(`clip created on lane 2: ${clipsBefore} -> ${clipsBefore + 1}`);
+
+  // Save the project to OPFS via the project menu, then reload the page and
+  // accept the autosave-restore prompt: the two-track project must survive.
+  await page.click('.project-menu .menu-trigger');
+  await page.click('.menu-pop .menu-save');
+  await page.waitForSelector('.autosave-state', { timeout: 15000 });
+  console.info('project saved to OPFS');
+
+  acceptRestore = true;
+  await page.reload({ waitUntil: 'load' });
+  await page.waitForFunction(
+    () => window.__sonareDebug?.initialized() === true && window.__sonareDebug.trackCount() === 2,
+    null,
+    { timeout: 30000 },
+  );
+  const restoredHeaders = await page.locator('.track-headers .track-header').count();
+  if (restoredHeaders !== 2) {
+    fail(`expected 2 track headers after reload, got ${restoredHeaders}`);
+  } else {
+    console.info('project restored after reload: 2 track headers');
   }
 
   if (process.exitCode !== 1) console.info('E2E SMOKE PASS');
