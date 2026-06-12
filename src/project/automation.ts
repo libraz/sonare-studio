@@ -132,6 +132,65 @@ export function cloneAutomationLane(lane: AutomationLaneState): AutomationLaneSt
   return { ...lane, points: lane.points.map((point) => ({ ...point })) };
 }
 
+/** Epsilon shifting exponential interpolation away from log(0). */
+const EXPONENTIAL_EPSILON = 1e-9;
+
+/** Sign of a value, treating 0 (and -0) as positive. */
+function signOrPositive(value: number): number {
+  return Math.sign(value) || 1;
+}
+
+/**
+ * Evaluates a lane's value at a PPQ position, replicating the engine's
+ * interpolation math. Outside the point range the nearest endpoint value
+ * holds. Between two points the segment's curve (stored on the earlier point)
+ * interpolates:
+ *
+ * - 'hold' keeps the earlier value until the next point.
+ * - 'exponential' interpolates in an epsilon-shifted log domain of the
+ *   magnitudes when both endpoints share a sign; endpoints straddling zero
+ *   fall back to linear.
+ * - 's-curve' applies smoothstep easing to the blend factor.
+ * - 'linear' (and absent) blends linearly.
+ *
+ * @param points Lane points sorted by ascending PPQ.
+ * @param ppq Position to evaluate, in PPQ.
+ * @returns The interpolated value; 0 when the lane has no points.
+ */
+export function evaluateAutomationValue(
+  points: ReadonlyArray<AutomationPoint>,
+  ppq: number,
+): number {
+  if (points.length === 0) return 0;
+  if (ppq <= points[0].ppq) return points[0].value;
+  const last = points[points.length - 1];
+  if (ppq >= last.ppq) return last.value;
+  let index = 0;
+  while (index + 1 < points.length && points[index + 1].ppq <= ppq) index++;
+  const a = points[index];
+  const b = points[index + 1];
+  const span = b.ppq - a.ppq;
+  const t = span > 0 ? Math.min(1, Math.max(0, (ppq - a.ppq) / span)) : 0;
+  switch (a.curve ?? 'linear') {
+    case 'hold':
+      return a.value;
+    case 'exponential': {
+      const sa = signOrPositive(a.value);
+      const sb = signOrPositive(b.value);
+      if (sa !== sb) return a.value + (b.value - a.value) * t;
+      const la = Math.log(Math.abs(a.value) + EXPONENTIAL_EPSILON);
+      const lb = Math.log(Math.abs(b.value) + EXPONENTIAL_EPSILON);
+      return sa * (Math.exp(la + (lb - la) * t) - EXPONENTIAL_EPSILON);
+    }
+    case 's-curve': {
+      const shaped = t * t * (3 - 2 * t);
+      return a.value + (b.value - a.value) * shaped;
+    }
+    default:
+      return a.value + (b.value - a.value) * t;
+  }
+}
+
 /**
  * Sanitizes an untrusted document automation list (a track's `automation`
  * field or the document's `masterAutomation`) into store lanes bound to the

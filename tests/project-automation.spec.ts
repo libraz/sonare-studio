@@ -6,6 +6,7 @@ import {
   automationLaneKey,
   clampAutomationValue,
   cloneAutomationLane,
+  evaluateAutomationValue,
   sanitizeAutomationEntries,
   sanitizeAutomationPoints,
 } from '@/project/automation';
@@ -113,6 +114,105 @@ describe('automation model', () => {
         { ppq: 0, value: 0, curve: 's-curve' },
         { ppq: 1, value: 0 },
       ]);
+    });
+  });
+
+  describe('evaluateAutomationValue', () => {
+    it('returns 0 for an empty lane', () => {
+      expect(evaluateAutomationValue([], 0)).toBe(0);
+      expect(evaluateAutomationValue([], 480)).toBe(0);
+    });
+
+    it('holds the nearest endpoint value outside the point range', () => {
+      const points: AutomationPoint[] = [
+        { ppq: 4, value: -6 },
+        { ppq: 8, value: 0 },
+      ];
+      expect(evaluateAutomationValue(points, 0)).toBe(-6);
+      expect(evaluateAutomationValue(points, 4)).toBe(-6);
+      expect(evaluateAutomationValue(points, 8)).toBe(0);
+      expect(evaluateAutomationValue(points, 100)).toBe(0);
+    });
+
+    it('returns the exact point value at an interior point position', () => {
+      const points: AutomationPoint[] = [
+        { ppq: 0, value: 0 },
+        { ppq: 4, value: 3 },
+        { ppq: 8, value: 10 },
+      ];
+      expect(evaluateAutomationValue(points, 4)).toBe(3);
+    });
+
+    it('interpolates linearly by default and for the linear curve', () => {
+      const points: AutomationPoint[] = [
+        { ppq: 0, value: 0, curve: 'linear' },
+        { ppq: 8, value: 4 },
+      ];
+      expect(evaluateAutomationValue(points, 2)).toBeCloseTo(1, 12);
+      expect(evaluateAutomationValue(points, 4)).toBeCloseTo(2, 12);
+      const noCurve: AutomationPoint[] = [
+        { ppq: 0, value: 0 },
+        { ppq: 8, value: 4 },
+      ];
+      expect(evaluateAutomationValue(noCurve, 6)).toBeCloseTo(3, 12);
+    });
+
+    it('keeps the earlier value across a hold segment', () => {
+      const points: AutomationPoint[] = [
+        { ppq: 0, value: -12, curve: 'hold' },
+        { ppq: 8, value: 0 },
+      ];
+      expect(evaluateAutomationValue(points, 1)).toBe(-12);
+      expect(evaluateAutomationValue(points, 7.999)).toBe(-12);
+      expect(evaluateAutomationValue(points, 8)).toBe(0);
+    });
+
+    it('applies smoothstep easing on an s-curve segment', () => {
+      const points: AutomationPoint[] = [
+        { ppq: 0, value: 0, curve: 's-curve' },
+        { ppq: 8, value: 8 },
+      ];
+      // smoothstep(0.25) = 0.15625, smoothstep(0.5) = 0.5.
+      expect(evaluateAutomationValue(points, 2)).toBeCloseTo(1.25, 12);
+      expect(evaluateAutomationValue(points, 4)).toBeCloseTo(4, 12);
+    });
+
+    it('interpolates exponential segments geometrically for positive endpoints', () => {
+      const points: AutomationPoint[] = [
+        { ppq: 0, value: 1, curve: 'exponential' },
+        { ppq: 8, value: 100 },
+      ];
+      // Midpoint of a log-domain blend is the geometric mean.
+      expect(evaluateAutomationValue(points, 4)).toBeCloseTo(10, 6);
+    });
+
+    it('keeps the sign on exponential segments with negative endpoints', () => {
+      const points: AutomationPoint[] = [
+        { ppq: 0, value: -1, curve: 'exponential' },
+        { ppq: 8, value: -100 },
+      ];
+      expect(evaluateAutomationValue(points, 4)).toBeCloseTo(-10, 6);
+    });
+
+    it('falls back to linear when an exponential segment straddles zero', () => {
+      const points: AutomationPoint[] = [
+        { ppq: 0, value: -1, curve: 'exponential' },
+        { ppq: 8, value: 1 },
+      ];
+      expect(evaluateAutomationValue(points, 2)).toBeCloseTo(-0.5, 12);
+      expect(evaluateAutomationValue(points, 4)).toBeCloseTo(0, 12);
+      expect(evaluateAutomationValue(points, 6)).toBeCloseTo(0.5, 12);
+    });
+
+    it('stays near zero at the start of an exponential ramp from zero', () => {
+      const points: AutomationPoint[] = [
+        { ppq: 0, value: 0, curve: 'exponential' },
+        { ppq: 8, value: 1 },
+      ];
+      // Zero counts as positive, so the blend runs in the epsilon-shifted
+      // log domain and hugs zero through the first half.
+      expect(evaluateAutomationValue(points, 4)).toBeGreaterThanOrEqual(0);
+      expect(evaluateAutomationValue(points, 4)).toBeLessThan(0.01);
     });
   });
 

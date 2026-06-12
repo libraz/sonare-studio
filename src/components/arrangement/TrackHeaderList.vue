@@ -1,12 +1,18 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from 'vue';
 import {
+  type AutomationLaneState,
+  type AutomationParam,
+  isAutomationParam,
+} from '@/project/automation';
+import {
   addAudioTrack,
   addTrack,
   removeTrack,
   renameTrack,
   reorderTracks,
   setActiveTrack,
+  setAutomationLaneEnabled,
   setTrackColor,
   setTrackMute,
   setTrackPan,
@@ -15,6 +21,7 @@ import {
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { type EditorTrack, TRACK_COLOR_PALETTE, type TrackKind } from '@/project/types';
+import { AUTOMATION_LANE_HEIGHT_PX } from '@/ui/arrangement/automation-rows';
 
 /**
  * Track header column of the arrangement view: one header per track lane with
@@ -24,6 +31,14 @@ import { type EditorTrack, TRACK_COLOR_PALETTE, type TrackKind } from '@/project
  * src/project/commands.ts; the store is the read model. Record-arm state is
  * owned by the shell and only mirrored here via the `armedTrackIds` prop and
  * the `arm` emit.
+ *
+ * The "A" toggle expands an automation strip below a track's header (mirroring
+ * the canvas sublane); expansion state and the selected parameter are owned by
+ * the container and mirrored via the `automationExpandedIds` /
+ * `automationParams` props and the `toggleAutomation` / `automationParam`
+ * emits. Row heights then match the canvas row geometry: lane height plus
+ * AUTOMATION_LANE_HEIGHT_PX for expanded rows, so stacked headers follow the
+ * same prefix sums as automation-rows.ts.
  */
 
 const props = defineProps<{
@@ -35,11 +50,19 @@ const props = defineProps<{
   rulerOffset: number;
   /** Ids of record-armed tracks (recording state is owned by the shell). */
   armedTrackIds?: readonly number[];
+  /** Ids of tracks whose automation sublane is expanded. */
+  automationExpandedIds?: readonly number[];
+  /** Selected automation parameter per track id (absent = 'faderDb'). */
+  automationParams?: Record<number, AutomationParam>;
 }>();
 
 const emit = defineEmits<{
   /** Request to (dis)arm a track for recording. */
   arm: [trackId: number, armed: boolean];
+  /** Request to expand/collapse a track's automation sublane. */
+  toggleAutomation: [trackId: number, expanded: boolean];
+  /** Request to switch the parameter a track's automation sublane edits. */
+  automationParam: [trackId: number, param: AutomationParam];
 }>();
 
 const store = useProjectStore();
@@ -131,6 +154,45 @@ function isArmed(track: EditorTrack): boolean {
 
 function onToggleArm(track: EditorTrack): void {
   emit('arm', track.id, !isArmed(track));
+}
+
+// --- Automation sublane ------------------------------------------------------
+
+/** True when the container reports the track's automation sublane as expanded. */
+function isAutomationExpanded(track: EditorTrack): boolean {
+  return props.automationExpandedIds?.includes(track.id) ?? false;
+}
+
+/** Parameter the track's automation sublane currently edits. */
+function automationParamFor(track: EditorTrack): AutomationParam {
+  return props.automationParams?.[track.id] ?? 'faderDb';
+}
+
+/** Store lane behind the track's sublane, or null when none exists yet. */
+function automationLaneFor(track: EditorTrack): AutomationLaneState | null {
+  const param = automationParamFor(track);
+  return (
+    store.automationLanes.find((lane) => lane.target === track.id && lane.param === param) ?? null
+  );
+}
+
+/** Full header row height: the lane plus the automation strip when expanded. */
+function rowHeight(track: EditorTrack): number {
+  return props.laneHeight + (isAutomationExpanded(track) ? AUTOMATION_LANE_HEIGHT_PX : 0);
+}
+
+function onToggleAutomation(track: EditorTrack): void {
+  emit('toggleAutomation', track.id, !isAutomationExpanded(track));
+}
+
+function onAutomationParamChange(track: EditorTrack, event: Event): void {
+  const value = (event.target as HTMLSelectElement).value;
+  if (isAutomationParam(value)) emit('automationParam', track.id, value);
+}
+
+function onAutomationEnabledChange(track: EditorTrack, event: Event): void {
+  const enabled = (event.target as HTMLInputElement).checked;
+  setAutomationLaneEnabled(track.id, automationParamFor(track), enabled);
 }
 
 // --- Add-track menu ----------------------------------------------------------
@@ -243,116 +305,151 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
           :key="track.id"
           class="track-header"
           :class="rowClass(track, index)"
-          :style="{ height: `${props.laneHeight}px` }"
+          :style="{ height: `${rowHeight(track)}px` }"
           @click="activate(track)"
         >
-          <div
-            class="track-grip"
-            title="Drag to reorder"
-            aria-hidden="true"
-            @click.stop
-            @pointerdown.stop="onGripPointerDown(track, index, $event)"
-            @pointermove="onGripPointerMove"
-            @pointerup="onGripPointerUp"
-            @pointercancel="onGripPointerCancel"
-          >
-            ⋮⋮
+          <div class="track-row" :style="{ height: `${props.laneHeight}px` }">
+            <div
+              class="track-grip"
+              title="Drag to reorder"
+              aria-hidden="true"
+              @click.stop
+              @pointerdown.stop="onGripPointerDown(track, index, $event)"
+              @pointermove="onGripPointerMove"
+              @pointerup="onGripPointerUp"
+              @pointercancel="onGripPointerCancel"
+            >
+              ⋮⋮
+            </div>
+            <button
+              type="button"
+              class="track-swatch"
+              :style="{ background: track.color }"
+              title="Cycle track color"
+              :aria-label="`Cycle color of ${track.name}`"
+              @click.stop="cycleColor(track)"
+            />
+            <div class="track-main">
+              <div class="track-name-row">
+                <span class="track-kind" :title="TRACK_KIND_LABELS[track.kind]">
+                  {{ TRACK_KIND_GLYPHS[track.kind] }}
+                </span>
+                <input
+                  v-if="editingTrackId === track.id"
+                  ref="nameInput"
+                  v-model="editName"
+                  class="track-name-input"
+                  aria-label="Track name"
+                  @click.stop
+                  @keydown.enter.prevent="commitRename"
+                  @keydown.escape.prevent="cancelRename"
+                  @blur="commitRename"
+                />
+                <span v-else class="track-name" @dblclick.stop="startRename(track)">
+                  {{ track.name }}
+                </span>
+                <button
+                  type="button"
+                  class="track-delete"
+                  title="Delete track"
+                  :aria-label="`Delete track ${track.name}`"
+                  @click.stop="onDelete(track)"
+                >
+                  ×
+                </button>
+              </div>
+              <div class="track-controls" @click.stop>
+                <button
+                  v-if="track.kind === 'audio'"
+                  type="button"
+                  class="toggle arm"
+                  :class="{ on: isArmed(track) }"
+                  title="Record arm"
+                  :aria-label="`Record arm ${track.name}`"
+                  :aria-pressed="isArmed(track)"
+                  @click="onToggleArm(track)"
+                >
+                  R
+                </button>
+                <button
+                  type="button"
+                  class="toggle mute"
+                  :class="{ on: track.mute }"
+                  title="Mute"
+                  :aria-label="`Mute ${track.name}`"
+                  :aria-pressed="track.mute"
+                  @click="setTrackMute(track.id, !track.mute)"
+                >
+                  M
+                </button>
+                <button
+                  type="button"
+                  class="toggle solo"
+                  :class="{ on: track.solo }"
+                  title="Solo"
+                  :aria-label="`Solo ${track.name}`"
+                  :aria-pressed="track.solo"
+                  @click="setTrackSolo(track.id, !track.solo)"
+                >
+                  S
+                </button>
+                <button
+                  type="button"
+                  class="toggle automation"
+                  :class="{ on: isAutomationExpanded(track) }"
+                  title="Automation lane"
+                  :aria-label="`Automation lane of ${track.name}`"
+                  :aria-pressed="isAutomationExpanded(track)"
+                  @click="onToggleAutomation(track)"
+                >
+                  A
+                </button>
+                <input
+                  class="mini-slider"
+                  type="range"
+                  min="0"
+                  max="2"
+                  step="0.01"
+                  :value="track.volume"
+                  :title="`Volume ${track.volume.toFixed(2)}`"
+                  :aria-label="`Volume of ${track.name}`"
+                  @change="onVolumeChange(track, $event)"
+                />
+                <input
+                  class="mini-slider"
+                  type="range"
+                  min="-1"
+                  max="1"
+                  step="0.01"
+                  :value="track.pan"
+                  :title="`Pan ${track.pan.toFixed(2)}`"
+                  :aria-label="`Pan of ${track.name}`"
+                  @change="onPanChange(track, $event)"
+                />
+              </div>
+            </div>
           </div>
-          <button
-            type="button"
-            class="track-swatch"
-            :style="{ background: track.color }"
-            title="Cycle track color"
-            :aria-label="`Cycle color of ${track.name}`"
-            @click.stop="cycleColor(track)"
-          />
-          <div class="track-main">
-            <div class="track-name-row">
-              <span class="track-kind" :title="TRACK_KIND_LABELS[track.kind]">
-                {{ TRACK_KIND_GLYPHS[track.kind] }}
-              </span>
+          <div v-if="isAutomationExpanded(track)" class="track-automation" @click.stop>
+            <span class="automation-label">AUTO</span>
+            <select
+              class="automation-param"
+              :value="automationParamFor(track)"
+              :aria-label="`Automation parameter of ${track.name}`"
+              @change="onAutomationParamChange(track, $event)"
+            >
+              <option value="faderDb">Volume (dB)</option>
+              <option value="pan">Pan</option>
+            </select>
+            <label class="automation-enable" :title="automationLaneFor(track) ? 'Apply during playback' : 'No automation points yet'">
               <input
-                v-if="editingTrackId === track.id"
-                ref="nameInput"
-                v-model="editName"
-                class="track-name-input"
-                aria-label="Track name"
-                @click.stop
-                @keydown.enter.prevent="commitRename"
-                @keydown.escape.prevent="cancelRename"
-                @blur="commitRename"
+                type="checkbox"
+                :checked="automationLaneFor(track)?.enabled ?? false"
+                :disabled="automationLaneFor(track) === null"
+                :aria-label="`Enable automation of ${track.name}`"
+                @change="onAutomationEnabledChange(track, $event)"
               />
-              <span v-else class="track-name" @dblclick.stop="startRename(track)">
-                {{ track.name }}
-              </span>
-              <button
-                type="button"
-                class="track-delete"
-                title="Delete track"
-                :aria-label="`Delete track ${track.name}`"
-                @click.stop="onDelete(track)"
-              >
-                ×
-              </button>
-            </div>
-            <div class="track-controls" @click.stop>
-              <button
-                v-if="track.kind === 'audio'"
-                type="button"
-                class="toggle arm"
-                :class="{ on: isArmed(track) }"
-                title="Record arm"
-                :aria-label="`Record arm ${track.name}`"
-                :aria-pressed="isArmed(track)"
-                @click="onToggleArm(track)"
-              >
-                R
-              </button>
-              <button
-                type="button"
-                class="toggle mute"
-                :class="{ on: track.mute }"
-                title="Mute"
-                :aria-label="`Mute ${track.name}`"
-                :aria-pressed="track.mute"
-                @click="setTrackMute(track.id, !track.mute)"
-              >
-                M
-              </button>
-              <button
-                type="button"
-                class="toggle solo"
-                :class="{ on: track.solo }"
-                title="Solo"
-                :aria-label="`Solo ${track.name}`"
-                :aria-pressed="track.solo"
-                @click="setTrackSolo(track.id, !track.solo)"
-              >
-                S
-              </button>
-              <input
-                class="mini-slider"
-                type="range"
-                min="0"
-                max="2"
-                step="0.01"
-                :value="track.volume"
-                :title="`Volume ${track.volume.toFixed(2)}`"
-                :aria-label="`Volume of ${track.name}`"
-                @change="onVolumeChange(track, $event)"
-              />
-              <input
-                class="mini-slider"
-                type="range"
-                min="-1"
-                max="1"
-                step="0.01"
-                :value="track.pan"
-                :title="`Pan ${track.pan.toFixed(2)}`"
-                :aria-label="`Pan of ${track.name}`"
-                @change="onPanChange(track, $event)"
-              />
-            </div>
+              On
+            </label>
           </div>
         </div>
       </div>
@@ -442,12 +539,19 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
 
 .track-header {
   display: flex;
-  align-items: stretch;
+  flex-direction: column;
   box-sizing: border-box;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   background: #15171c;
   cursor: pointer;
   user-select: none;
+}
+
+.track-row {
+  display: flex;
+  align-items: stretch;
+  box-sizing: border-box;
+  flex: none;
 }
 
 .track-header.active {
@@ -584,6 +688,60 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
   color: #0b0d11;
   background: #60a5fa;
   border-color: #60a5fa;
+}
+
+.toggle.automation.on {
+  color: #0b0d11;
+  background: #34d399;
+  border-color: #34d399;
+}
+
+.track-automation {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px 0 15px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.06);
+  cursor: default;
+}
+
+.automation-label {
+  flex: none;
+  font: 600 8px system-ui, sans-serif;
+  letter-spacing: 0.08em;
+  color: #5b6270;
+}
+
+.automation-param {
+  flex: 1;
+  min-width: 0;
+  font: 600 10px system-ui, sans-serif;
+  color: #c8cdd6;
+  background: #1d2027;
+  border: 1px solid #2a2e37;
+  border-radius: 3px;
+  padding: 1px 2px;
+}
+
+.automation-enable {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font: 600 9px system-ui, sans-serif;
+  color: #8b93a3;
+  cursor: pointer;
+}
+
+.automation-enable input {
+  margin: 0;
+  accent-color: #60a5fa;
+}
+
+.automation-enable input:disabled {
+  cursor: not-allowed;
 }
 
 .mini-slider {

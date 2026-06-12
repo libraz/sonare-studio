@@ -90,6 +90,12 @@ import {
 import { useProjectStore } from '@/project/store';
 import { makeDemoDocument, type TemplateName } from '@/project/templates';
 import { clipKind, type EditorClip, type EditorTrack, isAudioClip } from '@/project/types';
+import {
+  type AutomationStripMode,
+  automationStripMode,
+  disengageAutomationWriteModes,
+  setAutomationStripMode,
+} from '@/ui/mixer/automation-mode';
 import { createFocusTrap, type FocusTrap } from '@/ui/settings/focus-trap';
 import { ARRANGE_HEIGHT_MAX_PX, type LayoutBindings } from '@/ui/settings/layouts';
 import type { RealtimeEngine } from '@/wasm/index.js';
@@ -1008,6 +1014,12 @@ function togglePlayback(): void {
   else transport.play();
 }
 
+// Stopping the transport ends touch recording: strips left in 'write' fall
+// back to 'read' so resumed playback follows the recorded lanes.
+watch(isPlaying, (playing) => {
+  if (!playing) disengageAutomationWriteModes();
+});
+
 /**
  * Commits the tempo input to the project tempo map (first segment) so the
  * change is undoable and persisted; the transport follows via the
@@ -1503,6 +1515,12 @@ onMounted(async () => {
       ) => setAutomationLanePoints(target, param, points),
       removeAutomationLane: (target: number | 'master', param: AutomationParam) =>
         removeAutomationLane(target, param),
+      automationLanePoints: (target: number | 'master', param: AutomationParam) =>
+        store.automationLanes.find((lane) => lane.target === target && lane.param === param)
+          ?.points ?? [],
+      stripAutomationMode: (target: number | 'master') => automationStripMode(target),
+      setStripAutomationMode: (target: number | 'master', mode: AutomationStripMode) =>
+        setAutomationStripMode(target, mode),
       automationLaneCount: () => handle.value?.engine.automationLaneCount() ?? 0,
       automationInstalledParamIds: () => automationSync?.installedParamIds() ?? [],
       // Renders one note with the given synth preset and returns an audio
@@ -2024,7 +2042,13 @@ onBeforeUnmount(async () => {
           />
         </section>
         <section v-show="dockTab === 'mixer'" class="dock-body">
-          <MixerPanel class="mixer-host" :bridge="bridge" :meter-for="trackMeterSource" />
+          <MixerPanel
+            class="mixer-host"
+            :bridge="bridge"
+            :meter-for="trackMeterSource"
+            :position-ppq="() => positionPpq"
+            :is-playing="isPlaying"
+          />
         </section>
         <section v-show="dockTab === 'mastering'" class="dock-body">
           <!-- Kept alive via v-show: the A/B preview renders and playback are

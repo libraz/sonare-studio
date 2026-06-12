@@ -1095,6 +1095,101 @@ try {
     );
     await page.click('.transport-bar button:has-text("Stop")');
     await page.evaluate(() => window.__sonareDebug.setLoopRange(0, 4, false));
+
+    // --- Automation write/read modes: W records a fader drag, R follows -------
+
+    // The previous scenario removed the lane, so the write drag starts clean.
+    const lanePointsBefore = await page.evaluate(
+      (id) => window.__sonareDebug.automationLanePoints(id, 'faderDb'),
+      rampTrackId,
+    );
+    if (lanePointsBefore.length !== 0) {
+      fail(`fader lane present before the write test: ${JSON.stringify(lanePointsBefore)}`);
+    }
+
+    await page.click('.dock-tabs button:has-text("Mixer")');
+    await page.waitForSelector('.mixer-strips .channel-strip', { timeout: 10000 });
+    const stripIndex = await page.evaluate(
+      (id) => window.__sonareDebug.trackIds().indexOf(id),
+      rampTrackId,
+    );
+    const writeStrip = page.locator('.mixer-strips .channel-strip').nth(stripIndex);
+    await writeStrip.locator('.strip-auto-w').click();
+    await writeStrip.locator('.strip-auto-w.on').waitFor({ state: 'visible', timeout: 5000 });
+    console.info('strip automation write mode engaged');
+
+    // The fader's lower throw sits below the default 720px viewport fold, where
+    // synthetic pointer events are silently dropped. Enlarge the viewport for
+    // the drag and restore it at the end of the scenario.
+    const savedViewport = page.viewportSize();
+    await page.setViewportSize({ width: 1280, height: 960 });
+    await writeStrip.locator('.fader-track').scrollIntoViewIfNeeded();
+
+    // Record a rising fader drag across one loop pass ([0, 4) is 2 s at 120 BPM):
+    // from ~10% of the throw (deep cut) up to ~75% (around unity).
+    const faderBox = await writeStrip.locator('.fader-track').boundingBox();
+    const faderX = faderBox.x + faderBox.width / 2;
+    const dragYAt = (t) => faderBox.y + faderBox.height * (0.9 - 0.65 * t);
+    await page.evaluate(() => window.__sonareDebug.setLoopRange(0, 4, true));
+    await page.mouse.click(rulerBox8.x + 2, rulerBox8.y + 14); // playhead to PPQ 0
+    await page.click('.transport-bar button:has-text("Play")');
+    await page.waitForFunction(() => window.__sonareDebug.positionPpq() < 0.4, null, {
+      timeout: 10000,
+    });
+    await page.mouse.move(faderX, dragYAt(0));
+    await page.mouse.down();
+    const dragSteps = 8;
+    for (let i = 1; i <= dragSteps; i++) {
+      await page.mouse.move(faderX, dragYAt(i / dragSteps));
+      await page.waitForTimeout(160);
+    }
+    await page.mouse.up();
+    await page.click('.transport-bar button:has-text("Stop")');
+
+    // The drag must have produced a multi-point lane and stop drops W to R.
+    const writtenPoints = await page.evaluate(
+      (id) => window.__sonareDebug.automationLanePoints(id, 'faderDb'),
+      rampTrackId,
+    );
+    if (writtenPoints.length < 2) {
+      fail(`write drag recorded ${writtenPoints.length} point(s)`);
+    }
+    await writeStrip.locator('.strip-auto-r.on').waitFor({ state: 'visible', timeout: 5000 });
+    const modeAfterStop = await page.evaluate(
+      (id) => window.__sonareDebug.stripAutomationMode(id),
+      rampTrackId,
+    );
+    if (modeAfterStop !== 'read') {
+      fail(`stop did not drop write mode to read: mode ${modeAfterStop}`);
+    }
+
+    // Read-follow: the recorded ramp shapes the next loop pass audibly.
+    await page.waitForFunction(
+      () => window.__sonareDebug.automationInstalledParamIds().length >= 1,
+      null,
+      { timeout: 5000 },
+    );
+    await page.mouse.click(rulerBox8.x + 2, rulerBox8.y + 14);
+    await page.click('.transport-bar button:has-text("Play")');
+    const writeEarlyDb = await sampleWindow(0.5, 1.1);
+    const writeLateDb = await sampleWindow(3.3, 3.9);
+    if (writeEarlyDb === null || writeLateDb === null || writeLateDb - writeEarlyDb < 6) {
+      fail(
+        `recorded ramp not audible in read mode: early ${writeEarlyDb} dB, late ${writeLateDb} dB`,
+      );
+    }
+    console.info(
+      `PASS automation write/read modes: ${writtenPoints.length} points recorded, ` +
+        `read-follow early ${writeEarlyDb.toFixed(1)} dB -> late ${writeLateDb.toFixed(1)} dB`,
+    );
+
+    await page.click('.transport-bar button:has-text("Stop")');
+    await page.evaluate((id) => {
+      window.__sonareDebug.removeAutomationLane(id, 'faderDb');
+      window.__sonareDebug.setStripAutomationMode(id, 'off');
+      window.__sonareDebug.setLoopRange(0, 4, false);
+    }, rampTrackId);
+    if (savedViewport) await page.setViewportSize(savedViewport);
   }
 
   // --- Mastering tab: add processors to the project mastering chain -----------

@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, markRaw, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import type { AutomationParam } from '@/project/automation';
 import {
   addMidiClip,
   duplicateClip,
   moveClip,
   setActiveClip,
+  setAutomationLanePoints,
   setClipFades,
   splitClip,
   trimClip,
@@ -13,7 +15,9 @@ import { useProjectStore } from '@/project/store';
 import { isAudioClip } from '@/project/types';
 import { assetLengthPpq, audioClipSourceBounds } from '@/ui/arrangement/audio-clip-content';
 import { getLoadedAudioAsset } from '@/ui/arrangement/audio-clip-data';
+import { AUTOMATION_LANE_HEIGHT_PX, buildRowLayout } from '@/ui/arrangement/automation-rows';
 import { barRangeAt } from '@/ui/arrangement/ruler';
+import { useAutomationInteractions } from '@/ui/arrangement/use-automation-interactions';
 import {
   type ClipInteractionsView,
   useClipInteractions,
@@ -40,6 +44,10 @@ import {
  * is the read model. Selecting a clip activates its track and clip so the
  * piano roll follows. The optional `positionPpq` getter drives the playhead;
  * seek requests (ruler press, section click) are emitted to the shell.
+ *
+ * Automation sublane expansion and the per-track parameter choice are
+ * view-local state owned here and mirrored into both the header column and
+ * the canvas so their row geometry stays in lockstep.
  */
 
 const props = defineProps<{
@@ -87,10 +95,40 @@ function bump(): void {
 /** Vertical scroll offset of the track lanes in px (shared with the headers). */
 const scrollY = ref(0);
 
+// --- Automation sublane state ----------------------------------------------
+
+/** Ids of tracks whose automation sublane is expanded (view-local state). */
+const automationExpandedIds = ref<number[]>([]);
+
+/** Selected automation parameter per track id (absent = 'faderDb'). */
+const automationParams = ref<Record<number, AutomationParam>>({});
+
+/** Row layout reflecting which tracks show an automation sublane. */
+const rowLayout = computed(() => {
+  const expanded = new Set(automationExpandedIds.value);
+  return buildRowLayout(
+    store.tracks.map((track) => expanded.has(track.id)),
+    LANE_HEIGHT_PX,
+  );
+});
+
+function onToggleAutomation(trackId: number, expanded: boolean): void {
+  const ids = automationExpandedIds.value.filter((id) => id !== trackId);
+  if (expanded) ids.push(trackId);
+  automationExpandedIds.value = ids;
+  // Collapsing shrinks the content extent below the current scroll offset.
+  scrollY.value = clampScrollY(scrollY.value);
+  bump();
+}
+
+function onAutomationParamChange(trackId: number, param: AutomationParam): void {
+  automationParams.value = { ...automationParams.value, [trackId]: param };
+}
+
 /** Clamps the lane scroll offset to the track content extent. */
 function clampScrollY(y: number): number {
   const viewport = Math.max(0, range.heightPx - RULER_HEIGHT_PX);
-  const content = store.tracks.length * LANE_HEIGHT_PX;
+  const content = rowLayout.value.totalHeight;
   return Math.min(Math.max(0, content - viewport), Math.max(0, y));
 }
 
@@ -98,12 +136,19 @@ function clampScrollY(y: number): number {
 const gridPpq = computed(() => (store.snapEnabled ? 4 / store.snapDivision : 0));
 
 // Lane view contract for the clip gestures: horizontal mapping from the
-// shared range, vertical mapping from the lane layout and scroll offset.
+// shared range, vertical mapping from the row layout and scroll offset.
+// Clips occupy a row's track zone, so laneHeight stays the plain lane height
+// while row tops follow the prefix sums (expanded sublanes shift rows down).
 const laneView: ClipInteractionsView = {
   ppqToX: (ppq) => range.ppqToX(ppq),
   xToPpq: (x) => range.xToPpq(x),
-  laneTop: (index) => RULER_HEIGHT_PX + index * LANE_HEIGHT_PX - scrollY.value,
-  laneIndexAtY: (y) => Math.floor((y - RULER_HEIGHT_PX + scrollY.value) / LANE_HEIGHT_PX),
+  laneTop: (index) => RULER_HEIGHT_PX + rowLayout.value.rowTop(index) - scrollY.value,
+  laneIndexAtY: (y) => {
+    const contentY = y - RULER_HEIGHT_PX + scrollY.value;
+    if (contentY < 0) return Math.floor(contentY / LANE_HEIGHT_PX);
+    const hit = rowLayout.value.hitTest(contentY);
+    return hit ? hit.index : store.tracks.length;
+  },
   get laneHeight() {
     return LANE_HEIGHT_PX;
   },
@@ -145,6 +190,32 @@ const interactions = useClipInteractions({
       return addMidiClip({ trackId, startPpq, lengthPpq });
     },
     setClipFades,
+  },
+});
+
+const automation = useAutomationInteractions({
+  view: {
+    ppqToX: (ppq) => range.ppqToX(ppq),
+    xToPpq: (x) => range.xToPpq(x),
+    sublaneAt: (point) => {
+      if (point.y < RULER_HEIGHT_PX) return null;
+      const hit = rowLayout.value.hitTest(point.y - RULER_HEIGHT_PX + scrollY.value);
+      if (hit?.zone !== 'automation') return null;
+      const track = store.tracks[hit.index];
+      return {
+        trackId: track.id,
+        param: automationParams.value[track.id] ?? 'faderDb',
+        top: RULER_HEIGHT_PX + rowLayout.value.rowTop(hit.index) + LANE_HEIGHT_PX - scrollY.value,
+        height: AUTOMATION_LANE_HEIGHT_PX,
+      };
+    },
+  },
+  getLanePoints: (trackId, param) =>
+    store.automationLanes.find((lane) => lane.target === trackId && lane.param === param)?.points ??
+    [],
+  getGridPpq: () => gridPpq.value,
+  commands: {
+    setPoints: (trackId, param, points) => setAutomationLanePoints(trackId, param, points),
   },
 });
 
@@ -242,7 +313,11 @@ onBeforeUnmount(() => {
         :scroll-y="scrollY"
         :ruler-offset="RULER_HEIGHT_PX"
         :armed-track-ids="props.armedTrackIds ?? []"
+        :automation-expanded-ids="automationExpandedIds"
+        :automation-params="automationParams"
         @arm="(trackId, armed) => emit('arm', trackId, armed)"
+        @toggle-automation="onToggleAutomation"
+        @automation-param="onAutomationParamChange"
       />
       <div ref="canvasCell" class="cell-canvas" @wheel.prevent="onWheel">
         <ArrangementCanvas
@@ -262,6 +337,10 @@ onBeforeUnmount(() => {
           :loop-end-ppq="props.loopEndPpq ?? 0"
           :tempo-bpm="store.tempoBpm"
           :interactions="interactions"
+          :automation-expanded-ids="automationExpandedIds"
+          :automation-params="automationParams"
+          :automation-lanes="store.automationLanes"
+          :automation="automation"
           :position-ppq="props.positionPpq"
           @view-resize="onCanvasResize"
           @ruler-seek="onSeek"

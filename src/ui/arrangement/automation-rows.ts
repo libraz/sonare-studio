@@ -1,0 +1,144 @@
+/**
+ * Row geometry for arrangement tracks with optional automation sublanes.
+ * A row is one track lane plus, when the track's automation is expanded, an
+ * automation sublane directly below it. Heights become non-uniform, so the
+ * canvas and the header column share these prefix-sum helpers instead of the
+ * old `index * laneHeight` math. Pure geometry: no DOM, no framework imports.
+ *
+ * Vertical positions are in content px: y = 0 is the top of the first row,
+ * before any ruler offset or scroll is applied by the caller.
+ */
+
+import type { AutomationParam } from '@/project/automation';
+
+/** Height of one expanded automation sublane in px. */
+export const AUTOMATION_LANE_HEIGHT_PX = 56;
+
+/** Vertical inset keeping breakpoints inside the sublane, in px. */
+export const AUTOMATION_LANE_PAD_PX = 5;
+
+/** Region of a row a content y coordinate falls in. */
+export type ArrangementRowZone = 'track' | 'automation';
+
+/** Result of a successful row hit-test. */
+export interface ArrangementRowHit {
+  /** Row (track) index, 0 = top row. */
+  index: number;
+  /** Whether the point is in the track lane or the automation sublane. */
+  zone: ArrangementRowZone;
+}
+
+/** Prefix-sum row layout for one expansion state. */
+export interface ArrangementRowLayout {
+  /** Content y of a row's top edge; `rowTop(rowCount)` is the total height. */
+  rowTop(index: number): number;
+  /** Full height of a row (lane plus sublane when expanded). */
+  rowHeight(index: number): number;
+  /** Total content height of all rows in px. */
+  readonly totalHeight: number;
+  /** Resolves a content y to a row and zone; null outside the rows. */
+  hitTest(y: number): ArrangementRowHit | null;
+}
+
+/**
+ * Builds the row layout for one expansion state.
+ *
+ * @param expanded Per-row flags: true = the row shows an automation sublane.
+ * @param laneHeight Height of one track lane in px.
+ * @param automationHeight Height of an expanded sublane in px.
+ * @returns Prefix-sum lookup helpers for the given state.
+ */
+export function buildRowLayout(
+  expanded: readonly boolean[],
+  laneHeight: number,
+  automationHeight: number = AUTOMATION_LANE_HEIGHT_PX,
+): ArrangementRowLayout {
+  const tops = new Array<number>(expanded.length + 1);
+  tops[0] = 0;
+  for (let i = 0; i < expanded.length; i++) {
+    tops[i + 1] = tops[i] + laneHeight + (expanded[i] ? automationHeight : 0);
+  }
+  const totalHeight = tops[expanded.length];
+  return {
+    rowTop: (index) => tops[Math.min(expanded.length, Math.max(0, index))],
+    rowHeight: (index) => laneHeight + (expanded[index] ? automationHeight : 0),
+    totalHeight,
+    hitTest: (y) => {
+      if (y < 0 || y >= totalHeight) return null;
+      let index = 0;
+      while (index + 1 < tops.length && tops[index + 1] <= y) index++;
+      return { index, zone: y - tops[index] < laneHeight ? 'track' : 'automation' };
+    },
+  };
+}
+
+/** Drawing/editing value domain of an automated parameter. */
+export interface AutomationValueDomain {
+  /** Value mapped to the sublane bottom. */
+  min: number;
+  /** Value mapped to the sublane top. */
+  max: number;
+}
+
+/**
+ * Returns the value domain a sublane displays. Fader automation draws the
+ * musically useful [-60, +12] dB window (narrower than the model's clamp
+ * range); pan draws its full [-1, 1] range.
+ *
+ * @param param Automated parameter.
+ * @returns The min/max values mapped onto the sublane height.
+ */
+export function automationValueDomain(param: AutomationParam): AutomationValueDomain {
+  return param === 'faderDb' ? { min: -60, max: 12 } : { min: -1, max: 1 };
+}
+
+/** Clamps a number into [0, 1]. */
+function clamp01(t: number): number {
+  return Math.min(1, Math.max(0, t));
+}
+
+/**
+ * Maps an automation value to a viewport y inside a sublane. Values outside
+ * the parameter's display domain clamp to the padded sublane edges.
+ *
+ * @param param Automated parameter (selects the display domain).
+ * @param value Automation value.
+ * @param top Sublane top edge in viewport px.
+ * @param height Sublane height in px.
+ * @returns Y in viewport px (max value at the top).
+ */
+export function automationValueToY(
+  param: AutomationParam,
+  value: number,
+  top: number,
+  height: number,
+): number {
+  const domain = automationValueDomain(param);
+  const t = clamp01((value - domain.min) / (domain.max - domain.min));
+  const innerTop = top + AUTOMATION_LANE_PAD_PX;
+  const innerHeight = Math.max(1, height - 2 * AUTOMATION_LANE_PAD_PX);
+  return innerTop + (1 - t) * innerHeight;
+}
+
+/**
+ * Maps a viewport y inside a sublane back to an automation value, clamped to
+ * the parameter's display domain (the inverse of {@link automationValueToY}).
+ *
+ * @param param Automated parameter (selects the display domain).
+ * @param y Y in viewport px.
+ * @param top Sublane top edge in viewport px.
+ * @param height Sublane height in px.
+ * @returns The automation value at y.
+ */
+export function automationYToValue(
+  param: AutomationParam,
+  y: number,
+  top: number,
+  height: number,
+): number {
+  const domain = automationValueDomain(param);
+  const innerTop = top + AUTOMATION_LANE_PAD_PX;
+  const innerHeight = Math.max(1, height - 2 * AUTOMATION_LANE_PAD_PX);
+  const t = clamp01((y - innerTop) / innerHeight);
+  return domain.min + (1 - t) * (domain.max - domain.min);
+}

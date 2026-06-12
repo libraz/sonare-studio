@@ -1,12 +1,26 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount } from 'vue';
+import { computed, onBeforeUnmount, ref } from 'vue';
 import type { MeterSource } from '@/engine/meters';
+import { linearToDb } from '@/engine/mixer-sync';
+import type { AutomationParam } from '@/project/automation';
+import { evaluateAutomationValue } from '@/project/automation';
 import type { MixerStripTarget } from '@/project/commands';
-import { setActiveTrack, setTrackMute, setTrackSolo } from '@/project/commands';
+import {
+  setActiveTrack,
+  setAutomationLanePoints,
+  setTrackMute,
+  setTrackSolo,
+} from '@/project/commands';
 import { createDefaultStrip, type MixerStrip } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
-import { formatDb, formatPan } from '@/ui/mixer/db-scale';
+import {
+  type AutomationWriteGesture,
+  automationStripMode,
+  createAutomationWriteGesture,
+  toggleAutomationStripMode,
+} from '@/ui/mixer/automation-mode';
+import { FADER_MAX_DB, FADER_MIN_DB, formatDb, formatPan } from '@/ui/mixer/db-scale';
 import { gainGesture, panGesture, type ValueGesture } from '@/ui/mixer/strip-gestures';
 import InsertRack from './InsertRack.vue';
 import MixerFader from './MixerFader.vue';
@@ -23,6 +37,11 @@ import StripSends from './StripSends.vue';
  *
  * The meter is live whenever a source is supplied (master output or the
  * track's engine lane); without one the strip shows a placeholder.
+ *
+ * The R/W buttons control the strip's session-only automation mode: in
+ * 'read' the fader/pan display follows the lane value at the playhead (the
+ * control is non-interactive while following), in 'write' drags touch-record
+ * breakpoints into the lane instead of driving the manual strip commands.
  */
 
 const props = withDefaults(
@@ -31,8 +50,12 @@ const props = withDefaults(
     target: MixerStripTarget;
     /** Live meter source for this strip; null shows a placeholder meter. */
     bridge?: MeterSource | null;
+    /** Playhead position getter in PPQ (lane follow / touch recording). */
+    positionPpq?: () => number;
+    /** True while the transport runs (continuous touch recording). */
+    isPlaying?: boolean;
   }>(),
-  { bridge: null },
+  { bridge: null, positionPpq: undefined, isPlaying: false },
 );
 
 const store = useProjectStore();
@@ -58,12 +81,104 @@ function onHeaderClick(): void {
   if (track.value) setActiveTrack(track.value.id);
 }
 
+// --- Automation R/W mode --------------------------------------------------------
+
+const autoMode = computed(() => automationStripMode(props.target));
+
+/** Finds this strip's lane for a parameter (undefined when absent). */
+function laneFor(param: AutomationParam) {
+  return store.automationLanes.find((lane) => lane.target === props.target && lane.param === param);
+}
+
+const faderLane = computed(() => laneFor('faderDb'));
+const panLane = computed(() => laneFor('pan'));
+
+/**
+ * dB offset between the strip fader domain and the engine lane fader domain
+ * (the engine lane fader is linearToDb(track.volume) + strip.gainDb; the
+ * master strip has no track volume term).
+ */
+const laneOffsetDb = computed(() => (isMaster.value ? 0 : linearToDb(track.value?.volume ?? 1)));
+
+/** True when the fader display follows the lane (read mode, usable lane). */
+const followsFader = computed(
+  () =>
+    autoMode.value === 'read' &&
+    faderLane.value !== undefined &&
+    faderLane.value.enabled &&
+    faderLane.value.points.length > 0,
+);
+
+/** True when the pan display follows the lane (read mode, usable lane). */
+const followsPan = computed(
+  () =>
+    autoMode.value === 'read' &&
+    panLane.value !== undefined &&
+    panLane.value.enabled &&
+    panLane.value.points.length > 0,
+);
+
+/** Live drag value during a write-mode gesture (display only), or null. */
+const writeGainDb = ref<number | null>(null);
+const writePan = ref<number | null>(null);
+
+/** Fader value shown on the throw: write drag > lane follow > strip state. */
+const displayedGainDb = computed(() => {
+  if (writeGainDb.value !== null) return writeGainDb.value;
+  const lane = faderLane.value;
+  if (followsFader.value && lane) {
+    const db =
+      evaluateAutomationValue(lane.points, props.positionPpq?.() ?? 0) - laneOffsetDb.value;
+    return Math.min(FADER_MAX_DB, Math.max(FADER_MIN_DB, db));
+  }
+  return strip.value.gainDb;
+});
+
+/** Pan value shown on the knob: write drag > lane follow > strip state. */
+const displayedPan = computed(() => {
+  if (writePan.value !== null) return writePan.value;
+  const lane = panLane.value;
+  if (followsPan.value && lane) {
+    return Math.min(
+      1,
+      Math.max(-1, evaluateAutomationValue(lane.points, props.positionPpq?.() ?? 0)),
+    );
+  }
+  return strip.value.pan;
+});
+
+let writeFaderGesture: AutomationWriteGesture | null = null;
+let writePanGesture: AutomationWriteGesture | null = null;
+
+/** Starts a touch-record gesture committing into one of this strip's lanes. */
+function beginWriteGesture(param: AutomationParam): AutomationWriteGesture {
+  return createAutomationWriteGesture({
+    existingPoints: laneFor(param)?.points ?? [],
+    positionPpq: () => props.positionPpq?.() ?? 0,
+    isPlaying: () => props.isPlaying,
+    commit: (points) => setAutomationLanePoints(props.target, param, points),
+  });
+}
+
 // --- Fader / pan gestures -----------------------------------------------------
 
 let activeGainGesture: ValueGesture | null = null;
 let activePanGesture: ValueGesture | null = null;
 
 function onGainChange(db: number, commit: boolean): void {
+  if (autoMode.value === 'write') {
+    // Touch recording: the drag writes lane breakpoints (in the engine lane
+    // dB domain) instead of the manual strip command, which a lane overrides.
+    if (!writeFaderGesture) writeFaderGesture = beginWriteGesture('faderDb');
+    writeFaderGesture.update(laneOffsetDb.value + db);
+    writeGainDb.value = db;
+    if (commit) {
+      writeFaderGesture.end();
+      writeFaderGesture = null;
+      writeGainDb.value = null;
+    }
+    return;
+  }
   if (!commit) {
     if (!activeGainGesture) activeGainGesture = gainGesture(props.target, strip.value.gainDb);
     activeGainGesture.update(db);
@@ -75,6 +190,17 @@ function onGainChange(db: number, commit: boolean): void {
 }
 
 function onPanChange(pan: number, commit: boolean): void {
+  if (autoMode.value === 'write') {
+    if (!writePanGesture) writePanGesture = beginWriteGesture('pan');
+    writePanGesture.update(pan);
+    writePan.value = pan;
+    if (commit) {
+      writePanGesture.end();
+      writePanGesture = null;
+      writePan.value = null;
+    }
+    return;
+  }
   if (!commit) {
     if (!activePanGesture) activePanGesture = panGesture(props.target, strip.value.pan);
     activePanGesture.update(pan);
@@ -89,6 +215,9 @@ onBeforeUnmount(() => {
   // Close any in-flight gesture so the pending history entry is committed.
   activeGainGesture?.cancel();
   activePanGesture?.cancel();
+  // Commit any in-flight touch recording so its points are not lost.
+  writeFaderGesture?.end();
+  writePanGesture?.end();
 });
 </script>
 
@@ -98,6 +227,31 @@ onBeforeUnmount(() => {
       <span class="strip-color" :style="{ background: color }" />
       <span class="strip-name">{{ name }}</span>
     </button>
+
+    <div class="strip-auto">
+      <button
+        type="button"
+        class="toggle strip-auto-r"
+        :class="{ on: autoMode === 'read' }"
+        title="Automation read (controls follow the lanes)"
+        :aria-label="`Automation read ${name}`"
+        :aria-pressed="autoMode === 'read'"
+        @click="toggleAutomationStripMode(props.target, 'read')"
+      >
+        R
+      </button>
+      <button
+        type="button"
+        class="toggle strip-auto-w"
+        :class="{ on: autoMode === 'write' }"
+        title="Automation write (drags record lane breakpoints)"
+        :aria-label="`Automation write ${name}`"
+        :aria-pressed="autoMode === 'write'"
+        @click="toggleAutomationStripMode(props.target, 'write')"
+      >
+        W
+      </button>
+    </div>
 
     <div class="strip-section">
       <InsertRack :target="props.target" />
@@ -115,13 +269,14 @@ onBeforeUnmount(() => {
 
     <div class="strip-pan">
       <MixerKnob
-        :value="strip.pan"
+        :value="displayedPan"
         :min="-1"
         :max="1"
         :default-value="0"
         label="Pan"
-        :display="formatPan(strip.pan)"
+        :display="formatPan(displayedPan)"
         :size="24"
+        :disabled="followsPan"
         @change="onPanChange"
       />
       <div v-if="track" class="strip-toggles">
@@ -151,7 +306,12 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="strip-fader-row">
-      <MixerFader :value-db="strip.gainDb" :height="132" @change="onGainChange" />
+      <MixerFader
+        :value-db="displayedGainDb"
+        :height="132"
+        :disabled="followsFader"
+        @change="onGainChange"
+      />
       <StripMeter
         :bridge="props.bridge"
         :placeholder="!props.bridge"
@@ -160,7 +320,7 @@ onBeforeUnmount(() => {
       />
     </div>
 
-    <div class="strip-readout">{{ formatDb(strip.gainDb) }} dB</div>
+    <div class="strip-readout">{{ formatDb(displayedGainDb) }} dB</div>
   </div>
 </template>
 
@@ -213,6 +373,23 @@ onBeforeUnmount(() => {
   text-align: left;
   font: 600 10px system-ui, sans-serif;
   color: #c8cdd6;
+}
+
+.strip-auto {
+  display: flex;
+  gap: 2px;
+}
+
+.strip-auto-r.on {
+  color: #0b0d11;
+  background: #34d399;
+  border-color: #34d399;
+}
+
+.strip-auto-w.on {
+  color: #0b0d11;
+  background: #f87171;
+  border-color: #f87171;
 }
 
 .strip-section {

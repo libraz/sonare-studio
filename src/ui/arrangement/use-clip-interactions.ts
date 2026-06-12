@@ -190,7 +190,7 @@ interface FadeGesture {
 type Gesture = { kind: 'none' } | PendingGesture | MoveGesture | TrimGesture | FadeGesture;
 
 /** Rounds a PPQ position to the nearest multiple of `step`, clamped to >= 0. */
-function snapToStep(ppq: number, step: number): number {
+export function snapToStep(ppq: number, step: number): number {
   if (!(step > 0)) return Math.max(0, ppq);
   return Math.max(0, Math.round(ppq / step) * step);
 }

@@ -25,8 +25,12 @@ const props = withDefaults(
     bridge?: MeterSource | null;
     /** Per-track meter source lookup; null shows placeholder track meters. */
     meterFor?: ((trackId: number) => MeterSource | null) | null;
+    /** Playhead position getter in PPQ (strip automation follow/recording). */
+    positionPpq?: () => number;
+    /** True while the transport runs (strip automation touch recording). */
+    isPlaying?: boolean;
   }>(),
-  { bridge: null, meterFor: null },
+  { bridge: null, meterFor: null, positionPpq: undefined, isPlaying: false },
 );
 
 const store = useProjectStore();
@@ -158,9 +162,17 @@ onBeforeUnmount(() => {
         :key="track.id"
         :target="track.id"
         :bridge="props.meterFor ? props.meterFor(track.id) : null"
+        :position-ppq="props.positionPpq"
+        :is-playing="props.isPlaying"
       />
       <div class="strips-spacer" />
-      <ChannelStrip class="master-strip" target="master" :bridge="props.bridge" />
+      <ChannelStrip
+        class="master-strip"
+        target="master"
+        :bridge="props.bridge"
+        :position-ppq="props.positionPpq"
+        :is-playing="props.isPlaying"
+      />
     </div>
   </div>
 </template>

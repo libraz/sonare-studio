@@ -6,6 +6,11 @@ import {
   setupCanvas,
   strokeRoundRect,
 } from '@/components/piano-roll/theme';
+import {
+  type AutomationLaneState,
+  type AutomationParam,
+  evaluateAutomationValue,
+} from '@/project/automation';
 import type { EditorClip, EditorMarker, EditorTrack, TimeSignatureSegment } from '@/project/types';
 import { isAudioClip } from '@/project/types';
 import {
@@ -16,8 +21,14 @@ import {
 } from '@/ui/arrangement/audio-clip-content';
 import { audioAssetMergedPeaks, requestAudioAsset } from '@/ui/arrangement/audio-clip-data';
 import { FADE_HANDLE_SIZE_PX, fadeHandleXs } from '@/ui/arrangement/audio-fades';
+import {
+  automationValueDomain,
+  automationValueToY,
+  buildRowLayout,
+} from '@/ui/arrangement/automation-rows';
 import { clipContentMode, densityBuckets, miniNoteRects } from '@/ui/arrangement/clip-content';
 import { barLengthPpq, createRulerTickCache } from '@/ui/arrangement/ruler';
+import type { AutomationInteractions } from '@/ui/arrangement/use-automation-interactions';
 import type { ClipInteractions, ClipModifiers } from '@/ui/arrangement/use-clip-interactions';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
@@ -68,6 +79,14 @@ const props = defineProps<{
   loopEndPpq: number;
   /** Gesture state machine shared with the container. */
   interactions: ClipInteractions;
+  /** Ids of tracks whose automation sublane is expanded. */
+  automationExpandedIds: readonly number[];
+  /** Selected automation parameter per track id (absent = 'faderDb'). */
+  automationParams: Record<number, AutomationParam>;
+  /** Automation lanes from the store (sublane curve source). */
+  automationLanes: readonly AutomationLaneState[];
+  /** Automation sublane gesture state machine shared with the container. */
+  automation: AutomationInteractions;
   /** Playhead position getter in PPQ; omit to hide the playhead. */
   positionPpq?: () => number;
   /** Constant tempo in BPM used to map audio asset time onto PPQ (default 120). */
@@ -113,8 +132,17 @@ const barPpq = computed(() => {
   return segment ? barLengthPpq(segment) : 4;
 });
 
+/** Row layout reflecting which tracks show an automation sublane. */
+const rowLayout = computed(() => {
+  const expanded = new Set(props.automationExpandedIds);
+  return buildRowLayout(
+    props.tracks.map((track) => expanded.has(track.id)),
+    props.laneHeight,
+  );
+});
+
 function laneTopFor(index: number): number {
-  return RULER_HEIGHT_PX + index * props.laneHeight - props.scrollY;
+  return RULER_HEIGHT_PX + rowLayout.value.rowTop(index) - props.scrollY;
 }
 
 function scheduleBase(): void {
@@ -134,15 +162,16 @@ function scheduleAll(): void {
 function drawLanes(ctx: CanvasRenderingContext2D, w: number, h: number): void {
   for (let i = 0; i < props.tracks.length; i++) {
     const y = laneTopFor(i);
-    if (y + props.laneHeight <= RULER_HEIGHT_PX || y >= h) continue;
+    const rowHeight = rowLayout.value.rowHeight(i);
+    if (y + rowHeight <= RULER_HEIGHT_PX || y >= h) continue;
     ctx.fillStyle = i % 2 === 0 ? COLORS.laneEven : COLORS.laneOdd;
-    ctx.fillRect(0, y, w, props.laneHeight);
+    ctx.fillRect(0, y, w, rowHeight);
     if (props.tracks[i].id === props.activeTrackId) {
       ctx.fillStyle = COLORS.laneActive;
       ctx.fillRect(0, y, w, props.laneHeight);
     }
     ctx.fillStyle = COLORS.laneLine;
-    ctx.fillRect(0, y + props.laneHeight - 1, w, 1);
+    ctx.fillRect(0, y + rowHeight - 1, w, 1);
   }
   const lanesEnd = laneTopFor(props.tracks.length);
   if (lanesEnd < h) {
@@ -390,6 +419,97 @@ function drawClips(ctx: CanvasRenderingContext2D): void {
   }
 }
 
+/** Px step between automation curve samples along the x axis. */
+const AUTOMATION_SAMPLE_STEP_PX = 2;
+/** Radius of an automation breakpoint circle in px. */
+const AUTOMATION_POINT_RADIUS_PX = 3.5;
+/** Alpha applied to a disabled lane's curve and breakpoints. */
+const AUTOMATION_DISABLED_ALPHA = 0.35;
+
+/** Draws every expanded automation sublane: shade, curve and breakpoints. */
+function drawAutomationLanes(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  const expanded = new Set(props.automationExpandedIds);
+  for (let i = 0; i < props.tracks.length; i++) {
+    const track = props.tracks[i];
+    if (!expanded.has(track.id)) continue;
+    const top = laneTopFor(i) + props.laneHeight;
+    const height = rowLayout.value.rowHeight(i) - props.laneHeight;
+    if (top + height <= RULER_HEIGHT_PX || top >= h) continue;
+    drawAutomationSublane(ctx, w, track, top, height);
+  }
+}
+
+/** Draws one sublane: darker shade, mid-value line, curve and breakpoints. */
+function drawAutomationSublane(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  track: EditorTrack,
+  top: number,
+  height: number,
+): void {
+  const range = props.range;
+  const param = props.automationParams[track.id] ?? 'faderDb';
+  ctx.save();
+  ctx.beginPath();
+  const clipTop = Math.max(top, RULER_HEIGHT_PX);
+  ctx.rect(0, clipTop, w, top + height - clipTop);
+  ctx.clip();
+  ctx.fillStyle = COLORS.automationLane;
+  ctx.fillRect(0, top, w, height);
+  const domain = automationValueDomain(param);
+  const midY = automationValueToY(param, (domain.min + domain.max) / 2, top, height);
+  ctx.fillStyle = COLORS.automationMidline;
+  ctx.fillRect(0, Math.round(midY), w, 1);
+
+  const lane =
+    props.automationLanes.find((l) => l.target === track.id && l.param === param) ?? null;
+  const preview = props.automation.preview.value;
+  const previewing = preview !== null && preview.trackId === track.id && preview.param === param;
+  const points = previewing ? preview.points : (lane?.points ?? []);
+  if (points.length === 0) {
+    ctx.restore();
+    return;
+  }
+  if (lane && !lane.enabled) ctx.globalAlpha = AUTOMATION_DISABLED_ALPHA;
+
+  // Curve polyline: regular x samples plus the exact breakpoint vertices.
+  const xs: number[] = [];
+  for (let x = 0; x <= w; x += AUTOMATION_SAMPLE_STEP_PX) xs.push(x);
+  for (const point of points) {
+    const x = range.ppqToX(point.ppq);
+    if (x > 0 && x < w) xs.push(x);
+  }
+  xs.sort((a, b) => a - b);
+  ctx.strokeStyle = colorWithAlpha(track.color, 0.9);
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let i = 0; i < xs.length; i++) {
+    const value = evaluateAutomationValue(points, range.xToPpq(xs[i]));
+    const y = automationValueToY(param, value, top, height);
+    if (i === 0) ctx.moveTo(xs[i], y);
+    else ctx.lineTo(xs[i], y);
+  }
+  ctx.stroke();
+
+  const hover = props.automation.hover.value;
+  for (let i = 0; i < points.length; i++) {
+    const x = range.ppqToX(points[i].ppq);
+    if (x < -AUTOMATION_POINT_RADIUS_PX || x > w + AUTOMATION_POINT_RADIUS_PX) continue;
+    const y = automationValueToY(param, points[i].value, top, height);
+    const hovered =
+      !previewing &&
+      hover !== null &&
+      hover.trackId === track.id &&
+      hover.param === param &&
+      hover.index === i;
+    ctx.fillStyle = hovered ? COLORS.automationPointHover : track.color;
+    ctx.beginPath();
+    ctx.arc(x, y, AUTOMATION_POINT_RADIUS_PX, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
 /** Draws the ruler strip: loop band, ticks, labels and marker flags. */
 function drawRuler(ctx: CanvasRenderingContext2D, w: number): void {
   const range = props.range;
@@ -463,6 +583,7 @@ function drawBase(): void {
   drawLanes(ctx, w, h);
   drawGrid(ctx, h);
   drawClips(ctx);
+  drawAutomationLanes(ctx, w, h);
   drawRuler(ctx, w);
 }
 
@@ -542,14 +663,25 @@ watch(
     props.tempoBpm,
     props.interactions.previewClip.value,
     props.interactions.previewFades.value,
+    props.automationExpandedIds,
+    props.automationParams,
+    props.automationLanes,
+    props.automation.preview.value,
+    props.automation.hover.value,
   ],
   scheduleAll,
 );
 
-// --- Pointer routing: ruler scrub vs clip gestures ------------------------
+// --- Pointer routing: ruler scrub vs automation vs clip gestures ----------
 
 /** True while a ruler press scrubs the transport. */
 let rulerScrub = false;
+
+/** Which gesture machine consumed the current press. */
+let pressTarget: 'none' | 'automation' | 'clips' = 'none';
+
+/** Cursor over the lanes: the automation one wins while a sublane is hot. */
+const laneCursor = computed(() => props.automation.cursor.value ?? props.interactions.cursor.value);
 
 function localPoint(event: MouseEvent): { x: number; y: number } {
   const rect = wrapper.value?.getBoundingClientRect();
@@ -569,6 +701,11 @@ function onPointerDown(event: PointerEvent): void {
     emit('ruler-seek', Math.max(0, props.range.xToPpq(point.x)));
     return;
   }
+  if (props.automation.onPointerDown(point, modifiers(event))) {
+    pressTarget = 'automation';
+    return;
+  }
+  pressTarget = 'clips';
   props.interactions.onPointerDown(point, modifiers(event));
 }
 
@@ -578,6 +715,16 @@ function onPointerMove(event: PointerEvent): void {
     emit('ruler-seek', Math.max(0, props.range.xToPpq(point.x)));
     return;
   }
+  // While a press is in flight, only its own machine sees the moves.
+  if (pressTarget === 'automation') {
+    props.automation.onPointerMove(point, modifiers(event));
+    return;
+  }
+  if (pressTarget === 'clips') {
+    props.interactions.onPointerMove(point, modifiers(event));
+    return;
+  }
+  if (props.automation.onPointerMove(point, modifiers(event))) return;
   props.interactions.onPointerMove(point, modifiers(event));
 }
 
@@ -587,18 +734,31 @@ function onPointerUp(event: PointerEvent): void {
     rulerScrub = false;
     return;
   }
+  const target = pressTarget;
+  pressTarget = 'none';
+  if (target === 'automation') {
+    props.automation.onPointerUp(localPoint(event), modifiers(event));
+    return;
+  }
   props.interactions.onPointerUp(localPoint(event), modifiers(event));
 }
 
 function onPointerCancel(): void {
   rulerScrub = false;
+  pressTarget = 'none';
+  props.automation.cancel();
   props.interactions.cancel();
 }
 
 function onDoubleClick(event: MouseEvent): void {
   const point = localPoint(event);
   if (point.y < RULER_HEIGHT_PX) return;
+  if (props.automation.onDoubleClick(point)) return;
   props.interactions.onDoubleClick(point, modifiers(event));
+}
+
+function onContextMenu(event: MouseEvent): void {
+  if (props.automation.onContextMenu(localPoint(event))) event.preventDefault();
 }
 </script>
 
@@ -606,12 +766,13 @@ function onDoubleClick(event: MouseEvent): void {
   <div
     ref="wrapper"
     class="arrangement-canvas"
-    :style="{ cursor: props.interactions.cursor.value }"
+    :style="{ cursor: laneCursor }"
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
     @pointercancel="onPointerCancel"
     @dblclick="onDoubleClick"
+    @contextmenu="onContextMenu"
   >
     <canvas ref="baseCanvas" class="arrangement-layer" role="img" aria-label="Arrangement timeline" />
     <canvas ref="overlayCanvas" class="arrangement-layer" aria-hidden="true" />

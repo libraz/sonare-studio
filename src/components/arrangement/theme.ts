@@ -52,6 +52,12 @@ export const ARRANGEMENT_COLORS = {
   markerLabel: 'rgba(251, 191, 36, 0.9)',
   /** Playhead line. */
   playhead: '#ff6e6e',
+  /** Shade darkening an automation sublane below its track lane. */
+  automationLane: 'rgba(0, 0, 0, 0.3)',
+  /** Mid-value reference line across an automation sublane. */
+  automationMidline: 'rgba(255, 255, 255, 0.07)',
+  /** Fill of a hovered automation breakpoint. */
+  automationPointHover: '#f3f5f9',
 } as const;
 
 /** Height of the bar/beat ruler strip at the top of the arrangement canvas. */
