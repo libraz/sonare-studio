@@ -18,7 +18,7 @@ import {
 } from '@/engine/instruments';
 import { ensureWasm } from '@/lib/wasm';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
-import { clampPan, dbToLinear, type MixerStrip, stripCacheSegment, stripHasDsp } from './mixer';
+import { type MixerStrip, stripCacheSegment, stripHasDsp } from './mixer';
 import {
   applyBalancePan,
   applyStripDsp,
@@ -357,32 +357,28 @@ export interface ScheduleProjectClipsOptions {
 }
 
 /**
- * Schedules every audible clip of every track into the engine.
+ * Schedules every clip of every track into the engine.
  *
- * Audibility follows {@link isTrackAudible} (solo-any => only solo tracks,
- * mute => skip).
+ * All tracks are scheduled regardless of mute/solo: audibility, track volume,
+ * pan and the master strip are realtime mixer-lane state (see
+ * src/engine/mixer-sync.ts), applied by the engine without re-scheduling.
  *
- * MIDI clips are prerendered and normalized: track volume and clip gain are
- * folded into the per-clip normalization target (the engine exposes only
- * per-clip gain for prerendered audio), so volume 0.5 plays the clip 6 dB
- * below the base peak. Empty clips and fully attenuated clips are skipped.
+ * MIDI clips are prerendered and normalized: clip gain is folded into the
+ * per-clip normalization target. Empty clips and fully attenuated clips are
+ * skipped.
  *
  * Audio clips load their asset from the asset store, slice the source window
  * (sourceOffsetPpq/lengthPpq at the schedule tempo), bake fades into the
  * buffer edges, resample to the engine rate when needed, and are scheduled
- * with gain = clip gain x track volume — never loudness-normalized. Clips
- * whose asset is missing or unreadable are skipped silently.
+ * with gain = clip gain — never loudness-normalized. Clips whose asset is
+ * missing or unreadable are skipped silently.
  *
- * Mixer state is applied offline (the engine node has no channel-strip
- * surface): a track's instrument selects the MIDI bounce, strip gain (and the
- * master strip gain) multiplies the engine per-clip gain, strip pan plus
- * master pan are baked into the buffers as a balance law, and the track
- * strip's enabled inserts/EQ run over the buffers through the wasm one-shot
- * processors (results cached by render + strip identity). Master inserts/EQ,
- * buses and sends are UI-only in this iteration.
+ * The track strip's enabled inserts/EQ still run offline over the buffers
+ * through the wasm one-shot processors (results cached by render + strip
+ * identity). Master inserts/EQ, buses and sends are UI-only in this
+ * iteration.
  *
- * The legacy track.pan field and clip looping are not applied (no engine
- * support for prerendered clips).
+ * The legacy track.pan field and clip looping are not applied.
  *
  * The caller owns unscheduling: keep the returned list and call
  * engine.removeClip(engineClipId) for each entry before re-scheduling.
@@ -399,13 +395,9 @@ export async function scheduleProjectClips(
   const tempoBpm = options.tempoBpm ?? store.tempoBpm;
   const basePeak = options.targetPeak === undefined ? DEFAULT_TARGET_PEAK : options.targetPeak;
   const loadAudio = options.loadAudioAsset ?? loadAsset;
-  const master = store.mixer.master;
-  const masterGain = dbToLinear(master.gainDb);
-  // Resolve the wasm DSP seam only when an audible track actually needs it,
-  // so DSP-less projects never touch the processor module.
-  const anyStripDsp = store.tracks.some(
-    (track) => isTrackAudible(track, store.tracks) && stripHasDsp(track.mixer),
-  );
+  // Resolve the wasm DSP seam only when a track actually needs it, so
+  // DSP-less projects never touch the processor module.
+  const anyStripDsp = store.tracks.some((track) => stripHasDsp(track.mixer));
   const dsp =
     options.stripDsp !== undefined
       ? options.stripDsp
@@ -414,17 +406,13 @@ export async function scheduleProjectClips(
         : null;
   const scheduled: ScheduledProjectClip[] = [];
   for (const track of store.tracks) {
-    if (!isTrackAudible(track, store.tracks)) continue;
     const strip = track.mixer;
-    const stripGain = strip ? dbToLinear(strip.gainDb) : 1;
-    const extraGain = stripGain * masterGain;
-    const pan = clampPan((strip?.pan ?? 0) + master.pan);
     const hasDsp = stripHasDsp(strip) && dsp !== null;
     const clips = store.clips.filter((clip) => clip.trackId === track.id);
     for (const clip of clips) {
       if (clipKind(clip) === 'audio') {
         if (!clip.assetId) continue;
-        const gain = track.volume * clip.gain * extraGain;
+        const gain = clip.gain;
         if (gain <= 0) continue;
         let asset: LoadedAudioAsset;
         try {
@@ -450,9 +438,9 @@ export async function scheduleProjectClips(
         const targetRate = options.sampleRate ?? handle.ctx.sampleRate;
         channels = resampleChannelsLinear(channels, asset.meta.sampleRate, targetRate);
         if (channels.length === 0 || channels[0].length === 0) continue;
-        if (hasDsp || pan !== 0) {
+        if (hasDsp) {
           const cacheKey = audioClipProcessingCacheKey(clip, tempoBpm, targetRate);
-          channels = makeStripProcessor(cacheKey, targetRate, strip, dsp, pan)(channels);
+          channels = makeStripProcessor(cacheKey, targetRate, strip, dsp, 0)(channels);
         }
         const engineClipId = handle.engine.addClip(track.id, channels, clip.startPpq, { gain });
         scheduled.push({ engineClipId, clipId: clip.id, trackId: track.id });
@@ -460,7 +448,7 @@ export async function scheduleProjectClips(
       }
       const notes = clipPlaybackNotes(clip);
       if (notes.length === 0) continue;
-      const targetPeak = basePeak === null ? null : basePeak * track.volume * clip.gain;
+      const targetPeak = basePeak === null ? null : basePeak * clip.gain;
       if (targetPeak !== null && targetPeak <= 0) continue;
       const midiOptions: ScheduleMidiClipOptions = {
         ...(options.sampleRate !== undefined ? { sampleRate: options.sampleRate } : {}),
@@ -469,8 +457,7 @@ export async function scheduleProjectClips(
         tempoBpm,
         targetPeak,
       };
-      if (extraGain !== 1) midiOptions.extraGain = extraGain;
-      if (hasDsp || pan !== 0) {
+      if (hasDsp) {
         const renderRate = options.sampleRate ?? handle.ctx.sampleRate;
         const renderOptions: PrerenderMidiClipOptions = {
           sampleRate: renderRate,
@@ -483,7 +470,7 @@ export async function scheduleProjectClips(
           renderRate,
           strip,
           dsp,
-          pan,
+          0,
         );
       }
       const engineClipId = await scheduleMidiClip(

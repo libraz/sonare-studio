@@ -135,7 +135,7 @@ describe('scheduleProjectClips with audio clips', () => {
     scheduleMidiClipMock.mockImplementation(async () => nextEngineClipId++);
   });
 
-  it('loads the asset and schedules the buffer at the clip start with gain x volume', async () => {
+  it('loads the asset and schedules the buffer at the clip start with the clip gain', async () => {
     store.tracks = [makeTrack(1, { volume: 0.5 })];
     // 4 PPQ at 120 BPM = 2 s = 20 frames at 10 Hz.
     store.clips = [makeAudioClip(10, 1, { startPpq: 8, gain: 0.8 })];
@@ -149,8 +149,9 @@ describe('scheduleProjectClips with audio clips', () => {
     const [trackId, channels, startPpq, opts] = addClip.mock.calls[0];
     expect(trackId).toBe(1);
     expect(startPpq).toBe(8);
-    // No loudness normalization: gain is exactly clip gain x track volume.
-    expect(opts).toEqual({ gain: 0.8 * 0.5 });
+    // No loudness normalization, and track volume is engine lane state:
+    // the scheduled gain is exactly the clip gain.
+    expect(opts).toEqual({ gain: 0.8 });
     expect((channels as Float32Array[])[0]).toEqual(makeAsset(20).channels[0]);
     expect(scheduleMidiClipMock).not.toHaveBeenCalled();
   });
@@ -195,7 +196,7 @@ describe('scheduleProjectClips with audio clips', () => {
     expect(channels[0][19]).toBeCloseTo(10, 5);
   });
 
-  it('honors mute and solo exactly like MIDI tracks', async () => {
+  it('schedules muted and soloed tracks alike (audibility is realtime mixer state)', async () => {
     store.tracks = [
       makeTrack(1, { solo: true }),
       makeTrack(2),
@@ -207,10 +208,10 @@ describe('scheduleProjectClips with audio clips', () => {
     const scheduled = await scheduleProjectClips(handle, {
       loadAudioAsset: async () => makeAsset(20),
     });
-    expect(scheduled.map((s) => s.trackId)).toEqual([1]);
+    expect(scheduled.map((s) => s.trackId)).toEqual([1, 2, 3]);
   });
 
-  it('skips fully attenuated clips, clips without assetId and missing assets', async () => {
+  it('skips zero-gain clips, clips without assetId and missing assets', async () => {
     store.tracks = [makeTrack(1), makeTrack(2, { volume: 0 })];
     const orphan = makeAudioClip(11, 1);
     orphan.assetId = undefined;
@@ -227,11 +228,13 @@ describe('scheduleProjectClips with audio clips', () => {
     });
 
     const scheduled = await scheduleProjectClips(handle, { loadAudioAsset });
-    expect(scheduled).toEqual([]);
-    expect(addClip).not.toHaveBeenCalled();
-    // Only the clip with a present gain and asset id was attempted.
-    expect(loadAudioAsset).toHaveBeenCalledTimes(1);
-    expect(loadAudioAsset).toHaveBeenCalledWith('gone');
+    // Track volume is engine lane state: the volume-0 track still schedules.
+    expect(scheduled).toEqual([{ engineClipId: 500, clipId: 20, trackId: 2 }]);
+    expect(addClip).toHaveBeenCalledTimes(1);
+    // Only clips with a positive gain and an asset id are attempted.
+    expect(loadAudioAsset).toHaveBeenCalledTimes(2);
+    expect(loadAudioAsset).toHaveBeenNthCalledWith(1, 'gone');
+    expect(loadAudioAsset).toHaveBeenNthCalledWith(2, 'asset-x');
   });
 
   it('schedules MIDI and audio clips side by side', async () => {

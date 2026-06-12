@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
 import { scheduleMidiClip } from '@/engine/instruments';
 import type { TrackInstrument } from '@/project/instrument';
-import { createDefaultStrip, dbToLinear, type MixerStrip } from '@/project/mixer';
+import { createDefaultStrip, type MixerStrip } from '@/project/mixer';
 import type { StripProcessorDeps } from '@/project/mixer-dsp';
 import { clearStripProcessingCache, scheduleProjectClips } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
@@ -131,7 +131,7 @@ describe('scheduleProjectClips with mixer state', () => {
     expect(scheduleMidiClipMock.mock.calls[0][4]?.instrument).toEqual(instrument);
   });
 
-  it('folds strip gain and master gain into extraGain for MIDI clips', async () => {
+  it('does not fold strip or master gain into MIDI options (gain is engine lane state)', async () => {
     store.tracks = [makeTrack(1, { mixer: { ...createDefaultStrip(), gainDb: -6 } })];
     store.clips = [makeClip(10, 1)];
     store.mixer.master.gainDb = -6;
@@ -139,25 +139,37 @@ describe('scheduleProjectClips with mixer state', () => {
 
     await scheduleProjectClips(handle, { stripDsp: null });
     const options = scheduleMidiClipMock.mock.calls[0][4];
-    expect(options?.extraGain).toBeCloseTo(dbToLinear(-6) * dbToLinear(-6), 10);
+    expect(options?.extraGain).toBeUndefined();
+    expect(options?.targetPeak).toBe(0.5);
   });
 
-  it('bakes strip pan plus master pan into the MIDI process hook', async () => {
+  it('passes no MIDI process hook for pan-only strips (pan is engine lane state)', async () => {
     store.tracks = [makeTrack(1, { mixer: { ...createDefaultStrip(), pan: 0.5 } })];
     store.clips = [makeClip(10, 1)];
     store.mixer.master.pan = 0.25;
     const { handle } = makeHandle(48000);
 
     await scheduleProjectClips(handle, { stripDsp: null });
+    expect(scheduleMidiClipMock.mock.calls[0][4]?.processChannels).toBeUndefined();
+  });
+
+  it('keeps the MIDI process hook pan-free for strips with DSP and pan', async () => {
+    store.tracks = [makeTrack(1, { mixer: dspStrip({ pan: 0.5 }) })];
+    store.clips = [makeClip(10, 1)];
+    store.mixer.master.pan = 0.25;
+    const deps = markerDeps();
+    const { handle } = makeHandle(48000);
+
+    await scheduleProjectClips(handle, { stripDsp: deps });
     const processChannels = scheduleMidiClipMock.mock.calls[0][4]?.processChannels;
     expect(processChannels).toBeTypeOf('function');
     const out = (processChannels as (c: Float32Array[]) => Float32Array[])([
-      new Float32Array([1]),
-      new Float32Array([1]),
+      new Float32Array([0.5]),
+      new Float32Array([0.5]),
     ]);
-    // Combined pan 0.75 attenuates the left channel to 0.25.
-    expect(out[0][0]).toBeCloseTo(0.25, 6);
-    expect(out[1][0]).toBeCloseTo(1, 6);
+    // The insert marker is applied but neither channel is pan-attenuated.
+    expect(out[0][0]).toBeCloseTo(0.75, 6);
+    expect(out[1][0]).toBeCloseTo(0.75, 6);
   });
 
   it('applies strip DSP to audio clips and caches by strip identity', async () => {
@@ -182,36 +194,38 @@ describe('scheduleProjectClips with mixer state', () => {
     expect(deps.processStereo).toHaveBeenCalledTimes(1);
   });
 
-  it('multiplies strip and master gain into the audio clip gain', async () => {
+  it('keeps the audio clip gain free of volume, strip and master gain', async () => {
     store.tracks = [
       makeTrack(1, { kind: 'audio', volume: 0.5, mixer: { ...createDefaultStrip(), gainDb: 6 } }),
     ];
     store.clips = [makeAudioClip(10, 1, { gain: 0.8, lengthPpq: 0.4 })];
+    store.mixer.master.gainDb = -6;
     const { handle, addClip } = makeHandle(10);
 
     await scheduleProjectClips(handle, { stripDsp: null, loadAudioAsset: makeAssetLoader(10) });
     const opts = addClip.mock.calls[0][3] as { gain: number };
-    expect(opts.gain).toBeCloseTo(0.5 * 0.8 * dbToLinear(6), 10);
+    expect(opts.gain).toBe(0.8);
   });
 
-  it('keeps the legacy audio gain exactly when the mixer is neutral', async () => {
+  it('schedules audio at exactly the clip gain when the mixer is neutral', async () => {
     store.tracks = [makeTrack(1, { kind: 'audio', volume: 0.5 })];
     store.clips = [makeAudioClip(10, 1, { gain: 0.8, lengthPpq: 0.4 })];
     const { handle, addClip } = makeHandle(10);
 
     await scheduleProjectClips(handle, { loadAudioAsset: makeAssetLoader(10) });
-    expect((addClip.mock.calls[0][3] as { gain: number }).gain).toBe(0.5 * 0.8);
+    expect((addClip.mock.calls[0][3] as { gain: number }).gain).toBe(0.8);
   });
 
-  it('bakes pan into scheduled audio buffers', async () => {
+  it('leaves scheduled audio buffers pan-free (pan is engine lane state)', async () => {
     store.tracks = [makeTrack(1, { kind: 'audio', mixer: { ...createDefaultStrip(), pan: -0.5 } })];
     store.clips = [makeAudioClip(10, 1, { lengthPpq: 0.4 })];
+    store.mixer.master.pan = 0.25;
     const { handle, addClip } = makeHandle(10);
 
     await scheduleProjectClips(handle, { stripDsp: null, loadAudioAsset: makeAssetLoader(10) });
     const channels = addClip.mock.calls[0][1] as Float32Array[];
     expect(channels[0][0]).toBeCloseTo(0.5, 6);
-    expect(channels[1][0]).toBeCloseTo(0.25, 6); // right attenuated by 1 + pan
+    expect(channels[1][0]).toBeCloseTo(0.5, 6);
   });
 
   it('legacy track.pan stays UI-only (buffers untouched)', async () => {

@@ -96,11 +96,11 @@ export interface EditorTrack {
   color: string;
   /** Track content kind; only 'midi' tracks carry editable clips today. */
   kind: TrackKind;
-  /** Playback mute flag (app-level; applied when (re)scheduling clips). */
+  /** Playback mute flag (mirrored to the engine mixer lane in realtime). */
   mute: boolean;
-  /** Playback solo flag (app-level; applied when (re)scheduling clips). */
+  /** Playback solo flag (mirrored to the engine mixer lane in realtime). */
   solo: boolean;
-  /** Linear track volume (>= 0, 1 = unity; folded into clip gain on schedule). */
+  /** Linear track volume (>= 0, 1 = unity; mirrored to the engine lane fader). */
   volume: number;
   /** Stereo pan in [-1, 1] (app-level legacy field; the mixer strip pan is the audible pan). */
   pan: number;

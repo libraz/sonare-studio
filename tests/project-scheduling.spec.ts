@@ -161,7 +161,7 @@ describe('scheduleProjectClips', () => {
     expect(options).toEqual({ tempoBpm: 100, targetPeak: 0.5 });
   });
 
-  it('skips muted tracks and, when any track is soloed, all non-solo tracks', async () => {
+  it('schedules soloed and non-soloed tracks alike (solo is realtime mixer state)', async () => {
     store.tracks = [
       makeTrack(1, { solo: true }),
       makeTrack(2),
@@ -171,33 +171,35 @@ describe('scheduleProjectClips', () => {
     store.clips = [makeClip(10, 1), makeClip(20, 2), makeClip(30, 3), makeClip(40, 4)];
 
     const scheduled = await scheduleProjectClips(handle);
-    expect(scheduled.map((s) => s.trackId)).toEqual([1]);
+    expect(scheduled.map((s) => s.trackId)).toEqual([1, 2, 3, 4]);
   });
 
-  it('plays all unmuted tracks when no solo is active', async () => {
+  it('schedules muted tracks too (mute is realtime mixer state)', async () => {
     store.tracks = [makeTrack(1), makeTrack(2, { mute: true }), makeTrack(3)];
     store.clips = [makeClip(10, 1), makeClip(20, 2), makeClip(30, 3)];
 
     const scheduled = await scheduleProjectClips(handle);
-    expect(scheduled.map((s) => s.trackId)).toEqual([1, 3]);
+    expect(scheduled.map((s) => s.trackId)).toEqual([1, 2, 3]);
   });
 
-  it('folds track volume and clip gain into the per-clip target peak', async () => {
+  it('folds only the clip gain into the per-clip target peak (track volume excluded)', async () => {
     store.tracks = [makeTrack(1, { volume: 0.5 })];
     store.clips = [makeClip(10, 1, { gain: 0.8 })];
 
     await scheduleProjectClips(handle);
     const options = scheduleMidiClipMock.mock.calls[0][4];
-    expect(options?.targetPeak).toBeCloseTo(0.5 * 0.5 * 0.8, 10);
+    // Track volume is engine lane state and must not scale the target peak.
+    expect(options?.targetPeak).toBeCloseTo(0.5 * 0.8, 10);
   });
 
-  it('skips empty clips and fully attenuated clips', async () => {
+  it('skips empty clips and zero-gain clips, but not clips on volume-0 tracks', async () => {
     store.tracks = [makeTrack(1), makeTrack(2, { volume: 0 })];
-    store.clips = [makeClip(10, 1, { notes: [] }), makeClip(20, 2)];
+    store.clips = [makeClip(10, 1, { notes: [] }), makeClip(11, 1, { gain: 0 }), makeClip(20, 2)];
 
     const scheduled = await scheduleProjectClips(handle);
-    expect(scheduled).toEqual([]);
-    expect(scheduleMidiClipMock).not.toHaveBeenCalled();
+    // Track volume is engine lane state: a volume-0 track still schedules.
+    expect(scheduled).toEqual([{ engineClipId: 100, clipId: 20, trackId: 2 }]);
+    expect(scheduleMidiClipMock).toHaveBeenCalledTimes(1);
   });
 
   it('passes targetPeak null through unscaled (no volume/gain folding)', async () => {

@@ -2,24 +2,20 @@
  * Mixer model: per-track channel strips, a master strip and optional send
  * buses.
  *
- * The state is app-level metadata (the wasm Project has no per-track mixer
- * API and the realtime engine node exposes no channel-strip commands), so it
- * lives on the store mirror and is persisted by the project document (schema
- * version 3).
+ * The state is app-level metadata persisted by the project document (schema
+ * version 3); it lives on the store mirror.
  *
- * What is AUDIBLE with the current engine (applied offline while scheduling,
- * see src/project/scheduling.ts):
- * - track strip gainDb (folded into the engine per-clip gain),
- * - track strip pan (balance law baked into the scheduled buffers),
- * - track strip inserts and EQ (one-shot wasm processors applied to the
- *   prerendered/loaded buffers),
- * - master gainDb and pan (linear operations commute with summing, so they
- *   are folded/baked into every scheduled clip).
+ * How it reaches the engine during playback:
+ * - track strip gainDb/pan and the master gainDb/pan are realtime mixer-lane
+ *   state, mirrored by src/engine/mixer-sync.ts without re-scheduling,
+ * - track strip inserts and EQ are still applied offline while scheduling
+ *   (one-shot wasm processors over the prerendered/loaded buffers, see
+ *   src/project/scheduling.ts).
  *
  * What is UI-ONLY in this iteration:
  * - master inserts/EQ (nonlinear bus DSP cannot honestly be applied per clip
  *   before the engine sums them),
- * - buses and sends (the engine has no bus routing for prerendered clips).
+ * - buses and sends (not yet wired to the engine's bus lanes).
  *
  * Offline mixdown/export renders (src/export/mixdown.ts) additionally apply
  * master inserts/EQ honestly (they own the summed bus) and the project-level

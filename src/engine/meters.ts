@@ -87,6 +87,9 @@ export function createMeterBridge(handle: EngineHandle): MeterBridge {
   let rafId = 0;
 
   const publish = (snapshot: SonareWorkletMeterSnapshot): void => {
+    // With mixer lanes configured the engine emits per-lane and per-bus
+    // records too; this bridge tracks the master strip (target id 0) only.
+    if ((snapshot.targetId ?? 0) !== 0) return;
     latest = {
       frame: snapshot.frame,
       peakDbL: clampDb(snapshot.peakDbL),
@@ -115,9 +118,12 @@ export function createMeterBridge(handle: EngineHandle): MeterBridge {
   const poll = (): void => {
     if (disposed) return;
     const snapshots = handle.engine.pollMeters();
-    if (snapshots.length > 0) {
-      // Only the most recent snapshot matters for level display.
-      publish(snapshots[snapshots.length - 1]);
+    // Only the most recent master snapshot matters for level display.
+    for (let i = snapshots.length - 1; i >= 0; i--) {
+      if ((snapshots[i].targetId ?? 0) === 0) {
+        publish(snapshots[i]);
+        break;
+      }
     }
     rafId = raf(poll);
   };

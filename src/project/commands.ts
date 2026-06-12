@@ -560,8 +560,8 @@ export function setTrackColor(trackId: number, color: string): void {
 }
 
 /**
- * Sets a track's mute flag as one undoable edit. Mute is app-level state
- * applied when (re)scheduling clips into the engine.
+ * Sets a track's mute flag as one undoable edit. Mute is mirrored to the
+ * engine mixer lane in realtime (no re-scheduling).
  *
  * @param trackId Id of the track.
  * @param mute New mute state.
@@ -577,8 +577,8 @@ export function setTrackMute(trackId: number, mute: boolean): void {
 }
 
 /**
- * Sets a track's solo flag as one undoable edit. Solo is app-level state
- * applied when (re)scheduling clips into the engine.
+ * Sets a track's solo flag as one undoable edit. Solo is mirrored to the
+ * engine mixer lane in realtime (no re-scheduling).
  *
  * @param trackId Id of the track.
  * @param solo New solo state.
@@ -594,8 +594,8 @@ export function setTrackSolo(trackId: number, solo: boolean): void {
 }
 
 /**
- * Sets a track's linear volume as one undoable edit. Volume is app-level
- * state folded into clip gain when (re)scheduling.
+ * Sets a track's linear volume as one undoable edit. Volume is mirrored to
+ * the engine lane fader in realtime (no re-scheduling).
  *
  * @param trackId Id of the track.
  * @param volume New linear volume (finite, >= 0; 1 = unity).
@@ -739,7 +739,7 @@ function requireInsert(strip: MixerStrip, index: number): InsertSlot {
 
 /**
  * Sets a strip's gain as one undoable edit. Strip gain is audible: it is
- * folded into the engine per-clip gain when (re)scheduling.
+ * mirrored to the engine lane (or master) fader in realtime.
  *
  * @param target Track id or 'master'.
  * @param gainDb New gain in dB (finite, within [-96, 24]).
@@ -769,8 +769,8 @@ export function setStripGain(
 }
 
 /**
- * Sets a strip's pan as one undoable edit. Strip pan is audible: a balance
- * law is baked into the scheduled buffers when (re)scheduling.
+ * Sets a strip's pan as one undoable edit. Strip pan is audible: it is
+ * mirrored to the engine lane (or master) pan in realtime.
  *
  * @param target Track id or 'master'.
  * @param pan New balance in [-1, 1].

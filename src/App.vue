@@ -36,6 +36,7 @@ import {
   prerenderMidiClip,
 } from '@/engine/instruments';
 import { createMeterBridge, type MeterBridge } from '@/engine/meters';
+import { createMixerSync, type MixerSync } from '@/engine/mixer-sync';
 import { renderMixdownInWorker } from '@/export/client';
 import { dawprojectFilename, exportDawproject } from '@/export/dawproject';
 import type { MixdownRangePpq } from '@/export/mixdown';
@@ -68,6 +69,7 @@ import {
   undo,
 } from '@/project/commands';
 import { exportProjectSmf } from '@/project/export';
+import { stripCacheSegment } from '@/project/mixer';
 import { type ScheduledProjectClip, scheduleProjectClips } from '@/project/scheduling';
 import {
   loadProjectDocument,
@@ -76,7 +78,7 @@ import {
 } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { makeDemoDocument, type TemplateName } from '@/project/templates';
-import { clipKind, isAudioClip } from '@/project/types';
+import { clipKind, type EditorClip, type EditorTrack, isAudioClip } from '@/project/types';
 import { createFocusTrap, type FocusTrap } from '@/ui/settings/focus-trap';
 import { ARRANGE_HEIGHT_MAX_PX, type LayoutBindings } from '@/ui/settings/layouts';
 import type { RealtimeEngine } from '@/wasm/index.js';
@@ -587,6 +589,7 @@ function formatSize(bytes: number): string {
 
 /** Clips currently scheduled in the engine from the last apply. */
 let scheduledClips: ScheduledProjectClip[] = [];
+let mixerSync: MixerSync | null = null;
 /** Number of clips scheduled by the last apply (display only). */
 const scheduledCount = ref(0);
 /** True while edits exist that have not been bounced to the engine yet. */
@@ -630,12 +633,52 @@ function scheduleApply(): void {
   }, APPLY_DEBOUNCE_MS);
 }
 
-// The mirror arrays are replaced wholesale per command, so identity tracking
-// fires once per edit (including undo/redo). Clips cover note/clip/tempo
-// edits (every project command rebuilds them); tracks cover mute/solo/volume
-// metadata, which changes which clips are audible and at what level.
-watch(() => store.clips, scheduleApply);
-watch(() => store.tracks, scheduleApply);
+/**
+ * Mirrors level/routing state (volume, pan, solo/mute, master gain/pan) onto
+ * the engine's mixer lanes immediately — no re-bounce needed for these.
+ */
+function syncMixerState(): void {
+  if (!mixerSync || !store.initialized) return;
+  mixerSync.sync(store.tracks, store.mixer.master);
+}
+
+/**
+ * The scheduling-relevant identity of a track: content changes here require
+ * a re-bounce (instrument selection and strip DSP are still baked offline),
+ * while pure level changes are handled by the realtime mixer sync.
+ */
+function trackScheduleKey(track: EditorTrack): string {
+  return `${track.id}|${track.kind}|${JSON.stringify(track.instrument ?? null)}|${stripCacheSegment(track.mixer)}`;
+}
+
+/**
+ * The scheduling-relevant identity of a clip. The display name is excluded;
+ * everything else (position, content, gain, fades, asset) feeds the bounce.
+ */
+function clipScheduleKey(clip: EditorClip): string {
+  const { name: _name, ...rest } = clip;
+  return JSON.stringify(rest);
+}
+
+// The mirror arrays are replaced wholesale per command (including by
+// store.refresh()), so identity-based watches would fire on every edit.
+// Both watchers therefore compare scheduling-relevant content keys: clips
+// cover note/clip edits, tracks re-bounce only when instrument or strip DSP
+// changes — mute/solo/volume/pan go to the engine mixer lanes directly.
+watch(
+  () => store.clips.map(clipScheduleKey).join('\n'),
+  (next, prev) => {
+    if (next !== prev) scheduleApply();
+  },
+);
+watch(
+  () => store.tracks.map(trackScheduleKey).join('\n'),
+  (next, prev) => {
+    if (next !== prev) scheduleApply();
+  },
+);
+watch(() => store.tracks, syncMixerState);
+watch(() => store.mixer.master, syncMixerState);
 
 /** Applies the pending edits to the engine immediately. */
 function applyNow(): void {
@@ -732,6 +775,7 @@ function startEngine(): Promise<void> {
     if (handle.value) return;
     const h = await createEngine();
     handle.value = h;
+    mixerSync = createMixerSync(h);
     bridge.value = createMeterBridge(h);
     ctxState.value = h.ctx.state;
     h.ctx.addEventListener('statechange', () => {
@@ -744,6 +788,7 @@ function startEngine(): Promise<void> {
     if (bootPromise) await bootPromise;
     await store.init({ sampleRate: h.ctx.sampleRate });
     transport.setTempo(store.tempoBpm);
+    syncMixerState();
     await applyToEngine();
   });
 }
@@ -1305,6 +1350,7 @@ onBeforeUnmount(async () => {
   }
   bridge.value?.dispose();
   bridge.value = null;
+  mixerSync = null;
   await handle.value?.dispose();
   handle.value = null;
 });
