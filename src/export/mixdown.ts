@@ -3,21 +3,22 @@
  * without touching the realtime engine or any reactive state, so it runs on
  * the main thread and inside module workers alike.
  *
- * Per-clip rendering reuses the exact transforms of live playback scheduling
- * (src/project/scheduling.ts): the same MIDI prerender/bounce per instrument
- * and the same audio slice/fade/resample pipeline. Strip insert/EQ processing
- * is then baked in offline (src/export/strip-render.ts) to mirror the strip
- * DSP that the realtime engine applies during live playback, along with the
- * same gain/pan folding. The clips are then summed onto a stereo bus honoring
- * their timeline positions, and — unlike live playback, which owns no summed
- * bus — the master strip's inserts/EQ and the project mastering chain are
- * applied honestly to the mix.
+ * Audio clips reuse the exact transforms of live playback scheduling
+ * (src/project/scheduling.ts): the same slice/fade/resample pipeline. MIDI
+ * clips are prerendered per instrument (live playback instead drives the
+ * engine's realtime instruments). Strip insert/EQ processing is baked in
+ * offline (src/export/strip-render.ts) to mirror the strip DSP the realtime
+ * engine applies live. The clips are then summed onto a stereo bus honoring
+ * their timeline positions, where the master strip's inserts/EQ and the
+ * project mastering chain are applied.
  *
  * Differences from live playback, by design:
- * - master gain/pan are applied once on the summed bus instead of being
- *   folded into every clip (identical for gain; combined extreme pans differ
- *   slightly because live playback clamps the summed pan per clip),
- * - master inserts/EQ are audible here (live playback keeps them UI-only),
+ * - MIDI clip levels: this renderer normalizes each prerendered MIDI clip to
+ *   the target peak times the clip gain, while live playback plays the
+ *   instruments at their native level with the clip gain folded into note
+ *   velocities — MIDI track loudness can therefore differ,
+ * - buses and sends are not rendered here (live playback sums them through
+ *   the engine's bus lanes),
  * - the mastering chain runs here only.
  */
 

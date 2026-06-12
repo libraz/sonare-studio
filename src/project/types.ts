@@ -231,7 +231,7 @@ export const MAJOR_MODE_MASK = 0b101010110101;
 
 /**
  * Converts an editor note to the engine {@link MidiNote} shape
- * (e.g., for prerenderMidiClip / scheduleMidiClip).
+ * (e.g., for prerenderMidiClip).
  *
  * @param note Editor note to convert.
  * @returns Engine-facing note (drops the editor id and off velocity).

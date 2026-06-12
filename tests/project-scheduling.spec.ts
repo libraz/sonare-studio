@@ -1,7 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
-import { scheduleMidiClip } from '@/engine/instruments';
+import type { LoadedAudioAsset } from '@/persistence/assets';
 import {
   clipPlaybackNotes,
   isTrackAudible,
@@ -10,12 +10,6 @@ import {
 } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
 import type { EditorClip, EditorNote, EditorTrack } from '@/project/types';
-
-vi.mock('@/engine/instruments', () => ({
-  scheduleMidiClip: vi.fn(async () => 0),
-}));
-
-const scheduleMidiClipMock = vi.mocked(scheduleMidiClip);
 
 /** Builds a track mirror entry with overridable fields. */
 function makeTrack(id: number, overrides: Partial<EditorTrack> = {}): EditorTrack {
@@ -128,40 +122,69 @@ describe('clipPlaybackNotes', () => {
   });
 });
 
+/** Builds an audio clip mirror entry referencing a stub asset. */
+function makeAudioClip(
+  id: number,
+  trackId: number,
+  overrides: Partial<EditorClip> = {},
+): EditorClip {
+  return makeClip(id, trackId, { kind: 'audio', assetId: 'asset-x', notes: [], ...overrides });
+}
+
+/** Loaded-asset stub: 20 mono frames at 10 Hz (4 PPQ at 120 BPM = 2 s). */
+function makeAsset(): LoadedAudioAsset {
+  return {
+    meta: { id: 'asset-x', name: 'Asset', sampleRate: 10, numChannels: 1, numFrames: 20 },
+    channels: [new Float32Array(20).fill(0.5)],
+  };
+}
+
+/** EngineHandle stub capturing engine.addClip calls. */
+function makeHandle(): { handle: EngineHandle; addClip: ReturnType<typeof vi.fn> } {
+  const addClip = vi.fn(() => 500);
+  const handle = {
+    ctx: { sampleRate: 10 },
+    engine: { addClip },
+  } as unknown as EngineHandle;
+  return { handle, addClip };
+}
+
 describe('scheduleProjectClips', () => {
   let store: ReturnType<typeof useProjectStore>;
-  const handle = {} as EngineHandle;
 
   beforeEach(() => {
     setActivePinia(createPinia());
     store = useProjectStore();
-    let nextEngineClipId = 100;
-    scheduleMidiClipMock.mockReset();
-    scheduleMidiClipMock.mockImplementation(async () => nextEngineClipId++);
+    store.tempoBpm = 120;
   });
 
-  it('schedules every clip of every audible track onto its engine track', async () => {
+  it('does not schedule MIDI clips (MIDI playback is realtime engine state)', async () => {
     store.tracks = [makeTrack(1), makeTrack(2)];
     store.clips = [makeClip(10, 1), makeClip(11, 1, { startPpq: 8 }), makeClip(20, 2)];
-    store.tempoBpm = 100;
+    const { handle, addClip } = makeHandle();
 
     const scheduled = await scheduleProjectClips(handle);
-    expect(scheduled).toEqual([
-      { engineClipId: 100, clipId: 10, trackId: 1 },
-      { engineClipId: 101, clipId: 11, trackId: 1 },
-      { engineClipId: 102, clipId: 20, trackId: 2 },
-    ]);
-    expect(scheduleMidiClipMock).toHaveBeenCalledTimes(3);
-
-    const [h, trackId, notes, startPpq, options] = scheduleMidiClipMock.mock.calls[1];
-    expect(h).toBe(handle);
-    expect(trackId).toBe(1);
-    expect(notes).toEqual([{ note: 60, velocity: 100, startPpq: 0, durationPpq: 1, channel: 0 }]);
-    expect(startPpq).toBe(8);
-    expect(options).toEqual({ tempoBpm: 100, targetPeak: 0.5 });
+    expect(scheduled).toEqual([]);
+    expect(addClip).not.toHaveBeenCalled();
   });
 
-  it('schedules soloed and non-soloed tracks alike (solo is realtime mixer state)', async () => {
+  it('still schedules audio clips while skipping MIDI clips on the same tracks', async () => {
+    store.tracks = [makeTrack(1), makeTrack(2, { kind: 'audio' })];
+    store.clips = [makeClip(10, 1), makeAudioClip(20, 2, { startPpq: 4, gain: 0.8 })];
+    const { handle, addClip } = makeHandle();
+
+    const scheduled = await scheduleProjectClips(handle, {
+      loadAudioAsset: async () => makeAsset(),
+    });
+    expect(scheduled).toEqual([{ engineClipId: 500, clipId: 20, trackId: 2 }]);
+    expect(addClip).toHaveBeenCalledTimes(1);
+    const [trackId, , startPpq, opts] = addClip.mock.calls[0];
+    expect(trackId).toBe(2);
+    expect(startPpq).toBe(4);
+    expect(opts).toEqual({ gain: 0.8 });
+  });
+
+  it('skips MIDI clips regardless of mute/solo state', async () => {
     store.tracks = [
       makeTrack(1, { solo: true }),
       makeTrack(2),
@@ -169,68 +192,10 @@ describe('scheduleProjectClips', () => {
       makeTrack(4, { mute: true, solo: true }),
     ];
     store.clips = [makeClip(10, 1), makeClip(20, 2), makeClip(30, 3), makeClip(40, 4)];
+    const { handle, addClip } = makeHandle();
 
     const scheduled = await scheduleProjectClips(handle);
-    expect(scheduled.map((s) => s.trackId)).toEqual([1, 2, 3, 4]);
-  });
-
-  it('schedules muted tracks too (mute is realtime mixer state)', async () => {
-    store.tracks = [makeTrack(1), makeTrack(2, { mute: true }), makeTrack(3)];
-    store.clips = [makeClip(10, 1), makeClip(20, 2), makeClip(30, 3)];
-
-    const scheduled = await scheduleProjectClips(handle);
-    expect(scheduled.map((s) => s.trackId)).toEqual([1, 2, 3]);
-  });
-
-  it('folds only the clip gain into the per-clip target peak (track volume excluded)', async () => {
-    store.tracks = [makeTrack(1, { volume: 0.5 })];
-    store.clips = [makeClip(10, 1, { gain: 0.8 })];
-
-    await scheduleProjectClips(handle);
-    const options = scheduleMidiClipMock.mock.calls[0][4];
-    // Track volume is engine lane state and must not scale the target peak.
-    expect(options?.targetPeak).toBeCloseTo(0.5 * 0.8, 10);
-  });
-
-  it('skips empty clips and zero-gain clips, but not clips on volume-0 tracks', async () => {
-    store.tracks = [makeTrack(1), makeTrack(2, { volume: 0 })];
-    store.clips = [makeClip(10, 1, { notes: [] }), makeClip(11, 1, { gain: 0 }), makeClip(20, 2)];
-
-    const scheduled = await scheduleProjectClips(handle);
-    // Track volume is engine lane state: a volume-0 track still schedules.
-    expect(scheduled).toEqual([{ engineClipId: 100, clipId: 20, trackId: 2 }]);
-    expect(scheduleMidiClipMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('passes targetPeak null through unscaled (no volume/gain folding)', async () => {
-    store.tracks = [makeTrack(1, { volume: 0 })];
-    store.clips = [makeClip(10, 1, { gain: 0.5 })];
-
-    const scheduled = await scheduleProjectClips(handle, { targetPeak: null });
-    expect(scheduled).toHaveLength(1);
-    expect(scheduleMidiClipMock.mock.calls[0][4]?.targetPeak).toBeNull();
-  });
-
-  it('forwards sampleRate, preset and tempo overrides', async () => {
-    store.tracks = [makeTrack(1)];
-    store.clips = [makeClip(10, 1)];
-    store.tempoBpm = 100;
-
-    await scheduleProjectClips(handle, { sampleRate: 44100, preset: 'saw-lead', tempoBpm: 90 });
-    expect(scheduleMidiClipMock.mock.calls[0][4]).toEqual({
-      sampleRate: 44100,
-      preset: 'saw-lead',
-      tempoBpm: 90,
-      targetPeak: 0.5,
-    });
-  });
-
-  it('handles the single-track degenerate case like the legacy flow', async () => {
-    store.tracks = [makeTrack(1)];
-    store.clips = [makeClip(10, 1)];
-
-    const scheduled = await scheduleProjectClips(handle);
-    expect(scheduled).toEqual([{ engineClipId: 100, clipId: 10, trackId: 1 }]);
-    expect(scheduleMidiClipMock.mock.calls[0][1]).toBe(1);
+    expect(scheduled).toEqual([]);
+    expect(addClip).not.toHaveBeenCalled();
   });
 });

@@ -31,6 +31,18 @@ import QuickControls from './QuickControls.vue';
  * every edit through the undoable command layer.
  */
 
+withDefaults(
+  defineProps<{
+    /**
+     * True while the engine transport plays. Instrument swaps are stop-gated
+     * by the engine (they apply when playback stops), so the rack shows a
+     * hint instead of pretending the change is instant.
+     */
+    transportPlaying?: boolean;
+  }>(),
+  { transportPlaying: false },
+);
+
 const store = useProjectStore();
 
 /** Surfaced when a command or font operation rejects. */
@@ -354,6 +366,9 @@ function selectInsert(index: number): void {
           <span class="instrument-name">{{ instrumentCaption }}</span>
           <span class="instrument-caret" aria-hidden="true">▾</span>
         </button>
+        <p v-if="transportPlaying" class="instrument-gate-hint">
+          Instrument changes apply when playback stops.
+        </p>
 
         <div v-if="pickerOpen" class="instrument-picker" role="dialog" aria-label="Instrument picker">
           <div class="picker-tabs" role="tablist">
@@ -633,6 +648,12 @@ function selectInsert(index: number): void {
 
 .instrument-button.selected {
   border-color: #60a5fa;
+}
+
+.instrument-gate-hint {
+  margin: 4px 0 0;
+  font-size: 10px;
+  color: #8a91a0;
 }
 
 .instrument-kind {

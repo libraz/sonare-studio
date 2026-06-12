@@ -1,0 +1,375 @@
+import { describe, expect, it, vi } from 'vitest';
+import type { EngineHandle } from '@/engine/engine';
+import { buildMidiClipSchedules, createMidiSync } from '@/engine/midi-sync';
+import { DEFAULT_SYNTH_PRESET } from '@/project/instrument';
+import type { EditorClip, EditorNote, EditorTrack } from '@/project/types';
+import type { SynthPatch } from '@/wasm/index.js';
+
+/** Render rate of the mock engine context. */
+const SAMPLE_RATE = 48000;
+
+/** Default test tempo; at 48 kHz one quarter-note PPQ is 24000 samples. */
+const BPM = 120;
+
+/** Samples per PPQ at the default test tempo and rate. */
+const SPP = 24000;
+
+/** Expected UMP MIDI 1.0 channel-voice word for a note-on. */
+function noteOnWord(channel: number, pitch: number, velocity: number): number {
+  return (0x2 << 28) | (0x9 << 20) | (channel << 16) | (pitch << 8) | velocity;
+}
+
+/** Expected UMP MIDI 1.0 channel-voice word for a note-off (velocity 0). */
+function noteOffWord(channel: number, pitch: number): number {
+  return (0x2 << 28) | (0x8 << 20) | (channel << 16) | (pitch << 8);
+}
+
+/** Expected UMP MIDI 1.0 channel-voice word for a control change. */
+function ccWord(channel: number, controller: number, value: number): number {
+  return (0x2 << 28) | (0xb << 20) | (channel << 16) | (controller << 8) | value;
+}
+
+/** Expected UMP MIDI 1.0 channel-voice word for a program change. */
+function pcWord(channel: number, program: number): number {
+  return (0x2 << 28) | (0xc << 20) | (channel << 16) | (program << 8);
+}
+
+/** Builds a track mirror entry with overridable fields. */
+function makeTrack(id: number, overrides: Partial<EditorTrack> = {}): EditorTrack {
+  return {
+    id,
+    name: `Track ${id}`,
+    color: '#60a5fa',
+    kind: 'midi',
+    mute: false,
+    solo: false,
+    volume: 1,
+    pan: 0,
+    order: id,
+    ...overrides,
+  };
+}
+
+/** Builds a note with overridable fields. */
+function makeNote(overrides: Partial<EditorNote> = {}): EditorNote {
+  return { id: 1, pitch: 60, velocity: 100, startPpq: 0, durationPpq: 1, channel: 0, ...overrides };
+}
+
+/** Builds a MIDI clip mirror entry with one default note. */
+function makeClip(id: number, trackId: number, overrides: Partial<EditorClip> = {}): EditorClip {
+  return {
+    id,
+    trackId,
+    name: `Clip ${id}`,
+    startPpq: 0,
+    lengthPpq: 4,
+    sourceOffsetPpq: 0,
+    gain: 1,
+    loopEnabled: false,
+    loopLengthPpq: 0,
+    notes: [makeNote()],
+    ...overrides,
+  };
+}
+
+/** EngineHandle stub capturing the MIDI clip and instrument commands. */
+function makeHandle(): {
+  handle: EngineHandle;
+  engine: {
+    setMidiClips: ReturnType<typeof vi.fn>;
+    setSynthInstrument: ReturnType<typeof vi.fn>;
+    loadSoundFont: ReturnType<typeof vi.fn>;
+    setSf2Instrument: ReturnType<typeof vi.fn>;
+  };
+} {
+  const engine = {
+    setMidiClips: vi.fn(),
+    setSynthInstrument: vi.fn(),
+    loadSoundFont: vi.fn(),
+    setSf2Instrument: vi.fn(),
+  };
+  const handle = { ctx: { sampleRate: SAMPLE_RATE }, engine } as unknown as EngineHandle;
+  return { handle, engine };
+}
+
+describe('buildMidiClipSchedules', () => {
+  it('rejects a non-finite or non-positive tempo or sample rate', () => {
+    expect(() => buildMidiClipSchedules([], [], 0, SAMPLE_RATE)).toThrow(RangeError);
+    expect(() => buildMidiClipSchedules([], [], -120, SAMPLE_RATE)).toThrow(RangeError);
+    expect(() => buildMidiClipSchedules([], [], Number.NaN, SAMPLE_RATE)).toThrow(RangeError);
+    expect(() => buildMidiClipSchedules([], [], BPM, 0)).toThrow(RangeError);
+    expect(() => buildMidiClipSchedules([], [], BPM, Number.POSITIVE_INFINITY)).toThrow(RangeError);
+  });
+
+  it('bakes clip and note PPQ to absolute samples at the given tempo', () => {
+    const clip = makeClip(10, 1, { startPpq: 2, lengthPpq: 4 });
+    const schedules = buildMidiClipSchedules([makeTrack(1)], [clip], BPM, SAMPLE_RATE);
+
+    expect(schedules).toHaveLength(1);
+    const schedule = schedules[0];
+    expect(schedule.id).toBe(10);
+    expect(schedule.trackId).toBe(1);
+    expect(schedule.destinationId).toBe(1);
+    expect(schedule.startPpq).toBe(2);
+    expect(schedule.startSample).toBe(2 * SPP);
+    expect(schedule.lengthSamples).toBe(4 * SPP);
+    expect(schedule.events).toEqual([
+      { renderFrame: 48000, word0: noteOnWord(0, 60, 100), wordCount: 1 },
+      { renderFrame: 48000 + SPP - 1, word0: noteOffWord(0, 60), wordCount: 1 },
+    ]);
+  });
+
+  it('encodes the exact channel-voice words', () => {
+    // (0x2 << 28) | (status << 20) | (channel << 16) | (data0 << 8) | data1.
+    expect(noteOnWord(0, 60, 100)).toBe(0x20903c64);
+    expect(noteOffWord(0, 60)).toBe(0x20803c00);
+    expect(ccWord(0, 32, 1)).toBe(0x20b02001);
+    expect(pcWord(0, 5)).toBe(0x20c00500);
+
+    const clip = makeClip(1, 1, { notes: [makeNote({ pitch: 60, velocity: 100, channel: 3 })] });
+    const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], BPM, SAMPLE_RATE);
+    expect(schedule.events[0].word0).toBe(noteOnWord(3, 60, 100));
+    expect(schedule.events[1].word0).toBe(noteOffWord(3, 60));
+  });
+
+  it('scales note-on velocities by the clip gain, clamped to [1, 127]', () => {
+    const velocityFor = (gain: number): number => {
+      const clip = makeClip(1, 1, { gain });
+      const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], BPM, SAMPLE_RATE);
+      return (schedule.events[0].word0 as number) & 0x7f;
+    };
+    expect(velocityFor(0.5)).toBe(50);
+    expect(velocityFor(2)).toBe(127);
+    expect(velocityFor(0.001)).toBe(1);
+  });
+
+  it('skips clips with no audible content or no MIDI home', () => {
+    const tracks = [makeTrack(1), makeTrack(2, { kind: 'audio' })];
+    const clips = [
+      makeClip(1, 1, { gain: 0 }),
+      makeClip(2, 1, { notes: [] }),
+      makeClip(3, 1, { kind: 'audio' }),
+      makeClip(4, 2),
+      makeClip(5, 99),
+    ];
+    expect(buildMidiClipSchedules(tracks, clips, BPM, SAMPLE_RATE)).toEqual([]);
+  });
+
+  it('clamps the note end to the clip window', () => {
+    const clip = makeClip(1, 1, {
+      lengthPpq: 2,
+      notes: [makeNote({ startPpq: 1, durationPpq: 10 })],
+    });
+    const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], BPM, SAMPLE_RATE);
+    expect(schedule.events[0].renderFrame).toBe(SPP);
+    expect(schedule.events[1].renderFrame).toBe(2 * SPP - 1);
+  });
+
+  it('keeps the note-off at least one sample after the note-on', () => {
+    const clip = makeClip(1, 1, {
+      lengthPpq: 2,
+      notes: [makeNote({ startPpq: 1, durationPpq: 0.00001 })],
+    });
+    const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], BPM, SAMPLE_RATE);
+    expect(schedule.events[0].renderFrame).toBe(SPP);
+    expect(schedule.events[1].renderFrame).toBe(SPP + 1);
+  });
+
+  it('returns the schedules sorted by clip id', () => {
+    const clips = [makeClip(7, 1), makeClip(3, 1), makeClip(5, 1)];
+    const schedules = buildMidiClipSchedules([makeTrack(1)], clips, BPM, SAMPLE_RATE);
+    expect(schedules.map((schedule) => schedule.id)).toEqual([3, 5, 7]);
+  });
+
+  describe('sf2 program prelude', () => {
+    const sf2Track = (bank?: number, program?: number): EditorTrack =>
+      makeTrack(1, { instrument: { kind: 'sf2', fontId: 'font-a', bank, program } });
+
+    it('emits bank-select CCs and the program change before a frame-0 clip', () => {
+      const clip = makeClip(1, 1, { startPpq: 0 });
+      const [schedule] = buildMidiClipSchedules([sf2Track(1, 5)], [clip], BPM, SAMPLE_RATE);
+      // The prelude occupies frame 0, so the clip's frame-0 note-on moves to
+      // frame 1 to stay strictly after it.
+      expect(schedule.events).toEqual([
+        { renderFrame: 0, word0: ccWord(0, 0, 1 >> 7), wordCount: 1 },
+        { renderFrame: 0, word0: ccWord(0, 32, 1 & 0x7f), wordCount: 1 },
+        { renderFrame: 0, word0: pcWord(0, 5), wordCount: 1 },
+        { renderFrame: 1, word0: noteOnWord(0, 60, 100), wordCount: 1 },
+        { renderFrame: SPP - 1, word0: noteOffWord(0, 60), wordCount: 1 },
+      ]);
+    });
+
+    it('sits one sample before the clip start when the clip starts later', () => {
+      const clip = makeClip(1, 1, { startPpq: 2 });
+      // At 60 BPM and 48 kHz one PPQ is 48000 samples.
+      const [schedule] = buildMidiClipSchedules([sf2Track(1, 5)], [clip], 60, SAMPLE_RATE);
+      expect(schedule.startSample).toBe(96000);
+      expect(schedule.events.slice(0, 3).map((event) => event.renderFrame)).toEqual([
+        95999, 95999, 95999,
+      ]);
+      expect(schedule.events[3]).toEqual({
+        renderFrame: 96000,
+        word0: noteOnWord(0, 60, 100),
+        wordCount: 1,
+      });
+    });
+
+    it('emits only the program change when the bank is undefined', () => {
+      const clip = makeClip(1, 1, { startPpq: 2 });
+      const [schedule] = buildMidiClipSchedules([sf2Track(undefined, 5)], [clip], BPM, SAMPLE_RATE);
+      expect(schedule.events[0]).toEqual({
+        renderFrame: 2 * SPP - 1,
+        word0: pcWord(0, 5),
+        wordCount: 1,
+      });
+      expect(schedule.events).toHaveLength(3);
+    });
+
+    it('emits no prelude when neither bank nor program is set', () => {
+      const clip = makeClip(1, 1, { startPpq: 2 });
+      const [schedule] = buildMidiClipSchedules([sf2Track()], [clip], BPM, SAMPLE_RATE);
+      expect(schedule.events).toHaveLength(2);
+      expect(schedule.events[0].renderFrame).toBe(2 * SPP);
+    });
+
+    it('emits the prelude once per distinct note channel', () => {
+      const clip = makeClip(1, 1, {
+        startPpq: 2,
+        notes: [makeNote({ channel: 0 }), makeNote({ id: 2, pitch: 64, channel: 2 })],
+      });
+      const [schedule] = buildMidiClipSchedules([sf2Track(undefined, 5)], [clip], BPM, SAMPLE_RATE);
+      const preludes = schedule.events.filter((event) => event.renderFrame === 2 * SPP - 1);
+      expect(preludes.map((event) => event.word0)).toEqual([pcWord(0, 5), pcWord(2, 5)]);
+    });
+  });
+});
+
+describe('createMidiSync', () => {
+  it('binds the default synth preset to instrument-less midi tracks only', async () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMidiSync(handle);
+
+    await sync.sync([makeTrack(1), makeTrack(2, { kind: 'audio' })], [], BPM);
+    expect(engine.setSynthInstrument).toHaveBeenCalledTimes(1);
+    expect(engine.setSynthInstrument).toHaveBeenCalledWith(1, DEFAULT_SYNTH_PRESET);
+  });
+
+  it('applies the preset resolver to preset names', async () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMidiSync(handle, { resolvePreset: (preset) => `va:${preset}` });
+
+    const track = makeTrack(1, { instrument: { kind: 'synth-preset', preset: 'saw-lead' } });
+    await sync.sync([track], [], BPM);
+    expect(engine.setSynthInstrument).toHaveBeenCalledWith(1, 'va:saw-lead');
+  });
+
+  it('passes a synth patch object through unchanged', async () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMidiSync(handle);
+    const patch: SynthPatch = { preset: 'saw-lead', cutoffHz: 800 };
+
+    await sync.sync([makeTrack(1, { instrument: { kind: 'synth-patch', patch } })], [], BPM);
+    expect(engine.setSynthInstrument).toHaveBeenCalledTimes(1);
+    expect(engine.setSynthInstrument.mock.calls[0]).toEqual([1, patch]);
+    expect(engine.setSynthInstrument.mock.calls[0][1]).toBe(patch);
+  });
+
+  it('loads a SoundFont once per font id and binds each sf2 track', async () => {
+    const { handle, engine } = makeHandle();
+    const bytes = new Uint8Array([1, 2, 3]);
+    const loadFont = vi.fn(async () => bytes);
+    const sync = createMidiSync(handle, { loadFont });
+    const tracks = [
+      makeTrack(1, { instrument: { kind: 'sf2', fontId: 'font-a' } }),
+      makeTrack(2, { instrument: { kind: 'sf2', fontId: 'font-a' } }),
+    ];
+
+    await sync.sync(tracks, [], BPM);
+    expect(loadFont).toHaveBeenCalledTimes(1);
+    expect(loadFont).toHaveBeenCalledWith('font-a');
+    expect(engine.loadSoundFont).toHaveBeenCalledTimes(1);
+    expect(engine.loadSoundFont).toHaveBeenCalledWith(bytes);
+    expect(engine.setSf2Instrument).toHaveBeenCalledTimes(2);
+    expect(engine.setSf2Instrument).toHaveBeenNthCalledWith(1, 1, {});
+    expect(engine.setSf2Instrument).toHaveBeenNthCalledWith(2, 2, {});
+
+    // A second sync with the same font reloads nothing.
+    await sync.sync(tracks, [], BPM);
+    expect(loadFont).toHaveBeenCalledTimes(1);
+    expect(engine.loadSoundFont).toHaveBeenCalledTimes(1);
+    expect(engine.setSf2Instrument).toHaveBeenCalledTimes(2);
+  });
+
+  it('warns when tracks request distinct SoundFonts and loads both', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const { handle, engine } = makeHandle();
+      const loadFont = vi.fn(async (fontId: string) => new Uint8Array([fontId.length]));
+      const sync = createMidiSync(handle, { loadFont });
+      const tracks = [
+        makeTrack(1, { instrument: { kind: 'sf2', fontId: 'font-a' } }),
+        makeTrack(2, { instrument: { kind: 'sf2', fontId: 'font-b' } }),
+      ];
+
+      await sync.sync(tracks, [], BPM);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(loadFont).toHaveBeenCalledTimes(2);
+      expect(loadFont).toHaveBeenNthCalledWith(1, 'font-a');
+      expect(loadFont).toHaveBeenNthCalledWith(2, 'font-b');
+      expect(engine.loadSoundFont).toHaveBeenCalledTimes(2);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('dedupes unchanged state and re-sends on note edits', async () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMidiSync(handle);
+    const tracks = [makeTrack(1)];
+    const clip = makeClip(1, 1, { startPpq: 2 });
+
+    await sync.sync(tracks, [clip], BPM);
+    expect(engine.setMidiClips).toHaveBeenCalledTimes(1);
+    expect(engine.setSynthInstrument).toHaveBeenCalledTimes(1);
+
+    // An identical second sync sends nothing.
+    await sync.sync(tracks, [makeClip(1, 1, { startPpq: 2 })], BPM);
+    expect(engine.setMidiClips).toHaveBeenCalledTimes(1);
+    expect(engine.setSynthInstrument).toHaveBeenCalledTimes(1);
+
+    // A note edit re-sends the full clip set with the new schedule.
+    const edited = makeClip(1, 1, { startPpq: 2, notes: [makeNote({ velocity: 64 })] });
+    await sync.sync(tracks, [edited], BPM);
+    expect(engine.setMidiClips).toHaveBeenCalledTimes(2);
+    const resent = engine.setMidiClips.mock.calls[1][0];
+    expect(resent[0].events[0].word0).toBe(noteOnWord(0, 60, 64));
+  });
+
+  it('re-bakes and re-sends the clip frames after a tempo change', async () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMidiSync(handle);
+    const tracks = [makeTrack(1)];
+    const clips = [makeClip(1, 1, { startPpq: 2 })];
+
+    await sync.sync(tracks, clips, BPM);
+    expect(engine.setMidiClips.mock.calls[0][0][0].startSample).toBe(2 * SPP);
+
+    await sync.sync(tracks, clips, 60);
+    expect(engine.setMidiClips).toHaveBeenCalledTimes(2);
+    expect(engine.setMidiClips.mock.calls[1][0][0].startSample).toBe(2 * 48000);
+  });
+
+  it('reports the schedule count of the last send', async () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMidiSync(handle);
+    const tracks = [makeTrack(1)];
+
+    expect(sync.scheduledClipCount()).toBe(0);
+    await sync.sync(tracks, [makeClip(1, 1), makeClip(2, 1, { startPpq: 8 })], BPM);
+    expect(sync.scheduledClipCount()).toBe(2);
+
+    await sync.sync(tracks, [], BPM);
+    expect(engine.setMidiClips).toHaveBeenLastCalledWith([]);
+    expect(sync.scheduledClipCount()).toBe(0);
+  });
+});

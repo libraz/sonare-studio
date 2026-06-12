@@ -1,20 +1,11 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
-import { scheduleMidiClip } from '@/engine/instruments';
 import type { TrackInstrument } from '@/project/instrument';
 import { createDefaultStrip, type MixerStrip } from '@/project/mixer';
 import { scheduleProjectClips } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
 import type { EditorClip, EditorNote, EditorTrack } from '@/project/types';
-
-vi.mock('@/engine/instruments', async () => {
-  const actual =
-    await vi.importActual<typeof import('@/engine/instruments')>('@/engine/instruments');
-  return { ...actual, scheduleMidiClip: vi.fn(async () => 0) };
-});
-
-const scheduleMidiClipMock = vi.mocked(scheduleMidiClip);
 
 /** Builds a track mirror entry with overridable fields. */
 function makeTrack(id: number, overrides: Partial<EditorTrack> = {}): EditorTrack {
@@ -94,61 +85,20 @@ describe('scheduleProjectClips with mixer state', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     store = useProjectStore();
-    let nextEngineClipId = 100;
-    scheduleMidiClipMock.mockReset();
-    scheduleMidiClipMock.mockImplementation(async () => nextEngineClipId++);
   });
 
-  it('passes no mixer extras for neutral tracks (legacy options shape)', async () => {
-    store.tracks = [makeTrack(1)];
-    store.clips = [makeClip(10, 1)];
-    store.tempoBpm = 100;
-    const { handle } = makeHandle();
-
-    await scheduleProjectClips(handle);
-    expect(scheduleMidiClipMock.mock.calls[0][4]).toEqual({ tempoBpm: 100, targetPeak: 0.5 });
-  });
-
-  it('forwards the track instrument to scheduleMidiClip', async () => {
+  it('does not schedule MIDI clips regardless of instrument and mixer state', async () => {
     const instrument: TrackInstrument = { kind: 'synth-preset', preset: 'saw-lead' };
-    store.tracks = [makeTrack(1, { instrument })];
-    store.clips = [makeClip(10, 1)];
-    const { handle } = makeHandle();
-
-    await scheduleProjectClips(handle);
-    expect(scheduleMidiClipMock.mock.calls[0][4]?.instrument).toEqual(instrument);
-  });
-
-  it('does not fold strip or master gain into MIDI options (gain is engine lane state)', async () => {
-    store.tracks = [makeTrack(1, { mixer: { ...createDefaultStrip(), gainDb: -6 } })];
-    store.clips = [makeClip(10, 1)];
+    store.tracks = [makeTrack(1, { instrument }), makeTrack(2, { mixer: dspStrip({ pan: 0.5 }) })];
+    store.clips = [makeClip(10, 1), makeClip(20, 2)];
     store.mixer.master.gainDb = -6;
-    const { handle } = makeHandle();
+    const { handle, addClip } = makeHandle();
 
-    await scheduleProjectClips(handle);
-    const options = scheduleMidiClipMock.mock.calls[0][4];
-    expect(options?.extraGain).toBeUndefined();
-    expect(options?.targetPeak).toBe(0.5);
-  });
-
-  it('passes no MIDI process hook for pan-only strips (pan is engine lane state)', async () => {
-    store.tracks = [makeTrack(1, { mixer: { ...createDefaultStrip(), pan: 0.5 } })];
-    store.clips = [makeClip(10, 1)];
-    store.mixer.master.pan = 0.25;
-    const { handle } = makeHandle(48000);
-
-    await scheduleProjectClips(handle);
-    expect(scheduleMidiClipMock.mock.calls[0][4]?.processChannels).toBeUndefined();
-  });
-
-  it('passes no MIDI process hook for strips with insert DSP (strip DSP is engine state)', async () => {
-    store.tracks = [makeTrack(1, { mixer: dspStrip({ pan: 0.5 }) })];
-    store.clips = [makeClip(10, 1)];
-    store.mixer.master.pan = 0.25;
-    const { handle } = makeHandle(48000);
-
-    await scheduleProjectClips(handle);
-    expect(scheduleMidiClipMock.mock.calls[0][4]?.processChannels).toBeUndefined();
+    // MIDI clips and instruments are realtime engine state: nothing is
+    // bounced or placed on the engine timeline here.
+    const scheduled = await scheduleProjectClips(handle);
+    expect(scheduled).toEqual([]);
+    expect(addClip).not.toHaveBeenCalled();
   });
 
   it('schedules audio clips raw even when the strip carries insert DSP', async () => {

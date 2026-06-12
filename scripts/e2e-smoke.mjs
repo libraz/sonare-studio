@@ -572,6 +572,12 @@ try {
     null,
     { timeout: 20000 },
   );
+  const midiClipCount = await page.evaluate(() => window.__sonareDebug.engineMidiClipCount());
+  if (midiClipCount < 1) {
+    fail(`expected MIDI clips in the engine schedule, got ${midiClipCount}`);
+  } else {
+    console.info(`engine holds ${midiClipCount} realtime MIDI clip schedule(s)`);
+  }
   const idsBeforeInstrument = await page.evaluate(() =>
     JSON.stringify(window.__sonareDebug.scheduledClipIds()),
   );
@@ -593,18 +599,19 @@ try {
       .first()
       .click();
     await page.waitForFunction(
-      (before) =>
-        window.__sonareDebug.applyPending() === false &&
-        JSON.stringify(window.__sonareDebug.scheduledClipIds()) !== before,
-      idsBeforeInstrument,
-      { timeout: 30000 },
+      (name) => window.__sonareDebug.trackInstruments().includes(name),
+      presetName,
+      { timeout: 10000 },
     );
-    const instruments = await page.evaluate(() => window.__sonareDebug.trackInstruments());
-    if (!instruments.includes(presetName)) {
-      fail(`expected a track bound to "${presetName}", got ${JSON.stringify(instruments)}`);
-    } else {
-      console.info(`instrument changed to "${presetName}" and the project re-scheduled`);
+    await page.waitForTimeout(400);
+    const instrumentState = await page.evaluate(() => ({
+      pending: window.__sonareDebug.applyPending(),
+      ids: JSON.stringify(window.__sonareDebug.scheduledClipIds()),
+    }));
+    if (instrumentState.pending || instrumentState.ids !== idsBeforeInstrument) {
+      fail(`instrument change caused a re-schedule: pending=${instrumentState.pending}`);
     }
+    console.info(`instrument changed to "${presetName}" without re-scheduling (realtime synth)`);
   }
 
   // Two presets must render audibly different buffers through the real wasm.
@@ -798,6 +805,37 @@ try {
     timeout: 10000,
   });
   console.info(`step pattern applied: ${notesBeforeApply} -> 4 notes`);
+
+  // --- Realtime MIDI: note edits play without a re-bounce ---------------------
+
+  {
+    await page.waitForTimeout(400);
+    const stepsPending = await page.evaluate(() => window.__sonareDebug.applyPending());
+    if (stepsPending) {
+      fail('step bake caused an audio re-bounce (MIDI edits must be realtime)');
+    }
+    // Mute the audio track: anything audible at PPQ 0 must then come from the
+    // engine's realtime MIDI instruments (MIDI clips are never bounced to
+    // audio clips anymore).
+    await page.click('.dock-tabs button:has-text("Mixer")');
+    await page.waitForSelector('.mixer-strips .channel-strip', { timeout: 10000 });
+    const audioMute = page.locator('.mixer-strips .channel-strip .toggle.mute').nth(2);
+    await audioMute.click();
+    const rulerBox5 = await page.locator('.arrangement-canvas').boundingBox();
+    await page.mouse.click(rulerBox5.x + 2, rulerBox5.y + 14);
+    await page.click('.transport-bar button:has-text("Play")');
+    await page.waitForFunction(
+      () => {
+        const peak = window.__sonareDebug.meterPeakDb();
+        return peak !== null && peak > -90;
+      },
+      null,
+      { timeout: 5000 },
+    );
+    await page.click('.transport-bar button:has-text("Stop")');
+    await audioMute.click();
+    console.info('realtime MIDI: baked pattern audible through the engine instruments');
+  }
 
   // --- Mastering tab: add processors to the project mastering chain -----------
 

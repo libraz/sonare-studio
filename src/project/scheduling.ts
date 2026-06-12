@@ -1,8 +1,9 @@
 /**
- * Project-wide playback scheduling: prerenders and schedules every MIDI clip
- * and loads/schedules every audio clip of every track into the engine. The
- * single-implicit-track flow (scheduleMidiClip with one clip) remains the
- * degenerate case.
+ * Project-wide playback scheduling: loads and schedules every audio clip of
+ * every track into the engine. MIDI clips and instruments are realtime engine
+ * state, fed by the engine's MIDI scheduling (src/engine/midi-sync.ts) and not
+ * scheduled here; only the offline export renderer (src/export/mixdown.ts)
+ * still prerenders MIDI to audio.
  *
  * Clips are scheduled raw: track strips (inserts/EQ), gain/pan, solo/mute,
  * sends/buses and the master strip are realtime engine mixer state, applied
@@ -15,19 +16,16 @@
  */
 
 import type { EngineHandle } from '@/engine/engine';
-import {
-  type MidiNote,
-  type ScheduleMidiClipOptions,
-  scheduleMidiClip,
-} from '@/engine/instruments';
+import type { MidiNote } from '@/engine/instruments';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import { useProjectStore } from './store';
 import type { EditorClip, EditorNote, EditorTrack } from './types';
 import { clipKind } from './types';
 
 /**
- * Default peak level scheduled MIDI clips are normalized to (-6 dBFS),
- * matching the scheduleMidiClip default. Audio clips are never normalized.
+ * Default peak level prerendered MIDI clips are normalized to (-6 dBFS) by the
+ * offline export renderer (src/export/mixdown.ts). Audio clips are never
+ * normalized.
  */
 export const DEFAULT_TARGET_PEAK = 0.5;
 
@@ -249,17 +247,6 @@ export interface ScheduleProjectClipsOptions {
   sampleRate?: number;
   /** Tempo used for the bounce; defaults to the store's tempo. */
   tempoBpm?: number;
-  /** NativeSynth preset name; defaults to the scheduleMidiClip default. */
-  preset?: string;
-  /**
-   * Base peak level per MIDI clip before track volume and clip gain are
-   * applied (default 0.5 = -6 dBFS). Pass null to schedule at the rendered
-   * level; track volume and clip gain are then NOT applied (the engine has no
-   * separate track-gain control for prerendered clips). Audio clips ignore
-   * this option entirely: they always play at their native level times
-   * (clip gain x track volume).
-   */
-  targetPeak?: number | null;
   /**
    * Audio asset loader (defaults to the OPFS asset store's loadAsset).
    * Injectable for tests and alternative storage backends.
@@ -268,7 +255,12 @@ export interface ScheduleProjectClipsOptions {
 }
 
 /**
- * Schedules every clip of every track into the engine.
+ * Schedules every audio clip of every track into the engine.
+ *
+ * MIDI clips are skipped entirely: MIDI content and instruments are realtime
+ * engine state, fed by the engine's MIDI scheduling (src/engine/midi-sync.ts).
+ * Only the offline export renderer (src/export/mixdown.ts) still prerenders
+ * MIDI to audio.
  *
  * All tracks are scheduled regardless of mute/solo, and clips are scheduled
  * raw: audibility, track volume, track strips (inserts/EQ), gain/pan,
@@ -276,10 +268,6 @@ export interface ScheduleProjectClipsOptions {
  * by the engine without re-scheduling. Only the offline export renderer
  * (src/export/mixdown.ts + src/export/strip-render.ts) still bakes strip DSP
  * into its render.
- *
- * MIDI clips are prerendered and normalized: clip gain is folded into the
- * per-clip normalization target. Empty clips and fully attenuated clips are
- * skipped.
  *
  * Audio clips load their asset from the asset store, slice the source window
  * (sourceOffsetPpq/lengthPpq at the schedule tempo), bake fades into the
@@ -293,7 +281,7 @@ export interface ScheduleProjectClipsOptions {
  * engine.removeClip(engineClipId) for each entry before re-scheduling.
  *
  * @param handle Running engine handle from createEngine.
- * @param options Optional render/level overrides.
+ * @param options Optional render overrides.
  * @returns One entry per scheduled clip.
  */
 export async function scheduleProjectClips(
@@ -302,62 +290,40 @@ export async function scheduleProjectClips(
 ): Promise<ScheduledProjectClip[]> {
   const store = useProjectStore();
   const tempoBpm = options.tempoBpm ?? store.tempoBpm;
-  const basePeak = options.targetPeak === undefined ? DEFAULT_TARGET_PEAK : options.targetPeak;
   const loadAudio = options.loadAudioAsset ?? loadAsset;
   const scheduled: ScheduledProjectClip[] = [];
   for (const track of store.tracks) {
     const clips = store.clips.filter((clip) => clip.trackId === track.id);
     for (const clip of clips) {
-      if (clipKind(clip) === 'audio') {
-        if (!clip.assetId) continue;
-        const gain = clip.gain;
-        if (gain <= 0) continue;
-        let asset: LoadedAudioAsset;
-        try {
-          asset = await loadAudio(clip.assetId);
-        } catch {
-          // Missing or unreadable asset: leave the clip silent.
-          continue;
-        }
-        let channels = sliceAudioClipWindow(
-          asset.channels,
-          asset.meta.sampleRate,
-          clip.sourceOffsetPpq,
-          clip.lengthPpq,
-          tempoBpm,
-        );
-        channels = applyAudioClipFades(
-          channels,
-          asset.meta.sampleRate,
-          tempoBpm,
-          clip.fadeInPpq ?? 0,
-          clip.fadeOutPpq ?? 0,
-        );
-        const targetRate = options.sampleRate ?? handle.ctx.sampleRate;
-        channels = resampleChannelsLinear(channels, asset.meta.sampleRate, targetRate);
-        if (channels.length === 0 || channels[0].length === 0) continue;
-        const engineClipId = handle.engine.addClip(track.id, channels, clip.startPpq, { gain });
-        scheduled.push({ engineClipId, clipId: clip.id, trackId: track.id });
+      if (clipKind(clip) !== 'audio') continue;
+      if (!clip.assetId) continue;
+      const gain = clip.gain;
+      if (gain <= 0) continue;
+      let asset: LoadedAudioAsset;
+      try {
+        asset = await loadAudio(clip.assetId);
+      } catch {
+        // Missing or unreadable asset: leave the clip silent.
         continue;
       }
-      const notes = clipPlaybackNotes(clip);
-      if (notes.length === 0) continue;
-      const targetPeak = basePeak === null ? null : basePeak * clip.gain;
-      if (targetPeak !== null && targetPeak <= 0) continue;
-      const midiOptions: ScheduleMidiClipOptions = {
-        ...(options.sampleRate !== undefined ? { sampleRate: options.sampleRate } : {}),
-        ...(options.preset !== undefined ? { preset: options.preset } : {}),
-        ...(track.instrument !== undefined ? { instrument: track.instrument } : {}),
+      let channels = sliceAudioClipWindow(
+        asset.channels,
+        asset.meta.sampleRate,
+        clip.sourceOffsetPpq,
+        clip.lengthPpq,
         tempoBpm,
-        targetPeak,
-      };
-      const engineClipId = await scheduleMidiClip(
-        handle,
-        track.id,
-        notes,
-        clip.startPpq,
-        midiOptions,
       );
+      channels = applyAudioClipFades(
+        channels,
+        asset.meta.sampleRate,
+        tempoBpm,
+        clip.fadeInPpq ?? 0,
+        clip.fadeOutPpq ?? 0,
+      );
+      const targetRate = options.sampleRate ?? handle.ctx.sampleRate;
+      channels = resampleChannelsLinear(channels, asset.meta.sampleRate, targetRate);
+      if (channels.length === 0 || channels[0].length === 0) continue;
+      const engineClipId = handle.engine.addClip(track.id, channels, clip.startPpq, { gain });
       scheduled.push({ engineClipId, clipId: clip.id, trackId: track.id });
     }
   }

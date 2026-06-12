@@ -1,3 +1,12 @@
+/**
+ * Offline MIDI prerender helpers: bounce a MIDI phrase to audio buffers with
+ * a libsonare instrument, cache the renders, and normalize levels. These
+ * serve the offline export renderer (src/export/mixdown.ts) and UI audition
+ * (src/ui/devices/audition.ts); realtime playback does not prerender — MIDI
+ * clips and instruments are engine state fed by the engine's MIDI scheduling
+ * (src/engine/midi-sync.ts).
+ */
+
 import { ensureWasm } from '@/lib/wasm';
 import { loadFont as loadStoredFont } from '@/project/fonts';
 import {
@@ -6,7 +15,6 @@ import {
   type TrackInstrument,
 } from '@/project/instrument';
 import type { ProjectMidiEvent } from '@/wasm/index.js';
-import type { EngineHandle } from './engine';
 
 /** One note of a MIDI phrase, positioned in quarter-note pulses (PPQ). */
 export interface MidiNote {
@@ -41,31 +49,6 @@ export interface PrerenderMidiClipOptions {
    */
   loadFont?: (fontId: string) => Promise<Uint8Array>;
 }
-
-/** Options for {@link scheduleMidiClip}; sampleRate defaults to the engine context rate. */
-export type ScheduleMidiClipOptions = Partial<PrerenderMidiClipOptions> & {
-  /**
-   * Peak level the scheduled clip is normalized to via the engine's per-clip
-   * gain (the cached render itself is untouched). Synth bounces can be quiet
-   * (the default e-piano phrase peaks around -23 dBFS), so this defaults to
-   * 0.5 (-6 dBFS). Pass null to schedule at the rendered level.
-   */
-  targetPeak?: number | null;
-  /**
-   * Hook applied to the cached render before peak measurement and scheduling
-   * (the project layer uses it for offline channel-strip DSP and pan baking).
-   * Must not mutate the input buffers; return fresh buffers instead.
-   */
-  processChannels?: (channels: Float32Array[]) => Float32Array[];
-  /**
-   * Extra linear gain multiplied onto the engine per-clip gain after
-   * normalization (the project layer folds strip/master gain through it).
-   */
-  extraGain?: number;
-};
-
-/** Default peak level clips are normalized to when scheduling (-6 dBFS). */
-const DEFAULT_TARGET_PEAK = 0.5;
 
 /** Gain ceiling for normalization, so a near-silent render is not blown up. */
 const MAX_NORMALIZE_GAIN = 24;
@@ -253,9 +236,10 @@ type WasmModule = typeof import('@/wasm/index.js');
  * Validates a synth preset name against the runtime catalog when the module
  * exposes it, degrading unknown names to the default preset so a stale
  * document or template renders audibly instead of throwing. Modules without
- * the catalog function (older builds, test mocks) pass names through.
+ * the catalog function (older builds, test mocks) pass names through. Shared
+ * by the prerender path and the realtime instrument sync.
  */
-function resolvePresetName(wasm: WasmModule, preset: string): string {
+export function resolvePresetName(wasm: WasmModule, preset: string): string {
   const list = (wasm as { synthPresetNames?: () => string[] }).synthPresetNames;
   if (typeof list !== 'function') return preset;
   try {
@@ -362,37 +346,6 @@ export async function prerenderMidiClip(
   } finally {
     project.delete();
   }
-}
-
-/**
- * Prerenders a MIDI phrase and schedules the resulting audio on the engine.
- *
- * @param handle Running engine handle from createEngine.
- * @param trackId Target track identifier passed through to engine.addClip.
- * @param notes Notes of the phrase (clip-relative PPQ).
- * @param startPpq Timeline position of the clip start, in PPQ.
- * @param options Optional render overrides; sampleRate defaults to the engine context rate.
- * @returns The engine clip id (use engine.removeClip(clipId) to unschedule).
- */
-export async function scheduleMidiClip(
-  handle: EngineHandle,
-  trackId: string | number,
-  notes: ReadonlyArray<MidiNote>,
-  startPpq: number,
-  options: ScheduleMidiClipOptions = {},
-): Promise<number> {
-  const channels = await prerenderMidiClip(notes, {
-    sampleRate: options.sampleRate ?? handle.ctx.sampleRate,
-    tempoBpm: options.tempoBpm,
-    preset: options.preset,
-    instrument: options.instrument,
-    loadFont: options.loadFont,
-  });
-  const processed = options.processChannels ? options.processChannels(channels) : channels;
-  const targetPeak = options.targetPeak === undefined ? DEFAULT_TARGET_PEAK : options.targetPeak;
-  const baseGain = targetPeak === null ? 1 : normalizeGain(peakAmplitude(processed), targetPeak);
-  const gain = baseGain * (options.extraGain ?? 1);
-  return handle.engine.addClip(trackId, processed, startPpq, { gain });
 }
 
 /**

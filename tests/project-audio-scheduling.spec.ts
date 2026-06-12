@@ -1,7 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
-import { scheduleMidiClip } from '@/engine/instruments';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import {
   applyAudioClipFades,
@@ -12,12 +11,6 @@ import {
 } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
 import type { EditorClip, EditorTrack } from '@/project/types';
-
-vi.mock('@/engine/instruments', () => ({
-  scheduleMidiClip: vi.fn(async () => 0),
-}));
-
-const scheduleMidiClipMock = vi.mocked(scheduleMidiClip);
 
 /** Builds a track mirror entry with overridable fields. */
 function makeTrack(id: number, overrides: Partial<EditorTrack> = {}): EditorTrack {
@@ -130,9 +123,6 @@ describe('scheduleProjectClips with audio clips', () => {
     setActivePinia(createPinia());
     store = useProjectStore();
     store.tempoBpm = 120;
-    let nextEngineClipId = 100;
-    scheduleMidiClipMock.mockReset();
-    scheduleMidiClipMock.mockImplementation(async () => nextEngineClipId++);
   });
 
   it('loads the asset and schedules the buffer at the clip start with the clip gain', async () => {
@@ -153,7 +143,6 @@ describe('scheduleProjectClips with audio clips', () => {
     // the scheduled gain is exactly the clip gain.
     expect(opts).toEqual({ gain: 0.8 });
     expect((channels as Float32Array[])[0]).toEqual(makeAsset(20).channels[0]);
-    expect(scheduleMidiClipMock).not.toHaveBeenCalled();
   });
 
   it('slices the source window from sourceOffsetPpq and lengthPpq', async () => {
@@ -237,7 +226,7 @@ describe('scheduleProjectClips with audio clips', () => {
     expect(loadAudioAsset).toHaveBeenNthCalledWith(2, 'asset-x');
   });
 
-  it('schedules MIDI and audio clips side by side', async () => {
+  it('schedules only audio clips; MIDI clips are realtime engine state', async () => {
     store.tracks = [makeTrack(1), makeTrack(2, { kind: 'midi' })];
     const midiClip = makeAudioClip(20, 2, {
       notes: [{ id: 1, pitch: 60, velocity: 100, startPpq: 0, durationPpq: 1, channel: 0 }],
@@ -250,11 +239,10 @@ describe('scheduleProjectClips with audio clips', () => {
     const scheduled = await scheduleProjectClips(handle, {
       loadAudioAsset: async () => makeAsset(20),
     });
-    expect(scheduled.map((s) => s.clipId)).toEqual([10, 20]);
+    // The MIDI clip produces no engine clip: it plays via the engine's MIDI
+    // scheduling, not via addClip.
+    expect(scheduled.map((s) => s.clipId)).toEqual([10]);
     expect(addClip).toHaveBeenCalledTimes(1);
-    expect(scheduleMidiClipMock).toHaveBeenCalledTimes(1);
-    // Audio clips ignore targetPeak folding; MIDI keeps the default.
-    expect(scheduleMidiClipMock.mock.calls[0][4]?.targetPeak).toBe(0.5);
   });
 
   it('uses the sampleRate option instead of the engine context rate', async () => {

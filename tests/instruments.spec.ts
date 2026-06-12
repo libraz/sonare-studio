@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { EngineHandle } from '@/engine/engine';
 import {
   clearPrerenderCache,
   deinterleave,
@@ -10,7 +9,6 @@ import {
   noteEventsFromNotes,
   peakAmplitude,
   prerenderMidiClip,
-  scheduleMidiClip,
 } from '@/engine/instruments';
 
 const wasmMock = vi.hoisted(() => {
@@ -187,29 +185,6 @@ describe('prerenderMidiClip', () => {
     expect(channels[0].length).toBe(0);
     expect(channels[1].length).toBe(0);
     expect(wasmMock.bounceWithSynthInstrument).not.toHaveBeenCalled();
-  });
-});
-
-describe('scheduleMidiClip', () => {
-  it('prerenders at the context sample rate and forwards to engine.addClip', async () => {
-    const addClip = vi.fn(() => 42);
-    const handle = {
-      ctx: { sampleRate: 48000 },
-      engine: { addClip },
-    } as unknown as EngineHandle;
-
-    const clipId = await scheduleMidiClip(handle, 'track-1', NOTES, 4);
-    expect(clipId).toBe(42);
-    expect(addClip).toHaveBeenCalledTimes(1);
-    const [trackId, channels, startPpq] = addClip.mock.calls[0] as unknown as [
-      string,
-      Float32Array[],
-      number,
-    ];
-    expect(trackId).toBe('track-1');
-    expect(channels).toHaveLength(2);
-    expect(channels[0]).toBeInstanceOf(Float32Array);
-    expect(startPpq).toBe(4);
   });
 });
 

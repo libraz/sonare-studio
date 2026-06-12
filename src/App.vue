@@ -34,8 +34,10 @@ import {
   normalizeGain,
   peakAmplitude,
   prerenderMidiClip,
+  resolvePresetName,
 } from '@/engine/instruments';
 import { createMeterBridge, type MeterBridge } from '@/engine/meters';
+import { createMidiSync, type MidiSync } from '@/engine/midi-sync';
 import { createMixerSync, type MixerSync } from '@/engine/mixer-sync';
 import { createStripSync, type StripSync } from '@/engine/strip-sync';
 import { renderMixdownInWorker } from '@/export/client';
@@ -594,6 +596,7 @@ function formatSize(bytes: number): string {
 let scheduledClips: ScheduledProjectClip[] = [];
 let mixerSync: MixerSync | null = null;
 let stripSync: StripSync | null = null;
+let midiSync: MidiSync | null = null;
 /** Number of clips scheduled by the last apply (display only). */
 const scheduledCount = ref(0);
 /** True while edits exist that have not been bounced to the engine yet. */
@@ -650,18 +653,37 @@ function syncMixerState(): void {
   stripSync.sync(store.tracks, store.mixer);
 }
 
+/** Serializes async MIDI syncs so rapid edits cannot interleave out of order. */
+let midiSyncQueue: Promise<void> = Promise.resolve();
+
 /**
- * The scheduling-relevant identity of a track: content changes here require
- * a re-bounce (instrument selection is still baked offline), while mixer
- * changes — including strip inserts/EQ — are handled by the realtime sync.
+ * Mirrors MIDI content onto the engine immediately: track instruments and the
+ * compiled MIDI clip schedules. Note edits, instrument changes and tempo
+ * changes all land here — no re-bounce. Instrument swaps are stop-gated by
+ * the engine itself (they apply when playback stops).
+ */
+function syncMidiState(): void {
+  const m = midiSync;
+  if (!m || !store.initialized) return;
+  midiSyncQueue = midiSyncQueue
+    .then(() => m.sync(store.tracks, store.clips, store.tempoBpm))
+    .catch((err) => {
+      errorMessage.value = describeError(err);
+    });
+}
+
+/**
+ * The audio-bounce identity of a track: id and kind. Everything else —
+ * instrument, mixer levels, strip DSP — is realtime engine state.
  */
 function trackScheduleKey(track: EditorTrack): string {
-  return `${track.id}|${track.kind}|${JSON.stringify(track.instrument ?? null)}`;
+  return `${track.id}|${track.kind}`;
 }
 
 /**
  * The scheduling-relevant identity of a clip. The display name is excluded;
- * everything else (position, content, gain, fades, asset) feeds the bounce.
+ * everything else (position, content, gain, fades, asset) feeds either the
+ * audio bounce or the realtime MIDI schedule.
  */
 function clipScheduleKey(clip: EditorClip): string {
   const { name: _name, ...rest } = clip;
@@ -670,11 +692,12 @@ function clipScheduleKey(clip: EditorClip): string {
 
 // The mirror arrays are replaced wholesale per command (including by
 // store.refresh()), so identity-based watches would fire on every edit.
-// Both watchers therefore compare scheduling-relevant content keys: clips
-// cover note/clip edits, tracks re-bounce only on instrument changes — all
-// mixer state (levels, strip DSP, buses/sends) goes to the engine directly.
+// The watchers therefore compare content keys. Only AUDIO clip content
+// re-bounces; MIDI clips, instruments and tempo mirror to the engine's
+// realtime MIDI schedule, and mixer state (levels, strip DSP, buses/sends)
+// mirrors to the engine mixer — none of those re-schedule.
 watch(
-  () => store.clips.map(clipScheduleKey).join('\n'),
+  () => store.clips.filter(isAudioClip).map(clipScheduleKey).join('\n'),
   (next, prev) => {
     if (next !== prev) scheduleApply();
   },
@@ -683,6 +706,22 @@ watch(
   () => store.tracks.map(trackScheduleKey).join('\n'),
   (next, prev) => {
     if (next !== prev) scheduleApply();
+  },
+);
+watch(
+  () =>
+    [
+      store.clips
+        .filter((clip) => !isAudioClip(clip))
+        .map(clipScheduleKey)
+        .join('\n'),
+      store.tracks
+        .map((track) => `${track.id}|${JSON.stringify(track.instrument ?? null)}`)
+        .join('\n'),
+      String(store.tempoBpm),
+    ].join(' '),
+  (next, prev) => {
+    if (next !== prev) syncMidiState();
   },
 );
 watch(() => store.tracks, syncMixerState);
@@ -700,14 +739,32 @@ function applyNow(): void {
 // --- Live note preview -------------------------------------------------------
 
 /**
- * Plays a short single-note preview directly on the AudioContext. The note is
- * prerendered through the shared content-addressed cache (repeats are cheap)
- * and played as a one-shot buffer, so it is audible even while the engine
- * transport is stopped.
+ * Plays a short single-note preview. When the active track is a MIDI track,
+ * the note goes through the engine's live MIDI input — it sounds through the
+ * track's own instrument and channel strip, whether the transport plays or
+ * not. Otherwise (audio track, no engine) it falls back to a prerendered
+ * one-shot buffer on the AudioContext.
  */
 async function previewNote(pitch: number, velocity: number): Promise<void> {
   const h = handle.value;
   if (!h) return;
+  const activeTrack = store.tracks.find((track) => track.id === store.activeTrackId);
+  if (activeTrack && activeTrack.kind === 'midi' && midiSync) {
+    const durationMs = (PREVIEW_DURATION_PPQ * 60000) / Math.max(1, store.tempoBpm);
+    try {
+      h.engine.pushMidiNoteOn(activeTrack.id, 0, 0, pitch, velocity);
+      setTimeout(() => {
+        try {
+          h.engine.pushMidiNoteOff(activeTrack.id, 0, 0, pitch);
+        } catch {
+          // The engine may be disposed before the note-off timer fires.
+        }
+      }, durationMs);
+    } catch (err) {
+      errorMessage.value = describeError(err);
+    }
+    return;
+  }
   const phrase: MidiNote[] = [
     { note: pitch, velocity, startPpq: 0, durationPpq: PREVIEW_DURATION_PPQ },
   ];
@@ -788,6 +845,9 @@ function startEngine(): Promise<void> {
     const insertCatalog =
       typeof wasm.masteringInsertNames === 'function' ? new Set(wasm.masteringInsertNames()) : null;
     stripSync = createStripSync(h, { insertCatalog });
+    midiSync = createMidiSync(h, {
+      resolvePreset: (preset) => resolvePresetName(wasm as never, preset),
+    });
     bridge.value = createMeterBridge(h);
     ctxState.value = h.ctx.state;
     h.ctx.addEventListener('statechange', () => {
@@ -801,6 +861,7 @@ function startEngine(): Promise<void> {
     await store.init({ sampleRate: h.ctx.sampleRate });
     transport.setTempo(store.tempoBpm);
     syncMixerState();
+    syncMidiState();
     await applyToEngine();
   });
 }
@@ -872,12 +933,16 @@ function applyTempo(): void {
 
 // The project tempo map is authoritative: edits from the tempo input, the
 // lists editor, undo/redo and project loads all land here, then drive the
-// transport rate and the bounce (scheduleApply fires via the clips watcher).
+// transport rate, the audio re-bounce (clip windows are sliced at the
+// tempo) and the realtime MIDI re-bake (via the MIDI content watcher).
 watch(
   () => store.tempoBpm,
   (bpm) => {
     tempoInput.value = bpm;
-    if (handle.value) transport.setTempo(bpm);
+    if (handle.value) {
+      transport.setTempo(bpm);
+      scheduleApply();
+    }
   },
 );
 
@@ -1270,6 +1335,7 @@ onMounted(async () => {
       activeClipId: () => store.clipId,
       applyPending: () => applyPending.value,
       scheduledClipIds: () => scheduledClips.map((clip) => clip.engineClipId),
+      engineMidiClipCount: () => midiSync?.scheduledClipCount() ?? 0,
       trackInstruments: () =>
         store.tracks.map((track) =>
           track.instrument === undefined
@@ -1372,6 +1438,7 @@ onBeforeUnmount(async () => {
   bridge.value = null;
   mixerSync = null;
   stripSync = null;
+  midiSync = null;
   await handle.value?.dispose();
   handle.value = null;
 });
@@ -1882,7 +1949,7 @@ onBeforeUnmount(async () => {
       </div>
 
       <aside v-if="deviceRackOpen" class="right-zone" aria-label="Device rack panel">
-        <DeviceRack />
+        <DeviceRack :transport-playing="isPlaying" />
       </aside>
     </main>
 
