@@ -1,25 +1,33 @@
 /**
  * Microphone recording for a running engine: binds a microphone to the engine
- * node, captures the input on the host thread, and returns the recorded
- * frames together with the timeline position where the take starts.
+ * node and records through the engine's native capture path
+ * (configureCapture / armRecord / punch / capturedAudio).
  *
- * Capture model: arming and punching delegate to the engine record path
- * (engine.armRecord / engine.punch), but the declared engine API offers no
- * channel that carries captured frames from the AudioWorklet back to the main
- * thread (RealtimeEngine.capturedAudio exists only on control-thread engine
- * instances). The recorder therefore taps the microphone source with a
- * host-side capture node and assembles the take itself, applying count-in
- * skip and record-latency offset in plain sample math. For the same reason,
- * input monitoring runs through a host-side gain node: the engine's
- * setInputMonitor switch is not part of the worklet command protocol.
+ * Capture model: configureCapture allocates the engine-side capture buffer up
+ * front and selects `source: 'input'`, which captures the raw microphone
+ * signal (the engine node's input) before any processing. Capture is gated to
+ * the punch window — a half-open PPQ range [in, out) converted engine-side at
+ * the current tempo map — and only runs while the transport plays, so a
+ * count-in pre-roll (transport seeked earlier than the punch-in) is excluded
+ * from the take without any host-side frame skipping. The engine treats
+ * recordOffsetSamples as metadata only and never shifts captured samples;
+ * record-latency compensation is applied here by trimming the head of the
+ * take in stop().
  *
- * Silence guarantees: requesting a microphone produces no sound. The capture
- * tap drains into a zero-gain stage and the monitor path stays disconnected
- * until setMonitor(true) is called explicitly; nothing here starts playback.
+ * Input monitoring is engine-side: the capture config's inputMonitor switch
+ * controls whether the microphone input is also mixed into the engine output.
+ * Re-sending the config (for example to toggle the monitor) does not lose
+ * armed state or buffered audio. captureStatus / capturedAudio / resetCapture
+ * are async over a request/response message channel and behave identically in
+ * SAB and postMessage fallback modes. Meter snapshots tagged with
+ * {@link INPUT_METER_TARGET_ID} carry the input-capture level in dBFS.
+ *
+ * Silence guarantees: requesting a microphone produces no sound. The input
+ * monitor stays disabled until setMonitor(true) is called explicitly; nothing
+ * here starts playback.
  */
 
 import { ensureWasm } from '@/lib/wasm';
-import { ppqToSeconds } from '@/project/scheduling';
 import type { EngineHandle } from './engine';
 
 /** Thrown when the environment cannot capture microphone audio at all. */
@@ -61,8 +69,26 @@ export const MICROPHONE_CONSTRAINTS: MediaStreamConstraints = {
   video: false,
 };
 
-/** Upper bound for one take when no explicit limit is passed (10 minutes). */
-const DEFAULT_MAX_DURATION_SECONDS = 600;
+/**
+ * Meter target id of the engine's input-capture level: snapshots with this
+ * targetId carry the microphone peak (dBFS) alongside master/lane records.
+ */
+export const INPUT_METER_TARGET_ID = 0xffff;
+
+/**
+ * Capture buffer length in seconds configured while idle: a small allocation
+ * keeps the input source and the monitor state live on the engine before any
+ * take starts. start() reconfigures the buffer to the full take length.
+ */
+const MONITOR_BUFFER_SECONDS = 1;
+
+/**
+ * Upper bound for one take when no explicit limit is passed (5 minutes).
+ * The engine preallocates the whole capture buffer up front (stereo float:
+ * seconds x sampleRate x 2 channels x 4 bytes), so this cap is a real
+ * allocation rather than a grow-as-you-record limit.
+ */
+const DEFAULT_MAX_DURATION_SECONDS = 300;
 
 /** Default minimum interval between input-level callbacks. */
 const DEFAULT_LEVEL_INTERVAL_MS = 50;
@@ -84,19 +110,17 @@ export interface StartRecordingOptions {
   /** Tempo in BPM used for all PPQ/time conversions (> 0). */
   tempoBpm: number;
   /**
-   * Count-in length in PPQ (>= 0, default 0). The transport is expected to
-   * start rolling at `startPpq - countInPpq`; the captured count-in span is
-   * discarded so the take begins exactly at `startPpq`.
-   */
-  countInPpq?: number;
-  /**
-   * Record-latency compensation in samples (>= 0): that many extra captured
-   * frames are dropped at the punch-in so material played against the heard
-   * output lands on the timeline where it was intended. Defaults to
-   * {@link defaultRecordOffsetSamples} of the engine context.
+   * Record-latency compensation in samples (>= 0): the first that many
+   * captured frames are dropped when the take is assembled. A sound played
+   * at timeline position T reaches the capture input roughly this many
+   * samples late, so trimming the head re-aligns the take to `startPpq`.
+   * Defaults to {@link defaultRecordOffsetSamples} of the engine context.
    */
   recordOffsetSamples?: number;
-  /** Maximum take length in seconds (> 0, default 600). Extra frames are dropped. */
+  /**
+   * Maximum take length in seconds (> 0, default 300). Sizes the engine
+   * capture buffer, so the whole span is allocated up front.
+   */
   maxDurationSeconds?: number;
 }
 
@@ -109,25 +133,6 @@ export interface MicrophoneBinding {
   /** Disconnects the source and stops the stream tracks. */
   close(): void;
 }
-
-/** A host-side capture tap delivering microphone blocks to the recorder. */
-export interface CaptureTap {
-  /** Disconnects the tap and stops block delivery. */
-  close(): void;
-}
-
-/**
- * Builds a capture tap on a microphone source node. The factory must invoke
- * `onBlock` with planar buffers the recorder may retain (no reuse across
- * calls); the default implementation posts transferred copies from an
- * AudioWorklet processor.
- */
-export type CaptureTapFactory = (
-  ctx: AudioContext,
-  source: AudioNode,
-  channelCount: number,
-  onBlock: (channels: ReadonlyArray<Float32Array>) => void,
-) => Promise<CaptureTap> | CaptureTap;
 
 /** Injectable dependencies and tuning for {@link createRecorder}. */
 export interface RecorderOptions {
@@ -142,8 +147,6 @@ export interface RecorderOptions {
     engineNode: AudioWorkletNode,
     options: { stream: MediaStream; stopTracksOnClose: boolean },
   ) => Promise<MicrophoneBinding>;
-  /** Capture tap factory; defaults to an AudioWorklet-based tap. */
-  createTap?: CaptureTapFactory;
   /** Minimum interval between input-level callbacks in ms (default 50). */
   levelIntervalMs?: number;
 }
@@ -152,8 +155,8 @@ export interface RecorderOptions {
 export interface Recorder {
   /**
    * Requests microphone access (tracking-quality constraints), binds the
-   * stream to the engine node and installs the capture tap. Idempotent;
-   * concurrent calls share one request.
+   * stream to the engine node and configures the engine capture input.
+   * Idempotent; concurrent calls share one request.
    *
    * @throws NotSupportedError When no capture API is available.
    * @throws NoMicrophoneError When access fails or is denied.
@@ -170,9 +173,9 @@ export interface Recorder {
   /** True between a successful start() and the matching stop(). */
   isRecording(): boolean;
   /**
-   * Enables or disables host-side input monitoring (microphone to context
-   * destination through a gain node). Disabled by default; the desired state
-   * is remembered and applied once the microphone is bound.
+   * Enables or disables engine-side input monitoring (the microphone input
+   * mixed into the engine output). Disabled by default; the desired state is
+   * remembered and applied once the microphone is bound.
    *
    * @param enabled Target monitor state.
    * @param gain Linear monitor gain (finite, >= 0); kept when omitted.
@@ -182,33 +185,39 @@ export interface Recorder {
   monitorEnabled(): boolean;
   /**
    * Subscribes to throttled input peak levels (linear, 0..1+, max across
-   * channels since the previous callback).
+   * channels since the previous callback), derived from the engine's
+   * input-capture meter snapshots.
    *
    * @returns An unsubscribe function.
    */
   onLevel(listener: (peak: number) => void): () => void;
   /**
-   * Starts capturing the armed track: arms the engine record path
-   * (engine.armRecord), sets the punch window (engine.punch), and begins
-   * collecting tap blocks. The caller drives the transport (seek to
-   * `startPpq - countInPpq`, then play) around this call.
+   * Starts capturing the armed track through the engine record path: sizes
+   * the capture buffer for the full take, resets the capture counters, arms
+   * the engine (engine.armRecord) and sets the punch window (engine.punch)
+   * from `startPpq` to the max-duration bound. The caller drives the
+   * transport around this call (seek — possibly earlier than `startPpq` for
+   * a count-in — then play); the engine captures nothing outside the punch
+   * window.
    *
    * @throws RecorderStateError When disposed, already recording, the
    *   microphone is missing, or no track is armed.
    */
-  start(options: StartRecordingOptions): void;
+  start(options: StartRecordingOptions): Promise<void>;
   /**
-   * Stops capturing, disarms the engine record path and assembles the take.
+   * Disarms the engine record path, reads the captured take, resets the
+   * engine capture and restores the idle capture config.
    *
-   * @returns The recorded frames, or null when nothing usable was captured
-   *   (for example when stopped during the count-in).
+   * @returns The recorded frames (head-trimmed by the record-latency
+   *   offset), or null when nothing usable was captured (for example when
+   *   stopped during the count-in).
    * @throws RecorderStateError When no recording is in progress.
    */
-  stop(): RecordingResult | null;
+  stop(): Promise<RecordingResult | null>;
   /**
-   * Releases everything: aborts an in-flight recording (discarding frames),
-   * closes the tap, disconnects the monitor path and stops the microphone
-   * tracks. Safe to call multiple times.
+   * Releases everything: disarms an in-flight recording (discarding frames),
+   * unsubscribes from engine meters and stops the microphone tracks. Safe to
+   * call multiple times.
    */
   dispose(): void;
 }
@@ -247,108 +256,19 @@ async function defaultBindInput(
   return wasm.bindMicrophoneInput(ctx, engineNode, options);
 }
 
-/** Reads the channel count from the stream's first audio track (default 2). */
-function streamChannelCount(stream: MediaStream): number {
-  const track = stream.getAudioTracks()[0];
-  const channels = track?.getSettings?.().channelCount;
-  return typeof channels === 'number' && channels >= 1 ? Math.floor(channels) : 2;
+/** Converts a peak in dBFS to linear amplitude (non-finite values map to 0). */
+function dbPeakToLinear(db: number): number {
+  return Number.isFinite(db) ? 10 ** (db / 20) : 0;
 }
 
-/** Registered name of the capture-tap AudioWorklet processor. */
-const TAP_PROCESSOR_NAME = 'sonare-studio-capture-tap';
-
-/**
- * Inline AudioWorklet module for the capture tap: forwards every input block
- * to the main thread as transferred copies and writes no output (the node's
- * output stays silent).
- */
-const TAP_PROCESSOR_SOURCE = `
-registerProcessor('${TAP_PROCESSOR_NAME}', class extends AudioWorkletProcessor {
-  process(inputs) {
-    const input = inputs[0];
-    if (input && input.length > 0 && input[0].length > 0) {
-      const channels = input.map((channel) => channel.slice(0));
-      this.port.postMessage(channels, channels.map((channel) => channel.buffer));
-    }
-    return true;
-  }
-});
-`;
-
-/** Contexts that already loaded the tap processor module. */
-const tapModuleContexts = new WeakSet<BaseAudioContext>();
-
-/**
- * Default capture tap: an AudioWorkletNode fed by the microphone source,
- * kept pulled by the rendering graph through a zero-gain stage so it never
- * becomes audible. The module is loaded from a same-origin blob URL (COEP
- * compatible).
- */
-async function createWorkletTap(
-  ctx: AudioContext,
-  source: AudioNode,
-  channelCount: number,
-  onBlock: (channels: ReadonlyArray<Float32Array>) => void,
-): Promise<CaptureTap> {
-  if (typeof AudioWorkletNode !== 'function' || !ctx.audioWorklet) {
-    throw new NotSupportedError('Microphone capture requires AudioWorklet support');
-  }
-  if (!tapModuleContexts.has(ctx)) {
-    const url = URL.createObjectURL(
-      new Blob([TAP_PROCESSOR_SOURCE], { type: 'application/javascript' }),
-    );
-    try {
-      await ctx.audioWorklet.addModule(url);
-    } finally {
-      URL.revokeObjectURL(url);
-    }
-    tapModuleContexts.add(ctx);
-  }
-  const node = new AudioWorkletNode(ctx, TAP_PROCESSOR_NAME, {
-    numberOfInputs: 1,
-    numberOfOutputs: 1,
-    outputChannelCount: [1],
-    channelCount,
-    channelCountMode: 'explicit',
-  });
-  node.port.onmessage = (event: MessageEvent): void => {
-    onBlock(event.data as Float32Array[]);
-  };
-  const silent = ctx.createGain();
-  silent.gain.value = 0;
-  source.connect(node);
-  node.connect(silent);
-  silent.connect(ctx.destination);
-  return {
-    close(): void {
-      node.port.onmessage = null;
-      try {
-        source.disconnect(node);
-      } catch {
-        // The source may already be torn down; disconnecting is best-effort.
-      }
-      node.disconnect();
-      silent.disconnect();
-    },
-  };
-}
-
-/** Mutable state of one in-flight take. */
-interface ActiveCapture {
+/** Immutable state of one in-flight take. */
+interface ActiveTake {
   trackId: number;
   startPpq: number;
-  /** Frames to drop at the head (count-in span + record-latency offset). */
-  skipFrames: number;
-  /** Hard cap on kept frames (max take duration). */
-  maxFrames: number;
-  /** Total frames seen since start (kept or dropped). */
-  receivedFrames: number;
-  /** Channel count, fixed by the first kept block (0 until then). */
-  channelCount: number;
-  /** Kept block slices, per block one buffer per channel. */
-  blocks: Float32Array[][];
-  /** Total kept frames across blocks. */
-  keptFrames: number;
+  /** Record-latency head trim applied when the take is assembled. */
+  offsetSamples: number;
+  /** Capture sample rate at start time. */
+  sampleRate: number;
 }
 
 /**
@@ -363,30 +283,25 @@ interface ActiveCapture {
  */
 export function createRecorder(handle: EngineHandle, options: RecorderOptions = {}): Recorder {
   const levelIntervalMs = options.levelIntervalMs ?? DEFAULT_LEVEL_INTERVAL_MS;
+  /** Idle capture buffer size keeping the input path configured between takes. */
+  const idleBufferFrames = Math.max(1, Math.ceil(MONITOR_BUFFER_SECONDS * handle.ctx.sampleRate));
   let disposed = false;
   let binding: MicrophoneBinding | null = null;
-  let tap: CaptureTap | null = null;
   let micPromise: Promise<void> | null = null;
-  let monitorNode: GainNode | null = null;
-  let monitorConnected = false;
   let monitorOn = false;
   let monitorGainValue = 1;
   let armedTrack: number | null = null;
-  let capture: ActiveCapture | null = null;
+  let take: ActiveTake | null = null;
+  let captureBufferFrames = idleBufferFrames;
   const levelListeners = new Set<(peak: number) => void>();
   let levelPeak = 0;
   let lastLevelEmit = 0;
 
-  /** Computes and (throttled) publishes the block peak to level listeners. */
-  const emitLevel = (block: ReadonlyArray<Float32Array>): void => {
-    if (levelListeners.size === 0) return;
-    let peak = 0;
-    for (const channel of block) {
-      for (let i = 0; i < channel.length; i++) {
-        const value = Math.abs(channel[i]);
-        if (value > peak) peak = value;
-      }
-    }
+  // Input level: snapshots tagged with the input meter target id carry the
+  // capture peak in dBFS; master and lane records are ignored here.
+  const unsubscribeMeter = handle.engine.onMeter((meter) => {
+    if (meter.targetId !== INPUT_METER_TARGET_ID || levelListeners.size === 0) return;
+    const peak = Math.max(dbPeakToLinear(meter.peakDbL), dbPeakToLinear(meter.peakDbR));
     if (peak > levelPeak) levelPeak = peak;
     const now = Date.now();
     if (now - lastLevelEmit < levelIntervalMs) return;
@@ -394,30 +309,23 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     const emitted = levelPeak;
     levelPeak = 0;
     for (const listener of levelListeners) listener(emitted);
-  };
+  });
 
-  /** Consumes one tap block: level metering plus take assembly when recording. */
-  const handleBlock = (block: ReadonlyArray<Float32Array>): void => {
-    if (block.length === 0 || block[0].length === 0) return;
-    emitLevel(block);
-    const active = capture;
-    if (!active) return;
-    const frames = block[0].length;
-    const blockStart = active.receivedFrames;
-    active.receivedFrames += frames;
-    if (active.keptFrames >= active.maxFrames) return;
-    const offset = Math.max(0, active.skipFrames - blockStart);
-    if (offset >= frames) return;
-    if (active.channelCount === 0) active.channelCount = block.length;
-    const keep = Math.min(frames - offset, active.maxFrames - active.keptFrames);
-    const kept: Float32Array[] = [];
-    for (let c = 0; c < active.channelCount; c++) {
-      // A mid-take channel-count drop repeats the last available channel.
-      const channel = block[Math.min(c, block.length - 1)];
-      kept.push(channel.subarray(offset, offset + keep));
-    }
-    active.blocks.push(kept);
-    active.keptFrames += keep;
+  /**
+   * (Re)sends the engine capture config: raw input source, stereo, and the
+   * current monitor state. Re-sending preserves armed state and buffered
+   * audio, so this doubles as the monitor toggle. recordOffsetSamples is
+   * engine-side metadata only; the actual latency trim happens in stop().
+   */
+  const sendCaptureConfig = (bufferFrames: number): void => {
+    captureBufferFrames = bufferFrames;
+    handle.engine.configureCapture({
+      bufferFrames,
+      channels: 2,
+      source: 'input',
+      recordOffsetSamples: 0,
+      inputMonitor: { enabled: monitorOn, gain: monitorGainValue },
+    });
   };
 
   /** One-shot microphone acquisition shared by concurrent callers. */
@@ -441,29 +349,14 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
       stream,
       stopTracksOnClose: true,
     });
-    let boundTap: CaptureTap;
-    try {
-      if (disposed) throw new RecorderStateError('Recorder has been disposed');
-      const createTap = options.createTap ?? createWorkletTap;
-      boundTap = await createTap(handle.ctx, bound.source, streamChannelCount(stream), handleBlock);
-    } catch (err) {
-      bound.close();
-      throw err;
-    }
     if (disposed) {
-      boundTap.close();
       bound.close();
       throw new RecorderStateError('Recorder has been disposed');
     }
     binding = bound;
-    tap = boundTap;
-    monitorNode = handle.ctx.createGain();
-    monitorNode.gain.value = monitorOn ? monitorGainValue : 0;
-    bound.source.connect(monitorNode);
-    if (monitorOn) {
-      monitorNode.connect(handle.ctx.destination);
-      monitorConnected = true;
-    }
+    // The idle config makes the input source and the monitor state live on
+    // the engine before any take starts.
+    sendCaptureConfig(idleBufferFrames);
   };
 
   const requestMicrophone = (): Promise<void> => {
@@ -488,23 +381,15 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
       monitorGainValue = gain;
     }
     monitorOn = enabled;
-    if (!monitorNode) return;
-    monitorNode.gain.value = enabled ? monitorGainValue : 0;
-    if (enabled && !monitorConnected) {
-      monitorNode.connect(handle.ctx.destination);
-      monitorConnected = true;
-    } else if (!enabled && monitorConnected) {
-      monitorNode.disconnect();
-      monitorConnected = false;
-    }
+    // Re-send with the current buffer size (the recording size while a take
+    // is running) so toggling the monitor never shrinks an active capture.
+    if (binding) sendCaptureConfig(captureBufferFrames);
   };
 
-  const start = (startOptions: StartRecordingOptions): void => {
+  const start = async (startOptions: StartRecordingOptions): Promise<void> => {
     if (disposed) throw new RecorderStateError('Recorder has been disposed');
-    if (capture) throw new RecorderStateError('Recording is already in progress');
-    if (!binding || !tap) {
-      throw new RecorderStateError('Request the microphone before recording');
-    }
+    if (take) throw new RecorderStateError('Recording is already in progress');
+    if (!binding) throw new RecorderStateError('Request the microphone before recording');
     if (armedTrack === null) throw new RecorderStateError('Arm a track before recording');
     const { startPpq, tempoBpm } = startOptions;
     if (!Number.isFinite(startPpq) || startPpq < 0) {
@@ -512,10 +397,6 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     }
     if (!Number.isFinite(tempoBpm) || tempoBpm <= 0) {
       throw new RangeError(`Recording tempoBpm must be finite and > 0, got ${tempoBpm}`);
-    }
-    const countInPpq = startOptions.countInPpq ?? 0;
-    if (!Number.isFinite(countInPpq) || countInPpq < 0) {
-      throw new RangeError(`Recording countInPpq must be finite and >= 0, got ${countInPpq}`);
     }
     const maxDurationSeconds = startOptions.maxDurationSeconds ?? DEFAULT_MAX_DURATION_SECONDS;
     if (!Number.isFinite(maxDurationSeconds) || maxDurationSeconds <= 0) {
@@ -531,64 +412,54 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
       );
     }
     const sampleRate = handle.ctx.sampleRate;
-    // Engine-side record path: arm capture and set the punch window. The
-    // punch-out is the max-duration bound; stop() disarms earlier as needed.
-    // armRecord requires a configured capture buffer; the take audio itself
-    // still comes from the host-side tap, so a small ring satisfies the
-    // contract (overflow on the unused engine buffer is harmless).
-    handle.engine.configureCapture({
-      bufferFrames: Math.max(1, Math.round(sampleRate)),
-      channels: 2,
-      source: 'input',
-      recordOffsetSamples: 0,
-    });
-    handle.engine.armRecord(armedTrack, true);
+    const trackId = armedTrack;
+    sendCaptureConfig(Math.max(1, Math.ceil(maxDurationSeconds * sampleRate)));
+    await handle.engine.resetCapture();
+    handle.engine.armRecord(trackId, true);
+    // Punch-out = the max-duration bound; stop() disarms earlier as needed.
+    // The half-open window keeps any count-in pre-roll out of the buffer.
     handle.engine.punch(startPpq, startPpq + (maxDurationSeconds * tempoBpm) / 60);
-    capture = {
-      trackId: armedTrack,
-      startPpq,
-      skipFrames:
-        Math.round(ppqToSeconds(countInPpq, tempoBpm) * sampleRate) + Math.round(offsetSamples),
-      maxFrames: Math.max(1, Math.round(maxDurationSeconds * sampleRate)),
-      receivedFrames: 0,
-      channelCount: 0,
-      blocks: [],
-      keptFrames: 0,
-    };
+    take = { trackId, startPpq, offsetSamples, sampleRate };
   };
 
-  const stop = (): RecordingResult | null => {
-    const active = capture;
+  const stop = async (): Promise<RecordingResult | null> => {
+    const active = take;
     if (!active) throw new RecorderStateError('No recording in progress');
-    capture = null;
+    take = null;
     handle.engine.armRecord(active.trackId, false);
-    if (active.keptFrames === 0 || active.channelCount === 0) return null;
-    const channels: Float32Array[] = [];
-    for (let c = 0; c < active.channelCount; c++) {
-      const out = new Float32Array(active.keptFrames);
-      let cursor = 0;
-      for (const block of active.blocks) {
-        out.set(block[c], cursor);
-        cursor += block[c].length;
-      }
-      channels.push(out);
+    const status = await handle.engine.captureStatus();
+    const captured = await handle.engine.capturedAudio();
+    if (status.overflowCount > 0) {
+      console.warn(`Recording capture overflow: ${status.overflowCount} samples dropped`);
     }
-    return { channels, sampleRate: handle.ctx.sampleRate, startPpq: active.startPpq };
+    await handle.engine.resetCapture();
+    // Back to the idle config so the monitor state survives between takes.
+    if (binding) sendCaptureConfig(idleBufferFrames);
+    // capturedAudio returns full-capacity planar buffers; only the first
+    // capturedFrames samples of each channel are valid.
+    let frames = status.capturedFrames;
+    for (const channel of captured) frames = Math.min(frames, channel.length);
+    // The first offsetSamples frames are input-latency lead-in: a sound at
+    // timeline position T reaches the input about that many samples late, so
+    // dropping them re-aligns the take to startPpq.
+    const kept = frames - active.offsetSamples;
+    if (kept <= 0 || captured.length === 0) return null;
+    const channels = captured.map((channel) => channel.slice(active.offsetSamples, frames));
+    return { channels, sampleRate: active.sampleRate, startPpq: active.startPpq };
   };
 
   const dispose = (): void => {
     if (disposed) return;
     disposed = true;
-    if (capture) {
-      const active = capture;
-      capture = null;
+    unsubscribeMeter();
+    if (take) {
+      const active = take;
+      take = null;
       handle.engine.armRecord(active.trackId, false);
+      void handle.engine.resetCapture().catch(() => {
+        // The engine may already be tearing down; a failed reset is harmless.
+      });
     }
-    tap?.close();
-    tap = null;
-    if (monitorNode && monitorConnected) monitorNode.disconnect();
-    monitorNode = null;
-    monitorConnected = false;
     binding?.close();
     binding = null;
     micPromise = null;
@@ -599,15 +470,15 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     requestMicrophone,
     hasMicrophone: () => binding !== null,
     arm(trackId: number): void {
-      if (capture) throw new RecorderStateError('Cannot change the armed track while recording');
+      if (take) throw new RecorderStateError('Cannot change the armed track while recording');
       armedTrack = trackId;
     },
     disarm(): void {
-      if (capture) throw new RecorderStateError('Cannot disarm while recording');
+      if (take) throw new RecorderStateError('Cannot disarm while recording');
       armedTrack = null;
     },
     armedTrackId: () => armedTrack,
-    isRecording: () => capture !== null,
+    isRecording: () => take !== null,
     setMonitor,
     monitorEnabled: () => monitorOn,
     onLevel(listener: (peak: number) => void): () => void {

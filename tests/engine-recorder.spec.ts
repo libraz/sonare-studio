@@ -1,60 +1,121 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
-import type { CaptureTap, RecorderOptions } from '@/engine/recorder';
+import type { RecorderOptions } from '@/engine/recorder';
 import {
   createRecorder,
   defaultRecordOffsetSamples,
+  INPUT_METER_TARGET_ID,
   MICROPHONE_CONSTRAINTS,
   NoMicrophoneError,
   NotSupportedError,
   RecorderStateError,
 } from '@/engine/recorder';
 
-/** Fake GainNode capturing connect/disconnect and gain writes. */
-interface FakeGain {
-  gain: { value: number };
-  connect: ReturnType<typeof vi.fn>;
-  disconnect: ReturnType<typeof vi.fn>;
+/** Builds a full meter snapshot; only targetId and the peak fields matter here. */
+function meterSnapshot(targetId: number, peakDbL: number, peakDbR = peakDbL) {
+  return {
+    type: 'meter' as const,
+    targetId,
+    frame: 0,
+    peakDbL,
+    peakDbR,
+    rmsDbL: -60,
+    rmsDbR: -60,
+    correlation: 0,
+    truePeakDbL: peakDbL,
+    truePeakDbR: peakDbR,
+    momentaryLufs: -60,
+    shortTermLufs: -60,
+    integratedLufs: -60,
+    gainReductionDb: 0,
+  };
 }
 
-/** Builds an EngineHandle stub with spied record-path methods. */
+type MeterSnapshot = ReturnType<typeof meterSnapshot>;
+
+/** The engine-side capture status shape returned by the handle stub. */
+interface FakeCaptureStatus {
+  capturedFrames: number;
+  overflowCount: number;
+  armed: boolean;
+  punchEnabled: boolean;
+  source: 'input';
+  recordOffsetSamples: number;
+}
+
+/** Builds an EngineHandle stub with spied capture-path methods. */
 function makeHandle(sampleRate = 100, baseLatency = 0) {
+  const configureCapture = vi.fn();
   const armRecord = vi.fn(() => true);
   const punch = vi.fn(() => true);
-  const configureCapture = vi.fn();
-  const node = { engineNode: true };
-  const destination = { destination: true };
-  const gains: FakeGain[] = [];
-  const ctx = {
-    sampleRate,
-    baseLatency,
-    destination,
-    createGain: vi.fn((): FakeGain => {
-      const gain: FakeGain = { gain: { value: 1 }, connect: vi.fn(), disconnect: vi.fn() };
-      gains.push(gain);
-      return gain;
-    }),
+  const resetCapture = vi.fn(async () => {});
+  let status: FakeCaptureStatus = {
+    capturedFrames: 0,
+    overflowCount: 0,
+    armed: false,
+    punchEnabled: true,
+    source: 'input',
+    recordOffsetSamples: 0,
   };
+  let audio: Float32Array[] = [];
+  const captureStatus = vi.fn(async () => status);
+  const capturedAudio = vi.fn(async () => audio);
+  let meterCallback: ((meter: MeterSnapshot) => void) | null = null;
+  const meterUnsubscribe = vi.fn(() => {
+    meterCallback = null;
+  });
+  const onMeter = vi.fn((callback: (meter: MeterSnapshot) => void) => {
+    meterCallback = callback;
+    return meterUnsubscribe;
+  });
+  const node = { engineNode: true };
+  const ctx = { sampleRate, baseLatency };
   const handle = {
-    engine: { node, armRecord, punch, configureCapture },
+    engine: {
+      node,
+      configureCapture,
+      armRecord,
+      punch,
+      resetCapture,
+      captureStatus,
+      capturedAudio,
+      onMeter,
+    },
     ctx,
   } as unknown as EngineHandle;
-  return { handle, armRecord, punch, configureCapture, ctx, node, destination, gains };
+  return {
+    handle,
+    configureCapture,
+    armRecord,
+    punch,
+    resetCapture,
+    captureStatus,
+    capturedAudio,
+    onMeter,
+    meterUnsubscribe,
+    ctx,
+    node,
+    setStatus: (patch: Partial<FakeCaptureStatus>): void => {
+      status = { ...status, ...patch };
+    },
+    setAudio: (channels: Float32Array[]): void => {
+      audio = channels;
+    },
+    emitMeter: (meter: MeterSnapshot): void => meterCallback?.(meter),
+  };
 }
 
-/** Builds injectable mic/bind/tap fakes plus a block pusher. */
-function makeDeps(channelCount = 2) {
+/** Builds injectable mic/bind fakes. */
+function makeDeps() {
   const tracks = [
-    { stop: vi.fn(), getSettings: () => ({ channelCount }) },
+    { stop: vi.fn(), getSettings: () => ({ channelCount: 2 }) },
   ] as unknown as MediaStreamTrack[];
   const stream = {
     getAudioTracks: () => tracks,
     getTracks: () => tracks,
   } as unknown as MediaStream;
-  const source = { connect: vi.fn(), disconnect: vi.fn() } as unknown as AudioNode;
+  const source = { micSource: true } as unknown as AudioNode;
   const bindingClose = vi.fn();
-  const tapClose = vi.fn();
-  let onBlock: ((channels: ReadonlyArray<Float32Array>) => void) | null = null;
   const getUserMedia = vi.fn(async () => stream);
   const bindInput = vi.fn(
     async (_ctx: AudioContext, _node: AudioWorkletNode, opts: { stream: MediaStream }) => ({
@@ -63,41 +124,32 @@ function makeDeps(channelCount = 2) {
       close: bindingClose,
     }),
   );
-  const createTap = vi.fn(
-    (
-      _ctx: AudioContext,
-      _source: AudioNode,
-      _channels: number,
-      cb: (channels: ReadonlyArray<Float32Array>) => void,
-    ): CaptureTap => {
-      onBlock = cb;
-      return { close: tapClose };
-    },
-  );
-  const deps: RecorderOptions = { getUserMedia, bindInput, createTap };
-  const push = (channels: Float32Array[]): void => {
-    onBlock?.(channels);
-  };
-  return { deps, push, stream, source, bindingClose, tapClose, getUserMedia, bindInput, createTap };
+  const deps: RecorderOptions = { getUserMedia, bindInput };
+  return { deps, stream, source, bindingClose, getUserMedia, bindInput };
 }
 
-/** A block whose frame values continue a global ramp (frame index = value). */
-function rampBlock(channels: number, frames: number, startValue: number): Float32Array[] {
-  const block: Float32Array[] = [];
+/** Full-capacity ramp buffers: channel c holds value i * (c + 1) at index i. */
+function rampChannels(channels: number, capacityFrames: number): Float32Array[] {
+  const result: Float32Array[] = [];
   for (let c = 0; c < channels; c++) {
-    const channel = new Float32Array(frames);
-    for (let i = 0; i < frames; i++) channel[i] = (startValue + i) * (c + 1);
-    block.push(channel);
+    const channel = new Float32Array(capacityFrames);
+    for (let i = 0; i < capacityFrames; i++) channel[i] = i * (c + 1);
+    result.push(channel);
   }
-  return block;
+  return result;
 }
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('createRecorder microphone acquisition', () => {
-  it('requests tracking-quality constraints, binds the stream and installs the tap', async () => {
-    const { handle, node } = makeHandle();
-    const { deps, getUserMedia, bindInput, createTap, stream, source } = makeDeps(2);
+  it('requests tracking-quality constraints, binds the stream and configures the capture', async () => {
+    const { handle, node, configureCapture } = makeHandle(100);
+    const { deps, getUserMedia, bindInput, stream } = makeDeps();
     const recorder = createRecorder(handle, deps);
     expect(recorder.hasMicrophone()).toBe(false);
+    expect(configureCapture).not.toHaveBeenCalled();
 
     await recorder.requestMicrophone();
     expect(recorder.hasMicrophone()).toBe(true);
@@ -110,24 +162,20 @@ describe('createRecorder microphone acquisition', () => {
       stream,
       stopTracksOnClose: true,
     });
-    expect(createTap).toHaveBeenCalledWith(handle.ctx, source, 2, expect.any(Function));
+    // The idle config: a 1-second raw-input buffer with the monitor off.
+    expect(configureCapture).toHaveBeenCalledTimes(1);
+    expect(configureCapture).toHaveBeenCalledWith({
+      bufferFrames: 100,
+      channels: 2,
+      source: 'input',
+      recordOffsetSamples: 0,
+      inputMonitor: { enabled: false, gain: 1 },
+    });
 
     // Idempotent: a second request does not reacquire the device.
     await recorder.requestMicrophone();
     expect(getUserMedia).toHaveBeenCalledTimes(1);
-  });
-
-  it('falls back to 2 tap channels when the track exposes no settings', async () => {
-    const { handle } = makeHandle();
-    const { deps, createTap } = makeDeps(2);
-    const stream = {
-      getAudioTracks: () => [{ stop: vi.fn() }],
-      getTracks: () => [{ stop: vi.fn() }],
-    } as unknown as MediaStream;
-    deps.getUserMedia = vi.fn(async () => stream);
-    const recorder = createRecorder(handle, deps);
-    await recorder.requestMicrophone();
-    expect(createTap.mock.calls[0][2]).toBe(2);
+    expect(configureCapture).toHaveBeenCalledTimes(1);
   });
 
   it('throws NotSupportedError when no capture API exists', async () => {
@@ -151,18 +199,6 @@ describe('createRecorder microphone acquisition', () => {
     await recorder.requestMicrophone();
     expect(recorder.hasMicrophone()).toBe(true);
   });
-
-  it('closes the binding when the tap cannot be created', async () => {
-    const { handle } = makeHandle();
-    const { deps, bindingClose } = makeDeps();
-    deps.createTap = vi.fn(() => {
-      throw new NotSupportedError('no tap');
-    });
-    const recorder = createRecorder(handle, deps);
-    await expect(recorder.requestMicrophone()).rejects.toBeInstanceOf(NotSupportedError);
-    expect(bindingClose).toHaveBeenCalledTimes(1);
-    expect(recorder.hasMicrophone()).toBe(false);
-  });
 });
 
 describe('createRecorder state machine', () => {
@@ -172,15 +208,15 @@ describe('createRecorder state machine', () => {
     const recorder = createRecorder(handle, deps);
     const startOptions = { startPpq: 0, tempoBpm: 120 };
 
-    expect(() => recorder.start(startOptions)).toThrow(RecorderStateError);
+    await expect(recorder.start(startOptions)).rejects.toBeInstanceOf(RecorderStateError);
     await recorder.requestMicrophone();
-    expect(() => recorder.start(startOptions)).toThrow(RecorderStateError);
+    await expect(recorder.start(startOptions)).rejects.toBeInstanceOf(RecorderStateError);
     recorder.arm(3);
     expect(recorder.armedTrackId()).toBe(3);
-    recorder.start(startOptions);
+    await recorder.start(startOptions);
     expect(recorder.isRecording()).toBe(true);
-    expect(() => recorder.start(startOptions)).toThrow(RecorderStateError);
-    recorder.stop();
+    await expect(recorder.start(startOptions)).rejects.toBeInstanceOf(RecorderStateError);
+    await recorder.stop();
     expect(recorder.isRecording()).toBe(false);
   });
 
@@ -188,13 +224,13 @@ describe('createRecorder state machine', () => {
     const { handle } = makeHandle();
     const { deps } = makeDeps();
     const recorder = createRecorder(handle, deps);
-    expect(() => recorder.stop()).toThrow(RecorderStateError);
+    await expect(recorder.stop()).rejects.toBeInstanceOf(RecorderStateError);
     await recorder.requestMicrophone();
     recorder.arm(1);
-    recorder.start({ startPpq: 0, tempoBpm: 120 });
+    await recorder.start({ startPpq: 0, tempoBpm: 120 });
     expect(() => recorder.arm(2)).toThrow(RecorderStateError);
     expect(() => recorder.disarm()).toThrow(RecorderStateError);
-    recorder.stop();
+    await recorder.stop();
     recorder.disarm();
     expect(recorder.armedTrackId()).toBe(null);
   });
@@ -205,207 +241,285 @@ describe('createRecorder state machine', () => {
     const recorder = createRecorder(handle, deps);
     await recorder.requestMicrophone();
     recorder.arm(1);
-    expect(() => recorder.start({ startPpq: -1, tempoBpm: 120 })).toThrow(RangeError);
-    expect(() => recorder.start({ startPpq: 0, tempoBpm: 0 })).toThrow(RangeError);
-    expect(() => recorder.start({ startPpq: 0, tempoBpm: 120, countInPpq: -1 })).toThrow(
+    await expect(recorder.start({ startPpq: -1, tempoBpm: 120 })).rejects.toBeInstanceOf(
       RangeError,
     );
-    expect(() => recorder.start({ startPpq: 0, tempoBpm: 120, recordOffsetSamples: -5 })).toThrow(
-      RangeError,
-    );
-    expect(() => recorder.start({ startPpq: 0, tempoBpm: 120, maxDurationSeconds: 0 })).toThrow(
-      RangeError,
-    );
+    await expect(recorder.start({ startPpq: 0, tempoBpm: 0 })).rejects.toBeInstanceOf(RangeError);
+    await expect(
+      recorder.start({ startPpq: 0, tempoBpm: 120, recordOffsetSamples: -5 }),
+    ).rejects.toBeInstanceOf(RangeError);
+    await expect(
+      recorder.start({ startPpq: 0, tempoBpm: 120, maxDurationSeconds: 0 }),
+    ).rejects.toBeInstanceOf(RangeError);
     expect(recorder.isRecording()).toBe(false);
   });
 });
 
 describe('createRecorder capture', () => {
-  it('arms the engine record path and sets the punch window on start', async () => {
-    const { handle, armRecord, punch } = makeHandle(100);
+  it('configures, resets, arms and punches in order on start', async () => {
+    const { handle, configureCapture, armRecord, punch, resetCapture } = makeHandle(100);
     const { deps } = makeDeps();
     const recorder = createRecorder(handle, deps);
     await recorder.requestMicrophone();
     recorder.arm(7);
-    recorder.start({ startPpq: 8, tempoBpm: 120, maxDurationSeconds: 30 });
+    await recorder.start({ startPpq: 8, tempoBpm: 120, maxDurationSeconds: 30 });
 
+    // Recording-size buffer: 30 s at 100 Hz = 3000 frames.
+    expect(configureCapture).toHaveBeenLastCalledWith(
+      expect.objectContaining({ bufferFrames: 3000, channels: 2, source: 'input' }),
+    );
     expect(armRecord).toHaveBeenCalledWith(7, true);
     // Punch-out = startPpq + maxDuration in PPQ (30 s at 120 BPM = 60 PPQ).
     expect(punch).toHaveBeenCalledWith(8, 68);
+    const order = [
+      configureCapture.mock.invocationCallOrder[1],
+      resetCapture.mock.invocationCallOrder[0],
+      armRecord.mock.invocationCallOrder[0],
+      punch.mock.invocationCallOrder[0],
+    ];
+    expect(order).toEqual([...order].sort((a, b) => a - b));
 
-    recorder.stop();
+    await recorder.stop();
     expect(armRecord).toHaveBeenLastCalledWith(7, false);
   });
 
-  it('skips the count-in span plus the latency offset and returns the rest', async () => {
-    const { handle } = makeHandle(100);
-    const { deps, push } = makeDeps();
+  it('sizes the buffer and punch window with the 300 s default duration', async () => {
+    const { handle, configureCapture, punch } = makeHandle(100);
+    const { deps } = makeDeps();
     const recorder = createRecorder(handle, deps);
     await recorder.requestMicrophone();
     recorder.arm(1);
-    // Count-in 2 PPQ at 120 BPM = 1 s = 100 frames; offset 10 -> skip 110.
-    recorder.start({ startPpq: 8, tempoBpm: 120, countInPpq: 2, recordOffsetSamples: 10 });
+    await recorder.start({ startPpq: 4, tempoBpm: 120 });
+    expect(configureCapture).toHaveBeenLastCalledWith(
+      expect.objectContaining({ bufferFrames: 30000 }),
+    );
+    // 300 s at 120 BPM = 600 PPQ.
+    expect(punch).toHaveBeenCalledWith(4, 604);
+  });
 
-    push(rampBlock(1, 60, 0));
-    push(rampBlock(1, 60, 60));
-    push(rampBlock(1, 60, 120));
+  it('trims the latency offset from the head and returns the rest', async () => {
+    const { handle, setStatus, setAudio } = makeHandle(100);
+    const { deps } = makeDeps();
+    const recorder = createRecorder(handle, deps);
+    await recorder.requestMicrophone();
+    recorder.arm(1);
+    await recorder.start({ startPpq: 8, tempoBpm: 120, recordOffsetSamples: 10 });
 
-    const result = recorder.stop();
+    // Full-capacity buffers; only the first 30 captured frames are valid.
+    setAudio(rampChannels(1, 100));
+    setStatus({ capturedFrames: 30 });
+
+    const result = await recorder.stop();
     expect(result).not.toBeNull();
     expect(result?.startPpq).toBe(8);
     expect(result?.sampleRate).toBe(100);
     expect(result?.channels).toHaveLength(1);
     const channel = result?.channels[0] as Float32Array;
-    expect(channel.length).toBe(70);
-    expect(channel[0]).toBe(110);
-    expect(channel[69]).toBe(179);
+    expect(channel.length).toBe(20);
+    expect(channel[0]).toBe(10);
+    expect(channel[19]).toBe(29);
   });
 
   it('derives the default latency offset from the context latency', async () => {
-    // baseLatency 0.1 s at 100 Hz = 10 frames skipped.
-    const { handle } = makeHandle(100, 0.1);
-    const { deps, push } = makeDeps();
+    // baseLatency 0.1 s at 100 Hz = 10 frames trimmed.
+    const { handle, setStatus, setAudio } = makeHandle(100, 0.1);
+    const { deps } = makeDeps();
     const recorder = createRecorder(handle, deps);
     await recorder.requestMicrophone();
     recorder.arm(1);
-    recorder.start({ startPpq: 0, tempoBpm: 120 });
-    push(rampBlock(1, 30, 0));
-    const channel = recorder.stop()?.channels[0] as Float32Array;
+    await recorder.start({ startPpq: 0, tempoBpm: 120 });
+    setAudio(rampChannels(1, 100));
+    setStatus({ capturedFrames: 30 });
+    const channel = (await recorder.stop())?.channels[0] as Float32Array;
     expect(channel.length).toBe(20);
     expect(channel[0]).toBe(10);
   });
 
   it('preserves stereo channels independently', async () => {
-    const { handle } = makeHandle(100);
-    const { deps, push } = makeDeps(2);
+    const { handle, setStatus, setAudio } = makeHandle(100);
+    const { deps } = makeDeps();
     const recorder = createRecorder(handle, deps);
     await recorder.requestMicrophone();
     recorder.arm(1);
-    recorder.start({ startPpq: 0, tempoBpm: 120, recordOffsetSamples: 0 });
-    push(rampBlock(2, 4, 1));
-    const result = recorder.stop();
+    await recorder.start({ startPpq: 0, tempoBpm: 120, recordOffsetSamples: 0 });
+    setAudio(rampChannels(2, 100));
+    setStatus({ capturedFrames: 4 });
+    const result = await recorder.stop();
     expect(result?.channels).toHaveLength(2);
-    expect(Array.from(result?.channels[0] ?? [])).toEqual([1, 2, 3, 4]);
-    expect(Array.from(result?.channels[1] ?? [])).toEqual([2, 4, 6, 8]);
+    expect(Array.from(result?.channels[0] ?? [])).toEqual([0, 1, 2, 3]);
+    expect(Array.from(result?.channels[1] ?? [])).toEqual([0, 2, 4, 6]);
   });
 
-  it('returns null when stopped before any post-skip frame arrived', async () => {
-    const { handle, armRecord } = makeHandle(100);
-    const { deps, push } = makeDeps();
+  it('returns null when the capture is shorter than the latency offset', async () => {
+    const { handle, armRecord, setStatus, setAudio, resetCapture, configureCapture } =
+      makeHandle(100);
+    const { deps } = makeDeps();
     const recorder = createRecorder(handle, deps);
     await recorder.requestMicrophone();
     recorder.arm(1);
-    recorder.start({ startPpq: 4, tempoBpm: 120, countInPpq: 2, recordOffsetSamples: 0 });
-    push(rampBlock(1, 50, 0)); // still inside the 100-frame count-in
-    expect(recorder.stop()).toBeNull();
+    await recorder.start({ startPpq: 4, tempoBpm: 120, recordOffsetSamples: 10 });
+    setAudio(rampChannels(1, 100));
+    setStatus({ capturedFrames: 10 }); // nothing beyond the trimmed head
+    expect(await recorder.stop()).toBeNull();
     expect(armRecord).toHaveBeenLastCalledWith(1, false);
+    // The engine capture is still reset and the idle config restored.
+    expect(resetCapture).toHaveBeenCalledTimes(2);
+    expect(configureCapture).toHaveBeenLastCalledWith(
+      expect.objectContaining({ bufferFrames: 100 }),
+    );
   });
 
-  it('caps the take at maxDurationSeconds', async () => {
-    const { handle } = makeHandle(100);
-    const { deps, push } = makeDeps();
+  it('clamps the take to the shortest returned channel', async () => {
+    const { handle, setStatus, setAudio } = makeHandle(100);
+    const { deps } = makeDeps();
     const recorder = createRecorder(handle, deps);
     await recorder.requestMicrophone();
     recorder.arm(1);
-    recorder.start({
-      startPpq: 0,
-      tempoBpm: 120,
-      recordOffsetSamples: 0,
-      maxDurationSeconds: 0.5,
-    });
-    push(rampBlock(1, 40, 0));
-    push(rampBlock(1, 40, 40));
-    push(rampBlock(1, 40, 80));
-    const channel = recorder.stop()?.channels[0] as Float32Array;
+    await recorder.start({ startPpq: 0, tempoBpm: 120, recordOffsetSamples: 0 });
+    setAudio(rampChannels(1, 50));
+    setStatus({ capturedFrames: 1000 }); // larger than the buffers
+    const channel = (await recorder.stop())?.channels[0] as Float32Array;
     expect(channel.length).toBe(50);
-    expect(channel[49]).toBe(49);
   });
 
-  it('ignores blocks while not recording', async () => {
-    const { handle } = makeHandle(100);
-    const { deps, push } = makeDeps();
+  it('warns once when the engine reports a capture overflow', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { handle, setStatus, setAudio } = makeHandle(100);
+    const { deps } = makeDeps();
     const recorder = createRecorder(handle, deps);
     await recorder.requestMicrophone();
     recorder.arm(1);
-    push(rampBlock(1, 64, 0)); // before start: dropped
-    recorder.start({ startPpq: 0, tempoBpm: 120, recordOffsetSamples: 0 });
-    push(rampBlock(1, 4, 7));
-    expect(Array.from(recorder.stop()?.channels[0] ?? [])).toEqual([7, 8, 9, 10]);
+    await recorder.start({ startPpq: 0, tempoBpm: 120, recordOffsetSamples: 0 });
+    setAudio(rampChannels(1, 100));
+    setStatus({ capturedFrames: 30, overflowCount: 7 });
+    expect(await recorder.stop()).not.toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('capture overflow: 7 samples'));
+  });
+
+  it('resets the capture and restores the idle config after a take', async () => {
+    const { handle, resetCapture, configureCapture, setStatus, setAudio } = makeHandle(100);
+    const { deps } = makeDeps();
+    const recorder = createRecorder(handle, deps);
+    await recorder.requestMicrophone();
+    recorder.arm(1);
+    await recorder.start({ startPpq: 0, tempoBpm: 120, recordOffsetSamples: 0 });
+    expect(resetCapture).toHaveBeenCalledTimes(1); // before arming the take
+    setAudio(rampChannels(1, 100));
+    setStatus({ capturedFrames: 30 });
+    await recorder.stop();
+    expect(resetCapture).toHaveBeenCalledTimes(2); // after reading the take
+    expect(configureCapture).toHaveBeenLastCalledWith(
+      expect.objectContaining({ bufferFrames: 100 }),
+    );
   });
 });
 
-describe('createRecorder monitoring and levels', () => {
-  it('connects the monitor gain only when enabled and remembers the pre-mic state', async () => {
-    const { handle, gains, destination } = makeHandle();
+describe('createRecorder monitoring', () => {
+  it('remembers the pre-mic monitor state and sends it with the first config', async () => {
+    const { handle, configureCapture } = makeHandle(100);
     const { deps } = makeDeps();
     const recorder = createRecorder(handle, deps);
     recorder.setMonitor(true, 0.5); // before the mic exists: remembered
     expect(recorder.monitorEnabled()).toBe(true);
+    expect(configureCapture).not.toHaveBeenCalled();
 
     await recorder.requestMicrophone();
-    expect(gains).toHaveLength(1);
-    const monitor = gains[0];
-    expect(monitor.gain.value).toBe(0.5);
-    expect(monitor.connect).toHaveBeenCalledWith(destination);
+    expect(configureCapture).toHaveBeenLastCalledWith(
+      expect.objectContaining({ inputMonitor: { enabled: true, gain: 0.5 } }),
+    );
+  });
+
+  it('re-sends the capture config when the monitor is toggled', async () => {
+    const { handle, configureCapture } = makeHandle(100);
+    const { deps } = makeDeps();
+    const recorder = createRecorder(handle, deps);
+    await recorder.requestMicrophone();
+
+    recorder.setMonitor(true, 2);
+    expect(configureCapture).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        bufferFrames: 100,
+        inputMonitor: { enabled: true, gain: 2 },
+      }),
+    );
 
     recorder.setMonitor(false);
     expect(recorder.monitorEnabled()).toBe(false);
-    expect(monitor.gain.value).toBe(0);
-    expect(monitor.disconnect).toHaveBeenCalledTimes(1);
-
-    recorder.setMonitor(true, 2);
-    expect(monitor.gain.value).toBe(2);
-    expect(monitor.connect).toHaveBeenCalledTimes(2);
+    expect(configureCapture).toHaveBeenLastCalledWith(
+      expect.objectContaining({ inputMonitor: { enabled: false, gain: 2 } }),
+    );
 
     expect(() => recorder.setMonitor(true, -1)).toThrow(RangeError);
   });
 
-  it('stays disconnected from the destination while monitoring is off', async () => {
-    const { handle, gains } = makeHandle();
-    const { deps, source } = makeDeps();
+  it('keeps the recording-size buffer when toggled during a take', async () => {
+    const { handle, configureCapture } = makeHandle(100);
+    const { deps } = makeDeps();
     const recorder = createRecorder(handle, deps);
     await recorder.requestMicrophone();
-    const monitor = gains[0];
-    // The mic source feeds the gain stage, but the gain stage never reaches
-    // the destination (and is held at zero) until monitoring is enabled.
-    expect(source.connect).toHaveBeenCalledWith(monitor);
-    expect(monitor.gain.value).toBe(0);
-    expect(monitor.connect).not.toHaveBeenCalled();
+    recorder.arm(1);
+    await recorder.start({ startPpq: 0, tempoBpm: 120, maxDurationSeconds: 30 });
+
+    recorder.setMonitor(true);
+    expect(configureCapture).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        bufferFrames: 3000,
+        inputMonitor: { enabled: true, gain: 1 },
+      }),
+    );
+  });
+});
+
+describe('createRecorder input levels', () => {
+  it('exposes the engine input meter target id', () => {
+    expect(INPUT_METER_TARGET_ID).toBe(0xffff);
   });
 
-  it('publishes throttled input peaks to level listeners', async () => {
-    const { handle } = makeHandle();
-    const { deps, push } = makeDeps();
+  it('publishes input-capture snapshots as linear peaks and ignores other targets', () => {
+    const { handle, emitMeter } = makeHandle();
+    const { deps } = makeDeps();
     const recorder = createRecorder(handle, { ...deps, levelIntervalMs: 0 });
     const levels: number[] = [];
     const unsubscribe = recorder.onLevel((peak) => levels.push(peak));
 
-    await recorder.requestMicrophone();
-    push([new Float32Array([0.125, -0.75, 0.5])]);
-    expect(levels).toEqual([0.75]);
+    emitMeter(meterSnapshot(0, 0)); // master record: not the input level
+    expect(levels).toEqual([]);
+
+    // Max across channels after dB -> linear: max(10^(-20/20), 10^(0/20)) = 1.
+    emitMeter(meterSnapshot(INPUT_METER_TARGET_ID, -20, 0));
+    expect(levels).toEqual([1]);
+
+    emitMeter(meterSnapshot(INPUT_METER_TARGET_ID, -20, -40));
+    expect(levels[1]).toBeCloseTo(0.1, 10);
+
+    // Digital silence arrives as -Infinity dBFS and maps to 0.
+    emitMeter(meterSnapshot(INPUT_METER_TARGET_ID, Number.NEGATIVE_INFINITY));
+    expect(levels[2]).toBe(0);
 
     unsubscribe();
-    push([new Float32Array([0.875])]);
-    expect(levels).toEqual([0.75]);
+    emitMeter(meterSnapshot(INPUT_METER_TARGET_ID, 0));
+    expect(levels).toHaveLength(3);
   });
 
-  it('coalesces level callbacks within the throttle interval', async () => {
+  it('coalesces level callbacks within the throttle interval', () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000_000);
     try {
-      const { handle } = makeHandle();
-      const { deps, push } = makeDeps();
+      const { handle, emitMeter } = makeHandle();
+      const { deps } = makeDeps();
       const recorder = createRecorder(handle, { ...deps, levelIntervalMs: 50 });
       const levels: number[] = [];
       recorder.onLevel((peak) => levels.push(peak));
-      await recorder.requestMicrophone();
 
-      push([new Float32Array([0.25])]); // first block always emits
-      push([new Float32Array([0.75])]); // within the window: held back
-      expect(levels).toEqual([0.25]);
+      emitMeter(meterSnapshot(INPUT_METER_TARGET_ID, -20)); // first snapshot always emits
+      emitMeter(meterSnapshot(INPUT_METER_TARGET_ID, 0)); // within the window: held back
+      expect(levels).toHaveLength(1);
+      expect(levels[0]).toBeCloseTo(0.1, 10);
       vi.setSystemTime(1_000_100);
-      push([new Float32Array([0.125])]); // window elapsed: max since last emit
-      expect(levels).toEqual([0.25, 0.75]);
+      emitMeter(meterSnapshot(INPUT_METER_TARGET_ID, -40)); // window elapsed: max since last emit
+      expect(levels).toHaveLength(2);
+      expect(levels[1]).toBe(1);
     } finally {
       vi.useRealTimers();
     }
@@ -413,44 +527,47 @@ describe('createRecorder monitoring and levels', () => {
 });
 
 describe('createRecorder teardown', () => {
-  it('dispose closes the tap, the binding and the monitor path', async () => {
-    const { handle, gains } = makeHandle();
-    const { deps, push, bindingClose, tapClose } = makeDeps();
-    const recorder = createRecorder(handle, deps);
+  it('dispose unsubscribes the meters and closes the binding', async () => {
+    const { handle, meterUnsubscribe, emitMeter } = makeHandle();
+    const { deps, bindingClose } = makeDeps();
+    const recorder = createRecorder(handle, { ...deps, levelIntervalMs: 0 });
+    const levels: number[] = [];
+    recorder.onLevel((peak) => levels.push(peak));
     await recorder.requestMicrophone();
-    recorder.setMonitor(true);
 
     recorder.dispose();
-    expect(tapClose).toHaveBeenCalledTimes(1);
+    expect(meterUnsubscribe).toHaveBeenCalledTimes(1);
     expect(bindingClose).toHaveBeenCalledTimes(1);
-    expect(gains[0].disconnect).toHaveBeenCalled();
     expect(recorder.hasMicrophone()).toBe(false);
-    push([new Float32Array([0.5])]); // late blocks are harmless
+    emitMeter(meterSnapshot(INPUT_METER_TARGET_ID, 0)); // unsubscribed: dropped
+    expect(levels).toEqual([]);
 
     // Idempotent and terminal.
     recorder.dispose();
-    expect(tapClose).toHaveBeenCalledTimes(1);
+    expect(bindingClose).toHaveBeenCalledTimes(1);
     await expect(recorder.requestMicrophone()).rejects.toBeInstanceOf(RecorderStateError);
-    expect(() => recorder.start({ startPpq: 0, tempoBpm: 120 })).toThrow(RecorderStateError);
+    await expect(recorder.start({ startPpq: 0, tempoBpm: 120 })).rejects.toBeInstanceOf(
+      RecorderStateError,
+    );
   });
 
-  it('dispose during a recording disarms the engine and discards the take', async () => {
-    const { handle, armRecord } = makeHandle();
-    const { deps, push } = makeDeps();
+  it('dispose during a recording disarms the engine and resets the capture', async () => {
+    const { handle, armRecord, resetCapture } = makeHandle();
+    const { deps } = makeDeps();
     const recorder = createRecorder(handle, deps);
     await recorder.requestMicrophone();
     recorder.arm(4);
-    recorder.start({ startPpq: 0, tempoBpm: 120, recordOffsetSamples: 0 });
-    push(rampBlock(1, 16, 0));
+    await recorder.start({ startPpq: 0, tempoBpm: 120 });
 
     recorder.dispose();
     expect(recorder.isRecording()).toBe(false);
     expect(armRecord).toHaveBeenLastCalledWith(4, false);
+    expect(resetCapture).toHaveBeenCalledTimes(2); // start + dispose
   });
 
   it('rejects a microphone that finishes binding after dispose', async () => {
-    const { handle } = makeHandle();
-    const { deps, bindingClose, tapClose } = makeDeps();
+    const { handle, configureCapture } = makeHandle();
+    const { deps, bindingClose } = makeDeps();
     let release: () => void = () => {};
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -466,7 +583,7 @@ describe('createRecorder teardown', () => {
     await expect(pending).rejects.toBeInstanceOf(RecorderStateError);
     expect(recorder.hasMicrophone()).toBe(false);
     expect(bindingClose).toHaveBeenCalled();
-    expect(tapClose).not.toHaveBeenCalled();
+    expect(configureCapture).not.toHaveBeenCalled();
   });
 });
 

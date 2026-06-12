@@ -486,6 +486,11 @@ try {
   await page.waitForFunction(() => window.__sonareDebug.isRecording() === true, null, {
     timeout: 20000,
   });
+  // The engine's input-capture meter must register the fake microphone tone.
+  await page.waitForFunction(() => window.__sonareDebug.inputLevel() > 0.001, null, {
+    timeout: 5000,
+  });
+  console.info('input level meter follows the engine input capture');
   await page.waitForTimeout(1000);
   await page.click('.transport-bar .record-button');
   await page.waitForFunction(
@@ -495,6 +500,35 @@ try {
   );
   console.info(`recorded take landed as a clip: ${clipsBeforeRecord} -> ${clipsBeforeRecord + 1}`);
   await page.click('.transport-bar button:has-text("Stop")');
+
+  // --- Input monitor: the mic is audible through the engine only when enabled -
+
+  {
+    await page.waitForTimeout(500);
+    const idleBefore = await page.evaluate(() => window.__sonareDebug.meterPeakDb());
+    if (idleBefore !== null && idleBefore > -90) {
+      fail(`engine not silent before the monitor check: peak ${idleBefore} dB`);
+    }
+    await page.evaluate(() => window.__sonareDebug.setInputMonitor(true));
+    await page.waitForFunction(
+      () => {
+        const peak = window.__sonareDebug.meterPeakDb();
+        return peak !== null && peak > -60;
+      },
+      null,
+      { timeout: 5000 },
+    );
+    await page.evaluate(() => window.__sonareDebug.setInputMonitor(false));
+    await page.waitForFunction(
+      () => {
+        const peak = window.__sonareDebug.meterPeakDb();
+        return peak !== null && peak <= -90;
+      },
+      null,
+      { timeout: 5000 },
+    );
+    console.info('input monitor: fake mic audible only while monitoring is enabled');
+  }
 
   // --- Mixer tab: one channel strip per track plus the master strip -----------
 

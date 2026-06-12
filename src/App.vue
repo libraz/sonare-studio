@@ -1330,6 +1330,8 @@ onMounted(async () => {
       audioClipCount: () => store.clips.filter((clip) => isAudioClip(clip)).length,
       armedTrackId: () => recording.armedTrackId.value,
       isRecording: () => recording.isRecording.value,
+      inputLevel: () => recording.inputLevel.value,
+      setInputMonitor: (enabled: boolean) => recording.setMonitor(enabled),
       projectName: () => store.projectName,
       activeTrackId: () => store.activeTrackId,
       activeClipId: () => store.clipId,

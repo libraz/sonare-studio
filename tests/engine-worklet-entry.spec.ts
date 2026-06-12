@@ -1,15 +1,21 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { receiveSync, receiveCommand } = vi.hoisted(() => ({
-  receiveSync: vi.fn(),
-  receiveCommand: vi.fn(),
-}));
+const { receiveSync, receiveCommand, receiveCaptureRequest, receiveTransportRequest } = vi.hoisted(
+  () => ({
+    receiveSync: vi.fn(),
+    receiveCommand: vi.fn(),
+    receiveCaptureRequest: vi.fn(),
+    receiveTransportRequest: vi.fn(),
+  }),
+);
 
 vi.mock('@/wasm/worklet.js', () => ({
   init: vi.fn(() => Promise.resolve()),
   SonareRealtimeEngineWorkletProcessor: class {
     receiveSync = receiveSync;
     receiveCommand = receiveCommand;
+    receiveCaptureRequest = receiveCaptureRequest;
+    receiveTransportRequest = receiveTransportRequest;
     process(): boolean {
       return true;
     }
@@ -50,6 +56,8 @@ beforeAll(async () => {
 beforeEach(() => {
   receiveSync.mockClear();
   receiveCommand.mockClear();
+  receiveCaptureRequest.mockClear();
+  receiveTransportRequest.mockClear();
 });
 
 /** Instantiates the registered processor and drains its async init chain. */
@@ -70,7 +78,7 @@ describe('worklet-entry dispatch', () => {
     });
   });
 
-  it('forwards every sync-prefixed message and the capture/transport request RPCs', async () => {
+  it('forwards every sync-prefixed message to receiveSync', async () => {
     const instance = await createReadyProcessor();
     const types = [
       'syncClips',
@@ -80,8 +88,6 @@ describe('worklet-entry dispatch', () => {
       'syncMidiClips',
       'syncCapture',
       'syncBuiltinInstrument',
-      'captureRequest',
-      'transportRequest',
     ];
     for (const type of types) {
       instance.port.onmessage?.({ data: { type } });
@@ -91,6 +97,17 @@ describe('worklet-entry dispatch', () => {
       types,
     );
     expect(receiveCommand).not.toHaveBeenCalled();
+  });
+
+  it('routes capture/transport request RPCs to their dedicated handlers', async () => {
+    const instance = await createReadyProcessor();
+    const capture = { type: 'captureRequest', requestId: 7, op: 'status' };
+    const transport = { type: 'transportRequest', requestId: 8 };
+    instance.port.onmessage?.({ data: capture });
+    instance.port.onmessage?.({ data: transport });
+    expect(receiveCaptureRequest).toHaveBeenCalledWith(capture);
+    expect(receiveTransportRequest).toHaveBeenCalledWith(transport);
+    expect(receiveSync).not.toHaveBeenCalled();
   });
 
   it('routes numeric message types to receiveCommand', async () => {

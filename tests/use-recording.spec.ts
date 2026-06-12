@@ -93,12 +93,12 @@ function makeFakeRecorder() {
         levelListener = null;
       };
     }),
-    start: vi.fn((options: StartRecordingOptions) => {
+    start: vi.fn(async (options: StartRecordingOptions) => {
       recording = true;
       lastStart = options;
       if (nextResult) nextResult.startPpq = options.startPpq;
     }),
-    stop: vi.fn(() => {
+    stop: vi.fn(async () => {
       recording = false;
       return nextResult;
     }),
@@ -207,7 +207,7 @@ describe('useRecording', () => {
     expect(seekPpq).toHaveBeenCalledWith(8);
     expect(play).toHaveBeenCalledTimes(1);
     expect(fake.rec.arm).toHaveBeenCalledWith(trackId);
-    expect(fake.getLastStart()).toEqual({ startPpq: 8, tempoBpm: 120, countInPpq: 0 });
+    expect(fake.getLastStart()).toEqual({ startPpq: 8, tempoBpm: 120 });
     expect(recording.isRecording.value).toBe(true);
 
     const clipId = await recording.stopRecord();
@@ -243,7 +243,8 @@ describe('useRecording', () => {
     expect(await recording.record()).toBe(true);
     expect(toggleMetronome).toHaveBeenCalledWith(true);
     expect(seekPpq).toHaveBeenCalledWith(4); // startPpq - countInPpq
-    expect(fake.getLastStart()).toEqual({ startPpq: 8, tempoBpm: 120, countInPpq: 4 });
+    // The capture still starts at startPpq; the pre-roll is transport-only.
+    expect(fake.getLastStart()).toEqual({ startPpq: 8, tempoBpm: 120 });
     expect(recording.isCountingIn.value).toBe(true);
 
     // 4 PPQ at 120 BPM = 2 s of count-in.
@@ -262,7 +263,7 @@ describe('useRecording', () => {
 
     await recording.record();
     expect(seekPpq).toHaveBeenCalledWith(0);
-    expect(fake.getLastStart()?.countInPpq).toBe(2);
+    expect(fake.getLastStart()).toEqual({ startPpq: 2, tempoBpm: 120 });
   });
 
   it('keeps a user-enabled metronome on after the count-in', async () => {
@@ -291,7 +292,7 @@ describe('useRecording', () => {
     expect(await recording.record()).toBe(true);
     expect(seekPpq).not.toHaveBeenCalled();
     expect(play).not.toHaveBeenCalled();
-    expect(fake.getLastStart()).toEqual({ startPpq: 16, tempoBpm: 120, countInPpq: 0 });
+    expect(fake.getLastStart()).toEqual({ startPpq: 16, tempoBpm: 120 });
   });
 
   it('surfaces microphone errors from record()', async () => {

@@ -48,7 +48,7 @@ export interface UseRecordingReturn {
   inputLevel: Ref<number>;
   /** True once microphone access succeeded for the current engine. */
   micReady: Ref<boolean>;
-  /** Current input-monitor state (host-side mic passthrough). */
+  /** Current input-monitor state (engine-side mic passthrough). */
   monitorEnabled: Ref<boolean>;
   /** Count-in length in bars applied by record() when starting from stop. */
   countInBars: Ref<number>;
@@ -268,7 +268,9 @@ export function useRecording(
     }
     try {
       rec.arm(trackId);
-      rec.start({ startPpq, tempoBpm, countInPpq });
+      // The punch window starts at startPpq, so the count-in pre-roll (the
+      // transport was seeked earlier above) is never part of the capture.
+      await rec.start({ startPpq, tempoBpm });
     } catch (err) {
       finishCountIn();
       error.value = messageOf(err);
@@ -295,7 +297,7 @@ export function useRecording(
     recordingTrackId = null;
     let result: RecordingResult | null;
     try {
-      result = recorder.stop();
+      result = await recorder.stop();
     } catch (err) {
       error.value = messageOf(err);
       return null;

@@ -1,6 +1,8 @@
 import type {
+  SonareEngineCaptureRequestMessage,
   SonareEngineCommandRecord,
   SonareEngineSyncMessage,
+  SonareEngineTransportRequestMessage,
   SonareRealtimeEngineWorkletProcessorOptions,
 } from '@/wasm/worklet.js';
 import { init, SonareRealtimeEngineWorkletProcessor } from '@/wasm/worklet.js';
@@ -95,13 +97,17 @@ class SonareEngineWorklet extends AudioWorkletProcessor {
     const type = (data as { type?: unknown }).type;
     if (typeof type === 'number') {
       this.bridge.receiveCommand(data as SonareEngineCommandRecord);
-    } else if (
-      typeof type === 'string' &&
-      (type.startsWith('sync') || type === 'captureRequest' || type === 'transportRequest')
-    ) {
-      // The facade's control-plane contract: every `sync*` message plus the
-      // capture/transport request RPCs must reach the bridge (libsonare does
-      // not export a canonical list, so match the documented prefix contract).
+    } else if (type === 'captureRequest') {
+      // Capture and transport RPCs have dedicated handlers that post the
+      // matching response back over the port; routing them into receiveSync
+      // would silently drop them and hang the caller's promise.
+      this.bridge.receiveCaptureRequest(data as SonareEngineCaptureRequestMessage);
+    } else if (type === 'transportRequest') {
+      this.bridge.receiveTransportRequest(data as SonareEngineTransportRequestMessage);
+    } else if (typeof type === 'string' && type.startsWith('sync')) {
+      // The facade's control-plane contract: every `sync*` message must reach
+      // the bridge (libsonare does not export a canonical list, so match the
+      // documented prefix contract).
       this.bridge.receiveSync(data as SonareEngineSyncMessage);
     }
   }
