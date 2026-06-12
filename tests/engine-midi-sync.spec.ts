@@ -186,6 +186,15 @@ describe('buildMidiClipSchedules', () => {
     expect(buildMidiClipSchedules(tracks, clips, TEMPO_120, SAMPLE_RATE)).toEqual([]);
   });
 
+  it('skips clips on a frozen track (the baked render plays instead)', () => {
+    const tracks = [makeTrack(1, { frozen: { assetId: 'baked-1' } }), makeTrack(2)];
+    const clips = [makeClip(1, 1), makeClip(2, 2)];
+    const schedules = buildMidiClipSchedules(tracks, clips, TEMPO_120, SAMPLE_RATE);
+    // Only the unfrozen track's clip schedules; the frozen one is silent.
+    expect(schedules.map((schedule) => schedule.id)).toEqual([2]);
+    expect(schedules[0].trackId).toBe(2);
+  });
+
   it('clamps the note end to the clip window', () => {
     const clip = makeClip(1, 1, {
       lengthPpq: 2,

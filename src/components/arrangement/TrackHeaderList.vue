@@ -22,6 +22,7 @@ import {
   setTrackVolume,
 } from '@/project/commands';
 import { flattenClipComp } from '@/project/comp-flatten';
+import { bounceTrackRange, freezeTrack, unfreezeTrack } from '@/project/freeze';
 import { useProjectStore } from '@/project/store';
 import { type EditorTrack, TRACK_COLOR_PALETTE, type TrackKind } from '@/project/types';
 import {
@@ -50,6 +51,12 @@ import {
  * the track. Row heights then match the canvas row geometry: lane height plus
  * TAKE_LANE_HEIGHT_PX per take row plus AUTOMATION_LANE_HEIGHT_PX for expanded
  * rows, so stacked headers follow the same prefix sums as automation-rows.ts.
+ *
+ * The snowflake toggle freezes a non-group track (bakes its pre-fader render
+ * and silences its own clips/DSP); frozen headers carry the .track-frozen
+ * tint. The BNC button bounces the track in place over the transport loop
+ * region (mirrored via the loop props) or, without a valid loop, over the
+ * track's full clip span. Both renders are async with a disabled busy state.
  */
 
 const props = defineProps<{
@@ -67,6 +74,12 @@ const props = defineProps<{
   automationParams?: Record<number, AutomationParam>;
   /** Ids of tracks whose take sub-rows are expanded. */
   takesExpandedIds?: readonly number[];
+  /** True when the transport loop region is enabled (bounce range source). */
+  loopEnabled?: boolean;
+  /** Transport loop start in PPQ. */
+  loopStartPpq?: number;
+  /** Transport loop end in PPQ. */
+  loopEndPpq?: number;
 }>();
 
 const emit = defineEmits<{
@@ -258,6 +271,78 @@ async function onFlattenTakes(track: EditorTrack): Promise<void> {
   }
 }
 
+// --- Freeze & bounce-in-place ------------------------------------------------
+
+/** Ids of tracks with an in-flight freeze render. */
+const freezingIds = ref(new Set<number>());
+/** Ids of tracks with an in-flight bounce render. */
+const bouncingIds = ref(new Set<number>());
+
+/** True while the track's freeze render is pending. */
+function isFreezing(track: EditorTrack): boolean {
+  return freezingIds.value.has(track.id);
+}
+
+/** True while the track's bounce render is pending. */
+function isBouncing(track: EditorTrack): boolean {
+  return bouncingIds.value.has(track.id);
+}
+
+/** Freezes an unfrozen track (async bake) or unfreezes a frozen one. */
+async function onToggleFreeze(track: EditorTrack): Promise<void> {
+  if (freezingIds.value.has(track.id)) return;
+  if (track.frozen) {
+    unfreezeTrack(track.id);
+    return;
+  }
+  freezingIds.value.add(track.id);
+  try {
+    await freezeTrack(track.id);
+  } catch (err) {
+    console.warn(`Freezing track ${track.id} failed`, err);
+  } finally {
+    freezingIds.value.delete(track.id);
+  }
+}
+
+/** True when the track has at least one clip to bounce. */
+function trackHasClips(track: EditorTrack): boolean {
+  return store.clips.some((clip) => clip.trackId === track.id);
+}
+
+/**
+ * PPQ range a bounce covers: the transport loop region when enabled and
+ * valid, otherwise the track's full clip span (null when the track has no
+ * clips).
+ */
+function bounceRangeFor(track: EditorTrack): { startPpq: number; endPpq: number } | null {
+  const loopStart = props.loopStartPpq ?? 0;
+  const loopEnd = props.loopEndPpq ?? 0;
+  if (props.loopEnabled && loopStart >= 0 && loopEnd > loopStart) {
+    return { startPpq: loopStart, endPpq: loopEnd };
+  }
+  const clips = store.clips.filter((clip) => clip.trackId === track.id);
+  if (clips.length === 0) return null;
+  const startPpq = Math.min(...clips.map((clip) => clip.startPpq));
+  const endPpq = Math.max(...clips.map((clip) => clip.startPpq + clip.lengthPpq));
+  return endPpq > startPpq ? { startPpq, endPpq } : null;
+}
+
+/** Bounces the track in place over the range from {@link bounceRangeFor}. */
+async function onBounce(track: EditorTrack): Promise<void> {
+  if (bouncingIds.value.has(track.id)) return;
+  const range = bounceRangeFor(track);
+  if (range === null) return;
+  bouncingIds.value.add(track.id);
+  try {
+    await bounceTrackRange(track.id, range.startPpq, range.endPpq);
+  } catch (err) {
+    console.warn(`Bouncing track ${track.id} failed`, err);
+  } finally {
+    bouncingIds.value.delete(track.id);
+  }
+}
+
 function onAutomationParamChange(track: EditorTrack, event: Event): void {
   const value = (event.target as HTMLSelectElement).value;
   if (isAutomationParam(value)) emit('automationParam', track.id, value);
@@ -340,11 +425,12 @@ function onGripPointerCancel(): void {
   reorderDrag.value = null;
 }
 
-/** Row classes: active highlight plus reorder drag feedback. */
+/** Row classes: active highlight, frozen tint plus reorder drag feedback. */
 function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
   const drag = reorderDrag.value;
   return {
     active: track.id === store.activeTrackId,
+    'track-frozen': track.frozen !== undefined,
     dragging: drag?.trackId === track.id,
     'drop-target': drag !== null && drag.toIndex === index && drag.trackId !== track.id,
   };
@@ -478,6 +564,31 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   @click="onToggleAutomation(track)"
                 >
                   A
+                </button>
+                <button
+                  v-if="track.kind !== 'group'"
+                  type="button"
+                  class="toggle freeze"
+                  :class="{ on: track.frozen !== undefined, busy: isFreezing(track) }"
+                  :disabled="isFreezing(track)"
+                  :title="track.frozen ? 'Unfreeze track' : 'Freeze track (bake its render)'"
+                  :aria-label="`Freeze ${track.name}`"
+                  :aria-pressed="track.frozen !== undefined"
+                  @click="onToggleFreeze(track)"
+                >
+                  ❄
+                </button>
+                <button
+                  v-if="track.kind !== 'group' && trackHasClips(track)"
+                  type="button"
+                  class="track-bounce"
+                  :class="{ busy: isBouncing(track) }"
+                  :disabled="isBouncing(track)"
+                  title="Bounce in place (loop region, or the full clip span)"
+                  :aria-label="`Bounce ${track.name}`"
+                  @click="onBounce(track)"
+                >
+                  BNC
                 </button>
                 <button
                   v-if="takeRowCount(track) > 0"
@@ -682,6 +793,18 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
   background: #1b2330;
 }
 
+.track-header.track-frozen {
+  background: #161c24;
+}
+
+.track-header.track-frozen .track-name {
+  color: #9bb8cc;
+}
+
+.track-header.track-frozen.active {
+  background: #1b2530;
+}
+
 .track-header.dragging {
   opacity: 0.6;
 }
@@ -824,6 +947,35 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
   color: #0b0d11;
   background: #a78bfa;
   border-color: #a78bfa;
+}
+
+.toggle.freeze.on {
+  color: #0b0d11;
+  background: #7dd3fc;
+  border-color: #7dd3fc;
+}
+
+.toggle.freeze:disabled,
+.track-bounce:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.track-bounce {
+  height: 14px;
+  font: 700 8px system-ui, sans-serif;
+  line-height: 1;
+  color: #8b93a3;
+  background: #1d2027;
+  border: 1px solid #2a2e37;
+  border-radius: 3px;
+  padding: 0 4px;
+  cursor: pointer;
+}
+
+.track-bounce:hover:not(:disabled) {
+  color: #c8cdd6;
+  background: #242832;
 }
 
 .takes-flatten {

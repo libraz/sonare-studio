@@ -330,6 +330,72 @@ describe('scheduleProjectClips with audio clips', () => {
     expect(timeStretch).not.toHaveBeenCalled();
   });
 
+  it('schedules a frozen track from its baked asset and skips its own clips', async () => {
+    store.tracks = [makeTrack(1, { frozen: { assetId: 'frozen-1' } })];
+    store.clips = [makeAudioClip(10, 1, { startPpq: 8 })];
+    const { handle, addClip } = makeHandle(10);
+    const loadAudioAsset = vi.fn(async (assetId: string) => {
+      if (assetId !== 'frozen-1') throw new Error(`unexpected asset ${assetId}`);
+      return makeAsset(20);
+    });
+
+    const scheduled = await scheduleProjectClips(handle, { loadAudioAsset });
+    // One synthetic entry per frozen track (clipId = -trackId, no clip id).
+    expect(scheduled).toEqual([{ engineClipId: 500, clipId: -1, trackId: 1 }]);
+    // Only the baked asset loads; the track's own clip asset is never touched.
+    expect(loadAudioAsset).toHaveBeenCalledTimes(1);
+    expect(loadAudioAsset).toHaveBeenCalledWith('frozen-1');
+    expect(addClip).toHaveBeenCalledTimes(1);
+    const [trackId, channels, startPpq, opts] = addClip.mock.calls[0];
+    expect(trackId).toBe(1);
+    // The baked render always starts at the timeline origin at unity gain
+    // (track volume/pan stay live engine lane state).
+    expect(startPpq).toBe(0);
+    expect(opts).toEqual({ gain: 1 });
+    expect((channels as Float32Array[])[0]).toEqual(makeAsset(20).channels[0]);
+  });
+
+  it('resamples the baked frozen asset to the engine rate', async () => {
+    store.tracks = [makeTrack(1, { frozen: { assetId: 'frozen-1' } })];
+    store.clips = [];
+    const { handle, addClip } = makeHandle(20); // engine at 20 Hz, asset at 10 Hz
+
+    await scheduleProjectClips(handle, { loadAudioAsset: async () => makeAsset(10) });
+    const channels = addClip.mock.calls[0][1] as Float32Array[];
+    expect(channels[0].length).toBe(20);
+    expect(channels[0][0]).toBeCloseTo(1, 5);
+    expect(channels[0][19]).toBeCloseTo(10, 5);
+  });
+
+  it('a frozen track with a missing baked asset stays silent without throwing', async () => {
+    store.tracks = [makeTrack(1, { frozen: { assetId: 'gone' } }), makeTrack(2)];
+    store.clips = [makeAudioClip(10, 1), makeAudioClip(20, 2)];
+    const { handle, addClip } = makeHandle(10);
+    const loadAudioAsset = vi.fn(async (assetId: string) => {
+      if (assetId === 'gone') throw new Error('missing');
+      return makeAsset(20);
+    });
+
+    const scheduled = await scheduleProjectClips(handle, { loadAudioAsset });
+    // No engine clip for the frozen track (its own clips stay skipped too);
+    // the other track schedules normally.
+    expect(scheduled).toEqual([{ engineClipId: 500, clipId: 20, trackId: 2 }]);
+    expect(addClip).toHaveBeenCalledTimes(1);
+    expect(loadAudioAsset.mock.calls.map(([assetId]) => assetId)).toEqual(['gone', 'asset-x']);
+  });
+
+  it('schedules nothing for a frozen track whose baked asset is empty', async () => {
+    store.tracks = [makeTrack(1, { frozen: { assetId: 'frozen-1' } })];
+    store.clips = [];
+    const { handle, addClip } = makeHandle(10);
+
+    const scheduled = await scheduleProjectClips(handle, {
+      loadAudioAsset: async () => makeAsset(0),
+    });
+    expect(scheduled).toEqual([]);
+    expect(addClip).not.toHaveBeenCalled();
+  });
+
   it('expands a clip with takes into one engine clip per comp segment', async () => {
     store.tracks = [makeTrack(1)];
     store.clips = [

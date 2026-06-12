@@ -93,6 +93,7 @@ import {
 } from '@/project/commands';
 import { flattenClipComp } from '@/project/comp-flatten';
 import { exportProjectSmf } from '@/project/export';
+import { bounceTrackRange, freezeTrack, unfreezeTrack } from '@/project/freeze';
 import { clampPan } from '@/project/mixer';
 import { type ScheduledProjectClip, scheduleProjectClips } from '@/project/scheduling';
 import {
@@ -746,7 +747,7 @@ function syncMidiState(): void {
  * instrument, mixer levels, strip DSP — is realtime engine state.
  */
 function trackScheduleKey(track: EditorTrack): string {
-  return `${track.id}|${track.kind}`;
+  return `${track.id}|${track.kind}|${track.frozen?.assetId ?? ''}`;
 }
 
 /**
@@ -785,7 +786,10 @@ watch(
         .map(clipScheduleKey)
         .join('\n'),
       store.tracks
-        .map((track) => `${track.id}|${JSON.stringify(track.instrument ?? null)}`)
+        .map(
+          (track) =>
+            `${track.id}|${JSON.stringify(track.instrument ?? null)}|${track.frozen?.assetId ?? ''}`,
+        )
         .join('\n'),
       JSON.stringify(effectiveTempoSegments()),
     ].join(' '),
@@ -1580,6 +1584,12 @@ onMounted(async () => {
       setInsertSidechain: (trackId: number, index: number, sourceTrackId: number | null) =>
         setInsertSidechain(trackId, index, sourceTrackId),
       setStripGainDb: (target: number | 'master', gainDb: number) => setStripGain(target, gainDb),
+      removeClip: (clipId: number) => deleteClip(clipId),
+      freezeTrack: (trackId: number) => freezeTrack(trackId),
+      unfreezeTrack: (trackId: number) => unfreezeTrack(trackId),
+      bounceTrackRange: (trackId: number, startPpq: number, endPpq: number) =>
+        bounceTrackRange(trackId, startPpq, endPpq),
+      trackFrozenStates: () => store.tracks.map((track) => track.frozen?.assetId ?? null),
       setClipWarp: (
         clipId: number,
         warp: { enabled: boolean; sourceBpm: number; anchors?: WarpAnchor[] } | null,

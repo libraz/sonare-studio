@@ -266,6 +266,26 @@ export async function scheduleProjectClips(
   const loadAudio = options.loadAudioAsset ?? loadAsset;
   const scheduled: ScheduledProjectClip[] = [];
   for (const track of store.tracks) {
+    // Frozen tracks play their baked pre-fader render from the timeline
+    // start instead of their own clips (which stay silent until unfreeze).
+    if (track.frozen !== undefined) {
+      try {
+        const asset = await loadAudio(track.frozen.assetId);
+        const targetRate = options.sampleRate ?? handle.ctx.sampleRate;
+        const channels = resampleChannelsLinear(
+          asset.channels.map((channel) => channel.slice()),
+          asset.meta.sampleRate,
+          targetRate,
+        );
+        if (channels.length > 0 && channels[0].length > 0) {
+          const engineClipId = handle.engine.addClip(track.id, channels, 0, { gain: 1 });
+          scheduled.push({ engineClipId, clipId: -track.id, trackId: track.id });
+        }
+      } catch {
+        // Missing or unreadable frozen asset: the track stays silent.
+      }
+      continue;
+    }
     const clips = store.clips.filter((clip) => clip.trackId === track.id);
     for (const clip of clips) {
       if (clipKind(clip) !== 'audio') continue;

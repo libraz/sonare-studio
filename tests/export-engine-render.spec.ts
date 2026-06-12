@@ -521,6 +521,161 @@ describe('renderProjectWithEngine', () => {
   });
 });
 
+/** Fake baked freeze asset: half a second of stereo at the render rate. */
+function frozenAsset(frames = 24000): LoadedAudioAsset {
+  return {
+    meta: {
+      id: 'frozen-1',
+      name: 'baked.wav',
+      sampleRate: 48000,
+      numChannels: 2,
+      numFrames: frames,
+    },
+    channels: [new Float32Array(frames).fill(0.75), new Float32Array(frames).fill(0.75)],
+  };
+}
+
+describe('renderProjectWithEngine with frozen tracks', () => {
+  /** Asset loader serving the baked asset next to the regular clip asset. */
+  function loadFrozenOrClipAsset() {
+    return vi.fn(async (assetId: string) => (assetId === 'frozen-1' ? frozenAsset() : fakeAsset()));
+  }
+
+  it('plays a frozen audio track from its baked asset instead of its own clips and strip', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].frozen = { assetId: 'frozen-1' };
+    // Give the frozen track strip DSP that must NOT reach the engine (it is
+    // already baked into the frozen render).
+    (doc.tracks[1].mixer as { inserts: unknown[] }).inserts = [
+      { processor: 'dynamics.compressor', params: {}, enabled: true },
+    ];
+    const engine = new FakeEngine();
+    const loadAudioAsset = loadFrozenOrClipAsset();
+    await renderProjectWithEngine(doc, { deps: null, createEngine: () => engine, loadAudioAsset });
+
+    // Only the baked asset loads; the track's own clip asset is never touched.
+    expect(loadAudioAsset.mock.calls.map(([assetId]) => assetId)).toEqual(['frozen-1']);
+
+    // One engine clip: the baked render at the timeline start, full length,
+    // unity gain (the live fader applies on top).
+    const clips = engine.named('setClips')[0][1] as Array<{
+      trackId: number;
+      channels: Float32Array[];
+      startPpq: number;
+      lengthSamples: number;
+      gain?: number;
+    }>;
+    expect(clips).toHaveLength(1);
+    expect(clips[0]).toMatchObject({ trackId: 2, startPpq: 0, lengthSamples: 24000, gain: 1 });
+    expect(clips[0].channels[0][0]).toBeCloseTo(0.75, 5);
+
+    // The frozen lane gets no strip JSON; the unfrozen MIDI track still plays.
+    expect(engine.named('setTrackStripJson')).toEqual([]);
+    expect(engine.named('setMidiClips')).toHaveLength(1);
+  });
+
+  it('a frozen MIDI track contributes no MIDI schedules', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].frozen = { assetId: 'frozen-1' };
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, {
+      deps: null,
+      createEngine: () => engine,
+      loadAudioAsset: loadFrozenOrClipAsset(),
+    });
+
+    // The only MIDI clip lives on the frozen track: nothing is scheduled.
+    expect(engine.named('setMidiClips')).toEqual([]);
+    // The baked render plays on lane 1, the audio track keeps its own clip.
+    const clips = engine.named('setClips')[0][1] as Array<Record<string, unknown>>;
+    expect(clips).toHaveLength(2);
+    expect(clips[0]).toMatchObject({ trackId: 1, startPpq: 0, gain: 1 });
+    expect(clips[1]).toMatchObject({ trackId: 2, startPpq: 2 });
+  });
+
+  it('freezeTrackIndex renders one isolated pre-fader pass', async () => {
+    const doc = makeDoc();
+    // Automation on the frozen candidate must stay live (not rendered).
+    doc.tracks[1].automation = [
+      { param: 'faderDb', enabled: true, points: [{ ppq: 0, value: -12 }] },
+      { param: 'pan', enabled: true, points: [{ ppq: 0, value: 1 }] },
+    ];
+    // Its insert chain IS part of the pre-fader signal and must render.
+    (doc.tracks[1].mixer as { inserts: unknown[] }).inserts = [
+      { processor: 'dynamics.compressor', params: {}, enabled: true },
+    ];
+    // A master insert chain must be skipped by the freeze pass.
+    (doc.mixer as { master: { inserts: unknown[] } }).master.inserts = [
+      { processor: 'dynamics.limiter', params: {}, enabled: true },
+    ];
+
+    const engines: FakeEngine[] = [];
+    const result = await renderProjectWithEngine(doc, {
+      deps: null,
+      loadAudioAsset: async () => fakeAsset(),
+      createEngine: () => {
+        const engine = new FakeEngine();
+        engines.push(engine);
+        return engine;
+      },
+      freezeTrackIndex: 1,
+    });
+
+    // A freeze render is exactly one pass on one engine.
+    expect(engines).toHaveLength(1);
+    const engine = engines[0];
+    expect(engine.destroyed).toBe(true);
+
+    // The frozen lane's sends are stripped (they stay live on the track).
+    expect(engine.named('setTrackLanes')[0][1]).toEqual([{ trackId: 1 }, { trackId: 2 }]);
+
+    // Pre-fader: the lane renders at unity gain, centered.
+    const params = new Map(engine.named('setParameter').map(([, id, value]) => [id, value]));
+    expect(params.get(0x4d580101)).toBe(0);
+    expect(params.get(0x4d580102)).toBe(0);
+
+    // No master strip scene and no master levels.
+    expect(engine.named('setMasterStripJson')).toEqual([]);
+    expect(params.has(0x4d58ff01)).toBe(false);
+    expect(params.has(0x4d58ff02)).toBe(false);
+
+    // The frozen lane's faderDb/pan automation is excluded; other lanes keep
+    // theirs and master automation is skipped with the master levels.
+    const laneIds = new Set(engine.named('setAutomationLane').map(([, id]) => id));
+    expect(laneIds.has(0x4d580101)).toBe(false);
+    expect(laneIds.has(0x4d580102)).toBe(false);
+    expect(laneIds.has(0x4d580001)).toBe(true);
+    expect(laneIds.has(0x4d58ff02)).toBe(false);
+
+    // Every other lane is muted; the frozen lane stays audible.
+    expect(engine.named('setSoloMute')).toEqual([
+      ['setSoloMute', 0, false, true],
+      ['setSoloMute', 1, false, false],
+    ]);
+
+    // The track's own insert chain renders into the freeze (pre-fader DSP).
+    expect(engine.named('setTrackStripJson').map(([, trackId]) => trackId)).toEqual([2]);
+
+    // The result carries the single pass output and its peak.
+    expect(result.totalFrames).toBe(4 * 24000 + 2 * 48000);
+    expect(result.channels[0]).toHaveLength(result.totalFrames);
+    expect(result.channels[0][0]).toBeCloseTo(0.25, 5);
+    expect(result.channels[1][result.totalFrames - 1]).toBeCloseTo(0.25, 5);
+    expect(result.report.peakDb).toBeCloseTo(20 * Math.log10(0.25), 5);
+  });
+
+  it('rejects an out-of-range freeze track index', async () => {
+    for (const freezeTrackIndex of [-1, 2, 0.5]) {
+      await expect(
+        renderProjectWithEngine(makeDoc(), {
+          ...renderOptions(new FakeEngine()),
+          freezeTrackIndex,
+        }),
+      ).rejects.toThrow(RangeError);
+    }
+  });
+});
+
 /** Document with a group track (index 2) that the audio track routes into. */
 function makeGroupDoc(): ProjectDocument {
   const doc = makeDoc();

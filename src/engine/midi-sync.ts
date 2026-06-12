@@ -120,6 +120,8 @@ export function buildMidiClipSchedules(
   for (const clip of clips) {
     const track = trackById.get(clip.trackId);
     if (track?.kind !== 'midi' || clipKind(clip) !== 'midi') continue;
+    // Frozen tracks play their baked render; their MIDI stays silent.
+    if (track.frozen !== undefined) continue;
     const notes = clipPlaybackNotes(clip);
     if (notes.length === 0 || clip.gain <= 0) continue;
 

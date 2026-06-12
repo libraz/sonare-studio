@@ -12,6 +12,7 @@ import {
   setClipFades,
   setClipWarp,
   setInsertSidechain,
+  setTrackFrozen,
   setTrackGroup,
 } from '@/project/commands';
 import {
@@ -365,5 +366,47 @@ describe('group membership and insert sidechain serialization (schema v3)', () =
     }
     const reserialized = serializeProject();
     expect(reserialized.tracks.every((track) => track.groupIndex === undefined)).toBe(true);
+  });
+});
+
+describe('track frozen state serialization', () => {
+  let store: ReturnType<typeof useProjectStore>;
+
+  beforeEach(async () => {
+    setActivePinia(createPinia());
+    store = useProjectStore();
+    store.dispose();
+    clearHistory();
+    await store.init();
+  });
+
+  it('round-trips track.frozen through serialize and load', async () => {
+    const trackId = addAudioTrack({ name: 'Vox' });
+    setTrackFrozen(trackId, { assetId: 'baked-1' });
+
+    const doc = serializeProject();
+    expect(doc.tracks[1].frozen).toEqual({ assetId: 'baked-1' });
+    // Unfrozen tracks carry no frozen field at all.
+    expect('frozen' in doc.tracks[0]).toBe(false);
+    // Documents stay plain JSON (the baked PCM lives in the asset store).
+    expect(JSON.parse(JSON.stringify(doc))).toEqual(doc);
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    expect(store.tracks[1].frozen).toEqual({ assetId: 'baked-1' });
+    expect(store.tracks[0].frozen).toBeUndefined();
+    expect(serializeProject()).toEqual(doc);
+    expect(canUndo()).toBe(false);
+  });
+
+  it('drops invalid document frozen states on load', async () => {
+    addAudioTrack({ name: 'Vox' });
+    const doc = JSON.parse(JSON.stringify(serializeProject())) as ProjectDocument;
+    doc.tracks[1].frozen = { assetId: '' }; // empty asset id
+    doc.tracks[0].frozen = { assetId: 5 } as unknown as { assetId: string }; // not a string
+
+    await loadProjectDocument(doc);
+    expect(store.tracks.every((track) => track.frozen === undefined)).toBe(true);
+    // The invalid state never resurfaces on re-serialize.
+    expect(serializeProject().tracks.every((track) => track.frozen === undefined)).toBe(true);
   });
 });

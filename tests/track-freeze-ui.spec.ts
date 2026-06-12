@@ -1,0 +1,172 @@
+import { type DOMWrapper, flushPromises, mount } from '@vue/test-utils';
+import { createPinia, setActivePinia } from 'pinia';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import TrackHeaderList from '@/components/arrangement/TrackHeaderList.vue';
+import ChannelStrip from '@/components/mixer/ChannelStrip.vue';
+import {
+  addGroupTrack,
+  addMidiClip,
+  addTrack,
+  clearHistory,
+  setTrackFrozen,
+} from '@/project/commands';
+import { useProjectStore } from '@/project/store';
+
+vi.mock('@/lib/wasm', async () => {
+  const { createFakeWasmModule } = await import('./fake-wasm');
+  const fakeModule = createFakeWasmModule();
+  return { ensureWasm: async () => fakeModule };
+});
+
+const freezeMock = vi.hoisted(() => ({
+  freezeTrack: vi.fn(async () => 'frozen-asset'),
+  unfreezeTrack: vi.fn(),
+  bounceTrackRange: vi.fn(async () => 1),
+}));
+
+vi.mock('@/project/freeze', () => freezeMock);
+
+/** Mounts the header list with the geometry props it requires. */
+function mountHeaders(loop?: { enabled: boolean; startPpq: number; endPpq: number }) {
+  return mount(TrackHeaderList, {
+    props: {
+      laneHeight: 48,
+      scrollY: 0,
+      rulerOffset: 24,
+      ...(loop
+        ? { loopEnabled: loop.enabled, loopStartPpq: loop.startPpq, loopEndPpq: loop.endPpq }
+        : {}),
+    },
+  });
+}
+
+describe('track freeze / bounce UI', () => {
+  let store: ReturnType<typeof useProjectStore>;
+  let trackId: number;
+
+  beforeEach(async () => {
+    setActivePinia(createPinia());
+    store = useProjectStore();
+    store.dispose();
+    clearHistory();
+    vi.clearAllMocks();
+    await store.init();
+    trackId = store.tracks[0].id;
+  });
+
+  describe('TrackHeaderList freeze toggle', () => {
+    it('shows the freeze toggle on non-group tracks only', () => {
+      addGroupTrack();
+      const wrapper = mountHeaders();
+      const headers = wrapper.findAll('.track-header');
+      expect(headers[0].find('.toggle.freeze').exists()).toBe(true);
+      expect(headers[headers.length - 1].find('.toggle.freeze').exists()).toBe(false);
+    });
+
+    it('freezes an unfrozen track with a busy state while the render is pending', async () => {
+      let resolveFreeze!: (assetId: string) => void;
+      freezeMock.freezeTrack.mockImplementationOnce(
+        () => new Promise<string>((resolve) => (resolveFreeze = resolve)),
+      );
+      const wrapper = mountHeaders();
+      const button = wrapper.find('.toggle.freeze');
+      await button.trigger('click');
+      expect(freezeMock.freezeTrack).toHaveBeenCalledWith(trackId);
+      expect(button.attributes('disabled')).toBeDefined();
+      expect(button.classes()).toContain('busy');
+      resolveFreeze('frozen-asset');
+      await flushPromises();
+      expect(button.attributes('disabled')).toBeUndefined();
+      expect(button.classes()).not.toContain('busy');
+    });
+
+    it('re-enables the toggle and warns when the freeze render fails', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      freezeMock.freezeTrack.mockRejectedValueOnce(new Error('render failed'));
+      const wrapper = mountHeaders();
+      const button = wrapper.find('.toggle.freeze');
+      await button.trigger('click');
+      await flushPromises();
+      expect(warn).toHaveBeenCalled();
+      expect(button.attributes('disabled')).toBeUndefined();
+      warn.mockRestore();
+    });
+
+    it('marks frozen headers and unfreezes on click', async () => {
+      setTrackFrozen(trackId, { assetId: 'frozen-asset' });
+      const wrapper = mountHeaders();
+      const header = wrapper.find('.track-header');
+      expect(header.classes()).toContain('track-frozen');
+      const button = header.find('.toggle.freeze');
+      expect(button.classes()).toContain('on');
+      await button.trigger('click');
+      expect(freezeMock.unfreezeTrack).toHaveBeenCalledWith(trackId);
+      expect(freezeMock.freezeTrack).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('TrackHeaderList bounce button', () => {
+    // The demo project seeds track 0 with a clip; bounce tests target a
+    // fresh clipless track and scope to its own header row.
+    let bounceTrackId: number;
+
+    beforeEach(() => {
+      bounceTrackId = addTrack({ name: 'Bounce target' });
+    });
+
+    function bounceButton(loop?: {
+      enabled: boolean;
+      startPpq: number;
+      endPpq: number;
+    }): DOMWrapper<Element> {
+      const headers = mountHeaders(loop).findAll('.track-header');
+      return headers[headers.length - 1].find('.track-bounce');
+    }
+
+    it('only appears on tracks with at least one clip', () => {
+      expect(bounceButton().exists()).toBe(false);
+      addMidiClip({ trackId: bounceTrackId, startPpq: 0, lengthPpq: 960 });
+      expect(bounceButton().exists()).toBe(true);
+    });
+
+    it('bounces over the loop region when the loop is enabled and valid', async () => {
+      addMidiClip({ trackId: bounceTrackId, startPpq: 0, lengthPpq: 960 });
+      const button = bounceButton({ enabled: true, startPpq: 960, endPpq: 1920 });
+      await button.trigger('click');
+      expect(freezeMock.bounceTrackRange).toHaveBeenCalledWith(bounceTrackId, 960, 1920);
+    });
+
+    it('falls back to the full clip span when the loop is disabled or empty', async () => {
+      addMidiClip({ trackId: bounceTrackId, startPpq: 480, lengthPpq: 960 });
+      addMidiClip({ trackId: bounceTrackId, startPpq: 1920, lengthPpq: 480 });
+      const button = bounceButton({ enabled: false, startPpq: 960, endPpq: 1920 });
+      await button.trigger('click');
+      expect(freezeMock.bounceTrackRange).toHaveBeenCalledWith(bounceTrackId, 480, 2400);
+    });
+
+    it('re-enables the button and warns when the bounce render fails', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      freezeMock.bounceTrackRange.mockRejectedValueOnce(new Error('render failed'));
+      addMidiClip({ trackId: bounceTrackId, startPpq: 0, lengthPpq: 960 });
+      const button = bounceButton();
+      await button.trigger('click');
+      await flushPromises();
+      expect(warn).toHaveBeenCalled();
+      expect(button.attributes('disabled')).toBeUndefined();
+      warn.mockRestore();
+    });
+  });
+
+  describe('ChannelStrip frozen tag', () => {
+    it('tags frozen tracks with a snowflake next to the name', () => {
+      setTrackFrozen(trackId, { assetId: 'frozen-asset' });
+      const wrapper = mount(ChannelStrip, { props: { target: trackId }, shallow: true });
+      expect(wrapper.find('.strip-frozen-tag').exists()).toBe(true);
+    });
+
+    it('shows no tag on unfrozen tracks', () => {
+      const wrapper = mount(ChannelStrip, { props: { target: trackId }, shallow: true });
+      expect(wrapper.find('.strip-frozen-tag').exists()).toBe(false);
+    });
+  });
+});

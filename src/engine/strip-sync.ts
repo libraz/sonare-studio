@@ -334,7 +334,10 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
         }
         continue;
       }
-      const memory = syncStrip(track.id, track.mixer, trackStripMemory.get(track.id), (json) =>
+      // Frozen tracks bypass their strip DSP: the inserts/EQ are baked into
+      // the frozen render, so the engine strip goes neutral while frozen.
+      const stripState = track.frozen !== undefined ? undefined : track.mixer;
+      const memory = syncStrip(track.id, stripState, trackStripMemory.get(track.id), (json) =>
         handle.engine.setTrackStripJson(track.id, json),
       );
       if (memory) trackStripMemory.set(track.id, memory);

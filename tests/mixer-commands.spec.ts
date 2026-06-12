@@ -20,6 +20,7 @@ import {
   setStripEq,
   setStripGain,
   setStripPan,
+  setTrackFrozen,
   setTrackGroup,
   setTrackInstrument,
   undo,
@@ -326,6 +327,33 @@ describe('mixer commands', () => {
       undo();
       expect(store.tracks.some((t) => t.id === groupId)).toBe(true);
       expect(store.tracks[0].groupId).toBe(groupId);
+    });
+  });
+
+  describe('setTrackFrozen', () => {
+    it('sets, clears, undoes and redoes the frozen state as single edits', () => {
+      setTrackFrozen(trackId, { assetId: 'baked-1' });
+      expect(store.tracks[0].frozen).toEqual({ assetId: 'baked-1' });
+      // Frozen is app metadata: it must survive a refresh from the Project.
+      store.refresh();
+      expect(store.tracks[0].frozen).toEqual({ assetId: 'baked-1' });
+
+      setTrackFrozen(trackId, null);
+      expect(store.tracks[0].frozen).toBeUndefined();
+      undo(); // clear
+      expect(store.tracks[0].frozen).toEqual({ assetId: 'baked-1' });
+      undo(); // set
+      expect(store.tracks[0].frozen).toBeUndefined();
+      redo();
+      expect(store.tracks[0].frozen).toEqual({ assetId: 'baked-1' });
+    });
+
+    it('rejects group tracks, empty asset ids and unknown tracks', () => {
+      const groupId = addGroupTrack();
+      expect(() => setTrackFrozen(groupId, { assetId: 'baked-1' })).toThrow(/cannot be frozen/);
+      expect(() => setTrackFrozen(trackId, { assetId: '' })).toThrow(/must not be empty/);
+      expect(() => setTrackFrozen(9999, { assetId: 'baked-1' })).toThrow(RangeError);
+      expect(store.tracks.every((track) => track.frozen === undefined)).toBe(true);
     });
   });
 

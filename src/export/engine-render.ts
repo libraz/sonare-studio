@@ -152,6 +152,13 @@ export interface EngineRenderOptions {
   includeMasterChain?: boolean;
   /** True also returns one stereo stem per track (post-strip, pre-master). */
   stems?: boolean;
+  /**
+   * Renders ONE track's pre-fader signal in isolation (freeze/bounce-in-
+   * place): every other lane is muted, the track's sends, fader/pan and
+   * fader/pan automation are excluded (they stay live on the frozen track)
+   * and master strip/levels are skipped. The result is the mixdown channels.
+   */
+  freezeTrackIndex?: number;
   /** Mastering/metering seams; undefined derives them from the wasm module. */
   deps?: Pick<MixdownDeps, 'mastering' | 'metering'> | null;
   /** Audio asset loader (defaults to the OPFS asset store's loadAsset). */
@@ -210,6 +217,11 @@ interface RenderPass {
    * its member indices so the submix renders through the group bus.
    */
   stemIndices: ReadonlySet<number> | null;
+  /**
+   * Non-null renders this track pre-fader (freeze): its sends are stripped,
+   * its base fader/pan stay neutral and its fader/pan automation is skipped.
+   */
+  freezeIndex: number | null;
 }
 
 /**
@@ -330,6 +342,7 @@ export async function renderProjectWithEngine(
     order: index,
     ...(track.instrument !== undefined ? { instrument: track.instrument } : {}),
     ...(track.mixer !== undefined ? { mixer: track.mixer } : {}),
+    ...(track.frozen !== undefined ? { frozen: { ...track.frozen } } : {}),
   }));
   const midiClips: EditorClip[] = [];
   doc.tracks.forEach((track, trackIndex) => {
@@ -403,7 +416,32 @@ export async function renderProjectWithEngine(
     }
   };
   for (let index = 0; index < doc.tracks.length; index++) {
-    for (const clip of doc.tracks[index].clips) {
+    const track = doc.tracks[index];
+    // Frozen tracks play their baked pre-fader render from the timeline
+    // start instead of their own clips.
+    if (track.frozen !== undefined) {
+      try {
+        const asset = await loadAudio(track.frozen.assetId);
+        const channels = resampleChannelsLinear(
+          asset.channels.map((channel) => channel.slice()),
+          asset.meta.sampleRate,
+          sampleRate,
+        );
+        if (channels.length > 0 && channels[0].length > 0) {
+          audioClips.push({
+            trackId: trackIds[index],
+            channels,
+            startPpq: 0,
+            lengthSamples: channels[0].length,
+            gain: 1,
+          });
+        }
+      } catch {
+        // Missing or unreadable frozen asset: the track stays silent.
+      }
+      continue;
+    }
+    for (const clip of track.clips) {
       if ((clip.kind ?? 'midi') !== 'audio') continue;
       checkCancel();
       await renderAudioClip(clip, trackIds[index]);
@@ -431,9 +469,16 @@ export async function renderProjectWithEngine(
   /** Replays the pre-built program onto a fresh engine (synchronous). */
   const configureEngine = (engine: OfflineRenderEngine, pass: RenderPass): void => {
     // The engine validates sends against already-declared buses, so the bus
-    // set must be installed before any lane that carries sends.
+    // set must be installed before any lane that carries sends. A freeze
+    // pass strips the frozen lane's sends (they stay live on the track).
     if (buses.length > 0) engine.setTrackBuses(buses);
-    engine.setTrackLanes(lanes);
+    engine.setTrackLanes(
+      pass.freezeIndex === null
+        ? lanes
+        : lanes.map((lane, index) =>
+            index === pass.freezeIndex ? { trackId: lane.trackId } : lane,
+          ),
+    );
 
     // Per-track strips (inserts + EQ + bypass flags), lane base fader/pan and
     // solo/mute — the same state the live mixer/strip syncs install. A stem
@@ -457,7 +502,8 @@ export async function renderProjectWithEngine(
         }
         return;
       }
-      if (strip && (strip.inserts.length > 0 || strip.eq)) {
+      if (track.frozen === undefined && strip && (strip.inserts.length > 0 || strip.eq)) {
+        // Frozen tracks bypass their strip DSP (baked into the render).
         engine.setTrackStripJson(trackId, stripSceneJson(trackId, strip));
         strip.inserts.forEach((slot, insertIndex) => {
           if (!slot.enabled) engine.setTrackStripInsertBypassed(trackId, insertIndex, true);
@@ -471,11 +517,18 @@ export async function renderProjectWithEngine(
       } else {
         engine.setSoloMute(index, false, !pass.stemIndices.has(index));
       }
-      engine.setParameter(
-        laneParamId(index, ENGINE_MIXER_PARAM_FADER_DB),
-        linearToDb(track.volume) + (strip?.gainDb ?? 0),
-      );
-      engine.setParameter(laneParamId(index, ENGINE_MIXER_PARAM_PAN), clampPan(strip?.pan ?? 0));
+      if (pass.freezeIndex === index) {
+        // Pre-fader freeze: the lane renders at unity/centered; the live
+        // fader/pan keep applying to the baked audio afterwards.
+        engine.setParameter(laneParamId(index, ENGINE_MIXER_PARAM_FADER_DB), 0);
+        engine.setParameter(laneParamId(index, ENGINE_MIXER_PARAM_PAN), 0);
+      } else {
+        engine.setParameter(
+          laneParamId(index, ENGINE_MIXER_PARAM_FADER_DB),
+          linearToDb(track.volume) + (strip?.gainDb ?? 0),
+        );
+        engine.setParameter(laneParamId(index, ENGINE_MIXER_PARAM_PAN), clampPan(strip?.pan ?? 0));
+      }
     });
 
     // Insert sidechain keys (document inserts carry positional sources).
@@ -515,6 +568,7 @@ export async function renderProjectWithEngine(
 
     // Automation lanes (track entries + master), enabled lanes only.
     doc.tracks.forEach((track, index) => {
+      if (pass.freezeIndex === index) return;
       for (const lane of track.automation ?? []) {
         if (!lane.enabled || lane.points.length === 0) continue;
         const kind = lane.param === 'pan' ? ENGINE_MIXER_PARAM_PAN : ENGINE_MIXER_PARAM_FADER_DB;
@@ -648,6 +702,42 @@ export async function renderProjectWithEngine(
     }
   };
 
+  // A freeze render is a single isolated pre-fader pass; everything else
+  // renders the mix (and optional stems).
+  if (options.freezeTrackIndex !== undefined) {
+    const freezeIndex = options.freezeTrackIndex;
+    if (!Number.isInteger(freezeIndex) || freezeIndex < 0 || freezeIndex >= doc.tracks.length) {
+      throw new RangeError(`Freeze track index ${freezeIndex} is out of range`);
+    }
+    const channels = await runPass(
+      {
+        masterStrip: false,
+        masterLevels: false,
+        stemIndices: new Set([freezeIndex]),
+        freezeIndex,
+      },
+      'engine.freeze',
+      0,
+      0.9,
+    );
+    options.onProgress?.(1, 'done');
+    let freezePeak = 0;
+    for (const channel of channels) {
+      for (const value of channel) {
+        const magnitude = Math.abs(value);
+        if (magnitude > freezePeak) freezePeak = magnitude;
+      }
+    }
+    return {
+      channels,
+      sampleRate,
+      totalFrames,
+      report: {
+        peakDb: freezePeak > 0 ? 20 * Math.log10(freezePeak) : Number.NEGATIVE_INFINITY,
+      },
+    };
+  }
+
   // Pass schedule: the mix, then one isolated pass per audible track.
   const stemTracks = options.stems
     ? doc.tracks
@@ -657,7 +747,7 @@ export async function renderProjectWithEngine(
   const passSpan = 0.9 / (1 + stemTracks.length);
 
   let [mixL, mixR] = await runPass(
-    { masterStrip: includeMasterChain, masterLevels: true, stemIndices: null },
+    { masterStrip: includeMasterChain, masterLevels: true, stemIndices: null, freezeIndex: null },
     'engine.render',
     0,
     passSpan,
@@ -676,7 +766,7 @@ export async function renderProjectWithEngine(
       });
     }
     const channels = await runPass(
-      { masterStrip: false, masterLevels: false, stemIndices },
+      { masterStrip: false, masterLevels: false, stemIndices, freezeIndex: null },
       `engine.stem:${trackIndex}`,
       passSpan * (1 + i),
       passSpan,

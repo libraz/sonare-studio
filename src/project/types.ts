@@ -118,6 +118,14 @@ export interface EditorTrack {
    */
   groupId?: number;
   /**
+   * Frozen state (app-level metadata): the track's pre-fader render (clips,
+   * instrument, inserts/EQ) baked into an asset. While frozen, the track's
+   * own content and strip DSP stay silent/bypassed and the baked audio plays
+   * instead; fader/pan/sends/automation remain live. Edits to the frozen
+   * content are ignored until the track unfreezes.
+   */
+  frozen?: { assetId: string };
+  /**
    * Instrument rendering the track's MIDI clips (app-level metadata); absent
    * = the default synth preset (see src/project/instrument.ts).
    */

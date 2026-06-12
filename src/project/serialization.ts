@@ -155,6 +155,8 @@ export interface DocumentTrack {
    * are session-scoped, so documents store the index); absent = master mix.
    */
   groupIndex?: number;
+  /** Frozen state: the track's baked pre-fader render; absent = not frozen. */
+  frozen?: { assetId: string };
 }
 
 /** One timeline marker of the document. */
@@ -337,6 +339,7 @@ export function serializeProject(): ProjectDocument {
         const groupIndex = store.tracks.findIndex((entry) => entry.id === track.groupId);
         if (groupIndex >= 0) out.groupIndex = groupIndex;
       }
+      if (track.frozen !== undefined) out.frozen = { ...track.frozen };
       // Track automation rides the track entry (track ids are session-scoped,
       // so a document never stores lane targets); omitted when there is none.
       const automation = store.automationLanes.filter((lane) => lane.target === track.id);

@@ -1704,6 +1704,123 @@ export function dropClipTakes(clipId: number, bakedAssetId?: string): void {
   });
 }
 
+/** Fields for {@link addBouncedClip}. */
+export interface AddBouncedClipInput {
+  /** Name for the new track and its clip. */
+  name: string;
+  /** Audio asset id holding the bounced render. */
+  assetId: string;
+  /** Timeline start in PPQ (>= 0). */
+  startPpq: number;
+  /** Clip length in PPQ (> 0). */
+  lengthPpq: number;
+}
+
+/**
+ * Creates a new audio track holding one clip over a bounced render, as ONE
+ * undoable edit (a bounce-in-place result; a single undo removes both the
+ * clip and its track instead of stranding an empty track).
+ *
+ * @param input Track/clip name, asset and clip window.
+ * @returns The new clip id.
+ */
+export function addBouncedClip(input: AddBouncedClipInput): number {
+  const store = useProjectStore();
+  const project = getProject();
+  if (typeof input.assetId !== 'string' || input.assetId.length === 0) {
+    throw new RangeError('Bounced clip assetId must not be empty');
+  }
+  validatePpq(input.startPpq, 'Clip startPpq');
+  if (!Number.isFinite(input.lengthPpq) || input.lengthPpq <= 0) {
+    throw new RangeError(`Clip lengthPpq must be finite and > 0, got ${input.lengthPpq}`);
+  }
+  const color = TRACK_COLOR_PALETTE[store.tracks.length % TRACK_COLOR_PALETTE.length];
+  const known = getAudioSourceId(input.assetId);
+  const sourceId =
+    known !== undefined && known >= 1 && known <= project.sourceCount() ? known : undefined;
+  return execute(sourceId === undefined ? 3 : 4, () => {
+    const trackId = project.addTrack({ kind: 'audio', name: input.name });
+    const newClipId = project.addClip({
+      trackId,
+      isMidi: false,
+      startPpq: input.startPpq,
+      lengthPpq: input.lengthPpq,
+      gain: 1,
+      ...placeholderSourceAudio(),
+      ...(sourceId === undefined ? { sourceUri: audioAssetUri(input.assetId) } : {}),
+    });
+    if (sourceId === undefined) {
+      setAudioSourceId(input.assetId, project.sourceCount());
+    } else {
+      project.setClipSource(newClipId, sourceId);
+    }
+    store.tracks = [
+      ...store.tracks,
+      {
+        id: trackId,
+        name: input.name,
+        color,
+        kind: 'audio',
+        mute: false,
+        solo: false,
+        volume: 1,
+        pan: 0,
+        order: store.tracks.length,
+      },
+    ];
+    store.clips = [
+      ...store.clips,
+      {
+        id: newClipId,
+        trackId,
+        name: input.name,
+        startPpq: input.startPpq,
+        lengthPpq: input.lengthPpq,
+        sourceOffsetPpq: 0,
+        gain: 1,
+        loopEnabled: false,
+        loopLengthPpq: 0,
+        notes: [],
+        kind: 'audio',
+        assetId: input.assetId,
+      },
+    ];
+    store.refresh();
+    return newClipId;
+  });
+}
+
+/**
+ * Sets (or clears with null) a track's frozen state as one undoable edit.
+ * App-metadata only: playback and exports skip the frozen track's own
+ * content/strip DSP and play the baked asset instead (see
+ * src/project/freeze.ts for the render that produces it).
+ *
+ * @param trackId Id of the track.
+ * @param frozen Baked render reference, or null to unfreeze.
+ */
+export function setTrackFrozen(trackId: number, frozen: { assetId: string } | null): void {
+  const store = useProjectStore();
+  const track = requireTrack(store, trackId);
+  if (track.kind === 'group') {
+    throw new RangeError('Group tracks cannot be frozen (they have no own content)');
+  }
+  if (frozen !== null && (typeof frozen.assetId !== 'string' || frozen.assetId.length === 0)) {
+    throw new RangeError('Frozen assetId must not be empty');
+  }
+  if ((track.frozen?.assetId ?? null) === (frozen?.assetId ?? null)) return;
+  execute(0, () => {
+    store.tracks = store.tracks.map((entry) => {
+      if (entry.id !== trackId) return entry;
+      const next = { ...entry };
+      if (frozen === null) delete next.frozen;
+      else next.frozen = { assetId: frozen.assetId };
+      return next;
+    });
+    store.refresh();
+  });
+}
+
 /**
  * Sets (or clears with null) the tempo-follow (warp) state of an audio clip
  * as one undoable edit. Anchors are sanitized (sorted, strictly inside the

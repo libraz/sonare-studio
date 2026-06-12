@@ -789,6 +789,13 @@ export const useProjectStore = defineStore('project', () => {
         // version 3; older documents simply have neither (defaults apply).
         if (track.instrument !== undefined)
           mirrorEntry.instrument = cloneInstrument(track.instrument);
+        if (
+          track.frozen !== undefined &&
+          typeof track.frozen.assetId === 'string' &&
+          track.frozen.assetId.length > 0
+        ) {
+          mirrorEntry.frozen = { assetId: track.frozen.assetId };
+        }
         if (track.mixer !== undefined) {
           mirrorEntry.mixer = cloneStrip(track.mixer);
           // Insert sidechain sources are stored positionally; rebind them to

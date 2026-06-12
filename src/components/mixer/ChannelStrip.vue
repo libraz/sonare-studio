@@ -43,6 +43,9 @@ import StripSends from './StripSends.vue';
  * control is non-interactive while following), in 'write' drags touch-record
  * breakpoints into the lane instead of driving the manual strip commands.
  *
+ * Frozen tracks carry a snowflake tag next to the name (the strip's fader,
+ * pan and sends stay live while the track plays its baked render).
+ *
  * Group-track strips are tagged GROUP and drop the R/W and solo controls:
  * their level is the group bus gain (no automation lane), and bus solo is
  * not supported. Fader, mute, inserts and EQ keep working through the
@@ -234,6 +237,9 @@ onBeforeUnmount(() => {
       <span class="strip-color" :style="{ background: color }" />
       <span class="strip-name">{{ name }}</span>
       <span v-if="isGroup" class="strip-group-tag" title="Group submix">GROUP</span>
+      <span v-if="track?.frozen" class="strip-frozen-tag" title="Frozen (plays the baked render)">
+        ❄
+      </span>
     </button>
 
     <div v-if="!isGroup" class="strip-auto">
@@ -390,6 +396,15 @@ onBeforeUnmount(() => {
   letter-spacing: 0.06em;
   color: #0b0d11;
   background: #a78bfa;
+  border-radius: 2px;
+  padding: 1px 3px;
+}
+
+.strip-frozen-tag {
+  flex: none;
+  font: 700 8px system-ui, sans-serif;
+  color: #0b0d11;
+  background: #7dd3fc;
   border-radius: 2px;
   padding: 1px 3px;
 }
