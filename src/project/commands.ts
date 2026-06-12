@@ -491,8 +491,11 @@ export function addTrack(input: AddTrackInput = {}): number {
   const color =
     input.color ?? TRACK_COLOR_PALETTE[store.tracks.length % TRACK_COLOR_PALETTE.length];
   const kind = input.kind ?? 'midi';
+  // Group tracks are an app-level concept; the wasm Project stores them as
+  // aux tracks.
+  const projectKind = kind === 'group' ? 'aux' : kind;
   return execute(1, () => {
-    const trackId = project.addTrack({ kind, name });
+    const trackId = project.addTrack({ kind: projectKind, name });
     store.tracks = [
       ...store.tracks,
       {
@@ -538,10 +541,76 @@ export function removeTrack(trackId: number): void {
   execute(1, () => {
     project.removeTrack(trackId);
     store.automationLanes = store.automationLanes.filter((lane) => lane.target !== trackId);
+    // Drop group memberships pointing at a removed group and sidechain keys
+    // sourced from the removed track.
+    store.tracks = store.tracks.map((track) => {
+      let next = track;
+      if (track.groupId === trackId) {
+        next = { ...next };
+        delete next.groupId;
+      }
+      if (track.mixer?.inserts.some((slot) => slot.sidechainSourceTrackId === trackId)) {
+        next = next === track ? { ...next } : next;
+        next.mixer = {
+          ...cloneStrip(track.mixer as MixerStrip),
+          inserts: (track.mixer?.inserts ?? []).map((slot) => {
+            if (slot.sidechainSourceTrackId !== trackId) return { ...slot };
+            const cleared = { ...slot };
+            delete cleared.sidechainSourceTrackId;
+            return cleared;
+          }),
+        };
+      }
+      return next;
+    });
     if (store.activeTrackId === trackId) {
       store.activeTrackId = -1;
       store.clipId = -1;
     }
+    store.refresh();
+  });
+}
+
+/**
+ * Adds a group (folder/submix) track as one undoable edit. Group tracks have
+ * no clips; member tracks assigned via {@link setTrackGroup} route their
+ * output through the group's engine bus.
+ *
+ * @param input Optional name/color overrides.
+ * @returns The new track id.
+ */
+export function addGroupTrack(input: Omit<AddTrackInput, 'kind'> = {}): number {
+  return addTrack({ ...input, kind: 'group' });
+}
+
+/**
+ * Assigns a track to a group track (or removes the membership with null), as
+ * one undoable edit. Group tracks cannot be nested.
+ *
+ * @param trackId Id of the member track.
+ * @param groupId Id of a group track, or null for the master mix.
+ */
+export function setTrackGroup(trackId: number, groupId: number | null): void {
+  const store = useProjectStore();
+  const track = requireTrack(store, trackId);
+  if (track.kind === 'group') {
+    throw new RangeError('Group tracks cannot be nested into another group');
+  }
+  if (groupId !== null) {
+    const group = requireTrack(store, groupId);
+    if (group.kind !== 'group') {
+      throw new RangeError(`Track ${groupId} is not a group track`);
+    }
+  }
+  if ((track.groupId ?? null) === groupId) return;
+  execute(0, () => {
+    store.tracks = store.tracks.map((entry) => {
+      if (entry.id !== trackId) return entry;
+      const next = { ...entry };
+      if (groupId === null) delete next.groupId;
+      else next.groupId = groupId;
+      return next;
+    });
     store.refresh();
   });
 }
@@ -898,6 +967,43 @@ export function setInsertEnabled(target: MixerStripTarget, index: number, enable
     const next = cloneStrip(strip);
     next.inserts[index] = { ...next.inserts[index], enabled };
     writeStrip(store, target, next);
+    store.refresh();
+  });
+}
+
+/**
+ * Sets (or clears with null) the sidechain key source of a track insert as
+ * one undoable edit. Only track strips support keyed inserts (the master
+ * strip has no engine lane to key from).
+ *
+ * @param trackId Track owning the insert.
+ * @param index Insert slot index.
+ * @param sourceTrackId Track whose audio keys the insert, or null.
+ */
+export function setInsertSidechain(
+  trackId: number,
+  index: number,
+  sourceTrackId: number | null,
+): void {
+  const store = useProjectStore();
+  const track = requireTrack(store, trackId);
+  const strip = track.mixer;
+  if (!strip) throw new RangeError(`Track ${trackId} has no mixer strip`);
+  const slot = requireInsert(strip, index);
+  if (sourceTrackId !== null) {
+    requireTrack(store, sourceTrackId);
+    if (sourceTrackId === trackId) {
+      throw new RangeError('An insert cannot key from its own track');
+    }
+  }
+  if ((slot.sidechainSourceTrackId ?? null) === sourceTrackId) return;
+  executeApp(() => {
+    const next = cloneStrip(strip);
+    const updated = { ...next.inserts[index] };
+    if (sourceTrackId === null) delete updated.sidechainSourceTrackId;
+    else updated.sidechainSourceTrackId = sourceTrackId;
+    next.inserts[index] = updated;
+    writeStrip(store, trackId, next);
     store.refresh();
   });
 }

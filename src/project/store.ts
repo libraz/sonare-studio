@@ -571,10 +571,13 @@ export const useProjectStore = defineStore('project', () => {
     for (const previous of tracks.value) {
       const serialized = docTrackById.get(previous.id);
       if (!serialized) continue;
+      // Group tracks live as aux tracks in the Project; the app-level 'group'
+      // kind survives refresh as long as the Project still reports aux.
+      const projectKind = trackKindFromOrdinal(serialized.kind);
       nextTracks.push({
         ...previous,
         name: serialized.name ?? previous.name,
-        kind: trackKindFromOrdinal(serialized.kind),
+        kind: previous.kind === 'group' && projectKind === 'aux' ? 'group' : projectKind,
       });
     }
     for (const serialized of docTracks) {
@@ -759,7 +762,10 @@ export const useProjectStore = defineStore('project', () => {
       const loadedSourceIds = new Map<string, number>();
       let firstClipId = -1;
       doc.tracks.forEach((track, index) => {
-        const trackId = created.addTrack({ kind: track.kind, name: track.name });
+        // Group tracks are an app-level concept; the wasm Project stores them
+        // as aux tracks.
+        const projectKind = track.kind === 'group' ? 'aux' : track.kind;
+        const trackId = created.addTrack({ kind: projectKind, name: track.name });
         const mirrorEntry: EditorTrack = {
           id: trackId,
           name: track.name,
@@ -775,7 +781,11 @@ export const useProjectStore = defineStore('project', () => {
         // version 3; older documents simply have neither (defaults apply).
         if (track.instrument !== undefined)
           mirrorEntry.instrument = cloneInstrument(track.instrument);
-        if (track.mixer !== undefined) mirrorEntry.mixer = cloneStrip(track.mixer);
+        if (track.mixer !== undefined) {
+          mirrorEntry.mixer = cloneStrip(track.mixer);
+          // Insert sidechain sources are stored positionally; rebind them to
+          // the freshly assigned track ids after every track exists (below).
+        }
         // Track automation rides the track entry; rebind it to the freshly
         // assigned track id (malformed entries are dropped).
         if (track.automation !== undefined) {
@@ -843,6 +853,43 @@ export const useProjectStore = defineStore('project', () => {
           }
           clipMeta.set(newClipId, clip);
           if (firstClipId < 0) firstClipId = newClipId;
+        }
+      });
+
+      // Resolve positional group membership and insert sidechain sources onto
+      // the freshly assigned track ids (out-of-range or self references drop).
+      doc.tracks.forEach((track, index) => {
+        const entry = trackMirror[index];
+        if (!entry) return;
+        if (
+          track.groupIndex !== undefined &&
+          Number.isInteger(track.groupIndex) &&
+          track.groupIndex >= 0 &&
+          track.groupIndex < trackMirror.length &&
+          track.groupIndex !== index &&
+          trackMirror[track.groupIndex].kind === 'group'
+        ) {
+          entry.groupId = trackMirror[track.groupIndex].id;
+        }
+        const inserts = track.mixer?.inserts ?? [];
+        inserts.forEach((slot, slotIndex) => {
+          const sourceIndex = (slot as { sidechainSourceIndex?: number }).sidechainSourceIndex;
+          if (
+            sourceIndex === undefined ||
+            !Number.isInteger(sourceIndex) ||
+            sourceIndex < 0 ||
+            sourceIndex >= trackMirror.length ||
+            sourceIndex === index
+          ) {
+            return;
+          }
+          const target = entry.mixer?.inserts[slotIndex];
+          if (target) target.sidechainSourceTrackId = trackMirror[sourceIndex].id;
+        });
+        // The positional document field must not survive in the mirror (it
+        // would re-serialize stale after track reorders).
+        for (const slot of entry.mixer?.inserts ?? []) {
+          delete (slot as { sidechainSourceIndex?: number }).sidechainSourceIndex;
         }
       });
 

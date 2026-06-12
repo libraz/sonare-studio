@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
-import { createStripSync, MAX_ENGINE_BUSES, stripSceneJson } from '@/engine/strip-sync';
+import { linearToDb } from '@/engine/mixer-sync';
+import {
+  busSceneJson,
+  createStripSync,
+  groupBusGainDb,
+  MAX_ENGINE_BUSES,
+  stripSceneJson,
+} from '@/engine/strip-sync';
 import {
   createDefaultMixerState,
   createDefaultStrip,
@@ -25,6 +32,11 @@ function makeTrack(id: number, mixer?: MixerStrip): EditorTrack {
     order: id,
     ...(mixer ? { mixer } : {}),
   };
+}
+
+/** Builds a group track mirror entry, optionally with a mixer strip. */
+function makeGroupTrack(id: number, mixer?: MixerStrip): EditorTrack {
+  return { ...makeTrack(id, mixer), kind: 'group' };
 }
 
 /** Builds a strip with overridable fields. */
@@ -53,6 +65,9 @@ function makeHandle(): {
     setTrackBuses: ReturnType<typeof vi.fn>;
     setBusGain: ReturnType<typeof vi.fn>;
     setSends: ReturnType<typeof vi.fn>;
+    setTrackOutputBus: ReturnType<typeof vi.fn>;
+    setBusStripJson: ReturnType<typeof vi.fn>;
+    setLaneSidechain: ReturnType<typeof vi.fn>;
   };
 } {
   const engine = {
@@ -63,6 +78,9 @@ function makeHandle(): {
     setTrackBuses: vi.fn(),
     setBusGain: vi.fn(),
     setSends: vi.fn(),
+    setTrackOutputBus: vi.fn(),
+    setBusStripJson: vi.fn(),
+    setLaneSidechain: vi.fn(),
   };
   const handle = { engine } as unknown as EngineHandle;
   return { handle, engine };
@@ -343,7 +361,7 @@ describe('createStripSync', () => {
     const buses = Array.from({ length: MAX_ENGINE_BUSES + 1 }, (_, i) => makeBus(`bus-${i}`));
 
     expect(() => sync.sync([], makeMixer({ buses }))).toThrow(
-      `Too many mixer buses for the engine: ${MAX_ENGINE_BUSES + 1} > ${MAX_ENGINE_BUSES}`,
+      `Too many mixer buses for the engine: ${MAX_ENGINE_BUSES + 1} send buses + 0 group tracks > ${MAX_ENGINE_BUSES}`,
     );
   });
 
@@ -355,5 +373,265 @@ describe('createStripSync', () => {
     sync.sync([track], makeMixer({ buses: [makeBus('A')] }));
     sync.sync([track], makeMixer({ buses: [makeBus('A')] }));
     expect(engine.setSends).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('busSceneJson', () => {
+  it('declares the bus with the submix role and stringified params', () => {
+    const strip = makeStrip({
+      inserts: [
+        { processor: 'dynamics.compressor', params: { thresholdDb: -20 }, enabled: true },
+        { processor: 'saturation.tape', params: { drive: 0.4 }, enabled: false },
+      ],
+    });
+    expect(JSON.parse(busSceneJson(3, strip))).toEqual({
+      version: 1,
+      strips: [],
+      buses: [
+        {
+          id: 'bus-3',
+          role: 'submix',
+          inserts: [
+            { slot: 'pre', processor: 'dynamics.compressor', params: '{"thresholdDb":-20}' },
+            { slot: 'pre', processor: 'saturation.tape', params: '{"drive":0.4}' },
+          ],
+        },
+      ],
+      connections: [],
+    });
+  });
+
+  it('declares an empty bus strip for a missing strip', () => {
+    expect(JSON.parse(busSceneJson(5, undefined))).toEqual({
+      version: 1,
+      strips: [],
+      buses: [{ id: 'bus-5', role: 'submix', inserts: [] }],
+      connections: [],
+    });
+  });
+
+  it('rejects a processor not in the insert catalog, unless the catalog is null', () => {
+    const strip = makeStrip({ inserts: [{ processor: 'made.up', params: {}, enabled: true }] });
+    expect(() => busSceneJson(1, strip, new Set(['dynamics.compressor']))).toThrow(
+      'Unsupported insert processor: made.up',
+    );
+    expect(() => busSceneJson(1, strip, null)).not.toThrow();
+  });
+});
+
+describe('groupBusGainDb', () => {
+  it('stacks the track volume and strip gain in dB', () => {
+    const track = makeGroupTrack(1, makeStrip({ gainDb: -2 }));
+    track.volume = 0.5;
+    expect(groupBusGainDb(track)).toBeCloseTo(linearToDb(0.5) - 2, 6);
+  });
+
+  it('is unity for a default group track without a strip', () => {
+    expect(groupBusGainDb(makeGroupTrack(1))).toBe(0);
+  });
+
+  it('floors a muted group to silence', () => {
+    const track = makeGroupTrack(1);
+    track.mute = true;
+    expect(groupBusGainDb(track)).toBe(-120);
+  });
+
+  it('clamps to the engine bus gain range', () => {
+    const loud = makeGroupTrack(1, makeStrip({ gainDb: 24 }));
+    loud.volume = 2;
+    expect(groupBusGainDb(loud)).toBe(24);
+    const silent = makeGroupTrack(2);
+    silent.volume = 0;
+    expect(groupBusGainDb(silent)).toBe(-120);
+  });
+});
+
+describe('createStripSync group routing', () => {
+  it('allocates one engine bus per group track after the user buses and routes members', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const group = makeGroupTrack(10);
+    const member = { ...makeTrack(1), groupId: 10 };
+
+    sync.sync([member, group], makeMixer({ buses: [makeBus('A', -3)] }));
+    expect(engine.setTrackBuses).toHaveBeenCalledTimes(1);
+    expect(engine.setTrackBuses).toHaveBeenCalledWith([
+      { busId: 1, gainDb: -3 },
+      { busId: 2, gainDb: 0 },
+    ]);
+    expect(engine.setTrackOutputBus).toHaveBeenCalledTimes(1);
+    expect(engine.setTrackOutputBus).toHaveBeenCalledWith(1, 2);
+    clearCalls(engine);
+
+    // Unchanged state stays silent.
+    sync.sync([member, group], makeMixer({ buses: [makeBus('A', -3)] }));
+    expect(totalCalls(engine)).toBe(0);
+  });
+
+  it('keeps a group bus number stable when user buses are added later', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+
+    sync.sync([makeGroupTrack(10)], makeMixer());
+    expect(engine.setTrackBuses).toHaveBeenLastCalledWith([{ busId: 1, gainDb: 0 }]);
+
+    sync.sync([makeGroupTrack(10)], makeMixer({ buses: [makeBus('A')] }));
+    expect(engine.setTrackBuses).toHaveBeenLastCalledWith([
+      { busId: 2, gainDb: 0 },
+      { busId: 1, gainDb: 0 },
+    ]);
+  });
+
+  it('routes a member back to the master mix when its membership clears', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const group = makeGroupTrack(10);
+
+    sync.sync([{ ...makeTrack(1), groupId: 10 }, group], makeMixer());
+    expect(engine.setTrackOutputBus).toHaveBeenCalledWith(1, 1);
+    clearCalls(engine);
+
+    sync.sync([makeTrack(1), group], makeMixer());
+    expect(engine.setTrackOutputBus).toHaveBeenCalledTimes(1);
+    expect(engine.setTrackOutputBus).toHaveBeenCalledWith(1, 0);
+  });
+
+  it('rejects more send buses plus group tracks than the engine supports', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const buses = Array.from({ length: 7 }, (_, i) => makeBus(`bus-${i}`));
+    const groups = [makeGroupTrack(20), makeGroupTrack(21)];
+
+    expect(() => sync.sync(groups, makeMixer({ buses }))).toThrow(
+      `Too many mixer buses for the engine: 7 send buses + 2 group tracks > ${MAX_ENGINE_BUSES}`,
+    );
+    expect(totalCalls(engine)).toBe(0);
+  });
+
+  it('sends only the enabled group inserts via the bus strip and re-sends on changes', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const inserts = [
+      { processor: 'dynamics.compressor', params: { thresholdDb: -20 }, enabled: true },
+      { processor: 'saturation.tape', params: { drive: 0.4 }, enabled: false },
+    ];
+
+    sync.sync([makeGroupTrack(10, makeStrip({ inserts }))], makeMixer());
+    expect(engine.setTrackStripJson).not.toHaveBeenCalled();
+    expect(engine.setStripInsertBypassed).not.toHaveBeenCalled();
+    expect(engine.setBusStripJson).toHaveBeenCalledTimes(1);
+    expect(engine.setBusStripJson).toHaveBeenCalledWith(
+      1,
+      busSceneJson(1, makeStrip({ inserts: [inserts[0]] })),
+    );
+    clearCalls(engine);
+
+    // Unchanged state stays silent.
+    sync.sync([makeGroupTrack(10, makeStrip({ inserts }))], makeMixer());
+    expect(totalCalls(engine)).toBe(0);
+
+    // Enabling the second insert re-sends the whole (filtered) bus scene.
+    const toggled = [inserts[0], { ...inserts[1], enabled: true }];
+    sync.sync([makeGroupTrack(10, makeStrip({ inserts: toggled }))], makeMixer());
+    expect(engine.setBusStripJson).toHaveBeenCalledTimes(1);
+    expect(engine.setBusStripJson).toHaveBeenCalledWith(
+      1,
+      busSceneJson(1, makeStrip({ inserts: toggled })),
+    );
+  });
+
+  it('adjusts only the bus gain when the audible group level changes', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const inserts = [{ processor: 'dynamics.compressor', params: {}, enabled: true }];
+
+    sync.sync([makeGroupTrack(10, makeStrip({ inserts }))], makeMixer());
+    clearCalls(engine);
+
+    const quieter = makeGroupTrack(10, makeStrip({ inserts }));
+    quieter.volume = 0.5;
+    sync.sync([quieter], makeMixer());
+    expect(engine.setTrackBuses).not.toHaveBeenCalled();
+    expect(engine.setBusStripJson).not.toHaveBeenCalled();
+    expect(engine.setBusGain).toHaveBeenCalledTimes(1);
+    const [busId, gainDb] = engine.setBusGain.mock.calls[0] as [number, number];
+    expect(busId).toBe(1);
+    expect(gainDb).toBeCloseTo(linearToDb(0.5), 6);
+    clearCalls(engine);
+
+    const muted = makeGroupTrack(10, makeStrip({ inserts }));
+    muted.volume = 0.5;
+    muted.mute = true;
+    sync.sync([muted], makeMixer());
+    expect(engine.setBusGain).toHaveBeenCalledTimes(1);
+    expect(engine.setBusGain).toHaveBeenCalledWith(1, -120);
+  });
+});
+
+describe('createStripSync sidechain bindings', () => {
+  /** Strip with one enabled insert, optionally keyed from a source track. */
+  function keyedStrip(source?: number): MixerStrip {
+    return makeStrip({
+      inserts: [
+        {
+          processor: 'dynamics.compressor',
+          params: {},
+          enabled: true,
+          ...(source !== undefined ? { sidechainSourceTrackId: source } : {}),
+        },
+      ],
+    });
+  }
+
+  it('binds insert sidechains once, rebinds on source change and clears removed ones', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+
+    sync.sync([makeTrack(1, keyedStrip(2)), makeTrack(2), makeTrack(3)], makeMixer());
+    expect(engine.setLaneSidechain).toHaveBeenCalledTimes(1);
+    expect(engine.setLaneSidechain).toHaveBeenCalledWith(1, 0, 2);
+    engine.setLaneSidechain.mockClear();
+
+    // Unchanged binding stays silent.
+    sync.sync([makeTrack(1, keyedStrip(2)), makeTrack(2), makeTrack(3)], makeMixer());
+    expect(engine.setLaneSidechain).not.toHaveBeenCalled();
+
+    // A source change rebinds directly, without an intermediate clear.
+    sync.sync([makeTrack(1, keyedStrip(3)), makeTrack(2), makeTrack(3)], makeMixer());
+    expect(engine.setLaneSidechain).toHaveBeenCalledTimes(1);
+    expect(engine.setLaneSidechain).toHaveBeenCalledWith(1, 0, 3);
+    engine.setLaneSidechain.mockClear();
+
+    // Removing the binding clears the engine-side key with null.
+    sync.sync([makeTrack(1, keyedStrip()), makeTrack(2), makeTrack(3)], makeMixer());
+    expect(engine.setLaneSidechain).toHaveBeenCalledTimes(1);
+    expect(engine.setLaneSidechain).toHaveBeenCalledWith(1, 0, null);
+  });
+
+  it('ignores self, unknown and group-track sidechain sources', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+
+    sync.sync(
+      [
+        makeTrack(1, keyedStrip(1)),
+        makeTrack(2, keyedStrip(99)),
+        makeGroupTrack(10, keyedStrip(1)),
+      ],
+      makeMixer(),
+    );
+    expect(engine.setLaneSidechain).not.toHaveBeenCalled();
+  });
+
+  it('clears a binding whose source track disappears', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+
+    sync.sync([makeTrack(1, keyedStrip(2)), makeTrack(2)], makeMixer());
+    engine.setLaneSidechain.mockClear();
+
+    sync.sync([makeTrack(1, keyedStrip(2))], makeMixer());
+    expect(engine.setLaneSidechain).toHaveBeenCalledTimes(1);
+    expect(engine.setLaneSidechain).toHaveBeenCalledWith(1, 0, null);
   });
 });

@@ -3,11 +3,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   addAudioClip,
   addAudioTrack,
+  addGroupTrack,
+  addInsert,
   addNote,
   canUndo,
   clearHistory,
   setClipCompSegments,
   setClipFades,
+  setInsertSidechain,
+  setTrackGroup,
 } from '@/project/commands';
 import {
   loadProjectDocument,
@@ -198,5 +202,108 @@ describe('project serialization with audio clips (schema v2)', () => {
       { startPpq: 4, takeIndex: 1 },
     ]);
     expect(serializeProject()).toEqual(doc);
+  });
+});
+
+describe('group membership and insert sidechain serialization (schema v3)', () => {
+  let store: ReturnType<typeof useProjectStore>;
+  let midiId: number;
+  let groupId: number;
+  let audioId: number;
+
+  beforeEach(async () => {
+    setActivePinia(createPinia());
+    store = useProjectStore();
+    store.dispose();
+    clearHistory();
+    await store.init();
+    // Track order: 0 = initial MIDI track, 1 = group, 2 = audio member.
+    midiId = store.tracks[0].id;
+    groupId = addGroupTrack({ name: 'Drum Bus' });
+    audioId = addAudioTrack({ name: 'Vox' });
+    setTrackGroup(audioId, groupId);
+    addInsert(audioId, 'dynamics.compressor', { thresholdDb: -18 });
+    setInsertSidechain(audioId, 0, midiId);
+  });
+
+  it('serializes groupId and sidechain sources as positional indices', () => {
+    const doc = serializeProject();
+    expect(doc.tracks[1].kind).toBe('group');
+    expect(doc.tracks[1].groupIndex).toBeUndefined();
+    expect(doc.tracks[2].groupIndex).toBe(1);
+    const slot = doc.tracks[2].mixer?.inserts[0] as unknown as Record<string, unknown>;
+    expect(slot.sidechainSourceIndex).toBe(0);
+    expect('sidechainSourceTrackId' in slot).toBe(false);
+
+    // Serialization must not leak positional fields into the live mirror.
+    const mirrorSlot = store.tracks[2].mixer?.inserts[0] as unknown as Record<string, unknown>;
+    expect(mirrorSlot.sidechainSourceTrackId).toBe(midiId);
+    expect('sidechainSourceIndex' in mirrorSlot).toBe(false);
+
+    // Documents stay plain JSON.
+    expect(JSON.parse(JSON.stringify(doc))).toEqual(doc);
+  });
+
+  it('round-trips memberships and sidechains onto fresh session ids', async () => {
+    const doc = serializeProject();
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    expect(serializeProject()).toEqual(doc);
+    expect(canUndo()).toBe(false);
+
+    expect(store.tracks[1].kind).toBe('group');
+    expect(store.tracks[2].groupId).toBe(store.tracks[1].id);
+    const slot = store.tracks[2].mixer?.inserts[0] as unknown as Record<string, unknown>;
+    expect(slot.sidechainSourceTrackId).toBe(store.tracks[0].id);
+    // The positional document field must not survive into the loaded mirror.
+    expect('sidechainSourceIndex' in slot).toBe(false);
+  });
+
+  it('drops dangling session-id references at serialize time', () => {
+    store.tracks = store.tracks.map((track) => {
+      if (track.id !== audioId) return track;
+      return {
+        ...track,
+        groupId: 987654,
+        mixer: {
+          ...(track.mixer as NonNullable<typeof track.mixer>),
+          inserts: (track.mixer?.inserts ?? []).map((slot) => ({
+            ...slot,
+            sidechainSourceTrackId: 987654,
+          })),
+        },
+      };
+    });
+    const doc = serializeProject();
+    expect(doc.tracks[2].groupIndex).toBeUndefined();
+    const slot = doc.tracks[2].mixer?.inserts[0] as unknown as Record<string, unknown>;
+    expect('sidechainSourceIndex' in slot).toBe(false);
+    expect('sidechainSourceTrackId' in slot).toBe(false);
+  });
+
+  it('drops invalid positional references at load time', async () => {
+    const doc = JSON.parse(JSON.stringify(serializeProject())) as ProjectDocument;
+    doc.tracks[0].groupIndex = 0; // self reference
+    doc.tracks[1].groupIndex = 99; // out of range
+    doc.tracks[2].groupIndex = 0; // not a group track
+    const slot = doc.tracks[2].mixer?.inserts[0] as unknown as Record<string, unknown>;
+    slot.sidechainSourceIndex = 2; // self reference
+    doc.tracks[2].mixer?.inserts.push({
+      processor: 'saturation.tape',
+      params: {},
+      enabled: true,
+      sidechainSourceIndex: 99, // out of range
+    } as never);
+
+    await loadProjectDocument(doc);
+    expect(store.tracks.every((track) => track.groupId === undefined)).toBe(true);
+    const inserts = store.tracks[2].mixer?.inserts ?? [];
+    expect(inserts).toHaveLength(2);
+    for (const mirrorSlot of inserts) {
+      const record = mirrorSlot as unknown as Record<string, unknown>;
+      expect('sidechainSourceTrackId' in record).toBe(false);
+      expect('sidechainSourceIndex' in record).toBe(false);
+    }
+    const reserialized = serializeProject();
+    expect(reserialized.tracks.every((track) => track.groupIndex === undefined)).toBe(true);
   });
 });

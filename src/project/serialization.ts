@@ -144,6 +144,11 @@ export interface DocumentTrack {
   mixer?: MixerStrip;
   /** Automation lanes targeting this track; absent = none. */
   automation?: DocumentAutomationLane[];
+  /**
+   * Positional index of the group track this track is a member of (track ids
+   * are session-scoped, so documents store the index); absent = master mix.
+   */
+  groupIndex?: number;
 }
 
 /** One timeline marker of the document. */
@@ -298,7 +303,25 @@ export function serializeProject(): ProjectDocument {
           .map((clip) => toDocumentClip(clip, store.scoreAnnotations[clip.id])),
       };
       if (track.instrument !== undefined) out.instrument = cloneInstrument(track.instrument);
-      if (track.mixer !== undefined) out.mixer = cloneStrip(track.mixer);
+      if (track.mixer !== undefined) {
+        out.mixer = cloneStrip(track.mixer);
+        // Insert sidechain sources are session track ids; store them as
+        // positional indices (dangling references drop out).
+        for (const slot of out.mixer.inserts) {
+          if (slot.sidechainSourceTrackId === undefined) continue;
+          const sourceIndex = store.tracks.findIndex(
+            (entry) => entry.id === slot.sidechainSourceTrackId,
+          );
+          delete slot.sidechainSourceTrackId;
+          if (sourceIndex >= 0) {
+            (slot as { sidechainSourceIndex?: number }).sidechainSourceIndex = sourceIndex;
+          }
+        }
+      }
+      if (track.groupId !== undefined) {
+        const groupIndex = store.tracks.findIndex((entry) => entry.id === track.groupId);
+        if (groupIndex >= 0) out.groupIndex = groupIndex;
+      }
       // Track automation rides the track entry (track ids are session-scoped,
       // so a document never stores lane targets); omitted when there is none.
       const automation = store.automationLanes.filter((lane) => lane.target === track.id);

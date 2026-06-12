@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import {
   type AutomationLaneState,
   type AutomationParam,
@@ -7,6 +7,7 @@ import {
 } from '@/project/automation';
 import {
   addAudioTrack,
+  addGroupTrack,
   addTrack,
   removeTrack,
   renameTrack,
@@ -14,6 +15,7 @@ import {
   setActiveTrack,
   setAutomationLaneEnabled,
   setTrackColor,
+  setTrackGroup,
   setTrackMute,
   setTrackPan,
   setTrackSolo,
@@ -32,8 +34,9 @@ import {
  * Track header column of the arrangement view: one header per track lane with
  * a kind icon, color swatch, editable name (double-click), record-arm (audio
  * tracks), mute/solo toggles, volume and pan mini sliders, inline delete and
- * pointer-drag reordering via the grip. All edits go through
- * src/project/commands.ts; the store is the read model. Record-arm state is
+ * pointer-drag reordering via the grip. Once a group track exists, non-group
+ * tracks also get a group-assignment select routing them into a group submix.
+ * All edits go through src/project/commands.ts; the store is the read model. Record-arm state is
  * owned by the shell and only mirrored here via the `armedTrackIds` prop and
  * the `arm` emit.
  *
@@ -80,12 +83,18 @@ const emit = defineEmits<{
 const store = useProjectStore();
 
 /** Glyph shown in front of the track name per track kind. */
-const TRACK_KIND_GLYPHS: Record<TrackKind, string> = { audio: '∿', midi: '♪', aux: '⇄' };
+const TRACK_KIND_GLYPHS: Record<TrackKind, string> = {
+  audio: '∿',
+  midi: '♪',
+  aux: '⇄',
+  group: '⊞',
+};
 /** Tooltip label per track kind. */
 const TRACK_KIND_LABELS: Record<TrackKind, string> = {
   audio: 'Audio track',
   midi: 'MIDI track',
   aux: 'Aux track',
+  group: 'Group track',
 };
 
 /** Surfaced when a command rejects (e.g. empty rename). */
@@ -157,6 +166,23 @@ function onPanChange(track: EditorTrack, event: Event): void {
 
 function onDelete(track: EditorTrack): void {
   removeTrack(track.id);
+}
+
+// --- Group membership --------------------------------------------------------
+
+/** Group tracks available as routing targets, in track order. */
+const groupTracks = computed<EditorTrack[]>(() =>
+  store.tracks.filter((track) => track.kind === 'group'),
+);
+
+function onGroupChange(track: EditorTrack, event: Event): void {
+  const raw = (event.target as HTMLSelectElement).value;
+  try {
+    setTrackGroup(track.id, raw === '' ? null : Number(raw));
+    error.value = '';
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
 }
 
 /** True when the shell reports the track as record-armed. */
@@ -247,9 +273,10 @@ function onAutomationEnabledChange(track: EditorTrack, event: Event): void {
 const addMenuOpen = ref(false);
 const addMenu = ref<HTMLDivElement | null>(null);
 
-function onAddTrack(kind: 'midi' | 'audio'): void {
+function onAddTrack(kind: 'midi' | 'audio' | 'group'): void {
   addMenuOpen.value = false;
-  const trackId = kind === 'audio' ? addAudioTrack() : addTrack();
+  const trackId =
+    kind === 'audio' ? addAudioTrack() : kind === 'group' ? addGroupTrack() : addTrack();
   setActiveTrack(trackId);
 }
 
@@ -341,6 +368,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
         <div v-if="addMenuOpen" class="add-track-items" role="menu">
           <button type="button" role="menuitem" @click="onAddTrack('midi')">+ MIDI track</button>
           <button type="button" role="menuitem" @click="onAddTrack('audio')">+ Audio track</button>
+          <button type="button" role="menuitem" @click="onAddTrack('group')">+ Group track</button>
         </div>
       </div>
     </div>
@@ -495,6 +523,19 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   :aria-label="`Pan of ${track.name}`"
                   @change="onPanChange(track, $event)"
                 />
+                <select
+                  v-if="track.kind !== 'group' && groupTracks.length > 0"
+                  class="track-group-select"
+                  :value="track.groupId ?? ''"
+                  title="Output group"
+                  :aria-label="`Group of ${track.name}`"
+                  @change="onGroupChange(track, $event)"
+                >
+                  <option value="">No group</option>
+                  <option v-for="group in groupTracks" :key="group.id" :value="group.id">
+                    {{ group.name }}
+                  </option>
+                </select>
               </div>
             </div>
           </div>
@@ -877,5 +918,18 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
   min-width: 0;
   height: 10px;
   accent-color: #60a5fa;
+}
+
+.track-group-select {
+  flex: 1;
+  min-width: 0;
+  max-width: 64px;
+  height: 14px;
+  font: 600 9px system-ui, sans-serif;
+  color: #c8cdd6;
+  background: #1d2027;
+  border: 1px solid #2a2e37;
+  border-radius: 3px;
+  padding: 0 1px;
 }
 </style>

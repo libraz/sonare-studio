@@ -32,6 +32,11 @@ export interface InsertSlot {
   params: Record<string, number | boolean>;
   /** False bypasses the slot without losing its parameters. */
   enabled: boolean;
+  /**
+   * Track whose audio keys this insert's sidechain (ducking/sidechainRouter
+   * processors on track strips only); absent = the insert's internal key.
+   */
+  sidechainSourceTrackId?: number;
 }
 
 /** One send from a strip to a mixer bus (post-fader on the engine side). */

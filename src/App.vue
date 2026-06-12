@@ -64,6 +64,7 @@ import type { AutomationParam, AutomationPoint } from '@/project/automation';
 import {
   addAudioClip,
   addAudioTrack,
+  addGroupTrack,
   addInsert,
   addMixerBus,
   deleteClip,
@@ -81,9 +82,12 @@ import {
   setClipCompSegments,
   setClipTakes,
   setInsertEnabled,
+  setInsertSidechain,
   setSelection,
   setSend,
+  setStripGain,
   setTempoSegments,
+  setTrackGroup,
   undo,
 } from '@/project/commands';
 import { flattenClipComp } from '@/project/comp-flatten';
@@ -1471,6 +1475,10 @@ onMounted(async () => {
               : track.instrument.kind,
         ),
       trackInsertCounts: () => store.tracks.map((track) => track.mixer?.inserts.length ?? 0),
+      trackInsertSidechains: () =>
+        store.tracks.map((track) =>
+          (track.mixer?.inserts ?? []).map((slot) => slot.sidechainSourceTrackId ?? null),
+        ),
       trackInsertStates: () =>
         store.tracks.map((track) => (track.mixer?.inserts ?? []).map((slot) => slot.enabled)),
       masterInsertCount: () => store.mixer.master.inserts.length,
@@ -1558,6 +1566,36 @@ onMounted(async () => {
       addAudioTrack: (name?: string) => addAudioTrack(name !== undefined ? { name } : {}),
       removeTrack: (trackId: number) => removeTrack(trackId),
       armTrack: (trackId: number | null) => recording.arm(trackId),
+      addGroupTrack: (name?: string) => addGroupTrack(name !== undefined ? { name } : {}),
+      setTrackGroup: (trackId: number, groupId: number | null) => setTrackGroup(trackId, groupId),
+      trackGroups: () => store.tracks.map((track) => track.groupId ?? null),
+      addTrackInsert: (
+        trackId: number,
+        processor: string,
+        params?: Record<string, number | boolean>,
+      ) => addInsert(trackId, processor, params),
+      removeTrackInsert: (trackId: number, index: number) => removeInsert(trackId, index),
+      setInsertSidechain: (trackId: number, index: number, sourceTrackId: number | null) =>
+        setInsertSidechain(trackId, index, sourceTrackId),
+      setStripGainDb: (target: number | 'master', gainDb: number) => setStripGain(target, gainDb),
+      addToneClip: async (
+        trackId: number,
+        seconds: number,
+        frequencyHz: number,
+        amplitude: number,
+        startPpq = 0,
+      ) => {
+        const sampleRate = handle.value?.ctx.sampleRate ?? 48000;
+        const frames = Math.round(seconds * sampleRate);
+        const data = new Float32Array(frames);
+        for (let i = 0; i < frames; i++) {
+          data[i] = Math.sin((2 * Math.PI * frequencyHz * i) / sampleRate) * amplitude;
+        }
+        const meta = await ingestAudioBuffer([data], sampleRate, `tone-${frequencyHz}`, {
+          analysis: null,
+        });
+        return addAudioClip({ trackId, assetId: meta.id, startPpq, name: `Tone ${frequencyHz}` });
+      },
       clipTakesInfo: (trackId: number) =>
         store.clips
           .filter((clip) => clip.trackId === trackId && isAudioClip(clip))

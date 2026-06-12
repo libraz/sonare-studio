@@ -60,8 +60,13 @@ export interface EditorNoteUpdate {
   offVelocity?: number;
 }
 
-/** Track content kind, mirroring the wasm ProjectTrackKind string forms. */
-export type TrackKind = 'audio' | 'midi' | 'aux';
+/**
+ * Track content kind. 'audio'/'midi'/'aux' mirror the wasm ProjectTrackKind
+ * string forms; 'group' is an app-level folder/submix track (stored as 'aux'
+ * in the wasm Project) whose member tracks route through a dedicated engine
+ * bus.
+ */
+export type TrackKind = 'audio' | 'midi' | 'aux' | 'group';
 
 /** Clip content kind: MIDI clips carry notes, audio clips reference an asset. */
 export type ClipKind = 'midi' | 'audio';
@@ -106,6 +111,12 @@ export interface EditorTrack {
   pan: number;
   /** Display order index; always equals the track's index in the mirror. */
   order: number;
+  /**
+   * Id of the group track this track is a member of (app-level metadata);
+   * absent = the track outputs to the master mix. Group tracks themselves
+   * never carry a groupId (no nesting).
+   */
+  groupId?: number;
   /**
    * Instrument rendering the track's MIDI clips (app-level metadata); absent
    * = the default synth preset (see src/project/instrument.ts).

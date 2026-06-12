@@ -8,6 +8,22 @@ import type { MixerStripTarget } from '@/project/commands';
 import { addInsert, removeInsert, setInsertEnabled } from '@/project/commands';
 import type { InsertSlot } from '@/project/mixer';
 
+/** Insert processors whose sidechain can be keyed from another track. */
+export const SIDECHAIN_KEYED_PROCESSORS: readonly string[] = [
+  'dynamics.duckingProcessor',
+  'dynamics.sidechainRouter',
+];
+
+/**
+ * True when a processor accepts an external sidechain key source (see
+ * InsertSlot.sidechainSourceTrackId).
+ *
+ * @param processor Processor catalog name (e.g. 'dynamics.duckingProcessor').
+ */
+export function isSidechainKeyedProcessor(processor: string): boolean {
+  return SIDECHAIN_KEYED_PROCESSORS.includes(processor);
+}
+
 /** Injectable command surface (defaults to the real command layer). */
 export interface InsertRackCommands {
   addInsert: typeof addInsert;

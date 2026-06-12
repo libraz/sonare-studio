@@ -28,6 +28,7 @@ import type { MixerStrip, ProjectMixerState } from '@/project/mixer';
 import type { EditorTrack } from '@/project/types';
 import type { EngineTrackSend, EqBand } from '@/wasm/index.js';
 import type { EngineHandle } from './engine';
+import { linearToDb } from './mixer-sync';
 
 /** Maximum number of mixer buses the realtime engine supports. */
 export const MAX_ENGINE_BUSES = 8;
@@ -36,6 +37,41 @@ export const MAX_ENGINE_BUSES = 8;
 export interface StripSyncOptions {
   /** Known insert processor names for validation; null/undefined skips validation. */
   insertCatalog?: ReadonlySet<string> | null;
+}
+
+/**
+ * Builds the scene JSON declaring one BUS strip's insert chain (group
+ * tracks; exported for tests). Mirrors {@link stripSceneJson} but emits the
+ * scene's buses list, which setBusStripJson consumes.
+ */
+export function busSceneJson(
+  busId: number,
+  strip: MixerStrip | undefined,
+  insertCatalog?: ReadonlySet<string> | null,
+): string {
+  const inserts = (strip?.inserts ?? []).map((slot) => {
+    if (insertCatalog && !insertCatalog.has(slot.processor)) {
+      throw new Error(`Unsupported insert processor: ${slot.processor}`);
+    }
+    return { slot: 'pre', processor: slot.processor, params: JSON.stringify(slot.params) };
+  });
+  return JSON.stringify({
+    version: 1,
+    strips: [],
+    buses: [{ id: `bus-${busId}`, role: 'submix', inserts }],
+    connections: [],
+  });
+}
+
+/**
+ * Combined audible gain of a group track in dB: track volume and strip gain
+ * stacked (mixer-sync lane semantics), muted groups floored to silence, the
+ * result clamped to the engine's bus gain range.
+ */
+export function groupBusGainDb(track: EditorTrack): number {
+  if (track.mute) return -120;
+  const combined = linearToDb(track.volume) + (track.mixer?.gainDb ?? 0);
+  return Math.min(24, Math.max(-120, combined));
 }
 
 /**
@@ -104,6 +140,9 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
   const lastBusGain = new Map<number, number>();
   const lastSendsByTrack = new Map<number, string>();
   const trackStripMemory = new Map<number, StripMemory>();
+  const lastOutputBus = new Map<number, number>();
+  const lastBusStrip = new Map<number, string>();
+  const lastSidechains = new Map<string, { trackId: number; index: number; source: number }>();
   let masterStripMemory: StripMemory | undefined;
 
   /**
@@ -170,9 +209,12 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
   // 4. send the final per-track send lists,
   // 5. sync the track strips, then the master strip.
   const sync = (tracks: ReadonlyArray<EditorTrack>, mixer: ProjectMixerState): void => {
-    if (mixer.buses.length > MAX_ENGINE_BUSES) {
+    // Group tracks consume engine buses next to the user send buses.
+    const groupTracks = tracks.filter((track) => track.kind === 'group');
+    if (mixer.buses.length + groupTracks.length > MAX_ENGINE_BUSES) {
       throw new Error(
-        `Too many mixer buses for the engine: ${mixer.buses.length} > ${MAX_ENGINE_BUSES}`,
+        `Too many mixer buses for the engine: ${mixer.buses.length} send buses + ` +
+          `${groupTracks.length} group tracks > ${MAX_ENGINE_BUSES}`,
       );
     }
 
@@ -182,8 +224,31 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
         nextBusNumber += 1;
       }
     }
-    const newBusIds = mixer.buses.map((bus) => busNumberByStoreId.get(bus.id) as number);
+    for (const group of groupTracks) {
+      const key = `group:${group.id}`;
+      if (!busNumberByStoreId.has(key)) {
+        busNumberByStoreId.set(key, nextBusNumber);
+        nextBusNumber += 1;
+      }
+    }
+    const groupBusByTrackId = new Map(
+      groupTracks.map((group) => [group.id, busNumberByStoreId.get(`group:${group.id}`) as number]),
+    );
+    const newBusIds = [
+      ...mixer.buses.map((bus) => busNumberByStoreId.get(bus.id) as number),
+      ...groupTracks.map((group) => groupBusByTrackId.get(group.id) as number),
+    ];
     const newBusIdSet = new Set(newBusIds);
+    const busGainEntries: Array<{ busId: number; gainDb: number }> = [
+      ...mixer.buses.map((bus) => ({
+        busId: busNumberByStoreId.get(bus.id) as number,
+        gainDb: bus.gainDb,
+      })),
+      ...groupTracks.map((group) => ({
+        busId: groupBusByTrackId.get(group.id) as number,
+        gainDb: groupBusGainDb(group),
+      })),
+    ];
 
     // Prune stale sends before re-declaring the bus set.
     for (const track of tracks) {
@@ -202,24 +267,29 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       newBusIds.length !== lastBusList.length ||
       newBusIds.some((busId, i) => busId !== lastBusList[i])
     ) {
-      handle.engine.setTrackBuses(
-        mixer.buses.map((bus) => ({
-          busId: busNumberByStoreId.get(bus.id) as number,
-          gainDb: bus.gainDb,
-        })),
-      );
+      handle.engine.setTrackBuses(busGainEntries.map((entry) => ({ ...entry })));
       lastBusList = newBusIds;
       lastBusGain.clear();
-      for (const bus of mixer.buses) {
-        lastBusGain.set(busNumberByStoreId.get(bus.id) as number, bus.gainDb);
+      for (const entry of busGainEntries) {
+        lastBusGain.set(entry.busId, entry.gainDb);
       }
     } else {
-      for (const bus of mixer.buses) {
-        const busId = busNumberByStoreId.get(bus.id) as number;
-        if (lastBusGain.get(busId) !== bus.gainDb) {
-          handle.engine.setBusGain(busId, bus.gainDb);
-          lastBusGain.set(busId, bus.gainDb);
+      for (const entry of busGainEntries) {
+        if (lastBusGain.get(entry.busId) !== entry.gainDb) {
+          handle.engine.setBusGain(entry.busId, entry.gainDb);
+          lastBusGain.set(entry.busId, entry.gainDb);
         }
+      }
+    }
+
+    // Member tracks route their lane output through their group's bus;
+    // everything else stays on the master mix.
+    for (const track of tracks) {
+      const groupBus =
+        track.groupId !== undefined ? (groupBusByTrackId.get(track.groupId) ?? 0) : 0;
+      if ((lastOutputBus.get(track.id) ?? 0) !== groupBus) {
+        handle.engine.setTrackOutputBus(track.id, groupBus);
+        lastOutputBus.set(track.id, groupBus);
       }
     }
 
@@ -239,8 +309,31 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       }
     }
 
-    // Track strips, then the master strip.
+    // Track strips (group tracks carry their inserts on their bus strip
+    // instead of the silent lane strip), then the master strip.
     for (const track of tracks) {
+      if (track.kind === 'group') {
+        const busId = groupBusByTrackId.get(track.id) as number;
+        const inserts = track.mixer?.inserts ?? [];
+        const structureKey = JSON.stringify(
+          inserts.map((slot) => ({
+            processor: slot.processor,
+            params: slot.params,
+            enabled: slot.enabled,
+          })),
+        );
+        if (lastBusStrip.get(busId) !== structureKey) {
+          // Bus strips have no engine-side bypass toggles; disabled inserts
+          // are simply omitted from the (re-sent) scene.
+          const audible = { ...track.mixer, inserts: inserts.filter((slot) => slot.enabled) };
+          handle.engine.setBusStripJson(
+            busId,
+            busSceneJson(busId, audible as MixerStrip, insertCatalog),
+          );
+          lastBusStrip.set(busId, structureKey);
+        }
+        continue;
+      }
       const memory = syncStrip(track.id, track.mixer, trackStripMemory.get(track.id), (json) =>
         handle.engine.setTrackStripJson(track.id, json),
       );
@@ -249,6 +342,31 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     masterStripMemory = syncStrip('master', mixer.master, masterStripMemory, (json) =>
       handle.engine.setMasterStripJson(json),
     );
+
+    // Insert sidechain keys, replayed after the strips exist. Bindings are
+    // diffed per (track, insertIndex); stale ones are cleared with null.
+    const desiredSidechains = new Map<string, { trackId: number; index: number; source: number }>();
+    const trackIds = new Set(tracks.map((track) => track.id));
+    for (const track of tracks) {
+      if (track.kind === 'group') continue;
+      (track.mixer?.inserts ?? []).forEach((slot, index) => {
+        const source = slot.sidechainSourceTrackId;
+        if (source === undefined || source === track.id || !trackIds.has(source)) return;
+        desiredSidechains.set(`${track.id}:${index}`, { trackId: track.id, index, source });
+      });
+    }
+    for (const [key, binding] of lastSidechains) {
+      if (!desiredSidechains.has(key)) {
+        handle.engine.setLaneSidechain(binding.trackId, binding.index, null);
+        lastSidechains.delete(key);
+      }
+    }
+    for (const [key, binding] of desiredSidechains) {
+      const previous = lastSidechains.get(key);
+      if (previous && previous.source === binding.source) continue;
+      handle.engine.setLaneSidechain(binding.trackId, binding.index, binding.source);
+      lastSidechains.set(key, binding);
+    }
   };
 
   return { sync, busIdFor: (storeBusId) => busNumberByStoreId.get(storeBusId) };

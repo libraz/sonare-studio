@@ -32,6 +32,12 @@ class FakeEngine implements OfflineRenderEngine {
   setMasterStripJson(json: string): void {
     this.record('setMasterStripJson', json);
   }
+  setBusStripJson(busId: number, json: string): void {
+    this.record('setBusStripJson', busId, json);
+  }
+  setLaneSidechain(trackId: number, insertIndex: number, sourceTrackId: number): void {
+    this.record('setLaneSidechain', trackId, insertIndex, sourceTrackId);
+  }
   setTrackStripInsertBypassed(trackId: number, index: number, bypassed: boolean): void {
     this.record('setTrackStripInsertBypassed', trackId, index, bypassed);
   }
@@ -241,13 +247,16 @@ describe('renderProjectWithEngine', () => {
     expect(engine.destroyed).toBe(true);
   });
 
-  it('renders an explicit window and seeks the transport to its start', async () => {
+  it('renders an explicit window with a pre-roll before its start', async () => {
     const engine = new FakeEngine();
     const result = await renderProjectWithEngine(makeDoc(), {
       ...renderOptions(engine),
       range: { startPpq: 1, endPpq: 3 },
     });
-    expect(engine.named('seekSample')[0][1]).toBe(24000);
+    // The window starts at sample 24000; the render seeks half a second
+    // earlier (clamped at the timeline start) and discards the pre-roll so
+    // stateful DSP is already in motion at the capture start.
+    expect(engine.named('seekSample')[0][1]).toBe(0);
     expect(result.totalFrames).toBe(2 * 24000);
   });
 
@@ -389,5 +398,125 @@ describe('renderProjectWithEngine', () => {
     expect(clips[1].channels).toHaveLength(1);
     expect(clips[1].channels[0][0]).toBe(24000);
     expect(clips[1].channels[0][23999]).toBe(47999);
+  });
+});
+
+/** Document with a group track (index 2) that the audio track routes into. */
+function makeGroupDoc(): ProjectDocument {
+  const doc = makeDoc();
+  const tracks = doc.tracks as unknown as Array<Record<string, unknown>>;
+  tracks.push({
+    name: 'Drum Bus',
+    color: '#0af',
+    kind: 'group',
+    mute: false,
+    solo: false,
+    volume: 0.5,
+    pan: 0,
+    clips: [],
+    mixer: {
+      gainDb: -2,
+      pan: 0,
+      sends: [],
+      inserts: [
+        { processor: 'dynamics.compressor', params: { thresholdDb: -20 }, enabled: true },
+        { processor: 'saturation.tape', params: { drive: 0.4 }, enabled: false },
+      ],
+    },
+  });
+  tracks[1].groupIndex = 2;
+  return doc;
+}
+
+describe('renderProjectWithEngine with group tracks and sidechains', () => {
+  it('declares the group bus after the send buses and routes members through it', async () => {
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(makeGroupDoc(), renderOptions(engine));
+
+    const buses = engine.named('setTrackBuses')[0][1] as Array<{ busId: number; gainDb: number }>;
+    expect(buses).toHaveLength(2);
+    expect(buses[0]).toEqual({ busId: 1, gainDb: -6 });
+    expect(buses[1].busId).toBe(2);
+    // Combined audible group level: track volume in dB plus the strip gain.
+    expect(buses[1].gainDb).toBeCloseTo(linearToDb(0.5) - 2, 5);
+
+    expect(engine.named('setTrackLanes')[0][1]).toEqual([
+      { trackId: 1 },
+      { trackId: 2, sends: [{ busId: 1, levelDb: -9, enabled: true }], outputBusId: 2 },
+      { trackId: 3 },
+    ]);
+  });
+
+  it('sends only the enabled group inserts to the bus strip and keeps the group lane neutral', async () => {
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(makeGroupDoc(), renderOptions(engine));
+
+    const busStrips = engine.named('setBusStripJson');
+    expect(busStrips).toHaveLength(1);
+    expect(busStrips[0][1]).toBe(2);
+    expect(JSON.parse(busStrips[0][2] as string)).toEqual({
+      version: 1,
+      strips: [],
+      buses: [
+        {
+          id: 'bus-2',
+          role: 'submix',
+          inserts: [
+            { slot: 'pre', processor: 'dynamics.compressor', params: '{"thresholdDb":-20}' },
+          ],
+        },
+      ],
+      connections: [],
+    });
+
+    // The group's lane stays silent: no lane strip, fader/pan, or solo/mute.
+    expect(engine.named('setTrackStripJson').filter(([, trackId]) => trackId === 3)).toEqual([]);
+    const params = new Map(engine.named('setParameter').map(([, id, value]) => [id, value]));
+    expect(params.has(0x4d580201)).toBe(false);
+    expect(params.has(0x4d580202)).toBe(false);
+    expect(engine.named('setSoloMute')).toEqual([
+      ['setSoloMute', 0, false, false],
+      ['setSoloMute', 1, false, false],
+    ]);
+  });
+
+  it('floors a muted group bus to silence and skips the bus strip without enabled inserts', async () => {
+    const doc = makeGroupDoc();
+    const group = doc.tracks[2] as unknown as {
+      mute: boolean;
+      mixer: { inserts: Array<{ enabled: boolean }> };
+    };
+    group.mute = true;
+    for (const slot of group.mixer.inserts) slot.enabled = false;
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    const buses = engine.named('setTrackBuses')[0][1] as Array<{ busId: number; gainDb: number }>;
+    expect(buses[1].gainDb).toBe(-120);
+    expect(engine.named('setBusStripJson')).toEqual([]);
+  });
+
+  it('binds positional insert sidechains to lane ids and drops invalid references', async () => {
+    const doc = makeGroupDoc();
+    const drums = doc.tracks[1] as unknown as { mixer: { inserts: unknown[] } };
+    drums.mixer.inserts = [
+      // Valid: keyed from track index 0 (engine lane id 1).
+      { processor: 'dynamics.compressor', params: {}, enabled: true, sidechainSourceIndex: 0 },
+      // Self reference: dropped.
+      { processor: 'dynamics.compressor', params: {}, enabled: true, sidechainSourceIndex: 1 },
+      // Out of range: dropped.
+      { processor: 'dynamics.compressor', params: {}, enabled: true, sidechainSourceIndex: 9 },
+      // Not an integer index: dropped.
+      { processor: 'dynamics.compressor', params: {}, enabled: true, sidechainSourceIndex: 0.5 },
+    ];
+    // Group-track inserts never bind a lane sidechain (they live on a bus).
+    const group = doc.tracks[2] as unknown as {
+      mixer: { inserts: Array<Record<string, unknown>> };
+    };
+    group.mixer.inserts[0].sidechainSourceIndex = 0;
+
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+    expect(engine.named('setLaneSidechain')).toEqual([['setLaneSidechain', 2, 0, 1]]);
   });
 });

@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import type { CommandGestureOptions, MixerStripTarget } from '@/project/commands';
-import { createDefaultStrip, type MixerStrip } from '@/project/mixer';
+import { setInsertSidechain } from '@/project/commands';
+import { createDefaultStrip, type InsertSlot, type MixerStrip } from '@/project/mixer';
 import { listQuickControls, type QuickControl, setQuickControl } from '@/project/quick-controls';
 import { useProjectStore } from '@/project/store';
+import type { EditorTrack } from '@/project/types';
 import {
   groupInsertCatalog,
   humanizeInsertName,
@@ -13,6 +15,7 @@ import {
 import {
   addInsertSlot,
   adjustExpandedAfterRemove,
+  isSidechainKeyedProcessor,
   removeInsertSlot,
   toggleInsertEnabled,
 } from '@/ui/mixer/insert-rack';
@@ -25,6 +28,10 @@ import MixerKnob from './MixerKnob.vue';
  * plus an add button opening the processor catalog grouped by category.
  * All edits go through the undoable command layer; parameter knob drags
  * coalesce into one history entry via the quick-control gesture protocol.
+ *
+ * Sidechain-keyed processors (ducking/sidechainRouter) on track strips get a
+ * key-source select picking which other track's audio drives the sidechain;
+ * the master strip has no engine lane to key from, so it shows none.
  */
 
 const props = defineProps<{
@@ -108,6 +115,29 @@ function onRemove(index: number): void {
   expandedIndex.value = adjustExpandedAfterRemove(expandedIndex.value, index);
 }
 
+// --- Sidechain key source ------------------------------------------------------
+
+/** Tracks selectable as sidechain key sources (other non-group tracks). */
+const sidechainSources = computed<EditorTrack[]>(() =>
+  store.tracks.filter((track) => track.id !== props.target && track.kind !== 'group'),
+);
+
+/** True when the slot gets a key-source select (keyed insert on a track strip). */
+function hasSidechainSelect(slot: InsertSlot): boolean {
+  return props.target !== 'master' && isSidechainKeyedProcessor(slot.processor);
+}
+
+function onSidechainChange(index: number, event: Event): void {
+  if (props.target === 'master') return;
+  const raw = (event.target as HTMLSelectElement).value;
+  try {
+    setInsertSidechain(props.target, index, raw === '' ? null : Number(raw));
+    error.value = '';
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
+}
+
 // --- Add popover ---------------------------------------------------------------
 
 const addMenuOpen = ref(false);
@@ -182,6 +212,19 @@ onBeforeUnmount(() => {
         </button>
       </div>
       <div v-if="expandedIndex === index" class="insert-params">
+        <label v-if="hasSidechainSelect(slot)" class="insert-sidechain">
+          <span class="insert-sidechain-label">Key</span>
+          <select
+            class="insert-sidechain-select"
+            :value="slot.sidechainSourceTrackId ?? ''"
+            @change="onSidechainChange(index, $event)"
+          >
+            <option value="">No key</option>
+            <option v-for="source in sidechainSources" :key="source.id" :value="source.id">
+              {{ source.name }}
+            </option>
+          </select>
+        </label>
         <p v-if="expandedControls.length === 0" class="insert-params-empty">No parameters</p>
         <MixerKnob
           v-for="control in expandedControls"
@@ -378,5 +421,28 @@ onBeforeUnmount(() => {
   margin: 0;
   font: 9px/1.3 system-ui, sans-serif;
   color: #ffb4b4;
+}
+.insert-sidechain {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+}
+
+.insert-sidechain-label {
+  font-size: 9px;
+  color: var(--mixer-dim, #889);
+  text-transform: uppercase;
+}
+
+.insert-sidechain-select {
+  flex: 1;
+  min-width: 0;
+  font-size: 10px;
+  background: var(--mixer-bg, #1c1f27);
+  color: inherit;
+  border: 1px solid var(--mixer-border, #333a48);
+  border-radius: 3px;
+  padding: 1px 2px;
 }
 </style>

@@ -42,6 +42,11 @@ import StripSends from './StripSends.vue';
  * 'read' the fader/pan display follows the lane value at the playhead (the
  * control is non-interactive while following), in 'write' drags touch-record
  * breakpoints into the lane instead of driving the manual strip commands.
+ *
+ * Group-track strips are tagged GROUP and drop the R/W and solo controls:
+ * their level is the group bus gain (no automation lane), and bus solo is
+ * not supported. Fader, mute, inserts and EQ keep working through the
+ * group-bus sync layer.
  */
 
 const props = withDefaults(
@@ -70,6 +75,8 @@ const strip = computed<MixerStrip>(() => {
   if (isMaster.value) return store.mixer.master;
   return track.value?.mixer ?? createDefaultStrip();
 });
+
+const isGroup = computed(() => track.value?.kind === 'group');
 
 const name = computed(() => (isMaster.value ? 'Master' : (track.value?.name ?? '')));
 const color = computed(() => (isMaster.value ? '#8b93a3' : (track.value?.color ?? '#5b6270')));
@@ -226,9 +233,10 @@ onBeforeUnmount(() => {
     <button type="button" class="strip-header" :title="name" @click="onHeaderClick">
       <span class="strip-color" :style="{ background: color }" />
       <span class="strip-name">{{ name }}</span>
+      <span v-if="isGroup" class="strip-group-tag" title="Group submix">GROUP</span>
     </button>
 
-    <div class="strip-auto">
+    <div v-if="!isGroup" class="strip-auto">
       <button
         type="button"
         class="toggle strip-auto-r"
@@ -292,6 +300,7 @@ onBeforeUnmount(() => {
           M
         </button>
         <button
+          v-if="!isGroup"
           type="button"
           class="toggle solo"
           :class="{ on: track.solo }"
@@ -373,6 +382,16 @@ onBeforeUnmount(() => {
   text-align: left;
   font: 600 10px system-ui, sans-serif;
   color: #c8cdd6;
+}
+
+.strip-group-tag {
+  flex: none;
+  font: 700 7px system-ui, sans-serif;
+  letter-spacing: 0.06em;
+  color: #0b0d11;
+  background: #a78bfa;
+  border-radius: 2px;
+  padding: 1px 3px;
 }
 
 .strip-auto {

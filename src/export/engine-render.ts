@@ -25,7 +25,7 @@
 
 import { buildMidiClipSchedules } from '@/engine/midi-sync';
 import { linearToDb } from '@/engine/mixer-sync';
-import { stripSceneJson } from '@/engine/strip-sync';
+import { busSceneJson, groupBusGainDb, stripSceneJson } from '@/engine/strip-sync';
 import {
   MixdownCancelledError,
   type MixdownDeps,
@@ -70,6 +70,15 @@ const BLOCKS_PER_CHECKPOINT = 32;
 /** Release tail appended after the last clip for 'project' renders, in seconds. */
 const RELEASE_TAIL_SECONDS = 2;
 
+/**
+ * Audible pre-roll rendered and discarded before the capture window, in
+ * seconds. settleParameters snaps parameter smoothers, but stateful DSP
+ * (dynamics envelopes, sidechain keys, reverb tails) only converges while
+ * audio actually renders; without the pre-roll the first blocks of every
+ * windowed render carry an audible transient (e.g. an unducked sidechain).
+ */
+const PREROLL_SECONDS = 0.5;
+
 /** Tempo assumed when the document carries no tempo segment. */
 const DEFAULT_TEMPO_BPM = 120;
 
@@ -81,7 +90,9 @@ export interface OfflineRenderEngine {
   setTrackLanes(lanes: Array<{ trackId: number; sends?: SendSpec[] }>): void;
   setTrackBuses(buses: Array<{ busId: number; gainDb?: number }>): void;
   setTrackStripJson(trackId: number, sceneJson: string): void;
+  setBusStripJson(busId: number, sceneJson: string): void;
   setMasterStripJson(sceneJson: string): void;
+  setLaneSidechain(trackId: number, insertIndex: number, sourceTrackId: number): void;
   setTrackStripInsertBypassed(trackId: number, insertIndex: number, bypassed: boolean): void;
   setMasterStripInsertBypassed(insertIndex: number, bypassed: boolean): void;
   setTrackStripEqBandJson(trackId: number, bandIndex: number, bandJson: string): void;
@@ -192,8 +203,12 @@ interface RenderPass {
   masterStrip: boolean;
   /** Apply master gain/pan and master automation lanes. */
   masterLevels: boolean;
-  /** Non-null isolates this track index (every other lane muted). */
-  soloIndex: number | null;
+  /**
+   * Non-null isolates these track indices (every other lane muted). A plain
+   * track stem holds just its own index; a group stem holds the group and
+   * its member indices so the submix renders through the group bus.
+   */
+  stemIndices: ReadonlySet<number> | null;
 }
 
 /**
@@ -247,11 +262,26 @@ export async function renderProjectWithEngine(
   // Synthetic numeric track ids: documents store tracks positionally.
   const trackIds = doc.tracks.map((_, index) => index + 1);
 
-  // Buses first (sends must reference declared buses), in document order.
+  // Buses first (sends must reference declared buses): the document's send
+  // buses in order, then one bus per group track (matching live strip-sync).
   const busNumberById = new Map<string, number>();
   const buses = (doc.mixer?.buses ?? []).map((bus, index) => {
     busNumberById.set(bus.id, index + 1);
     return { busId: index + 1, gainDb: bus.gainDb };
+  });
+  const groupBusByTrackIndex = new Map<number, number>();
+  doc.tracks.forEach((track, index) => {
+    if (track.kind !== 'group') return;
+    const busId = buses.length + 1;
+    groupBusByTrackIndex.set(index, busId);
+    buses.push({
+      busId,
+      gainDb: groupBusGainDb({
+        volume: track.volume,
+        mute: track.mute,
+        ...(track.mixer !== undefined ? { mixer: track.mixer } : {}),
+      } as Parameters<typeof groupBusGainDb>[0]),
+    });
   });
   const lanes = doc.tracks.map((track, index) => {
     const sends: SendSpec[] = (track.mixer?.sends ?? [])
@@ -261,7 +291,13 @@ export async function renderProjectWithEngine(
         levelDb: send.levelDb,
         enabled: send.enabled,
       }));
-    return { trackId: trackIds[index], ...(sends.length > 0 ? { sends } : {}) };
+    const groupBus =
+      track.groupIndex !== undefined ? groupBusByTrackIndex.get(track.groupIndex) : undefined;
+    return {
+      trackId: trackIds[index],
+      ...(sends.length > 0 ? { sends } : {}),
+      ...(groupBus !== undefined ? { outputBusId: groupBus } : {}),
+    };
   });
 
   // Pre-load instrument fonts once; engine passes then configure synchronously.
@@ -398,6 +434,21 @@ export async function renderProjectWithEngine(
     doc.tracks.forEach((track, index) => {
       const strip = track.mixer;
       const trackId = trackIds[index];
+      if (track.kind === 'group') {
+        // Group inserts ride the group's bus strip (the lane stays silent);
+        // the audible group level was already baked into the bus gain.
+        const busId = groupBusByTrackIndex.get(index);
+        const enabledInserts = (strip?.inserts ?? []).filter((slot) => slot.enabled);
+        if (busId !== undefined && enabledInserts.length > 0) {
+          engine.setBusStripJson(
+            busId,
+            busSceneJson(busId, { ...(strip as object), inserts: enabledInserts } as NonNullable<
+              typeof strip
+            >),
+          );
+        }
+        return;
+      }
       if (strip && (strip.inserts.length > 0 || strip.eq)) {
         engine.setTrackStripJson(trackId, stripSceneJson(trackId, strip));
         strip.inserts.forEach((slot, insertIndex) => {
@@ -407,16 +458,34 @@ export async function renderProjectWithEngine(
           engine.setTrackStripEqBandJson(trackId, bandIndex, JSON.stringify(band));
         });
       }
-      if (pass.soloIndex === null) {
+      if (pass.stemIndices === null) {
         engine.setSoloMute(index, track.solo, track.mute);
       } else {
-        engine.setSoloMute(index, false, index !== pass.soloIndex);
+        engine.setSoloMute(index, false, !pass.stemIndices.has(index));
       }
       engine.setParameter(
         laneParamId(index, ENGINE_MIXER_PARAM_FADER_DB),
         linearToDb(track.volume) + (strip?.gainDb ?? 0),
       );
       engine.setParameter(laneParamId(index, ENGINE_MIXER_PARAM_PAN), clampPan(strip?.pan ?? 0));
+    });
+
+    // Insert sidechain keys (document inserts carry positional sources).
+    doc.tracks.forEach((track, index) => {
+      if (track.kind === 'group') return;
+      (track.mixer?.inserts ?? []).forEach((slot, insertIndex) => {
+        const sourceIndex = (slot as { sidechainSourceIndex?: number }).sidechainSourceIndex;
+        if (
+          sourceIndex === undefined ||
+          !Number.isInteger(sourceIndex) ||
+          sourceIndex < 0 ||
+          sourceIndex >= doc.tracks.length ||
+          sourceIndex === index
+        ) {
+          return;
+        }
+        engine.setLaneSidechain(trackIds[index], insertIndex, trackIds[sourceIndex]);
+      });
     });
 
     // Master strip: inserts/EQ only with the chain enabled; gain/pan whenever
@@ -515,10 +584,21 @@ export async function renderProjectWithEngine(
   ): Promise<[Float32Array, Float32Array]> => {
     const left = new Float32Array(totalFrames);
     const right = new Float32Array(totalFrames);
-    engine.seekSample(startSample);
+    // Roll (and discard) a pre-roll up to the window start so stateful DSP
+    // and the content before the window (sustained clips, sidechain keys)
+    // are already in motion when capture begins. Renders from the timeline
+    // start have nothing before them and start cold by definition.
+    const prerollFrames = Math.min(startSample, Math.round(PREROLL_SECONDS * sampleRate));
+    engine.seekSample(startSample - prerollFrames);
     engine.process([new Float32Array(RENDER_BLOCK_FRAMES), new Float32Array(RENDER_BLOCK_FRAMES)]);
     engine.settleParameters();
     engine.play();
+    let prerollDone = 0;
+    while (prerollDone < prerollFrames) {
+      const blockFrames = Math.min(RENDER_BLOCK_FRAMES, prerollFrames - prerollDone);
+      engine.process([new Float32Array(blockFrames), new Float32Array(blockFrames)]);
+      prerollDone += blockFrames;
+    }
     let framesDone = 0;
     let blocksSinceCheckpoint = 0;
     while (framesDone < totalFrames) {
@@ -569,7 +649,7 @@ export async function renderProjectWithEngine(
   const passSpan = 0.9 / (1 + stemTracks.length);
 
   let [mixL, mixR] = await runPass(
-    { masterStrip: includeMasterChain, masterLevels: true, soloIndex: null },
+    { masterStrip: includeMasterChain, masterLevels: true, stemIndices: null },
     'engine.render',
     0,
     passSpan,
@@ -579,8 +659,16 @@ export async function renderProjectWithEngine(
   for (let i = 0; i < stemTracks.length; i++) {
     const { track, trackIndex } = stemTracks[i];
     checkCancel();
+    // A group stem keeps its member lanes audible (their output routes
+    // through the group bus), so it renders the group submix.
+    const stemIndices = new Set<number>([trackIndex]);
+    if (track.kind === 'group') {
+      doc.tracks.forEach((member, memberIndex) => {
+        if (member.groupIndex === trackIndex) stemIndices.add(memberIndex);
+      });
+    }
     const channels = await runPass(
-      { masterStrip: false, masterLevels: false, soloIndex: trackIndex },
+      { masterStrip: false, masterLevels: false, stemIndices },
       `engine.stem:${trackIndex}`,
       passSpan * (1 + i),
       passSpan,

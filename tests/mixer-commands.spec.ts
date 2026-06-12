@@ -1,6 +1,8 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  addAudioTrack,
+  addGroupTrack,
   addInsert,
   addMixerBus,
   addNote,
@@ -9,13 +11,16 @@ import {
   redo,
   removeInsert,
   removeMixerBus,
+  removeTrack,
   setInsertEnabled,
   setInsertParam,
+  setInsertSidechain,
   setMasteringPreset,
   setSend,
   setStripEq,
   setStripGain,
   setStripPan,
+  setTrackGroup,
   setTrackInstrument,
   undo,
 } from '@/project/commands';
@@ -262,6 +267,110 @@ describe('mixer commands', () => {
       expect(store.tracks[0].mixer?.sends).toHaveLength(1);
       expect(store.mixer.master.sends).toHaveLength(1);
       expect(() => removeMixerBus('nope')).toThrow(RangeError);
+    });
+  });
+
+  describe('group tracks', () => {
+    it('addGroupTrack creates a group track whose kind survives refresh', () => {
+      const groupId = addGroupTrack({ name: 'Drum Bus' });
+      const track = store.tracks.find((t) => t.id === groupId);
+      expect(track?.kind).toBe('group');
+      expect(track?.name).toBe('Drum Bus');
+      // The wasm Project stores group tracks as aux; the app-level kind must
+      // survive a refresh from the Project document.
+      store.refresh();
+      expect(store.tracks.find((t) => t.id === groupId)?.kind).toBe('group');
+      expect(undo()).toBe(true);
+      expect(store.tracks.some((t) => t.id === groupId)).toBe(false);
+      expect(redo()).toBe(true);
+      expect(store.tracks.find((t) => t.id === groupId)?.kind).toBe('group');
+    });
+
+    it('setTrackGroup sets and clears the membership undoably', () => {
+      const groupId = addGroupTrack();
+      setTrackGroup(trackId, groupId);
+      expect(store.tracks[0].groupId).toBe(groupId);
+      setTrackGroup(trackId, null);
+      expect(store.tracks[0].groupId).toBeUndefined();
+      undo(); // clear
+      expect(store.tracks[0].groupId).toBe(groupId);
+      undo(); // set
+      expect(store.tracks[0].groupId).toBeUndefined();
+      redo();
+      expect(store.tracks[0].groupId).toBe(groupId);
+    });
+
+    it('validates the target, nesting and self references', () => {
+      const groupA = addGroupTrack();
+      const groupB = addGroupTrack();
+      expect(() => setTrackGroup(trackId, trackId)).toThrow(/not a group track/);
+      expect(() => setTrackGroup(groupA, groupB)).toThrow(/cannot be nested/);
+      expect(() => setTrackGroup(groupA, groupA)).toThrow(RangeError);
+      expect(() => setTrackGroup(9999, groupA)).toThrow(RangeError);
+      expect(() => setTrackGroup(trackId, 9999)).toThrow(RangeError);
+      expect(store.tracks.every((t) => t.groupId === undefined)).toBe(true);
+    });
+
+    it('clearing an absent membership is not an undoable edit', () => {
+      clearHistory();
+      setTrackGroup(trackId, null);
+      expect(canUndo()).toBe(false);
+    });
+
+    it('removing a group track clears its members and restores them on undo', () => {
+      const groupId = addGroupTrack();
+      setTrackGroup(trackId, groupId);
+      removeTrack(groupId);
+      expect(store.tracks.some((t) => t.id === groupId)).toBe(false);
+      expect(store.tracks[0].groupId).toBeUndefined();
+      undo();
+      expect(store.tracks.some((t) => t.id === groupId)).toBe(true);
+      expect(store.tracks[0].groupId).toBe(groupId);
+    });
+  });
+
+  describe('setInsertSidechain', () => {
+    it('sets and clears the sidechain source undoably', () => {
+      addInsert(trackId, 'dynamics.compressor');
+      const sourceId = addAudioTrack({ name: 'Kick' });
+      setInsertSidechain(trackId, 0, sourceId);
+      expect(store.tracks[0].mixer?.inserts[0].sidechainSourceTrackId).toBe(sourceId);
+      setInsertSidechain(trackId, 0, null);
+      expect(store.tracks[0].mixer?.inserts[0].sidechainSourceTrackId).toBeUndefined();
+      undo(); // clear
+      expect(store.tracks[0].mixer?.inserts[0].sidechainSourceTrackId).toBe(sourceId);
+      undo(); // set
+      expect(store.tracks[0].mixer?.inserts[0].sidechainSourceTrackId).toBeUndefined();
+      redo();
+      expect(store.tracks[0].mixer?.inserts[0].sidechainSourceTrackId).toBe(sourceId);
+    });
+
+    it('validates the strip, slot index and source track', () => {
+      const sourceId = addAudioTrack({ name: 'Kick' });
+      expect(() => setInsertSidechain(trackId, 0, sourceId)).toThrow(/no mixer strip/);
+      addInsert(trackId, 'dynamics.compressor');
+      expect(() => setInsertSidechain(trackId, 5, sourceId)).toThrow(RangeError);
+      expect(() => setInsertSidechain(trackId, 0, trackId)).toThrow(/its own track/);
+      expect(() => setInsertSidechain(trackId, 0, 9999)).toThrow(RangeError);
+      expect(() => setInsertSidechain(9999, 0, sourceId)).toThrow(RangeError);
+      expect(store.tracks[0].mixer?.inserts[0].sidechainSourceTrackId).toBeUndefined();
+    });
+
+    it('clearing an absent source is not an undoable edit', () => {
+      addInsert(trackId, 'dynamics.compressor');
+      clearHistory();
+      setInsertSidechain(trackId, 0, null);
+      expect(canUndo()).toBe(false);
+    });
+
+    it('removing the source track clears referencing slots and restores on undo', () => {
+      addInsert(trackId, 'dynamics.compressor');
+      const sourceId = addAudioTrack({ name: 'Kick' });
+      setInsertSidechain(trackId, 0, sourceId);
+      removeTrack(sourceId);
+      expect(store.tracks[0].mixer?.inserts[0].sidechainSourceTrackId).toBeUndefined();
+      undo();
+      expect(store.tracks[0].mixer?.inserts[0].sidechainSourceTrackId).toBe(sourceId);
     });
   });
 });
