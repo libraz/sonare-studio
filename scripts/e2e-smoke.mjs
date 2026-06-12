@@ -1190,6 +1190,107 @@ try {
       window.__sonareDebug.setLoopRange(0, 4, false);
     }, rampTrackId);
     if (savedViewport) await page.setViewportSize(savedViewport);
+
+    // --- Export equivalence: automation, sends and buses render in the export -
+
+    // Isolate the steady tone: silence every other track with a held -120 dB
+    // fader lane (audible live AND in the export, so the comparison stays
+    // apples-to-apples).
+    const eqRange = { startPpq: 0, endPpq: 4 };
+    const otherIds = await page.evaluate(
+      (keep) => window.__sonareDebug.trackIds().filter((id) => id !== keep),
+      rampTrackId,
+    );
+    await page.evaluate((ids) => {
+      for (const id of ids) {
+        window.__sonareDebug.setAutomationLanePoints(id, 'faderDb', [
+          { ppq: 0, value: -120, curve: 'hold' },
+        ]);
+      }
+    }, otherIds);
+
+    const probeBase = await page.evaluate(
+      (range) => window.__sonareDebug.exportProbe(true, range),
+      eqRange,
+    );
+
+    // A constant -24 dB fader lane must shift the exported peak down ~24 dB.
+    await page.evaluate(
+      (id) =>
+        window.__sonareDebug.setAutomationLanePoints(id, 'faderDb', [
+          { ppq: 0, value: -24, curve: 'hold' },
+        ]),
+      rampTrackId,
+    );
+    const probeAuto = await page.evaluate(
+      (range) => window.__sonareDebug.exportProbe(true, range),
+      eqRange,
+    );
+    await page.evaluate(
+      (id) => window.__sonareDebug.removeAutomationLane(id, 'faderDb'),
+      rampTrackId,
+    );
+    const autoShift = probeBase.peakDb - probeAuto.peakDb;
+    if (!(autoShift > 18 && autoShift < 30)) {
+      fail(
+        `automation not rendered in export: base ${probeBase.peakDb.toFixed(1)} dB, ` +
+          `with -24 dB lane ${probeAuto.peakDb.toFixed(1)} dB`,
+      );
+    }
+
+    // A unity send into a unity bus must raise the exported level audibly.
+    const eqBusId = await page.evaluate((id) => {
+      const bus = window.__sonareDebug.addMixerBus('FX');
+      window.__sonareDebug.setSend(id, bus, { levelDb: 0, enabled: true });
+      return bus;
+    }, rampTrackId);
+    const probeSend = await page.evaluate(
+      (range) => window.__sonareDebug.exportProbe(true, range),
+      eqRange,
+    );
+    const sendLift = probeSend.peakDb - probeBase.peakDb;
+    if (!(sendLift > 1.5)) {
+      fail(
+        `send/bus not rendered in export: base ${probeBase.peakDb.toFixed(1)} dB, ` +
+          `with unity send ${probeSend.peakDb.toFixed(1)} dB`,
+      );
+    }
+
+    // Live playback of the same window with the send active must land in the
+    // exported level's ballpark (the meter is a block peak, so allow slack).
+    await page.evaluate(() => window.__sonareDebug.setLoopRange(0, 4, true));
+    await page.mouse.click(rulerBox8.x + 2, rulerBox8.y + 14);
+    await page.click('.transport-bar button:has-text("Play")');
+    let livePeak = Number.NEGATIVE_INFINITY;
+    const liveDeadline = Date.now() + 2400;
+    while (Date.now() < liveDeadline) {
+      const peak = await page.evaluate(() => window.__sonareDebug.meterPeakDb());
+      if (peak !== null && peak > livePeak) livePeak = peak;
+      await page.waitForTimeout(100);
+    }
+    await page.click('.transport-bar button:has-text("Stop")');
+    if (!Number.isFinite(livePeak) || Math.abs(livePeak - probeSend.peakDb) > 6) {
+      fail(
+        `live vs engine export diverge: live peak ${livePeak.toFixed(1)} dB, ` +
+          `export ${probeSend.peakDb.toFixed(1)} dB`,
+      );
+    } else {
+      console.info(
+        `PASS export equivalence: automation shift ${autoShift.toFixed(1)} dB, ` +
+          `send lift ${sendLift.toFixed(1)} dB, live ${livePeak.toFixed(1)} dB vs ` +
+          `export ${probeSend.peakDb.toFixed(1)} dB`,
+      );
+    }
+
+    await page.evaluate(
+      ([id, bus, others]) => {
+        window.__sonareDebug.setSend(id, bus, null);
+        window.__sonareDebug.removeMixerBus(bus);
+        for (const other of others) window.__sonareDebug.removeAutomationLane(other, 'faderDb');
+        window.__sonareDebug.setLoopRange(0, 4, false);
+      },
+      [rampTrackId, eqBusId, otherIds],
+    );
   }
 
   // --- Mastering tab: add processors to the project mastering chain -----------

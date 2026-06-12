@@ -14,6 +14,7 @@
  * its terminal `render` / `cancelled` / `error` response.
  */
 
+import { renderProjectWithEngine } from '@/export/engine-render';
 import {
   createWasmMixdownDeps,
   MixdownCancelledError,
@@ -97,13 +98,23 @@ async function handleRender(
   options: ExportRenderOptions = {},
 ): Promise<void> {
   try {
-    const result = await renderMixdown(doc, {
-      ...options,
-      deps: await createWasmMixdownDeps(),
-      onProgress: (progress, stage) => post({ id, type: 'progress', progress, stage }),
-      shouldCancel: () => cancelled.has(id),
-      yieldBetweenClips: yieldToMessages,
-    });
+    // The stereo mixdown renders through the offline engine (live-playback
+    // parity: buses/sends, strips, realtime instruments, automation, tempo
+    // map). Stems still use the legacy per-track summing renderer.
+    const result = options.stems
+      ? await renderMixdown(doc, {
+          ...options,
+          deps: await createWasmMixdownDeps(),
+          onProgress: (progress, stage) => post({ id, type: 'progress', progress, stage }),
+          shouldCancel: () => cancelled.has(id),
+          yieldBetweenClips: yieldToMessages,
+        })
+      : await renderProjectWithEngine(doc, {
+          ...options,
+          onProgress: (progress, stage) => post({ id, type: 'progress', progress, stage }),
+          shouldCancel: () => cancelled.has(id),
+          yieldBetweenBlocks: yieldToMessages,
+        });
     const payload: ExportWorkerResult = {
       left: result.channels[0],
       right: result.channels[1],

@@ -65,6 +65,7 @@ import {
   addAudioClip,
   addAudioTrack,
   addInsert,
+  addMixerBus,
   deleteClip,
   deleteNotes,
   duplicateClip,
@@ -72,10 +73,12 @@ import {
   redo,
   removeAutomationLane,
   removeInsert,
+  removeMixerBus,
   setActiveClip,
   setAutomationLanePoints,
   setInsertEnabled,
   setSelection,
+  setSend,
   setTempoSegments,
   undo,
 } from '@/project/commands';
@@ -1477,9 +1480,14 @@ onMounted(async () => {
       // Renders the project mixdown through the export worker and returns an
       // audio signature, so automation can verify the real render path and
       // that toggling the master chain changes the bytes.
-      exportProbe: async (includeMasterChain = true) => {
-        const result = await renderMixdownInWorker(serializeProject(), { includeMasterChain })
-          .result;
+      exportProbe: async (
+        includeMasterChain = true,
+        range?: { startPpq: number; endPpq: number },
+      ) => {
+        const result = await renderMixdownInWorker(serializeProject(), {
+          includeMasterChain,
+          ...(range !== undefined ? { range } : {}),
+        }).result;
         const wav = encodeWav(result.channels, result.sampleRate, { bitDepth: 16 });
         let hash = 0x811c9dc5;
         for (const byte of wav) hash = Math.imul(hash ^ byte, 0x01000193);
@@ -1523,6 +1531,13 @@ onMounted(async () => {
         setAutomationStripMode(target, mode),
       automationLaneCount: () => handle.value?.engine.automationLaneCount() ?? 0,
       automationInstalledParamIds: () => automationSync?.installedParamIds() ?? [],
+      addMixerBus: (name?: string) => addMixerBus(name !== undefined ? { name } : {}),
+      removeMixerBus: (busId: string) => removeMixerBus(busId),
+      setSend: (
+        target: number | 'master',
+        busId: string,
+        send: { levelDb: number; enabled?: boolean } | null,
+      ) => setSend(target, busId, send),
       // Renders one note with the given synth preset and returns an audio
       // signature, so automation can verify two presets produce different sound.
       renderProbe: async (preset: string) => {
