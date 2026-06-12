@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import type { MeterBridge } from '@/engine/meters';
+import type { MeterSource } from '@/engine/meters';
 import { addMixerBus, removeMixerBus } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
@@ -14,16 +14,19 @@ import ChannelStrip from './ChannelStrip.vue';
  * buses are managed from the same menu (buses are routing metadata only in
  * this iteration).
  *
- * The single live engine meter (summed output) feeds the master strip; track
- * strips show placeholder meters until per-track engine metering exists.
+ * The master strip is fed by the summed-output meter source; track strips
+ * are fed per track via the meterFor lookup (the engine publishes a meter
+ * record per mixer lane). Strips without a source show a placeholder meter.
  */
 
 const props = withDefaults(
   defineProps<{
     /** Engine meter source for the master strip; null draws silent meters. */
-    bridge?: MeterBridge | null;
+    bridge?: MeterSource | null;
+    /** Per-track meter source lookup; null shows placeholder track meters. */
+    meterFor?: ((trackId: number) => MeterSource | null) | null;
   }>(),
-  { bridge: null },
+  { bridge: null, meterFor: null },
 );
 
 const store = useProjectStore();
@@ -154,7 +157,7 @@ onBeforeUnmount(() => {
         v-for="track in visibleTracks"
         :key="track.id"
         :target="track.id"
-        :bridge="null"
+        :bridge="props.meterFor ? props.meterFor(track.id) : null"
       />
       <div class="strips-spacer" />
       <ChannelStrip class="master-strip" target="master" :bridge="props.bridge" />

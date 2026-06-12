@@ -36,7 +36,7 @@ import {
   prerenderMidiClip,
   resolvePresetName,
 } from '@/engine/instruments';
-import { createMeterBridge, type MeterBridge } from '@/engine/meters';
+import { createMeterBridge, type MeterBridge, type MeterSource } from '@/engine/meters';
 import { createMidiSync, type MidiSync } from '@/engine/midi-sync';
 import { createMixerSync, type MixerSync } from '@/engine/mixer-sync';
 import { createStripSync, type StripSync } from '@/engine/strip-sync';
@@ -651,6 +651,19 @@ function syncMixerState(): void {
   if (!mixerSync || !stripSync || !store.initialized) return;
   mixerSync.sync(store.tracks, store.mixer.master);
   stripSync.sync(store.tracks, store.mixer);
+}
+
+/**
+ * Resolves a track's live meter source: the engine emits one meter record per
+ * mixer lane (target id = lane index + 1), and the lane order is whatever the
+ * mixer sync declared. Null until the engine runs or the track has no lane.
+ */
+function trackMeterSource(trackId: number): MeterSource | null {
+  const b = bridge.value;
+  const sync = mixerSync;
+  if (!b || !sync) return null;
+  const laneIndex = sync.laneTrackIds().indexOf(trackId);
+  return laneIndex >= 0 ? b.forTarget(laneIndex + 1) : null;
 }
 
 /** Serializes async MIDI syncs so rapid edits cannot interleave out of order. */
@@ -1325,6 +1338,7 @@ onMounted(async () => {
       selectionCount: () => store.selection.size,
       initialized: () => store.initialized,
       trackCount: () => store.tracks.length,
+      trackIds: () => store.tracks.map((track) => track.id),
       clipCount: () => store.clips.length,
       clipKinds: () => store.clips.map((clip) => clipKind(clip)),
       audioClipCount: () => store.clips.filter((clip) => isAudioClip(clip)).length,
@@ -1382,6 +1396,11 @@ onMounted(async () => {
         const latest = bridge.value?.latest;
         return latest ? Math.max(latest.peakDbL, latest.peakDbR) : null;
       },
+      trackMeterDb: (trackId: number) => {
+        const source = trackMeterSource(trackId);
+        return source ? Math.max(source.latest.peakDbL, source.latest.peakDbR) : null;
+      },
+      masterLufs: () => bridge.value?.latest.momentaryLufs ?? null,
       // Renders one note with the given synth preset and returns an audio
       // signature, so automation can verify two presets produce different sound.
       renderProbe: async (preset: string) => {
@@ -1899,7 +1918,7 @@ onBeforeUnmount(async () => {
           />
         </section>
         <section v-show="dockTab === 'mixer'" class="dock-body">
-          <MixerPanel class="mixer-host" :bridge="bridge" />
+          <MixerPanel class="mixer-host" :bridge="bridge" :meter-for="trackMeterSource" />
         </section>
         <section v-show="dockTab === 'mastering'" class="dock-body">
           <!-- Kept alive via v-show: the A/B preview renders and playback are

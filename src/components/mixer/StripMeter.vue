@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import type { MeterBridge } from '@/engine/meters';
+import type { MeterSource } from '@/engine/meters';
 import {
   advanceMeterChannel,
   createMeterChannel,
@@ -13,16 +13,14 @@ import {
 
 /**
  * Compact per-strip stereo meter: peak + RMS bars with a latched clip LED
- * (click to reset). The engine currently publishes a single stereo meter for
- * the summed output, so only the master strip gets a live bridge; track
- * strips render the placeholder variant until per-track engine metering
- * exists.
+ * (click to reset). Any meter source works (master, track lane, bus); strips
+ * without a live source render the placeholder variant.
  */
 
 const props = withDefaults(
   defineProps<{
     /** Live level source; null draws a silent meter. */
-    bridge?: MeterBridge | null;
+    bridge?: MeterSource | null;
     /** Placeholder mode: static dimmed bars, no animation, no clip LED. */
     placeholder?: boolean;
     /** Bar area width in CSS px. */
@@ -55,7 +53,7 @@ const clipped = ref(false);
 
 const title = computed(() =>
   props.placeholder
-    ? 'Per-track metering requires engine support; the master meter is live'
+    ? 'No live meter for this strip'
     : clipped.value
       ? 'Clipped - click to reset'
       : 'Stereo level meter',

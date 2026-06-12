@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount } from 'vue';
-import type { MeterBridge } from '@/engine/meters';
+import type { MeterSource } from '@/engine/meters';
 import type { MixerStripTarget } from '@/project/commands';
 import { setActiveTrack, setTrackMute, setTrackSolo } from '@/project/commands';
 import { createDefaultStrip, type MixerStrip } from '@/project/mixer';
@@ -21,16 +21,16 @@ import StripSends from './StripSends.vue';
  * gain fader next to a stereo meter. All edits go through the undoable
  * command layer; fader and pan drags coalesce into one history entry each.
  *
- * Only the master strip carries a live meter: the engine publishes a single
- * stereo meter for the summed output, so track strips show a placeholder.
+ * The meter is live whenever a source is supplied (master output or the
+ * track's engine lane); without one the strip shows a placeholder.
  */
 
 const props = withDefaults(
   defineProps<{
     /** Strip target: a track id or 'master'. */
     target: MixerStripTarget;
-    /** Live meter source (master strip only with the current engine). */
-    bridge?: MeterBridge | null;
+    /** Live meter source for this strip; null shows a placeholder meter. */
+    bridge?: MeterSource | null;
   }>(),
   { bridge: null },
 );
@@ -153,8 +153,8 @@ onBeforeUnmount(() => {
     <div class="strip-fader-row">
       <MixerFader :value-db="strip.gainDb" :height="132" @change="onGainChange" />
       <StripMeter
-        :bridge="isMaster ? props.bridge : null"
-        :placeholder="!isMaster"
+        :bridge="props.bridge"
+        :placeholder="!props.bridge"
         :width="12"
         :height="132"
       />
