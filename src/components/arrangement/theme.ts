@@ -52,6 +52,8 @@ export const ARRANGEMENT_COLORS = {
   markerLabel: 'rgba(251, 191, 36, 0.9)',
   /** Playhead line. */
   playhead: '#ff6e6e',
+  /** Shade darkening the take sub-rows below their track lane. */
+  takeLane: 'rgba(0, 0, 0, 0.25)',
   /** Shade darkening an automation sublane below its track lane. */
   automationLane: 'rgba(0, 0, 0, 0.3)',
   /** Mid-value reference line across an automation sublane. */

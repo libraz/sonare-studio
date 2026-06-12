@@ -622,6 +622,12 @@ export const useProjectStore = defineStore('project', () => {
         // serialized values when the binding reports them.
         if (previous?.kind !== undefined) entry.kind = previous.kind;
         if (previous?.assetId !== undefined) entry.assetId = previous.assetId;
+        if (previous?.takes !== undefined) {
+          entry.takes = previous.takes.map((take) => ({ ...take }));
+          if (previous.compSegments !== undefined) {
+            entry.compSegments = previous.compSegments.map((segment) => ({ ...segment }));
+          }
+        }
         const fadeIn =
           serializedFadePpq(serialized.fade_in_ppq, serialized.fade_in) ?? previous?.fadeInPpq ?? 0;
         if (fadeIn > 0) entry.fadeInPpq = fadeIn;
@@ -883,6 +889,21 @@ export const useProjectStore = defineStore('project', () => {
           if (meta.assetId !== undefined) next.assetId = meta.assetId;
           if ((meta.fadeInPpq ?? 0) > 0) next.fadeInPpq = meta.fadeInPpq as number;
           if ((meta.fadeOutPpq ?? 0) > 0) next.fadeOutPpq = meta.fadeOutPpq as number;
+          // Takes/comping are document metadata; malformed selections are
+          // re-sanitized on expansion (src/project/comping.ts).
+          if (Array.isArray(meta.takes) && meta.takes.length > 0) {
+            next.takes = meta.takes
+              .filter((take) => typeof take?.assetId === 'string' && take.assetId.length > 0)
+              .map((take) => ({ assetId: take.assetId, name: String(take.name ?? '') }));
+            if (next.takes.length === 0) {
+              delete next.takes;
+            } else if (Array.isArray(meta.compSegments) && meta.compSegments.length > 0) {
+              next.compSegments = meta.compSegments.map((segment) => ({
+                startPpq: Number(segment.startPpq),
+                takeIndex: Number(segment.takeIndex),
+              }));
+            }
+          }
         }
         return next;
       });

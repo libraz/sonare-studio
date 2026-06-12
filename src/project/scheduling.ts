@@ -17,6 +17,7 @@
 import type { EngineHandle } from '@/engine/engine';
 import type { MidiNote } from '@/engine/instruments';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
+import { audioClipSegments } from './comping';
 import { useProjectStore } from './store';
 import type { EditorNote, EditorTrack } from './types';
 import { clipKind } from './types';
@@ -267,35 +268,43 @@ export async function scheduleProjectClips(
     const clips = store.clips.filter((clip) => clip.trackId === track.id);
     for (const clip of clips) {
       if (clipKind(clip) !== 'audio') continue;
-      if (!clip.assetId) continue;
       const gain = clip.gain;
       if (gain <= 0) continue;
-      let asset: LoadedAudioAsset;
-      try {
-        asset = await loadAudio(clip.assetId);
-      } catch {
-        // Missing or unreadable asset: leave the clip silent.
-        continue;
+      // A clip expands to one engine clip per comp segment (one segment for
+      // clips without takes); each slice loads its segment's asset.
+      for (const segment of audioClipSegments(clip)) {
+        let asset: LoadedAudioAsset;
+        try {
+          asset = await loadAudio(segment.assetId);
+        } catch {
+          // Missing or unreadable asset: leave the slice silent.
+          continue;
+        }
+        let channels = sliceAudioClipWindow(
+          asset.channels,
+          asset.meta.sampleRate,
+          segment.sourceOffsetPpq,
+          segment.lengthPpq,
+          tempoBpm,
+        );
+        channels = applyAudioClipFades(
+          channels,
+          asset.meta.sampleRate,
+          tempoBpm,
+          segment.fadeInPpq,
+          segment.fadeOutPpq,
+        );
+        const targetRate = options.sampleRate ?? handle.ctx.sampleRate;
+        channels = resampleChannelsLinear(channels, asset.meta.sampleRate, targetRate);
+        if (channels.length === 0 || channels[0].length === 0) continue;
+        const engineClipId = handle.engine.addClip(
+          track.id,
+          channels,
+          clip.startPpq + segment.offsetPpq,
+          { gain },
+        );
+        scheduled.push({ engineClipId, clipId: clip.id, trackId: track.id });
       }
-      let channels = sliceAudioClipWindow(
-        asset.channels,
-        asset.meta.sampleRate,
-        clip.sourceOffsetPpq,
-        clip.lengthPpq,
-        tempoBpm,
-      );
-      channels = applyAudioClipFades(
-        channels,
-        asset.meta.sampleRate,
-        tempoBpm,
-        clip.fadeInPpq ?? 0,
-        clip.fadeOutPpq ?? 0,
-      );
-      const targetRate = options.sampleRate ?? handle.ctx.sampleRate;
-      channels = resampleChannelsLinear(channels, asset.meta.sampleRate, targetRate);
-      if (channels.length === 0 || channels[0].length === 0) continue;
-      const engineClipId = handle.engine.addClip(track.id, channels, clip.startPpq, { gain });
-      scheduled.push({ engineClipId, clipId: clip.id, trackId: track.id });
     }
   }
   return scheduled;

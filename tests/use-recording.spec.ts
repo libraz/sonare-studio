@@ -397,4 +397,147 @@ describe('useRecording', () => {
     expect(fake.rec.dispose).toHaveBeenCalledTimes(1);
     expect(recording.micReady.value).toBe(false);
   });
+
+  describe('cycle recording', () => {
+    /** Frames in one loop pass: 4 PPQ at 120 BPM = 2 s at 48 kHz. */
+    const cycleFrames = 96000;
+
+    /** Capture buffer whose value marks the loop pass it belongs to (1, 2, ...). */
+    function makeCapture(frames: number): Float32Array {
+      const buffer = new Float32Array(frames);
+      for (let i = 0; i < frames; i++) buffer[i] = Math.floor(i / cycleFrames) + 1;
+      return buffer;
+    }
+
+    /** Configures the transport loop window. */
+    function setLoop(
+      transport: UseTransportReturn,
+      startPpq: number,
+      endPpq: number,
+      enabled = true,
+    ): void {
+      transport.loopEnabled.value = enabled;
+      transport.loopStartPpq.value = startPpq;
+      transport.loopEndPpq.value = endPpq;
+    }
+
+    it('splits complete loop passes into takes of one clip', async () => {
+      const { recording, fake, transport } = setup();
+      const trackId = addAudioTrack({ name: 'Vox' });
+      recording.arm(trackId);
+      setLoop(transport, 0, 4);
+      // 2.5 passes: two complete cycles plus half a cycle of overhang.
+      fake.setResult({
+        channels: [makeCapture(cycleFrames * 2.5)],
+        sampleRate: 48000,
+        startPpq: 0,
+      });
+      ingestMock
+        .mockImplementationOnce(async (channels, sampleRate, name) => ({
+          id: 'take-asset-1',
+          name,
+          sampleRate,
+          numChannels: channels.length,
+          numFrames: channels[0]?.length ?? 0,
+        }))
+        .mockImplementationOnce(async (channels, sampleRate, name) => ({
+          id: 'take-asset-2',
+          name,
+          sampleRate,
+          numChannels: channels.length,
+          numFrames: channels[0]?.length ?? 0,
+        }));
+
+      expect(await recording.record()).toBe(true);
+      const clipId = await recording.stopRecord();
+      expect(clipId).not.toBeNull();
+
+      // Each complete pass is ingested as one take of exactly one loop.
+      expect(ingestMock).toHaveBeenCalledTimes(2);
+      for (const [index, call] of ingestMock.mock.calls.entries()) {
+        const [channels, sampleRate, name] = call;
+        expect(sampleRate).toBe(48000);
+        expect(name).toBe(`Recording 1 — Take ${index + 1}`);
+        expect(channels[0].length).toBe(cycleFrames);
+        // The slice carries its pass marker from start to end.
+        expect(channels[0][0]).toBe(index + 1);
+        expect(channels[0][cycleFrames - 1]).toBe(index + 1);
+      }
+
+      // One clip spanning the loop window, last take selected.
+      const clips = store.clips.filter((c) => c.kind === 'audio');
+      expect(clips).toHaveLength(1);
+      const clip = clips[0];
+      expect(clip.id).toBe(clipId);
+      expect(clip).toMatchObject({ trackId, startPpq: 0, lengthPpq: 4, assetId: 'take-asset-2' });
+      expect(clip.takes).toEqual([
+        { assetId: 'take-asset-1', name: 'Recording 1 — Take 1' },
+        { assetId: 'take-asset-2', name: 'Recording 1 — Take 2' },
+      ]);
+      expect(clip.compSegments).toEqual([{ startPpq: 0, takeIndex: 1 }]);
+    });
+
+    it('falls back to one linear clip when fewer than two passes complete', async () => {
+      const { recording, fake, transport } = setup();
+      const trackId = addAudioTrack();
+      recording.arm(trackId);
+      setLoop(transport, 0, 4);
+      fake.setResult({
+        channels: [makeCapture(cycleFrames * 1.5)],
+        sampleRate: 48000,
+        startPpq: 0,
+      });
+
+      await recording.record();
+      const clipId = await recording.stopRecord();
+      expect(clipId).not.toBeNull();
+      // The whole capture lands as one clip without takes.
+      expect(ingestMock).toHaveBeenCalledTimes(1);
+      expect(ingestMock.mock.calls[0][0][0].length).toBe(cycleFrames * 1.5);
+      const clip = store.clips.find((c) => c.id === clipId);
+      expect(clip?.takes).toBeUndefined();
+      expect(clip?.compSegments).toBeUndefined();
+      expect(clip?.startPpq).toBe(0);
+      expect(clip?.lengthPpq).toBeCloseTo(6, 10); // 3 s at 120 BPM
+    });
+
+    it('ignores the loop window when looping is disabled', async () => {
+      const { recording, fake, transport } = setup();
+      const trackId = addAudioTrack();
+      recording.arm(trackId);
+      setLoop(transport, 0, 4, false);
+      fake.setResult({
+        channels: [makeCapture(cycleFrames * 2.5)],
+        sampleRate: 48000,
+        startPpq: 0,
+      });
+
+      await recording.record();
+      const clipId = await recording.stopRecord();
+      expect(ingestMock).toHaveBeenCalledTimes(1);
+      const clip = store.clips.find((c) => c.id === clipId);
+      expect(clip?.takes).toBeUndefined();
+      expect(clip?.lengthPpq).toBeCloseTo(10, 10); // 5 s at 120 BPM
+    });
+
+    it('records one linear take when starting away from the loop start', async () => {
+      const { recording, fake, transport } = setup();
+      const trackId = addAudioTrack();
+      recording.arm(trackId);
+      setLoop(transport, 0, 4);
+      transport.positionSeconds.value = 0.5; // 1 PPQ, not the loop start
+      fake.setResult({
+        channels: [makeCapture(cycleFrames * 2.5)],
+        sampleRate: 48000,
+        startPpq: 0, // overwritten by start() with the real punch position
+      });
+
+      await recording.record();
+      const clipId = await recording.stopRecord();
+      expect(ingestMock).toHaveBeenCalledTimes(1);
+      const clip = store.clips.find((c) => c.id === clipId);
+      expect(clip?.takes).toBeUndefined();
+      expect(clip?.startPpq).toBe(1);
+    });
+  });
 });

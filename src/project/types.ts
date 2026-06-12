@@ -118,6 +118,27 @@ export interface EditorTrack {
   mixer?: MixerStrip;
 }
 
+/** One alternative recording of an audio clip (cycle-recording take). */
+export interface ClipTake {
+  /** Audio asset id (src/persistence/assets.ts) holding this take's PCM. */
+  assetId: string;
+  /** Take display name (e.g. "Take 2"). */
+  name: string;
+}
+
+/**
+ * One comp selection segment of an audio clip with takes. Segments are
+ * sorted by start, the first starts at 0, and each one selects which take
+ * plays from its start (clip-window-relative PPQ) up to the next segment's
+ * start (the last runs to the clip end).
+ */
+export interface ClipCompSegment {
+  /** Segment start, relative to the clip window, in PPQ (>= 0). */
+  startPpq: number;
+  /** Index into the clip's takes list. */
+  takeIndex: number;
+}
+
 /**
  * One clip in the arrangement mirror.
  *
@@ -155,6 +176,14 @@ export interface EditorClip {
   fadeInPpq?: number;
   /** Fade-out length in PPQ (> 0 when present); audio clips only. */
   fadeOutPpq?: number;
+  /**
+   * Alternative recordings of this clip (cycle-recording takes); audio clips
+   * only. When present, playback follows {@link compSegments} and `assetId`
+   * mirrors the take selected at the clip start.
+   */
+  takes?: ClipTake[];
+  /** Comp selection over {@link takes}; absent with takes = take 0 throughout. */
+  compSegments?: ClipCompSegment[];
 }
 
 /** One timeline marker (app-level; the Project has no marker removal API). */

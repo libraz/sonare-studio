@@ -328,4 +328,66 @@ describe('renderProjectWithEngine', () => {
     await expect(promise).rejects.toBeInstanceOf(MixdownCancelledError);
     expect(engine.destroyed).toBe(true);
   });
+
+  it('expands a comped audio clip into one engine clip per segment', async () => {
+    const doc = makeDoc();
+    const drumClip = doc.tracks[1].clips[0];
+    drumClip.takes = [
+      { assetId: 'asset-1', name: 'Take 1' },
+      { assetId: 'asset-2', name: 'Take 2' },
+    ];
+    drumClip.compSegments = [
+      { startPpq: 0, takeIndex: 0 },
+      { startPpq: 1, takeIndex: 1 },
+    ];
+
+    // asset-1: constant stereo 0.5 (fakeAsset); asset-2: a mono index ramp so
+    // the per-segment source offset is observable in the scheduled samples.
+    const rampFrames = 48000;
+    const ramp = new Float32Array(rampFrames);
+    for (let i = 0; i < rampFrames; i++) ramp[i] = i;
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, {
+      deps: null,
+      createEngine: () => engine,
+      loadAudioAsset: async (assetId: string) =>
+        assetId === 'asset-2'
+          ? {
+              meta: {
+                id: 'asset-2',
+                name: 'take2.wav',
+                sampleRate: 48000,
+                numChannels: 1,
+                numFrames: rampFrames,
+              },
+              channels: [ramp],
+            }
+          : fakeAsset(),
+    });
+
+    const clips = engine.named('setClips')[0][1] as Array<{
+      trackId: number;
+      channels: Float32Array[];
+      startPpq: number;
+      lengthSamples: number;
+      gain?: number;
+    }>;
+    expect(clips).toHaveLength(2);
+    expect(clips.map((clip) => clip.trackId)).toEqual([2, 2]);
+    // Clip at PPQ 2, segments at clip-relative 0 and 1.
+    expect(clips.map((clip) => clip.startPpq)).toEqual([2, 3]);
+    // Each segment is 1 PPQ = 0.5 s = 24000 frames at 120 BPM / 48 kHz.
+    expect(clips.map((clip) => clip.lengthSamples)).toEqual([24000, 24000]);
+    expect(clips[0].gain).toBeCloseTo(0.8, 5);
+    expect(clips[1].gain).toBeCloseTo(0.8, 5);
+
+    // First segment: take 1 (stereo, constant 0.5) from source offset 0.
+    expect(clips[0].channels).toHaveLength(2);
+    expect(clips[0].channels[0][0]).toBeCloseTo(0.5, 5);
+    expect(clips[0].channels[0][23999]).toBeCloseTo(0.5, 5);
+    // Second segment: take 2 (mono ramp) from source offset 1 PPQ = 24000 frames.
+    expect(clips[1].channels).toHaveLength(1);
+    expect(clips[1].channels[0][0]).toBe(24000);
+    expect(clips[1].channels[0][23999]).toBe(47999);
+  });
 });

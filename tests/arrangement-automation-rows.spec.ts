@@ -6,6 +6,8 @@ import {
   automationValueToY,
   automationYToValue,
   buildRowLayout,
+  TAKE_LANE_HEIGHT_PX,
+  trackTakeRowCount,
 } from '@/ui/arrangement/automation-rows';
 
 describe('arrangement automation rows', () => {
@@ -64,6 +66,54 @@ describe('arrangement automation rows', () => {
       expect(layout.totalHeight).toBe(0);
       expect(layout.rowTop(0)).toBe(0);
       expect(layout.hitTest(0)).toBeNull();
+    });
+
+    it('stacks take sub-rows between the lane and the automation sublane', () => {
+      const layout = buildRowLayout([false, true], 40, 56, [2, 1], 40);
+      expect(layout.rowTop(0)).toBe(0);
+      expect(layout.rowTop(1)).toBe(120);
+      expect(layout.rowHeight(0)).toBe(120);
+      expect(layout.rowHeight(1)).toBe(136);
+      expect(layout.totalHeight).toBe(256);
+      expect(layout.takeTop(0, 0)).toBe(40);
+      expect(layout.takeTop(0, 1)).toBe(80);
+      expect(layout.takeTop(1, 0)).toBe(160);
+      expect(layout.automationTop(1)).toBe(200);
+      // Without take rows the automation top is the lane bottom.
+      expect(buildRowLayout([true], 40, 56).automationTop(0)).toBe(40);
+    });
+
+    it('hit-tests take sub-rows with their take index', () => {
+      const layout = buildRowLayout([false, true], 40, 56, [2, 1], 40);
+      expect(layout.hitTest(39)).toEqual({ index: 0, zone: 'track' });
+      expect(layout.hitTest(40)).toEqual({ index: 0, zone: 'take', takeIndex: 0 });
+      expect(layout.hitTest(79)).toEqual({ index: 0, zone: 'take', takeIndex: 0 });
+      expect(layout.hitTest(80)).toEqual({ index: 0, zone: 'take', takeIndex: 1 });
+      expect(layout.hitTest(119)).toEqual({ index: 0, zone: 'take', takeIndex: 1 });
+      expect(layout.hitTest(120)).toEqual({ index: 1, zone: 'track' });
+      expect(layout.hitTest(160)).toEqual({ index: 1, zone: 'take', takeIndex: 0 });
+      expect(layout.hitTest(200)).toEqual({ index: 1, zone: 'automation' });
+      expect(layout.hitTest(255)).toEqual({ index: 1, zone: 'automation' });
+      expect(layout.hitTest(256)).toBeNull();
+    });
+
+    it('defaults the take sub-row height to TAKE_LANE_HEIGHT_PX', () => {
+      const layout = buildRowLayout([false], 40, 56, [3]);
+      expect(layout.totalHeight).toBe(40 + 3 * TAKE_LANE_HEIGHT_PX);
+    });
+  });
+
+  describe('trackTakeRowCount', () => {
+    it('returns the maximum take count among the track clips', () => {
+      const clips = [
+        { trackId: 1, takes: [{}, {}] },
+        { trackId: 1, takes: [{}, {}, {}] },
+        { trackId: 1 },
+        { trackId: 2, takes: [{}] },
+      ];
+      expect(trackTakeRowCount(clips, 1)).toBe(3);
+      expect(trackTakeRowCount(clips, 2)).toBe(1);
+      expect(trackTakeRowCount(clips, 3)).toBe(0);
     });
   });
 

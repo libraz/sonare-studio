@@ -6,6 +6,7 @@ import {
   addNote,
   canUndo,
   clearHistory,
+  setClipCompSegments,
   setClipFades,
 } from '@/project/commands';
 import {
@@ -152,5 +153,50 @@ describe('project serialization with audio clips (schema v2)', () => {
     const doc = serializeProject();
     await loadProjectDocument(doc); // no OPFS mock installed at all
     expect(store.clips.filter((c) => c.kind === 'audio')).toHaveLength(2);
+  });
+
+  it('serializes takes and compSegments and round-trips them', async () => {
+    const trackId = addAudioTrack({ name: 'Comp' });
+    const clipId = await addAudioClip({
+      trackId,
+      assetId: 'take-b',
+      lengthPpq: 8,
+      name: 'Comped',
+      takes: [
+        { assetId: 'take-a', name: 'Take 1' },
+        { assetId: 'take-b', name: 'Take 2' },
+      ],
+    });
+    setClipCompSegments(clipId, [
+      { startPpq: 0, takeIndex: 0 },
+      { startPpq: 4, takeIndex: 1 },
+    ]);
+
+    const doc = serializeProject();
+    const docClip = doc.tracks[1].clips[0];
+    expect(docClip.takes).toEqual([
+      { assetId: 'take-a', name: 'Take 1' },
+      { assetId: 'take-b', name: 'Take 2' },
+    ]);
+    expect(docClip.compSegments).toEqual([
+      { startPpq: 0, takeIndex: 0 },
+      { startPpq: 4, takeIndex: 1 },
+    ]);
+    // The clip asset follows the take selected at the clip start.
+    expect(docClip.assetId).toBe('take-a');
+    // Documents stay plain JSON (takes reference assets, never inline PCM).
+    expect(JSON.parse(JSON.stringify(doc))).toEqual(doc);
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    const mirror = store.clips.find((c) => c.kind === 'audio');
+    expect(mirror?.takes).toEqual([
+      { assetId: 'take-a', name: 'Take 1' },
+      { assetId: 'take-b', name: 'Take 2' },
+    ]);
+    expect(mirror?.compSegments).toEqual([
+      { startPpq: 0, takeIndex: 0 },
+      { startPpq: 4, takeIndex: 1 },
+    ]);
+    expect(serializeProject()).toEqual(doc);
   });
 });

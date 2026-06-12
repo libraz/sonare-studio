@@ -257,4 +257,56 @@ describe('scheduleProjectClips with audio clips', () => {
     const channels = addClip.mock.calls[0][1] as Float32Array[];
     expect(channels[0].length).toBe(10); // no resampling happened
   });
+
+  it('expands a clip with takes into one engine clip per comp segment', async () => {
+    store.tracks = [makeTrack(1)];
+    store.clips = [
+      makeAudioClip(10, 1, {
+        startPpq: 8,
+        lengthPpq: 4,
+        assetId: 'asset-a',
+        takes: [
+          { assetId: 'asset-a', name: 'Take 1' },
+          { assetId: 'asset-b', name: 'Take 2' },
+        ],
+        compSegments: [
+          { startPpq: 0, takeIndex: 0 },
+          { startPpq: 2, takeIndex: 1 },
+        ],
+      }),
+    ];
+    const { handle, addClip } = makeHandle(10);
+    // Distinguishable assets: asset-a counts 1..20, asset-b counts 101..120.
+    const loadAudioAsset = vi.fn(async (assetId: string): Promise<LoadedAudioAsset> => {
+      const base = assetId === 'asset-b' ? 100 : 0;
+      const channel = new Float32Array(20);
+      for (let i = 0; i < 20; i++) channel[i] = base + i + 1;
+      return {
+        meta: { id: assetId, name: assetId, sampleRate: 10, numChannels: 1, numFrames: 20 },
+        channels: [channel],
+      };
+    });
+
+    const scheduled = await scheduleProjectClips(handle, { loadAudioAsset });
+    // Two engine clips for the one project clip, one per segment's take asset.
+    expect(scheduled).toEqual([
+      { engineClipId: 500, clipId: 10, trackId: 1 },
+      { engineClipId: 500, clipId: 10, trackId: 1 },
+    ]);
+    expect(loadAudioAsset.mock.calls.map(([assetId]) => assetId)).toEqual(['asset-a', 'asset-b']);
+    expect(addClip).toHaveBeenCalledTimes(2);
+
+    // At 120 BPM and 10 Hz: 1 PPQ = 0.5 s = 5 frames; each segment is 2 PPQ.
+    const [, firstChannels, firstStart] = addClip.mock.calls[0];
+    expect(firstStart).toBe(8); // clip start + segment offset 0
+    expect((firstChannels as Float32Array[])[0]).toEqual(
+      new Float32Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
+    );
+    const [, secondChannels, secondStart] = addClip.mock.calls[1];
+    expect(secondStart).toBe(10); // clip start + segment offset 2 PPQ
+    // The second slice reads asset-b from source offset 2 PPQ = 10 frames.
+    expect((secondChannels as Float32Array[])[0]).toEqual(
+      new Float32Array([111, 112, 113, 114, 115, 116, 117, 118, 119, 120]),
+    );
+  });
 });

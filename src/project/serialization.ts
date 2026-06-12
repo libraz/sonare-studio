@@ -95,6 +95,10 @@ export interface DocumentClip {
   fadeInPpq?: number;
   /** Fade-out length in PPQ (> 0 when present); audio clips only. */
   fadeOutPpq?: number;
+  /** Alternative recordings (cycle takes); audio clips only, omitted when none. */
+  takes?: Array<{ assetId: string; name: string }>;
+  /** Comp selection over `takes` (clip-window-relative); omitted when absent. */
+  compSegments?: Array<{ startPpq: number; takeIndex: number }>;
   /**
    * Display-only score annotations of this clip's notes, content-addressed
    * (editor note ids are session-scoped); omitted when the clip has none.
@@ -227,6 +231,12 @@ function toDocumentClip(
   if (clip.assetId !== undefined) out.assetId = clip.assetId;
   if (clip.fadeInPpq !== undefined) out.fadeInPpq = clip.fadeInPpq;
   if (clip.fadeOutPpq !== undefined) out.fadeOutPpq = clip.fadeOutPpq;
+  if (clip.takes !== undefined && clip.takes.length > 0) {
+    out.takes = clip.takes.map((take) => ({ ...take }));
+    if (clip.compSegments !== undefined && clip.compSegments.length > 0) {
+      out.compSegments = clip.compSegments.map((segment) => ({ ...segment }));
+    }
+  }
   if (annotations !== undefined) {
     // Annotations are re-addressed by note content (orphans drop out here).
     const entries = annotationsToDocument(annotations, clip.notes);

@@ -11,6 +11,7 @@ import {
   type AutomationParam,
   evaluateAutomationValue,
 } from '@/project/automation';
+import { sanitizeCompSegments } from '@/project/comping';
 import type { EditorClip, EditorMarker, EditorTrack, TimeSignatureSegment } from '@/project/types';
 import { isAudioClip } from '@/project/types';
 import {
@@ -22,14 +23,18 @@ import {
 import { audioAssetMergedPeaks, requestAudioAsset } from '@/ui/arrangement/audio-clip-data';
 import { FADE_HANDLE_SIZE_PX, fadeHandleXs } from '@/ui/arrangement/audio-fades';
 import {
+  AUTOMATION_LANE_HEIGHT_PX,
   automationValueDomain,
   automationValueToY,
   buildRowLayout,
+  TAKE_LANE_HEIGHT_PX,
+  trackTakeRowCount,
 } from '@/ui/arrangement/automation-rows';
 import { clipContentMode, densityBuckets, miniNoteRects } from '@/ui/arrangement/clip-content';
 import { barLengthPpq, createRulerTickCache } from '@/ui/arrangement/ruler';
 import type { AutomationInteractions } from '@/ui/arrangement/use-automation-interactions';
 import type { ClipInteractions, ClipModifiers } from '@/ui/arrangement/use-clip-interactions';
+import type { TakeInteractions } from '@/ui/arrangement/use-take-interactions';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 import { ARRANGEMENT_COLORS, colorWithAlpha, RULER_HEIGHT_PX } from './theme';
@@ -43,9 +48,11 @@ import { ARRANGEMENT_COLORS, colorWithAlpha, RULER_HEIGHT_PX } from './theme';
  * MIDI clip bodies show mini-notes at high zoom and per-bar density blocks at
  * low zoom; audio clip bodies show a min/max waveform (with fade ramps and
  * fade handles) once their asset is loaded, and a placeholder centerline
- * before that. Clip gestures are delegated to the shared interactions state
- * machine; pressing the ruler seeks (and scrubs) the transport via the
- * `ruler-seek` emit.
+ * before that. Expanded take sub-rows draw one block per take inside each
+ * comped clip's span, highlighting the ranges the comp selection plays. Clip
+ * gestures are delegated to the shared interactions state machine (take
+ * sub-rows to the take machine); pressing the ruler seeks (and scrubs) the
+ * transport via the `ruler-seek` emit.
  */
 
 const props = defineProps<{
@@ -87,6 +94,10 @@ const props = defineProps<{
   automationLanes: readonly AutomationLaneState[];
   /** Automation sublane gesture state machine shared with the container. */
   automation: AutomationInteractions;
+  /** Ids of tracks whose take sub-rows are expanded. */
+  takesExpandedIds: readonly number[];
+  /** Take sub-row (comping) gesture state machine shared with the container. */
+  takes: TakeInteractions;
   /** Playhead position getter in PPQ; omit to hide the playhead. */
   positionPpq?: () => number;
   /** Constant tempo in BPM used to map audio asset time onto PPQ (default 120). */
@@ -132,12 +143,17 @@ const barPpq = computed(() => {
   return segment ? barLengthPpq(segment) : 4;
 });
 
-/** Row layout reflecting which tracks show an automation sublane. */
+/** Row layout reflecting which tracks show take sub-rows or an automation sublane. */
 const rowLayout = computed(() => {
   const expanded = new Set(props.automationExpandedIds);
+  const takesExpanded = new Set(props.takesExpandedIds);
   return buildRowLayout(
     props.tracks.map((track) => expanded.has(track.id)),
     props.laneHeight,
+    AUTOMATION_LANE_HEIGHT_PX,
+    props.tracks.map((track) =>
+      takesExpanded.has(track.id) ? trackTakeRowCount(props.clips, track.id) : 0,
+    ),
   );
 });
 
@@ -432,10 +448,93 @@ function drawAutomationLanes(ctx: CanvasRenderingContext2D, w: number, h: number
   for (let i = 0; i < props.tracks.length; i++) {
     const track = props.tracks[i];
     if (!expanded.has(track.id)) continue;
-    const top = laneTopFor(i) + props.laneHeight;
-    const height = rowLayout.value.rowHeight(i) - props.laneHeight;
+    const top = RULER_HEIGHT_PX + rowLayout.value.automationTop(i) - props.scrollY;
+    const height = AUTOMATION_LANE_HEIGHT_PX;
     if (top + height <= RULER_HEIGHT_PX || top >= h) continue;
     drawAutomationSublane(ctx, w, track, top, height);
+  }
+}
+
+/** Vertical inset of a take block inside its sub-row, in px. */
+const TAKE_BLOCK_PAD_PX = 3;
+
+/** Draws every expanded take sub-row area: shade, separators and take blocks. */
+function drawTakeLanes(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  const takesExpanded = new Set(props.takesExpandedIds);
+  for (let i = 0; i < props.tracks.length; i++) {
+    const track = props.tracks[i];
+    if (!takesExpanded.has(track.id)) continue;
+    const rowCount = trackTakeRowCount(props.clips, track.id);
+    if (rowCount === 0) continue;
+    const top = RULER_HEIGHT_PX + rowLayout.value.takeTop(i, 0) - props.scrollY;
+    const height = rowCount * TAKE_LANE_HEIGHT_PX;
+    if (top + height <= RULER_HEIGHT_PX || top >= h) continue;
+    ctx.fillStyle = COLORS.takeLane;
+    ctx.fillRect(0, top, w, height);
+    ctx.fillStyle = COLORS.laneLine;
+    for (let k = 1; k < rowCount; k++) {
+      ctx.fillRect(0, top + k * TAKE_LANE_HEIGHT_PX, w, 1);
+    }
+    for (const clip of props.clips) {
+      if (clip.trackId !== track.id || (clip.takes?.length ?? 0) === 0) continue;
+      drawClipTakeBlocks(ctx, clip, track, top);
+    }
+  }
+}
+
+/**
+ * Draws one comped clip's take blocks: in take sub-row k a subtle block over
+ * the clip's span, a stronger fill on the ranges where the comp selection
+ * plays take k and, while a comp drag runs, a highlight over the dragged
+ * range.
+ */
+function drawClipTakeBlocks(
+  ctx: CanvasRenderingContext2D,
+  clip: EditorClip,
+  track: EditorTrack,
+  top: number,
+): void {
+  const range = props.range;
+  const takes = clip.takes ?? [];
+  const x = range.ppqToX(clip.startPpq);
+  const wPx = Math.max(2, clip.lengthPpq * range.pxPerPpq - 1);
+  if (x + wPx < 0 || x > range.widthPx) return;
+  const selection = sanitizeCompSegments(
+    clip.compSegments && clip.compSegments.length > 0
+      ? clip.compSegments
+      : [{ startPpq: 0, takeIndex: 0 }],
+    takes.length,
+    clip.lengthPpq,
+  );
+  const preview = props.takes.preview.value;
+  for (let k = 0; k < takes.length; k++) {
+    const y = top + k * TAKE_LANE_HEIGHT_PX + TAKE_BLOCK_PAD_PX;
+    const hPx = TAKE_LANE_HEIGHT_PX - 2 * TAKE_BLOCK_PAD_PX;
+    ctx.fillStyle = colorWithAlpha(track.color, 0.14);
+    fillRoundRect(ctx, x, y, wPx, hPx, 2);
+    ctx.fillStyle = colorWithAlpha(track.color, 0.55);
+    for (let s = 0; s < selection.length; s++) {
+      if (selection[s].takeIndex !== k) continue;
+      const segStart = selection[s].startPpq;
+      const segEnd = s + 1 < selection.length ? selection[s + 1].startPpq : clip.lengthPpq;
+      const sx = range.ppqToX(clip.startPpq + segStart);
+      const sw = Math.max(1, (segEnd - segStart) * range.pxPerPpq - 1);
+      ctx.fillRect(sx, y, sw, hPx);
+    }
+    if (
+      preview &&
+      preview.clipId === clip.id &&
+      preview.takeIndex === k &&
+      preview.endPpq > preview.startPpq
+    ) {
+      ctx.fillStyle = colorWithAlpha(track.color, 0.75);
+      const px = range.ppqToX(clip.startPpq + preview.startPpq);
+      const pw = Math.max(1, (preview.endPpq - preview.startPpq) * range.pxPerPpq);
+      ctx.fillRect(px, y, pw, hPx);
+    }
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = COLORS.clipBorder;
+    strokeRoundRect(ctx, x + 0.5, y + 0.5, wPx - 1, hPx - 1, 2);
   }
 }
 
@@ -583,6 +682,7 @@ function drawBase(): void {
   drawLanes(ctx, w, h);
   drawGrid(ctx, h);
   drawClips(ctx);
+  drawTakeLanes(ctx, w, h);
   drawAutomationLanes(ctx, w, h);
   drawRuler(ctx, w);
 }
@@ -668,20 +768,25 @@ watch(
     props.automationLanes,
     props.automation.preview.value,
     props.automation.hover.value,
+    props.takesExpandedIds,
+    props.takes.preview.value,
   ],
   scheduleAll,
 );
 
-// --- Pointer routing: ruler scrub vs automation vs clip gestures ----------
+// --- Pointer routing: ruler scrub vs automation vs takes vs clip gestures --
 
 /** True while a ruler press scrubs the transport. */
 let rulerScrub = false;
 
 /** Which gesture machine consumed the current press. */
-let pressTarget: 'none' | 'automation' | 'clips' = 'none';
+let pressTarget: 'none' | 'automation' | 'takes' | 'clips' = 'none';
 
-/** Cursor over the lanes: the automation one wins while a sublane is hot. */
-const laneCursor = computed(() => props.automation.cursor.value ?? props.interactions.cursor.value);
+/** Cursor over the lanes: a hot sublane (automation, then takes) wins. */
+const laneCursor = computed(
+  () =>
+    props.automation.cursor.value ?? props.takes.cursor.value ?? props.interactions.cursor.value,
+);
 
 function localPoint(event: MouseEvent): { x: number; y: number } {
   const rect = wrapper.value?.getBoundingClientRect();
@@ -705,6 +810,10 @@ function onPointerDown(event: PointerEvent): void {
     pressTarget = 'automation';
     return;
   }
+  if (props.takes.onPointerDown(point)) {
+    pressTarget = 'takes';
+    return;
+  }
   pressTarget = 'clips';
   props.interactions.onPointerDown(point, modifiers(event));
 }
@@ -720,11 +829,16 @@ function onPointerMove(event: PointerEvent): void {
     props.automation.onPointerMove(point, modifiers(event));
     return;
   }
+  if (pressTarget === 'takes') {
+    props.takes.onPointerMove(point);
+    return;
+  }
   if (pressTarget === 'clips') {
     props.interactions.onPointerMove(point, modifiers(event));
     return;
   }
   if (props.automation.onPointerMove(point, modifiers(event))) return;
+  if (props.takes.onPointerMove(point)) return;
   props.interactions.onPointerMove(point, modifiers(event));
 }
 
@@ -740,6 +854,10 @@ function onPointerUp(event: PointerEvent): void {
     props.automation.onPointerUp(localPoint(event), modifiers(event));
     return;
   }
+  if (target === 'takes') {
+    props.takes.onPointerUp(localPoint(event));
+    return;
+  }
   props.interactions.onPointerUp(localPoint(event), modifiers(event));
 }
 
@@ -747,6 +865,7 @@ function onPointerCancel(): void {
   rulerScrub = false;
   pressTarget = 'none';
   props.automation.cancel();
+  props.takes.cancel();
   props.interactions.cancel();
 }
 

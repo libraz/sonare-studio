@@ -59,7 +59,7 @@ import {
   saveProject,
 } from '@/persistence/opfs';
 import { decodeSzd, encodeSzd } from '@/persistence/szd';
-import { decodeAndIngest } from '@/project/audio-import';
+import { decodeAndIngest, ingestAudioBuffer } from '@/project/audio-import';
 import type { AutomationParam, AutomationPoint } from '@/project/automation';
 import {
   addAudioClip,
@@ -74,14 +74,19 @@ import {
   removeAutomationLane,
   removeInsert,
   removeMixerBus,
+  removeTrack,
   setActiveClip,
   setAutomationLanePoints,
+  setClipActiveTake,
+  setClipCompSegments,
+  setClipTakes,
   setInsertEnabled,
   setSelection,
   setSend,
   setTempoSegments,
   undo,
 } from '@/project/commands';
+import { flattenClipComp } from '@/project/comp-flatten';
 import { exportProjectSmf } from '@/project/export';
 import { clampPan } from '@/project/mixer';
 import { type ScheduledProjectClip, scheduleProjectClips } from '@/project/scheduling';
@@ -1549,6 +1554,39 @@ onMounted(async () => {
         setAutomationStripMode(target, mode),
       automationLaneCount: () => handle.value?.engine.automationLaneCount() ?? 0,
       automationInstalledParamIds: () => automationSync?.installedParamIds() ?? [],
+      seekPpq: (ppq: number) => transport.seekPpq(ppq),
+      addAudioTrack: (name?: string) => addAudioTrack(name !== undefined ? { name } : {}),
+      removeTrack: (trackId: number) => removeTrack(trackId),
+      armTrack: (trackId: number | null) => recording.arm(trackId),
+      clipTakesInfo: (trackId: number) =>
+        store.clips
+          .filter((clip) => clip.trackId === trackId && isAudioClip(clip))
+          .map((clip) => ({
+            clipId: clip.id,
+            startPpq: clip.startPpq,
+            lengthPpq: clip.lengthPpq,
+            takeCount: clip.takes?.length ?? 0,
+            segments: (clip.compSegments ?? []).map((segment) => ({ ...segment })),
+          })),
+      setClipTakes: (clipId: number, takes: { assetId: string; name: string }[], active?: number) =>
+        setClipTakes(clipId, takes, active),
+      setClipActiveTake: (clipId: number, takeIndex: number) =>
+        setClipActiveTake(clipId, takeIndex),
+      setClipCompSegments: (clipId: number, segments: { startPpq: number; takeIndex: number }[]) =>
+        setClipCompSegments(clipId, segments),
+      flattenClipComp: (clipId: number) => flattenClipComp(clipId),
+      ingestToneAsset: async (seconds: number, frequencyHz: number, amplitude: number) => {
+        const sampleRate = handle.value?.ctx.sampleRate ?? 48000;
+        const frames = Math.round(seconds * sampleRate);
+        const data = new Float32Array(frames);
+        for (let i = 0; i < frames; i++) {
+          data[i] = Math.sin((2 * Math.PI * frequencyHz * i) / sampleRate) * amplitude;
+        }
+        const meta = await ingestAudioBuffer([data], sampleRate, `tone-${frequencyHz}`, {
+          analysis: null,
+        });
+        return meta.id;
+      },
       addMixerBus: (name?: string) => addMixerBus(name !== undefined ? { name } : {}),
       removeMixerBus: (busId: string) => removeMixerBus(busId),
       setSend: (

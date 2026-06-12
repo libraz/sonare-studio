@@ -19,9 +19,14 @@ import {
   setTrackSolo,
   setTrackVolume,
 } from '@/project/commands';
+import { flattenClipComp } from '@/project/comp-flatten';
 import { useProjectStore } from '@/project/store';
 import { type EditorTrack, TRACK_COLOR_PALETTE, type TrackKind } from '@/project/types';
-import { AUTOMATION_LANE_HEIGHT_PX } from '@/ui/arrangement/automation-rows';
+import {
+  AUTOMATION_LANE_HEIGHT_PX,
+  TAKE_LANE_HEIGHT_PX,
+  trackTakeRowCount,
+} from '@/ui/arrangement/automation-rows';
 
 /**
  * Track header column of the arrangement view: one header per track lane with
@@ -36,9 +41,12 @@ import { AUTOMATION_LANE_HEIGHT_PX } from '@/ui/arrangement/automation-rows';
  * the canvas sublane); expansion state and the selected parameter are owned by
  * the container and mirrored via the `automationExpandedIds` /
  * `automationParams` props and the `toggleAutomation` / `automationParam`
- * emits. Row heights then match the canvas row geometry: lane height plus
- * AUTOMATION_LANE_HEIGHT_PX for expanded rows, so stacked headers follow the
- * same prefix sums as automation-rows.ts.
+ * emits. The "T" toggle (tracks with comped audio clips only) likewise expands
+ * one label row per take, mirrored via the `takesExpandedIds` prop and the
+ * `toggleTakes` emit; the Flatten button next to it bakes every comped clip on
+ * the track. Row heights then match the canvas row geometry: lane height plus
+ * TAKE_LANE_HEIGHT_PX per take row plus AUTOMATION_LANE_HEIGHT_PX for expanded
+ * rows, so stacked headers follow the same prefix sums as automation-rows.ts.
  */
 
 const props = defineProps<{
@@ -54,6 +62,8 @@ const props = defineProps<{
   automationExpandedIds?: readonly number[];
   /** Selected automation parameter per track id (absent = 'faderDb'). */
   automationParams?: Record<number, AutomationParam>;
+  /** Ids of tracks whose take sub-rows are expanded. */
+  takesExpandedIds?: readonly number[];
 }>();
 
 const emit = defineEmits<{
@@ -63,6 +73,8 @@ const emit = defineEmits<{
   toggleAutomation: [trackId: number, expanded: boolean];
   /** Request to switch the parameter a track's automation sublane edits. */
   automationParam: [trackId: number, param: AutomationParam];
+  /** Request to expand/collapse a track's take sub-rows. */
+  toggleTakes: [trackId: number, expanded: boolean];
 }>();
 
 const store = useProjectStore();
@@ -176,13 +188,48 @@ function automationLaneFor(track: EditorTrack): AutomationLaneState | null {
   );
 }
 
-/** Full header row height: the lane plus the automation strip when expanded. */
+/** Full header row height: lane plus take rows and the automation strip when expanded. */
 function rowHeight(track: EditorTrack): number {
-  return props.laneHeight + (isAutomationExpanded(track) ? AUTOMATION_LANE_HEIGHT_PX : 0);
+  const takeRows = isTakesExpanded(track) ? takeRowCount(track) : 0;
+  return (
+    props.laneHeight +
+    takeRows * TAKE_LANE_HEIGHT_PX +
+    (isAutomationExpanded(track) ? AUTOMATION_LANE_HEIGHT_PX : 0)
+  );
 }
 
 function onToggleAutomation(track: EditorTrack): void {
   emit('toggleAutomation', track.id, !isAutomationExpanded(track));
+}
+
+// --- Take sub-rows (comping) -------------------------------------------------
+
+/** True when the container reports the track's take sub-rows as expanded. */
+function isTakesExpanded(track: EditorTrack): boolean {
+  return props.takesExpandedIds?.includes(track.id) ?? false;
+}
+
+/** Number of take sub-rows the track shows when expanded (0 = no comped clips). */
+function takeRowCount(track: EditorTrack): number {
+  return trackTakeRowCount(store.clips, track.id);
+}
+
+function onToggleTakes(track: EditorTrack): void {
+  emit('toggleTakes', track.id, !isTakesExpanded(track));
+}
+
+/** Bakes the comp of every comped audio clip on the track, one clip at a time. */
+async function onFlattenTakes(track: EditorTrack): Promise<void> {
+  const comped = store.clips.filter(
+    (clip) => clip.trackId === track.id && (clip.takes?.length ?? 0) > 0,
+  );
+  for (const clip of comped) {
+    try {
+      await flattenClipComp(clip.id);
+    } catch (err) {
+      console.warn(`Flattening clip ${clip.id} failed`, err);
+    }
+  }
 }
 
 function onAutomationParamChange(track: EditorTrack, event: Event): void {
@@ -404,6 +451,28 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                 >
                   A
                 </button>
+                <button
+                  v-if="takeRowCount(track) > 0"
+                  type="button"
+                  class="toggle takes"
+                  :class="{ on: isTakesExpanded(track) }"
+                  title="Take lanes"
+                  :aria-label="`Take lanes of ${track.name}`"
+                  :aria-pressed="isTakesExpanded(track)"
+                  @click="onToggleTakes(track)"
+                >
+                  T
+                </button>
+                <button
+                  v-if="takeRowCount(track) > 0 && isTakesExpanded(track)"
+                  type="button"
+                  class="takes-flatten"
+                  title="Flatten comp into one clip per comped clip"
+                  :aria-label="`Flatten takes of ${track.name}`"
+                  @click="onFlattenTakes(track)"
+                >
+                  Flatten
+                </button>
                 <input
                   class="mini-slider"
                   type="range"
@@ -427,6 +496,20 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   @change="onPanChange(track, $event)"
                 />
               </div>
+            </div>
+          </div>
+          <div
+            v-if="isTakesExpanded(track) && takeRowCount(track) > 0"
+            class="track-takes"
+            @click.stop
+          >
+            <div
+              v-for="k in takeRowCount(track)"
+              :key="k"
+              class="take-label-row"
+              :style="{ height: `${TAKE_LANE_HEIGHT_PX}px` }"
+            >
+              Take {{ k }}
             </div>
           </div>
           <div v-if="isAutomationExpanded(track)" class="track-automation" @click.stop>
@@ -694,6 +777,51 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
   color: #0b0d11;
   background: #34d399;
   border-color: #34d399;
+}
+
+.toggle.takes.on {
+  color: #0b0d11;
+  background: #a78bfa;
+  border-color: #a78bfa;
+}
+
+.takes-flatten {
+  height: 14px;
+  font: 700 8px system-ui, sans-serif;
+  line-height: 1;
+  color: #8b93a3;
+  background: #1d2027;
+  border: 1px solid #2a2e37;
+  border-radius: 3px;
+  padding: 0 4px;
+  cursor: pointer;
+}
+
+.takes-flatten:hover {
+  color: #c8cdd6;
+  background: #242832;
+}
+
+.track-takes {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  border-top: 1px dashed rgba(255, 255, 255, 0.06);
+  cursor: default;
+}
+
+.take-label-row {
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  padding: 0 6px 0 15px;
+  font: 600 9px system-ui, sans-serif;
+  color: #8b93a3;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.take-label-row:last-child {
+  border-bottom: none;
 }
 
 .track-automation {

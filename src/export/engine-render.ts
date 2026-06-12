@@ -38,6 +38,7 @@ import {
 import { ensureWasm } from '@/lib/wasm';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import { automationCurveCode } from '@/project/automation';
+import { audioClipSegments } from '@/project/comping';
 import { loadFont } from '@/project/fonts';
 import { DEFAULT_SYNTH_PRESET } from '@/project/instrument';
 import { clampPan, masteringChainIsActive } from '@/project/mixer';
@@ -321,37 +322,41 @@ export async function renderProjectWithEngine(
   // linear resample to the render rate), placed at their timeline PPQ.
   const audioClips: EngineClipSpec[] = [];
   const renderAudioClip = async (clip: DocumentClip, trackId: number): Promise<void> => {
-    if (!clip.assetId || clip.gain <= 0) return;
-    let asset: LoadedAudioAsset;
-    try {
-      asset = await loadAudio(clip.assetId);
-    } catch {
-      // Missing or unreadable asset: leave the clip silent, like live playback.
-      return;
+    if (clip.gain <= 0) return;
+    // A clip expands to one engine clip per comp segment (one segment for
+    // clips without takes), matching live scheduling exactly.
+    for (const segment of audioClipSegments(clip)) {
+      let asset: LoadedAudioAsset;
+      try {
+        asset = await loadAudio(segment.assetId);
+      } catch {
+        // Missing or unreadable asset: leave the slice silent, like live playback.
+        continue;
+      }
+      let channels = sliceAudioClipWindow(
+        asset.channels,
+        asset.meta.sampleRate,
+        segment.sourceOffsetPpq,
+        segment.lengthPpq,
+        sliceTempoBpm,
+      );
+      channels = applyAudioClipFades(
+        channels,
+        asset.meta.sampleRate,
+        sliceTempoBpm,
+        segment.fadeInPpq,
+        segment.fadeOutPpq,
+      );
+      channels = resampleChannelsLinear(channels, asset.meta.sampleRate, sampleRate);
+      if (channels.length === 0 || channels[0].length === 0) continue;
+      audioClips.push({
+        trackId,
+        channels,
+        startPpq: clip.startPpq + segment.offsetPpq,
+        lengthSamples: channels[0].length,
+        gain: clip.gain,
+      });
     }
-    let channels = sliceAudioClipWindow(
-      asset.channels,
-      asset.meta.sampleRate,
-      clip.sourceOffsetPpq,
-      clip.lengthPpq,
-      sliceTempoBpm,
-    );
-    channels = applyAudioClipFades(
-      channels,
-      asset.meta.sampleRate,
-      sliceTempoBpm,
-      clip.fadeInPpq ?? 0,
-      clip.fadeOutPpq ?? 0,
-    );
-    channels = resampleChannelsLinear(channels, asset.meta.sampleRate, sampleRate);
-    if (channels.length === 0 || channels[0].length === 0) return;
-    audioClips.push({
-      trackId,
-      channels,
-      startPpq: clip.startPpq,
-      lengthSamples: channels[0].length,
-      gain: clip.gain,
-    });
   };
   for (let index = 0; index < doc.tracks.length; index++) {
     for (const clip of doc.tracks[index].clips) {

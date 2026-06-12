@@ -7,6 +7,12 @@
  * audio asset and adds an audio clip at the recorded timeline position on
  * the armed track. The transport keeps rolling after stopRecord(); stopping
  * the transport itself also ends an in-flight recording.
+ *
+ * Cycle recording: when the transport loop is enabled and recording starts
+ * at the loop start, the single linear capture is split at the loop
+ * boundaries and every completed pass becomes one take of a single clip
+ * spanning the loop window (the last complete take starts selected; see
+ * src/project/comping.ts for the comp model).
  */
 
 import type { MaybeRefOrGetter, Ref } from 'vue';
@@ -131,6 +137,7 @@ export function useRecording(
   let recordingTrackId: number | null = null;
   let recordingTempoBpm = 120;
   let recordingCounter = 0;
+  let recordingLoop: { startPpq: number; endPpq: number } | null = null;
 
   const resolveHandle = (): EngineHandle | null => toValue(handleSource) ?? null;
 
@@ -243,8 +250,19 @@ export function useRecording(
     if (!rec.hasMicrophone() && !(await requestMic())) return false;
 
     const tempoBpm = transport.tempo.value;
-    const startPpq = Math.max(0, transport.positionPpq.value);
+    let startPpq = Math.max(0, transport.positionPpq.value);
     const wasRolling = transport.isPlaying.value;
+    // Cycle recording: starting from stop with the loop on and the playhead
+    // near the loop start snaps the capture to the exact loop start, so the
+    // takes align with the loop window (ruler seeks land on fractional ppq).
+    if (
+      !wasRolling &&
+      transport.loopEnabled.value &&
+      transport.loopEndPpq.value > transport.loopStartPpq.value &&
+      Math.abs(startPpq - transport.loopStartPpq.value) < 0.5
+    ) {
+      startPpq = transport.loopStartPpq.value;
+    }
     // Count-in only applies when starting from stop; punching in on a
     // rolling transport records from the current position immediately.
     let countInPpq = 0;
@@ -278,6 +296,14 @@ export function useRecording(
     }
     recordingTrackId = trackId;
     recordingTempoBpm = tempoBpm;
+    // Cycle mode: loop enabled and the capture starts at the loop start (a
+    // punch-in elsewhere records one linear take as usual).
+    const loopStart = transport.loopStartPpq.value;
+    const loopEnd = transport.loopEndPpq.value;
+    recordingLoop =
+      transport.loopEnabled.value && loopEnd > loopStart && Math.abs(startPpq - loopStart) < 1e-6
+        ? { startPpq: loopStart, endPpq: loopEnd }
+        : null;
     isRecording.value = true;
     if (countInPpq > 0) {
       isCountingIn.value = true;
@@ -304,9 +330,39 @@ export function useRecording(
     }
     if (!result || result.channels.length === 0 || result.channels[0].length === 0) return null;
     if (trackId === null) return null;
+    const loop = recordingLoop;
+    recordingLoop = null;
     try {
       recordingCounter += 1;
       const name = `Recording ${recordingCounter}`;
+      // Cycle recording: split the linear capture at the loop boundaries and
+      // register every completed pass as one take of a single clip.
+      if (loop) {
+        const loopLengthPpq = loop.endPpq - loop.startPpq;
+        const framesPerPpq = ppqToSeconds(1, recordingTempoBpm) * result.sampleRate;
+        const cycleFrames = Math.round(loopLengthPpq * framesPerPpq);
+        const cycles = cycleFrames > 0 ? Math.floor(result.channels[0].length / cycleFrames) : 0;
+        if (cycles >= 2) {
+          const takes: { assetId: string; name: string }[] = [];
+          for (let cycle = 0; cycle < cycles; cycle++) {
+            const begin = cycle * cycleFrames;
+            const slice = result.channels.map((channel) =>
+              channel.slice(begin, begin + cycleFrames),
+            );
+            const takeName = `${name} — Take ${cycle + 1}`;
+            const takeMeta = await ingest(slice, result.sampleRate, takeName);
+            takes.push({ assetId: takeMeta.id, name: takeName });
+          }
+          return await addAudioClip({
+            trackId,
+            assetId: takes[takes.length - 1].assetId,
+            startPpq: loop.startPpq,
+            lengthPpq: loopLengthPpq,
+            name,
+            takes,
+          });
+        }
+      }
       const meta = await ingest(result.channels, result.sampleRate, name);
       const lengthPpq = (result.channels[0].length / result.sampleRate) * (recordingTempoBpm / 60);
       return await addAudioClip({

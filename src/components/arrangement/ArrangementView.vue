@@ -7,6 +7,8 @@ import {
   moveClip,
   setActiveClip,
   setAutomationLanePoints,
+  setClipActiveTake,
+  setClipCompSegments,
   setClipFades,
   splitClip,
   trimClip,
@@ -15,13 +17,18 @@ import { useProjectStore } from '@/project/store';
 import { isAudioClip } from '@/project/types';
 import { assetLengthPpq, audioClipSourceBounds } from '@/ui/arrangement/audio-clip-content';
 import { getLoadedAudioAsset } from '@/ui/arrangement/audio-clip-data';
-import { AUTOMATION_LANE_HEIGHT_PX, buildRowLayout } from '@/ui/arrangement/automation-rows';
+import {
+  AUTOMATION_LANE_HEIGHT_PX,
+  buildRowLayout,
+  trackTakeRowCount,
+} from '@/ui/arrangement/automation-rows';
 import { barRangeAt } from '@/ui/arrangement/ruler';
 import { useAutomationInteractions } from '@/ui/arrangement/use-automation-interactions';
 import {
   type ClipInteractionsView,
   useClipInteractions,
 } from '@/ui/arrangement/use-clip-interactions';
+import { useTakeInteractions } from '@/ui/arrangement/use-take-interactions';
 import { createPainter } from '@/ui/canvas/painter';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
 import ArrangementCanvas from './ArrangementCanvas.vue';
@@ -45,9 +52,9 @@ import {
  * piano roll follows. The optional `positionPpq` getter drives the playhead;
  * seek requests (ruler press, section click) are emitted to the shell.
  *
- * Automation sublane expansion and the per-track parameter choice are
- * view-local state owned here and mirrored into both the header column and
- * the canvas so their row geometry stays in lockstep.
+ * Automation sublane expansion, the per-track parameter choice and take
+ * sub-row expansion are view-local state owned here and mirrored into both
+ * the header column and the canvas so their row geometry stays in lockstep.
  */
 
 const props = defineProps<{
@@ -103,12 +110,20 @@ const automationExpandedIds = ref<number[]>([]);
 /** Selected automation parameter per track id (absent = 'faderDb'). */
 const automationParams = ref<Record<number, AutomationParam>>({});
 
-/** Row layout reflecting which tracks show an automation sublane. */
+/** Ids of tracks whose take sub-rows are expanded (view-local state). */
+const takesExpandedIds = ref<number[]>([]);
+
+/** Row layout reflecting which tracks show take sub-rows or an automation sublane. */
 const rowLayout = computed(() => {
   const expanded = new Set(automationExpandedIds.value);
+  const takesExpanded = new Set(takesExpandedIds.value);
   return buildRowLayout(
     store.tracks.map((track) => expanded.has(track.id)),
     LANE_HEIGHT_PX,
+    AUTOMATION_LANE_HEIGHT_PX,
+    store.tracks.map((track) =>
+      takesExpanded.has(track.id) ? trackTakeRowCount(store.clips, track.id) : 0,
+    ),
   );
 });
 
@@ -123,6 +138,15 @@ function onToggleAutomation(trackId: number, expanded: boolean): void {
 
 function onAutomationParamChange(trackId: number, param: AutomationParam): void {
   automationParams.value = { ...automationParams.value, [trackId]: param };
+}
+
+function onToggleTakes(trackId: number, expanded: boolean): void {
+  const ids = takesExpandedIds.value.filter((id) => id !== trackId);
+  if (expanded) ids.push(trackId);
+  takesExpandedIds.value = ids;
+  // Collapsing shrinks the content extent below the current scroll offset.
+  scrollY.value = clampScrollY(scrollY.value);
+  bump();
 }
 
 /** Clamps the lane scroll offset to the track content extent. */
@@ -205,7 +229,7 @@ const automation = useAutomationInteractions({
       return {
         trackId: track.id,
         param: automationParams.value[track.id] ?? 'faderDb',
-        top: RULER_HEIGHT_PX + rowLayout.value.rowTop(hit.index) + LANE_HEIGHT_PX - scrollY.value,
+        top: RULER_HEIGHT_PX + rowLayout.value.automationTop(hit.index) - scrollY.value,
         height: AUTOMATION_LANE_HEIGHT_PX,
       };
     },
@@ -216,6 +240,24 @@ const automation = useAutomationInteractions({
   getGridPpq: () => gridPpq.value,
   commands: {
     setPoints: (trackId, param, points) => setAutomationLanePoints(trackId, param, points),
+  },
+});
+
+const takes = useTakeInteractions({
+  view: {
+    ppqToX: (ppq) => range.ppqToX(ppq),
+    xToPpq: (x) => range.xToPpq(x),
+    takeRowAt: (point) => {
+      if (point.y < RULER_HEIGHT_PX) return null;
+      const hit = rowLayout.value.hitTest(point.y - RULER_HEIGHT_PX + scrollY.value);
+      if (hit?.zone !== 'take' || hit.takeIndex === undefined) return null;
+      return { trackId: store.tracks[hit.index].id, takeIndex: hit.takeIndex };
+    },
+  },
+  getClips: () => store.clips,
+  commands: {
+    setActiveTake: setClipActiveTake,
+    setCompSegments: setClipCompSegments,
   },
 });
 
@@ -273,9 +315,10 @@ function cutAtPlayhead(): void {
 
 defineExpose({ cutAtPlayhead });
 
-// Track removal can shrink the content extent below the current scroll.
+// Track removal or take-lane changes (e.g. flattening a comp) can shrink the
+// content extent below the current scroll.
 watch(
-  () => store.tracks.length,
+  () => rowLayout.value.totalHeight,
   () => {
     scrollY.value = clampScrollY(scrollY.value);
     bump();
@@ -315,9 +358,11 @@ onBeforeUnmount(() => {
         :armed-track-ids="props.armedTrackIds ?? []"
         :automation-expanded-ids="automationExpandedIds"
         :automation-params="automationParams"
+        :takes-expanded-ids="takesExpandedIds"
         @arm="(trackId, armed) => emit('arm', trackId, armed)"
         @toggle-automation="onToggleAutomation"
         @automation-param="onAutomationParamChange"
+        @toggle-takes="onToggleTakes"
       />
       <div ref="canvasCell" class="cell-canvas" @wheel.prevent="onWheel">
         <ArrangementCanvas
@@ -341,6 +386,8 @@ onBeforeUnmount(() => {
           :automation-params="automationParams"
           :automation-lanes="store.automationLanes"
           :automation="automation"
+          :takes-expanded-ids="takesExpandedIds"
+          :takes="takes"
           :position-ppq="props.positionPpq"
           @view-resize="onCanvasResize"
           @ruler-seek="onSeek"
