@@ -40,6 +40,7 @@ import { createMeterBridge, type MeterBridge, type MeterSource } from '@/engine/
 import { createMidiSync, type MidiSync } from '@/engine/midi-sync';
 import { createMixerSync, type MixerSync } from '@/engine/mixer-sync';
 import { createStripSync, type StripSync } from '@/engine/strip-sync';
+import { createTransportSync, type TransportSync } from '@/engine/transport-sync';
 import { renderMixdownInWorker } from '@/export/client';
 import { dawprojectFilename, exportDawproject } from '@/export/dawproject';
 import type { MixdownRangePpq } from '@/export/mixdown';
@@ -597,6 +598,7 @@ let scheduledClips: ScheduledProjectClip[] = [];
 let mixerSync: MixerSync | null = null;
 let stripSync: StripSync | null = null;
 let midiSync: MidiSync | null = null;
+let transportSync: TransportSync | null = null;
 /** Number of clips scheduled by the last apply (display only). */
 const scheduledCount = ref(0);
 /** True while edits exist that have not been bounced to the engine yet. */
@@ -666,6 +668,24 @@ function trackMeterSource(trackId: number): MeterSource | null {
   return laneIndex >= 0 ? b.forTarget(laneIndex + 1) : null;
 }
 
+/** The project tempo map (a single constant segment when none is defined). */
+function effectiveTempoSegments(): { startPpq: number; bpm: number; endBpm?: number }[] {
+  return store.tempoSegments.length > 0
+    ? store.tempoSegments.map((segment) => ({ ...segment }))
+    : [{ startPpq: 0, bpm: store.tempoBpm }];
+}
+
+/**
+ * Mirrors the musical timeline onto the engine: tempo segments, time
+ * signatures and markers. Also hands the tempo map to the transport so the
+ * playhead PPQ conversion matches the engine's timing exactly.
+ */
+function syncTransportState(): void {
+  if (!transportSync || !store.initialized) return;
+  transportSync.sync(store.tempoSegments, store.timeSignatures, store.markers);
+  transport.setTempoMap(effectiveTempoSegments());
+}
+
 /** Serializes async MIDI syncs so rapid edits cannot interleave out of order. */
 let midiSyncQueue: Promise<void> = Promise.resolve();
 
@@ -679,7 +699,7 @@ function syncMidiState(): void {
   const m = midiSync;
   if (!m || !store.initialized) return;
   midiSyncQueue = midiSyncQueue
-    .then(() => m.sync(store.tracks, store.clips, store.tempoBpm))
+    .then(() => m.sync(store.tracks, store.clips, effectiveTempoSegments()))
     .catch((err) => {
       errorMessage.value = describeError(err);
     });
@@ -731,7 +751,7 @@ watch(
       store.tracks
         .map((track) => `${track.id}|${JSON.stringify(track.instrument ?? null)}`)
         .join('\n'),
-      String(store.tempoBpm),
+      JSON.stringify(effectiveTempoSegments()),
     ].join(' '),
   (next, prev) => {
     if (next !== prev) syncMidiState();
@@ -739,6 +759,17 @@ watch(
 );
 watch(() => store.tracks, syncMixerState);
 watch(() => store.mixer, syncMixerState);
+watch(
+  () =>
+    [
+      JSON.stringify(store.tempoSegments),
+      JSON.stringify(store.timeSignatures),
+      JSON.stringify(store.markers),
+    ].join('|'),
+  (next, prev) => {
+    if (next !== prev) syncTransportState();
+  },
+);
 
 /** Applies the pending edits to the engine immediately. */
 function applyNow(): void {
@@ -861,6 +892,7 @@ function startEngine(): Promise<void> {
     midiSync = createMidiSync(h, {
       resolvePreset: (preset) => resolvePresetName(wasm as never, preset),
     });
+    transportSync = createTransportSync(h);
     bridge.value = createMeterBridge(h);
     ctxState.value = h.ctx.state;
     h.ctx.addEventListener('statechange', () => {
@@ -874,6 +906,7 @@ function startEngine(): Promise<void> {
     await store.init({ sampleRate: h.ctx.sampleRate });
     transport.setTempo(store.tempoBpm);
     syncMixerState();
+    syncTransportState();
     syncMidiState();
     await applyToEngine();
   });
@@ -954,6 +987,7 @@ watch(
     tempoInput.value = bpm;
     if (handle.value) {
       transport.setTempo(bpm);
+      syncTransportState();
       scheduleApply();
     }
   },
@@ -1401,6 +1435,11 @@ onMounted(async () => {
         return source ? Math.max(source.latest.peakDbL, source.latest.peakDbR) : null;
       },
       masterLufs: () => bridge.value?.latest.momentaryLufs ?? null,
+      positionPpq: () => positionPpq.value,
+      setTempoSegments: (segments: { startPpq: number; bpm: number }[]) =>
+        setTempoSegments(segments),
+      setLoopRange: (startPpq: number, endPpq: number, enabled: boolean) =>
+        transport.setLoop(startPpq, endPpq, enabled),
       // Renders one note with the given synth preset and returns an audio
       // signature, so automation can verify two presets produce different sound.
       renderProbe: async (preset: string) => {
@@ -1460,6 +1499,7 @@ onBeforeUnmount(async () => {
   mixerSync = null;
   stripSync = null;
   midiSync = null;
+  transportSync = null;
   await handle.value?.dispose();
   handle.value = null;
 });

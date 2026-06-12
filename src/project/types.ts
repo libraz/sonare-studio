@@ -112,8 +112,8 @@ export interface EditorTrack {
    */
   instrument?: TrackInstrument;
   /**
-   * Mixer channel strip (app-level metadata); absent = a neutral strip (see
-   * src/project/mixer.ts for what is audible vs UI-only).
+   * Mixer channel strip (app-level metadata); absent = a neutral strip. The
+   * strip is audible in realtime through the engine (see src/project/mixer.ts).
    */
   mixer?: MixerStrip;
 }

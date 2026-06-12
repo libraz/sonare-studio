@@ -910,6 +910,66 @@ try {
     console.info(`per-lane meters independent (master momentary LUFS ${lufs.toFixed(1)})`);
   }
 
+  // --- Tempo map: segments drive the engine timeline and the playhead ---------
+
+  {
+    await page.evaluate(() =>
+      window.__sonareDebug.setTempoSegments([
+        { startPpq: 0, bpm: 120 },
+        { startPpq: 4, bpm: 60 },
+      ]),
+    );
+    // A tempo change re-bounces audio clips; let it settle.
+    await page.waitForFunction(() => window.__sonareDebug.applyPending() === false, null, {
+      timeout: 20000,
+    });
+    const rulerBox7 = await page.locator('.arrangement-canvas').boundingBox();
+    await page.mouse.click(rulerBox7.x + 2, rulerBox7.y + 14);
+    await page.click('.transport-bar button:has-text("Play")');
+    // 120 BPM region: the playhead advances ~2 PPQ per second.
+    const fastStart = await page.evaluate(() => window.__sonareDebug.positionPpq());
+    await page.waitForTimeout(1500);
+    const fastEnd = await page.evaluate(() => window.__sonareDebug.positionPpq());
+    const fastRate = (fastEnd - fastStart) / 1.5;
+    if (!(fastRate > 1.4 && fastRate < 2.6)) {
+      fail(`playhead rate in the 120 BPM region off: ${fastRate.toFixed(2)} PPQ/s`);
+    }
+    // 60 BPM region: ~1 PPQ per second once past the segment boundary.
+    await page.waitForFunction(() => window.__sonareDebug.positionPpq() > 4.5, null, {
+      timeout: 8000,
+    });
+    const slowStart = await page.evaluate(() => window.__sonareDebug.positionPpq());
+    await page.waitForTimeout(1500);
+    const slowEnd = await page.evaluate(() => window.__sonareDebug.positionPpq());
+    const slowRate = (slowEnd - slowStart) / 1.5;
+    if (!(slowRate > 0.6 && slowRate < 1.4)) {
+      fail(`playhead rate in the 60 BPM region off: ${slowRate.toFixed(2)} PPQ/s`);
+    }
+    await page.click('.transport-bar button:has-text("Stop")');
+    console.info(
+      `tempo map followed: ${fastRate.toFixed(2)} PPQ/s at 120 BPM, ${slowRate.toFixed(2)} PPQ/s at 60 BPM`,
+    );
+
+    // Loop boundaries hold under the tempo map.
+    await page.evaluate(() => window.__sonareDebug.setLoopRange(0, 4, true));
+    await page.mouse.click(rulerBox7.x + 2, rulerBox7.y + 14);
+    await page.click('.transport-bar button:has-text("Play")');
+    await page.waitForTimeout(3000);
+    const loopedPpq = await page.evaluate(() => window.__sonareDebug.positionPpq());
+    if (!(loopedPpq >= 0 && loopedPpq < 4.4)) {
+      fail(`loop did not wrap at the segment tempo: position ${loopedPpq.toFixed(2)} PPQ`);
+    }
+    await page.click('.transport-bar button:has-text("Stop")');
+    await page.evaluate(() => window.__sonareDebug.setLoopRange(0, 4, false));
+    console.info(`loop wrapped inside [0, 4): position ${loopedPpq.toFixed(2)} PPQ`);
+
+    // Restore the constant demo tempo for the remaining scenarios.
+    await page.evaluate(() => window.__sonareDebug.setTempoSegments([{ startPpq: 0, bpm: 120 }]));
+    await page.waitForFunction(() => window.__sonareDebug.applyPending() === false, null, {
+      timeout: 20000,
+    });
+  }
+
   // --- Mastering tab: add processors to the project mastering chain -----------
 
   await page.click('.dock-tabs button:has-text("Mastering")');

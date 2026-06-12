@@ -134,23 +134,51 @@ describe('useTransport', () => {
     expect(transport.positionSeconds.value).toBe(2.5);
   });
 
-  it('seekPpq() delegates and converts PPQ to seconds using the current tempo', () => {
+  it('seekPpq() delegates and converts PPQ to seconds through the tempo map', () => {
     const mock = createMockHandle();
     const { transport } = setup(mock.handle);
-    transport.setTempo(60);
-    expect(transport.seekPpq(4)).toBe(true);
-    expect(mock.transport.seekPpq).toHaveBeenCalledWith(4, undefined);
-    expect(transport.positionSeconds.value).toBe(4);
+    // Default map is a single constant 120 BPM segment: 2 ppq = 1 second.
+    expect(transport.seekPpq(2)).toBe(true);
+    expect(mock.transport.seekPpq).toHaveBeenCalledWith(2, undefined);
+    expect(transport.positionPpq.value).toBe(2);
+    expect(transport.positionSeconds.value).toBe(1);
   });
 
-  it('setTempo() delegates and updates the tempo ref + positionPpq', () => {
+  it('setTempo() updates the local tempo ref without calling the engine', () => {
     const mock = createMockHandle();
     const { transport } = setup(mock.handle);
     transport.setTempo(90);
-    expect(mock.transport.setTempo).toHaveBeenCalledWith(90);
+    expect(mock.transport.setTempo).not.toHaveBeenCalled();
     expect(transport.tempo.value).toBe(90);
+    // Conversions still use the tempo map (default 120 BPM), not the tempo ref.
     transport.seek(2);
-    expect(transport.positionPpq.value).toBe(3);
+    expect(transport.positionPpq.value).toBe(4);
+  });
+
+  it('converts telemetry and seekPpq positions through a multi-segment tempo map', () => {
+    const mock = createMockHandle(48000);
+    const { transport } = setup(mock.handle);
+    transport.setTempoMap([
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 4, bpm: 60 },
+    ]);
+    transport.play();
+    // 3 s of audio: 2 s cover ppq 0..4 at 120 BPM, then 1 s = 1 ppq at 60 BPM.
+    mock.emitTelemetry({ type: 0, audibleTimelineSample: 3 * 48000 });
+    expect(transport.positionPpq.value).toBeCloseTo(5, 9);
+    // ppq 6 = 2 s (ppq 0..4 at 120) + 2 s (ppq 4..6 at 60).
+    expect(transport.seekPpq(6)).toBe(true);
+    expect(transport.positionSeconds.value).toBeCloseTo(4, 9);
+  });
+
+  it('setTempoMap() keeps positionPpq and re-derives positionSeconds', () => {
+    const mock = createMockHandle();
+    const { transport } = setup(mock.handle);
+    transport.seekPpq(4);
+    expect(transport.positionSeconds.value).toBe(2);
+    transport.setTempoMap([{ startPpq: 0, bpm: 60 }]);
+    expect(transport.positionPpq.value).toBe(4);
+    expect(transport.positionSeconds.value).toBe(4);
   });
 
   it('setLoop() delegates and mirrors the loop range', () => {

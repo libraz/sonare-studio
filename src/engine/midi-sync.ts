@@ -9,8 +9,8 @@
  * - Each event's renderFrame is an ABSOLUTE sample position on the render
  *   timeline (not clip-relative); startSample/lengthSamples are absolute
  *   samples too. startPpq is carried for diagnostics only — the engine never
- *   converts PPQ, so the caller bakes PPQ to samples at the current tempo and
- *   must re-send the clips after a tempo change.
+ *   converts PPQ, so the caller bakes PPQ to samples through the current
+ *   tempo map and must re-send the clips after a tempo-map change.
  * - The engine sorts events by renderFrame with a NON-stable sort, so
  *   same-frame ordering is undefined; the builder avoids same-frame
  *   collisions wherever ordering matters (note-off vs note-on, program
@@ -28,7 +28,8 @@
 import { loadFont } from '@/project/fonts';
 import { DEFAULT_SYNTH_PRESET } from '@/project/instrument';
 import { clipPlaybackNotes } from '@/project/scheduling';
-import { clipKind, type EditorClip, type EditorTrack } from '@/project/types';
+import { normalizeTempoMap, ppqToSamples } from '@/project/tempo-map';
+import { clipKind, type EditorClip, type EditorTrack, type TempoSegment } from '@/project/types';
 import type { EngineMidiClipSchedule, EngineMidiEvent } from '@/wasm/index.js';
 import type { EngineHandle } from './engine';
 
@@ -81,8 +82,10 @@ function voiceEvent(
  * Compiles the MIDI clips of the given tracks into engine clip schedules
  * (exported for tests). Only clips on 'midi' tracks with MIDI content, notes
  * and an audible gain are scheduled; clip gain is baked into the note-on
- * velocities. All PPQ positions are converted to absolute samples at the
- * given constant tempo.
+ * velocities. All PPQ positions are converted to absolute samples through the
+ * given tempo map, so tempo changes and ramps inside a clip land on exact
+ * frames (a clip's length is the sample distance between its start and end
+ * positions, not a rounded duration).
  *
  * Note-offs are placed one sample before the note's nominal end (clamped to
  * the clip window, and never before noteOn + 1): the engine's same-frame
@@ -97,23 +100,20 @@ function voiceEvent(
  *
  * @param tracks Project tracks (clip track lookup and instrument source).
  * @param clips Project clips to compile.
- * @param tempoBpm Constant tempo in BPM (finite, > 0).
+ * @param tempoSegments Project tempo segments (empty falls back to 120 BPM).
  * @param sampleRate Render sample rate in Hz (finite, > 0).
  * @returns Schedules sorted by clip id, each with events sorted by frame.
  */
 export function buildMidiClipSchedules(
   tracks: ReadonlyArray<EditorTrack>,
   clips: ReadonlyArray<EditorClip>,
-  tempoBpm: number,
+  tempoSegments: ReadonlyArray<TempoSegment>,
   sampleRate: number,
 ): EngineMidiClipSchedule[] {
-  if (!Number.isFinite(tempoBpm) || tempoBpm <= 0) {
-    throw new RangeError(`Tempo must be finite and > 0, got ${tempoBpm}`);
-  }
   if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
     throw new RangeError(`Sample rate must be finite and > 0, got ${sampleRate}`);
   }
-  const samplesPerPpq = (60 / tempoBpm) * sampleRate;
+  const tempoMap = normalizeTempoMap(tempoSegments);
   const trackById = new Map(tracks.map((track) => [track.id, track]));
   const schedules: EngineMidiClipSchedule[] = [];
 
@@ -123,8 +123,11 @@ export function buildMidiClipSchedules(
     const notes = clipPlaybackNotes(clip);
     if (notes.length === 0 || clip.gain <= 0) continue;
 
-    const startSample = Math.round(clip.startPpq * samplesPerPpq);
-    const lengthSamples = Math.round(clip.lengthPpq * samplesPerPpq);
+    const startSample = ppqToSamples(tempoMap, clip.startPpq, sampleRate);
+    // End minus start (not a rounded duration), so tempo-segment boundaries
+    // inside the clip stay exact.
+    const lengthSamples =
+      ppqToSamples(tempoMap, clip.startPpq + clip.lengthPpq, sampleRate) - startSample;
     const events: EngineMidiEvent[] = [];
 
     const instrument = track.instrument;
@@ -160,13 +163,16 @@ export function buildMidiClipSchedules(
     for (const note of notes) {
       const channel = clamp(note.channel ?? 0, 0, 15);
       const velocity = clamp(Math.round(note.velocity * clip.gain), 1, 127);
-      let onFrame = startSample + Math.round(note.startPpq * samplesPerPpq);
+      let onFrame = ppqToSamples(tempoMap, clip.startPpq + note.startPpq, sampleRate);
       if (shiftFrameZero && onFrame === 0) onFrame = 1;
       // One sample before the nominal end keeps this note-off strictly before
       // a same-pitch note-on of the next note (legato) despite the engine's
       // unstable same-frame sort; the floor keeps the note at least 1 sample.
       const endPpq = Math.min(note.startPpq + note.durationPpq, clip.lengthPpq);
-      const offFrame = Math.max(onFrame + 1, startSample + Math.round(endPpq * samplesPerPpq) - 1);
+      const offFrame = Math.max(
+        onFrame + 1,
+        ppqToSamples(tempoMap, clip.startPpq + endPpq, sampleRate) - 1,
+      );
       events.push(voiceEvent(onFrame, STATUS_NOTE_ON, channel, note.note, velocity));
       events.push(voiceEvent(offFrame, STATUS_NOTE_OFF, channel, note.note, 0));
     }
@@ -204,12 +210,13 @@ export interface MidiSync {
    *
    * @param tracks Project tracks in store order.
    * @param clips Project clips.
-   * @param tempoBpm Constant tempo the clip frames are baked at.
+   * @param tempoSegments Project tempo segments the clip frames are baked
+   *   through (empty falls back to 120 BPM).
    */
   sync(
     tracks: ReadonlyArray<EditorTrack>,
     clips: ReadonlyArray<EditorClip>,
-    tempoBpm: number,
+    tempoSegments: ReadonlyArray<TempoSegment>,
   ): Promise<void>;
   /** Number of MIDI clip schedules in the last setMidiClips call (0 before any). */
   scheduledClipCount(): number;
@@ -235,7 +242,7 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
   const sync = async (
     tracks: ReadonlyArray<EditorTrack>,
     clips: ReadonlyArray<EditorClip>,
-    tempoBpm: number,
+    tempoSegments: ReadonlyArray<TempoSegment>,
   ): Promise<void> => {
     const sampleRate = handle.ctx.sampleRate;
 
@@ -275,7 +282,7 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
       lastInstrumentKeyByTrack.set(track.id, instrumentKey);
     }
 
-    const schedules = buildMidiClipSchedules(tracks, clips, tempoBpm, sampleRate);
+    const schedules = buildMidiClipSchedules(tracks, clips, tempoSegments, sampleRate);
     const clipsKey = JSON.stringify(schedules);
     if (clipsKey !== lastClipsKey) {
       handle.engine.setMidiClips(schedules);

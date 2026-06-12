@@ -1,6 +1,8 @@
-import type { ComputedRef, MaybeRefOrGetter, Ref } from 'vue';
-import { computed, getCurrentScope, onScopeDispose, ref, toValue } from 'vue';
+import type { MaybeRefOrGetter, Ref } from 'vue';
+import { getCurrentScope, onScopeDispose, ref, toValue } from 'vue';
 import type { EngineHandle } from '@/engine/engine';
+import { normalizeTempoMap, ppqToSeconds, samplesToPpq, secondsToPpq } from '@/project/tempo-map';
+import type { TempoSegment } from '@/project/types';
 import type { SonareEngine, SonareEngineTelemetryRecord } from '@/wasm/worklet.js';
 
 /** Telemetry record type emitted once per processed audio block (SonareEngineTelemetryType.ProcessBlock). */
@@ -20,10 +22,12 @@ export interface UseTransportReturn {
    */
   positionSeconds: Ref<number>;
   /**
-   * Playhead position in PPQ (quarter-note pulses), derived from
-   * `positionSeconds` and the current `tempo`. Exact only for a constant tempo map.
+   * Playhead position in PPQ (quarter-note pulses), converted from the engine's
+   * `audibleTimelineSample` through the project tempo map (which replicates the
+   * engine's tempo math), so it is exact under tempo segments and ramps. Also
+   * set optimistically by `seek()` / `seekPpq()`.
    */
-  positionPpq: ComputedRef<number>;
+  positionPpq: Ref<number>;
   /** Last tempo set through this composable, in BPM. The engine exposes no tempo getter. */
   tempo: Ref<number>;
   /** True when a loop region is active (last successful `setLoop` had `enabled !== false`). */
@@ -65,11 +69,25 @@ export interface UseTransportReturn {
    */
   seekPpq(ppq: number, sampleTime?: number): boolean;
   /**
-   * Sets the playback tempo via `engine.transport.setTempo` and mirrors it into `tempo`.
+   * Updates the local `tempo` ref only (display and metronome conversions
+   * depend on it). The engine's tempo is owned by the transport sync
+   * (`src/engine/transport-sync.ts`, which sends `setTempoSegments`), so this
+   * never calls into the engine. The tempo map used for playhead conversions
+   * changes only via `setTempoMap`.
    *
    * @param bpm Tempo in beats (quarter notes) per minute.
    */
   setTempo(bpm: number): void;
+  /**
+   * Replaces the tempo map used for PPQ <-> seconds playhead conversions.
+   * Keeps the playhead's musical position: `positionPpq` is preserved and
+   * `positionSeconds` is re-derived through the new map, so a tempo edit does
+   * not move the playhead in bars.
+   *
+   * @param segments Project tempo segments (normalized internally; the current
+   *   `tempo` is the fallback when no usable segment exists).
+   */
+  setTempoMap(segments: ReadonlyArray<TempoSegment>): void;
   /**
    * Sets the loop region via `engine.transport.setLoop` and mirrors it into the loop refs.
    *
@@ -105,7 +123,9 @@ export interface UseTransportReturn {
  * requestAnimationFrame loop calls `engine.pollTelemetry()` (drains the SAB
  * telemetry ring in 'sab' mode; a no-op in 'postMessage' mode where telemetry
  * arrives as port messages) and an `onTelemetry` subscription converts
- * `audibleTimelineSample` to seconds using the AudioContext sample rate.
+ * `audibleTimelineSample` to seconds using the AudioContext sample rate and to
+ * PPQ through the project tempo map (set via `setTempoMap`), replicating the
+ * engine's tempo math so the PPQ playhead is exact under segments and ramps.
  *
  * @param handleSource The engine handle, or a ref/getter resolving to one (or null while absent).
  * @returns Reactive transport state and delegating actions.
@@ -115,13 +135,15 @@ export function useTransport(
 ): UseTransportReturn {
   const isPlaying = ref(false);
   const positionSeconds = ref(0);
+  const positionPpq = ref(0);
   const tempo = ref(DEFAULT_TEMPO_BPM);
   const loopEnabled = ref(false);
   const loopStartPpq = ref(0);
   const loopEndPpq = ref(0);
   const metronomeEnabled = ref(false);
 
-  const positionPpq = computed(() => (positionSeconds.value * tempo.value) / 60);
+  /** Tempo map mirroring what the transport sync sends to the engine. */
+  let tempoMap = normalizeTempoMap([], DEFAULT_TEMPO_BPM);
 
   const resolveHandle = (): EngineHandle | null => toValue(handleSource) ?? null;
 
@@ -138,6 +160,7 @@ export function useTransport(
       (telemetry: SonareEngineTelemetryRecord): void => {
         if (telemetry.type !== TELEMETRY_PROCESS_BLOCK) return;
         positionSeconds.value = telemetry.audibleTimelineSample / sampleRate;
+        positionPpq.value = samplesToPpq(tempoMap, telemetry.audibleTimelineSample, sampleRate);
       },
     );
     subscribedEngine = handle.engine;
@@ -194,7 +217,10 @@ export function useTransport(
     if (!handle) return false;
     ensureTelemetrySubscription(handle);
     const ok = handle.engine.transport.seekSeconds(seconds, sampleTime);
-    if (ok) positionSeconds.value = seconds;
+    if (ok) {
+      positionSeconds.value = seconds;
+      positionPpq.value = secondsToPpq(tempoMap, seconds);
+    }
     return ok;
   };
 
@@ -203,15 +229,20 @@ export function useTransport(
     if (!handle) return false;
     ensureTelemetrySubscription(handle);
     const ok = handle.engine.transport.seekPpq(ppq, sampleTime);
-    if (ok) positionSeconds.value = (ppq * 60) / tempo.value;
+    if (ok) {
+      positionPpq.value = ppq;
+      positionSeconds.value = ppqToSeconds(tempoMap, ppq);
+    }
     return ok;
   };
 
   const setTempo = (bpm: number): void => {
-    const handle = resolveHandle();
-    if (!handle) return;
-    handle.engine.transport.setTempo(bpm);
     tempo.value = bpm;
+  };
+
+  const setTempoMap = (segments: ReadonlyArray<TempoSegment>): void => {
+    tempoMap = normalizeTempoMap(segments, tempo.value);
+    positionSeconds.value = ppqToSeconds(tempoMap, positionPpq.value);
   };
 
   const setLoop = (startPpq: number, endPpq: number, enabled = true): boolean => {
@@ -260,6 +291,7 @@ export function useTransport(
     seek,
     seekPpq,
     setTempo,
+    setTempoMap,
     setLoop,
     toggleMetronome,
     dispose,

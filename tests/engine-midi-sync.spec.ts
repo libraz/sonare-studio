@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
 import { buildMidiClipSchedules, createMidiSync } from '@/engine/midi-sync';
 import { DEFAULT_SYNTH_PRESET } from '@/project/instrument';
-import type { EditorClip, EditorNote, EditorTrack } from '@/project/types';
+import type { EditorClip, EditorNote, EditorTrack, TempoSegment } from '@/project/types';
 import type { SynthPatch } from '@/wasm/index.js';
 
 /** Render rate of the mock engine context. */
@@ -13,6 +13,12 @@ const BPM = 120;
 
 /** Samples per PPQ at the default test tempo and rate. */
 const SPP = 24000;
+
+/** Constant default-tempo map. */
+const TEMPO_120: TempoSegment[] = [{ startPpq: 0, bpm: BPM }];
+
+/** Constant 60 BPM map; at 48 kHz one quarter-note PPQ is 48000 samples. */
+const TEMPO_60: TempoSegment[] = [{ startPpq: 0, bpm: 60 }];
 
 /** Expected UMP MIDI 1.0 channel-voice word for a note-on. */
 function noteOnWord(channel: number, pitch: number, velocity: number): number {
@@ -93,17 +99,24 @@ function makeHandle(): {
 }
 
 describe('buildMidiClipSchedules', () => {
-  it('rejects a non-finite or non-positive tempo or sample rate', () => {
-    expect(() => buildMidiClipSchedules([], [], 0, SAMPLE_RATE)).toThrow(RangeError);
-    expect(() => buildMidiClipSchedules([], [], -120, SAMPLE_RATE)).toThrow(RangeError);
-    expect(() => buildMidiClipSchedules([], [], Number.NaN, SAMPLE_RATE)).toThrow(RangeError);
-    expect(() => buildMidiClipSchedules([], [], BPM, 0)).toThrow(RangeError);
-    expect(() => buildMidiClipSchedules([], [], BPM, Number.POSITIVE_INFINITY)).toThrow(RangeError);
+  it('rejects a non-finite or non-positive sample rate', () => {
+    expect(() => buildMidiClipSchedules([], [], TEMPO_120, 0)).toThrow(RangeError);
+    expect(() => buildMidiClipSchedules([], [], TEMPO_120, -1)).toThrow(RangeError);
+    expect(() => buildMidiClipSchedules([], [], TEMPO_120, Number.NaN)).toThrow(RangeError);
+    expect(() => buildMidiClipSchedules([], [], TEMPO_120, Number.POSITIVE_INFINITY)).toThrow(
+      RangeError,
+    );
+  });
+
+  it('falls back to a constant 120 BPM when the tempo map is empty', () => {
+    const clip = makeClip(1, 1, { startPpq: 2 });
+    const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], [], SAMPLE_RATE);
+    expect(schedule.startSample).toBe(2 * SPP);
   });
 
   it('bakes clip and note PPQ to absolute samples at the given tempo', () => {
     const clip = makeClip(10, 1, { startPpq: 2, lengthPpq: 4 });
-    const schedules = buildMidiClipSchedules([makeTrack(1)], [clip], BPM, SAMPLE_RATE);
+    const schedules = buildMidiClipSchedules([makeTrack(1)], [clip], TEMPO_120, SAMPLE_RATE);
 
     expect(schedules).toHaveLength(1);
     const schedule = schedules[0];
@@ -119,6 +132,24 @@ describe('buildMidiClipSchedules', () => {
     ]);
   });
 
+  it('bakes exact frames across a tempo-segment boundary', () => {
+    // 120 BPM until ppq 4 (2 s), then 60 BPM (1 s per PPQ).
+    const segments: TempoSegment[] = [
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 4, bpm: 60 },
+    ];
+    const clip = makeClip(1, 1, { startPpq: 4, lengthPpq: 4 });
+    const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], segments, SAMPLE_RATE);
+
+    expect(schedule.startSample).toBe(96000); // ppq 4 = 2 s.
+    // Clip end at ppq 8 = 6 s = 288000 samples; length is end minus start.
+    expect(schedule.lengthSamples).toBe(288000 - 96000);
+    expect(schedule.events).toEqual([
+      { renderFrame: 96000, word0: noteOnWord(0, 60, 100), wordCount: 1 },
+      { renderFrame: 96000 + 48000 - 1, word0: noteOffWord(0, 60), wordCount: 1 },
+    ]);
+  });
+
   it('encodes the exact channel-voice words', () => {
     // (0x2 << 28) | (status << 20) | (channel << 16) | (data0 << 8) | data1.
     expect(noteOnWord(0, 60, 100)).toBe(0x20903c64);
@@ -127,7 +158,7 @@ describe('buildMidiClipSchedules', () => {
     expect(pcWord(0, 5)).toBe(0x20c00500);
 
     const clip = makeClip(1, 1, { notes: [makeNote({ pitch: 60, velocity: 100, channel: 3 })] });
-    const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], BPM, SAMPLE_RATE);
+    const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], TEMPO_120, SAMPLE_RATE);
     expect(schedule.events[0].word0).toBe(noteOnWord(3, 60, 100));
     expect(schedule.events[1].word0).toBe(noteOffWord(3, 60));
   });
@@ -135,7 +166,7 @@ describe('buildMidiClipSchedules', () => {
   it('scales note-on velocities by the clip gain, clamped to [1, 127]', () => {
     const velocityFor = (gain: number): number => {
       const clip = makeClip(1, 1, { gain });
-      const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], BPM, SAMPLE_RATE);
+      const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], TEMPO_120, SAMPLE_RATE);
       return (schedule.events[0].word0 as number) & 0x7f;
     };
     expect(velocityFor(0.5)).toBe(50);
@@ -152,7 +183,7 @@ describe('buildMidiClipSchedules', () => {
       makeClip(4, 2),
       makeClip(5, 99),
     ];
-    expect(buildMidiClipSchedules(tracks, clips, BPM, SAMPLE_RATE)).toEqual([]);
+    expect(buildMidiClipSchedules(tracks, clips, TEMPO_120, SAMPLE_RATE)).toEqual([]);
   });
 
   it('clamps the note end to the clip window', () => {
@@ -160,7 +191,7 @@ describe('buildMidiClipSchedules', () => {
       lengthPpq: 2,
       notes: [makeNote({ startPpq: 1, durationPpq: 10 })],
     });
-    const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], BPM, SAMPLE_RATE);
+    const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], TEMPO_120, SAMPLE_RATE);
     expect(schedule.events[0].renderFrame).toBe(SPP);
     expect(schedule.events[1].renderFrame).toBe(2 * SPP - 1);
   });
@@ -170,14 +201,14 @@ describe('buildMidiClipSchedules', () => {
       lengthPpq: 2,
       notes: [makeNote({ startPpq: 1, durationPpq: 0.00001 })],
     });
-    const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], BPM, SAMPLE_RATE);
+    const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], TEMPO_120, SAMPLE_RATE);
     expect(schedule.events[0].renderFrame).toBe(SPP);
     expect(schedule.events[1].renderFrame).toBe(SPP + 1);
   });
 
   it('returns the schedules sorted by clip id', () => {
     const clips = [makeClip(7, 1), makeClip(3, 1), makeClip(5, 1)];
-    const schedules = buildMidiClipSchedules([makeTrack(1)], clips, BPM, SAMPLE_RATE);
+    const schedules = buildMidiClipSchedules([makeTrack(1)], clips, TEMPO_120, SAMPLE_RATE);
     expect(schedules.map((schedule) => schedule.id)).toEqual([3, 5, 7]);
   });
 
@@ -187,7 +218,7 @@ describe('buildMidiClipSchedules', () => {
 
     it('emits bank-select CCs and the program change before a frame-0 clip', () => {
       const clip = makeClip(1, 1, { startPpq: 0 });
-      const [schedule] = buildMidiClipSchedules([sf2Track(1, 5)], [clip], BPM, SAMPLE_RATE);
+      const [schedule] = buildMidiClipSchedules([sf2Track(1, 5)], [clip], TEMPO_120, SAMPLE_RATE);
       // The prelude occupies frame 0, so the clip's frame-0 note-on moves to
       // frame 1 to stay strictly after it.
       expect(schedule.events).toEqual([
@@ -202,7 +233,7 @@ describe('buildMidiClipSchedules', () => {
     it('sits one sample before the clip start when the clip starts later', () => {
       const clip = makeClip(1, 1, { startPpq: 2 });
       // At 60 BPM and 48 kHz one PPQ is 48000 samples.
-      const [schedule] = buildMidiClipSchedules([sf2Track(1, 5)], [clip], 60, SAMPLE_RATE);
+      const [schedule] = buildMidiClipSchedules([sf2Track(1, 5)], [clip], TEMPO_60, SAMPLE_RATE);
       expect(schedule.startSample).toBe(96000);
       expect(schedule.events.slice(0, 3).map((event) => event.renderFrame)).toEqual([
         95999, 95999, 95999,
@@ -216,7 +247,12 @@ describe('buildMidiClipSchedules', () => {
 
     it('emits only the program change when the bank is undefined', () => {
       const clip = makeClip(1, 1, { startPpq: 2 });
-      const [schedule] = buildMidiClipSchedules([sf2Track(undefined, 5)], [clip], BPM, SAMPLE_RATE);
+      const [schedule] = buildMidiClipSchedules(
+        [sf2Track(undefined, 5)],
+        [clip],
+        TEMPO_120,
+        SAMPLE_RATE,
+      );
       expect(schedule.events[0]).toEqual({
         renderFrame: 2 * SPP - 1,
         word0: pcWord(0, 5),
@@ -227,7 +263,7 @@ describe('buildMidiClipSchedules', () => {
 
     it('emits no prelude when neither bank nor program is set', () => {
       const clip = makeClip(1, 1, { startPpq: 2 });
-      const [schedule] = buildMidiClipSchedules([sf2Track()], [clip], BPM, SAMPLE_RATE);
+      const [schedule] = buildMidiClipSchedules([sf2Track()], [clip], TEMPO_120, SAMPLE_RATE);
       expect(schedule.events).toHaveLength(2);
       expect(schedule.events[0].renderFrame).toBe(2 * SPP);
     });
@@ -237,7 +273,12 @@ describe('buildMidiClipSchedules', () => {
         startPpq: 2,
         notes: [makeNote({ channel: 0 }), makeNote({ id: 2, pitch: 64, channel: 2 })],
       });
-      const [schedule] = buildMidiClipSchedules([sf2Track(undefined, 5)], [clip], BPM, SAMPLE_RATE);
+      const [schedule] = buildMidiClipSchedules(
+        [sf2Track(undefined, 5)],
+        [clip],
+        TEMPO_120,
+        SAMPLE_RATE,
+      );
       const preludes = schedule.events.filter((event) => event.renderFrame === 2 * SPP - 1);
       expect(preludes.map((event) => event.word0)).toEqual([pcWord(0, 5), pcWord(2, 5)]);
     });
@@ -249,7 +290,7 @@ describe('createMidiSync', () => {
     const { handle, engine } = makeHandle();
     const sync = createMidiSync(handle);
 
-    await sync.sync([makeTrack(1), makeTrack(2, { kind: 'audio' })], [], BPM);
+    await sync.sync([makeTrack(1), makeTrack(2, { kind: 'audio' })], [], TEMPO_120);
     expect(engine.setSynthInstrument).toHaveBeenCalledTimes(1);
     expect(engine.setSynthInstrument).toHaveBeenCalledWith(1, DEFAULT_SYNTH_PRESET);
   });
@@ -259,7 +300,7 @@ describe('createMidiSync', () => {
     const sync = createMidiSync(handle, { resolvePreset: (preset) => `va:${preset}` });
 
     const track = makeTrack(1, { instrument: { kind: 'synth-preset', preset: 'saw-lead' } });
-    await sync.sync([track], [], BPM);
+    await sync.sync([track], [], TEMPO_120);
     expect(engine.setSynthInstrument).toHaveBeenCalledWith(1, 'va:saw-lead');
   });
 
@@ -268,7 +309,7 @@ describe('createMidiSync', () => {
     const sync = createMidiSync(handle);
     const patch: SynthPatch = { preset: 'saw-lead', cutoffHz: 800 };
 
-    await sync.sync([makeTrack(1, { instrument: { kind: 'synth-patch', patch } })], [], BPM);
+    await sync.sync([makeTrack(1, { instrument: { kind: 'synth-patch', patch } })], [], TEMPO_120);
     expect(engine.setSynthInstrument).toHaveBeenCalledTimes(1);
     expect(engine.setSynthInstrument.mock.calls[0]).toEqual([1, patch]);
     expect(engine.setSynthInstrument.mock.calls[0][1]).toBe(patch);
@@ -284,7 +325,7 @@ describe('createMidiSync', () => {
       makeTrack(2, { instrument: { kind: 'sf2', fontId: 'font-a' } }),
     ];
 
-    await sync.sync(tracks, [], BPM);
+    await sync.sync(tracks, [], TEMPO_120);
     expect(loadFont).toHaveBeenCalledTimes(1);
     expect(loadFont).toHaveBeenCalledWith('font-a');
     expect(engine.loadSoundFont).toHaveBeenCalledTimes(1);
@@ -294,7 +335,7 @@ describe('createMidiSync', () => {
     expect(engine.setSf2Instrument).toHaveBeenNthCalledWith(2, 2, {});
 
     // A second sync with the same font reloads nothing.
-    await sync.sync(tracks, [], BPM);
+    await sync.sync(tracks, [], TEMPO_120);
     expect(loadFont).toHaveBeenCalledTimes(1);
     expect(engine.loadSoundFont).toHaveBeenCalledTimes(1);
     expect(engine.setSf2Instrument).toHaveBeenCalledTimes(2);
@@ -311,7 +352,7 @@ describe('createMidiSync', () => {
         makeTrack(2, { instrument: { kind: 'sf2', fontId: 'font-b' } }),
       ];
 
-      await sync.sync(tracks, [], BPM);
+      await sync.sync(tracks, [], TEMPO_120);
       expect(warn).toHaveBeenCalledTimes(1);
       expect(loadFont).toHaveBeenCalledTimes(2);
       expect(loadFont).toHaveBeenNthCalledWith(1, 'font-a');
@@ -328,35 +369,36 @@ describe('createMidiSync', () => {
     const tracks = [makeTrack(1)];
     const clip = makeClip(1, 1, { startPpq: 2 });
 
-    await sync.sync(tracks, [clip], BPM);
+    await sync.sync(tracks, [clip], TEMPO_120);
     expect(engine.setMidiClips).toHaveBeenCalledTimes(1);
     expect(engine.setSynthInstrument).toHaveBeenCalledTimes(1);
 
     // An identical second sync sends nothing.
-    await sync.sync(tracks, [makeClip(1, 1, { startPpq: 2 })], BPM);
+    await sync.sync(tracks, [makeClip(1, 1, { startPpq: 2 })], TEMPO_120);
     expect(engine.setMidiClips).toHaveBeenCalledTimes(1);
     expect(engine.setSynthInstrument).toHaveBeenCalledTimes(1);
 
     // A note edit re-sends the full clip set with the new schedule.
     const edited = makeClip(1, 1, { startPpq: 2, notes: [makeNote({ velocity: 64 })] });
-    await sync.sync(tracks, [edited], BPM);
+    await sync.sync(tracks, [edited], TEMPO_120);
     expect(engine.setMidiClips).toHaveBeenCalledTimes(2);
     const resent = engine.setMidiClips.mock.calls[1][0];
     expect(resent[0].events[0].word0).toBe(noteOnWord(0, 60, 64));
   });
 
-  it('re-bakes and re-sends the clip frames after a tempo change', async () => {
+  it('re-bakes and re-sends the clip frames after a tempo-map change', async () => {
     const { handle, engine } = makeHandle();
     const sync = createMidiSync(handle);
     const tracks = [makeTrack(1)];
     const clips = [makeClip(1, 1, { startPpq: 2 })];
 
-    await sync.sync(tracks, clips, BPM);
+    await sync.sync(tracks, clips, TEMPO_120);
     expect(engine.setMidiClips.mock.calls[0][0][0].startSample).toBe(2 * SPP);
 
-    await sync.sync(tracks, clips, 60);
+    // At 90 BPM one PPQ is 60/90 s = 32000 samples at 48 kHz.
+    await sync.sync(tracks, clips, [{ startPpq: 0, bpm: 90 }]);
     expect(engine.setMidiClips).toHaveBeenCalledTimes(2);
-    expect(engine.setMidiClips.mock.calls[1][0][0].startSample).toBe(2 * 48000);
+    expect(engine.setMidiClips.mock.calls[1][0][0].startSample).toBe(2 * 32000);
   });
 
   it('reports the schedule count of the last send', async () => {
@@ -365,10 +407,10 @@ describe('createMidiSync', () => {
     const tracks = [makeTrack(1)];
 
     expect(sync.scheduledClipCount()).toBe(0);
-    await sync.sync(tracks, [makeClip(1, 1), makeClip(2, 1, { startPpq: 8 })], BPM);
+    await sync.sync(tracks, [makeClip(1, 1), makeClip(2, 1, { startPpq: 8 })], TEMPO_120);
     expect(sync.scheduledClipCount()).toBe(2);
 
-    await sync.sync(tracks, [], BPM);
+    await sync.sync(tracks, [], TEMPO_120);
     expect(engine.setMidiClips).toHaveBeenLastCalledWith([]);
     expect(sync.scheduledClipCount()).toBe(0);
   });
