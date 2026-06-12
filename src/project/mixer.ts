@@ -15,9 +15,10 @@
  * What stays UI-only: master sends (the engine master strip has no bus
  * routing).
  *
- * Offline mixdown/export renders (src/export/mixdown.ts) bake the same strip
- * DSP into their render and additionally apply the project-level mastering
- * chain; they do not render buses/sends yet.
+ * Offline mixdown/export renders (src/export/engine-render.ts) replay this
+ * state onto an offline engine instance, so buses/sends, strips and
+ * automation render exactly as live playback; the project-level mastering
+ * chain is an additional export-only stage.
  */
 
 import type { EqBand } from '@/wasm/index.js';

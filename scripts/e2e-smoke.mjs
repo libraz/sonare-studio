@@ -1282,15 +1282,55 @@ try {
       );
     }
 
+    // Stems: isolated per-track engine passes. With the send/bus removed and
+    // the -120 dB lanes still silencing the other tracks, the tone track's
+    // stem must carry the (pre-master) mix level while every other stem stays
+    // far below it.
     await page.evaluate(
-      ([id, bus, others]) => {
+      ([id, bus]) => {
         window.__sonareDebug.setSend(id, bus, null);
         window.__sonareDebug.removeMixerBus(bus);
-        for (const other of others) window.__sonareDebug.removeAutomationLane(other, 'faderDb');
-        window.__sonareDebug.setLoopRange(0, 4, false);
       },
-      [rampTrackId, eqBusId, otherIds],
+      [rampTrackId, eqBusId],
     );
+    const allIds = await page.evaluate(() => window.__sonareDebug.trackIds());
+    const rampIndex = allIds.indexOf(rampTrackId);
+    const probeNoMaster = await page.evaluate(
+      (range) => window.__sonareDebug.exportProbe(false, range),
+      eqRange,
+    );
+    const probeStems = await page.evaluate(
+      (range) => window.__sonareDebug.exportProbe(false, range, true),
+      eqRange,
+    );
+    const stemList = probeStems.stems ?? [];
+    const rampStem = stemList.find((stem) => stem.trackIndex === rampIndex);
+    const otherPeaks = stemList
+      .filter((stem) => stem.trackIndex !== rampIndex)
+      .map((stem) => stem.peakDb);
+    const otherMax = otherPeaks.length > 0 ? Math.max(...otherPeaks) : Number.NEGATIVE_INFINITY;
+    if (
+      stemList.length !== allIds.length ||
+      !rampStem ||
+      Math.abs(rampStem.peakDb - probeNoMaster.peakDb) > 2 ||
+      otherMax > -40
+    ) {
+      fail(
+        `stems not isolated: ${stemList.length}/${allIds.length} stems, tone stem ` +
+          `${rampStem ? rampStem.peakDb.toFixed(1) : 'missing'} dB vs mix ` +
+          `${probeNoMaster.peakDb.toFixed(1)} dB, max other ${otherMax.toFixed(1)} dB`,
+      );
+    } else {
+      console.info(
+        `PASS export stems: ${stemList.length} stems, tone stem ${rampStem.peakDb.toFixed(1)} dB ` +
+          `(mix ${probeNoMaster.peakDb.toFixed(1)} dB), max other stem ${otherMax.toFixed(1)} dB`,
+      );
+    }
+
+    await page.evaluate((others) => {
+      for (const other of others) window.__sonareDebug.removeAutomationLane(other, 'faderDb');
+      window.__sonareDebug.setLoopRange(0, 4, false);
+    }, otherIds);
   }
 
   // --- Mastering tab: add processors to the project mastering chain -----------

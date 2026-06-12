@@ -270,6 +270,54 @@ describe('renderProjectWithEngine', () => {
     expect(params.get(0x4d58ff01)).toBeCloseTo(-3, 5);
   });
 
+  it('renders stems as isolated engine passes without the master stage', async () => {
+    const engines: FakeEngine[] = [];
+    const result = await renderProjectWithEngine(makeDoc(), {
+      deps: null,
+      loadAudioAsset: async () => fakeAsset(),
+      createEngine: () => {
+        const engine = new FakeEngine();
+        engines.push(engine);
+        return engine;
+      },
+      stems: true,
+    });
+
+    // One mix pass plus one pass per audible track, each on a fresh engine.
+    expect(engines).toHaveLength(3);
+    expect(engines.every((engine) => engine.destroyed)).toBe(true);
+    expect(result.stems).toHaveLength(2);
+    expect(result.stems?.[0]).toMatchObject({ trackIndex: 0, name: 'Keys' });
+    expect(result.stems?.[1]).toMatchObject({ trackIndex: 1, name: 'Drums' });
+    expect(result.stems?.[0].channels[0].length).toBe(result.totalFrames);
+    expect(result.stems?.[0].channels[0][0]).toBeCloseTo(0.25, 5);
+
+    // A stem pass isolates its lane via mutes (solo would keep the document's
+    // own soloed tracks audible too).
+    const stemPass = engines[1];
+    expect(stemPass.named('setSoloMute')).toEqual([
+      ['setSoloMute', 0, false, false],
+      ['setSoloMute', 1, false, true],
+    ]);
+
+    // Stems are pre-master: no master gain/pan and no master automation.
+    const stemParams = new Map(stemPass.named('setParameter').map(([, id, value]) => [id, value]));
+    expect(stemParams.has(0x4d58ff01)).toBe(false);
+    expect(stemParams.has(0x4d58ff02)).toBe(false);
+    const stemLaneIds = new Set(stemPass.named('setAutomationLane').map(([, id]) => id));
+    expect(stemLaneIds.has(0x4d58ff02)).toBe(false);
+    expect(stemLaneIds.has(0x4d580001)).toBe(true);
+
+    // The mix pass keeps the document's solo/mute state and master levels.
+    const mixPass = engines[0];
+    expect(mixPass.named('setSoloMute')).toEqual([
+      ['setSoloMute', 0, false, false],
+      ['setSoloMute', 1, false, false],
+    ]);
+    const mixParams = new Map(mixPass.named('setParameter').map(([, id, value]) => [id, value]));
+    expect(mixParams.get(0x4d58ff01)).toBeCloseTo(-3, 5);
+  });
+
   it('cancels between checkpoints and still destroys the engine', async () => {
     const engine = new FakeEngine();
     let blocks = 0;

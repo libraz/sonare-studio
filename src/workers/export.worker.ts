@@ -5,7 +5,8 @@
  * the shared ensureWasm entry, which calls the module's worker-safe init())
  * and reused afterwards. Render requests are processed strictly in order
  * through a promise queue; 'cancel' messages bypass the queue and flip a flag
- * the running render checks between clips and stages. Audio assets and
+ * the running render checks between block checkpoints and stages. Audio
+ * assets and
  * SoundFonts are read from OPFS inside the worker (the persistence APIs only
  * use navigator.storage, which is available in worker scope).
  *
@@ -16,16 +17,14 @@
 
 import { renderProjectWithEngine } from '@/export/engine-render';
 import {
-  createWasmMixdownDeps,
   MixdownCancelledError,
   type MixdownRange,
   type MixdownRangePpq,
   type MixdownReport,
-  renderMixdown,
 } from '@/export/mixdown';
 import type { ProjectDocument } from '@/project/serialization';
 
-/** Structured-clone-safe subset of the mixdown options (no functions). */
+/** Structured-clone-safe subset of the render options (no functions). */
 export interface ExportRenderOptions {
   /** Output sample rate in Hz; defaults to the document sample rate. */
   sampleRate?: number;
@@ -37,8 +36,6 @@ export interface ExportRenderOptions {
   includeMasterChain?: boolean;
   /** Also return one stereo stem per track (post-strip, pre-master). */
   stems?: boolean;
-  /** MIDI clip normalization target; see renderMixdown. */
-  targetPeak?: number | null;
 }
 
 /** One transferred stem of a worker render. */
@@ -98,23 +95,15 @@ async function handleRender(
   options: ExportRenderOptions = {},
 ): Promise<void> {
   try {
-    // The stereo mixdown renders through the offline engine (live-playback
-    // parity: buses/sends, strips, realtime instruments, automation, tempo
-    // map). Stems still use the legacy per-track summing renderer.
-    const result = options.stems
-      ? await renderMixdown(doc, {
-          ...options,
-          deps: await createWasmMixdownDeps(),
-          onProgress: (progress, stage) => post({ id, type: 'progress', progress, stage }),
-          shouldCancel: () => cancelled.has(id),
-          yieldBetweenClips: yieldToMessages,
-        })
-      : await renderProjectWithEngine(doc, {
-          ...options,
-          onProgress: (progress, stage) => post({ id, type: 'progress', progress, stage }),
-          shouldCancel: () => cancelled.has(id),
-          yieldBetweenBlocks: yieldToMessages,
-        });
+    // Every render goes through the offline engine (live-playback parity:
+    // buses/sends, strips, realtime instruments, automation, tempo map);
+    // stems are extra isolated engine passes.
+    const result = await renderProjectWithEngine(doc, {
+      ...options,
+      onProgress: (progress, stage) => post({ id, type: 'progress', progress, stage }),
+      shouldCancel: () => cancelled.has(id),
+      yieldBetweenBlocks: yieldToMessages,
+    });
     const payload: ExportWorkerResult = {
       left: result.channels[0],
       right: result.channels[1],

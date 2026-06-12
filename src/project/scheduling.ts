@@ -2,14 +2,13 @@
  * Project-wide playback scheduling: loads and schedules every audio clip of
  * every track into the engine. MIDI clips and instruments are realtime engine
  * state, fed by the engine's MIDI scheduling (src/engine/midi-sync.ts) and not
- * scheduled here; only the offline export renderer (src/export/mixdown.ts)
- * still prerenders MIDI to audio.
+ * scheduled here.
  *
  * Clips are scheduled raw: track strips (inserts/EQ), gain/pan, solo/mute,
  * sends/buses and the master strip are realtime engine mixer state, applied
- * without re-scheduling. Only the offline export renderer
- * (src/export/mixdown.ts + src/export/strip-render.ts) still bakes strip DSP
- * into its render.
+ * without re-scheduling. The offline export renderer
+ * (src/export/engine-render.ts) reuses the same clip transforms and drives
+ * an offline engine instance, so exports apply identical mixer state.
  *
  * Nothing here produces sound by itself: engine.addClip only places content
  * on the engine timeline, which stays silent until the transport plays.
@@ -19,15 +18,8 @@ import type { EngineHandle } from '@/engine/engine';
 import type { MidiNote } from '@/engine/instruments';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import { useProjectStore } from './store';
-import type { EditorClip, EditorNote, EditorTrack } from './types';
+import type { EditorNote, EditorTrack } from './types';
 import { clipKind } from './types';
-
-/**
- * Default peak level prerendered MIDI clips are normalized to (-6 dBFS) by the
- * offline export renderer (src/export/mixdown.ts). Audio clips are never
- * normalized.
- */
-export const DEFAULT_TARGET_PEAK = 0.5;
 
 /** The mute/solo subset of a track relevant to audibility. */
 export type TrackAudibilityState = Pick<EditorTrack, 'mute' | 'solo'>;
@@ -214,23 +206,6 @@ export function resampleChannelsLinear(
   });
 }
 
-/**
- * Deterministic processed-buffer cache key for an audio clip render: covers
- * everything that shapes the buffer fed to the strip processor (asset, source
- * window, tempo, fades and target sample rate). Used by the offline export
- * renderer (src/export/mixdown.ts) to key its processed buffers.
- */
-export function audioClipProcessingCacheKey(
-  clip: Pick<EditorClip, 'assetId' | 'sourceOffsetPpq' | 'lengthPpq' | 'fadeInPpq' | 'fadeOutPpq'>,
-  tempoBpm: number,
-  sampleRate: number,
-): string {
-  return (
-    `audio|${clip.assetId}|off=${clip.sourceOffsetPpq}|len=${clip.lengthPpq}` +
-    `|bpm=${tempoBpm}|fi=${clip.fadeInPpq ?? 0}|fo=${clip.fadeOutPpq ?? 0}|sr=${sampleRate}`
-  );
-}
-
 /** One clip scheduled by {@link scheduleProjectClips}. */
 export interface ScheduledProjectClip {
   /** Engine clip id (pass to engine.removeClip to unschedule). */
@@ -259,15 +234,11 @@ export interface ScheduleProjectClipsOptions {
  *
  * MIDI clips are skipped entirely: MIDI content and instruments are realtime
  * engine state, fed by the engine's MIDI scheduling (src/engine/midi-sync.ts).
- * Only the offline export renderer (src/export/mixdown.ts) still prerenders
- * MIDI to audio.
  *
  * All tracks are scheduled regardless of mute/solo, and clips are scheduled
  * raw: audibility, track volume, track strips (inserts/EQ), gain/pan,
  * sends/buses and the master strip are realtime engine mixer state, applied
- * by the engine without re-scheduling. Only the offline export renderer
- * (src/export/mixdown.ts + src/export/strip-render.ts) still bakes strip DSP
- * into its render.
+ * by the engine without re-scheduling.
  *
  * Audio clips load their asset from the asset store, slice the source window
  * (sourceOffsetPpq/lengthPpq at the schedule tempo), bake fades into the

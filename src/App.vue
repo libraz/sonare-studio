@@ -1483,14 +1483,26 @@ onMounted(async () => {
       exportProbe: async (
         includeMasterChain = true,
         range?: { startPpq: number; endPpq: number },
+        stems = false,
       ) => {
         const result = await renderMixdownInWorker(serializeProject(), {
           includeMasterChain,
           ...(range !== undefined ? { range } : {}),
+          ...(stems ? { stems } : {}),
         }).result;
         const wav = encodeWav(result.channels, result.sampleRate, { bitDepth: 16 });
         let hash = 0x811c9dc5;
         for (const byte of wav) hash = Math.imul(hash ^ byte, 0x01000193);
+        const peakOf = (channels: Float32Array[]) => {
+          let peak = 0;
+          for (const channel of channels) {
+            for (const sample of channel) {
+              const a = Math.abs(sample);
+              if (a > peak) peak = a;
+            }
+          }
+          return peak > 0 ? 20 * Math.log10(peak) : Number.NEGATIVE_INFINITY;
+        };
         return {
           totalFrames: result.totalFrames,
           sampleRate: result.sampleRate,
@@ -1500,6 +1512,12 @@ onMounted(async () => {
           wavBytes: wav.length,
           riff: String.fromCharCode(wav[0], wav[1], wav[2], wav[3]),
           hash: (hash >>> 0).toString(16),
+          stems:
+            result.stems?.map((stem) => ({
+              trackIndex: stem.trackIndex,
+              name: stem.name,
+              peakDb: peakOf(stem.channels),
+            })) ?? null,
         };
       },
       meterPeakDb: () => {

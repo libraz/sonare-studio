@@ -11,11 +11,16 @@
  * - buses and sends are rendered,
  * - automation lanes are rendered,
  * - MIDI tracks play at their live engine level (no per-clip peak
- *   normalization; the targetPeak option is ignored),
+ *   normalization),
  * - the full tempo map applies (renderMixdown assumed the first segment's
  *   tempo throughout).
  * The project mastering chain remains an export-only stage applied to the
  * bounced stereo, exactly as before (it is not audible live).
+ *
+ * Stems render through the same path: one extra engine pass per audible
+ * track with every other lane muted, master strip/levels and the mastering
+ * chain skipped (post-strip, pre-master). A stem therefore includes the
+ * track's bus/send contributions.
  */
 
 import { buildMidiClipSchedules } from '@/engine/midi-sync';
@@ -28,6 +33,7 @@ import {
   type MixdownRangePpq,
   type MixdownReport,
   type MixdownResult,
+  type MixdownStem,
 } from '@/export/mixdown';
 import { ensureWasm } from '@/lib/wasm';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
@@ -37,6 +43,7 @@ import { DEFAULT_SYNTH_PRESET } from '@/project/instrument';
 import { clampPan, masteringChainIsActive } from '@/project/mixer';
 import {
   applyAudioClipFades,
+  isTrackAudible,
   resampleChannelsLinear,
   sliceAudioClipWindow,
 } from '@/project/scheduling';
@@ -130,6 +137,8 @@ export interface EngineRenderOptions {
    * apply, as they are audible in live playback).
    */
   includeMasterChain?: boolean;
+  /** True also returns one stereo stem per track (post-strip, pre-master). */
+  stems?: boolean;
   /** Mastering/metering seams; undefined derives them from the wasm module. */
   deps?: Pick<MixdownDeps, 'mastering' | 'metering'> | null;
   /** Audio asset loader (defaults to the OPFS asset store's loadAsset). */
@@ -176,13 +185,24 @@ function masterParamId(kind: number): number {
   return ENGINE_MIXER_TARGET_BASE | (ENGINE_MIXER_LANE_MASTER << 8) | (kind & 0xff);
 }
 
+/** What one engine pass renders. */
+interface RenderPass {
+  /** Apply the master strip scene (inserts/EQ). */
+  masterStrip: boolean;
+  /** Apply master gain/pan and master automation lanes. */
+  masterLevels: boolean;
+  /** Non-null isolates this track index (every other lane muted). */
+  soloIndex: number | null;
+}
+
 /**
- * Renders a project document to a stereo mixdown through an offline engine
- * instance. See the module doc comment for the relation to live playback.
+ * Renders a project document to a stereo mixdown (and optional per-track
+ * stems) through offline engine instances. See the module doc comment for
+ * the relation to live playback.
  *
  * @param doc Plain project document (serializeProject output or equivalent).
  * @param options Render options and injectable seams.
- * @returns The mixdown, its loudness/peak report.
+ * @returns The mixdown, its loudness/peak report and optional stems.
  * @throws MixdownCancelledError when options.shouldCancel returns true.
  */
 export async function renderProjectWithEngine(
@@ -222,36 +242,154 @@ export async function renderProjectWithEngine(
   }
 
   options.onProgress?.(0, 'engine.prepare');
-  const engine = createEngine(sampleRate, RENDER_BLOCK_FRAMES);
-  try {
-    // Synthetic numeric track ids: documents store tracks positionally.
-    const trackIds = doc.tracks.map((_, index) => index + 1);
 
-    // Buses first (sends must reference declared buses), in document order.
-    const busNumberById = new Map<string, number>();
-    const buses = (doc.mixer?.buses ?? []).map((bus, index) => {
-      busNumberById.set(bus.id, index + 1);
-      return { busId: index + 1, gainDb: bus.gainDb };
+  // Synthetic numeric track ids: documents store tracks positionally.
+  const trackIds = doc.tracks.map((_, index) => index + 1);
+
+  // Buses first (sends must reference declared buses), in document order.
+  const busNumberById = new Map<string, number>();
+  const buses = (doc.mixer?.buses ?? []).map((bus, index) => {
+    busNumberById.set(bus.id, index + 1);
+    return { busId: index + 1, gainDb: bus.gainDb };
+  });
+  const lanes = doc.tracks.map((track, index) => {
+    const sends: SendSpec[] = (track.mixer?.sends ?? [])
+      .filter((send) => busNumberById.has(send.busId))
+      .map((send) => ({
+        busId: busNumberById.get(send.busId) as number,
+        levelDb: send.levelDb,
+        enabled: send.enabled,
+      }));
+    return { trackId: trackIds[index], ...(sends.length > 0 ? { sends } : {}) };
+  });
+
+  // Pre-load instrument fonts once; engine passes then configure synchronously.
+  const fontBytesById = new Map<string, Uint8Array>();
+  for (const track of doc.tracks) {
+    if (track.kind === 'midi' && track.instrument?.kind === 'sf2') {
+      if (!fontBytesById.has(track.instrument.fontId)) {
+        fontBytesById.set(track.instrument.fontId, await loadFontBytes(track.instrument.fontId));
+      }
+    }
+  }
+  if (fontBytesById.size > 1) {
+    console.warn(
+      `Engine render: ${fontBytesById.size} distinct SoundFonts requested, but the engine holds a single global SoundFont — the last loaded font wins.`,
+    );
+  }
+
+  // MIDI clip schedules via the live builder (velocity-folded clip gain,
+  // SF2 preludes, tempo-map-exact sample positions).
+  const midiTracks: EditorTrack[] = doc.tracks.map((track, index) => ({
+    id: trackIds[index],
+    name: track.name,
+    color: track.color,
+    kind: track.kind,
+    mute: track.mute,
+    solo: track.solo,
+    volume: track.volume,
+    pan: track.pan,
+    order: index,
+    ...(track.instrument !== undefined ? { instrument: track.instrument } : {}),
+    ...(track.mixer !== undefined ? { mixer: track.mixer } : {}),
+  }));
+  const midiClips: EditorClip[] = [];
+  doc.tracks.forEach((track, trackIndex) => {
+    track.clips.forEach((clip, clipIndex) => {
+      if ((clip.kind ?? 'midi') !== 'midi') return;
+      midiClips.push({
+        id: trackIndex * 10_000 + clipIndex + 1,
+        trackId: trackIds[trackIndex],
+        name: clip.name,
+        startPpq: clip.startPpq,
+        lengthPpq: clip.lengthPpq,
+        sourceOffsetPpq: clip.sourceOffsetPpq,
+        gain: clip.gain,
+        loopEnabled: clip.loopEnabled,
+        loopLengthPpq: clip.loopLengthPpq,
+        // Document notes drop the editor id; synthesize stable ones.
+        notes: clip.notes.map((note, noteIndex) => ({ id: noteIndex + 1, ...note })),
+      });
     });
+  });
+  const midiSchedules =
+    midiClips.length > 0
+      ? buildMidiClipSchedules(midiTracks, midiClips, tempoSegments, sampleRate)
+      : [];
 
+  // Audio clips: the live scheduling transforms (slice window, baked fades,
+  // linear resample to the render rate), placed at their timeline PPQ.
+  const audioClips: EngineClipSpec[] = [];
+  const renderAudioClip = async (clip: DocumentClip, trackId: number): Promise<void> => {
+    if (!clip.assetId || clip.gain <= 0) return;
+    let asset: LoadedAudioAsset;
+    try {
+      asset = await loadAudio(clip.assetId);
+    } catch {
+      // Missing or unreadable asset: leave the clip silent, like live playback.
+      return;
+    }
+    let channels = sliceAudioClipWindow(
+      asset.channels,
+      asset.meta.sampleRate,
+      clip.sourceOffsetPpq,
+      clip.lengthPpq,
+      sliceTempoBpm,
+    );
+    channels = applyAudioClipFades(
+      channels,
+      asset.meta.sampleRate,
+      sliceTempoBpm,
+      clip.fadeInPpq ?? 0,
+      clip.fadeOutPpq ?? 0,
+    );
+    channels = resampleChannelsLinear(channels, asset.meta.sampleRate, sampleRate);
+    if (channels.length === 0 || channels[0].length === 0) return;
+    audioClips.push({
+      trackId,
+      channels,
+      startPpq: clip.startPpq,
+      lengthSamples: channels[0].length,
+      gain: clip.gain,
+    });
+  };
+  for (let index = 0; index < doc.tracks.length; index++) {
+    for (const clip of doc.tracks[index].clips) {
+      if ((clip.kind ?? 'midi') !== 'audio') continue;
+      checkCancel();
+      await renderAudioClip(clip, trackIds[index]);
+    }
+  }
+
+  // Resolve the render window in frames.
+  const startSample = ppqToSamples(tempoMap, range.startPpq, sampleRate);
+  let endSample: number;
+  if (range.endPpq !== null) {
+    endSample = ppqToSamples(tempoMap, range.endPpq, sampleRate);
+  } else {
+    let contentEndPpq = 0;
+    for (const track of doc.tracks) {
+      for (const clip of track.clips) {
+        contentEndPpq = Math.max(contentEndPpq, clip.startPpq + clip.lengthPpq);
+      }
+    }
+    endSample =
+      ppqToSamples(tempoMap, contentEndPpq, sampleRate) +
+      Math.round(RELEASE_TAIL_SECONDS * sampleRate);
+  }
+  const totalFrames = Math.max(0, endSample - startSample);
+
+  /** Replays the pre-built program onto a fresh engine (synchronous). */
+  const configureEngine = (engine: OfflineRenderEngine, pass: RenderPass): void => {
     // The engine validates sends against already-declared buses, so the bus
     // set must be installed before any lane that carries sends.
     if (buses.length > 0) engine.setTrackBuses(buses);
-    engine.setTrackLanes(
-      doc.tracks.map((track, index) => {
-        const sends: SendSpec[] = (track.mixer?.sends ?? [])
-          .filter((send) => busNumberById.has(send.busId))
-          .map((send) => ({
-            busId: busNumberById.get(send.busId) as number,
-            levelDb: send.levelDb,
-            enabled: send.enabled,
-          }));
-        return { trackId: trackIds[index], ...(sends.length > 0 ? { sends } : {}) };
-      }),
-    );
+    engine.setTrackLanes(lanes);
 
     // Per-track strips (inserts + EQ + bypass flags), lane base fader/pan and
-    // solo/mute — the same state the live mixer/strip syncs install.
+    // solo/mute — the same state the live mixer/strip syncs install. A stem
+    // pass instead isolates one lane by muting every other one (solo would
+    // also keep the document's own soloed tracks audible).
     doc.tracks.forEach((track, index) => {
       const strip = track.mixer;
       const trackId = trackIds[index];
@@ -264,7 +402,11 @@ export async function renderProjectWithEngine(
           engine.setTrackStripEqBandJson(trackId, bandIndex, JSON.stringify(band));
         });
       }
-      engine.setSoloMute(index, track.solo, track.mute);
+      if (pass.soloIndex === null) {
+        engine.setSoloMute(index, track.solo, track.mute);
+      } else {
+        engine.setSoloMute(index, false, index !== pass.soloIndex);
+      }
       engine.setParameter(
         laneParamId(index, ENGINE_MIXER_PARAM_FADER_DB),
         linearToDb(track.volume) + (strip?.gainDb ?? 0),
@@ -272,9 +414,10 @@ export async function renderProjectWithEngine(
       engine.setParameter(laneParamId(index, ENGINE_MIXER_PARAM_PAN), clampPan(strip?.pan ?? 0));
     });
 
-    // Master strip: inserts/EQ only with the chain enabled; gain/pan always.
+    // Master strip: inserts/EQ only with the chain enabled; gain/pan whenever
+    // the pass renders master levels (stems are pre-master).
     const master = doc.mixer?.master;
-    if (includeMasterChain && master && (master.inserts.length > 0 || master.eq)) {
+    if (pass.masterStrip && master && (master.inserts.length > 0 || master.eq)) {
       engine.setMasterStripJson(stripSceneJson('master', master));
       master.inserts.forEach((slot, insertIndex) => {
         if (!slot.enabled) engine.setMasterStripInsertBypassed(insertIndex, true);
@@ -283,8 +426,10 @@ export async function renderProjectWithEngine(
         engine.setMasterStripEqBandJson(bandIndex, JSON.stringify(band));
       });
     }
-    engine.setParameter(masterParamId(ENGINE_MIXER_PARAM_FADER_DB), master?.gainDb ?? 0);
-    engine.setParameter(masterParamId(ENGINE_MIXER_PARAM_PAN), clampPan(master?.pan ?? 0));
+    if (pass.masterLevels) {
+      engine.setParameter(masterParamId(ENGINE_MIXER_PARAM_FADER_DB), master?.gainDb ?? 0);
+      engine.setParameter(masterParamId(ENGINE_MIXER_PARAM_PAN), clampPan(master?.pan ?? 0));
+    }
 
     // Automation lanes (track entries + master), enabled lanes only.
     doc.tracks.forEach((track, index) => {
@@ -301,17 +446,19 @@ export async function renderProjectWithEngine(
         );
       }
     });
-    for (const lane of doc.masterAutomation ?? []) {
-      if (!lane.enabled || lane.points.length === 0) continue;
-      const kind = lane.param === 'pan' ? ENGINE_MIXER_PARAM_PAN : ENGINE_MIXER_PARAM_FADER_DB;
-      engine.setAutomationLane(
-        masterParamId(kind),
-        lane.points.map((point) => ({
-          ppq: point.ppq,
-          value: point.value,
-          curveToNext: automationCurveCode(point.curve),
-        })),
-      );
+    if (pass.masterLevels) {
+      for (const lane of doc.masterAutomation ?? []) {
+        if (!lane.enabled || lane.points.length === 0) continue;
+        const kind = lane.param === 'pan' ? ENGINE_MIXER_PARAM_PAN : ENGINE_MIXER_PARAM_FADER_DB;
+        engine.setAutomationLane(
+          masterParamId(kind),
+          lane.points.map((point) => ({
+            ppq: point.ppq,
+            value: point.value,
+            curveToNext: automationCurveCode(point.curve),
+          })),
+        );
+      }
     }
 
     engine.setTempoSegments(
@@ -320,17 +467,6 @@ export async function renderProjectWithEngine(
 
     // Instruments for MIDI tracks: same resolution as the live midi-sync
     // (default preset when absent; one global SoundFont, last font wins).
-    const fontIds = new Set<string>();
-    for (const track of doc.tracks) {
-      if (track.kind === 'midi' && track.instrument?.kind === 'sf2') {
-        fontIds.add(track.instrument.fontId);
-      }
-    }
-    if (fontIds.size > 1) {
-      console.warn(
-        `Engine render: ${fontIds.size} distinct SoundFonts requested, but the engine holds a single global SoundFont — the last loaded font wins.`,
-      );
-    }
     let loadedFontId: string | undefined;
     for (let index = 0; index < doc.tracks.length; index++) {
       const track = doc.tracks[index];
@@ -344,121 +480,34 @@ export async function renderProjectWithEngine(
       } else if (instrument.kind === 'synth-patch') {
         engine.setSynthInstrument(instrument.patch as Record<string, unknown>, destinationId);
       } else {
-        if (instrument.fontId !== loadedFontId) {
-          engine.loadSoundFont(await loadFontBytes(instrument.fontId));
+        const bytes = fontBytesById.get(instrument.fontId);
+        if (bytes && instrument.fontId !== loadedFontId) {
+          engine.loadSoundFont(bytes);
           loadedFontId = instrument.fontId;
         }
         engine.setSf2Instrument({}, destinationId);
       }
     }
 
-    // MIDI clip schedules via the live builder (velocity-folded clip gain,
-    // SF2 preludes, tempo-map-exact sample positions).
-    const midiTracks: EditorTrack[] = doc.tracks.map((track, index) => ({
-      id: trackIds[index],
-      name: track.name,
-      color: track.color,
-      kind: track.kind,
-      mute: track.mute,
-      solo: track.solo,
-      volume: track.volume,
-      pan: track.pan,
-      order: index,
-      ...(track.instrument !== undefined ? { instrument: track.instrument } : {}),
-      ...(track.mixer !== undefined ? { mixer: track.mixer } : {}),
-    }));
-    const midiClips: EditorClip[] = [];
-    doc.tracks.forEach((track, trackIndex) => {
-      track.clips.forEach((clip, clipIndex) => {
-        if ((clip.kind ?? 'midi') !== 'midi') return;
-        midiClips.push({
-          id: trackIndex * 10_000 + clipIndex + 1,
-          trackId: trackIds[trackIndex],
-          name: clip.name,
-          startPpq: clip.startPpq,
-          lengthPpq: clip.lengthPpq,
-          sourceOffsetPpq: clip.sourceOffsetPpq,
-          gain: clip.gain,
-          loopEnabled: clip.loopEnabled,
-          loopLengthPpq: clip.loopLengthPpq,
-          // Document notes drop the editor id; synthesize stable ones.
-          notes: clip.notes.map((note, noteIndex) => ({ id: noteIndex + 1, ...note })),
-        });
-      });
-    });
-    if (midiClips.length > 0) {
-      engine.setMidiClips(buildMidiClipSchedules(midiTracks, midiClips, tempoSegments, sampleRate));
-    }
-
-    // Audio clips: the live scheduling transforms (slice window, baked fades,
-    // linear resample to the render rate), placed at their timeline PPQ.
-    const audioClips: EngineClipSpec[] = [];
-    const renderAudioClip = async (clip: DocumentClip, trackId: number): Promise<void> => {
-      if (!clip.assetId || clip.gain <= 0) return;
-      let asset: LoadedAudioAsset;
-      try {
-        asset = await loadAudio(clip.assetId);
-      } catch {
-        // Missing or unreadable asset: leave the clip silent, like live playback.
-        return;
-      }
-      let channels = sliceAudioClipWindow(
-        asset.channels,
-        asset.meta.sampleRate,
-        clip.sourceOffsetPpq,
-        clip.lengthPpq,
-        sliceTempoBpm,
-      );
-      channels = applyAudioClipFades(
-        channels,
-        asset.meta.sampleRate,
-        sliceTempoBpm,
-        clip.fadeInPpq ?? 0,
-        clip.fadeOutPpq ?? 0,
-      );
-      channels = resampleChannelsLinear(channels, asset.meta.sampleRate, sampleRate);
-      if (channels.length === 0 || channels[0].length === 0) return;
-      audioClips.push({
-        trackId,
-        channels,
-        startPpq: clip.startPpq,
-        lengthSamples: channels[0].length,
-        gain: clip.gain,
-      });
-    };
-    for (let index = 0; index < doc.tracks.length; index++) {
-      for (const clip of doc.tracks[index].clips) {
-        if ((clip.kind ?? 'midi') !== 'audio') continue;
-        checkCancel();
-        await renderAudioClip(clip, trackIds[index]);
-      }
-    }
+    if (midiSchedules.length > 0) engine.setMidiClips(midiSchedules);
     if (audioClips.length > 0) engine.setClips(audioClips);
+  };
 
-    // Resolve the render window in frames.
-    const startSample = ppqToSamples(tempoMap, range.startPpq, sampleRate);
-    let endSample: number;
-    if (range.endPpq !== null) {
-      endSample = ppqToSamples(tempoMap, range.endPpq, sampleRate);
-    } else {
-      let contentEndPpq = 0;
-      for (const track of doc.tracks) {
-        for (const clip of track.clips) {
-          contentEndPpq = Math.max(contentEndPpq, clip.startPpq + clip.lengthPpq);
-        }
-      }
-      endSample =
-        ppqToSamples(tempoMap, contentEndPpq, sampleRate) +
-        Math.round(RELEASE_TAIL_SECONDS * sampleRate);
-    }
-    const totalFrames = Math.max(0, endSample - startSample);
-
-    // Drive the engine block by block from the range start. Lane faders and
-    // other engine parameters are smoothed, so a freshly built engine would
-    // ramp them in from their defaults over the first audible milliseconds.
-    // One priming block with the transport stopped (drains queued commands
-    // and applies automation at the seek position, nothing sounds) followed
-    // by settleParameters snaps every smoother to its target before play.
+  /**
+   * Drives one engine pass block by block over the render window, mapping its
+   * progress onto [progressStart, progressStart + progressSpan]. Lane faders
+   * and other engine parameters are smoothed, so a freshly built engine would
+   * ramp them in from their defaults over the first audible milliseconds. One
+   * priming block with the transport stopped (drains queued commands and
+   * applies automation at the seek position, nothing sounds) followed by
+   * settleParameters snaps every smoother to its target before play.
+   */
+  const renderWindow = async (
+    engine: OfflineRenderEngine,
+    stage: string,
+    progressStart: number,
+    progressSpan: number,
+  ): Promise<[Float32Array, Float32Array]> => {
     const left = new Float32Array(totalFrames);
     const right = new Float32Array(totalFrames);
     engine.seekSample(startSample);
@@ -476,72 +525,121 @@ export async function renderProjectWithEngine(
       if (++blocksSinceCheckpoint >= BLOCKS_PER_CHECKPOINT) {
         blocksSinceCheckpoint = 0;
         checkCancel();
-        options.onProgress?.((framesDone / Math.max(1, totalFrames)) * 0.9, 'engine.render');
+        options.onProgress?.(
+          progressStart + (framesDone / Math.max(1, totalFrames)) * progressSpan,
+          stage,
+        );
         if (options.yieldBetweenBlocks) await options.yieldBetweenBlocks();
       }
     }
     engine.stop();
+    return [left, right];
+  };
 
-    // Mastering chain: export-only stage on the bounced stereo, as before.
-    let mixL: Float32Array = left;
-    let mixR: Float32Array = right;
-    const chain = doc.mixer?.masteringChain;
-    const mastering = deps?.mastering ?? null;
-    if (includeMasterChain && chain && masteringChainIsActive(chain) && mastering) {
-      if (chain.preset !== undefined && mastering.applyPreset) {
-        checkCancel();
-        options.onProgress?.(0.92, `mastering.preset:${chain.preset}`);
-        const out = mastering.applyPreset(chain.preset, mixL, mixR, sampleRate);
-        mixL = out.left;
-        mixR = out.right;
-      }
-      for (const slot of chain.processors) {
-        if (!slot.enabled) continue;
-        checkCancel();
-        options.onProgress?.(0.94, `mastering.${slot.processor}`);
-        const out = mastering.processStereo(slot.processor, mixL, mixR, sampleRate, slot.params);
-        mixL = out.left;
-        mixR = out.right;
-      }
+  /** Runs one configured pass on a fresh engine, destroying it afterwards. */
+  const runPass = async (
+    pass: RenderPass,
+    stage: string,
+    progressStart: number,
+    progressSpan: number,
+  ): Promise<[Float32Array, Float32Array]> => {
+    const engine = (createEngine as NonNullable<typeof createEngine>)(
+      sampleRate,
+      RENDER_BLOCK_FRAMES,
+    );
+    try {
+      configureEngine(engine, pass);
+      return await renderWindow(engine, stage, progressStart, progressSpan);
+    } finally {
+      engine.destroy();
     }
+  };
 
-    // Loudness/peak report (same shape as renderMixdown).
+  // Pass schedule: the mix, then one isolated pass per audible track.
+  const stemTracks = options.stems
+    ? doc.tracks
+        .map((track, trackIndex) => ({ track, trackIndex }))
+        .filter(({ track }) => isTrackAudible(track, doc.tracks))
+    : [];
+  const passSpan = 0.9 / (1 + stemTracks.length);
+
+  let [mixL, mixR] = await runPass(
+    { masterStrip: includeMasterChain, masterLevels: true, soloIndex: null },
+    'engine.render',
+    0,
+    passSpan,
+  );
+
+  const stems: MixdownStem[] = [];
+  for (let i = 0; i < stemTracks.length; i++) {
+    const { track, trackIndex } = stemTracks[i];
     checkCancel();
-    options.onProgress?.(0.97, 'metering');
-    let peak = 0;
-    for (let i = 0; i < mixL.length; i++) {
-      const a = Math.abs(mixL[i]);
-      const b = Math.abs(mixR[i]);
-      if (a > peak) peak = a;
-      if (b > peak) peak = b;
-    }
-    const report: MixdownReport = {
-      peakDb: peak > 0 ? 20 * Math.log10(peak) : Number.NEGATIVE_INFINITY,
-    };
-    const metering = deps?.metering ?? null;
-    if (metering?.truePeakDb && totalFrames > 0) {
-      try {
-        report.truePeakDb = Math.max(
-          metering.truePeakDb(mixL, sampleRate),
-          metering.truePeakDb(mixR, sampleRate),
-        );
-      } catch {
-        // True peak stays absent when the metering call fails.
-      }
-    }
-    if (metering?.integratedLufs && totalFrames > 0) {
-      try {
-        const mono = new Float32Array(totalFrames);
-        for (let i = 0; i < totalFrames; i++) mono[i] = 0.5 * (mixL[i] + mixR[i]);
-        report.lufs = metering.integratedLufs(mono, sampleRate);
-      } catch {
-        // Loudness stays absent when the metering call fails.
-      }
-    }
-    options.onProgress?.(1, 'done');
-
-    return { channels: [mixL, mixR], sampleRate, totalFrames, report };
-  } finally {
-    engine.destroy();
+    const channels = await runPass(
+      { masterStrip: false, masterLevels: false, soloIndex: trackIndex },
+      `engine.stem:${trackIndex}`,
+      passSpan * (1 + i),
+      passSpan,
+    );
+    stems.push({ trackIndex, name: track.name, channels });
   }
+
+  // Mastering chain: export-only stage on the bounced stereo, as before.
+  const chain = doc.mixer?.masteringChain;
+  const mastering = deps?.mastering ?? null;
+  if (includeMasterChain && chain && masteringChainIsActive(chain) && mastering) {
+    if (chain.preset !== undefined && mastering.applyPreset) {
+      checkCancel();
+      options.onProgress?.(0.92, `mastering.preset:${chain.preset}`);
+      const out = mastering.applyPreset(chain.preset, mixL, mixR, sampleRate);
+      mixL = out.left;
+      mixR = out.right;
+    }
+    for (const slot of chain.processors) {
+      if (!slot.enabled) continue;
+      checkCancel();
+      options.onProgress?.(0.94, `mastering.${slot.processor}`);
+      const out = mastering.processStereo(slot.processor, mixL, mixR, sampleRate, slot.params);
+      mixL = out.left;
+      mixR = out.right;
+    }
+  }
+
+  // Loudness/peak report (same shape as renderMixdown).
+  checkCancel();
+  options.onProgress?.(0.97, 'metering');
+  let peak = 0;
+  for (let i = 0; i < mixL.length; i++) {
+    const a = Math.abs(mixL[i]);
+    const b = Math.abs(mixR[i]);
+    if (a > peak) peak = a;
+    if (b > peak) peak = b;
+  }
+  const report: MixdownReport = {
+    peakDb: peak > 0 ? 20 * Math.log10(peak) : Number.NEGATIVE_INFINITY,
+  };
+  const metering = deps?.metering ?? null;
+  if (metering?.truePeakDb && totalFrames > 0) {
+    try {
+      report.truePeakDb = Math.max(
+        metering.truePeakDb(mixL, sampleRate),
+        metering.truePeakDb(mixR, sampleRate),
+      );
+    } catch {
+      // True peak stays absent when the metering call fails.
+    }
+  }
+  if (metering?.integratedLufs && totalFrames > 0) {
+    try {
+      const mono = new Float32Array(totalFrames);
+      for (let i = 0; i < totalFrames; i++) mono[i] = 0.5 * (mixL[i] + mixR[i]);
+      report.lufs = metering.integratedLufs(mono, sampleRate);
+    } catch {
+      // Loudness stays absent when the metering call fails.
+    }
+  }
+  options.onProgress?.(1, 'done');
+
+  const result: MixdownResult = { channels: [mixL, mixR], sampleRate, totalFrames, report };
+  if (options.stems) result.stems = stems;
+  return result;
 }
