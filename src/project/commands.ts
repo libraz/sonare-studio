@@ -57,6 +57,7 @@ import {
 import {
   type ClipCompSegment,
   type ClipTake,
+  type ClipWarp,
   DEFAULT_SECTION_COLOR,
   type EditorClip,
   type EditorMarker,
@@ -70,6 +71,7 @@ import {
   TRACK_COLOR_PALETTE,
   type TrackKind,
 } from './types';
+import { sanitizeWarpAnchors } from './warp';
 
 /** Default note-on velocity for newly created notes. */
 const DEFAULT_VELOCITY = 96;
@@ -137,6 +139,14 @@ function cloneClip(clip: EditorClip): EditorClip {
   if (clip.takes !== undefined) next.takes = clip.takes.map((take) => ({ ...take }));
   if (clip.compSegments !== undefined) {
     next.compSegments = clip.compSegments.map((segment) => ({ ...segment }));
+  }
+  if (clip.warp !== undefined) {
+    next.warp = {
+      ...clip.warp,
+      ...(clip.warp.anchors !== undefined
+        ? { anchors: clip.warp.anchors.map((anchor) => ({ ...anchor })) }
+        : {}),
+    };
   }
   return next;
 }
@@ -1689,6 +1699,47 @@ export function dropClipTakes(clipId: number, bakedAssetId?: string): void {
       delete next.takes;
       delete next.compSegments;
       return next;
+    });
+    store.refresh();
+  });
+}
+
+/**
+ * Sets (or clears with null) the tempo-follow (warp) state of an audio clip
+ * as one undoable edit. Anchors are sanitized (sorted, strictly inside the
+ * clip window, strictly increasing source times). App-metadata only; the
+ * audio re-bounces through the schedule watcher.
+ *
+ * @param clipId Id of the audio clip.
+ * @param warp New warp state, or null to play at the recorded rate.
+ */
+export function setClipWarp(clipId: number, warp: ClipWarp | null): void {
+  const store = useProjectStore();
+  const index = store.clips.findIndex((clip) => clip.id === clipId);
+  if (index < 0) throw new RangeError(`Unknown clip id ${clipId}`);
+  const clip = store.clips[index];
+  if ((clip.kind ?? 'midi') !== 'audio') {
+    throw new RangeError(`Clip ${clipId} is not an audio clip`);
+  }
+  let next: ClipWarp | undefined;
+  if (warp !== null) {
+    if (!Number.isFinite(warp.sourceBpm) || warp.sourceBpm <= 0) {
+      throw new RangeError(`Warp sourceBpm must be finite and > 0, got ${warp.sourceBpm}`);
+    }
+    const anchors = sanitizeWarpAnchors(warp.anchors ?? [], clip.lengthPpq);
+    next = {
+      enabled: warp.enabled,
+      sourceBpm: warp.sourceBpm,
+      ...(anchors.length > 0 ? { anchors } : {}),
+    };
+  }
+  execute(0, () => {
+    store.clips = store.clips.map((entry, i) => {
+      if (i !== index) return entry;
+      const updated = { ...entry };
+      if (next === undefined) delete updated.warp;
+      else updated.warp = next;
+      return updated;
     });
     store.refresh();
   });

@@ -1,10 +1,33 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { linearToDb } from '@/engine/mixer-sync';
 import type { OfflineRenderEngine } from '@/export/engine-render';
 import { renderProjectWithEngine } from '@/export/engine-render';
 import { MixdownCancelledError } from '@/export/mixdown';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import type { ProjectDocument } from '@/project/serialization';
+import { clearWarpBakeCache } from '@/project/warp';
+
+// The warp bake resolves its stretch through ensureWasm: provide a
+// deterministic nearest-neighbour fake (output length = input / rate).
+const timeStretch = vi.hoisted(() =>
+  vi.fn((samples: Float32Array, _sampleRate: number, rate: number): Float32Array => {
+    const frames = Math.max(1, Math.round(samples.length / rate));
+    const out = new Float32Array(frames);
+    for (let i = 0; i < frames; i++) {
+      out[i] = samples[Math.min(samples.length - 1, Math.round(i * rate))];
+    }
+    return out;
+  }),
+);
+
+vi.mock('@/lib/wasm', () => ({
+  ensureWasm: async () => ({ timeStretch }),
+}));
+
+beforeEach(() => {
+  clearWarpBakeCache();
+  timeStretch.mockClear();
+});
 
 /** Records every engine call and renders a constant sample value. */
 class FakeEngine implements OfflineRenderEngine {
@@ -336,6 +359,103 @@ describe('renderProjectWithEngine', () => {
     });
     await expect(promise).rejects.toBeInstanceOf(MixdownCancelledError);
     expect(engine.destroyed).toBe(true);
+  });
+
+  it('bakes a warp-enabled clip (no takes) into one tempo-length engine clip', async () => {
+    const doc = makeDoc();
+    // sourceBpm 240: the 2 PPQ window covers 0.5 s of source (24000 frames),
+    // stretched onto 1 s (48000 frames) at the 120 BPM document tempo.
+    doc.tracks[1].clips[0].warp = { enabled: true, sourceBpm: 240 };
+
+    // Mono index ramp so warped sample positions are observable.
+    const rampFrames = 48000;
+    const ramp = new Float32Array(rampFrames);
+    for (let i = 0; i < rampFrames; i++) ramp[i] = i;
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, {
+      deps: null,
+      createEngine: () => engine,
+      loadAudioAsset: async () => ({
+        meta: {
+          id: 'asset-1',
+          name: 'loop.wav',
+          sampleRate: 48000,
+          numChannels: 1,
+          numFrames: rampFrames,
+        },
+        channels: [ramp],
+      }),
+    });
+
+    const clips = engine.named('setClips')[0][1] as Array<{
+      trackId: number;
+      channels: Float32Array[];
+      startPpq: number;
+      lengthSamples: number;
+      gain?: number;
+    }>;
+    // One engine clip whose length is exactly lengthPpq at the render tempo.
+    expect(clips).toHaveLength(1);
+    expect(clips[0].trackId).toBe(2);
+    expect(clips[0].startPpq).toBe(2);
+    expect(clips[0].lengthSamples).toBe(48000);
+    expect(clips[0].gain).toBeCloseTo(0.8, 5);
+    // The wasm stretch ran at rate 0.5 (24000 source frames over 48000):
+    // the fake expansion reads source frame round(i / 2) at output frame i.
+    expect(timeStretch).toHaveBeenCalledTimes(1);
+    expect(timeStretch.mock.calls[0][2]).toBeCloseTo(0.5, 10);
+    expect(clips[0].channels[0][1000]).toBe(500);
+    // An unwarped slice would read source frame i here (4000, not 2000).
+    expect(clips[0].channels[0][4000]).toBe(2000);
+  });
+
+  it('keeps the unwarped comp path for a clip with takes and warp', async () => {
+    const doc = makeDoc();
+    const drumClip = doc.tracks[1].clips[0];
+    drumClip.warp = { enabled: true, sourceBpm: 240 };
+    drumClip.takes = [
+      { assetId: 'asset-1', name: 'Take 1' },
+      { assetId: 'asset-2', name: 'Take 2' },
+    ];
+    drumClip.compSegments = [
+      { startPpq: 0, takeIndex: 0 },
+      { startPpq: 1, takeIndex: 1 },
+    ];
+
+    const rampFrames = 48000;
+    const ramp = new Float32Array(rampFrames);
+    for (let i = 0; i < rampFrames; i++) ramp[i] = i;
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, {
+      deps: null,
+      createEngine: () => engine,
+      loadAudioAsset: async (assetId: string) =>
+        assetId === 'asset-2'
+          ? {
+              meta: {
+                id: 'asset-2',
+                name: 'take2.wav',
+                sampleRate: 48000,
+                numChannels: 1,
+                numFrames: rampFrames,
+              },
+              channels: [ramp],
+            }
+          : fakeAsset(),
+    });
+
+    const clips = engine.named('setClips')[0][1] as Array<{
+      channels: Float32Array[];
+      startPpq: number;
+      lengthSamples: number;
+    }>;
+    // The comp expansion wins: two fixed-rate segments, never stretched.
+    expect(clips).toHaveLength(2);
+    expect(clips.map((clip) => clip.startPpq)).toEqual([2, 3]);
+    expect(clips.map((clip) => clip.lengthSamples)).toEqual([24000, 24000]);
+    // Second segment reads take 2 verbatim from source offset 1 PPQ.
+    expect(clips[1].channels[0][0]).toBe(24000);
+    expect(timeStretch).not.toHaveBeenCalled();
   });
 
   it('expands a comped audio clip into one engine clip per segment', async () => {

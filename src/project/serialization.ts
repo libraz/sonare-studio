@@ -99,6 +99,12 @@ export interface DocumentClip {
   takes?: Array<{ assetId: string; name: string }>;
   /** Comp selection over `takes` (clip-window-relative); omitted when absent. */
   compSegments?: Array<{ startPpq: number; takeIndex: number }>;
+  /** Tempo-follow (warp) state; omitted when the clip plays at its recorded rate. */
+  warp?: {
+    enabled: boolean;
+    sourceBpm: number;
+    anchors?: Array<{ ppq: number; sourceSeconds: number }>;
+  };
   /**
    * Display-only score annotations of this clip's notes, content-addressed
    * (editor note ids are session-scoped); omitted when the clip has none.
@@ -241,6 +247,15 @@ function toDocumentClip(
     if (clip.compSegments !== undefined && clip.compSegments.length > 0) {
       out.compSegments = clip.compSegments.map((segment) => ({ ...segment }));
     }
+  }
+  if (clip.warp !== undefined) {
+    out.warp = {
+      enabled: clip.warp.enabled,
+      sourceBpm: clip.warp.sourceBpm,
+      ...(clip.warp.anchors !== undefined && clip.warp.anchors.length > 0
+        ? { anchors: clip.warp.anchors.map((anchor) => ({ ...anchor })) }
+        : {}),
+    };
   }
   if (annotations !== undefined) {
     // Annotations are re-addressed by note content (orphans drop out here).

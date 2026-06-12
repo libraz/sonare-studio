@@ -631,6 +631,14 @@ export const useProjectStore = defineStore('project', () => {
             entry.compSegments = previous.compSegments.map((segment) => ({ ...segment }));
           }
         }
+        if (previous?.warp !== undefined) {
+          entry.warp = {
+            ...previous.warp,
+            ...(previous.warp.anchors !== undefined
+              ? { anchors: previous.warp.anchors.map((anchor) => ({ ...anchor })) }
+              : {}),
+          };
+        }
         const fadeIn =
           serializedFadePpq(serialized.fade_in_ppq, serialized.fade_in) ?? previous?.fadeInPpq ?? 0;
         if (fadeIn > 0) entry.fadeInPpq = fadeIn;
@@ -950,6 +958,25 @@ export const useProjectStore = defineStore('project', () => {
                 takeIndex: Number(segment.takeIndex),
               }));
             }
+          }
+          if (
+            meta.warp !== undefined &&
+            typeof meta.warp.enabled === 'boolean' &&
+            Number.isFinite(meta.warp.sourceBpm) &&
+            meta.warp.sourceBpm > 0
+          ) {
+            next.warp = {
+              enabled: meta.warp.enabled,
+              sourceBpm: meta.warp.sourceBpm,
+              ...(Array.isArray(meta.warp.anchors) && meta.warp.anchors.length > 0
+                ? {
+                    anchors: meta.warp.anchors.map((anchor) => ({
+                      ppq: Number(anchor.ppq),
+                      sourceSeconds: Number(anchor.sourceSeconds),
+                    })),
+                  }
+                : {}),
+            };
           }
         }
         return next;

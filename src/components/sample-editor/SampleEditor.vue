@@ -2,6 +2,9 @@
 import { computed, markRaw, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { setupCanvas } from '@/components/piano-roll/theme';
 import { type LoadedAudioAsset, loadAsset, saveAsset } from '@/persistence/assets';
+import { setClipWarp } from '@/project/commands';
+import { useProjectStore } from '@/project/store';
+import type { ClipWarp } from '@/project/types';
 import {
   type AssetVersion,
   createHistory,
@@ -31,6 +34,12 @@ import {
   selectionReadout,
 } from '@/ui/sample-editor/selection';
 import { SampleViewport } from '@/ui/sample-editor/viewport';
+import {
+  defaultWarpAnchor,
+  findWarpClip,
+  mergedWarp,
+  segmentStretchRatios,
+} from '@/ui/sample-editor/warp-controls';
 import {
   declickRange,
   denoiseRange,
@@ -435,6 +444,84 @@ function versionTitle(version: AssetVersion): string {
   return `${version.label} — ${version.assetId}`;
 }
 
+// --- Clip warp (tempo follow) ---------------------------------------------------
+
+const project = useProjectStore();
+
+/**
+ * The clip whose tempo-follow state the warp controls edit: the active clip
+ * when it is an audio clip without takes referencing this asset, else the
+ * first such clip. Null hides the section (MIDI clips, clips with takes,
+ * assets not placed in the arrangement).
+ */
+const warpClip = computed(() => findWarpClip(project.clips, project.clipId, props.assetId));
+const warpEnabled = computed(() => warpClip.value?.warp?.enabled ?? false);
+const warpAnchors = computed(() => warpClip.value?.warp?.anchors ?? []);
+/** Per-segment stretch ratio hints at the current project tempo. */
+const warpRatioHint = computed(() => {
+  const clip = warpClip.value;
+  if (!clip) return '';
+  return segmentStretchRatios(clip, project.tempoBpm)
+    .map((ratio) => `×${ratio.toFixed(2)}`)
+    .join(' · ');
+});
+
+const warpBpmInput = ref('');
+watch(
+  () => [warpClip.value?.id, warpClip.value?.warp?.sourceBpm] as const,
+  () => {
+    warpBpmInput.value = String(warpClip.value?.warp?.sourceBpm ?? project.tempoBpm);
+  },
+  { immediate: true },
+);
+
+/** Applies a partial warp edit through the undoable setClipWarp command. */
+function commitWarp(overrides: Partial<ClipWarp>): void {
+  const clip = warpClip.value;
+  if (!clip) return;
+  try {
+    setClipWarp(clip.id, mergedWarp(clip.warp, overrides, project.tempoBpm));
+  } catch (err) {
+    error.value = errorMessage(err);
+  }
+}
+
+function onToggleWarp(): void {
+  commitWarp({ enabled: !warpEnabled.value });
+}
+
+function onWarpBpmChange(): void {
+  const bpm = parseNumber(warpBpmInput.value);
+  if (bpm === null || bpm <= 0) {
+    warpBpmInput.value = String(warpClip.value?.warp?.sourceBpm ?? project.tempoBpm);
+    return;
+  }
+  commitWarp({ sourceBpm: bpm });
+}
+
+function onAnchorEdit(index: number, field: 'ppq' | 'sourceSeconds', event: Event): void {
+  const value = Number((event.target as HTMLInputElement).value);
+  if (!Number.isFinite(value)) return;
+  commitWarp({
+    anchors: warpAnchors.value.map((anchor, i) =>
+      i === index ? { ...anchor, [field]: value } : anchor,
+    ),
+  });
+}
+
+function onRemoveAnchor(index: number): void {
+  commitWarp({ anchors: warpAnchors.value.filter((_, i) => i !== index) });
+}
+
+function onAddAnchor(): void {
+  const clip = warpClip.value;
+  if (!clip) return;
+  const sourceBpm = clip.warp?.sourceBpm ?? project.tempoBpm;
+  const anchor = defaultWarpAnchor(warpAnchors.value, clip.lengthPpq, sourceBpm);
+  if (!anchor) return;
+  commitWarp({ anchors: [...warpAnchors.value, anchor] });
+}
+
 // --- Lifecycle -----------------------------------------------------------------
 
 onMounted(() => {
@@ -575,6 +662,74 @@ onBeforeUnmount(() => {
       >
         {{ version.label }}
       </button>
+    </div>
+    <div v-if="warpClip" class="warp">
+      <div class="toolbar">
+        <span class="warp-title">Warp</span>
+        <button
+          type="button"
+          class="warp-toggle"
+          :class="{ on: warpEnabled }"
+          :aria-pressed="warpEnabled"
+          title="Stretch this clip's audio to follow the project tempo"
+          @click="onToggleWarp"
+        >
+          Follow tempo
+        </button>
+        <label>
+          Source BPM
+          <input
+            v-model="warpBpmInput"
+            class="num warp-source-bpm"
+            type="number"
+            step="0.1"
+            min="1"
+            @change="onWarpBpmChange"
+          />
+        </label>
+        <button type="button" class="warp-anchor-add" @click="onAddAnchor">Add anchor</button>
+        <span
+          v-if="warpRatioHint"
+          class="warp-segments"
+          title="Stretch ratio per segment at the project tempo (×1.00 = recorded rate)"
+        >
+          {{ warpRatioHint }}
+        </span>
+      </div>
+      <div
+        v-for="(anchor, index) in warpAnchors"
+        :key="`${index}-${anchor.ppq}`"
+        class="toolbar warp-anchor"
+      >
+        <label>
+          Beat
+          <input
+            class="num"
+            type="number"
+            step="0.25"
+            :value="anchor.ppq"
+            @change="onAnchorEdit(index, 'ppq', $event)"
+          />
+        </label>
+        <label>
+          Source s
+          <input
+            class="num"
+            type="number"
+            step="0.01"
+            :value="anchor.sourceSeconds"
+            @change="onAnchorEdit(index, 'sourceSeconds', $event)"
+          />
+        </label>
+        <button
+          type="button"
+          class="warp-anchor-remove"
+          title="Remove this warp anchor"
+          @click="onRemoveAnchor(index)"
+        >
+          Remove
+        </button>
+      </div>
     </div>
   </div>
 </template>
@@ -724,5 +879,33 @@ onBeforeUnmount(() => {
 .history-entry:disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+.warp {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px solid #2a2e36;
+  padding-top: 6px;
+}
+
+.warp-title {
+  color: #7d8590;
+  font-weight: 600;
+  margin-right: 2px;
+}
+
+.warp-toggle.on {
+  border-color: #60a5fa;
+  color: #e8ebf0;
+}
+
+.warp-segments {
+  color: #9aa3b0;
+  font-variant-numeric: tabular-nums;
+}
+
+.warp-anchor {
+  padding-left: 14px;
 }
 </style>

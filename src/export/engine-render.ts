@@ -51,6 +51,7 @@ import {
 import type { DocumentClip, ProjectDocument } from '@/project/serialization';
 import { normalizeTempoMap, ppqToSamples } from '@/project/tempo-map';
 import type { EditorClip, EditorTrack } from '@/project/types';
+import { bakeWarpedClip } from '@/project/warp';
 
 /** Reserved engine mixer parameter namespace (mirrors the facade encoding). */
 const ENGINE_MIXER_TARGET_BASE = 0x4d580000;
@@ -369,13 +370,20 @@ export async function renderProjectWithEngine(
         // Missing or unreadable asset: leave the slice silent, like live playback.
         continue;
       }
-      let channels = sliceAudioClipWindow(
-        asset.channels,
-        asset.meta.sampleRate,
-        segment.sourceOffsetPpq,
-        segment.lengthPpq,
-        sliceTempoBpm,
-      );
+      // Tempo-following clips bake their window through the offline stretch
+      // instead of the fixed-rate slice (takes-free clips only).
+      let channels =
+        clip.warp?.enabled && (clip.takes?.length ?? 0) === 0
+          ? await bakeWarpedClip(asset.channels, asset.meta.sampleRate, clip, sliceTempoBpm, {
+              cacheKey: segment.assetId,
+            })
+          : sliceAudioClipWindow(
+              asset.channels,
+              asset.meta.sampleRate,
+              segment.sourceOffsetPpq,
+              segment.lengthPpq,
+              sliceTempoBpm,
+            );
       channels = applyAudioClipFades(
         channels,
         asset.meta.sampleRate,

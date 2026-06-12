@@ -150,6 +150,24 @@ export interface ClipCompSegment {
   takeIndex: number;
 }
 
+/** One warp anchor: a clip-relative beat pinned to a source time. */
+export interface WarpAnchor {
+  /** Position relative to the clip window, in PPQ (0 < ppq < lengthPpq). */
+  ppq: number;
+  /** Source time the beat pins to, in seconds from the clip's source start. */
+  sourceSeconds: number;
+}
+
+/** Tempo-follow (warp) state of an audio clip. */
+export interface ClipWarp {
+  /** True stretches the clip's audio to follow the project tempo. */
+  enabled: boolean;
+  /** Tempo of the source material in BPM (> 0). */
+  sourceBpm: number;
+  /** Optional warp anchors bending the beat-to-source mapping; sorted by ppq. */
+  anchors?: WarpAnchor[];
+}
+
 /**
  * One clip in the arrangement mirror.
  *
@@ -195,6 +213,11 @@ export interface EditorClip {
   takes?: ClipTake[];
   /** Comp selection over {@link takes}; absent with takes = take 0 throughout. */
   compSegments?: ClipCompSegment[];
+  /**
+   * Tempo-follow state (audio clips without takes); absent = the clip plays
+   * at its recorded rate. Baked offline on schedule (src/project/warp.ts).
+   */
+  warp?: ClipWarp;
 }
 
 /** One timeline marker (app-level; the Project has no marker removal API). */

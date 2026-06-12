@@ -10,6 +10,7 @@ import {
   moveClip,
   redo,
   setClipFades,
+  setClipWarp,
   splitClip,
   trimClip,
   undo,
@@ -215,6 +216,73 @@ describe('audio track and clip commands', () => {
     expect(() => setClipFades(9999, 1)).toThrow(RangeError);
   });
 
+  it('setClipWarp stores sanitized warp on the mirror, undoably', async () => {
+    const trackId = addAudioTrack();
+    const clipId = await addAudioClip({ trackId, assetId: 'asset-x', lengthPpq: 8 });
+    setClipWarp(clipId, {
+      enabled: true,
+      sourceBpm: 95,
+      anchors: [
+        { ppq: 6, sourceSeconds: 3 }, // unsorted on purpose
+        { ppq: 2, sourceSeconds: 1 },
+        { ppq: 8, sourceSeconds: 4 }, // on the window edge: dropped
+        { ppq: -1, sourceSeconds: 1 }, // outside the window: dropped
+        { ppq: 4, sourceSeconds: Number.NaN }, // non-finite: dropped
+      ],
+    });
+    expect(store.clips.find((c) => c.id === clipId)?.warp).toEqual({
+      enabled: true,
+      sourceBpm: 95,
+      anchors: [
+        { ppq: 2, sourceSeconds: 1 },
+        { ppq: 6, sourceSeconds: 3 },
+      ],
+    });
+
+    undo();
+    expect(store.clips.find((c) => c.id === clipId)?.warp).toBeUndefined();
+    redo();
+    expect(store.clips.find((c) => c.id === clipId)?.warp).toMatchObject({
+      enabled: true,
+      sourceBpm: 95,
+    });
+
+    // null clears the warp state, undoably too.
+    setClipWarp(clipId, null);
+    expect(store.clips.find((c) => c.id === clipId)?.warp).toBeUndefined();
+    undo();
+    expect(store.clips.find((c) => c.id === clipId)?.warp).toMatchObject({ sourceBpm: 95 });
+  });
+
+  it('setClipWarp omits the anchors field when none survive sanitizing', async () => {
+    const trackId = addAudioTrack();
+    const clipId = await addAudioClip({ trackId, assetId: 'asset-x', lengthPpq: 8 });
+    setClipWarp(clipId, {
+      enabled: false,
+      sourceBpm: 100,
+      anchors: [{ ppq: 99, sourceSeconds: 1 }],
+    });
+    const warp = store.clips.find((c) => c.id === clipId)?.warp;
+    expect(warp).toEqual({ enabled: false, sourceBpm: 100 });
+    expect(warp !== undefined && 'anchors' in warp).toBe(false);
+  });
+
+  it('setClipWarp validates its inputs', async () => {
+    const trackId = addAudioTrack();
+    const clipId = await addAudioClip({ trackId, assetId: 'asset-x', lengthPpq: 8 });
+    expect(() => setClipWarp(9999, { enabled: true, sourceBpm: 120 })).toThrow(RangeError);
+    // The default project ships one MIDI clip; warp is audio-only.
+    const midiClip = store.clips.find((c) => (c.kind ?? 'midi') === 'midi');
+    expect(midiClip).toBeDefined();
+    expect(() =>
+      setClipWarp((midiClip as { id: number }).id, { enabled: true, sourceBpm: 120 }),
+    ).toThrow(RangeError);
+    expect(() => setClipWarp(clipId, { enabled: true, sourceBpm: 0 })).toThrow(RangeError);
+    expect(() => setClipWarp(clipId, { enabled: true, sourceBpm: -120 })).toThrow(RangeError);
+    expect(() => setClipWarp(clipId, { enabled: true, sourceBpm: Number.NaN })).toThrow(RangeError);
+    // Failed validation leaves the clip untouched.
+    expect(store.clips.find((c) => c.id === clipId)?.warp).toBeUndefined();
+  });
   it('move and trim keep the audio metadata on the mirror', async () => {
     const trackId = addAudioTrack();
     const clipId = await addAudioClip({ trackId, assetId: 'asset-x', lengthPpq: 8 });

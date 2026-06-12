@@ -11,6 +11,24 @@ import {
 } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
 import type { EditorClip, EditorTrack } from '@/project/types';
+import { clearWarpBakeCache } from '@/project/warp';
+
+// The warp bake resolves its stretch through ensureWasm: provide a
+// deterministic nearest-neighbour fake (output length = input / rate).
+const timeStretch = vi.hoisted(() =>
+  vi.fn((samples: Float32Array, _sampleRate: number, rate: number): Float32Array => {
+    const frames = Math.max(1, Math.round(samples.length / rate));
+    const out = new Float32Array(frames);
+    for (let i = 0; i < frames; i++) {
+      out[i] = samples[Math.min(samples.length - 1, Math.round(i * rate))];
+    }
+    return out;
+  }),
+);
+
+vi.mock('@/lib/wasm', () => ({
+  ensureWasm: async () => ({ timeStretch }),
+}));
 
 /** Builds a track mirror entry with overridable fields. */
 function makeTrack(id: number, overrides: Partial<EditorTrack> = {}): EditorTrack {
@@ -123,6 +141,8 @@ describe('scheduleProjectClips with audio clips', () => {
     setActivePinia(createPinia());
     store = useProjectStore();
     store.tempoBpm = 120;
+    clearWarpBakeCache();
+    timeStretch.mockClear();
   });
 
   it('loads the asset and schedules the buffer at the clip start with the clip gain', async () => {
@@ -256,6 +276,58 @@ describe('scheduleProjectClips with audio clips', () => {
     });
     const channels = addClip.mock.calls[0][1] as Float32Array[];
     expect(channels[0].length).toBe(10); // no resampling happened
+  });
+
+  it('bakes a warp-enabled clip (no takes) into one tempo-length engine clip', async () => {
+    store.tracks = [makeTrack(1)];
+    // sourceBpm 60: the 4 PPQ window covers 4 s of source = 40 frames at
+    // 10 Hz; at the 120 BPM schedule tempo the window is 2 s = 20 frames.
+    store.clips = [
+      makeAudioClip(10, 1, {
+        startPpq: 8,
+        lengthPpq: 4,
+        warp: { enabled: true, sourceBpm: 60 },
+      }),
+    ];
+    const { handle, addClip } = makeHandle(10);
+
+    const scheduled = await scheduleProjectClips(handle, {
+      loadAudioAsset: async () => makeAsset(40),
+    });
+    expect(scheduled).toEqual([{ engineClipId: 500, clipId: 10, trackId: 1 }]);
+    expect(addClip).toHaveBeenCalledTimes(1);
+    const [trackId, channels, startPpq, opts] = addClip.mock.calls[0];
+    expect(trackId).toBe(1);
+    expect(startPpq).toBe(8);
+    expect(opts).toEqual({ gain: 1 });
+    // The channel covers exactly lengthPpq at the schedule tempo.
+    expect((channels as Float32Array[])[0].length).toBe(20);
+    // The wasm stretch ran at rate 2 (40 source frames into 20 frames):
+    // the fake decimation reads every other ramp sample (1, 3, 5, ...).
+    expect(timeStretch).toHaveBeenCalledTimes(1);
+    expect(timeStretch.mock.calls[0][2]).toBeCloseTo(2, 10);
+    expect(Array.from((channels as Float32Array[])[0])).toEqual(
+      Array.from({ length: 20 }, (_, i) => 2 * i + 1),
+    );
+  });
+
+  it('keeps the unwarped comp path for a clip with takes and warp', async () => {
+    store.tracks = [makeTrack(1)];
+    store.clips = [
+      makeAudioClip(10, 1, {
+        lengthPpq: 4,
+        warp: { enabled: true, sourceBpm: 60 },
+        takes: [{ assetId: 'asset-x', name: 'Take 1' }],
+      }),
+    ];
+    const { handle, addClip } = makeHandle(10);
+
+    await scheduleProjectClips(handle, { loadAudioAsset: async () => makeAsset(40) });
+    expect(addClip).toHaveBeenCalledTimes(1);
+    const channels = addClip.mock.calls[0][1] as Float32Array[];
+    // Fixed-rate slice: the first 20 ramp samples verbatim, never stretched.
+    expect(channels[0]).toEqual(makeAsset(40).channels[0].slice(0, 20));
+    expect(timeStretch).not.toHaveBeenCalled();
   });
 
   it('expands a clip with takes into one engine clip per comp segment', async () => {

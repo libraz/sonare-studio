@@ -10,6 +10,7 @@ import {
   clearHistory,
   setClipCompSegments,
   setClipFades,
+  setClipWarp,
   setInsertSidechain,
   setTrackGroup,
 } from '@/project/commands';
@@ -157,6 +158,65 @@ describe('project serialization with audio clips (schema v2)', () => {
     const doc = serializeProject();
     await loadProjectDocument(doc); // no OPFS mock installed at all
     expect(store.clips.filter((c) => c.kind === 'audio')).toHaveLength(2);
+  });
+
+  it('serializes clip warp (with anchors) and round-trips it', async () => {
+    const trackId = addAudioTrack({ name: 'Warped' });
+    const clipId = await addAudioClip({ trackId, assetId: 'asset-loop', lengthPpq: 8 });
+    setClipWarp(clipId, {
+      enabled: true,
+      sourceBpm: 95,
+      anchors: [
+        { ppq: 2, sourceSeconds: 1.25 },
+        { ppq: 4, sourceSeconds: 2 },
+      ],
+    });
+
+    const doc = serializeProject();
+    const docClip = doc.tracks[1].clips[0];
+    expect(docClip.warp).toEqual({
+      enabled: true,
+      sourceBpm: 95,
+      anchors: [
+        { ppq: 2, sourceSeconds: 1.25 },
+        { ppq: 4, sourceSeconds: 2 },
+      ],
+    });
+    // Documents stay plain JSON (warp is pure metadata, no baked audio).
+    expect(JSON.parse(JSON.stringify(doc))).toEqual(doc);
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    const mirror = store.clips.find((c) => c.kind === 'audio');
+    expect(mirror?.warp).toEqual({
+      enabled: true,
+      sourceBpm: 95,
+      anchors: [
+        { ppq: 2, sourceSeconds: 1.25 },
+        { ppq: 4, sourceSeconds: 2 },
+      ],
+    });
+    expect(serializeProject()).toEqual(doc);
+  });
+
+  it('omits warp from documents and mirrors when a clip has none', async () => {
+    const trackId = addAudioTrack();
+    await addAudioClip({ trackId, assetId: 'asset-loop', lengthPpq: 8 });
+    const doc = serializeProject();
+    expect('warp' in doc.tracks[1].clips[0]).toBe(false);
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    expect(store.clips.find((c) => c.kind === 'audio')?.warp).toBeUndefined();
+  });
+
+  it('drops invalid document warp (sourceBpm 0) on load', async () => {
+    const trackId = addAudioTrack();
+    await addAudioClip({ trackId, assetId: 'asset-loop', lengthPpq: 8 });
+    const doc = JSON.parse(JSON.stringify(serializeProject())) as ProjectDocument;
+    doc.tracks[1].clips[0].warp = { enabled: true, sourceBpm: 0 };
+
+    await loadProjectDocument(doc);
+    expect(store.clips.find((c) => c.kind === 'audio')?.warp).toBeUndefined();
+    // The invalid state never resurfaces on re-serialize.
+    expect(serializeProject().tracks[1].clips[0].warp).toBeUndefined();
   });
 
   it('serializes takes and compSegments and round-trips them', async () => {

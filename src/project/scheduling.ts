@@ -21,6 +21,7 @@ import { audioClipSegments } from './comping';
 import { useProjectStore } from './store';
 import type { EditorNote, EditorTrack } from './types';
 import { clipKind } from './types';
+import { bakeWarpedClip } from './warp';
 
 /** The mute/solo subset of a track relevant to audibility. */
 export type TrackAudibilityState = Pick<EditorTrack, 'mute' | 'solo'>;
@@ -280,13 +281,20 @@ export async function scheduleProjectClips(
           // Missing or unreadable asset: leave the slice silent.
           continue;
         }
-        let channels = sliceAudioClipWindow(
-          asset.channels,
-          asset.meta.sampleRate,
-          segment.sourceOffsetPpq,
-          segment.lengthPpq,
-          tempoBpm,
-        );
+        // Tempo-following clips bake their window through the offline
+        // stretch instead of the fixed-rate slice (takes-free clips only).
+        let channels =
+          clip.warp?.enabled && (clip.takes?.length ?? 0) === 0
+            ? await bakeWarpedClip(asset.channels, asset.meta.sampleRate, clip, tempoBpm, {
+                cacheKey: segment.assetId,
+              })
+            : sliceAudioClipWindow(
+                asset.channels,
+                asset.meta.sampleRate,
+                segment.sourceOffsetPpq,
+                segment.lengthPpq,
+                tempoBpm,
+              );
         channels = applyAudioClipFades(
           channels,
           asset.meta.sampleRate,

@@ -81,6 +81,7 @@ import {
   setClipActiveTake,
   setClipCompSegments,
   setClipTakes,
+  setClipWarp,
   setInsertEnabled,
   setInsertSidechain,
   setSelection,
@@ -101,6 +102,7 @@ import {
 } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { makeDemoDocument, type TemplateName } from '@/project/templates';
+import type { WarpAnchor } from '@/project/types';
 import { clipKind, type EditorClip, type EditorTrack, isAudioClip } from '@/project/types';
 import {
   type AutomationStripMode,
@@ -1578,6 +1580,27 @@ onMounted(async () => {
       setInsertSidechain: (trackId: number, index: number, sourceTrackId: number | null) =>
         setInsertSidechain(trackId, index, sourceTrackId),
       setStripGainDb: (target: number | 'master', gainDb: number) => setStripGain(target, gainDb),
+      setClipWarp: (
+        clipId: number,
+        warp: { enabled: boolean; sourceBpm: number; anchors?: WarpAnchor[] } | null,
+      ) => setClipWarp(clipId, warp),
+      addClickClip: async (trackId: number, beats: number, sourceBpm: number, startPpq = 0) => {
+        const sampleRate = handle.value?.ctx.sampleRate ?? 48000;
+        const secondsPerBeat = 60 / sourceBpm;
+        const frames = Math.round(beats * secondsPerBeat * sampleRate);
+        const data = new Float32Array(frames);
+        const burstFrames = Math.round(0.01 * sampleRate);
+        for (let beat = 0; beat < beats; beat++) {
+          const begin = Math.round(beat * secondsPerBeat * sampleRate);
+          for (let i = 0; i < burstFrames && begin + i < frames; i++) {
+            data[begin + i] = Math.sin((2 * Math.PI * 1000 * i) / sampleRate) * 0.9;
+          }
+        }
+        const meta = await ingestAudioBuffer([data], sampleRate, `clicks-${sourceBpm}`, {
+          analysis: null,
+        });
+        return addAudioClip({ trackId, assetId: meta.id, startPpq, name: 'Clicks' });
+      },
       addToneClip: async (
         trackId: number,
         seconds: number,
