@@ -1539,6 +1539,7 @@ onMounted(async () => {
             })) ?? null,
         };
       },
+      lastError: () => errorMessage.value,
       meterPeakDb: () => {
         const latest = bridge.value?.latest;
         return latest ? Math.max(latest.peakDbL, latest.peakDbR) : null;
