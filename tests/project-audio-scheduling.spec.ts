@@ -147,7 +147,7 @@ describe('scheduleProjectClips with audio clips', () => {
     expect(loadAudioAsset).toHaveBeenCalledWith('asset-x');
     expect(addClip).toHaveBeenCalledTimes(1);
     const [trackId, channels, startPpq, opts] = addClip.mock.calls[0];
-    expect(trackId).toBe('track-1');
+    expect(trackId).toBe(1);
     expect(startPpq).toBe(8);
     // No loudness normalization: gain is exactly clip gain x track volume.
     expect(opts).toEqual({ gain: 0.8 * 0.5 });

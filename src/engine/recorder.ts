@@ -19,7 +19,7 @@
  */
 
 import { ensureWasm } from '@/lib/wasm';
-import { engineTrackId, ppqToSeconds } from '@/project/scheduling';
+import { ppqToSeconds } from '@/project/scheduling';
 import type { EngineHandle } from './engine';
 
 /** Thrown when the environment cannot capture microphone audio at all. */
@@ -533,7 +533,16 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     const sampleRate = handle.ctx.sampleRate;
     // Engine-side record path: arm capture and set the punch window. The
     // punch-out is the max-duration bound; stop() disarms earlier as needed.
-    handle.engine.armRecord(engineTrackId(armedTrack), true);
+    // armRecord requires a configured capture buffer; the take audio itself
+    // still comes from the host-side tap, so a small ring satisfies the
+    // contract (overflow on the unused engine buffer is harmless).
+    handle.engine.configureCapture({
+      bufferFrames: Math.max(1, Math.round(sampleRate)),
+      channels: 2,
+      source: 'input',
+      recordOffsetSamples: 0,
+    });
+    handle.engine.armRecord(armedTrack, true);
     handle.engine.punch(startPpq, startPpq + (maxDurationSeconds * tempoBpm) / 60);
     capture = {
       trackId: armedTrack,
@@ -552,7 +561,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     const active = capture;
     if (!active) throw new RecorderStateError('No recording in progress');
     capture = null;
-    handle.engine.armRecord(engineTrackId(active.trackId), false);
+    handle.engine.armRecord(active.trackId, false);
     if (active.keptFrames === 0 || active.channelCount === 0) return null;
     const channels: Float32Array[] = [];
     for (let c = 0; c < active.channelCount; c++) {
@@ -573,7 +582,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     if (capture) {
       const active = capture;
       capture = null;
-      handle.engine.armRecord(engineTrackId(active.trackId), false);
+      handle.engine.armRecord(active.trackId, false);
     }
     tap?.close();
     tap = null;

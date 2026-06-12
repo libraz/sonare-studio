@@ -4,7 +4,6 @@ import type { EngineHandle } from '@/engine/engine';
 import { scheduleMidiClip } from '@/engine/instruments';
 import {
   clipPlaybackNotes,
-  engineTrackId,
   isTrackAudible,
   scheduleProjectClips,
   type TrackAudibilityState,
@@ -106,12 +105,6 @@ describe('isTrackAudible', () => {
   });
 });
 
-describe('engineTrackId', () => {
-  it('maps the project track id onto a stable engine identifier', () => {
-    expect(engineTrackId(7)).toBe('track-7');
-  });
-});
-
 describe('clipPlaybackNotes', () => {
   it('selects the clip window in source coordinates and shifts it to zero', () => {
     const clip = makeClip(1, 1, {
@@ -162,7 +155,7 @@ describe('scheduleProjectClips', () => {
 
     const [h, trackId, notes, startPpq, options] = scheduleMidiClipMock.mock.calls[1];
     expect(h).toBe(handle);
-    expect(trackId).toBe('track-1');
+    expect(trackId).toBe(1);
     expect(notes).toEqual([{ note: 60, velocity: 100, startPpq: 0, durationPpq: 1, channel: 0 }]);
     expect(startPpq).toBe(8);
     expect(options).toEqual({ tempoBpm: 100, targetPeak: 0.5 });
@@ -236,6 +229,6 @@ describe('scheduleProjectClips', () => {
 
     const scheduled = await scheduleProjectClips(handle);
     expect(scheduled).toEqual([{ engineClipId: 100, clipId: 10, trackId: 1 }]);
-    expect(scheduleMidiClipMock.mock.calls[0][1]).toBe('track-1');
+    expect(scheduleMidiClipMock.mock.calls[0][1]).toBe(1);
   });
 });

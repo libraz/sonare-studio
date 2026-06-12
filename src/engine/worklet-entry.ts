@@ -17,8 +17,6 @@ type EngineProcessorOptions = SonareRealtimeEngineWorkletProcessorOptions & {
   wasmBinary?: ArrayBuffer;
 };
 
-const SYNC_TYPES = new Set(['syncClips', 'syncMarkers', 'syncMetronome', 'syncAutomation']);
-
 // The AudioWorkletGlobalScope has no URL constructor, but the bundled Emscripten
 // glue computes a wasm path with `new URL(..., import.meta.url)` during init even
 // though the bytes always arrive via processorOptions.wasmBinary and the resulting
@@ -97,7 +95,13 @@ class SonareEngineWorklet extends AudioWorkletProcessor {
     const type = (data as { type?: unknown }).type;
     if (typeof type === 'number') {
       this.bridge.receiveCommand(data as SonareEngineCommandRecord);
-    } else if (typeof type === 'string' && SYNC_TYPES.has(type)) {
+    } else if (
+      typeof type === 'string' &&
+      (type.startsWith('sync') || type === 'captureRequest' || type === 'transportRequest')
+    ) {
+      // The facade's control-plane contract: every `sync*` message plus the
+      // capture/transport request RPCs must reach the bridge (libsonare does
+      // not export a canonical list, so match the documented prefix contract).
       this.bridge.receiveSync(data as SonareEngineSyncMessage);
     }
   }

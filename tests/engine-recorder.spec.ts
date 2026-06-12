@@ -21,6 +21,7 @@ interface FakeGain {
 function makeHandle(sampleRate = 100, baseLatency = 0) {
   const armRecord = vi.fn(() => true);
   const punch = vi.fn(() => true);
+  const configureCapture = vi.fn();
   const node = { engineNode: true };
   const destination = { destination: true };
   const gains: FakeGain[] = [];
@@ -34,8 +35,11 @@ function makeHandle(sampleRate = 100, baseLatency = 0) {
       return gain;
     }),
   };
-  const handle = { engine: { node, armRecord, punch }, ctx } as unknown as EngineHandle;
-  return { handle, armRecord, punch, ctx, node, destination, gains };
+  const handle = {
+    engine: { node, armRecord, punch, configureCapture },
+    ctx,
+  } as unknown as EngineHandle;
+  return { handle, armRecord, punch, configureCapture, ctx, node, destination, gains };
 }
 
 /** Builds injectable mic/bind/tap fakes plus a block pusher. */
@@ -225,12 +229,12 @@ describe('createRecorder capture', () => {
     recorder.arm(7);
     recorder.start({ startPpq: 8, tempoBpm: 120, maxDurationSeconds: 30 });
 
-    expect(armRecord).toHaveBeenCalledWith('track-7', true);
+    expect(armRecord).toHaveBeenCalledWith(7, true);
     // Punch-out = startPpq + maxDuration in PPQ (30 s at 120 BPM = 60 PPQ).
     expect(punch).toHaveBeenCalledWith(8, 68);
 
     recorder.stop();
-    expect(armRecord).toHaveBeenLastCalledWith('track-7', false);
+    expect(armRecord).toHaveBeenLastCalledWith(7, false);
   });
 
   it('skips the count-in span plus the latency offset and returns the rest', async () => {
@@ -294,7 +298,7 @@ describe('createRecorder capture', () => {
     recorder.start({ startPpq: 4, tempoBpm: 120, countInPpq: 2, recordOffsetSamples: 0 });
     push(rampBlock(1, 50, 0)); // still inside the 100-frame count-in
     expect(recorder.stop()).toBeNull();
-    expect(armRecord).toHaveBeenLastCalledWith('track-1', false);
+    expect(armRecord).toHaveBeenLastCalledWith(1, false);
   });
 
   it('caps the take at maxDurationSeconds', async () => {
@@ -441,7 +445,7 @@ describe('createRecorder teardown', () => {
 
     recorder.dispose();
     expect(recorder.isRecording()).toBe(false);
-    expect(armRecord).toHaveBeenLastCalledWith('track-4', false);
+    expect(armRecord).toHaveBeenLastCalledWith(4, false);
   });
 
   it('rejects a microphone that finishes binding after dispose', async () => {

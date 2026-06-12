@@ -58,17 +58,6 @@ export function isTrackAudible(
 }
 
 /**
- * Maps a project track id onto the engine track identifier used for
- * engine.addClip scheduling.
- *
- * @param trackId Stable project track id.
- * @returns Engine track id string.
- */
-export function engineTrackId(trackId: number): string {
-  return `track-${trackId}`;
-}
-
-/**
  * The note-window subset of a clip needed to derive its playback notes:
  * satisfied by editor mirror clips and by document clips alike.
  */
@@ -465,12 +454,7 @@ export async function scheduleProjectClips(
           const cacheKey = audioClipProcessingCacheKey(clip, tempoBpm, targetRate);
           channels = makeStripProcessor(cacheKey, targetRate, strip, dsp, pan)(channels);
         }
-        const engineClipId = handle.engine.addClip(
-          engineTrackId(track.id),
-          channels,
-          clip.startPpq,
-          { gain },
-        );
+        const engineClipId = handle.engine.addClip(track.id, channels, clip.startPpq, { gain });
         scheduled.push({ engineClipId, clipId: clip.id, trackId: track.id });
         continue;
       }
@@ -504,7 +488,7 @@ export async function scheduleProjectClips(
       }
       const engineClipId = await scheduleMidiClip(
         handle,
-        engineTrackId(track.id),
+        track.id,
         notes,
         clip.startPpq,
         midiOptions,
