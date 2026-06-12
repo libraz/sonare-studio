@@ -9,6 +9,7 @@ import {
   DISPLAY_TRANSPOSE_MIN,
   type ScoreAnnotations,
 } from './annotations';
+import { type AutomationLaneState, sanitizeAutomationEntries } from './automation';
 import { cloneInstrument } from './instrument';
 import {
   cloneMixerState,
@@ -422,6 +423,8 @@ export const useProjectStore = defineStore('project', () => {
   const markers = ref<EditorMarker[]>([]);
   /** Arrangement sections (app-level), ordered by startPpq. */
   const sections = ref<EditorSection[]>([]);
+  /** Automation lanes (app-level), one per (target, param) pair. */
+  const automationLanes = ref<AutomationLaneState[]>([]);
   /** Project mixer state: master strip + buses (app-level metadata). */
   const mixer = ref<ProjectMixerState>(createDefaultMixerState());
   /** Id of the active (focused) track (-1 when there is none). */
@@ -700,6 +703,7 @@ export const useProjectStore = defineStore('project', () => {
     clips.value = [];
     markers.value = [];
     sections.value = [];
+    automationLanes.value = [];
     activeTrackId.value = trackId;
     clipId.value = newClipId;
     clipStartPpq.value = 0;
@@ -744,6 +748,7 @@ export const useProjectStore = defineStore('project', () => {
         created.setTimeSignatures(doc.timeSignatures.map((s) => ({ ...s })));
       }
       const trackMirror: EditorTrack[] = [];
+      const laneMirror: AutomationLaneState[] = [];
       const clipMeta = new Map<number, DocumentClip>();
       const loadedSourceIds = new Map<string, number>();
       let firstClipId = -1;
@@ -765,6 +770,11 @@ export const useProjectStore = defineStore('project', () => {
         if (track.instrument !== undefined)
           mirrorEntry.instrument = cloneInstrument(track.instrument);
         if (track.mixer !== undefined) mirrorEntry.mixer = cloneStrip(track.mixer);
+        // Track automation rides the track entry; rebind it to the freshly
+        // assigned track id (malformed entries are dropped).
+        if (track.automation !== undefined) {
+          laneMirror.push(...sanitizeAutomationEntries(track.automation, trackId));
+        }
         trackMirror.push(mirrorEntry);
         for (const clip of track.clips) {
           const isAudio = clip.kind === 'audio' && typeof clip.assetId === 'string';
@@ -851,6 +861,11 @@ export const useProjectStore = defineStore('project', () => {
           endPpq: section.endPpq,
         }))
         .sort((a, b) => a.startPpq - b.startPpq || a.endPpq - b.endPpq);
+      // Older documents have no automation; malformed entries are dropped.
+      automationLanes.value = [
+        ...laneMirror,
+        ...sanitizeAutomationEntries(doc.masterAutomation, 'master'),
+      ];
       activeTrackId.value = trackMirror[0]?.id ?? -1;
       clipId.value = firstClipId;
       selection.value = new Set();
@@ -914,6 +929,7 @@ export const useProjectStore = defineStore('project', () => {
     clips.value = [];
     markers.value = [];
     sections.value = [];
+    automationLanes.value = [];
     mixer.value = createDefaultMixerState();
     activeTrackId.value = -1;
     clipId.value = -1;
@@ -937,6 +953,7 @@ export const useProjectStore = defineStore('project', () => {
     clips,
     markers,
     sections,
+    automationLanes,
     mixer,
     activeTrackId,
     clipId,

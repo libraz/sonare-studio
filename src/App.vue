@@ -28,6 +28,7 @@ import { useShortcuts } from '@/composables/useShortcuts';
 import { useStepInput } from '@/composables/useStepInput';
 import { useTransport } from '@/composables/useTransport';
 import { useWebMidi } from '@/composables/useWebMidi';
+import { type AutomationSync, createAutomationSync } from '@/engine/automation-sync';
 import { createEngine, type EngineHandle } from '@/engine/engine';
 import {
   type MidiNote,
@@ -38,7 +39,7 @@ import {
 } from '@/engine/instruments';
 import { createMeterBridge, type MeterBridge, type MeterSource } from '@/engine/meters';
 import { createMidiSync, type MidiSync } from '@/engine/midi-sync';
-import { createMixerSync, type MixerSync } from '@/engine/mixer-sync';
+import { createMixerSync, linearToDb, type MixerSync } from '@/engine/mixer-sync';
 import { createStripSync, type StripSync } from '@/engine/strip-sync';
 import { createTransportSync, type TransportSync } from '@/engine/transport-sync';
 import { renderMixdownInWorker } from '@/export/client';
@@ -59,6 +60,7 @@ import {
 } from '@/persistence/opfs';
 import { decodeSzd, encodeSzd } from '@/persistence/szd';
 import { decodeAndIngest } from '@/project/audio-import';
+import type { AutomationParam, AutomationPoint } from '@/project/automation';
 import {
   addAudioClip,
   addAudioTrack,
@@ -68,14 +70,17 @@ import {
   duplicateClip,
   quantizeSelection,
   redo,
+  removeAutomationLane,
   removeInsert,
   setActiveClip,
+  setAutomationLanePoints,
   setInsertEnabled,
   setSelection,
   setTempoSegments,
   undo,
 } from '@/project/commands';
 import { exportProjectSmf } from '@/project/export';
+import { clampPan } from '@/project/mixer';
 import { type ScheduledProjectClip, scheduleProjectClips } from '@/project/scheduling';
 import {
   loadProjectDocument,
@@ -597,6 +602,7 @@ function formatSize(bytes: number): string {
 let scheduledClips: ScheduledProjectClip[] = [];
 let mixerSync: MixerSync | null = null;
 let stripSync: StripSync | null = null;
+let automationSync: AutomationSync | null = null;
 let midiSync: MidiSync | null = null;
 let transportSync: TransportSync | null = null;
 /** Number of clips scheduled by the last apply (display only). */
@@ -653,6 +659,16 @@ function syncMixerState(): void {
   if (!mixerSync || !stripSync || !store.initialized) return;
   mixerSync.sync(store.tracks, store.mixer.master);
   stripSync.sync(store.tracks, store.mixer);
+}
+
+/**
+ * Mirrors automation lanes onto the engine's reserved mixer parameters. Runs
+ * after syncMixerState so lanes for newly declared tracks resolve against the
+ * engine's lane registry.
+ */
+function syncAutomationState(): void {
+  if (!automationSync || !store.initialized) return;
+  automationSync.sync(store.automationLanes);
 }
 
 /**
@@ -757,8 +773,28 @@ watch(
     if (next !== prev) syncMidiState();
   },
 );
-watch(() => store.tracks, syncMixerState);
-watch(() => store.mixer, syncMixerState);
+// Automation re-syncs right after the mixer sync so lanes addressing tracks
+// that the mixer sync just declared resolve to valid engine parameter ids.
+watch(
+  () => store.tracks,
+  () => {
+    syncMixerState();
+    syncAutomationState();
+  },
+);
+watch(
+  () => store.mixer,
+  () => {
+    syncMixerState();
+    syncAutomationState();
+  },
+);
+watch(
+  () => JSON.stringify(store.automationLanes),
+  (next, prev) => {
+    if (next !== prev) syncAutomationState();
+  },
+);
 watch(
   () =>
     [
@@ -889,6 +925,25 @@ function startEngine(): Promise<void> {
     const insertCatalog =
       typeof wasm.masteringInsertNames === 'function' ? new Set(wasm.masteringInsertNames()) : null;
     stripSync = createStripSync(h, { insertCatalog });
+    automationSync = createAutomationSync(h, {
+      knownTrackIds: () => mixerSync?.laneTrackIds() ?? [],
+      // Clearing an engine lane leaves the strip at the last automated value;
+      // re-push the manual value the same way the mixer sync derives it.
+      restoreParam: (target, param) => {
+        if (target === 'master') {
+          if (param === 'faderDb') h.engine.setStripGain('master', store.mixer.master.gainDb);
+          else h.engine.setStripPan('master', clampPan(store.mixer.master.pan));
+          return;
+        }
+        const track = store.tracks.find((entry) => entry.id === target);
+        if (!track) return;
+        if (param === 'faderDb') {
+          h.engine.setStripGain(target, linearToDb(track.volume) + (track.mixer?.gainDb ?? 0));
+        } else {
+          h.engine.setStripPan(target, clampPan(track.mixer?.pan ?? 0));
+        }
+      },
+    });
     midiSync = createMidiSync(h, {
       resolvePreset: (preset) => resolvePresetName(wasm as never, preset),
     });
@@ -906,6 +961,7 @@ function startEngine(): Promise<void> {
     await store.init({ sampleRate: h.ctx.sampleRate });
     transport.setTempo(store.tempoBpm);
     syncMixerState();
+    syncAutomationState();
     syncTransportState();
     syncMidiState();
     await applyToEngine();
@@ -1440,6 +1496,15 @@ onMounted(async () => {
         setTempoSegments(segments),
       setLoopRange: (startPpq: number, endPpq: number, enabled: boolean) =>
         transport.setLoop(startPpq, endPpq, enabled),
+      setAutomationLanePoints: (
+        target: number | 'master',
+        param: AutomationParam,
+        points: AutomationPoint[],
+      ) => setAutomationLanePoints(target, param, points),
+      removeAutomationLane: (target: number | 'master', param: AutomationParam) =>
+        removeAutomationLane(target, param),
+      automationLaneCount: () => handle.value?.engine.automationLaneCount() ?? 0,
+      automationInstalledParamIds: () => automationSync?.installedParamIds() ?? [],
       // Renders one note with the given synth preset and returns an audio
       // signature, so automation can verify two presets produce different sound.
       renderProbe: async (preset: string) => {
@@ -1498,6 +1563,7 @@ onBeforeUnmount(async () => {
   bridge.value = null;
   mixerSync = null;
   stripSync = null;
+  automationSync = null;
   midiSync = null;
   transportSync = null;
   await handle.value?.dispose();

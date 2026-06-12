@@ -6,8 +6,11 @@ import {
   addTrack,
   canUndo,
   clearHistory,
+  removeTrack,
   renameClip,
   setActiveClip,
+  setAutomationLaneEnabled,
+  setAutomationLanePoints,
   setClipGain,
   setClipLoop,
   setMarker,
@@ -162,6 +165,100 @@ describe('project serialization', () => {
     expect(store.markers).toEqual([]);
     expect(store.sections).toEqual([]);
     expect(store.notes).toEqual([]);
+  });
+
+  it('serializes automation onto track entries and re-targets lanes across fresh ids', async () => {
+    buildSampleProject(store);
+    // Automation-less sessions omit the fields entirely.
+    const emptyDoc = serializeProject();
+    expect(emptyDoc.masterAutomation).toBeUndefined();
+    expect(emptyDoc.tracks.every((track) => track.automation === undefined)).toBe(true);
+
+    // Removing the first track leaves the Bass track with a non-contiguous id;
+    // loading must still resolve its lanes (fresh ids are assigned on load).
+    removeTrack(store.tracks[0].id);
+    const bassTrackId = store.tracks.find((track) => track.name === 'Bass')?.id as number;
+    setAutomationLanePoints(bassTrackId, 'faderDb', [
+      { ppq: 0, value: -6 },
+      { ppq: 8, value: 0, curve: 'hold' },
+    ]);
+    setAutomationLanePoints('master', 'pan', [{ ppq: 4, value: 0.5 }]);
+    setAutomationLaneEnabled('master', 'pan', false);
+
+    const doc = serializeProject();
+    expect(doc.tracks.map((track) => track.name)).toEqual(['Bass']);
+    expect(doc.tracks[0].automation).toEqual([
+      {
+        param: 'faderDb',
+        points: [
+          { ppq: 0, value: -6 },
+          { ppq: 8, value: 0, curve: 'hold' },
+        ],
+        enabled: true,
+      },
+    ]);
+    expect(doc.masterAutomation).toEqual([
+      { param: 'pan', points: [{ ppq: 4, value: 0.5 }], enabled: false },
+    ]);
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    const loadedBass = store.tracks.find((track) => track.name === 'Bass');
+    expect(loadedBass).toBeDefined();
+    expect(store.automationLanes).toEqual([
+      {
+        target: loadedBass?.id,
+        param: 'faderDb',
+        points: [
+          { ppq: 0, value: -6 },
+          { ppq: 8, value: 0, curve: 'hold' },
+        ],
+        enabled: true,
+      },
+      { target: 'master', param: 'pan', points: [{ ppq: 4, value: 0.5 }], enabled: false },
+    ]);
+    expect(serializeProject()).toEqual(doc);
+  });
+
+  it('loading defaults absent automation to [] and drops malformed entries', async () => {
+    buildSampleProject(store);
+    const doc = serializeProject();
+    await loadProjectDocument(doc);
+    expect(store.automationLanes).toEqual([]);
+
+    const withBadLanes = {
+      ...doc,
+      tracks: [
+        {
+          ...doc.tracks[0],
+          automation: [
+            { param: 'volume', points: [], enabled: true },
+            { param: 'pan', points: 'oops', enabled: true },
+            {
+              param: 'faderDb',
+              points: [
+                { ppq: 8, value: 999 },
+                { ppq: -1, value: 0 },
+                { ppq: 0, value: -3 },
+              ],
+            },
+          ],
+        },
+        ...doc.tracks.slice(1),
+      ],
+      masterAutomation: 'oops',
+    } as unknown as ProjectDocument;
+    await loadProjectDocument(withBadLanes);
+    expect(store.automationLanes).toEqual([
+      {
+        target: store.tracks[0].id,
+        param: 'faderDb',
+        points: [
+          { ppq: 0, value: -3 },
+          { ppq: 8, value: 24 },
+        ],
+        enabled: true,
+      },
+    ]);
   });
 
   it('rejects unsupported schema versions and keeps the open project alive', async () => {

@@ -15,6 +15,7 @@ import {
   type DocumentNoteAnnotation,
   type DocumentScoreSettings,
 } from './annotations';
+import type { AutomationLaneState, AutomationParam, AutomationPoint } from './automation';
 import { clearHistory } from './commands';
 import { cloneInstrument, type TrackInstrument } from './instrument';
 import {
@@ -51,6 +52,14 @@ import type { ClipKind, EditorClip, EditorNote, TrackKind } from './types';
  *   `score` settings block. Both are omitted when empty/default, so every
  *   existing version-3 document remains valid and loaders that predate the
  *   fields simply ignore them.
+ *   Additionally (still version 3, additive): tracks may carry optional
+ *   `automation` lanes and the document an optional `masterAutomation` list
+ *   (mixer parameter automation, see src/project/automation.ts). Lane targets
+ *   are positional — a track's lanes live on its track entry and master lanes
+ *   at the document level — because track ids are session-scoped and loading
+ *   assigns fresh ones. Both fields are omitted when empty, so every existing
+ *   version-3 document remains valid and loaders that predate them simply
+ *   ignore them.
  *
  * Loaders accept any version up to this one; version-1 documents load
  * unchanged (every clip is MIDI).
@@ -93,6 +102,20 @@ export interface DocumentClip {
   scoreAnnotations?: DocumentNoteAnnotation[];
 }
 
+/**
+ * One automation lane of a document. The lane target is positional: lanes on
+ * a track entry automate that track, lanes in `masterAutomation` automate the
+ * master strip (track ids are session-scoped, so documents never store them).
+ */
+export interface DocumentAutomationLane {
+  /** Automated parameter. */
+  param: AutomationParam;
+  /** Points sorted by ascending PPQ. */
+  points: AutomationPoint[];
+  /** Whether the lane is applied during playback. */
+  enabled: boolean;
+}
+
 /** One track of the document, with its clips. */
 export interface DocumentTrack {
   /** Track display name. */
@@ -115,6 +138,8 @@ export interface DocumentTrack {
   instrument?: TrackInstrument;
   /** Mixer channel strip; absent (schema < 3) = a neutral strip. */
   mixer?: MixerStrip;
+  /** Automation lanes targeting this track; absent = none. */
+  automation?: DocumentAutomationLane[];
 }
 
 /** One timeline marker of the document. */
@@ -175,6 +200,8 @@ export interface ProjectDocument {
   markers: DocumentMarker[];
   /** Arrangement sections ordered by start position. */
   sections: DocumentSection[];
+  /** Automation lanes targeting the master strip; absent = none. */
+  masterAutomation?: DocumentAutomationLane[];
   /** Project mixer state; absent (schema < 3 or all-default) = defaults. */
   mixer?: ProjectMixerState;
   /** Score display settings; absent = defaults (no display transpose). */
@@ -206,6 +233,15 @@ function toDocumentClip(
     if (entries.length > 0) out.scoreAnnotations = entries;
   }
   return out;
+}
+
+/** Deep-copies a store lane into the document shape (placement carries the target). */
+function toDocumentAutomationLane(lane: AutomationLaneState): DocumentAutomationLane {
+  return {
+    param: lane.param,
+    points: lane.points.map((point) => ({ ...point })),
+    enabled: lane.enabled,
+  };
 }
 
 /** Deep-copies a note, dropping the editor id. */
@@ -253,6 +289,10 @@ export function serializeProject(): ProjectDocument {
       };
       if (track.instrument !== undefined) out.instrument = cloneInstrument(track.instrument);
       if (track.mixer !== undefined) out.mixer = cloneStrip(track.mixer);
+      // Track automation rides the track entry (track ids are session-scoped,
+      // so a document never stores lane targets); omitted when there is none.
+      const automation = store.automationLanes.filter((lane) => lane.target === track.id);
+      if (automation.length > 0) out.automation = automation.map(toDocumentAutomationLane);
       return out;
     }),
     markers: store.markers.map((marker) => ({ ppq: marker.ppq, name: marker.name })),
@@ -263,6 +303,12 @@ export function serializeProject(): ProjectDocument {
       endPpq: section.endPpq,
     })),
   };
+  // Master automation lanes are omitted while there are none, so documents
+  // from automation-less sessions look exactly like older ones. Numeric-target
+  // lanes were captured on their track entries above (lanes whose track no
+  // longer exists drop out naturally).
+  const masterLanes = store.automationLanes.filter((lane) => lane.target === 'master');
+  if (masterLanes.length > 0) doc.masterAutomation = masterLanes.map(toDocumentAutomationLane);
   // The project mixer state is omitted while it is entirely default, so
   // documents from mixer-less sessions look exactly like older ones.
   if (!isDefaultMixerState(store.mixer)) doc.mixer = cloneMixerState(store.mixer);

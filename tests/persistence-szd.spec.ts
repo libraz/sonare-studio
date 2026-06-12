@@ -59,6 +59,41 @@ describe('szd encode/decode', () => {
     expect(decodeSzd(bytes)).toEqual(doc);
   });
 
+  it('round-trips automation lanes and tolerates their absence', () => {
+    const base = makeDocument();
+    const withLanes: ProjectDocument = {
+      ...base,
+      tracks: [
+        {
+          ...base.tracks[0],
+          automation: [
+            {
+              param: 'faderDb',
+              points: [
+                { ppq: 0, value: -6 },
+                { ppq: 8, value: 0, curve: 'hold' },
+              ],
+              enabled: true,
+            },
+          ],
+        },
+      ],
+      masterAutomation: [{ param: 'pan', points: [{ ppq: 4, value: 0.5 }], enabled: false }],
+    };
+    expect(decodeSzd(encodeSzd(withLanes))).toEqual(withLanes);
+    // Documents that predate the fields decode without them (loading defaults to []).
+    const plain = decodeSzd(encodeSzd(makeDocument()));
+    expect(plain.masterAutomation).toBeUndefined();
+    expect(plain.tracks[0].automation).toBeUndefined();
+  });
+
+  it('rejects a present but non-array masterAutomation field', () => {
+    const doc = makeDocument() as unknown as Record<string, unknown>;
+    doc['masterAutomation'] = 'oops';
+    const bytes = zipSync({ 'project.json': strToU8(JSON.stringify(doc)) });
+    expect(() => decodeSzd(bytes)).toThrow(/"masterAutomation"/);
+  });
+
   it('is deterministic for the same input (no clock reads)', () => {
     const doc = makeDocument();
     expect(encodeSzd(doc)).toEqual(encodeSzd(doc));

@@ -11,6 +11,7 @@ import {
   duplicateClip,
   moveClip,
   redo,
+  removeAutomationLane,
   removeMarker,
   removeTrack,
   renameClip,
@@ -18,6 +19,8 @@ import {
   reorderTracks,
   setActiveClip,
   setActiveTrack,
+  setAutomationLaneEnabled,
+  setAutomationLanePoints,
   setClipGain,
   setClipLoop,
   setMarker,
@@ -434,6 +437,124 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
 
       expect(() => setSections([{ name: 'Bad', startPpq: 4, endPpq: 4 }])).toThrow(RangeError);
       expect(() => setSections([{ name: 'Bad', startPpq: -1, endPpq: 4 }])).toThrow(RangeError);
+    });
+  });
+
+  describe('automation commands', () => {
+    it('setAutomationLanePoints creates a lane with sanitized, sorted points', () => {
+      const trackId = store.tracks[0].id;
+      setAutomationLanePoints(trackId, 'faderDb', [
+        { ppq: 8, value: 999 },
+        { ppq: -1, value: 0 },
+        { ppq: 0, value: -6, curve: 'hold' },
+      ]);
+      expect(store.automationLanes).toEqual([
+        {
+          target: trackId,
+          param: 'faderDb',
+          points: [
+            { ppq: 0, value: -6, curve: 'hold' },
+            { ppq: 8, value: 24 },
+          ],
+          enabled: true,
+        },
+      ]);
+    });
+
+    it('keeps one lane per (target, param) and preserves enabled on replace', () => {
+      const trackId = store.tracks[0].id;
+      setAutomationLanePoints(trackId, 'pan', [{ ppq: 0, value: -0.5 }]);
+      setAutomationLanePoints('master', 'pan', [{ ppq: 0, value: 0.5 }]);
+      setAutomationLaneEnabled(trackId, 'pan', false);
+
+      setAutomationLanePoints(trackId, 'pan', [{ ppq: 4, value: 1 }]);
+      expect(store.automationLanes).toHaveLength(2);
+      expect(store.automationLanes.find((l) => l.target === trackId)).toEqual({
+        target: trackId,
+        param: 'pan',
+        points: [{ ppq: 4, value: 1 }],
+        enabled: false,
+      });
+    });
+
+    it('an empty sanitized point list removes the lane entirely', () => {
+      const trackId = store.tracks[0].id;
+      setAutomationLanePoints(trackId, 'pan', [{ ppq: 0, value: 0 }]);
+      setAutomationLanePoints(trackId, 'pan', [{ ppq: -1, value: Number.NaN }]);
+      expect(store.automationLanes).toEqual([]);
+      // No lane and no points is a no-op that pushes no history.
+      clearHistory();
+      setAutomationLanePoints(trackId, 'pan', []);
+      expect(canUndo()).toBe(false);
+    });
+
+    it('setAutomationLanePoints validates numeric targets against the tracks', () => {
+      expect(() => setAutomationLanePoints(9999, 'pan', [{ ppq: 0, value: 0 }])).toThrow(
+        RangeError,
+      );
+      setAutomationLanePoints('master', 'faderDb', [{ ppq: 0, value: 0 }]);
+      expect(store.automationLanes[0].target).toBe('master');
+    });
+
+    it('setAutomationLaneEnabled toggles and is a no-op for missing lanes', () => {
+      const trackId = store.tracks[0].id;
+      setAutomationLaneEnabled(trackId, 'pan', false);
+      expect(canUndo()).toBe(false);
+
+      setAutomationLanePoints(trackId, 'pan', [{ ppq: 0, value: 0 }]);
+      setAutomationLaneEnabled(trackId, 'pan', true); // unchanged: no history
+      setAutomationLaneEnabled(trackId, 'pan', false);
+      expect(store.automationLanes[0].enabled).toBe(false);
+
+      expect(undo()).toBe(true); // the enabled toggle
+      expect(store.automationLanes[0].enabled).toBe(true);
+      expect(undo()).toBe(true); // the lane creation
+      expect(store.automationLanes).toEqual([]);
+    });
+
+    it('removeAutomationLane removes the lane; unknown lanes are a silent no-op', () => {
+      const trackId = store.tracks[0].id;
+      setAutomationLanePoints(trackId, 'faderDb', [{ ppq: 0, value: 0 }]);
+      removeAutomationLane(trackId, 'faderDb');
+      expect(store.automationLanes).toEqual([]);
+
+      clearHistory();
+      removeAutomationLane(trackId, 'faderDb');
+      expect(canUndo()).toBe(false);
+    });
+
+    it('undo/redo restores the lane list', () => {
+      const trackId = store.tracks[0].id;
+      setAutomationLanePoints(trackId, 'pan', [{ ppq: 0, value: -1 }]);
+      setAutomationLanePoints(trackId, 'pan', [
+        { ppq: 0, value: -1 },
+        { ppq: 8, value: 1 },
+      ]);
+
+      undo();
+      expect(store.automationLanes[0].points).toEqual([{ ppq: 0, value: -1 }]);
+      undo();
+      expect(store.automationLanes).toEqual([]);
+      redo();
+      redo();
+      expect(store.automationLanes[0].points).toEqual([
+        { ppq: 0, value: -1 },
+        { ppq: 8, value: 1 },
+      ]);
+    });
+
+    it('removeTrack drops the track lanes in the same undo step', () => {
+      const trackId = store.tracks[0].id;
+      setAutomationLanePoints(trackId, 'faderDb', [{ ppq: 0, value: -12 }]);
+      setAutomationLanePoints(trackId, 'pan', [{ ppq: 0, value: 0.5 }]);
+      setAutomationLanePoints('master', 'faderDb', [{ ppq: 0, value: 0 }]);
+
+      removeTrack(trackId);
+      expect(store.automationLanes.map((l) => l.target)).toEqual(['master']);
+
+      expect(undo()).toBe(true);
+      expect(store.automationLanes).toHaveLength(3);
+      expect(store.automationLanes.filter((l) => l.target === trackId)).toHaveLength(2);
     });
   });
 

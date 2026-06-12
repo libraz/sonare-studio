@@ -13,6 +13,14 @@ import {
   scoreAnnotationEquals,
 } from './annotations';
 import {
+  type AutomationLaneState,
+  type AutomationParam,
+  type AutomationPoint,
+  automationLaneKey,
+  cloneAutomationLane,
+  sanitizeAutomationPoints,
+} from './automation';
+import {
   cloneInstrument,
   instrumentEquals,
   type TrackInstrument,
@@ -77,13 +85,15 @@ const MAX_HISTORY = 100;
  * (track/clip structure, names, timing, note events, tempo, meter). These
  * snapshots restore what the Project does not know about: editor note ids,
  * track colors/mute/solo/volume/pan/order/instrument/mixer, clip names,
- * markers, sections, the project mixer state and the active track/clip.
+ * markers, sections, automation lanes, the project mixer state and the
+ * active track/clip.
  */
 interface MirrorSnapshot {
   tracks: EditorTrack[];
   clips: EditorClip[];
   markers: EditorMarker[];
   sections: EditorSection[];
+  automationLanes: AutomationLaneState[];
   mixer: ProjectMixerState;
   scoreAnnotations: ScoreAnnotations;
   displayTransposeSemitones: number;
@@ -130,6 +140,7 @@ function captureSnapshot(store: ReturnType<typeof useProjectStore>): MirrorSnaps
     clips: store.clips.map(cloneClip),
     markers: store.markers.map((marker) => ({ ...marker })),
     sections: store.sections.map((section) => ({ ...section })),
+    automationLanes: store.automationLanes.map(cloneAutomationLane),
     mixer: cloneMixerState(store.mixer),
     scoreAnnotations: cloneScoreAnnotations(store.scoreAnnotations),
     displayTransposeSemitones: store.displayTransposeSemitones,
@@ -151,6 +162,7 @@ function restoreSnapshot(
   store.clips = snapshot.clips.map(cloneClip);
   store.markers = snapshot.markers.map((marker) => ({ ...marker }));
   store.sections = snapshot.sections.map((section) => ({ ...section }));
+  store.automationLanes = snapshot.automationLanes.map(cloneAutomationLane);
   store.mixer = cloneMixerState(snapshot.mixer);
   store.scoreAnnotations = cloneScoreAnnotations(snapshot.scoreAnnotations);
   store.displayTransposeSemitones = snapshot.displayTransposeSemitones;
@@ -505,8 +517,9 @@ export function addAudioTrack(input: Omit<AddTrackInput, 'kind'> = {}): number {
 }
 
 /**
- * Removes a track and its clips as one undoable edit. When the active track
- * is removed, the first remaining track (and its first clip) becomes active.
+ * Removes a track and its clips as one undoable edit. The track's automation
+ * lanes are dropped in the same step. When the active track is removed, the
+ * first remaining track (and its first clip) becomes active.
  *
  * @param trackId Id of the track to remove.
  */
@@ -516,6 +529,7 @@ export function removeTrack(trackId: number): void {
   requireTrack(store, trackId);
   execute(1, () => {
     project.removeTrack(trackId);
+    store.automationLanes = store.automationLanes.filter((lane) => lane.target !== trackId);
     if (store.activeTrackId === trackId) {
       store.activeTrackId = -1;
       store.clipId = -1;
@@ -1793,6 +1807,112 @@ export function setTimeSignatures(segments: ReadonlyArray<TimeSignatureSegment>)
   });
   execute(1, () => {
     project.setTimeSignatures(segments.map((s) => ({ ...s })));
+    store.refresh();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Automation commands (app-level metadata, execute(0)-style)
+// ---------------------------------------------------------------------------
+
+/**
+ * Validates an automation lane target: 'master' is always valid; numeric
+ * targets must name an existing track (throws RangeError otherwise).
+ */
+function validateAutomationTarget(
+  store: ReturnType<typeof useProjectStore>,
+  target: number | 'master',
+): void {
+  if (target !== 'master') requireTrack(store, target);
+}
+
+/** Returns the index of the lane addressing (target, param), or -1. */
+function findAutomationLane(
+  store: ReturnType<typeof useProjectStore>,
+  target: number | 'master',
+  param: AutomationParam,
+): number {
+  const key = automationLaneKey(target, param);
+  return store.automationLanes.findIndex(
+    (lane) => automationLaneKey(lane.target, lane.param) === key,
+  );
+}
+
+/**
+ * Replaces the point list of an automation lane as one undoable edit. Lanes
+ * are app-level metadata (the Project has no automation API). Points are
+ * sanitized (non-finite/negative positions dropped, values clamped, sorted by
+ * PPQ); an empty result removes the lane entirely. A new lane starts enabled;
+ * replacing an existing lane preserves its enabled flag.
+ *
+ * @param target Lane target: a track id or 'master'.
+ * @param param Automated parameter.
+ * @param points New point list (replaces the lane's points).
+ */
+export function setAutomationLanePoints(
+  target: number | 'master',
+  param: AutomationParam,
+  points: ReadonlyArray<AutomationPoint>,
+): void {
+  const store = useProjectStore();
+  validateAutomationTarget(store, target);
+  const sanitized = sanitizeAutomationPoints(param, points);
+  const index = findAutomationLane(store, target, param);
+  if (sanitized.length === 0 && index < 0) return;
+  execute(0, () => {
+    if (sanitized.length === 0) {
+      store.automationLanes = store.automationLanes.filter((_, i) => i !== index);
+    } else if (index < 0) {
+      store.automationLanes = [
+        ...store.automationLanes,
+        { target, param, points: sanitized, enabled: true },
+      ];
+    } else {
+      store.automationLanes = store.automationLanes.map((lane, i) =>
+        i === index ? { ...lane, points: sanitized } : lane,
+      );
+    }
+    store.refresh();
+  });
+}
+
+/**
+ * Enables or disables an automation lane as one undoable edit. Missing lanes
+ * and unchanged values are silent no-ops.
+ *
+ * @param target Lane target: a track id or 'master'.
+ * @param param Automated parameter.
+ * @param enabled New enabled state.
+ */
+export function setAutomationLaneEnabled(
+  target: number | 'master',
+  param: AutomationParam,
+  enabled: boolean,
+): void {
+  const store = useProjectStore();
+  const index = findAutomationLane(store, target, param);
+  if (index < 0 || store.automationLanes[index].enabled === enabled) return;
+  execute(0, () => {
+    store.automationLanes = store.automationLanes.map((lane, i) =>
+      i === index ? { ...lane, enabled } : lane,
+    );
+    store.refresh();
+  });
+}
+
+/**
+ * Removes an automation lane as one undoable edit. Missing lanes are a
+ * silent no-op.
+ *
+ * @param target Lane target: a track id or 'master'.
+ * @param param Automated parameter.
+ */
+export function removeAutomationLane(target: number | 'master', param: AutomationParam): void {
+  const store = useProjectStore();
+  const index = findAutomationLane(store, target, param);
+  if (index < 0) return;
+  execute(0, () => {
+    store.automationLanes = store.automationLanes.filter((_, i) => i !== index);
     store.refresh();
   });
 }

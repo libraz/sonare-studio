@@ -121,6 +121,11 @@ function validateDocument(value: unknown): ProjectDocument {
       throw new SzdFormatError(`Invalid project file: "${field}" is not an array`);
     }
   }
+  // Optional collections must still be arrays when present (older documents
+  // simply omit them; loading injects the defaults).
+  if (doc.masterAutomation !== undefined && !Array.isArray(doc.masterAutomation)) {
+    throw new SzdFormatError('Invalid project file: "masterAutomation" is not an array');
+  }
   return doc as ProjectDocument;
 }
 
