@@ -11,6 +11,7 @@ import {
   removeMixerBus,
   setInsertEnabled,
   setInsertParam,
+  setMasteringPreset,
   setSend,
   setStripEq,
   setStripGain,
@@ -19,6 +20,7 @@ import {
   undo,
 } from '@/project/commands';
 import type { TrackInstrument } from '@/project/instrument';
+import { MAX_MIXER_BUSES } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 
 vi.mock('@/lib/wasm', async () => {
@@ -232,6 +234,19 @@ describe('mixer commands', () => {
       undo();
       expect(store.tracks[0].mixer?.sends).toHaveLength(1);
       expect(() => setSend(trackId, 'nope', { levelDb: 0 })).toThrow(RangeError);
+    });
+
+    it('rejects adding a bus beyond the engine limit', () => {
+      for (let i = 0; i < MAX_MIXER_BUSES; i++) addMixerBus();
+      expect(store.mixer.buses).toHaveLength(MAX_MIXER_BUSES);
+      expect(() => addMixerBus()).toThrow(RangeError);
+    });
+
+    it('removing a bus keeps the mastering chain', () => {
+      const busId = addMixerBus();
+      setMasteringPreset('club');
+      removeMixerBus(busId);
+      expect(store.mixer.masteringChain?.preset).toBe('club');
     });
 
     it('removing a bus cascades the sends referencing it', () => {

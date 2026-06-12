@@ -6,9 +6,9 @@ import {
   type MixdownDeps,
   renderMixdown,
 } from '@/export/mixdown';
+import { clearStripProcessingCache } from '@/export/strip-render';
 import { dbToLinear } from '@/project/mixer';
 import type { StripProcessorDeps } from '@/project/mixer-dsp';
-import { clearStripProcessingCache } from '@/project/scheduling';
 import type { DocumentClip, DocumentTrack, ProjectDocument } from '@/project/serialization';
 
 vi.mock('@/lib/wasm', async () => {

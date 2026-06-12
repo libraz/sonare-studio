@@ -26,6 +26,7 @@ import {
   createDefaultStrip,
   type InsertSlot,
   isDefaultMasteringChain,
+  MAX_MIXER_BUSES,
   MAX_STRIP_GAIN_DB,
   type MasteringChainState,
   MIN_STRIP_GAIN_DB,
@@ -800,8 +801,8 @@ export function setStripPan(
 /**
  * Appends an insert slot to a strip as one undoable edit. The processor is a
  * wasm catalog name (masteringProcessorNames / masteringInsertNames); track
- * inserts are applied offline while scheduling, master inserts are UI-only
- * in this iteration.
+ * and master inserts are audible in realtime (mirrored to the engine strip,
+ * see src/engine/strip-sync.ts).
  *
  * @param target Track id or 'master'.
  * @param processor Processor catalog name (non-empty).
@@ -919,8 +920,8 @@ export function setInsertParam(
 }
 
 /**
- * Replaces a strip's EQ as one undoable edit. Track EQ is applied offline
- * while scheduling; master EQ is UI-only in this iteration.
+ * Replaces a strip's EQ as one undoable edit. Track and master EQ are audible
+ * in realtime (mirrored to the engine strip EQ, see src/engine/strip-sync.ts).
  *
  * @param target Track id or 'master'.
  * @param eq New EQ state, or null to remove the EQ.
@@ -951,8 +952,8 @@ export function setStripEq(
 
 /**
  * Adds, updates or removes a send from a strip to a bus as one undoable edit.
- * Sends are UI-only in this iteration (the engine has no bus routing for
- * prerendered clips).
+ * Track sends feed the engine's realtime bus lanes (post-fader); master sends
+ * have no engine routing and stay UI-only.
  *
  * @param target Track id or 'master'.
  * @param busId Destination bus id (must exist).
@@ -995,14 +996,18 @@ export interface AddMixerBusInput {
 }
 
 /**
- * Adds a mixer bus as one undoable edit (UI-only send destination in this
- * iteration).
+ * Adds a mixer bus as one undoable edit. Buses are audible send destinations:
+ * they are declared as realtime engine bus lanes (engine limit
+ * {@link MAX_MIXER_BUSES}, enforced here).
  *
  * @param input Optional id/name overrides.
  * @returns The bus id.
  */
 export function addMixerBus(input: AddMixerBusInput = {}): string {
   const store = useProjectStore();
+  if (store.mixer.buses.length >= MAX_MIXER_BUSES) {
+    throw new RangeError(`Mixer bus limit reached (${MAX_MIXER_BUSES})`);
+  }
   let id = input.id;
   if (id !== undefined) {
     if (id.length === 0) throw new RangeError('Mixer bus id must not be empty');
@@ -1048,6 +1053,7 @@ export function removeMixerBus(busId: string): void {
       track.mixer ? { ...track, mixer: dropSends(track.mixer) } : track,
     );
     store.mixer = {
+      ...store.mixer,
       master: dropSends(store.mixer.master),
       buses: store.mixer.buses.filter((bus) => bus.id !== busId),
     };

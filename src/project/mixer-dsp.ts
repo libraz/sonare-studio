@@ -1,11 +1,12 @@
 /**
  * Offline channel-strip DSP applied to prerendered/loaded clip buffers.
  *
- * The realtime engine node exposes no channel-strip commands, so the honest
- * audible mixer for the current playback path applies strip DSP while
- * scheduling: insert chains and EQ run through the wasm one-shot processors
- * (injected via {@link StripProcessorDeps} so tests can substitute
- * pass-through mocks), and pan is plain balance-law gain math in TS.
+ * Used by the offline export renderer (src/export/strip-render.ts +
+ * src/export/mixdown.ts) to bake the same strip topology the realtime engine
+ * applies during live playback: EQ and insert chains run through the wasm
+ * one-shot processors (injected via {@link StripProcessorDeps} so tests can
+ * substitute pass-through mocks), and pan is plain balance-law gain math in
+ * TS.
  */
 
 import { eqIsActive, type MixerStrip, stripHasDsp } from './mixer';
@@ -83,14 +84,16 @@ export function applyBalancePan(channels: Float32Array[], pan: number): Float32A
 }
 
 /**
- * Runs a strip's enabled inserts (in order) and its active EQ over planar
- * buffers, returning fresh stereo buffers. The input is never mutated. When
- * the strip carries no DSP — or the buffers are empty — the input is returned
+ * Runs a strip's active EQ and then its enabled inserts (in order) over
+ * planar buffers, returning fresh stereo buffers. The EQ runs pre-insert to
+ * match the realtime engine's channel strip topology, keeping offline export
+ * renders equivalent to live playback. The input is never mutated. When the
+ * strip carries no DSP — or the buffers are empty — the input is returned
  * unchanged.
  *
  * Strip gain and pan are NOT applied here: gain is folded into the engine
- * per-clip gain and pan is applied per schedule outside the processed-buffer
- * cache (see src/project/scheduling.ts).
+ * per-clip gain and pan is applied per render outside the processed-buffer
+ * cache (see src/export/strip-render.ts).
  *
  * @param channels Planar input buffers.
  * @param sampleRate Buffer sample rate in Hz.
@@ -108,12 +111,6 @@ export function applyStripDsp(
   const frames = channels[0]?.length ?? 0;
   if (frames === 0) return channels;
   let [left, right] = toStereo(channels);
-  for (const slot of strip.inserts) {
-    if (!slot.enabled) continue;
-    const out = deps.processStereo(slot.processor, left, right, sampleRate, slot.params);
-    left = out.left;
-    right = out.right;
-  }
   if (eqIsActive(strip.eq) && strip.eq && deps.createEqualizer) {
     const eq = deps.createEqualizer({ sampleRate, maxBlockSize: Math.max(1, left.length) });
     try {
@@ -126,6 +123,12 @@ export function applyStripDsp(
     } finally {
       eq.delete();
     }
+  }
+  for (const slot of strip.inserts) {
+    if (!slot.enabled) continue;
+    const out = deps.processStereo(slot.processor, left, right, sampleRate, slot.params);
+    left = out.left;
+    right = out.right;
   }
   return [left, right];
 }

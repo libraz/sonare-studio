@@ -5,21 +5,19 @@
  * The state is app-level metadata persisted by the project document (schema
  * version 3); it lives on the store mirror.
  *
- * How it reaches the engine during playback:
- * - track strip gainDb/pan and the master gainDb/pan are realtime mixer-lane
- *   state, mirrored by src/engine/mixer-sync.ts without re-scheduling,
- * - track strip inserts and EQ are still applied offline while scheduling
- *   (one-shot wasm processors over the prerendered/loaded buffers, see
- *   src/project/scheduling.ts).
+ * How it reaches the engine during playback — all of it in realtime, without
+ * re-scheduling:
+ * - track strip gainDb/pan and the master gainDb/pan are mixer-lane state,
+ *   mirrored by src/engine/mixer-sync.ts,
+ * - track/master inserts and EQ are engine channel-strip state, and buses and
+ *   track sends are engine bus lanes, mirrored by src/engine/strip-sync.ts.
  *
- * What is UI-ONLY in this iteration:
- * - master inserts/EQ (nonlinear bus DSP cannot honestly be applied per clip
- *   before the engine sums them),
- * - buses and sends (not yet wired to the engine's bus lanes).
+ * What stays UI-only: master sends (the engine master strip has no bus
+ * routing).
  *
- * Offline mixdown/export renders (src/export/mixdown.ts) additionally apply
- * master inserts/EQ honestly (they own the summed bus) and the project-level
- * mastering chain, which live playback never runs.
+ * Offline mixdown/export renders (src/export/mixdown.ts) bake the same strip
+ * DSP into their render and additionally apply the project-level mastering
+ * chain; they do not render buses/sends yet.
  */
 
 import type { EqBand } from '@/wasm/index.js';
@@ -35,7 +33,7 @@ export interface InsertSlot {
   enabled: boolean;
 }
 
-/** One send from a strip to a mixer bus (UI-only in this iteration). */
+/** One send from a strip to a mixer bus (post-fader on the engine side). */
 export interface StripSend {
   /** Destination bus id (must exist in the project mixer state). */
   busId: string;
@@ -61,7 +59,7 @@ export interface MixerStrip {
   pan: number;
   /** Insert chain, applied in order. */
   inserts: InsertSlot[];
-  /** Sends to mixer buses (UI-only in this iteration). */
+  /** Sends to mixer buses (audible on tracks; UI-only on the master strip). */
   sends: StripSend[];
   /** Channel EQ; absent = no EQ. */
   eq?: StripEq;
@@ -85,7 +83,7 @@ export interface MasteringChainState {
   processors: InsertSlot[];
 }
 
-/** One send bus (UI-only in this iteration). */
+/** One send bus, audible as a realtime engine bus lane. */
 export interface MixerBus {
   /** Stable bus id (unique within the project). */
   id: string;
@@ -97,13 +95,16 @@ export interface MixerBus {
 
 /** Project-wide mixer state: the master strip plus optional buses. */
 export interface ProjectMixerState {
-  /** Master strip (gainDb/pan audible; inserts/EQ UI-only). */
+  /** Master strip (gain/pan, inserts and EQ are all audible in realtime). */
   master: MixerStrip;
-  /** Send buses (UI-only in this iteration). */
+  /** Send buses (realtime engine bus lanes, at most {@link MAX_MIXER_BUSES}). */
   buses: MixerBus[];
   /** Mastering chain for offline mixdown renders; absent = none. */
   masteringChain?: MasteringChainState;
 }
+
+/** Maximum number of send buses (the realtime engine's bus lane limit). */
+export const MAX_MIXER_BUSES = 8;
 
 /** Lowest accepted strip gain in dB. */
 export const MIN_STRIP_GAIN_DB = -96;

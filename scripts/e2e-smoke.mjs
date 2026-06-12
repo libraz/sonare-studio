@@ -9,8 +9,10 @@
  * a drawn waveform, and a take recorded from the fake microphone lands as a
  * clip (via the dev-only window.__sonareDebug hook exposed by App.vue).
  * It then checks the mixer tab (one strip per track plus master), the device
- * rack (instrument change and insert add/bypass re-schedule the project, and
- * two synth presets render different audio), the step sequencer (a baked
+ * rack (an instrument change re-schedules the project, insert add/bypass are
+ * realtime with no re-schedule, a master limiter is audible live and matches
+ * the offline export level, and two synth presets render different audio),
+ * the step sequencer (a baked
  * pattern replaces the active clip's notes), the mastering tab (processors
  * added to the project chain change the rendered mixdown bytes), the audio
  * export dialog (a 16-bit WAV download with an audible peak and a loudness
@@ -620,7 +622,7 @@ try {
     );
   }
 
-  // --- Device rack: adding and bypassing an insert re-schedules ---------------
+  // --- Device rack: insert add/bypass are realtime (no re-schedule) -----------
 
   const insertChoice = await page.evaluate(() => {
     const values = [...document.querySelectorAll('.device-rack .add-insert option')]
@@ -639,28 +641,146 @@ try {
     const idsBeforeInsert = await page.evaluate(() =>
       JSON.stringify(window.__sonareDebug.scheduledClipIds()),
     );
+    const insertCountsBefore = await page.evaluate(() =>
+      JSON.stringify(window.__sonareDebug.trackInsertCounts()),
+    );
     await page.selectOption('.device-rack .add-insert', insertChoice);
     await page.waitForFunction(
-      (before) =>
-        window.__sonareDebug.applyPending() === false &&
-        JSON.stringify(window.__sonareDebug.scheduledClipIds()) !== before,
-      idsBeforeInsert,
-      { timeout: 30000 },
+      (before) => JSON.stringify(window.__sonareDebug.trackInsertCounts()) !== before,
+      insertCountsBefore,
+      { timeout: 10000 },
     );
-    console.info(`insert "${insertChoice}" added and the project re-scheduled`);
+    await page.waitForTimeout(400);
+    const insertAddState = await page.evaluate(() => ({
+      pending: window.__sonareDebug.applyPending(),
+      ids: JSON.stringify(window.__sonareDebug.scheduledClipIds()),
+    }));
+    if (insertAddState.pending || insertAddState.ids !== idsBeforeInsert) {
+      fail(`insert add caused a re-schedule: pending=${insertAddState.pending}`);
+    }
+    console.info(`insert "${insertChoice}" added without re-scheduling`);
 
-    const idsBeforeBypass = await page.evaluate(() =>
-      JSON.stringify(window.__sonareDebug.scheduledClipIds()),
+    const statesBeforeBypass = await page.evaluate(() =>
+      JSON.stringify(window.__sonareDebug.trackInsertStates()),
     );
     await page.click('.device-rack .insert-power');
     await page.waitForFunction(
-      (before) =>
-        window.__sonareDebug.applyPending() === false &&
-        JSON.stringify(window.__sonareDebug.scheduledClipIds()) !== before,
-      idsBeforeBypass,
-      { timeout: 30000 },
+      (before) => JSON.stringify(window.__sonareDebug.trackInsertStates()) !== before,
+      statesBeforeBypass,
+      { timeout: 10000 },
     );
-    console.info('insert bypass toggled and the project re-scheduled');
+    await page.waitForTimeout(400);
+    const bypassState = await page.evaluate(() => ({
+      pending: window.__sonareDebug.applyPending(),
+      ids: JSON.stringify(window.__sonareDebug.scheduledClipIds()),
+    }));
+    if (bypassState.pending || bypassState.ids !== idsBeforeInsert) {
+      fail(`insert bypass caused a re-schedule: pending=${bypassState.pending}`);
+    }
+    console.info('insert bypass toggled without re-scheduling');
+  }
+
+  // --- Realtime strip DSP: a master limiter is audible live and in the export -
+
+  {
+    const masterInsertsBefore = await page.evaluate(() => window.__sonareDebug.masterInsertCount());
+    if (masterInsertsBefore !== 0) {
+      fail(`expected an empty master insert chain, got ${masterInsertsBefore}`);
+    }
+    const rulerBox4 = await page.locator('.arrangement-canvas').boundingBox();
+    await page.mouse.click(rulerBox4.x + 2, rulerBox4.y + 14); // seek to PPQ 0
+    await page.waitForFunction(() => window.__sonareDebug.applyPending() === false, null, {
+      timeout: 10000,
+    });
+    const idsBeforeStrip = await page.evaluate(() =>
+      JSON.stringify(window.__sonareDebug.scheduledClipIds()),
+    );
+    await page.click('.transport-bar button:has-text("Play")');
+    await page.waitForFunction(
+      () => {
+        const peak = window.__sonareDebug.meterPeakDb();
+        return peak !== null && peak > -90;
+      },
+      null,
+      { timeout: 5000 },
+    );
+    // The fixed thresholds below assume a healthy playback level; sample the
+    // meter briefly to prove the premise.
+    let peakBefore = -120;
+    for (let i = 0; i < 8; i++) {
+      const peak = await page.evaluate(() => window.__sonareDebug.meterPeakDb());
+      if (peak !== null && peak > peakBefore) peakBefore = peak;
+      await page.waitForTimeout(100);
+    }
+    if (peakBefore <= -40) {
+      fail(`playback too quiet for the limiter check: peak ${peakBefore.toFixed(1)} dB`);
+    }
+
+    // A brickwall limiter with a -60 dB ceiling must cap the master output
+    // immediately, with no re-schedule.
+    await page.evaluate(() =>
+      window.__sonareDebug.addMasterInsert('dynamics.brickwallLimiter', { ceilingDb: -60 }),
+    );
+    await page.waitForFunction(
+      () => {
+        const peak = window.__sonareDebug.meterPeakDb();
+        return peak !== null && peak <= -50;
+      },
+      null,
+      { timeout: 5000 },
+    );
+    const peakLimited = await page.evaluate(() => window.__sonareDebug.meterPeakDb());
+
+    // Bypassing the limiter must restore the level, still without re-scheduling.
+    await page.evaluate(() => window.__sonareDebug.setMasterInsertEnabled(0, false));
+    await page.waitForFunction(
+      () => {
+        const peak = window.__sonareDebug.meterPeakDb();
+        return peak !== null && peak > -45;
+      },
+      null,
+      { timeout: 5000 },
+    );
+    await page.evaluate(() => window.__sonareDebug.setMasterInsertEnabled(0, true));
+    await page.waitForFunction(
+      () => {
+        const peak = window.__sonareDebug.meterPeakDb();
+        return peak !== null && peak <= -50;
+      },
+      null,
+      { timeout: 5000 },
+    );
+    await page.click('.transport-bar button:has-text("Stop")');
+
+    const stripState = await page.evaluate(() => ({
+      pending: window.__sonareDebug.applyPending(),
+      ids: JSON.stringify(window.__sonareDebug.scheduledClipIds()),
+    }));
+    if (stripState.pending || stripState.ids !== idsBeforeStrip) {
+      fail(`master insert edits caused a re-schedule: pending=${stripState.pending}`);
+    }
+    console.info(
+      `realtime master limiter: live peak capped to ${peakLimited?.toFixed(1)} dB without re-scheduling`,
+    );
+
+    // Chain equivalence: the offline export must apply the same limiter and
+    // land in the same loudness ballpark as the live engine.
+    const exportLimited = await page.evaluate(() => window.__sonareDebug.exportProbe(true));
+    if (exportLimited.peakDb > -50 || exportLimited.peakDb < -75) {
+      fail(`export ignored the master limiter: peak ${exportLimited.peakDb} dB`);
+    }
+    if (peakLimited !== null && Math.abs(exportLimited.peakDb - peakLimited) > 8) {
+      fail(
+        `realtime vs export diverge: live ${peakLimited.toFixed(1)} dB, export ${exportLimited.peakDb.toFixed(1)} dB`,
+      );
+    }
+    console.info(
+      `chain equivalence: live ${peakLimited?.toFixed(1)} dB vs export ${exportLimited.peakDb.toFixed(1)} dB`,
+    );
+    await page.evaluate(() => window.__sonareDebug.removeMasterInsert(0));
+    await page.waitForFunction(() => window.__sonareDebug.masterInsertCount() === 0, null, {
+      timeout: 5000,
+    });
   }
 
   // --- Steps tab: bake a 4-step pattern into the active clip ------------------

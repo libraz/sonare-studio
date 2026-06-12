@@ -4,13 +4,14 @@
  * the main thread and inside module workers alike.
  *
  * Per-clip rendering reuses the exact transforms of live playback scheduling
- * (src/project/scheduling.ts): the same MIDI prerender/bounce per instrument,
- * the same audio slice/fade/resample pipeline, the same strip insert/EQ
- * processing (sharing its processed-buffer cache) and the same gain/pan
- * folding. The clips are then summed onto a stereo bus honoring their
- * timeline positions, and — unlike live playback, which owns no summed bus —
- * the master strip's inserts/EQ and the project mastering chain are applied
- * honestly to the mix.
+ * (src/project/scheduling.ts): the same MIDI prerender/bounce per instrument
+ * and the same audio slice/fade/resample pipeline. Strip insert/EQ processing
+ * is then baked in offline (src/export/strip-render.ts) to mirror the strip
+ * DSP that the realtime engine applies during live playback, along with the
+ * same gain/pan folding. The clips are then summed onto a stereo bus honoring
+ * their timeline positions, and — unlike live playback, which owns no summed
+ * bus — the master strip's inserts/EQ and the project mastering chain are
+ * applied honestly to the mix.
  *
  * Differences from live playback, by design:
  * - master gain/pan are applied once on the summed bus instead of being
@@ -28,6 +29,7 @@ import {
   peakAmplitude,
   prerenderMidiClip,
 } from '@/engine/instruments';
+import { defaultStripDsp, makeStripProcessor } from '@/export/strip-render';
 import { ensureWasm } from '@/lib/wasm';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import {
@@ -45,9 +47,7 @@ import {
   audioClipProcessingCacheKey,
   clipPlaybackNotes,
   DEFAULT_TARGET_PEAK,
-  defaultStripDsp,
   isTrackAudible,
-  makeStripProcessor,
   ppqToSeconds,
   resampleChannelsLinear,
   sliceAudioClipWindow,

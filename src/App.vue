@@ -37,6 +37,7 @@ import {
 } from '@/engine/instruments';
 import { createMeterBridge, type MeterBridge } from '@/engine/meters';
 import { createMixerSync, type MixerSync } from '@/engine/mixer-sync';
+import { createStripSync, type StripSync } from '@/engine/strip-sync';
 import { renderMixdownInWorker } from '@/export/client';
 import { dawprojectFilename, exportDawproject } from '@/export/dawproject';
 import type { MixdownRangePpq } from '@/export/mixdown';
@@ -58,18 +59,20 @@ import { decodeAndIngest } from '@/project/audio-import';
 import {
   addAudioClip,
   addAudioTrack,
+  addInsert,
   deleteClip,
   deleteNotes,
   duplicateClip,
   quantizeSelection,
   redo,
+  removeInsert,
   setActiveClip,
+  setInsertEnabled,
   setSelection,
   setTempoSegments,
   undo,
 } from '@/project/commands';
 import { exportProjectSmf } from '@/project/export';
-import { stripCacheSegment } from '@/project/mixer';
 import { type ScheduledProjectClip, scheduleProjectClips } from '@/project/scheduling';
 import {
   loadProjectDocument,
@@ -590,6 +593,7 @@ function formatSize(bytes: number): string {
 /** Clips currently scheduled in the engine from the last apply. */
 let scheduledClips: ScheduledProjectClip[] = [];
 let mixerSync: MixerSync | null = null;
+let stripSync: StripSync | null = null;
 /** Number of clips scheduled by the last apply (display only). */
 const scheduledCount = ref(0);
 /** True while edits exist that have not been bounced to the engine yet. */
@@ -634,21 +638,25 @@ function scheduleApply(): void {
 }
 
 /**
- * Mirrors level/routing state (volume, pan, solo/mute, master gain/pan) onto
- * the engine's mixer lanes immediately — no re-bounce needed for these.
+ * Mirrors mixer state onto the engine immediately — no re-bounce needed:
+ * levels and routing (volume, pan, solo/mute, master gain/pan) go to the
+ * mixer lanes, strip DSP (inserts/EQ) and buses/sends go to the engine
+ * channel strips. Lane declaration order matters, so the lane sync runs
+ * before the strip sync.
  */
 function syncMixerState(): void {
-  if (!mixerSync || !store.initialized) return;
+  if (!mixerSync || !stripSync || !store.initialized) return;
   mixerSync.sync(store.tracks, store.mixer.master);
+  stripSync.sync(store.tracks, store.mixer);
 }
 
 /**
  * The scheduling-relevant identity of a track: content changes here require
- * a re-bounce (instrument selection and strip DSP are still baked offline),
- * while pure level changes are handled by the realtime mixer sync.
+ * a re-bounce (instrument selection is still baked offline), while mixer
+ * changes — including strip inserts/EQ — are handled by the realtime sync.
  */
 function trackScheduleKey(track: EditorTrack): string {
-  return `${track.id}|${track.kind}|${JSON.stringify(track.instrument ?? null)}|${stripCacheSegment(track.mixer)}`;
+  return `${track.id}|${track.kind}|${JSON.stringify(track.instrument ?? null)}`;
 }
 
 /**
@@ -663,8 +671,8 @@ function clipScheduleKey(clip: EditorClip): string {
 // The mirror arrays are replaced wholesale per command (including by
 // store.refresh()), so identity-based watches would fire on every edit.
 // Both watchers therefore compare scheduling-relevant content keys: clips
-// cover note/clip edits, tracks re-bounce only when instrument or strip DSP
-// changes — mute/solo/volume/pan go to the engine mixer lanes directly.
+// cover note/clip edits, tracks re-bounce only on instrument changes — all
+// mixer state (levels, strip DSP, buses/sends) goes to the engine directly.
 watch(
   () => store.clips.map(clipScheduleKey).join('\n'),
   (next, prev) => {
@@ -678,7 +686,7 @@ watch(
   },
 );
 watch(() => store.tracks, syncMixerState);
-watch(() => store.mixer.master, syncMixerState);
+watch(() => store.mixer, syncMixerState);
 
 /** Applies the pending edits to the engine immediately. */
 function applyNow(): void {
@@ -776,6 +784,10 @@ function startEngine(): Promise<void> {
     const h = await createEngine();
     handle.value = h;
     mixerSync = createMixerSync(h);
+    const wasm = (await ensureWasm()) as unknown as { masteringInsertNames?: () => string[] };
+    const insertCatalog =
+      typeof wasm.masteringInsertNames === 'function' ? new Set(wasm.masteringInsertNames()) : null;
+    stripSync = createStripSync(h, { insertCatalog });
     bridge.value = createMeterBridge(h);
     ctxState.value = h.ctx.state;
     h.ctx.addEventListener('statechange', () => {
@@ -1267,6 +1279,14 @@ onMounted(async () => {
               : track.instrument.kind,
         ),
       trackInsertCounts: () => store.tracks.map((track) => track.mixer?.inserts.length ?? 0),
+      trackInsertStates: () =>
+        store.tracks.map((track) => (track.mixer?.inserts ?? []).map((slot) => slot.enabled)),
+      masterInsertCount: () => store.mixer.master.inserts.length,
+      addMasterInsert: (processor: string, params?: Record<string, number | boolean>) =>
+        addInsert('master', processor, params),
+      setMasterInsertEnabled: (index: number, enabled: boolean) =>
+        setInsertEnabled('master', index, enabled),
+      removeMasterInsert: (index: number) => removeInsert('master', index),
       masteringProcessors: () =>
         (store.mixer.masteringChain?.processors ?? []).map((slot) => slot.processor),
       lastDownload: () => lastDownload,
@@ -1351,6 +1371,7 @@ onBeforeUnmount(async () => {
   bridge.value?.dispose();
   bridge.value = null;
   mixerSync = null;
+  stripSync = null;
   await handle.value?.dispose();
   handle.value = null;
 });

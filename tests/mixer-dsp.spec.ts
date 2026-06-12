@@ -225,6 +225,33 @@ describe('applyStripDsp', () => {
     expect(out[1][0]).toBeCloseTo(0.7, 6);
   });
 
+  it('runs the EQ before the inserts (pre-insert strip topology)', () => {
+    const stages: string[] = [];
+    const deps: StripProcessorDeps = {
+      processStereo: (_name, left, right) => {
+        stages.push('insert');
+        return { left: left.map((x) => x + 0.1), right: right.map((x) => x + 0.1) };
+      },
+      createEqualizer: () => ({
+        setBand: () => {},
+        processStereo: (left: Float32Array, right: Float32Array) => {
+          stages.push('eq');
+          return { left: left.map((x) => x * 2), right: right.map((x) => x * 2) };
+        },
+        delete: () => {},
+      }),
+    };
+    const strip = makeStrip({
+      inserts: [{ processor: 'eq.tilt', params: {}, enabled: true }],
+      eq: { enabled: true, bands: [{ type: 'Peak', gainDb: 3 }] },
+    });
+    const out = applyStripDsp(input, 48000, strip, deps);
+    expect(stages).toEqual(['eq', 'insert']);
+    // EQ doubles 0.1 to 0.2, then the insert adds 0.1 (insert-first would
+    // yield 0.4 instead).
+    expect(out[0][0]).toBeCloseTo(0.3, 6);
+  });
+
   it('applies the active EQ through the injected equalizer', () => {
     const setBand = vi.fn();
     const del = vi.fn();
