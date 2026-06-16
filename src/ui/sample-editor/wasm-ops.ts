@@ -9,6 +9,7 @@
  */
 
 import { ensureWasm } from '@/lib/wasm';
+import { downmixToMono, onsetSecondsToFrames } from './onsets';
 import { resolveRange, type SampleRange, spliceRange } from './ops';
 
 /** The subset of the libsonare module consumed by the sample editor. */
@@ -21,6 +22,8 @@ export interface SampleEditorWasmOps {
   masteringRepairDeclick?: (samples: Float32Array, sampleRate: number) => Float32Array;
   /** Classical (non-ML) broadband denoise. */
   masteringRepairDenoiseClassical?: (samples: Float32Array, sampleRate: number) => Float32Array;
+  /** Transient onset detection; returns onset times in seconds. */
+  detectOnsets?: (samples: Float32Array, sampleRate: number) => Float32Array;
 }
 
 /** Which wasm-delegated operations the given module actually provides. */
@@ -29,6 +32,7 @@ export interface WasmOpAvailability {
   timeStretch: boolean;
   declick: boolean;
   denoise: boolean;
+  detectOnsets: boolean;
 }
 
 /** Reports availability of the wasm-delegated operations (all false on null). */
@@ -40,6 +44,7 @@ export function wasmOpAvailability(
     timeStretch: typeof ops?.timeStretch === 'function',
     declick: typeof ops?.masteringRepairDeclick === 'function',
     denoise: typeof ops?.masteringRepairDenoiseClassical === 'function',
+    detectOnsets: typeof ops?.detectOnsets === 'function',
   };
 }
 
@@ -161,4 +166,28 @@ export function denoiseRange(
     throw new Error('Denoise is unavailable in this libsonare build');
   }
   return applyToRange(channels, range, (segment) => fn(segment, sampleRate));
+}
+
+/**
+ * Detects transient onsets across the whole file and returns their frame
+ * positions (sorted, deduplicated, inside [0, totalFrames)). The channels are
+ * downmixed to mono first, since the detector takes a single channel.
+ *
+ * @throws Error when the module does not provide detectOnsets.
+ * @throws RangeError when the sample rate is not positive.
+ */
+export function detectOnsetFrames(
+  ops: SampleEditorWasmOps,
+  channels: ReadonlyArray<Float32Array>,
+  sampleRate: number,
+): number[] {
+  const fn = ops.detectOnsets;
+  if (typeof fn !== 'function') {
+    throw new Error('Onset detection is unavailable in this libsonare build');
+  }
+  if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
+    throw new RangeError(`sampleRate must be > 0, got ${sampleRate}`);
+  }
+  const mono = downmixToMono(channels);
+  return onsetSecondsToFrames(fn(mono, sampleRate), sampleRate, mono.length);
 }

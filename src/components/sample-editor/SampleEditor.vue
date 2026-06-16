@@ -15,6 +15,7 @@ import {
   selectVersion,
   type VersionHistoryState,
 } from '@/ui/sample-editor/history';
+import { sliceRangeAt, snapFrameToOnsets } from '@/ui/sample-editor/onsets';
 import {
   applyGainDb,
   fadeInLinear,
@@ -45,6 +46,7 @@ import {
 import {
   declickRange,
   denoiseRange,
+  detectOnsetFrames,
   loadSampleEditorWasm,
   pitchShiftRange,
   type SampleEditorWasmOps,
@@ -88,6 +90,9 @@ const LANE_HEIGHT_PX = 96;
 /** Wheel-zoom sensitivity (factor exponent per wheel delta unit). */
 const WHEEL_ZOOM_SENSITIVITY = 0.01;
 
+/** Pointer distance (CSS px) within which a selection edge snaps to an onset. */
+const ONSET_SNAP_PX = 6;
+
 /** Canvas color tokens (matches the app's dark theme). */
 const COLORS = {
   background: '#15171c',
@@ -96,6 +101,7 @@ const COLORS = {
   laneSeparator: 'rgba(255, 255, 255, 0.1)',
   selectionFill: 'rgba(96, 165, 250, 0.16)',
   selectionEdge: 'rgba(96, 165, 250, 0.85)',
+  onsetMarker: 'rgba(250, 204, 21, 0.7)',
 } as const;
 
 const wrapRef = ref<HTMLDivElement | null>(null);
@@ -110,6 +116,9 @@ const selection = ref<SelectionDraft | null>(null);
 const loading = ref(false);
 const busy = ref(false);
 const error = ref<string | null>(null);
+
+/** Detected transient onset positions in frames (overlay markers). */
+const onsetFrames = ref<number[]>([]);
 
 /** Non-reactive: redraws are scheduled explicitly after viewport changes. */
 let viewport: SampleViewport | null = null;
@@ -170,6 +179,8 @@ async function loadCurrent(assetId: string): Promise<void> {
   try {
     const loaded = await loadAsset(assetId);
     asset.value = loaded;
+    // Markers belong to the previous buffer; a new version invalidates them.
+    onsetFrames.value = [];
     const widthPx = wrapRef.value?.clientWidth || 800;
     if (viewport && viewport.widthPx === widthPx) {
       viewport.setTotalFrames(loaded.meta.numFrames);
@@ -253,6 +264,15 @@ function draw(): void {
     }
   }
 
+  if (onsetFrames.value.length > 0) {
+    ctx.fillStyle = COLORS.onsetMarker;
+    for (const frame of onsetFrames.value) {
+      const x = view.frameToX(frame);
+      if (x < 0 || x > widthPx) continue;
+      ctx.fillRect(Math.floor(x), 0, 1, heightPx);
+    }
+  }
+
   const range = selRange.value;
   if (range) {
     const x0 = Math.max(0, view.frameToX(range.startFrame));
@@ -267,7 +287,7 @@ function draw(): void {
   }
 }
 
-watch([selection, asset], scheduleDraw);
+watch([selection, asset, onsetFrames], scheduleDraw);
 
 // --- Pointer / wheel interaction --------------------------------------------
 
@@ -276,12 +296,25 @@ function localX(event: PointerEvent | WheelEvent): number {
   return event.clientX - (rect?.left ?? 0);
 }
 
+/** Maps a pointer x to a frame, snapping to a nearby onset marker if one exists. */
+function frameAtPointer(view: SampleViewport, x: number): number {
+  const frame = view.xToFrame(x);
+  if (onsetFrames.value.length === 0) return frame;
+  return snapFrameToOnsets(frame, onsetFrames.value, ONSET_SNAP_PX * view.framesPerPx);
+}
+
+/** Shift state and raw down frame of the active gesture (for slice-on-click). */
+let pointerDownShift = false;
+let pointerDownRawFrame = 0;
+
 function onPointerDown(event: PointerEvent): void {
   const view = viewport;
   const loaded = asset.value;
   if (event.button !== 0 || !view || !loaded) return;
   (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-  const frame = view.xToFrame(localX(event));
+  pointerDownShift = event.shiftKey;
+  pointerDownRawFrame = view.xToFrame(localX(event));
+  const frame = frameAtPointer(view, localX(event));
   selection.value = event.shiftKey
     ? extendSelection(selection.value, frame, loaded.meta.numFrames)
     : beginSelection(frame, loaded.meta.numFrames);
@@ -293,10 +326,26 @@ function onPointerMove(event: PointerEvent): void {
   const loaded = asset.value;
   const draft = selection.value;
   if (!dragging || !view || !loaded || !draft) return;
-  selection.value = dragSelection(draft, view.xToFrame(localX(event)), loaded.meta.numFrames);
+  selection.value = dragSelection(
+    draft,
+    frameAtPointer(view, localX(event)),
+    loaded.meta.numFrames,
+  );
 }
 
 function onPointerUp(): void {
+  const loaded = asset.value;
+  // A click (no drag) on a transient-marked file selects the slice it lands in.
+  if (
+    dragging &&
+    !pointerDownShift &&
+    loaded &&
+    onsetFrames.value.length > 0 &&
+    selectionRange(selection.value) === null
+  ) {
+    const slice = sliceRangeAt(pointerDownRawFrame, onsetFrames.value, loaded.meta.numFrames);
+    if (slice) selection.value = { anchorFrame: slice.startFrame, headFrame: slice.endFrame };
+  }
   dragging = false;
 }
 
@@ -454,6 +503,28 @@ async function onDenoise(): Promise<void> {
   await runOp(t.value.shell.sampleEditor.ops.denoise, (channels, range) =>
     denoiseRange(ops, channels, asset.value?.meta.sampleRate ?? 48000, range),
   );
+}
+
+/**
+ * Detects transient onsets across the whole file and shows them as overlay
+ * markers. The markers do not alter the audio; they snap selection edges and
+ * let a click pick the slice between two transients (then any op can run on it).
+ */
+function onDetectTransients(): void {
+  const ops = wasmOps.value;
+  const loaded = asset.value;
+  if (!ops || !loaded) return;
+  error.value = null;
+  try {
+    onsetFrames.value = detectOnsetFrames(ops, loaded.channels, loaded.meta.sampleRate);
+  } catch (err) {
+    error.value = errorMessage(err);
+  }
+}
+
+/** Removes the transient markers (selection and audio are untouched). */
+function onClearTransients(): void {
+  onsetFrames.value = [];
 }
 
 // --- History / apply ----------------------------------------------------------
@@ -688,6 +759,27 @@ onBeforeUnmount(() => {
         @click="onDenoise"
       >
         {{ t.shell.sampleEditor.denoise }}
+      </button>
+      <span class="sep" />
+      <button
+        type="button"
+        :disabled="opsDisabled || !wasmAvail.detectOnsets"
+        :title="
+          wasmAvail.detectOnsets
+            ? t.shell.sampleEditor.detectTransientsTitle
+            : t.shell.sampleEditor.unavailable
+        "
+        @click="onDetectTransients"
+      >
+        {{ t.shell.sampleEditor.detectTransients }}
+      </button>
+      <button
+        v-if="onsetFrames.length > 0"
+        type="button"
+        :title="t.shell.sampleEditor.clearTransientsTitle"
+        @click="onClearTransients"
+      >
+        {{ formatMessage(t.shell.sampleEditor.clearTransients, { count: onsetFrames.length }) }}
       </button>
     </div>
     <p v-if="error" class="error">{{ error }}</p>

@@ -181,6 +181,11 @@ const MESSAGES = {
         declick: 'Declick',
         denoiseTitle: 'Reduce broadband noise',
         denoise: 'Denoise',
+        detectTransients: 'Transients',
+        detectTransientsTitle:
+          'Detect transient onsets; markers snap selection edges and clicks select slices',
+        clearTransients: 'Clear ({count})',
+        clearTransientsTitle: 'Remove the transient markers',
         waveform: 'Audio waveform',
         history: 'History',
         warp: 'Warp',
@@ -1278,6 +1283,11 @@ const MESSAGES = {
         declick: 'デクリック',
         denoiseTitle: '広帯域ノイズを低減',
         denoise: 'デノイズ',
+        detectTransients: 'トランジェント',
+        detectTransientsTitle:
+          'トランジェント（アタック）を検出。マーカーは選択端にスナップし、クリックでスライスを選択',
+        clearTransients: 'クリア ({count})',
+        clearTransientsTitle: 'トランジェントマーカーを削除',
         waveform: 'オーディオ波形',
         history: '履歴',
         warp: 'ワープ',

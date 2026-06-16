@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   declickRange,
   denoiseRange,
+  detectOnsetFrames,
   loadSampleEditorWasm,
   pitchShiftRange,
   type SampleEditorWasmOps,
@@ -33,6 +34,7 @@ describe('wasmOpAvailability', () => {
       timeStretch: false,
       declick: false,
       denoise: false,
+      detectOnsets: false,
     });
     expect(wasmOpAvailability(undefined).pitchShift).toBe(false);
   });
@@ -41,13 +43,36 @@ describe('wasmOpAvailability', () => {
     const mod: SampleEditorWasmOps = {
       pitchShift: (samples) => samples,
       masteringRepairDeclick: (samples) => samples,
+      detectOnsets: () => new Float32Array(),
     };
     expect(wasmOpAvailability(mod)).toEqual({
       pitchShift: true,
       timeStretch: false,
       declick: true,
       denoise: false,
+      detectOnsets: true,
     });
+  });
+});
+
+describe('detectOnsetFrames', () => {
+  it('downmixes to mono and converts onset seconds to sorted frames', () => {
+    const detectOnsets = vi.fn((samples: Float32Array, _sampleRate: number) => {
+      // The detector should receive the channel average over 8 frames.
+      expect([...samples]).toEqual([1, 0, 0, 0, 0, 0, 0, 0]);
+      return new Float32Array([0.5, 0.1]); // seconds -> 4, 0 frames at 8 Hz... see below
+    });
+    const left = new Float32Array([2, 0, 0, 0, 0, 0, 0, 0]);
+    const right = new Float32Array([0, 0, 0, 0, 0, 0, 0, 0]);
+    // sampleRate 8: 0.5 s -> frame 4, 0.1 s -> frame 1 (round). Sorted ascending.
+    expect(detectOnsetFrames({ detectOnsets }, [left, right], 8)).toEqual([1, 4]);
+    expect(detectOnsets).toHaveBeenCalledTimes(1);
+  });
+
+  it('throws when detectOnsets is unavailable or the sample rate is invalid', () => {
+    expect(() => detectOnsetFrames({}, [new Float32Array([1])], 48000)).toThrow(/unavailable/);
+    const mod: SampleEditorWasmOps = { detectOnsets: () => new Float32Array() };
+    expect(() => detectOnsetFrames(mod, [new Float32Array([1])], 0)).toThrow(RangeError);
   });
 });
 
