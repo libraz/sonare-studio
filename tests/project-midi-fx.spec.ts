@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_MIDI_FX_CONFIG,
   isMidiFxNoop,
+  MIDI_FX_ARP_PRESETS,
   MIDI_FX_CHORD_PRESETS,
   MIDI_FX_QUANTIZE_GRIDS,
   type MidiFxConfig,
   midiFxConfigJson,
+  sanitizeArpIntervals,
   sanitizeChordIntervals,
   sanitizeMidiFxConfig,
 } from '@/project/midi-fx';
@@ -26,6 +28,18 @@ describe('sanitizeChordIntervals', () => {
   });
 });
 
+describe('sanitizeArpIntervals', () => {
+  it('clamps and rounds but keeps order and repeats, capping the step count', () => {
+    expect(sanitizeArpIntervals([0, 4, 7])).toEqual([0, 4, 7]);
+    // Order and repeats are musically meaningful, so they survive (no de-dupe).
+    expect(sanitizeArpIntervals([0, 12, 0, 12])).toEqual([0, 12, 0, 12]);
+    expect(sanitizeArpIntervals([4.4, -3.6])).toEqual([4, -4]);
+    expect(sanitizeArpIntervals([100, -100])).toEqual([48, -48]);
+    expect(sanitizeArpIntervals([Number.NaN, 1, Number.POSITIVE_INFINITY])).toEqual([1]);
+    expect(sanitizeArpIntervals(Array.from({ length: 20 }, (_, i) => i))).toHaveLength(16);
+  });
+});
+
 describe('sanitizeMidiFxConfig', () => {
   it('clamps every field into its supported range', () => {
     const c = sanitizeMidiFxConfig({
@@ -38,6 +52,8 @@ describe('sanitizeMidiFxConfig', () => {
       humanizeTimingPpq: 9,
       humanizeVelocity: 999,
       chordIntervals: [0, 4],
+      arpeggiatorRate: 100,
+      arpeggiatorGate: 9,
     });
     expect(c.transposeSemitones).toBe(48);
     expect(c.quantizeStrength).toBe(1);
@@ -48,6 +64,8 @@ describe('sanitizeMidiFxConfig', () => {
     expect(c.humanizeTimingPpq).toBe(1);
     expect(c.humanizeVelocity).toBe(64);
     expect(c.chordIntervals).toEqual([0, 4]);
+    expect(c.arpeggiatorRate).toBe(4);
+    expect(c.arpeggiatorGate).toBe(1);
   });
 
   it('falls back to defaults for non-finite numeric fields', () => {
@@ -86,6 +104,37 @@ describe('midiFxConfigJson', () => {
     expect(JSON.parse(json as string)).toEqual({ chord_intervals: [0, 4, 7] });
   });
 
+  it('omits the arpeggiator until a step list is set, then emits rate + steps', () => {
+    expect(midiFxConfigJson(config({ arpeggiatorIntervals: [] }))).toBeNull();
+    const json = midiFxConfigJson(
+      config({ arpeggiatorIntervals: [0, 4, 7], arpeggiatorRate: 0.25 }),
+    );
+    // A full gate is the engine's legato default, so no gate key is emitted.
+    expect(JSON.parse(json as string)).toEqual({
+      arpeggiator_intervals: [0, 4, 7],
+      arpeggiator_step_ppq: 0.25,
+    });
+  });
+
+  it('treats a single repeating arpeggiator step as effective (a note repeat)', () => {
+    const json = midiFxConfigJson(config({ arpeggiatorIntervals: [0], arpeggiatorRate: 0.5 }));
+    expect(JSON.parse(json as string)).toEqual({
+      arpeggiator_intervals: [0],
+      arpeggiator_step_ppq: 0.5,
+    });
+  });
+
+  it('emits arpeggiator_gate_ppq only when the gate shortens the step', () => {
+    const json = midiFxConfigJson(
+      config({ arpeggiatorIntervals: [0, 12], arpeggiatorRate: 0.25, arpeggiatorGate: 0.5 }),
+    );
+    expect(JSON.parse(json as string)).toEqual({
+      arpeggiator_intervals: [0, 12],
+      arpeggiator_step_ppq: 0.25,
+      arpeggiator_gate_ppq: 0.125,
+    });
+  });
+
   it('serializes a combined transform with every effective key', () => {
     const json = midiFxConfigJson(
       config({
@@ -120,5 +169,12 @@ describe('catalogs', () => {
     expect(MIDI_FX_QUANTIZE_GRIDS.map((g) => g.id)).toContain('1/4');
     expect(MIDI_FX_QUANTIZE_GRIDS.map((g) => g.id)).toContain('1/32');
     for (const grid of MIDI_FX_QUANTIZE_GRIDS) expect(grid.ppq).toBeGreaterThan(0);
+  });
+
+  it('offers an Off arpeggio preset and named patterns within the step cap', () => {
+    expect(MIDI_FX_ARP_PRESETS[0]).toMatchObject({ id: 'off', intervals: [] });
+    expect(MIDI_FX_ARP_PRESETS.find((p) => p.id === 'up')?.intervals).toEqual([0, 4, 7]);
+    for (const preset of MIDI_FX_ARP_PRESETS)
+      expect(preset.intervals.length).toBeLessThanOrEqual(16);
   });
 });

@@ -4,6 +4,7 @@ import { bakeClipMidiFx } from '@/project/commands';
 import {
   DEFAULT_MIDI_FX_CONFIG,
   isMidiFxNoop,
+  MIDI_FX_ARP_PRESETS,
   MIDI_FX_CHORD_PRESETS,
   MIDI_FX_QUANTIZE_GRIDS,
   type MidiFxConfig,
@@ -32,13 +33,25 @@ const emit = defineEmits<{
 const { t } = useI18n();
 
 /** Working transform; mutated by the controls, baked on Apply. */
-const config = reactive<MidiFxConfig>({ ...DEFAULT_MIDI_FX_CONFIG, chordIntervals: [] });
+const config = reactive<MidiFxConfig>({
+  ...DEFAULT_MIDI_FX_CONFIG,
+  chordIntervals: [],
+  arpeggiatorIntervals: [],
+});
 
 /** Currently selected harmonize preset id (matched by interval equality). */
 const chordPresetId = computed(() => {
   const current = config.chordIntervals.join(',');
   return (
     MIDI_FX_CHORD_PRESETS.find((preset) => preset.intervals.join(',') === current)?.id ?? 'custom'
+  );
+});
+
+/** Currently selected arpeggio preset id (matched by step-list equality). */
+const arpPresetId = computed(() => {
+  const current = config.arpeggiatorIntervals.join(',');
+  return (
+    MIDI_FX_ARP_PRESETS.find((preset) => preset.intervals.join(',') === current)?.id ?? 'custom'
   );
 });
 
@@ -50,9 +63,18 @@ function selectChord(intervals: number[]): void {
   config.chordIntervals = [...intervals];
 }
 
+/** Selects an arpeggio preset (replaces the step list). */
+function selectArp(intervals: number[]): void {
+  config.arpeggiatorIntervals = [...intervals];
+}
+
 /** Restores every control to its identity value. */
 function reset(): void {
-  Object.assign(config, { ...DEFAULT_MIDI_FX_CONFIG, chordIntervals: [] });
+  Object.assign(config, {
+    ...DEFAULT_MIDI_FX_CONFIG,
+    chordIntervals: [],
+    arpeggiatorIntervals: [],
+  });
 }
 
 /** Bakes the transform into the clip and closes the panel. */
@@ -231,6 +253,56 @@ function pct(value: number): string {
           >
             {{ preset.label }}
           </button>
+        </div>
+      </section>
+
+      <section class="fx-group">
+        <div class="fx-group-head">{{ t.shell.pianoRoll.midiTransform.arpeggiate }}</div>
+        <div
+          class="fx-grid-tabs"
+          role="group"
+          :aria-label="t.shell.pianoRoll.midiTransform.arpPattern"
+        >
+          <button
+            v-for="preset in MIDI_FX_ARP_PRESETS"
+            :key="preset.id"
+            type="button"
+            class="fx-chip"
+            :class="{ 'fx-chip-active': arpPresetId === preset.id }"
+            @click="selectArp(preset.intervals)"
+          >
+            {{ preset.label }}
+          </button>
+        </div>
+        <div
+          class="fx-grid-tabs"
+          role="group"
+          :aria-label="t.shell.pianoRoll.midiTransform.arpRate"
+        >
+          <button
+            v-for="grid in MIDI_FX_QUANTIZE_GRIDS"
+            :key="grid.id"
+            type="button"
+            class="fx-chip"
+            :class="{ 'fx-chip-active': config.arpeggiatorRate === grid.ppq }"
+            @click="config.arpeggiatorRate = grid.ppq"
+          >
+            {{ grid.label }}
+          </button>
+        </div>
+        <div class="fx-row">
+          <label class="fx-label" for="fx-arp-gate">
+            {{ t.shell.pianoRoll.midiTransform.arpGate }}
+          </label>
+          <input
+            id="fx-arp-gate"
+            v-model.number="config.arpeggiatorGate"
+            type="range"
+            min="0.05"
+            max="1"
+            step="0.05"
+          />
+          <output class="fx-value">{{ pct(config.arpeggiatorGate) }}</output>
         </div>
       </section>
     </div>

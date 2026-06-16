@@ -7,9 +7,10 @@
  *
  * The engine accepts a flat JSON object (verified against the realtime ABI):
  * `transpose_semitones`, `quantize_ppq` + `quantize_strength`, `velocity_scale`,
- * `velocity_offset`, `velocity_gamma`, `humanize_ppq`, `humanize_velocity` and
- * `chord_intervals`. Absent or identity-valued keys are no-ops, so the
- * serializer only emits keys that actually change the notes.
+ * `velocity_offset`, `velocity_gamma`, `humanize_ppq`, `humanize_velocity`,
+ * `chord_intervals` and `arpeggiator_intervals` + `arpeggiator_step_ppq`
+ * (+ optional `arpeggiator_gate_ppq`). Absent or identity-valued keys are
+ * no-ops, so the serializer only emits keys that actually change the notes.
  *
  * All PPQ values are in the editor convention where 1.0 = one quarter note.
  */
@@ -34,6 +35,12 @@ export interface MidiFxConfig {
   humanizeVelocity: number;
   /** Harmonize intervals in semitones (empty or root-only = off). */
   chordIntervals: number[];
+  /** Arpeggio step intervals in semitones, in playback order (empty = off). */
+  arpeggiatorIntervals: number[];
+  /** Arpeggio step spacing in quarter-note PPQ (e.g. 0.25 = a 1/16 step). */
+  arpeggiatorRate: number;
+  /** Arpeggio gate as a fraction of the step (1 = legato, <1 = staccato). */
+  arpeggiatorGate: number;
 }
 
 /** Identity transform: every field a no-op. */
@@ -47,6 +54,9 @@ export const DEFAULT_MIDI_FX_CONFIG: MidiFxConfig = {
   humanizeTimingPpq: 0,
   humanizeVelocity: 0,
   chordIntervals: [],
+  arpeggiatorIntervals: [],
+  arpeggiatorRate: 0.25,
+  arpeggiatorGate: 1,
 };
 
 /** One harmonize preset offered by the transform panel. */
@@ -71,6 +81,31 @@ export const MIDI_FX_CHORD_PRESETS: readonly ChordPreset[] = [
   { id: 'minor7', label: 'Min7', intervals: [0, 3, 7, 10] },
   { id: 'dom7', label: 'Dom7', intervals: [0, 4, 7, 10] },
   { id: 'spread', label: 'Spread', intervals: [-12, 0, 12] },
+];
+
+/** One arpeggio pattern offered by the transform panel. */
+export interface ArpPreset {
+  /** Stable identifier. */
+  id: string;
+  /** Short menu label. */
+  label: string;
+  /** Semitone offsets played one per step, in order (0 keeps the original note). */
+  intervals: number[];
+}
+
+/**
+ * Arpeggio patterns, in menu order. "Off" is the empty-interval entry. Unlike
+ * harmonize, order and repeats matter (a step list is played sequentially), so
+ * up/down patterns list the same interval more than once.
+ */
+export const MIDI_FX_ARP_PRESETS: readonly ArpPreset[] = [
+  { id: 'off', label: 'Off', intervals: [] },
+  { id: 'octave', label: 'Octave', intervals: [0, 12] },
+  { id: 'up', label: 'Up', intervals: [0, 4, 7] },
+  { id: 'upOctave', label: 'Up+8ve', intervals: [0, 4, 7, 12] },
+  { id: 'minor', label: 'Minor', intervals: [0, 3, 7] },
+  { id: 'octaves', label: 'Octaves', intervals: [0, 12, 24] },
+  { id: 'updown', label: 'Up/Down', intervals: [0, 4, 7, 12, 7, 4] },
 ];
 
 /** One quantize grid offered by the transform panel. */
@@ -99,6 +134,12 @@ const CHORD_INTERVAL_MIN = -48;
 const CHORD_INTERVAL_MAX = 48;
 /** Maximum harmonize voices the engine accepts. */
 const CHORD_INTERVAL_MAX_COUNT = 8;
+
+/** Lowest / highest arpeggio step interval (semitones). */
+const ARP_INTERVAL_MIN = -48;
+const ARP_INTERVAL_MAX = 48;
+/** Maximum arpeggio steps the engine accepts (ArpeggiatorConfig::kMaxArpSteps). */
+const ARP_INTERVAL_MAX_COUNT = 16;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -138,6 +179,24 @@ export function sanitizeChordIntervals(intervals: ReadonlyArray<number>): number
 }
 
 /**
+ * Normalizes arpeggio step intervals: drops non-finite entries, clamps each to
+ * the supported range and caps the step count. Order and repeats are preserved
+ * (a step list is played sequentially, so they are musically meaningful).
+ *
+ * @param intervals Raw semitone offsets, in playback order.
+ * @returns A fresh, clamped interval list (at most {@link ARP_INTERVAL_MAX_COUNT}).
+ */
+export function sanitizeArpIntervals(intervals: ReadonlyArray<number>): number[] {
+  const out: number[] = [];
+  for (const raw of intervals) {
+    if (!Number.isFinite(raw)) continue;
+    out.push(clamp(Math.round(raw), ARP_INTERVAL_MIN, ARP_INTERVAL_MAX));
+    if (out.length >= ARP_INTERVAL_MAX_COUNT) break;
+  }
+  return out;
+}
+
+/**
  * Clamps every field of a transform config into its supported range, returning
  * a fresh object safe to serialize or store.
  *
@@ -161,6 +220,14 @@ export function sanitizeMidiFxConfig(input: Partial<MidiFxConfig>): MidiFxConfig
     humanizeTimingPpq: clampFinite(input.humanizeTimingPpq ?? 0, 0, 1, 0),
     humanizeVelocity: clampInt(input.humanizeVelocity ?? 0, 0, 64, 0),
     chordIntervals: sanitizeChordIntervals(input.chordIntervals ?? []),
+    arpeggiatorIntervals: sanitizeArpIntervals(input.arpeggiatorIntervals ?? []),
+    arpeggiatorRate: clampFinite(
+      input.arpeggiatorRate ?? DEFAULT_MIDI_FX_CONFIG.arpeggiatorRate,
+      1 / 32,
+      4,
+      DEFAULT_MIDI_FX_CONFIG.arpeggiatorRate,
+    ),
+    arpeggiatorGate: clampFinite(input.arpeggiatorGate ?? 1, 0.05, 1, 1),
   };
 }
 
@@ -175,6 +242,9 @@ interface MidiFxEngineConfig {
   humanize_ppq?: number;
   humanize_velocity?: number;
   chord_intervals?: number[];
+  arpeggiator_intervals?: number[];
+  arpeggiator_step_ppq?: number;
+  arpeggiator_gate_ppq?: number;
 }
 
 /**
@@ -199,6 +269,17 @@ function toEngineConfig(config: MidiFxConfig): MidiFxEngineConfig {
   if (config.humanizeVelocity > 0) out.humanize_velocity = config.humanizeVelocity;
   if (config.chordIntervals.length > 0 && config.chordIntervals.some((i) => i !== 0)) {
     out.chord_intervals = [...config.chordIntervals];
+  }
+  // An arpeggio re-triggers a held note into a sequence, so any non-empty step
+  // list is effective (even a single [0] step, which repeats the note). The gate
+  // key is emitted only when it shortens the step; a full gate is the legato
+  // default the engine assumes when the key is absent.
+  if (config.arpeggiatorIntervals.length > 0 && config.arpeggiatorRate > 0) {
+    out.arpeggiator_intervals = [...config.arpeggiatorIntervals];
+    out.arpeggiator_step_ppq = config.arpeggiatorRate;
+    if (config.arpeggiatorGate < 1) {
+      out.arpeggiator_gate_ppq = config.arpeggiatorRate * config.arpeggiatorGate;
+    }
   }
   return out;
 }
