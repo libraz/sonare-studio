@@ -724,6 +724,8 @@ const MESSAGES = {
         bendLaneTitle: 'Pitch bend lane',
         pressureLaneTab: 'AT',
         pressureLaneTitle: 'Channel pressure (aftertouch) lane',
+        polyPressureLaneTab: 'PAT',
+        polyPressureLaneTitle: 'Polyphonic key pressure lane (select one note)',
         parameterLane: 'Note parameter lane',
         context: {
           quantizeStarts: 'Quantize starts',
@@ -1821,6 +1823,8 @@ const MESSAGES = {
         bendLaneTitle: 'ピッチベンドレーン',
         pressureLaneTab: 'AT',
         pressureLaneTitle: 'チャンネルプレッシャー（アフタータッチ）レーン',
+        polyPressureLaneTab: 'PAT',
+        polyPressureLaneTitle: 'ポリフォニックキープレッシャーレーン（ノートを1つ選択）',
         parameterLane: 'ノートパラメーターレーン',
         context: {
           quantizeStarts: '開始位置をクオンタイズ',

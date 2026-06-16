@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, markRaw, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useEditorTool } from '@/composables/useEditorTool';
+import { formatPitch } from '@/lib/pitch';
 import {
   addNote,
   deleteNotes,
@@ -13,6 +14,7 @@ import {
   setClipCcLane,
   setClipChannelPressure,
   setClipPitchBend,
+  setClipPolyPressure,
   setSelection,
   snapSelectionToScale,
   splitNote,
@@ -129,39 +131,65 @@ const lanePitchBend = ref(false);
 /** Whether the bottom lane edits the active clip's channel-pressure curve. */
 const laneChannelPressure = ref(false);
 
-/** Switches the bottom lane to a note-parameter view. */
-function selectNoteLane(id: LaneParamId): void {
-  laneParam.value = id;
+/** Whether the bottom lane edits the selected note's poly-pressure curve. */
+const lanePolyPressure = ref(false);
+
+/** Clears every non-note lane mode so a single mode owns the bottom lane. */
+function clearExpressionLanes(): void {
   laneCc.value = null;
   lanePitchBend.value = false;
   laneChannelPressure.value = false;
+  lanePolyPressure.value = false;
+}
+
+/** Switches the bottom lane to a note-parameter view. */
+function selectNoteLane(id: LaneParamId): void {
+  laneParam.value = id;
+  clearExpressionLanes();
 }
 
 /** Switches the bottom lane to a CC controller view. */
 function selectCcLane(controller: number): void {
+  clearExpressionLanes();
   laneCc.value = controller;
-  lanePitchBend.value = false;
-  laneChannelPressure.value = false;
 }
 
 /** Switches the bottom lane to the pitch-bend view. */
 function selectPitchBendLane(): void {
+  clearExpressionLanes();
   lanePitchBend.value = true;
-  laneCc.value = null;
-  laneChannelPressure.value = false;
 }
 
 /** Switches the bottom lane to the channel-pressure (aftertouch) view. */
 function selectChannelPressureLane(): void {
+  clearExpressionLanes();
   laneChannelPressure.value = true;
-  laneCc.value = null;
-  lanePitchBend.value = false;
 }
 
-/** True when a note-parameter lane (not CC/bend/pressure) is shown. */
+/** Switches the bottom lane to the poly-pressure (per-key aftertouch) view. */
+function selectPolyPressureLane(): void {
+  clearExpressionLanes();
+  lanePolyPressure.value = true;
+}
+
+/** True when a note-parameter lane (not an expression lane) is shown. */
 const noteLaneActive = computed(
-  () => laneCc.value === null && !lanePitchBend.value && !laneChannelPressure.value,
+  () =>
+    laneCc.value === null &&
+    !lanePitchBend.value &&
+    !laneChannelPressure.value &&
+    !lanePolyPressure.value,
 );
+
+/**
+ * Pitch the poly-pressure lane targets: the single selected note's pitch, or
+ * null when zero or several notes are selected (per-key pressure needs one).
+ */
+const polyPressurePitch = computed<number | null>(() => {
+  if (store.selection.size !== 1) return null;
+  const [id] = store.selection;
+  return store.notes.find((n) => n.id === id)?.pitch ?? null;
+});
 
 /** Active clip color for the CC curve. */
 const trackColor = computed(() => store.activeTrack?.color ?? DEFAULT_NOTE_COLOR);
@@ -215,6 +243,23 @@ function commitPitchBendPoints(points: ClipPitchBendPoint[]): void {
 /** Commits a channel-pressure lane edit on channel 0. */
 function commitChannelPressurePoints(points: ClipPressurePoint[]): void {
   setClipChannelPressure(store.clipId, 0, points);
+}
+
+/** Breakpoints of the selected note's poly-pressure lane on channel 0 (empty when none). */
+const activePolyPressurePoints = computed<ClipPressurePoint[]>(() => {
+  const pitch = polyPressurePitch.value;
+  if (!lanePolyPressure.value || pitch === null) return [];
+  const lane = store.activeClip?.polyPressureLanes?.find(
+    (l) => l.channel === 0 && l.pitch === pitch,
+  );
+  return lane?.points ?? [];
+});
+
+/** Commits a poly-pressure lane edit for the selected note's pitch on channel 0. */
+function commitPolyPressurePoints(points: ClipPressurePoint[]): void {
+  const pitch = polyPressurePitch.value;
+  if (pitch === null) return;
+  setClipPolyPressure(store.clipId, 0, pitch, points);
 }
 
 /** Horizontal snap for lane points, following the grid when snapping is on. */
@@ -710,6 +755,17 @@ onBeforeUnmount(() => {
         >
           {{ t.shell.pianoRoll.pressureLaneTab }}
         </button>
+        <button
+          type="button"
+          class="lane-tab"
+          :class="{ 'lane-tab-active': lanePolyPressure }"
+          :title="t.shell.pianoRoll.polyPressureLaneTitle"
+          role="tab"
+          :aria-selected="lanePolyPressure"
+          @click="selectPolyPressureLane()"
+        >
+          {{ t.shell.pianoRoll.polyPressureLaneTab }}
+        </button>
       </div>
       <VelocityLane
         v-if="noteLaneActive"
@@ -753,7 +809,7 @@ onBeforeUnmount(() => {
         :snap-ppq="ccSnap"
       />
       <BreakpointLane
-        v-else
+        v-else-if="laneChannelPressure"
         class="cell-velocity"
         :range="range"
         :revision="revision"
@@ -764,6 +820,25 @@ onBeforeUnmount(() => {
         :commit="commitChannelPressurePoints"
         :readout-label="t.shell.pianoRoll.pressureLaneTab"
         :aria-label="t.shell.pianoRoll.pressureLaneTitle"
+        :color="trackColor"
+        :snap-ppq="ccSnap"
+      />
+      <BreakpointLane
+        v-else
+        class="cell-velocity"
+        :range="range"
+        :revision="revision"
+        :painter="painter"
+        :clip-id="polyPressurePitch === null ? -1 : store.clipId"
+        :clip-length-ppq="store.clipLengthPpq"
+        :points="activePolyPressurePoints"
+        :commit="commitPolyPressurePoints"
+        :readout-label="
+          polyPressurePitch === null
+            ? t.shell.pianoRoll.polyPressureLaneTab
+            : formatPitch(polyPressurePitch)
+        "
+        :aria-label="t.shell.pianoRoll.polyPressureLaneTitle"
         :color="trackColor"
         :snap-ppq="ccSnap"
       />

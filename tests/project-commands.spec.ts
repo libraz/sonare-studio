@@ -32,6 +32,7 @@ import {
   setClipGain,
   setClipLoop,
   setClipPitchBend,
+  setClipPolyPressure,
   setMarker,
   setProjectChords,
   setSections,
@@ -550,6 +551,41 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       const clipId = store.clipId;
       expect(() => setClipChannelPressure(clipId, 16, [])).toThrow(RangeError);
       expect(() => setClipChannelPressure(9999, 0, [])).toThrow(RangeError);
+    });
+
+    it('setClipPolyPressure keys lanes by channel/pitch, sorts, removes and is undoable', () => {
+      const clipId = store.clipId;
+      setClipPolyPressure(clipId, 0, 64, [{ ppq: 1, value: 999 }]);
+      setClipPolyPressure(clipId, 0, 60, [
+        { ppq: 2, value: 80 },
+        { ppq: 0, value: -5 },
+      ]);
+      // Lanes sort by channel then pitch; points sort by ppq and clamp to 7-bit.
+      expect(store.activeClip?.polyPressureLanes).toEqual([
+        {
+          channel: 0,
+          pitch: 60,
+          points: [
+            { ppq: 0, value: 0 },
+            { ppq: 2, value: 80 },
+          ],
+        },
+        { channel: 0, pitch: 64, points: [{ ppq: 1, value: 127 }] },
+      ]);
+      // Empty points remove just that channel/pitch lane.
+      setClipPolyPressure(clipId, 0, 60, []);
+      expect(store.activeClip?.polyPressureLanes).toEqual([
+        { channel: 0, pitch: 64, points: [{ ppq: 1, value: 127 }] },
+      ]);
+      expect(undo()).toBe(true);
+      expect(store.activeClip?.polyPressureLanes?.map((l) => l.pitch)).toEqual([60, 64]);
+    });
+
+    it('setClipPolyPressure validates the channel, pitch and clip', () => {
+      const clipId = store.clipId;
+      expect(() => setClipPolyPressure(clipId, 16, 60, [])).toThrow(RangeError);
+      expect(() => setClipPolyPressure(clipId, 0, 128, [])).toThrow(RangeError);
+      expect(() => setClipPolyPressure(9999, 0, 60, [])).toThrow(RangeError);
     });
 
     it('bakeClipMidiFx transposes the clip notes as one undoable edit', () => {
