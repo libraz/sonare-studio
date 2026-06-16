@@ -1,4 +1,10 @@
-import { allocateNoteId, getProject, notesToProjectEvents, useProjectStore } from '../store';
+import {
+  allocateNoteId,
+  getProject,
+  getWasmModule,
+  notesToProjectEvents,
+  useProjectStore,
+} from '../store';
 import type { EditorNote, EditorNoteUpdate, NewEditorNote } from '../types';
 import { cloneNotes, execute } from './history';
 
@@ -236,6 +242,31 @@ export function transposeSelection(semitones: number): void {
     store.selection.has(note.id) ? { ...note, pitch: note.pitch + applied } : { ...note },
   );
   commit(next);
+}
+
+/**
+ * Snaps the pitch of every selected note to the nearest note of the piano
+ * roll's active scale (root + mode from the scale-highlight config) as one
+ * undoable edit. The engine's `scaleQuantizeMidi` oracle does the pitch-class
+ * snap, so the result matches scale highlighting exactly. A no-op when nothing
+ * is selected, the mode mask is empty, or every note already sits in the scale.
+ */
+export function snapSelectionToScale(): void {
+  const store = useProjectStore();
+  if (store.selection.size === 0) return;
+  const { rootPc, modeMask } = store.scaleHighlight;
+  // An empty mask has no in-scale pitch class to snap to.
+  if ((modeMask & 0xfff) === 0) return;
+  const mod = getWasmModule();
+  let changed = false;
+  const next = store.notes.map((note) => {
+    if (!store.selection.has(note.id)) return { ...note };
+    const snapped = clampInt(mod.scaleQuantizeMidi(rootPc, modeMask, note.pitch), 0, 127);
+    if (snapped === note.pitch) return { ...note };
+    changed = true;
+    return { ...note, pitch: snapped };
+  });
+  if (changed) commit(next);
 }
 
 /**

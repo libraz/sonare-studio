@@ -68,6 +68,7 @@ export {
   quantizeSelection,
   quantizeSelectionLengths,
   setSelection,
+  snapSelectionToScale,
   splitNote,
   transposeSelection,
   updateNotes,

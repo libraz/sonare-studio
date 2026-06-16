@@ -693,6 +693,22 @@ export function scalePitchClassEnabled(
   return ((modeMask >> ((((pitchClass - root) % 12) + 12) % 12)) & 1) === 1;
 }
 
+/**
+ * Mirrors libsonare's `scaleQuantizeMidi`: snaps a MIDI value to the nearest
+ * pitch class enabled by `modeMask` (relative to `root`), preferring the lower
+ * note on a tie. An unchanged value is returned when the note already sits in
+ * the scale (or the mask has no enabled pitch class).
+ */
+export function scaleQuantizeMidi(root: number, modeMask: number, midi: number): number {
+  const pc = (value: number): number => ((value % 12) + 12) % 12;
+  if (scalePitchClassEnabled(root, modeMask, pc(midi))) return midi;
+  for (let d = 1; d <= 6; d++) {
+    if (scalePitchClassEnabled(root, modeMask, pc(midi - d))) return midi - d;
+    if (scalePitchClassEnabled(root, modeMask, pc(midi + d))) return midi + d;
+  }
+  return midi;
+}
+
 /** Synth preset names the fake catalog reports (subset of the real build). */
 export const FAKE_SYNTH_PRESETS = [
   'sine',
@@ -845,6 +861,7 @@ export function createFakeWasmModule(): typeof import('@/wasm/index.js') {
   return {
     Project: FakeProject,
     scalePitchClassEnabled,
+    scaleQuantizeMidi,
     init: async () => {},
     synthPresetNames: fakeSynthPresetNames,
     synthPresetPatch: fakeSynthPresetPatch,

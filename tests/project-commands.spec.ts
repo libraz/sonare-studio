@@ -41,6 +41,7 @@ import {
   setTrackPan,
   setTrackSolo,
   setTrackVolume,
+  snapSelectionToScale,
   splitClip,
   splitNote,
   transposeSelection,
@@ -679,8 +680,50 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       transposeSelection(12);
       nudgeSelectionVelocity(10);
       quantizeSelectionLengths();
+      snapSelectionToScale();
       expect(store.notes[0].pitch).toBe(60);
       expect(store.notes[0].velocity).toBe(80);
+    });
+
+    it('snaps the selection to the active scale and leaves the rest alone', () => {
+      // C minor pentatonic (C, Eb, F, G, Bb): unambiguous nearest snaps.
+      store.scaleHighlight = { enabled: true, rootPc: 0, modeMask: 0b10010101001 };
+      const inScale = addNote({ pitch: 60, startPpq: 0, durationPpq: 1 }); // C, already in scale
+      const sharp = addNote({ pitch: 61, startPpq: 4, durationPpq: 1 }); // C# -> C (60)
+      const d = addNote({ pitch: 62, startPpq: 8, durationPpq: 1 }); // D -> Eb (63)
+      const unselected = addNote({ pitch: 61, startPpq: 12, durationPpq: 1 }); // C#, not selected
+      setSelection([inScale, sharp, d]);
+
+      snapSelectionToScale();
+      expect(noteById(inScale)?.pitch).toBe(60);
+      expect(noteById(sharp)?.pitch).toBe(60);
+      expect(noteById(d)?.pitch).toBe(63);
+      expect(noteById(unselected)?.pitch).toBe(61);
+
+      undo();
+      expect(noteById(sharp)?.pitch).toBe(61);
+      expect(noteById(d)?.pitch).toBe(62);
+    });
+
+    it('does not push an undo entry when every selected note is already in scale', () => {
+      store.scaleHighlight = { enabled: true, rootPc: 0, modeMask: 0b10010101001 };
+      const c = addNote({ pitch: 60, startPpq: 0, durationPpq: 1 }); // C
+      const g = addNote({ pitch: 67, startPpq: 4, durationPpq: 1 }); // G
+      setSelection([c, g]);
+      snapSelectionToScale();
+      // The snap was a no-op, so the only undoable step is adding g (not a snap):
+      // undoing once removes g and leaves c untouched.
+      undo();
+      expect(noteById(g)).toBeUndefined();
+      expect(noteById(c)?.pitch).toBe(60);
+    });
+
+    it('is a no-op when the scale mask is empty', () => {
+      store.scaleHighlight = { enabled: true, rootPc: 0, modeMask: 0 };
+      const note = addNote({ pitch: 61, startPpq: 0, durationPpq: 1 });
+      setSelection([note]);
+      snapSelectionToScale();
+      expect(noteById(note)?.pitch).toBe(61);
     });
   });
 

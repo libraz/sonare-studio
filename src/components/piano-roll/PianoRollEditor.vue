@@ -11,6 +11,7 @@ import {
   setActiveClip,
   setActiveTrack,
   setSelection,
+  snapSelectionToScale,
   splitNote,
   transposeSelection,
   undo,
@@ -206,6 +207,11 @@ function selectionOpItems(): ContextMenuItem[] {
       id: 'humanize',
       label: t.value.shell.pianoRoll.context.humanizeVelocity,
       run: () => humanizeSelectionVelocity(HUMANIZE_VELOCITY_AMOUNT),
+    },
+    {
+      id: 'snap-scale',
+      label: t.value.shell.pianoRoll.context.snapToScale,
+      run: () => snapSelectionToScale(),
     },
   ];
 }
