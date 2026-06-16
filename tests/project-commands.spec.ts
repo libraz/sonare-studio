@@ -30,6 +30,7 @@ import {
   setClipCcLane,
   setClipGain,
   setClipLoop,
+  setClipPitchBend,
   setMarker,
   setProjectChords,
   setSections,
@@ -482,6 +483,39 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(() => setClipCcLane(clipId, 128, 0, [])).toThrow(RangeError);
       expect(() => setClipCcLane(clipId, 1, 16, [])).toThrow(RangeError);
       expect(() => setClipCcLane(9999, 1, 0, [])).toThrow(RangeError);
+    });
+
+    it('setClipPitchBend sanitizes 14-bit points, sorts lanes, removes and is undoable', () => {
+      const clipId = store.clipId;
+      setClipPitchBend(clipId, 1, [{ ppq: 1.5, value: 4096 }]);
+      setClipPitchBend(clipId, 0, [
+        { ppq: 2, value: 99999 },
+        { ppq: 0, value: -5 },
+      ]);
+      // Lanes sort by channel; points sort by ppq and clamp to the 14-bit range.
+      expect(store.activeClip?.pitchBendLanes).toEqual([
+        {
+          channel: 0,
+          points: [
+            { ppq: 0, value: 0 },
+            { ppq: 2, value: 16383 },
+          ],
+        },
+        { channel: 1, points: [{ ppq: 1.5, value: 4096 }] },
+      ]);
+      // Empty points remove just that channel's lane.
+      setClipPitchBend(clipId, 0, []);
+      expect(store.activeClip?.pitchBendLanes).toEqual([
+        { channel: 1, points: [{ ppq: 1.5, value: 4096 }] },
+      ]);
+      expect(undo()).toBe(true);
+      expect(store.activeClip?.pitchBendLanes?.map((l) => l.channel)).toEqual([0, 1]);
+    });
+
+    it('setClipPitchBend validates the channel and clip', () => {
+      const clipId = store.clipId;
+      expect(() => setClipPitchBend(clipId, 16, [])).toThrow(RangeError);
+      expect(() => setClipPitchBend(9999, 0, [])).toThrow(RangeError);
     });
 
     it('bakeClipMidiFx transposes the clip notes as one undoable edit', () => {

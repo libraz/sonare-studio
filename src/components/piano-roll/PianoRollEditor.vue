@@ -10,6 +10,8 @@ import {
   redo,
   setActiveClip,
   setActiveTrack,
+  setClipCcLane,
+  setClipPitchBend,
   setSelection,
   snapSelectionToScale,
   splitNote,
@@ -17,14 +19,18 @@ import {
   undo,
   updateNotes,
 } from '@/project/commands';
-import { PIANO_ROLL_CC_LANES } from '@/project/midi-cc';
+import {
+  MIDI_PITCH_BEND_CENTER,
+  MIDI_PITCH_BEND_MAX,
+  PIANO_ROLL_CC_LANES,
+} from '@/project/midi-cc';
 import { useProjectStore } from '@/project/store';
-import type { ClipCcPoint } from '@/project/types';
+import type { ClipCcPoint, ClipPitchBendPoint } from '@/project/types';
 import { createPainter } from '@/ui/canvas/painter';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
 import { useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
-import CcLane from './CcLane.vue';
+import BreakpointLane from './BreakpointLane.vue';
 import { createNoteExtentCache } from './content-extent';
 import KeyboardColumn from './KeyboardColumn.vue';
 import { LANE_PARAMS, type LaneParamId } from './lane-params';
@@ -116,9 +122,25 @@ const laneParam = ref<LaneParamId>('velocity');
  */
 const laneCc = ref<number | null>(null);
 
+/** Whether the bottom lane edits the active clip's pitch-bend curve. */
+const lanePitchBend = ref(false);
+
 /** Switches the bottom lane to a note-parameter view. */
 function selectNoteLane(id: LaneParamId): void {
   laneParam.value = id;
+  laneCc.value = null;
+  lanePitchBend.value = false;
+}
+
+/** Switches the bottom lane to a CC controller view. */
+function selectCcLane(controller: number): void {
+  laneCc.value = controller;
+  lanePitchBend.value = false;
+}
+
+/** Switches the bottom lane to the pitch-bend view. */
+function selectPitchBendLane(): void {
+  lanePitchBend.value = true;
   laneCc.value = null;
 }
 
@@ -146,7 +168,25 @@ const activeCcPoints = computed<ClipCcPoint[]>(() => {
   return lane?.points ?? [];
 });
 
-/** Horizontal snap for CC points, following the grid when snapping is on. */
+/** Breakpoints of the active clip's pitch-bend lane on channel 0 (empty when none). */
+const activePitchBendPoints = computed<ClipPitchBendPoint[]>(() => {
+  if (!lanePitchBend.value) return [];
+  const lane = store.activeClip?.pitchBendLanes?.find((l) => l.channel === 0);
+  return lane?.points ?? [];
+});
+
+/** Commits a CC lane edit for the active controller on channel 0. */
+function commitCcPoints(points: ClipCcPoint[]): void {
+  if (laneCc.value === null) return;
+  setClipCcLane(store.clipId, laneCc.value, 0, points);
+}
+
+/** Commits a pitch-bend lane edit on channel 0. */
+function commitPitchBendPoints(points: ClipPitchBendPoint[]): void {
+  setClipPitchBend(store.clipId, 0, points);
+}
+
+/** Horizontal snap for lane points, following the grid when snapping is on. */
 function ccSnap(ppq: number): number {
   if (!store.snapEnabled) return ppq;
   const step = gridPpq.value;
@@ -613,13 +653,24 @@ onBeforeUnmount(() => {
           :title="cc.title"
           role="tab"
           :aria-selected="laneCc === cc.controller"
-          @click="laneCc = cc.controller"
+          @click="selectCcLane(cc.controller)"
         >
           {{ cc.label }}
         </button>
+        <button
+          type="button"
+          class="lane-tab"
+          :class="{ 'lane-tab-active': lanePitchBend }"
+          :title="t.shell.pianoRoll.bendLaneTitle"
+          role="tab"
+          :aria-selected="lanePitchBend"
+          @click="selectPitchBendLane()"
+        >
+          {{ t.shell.pianoRoll.bendLaneTab }}
+        </button>
       </div>
       <VelocityLane
-        v-if="laneCc === null"
+        v-if="laneCc === null && !lanePitchBend"
         class="cell-velocity"
         :range="range"
         :revision="revision"
@@ -628,7 +679,21 @@ onBeforeUnmount(() => {
         :selection="store.selection"
         :param="laneParam"
       />
-      <CcLane
+      <BreakpointLane
+        v-else-if="laneCc !== null"
+        class="cell-velocity"
+        :range="range"
+        :revision="revision"
+        :painter="painter"
+        :clip-id="store.clipId"
+        :clip-length-ppq="store.clipLengthPpq"
+        :points="activeCcPoints"
+        :commit="commitCcPoints"
+        :readout-label="`CC${laneCc}`"
+        :color="trackColor"
+        :snap-ppq="ccSnap"
+      />
+      <BreakpointLane
         v-else
         class="cell-velocity"
         :range="range"
@@ -636,9 +701,12 @@ onBeforeUnmount(() => {
         :painter="painter"
         :clip-id="store.clipId"
         :clip-length-ppq="store.clipLengthPpq"
-        :controller="laneCc"
-        :channel="0"
-        :points="activeCcPoints"
+        :points="activePitchBendPoints"
+        :commit="commitPitchBendPoints"
+        :value-max="MIDI_PITCH_BEND_MAX"
+        :center-value="MIDI_PITCH_BEND_CENTER"
+        :readout-label="t.shell.pianoRoll.bendLaneTab"
+        :aria-label="t.shell.pianoRoll.bendLaneTitle"
         :color="trackColor"
         :snap-ppq="ccSnap"
       />

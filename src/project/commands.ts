@@ -22,6 +22,7 @@ export {
   setClipFades,
   setClipGain,
   setClipLoop,
+  setClipPitchBend,
   setClipTakes,
   setClipWarp,
   setTrackFrozen,

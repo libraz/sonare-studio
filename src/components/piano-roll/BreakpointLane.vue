@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
-import { setClipCcLane } from '@/project/commands';
 import type { ClipCcPoint } from '@/project/types';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
@@ -8,13 +7,17 @@ import { useI18n } from '@/ui/i18n';
 import { DEFAULT_NOTE_COLOR, getCanvasContext, PIANO_ROLL_COLORS, setupCanvas } from './theme';
 
 /**
- * Continuous-controller (CC) lane below the note grid: a stepped curve of the
- * active clip's breakpoints for one controller, sharing the grid's horizontal
- * TimelineRange. The value axis is 0-127 (bottom to top). Drag a breakpoint to
- * move it, click empty space to add one, drag across empty space to draw a
- * freehand curve, and alt-click or right-click a breakpoint to delete it. Each
- * gesture commits as one undo step via setClipCcLane; the points feed the
- * realtime MIDI schedule (src/engine/midi-sync.ts), so the curve is audible.
+ * Generic breakpoint-automation lane below the note grid: a stepped curve of a
+ * clip's {ppq, value} breakpoints sharing the grid's horizontal TimelineRange.
+ * The value axis runs 0..`valueMax` (bottom to top). Drag a breakpoint to move
+ * it, click empty space to add one, drag across empty space to draw a freehand
+ * curve, and alt-click or right-click a breakpoint to delete it. Each gesture
+ * commits as one undo step via the `commit` callback; the host wires it to the
+ * matching command (CC, pitch bend, ...) and the points feed the realtime MIDI
+ * schedule (src/engine/midi-sync.ts), so the curve is audible.
+ *
+ * When `centerValue` is set, a center rule is drawn and the corner readout
+ * shows the signed offset from it (used by bipolar lanes like pitch bend).
  */
 
 const props = defineProps<{
@@ -28,12 +31,18 @@ const props = defineProps<{
   clipId: number;
   /** Clip window length in PPQ (positions clamp to it). */
   clipLengthPpq: number;
-  /** Controller number this lane edits (0-127). */
-  controller: number;
-  /** MIDI channel the CC is emitted on (0-15). */
-  channel: number;
-  /** Breakpoints of the active controller, sorted by ppq. */
+  /** Breakpoints of the active lane, sorted by ppq. */
   points: ClipCcPoint[];
+  /** Commits an edited point list as one undoable step. */
+  commit: (points: ClipCcPoint[]) => void;
+  /** Top of the value axis (default 127 = 7-bit). */
+  valueMax?: number;
+  /** When set, draws a center rule and shows a signed readout offset from it. */
+  centerValue?: number;
+  /** Readout prefix shown during a gesture (e.g. "CC1", "Bend"); '' = value only. */
+  readoutLabel?: string;
+  /** Accessible name for the lane canvas. */
+  ariaLabel?: string;
   /** Curve color; defaults to the neutral note color. */
   color?: string;
   /** Optional horizontal snap applied to added/moved points. */
@@ -41,6 +50,11 @@ const props = defineProps<{
 }>();
 
 const { t } = useI18n();
+
+/** Top of the value axis (7-bit by default). */
+function maxValue(): number {
+  return props.valueMax ?? 127;
+}
 
 const wrapper = ref<HTMLDivElement | null>(null);
 const canvas = ref<HTMLCanvasElement | null>(null);
@@ -79,11 +93,12 @@ function currentPoints(): ClipCcPoint[] {
 
 function valueFromY(y: number): number {
   if (heightPx <= 0) return 0;
-  return Math.min(127, Math.max(0, Math.round((1 - y / heightPx) * 127)));
+  const max = maxValue();
+  return Math.min(max, Math.max(0, Math.round((1 - y / heightPx) * max)));
 }
 
 function yFromValue(value: number): number {
-  return (1 - value / 127) * heightPx;
+  return (1 - value / maxValue()) * heightPx;
 }
 
 function ppqFromX(x: number): number {
@@ -125,6 +140,11 @@ function draw(): void {
   for (const fraction of [0.25, 0.5, 0.75]) {
     ctx.fillRect(0, Math.round(heightPx * fraction), widthPx, 1);
   }
+  // Bipolar lanes (pitch bend) get a brighter center rule at the no-bend value.
+  if (props.centerValue !== undefined) {
+    ctx.fillStyle = COLORS.laneValueText;
+    ctx.fillRect(0, Math.round(yFromValue(props.centerValue)), widthPx, 1);
+  }
 
   const color = props.color ?? DEFAULT_NOTE_COLOR;
   const pts = [...currentPoints()].sort((a, b) => a.ppq - b.ppq);
@@ -160,7 +180,13 @@ function draw(): void {
   if (dragValue !== null) {
     ctx.fillStyle = COLORS.laneValueText;
     ctx.font = '10px system-ui, sans-serif';
-    ctx.fillText(`CC${props.controller}: ${dragValue}`, 6, 12);
+    const prefix = props.readoutLabel ? `${props.readoutLabel}: ` : '';
+    let shown = `${dragValue}`;
+    if (props.centerValue !== undefined) {
+      const signed = dragValue - props.centerValue;
+      shown = `${signed > 0 ? '+' : ''}${signed}`;
+    }
+    ctx.fillText(`${prefix}${shown}`, 6, 12);
   }
 }
 
@@ -183,7 +209,7 @@ function onPointerDown(event: PointerEvent): void {
     if (hit >= 0) {
       event.preventDefault();
       const next = props.points.filter((_, i) => i !== hit);
-      setClipCcLane(props.clipId, props.controller, props.channel, next);
+      props.commit(next);
     }
     return;
   }
@@ -235,7 +261,7 @@ function onPointerUp(): void {
   dragValue = null;
   preview.value = null;
   if (result && !pointsEqual(result, props.points)) {
-    setClipCcLane(props.clipId, props.controller, props.channel, result);
+    props.commit(result);
   }
   schedule();
 }
@@ -269,7 +295,7 @@ onBeforeUnmount(() => {
 });
 
 watch(
-  () => [props.revision, props.points, props.controller, props.clipId] as const,
+  () => [props.revision, props.points, props.clipId, props.valueMax] as const,
   () => schedule(),
 );
 </script>
@@ -277,19 +303,24 @@ watch(
 <template>
   <div
     ref="wrapper"
-    class="cc-lane"
+    class="breakpoint-lane"
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
     @pointercancel="onPointerCancel"
     @contextmenu.prevent
   >
-    <canvas ref="canvas" class="cc-canvas" role="img" :aria-label="t.shell.pianoRoll.ccLane" />
+    <canvas
+      ref="canvas"
+      class="breakpoint-canvas"
+      role="img"
+      :aria-label="props.ariaLabel ?? t.shell.pianoRoll.ccLane"
+    />
   </div>
 </template>
 
 <style scoped>
-.cc-lane {
+.breakpoint-lane {
   position: relative;
   width: 100%;
   height: 100%;
@@ -298,7 +329,7 @@ watch(
   cursor: crosshair;
 }
 
-.cc-canvas {
+.breakpoint-canvas {
   position: absolute;
   inset: 0;
   width: 100%;

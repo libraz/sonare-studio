@@ -720,6 +720,8 @@ const MESSAGES = {
         keyboard: 'Piano keyboard',
         noteGrid: 'Piano roll note grid',
         ccLane: 'CC automation lane',
+        bendLaneTab: 'Bend',
+        bendLaneTitle: 'Pitch bend lane',
         parameterLane: 'Note parameter lane',
         context: {
           quantizeStarts: 'Quantize starts',
@@ -1813,6 +1815,8 @@ const MESSAGES = {
         keyboard: 'ピアノキーボード',
         noteGrid: 'ピアノロールノートグリッド',
         ccLane: 'CCオートメーションレーン',
+        bendLaneTab: 'ベンド',
+        bendLaneTitle: 'ピッチベンドレーン',
         parameterLane: 'ノートパラメーターレーン',
         context: {
           quantizeStarts: '開始位置をクオンタイズ',

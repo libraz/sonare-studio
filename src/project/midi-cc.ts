@@ -9,7 +9,7 @@
  * discrete CC events, so the lane is genuinely audible during transport.
  */
 
-import type { ClipCcLane, ClipCcPoint } from './types';
+import type { ClipCcLane, ClipCcPoint, ClipPitchBendPoint } from './types';
 
 /** Lowest MIDI controller number / value. */
 export const MIDI_CC_MIN = 0;
@@ -17,6 +17,10 @@ export const MIDI_CC_MIN = 0;
 export const MIDI_CC_MAX = 127;
 /** Highest MIDI channel index (0-based). */
 export const MIDI_CHANNEL_MAX = 15;
+/** Highest MIDI 14-bit pitch-bend value. */
+export const MIDI_PITCH_BEND_MAX = 16383;
+/** Pitch-bend value with no bend applied (axis center). */
+export const MIDI_PITCH_BEND_CENTER = 8192;
 
 /** One CC controller the piano-roll lane header offers as a tab. */
 export interface CcLaneOption {
@@ -78,6 +82,29 @@ export function sanitizeCcPoints(
   for (const point of points) {
     if (!Number.isFinite(point.ppq)) continue;
     byPpq.set(clamp(point.ppq, 0, max), clampInt(point.value, MIDI_CC_MIN, MIDI_CC_MAX));
+  }
+  return [...byPpq.entries()].map(([ppq, value]) => ({ ppq, value })).sort((a, b) => a.ppq - b.ppq);
+}
+
+/**
+ * Normalizes pitch-bend breakpoints: drops non-finite entries, clamps each
+ * position to [0, lengthPpq] and each value to an integer in [0, 16383]
+ * (8192 = center), collapses points on the same position (last wins) and
+ * returns them sorted by ppq.
+ *
+ * @param points Raw breakpoints in any order.
+ * @param lengthPpq Clip window length the positions are clamped to (>= 0).
+ * @returns A fresh sorted, de-duplicated point list.
+ */
+export function sanitizePitchBendPoints(
+  points: ReadonlyArray<ClipPitchBendPoint>,
+  lengthPpq: number,
+): ClipPitchBendPoint[] {
+  const max = Number.isFinite(lengthPpq) && lengthPpq > 0 ? lengthPpq : 0;
+  const byPpq = new Map<number, number>();
+  for (const point of points) {
+    if (!Number.isFinite(point.ppq)) continue;
+    byPpq.set(clamp(point.ppq, 0, max), clampInt(point.value, 0, MIDI_PITCH_BEND_MAX));
   }
   return [...byPpq.entries()].map(([ppq, value]) => ({ ppq, value })).sort((a, b) => a.ppq - b.ppq);
 }

@@ -1,6 +1,11 @@
 import { audioAssetUri, loadAssetMeta } from '@/persistence/assets';
 import { sanitizeCompSegments } from '../comping';
-import { isValidChannel, isValidController, sanitizeCcPoints } from '../midi-cc';
+import {
+  isValidChannel,
+  isValidController,
+  sanitizeCcPoints,
+  sanitizePitchBendPoints,
+} from '../midi-cc';
 import {
   getAudioSourceId,
   getProject,
@@ -12,6 +17,8 @@ import {
   type ClipCcLane,
   type ClipCcPoint,
   type ClipCompSegment,
+  type ClipPitchBendLane,
+  type ClipPitchBendPoint,
   type ClipTake,
   type ClipWarp,
   type EditorClip,
@@ -569,6 +576,50 @@ export function setClipCcLane(
       const updated = { ...entry };
       if (nextLanes.length > 0) updated.ccLanes = nextLanes;
       else delete updated.ccLanes;
+      return updated;
+    });
+    store.refresh();
+  });
+}
+
+/**
+ * Replaces a MIDI clip's pitch-bend lane for one channel as one undoable edit.
+ * The points are sanitized (clamped to the clip window and the 14-bit range
+ * 0-16383 where 8192 is center, sorted, deduped); passing an empty point list
+ * removes the lane. Like CC lanes, pitch-bend lanes are app-level metadata baked
+ * into the realtime MIDI schedule, so the change is audible on the next sync.
+ *
+ * @param clipId Id of the MIDI clip.
+ * @param channel MIDI channel the bend applies to (integer, 0-15).
+ * @param points Breakpoints (clip-window-relative PPQ + 0-16383 value); empty
+ *   removes the lane.
+ */
+export function setClipPitchBend(
+  clipId: number,
+  channel: number,
+  points: ReadonlyArray<ClipPitchBendPoint>,
+): void {
+  const store = useProjectStore();
+  const index = store.clips.findIndex((clip) => clip.id === clipId);
+  if (index < 0) throw new RangeError(`Unknown clip id ${clipId}`);
+  const clip = store.clips[index];
+  if ((clip.kind ?? 'midi') !== 'midi') {
+    throw new RangeError(`Clip ${clipId} is not a MIDI clip`);
+  }
+  if (!isValidChannel(channel)) {
+    throw new RangeError(`Pitch-bend channel must be an integer in [0, 15], got ${channel}`);
+  }
+  const sanitized = sanitizePitchBendPoints(points, clip.lengthPpq);
+  const others = (clip.pitchBendLanes ?? []).filter((lane) => lane.channel !== channel);
+  const nextLanes: ClipPitchBendLane[] =
+    sanitized.length > 0 ? [...others, { channel, points: sanitized }] : others;
+  nextLanes.sort((a, b) => a.channel - b.channel);
+  execute(0, () => {
+    store.clips = store.clips.map((entry, i) => {
+      if (i !== index) return entry;
+      const updated = { ...entry };
+      if (nextLanes.length > 0) updated.pitchBendLanes = nextLanes;
+      else delete updated.pitchBendLanes;
       return updated;
     });
     store.refresh();
