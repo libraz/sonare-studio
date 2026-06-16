@@ -6,27 +6,35 @@ import {
   addInsert,
   addMixerBus,
   addNote,
+  addTrack,
+  addVcaGroup,
   canUndo,
   clearHistory,
   redo,
   removeInsert,
   removeMixerBus,
   removeTrack,
+  removeVcaGroup,
   setInsertEnabled,
   setInsertParam,
   setInsertSidechain,
   setMasteringPreset,
+  setMixerBusGain,
   setSend,
   setStripEq,
   setStripGain,
+  setStripOutputBus,
   setStripPan,
   setTrackFrozen,
   setTrackGroup,
   setTrackInstrument,
+  setTrackSoloSafe,
+  setTrackVca,
+  setVcaGroupGain,
   undo,
 } from '@/project/commands';
 import type { TrackInstrument } from '@/project/instrument';
-import { MAX_MIXER_BUSES } from '@/project/mixer';
+import { MAX_MIXER_BUSES, MAX_VCA_GROUPS } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 
 vi.mock('@/lib/wasm', async () => {
@@ -229,6 +237,26 @@ describe('mixer commands', () => {
       expect(() => addMixerBus({ id: 'bus-1' })).toThrow(RangeError);
     });
 
+    it('sets bus gain undoably and validates input', () => {
+      const busId = addMixerBus();
+      setMixerBusGain(busId, -6);
+      expect(store.mixer.buses[0].gainDb).toBe(-6);
+      undo();
+      expect(store.mixer.buses[0].gainDb).toBe(0);
+      expect(() => setMixerBusGain('nope', 0)).toThrow(RangeError);
+      expect(() => setMixerBusGain(busId, Number.POSITIVE_INFINITY)).toThrow(RangeError);
+    });
+
+    it('coalesces a bus-gain drag into one history entry', () => {
+      const busId = addMixerBus();
+      setMixerBusGain(busId, -3, { commit: false });
+      setMixerBusGain(busId, -9, { commit: false });
+      setMixerBusGain(busId, -12, { commit: true });
+      expect(store.mixer.buses[0].gainDb).toBe(-12);
+      undo();
+      expect(store.mixer.buses[0].gainDb).toBe(0);
+    });
+
     it('upserts and removes sends undoably', () => {
       const busId = addMixerBus({ name: 'FX' });
       setSend(trackId, busId, { levelDb: -12 });
@@ -268,6 +296,45 @@ describe('mixer commands', () => {
       expect(store.tracks[0].mixer?.sends).toHaveLength(1);
       expect(store.mixer.master.sends).toHaveLength(1);
       expect(() => removeMixerBus('nope')).toThrow(RangeError);
+    });
+
+    it('routes a track output to a bus and back undoably', () => {
+      const busId = addMixerBus({ name: 'FX' });
+      setStripOutputBus(trackId, busId);
+      expect(store.tracks[0].mixer?.outputBusId).toBe(busId);
+      setStripOutputBus(trackId, null);
+      expect(store.tracks[0].mixer?.outputBusId).toBeUndefined();
+      undo();
+      expect(store.tracks[0].mixer?.outputBusId).toBe(busId);
+      redo();
+      expect(store.tracks[0].mixer?.outputBusId).toBeUndefined();
+    });
+
+    it('is a no-op for the current output routing', () => {
+      const busId = addMixerBus();
+      setStripOutputBus(trackId, busId);
+      clearHistory();
+      setStripOutputBus(trackId, busId);
+      expect(canUndo()).toBe(false);
+    });
+
+    it('rejects routing the master, a group track, or an unknown bus', () => {
+      const busId = addMixerBus();
+      const groupId = addGroupTrack();
+      expect(() => setStripOutputBus('master', busId)).toThrow(RangeError);
+      expect(() => setStripOutputBus(groupId, busId)).toThrow(RangeError);
+      expect(() => setStripOutputBus(trackId, 'nope')).toThrow(RangeError);
+    });
+
+    it('clears a dangling output routing when its bus is removed', () => {
+      const busId = addMixerBus();
+      setStripOutputBus(trackId, busId);
+      setSend(trackId, busId, { levelDb: -6 });
+      removeMixerBus(busId);
+      expect(store.tracks[0].mixer?.outputBusId).toBeUndefined();
+      expect(store.tracks[0].mixer?.sends).toEqual([]);
+      undo();
+      expect(store.tracks[0].mixer?.outputBusId).toBe(busId);
     });
   });
 
@@ -399,6 +466,65 @@ describe('mixer commands', () => {
       expect(store.tracks[0].mixer?.inserts[0].sidechainSourceTrackId).toBeUndefined();
       undo();
       expect(store.tracks[0].mixer?.inserts[0].sidechainSourceTrackId).toBe(sourceId);
+    });
+  });
+
+  describe('solo-safe', () => {
+    it('sets, dedupes and undoes the flag', () => {
+      setTrackSoloSafe(trackId, true);
+      expect(store.tracks[0].soloSafe).toBe(true);
+      const depth = canUndo();
+      setTrackSoloSafe(trackId, true); // no-op
+      expect(canUndo()).toBe(depth);
+      setTrackSoloSafe(trackId, false);
+      expect(store.tracks[0].soloSafe).toBeUndefined();
+      undo();
+      expect(store.tracks[0].soloSafe).toBe(true);
+    });
+  });
+
+  describe('VCA groups', () => {
+    it('adds a group with a default name and undoes it', () => {
+      const id = addVcaGroup();
+      expect(store.mixer.vcaGroups).toEqual([{ id, name: 'VCA 1', gainDb: 0 }]);
+      expect(undo()).toBe(true);
+      expect(store.mixer.vcaGroups ?? []).toEqual([]);
+    });
+
+    it('rejects a duplicate id and enforces the group limit', () => {
+      addVcaGroup({ id: 'g' });
+      expect(() => addVcaGroup({ id: 'g' })).toThrow(RangeError);
+      while ((store.mixer.vcaGroups?.length ?? 0) < MAX_VCA_GROUPS) addVcaGroup();
+      expect(() => addVcaGroup()).toThrow(RangeError);
+    });
+
+    it('assigns a track to a group and validates the group id', () => {
+      const id = addVcaGroup();
+      setTrackVca(trackId, id);
+      expect(store.tracks[0].vcaId).toBe(id);
+      expect(() => setTrackVca(trackId, 'nope')).toThrow(RangeError);
+      setTrackVca(trackId, null);
+      expect(store.tracks[0].vcaId).toBeUndefined();
+    });
+
+    it('sets the group gain with range validation', () => {
+      const id = addVcaGroup();
+      setVcaGroupGain(id, -6);
+      expect(store.mixer.vcaGroups?.[0].gainDb).toBe(-6);
+      expect(() => setVcaGroupGain(id, 999)).toThrow(RangeError);
+      expect(() => setVcaGroupGain('nope', 0)).toThrow(RangeError);
+    });
+
+    it('unassigns member tracks when the group is removed', () => {
+      const id = addVcaGroup();
+      const otherId = addTrack({ name: 'Other' });
+      setTrackVca(trackId, id);
+      setTrackVca(otherId, id);
+      removeVcaGroup(id);
+      expect(store.mixer.vcaGroups ?? []).toEqual([]);
+      expect(store.tracks.find((t) => t.id === trackId)?.vcaId).toBeUndefined();
+      expect(store.tracks.find((t) => t.id === otherId)?.vcaId).toBeUndefined();
+      expect(() => removeVcaGroup('nope')).toThrow(RangeError);
     });
   });
 });

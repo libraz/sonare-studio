@@ -41,6 +41,31 @@ describe('shortcut registry', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
+  it('binds the project and locator commands to conflict-free defaults', () => {
+    const bindings = resolveBindings();
+    expect(bindings.get('project.open')).toEqual(['mod+o']);
+    expect(bindings.get('project.saveAs')).toEqual(['mod+shift+s']);
+    expect(bindings.get('transport.setLeftLocator')).toEqual(['[']);
+    expect(bindings.get('transport.setRightLocator')).toEqual([']']);
+    expect(findConflicts(bindings)).toEqual([]);
+  });
+
+  it('matches the new project and locator combos', () => {
+    const bindings = resolveBindings();
+    expect(matchShortcut(keydown({ key: 'o', metaKey: true }), 'editor', bindings)).toBe(
+      'project.open',
+    );
+    expect(
+      matchShortcut(keydown({ key: 's', metaKey: true, shiftKey: true }), 'editor', bindings),
+    ).toBe('project.saveAs');
+    expect(matchShortcut(keydown({ key: '[' }), 'arrangement', bindings)).toBe(
+      'transport.setLeftLocator',
+    );
+    expect(matchShortcut(keydown({ key: ']' }), 'editor', bindings)).toBe(
+      'transport.setRightLocator',
+    );
+  });
+
   it('looks actions up by id', () => {
     expect(getShortcutAction('edit.undo')?.defaultKeys).toEqual(['mod+z']);
     expect(getShortcutAction('nope')).toBeUndefined();

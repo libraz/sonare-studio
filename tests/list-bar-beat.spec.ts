@@ -4,8 +4,11 @@ import {
   barLengthPpq,
   beatLengthPpq,
   formatBarBeat,
+  formatBarBeatTick,
   parseBarBeat,
+  parseBarBeatTick,
   ppqFromBarBeat,
+  TICKS_PER_QUARTER,
 } from '@/components/lists/bar-beat';
 import type { TimeSignatureSegment } from '@/project/types';
 
@@ -105,6 +108,53 @@ describe('parseBarBeat', () => {
     for (const ppq of [0, 2.25, 5.5, 8, 9.5, 20]) {
       const text = formatBarBeat(ppq, MIXED);
       expect(parseBarBeat(text, MIXED)).toBeCloseTo(ppq, 6);
+    }
+  });
+});
+
+describe('formatBarBeatTick', () => {
+  it('formats bar.beat.sixteenth.tick with zero-padded ticks', () => {
+    expect(formatBarBeatTick(0, FOUR_FOUR)).toBe('1.1.1.000');
+    expect(formatBarBeatTick(5, FOUR_FOUR)).toBe('2.2.1.000');
+    // Beat 2.5 in 4/4 → 240 ticks into the beat = sixteenth 3, tick 0.
+    expect(formatBarBeatTick(5.5, FOUR_FOUR)).toBe('2.2.3.000');
+    // A sixteenth offset: 60 ticks into the beat = sixteenth 1, tick 60.
+    expect(formatBarBeatTick(4 + 60 / 480, FOUR_FOUR)).toBe('2.1.1.060');
+  });
+
+  it('carries a tick that rounds past the bar end into the next bar', () => {
+    expect(formatBarBeatTick(3.9999999, FOUR_FOUR)).toBe('2.1.1.000');
+  });
+
+  it('formats positions under a later meter', () => {
+    // PPQ 8.5 = bar 3 beat 2 in the 6/8 region (beat = 0.5 PPQ).
+    expect(formatBarBeatTick(8.5, MIXED)).toBe('3.2.1.000');
+  });
+});
+
+describe('parseBarBeatTick', () => {
+  it('parses bar, bar.beat, bar.beat.16th and bar.beat.16th.tick forms', () => {
+    expect(parseBarBeatTick('1', FOUR_FOUR)).toBe(0);
+    expect(parseBarBeatTick('2.2', FOUR_FOUR)).toBe(5);
+    expect(parseBarBeatTick('2.2.3', FOUR_FOUR)).toBeCloseTo(5.5, 9);
+    expect(parseBarBeatTick('2.2.3.000', FOUR_FOUR)).toBeCloseTo(5.5, 9);
+    expect(parseBarBeatTick(' 3.1.1.000 ', FOUR_FOUR)).toBe(8);
+  });
+
+  it('rejects malformed and out-of-range positions', () => {
+    expect(parseBarBeatTick('', FOUR_FOUR)).toBeNull();
+    expect(parseBarBeatTick('0.1', FOUR_FOUR)).toBeNull();
+    expect(parseBarBeatTick('1.0', FOUR_FOUR)).toBeNull();
+    expect(parseBarBeatTick('1.5.1', FOUR_FOUR)).toBeNull(); // beat 5 absent in 4/4
+    expect(parseBarBeatTick('1.1.5', FOUR_FOUR)).toBeNull(); // 16th 5 absent in a 4/4 beat
+    // tick out of the sixteenth's range (>= ticks per sixteenth).
+    expect(parseBarBeatTick(`1.1.1.${TICKS_PER_QUARTER / 4}`, FOUR_FOUR)).toBeNull();
+  });
+
+  it('round-trips formatBarBeatTick output', () => {
+    for (const ppq of [0, 2.25, 5.5, 8, 9.5, 20]) {
+      const text = formatBarBeatTick(ppq, MIXED);
+      expect(parseBarBeatTick(text, MIXED)).toBeCloseTo(ppq, 6);
     }
   });
 });

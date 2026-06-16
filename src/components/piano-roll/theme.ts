@@ -4,6 +4,7 @@
  */
 
 import type { EditorNote } from '@/project/types';
+import { colorWithAlpha, TOKENS } from '@/ui/theme/tokens';
 
 /** Color tokens used by the piano-roll canvases. */
 export const PIANO_ROLL_COLORS = {
@@ -28,11 +29,11 @@ export const PIANO_ROLL_COLORS = {
   /** Border of selected notes. */
   noteSelectedBorder: '#f3f5f9',
   /** Playhead line. */
-  playhead: '#ff6e6e',
+  playhead: TOKENS.playhead,
   /** Marquee fill. */
-  marqueeFill: 'rgba(96, 165, 250, 0.14)',
+  marqueeFill: colorWithAlpha(TOKENS.accent, 0.14),
   /** Marquee outline. */
-  marqueeStroke: 'rgba(96, 165, 250, 0.85)',
+  marqueeStroke: colorWithAlpha(TOKENS.accent, 0.85),
   /** White piano keys. */
   keyWhite: '#cdd2da',
   /** Black piano keys. */

@@ -1,0 +1,281 @@
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  font-family: system-ui, sans-serif;
+  background: var(--surface-0);
+  color: var(--text-2);
+}
+
+.bar-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+
+.midi-learn-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.midi-learn-toggle-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.error-box {
+  margin: 0.4rem 0.75rem;
+  background: var(--danger-surface);
+  border: 1px solid color-mix(in srgb, var(--danger), transparent 60%);
+  color: var(--danger-text);
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1);
+  white-space: pre-wrap;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.main-row {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  /* Clip the workspace so its min-height content cannot spill over the
+   * Diagnostics panel / transport bar when the row flex-shrinks. */
+  overflow: hidden;
+}
+
+.workspace {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.right-zone {
+  flex: none;
+  width: 300px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border-strong);
+  overflow: hidden;
+}
+
+.arrange-zone {
+  flex: 0 0 auto;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Collapsed dock: the arrangement grows to fill the freed vertical space. */
+.arrange-zone.arrange-grow {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.split-divider {
+  flex: none;
+  height: 6px;
+  background: var(--surface-1);
+  border-top: 1px solid var(--border-strong);
+  border-bottom: 1px solid var(--border-strong);
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.split-divider:hover,
+.split-divider:focus-visible {
+  background: var(--surface-3);
+  box-shadow: inset 0 0 0 1px var(--accent-muted);
+}
+
+.editor-dock {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Collapsed: only the tab strip remains; the body is hidden. */
+.editor-dock.collapsed {
+  flex: none;
+}
+
+.editor-dock.collapsed .dock-body {
+  display: none;
+}
+
+.dock-tabs {
+  display: flex;
+  align-items: stretch;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border-strong);
+}
+
+.dock-tab {
+  background: none;
+  border: none;
+  box-shadow: none;
+  /* Square-edged segment: the baseline button radius must not leak here, or the
+   * active fill and focus ring round into a pill. */
+  border-radius: 0;
+  color: var(--text-3);
+  font: var(--fw-semibold) var(--fs-sm) var(--font-sans);
+  padding: 0.4rem 1rem;
+  cursor: default;
+  transition:
+    color var(--dur-1) var(--ease-out),
+    background-color var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-1) var(--ease-out);
+}
+
+.dock-tab.active {
+  color: var(--text-1);
+  background-color: var(--surface-2);
+  box-shadow:
+    inset 0 -2px 0 var(--accent),
+    inset 0 1px 0 var(--border-hi);
+}
+
+.dock-tab-toggle {
+  cursor: pointer;
+}
+
+/* Keyboard focus reads as the tab's own underline language — never a floating
+ * rounded ring around the label. */
+.dock-tab:focus-visible {
+  outline: none;
+  color: var(--text-1);
+  box-shadow:
+    inset 0 -2px 0 var(--accent),
+    inset 0 1px 0 var(--border-hi);
+}
+
+/* Hover telegraphs the click with a brighter label, a faint surface lift and a
+ * neutral underline — distinct from the accent underline that marks the active
+ * tab, so the two states never read alike. */
+.dock-tab-toggle:hover:not(.active) {
+  color: var(--text-1);
+  background-color: var(--surface-2);
+  box-shadow: inset 0 -2px 0 var(--border-hi);
+}
+
+.dock-tabs-spacer {
+  flex: 1;
+}
+
+.dock-collapse {
+  background: none;
+  border: none;
+  box-shadow: none;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  padding: 0 0.6rem;
+  cursor: pointer;
+}
+
+.dock-collapse:hover {
+  color: var(--text-1);
+}
+
+.dock-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0.75rem;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border-strong);
+  /* Never wrap to a second row (which would steal piano-roll height). The left
+   * controls scroll sideways instead; the bar stays overflow-visible so the
+   * MIDI Learn popover is not clipped. */
+  flex-wrap: nowrap;
+  font-size: var(--fs-sm);
+}
+
+/* Scrollable region holding the left-hand controls; grows to fill the bar and
+ * scrolls horizontally when the controls do not fit. */
+.editor-toolbar-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.editor-toolbar > .midi-learn-anchor,
+.editor-toolbar > .apply-state,
+.editor-toolbar > button {
+  flex: none;
+}
+
+.step-cursor {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.apply-state {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.piano-roll-host {
+  flex: 1;
+  min-height: 0;
+}
+
+.mixer-host {
+  flex: 1;
+  min-height: 0;
+}
+
+.mastering-host {
+  flex: 1;
+  min-height: 0;
+}
+
+.dock-body-scroll {
+  overflow: auto;
+}
+
+/* The score panel borrows vertical space from the roll; closing it hands the
+   full editor height back to the piano roll. */
+.score-host {
+  /* Default ~40% of the editor height; once the user drags the splitter an
+   * inline pixel height takes over (flex:none). */
+  flex: 0 0 40%;
+  min-height: 0;
+}
+
+.lists-host {
+  flex: 1;
+  min-height: 0;
+}
+
+.media-host {
+  flex: 1;
+  min-height: 0;
+}
+
+.sample-host {
+  flex: 1;
+  min-height: 0;
+}
+

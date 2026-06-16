@@ -7,12 +7,15 @@ import {
   faderPositionToDb,
   formatDb,
 } from '@/ui/mixer/db-scale';
+import { FINE_FACTOR } from '@/ui/mixer/drag';
+import { useControlInteractions } from '@/ui/mixer/use-control-interactions';
 
 /**
  * Vertical channel fader with a tapered dB scale (0 dB at 3/4 throw), a tick
- * column with an emphasized unity marker, double-click reset to 0 dB and
- * keyboard nudging (shift = fine). Like the knob, every value is emitted with
- * a commit flag so a drag coalesces into a single undo entry.
+ * column with an emphasized unity marker, click-anywhere jump, shift-drag fine
+ * adjust, mouse-wheel adjust, double-click reset to 0 dB, keyboard nudging and
+ * a right-click menu (reset / copy / paste). Like the knob, every value is
+ * emitted with a commit flag so a drag coalesces into a single undo entry.
  */
 
 const props = withDefaults(
@@ -32,7 +35,7 @@ const emit = defineEmits<{
   change: [db: number, commit: boolean];
 }>();
 
-/** Coarse / fine keyboard nudge steps in dB. */
+/** Coarse / fine keyboard + wheel nudge steps in dB. */
 const NUDGE_DB = 1;
 const FINE_NUDGE_DB = 0.1;
 
@@ -42,6 +45,7 @@ const TICK_DBS = [12, 6, 0, -6, -12, -24, -48] as const;
 const trackEl = ref<HTMLDivElement | null>(null);
 const dragging = ref(false);
 let dragDb = 0;
+let lastY = 0;
 
 /** Thumb center offset from the top of the throw, in px. */
 const thumbTopPx = computed(() => (1 - dbToFaderPosition(props.valueDb)) * props.height);
@@ -55,18 +59,48 @@ function dbFromPointer(event: PointerEvent): number {
   return faderPositionToDb(position);
 }
 
+/** Clamps a dB value to the fader range. */
+function clampDb(db: number): number {
+  return Math.min(FADER_MAX_DB, Math.max(FADER_MIN_DB, db));
+}
+
+/** Nudges the gain by one step in the given direction (commit). */
+function nudge(direction: 1 | -1, fine: boolean): void {
+  if (props.disabled) return;
+  const step = fine ? FINE_NUDGE_DB : NUDGE_DB;
+  emit('change', clampDb(props.valueDb + direction * step), true);
+}
+
+const interactions = useControlInteractions({
+  getValue: () => props.valueDb,
+  getRange: () => ({ min: FADER_MIN_DB, max: FADER_MAX_DB }),
+  commit: (value) => emit('change', value, true),
+  nudge,
+  getDefault: () => 0,
+  isDisabled: () => props.disabled,
+});
+
 function onPointerDown(event: PointerEvent): void {
   if (props.disabled || event.button !== 0) return;
   (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
   dragging.value = true;
   dragDb = dbFromPointer(event);
+  lastY = event.clientY;
   emit('change', dragDb, false);
   event.preventDefault();
 }
 
 function onPointerMove(event: PointerEvent): void {
   if (!dragging.value) return;
-  dragDb = dbFromPointer(event);
+  if (event.shiftKey) {
+    // Fine drag: move relative to the current value in tapered position space.
+    const deltaUp = lastY - event.clientY;
+    const position = dbToFaderPosition(dragDb) + (deltaUp / props.height) * FINE_FACTOR;
+    dragDb = faderPositionToDb(Math.min(1, Math.max(0, position)));
+  } else {
+    dragDb = dbFromPointer(event);
+  }
+  lastY = event.clientY;
   emit('change', dragDb, false);
 }
 
@@ -83,14 +117,10 @@ function onDoubleClick(): void {
 
 function onKeyDown(event: KeyboardEvent): void {
   if (props.disabled) return;
-  let direction: 1 | -1;
-  if (event.key === 'ArrowUp' || event.key === 'ArrowRight') direction = 1;
-  else if (event.key === 'ArrowDown' || event.key === 'ArrowLeft') direction = -1;
+  if (event.key === 'ArrowUp' || event.key === 'ArrowRight') nudge(1, event.shiftKey);
+  else if (event.key === 'ArrowDown' || event.key === 'ArrowLeft') nudge(-1, event.shiftKey);
   else return;
   event.preventDefault();
-  const step = event.shiftKey ? FINE_NUDGE_DB : NUDGE_DB;
-  const next = Math.min(FADER_MAX_DB, Math.max(FADER_MIN_DB, props.valueDb + direction * step));
-  emit('change', next, true);
 }
 
 /** Tick offset from the top of the throw, in px. */
@@ -130,11 +160,32 @@ function tickTopPx(db: number): number {
       @pointerup="onPointerUp"
       @pointercancel="onPointerUp"
       @dblclick="onDoubleClick"
+      @wheel="interactions.onWheel"
+      @contextmenu.stop.prevent="interactions.onContextMenu"
       @keydown="onKeyDown"
     >
       <span class="fader-groove" />
       <span class="fader-unity" :style="{ top: `${tickTopPx(0)}px` }" />
       <span class="fader-thumb" :style="{ top: `${thumbTopPx}px` }" />
+    </div>
+    <div
+      v-if="interactions.menu.open"
+      class="control-menu"
+      :style="{ left: `${interactions.menu.x}px`, top: `${interactions.menu.y}px` }"
+      role="menu"
+    >
+      <button type="button" role="menuitem" @click="interactions.resetToDefault">
+        Reset to 0 dB
+      </button>
+      <button type="button" role="menuitem" @click="interactions.copyValue">Copy value</button>
+      <button
+        type="button"
+        role="menuitem"
+        :disabled="!interactions.canPaste()"
+        @click="interactions.pasteValue"
+      >
+        Paste value
+      </button>
     </div>
   </div>
 </template>
@@ -157,13 +208,13 @@ function tickTopPx(db: number): number {
   position: absolute;
   right: 0;
   transform: translateY(-50%);
-  font: 7px system-ui, sans-serif;
-  color: #4a5160;
+  font: 7px var(--font-sans);
+  color: var(--text-4);
 }
 
 .fader-tick.unity {
-  color: #9ca3af;
-  font-weight: 700;
+  color: var(--text-3);
+  font-weight: var(--fw-bold);
 }
 
 .fader-track {
@@ -175,7 +226,7 @@ function tickTopPx(db: number): number {
 }
 
 .fader-track:focus-visible {
-  outline: 1px solid #60a5fa;
+  outline: 1px solid var(--accent);
   outline-offset: 1px;
 }
 
@@ -192,8 +243,9 @@ function tickTopPx(db: number): number {
   width: 3px;
   margin-left: -1.5px;
   border-radius: 2px;
-  background: #0b0d11;
-  border: 1px solid #2a2e37;
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  box-shadow: var(--inset-well);
 }
 
 .fader-unity {
@@ -201,7 +253,7 @@ function tickTopPx(db: number): number {
   left: 2px;
   right: 2px;
   height: 1px;
-  background: #3a4150;
+  background: var(--border-raised);
   pointer-events: none;
 }
 
@@ -213,9 +265,12 @@ function tickTopPx(db: number): number {
   margin-top: -7px;
   border-radius: 3px;
   background: linear-gradient(#343a47, #20242d);
-  border: 1px solid #3a4150;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+  border: 1px solid var(--border-raised);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.6),
+    var(--raise-hi);
   pointer-events: none;
+  transition: border-color var(--dur-1) var(--ease-out);
 }
 
 .fader-thumb::after {
@@ -225,10 +280,10 @@ function tickTopPx(db: number): number {
   right: 2px;
   top: 50%;
   height: 1px;
-  background: #9fc4f5;
+  background: var(--accent);
 }
 
 .fader-track.dragging .fader-thumb {
-  border-color: #60a5fa;
+  border-color: var(--accent);
 }
 </style>

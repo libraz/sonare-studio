@@ -162,7 +162,9 @@ function onKeydown(event: KeyboardEvent): void {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(17, 24, 39, 0.28);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
 }
 
 .dialog {
@@ -171,13 +173,15 @@ function onKeydown(event: KeyboardEvent): void {
   gap: 0.75rem;
   width: min(34rem, calc(100vw - 2rem));
   max-height: calc(100vh - 4rem);
-  padding: 1rem 1.25rem;
-  background: #1b1e25;
-  border: 1px solid #000;
-  border-radius: 8px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
-  color: #e2e6ee;
-  font-size: 12px;
+  padding: 1.25rem 1.4rem;
+  background: var(--glass-3);
+  -webkit-backdrop-filter: var(--glass-blur-strong);
+  backdrop-filter: var(--glass-blur-strong);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--glass-hairline), var(--shadow-modal);
+  color: var(--text-1);
+  font-size: var(--fs-sm);
 }
 
 .dialog:focus {
@@ -186,8 +190,8 @@ function onKeydown(event: KeyboardEvent): void {
 
 .dialog-title {
   margin: 0;
-  font-size: 14px;
-  font-weight: 700;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-bold);
   letter-spacing: 0.04em;
 }
 
@@ -202,8 +206,8 @@ function onKeydown(event: KeyboardEvent): void {
   margin: 0;
   padding: 0;
   list-style: none;
-  border: 1px solid #2a2e38;
-  border-radius: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   overflow: auto;
 }
 
@@ -213,7 +217,8 @@ function onKeydown(event: KeyboardEvent): void {
   gap: 0.1rem;
   padding: 0.4rem 0.6rem;
   cursor: pointer;
-  border-bottom: 1px solid #14161b;
+  border-bottom: 1px solid var(--surface-2);
+  transition: background var(--dur-1) var(--ease-out);
 }
 
 .template-item:last-child {
@@ -221,12 +226,12 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 .template-item:hover {
-  background: #181b22;
+  background: var(--surface-3);
 }
 
 .template-item.selected {
-  background: #1d2940;
-  box-shadow: inset 2px 0 0 #60a5fa;
+  background: var(--accent-muted);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .template-label {
@@ -234,14 +239,14 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 .template-description {
-  color: #8b93a3;
-  font-size: 11px;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
 }
 
 .template-preview {
   flex: 1;
-  border: 1px solid #2a2e38;
-  border-radius: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   padding: 0.4rem 0.6rem;
   overflow: auto;
   max-height: 16rem;
@@ -249,16 +254,16 @@ function onKeydown(event: KeyboardEvent): void {
 
 .preview-title {
   margin: 0 0 0.3rem;
-  font-size: 11px;
-  font-weight: 600;
-  color: #8b93a3;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--text-3);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
 
 .preview-empty {
   margin: 0;
-  color: #8b93a3;
+  color: var(--text-3);
 }
 
 .preview-tracks {
@@ -285,10 +290,10 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 .dialog-warning {
-  background: #3a2a0c;
-  border: 1px solid #fbbf24;
-  border-radius: 4px;
-  color: #fde68a;
+  background: var(--warning-surface);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-sm);
+  color: var(--warning-text);
   padding: 0.4rem 0.6rem;
 }
 
@@ -299,11 +304,17 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 .dialog-actions .primary {
-  background: #2453a8;
-  border: 1px solid #60a5fa;
-  color: #e2e6ee;
-  border-radius: 4px;
+  background: var(--accent-strong);
+  border: 1px solid var(--accent);
+  color: var(--text-1);
+  border-radius: var(--radius-sm);
   padding: 0.25rem 0.9rem;
   cursor: pointer;
+  box-shadow: var(--raise-hi);
+  transition: background var(--dur-1) var(--ease-out);
+}
+
+.dialog-actions .primary:hover {
+  background: var(--accent-hover);
 }
 </style>

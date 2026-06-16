@@ -11,6 +11,7 @@ import {
 import { encodeWav } from '@/export/wav';
 import type { ProjectDocument } from '@/project/serialization';
 import type { ExportRenderOptions } from '@/workers/export.worker';
+import { readOptionLabels, selectOption } from './helpers/select-menu';
 
 /** Minimal valid project document for the render seam. */
 function makeDocument(): ProjectDocument {
@@ -123,14 +124,14 @@ describe('ExportDialog', () => {
     expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
   });
 
-  it('lists the registered encoders (WAV and MP3)', () => {
+  it('lists the registered encoders (WAV and MP3)', async () => {
     const { wrapper } = mountDialog(makeRender());
-    const labels = wrapper.findAll('.format-select option').map((o) => o.text());
+    const labels = await readOptionLabels(wrapper, '.format-select');
     expect(labels.some((l) => l.includes('WAV'))).toBe(true);
     expect(labels.some((l) => l.includes('MP3'))).toBe(true);
   });
 
-  it('hides MP3 when the registry lacks it (injected encoder list)', () => {
+  it('hides MP3 when the registry lacks it (injected encoder list)', async () => {
     const { wrapper } = mountDialog(makeRender(), {
       encoders: [
         {
@@ -142,17 +143,15 @@ describe('ExportDialog', () => {
         },
       ],
     });
-    const values = wrapper
-      .findAll('.format-select option')
-      .map((o) => (o.element as HTMLOptionElement).value);
-    expect(values).toEqual(['wav']);
+    const labels = await readOptionLabels(wrapper, '.format-select');
+    expect(labels).toEqual(['WAV (PCM)']);
   });
 
   it('shows WAV options by default and MP3 options after switching formats', async () => {
     const { wrapper } = mountDialog(makeRender());
     expect(wrapper.find('.wav-bit-depth').exists()).toBe(true);
     expect(wrapper.find('.mp3-bitrate').exists()).toBe(false);
-    await wrapper.find('.format-select').setValue('mp3');
+    await selectOption(wrapper, '.format-select', 'MP3 (CBR)');
     expect(wrapper.find('.wav-bit-depth').exists()).toBe(false);
     expect(wrapper.find('.mp3-bitrate').exists()).toBe(true);
   });
@@ -169,8 +168,8 @@ describe('ExportDialog', () => {
 
   it('shows a validation error and disables Export for MP3 at 96 kHz', async () => {
     const { wrapper } = mountDialog(makeRender());
-    await wrapper.find('.format-select').setValue('mp3');
-    await wrapper.find('.sample-rate-select').setValue('96000');
+    await selectOption(wrapper, '.format-select', 'MP3 (CBR)');
+    await selectOption(wrapper, '.sample-rate-select', '96 kHz');
     expect(wrapper.find('.dialog-errors').text()).toContain('MP3 supports 44.1 kHz and 48 kHz');
     expect((wrapper.find('.export-button').element as HTMLButtonElement).disabled).toBe(true);
   });
@@ -178,7 +177,7 @@ describe('ExportDialog', () => {
   it('exports a WAV mixdown: progress, download, report and exported event', async () => {
     const control = makeRender();
     const { wrapper, download } = mountDialog(control);
-    await wrapper.find('.wav-bit-depth').setValue('24');
+    await selectOption(wrapper, '.wav-bit-depth', '24-bit PCM');
     await clickExport(wrapper);
 
     expect(control.render).toHaveBeenCalledTimes(1);

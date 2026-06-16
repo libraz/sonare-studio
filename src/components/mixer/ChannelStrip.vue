@@ -1,19 +1,29 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue';
+import SelectMenu from '@/components/shell/SelectMenu.vue';
+import { promptDialog } from '@/composables/useDialogs';
 import type { MeterSource } from '@/engine/meters';
 import { linearToDb } from '@/engine/mixer-sync';
 import type { AutomationParam } from '@/project/automation';
 import { evaluateAutomationValue } from '@/project/automation';
 import type { MixerStripTarget } from '@/project/commands';
 import {
+  addVcaGroup,
+  renameTrack,
   setActiveTrack,
   setAutomationLanePoints,
+  setStripGain,
+  setStripOutputBus,
+  setStripPan,
   setTrackMute,
   setTrackSolo,
+  setTrackSoloSafe,
+  setTrackVca,
 } from '@/project/commands';
-import { createDefaultStrip, type MixerStrip } from '@/project/mixer';
+import { createDefaultStrip, MAX_VCA_GROUPS, type MixerStrip } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
+import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 import {
   type AutomationWriteGesture,
   automationStripMode,
@@ -87,8 +97,109 @@ const active = computed(
   () => !isMaster.value && track.value !== undefined && track.value.id === store.activeTrackId,
 );
 
+/** Name of the VCA group the track belongs to, or null when unassigned. */
+const vcaGroupName = computed<string | null>(() => {
+  const id = track.value?.vcaId;
+  if (id === undefined) return null;
+  return store.mixer.vcaGroups?.find((group) => group.id === id)?.name ?? null;
+});
+
+/** True when the track is flagged solo-safe (stays audible during solos). */
+const isSoloSafe = computed(() => track.value?.soloSafe === true);
+
+/**
+ * Output-bus selector is offered on non-group track strips that have at least
+ * one send bus to route into. Group members hide it (their group bus always
+ * wins); the master strip and group tracks have no routable lane.
+ */
+const showOutputBus = computed(
+  () =>
+    !isMaster.value &&
+    !isGroup.value &&
+    track.value?.groupId === undefined &&
+    store.mixer.buses.length > 0,
+);
+
+/** Output-bus options: the master mix plus every send bus (value = bus id). */
+const outputBusOptions = computed(() => [
+  { value: '', label: 'Master' },
+  ...store.mixer.buses.map((bus) => ({ value: bus.id, label: bus.name })),
+]);
+
+/** Selected output bus id, or '' for the master mix. */
+const outputBusValue = computed(() => strip.value.outputBusId ?? '');
+
+function onOutputBusChange(value: string): void {
+  if (!track.value) return;
+  setStripOutputBus(track.value.id, value === '' ? null : value);
+}
+
 function onHeaderClick(): void {
   if (track.value) setActiveTrack(track.value.id);
+}
+
+/** Builds and opens the strip's right-click action menu. */
+function onContextMenu(event: MouseEvent): void {
+  const t = track.value;
+  if (t) setActiveTrack(t.id);
+  const items: ContextMenuItem[] = [];
+  if (t) {
+    items.push({
+      id: 'rename',
+      label: 'Rename…',
+      run: () => {
+        void (async () => {
+          const next = await promptDialog({
+            title: 'Rename track',
+            message: 'Enter a name for this track.',
+            defaultValue: t.name,
+            placeholder: 'Track name',
+            confirmLabel: 'Rename',
+          });
+          if (next && next !== t.name) renameTrack(t.id, next);
+        })();
+      },
+    });
+  }
+  items.push(
+    { id: 'reset-gain', label: 'Reset fader (0 dB)', run: () => setStripGain(props.target, 0) },
+    { id: 'reset-pan', label: 'Center pan', run: () => setStripPan(props.target, 0) },
+  );
+  if (t && !isGroup.value) {
+    const safe = t.soloSafe === true;
+    items.push(
+      { id: 'sep-1', separator: true },
+      { id: 'mute', label: t.mute ? 'Unmute' : 'Mute', run: () => setTrackMute(t.id, !t.mute) },
+      { id: 'solo', label: t.solo ? 'Unsolo' : 'Solo', run: () => setTrackSolo(t.id, !t.solo) },
+      {
+        id: 'solo-safe',
+        label: 'Solo safe',
+        checked: safe,
+        run: () => setTrackSoloSafe(t.id, !safe),
+      },
+    );
+    // VCA assignment: each existing group toggles membership; a new group can
+    // be spun up and the track joins it in one step.
+    const groups = store.mixer.vcaGroups ?? [];
+    items.push({ id: 'sep-vca', separator: true });
+    for (const group of groups) {
+      const assigned = t.vcaId === group.id;
+      items.push({
+        id: `vca-${group.id}`,
+        label: group.name,
+        checked: assigned,
+        run: () => setTrackVca(t.id, assigned ? null : group.id),
+      });
+    }
+    if (groups.length < MAX_VCA_GROUPS) {
+      items.push({
+        id: 'vca-new',
+        label: 'New VCA group',
+        run: () => setTrackVca(t.id, addVcaGroup()),
+      });
+    }
+  }
+  openContextMenu(event.clientX, event.clientY, items);
 }
 
 // --- Automation R/W mode --------------------------------------------------------
@@ -232,13 +343,20 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="channel-strip" :class="{ active, master: isMaster }">
+  <div
+    class="channel-strip"
+    :class="{ active, master: isMaster }"
+    @contextmenu.prevent="onContextMenu"
+  >
     <button type="button" class="strip-header" :title="name" @click="onHeaderClick">
       <span class="strip-color" :style="{ background: color }" />
       <span class="strip-name">{{ name }}</span>
       <span v-if="isGroup" class="strip-group-tag" title="Group submix">GROUP</span>
       <span v-if="track?.frozen" class="strip-frozen-tag" title="Frozen (plays the baked render)">
         ❄
+      </span>
+      <span v-if="vcaGroupName" class="strip-vca-tag" :title="`VCA group: ${vcaGroupName}`">
+        {{ vcaGroupName }}
       </span>
     </button>
 
@@ -279,6 +397,17 @@ onBeforeUnmount(() => {
       <StripSends :target="props.target" />
     </div>
 
+    <div v-if="showOutputBus" class="strip-section strip-output">
+      <span class="strip-output-label">OUT</span>
+      <SelectMenu
+        :model-value="outputBusValue"
+        size="sm"
+        :options="outputBusOptions"
+        :aria-label="`Output bus for ${name}`"
+        @change="onOutputBusChange"
+      />
+    </div>
+
     <div class="strip-spacer" />
 
     <div class="strip-pan">
@@ -309,8 +438,8 @@ onBeforeUnmount(() => {
           v-if="!isGroup"
           type="button"
           class="toggle solo"
-          :class="{ on: track.solo }"
-          title="Solo"
+          :class="{ on: track.solo, safe: isSoloSafe }"
+          :title="isSoloSafe ? 'Solo (solo-safe: stays audible during other solos)' : 'Solo'"
           :aria-label="`Solo ${name}`"
           :aria-pressed="track.solo"
           @click="setTrackSolo(track.id, !track.solo)"
@@ -343,30 +472,31 @@ onBeforeUnmount(() => {
 .channel-strip {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--sp-3);
   width: 96px;
   flex: none;
   box-sizing: border-box;
-  padding: 6px 6px 8px;
-  background: #15171c;
-  border-right: 1px solid rgba(0, 0, 0, 0.5);
+  padding: var(--sp-3) var(--sp-3) var(--sp-4);
+  background: var(--surface-2);
+  border-right: 1px solid var(--border);
 }
 
 .channel-strip.active {
-  background: #1b2330;
+  background: var(--surface-selected);
 }
 
 .channel-strip.master {
-  background: #181b22;
-  border-left: 1px solid #2a2e37;
+  background: var(--surface-2);
+  border-left: 1px solid var(--border);
 }
 
 .strip-header {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--sp-2);
   background: transparent;
   border: none;
+  box-shadow: none;
   padding: 0;
   cursor: pointer;
   min-width: 0;
@@ -387,14 +517,14 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   text-align: left;
   font: 600 10px system-ui, sans-serif;
-  color: #c8cdd6;
+  color: var(--text-2);
 }
 
 .strip-group-tag {
   flex: none;
   font: 700 7px system-ui, sans-serif;
   letter-spacing: 0.06em;
-  color: #0b0d11;
+  color: var(--surface-0);
   background: #a78bfa;
   border-radius: 2px;
   padding: 1px 3px;
@@ -403,32 +533,61 @@ onBeforeUnmount(() => {
 .strip-frozen-tag {
   flex: none;
   font: 700 8px system-ui, sans-serif;
-  color: #0b0d11;
+  color: var(--surface-0);
   background: #7dd3fc;
+  border-radius: 2px;
+  padding: 1px 3px;
+}
+
+.strip-vca-tag {
+  flex: none;
+  max-width: 4rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font: 700 7px system-ui, sans-serif;
+  letter-spacing: 0.04em;
+  color: var(--surface-0);
+  background: #fbbf24;
   border-radius: 2px;
   padding: 1px 3px;
 }
 
 .strip-auto {
   display: flex;
-  gap: 2px;
+  gap: var(--sp-1);
 }
 
 .strip-auto-r.on {
-  color: #0b0d11;
-  background: #34d399;
-  border-color: #34d399;
+  color: var(--surface-0);
+  background: var(--success);
 }
 
 .strip-auto-w.on {
-  color: #0b0d11;
+  color: var(--surface-0);
   background: #f87171;
-  border-color: #f87171;
 }
 
 .strip-section {
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
-  padding-top: 4px;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--sp-2);
+}
+
+.strip-output {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.strip-output-label {
+  font: var(--fw-bold) 8px var(--font-sans);
+  letter-spacing: 0.06em;
+  color: var(--text-4);
+  user-select: none;
+}
+
+.strip-output :deep(.select-trigger) {
+  flex: 1;
+  min-width: 0;
 }
 
 .strip-spacer {
@@ -439,13 +598,13 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 4px;
+  gap: var(--sp-2);
 }
 
 .strip-toggles {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--sp-1);
 }
 
 .toggle {
@@ -453,36 +612,42 @@ onBeforeUnmount(() => {
   height: 14px;
   font: 700 9px system-ui, sans-serif;
   line-height: 1;
-  color: #8b93a3;
-  background: #1d2027;
-  border: 1px solid #2a2e37;
+  color: var(--text-3);
+  background: var(--surface-3);
   border-radius: 3px;
   padding: 0;
   cursor: pointer;
+  box-shadow: var(--control-lift);
+  transition:
+    background var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
 }
 
 .toggle.mute.on {
-  color: #0b0d11;
-  background: #fbbf24;
-  border-color: #fbbf24;
+  color: var(--surface-0);
+  background: var(--warning);
 }
 
 .toggle.solo.on {
-  color: #0b0d11;
-  background: #60a5fa;
-  border-color: #60a5fa;
+  color: var(--surface-0);
+  background: var(--accent);
+}
+
+/* Solo-safe is shown as a persistent outline on the S button. */
+.toggle.solo.safe {
+  box-shadow: inset 0 0 0 1px #fbbf24;
 }
 
 .strip-fader-row {
   display: flex;
   justify-content: center;
-  gap: 4px;
+  gap: var(--sp-2);
 }
 
 .strip-readout {
   text-align: center;
   font: 10px ui-monospace, monospace;
-  color: #8b93a3;
+  color: var(--text-3);
   user-select: none;
 }
 </style>

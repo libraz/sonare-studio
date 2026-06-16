@@ -1,15 +1,21 @@
 <script setup lang="ts">
 import { computed, markRaw, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { promptDialog } from '@/composables/useDialogs';
+import { useEditorTool } from '@/composables/useEditorTool';
 import type { AutomationParam } from '@/project/automation';
 import {
   addMidiClip,
+  deleteClip,
   duplicateClip,
   moveClip,
+  renameClip,
   setActiveClip,
   setAutomationLanePoints,
   setClipActiveTake,
   setClipCompSegments,
   setClipFades,
+  setClipLoop,
+  setMarker,
   splitClip,
   trimClip,
 } from '@/project/commands';
@@ -26,11 +32,13 @@ import { barRangeAt } from '@/ui/arrangement/ruler';
 import { useAutomationInteractions } from '@/ui/arrangement/use-automation-interactions';
 import {
   type ClipInteractionsView,
+  snapToStep,
   useClipInteractions,
 } from '@/ui/arrangement/use-clip-interactions';
 import { useTakeInteractions } from '@/ui/arrangement/use-take-interactions';
 import { createPainter } from '@/ui/canvas/painter';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
+import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 import ArrangementCanvas from './ArrangementCanvas.vue';
 import SectionLane from './SectionLane.vue';
 import TrackHeaderList from './TrackHeaderList.vue';
@@ -194,6 +202,8 @@ function sourceBoundsFor(clipId: number) {
   return audioClipSourceBounds(clip, assetPpq);
 }
 
+const { tool } = useEditorTool();
+
 const interactions = useClipInteractions({
   view: laneView,
   getClips: () => store.clips,
@@ -201,19 +211,22 @@ const interactions = useClipInteractions({
   getGridPpq: () => gridPpq.value,
   getBarRange: (ppq) => barRangeAt(store.timeSignatures, ppq),
   getSourceBounds: sourceBoundsFor,
+  getTool: () => tool.value,
   commands: {
     selectClip: (clipId) => setActiveClip(clipId),
     moveClip,
     trimClip,
     duplicateClip,
-    // Double-click creation makes empty MIDI clips; audio clips come from
-    // imports/recording, so audio (and aux) lanes do not create on click.
+    // Double-click and draw-tool creation make empty MIDI clips; audio clips
+    // come from imports/recording, so audio (and aux) lanes do not create.
     createClip: (trackId, startPpq, lengthPpq) => {
       const track = store.tracks.find((t) => t.id === trackId);
       if (track?.kind !== 'midi') return null;
       return addMidiClip({ trackId, startPpq, lengthPpq });
     },
     setClipFades,
+    deleteClip,
+    splitClip,
   },
 });
 
@@ -285,6 +298,80 @@ function onCanvasResize(): void {
 
 function onSeek(ppq: number): void {
   emit('seek', ppq);
+}
+
+/** Builds and opens the right-click menu for a clip (or an empty lane). */
+function onClipContext(payload: {
+  x: number;
+  y: number;
+  clipId: number | null;
+  ppq: number;
+}): void {
+  const clip = payload.clipId === null ? null : store.clips.find((c) => c.id === payload.clipId);
+  if (!clip) return;
+  setActiveClip(clip.id);
+  const end = clip.startPpq + clip.lengthPpq;
+  const splitPpq = snapToStep(payload.ppq, gridPpq.value);
+  const canSplit = splitPpq > clip.startPpq && splitPpq < end;
+  const items: ContextMenuItem[] = [
+    {
+      id: 'split',
+      label: 'Split here',
+      hint: '3',
+      disabled: !canSplit,
+      run: () => setActiveClip(splitClip(clip.id, splitPpq)),
+    },
+    { id: 'duplicate', label: 'Duplicate', run: () => setActiveClip(duplicateClip(clip.id, end)) },
+    { id: 'rename', label: 'Rename…', run: () => renameClipFromPrompt(clip.id, clip.name) },
+    {
+      id: 'loop',
+      label: clip.loopEnabled ? 'Disable loop' : 'Enable loop',
+      run: () => setClipLoop(clip.id, !clip.loopEnabled),
+    },
+    { id: 'sep-1', separator: true },
+    { id: 'delete', label: 'Delete', danger: true, run: () => deleteClip(clip.id) },
+  ];
+  openContextMenu(payload.x, payload.y, items);
+}
+
+/** Builds and opens the right-click menu for the bar/beat ruler. */
+function onRulerContext(payload: { x: number; y: number; ppq: number }): void {
+  const items: ContextMenuItem[] = [
+    {
+      id: 'marker',
+      label: 'Add marker here…',
+      run: () => addMarkerFromPrompt(payload.ppq),
+    },
+  ];
+  openContextMenu(payload.x, payload.y, items);
+}
+
+/** Renames a clip via a prompt, ignoring an empty or unchanged name. */
+function renameClipFromPrompt(clipId: number, current: string): void {
+  void (async () => {
+    const next = await promptDialog({
+      title: 'Rename clip',
+      message: 'Enter a name for this clip.',
+      defaultValue: current,
+      placeholder: 'Clip name',
+      confirmLabel: 'Rename',
+    });
+    if (next && next !== current) renameClip(clipId, next);
+  })();
+}
+
+/** Adds a marker at a position via a prompt for its name. */
+function addMarkerFromPrompt(ppq: number): void {
+  void (async () => {
+    const name = await promptDialog({
+      title: 'Add marker',
+      message: 'Name the marker placed at this position.',
+      defaultValue: 'Marker',
+      placeholder: 'Marker name',
+      confirmLabel: 'Add',
+    });
+    if (name) setMarker(null, ppq, name);
+  })();
 }
 
 /**
@@ -394,6 +481,8 @@ onBeforeUnmount(() => {
           :position-ppq="props.positionPpq"
           @view-resize="onCanvasResize"
           @ruler-seek="onSeek"
+          @clip-context="onClipContext"
+          @ruler-context="onRulerContext"
         />
       </div>
     </div>
@@ -405,18 +494,20 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   width: 100%;
-  height: 100%;
-  min-height: 160px;
-  background: #0b0d11;
-  color: #c8cdd6;
+  /* Fill the remaining height of the arrange zone, sharing it with a sibling
+     clip-inspector bar in the shell. */
+  flex: 1 1 auto;
+  min-height: 0;
+  background: var(--surface-0);
+  color: var(--text-2);
 }
 
 .arrangement-error {
   margin: 0;
   padding: 0.5rem 0.75rem;
-  background: #3b1219;
-  color: #ffb4b4;
-  font: 12px/1.4 system-ui, sans-serif;
+  background: var(--danger-surface);
+  color: var(--danger-text);
+  font: var(--fs-sm)/1.4 var(--font-sans);
 }
 
 .arrangement-grid {
@@ -428,13 +519,14 @@ onBeforeUnmount(() => {
 .cell-corner {
   display: flex;
   align-items: center;
-  padding: 0 8px;
-  font: 600 9px system-ui, sans-serif;
+  padding: 0 var(--sp-4);
+  font: var(--fw-semibold) 9px var(--font-sans);
   letter-spacing: 0.08em;
-  color: #5b6270;
-  background: #14161b;
-  border-right: 1px solid rgba(0, 0, 0, 0.5);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.5);
+  color: var(--text-4);
+  background: var(--surface-2);
+  border-right: 1px solid var(--border-strong);
+  border-bottom: 1px solid var(--border-strong);
+  box-shadow: var(--raise-hi);
 }
 
 .cell-sections {

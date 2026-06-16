@@ -295,6 +295,30 @@ describe('useRecording', () => {
     expect(fake.getLastStart()).toEqual({ startPpq: 16, tempoBpm: 120 });
   });
 
+  it('records from an explicit punch-in position, ignoring count-in and loop snap', async () => {
+    const { recording, fake, transport, play, seekPpq } = setup();
+    const trackId = addAudioTrack();
+    recording.arm(trackId);
+    recording.countInBars.value = 2;
+    transport.isPlaying.value = true;
+    transport.positionSeconds.value = 8; // 16 PPQ — playhead already past the in-point
+    transport.loopEnabled.value = true;
+    transport.loopStartPpq.value = 4;
+    transport.loopEndPpq.value = 12;
+
+    // The auto-punch in-point (left locator) overrides the playhead, with no
+    // count-in pre-roll and no cycle split.
+    expect(await recording.record(4)).toBe(true);
+    expect(seekPpq).not.toHaveBeenCalled();
+    expect(play).not.toHaveBeenCalled();
+    expect(fake.getLastStart()).toEqual({ startPpq: 4, tempoBpm: 120 });
+
+    const clipId = await recording.stopRecord();
+    expect(clipId).not.toBeNull();
+    const clip = store.clips.find((c) => c.id === clipId);
+    expect(clip?.takes ?? []).toHaveLength(0); // single linear take, never cycle-split
+  });
+
   it('surfaces microphone errors from record()', async () => {
     const { recording, fake } = setup();
     const trackId = addAudioTrack();

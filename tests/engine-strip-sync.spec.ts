@@ -568,6 +568,85 @@ describe('createStripSync group routing', () => {
   });
 });
 
+describe('createStripSync output-bus routing', () => {
+  it('routes a non-grouped track strip to its chosen send bus', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+
+    sync.sync(
+      [makeTrack(1, makeStrip({ outputBusId: 'A' }))],
+      makeMixer({ buses: [makeBus('A')] }),
+    );
+    expect(engine.setTrackOutputBus).toHaveBeenCalledTimes(1);
+    expect(engine.setTrackOutputBus).toHaveBeenCalledWith(1, 1);
+    clearCalls(engine);
+
+    // Unchanged routing stays silent.
+    sync.sync(
+      [makeTrack(1, makeStrip({ outputBusId: 'A' }))],
+      makeMixer({ buses: [makeBus('A')] }),
+    );
+    expect(totalCalls(engine)).toBe(0);
+  });
+
+  it('lets group membership win over a user-chosen output bus', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const group = makeGroupTrack(10);
+    const member = { ...makeTrack(1, makeStrip({ outputBusId: 'A' })), groupId: 10 };
+
+    // Bus 'A' is engine bus 1, the group bus is 2; the member routes to 2.
+    sync.sync([member, group], makeMixer({ buses: [makeBus('A')] }));
+    expect(engine.setTrackOutputBus).toHaveBeenCalledWith(1, 2);
+  });
+
+  it('routes back to the master mix when the output bus is cleared', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+
+    sync.sync(
+      [makeTrack(1, makeStrip({ outputBusId: 'A' }))],
+      makeMixer({ buses: [makeBus('A')] }),
+    );
+    expect(engine.setTrackOutputBus).toHaveBeenCalledWith(1, 1);
+    clearCalls(engine);
+
+    sync.sync([makeTrack(1)], makeMixer({ buses: [makeBus('A')] }));
+    expect(engine.setTrackOutputBus).toHaveBeenCalledTimes(1);
+    expect(engine.setTrackOutputBus).toHaveBeenCalledWith(1, 0);
+  });
+
+  it('falls back to the master mix when the output bus is no longer declared', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+
+    sync.sync(
+      [makeTrack(1, makeStrip({ outputBusId: 'A' }))],
+      makeMixer({ buses: [makeBus('A')] }),
+    );
+    expect(engine.setTrackOutputBus).toHaveBeenCalledWith(1, 1);
+    clearCalls(engine);
+
+    // The bus is removed but the strip still names it: route back to master,
+    // never to an undeclared bus (the engine rejects that lane).
+    sync.sync([makeTrack(1, makeStrip({ outputBusId: 'A' }))], makeMixer());
+    expect(engine.setTrackOutputBus).toHaveBeenCalledWith(1, 0);
+  });
+
+  it('ignores an output bus set on a group track itself', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+
+    sync.sync(
+      [makeGroupTrack(10, makeStrip({ outputBusId: 'A' }))],
+      makeMixer({ buses: [makeBus('A')] }),
+    );
+    // The group track's own lane stays on the master mix (its bus carries the
+    // submix); no lane is routed to bus 'A'.
+    expect(engine.setTrackOutputBus).not.toHaveBeenCalled();
+  });
+});
+
 describe('createStripSync sidechain bindings', () => {
   /** Strip with one enabled insert, optionally keyed from a source track. */
   function keyedStrip(source?: number): MixerStrip {

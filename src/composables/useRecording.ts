@@ -77,14 +77,18 @@ export interface UseRecordingReturn {
    */
   setMonitor(enabled: boolean, gain?: number): void;
   /**
-   * Starts recording on the armed track at the current playhead position:
-   * requests the microphone when needed, pre-rolls the count-in (metronome
-   * forced on for its duration when it was off), starts the transport when
-   * stopped, and begins capturing.
+   * Starts recording on the armed track: requests the microphone when needed,
+   * pre-rolls the count-in (metronome forced on for its duration when it was
+   * off), starts the transport when stopped, and begins capturing.
    *
+   * @param startAtPpq Explicit punch-in position; when omitted the current
+   *   playhead is used. Pass the left locator slightly before the playhead
+   *   reaches it for sample-accurate auto-punch (the engine punch window opens
+   *   exactly at this position). An explicit start never count-ins or
+   *   cycle-splits.
    * @returns True when recording started; false with `error` set otherwise.
    */
-  record(): Promise<boolean>;
+  record(startAtPpq?: number): Promise<boolean>;
   /**
    * Stops capturing, ingests the take as an audio asset and adds an audio
    * clip at the recorded position. The transport keeps rolling.
@@ -229,9 +233,11 @@ export function useRecording(
     ensureRecorder()?.setMonitor(enabled, gain);
   };
 
-  const record = async (): Promise<boolean> => {
+  const record = async (startAtPpq?: number): Promise<boolean> => {
     error.value = null;
     if (isRecording.value) return false;
+    const explicitStart =
+      startAtPpq !== undefined && Number.isFinite(startAtPpq) && startAtPpq >= 0;
     const rec = ensureRecorder();
     if (!rec) {
       error.value = ENGINE_NOT_STARTED_MESSAGE;
@@ -252,10 +258,14 @@ export function useRecording(
     const tempoBpm = transport.tempo.value;
     let startPpq = Math.max(0, transport.positionPpq.value);
     const wasRolling = transport.isPlaying.value;
-    // Cycle recording: starting from stop with the loop on and the playhead
-    // near the loop start snaps the capture to the exact loop start, so the
-    // takes align with the loop window (ruler seeks land on fractional ppq).
-    if (
+    if (explicitStart) {
+      // Auto-punch: the engine punch window opens exactly at this position;
+      // no loop-snap, count-in or cycle-split applies.
+      startPpq = startAtPpq as number;
+    } else if (
+      // Cycle recording: starting from stop with the loop on and the playhead
+      // near the loop start snaps the capture to the exact loop start, so the
+      // takes align with the loop window (ruler seeks land on fractional ppq).
       !wasRolling &&
       transport.loopEnabled.value &&
       transport.loopEndPpq.value > transport.loopStartPpq.value &&
@@ -266,7 +276,7 @@ export function useRecording(
     // Count-in only applies when starting from stop; punching in on a
     // rolling transport records from the current position immediately.
     let countInPpq = 0;
-    if (!wasRolling && countInBars.value > 0) {
+    if (!explicitStart && !wasRolling && countInBars.value > 0) {
       const meter = timeSignatureAt(startPpq);
       const barPpq = meter.numerator * (4 / meter.denominator);
       // The pre-roll cannot reach before the timeline start.
@@ -297,11 +307,14 @@ export function useRecording(
     recordingTrackId = trackId;
     recordingTempoBpm = tempoBpm;
     // Cycle mode: loop enabled and the capture starts at the loop start (a
-    // punch-in elsewhere records one linear take as usual).
+    // punch-in elsewhere, or an explicit auto-punch, records one linear take).
     const loopStart = transport.loopStartPpq.value;
     const loopEnd = transport.loopEndPpq.value;
     recordingLoop =
-      transport.loopEnabled.value && loopEnd > loopStart && Math.abs(startPpq - loopStart) < 1e-6
+      !explicitStart &&
+      transport.loopEnabled.value &&
+      loopEnd > loopStart &&
+      Math.abs(startPpq - loopStart) < 1e-6
         ? { startPpq: loopStart, endPpq: loopEnd }
         : null;
     isRecording.value = true;

@@ -9,6 +9,7 @@ import {
   setTrackInstrument,
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
+import { selectOption } from './helpers/select-menu';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -140,7 +141,7 @@ describe('DeviceRack.vue', () => {
     const wrapper = mount(DeviceRack);
     expect(wrapper.find('.chain-empty').exists()).toBe(true);
 
-    await wrapper.find('.add-insert').setValue('dynamics.compressor');
+    await selectOption(wrapper, '.add-insert', 'Compressor (dynamics)');
     expect(store.tracks[0].mixer?.inserts).toHaveLength(1);
     const row = wrapper.find('.insert-row');
     expect(row.find('.insert-name').text()).toContain('Compressor');

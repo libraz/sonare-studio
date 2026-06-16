@@ -103,9 +103,10 @@ function onPointerUp(): void {
 .param-lane {
   position: relative;
   height: 72px;
-  padding: 2px 4px;
-  background: #14161b;
-  border-top: 1px solid rgba(0, 0, 0, 0.4);
+  padding: var(--sp-1) var(--sp-2);
+  background: var(--surface-inset);
+  border-top: 1px solid var(--border-strong);
+  box-shadow: var(--inset-well);
   touch-action: none;
   user-select: none;
   cursor: ns-resize;
@@ -113,16 +114,16 @@ function onPointerUp(): void {
 
 .lane-center-line {
   position: absolute;
-  left: 4px;
-  right: 4px;
+  left: var(--sp-2);
+  right: var(--sp-2);
   top: 50%;
-  border-top: 1px solid #2a2f39;
+  border-top: 1px solid var(--border);
   pointer-events: none;
 }
 
 .lane-bars {
   display: flex;
-  gap: 2px;
+  gap: var(--sp-1);
   height: 100%;
 }
 

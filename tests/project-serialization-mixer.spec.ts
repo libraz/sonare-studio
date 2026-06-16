@@ -3,12 +3,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   addInsert,
   addMixerBus,
+  addVcaGroup,
   clearHistory,
   setSend,
   setStripEq,
   setStripGain,
+  setStripOutputBus,
   setStripPan,
   setTrackInstrument,
+  setTrackSoloSafe,
+  setTrackVca,
 } from '@/project/commands';
 import {
   loadProjectDocument,
@@ -103,6 +107,44 @@ describe('project serialization with instruments and mixer (schema v3)', () => {
     });
     expect(store.tracks[0].mixer?.gainDb).toBe(-3);
     expect(store.mixer.master.inserts).toHaveLength(1);
+  });
+
+  it('round-trips a track output-bus routing through the document', async () => {
+    const trackId = store.tracks[0].id;
+    const busId = addMixerBus({ name: 'FX' });
+    setStripOutputBus(trackId, busId);
+    const doc = serializeProject();
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    expect(serializeProject()).toEqual(doc);
+    expect(store.tracks[0].mixer?.outputBusId).toBe(busId);
+  });
+
+  it('round-trips VCA groups and the per-track solo-safe / VCA assignment', async () => {
+    const trackId = store.tracks[0].id;
+    const groupId = addVcaGroup({ name: 'Drums' });
+    setTrackVca(trackId, groupId);
+    setTrackSoloSafe(trackId, true);
+    const doc = serializeProject();
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    expect(serializeProject()).toEqual(doc);
+    expect(store.mixer.vcaGroups).toEqual([{ id: groupId, name: 'Drums', gainDb: 0 }]);
+    expect(store.tracks[0].vcaId).toBe(groupId);
+    expect(store.tracks[0].soloSafe).toBe(true);
+  });
+
+  it('drops a track VCA assignment whose group is missing from the document', async () => {
+    const trackId = store.tracks[0].id;
+    const groupId = addVcaGroup();
+    setTrackVca(trackId, groupId);
+    const doc = serializeProject();
+    // Simulate a document whose VCA group was stripped but the assignment kept.
+    const tampered = JSON.parse(JSON.stringify(doc)) as ProjectDocument;
+    if (tampered.mixer) tampered.mixer.vcaGroups = [];
+
+    await loadProjectDocument(tampered);
+    expect(store.tracks[0].vcaId).toBeUndefined();
   });
 
   it('loads v2 documents seamlessly with defaults injected', async () => {

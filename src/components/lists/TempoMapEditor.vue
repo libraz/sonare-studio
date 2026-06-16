@@ -201,8 +201,8 @@ function apply(): void {
   flex-direction: column;
   gap: 0.4rem;
   padding: 0.5rem 0.75rem;
-  font-size: 12px;
-  color: #c7cdd9;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
   overflow: auto;
   min-height: 0;
 }
@@ -214,11 +214,11 @@ function apply(): void {
 
 .list-table th {
   text-align: left;
-  font-size: 11px;
-  font-weight: 600;
-  color: #8b93a3;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--text-3);
   padding: 0.15rem 0.4rem 0.15rem 0;
-  border-bottom: 1px solid #2a2e38;
+  border-bottom: 1px solid var(--border);
 }
 
 .list-table td {
@@ -228,18 +228,20 @@ function apply(): void {
 .cell-input {
   width: 100%;
   box-sizing: border-box;
-  background: #0b0d11;
-  border: 1px solid #2a2e38;
-  border-radius: 3px;
-  color: #e2e6ee;
+  background: var(--surface-inset);
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
   font: inherit;
   font-variant-numeric: tabular-nums;
   padding: 0.15rem 0.3rem;
+  box-shadow: var(--control-edge), var(--inset-well);
+  transition: box-shadow var(--dur-1) var(--ease-out);
 }
 
 .cell-input:focus {
   outline: none;
-  border-color: #60a5fa;
+  box-shadow: inset 0 0 0 1px var(--accent), var(--inset-well), var(--ring);
 }
 
 .cell-number {
@@ -254,27 +256,29 @@ function apply(): void {
 .row-button {
   background: none;
   border: none;
-  color: #8b93a3;
+  box-shadow: none;
+  color: var(--text-3);
   cursor: pointer;
   padding: 0.1rem 0.25rem;
-  font-size: 11px;
+  font-size: var(--fs-xs);
+  transition: color var(--dur-1) var(--ease-out);
 }
 
 .row-button:hover {
-  color: #f87171;
+  color: var(--danger);
 }
 
 .list-empty {
   margin: 0;
-  color: #8b93a3;
+  color: var(--text-3);
 }
 
 .list-error {
   margin: 0;
-  background: #3b1219;
-  border: 1px solid #ef4444;
-  border-radius: 3px;
-  color: #ffb4b4;
+  background: var(--danger-surface);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  color: var(--danger-text);
   padding: 0.25rem 0.5rem;
 }
 

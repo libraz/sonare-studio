@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
+import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { setTimeSignatures } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import type { TimeSignatureSegment } from '@/project/types';
@@ -22,6 +23,12 @@ import {
  */
 
 const store = useProjectStore();
+
+/** Beat-unit picker options; values stay strings to match the draft rows. */
+const DENOMINATOR_OPTIONS = TIME_SIGNATURE_DENOMINATORS.map((denominator) => ({
+  value: String(denominator),
+  label: String(denominator),
+}));
 
 /** One editable draft row; values stay strings until Apply parses them. */
 interface DraftRow {
@@ -164,20 +171,14 @@ function apply(): void {
             />
           </td>
           <td>
-            <select
+            <SelectMenu
               v-model="row.denominator"
               class="cell-input cell-number"
+              size="sm"
+              :options="DENOMINATOR_OPTIONS"
               :aria-label="`Meter entry ${index + 1} beat unit`"
               @change="markDirty"
-            >
-              <option
-                v-for="denominator in TIME_SIGNATURE_DENOMINATORS"
-                :key="denominator"
-                :value="String(denominator)"
-              >
-                {{ denominator }}
-              </option>
-            </select>
+            />
           </td>
           <td class="cell-actions">
             <button
@@ -209,8 +210,8 @@ function apply(): void {
   flex-direction: column;
   gap: 0.4rem;
   padding: 0.5rem 0.75rem;
-  font-size: 12px;
-  color: #c7cdd9;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
   overflow: auto;
   min-height: 0;
 }
@@ -222,32 +223,39 @@ function apply(): void {
 
 .list-table th {
   text-align: left;
-  font-size: 11px;
-  font-weight: 600;
-  color: #8b93a3;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--text-3);
   padding: 0.15rem 0.4rem 0.15rem 0;
-  border-bottom: 1px solid #2a2e38;
+  border-bottom: 1px solid var(--border);
 }
 
 .list-table td {
   padding: 0.12rem 0.4rem 0.12rem 0;
 }
 
+/* Layout applies to both native inputs and SelectMenu wrappers sharing this class. */
 .cell-input {
   width: 100%;
   box-sizing: border-box;
-  background: #0b0d11;
-  border: 1px solid #2a2e38;
-  border-radius: 3px;
-  color: #e2e6ee;
+}
+
+/* The sunken field face is only for real inputs; SelectMenu carries its own face. */
+input.cell-input {
+  background: var(--surface-inset);
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
   font: inherit;
   font-variant-numeric: tabular-nums;
   padding: 0.15rem 0.3rem;
+  box-shadow: var(--control-edge), var(--inset-well);
+  transition: box-shadow var(--dur-1) var(--ease-out);
 }
 
-.cell-input:focus {
+input.cell-input:focus {
   outline: none;
-  border-color: #60a5fa;
+  box-shadow: inset 0 0 0 1px var(--accent), var(--inset-well), var(--ring);
 }
 
 .cell-number {
@@ -262,27 +270,29 @@ function apply(): void {
 .row-button {
   background: none;
   border: none;
-  color: #8b93a3;
+  box-shadow: none;
+  color: var(--text-3);
   cursor: pointer;
   padding: 0.1rem 0.25rem;
-  font-size: 11px;
+  font-size: var(--fs-xs);
+  transition: color var(--dur-1) var(--ease-out);
 }
 
 .row-button:hover {
-  color: #f87171;
+  color: var(--danger);
 }
 
 .list-empty {
   margin: 0;
-  color: #8b93a3;
+  color: var(--text-3);
 }
 
 .list-error {
   margin: 0;
-  background: #3b1219;
-  border: 1px solid #ef4444;
-  border-radius: 3px;
-  color: #ffb4b4;
+  background: var(--danger-surface);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  color: var(--danger-text);
   padding: 0.25rem 0.5rem;
 }
 

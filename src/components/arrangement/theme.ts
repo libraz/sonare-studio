@@ -1,19 +1,24 @@
 /**
  * Shared dark-theme color tokens and layout constants for the arrangement
- * components. Canvas helpers (setupCanvas, rounded rects) are reused from the
- * piano-roll theme module until a global theme exists.
+ * components. The shared palette is sourced from the global theme (tokens.ts);
+ * fine-grained canvas overlays stay as local literals. Canvas helpers
+ * (setupCanvas, rounded rects) are reused from the piano-roll theme module.
  */
+
+import { colorWithAlpha, TOKENS } from '@/ui/theme/tokens';
+
+export { colorWithAlpha };
 
 /** Color tokens used by the arrangement canvases and lanes. */
 export const ARRANGEMENT_COLORS = {
   /** Lane area background. */
-  background: '#101216',
+  background: TOKENS.surface1,
   /** Even track lane background. */
   laneEven: '#15171c',
   /** Odd track lane background. */
   laneOdd: '#13151a',
   /** Tint over the active track's lane. */
-  laneActive: 'rgba(96, 165, 250, 0.07)',
+  laneActive: colorWithAlpha(TOKENS.accent, 0.07),
   /** Horizontal line between track lanes. */
   laneLine: 'rgba(255, 255, 255, 0.05)',
   /** Shade over the area below the last track lane. */
@@ -29,7 +34,7 @@ export const ARRANGEMENT_COLORS = {
   /** Clip name label. */
   clipName: 'rgba(232, 235, 240, 0.92)',
   /** Ruler strip background. */
-  rulerBackground: '#14161b',
+  rulerBackground: TOKENS.surface2,
   /** Line separating the ruler from the lanes. */
   rulerBorder: 'rgba(0, 0, 0, 0.5)',
   /** Bar tick on the ruler. */
@@ -37,9 +42,9 @@ export const ARRANGEMENT_COLORS = {
   /** Beat tick on the ruler. */
   rulerBeat: 'rgba(255, 255, 255, 0.16)',
   /** Bar-number label on the ruler. */
-  rulerLabel: '#8b93a3',
+  rulerLabel: TOKENS.text3,
   /** Loop range band on the ruler. */
-  loopOverlay: 'rgba(96, 165, 250, 0.28)',
+  loopOverlay: colorWithAlpha(TOKENS.accent, 0.28),
   /** Shade over the attenuated corner of an audio clip fade. */
   fadeOverlay: 'rgba(0, 0, 0, 0.38)',
   /** Fade ramp line over an audio clip waveform. */
@@ -47,11 +52,11 @@ export const ARRANGEMENT_COLORS = {
   /** Fade handle triangle at an audio clip's top corners. */
   fadeHandle: 'rgba(232, 235, 240, 0.9)',
   /** Marker flag and stem. */
-  markerFlag: '#fbbf24',
+  markerFlag: TOKENS.warning,
   /** Marker name label. */
-  markerLabel: 'rgba(251, 191, 36, 0.9)',
+  markerLabel: colorWithAlpha(TOKENS.warning, 0.9),
   /** Playhead line. */
-  playhead: '#ff6e6e',
+  playhead: TOKENS.playhead,
   /** Shade darkening the take sub-rows below their track lane. */
   takeLane: 'rgba(0, 0, 0, 0.25)',
   /** Shade darkening an automation sublane below its track lane. */
@@ -60,6 +65,10 @@ export const ARRANGEMENT_COLORS = {
   automationMidline: 'rgba(255, 255, 255, 0.07)',
   /** Fill of a hovered automation breakpoint. */
   automationPointHover: '#f3f5f9',
+  /** Fill of the draw-tool draft clip outline. */
+  draftFill: colorWithAlpha(TOKENS.accent, 0.2),
+  /** Stroke of the draw-tool draft clip outline. */
+  draftStroke: colorWithAlpha(TOKENS.accent, 0.85),
 } as const;
 
 /** Height of the bar/beat ruler strip at the top of the arrangement canvas. */
@@ -73,20 +82,3 @@ export const TRACK_HEADER_WIDTH_PX = 192;
 
 /** Height of the section lane above the ruler. */
 export const SECTION_LANE_HEIGHT_PX = 22;
-
-/**
- * Converts a `#rrggbb` color to an `rgba()` string with the given alpha.
- * Non-hex inputs are returned unchanged.
- *
- * @param color - CSS color string (expected `#rrggbb`).
- * @param alpha - Alpha in [0, 1].
- */
-export function colorWithAlpha(color: string, alpha: number): string {
-  const match = /^#([0-9a-f]{6})$/i.exec(color.trim());
-  if (!match) return color;
-  const value = Number.parseInt(match[1], 16);
-  const r = (value >> 16) & 0xff;
-  const g = (value >> 8) & 0xff;
-  const b = value & 0xff;
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}

@@ -69,6 +69,13 @@ export interface MixerStrip {
   sends: StripSend[];
   /** Channel EQ; absent = no EQ. */
   eq?: StripEq;
+  /**
+   * Send-bus id this track's post-fader output routes into instead of the
+   * master mix (track strips only; group routing always wins, see
+   * src/engine/strip-sync.ts). Absent = master. Must reference a declared bus
+   * or the engine rejects the lane.
+   */
+  outputBusId?: string;
 }
 
 /**
@@ -99,18 +106,38 @@ export interface MixerBus {
   gainDb: number;
 }
 
+/**
+ * A VCA control group: a named fader that offsets the gain of every track
+ * assigned to it (see {@link EditorTrack.vcaId}). Unlike a bus, a VCA carries
+ * no audio of its own — it only shifts member lane gains, so the offset is
+ * applied in the frontend mixer sync as a per-member dB delta.
+ */
+export interface VcaGroup {
+  /** Stable group id (unique within the project). */
+  id: string;
+  /** Display name. */
+  name: string;
+  /** Group fader offset in dB applied to every member (0 = unity). */
+  gainDb: number;
+}
+
 /** Project-wide mixer state: the master strip plus optional buses. */
 export interface ProjectMixerState {
   /** Master strip (gain/pan, inserts and EQ are all audible in realtime). */
   master: MixerStrip;
   /** Send buses (realtime engine bus lanes, at most {@link MAX_MIXER_BUSES}). */
   buses: MixerBus[];
+  /** VCA control groups; absent/empty = none. */
+  vcaGroups?: VcaGroup[];
   /** Mastering chain for offline mixdown renders; absent = none. */
   masteringChain?: MasteringChainState;
 }
 
 /** Maximum number of send buses (the realtime engine's bus lane limit). */
 export const MAX_MIXER_BUSES = 8;
+
+/** Maximum number of VCA control groups (UI/sanity bound, not an engine limit). */
+export const MAX_VCA_GROUPS = 8;
 
 /** Lowest accepted strip gain in dB. */
 export const MIN_STRIP_GAIN_DB = -96;
@@ -155,7 +182,8 @@ export function isDefaultStrip(strip: MixerStrip): boolean {
     strip.pan === 0 &&
     strip.inserts.length === 0 &&
     strip.sends.length === 0 &&
-    strip.eq === undefined
+    strip.eq === undefined &&
+    strip.outputBusId === undefined
   );
 }
 
@@ -179,6 +207,7 @@ export function isDefaultMixerState(state: ProjectMixerState): boolean {
   return (
     isDefaultStrip(state.master) &&
     state.buses.length === 0 &&
+    (state.vcaGroups === undefined || state.vcaGroups.length === 0) &&
     isDefaultMasteringChain(state.masteringChain)
   );
 }

@@ -7,6 +7,7 @@ import { useProjectStore } from '@/project/store';
 import type { EditorClip } from '@/project/types';
 import { ASSET_DRAG_MIME } from '@/ui/media/asset-drag';
 import { asAudioContext, createFakeAudioContext } from './fake-audio-context';
+import { readOptionLabels, selectOption } from './helpers/select-menu';
 
 const assetStore = vi.hoisted(() => ({
   listAssets: vi.fn<() => Promise<AudioAssetMeta[]>>(),
@@ -126,9 +127,8 @@ describe('MediaBrowser', () => {
       meta({ id: 'c', name: 'C' }),
     ]);
     const wrapper = await mountBrowser();
-    const options = wrapper.find('.filter-key').findAll('option');
-    expect(options.map((o) => o.text())).toEqual(['Any key', 'Am', 'Cm']);
-    await wrapper.find('.filter-key').setValue('Am');
+    expect(await readOptionLabels(wrapper, '.filter-key')).toEqual(['Any key', 'Am', 'Cm']);
+    await selectOption(wrapper, '.filter-key', 'Am');
     expect(rowNames(wrapper)).toEqual(['B']);
   });
 
@@ -154,9 +154,9 @@ describe('MediaBrowser', () => {
       meta({ id: 'c', name: 'C', numFrames: 48000 }),
     ]);
     const wrapper = await mountBrowser();
-    await wrapper.find('.sort-key').setValue('duration');
+    await selectOption(wrapper, '.sort-key', 'Duration');
     expect(rowNames(wrapper)).toEqual(['B', 'C', 'A']);
-    await wrapper.find('.sort-key').setValue('bpm');
+    await selectOption(wrapper, '.sort-key', 'BPM');
     expect(rowNames(wrapper)).toEqual(['B', 'A', 'C']);
   });
 

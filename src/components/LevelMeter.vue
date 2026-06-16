@@ -170,15 +170,21 @@ function draw(ts: number): void {
   drawBar(ctx, 0, barW, h, channels[0]);
   drawBar(ctx, barW + gap, barW, h, channels[1]);
 
-  // dB scale ticks + labels.
+  // dB scale ticks + labels. Every tick gets a mark, but a label is skipped
+  // when it would collide with the previous one so compact meters (e.g. the
+  // 36px-tall master meter) stay legible instead of stacking numbers.
   ctx.font = '8px system-ui, sans-serif';
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'left';
+  const labelGap = 9;
+  let lastLabelY = Number.NEGATIVE_INFINITY;
   for (const db of TICK_DBS) {
     if (db < props.minDb) continue;
     const y = Math.min(h - 4, Math.max(4, dbToY(db, h)));
     ctx.fillStyle = '#374151';
     ctx.fillRect(2 * barW + gap + 1, y, 4, 1);
+    if (y - lastLabelY < labelGap) continue;
+    lastLabelY = y;
     ctx.fillStyle = '#9ca3af';
     ctx.fillText(`${db}`, 2 * barW + gap + 7, y);
   }

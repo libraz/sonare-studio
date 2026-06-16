@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import DeviceInsertChain from '@/components/devices/DeviceInsertChain.vue';
+import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { addInsert, removeInsert, setInsertEnabled, setTrackInstrument } from '@/project/commands';
 import { listFonts, loadFontMeta, type SoundFontMeta, saveFont } from '@/project/fonts';
 import { trackInstrument } from '@/project/instrument';
@@ -306,10 +308,23 @@ watch(
   { immediate: true },
 );
 
-function onAddInsert(event: Event): void {
-  const select = event.target as HTMLSelectElement;
-  const processor = select.value;
-  select.value = '';
+/** Sentinel value for the disabled "+ Add insert…" placeholder option. */
+const ADD_INSERT_PLACEHOLDER = '';
+
+/** Always holds the placeholder so the picker re-fires for repeated adds. */
+const addInsertValue = ref(ADD_INSERT_PLACEHOLDER);
+
+/** Add-insert picker options: placeholder prompt plus the runtime catalog. */
+const addInsertOptions = computed<{ value: string; label: string; disabled?: boolean }[]>(() => [
+  { value: ADD_INSERT_PLACEHOLDER, label: '+ Add insert…', disabled: true },
+  ...insertCatalog.value.map((name) => ({
+    value: name,
+    label: `${insertLabel(name)} (${insertCategory(name) || name})`,
+  })),
+]);
+
+function onAddInsert(processor: string): void {
+  addInsertValue.value = ADD_INSERT_PLACEHOLDER;
   const track = activeTrack.value;
   if (!track || processor.length === 0) return;
   run(() => {
@@ -500,54 +515,16 @@ function selectInsert(index: number): void {
         </div>
       </div>
 
-      <div class="insert-chain">
-        <h4 class="chain-title">Inserts</h4>
-        <p v-if="inserts.length === 0" class="chain-empty">No inserts</p>
-        <ul v-else class="insert-list">
-          <li
-            v-for="(insertSlot, index) in inserts"
-            :key="`${insertSlot.processor}-${index}`"
-            class="insert-row"
-            :class="{ selected: selectedDevice === index, bypassed: !insertSlot.enabled }"
-          >
-            <button
-              type="button"
-              class="insert-power"
-              :class="{ on: insertSlot.enabled }"
-              :title="insertSlot.enabled ? 'Bypass insert' : 'Enable insert'"
-              :aria-label="`${insertLabel(insertSlot.processor)} power`"
-              :aria-pressed="insertSlot.enabled"
-              @click="onToggleInsert(index)"
-            >
-              ●
-            </button>
-            <button
-              type="button"
-              class="insert-name"
-              :title="insertSlot.processor"
-              @click="selectInsert(index)"
-            >
-              {{ insertLabel(insertSlot.processor) }}
-              <span class="insert-cat">{{ insertCategory(insertSlot.processor) }}</span>
-            </button>
-            <button
-              type="button"
-              class="insert-remove"
-              title="Remove insert"
-              :aria-label="`Remove ${insertLabel(insertSlot.processor)}`"
-              @click="onRemoveInsert(index)"
-            >
-              ×
-            </button>
-          </li>
-        </ul>
-        <select class="add-insert" aria-label="Add insert" @change="onAddInsert">
-          <option value="" disabled>+ Add insert…</option>
-          <option v-for="name in insertCatalog" :key="name" :value="name">
-            {{ insertLabel(name) }} ({{ insertCategory(name) || name }})
-          </option>
-        </select>
-      </div>
+      <DeviceInsertChain
+        v-model:add-insert-value="addInsertValue"
+        :inserts="inserts"
+        :selected-device="selectedDevice"
+        :add-insert-options="addInsertOptions"
+        @add-insert="onAddInsert"
+        @toggle-insert="onToggleInsert"
+        @remove-insert="onRemoveInsert"
+        @select-insert="selectInsert"
+      />
 
       <div class="rack-quick-controls">
         <h4 class="chain-title">Quick controls</h4>
@@ -569,370 +546,4 @@ function selectInsert(index: number): void {
   </section>
 </template>
 
-<style scoped>
-.device-rack {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  height: 100%;
-  min-height: 0;
-  padding: 6px;
-  background: #14161b;
-  color: #c8cdd6;
-  font: 11px system-ui, sans-serif;
-  overflow: auto;
-}
-
-.rack-header {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-}
-
-.rack-title {
-  margin: 0;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: #8b93a3;
-}
-
-.rack-track {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 600;
-  color: #e2e6ee;
-}
-
-.rack-error {
-  margin: 0;
-  padding: 2px 6px;
-  background: #3b1219;
-  color: #ffb4b4;
-  font: 10px/1.4 system-ui, sans-serif;
-  border-radius: 3px;
-}
-
-.rack-empty,
-.chain-empty,
-.picker-empty {
-  margin: 0;
-  color: #5b6270;
-}
-
-.instrument-slot {
-  position: relative;
-}
-
-.instrument-button {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 5px 8px;
-  background: #1d2027;
-  border: 1px solid #2a2e37;
-  border-radius: 4px;
-  color: #c8cdd6;
-  cursor: pointer;
-  text-align: left;
-}
-
-.instrument-button:hover {
-  background: #242832;
-}
-
-.instrument-button.selected {
-  border-color: #60a5fa;
-}
-
-.instrument-gate-hint {
-  margin: 4px 0 0;
-  font-size: 10px;
-  color: #8a91a0;
-}
-
-.instrument-kind {
-  flex: none;
-  font: 700 8px system-ui, sans-serif;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: #0b0d11;
-  background: #60a5fa;
-  border-radius: 3px;
-  padding: 1px 4px;
-}
-
-.instrument-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 600;
-}
-
-.instrument-caret {
-  flex: none;
-  color: #5b6270;
-}
-
-.instrument-picker {
-  position: absolute;
-  top: calc(100% + 3px);
-  left: 0;
-  right: 0;
-  z-index: 20;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 6px;
-  background: #1d2027;
-  border: 1px solid #2a2e37;
-  border-radius: 4px;
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5);
-}
-
-.picker-tabs {
-  display: flex;
-  gap: 2px;
-}
-
-.picker-tab {
-  flex: 1;
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: #8b93a3;
-  font: 600 10px system-ui, sans-serif;
-  padding: 3px 0;
-  cursor: pointer;
-}
-
-.picker-tab.active {
-  color: #e2e6ee;
-  border-bottom-color: #60a5fa;
-}
-
-.picker-body {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  max-height: 14rem;
-  overflow: auto;
-}
-
-.preset-search {
-  background: #0b0d11;
-  border: 1px solid #2a2e37;
-  border-radius: 3px;
-  color: #e2e6ee;
-  font-size: 11px;
-  padding: 3px 6px;
-}
-
-.preset-list,
-.font-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-}
-
-.preset-option,
-.font-option {
-  width: 100%;
-  background: transparent;
-  border: none;
-  color: #c8cdd6;
-  font-size: 11px;
-  text-align: left;
-  padding: 3px 6px;
-  cursor: pointer;
-  border-radius: 3px;
-}
-
-.preset-option:hover,
-.font-option:hover {
-  background: #242832;
-}
-
-.font-option.selected {
-  background: #1d2940;
-  box-shadow: inset 2px 0 0 #60a5fa;
-}
-
-.sf2-numbers {
-  display: flex;
-  gap: 8px;
-}
-
-.sf2-field {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  color: #8b93a3;
-}
-
-.sf2-field input {
-  width: 4.4rem;
-  background: #0b0d11;
-  border: 1px solid #2a2e37;
-  border-radius: 3px;
-  color: #e2e6ee;
-  font-size: 11px;
-  padding: 2px 4px;
-}
-
-.sf2-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-}
-
-.load-sf2 {
-  display: inline-block;
-  background: #1d2027;
-  border: 1px solid #2a2e37;
-  border-radius: 4px;
-  padding: 3px 8px;
-  cursor: pointer;
-  font: 600 10px system-ui, sans-serif;
-  color: #c8cdd6;
-}
-
-.load-sf2-input {
-  display: none;
-}
-
-.use-sf2,
-.edit-patch {
-  background: #2453a8;
-  border: 1px solid #60a5fa;
-  border-radius: 4px;
-  color: #e2e6ee;
-  font: 600 10px system-ui, sans-serif;
-  padding: 3px 10px;
-  cursor: pointer;
-}
-
-.use-sf2:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.patch-summary {
-  margin: 0;
-  color: #8b93a3;
-}
-
-.chain-title {
-  margin: 0;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #5b6270;
-}
-
-.insert-chain,
-.rack-quick-controls {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.insert-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.insert-row {
-  display: flex;
-  align-items: stretch;
-  gap: 2px;
-  background: #1a1d24;
-  border: 1px solid #2a2e37;
-  border-radius: 4px;
-  overflow: hidden;
-}
-
-.insert-row.selected {
-  border-color: #60a5fa;
-}
-
-.insert-row.bypassed .insert-name {
-  color: #5b6270;
-}
-
-.insert-power {
-  flex: none;
-  width: 20px;
-  background: transparent;
-  border: none;
-  color: #3a4150;
-  cursor: pointer;
-  font-size: 9px;
-}
-
-.insert-power.on {
-  color: #4ade80;
-}
-
-.insert-name {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: transparent;
-  border: none;
-  color: #c8cdd6;
-  font: 600 11px system-ui, sans-serif;
-  text-align: left;
-  padding: 4px 0;
-  cursor: pointer;
-  overflow: hidden;
-}
-
-.insert-cat {
-  font: 9px system-ui, sans-serif;
-  color: #5b6270;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.insert-remove {
-  flex: none;
-  width: 18px;
-  background: transparent;
-  border: none;
-  color: #5b6270;
-  cursor: pointer;
-  font-size: 12px;
-}
-
-.insert-remove:hover {
-  color: #ffb4b4;
-}
-
-.add-insert {
-  background: #1d2027;
-  border: 1px solid #2a2e37;
-  border-radius: 4px;
-  color: #8b93a3;
-  font: 600 10px system-ui, sans-serif;
-  padding: 3px 4px;
-  cursor: pointer;
-}
-</style>
+<style scoped src="./device-rack.css"></style>

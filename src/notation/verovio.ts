@@ -40,6 +40,8 @@ export interface LayoutOptions {
   breaks?: 'none' | 'auto' | 'line' | 'smart' | 'encoded';
   /** Shrink the page height to the rendered content. */
   adjustPageHeight?: boolean;
+  /** Shrink the page width to the rendered content (used with `breaks: 'none'`). */
+  adjustPageWidth?: boolean;
   /** Emit a viewBox on the SVG root for CSS-responsive scaling. */
   svgViewBox?: boolean;
   /** Page header rendering ('auto' shows title metadata; 'none' suppresses it). */

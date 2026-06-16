@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, markRaw, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { setupCanvas } from '@/components/piano-roll/theme';
+import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { type LoadedAudioAsset, loadAsset, saveAsset } from '@/persistence/assets';
 import { setClipWarp } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
@@ -120,6 +121,13 @@ const gainDbInput = ref('3');
 const normalizeTargetInput = ref('-1');
 const pitchInput = ref('0');
 const stretchInput = ref('1');
+
+/** Peak targets (in dB) offered by the normalize control. */
+const NORMALIZE_TARGET_OPTIONS: { value: string; label: string }[] = [
+  { value: '-1', label: '-1 dB' },
+  { value: '-3', label: '-3 dB' },
+  { value: '-6', label: '-6 dB' },
+];
 
 const selRange = computed(() => selectionRange(selection.value));
 const opsDisabled = computed(
@@ -573,11 +581,12 @@ onBeforeUnmount(() => {
       <span class="sep" />
       <label>
         Normalize
-        <select v-model="normalizeTargetInput">
-          <option value="-1">-1 dB</option>
-          <option value="-3">-3 dB</option>
-          <option value="-6">-6 dB</option>
-        </select>
+        <SelectMenu
+          v-model="normalizeTargetInput"
+          :options="NORMALIZE_TARGET_OPTIONS"
+          aria-label="Normalize target"
+          size="sm"
+        />
       </label>
       <button type="button" :disabled="opsDisabled" @click="onNormalize">Apply</button>
       <span class="sep" />
@@ -738,23 +747,23 @@ onBeforeUnmount(() => {
 .sample-editor {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--sp-3);
   min-width: 0;
-  color: #cdd2da;
-  font: 12px system-ui, sans-serif;
+  color: var(--text-2);
+  font: var(--fs-sm) var(--font-sans);
 }
 
 .toolbar {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--sp-3);
 }
 
 .toolbar label {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--sp-2);
   white-space: nowrap;
 }
 
@@ -762,24 +771,26 @@ onBeforeUnmount(() => {
   width: 56px;
 }
 
-.toolbar input,
-.toolbar select {
-  background: #0b0d11;
-  color: #e8ebf0;
-  border: 1px solid #2a2e36;
-  border-radius: 3px;
+.toolbar input {
+  background: var(--surface-inset);
+  color: var(--text-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   padding: 2px 4px;
   font: inherit;
+  box-shadow: var(--inset-well);
 }
 
 .toolbar button {
-  background: #1d2026;
-  color: #e8ebf0;
-  border: 1px solid #2a2e36;
-  border-radius: 3px;
+  background: var(--surface-3);
+  color: var(--text-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   padding: 2px 8px;
   font: inherit;
   cursor: pointer;
+  box-shadow: var(--raise-hi);
+  transition: filter var(--dur-1) var(--ease-out);
 }
 
 .toolbar button:disabled {
@@ -792,8 +803,8 @@ onBeforeUnmount(() => {
 }
 
 .asset-name {
-  font-weight: 600;
-  color: #e8ebf0;
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -801,12 +812,12 @@ onBeforeUnmount(() => {
 }
 
 .asset-info {
-  color: #7d8590;
+  color: var(--text-3);
 }
 
 .readout {
   font-variant-numeric: tabular-nums;
-  color: #9aa3b0;
+  color: var(--text-3);
 }
 
 .spacer {
@@ -816,22 +827,23 @@ onBeforeUnmount(() => {
 .sep {
   width: 1px;
   align-self: stretch;
-  background: #2a2e36;
+  background: var(--border);
 }
 
 .error {
   margin: 0;
-  color: #f87171;
+  color: var(--danger);
 }
 
 .wave-wrap {
   position: relative;
   min-height: 96px;
   overflow: hidden;
-  border: 1px solid #2a2e36;
-  border-radius: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   touch-action: none;
   cursor: text;
+  box-shadow: var(--inset-well);
 }
 
 .wave-canvas {
@@ -846,7 +858,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   background: rgba(11, 13, 17, 0.6);
-  color: #e8ebf0;
+  color: var(--text-1);
 }
 
 .history {
@@ -857,23 +869,25 @@ onBeforeUnmount(() => {
 }
 
 .history-title {
-  color: #7d8590;
+  color: var(--text-3);
   margin-right: 2px;
 }
 
 .history-entry {
-  background: #1d2026;
-  color: #cdd2da;
-  border: 1px solid #2a2e36;
-  border-radius: 3px;
+  background: var(--surface-3);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   padding: 1px 8px;
   font: inherit;
   cursor: pointer;
+  box-shadow: var(--raise-hi);
+  transition: filter var(--dur-1) var(--ease-out);
 }
 
 .history-entry.current {
-  border-color: #60a5fa;
-  color: #e8ebf0;
+  border-color: var(--accent);
+  color: var(--text-1);
 }
 
 .history-entry:disabled {
@@ -884,24 +898,24 @@ onBeforeUnmount(() => {
 .warp {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  border-top: 1px solid #2a2e36;
-  padding-top: 6px;
+  gap: var(--sp-2);
+  border-top: 1px solid var(--border);
+  padding-top: var(--sp-3);
 }
 
 .warp-title {
-  color: #7d8590;
-  font-weight: 600;
+  color: var(--text-3);
+  font-weight: var(--fw-semibold);
   margin-right: 2px;
 }
 
 .warp-toggle.on {
-  border-color: #60a5fa;
-  color: #e8ebf0;
+  border-color: var(--accent);
+  color: var(--text-1);
 }
 
 .warp-segments {
-  color: #9aa3b0;
+  color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
 

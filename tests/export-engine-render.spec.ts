@@ -270,6 +270,25 @@ describe('renderProjectWithEngine', () => {
     expect(engine.destroyed).toBe(true);
   });
 
+  it('routes a track output bus into its lane descriptor', async () => {
+    const doc = makeDoc();
+    // Route the Keys track (engine track 1) into bus 'bus-a' (engine bus 1).
+    (doc.tracks[0] as { mixer?: Record<string, unknown> }).mixer = {
+      gainDb: 0,
+      pan: 0,
+      inserts: [],
+      sends: [],
+      outputBusId: 'bus-a',
+    };
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    expect(engine.named('setTrackLanes')[0][1]).toEqual([
+      { trackId: 1, outputBusId: 1 },
+      { trackId: 2, sends: [{ busId: 1, levelDb: -9, enabled: true }] },
+    ]);
+  });
+
   it('renders an explicit window with a pre-roll before its start', async () => {
     const engine = new FakeEngine();
     const result = await renderProjectWithEngine(makeDoc(), {

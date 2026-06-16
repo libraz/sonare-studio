@@ -5,6 +5,7 @@ import {
 } from '@/components/piano-roll/use-note-interactions';
 import type { EditorNote } from '@/project/types';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
+import type { EditorToolId } from '@/ui/editor/tools';
 
 /** Builds an editor note with sensible defaults. */
 function makeNote(partial: Partial<EditorNote> & { id: number }): EditorNote {
@@ -30,6 +31,7 @@ function makeHarness(notes: EditorNote[], initialSelection: number[] = []) {
   const view = new TimelineRange({ widthPx: 800, heightPx: 1280, pxPerPpq: 100, rowHeight: 10 });
   let selection = new Set<number>(initialSelection);
   let nextId = 100;
+  let tool: EditorToolId = 'select';
   const commands: InteractionCommands = {
     addNote: vi.fn(() => nextId++),
     updateNotes: vi.fn(),
@@ -37,15 +39,28 @@ function makeHarness(notes: EditorNote[], initialSelection: number[] = []) {
     setSelection: vi.fn((ids: Iterable<number>) => {
       selection = new Set(ids);
     }),
+    splitNote: vi.fn(() => nextId++),
   };
+  const onAudition = vi.fn();
   const interactions = useNoteInteractions({
     view,
     getNotes: () => notes,
     getSelection: () => selection,
     getGridPpq: () => 0.25,
+    getTool: () => tool,
     commands,
+    onAudition,
   });
-  return { view, commands, interactions, selection: () => selection };
+  return {
+    view,
+    commands,
+    interactions,
+    onAudition,
+    selection: () => selection,
+    setTool: (next: EditorToolId) => {
+      tool = next;
+    },
+  };
 }
 
 const mocked = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
@@ -77,6 +92,37 @@ describe('useNoteInteractions', () => {
       const { commands, interactions } = makeHarness([makeNote({ id: 1 })]);
       interactions.onDoubleClick({ x: 150, y: 675 });
       expect(commands.addNote).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('audition feedback', () => {
+    it('auditions the actual note pitch and velocity when a note is clicked', () => {
+      const { interactions, onAudition } = makeHarness([
+        makeNote({ id: 1, pitch: 64, velocity: 88 }),
+      ]);
+      interactions.onPointerDown({ x: 150, y: 635 });
+      expect(onAudition).toHaveBeenCalledTimes(1);
+      expect(onAudition).toHaveBeenCalledWith(64, 88);
+    });
+
+    it('auditions the drawn pitch at the draw velocity', () => {
+      const harness = makeHarness([]);
+      harness.setTool('draw');
+      // y 675 = pitch 60.
+      harness.interactions.onPointerDown({ x: 337, y: 675 });
+      expect(harness.onAudition).toHaveBeenCalledWith(60, 96);
+    });
+
+    it('auditions a double-click-created note', () => {
+      const { interactions, onAudition } = makeHarness([]);
+      interactions.onDoubleClick({ x: 337, y: 675 });
+      expect(onAudition).toHaveBeenCalledWith(60, 96);
+    });
+
+    it('stays silent when clicking empty grid space', () => {
+      const { interactions, onAudition } = makeHarness([makeNote({ id: 1 })]);
+      interactions.onPointerDown({ x: 500, y: 200 });
+      expect(onAudition).not.toHaveBeenCalled();
     });
   });
 
@@ -303,6 +349,123 @@ describe('useNoteInteractions', () => {
       expect(interactions.cursor.value).toBe('ew-resize');
       interactions.onPointerMove({ x: 600, y: 50 });
       expect(interactions.cursor.value).toBe('default');
+    });
+  });
+
+  describe('draw tool', () => {
+    it('creates a note from a click at grid-step length on the clicked cell', () => {
+      const { commands, interactions, setTool } = makeHarness([]);
+      setTool('draw');
+      // x 337 floor-snaps to PPQ 3.25; y 675 = pitch 60.
+      interactions.onPointerDown({ x: 337, y: 675 });
+      interactions.onPointerUp({ x: 337, y: 675 });
+      expect(commands.addNote).toHaveBeenCalledWith({
+        pitch: 60,
+        startPpq: 3.25,
+        durationPpq: 0.25,
+      });
+      expect(commands.setSelection).toHaveBeenLastCalledWith([100]);
+    });
+
+    it('extends the drawn note length by dragging, snapping the end', () => {
+      const { commands, interactions, setTool } = makeHarness([]);
+      setTool('draw');
+      interactions.onPointerDown({ x: 300, y: 675 }); // start PPQ 3
+      interactions.onPointerMove({ x: 380, y: 675 }); // end raw 3.80 snaps to 3.75
+      interactions.onPointerUp({ x: 380, y: 675 });
+      expect(commands.addNote).toHaveBeenCalledWith({
+        pitch: 60,
+        startPpq: 3,
+        durationPpq: 0.75,
+      });
+    });
+
+    it('previews the draft note while drawing', () => {
+      const { interactions, setTool } = makeHarness([]);
+      setTool('draw');
+      interactions.onPointerDown({ x: 300, y: 675 });
+      interactions.onPointerMove({ x: 400, y: 675 });
+      const preview = interactions.previewNotes.value;
+      expect(preview).not.toBeNull();
+      expect(preview?.at(-1)).toMatchObject({ id: -1, startPpq: 3, durationPpq: 1, pitch: 60 });
+    });
+  });
+
+  describe('erase tool', () => {
+    it('deletes the clicked note on release', () => {
+      const { commands, interactions, setTool } = makeHarness([makeNote({ id: 1 })]);
+      setTool('erase');
+      interactions.onPointerDown({ x: 150, y: 675 });
+      interactions.onPointerUp({ x: 150, y: 675 });
+      expect(commands.deleteNotes).toHaveBeenCalledWith([1]);
+    });
+
+    it('accumulates notes swept during the drag into one delete', () => {
+      const notes = [makeNote({ id: 1 }), makeNote({ id: 2, startPpq: 3 })];
+      const { commands, interactions, setTool } = makeHarness(notes);
+      setTool('erase');
+      interactions.onPointerDown({ x: 150, y: 675 }); // over note 1
+      interactions.onPointerMove({ x: 350, y: 675 }); // over note 2 (PPQ 3.5)
+      interactions.onPointerUp({ x: 350, y: 675 });
+      expect(commands.deleteNotes).toHaveBeenCalledTimes(1);
+      expect(commands.deleteNotes).toHaveBeenCalledWith([1, 2]);
+    });
+
+    it('hides erase-marked notes in the preview while dragging', () => {
+      const { interactions, setTool } = makeHarness([makeNote({ id: 1 })]);
+      setTool('erase');
+      interactions.onPointerDown({ x: 150, y: 675 });
+      expect(interactions.previewNotes.value).toEqual([]);
+    });
+
+    it('deletes nothing when erasing empty space', () => {
+      const { commands, interactions, setTool } = makeHarness([makeNote({ id: 1 })]);
+      setTool('erase');
+      interactions.onPointerDown({ x: 600, y: 50 });
+      interactions.onPointerUp({ x: 600, y: 50 });
+      expect(commands.deleteNotes).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('split tool', () => {
+    it('splits the clicked note at the snapped pointer position', () => {
+      const { commands, interactions, setTool } = makeHarness([
+        makeNote({ id: 1, startPpq: 1, durationPpq: 2 }),
+      ]);
+      setTool('split');
+      // x 238 = PPQ 2.38 snaps to 2.5, strictly inside [1, 3).
+      interactions.onPointerDown({ x: 238, y: 675 });
+      expect(commands.splitNote).toHaveBeenCalledWith(1, 2.5);
+      expect(commands.setSelection).toHaveBeenLastCalledWith([100]);
+    });
+
+    it('does not split at the exact note boundary', () => {
+      const { commands, interactions, setTool } = makeHarness([
+        makeNote({ id: 1, startPpq: 1, durationPpq: 2 }),
+      ]);
+      setTool('split');
+      interactions.onPointerDown({ x: 100, y: 675 }); // PPQ 1 = note start
+      expect(commands.splitNote).not.toHaveBeenCalled();
+    });
+
+    it('does nothing when splitting empty space', () => {
+      const { commands, interactions, setTool } = makeHarness([makeNote({ id: 1 })]);
+      setTool('split');
+      interactions.onPointerDown({ x: 600, y: 50 });
+      expect(commands.splitNote).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('hitNoteAt', () => {
+    it('returns the note id under the point', () => {
+      const { interactions } = makeHarness([makeNote({ id: 7 })]);
+      // Pitch-60 note at PPQ [1, 2) covers x [100, 200), y [670, 680).
+      expect(interactions.hitNoteAt({ x: 150, y: 675 })).toBe(7);
+    });
+
+    it('returns null over empty space', () => {
+      const { interactions } = makeHarness([makeNote({ id: 7 })]);
+      expect(interactions.hitNoteAt({ x: 50, y: 675 })).toBeNull();
     });
   });
 });

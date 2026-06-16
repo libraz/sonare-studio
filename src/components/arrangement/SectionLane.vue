@@ -258,8 +258,8 @@ function onLaneDoubleClick(event: MouseEvent): void {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #101216;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.5);
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border-strong);
 }
 
 .section-band {
@@ -270,12 +270,13 @@ function onLaneDoubleClick(event: MouseEvent): void {
   align-items: center;
   box-sizing: border-box;
   border: 1px solid;
-  border-radius: 3px;
-  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  padding: 0 var(--sp-2);
   overflow: hidden;
   cursor: pointer;
   touch-action: none;
   user-select: none;
+  transition: filter var(--dur-1) var(--ease-out);
 }
 
 .section-band:hover {
@@ -286,17 +287,17 @@ function onLaneDoubleClick(event: MouseEvent): void {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font: 600 10px system-ui, sans-serif;
-  color: #e8ebf0;
+  font: var(--fw-semibold) 10px var(--font-sans);
+  color: var(--text-1);
 }
 
 .section-name-input {
   width: 100%;
-  font: 600 10px system-ui, sans-serif;
-  color: #e8ebf0;
-  background: #0b0d11;
-  border: 1px solid #60a5fa;
-  border-radius: 2px;
+  font: var(--fw-semibold) 10px var(--font-sans);
+  color: var(--text-1);
+  background: var(--surface-0);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
   padding: 0 2px;
 }
 </style>

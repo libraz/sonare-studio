@@ -1,8 +1,13 @@
 import { createPinia } from 'pinia';
 import { createApp } from 'vue';
 import App from './App.vue';
-// Global keyboard-focus outline; imported here so it applies to the whole
-// shell regardless of which panels are mounted.
+// Global design tokens first, then the base layer (document reset, dark UA
+// chrome, scrollbars), the shared control primitives and the keyboard-focus
+// ring that build on them — imported here so they apply to the whole shell
+// regardless of which panels are mounted.
+import '@/ui/theme/tokens.css';
+import '@/ui/theme/base.css';
+import '@/ui/theme/controls.css';
 import '@/ui/theme/focus-visible.css';
 
 createApp(App).use(createPinia()).mount('#app');

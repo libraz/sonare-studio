@@ -5,6 +5,7 @@ import {
   type ClipInteractionsView,
   useClipInteractions,
 } from '@/ui/arrangement/use-clip-interactions';
+import type { EditorToolId } from '@/ui/editor/tools';
 
 /** Linear view: 10 px per PPQ, two 50 px lanes, no scroll or ruler offset. */
 const view: ClipInteractionsView = {
@@ -18,19 +19,24 @@ const view: ClipInteractionsView = {
 
 interface Setup {
   interactions: ReturnType<typeof useClipInteractions>;
-  commands: { [K in keyof ClipInteractionCommands]: ReturnType<typeof vi.fn> };
+  commands: { [K in keyof ClipInteractionCommands]-?: ReturnType<typeof vi.fn> };
   clips: ArrangeClip[];
+  setTool: (tool: EditorToolId) => void;
 }
 
 function makeSetup(): Setup {
   // Clip 1: x [40, 120) on lane 0 (track 10).
   const clips: ArrangeClip[] = [{ id: 1, trackId: 10, startPpq: 4, lengthPpq: 8 }];
+  let tool: EditorToolId = 'select';
   const commands = {
     selectClip: vi.fn(),
     moveClip: vi.fn(),
     trimClip: vi.fn(),
     duplicateClip: vi.fn(() => 99),
     createClip: vi.fn(() => 77),
+    setClipFades: vi.fn(),
+    deleteClip: vi.fn(),
+    splitClip: vi.fn(() => 88),
   };
   const interactions = useClipInteractions({
     view,
@@ -38,9 +44,17 @@ function makeSetup(): Setup {
     getTrackIds: () => [10, 20],
     getGridPpq: () => 1,
     getBarRange: (ppq) => ({ startPpq: Math.floor(ppq / 4) * 4, lengthPpq: 4 }),
+    getTool: () => tool,
     commands,
   });
-  return { interactions, commands, clips };
+  return {
+    interactions,
+    commands,
+    clips,
+    setTool: (next: EditorToolId) => {
+      tool = next;
+    },
+  };
 }
 
 describe('useClipInteractions selection', () => {
@@ -332,5 +346,89 @@ describe('useClipInteractions feedback and cancel', () => {
     expect(interactions.previewClip.value).toBeNull();
     interactions.onPointerUp({ x: 104, y: 25 });
     expect(commands.moveClip).not.toHaveBeenCalled();
+  });
+});
+
+describe('useClipInteractions tools', () => {
+  describe('erase tool', () => {
+    it('deletes the clip under the pointer on pointerdown', () => {
+      const { interactions, commands, setTool } = makeSetup();
+      setTool('erase');
+      interactions.onPointerDown({ x: 80, y: 25 });
+      expect(commands.deleteClip).toHaveBeenCalledWith(1);
+    });
+
+    it('deletes nothing over empty space', () => {
+      const { interactions, commands, setTool } = makeSetup();
+      setTool('erase');
+      interactions.onPointerDown({ x: 200, y: 25 });
+      expect(commands.deleteClip).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('split tool', () => {
+    it('splits the clip at the snapped pointer position and selects the right half', () => {
+      const { interactions, commands, setTool } = makeSetup();
+      setTool('split');
+      // x 84 = PPQ 8.4 snaps to 8, strictly inside clip [4, 12).
+      interactions.onPointerDown({ x: 84, y: 25 });
+      expect(commands.splitClip).toHaveBeenCalledWith(1, 8);
+      expect(commands.selectClip).toHaveBeenCalledWith(88);
+    });
+
+    it('does not split at the clip boundary', () => {
+      const { interactions, commands, setTool } = makeSetup();
+      setTool('split');
+      interactions.onPointerDown({ x: 40, y: 25 }); // PPQ 4 = clip start
+      expect(commands.splitClip).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('draw tool', () => {
+    it('creates a one-bar clip from a click on an empty lane', () => {
+      const { interactions, commands, setTool } = makeSetup();
+      setTool('draw');
+      // Lane 1 (track 20), x 200 = PPQ 20 (bar-aligned), no drag.
+      interactions.onPointerDown({ x: 200, y: 75 });
+      interactions.onPointerUp({ x: 200, y: 75 });
+      expect(commands.createClip).toHaveBeenCalledWith(20, 20, 4);
+      expect(commands.selectClip).toHaveBeenCalledWith(77);
+    });
+
+    it('grows the drawn clip to the snapped drag length, kept at >= one bar', () => {
+      const { interactions, commands, setTool } = makeSetup();
+      setTool('draw');
+      interactions.onPointerDown({ x: 40, y: 75 }); // start PPQ 4
+      interactions.onPointerMove({ x: 104, y: 75 }); // end raw 10.4 snaps to 10
+      expect(interactions.previewDraft.value).toMatchObject({
+        trackId: 20,
+        startPpq: 4,
+        lengthPpq: 6,
+      });
+      interactions.onPointerUp({ x: 104, y: 75 });
+      expect(commands.createClip).toHaveBeenCalledWith(20, 4, 6);
+      expect(interactions.previewDraft.value).toBeNull();
+    });
+
+    it('does nothing when drawing off the lane area', () => {
+      const { interactions, commands, setTool } = makeSetup();
+      setTool('draw');
+      interactions.onPointerDown({ x: 200, y: 200 }); // below both lanes
+      interactions.onPointerUp({ x: 200, y: 200 });
+      expect(commands.createClip).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('hitClipAt', () => {
+    it('returns the clip id under the point', () => {
+      const { interactions } = makeSetup();
+      // Clip 1 covers x [40, 120) on lane 0.
+      expect(interactions.hitClipAt({ x: 80, y: 25 })).toBe(1);
+    });
+
+    it('returns null over empty space', () => {
+      const { interactions } = makeSetup();
+      expect(interactions.hitClipAt({ x: 200, y: 25 })).toBeNull();
+    });
   });
 });

@@ -1,21 +1,32 @@
 <script setup lang="ts">
 import { computed, markRaw, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useEditorTool } from '@/composables/useEditorTool';
 import {
   addNote,
   deleteNotes,
+  humanizeSelectionVelocity,
+  quantizeSelection,
+  quantizeSelectionLengths,
   redo,
   setActiveClip,
   setActiveTrack,
   setSelection,
+  splitNote,
+  transposeSelection,
   undo,
   updateNotes,
 } from '@/project/commands';
+import { PIANO_ROLL_CC_LANES } from '@/project/midi-cc';
 import { useProjectStore } from '@/project/store';
+import type { ClipCcPoint } from '@/project/types';
 import { createPainter } from '@/ui/canvas/painter';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
+import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
+import CcLane from './CcLane.vue';
 import { createNoteExtentCache } from './content-extent';
 import KeyboardColumn from './KeyboardColumn.vue';
 import { LANE_PARAMS, type LaneParamId } from './lane-params';
+import MidiFxPanel from './MidiFxPanel.vue';
 import NoteGridCanvas from './NoteGridCanvas.vue';
 import { buildGhostNotes, contentCenterPitch, type GhostNote } from './overlay';
 import { DEFAULT_NOTE_COLOR, type NoteColorFn } from './theme';
@@ -41,6 +52,11 @@ import VelocityLane from './VelocityLane.vue';
 const props = defineProps<{
   /** Playhead position getter in PPQ; omit to hide the playhead. */
   positionPpq?: () => number;
+  /**
+   * Audible-feedback hook: plays a short preview of a note's pitch/velocity
+   * when one is clicked or created. Omit to edit silently.
+   */
+  audition?: (pitch: number, velocity: number) => void;
 }>();
 
 const store = useProjectStore();
@@ -48,14 +64,19 @@ const store = useProjectStore();
 /** Initialization/runtime error surfaced above the editor. */
 const error = ref('');
 
-/** Default horizontal zoom in px per quarter note. */
-const DEFAULT_PX_PER_PPQ = 60;
-/** Default pitch row height in px. */
-const DEFAULT_ROW_HEIGHT = 14;
+/** Default horizontal zoom in px per quarter note (zoomed out for an overview). */
+const DEFAULT_PX_PER_PPQ = 38;
+/** Default pitch row height in px (compact so more of the range is visible). */
+const DEFAULT_ROW_HEIGHT = 10;
 /** Pitch placed near the vertical center on first layout (C5). */
 const INITIAL_CENTER_PITCH = 72;
 /** Wheel-to-zoom sensitivity for ⌘wheel / pinch gestures. */
 const ZOOM_WHEEL_SENSITIVITY = 0.0035;
+/** Per-click zoom multiplier for the toolbar zoom buttons. */
+const ZOOM_BUTTON_STEP = 1.2;
+/** Row-height bounds for vertical zoom (px). */
+const MIN_ROW_HEIGHT = 5;
+const MAX_ROW_HEIGHT = 40;
 
 // The TimelineRange and painter are plain (non-reactive) objects; views are
 // invalidated through the `revision` counter after every range mutation.
@@ -85,6 +106,50 @@ const overlayEnabled = ref(true);
 /** Note parameter shown in the bottom lane (tab strip in the lane header). */
 const laneParam = ref<LaneParamId>('velocity');
 
+/**
+ * Active CC controller in the bottom lane, or null when a note-parameter lane
+ * is shown. When set, the bottom lane edits the active clip's CC breakpoints
+ * for this controller instead of per-note values.
+ */
+const laneCc = ref<number | null>(null);
+
+/** Switches the bottom lane to a note-parameter view. */
+function selectNoteLane(id: LaneParamId): void {
+  laneParam.value = id;
+  laneCc.value = null;
+}
+
+/** Active clip color for the CC curve. */
+const trackColor = computed(() => store.activeTrack?.color ?? DEFAULT_NOTE_COLOR);
+
+/** Whether the MIDI-FX transform popover is open. */
+const fxPanelOpen = ref(false);
+
+/** True when a MIDI clip is active and can receive a transform. */
+const canTransform = computed(
+  () => store.clipId >= 0 && (store.activeClip?.kind ?? 'midi') === 'midi',
+);
+
+/** Toggles the transform popover (closing it when no MIDI clip is active). */
+function toggleFxPanel(): void {
+  if (!canTransform.value) return;
+  fxPanelOpen.value = !fxPanelOpen.value;
+}
+
+/** Breakpoints of the active clip's selected CC lane (empty when none). */
+const activeCcPoints = computed<ClipCcPoint[]>(() => {
+  if (laneCc.value === null) return [];
+  const lane = store.activeClip?.ccLanes?.find((l) => l.controller === laneCc.value);
+  return lane?.points ?? [];
+});
+
+/** Horizontal snap for CC points, following the grid when snapping is on. */
+function ccSnap(ppq: number): number {
+  if (!store.snapEnabled) return ppq;
+  const step = gridPpq.value;
+  return step > 0 ? Math.round(ppq / step) * step : ppq;
+}
+
 /** Read-only ghost notes from all non-active clips (empty when overlay off). */
 const ghostNotes = computed<GhostNote[]>(() =>
   overlayEnabled.value
@@ -106,6 +171,74 @@ const noteColor = computed<NoteColorFn>(() => {
   return () => color;
 });
 
+/** Maximum per-note random velocity jitter applied by the Humanize action. */
+const HUMANIZE_VELOCITY_AMOUNT = 12;
+
+/** Selection-wide note operations shared by the note and empty-space menus. */
+function selectionOpItems(): ContextMenuItem[] {
+  return [
+    { id: 'quantize', label: 'Quantize starts', hint: 'Q', run: () => quantizeSelection() },
+    { id: 'quantize-len', label: 'Quantize lengths', run: () => quantizeSelectionLengths() },
+    {
+      id: 'transpose-up',
+      label: 'Transpose +1 octave',
+      hint: '⇧⌘↑',
+      run: () => transposeSelection(12),
+    },
+    {
+      id: 'transpose-down',
+      label: 'Transpose −1 octave',
+      hint: '⇧⌘↓',
+      run: () => transposeSelection(-12),
+    },
+    {
+      id: 'humanize',
+      label: 'Humanize velocity',
+      run: () => humanizeSelectionVelocity(HUMANIZE_VELOCITY_AMOUNT),
+    },
+  ];
+}
+
+/** Builds and opens the right-click menu for a note (or empty grid space). */
+function onNoteContext(payload: {
+  x: number;
+  y: number;
+  noteId: number | null;
+  ppq: number;
+}): void {
+  const items: ContextMenuItem[] = [];
+  if (payload.noteId !== null) {
+    const note = store.notes.find((n) => n.id === payload.noteId);
+    if (note) {
+      if (!store.selection.has(note.id)) setSelection([note.id]);
+      const step = store.snapEnabled ? gridPpq.value : 0;
+      const splitPpq = step > 0 ? Math.round(payload.ppq / step) * step : payload.ppq;
+      const canSplit = splitPpq > note.startPpq && splitPpq < note.startPpq + note.durationPpq;
+      items.push(
+        {
+          id: 'split',
+          label: 'Split here',
+          hint: '3',
+          disabled: !canSplit,
+          run: () => setSelection([splitNote(note.id, splitPpq)]),
+        },
+        ...selectionOpItems(),
+        { id: 'sep-1', separator: true },
+        {
+          id: 'delete',
+          label: 'Delete',
+          danger: true,
+          hint: 'Del',
+          run: () => deleteNotes([note.id]),
+        },
+      );
+    }
+  } else if (store.selection.size > 0) {
+    items.push(...selectionOpItems());
+  }
+  openContextMenu(payload.x, payload.y, items);
+}
+
 /** Activates a ghost note's track + clip and selects that note. */
 function onGhostActivate(ghost: GhostNote): void {
   setActiveClip(ghost.clipId);
@@ -119,6 +252,8 @@ function onLegendClick(trackId: number): void {
   setActiveTrack(trackId);
 }
 
+const { tool } = useEditorTool();
+
 const interactions = useNoteInteractions({
   view: range,
   getNotes: () => store.notes,
@@ -126,7 +261,9 @@ const interactions = useNoteInteractions({
   // A non-positive step disables snapping in the gesture state machine while
   // the drawn gridlines keep following the configured division.
   getGridPpq: () => (store.snapEnabled ? gridPpq.value : 0),
-  commands: { addNote, updateNotes, deleteNotes, setSelection },
+  getTool: () => tool.value,
+  commands: { addNote, updateNotes, deleteNotes, setSelection, splitNote },
+  ...(props.audition ? { onAudition: props.audition } : {}),
 });
 
 const root = ref<HTMLDivElement | null>(null);
@@ -160,7 +297,11 @@ function centerOnActiveClip(): void {
 // preserving the horizontal scroll position.
 watch(
   () => store.clipId,
-  () => centerOnActiveClip(),
+  () => {
+    centerOnActiveClip();
+    // A transform targets a specific clip; close the popover on clip change.
+    fxPanelOpen.value = false;
+  },
 );
 
 /** Extent of the note content, cached per note-mirror identity. */
@@ -183,6 +324,21 @@ function onWheel(event: WheelEvent): void {
     range.scrollByPx(event.deltaX);
     range.scrollByY(event.deltaY);
   }
+  bump();
+}
+
+/** Zooms the timeline horizontally around the viewport center. */
+function zoomHorizontal(factor: number): void {
+  range.zoomAt(range.widthPx / 2, factor);
+  bump();
+}
+
+/** Zooms the pitch rows vertically, keeping the viewport center pitch in place. */
+function zoomVertical(factor: number): void {
+  const centerRow = (range.scrollY + range.heightPx / 2) / range.rowHeight;
+  const next = Math.min(MAX_ROW_HEIGHT, Math.max(MIN_ROW_HEIGHT, range.rowHeight * factor));
+  range.setRowHeight(next);
+  range.setScrollY(centerRow * range.rowHeight - range.heightPx / 2);
   bump();
 }
 
@@ -322,6 +478,64 @@ onBeforeUnmount(() => {
           <span class="chip-name">{{ track.name }}</span>
         </button>
       </div>
+      <div class="zoom-cluster" role="group" aria-label="Zoom">
+        <span class="zoom-pair">
+          <button
+            type="button"
+            class="zoom-btn"
+            title="Zoom out (time)"
+            aria-label="Zoom out horizontally"
+            @click="zoomHorizontal(1 / ZOOM_BUTTON_STEP)"
+          >
+            ↔−
+          </button>
+          <button
+            type="button"
+            class="zoom-btn"
+            title="Zoom in (time)"
+            aria-label="Zoom in horizontally"
+            @click="zoomHorizontal(ZOOM_BUTTON_STEP)"
+          >
+            ↔+
+          </button>
+        </span>
+        <span class="zoom-pair">
+          <button
+            type="button"
+            class="zoom-btn"
+            title="Zoom out (pitch)"
+            aria-label="Zoom out vertically"
+            @click="zoomVertical(1 / ZOOM_BUTTON_STEP)"
+          >
+            ↕−
+          </button>
+          <button
+            type="button"
+            class="zoom-btn"
+            title="Zoom in (pitch)"
+            aria-label="Zoom in vertically"
+            @click="zoomVertical(ZOOM_BUTTON_STEP)"
+          >
+            ↕+
+          </button>
+        </span>
+      </div>
+      <button
+        type="button"
+        class="fx-toggle"
+        :class="{ 'fx-toggle-active': fxPanelOpen }"
+        :disabled="!canTransform"
+        :aria-expanded="fxPanelOpen"
+        title="MIDI transform (transpose, quantize, velocity, humanize, harmonize)"
+        @click="toggleFxPanel"
+      >
+        MIDI FX
+      </button>
+      <MidiFxPanel
+        v-if="fxPanelOpen && canTransform"
+        :clip-id="store.clipId"
+        @close="fxPanelOpen = false"
+      />
     </div>
     <div class="piano-roll-layout">
       <KeyboardColumn class="cell-keyboard" :range="range" :revision="revision" :painter="painter" />
@@ -341,6 +555,7 @@ onBeforeUnmount(() => {
           :ghost-notes="ghostNotes"
           @view-resize="onGridResize"
           @ghost-activate="onGhostActivate"
+          @note-context="onNoteContext"
         />
       </div>
       <div
@@ -359,16 +574,31 @@ onBeforeUnmount(() => {
           :key="laneSpec.id"
           type="button"
           class="lane-tab"
-          :class="{ 'lane-tab-active': laneParam === laneSpec.id }"
+          :class="{ 'lane-tab-active': laneCc === null && laneParam === laneSpec.id }"
           :title="laneSpec.title"
           role="tab"
-          :aria-selected="laneParam === laneSpec.id"
-          @click="laneParam = laneSpec.id"
+          :aria-selected="laneCc === null && laneParam === laneSpec.id"
+          @click="selectNoteLane(laneSpec.id)"
         >
           {{ laneSpec.label }}
         </button>
+        <span class="lane-divider" aria-hidden="true" />
+        <button
+          v-for="cc in PIANO_ROLL_CC_LANES"
+          :key="`cc-${cc.controller}`"
+          type="button"
+          class="lane-tab"
+          :class="{ 'lane-tab-active': laneCc === cc.controller }"
+          :title="cc.title"
+          role="tab"
+          :aria-selected="laneCc === cc.controller"
+          @click="laneCc = cc.controller"
+        >
+          {{ cc.label }}
+        </button>
       </div>
       <VelocityLane
+        v-if="laneCc === null"
         class="cell-velocity"
         :range="range"
         :revision="revision"
@@ -376,6 +606,20 @@ onBeforeUnmount(() => {
         :notes="store.notes"
         :selection="store.selection"
         :param="laneParam"
+      />
+      <CcLane
+        v-else
+        class="cell-velocity"
+        :range="range"
+        :revision="revision"
+        :painter="painter"
+        :clip-id="store.clipId"
+        :clip-length-ppq="store.clipLengthPpq"
+        :controller="laneCc"
+        :channel="0"
+        :points="activeCcPoints"
+        :color="trackColor"
+        :snap-ppq="ccSnap"
       />
       <div class="cell-corner" />
       <div class="cell-hscroll-spacer" />
@@ -401,31 +645,99 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100%;
   min-height: 240px;
-  background: #101216;
-  color: #c8cdd6;
+  background: var(--surface-1);
+  color: var(--text-2);
   outline: none;
 }
 
+/* The editor auto-focuses on click, so a full accent frame would show on every
+ * interaction and read as a heavy border. Keep only a faint hint. */
 .piano-roll-editor:focus-visible {
-  box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.6);
+  box-shadow: inset 0 0 0 1px var(--accent-muted);
 }
 
 .piano-roll-error {
   margin: 0;
   padding: 0.5rem 0.75rem;
-  background: #3b1219;
-  color: #ffb4b4;
-  font: 12px/1.4 system-ui, sans-serif;
+  background: var(--danger-surface);
+  color: var(--danger-text);
+  font: var(--fs-sm)/1.4 var(--font-sans);
 }
 
 .roll-toolbar {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 0.75rem;
   padding: 0.25rem 0.5rem;
-  background: #14161b;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.4);
-  font: 12px/1.4 system-ui, sans-serif;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-strong);
+  box-shadow: var(--raise-hi);
+  font: var(--fs-sm)/1.4 var(--font-sans);
+}
+
+.zoom-cluster {
+  margin-left: auto;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.zoom-pair {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.zoom-btn {
+  flex: none;
+  min-width: 1.6rem;
+  padding: 0.1rem 0.3rem;
+  font: var(--fw-semibold) 11px var(--font-sans);
+  color: var(--text-2);
+  background: var(--surface-3);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--control-lift);
+  cursor: pointer;
+}
+
+.zoom-btn:hover {
+  box-shadow: var(--control-lift-hover);
+  color: var(--text-1);
+}
+
+.zoom-btn:active {
+  box-shadow: var(--control-edge), var(--inset-well);
+}
+
+.fx-toggle {
+  flex: 0 0 auto;
+  padding: 0.15rem 0.6rem;
+  font: var(--fs-xs)/1.4 var(--font-sans);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.02em;
+  color: var(--text-2);
+  background: var(--surface-3);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--control-lift);
+  cursor: pointer;
+}
+
+.fx-toggle:hover:not(:disabled) {
+  box-shadow: var(--control-lift-hover);
+  color: var(--text-1);
+}
+
+.fx-toggle-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.fx-toggle:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .overlay-toggle {
@@ -434,7 +746,7 @@ onBeforeUnmount(() => {
   gap: 0.3rem;
   white-space: nowrap;
   cursor: pointer;
-  color: #9aa1ad;
+  color: var(--text-3);
 }
 
 .track-legend {
@@ -450,23 +762,24 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 0.3rem;
   padding: 0.1rem 0.45rem;
-  border: 1px solid transparent;
-  border-radius: 9999px;
+  border: none;
+  border-radius: var(--radius-full);
   background: transparent;
-  color: #9aa1ad;
+  box-shadow: none;
+  color: var(--text-3);
   font: inherit;
   cursor: pointer;
   white-space: nowrap;
+  transition: background var(--dur-1) var(--ease-out);
 }
 
 .legend-chip:hover {
-  background: #1c1f26;
+  background: var(--surface-3);
 }
 
 .legend-chip-active {
-  border-color: #3a4150;
-  background: #1c1f26;
-  color: #e2e6ed;
+  background: var(--accent-soft);
+  color: var(--text-1);
 }
 
 .chip-swatch {
@@ -512,8 +825,8 @@ onBeforeUnmount(() => {
   align-items: stretch;
   gap: 1px;
   padding: 2px;
-  background: #181a20;
-  border-top: 1px solid rgba(0, 0, 0, 0.4);
+  background: var(--surface-2);
+  border-top: 1px solid var(--border-strong);
   overflow: hidden;
 }
 
@@ -522,37 +835,46 @@ onBeforeUnmount(() => {
   min-height: 0;
   padding: 0;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: #5b6270;
-  font: 600 9px system-ui, sans-serif;
+  box-shadow: none;
+  color: var(--text-4);
+  font: var(--fw-semibold) 9px var(--font-sans);
   letter-spacing: 0.06em;
   cursor: pointer;
+  transition: background var(--dur-1) var(--ease-out);
 }
 
 .lane-tab:hover {
-  background: #1c1f26;
-  color: #9aa1ad;
+  background: var(--surface-3);
+  color: var(--text-3);
 }
 
 .lane-tab-active {
-  background: #1c1f26;
-  color: #e2e6ed;
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+.lane-divider {
+  flex: none;
+  height: 1px;
+  margin: 1px 4px;
+  background: var(--border);
 }
 
 .cell-velocity {
   grid-area: 2 / 2;
-  border-top: 1px solid rgba(0, 0, 0, 0.4);
+  border-top: 1px solid var(--border-strong);
 }
 
 .cell-corner {
   grid-area: 2 / 3;
-  background: #14161b;
+  background: var(--surface-2);
 }
 
 .cell-hscroll-spacer {
   grid-area: 3 / 1;
-  background: #14161b;
+  background: var(--surface-2);
 }
 
 .cell-hscroll {
@@ -561,23 +883,25 @@ onBeforeUnmount(() => {
 
 .cell-corner-br {
   grid-area: 3 / 3;
-  background: #14161b;
+  background: var(--surface-2);
 }
 
 .scroll-track {
   position: relative;
-  background: #14161b;
+  background: var(--surface-2);
+  box-shadow: var(--inset-well);
   touch-action: none;
 }
 
 .scroll-thumb {
   position: absolute;
-  background: #3a4150;
-  border-radius: 4px;
+  background: var(--surface-4);
+  border-radius: var(--radius-sm);
+  transition: background var(--dur-1) var(--ease-out);
 }
 
 .scroll-thumb:hover {
-  background: #4a5263;
+  background: var(--text-4);
 }
 
 .scroll-thumb-v {

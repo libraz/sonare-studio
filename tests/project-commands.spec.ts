@@ -4,12 +4,18 @@ import {
   addMidiClip,
   addNote,
   addTrack,
+  bakeClipMidiFx,
   canRedo,
   canUndo,
   clearHistory,
+  clearProjectChords,
   deleteClip,
+  detectChordsForClip,
   duplicateClip,
+  humanizeSelectionVelocity,
   moveClip,
+  nudgeSelectionVelocity,
+  quantizeSelectionLengths,
   redo,
   removeAutomationLane,
   removeMarker,
@@ -21,10 +27,13 @@ import {
   setActiveTrack,
   setAutomationLaneEnabled,
   setAutomationLanePoints,
+  setClipCcLane,
   setClipGain,
   setClipLoop,
   setMarker,
+  setProjectChords,
   setSections,
+  setSelection,
   setTempoSegments,
   setTimeSignatures,
   setTrackColor,
@@ -33,9 +42,12 @@ import {
   setTrackSolo,
   setTrackVolume,
   splitClip,
+  splitNote,
+  transposeSelection,
   trimClip,
   undo,
 } from '@/project/commands';
+import { sanitizeMidiFxConfig } from '@/project/midi-fx';
 import { useProjectStore } from '@/project/store';
 
 vi.mock('@/lib/wasm', async () => {
@@ -347,6 +359,242 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(() => deleteClip(9999)).toThrow(RangeError);
       expect(() => moveClip(9999, 0)).toThrow(RangeError);
       expect(() => setClipGain(9999, 1)).toThrow(RangeError);
+    });
+
+    it('setClipCcLane sanitizes points, sorts lanes and is undoable', () => {
+      const clipId = store.clipId;
+      setClipCcLane(clipId, 11, 0, [
+        { ppq: 2, value: 200 },
+        { ppq: 0, value: -5 },
+      ]);
+      setClipCcLane(clipId, 1, 0, [{ ppq: 1, value: 64 }]);
+      const lanes = store.activeClip?.ccLanes;
+      // Lanes sort by controller; points sort by ppq and clamp to [0, 127].
+      expect(lanes).toEqual([
+        { controller: 1, channel: 0, points: [{ ppq: 1, value: 64 }] },
+        {
+          controller: 11,
+          channel: 0,
+          points: [
+            { ppq: 0, value: 0 },
+            { ppq: 2, value: 127 },
+          ],
+        },
+      ]);
+      // Empty points remove just that lane.
+      setClipCcLane(clipId, 11, 0, []);
+      expect(store.activeClip?.ccLanes).toEqual([
+        { controller: 1, channel: 0, points: [{ ppq: 1, value: 64 }] },
+      ]);
+      expect(undo()).toBe(true);
+      expect(store.activeClip?.ccLanes?.map((l) => l.controller)).toEqual([1, 11]);
+    });
+
+    it('setClipCcLane validates the controller, channel and clip', () => {
+      const clipId = store.clipId;
+      expect(() => setClipCcLane(clipId, 128, 0, [])).toThrow(RangeError);
+      expect(() => setClipCcLane(clipId, 1, 16, [])).toThrow(RangeError);
+      expect(() => setClipCcLane(9999, 1, 0, [])).toThrow(RangeError);
+    });
+
+    it('bakeClipMidiFx transposes the clip notes as one undoable edit', () => {
+      const clipId = store.clipId;
+      addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+      addNote({ pitch: 64, startPpq: 1, durationPpq: 1 });
+      const changed = bakeClipMidiFx(clipId, sanitizeMidiFxConfig({ transposeSemitones: 12 }));
+      expect(changed).toBe(true);
+      expect(store.notes.map((n) => n.pitch).sort((a, b) => a - b)).toEqual([72, 76]);
+      expect(undo()).toBe(true);
+      expect(store.notes.map((n) => n.pitch).sort((a, b) => a - b)).toEqual([60, 64]);
+    });
+
+    it('bakeClipMidiFx harmonizes each note into a chord', () => {
+      const clipId = store.clipId;
+      addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+      const changed = bakeClipMidiFx(clipId, sanitizeMidiFxConfig({ chordIntervals: [0, 4, 7] }));
+      expect(changed).toBe(true);
+      expect(store.notes.map((n) => n.pitch).sort((a, b) => a - b)).toEqual([60, 64, 67]);
+      expect(undo()).toBe(true);
+      expect(store.notes.map((n) => n.pitch)).toEqual([60]);
+    });
+
+    it('bakeClipMidiFx skips a no-op transform without touching history', () => {
+      const clipId = store.clipId;
+      addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+      clearHistory();
+      const changed = bakeClipMidiFx(clipId, sanitizeMidiFxConfig({}));
+      expect(changed).toBe(false);
+      expect(store.notes.map((n) => n.pitch)).toEqual([60]);
+      expect(canUndo()).toBe(false);
+    });
+
+    it('bakeClipMidiFx rejects an unknown clip', () => {
+      expect(() => bakeClipMidiFx(9999, sanitizeMidiFxConfig({ transposeSemitones: 1 }))).toThrow(
+        RangeError,
+      );
+    });
+  });
+
+  describe('chord track commands', () => {
+    it('setProjectChords writes the annotation stream and is undoable', () => {
+      setProjectChords([
+        { startPpq: 4, endPpq: 8, rootPc: 7, quality: 4 },
+        { startPpq: 0, endPpq: 4, rootPc: 0, quality: 0, bassPc: 4 },
+      ]);
+      // Sorted by position and read back from the Project annotation stream.
+      expect(store.chords).toEqual([
+        { startPpq: 0, endPpq: 4, rootPc: 0, quality: 0, bassPc: 4 },
+        { startPpq: 4, endPpq: 8, rootPc: 7, quality: 4 },
+      ]);
+      expect(undo()).toBe(true);
+      expect(store.chords).toEqual([]);
+      expect(redo()).toBe(true);
+      expect(store.chords).toHaveLength(2);
+    });
+
+    it('setProjectChords drops invalid roots and empty regions', () => {
+      setProjectChords([
+        { startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 },
+        { startPpq: 4, endPpq: 4, rootPc: 2, quality: 1 }, // zero-length
+        { startPpq: 8, endPpq: 12, rootPc: 99, quality: 0 }, // bad root
+      ]);
+      expect(store.chords).toEqual([{ startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 }]);
+    });
+
+    it('clearProjectChords empties the stream undoably and no-ops when empty', () => {
+      setProjectChords([{ startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 }]);
+      clearProjectChords();
+      expect(store.chords).toEqual([]);
+      expect(undo()).toBe(true);
+      expect(store.chords).toHaveLength(1);
+
+      clearProjectChords();
+      clearHistory();
+      clearProjectChords();
+      expect(canUndo()).toBe(false);
+    });
+
+    it('detectChordsForClip estimates chords from the clip notes and is idempotent', () => {
+      const clipId = store.clipId;
+      // A C major triad sounding through the first bar (4 PPQ in 4/4).
+      addNote({ pitch: 60, startPpq: 0, durationPpq: 4 });
+      addNote({ pitch: 64, startPpq: 0, durationPpq: 4 });
+      addNote({ pitch: 67, startPpq: 0, durationPpq: 4 });
+
+      const count = detectChordsForClip(clipId);
+      expect(count).toBeGreaterThan(0);
+      expect(store.chords[0]).toMatchObject({ startPpq: 0, rootPc: 0, quality: 0 });
+
+      // Re-running replaces the clip-region chords rather than duplicating them.
+      const before = store.chords.length;
+      detectChordsForClip(clipId);
+      expect(store.chords.length).toBe(before);
+    });
+
+    it('detectChordsForClip rejects a non-MIDI clip', () => {
+      expect(() => detectChordsForClip(9999)).toThrow(RangeError);
+    });
+  });
+
+  describe('splitNote', () => {
+    it('splits a note into two halves as one undoable edit and returns the right id', () => {
+      const leftId = addNote({ pitch: 60, startPpq: 0, durationPpq: 4, velocity: 80, channel: 2 });
+      const rightId = splitNote(leftId, 1);
+
+      const left = store.notes.find((n) => n.id === leftId);
+      const right = store.notes.find((n) => n.id === rightId);
+      expect(left).toMatchObject({ startPpq: 0, durationPpq: 1 });
+      expect(right).toMatchObject({
+        startPpq: 1,
+        durationPpq: 3,
+        pitch: 60,
+        velocity: 80,
+        channel: 2,
+      });
+      expect(store.notes).toHaveLength(2);
+
+      // One history entry: undo restores the single original note.
+      expect(undo()).toBe(true);
+      expect(store.notes).toHaveLength(1);
+      expect(store.notes[0]).toMatchObject({ id: leftId, startPpq: 0, durationPpq: 4 });
+    });
+
+    it('rejects a split position outside the note', () => {
+      const id = addNote({ pitch: 60, startPpq: 1, durationPpq: 2 });
+      expect(() => splitNote(id, 1)).toThrow(RangeError);
+      expect(() => splitNote(id, 3)).toThrow(RangeError);
+      expect(() => splitNote(9999, 1)).toThrow();
+    });
+  });
+
+  describe('selection note operations', () => {
+    /** Adds three notes and selects the first two; returns all three ids. */
+    function threeNotesSelectFirstTwo(): number[] {
+      const a = addNote({ pitch: 60, startPpq: 0, durationPpq: 2, velocity: 80 });
+      const b = addNote({ pitch: 64, startPpq: 4, durationPpq: 3, velocity: 80 });
+      const c = addNote({ pitch: 67, startPpq: 8, durationPpq: 2, velocity: 80 });
+      setSelection([a, b]);
+      return [a, b, c];
+    }
+
+    function noteById(id: number) {
+      return store.notes.find((n) => n.id === id);
+    }
+
+    it('transposes the selection and leaves unselected notes alone', () => {
+      const [a, b, c] = threeNotesSelectFirstTwo();
+      transposeSelection(12);
+      expect(noteById(a)?.pitch).toBe(72);
+      expect(noteById(b)?.pitch).toBe(76);
+      expect(noteById(c)?.pitch).toBe(67);
+      undo();
+      expect(noteById(a)?.pitch).toBe(60);
+    });
+
+    it('clamps the whole block so intervals are preserved at the edges', () => {
+      const high = addNote({ pitch: 126, startPpq: 0, durationPpq: 1 });
+      const low = addNote({ pitch: 120, startPpq: 4, durationPpq: 1 });
+      setSelection([high, low]);
+      // +12 would push 126 past 127, so the block only rises by 1.
+      transposeSelection(12);
+      expect(noteById(high)?.pitch).toBe(127);
+      expect(noteById(low)?.pitch).toBe(121);
+    });
+
+    it('quantizes note lengths to the snap grid', () => {
+      const [a] = threeNotesSelectFirstTwo();
+      store.snapDivision = 1; // grid = 4 PPQ
+      quantizeSelectionLengths();
+      // duration 2 -> nearest multiple of 4, min one grid step = 4.
+      expect(noteById(a)?.durationPpq).toBe(4);
+    });
+
+    it('nudges and clamps selection velocity', () => {
+      const [a, , c] = threeNotesSelectFirstTwo();
+      nudgeSelectionVelocity(20);
+      expect(noteById(a)?.velocity).toBe(100);
+      expect(noteById(c)?.velocity).toBe(80);
+      nudgeSelectionVelocity(40);
+      expect(noteById(a)?.velocity).toBe(127);
+    });
+
+    it('humanizes velocity within the requested range using an injected RNG', () => {
+      const [a, b] = threeNotesSelectFirstTwo();
+      // RNG 1 -> +amount, RNG 0 -> -amount.
+      const values = [1, 0];
+      humanizeSelectionVelocity(10, () => values.shift() ?? 0.5);
+      expect(noteById(a)?.velocity).toBe(90);
+      expect(noteById(b)?.velocity).toBe(70);
+    });
+
+    it('is a no-op with an empty selection', () => {
+      addNote({ pitch: 60, startPpq: 0, durationPpq: 1, velocity: 80 });
+      setSelection([]);
+      transposeSelection(12);
+      nudgeSelectionVelocity(10);
+      quantizeSelectionLengths();
+      expect(store.notes[0].pitch).toBe(60);
+      expect(store.notes[0].velocity).toBe(80);
     });
   });
 

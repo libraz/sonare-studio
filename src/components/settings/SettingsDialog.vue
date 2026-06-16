@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
+import { promptDialog } from '@/composables/useDialogs';
 import { useLayouts } from '@/composables/useLayouts';
 import { useShortcuts } from '@/composables/useShortcuts';
 import {
@@ -89,6 +91,19 @@ function onTabKeydown(event: KeyboardEvent): void {
 
 // --- General tab -----------------------------------------------------------
 
+/** Editor density choices for the General tab picker. */
+const EDITOR_DENSITY_OPTIONS: ReadonlyArray<{
+  value: 'comfortable' | 'compact';
+  label: string;
+}> = [
+  { value: 'comfortable', label: 'Comfortable' },
+  { value: 'compact', label: 'Compact' },
+];
+
+function onEditorDensityChange(value: 'comfortable' | 'compact'): void {
+  appSettings.set('editorDensity', value);
+}
+
 const autosaveSeconds = computed<number>(() =>
   Math.round(appSettings.settings.autosaveIntervalMs / 1000),
 );
@@ -109,6 +124,38 @@ function onCountInInput(event: Event): void {
 
 /** Action id currently listening for a new key combo, or null. */
 const capturingId = ref<string | null>(null);
+
+/** Free-text filter over action label, group and current keys. */
+const shortcutQuery = ref('');
+/** Selected category filter, or 'all' for every group. */
+const shortcutGroup = ref('all');
+
+/** The distinct action groups, in registry order, for the category picker. */
+const shortcutGroups = computed<string[]>(() => {
+  const seen: string[] = [];
+  for (const action of shortcuts.actions) {
+    if (!seen.includes(action.group)) seen.push(action.group);
+  }
+  return seen;
+});
+
+/** Category-filter choices: "All categories" plus each distinct action group. */
+const shortcutGroupOptions = computed(() => [
+  { value: 'all', label: 'All categories' },
+  ...shortcutGroups.value.map((group) => ({ value: group, label: group })),
+]);
+
+/** Actions matching the active category and search query, in registry order. */
+const visibleShortcuts = computed<ReadonlyArray<ShortcutActionDef>>(() => {
+  const query = shortcutQuery.value.trim().toLowerCase();
+  const group = shortcutGroup.value;
+  return shortcuts.actions.filter((action) => {
+    if (group !== 'all' && action.group !== group) return false;
+    if (query === '') return true;
+    const haystack = `${action.label} ${action.group} ${keysText(action)}`.toLowerCase();
+    return haystack.includes(query);
+  });
+});
 
 const conflictActionIds = computed<ReadonlySet<string>>(() => {
   const ids = new Set<string>();
@@ -189,13 +236,21 @@ function deleteLayout(name: string): void {
 }
 
 function renameLayout(name: string): void {
-  const next = window.prompt('Rename layout', name);
-  if (next === null) return;
-  if (!namedLayouts.rename(name, next)) {
-    layoutError.value = 'Could not rename the layout (name empty or already used).';
-  } else {
-    layoutError.value = '';
-  }
+  void (async () => {
+    const next = await promptDialog({
+      title: 'Rename layout',
+      message: 'Enter a new name for this layout.',
+      defaultValue: name,
+      placeholder: 'Layout name',
+      confirmLabel: 'Rename',
+    });
+    if (next === null) return;
+    if (!namedLayouts.rename(name, next)) {
+      layoutError.value = 'Could not rename the layout (name empty or already used).';
+    } else {
+      layoutError.value = '';
+    }
+  })();
 }
 
 // --- Open/close lifecycle ----------------------------------------------------
@@ -262,21 +317,17 @@ onBeforeUnmount(() => {
         role="tabpanel"
         aria-label="General"
       >
-        <label class="row">
+        <div class="row">
           <span class="row-label">Editor density</span>
-          <select
-            :value="appSettings.settings.editorDensity"
-            @change="
-              appSettings.set(
-                'editorDensity',
-                ($event.target as HTMLSelectElement).value as 'comfortable' | 'compact',
-              )
-            "
-          >
-            <option value="comfortable">Comfortable</option>
-            <option value="compact">Compact</option>
-          </select>
-        </label>
+          <SelectMenu
+            class="row-select"
+            :model-value="appSettings.settings.editorDensity"
+            :options="EDITOR_DENSITY_OPTIONS"
+            aria-label="Editor density"
+            size="sm"
+            @change="onEditorDensityChange"
+          />
+        </div>
         <label class="row">
           <span class="row-label">Snap to grid by default</span>
           <input
@@ -348,23 +399,44 @@ onBeforeUnmount(() => {
         <p v-if="shortcuts.conflicts.value.length > 0" class="conflict-banner" role="alert">
           Some shortcuts share the same keys; highlighted rows may shadow each other.
         </p>
+        <div class="shortcut-filters">
+          <input
+            v-model="shortcutQuery"
+            type="search"
+            class="shortcut-search"
+            placeholder="Search shortcuts…"
+            aria-label="Search shortcuts"
+          />
+          <SelectMenu
+            v-model="shortcutGroup"
+            :options="shortcutGroupOptions"
+            class="shortcut-group"
+            aria-label="Filter by category"
+            size="sm"
+          />
+        </div>
         <table class="shortcut-table">
           <thead>
             <tr>
               <th scope="col">Action</th>
+              <th scope="col">Category</th>
               <th scope="col">Scope</th>
               <th scope="col">Keys</th>
               <th scope="col"><span class="visually-hidden">Edit</span></th>
             </tr>
           </thead>
           <tbody>
+            <tr v-if="visibleShortcuts.length === 0">
+              <td class="shortcut-empty" colspan="5">No shortcuts match your search.</td>
+            </tr>
             <tr
-              v-for="action in shortcuts.actions"
+              v-for="action in visibleShortcuts"
               :key="action.id"
               :class="{ conflict: conflictActionIds.has(action.id) }"
               :data-action-id="action.id"
             >
               <td>{{ action.label }}</td>
+              <td class="group-cell">{{ action.group }}</td>
               <td class="scope-cell">{{ action.when }}</td>
               <td class="keys-cell">
                 <span v-if="capturingId === action.id" class="capturing">
@@ -483,7 +555,9 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(17, 24, 39, 0.28);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
 }
 
 .dialog {
@@ -492,13 +566,15 @@ onBeforeUnmount(() => {
   gap: 0.6rem;
   width: min(38rem, calc(100vw - 2rem));
   max-height: calc(100vh - 4rem);
-  padding: 1rem 1.25rem;
-  background: #1b1e25;
-  border: 1px solid #000;
-  border-radius: 8px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
-  color: #e2e6ee;
-  font-size: 12px;
+  padding: 1.25rem 1.4rem;
+  background: var(--glass-3);
+  -webkit-backdrop-filter: var(--glass-blur-strong);
+  backdrop-filter: var(--glass-blur-strong);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--glass-hairline), var(--shadow-modal);
+  color: var(--text-1);
+  font-size: var(--fs-sm);
 }
 
 .dialog:focus {
@@ -507,30 +583,35 @@ onBeforeUnmount(() => {
 
 .dialog-title {
   margin: 0;
-  font-size: 14px;
-  font-weight: 700;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-bold);
   letter-spacing: 0.04em;
 }
 
 .tabs {
   display: flex;
   gap: 0.25rem;
-  border-bottom: 1px solid #2a2e38;
+  border-bottom: 1px solid var(--border);
 }
 
 .tab {
   background: none;
   border: none;
+  box-shadow: none;
+  border-radius: 0;
   border-bottom: 2px solid transparent;
-  color: #8b93a3;
+  color: var(--text-3);
   padding: 0.3rem 0.7rem;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-sm);
+  transition:
+    color var(--dur-1) var(--ease-out),
+    border-color var(--dur-1) var(--ease-out);
 }
 
 .tab.active {
-  color: #e2e6ee;
-  border-bottom-color: #60a5fa;
+  color: var(--text-1);
+  border-bottom-color: var(--accent);
 }
 
 .panel {
@@ -543,9 +624,9 @@ onBeforeUnmount(() => {
 
 .panel-heading {
   margin: 0.2rem 0 0;
-  font-size: 11px;
-  font-weight: 600;
-  color: #8b93a3;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--text-3);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
@@ -558,20 +639,56 @@ onBeforeUnmount(() => {
 }
 
 .row-label {
-  color: #c4cad6;
+  color: var(--text-2);
 }
 
 .row input[type='number'] {
   width: 4.5rem;
 }
 
-.row select,
 .row input {
-  background: #11141a;
-  border: 1px solid #2a2e38;
-  border-radius: 4px;
-  color: #e2e6ee;
+  background: var(--surface-inset);
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
   padding: 0.15rem 0.3rem;
+  box-shadow: var(--control-edge), var(--inset-well);
+}
+
+.row input:focus,
+.row input:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--accent), var(--inset-well), var(--ring);
+}
+
+.row-select {
+  width: 10rem;
+}
+
+.shortcut-filters {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.shortcut-search {
+  flex: 1;
+  min-width: 0;
+}
+
+.shortcut-group {
+  flex: 0 0 12rem;
+}
+
+.shortcut-empty {
+  color: var(--text-3);
+  font-style: italic;
+  text-align: center;
+  padding: 0.6rem 0.4rem;
+}
+
+.group-cell {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
 }
 
 .shortcut-table {
@@ -581,36 +698,36 @@ onBeforeUnmount(() => {
 
 .shortcut-table th {
   text-align: left;
-  color: #8b93a3;
-  font-size: 11px;
-  font-weight: 600;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   padding: 0.2rem 0.4rem;
-  border-bottom: 1px solid #2a2e38;
+  border-bottom: 1px solid var(--border);
 }
 
 .shortcut-table td {
   padding: 0.25rem 0.4rem;
-  border-bottom: 1px solid #14161b;
+  border-bottom: 1px solid var(--surface-2);
 }
 
 .shortcut-table tr.conflict td {
-  background: #3a1f1f;
+  background: var(--danger-surface);
 }
 
 .scope-cell {
-  color: #8b93a3;
-  font-size: 11px;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
 }
 
 .keys-cell {
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-mono);
   white-space: nowrap;
 }
 
 .capturing {
-  color: #fbbf24;
+  color: var(--warning);
 }
 
 .edit-cell {
@@ -620,22 +737,32 @@ onBeforeUnmount(() => {
 
 .conflict-banner {
   margin: 0;
-  background: #3a2a0c;
-  border: 1px solid #fbbf24;
-  border-radius: 4px;
-  color: #fde68a;
+  background: var(--warning-surface);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-sm);
+  color: var(--warning-text);
   padding: 0.4rem 0.6rem;
 }
 
 button.small {
-  background: #232733;
-  border: 1px solid #2a2e38;
-  border-radius: 4px;
-  color: #c4cad6;
-  font-size: 11px;
+  background: var(--surface-3);
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
   padding: 0.1rem 0.5rem;
   cursor: pointer;
   margin-left: 0.25rem;
+  box-shadow: var(--control-lift);
+  transition: background var(--dur-1) var(--ease-out);
+}
+
+button.small:hover {
+  background: var(--surface-4);
+  box-shadow: var(--control-lift-hover);
+}
+
+button.small:active {
+  box-shadow: var(--control-edge), var(--inset-well);
 }
 
 button.small:disabled {
@@ -657,7 +784,7 @@ button.small:disabled {
   justify-content: space-between;
   gap: 0.5rem;
   padding: 0.25rem 0.2rem;
-  border-bottom: 1px solid #14161b;
+  border-bottom: 1px solid var(--surface-2);
 }
 
 .layout-name {
@@ -666,7 +793,7 @@ button.small:disabled {
 
 .layout-empty {
   margin: 0;
-  color: #8b93a3;
+  color: var(--text-3);
 }
 
 .layout-save {
@@ -677,16 +804,22 @@ button.small:disabled {
 
 .layout-save input {
   flex: 1;
-  background: #11141a;
-  border: 1px solid #2a2e38;
-  border-radius: 4px;
-  color: #e2e6ee;
+  background: var(--surface-inset);
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
   padding: 0.2rem 0.4rem;
+  box-shadow: var(--control-edge), var(--inset-well);
+}
+
+.layout-save input:focus,
+.layout-save input:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--accent), var(--inset-well), var(--ring);
 }
 
 .layout-error {
   margin: 0;
-  color: #f87171;
+  color: var(--danger-text);
 }
 
 .panel-actions {
@@ -702,12 +835,18 @@ button.small:disabled {
 }
 
 .dialog-actions .primary {
-  background: #2453a8;
-  border: 1px solid #60a5fa;
-  color: #e2e6ee;
-  border-radius: 4px;
+  background: var(--accent-strong);
+  border: 1px solid var(--accent);
+  color: var(--text-1);
+  border-radius: var(--radius-sm);
   padding: 0.25rem 0.9rem;
   cursor: pointer;
+  box-shadow: var(--raise-hi);
+  transition: background var(--dur-1) var(--ease-out);
+}
+
+.dialog-actions .primary:hover {
+  background: var(--accent-hover);
 }
 
 .visually-hidden {

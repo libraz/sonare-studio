@@ -92,6 +92,10 @@ function voiceEvent(
  * event order is undefined, so a legato note-off must sit strictly before a
  * same-pitch note-on of the following note.
  *
+ * A clip's CC lanes (app-level metadata) are baked into the same event list as
+ * discrete control-change events, one per breakpoint, at the breakpoint's
+ * absolute frame; CC-only clips (or muted clips with CC) still schedule.
+ *
  * SF2 instruments with an explicit bank and/or program get a per-channel
  * program prelude (bank-select CCs, then program change) one sample before
  * the clip start. A clip starting at sample 0 has no earlier sample, so the
@@ -122,8 +126,11 @@ export function buildMidiClipSchedules(
     if (track?.kind !== 'midi' || clipKind(clip) !== 'midi') continue;
     // Frozen tracks play their baked render; their MIDI stays silent.
     if (track.frozen !== undefined) continue;
-    const notes = clipPlaybackNotes(clip);
-    if (notes.length === 0 || clip.gain <= 0) continue;
+    // A muted clip (gain <= 0) plays no notes, but its CC lanes still send:
+    // controllers are not gain-scaled, and a CC-only clip is legitimate.
+    const notes = clip.gain > 0 ? clipPlaybackNotes(clip) : [];
+    const ccLanes = (clip.ccLanes ?? []).filter((lane) => lane.points.length > 0);
+    if (notes.length === 0 && ccLanes.length === 0) continue;
 
     const startSample = ppqToSamples(tempoMap, clip.startPpq, sampleRate);
     // End minus start (not a rounded duration), so tempo-segment boundaries
@@ -177,6 +184,22 @@ export function buildMidiClipSchedules(
       );
       events.push(voiceEvent(onFrame, STATUS_NOTE_ON, channel, note.note, velocity));
       events.push(voiceEvent(offFrame, STATUS_NOTE_OFF, channel, note.note, 0));
+    }
+
+    // CC lanes emit one discrete control-change event per breakpoint (the
+    // value holds until the next event on playback). Points are clip-window
+    // relative; out-of-window points are dropped.
+    for (const lane of ccLanes) {
+      const channel = clamp(lane.channel, 0, 15);
+      const controller = clamp(lane.controller, 0, 127);
+      for (const point of lane.points) {
+        if (point.ppq < 0 || point.ppq > clip.lengthPpq) continue;
+        let frame = ppqToSamples(tempoMap, clip.startPpq + point.ppq, sampleRate);
+        if (shiftFrameZero && frame === 0) frame = 1;
+        events.push(
+          voiceEvent(frame, STATUS_CONTROL_CHANGE, channel, controller, clamp(point.value, 0, 127)),
+        );
+      }
     }
 
     events.sort((a, b) => a.renderFrame - b.renderFrame);

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue';
+import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { ensureWasm } from '@/lib/wasm';
 import { type AudioAssetMeta, deleteAsset, listAssets, loadAsset } from '@/persistence/assets';
 import { decodeAndIngest } from '@/project/audio-import';
@@ -88,6 +89,19 @@ const sortKey = ref<AssetSortKey>('name');
 const bpmRange = computed(() => parseBpmRange(bpmText.value));
 const bpmInvalid = computed(() => bpmText.value.trim().length > 0 && bpmRange.value === null);
 const keyOptions = computed(() => collectKeyTags(assets.value));
+
+/** Key filter choices: "Any key" plus each distinct key tag in the assets. */
+const keyFilterOptions = computed(() => [
+  { value: '', label: 'Any key' },
+  ...keyOptions.value.map((key) => ({ value: key, label: key })),
+]);
+
+/** Sort-order choices for the asset list. */
+const sortOptions: ReadonlyArray<{ value: AssetSortKey; label: string }> = [
+  { value: 'name', label: 'Name' },
+  { value: 'duration', label: 'Duration' },
+  { value: 'bpm', label: 'BPM' },
+];
 const displayedAssets = computed(() =>
   sortAssets(
     filterAssets(assets.value, {
@@ -290,10 +304,13 @@ onBeforeUnmount(() => {
         placeholder="Filter by name"
         aria-label="Filter assets by name"
       />
-      <select v-model="filterKey" class="filter-key" aria-label="Filter by key">
-        <option value="">Any key</option>
-        <option v-for="key in keyOptions" :key="key" :value="key">{{ key }}</option>
-      </select>
+      <SelectMenu
+        v-model="filterKey"
+        :options="keyFilterOptions"
+        class="filter-key"
+        aria-label="Filter by key"
+        size="sm"
+      />
       <input
         v-model="bpmText"
         class="filter-bpm"
@@ -302,11 +319,13 @@ onBeforeUnmount(() => {
         placeholder="BPM (80-120)"
         aria-label="Filter by BPM range"
       />
-      <select v-model="sortKey" class="sort-key" aria-label="Sort assets">
-        <option value="name">Name</option>
-        <option value="duration">Duration</option>
-        <option value="bpm">BPM</option>
-      </select>
+      <SelectMenu
+        v-model="sortKey"
+        :options="sortOptions"
+        class="sort-key"
+        aria-label="Sort assets"
+        size="sm"
+      />
       <label v-if="timeStretchFn" class="sync-toggle">
         <input v-model="syncToTempo" type="checkbox" />
         Sync to project tempo
@@ -404,13 +423,13 @@ onBeforeUnmount(() => {
   height: 100%;
   min-height: 0;
   padding: 0.5rem;
-  background: #14161b;
-  color: #e2e6ee;
-  font-size: 12px;
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-size: var(--fs-sm);
 }
 
 .media-browser.drag-over {
-  outline: 1px dashed #60a5fa;
+  outline: 1px dashed var(--accent);
   outline-offset: -3px;
 }
 
@@ -422,14 +441,28 @@ onBeforeUnmount(() => {
 }
 
 .toolbar input[type='search'],
-.toolbar input[type='text'],
-.toolbar select {
-  background: #1b1e25;
-  border: 1px solid #2a2e38;
-  border-radius: 4px;
-  color: #e2e6ee;
-  font-size: 11px;
+.toolbar input[type='text'] {
+  background: var(--surface-inset);
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
+  font-size: var(--fs-xs);
   padding: 0.2rem 0.35rem;
+  box-shadow: var(--control-edge), var(--inset-well);
+}
+
+.toolbar input[type='search']:focus-visible,
+.toolbar input[type='text']:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--accent), var(--inset-well), var(--ring);
+}
+
+.filter-key {
+  width: 7rem;
+}
+
+.sort-key {
+  width: 7rem;
 }
 
 .filter-text {
@@ -442,26 +475,32 @@ onBeforeUnmount(() => {
 }
 
 .filter-bpm.invalid {
-  border-color: #f87171;
+  box-shadow: inset 0 0 0 1px var(--danger), var(--inset-well);
 }
 
 .sync-toggle {
   display: flex;
   align-items: center;
   gap: 0.25rem;
-  color: #8b93a3;
-  font-size: 11px;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
   white-space: nowrap;
 }
 
 .import-button {
-  background: #1d2940;
-  border: 1px solid #2a3a5c;
-  border-radius: 4px;
-  color: #e2e6ee;
+  background: var(--surface-selected);
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   padding: 0.2rem 0.6rem;
+  box-shadow: var(--control-lift);
+  transition: filter var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
+}
+
+.import-button:not(:disabled):hover {
+  filter: brightness(1.15);
+  box-shadow: var(--control-lift-hover);
 }
 
 .import-button:disabled {
@@ -475,33 +514,33 @@ onBeforeUnmount(() => {
 
 .import-progress {
   margin: 0;
-  color: #8b93a3;
+  color: var(--text-3);
 }
 
 .import-errors {
   margin: 0;
   padding: 0.3rem 0.5rem;
   list-style: none;
-  background: #3a1414;
-  border: 1px solid #f87171;
-  border-radius: 4px;
-  color: #fca5a5;
-  font-size: 11px;
+  background: var(--danger-surface);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  color: var(--danger-text);
+  font-size: var(--fs-xs);
 }
 
 .error-file {
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
 }
 
 .error {
   margin: 0;
-  color: #f87171;
-  font-size: 11px;
+  color: var(--danger);
+  font-size: var(--fs-xs);
 }
 
 .empty {
   margin: 0.4rem 0 0;
-  color: #8b93a3;
+  color: var(--text-3);
 }
 
 .asset-list {
@@ -510,9 +549,11 @@ onBeforeUnmount(() => {
   padding: 0;
   list-style: none;
   overflow-y: auto;
-  border: 1px solid #2a2e38;
-  border-radius: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   min-height: 0;
+  background: var(--surface-inset);
+  box-shadow: var(--inset-well);
 }
 
 .asset-row {
@@ -520,8 +561,9 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 0.45rem;
   padding: 0.25rem 0.5rem;
-  border-bottom: 1px solid #1b1e25;
+  border-bottom: 1px solid var(--border-subtle);
   cursor: grab;
+  transition: background var(--dur-1) var(--ease-out);
 }
 
 .asset-row:last-child {
@@ -529,26 +571,26 @@ onBeforeUnmount(() => {
 }
 
 .asset-row:hover {
-  background: #181b22;
+  background: var(--surface-3);
+  box-shadow: var(--raise-hi);
 }
 
 .preview-button {
   flex: none;
   width: 1.5rem;
   height: 1.4rem;
-  background: #1b1e25;
-  border: 1px solid #2a2e38;
-  border-radius: 4px;
-  color: #e2e6ee;
+  background: var(--surface-3);
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
   cursor: pointer;
   font-size: 10px;
   line-height: 1;
+  box-shadow: var(--control-lift);
 }
 
 .preview-button.playing {
-  background: #1d2940;
-  border-color: #60a5fa;
-  color: #60a5fa;
+  background: var(--surface-selected);
+  color: var(--accent);
 }
 
 .asset-info {
@@ -563,12 +605,12 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
 }
 
 .asset-summary {
-  color: #8b93a3;
-  font-size: 11px;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
   white-space: nowrap;
 }
 
@@ -580,13 +622,19 @@ onBeforeUnmount(() => {
 }
 
 .row-actions button {
-  background: #1b1e25;
-  border: 1px solid #2a2e38;
-  border-radius: 4px;
-  color: #e2e6ee;
+  background: var(--surface-3);
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   padding: 0.15rem 0.45rem;
+  box-shadow: var(--control-lift);
+  transition: filter var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
+}
+
+.row-actions button:not(:disabled):hover {
+  filter: brightness(1.2);
+  box-shadow: var(--control-lift-hover);
 }
 
 .row-actions button:disabled {
@@ -595,13 +643,13 @@ onBeforeUnmount(() => {
 }
 
 .row-actions .danger {
-  background: #3a1414;
-  border-color: #f87171;
-  color: #fca5a5;
+  background: var(--danger-surface);
+  color: var(--danger-text);
+  box-shadow: inset 0 0 0 1px var(--danger), var(--shadow-1);
 }
 
 .confirm-label {
-  color: #fca5a5;
-  font-size: 11px;
+  color: var(--danger-text);
+  font-size: var(--fs-xs);
 }
 </style>

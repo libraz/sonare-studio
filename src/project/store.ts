@@ -10,7 +10,21 @@ import {
   type ScoreAnnotations,
 } from './annotations';
 import { type AutomationLaneState, sanitizeAutomationEntries } from './automation';
+import {
+  chordsFromAnnotation,
+  type EditorChordSymbol,
+  sanitizeChordSymbols,
+  toProjectChordSymbols,
+} from './chords';
 import { cloneInstrument } from './instrument';
+import { cloneCcLanes, isValidChannel, isValidController, sanitizeCcPoints } from './midi-cc';
+import {
+  noteKey,
+  notesToProjectMidiEvents,
+  pairEventsIntoNotes,
+  type RawNote,
+  type SerializedMidiEvent,
+} from './midi-events';
 import {
   cloneMixerState,
   cloneStrip,
@@ -19,6 +33,7 @@ import {
 } from './mixer';
 import type { DocumentClip, ProjectDocument } from './serialization';
 import {
+  type ClipCcLane,
   type ClipKind,
   DEFAULT_SECTION_COLOR,
   type EditorClip,
@@ -136,20 +151,6 @@ export function placeholderSourceAudio(): {
   return { audio: new Float32Array(1), audioChannels: 1, audioSampleRate: DEFAULT_SAMPLE_RATE };
 }
 
-/** UMP message-type nibble for MIDI 1.0 channel-voice words. */
-const UMP_MIDI1_CHANNEL_VOICE = 0x2;
-/** MIDI 1.0 note-off status nibble. */
-const STATUS_NOTE_OFF = 0x8;
-/** MIDI 1.0 note-on status nibble. */
-const STATUS_NOTE_ON = 0x9;
-
-/** Shape of one serialized MIDI event inside the Project JSON document. */
-interface SerializedMidiEvent {
-  ppq: number;
-  data0: number;
-  data1: number;
-}
-
 /** Shape of one serialized tempo segment inside the Project JSON document. */
 interface SerializedTempoSegment {
   start_ppq: number;
@@ -212,106 +213,7 @@ interface SerializedProjectDoc {
   time_signatures?: SerializedTimeSignature[];
   tracks?: SerializedTrack[];
   clips?: SerializedClip[];
-}
-
-/** A note-on or note-off boundary decoded from a packed UMP word. */
-interface DecodedNoteEvent {
-  ppq: number;
-  kind: 'on' | 'off';
-  channel: number;
-  pitch: number;
-  velocity: number;
-}
-
-/** An editor note without its id, as recovered from the Project. */
-type RawNote = Omit<EditorNote, 'id'>;
-
-/**
- * Decodes a packed UMP MIDI 1.0 channel-voice word into a note boundary.
- *
- * @param ppq Event position in PPQ.
- * @param data0 Packed 32-bit UMP word.
- * @returns The decoded boundary, or null for non-note events.
- */
-function decodeNoteEvent(ppq: number, data0: number): DecodedNoteEvent | null {
-  if (((data0 >>> 28) & 0xf) !== UMP_MIDI1_CHANNEL_VOICE) return null;
-  const status = (data0 >>> 20) & 0xf;
-  const channel = (data0 >>> 16) & 0xf;
-  const pitch = (data0 >>> 8) & 0x7f;
-  const velocity = data0 & 0x7f;
-  if (status === STATUS_NOTE_ON && velocity > 0) {
-    return { ppq, kind: 'on', channel, pitch, velocity };
-  }
-  if (status === STATUS_NOTE_OFF || status === STATUS_NOTE_ON) {
-    // A note-on with velocity 0 is a note-off per MIDI 1.0 semantics.
-    return {
-      ppq,
-      kind: 'off',
-      channel,
-      pitch,
-      velocity: status === STATUS_NOTE_OFF ? velocity : 0,
-    };
-  }
-  return null;
-}
-
-/**
- * Pairs serialized note-on/note-off events back into notes.
- *
- * Events are matched FIFO per (channel, pitch); note-offs sort before
- * note-ons at the same PPQ so back-to-back repeats pair correctly.
- * Unmatched boundaries and non-note events (CC, pitch bend, ...) are dropped;
- * the editor only manages note content in its clips.
- *
- * @param events Serialized events from the Project JSON document.
- * @returns Recovered notes sorted by start position.
- */
-function pairEventsIntoNotes(events: ReadonlyArray<SerializedMidiEvent>): RawNote[] {
-  const decoded: DecodedNoteEvent[] = [];
-  for (const event of events) {
-    const note = decodeNoteEvent(event.ppq, event.data0);
-    if (note) decoded.push(note);
-  }
-  decoded.sort(
-    (a, b) =>
-      a.ppq - b.ppq ||
-      (a.kind === b.kind ? 0 : a.kind === 'off' ? -1 : 1) ||
-      a.pitch - b.pitch ||
-      a.channel - b.channel,
-  );
-  const pending = new Map<string, Array<{ startPpq: number; velocity: number }>>();
-  const out: RawNote[] = [];
-  for (const event of decoded) {
-    const key = `${event.channel}:${event.pitch}`;
-    if (event.kind === 'on') {
-      const queue = pending.get(key) ?? [];
-      queue.push({ startPpq: event.ppq, velocity: event.velocity });
-      pending.set(key, queue);
-      continue;
-    }
-    const on = pending.get(key)?.shift();
-    if (!on || event.ppq <= on.startPpq) continue;
-    const note: RawNote = {
-      pitch: event.pitch,
-      velocity: on.velocity,
-      startPpq: on.startPpq,
-      durationPpq: event.ppq - on.startPpq,
-      channel: event.channel,
-    };
-    if (event.velocity > 0) note.offVelocity = event.velocity;
-    out.push(note);
-  }
-  out.sort((a, b) => a.startPpq - b.startPpq || a.pitch - b.pitch || a.channel - b.channel);
-  return out;
-}
-
-/** A note-on or note-off boundary used to build a flat event list. */
-interface NoteBoundary {
-  ppq: number;
-  kind: 'on' | 'off';
-  pitch: number;
-  channel: number;
-  velocity: number;
+  annotation?: { chords?: unknown };
 }
 
 /**
@@ -323,51 +225,7 @@ interface NoteBoundary {
  * @returns Packed events accepted by Project.setMidiEvents.
  */
 export function notesToProjectEvents(notes: ReadonlyArray<RawNote>): ProjectMidiEvent[] {
-  const wasm = getWasmModule();
-  const boundaries: NoteBoundary[] = [];
-  for (const note of notes) {
-    boundaries.push({
-      ppq: note.startPpq,
-      kind: 'on',
-      pitch: note.pitch,
-      channel: note.channel,
-      velocity: note.velocity,
-    });
-    boundaries.push({
-      ppq: note.startPpq + note.durationPpq,
-      kind: 'off',
-      pitch: note.pitch,
-      channel: note.channel,
-      velocity: note.offVelocity ?? 0,
-    });
-  }
-  boundaries.sort(
-    (a, b) =>
-      a.ppq - b.ppq ||
-      (a.kind === b.kind ? 0 : a.kind === 'off' ? -1 : 1) ||
-      a.pitch - b.pitch ||
-      a.channel - b.channel,
-  );
-  return boundaries.map((b) =>
-    b.kind === 'on'
-      ? wasm.Project.midiNoteOn(b.ppq, 0, b.channel, b.pitch, b.velocity)
-      : wasm.Project.midiNoteOff(b.ppq, 0, b.channel, b.pitch, b.velocity),
-  );
-}
-
-/** PPQ values are keyed at micro-PPQ resolution to absorb float round-trip noise. */
-const KEY_PPQ_SCALE = 1e6;
-
-/** Builds the content key used to re-associate editor ids after a refresh. */
-function noteKey(note: RawNote): string {
-  return [
-    note.pitch,
-    note.velocity,
-    Math.round(note.startPpq * KEY_PPQ_SCALE),
-    Math.round(note.durationPpq * KEY_PPQ_SCALE),
-    note.channel,
-    note.offVelocity ?? 0,
-  ].join('|');
+  return notesToProjectMidiEvents(notes, getWasmModule());
 }
 
 /** Maps a serialized track-kind ordinal to the string form. */
@@ -421,6 +279,8 @@ export const useProjectStore = defineStore('project', () => {
   const clips = ref<EditorClip[]>([]);
   /** Timeline markers (app-level). */
   const markers = ref<EditorMarker[]>([]);
+  /** Chord-track symbols, mirroring the Project's annotation stream. */
+  const chords = ref<EditorChordSymbol[]>([]);
   /** Arrangement sections (app-level), ordered by startPpq. */
   const sections = ref<EditorSection[]>([]);
   /** Automation lanes (app-level), one per (target, param) pair. */
@@ -562,6 +422,10 @@ export const useProjectStore = defineStore('project', () => {
       denominator: s.denominator,
     }));
 
+    // Chord-track mirror: read back the Project's annotation stream (the chord
+    // commands write it through annotateChords, so it round-trips here).
+    chords.value = chordsFromAnnotation(doc.annotation);
+
     // Track mirror: structure from the Project, app fields + order from the
     // current mirror; tracks first seen in the Project are appended.
     const docTracks = Array.isArray(doc.tracks) ? doc.tracks : [];
@@ -639,6 +503,9 @@ export const useProjectStore = defineStore('project', () => {
               : {}),
           };
         }
+        // CC lanes are app-level metadata, carried forward across refreshes.
+        const ccLanes = cloneCcLanes(previous?.ccLanes);
+        if (ccLanes !== undefined) entry.ccLanes = ccLanes;
         const fadeIn =
           serializedFadePpq(serialized.fade_in_ppq, serialized.fade_in) ?? previous?.fadeInPpq ?? 0;
         if (fadeIn > 0) entry.fadeInPpq = fadeIn;
@@ -719,6 +586,7 @@ export const useProjectStore = defineStore('project', () => {
     ];
     clips.value = [];
     markers.value = [];
+    chords.value = [];
     sections.value = [];
     automationLanes.value = [];
     activeTrackId.value = trackId;
@@ -789,6 +657,15 @@ export const useProjectStore = defineStore('project', () => {
         // version 3; older documents simply have neither (defaults apply).
         if (track.instrument !== undefined)
           mirrorEntry.instrument = cloneInstrument(track.instrument);
+        if (track.soloSafe === true) mirrorEntry.soloSafe = true;
+        // Restore the VCA assignment only when the referenced group survives in
+        // the document mixer, so dangling ids never leak into the session.
+        if (
+          typeof track.vcaId === 'string' &&
+          (doc.mixer?.vcaGroups ?? []).some((group) => group.id === track.vcaId)
+        ) {
+          mirrorEntry.vcaId = track.vcaId;
+        }
         if (
           track.frozen !== undefined &&
           typeof track.frozen.assetId === 'string' &&
@@ -908,6 +785,13 @@ export const useProjectStore = defineStore('project', () => {
         }
       });
 
+      // Replay the chord-track annotation stream onto the rebuilt Project so it
+      // round-trips through refresh() below (chords are read back from toJson).
+      const documentChords = sanitizeChordSymbols(doc.chords ?? []);
+      if (documentChords.length > 0) {
+        created.annotateChords(toProjectChordSymbols(documentChords));
+      }
+
       if (project) project.delete();
       project = created;
       audioSourceIds = loadedSourceIds;
@@ -986,6 +870,25 @@ export const useProjectStore = defineStore('project', () => {
             };
           }
         }
+        // CC lanes are MIDI-clip metadata; hydrate and re-sanitize them against
+        // the clip window (malformed lanes/points drop out).
+        if (kind === 'midi' && Array.isArray(meta.ccLanes) && meta.ccLanes.length > 0) {
+          const lanes: ClipCcLane[] = [];
+          for (const lane of meta.ccLanes) {
+            if (!isValidController(lane.controller) || !isValidChannel(lane.channel)) continue;
+            const points = sanitizeCcPoints(
+              Array.isArray(lane.points) ? lane.points : [],
+              clip.lengthPpq,
+            );
+            if (points.length > 0) {
+              lanes.push({ controller: lane.controller, channel: lane.channel, points });
+            }
+          }
+          if (lanes.length > 0) {
+            lanes.sort((a, b) => a.controller - b.controller);
+            next.ccLanes = lanes;
+          }
+        }
         return next;
       });
       // Score annotations are content-addressed in the document; re-associate
@@ -1030,6 +933,7 @@ export const useProjectStore = defineStore('project', () => {
     tracks.value = [];
     clips.value = [];
     markers.value = [];
+    chords.value = [];
     sections.value = [];
     automationLanes.value = [];
     mixer.value = createDefaultMixerState();
@@ -1054,6 +958,7 @@ export const useProjectStore = defineStore('project', () => {
     tracks,
     clips,
     markers,
+    chords,
     sections,
     automationLanes,
     mixer,

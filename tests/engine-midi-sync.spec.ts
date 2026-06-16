@@ -221,6 +221,76 @@ describe('buildMidiClipSchedules', () => {
     expect(schedules.map((schedule) => schedule.id)).toEqual([3, 5, 7]);
   });
 
+  describe('cc lanes', () => {
+    it('bakes each CC breakpoint into a control-change event at its frame', () => {
+      const clip = makeClip(1, 1, {
+        notes: [],
+        ccLanes: [
+          {
+            controller: 1,
+            channel: 0,
+            points: [
+              { ppq: 0, value: 0 },
+              { ppq: 2, value: 127 },
+            ],
+          },
+        ],
+      });
+      const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], TEMPO_120, SAMPLE_RATE);
+      expect(schedule.events).toEqual([
+        { renderFrame: 0, word0: ccWord(0, 1, 0), wordCount: 1 },
+        { renderFrame: 2 * SPP, word0: ccWord(0, 1, 127), wordCount: 1 },
+      ]);
+    });
+
+    it('honors the lane channel and drops points outside the clip window', () => {
+      const clip = makeClip(1, 1, {
+        lengthPpq: 2,
+        notes: [],
+        ccLanes: [
+          {
+            controller: 11,
+            channel: 2,
+            points: [
+              { ppq: 1, value: 64 },
+              { ppq: 3, value: 100 },
+            ],
+          },
+        ],
+      });
+      const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], TEMPO_120, SAMPLE_RATE);
+      expect(schedule.events).toEqual([
+        { renderFrame: SPP, word0: ccWord(2, 11, 64), wordCount: 1 },
+      ]);
+    });
+
+    it('still sends CC from a muted (gain 0) clip, with no notes', () => {
+      const clip = makeClip(1, 1, {
+        gain: 0,
+        ccLanes: [{ controller: 1, channel: 0, points: [{ ppq: 1, value: 64 }] }],
+      });
+      const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], TEMPO_120, SAMPLE_RATE);
+      expect(schedule.events).toEqual([
+        { renderFrame: SPP, word0: ccWord(0, 1, 64), wordCount: 1 },
+      ]);
+    });
+
+    it('merges CC events with notes, keeping the event list sorted by frame', () => {
+      const clip = makeClip(1, 1, {
+        notes: [makeNote({ startPpq: 0, durationPpq: 1 })],
+        ccLanes: [{ controller: 1, channel: 0, points: [{ ppq: 2, value: 100 }] }],
+      });
+      const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], TEMPO_120, SAMPLE_RATE);
+      const frames = schedule.events.map((event) => event.renderFrame);
+      expect(frames).toEqual([...frames].sort((a, b) => a - b));
+      expect(schedule.events.at(-1)).toEqual({
+        renderFrame: 2 * SPP,
+        word0: ccWord(0, 1, 100),
+        wordCount: 1,
+      });
+    });
+  });
+
   describe('sf2 program prelude', () => {
     const sf2Track = (bank?: number, program?: number): EditorTrack =>
       makeTrack(1, { instrument: { kind: 'sf2', fontId: 'font-a', bank, program } });

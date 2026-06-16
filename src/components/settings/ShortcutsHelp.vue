@@ -135,7 +135,9 @@ function onKeydown(event: KeyboardEvent): void {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(17, 24, 39, 0.28);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
 }
 
 .dialog {
@@ -144,13 +146,15 @@ function onKeydown(event: KeyboardEvent): void {
   gap: 0.6rem;
   width: min(46rem, calc(100vw - 2rem));
   max-height: calc(100vh - 4rem);
-  padding: 1rem 1.25rem;
-  background: #1b1e25;
-  border: 1px solid #000;
-  border-radius: 8px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
-  color: #e2e6ee;
-  font-size: 12px;
+  padding: 1.25rem 1.4rem;
+  background: var(--glass-3);
+  -webkit-backdrop-filter: var(--glass-blur-strong);
+  backdrop-filter: var(--glass-blur-strong);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--glass-hairline), var(--shadow-modal);
+  color: var(--text-1);
+  font-size: var(--fs-sm);
 }
 
 .dialog:focus {
@@ -159,8 +163,8 @@ function onKeydown(event: KeyboardEvent): void {
 
 .dialog-title {
   margin: 0;
-  font-size: 14px;
-  font-weight: 700;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-bold);
   letter-spacing: 0.04em;
 }
 
@@ -172,16 +176,17 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 .scope-section {
-  border: 1px solid #2a2e38;
-  border-radius: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   padding: 0.5rem 0.7rem;
+  box-shadow: var(--raise-hi);
 }
 
 .scope-title {
   margin: 0 0 0.35rem;
-  font-size: 11px;
-  font-weight: 600;
-  color: #8b93a3;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--text-3);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
@@ -194,15 +199,15 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 .shortcut-label {
-  color: #c4cad6;
+  color: var(--text-2);
 }
 
 .shortcut-keys {
   margin: 0;
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-mono);
   white-space: nowrap;
   text-align: right;
-  color: #e2e6ee;
+  color: var(--text-1);
 }
 
 .dialog-actions {
@@ -211,11 +216,17 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 .dialog-actions .primary {
-  background: #2453a8;
-  border: 1px solid #60a5fa;
-  color: #e2e6ee;
-  border-radius: 4px;
+  background: var(--accent-strong);
+  border: 1px solid var(--accent);
+  color: var(--text-1);
+  border-radius: var(--radius-sm);
   padding: 0.25rem 0.9rem;
   cursor: pointer;
+  box-shadow: var(--raise-hi);
+  transition: background var(--dur-1) var(--ease-out);
+}
+
+.dialog-actions .primary:hover {
+  background: var(--accent-hover);
 }
 </style>

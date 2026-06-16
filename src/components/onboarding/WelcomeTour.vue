@@ -239,14 +239,14 @@ onBeforeUnmount(() => {
   position: fixed;
   inset: 0;
   z-index: 60;
-  background: rgba(0, 0, 0, 0.45);
+  background: rgba(17, 24, 39, 0.32);
 }
 
 .tour-highlight {
   position: fixed;
-  border: 2px solid #60a5fa;
-  border-radius: 6px;
-  box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.25);
+  border: 2px solid var(--accent);
+  border-radius: var(--radius-md);
+  box-shadow: 0 0 0 4px var(--accent-muted);
   pointer-events: none;
 }
 
@@ -256,13 +256,15 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 0.4rem;
   width: min(20rem, calc(100vw - 2rem));
-  padding: 0.75rem 0.9rem;
-  background: #1b1e25;
-  border: 1px solid #2a2e38;
-  border-radius: 8px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
-  color: #e2e6ee;
-  font-size: 12px;
+  padding: 0.85rem 1rem;
+  background: var(--glass-3);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--glass-hairline), var(--shadow-pop);
+  color: var(--text-1);
+  font-size: var(--fs-sm);
 }
 
 .tour-tooltip:focus {
@@ -271,20 +273,20 @@ onBeforeUnmount(() => {
 
 .tour-progress {
   margin: 0;
-  color: #8b93a3;
-  font-size: 11px;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
 }
 
 .tour-title {
   margin: 0;
-  font-size: 13px;
-  font-weight: 700;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-bold);
   letter-spacing: 0.02em;
 }
 
 .tour-body {
   margin: 0;
-  color: #b6bdca;
+  color: var(--text-2);
   line-height: 1.5;
 }
 
@@ -302,19 +304,26 @@ onBeforeUnmount(() => {
 .tour-skip {
   background: none;
   border: none;
-  color: #8b93a3;
+  box-shadow: none;
+  color: var(--text-3);
   cursor: pointer;
   padding: 0.25rem 0;
   text-decoration: underline;
 }
 
 .tour-actions button:not(.tour-skip) {
-  background: #232732;
-  border: 1px solid #2a2e38;
-  border-radius: 4px;
-  color: #e2e6ee;
+  background: var(--surface-3);
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
   padding: 0.25rem 0.7rem;
   cursor: pointer;
+  box-shadow: var(--control-lift);
+  transition: background var(--dur-1) var(--ease-out);
+}
+
+.tour-actions button:not(.tour-skip):not(.primary):not(:disabled):hover {
+  background: var(--surface-4);
+  box-shadow: var(--control-lift-hover);
 }
 
 .tour-actions button:disabled {
@@ -323,7 +332,11 @@ onBeforeUnmount(() => {
 }
 
 .tour-actions .primary {
-  background: #2453a8;
-  border-color: #60a5fa;
+  background: var(--accent-strong);
+  border-color: var(--accent);
+}
+
+.tour-actions .primary:not(:disabled):hover {
+  background: var(--accent-hover);
 }
 </style>

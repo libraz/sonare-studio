@@ -11,9 +11,11 @@ import {
   setActiveClip,
   setAutomationLaneEnabled,
   setAutomationLanePoints,
+  setClipCcLane,
   setClipGain,
   setClipLoop,
   setMarker,
+  setProjectChords,
   setSections,
   setTempoSegments,
   setTimeSignatures,
@@ -141,6 +143,52 @@ describe('project serialization', () => {
       { name: 'Verse', color: '#334455', startPpq: 0, endPpq: 16 },
       { name: 'Chorus', color: expect.any(String), startPpq: 16, endPpq: 32 },
     ]);
+  });
+
+  it('round-trips clip CC lanes through the document', async () => {
+    addNote({ pitch: 60, startPpq: 0, durationPpq: 1, velocity: 100 });
+    setClipCcLane(store.clipId, 1, 0, [
+      { ppq: 0, value: 0 },
+      { ppq: 2, value: 127 },
+    ]);
+    const doc = serializeProject();
+    expect(doc.tracks[0].clips[0].ccLanes).toEqual([
+      {
+        controller: 1,
+        channel: 0,
+        points: [
+          { ppq: 0, value: 0 },
+          { ppq: 2, value: 127 },
+        ],
+      },
+    ]);
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    expect(serializeProject()).toEqual(doc);
+    expect(store.activeClip?.ccLanes).toEqual(doc.tracks[0].clips[0].ccLanes);
+  });
+
+  it('round-trips the chord track through the document', async () => {
+    setProjectChords([
+      { startPpq: 0, endPpq: 4, rootPc: 0, quality: 0, bassPc: 4 },
+      { startPpq: 4, endPpq: 8, rootPc: 7, quality: 4 },
+    ]);
+    const doc = serializeProject();
+    expect(doc.chords).toEqual([
+      { startPpq: 0, endPpq: 4, rootPc: 0, quality: 0, bassPc: 4 },
+      { startPpq: 4, endPpq: 8, rootPc: 7, quality: 4 },
+    ]);
+
+    // The chord stream is replayed through annotateChords and read back from
+    // the rebuilt Project, so re-serializing yields the same document.
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    expect(serializeProject()).toEqual(doc);
+    expect(store.chords).toEqual(doc.chords);
+  });
+
+  it('omits the chord track from the document when empty', () => {
+    const doc = serializeProject();
+    expect(doc.chords).toBeUndefined();
   });
 
   it('loadProjectDocument round-trips: re-serializing yields the same document', async () => {

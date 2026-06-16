@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
+import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { type ExportRenderHandle, renderMixdownInWorker } from '@/export/client';
 import { type AudioEncoder, listEncoders, WAV_ENCODER_ID } from '@/export/codecs';
 import {
@@ -150,6 +151,30 @@ const wavBitDepthProxy = computed({
   },
 });
 
+/** Format picker options, derived from the registered encoders. */
+const encoderOptions = computed(() =>
+  encoderList.value.map((encoder) => ({ value: encoder.id, label: encoder.label })),
+);
+
+/** WAV bit-depth options ('32f' rides as a string via wavBitDepthProxy). */
+const WAV_BIT_DEPTH_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: '16', label: '16-bit PCM' },
+  { value: '24', label: '24-bit PCM' },
+  { value: '32f', label: '32-bit float' },
+];
+
+/** MP3 bitrate options. */
+const mp3BitrateOptions = MP3_BITRATES.map((bitrate) => ({
+  value: bitrate,
+  label: `${bitrate} kbps`,
+}));
+
+/** Sample-rate options, labelled in kHz. */
+const sampleRateOptions = EXPORT_SAMPLE_RATES.map((rate) => ({
+  value: rate,
+  label: `${(rate / 1000).toLocaleString('en-US')} kHz`,
+}));
+
 /** Formats a dB / LUFS value for the report ('-inf' for silence). */
 function formatLevel(value: number): string {
   return Number.isFinite(value) ? value.toFixed(1) : '-inf';
@@ -269,17 +294,22 @@ function onKeydown(event: KeyboardEvent): void {
       <div class="dialog-grid">
         <label class="field-label" for="export-format">Format</label>
         <div class="field">
-          <select id="export-format" v-model="model.encoderId" class="format-select" :disabled="busy">
-            <option v-for="encoder in encoderList" :key="encoder.id" :value="encoder.id">
-              {{ encoder.label }}
-            </option>
-          </select>
+          <SelectMenu
+            v-model="model.encoderId"
+            class="format-select"
+            :options="encoderOptions"
+            :disabled="busy"
+            aria-label="Format"
+          />
           <div v-if="model.encoderId === WAV_ENCODER_ID" class="format-options wav-options">
-            <select v-model="wavBitDepthProxy" class="wav-bit-depth" :disabled="busy" aria-label="Bit depth">
-              <option value="16">16-bit PCM</option>
-              <option value="24">24-bit PCM</option>
-              <option value="32f">32-bit float</option>
-            </select>
+            <SelectMenu
+              v-model="wavBitDepthProxy"
+              class="wav-bit-depth"
+              size="sm"
+              :options="WAV_BIT_DEPTH_OPTIONS"
+              :disabled="busy"
+              aria-label="Bit depth"
+            />
             <label class="check-label">
               <input
                 v-model="model.wavDither"
@@ -291,31 +321,26 @@ function onKeydown(event: KeyboardEvent): void {
             </label>
           </div>
           <div v-if="model.encoderId === MP3_ENCODER_ID" class="format-options mp3-options">
-            <select
-              v-model.number="model.mp3Bitrate"
+            <SelectMenu
+              v-model="model.mp3Bitrate"
               class="mp3-bitrate"
+              size="sm"
+              :options="mp3BitrateOptions"
               :disabled="busy"
               aria-label="Bitrate"
-            >
-              <option v-for="bitrate in MP3_BITRATES" :key="bitrate" :value="bitrate">
-                {{ bitrate }} kbps
-              </option>
-            </select>
+            />
           </div>
         </div>
 
         <label class="field-label" for="export-sample-rate">Sample rate</label>
         <div class="field">
-          <select
-            id="export-sample-rate"
-            v-model.number="model.sampleRate"
+          <SelectMenu
+            v-model="model.sampleRate"
             class="sample-rate-select"
+            :options="sampleRateOptions"
             :disabled="busy"
-          >
-            <option v-for="rate in EXPORT_SAMPLE_RATES" :key="rate" :value="rate">
-              {{ (rate / 1000).toLocaleString('en-US') }} kHz
-            </option>
-          </select>
+            aria-label="Sample rate"
+          />
         </div>
 
         <span class="field-label">Range</span>
@@ -425,7 +450,9 @@ function onKeydown(event: KeyboardEvent): void {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(17, 24, 39, 0.28);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
 }
 
 .dialog {
@@ -434,14 +461,16 @@ function onKeydown(event: KeyboardEvent): void {
   gap: 0.75rem;
   width: min(30rem, calc(100vw - 2rem));
   max-height: calc(100vh - 4rem);
-  padding: 1rem 1.25rem;
+  padding: 1.25rem 1.4rem;
   overflow: auto;
-  background: #1b1e25;
-  border: 1px solid #000;
-  border-radius: 8px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
-  color: #e2e6ee;
-  font-size: 12px;
+  background: var(--glass-3);
+  -webkit-backdrop-filter: var(--glass-blur-strong);
+  backdrop-filter: var(--glass-blur-strong);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--glass-hairline), var(--shadow-modal);
+  color: var(--text-1);
+  font-size: var(--fs-sm);
 }
 
 .dialog:focus {
@@ -450,8 +479,8 @@ function onKeydown(event: KeyboardEvent): void {
 
 .dialog-title {
   margin: 0;
-  font-size: 14px;
-  font-weight: 700;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-bold);
   letter-spacing: 0.04em;
 }
 
@@ -464,8 +493,8 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 .field-label {
-  color: #8b93a3;
-  font-size: 11px;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -497,18 +526,26 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 .check-label.disabled {
-  color: #5a6170;
+  color: var(--text-4);
   cursor: default;
 }
 
 select,
 input[type='text'] {
-  background: #12141a;
-  border: 1px solid #2a2e38;
-  border-radius: 4px;
-  color: #e2e6ee;
-  font-size: 12px;
+  background: var(--surface-inset);
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
+  font-size: var(--fs-sm);
   padding: 0.2rem 0.35rem;
+  box-shadow: var(--control-edge), var(--inset-well);
+}
+
+select:focus,
+select:focus-visible,
+input[type='text']:focus,
+input[type='text']:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--accent), var(--inset-well), var(--ring);
 }
 
 .filename-input {
@@ -517,8 +554,8 @@ input[type='text'] {
 }
 
 .filename-preview {
-  color: #8b93a3;
-  font-size: 11px;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -528,10 +565,10 @@ input[type='text'] {
 .dialog-errors {
   margin: 0;
   padding: 0.4rem 0.6rem 0.4rem 1.5rem;
-  background: #3a2a0c;
-  border: 1px solid #fbbf24;
-  border-radius: 4px;
-  color: #fde68a;
+  background: var(--warning-surface);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-sm);
+  color: var(--warning-text);
 }
 
 .export-progress {
@@ -543,21 +580,21 @@ input[type='text'] {
 .progress-track {
   flex: 1;
   height: 0.45rem;
-  background: #12141a;
-  border: 1px solid #2a2e38;
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
   border-radius: 999px;
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
-  background: #60a5fa;
+  background: var(--accent);
   transition: width 120ms linear;
 }
 
 .progress-stage {
-  color: #8b93a3;
-  font-size: 11px;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
   max-width: 12rem;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -566,20 +603,20 @@ input[type='text'] {
 
 .export-cancelled {
   margin: 0;
-  color: #fbbf24;
+  color: var(--warning);
 }
 
 .export-report {
-  border: 1px solid #2a2e38;
-  border-radius: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   padding: 0.4rem 0.6rem;
 }
 
 .report-title {
   margin: 0 0 0.3rem;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 600;
-  color: #8b93a3;
+  color: var(--text-3);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
@@ -593,7 +630,7 @@ input[type='text'] {
 }
 
 .report-grid dt {
-  color: #8b93a3;
+  color: var(--text-3);
 }
 
 .report-grid dd {
@@ -604,10 +641,10 @@ input[type='text'] {
 .dialog-error {
   margin: 0;
   padding: 0.4rem 0.6rem;
-  background: #3a1414;
-  border: 1px solid #ef4444;
-  border-radius: 4px;
-  color: #fecaca;
+  background: var(--danger-surface);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  color: var(--danger-text);
 }
 
 .dialog-actions {
@@ -617,10 +654,10 @@ input[type='text'] {
 }
 
 .dialog-actions .primary {
-  background: #2453a8;
-  border: 1px solid #60a5fa;
-  color: #e2e6ee;
-  border-radius: 4px;
+  background: var(--accent-strong);
+  border: 1px solid var(--accent);
+  color: var(--text-1);
+  border-radius: var(--radius-sm);
   padding: 0.25rem 0.9rem;
   cursor: pointer;
 }

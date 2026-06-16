@@ -1,0 +1,88 @@
+/*
+ * Global base layer: document reset, light UA chrome, custom scrollbars and
+ * text-selection tint. Imported after tokens.css (consumes its vars) and before
+ * controls.css so component styles still win. This makes native chrome —
+ * scrollbars, form controls, selection — read as part of the light frosted DAW
+ * shell rather than the browser default.
+ */
+
+:root {
+  /* Render native scrollbars, form controls and the canvas backdrop light. */
+  color-scheme: light;
+  /* Default tint for range/checkbox/radio/progress unless a component overrides. */
+  accent-color: var(--accent);
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--surface-0);
+  color: var(--text-2);
+  font-family: var(--font-sans);
+  /* Crisper text on light surfaces. */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/*
+ * Atmospheric backdrop: two faint colored light-blooms over the light base give
+ * the frosted-glass panels something with depth and subtle hue to refract,
+ * instead of floating over a flat gray. Fixed so it stays put behind the shell.
+ */
+body {
+  background-image:
+    radial-gradient(120% 90% at 12% -10%, rgba(10, 132, 255, 0.1), transparent 55%),
+    radial-gradient(110% 80% at 100% 0%, rgba(94, 92, 230, 0.08), transparent 50%),
+    radial-gradient(120% 120% at 50% 120%, rgba(48, 209, 176, 0.06), transparent 55%);
+  background-attachment: fixed;
+}
+
+#app {
+  height: 100%;
+  /* The shell owns its own scrolling regions; the page itself never scrolls. */
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* Accent-tinted text selection instead of the OS default highlight. */
+::selection {
+  background: var(--accent-muted);
+  color: var(--text-1);
+}
+
+/* --- Custom scrollbars -------------------------------------------------
+ * Slim, unobtrusive pills that float over a transparent track — the thumb's
+ * breathing room comes from a transparent border clipped to the padding box.
+ * Applies to every DOM scroll region; the piano roll and arrangement draw
+ * their own canvas scrollbars and are unaffected. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(17, 24, 39, 0.22) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(17, 24, 39, 0.2);
+  background-clip: padding-box;
+  border: 3px solid transparent;
+  border-radius: var(--radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(17, 24, 39, 0.34);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}

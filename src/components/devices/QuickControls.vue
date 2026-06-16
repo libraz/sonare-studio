@@ -168,8 +168,8 @@ function onKnobKeydown(control: QuickControl, event: KeyboardEvent): void {
 .qc-error {
   margin: 0;
   padding: 2px 6px;
-  background: #3b1219;
-  color: #ffb4b4;
+  background: var(--danger-surface);
+  color: var(--danger-text);
   font: 10px/1.4 system-ui, sans-serif;
   border-radius: 3px;
 }
@@ -177,7 +177,7 @@ function onKnobKeydown(control: QuickControl, event: KeyboardEvent): void {
 .qc-empty {
   margin: 0;
   padding: 6px;
-  color: #5b6270;
+  color: var(--text-4);
   font: 11px system-ui, sans-serif;
 }
 
@@ -200,15 +200,16 @@ function onKnobKeydown(control: QuickControl, event: KeyboardEvent): void {
   position: relative;
   width: 34px;
   height: 34px;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
   background: radial-gradient(circle at 35% 30%, #2c313c, #1a1d24 70%);
-  border: 1px solid #2a2e37;
+  border: 1px solid var(--border);
+  box-shadow: var(--inset-well);
   cursor: ns-resize;
   touch-action: none;
 }
 
 .qc-knob:focus-visible {
-  outline: 1px solid #60a5fa;
+  outline: 1px solid var(--accent);
   outline-offset: 1px;
 }
 
@@ -226,7 +227,7 @@ function onKnobKeydown(control: QuickControl, event: KeyboardEvent): void {
   height: 11px;
   margin-left: -1px;
   border-radius: 1px;
-  background: #60a5fa;
+  background: var(--accent);
 }
 
 .qc-name {
@@ -235,13 +236,13 @@ function onKnobKeydown(control: QuickControl, event: KeyboardEvent): void {
   text-overflow: ellipsis;
   white-space: nowrap;
   font: 600 9px system-ui, sans-serif;
-  color: #8b93a3;
+  color: var(--text-3);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 
 .qc-value {
   font: 10px system-ui, sans-serif;
-  color: #c8cdd6;
+  color: var(--text-2);
 }
 </style>

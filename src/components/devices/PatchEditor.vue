@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { setTrackInstrument } from '@/project/commands';
 import { trackInstrument } from '@/project/instrument';
 import { getWasmModule, useProjectStore } from '@/project/store';
@@ -165,12 +166,21 @@ function enumValue(field: EnumFieldView): string {
   return typeof value === 'string' && value.length > 0 ? value : 'default';
 }
 
-function onEnumChange(field: EnumFieldView, event: Event): void {
-  const value = (event.target as HTMLSelectElement).value;
+/** Maps a string enum table to SelectMenu options. */
+function enumOptions(values: string[]): { value: string; label: string }[] {
+  return values.map((value) => ({ value, label: value }));
+}
+
+function onEnumChange(field: EnumFieldView, value: string): void {
   draft.value = { ...draft.value, [field.id]: value };
 }
 
 // --- Mod matrix --------------------------------------------------------------
+
+/** Mod source options for the matrix selects. */
+const modSourceOptions = computed(() => enumOptions(enums.value.modSources));
+/** Mod destination options for the matrix selects. */
+const modDestinationOptions = computed(() => enumOptions(enums.value.modDestinations));
 
 function addModRow(): void {
   if (modRows.value.length >= MAX_MOD_ROUTINGS) return;
@@ -340,11 +350,13 @@ function onKeydown(event: KeyboardEvent): void {
           <h3 class="section-title">OSC</h3>
           <label v-for="field in OSC_ENUM_FIELDS" :key="field.id" class="enum-row">
             <span class="field-label">{{ field.label }}</span>
-            <select :data-enum="field.id" :value="enumValue(field)" @change="onEnumChange(field, $event)">
-              <option v-for="option in field.options()" :key="option" :value="option">
-                {{ option }}
-              </option>
-            </select>
+            <SelectMenu
+              :model-value="enumValue(field)"
+              :options="enumOptions(field.options())"
+              :aria-label="field.label"
+              size="sm"
+              @change="onEnumChange(field, $event)"
+            />
           </label>
           <label v-for="field in oscFields" :key="field.id" class="field-row">
             <span class="field-label">{{ field.label }}</span>
@@ -365,11 +377,13 @@ function onKeydown(event: KeyboardEvent): void {
           <h3 class="section-title">FILTER</h3>
           <label v-for="field in FILTER_ENUM_FIELDS" :key="field.id" class="enum-row">
             <span class="field-label">{{ field.label }}</span>
-            <select :data-enum="field.id" :value="enumValue(field)" @change="onEnumChange(field, $event)">
-              <option v-for="option in field.options()" :key="option" :value="option">
-                {{ option }}
-              </option>
-            </select>
+            <SelectMenu
+              :model-value="enumValue(field)"
+              :options="enumOptions(field.options())"
+              :aria-label="field.label"
+              size="sm"
+              @change="onEnumChange(field, $event)"
+            />
           </label>
           <label v-for="field in filterFields" :key="field.id" class="field-row">
             <span class="field-label">{{ field.label }}</span>
@@ -449,11 +463,13 @@ function onKeydown(event: KeyboardEvent): void {
           <h3 class="section-title">GLOBAL</h3>
           <label v-for="field in GLOBAL_ENUM_FIELDS" :key="field.id" class="enum-row">
             <span class="field-label">{{ field.label }}</span>
-            <select :data-enum="field.id" :value="enumValue(field)" @change="onEnumChange(field, $event)">
-              <option v-for="option in field.options()" :key="option" :value="option">
-                {{ option }}
-              </option>
-            </select>
+            <SelectMenu
+              :model-value="enumValue(field)"
+              :options="enumOptions(field.options())"
+              :aria-label="field.label"
+              size="sm"
+              @change="onEnumChange(field, $event)"
+            />
           </label>
           <label v-for="field in globalFields" :key="field.id" class="field-row">
             <span class="field-label">{{ field.label }}</span>
@@ -473,29 +489,23 @@ function onKeydown(event: KeyboardEvent): void {
         <section class="patch-section mod-matrix" aria-label="Mod matrix">
           <h3 class="section-title">MOD MATRIX</h3>
           <div v-for="(row, index) in modRows" :key="index" class="mod-row">
-            <select
+            <SelectMenu
               class="mod-source"
-              :value="row.source"
+              :model-value="row.source"
+              :options="modSourceOptions"
               :aria-label="`Mod source ${index + 1}`"
-              @change="onModRowChange(index, { source: ($event.target as HTMLSelectElement).value })"
-            >
-              <option v-for="option in enums.modSources" :key="option" :value="option">
-                {{ option }}
-              </option>
-            </select>
+              size="sm"
+              @update:model-value="onModRowChange(index, { source: $event })"
+            />
             <span class="mod-arrow">→</span>
-            <select
+            <SelectMenu
               class="mod-destination"
-              :value="row.destination"
+              :model-value="row.destination"
+              :options="modDestinationOptions"
               :aria-label="`Mod destination ${index + 1}`"
-              @change="
-                onModRowChange(index, { destination: ($event.target as HTMLSelectElement).value })
-              "
-            >
-              <option v-for="option in enums.modDestinations" :key="option" :value="option">
-                {{ option }}
-              </option>
-            </select>
+              size="sm"
+              @update:model-value="onModRowChange(index, { destination: $event })"
+            />
             <input
               class="mod-depth"
               type="number"
@@ -544,7 +554,9 @@ function onKeydown(event: KeyboardEvent): void {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(17, 24, 39, 0.28);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
 }
 
 .patch-dialog {
@@ -553,13 +565,15 @@ function onKeydown(event: KeyboardEvent): void {
   gap: 0.5rem;
   width: min(46rem, calc(100vw - 2rem));
   max-height: calc(100vh - 3rem);
-  padding: 0.75rem 1rem;
-  background: #1b1e25;
-  border: 1px solid #000;
-  border-radius: 8px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
-  color: #e2e6ee;
-  font-size: 12px;
+  padding: 1rem 1.25rem;
+  background: var(--glass-3);
+  -webkit-backdrop-filter: var(--glass-blur-strong);
+  backdrop-filter: var(--glass-blur-strong);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--glass-hairline), var(--shadow-modal);
+  color: var(--text-1);
+  font-size: var(--fs-sm);
   overflow: hidden;
 }
 
@@ -575,36 +589,37 @@ function onKeydown(event: KeyboardEvent): void {
 
 .patch-title {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-md);
   font-weight: 700;
   letter-spacing: 0.04em;
 }
 
 .patch-base {
   margin-left: 0.5rem;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 400;
-  color: #8b93a3;
+  color: var(--text-3);
 }
 
 .patch-close {
   border: none;
   background: transparent;
-  color: #8b93a3;
-  font-size: 16px;
+  box-shadow: none;
+  color: var(--text-3);
+  font-size: var(--fs-xl);
   line-height: 1;
   cursor: pointer;
 }
 
 .patch-close:hover {
-  color: #e2e6ee;
+  color: var(--text-1);
 }
 
 .patch-error {
   margin: 0;
   padding: 2px 6px;
-  background: #3b1219;
-  color: #ffb4b4;
+  background: var(--danger-surface);
+  color: var(--danger-text);
   font: 10px/1.4 system-ui, sans-serif;
   border-radius: 3px;
 }
@@ -618,8 +633,8 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 .patch-section {
-  border: 1px solid #2a2e38;
-  border-radius: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   padding: 0.4rem 0.5rem;
   display: flex;
   flex-direction: column;
@@ -630,7 +645,7 @@ function onKeydown(event: KeyboardEvent): void {
   margin: 0 0 0.15rem;
   font-size: 10px;
   font-weight: 700;
-  color: #8b93a3;
+  color: var(--text-3);
   letter-spacing: 0.08em;
 }
 
@@ -648,7 +663,7 @@ function onKeydown(event: KeyboardEvent): void {
 
 .field-label {
   font-size: 10px;
-  color: #8b93a3;
+  color: var(--text-3);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -656,7 +671,7 @@ function onKeydown(event: KeyboardEvent): void {
 
 .field-value {
   font-size: 10px;
-  color: #c8cdd6;
+  color: var(--text-2);
   text-align: right;
   white-space: nowrap;
 }
@@ -664,16 +679,17 @@ function onKeydown(event: KeyboardEvent): void {
 .field-row input[type='range'] {
   width: 100%;
   height: 12px;
-  accent-color: #60a5fa;
+  accent-color: var(--accent);
 }
 
 .enum-row select,
 .mod-row select {
-  background: #14161b;
-  color: #c8cdd6;
-  border: 1px solid #2a2e38;
+  background: var(--surface-2);
+  color: var(--text-2);
+  border: 1px solid var(--border);
   border-radius: 3px;
-  font-size: 11px;
+  box-shadow: var(--inset-well);
+  font-size: var(--fs-xs);
   padding: 1px 2px;
   min-width: 0;
 }
@@ -681,8 +697,9 @@ function onKeydown(event: KeyboardEvent): void {
 .envelope-canvas {
   width: 100%;
   height: 48px;
-  border: 1px solid #2a2e38;
+  border: 1px solid var(--border);
   border-radius: 3px;
+  box-shadow: var(--inset-well);
 }
 
 .mod-matrix {
@@ -697,37 +714,39 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 .mod-arrow {
-  color: #5b6270;
+  color: var(--text-4);
 }
 
 .mod-depth {
-  background: #14161b;
-  color: #c8cdd6;
-  border: 1px solid #2a2e38;
+  background: var(--surface-2);
+  color: var(--text-2);
+  border: none;
   border-radius: 3px;
-  font-size: 11px;
+  box-shadow: var(--control-edge), var(--inset-well);
+  font-size: var(--fs-xs);
   padding: 1px 4px;
 }
 
 .mod-remove {
   border: none;
   background: transparent;
-  color: #5b6270;
+  box-shadow: none;
+  color: var(--text-4);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1;
 }
 
 .mod-remove:hover {
-  color: #ffb4b4;
+  color: var(--danger-text);
 }
 
 .mod-add {
   align-self: flex-start;
-  background: #1d2027;
-  color: #c8cdd6;
-  border: 1px solid #2a2e37;
-  border-radius: 4px;
+  background: var(--surface-3);
+  color: var(--text-2);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--control-lift);
   font: 600 10px system-ui, sans-serif;
   padding: 2px 8px;
   cursor: pointer;
@@ -749,22 +768,22 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 .patch-actions button {
-  background: #1d2027;
-  color: #c8cdd6;
-  border: 1px solid #2a2e37;
-  border-radius: 4px;
+  background: var(--surface-3);
+  color: var(--text-2);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--control-lift);
   padding: 0.25rem 0.9rem;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .patch-actions .primary {
-  background: #2453a8;
-  border-color: #60a5fa;
-  color: #e2e6ee;
+  background: var(--accent-strong);
+  border-color: var(--accent);
+  color: var(--text-1);
 }
 
 .patch-actions .audition {
-  border-color: #3b82f6;
+  box-shadow: inset 0 0 0 1px var(--accent), var(--shadow-1);
 }
 </style>

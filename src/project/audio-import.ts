@@ -68,8 +68,12 @@ export function mixdownToMono(channels: ReadonlyArray<Float32Array>): Float32Arr
   return out;
 }
 
-/** Resolves the default analysis provider from the wasm module, if loadable. */
-async function defaultAnalysis(): Promise<AudioAnalysisFunctions | null> {
+/**
+ * Resolves the default analysis provider from the wasm module, if loadable.
+ * Exposed so callers re-analyzing an already-imported clip (e.g. the clip
+ * inspector's "Re-detect tempo") reuse the same detector wiring as import.
+ */
+export async function resolveAudioAnalysis(): Promise<AudioAnalysisFunctions | null> {
   try {
     const wasm = (await ensureWasm()) as unknown as AudioAnalysisFunctions;
     if (typeof wasm.detectBpm === 'function' || typeof wasm.detectKey === 'function') {
@@ -135,7 +139,7 @@ export async function ingestAudioBuffer(
   name: string,
   options: IngestAudioOptions = {},
 ): Promise<AudioAssetMeta> {
-  const analysis = options.analysis === undefined ? await defaultAnalysis() : options.analysis;
+  const analysis = options.analysis === undefined ? await resolveAudioAnalysis() : options.analysis;
   const detected = analyzeAudioTags(channels, sampleRate, analysis);
   const tags: AudioAssetTags = { ...detected, ...options.tags };
   return saveAsset(

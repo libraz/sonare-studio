@@ -137,9 +137,9 @@ function fillHeight(velocity: number): string {
 .step-grid {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 4px;
-  background: #101216;
+  gap: var(--sp-1);
+  padding: var(--sp-2);
+  background: var(--surface-1);
   touch-action: none;
   user-select: none;
 }
@@ -147,7 +147,7 @@ function fillHeight(velocity: number): string {
 .grid-row {
   display: flex;
   align-items: stretch;
-  gap: 4px;
+  gap: var(--sp-2);
   min-height: 22px;
 }
 
@@ -157,26 +157,27 @@ function fillHeight(velocity: number): string {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 4px;
-  padding: 0 6px;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-3);
   border: 1px solid transparent;
-  border-radius: 3px;
-  background: #181a20;
-  color: #9aa1ad;
-  font: 11px/1.2 system-ui, sans-serif;
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  color: var(--text-3);
+  font: var(--fs-xs)/1.2 var(--font-sans);
   text-align: left;
   cursor: pointer;
   overflow: hidden;
+  transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
 }
 
 .row-selected .row-label {
-  border-color: #3a4150;
-  background: #1c1f26;
-  color: #e2e6ed;
+  border-color: var(--border);
+  background: var(--surface-4);
+  color: var(--text-1);
 }
 
 .row-muted .row-label {
-  color: #5b6270;
+  color: var(--text-4);
 }
 
 .row-name {
@@ -187,14 +188,14 @@ function fillHeight(velocity: number): string {
 
 .row-mute-flag {
   flex: none;
-  font-weight: 700;
-  color: #d97706;
+  font-weight: var(--fw-bold);
+  color: var(--warning);
 }
 
 .row-cells {
   flex: 1;
   display: flex;
-  gap: 2px;
+  gap: var(--sp-1);
   min-width: 0;
 }
 
@@ -203,13 +204,14 @@ function fillHeight(velocity: number): string {
   flex: 1;
   min-width: 8px;
   border-radius: 2px;
-  background: #1a1d24;
+  background: var(--surface-inset);
   overflow: hidden;
   cursor: pointer;
+  box-shadow: var(--inset-well);
 }
 
 .cell-accent {
-  background: #20242d;
+  background: var(--surface-3);
 }
 
 .row-muted .grid-cell {
@@ -223,13 +225,14 @@ function fillHeight(velocity: number): string {
   bottom: 0;
   background: #4f86d8;
   border-radius: 2px 2px 0 0;
+  transition: background var(--dur-1) var(--ease-out);
 }
 
 .row-selected .cell-fill {
-  background: #60a5fa;
+  background: var(--accent);
 }
 
 .cell-active {
-  box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(10, 132, 255, 0.6);
 }
 </style>

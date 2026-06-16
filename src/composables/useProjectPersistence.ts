@@ -1,0 +1,310 @@
+import { computed, nextTick, type Ref, ref, watch } from 'vue';
+import type { useAutosave } from '@/composables/useAutosave';
+import { promptDialog } from '@/composables/useDialogs';
+import { describeError } from '@/lib/errors';
+import { downloadSzd, pickAndReadSzd } from '@/persistence/local-file';
+import {
+  deleteProject,
+  isOpfsAvailable,
+  listProjects,
+  loadProject,
+  type StoredProjectInfo,
+  saveProject,
+} from '@/persistence/opfs';
+import { decodeSzd, encodeSzd } from '@/persistence/szd';
+import { exportProjectSmf } from '@/project/export';
+import {
+  loadProjectDocument,
+  type ProjectDocument,
+  serializeProject,
+} from '@/project/serialization';
+import { useProjectStore } from '@/project/store';
+import { makeDemoDocument, type TemplateName } from '@/project/templates';
+import { createFocusTrap, type FocusTrap } from '@/ui/settings/focus-trap';
+import {
+  loadRecentProjects,
+  saveRecentProjects,
+  withoutRecent,
+  withRecent,
+} from '@/ui/shell/recent-projects';
+
+const AUTOSAVE_SLOT = 'autosave';
+
+type Autosave = ReturnType<typeof useAutosave>;
+type ConfirmAction = (
+  message: string,
+  opts?: { danger?: boolean; confirmLabel?: string; title?: string },
+) => Promise<boolean>;
+type RunAction = (action: () => Promise<void>) => Promise<void>;
+type DownloadBlobFile = (blob: Blob, filename: string) => void;
+
+export interface ProjectPersistenceOptions {
+  autosave: Autosave;
+  confirmAction: ConfirmAction;
+  downloadBlobFile: DownloadBlobFile;
+  errorMessage: Ref<string>;
+  runAction: RunAction;
+}
+
+export function useProjectPersistence(options: ProjectPersistenceOptions) {
+  const { autosave, confirmAction, downloadBlobFile, errorMessage, runAction } = options;
+  const store = useProjectStore();
+
+  const dirty = ref(false);
+  const opfsAvailable = isOpfsAvailable();
+  const projectMenuOpen = ref(false);
+  const projectMenuRoot = ref<HTMLElement | null>(null);
+  const newDialogOpen = ref(false);
+  const openDialogOpen = ref(false);
+  const storedProjects = ref<StoredProjectInfo[]>([]);
+  const recentProjects = ref<string[]>(loadRecentProjects());
+  const openDialogRef = ref<HTMLElement | null>(null);
+
+  let openDialogTrap: FocusTrap | null = null;
+
+  watch(
+    () =>
+      [
+        store.projectName,
+        store.tracks,
+        store.clips,
+        store.markers,
+        store.sections,
+        store.tempoSegments,
+        store.timeSignatures,
+        store.mixer,
+        store.scoreAnnotations,
+        store.displayTransposeSemitones,
+      ] as const,
+    () => {
+      if (store.initialized) dirty.value = true;
+    },
+  );
+
+  watch(openDialogOpen, (open) => {
+    if (open) {
+      void nextTick(() => {
+        if (openDialogRef.value === null) return;
+        openDialogTrap = createFocusTrap(openDialogRef.value);
+        openDialogTrap.activate();
+      });
+    } else {
+      disposeOpenDialogTrap();
+    }
+  });
+
+  const recentMenuNames = computed(() =>
+    recentProjects.value.filter((name) => name !== store.projectName && name !== AUTOSAVE_SLOT),
+  );
+
+  async function markClean(): Promise<void> {
+    await nextTick();
+    dirty.value = false;
+  }
+
+  async function bootProject(): Promise<void> {
+    let restored = false;
+    if (isOpfsAvailable()) {
+      try {
+        const stored = await listProjects();
+        if (
+          stored.some((info) => info.name === AUTOSAVE_SLOT) &&
+          (await confirmAction('Restore the autosaved project from your last session?', {
+            title: 'Restore session',
+            danger: false,
+            confirmLabel: 'Restore',
+          }))
+        ) {
+          restored = await autosave.restoreAutosave();
+        }
+      } catch (err) {
+        errorMessage.value = describeError(err);
+      }
+    }
+    if (!restored) {
+      await loadProjectDocument(makeDemoDocument());
+    }
+    await markClean();
+  }
+
+  function rememberRecentProject(name: string): void {
+    recentProjects.value = withRecent(recentProjects.value, name);
+    saveRecentProjects(recentProjects.value);
+  }
+
+  function closeProjectMenu(): void {
+    projectMenuOpen.value = false;
+  }
+
+  function onOpenDialogKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      openDialogOpen.value = false;
+    }
+  }
+
+  function openNewDialog(): void {
+    closeProjectMenu();
+    newDialogOpen.value = true;
+  }
+
+  function onCreateProject(payload: { document: ProjectDocument; template: TemplateName }): void {
+    newDialogOpen.value = false;
+    void runAction(async () => {
+      await loadProjectDocument(payload.document);
+      await markClean();
+    });
+  }
+
+  async function refreshStoredProjects(): Promise<void> {
+    if (!opfsAvailable) {
+      storedProjects.value = [];
+      return;
+    }
+    storedProjects.value = (await listProjects()).filter((info) => info.name !== AUTOSAVE_SLOT);
+  }
+
+  function openOpenDialog(): void {
+    closeProjectMenu();
+    openDialogOpen.value = true;
+    void runAction(refreshStoredProjects);
+  }
+
+  function confirmDiscard(): Promise<boolean> {
+    if (!dirty.value) return Promise.resolve(true);
+    return confirmAction('Discard unsaved changes in the current project?', {
+      title: 'Unsaved changes',
+      confirmLabel: 'Discard',
+    });
+  }
+
+  async function openStoredProject(name: string): Promise<void> {
+    if (!(await confirmDiscard())) return;
+    void runAction(async () => {
+      const bytes = await loadProject(name);
+      await loadProjectDocument(decodeSzd(bytes));
+      store.projectName = name;
+      rememberRecentProject(name);
+      await markClean();
+      openDialogOpen.value = false;
+    });
+  }
+
+  function openRecentProject(name: string): void {
+    closeProjectMenu();
+    void openStoredProject(name);
+  }
+
+  async function deleteStoredProject(name: string): Promise<void> {
+    if (
+      !(await confirmAction(`Delete the saved project "${name}"?`, {
+        title: 'Delete project',
+        confirmLabel: 'Delete',
+      }))
+    )
+      return;
+    void runAction(async () => {
+      await deleteProject(name);
+      recentProjects.value = withoutRecent(recentProjects.value, name);
+      saveRecentProjects(recentProjects.value);
+      await refreshStoredProjects();
+    });
+  }
+
+  async function importSzdFile(): Promise<void> {
+    if (!(await confirmDiscard())) return;
+    void runAction(async () => {
+      const picked = await pickAndReadSzd();
+      if (!picked) return;
+      await loadProjectDocument(decodeSzd(picked.bytes));
+      await markClean();
+      openDialogOpen.value = false;
+    });
+  }
+
+  async function saveToOpfs(name: string): Promise<void> {
+    const doc = serializeProject();
+    const bytes = encodeSzd(doc, { savedAt: new Date().toISOString() });
+    await saveProject(name, bytes);
+    rememberRecentProject(name);
+    await autosave.saveNow();
+    await markClean();
+  }
+
+  function saveProjectAction(): void {
+    closeProjectMenu();
+    void runAction(async () => {
+      await saveToOpfs(store.projectName);
+    });
+  }
+
+  function saveProjectAsAction(): void {
+    closeProjectMenu();
+    void (async () => {
+      const name = await promptDialog({
+        title: 'Save project as',
+        message: 'Enter a name for the saved project.',
+        defaultValue: store.projectName,
+        placeholder: 'Project name',
+        confirmLabel: 'Save',
+      });
+      if (!name) return;
+      void runAction(async () => {
+        store.projectName = name;
+        await saveToOpfs(name);
+      });
+    })();
+  }
+
+  function exportSzdAction(): void {
+    closeProjectMenu();
+    void runAction(async () => {
+      const bytes = encodeSzd(serializeProject(), { savedAt: new Date().toISOString() });
+      downloadSzd(store.projectName, bytes);
+    });
+  }
+
+  function exportSmfAction(): void {
+    closeProjectMenu();
+    void runAction(async () => {
+      const result = exportProjectSmf();
+      downloadBlobFile(
+        new Blob([new Uint8Array(result.bytes)], { type: 'audio/midi' }),
+        result.filename,
+      );
+    });
+  }
+
+  function disposeOpenDialogTrap(): void {
+    openDialogTrap?.deactivate();
+    openDialogTrap = null;
+  }
+
+  return {
+    dirty,
+    opfsAvailable,
+    projectMenuOpen,
+    projectMenuRoot,
+    newDialogOpen,
+    openDialogOpen,
+    storedProjects,
+    recentMenuNames,
+    openDialogRef,
+    bootProject,
+    markClean,
+    closeProjectMenu,
+    onOpenDialogKeydown,
+    openNewDialog,
+    onCreateProject,
+    openOpenDialog,
+    openStoredProject,
+    openRecentProject,
+    deleteStoredProject,
+    importSzdFile,
+    saveProjectAction,
+    saveProjectAsAction,
+    exportSzdAction,
+    exportSmfAction,
+    disposeProjectPersistence: disposeOpenDialogTrap,
+  };
+}

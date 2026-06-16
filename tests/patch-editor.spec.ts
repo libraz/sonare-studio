@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import PatchEditor from '@/components/devices/PatchEditor.vue';
 import { clearHistory, setTrackInstrument, undo } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
+import { selectOption } from './helpers/select-menu';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -85,8 +86,8 @@ describe('PatchEditor.vue', () => {
 
     const rows = wrapper.findAll('.mod-row');
     expect(rows).toHaveLength(2);
-    await rows[0].find('.mod-source').setValue('lfo1');
-    await rows[0].find('.mod-destination').setValue('pitch-cents');
+    await selectOption(rows[0], '.mod-source', 'lfo1');
+    await selectOption(rows[0], '.mod-destination', 'pitch-cents');
     await rows[0].find('.mod-depth').setValue('0.5');
     // The second row stays inert (none -> none) and must not be committed.
 

@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch, watchEffect } from 'vue';
+import ScoreAnnotationPalette from '@/components/score/ScoreAnnotationPalette.vue';
+import SelectMenu from '@/components/shell/SelectMenu.vue';
 import {
   canonicalizeChordSymbols,
   type EstimatedChordSymbol,
@@ -9,16 +11,12 @@ import { exportMusicXml } from '@/notation/io';
 import { timeSigLengthPpq } from '@/notation/model';
 import { serializeMusicXml } from '@/notation/musicxml';
 import { keyToKeyFifths } from '@/notation/pitch-spelling';
-import { downloadBlob, exportPdf, type PageLayout, printScore } from '@/notation/print';
+import { downloadBlob, exportPdf, printScore } from '@/notation/print';
 import { quantizeToScore } from '@/notation/quantize';
-import { type LayoutOptions, VerovioClient } from '@/notation/verovio';
+import { VerovioClient } from '@/notation/verovio';
 import {
   DISPLAY_TRANSPOSE_MAX,
   DISPLAY_TRANSPOSE_MIN,
-  NOTE_ARTICULATIONS,
-  NOTE_DYNAMICS,
-  type NoteArticulation,
-  type NoteDynamics,
   type ScoreNoteAnnotation,
 } from '@/project/annotations';
 import {
@@ -30,6 +28,13 @@ import {
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { MAJOR_MODE_MASK } from '@/project/types';
+import {
+  SCORE_PAGE_FORMATS,
+  type ScoreLayoutSettings,
+  scorePageDimsMm,
+  scorePrintLayoutOptions,
+  scoreScreenLayoutOptions,
+} from '@/ui/score/layout';
 import type { Key } from '@/wasm/index.js';
 
 /**
@@ -88,15 +93,16 @@ const DQ_CHOICES: ReadonlyArray<DqChoice> = [
 const dqKey = ref('16');
 const chordsEnabled = ref(false);
 
-// --- Annotation state ----------------------------------------------------------
+/** Display Quantize options for the toolbar select (triplet grids disabled). */
+const dqOptions = computed(() =>
+  DQ_CHOICES.map((choice) => ({
+    value: choice.key,
+    label: choice.label,
+    disabled: choice.disabled,
+  })),
+);
 
-/** Display labels for the articulation palette buttons. */
-const ARTICULATION_LABELS: Readonly<Record<NoteArticulation, string>> = {
-  staccato: 'Stacc.',
-  accent: 'Accent',
-  tenuto: 'Ten.',
-  marcato: 'Marc.',
-};
+// --- Annotation state ----------------------------------------------------------
 
 /** Display transpose choices offered in the layout popover (semitones). */
 const TRANSPOSE_CHOICES: ReadonlyArray<number> = Array.from(
@@ -120,20 +126,85 @@ const annotationCurrent = computed<ScoreNoteAnnotation>(() => {
   return store.scoreAnnotations[store.clipId]?.[id] ?? {};
 });
 
-/** Page formats offered in the layout popover, in millimeters. */
-const PAGE_FORMATS = {
-  a4: { label: 'A4', widthMm: 210, heightMm: 297 },
-  letter: { label: 'Letter', widthMm: 215.9, heightMm: 279.4 },
-} as const;
-
-type PageFormatKey = keyof typeof PAGE_FORMATS;
-
 const layoutOpen = ref(false);
-const pageFormat = ref<PageFormatKey>('a4');
+const pageFormat = ref<keyof typeof SCORE_PAGE_FORMATS>('a4');
 const landscape = ref(false);
 const pageMarginMm = ref(10);
 const scalePercent = ref(50);
 const spacingStaff = ref(12);
+
+/**
+ * On-screen zoom of the engraved (single continuous) system.
+ *
+ * At 100% the system fills the panel width exactly. Zooming IN (>100%) enlarges
+ * the notes and the body scrolls horizontally (the SVG grows past the panel).
+ * Zooming OUT (<100%) keeps the FULL width and shrinks the notes by padding the
+ * line with trailing empty measures — so the staff always spans the panel with
+ * no blank tail and no distortion, instead of shrinking into a narrow block.
+ */
+const viewZoom = ref(1);
+const VIEW_ZOOM_MIN = 0.25;
+const VIEW_ZOOM_MAX = 4;
+const VIEW_ZOOM_STEP = 1.2;
+
+/** Engraved measure length in PPQ (the score is always notated in 4/4). */
+const MEASURE_LEN_PPQ = timeSigLengthPpq(DEFAULT_TIME_SIG);
+
+/** Whole measures the real clip content spans. */
+const actualMeasures = computed(() =>
+  Math.max(1, Math.ceil(store.clipLengthPpq / MEASURE_LEN_PPQ)),
+);
+
+/**
+ * Empty measures appended to fill the panel width when zoomed out below 100%.
+ * Showing `actualMeasures / viewZoom` measures across the same width shrinks the
+ * notes proportionally; the extra measures past the real content are blank.
+ */
+const padMeasures = computed(() =>
+  viewZoom.value >= 1
+    ? 0
+    : Math.max(0, Math.ceil(actualMeasures.value / viewZoom.value) - actualMeasures.value),
+);
+
+/** Clip length (real content plus padding) fed to the transcriber, in PPQ. */
+const paddedClipLengthPpq = computed(
+  () => (actualMeasures.value + padMeasures.value) * MEASURE_LEN_PPQ,
+);
+
+/** CSS width factor: >= 1 so zoom-out fills via padding, never shrinks below. */
+const widthFactor = computed(() => Math.max(1, viewZoom.value));
+
+/** On-screen zoom as a rounded percentage for the toolbar readout. */
+const zoomPercent = computed(() => Math.round(viewZoom.value * 100));
+
+/** Multiplies the on-screen zoom by a factor, clamped to the zoom bounds. */
+function zoomView(factor: number): void {
+  viewZoom.value = Math.min(VIEW_ZOOM_MAX, Math.max(VIEW_ZOOM_MIN, viewZoom.value * factor));
+}
+
+/** Page format options for the layout popover select. */
+const pageFormatOptions = computed(() =>
+  Object.entries(SCORE_PAGE_FORMATS).map(([key, format]) => ({ value: key, label: format.label })),
+);
+
+/** Orientation options; values mirror the boolean `landscape` flag. */
+const ORIENTATION_OPTIONS: ReadonlyArray<{ value: 'portrait' | 'landscape'; label: string }> = [
+  { value: 'portrait', label: 'Portrait' },
+  { value: 'landscape', label: 'Landscape' },
+];
+
+/** String proxy over the boolean `landscape` flag for the select binding. */
+const orientation = computed<'portrait' | 'landscape'>({
+  get: () => (landscape.value ? 'landscape' : 'portrait'),
+  set: (value) => {
+    landscape.value = value === 'landscape';
+  },
+});
+
+/** Display transpose options for the layout popover select (semitones). */
+const transposeOptions = computed(() =>
+  TRANSPOSE_CHOICES.map((n) => ({ value: n, label: n > 0 ? `+${n}` : String(n) })),
+);
 
 // --- Render state ------------------------------------------------------------
 
@@ -172,32 +243,29 @@ function keyFifths(): number {
   return keyToKeyFifths({ root, mode: 0 });
 }
 
-/** Page dimensions in millimeters honoring the orientation setting. */
-function pageDimsMm(): PageLayout {
-  const format = PAGE_FORMATS[pageFormat.value];
-  return landscape.value
-    ? { pageWidthMm: format.heightMm, pageHeightMm: format.widthMm }
-    : { pageWidthMm: format.widthMm, pageHeightMm: format.heightMm };
+function layoutSettings(): ScoreLayoutSettings {
+  return {
+    pageFormat: pageFormat.value,
+    landscape: landscape.value,
+    pageMarginMm: pageMarginMm.value,
+    scalePercent: scalePercent.value,
+    spacingStaff: spacingStaff.value,
+  };
 }
 
 /** Verovio layout options for the current settings (page units are 1/10 mm). */
-function layoutOptions(): LayoutOptions {
-  const dims = pageDimsMm();
-  const margin = Math.round(Math.max(0, pageMarginMm.value) * 10);
-  return {
-    pageWidth: Math.round(dims.pageWidthMm * 10),
-    pageHeight: Math.round(dims.pageHeightMm * 10),
-    pageMarginTop: margin,
-    pageMarginBottom: margin,
-    pageMarginLeft: margin,
-    pageMarginRight: margin,
-    scale: Math.min(100, Math.max(20, Math.round(scalePercent.value))),
-    spacingStaff: Math.max(0, Math.round(spacingStaff.value)),
-    breaks: 'auto',
-    svgViewBox: true,
-    header: 'none',
-    footer: 'none',
-  };
+function layoutOptions() {
+  return scorePrintLayoutOptions(layoutSettings());
+}
+
+/**
+ * On-screen layout: one continuous system with NO line/system breaks, cropped
+ * to the content on both axes. The engraved strip then scrolls horizontally
+ * instead of wrapping to multiple lines. Print/PDF use the paginated
+ * `layoutOptions()` above instead.
+ */
+function screenLayoutOptions() {
+  return scoreScreenLayoutOptions(layoutSettings());
 }
 
 // --- Transcription pipeline ---------------------------------------------------
@@ -219,7 +287,9 @@ async function transcribe(): Promise<void> {
       timeSig: { ...DEFAULT_TIME_SIG },
       keyFifths: fifths,
       clipStartPpq: store.clipStartPpq,
-      clipLengthPpq: store.clipLengthPpq,
+      // Padded with trailing empty measures so the line fills the width when
+      // zoomed out (never shrinks into a narrow block).
+      clipLengthPpq: paddedClipLengthPpq.value,
       clef: 'grand',
       partName: 'Piano',
       // Engraving-only transpose; the underlying MIDI notes never change.
@@ -246,7 +316,7 @@ async function transcribe(): Promise<void> {
       }
     }
     const xml = serializeMusicXml(score);
-    const count = await verovio.load(xml, layoutOptions());
+    const count = await verovio.load(xml, screenLayoutOptions());
     if (gen !== generation) return;
     currentXml = xml;
     pageCount.value = count;
@@ -298,7 +368,7 @@ async function applyLayout(): Promise<void> {
   loading.value = true;
   error.value = '';
   try {
-    const count = await verovio.setLayout(layoutOptions());
+    const count = await verovio.setLayout(screenLayoutOptions());
     if (gen !== generation) return;
     pageCount.value = count;
     page.value = Math.min(Math.max(page.value, 1), Math.max(count, 1));
@@ -325,15 +395,29 @@ function gotoPage(target: number): void {
 
 // --- Print / export ------------------------------------------------------------
 
-/** Renders every page of the loaded score to SVG strings. */
+/**
+ * Renders every page for print/export using the PAGINATED A4 layout (the
+ * on-screen view is a single continuous system, which would print as one
+ * oversized strip), then restores the continuous screen layout.
+ */
 async function renderAllPages(): Promise<string[]> {
   const verovio = client.value;
   if (!verovio || pageCount.value === 0) return [];
-  const pages: string[] = [];
-  for (let p = 1; p <= pageCount.value; p++) {
-    pages.push(await verovio.renderPage(p));
+  try {
+    const count = await verovio.setLayout(layoutOptions());
+    const pages: string[] = [];
+    for (let p = 1; p <= count; p++) {
+      pages.push(await verovio.renderPage(p));
+    }
+    return pages;
+  } finally {
+    // Restore the on-screen continuous layout and re-render the current page.
+    const screenCount = await verovio.setLayout(screenLayoutOptions());
+    pageCount.value = screenCount;
+    page.value = Math.min(Math.max(page.value, 1), Math.max(screenCount, 1));
+    svg.value = await verovio.renderPage(page.value);
+    resetPlayheadScan();
   }
-  return pages;
 }
 
 /** Runs an export action with the busy flag and error reporting. */
@@ -353,7 +437,7 @@ async function runExport(action: () => Promise<void>): Promise<void> {
 function onPrint(): void {
   void runExport(async () => {
     const pages = await renderAllPages();
-    if (pages.length > 0) printScore(pages, pageDimsMm());
+    if (pages.length > 0) printScore(pages, scorePageDimsMm(layoutSettings()));
   });
 }
 
@@ -361,7 +445,7 @@ function onExportPdf(): void {
   void runExport(async () => {
     const pages = await renderAllPages();
     if (pages.length === 0) return;
-    const blob = await exportPdf(pages, pageDimsMm());
+    const blob = await exportPdf(pages, scorePageDimsMm(layoutSettings()));
     downloadBlob(blob, 'score.pdf');
   });
 }
@@ -520,16 +604,6 @@ function applyAnnotation(update: NoteAnnotationUpdate): void {
   }
 }
 
-/** Toggles a dynamics marking on the target note (same value clears it). */
-function toggleDynamics(value: NoteDynamics): void {
-  applyAnnotation({ dynamics: annotationCurrent.value.dynamics === value ? null : value });
-}
-
-/** Toggles an articulation marking on the target note (same value clears it). */
-function toggleArticulation(value: NoteArticulation): void {
-  applyAnnotation({ articulation: annotationCurrent.value.articulation === value ? null : value });
-}
-
 /** Removes every annotation of the target note. */
 function clearAnnotation(): void {
   const id = annotationNoteId.value;
@@ -549,8 +623,7 @@ function closePalette(): void {
 }
 
 /** Layout popover change handler for the display transpose select. */
-function onTransposeChange(event: Event): void {
-  const value = Number((event.target as HTMLSelectElement).value);
+function onTransposeChange(value: number): void {
   try {
     setDisplayTranspose(value);
     error.value = '';
@@ -576,6 +649,9 @@ watch(() => store.notes, scheduleRetranscribe);
 // too; both only affect engraving, so they re-transcribe debounced like edits.
 watch([() => store.scoreAnnotations, () => store.displayTransposeSemitones], scheduleRetranscribe);
 watch([dqKey, chordsEnabled, () => store.scaleHighlight], () => void transcribe(), { deep: true });
+// Zoom-out padding changes the number of (empty) measures, so the score must be
+// re-engraved; zoom-in (padMeasures stays 0) only updates the CSS width.
+watch(padMeasures, () => void transcribe());
 watch([pageFormat, landscape, pageMarginMm, scalePercent, spacingStaff], () => void applyLayout());
 watch(annotateEnabled, (enabled) => {
   if (!enabled) closePalette();
@@ -615,16 +691,7 @@ onBeforeUnmount(() => {
     <div class="score-toolbar" role="toolbar" aria-label="Score tools">
       <label class="bar-field" title="Display quantize: changes the engraved view only, never the MIDI data">
         DQ
-        <select v-model="dqKey">
-          <option
-            v-for="choice in DQ_CHOICES"
-            :key="choice.key"
-            :value="choice.key"
-            :disabled="choice.disabled"
-          >
-            {{ choice.label }}
-          </option>
-        </select>
+        <SelectMenu v-model="dqKey" :options="dqOptions" aria-label="Display quantize" size="sm" />
       </label>
       <button type="button" :disabled="loading" title="Re-transcribe the clip (non-destructive)" @click="transcribe">
         Transcribe
@@ -652,18 +719,21 @@ onBeforeUnmount(() => {
         <div v-if="layoutOpen" class="layout-popover">
           <label class="layout-row">
             Page
-            <select v-model="pageFormat">
-              <option v-for="(format, key) in PAGE_FORMATS" :key="key" :value="key">
-                {{ format.label }}
-              </option>
-            </select>
+            <SelectMenu
+              v-model="pageFormat"
+              :options="pageFormatOptions"
+              aria-label="Page format"
+              size="sm"
+            />
           </label>
           <label class="layout-row">
             Orientation
-            <select v-model="landscape">
-              <option :value="false">Portrait</option>
-              <option :value="true">Landscape</option>
-            </select>
+            <SelectMenu
+              v-model="orientation"
+              :options="ORIENTATION_OPTIONS"
+              aria-label="Orientation"
+              size="sm"
+            />
           </label>
           <label class="layout-row">
             Margin (mm)
@@ -682,13 +752,38 @@ onBeforeUnmount(() => {
             title="Shifts the engraved pitches only — the MIDI notes are never changed"
           >
             Transpose (st)
-            <select :value="store.displayTransposeSemitones" @change="onTransposeChange">
-              <option v-for="n in TRANSPOSE_CHOICES" :key="n" :value="n">
-                {{ n > 0 ? `+${n}` : String(n) }}
-              </option>
-            </select>
+            <SelectMenu
+              :model-value="store.displayTransposeSemitones"
+              :options="transposeOptions"
+              aria-label="Display transpose"
+              size="sm"
+              @change="onTransposeChange"
+            />
           </label>
         </div>
+      </div>
+      <div class="score-zoom" role="group" aria-label="Score zoom">
+        <button
+          type="button"
+          class="score-zoom-btn"
+          :disabled="viewZoom <= VIEW_ZOOM_MIN"
+          aria-label="Zoom out"
+          title="Zoom out"
+          @click="zoomView(1 / VIEW_ZOOM_STEP)"
+        >
+          −
+        </button>
+        <span class="score-zoom-readout" aria-live="polite">{{ zoomPercent }}%</span>
+        <button
+          type="button"
+          class="score-zoom-btn"
+          :disabled="viewZoom >= VIEW_ZOOM_MAX"
+          aria-label="Zoom in"
+          title="Zoom in"
+          @click="zoomView(VIEW_ZOOM_STEP)"
+        >
+          +
+        </button>
       </div>
       <span class="bar-spacer" />
       <button type="button" :disabled="page <= 1 || loading" aria-label="Previous page" @click="gotoPage(page - 1)">
@@ -720,237 +815,24 @@ onBeforeUnmount(() => {
         class="score-body"
         role="img"
         aria-label="Engraved score"
+        :style="{ '--score-zoom': widthFactor }"
         @click="onSvgClick"
         v-html="svg"
       />
       <div v-if="loading" class="score-loading">Engraving…</div>
       <div v-else-if="!svg" class="score-empty">No score yet — press Transcribe.</div>
-      <div
+      <ScoreAnnotationPalette
         v-if="annotateEnabled && annotationNoteId !== null"
-        class="annotation-palette"
-        role="dialog"
-        aria-label="Note annotations"
-        :style="{ left: `${palettePos.x}px`, top: `${palettePos.y}px` }"
-      >
-        <div class="palette-row">
-          <button
-            v-for="d in NOTE_DYNAMICS"
-            :key="d"
-            type="button"
-            class="palette-dynamics"
-            :class="{ active: annotationCurrent.dynamics === d }"
-            :aria-pressed="annotationCurrent.dynamics === d"
-            @click="toggleDynamics(d)"
-          >
-            {{ d }}
-          </button>
-        </div>
-        <div class="palette-row">
-          <button
-            v-for="a in NOTE_ARTICULATIONS"
-            :key="a"
-            type="button"
-            :class="{ active: annotationCurrent.articulation === a }"
-            :aria-pressed="annotationCurrent.articulation === a"
-            @click="toggleArticulation(a)"
-          >
-            {{ ARTICULATION_LABELS[a] }}
-          </button>
-        </div>
-        <div class="palette-row">
-          <button
-            type="button"
-            :class="{ active: slurArmed }"
-            :aria-pressed="slurArmed"
-            title="Slur to another note: arm, then click the target note in the score"
-            @click="slurArmed = !slurArmed"
-          >
-            {{ slurArmed ? 'Click target…' : 'Slur…' }}
-          </button>
-          <button
-            v-if="annotationCurrent.slurToNoteId !== undefined"
-            type="button"
-            title="Remove the slur starting on this note"
-            @click="applyAnnotation({ slurToNoteId: null })"
-          >
-            Unslur
-          </button>
-          <button type="button" title="Remove all annotations of this note" @click="clearAnnotation">
-            Clear
-          </button>
-          <button type="button" aria-label="Close annotation palette" @click="closePalette">×</button>
-        </div>
-      </div>
+        :annotation="annotationCurrent"
+        :position="palettePos"
+        :slur-armed="slurArmed"
+        @apply="applyAnnotation"
+        @clear="clearAnnotation"
+        @close="closePalette"
+        @slur-armed-change="slurArmed = $event"
+      />
     </div>
   </section>
 </template>
 
-<style scoped>
-.score-panel {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  background: #15171c;
-  border-top: 1px solid #000;
-}
-
-.score-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.35rem 0.75rem;
-  background: #101216;
-  border-bottom: 1px solid #000;
-  flex-wrap: wrap;
-  font-size: 12px;
-}
-
-.bar-field {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  white-space: nowrap;
-}
-
-.bar-spacer {
-  width: 0.75rem;
-}
-
-.score-page-indicator {
-  font-variant-numeric: tabular-nums;
-  color: #8b93a3;
-  min-width: 3.5rem;
-  text-align: center;
-}
-
-.layout-host {
-  position: relative;
-}
-
-.layout-popover {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  z-index: 20;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  padding: 0.6rem 0.75rem;
-  background: #1b1e25;
-  border: 1px solid #000;
-  border-radius: 6px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
-  font-size: 12px;
-  min-width: 12rem;
-}
-
-.layout-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  white-space: nowrap;
-}
-
-.layout-row input,
-.layout-row select {
-  width: 6rem;
-}
-
-.score-error {
-  margin: 0;
-  background: #3b1219;
-  border-bottom: 1px solid #ef4444;
-  color: #ffb4b4;
-  padding: 0.4rem 0.75rem;
-  font-size: 12px;
-  white-space: pre-wrap;
-}
-
-.score-body-wrap {
-  position: relative;
-  flex: 1;
-  min-height: 0;
-}
-
-.score-body {
-  height: 100%;
-  overflow: auto;
-  background: #f5f2ea;
-  padding: 0.5rem;
-}
-
-.score-body :deep(svg) {
-  display: block;
-  margin: 0 auto;
-  max-width: 100%;
-  height: auto;
-  background: #fff;
-  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
-}
-
-.score-body :deep(g.note) {
-  cursor: pointer;
-  /* Make the whole note group (notehead + stem + the space between) clickable,
-     not just the painted glyph outlines. */
-  pointer-events: bounding-box;
-}
-
-.score-body :deep(.score-note-playing),
-.score-body :deep(.score-note-playing *) {
-  fill: #2563eb;
-  color: #2563eb;
-  stroke: #2563eb;
-}
-
-.score-toolbar button.active {
-  background: #2563eb;
-  color: #fff;
-}
-
-.annotation-palette {
-  position: absolute;
-  z-index: 30;
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  padding: 0.45rem 0.5rem;
-  background: #1b1e25;
-  border: 1px solid #000;
-  border-radius: 6px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
-  font-size: 11px;
-}
-
-.palette-row {
-  display: flex;
-  gap: 0.25rem;
-}
-
-.annotation-palette button.active {
-  background: #2563eb;
-  color: #fff;
-}
-
-.palette-dynamics {
-  font-style: italic;
-  font-weight: 600;
-  min-width: 1.8rem;
-}
-
-.score-loading,
-.score-empty {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 13px;
-  color: #4b5563;
-  pointer-events: none;
-}
-
-.score-loading {
-  background: rgba(245, 242, 234, 0.6);
-}
-</style>
+<style scoped src="./score-panel.css"></style>

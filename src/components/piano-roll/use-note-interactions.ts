@@ -18,12 +18,16 @@ import {
   type NoteRect,
 } from '@/ui/canvas/hit-test';
 import { MAX_PITCH, MIN_PITCH } from '@/ui/canvas/timeline-range';
+import type { EditorToolId } from '@/ui/editor/tools';
 
 /** Px a pointer must travel from its down point before a drag gesture starts. */
 export const DEFAULT_DRAG_THRESHOLD_PX = 3;
 
 /** Smallest note duration a resize can produce (a sixty-fourth note in PPQ). */
 export const DEFAULT_MIN_DURATION_PPQ = 0.0625;
+
+/** Velocity given to notes created with the draw tool. */
+export const DEFAULT_DRAW_VELOCITY = 96;
 
 /** A pointer position in note-grid viewport px coordinates. */
 export interface InteractionPoint {
@@ -59,6 +63,11 @@ export interface InteractionCommands {
   updateNotes(updates: ReadonlyArray<EditorNoteUpdate>): void;
   deleteNotes(ids: Iterable<number>): void;
   setSelection(ids: Iterable<number>): void;
+  /**
+   * Splits a note at a PPQ position as one undoable edit, returning the new
+   * right-hand note id. Required by the split tool; absent = split is a no-op.
+   */
+  splitNote?(noteId: number, splitPpq: number): number;
 }
 
 /** Configuration for {@link useNoteInteractions}. */
@@ -71,6 +80,8 @@ export interface UseNoteInteractionsOptions {
   getSelection(): ReadonlySet<number>;
   /** Returns the current snap grid step in PPQ. */
   getGridPpq(): number;
+  /** Returns the active editor tool (absent = always the select tool). */
+  getTool?(): EditorToolId;
   /** Mutation commands invoked when gestures commit. */
   commands: InteractionCommands;
   /** Drag start threshold in px. Default {@link DEFAULT_DRAG_THRESHOLD_PX}. */
@@ -79,6 +90,13 @@ export interface UseNoteInteractionsOptions {
   minDurationPpq?: number;
   /** Px distance from a note edge treated as a resize handle. */
   resizeTolerancePx?: number;
+  /**
+   * Optional audible-feedback hook. Called with a note's pitch and velocity
+   * when the user clicks an existing note or creates a new one, so the host can
+   * play a short preview through the active track's instrument. Omit for no
+   * audition (e.g. in unit tests).
+   */
+  onAudition?(pitch: number, velocity: number): void;
 }
 
 /** CSS cursor reflecting what a pointer press at the hovered point would do. */
@@ -104,6 +122,8 @@ export interface NoteInteractions {
   onPointerUp(point: InteractionPoint, modifiers?: InteractionModifiers): void;
   /** Handles double-click; creates a snapped note on empty space. */
   onDoubleClick(point: InteractionPoint, modifiers?: InteractionModifiers): void;
+  /** Returns the topmost note id under a point, or null when none is hit. */
+  hitNoteAt(point: InteractionPoint): number | null;
   /**
    * Handles a key press (`event.key` value).
    *
@@ -161,13 +181,29 @@ interface ResizeGesture {
   origins: Map<number, EditorNote>;
 }
 
+/** Draw-tool gesture: a new note grows from its start to the pointer. */
+interface DrawNoteGesture {
+  kind: 'draw-note';
+  start: InteractionPoint;
+  startPpq: number;
+  pitch: number;
+}
+
+/** Erase-tool gesture: notes the pointer sweeps over are removed on release. */
+interface EraseGesture {
+  kind: 'erase';
+  ids: Set<number>;
+}
+
 type Gesture =
   | { kind: 'none' }
   | PendingNoteGesture
   | PendingMarqueeGesture
   | MarqueeGesture
   | MoveGesture
-  | ResizeGesture;
+  | ResizeGesture
+  | DrawNoteGesture
+  | EraseGesture;
 
 /** Rounds a PPQ position to the nearest multiple of `step`, clamped to >= 0. */
 function snapToStep(ppq: number, step: number): number {
@@ -230,6 +266,84 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
       if (note) origins.set(id, { ...note });
     }
     return origins;
+  }
+
+  /** The active tool ('select' when no tool getter is wired). */
+  function currentTool(): EditorToolId {
+    return options.getTool?.() ?? 'select';
+  }
+
+  /** Clamps a pitch into the playable range. */
+  function clampPitch(pitch: number): number {
+    return Math.min(MAX_PITCH, Math.max(MIN_PITCH, pitch));
+  }
+
+  /** Resolves the grid-snapped start cell of a draw at the pointer x. */
+  function drawStartPpq(point: InteractionPoint, modifiers: InteractionModifiers): number {
+    const step = options.getGridPpq();
+    const ppq = view.xToPpq(point.x);
+    return modifiers.meta === true || !(step > 0)
+      ? Math.max(0, ppq)
+      : Math.max(0, Math.floor(ppq / step) * step);
+  }
+
+  /** Resolves the snapped length of an in-flight draw, kept at >= one grid cell. */
+  function drawLength(
+    g: DrawNoteGesture,
+    point: InteractionPoint,
+    modifiers: InteractionModifiers,
+  ): number {
+    const step = options.getGridPpq();
+    const minLen = step > 0 ? step : DEFAULT_MIN_DURATION_PPQ;
+    const raw = view.xToPpq(point.x);
+    const end = modifiers.meta === true ? raw : snapToStep(raw, step);
+    return Math.max(minLen, end - g.startPpq);
+  }
+
+  /** Builds the rendered note list for an in-flight draw (draft note id -1). */
+  function buildDrawPreview(
+    g: DrawNoteGesture,
+    point: InteractionPoint,
+    modifiers: InteractionModifiers,
+  ): EditorNote[] {
+    const draft: EditorNote = {
+      id: -1,
+      pitch: g.pitch,
+      velocity: DEFAULT_DRAW_VELOCITY,
+      startPpq: g.startPpq,
+      durationPpq: drawLength(g, point, modifiers),
+      channel: 0,
+    };
+    return [...options.getNotes().map((note) => ({ ...note })), draft];
+  }
+
+  /** Builds the rendered note list with the erase-marked notes removed. */
+  function buildErasePreview(ids: ReadonlySet<number>): EditorNote[] {
+    return options
+      .getNotes()
+      .filter((note) => !ids.has(note.id))
+      .map((note) => ({ ...note }));
+  }
+
+  /** Hover cursor for a non-select tool. */
+  function toolCursor(tool: EditorToolId): InteractionCursor {
+    return tool === 'erase' ? 'default' : 'crosshair';
+  }
+
+  /** Splits the note under the pointer at the snapped pointer position. */
+  function splitAt(point: InteractionPoint, modifiers: InteractionModifiers): void {
+    const split = commands.splitNote;
+    if (!split) return;
+    const hit = hitTestNote(toRects(options.getNotes()), point, view, hitOptions());
+    if (!hit) return;
+    const note = options.getNotes().find((n) => n.id === Number(hit.id));
+    if (!note) return;
+    const step = options.getGridPpq();
+    const raw = view.xToPpq(point.x);
+    const splitPpq = modifiers.meta === true ? raw : snapToStep(raw, step);
+    if (splitPpq <= note.startPpq || splitPpq >= note.startPpq + note.durationPpq) return;
+    const newId = split(note.id, splitPpq);
+    commands.setSelection([newId]);
   }
 
   /**
@@ -365,6 +479,32 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
   }
 
   function onPointerDown(point: InteractionPoint, modifiers: InteractionModifiers = {}): void {
+    const tool = currentTool();
+    if (tool === 'draw') {
+      const pitch = clampPitch(view.yToPitch(point.y));
+      gesture = {
+        kind: 'draw-note',
+        start: point,
+        startPpq: drawStartPpq(point, modifiers),
+        pitch,
+      };
+      previewNotes.value = buildDrawPreview(gesture, point, modifiers);
+      options.onAudition?.(pitch, DEFAULT_DRAW_VELOCITY);
+      return;
+    }
+    if (tool === 'erase') {
+      const ids = new Set<number>();
+      const eraseHit = hitTestNote(toRects(options.getNotes()), point, view, hitOptions());
+      if (eraseHit) ids.add(Number(eraseHit.id));
+      gesture = { kind: 'erase', ids };
+      previewNotes.value = buildErasePreview(ids);
+      return;
+    }
+    if (tool === 'split') {
+      splitAt(point, modifiers);
+      gesture = { kind: 'none' };
+      return;
+    }
     const notes = options.getNotes();
     const hit = hitTestNote(toRects(notes), point, view, hitOptions());
     if (!hit) {
@@ -377,6 +517,8 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
       return;
     }
     const id = Number(hit.id);
+    const hitNote = notes.find((note) => note.id === id);
+    if (hitNote) options.onAudition?.(hitNote.pitch, hitNote.velocity);
     const wasSelected = options.getSelection().has(id);
     if (modifiers.shift) {
       if (!wasSelected) commands.setSelection([...options.getSelection(), id]);
@@ -430,8 +572,23 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
 
   function onPointerMove(point: InteractionPoint, modifiers: InteractionModifiers = {}): void {
     if (gesture.kind === 'none') {
+      const tool = currentTool();
+      if (tool !== 'select') {
+        cursor.value = toolCursor(tool);
+        return;
+      }
       const hit = hitTestNote(toRects(options.getNotes()), point, view, hitOptions());
       cursor.value = hit ? (hit.zone === 'body' ? 'pointer' : 'ew-resize') : 'default';
+      return;
+    }
+    if (gesture.kind === 'draw-note') {
+      previewNotes.value = buildDrawPreview(gesture, point, modifiers);
+      return;
+    }
+    if (gesture.kind === 'erase') {
+      const hit = hitTestNote(toRects(options.getNotes()), point, view, hitOptions());
+      if (hit) gesture.ids.add(Number(hit.id));
+      previewNotes.value = buildErasePreview(gesture.ids);
       return;
     }
     if (gesture.kind === 'pending-note' || gesture.kind === 'pending-marquee') {
@@ -458,6 +615,19 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     marquee.value = null;
     previewNotes.value = null;
     cursor.value = 'default';
+    if (g.kind === 'draw-note') {
+      const id = commands.addNote({
+        pitch: g.pitch,
+        startPpq: g.startPpq,
+        durationPpq: drawLength(g, point, modifiers),
+      });
+      commands.setSelection([id]);
+      return;
+    }
+    if (g.kind === 'erase') {
+      if (g.ids.size > 0) commands.deleteNotes([...g.ids]);
+      return;
+    }
     if (g.kind === 'pending-note') {
       // Plain click: shift toggles the note off when it was already selected;
       // without shift a click collapses a multi-selection to the clicked note.
@@ -526,8 +696,16 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
         ? Math.max(0, ppq)
         : Math.max(0, Math.floor(ppq / step) * step);
     const durationPpq = step > 0 ? step : DEFAULT_MIN_DURATION_PPQ;
-    const id = commands.addNote({ pitch: view.yToPitch(point.y), startPpq, durationPpq });
+    const pitch = view.yToPitch(point.y);
+    const id = commands.addNote({ pitch, startPpq, durationPpq });
     commands.setSelection([id]);
+    options.onAudition?.(pitch, DEFAULT_DRAW_VELOCITY);
+  }
+
+  /** Returns the topmost note id under a point, or null when none is hit. */
+  function hitNoteAt(point: InteractionPoint): number | null {
+    const hit = hitTestNote(toRects(options.getNotes()), point, view, hitOptions());
+    return hit ? Number(hit.id) : null;
   }
 
   function cancel(): void {
@@ -560,6 +738,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     onPointerMove,
     onPointerUp,
     onDoubleClick,
+    hitNoteAt,
     onKeyDown,
     cancel,
   };

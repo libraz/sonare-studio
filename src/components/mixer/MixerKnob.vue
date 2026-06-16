@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { applyDrag, type DragRange, nudgeValue } from '@/ui/mixer/drag';
+import { DEFAULT_DRAG_PIXELS, type DragRange, FINE_FACTOR, NUDGE_DIVISIONS } from '@/ui/mixer/drag';
+import { useControlInteractions } from '@/ui/mixer/use-control-interactions';
 
 /**
- * Rotary knob primitive: vertical pointer drag (shift = fine), keyboard
- * nudging and double-click reset. Emits every value with a commit flag so
- * callers can coalesce a whole drag into one undo entry — intermediate moves
- * arrive with commit=false, releasing the pointer (or any keyboard/reset
- * edit) commits.
+ * Rotary knob primitive: vertical pointer drag (shift = fine), mouse-wheel
+ * adjust, keyboard nudging, double-click reset and a right-click menu (reset /
+ * copy / paste). Position math runs in a normalized [0, 1] space so the same
+ * control serves linear ranges and logarithmic (e.g. frequency) ranges. Emits
+ * every value with a commit flag so callers coalesce a whole drag into one undo
+ * entry — intermediate moves arrive with commit=false, the gesture end commits.
  */
 
 const props = withDefaults(
@@ -18,10 +20,14 @@ const props = withDefaults(
     min: number;
     /** Upper bound of the value range. */
     max: number;
-    /** Double-click reset target; omit to disable reset. */
+    /** Value mapping across the knob travel. Log requires min > 0. */
+    scale?: 'linear' | 'log';
+    /** Double-click / menu reset target; omit to disable reset. */
     defaultValue?: number;
-    /** Caption under the knob. */
+    /** Caption under the knob (also used as the slider aria-label). */
     label?: string;
+    /** Slider aria-label when no visible caption is wanted (overrides label). */
+    ariaLabel?: string;
     /** Formatted value for the tooltip / aria text (defaults to the number). */
     display?: string;
     /** Knob diameter in px. */
@@ -29,7 +35,15 @@ const props = withDefaults(
     /** Disables all interaction. */
     disabled?: boolean;
   }>(),
-  { defaultValue: undefined, label: '', display: '', size: 26, disabled: false },
+  {
+    scale: 'linear',
+    defaultValue: undefined,
+    label: '',
+    ariaLabel: '',
+    display: '',
+    size: 26,
+    disabled: false,
+  },
 );
 
 const emit = defineEmits<{
@@ -41,25 +55,55 @@ const emit = defineEmits<{
 const SWEEP_DEG = 270;
 
 const dragging = ref(false);
-let dragValue = 0;
+let dragNorm = 0;
 let lastY = 0;
 
 const range = computed<DragRange>(() => ({ min: props.min, max: props.max }));
 
-/** Pointer angle for the current value (-135deg at min, +135deg at max). */
-const angleDeg = computed(() => {
+/** Maps a value to its normalized [0, 1] position under the active scale. */
+function toNorm(value: number): number {
   const span = props.max - props.min;
-  const norm = span > 0 ? (props.value - props.min) / span : 0;
-  return (Math.min(1, Math.max(0, norm)) - 0.5) * SWEEP_DEG;
-});
+  if (props.scale === 'log' && props.min > 0 && props.max > props.min) {
+    return Math.log(Math.max(props.min, value) / props.min) / Math.log(props.max / props.min);
+  }
+  return span > 0 ? (value - props.min) / span : 0;
+}
+
+/** Maps a normalized [0, 1] position back to a value under the active scale. */
+function fromNorm(norm: number): number {
+  const n = Math.min(1, Math.max(0, norm));
+  if (props.scale === 'log' && props.min > 0 && props.max > props.min) {
+    return props.min * (props.max / props.min) ** n;
+  }
+  return props.min + n * (props.max - props.min);
+}
+
+/** Pointer angle for the current value (-135deg at min, +135deg at max). */
+const angleDeg = computed(() => (Math.min(1, Math.max(0, toNorm(props.value))) - 0.5) * SWEEP_DEG);
 
 const displayText = computed(() => props.display || `${props.value}`);
+
+/** Nudges the value by one normalized step in the given direction (commit). */
+function nudge(direction: 1 | -1, fine: boolean): void {
+  if (props.disabled) return;
+  const step = (fine ? FINE_FACTOR : 1) / NUDGE_DIVISIONS;
+  emit('change', fromNorm(toNorm(props.value) + direction * step), true);
+}
+
+const interactions = useControlInteractions({
+  getValue: () => props.value,
+  getRange: () => range.value,
+  commit: (value) => emit('change', value, true),
+  nudge,
+  getDefault: () => props.defaultValue,
+  isDisabled: () => props.disabled,
+});
 
 function onPointerDown(event: PointerEvent): void {
   if (props.disabled || event.button !== 0) return;
   (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
   dragging.value = true;
-  dragValue = props.value;
+  dragNorm = toNorm(props.value);
   lastY = event.clientY;
   event.preventDefault();
 }
@@ -69,14 +113,15 @@ function onPointerMove(event: PointerEvent): void {
   const deltaUp = lastY - event.clientY;
   lastY = event.clientY;
   if (deltaUp === 0) return;
-  dragValue = applyDrag(dragValue, deltaUp, range.value, { fine: event.shiftKey });
-  emit('change', dragValue, false);
+  const factor = event.shiftKey ? FINE_FACTOR : 1;
+  dragNorm = Math.min(1, Math.max(0, dragNorm + (deltaUp / DEFAULT_DRAG_PIXELS) * factor));
+  emit('change', fromNorm(dragNorm), false);
 }
 
 function onPointerUp(): void {
   if (!dragging.value) return;
   dragging.value = false;
-  emit('change', dragValue, true);
+  emit('change', fromNorm(dragNorm), true);
 }
 
 function onDoubleClick(): void {
@@ -86,12 +131,10 @@ function onDoubleClick(): void {
 
 function onKeyDown(event: KeyboardEvent): void {
   if (props.disabled) return;
-  let direction: 1 | -1;
-  if (event.key === 'ArrowUp' || event.key === 'ArrowRight') direction = 1;
-  else if (event.key === 'ArrowDown' || event.key === 'ArrowLeft') direction = -1;
+  if (event.key === 'ArrowUp' || event.key === 'ArrowRight') nudge(1, event.shiftKey);
+  else if (event.key === 'ArrowDown' || event.key === 'ArrowLeft') nudge(-1, event.shiftKey);
   else return;
   event.preventDefault();
-  emit('change', nudgeValue(props.value, range.value, direction, event.shiftKey), true);
 }
 </script>
 
@@ -103,7 +146,7 @@ function onKeyDown(event: KeyboardEvent): void {
       :style="{ width: `${props.size}px`, height: `${props.size}px` }"
       role="slider"
       :tabindex="props.disabled ? -1 : 0"
-      :aria-label="props.label || 'Knob'"
+      :aria-label="props.ariaLabel || props.label || 'Knob'"
       :aria-valuemin="props.min"
       :aria-valuemax="props.max"
       :aria-valuenow="props.value"
@@ -114,11 +157,37 @@ function onKeyDown(event: KeyboardEvent): void {
       @pointerup="onPointerUp"
       @pointercancel="onPointerUp"
       @dblclick="onDoubleClick"
+      @wheel="interactions.onWheel"
+      @contextmenu.stop.prevent="interactions.onContextMenu"
       @keydown="onKeyDown"
     >
       <span class="knob-pointer" :style="{ transform: `rotate(${angleDeg}deg)` }" />
     </div>
     <span v-if="props.label" class="knob-label">{{ props.label }}</span>
+    <div
+      v-if="interactions.menu.open"
+      class="control-menu"
+      :style="{ left: `${interactions.menu.x}px`, top: `${interactions.menu.y}px` }"
+      role="menu"
+    >
+      <button
+        v-if="interactions.canReset()"
+        type="button"
+        role="menuitem"
+        @click="interactions.resetToDefault"
+      >
+        Reset
+      </button>
+      <button type="button" role="menuitem" @click="interactions.copyValue">Copy value</button>
+      <button
+        type="button"
+        role="menuitem"
+        :disabled="!interactions.canPaste()"
+        @click="interactions.pasteValue"
+      >
+        Paste value
+      </button>
+    </div>
   </div>
 </template>
 
@@ -134,19 +203,21 @@ function onKeyDown(event: KeyboardEvent): void {
   position: relative;
   border-radius: 50%;
   background: radial-gradient(circle at 35% 30%, #2c313c, #1a1d24 70%);
-  border: 1px solid #2a2e37;
+  border: 1px solid var(--border);
+  box-shadow: var(--raise-hi);
   cursor: ns-resize;
   touch-action: none;
   flex: none;
+  transition: border-color var(--dur-1) var(--ease-out);
 }
 
 .knob:focus-visible {
-  outline: 1px solid #60a5fa;
+  outline: 1px solid var(--accent);
   outline-offset: 1px;
 }
 
 .knob.dragging {
-  border-color: #60a5fa;
+  border-color: var(--accent);
 }
 
 .knob.disabled {
@@ -173,8 +244,8 @@ function onKeyDown(event: KeyboardEvent): void {
 }
 
 .knob-label {
-  font: 8px system-ui, sans-serif;
-  color: #5b6270;
+  font: var(--fw-normal) 8px var(--font-sans);
+  color: var(--text-4);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   user-select: none;

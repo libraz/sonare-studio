@@ -57,6 +57,18 @@ interface FakeMarker {
   name: string;
 }
 
+/** One chord stored in the annotation stream, in the toJson() snake_case shape. */
+interface FakeAnnotationChord {
+  start_ppq: number;
+  end_ppq: number;
+  root_pc: number;
+  quality: number;
+  slash_bass_pc: number;
+  roman_numeral: string;
+  extensions: number[];
+  modulation_boundary: boolean;
+}
+
 interface FakeState {
   tempoSegments: Array<{ startPpq: number; bpm: number; endBpm: number }>;
   timeSignatures: Array<{ startPpq: number; numerator: number; denominator: number }>;
@@ -64,6 +76,7 @@ interface FakeState {
   clips: FakeClip[];
   midi: Map<number, FakeEvent[]>;
   markers: FakeMarker[];
+  chords: FakeAnnotationChord[];
   sourceCount: number;
   sources: Map<number, FakeSource>;
 }
@@ -95,6 +108,7 @@ function cloneState(state: FakeState): FakeState {
     clips: state.clips.map((c) => ({ ...c })),
     midi: new Map([...state.midi].map(([id, events]) => [id, events.map((e) => ({ ...e }))])),
     markers: state.markers.map((m) => ({ ...m })),
+    chords: state.chords.map((c) => ({ ...c, extensions: [...c.extensions] })),
     sourceCount: state.sourceCount,
     sources: new Map([...state.sources].map(([id, source]) => [id, { ...source }])),
   };
@@ -110,6 +124,7 @@ export class FakeProject {
     clips: [],
     midi: new Map(),
     markers: [],
+    chords: [],
     sourceCount: 0,
     sources: new Map(),
   };
@@ -418,6 +433,61 @@ export class FakeProject {
     });
   }
 
+  /**
+   * Applies a MIDI-FX transform to a clip's stored events, mirroring the real
+   * engine's verified flat-config semantics (transpose, grid quantize, velocity
+   * scale/offset/gamma, bounded humanize, chord harmonize) as one undoable
+   * edit. Humanize uses a deterministic index-based jitter so tests stay stable.
+   */
+  bakeMidiFx(clipId: number, configJson: string): void {
+    const cfg = JSON.parse(configJson) as Record<string, number | number[]>;
+    const transpose = typeof cfg.transpose_semitones === 'number' ? cfg.transpose_semitones : 0;
+    const qPpq = typeof cfg.quantize_ppq === 'number' ? cfg.quantize_ppq : 0;
+    const qStr = typeof cfg.quantize_strength === 'number' ? cfg.quantize_strength : 0;
+    const vScale = typeof cfg.velocity_scale === 'number' ? cfg.velocity_scale : 1;
+    const vOffset = typeof cfg.velocity_offset === 'number' ? cfg.velocity_offset : 0;
+    const vGamma = typeof cfg.velocity_gamma === 'number' ? cfg.velocity_gamma : 1;
+    const hPpq = typeof cfg.humanize_ppq === 'number' ? cfg.humanize_ppq : 0;
+    const hVel = typeof cfg.humanize_velocity === 'number' ? cfg.humanize_velocity : 0;
+    const chord = Array.isArray(cfg.chord_intervals) ? cfg.chord_intervals : null;
+    const clampU7 = (v: number) => Math.min(127, Math.max(0, Math.round(v)));
+    this.edit(() => {
+      this.requireClip(clipId);
+      const source = this.state.midi.get(clipId) ?? [];
+      const out: FakeEvent[] = [];
+      source.forEach((event, index) => {
+        const w = event.data0 >>> 0;
+        const group = (w >>> 24) & 0xf;
+        const status = (w >>> 20) & 0xf;
+        const channel = (w >>> 16) & 0xf;
+        let note = (w >>> 8) & 0x7f;
+        let value = w & 0x7f;
+        const isNoteOn = status === 0x9;
+        const isNoteOff = status === 0x8;
+        let ppq = event.ppq;
+        if ((isNoteOn || isNoteOff) && transpose !== 0) note = clampU7(note + transpose);
+        if (isNoteOn) {
+          if (vScale !== 1) value = clampU7(value * vScale);
+          if (vOffset !== 0) value = clampU7(value + vOffset);
+          if (vGamma !== 1) value = clampU7(127 * (value / 127) ** vGamma);
+          if (hVel > 0) value = clampU7(value + ((index % 3) - 1) * hVel);
+        }
+        if ((isNoteOn || isNoteOff) && hPpq > 0) ppq += ((index % 3) - 1) * hPpq * 0.5;
+        if ((isNoteOn || isNoteOff) && qPpq > 0 && qStr > 0) {
+          const target = Math.round(ppq / qPpq) * qPpq;
+          ppq += (target - ppq) * qStr;
+        }
+        const intervals = (isNoteOn || isNoteOff) && chord && chord.length > 0 ? chord : [0];
+        for (const interval of intervals) {
+          const n = isNoteOn || isNoteOff ? clampU7(note + interval) : note;
+          out.push({ ppq, data0: pack(group, status, channel, n, value), data1: event.data1 });
+        }
+      });
+      out.sort((a, b) => a.ppq - b.ppq);
+      this.state.midi.set(clipId, out);
+    });
+  }
+
   setMarker(markerId: number, ppq: number, name: string): number {
     return this.edit(() => {
       if (markerId === 0) {
@@ -433,6 +503,37 @@ export class FakeProject {
         this.state.markers.push({ id: markerId, ppq, name });
       }
       return markerId;
+    });
+  }
+
+  /**
+   * Replaces the chord-symbol annotation stream (one undoable edit), mirroring
+   * the real Project's field clamping: the 255 "no pitch class" sentinel is
+   * preserved, omitted extensions become an empty array, and the stored form
+   * uses the snake_case shape that toJson() emits.
+   */
+  annotateChords(
+    chords: ReadonlyArray<{
+      startPpq: number;
+      endPpq: number;
+      rootPc?: number;
+      quality?: number;
+      slashBassPc?: number;
+      extensions?: ReadonlyArray<number>;
+      romanNumeral?: string;
+    }>,
+  ): void {
+    this.edit(() => {
+      this.state.chords = chords.map((c) => ({
+        start_ppq: c.startPpq,
+        end_ppq: c.endPpq,
+        root_pc: c.rootPc ?? 255,
+        quality: c.quality ?? 0,
+        slash_bass_pc: c.slashBassPc ?? 255,
+        roman_numeral: c.romanNumeral ?? '',
+        extensions: c.extensions ? [...c.extensions] : [],
+        modulation_boundary: false,
+      }));
     });
   }
 
@@ -508,6 +609,7 @@ export class FakeProject {
       tracks: this.state.tracks.map((t) => ({ id: t.id, kind: t.kind, name: t.name })),
       clips: this.state.clips.map((c) => ({ ...c })),
       markers: this.state.markers.map((m) => ({ ...m })),
+      annotation: { chords: this.state.chords.map((c) => ({ ...c })) },
       midi_content: Object.fromEntries(
         [...this.state.midi].map(([id, events]) => [String(id), events.map((e) => ({ ...e }))]),
       ),

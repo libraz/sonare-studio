@@ -16,8 +16,10 @@ import {
   type DocumentScoreSettings,
 } from './annotations';
 import type { AutomationLaneState, AutomationParam, AutomationPoint } from './automation';
+import type { EditorChordSymbol } from './chords';
 import { clearHistory } from './commands';
 import { cloneInstrument, type TrackInstrument } from './instrument';
+import { cloneCcLanes } from './midi-cc';
 import {
   cloneMixerState,
   cloneStrip,
@@ -60,6 +62,13 @@ import type { ClipKind, EditorClip, EditorNote, TrackKind } from './types';
  *   assigns fresh ones. Both fields are omitted when empty, so every existing
  *   version-3 document remains valid and loaders that predate them simply
  *   ignore them.
+ *   Additionally (still version 3, additive): MIDI clips may carry optional
+ *   `ccLanes` (continuous-controller automation, see src/project/midi-cc.ts),
+ *   omitted when the clip has none, so every existing version-3 document
+ *   remains valid and loaders that predate the field simply ignore it.
+ *   Additionally (still version 3, additive): the document may carry an
+ *   optional `chords` list (the project chord track, see src/project/chords.ts)
+ *   replayed onto the Project through annotateChords; omitted when empty.
  *
  * Loaders accept any version up to this one; version-1 documents load
  * unchanged (every clip is MIDI).
@@ -105,6 +114,15 @@ export interface DocumentClip {
     sourceBpm: number;
     anchors?: Array<{ ppq: number; sourceSeconds: number }>;
   };
+  /**
+   * Continuous-controller (CC) automation lanes (MIDI clips); omitted when the
+   * clip carries none. Positions are clip-window-relative PPQ, values 0-127.
+   */
+  ccLanes?: Array<{
+    controller: number;
+    channel: number;
+    points: Array<{ ppq: number; value: number }>;
+  }>;
   /**
    * Display-only score annotations of this clip's notes, content-addressed
    * (editor note ids are session-scoped); omitted when the clip has none.
@@ -155,6 +173,10 @@ export interface DocumentTrack {
    * are session-scoped, so documents store the index); absent = master mix.
    */
   groupIndex?: number;
+  /** Solo-safe flag; absent = not solo-safe. */
+  soloSafe?: boolean;
+  /** Id of the VCA control group this track belongs to; absent = unassigned. */
+  vcaId?: string;
   /** Frozen state: the track's baked pre-fader render; absent = not frozen. */
   frozen?: { assetId: string };
 }
@@ -219,6 +241,8 @@ export interface ProjectDocument {
   sections: DocumentSection[];
   /** Automation lanes targeting the master strip; absent = none. */
   masterAutomation?: DocumentAutomationLane[];
+  /** Chord-track symbols ordered by position; absent/empty = no chord track. */
+  chords?: EditorChordSymbol[];
   /** Project mixer state; absent (schema < 3 or all-default) = defaults. */
   mixer?: ProjectMixerState;
   /** Score display settings; absent = defaults (no display transpose). */
@@ -259,6 +283,8 @@ function toDocumentClip(
         : {}),
     };
   }
+  const ccLanes = cloneCcLanes(clip.ccLanes);
+  if (ccLanes !== undefined) out.ccLanes = ccLanes;
   if (annotations !== undefined) {
     // Annotations are re-addressed by note content (orphans drop out here).
     const entries = annotationsToDocument(annotations, clip.notes);
@@ -339,6 +365,10 @@ export function serializeProject(): ProjectDocument {
         const groupIndex = store.tracks.findIndex((entry) => entry.id === track.groupId);
         if (groupIndex >= 0) out.groupIndex = groupIndex;
       }
+      if (track.soloSafe === true) out.soloSafe = true;
+      // VCA group ids are app-level strings, stable within a document, so they
+      // round-trip directly (dangling ids are dropped on load).
+      if (track.vcaId !== undefined) out.vcaId = track.vcaId;
       if (track.frozen !== undefined) out.frozen = { ...track.frozen };
       // Track automation rides the track entry (track ids are session-scoped,
       // so a document never stores lane targets); omitted when there is none.
@@ -360,6 +390,9 @@ export function serializeProject(): ProjectDocument {
   // longer exists drop out naturally).
   const masterLanes = store.automationLanes.filter((lane) => lane.target === 'master');
   if (masterLanes.length > 0) doc.masterAutomation = masterLanes.map(toDocumentAutomationLane);
+  // The chord track is omitted while empty, so chord-less documents look
+  // exactly like older ones (the loader replays it through annotateChords).
+  if (store.chords.length > 0) doc.chords = store.chords.map((chord) => ({ ...chord }));
   // The project mixer state is omitted while it is entirely default, so
   // documents from mixer-less sessions look exactly like older ones.
   if (!isDefaultMixerState(store.mixer)) doc.mixer = cloneMixerState(store.mixer);

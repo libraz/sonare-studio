@@ -59,6 +59,8 @@ const emit = defineEmits<{
   'view-resize': [widthPx: number, heightPx: number];
   /** Fired when a pointer press lands on a ghost note (read-only overlay). */
   'ghost-activate': [ghost: GhostNote];
+  /** Right-click on the grid: noteId is null when no note was hit. */
+  'note-context': [payload: { x: number; y: number; noteId: number | null; ppq: number }];
 }>();
 
 const wrapper = ref<HTMLDivElement | null>(null);
@@ -318,6 +320,17 @@ function onPointerCancel(): void {
 
 function onDoubleClick(event: MouseEvent): void {
   props.interactions.onDoubleClick(localPoint(event), modifiers(event));
+}
+
+function onContextMenu(event: MouseEvent): void {
+  event.preventDefault();
+  const point = localPoint(event);
+  emit('note-context', {
+    x: event.clientX,
+    y: event.clientY,
+    noteId: props.interactions.hitNoteAt(point),
+    ppq: Math.max(0, props.range.xToPpq(point.x)),
+  });
 }
 </script>
 

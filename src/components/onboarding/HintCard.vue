@@ -34,18 +34,19 @@ defineProps<{
   margin: auto;
   padding: 0.9rem 1.1rem;
   background: rgba(27, 30, 37, 0.85);
-  border: 1px dashed #2a2e38;
-  border-radius: 8px;
-  color: #8b93a3;
-  font-size: 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-lg);
+  color: var(--text-3);
+  font-size: var(--fs-sm);
   text-align: center;
+  box-shadow: var(--shadow-1);
 }
 
 .hint-title {
   margin: 0;
-  color: #b6bdca;
-  font-size: 12px;
-  font-weight: 600;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
   letter-spacing: 0.04em;
 }
 

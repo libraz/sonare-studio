@@ -1,12 +1,22 @@
-import { mount, type VueWrapper } from '@vue/test-utils';
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import ChordListEditor from '@/components/lists/ChordListEditor.vue';
 import MarkerListEditor from '@/components/lists/MarkerListEditor.vue';
 import ProjectListsPanel from '@/components/lists/ProjectListsPanel.vue';
 import TempoMapEditor from '@/components/lists/TempoMapEditor.vue';
 import TimeSignatureEditor from '@/components/lists/TimeSignatureEditor.vue';
-import { canUndo, clearHistory, redo, setMarker, undo } from '@/project/commands';
+import {
+  addNote,
+  canUndo,
+  clearHistory,
+  redo,
+  setMarker,
+  setProjectChords,
+  undo,
+} from '@/project/commands';
 import { useProjectStore } from '@/project/store';
+import { chooseOption, selectOption } from './helpers/select-menu';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -115,7 +125,10 @@ describe('project list editors', () => {
       await buttonByText(wrapper, 'Add meter').trigger('click'); // 2.1, 4/4
       const row = wrapper.findAll('tbody tr')[1];
       await row.find('input[type="number"]').setValue('6');
-      await row.find('select').setValue('8');
+      // The denominator is a SelectMenu; open the second row's picker (index 1)
+      // and pick the eighth-note unit by its visible label.
+      await selectOption(row as unknown as VueWrapper, '.cell-input', '8');
+      await wrapper.vm.$nextTick();
       await buttonByText(wrapper, 'Apply').trigger('click');
 
       expect(store.timeSignatures).toEqual([
@@ -196,12 +209,80 @@ describe('project list editors', () => {
     });
   });
 
+  describe('ChordListEditor', () => {
+    it('adds a one-bar major chord at the playhead', async () => {
+      const wrapper = mount(ChordListEditor, { props: { positionPpq: () => 4 } });
+      await buttonByText(wrapper, 'Add at playhead').trigger('click');
+      expect(store.chords).toEqual([{ startPpq: 4, endPpq: 8, rootPc: 0, quality: 0 }]);
+      // Position shows bars.beats (PPQ 4 = bar 2) and the formatted name.
+      expect((wrapper.find('tbody input').element as HTMLInputElement).value).toBe('2.1');
+      expect(wrapper.find('.cell-name').text()).toBe('C');
+      wrapper.unmount();
+    });
+
+    it('edits the root, quality, and slash bass through the pickers', async () => {
+      setProjectChords([{ startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 }]);
+      const wrapper = mount(ChordListEditor);
+      // Root / quality / bass share the `.cell-select` class within the row, so
+      // disambiguate by column index: open the nth trigger, then pick by label.
+      const triggers = () => wrapper.findAll('tbody tr')[0].findAll('.cell-select .select-trigger');
+      await triggers()[0].trigger('click'); // root picker
+      await flushPromises();
+      await chooseOption('G');
+      expect(store.chords[0].rootPc).toBe(7);
+      await triggers()[1].trigger('click'); // quality picker
+      await flushPromises();
+      await chooseOption('Dominant 7');
+      expect(store.chords[0].quality).toBe(4);
+      await triggers()[2].trigger('click'); // slash-bass picker
+      await flushPromises();
+      await chooseOption('C');
+      expect(store.chords[0].bassPc).toBe(0);
+      expect(wrapper.find('.cell-name').text()).toBe('G7/C');
+      wrapper.unmount();
+    });
+
+    it('detects chords from the active MIDI clip', async () => {
+      addNote({ pitch: 60, startPpq: 0, durationPpq: 4 });
+      addNote({ pitch: 64, startPpq: 0, durationPpq: 4 });
+      addNote({ pitch: 67, startPpq: 0, durationPpq: 4 });
+      const wrapper = mount(ChordListEditor);
+      await buttonByText(wrapper, 'Detect from clip').trigger('click');
+      expect(store.chords.length).toBeGreaterThan(0);
+      expect(store.chords[0]).toMatchObject({ rootPc: 0, quality: 0 });
+      wrapper.unmount();
+    });
+
+    it('deletes a chord and clears the whole track', async () => {
+      setProjectChords([
+        { startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 },
+        { startPpq: 4, endPpq: 8, rootPc: 7, quality: 4 },
+      ]);
+      const wrapper = mount(ChordListEditor);
+      await wrapper.find('button[aria-label="Delete chord C"]').trigger('click');
+      expect(store.chords.map((c) => c.rootPc)).toEqual([7]);
+      await buttonByText(wrapper, 'Clear').trigger('click');
+      expect(store.chords).toEqual([]);
+      wrapper.unmount();
+    });
+
+    it('emits seek when a chord row arrow is clicked', async () => {
+      setProjectChords([{ startPpq: 8, endPpq: 12, rootPc: 0, quality: 0 }]);
+      const wrapper = mount(ChordListEditor);
+      await wrapper.find('.cell-seek .row-button').trigger('click');
+      expect(wrapper.emitted('seek')).toEqual([[8]]);
+      wrapper.unmount();
+    });
+  });
+
   describe('ProjectListsPanel', () => {
     it('shows the tempo tab by default and switches tabs', async () => {
       const wrapper = mount(ProjectListsPanel);
       expect(wrapper.findComponent(TempoMapEditor).exists()).toBe(true);
       await buttonByText(wrapper, 'Time Sig').trigger('click');
       expect(wrapper.findComponent(TimeSignatureEditor).exists()).toBe(true);
+      await buttonByText(wrapper, 'Chords').trigger('click');
+      expect(wrapper.findComponent(ChordListEditor).exists()).toBe(true);
       await buttonByText(wrapper, 'Markers').trigger('click');
       expect(wrapper.findComponent(MarkerListEditor).exists()).toBe(true);
       wrapper.unmount();

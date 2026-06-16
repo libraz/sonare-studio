@@ -1,0 +1,190 @@
+/*
+ * Global design tokens for sonare studio — refined light "iOS glass" theme.
+ *
+ * Single source of truth for color, type, spacing, radius, elevation and the
+ * frosted-glass material. Every chrome component consumes these via var(); the
+ * canvas/SVG editors (piano roll, arrangement) read the SEPARATE dark literals
+ * in tokens.ts so the editor surfaces stay dark for contrast while the shell
+ * around them is light. This is the intentional hybrid: light frosted chrome,
+ * dark editor "screens".
+ *
+ * Re-tune the whole shell by editing this one file. Variable NAMES are stable
+ * so components never need to change when the palette shifts.
+ */
+:root {
+  /* --- Surfaces: backdrop (0) to most raised (4) -----------------------
+   * Light, near-white opaque fallbacks. Translucent glass is layered on top
+   * via the --glass-* tokens; these are what shows when blur is unsupported. */
+  --surface-0: #e9ecf2; /* app shell backdrop (behind glass) */
+  --surface-1: #f3f5f9; /* lanes, toolbars, diagnostics */
+  --surface-2: #ffffff; /* transport bar, panels, modals */
+  --surface-3: #f6f8fb; /* menus, inputs, popovers */
+  --surface-4: #eaeef4; /* hover / raised controls */
+  --surface-inset: #eceff4; /* recessed control wells (inputs, grooves) */
+  --surface-selected: #e4eefb; /* accent-tinted selected / active row */
+
+  /* --- Borders / hairlines ---------------------------------------------
+   * Soft dark hairlines on light. `--border-strong` is no longer black — on a
+   * light shell a structural seam reads as a slightly deeper gray. */
+  --border: rgba(17, 24, 39, 0.1); /* default 1px divider */
+  --border-strong: rgba(17, 24, 39, 0.16); /* structural seams */
+  --border-subtle: rgba(17, 24, 39, 0.05); /* faint inner lines */
+  --border-hi: rgba(255, 255, 255, 0.7); /* top-edge highlight on glass chrome */
+  --border-raised: rgba(17, 24, 39, 0.14); /* edge on raised controls */
+
+  /* --- Text tiers ------------------------------------------------------- */
+  --text-1: #11151c; /* primary / headings */
+  --text-2: #3a4150; /* body */
+  --text-3: #6b7385; /* muted labels */
+  --text-4: #a0a7b4; /* disabled / meta */
+
+  /* --- Accent (iOS systemBlue family) ----------------------------------- */
+  --accent: #0a84ff; /* focus, active, highlights */
+  --accent-strong: #0a84ff; /* primary-button fill */
+  --accent-hover: #2b94ff; /* primary-button hover */
+  --accent-active: #006fe0; /* primary-button pressed */
+  --accent-text: #ffffff; /* text on accent fill */
+  --accent-muted: rgba(10, 132, 255, 0.22); /* selection / loop bands */
+  --accent-soft: rgba(10, 132, 255, 0.08); /* active-lane tint */
+
+  /* --- Semantic (iOS system colors) ------------------------------------- */
+  --danger: #ff3b30;
+  --danger-text: #c1271d;
+  --danger-surface: #ffecea;
+  --warning: #ff9f0a;
+  --warning-text: #9a6200;
+  --warning-surface: #fff4e2;
+  --success: #34c759;
+  --success-strong: #28a745;
+
+  /* --- Meter ramp (unchanged — drawn over dark canvas) ------------------ */
+  --meter-green: #34d399;
+  --meter-yellow: #fbbf24;
+  --meter-red: #ef4444;
+  --playhead: #ff6e6e;
+
+  /* --- Canvas editor palette (DARK) ------------------------------------
+   * The hybrid: the shell chrome above is light frosted glass, but the canvas
+   * editors (piano roll, arrangement) stay dark for contrast and long-session
+   * comfort. Their renderers read the literals in tokens.ts; these vars mirror
+   * those literals so the palette is documented in one place and guarded
+   * against drift (tests/theme-tokens.spec.ts). The DOM chrome that frames a
+   * canvas may also reference these to blend its edge into the dark screen. */
+  --canvas-surface-0: #0b0d11;
+  --canvas-surface-1: #101216;
+  --canvas-surface-2: #14161b;
+  --canvas-surface-3: #1d2027;
+  --canvas-surface-4: #242832;
+  --canvas-surface-inset: #11141a;
+  --canvas-border: #2a2e37;
+  --canvas-border-strong: #000000;
+  --canvas-text-1: #e2e6ee;
+  --canvas-text-2: #c8cdd6;
+  --canvas-text-3: #8b93a3;
+  --canvas-text-4: #5b6270;
+  --canvas-accent: #60a5fa;
+  --canvas-accent-strong: #2453a8;
+  --canvas-danger: #ef4444;
+  --canvas-danger-text: #ffb4b4;
+  --canvas-danger-surface: #3b1219;
+  --canvas-warning: #fbbf24;
+  --canvas-success: #34d399;
+  --canvas-success-strong: #22c55e;
+
+  /* --- Frosted glass material ------------------------------------------
+   * The signature iOS material: a translucent white wash plus a heavy blur +
+   * saturation boost so the backdrop bleeds through with vibrancy. Components
+   * apply: background: var(--glass-2); backdrop-filter: var(--glass-blur).
+   * Refined/subtle tuning — readable through long editing sessions. */
+  --glass-1: rgba(248, 250, 253, 0.62); /* lanes / toolbars */
+  --glass-2: rgba(255, 255, 255, 0.74); /* panels / transport / menus */
+  --glass-3: rgba(255, 255, 255, 0.86); /* modals / elevated popovers */
+  --glass-blur: saturate(170%) blur(20px);
+  --glass-blur-strong: saturate(180%) blur(30px);
+  --glass-hairline: inset 0 1px 0 rgba(255, 255, 255, 0.65),
+    inset 0 0 0 1px rgba(17, 24, 39, 0.06);
+
+  /* --- Typography ------------------------------------------------------
+   * The SF system stack IS the iOS typeface — keeping it is the intentional
+   * choice for an Apple-native feel, not a fallback. */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui,
+    "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Roboto Mono", monospace;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 14px;
+  --fs-xl: 16px;
+  --fw-normal: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+
+  /* --- Spacing scale ---------------------------------------------------- */
+  --sp-1: 2px;
+  --sp-2: 4px;
+  --sp-3: 6px;
+  --sp-4: 8px;
+  --sp-5: 12px;
+  --sp-6: 16px;
+
+  /* --- Radius -----------------------------------------------------------
+   * Tightened from the early "iOS pill" scale toward a more precise,
+   * pro-tool corner: controls read as crisp faces, not bubbly capsules.
+   * Containers (popovers, modals) keep softer corners for the glass feel. */
+  --radius-sm: 5px;
+  --radius-md: 7px;
+  --radius-lg: 11px;
+  --radius-xl: 18px;
+  --radius-full: 9999px;
+
+  /* --- Elevation — soft, diffuse, low-opacity (Apple-style) ------------ */
+  --shadow-1: 0 1px 2px rgba(17, 24, 39, 0.06), 0 1px 3px rgba(17, 24, 39, 0.05);
+  --shadow-2: 0 2px 8px rgba(17, 24, 39, 0.08), 0 1px 2px rgba(17, 24, 39, 0.04);
+  --shadow-pop: 0 10px 30px rgba(17, 24, 39, 0.14), 0 2px 8px rgba(17, 24, 39, 0.08);
+  --shadow-modal: 0 24px 70px rgba(17, 24, 39, 0.26), 0 6px 20px rgba(17, 24, 39, 0.12);
+
+  /* --- Surface dimensionality ------------------------------------------
+   * On light glass the top highlight is a near-opaque white line; the sheen is
+   * a whisper-thin top gloss (kept very subtle so faces read flat, not glossy);
+   * the well recesses inputs with a soft inner shadow rather than heavy black. */
+  --raise-hi: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --sheen: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.4),
+    rgba(255, 255, 255, 0) 55%
+  );
+  --inset-well: inset 0 1px 2px rgba(17, 24, 39, 0.08);
+
+  /* --- Control faces ---------------------------------------------------
+   * The pro-tool control language: buttons and pop-ups are RAISED FACES, not
+   * outlined rectangles. Definition comes from a whisper hairline ring
+   * (--control-edge) plus a soft drop shadow — never a drawn 1px border. This
+   * is the single knob that retires the "HTML button" look app-wide. */
+  --control-bg: var(--surface-2);
+  --control-bg-hover: var(--surface-4);
+  --control-bg-active: #e3e8ef;
+  --control-edge: inset 0 0 0 1px rgba(17, 24, 39, 0.07);
+  --control-edge-hover: inset 0 0 0 1px rgba(17, 24, 39, 0.12);
+  --control-lift: var(--raise-hi), var(--control-edge), var(--shadow-1);
+  --control-lift-hover: var(--raise-hi), var(--control-edge-hover), var(--shadow-2);
+
+  /* --- Focus ring ------------------------------------------------------- */
+  --ring: 0 0 0 3px rgba(10, 132, 255, 0.32); /* soft accent halo */
+
+  /* --- Motion ----------------------------------------------------------- */
+  --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* gentle iOS overshoot */
+  --dur-1: 90ms; /* taps, hovers */
+  --dur-2: 160ms; /* panels, popovers */
+  --dur-3: 240ms; /* modal entrance */
+}
+
+/* Honour the OS reduced-motion preference: collapse all transitions. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-1: 0ms;
+    --dur-2: 0ms;
+    --dur-3: 0ms;
+  }
+}

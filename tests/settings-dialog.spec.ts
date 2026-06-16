@@ -6,6 +6,7 @@ import { useAppSettings } from '@/composables/useAppSettings';
 import { useLayouts } from '@/composables/useLayouts';
 import { useShortcuts } from '@/composables/useShortcuts';
 import type { DockTabId, LayoutBindings } from '@/ui/settings/layouts';
+import { selectOption } from './helpers/select-menu';
 
 function makeBindings(): LayoutBindings {
   return {
@@ -13,6 +14,7 @@ function makeBindings(): LayoutBindings {
     dockTab: ref<DockTabId>('roll'),
     deviceRackOpen: ref(true),
     scoreOpen: ref(false),
+    dockCollapsed: ref(false),
   };
 }
 
@@ -117,6 +119,30 @@ describe('SettingsDialog', () => {
     expect(reset).toBeDefined();
     await reset!.trigger('click');
     expect(useShortcuts().keysFor('edit.undo')).toEqual(['mod+z']);
+  });
+
+  it('filters the shortcut list by search query', async () => {
+    const w = open();
+    await w.findAll('[role="tab"]')[1].trigger('click');
+    await w.find('.shortcut-search').setValue('quantize');
+    const ids = w.findAll('tbody [data-action-id]').map((row) => row.attributes('data-action-id'));
+    expect(ids).toEqual(['edit.quantizeSelection']);
+  });
+
+  it('filters the shortcut list by category', async () => {
+    const w = open();
+    await w.findAll('[role="tab"]')[1].trigger('click');
+    await selectOption(w, '.shortcut-group', 'Tools');
+    const ids = w.findAll('tbody [data-action-id]').map((row) => row.attributes('data-action-id'));
+    expect(ids).toEqual(['tool.select', 'tool.draw', 'tool.split', 'tool.erase']);
+  });
+
+  it('shows an empty state when nothing matches the search', async () => {
+    const w = open();
+    await w.findAll('[role="tab"]')[1].trigger('click');
+    await w.find('.shortcut-search').setValue('zzzznomatch');
+    expect(w.findAll('tbody [data-action-id]')).toHaveLength(0);
+    expect(w.find('.shortcut-empty').exists()).toBe(true);
   });
 
   it('offers no edit button for fixed entries', async () => {

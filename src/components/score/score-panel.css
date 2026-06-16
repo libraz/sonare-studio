@@ -1,0 +1,198 @@
+.score-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface-2);
+  border-top: 1px solid var(--border-strong);
+}
+
+.score-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.75rem;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border-strong);
+  flex-wrap: wrap;
+  font-size: var(--fs-sm);
+  box-shadow: var(--raise-hi);
+}
+
+.bar-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  white-space: nowrap;
+}
+
+.bar-field :deep(.select-trigger) {
+  width: 5rem;
+}
+
+.bar-spacer {
+  width: 0.75rem;
+}
+
+.score-page-indicator {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+  min-width: 3.5rem;
+  text-align: center;
+}
+
+.score-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.score-zoom-btn {
+  min-width: 1.7rem;
+  padding: 0.1rem 0.35rem;
+  font-weight: var(--fw-semibold);
+}
+
+.score-zoom-readout {
+  min-width: 2.6rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.layout-host {
+  position: relative;
+}
+
+.layout-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+  font-size: var(--fs-sm);
+  min-width: 12rem;
+}
+
+.layout-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  white-space: nowrap;
+}
+
+.layout-row input,
+.layout-row :deep(.select-trigger) {
+  width: 6rem;
+}
+
+.score-error {
+  margin: 0;
+  background: var(--danger-surface);
+  border-bottom: 1px solid var(--danger);
+  color: var(--danger-text);
+  padding: 0.4rem 0.75rem;
+  font-size: var(--fs-sm);
+  white-space: pre-wrap;
+}
+
+.score-body-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.score-body {
+  height: 100%;
+  overflow: auto;
+  /* Neutral light backdrop behind the white "paper"; matches the app theme
+   * rather than the old cream tint. */
+  background: var(--surface-1);
+  padding: 0.5rem;
+}
+
+.score-body :deep(svg) {
+  display: block;
+  margin: 0 auto;
+  /* The engraving is one continuous system cropped to its content
+   * (adjustPageWidth), so width:100% makes it span the full panel width — no
+   * trailing blank space. Scaling is uniform via the viewBox (no distortion).
+   * Zoom > 100% overflows and the body scrolls horizontally. */
+  width: calc(var(--score-zoom, 1) * 100%);
+  max-width: none;
+  height: auto;
+  background: #fff;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
+}
+
+.score-body :deep(g.note) {
+  cursor: pointer;
+  /* Make the whole note group (notehead + stem + the space between) clickable,
+     not just the painted glyph outlines. */
+  pointer-events: bounding-box;
+}
+
+.score-body :deep(.score-note-playing),
+.score-body :deep(.score-note-playing *) {
+  fill: #2563eb;
+  color: #2563eb;
+  stroke: #2563eb;
+}
+
+.score-toolbar button.active {
+  background: #2563eb;
+  color: #fff;
+}
+
+.annotation-palette {
+  position: absolute;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.45rem 0.5rem;
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+  font-size: var(--fs-xs);
+}
+
+.palette-row {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.annotation-palette button.active {
+  background: #2563eb;
+  color: #fff;
+}
+
+.palette-dynamics {
+  font-style: italic;
+  font-weight: var(--fw-semibold);
+  min-width: 1.8rem;
+}
+
+.score-loading,
+.score-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-md);
+  color: #4b5563;
+  pointer-events: none;
+}
+
+.score-loading {
+  background: color-mix(in srgb, var(--surface-1), transparent 25%);
+}

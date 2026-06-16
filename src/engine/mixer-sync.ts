@@ -45,8 +45,14 @@ export interface MixerSync {
    *
    * @param tracks Project tracks in store order.
    * @param master Master strip (gainDb/pan audible).
+   * @param vcaGainDb VCA group id -> fader offset in dB; a member track's gain
+   *   is raised by its group's offset. Omit when there are no VCA groups.
    */
-  sync(tracks: ReadonlyArray<EditorTrack>, master: MixerStrip): void;
+  sync(
+    tracks: ReadonlyArray<EditorTrack>,
+    master: MixerStrip,
+    vcaGainDb?: ReadonlyMap<string, number>,
+  ): void;
   /** Lane order as declared so far (lane index -> project track id). */
   laneTrackIds(): readonly number[];
 }
@@ -63,19 +69,27 @@ export function createMixerSync(handle: EngineHandle): MixerSync {
   const laneStates = new Map<number, LaneState>();
   let masterState: { gainDb: number; pan: number } | undefined;
 
-  const sync = (tracks: ReadonlyArray<EditorTrack>, master: MixerStrip): void => {
+  const sync = (
+    tracks: ReadonlyArray<EditorTrack>,
+    master: MixerStrip,
+    vcaGainDb?: ReadonlyMap<string, number>,
+  ): void => {
     const known = new Set(laneIds);
     const appended = tracks.filter((track) => !known.has(track.id)).map((track) => track.id);
     if (appended.length > 0) {
       laneIds.push(...appended);
       handle.engine.setTrackLanes([...laneIds]);
     }
+    // Solo-safe tracks join the solo group whenever any solo is active, so the
+    // engine keeps them audible instead of silencing them with the rest.
+    const anySolo = tracks.some((track) => track.solo);
     for (const track of tracks) {
       const strip = track.mixer;
+      const vcaOffset = track.vcaId !== undefined ? (vcaGainDb?.get(track.vcaId) ?? 0) : 0;
       const next: LaneState = {
-        gainDb: linearToDb(track.volume) + (strip?.gainDb ?? 0),
+        gainDb: linearToDb(track.volume) + (strip?.gainDb ?? 0) + vcaOffset,
         pan: clampPan(strip?.pan ?? 0),
-        solo: track.solo,
+        solo: track.solo || (anySolo && track.soloSafe === true),
         mute: track.mute,
       };
       const prev = laneStates.get(track.id);

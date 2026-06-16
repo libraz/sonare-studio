@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import SelectMenu from '@/components/shell/SelectMenu.vue';
 import type { CommandGestureOptions, MixerStripTarget } from '@/project/commands';
 import { setInsertSidechain } from '@/project/commands';
 import { createDefaultStrip, type InsertSlot, type MixerStrip } from '@/project/mixer';
@@ -17,6 +18,7 @@ import {
   adjustExpandedAfterRemove,
   isSidechainKeyedProcessor,
   removeInsertSlot,
+  reorderInsertSlots,
   toggleInsertEnabled,
 } from '@/ui/mixer/insert-rack';
 import { createValueGesture, type ValueGesture } from '@/ui/mixer/strip-gestures';
@@ -115,23 +117,69 @@ function onRemove(index: number): void {
   expandedIndex.value = adjustExpandedAfterRemove(expandedIndex.value, index);
 }
 
+// --- Drag reorder ------------------------------------------------------------
+
+const dragIndex = ref<number | null>(null);
+const dragOverIndex = ref<number | null>(null);
+
+function onDragStart(index: number, event: DragEvent): void {
+  dragIndex.value = index;
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', String(index));
+  }
+}
+
+function onDragOver(index: number, event: DragEvent): void {
+  if (dragIndex.value === null) return;
+  event.preventDefault();
+  dragOverIndex.value = index;
+}
+
+function onDrop(index: number): void {
+  const from = dragIndex.value;
+  dragIndex.value = null;
+  dragOverIndex.value = null;
+  if (from === null || from === index) return;
+  try {
+    reorderInsertSlots(props.target, strip.value.inserts, from, index);
+    expandedIndex.value = null;
+    error.value = '';
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
+}
+
+function onDragEnd(): void {
+  dragIndex.value = null;
+  dragOverIndex.value = null;
+}
+
 // --- Sidechain key source ------------------------------------------------------
+
+/** Sidechain select value meaning "no key source" (track ids are never < 0). */
+const SIDECHAIN_NONE = -1;
 
 /** Tracks selectable as sidechain key sources (other non-group tracks). */
 const sidechainSources = computed<EditorTrack[]>(() =>
   store.tracks.filter((track) => track.id !== props.target && track.kind !== 'group'),
 );
 
+/** Key-source options: "No key" plus every selectable source track. */
+const sidechainOptions = computed<{ value: number; label: string }[]>(() => [
+  { value: SIDECHAIN_NONE, label: 'No key' },
+  ...sidechainSources.value.map((track) => ({ value: track.id, label: track.name })),
+]);
+
 /** True when the slot gets a key-source select (keyed insert on a track strip). */
 function hasSidechainSelect(slot: InsertSlot): boolean {
   return props.target !== 'master' && isSidechainKeyedProcessor(slot.processor);
 }
 
-function onSidechainChange(index: number, event: Event): void {
+function onSidechainChange(index: number, value: number): void {
   if (props.target === 'master') return;
-  const raw = (event.target as HTMLSelectElement).value;
   try {
-    setInsertSidechain(props.target, index, raw === '' ? null : Number(raw));
+    setInsertSidechain(props.target, index, value === SIDECHAIN_NONE ? null : value);
     error.value = '';
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
@@ -182,7 +230,20 @@ onBeforeUnmount(() => {
 <template>
   <div class="insert-rack">
     <template v-for="(slot, index) in strip.inserts" :key="index">
-      <div class="insert-slot" :class="{ bypassed: !slot.enabled }">
+      <div
+        class="insert-slot"
+        :class="{ bypassed: !slot.enabled, 'drag-over': dragOverIndex === index }"
+        @dragover="onDragOver(index, $event)"
+        @drop="onDrop(index)"
+        @dragend="onDragEnd"
+      >
+        <span
+          class="insert-drag"
+          draggable="true"
+          title="Drag to reorder"
+          aria-hidden="true"
+          @dragstart="onDragStart(index, $event)"
+        >⋮⋮</span>
         <button
           type="button"
           class="insert-power"
@@ -214,16 +275,14 @@ onBeforeUnmount(() => {
       <div v-if="expandedIndex === index" class="insert-params">
         <label v-if="hasSidechainSelect(slot)" class="insert-sidechain">
           <span class="insert-sidechain-label">Key</span>
-          <select
+          <SelectMenu
             class="insert-sidechain-select"
-            :value="slot.sidechainSourceTrackId ?? ''"
-            @change="onSidechainChange(index, $event)"
-          >
-            <option value="">No key</option>
-            <option v-for="source in sidechainSources" :key="source.id" :value="source.id">
-              {{ source.name }}
-            </option>
-          </select>
+            :model-value="slot.sidechainSourceTrackId ?? SIDECHAIN_NONE"
+            :options="sidechainOptions"
+            aria-label="Sidechain key source"
+            size="sm"
+            @change="(value) => onSidechainChange(index, value)"
+          />
         </label>
         <p v-if="expandedControls.length === 0" class="insert-params-empty">No parameters</p>
         <MixerKnob
@@ -274,21 +333,40 @@ onBeforeUnmount(() => {
 .insert-rack {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--sp-1);
 }
 
 .insert-slot {
   display: flex;
   align-items: center;
   gap: 3px;
-  background: #1a1d23;
-  border: 1px solid #23262e;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
   border-radius: 3px;
   padding: 1px 3px;
 }
 
+.insert-slot.drag-over {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent-muted);
+}
+
 .insert-slot.bypassed .insert-name {
-  color: #4a5160;
+  color: var(--text-4);
+}
+
+.insert-drag {
+  flex: none;
+  color: var(--text-4);
+  font-size: 9px;
+  line-height: 1;
+  letter-spacing: -1px;
+  cursor: grab;
+  user-select: none;
+}
+
+.insert-drag:active {
+  cursor: grabbing;
 }
 
 .insert-power {
@@ -296,15 +374,16 @@ onBeforeUnmount(() => {
   height: 7px;
   flex: none;
   border-radius: 50%;
-  border: 1px solid #3a4150;
+  border: 1px solid var(--border-raised);
   background: transparent;
+  box-shadow: none;
   padding: 0;
   cursor: pointer;
 }
 
 .insert-power.on {
-  background: #4ade80;
-  border-color: #4ade80;
+  background: var(--success);
+  border-color: var(--success);
 }
 
 .insert-name {
@@ -314,48 +393,51 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: left;
-  font: 9px system-ui, sans-serif;
-  color: #c8cdd6;
+  font: 9px var(--font-sans);
+  color: var(--text-2);
   background: transparent;
   border: none;
+  box-shadow: none;
   padding: 1px 0;
   cursor: pointer;
 }
 
 .insert-name.expanded {
-  color: #9fc4f5;
+  color: var(--accent);
 }
 
 .insert-remove {
   flex: none;
   border: none;
   background: transparent;
-  color: #5b6270;
-  font: 10px system-ui, sans-serif;
+  box-shadow: none;
+  color: var(--text-4);
+  font: 10px var(--font-sans);
   line-height: 1;
   padding: 0 1px;
   cursor: pointer;
 }
 
 .insert-remove:hover {
-  color: #ffb4b4;
+  color: var(--danger-text);
 }
 
 .insert-params {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 6px;
+  gap: var(--sp-2) var(--sp-3);
   justify-content: center;
-  background: #15171c;
-  border: 1px solid #23262e;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
   border-radius: 3px;
-  padding: 4px 2px;
+  padding: var(--sp-2) var(--sp-1);
+  box-shadow: var(--inset-well);
 }
 
 .insert-params-empty {
   margin: 0;
-  font: 9px system-ui, sans-serif;
-  color: #4a5160;
+  font: 9px var(--font-sans);
+  color: var(--text-4);
 }
 
 .insert-add-wrap {
@@ -364,18 +446,18 @@ onBeforeUnmount(() => {
 
 .insert-add {
   width: 100%;
-  font: 600 9px system-ui, sans-serif;
-  color: #8b93a3;
+  font: var(--fw-semibold) 9px var(--font-sans);
+  color: var(--text-3);
   background: transparent;
-  border: 1px dashed #2a2e37;
+  box-shadow: none;
   border-radius: 3px;
   padding: 2px 0;
   cursor: pointer;
+  transition: color var(--dur-1) var(--ease-out);
 }
 
 .insert-add:hover {
-  color: #c8cdd6;
-  border-color: #3a4150;
+  color: var(--text-2);
 }
 
 .insert-catalog {
@@ -386,18 +468,18 @@ onBeforeUnmount(() => {
   width: 150px;
   max-height: 240px;
   overflow-y: auto;
-  background: #1d2027;
-  border: 1px solid #2a2e37;
-  border-radius: 4px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-pop);
   padding: 2px 0;
 }
 
 .catalog-category {
-  font: 700 8px system-ui, sans-serif;
+  font: var(--fw-bold) 8px var(--font-sans);
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: #5b6270;
+  color: var(--text-4);
   padding: 4px 8px 2px;
 }
 
@@ -405,44 +487,40 @@ onBeforeUnmount(() => {
   display: block;
   width: 100%;
   text-align: left;
-  font: 10px system-ui, sans-serif;
-  color: #c8cdd6;
+  font: 10px var(--font-sans);
+  color: var(--text-2);
   background: transparent;
   border: none;
+  box-shadow: none;
   padding: 3px 10px;
   cursor: pointer;
+  transition: background var(--dur-1) var(--ease-out);
 }
 
 .catalog-item:hover {
-  background: #242832;
+  background: var(--surface-4);
 }
 
 .insert-error {
   margin: 0;
-  font: 9px/1.3 system-ui, sans-serif;
-  color: #ffb4b4;
+  font: 9px/1.3 var(--font-sans);
+  color: var(--danger-text);
 }
 .insert-sidechain {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--sp-2);
   width: 100%;
 }
 
 .insert-sidechain-label {
   font-size: 9px;
-  color: var(--mixer-dim, #889);
+  color: var(--text-3);
   text-transform: uppercase;
 }
 
 .insert-sidechain-select {
   flex: 1;
   min-width: 0;
-  font-size: 10px;
-  background: var(--mixer-bg, #1c1f27);
-  color: inherit;
-  border: 1px solid var(--mixer-border, #333a48);
-  border-radius: 3px;
-  padding: 1px 2px;
 }
 </style>

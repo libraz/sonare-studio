@@ -228,10 +228,10 @@ function onEscape(field: FieldDef, event: KeyboardEvent): void {
   align-items: center;
   gap: 0.75rem;
   padding: 0.25rem 0.5rem;
-  background: #1d2026;
-  border-bottom: 1px solid #2c313a;
+  background: var(--surface-3);
+  border-bottom: 1px solid var(--border);
   font-size: 0.75rem;
-  color: #aab2c0;
+  color: var(--text-2);
   user-select: none;
 }
 
@@ -245,23 +245,25 @@ function onEscape(field: FieldDef, event: KeyboardEvent): void {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   font-size: 0.65rem;
-  color: #6c7686;
+  color: var(--text-3);
 }
 
 .info-line__input {
   width: 4.5rem;
   padding: 0.15rem 0.3rem;
-  background: #12141a;
-  border: 1px solid #2c313a;
-  border-radius: 3px;
-  color: #dde3ec;
+  background: var(--surface-inset);
+  border: none;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--control-edge), var(--inset-well);
+  color: var(--text-1);
   font: inherit;
   font-variant-numeric: tabular-nums;
+  transition: border-color var(--dur-1) var(--ease-out);
 }
 
 .info-line__input:focus {
   outline: none;
-  border-color: #4a90d9;
+  box-shadow: inset 0 0 0 1px var(--accent), var(--inset-well), var(--ring);
 }
 
 .info-line__input:disabled {
@@ -270,6 +272,6 @@ function onEscape(field: FieldDef, event: KeyboardEvent): void {
 
 .info-line__count {
   margin-left: auto;
-  color: #6c7686;
+  color: var(--text-3);
 }
 </style>

@@ -8,17 +8,21 @@ import { formatDb } from '@/ui/mixer/db-scale';
 import MixerKnob from './MixerKnob.vue';
 
 /**
- * Send section of a channel strip: one level knob per project bus. Sends are
- * routing metadata only in this iteration (the engine has no bus routing for
- * prerendered clips), so the section is labelled accordingly. setSend has no
- * gesture coalescing, so knob drags preview locally and issue a single
- * command on release — one undo entry per drag either way.
+ * Send section of a channel strip: one level knob per project bus, with a
+ * per-send mute (click the bus name). Track sends are live — strip-sync mirrors
+ * them to the engine bus lanes — so they are audible; only the master strip has
+ * no engine send bus, so its sends are routing-only. setSend has no gesture
+ * coalescing, so knob drags preview locally and issue a single command on
+ * release — one undo entry per drag either way.
  */
 
 const props = defineProps<{
   /** Strip the section edits: a track id or 'master'. */
   target: MixerStripTarget;
 }>();
+
+/** The master strip has no engine send bus, so its sends are routing-only. */
+const isMaster = computed(() => props.target === 'master');
 
 const store = useProjectStore();
 
@@ -72,14 +76,28 @@ function onRemove(busId: string): void {
 </script>
 
 <template>
-  <div v-if="buses.length > 0" class="sends" title="Sends are routing metadata only (not audible yet)">
-    <span class="sends-title">SENDS</span>
+  <div
+    v-if="buses.length > 0"
+    class="sends"
+    :title="
+      isMaster
+        ? 'Master sends are routing-only (the master has no engine send bus)'
+        : 'Send levels to the project buses — click a name to mute that send'
+    "
+  >
+    <span class="sends-title">SENDS<span v-if="isMaster" class="sends-note"> · routing-only</span></span>
     <div v-for="bus in buses" :key="bus.id" class="send-row">
       <button
         type="button"
         class="send-name"
         :class="{ off: sendFor(bus.id)?.enabled === false, unset: !sendFor(bus.id) }"
-        :title="sendFor(bus.id) ? 'Toggle send' : 'No send yet - turn the knob'"
+        :title="
+          sendFor(bus.id)
+            ? sendFor(bus.id)?.enabled === false
+              ? 'Muted send — click to unmute'
+              : 'Active send — click to mute'
+            : 'No send yet — turn the knob'
+        "
         @click="onToggleEnabled(bus.id)"
       >
         {{ bus.name }}
@@ -114,10 +132,17 @@ function onRemove(busId: string): void {
 }
 
 .sends-title {
-  font: 700 8px system-ui, sans-serif;
+  font: var(--fw-bold) 8px var(--font-sans);
   letter-spacing: 0.06em;
-  color: #5b6270;
+  color: var(--text-4);
   user-select: none;
+}
+
+.sends-note {
+  font-weight: var(--fw-normal);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-4);
 }
 
 .send-row {
@@ -133,36 +158,38 @@ function onRemove(busId: string): void {
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: left;
-  font: 9px system-ui, sans-serif;
-  color: #c8cdd6;
+  font: 9px var(--font-sans);
+  color: var(--text-2);
   background: transparent;
   border: none;
+  box-shadow: none;
   padding: 0;
   cursor: pointer;
 }
 
 .send-name.off {
   text-decoration: line-through;
-  color: #5b6270;
+  color: var(--text-4);
 }
 
 .send-name.unset {
-  color: #4a5160;
+  color: var(--text-4);
 }
 
 .send-remove {
   flex: none;
   border: none;
   background: transparent;
-  color: #5b6270;
-  font: 10px system-ui, sans-serif;
+  box-shadow: none;
+  color: var(--text-4);
+  font: 10px var(--font-sans);
   line-height: 1;
   padding: 0 1px;
   cursor: pointer;
 }
 
 .send-remove:hover {
-  color: #ffb4b4;
+  color: var(--danger-text);
 }
 
 .send-remove-spacer {

@@ -227,8 +227,9 @@ watch(
 <style scoped>
 .strip-meter {
   display: block;
-  background: #111418;
+  background: var(--surface-inset);
   border-radius: 2px;
+  box-shadow: var(--inset-well);
   cursor: pointer;
 }
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue';
+import ChordListEditor from './ChordListEditor.vue';
 import KeyListEditor from './KeyListEditor.vue';
 import MarkerListEditor from './MarkerListEditor.vue';
 import TempoMapEditor from './TempoMapEditor.vue';
@@ -7,9 +8,9 @@ import TimeSignatureEditor from './TimeSignatureEditor.vue';
 
 /**
  * Tabbed container for the project list editors (tempo map, time signatures,
- * key, markers). Suited for the editor dock or a popover host; the panel
- * itself only routes the playhead getter and seek requests to the marker
- * list.
+ * key, chords, markers). Suited for the editor dock or a popover host; the
+ * panel itself only routes the playhead getter and seek requests to the
+ * chord and marker lists.
  */
 
 const props = defineProps<{
@@ -22,12 +23,13 @@ const emit = defineEmits<{
   seek: [ppq: number];
 }>();
 
-type ListTab = 'tempo' | 'meter' | 'key' | 'markers';
+type ListTab = 'tempo' | 'meter' | 'key' | 'chords' | 'markers';
 
 const TABS: ReadonlyArray<{ id: ListTab; label: string }> = [
   { id: 'tempo', label: 'Tempo' },
   { id: 'meter', label: 'Time Sig' },
   { id: 'key', label: 'Key' },
+  { id: 'chords', label: 'Chords' },
   { id: 'markers', label: 'Markers' },
 ];
 
@@ -54,6 +56,11 @@ const activeTab = ref<ListTab>('tempo');
       <TempoMapEditor v-if="activeTab === 'tempo'" />
       <TimeSignatureEditor v-else-if="activeTab === 'meter'" />
       <KeyListEditor v-else-if="activeTab === 'key'" />
+      <ChordListEditor
+        v-else-if="activeTab === 'chords'"
+        :position-ppq="props.positionPpq"
+        @seek="emit('seek', $event)"
+      />
       <MarkerListEditor v-else :position-ppq="props.positionPpq" @seek="emit('seek', $event)" />
     </div>
   </section>
@@ -64,28 +71,32 @@ const activeTab = ref<ListTab>('tempo');
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: #14161b;
-  border: 1px solid #000;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
 }
 
 .list-tabs {
   display: flex;
-  background: #101216;
-  border-bottom: 1px solid #000;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border-strong);
+  box-shadow: var(--raise-hi);
 }
 
 .list-tab {
   background: none;
   border: none;
-  color: #8b93a3;
-  font: 600 12px system-ui, sans-serif;
+  box-shadow: none;
+  border-radius: 0;
+  color: var(--text-3);
+  font: var(--fw-semibold) var(--fs-sm) var(--font-sans);
   padding: 0.4rem 0.9rem;
   cursor: pointer;
+  transition: color var(--dur-1) var(--ease-out);
 }
 
 .list-tab.active {
-  color: #e2e6ee;
-  box-shadow: inset 0 -2px 0 #60a5fa;
+  color: var(--text-1);
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 .list-tab-body {

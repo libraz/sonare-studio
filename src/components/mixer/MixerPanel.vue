@@ -1,22 +1,26 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import type { MeterSource } from '@/engine/meters';
-import { addMixerBus, removeMixerBus } from '@/project/commands';
+import { addMixerBus, addVcaGroup } from '@/project/commands';
+import { MAX_VCA_GROUPS } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
+import BusStrip from './BusStrip.vue';
 import ChannelStrip from './ChannelStrip.vue';
+import VcaStrip from './VcaStrip.vue';
 
 /**
  * Mixer panel for the editor dock: a horizontal scroll of channel strips
  * (one per project track, in track order) with the master strip pinned at
  * the right. Tracks can be hidden from the mixer view via the visibility
- * menu — that state is panel-local and does not touch the project. Send
- * buses are managed from the same menu (buses are routing metadata only in
- * this iteration).
+ * menu — that state is panel-local and does not touch the project. Send/return
+ * buses render as inline strips after the track strips; their sends feed the
+ * engine's realtime bus lanes.
  *
- * The master strip is fed by the summed-output meter source; track strips
- * are fed per track via the meterFor lookup (the engine publishes a meter
- * record per mixer lane). Strips without a source show a placeholder meter.
+ * The master strip is fed by the summed-output meter source; track strips and
+ * bus strips are fed via the meterFor / busMeterFor lookups (the engine
+ * publishes a meter record per mixer lane and per bus). Strips without a source
+ * show a placeholder meter.
  */
 
 const props = withDefaults(
@@ -25,12 +29,20 @@ const props = withDefaults(
     bridge?: MeterSource | null;
     /** Per-track meter source lookup; null shows placeholder track meters. */
     meterFor?: ((trackId: number) => MeterSource | null) | null;
+    /** Per-bus meter source lookup; null shows placeholder bus meters. */
+    busMeterFor?: ((busId: string) => MeterSource | null) | null;
     /** Playhead position getter in PPQ (strip automation follow/recording). */
     positionPpq?: () => number;
     /** True while the transport runs (strip automation touch recording). */
     isPlaying?: boolean;
   }>(),
-  { bridge: null, meterFor: null, positionPpq: undefined, isPlaying: false },
+  {
+    bridge: null,
+    meterFor: null,
+    busMeterFor: null,
+    positionPpq: undefined,
+    isPlaying: false,
+  },
 );
 
 const store = useProjectStore();
@@ -72,9 +84,12 @@ function onAddBus(): void {
   }
 }
 
-function onRemoveBus(busId: string): void {
+/** True while another VCA group can be created (the UI cap is reached). */
+const canAddVca = computed(() => (store.mixer.vcaGroups?.length ?? 0) < MAX_VCA_GROUPS);
+
+function onAddVca(): void {
   try {
-    removeMixerBus(busId);
+    addVcaGroup();
     error.value = '';
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
@@ -105,6 +120,23 @@ onBeforeUnmount(() => {
         {{ hiddenCount }} hidden
       </span>
       <span class="toolbar-spacer" />
+      <button
+        type="button"
+        class="toolbar-button"
+        title="Add a send/return bus"
+        @click="onAddBus"
+      >
+        + Bus
+      </button>
+      <button
+        type="button"
+        class="toolbar-button"
+        title="Add a VCA control group"
+        :disabled="!canAddVca"
+        @click="onAddVca"
+      >
+        + VCA
+      </button>
       <div ref="menuEl" class="view-menu-wrap">
         <button
           type="button"
@@ -136,22 +168,6 @@ onBeforeUnmount(() => {
           >
             Show all
           </button>
-          <div class="view-menu-section">Buses</div>
-          <div v-for="bus in store.mixer.buses" :key="bus.id" class="view-menu-bus">
-            <span class="view-menu-name">{{ bus.name }}</span>
-            <button
-              type="button"
-              class="view-menu-bus-remove"
-              title="Remove bus (and its sends)"
-              :aria-label="`Remove bus ${bus.name}`"
-              @click="onRemoveBus(bus.id)"
-            >
-              ×
-            </button>
-          </div>
-          <button type="button" role="menuitem" class="view-menu-action" @click="onAddBus">
-            + Bus
-          </button>
         </div>
       </div>
     </div>
@@ -165,6 +181,13 @@ onBeforeUnmount(() => {
         :position-ppq="props.positionPpq"
         :is-playing="props.isPlaying"
       />
+      <BusStrip
+        v-for="bus in store.mixer.buses"
+        :key="bus.id"
+        :bus="bus"
+        :bridge="props.busMeterFor ? props.busMeterFor(bus.id) : null"
+      />
+      <VcaStrip v-for="group in store.mixer.vcaGroups ?? []" :key="group.id" :group="group" />
       <div class="strips-spacer" />
       <ChannelStrip
         class="master-strip"
@@ -184,29 +207,30 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100%;
   min-height: 0;
-  background: #14161b;
+  background: var(--surface-2);
   overflow: hidden;
 }
 
 .mixer-toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 3px 8px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.5);
+  gap: var(--sp-4);
+  padding: 3px var(--sp-4);
+  border-bottom: 1px solid var(--border-strong);
   flex: none;
+  box-shadow: var(--raise-hi);
 }
 
 .mixer-title {
-  font: 700 9px system-ui, sans-serif;
+  font: var(--fw-bold) 9px var(--font-sans);
   letter-spacing: 0.08em;
-  color: #5b6270;
+  color: var(--text-4);
   user-select: none;
 }
 
 .mixer-hidden-note {
-  font: 9px system-ui, sans-serif;
-  color: #5b6270;
+  font: 9px var(--font-sans);
+  color: var(--text-4);
 }
 
 .toolbar-spacer {
@@ -218,17 +242,19 @@ onBeforeUnmount(() => {
 }
 
 .toolbar-button {
-  font: 600 10px system-ui, sans-serif;
-  color: #c8cdd6;
-  background: #1d2027;
-  border: 1px solid #2a2e37;
-  border-radius: 4px;
-  padding: 2px 8px;
+  font: var(--fw-semibold) 10px var(--font-sans);
+  color: var(--text-2);
+  background: var(--surface-3);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--sp-4);
   cursor: pointer;
+  box-shadow: var(--control-lift);
+  transition: background var(--dur-1) var(--ease-out);
 }
 
 .toolbar-button:hover {
-  background: #242832;
+  background: var(--surface-4);
+  box-shadow: var(--control-lift-hover);
 }
 
 .view-menu {
@@ -239,18 +265,18 @@ onBeforeUnmount(() => {
   min-width: 160px;
   max-height: 280px;
   overflow-y: auto;
-  background: #1d2027;
-  border: 1px solid #2a2e37;
-  border-radius: 4px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-pop);
   padding: 2px 0;
 }
 
 .view-menu-section {
-  font: 700 8px system-ui, sans-serif;
+  font: var(--fw-bold) 8px var(--font-sans);
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: #5b6270;
+  color: var(--text-4);
   padding: 5px 10px 2px;
 }
 
@@ -259,13 +285,14 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 5px;
   padding: 2px 10px;
-  font: 10px system-ui, sans-serif;
-  color: #c8cdd6;
+  font: 10px var(--font-sans);
+  color: var(--text-2);
   cursor: pointer;
+  transition: background var(--dur-1) var(--ease-out);
 }
 
 .view-menu-track:hover {
-  background: #242832;
+  background: var(--surface-4);
 }
 
 .view-menu-swatch {
@@ -283,52 +310,29 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.view-menu-bus {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 2px 10px;
-  font: 10px system-ui, sans-serif;
-  color: #c8cdd6;
-}
-
-.view-menu-bus-remove {
-  flex: none;
-  border: none;
-  background: transparent;
-  color: #5b6270;
-  font: 11px system-ui, sans-serif;
-  line-height: 1;
-  padding: 0 1px;
-  cursor: pointer;
-}
-
-.view-menu-bus-remove:hover {
-  color: #ffb4b4;
-}
-
 .view-menu-action {
   display: block;
   width: 100%;
   text-align: left;
-  font: 600 10px system-ui, sans-serif;
+  font: var(--fw-semibold) 10px var(--font-sans);
   color: #9fc4f5;
   background: transparent;
   border: none;
+  box-shadow: none;
   padding: 3px 10px;
   cursor: pointer;
 }
 
 .view-menu-action:hover {
-  background: #242832;
+  background: var(--surface-4);
 }
 
 .mixer-error {
   margin: 0;
-  padding: 2px 8px;
-  background: #3b1219;
-  color: #ffb4b4;
-  font: 10px/1.4 system-ui, sans-serif;
+  padding: 2px var(--sp-4);
+  background: var(--danger-surface);
+  color: var(--danger-text);
+  font: 10px/1.4 var(--font-sans);
   flex: none;
 }
 
@@ -343,7 +347,7 @@ onBeforeUnmount(() => {
 
 .strips-spacer {
   flex: 1;
-  min-width: 8px;
+  min-width: var(--sp-4);
 }
 
 .master-strip {

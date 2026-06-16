@@ -1,5 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, ref } from 'vue';
+import AddTrackMenu from '@/components/arrangement/track-header/AddTrackMenu.vue';
+import TrackAutomationStrip from '@/components/arrangement/track-header/TrackAutomationStrip.vue';
+import TrackTakeRows from '@/components/arrangement/track-header/TrackTakeRows.vue';
+import SelectMenu from '@/components/shell/SelectMenu.vue';
 import {
   type AutomationLaneState,
   type AutomationParam,
@@ -30,6 +34,7 @@ import {
   TAKE_LANE_HEIGHT_PX,
   trackTakeRowCount,
 } from '@/ui/arrangement/automation-rows';
+import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 
 /**
  * Track header column of the arrangement view: one header per track lane with
@@ -188,10 +193,18 @@ const groupTracks = computed<EditorTrack[]>(() =>
   store.tracks.filter((track) => track.kind === 'group'),
 );
 
-function onGroupChange(track: EditorTrack, event: Event): void {
-  const raw = (event.target as HTMLSelectElement).value;
+/** Sentinel value for the "No group" output-group option. */
+const GROUP_NONE = '';
+
+/** Output-group picker options: "No group" plus every group track. */
+const groupOptions = computed<{ value: string | number; label: string }[]>(() => [
+  { value: GROUP_NONE, label: 'No group' },
+  ...groupTracks.value.map((group) => ({ value: group.id, label: group.name })),
+]);
+
+function onGroupChange(track: EditorTrack, value: string | number): void {
   try {
-    setTrackGroup(track.id, raw === '' ? null : Number(raw));
+    setTrackGroup(track.id, value === GROUP_NONE ? null : Number(value));
     error.value = '';
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
@@ -343,8 +356,13 @@ async function onBounce(track: EditorTrack): Promise<void> {
   }
 }
 
-function onAutomationParamChange(track: EditorTrack, event: Event): void {
-  const value = (event.target as HTMLSelectElement).value;
+/** Parameter choices for a track's automation sublane picker. */
+const AUTOMATION_PARAM_OPTIONS: ReadonlyArray<{ value: AutomationParam; label: string }> = [
+  { value: 'faderDb', label: 'Volume (dB)' },
+  { value: 'pan', label: 'Pan' },
+];
+
+function onAutomationParamChange(track: EditorTrack, value: string): void {
   if (isAutomationParam(value)) emit('automationParam', track.id, value);
 }
 
@@ -353,33 +371,11 @@ function onAutomationEnabledChange(track: EditorTrack, event: Event): void {
   setAutomationLaneEnabled(track.id, automationParamFor(track), enabled);
 }
 
-// --- Add-track menu ----------------------------------------------------------
-
-const addMenuOpen = ref(false);
-const addMenu = ref<HTMLDivElement | null>(null);
-
 function onAddTrack(kind: 'midi' | 'audio' | 'group'): void {
-  addMenuOpen.value = false;
   const trackId =
     kind === 'audio' ? addAudioTrack() : kind === 'group' ? addGroupTrack() : addTrack();
   setActiveTrack(trackId);
 }
-
-/** Closes the add-track menu when the pointer goes down outside of it. */
-function onDocumentPointerDown(event: PointerEvent): void {
-  if (!(event.target instanceof Node) || !addMenu.value?.contains(event.target)) {
-    addMenuOpen.value = false;
-  }
-}
-
-watch(addMenuOpen, (open) => {
-  if (open) document.addEventListener('pointerdown', onDocumentPointerDown, true);
-  else document.removeEventListener('pointerdown', onDocumentPointerDown, true);
-});
-
-onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', onDocumentPointerDown, true);
-});
 
 // --- Drag reordering -------------------------------------------------------
 
@@ -425,6 +421,63 @@ function onGripPointerCancel(): void {
   reorderDrag.value = null;
 }
 
+// --- Right-click menu ------------------------------------------------------
+
+/** Builds and opens the track header's right-click action menu. */
+function onContextMenu(track: EditorTrack, event: MouseEvent): void {
+  setActiveTrack(track.id);
+  const items: ContextMenuItem[] = [
+    { id: 'rename', label: 'Rename…', run: () => startRename(track) },
+    { id: 'sep-1', separator: true },
+    {
+      id: 'mute',
+      label: track.mute ? 'Unmute' : 'Mute',
+      run: () => setTrackMute(track.id, !track.mute),
+    },
+    {
+      id: 'solo',
+      label: track.solo ? 'Unsolo' : 'Solo',
+      run: () => setTrackSolo(track.id, !track.solo),
+    },
+  ];
+  if (track.kind === 'audio') {
+    items.push({
+      id: 'arm',
+      label: isArmed(track) ? 'Disarm recording' : 'Record-enable',
+      run: () => onToggleArm(track),
+    });
+  }
+  items.push(
+    { id: 'sep-2', separator: true },
+    { id: 'color', label: 'Next color', run: () => cycleColor(track) },
+  );
+  if (track.kind !== 'group') {
+    items.push({
+      id: 'freeze',
+      label: track.frozen ? 'Unfreeze' : 'Freeze',
+      disabled: isFreezing(track),
+      run: () => {
+        void onToggleFreeze(track);
+      },
+    });
+    if (trackHasClips(track)) {
+      items.push({
+        id: 'bounce',
+        label: 'Bounce in place',
+        disabled: isBouncing(track),
+        run: () => {
+          void onBounce(track);
+        },
+      });
+    }
+  }
+  items.push(
+    { id: 'sep-3', separator: true },
+    { id: 'delete', label: 'Remove track', danger: true, run: () => onDelete(track) },
+  );
+  openContextMenu(event.clientX, event.clientY, items);
+}
+
 /** Row classes: active highlight, frozen tint plus reorder drag feedback. */
 function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
   const drag = reorderDrag.value;
@@ -440,23 +493,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
 <template>
   <div class="track-headers">
     <div class="headers-top" :style="{ height: `${props.rulerOffset}px` }">
-      <div ref="addMenu" class="add-track-menu">
-        <button
-          type="button"
-          class="add-track"
-          title="Add a track"
-          aria-haspopup="menu"
-          :aria-expanded="addMenuOpen"
-          @click="addMenuOpen = !addMenuOpen"
-        >
-          + Track ▾
-        </button>
-        <div v-if="addMenuOpen" class="add-track-items" role="menu">
-          <button type="button" role="menuitem" @click="onAddTrack('midi')">+ MIDI track</button>
-          <button type="button" role="menuitem" @click="onAddTrack('audio')">+ Audio track</button>
-          <button type="button" role="menuitem" @click="onAddTrack('group')">+ Group track</button>
-        </div>
-      </div>
+      <AddTrackMenu @add="onAddTrack" />
     </div>
     <p v-if="error" class="headers-error" role="alert">{{ error }}</p>
     <div class="headers-viewport">
@@ -468,6 +505,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
           :class="rowClass(track, index)"
           :style="{ height: `${rowHeight(track)}px` }"
           @click="activate(track)"
+          @contextmenu.prevent="onContextMenu(track, $event)"
         >
           <div class="track-row" :style="{ height: `${props.laneHeight}px` }">
             <div
@@ -634,454 +672,36 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   :aria-label="`Pan of ${track.name}`"
                   @change="onPanChange(track, $event)"
                 />
-                <select
+                <SelectMenu
                   v-if="track.kind !== 'group' && groupTracks.length > 0"
                   class="track-group-select"
-                  :value="track.groupId ?? ''"
-                  title="Output group"
+                  size="sm"
+                  :model-value="track.groupId ?? GROUP_NONE"
+                  :options="groupOptions"
                   :aria-label="`Group of ${track.name}`"
                   @change="onGroupChange(track, $event)"
-                >
-                  <option value="">No group</option>
-                  <option v-for="group in groupTracks" :key="group.id" :value="group.id">
-                    {{ group.name }}
-                  </option>
-                </select>
+                />
               </div>
             </div>
           </div>
-          <div
+          <TrackTakeRows
             v-if="isTakesExpanded(track) && takeRowCount(track) > 0"
-            class="track-takes"
-            @click.stop
-          >
-            <div
-              v-for="k in takeRowCount(track)"
-              :key="k"
-              class="take-label-row"
-              :style="{ height: `${TAKE_LANE_HEIGHT_PX}px` }"
-            >
-              Take {{ k }}
-            </div>
-          </div>
-          <div v-if="isAutomationExpanded(track)" class="track-automation" @click.stop>
-            <span class="automation-label">AUTO</span>
-            <select
-              class="automation-param"
-              :value="automationParamFor(track)"
-              :aria-label="`Automation parameter of ${track.name}`"
-              @change="onAutomationParamChange(track, $event)"
-            >
-              <option value="faderDb">Volume (dB)</option>
-              <option value="pan">Pan</option>
-            </select>
-            <label class="automation-enable" :title="automationLaneFor(track) ? 'Apply during playback' : 'No automation points yet'">
-              <input
-                type="checkbox"
-                :checked="automationLaneFor(track)?.enabled ?? false"
-                :disabled="automationLaneFor(track) === null"
-                :aria-label="`Enable automation of ${track.name}`"
-                @change="onAutomationEnabledChange(track, $event)"
-              />
-              On
-            </label>
-          </div>
+            :row-count="takeRowCount(track)"
+            :row-height="TAKE_LANE_HEIGHT_PX"
+          />
+          <TrackAutomationStrip
+            v-if="isAutomationExpanded(track)"
+            :track="track"
+            :lane="automationLaneFor(track)"
+            :param="automationParamFor(track)"
+            :options="AUTOMATION_PARAM_OPTIONS"
+            @param-change="onAutomationParamChange"
+            @enabled-change="onAutomationEnabledChange"
+          />
         </div>
       </div>
     </div>
   </div>
 </template>
 
-<style scoped>
-.track-headers {
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  height: 100%;
-  background: #14161b;
-  border-right: 1px solid rgba(0, 0, 0, 0.5);
-  overflow: hidden;
-}
-
-.headers-top {
-  display: flex;
-  align-items: center;
-  padding: 0 6px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.5);
-  flex: none;
-}
-
-.add-track-menu {
-  position: relative;
-}
-
-.add-track {
-  font: 600 10px system-ui, sans-serif;
-  color: #c8cdd6;
-  background: #1d2027;
-  border: 1px solid #2a2e37;
-  border-radius: 4px;
-  padding: 2px 8px;
-  cursor: pointer;
-}
-
-.add-track:hover {
-  background: #242832;
-}
-
-.add-track-items {
-  position: absolute;
-  top: calc(100% + 2px);
-  left: 0;
-  z-index: 10;
-  display: flex;
-  flex-direction: column;
-  min-width: 110px;
-  background: #1d2027;
-  border: 1px solid #2a2e37;
-  border-radius: 4px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
-  overflow: hidden;
-}
-
-.add-track-items button {
-  font: 600 10px system-ui, sans-serif;
-  color: #c8cdd6;
-  background: transparent;
-  border: none;
-  padding: 5px 8px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.add-track-items button:hover {
-  background: #242832;
-}
-
-.headers-error {
-  margin: 0;
-  padding: 2px 6px;
-  background: #3b1219;
-  color: #ffb4b4;
-  font: 10px/1.4 system-ui, sans-serif;
-}
-
-.headers-viewport {
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.track-header {
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  background: #15171c;
-  cursor: pointer;
-  user-select: none;
-}
-
-.track-row {
-  display: flex;
-  align-items: stretch;
-  box-sizing: border-box;
-  flex: none;
-}
-
-.track-header.active {
-  background: #1b2330;
-}
-
-.track-header.track-frozen {
-  background: #161c24;
-}
-
-.track-header.track-frozen .track-name {
-  color: #9bb8cc;
-}
-
-.track-header.track-frozen.active {
-  background: #1b2530;
-}
-
-.track-header.dragging {
-  opacity: 0.6;
-}
-
-.track-header.drop-target {
-  box-shadow: inset 0 2px 0 #60a5fa;
-}
-
-.track-grip {
-  display: flex;
-  align-items: center;
-  padding: 0 3px;
-  color: #3a4150;
-  font: 10px system-ui, sans-serif;
-  letter-spacing: -1px;
-  cursor: grab;
-  touch-action: none;
-}
-
-.track-grip:hover {
-  color: #5b6270;
-}
-
-.track-swatch {
-  width: 6px;
-  border: none;
-  padding: 0;
-  margin: 4px 0;
-  border-radius: 3px;
-  cursor: pointer;
-  flex: none;
-}
-
-.track-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 4px;
-  padding: 4px 6px;
-}
-
-.track-name-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.track-kind {
-  flex: none;
-  font: 10px system-ui, sans-serif;
-  color: #5b6270;
-}
-
-.track-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font: 600 11px system-ui, sans-serif;
-  color: #c8cdd6;
-}
-
-.track-name-input {
-  flex: 1;
-  min-width: 0;
-  font: 600 11px system-ui, sans-serif;
-  color: #e8ebf0;
-  background: #0b0d11;
-  border: 1px solid #60a5fa;
-  border-radius: 3px;
-  padding: 0 3px;
-}
-
-.track-delete {
-  border: none;
-  background: transparent;
-  color: #5b6270;
-  font: 12px system-ui, sans-serif;
-  line-height: 1;
-  padding: 0 2px;
-  cursor: pointer;
-  visibility: hidden;
-}
-
-.track-header:hover .track-delete {
-  visibility: visible;
-}
-
-.track-delete:hover {
-  color: #ffb4b4;
-}
-
-.track-controls {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.toggle {
-  width: 16px;
-  height: 14px;
-  font: 700 9px system-ui, sans-serif;
-  line-height: 1;
-  color: #8b93a3;
-  background: #1d2027;
-  border: 1px solid #2a2e37;
-  border-radius: 3px;
-  padding: 0;
-  cursor: pointer;
-}
-
-.toggle.arm.on {
-  color: #fff;
-  background: #ef4444;
-  border-color: #ef4444;
-}
-
-.toggle.mute.on {
-  color: #0b0d11;
-  background: #fbbf24;
-  border-color: #fbbf24;
-}
-
-.toggle.solo.on {
-  color: #0b0d11;
-  background: #60a5fa;
-  border-color: #60a5fa;
-}
-
-.toggle.automation.on {
-  color: #0b0d11;
-  background: #34d399;
-  border-color: #34d399;
-}
-
-.toggle.takes.on {
-  color: #0b0d11;
-  background: #a78bfa;
-  border-color: #a78bfa;
-}
-
-.toggle.freeze.on {
-  color: #0b0d11;
-  background: #7dd3fc;
-  border-color: #7dd3fc;
-}
-
-.toggle.freeze:disabled,
-.track-bounce:disabled {
-  opacity: 0.5;
-  cursor: wait;
-}
-
-.track-bounce {
-  height: 14px;
-  font: 700 8px system-ui, sans-serif;
-  line-height: 1;
-  color: #8b93a3;
-  background: #1d2027;
-  border: 1px solid #2a2e37;
-  border-radius: 3px;
-  padding: 0 4px;
-  cursor: pointer;
-}
-
-.track-bounce:hover:not(:disabled) {
-  color: #c8cdd6;
-  background: #242832;
-}
-
-.takes-flatten {
-  height: 14px;
-  font: 700 8px system-ui, sans-serif;
-  line-height: 1;
-  color: #8b93a3;
-  background: #1d2027;
-  border: 1px solid #2a2e37;
-  border-radius: 3px;
-  padding: 0 4px;
-  cursor: pointer;
-}
-
-.takes-flatten:hover {
-  color: #c8cdd6;
-  background: #242832;
-}
-
-.track-takes {
-  display: flex;
-  flex-direction: column;
-  flex: none;
-  border-top: 1px dashed rgba(255, 255, 255, 0.06);
-  cursor: default;
-}
-
-.take-label-row {
-  display: flex;
-  align-items: center;
-  box-sizing: border-box;
-  padding: 0 6px 0 15px;
-  font: 600 9px system-ui, sans-serif;
-  color: #8b93a3;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-}
-
-.take-label-row:last-child {
-  border-bottom: none;
-}
-
-.track-automation {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 6px 0 15px;
-  border-top: 1px dashed rgba(255, 255, 255, 0.06);
-  cursor: default;
-}
-
-.automation-label {
-  flex: none;
-  font: 600 8px system-ui, sans-serif;
-  letter-spacing: 0.08em;
-  color: #5b6270;
-}
-
-.automation-param {
-  flex: 1;
-  min-width: 0;
-  font: 600 10px system-ui, sans-serif;
-  color: #c8cdd6;
-  background: #1d2027;
-  border: 1px solid #2a2e37;
-  border-radius: 3px;
-  padding: 1px 2px;
-}
-
-.automation-enable {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  font: 600 9px system-ui, sans-serif;
-  color: #8b93a3;
-  cursor: pointer;
-}
-
-.automation-enable input {
-  margin: 0;
-  accent-color: #60a5fa;
-}
-
-.automation-enable input:disabled {
-  cursor: not-allowed;
-}
-
-.mini-slider {
-  flex: 1;
-  min-width: 0;
-  height: 10px;
-  accent-color: #60a5fa;
-}
-
-.track-group-select {
-  flex: 1;
-  min-width: 0;
-  max-width: 64px;
-  height: 14px;
-  font: 600 9px system-ui, sans-serif;
-  color: #c8cdd6;
-  background: #1d2027;
-  border: 1px solid #2a2e37;
-  border-radius: 3px;
-  padding: 0 1px;
-}
-</style>
+<style src="./track-header/track-header-list.css"></style>

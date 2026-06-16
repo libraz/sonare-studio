@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useProjectStore } from '@/project/store';
 import {
   KEY_MODE_CHOICES,
@@ -50,6 +51,25 @@ const modeId = computed({
 const currentLabel = computed(() =>
   keyLabel(rootPc.value, modeId.value === CUSTOM_MODE ? null : modeId.value),
 );
+
+/** Root pitch-class choices, numeric to match the stored root pitch class. */
+const rootOptions = computed(() =>
+  PITCH_CLASS_NAMES.map((name, pc) => ({ value: pc, label: name })),
+);
+
+/**
+ * Mode choices. The "Custom scale" sentinel is appended (disabled) only while
+ * the current mask matches no diatonic mode, mirroring the original markup.
+ */
+const modeOptions = computed(() => {
+  const choices: Array<{ value: string; label: string; disabled?: boolean }> = KEY_MODE_CHOICES.map(
+    (choice) => ({ value: choice.id, label: choice.label }),
+  );
+  if (modeId.value === CUSTOM_MODE) {
+    choices.push({ value: CUSTOM_MODE, label: 'Custom scale', disabled: true });
+  }
+  return choices;
+});
 </script>
 
 <template>
@@ -65,19 +85,22 @@ const currentLabel = computed(() =>
       <tbody>
         <tr>
           <td>
-            <select v-model.number="rootPc" class="cell-input cell-number" aria-label="Key root">
-              <option v-for="(name, pc) in PITCH_CLASS_NAMES" :key="name" :value="pc">
-                {{ name }}
-              </option>
-            </select>
+            <SelectMenu
+              v-model="rootPc"
+              :options="rootOptions"
+              class="cell-input cell-number"
+              aria-label="Key root"
+              size="sm"
+            />
           </td>
           <td>
-            <select v-model="modeId" class="cell-input" aria-label="Key mode">
-              <option v-for="choice in KEY_MODE_CHOICES" :key="choice.id" :value="choice.id">
-                {{ choice.label }}
-              </option>
-              <option v-if="modeId === 'custom'" value="custom" disabled>Custom scale</option>
-            </select>
+            <SelectMenu
+              v-model="modeId"
+              :options="modeOptions"
+              class="cell-input"
+              aria-label="Key mode"
+              size="sm"
+            />
           </td>
           <td class="cell-toggle">
             <input
@@ -103,8 +126,8 @@ const currentLabel = computed(() =>
   flex-direction: column;
   gap: 0.4rem;
   padding: 0.5rem 0.75rem;
-  font-size: 12px;
-  color: #c7cdd9;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
   overflow: auto;
   min-height: 0;
 }
@@ -116,11 +139,11 @@ const currentLabel = computed(() =>
 
 .list-table th {
   text-align: left;
-  font-size: 11px;
-  font-weight: 600;
-  color: #8b93a3;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--text-3);
   padding: 0.15rem 0.4rem 0.15rem 0;
-  border-bottom: 1px solid #2a2e38;
+  border-bottom: 1px solid var(--border);
 }
 
 .list-table td {
@@ -130,17 +153,6 @@ const currentLabel = computed(() =>
 .cell-input {
   width: 100%;
   box-sizing: border-box;
-  background: #0b0d11;
-  border: 1px solid #2a2e38;
-  border-radius: 3px;
-  color: #e2e6ee;
-  font: inherit;
-  padding: 0.15rem 0.3rem;
-}
-
-.cell-input:focus {
-  outline: none;
-  border-color: #60a5fa;
 }
 
 .cell-number {
@@ -153,12 +165,12 @@ const currentLabel = computed(() =>
 
 .list-readout {
   margin: 0;
-  color: #e2e6ee;
+  color: var(--text-1);
   font-weight: 600;
 }
 
 .list-hint {
   margin: 0;
-  color: #8b93a3;
+  color: var(--text-3);
 }
 </style>

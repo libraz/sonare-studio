@@ -1,0 +1,30 @@
+.diagnostics {
+  flex: none;
+  background: var(--surface-1);
+  border-top: 1px solid var(--border-strong);
+  padding: 0.4rem 0.75rem;
+  font-size: var(--fs-md);
+}
+
+.diagnostics[open] {
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.diagnostics summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+.diag-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}
+
+.diag-shortcuts {
+  font-size: var(--fs-xs);
+  color: var(--text-4);
+}

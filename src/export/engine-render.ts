@@ -88,7 +88,7 @@ const DEFAULT_TEMPO_BPM = 120;
  * structural so tests can inject a fake engine.
  */
 export interface OfflineRenderEngine {
-  setTrackLanes(lanes: Array<{ trackId: number; sends?: SendSpec[] }>): void;
+  setTrackLanes(lanes: Array<{ trackId: number; sends?: SendSpec[]; outputBusId?: number }>): void;
   setTrackBuses(buses: Array<{ busId: number; gainDb?: number }>): void;
   setTrackStripJson(trackId: number, sceneJson: string): void;
   setBusStripJson(busId: number, sceneJson: string): void;
@@ -304,12 +304,21 @@ export async function renderProjectWithEngine(
         levelDb: send.levelDb,
         enabled: send.enabled,
       }));
-    const groupBus =
-      track.groupIndex !== undefined ? groupBusByTrackIndex.get(track.groupIndex) : undefined;
+    // Output bus: group routing wins; otherwise an explicit per-track output
+    // bus (non-group tracks only), resolved to its engine bus number and
+    // honored only when the bus was actually declared (matches live
+    // strip-sync, which the engine requires).
+    let outputBus: number | undefined;
+    if (track.groupIndex !== undefined) {
+      outputBus = groupBusByTrackIndex.get(track.groupIndex);
+    } else if (track.kind !== 'group' && track.mixer?.outputBusId !== undefined) {
+      const busNumber = busNumberById.get(track.mixer.outputBusId);
+      if (busNumber !== undefined) outputBus = busNumber;
+    }
     return {
       trackId: trackIds[index],
       ...(sends.length > 0 ? { sends } : {}),
-      ...(groupBus !== undefined ? { outputBusId: groupBus } : {}),
+      ...(outputBus !== undefined ? { outputBusId: outputBus } : {}),
     };
   });
 

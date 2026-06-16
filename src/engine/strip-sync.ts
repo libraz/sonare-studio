@@ -282,14 +282,26 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       }
     }
 
-    // Member tracks route their lane output through their group's bus;
-    // everything else stays on the master mix.
+    // Output-bus routing (group wins over a user-chosen send bus, which wins
+    // over the master mix). Group members route through their group's bus; a
+    // non-grouped track strip may route into any declared send bus. The bus
+    // must already be in the declared set (the engine rejects a lane pointed
+    // at an undeclared bus), so an outputBusId naming a pruned/missing bus
+    // falls back to the master mix.
     for (const track of tracks) {
-      const groupBus =
-        track.groupId !== undefined ? (groupBusByTrackId.get(track.groupId) ?? 0) : 0;
-      if ((lastOutputBus.get(track.id) ?? 0) !== groupBus) {
-        handle.engine.setTrackOutputBus(track.id, groupBus);
-        lastOutputBus.set(track.id, groupBus);
+      let outputBus = 0;
+      if (track.groupId !== undefined) {
+        outputBus = groupBusByTrackId.get(track.groupId) ?? 0;
+      } else if (track.kind !== 'group') {
+        const userBusId = track.mixer?.outputBusId;
+        if (userBusId !== undefined) {
+          const busNumber = busNumberByStoreId.get(userBusId);
+          if (busNumber !== undefined && newBusIdSet.has(busNumber)) outputBus = busNumber;
+        }
+      }
+      if ((lastOutputBus.get(track.id) ?? 0) !== outputBus) {
+        handle.engine.setTrackOutputBus(track.id, outputBus);
+        lastOutputBus.set(track.id, outputBus);
       }
     }
 

@@ -14,6 +14,7 @@ type MidiMessageEventLike = Parameters<MidiMessageListener>[0];
 /** MIDI 1.0 status nibbles. */
 const STATUS_NOTE_OFF = 0x80;
 const STATUS_NOTE_ON = 0x90;
+const STATUS_CONTROL_CHANGE = 0xb0;
 
 /** A note-on or note-off received from a Web MIDI input. */
 export interface WebMidiNoteEvent {
@@ -21,6 +22,16 @@ export interface WebMidiNoteEvent {
   pitch: number;
   /** Velocity (note-on velocity, or release velocity for note-offs). */
   velocity: number;
+  /** MIDI channel (0-15). */
+  channel: number;
+}
+
+/** A control-change (CC) message received from a Web MIDI input. */
+export interface WebMidiCcEvent {
+  /** Controller number (0-127). */
+  controller: number;
+  /** Controller value (0-127). */
+  value: number;
   /** MIDI channel (0-15). */
   channel: number;
 }
@@ -33,6 +44,8 @@ export interface UseWebMidiOptions {
   onNoteOn?: (event: WebMidiNoteEvent) => void;
   /** Called for each incoming note-off (including note-on with velocity 0). */
   onNoteOff?: (event: WebMidiNoteEvent) => void;
+  /** Called for each incoming control-change message (for MIDI learn). */
+  onControlChange?: (event: WebMidiCcEvent) => void;
 }
 
 /** Reactive Web MIDI state and controls returned by {@link useWebMidi}. */
@@ -100,6 +113,9 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
     } else if (status === STATUS_NOTE_OFF || status === STATUS_NOTE_ON) {
       // A note-on with velocity 0 is a note-off per MIDI 1.0 semantics.
       options.onNoteOff?.({ pitch, velocity: status === STATUS_NOTE_OFF ? velocity : 0, channel });
+    } else if (status === STATUS_CONTROL_CHANGE) {
+      // data[1] = controller number, data[2] = value (both 7-bit).
+      options.onControlChange?.({ controller: pitch, value: velocity, channel });
     }
   }
 

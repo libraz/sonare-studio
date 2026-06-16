@@ -178,6 +178,44 @@ describe('createMixerSync', () => {
     expect(engine.setStripPan).toHaveBeenCalledWith('master', 0.5);
   });
 
+  it('keeps a solo-safe track in the solo group while another track is soloed', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMixerSync(handle);
+
+    // No solo active: the safe track is not forced into the solo group.
+    sync.sync([makeTrack(1, { soloSafe: true }), makeTrack(2)], neutralMaster());
+    expect(engine.setSoloMute).toHaveBeenCalledWith(1, false, false);
+    engine.setSoloMute.mockClear();
+
+    // Track 2 soloed: the solo-safe track 1 joins the solo group (effSolo true).
+    sync.sync([makeTrack(1, { soloSafe: true }), makeTrack(2, { solo: true })], neutralMaster());
+    expect(engine.setSoloMute).toHaveBeenCalledWith(1, true, false);
+    expect(engine.setSoloMute).toHaveBeenCalledWith(2, true, false);
+  });
+
+  it('folds the VCA group offset into a member track gain', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMixerSync(handle);
+    const track = makeTrack(1, { vcaId: 'vca-1', mixer: { ...createDefaultStrip(), gainDb: -3 } });
+
+    sync.sync([track], neutralMaster(), new Map([['vca-1', -6]]));
+    expect(engine.setStripGain).toHaveBeenCalledWith(1, -9);
+
+    // Raising the VCA offset re-sends only the member gain.
+    engine.setStripGain.mockClear();
+    sync.sync([track], neutralMaster(), new Map([['vca-1', 6]]));
+    expect(engine.setStripGain).toHaveBeenCalledTimes(1);
+    expect(engine.setStripGain).toHaveBeenCalledWith(1, 3);
+  });
+
+  it('leaves non-member tracks untouched by VCA offsets', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMixerSync(handle);
+
+    sync.sync([makeTrack(1)], neutralMaster(), new Map([['vca-1', -6]]));
+    expect(engine.setStripGain).toHaveBeenCalledWith(1, 0);
+  });
+
   it('keeps the lane of a removed track and sends it no commands', () => {
     const { handle, engine } = makeHandle();
     const sync = createMixerSync(handle);

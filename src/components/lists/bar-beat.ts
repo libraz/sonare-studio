@@ -189,3 +189,91 @@ export function parseBarBeat(
   if (beat >= governing.numerator + 1) return null;
   return ppqFromBarBeat({ bar, beat }, signatures);
 }
+
+/** Ticks per quarter note for the bars.beats.sixteenths.ticks transport display. */
+export const TICKS_PER_QUARTER = 480;
+
+/** Number of ticks spanning one beat (denominator unit) of a meter. */
+function ticksPerBeatOf(
+  signature: Pick<TimeSignatureSegment, 'denominator'>,
+  ticksPerQuarter: number,
+): number {
+  return beatLengthPpq(signature) * ticksPerQuarter;
+}
+
+/** Accepts "bar", "bar.beat", "bar.beat.16th" and "bar.beat.16th.tick". */
+const BAR_BEAT_SIXTEENTH_PATTERN = /^\s*(\d+)(?:\.(\d+)(?:\.(\d+)(?:\.(\d+))?)?)?\s*$/;
+
+/**
+ * Formats an absolute PPQ position as the "bar.beat.sixteenth.tick"
+ * transport string desktop DAWs display (e.g. "5.2.3.120"): bar and beat
+ * are 1-based, the sixteenth is the 1-based sixteenth-note subdivision inside
+ * the beat, and the tick is the 0-based offset inside that sixteenth in
+ * {@link TICKS_PER_QUARTER}-per-quarter resolution. Values that round past a
+ * boundary carry forward so the output always re-parses with
+ * {@link parseBarBeatTick}.
+ *
+ * @param ppq Position in quarter-note PPQ.
+ * @param signatures Project time-signature map.
+ * @param ticksPerQuarter Tick resolution per quarter note (default {@link TICKS_PER_QUARTER}).
+ * @returns Display string such as "1.1.1.000" or "5.2.3.120".
+ */
+export function formatBarBeatTick(
+  ppq: number,
+  signatures: ReadonlyArray<TimeSignatureSegment>,
+  ticksPerQuarter: number = TICKS_PER_QUARTER,
+): string {
+  const { bar, beat } = barBeatFromPpq(ppq, signatures);
+  const governing = governingSignatureForBar(bar, signatures);
+  const ticksPerBeat = ticksPerBeatOf(governing, ticksPerQuarter);
+  const ticksPerSixteenth = ticksPerQuarter / 4;
+  let outBar = bar;
+  let outBeat = Math.floor(beat + EPSILON_PPQ);
+  let ticksIntoBeat = Math.round((beat - outBeat) * ticksPerBeat);
+  if (ticksIntoBeat >= ticksPerBeat) {
+    ticksIntoBeat -= ticksPerBeat;
+    outBeat += 1;
+  }
+  if (outBeat >= governing.numerator + 1) {
+    outBar += 1;
+    outBeat = 1;
+  }
+  const sixteenth = Math.floor(ticksIntoBeat / ticksPerSixteenth) + 1;
+  const tick = ticksIntoBeat % ticksPerSixteenth;
+  return `${outBar}.${outBeat}.${sixteenth}.${String(tick).padStart(3, '0')}`;
+}
+
+/**
+ * Parses a "bar.beat.sixteenth.tick" transport string into absolute PPQ. The
+ * bar must be >= 1, the beat must lie inside the governing bar, the sixteenth
+ * must lie inside the beat, and the tick must be in [0, ticksPerSixteenth).
+ * Omitted fields default to beat 1, sixteenth 1, tick 0.
+ *
+ * @param text User input such as "5", "5.2", "5.2.3" or "5.2.3.120".
+ * @param signatures Project time-signature map.
+ * @param ticksPerQuarter Tick resolution per quarter note (default {@link TICKS_PER_QUARTER}).
+ * @returns Position in PPQ, or null when the input is not a valid position.
+ */
+export function parseBarBeatTick(
+  text: string,
+  signatures: ReadonlyArray<TimeSignatureSegment>,
+  ticksPerQuarter: number = TICKS_PER_QUARTER,
+): number | null {
+  const match = BAR_BEAT_SIXTEENTH_PATTERN.exec(text);
+  if (!match) return null;
+  const bar = Number(match[1]);
+  const beatInt = match[2] === undefined ? 1 : Number(match[2]);
+  const sixteenth = match[3] === undefined ? 1 : Number(match[3]);
+  const tick = match[4] === undefined ? 0 : Number(match[4]);
+  const ticksPerSixteenth = ticksPerQuarter / 4;
+  if (!Number.isInteger(bar) || bar < 1) return null;
+  if (!Number.isInteger(beatInt) || beatInt < 1) return null;
+  if (!Number.isInteger(sixteenth) || sixteenth < 1) return null;
+  if (!Number.isInteger(tick) || tick < 0 || tick >= ticksPerSixteenth) return null;
+  const governing = governingSignatureForBar(bar, signatures);
+  if (beatInt > governing.numerator) return null;
+  const ticksPerBeat = ticksPerBeatOf(governing, ticksPerQuarter);
+  const ticksIntoBeat = (sixteenth - 1) * ticksPerSixteenth + tick;
+  if (ticksIntoBeat >= ticksPerBeat) return null;
+  return ppqFromBarBeat({ bar, beat: beatInt + ticksIntoBeat / ticksPerBeat }, signatures);
+}

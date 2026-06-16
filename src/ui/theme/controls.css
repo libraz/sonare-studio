@@ -1,0 +1,300 @@
+/*
+ * Shared control primitives — light "iOS glass" baseline.
+ *
+ * Bare element rules use :where() so they carry ZERO specificity — every
+ * component that already styles its own buttons/inputs keeps winning, while
+ * un-styled controls inherit one consistent, tokenized baseline.
+ */
+
+:where(button) {
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+  background: var(--control-bg);
+  border: none; /* faces are defined by --control-edge + shadow, not a drawn border */
+  border-radius: var(--radius-md);
+  box-shadow: var(--control-lift);
+  padding: var(--sp-2) var(--sp-5);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-1) var(--ease-out),
+    transform var(--dur-1) var(--ease-out);
+}
+
+:where(button):hover:not(:disabled) {
+  background: var(--control-bg-hover);
+  box-shadow: var(--control-lift-hover);
+}
+
+:where(button):active:not(:disabled) {
+  background: var(--control-bg-active);
+  box-shadow: var(--control-edge), var(--inset-well);
+  transform: translateY(0.5px);
+}
+
+:where(button):disabled {
+  color: var(--text-4);
+  box-shadow: var(--control-edge);
+  cursor: default;
+}
+
+:where(input, select, textarea) {
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  color: var(--text-1);
+  background: var(--surface-inset);
+  border: none;
+  border-radius: var(--radius-md);
+  box-shadow: var(--control-edge), var(--inset-well);
+  padding: var(--sp-2) var(--sp-3);
+  transition:
+    box-shadow var(--dur-1) var(--ease-out);
+}
+
+:where(input, select, textarea):focus-visible {
+  outline: 2px solid transparent; /* visible under forced-colors mode */
+  box-shadow: inset 0 0 0 1px var(--accent), var(--inset-well), var(--ring);
+}
+
+:where(input::placeholder, textarea::placeholder) {
+  color: var(--text-4);
+}
+
+/*
+ * Custom-drawn checkbox / radio — retire the native form control entirely so
+ * toggles read as part of the app, not the browser. appearance:none strips the
+ * UA widget; the box is a crisp raised face with a hairline ring, the check is
+ * an inline SVG that appears on :checked, and the radio paints an accent dot.
+ */
+:where(input[type='checkbox'], input[type='radio']) {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: none;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  padding: 0;
+  background: var(--control-bg);
+  border: none;
+  box-shadow: var(--control-edge), var(--shadow-1);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-1) var(--ease-out);
+}
+
+:where(input[type='checkbox']) {
+  border-radius: var(--radius-sm);
+}
+
+:where(input[type='radio']) {
+  border-radius: var(--radius-full);
+}
+
+:where(input[type='checkbox'], input[type='radio']):hover:not(:disabled) {
+  box-shadow: var(--control-edge-hover), var(--shadow-1);
+}
+
+:where(input[type='checkbox']):checked {
+  background-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M2.6 7.4L5.7 10.5l5.7-7.2' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 11px 11px;
+  box-shadow: inset 0 0 0 1px rgba(17, 24, 39, 0.06);
+}
+
+:where(input[type='radio']):checked {
+  background-image: radial-gradient(circle at center, var(--accent) 0 3.2px, transparent 3.6px);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+:where(input[type='checkbox'], input[type='radio']):focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--control-edge), var(--ring);
+}
+
+:where(input[type='checkbox'], input[type='radio']):disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/*
+ * Canonical primary action button — the iOS accent pill. Components define
+ * `.primary` on a button and delete their local copy.
+ */
+.primary {
+  background-color: var(--accent-strong);
+  border: none;
+  color: var(--accent-text);
+  border-radius: var(--radius-md);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    0 1px 2px rgba(10, 132, 255, 0.35),
+    var(--shadow-1);
+  padding: var(--sp-2) 0.95rem;
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+}
+
+.primary:hover:not(:disabled) {
+  background-color: var(--accent-hover);
+}
+
+.primary:active:not(:disabled) {
+  background-color: var(--accent-active);
+  box-shadow: inset 0 1px 2px rgba(17, 24, 39, 0.25);
+}
+
+.primary:disabled {
+  opacity: 0.5;
+  box-shadow: none;
+  cursor: default;
+}
+
+/*
+ * Destructive action button — same face as .primary, danger fill.
+ */
+.danger-action {
+  background-color: var(--danger);
+  border: none;
+  color: #ffffff;
+  border-radius: var(--radius-md);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    0 1px 2px rgba(255, 59, 48, 0.35),
+    var(--shadow-1);
+  padding: var(--sp-2) 0.95rem;
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+}
+
+.danger-action:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--danger), #000 8%);
+}
+
+.danger-action:active:not(:disabled) {
+  box-shadow: inset 0 1px 2px rgba(17, 24, 39, 0.25);
+}
+
+/*
+ * Canonical ghost row button used by the list editors (marker / tempo / time
+ * signature): borderless, muted, brightening on hover.
+ */
+.row-button {
+  background: none;
+  border: none;
+  box-shadow: none;
+  color: var(--text-3);
+  cursor: pointer;
+  padding: var(--sp-1) var(--sp-2);
+  font-size: var(--fs-xs);
+}
+
+.row-button:hover:not(:disabled) {
+  color: var(--text-1);
+  background: none;
+  border-color: transparent;
+}
+
+/*
+ * Floating right-click menu shared by the mixer knob and fader (and any other
+ * control using useControlInteractions). Frosted glass popover.
+ */
+.control-menu {
+  position: fixed;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  min-width: 7rem;
+  padding: var(--sp-2);
+  background: var(--glass-3);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--glass-hairline), var(--shadow-pop);
+}
+
+.control-menu button {
+  justify-content: flex-start;
+  text-align: left;
+  background: none;
+  border: none;
+  box-shadow: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  padding: var(--sp-2) var(--sp-3);
+}
+
+.control-menu button:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: transparent;
+}
+
+/*
+ * App-wide right-click action menu (ContextMenu.vue), built on the .control-menu
+ * box. Items pair a label with an optional right-aligned shortcut hint; a danger
+ * variant marks destructive actions and a thin rule separates groups.
+ */
+.context-menu {
+  min-width: 9rem;
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  justify-content: space-between;
+}
+
+.context-menu-check {
+  flex: none;
+  width: 0.85em;
+  text-align: center;
+  color: var(--accent);
+}
+
+.context-menu-item:hover:not(:disabled) .context-menu-check {
+  color: var(--accent-text);
+}
+
+.context-menu-label {
+  flex: 1;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.context-menu-item.danger {
+  color: var(--danger-text);
+}
+
+.context-menu-item.danger:hover:not(:disabled) {
+  background: var(--danger);
+  color: #ffffff;
+}
+
+.context-menu-item:disabled {
+  color: var(--text-4);
+  cursor: default;
+}
+
+.context-menu-hint {
+  color: var(--text-4);
+  font-variant-numeric: tabular-nums;
+}
+
+.context-menu-item:hover:not(:disabled) .context-menu-hint {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.context-menu-sep {
+  height: 1px;
+  margin: var(--sp-1) var(--sp-2);
+  background: var(--border);
+}

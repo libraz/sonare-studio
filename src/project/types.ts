@@ -105,6 +105,18 @@ export interface EditorTrack {
   mute: boolean;
   /** Playback solo flag (mirrored to the engine mixer lane in realtime). */
   solo: boolean;
+  /**
+   * Solo-safe flag (app-level): when set, the track stays audible while other
+   * tracks are soloed instead of being silenced by the solo bus. Absent = not
+   * solo-safe. Realtime-honored by keeping the lane in the engine solo group.
+   */
+  soloSafe?: boolean;
+  /**
+   * VCA control-group membership (app-level): id of the {@link VcaGroup} whose
+   * fader offsets this track's gain. Absent = unassigned. The VCA fader makes
+   * no audio of its own; it shifts member lane gains in dB.
+   */
+  vcaId?: string;
   /** Linear track volume (>= 0, 1 = unity; mirrored to the engine lane fader). */
   volume: number;
   /** Stereo pan in [-1, 1] (app-level legacy field; the mixer strip pan is the audible pan). */
@@ -164,6 +176,28 @@ export interface WarpAnchor {
   ppq: number;
   /** Source time the beat pins to, in seconds from the clip's source start. */
   sourceSeconds: number;
+}
+
+/** One breakpoint in a clip CC lane: a clip-window-relative beat and a value. */
+export interface ClipCcPoint {
+  /** Position relative to the clip window, in PPQ (>= 0, <= the clip length). */
+  ppq: number;
+  /** Controller value (integer, 0-127). */
+  value: number;
+}
+
+/**
+ * One continuous-controller (CC) automation lane inside a MIDI clip. Points are
+ * emitted as discrete MIDI CC events at playback (the value holds until the
+ * next point), so what the lane draws is exactly what the engine receives.
+ */
+export interface ClipCcLane {
+  /** MIDI controller number (integer, 0-127, e.g. 1 = mod wheel, 11 = expression). */
+  controller: number;
+  /** MIDI channel the CC is emitted on (integer, 0-15). */
+  channel: number;
+  /** Breakpoints sorted by ppq; an empty lane is dropped. */
+  points: ClipCcPoint[];
 }
 
 /** Tempo-follow (warp) state of an audio clip. */
@@ -226,6 +260,12 @@ export interface EditorClip {
    * at its recorded rate. Baked offline on schedule (src/project/warp.ts).
    */
   warp?: ClipWarp;
+  /**
+   * Continuous-controller (CC) automation lanes (MIDI clips only); absent or
+   * empty = the clip sends no CC. Each lane's points are baked into the
+   * realtime MIDI schedule as discrete CC events (src/engine/midi-sync.ts).
+   */
+  ccLanes?: ClipCcLane[];
 }
 
 /** One timeline marker (app-level; the Project has no marker removal API). */

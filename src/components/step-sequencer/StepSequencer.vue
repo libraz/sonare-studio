@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { addNote, deleteNotes, updateNotes } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { clipKind } from '@/project/types';
@@ -85,6 +86,22 @@ const canTargetClip = computed(() => {
 const selectedRowSteps = computed(() => pattern.value.rows[selectedRow.value]?.steps ?? []);
 const selectedRowMuted = computed(() => pattern.value.rows[selectedRow.value]?.muted === true);
 
+/** Row mode choices for the mode picker. */
+const MODE_OPTIONS: ReadonlyArray<{ value: SequencerMode; label: string }> = [
+  { value: 'drum', label: 'Drums' },
+  { value: 'pitch', label: 'Pitch' },
+];
+
+/** Pattern-length choices, numeric to match the parsed step count. */
+const stepCountOptions = computed(() =>
+  STEP_COUNTS.map((count) => ({ value: count, label: String(count) })),
+);
+
+/** Step-resolution choices. */
+const resolutionOptions = computed(() =>
+  STEP_RESOLUTIONS.map((resolution) => ({ value: resolution, label: resolution })),
+);
+
 // Keep the selected row valid when rows are rebuilt (mode switch / pull).
 watch(
   () => pattern.value.rows.length,
@@ -126,15 +143,13 @@ function onRootPitchChange(event: Event): void {
   }
 }
 
-function onStepCountChange(event: Event): void {
-  const value = Number((event.target as HTMLSelectElement).value);
+function onStepCountChange(value: StepCount): void {
   if ((STEP_COUNTS as ReadonlyArray<number>).includes(value)) {
-    pattern.value = withStepCount(pattern.value, value as StepCount);
+    pattern.value = withStepCount(pattern.value, value);
   }
 }
 
-function onResolutionChange(event: Event): void {
-  const value = (event.target as HTMLSelectElement).value as StepResolution;
+function onResolutionChange(value: StepResolution): void {
   if (STEP_RESOLUTIONS.includes(value)) {
     pattern.value = { ...pattern.value, resolution: value };
   }
@@ -255,15 +270,14 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
   <div class="step-sequencer">
     <div class="seq-toolbar">
       <div class="tool-group">
-        <select
+        <SelectMenu
           class="tool-select"
-          :value="pattern.mode"
+          :model-value="pattern.mode"
+          :options="MODE_OPTIONS"
           aria-label="Row mode"
-          @change="setMode(($event.target as HTMLSelectElement).value as SequencerMode)"
-        >
-          <option value="drum">Drums</option>
-          <option value="pitch">Pitch</option>
-        </select>
+          size="sm"
+          @change="setMode"
+        />
         <input
           v-if="pattern.mode === 'pitch'"
           class="tool-number"
@@ -277,26 +291,22 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
       </div>
       <div class="tool-group">
         <label class="tool-label">Steps</label>
-        <select
+        <SelectMenu
           class="tool-select"
-          :value="String(pattern.stepCount)"
+          :model-value="pattern.stepCount"
+          :options="stepCountOptions"
           aria-label="Pattern length"
+          size="sm"
           @change="onStepCountChange"
-        >
-          <option v-for="count in STEP_COUNTS" :key="count" :value="String(count)">
-            {{ count }}
-          </option>
-        </select>
-        <select
+        />
+        <SelectMenu
           class="tool-select"
-          :value="pattern.resolution"
+          :model-value="pattern.resolution"
+          :options="resolutionOptions"
           aria-label="Step resolution"
+          size="sm"
           @change="onResolutionChange"
-        >
-          <option v-for="resolution in STEP_RESOLUTIONS" :key="resolution" :value="resolution">
-            {{ resolution }}
-          </option>
-        </select>
+        />
         <label class="tool-label">Swing</label>
         <input
           class="tool-number"
@@ -460,9 +470,9 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
   display: flex;
   flex-direction: column;
   width: 100%;
-  background: #101216;
-  color: #c8cdd6;
-  font: 12px/1.4 system-ui, sans-serif;
+  background: var(--surface-1);
+  color: var(--text-2);
+  font: var(--fs-sm)/1.4 var(--font-sans);
 }
 
 .seq-toolbar {
@@ -471,8 +481,9 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
   align-items: center;
   gap: 0.75rem;
   padding: 0.3rem 0.5rem;
-  background: #14161b;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.4);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-strong);
+  box-shadow: var(--raise-hi);
 }
 
 .tool-group {
@@ -489,37 +500,45 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
   display: flex;
   align-items: center;
   gap: 0.25rem;
-  color: #9aa1ad;
+  color: var(--text-3);
   white-space: nowrap;
 }
 
-.tool-select,
 .tool-number {
-  background: #1c1f26;
-  color: #e2e6ed;
-  border: 1px solid #3a4150;
-  border-radius: 3px;
+  background: var(--surface-inset);
+  color: var(--text-1);
+  border: none;
+  border-radius: var(--radius-sm);
   padding: 0.1rem 0.25rem;
   font: inherit;
+  box-shadow: var(--control-edge), var(--inset-well);
+  width: 3.5rem;
 }
 
-.tool-number {
-  width: 3.5rem;
+.tool-number:focus {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--accent), var(--inset-well), var(--ring);
+}
+
+.tool-select {
+  width: auto;
 }
 
 .tool-button {
   padding: 0.15rem 0.5rem;
-  border: 1px solid #3a4150;
-  border-radius: 3px;
-  background: #1c1f26;
-  color: #c8cdd6;
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  color: var(--text-2);
   font: inherit;
+  box-shadow: var(--control-lift);
   cursor: pointer;
   white-space: nowrap;
+  transition: background var(--dur-1) var(--ease-out);
 }
 
 .tool-button:hover:not(:disabled) {
-  background: #242936;
+  background: var(--surface-4);
+  box-shadow: var(--control-lift-hover);
 }
 
 .tool-button:disabled {
@@ -528,9 +547,9 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
 }
 
 .tool-button-primary {
-  border-color: #2f5b9e;
-  background: #1f3253;
-  color: #dbe7fb;
+  border-color: var(--accent-strong);
+  background: var(--accent-strong);
+  color: var(--accent-text);
 }
 
 .euclid-anchor {
@@ -546,18 +565,18 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
   flex-direction: column;
   gap: 0.4rem;
   padding: 0.5rem;
-  background: #181a20;
-  border: 1px solid #3a4150;
-  border-radius: 4px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-pop);
 }
 
 .seq-status {
   margin: 0;
   padding: 0.2rem 0.5rem;
-  color: #9aa1ad;
-  background: #12141a;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.4);
+  color: var(--text-3);
+  background: var(--surface-inset);
+  border-bottom: 1px solid var(--border-strong);
 }
 
 .param-tabs {
@@ -565,30 +584,32 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
   align-items: center;
   gap: 0.25rem;
   padding: 0.2rem 0.5rem;
-  background: #14161b;
-  border-top: 1px solid rgba(0, 0, 0, 0.4);
+  background: var(--surface-2);
+  border-top: 1px solid var(--border-strong);
 }
 
 .param-tab {
-  padding: 0.1rem 0.45rem;
-  border: 1px solid transparent;
-  border-radius: 9999px;
+  padding: 0.1rem 0.5rem;
+  border: none;
+  border-radius: var(--radius-full);
   background: transparent;
-  color: #9aa1ad;
-  font: 600 10px system-ui, sans-serif;
+  box-shadow: none;
+  color: var(--text-3);
+  font: var(--fw-semibold) 10px var(--font-sans);
   letter-spacing: 0.08em;
   cursor: pointer;
+  transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
 }
 
+/* Active = accent-tinted fill, no outline border on the pill. */
 .param-tab-active {
-  border-color: #3a4150;
-  background: #1c1f26;
-  color: #e2e6ed;
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .param-row-name {
   margin-left: auto;
-  color: #5b6270;
+  color: var(--text-4);
   font-size: 10px;
 }
 
@@ -596,7 +617,7 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
   display: flex;
   gap: 4px;
   padding: 0 4px 4px;
-  background: #101216;
+  background: var(--surface-1);
 }
 
 .param-lane-spacer {

@@ -38,6 +38,8 @@ export interface WorkspaceLayoutState {
   deviceRackOpen: boolean;
   /** Whether the score panel is visible below the piano roll. */
   scoreOpen: boolean;
+  /** Whether the editor dock is collapsed to its tab strip. */
+  dockCollapsed: boolean;
 }
 
 /** A layout with a user-facing name (preset or user-saved). */
@@ -52,21 +54,53 @@ export interface LayoutBindings {
   dockTab: Ref<DockTabId>;
   deviceRackOpen: Ref<boolean>;
   scoreOpen: Ref<boolean>;
+  dockCollapsed: Ref<boolean>;
 }
 
-/** Built-in workspace presets. */
+/**
+ * Built-in workspace presets. The arrangement is the primary surface, so its
+ * zone is the larger share; Mix gives the mixer dock more room.
+ */
 export const LAYOUT_PRESETS: ReadonlyArray<NamedLayout> = [
   {
     name: 'Compose',
-    state: { arrangeHeightPx: 260, dockTab: 'roll', deviceRackOpen: true, scoreOpen: false },
+    state: {
+      arrangeHeightPx: 440,
+      dockTab: 'roll',
+      deviceRackOpen: true,
+      scoreOpen: false,
+      dockCollapsed: false,
+    },
   },
   {
     name: 'Mix',
-    state: { arrangeHeightPx: 180, dockTab: 'mixer', deviceRackOpen: false, scoreOpen: false },
+    state: {
+      arrangeHeightPx: 300,
+      dockTab: 'mixer',
+      deviceRackOpen: false,
+      scoreOpen: false,
+      dockCollapsed: false,
+    },
   },
   {
     name: 'Score',
-    state: { arrangeHeightPx: 140, dockTab: 'roll', deviceRackOpen: false, scoreOpen: true },
+    state: {
+      arrangeHeightPx: 320,
+      dockTab: 'roll',
+      deviceRackOpen: false,
+      scoreOpen: true,
+      dockCollapsed: false,
+    },
+  },
+  {
+    name: 'Arrange',
+    state: {
+      arrangeHeightPx: 600,
+      dockTab: 'roll',
+      deviceRackOpen: false,
+      scoreOpen: false,
+      dockCollapsed: true,
+    },
   },
 ];
 
@@ -74,7 +108,7 @@ export const LAYOUT_PRESETS: ReadonlyArray<NamedLayout> = [
 export const MAX_USER_LAYOUTS = 32;
 
 /** Storage schema version for the saved-layouts envelope. */
-export const LAYOUTS_VERSION = 1;
+export const LAYOUTS_VERSION = 2;
 
 /** Clamps a number to [lo, hi]. */
 function clamp(value: number, lo: number, hi: number): number {
@@ -104,6 +138,8 @@ export function sanitizeLayoutState(raw: unknown): WorkspaceLayoutState | null {
     deviceRackOpen:
       typeof source.deviceRackOpen === 'boolean' ? source.deviceRackOpen : fallback.deviceRackOpen,
     scoreOpen: typeof source.scoreOpen === 'boolean' ? source.scoreOpen : fallback.scoreOpen,
+    dockCollapsed:
+      typeof source.dockCollapsed === 'boolean' ? source.dockCollapsed : fallback.dockCollapsed,
   };
 }
 
@@ -114,6 +150,7 @@ export function captureLayoutState(bindings: LayoutBindings): WorkspaceLayoutSta
     dockTab: bindings.dockTab.value,
     deviceRackOpen: bindings.deviceRackOpen.value,
     scoreOpen: bindings.scoreOpen.value,
+    dockCollapsed: bindings.dockCollapsed.value,
   };
 }
 
@@ -125,6 +162,7 @@ export function applyLayoutState(state: WorkspaceLayoutState, bindings: LayoutBi
   bindings.dockTab.value = safe.dockTab;
   bindings.deviceRackOpen.value = safe.deviceRackOpen;
   bindings.scoreOpen.value = safe.scoreOpen;
+  bindings.dockCollapsed.value = safe.dockCollapsed;
 }
 
 /** Encodes user layouts into the versioned JSON envelope for storage. */

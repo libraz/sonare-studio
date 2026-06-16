@@ -18,6 +18,7 @@ function makeBindings(): LayoutBindings {
     dockTab: ref<DockTabId>('roll'),
     deviceRackOpen: ref(true),
     scoreOpen: ref(false),
+    dockCollapsed: ref(false),
   };
 }
 
@@ -34,6 +35,7 @@ describe('sanitizeLayoutState', () => {
       dockTab: 'roll',
       deviceRackOpen: true,
       scoreOpen: true,
+      dockCollapsed: false,
     });
   });
 
@@ -43,6 +45,7 @@ describe('sanitizeLayoutState', () => {
       dockTab: 'mixer',
       deviceRackOpen: false,
       scoreOpen: true,
+      dockCollapsed: true,
     };
     expect(sanitizeLayoutState(state)).toEqual(state);
   });
@@ -58,19 +61,27 @@ describe('captureLayoutState / applyLayoutState', () => {
       dockTab: 'mastering',
       deviceRackOpen: true,
       scoreOpen: false,
+      dockCollapsed: false,
     });
   });
 
   it('applies a state into the refs, clamping first', () => {
     const bindings = makeBindings();
     applyLayoutState(
-      { arrangeHeightPx: 99999, dockTab: 'mixer', deviceRackOpen: false, scoreOpen: true },
+      {
+        arrangeHeightPx: 99999,
+        dockTab: 'mixer',
+        deviceRackOpen: false,
+        scoreOpen: true,
+        dockCollapsed: true,
+      },
       bindings,
     );
     expect(bindings.arrangeHeightPx.value).toBe(2000);
     expect(bindings.dockTab.value).toBe('mixer');
     expect(bindings.deviceRackOpen.value).toBe(false);
     expect(bindings.scoreOpen.value).toBe(true);
+    expect(bindings.dockCollapsed.value).toBe(true);
   });
 });
 
@@ -84,6 +95,7 @@ describe('layout storage codec', () => {
           dockTab: 'mixer' as DockTabId,
           deviceRackOpen: false,
           scoreOpen: false,
+          dockCollapsed: false,
         },
       },
     ];
@@ -118,8 +130,13 @@ describe('useLayouts', () => {
 
   it('lists the built-in presets first', () => {
     const layouts = useLayouts();
-    expect(layouts.presets.map((preset) => preset.name)).toEqual(['Compose', 'Mix', 'Score']);
-    expect(layouts.layouts.value.slice(0, 3)).toEqual([...LAYOUT_PRESETS]);
+    expect(layouts.presets.map((preset) => preset.name)).toEqual([
+      'Compose',
+      'Mix',
+      'Score',
+      'Arrange',
+    ]);
+    expect(layouts.layouts.value.slice(0, 4)).toEqual([...LAYOUT_PRESETS]);
     expect(layouts.isPreset('Mix')).toBe(true);
     expect(layouts.isPreset('Mine')).toBe(false);
   });
@@ -142,7 +159,13 @@ describe('useLayouts', () => {
     expect(layouts.userLayouts.value).toEqual([
       {
         name: 'Beat making',
-        state: { arrangeHeightPx: 321, dockTab: 'steps', deviceRackOpen: true, scoreOpen: false },
+        state: {
+          arrangeHeightPx: 321,
+          dockTab: 'steps',
+          deviceRackOpen: true,
+          scoreOpen: false,
+          dockCollapsed: false,
+        },
       },
     ]);
     expect(decodeUserLayouts(window.localStorage.getItem(LAYOUTS_STORAGE_KEY))).toEqual(

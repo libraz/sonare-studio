@@ -109,6 +109,10 @@ const emit = defineEmits<{
   'view-resize': [widthPx: number, heightPx: number];
   /** Request to move the transport playhead (press or scrub on the ruler). */
   'ruler-seek': [ppq: number];
+  /** Right-click on a clip lane: clipId is null when no clip was hit. */
+  'clip-context': [payload: { x: number; y: number; clipId: number | null; ppq: number }];
+  /** Right-click on the bar/beat ruler. */
+  'ruler-context': [payload: { x: number; y: number; ppq: number }];
 }>();
 
 const wrapper = ref<HTMLDivElement | null>(null);
@@ -433,6 +437,28 @@ function drawClips(ctx: CanvasRenderingContext2D): void {
     const source = props.clips.find((clip) => clip.id === preview.clipId);
     if (source) drawClip(ctx, source, preview, true);
   }
+  const draft = props.interactions.previewDraft.value;
+  if (draft) drawDraft(ctx, draft);
+}
+
+/** Draws the draw-tool draft outline (a dashed accent rectangle). */
+function drawDraft(
+  ctx: CanvasRenderingContext2D,
+  draft: { trackId: number; startPpq: number; lengthPpq: number },
+): void {
+  const laneIndex = trackIndexById.value.get(draft.trackId);
+  if (laneIndex === undefined) return;
+  const range = props.range;
+  const x = range.ppqToX(draft.startPpq);
+  const wPx = Math.max(2, draft.lengthPpq * range.pxPerPpq - 1);
+  if (x + wPx < 0 || x > range.widthPx) return;
+  const y = laneTopFor(laneIndex) + 2;
+  const hPx = props.laneHeight - 5;
+  ctx.fillStyle = COLORS.draftFill;
+  fillRoundRect(ctx, x, y, wPx, hPx, 3);
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = COLORS.draftStroke;
+  strokeRoundRect(ctx, x + 0.5, y + 0.5, wPx - 1, hPx - 1, 3);
 }
 
 /** Px step between automation curve samples along the x axis. */
@@ -877,7 +903,24 @@ function onDoubleClick(event: MouseEvent): void {
 }
 
 function onContextMenu(event: MouseEvent): void {
-  if (props.automation.onContextMenu(localPoint(event))) event.preventDefault();
+  const point = localPoint(event);
+  // The automation sublane owns its own point menu; defer to it first.
+  if (props.automation.onContextMenu(point)) {
+    event.preventDefault();
+    return;
+  }
+  event.preventDefault();
+  const ppq = Math.max(0, props.range.xToPpq(point.x));
+  if (point.y < RULER_HEIGHT_PX) {
+    emit('ruler-context', { x: event.clientX, y: event.clientY, ppq });
+    return;
+  }
+  emit('clip-context', {
+    x: event.clientX,
+    y: event.clientY,
+    clipId: props.interactions.hitClipAt(point),
+    ppq,
+  });
 }
 </script>
 

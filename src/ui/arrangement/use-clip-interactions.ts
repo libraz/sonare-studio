@@ -10,6 +10,7 @@
  */
 
 import { type Ref, ref } from 'vue';
+import type { EditorToolId } from '@/ui/editor/tools';
 import { clampFadePpq, type FadeEdge, hitTestFadeHandles } from './audio-fades';
 import {
   type ArrangeClipRect,
@@ -74,6 +75,10 @@ export interface ClipInteractionCommands {
   createClip(trackId: number, startPpq: number, lengthPpq: number): number | null;
   /** Sets both fade lengths of an audio clip (0 clears). Enables fade handles. */
   setClipFades?(clipId: number, fadeInPpq: number, fadeOutPpq: number): void;
+  /** Deletes a clip (used by the erase tool; absent = erase is a no-op). */
+  deleteClip?(clipId: number): void;
+  /** Splits a clip at a timeline position (used by the split tool). */
+  splitClip?(clipId: number, splitPpq: number): number;
 }
 
 /** Timeline bounds trims of a clip must stay inside (see getSourceBounds). */
@@ -96,6 +101,8 @@ export interface UseClipInteractionsOptions {
   getGridPpq(): number;
   /** Returns the bar containing a PPQ position (for double-click creation). */
   getBarRange(ppq: number): ClipBarRange;
+  /** Returns the active editor tool (absent = always the select tool). */
+  getTool?(): EditorToolId;
   /** Mutation commands invoked when gestures commit. */
   commands: ClipInteractionCommands;
   /**
@@ -135,8 +142,18 @@ export interface ClipFadePreview {
   fadeOutPpq: number;
 }
 
+/** Geometry of an in-flight draw-tool clip, for rendering the draft outline. */
+export interface ClipDraftPreview {
+  /** Target track id of the draft. */
+  trackId: number;
+  /** Draft start in PPQ. */
+  startPpq: number;
+  /** Draft length in PPQ. */
+  lengthPpq: number;
+}
+
 /** CSS cursor reflecting what a pointer press at the hovered point would do. */
-export type ClipCursor = 'default' | 'pointer' | 'move' | 'copy' | 'ew-resize';
+export type ClipCursor = 'default' | 'pointer' | 'move' | 'copy' | 'ew-resize' | 'crosshair';
 
 /** Reactive state and event handlers returned by {@link useClipInteractions}. */
 export interface ClipInteractions {
@@ -144,6 +161,8 @@ export interface ClipInteractions {
   previewClip: Ref<ClipDragPreview | null>;
   /** In-flight fade-drag values, or null when no fade drag is running. */
   previewFades: Ref<ClipFadePreview | null>;
+  /** In-flight draw-tool draft outline, or null when no draw is running. */
+  previewDraft: Ref<ClipDraftPreview | null>;
   /** Cursor to show over the arrangement lanes. */
   cursor: Ref<ClipCursor>;
   /** Handles pointerdown on the lane area (point in local px). */
@@ -154,6 +173,8 @@ export interface ClipInteractions {
   onPointerUp(point: ClipPoint, modifiers?: ClipModifiers): void;
   /** Handles double-click; creates a one-bar clip on an empty lane. */
   onDoubleClick(point: ClipPoint, modifiers?: ClipModifiers): void;
+  /** Returns the topmost clip id under a point, or null when none is hit. */
+  hitClipAt(point: ClipPoint): number | null;
   /** Aborts any in-flight gesture without committing (e.g. pointercancel). */
   cancel(): void;
 }
@@ -187,7 +208,21 @@ interface FadeGesture {
   origin: ArrangeClip;
 }
 
-type Gesture = { kind: 'none' } | PendingGesture | MoveGesture | TrimGesture | FadeGesture;
+/** Draw-tool gesture: a new clip grows from its start to the pointer. */
+interface DrawClipGesture {
+  kind: 'draw-clip';
+  start: ClipPoint;
+  trackId: number;
+  startPpq: number;
+}
+
+type Gesture =
+  | { kind: 'none' }
+  | PendingGesture
+  | MoveGesture
+  | TrimGesture
+  | FadeGesture
+  | DrawClipGesture;
 
 /** Rounds a PPQ position to the nearest multiple of `step`, clamped to >= 0. */
 export function snapToStep(ppq: number, step: number): number {
@@ -208,9 +243,63 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
 
   const previewClip = ref<ClipDragPreview | null>(null);
   const previewFades = ref<ClipFadePreview | null>(null);
+  const previewDraft = ref<ClipDraftPreview | null>(null);
   const cursor = ref<ClipCursor>('default');
 
   let gesture: Gesture = { kind: 'none' };
+
+  /** The active tool ('select' when no tool getter is wired). */
+  function currentTool(): EditorToolId {
+    return options.getTool?.() ?? 'select';
+  }
+
+  /** Resolves the lane and track under a point (track id null when off-lane). */
+  function laneAt(point: ClipPoint): { laneIndex: number; trackId: number | null } {
+    const trackIds = options.getTrackIds();
+    const laneIndex = view.laneIndexAtY(point.y);
+    const trackId = laneIndex >= 0 && laneIndex < trackIds.length ? trackIds[laneIndex] : null;
+    return { laneIndex, trackId };
+  }
+
+  /** Resolves the grid-snapped start cell of a draw at the pointer x. */
+  function drawStartPpq(point: ClipPoint, modifiers: ClipModifiers): number {
+    const step = options.getGridPpq();
+    const ppq = view.xToPpq(point.x);
+    return modifiers.meta === true || !(step > 0)
+      ? Math.max(0, ppq)
+      : Math.max(0, Math.floor(ppq / step) * step);
+  }
+
+  /** Resolves the snapped length of an in-flight clip draw (>= one bar). */
+  function drawClipLength(g: DrawClipGesture, point: ClipPoint, modifiers: ClipModifiers): number {
+    const step = options.getGridPpq();
+    const raw = view.xToPpq(point.x);
+    const end = modifiers.meta === true ? raw : snapToStep(raw, step);
+    const bar = options.getBarRange(g.startPpq).lengthPpq;
+    return Math.max(bar, end - g.startPpq);
+  }
+
+  /** Deletes the clip under the pointer, if any (erase tool). */
+  function eraseAt(point: ClipPoint): void {
+    if (!commands.deleteClip) return;
+    const hit = hitTestClip(toRects(), point, view, hitOptions());
+    if (hit) commands.deleteClip(hit.id);
+  }
+
+  /** Splits the clip under the pointer at the snapped pointer position. */
+  function splitAt(point: ClipPoint, modifiers: ClipModifiers): void {
+    if (!commands.splitClip) return;
+    const hit = hitTestClip(toRects(), point, view, hitOptions());
+    if (!hit) return;
+    const clip = options.getClips().find((c) => c.id === hit.id);
+    if (!clip) return;
+    const step = options.getGridPpq();
+    const raw = view.xToPpq(point.x);
+    const splitPpq = modifiers.meta === true ? raw : snapToStep(raw, step);
+    if (splitPpq <= clip.startPpq || splitPpq >= clip.startPpq + clip.lengthPpq) return;
+    const rightId = commands.splitClip(clip.id, splitPpq);
+    commands.selectClip(rightId);
+  }
 
   function hitOptions(): { trimTolerancePx?: number } {
     return options.trimTolerancePx === undefined
@@ -337,6 +426,37 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
   }
 
   function onPointerDown(point: ClipPoint, modifiers: ClipModifiers = {}): void {
+    const tool = currentTool();
+    if (tool === 'erase') {
+      eraseAt(point);
+      gesture = { kind: 'none' };
+      return;
+    }
+    if (tool === 'split') {
+      splitAt(point, modifiers);
+      gesture = { kind: 'none' };
+      return;
+    }
+    if (tool === 'draw') {
+      const { trackId } = laneAt(point);
+      if (trackId === null) {
+        gesture = { kind: 'none' };
+        return;
+      }
+      gesture = {
+        kind: 'draw-clip',
+        start: point,
+        trackId,
+        startPpq: drawStartPpq(point, modifiers),
+      };
+      previewDraft.value = {
+        trackId,
+        startPpq: gesture.startPpq,
+        lengthPpq: drawClipLength(gesture, point, modifiers),
+      };
+      cursor.value = 'crosshair';
+      return;
+    }
     const fadeHit = fadeHandleHit(point);
     if (fadeHit) {
       commands.selectClip(fadeHit.clip.id);
@@ -388,12 +508,25 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
 
   function onPointerMove(point: ClipPoint, modifiers: ClipModifiers = {}): void {
     if (gesture.kind === 'none') {
+      const tool = currentTool();
+      if (tool !== 'select') {
+        cursor.value = tool === 'erase' ? 'default' : 'crosshair';
+        return;
+      }
       if (fadeHandleHit(point)) {
         cursor.value = 'ew-resize';
         return;
       }
       const hit = hitTestClip(toRects(), point, view, hitOptions());
       cursor.value = hit ? (hit.zone === 'body' ? 'pointer' : 'ew-resize') : 'default';
+      return;
+    }
+    if (gesture.kind === 'draw-clip') {
+      previewDraft.value = {
+        trackId: gesture.trackId,
+        startPpq: gesture.startPpq,
+        lengthPpq: drawClipLength(gesture, point, modifiers),
+      };
       return;
     }
     if (gesture.kind === 'fade') {
@@ -433,7 +566,14 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     gesture = { kind: 'none' };
     previewClip.value = null;
     previewFades.value = null;
+    previewDraft.value = null;
     cursor.value = 'default';
+    if (g.kind === 'draw-clip') {
+      const lengthPpq = drawClipLength(g, point, modifiers);
+      const id = commands.createClip(g.trackId, g.startPpq, lengthPpq);
+      if (id !== null) commands.selectClip(id);
+      return;
+    }
     if (g.kind === 'fade') {
       const fades = fadeTarget(g, point, modifiers);
       const originIn = g.origin.fadeInPpq ?? 0;
@@ -474,21 +614,29 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     if (id !== null) commands.selectClip(id);
   }
 
+  /** Returns the topmost clip id under a point, or null when none is hit. */
+  function hitClipAt(point: ClipPoint): number | null {
+    return hitTestClip(toRects(), point, view, hitOptions())?.id ?? null;
+  }
+
   function cancel(): void {
     gesture = { kind: 'none' };
     previewClip.value = null;
     previewFades.value = null;
+    previewDraft.value = null;
     cursor.value = 'default';
   }
 
   return {
     previewClip,
     previewFades,
+    previewDraft,
     cursor,
     onPointerDown,
     onPointerMove,
     onPointerUp,
     onDoubleClick,
+    hitClipAt,
     cancel,
   };
 }
