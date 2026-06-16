@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue';
+import { useI18n } from '@/ui/i18n';
 import { wrapTabFocus } from '@/ui/settings/focus-trap';
 
 /**
@@ -32,6 +33,7 @@ const emit = defineEmits<{
   close: [];
 }>();
 
+const { t } = useI18n();
 const dialogRef = ref<HTMLElement | null>(null);
 
 /** Element focused before the modal opened, restored on close. */
@@ -84,7 +86,7 @@ function onKeydown(event: KeyboardEvent): void {
               v-if="props.dismissable"
               type="button"
               class="modal-close"
-              aria-label="Close"
+              :aria-label="t.settings.close"
               @click="emit('close')"
             >
               <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">

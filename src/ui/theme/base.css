@@ -13,6 +13,10 @@
   accent-color: var(--accent);
 }
 
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+
 html,
 body {
   margin: 0;
@@ -39,6 +43,13 @@ body {
   background-attachment: fixed;
 }
 
+:root[data-theme='dark'] body {
+  background-image:
+    radial-gradient(120% 90% at 12% -10%, rgba(96, 165, 250, 0.13), transparent 55%),
+    radial-gradient(110% 80% at 100% 0%, rgba(94, 92, 230, 0.1), transparent 50%),
+    radial-gradient(120% 120% at 50% 120%, rgba(52, 211, 153, 0.06), transparent 55%);
+}
+
 #app {
   height: 100%;
   /* The shell owns its own scrolling regions; the page itself never scrolls. */
@@ -62,6 +73,10 @@ body {
   scrollbar-color: rgba(17, 24, 39, 0.22) transparent;
 }
 
+:root[data-theme='dark'] * {
+  scrollbar-color: rgba(226, 230, 238, 0.24) transparent;
+}
+
 ::-webkit-scrollbar {
   width: 12px;
   height: 12px;
@@ -80,6 +95,16 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(17, 24, 39, 0.34);
+  background-clip: padding-box;
+}
+
+:root[data-theme='dark'] ::-webkit-scrollbar-thumb {
+  background: rgba(226, 230, 238, 0.22);
+  background-clip: padding-box;
+}
+
+:root[data-theme='dark'] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(226, 230, 238, 0.36);
   background-clip: padding-box;
 }
 

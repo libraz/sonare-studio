@@ -4,6 +4,7 @@ import { setSelection, updateNotes } from '@/project/commands';
 import type { EditorNote, EditorNoteUpdate } from '@/project/types';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
+import { useI18n } from '@/ui/i18n';
 import {
   barsInSpan,
   formatLaneValue,
@@ -52,6 +53,8 @@ const props = defineProps<{
   /** Note field shown by the bars; defaults to note-on velocity. */
   param?: LaneParamId;
 }>();
+
+const { t } = useI18n();
 
 const wrapper = ref<HTMLDivElement | null>(null);
 const canvas = ref<HTMLCanvasElement | null>(null);
@@ -315,7 +318,12 @@ watch(
     @pointerup="onPointerUp"
     @pointercancel="onPointerCancel"
   >
-    <canvas ref="canvas" class="velocity-canvas" role="img" aria-label="Note parameter lane" />
+    <canvas
+      ref="canvas"
+      class="velocity-canvas"
+      role="img"
+      :aria-label="t.shell.pianoRoll.parameterLane"
+    />
   </div>
 </template>
 

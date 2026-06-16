@@ -5,7 +5,10 @@ import { useAppSettings } from '@/composables/useAppSettings';
 import { promptDialog } from '@/composables/useDialogs';
 import { useLayouts } from '@/composables/useLayouts';
 import { useShortcuts } from '@/composables/useShortcuts';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import {
+  type AppLanguage,
+  type AppTheme,
   AUTOSAVE_INTERVAL_MAX_MS,
   AUTOSAVE_INTERVAL_MIN_MS,
   COUNT_IN_BARS_MAX,
@@ -44,16 +47,17 @@ const emit = defineEmits<{
 }>();
 
 const appSettings = useAppSettings();
+const { t } = useI18n();
 const shortcuts = useShortcuts();
 const namedLayouts = useLayouts();
 const platform = detectPlatform();
 
 type TabId = 'general' | 'shortcuts' | 'layouts';
-const TABS: ReadonlyArray<{ id: TabId; label: string }> = [
-  { id: 'general', label: 'General' },
-  { id: 'shortcuts', label: 'Shortcuts' },
-  { id: 'layouts', label: 'Layouts' },
-];
+const TABS = computed<ReadonlyArray<{ id: TabId; label: string }>>(() => [
+  { id: 'general', label: t.value.settings.tabs.general },
+  { id: 'shortcuts', label: t.value.settings.tabs.shortcuts },
+  { id: 'layouts', label: t.value.settings.tabs.layouts },
+]);
 const activeTab = ref<TabId>('general');
 
 const dialogRef = ref<HTMLElement | null>(null);
@@ -74,9 +78,10 @@ function onDialogKeydown(event: KeyboardEvent): void {
 
 /** Moves the tab selection by `delta`, wrapping around. */
 function moveTab(delta: number): void {
-  const index = TABS.findIndex((tab) => tab.id === activeTab.value);
-  const next = (index + delta + TABS.length) % TABS.length;
-  activeTab.value = TABS[next].id;
+  const tabs = TABS.value;
+  const index = tabs.findIndex((tab) => tab.id === activeTab.value);
+  const next = (index + delta + tabs.length) % tabs.length;
+  activeTab.value = tabs[next].id;
 }
 
 function onTabKeydown(event: KeyboardEvent): void {
@@ -92,16 +97,38 @@ function onTabKeydown(event: KeyboardEvent): void {
 // --- General tab -----------------------------------------------------------
 
 /** Editor density choices for the General tab picker. */
-const EDITOR_DENSITY_OPTIONS: ReadonlyArray<{
-  value: 'comfortable' | 'compact';
-  label: string;
-}> = [
-  { value: 'comfortable', label: 'Comfortable' },
-  { value: 'compact', label: 'Compact' },
-];
+const EDITOR_DENSITY_OPTIONS = computed<
+  ReadonlyArray<{
+    value: 'comfortable' | 'compact';
+    label: string;
+  }>
+>(() => [
+  { value: 'comfortable', label: t.value.settings.general.densityComfortable },
+  { value: 'compact', label: t.value.settings.general.densityCompact },
+]);
+
+const THEME_OPTIONS = computed<ReadonlyArray<{ value: AppTheme; label: string }>>(() => [
+  { value: 'system', label: t.value.settings.general.themeSystem },
+  { value: 'light', label: t.value.settings.general.themeLight },
+  { value: 'dark', label: t.value.settings.general.themeDark },
+]);
+
+const LANGUAGE_OPTIONS = computed<ReadonlyArray<{ value: AppLanguage; label: string }>>(() => [
+  { value: 'system', label: t.value.settings.general.languageSystem },
+  { value: 'en', label: t.value.settings.general.languageEnglish },
+  { value: 'ja', label: t.value.settings.general.languageJapanese },
+]);
 
 function onEditorDensityChange(value: 'comfortable' | 'compact'): void {
   appSettings.set('editorDensity', value);
+}
+
+function onThemeChange(value: AppTheme): void {
+  appSettings.set('theme', value);
+}
+
+function onLanguageChange(value: AppLanguage): void {
+  appSettings.set('language', value);
 }
 
 const autosaveSeconds = computed<number>(() =>
@@ -141,8 +168,8 @@ const shortcutGroups = computed<string[]>(() => {
 
 /** Category-filter choices: "All categories" plus each distinct action group. */
 const shortcutGroupOptions = computed(() => [
-  { value: 'all', label: 'All categories' },
-  ...shortcutGroups.value.map((group) => ({ value: group, label: group })),
+  { value: 'all', label: t.value.settings.shortcuts.allCategories },
+  ...shortcutGroups.value.map((group) => ({ value: group, label: shortcutGroupLabel(group) })),
 ]);
 
 /** Actions matching the active category and search query, in registry order. */
@@ -152,7 +179,8 @@ const visibleShortcuts = computed<ReadonlyArray<ShortcutActionDef>>(() => {
   return shortcuts.actions.filter((action) => {
     if (group !== 'all' && action.group !== group) return false;
     if (query === '') return true;
-    const haystack = `${action.label} ${action.group} ${keysText(action)}`.toLowerCase();
+    const haystack =
+      `${shortcutActionLabel(action)} ${shortcutGroupLabel(action.group)} ${keysText(action)}`.toLowerCase();
     return haystack.includes(query);
   });
 });
@@ -168,8 +196,18 @@ const conflictActionIds = computed<ReadonlySet<string>>(() => {
 function keysText(action: ShortcutActionDef): string {
   if (action.keysLabel !== undefined) return action.keysLabel;
   const keys = shortcuts.keysFor(action.id);
-  if (keys.length === 0) return '—';
+  if (keys.length === 0) return t.value.settings.shortcuts.emptyKeys;
   return keys.map((combo) => formatKeyCombo(combo, platform)).join(' / ');
+}
+
+function shortcutActionLabel(action: ShortcutActionDef): string {
+  return (
+    t.value.shortcuts.actions[action.id as keyof typeof t.value.shortcuts.actions] ?? action.label
+  );
+}
+
+function shortcutGroupLabel(group: string): string {
+  return t.value.shortcuts.groups[group as keyof typeof t.value.shortcuts.groups] ?? group;
 }
 
 function onCaptureKeydown(event: KeyboardEvent): void {
@@ -224,10 +262,10 @@ function saveCurrentLayout(): void {
   } else {
     layoutError.value =
       name === ''
-        ? 'Enter a layout name.'
+        ? t.value.settings.layouts.enterName
         : namedLayouts.isPreset(name)
-          ? 'That name is reserved for a preset.'
-          : 'Could not save the layout.';
+          ? t.value.settings.layouts.reservedName
+          : t.value.settings.layouts.saveFailed;
   }
 }
 
@@ -238,15 +276,15 @@ function deleteLayout(name: string): void {
 function renameLayout(name: string): void {
   void (async () => {
     const next = await promptDialog({
-      title: 'Rename layout',
-      message: 'Enter a new name for this layout.',
+      title: t.value.settings.layouts.renameTitle,
+      message: t.value.settings.layouts.renameMessage,
       defaultValue: name,
-      placeholder: 'Layout name',
-      confirmLabel: 'Rename',
+      placeholder: t.value.settings.layouts.layoutNamePlaceholder,
+      confirmLabel: t.value.settings.layouts.renameConfirm,
     });
     if (next === null) return;
     if (!namedLayouts.rename(name, next)) {
-      layoutError.value = 'Could not rename the layout (name empty or already used).';
+      layoutError.value = t.value.settings.layouts.renameFailed;
     } else {
       layoutError.value = '';
     }
@@ -288,12 +326,17 @@ onBeforeUnmount(() => {
       class="dialog"
       role="dialog"
       aria-modal="true"
-      aria-label="Settings"
+      :aria-label="t.settings.title"
       tabindex="-1"
       @keydown="onDialogKeydown"
     >
-      <h2 class="dialog-title">Settings</h2>
-      <div class="tabs" role="tablist" aria-label="Settings sections" @keydown="onTabKeydown">
+      <h2 class="dialog-title">{{ t.settings.title }}</h2>
+      <div
+        class="tabs"
+        role="tablist"
+        :aria-label="t.settings.sectionsLabel"
+        @keydown="onTabKeydown"
+      >
         <button
           v-for="tab in TABS"
           :key="tab.id"
@@ -315,21 +358,43 @@ onBeforeUnmount(() => {
         id="settings-panel-general"
         class="panel"
         role="tabpanel"
-        aria-label="General"
+        :aria-label="t.settings.tabs.general"
       >
         <div class="row">
-          <span class="row-label">Editor density</span>
+          <span class="row-label">{{ t.settings.general.language }}</span>
+          <SelectMenu
+            class="row-select"
+            :model-value="appSettings.settings.language"
+            :options="LANGUAGE_OPTIONS"
+            :aria-label="t.settings.general.language"
+            size="sm"
+            @change="onLanguageChange"
+          />
+        </div>
+        <div class="row">
+          <span class="row-label">{{ t.settings.general.theme }}</span>
+          <SelectMenu
+            class="row-select"
+            :model-value="appSettings.settings.theme"
+            :options="THEME_OPTIONS"
+            :aria-label="t.settings.general.theme"
+            size="sm"
+            @change="onThemeChange"
+          />
+        </div>
+        <div class="row">
+          <span class="row-label">{{ t.settings.general.editorDensity }}</span>
           <SelectMenu
             class="row-select"
             :model-value="appSettings.settings.editorDensity"
             :options="EDITOR_DENSITY_OPTIONS"
-            aria-label="Editor density"
+            :aria-label="t.settings.general.editorDensity"
             size="sm"
             @change="onEditorDensityChange"
           />
         </div>
         <label class="row">
-          <span class="row-label">Snap to grid by default</span>
+          <span class="row-label">{{ t.settings.general.snapDefault }}</span>
           <input
             type="checkbox"
             :checked="appSettings.settings.snapDefault"
@@ -337,7 +402,7 @@ onBeforeUnmount(() => {
           />
         </label>
         <label class="row">
-          <span class="row-label">Count-in (bars)</span>
+          <span class="row-label">{{ t.settings.general.countInBars }}</span>
           <input
             type="number"
             :min="COUNT_IN_BARS_MIN"
@@ -347,7 +412,7 @@ onBeforeUnmount(() => {
           />
         </label>
         <label class="row">
-          <span class="row-label">Monitor input when arming</span>
+          <span class="row-label">{{ t.settings.general.monitorDefault }}</span>
           <input
             type="checkbox"
             :checked="appSettings.settings.monitorDefault"
@@ -355,7 +420,7 @@ onBeforeUnmount(() => {
           />
         </label>
         <label class="row">
-          <span class="row-label">Autosave interval (seconds)</span>
+          <span class="row-label">{{ t.settings.general.autosaveInterval }}</span>
           <input
             type="number"
             :min="AUTOSAVE_INTERVAL_MIN_MS / 1000"
@@ -365,7 +430,7 @@ onBeforeUnmount(() => {
           />
         </label>
         <label class="row">
-          <span class="row-label">Scroll view to follow playhead</span>
+          <span class="row-label">{{ t.settings.general.scrollFollowPlayhead }}</span>
           <input
             type="checkbox"
             :checked="appSettings.settings.scrollFollowPlayhead"
@@ -375,7 +440,7 @@ onBeforeUnmount(() => {
           />
         </label>
         <label class="row">
-          <span class="row-label">Confirm destructive actions</span>
+          <span class="row-label">{{ t.settings.general.confirmDestructive }}</span>
           <input
             type="checkbox"
             :checked="appSettings.settings.confirmDestructive"
@@ -385,7 +450,9 @@ onBeforeUnmount(() => {
           />
         </label>
         <div class="panel-actions">
-          <button type="button" @click="appSettings.reset()">Reset to defaults</button>
+          <button type="button" @click="appSettings.reset()">
+            {{ t.settings.general.resetDefaults }}
+          </button>
         </div>
       </div>
 
@@ -394,40 +461,42 @@ onBeforeUnmount(() => {
         id="settings-panel-shortcuts"
         class="panel"
         role="tabpanel"
-        aria-label="Shortcuts"
+        :aria-label="t.settings.tabs.shortcuts"
       >
         <p v-if="shortcuts.conflicts.value.length > 0" class="conflict-banner" role="alert">
-          Some shortcuts share the same keys; highlighted rows may shadow each other.
+          {{ t.settings.shortcuts.conflict }}
         </p>
         <div class="shortcut-filters">
           <input
             v-model="shortcutQuery"
             type="search"
             class="shortcut-search"
-            placeholder="Search shortcuts…"
-            aria-label="Search shortcuts"
+            :placeholder="t.settings.shortcuts.searchPlaceholder"
+            :aria-label="t.settings.shortcuts.searchLabel"
           />
           <SelectMenu
             v-model="shortcutGroup"
             :options="shortcutGroupOptions"
             class="shortcut-group"
-            aria-label="Filter by category"
+            :aria-label="t.settings.shortcuts.categoryLabel"
             size="sm"
           />
         </div>
         <table class="shortcut-table">
           <thead>
             <tr>
-              <th scope="col">Action</th>
-              <th scope="col">Category</th>
-              <th scope="col">Scope</th>
-              <th scope="col">Keys</th>
-              <th scope="col"><span class="visually-hidden">Edit</span></th>
+              <th scope="col">{{ t.settings.shortcuts.action }}</th>
+              <th scope="col">{{ t.settings.shortcuts.category }}</th>
+              <th scope="col">{{ t.settings.shortcuts.scope }}</th>
+              <th scope="col">{{ t.settings.shortcuts.keys }}</th>
+              <th scope="col">
+                <span class="visually-hidden">{{ t.settings.shortcuts.editHidden }}</span>
+              </th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="visibleShortcuts.length === 0">
-              <td class="shortcut-empty" colspan="5">No shortcuts match your search.</td>
+              <td class="shortcut-empty" colspan="5">{{ t.settings.shortcuts.noMatches }}</td>
             </tr>
             <tr
               v-for="action in visibleShortcuts"
@@ -435,12 +504,12 @@ onBeforeUnmount(() => {
               :class="{ conflict: conflictActionIds.has(action.id) }"
               :data-action-id="action.id"
             >
-              <td>{{ action.label }}</td>
-              <td class="group-cell">{{ action.group }}</td>
+              <td>{{ shortcutActionLabel(action) }}</td>
+              <td class="group-cell">{{ shortcutGroupLabel(action.group) }}</td>
               <td class="scope-cell">{{ action.when }}</td>
               <td class="keys-cell">
                 <span v-if="capturingId === action.id" class="capturing">
-                  Press keys… (Esc cancels)
+                  {{ t.settings.shortcuts.capturing }}
                 </span>
                 <span v-else>{{ keysText(action) }}</span>
               </td>
@@ -449,19 +518,31 @@ onBeforeUnmount(() => {
                   <button
                     type="button"
                     class="small"
-                    :aria-label="`Change keys for ${action.label}`"
+                    :aria-label="
+                      formatMessage(t.settings.shortcuts.changeKeys, {
+                        action: shortcutActionLabel(action),
+                      })
+                    "
                     @click="capturingId === action.id ? stopCapture() : startCapture(action.id)"
                   >
-                    {{ capturingId === action.id ? 'Cancel' : 'Edit' }}
+                    {{
+                      capturingId === action.id
+                        ? t.settings.shortcuts.cancel
+                        : t.settings.shortcuts.edit
+                    }}
                   </button>
                   <button
                     v-if="shortcuts.isOverridden(action.id)"
                     type="button"
                     class="small"
-                    :aria-label="`Reset keys for ${action.label}`"
+                    :aria-label="
+                      formatMessage(t.settings.shortcuts.resetKeys, {
+                        action: shortcutActionLabel(action),
+                      })
+                    "
                     @click="resetActionKeys(action.id)"
                   >
-                    Reset
+                    {{ t.settings.shortcuts.reset }}
                   </button>
                 </template>
               </td>
@@ -469,7 +550,9 @@ onBeforeUnmount(() => {
           </tbody>
         </table>
         <div class="panel-actions">
-          <button type="button" @click="shortcuts.resetAll()">Reset all shortcuts</button>
+          <button type="button" @click="shortcuts.resetAll()">
+            {{ t.settings.shortcuts.resetAll }}
+          </button>
         </div>
       </div>
 
@@ -478,9 +561,9 @@ onBeforeUnmount(() => {
         id="settings-panel-layouts"
         class="panel"
         role="tabpanel"
-        aria-label="Layouts"
+        :aria-label="t.settings.tabs.layouts"
       >
-        <h3 class="panel-heading">Presets</h3>
+        <h3 class="panel-heading">{{ t.settings.layouts.presets }}</h3>
         <ul class="layout-list">
           <li v-for="layout in namedLayouts.presets" :key="layout.name" class="layout-item">
             <span class="layout-name">{{ layout.name }}</span>
@@ -491,14 +574,14 @@ onBeforeUnmount(() => {
                 :disabled="props.layoutBindings === null"
                 @click="applyLayout(layout.name)"
               >
-                Apply
+                {{ t.settings.layouts.apply }}
               </button>
             </span>
           </li>
         </ul>
-        <h3 class="panel-heading">My layouts</h3>
+        <h3 class="panel-heading">{{ t.settings.layouts.myLayouts }}</h3>
         <p v-if="namedLayouts.userLayouts.value.length === 0" class="layout-empty">
-          No saved layouts yet.
+          {{ t.settings.layouts.noSaved }}
         </p>
         <ul v-else class="layout-list">
           <li
@@ -514,10 +597,14 @@ onBeforeUnmount(() => {
                 :disabled="props.layoutBindings === null"
                 @click="applyLayout(layout.name)"
               >
-                Apply
+                {{ t.settings.layouts.apply }}
               </button>
-              <button type="button" class="small" @click="renameLayout(layout.name)">Rename</button>
-              <button type="button" class="small" @click="deleteLayout(layout.name)">Delete</button>
+              <button type="button" class="small" @click="renameLayout(layout.name)">
+                {{ t.settings.layouts.rename }}
+              </button>
+              <button type="button" class="small" @click="deleteLayout(layout.name)">
+                {{ t.settings.layouts.delete }}
+              </button>
             </span>
           </li>
         </ul>
@@ -525,8 +612,8 @@ onBeforeUnmount(() => {
           <input
             v-model="newLayoutName"
             type="text"
-            placeholder="Layout name"
-            aria-label="New layout name"
+            :placeholder="t.settings.layouts.layoutNamePlaceholder"
+            :aria-label="t.settings.layouts.newLayoutName"
             @keydown.enter.prevent="saveCurrentLayout"
           />
           <button
@@ -534,14 +621,14 @@ onBeforeUnmount(() => {
             :disabled="props.layoutBindings === null"
             @click="saveCurrentLayout"
           >
-            Save current layout
+            {{ t.settings.layouts.saveCurrent }}
           </button>
         </div>
         <p v-if="layoutError !== ''" class="layout-error" role="alert">{{ layoutError }}</p>
       </div>
 
       <div class="dialog-actions">
-        <button type="button" class="primary" @click="close">Close</button>
+        <button type="button" class="primary" @click="close">{{ t.settings.close }}</button>
       </div>
     </div>
   </div>

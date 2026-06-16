@@ -18,8 +18,10 @@ import {
   type ProjectDocument,
   serializeProject,
 } from '@/project/serialization';
+import { smfToProjectDocument } from '@/project/smf';
 import { useProjectStore } from '@/project/store';
 import { makeDemoDocument, type TemplateName } from '@/project/templates';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import { createFocusTrap, type FocusTrap } from '@/ui/settings/focus-trap';
 import {
   loadRecentProjects,
@@ -49,11 +51,13 @@ export interface ProjectPersistenceOptions {
 export function useProjectPersistence(options: ProjectPersistenceOptions) {
   const { autosave, confirmAction, downloadBlobFile, errorMessage, runAction } = options;
   const store = useProjectStore();
+  const { t } = useI18n();
 
   const dirty = ref(false);
   const opfsAvailable = isOpfsAvailable();
   const projectMenuOpen = ref(false);
   const projectMenuRoot = ref<HTMLElement | null>(null);
+  const midiImportInput = ref<HTMLInputElement | null>(null);
   const newDialogOpen = ref(false);
   const openDialogOpen = ref(false);
   const storedProjects = ref<StoredProjectInfo[]>([]);
@@ -109,10 +113,10 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
         const stored = await listProjects();
         if (
           stored.some((info) => info.name === AUTOSAVE_SLOT) &&
-          (await confirmAction('Restore the autosaved project from your last session?', {
-            title: 'Restore session',
+          (await confirmAction(t.value.dialogs.prompts.restoreSessionMessage, {
+            title: t.value.dialogs.prompts.restoreSessionTitle,
             danger: false,
-            confirmLabel: 'Restore',
+            confirmLabel: t.value.dialogs.prompts.restore,
           }))
         ) {
           restored = await autosave.restoreAutosave();
@@ -172,9 +176,9 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
 
   function confirmDiscard(): Promise<boolean> {
     if (!dirty.value) return Promise.resolve(true);
-    return confirmAction('Discard unsaved changes in the current project?', {
-      title: 'Unsaved changes',
-      confirmLabel: 'Discard',
+    return confirmAction(t.value.dialogs.prompts.discardUnsavedMessage, {
+      title: t.value.dialogs.prompts.unsavedChangesTitle,
+      confirmLabel: t.value.dialogs.prompts.discard,
     });
   }
 
@@ -197,9 +201,9 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
 
   async function deleteStoredProject(name: string): Promise<void> {
     if (
-      !(await confirmAction(`Delete the saved project "${name}"?`, {
-        title: 'Delete project',
-        confirmLabel: 'Delete',
+      !(await confirmAction(formatMessage(t.value.dialogs.prompts.deleteProjectMessage, { name }), {
+        title: t.value.dialogs.prompts.deleteProjectTitle,
+        confirmLabel: t.value.dialogs.prompts.delete,
       }))
     )
       return;
@@ -217,6 +221,25 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       const picked = await pickAndReadSzd();
       if (!picked) return;
       await loadProjectDocument(decodeSzd(picked.bytes));
+      await markClean();
+      openDialogOpen.value = false;
+    });
+  }
+
+  function importMidiAction(): void {
+    closeProjectMenu();
+    midiImportInput.value?.click();
+  }
+
+  function onMidiImportChange(event: Event): void {
+    const input = event.target as HTMLInputElement | null;
+    const file = input?.files?.[0] ?? null;
+    if (input) input.value = '';
+    if (!file) return;
+    void runAction(async () => {
+      if (!(await confirmDiscard())) return;
+      const doc = await smfToProjectDocument(await file.arrayBuffer(), file.name);
+      await loadProjectDocument(doc);
       await markClean();
       openDialogOpen.value = false;
     });
@@ -242,11 +265,11 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     closeProjectMenu();
     void (async () => {
       const name = await promptDialog({
-        title: 'Save project as',
-        message: 'Enter a name for the saved project.',
+        title: t.value.dialogs.prompts.saveProjectAsTitle,
+        message: t.value.dialogs.prompts.saveProjectAsMessage,
         defaultValue: store.projectName,
-        placeholder: 'Project name',
-        confirmLabel: 'Save',
+        placeholder: t.value.dialogs.prompts.projectNamePlaceholder,
+        confirmLabel: t.value.dialogs.prompts.save,
       });
       if (!name) return;
       void runAction(async () => {
@@ -267,7 +290,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   function exportSmfAction(): void {
     closeProjectMenu();
     void runAction(async () => {
-      const result = exportProjectSmf();
+      const result = await exportProjectSmf();
       downloadBlobFile(
         new Blob([new Uint8Array(result.bytes)], { type: 'audio/midi' }),
         result.filename,
@@ -285,6 +308,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     opfsAvailable,
     projectMenuOpen,
     projectMenuRoot,
+    midiImportInput,
     newDialogOpen,
     openDialogOpen,
     storedProjects,
@@ -301,6 +325,8 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     openRecentProject,
     deleteStoredProject,
     importSzdFile,
+    importMidiAction,
+    onMidiImportChange,
     saveProjectAction,
     saveProjectAsAction,
     exportSzdAction,

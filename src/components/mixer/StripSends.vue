@@ -4,6 +4,7 @@ import type { MixerStripTarget } from '@/project/commands';
 import { setSend } from '@/project/commands';
 import { createDefaultStrip, type MixerStrip, type StripSend } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
+import { useI18n } from '@/ui/i18n';
 import { formatDb } from '@/ui/mixer/db-scale';
 import MixerKnob from './MixerKnob.vue';
 
@@ -25,6 +26,7 @@ const props = defineProps<{
 const isMaster = computed(() => props.target === 'master');
 
 const store = useProjectStore();
+const { t } = useI18n();
 
 /** Send level knob range in dB. */
 const SEND_MIN_DB = -60;
@@ -79,13 +81,12 @@ function onRemove(busId: string): void {
   <div
     v-if="buses.length > 0"
     class="sends"
-    :title="
-      isMaster
-        ? 'Master sends are routing-only (the master has no engine send bus)'
-        : 'Send levels to the project buses — click a name to mute that send'
-    "
+    :title="isMaster ? t.shell.mixer.sends.masterTitle : t.shell.mixer.sends.stripTitle"
   >
-    <span class="sends-title">SENDS<span v-if="isMaster" class="sends-note"> · routing-only</span></span>
+    <span class="sends-title">
+      {{ t.shell.mixer.sends.title }}
+      <span v-if="isMaster" class="sends-note"> · {{ t.shell.mixer.sends.routingOnly }}</span>
+    </span>
     <div v-for="bus in buses" :key="bus.id" class="send-row">
       <button
         type="button"
@@ -94,9 +95,9 @@ function onRemove(busId: string): void {
         :title="
           sendFor(bus.id)
             ? sendFor(bus.id)?.enabled === false
-              ? 'Muted send — click to unmute'
-              : 'Active send — click to mute'
-            : 'No send yet — turn the knob'
+              ? t.shell.mixer.sends.mutedTitle
+              : t.shell.mixer.sends.activeTitle
+            : t.shell.mixer.sends.unsetTitle
         "
         @click="onToggleEnabled(bus.id)"
       >
@@ -114,7 +115,7 @@ function onRemove(busId: string): void {
         v-if="sendFor(bus.id)"
         type="button"
         class="send-remove"
-        title="Remove send"
+        :title="t.shell.mixer.sends.remove"
         @click="onRemove(bus.id)"
       >
         ×

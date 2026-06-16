@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import { useI18n } from '@/ui/i18n';
 import { DEFAULT_DRAG_PIXELS, type DragRange, FINE_FACTOR, NUDGE_DIVISIONS } from '@/ui/mixer/drag';
 import { useControlInteractions } from '@/ui/mixer/use-control-interactions';
 
@@ -50,6 +51,8 @@ const emit = defineEmits<{
   /** New value; commit=false while dragging, true when the gesture ends. */
   change: [value: number, commit: boolean];
 }>();
+
+const { t } = useI18n();
 
 /** Knob rotation sweep in degrees (centered on 12 o'clock). */
 const SWEEP_DEG = 270;
@@ -146,7 +149,7 @@ function onKeyDown(event: KeyboardEvent): void {
       :style="{ width: `${props.size}px`, height: `${props.size}px` }"
       role="slider"
       :tabindex="props.disabled ? -1 : 0"
-      :aria-label="props.ariaLabel || props.label || 'Knob'"
+      :aria-label="props.ariaLabel || props.label || t.shell.mixer.controls.knob"
       :aria-valuemin="props.min"
       :aria-valuemax="props.max"
       :aria-valuenow="props.value"
@@ -176,16 +179,18 @@ function onKeyDown(event: KeyboardEvent): void {
         role="menuitem"
         @click="interactions.resetToDefault"
       >
-        Reset
+        {{ t.shell.mixer.controls.reset }}
       </button>
-      <button type="button" role="menuitem" @click="interactions.copyValue">Copy value</button>
+      <button type="button" role="menuitem" @click="interactions.copyValue">
+        {{ t.shell.mixer.controls.copyValue }}
+      </button>
       <button
         type="button"
         role="menuitem"
         :disabled="!interactions.canPaste()"
         @click="interactions.pasteValue"
       >
-        Paste value
+        {{ t.shell.mixer.controls.pasteValue }}
       </button>
     </div>
   </div>

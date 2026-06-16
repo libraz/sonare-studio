@@ -80,6 +80,14 @@ describe('SettingsDialog', () => {
     expect(useAppSettings().settings.snapDefault).toBe(false);
   });
 
+  it('writes language and theme changes through the settings store', async () => {
+    const w = open();
+    await selectOption(w, '.row:nth-child(2) .row-select', 'Dark');
+    await selectOption(w, '.row:nth-child(1) .row-select', 'Japanese');
+    expect(useAppSettings().settings.language).toBe('ja');
+    expect(useAppSettings().settings.theme).toBe('dark');
+  });
+
   it('rebinds a shortcut by capturing a key press', async () => {
     const w = open();
     await w.findAll('[role="tab"]')[1].trigger('click');

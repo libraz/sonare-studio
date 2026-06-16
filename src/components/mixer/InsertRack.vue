@@ -7,6 +7,7 @@ import { createDefaultStrip, type InsertSlot, type MixerStrip } from '@/project/
 import { listQuickControls, type QuickControl, setQuickControl } from '@/project/quick-controls';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import {
   groupInsertCatalog,
   humanizeInsertName,
@@ -42,6 +43,7 @@ const props = defineProps<{
 }>();
 
 const store = useProjectStore();
+const { t } = useI18n();
 
 const strip = computed<MixerStrip>(() => {
   if (props.target === 'master') return store.mixer.master;
@@ -167,7 +169,7 @@ const sidechainSources = computed<EditorTrack[]>(() =>
 
 /** Key-source options: "No key" plus every selectable source track. */
 const sidechainOptions = computed<{ value: number; label: string }[]>(() => [
-  { value: SIDECHAIN_NONE, label: 'No key' },
+  { value: SIDECHAIN_NONE, label: t.value.shell.inserts.noKey },
   ...sidechainSources.value.map((track) => ({ value: track.id, label: track.name })),
 ]);
 
@@ -240,7 +242,7 @@ onBeforeUnmount(() => {
         <span
           class="insert-drag"
           draggable="true"
-          title="Drag to reorder"
+          :title="t.shell.inserts.dragReorder"
           aria-hidden="true"
           @dragstart="onDragStart(index, $event)"
         >⋮⋮</span>
@@ -248,8 +250,10 @@ onBeforeUnmount(() => {
           type="button"
           class="insert-power"
           :class="{ on: slot.enabled }"
-          :title="slot.enabled ? 'Bypass insert' : 'Enable insert'"
-          :aria-label="`${humanizeInsertName(slot.processor)} power`"
+          :title="slot.enabled ? t.shell.inserts.bypass : t.shell.inserts.enable"
+          :aria-label="
+            formatMessage(t.shell.inserts.power, { name: humanizeInsertName(slot.processor) })
+          "
           :aria-pressed="slot.enabled"
           @click="onToggleEnabled(index)"
         />
@@ -265,8 +269,10 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="insert-remove"
-          title="Remove insert"
-          :aria-label="`Remove ${humanizeInsertName(slot.processor)}`"
+          :title="t.shell.inserts.remove"
+          :aria-label="
+            formatMessage(t.shell.inserts.removeNamed, { name: humanizeInsertName(slot.processor) })
+          "
           @click="onRemove(index)"
         >
           ×
@@ -274,17 +280,19 @@ onBeforeUnmount(() => {
       </div>
       <div v-if="expandedIndex === index" class="insert-params">
         <label v-if="hasSidechainSelect(slot)" class="insert-sidechain">
-          <span class="insert-sidechain-label">Key</span>
+          <span class="insert-sidechain-label">{{ t.shell.inserts.key }}</span>
           <SelectMenu
             class="insert-sidechain-select"
             :model-value="slot.sidechainSourceTrackId ?? SIDECHAIN_NONE"
             :options="sidechainOptions"
-            aria-label="Sidechain key source"
+            :aria-label="t.shell.inserts.sidechainKey"
             size="sm"
             @change="(value) => onSidechainChange(index, value)"
           />
         </label>
-        <p v-if="expandedControls.length === 0" class="insert-params-empty">No parameters</p>
+        <p v-if="expandedControls.length === 0" class="insert-params-empty">
+          {{ t.shell.inserts.noParameters }}
+        </p>
         <MixerKnob
           v-for="control in expandedControls"
           :key="control.id"
@@ -302,12 +310,12 @@ onBeforeUnmount(() => {
       <button
         type="button"
         class="insert-add"
-        title="Add insert"
+        :title="t.shell.inserts.add"
         aria-haspopup="menu"
         :aria-expanded="addMenuOpen"
         @click="openAddMenu"
       >
-        + Insert
+        {{ t.shell.inserts.addButton }}
       </button>
       <div v-if="addMenuOpen" class="insert-catalog" role="menu">
         <div v-for="group in catalog" :key="group.category" class="catalog-group">

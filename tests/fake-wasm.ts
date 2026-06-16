@@ -55,6 +55,9 @@ interface FakeMarker {
   id: number;
   ppq: number;
   name: string;
+  kind?: number;
+  key_fifths?: number;
+  key_minor?: boolean;
 }
 
 /** One chord stored in the annotation stream, in the toJson() snake_case shape. */
@@ -158,6 +161,39 @@ export class FakeProject {
 
   static midiProgram(ppq: number, group: number, channel: number, program: number): FakeEvent {
     return { ppq, data0: pack(group, 0xc, channel, program, 0), data1: 0 };
+  }
+
+  static midiCc(
+    ppq: number,
+    group: number,
+    channel: number,
+    controller: number,
+    value: number,
+  ): FakeEvent {
+    return { ppq, data0: pack(group, 0xb, channel, controller, value), data1: 0 };
+  }
+
+  static midiPolyPressure(
+    ppq: number,
+    group: number,
+    channel: number,
+    note: number,
+    pressure: number,
+  ): FakeEvent {
+    return { ppq, data0: pack(group, 0xa, channel, note, pressure), data1: 0 };
+  }
+
+  static midiChannelPressure(
+    ppq: number,
+    group: number,
+    channel: number,
+    pressure: number,
+  ): FakeEvent {
+    return { ppq, data0: pack(group, 0xd, channel, pressure, 0), data1: 0 };
+  }
+
+  static midiPitchBend(ppq: number, group: number, channel: number, bend: number): FakeEvent {
+    return { ppq, data0: pack(group, 0xe, channel, bend & 0x7f, (bend >> 7) & 0x7f), data1: 0 };
   }
 
   static midiBankProgram(
@@ -503,6 +539,31 @@ export class FakeProject {
         this.state.markers.push({ id: markerId, ppq, name });
       }
       return markerId;
+    });
+  }
+
+  setMarkerEx(marker: {
+    id?: number;
+    ppq: number;
+    name: string;
+    kind?: number;
+    keyFifths?: number;
+    keyMinor?: boolean;
+  }): number {
+    return this.edit(() => {
+      const id = marker.id ?? 0;
+      const entry: FakeMarker = {
+        id: id === 0 ? this.nextMarkerId++ : id,
+        ppq: marker.ppq,
+        name: marker.name,
+        kind: marker.kind,
+        key_fifths: marker.keyFifths,
+        key_minor: marker.keyMinor,
+      };
+      const existing = id === 0 ? undefined : this.state.markers.find((m) => m.id === id);
+      if (existing) Object.assign(existing, entry);
+      else this.state.markers.push(entry);
+      return entry.id;
     });
   }
 

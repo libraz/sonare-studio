@@ -277,11 +277,32 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       const clipId = store.clipId;
       addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
       renameClip(clipId, 'Riff');
+      setClipCcLane(clipId, 1, 0, [{ ppq: 0.5, value: 64 }]);
+      store.clips = store.clips.map((clip) =>
+        clip.id === clipId
+          ? {
+              ...clip,
+              pitchBendLanes: [{ channel: 0, points: [{ ppq: 0.5, value: 8192 }] }],
+              channelPressureLanes: [{ channel: 0, points: [{ ppq: 0.75, value: 32 }] }],
+              polyPressureLanes: [{ channel: 0, pitch: 60, points: [{ ppq: 0.25, value: 40 }] }],
+            }
+          : clip,
+      );
       const copyId = duplicateClip(clipId, 32);
       const copy = store.clips.find((c) => c.id === copyId);
       expect(copy).toMatchObject({ name: 'Riff', startPpq: 32 });
       expect(copy?.notes).toHaveLength(1);
       expect(copy?.notes[0]).toMatchObject({ pitch: 60 });
+      expect(copy?.ccLanes).toEqual([
+        { controller: 1, channel: 0, points: [{ ppq: 0.5, value: 64 }] },
+      ]);
+      expect(copy?.pitchBendLanes).toEqual([{ channel: 0, points: [{ ppq: 0.5, value: 8192 }] }]);
+      expect(copy?.channelPressureLanes).toEqual([
+        { channel: 0, points: [{ ppq: 0.75, value: 32 }] },
+      ]);
+      expect(copy?.polyPressureLanes).toEqual([
+        { channel: 0, pitch: 60, points: [{ ppq: 0.25, value: 40 }] },
+      ]);
       // The copy's notes get fresh editor ids.
       expect(copy?.notes[0].id).not.toBe(store.notes[0].id);
 
@@ -294,6 +315,26 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       const leftNoteId = addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
       addNote({ pitch: 64, startPpq: 4, durationPpq: 1 });
       renameClip(clipId, 'Phrase');
+      setClipCcLane(clipId, 1, 0, [
+        { ppq: 1, value: 32 },
+        { ppq: 4, value: 96 },
+      ]);
+      store.clips = store.clips.map((clip) =>
+        clip.id === clipId
+          ? {
+              ...clip,
+              pitchBendLanes: [
+                {
+                  channel: 0,
+                  points: [
+                    { ppq: 1, value: 4096 },
+                    { ppq: 4, value: 8192 },
+                  ],
+                },
+              ],
+            }
+          : clip,
+      );
 
       const rightId = splitClip(clipId, 2);
       const left = store.clips.find((c) => c.id === clipId);
@@ -303,6 +344,29 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(right?.sourceOffsetPpq).toBe(2);
       expect(left?.notes.map((n) => n.pitch)).toEqual([60]);
       expect(right?.notes.map((n) => n.pitch)).toEqual([64]);
+      expect(left?.ccLanes).toEqual([
+        { controller: 1, channel: 0, points: [{ ppq: 1, value: 32 }] },
+      ]);
+      expect(right?.ccLanes).toEqual([
+        {
+          controller: 1,
+          channel: 0,
+          points: [
+            { ppq: 0, value: 32 },
+            { ppq: 2, value: 96 },
+          ],
+        },
+      ]);
+      expect(left?.pitchBendLanes).toEqual([{ channel: 0, points: [{ ppq: 1, value: 4096 }] }]);
+      expect(right?.pitchBendLanes).toEqual([
+        {
+          channel: 0,
+          points: [
+            { ppq: 0, value: 4096 },
+            { ppq: 2, value: 8192 },
+          ],
+        },
+      ]);
 
       expect(undo()).toBe(true);
       const whole = store.clips.find((c) => c.id === clipId);
@@ -320,12 +384,27 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
 
     it('trimClip adjusts start, length and source offset and is undoable', () => {
       const clipId = store.clipId;
+      setClipCcLane(clipId, 1, 0, [
+        { ppq: 1, value: 32 },
+        { ppq: 4, value: 96 },
+        { ppq: 20, value: 127 },
+      ]);
       trimClip(clipId, 2, 16);
       expect(store.activeClip).toMatchObject({
         startPpq: 2,
         lengthPpq: 16,
         sourceOffsetPpq: 2,
       });
+      expect(store.activeClip?.ccLanes).toEqual([
+        {
+          controller: 1,
+          channel: 0,
+          points: [
+            { ppq: 0, value: 32 },
+            { ppq: 2, value: 96 },
+          ],
+        },
+      ]);
       expect(undo()).toBe(true);
       expect(store.activeClip).toMatchObject({ startPpq: 0, lengthPpq: 32, sourceOffsetPpq: 0 });
       expect(() => trimClip(clipId, -1, 16)).toThrow(RangeError);
@@ -368,10 +447,12 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
         { ppq: 0, value: -5 },
       ]);
       setClipCcLane(clipId, 1, 0, [{ ppq: 1, value: 64 }]);
+      setClipCcLane(clipId, 1, 1, [{ ppq: 1.5, value: 96 }]);
       const lanes = store.activeClip?.ccLanes;
-      // Lanes sort by controller; points sort by ppq and clamp to [0, 127].
+      // Lanes sort by controller/channel; points sort by ppq and clamp to [0, 127].
       expect(lanes).toEqual([
         { controller: 1, channel: 0, points: [{ ppq: 1, value: 64 }] },
+        { controller: 1, channel: 1, points: [{ ppq: 1.5, value: 96 }] },
         {
           controller: 11,
           channel: 0,
@@ -385,9 +466,14 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       setClipCcLane(clipId, 11, 0, []);
       expect(store.activeClip?.ccLanes).toEqual([
         { controller: 1, channel: 0, points: [{ ppq: 1, value: 64 }] },
+        { controller: 1, channel: 1, points: [{ ppq: 1.5, value: 96 }] },
       ]);
       expect(undo()).toBe(true);
-      expect(store.activeClip?.ccLanes?.map((l) => l.controller)).toEqual([1, 11]);
+      expect(store.activeClip?.ccLanes?.map((l) => `${l.controller}:${l.channel}`)).toEqual([
+        '1:0',
+        '1:1',
+        '11:0',
+      ]);
     });
 
     it('setClipCcLane validates the controller, channel and clip', () => {

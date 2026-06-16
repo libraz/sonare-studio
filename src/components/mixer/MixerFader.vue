@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import {
   dbToFaderPosition,
   FADER_MAX_DB,
@@ -34,6 +35,8 @@ const emit = defineEmits<{
   /** New gain in dB; commit=false while dragging, true at gesture end. */
   change: [db: number, commit: boolean];
 }>();
+
+const { t } = useI18n();
 
 /** Coarse / fine keyboard + wheel nudge steps in dB. */
 const NUDGE_DB = 1;
@@ -147,14 +150,14 @@ function tickTopPx(db: number): number {
       class="fader-track"
       :class="{ disabled: props.disabled, dragging }"
       role="slider"
-      aria-label="Strip gain"
+      :aria-label="t.shell.mixer.controls.stripGain"
       aria-orientation="vertical"
       :aria-valuemin="FADER_MIN_DB"
       :aria-valuemax="FADER_MAX_DB"
       :aria-valuenow="props.valueDb"
       :aria-valuetext="`${formatDb(props.valueDb)} dB`"
       :tabindex="props.disabled ? -1 : 0"
-      :title="`Gain ${formatDb(props.valueDb)} dB`"
+      :title="formatMessage(t.shell.mixer.controls.gainTitle, { value: formatDb(props.valueDb) })"
       @pointerdown="onPointerDown"
       @pointermove="onPointerMove"
       @pointerup="onPointerUp"
@@ -175,16 +178,18 @@ function tickTopPx(db: number): number {
       role="menu"
     >
       <button type="button" role="menuitem" @click="interactions.resetToDefault">
-        Reset to 0 dB
+        {{ t.shell.mixer.controls.resetToZero }}
       </button>
-      <button type="button" role="menuitem" @click="interactions.copyValue">Copy value</button>
+      <button type="button" role="menuitem" @click="interactions.copyValue">
+        {{ t.shell.mixer.controls.copyValue }}
+      </button>
       <button
         type="button"
         role="menuitem"
         :disabled="!interactions.canPaste()"
         @click="interactions.pasteValue"
       >
-        Paste value
+        {{ t.shell.mixer.controls.pasteValue }}
       </button>
     </div>
   </div>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { useI18n } from '@/ui/i18n';
 import {
   type AnchorRect,
   placeTooltip,
@@ -34,6 +35,7 @@ const emit = defineEmits<{
   close: [completed: boolean];
 }>();
 
+const { t } = useI18n();
 const visible = ref(false);
 const step = ref<TourStep | null>(null);
 const stepNumber = ref(0);
@@ -223,11 +225,15 @@ onBeforeUnmount(() => {
       <h2 class="tour-title">{{ step.title }}</h2>
       <p class="tour-body">{{ step.body }}</p>
       <div class="tour-actions">
-        <button type="button" class="tour-skip" @click="onSkip">Skip tour</button>
+        <button type="button" class="tour-skip" @click="onSkip">
+          {{ t.shell.tour.skip }}
+        </button>
         <span class="tour-spacer" />
-        <button type="button" :disabled="!hasBack" @click="onBack">Back</button>
+        <button type="button" :disabled="!hasBack" @click="onBack">
+          {{ t.shell.tour.back }}
+        </button>
         <button type="button" class="primary" @click="onNext">
-          {{ isLast ? 'Done' : 'Next' }}
+          {{ isLast ? t.shell.tour.done : t.shell.tour.next }}
         </button>
       </div>
     </div>

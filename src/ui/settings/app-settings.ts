@@ -10,13 +10,27 @@
 /** Storage schema version of the settings envelope. */
 export const APP_SETTINGS_VERSION = 1;
 
+/** Color-theme preference. */
+export type AppTheme = 'system' | 'light' | 'dark';
+
+/** Resolved color theme applied to the document. */
+export type ResolvedAppTheme = 'light' | 'dark';
+
+/** UI language preference. */
+export type AppLanguage = 'system' | 'en' | 'ja';
+
+/** Resolved UI language applied to the document. */
+export type ResolvedAppLanguage = 'en' | 'ja';
+
 /** UI density of the editor panels. */
 export type EditorDensity = 'comfortable' | 'compact';
 
 /** User-level application preferences. */
 export interface AppSettings {
-  /** Color theme; only 'dark' ships today (field reserved for a light theme). */
-  theme: 'dark';
+  /** Color theme; 'system' follows the OS preference. */
+  theme: AppTheme;
+  /** UI language; 'system' follows the browser language list. */
+  language: AppLanguage;
   /** Editor panel density. */
   editorDensity: EditorDensity;
   /** Whether grid snap starts enabled in a new session. */
@@ -43,7 +57,8 @@ export const AUTOSAVE_INTERVAL_MAX_MS = 600000;
 
 /** Factory defaults (matching the shell's current hardcoded behavior). */
 export const DEFAULT_APP_SETTINGS: AppSettings = {
-  theme: 'dark',
+  theme: 'system',
+  language: 'system',
   editorDensity: 'comfortable',
   snapDefault: true,
   countInBars: 0,
@@ -67,6 +82,14 @@ function asIntInRange(value: unknown, lo: number, hi: number, fallback: number):
   return clamp(Math.round(value), lo, hi);
 }
 
+function asTheme(value: unknown, fallback: AppTheme): AppTheme {
+  return value === 'system' || value === 'light' || value === 'dark' ? value : fallback;
+}
+
+function asLanguage(value: unknown, fallback: AppLanguage): AppLanguage {
+  return value === 'system' || value === 'en' || value === 'ja' ? value : fallback;
+}
+
 /**
  * Validates a raw settings object field by field; anything missing or
  * out of range falls back to the default.
@@ -78,7 +101,8 @@ export function sanitizeAppSettings(raw: unknown): AppSettings {
   const source = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
   const defaults = DEFAULT_APP_SETTINGS;
   return {
-    theme: 'dark',
+    theme: asTheme(source.theme, defaults.theme),
+    language: asLanguage(source.language, defaults.language),
     editorDensity:
       source.editorDensity === 'compact' || source.editorDensity === 'comfortable'
         ? source.editorDensity
@@ -140,4 +164,18 @@ export function decodeAppSettings(text: string | null): AppSettings {
   } catch {
     return { ...DEFAULT_APP_SETTINGS };
   }
+}
+
+/** Resolves a theme preference against an OS dark-mode flag. */
+export function resolveAppTheme(theme: AppTheme, prefersDark: boolean): ResolvedAppTheme {
+  return theme === 'system' ? (prefersDark ? 'dark' : 'light') : theme;
+}
+
+/** Resolves a language preference against the browser language list. */
+export function resolveAppLanguage(
+  language: AppLanguage,
+  browserLanguages: ReadonlyArray<string>,
+): ResolvedAppLanguage {
+  if (language === 'en' || language === 'ja') return language;
+  return browserLanguages.some((entry) => entry.toLowerCase().startsWith('ja')) ? 'ja' : 'en';
 }

@@ -15,6 +15,7 @@ import {
 import { createDefaultMasteringChain, type MasteringChainState } from '@/project/mixer';
 import { serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import {
   clampControlValue,
   type MasteringControl,
@@ -75,6 +76,7 @@ const props = withDefaults(
 );
 
 const store = useProjectStore();
+const { t } = useI18n();
 
 const chain = computed<MasteringChainState>(
   () => store.mixer.masteringChain ?? createDefaultMasteringChain(),
@@ -103,7 +105,7 @@ const filteredPresets = computed(() => filterPresetCatalog(presetCatalog.value, 
 
 const presetLabel = computed(() => {
   const preset = chain.value.preset;
-  return preset !== undefined ? humanizePresetName(preset) : 'No preset';
+  return preset !== undefined ? humanizePresetName(preset) : t.value.shell.mastering.noPreset;
 });
 
 function togglePresetMenu(): void {
@@ -393,9 +395,14 @@ const loudnessRows = computed<LoudnessRow[]>(() => {
   const b = state?.bypassed?.report;
   if (!a && !b) return [];
   return [
-    { label: 'Peak', unit: 'dBFS', a: a?.peakDb, b: b?.peakDb },
-    { label: 'True peak', unit: 'dBTP', a: a?.truePeakDb, b: b?.truePeakDb },
-    { label: 'Loudness', unit: 'LUFS', a: a?.lufs, b: b?.lufs },
+    { label: t.value.shell.mastering.loudness.peak, unit: 'dBFS', a: a?.peakDb, b: b?.peakDb },
+    {
+      label: t.value.shell.mastering.loudness.truePeak,
+      unit: 'dBTP',
+      a: a?.truePeakDb,
+      b: b?.truePeakDb,
+    },
+    { label: t.value.shell.mastering.loudness.loudness, unit: 'LUFS', a: a?.lufs, b: b?.lufs },
   ];
 });
 
@@ -413,13 +420,13 @@ onBeforeUnmount(() => {
 <template>
   <div class="mastering-panel">
     <div class="mastering-toolbar">
-      <span class="mastering-title">MASTERING</span>
+      <span class="mastering-title">{{ t.shell.mastering.title }}</span>
       <div ref="presetMenuEl" class="preset-wrap">
         <button
           type="button"
           class="preset-button"
           :class="{ set: chain.preset !== undefined }"
-          title="Mastering preset"
+          :title="t.shell.mastering.presetTitle"
           aria-haspopup="menu"
           :aria-expanded="presetMenuOpen"
           @click="togglePresetMenu"
@@ -431,11 +438,11 @@ onBeforeUnmount(() => {
             v-model="presetQuery"
             type="search"
             class="preset-search"
-            placeholder="Search presets…"
-            aria-label="Search presets"
+            :placeholder="t.shell.mastering.searchPresets"
+            :aria-label="t.shell.mastering.searchPresets"
           />
           <button type="button" role="menuitem" class="preset-item none" @click="onSelectPreset(null)">
-            No preset
+            {{ t.shell.mastering.noPreset }}
           </button>
           <button
             v-for="preset in filteredPresets"
@@ -448,7 +455,9 @@ onBeforeUnmount(() => {
           >
             {{ humanizePresetName(preset) }}
           </button>
-          <p v-if="filteredPresets.length === 0" class="preset-empty">No matches</p>
+          <p v-if="filteredPresets.length === 0" class="preset-empty">
+            {{ t.shell.mastering.noMatches }}
+          </p>
         </div>
       </div>
       <span class="toolbar-spacer" />
@@ -470,13 +479,21 @@ onBeforeUnmount(() => {
             @drop="onDrop(index)"
             @dragend="onDragEnd"
           >
-            <span class="chain-drag" title="Drag to reorder" aria-hidden="true">⋮⋮</span>
+            <span class="chain-drag" :title="t.shell.mastering.dragReorder" aria-hidden="true">
+              ⋮⋮
+            </span>
             <button
               type="button"
               class="chain-power"
               :class="{ on: slot.enabled }"
-              :title="slot.enabled ? 'Bypass processor' : 'Enable processor'"
-              :aria-label="`${humanizeInsertName(slot.processor)} power`"
+              :title="
+                slot.enabled ? t.shell.mastering.bypassProcessor : t.shell.mastering.enableProcessor
+              "
+              :aria-label="
+                formatMessage(t.shell.mastering.processorPower, {
+                  name: humanizeInsertName(slot.processor),
+                })
+              "
               :aria-pressed="slot.enabled"
               @click="onToggleEnabled(index)"
             />
@@ -493,15 +510,21 @@ onBeforeUnmount(() => {
             <button
               type="button"
               class="chain-remove"
-              title="Remove processor"
-              :aria-label="`Remove ${humanizeInsertName(slot.processor)}`"
+              :title="t.shell.mastering.removeProcessor"
+              :aria-label="
+                formatMessage(t.shell.mastering.removeNamed, {
+                  name: humanizeInsertName(slot.processor),
+                })
+              "
               @click="onRemove(index)"
             >
               ×
             </button>
           </div>
           <div v-if="expandedIndex === index" class="chain-params">
-            <p v-if="expandedControls.length === 0" class="chain-params-empty">No parameters</p>
+            <p v-if="expandedControls.length === 0" class="chain-params-empty">
+              {{ t.shell.mastering.noParameters }}
+            </p>
             <MixerKnob
               v-for="control in expandedControls"
               :key="control.id"
@@ -519,12 +542,12 @@ onBeforeUnmount(() => {
           <button
             type="button"
             class="chain-add"
-            title="Add processor"
+            :title="t.shell.mastering.addProcessorTitle"
             aria-haspopup="menu"
             :aria-expanded="addMenuOpen"
             @click="toggleAddMenu"
           >
-            + Processor
+            {{ t.shell.mastering.addProcessor }}
           </button>
           <div v-if="addMenuOpen" class="chain-catalog" role="menu">
             <div v-for="group in catalog" :key="group.category" class="catalog-group">
@@ -551,7 +574,7 @@ onBeforeUnmount(() => {
             :disabled="previewState?.status === 'rendering'"
             @click="onPreview"
           >
-            Preview
+            {{ t.shell.mastering.preview }}
           </button>
           <button
             v-if="previewState?.status === 'rendering'"
@@ -559,16 +582,16 @@ onBeforeUnmount(() => {
             class="preview-cancel"
             @click="onCancelPreview"
           >
-            Cancel
+            {{ t.shell.mastering.cancel }}
           </button>
-          <div class="ab-toggle" role="group" aria-label="A/B comparison">
+          <div class="ab-toggle" role="group" :aria-label="t.shell.mastering.abComparison">
             <button
               type="button"
               class="ab-button"
               :class="{ active: variant === 'processed' }"
               :disabled="!previewState?.processed"
-              title="With mastering chain"
-              aria-label="Preview with mastering chain"
+              :title="t.shell.mastering.withChain"
+              :aria-label="t.shell.mastering.previewWithChain"
               :aria-pressed="variant === 'processed'"
               @click="onSelectVariant('processed')"
             >
@@ -579,8 +602,8 @@ onBeforeUnmount(() => {
               class="ab-button"
               :class="{ active: variant === 'bypassed' }"
               :disabled="!previewState?.bypassed"
-              title="Chain bypassed"
-              aria-label="Preview with chain bypassed"
+              :title="t.shell.mastering.chainBypassed"
+              :aria-label="t.shell.mastering.previewBypassed"
               :aria-pressed="variant === 'bypassed'"
               @click="onSelectVariant('bypassed')"
             >
@@ -593,10 +616,10 @@ onBeforeUnmount(() => {
             :disabled="!activeResult"
             @click="onTogglePlay"
           >
-            {{ isPlaying ? '■ Stop' : '▶ Play' }}
+            {{ isPlaying ? `■ ${t.shell.mastering.stop}` : `▶ ${t.shell.mastering.play}` }}
           </button>
-          <span v-if="previewStale" class="preview-stale" title="Project changed since this preview was rendered">
-            stale
+          <span v-if="previewStale" class="preview-stale" :title="t.shell.mastering.staleTitle">
+            {{ t.shell.mastering.stale }}
           </span>
         </div>
         <div v-if="previewState?.status === 'rendering'" class="preview-progress">

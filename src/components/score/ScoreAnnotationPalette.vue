@@ -7,6 +7,7 @@ import {
   type ScoreNoteAnnotation,
 } from '@/project/annotations';
 import type { NoteAnnotationUpdate } from '@/project/commands';
+import { useI18n } from '@/ui/i18n';
 
 const props = defineProps<{
   annotation: ScoreNoteAnnotation;
@@ -21,13 +22,11 @@ const emit = defineEmits<{
   slurArmedChange: [armed: boolean];
 }>();
 
-/** Display labels for the articulation palette buttons. */
-const ARTICULATION_LABELS: Readonly<Record<NoteArticulation, string>> = {
-  staccato: 'Stacc.',
-  accent: 'Accent',
-  tenuto: 'Ten.',
-  marcato: 'Marc.',
-};
+const { t } = useI18n();
+
+function articulationLabel(value: NoteArticulation): string {
+  return t.value.shell.score.annotations[value];
+}
 
 function toggleDynamics(value: NoteDynamics): void {
   emit('apply', { dynamics: props.annotation.dynamics === value ? null : value });
@@ -42,7 +41,7 @@ function toggleArticulation(value: NoteArticulation): void {
   <div
     class="annotation-palette"
     role="dialog"
-    aria-label="Note annotations"
+    :aria-label="t.shell.score.annotations.label"
     :style="{ left: `${position.x}px`, top: `${position.y}px` }"
   >
     <div class="palette-row">
@@ -67,7 +66,7 @@ function toggleArticulation(value: NoteArticulation): void {
         :aria-pressed="annotation.articulation === a"
         @click="toggleArticulation(a)"
       >
-        {{ ARTICULATION_LABELS[a] }}
+        {{ articulationLabel(a) }}
       </button>
     </div>
     <div class="palette-row">
@@ -75,23 +74,25 @@ function toggleArticulation(value: NoteArticulation): void {
         type="button"
         :class="{ active: slurArmed }"
         :aria-pressed="slurArmed"
-        title="Slur to another note: arm, then click the target note in the score"
+        :title="t.shell.score.annotations.slurTitle"
         @click="emit('slurArmedChange', !slurArmed)"
       >
-        {{ slurArmed ? 'Click target…' : 'Slur…' }}
+        {{ slurArmed ? t.shell.score.annotations.slurArmed : t.shell.score.annotations.slur }}
       </button>
       <button
         v-if="annotation.slurToNoteId !== undefined"
         type="button"
-        title="Remove the slur starting on this note"
+        :title="t.shell.score.annotations.unslurTitle"
         @click="emit('apply', { slurToNoteId: null })"
       >
-        Unslur
+        {{ t.shell.score.annotations.unslur }}
       </button>
-      <button type="button" title="Remove all annotations of this note" @click="emit('clear')">
-        Clear
+      <button type="button" :title="t.shell.score.annotations.clearTitle" @click="emit('clear')">
+        {{ t.shell.score.annotations.clear }}
       </button>
-      <button type="button" aria-label="Close annotation palette" @click="emit('close')">×</button>
+      <button type="button" :aria-label="t.shell.score.annotations.close" @click="emit('close')">
+        ×
+      </button>
     </div>
   </div>
 </template>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue';
+import { useI18n } from '@/ui/i18n';
 import ChordListEditor from './ChordListEditor.vue';
 import KeyListEditor from './KeyListEditor.vue';
 import MarkerListEditor from './MarkerListEditor.vue';
@@ -25,12 +26,14 @@ const emit = defineEmits<{
 
 type ListTab = 'tempo' | 'meter' | 'key' | 'chords' | 'markers';
 
-const TABS: ReadonlyArray<{ id: ListTab; label: string }> = [
-  { id: 'tempo', label: 'Tempo' },
-  { id: 'meter', label: 'Time Sig' },
-  { id: 'key', label: 'Key' },
-  { id: 'chords', label: 'Chords' },
-  { id: 'markers', label: 'Markers' },
+const { t } = useI18n();
+
+const TABS: ReadonlyArray<{ id: ListTab }> = [
+  { id: 'tempo' },
+  { id: 'meter' },
+  { id: 'key' },
+  { id: 'chords' },
+  { id: 'markers' },
 ];
 
 const activeTab = ref<ListTab>('tempo');
@@ -38,7 +41,7 @@ const activeTab = ref<ListTab>('tempo');
 
 <template>
   <section class="project-lists">
-    <div class="list-tabs" role="tablist" aria-label="Project lists">
+    <div class="list-tabs" role="tablist" :aria-label="t.shell.lists.label">
       <button
         v-for="tab in TABS"
         :key="tab.id"
@@ -49,7 +52,7 @@ const activeTab = ref<ListTab>('tempo');
         :aria-selected="activeTab === tab.id"
         @click="activeTab = tab.id"
       >
-        {{ tab.label }}
+        {{ t.shell.lists.tabs[tab.id] }}
       </button>
     </div>
     <div class="list-tab-body" role="tabpanel">

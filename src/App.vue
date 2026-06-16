@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, shallowRef } from 'vue';
+import { computed, ref, shallowRef } from 'vue';
 import ArrangementView from '@/components/arrangement/ArrangementView.vue';
 import ClipInspector from '@/components/arrangement/ClipInspector.vue';
 import DeviceRack from '@/components/devices/DeviceRack.vue';
@@ -59,6 +59,7 @@ import { quantizeSelection } from '@/project/commands';
 import { serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { isAudioClip } from '@/project/types';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import { disengageAutomationWriteModes } from '@/ui/mixer/automation-mode';
 import { COUNT_IN_CHOICES, SNAP_CHOICES, TOUR_STEPS } from '@/ui/shell/app-shell-options';
 import { installSonareDevDebug } from '@/ui/shell/dev-debug';
@@ -101,8 +102,21 @@ const stepInput = useStepInput();
 // --- User preferences ----------------------------------------------------------
 
 const appSettings = useAppSettings();
+const { t } = useI18n();
 const shortcuts = useShortcuts();
 const { tool: editorTool, setTool: setEditorTool } = useEditorTool();
+const applyStateText = computed(() => {
+  if (!handle.value) return t.value.shell.editor.engineOff;
+  if (applyPending.value) return t.value.shell.editor.pending;
+  return formatMessage(t.value.shell.editor.clipCount, { count: String(scheduledCount.value) });
+});
+const localizedTourSteps = computed(() =>
+  TOUR_STEPS.map((step) => {
+    const copy = { ...step };
+    const translated = t.value.shell.tour.steps[step.id as keyof typeof t.value.shell.tour.steps];
+    return translated ? { ...copy, title: translated.title, body: translated.body } : copy;
+  }),
+);
 
 // Editor-only boot defaults sourced from the user preferences.
 store.snapEnabled = appSettings.settings.snapDefault;
@@ -128,6 +142,7 @@ const {
   opfsAvailable,
   projectMenuOpen,
   projectMenuRoot,
+  midiImportInput,
   newDialogOpen,
   openDialogOpen,
   storedProjects,
@@ -144,6 +159,8 @@ const {
   openRecentProject,
   deleteStoredProject,
   importSzdFile,
+  importMidiAction,
+  onMidiImportChange,
   saveProjectAction,
   saveProjectAsAction,
   exportSzdAction,
@@ -452,7 +469,10 @@ useAppLifecycle({
       @export-szd="exportSzdAction"
       @help-menu-ref="(el) => (helpMenuRoot = el)"
       @import-audio="importAudioAction"
+      @import-midi="importMidiAction"
       @layout-menu-ref="(el) => (layoutMenuRoot = el)"
+      @midi-import-change="onMidiImportChange"
+      @midi-import-input-ref="(el) => (midiImportInput = el)"
       @open-about="openAbout"
       @open-export-dialog="openExportDialog"
       @open-menu-bar="openMenuBar"
@@ -500,12 +520,12 @@ useAppLifecycle({
         class="split-divider"
         role="separator"
         aria-orientation="horizontal"
-        aria-label="Resize the arrangement zone"
+        :aria-label="t.shell.editor.resizeArrangement"
         :aria-valuenow="Math.round(arrangeHeight)"
         :aria-valuemin="arrangeHeightMin"
         :aria-valuemax="arrangeHeightMax"
         tabindex="0"
-        title="Drag or use the arrow keys to resize the arrangement"
+        :title="t.shell.editor.resizeArrangementTitle"
         @pointerdown="onDividerPointerDown"
         @pointermove="onDividerPointerMove"
         @pointerup="onDividerPointerUp"
@@ -518,7 +538,7 @@ useAppLifecycle({
         :class="{ collapsed: dockCollapsed }"
         @pointerdown.capture="focusZone = 'editor'"
       >
-        <div class="dock-tabs" role="tablist" aria-label="Editor panels">
+        <div class="dock-tabs" role="tablist" :aria-label="t.shell.editor.panels">
           <button
             type="button"
             class="dock-tab dock-tab-toggle"
@@ -527,7 +547,7 @@ useAppLifecycle({
             :aria-selected="dockTab === 'roll'"
             @click="selectDockTab('roll')"
           >
-            Piano Roll
+            {{ t.shell.editor.tabs.pianoRoll }}
           </button>
           <button
             type="button"
@@ -537,7 +557,7 @@ useAppLifecycle({
             :aria-selected="dockTab === 'mixer'"
             @click="selectDockTab('mixer')"
           >
-            Mixer
+            {{ t.shell.editor.tabs.mixer }}
           </button>
           <button
             type="button"
@@ -547,7 +567,7 @@ useAppLifecycle({
             :aria-selected="dockTab === 'mastering'"
             @click="selectDockTab('mastering')"
           >
-            Mastering
+            {{ t.shell.editor.tabs.mastering }}
           </button>
           <button
             type="button"
@@ -557,7 +577,7 @@ useAppLifecycle({
             :aria-selected="dockTab === 'steps'"
             @click="selectDockTab('steps')"
           >
-            Steps
+            {{ t.shell.editor.tabs.steps }}
           </button>
           <button
             type="button"
@@ -567,7 +587,7 @@ useAppLifecycle({
             :aria-selected="dockTab === 'lists'"
             @click="selectDockTab('lists')"
           >
-            Lists
+            {{ t.shell.editor.tabs.lists }}
           </button>
           <button
             type="button"
@@ -577,7 +597,7 @@ useAppLifecycle({
             :aria-selected="dockTab === 'media'"
             @click="selectDockTab('media')"
           >
-            Media
+            {{ t.shell.editor.tabs.media }}
           </button>
           <button
             type="button"
@@ -587,17 +607,17 @@ useAppLifecycle({
             :aria-selected="dockTab === 'sample'"
             @click="selectDockTab('sample')"
           >
-            Sample
+            {{ t.shell.editor.tabs.sample }}
           </button>
           <button
             type="button"
             class="dock-tab dock-tab-toggle dock-tab-score"
             :class="{ active: scoreVisible }"
             :aria-pressed="scoreVisible"
-            title="Toggle the score panel (Cmd+E)"
+            :title="t.shell.editor.toggleScoreTitle"
             @click="toggleScorePanel"
           >
-            Score
+            {{ t.shell.editor.tabs.score }}
           </button>
           <span class="dock-tabs-spacer" />
           <ToolPalette />
@@ -605,8 +625,8 @@ useAppLifecycle({
             type="button"
             class="dock-collapse"
             :aria-pressed="dockCollapsed"
-            :title="dockCollapsed ? 'Expand the editor dock' : 'Collapse the editor dock'"
-            aria-label="Toggle the editor dock"
+            :title="dockCollapsed ? t.shell.editor.expandDock : t.shell.editor.collapseDock"
+            :aria-label="t.shell.editor.toggleDock"
             @click="toggleDockCollapsed"
           >
             {{ dockCollapsed ? '▴' : '▾' }}
@@ -616,52 +636,52 @@ useAppLifecycle({
           <div class="editor-toolbar">
             <div class="editor-toolbar-scroll">
               <label class="bar-field">
-                Snap
+                {{ t.shell.editor.snap }}
                 <SelectMenu
                   v-model="store.snapDivision"
                   :options="SNAP_CHOICES"
                   size="sm"
-                  aria-label="Snap"
+                  :aria-label="t.shell.editor.snap"
                 />
               </label>
-            <label class="bar-field" title="Toggle grid snapping (Cmd+G)">
+            <label class="bar-field" :title="t.shell.editor.snapToggleTitle">
               <input v-model="store.snapEnabled" type="checkbox" />
-              Snap on
+              {{ t.shell.editor.snapOn }}
             </label>
             <button
               type="button"
               :disabled="store.selection.size === 0"
-              title="Quantize selected note starts (Q)"
+              :title="t.shell.editor.quantizeTitle"
               @click="quantizeSelection()"
             >
-              Quantize
+              {{ t.shell.editor.quantize }}
             </button>
             <label class="bar-field">
               <input v-model="store.scaleHighlight.enabled" type="checkbox" />
-              Scale highlight
+              {{ t.shell.editor.scaleHighlight }}
             </label>
-            <label class="bar-field" title="QWERTY keys play and enter notes">
+            <label class="bar-field" :title="t.shell.editor.musicTypingTitle">
               <input
                 :checked="musicTyping.enabled.value"
                 type="checkbox"
                 @change="toggleMusicTyping"
               />
-              Music typing
+              {{ t.shell.editor.musicTyping }}
             </label>
-            <label class="bar-field" title="Entered notes are written at the step cursor">
+            <label class="bar-field" :title="t.shell.editor.stepInputTitle">
               <input :checked="stepInput.armed.value" type="checkbox" @change="toggleStepInput" />
-              Step input
+              {{ t.shell.editor.stepInput }}
             </label>
             <span v-if="stepInput.armed.value" class="step-cursor">
               @ {{ formatBarBeatTick(stepInput.cursorPpq.value, store.timeSignatures) }}
             </span>
             <label class="bar-field">
-              MIDI in
+              {{ t.shell.editor.midiIn }}
               <SelectMenu
                 v-model="midiInputSelection"
                 :options="midiInputChoices"
                 size="sm"
-                aria-label="MIDI in"
+                :aria-label="t.shell.editor.midiIn"
               />
             </label>
             <button
@@ -670,9 +690,11 @@ useAppLifecycle({
               :disabled="busy"
               @click="connectWebMidi"
             >
-              Connect MIDI
+              {{ t.shell.editor.connectMidi }}
             </button>
-            <button v-else type="button" @click="webMidi.disconnect()">Disconnect MIDI</button>
+            <button v-else type="button" @click="webMidi.disconnect()">
+              {{ t.shell.editor.disconnectMidi }}
+            </button>
             </div>
             <span class="midi-learn-anchor">
               <button
@@ -680,10 +702,10 @@ useAppLifecycle({
                 class="midi-learn-toggle"
                 :class="{ 'midi-learn-toggle-active': midiLearnOpen }"
                 :aria-expanded="midiLearnOpen"
-                title="Map hardware CC controllers to mixer volume and pan"
+                :title="t.shell.editor.midiLearnTitle"
                 @click="midiLearnOpen = !midiLearnOpen"
               >
-                MIDI Learn
+                {{ t.shell.editor.midiLearn }}
               </button>
               <MidiLearnPanel
                 v-if="midiLearnOpen"
@@ -695,13 +717,13 @@ useAppLifecycle({
             <button
               type="button"
               :disabled="!handle || !store.initialized"
-              title="Bounce all project clips to the engine now"
+              :title="t.shell.editor.applyTitle"
               @click="applyNow"
             >
-              Apply to engine
+              {{ t.shell.editor.apply }}
             </button>
             <span class="apply-state">
-              {{ !handle ? 'engine off' : applyPending ? 'pending…' : `${scheduledCount} clip(s)` }}
+              {{ applyStateText }}
             </span>
           </div>
           <InfoLine />
@@ -715,11 +737,11 @@ useAppLifecycle({
             class="split-divider"
             role="separator"
             aria-orientation="horizontal"
-            aria-label="Resize the score panel"
+            :aria-label="t.shell.editor.resizeScore"
             :aria-valuenow="Math.round(scoreHeight)"
             :aria-valuemin="scoreHeightMin"
             tabindex="0"
-            title="Drag or use the arrow keys to resize the score"
+            :title="t.shell.editor.resizeScoreTitle"
             @pointerdown="onScoreDividerPointerDown"
             @pointermove="onScoreDividerPointerMove"
             @pointerup="onScoreDividerPointerUp"
@@ -786,14 +808,14 @@ useAppLifecycle({
           />
           <HintCard
             v-else
-            title="Sample editor"
-            message="Select an audio clip in the arrangement to edit its audio here."
+            :title="t.shell.sampleEditor.title"
+            :message="t.shell.sampleEditor.emptyMessage"
           />
         </section>
       </section>
       </div>
 
-      <aside v-if="deviceRackOpen" class="right-zone" aria-label="Device rack panel">
+      <aside v-if="deviceRackOpen" class="right-zone" :aria-label="t.shell.devices.panelLabel">
         <DeviceRack :transport-playing="isPlaying" />
       </aside>
     </main>
@@ -887,7 +909,7 @@ useAppLifecycle({
       @close="aboutOpen = false"
     />
 
-    <WelcomeTour ref="tourRef" :steps="TOUR_STEPS" />
+    <WelcomeTour ref="tourRef" :steps="localizedTourSteps" />
 
     <ContextMenu />
 

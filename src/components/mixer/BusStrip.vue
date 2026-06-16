@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import type { MeterSource } from '@/engine/meters';
 import { removeMixerBus, setMixerBusGain } from '@/project/commands';
 import type { MixerBus } from '@/project/mixer';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import { formatDb } from '@/ui/mixer/db-scale';
 import MixerFader from './MixerFader.vue';
 import StripMeter from './StripMeter.vue';
@@ -26,6 +27,7 @@ const props = withDefaults(
 );
 
 const gainDb = computed(() => props.bus.gainDb);
+const { t } = useI18n();
 
 function onFaderChange(db: number, commit: boolean): void {
   setMixerBusGain(props.bus.id, db, { commit });
@@ -39,13 +41,13 @@ function onRemove(): void {
 <template>
   <div class="bus-strip">
     <div class="bus-header">
-      <span class="bus-tag">BUS</span>
+      <span class="bus-tag">{{ t.shell.mixer.strip.bus }}</span>
       <span class="bus-name" :title="props.bus.name">{{ props.bus.name }}</span>
       <button
         type="button"
         class="bus-remove"
-        title="Remove bus (and its sends)"
-        :aria-label="`Remove bus ${props.bus.name}`"
+        :title="t.shell.mixer.strip.removeBusTitle"
+        :aria-label="formatMessage(t.shell.mixer.strip.removeBus, { name: props.bus.name })"
         @click="onRemove"
       >
         ×

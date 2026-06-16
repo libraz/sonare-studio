@@ -3,6 +3,7 @@ import { ref } from 'vue';
 import { removeMarker, setMarker } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import type { EditorMarker } from '@/project/types';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import { formatBarBeat, parseBarBeat } from './bar-beat';
 
 /**
@@ -24,6 +25,7 @@ const emit = defineEmits<{
 }>();
 
 const store = useProjectStore();
+const { t } = useI18n();
 const errorMessage = ref('');
 
 /** Current display position of a marker. */
@@ -36,7 +38,9 @@ function onPositionChange(marker: EditorMarker, event: Event): void {
   const input = event.target as HTMLInputElement;
   const ppq = parseBarBeat(input.value, store.timeSignatures);
   if (ppq === null) {
-    errorMessage.value = `Invalid position "${input.value}" (use bars.beats, e.g. 5.1)`;
+    errorMessage.value = formatMessage(t.value.shell.lists.markers.invalidPosition, {
+      position: input.value,
+    });
     input.value = positionText(marker);
     return;
   }
@@ -59,7 +63,11 @@ function onNameChange(marker: EditorMarker, event: Event): void {
 /** Creates a marker at the transport playhead (or 1.1 without a getter). */
 function addAtPlayhead(): void {
   const ppq = Math.max(0, props.positionPpq?.() ?? 0);
-  setMarker(null, ppq, `Marker ${store.markers.length + 1}`);
+  setMarker(
+    null,
+    ppq,
+    formatMessage(t.value.shell.lists.markers.defaultName, { number: store.markers.length + 1 }),
+  );
 }
 
 function onDelete(marker: EditorMarker): void {
@@ -76,10 +84,10 @@ function onSeek(marker: EditorMarker): void {
     <table class="list-table">
       <thead>
         <tr>
-          <th scope="col"><span class="visually-hidden">Seek</span></th>
-          <th scope="col">Position</th>
-          <th scope="col">Name</th>
-          <th scope="col"><span class="visually-hidden">Actions</span></th>
+          <th scope="col"><span class="visually-hidden">{{ t.shell.lists.columns.seek }}</span></th>
+          <th scope="col">{{ t.shell.lists.columns.position }}</th>
+          <th scope="col">{{ t.shell.lists.columns.name }}</th>
+          <th scope="col"><span class="visually-hidden">{{ t.shell.lists.columns.actions }}</span></th>
         </tr>
       </thead>
       <tbody>
@@ -93,7 +101,7 @@ function onSeek(marker: EditorMarker): void {
             <button
               type="button"
               class="row-button"
-              :aria-label="`Seek to marker ${marker.name}`"
+              :aria-label="formatMessage(t.shell.lists.markers.seekTo, { name: marker.name })"
               @click.stop="onSeek(marker)"
             >
               ▶
@@ -105,7 +113,7 @@ function onSeek(marker: EditorMarker): void {
               class="cell-input cell-position"
               type="text"
               inputmode="decimal"
-              :aria-label="`Position of marker ${marker.name} (bars.beats)`"
+              :aria-label="formatMessage(t.shell.lists.markers.positionOf, { name: marker.name })"
               @click.stop
               @change="onPositionChange(marker, $event)"
             />
@@ -115,7 +123,7 @@ function onSeek(marker: EditorMarker): void {
               :value="marker.name"
               class="cell-input"
               type="text"
-              :aria-label="`Name of marker ${marker.name}`"
+              :aria-label="formatMessage(t.shell.lists.markers.nameOf, { name: marker.name })"
               @click.stop
               @change="onNameChange(marker, $event)"
             />
@@ -124,7 +132,7 @@ function onSeek(marker: EditorMarker): void {
             <button
               type="button"
               class="row-button"
-              :aria-label="`Delete marker ${marker.name}`"
+              :aria-label="formatMessage(t.shell.lists.markers.delete, { name: marker.name })"
               @click.stop="onDelete(marker)"
             >
               ✕
@@ -133,12 +141,10 @@ function onSeek(marker: EditorMarker): void {
         </tr>
       </tbody>
     </table>
-    <p v-if="store.markers.length === 0" class="list-empty">
-      No markers — add one at the playhead below.
-    </p>
+    <p v-if="store.markers.length === 0" class="list-empty">{{ t.shell.lists.markers.empty }}</p>
     <p v-if="errorMessage" class="list-error" role="alert">{{ errorMessage }}</p>
     <div class="list-actions">
-      <button type="button" @click="addAtPlayhead">Add at playhead</button>
+      <button type="button" @click="addAtPlayhead">{{ t.shell.lists.common.addAtPlayhead }}</button>
     </div>
   </div>
 </template>

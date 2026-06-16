@@ -36,8 +36,11 @@ import type { EngineHandle } from './engine';
 /** MIDI 1.0 channel-voice status nibbles used by the builder. */
 const STATUS_NOTE_ON = 0x9;
 const STATUS_NOTE_OFF = 0x8;
+const STATUS_POLY_PRESSURE = 0xa;
 const STATUS_CONTROL_CHANGE = 0xb;
 const STATUS_PROGRAM_CHANGE = 0xc;
+const STATUS_CHANNEL_PRESSURE = 0xd;
+const STATUS_PITCH_BEND = 0xe;
 
 /** Bank-select controller numbers (MSB / LSB). */
 const CC_BANK_SELECT_MSB = 0;
@@ -130,7 +133,21 @@ export function buildMidiClipSchedules(
     // controllers are not gain-scaled, and a CC-only clip is legitimate.
     const notes = clip.gain > 0 ? clipPlaybackNotes(clip) : [];
     const ccLanes = (clip.ccLanes ?? []).filter((lane) => lane.points.length > 0);
-    if (notes.length === 0 && ccLanes.length === 0) continue;
+    const pitchBendLanes = (clip.pitchBendLanes ?? []).filter((lane) => lane.points.length > 0);
+    const channelPressureLanes = (clip.channelPressureLanes ?? []).filter(
+      (lane) => lane.points.length > 0,
+    );
+    const polyPressureLanes = (clip.polyPressureLanes ?? []).filter(
+      (lane) => lane.points.length > 0,
+    );
+    if (
+      notes.length === 0 &&
+      ccLanes.length === 0 &&
+      pitchBendLanes.length === 0 &&
+      channelPressureLanes.length === 0 &&
+      polyPressureLanes.length === 0
+    )
+      continue;
 
     const startSample = ppqToSamples(tempoMap, clip.startPpq, sampleRate);
     // End minus start (not a rounded duration), so tempo-segment boundaries
@@ -145,7 +162,13 @@ export function buildMidiClipSchedules(
     if (sf2 && hasPrelude) {
       const { bank, program } = sf2;
       const preludeFrame = Math.max(0, startSample - 1);
-      const channels = new Set(notes.map((note) => clamp(note.channel ?? 0, 0, 15)));
+      const channels = new Set([
+        ...notes.map((note) => clamp(note.channel ?? 0, 0, 15)),
+        ...ccLanes.map((lane) => clamp(lane.channel, 0, 15)),
+        ...pitchBendLanes.map((lane) => clamp(lane.channel, 0, 15)),
+        ...channelPressureLanes.map((lane) => clamp(lane.channel, 0, 15)),
+        ...polyPressureLanes.map((lane) => clamp(lane.channel, 0, 15)),
+      ]);
       for (const channel of channels) {
         if (bank !== undefined) {
           events.push(
@@ -198,6 +221,45 @@ export function buildMidiClipSchedules(
         if (shiftFrameZero && frame === 0) frame = 1;
         events.push(
           voiceEvent(frame, STATUS_CONTROL_CHANGE, channel, controller, clamp(point.value, 0, 127)),
+        );
+      }
+    }
+
+    // Pitch bend is a 14-bit value encoded LSB first in MIDI 1.0. Points are
+    // clip-window relative; out-of-window points are dropped.
+    for (const lane of pitchBendLanes) {
+      const channel = clamp(lane.channel, 0, 15);
+      for (const point of lane.points) {
+        if (point.ppq < 0 || point.ppq > clip.lengthPpq) continue;
+        let frame = ppqToSamples(tempoMap, clip.startPpq + point.ppq, sampleRate);
+        if (shiftFrameZero && frame === 0) frame = 1;
+        const value = clamp(Math.round(point.value), 0, 16383);
+        events.push(voiceEvent(frame, STATUS_PITCH_BEND, channel, value & 0x7f, value >> 7));
+      }
+    }
+
+    // Aftertouch lanes preserve imported performance pressure data. Channel
+    // pressure has one 7-bit data byte; poly pressure carries note + pressure.
+    for (const lane of channelPressureLanes) {
+      const channel = clamp(lane.channel, 0, 15);
+      for (const point of lane.points) {
+        if (point.ppq < 0 || point.ppq > clip.lengthPpq) continue;
+        let frame = ppqToSamples(tempoMap, clip.startPpq + point.ppq, sampleRate);
+        if (shiftFrameZero && frame === 0) frame = 1;
+        events.push(
+          voiceEvent(frame, STATUS_CHANNEL_PRESSURE, channel, clamp(point.value, 0, 127), 0),
+        );
+      }
+    }
+    for (const lane of polyPressureLanes) {
+      const channel = clamp(lane.channel, 0, 15);
+      const pitch = clamp(lane.pitch, 0, 127);
+      for (const point of lane.points) {
+        if (point.ppq < 0 || point.ppq > clip.lengthPpq) continue;
+        let frame = ppqToSamples(tempoMap, clip.startPpq + point.ppq, sampleRate);
+        if (shiftFrameZero && frame === 0) frame = 1;
+        events.push(
+          voiceEvent(frame, STATUS_POLY_PRESSURE, channel, pitch, clamp(point.value, 0, 127)),
         );
       }
     }

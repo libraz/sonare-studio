@@ -34,7 +34,10 @@ import {
 import type { DocumentClip, ProjectDocument } from './serialization';
 import {
   type ClipCcLane,
+  type ClipChannelPressureLane,
   type ClipKind,
+  type ClipPitchBendLane,
+  type ClipPolyPressureLane,
   DEFAULT_SECTION_COLOR,
   type EditorClip,
   type EditorMarker,
@@ -506,6 +509,28 @@ export const useProjectStore = defineStore('project', () => {
         // CC lanes are app-level metadata, carried forward across refreshes.
         const ccLanes = cloneCcLanes(previous?.ccLanes);
         if (ccLanes !== undefined) entry.ccLanes = ccLanes;
+        if (previous?.pitchBendLanes !== undefined && previous.pitchBendLanes.length > 0) {
+          entry.pitchBendLanes = previous.pitchBendLanes.map((lane) => ({
+            channel: lane.channel,
+            points: lane.points.map((point) => ({ ...point })),
+          }));
+        }
+        if (
+          previous?.channelPressureLanes !== undefined &&
+          previous.channelPressureLanes.length > 0
+        ) {
+          entry.channelPressureLanes = previous.channelPressureLanes.map((lane) => ({
+            channel: lane.channel,
+            points: lane.points.map((point) => ({ ...point })),
+          }));
+        }
+        if (previous?.polyPressureLanes !== undefined && previous.polyPressureLanes.length > 0) {
+          entry.polyPressureLanes = previous.polyPressureLanes.map((lane) => ({
+            channel: lane.channel,
+            pitch: lane.pitch,
+            points: lane.points.map((point) => ({ ...point })),
+          }));
+        }
         const fadeIn =
           serializedFadePpq(serialized.fade_in_ppq, serialized.fade_in) ?? previous?.fadeInPpq ?? 0;
         if (fadeIn > 0) entry.fadeInPpq = fadeIn;
@@ -887,6 +912,98 @@ export const useProjectStore = defineStore('project', () => {
           if (lanes.length > 0) {
             lanes.sort((a, b) => a.controller - b.controller);
             next.ccLanes = lanes;
+          }
+        }
+        if (
+          kind === 'midi' &&
+          Array.isArray(meta.pitchBendLanes) &&
+          meta.pitchBendLanes.length > 0
+        ) {
+          const lanes: ClipPitchBendLane[] = [];
+          for (const lane of meta.pitchBendLanes) {
+            if (!isValidChannel(lane.channel)) continue;
+            const points = (Array.isArray(lane.points) ? lane.points : [])
+              .map((point) => ({
+                ppq: Number(point.ppq),
+                value: Math.round(Number(point.value)),
+              }))
+              .filter(
+                (point) =>
+                  Number.isFinite(point.ppq) &&
+                  point.ppq >= 0 &&
+                  point.ppq <= clip.lengthPpq &&
+                  Number.isInteger(point.value) &&
+                  point.value >= 0 &&
+                  point.value <= 16383,
+              )
+              .sort((a, b) => a.ppq - b.ppq);
+            if (points.length > 0) lanes.push({ channel: lane.channel, points });
+          }
+          if (lanes.length > 0) {
+            lanes.sort((a, b) => a.channel - b.channel);
+            next.pitchBendLanes = lanes;
+          }
+        }
+        if (
+          kind === 'midi' &&
+          Array.isArray(meta.channelPressureLanes) &&
+          meta.channelPressureLanes.length > 0
+        ) {
+          const lanes: ClipChannelPressureLane[] = [];
+          for (const lane of meta.channelPressureLanes) {
+            if (!isValidChannel(lane.channel)) continue;
+            const points = (Array.isArray(lane.points) ? lane.points : [])
+              .map((point) => ({
+                ppq: Number(point.ppq),
+                value: Math.round(Number(point.value)),
+              }))
+              .filter(
+                (point) =>
+                  Number.isFinite(point.ppq) &&
+                  point.ppq >= 0 &&
+                  point.ppq <= clip.lengthPpq &&
+                  Number.isInteger(point.value) &&
+                  point.value >= 0 &&
+                  point.value <= 127,
+              )
+              .sort((a, b) => a.ppq - b.ppq);
+            if (points.length > 0) lanes.push({ channel: lane.channel, points });
+          }
+          if (lanes.length > 0) {
+            lanes.sort((a, b) => a.channel - b.channel);
+            next.channelPressureLanes = lanes;
+          }
+        }
+        if (
+          kind === 'midi' &&
+          Array.isArray(meta.polyPressureLanes) &&
+          meta.polyPressureLanes.length > 0
+        ) {
+          const lanes: ClipPolyPressureLane[] = [];
+          for (const lane of meta.polyPressureLanes) {
+            if (!isValidChannel(lane.channel)) continue;
+            const pitch = Math.round(Number(lane.pitch));
+            if (!Number.isInteger(pitch) || pitch < 0 || pitch > 127) continue;
+            const points = (Array.isArray(lane.points) ? lane.points : [])
+              .map((point) => ({
+                ppq: Number(point.ppq),
+                value: Math.round(Number(point.value)),
+              }))
+              .filter(
+                (point) =>
+                  Number.isFinite(point.ppq) &&
+                  point.ppq >= 0 &&
+                  point.ppq <= clip.lengthPpq &&
+                  Number.isInteger(point.value) &&
+                  point.value >= 0 &&
+                  point.value <= 127,
+              )
+              .sort((a, b) => a.ppq - b.ppq);
+            if (points.length > 0) lanes.push({ channel: lane.channel, pitch, points });
+          }
+          if (lanes.length > 0) {
+            lanes.sort((a, b) => a.channel - b.channel || a.pitch - b.pitch);
+            next.polyPressureLanes = lanes;
           }
         }
         return next;

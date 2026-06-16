@@ -9,6 +9,7 @@
  */
 
 import { reactive } from 'vue';
+import { useI18n } from '@/ui/i18n';
 
 /** Shared option bag for the confirm / alert variants. */
 export interface ConfirmOptions {
@@ -67,13 +68,14 @@ function enqueue(partial: Omit<DialogRequest, 'id'>): void {
  * @returns Promise resolving true when confirmed, false when cancelled.
  */
 export function confirmDialog(options: ConfirmOptions): Promise<boolean> {
+  const { t } = useI18n();
   return new Promise((resolve) => {
     enqueue({
       kind: 'confirm',
       title: options.title,
       message: options.message,
-      confirmLabel: options.confirmLabel ?? 'OK',
-      cancelLabel: options.cancelLabel ?? 'Cancel',
+      confirmLabel: options.confirmLabel ?? t.value.dialogs.common.ok,
+      cancelLabel: options.cancelLabel ?? t.value.dialogs.common.cancel,
       danger: options.danger ?? false,
       defaultValue: '',
       placeholder: '',
@@ -86,12 +88,13 @@ export function confirmDialog(options: ConfirmOptions): Promise<boolean> {
  * Shows an informational message with a single dismiss button.
  */
 export function alertDialog(options: ConfirmOptions): Promise<void> {
+  const { t } = useI18n();
   return new Promise((resolve) => {
     enqueue({
       kind: 'alert',
       title: options.title,
       message: options.message,
-      confirmLabel: options.confirmLabel ?? 'OK',
+      confirmLabel: options.confirmLabel ?? t.value.dialogs.common.ok,
       cancelLabel: '',
       danger: options.danger ?? false,
       defaultValue: '',
@@ -107,13 +110,14 @@ export function alertDialog(options: ConfirmOptions): Promise<void> {
  * @returns Promise resolving the entered string, or null if cancelled.
  */
 export function promptDialog(options: PromptOptions): Promise<string | null> {
+  const { t } = useI18n();
   return new Promise((resolve) => {
     enqueue({
       kind: 'prompt',
       title: options.title,
       message: options.message,
-      confirmLabel: options.confirmLabel ?? 'OK',
-      cancelLabel: options.cancelLabel ?? 'Cancel',
+      confirmLabel: options.confirmLabel ?? t.value.dialogs.common.ok,
+      cancelLabel: options.cancelLabel ?? t.value.dialogs.common.cancel,
       danger: false,
       defaultValue: options.defaultValue ?? '',
       placeholder: options.placeholder ?? '',

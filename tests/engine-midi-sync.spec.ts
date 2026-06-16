@@ -35,9 +35,24 @@ function ccWord(channel: number, controller: number, value: number): number {
   return (0x2 << 28) | (0xb << 20) | (channel << 16) | (controller << 8) | value;
 }
 
+/** Expected UMP MIDI 1.0 channel-voice word for polyphonic key pressure. */
+function polyPressureWord(channel: number, pitch: number, value: number): number {
+  return (0x2 << 28) | (0xa << 20) | (channel << 16) | (pitch << 8) | value;
+}
+
 /** Expected UMP MIDI 1.0 channel-voice word for a program change. */
 function pcWord(channel: number, program: number): number {
   return (0x2 << 28) | (0xc << 20) | (channel << 16) | (program << 8);
+}
+
+/** Expected UMP MIDI 1.0 channel-voice word for channel pressure. */
+function channelPressureWord(channel: number, value: number): number {
+  return (0x2 << 28) | (0xd << 20) | (channel << 16) | (value << 8);
+}
+
+/** Expected UMP MIDI 1.0 channel-voice word for pitch bend. */
+function pitchBendWord(channel: number, value: number): number {
+  return (0x2 << 28) | (0xe << 20) | (channel << 16) | ((value & 0x7f) << 8) | (value >> 7);
 }
 
 /** Builds a track mirror entry with overridable fields. */
@@ -288,6 +303,83 @@ describe('buildMidiClipSchedules', () => {
         word0: ccWord(0, 1, 100),
         wordCount: 1,
       });
+    });
+  });
+
+  describe('pitch-bend lanes', () => {
+    it('bakes each pitch-bend point into a 14-bit pitch-bend event at its frame', () => {
+      const clip = makeClip(1, 1, {
+        notes: [],
+        pitchBendLanes: [
+          {
+            channel: 2,
+            points: [
+              { ppq: 0, value: 8192 },
+              { ppq: 1, value: 4096 },
+            ],
+          },
+        ],
+      });
+      const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], TEMPO_120, SAMPLE_RATE);
+      expect(schedule.events).toEqual([
+        { renderFrame: 0, word0: pitchBendWord(2, 8192), wordCount: 1 },
+        { renderFrame: SPP, word0: pitchBendWord(2, 4096), wordCount: 1 },
+      ]);
+    });
+
+    it('keeps pitch bend from muted clips and drops points outside the clip window', () => {
+      const clip = makeClip(1, 1, {
+        gain: 0,
+        lengthPpq: 1,
+        pitchBendLanes: [
+          {
+            channel: 0,
+            points: [
+              { ppq: 0.5, value: 16383 },
+              { ppq: 2, value: 0 },
+            ],
+          },
+        ],
+      });
+      const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], TEMPO_120, SAMPLE_RATE);
+      expect(schedule.events).toEqual([
+        { renderFrame: SPP / 2, word0: pitchBendWord(0, 16383), wordCount: 1 },
+      ]);
+    });
+  });
+
+  describe('aftertouch lanes', () => {
+    it('bakes channel pressure and poly key pressure into MIDI events', () => {
+      const clip = makeClip(1, 1, {
+        notes: [],
+        channelPressureLanes: [{ channel: 1, points: [{ ppq: 0.5, value: 70 }] }],
+        polyPressureLanes: [{ channel: 1, pitch: 64, points: [{ ppq: 1, value: 90 }] }],
+      });
+      const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], TEMPO_120, SAMPLE_RATE);
+      expect(schedule.events).toEqual([
+        { renderFrame: SPP / 2, word0: channelPressureWord(1, 70), wordCount: 1 },
+        { renderFrame: SPP, word0: polyPressureWord(1, 64, 90), wordCount: 1 },
+      ]);
+    });
+
+    it('keeps aftertouch from muted clips and drops points outside the clip window', () => {
+      const clip = makeClip(1, 1, {
+        gain: 0,
+        lengthPpq: 1,
+        channelPressureLanes: [
+          {
+            channel: 0,
+            points: [
+              { ppq: 0.25, value: 30 },
+              { ppq: 2, value: 100 },
+            ],
+          },
+        ],
+      });
+      const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], TEMPO_120, SAMPLE_RATE);
+      expect(schedule.events).toEqual([
+        { renderFrame: SPP / 4, word0: channelPressureWord(0, 30), wordCount: 1 },
+      ]);
     });
   });
 

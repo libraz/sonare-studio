@@ -9,6 +9,7 @@ import {
   type MidiFxConfig,
   sanitizeMidiFxConfig,
 } from '@/project/midi-fx';
+import { useI18n } from '@/ui/i18n';
 
 /**
  * MIDI-FX transform popover for the active MIDI clip: transpose, grid quantize,
@@ -27,6 +28,8 @@ const emit = defineEmits<{
   /** Request the host close the panel. */
   close: [];
 }>();
+
+const { t } = useI18n();
 
 /** Working transform; mutated by the controls, baked on Apply. */
 const config = reactive<MidiFxConfig>({ ...DEFAULT_MIDI_FX_CONFIG, chordIntervals: [] });
@@ -66,16 +69,25 @@ function pct(value: number): string {
 </script>
 
 <template>
-  <div class="midi-fx-panel" role="dialog" aria-label="MIDI transform">
+  <div class="midi-fx-panel" role="dialog" :aria-label="t.shell.pianoRoll.midiTransform.label">
     <header class="fx-head">
-      <h2 class="fx-title">MIDI Transform</h2>
-      <button type="button" class="fx-close" aria-label="Close" @click="emit('close')">×</button>
+      <h2 class="fx-title">{{ t.shell.pianoRoll.midiTransform.title }}</h2>
+      <button
+        type="button"
+        class="fx-close"
+        :aria-label="t.shell.pianoRoll.midiTransform.close"
+        @click="emit('close')"
+      >
+        ×
+      </button>
     </header>
 
     <div class="fx-body">
       <section class="fx-group">
         <div class="fx-row">
-          <label class="fx-label" for="fx-transpose">Transpose</label>
+          <label class="fx-label" for="fx-transpose">
+            {{ t.shell.pianoRoll.midiTransform.transpose }}
+          </label>
           <input
             id="fx-transpose"
             v-model.number="config.transposeSemitones"
@@ -90,8 +102,12 @@ function pct(value: number): string {
       </section>
 
       <section class="fx-group">
-        <div class="fx-group-head">Quantize</div>
-        <div class="fx-grid-tabs" role="group" aria-label="Quantize grid">
+        <div class="fx-group-head">{{ t.shell.pianoRoll.midiTransform.quantize }}</div>
+        <div
+          class="fx-grid-tabs"
+          role="group"
+          :aria-label="t.shell.pianoRoll.midiTransform.quantizeGrid"
+        >
           <button
             v-for="grid in MIDI_FX_QUANTIZE_GRIDS"
             :key="grid.id"
@@ -104,7 +120,9 @@ function pct(value: number): string {
           </button>
         </div>
         <div class="fx-row">
-          <label class="fx-label" for="fx-q-strength">Strength</label>
+          <label class="fx-label" for="fx-q-strength">
+            {{ t.shell.pianoRoll.midiTransform.strength }}
+          </label>
           <input
             id="fx-q-strength"
             v-model.number="config.quantizeStrength"
@@ -118,9 +136,11 @@ function pct(value: number): string {
       </section>
 
       <section class="fx-group">
-        <div class="fx-group-head">Velocity</div>
+        <div class="fx-group-head">{{ t.shell.pianoRoll.midiTransform.velocity }}</div>
         <div class="fx-row">
-          <label class="fx-label" for="fx-v-scale">Scale</label>
+          <label class="fx-label" for="fx-v-scale">
+            {{ t.shell.pianoRoll.midiTransform.scale }}
+          </label>
           <input
             id="fx-v-scale"
             v-model.number="config.velocityScale"
@@ -132,7 +152,9 @@ function pct(value: number): string {
           <output class="fx-value">{{ pct(config.velocityScale) }}</output>
         </div>
         <div class="fx-row">
-          <label class="fx-label" for="fx-v-offset">Offset</label>
+          <label class="fx-label" for="fx-v-offset">
+            {{ t.shell.pianoRoll.midiTransform.offset }}
+          </label>
           <input
             id="fx-v-offset"
             v-model.number="config.velocityOffset"
@@ -145,7 +167,9 @@ function pct(value: number): string {
             }}{{ config.velocityOffset }}</output>
         </div>
         <div class="fx-row">
-          <label class="fx-label" for="fx-v-gamma">Curve</label>
+          <label class="fx-label" for="fx-v-gamma">
+            {{ t.shell.pianoRoll.midiTransform.curve }}
+          </label>
           <input
             id="fx-v-gamma"
             v-model.number="config.velocityGamma"
@@ -159,9 +183,11 @@ function pct(value: number): string {
       </section>
 
       <section class="fx-group">
-        <div class="fx-group-head">Humanize</div>
+        <div class="fx-group-head">{{ t.shell.pianoRoll.midiTransform.humanize }}</div>
         <div class="fx-row">
-          <label class="fx-label" for="fx-h-time">Timing</label>
+          <label class="fx-label" for="fx-h-time">
+            {{ t.shell.pianoRoll.midiTransform.timing }}
+          </label>
           <input
             id="fx-h-time"
             v-model.number="config.humanizeTimingPpq"
@@ -173,7 +199,9 @@ function pct(value: number): string {
           <output class="fx-value">±{{ config.humanizeTimingPpq.toFixed(2) }} beat</output>
         </div>
         <div class="fx-row">
-          <label class="fx-label" for="fx-h-vel">Velocity</label>
+          <label class="fx-label" for="fx-h-vel">
+            {{ t.shell.pianoRoll.midiTransform.velocity }}
+          </label>
           <input
             id="fx-h-vel"
             v-model.number="config.humanizeVelocity"
@@ -187,8 +215,12 @@ function pct(value: number): string {
       </section>
 
       <section class="fx-group">
-        <div class="fx-group-head">Harmonize</div>
-        <div class="fx-grid-tabs" role="group" aria-label="Harmonize chord">
+        <div class="fx-group-head">{{ t.shell.pianoRoll.midiTransform.harmonize }}</div>
+        <div
+          class="fx-grid-tabs"
+          role="group"
+          :aria-label="t.shell.pianoRoll.midiTransform.harmonizeChord"
+        >
           <button
             v-for="preset in MIDI_FX_CHORD_PRESETS"
             :key="preset.id"
@@ -204,11 +236,13 @@ function pct(value: number): string {
     </div>
 
     <footer class="fx-foot">
-      <span class="fx-hint">Destructive · undoable</span>
+      <span class="fx-hint">{{ t.shell.pianoRoll.midiTransform.hint }}</span>
       <span class="fx-spacer" />
-      <button type="button" class="fx-btn" @click="reset">Reset</button>
+      <button type="button" class="fx-btn" @click="reset">
+        {{ t.shell.pianoRoll.midiTransform.reset }}
+      </button>
       <button type="button" class="fx-btn fx-btn-primary" :disabled="noop" @click="apply">
-        Apply
+        {{ t.shell.pianoRoll.midiTransform.apply }}
       </button>
     </footer>
   </div>

@@ -1,13 +1,17 @@
 /**
- * MIDI export commands: thin wrappers around the wasm Project export APIs
- * returning bytes plus a suggested filename. Browser download plumbing lives
- * in src/notation/io.ts (exportSmfFile); these helpers feed it or the
- * persistence layer directly.
+ * MIDI export commands returning bytes plus a suggested filename. SMF export
+ * is document-driven so app-level MIDI metadata (instrument, CC and imported
+ * performance lanes) is not lost.
  */
 
-import { ensureWasm } from '@/lib/wasm';
 import { ensureFileExtension } from '@/notation/io';
-import { getProject, notesToProjectEvents, useProjectStore } from './store';
+import {
+  type DocumentClip,
+  PROJECT_DOCUMENT_SCHEMA_VERSION,
+  serializeProject,
+} from './serialization';
+import { projectDocumentToSmf } from './smf';
+import { getProject, useProjectStore } from './store';
 
 /** Bytes plus suggested filename produced by the export commands. */
 export interface MidiExportResult {
@@ -30,17 +34,16 @@ function copyBytes(bytes: Uint8Array): Uint8Array {
 
 /**
  * Exports the whole project (tempo map + all MIDI clips) as a Standard MIDI
- * File via Project.exportSmf.
+ * File.
  *
  * @param baseName Base filename; defaults to the project name.
  * @returns SMF bytes and a ".mid" filename.
  */
-export function exportProjectSmf(baseName?: string): MidiExportResult {
+export async function exportProjectSmf(baseName?: string): Promise<MidiExportResult> {
   const store = useProjectStore();
-  const project = getProject();
   const name = sanitizeBaseName(baseName ?? store.projectName, 'project');
   return {
-    bytes: copyBytes(project.exportSmf()),
+    bytes: await projectDocumentToSmf(serializeProject()),
     filename: ensureFileExtension(name, '.mid'),
   };
 }
@@ -65,10 +68,8 @@ export function exportProjectClipFile(baseName?: string): MidiExportResult {
 /**
  * Exports a single clip as a Standard MIDI File.
  *
- * The Project has no per-clip export API, so a scratch Project is built with
- * the live tempo map and just this clip's audible note window (source offsets
- * applied, so the file starts at the clip start), then exported via
- * Project.exportSmf. The scratch Project is always released.
+ * Source offsets are kept on the document clip, so the resulting file starts
+ * at the clip window while still preserving app-level MIDI lanes.
  *
  * @param clipId Id of the clip to export.
  * @param baseName Base filename; defaults to the clip name.
@@ -76,43 +77,73 @@ export function exportProjectClipFile(baseName?: string): MidiExportResult {
  */
 export async function exportClipSmf(clipId: number, baseName?: string): Promise<MidiExportResult> {
   const store = useProjectStore();
-  const project = getProject();
   const clip = store.clips.find((c) => c.id === clipId);
   if (!clip) throw new RangeError(`Unknown clip id: ${clipId}`);
-
-  // Shift notes from source coordinates into clip-local coordinates and keep
-  // only those starting inside the clip window.
-  const windowEnd = clip.sourceOffsetPpq + clip.lengthPpq;
-  const localNotes = clip.notes
-    .filter((note) => note.startPpq >= clip.sourceOffsetPpq && note.startPpq < windowEnd)
-    .map((note) => ({ ...note, startPpq: note.startPpq - clip.sourceOffsetPpq }));
-
-  const mod = await ensureWasm();
-  const scratch = new mod.Project();
-  try {
-    scratch.setSampleRate(project.getSampleRate());
-    if (store.tempoSegments.length > 0) {
-      scratch.setTempoSegments(
-        store.tempoSegments.map((s) => ({
-          startPpq: s.startPpq,
-          bpm: s.bpm,
-          endBpm: s.endBpm ?? 0,
-        })),
-      );
-    }
-    const { clipId: scratchClipId } = scratch.addMidiClip(
-      0,
-      Math.max(1, Math.ceil(clip.lengthPpq)),
-    );
-    if (localNotes.length > 0) {
-      scratch.setMidiEvents(scratchClipId, notesToProjectEvents(localNotes));
-    }
-    const name = sanitizeBaseName(baseName ?? clip.name, 'clip');
-    return {
-      bytes: copyBytes(scratch.exportSmf()),
-      filename: ensureFileExtension(name, '.mid'),
-    };
-  } finally {
-    scratch.delete();
+  if ((clip.kind ?? 'midi') !== 'midi') throw new RangeError(`Clip ${clipId} is not a MIDI clip`);
+  const track = store.tracks.find((entry) => entry.id === clip.trackId);
+  if (!track) throw new RangeError(`Unknown track id: ${clip.trackId}`);
+  const documentClip: DocumentClip = {
+    name: clip.name,
+    startPpq: 0,
+    lengthPpq: clip.lengthPpq,
+    sourceOffsetPpq: clip.sourceOffsetPpq,
+    gain: clip.gain,
+    loopEnabled: clip.loopEnabled,
+    loopLengthPpq: clip.loopLengthPpq,
+    notes: clip.notes.map(({ id: _id, ...note }) => note),
+    kind: 'midi',
+  };
+  if (clip.ccLanes !== undefined && clip.ccLanes.length > 0) {
+    documentClip.ccLanes = clip.ccLanes.map((lane) => ({
+      controller: lane.controller,
+      channel: lane.channel,
+      points: lane.points.map((point) => ({ ...point })),
+    }));
   }
+  if (clip.pitchBendLanes !== undefined && clip.pitchBendLanes.length > 0) {
+    documentClip.pitchBendLanes = clip.pitchBendLanes.map((lane) => ({
+      channel: lane.channel,
+      points: lane.points.map((point) => ({ ...point })),
+    }));
+  }
+  if (clip.channelPressureLanes !== undefined && clip.channelPressureLanes.length > 0) {
+    documentClip.channelPressureLanes = clip.channelPressureLanes.map((lane) => ({
+      channel: lane.channel,
+      points: lane.points.map((point) => ({ ...point })),
+    }));
+  }
+  if (clip.polyPressureLanes !== undefined && clip.polyPressureLanes.length > 0) {
+    documentClip.polyPressureLanes = clip.polyPressureLanes.map((lane) => ({
+      channel: lane.channel,
+      pitch: lane.pitch,
+      points: lane.points.map((point) => ({ ...point })),
+    }));
+  }
+
+  const name = sanitizeBaseName(baseName ?? clip.name, 'clip');
+  return {
+    bytes: await projectDocumentToSmf({
+      schemaVersion: PROJECT_DOCUMENT_SCHEMA_VERSION,
+      name,
+      sampleRate: 48000,
+      tempoSegments: store.tempoSegments.map((segment) => ({ ...segment })),
+      timeSignatures: store.timeSignatures.map((signature) => ({ ...signature })),
+      tracks: [
+        {
+          name: track.name,
+          color: track.color,
+          kind: 'midi',
+          mute: false,
+          solo: false,
+          volume: 1,
+          pan: 0,
+          ...(track.instrument ? { instrument: track.instrument } : {}),
+          clips: [documentClip],
+        },
+      ],
+      markers: [],
+      sections: [],
+    }),
+    filename: ensureFileExtension(name, '.mid'),
+  };
 }

@@ -9,6 +9,8 @@ import {
   decodeAppSettings,
   encodeAppSettings,
   migrateAppSettings,
+  resolveAppLanguage,
+  resolveAppTheme,
   sanitizeAppSettings,
 } from '@/ui/settings/app-settings';
 
@@ -29,10 +31,12 @@ describe('sanitizeAppSettings', () => {
       scrollFollowPlayhead: 0,
       confirmDestructive: false,
       theme: 'light',
+      language: 'ja',
       bogus: true,
     });
     expect(out).toEqual({
-      theme: 'dark',
+      theme: 'light',
+      language: 'ja',
       editorDensity: 'compact',
       snapDefault: false,
       countInBars: 2,
@@ -53,6 +57,26 @@ describe('sanitizeAppSettings', () => {
     expect(sanitizeAppSettings({ countInBars: Number.NaN }).countInBars).toBe(
       DEFAULT_APP_SETTINGS.countInBars,
     );
+  });
+
+  it('defaults invalid theme and language values', () => {
+    const out = sanitizeAppSettings({ theme: 'sepia', language: 'fr' });
+    expect(out.theme).toBe(DEFAULT_APP_SETTINGS.theme);
+    expect(out.language).toBe(DEFAULT_APP_SETTINGS.language);
+  });
+});
+
+describe('theme and language resolution', () => {
+  it('resolves system theme against the OS preference', () => {
+    expect(resolveAppTheme('system', true)).toBe('dark');
+    expect(resolveAppTheme('system', false)).toBe('light');
+    expect(resolveAppTheme('dark', false)).toBe('dark');
+  });
+
+  it('resolves system language from browser languages', () => {
+    expect(resolveAppLanguage('system', ['ja-JP', 'en-US'])).toBe('ja');
+    expect(resolveAppLanguage('system', ['en-US'])).toBe('en');
+    expect(resolveAppLanguage('en', ['ja-JP'])).toBe('en');
   });
 });
 
@@ -138,5 +162,13 @@ describe('useAppSettings', () => {
     );
     app.reload();
     expect(app.settings.countInBars).toBe(4);
+  });
+
+  it('applies theme and language to the document', () => {
+    const app = useAppSettings();
+    app.update({ theme: 'dark', language: 'ja' });
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    expect(document.documentElement.dataset.themePreference).toBe('dark');
+    expect(document.documentElement.lang).toBe('ja');
   });
 });

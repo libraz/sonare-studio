@@ -2,6 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import type { ProjectDocument } from '@/project/serialization';
 import { createTemplate, TEMPLATE_NAMES, type TemplateName } from '@/project/templates';
+import { useI18n } from '@/ui/i18n';
 import { wrapTabFocus } from '@/ui/settings/focus-trap';
 
 /**
@@ -29,14 +30,27 @@ const emit = defineEmits<{
   cancel: [];
 }>();
 
-/** Display metadata per template. */
-const TEMPLATE_INFO: Record<TemplateName, { label: string; description: string }> = {
-  empty: { label: 'Empty', description: 'No tracks — start from scratch' },
-  band: { label: 'Band', description: 'Drums, bass, piano, guitar and vocal' },
-  'gm-orchestra': { label: 'GM Orchestra', description: 'Full orchestral section layout' },
-  programming: { label: 'Programming', description: 'Synth lead, pad, pluck, bass and drums' },
-  transcription: { label: 'Transcription', description: 'A single piano track' },
+const { t } = useI18n();
+
+const TEMPLATE_MESSAGE_KEYS: Record<
+  TemplateName,
+  keyof typeof t.value.dialogs.newProject.templateInfo
+> = {
+  empty: 'empty',
+  band: 'band',
+  'gm-orchestra': 'gmOrchestra',
+  programming: 'programming',
+  transcription: 'transcription',
 };
+
+/** Display metadata per template. */
+const templateInfo = computed<Record<TemplateName, { label: string; description: string }>>(() => ({
+  empty: t.value.dialogs.newProject.templateInfo.empty,
+  band: t.value.dialogs.newProject.templateInfo.band,
+  'gm-orchestra': t.value.dialogs.newProject.templateInfo.gmOrchestra,
+  programming: t.value.dialogs.newProject.templateInfo.programming,
+  transcription: t.value.dialogs.newProject.templateInfo.transcription,
+}));
 
 const selected = ref<TemplateName>('empty');
 const dialogRef = ref<HTMLElement | null>(null);
@@ -100,6 +114,14 @@ function onKeydown(event: KeyboardEvent): void {
       break;
   }
 }
+
+function templateLabel(name: TemplateName): string {
+  return t.value.dialogs.newProject.templateInfo[TEMPLATE_MESSAGE_KEYS[name]].label;
+}
+
+function templateDescription(name: TemplateName): string {
+  return templateInfo.value[name].description;
+}
 </script>
 
 <template>
@@ -109,13 +131,13 @@ function onKeydown(event: KeyboardEvent): void {
       class="dialog"
       role="dialog"
       aria-modal="true"
-      aria-label="New project"
+      :aria-label="t.dialogs.newProject.title"
       tabindex="-1"
       @keydown="onKeydown"
     >
-      <h2 class="dialog-title">New project</h2>
+      <h2 class="dialog-title">{{ t.dialogs.newProject.title }}</h2>
       <div class="dialog-columns">
-        <ul class="template-list" role="listbox" aria-label="Project templates">
+        <ul class="template-list" role="listbox" :aria-label="t.dialogs.newProject.templates">
           <li
             v-for="name in TEMPLATE_NAMES"
             :key="name"
@@ -126,13 +148,15 @@ function onKeydown(event: KeyboardEvent): void {
             @click="selected = name"
             @dblclick="onCreate"
           >
-            <span class="template-label">{{ TEMPLATE_INFO[name].label }}</span>
-            <span class="template-description">{{ TEMPLATE_INFO[name].description }}</span>
+            <span class="template-label">{{ templateLabel(name) }}</span>
+            <span class="template-description">{{ templateDescription(name) }}</span>
           </li>
         </ul>
-        <div class="template-preview" aria-label="Template tracks">
-          <h3 class="preview-title">Tracks</h3>
-          <p v-if="preview.tracks.length === 0" class="preview-empty">No tracks</p>
+        <div class="template-preview" :aria-label="t.dialogs.newProject.templateTracks">
+          <h3 class="preview-title">{{ t.dialogs.newProject.tracks }}</h3>
+          <p v-if="preview.tracks.length === 0" class="preview-empty">
+            {{ t.dialogs.newProject.noTracks }}
+          </p>
           <ul v-else class="preview-tracks">
             <li v-for="track in preview.tracks" :key="track.name" class="preview-track">
               <span class="track-color" :style="{ background: track.color }" />
@@ -143,12 +167,14 @@ function onKeydown(event: KeyboardEvent): void {
       </div>
       <div v-if="props.unsavedChanges" class="dialog-warning" role="alert">
         <slot name="warning">
-          The current project has unsaved changes. Creating a new project will discard them.
+          {{ t.dialogs.newProject.warning }}
         </slot>
       </div>
       <div class="dialog-actions">
-        <button type="button" @click="onCancel">Cancel</button>
-        <button type="button" class="primary" @click="onCreate">Create</button>
+        <button type="button" @click="onCancel">{{ t.dialogs.newProject.cancel }}</button>
+        <button type="button" class="primary" @click="onCreate">
+          {{ t.dialogs.newProject.create }}
+        </button>
       </div>
     </div>
   </div>

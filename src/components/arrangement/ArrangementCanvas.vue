@@ -37,6 +37,7 @@ import type { ClipInteractions, ClipModifiers } from '@/ui/arrangement/use-clip-
 import type { TakeInteractions } from '@/ui/arrangement/use-take-interactions';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
+import { useI18n } from '@/ui/i18n';
 import { ARRANGEMENT_COLORS, colorWithAlpha, RULER_HEIGHT_PX } from './theme';
 
 /**
@@ -103,6 +104,8 @@ const props = defineProps<{
   /** Constant tempo in BPM used to map audio asset time onto PPQ (default 120). */
   tempoBpm?: number;
 }>();
+
+const { t } = useI18n();
 
 const emit = defineEmits<{
   /** Fired after the canvas viewport was resized and the range re-clamped. */
@@ -936,7 +939,12 @@ function onContextMenu(event: MouseEvent): void {
     @dblclick="onDoubleClick"
     @contextmenu="onContextMenu"
   >
-    <canvas ref="baseCanvas" class="arrangement-layer" role="img" aria-label="Arrangement timeline" />
+    <canvas
+      ref="baseCanvas"
+      class="arrangement-layer"
+      role="img"
+      :aria-label="t.shell.arrangement.timeline"
+    />
     <canvas ref="overlayCanvas" class="arrangement-layer" aria-hidden="true" />
   </div>
 </template>

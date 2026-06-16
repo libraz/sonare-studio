@@ -25,6 +25,7 @@ import {
 } from '@/export/options';
 import type { WavBitDepth } from '@/export/wav';
 import type { ProjectDocument } from '@/project/serialization';
+import { useI18n } from '@/ui/i18n';
 import { wrapTabFocus } from '@/ui/settings/focus-trap';
 import type { ExportRenderOptions } from '@/workers/export.worker';
 
@@ -83,6 +84,7 @@ const emit = defineEmits<{
 // Make MP3 available in the registry; idempotent across mounts.
 registerMp3Encoder();
 
+const { t } = useI18n();
 const dialogRef = ref<HTMLElement | null>(null);
 const model = ref<ExportOptionsModel>(createDefaultExportOptions(props.projectName));
 const encoderList = ref<AudioEncoder[]>(resolveEncoders());
@@ -175,6 +177,12 @@ const sampleRateOptions = EXPORT_SAMPLE_RATES.map((rate) => ({
   label: `${(rate / 1000).toLocaleString('en-US')} kHz`,
 }));
 
+const progressStageLabel = computed(() => {
+  if (stage.value === 'render') return t.value.dialogs.exportAudio.stage.render;
+  if (stage.value === 'encode') return t.value.dialogs.exportAudio.stage.encode;
+  return stage.value;
+});
+
 /** Formats a dB / LUFS value for the report ('-inf' for silence). */
 function formatLevel(value: number): string {
   return Number.isFinite(value) ? value.toFixed(1) : '-inf';
@@ -220,7 +228,7 @@ async function onExport(): Promise<void> {
     if (model.value.mode === 'stems') {
       const stems = result.stems ?? [];
       if (stems.length === 0) {
-        throw new Error('No stems were rendered (the project has no tracks)');
+        throw new Error(t.value.dialogs.exportAudio.noStems);
       }
       const names = stemEntryNames(
         stems.map((stem) => stem.name),
@@ -285,21 +293,21 @@ function onKeydown(event: KeyboardEvent): void {
       class="dialog"
       role="dialog"
       aria-modal="true"
-      aria-label="Export audio"
+      :aria-label="t.dialogs.exportAudio.title"
       tabindex="-1"
       @keydown="onKeydown"
     >
-      <h2 class="dialog-title">Export audio</h2>
+      <h2 class="dialog-title">{{ t.dialogs.exportAudio.title }}</h2>
 
       <div class="dialog-grid">
-        <label class="field-label" for="export-format">Format</label>
+        <label class="field-label" for="export-format">{{ t.dialogs.exportAudio.format }}</label>
         <div class="field">
           <SelectMenu
             v-model="model.encoderId"
             class="format-select"
             :options="encoderOptions"
             :disabled="busy"
-            aria-label="Format"
+            :aria-label="t.dialogs.exportAudio.format"
           />
           <div v-if="model.encoderId === WAV_ENCODER_ID" class="format-options wav-options">
             <SelectMenu
@@ -308,7 +316,7 @@ function onKeydown(event: KeyboardEvent): void {
               size="sm"
               :options="WAV_BIT_DEPTH_OPTIONS"
               :disabled="busy"
-              aria-label="Bit depth"
+              :aria-label="t.dialogs.exportAudio.bitDepth"
             />
             <label class="check-label">
               <input
@@ -317,7 +325,7 @@ function onKeydown(event: KeyboardEvent): void {
                 class="wav-dither"
                 :disabled="busy || model.wavBitDepth !== 16"
               />
-              Dither
+              {{ t.dialogs.exportAudio.dither }}
             </label>
           </div>
           <div v-if="model.encoderId === MP3_ENCODER_ID" class="format-options mp3-options">
@@ -327,27 +335,29 @@ function onKeydown(event: KeyboardEvent): void {
               size="sm"
               :options="mp3BitrateOptions"
               :disabled="busy"
-              aria-label="Bitrate"
+              :aria-label="t.dialogs.exportAudio.bitrate"
             />
           </div>
         </div>
 
-        <label class="field-label" for="export-sample-rate">Sample rate</label>
+        <label class="field-label" for="export-sample-rate">
+          {{ t.dialogs.exportAudio.sampleRate }}
+        </label>
         <div class="field">
           <SelectMenu
             v-model="model.sampleRate"
             class="sample-rate-select"
             :options="sampleRateOptions"
             :disabled="busy"
-            aria-label="Sample rate"
+            :aria-label="t.dialogs.exportAudio.sampleRate"
           />
         </div>
 
-        <span class="field-label">Range</span>
-        <div class="field radio-row" role="radiogroup" aria-label="Range">
+        <span class="field-label">{{ t.dialogs.exportAudio.range }}</span>
+        <div class="field radio-row" role="radiogroup" :aria-label="t.dialogs.exportAudio.range">
           <label class="check-label">
             <input v-model="model.range" type="radio" value="project" class="range-project" :disabled="busy" />
-            Whole project
+            {{ t.dialogs.exportAudio.wholeProject }}
           </label>
           <label class="check-label" :class="{ disabled: !props.hasLoop }">
             <input
@@ -357,23 +367,23 @@ function onKeydown(event: KeyboardEvent): void {
               class="range-loop"
               :disabled="busy || !props.hasLoop"
             />
-            Loop region
+            {{ t.dialogs.exportAudio.loopRegion }}
           </label>
         </div>
 
-        <span class="field-label">Mode</span>
-        <div class="field radio-row" role="radiogroup" aria-label="Mode">
+        <span class="field-label">{{ t.dialogs.exportAudio.mode }}</span>
+        <div class="field radio-row" role="radiogroup" :aria-label="t.dialogs.exportAudio.mode">
           <label class="check-label">
             <input v-model="model.mode" type="radio" value="mixdown" class="mode-mixdown" :disabled="busy" />
-            Mixdown
+            {{ t.dialogs.exportAudio.mixdown }}
           </label>
           <label class="check-label">
             <input v-model="model.mode" type="radio" value="stems" class="mode-stems" :disabled="busy" />
-            Stems (one file per track)
+            {{ t.dialogs.exportAudio.stems }}
           </label>
         </div>
 
-        <span class="field-label">Master chain</span>
+        <span class="field-label">{{ t.dialogs.exportAudio.masterChain }}</span>
         <div class="field">
           <label class="check-label">
             <input
@@ -382,11 +392,13 @@ function onKeydown(event: KeyboardEvent): void {
               class="include-master-chain"
               :disabled="busy"
             />
-            Apply master inserts, EQ and mastering chain
+            {{ t.dialogs.exportAudio.includeMasterChain }}
           </label>
         </div>
 
-        <label class="field-label" for="export-filename">Filename</label>
+        <label class="field-label" for="export-filename">
+          {{ t.dialogs.exportAudio.filename }}
+        </label>
         <div class="field">
           <input
             id="export-filename"
@@ -408,23 +420,27 @@ function onKeydown(event: KeyboardEvent): void {
         <div class="progress-track">
           <div class="progress-fill" :style="{ width: `${Math.round(progress * 100)}%` }" />
         </div>
-        <span class="progress-stage">{{ stage }}</span>
-        <button type="button" class="cancel-render" @click="onCancelRender">Cancel</button>
+        <span class="progress-stage">{{ progressStageLabel }}</span>
+        <button type="button" class="cancel-render" @click="onCancelRender">
+          {{ t.dialogs.exportAudio.cancel }}
+        </button>
       </div>
 
-      <p v-if="cancelled" class="export-cancelled" role="status">Export cancelled.</p>
+      <p v-if="cancelled" class="export-cancelled" role="status">
+        {{ t.dialogs.exportAudio.cancelled }}
+      </p>
 
       <div v-if="report" class="export-report" role="status">
-        <h3 class="report-title">Loudness report</h3>
+        <h3 class="report-title">{{ t.dialogs.exportAudio.loudnessReport }}</h3>
         <dl class="report-grid">
-          <dt>Peak</dt>
+          <dt>{{ t.dialogs.exportAudio.peak }}</dt>
           <dd class="report-peak">{{ formatLevel(report.peakDb) }} dBFS</dd>
           <template v-if="report.truePeakDb !== undefined">
-            <dt>True peak</dt>
+            <dt>{{ t.dialogs.exportAudio.truePeak }}</dt>
             <dd class="report-true-peak">{{ formatLevel(report.truePeakDb) }} dBTP</dd>
           </template>
           <template v-if="report.lufs !== undefined">
-            <dt>Loudness</dt>
+            <dt>{{ t.dialogs.exportAudio.loudness }}</dt>
             <dd class="report-lufs">{{ formatLevel(report.lufs) }} LUFS</dd>
           </template>
         </dl>
@@ -433,9 +449,11 @@ function onKeydown(event: KeyboardEvent): void {
       <p v-if="errorMessage" class="dialog-error" role="alert">{{ errorMessage }}</p>
 
       <div class="dialog-actions">
-        <button type="button" class="close-button" :disabled="busy" @click="onClose">Close</button>
+        <button type="button" class="close-button" :disabled="busy" @click="onClose">
+          {{ t.dialogs.exportAudio.close }}
+        </button>
         <button type="button" class="primary export-button" :disabled="!canExport" @click="onExport">
-          Export
+          {{ t.dialogs.exportAudio.export }}
         </button>
       </div>
     </div>

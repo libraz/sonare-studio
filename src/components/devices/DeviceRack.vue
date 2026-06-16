@@ -10,7 +10,6 @@ import { getWasmModule, useProjectStore } from '@/project/store';
 import {
   insertCategory,
   insertLabel,
-  instrumentKindLabel,
   instrumentLabel,
   patchBaseLabel,
 } from '@/ui/devices/device-labels';
@@ -22,6 +21,7 @@ import {
   clampProgram,
   createSf2Selection,
 } from '@/ui/devices/sf2-model';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import PatchEditor from './PatchEditor.vue';
 import QuickControls from './QuickControls.vue';
 
@@ -46,6 +46,7 @@ withDefaults(
 );
 
 const store = useProjectStore();
+const { t } = useI18n();
 
 /** Surfaced when a command or font operation rejects. */
 const error = ref('');
@@ -262,10 +263,18 @@ const patchSummary = computed(() => {
   const current = instrument.value;
   if (current?.kind === 'synth-patch') {
     const edits = patchEditCount(current.patch);
-    return `${patchBaseLabel(current.patch)} · ${edits} ${edits === 1 ? 'edit' : 'edits'}`;
+    const editText = formatMessage(
+      edits === 1
+        ? t.value.shell.devicesPanel.editCount
+        : t.value.shell.devicesPanel.editCountPlural,
+      { count: String(edits) },
+    );
+    return `${patchBaseLabel(current.patch)} · ${editText}`;
   }
-  if (current?.kind === 'synth-preset') return `${current.preset} · unedited`;
-  return 'No synth patch';
+  if (current?.kind === 'synth-preset') {
+    return `${current.preset} · ${t.value.shell.devicesPanel.unedited}`;
+  }
+  return t.value.shell.devicesPanel.noSynthPatch;
 });
 
 function openPatchEditor(): void {
@@ -316,7 +325,7 @@ const addInsertValue = ref(ADD_INSERT_PLACEHOLDER);
 
 /** Add-insert picker options: placeholder prompt plus the runtime catalog. */
 const addInsertOptions = computed<{ value: string; label: string; disabled?: boolean }[]>(() => [
-  { value: ADD_INSERT_PLACEHOLDER, label: '+ Add insert…', disabled: true },
+  { value: ADD_INSERT_PLACEHOLDER, label: t.value.shell.devicesPanel.addInsert, disabled: true },
   ...insertCatalog.value.map((name) => ({
     value: name,
     label: `${insertLabel(name)} (${insertCategory(name) || name})`,
@@ -355,37 +364,50 @@ function onRemoveInsert(index: number): void {
 function selectInsert(index: number): void {
   selectedDevice.value = index;
 }
+
+function displayInstrumentKind(): string {
+  const current = instrument.value;
+  if (current?.kind === 'synth-preset') return t.value.shell.devicesPanel.kindPreset;
+  if (current?.kind === 'synth-patch') return t.value.shell.devicesPanel.kindPatch;
+  if (current?.kind === 'sf2') return t.value.shell.devicesPanel.kindSf2;
+  return '';
+}
 </script>
 
 <template>
-  <section class="device-rack" aria-label="Device rack">
+  <section class="device-rack" :aria-label="t.shell.devicesPanel.rackLabel">
     <header class="rack-header">
-      <h3 class="rack-title">Devices</h3>
-      <span class="rack-track">{{ activeTrack?.name ?? 'No track' }}</span>
+      <h3 class="rack-title">{{ t.shell.devicesPanel.title }}</h3>
+      <span class="rack-track">{{ activeTrack?.name ?? t.shell.devicesPanel.noTrack }}</span>
     </header>
     <p v-if="error" class="rack-error" role="alert">{{ error }}</p>
 
-    <p v-if="!activeTrack" class="rack-empty">Select a track to edit its devices.</p>
+    <p v-if="!activeTrack" class="rack-empty">{{ t.shell.devicesPanel.empty }}</p>
     <template v-else>
       <div v-if="instrument" ref="pickerRoot" class="instrument-slot">
         <button
           type="button"
           class="instrument-button"
           :class="{ selected: selectedDevice === 'instrument' }"
-          :title="'Change instrument'"
+          :title="t.shell.devicesPanel.changeInstrument"
           aria-haspopup="dialog"
           :aria-expanded="pickerOpen"
           @click="onInstrumentClick"
         >
-          <span class="instrument-kind">{{ instrumentKindLabel(instrument) }}</span>
+          <span class="instrument-kind">{{ displayInstrumentKind() }}</span>
           <span class="instrument-name">{{ instrumentCaption }}</span>
           <span class="instrument-caret" aria-hidden="true">▾</span>
         </button>
         <p v-if="transportPlaying" class="instrument-gate-hint">
-          Instrument changes apply when playback stops.
+          {{ t.shell.devicesPanel.instrumentGateHint }}
         </p>
 
-        <div v-if="pickerOpen" class="instrument-picker" role="dialog" aria-label="Instrument picker">
+        <div
+          v-if="pickerOpen"
+          class="instrument-picker"
+          role="dialog"
+          :aria-label="t.shell.devicesPanel.instrumentPicker"
+        >
           <div class="picker-tabs" role="tablist">
             <button
               type="button"
@@ -395,7 +417,7 @@ function selectInsert(index: number): void {
               :class="{ active: pickerTab === 'presets' }"
               @click="openTab('presets')"
             >
-              Presets
+              {{ t.shell.devicesPanel.presets }}
             </button>
             <button
               type="button"
@@ -405,7 +427,7 @@ function selectInsert(index: number): void {
               :class="{ active: pickerTab === 'sf2' }"
               @click="openTab('sf2')"
             >
-              SF2
+              {{ t.shell.devicesPanel.sf2 }}
             </button>
             <button
               type="button"
@@ -415,7 +437,7 @@ function selectInsert(index: number): void {
               :class="{ active: pickerTab === 'patch' }"
               @click="openTab('patch')"
             >
-              Patch
+              {{ t.shell.devicesPanel.patch }}
             </button>
           </div>
 
@@ -424,11 +446,13 @@ function selectInsert(index: number): void {
               v-model="presetQuery"
               class="preset-search"
               type="search"
-              placeholder="Search presets…"
-              aria-label="Search presets"
+              :placeholder="t.shell.devicesPanel.searchPresets"
+              :aria-label="t.shell.devicesPanel.searchPresets"
             />
-            <p v-if="filteredPresets.length === 0" class="picker-empty">No matching presets</p>
-            <ul v-else class="preset-list" role="listbox" aria-label="Synth presets">
+            <p v-if="filteredPresets.length === 0" class="picker-empty">
+              {{ t.shell.devicesPanel.noMatchingPresets }}
+            </p>
+            <ul v-else class="preset-list" role="listbox" :aria-label="t.shell.devicesPanel.synthPresets">
               <li v-for="preset in filteredPresets" :key="preset">
                 <button
                   type="button"
@@ -446,9 +470,18 @@ function selectInsert(index: number): void {
           </div>
 
           <div v-else-if="pickerTab === 'sf2'" class="picker-body">
-            <p v-if="fontsLoading" class="picker-empty">Loading fonts…</p>
-            <p v-else-if="fonts.length === 0" class="picker-empty">No stored SoundFonts</p>
-            <ul v-else class="font-list" role="listbox" aria-label="Stored SoundFonts">
+            <p v-if="fontsLoading" class="picker-empty">
+              {{ t.shell.devicesPanel.loadingFonts }}
+            </p>
+            <p v-else-if="fonts.length === 0" class="picker-empty">
+              {{ t.shell.devicesPanel.noStoredSoundFonts }}
+            </p>
+            <ul
+              v-else
+              class="font-list"
+              role="listbox"
+              :aria-label="t.shell.devicesPanel.storedSoundFonts"
+            >
               <li v-for="font in fonts" :key="font.id">
                 <button
                   type="button"
@@ -464,7 +497,7 @@ function selectInsert(index: number): void {
             </ul>
             <div class="sf2-numbers">
               <label class="sf2-field">
-                <span>Bank</span>
+                <span>{{ t.shell.devicesPanel.bank }}</span>
                 <input
                   class="sf2-bank"
                   type="number"
@@ -475,7 +508,7 @@ function selectInsert(index: number): void {
                 />
               </label>
               <label class="sf2-field">
-                <span>Program</span>
+                <span>{{ t.shell.devicesPanel.program }}</span>
                 <input
                   class="sf2-program"
                   type="number"
@@ -488,7 +521,7 @@ function selectInsert(index: number): void {
             </div>
             <div class="sf2-actions">
               <label class="load-sf2">
-                Load .sf2…
+                {{ t.shell.devicesPanel.loadSf2 }}
                 <input
                   ref="sf2FileInput"
                   class="load-sf2-input"
@@ -503,14 +536,16 @@ function selectInsert(index: number): void {
                 :disabled="sf2Selection.fontId === null"
                 @click="useSf2"
               >
-                Use SoundFont
+                {{ t.shell.devicesPanel.useSoundFont }}
               </button>
             </div>
           </div>
 
           <div v-else class="picker-body">
             <p class="patch-summary">{{ patchSummary }}</p>
-            <button type="button" class="edit-patch" @click="openPatchEditor">Edit patch…</button>
+            <button type="button" class="edit-patch" @click="openPatchEditor">
+              {{ t.shell.devicesPanel.editPatch }}
+            </button>
           </div>
         </div>
       </div>
@@ -527,13 +562,13 @@ function selectInsert(index: number): void {
       />
 
       <div class="rack-quick-controls">
-        <h4 class="chain-title">Quick controls</h4>
+        <h4 class="chain-title">{{ t.shell.devicesPanel.quickControls }}</h4>
         <QuickControls
           v-if="quickControlTarget"
           :key="quickControlKey"
           :target="quickControlTarget"
         />
-        <p v-else class="chain-empty">No device selected</p>
+        <p v-else class="chain-empty">{{ t.shell.devicesPanel.noDeviceSelected }}</p>
       </div>
 
       <PatchEditor

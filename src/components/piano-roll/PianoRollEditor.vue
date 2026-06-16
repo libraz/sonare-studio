@@ -21,6 +21,7 @@ import { useProjectStore } from '@/project/store';
 import type { ClipCcPoint } from '@/project/types';
 import { createPainter } from '@/ui/canvas/painter';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
+import { useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 import CcLane from './CcLane.vue';
 import { createNoteExtentCache } from './content-extent';
@@ -60,6 +61,7 @@ const props = defineProps<{
 }>();
 
 const store = useProjectStore();
+const { t } = useI18n();
 
 /** Initialization/runtime error surfaced above the editor. */
 const error = ref('');
@@ -177,23 +179,32 @@ const HUMANIZE_VELOCITY_AMOUNT = 12;
 /** Selection-wide note operations shared by the note and empty-space menus. */
 function selectionOpItems(): ContextMenuItem[] {
   return [
-    { id: 'quantize', label: 'Quantize starts', hint: 'Q', run: () => quantizeSelection() },
-    { id: 'quantize-len', label: 'Quantize lengths', run: () => quantizeSelectionLengths() },
+    {
+      id: 'quantize',
+      label: t.value.shell.pianoRoll.context.quantizeStarts,
+      hint: 'Q',
+      run: () => quantizeSelection(),
+    },
+    {
+      id: 'quantize-len',
+      label: t.value.shell.pianoRoll.context.quantizeLengths,
+      run: () => quantizeSelectionLengths(),
+    },
     {
       id: 'transpose-up',
-      label: 'Transpose +1 octave',
+      label: t.value.shell.pianoRoll.context.transposeUpOctave,
       hint: '⇧⌘↑',
       run: () => transposeSelection(12),
     },
     {
       id: 'transpose-down',
-      label: 'Transpose −1 octave',
+      label: t.value.shell.pianoRoll.context.transposeDownOctave,
       hint: '⇧⌘↓',
       run: () => transposeSelection(-12),
     },
     {
       id: 'humanize',
-      label: 'Humanize velocity',
+      label: t.value.shell.pianoRoll.context.humanizeVelocity,
       run: () => humanizeSelectionVelocity(HUMANIZE_VELOCITY_AMOUNT),
     },
   ];
@@ -217,7 +228,7 @@ function onNoteContext(payload: {
       items.push(
         {
           id: 'split',
-          label: 'Split here',
+          label: t.value.shell.pianoRoll.context.splitHere,
           hint: '3',
           disabled: !canSplit,
           run: () => setSelection([splitNote(note.id, splitPpq)]),
@@ -226,7 +237,7 @@ function onNoteContext(payload: {
         { id: 'sep-1', separator: true },
         {
           id: 'delete',
-          label: 'Delete',
+          label: t.value.shell.pianoRoll.context.delete,
           danger: true,
           hint: 'Del',
           run: () => deleteNotes([note.id]),
@@ -453,7 +464,7 @@ onBeforeUnmount(() => {
     ref="root"
     class="piano-roll-editor"
     tabindex="0"
-    aria-label="Piano roll editor"
+    :aria-label="t.shell.pianoRoll.editor"
     @keydown="onKeyDown"
     @wheel.prevent="onWheel"
     @pointerdown="onRootPointerDown"
@@ -462,7 +473,7 @@ onBeforeUnmount(() => {
     <div class="roll-toolbar">
       <label class="overlay-toggle">
         <input v-model="overlayEnabled" type="checkbox" />
-        Overlay
+        {{ t.shell.pianoRoll.overlay }}
       </label>
       <div class="track-legend">
         <button
@@ -478,13 +489,13 @@ onBeforeUnmount(() => {
           <span class="chip-name">{{ track.name }}</span>
         </button>
       </div>
-      <div class="zoom-cluster" role="group" aria-label="Zoom">
+      <div class="zoom-cluster" role="group" :aria-label="t.shell.pianoRoll.zoom">
         <span class="zoom-pair">
           <button
             type="button"
             class="zoom-btn"
-            title="Zoom out (time)"
-            aria-label="Zoom out horizontally"
+            :title="t.shell.pianoRoll.zoomOutTimeTitle"
+            :aria-label="t.shell.pianoRoll.zoomOutHorizontal"
             @click="zoomHorizontal(1 / ZOOM_BUTTON_STEP)"
           >
             ↔−
@@ -492,8 +503,8 @@ onBeforeUnmount(() => {
           <button
             type="button"
             class="zoom-btn"
-            title="Zoom in (time)"
-            aria-label="Zoom in horizontally"
+            :title="t.shell.pianoRoll.zoomInTimeTitle"
+            :aria-label="t.shell.pianoRoll.zoomInHorizontal"
             @click="zoomHorizontal(ZOOM_BUTTON_STEP)"
           >
             ↔+
@@ -503,8 +514,8 @@ onBeforeUnmount(() => {
           <button
             type="button"
             class="zoom-btn"
-            title="Zoom out (pitch)"
-            aria-label="Zoom out vertically"
+            :title="t.shell.pianoRoll.zoomOutPitchTitle"
+            :aria-label="t.shell.pianoRoll.zoomOutVertical"
             @click="zoomVertical(1 / ZOOM_BUTTON_STEP)"
           >
             ↕−
@@ -512,8 +523,8 @@ onBeforeUnmount(() => {
           <button
             type="button"
             class="zoom-btn"
-            title="Zoom in (pitch)"
-            aria-label="Zoom in vertically"
+            :title="t.shell.pianoRoll.zoomInPitchTitle"
+            :aria-label="t.shell.pianoRoll.zoomInVertical"
             @click="zoomVertical(ZOOM_BUTTON_STEP)"
           >
             ↕+
@@ -526,10 +537,10 @@ onBeforeUnmount(() => {
         :class="{ 'fx-toggle-active': fxPanelOpen }"
         :disabled="!canTransform"
         :aria-expanded="fxPanelOpen"
-        title="MIDI transform (transpose, quantize, velocity, humanize, harmonize)"
+        :title="t.shell.pianoRoll.midiFxTitle"
         @click="toggleFxPanel"
       >
-        MIDI FX
+        {{ t.shell.pianoRoll.midiFx }}
       </button>
       <MidiFxPanel
         v-if="fxPanelOpen && canTransform"
@@ -568,7 +579,11 @@ onBeforeUnmount(() => {
       >
         <div class="scroll-thumb scroll-thumb-v" :style="vThumbStyle" />
       </div>
-      <div class="cell-velocity-label" role="tablist" aria-label="Note lane parameter">
+      <div
+        class="cell-velocity-label"
+        role="tablist"
+        :aria-label="t.shell.pianoRoll.noteLaneParameter"
+      >
         <button
           v-for="laneSpec in LANE_PARAMS"
           :key="laneSpec.id"

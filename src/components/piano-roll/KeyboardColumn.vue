@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
+import { useI18n } from '@/ui/i18n';
 import { getCanvasContext, isBlackKey, PIANO_ROLL_COLORS, setupCanvas } from './theme';
 
 /**
@@ -21,6 +22,7 @@ const props = defineProps<{
 
 const wrapper = ref<HTMLDivElement | null>(null);
 const canvas = ref<HTMLCanvasElement | null>(null);
+const { t } = useI18n();
 
 /** Unique painter layer suffix so several editors can share one painter. */
 const layerId = Math.random().toString(36).slice(2, 8);
@@ -114,7 +116,7 @@ watch(
 
 <template>
   <div ref="wrapper" class="keyboard-column">
-    <canvas ref="canvas" class="keyboard-canvas" role="img" aria-label="Piano keyboard" />
+    <canvas ref="canvas" class="keyboard-canvas" role="img" :aria-label="t.shell.pianoRoll.keyboard" />
   </div>
 </template>
 

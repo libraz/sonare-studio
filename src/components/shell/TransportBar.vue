@@ -1,14 +1,16 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import LevelMeter from '@/components/LevelMeter.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import TransportIcon from '@/components/shell/TransportIcon.vue';
 import type { useRecording } from '@/composables/useRecording';
 import type { EngineHandle } from '@/engine/engine';
 import type { MeterBridge } from '@/engine/meters';
+import { formatMessage, useI18n } from '@/ui/i18n';
 
 type Recording = ReturnType<typeof useRecording>;
 
-defineProps<{
+const props = defineProps<{
   autoPunchEnabled: boolean;
   bbtDisplay: string;
   bridge: MeterBridge | null;
@@ -47,17 +49,31 @@ const emit = defineEmits<{
   updateRecordMenuOpen: [open: boolean];
   updateTempoInput: [value: number];
 }>();
+
+const { t } = useI18n();
+
+const countInOptions = computed(() =>
+  props.countInChoices.map((choice) => ({
+    value: choice.value,
+    label:
+      choice.value === 0
+        ? t.value.shell.transport.countInOff
+        : choice.value === 1
+          ? t.value.shell.transport.countInOne
+          : formatMessage(t.value.shell.transport.countInMany, { count: String(choice.value) }),
+  })),
+);
 </script>
 
 <template>
-  <footer class="transport-bar" aria-label="Transport">
-    <div class="transport-cluster" role="group" aria-label="Transport">
+  <footer class="transport-bar" :aria-label="t.shell.transport.label">
+    <div class="transport-cluster" role="group" :aria-label="t.shell.transport.label">
       <button
         type="button"
         class="transport-nav"
         :disabled="!handle"
-        aria-label="Go to start"
-        title="Go to start (Home)"
+        :aria-label="t.shell.transport.goToStart"
+        :title="t.shell.transport.goToStartTitle"
         @click="emit('seekToStart')"
       >
         <TransportIcon name="to-start" />
@@ -66,8 +82,8 @@ const emit = defineEmits<{
         type="button"
         class="transport-nav"
         :disabled="!handle"
-        aria-label="Nudge back one bar"
-        title="Nudge back one bar (,)"
+        :aria-label="t.shell.transport.nudgeBack"
+        :title="t.shell.transport.nudgeBackTitle"
         @click="emit('nudgeByBar', -1)"
       >
         <TransportIcon name="rewind" />
@@ -76,8 +92,8 @@ const emit = defineEmits<{
         type="button"
         class="transport-nav"
         :disabled="!handle"
-        aria-label="Nudge forward one bar"
-        title="Nudge forward one bar (.)"
+        :aria-label="t.shell.transport.nudgeForward"
+        :title="t.shell.transport.nudgeForwardTitle"
         @click="emit('nudgeByBar', 1)"
       >
         <TransportIcon name="forward" />
@@ -86,8 +102,8 @@ const emit = defineEmits<{
         type="button"
         class="transport-nav"
         :disabled="!handle"
-        aria-label="Go to end"
-        title="Go to end (End)"
+        :aria-label="t.shell.transport.goToEnd"
+        :title="t.shell.transport.goToEndTitle"
         @click="emit('seekToEnd')"
       >
         <TransportIcon name="to-end" />
@@ -98,9 +114,9 @@ const emit = defineEmits<{
         class="transport-key cycle"
         :class="{ active: loopEnabled }"
         :disabled="!handle"
-        aria-label="Cycle"
+        :aria-label="t.shell.transport.cycle"
         :aria-pressed="loopEnabled"
-        :title="shortcutTitle('Cycle (loop between the L and R locators)', 'transport.toggleLoop')"
+        :title="shortcutTitle(t.shell.transport.cycleTitle, 'transport.toggleLoop')"
         @click="emit('toggleLoop')"
       >
         <TransportIcon name="cycle" />
@@ -109,8 +125,8 @@ const emit = defineEmits<{
         type="button"
         class="transport-key stop"
         :disabled="!handle || !isPlaying"
-        aria-label="Stop"
-        title="Stop (Space)"
+        :aria-label="t.shell.transport.stop"
+        :title="t.shell.transport.stopTitle"
         @click="emit('stopPlayback')"
       >
         <TransportIcon name="stop" />
@@ -120,9 +136,9 @@ const emit = defineEmits<{
         class="transport-key play"
         :class="{ active: isPlaying }"
         :disabled="!storeInitialized"
-        aria-label="Play"
+        :aria-label="t.shell.transport.play"
         :aria-pressed="isPlaying"
-        title="Play (Space) - boots the audio engine on first press"
+        :title="t.shell.transport.playTitle"
         @click="emit('startPlayback')"
       >
         <TransportIcon name="play" />
@@ -139,13 +155,13 @@ const emit = defineEmits<{
             recording: recording.isRecording.value,
             'counting-in': recording.isCountingIn.value,
           }"
-          aria-label="Record"
+          :aria-label="t.shell.transport.record"
           :aria-pressed="recording.isRecording.value"
           :disabled="!handle || (!recording.isRecording.value && recording.armedTrackId.value === null)"
           :title="
             recording.isRecording.value
-              ? 'Stop recording (the take lands as a clip)'
-              : 'Record onto the armed audio track'
+              ? t.shell.transport.recordStopTitle
+              : t.shell.transport.recordStartTitle
           "
           @click="emit('toggleRecord')"
         >
@@ -154,10 +170,10 @@ const emit = defineEmits<{
         <button
           type="button"
           class="record-settings"
-          aria-label="Recording settings"
+          :aria-label="t.shell.transport.recordingSettings"
           aria-haspopup="true"
           :aria-expanded="recordMenuOpen"
-          title="Recording settings"
+          :title="t.shell.transport.recordingSettings"
           @click="emit('updateRecordMenuOpen', !recordMenuOpen)"
         >
           <TransportIcon name="chevron-down" />
@@ -166,7 +182,7 @@ const emit = defineEmits<{
           v-if="recordMenuOpen"
           class="menu-pop record-pop record-pop-up"
           role="group"
-          aria-label="Recording settings"
+          :aria-label="t.shell.transport.recordingSettings"
         >
           <label class="bar-field">
             <input
@@ -174,15 +190,15 @@ const emit = defineEmits<{
               :checked="recording.monitorEnabled.value"
               @change="recording.setMonitor(!recording.monitorEnabled.value)"
             />
-            Monitor input
+            {{ t.shell.transport.monitorInput }}
           </label>
           <label class="bar-field">
-            Count-in
+            {{ t.shell.transport.countIn }}
             <SelectMenu
               :model-value="recording.countInBars.value"
-              :options="countInChoices"
+              :options="countInOptions"
               size="sm"
-              aria-label="Count-in"
+              :aria-label="t.shell.transport.countIn"
               @change="emit('countInChange', $event)"
             />
           </label>
@@ -190,8 +206,8 @@ const emit = defineEmits<{
             class="bar-field"
             :title="
               hasLocatorWindow
-                ? 'Record only between the L and R locators (auto in/out)'
-                : 'Set the L and R locators first (auto in/out needs a window)'
+                ? t.shell.transport.autoPunchReadyTitle
+                : t.shell.transport.autoPunchNeedsWindowTitle
             "
           >
             <input
@@ -200,13 +216,13 @@ const emit = defineEmits<{
               :disabled="!hasLocatorWindow"
               @change="emit('toggleAutoPunch')"
             />
-            Auto-punch (locators)
+            {{ t.shell.transport.autoPunch }}
           </label>
         </div>
         <span
           v-if="recording.armedTrackId.value !== null"
           class="input-level"
-          title="Microphone input level"
+          :title="t.shell.transport.inputLevel"
         >
           <span
             class="input-level-fill"
@@ -216,9 +232,9 @@ const emit = defineEmits<{
       </div>
     </div>
 
-    <div class="transport-module" role="group" aria-label="Tempo and metronome">
-      <span class="module-cap">Tempo</span>
-      <label class="tempo-field" aria-label="Tempo in beats per minute">
+    <div class="transport-module" role="group" :aria-label="t.shell.transport.tempoGroup">
+      <span class="module-cap">{{ t.shell.transport.tempo }}</span>
+      <label class="tempo-field" :aria-label="t.shell.transport.tempoLabel">
         <input
           :value="tempoInput"
           type="number"
@@ -237,24 +253,24 @@ const emit = defineEmits<{
         class="click-toggle"
         :class="{ active: metronomeEnabled }"
         :disabled="!handle"
-        aria-label="Metronome click"
+        :aria-label="t.shell.transport.metronome"
         :aria-pressed="metronomeEnabled"
-        title="Metronome click"
+        :title="t.shell.transport.metronome"
         @click="emit('toggleMetronome')"
       >
         <TransportIcon name="metronome" />
       </button>
     </div>
 
-    <div class="transport-module" role="group" aria-label="Loop locators">
-      <span class="module-cap">Loc</span>
+    <div class="transport-module" role="group" :aria-label="t.shell.transport.locatorsGroup">
+      <span class="module-cap">{{ t.shell.transport.locators }}</span>
       <div class="locator-group">
         <button
           type="button"
           class="transport-nav locator"
           :disabled="!handle"
-          aria-label="Set left locator to playhead"
-          :title="shortcutTitle('Set left locator to the playhead', 'transport.setLeftLocator')"
+          :aria-label="t.shell.transport.setLeftLocator"
+          :title="shortcutTitle(t.shell.transport.setLeftLocatorTitle, 'transport.setLeftLocator')"
           @click="emit('setLeftLocator')"
         >
           L
@@ -263,8 +279,10 @@ const emit = defineEmits<{
           type="button"
           class="transport-nav locator"
           :disabled="!handle"
-          aria-label="Set right locator to playhead"
-          :title="shortcutTitle('Set right locator to the playhead', 'transport.setRightLocator')"
+          :aria-label="t.shell.transport.setRightLocator"
+          :title="
+            shortcutTitle(t.shell.transport.setRightLocatorTitle, 'transport.setRightLocator')
+          "
           @click="emit('setRightLocator')"
         >
           R
@@ -274,11 +292,11 @@ const emit = defineEmits<{
         v-if="autoPunchEnabled"
         type="button"
         class="punch-indicator"
-        aria-label="Auto-punch armed"
-        title="Auto-punch armed - recording opens at L and stops at R. Click to disarm."
+        :aria-label="t.shell.transport.autoPunchArmed"
+        :title="t.shell.transport.autoPunchArmedTitle"
         @click="emit('toggleAutoPunch')"
       >
-        PUNCH
+        {{ t.shell.transport.punch }}
       </button>
     </div>
 
@@ -286,15 +304,15 @@ const emit = defineEmits<{
 
     <div class="time-display" :class="{ playing: isPlaying }">
       <div class="time-register time-primary">
-        <span class="time-cap">Bars</span>
+        <span class="time-cap">{{ t.shell.transport.bars }}</span>
         <input
           class="position-bbt"
           type="text"
           inputmode="numeric"
           spellcheck="false"
           :value="bbtDisplay"
-          aria-label="Playhead position in bars, beats, sixteenths and ticks"
-          title="Bar.Beat.Sixteenth.Tick - type a position and press Enter to move the playhead"
+          :aria-label="t.shell.transport.playheadPosition"
+          :title="t.shell.transport.playheadPositionTitle"
           @focus="emit('bbtFocus')"
           @input="emit('updateBbtDraft', ($event.target as HTMLInputElement).value)"
           @keydown.enter="($event.target as HTMLInputElement).blur()"
@@ -302,7 +320,7 @@ const emit = defineEmits<{
         />
       </div>
       <div class="time-register time-secondary">
-        <span class="time-cap">Time</span>
+        <span class="time-cap">{{ t.shell.transport.time }}</span>
         <span class="position-seconds">{{ positionSeconds.toFixed(2) }}s</span>
       </div>
     </div>

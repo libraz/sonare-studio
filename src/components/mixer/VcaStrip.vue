@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import { removeVcaGroup, setVcaGroupGain } from '@/project/commands';
 import type { VcaGroup } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import { formatDb } from '@/ui/mixer/db-scale';
 import MixerFader from './MixerFader.vue';
 
@@ -19,6 +20,7 @@ const props = defineProps<{
 }>();
 
 const store = useProjectStore();
+const { t } = useI18n();
 
 const gainDb = computed(() => props.group.gainDb);
 
@@ -39,13 +41,13 @@ function onRemove(): void {
 <template>
   <div class="vca-strip">
     <div class="vca-header">
-      <span class="vca-tag">VCA</span>
+      <span class="vca-tag">{{ t.shell.mixer.strip.vca }}</span>
       <span class="vca-name" :title="props.group.name">{{ props.group.name }}</span>
       <button
         type="button"
         class="vca-remove"
-        title="Remove VCA group (members are unassigned)"
-        :aria-label="`Remove VCA group ${props.group.name}`"
+        :title="t.shell.mixer.strip.removeVcaTitle"
+        :aria-label="formatMessage(t.shell.mixer.strip.removeVca, { name: props.group.name })"
         @click="onRemove"
       >
         ×
@@ -55,7 +57,9 @@ function onRemove(): void {
       <MixerFader :value-db="gainDb" :height="120" @change="onFaderChange" />
     </div>
     <span class="vca-readout">{{ formatDb(gainDb) }} dB</span>
-    <span class="vca-members">{{ memberCount }} ch</span>
+    <span class="vca-members">
+      {{ formatMessage(t.shell.mixer.strip.channelCount, { count: memberCount }) }}
+    </span>
   </div>
 </template>
 

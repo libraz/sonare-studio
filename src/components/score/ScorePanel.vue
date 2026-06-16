@@ -28,6 +28,7 @@ import {
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { MAJOR_MODE_MASK } from '@/project/types';
+import { useI18n } from '@/ui/i18n';
 import {
   SCORE_PAGE_FORMATS,
   type ScoreLayoutSettings,
@@ -62,6 +63,7 @@ const emit = defineEmits<{
 }>();
 
 const store = useProjectStore();
+const { t } = useI18n();
 
 /** Delay after the last note edit before the score is re-transcribed. */
 const RETRANSCRIBE_DEBOUNCE_MS = 600;
@@ -688,87 +690,102 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="score-panel">
-    <div class="score-toolbar" role="toolbar" aria-label="Score tools">
-      <label class="bar-field" title="Display quantize: changes the engraved view only, never the MIDI data">
+    <div class="score-toolbar" role="toolbar" :aria-label="t.shell.score.tools">
+      <label class="bar-field" :title="t.shell.score.displayQuantizeTitle">
         DQ
-        <SelectMenu v-model="dqKey" :options="dqOptions" aria-label="Display quantize" size="sm" />
+        <SelectMenu
+          v-model="dqKey"
+          :options="dqOptions"
+          :aria-label="t.shell.score.displayQuantize"
+          size="sm"
+        />
       </label>
-      <button type="button" :disabled="loading" title="Re-transcribe the clip (non-destructive)" @click="transcribe">
-        Transcribe
+      <button
+        type="button"
+        :disabled="loading"
+        :title="t.shell.score.transcribeTitle"
+        @click="transcribe"
+      >
+        {{ t.shell.score.transcribe }}
       </button>
-      <button type="button" :disabled="loading || pageCount === 0" title="Re-render the current page" @click="refresh">
-        Refresh
+      <button
+        type="button"
+        :disabled="loading || pageCount === 0"
+        :title="t.shell.score.refreshTitle"
+        @click="refresh"
+      >
+        {{ t.shell.score.refresh }}
       </button>
-      <label class="bar-field" title="Show estimated chord symbols above the staff">
+      <label class="bar-field" :title="t.shell.score.chordsTitle">
         <input v-model="chordsEnabled" type="checkbox" />
-        Chords
+        {{ t.shell.score.chords }}
       </label>
       <button
         type="button"
         :class="{ active: annotateEnabled }"
         :aria-pressed="annotateEnabled"
-        title="Annotate: click an engraved note to add dynamics, articulations and slurs (display-only, never changes MIDI)"
+        :title="t.shell.score.annotateTitle"
         @click="annotateEnabled = !annotateEnabled"
       >
-        Annotate
+        {{ t.shell.score.annotate }}
       </button>
       <div class="layout-host">
         <button type="button" aria-haspopup="true" :aria-expanded="layoutOpen" @click="layoutOpen = !layoutOpen">
-          Layout
+          {{ t.shell.score.layout }}
         </button>
         <div v-if="layoutOpen" class="layout-popover">
           <label class="layout-row">
-            Page
+            {{ t.shell.score.page }}
             <SelectMenu
               v-model="pageFormat"
               :options="pageFormatOptions"
-              aria-label="Page format"
+              :aria-label="t.shell.score.pageFormat"
               size="sm"
             />
           </label>
           <label class="layout-row">
-            Orientation
+            {{ t.shell.score.orientation }}
             <SelectMenu
               v-model="orientation"
               :options="ORIENTATION_OPTIONS"
-              aria-label="Orientation"
+              :aria-label="t.shell.score.orientation"
               size="sm"
             />
           </label>
           <label class="layout-row">
-            Margin (mm)
+            {{ t.shell.score.margin }}
             <input v-model.number="pageMarginMm" type="number" min="0" max="40" step="1" />
           </label>
           <label class="layout-row">
-            Scale (%)
+            {{ t.shell.score.scale }}
             <input v-model.number="scalePercent" type="number" min="20" max="100" step="5" />
           </label>
           <label class="layout-row">
-            Staff spacing
+            {{ t.shell.score.staffSpacing }}
             <input v-model.number="spacingStaff" type="number" min="0" max="48" step="1" />
           </label>
           <label
             class="layout-row"
-            title="Shifts the engraved pitches only — the MIDI notes are never changed"
+            :title="t.shell.score.transposeTitle"
           >
-            Transpose (st)
+            {{ t.shell.score.transpose }}
             <SelectMenu
               :model-value="store.displayTransposeSemitones"
               :options="transposeOptions"
-              aria-label="Display transpose"
+              :aria-label="t.shell.score.displayTranspose"
               size="sm"
               @change="onTransposeChange"
             />
           </label>
         </div>
       </div>
-      <div class="score-zoom" role="group" aria-label="Score zoom">
+      <div class="score-zoom" role="group" :aria-label="t.shell.score.zoom">
         <button
           type="button"
           class="score-zoom-btn"
           :disabled="viewZoom <= VIEW_ZOOM_MIN"
-          aria-label="Zoom out"
-          title="Zoom out"
+          :aria-label="t.shell.score.zoomOut"
+          :title="t.shell.score.zoomOut"
           @click="zoomView(1 / VIEW_ZOOM_STEP)"
         >
           −
@@ -778,15 +795,20 @@ onBeforeUnmount(() => {
           type="button"
           class="score-zoom-btn"
           :disabled="viewZoom >= VIEW_ZOOM_MAX"
-          aria-label="Zoom in"
-          title="Zoom in"
+          :aria-label="t.shell.score.zoomIn"
+          :title="t.shell.score.zoomIn"
           @click="zoomView(VIEW_ZOOM_STEP)"
         >
           +
         </button>
       </div>
       <span class="bar-spacer" />
-      <button type="button" :disabled="page <= 1 || loading" aria-label="Previous page" @click="gotoPage(page - 1)">
+      <button
+        type="button"
+        :disabled="page <= 1 || loading"
+        :aria-label="t.shell.score.previousPage"
+        @click="gotoPage(page - 1)"
+      >
         ◀
       </button>
       <span class="score-page-indicator" aria-live="polite">
@@ -795,13 +817,15 @@ onBeforeUnmount(() => {
       <button
         type="button"
         :disabled="page >= pageCount || loading"
-        aria-label="Next page"
+        :aria-label="t.shell.score.nextPage"
         @click="gotoPage(page + 1)"
       >
         ▶
       </button>
       <span class="bar-spacer" />
-      <button type="button" :disabled="exporting || pageCount === 0" @click="onPrint">Print</button>
+      <button type="button" :disabled="exporting || pageCount === 0" @click="onPrint">
+        {{ t.shell.score.print }}
+      </button>
       <button type="button" :disabled="exporting || pageCount === 0" @click="onExportPdf">PDF</button>
       <button type="button" :disabled="exporting || !currentXml" @click="onExportMusicXml">
         MusicXML
@@ -814,13 +838,13 @@ onBeforeUnmount(() => {
         ref="svgHost"
         class="score-body"
         role="img"
-        aria-label="Engraved score"
+        :aria-label="t.shell.score.engravedScore"
         :style="{ '--score-zoom': widthFactor }"
         @click="onSvgClick"
         v-html="svg"
       />
-      <div v-if="loading" class="score-loading">Engraving…</div>
-      <div v-else-if="!svg" class="score-empty">No score yet — press Transcribe.</div>
+      <div v-if="loading" class="score-loading">{{ t.shell.score.engraving }}</div>
+      <div v-else-if="!svg" class="score-empty">{{ t.shell.score.empty }}</div>
       <ScoreAnnotationPalette
         v-if="annotateEnabled && annotationNoteId !== null"
         :annotation="annotationCurrent"

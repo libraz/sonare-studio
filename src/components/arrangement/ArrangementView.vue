@@ -38,6 +38,7 @@ import {
 import { useTakeInteractions } from '@/ui/arrangement/use-take-interactions';
 import { createPainter } from '@/ui/canvas/painter';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
+import { useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 import ArrangementCanvas from './ArrangementCanvas.vue';
 import SectionLane from './SectionLane.vue';
@@ -86,6 +87,7 @@ const emit = defineEmits<{
 }>();
 
 const store = useProjectStore();
+const { t } = useI18n();
 
 /** Initialization/runtime error surfaced above the view. */
 const error = ref('');
@@ -435,7 +437,7 @@ onBeforeUnmount(() => {
         gridTemplateRows: `${SECTION_LANE_HEIGHT_PX}px 1fr`,
       }"
     >
-      <div class="cell-corner">SECTIONS</div>
+      <div class="cell-corner">{{ t.shell.arrangement.sections }}</div>
       <SectionLane class="cell-sections" :range="range" :revision="revision" @seek="onSeek" />
       <TrackHeaderList
         class="cell-headers"

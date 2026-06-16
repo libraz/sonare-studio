@@ -180,6 +180,71 @@
   --dur-3: 240ms; /* modal entrance */
 }
 
+:root[data-theme='dark'] {
+  --surface-0: #0b0d11;
+  --surface-1: #101216;
+  --surface-2: #14161b;
+  --surface-3: #1d2027;
+  --surface-4: #242832;
+  --surface-inset: #11141a;
+  --surface-selected: #1d314d;
+
+  --border: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(0, 0, 0, 0.85);
+  --border-subtle: rgba(255, 255, 255, 0.05);
+  --border-hi: rgba(255, 255, 255, 0.08);
+  --border-raised: rgba(255, 255, 255, 0.14);
+
+  --text-1: #e2e6ee;
+  --text-2: #c8cdd6;
+  --text-3: #8b93a3;
+  --text-4: #5b6270;
+
+  --accent: #60a5fa;
+  --accent-strong: #2453a8;
+  --accent-hover: #2f67c0;
+  --accent-active: #1d4389;
+  --accent-text: #ffffff;
+  --accent-muted: rgba(96, 165, 250, 0.24);
+  --accent-soft: rgba(96, 165, 250, 0.1);
+
+  --danger: #ef4444;
+  --danger-text: #ffb4b4;
+  --danger-surface: #3b1219;
+  --warning: #fbbf24;
+  --warning-text: #ffe2a3;
+  --warning-surface: #3a2a0d;
+  --success: #34d399;
+  --success-strong: #22c55e;
+
+  --glass-1: rgba(20, 22, 27, 0.58);
+  --glass-2: rgba(20, 22, 27, 0.72);
+  --glass-3: rgba(24, 27, 34, 0.88);
+  --glass-hairline: inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.36), 0 1px 3px rgba(0, 0, 0, 0.24);
+  --shadow-2: 0 2px 8px rgba(0, 0, 0, 0.42), 0 1px 2px rgba(0, 0, 0, 0.28);
+  --shadow-pop: 0 10px 30px rgba(0, 0, 0, 0.56), 0 2px 8px rgba(0, 0, 0, 0.34);
+  --shadow-modal: 0 24px 70px rgba(0, 0, 0, 0.68), 0 6px 20px rgba(0, 0, 0, 0.4);
+
+  --raise-hi: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  --sheen: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.06),
+    rgba(255, 255, 255, 0) 55%
+  );
+  --inset-well: inset 0 1px 2px rgba(0, 0, 0, 0.5);
+
+  --control-bg: var(--surface-2);
+  --control-bg-hover: var(--surface-4);
+  --control-bg-active: #0f1218;
+  --control-edge: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --control-edge-hover: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+
+  --ring: 0 0 0 3px rgba(96, 165, 250, 0.34);
+}
+
 /* Honour the OS reduced-motion preference: collapse all transitions. */
 @media (prefers-reduced-motion: reduce) {
   :root {

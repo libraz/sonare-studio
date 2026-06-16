@@ -1,5 +1,5 @@
 export function formatSavedAt(date: Date): string {
-  return `saved ${date.toLocaleTimeString()}`;
+  return date.toLocaleTimeString();
 }
 
 export function formatSize(bytes: number): string {

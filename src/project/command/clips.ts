@@ -19,7 +19,7 @@ import {
 } from '../types';
 import { sanitizeWarpAnchors } from '../warp';
 import { execute } from './history';
-import { requireClip, requireTrack, validatePpq, withAudioMetadata } from './utils';
+import { requireClip, requireTrack, validatePpq, withDerivedClipMetadata } from './utils';
 
 // ---------------------------------------------------------------------------
 // Clip commands
@@ -557,10 +557,12 @@ export function setClipCcLane(
     throw new RangeError(`CC channel must be an integer in [0, 15], got ${channel}`);
   }
   const sanitized = sanitizeCcPoints(points, clip.lengthPpq);
-  const others = (clip.ccLanes ?? []).filter((lane) => lane.controller !== controller);
+  const others = (clip.ccLanes ?? []).filter(
+    (lane) => lane.controller !== controller || lane.channel !== channel,
+  );
   const nextLanes: ClipCcLane[] =
     sanitized.length > 0 ? [...others, { controller, channel, points: sanitized }] : others;
-  nextLanes.sort((a, b) => a.controller - b.controller);
+  nextLanes.sort((a, b) => a.controller - b.controller || a.channel - b.channel);
   execute(0, () => {
     store.clips = store.clips.map((entry, i) => {
       if (i !== index) return entry;
@@ -649,7 +651,7 @@ export function duplicateClip(clipId: number, newStartPpq: number): number {
     const copyId = project.duplicateClip(clipId, newStartPpq);
     store.refresh();
     store.clips = store.clips.map((c) =>
-      c.id === copyId ? withAudioMetadata({ ...c, name }, sourceMeta) : c,
+      c.id === copyId ? withDerivedClipMetadata({ ...c, name }, sourceMeta) : c,
     );
     return copyId;
   });
@@ -683,9 +685,22 @@ export function splitClip(clipId: number, splitPpq: number): number {
   return execute(1, () => {
     const rightId = project.splitClip(clipId, splitPpq);
     store.refresh();
-    store.clips = store.clips.map((c) =>
-      c.id === rightId ? withAudioMetadata({ ...c, name }, sourceMeta) : c,
-    );
+    const splitOffsetPpq = splitPpq - source.startPpq;
+    store.clips = store.clips.map((c) => {
+      if (c.id === clipId) {
+        return withDerivedClipMetadata(c, sourceMeta, {
+          windowStartPpq: 0,
+          windowLengthPpq: c.lengthPpq,
+        });
+      }
+      if (c.id === rightId) {
+        return withDerivedClipMetadata({ ...c, name }, sourceMeta, {
+          windowStartPpq: splitOffsetPpq,
+          windowLengthPpq: c.lengthPpq,
+        });
+      }
+      return c;
+    });
     return rightId;
   });
 }
@@ -701,14 +716,24 @@ export function splitClip(clipId: number, splitPpq: number): number {
 export function trimClip(clipId: number, newStartPpq: number, newLengthPpq: number): void {
   const store = useProjectStore();
   const project = getProject();
-  requireClip(store, clipId);
+  const source = requireClip(store, clipId);
   validatePpq(newStartPpq, 'Clip startPpq');
   if (!Number.isFinite(newLengthPpq) || newLengthPpq <= 0) {
     throw new RangeError(`Clip lengthPpq must be finite and > 0, got ${newLengthPpq}`);
   }
+  const sourceMeta = { ...source };
   execute(1, () => {
     project.trimClip(clipId, newStartPpq, newLengthPpq);
     store.refresh();
+    const windowStartPpq = newStartPpq - source.startPpq;
+    store.clips = store.clips.map((c) =>
+      c.id === clipId
+        ? withDerivedClipMetadata(c, sourceMeta, {
+            windowStartPpq,
+            windowLengthPpq: c.lengthPpq,
+          })
+        : c,
+    );
   });
 }
 

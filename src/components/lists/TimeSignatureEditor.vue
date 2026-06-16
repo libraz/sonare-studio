@@ -4,6 +4,7 @@ import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { setTimeSignatures } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import type { TimeSignatureSegment } from '@/project/types';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import { barBeatFromPpq, formatBarBeat, parseBarBeat } from './bar-beat';
 import {
   MAX_TIME_SIGNATURE_NUMERATOR,
@@ -23,6 +24,7 @@ import {
  */
 
 const store = useProjectStore();
+const { t } = useI18n();
 
 /** Beat-unit picker options; values stay strings to match the draft rows. */
 const DENOMINATOR_OPTIONS = TIME_SIGNATURE_DENOMINATORS.map((denominator) => ({
@@ -109,7 +111,10 @@ function apply(): void {
     const startPpq = parseBarBeat(row.position, store.timeSignatures);
     if (startPpq === null) {
       issues.push(
-        `Row ${index + 1}: invalid position "${row.position}" (use bars.beats, e.g. 5.1)`,
+        formatMessage(t.value.shell.lists.common.rowInvalidPosition, {
+          row: index + 1,
+          position: row.position,
+        }),
       );
       return;
     }
@@ -121,7 +126,14 @@ function apply(): void {
   });
   if (issues.length === 0) {
     for (const issue of validateTimeSignatureRows(parsed)) {
-      issues.push(issue.row >= 0 ? `Row ${issue.row + 1}: ${issue.message}` : issue.message);
+      issues.push(
+        issue.row >= 0
+          ? formatMessage(t.value.shell.lists.common.rowIssue, {
+              row: issue.row + 1,
+              message: issue.message,
+            })
+          : issue.message,
+      );
     }
   }
   errors.value = issues;
@@ -136,10 +148,10 @@ function apply(): void {
     <table class="list-table">
       <thead>
         <tr>
-          <th scope="col">Position</th>
-          <th scope="col">Beats</th>
-          <th scope="col">Unit</th>
-          <th scope="col"><span class="visually-hidden">Actions</span></th>
+          <th scope="col">{{ t.shell.lists.columns.position }}</th>
+          <th scope="col">{{ t.shell.lists.columns.beats }}</th>
+          <th scope="col">{{ t.shell.lists.columns.unit }}</th>
+          <th scope="col"><span class="visually-hidden">{{ t.shell.lists.columns.actions }}</span></th>
         </tr>
       </thead>
       <tbody>
@@ -150,7 +162,7 @@ function apply(): void {
               class="cell-input"
               type="text"
               inputmode="decimal"
-              :aria-label="`Meter entry ${index + 1} position (bars.beats)`"
+              :aria-label="formatMessage(t.shell.lists.meter.entryPosition, { row: index + 1 })"
               @input="markDirty"
               @keydown.enter.prevent="apply"
               @keydown.esc.prevent="revert"
@@ -164,7 +176,7 @@ function apply(): void {
               min="1"
               :max="MAX_TIME_SIGNATURE_NUMERATOR"
               step="1"
-              :aria-label="`Meter entry ${index + 1} beats per bar`"
+              :aria-label="formatMessage(t.shell.lists.meter.entryBeats, { row: index + 1 })"
               @input="markDirty"
               @keydown.enter.prevent="apply"
               @keydown.esc.prevent="revert"
@@ -176,7 +188,7 @@ function apply(): void {
               class="cell-input cell-number"
               size="sm"
               :options="DENOMINATOR_OPTIONS"
-              :aria-label="`Meter entry ${index + 1} beat unit`"
+              :aria-label="formatMessage(t.shell.lists.meter.entryUnit, { row: index + 1 })"
               @change="markDirty"
             />
           </td>
@@ -184,7 +196,7 @@ function apply(): void {
             <button
               type="button"
               class="row-button"
-              :aria-label="`Delete meter entry ${index + 1}`"
+              :aria-label="formatMessage(t.shell.lists.meter.deleteEntry, { row: index + 1 })"
               @click="deleteRow(index)"
             >
               ✕
@@ -193,13 +205,17 @@ function apply(): void {
         </tr>
       </tbody>
     </table>
-    <p v-if="rows.length === 0" class="list-empty">No meter entries — add one below.</p>
+    <p v-if="rows.length === 0" class="list-empty">{{ t.shell.lists.meter.empty }}</p>
     <p v-for="error in errors" :key="error" class="list-error" role="alert">{{ error }}</p>
     <div class="list-actions">
-      <button type="button" @click="addRow">Add meter</button>
+      <button type="button" @click="addRow">{{ t.shell.lists.meter.add }}</button>
       <span class="list-spacer" />
-      <button type="button" :disabled="!dirty" @click="revert">Revert</button>
-      <button type="button" :disabled="!dirty" @click="apply">Apply</button>
+      <button type="button" :disabled="!dirty" @click="revert">
+        {{ t.shell.lists.common.revert }}
+      </button>
+      <button type="button" :disabled="!dirty" @click="apply">
+        {{ t.shell.lists.common.apply }}
+      </button>
     </div>
   </div>
 </template>

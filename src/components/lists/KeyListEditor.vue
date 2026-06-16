@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useProjectStore } from '@/project/store';
+import { useI18n } from '@/ui/i18n';
 import {
   KEY_MODE_CHOICES,
   keyLabel,
@@ -22,6 +23,7 @@ import {
  */
 
 const store = useProjectStore();
+const { t } = useI18n();
 
 /** Sentinel select value shown when the mask matches no diatonic mode. */
 const CUSTOM_MODE = 'custom';
@@ -66,7 +68,11 @@ const modeOptions = computed(() => {
     (choice) => ({ value: choice.id, label: choice.label }),
   );
   if (modeId.value === CUSTOM_MODE) {
-    choices.push({ value: CUSTOM_MODE, label: 'Custom scale', disabled: true });
+    choices.push({
+      value: CUSTOM_MODE,
+      label: t.value.shell.lists.key.customScale,
+      disabled: true,
+    });
   }
   return choices;
 });
@@ -77,9 +83,9 @@ const modeOptions = computed(() => {
     <table class="list-table">
       <thead>
         <tr>
-          <th scope="col">Root</th>
-          <th scope="col">Mode</th>
-          <th scope="col">Highlight</th>
+          <th scope="col">{{ t.shell.lists.columns.root }}</th>
+          <th scope="col">{{ t.shell.lists.columns.mode }}</th>
+          <th scope="col">{{ t.shell.lists.columns.highlight }}</th>
         </tr>
       </thead>
       <tbody>
@@ -89,7 +95,7 @@ const modeOptions = computed(() => {
               v-model="rootPc"
               :options="rootOptions"
               class="cell-input cell-number"
-              aria-label="Key root"
+              :aria-label="t.shell.lists.key.root"
               size="sm"
             />
           </td>
@@ -98,7 +104,7 @@ const modeOptions = computed(() => {
               v-model="modeId"
               :options="modeOptions"
               class="cell-input"
-              aria-label="Key mode"
+              :aria-label="t.shell.lists.key.mode"
               size="sm"
             />
           </td>
@@ -106,17 +112,14 @@ const modeOptions = computed(() => {
             <input
               v-model="enabled"
               type="checkbox"
-              aria-label="Highlight the key in the piano roll"
+              :aria-label="t.shell.lists.key.highlight"
             />
           </td>
         </tr>
       </tbody>
     </table>
     <p class="list-readout">{{ currentLabel }}</p>
-    <p class="list-hint">
-      The project stores one global key, used for piano-roll scale highlighting. Per-range key
-      changes are not supported yet.
-    </p>
+    <p class="list-hint">{{ t.shell.lists.key.hint }}</p>
   </div>
 </template>
 

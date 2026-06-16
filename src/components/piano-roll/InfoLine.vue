@@ -4,6 +4,7 @@ import { formatPitch, parsePitch } from '@/lib/pitch';
 import { updateNotes } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import type { EditorNote, EditorNoteUpdate } from '@/project/types';
+import { formatMessage, useI18n } from '@/ui/i18n';
 
 /**
  * Info Line: a horizontal strip above the piano roll showing the selected
@@ -18,6 +19,7 @@ import type { EditorNote, EditorNoteUpdate } from '@/project/types';
 const MIN_DURATION_PPQ = 0.001;
 
 const store = useProjectStore();
+const { t } = useI18n();
 
 /** The anchor note: the most recently selected id drives the displayed values. */
 const anchorNote = computed<EditorNote | null>(() => {
@@ -63,58 +65,60 @@ interface FieldDef {
   parse: (text: string) => number | null;
 }
 
-const fields: FieldDef[] = [
-  {
-    key: 'start',
-    label: 'Start',
-    title: 'Note start (PPQ, quarter notes)',
-    display: (note) => formatPpq(note.startPpq),
-    parse: parseNumber,
-  },
-  {
-    key: 'end',
-    label: 'End',
-    title: 'Note end (PPQ, quarter notes); edits the length',
-    display: (note) => formatPpq(note.startPpq + note.durationPpq),
-    parse: parseNumber,
-  },
-  {
-    key: 'length',
-    label: 'Length',
-    title: 'Note length (PPQ, quarter notes)',
-    display: (note) => formatPpq(note.durationPpq),
-    parse: parseNumber,
-  },
-  {
-    key: 'pitch',
-    label: 'Pitch',
-    title: 'Pitch as a note name (C#4) or MIDI number (61)',
-    display: (note) => formatPitch(note.pitch),
-    parse: parsePitch,
-  },
-  {
-    key: 'velocity',
-    label: 'Vel',
-    title: 'Note-on velocity (1-127)',
-    display: (note) => String(note.velocity),
-    parse: parseInteger,
-  },
-  {
-    key: 'channel',
-    label: 'Ch',
-    title: 'MIDI channel (1-16)',
-    // Channels are stored 0-15 but displayed 1-16, the common DAW convention.
-    display: (note) => String(note.channel + 1),
-    parse: parseInteger,
-  },
-  {
-    key: 'offVelocity',
-    label: 'Off Vel',
-    title: 'Note-off (release) velocity (1-127); empty = default release',
-    display: (note) => (note.offVelocity !== undefined ? String(note.offVelocity) : ''),
-    parse: parseInteger,
-  },
-];
+const fields = computed<FieldDef[]>(() => {
+  const labels = t.value.shell.pianoRoll.info.fields;
+  return [
+    {
+      key: 'start',
+      label: labels.start.label,
+      title: labels.start.title,
+      display: (note) => formatPpq(note.startPpq),
+      parse: parseNumber,
+    },
+    {
+      key: 'end',
+      label: labels.end.label,
+      title: labels.end.title,
+      display: (note) => formatPpq(note.startPpq + note.durationPpq),
+      parse: parseNumber,
+    },
+    {
+      key: 'length',
+      label: labels.length.label,
+      title: labels.length.title,
+      display: (note) => formatPpq(note.durationPpq),
+      parse: parseNumber,
+    },
+    {
+      key: 'pitch',
+      label: labels.pitch.label,
+      title: labels.pitch.title,
+      display: (note) => formatPitch(note.pitch),
+      parse: parsePitch,
+    },
+    {
+      key: 'velocity',
+      label: labels.velocity.label,
+      title: labels.velocity.title,
+      display: (note) => String(note.velocity),
+      parse: parseInteger,
+    },
+    {
+      key: 'channel',
+      label: labels.channel.label,
+      title: labels.channel.title,
+      display: (note) => String(note.channel + 1),
+      parse: parseInteger,
+    },
+    {
+      key: 'offVelocity',
+      label: labels.offVelocity.label,
+      title: labels.offVelocity.title,
+      display: (note) => (note.offVelocity !== undefined ? String(note.offVelocity) : ''),
+      parse: parseInteger,
+    },
+  ];
+});
 
 /**
  * Builds the per-note updates for one committed field value. Numeric fields
@@ -200,7 +204,7 @@ function onEscape(field: FieldDef, event: KeyboardEvent): void {
 </script>
 
 <template>
-  <div class="info-line" role="group" aria-label="Note info">
+  <div class="info-line" role="group" :aria-label="t.shell.pianoRoll.info.label">
     <label v-for="field in fields" :key="field.key" class="info-line__field" :title="field.title">
       <span class="info-line__label">{{ field.label }}</span>
       <input
@@ -218,7 +222,9 @@ function onEscape(field: FieldDef, event: KeyboardEvent): void {
         @keydown.stop
       />
     </label>
-    <span v-if="selectionCount > 1" class="info-line__count">{{ selectionCount }} notes</span>
+    <span v-if="selectionCount > 1" class="info-line__count">
+      {{ formatMessage(t.shell.pianoRoll.info.count, { count: selectionCount }) }}
+    </span>
   </div>
 </template>
 

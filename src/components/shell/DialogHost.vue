@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
 import { dialogQueue, resolveDialog } from '@/composables/useDialogs';
+import { useI18n } from '@/ui/i18n';
 import AppModal from './AppModal.vue';
 
 /**
@@ -11,6 +12,7 @@ import AppModal from './AppModal.vue';
 
 /** The request currently shown (front of the queue), or undefined when idle. */
 const current = computed(() => dialogQueue[0]);
+const { t } = useI18n();
 
 const inputRef = ref<HTMLInputElement | null>(null);
 const promptValue = ref('');
@@ -61,7 +63,7 @@ function onPromptKeydown(event: KeyboardEvent): void {
   <AppModal
     :open="current !== undefined"
     size="sm"
-    :aria-label="current?.title ?? 'Dialog'"
+    :aria-label="current?.title ?? t.dialogs.common.dialog"
     @close="onCancel"
   >
     <template v-if="current?.title" #title>{{ current.title }}</template>

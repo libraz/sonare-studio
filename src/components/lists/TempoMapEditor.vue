@@ -3,6 +3,7 @@ import { ref, watch } from 'vue';
 import { setTempoSegments } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import type { TempoSegment } from '@/project/types';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import { barBeatFromPpq, formatBarBeat, parseBarBeat } from './bar-beat';
 import { MAX_BPM, MIN_BPM, mergeTempoSegments, validateTempoRows } from './row-validation';
 
@@ -14,6 +15,7 @@ import { MAX_BPM, MIN_BPM, mergeTempoSegments, validateTempoRows } from './row-v
  */
 
 const store = useProjectStore();
+const { t } = useI18n();
 
 /** One editable draft row; values stay strings until Apply parses them. */
 interface DraftRow {
@@ -97,7 +99,10 @@ function apply(): void {
     const startPpq = parseBarBeat(row.position, store.timeSignatures);
     if (startPpq === null) {
       issues.push(
-        `Row ${index + 1}: invalid position "${row.position}" (use bars.beats, e.g. 5.1)`,
+        formatMessage(t.value.shell.lists.common.rowInvalidPosition, {
+          row: index + 1,
+          position: row.position,
+        }),
       );
       return;
     }
@@ -107,7 +112,14 @@ function apply(): void {
   });
   if (issues.length === 0) {
     for (const issue of validateTempoRows(parsed)) {
-      issues.push(issue.row >= 0 ? `Row ${issue.row + 1}: ${issue.message}` : issue.message);
+      issues.push(
+        issue.row >= 0
+          ? formatMessage(t.value.shell.lists.common.rowIssue, {
+              row: issue.row + 1,
+              message: issue.message,
+            })
+          : issue.message,
+      );
     }
   }
   errors.value = issues;
@@ -122,10 +134,10 @@ function apply(): void {
     <table class="list-table">
       <thead>
         <tr>
-          <th scope="col">Position</th>
-          <th scope="col">BPM</th>
-          <th scope="col">Ramp to</th>
-          <th scope="col"><span class="visually-hidden">Actions</span></th>
+          <th scope="col">{{ t.shell.lists.columns.position }}</th>
+          <th scope="col">{{ t.shell.lists.columns.bpm }}</th>
+          <th scope="col">{{ t.shell.lists.columns.rampTo }}</th>
+          <th scope="col"><span class="visually-hidden">{{ t.shell.lists.columns.actions }}</span></th>
         </tr>
       </thead>
       <tbody>
@@ -136,7 +148,9 @@ function apply(): void {
               class="cell-input"
               type="text"
               inputmode="decimal"
-              :aria-label="`Tempo entry ${index + 1} position (bars.beats)`"
+              :aria-label="
+                formatMessage(t.shell.lists.tempo.entryPosition, { row: index + 1 })
+              "
               @input="markDirty"
               @keydown.enter.prevent="apply"
               @keydown.esc.prevent="revert"
@@ -150,7 +164,7 @@ function apply(): void {
               :min="MIN_BPM"
               :max="MAX_BPM"
               step="0.1"
-              :aria-label="`Tempo entry ${index + 1} BPM`"
+              :aria-label="formatMessage(t.shell.lists.tempo.entryBpm, { row: index + 1 })"
               @input="markDirty"
               @keydown.enter.prevent="apply"
               @keydown.esc.prevent="revert"
@@ -165,7 +179,7 @@ function apply(): void {
               :max="MAX_BPM"
               step="0.1"
               placeholder="—"
-              :aria-label="`Tempo entry ${index + 1} ramp target BPM`"
+              :aria-label="formatMessage(t.shell.lists.tempo.entryRamp, { row: index + 1 })"
               @input="markDirty"
               @keydown.enter.prevent="apply"
               @keydown.esc.prevent="revert"
@@ -175,7 +189,7 @@ function apply(): void {
             <button
               type="button"
               class="row-button"
-              :aria-label="`Delete tempo entry ${index + 1}`"
+              :aria-label="formatMessage(t.shell.lists.tempo.deleteEntry, { row: index + 1 })"
               @click="deleteRow(index)"
             >
               ✕
@@ -184,13 +198,17 @@ function apply(): void {
         </tr>
       </tbody>
     </table>
-    <p v-if="rows.length === 0" class="list-empty">No tempo entries — add one below.</p>
+    <p v-if="rows.length === 0" class="list-empty">{{ t.shell.lists.tempo.empty }}</p>
     <p v-for="error in errors" :key="error" class="list-error" role="alert">{{ error }}</p>
     <div class="list-actions">
-      <button type="button" @click="addRow">Add tempo</button>
+      <button type="button" @click="addRow">{{ t.shell.lists.tempo.add }}</button>
       <span class="list-spacer" />
-      <button type="button" :disabled="!dirty" @click="revert">Revert</button>
-      <button type="button" :disabled="!dirty" @click="apply">Apply</button>
+      <button type="button" :disabled="!dirty" @click="revert">
+        {{ t.shell.lists.common.revert }}
+      </button>
+      <button type="button" :disabled="!dirty" @click="apply">
+        {{ t.shell.lists.common.apply }}
+      </button>
     </div>
   </div>
 </template>

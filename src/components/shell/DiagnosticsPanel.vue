@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { EngineHandle } from '@/engine/engine';
+import { useI18n } from '@/ui/i18n';
 
 defineProps<{
   busy: boolean;
@@ -12,27 +13,30 @@ const emit = defineEmits<{
   renderOffline: [];
   testTone: [];
 }>();
+
+const { t } = useI18n();
 </script>
 
 <template>
   <details class="diagnostics">
-    <summary>Diagnostics</summary>
+    <summary>{{ t.shell.diagnostics.title }}</summary>
     <div class="diag-actions">
       <button type="button" :disabled="busy || !handle" @click="emit('testTone')">
-        Test tone (1 s, bypasses engine)
+        {{ t.shell.diagnostics.testTone }}
       </button>
       <button type="button" :disabled="busy || !handle" @click="emit('renderOffline')">
-        Render offline (3 s)
+        {{ t.shell.diagnostics.renderOffline }}
       </button>
     </div>
     <p v-if="renderInfo">{{ renderInfo }}</p>
-    <p class="diag-shortcuts">
-      Shortcuts: press ? for the full cheatsheet. Keys are remappable in Settings (⚙) → Shortcuts.
-    </p>
+    <p class="diag-shortcuts">{{ t.shell.diagnostics.shortcuts }}</p>
     <ul v-if="handle">
       <li>mode: <strong>{{ handle.capabilities.mode }}</strong></li>
       <li>runtimeTarget: <strong>{{ handle.capabilities.runtimeTarget }}</strong></li>
-      <li>abiCompatible: <strong>{{ handle.capabilities.abiCompatible ?? 'unknown' }}</strong></li>
+      <li>
+        abiCompatible:
+        <strong>{{ handle.capabilities.abiCompatible ?? t.shell.diagnostics.unknown }}</strong>
+      </li>
       <li v-if="handle.capabilities.degradedReason">
         degradedReason: <strong>{{ handle.capabilities.degradedReason }}</strong>
       </li>

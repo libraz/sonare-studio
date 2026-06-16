@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { MeterSource } from '@/engine/meters';
+import { useI18n } from '@/ui/i18n';
 import {
   advanceMeterChannel,
   createMeterChannel,
@@ -50,13 +51,14 @@ const channels: MeterChannelModel[] = [
 ];
 
 const clipped = ref(false);
+const { t } = useI18n();
 
 const title = computed(() =>
   props.placeholder
-    ? 'No live meter for this strip'
+    ? t.value.shell.mixer.meter.noLive
     : clipped.value
-      ? 'Clipped - click to reset'
-      : 'Stereo level meter',
+      ? t.value.shell.mixer.meter.clipped
+      : t.value.shell.mixer.meter.stereo,
 );
 
 function resizeCanvas(): void {
@@ -218,7 +220,7 @@ watch(
     class="strip-meter"
     :class="{ placeholder: props.placeholder }"
     role="img"
-    aria-label="Strip level meter"
+    :aria-label="t.shell.mixer.meter.strip"
     :title="title"
     @click="onClick"
   />

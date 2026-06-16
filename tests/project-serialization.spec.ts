@@ -20,6 +20,7 @@ import {
   setTempoSegments,
   setTimeSignatures,
   setTrackColor,
+  setTrackInstrument,
   setTrackMute,
   setTrackPan,
   setTrackSolo,
@@ -166,6 +167,52 @@ describe('project serialization', () => {
     await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
     expect(serializeProject()).toEqual(doc);
     expect(store.activeClip?.ccLanes).toEqual(doc.tracks[0].clips[0].ccLanes);
+  });
+
+  it('round-trips imported clip pitch-bend lanes through the document', async () => {
+    const doc = serializeProject();
+    doc.tracks[0].clips[0].pitchBendLanes = [
+      {
+        channel: 0,
+        points: [
+          { ppq: 0, value: 8192 },
+          { ppq: 1, value: 4096 },
+        ],
+      },
+    ];
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+
+    expect(serializeProject()).toEqual(doc);
+    expect(store.activeClip?.pitchBendLanes).toEqual(doc.tracks[0].clips[0].pitchBendLanes);
+  });
+
+  it('round-trips imported aftertouch lanes through the document', async () => {
+    const doc = serializeProject();
+    doc.tracks[0].clips[0].channelPressureLanes = [
+      {
+        channel: 0,
+        points: [
+          { ppq: 0, value: 20 },
+          { ppq: 1, value: 80 },
+        ],
+      },
+    ];
+    doc.tracks[0].clips[0].polyPressureLanes = [
+      {
+        channel: 0,
+        pitch: 60,
+        points: [{ ppq: 0.5, value: 64 }],
+      },
+    ];
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+
+    expect(serializeProject()).toEqual(doc);
+    expect(store.activeClip?.channelPressureLanes).toEqual(
+      doc.tracks[0].clips[0].channelPressureLanes,
+    );
+    expect(store.activeClip?.polyPressureLanes).toEqual(doc.tracks[0].clips[0].polyPressureLanes);
   });
 
   it('round-trips the chord track through the document', async () => {
@@ -330,9 +377,9 @@ describe('MIDI export commands', () => {
     await store.init();
   });
 
-  it('exportProjectSmf returns SMF bytes with a sanitized .mid filename', () => {
+  it('exportProjectSmf returns SMF bytes with a sanitized .mid filename', async () => {
     store.projectName = 'A/B: take *2*';
-    const result = exportProjectSmf();
+    const result = await exportProjectSmf();
     expect(result.filename).toBe('A_B_ take _2_.mid');
     expect(Array.from(result.bytes.subarray(0, 4))).toEqual([0x4d, 0x54, 0x68, 0x64]);
   });
@@ -343,8 +390,20 @@ describe('MIDI export commands', () => {
     expect(result.bytes.length).toBeGreaterThan(0);
   });
 
-  it('exportClipSmf renders one clip into a scratch project', async () => {
+  it('exportClipSmf preserves one clip with app-level MIDI metadata', async () => {
     addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+    setClipCcLane(store.clipId, 1, 0, [{ ppq: 0.25, value: 64 }]);
+    setTrackInstrument(store.activeTrackId, { kind: 'synth-preset', preset: 'sub-bass' });
+    store.clips = store.clips.map((clip) =>
+      clip.id === store.clipId
+        ? {
+            ...clip,
+            pitchBendLanes: [{ channel: 0, points: [{ ppq: 0.5, value: 4096 }] }],
+            channelPressureLanes: [{ channel: 0, points: [{ ppq: 0.75, value: 70 }] }],
+            polyPressureLanes: [{ channel: 0, pitch: 60, points: [{ ppq: 0.9, value: 80 }] }],
+          }
+        : clip,
+    );
     renameClip(store.clipId, 'Lead line');
     const result = await exportClipSmf(store.clipId);
     expect(result.filename).toBe('Lead line.mid');

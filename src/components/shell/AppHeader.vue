@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { formatMessage, useI18n } from '@/ui/i18n';
 import { formatSavedAt } from '@/ui/shell/format';
 
 type MenuBarId = 'edit' | 'view' | 'transport';
@@ -27,7 +28,10 @@ const emit = defineEmits<{
   exportSzd: [];
   helpMenuRef: [el: HTMLElement | null];
   importAudio: [];
+  importMidi: [];
   layoutMenuRef: [el: HTMLElement | null];
+  midiImportChange: [event: Event];
+  midiImportInputRef: [el: HTMLInputElement | null];
   openAbout: [];
   openExportDialog: [];
   openMenuBar: [menu: MenuBarId, event: MouseEvent];
@@ -46,6 +50,8 @@ const emit = defineEmits<{
   updateProjectMenuOpen: [open: boolean];
   openSettings: [];
 }>();
+
+const { t } = useI18n();
 </script>
 
 <template>
@@ -63,41 +69,48 @@ const emit = defineEmits<{
         :aria-expanded="projectMenuOpen"
         @click="emit('updateProjectMenuOpen', !projectMenuOpen)"
       >
-        Project ▾
+        {{ t.shell.project.trigger }} ▾
       </button>
-      <div v-if="projectMenuOpen" class="menu-pop" role="menu" aria-label="Project menu">
-        <button type="button" role="menuitem" @click="emit('openNewDialog')">New…</button>
+      <div
+        v-if="projectMenuOpen"
+        class="menu-pop"
+        role="menu"
+        :aria-label="t.shell.project.menuLabel"
+      >
+        <button type="button" role="menuitem" @click="emit('openNewDialog')">
+          {{ t.shell.project.new }}
+        </button>
         <button
           type="button"
           role="menuitem"
           :disabled="!opfsAvailable"
-          :title="shortcutTitle('Open a saved project', 'project.open')"
+          :title="shortcutTitle(t.shell.project.openTitle, 'project.open')"
           @click="emit('openOpenDialog')"
         >
-          Open…
+          {{ t.shell.project.open }}
         </button>
         <button
           type="button"
           class="menu-save"
           role="menuitem"
           :disabled="!opfsAvailable"
-          :title="shortcutTitle('Save to browser storage', 'project.save')"
+          :title="shortcutTitle(t.shell.project.saveTitle, 'project.save')"
           @click="emit('saveProject')"
         >
-          Save
+          {{ t.shell.project.save }}
         </button>
         <button
           type="button"
           role="menuitem"
           :disabled="!opfsAvailable"
-          :title="shortcutTitle('Save under a new name', 'project.saveAs')"
+          :title="shortcutTitle(t.shell.project.saveAsTitle, 'project.saveAs')"
           @click="emit('saveProjectAs')"
         >
-          Save As…
+          {{ t.shell.project.saveAs }}
         </button>
         <template v-if="recentMenuNames.length > 0">
           <hr class="menu-rule" />
-          <span class="menu-section">Recent</span>
+          <span class="menu-section">{{ t.shell.project.recent }}</span>
           <button
             v-for="name in recentMenuNames"
             :key="name"
@@ -105,52 +118,61 @@ const emit = defineEmits<{
             role="menuitem"
             class="menu-recent"
             :disabled="!opfsAvailable"
-            :title="`Open ${name}`"
+            :title="formatMessage(t.shell.project.openRecent, { name })"
             @click="emit('openRecentProject', name)"
           >
             {{ name }}
           </button>
         </template>
         <hr class="menu-rule" />
-        <button type="button" role="menuitem" @click="emit('importAudio')">Import audio…</button>
+        <button type="button" role="menuitem" @click="emit('importMidi')">
+          {{ t.shell.project.importMidi }}
+        </button>
+        <button type="button" role="menuitem" @click="emit('importAudio')">
+          {{ t.shell.project.importAudio }}
+        </button>
         <hr class="menu-rule" />
-        <button type="button" role="menuitem" @click="emit('exportSzd')">Export .szd</button>
-        <button type="button" role="menuitem" @click="emit('exportSmf')">Export SMF</button>
+        <button type="button" role="menuitem" @click="emit('exportSzd')">
+          {{ t.shell.project.exportSzd }}
+        </button>
+        <button type="button" role="menuitem" @click="emit('exportSmf')">
+          {{ t.shell.project.exportSmf }}
+        </button>
         <button type="button" role="menuitem" @click="emit('openExportDialog')">
-          Export Audio…
+          {{ t.shell.project.exportAudio }}
         </button>
         <button type="button" role="menuitem" @click="emit('exportDawproject')">
-          Export DAWproject
+          {{ t.shell.project.exportDawproject }}
         </button>
       </div>
     </div>
-    <nav class="menu-bar" aria-label="Edit, view and transport menus">
+    <nav class="menu-bar" :aria-label="t.shell.menus.barLabel">
       <button
         type="button"
         class="menu-trigger"
         aria-haspopup="menu"
-        title="Edit: undo, redo, selection, quantize"
+        :title="t.shell.menus.editTitle"
         @click="emit('openMenuBar', 'edit', $event)"
       >
-        Edit
+        {{ t.shell.menus.edit }}
       </button>
       <button
         type="button"
         class="menu-trigger"
         aria-haspopup="menu"
-        title="View: snap, score panel, editor tools"
+        :title="t.shell.menus.viewTitle"
         @click="emit('openMenuBar', 'view', $event)"
       >
-        View
+        {{ t.shell.menus.view }}
       </button>
       <button
         type="button"
         class="menu-trigger"
         aria-haspopup="menu"
-        title="Transport: play, loop, record, navigation"
+        :title="t.shell.menus.transportTitle"
         @click="emit('openMenuBar', 'transport', $event)"
       >
-        Transport
+        {{ t.shell.menus.transport }}
       </button>
     </nav>
     <input
@@ -163,8 +185,18 @@ const emit = defineEmits<{
       tabindex="-1"
       @change="emit('audioImportChange', $event)"
     />
+    <input
+      :ref="(el) => emit('midiImportInputRef', el as HTMLInputElement | null)"
+      class="hidden-file-input"
+      type="file"
+      accept=".mid,.midi,audio/midi,audio/x-midi"
+      aria-hidden="true"
+      tabindex="-1"
+      @change="emit('midiImportChange', $event)"
+    />
     <span class="project-name" :title="projectName">
-      {{ projectName }}<span v-if="dirty" class="dirty-dot" title="Unsaved changes">•</span>
+      {{ projectName }}
+      <span v-if="dirty" class="dirty-dot" :title="t.shell.project.unsavedChanges">•</span>
     </span>
     <span class="bar-spacer" />
     <button
@@ -172,10 +204,10 @@ const emit = defineEmits<{
       class="devices-toggle"
       :class="{ active: deviceRackOpen }"
       :aria-pressed="deviceRackOpen"
-      title="Toggle the device rack panel"
+      :title="t.shell.devices.toggleTitle"
       @click="emit('toggleDeviceRack')"
     >
-      Devices
+      {{ t.shell.devices.toggle }}
     </button>
     <div
       :ref="(el) => emit('layoutMenuRef', el as HTMLElement | null)"
@@ -187,12 +219,17 @@ const emit = defineEmits<{
         class="menu-trigger"
         aria-haspopup="menu"
         :aria-expanded="layoutMenuOpen"
-        title="Workspace layouts (presets and saved layouts)"
+        :title="t.shell.layout.title"
         @click="emit('updateLayoutMenuOpen', !layoutMenuOpen)"
       >
-        Layout ▾
+        {{ t.shell.layout.trigger }} ▾
       </button>
-      <div v-if="layoutMenuOpen" class="menu-pop" role="menu" aria-label="Layout menu">
+      <div
+        v-if="layoutMenuOpen"
+        class="menu-pop"
+        role="menu"
+        :aria-label="t.shell.layout.menuLabel"
+      >
         <button
           v-for="layout in layouts"
           :key="layout.name"
@@ -204,7 +241,7 @@ const emit = defineEmits<{
         </button>
         <hr class="menu-rule" />
         <button type="button" role="menuitem" @click="emit('saveCurrentLayout')">
-          Save current…
+          {{ t.shell.layout.saveCurrent }}
         </button>
       </div>
     </div>
@@ -220,31 +257,33 @@ const emit = defineEmits<{
         :aria-expanded="helpMenuOpen"
         @click="emit('updateHelpMenuOpen', !helpMenuOpen)"
       >
-        Help ▾
+        {{ t.shell.help.trigger }} ▾
       </button>
-      <div v-if="helpMenuOpen" class="menu-pop" role="menu" aria-label="Help menu">
+      <div v-if="helpMenuOpen" class="menu-pop" role="menu" :aria-label="t.shell.help.menuLabel">
         <button type="button" role="menuitem" @click="emit('openShortcutsHelp')">
-          Keyboard shortcuts (?)
+          {{ t.shell.help.shortcuts }}
         </button>
-        <button type="button" role="menuitem" @click="emit('openWelcomeTour')">Welcome tour</button>
+        <button type="button" role="menuitem" @click="emit('openWelcomeTour')">
+          {{ t.shell.help.welcomeTour }}
+        </button>
         <hr class="menu-rule" />
         <button type="button" role="menuitem" @click="emit('openAbout')">
-          About sonare studio
+          {{ t.shell.help.about }}
         </button>
       </div>
     </div>
     <button
       type="button"
       class="settings-button"
-      aria-label="Settings"
+      :aria-label="t.shell.settingsButton.label"
       aria-haspopup="dialog"
-      title="Settings (Cmd+,)"
+      :title="t.shell.settingsButton.title"
       @click="emit('openSettings')"
     >
       ⚙
     </button>
     <span v-if="autosaveLastSavedAt" class="autosave-state">
-      {{ formatSavedAt(autosaveLastSavedAt) }}
+      {{ formatMessage(t.shell.savedAt, { time: formatSavedAt(autosaveLastSavedAt) }) }}
     </span>
   </header>
 </template>

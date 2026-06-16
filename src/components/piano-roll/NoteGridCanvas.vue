@@ -3,6 +3,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { EditorNote } from '@/project/types';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
+import { useI18n } from '@/ui/i18n';
 import { type GhostNote, hitTestGhost, isNoteInView } from './overlay';
 import {
   DEFAULT_NOTE_COLOR,
@@ -53,6 +54,8 @@ const props = defineProps<{
   /** Read-only ghost notes from non-active clips, drawn under the notes. */
   ghostNotes?: GhostNote[];
 }>();
+
+const { t } = useI18n();
 
 const emit = defineEmits<{
   /** Fired after the grid viewport was resized and the range re-clamped. */
@@ -344,8 +347,14 @@ function onContextMenu(event: MouseEvent): void {
     @pointerup="onPointerUp"
     @pointercancel="onPointerCancel"
     @dblclick="onDoubleClick"
+    @contextmenu="onContextMenu"
   >
-    <canvas ref="baseCanvas" class="note-grid-layer" role="img" aria-label="Piano roll note grid" />
+    <canvas
+      ref="baseCanvas"
+      class="note-grid-layer"
+      role="img"
+      :aria-label="t.shell.pianoRoll.noteGrid"
+    />
     <canvas ref="overlayCanvas" class="note-grid-layer" aria-hidden="true" />
   </div>
 </template>

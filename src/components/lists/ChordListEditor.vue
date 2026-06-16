@@ -9,6 +9,7 @@ import {
 } from '@/project/chords';
 import { clearProjectChords, detectChordsForClip, setProjectChords } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import { barLengthPpq, formatBarBeat, parseBarBeat } from './bar-beat';
 
 /** Pitch-class options for the root / slash-bass pickers (value = pitch class). */
@@ -48,6 +49,7 @@ const emit = defineEmits<{
 }>();
 
 const store = useProjectStore();
+const { t } = useI18n();
 const errorMessage = ref('');
 
 /** Active clip id when it is a MIDI clip, else -1 (detection source). */
@@ -84,7 +86,9 @@ function onPositionChange(index: number, chord: EditorChordSymbol, event: Event)
   const input = event.target as HTMLInputElement;
   const ppq = parseBarBeat(input.value, store.timeSignatures);
   if (ppq === null) {
-    errorMessage.value = `Invalid position "${input.value}" (use bars.beats, e.g. 5.1)`;
+    errorMessage.value = formatMessage(t.value.shell.lists.chords.invalidPosition, {
+      position: input.value,
+    });
     input.value = positionText(chord);
     return;
   }
@@ -136,7 +140,7 @@ function detectFromClip(): void {
   errorMessage.value = '';
   const count = detectChordsForClip(detectClipId.value);
   if (count === 0) {
-    errorMessage.value = 'No chords detected in the active clip.';
+    errorMessage.value = t.value.shell.lists.chords.noneDetected;
   }
 }
 
@@ -151,13 +155,13 @@ function clearAll(): void {
     <table class="list-table">
       <thead>
         <tr>
-          <th scope="col"><span class="visually-hidden">Seek</span></th>
-          <th scope="col">Position</th>
-          <th scope="col">Root</th>
-          <th scope="col">Quality</th>
-          <th scope="col">Bass</th>
-          <th scope="col">Chord</th>
-          <th scope="col"><span class="visually-hidden">Actions</span></th>
+          <th scope="col"><span class="visually-hidden">{{ t.shell.lists.columns.seek }}</span></th>
+          <th scope="col">{{ t.shell.lists.columns.position }}</th>
+          <th scope="col">{{ t.shell.lists.columns.root }}</th>
+          <th scope="col">{{ t.shell.lists.columns.quality }}</th>
+          <th scope="col">{{ t.shell.lists.columns.bass }}</th>
+          <th scope="col">{{ t.shell.lists.columns.chord }}</th>
+          <th scope="col"><span class="visually-hidden">{{ t.shell.lists.columns.actions }}</span></th>
         </tr>
       </thead>
       <tbody>
@@ -166,7 +170,9 @@ function clearAll(): void {
             <button
               type="button"
               class="row-button"
-              :aria-label="`Seek to chord ${formatChordName(chord)}`"
+              :aria-label="
+                formatMessage(t.shell.lists.chords.seekTo, { name: formatChordName(chord) })
+              "
               @click="onSeek(chord)"
             >
               ▶
@@ -178,7 +184,9 @@ function clearAll(): void {
               class="cell-input cell-position"
               type="text"
               inputmode="decimal"
-              :aria-label="`Position of chord ${formatChordName(chord)} (bars.beats)`"
+              :aria-label="
+                formatMessage(t.shell.lists.chords.positionOf, { name: formatChordName(chord) })
+              "
               @change="onPositionChange(index, chord, $event)"
             />
           </td>
@@ -188,7 +196,7 @@ function clearAll(): void {
               class="cell-input cell-select"
               size="sm"
               :options="PITCH_CLASS_OPTIONS"
-              :aria-label="`Root of chord ${index + 1}`"
+              :aria-label="formatMessage(t.shell.lists.chords.rootOf, { row: index + 1 })"
               @change="onRootChange(index, chord, $event)"
             />
           </td>
@@ -198,7 +206,7 @@ function clearAll(): void {
               class="cell-input cell-select"
               size="sm"
               :options="QUALITY_OPTIONS"
-              :aria-label="`Quality of chord ${index + 1}`"
+              :aria-label="formatMessage(t.shell.lists.chords.qualityOf, { row: index + 1 })"
               @change="onQualityChange(index, chord, $event)"
             />
           </td>
@@ -208,7 +216,7 @@ function clearAll(): void {
               class="cell-input cell-select"
               size="sm"
               :options="BASS_OPTIONS"
-              :aria-label="`Slash bass of chord ${index + 1}`"
+              :aria-label="formatMessage(t.shell.lists.chords.bassOf, { row: index + 1 })"
               @change="onBassChange(index, chord, $event)"
             />
           </td>
@@ -217,7 +225,9 @@ function clearAll(): void {
             <button
               type="button"
               class="row-button"
-              :aria-label="`Delete chord ${formatChordName(chord)}`"
+              :aria-label="
+                formatMessage(t.shell.lists.chords.delete, { name: formatChordName(chord) })
+              "
               @click="onDelete(index)"
             >
               ✕
@@ -226,14 +236,12 @@ function clearAll(): void {
         </tr>
       </tbody>
     </table>
-    <p v-if="store.chords.length === 0" class="list-empty">
-      No chords — detect them from a clip or add one at the playhead.
-    </p>
+    <p v-if="store.chords.length === 0" class="list-empty">{{ t.shell.lists.chords.empty }}</p>
     <p v-if="errorMessage" class="list-error" role="alert">{{ errorMessage }}</p>
     <div class="list-actions">
-      <button type="button" @click="addAtPlayhead">Add at playhead</button>
+      <button type="button" @click="addAtPlayhead">{{ t.shell.lists.common.addAtPlayhead }}</button>
       <button type="button" :disabled="detectClipId < 0" @click="detectFromClip">
-        Detect from clip
+        {{ t.shell.lists.chords.detectFromClip }}
       </button>
       <button
         type="button"
@@ -241,7 +249,7 @@ function clearAll(): void {
         :disabled="store.chords.length === 0"
         @click="clearAll"
       >
-        Clear
+        {{ t.shell.lists.common.clear }}
       </button>
     </div>
   </div>

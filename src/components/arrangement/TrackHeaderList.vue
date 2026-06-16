@@ -34,6 +34,7 @@ import {
   TAKE_LANE_HEIGHT_PX,
   trackTakeRowCount,
 } from '@/ui/arrangement/automation-rows';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 
 /**
@@ -99,6 +100,7 @@ const emit = defineEmits<{
 }>();
 
 const store = useProjectStore();
+const { t } = useI18n();
 
 /** Glyph shown in front of the track name per track kind. */
 const TRACK_KIND_GLYPHS: Record<TrackKind, string> = {
@@ -108,12 +110,12 @@ const TRACK_KIND_GLYPHS: Record<TrackKind, string> = {
   group: '⊞',
 };
 /** Tooltip label per track kind. */
-const TRACK_KIND_LABELS: Record<TrackKind, string> = {
-  audio: 'Audio track',
-  midi: 'MIDI track',
-  aux: 'Aux track',
-  group: 'Group track',
-};
+const trackKindLabel = computed<Record<TrackKind, string>>(() => ({
+  audio: t.value.shell.arrangement.trackHeader.audioTrack,
+  midi: t.value.shell.arrangement.trackHeader.midiTrack,
+  aux: t.value.shell.arrangement.trackHeader.auxTrack,
+  group: t.value.shell.arrangement.trackHeader.groupTrack,
+}));
 
 /** Surfaced when a command rejects (e.g. empty rename). */
 const error = ref('');
@@ -198,7 +200,7 @@ const GROUP_NONE = '';
 
 /** Output-group picker options: "No group" plus every group track. */
 const groupOptions = computed<{ value: string | number; label: string }[]>(() => [
-  { value: GROUP_NONE, label: 'No group' },
+  { value: GROUP_NONE, label: t.value.shell.arrangement.trackHeader.noGroup },
   ...groupTracks.value.map((group) => ({ value: group.id, label: group.name })),
 ]);
 
@@ -357,10 +359,12 @@ async function onBounce(track: EditorTrack): Promise<void> {
 }
 
 /** Parameter choices for a track's automation sublane picker. */
-const AUTOMATION_PARAM_OPTIONS: ReadonlyArray<{ value: AutomationParam; label: string }> = [
-  { value: 'faderDb', label: 'Volume (dB)' },
-  { value: 'pan', label: 'Pan' },
-];
+const automationParamOptions = computed<ReadonlyArray<{ value: AutomationParam; label: string }>>(
+  () => [
+    { value: 'faderDb', label: t.value.shell.arrangement.trackHeader.volumeDb },
+    { value: 'pan', label: t.value.shell.arrangement.trackHeader.pan },
+  ],
+);
 
 function onAutomationParamChange(track: EditorTrack, value: string): void {
   if (isAutomationParam(value)) emit('automationParam', track.id, value);
@@ -427,34 +431,50 @@ function onGripPointerCancel(): void {
 function onContextMenu(track: EditorTrack, event: MouseEvent): void {
   setActiveTrack(track.id);
   const items: ContextMenuItem[] = [
-    { id: 'rename', label: 'Rename…', run: () => startRename(track) },
+    {
+      id: 'rename',
+      label: t.value.shell.arrangement.trackHeader.rename,
+      run: () => startRename(track),
+    },
     { id: 'sep-1', separator: true },
     {
       id: 'mute',
-      label: track.mute ? 'Unmute' : 'Mute',
+      label: track.mute
+        ? t.value.shell.arrangement.trackHeader.unmute
+        : t.value.shell.arrangement.trackHeader.mute,
       run: () => setTrackMute(track.id, !track.mute),
     },
     {
       id: 'solo',
-      label: track.solo ? 'Unsolo' : 'Solo',
+      label: track.solo
+        ? t.value.shell.arrangement.trackHeader.unsolo
+        : t.value.shell.arrangement.trackHeader.solo,
       run: () => setTrackSolo(track.id, !track.solo),
     },
   ];
   if (track.kind === 'audio') {
     items.push({
       id: 'arm',
-      label: isArmed(track) ? 'Disarm recording' : 'Record-enable',
+      label: isArmed(track)
+        ? t.value.shell.arrangement.trackHeader.disarmRecording
+        : t.value.shell.arrangement.trackHeader.recordEnable,
       run: () => onToggleArm(track),
     });
   }
   items.push(
     { id: 'sep-2', separator: true },
-    { id: 'color', label: 'Next color', run: () => cycleColor(track) },
+    {
+      id: 'color',
+      label: t.value.shell.arrangement.trackHeader.nextColor,
+      run: () => cycleColor(track),
+    },
   );
   if (track.kind !== 'group') {
     items.push({
       id: 'freeze',
-      label: track.frozen ? 'Unfreeze' : 'Freeze',
+      label: track.frozen
+        ? t.value.shell.arrangement.trackHeader.unfreeze
+        : t.value.shell.arrangement.trackHeader.freeze,
       disabled: isFreezing(track),
       run: () => {
         void onToggleFreeze(track);
@@ -463,7 +483,7 @@ function onContextMenu(track: EditorTrack, event: MouseEvent): void {
     if (trackHasClips(track)) {
       items.push({
         id: 'bounce',
-        label: 'Bounce in place',
+        label: t.value.shell.arrangement.trackHeader.bounceInPlace,
         disabled: isBouncing(track),
         run: () => {
           void onBounce(track);
@@ -473,7 +493,12 @@ function onContextMenu(track: EditorTrack, event: MouseEvent): void {
   }
   items.push(
     { id: 'sep-3', separator: true },
-    { id: 'delete', label: 'Remove track', danger: true, run: () => onDelete(track) },
+    {
+      id: 'delete',
+      label: t.value.shell.arrangement.trackHeader.removeTrack,
+      danger: true,
+      run: () => onDelete(track),
+    },
   );
   openContextMenu(event.clientX, event.clientY, items);
 }
@@ -510,7 +535,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
           <div class="track-row" :style="{ height: `${props.laneHeight}px` }">
             <div
               class="track-grip"
-              title="Drag to reorder"
+              :title="t.shell.arrangement.trackHeader.dragReorder"
               aria-hidden="true"
               @click.stop
               @pointerdown.stop="onGripPointerDown(track, index, $event)"
@@ -524,13 +549,15 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
               type="button"
               class="track-swatch"
               :style="{ background: track.color }"
-              title="Cycle track color"
-              :aria-label="`Cycle color of ${track.name}`"
+              :title="t.shell.arrangement.trackHeader.cycleColor"
+              :aria-label="
+                formatMessage(t.shell.arrangement.trackHeader.cycleColorOf, { name: track.name })
+              "
               @click.stop="cycleColor(track)"
             />
             <div class="track-main">
               <div class="track-name-row">
-                <span class="track-kind" :title="TRACK_KIND_LABELS[track.kind]">
+                <span class="track-kind" :title="trackKindLabel[track.kind]">
                   {{ TRACK_KIND_GLYPHS[track.kind] }}
                 </span>
                 <input
@@ -538,7 +565,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   ref="nameInput"
                   v-model="editName"
                   class="track-name-input"
-                  aria-label="Track name"
+                  :aria-label="t.shell.arrangement.trackHeader.trackName"
                   @click.stop
                   @keydown.enter.prevent="commitRename"
                   @keydown.escape.prevent="cancelRename"
@@ -550,8 +577,12 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                 <button
                   type="button"
                   class="track-delete"
-                  title="Delete track"
-                  :aria-label="`Delete track ${track.name}`"
+                  :title="t.shell.arrangement.trackHeader.deleteTrack"
+                  :aria-label="
+                    formatMessage(t.shell.arrangement.trackHeader.deleteTrackNamed, {
+                      name: track.name,
+                    })
+                  "
                   @click.stop="onDelete(track)"
                 >
                   ×
@@ -563,8 +594,12 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   type="button"
                   class="toggle arm"
                   :class="{ on: isArmed(track) }"
-                  title="Record arm"
-                  :aria-label="`Record arm ${track.name}`"
+                  :title="t.shell.arrangement.trackHeader.recordArm"
+                  :aria-label="
+                    formatMessage(t.shell.arrangement.trackHeader.recordArmNamed, {
+                      name: track.name,
+                    })
+                  "
                   :aria-pressed="isArmed(track)"
                   @click="onToggleArm(track)"
                 >
@@ -574,8 +609,10 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   type="button"
                   class="toggle mute"
                   :class="{ on: track.mute }"
-                  title="Mute"
-                  :aria-label="`Mute ${track.name}`"
+                  :title="t.shell.arrangement.trackHeader.mute"
+                  :aria-label="
+                    formatMessage(t.shell.arrangement.trackHeader.muteNamed, { name: track.name })
+                  "
                   :aria-pressed="track.mute"
                   @click="setTrackMute(track.id, !track.mute)"
                 >
@@ -585,8 +622,10 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   type="button"
                   class="toggle solo"
                   :class="{ on: track.solo }"
-                  title="Solo"
-                  :aria-label="`Solo ${track.name}`"
+                  :title="t.shell.arrangement.trackHeader.solo"
+                  :aria-label="
+                    formatMessage(t.shell.arrangement.trackHeader.soloNamed, { name: track.name })
+                  "
                   :aria-pressed="track.solo"
                   @click="setTrackSolo(track.id, !track.solo)"
                 >
@@ -596,8 +635,12 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   type="button"
                   class="toggle automation"
                   :class="{ on: isAutomationExpanded(track) }"
-                  title="Automation lane"
-                  :aria-label="`Automation lane of ${track.name}`"
+                  :title="t.shell.arrangement.trackHeader.automationLane"
+                  :aria-label="
+                    formatMessage(t.shell.arrangement.trackHeader.automationLaneOf, {
+                      name: track.name,
+                    })
+                  "
                   :aria-pressed="isAutomationExpanded(track)"
                   @click="onToggleAutomation(track)"
                 >
@@ -609,8 +652,14 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   class="toggle freeze"
                   :class="{ on: track.frozen !== undefined, busy: isFreezing(track) }"
                   :disabled="isFreezing(track)"
-                  :title="track.frozen ? 'Unfreeze track' : 'Freeze track (bake its render)'"
-                  :aria-label="`Freeze ${track.name}`"
+                  :title="
+                    track.frozen
+                      ? t.shell.arrangement.trackHeader.unfreezeTitle
+                      : t.shell.arrangement.trackHeader.freezeTitle
+                  "
+                  :aria-label="
+                    formatMessage(t.shell.arrangement.trackHeader.freezeNamed, { name: track.name })
+                  "
                   :aria-pressed="track.frozen !== undefined"
                   @click="onToggleFreeze(track)"
                 >
@@ -622,8 +671,10 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   class="track-bounce"
                   :class="{ busy: isBouncing(track) }"
                   :disabled="isBouncing(track)"
-                  title="Bounce in place (loop region, or the full clip span)"
-                  :aria-label="`Bounce ${track.name}`"
+                  :title="t.shell.arrangement.trackHeader.bounceTitle"
+                  :aria-label="
+                    formatMessage(t.shell.arrangement.trackHeader.bounceNamed, { name: track.name })
+                  "
                   @click="onBounce(track)"
                 >
                   BNC
@@ -633,8 +684,12 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   type="button"
                   class="toggle takes"
                   :class="{ on: isTakesExpanded(track) }"
-                  title="Take lanes"
-                  :aria-label="`Take lanes of ${track.name}`"
+                  :title="t.shell.arrangement.trackHeader.takeLanes"
+                  :aria-label="
+                    formatMessage(t.shell.arrangement.trackHeader.takeLanesOf, {
+                      name: track.name,
+                    })
+                  "
                   :aria-pressed="isTakesExpanded(track)"
                   @click="onToggleTakes(track)"
                 >
@@ -644,11 +699,15 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   v-if="takeRowCount(track) > 0 && isTakesExpanded(track)"
                   type="button"
                   class="takes-flatten"
-                  title="Flatten comp into one clip per comped clip"
-                  :aria-label="`Flatten takes of ${track.name}`"
+                  :title="t.shell.arrangement.trackHeader.flattenTitle"
+                  :aria-label="
+                    formatMessage(t.shell.arrangement.trackHeader.flattenNamed, {
+                      name: track.name,
+                    })
+                  "
                   @click="onFlattenTakes(track)"
                 >
-                  Flatten
+                  {{ t.shell.arrangement.trackHeader.flatten }}
                 </button>
                 <input
                   class="mini-slider"
@@ -657,8 +716,14 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   max="2"
                   step="0.01"
                   :value="track.volume"
-                  :title="`Volume ${track.volume.toFixed(2)}`"
-                  :aria-label="`Volume of ${track.name}`"
+                  :title="
+                    formatMessage(t.shell.arrangement.trackHeader.volumeTitle, {
+                      value: track.volume.toFixed(2),
+                    })
+                  "
+                  :aria-label="
+                    formatMessage(t.shell.arrangement.trackHeader.volumeOf, { name: track.name })
+                  "
                   @change="onVolumeChange(track, $event)"
                 />
                 <input
@@ -668,8 +733,14 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   max="1"
                   step="0.01"
                   :value="track.pan"
-                  :title="`Pan ${track.pan.toFixed(2)}`"
-                  :aria-label="`Pan of ${track.name}`"
+                  :title="
+                    formatMessage(t.shell.arrangement.trackHeader.panTitle, {
+                      value: track.pan.toFixed(2),
+                    })
+                  "
+                  :aria-label="
+                    formatMessage(t.shell.arrangement.trackHeader.panOf, { name: track.name })
+                  "
                   @change="onPanChange(track, $event)"
                 />
                 <SelectMenu
@@ -678,7 +749,9 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   size="sm"
                   :model-value="track.groupId ?? GROUP_NONE"
                   :options="groupOptions"
-                  :aria-label="`Group of ${track.name}`"
+                  :aria-label="
+                    formatMessage(t.shell.arrangement.trackHeader.groupOf, { name: track.name })
+                  "
                   @change="onGroupChange(track, $event)"
                 />
               </div>
@@ -694,7 +767,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
             :track="track"
             :lane="automationLaneFor(track)"
             :param="automationParamFor(track)"
-            :options="AUTOMATION_PARAM_OPTIONS"
+            :options="automationParamOptions"
             @param-change="onAutomationParamChange"
             @enabled-change="onAutomationEnabledChange"
           />

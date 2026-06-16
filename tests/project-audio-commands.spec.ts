@@ -254,6 +254,48 @@ describe('audio track and clip commands', () => {
     expect(store.clips.find((c) => c.id === clipId)?.warp).toMatchObject({ sourceBpm: 95 });
   });
 
+  it('duplicate, split and trim preserve warp metadata in the derived window', async () => {
+    const trackId = addAudioTrack();
+    const clipId = await addAudioClip({ trackId, assetId: 'asset-x', lengthPpq: 8 });
+    setClipWarp(clipId, {
+      enabled: true,
+      sourceBpm: 120,
+      anchors: [
+        { ppq: 2, sourceSeconds: 1 },
+        { ppq: 6, sourceSeconds: 3 },
+      ],
+    });
+
+    const copyId = duplicateClip(clipId, 16);
+    expect(store.clips.find((c) => c.id === copyId)?.warp).toEqual({
+      enabled: true,
+      sourceBpm: 120,
+      anchors: [
+        { ppq: 2, sourceSeconds: 1 },
+        { ppq: 6, sourceSeconds: 3 },
+      ],
+    });
+
+    const rightId = splitClip(clipId, 4);
+    expect(store.clips.find((c) => c.id === clipId)?.warp).toEqual({
+      enabled: true,
+      sourceBpm: 120,
+      anchors: [{ ppq: 2, sourceSeconds: 1 }],
+    });
+    expect(store.clips.find((c) => c.id === rightId)?.warp).toEqual({
+      enabled: true,
+      sourceBpm: 120,
+      anchors: [{ ppq: 2, sourceSeconds: 1 }],
+    });
+
+    trimClip(copyId, 17, 5);
+    expect(store.clips.find((c) => c.id === copyId)?.warp).toEqual({
+      enabled: true,
+      sourceBpm: 120,
+      anchors: [{ ppq: 1, sourceSeconds: 0.5 }],
+    });
+  });
+
   it('setClipWarp omits the anchors field when none survive sanitizing', async () => {
     const trackId = addAudioTrack();
     const clipId = await addAudioClip({ trackId, assetId: 'asset-x', lengthPpq: 8 });

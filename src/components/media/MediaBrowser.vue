@@ -5,6 +5,7 @@ import { ensureWasm } from '@/lib/wasm';
 import { type AudioAssetMeta, deleteAsset, listAssets, loadAsset } from '@/persistence/assets';
 import { decodeAndIngest } from '@/project/audio-import';
 import { useProjectStore } from '@/project/store';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import { setAssetDragData } from '@/ui/media/asset-drag';
 import {
   type AssetSortKey,
@@ -55,6 +56,7 @@ const emit = defineEmits<{
 }>();
 
 const store = useProjectStore();
+const { t } = useI18n();
 
 /** Renders an unknown error as a display message. */
 function errorMessage(error: unknown): string {
@@ -92,16 +94,16 @@ const keyOptions = computed(() => collectKeyTags(assets.value));
 
 /** Key filter choices: "Any key" plus each distinct key tag in the assets. */
 const keyFilterOptions = computed(() => [
-  { value: '', label: 'Any key' },
+  { value: '', label: t.value.shell.media.anyKey },
   ...keyOptions.value.map((key) => ({ value: key, label: key })),
 ]);
 
 /** Sort-order choices for the asset list. */
-const sortOptions: ReadonlyArray<{ value: AssetSortKey; label: string }> = [
-  { value: 'name', label: 'Name' },
-  { value: 'duration', label: 'Duration' },
-  { value: 'bpm', label: 'BPM' },
-];
+const sortOptions = computed<ReadonlyArray<{ value: AssetSortKey; label: string }>>(() => [
+  { value: 'name', label: t.value.shell.media.sortName },
+  { value: 'duration', label: t.value.shell.media.sortDuration },
+  { value: 'bpm', label: t.value.shell.media.sortBpm },
+]);
 const displayedAssets = computed(() =>
   sortAssets(
     filterAssets(assets.value, {
@@ -291,7 +293,7 @@ onBeforeUnmount(() => {
   <section
     class="media-browser"
     :class="{ 'drag-over': dragOver }"
-    aria-label="Media browser"
+    :aria-label="t.shell.media.label"
     @dragover="onDragOver"
     @dragleave="onDragLeave"
     @drop="onDrop"
@@ -301,14 +303,14 @@ onBeforeUnmount(() => {
         v-model="filterText"
         class="filter-text"
         type="search"
-        placeholder="Filter by name"
-        aria-label="Filter assets by name"
+        :placeholder="t.shell.media.filterByName"
+        :aria-label="t.shell.media.filterAssetsByName"
       />
       <SelectMenu
         v-model="filterKey"
         :options="keyFilterOptions"
         class="filter-key"
-        aria-label="Filter by key"
+        :aria-label="t.shell.media.filterByKey"
         size="sm"
       />
       <input
@@ -316,19 +318,19 @@ onBeforeUnmount(() => {
         class="filter-bpm"
         :class="{ invalid: bpmInvalid }"
         type="text"
-        placeholder="BPM (80-120)"
-        aria-label="Filter by BPM range"
+        :placeholder="t.shell.media.bpmPlaceholder"
+        :aria-label="t.shell.media.filterByBpm"
       />
       <SelectMenu
         v-model="sortKey"
         :options="sortOptions"
         class="sort-key"
-        aria-label="Sort assets"
+        :aria-label="t.shell.media.sortAssets"
         size="sm"
       />
       <label v-if="timeStretchFn" class="sync-toggle">
         <input v-model="syncToTempo" type="checkbox" />
-        Sync to project tempo
+        {{ t.shell.media.syncTempo }}
       </label>
       <button
         type="button"
@@ -336,7 +338,7 @@ onBeforeUnmount(() => {
         :disabled="importProgress !== null"
         @click="onImportClick"
       >
-        Import files…
+        {{ t.shell.media.importFiles }}
       </button>
       <input
         ref="fileInput"
@@ -351,8 +353,12 @@ onBeforeUnmount(() => {
     </div>
 
     <p v-if="importProgress" class="import-progress" role="status">
-      Importing {{ Math.min(importProgress.done + 1, importProgress.total) }} /
-      {{ importProgress.total }}…
+      {{
+        formatMessage(t.shell.media.importing, {
+          done: String(Math.min(importProgress.done + 1, importProgress.total)),
+          total: String(importProgress.total),
+        })
+      }}
     </p>
     <ul v-if="importErrors.length > 0" class="import-errors" role="alert">
       <li v-for="(entry, index) in importErrors" :key="`${entry.name}-${index}`">
@@ -364,7 +370,7 @@ onBeforeUnmount(() => {
     <p v-if="deleteError" class="error">{{ deleteError }}</p>
 
     <p v-if="loaded && displayedAssets.length === 0" class="empty">
-      {{ assets.length === 0 ? 'No audio assets. Import files or drop them here.' : 'No assets match the filters.' }}
+      {{ assets.length === 0 ? t.shell.media.empty : t.shell.media.noMatches }}
     </p>
     <ul v-else class="asset-list">
       <li
@@ -378,8 +384,12 @@ onBeforeUnmount(() => {
           type="button"
           class="preview-button"
           :class="{ playing: playingId === asset.id }"
-          :title="playingId === asset.id ? 'Stop preview' : 'Preview'"
-          :aria-label="playingId === asset.id ? `Stop ${asset.name}` : `Preview ${asset.name}`"
+          :title="playingId === asset.id ? t.shell.media.stopPreview : t.shell.media.preview"
+          :aria-label="
+            playingId === asset.id
+              ? formatMessage(t.shell.media.stopAsset, { name: asset.name })
+              : formatMessage(t.shell.media.previewAsset, { name: asset.name })
+          "
           @click="togglePreview(asset)"
         >
           {{ playingId === asset.id ? '■' : '▶' }}
@@ -389,22 +399,26 @@ onBeforeUnmount(() => {
           <span class="asset-summary">{{ assetSummary(asset) }}</span>
         </div>
         <div v-if="pendingDeleteId === asset.id" class="row-actions confirm">
-          <span class="confirm-label">Delete?</span>
-          <button type="button" class="danger" @click="confirmDelete(asset.id)">Delete</button>
-          <button type="button" @click="cancelDelete">Cancel</button>
+          <span class="confirm-label">{{ t.shell.media.deleteConfirm }}</span>
+          <button type="button" class="danger" @click="confirmDelete(asset.id)">
+            {{ t.shell.media.delete }}
+          </button>
+          <button type="button" @click="cancelDelete">{{ t.shell.media.cancel }}</button>
         </div>
         <div v-else class="row-actions">
-          <button type="button" class="add-button" @click="onAdd(asset.id)">Add</button>
+          <button type="button" class="add-button" @click="onAdd(asset.id)">
+            {{ t.shell.media.add }}
+          </button>
           <button
             type="button"
             class="delete-button"
             :disabled="referencedIds.has(asset.id)"
             :title="
               referencedIds.has(asset.id)
-                ? 'In use by project clips — remove those clips first'
-                : 'Delete asset'
+                ? t.shell.media.deleteBlocked
+                : t.shell.media.deleteAsset
             "
-            :aria-label="`Delete ${asset.name}`"
+            :aria-label="formatMessage(t.shell.media.deleteAssetNamed, { name: asset.name })"
             @click="requestDelete(asset.id)"
           >
             ×

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { MidiLearnHandle } from '@/composables/useMidiLearn';
+import { useI18n } from '@/ui/i18n';
 import {
   formatMidiCcBinding,
   type MidiLearnParam,
@@ -25,35 +26,41 @@ const emit = defineEmits<{
   close: [];
 }>();
 
+const { t } = useI18n();
+
 /** The two bindable parameters per strip, in column order. */
-const PARAMS: ReadonlyArray<{ param: MidiLearnParam; label: string }> = [
-  { param: 'gain', label: 'Vol' },
-  { param: 'pan', label: 'Pan' },
+const PARAMS: ReadonlyArray<{ param: MidiLearnParam; labelKey: 'volume' | 'pan' }> = [
+  { param: 'gain', labelKey: 'volume' },
+  { param: 'pan', labelKey: 'pan' },
 ];
 
 /** Short caption for a target's button: its binding, listening, or a dash. */
 function caption(param: MidiLearnParam, scope: MidiLearnScope): string {
-  if (props.learn.isArmed(param, scope)) return 'listening…';
+  if (props.learn.isArmed(param, scope)) return t.value.shell.midiLearn.listening;
   const binding = props.learn.bindingFor(param, scope);
-  return binding ? formatMidiCcBinding(binding) : 'learn';
+  return binding ? formatMidiCcBinding(binding) : t.value.shell.midiLearn.learn;
 }
 </script>
 
 <template>
-  <div class="midi-learn-panel" role="dialog" aria-label="MIDI learn">
+  <div class="midi-learn-panel" role="dialog" :aria-label="t.shell.midiLearn.label">
     <header class="ml-head">
-      <h2 class="ml-title">MIDI Learn</h2>
-      <button type="button" class="ml-close" aria-label="Close" @click="emit('close')">×</button>
+      <h2 class="ml-title">{{ t.shell.midiLearn.title }}</h2>
+      <button type="button" class="ml-close" :aria-label="t.shell.midiLearn.close" @click="emit('close')">
+        ×
+      </button>
     </header>
 
     <div class="ml-body">
       <div class="ml-row ml-row-head">
-        <span class="ml-name">Strip</span>
-        <span v-for="col in PARAMS" :key="col.param" class="ml-col-head">{{ col.label }}</span>
+        <span class="ml-name">{{ t.shell.midiLearn.strip }}</span>
+        <span v-for="col in PARAMS" :key="col.param" class="ml-col-head">
+          {{ t.shell.midiLearn[col.labelKey] }}
+        </span>
       </div>
 
       <div class="ml-row">
-        <span class="ml-name ml-name-master">Master</span>
+        <span class="ml-name ml-name-master">{{ t.shell.midiLearn.master }}</span>
         <span v-for="col in PARAMS" :key="col.param" class="ml-cell">
           <button
             type="button"
@@ -70,7 +77,7 @@ function caption(param: MidiLearnParam, scope: MidiLearnScope): string {
             v-if="learn.bindingFor(col.param, 'master')"
             type="button"
             class="ml-clear"
-            aria-label="Clear binding"
+            :aria-label="t.shell.midiLearn.clearBinding"
             @click="learn.clear(col.param, 'master')"
           >
             ×
@@ -99,7 +106,7 @@ function caption(param: MidiLearnParam, scope: MidiLearnScope): string {
             v-if="learn.bindingFor(col.param, track.id)"
             type="button"
             class="ml-clear"
-            aria-label="Clear binding"
+            :aria-label="t.shell.midiLearn.clearBinding"
             @click="learn.clear(col.param, track.id)"
           >
             ×
@@ -109,7 +116,7 @@ function caption(param: MidiLearnParam, scope: MidiLearnScope): string {
     </div>
 
     <footer class="ml-foot">
-      <span class="ml-hint">Session bindings · move a control to learn</span>
+      <span class="ml-hint">{{ t.shell.midiLearn.hint }}</span>
       <span class="ml-spacer" />
       <button
         type="button"
@@ -117,7 +124,7 @@ function caption(param: MidiLearnParam, scope: MidiLearnScope): string {
         :disabled="learn.bindings.size === 0 && learn.armed.value === null"
         @click="learn.clearAll()"
       >
-        Clear all
+        {{ t.shell.midiLearn.clearAll }}
       </button>
     </footer>
   </div>

@@ -1,6 +1,7 @@
 import { type Ref, ref } from 'vue';
 import { promptDialog } from '@/composables/useDialogs';
 import { useLayouts } from '@/composables/useLayouts';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import type { LayoutBindings } from '@/ui/settings/layouts';
 
 interface TourHandle {
@@ -25,6 +26,7 @@ export function useShellPanels(options: ShellPanelsOptions) {
   const layoutMenuRoot = ref<HTMLElement | null>(null);
   const tourRef = ref<TourHandle | null>(null);
   const namedLayouts = useLayouts();
+  const { t } = useI18n();
 
   function applyNamedLayout(name: string): void {
     layoutMenuOpen.value = false;
@@ -38,16 +40,16 @@ export function useShellPanels(options: ShellPanelsOptions) {
     layoutMenuOpen.value = false;
     void (async () => {
       const name = await promptDialog({
-        title: 'Save layout',
-        message: 'Save the current panel arrangement under a name.',
-        placeholder: 'Layout name',
-        confirmLabel: 'Save',
+        title: t.value.dialogs.prompts.saveLayoutTitle,
+        message: t.value.dialogs.prompts.saveLayoutMessage,
+        placeholder: t.value.dialogs.prompts.layoutNamePlaceholder,
+        confirmLabel: t.value.dialogs.prompts.save,
       });
       if (!name) return;
       if (!namedLayouts.saveCurrent(name, options.layoutBindings)) {
         options.errorMessage.value = namedLayouts.isPreset(name)
-          ? `"${name}" is a built-in preset name; choose another.`
-          : 'Could not save the layout (too many saved layouts).';
+          ? formatMessage(t.value.dialogs.prompts.builtInLayoutName, { name })
+          : t.value.dialogs.prompts.layoutSaveFailed;
       }
     })();
   }

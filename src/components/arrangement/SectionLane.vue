@@ -6,6 +6,7 @@ import { type EditorSection, TRACK_COLOR_PALETTE } from '@/project/types';
 import { barRangeAt, nearestBarPpq } from '@/ui/arrangement/ruler';
 import { clampSectionEdge, newSectionSpan, sectionIndexAt } from '@/ui/arrangement/sections';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
+import { useI18n } from '@/ui/i18n';
 import { colorWithAlpha } from './theme';
 
 /**
@@ -29,6 +30,7 @@ const emit = defineEmits<{
 }>();
 
 const store = useProjectStore();
+const { t } = useI18n();
 const wrapper = ref<HTMLDivElement | null>(null);
 
 /** Px distance from a band edge treated as a resize handle. */
@@ -240,7 +242,7 @@ function onLaneDoubleClick(event: MouseEvent): void {
         ref="nameInput"
         v-model="editName"
         class="section-name-input"
-        aria-label="Section name"
+        :aria-label="t.shell.arrangement.sectionName"
         @click.stop
         @pointerdown.stop
         @keydown.enter.prevent="commitRename"

@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import { setClipFades, setClipGain, setClipLoop } from '@/project/commands';
 import { dbToLinear } from '@/project/mixer';
 import { type EditorClip, isAudioClip } from '@/project/types';
+import { useI18n } from '@/ui/i18n';
 
 /**
  * Compact inspector for the active arrangement clip: edits the clip gain,
@@ -24,6 +25,8 @@ const emit = defineEmits<{
   /** Request a tempo re-analysis of the clip's audio asset. */
   redetectTempo: [clipId: number];
 }>();
+
+const { t } = useI18n();
 
 /** Lowest gain shown before the field reads as silence ("-inf"). */
 const GAIN_FLOOR_DB = -60;
@@ -71,17 +74,17 @@ function onLoopToggle(): void {
 </script>
 
 <template>
-  <div v-if="props.clip" class="clip-inspector" aria-label="Clip inspector">
+  <div v-if="props.clip" class="clip-inspector" :aria-label="t.shell.arrangement.clipInspector.label">
     <span class="ci-name" :title="props.clip.name">{{ props.clip.name }}</span>
 
     <label class="ci-field">
-      Gain
+      {{ t.shell.arrangement.clipInspector.gain }}
       <input
         class="ci-num"
         type="number"
         step="0.5"
         :value="gainDb === '-inf' ? GAIN_FLOOR_DB : gainDb"
-        aria-label="Clip gain in decibels"
+        :aria-label="t.shell.arrangement.clipInspector.gainAria"
         @change="onGainInput"
       />
       <span class="ci-unit">dB</span>
@@ -89,30 +92,30 @@ function onLoopToggle(): void {
 
     <template v-if="isAudio">
       <label class="ci-field">
-        Fade in
+        {{ t.shell.arrangement.clipInspector.fadeIn }}
         <input
           class="ci-num"
           type="number"
           min="0"
           step="0.25"
           :value="fadeBeats(props.clip.fadeInPpq)"
-          aria-label="Fade-in length in beats"
+          :aria-label="t.shell.arrangement.clipInspector.fadeInAria"
           @change="onFadeInput('in', $event)"
         />
-        <span class="ci-unit">beats</span>
+        <span class="ci-unit">{{ t.shell.arrangement.clipInspector.beats }}</span>
       </label>
       <label class="ci-field">
-        Fade out
+        {{ t.shell.arrangement.clipInspector.fadeOut }}
         <input
           class="ci-num"
           type="number"
           min="0"
           step="0.25"
           :value="fadeBeats(props.clip.fadeOutPpq)"
-          aria-label="Fade-out length in beats"
+          :aria-label="t.shell.arrangement.clipInspector.fadeOutAria"
           @change="onFadeInput('out', $event)"
         />
-        <span class="ci-unit">beats</span>
+        <span class="ci-unit">{{ t.shell.arrangement.clipInspector.beats }}</span>
       </label>
     </template>
 
@@ -120,20 +123,20 @@ function onLoopToggle(): void {
       <input
         type="checkbox"
         :checked="props.clip.loopEnabled"
-        aria-label="Loop the clip window"
+        :aria-label="t.shell.arrangement.clipInspector.loopAria"
         @change="onLoopToggle"
       />
-      Loop
+      {{ t.shell.arrangement.clipInspector.loop }}
     </label>
 
     <button
       v-if="isAudio"
       type="button"
       class="ci-redetect"
-      title="Re-analyze the clip's audio and update its source tempo"
+      :title="t.shell.arrangement.clipInspector.redetectTitle"
       @click="emit('redetectTempo', props.clip.id)"
     >
-      Re-detect tempo
+      {{ t.shell.arrangement.clipInspector.redetect }}
     </button>
   </div>
 </template>

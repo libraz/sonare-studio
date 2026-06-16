@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useShortcuts } from '@/composables/useShortcuts';
+import { useI18n } from '@/ui/i18n';
 import { createFocusTrap, type FocusTrap } from '@/ui/settings/focus-trap';
 import { detectPlatform, formatKeyCombo } from '@/ui/settings/key-combo';
 import type { ShortcutActionDef, ShortcutScope } from '@/ui/settings/shortcuts';
@@ -22,13 +23,9 @@ const emit = defineEmits<{
 }>();
 
 const shortcuts = useShortcuts();
+const { t } = useI18n();
 const platform = detectPlatform();
 
-const SCOPE_LABELS: Record<ShortcutScope, string> = {
-  global: 'Everywhere',
-  arrangement: 'Arrangement',
-  editor: 'Editor',
-};
 const SCOPE_ORDER: ReadonlyArray<ShortcutScope> = ['global', 'arrangement', 'editor'];
 
 interface HelpRow {
@@ -46,17 +43,27 @@ interface HelpSection {
 function rowKeys(action: ShortcutActionDef): string {
   if (action.keysLabel !== undefined) return action.keysLabel;
   const keys = shortcuts.keysFor(action.id);
-  if (keys.length === 0) return '—';
+  if (keys.length === 0) return t.value.dialogs.shortcutsHelp.emptyKeys;
   return keys.map((combo) => formatKeyCombo(combo, platform)).join(' / ');
+}
+
+function shortcutActionLabel(action: ShortcutActionDef): string {
+  return (
+    t.value.shortcuts.actions[action.id as keyof typeof t.value.shortcuts.actions] ?? action.label
+  );
 }
 
 const sections = computed<HelpSection[]>(() =>
   SCOPE_ORDER.map((scope) => ({
     scope,
-    label: SCOPE_LABELS[scope],
+    label: t.value.dialogs.shortcutsHelp.scopes[scope],
     rows: shortcuts.actions
       .filter((action) => action.when === scope)
-      .map((action) => ({ id: action.id, label: action.label, keys: rowKeys(action) })),
+      .map((action) => ({
+        id: action.id,
+        label: shortcutActionLabel(action),
+        keys: rowKeys(action),
+      })),
   })).filter((section) => section.rows.length > 0),
 );
 
@@ -104,11 +111,11 @@ function onKeydown(event: KeyboardEvent): void {
       class="dialog"
       role="dialog"
       aria-modal="true"
-      aria-label="Keyboard shortcuts"
+      :aria-label="t.dialogs.shortcutsHelp.title"
       tabindex="-1"
       @keydown="onKeydown"
     >
-      <h2 class="dialog-title">Keyboard shortcuts</h2>
+      <h2 class="dialog-title">{{ t.dialogs.shortcutsHelp.title }}</h2>
       <div class="sections">
         <section v-for="section in sections" :key="section.scope" class="scope-section">
           <h3 class="scope-title">{{ section.label }}</h3>
@@ -121,7 +128,9 @@ function onKeydown(event: KeyboardEvent): void {
         </section>
       </div>
       <div class="dialog-actions">
-        <button type="button" class="primary" @click="close">Close</button>
+        <button type="button" class="primary" @click="close">
+          {{ t.dialogs.shortcutsHelp.close }}
+        </button>
       </div>
     </div>
   </div>

@@ -4,6 +4,7 @@ import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { addNote, deleteNotes, updateNotes } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { clipKind } from '@/project/types';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import {
   bakePattern,
   isEmptyPlan,
@@ -50,6 +51,7 @@ const emit = defineEmits<{
 }>();
 
 const store = useProjectStore();
+const { t } = useI18n();
 
 /** The editable pattern (replaced wholesale by every pure operation). */
 const pattern = ref<StepPattern>(createDrumPattern());
@@ -87,10 +89,10 @@ const selectedRowSteps = computed(() => pattern.value.rows[selectedRow.value]?.s
 const selectedRowMuted = computed(() => pattern.value.rows[selectedRow.value]?.muted === true);
 
 /** Row mode choices for the mode picker. */
-const MODE_OPTIONS: ReadonlyArray<{ value: SequencerMode; label: string }> = [
-  { value: 'drum', label: 'Drums' },
-  { value: 'pitch', label: 'Pitch' },
-];
+const MODE_OPTIONS = computed<ReadonlyArray<{ value: SequencerMode; label: string }>>(() => [
+  { value: 'drum', label: t.value.shell.stepSequencer.modes.drums },
+  { value: 'pitch', label: t.value.shell.stepSequencer.modes.pitch },
+]);
 
 /** Pattern-length choices, numeric to match the parsed step count. */
 const stepCountOptions = computed(() =>
@@ -226,13 +228,13 @@ function applyFill(): void {
 function applyToClip(): void {
   const clip = activeClip.value;
   if (!clip || !canTargetClip.value) {
-    status.value = 'No active MIDI clip to apply to.';
+    status.value = t.value.shell.stepSequencer.status.noActiveApply;
     return;
   }
   const baked = bakePattern(pattern.value, { basePpq: clip.sourceOffsetPpq });
   const plan = planNoteReplacement(store.notes, baked);
   if (isEmptyPlan(plan)) {
-    status.value = 'Clip already matches the pattern.';
+    status.value = t.value.shell.stepSequencer.status.alreadyMatches;
     return;
   }
   try {
@@ -243,14 +245,17 @@ function applyToClip(): void {
     status.value = err instanceof Error ? err.message : String(err);
     return;
   }
-  status.value = `Applied ${baked.length} notes to "${clip.name}".`;
+  status.value = formatMessage(t.value.shell.stepSequencer.status.applied, {
+    count: baked.length,
+    name: clip.name,
+  });
   emit('applied', baked.length);
 }
 
 function pullFromClip(): void {
   const clip = activeClip.value;
   if (!clip || !canTargetClip.value) {
-    status.value = 'No active MIDI clip to pull from.';
+    status.value = t.value.shell.stepSequencer.status.noActivePull;
     return;
   }
   const result = patternFromNotes(store.notes, pattern.value, clip.sourceOffsetPpq);
@@ -258,8 +263,14 @@ function pullFromClip(): void {
   const captured = store.notes.length - result.droppedNotes;
   status.value =
     result.droppedNotes > 0
-      ? `Pulled ${captured} notes (${result.droppedNotes} off-grid notes dropped).`
-      : `Pulled ${captured} notes from "${clip.name}".`;
+      ? formatMessage(t.value.shell.stepSequencer.status.pulledDropped, {
+          count: captured,
+          dropped: result.droppedNotes,
+        })
+      : formatMessage(t.value.shell.stepSequencer.status.pulled, {
+          count: captured,
+          name: clip.name,
+        });
   emit('pulled', captured);
 }
 
@@ -274,7 +285,7 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
           class="tool-select"
           :model-value="pattern.mode"
           :options="MODE_OPTIONS"
-          aria-label="Row mode"
+          :aria-label="t.shell.stepSequencer.rowMode"
           size="sm"
           @change="setMode"
         />
@@ -285,17 +296,17 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
           min="0"
           max="115"
           :value="rootPitch"
-          aria-label="Root pitch"
+          :aria-label="t.shell.stepSequencer.rootPitch"
           @change="onRootPitchChange"
         />
       </div>
       <div class="tool-group">
-        <label class="tool-label">Steps</label>
+        <label class="tool-label">{{ t.shell.stepSequencer.steps }}</label>
         <SelectMenu
           class="tool-select"
           :model-value="pattern.stepCount"
           :options="stepCountOptions"
-          aria-label="Pattern length"
+          :aria-label="t.shell.stepSequencer.patternLength"
           size="sm"
           @change="onStepCountChange"
         />
@@ -303,33 +314,33 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
           class="tool-select"
           :model-value="pattern.resolution"
           :options="resolutionOptions"
-          aria-label="Step resolution"
+          :aria-label="t.shell.stepSequencer.stepResolution"
           size="sm"
           @change="onResolutionChange"
         />
-        <label class="tool-label">Swing</label>
+        <label class="tool-label">{{ t.shell.stepSequencer.swing }}</label>
         <input
           class="tool-number"
           type="number"
           min="0"
           max="100"
           :value="pattern.swing"
-          aria-label="Swing percent"
+          :aria-label="t.shell.stepSequencer.swingPercent"
           @change="onSwingChange"
         />
       </div>
       <div class="tool-group">
         <button type="button" class="tool-button" data-test="row-mute" @click="toggleRowMute">
-          {{ selectedRowMuted ? 'Unmute' : 'Mute' }}
+          {{ selectedRowMuted ? t.shell.stepSequencer.unmute : t.shell.stepSequencer.mute }}
         </button>
         <button type="button" class="tool-button" data-test="row-clear" @click="clearSelectedRow">
-          Clear
+          {{ t.shell.stepSequencer.clear }}
         </button>
         <button
           type="button"
           class="tool-button"
           data-test="row-shift-left"
-          aria-label="Shift row left"
+          :aria-label="t.shell.stepSequencer.shiftLeft"
           @click="shiftSelectedRow(-1)"
         >
           ◀
@@ -338,7 +349,7 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
           type="button"
           class="tool-button"
           data-test="row-shift-right"
-          aria-label="Shift row right"
+          :aria-label="t.shell.stepSequencer.shiftRight"
           @click="shiftSelectedRow(1)"
         >
           ▶
@@ -350,11 +361,11 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
             data-test="euclid-toggle"
             @click="euclidOpen = !euclidOpen"
           >
-            Euclid
+            {{ t.shell.stepSequencer.euclid }}
           </button>
           <div v-if="euclidOpen" class="euclid-popover">
             <label class="tool-label">
-              Pulses
+              {{ t.shell.stepSequencer.pulses }}
               <input
                 v-model.number="euclidPulses"
                 class="tool-number"
@@ -364,7 +375,7 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
               />
             </label>
             <label class="tool-label">
-              Rotate
+              {{ t.shell.stepSequencer.rotate }}
               <input
                 v-model.number="euclidRotation"
                 class="tool-number"
@@ -374,18 +385,18 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
               />
             </label>
             <button type="button" class="tool-button" data-test="euclid-apply" @click="applyEuclid">
-              Fill row
+              {{ t.shell.stepSequencer.fillRow }}
             </button>
           </div>
         </div>
       </div>
       <div class="tool-group">
-        <label class="tool-label">Seed</label>
+        <label class="tool-label">{{ t.shell.stepSequencer.seed }}</label>
         <input
           class="tool-number"
           type="number"
           :value="pattern.seed"
-          aria-label="Random seed"
+          :aria-label="t.shell.stepSequencer.randomSeed"
           @change="onSeedChange"
         />
         <input
@@ -394,10 +405,10 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
           type="number"
           min="0"
           max="64"
-          aria-label="Velocity jitter amount"
+          :aria-label="t.shell.stepSequencer.velocityJitter"
         />
         <button type="button" class="tool-button" data-test="jitter" @click="applyJitter">
-          Jitter
+          {{ t.shell.stepSequencer.jitter }}
         </button>
         <input
           v-model.number="fillDensity"
@@ -405,10 +416,10 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
           type="number"
           min="0"
           max="100"
-          aria-label="Fill density percent"
+          :aria-label="t.shell.stepSequencer.fillDensity"
         />
         <button type="button" class="tool-button" data-test="fill" @click="applyFill">
-          Fill
+          {{ t.shell.stepSequencer.fill }}
         </button>
       </div>
       <div class="tool-group tool-group-apply">
@@ -419,7 +430,7 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
           :disabled="!canTargetClip"
           @click="applyToClip"
         >
-          Apply to clip
+          {{ t.shell.stepSequencer.applyToClip }}
         </button>
         <button
           type="button"
@@ -428,7 +439,7 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
           :disabled="!canTargetClip"
           @click="pullFromClip"
         >
-          Pull from clip
+          {{ t.shell.stepSequencer.pullFromClip }}
         </button>
       </div>
     </div>

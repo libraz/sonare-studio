@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from 'vue';
+import { useI18n } from '@/ui/i18n';
 
 const emit = defineEmits<{
   add: [kind: 'midi' | 'audio' | 'group'];
@@ -7,6 +8,7 @@ const emit = defineEmits<{
 
 const open = ref(false);
 const menu = ref<HTMLDivElement | null>(null);
+const { t } = useI18n();
 
 function onAdd(kind: 'midi' | 'audio' | 'group'): void {
   open.value = false;
@@ -34,17 +36,23 @@ onBeforeUnmount(() => {
     <button
       type="button"
       class="add-track"
-      title="Add a track"
+      :title="t.shell.arrangement.addTrack.title"
       aria-haspopup="menu"
       :aria-expanded="open"
       @click="open = !open"
     >
-      + Track ▾
+      {{ t.shell.arrangement.addTrack.trigger }} ▾
     </button>
     <div v-if="open" class="add-track-items" role="menu">
-      <button type="button" role="menuitem" @click="onAdd('midi')">+ MIDI track</button>
-      <button type="button" role="menuitem" @click="onAdd('audio')">+ Audio track</button>
-      <button type="button" role="menuitem" @click="onAdd('group')">+ Group track</button>
+      <button type="button" role="menuitem" @click="onAdd('midi')">
+        {{ t.shell.arrangement.addTrack.midi }}
+      </button>
+      <button type="button" role="menuitem" @click="onAdd('audio')">
+        {{ t.shell.arrangement.addTrack.audio }}
+      </button>
+      <button type="button" role="menuitem" @click="onAdd('group')">
+        {{ t.shell.arrangement.addTrack.group }}
+      </button>
     </div>
   </div>
 </template>

@@ -23,6 +23,7 @@ import {
 import { createDefaultStrip, MAX_VCA_GROUPS, type MixerStrip } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 import {
   type AutomationWriteGesture,
@@ -77,6 +78,7 @@ const props = withDefaults(
 );
 
 const store = useProjectStore();
+const { t } = useI18n();
 
 const isMaster = computed(() => props.target === 'master');
 
@@ -91,7 +93,9 @@ const strip = computed<MixerStrip>(() => {
 
 const isGroup = computed(() => track.value?.kind === 'group');
 
-const name = computed(() => (isMaster.value ? 'Master' : (track.value?.name ?? '')));
+const name = computed(() =>
+  isMaster.value ? t.value.shell.mixer.strip.master : (track.value?.name ?? ''),
+);
 const color = computed(() => (isMaster.value ? '#8b93a3' : (track.value?.color ?? '#5b6270')));
 const active = computed(
   () => !isMaster.value && track.value !== undefined && track.value.id === store.activeTrackId,
@@ -122,7 +126,7 @@ const showOutputBus = computed(
 
 /** Output-bus options: the master mix plus every send bus (value = bus id). */
 const outputBusOptions = computed(() => [
-  { value: '', label: 'Master' },
+  { value: '', label: t.value.shell.mixer.strip.master },
   ...store.mixer.buses.map((bus) => ({ value: bus.id, label: bus.name })),
 ]);
 
@@ -140,42 +144,62 @@ function onHeaderClick(): void {
 
 /** Builds and opens the strip's right-click action menu. */
 function onContextMenu(event: MouseEvent): void {
-  const t = track.value;
-  if (t) setActiveTrack(t.id);
+  const currentTrack = track.value;
+  if (currentTrack) setActiveTrack(currentTrack.id);
   const items: ContextMenuItem[] = [];
-  if (t) {
+  if (currentTrack) {
     items.push({
       id: 'rename',
-      label: 'Rename…',
+      label: t.value.shell.mixer.strip.rename,
       run: () => {
         void (async () => {
           const next = await promptDialog({
-            title: 'Rename track',
-            message: 'Enter a name for this track.',
-            defaultValue: t.name,
-            placeholder: 'Track name',
-            confirmLabel: 'Rename',
+            title: t.value.shell.mixer.strip.renameTitle,
+            message: t.value.shell.mixer.strip.renameMessage,
+            defaultValue: currentTrack.name,
+            placeholder: t.value.shell.mixer.strip.trackNamePlaceholder,
+            confirmLabel: t.value.shell.mixer.strip.renameConfirm,
           });
-          if (next && next !== t.name) renameTrack(t.id, next);
+          if (next && next !== currentTrack.name) renameTrack(currentTrack.id, next);
         })();
       },
     });
   }
   items.push(
-    { id: 'reset-gain', label: 'Reset fader (0 dB)', run: () => setStripGain(props.target, 0) },
-    { id: 'reset-pan', label: 'Center pan', run: () => setStripPan(props.target, 0) },
+    {
+      id: 'reset-gain',
+      label: t.value.shell.mixer.strip.resetFader,
+      run: () => setStripGain(props.target, 0),
+    },
+    {
+      id: 'reset-pan',
+      label: t.value.shell.mixer.strip.centerPan,
+      run: () => setStripPan(props.target, 0),
+    },
   );
-  if (t && !isGroup.value) {
-    const safe = t.soloSafe === true;
+  if (currentTrack && !isGroup.value) {
+    const safe = currentTrack.soloSafe === true;
     items.push(
       { id: 'sep-1', separator: true },
-      { id: 'mute', label: t.mute ? 'Unmute' : 'Mute', run: () => setTrackMute(t.id, !t.mute) },
-      { id: 'solo', label: t.solo ? 'Unsolo' : 'Solo', run: () => setTrackSolo(t.id, !t.solo) },
+      {
+        id: 'mute',
+        label: currentTrack.mute
+          ? t.value.shell.mixer.strip.unmute
+          : t.value.shell.mixer.strip.mute,
+        run: () => setTrackMute(currentTrack.id, !currentTrack.mute),
+      },
+      {
+        id: 'solo',
+        label: currentTrack.solo
+          ? t.value.shell.mixer.strip.unsolo
+          : t.value.shell.mixer.strip.solo,
+        run: () => setTrackSolo(currentTrack.id, !currentTrack.solo),
+      },
       {
         id: 'solo-safe',
-        label: 'Solo safe',
+        label: t.value.shell.mixer.strip.soloSafe,
         checked: safe,
-        run: () => setTrackSoloSafe(t.id, !safe),
+        run: () => setTrackSoloSafe(currentTrack.id, !safe),
       },
     );
     // VCA assignment: each existing group toggles membership; a new group can
@@ -183,19 +207,19 @@ function onContextMenu(event: MouseEvent): void {
     const groups = store.mixer.vcaGroups ?? [];
     items.push({ id: 'sep-vca', separator: true });
     for (const group of groups) {
-      const assigned = t.vcaId === group.id;
+      const assigned = currentTrack.vcaId === group.id;
       items.push({
         id: `vca-${group.id}`,
         label: group.name,
         checked: assigned,
-        run: () => setTrackVca(t.id, assigned ? null : group.id),
+        run: () => setTrackVca(currentTrack.id, assigned ? null : group.id),
       });
     }
     if (groups.length < MAX_VCA_GROUPS) {
       items.push({
         id: 'vca-new',
-        label: 'New VCA group',
-        run: () => setTrackVca(t.id, addVcaGroup()),
+        label: t.value.shell.mixer.strip.newVcaGroup,
+        run: () => setTrackVca(currentTrack.id, addVcaGroup()),
       });
     }
   }
@@ -351,11 +375,17 @@ onBeforeUnmount(() => {
     <button type="button" class="strip-header" :title="name" @click="onHeaderClick">
       <span class="strip-color" :style="{ background: color }" />
       <span class="strip-name">{{ name }}</span>
-      <span v-if="isGroup" class="strip-group-tag" title="Group submix">GROUP</span>
-      <span v-if="track?.frozen" class="strip-frozen-tag" title="Frozen (plays the baked render)">
+      <span v-if="isGroup" class="strip-group-tag" :title="t.shell.mixer.strip.groupSubmix">
+        {{ t.shell.mixer.strip.group }}
+      </span>
+      <span v-if="track?.frozen" class="strip-frozen-tag" :title="t.shell.mixer.strip.frozenTitle">
         ❄
       </span>
-      <span v-if="vcaGroupName" class="strip-vca-tag" :title="`VCA group: ${vcaGroupName}`">
+      <span
+        v-if="vcaGroupName"
+        class="strip-vca-tag"
+        :title="formatMessage(t.shell.mixer.strip.vcaGroup, { name: vcaGroupName })"
+      >
         {{ vcaGroupName }}
       </span>
     </button>
@@ -365,8 +395,8 @@ onBeforeUnmount(() => {
         type="button"
         class="toggle strip-auto-r"
         :class="{ on: autoMode === 'read' }"
-        title="Automation read (controls follow the lanes)"
-        :aria-label="`Automation read ${name}`"
+        :title="t.shell.mixer.strip.automationReadTitle"
+        :aria-label="formatMessage(t.shell.mixer.strip.automationRead, { name })"
         :aria-pressed="autoMode === 'read'"
         @click="toggleAutomationStripMode(props.target, 'read')"
       >
@@ -376,8 +406,8 @@ onBeforeUnmount(() => {
         type="button"
         class="toggle strip-auto-w"
         :class="{ on: autoMode === 'write' }"
-        title="Automation write (drags record lane breakpoints)"
-        :aria-label="`Automation write ${name}`"
+        :title="t.shell.mixer.strip.automationWriteTitle"
+        :aria-label="formatMessage(t.shell.mixer.strip.automationWrite, { name })"
         :aria-pressed="autoMode === 'write'"
         @click="toggleAutomationStripMode(props.target, 'write')"
       >
@@ -398,12 +428,12 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="showOutputBus" class="strip-section strip-output">
-      <span class="strip-output-label">OUT</span>
+      <span class="strip-output-label">{{ t.shell.mixer.strip.output }}</span>
       <SelectMenu
         :model-value="outputBusValue"
         size="sm"
         :options="outputBusOptions"
-        :aria-label="`Output bus for ${name}`"
+        :aria-label="formatMessage(t.shell.mixer.strip.outputBus, { name })"
         @change="onOutputBusChange"
       />
     </div>
@@ -416,7 +446,7 @@ onBeforeUnmount(() => {
         :min="-1"
         :max="1"
         :default-value="0"
-        label="Pan"
+        :label="t.shell.mixer.strip.pan"
         :display="formatPan(displayedPan)"
         :size="24"
         :disabled="followsPan"
@@ -427,8 +457,8 @@ onBeforeUnmount(() => {
           type="button"
           class="toggle mute"
           :class="{ on: track.mute }"
-          title="Mute"
-          :aria-label="`Mute ${name}`"
+          :title="t.shell.mixer.strip.mute"
+          :aria-label="formatMessage(t.shell.mixer.strip.muteNamed, { name })"
           :aria-pressed="track.mute"
           @click="setTrackMute(track.id, !track.mute)"
         >
@@ -439,8 +469,8 @@ onBeforeUnmount(() => {
           type="button"
           class="toggle solo"
           :class="{ on: track.solo, safe: isSoloSafe }"
-          :title="isSoloSafe ? 'Solo (solo-safe: stays audible during other solos)' : 'Solo'"
-          :aria-label="`Solo ${name}`"
+          :title="isSoloSafe ? t.shell.mixer.strip.soloSafeTitle : t.shell.mixer.strip.solo"
+          :aria-label="formatMessage(t.shell.mixer.strip.soloNamed, { name })"
           :aria-pressed="track.solo"
           @click="setTrackSolo(track.id, !track.solo)"
         >

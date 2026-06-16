@@ -6,6 +6,7 @@ import { type LoadedAudioAsset, loadAsset, saveAsset } from '@/persistence/asset
 import { setClipWarp } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import type { ClipWarp } from '@/project/types';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import {
   type AssetVersion,
   createHistory,
@@ -80,6 +81,8 @@ const emit = defineEmits<{
   'apply-asset': [assetId: string];
 }>();
 
+const { t } = useI18n();
+
 /** Height of one channel lane in CSS px. */
 const LANE_HEIGHT_PX = 96;
 /** Wheel-zoom sensitivity (factor exponent per wheel delta unit). */
@@ -101,7 +104,7 @@ const canvasRef = ref<HTMLCanvasElement | null>(null);
 const asset = shallowRef<LoadedAudioAsset | null>(null);
 const currentAssetId = ref(props.assetId);
 const historyState = ref<VersionHistoryState>(
-  createHistory({ assetId: props.assetId, label: 'Original' }),
+  createHistory({ assetId: props.assetId, label: t.value.shell.sampleEditor.ops.original }),
 );
 const selection = ref<SelectionDraft | null>(null);
 const loading = ref(false);
@@ -188,7 +191,10 @@ watch(
   (assetId) => {
     if (assetId === currentAssetId.value) return;
     currentAssetId.value = assetId;
-    historyState.value = createHistory({ assetId, label: 'Original' });
+    historyState.value = createHistory({
+      assetId,
+      label: t.value.shell.sampleEditor.ops.original,
+    });
     selection.value = null;
     viewport = null;
     void loadCurrent(assetId);
@@ -356,39 +362,50 @@ async function runOp(
 async function onGain(): Promise<void> {
   const db = parseNumber(gainDbInput.value);
   if (db === null) {
-    error.value = 'Enter a finite gain in dB';
+    error.value = t.value.shell.sampleEditor.errors.gain;
     return;
   }
-  await runOp(`Gain ${db} dB`, (channels, range) => applyGainDb(channels, db, range));
+  await runOp(formatMessage(t.value.shell.sampleEditor.ops.gain, { db }), (channels, range) =>
+    applyGainDb(channels, db, range),
+  );
 }
 
 async function onNormalize(): Promise<void> {
   const target = parseNumber(normalizeTargetInput.value) ?? -1;
-  await runOp(`Normalize ${target} dB`, (channels, range) =>
-    normalizeToDb(channels, target, range),
+  await runOp(
+    formatMessage(t.value.shell.sampleEditor.ops.normalize, { target }),
+    (channels, range) => normalizeToDb(channels, target, range),
   );
 }
 
 async function onFadeIn(): Promise<void> {
-  await runOp('Fade in', (channels, range) => fadeInLinear(channels, range));
+  await runOp(t.value.shell.sampleEditor.ops.fadeIn, (channels, range) =>
+    fadeInLinear(channels, range),
+  );
 }
 
 async function onFadeOut(): Promise<void> {
-  await runOp('Fade out', (channels, range) => fadeOutLinear(channels, range));
+  await runOp(t.value.shell.sampleEditor.ops.fadeOut, (channels, range) =>
+    fadeOutLinear(channels, range),
+  );
 }
 
 async function onReverse(): Promise<void> {
-  await runOp('Reverse', (channels, range) => reverse(channels, range));
+  await runOp(t.value.shell.sampleEditor.ops.reverse, (channels, range) =>
+    reverse(channels, range),
+  );
 }
 
 async function onSilence(): Promise<void> {
-  await runOp('Silence', (channels, range) => silence(channels, range));
+  await runOp(t.value.shell.sampleEditor.ops.silence, (channels, range) =>
+    silence(channels, range),
+  );
 }
 
 async function onTrim(): Promise<void> {
   const range = selRange.value;
   if (!range) return;
-  await runOp('Trim', (channels) => trimToRange(channels, range));
+  await runOp(t.value.shell.sampleEditor.ops.trim, (channels) => trimToRange(channels, range));
   selection.value = null;
 }
 
@@ -397,11 +414,16 @@ async function onPitchShift(): Promise<void> {
   const semitones = parseNumber(pitchInput.value);
   if (!ops) return;
   if (semitones === null) {
-    error.value = 'Enter a finite pitch offset in semitones';
+    error.value = t.value.shell.sampleEditor.errors.pitch;
     return;
   }
-  await runOp(`Pitch ${semitones >= 0 ? '+' : ''}${semitones} st`, (channels, range) =>
-    pitchShiftRange(ops, channels, asset.value?.meta.sampleRate ?? 48000, semitones, range),
+  await runOp(
+    formatMessage(t.value.shell.sampleEditor.ops.pitch, {
+      sign: semitones >= 0 ? '+' : '',
+      semitones,
+    }),
+    (channels, range) =>
+      pitchShiftRange(ops, channels, asset.value?.meta.sampleRate ?? 48000, semitones, range),
   );
 }
 
@@ -410,10 +432,10 @@ async function onTimeStretch(): Promise<void> {
   const rate = parseNumber(stretchInput.value);
   if (!ops) return;
   if (rate === null || rate <= 0) {
-    error.value = 'Enter a stretch rate > 0';
+    error.value = t.value.shell.sampleEditor.errors.stretch;
     return;
   }
-  await runOp(`Stretch ×${rate}`, (channels, range) =>
+  await runOp(formatMessage(t.value.shell.sampleEditor.ops.stretch, { rate }), (channels, range) =>
     timeStretchRange(ops, channels, asset.value?.meta.sampleRate ?? 48000, rate, range),
   );
 }
@@ -421,7 +443,7 @@ async function onTimeStretch(): Promise<void> {
 async function onDeclick(): Promise<void> {
   const ops = wasmOps.value;
   if (!ops) return;
-  await runOp('Declick', (channels, range) =>
+  await runOp(t.value.shell.sampleEditor.ops.declick, (channels, range) =>
     declickRange(ops, channels, asset.value?.meta.sampleRate ?? 48000, range),
   );
 }
@@ -429,7 +451,7 @@ async function onDeclick(): Promise<void> {
 async function onDenoise(): Promise<void> {
   const ops = wasmOps.value;
   if (!ops) return;
-  await runOp('Denoise', (channels, range) =>
+  await runOp(t.value.shell.sampleEditor.ops.denoise, (channels, range) =>
     denoiseRange(ops, channels, asset.value?.meta.sampleRate ?? 48000, range),
   );
 }
@@ -558,90 +580,114 @@ onBeforeUnmount(() => {
 <template>
   <div class="sample-editor">
     <div class="toolbar">
-      <span class="asset-name" :title="currentAssetId">{{ asset?.meta.name ?? 'Loading…' }}</span>
+      <span class="asset-name" :title="currentAssetId">
+        {{ asset?.meta.name ?? t.shell.sampleEditor.loading }}
+      </span>
       <span v-if="assetInfo" class="asset-info">{{ assetInfo }}</span>
       <span class="readout">{{ readout }}</span>
       <span class="spacer" />
-      <button type="button" :disabled="!asset" @click="zoomToFit">Fit</button>
+      <button type="button" :disabled="!asset" @click="zoomToFit">
+        {{ t.shell.sampleEditor.fit }}
+      </button>
       <button
         type="button"
         :disabled="!asset"
-        title="Ask the shell to use this version in the project"
+        :title="t.shell.sampleEditor.useInProjectTitle"
         @click="onApply"
       >
-        Use in project
+        {{ t.shell.sampleEditor.useInProject }}
       </button>
     </div>
     <div class="toolbar ops">
       <label>
-        Gain
+        {{ t.shell.sampleEditor.gain }}
         <input v-model="gainDbInput" class="num" type="number" step="0.5" /> dB
       </label>
-      <button type="button" :disabled="opsDisabled" @click="onGain">Apply</button>
-      <span class="sep" />
-      <label>
-        Normalize
-        <SelectMenu
-          v-model="normalizeTargetInput"
-          :options="NORMALIZE_TARGET_OPTIONS"
-          aria-label="Normalize target"
-          size="sm"
-        />
-      </label>
-      <button type="button" :disabled="opsDisabled" @click="onNormalize">Apply</button>
-      <span class="sep" />
-      <button type="button" :disabled="opsDisabled" @click="onFadeIn">Fade in</button>
-      <button type="button" :disabled="opsDisabled" @click="onFadeOut">Fade out</button>
-      <button type="button" :disabled="opsDisabled" @click="onReverse">Reverse</button>
-      <button type="button" :disabled="opsDisabled" @click="onSilence">Silence</button>
-      <button
-        type="button"
-        :disabled="opsDisabled || !selRange"
-        title="Crop to the selection"
-        @click="onTrim"
-      >
-        Trim
+      <button type="button" :disabled="opsDisabled" @click="onGain">
+        {{ t.shell.sampleEditor.apply }}
       </button>
       <span class="sep" />
       <label>
-        Pitch
+        {{ t.shell.sampleEditor.normalize }}
+        <SelectMenu
+          v-model="normalizeTargetInput"
+          :options="NORMALIZE_TARGET_OPTIONS"
+          :aria-label="t.shell.sampleEditor.normalizeTarget"
+          size="sm"
+        />
+      </label>
+      <button type="button" :disabled="opsDisabled" @click="onNormalize">
+        {{ t.shell.sampleEditor.apply }}
+      </button>
+      <span class="sep" />
+      <button type="button" :disabled="opsDisabled" @click="onFadeIn">
+        {{ t.shell.sampleEditor.fadeIn }}
+      </button>
+      <button type="button" :disabled="opsDisabled" @click="onFadeOut">
+        {{ t.shell.sampleEditor.fadeOut }}
+      </button>
+      <button type="button" :disabled="opsDisabled" @click="onReverse">
+        {{ t.shell.sampleEditor.reverse }}
+      </button>
+      <button type="button" :disabled="opsDisabled" @click="onSilence">
+        {{ t.shell.sampleEditor.silence }}
+      </button>
+      <button
+        type="button"
+        :disabled="opsDisabled || !selRange"
+        :title="t.shell.sampleEditor.trimTitle"
+        @click="onTrim"
+      >
+        {{ t.shell.sampleEditor.trim }}
+      </button>
+      <span class="sep" />
+      <label>
+        {{ t.shell.sampleEditor.pitch }}
         <input v-model="pitchInput" class="num" type="number" step="1" /> st
       </label>
       <button
         type="button"
         :disabled="opsDisabled || !wasmAvail.pitchShift"
-        :title="wasmAvail.pitchShift ? 'Pitch shift (duration preserved)' : 'Unavailable in this libsonare build'"
+        :title="
+          wasmAvail.pitchShift ? t.shell.sampleEditor.pitchTitle : t.shell.sampleEditor.unavailable
+        "
         @click="onPitchShift"
       >
-        Apply
+        {{ t.shell.sampleEditor.apply }}
       </button>
       <label>
-        Stretch
+        {{ t.shell.sampleEditor.stretch }}
         <input v-model="stretchInput" class="num" type="number" step="0.05" min="0.1" /> ×
       </label>
       <button
         type="button"
         :disabled="opsDisabled || !wasmAvail.timeStretch"
-        :title="wasmAvail.timeStretch ? 'Time stretch (0.5 = double duration, 2 = half)' : 'Unavailable in this libsonare build'"
+        :title="
+          wasmAvail.timeStretch ? t.shell.sampleEditor.stretchTitle : t.shell.sampleEditor.unavailable
+        "
         @click="onTimeStretch"
       >
-        Apply
+        {{ t.shell.sampleEditor.apply }}
       </button>
       <button
         type="button"
         :disabled="opsDisabled || !wasmAvail.declick"
-        :title="wasmAvail.declick ? 'Repair clicks and pops' : 'Unavailable in this libsonare build'"
+        :title="
+          wasmAvail.declick ? t.shell.sampleEditor.declickTitle : t.shell.sampleEditor.unavailable
+        "
         @click="onDeclick"
       >
-        Declick
+        {{ t.shell.sampleEditor.declick }}
       </button>
       <button
         type="button"
         :disabled="opsDisabled || !wasmAvail.denoise"
-        :title="wasmAvail.denoise ? 'Reduce broadband noise' : 'Unavailable in this libsonare build'"
+        :title="
+          wasmAvail.denoise ? t.shell.sampleEditor.denoiseTitle : t.shell.sampleEditor.unavailable
+        "
         @click="onDenoise"
       >
-        Denoise
+        {{ t.shell.sampleEditor.denoise }}
       </button>
     </div>
     <p v-if="error" class="error">{{ error }}</p>
@@ -654,11 +700,13 @@ onBeforeUnmount(() => {
       @pointercancel="onPointerUp"
       @wheel.prevent="onWheel"
     >
-      <canvas ref="canvasRef" class="wave-canvas" role="img" aria-label="Audio waveform" />
-      <div v-if="busy || loading" class="busy">{{ busy ? 'Processing…' : 'Loading…' }}</div>
+      <canvas ref="canvasRef" class="wave-canvas" role="img" :aria-label="t.shell.sampleEditor.waveform" />
+      <div v-if="busy || loading" class="busy">
+        {{ busy ? t.shell.sampleEditor.processing : t.shell.sampleEditor.loading }}
+      </div>
     </div>
     <div class="history">
-      <span class="history-title">History</span>
+      <span class="history-title">{{ t.shell.sampleEditor.history }}</span>
       <button
         v-for="(version, index) in historyState.versions"
         :key="`${index}-${version.assetId}`"
@@ -674,19 +722,19 @@ onBeforeUnmount(() => {
     </div>
     <div v-if="warpClip" class="warp">
       <div class="toolbar">
-        <span class="warp-title">Warp</span>
+        <span class="warp-title">{{ t.shell.sampleEditor.warp }}</span>
         <button
           type="button"
           class="warp-toggle"
           :class="{ on: warpEnabled }"
           :aria-pressed="warpEnabled"
-          title="Stretch this clip's audio to follow the project tempo"
+          :title="t.shell.sampleEditor.warpTitle"
           @click="onToggleWarp"
         >
-          Follow tempo
+          {{ t.shell.sampleEditor.followTempo }}
         </button>
         <label>
-          Source BPM
+          {{ t.shell.sampleEditor.sourceBpm }}
           <input
             v-model="warpBpmInput"
             class="num warp-source-bpm"
@@ -696,11 +744,13 @@ onBeforeUnmount(() => {
             @change="onWarpBpmChange"
           />
         </label>
-        <button type="button" class="warp-anchor-add" @click="onAddAnchor">Add anchor</button>
+        <button type="button" class="warp-anchor-add" @click="onAddAnchor">
+          {{ t.shell.sampleEditor.addAnchor }}
+        </button>
         <span
           v-if="warpRatioHint"
           class="warp-segments"
-          title="Stretch ratio per segment at the project tempo (×1.00 = recorded rate)"
+          :title="t.shell.sampleEditor.ratioTitle"
         >
           {{ warpRatioHint }}
         </span>
@@ -711,7 +761,7 @@ onBeforeUnmount(() => {
         class="toolbar warp-anchor"
       >
         <label>
-          Beat
+          {{ t.shell.sampleEditor.beat }}
           <input
             class="num"
             type="number"
@@ -721,7 +771,7 @@ onBeforeUnmount(() => {
           />
         </label>
         <label>
-          Source s
+          {{ t.shell.sampleEditor.sourceSeconds }}
           <input
             class="num"
             type="number"
@@ -733,10 +783,10 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="warp-anchor-remove"
-          title="Remove this warp anchor"
+          :title="t.shell.sampleEditor.removeAnchorTitle"
           @click="onRemoveAnchor(index)"
         >
-          Remove
+          {{ t.shell.sampleEditor.remove }}
         </button>
       </div>
     </div>

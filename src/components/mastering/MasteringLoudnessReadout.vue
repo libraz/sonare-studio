@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useI18n } from '@/ui/i18n';
 import { formatLevel, loudnessBarFraction } from '@/ui/mastering/loudness';
 
 defineProps<{
@@ -10,14 +11,16 @@ defineProps<{
   }>;
   clipWarning: boolean;
 }>();
+
+const { t } = useI18n();
 </script>
 
 <template>
   <div v-if="rows.length > 0" class="loudness-readout">
     <div class="loudness-head">
       <span class="loudness-label" />
-      <span class="loudness-col">A · chain</span>
-      <span class="loudness-col">B · bypass</span>
+      <span class="loudness-col">{{ t.shell.mastering.loudness.aChain }}</span>
+      <span class="loudness-col">{{ t.shell.mastering.loudness.bBypass }}</span>
     </div>
     <div v-for="row in rows" :key="row.label" class="loudness-row">
       <span class="loudness-label">{{ row.label }}</span>
@@ -35,7 +38,7 @@ defineProps<{
       </span>
     </div>
     <p v-if="clipWarning" class="clip-warning" role="alert">
-      ⚠ True peak above −0.3 dBTP — risk of clipping on lossy encodes
+      {{ t.shell.mastering.loudness.clipWarning }}
     </p>
   </div>
 </template>

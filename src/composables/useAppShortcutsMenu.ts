@@ -16,6 +16,7 @@ import {
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import type { EditorToolId } from '@/ui/editor/tools';
+import { useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 import { detectPlatform, formatKeyCombo } from '@/ui/settings/key-combo';
 
@@ -62,6 +63,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 
 export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
   const store = useProjectStore();
+  const { t } = useI18n();
   const focusZone = ref<FocusZone>('editor');
   const arrangementRef = ref<ArrangementCommands | null>(null);
   const menuPlatform = detectPlatform();
@@ -227,43 +229,80 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
     switch (menu) {
       case 'edit':
         return [
-          actionItem('edit.undo', 'Undo', { disabled: !canUndo() }),
-          actionItem('edit.redo', 'Redo', { disabled: !canRedo() }),
+          actionItem('edit.undo', t.value.shortcuts.actions['edit.undo'], { disabled: !canUndo() }),
+          actionItem('edit.redo', t.value.shortcuts.actions['edit.redo'], { disabled: !canRedo() }),
           { id: 'sep1', separator: true },
-          actionItem('edit.selectAllNotes', 'Select all notes'),
-          actionItem('edit.quantizeSelection', 'Quantize selection', { disabled: noSelection }),
+          actionItem('edit.selectAllNotes', t.value.shortcuts.actions['edit.selectAllNotes']),
+          actionItem(
+            'edit.quantizeSelection',
+            t.value.shortcuts.actions['edit.quantizeSelection'],
+            {
+              disabled: noSelection,
+            },
+          ),
           { id: 'sep2', separator: true },
-          actionItem('edit.deleteSelectedNotes', 'Delete selection', { disabled: noSelection }),
+          actionItem('edit.deleteSelectedNotes', t.value.shortcuts.menu.deleteSelection, {
+            disabled: noSelection,
+          }),
         ];
       case 'view':
         return [
-          actionItem('view.toggleSnap', 'Snap to grid', { checked: store.snapEnabled }),
-          actionItem('view.toggleScorePanel', 'Score panel', {
+          actionItem('view.toggleSnap', t.value.shortcuts.menu.snapToGrid, {
+            checked: store.snapEnabled,
+          }),
+          actionItem('view.toggleScorePanel', t.value.shortcuts.menu.scorePanel, {
             checked: options.scoreVisible.value,
           }),
           { id: 'sep1', separator: true },
-          actionItem('tool.select', 'Select tool', {
+          actionItem('tool.select', t.value.shortcuts.actions['tool.select'], {
             checked: options.editorTool.value === 'select',
           }),
-          actionItem('tool.draw', 'Draw tool', { checked: options.editorTool.value === 'draw' }),
-          actionItem('tool.split', 'Split tool', { checked: options.editorTool.value === 'split' }),
-          actionItem('tool.erase', 'Erase tool', { checked: options.editorTool.value === 'erase' }),
+          actionItem('tool.draw', t.value.shortcuts.actions['tool.draw'], {
+            checked: options.editorTool.value === 'draw',
+          }),
+          actionItem('tool.split', t.value.shortcuts.actions['tool.split'], {
+            checked: options.editorTool.value === 'split',
+          }),
+          actionItem('tool.erase', t.value.shortcuts.actions['tool.erase'], {
+            checked: options.editorTool.value === 'erase',
+          }),
         ];
       case 'transport': {
         const engineReady = Boolean(options.handle.value);
         const canRecord = engineReady && options.recording.armedTrackId.value !== null;
         return [
-          actionItem('transport.togglePlayback', options.isPlaying.value ? 'Stop' : 'Play'),
-          actionItem('transport.toggleLoop', 'Loop', { checked: options.loopEnabled.value }),
-          actionItem('transport.toggleRecord', 'Record', {
-            disabled: !canRecord,
-            checked: options.recording.isRecording.value,
+          actionItem(
+            'transport.togglePlayback',
+            options.isPlaying.value ? t.value.shortcuts.menu.stop : t.value.shortcuts.menu.play,
+          ),
+          actionItem('transport.toggleLoop', t.value.shortcuts.menu.loop, {
+            checked: options.loopEnabled.value,
           }),
+          actionItem(
+            'transport.toggleRecord',
+            t.value.shortcuts.actions['transport.toggleRecord'],
+            {
+              disabled: !canRecord,
+              checked: options.recording.isRecording.value,
+            },
+          ),
           { id: 'sep1', separator: true },
-          actionItem('transport.toStart', 'Go to start', { disabled: !engineReady }),
-          actionItem('transport.toEnd', 'Go to end', { disabled: !engineReady }),
-          actionItem('transport.nudgeBack', 'Nudge back one bar', { disabled: !engineReady }),
-          actionItem('transport.nudgeForward', 'Nudge forward one bar', { disabled: !engineReady }),
+          actionItem('transport.toStart', t.value.shortcuts.actions['transport.toStart'], {
+            disabled: !engineReady,
+          }),
+          actionItem('transport.toEnd', t.value.shortcuts.actions['transport.toEnd'], {
+            disabled: !engineReady,
+          }),
+          actionItem('transport.nudgeBack', t.value.shortcuts.actions['transport.nudgeBack'], {
+            disabled: !engineReady,
+          }),
+          actionItem(
+            'transport.nudgeForward',
+            t.value.shortcuts.actions['transport.nudgeForward'],
+            {
+              disabled: !engineReady,
+            },
+          ),
         ];
       }
     }

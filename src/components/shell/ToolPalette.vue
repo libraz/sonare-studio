@@ -7,12 +7,24 @@
  */
 import { useEditorTool } from '@/composables/useEditorTool';
 import { EDITOR_TOOL_DEFS } from '@/ui/editor/tools';
+import { formatMessage, useI18n } from '@/ui/i18n';
 
 const { tool, setTool } = useEditorTool();
+const { t } = useI18n();
+
+type EditorToolId = (typeof EDITOR_TOOL_DEFS)[number]['id'];
+
+function toolName(id: EditorToolId): string {
+  return t.value.shell.tools.names[id];
+}
+
+function toolHint(id: EditorToolId): string {
+  return t.value.shell.tools.hints[id];
+}
 </script>
 
 <template>
-  <div class="tool-palette" role="toolbar" aria-label="Editor tools">
+  <div class="tool-palette" role="toolbar" :aria-label="t.shell.tools.label">
     <button
       v-for="def in EDITOR_TOOL_DEFS"
       :key="def.id"
@@ -20,8 +32,14 @@ const { tool, setTool } = useEditorTool();
       class="tool-button"
       :class="{ active: tool === def.id }"
       :aria-pressed="tool === def.id"
-      :aria-label="`${def.label} tool`"
-      :title="`${def.label} (${def.key}) — ${def.hint}`"
+      :aria-label="formatMessage(t.shell.tools.toolLabel, { name: toolName(def.id) })"
+      :title="
+        formatMessage(t.shell.tools.toolTitle, {
+          name: toolName(def.id),
+          key: def.key,
+          hint: toolHint(def.id),
+        })
+      "
       @click="setTool(def.id)"
     >
       <span class="tool-glyph" aria-hidden="true">{{ def.glyph }}</span>

@@ -8,6 +8,7 @@ import {
   setQuickControl,
 } from '@/project/quick-controls';
 import { formatControlValue, knobRotationDeg, knobValueForDrag } from '@/ui/devices/knob-math';
+import { useI18n } from '@/ui/i18n';
 
 /**
  * Quick Controls: up to eight knobs for the selected device (instrument or
@@ -23,6 +24,7 @@ const props = defineProps<{
   resolvers?: QuickControlResolvers;
 }>();
 
+const { t } = useI18n();
 /** Surfaced when a control edit rejects. */
 const error = ref('');
 
@@ -124,9 +126,9 @@ function onKnobKeydown(control: QuickControl, event: KeyboardEvent): void {
 </script>
 
 <template>
-  <div class="quick-controls" aria-label="Quick controls">
+  <div class="quick-controls" :aria-label="t.shell.devicesPanel.quickControls">
     <p v-if="error" class="qc-error" role="alert">{{ error }}</p>
-    <p v-if="controls.length === 0" class="qc-empty">No controls</p>
+    <p v-if="controls.length === 0" class="qc-empty">{{ t.shell.devicesPanel.noControls }}</p>
     <div v-else class="qc-grid">
       <div v-for="control in controls" :key="control.id" class="qc-cell">
         <div

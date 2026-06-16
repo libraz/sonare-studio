@@ -200,6 +200,51 @@ export interface ClipCcLane {
   points: ClipCcPoint[];
 }
 
+/** One breakpoint in a pitch-bend lane: clip-window-relative beat and 14-bit value. */
+export interface ClipPitchBendPoint {
+  /** Position relative to the clip window, in PPQ (>= 0, <= the clip length). */
+  ppq: number;
+  /** MIDI pitch-bend value (integer, 0-16383; 8192 = center/no bend). */
+  value: number;
+}
+
+/**
+ * One pitch-bend lane inside a MIDI clip. Points are emitted as discrete
+ * MIDI pitch-bend events at playback, preserving imported performance data.
+ */
+export interface ClipPitchBendLane {
+  /** MIDI channel the pitch-bend applies to (integer, 0-15). */
+  channel: number;
+  /** Breakpoints sorted by ppq; an empty lane is dropped. */
+  points: ClipPitchBendPoint[];
+}
+
+/** One breakpoint in an aftertouch lane: clip-window-relative beat and 7-bit pressure. */
+export interface ClipPressurePoint {
+  /** Position relative to the clip window, in PPQ (>= 0, <= the clip length). */
+  ppq: number;
+  /** MIDI pressure value (integer, 0-127). */
+  value: number;
+}
+
+/** Channel pressure (monophonic aftertouch) lane inside a MIDI clip. */
+export interface ClipChannelPressureLane {
+  /** MIDI channel the channel pressure applies to (integer, 0-15). */
+  channel: number;
+  /** Breakpoints sorted by ppq; an empty lane is dropped. */
+  points: ClipPressurePoint[];
+}
+
+/** Polyphonic key pressure lane inside a MIDI clip, scoped to one channel/pitch. */
+export interface ClipPolyPressureLane {
+  /** MIDI channel the key pressure applies to (integer, 0-15). */
+  channel: number;
+  /** MIDI note number the key pressure applies to (integer, 0-127). */
+  pitch: number;
+  /** Breakpoints sorted by ppq; an empty lane is dropped. */
+  points: ClipPressurePoint[];
+}
+
 /** Tempo-follow (warp) state of an audio clip. */
 export interface ClipWarp {
   /** True stretches the clip's audio to follow the project tempo. */
@@ -266,6 +311,21 @@ export interface EditorClip {
    * realtime MIDI schedule as discrete CC events (src/engine/midi-sync.ts).
    */
   ccLanes?: ClipCcLane[];
+  /**
+   * Pitch-bend lanes (MIDI clips only); absent or empty = the clip sends no
+   * bend. Values are 14-bit MIDI bend values, center at 8192.
+   */
+  pitchBendLanes?: ClipPitchBendLane[];
+  /**
+   * Channel pressure / monophonic aftertouch lanes (MIDI clips only); absent
+   * or empty = the clip sends no channel pressure.
+   */
+  channelPressureLanes?: ClipChannelPressureLane[];
+  /**
+   * Polyphonic key pressure lanes (MIDI clips only); absent or empty = the
+   * clip sends no per-key pressure.
+   */
+  polyPressureLanes?: ClipPolyPressureLane[];
 }
 
 /** One timeline marker (app-level; the Project has no marker removal API). */

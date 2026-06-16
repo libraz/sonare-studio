@@ -23,6 +23,7 @@ import {
   sanitizePatchDraft,
 } from '@/ui/devices/patch-draft';
 import { resolveSynthEnums } from '@/ui/devices/synth-enums';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import { wrapTabFocus } from '@/ui/settings/focus-trap';
 import type { SynthEnumTables, SynthPatch } from '@/wasm/index.js';
 
@@ -49,6 +50,7 @@ const emit = defineEmits<{
 }>();
 
 const store = useProjectStore();
+const { t } = useI18n();
 
 const draft = ref<SynthPatch>({});
 const modRows = ref<ModMatrixRow[]>([]);
@@ -145,20 +147,20 @@ function onFieldInput(spec: PatchFieldSpec, event: Event): void {
 /** Enum fields rendered as selects: id, label and the table they pick from. */
 interface EnumFieldView {
   id: 'engineMode' | 'waveform' | 'filterModel' | 'filterOutput' | 'body';
-  label: string;
+  labelKey: keyof typeof t.value.shell.patchEditor.enumLabels;
   options: () => string[];
 }
 
 const OSC_ENUM_FIELDS: EnumFieldView[] = [
-  { id: 'waveform', label: 'Waveform', options: () => enums.value.waveforms },
+  { id: 'waveform', labelKey: 'waveform', options: () => enums.value.waveforms },
 ];
 const FILTER_ENUM_FIELDS: EnumFieldView[] = [
-  { id: 'filterModel', label: 'Model', options: () => enums.value.filterModels },
-  { id: 'filterOutput', label: 'Output', options: () => enums.value.filterOutputs },
+  { id: 'filterModel', labelKey: 'model', options: () => enums.value.filterModels },
+  { id: 'filterOutput', labelKey: 'output', options: () => enums.value.filterOutputs },
 ];
 const GLOBAL_ENUM_FIELDS: EnumFieldView[] = [
-  { id: 'engineMode', label: 'Engine', options: () => enums.value.engineModes },
-  { id: 'body', label: 'Body', options: () => enums.value.bodyTypes },
+  { id: 'engineMode', labelKey: 'engine', options: () => enums.value.engineModes },
+  { id: 'body', labelKey: 'body', options: () => enums.value.bodyTypes },
 ];
 
 function enumValue(field: EnumFieldView): string {
@@ -332,28 +334,32 @@ function onKeydown(event: KeyboardEvent): void {
       class="patch-dialog"
       role="dialog"
       aria-modal="true"
-      aria-label="Patch editor"
+      :aria-label="t.shell.patchEditor.label"
       tabindex="-1"
       @keydown="onKeydown"
     >
       <header class="patch-header">
         <h2 class="patch-title">
-          Patch editor
-          <span v-if="draft.preset" class="patch-base">based on {{ draft.preset }}</span>
+          {{ t.shell.patchEditor.label }}
+          <span v-if="draft.preset" class="patch-base">
+            {{ formatMessage(t.shell.patchEditor.basedOn, { preset: draft.preset }) }}
+          </span>
         </h2>
-        <button type="button" class="patch-close" title="Close" @click="onClose">×</button>
+        <button type="button" class="patch-close" :title="t.shell.patchEditor.close" @click="onClose">
+          ×
+        </button>
       </header>
       <p v-if="error" class="patch-error" role="alert">{{ error }}</p>
 
       <div class="patch-sections">
-        <section class="patch-section" aria-label="Oscillator">
-          <h3 class="section-title">OSC</h3>
+        <section class="patch-section" :aria-label="t.shell.patchEditor.sections.oscillator">
+          <h3 class="section-title">{{ t.shell.patchEditor.sections.osc }}</h3>
           <label v-for="field in OSC_ENUM_FIELDS" :key="field.id" class="enum-row">
-            <span class="field-label">{{ field.label }}</span>
+            <span class="field-label">{{ t.shell.patchEditor.enumLabels[field.labelKey] }}</span>
             <SelectMenu
               :model-value="enumValue(field)"
               :options="enumOptions(field.options())"
-              :aria-label="field.label"
+              :aria-label="t.shell.patchEditor.enumLabels[field.labelKey]"
               size="sm"
               @change="onEnumChange(field, $event)"
             />
@@ -373,14 +379,14 @@ function onKeydown(event: KeyboardEvent): void {
           </label>
         </section>
 
-        <section class="patch-section" aria-label="Filter">
-          <h3 class="section-title">FILTER</h3>
+        <section class="patch-section" :aria-label="t.shell.patchEditor.sections.filter">
+          <h3 class="section-title">{{ t.shell.patchEditor.sections.filterTitle }}</h3>
           <label v-for="field in FILTER_ENUM_FIELDS" :key="field.id" class="enum-row">
-            <span class="field-label">{{ field.label }}</span>
+            <span class="field-label">{{ t.shell.patchEditor.enumLabels[field.labelKey] }}</span>
             <SelectMenu
               :model-value="enumValue(field)"
               :options="enumOptions(field.options())"
-              :aria-label="field.label"
+              :aria-label="t.shell.patchEditor.enumLabels[field.labelKey]"
               size="sm"
               @change="onEnumChange(field, $event)"
             />
@@ -400,15 +406,15 @@ function onKeydown(event: KeyboardEvent): void {
           </label>
         </section>
 
-        <section class="patch-section" aria-label="Amp envelope">
-          <h3 class="section-title">AMP ENV</h3>
+        <section class="patch-section" :aria-label="t.shell.patchEditor.sections.ampEnvelope">
+          <h3 class="section-title">{{ t.shell.patchEditor.sections.ampEnvelopeTitle }}</h3>
           <canvas
             ref="envelopeCanvas"
             class="envelope-canvas"
             width="168"
             height="48"
             role="img"
-            aria-label="Amp envelope curve"
+            :aria-label="t.shell.patchEditor.sections.ampEnvelopeCurve"
           />
           <label v-for="field in ampFields" :key="field.id" class="field-row">
             <span class="field-label">{{ field.label }}</span>
@@ -425,8 +431,8 @@ function onKeydown(event: KeyboardEvent): void {
           </label>
         </section>
 
-        <section class="patch-section" aria-label="Filter envelope">
-          <h3 class="section-title">FILTER ENV</h3>
+        <section class="patch-section" :aria-label="t.shell.patchEditor.sections.filterEnvelope">
+          <h3 class="section-title">{{ t.shell.patchEditor.sections.filterEnvelopeTitle }}</h3>
           <label v-for="field in filterEnvFields" :key="field.id" class="field-row">
             <span class="field-label">{{ field.label }}</span>
             <input
@@ -442,8 +448,8 @@ function onKeydown(event: KeyboardEvent): void {
           </label>
         </section>
 
-        <section class="patch-section" aria-label="LFO">
-          <h3 class="section-title">LFO</h3>
+        <section class="patch-section" :aria-label="t.shell.patchEditor.sections.lfo">
+          <h3 class="section-title">{{ t.shell.patchEditor.sections.lfo }}</h3>
           <label v-for="field in lfoFields" :key="field.id" class="field-row">
             <span class="field-label">{{ field.label }}</span>
             <input
@@ -459,14 +465,14 @@ function onKeydown(event: KeyboardEvent): void {
           </label>
         </section>
 
-        <section class="patch-section" aria-label="Global">
-          <h3 class="section-title">GLOBAL</h3>
+        <section class="patch-section" :aria-label="t.shell.patchEditor.sections.global">
+          <h3 class="section-title">{{ t.shell.patchEditor.sections.globalTitle }}</h3>
           <label v-for="field in GLOBAL_ENUM_FIELDS" :key="field.id" class="enum-row">
-            <span class="field-label">{{ field.label }}</span>
+            <span class="field-label">{{ t.shell.patchEditor.enumLabels[field.labelKey] }}</span>
             <SelectMenu
               :model-value="enumValue(field)"
               :options="enumOptions(field.options())"
-              :aria-label="field.label"
+              :aria-label="t.shell.patchEditor.enumLabels[field.labelKey]"
               size="sm"
               @change="onEnumChange(field, $event)"
             />
@@ -486,14 +492,14 @@ function onKeydown(event: KeyboardEvent): void {
           </label>
         </section>
 
-        <section class="patch-section mod-matrix" aria-label="Mod matrix">
-          <h3 class="section-title">MOD MATRIX</h3>
+        <section class="patch-section mod-matrix" :aria-label="t.shell.patchEditor.sections.modMatrix">
+          <h3 class="section-title">{{ t.shell.patchEditor.sections.modMatrixTitle }}</h3>
           <div v-for="(row, index) in modRows" :key="index" class="mod-row">
             <SelectMenu
               class="mod-source"
               :model-value="row.source"
               :options="modSourceOptions"
-              :aria-label="`Mod source ${index + 1}`"
+              :aria-label="formatMessage(t.shell.patchEditor.modSource, { row: index + 1 })"
               size="sm"
               @update:model-value="onModRowChange(index, { source: $event })"
             />
@@ -502,7 +508,7 @@ function onKeydown(event: KeyboardEvent): void {
               class="mod-destination"
               :model-value="row.destination"
               :options="modDestinationOptions"
-              :aria-label="`Mod destination ${index + 1}`"
+              :aria-label="formatMessage(t.shell.patchEditor.modDestination, { row: index + 1 })"
               size="sm"
               @update:model-value="onModRowChange(index, { destination: $event })"
             />
@@ -513,13 +519,13 @@ function onKeydown(event: KeyboardEvent): void {
               :max="MOD_DEPTH_MAX"
               step="0.01"
               :value="row.depth"
-              :aria-label="`Mod depth ${index + 1}`"
+              :aria-label="formatMessage(t.shell.patchEditor.modDepth, { row: index + 1 })"
               @input="onModDepthInput(index, $event)"
             />
             <button
               type="button"
               class="mod-remove"
-              :title="`Remove routing ${index + 1}`"
+              :title="formatMessage(t.shell.patchEditor.removeRouting, { row: index + 1 })"
               @click="removeModRow(index)"
             >
               ×
@@ -531,16 +537,18 @@ function onKeydown(event: KeyboardEvent): void {
             :disabled="modRows.length >= MAX_MOD_ROUTINGS"
             @click="addModRow"
           >
-            + Routing
+            {{ t.shell.patchEditor.addRouting }}
           </button>
         </section>
       </div>
 
       <footer class="patch-actions">
-        <button type="button" class="audition" @click="onAudition">Audition</button>
+        <button type="button" class="audition" @click="onAudition">
+          {{ t.shell.patchEditor.audition }}
+        </button>
         <span class="actions-spacer" />
-        <button type="button" @click="onClose">Close</button>
-        <button type="button" class="primary" @click="onApply">Apply</button>
+        <button type="button" @click="onClose">{{ t.shell.patchEditor.close }}</button>
+        <button type="button" class="primary" @click="onApply">{{ t.shell.patchEditor.apply }}</button>
       </footer>
     </div>
   </div>

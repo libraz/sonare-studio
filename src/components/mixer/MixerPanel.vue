@@ -5,6 +5,7 @@ import { addMixerBus, addVcaGroup } from '@/project/commands';
 import { MAX_VCA_GROUPS } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import BusStrip from './BusStrip.vue';
 import ChannelStrip from './ChannelStrip.vue';
 import VcaStrip from './VcaStrip.vue';
@@ -46,6 +47,7 @@ const props = withDefaults(
 );
 
 const store = useProjectStore();
+const { t } = useI18n();
 
 /** Track ids hidden from the mixer view (panel-local, not persisted). */
 const hiddenTrackIds = ref<ReadonlySet<number>>(new Set());
@@ -115,41 +117,41 @@ onBeforeUnmount(() => {
 <template>
   <div class="mixer-panel">
     <div class="mixer-toolbar">
-      <span class="mixer-title">MIXER</span>
+      <span class="mixer-title">{{ t.shell.mixer.title }}</span>
       <span v-if="hiddenCount > 0" class="mixer-hidden-note">
-        {{ hiddenCount }} hidden
+        {{ formatMessage(t.shell.mixer.hiddenCount, { count: String(hiddenCount) }) }}
       </span>
       <span class="toolbar-spacer" />
       <button
         type="button"
         class="toolbar-button"
-        title="Add a send/return bus"
+        :title="t.shell.mixer.addBusTitle"
         @click="onAddBus"
       >
-        + Bus
+        {{ t.shell.mixer.addBus }}
       </button>
       <button
         type="button"
         class="toolbar-button"
-        title="Add a VCA control group"
+        :title="t.shell.mixer.addVcaTitle"
         :disabled="!canAddVca"
         @click="onAddVca"
       >
-        + VCA
+        {{ t.shell.mixer.addVca }}
       </button>
       <div ref="menuEl" class="view-menu-wrap">
         <button
           type="button"
           class="toolbar-button"
-          title="Mixer view options"
+          :title="t.shell.mixer.viewTitle"
           aria-haspopup="menu"
           :aria-expanded="menuOpen"
           @click="menuOpen = !menuOpen"
         >
-          View ▾
+          {{ t.shell.mixer.view }} ▾
         </button>
         <div v-if="menuOpen" class="view-menu" role="menu">
-          <div class="view-menu-section">Tracks</div>
+          <div class="view-menu-section">{{ t.shell.mixer.tracks }}</div>
           <label v-for="track in store.tracks" :key="track.id" class="view-menu-track">
             <input
               type="checkbox"
@@ -166,7 +168,7 @@ onBeforeUnmount(() => {
             class="view-menu-action"
             @click="showAllTracks"
           >
-            Show all
+            {{ t.shell.mixer.showAll }}
           </button>
         </div>
       </div>

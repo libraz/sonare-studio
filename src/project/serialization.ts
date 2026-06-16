@@ -69,6 +69,12 @@ import type { ClipKind, EditorClip, EditorNote, TrackKind } from './types';
  *   Additionally (still version 3, additive): the document may carry an
  *   optional `chords` list (the project chord track, see src/project/chords.ts)
  *   replayed onto the Project through annotateChords; omitted when empty.
+ *   Additionally (still version 3, additive): MIDI clips may carry optional
+ *   `pitchBendLanes` imported from SMF pitch-bend events and emitted during
+ *   realtime playback/export; omitted when absent.
+ *   Additionally (still version 3, additive): MIDI clips may carry optional
+ *   `channelPressureLanes` and `polyPressureLanes` imported from aftertouch
+ *   events and emitted during realtime playback/export; omitted when absent.
  *
  * Loaders accept any version up to this one; version-1 documents load
  * unchanged (every clip is MIDI).
@@ -121,6 +127,25 @@ export interface DocumentClip {
   ccLanes?: Array<{
     controller: number;
     channel: number;
+    points: Array<{ ppq: number; value: number }>;
+  }>;
+  /**
+   * Pitch-bend lanes (MIDI clips); omitted when the clip carries none.
+   * Values are 14-bit MIDI pitch-bend units, 8192 = center.
+   */
+  pitchBendLanes?: Array<{
+    channel: number;
+    points: Array<{ ppq: number; value: number }>;
+  }>;
+  /** Channel pressure / monophonic aftertouch lanes (MIDI clips). */
+  channelPressureLanes?: Array<{
+    channel: number;
+    points: Array<{ ppq: number; value: number }>;
+  }>;
+  /** Polyphonic key pressure lanes (MIDI clips), scoped to channel + pitch. */
+  polyPressureLanes?: Array<{
+    channel: number;
+    pitch: number;
     points: Array<{ ppq: number; value: number }>;
   }>;
   /**
@@ -285,6 +310,25 @@ function toDocumentClip(
   }
   const ccLanes = cloneCcLanes(clip.ccLanes);
   if (ccLanes !== undefined) out.ccLanes = ccLanes;
+  if (clip.pitchBendLanes !== undefined && clip.pitchBendLanes.length > 0) {
+    out.pitchBendLanes = clip.pitchBendLanes.map((lane) => ({
+      channel: lane.channel,
+      points: lane.points.map((point) => ({ ...point })),
+    }));
+  }
+  if (clip.channelPressureLanes !== undefined && clip.channelPressureLanes.length > 0) {
+    out.channelPressureLanes = clip.channelPressureLanes.map((lane) => ({
+      channel: lane.channel,
+      points: lane.points.map((point) => ({ ...point })),
+    }));
+  }
+  if (clip.polyPressureLanes !== undefined && clip.polyPressureLanes.length > 0) {
+    out.polyPressureLanes = clip.polyPressureLanes.map((lane) => ({
+      channel: lane.channel,
+      pitch: lane.pitch,
+      points: lane.points.map((point) => ({ ...point })),
+    }));
+  }
   if (annotations !== undefined) {
     // Annotations are re-addressed by note content (orphans drop out here).
     const entries = annotationsToDocument(annotations, clip.notes);

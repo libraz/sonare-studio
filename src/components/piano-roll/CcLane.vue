@@ -4,6 +4,7 @@ import { setClipCcLane } from '@/project/commands';
 import type { ClipCcPoint } from '@/project/types';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
+import { useI18n } from '@/ui/i18n';
 import { DEFAULT_NOTE_COLOR, getCanvasContext, PIANO_ROLL_COLORS, setupCanvas } from './theme';
 
 /**
@@ -38,6 +39,8 @@ const props = defineProps<{
   /** Optional horizontal snap applied to added/moved points. */
   snapPpq?: (ppq: number) => number;
 }>();
+
+const { t } = useI18n();
 
 const wrapper = ref<HTMLDivElement | null>(null);
 const canvas = ref<HTMLCanvasElement | null>(null);
@@ -281,7 +284,7 @@ watch(
     @pointercancel="onPointerCancel"
     @contextmenu.prevent
   >
-    <canvas ref="canvas" class="cc-canvas" role="img" aria-label="CC automation lane" />
+    <canvas ref="canvas" class="cc-canvas" role="img" :aria-label="t.shell.pianoRoll.ccLane" />
   </div>
 </template>
 

@@ -1,9 +1,12 @@
-import { reactive, readonly } from 'vue';
+import { type ComputedRef, computed, reactive, readonly, ref, watch } from 'vue';
+import type { ResolvedAppLanguage, ResolvedAppTheme } from '@/ui/settings/app-settings';
 import {
   type AppSettings,
   DEFAULT_APP_SETTINGS,
   decodeAppSettings,
   encodeAppSettings,
+  resolveAppLanguage,
+  resolveAppTheme,
   sanitizeAppSettings,
 } from '@/ui/settings/app-settings';
 
@@ -14,6 +17,10 @@ export const APP_SETTINGS_STORAGE_KEY = 'sonare-studio.settings';
 export interface UseAppSettingsReturn {
   /** Live, reactive preferences (read-only; mutate via set/update). */
   settings: Readonly<AppSettings>;
+  /** Effective theme after resolving the system preference. */
+  resolvedTheme: ComputedRef<ResolvedAppTheme>;
+  /** Effective UI language after resolving the browser language preference. */
+  resolvedLanguage: ComputedRef<ResolvedAppLanguage>;
   /** Sets one preference (validated/clamped) and persists immediately. */
   set<K extends keyof AppSettings>(key: K, value: AppSettings[K]): void;
   /** Applies a partial patch (validated/clamped) and persists immediately. */
@@ -44,10 +51,55 @@ function writeStored(settings: AppSettings): void {
 
 // Single shared state so every caller observes the same preferences.
 const state = reactive<AppSettings>(readStored());
+const prefersDark = ref(false);
+const browserLanguages = ref<ReadonlyArray<string>>(['en']);
+
+function readPrefersDark(): boolean {
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches === true;
+}
+
+function readBrowserLanguages(): ReadonlyArray<string> {
+  const languages = window.navigator.languages;
+  if (Array.isArray(languages) && languages.length > 0) return languages;
+  if (window.navigator.language !== '') return [window.navigator.language];
+  return ['en'];
+}
+
+prefersDark.value = readPrefersDark();
+browserLanguages.value = readBrowserLanguages();
+
+const resolvedTheme = computed<ResolvedAppTheme>(() =>
+  resolveAppTheme(state.theme, prefersDark.value),
+);
+const resolvedLanguage = computed<ResolvedAppLanguage>(() =>
+  resolveAppLanguage(state.language, browserLanguages.value),
+);
 
 function assign(next: AppSettings): void {
   Object.assign(state, next);
+  applyDocumentPreferences();
 }
+
+function applyDocumentPreferences(): void {
+  const root = document.documentElement;
+  root.dataset.theme = resolvedTheme.value;
+  root.dataset.themePreference = state.theme;
+  root.lang = resolvedLanguage.value;
+}
+
+const media = window.matchMedia?.('(prefers-color-scheme: dark)') ?? null;
+media?.addEventListener('change', () => {
+  prefersDark.value = readPrefersDark();
+});
+
+window.addEventListener('languagechange', () => {
+  browserLanguages.value = readBrowserLanguages();
+});
+
+watch([resolvedTheme, resolvedLanguage, () => state.theme], applyDocumentPreferences, {
+  flush: 'sync',
+  immediate: true,
+});
 
 /**
  * Vue composable exposing the app-wide user preferences.
@@ -76,5 +128,13 @@ export function useAppSettings(): UseAppSettingsReturn {
     assign(readStored());
   };
 
-  return { settings: readonly(state) as Readonly<AppSettings>, set, update, reset, reload };
+  return {
+    settings: readonly(state) as Readonly<AppSettings>,
+    resolvedTheme,
+    resolvedLanguage,
+    set,
+    update,
+    reset,
+    reload,
+  };
 }

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import AppModal from '@/components/shell/AppModal.vue';
+import { useI18n } from '@/ui/i18n';
 
 /**
  * About dialog — the app's identity and runtime build/environment facts
@@ -20,25 +21,27 @@ const emit = defineEmits<{
   /** The user dismissed the dialog. */
   close: [];
 }>();
+
+const { t } = useI18n();
 </script>
 
 <template>
-  <AppModal :open="open" size="sm" aria-label="About sonare studio" @close="emit('close')">
-    <template #title>About</template>
+  <AppModal :open="open" size="sm" :aria-label="t.dialogs.about.ariaLabel" @close="emit('close')">
+    <template #title>{{ t.dialogs.about.title }}</template>
 
     <div class="about">
       <p class="about-brand">sonare studio</p>
-      <p class="about-tagline">Browser-native DAW</p>
+      <p class="about-tagline">{{ t.dialogs.about.tagline }}</p>
 
       <dl class="about-facts">
         <div class="about-row">
-          <dt>Audio engine</dt>
+          <dt>{{ t.dialogs.about.audioEngine }}</dt>
           <dd>libsonare <strong>{{ version }}</strong></dd>
         </div>
         <div class="about-row">
           <dt>SharedArrayBuffer</dt>
           <dd>
-            <strong>{{ isolated ? 'available' : 'unavailable' }}</strong>
+            <strong>{{ isolated ? t.dialogs.about.available : t.dialogs.about.unavailable }}</strong>
             <span class="about-note">(crossOriginIsolated: {{ isolated }})</span>
           </dd>
         </div>
@@ -46,7 +49,9 @@ const emit = defineEmits<{
     </div>
 
     <template #actions>
-      <button type="button" class="primary" @click="emit('close')">Close</button>
+      <button type="button" class="primary" @click="emit('close')">
+        {{ t.dialogs.about.close }}
+      </button>
     </template>
   </AppModal>
 </template>

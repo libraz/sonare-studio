@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { METER_SILENCE_DB, type MeterBridge } from '@/engine/meters';
+import { useI18n } from '@/ui/i18n';
 import { isMeterAtFloor } from '@/ui/mixer/meter-model';
 
 const props = withDefaults(
@@ -16,6 +17,8 @@ const props = withDefaults(
   }>(),
   { bridge: null, width: 64, height: 180, minDb: -60 },
 );
+
+const { t } = useI18n();
 
 /** Displayed-peak falloff in dB per second. */
 const PEAK_DECAY_DB_PER_S = 24;
@@ -209,7 +212,7 @@ watch(
   <canvas
     ref="canvasRef"
     style="display: block; background: #111418; border-radius: 3px"
-    aria-label="Stereo level meter"
+    :aria-label="t.shell.meters.stereo"
     role="img"
   />
 </template>

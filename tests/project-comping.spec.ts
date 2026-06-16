@@ -6,9 +6,12 @@ import {
   addAudioTrack,
   clearHistory,
   dropClipTakes,
+  duplicateClip,
   redo,
   setClipActiveTake,
   setClipCompSegments,
+  splitClip,
+  trimClip,
   undo,
 } from '@/project/commands';
 import { flattenClipComp } from '@/project/comp-flatten';
@@ -441,6 +444,69 @@ describe('take and comping commands', () => {
       { startPpq: 2, takeIndex: 1 },
     ]);
     expect(findClip(clipId)?.assetId).toBe('take-a');
+  });
+
+  it('duplicateClip preserves takes and comp selection metadata', async () => {
+    const clipId = await addCompedClip();
+    setClipCompSegments(clipId, [
+      { startPpq: 0, takeIndex: 0 },
+      { startPpq: 3, takeIndex: 1 },
+    ]);
+
+    const copyId = duplicateClip(clipId, 16);
+    const copy = findClip(copyId);
+
+    expect(copy?.takes).toEqual(twoTakes());
+    expect(copy?.compSegments).toEqual([
+      { startPpq: 0, takeIndex: 0 },
+      { startPpq: 3, takeIndex: 1 },
+    ]);
+    expect(copy?.assetId).toBe('take-a');
+  });
+
+  it('splitClip partitions takes and comp selection metadata into both halves', async () => {
+    const clipId = await addCompedClip();
+    setClipCompSegments(clipId, [
+      { startPpq: 0, takeIndex: 0 },
+      { startPpq: 3, takeIndex: 1 },
+      { startPpq: 6, takeIndex: 0 },
+    ]);
+
+    const rightId = splitClip(clipId, 4);
+    const left = findClip(clipId);
+    const right = findClip(rightId);
+
+    expect(left?.takes).toEqual(twoTakes());
+    expect(left?.compSegments).toEqual([
+      { startPpq: 0, takeIndex: 0 },
+      { startPpq: 3, takeIndex: 1 },
+    ]);
+    expect(left?.assetId).toBe('take-a');
+    expect(right?.takes).toEqual(twoTakes());
+    expect(right?.compSegments).toEqual([
+      { startPpq: 0, takeIndex: 1 },
+      { startPpq: 2, takeIndex: 0 },
+    ]);
+    expect(right?.assetId).toBe('take-b');
+  });
+
+  it('trimClip rebases takes and comp selection metadata to the trimmed window', async () => {
+    const clipId = await addCompedClip();
+    setClipCompSegments(clipId, [
+      { startPpq: 0, takeIndex: 0 },
+      { startPpq: 3, takeIndex: 1 },
+      { startPpq: 6, takeIndex: 0 },
+    ]);
+
+    trimClip(clipId, 2, 4);
+    const trimmed = findClip(clipId);
+
+    expect(trimmed?.takes).toEqual(twoTakes());
+    expect(trimmed?.compSegments).toEqual([
+      { startPpq: 0, takeIndex: 0 },
+      { startPpq: 1, takeIndex: 1 },
+    ]);
+    expect(trimmed?.assetId).toBe('take-a');
   });
 
   it('setClipCompSegments validates the clip and the selection', async () => {

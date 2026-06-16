@@ -81,6 +81,31 @@ function cloneClip(clip: EditorClip): EditorClip {
   const ccLanes = cloneCcLanes(clip.ccLanes);
   if (ccLanes !== undefined) next.ccLanes = ccLanes;
   else delete next.ccLanes;
+  if (clip.pitchBendLanes !== undefined && clip.pitchBendLanes.length > 0) {
+    next.pitchBendLanes = clip.pitchBendLanes.map((lane) => ({
+      channel: lane.channel,
+      points: lane.points.map((point) => ({ ...point })),
+    }));
+  } else {
+    delete next.pitchBendLanes;
+  }
+  if (clip.channelPressureLanes !== undefined && clip.channelPressureLanes.length > 0) {
+    next.channelPressureLanes = clip.channelPressureLanes.map((lane) => ({
+      channel: lane.channel,
+      points: lane.points.map((point) => ({ ...point })),
+    }));
+  } else {
+    delete next.channelPressureLanes;
+  }
+  if (clip.polyPressureLanes !== undefined && clip.polyPressureLanes.length > 0) {
+    next.polyPressureLanes = clip.polyPressureLanes.map((lane) => ({
+      channel: lane.channel,
+      pitch: lane.pitch,
+      points: lane.points.map((point) => ({ ...point })),
+    }));
+  } else {
+    delete next.polyPressureLanes;
+  }
   return next;
 }
 

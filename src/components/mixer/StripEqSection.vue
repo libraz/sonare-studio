@@ -4,6 +4,7 @@ import type { CommandGestureOptions, MixerStripTarget } from '@/project/commands
 import { setStripEq } from '@/project/commands';
 import { createDefaultStrip, type MixerStrip, type StripEq } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 import { formatDb, formatHz } from '@/ui/mixer/db-scale';
 import { eqCurve, eqCurvePath } from '@/ui/mixer/eq-curve';
@@ -27,6 +28,7 @@ const props = defineProps<{
 }>();
 
 const store = useProjectStore();
+const { t } = useI18n();
 
 /** Graph viewBox size in px. */
 const GRAPH_W = 78;
@@ -43,13 +45,16 @@ const Q_MAX = 18;
 const MAX_BANDS = 6;
 
 /** Band types offered in the type menu, in low-to-high display order. */
-const BAND_TYPE_CHOICES: ReadonlyArray<{ type: EqBandType; label: string }> = [
-  { type: 'HighPass', label: 'Low cut' },
-  { type: 'LowShelf', label: 'Low shelf' },
-  { type: 'Peak', label: 'Bell' },
-  { type: 'HighShelf', label: 'High shelf' },
-  { type: 'LowPass', label: 'High cut' },
-  { type: 'Notch', label: 'Notch' },
+const BAND_TYPE_CHOICES: ReadonlyArray<{
+  type: EqBandType;
+  labelKey: keyof typeof t.value.shell.mixer.eq.types;
+}> = [
+  { type: 'HighPass', labelKey: 'lowCut' },
+  { type: 'LowShelf', labelKey: 'lowShelf' },
+  { type: 'Peak', labelKey: 'bell' },
+  { type: 'HighShelf', labelKey: 'highShelf' },
+  { type: 'LowPass', labelKey: 'highCut' },
+  { type: 'Notch', labelKey: 'notch' },
 ];
 
 /** Band types whose gain knob has no audible effect (cut/notch filters). */
@@ -208,13 +213,18 @@ function openBandMenu(index: number, event: MouseEvent): void {
   if (!band) return;
   const items: ContextMenuItem[] = BAND_TYPE_CHOICES.map((choice) => ({
     id: `type:${choice.type}`,
-    label: choice.label,
+    label: t.value.shell.mixer.eq.types[choice.labelKey],
     checked: (band.type ?? 'Peak') === choice.type,
     run: () => setBandType(index, choice.type),
   }));
   if (currentBands().length > 1) {
     items.push({ id: 'sep', separator: true });
-    items.push({ id: 'remove', label: 'Remove band', danger: true, run: () => removeBand(index) });
+    items.push({
+      id: 'remove',
+      label: t.value.shell.mixer.eq.removeBand,
+      danger: true,
+      run: () => removeBand(index),
+    });
   }
   openContextMenu(event.clientX, event.clientY, items);
 }
@@ -280,8 +290,8 @@ function onQChange(bandIndex: number, value: number, commit: boolean): void {
         type="button"
         class="eq-power"
         :class="{ on: eq?.enabled }"
-        :title="eq?.enabled ? 'Bypass EQ' : 'Enable EQ'"
-        aria-label="EQ power"
+        :title="eq?.enabled ? t.shell.mixer.eq.bypass : t.shell.mixer.eq.enable"
+        :aria-label="t.shell.mixer.eq.power"
         :aria-pressed="eq?.enabled === true"
         @click="onTogglePower"
       />
@@ -291,8 +301,8 @@ function onQChange(bandIndex: number, value: number, commit: boolean): void {
         v-if="eq && eq.bands.length < MAX_BANDS"
         type="button"
         class="eq-add"
-        title="Add an EQ band"
-        aria-label="Add EQ band"
+        :title="t.shell.mixer.eq.addTitle"
+        :aria-label="t.shell.mixer.eq.add"
         @click="addBand"
       >
         +
@@ -313,7 +323,9 @@ function onQChange(bandIndex: number, value: number, commit: boolean): void {
         <button
           type="button"
           class="eq-band-label"
-          :title="`${bandLabel(band, index)} — click to change type`"
+          :title="
+            formatMessage(t.shell.mixer.eq.bandTypeTitle, { label: bandLabel(band, index) })
+          "
           @click="openBandMenu(index, $event)"
           @contextmenu="openBandMenu(index, $event)"
         >
@@ -324,7 +336,7 @@ function onQChange(bandIndex: number, value: number, commit: boolean): void {
           :min="freqRange(band).min"
           :max="freqRange(band).max"
           scale="log"
-          :aria-label="`${bandLabel(band, index)} frequency`"
+          :aria-label="formatMessage(t.shell.mixer.eq.frequency, { label: bandLabel(band, index) })"
           :default-value="defaultFreq(band)"
           :display="`${formatHz(band.frequencyHz ?? 1000)} Hz`"
           :size="18"
@@ -336,7 +348,7 @@ function onQChange(bandIndex: number, value: number, commit: boolean): void {
           :value="band.gainDb ?? 0"
           :min="-BAND_GAIN_DB"
           :max="BAND_GAIN_DB"
-          :aria-label="`${bandLabel(band, index)} gain`"
+          :aria-label="formatMessage(t.shell.mixer.eq.gain, { label: bandLabel(band, index) })"
           :default-value="0"
           :display="`${formatDb(band.gainDb ?? 0)} dB`"
           :size="18"
@@ -348,7 +360,7 @@ function onQChange(bandIndex: number, value: number, commit: boolean): void {
           :min="Q_MIN"
           :max="Q_MAX"
           scale="log"
-          :aria-label="`${bandLabel(band, index)} Q`"
+          :aria-label="formatMessage(t.shell.mixer.eq.q, { label: bandLabel(band, index) })"
           :default-value="defaultQ(band)"
           :display="`Q ${(band.q ?? 0.7).toFixed(2)}`"
           :size="18"

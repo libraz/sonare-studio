@@ -11,6 +11,7 @@ import {
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { isAudioClip } from '@/project/types';
+import { formatMessage, useI18n } from '@/ui/i18n';
 
 type RunAction = (action: () => Promise<void>) => Promise<void>;
 
@@ -24,6 +25,7 @@ export interface ProjectAudioAssetsOptions {
 export function useProjectAudioAssets(options: ProjectAudioAssetsOptions) {
   const { closeProjectMenu, positionPpq, renderInfo, runAction } = options;
   const store = useProjectStore();
+  const { t } = useI18n();
   const audioImportInput = ref<HTMLInputElement | null>(null);
 
   async function placeAssetAtPlayhead(assetId: string): Promise<number> {
@@ -100,9 +102,9 @@ export function useProjectAudioAssets(options: ProjectAudioAssetsOptions) {
     const clipId = clip.id;
     void (async () => {
       const ok = await confirmDialog({
-        title: 'Apply edited audio',
-        message: 'Use the edited audio for the selected clip?',
-        confirmLabel: 'Use edit',
+        title: t.value.dialogs.prompts.applyEditedAudioTitle,
+        message: t.value.dialogs.prompts.applyEditedAudioMessage,
+        confirmLabel: t.value.dialogs.prompts.useEdit,
       });
       if (!ok) return;
       void runAction(() => swapClipAsset(clipId, newAssetId));
@@ -125,7 +127,7 @@ export function useProjectAudioAssets(options: ProjectAudioAssetsOptions) {
       const analysis = await resolveAudioAnalysis();
       const tags = analyzeAudioTags(asset.channels, asset.meta.sampleRate, analysis);
       if (tags.bpm === undefined) {
-        renderInfo.value = 'Tempo detection found no clear beat.';
+        renderInfo.value = t.value.dialogs.prompts.tempoDetectionFailed;
         return;
       }
       const bpm = Math.round(tags.bpm * 10) / 10;
@@ -134,7 +136,9 @@ export function useProjectAudioAssets(options: ProjectAudioAssetsOptions) {
         sourceBpm: bpm,
         ...(clip.warp?.anchors ? { anchors: clip.warp.anchors } : {}),
       });
-      renderInfo.value = `Detected tempo: ${bpm.toFixed(1)} BPM`;
+      renderInfo.value = formatMessage(t.value.dialogs.prompts.tempoDetected, {
+        bpm: bpm.toFixed(1),
+      });
     });
   }
 
