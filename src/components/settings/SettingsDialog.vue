@@ -13,6 +13,8 @@ import {
   AUTOSAVE_INTERVAL_MIN_MS,
   COUNT_IN_BARS_MAX,
   COUNT_IN_BARS_MIN,
+  LOUDNESS_TARGET_MAX_LUFS,
+  LOUDNESS_TARGET_MIN_LUFS,
 } from '@/ui/settings/app-settings';
 import { createFocusTrap, type FocusTrap } from '@/ui/settings/focus-trap';
 import {
@@ -145,6 +147,12 @@ function onCountInInput(event: Event): void {
   const value = Number((event.target as HTMLInputElement).value);
   if (!Number.isFinite(value)) return;
   appSettings.set('countInBars', value);
+}
+
+function onLoudnessTargetInput(event: Event): void {
+  const value = Number((event.target as HTMLInputElement).value);
+  if (!Number.isFinite(value)) return;
+  appSettings.set('loudnessTargetLufs', value);
 }
 
 // --- Shortcuts tab ----------------------------------------------------------
@@ -427,6 +435,16 @@ onBeforeUnmount(() => {
             :max="AUTOSAVE_INTERVAL_MAX_MS / 1000"
             :value="autosaveSeconds"
             @change="onAutosaveSecondsInput"
+          />
+        </label>
+        <label class="row">
+          <span class="row-label">{{ t.settings.general.loudnessTarget }}</span>
+          <input
+            type="number"
+            :min="LOUDNESS_TARGET_MIN_LUFS"
+            :max="LOUDNESS_TARGET_MAX_LUFS"
+            :value="appSettings.settings.loudnessTargetLufs"
+            @change="onLoudnessTargetInput"
           />
         </label>
         <label class="row">

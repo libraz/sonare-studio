@@ -35,6 +35,12 @@ const props = withDefaults(
     size?: number;
     /** Disables all interaction. */
     disabled?: boolean;
+    /**
+     * MIDI-learn affordance shown in the right-click menu: 'unbound' offers
+     * "MIDI Learn", 'armed' shows it listening, 'bound' adds a "Forget"
+     * action. Omit to hide the affordance (the control is not learnable).
+     */
+    midiLearnState?: 'unbound' | 'armed' | 'bound';
   }>(),
   {
     scale: 'linear',
@@ -44,12 +50,17 @@ const props = withDefaults(
     display: '',
     size: 26,
     disabled: false,
+    midiLearnState: undefined,
   },
 );
 
 const emit = defineEmits<{
   /** New value; commit=false while dragging, true when the gesture ends. */
   change: [value: number, commit: boolean];
+  /** Menu action: arm (or cancel) MIDI learn for this control. */
+  midiLearn: [];
+  /** Menu action: forget this control's MIDI binding. */
+  midiForget: [];
 }>();
 
 const { t } = useI18n();
@@ -139,6 +150,18 @@ function onKeyDown(event: KeyboardEvent): void {
   else return;
   event.preventDefault();
 }
+
+/** Menu action: toggle MIDI-learn arming for this control. */
+function onMidiLearn(): void {
+  emit('midiLearn');
+  interactions.closeMenu();
+}
+
+/** Menu action: forget this control's MIDI binding. */
+function onMidiForget(): void {
+  emit('midiForget');
+  interactions.closeMenu();
+}
 </script>
 
 <template>
@@ -191,6 +214,27 @@ function onKeyDown(event: KeyboardEvent): void {
         @click="interactions.pasteValue"
       >
         {{ t.shell.mixer.controls.pasteValue }}
+      </button>
+      <button
+        v-if="props.midiLearnState"
+        type="button"
+        role="menuitem"
+        :class="{ 'menu-armed': props.midiLearnState === 'armed' }"
+        @click="onMidiLearn"
+      >
+        {{
+          props.midiLearnState === 'armed'
+            ? t.shell.mixer.controls.midiLearnListening
+            : t.shell.mixer.controls.midiLearn
+        }}
+      </button>
+      <button
+        v-if="props.midiLearnState === 'bound'"
+        type="button"
+        role="menuitem"
+        @click="onMidiForget"
+      >
+        {{ t.shell.mixer.controls.midiForget }}
       </button>
     </div>
   </div>
@@ -254,5 +298,9 @@ function onKeyDown(event: KeyboardEvent): void {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   user-select: none;
+}
+
+.menu-armed {
+  color: var(--accent);
 }
 </style>

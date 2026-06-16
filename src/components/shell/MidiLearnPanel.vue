@@ -1,10 +1,14 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import type { MidiLearnHandle } from '@/composables/useMidiLearn';
-import { useI18n } from '@/ui/i18n';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import {
   formatMidiCcBinding,
+  type MidiCcBinding,
   type MidiLearnParam,
   type MidiLearnScope,
+  parseMidiLearnInsertTargetId,
+  parseMidiLearnInstrumentTargetId,
 } from '@/ui/midi/midi-learn';
 
 /**
@@ -40,6 +44,61 @@ function caption(param: MidiLearnParam, scope: MidiLearnScope): string {
   const binding = props.learn.bindingFor(param, scope);
   return binding ? formatMidiCcBinding(binding) : t.value.shell.midiLearn.learn;
 }
+
+// --- Device (insert / instrument) bindings -----------------------------------
+
+/** One listed insert/instrument binding with a human-readable label. */
+interface DeviceBindingRow {
+  /** Target id (passed to clearId on forget). */
+  id: string;
+  /** Display label, e.g. "Bass · Insert 2 · Threshold Db". */
+  label: string;
+  /** The bound channel + controller. */
+  binding: MidiCcBinding;
+}
+
+/** camelCase parameter name to a spaced, capitalized label. */
+function humanizeParam(name: string): string {
+  const spaced = name.replace(/([a-z0-9])([A-Z])/g, '$1 $2');
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+/** Display name of a binding's strip scope (track name or "Master"). */
+function scopeName(scope: MidiLearnScope): string {
+  if (scope === 'master') return t.value.shell.midiLearn.master;
+  return props.tracks.find((track) => track.id === scope)?.name ?? '';
+}
+
+/**
+ * Insert/instrument bindings derived from the learn map, sorted by label.
+ * Strip gain/pan bindings are shown in the grid above and excluded here.
+ */
+const deviceBindings = computed<DeviceBindingRow[]>(() => {
+  const rows: DeviceBindingRow[] = [];
+  for (const [id, binding] of props.learn.bindings) {
+    const insert = parseMidiLearnInsertTargetId(id);
+    if (insert) {
+      const slot = formatMessage(t.value.shell.midiLearn.insertSlot, {
+        index: String(insert.index + 1),
+      });
+      rows.push({
+        id,
+        label: `${scopeName(insert.scope)} · ${slot} · ${humanizeParam(insert.paramId)}`,
+        binding,
+      });
+      continue;
+    }
+    const instrument = parseMidiLearnInstrumentTargetId(id);
+    if (instrument) {
+      rows.push({
+        id,
+        label: `${scopeName(instrument.trackId)} · ${t.value.shell.midiLearn.instrument} · ${humanizeParam(instrument.paramId)}`,
+        binding,
+      });
+    }
+  }
+  return rows.sort((a, b) => a.label.localeCompare(b.label));
+});
 </script>
 
 <template>
@@ -112,6 +171,24 @@ function caption(param: MidiLearnParam, scope: MidiLearnScope): string {
             ×
           </button>
         </span>
+      </div>
+
+      <div v-if="deviceBindings.length > 0" class="ml-devices">
+        <div class="ml-row-head ml-devices-head">
+          <span class="ml-col-head">{{ t.shell.midiLearn.deviceControls }}</span>
+        </div>
+        <div v-for="row in deviceBindings" :key="row.id" class="ml-device-row">
+          <span class="ml-device-name" :title="row.label">{{ row.label }}</span>
+          <span class="ml-device-binding">{{ formatMidiCcBinding(row.binding) }}</span>
+          <button
+            type="button"
+            class="ml-clear"
+            :aria-label="t.shell.midiLearn.clearBinding"
+            @click="learn.clearId(row.id)"
+          >
+            ×
+          </button>
+        </div>
       </div>
     </div>
 
@@ -266,6 +343,40 @@ function caption(param: MidiLearnParam, scope: MidiLearnScope): string {
   background: var(--accent);
   color: var(--accent-text);
   box-shadow: inset 0 0 0 1px var(--accent), var(--raise-hi), var(--shadow-1);
+}
+
+.ml-devices {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: var(--sp-2);
+}
+
+.ml-devices-head {
+  padding-bottom: var(--sp-1);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.ml-device-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.ml-device-name {
+  min-width: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ml-device-binding {
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-1);
 }
 
 .ml-clear {

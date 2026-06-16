@@ -124,12 +124,13 @@ describe('createMeterBridge', () => {
     const { handle, emit } = makeHandle();
     const bridge = createMeterBridge(handle);
 
-    emit(makeSnapshot({ truePeakDbL: -4.2, momentaryLufs: -14.5 }));
+    emit(makeSnapshot({ truePeakDbL: -4.2, momentaryLufs: -14.5, gainReductionDb: -3.5 }));
     expect(bridge.latest.truePeakDbL).toBe(-4.2);
     expect(bridge.latest.truePeakDbR).toBe(-6.5);
     expect(bridge.latest.momentaryLufs).toBe(-14.5);
     expect(bridge.latest.shortTermLufs).toBe(-15);
     expect(bridge.latest.integratedLufs).toBe(-16);
+    expect(bridge.latest.gainReductionDb).toBe(-3.5);
 
     emit(
       makeSnapshot({
@@ -138,6 +139,7 @@ describe('createMeterBridge', () => {
         momentaryLufs: Number.NEGATIVE_INFINITY,
         shortTermLufs: Number.NEGATIVE_INFINITY,
         integratedLufs: Number.NEGATIVE_INFINITY,
+        gainReductionDb: Number.NaN,
       }),
     );
     expect(bridge.latest).not.toHaveProperty('truePeakDbL');
@@ -145,6 +147,7 @@ describe('createMeterBridge', () => {
     expect(bridge.latest).not.toHaveProperty('momentaryLufs');
     expect(bridge.latest).not.toHaveProperty('shortTermLufs');
     expect(bridge.latest).not.toHaveProperty('integratedLufs');
+    expect(bridge.latest).not.toHaveProperty('gainReductionDb');
     bridge.dispose();
   });
 

@@ -1,7 +1,9 @@
 import { mount, type VueWrapper } from '@vue/test-utils';
+import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import MidiLearnPanel from '@/components/shell/MidiLearnPanel.vue';
 import { useMidiLearn } from '@/composables/useMidiLearn';
+import { useProjectStore } from '@/project/store';
 
 vi.mock('@/project/commands', () => ({
   setStripGain: vi.fn(),
@@ -16,6 +18,7 @@ const TRACKS = [
 let wrapper: VueWrapper | null = null;
 
 beforeEach(() => {
+  setActivePinia(createPinia());
   vi.useFakeTimers();
 });
 
@@ -70,6 +73,25 @@ describe('MidiLearnPanel', () => {
     expect(clear.exists()).toBe(true);
     await clear.trigger('click');
     expect(learn.bindingFor('gain', 'master')).toBeUndefined();
+  });
+
+  it('lists insert/instrument bindings and forgets them individually', async () => {
+    mountPanel();
+    const store = useProjectStore();
+    store.midiCcBindings.set('insert:1:0:thresholdDb', { channel: 0, controller: 20 });
+    store.midiCcBindings.set('instrument:2:cutoffHz', { channel: 1, controller: 74 });
+    await (wrapper as VueWrapper).vm.$nextTick();
+
+    const rows = (wrapper as VueWrapper).findAll('.ml-device-row');
+    expect(rows).toHaveLength(2);
+    const devices = (wrapper as VueWrapper).find('.ml-devices').text();
+    expect(devices).toContain('Drums · Insert 1 · Threshold Db');
+    expect(devices).toContain('Bass · Instrument · Cutoff Hz');
+
+    // Rows are sorted by label, so "Bass · Instrument…" comes first.
+    await rows[0].find('.ml-clear').trigger('click');
+    expect(store.midiCcBindings.has('instrument:2:cutoffHz')).toBe(false);
+    expect(store.midiCcBindings.has('insert:1:0:thresholdDb')).toBe(true);
   });
 
   it('disables Clear all until something is bound or armed', async () => {

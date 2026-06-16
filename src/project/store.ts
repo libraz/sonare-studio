@@ -2,6 +2,12 @@ import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { ensureWasm } from '@/lib/wasm';
 import { audioAssetUri } from '@/persistence/assets';
+import {
+  type MidiCcBinding,
+  midiLearnTargetScope,
+  sanitizeMidiCcBindings,
+  withMidiLearnTargetScope,
+} from '@/ui/midi/midi-learn';
 import type { Project, ProjectMidiEvent } from '@/wasm/index.js';
 import {
   annotationsFromDocument,
@@ -288,6 +294,12 @@ export const useProjectStore = defineStore('project', () => {
   const sections = ref<EditorSection[]>([]);
   /** Automation lanes (app-level), one per (target, param) pair. */
   const automationLanes = ref<AutomationLaneState[]>([]);
+  /**
+   * MIDI-learn CC bindings (app-level), keyed by target id. Persisted with the
+   * project; the map identity is stable across loads (mutated in place) so the
+   * MIDI-learn handle can hold a long-lived reference.
+   */
+  const midiCcBindings = ref(new Map<string, MidiCcBinding>());
   /** Project mixer state: master strip + buses (app-level metadata). */
   const mixer = ref<ProjectMixerState>(createDefaultMixerState());
   /** Id of the active (focused) track (-1 when there is none). */
@@ -614,6 +626,7 @@ export const useProjectStore = defineStore('project', () => {
     chords.value = [];
     sections.value = [];
     automationLanes.value = [];
+    midiCcBindings.value.clear();
     activeTrackId.value = trackId;
     clipId.value = newClipId;
     clipStartPpq.value = 0;
@@ -843,6 +856,24 @@ export const useProjectStore = defineStore('project', () => {
         ...laneMirror,
         ...sanitizeAutomationEntries(doc.masterAutomation, 'master'),
       ];
+      // CC bindings are mutated in place to keep the map identity stable for
+      // any long-lived MIDI-learn handle; malformed entries are dropped.
+      // Track-scoped targets hold a positional index, rebound to the freshly
+      // assigned track id (a dangling index drops the binding).
+      midiCcBindings.value.clear();
+      for (const binding of sanitizeMidiCcBindings(doc.midiCcBindings)) {
+        let target: string | null = binding.target;
+        if (binding.trackScoped) {
+          const index = midiLearnTargetScope(binding.target);
+          const mapped = typeof index === 'number' ? trackMirror[index] : undefined;
+          target = mapped ? withMidiLearnTargetScope(binding.target, mapped.id) : null;
+        }
+        if (target === null) continue;
+        midiCcBindings.value.set(target, {
+          channel: binding.channel,
+          controller: binding.controller,
+        });
+      }
       activeTrackId.value = trackMirror[0]?.id ?? -1;
       clipId.value = firstClipId;
       selection.value = new Set();
@@ -1053,6 +1084,7 @@ export const useProjectStore = defineStore('project', () => {
     chords.value = [];
     sections.value = [];
     automationLanes.value = [];
+    midiCcBindings.value.clear();
     mixer.value = createDefaultMixerState();
     activeTrackId.value = -1;
     clipId.value = -1;
@@ -1078,6 +1110,7 @@ export const useProjectStore = defineStore('project', () => {
     chords,
     sections,
     automationLanes,
+    midiCcBindings,
     mixer,
     activeTrackId,
     clipId,

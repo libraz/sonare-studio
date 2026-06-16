@@ -314,6 +314,41 @@ describe('project serialization', () => {
     expect(serializeProject()).toEqual(doc);
   });
 
+  it('round-trips MIDI-learn CC bindings, rebinding track scope across fresh ids', async () => {
+    buildSampleProject(store);
+    // Binding-less sessions omit the field entirely.
+    expect(serializeProject().midiCcBindings).toBeUndefined();
+
+    // Removing the first track leaves Bass with a non-contiguous id; the bound
+    // target must still resolve after load (fresh ids are assigned on load).
+    removeTrack(store.tracks[0].id);
+    const bassTrackId = store.tracks.find((track) => track.name === 'Bass')?.id as number;
+    store.midiCcBindings.set(`gain:${bassTrackId}`, { channel: 0, controller: 7 });
+    store.midiCcBindings.set('gain:master', { channel: 1, controller: 10 });
+    // A binding to a track that no longer exists must drop out on serialize.
+    store.midiCcBindings.set('pan:99999', { channel: 2, controller: 20 });
+
+    const doc = serializeProject();
+    expect(doc.midiCcBindings).toEqual([
+      { target: 'gain:0', channel: 0, controller: 7, trackScoped: true },
+      { target: 'gain:master', channel: 1, controller: 10 },
+    ]);
+    // The document is plain JSON (the store map never leaks through).
+    expect(JSON.parse(JSON.stringify(doc))).toEqual(doc);
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    const loadedBass = store.tracks.find((track) => track.name === 'Bass');
+    expect(loadedBass).toBeDefined();
+    expect(store.midiCcBindings.get(`gain:${loadedBass?.id}`)).toEqual({
+      channel: 0,
+      controller: 7,
+    });
+    expect(store.midiCcBindings.get('gain:master')).toEqual({ channel: 1, controller: 10 });
+    expect(store.midiCcBindings.size).toBe(2);
+    // Re-serializing the loaded project yields the same document.
+    expect(serializeProject()).toEqual(doc);
+  });
+
   it('loading defaults absent automation to [] and drops malformed entries', async () => {
     buildSampleProject(store);
     const doc = serializeProject();

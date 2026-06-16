@@ -9,6 +9,7 @@
  * (addTrack/addClip/setMidiEvents/...), which rebuilds an equivalent Project.
  */
 
+import { midiLearnTargetScope, withMidiLearnTargetScope } from '@/ui/midi/midi-learn';
 import {
   annotationsToDocument,
   type ClipScoreAnnotations,
@@ -75,6 +76,9 @@ import type { ClipKind, EditorClip, EditorNote, TrackKind } from './types';
  *   Additionally (still version 3, additive): MIDI clips may carry optional
  *   `channelPressureLanes` and `polyPressureLanes` imported from aftertouch
  *   events and emitted during realtime playback/export; omitted when absent.
+ *   Additionally (still version 3, additive): the document may carry an optional
+ *   `midiCcBindings` list (MIDI-learn CC mappings, see src/ui/midi/midi-learn.ts)
+ *   restored into the session learn handle on load; omitted when there are none.
  *
  * Loaders accept any version up to this one; version-1 documents load
  * unchanged (every clip is MIDI).
@@ -246,6 +250,22 @@ export interface DocumentTimeSignature {
   denominator: number;
 }
 
+/** One persisted MIDI-learn CC binding of the document. */
+export interface DocumentMidiCcBinding {
+  /**
+   * Target id (mixer / insert / instrument); see src/ui/midi/midi-learn.ts.
+   * When {@link trackScoped} is true the id's scope is a positional track index
+   * (session track ids are reassigned on load), rebound on {@link loadProjectDocument}.
+   */
+  target: string;
+  /** MIDI channel (0-15). */
+  channel: number;
+  /** Controller number (0-127). */
+  controller: number;
+  /** True when `target`'s scope is a track index awaiting load-time rebinding. */
+  trackScoped?: boolean;
+}
+
 /** Plain JSON-able snapshot of a whole project. */
 export interface ProjectDocument {
   /** Schema version; see {@link PROJECT_DOCUMENT_SCHEMA_VERSION}. */
@@ -272,6 +292,8 @@ export interface ProjectDocument {
   mixer?: ProjectMixerState;
   /** Score display settings; absent = defaults (no display transpose). */
   score?: DocumentScoreSettings;
+  /** MIDI-learn CC bindings; absent/empty = none. */
+  midiCcBindings?: DocumentMidiCcBinding[];
 }
 
 /** Deep-copies a clip mirror entry into the document shape (no session ids). */
@@ -443,6 +465,36 @@ export function serializeProject(): ProjectDocument {
   // Score display settings are likewise omitted while default.
   if (store.displayTransposeSemitones !== 0) {
     doc.score = { displayTransposeSemitones: store.displayTransposeSemitones };
+  }
+  // MIDI-learn CC bindings are app-level metadata; omitted while there are none.
+  // Track-scoped targets embed a session track id, so they are stored with the
+  // track's positional index (rebound on load); 'master' targets are stable and
+  // stored verbatim. Dangling track bindings drop out. Sorted for determinism.
+  if (store.midiCcBindings.size > 0) {
+    const entries: DocumentMidiCcBinding[] = [];
+    for (const [target, binding] of store.midiCcBindings.entries()) {
+      const scope = midiLearnTargetScope(target);
+      if (scope === null) continue;
+      const out: DocumentMidiCcBinding = {
+        target,
+        channel: binding.channel,
+        controller: binding.controller,
+      };
+      if (scope !== 'master') {
+        const index = store.tracks.findIndex((track) => track.id === scope);
+        if (index < 0) continue;
+        const portable = withMidiLearnTargetScope(target, index);
+        if (portable === null) continue;
+        out.target = portable;
+        out.trackScoped = true;
+      }
+      entries.push(out);
+    }
+    if (entries.length > 0) {
+      doc.midiCcBindings = entries.sort((a, b) =>
+        a.target < b.target ? -1 : a.target > b.target ? 1 : 0,
+      );
+    }
   }
   return doc;
 }

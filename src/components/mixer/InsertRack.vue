@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, inject, onBeforeUnmount, ref, watch } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
+import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
 import type { CommandGestureOptions, MixerStripTarget } from '@/project/commands';
 import { setInsertSidechain } from '@/project/commands';
 import { createDefaultStrip, type InsertSlot, type MixerStrip } from '@/project/mixer';
@@ -8,6 +9,7 @@ import { listQuickControls, type QuickControl, setQuickControl } from '@/project
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { midiLearnInsertTargetId } from '@/ui/midi/midi-learn';
 import {
   groupInsertCatalog,
   humanizeInsertName,
@@ -106,6 +108,31 @@ function controlDisplay(control: QuickControl): string {
   const value =
     Math.abs(control.value) >= 100 ? Math.round(control.value) : control.value.toFixed(1);
   return control.unit ? `${value} ${control.unit}` : `${value}`;
+}
+
+// --- MIDI learn (shared app handle, injected; null in isolated tests) --------
+
+const midiLearn = inject(MIDI_LEARN_KEY, null);
+
+/** Learn target id for a control on the currently expanded insert slot. */
+function learnTargetId(control: QuickControl): string {
+  return midiLearnInsertTargetId(props.target, expandedIndex.value ?? -1, control.id);
+}
+
+/** MIDI-learn state for a control's knob menu, or undefined when unavailable. */
+function learnState(control: QuickControl): 'unbound' | 'armed' | 'bound' | undefined {
+  if (!midiLearn) return undefined;
+  const id = learnTargetId(control);
+  if (midiLearn.isArmedId(id)) return 'armed';
+  return midiLearn.bindingForId(id) ? 'bound' : 'unbound';
+}
+
+function onMidiLearn(control: QuickControl): void {
+  midiLearn?.armId(learnTargetId(control));
+}
+
+function onMidiForget(control: QuickControl): void {
+  midiLearn?.clearId(learnTargetId(control));
 }
 
 // --- Slot actions ------------------------------------------------------------
@@ -302,7 +329,10 @@ onBeforeUnmount(() => {
           :label="control.name"
           :display="controlDisplay(control)"
           :size="22"
+          :midi-learn-state="learnState(control)"
           @change="(value, commit) => onParamChange(control, value, commit)"
+          @midi-learn="onMidiLearn(control)"
+          @midi-forget="onMidiForget(control)"
         />
       </div>
     </template>

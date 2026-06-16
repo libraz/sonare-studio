@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, inject, onBeforeUnmount, reactive, ref } from 'vue';
+import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
 import {
   listQuickControls,
   type QuickControl,
@@ -9,6 +10,7 @@ import {
 } from '@/project/quick-controls';
 import { formatControlValue, knobRotationDeg, knobValueForDrag } from '@/ui/devices/knob-math';
 import { useI18n } from '@/ui/i18n';
+import { midiLearnInsertTargetId, midiLearnInstrumentTargetId } from '@/ui/midi/midi-learn';
 
 /**
  * Quick Controls: up to eight knobs for the selected device (instrument or
@@ -123,6 +125,67 @@ function onKnobKeydown(control: QuickControl, event: KeyboardEvent): void {
   );
   if (next !== control.value) apply(control.id, next, true);
 }
+
+// --- MIDI learn (shared app handle, injected; null in isolated tests) --------
+
+const midiLearn = inject(MIDI_LEARN_KEY, null);
+
+/** Right-click learn menu state (one menu shared across the knobs). */
+const menu = reactive<{ open: boolean; x: number; y: number; controlId: string }>({
+  open: false,
+  x: 0,
+  y: 0,
+  controlId: '',
+});
+
+/** Learn target id for a control on the current device target. */
+function learnTargetId(controlId: string): string {
+  return props.target.type === 'instrument'
+    ? midiLearnInstrumentTargetId(props.target.trackId, controlId)
+    : midiLearnInsertTargetId(props.target.trackId, props.target.index, controlId);
+}
+
+/** MIDI-learn state for a control, or undefined when the handle is absent. */
+function learnState(controlId: string): 'unbound' | 'armed' | 'bound' | undefined {
+  if (!midiLearn) return undefined;
+  const id = learnTargetId(controlId);
+  if (midiLearn.isArmedId(id)) return 'armed';
+  return midiLearn.bindingForId(id) ? 'bound' : 'unbound';
+}
+
+/** Closes the menu on any press outside of it. */
+function onOutsidePointerDown(event: PointerEvent): void {
+  const target = event.target as HTMLElement | null;
+  if (!target?.closest('.qc-menu')) closeMenu();
+}
+
+function closeMenu(): void {
+  if (!menu.open) return;
+  menu.open = false;
+  window.removeEventListener('pointerdown', onOutsidePointerDown, true);
+}
+
+function onKnobContextMenu(control: QuickControl, event: MouseEvent): void {
+  if (!midiLearn) return;
+  event.preventDefault();
+  menu.open = true;
+  menu.x = event.clientX;
+  menu.y = event.clientY;
+  menu.controlId = control.id;
+  window.addEventListener('pointerdown', onOutsidePointerDown, true);
+}
+
+function onMidiLearn(): void {
+  midiLearn?.armId(learnTargetId(menu.controlId));
+  closeMenu();
+}
+
+function onMidiForget(): void {
+  midiLearn?.clearId(learnTargetId(menu.controlId));
+  closeMenu();
+}
+
+onBeforeUnmount(closeMenu);
 </script>
 
 <template>
@@ -133,6 +196,10 @@ function onKnobKeydown(control: QuickControl, event: KeyboardEvent): void {
       <div v-for="control in controls" :key="control.id" class="qc-cell">
         <div
           class="qc-knob"
+          :class="{
+            'qc-knob-armed': learnState(control.id) === 'armed',
+            'qc-knob-bound': learnState(control.id) === 'bound',
+          }"
           role="slider"
           tabindex="0"
           :data-control="control.id"
@@ -145,6 +212,7 @@ function onKnobKeydown(control: QuickControl, event: KeyboardEvent): void {
           @pointerup="onKnobPointerUp"
           @pointercancel="onKnobPointerCancel"
           @keydown="onKnobKeydown(control, $event)"
+          @contextmenu="onKnobContextMenu(control, $event)"
         >
           <div
             class="qc-knob-indicator"
@@ -156,6 +224,33 @@ function onKnobKeydown(control: QuickControl, event: KeyboardEvent): void {
         <span class="qc-name" :title="control.name">{{ control.name }}</span>
         <span class="qc-value">{{ formatControlValue(control.value, control.unit) }}</span>
       </div>
+    </div>
+    <div
+      v-if="menu.open"
+      class="qc-menu"
+      :style="{ left: `${menu.x}px`, top: `${menu.y}px` }"
+      role="menu"
+    >
+      <button
+        type="button"
+        role="menuitem"
+        :class="{ 'qc-menu-armed': learnState(menu.controlId) === 'armed' }"
+        @click="onMidiLearn"
+      >
+        {{
+          learnState(menu.controlId) === 'armed'
+            ? t.shell.mixer.controls.midiLearnListening
+            : t.shell.mixer.controls.midiLearn
+        }}
+      </button>
+      <button
+        v-if="learnState(menu.controlId) === 'bound'"
+        type="button"
+        role="menuitem"
+        @click="onMidiForget"
+      >
+        {{ t.shell.mixer.controls.midiForget }}
+      </button>
     </div>
   </div>
 </template>
@@ -246,5 +341,47 @@ function onKnobKeydown(control: QuickControl, event: KeyboardEvent): void {
 .qc-value {
   font: 10px system-ui, sans-serif;
   color: var(--text-2);
+}
+
+.qc-knob-bound {
+  border-color: var(--accent-muted);
+}
+
+.qc-knob-armed {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.qc-menu {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  min-width: 120px;
+  padding: 2px;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-pop);
+}
+
+.qc-menu button {
+  text-align: left;
+  font: 11px system-ui, sans-serif;
+  color: var(--text-2);
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 4px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.qc-menu button:hover {
+  background: var(--surface-4);
+}
+
+.qc-menu-armed {
+  color: var(--accent);
 }
 </style>

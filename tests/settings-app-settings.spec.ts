@@ -8,6 +8,8 @@ import {
   DEFAULT_APP_SETTINGS,
   decodeAppSettings,
   encodeAppSettings,
+  LOUDNESS_TARGET_MAX_LUFS,
+  LOUDNESS_TARGET_MIN_LUFS,
   migrateAppSettings,
   resolveAppLanguage,
   resolveAppTheme,
@@ -44,7 +46,21 @@ describe('sanitizeAppSettings', () => {
       autosaveIntervalMs: 60000,
       scrollFollowPlayhead: DEFAULT_APP_SETTINGS.scrollFollowPlayhead,
       confirmDestructive: false,
+      loudnessTargetLufs: DEFAULT_APP_SETTINGS.loudnessTargetLufs,
     });
+  });
+
+  it('keeps a valid loudness target and clamps out-of-range ones', () => {
+    expect(sanitizeAppSettings({ loudnessTargetLufs: -16 }).loudnessTargetLufs).toBe(-16);
+    expect(sanitizeAppSettings({ loudnessTargetLufs: -100 }).loudnessTargetLufs).toBe(
+      LOUDNESS_TARGET_MIN_LUFS,
+    );
+    expect(sanitizeAppSettings({ loudnessTargetLufs: 5 }).loudnessTargetLufs).toBe(
+      LOUDNESS_TARGET_MAX_LUFS,
+    );
+    expect(sanitizeAppSettings({ loudnessTargetLufs: Number.NaN }).loudnessTargetLufs).toBe(
+      DEFAULT_APP_SETTINGS.loudnessTargetLufs,
+    );
   });
 
   it('clamps and rounds numeric fields', () => {

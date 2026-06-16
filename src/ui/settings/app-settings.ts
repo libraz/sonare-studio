@@ -45,6 +45,11 @@ export interface AppSettings {
   scrollFollowPlayhead: boolean;
   /** Ask for confirmation before destructive actions (delete project, discard edits). */
   confirmDestructive: boolean;
+  /**
+   * Integrated-loudness target in LUFS the master meter compares against
+   * (e.g. -14 for most streaming services, -23 for EBU R128 broadcast).
+   */
+  loudnessTargetLufs: number;
 }
 
 /** Count-in bounds in bars. */
@@ -54,6 +59,10 @@ export const COUNT_IN_BARS_MAX = 4;
 /** Autosave interval bounds in milliseconds. */
 export const AUTOSAVE_INTERVAL_MIN_MS = 5000;
 export const AUTOSAVE_INTERVAL_MAX_MS = 600000;
+
+/** Integrated-loudness target bounds in LUFS (broadcast-quiet to loud masters). */
+export const LOUDNESS_TARGET_MIN_LUFS = -31;
+export const LOUDNESS_TARGET_MAX_LUFS = -5;
 
 /** Factory defaults (matching the shell's current hardcoded behavior). */
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -66,6 +75,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   autosaveIntervalMs: 30000,
   scrollFollowPlayhead: true,
   confirmDestructive: true,
+  loudnessTargetLufs: -14,
 };
 
 /** Clamps a number to [lo, hi]. */
@@ -123,6 +133,12 @@ export function sanitizeAppSettings(raw: unknown): AppSettings {
     ),
     scrollFollowPlayhead: asBoolean(source.scrollFollowPlayhead, defaults.scrollFollowPlayhead),
     confirmDestructive: asBoolean(source.confirmDestructive, defaults.confirmDestructive),
+    loudnessTargetLufs: asIntInRange(
+      source.loudnessTargetLufs,
+      LOUDNESS_TARGET_MIN_LUFS,
+      LOUDNESS_TARGET_MAX_LUFS,
+      defaults.loudnessTargetLufs,
+    ),
   };
 }
 

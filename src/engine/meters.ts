@@ -41,6 +41,12 @@ export interface StereoMeterLevels {
   shortTermLufs?: number;
   /** Integrated loudness in LUFS (full records only). */
   integratedLufs?: number;
+  /**
+   * Strip gain reduction in dB from the strip's dynamics processors (omitted
+   * when the engine reports a non-finite value). Present on any target whose
+   * insert chain runs a compressor/limiter, not only the master.
+   */
+  gainReductionDb?: number;
 }
 
 /** Callback invoked whenever a new meter snapshot arrives. */
@@ -114,6 +120,7 @@ function toLevels(snapshot: SonareWorkletMeterSnapshot): StereoMeterLevels {
   if (Number.isFinite(snapshot.momentaryLufs)) levels.momentaryLufs = snapshot.momentaryLufs;
   if (Number.isFinite(snapshot.shortTermLufs)) levels.shortTermLufs = snapshot.shortTermLufs;
   if (Number.isFinite(snapshot.integratedLufs)) levels.integratedLufs = snapshot.integratedLufs;
+  if (Number.isFinite(snapshot.gainReductionDb)) levels.gainReductionDb = snapshot.gainReductionDb;
   return levels;
 }
 

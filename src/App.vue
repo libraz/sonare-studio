@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, shallowRef } from 'vue';
+import { computed, provide, ref, shallowRef } from 'vue';
 import ArrangementView from '@/components/arrangement/ArrangementView.vue';
 import ClipInspector from '@/components/arrangement/ClipInspector.vue';
 import DeviceRack from '@/components/devices/DeviceRack.vue';
@@ -40,6 +40,7 @@ import { useEngineLifecycle } from '@/composables/useEngineLifecycle';
 import { useEngineProjectSync } from '@/composables/useEngineProjectSync';
 import { useFileDownloads } from '@/composables/useFileDownloads';
 import { useInputControls } from '@/composables/useInputControls';
+import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
 import { useNotePreview } from '@/composables/useNotePreview';
 import { useOutsidePopovers } from '@/composables/useOutsidePopovers';
 import { useProjectAudioAssets } from '@/composables/useProjectAudioAssets';
@@ -275,6 +276,9 @@ const {
   previewNote,
   runAction,
 });
+
+// Share the single learn handle so insert-knob menus can bind CC too.
+provide(MIDI_LEARN_KEY, midiLearn);
 
 // --- Transport bar -----------------------------------------------------------
 

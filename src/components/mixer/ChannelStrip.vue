@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
+import { useAppSettings } from '@/composables/useAppSettings';
 import { promptDialog } from '@/composables/useDialogs';
 import type { MeterSource } from '@/engine/meters';
 import { linearToDb } from '@/engine/mixer-sync';
@@ -34,6 +35,7 @@ import {
 import { FADER_MAX_DB, FADER_MIN_DB, formatDb, formatPan } from '@/ui/mixer/db-scale';
 import { gainGesture, panGesture, type ValueGesture } from '@/ui/mixer/strip-gestures';
 import InsertRack from './InsertRack.vue';
+import MasterMeterReadout from './MasterMeterReadout.vue';
 import MixerFader from './MixerFader.vue';
 import MixerKnob from './MixerKnob.vue';
 import StripEqSection from './StripEqSection.vue';
@@ -79,6 +81,7 @@ const props = withDefaults(
 
 const store = useProjectStore();
 const { t } = useI18n();
+const appSettings = useAppSettings();
 
 const isMaster = computed(() => props.target === 'master');
 
@@ -495,6 +498,12 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="strip-readout">{{ formatDb(displayedGainDb) }} dB</div>
+
+    <MasterMeterReadout
+      v-if="isMaster"
+      :bridge="props.bridge"
+      :target-lufs="appSettings.settings.loudnessTargetLufs"
+    />
   </div>
 </template>
 

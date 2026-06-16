@@ -112,7 +112,204 @@ export function parseMidiLearnTargetId(id: string): MidiLearnTarget | null {
   return { param, scope: trackId };
 }
 
+/** Prefix marking an insert-parameter learn target id. */
+const INSERT_TARGET_PREFIX = 'insert:';
+
+/** A decoded insert-parameter learn target. */
+export interface MidiLearnInsertTarget {
+  /** Strip the insert lives on (track id or 'master'). */
+  scope: MidiLearnScope;
+  /** Insert slot index on the strip. */
+  index: number;
+  /** Processor parameter name (a quick-control id). */
+  paramId: string;
+}
+
+/**
+ * Encodes an insert-parameter learn target, e.g. `insert:7:2:thresholdDb`
+ * (track 7, slot 2) or `insert:master:0:gainDb`. The param id is the last
+ * segment, so it may itself contain colons without ambiguity.
+ *
+ * @param scope Strip the insert lives on (track id or 'master').
+ * @param index Insert slot index.
+ * @param paramId Processor parameter name.
+ * @returns The encoded target id.
+ */
+export function midiLearnInsertTargetId(
+  scope: MidiLearnScope,
+  index: number,
+  paramId: string,
+): string {
+  return `${INSERT_TARGET_PREFIX}${scope}:${index}:${paramId}`;
+}
+
+/** Decodes an insert-parameter target id, or null when it is malformed. */
+export function parseMidiLearnInsertTargetId(id: string): MidiLearnInsertTarget | null {
+  if (!id.startsWith(INSERT_TARGET_PREFIX)) return null;
+  const rest = id.slice(INSERT_TARGET_PREFIX.length);
+  const firstSep = rest.indexOf(':');
+  if (firstSep <= 0) return null;
+  const scopeText = rest.slice(0, firstSep);
+  const afterScope = rest.slice(firstSep + 1);
+  const secondSep = afterScope.indexOf(':');
+  if (secondSep < 0) return null;
+  const indexText = afterScope.slice(0, secondSep);
+  const paramId = afterScope.slice(secondSep + 1);
+  if (paramId.length === 0) return null;
+  const index = Number(indexText);
+  if (!Number.isInteger(index) || index < 0) return null;
+  if (scopeText === 'master') return { scope: 'master', index, paramId };
+  const trackId = Number(scopeText);
+  if (!Number.isInteger(trackId)) return null;
+  return { scope: trackId, index, paramId };
+}
+
+/** Prefix marking an instrument-parameter learn target id. */
+const INSTRUMENT_TARGET_PREFIX = 'instrument:';
+
+/** A decoded instrument-parameter learn target. */
+export interface MidiLearnInstrumentTarget {
+  /** Track whose instrument is driven. */
+  trackId: number;
+  /** Instrument parameter name (a quick-control id). */
+  paramId: string;
+}
+
+/**
+ * Encodes an instrument-parameter learn target, e.g. `instrument:7:cutoffHz`.
+ * The param id is the last segment, so it may itself contain colons.
+ *
+ * @param trackId Track whose instrument is driven.
+ * @param paramId Instrument parameter name.
+ * @returns The encoded target id.
+ */
+export function midiLearnInstrumentTargetId(trackId: number, paramId: string): string {
+  return `${INSTRUMENT_TARGET_PREFIX}${trackId}:${paramId}`;
+}
+
+/** Decodes an instrument-parameter target id, or null when it is malformed. */
+export function parseMidiLearnInstrumentTargetId(id: string): MidiLearnInstrumentTarget | null {
+  if (!id.startsWith(INSTRUMENT_TARGET_PREFIX)) return null;
+  const rest = id.slice(INSTRUMENT_TARGET_PREFIX.length);
+  const sep = rest.indexOf(':');
+  if (sep <= 0) return null;
+  const paramId = rest.slice(sep + 1);
+  if (paramId.length === 0) return null;
+  const trackId = Number(rest.slice(0, sep));
+  if (!Number.isInteger(trackId)) return null;
+  return { trackId, paramId };
+}
+
+/** Maps a CC value (0-127) linearly into the inclusive range [min, max]. */
+export function ccToRange(value: number, min: number, max: number): number {
+  const t = clampCcValue(value) / MIDI_VALUE_MAX;
+  return min + t * (max - min);
+}
+
+/** Maps a value in [min, max] back to the nearest CC value (for round-trips). */
+export function rangeToCc(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value) || max === min) return 0;
+  return clampCcValue(((value - min) / (max - min)) * MIDI_VALUE_MAX);
+}
+
 /** Formats a binding for display, e.g. "CC 7 · Ch 1". */
 export function formatMidiCcBinding(binding: MidiCcBinding): string {
   return `CC ${binding.controller} · Ch ${binding.channel + 1}`;
+}
+
+/** True when an id decodes to any known learn target (strip / insert / instrument). */
+export function isMidiLearnTargetId(id: string): boolean {
+  return (
+    parseMidiLearnTargetId(id) !== null ||
+    parseMidiLearnInsertTargetId(id) !== null ||
+    parseMidiLearnInstrumentTargetId(id) !== null
+  );
+}
+
+/**
+ * Extracts the track scope a target id is bound to: a track id, 'master', or
+ * null when the id does not decode. Track-scoped ids embed a session track id
+ * (gain/pan/insert/instrument); 'master' ids are stable across reloads.
+ */
+export function midiLearnTargetScope(id: string): MidiLearnScope | null {
+  const strip = parseMidiLearnTargetId(id);
+  if (strip) return strip.scope;
+  const insert = parseMidiLearnInsertTargetId(id);
+  if (insert) return insert.scope;
+  const instrument = parseMidiLearnInstrumentTargetId(id);
+  if (instrument) return instrument.trackId;
+  return null;
+}
+
+/**
+ * Rewrites a target id's track scope to a new value, keeping the rest of the
+ * target intact. Returns null when the id does not decode, or when a numeric
+ * scope is replaced by 'master' on an instrument target (which is track-only).
+ *
+ * This makes a binding portable across a document load: serialize replaces the
+ * session track id with the track's positional index, and load replaces that
+ * index with the freshly assigned track id.
+ */
+export function withMidiLearnTargetScope(id: string, scope: MidiLearnScope): string | null {
+  const strip = parseMidiLearnTargetId(id);
+  if (strip) return midiLearnTargetId(strip.param, scope);
+  const insert = parseMidiLearnInsertTargetId(id);
+  if (insert) return midiLearnInsertTargetId(scope, insert.index, insert.paramId);
+  const instrument = parseMidiLearnInstrumentTargetId(id);
+  if (instrument) {
+    if (scope === 'master') return null;
+    return midiLearnInstrumentTargetId(scope, instrument.paramId);
+  }
+  return null;
+}
+
+/** One persisted CC binding: the target id it drives plus the channel + controller. */
+export interface PersistedMidiCcBinding {
+  /**
+   * Target id (see {@link midiLearnTargetId} and the insert/instrument
+   * encoders). When {@link trackScoped} is true, the id's scope segment holds a
+   * positional track index rather than a session track id.
+   */
+  target: string;
+  /** MIDI channel (0-15). */
+  channel: number;
+  /** Controller number (0-127). */
+  controller: number;
+  /** True when `target`'s scope is a track index awaiting load-time rebinding. */
+  trackScoped?: boolean;
+}
+
+/**
+ * Sanitizes an untrusted persisted binding list (a document's `midiCcBindings`)
+ * into well-formed entries. Drops entries whose target id does not decode to a
+ * known target, whose channel/controller is out of range, or that repeat a
+ * target already seen (first occurrence wins).
+ *
+ * @param value Candidate entry list; non-arrays yield [].
+ * @returns A new array of well-formed bindings.
+ */
+export function sanitizeMidiCcBindings(value: unknown): PersistedMidiCcBinding[] {
+  if (!Array.isArray(value)) return [];
+  const out: PersistedMidiCcBinding[] = [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const candidate = entry as {
+      target?: unknown;
+      channel?: unknown;
+      controller?: unknown;
+      trackScoped?: unknown;
+    };
+    if (typeof candidate.target !== 'string' || !isMidiLearnTargetId(candidate.target)) continue;
+    if (seen.has(candidate.target)) continue;
+    const channel = Number(candidate.channel);
+    const controller = Number(candidate.controller);
+    if (!Number.isInteger(channel) || channel < 0 || channel > 15) continue;
+    if (!Number.isInteger(controller) || controller < 0 || controller > MIDI_VALUE_MAX) continue;
+    seen.add(candidate.target);
+    const binding: PersistedMidiCcBinding = { target: candidate.target, channel, controller };
+    if (candidate.trackScoped === true) binding.trackScoped = true;
+    out.push(binding);
+  }
+  return out;
 }
