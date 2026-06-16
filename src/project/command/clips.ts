@@ -5,6 +5,7 @@ import {
   isValidController,
   sanitizeCcPoints,
   sanitizePitchBendPoints,
+  sanitizePressurePoints,
 } from '../midi-cc';
 import {
   getAudioSourceId,
@@ -16,9 +17,11 @@ import {
 import {
   type ClipCcLane,
   type ClipCcPoint,
+  type ClipChannelPressureLane,
   type ClipCompSegment,
   type ClipPitchBendLane,
   type ClipPitchBendPoint,
+  type ClipPressurePoint,
   type ClipTake,
   type ClipWarp,
   type EditorClip,
@@ -620,6 +623,50 @@ export function setClipPitchBend(
       const updated = { ...entry };
       if (nextLanes.length > 0) updated.pitchBendLanes = nextLanes;
       else delete updated.pitchBendLanes;
+      return updated;
+    });
+    store.refresh();
+  });
+}
+
+/**
+ * Replaces a MIDI clip's channel-pressure (monophonic aftertouch) lane for one
+ * channel as one undoable edit. The points are sanitized (clamped to the clip
+ * window and 0-127, sorted, deduped); passing an empty point list removes the
+ * lane. Like CC lanes, channel-pressure lanes are app-level metadata baked into
+ * the realtime MIDI schedule, so the change is audible on the next sync.
+ *
+ * @param clipId Id of the MIDI clip.
+ * @param channel MIDI channel the pressure applies to (integer, 0-15).
+ * @param points Breakpoints (clip-window-relative PPQ + 0-127 value); empty
+ *   removes the lane.
+ */
+export function setClipChannelPressure(
+  clipId: number,
+  channel: number,
+  points: ReadonlyArray<ClipPressurePoint>,
+): void {
+  const store = useProjectStore();
+  const index = store.clips.findIndex((clip) => clip.id === clipId);
+  if (index < 0) throw new RangeError(`Unknown clip id ${clipId}`);
+  const clip = store.clips[index];
+  if ((clip.kind ?? 'midi') !== 'midi') {
+    throw new RangeError(`Clip ${clipId} is not a MIDI clip`);
+  }
+  if (!isValidChannel(channel)) {
+    throw new RangeError(`Channel-pressure channel must be an integer in [0, 15], got ${channel}`);
+  }
+  const sanitized = sanitizePressurePoints(points, clip.lengthPpq);
+  const others = (clip.channelPressureLanes ?? []).filter((lane) => lane.channel !== channel);
+  const nextLanes: ClipChannelPressureLane[] =
+    sanitized.length > 0 ? [...others, { channel, points: sanitized }] : others;
+  nextLanes.sort((a, b) => a.channel - b.channel);
+  execute(0, () => {
+    store.clips = store.clips.map((entry, i) => {
+      if (i !== index) return entry;
+      const updated = { ...entry };
+      if (nextLanes.length > 0) updated.channelPressureLanes = nextLanes;
+      else delete updated.channelPressureLanes;
       return updated;
     });
     store.refresh();

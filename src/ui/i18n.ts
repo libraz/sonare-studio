@@ -722,6 +722,8 @@ const MESSAGES = {
         ccLane: 'CC automation lane',
         bendLaneTab: 'Bend',
         bendLaneTitle: 'Pitch bend lane',
+        pressureLaneTab: 'AT',
+        pressureLaneTitle: 'Channel pressure (aftertouch) lane',
         parameterLane: 'Note parameter lane',
         context: {
           quantizeStarts: 'Quantize starts',
@@ -1817,6 +1819,8 @@ const MESSAGES = {
         ccLane: 'CCオートメーションレーン',
         bendLaneTab: 'ベンド',
         bendLaneTitle: 'ピッチベンドレーン',
+        pressureLaneTab: 'AT',
+        pressureLaneTitle: 'チャンネルプレッシャー（アフタータッチ）レーン',
         parameterLane: 'ノートパラメーターレーン',
         context: {
           quantizeStarts: '開始位置をクオンタイズ',

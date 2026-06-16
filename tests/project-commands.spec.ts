@@ -28,6 +28,7 @@ import {
   setAutomationLaneEnabled,
   setAutomationLanePoints,
   setClipCcLane,
+  setClipChannelPressure,
   setClipGain,
   setClipLoop,
   setClipPitchBend,
@@ -516,6 +517,39 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       const clipId = store.clipId;
       expect(() => setClipPitchBend(clipId, 16, [])).toThrow(RangeError);
       expect(() => setClipPitchBend(9999, 0, [])).toThrow(RangeError);
+    });
+
+    it('setClipChannelPressure sanitizes 7-bit points, sorts lanes, removes and is undoable', () => {
+      const clipId = store.clipId;
+      setClipChannelPressure(clipId, 1, [{ ppq: 1.5, value: 50 }]);
+      setClipChannelPressure(clipId, 0, [
+        { ppq: 2, value: 999 },
+        { ppq: 0, value: -5 },
+      ]);
+      // Lanes sort by channel; points sort by ppq and clamp to the 7-bit range.
+      expect(store.activeClip?.channelPressureLanes).toEqual([
+        {
+          channel: 0,
+          points: [
+            { ppq: 0, value: 0 },
+            { ppq: 2, value: 127 },
+          ],
+        },
+        { channel: 1, points: [{ ppq: 1.5, value: 50 }] },
+      ]);
+      // Empty points remove just that channel's lane.
+      setClipChannelPressure(clipId, 0, []);
+      expect(store.activeClip?.channelPressureLanes).toEqual([
+        { channel: 1, points: [{ ppq: 1.5, value: 50 }] },
+      ]);
+      expect(undo()).toBe(true);
+      expect(store.activeClip?.channelPressureLanes?.map((l) => l.channel)).toEqual([0, 1]);
+    });
+
+    it('setClipChannelPressure validates the channel and clip', () => {
+      const clipId = store.clipId;
+      expect(() => setClipChannelPressure(clipId, 16, [])).toThrow(RangeError);
+      expect(() => setClipChannelPressure(9999, 0, [])).toThrow(RangeError);
     });
 
     it('bakeClipMidiFx transposes the clip notes as one undoable edit', () => {

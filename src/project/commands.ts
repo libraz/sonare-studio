@@ -18,6 +18,7 @@ export {
   setActiveTrack,
   setClipActiveTake,
   setClipCcLane,
+  setClipChannelPressure,
   setClipCompSegments,
   setClipFades,
   setClipGain,

@@ -9,7 +9,7 @@
  * discrete CC events, so the lane is genuinely audible during transport.
  */
 
-import type { ClipCcLane, ClipCcPoint, ClipPitchBendPoint } from './types';
+import type { ClipCcLane, ClipCcPoint, ClipPitchBendPoint, ClipPressurePoint } from './types';
 
 /** Lowest MIDI controller number / value. */
 export const MIDI_CC_MIN = 0;
@@ -105,6 +105,29 @@ export function sanitizePitchBendPoints(
   for (const point of points) {
     if (!Number.isFinite(point.ppq)) continue;
     byPpq.set(clamp(point.ppq, 0, max), clampInt(point.value, 0, MIDI_PITCH_BEND_MAX));
+  }
+  return [...byPpq.entries()].map(([ppq, value]) => ({ ppq, value })).sort((a, b) => a.ppq - b.ppq);
+}
+
+/**
+ * Normalizes aftertouch (channel/poly pressure) breakpoints: drops non-finite
+ * entries, clamps each position to [0, lengthPpq] and each value to an integer
+ * in [0, 127], collapses points on the same position (last wins) and returns
+ * them sorted by ppq.
+ *
+ * @param points Raw breakpoints in any order.
+ * @param lengthPpq Clip window length the positions are clamped to (>= 0).
+ * @returns A fresh sorted, de-duplicated point list.
+ */
+export function sanitizePressurePoints(
+  points: ReadonlyArray<ClipPressurePoint>,
+  lengthPpq: number,
+): ClipPressurePoint[] {
+  const max = Number.isFinite(lengthPpq) && lengthPpq > 0 ? lengthPpq : 0;
+  const byPpq = new Map<number, number>();
+  for (const point of points) {
+    if (!Number.isFinite(point.ppq)) continue;
+    byPpq.set(clamp(point.ppq, 0, max), clampInt(point.value, MIDI_CC_MIN, MIDI_CC_MAX));
   }
   return [...byPpq.entries()].map(([ppq, value]) => ({ ppq, value })).sort((a, b) => a.ppq - b.ppq);
 }

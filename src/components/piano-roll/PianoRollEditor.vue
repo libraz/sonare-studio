@@ -11,6 +11,7 @@ import {
   setActiveClip,
   setActiveTrack,
   setClipCcLane,
+  setClipChannelPressure,
   setClipPitchBend,
   setSelection,
   snapSelectionToScale,
@@ -25,7 +26,7 @@ import {
   PIANO_ROLL_CC_LANES,
 } from '@/project/midi-cc';
 import { useProjectStore } from '@/project/store';
-import type { ClipCcPoint, ClipPitchBendPoint } from '@/project/types';
+import type { ClipCcPoint, ClipPitchBendPoint, ClipPressurePoint } from '@/project/types';
 import { createPainter } from '@/ui/canvas/painter';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
 import { useI18n } from '@/ui/i18n';
@@ -125,24 +126,42 @@ const laneCc = ref<number | null>(null);
 /** Whether the bottom lane edits the active clip's pitch-bend curve. */
 const lanePitchBend = ref(false);
 
+/** Whether the bottom lane edits the active clip's channel-pressure curve. */
+const laneChannelPressure = ref(false);
+
 /** Switches the bottom lane to a note-parameter view. */
 function selectNoteLane(id: LaneParamId): void {
   laneParam.value = id;
   laneCc.value = null;
   lanePitchBend.value = false;
+  laneChannelPressure.value = false;
 }
 
 /** Switches the bottom lane to a CC controller view. */
 function selectCcLane(controller: number): void {
   laneCc.value = controller;
   lanePitchBend.value = false;
+  laneChannelPressure.value = false;
 }
 
 /** Switches the bottom lane to the pitch-bend view. */
 function selectPitchBendLane(): void {
   lanePitchBend.value = true;
   laneCc.value = null;
+  laneChannelPressure.value = false;
 }
+
+/** Switches the bottom lane to the channel-pressure (aftertouch) view. */
+function selectChannelPressureLane(): void {
+  laneChannelPressure.value = true;
+  laneCc.value = null;
+  lanePitchBend.value = false;
+}
+
+/** True when a note-parameter lane (not CC/bend/pressure) is shown. */
+const noteLaneActive = computed(
+  () => laneCc.value === null && !lanePitchBend.value && !laneChannelPressure.value,
+);
 
 /** Active clip color for the CC curve. */
 const trackColor = computed(() => store.activeTrack?.color ?? DEFAULT_NOTE_COLOR);
@@ -175,6 +194,13 @@ const activePitchBendPoints = computed<ClipPitchBendPoint[]>(() => {
   return lane?.points ?? [];
 });
 
+/** Breakpoints of the active clip's channel-pressure lane on channel 0 (empty when none). */
+const activeChannelPressurePoints = computed<ClipPressurePoint[]>(() => {
+  if (!laneChannelPressure.value) return [];
+  const lane = store.activeClip?.channelPressureLanes?.find((l) => l.channel === 0);
+  return lane?.points ?? [];
+});
+
 /** Commits a CC lane edit for the active controller on channel 0. */
 function commitCcPoints(points: ClipCcPoint[]): void {
   if (laneCc.value === null) return;
@@ -184,6 +210,11 @@ function commitCcPoints(points: ClipCcPoint[]): void {
 /** Commits a pitch-bend lane edit on channel 0. */
 function commitPitchBendPoints(points: ClipPitchBendPoint[]): void {
   setClipPitchBend(store.clipId, 0, points);
+}
+
+/** Commits a channel-pressure lane edit on channel 0. */
+function commitChannelPressurePoints(points: ClipPressurePoint[]): void {
+  setClipChannelPressure(store.clipId, 0, points);
 }
 
 /** Horizontal snap for lane points, following the grid when snapping is on. */
@@ -635,10 +666,10 @@ onBeforeUnmount(() => {
           :key="laneSpec.id"
           type="button"
           class="lane-tab"
-          :class="{ 'lane-tab-active': laneCc === null && laneParam === laneSpec.id }"
+          :class="{ 'lane-tab-active': noteLaneActive && laneParam === laneSpec.id }"
           :title="laneSpec.title"
           role="tab"
-          :aria-selected="laneCc === null && laneParam === laneSpec.id"
+          :aria-selected="noteLaneActive && laneParam === laneSpec.id"
           @click="selectNoteLane(laneSpec.id)"
         >
           {{ laneSpec.label }}
@@ -668,9 +699,20 @@ onBeforeUnmount(() => {
         >
           {{ t.shell.pianoRoll.bendLaneTab }}
         </button>
+        <button
+          type="button"
+          class="lane-tab"
+          :class="{ 'lane-tab-active': laneChannelPressure }"
+          :title="t.shell.pianoRoll.pressureLaneTitle"
+          role="tab"
+          :aria-selected="laneChannelPressure"
+          @click="selectChannelPressureLane()"
+        >
+          {{ t.shell.pianoRoll.pressureLaneTab }}
+        </button>
       </div>
       <VelocityLane
-        v-if="laneCc === null && !lanePitchBend"
+        v-if="noteLaneActive"
         class="cell-velocity"
         :range="range"
         :revision="revision"
@@ -694,7 +736,7 @@ onBeforeUnmount(() => {
         :snap-ppq="ccSnap"
       />
       <BreakpointLane
-        v-else
+        v-else-if="lanePitchBend"
         class="cell-velocity"
         :range="range"
         :revision="revision"
@@ -707,6 +749,21 @@ onBeforeUnmount(() => {
         :center-value="MIDI_PITCH_BEND_CENTER"
         :readout-label="t.shell.pianoRoll.bendLaneTab"
         :aria-label="t.shell.pianoRoll.bendLaneTitle"
+        :color="trackColor"
+        :snap-ppq="ccSnap"
+      />
+      <BreakpointLane
+        v-else
+        class="cell-velocity"
+        :range="range"
+        :revision="revision"
+        :painter="painter"
+        :clip-id="store.clipId"
+        :clip-length-ppq="store.clipLengthPpq"
+        :points="activeChannelPressurePoints"
+        :commit="commitChannelPressurePoints"
+        :readout-label="t.shell.pianoRoll.pressureLaneTab"
+        :aria-label="t.shell.pianoRoll.pressureLaneTitle"
         :color="trackColor"
         :snap-ppq="ccSnap"
       />
