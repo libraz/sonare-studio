@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
+import { detectActiveAudioClipTimeSignatures } from '@/project/audio-tempo';
 import { setTimeSignatures } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
-import type { TimeSignatureSegment } from '@/project/types';
+import { isAudioClip, type TimeSignatureSegment } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { barBeatFromPpq, formatBarBeat, parseBarBeat } from './bar-beat';
 import {
@@ -44,6 +45,14 @@ let nextRowKey = 1;
 const rows = ref<DraftRow[]>([]);
 const dirty = ref(false);
 const errors = ref<string[]>([]);
+/** True while a meter detection is awaiting the engine. */
+const isDetecting = ref(false);
+
+/** The active clip when it is an audio clip carrying an asset, else null. */
+const detectableAudioClip = computed(() => {
+  const clip = store.activeClip;
+  return clip && isAudioClip(clip) && clip.assetId !== undefined ? clip : null;
+});
 
 /** Rebuilds the draft from the store mirror. */
 function rowsFromStore(): DraftRow[] {
@@ -93,6 +102,38 @@ function addRow(): void {
 function deleteRow(index: number): void {
   rows.value = rows.value.filter((_, i) => i !== index);
   dirty.value = true;
+}
+
+/**
+ * Tracks beats and downbeats in the active audio clip and replaces the draft
+ * with the resulting meter map (one segment per bar where the meter changes,
+ * anchored at song start). The draft awaits review before Apply.
+ */
+async function detectFromClip(): Promise<void> {
+  const clip = detectableAudioClip.value;
+  if (!clip || isDetecting.value) return;
+  errors.value = [];
+  isDetecting.value = true;
+  try {
+    const segments = await detectActiveAudioClipTimeSignatures(clip.id, {
+      maxNumerator: MAX_TIME_SIGNATURE_NUMERATOR,
+    });
+    if (segments.length === 0) {
+      errors.value = [t.value.shell.lists.meter.noneDetected];
+      return;
+    }
+    rows.value = segments.map((segment) => ({
+      key: nextRowKey++,
+      position: formatBarBeat(segment.startPpq, store.timeSignatures),
+      numerator: String(segment.numerator),
+      denominator: String(segment.denominator),
+    }));
+    dirty.value = true;
+  } catch (err) {
+    errors.value = [err instanceof Error ? err.message : String(err)];
+  } finally {
+    isDetecting.value = false;
+  }
 }
 
 /** Discards the draft and reloads the rows from the store. */
@@ -209,6 +250,14 @@ function apply(): void {
     <p v-for="error in errors" :key="error" class="list-error" role="alert">{{ error }}</p>
     <div class="list-actions">
       <button type="button" @click="addRow">{{ t.shell.lists.meter.add }}</button>
+      <button
+        type="button"
+        :disabled="detectableAudioClip === null || isDetecting"
+        :title="t.shell.lists.meter.detectFromClipTitle"
+        @click="detectFromClip"
+      >
+        {{ t.shell.lists.meter.detectFromClip }}
+      </button>
       <span class="list-spacer" />
       <button type="button" :disabled="!dirty" @click="revert">
         {{ t.shell.lists.common.revert }}

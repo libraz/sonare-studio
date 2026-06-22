@@ -11,10 +11,10 @@ import type { EditorTrack } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { midiLearnInsertTargetId } from '@/ui/midi/midi-learn';
 import {
-  groupInsertCatalog,
+  groupInsertCatalogEntries,
   humanizeInsertName,
   type InsertCatalogGroup,
-  loadInsertCatalog,
+  loadInsertCatalogEntries,
 } from '@/ui/mixer/insert-catalog';
 import {
   addInsertSlot,
@@ -223,8 +223,10 @@ const catalog = ref<InsertCatalogGroup[]>([]);
 
 function openAddMenu(): void {
   if (!addMenuOpen.value) {
-    // Loaded lazily: the wasm catalog may not exist at mount time.
-    catalog.value = groupInsertCatalog(loadInsertCatalog());
+    // Loaded lazily: the wasm catalog may not exist at mount time. Mixer
+    // strips run inserts in the realtime engine, so offer only the
+    // insert-safe subset (the engine rejects offline-only processors).
+    catalog.value = groupInsertCatalogEntries(loadInsertCatalogEntries('realtime'));
   }
   addMenuOpen.value = !addMenuOpen.value;
 }
@@ -358,7 +360,10 @@ onBeforeUnmount(() => {
             class="catalog-item"
             @click="onAddProcessor(processor.id)"
           >
-            {{ processor.label }}
+            <span class="catalog-item-label">{{ processor.label }}</span>
+            <span v-if="processor.stereoOnly" class="catalog-item-tag">{{
+              t.shell.inserts.stereoOnly
+            }}</span>
           </button>
         </div>
       </div>
@@ -522,7 +527,10 @@ onBeforeUnmount(() => {
 }
 
 .catalog-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
   width: 100%;
   text-align: left;
   font: 10px var(--font-sans);
@@ -537,6 +545,17 @@ onBeforeUnmount(() => {
 
 .catalog-item:hover {
   background: var(--surface-4);
+}
+
+.catalog-item-tag {
+  flex: none;
+  font: 8px var(--font-sans);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-1);
+  padding: 0 4px;
 }
 
 .insert-error {

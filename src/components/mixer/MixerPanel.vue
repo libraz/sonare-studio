@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import type { AnalyserBridge } from '@/engine/analyser';
 import type { MeterSource } from '@/engine/meters';
+import type { ScopeSource } from '@/engine/scope';
 import { addMixerBus, addVcaGroup } from '@/project/commands';
 import { MAX_VCA_GROUPS } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
@@ -8,6 +10,7 @@ import type { EditorTrack } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import BusStrip from './BusStrip.vue';
 import ChannelStrip from './ChannelStrip.vue';
+import MixerSnapshots from './MixerSnapshots.vue';
 import VcaStrip from './VcaStrip.vue';
 
 /**
@@ -28,10 +31,18 @@ const props = withDefaults(
   defineProps<{
     /** Engine meter source for the master strip; null draws silent meters. */
     bridge?: MeterSource | null;
+    /** Master analyser tap for the spectrum/goniometer; null draws placeholders. */
+    analyser?: AnalyserBridge | null;
+    /** Master engine scope source (per-target spectrum + goniometer). */
+    masterScope?: ScopeSource | null;
     /** Per-track meter source lookup; null shows placeholder track meters. */
     meterFor?: ((trackId: number) => MeterSource | null) | null;
     /** Per-bus meter source lookup; null shows placeholder bus meters. */
     busMeterFor?: ((busId: string) => MeterSource | null) | null;
+    /** Per-track scope source lookup (engine spectrum + goniometer). */
+    scopeFor?: ((trackId: number) => ScopeSource | null) | null;
+    /** Per-bus scope source lookup (engine spectrum + goniometer). */
+    busScopeFor?: ((busId: string) => ScopeSource | null) | null;
     /** Playhead position getter in PPQ (strip automation follow/recording). */
     positionPpq?: () => number;
     /** True while the transport runs (strip automation touch recording). */
@@ -39,8 +50,12 @@ const props = withDefaults(
   }>(),
   {
     bridge: null,
+    analyser: null,
+    masterScope: null,
     meterFor: null,
     busMeterFor: null,
+    scopeFor: null,
+    busScopeFor: null,
     positionPpq: undefined,
     isPlaying: false,
   },
@@ -122,6 +137,7 @@ onBeforeUnmount(() => {
         {{ formatMessage(t.shell.mixer.hiddenCount, { count: String(hiddenCount) }) }}
       </span>
       <span class="toolbar-spacer" />
+      <MixerSnapshots />
       <button
         type="button"
         class="toolbar-button"
@@ -180,6 +196,7 @@ onBeforeUnmount(() => {
         :key="track.id"
         :target="track.id"
         :bridge="props.meterFor ? props.meterFor(track.id) : null"
+        :scope="props.scopeFor ? props.scopeFor(track.id) : null"
         :position-ppq="props.positionPpq"
         :is-playing="props.isPlaying"
       />
@@ -195,6 +212,8 @@ onBeforeUnmount(() => {
         class="master-strip"
         target="master"
         :bridge="props.bridge"
+        :analyser="props.analyser"
+        :scope="props.masterScope"
         :position-ppq="props.positionPpq"
         :is-playing="props.isPlaying"
       />

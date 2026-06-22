@@ -1,6 +1,10 @@
+import { ensureWasm } from '@/lib/wasm';
 import { estimateChordSymbols } from '@/notation/chords';
+import { loadAsset } from '@/persistence/assets';
+import { type AudioChordDetector, analyzeAudioClipChords } from '../audio-chords';
 import { type EditorChordSymbol, sanitizeChordSymbols, toProjectChordSymbols } from '../chords';
 import { getProject, useProjectStore } from '../store';
+import { clipKind } from '../types';
 import { execute } from './history';
 import { requireClip } from './utils';
 
@@ -81,6 +85,38 @@ export function detectChordsForClip(clipId: number): number {
     };
     if (symbol.bassPc !== undefined) next.bassPc = symbol.bassPc;
     return next;
+  });
+  const clipEnd = clip.startPpq + clip.lengthPpq;
+  const kept = store.chords.filter(
+    (chord) => chord.startPpq < clip.startPpq || chord.startPpq >= clipEnd,
+  );
+  setProjectChords([...kept, ...detected]);
+  return detected.length;
+}
+
+/**
+ * Detects chords from an audio clip with libsonare's audio chord detector and
+ * merges them into the chord track (one undoable entry), replacing any existing
+ * symbols that start within the clip's region so re-running is idempotent.
+ *
+ * Unlike {@link detectChordsForClip} (MIDI clips, app-side music theory), this
+ * loads the clip's audio and runs the engine detector, so it is asynchronous.
+ * Resolves to 0 when the wasm detector is unavailable or nothing is detected.
+ *
+ * @param clipId Editor id of an audio clip.
+ * @returns The number of chord symbols detected in the clip.
+ */
+export async function detectChordsFromAudioClip(clipId: number): Promise<number> {
+  const store = useProjectStore();
+  const clip = requireClip(store, clipId);
+  if (clipKind(clip) !== 'audio') {
+    throw new RangeError(`Clip ${clipId} is not an audio clip`);
+  }
+  const wasm = (await ensureWasm()) as unknown as { detectChords?: AudioChordDetector };
+  if (typeof wasm.detectChords !== 'function') return 0;
+  const detected = await analyzeAudioClipChords(clip, store.tempoBpm, {
+    loadAudioAsset: loadAsset,
+    detectChords: wasm.detectChords,
   });
   const clipEnd = clip.startPpq + clip.lengthPpq;
   const kept = store.chords.filter(

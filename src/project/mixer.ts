@@ -21,7 +21,7 @@
  * chain is an additional export-only stage.
  */
 
-import type { EqBand } from '@/wasm/index.js';
+import type { EqBand, SendTiming } from '@/wasm/index.js';
 import { canonicalJson, fnv1a32Hex } from './hash';
 
 /** One insert effect slot referencing the wasm processor catalog by name. */
@@ -39,7 +39,7 @@ export interface InsertSlot {
   sidechainSourceTrackId?: number;
 }
 
-/** One send from a strip to a mixer bus (post-fader on the engine side). */
+/** One send from a strip to a mixer bus. */
 export interface StripSend {
   /** Destination bus id (must exist in the project mixer state). */
   busId: string;
@@ -47,7 +47,53 @@ export interface StripSend {
   levelDb: number;
   /** False mutes the send without removing it. */
   enabled: boolean;
+  /**
+   * Tap point on the source strip: 'postFader' (default) taps after the
+   * fader, 'preFader' before it (so the fader does not scale the send). Absent
+   * = post-fader.
+   */
+  timing?: SendTiming;
 }
+
+/**
+ * Strip pan law: the center-level compensation curve applied as a signal
+ * pans across the stereo field. Mirrors libsonare's SonarePanLaw codes
+ * (const3dB=0, const4.5dB=1, const6dB=2, linear0dB=3).
+ */
+export type PanLawId = 'const3dB' | 'const4.5dB' | 'const6dB' | 'linear0dB';
+
+/**
+ * Strip pan mode. 'balance' attenuates the opposite channel (default),
+ * 'stereoPan' repositions the whole stereo image, 'dualPan' pans each input
+ * channel independently (see {@link MixerStrip.dualPan}). Mirrors libsonare's
+ * SonarePanMode codes (balance=0, stereoPan=1, dualPan=2).
+ */
+export type PanModeId = 'balance' | 'stereoPan' | 'dualPan';
+
+/** Independent left/right pan positions used in 'dualPan' mode. */
+export interface DualPan {
+  /** Pan position of the left input channel, in [-1, 1]. */
+  left: number;
+  /** Pan position of the right input channel, in [-1, 1]. */
+  right: number;
+}
+
+/** Selectable pan laws in display order. */
+export const PAN_LAW_IDS: ReadonlyArray<PanLawId> = [
+  'const3dB',
+  'const4.5dB',
+  'const6dB',
+  'linear0dB',
+];
+
+/** Selectable pan modes in display order. */
+export const PAN_MODE_IDS: ReadonlyArray<PanModeId> = ['balance', 'stereoPan', 'dualPan'];
+
+/** Default pan law (constant-power -3 dB center), matching the engine default. */
+export const DEFAULT_PAN_LAW: PanLawId = 'const3dB';
+
+/** Default pan mode (balance). */
+export const DEFAULT_PAN_MODE: PanModeId = 'balance';
 
 /** Channel EQ as a list of libsonare EqBand descriptors. */
 export interface StripEq {
@@ -76,6 +122,28 @@ export interface MixerStrip {
    * or the engine rejects the lane.
    */
   outputBusId?: string;
+  /**
+   * Strip-panner channel alignment delay in whole samples (track strips only).
+   * Mirrored to the engine via setTrackStripChannelDelaySamples and folded
+   * into plugin-delay compensation. Absent/0 = no delay.
+   */
+  channelDelaySamples?: number;
+  /**
+   * Strip pan law (track strips only); mirrored to the engine via
+   * setTrackStripPanLaw. Absent = {@link DEFAULT_PAN_LAW}.
+   */
+  panLaw?: PanLawId;
+  /**
+   * Strip pan mode (track strips only); mirrored to the engine via
+   * setTrackStripPanMode. Absent = {@link DEFAULT_PAN_MODE}.
+   */
+  panMode?: PanModeId;
+  /**
+   * Independent left/right pan positions for 'dualPan' mode (track strips
+   * only); mirrored to the engine via setTrackStripDualPan. Absent = derived
+   * from {@link MixerStrip.pan} (both channels at the strip pan position).
+   */
+  dualPan?: DualPan;
 }
 
 /**
@@ -145,6 +213,9 @@ export const MIN_STRIP_GAIN_DB = -96;
 /** Highest accepted strip gain in dB. */
 export const MAX_STRIP_GAIN_DB = 24;
 
+/** Highest accepted channel alignment delay in samples (2 s at 48 kHz). */
+export const MAX_CHANNEL_DELAY_SAMPLES = 96000;
+
 /** Builds a neutral strip: unity gain, centered, no inserts/sends/EQ. */
 export function createDefaultStrip(): MixerStrip {
   return { gainDb: 0, pan: 0, inserts: [], sends: [] };
@@ -183,7 +254,11 @@ export function isDefaultStrip(strip: MixerStrip): boolean {
     strip.inserts.length === 0 &&
     strip.sends.length === 0 &&
     strip.eq === undefined &&
-    strip.outputBusId === undefined
+    strip.outputBusId === undefined &&
+    (strip.channelDelaySamples ?? 0) === 0 &&
+    (strip.panLaw ?? DEFAULT_PAN_LAW) === DEFAULT_PAN_LAW &&
+    (strip.panMode ?? DEFAULT_PAN_MODE) === DEFAULT_PAN_MODE &&
+    strip.dualPan === undefined
   );
 }
 

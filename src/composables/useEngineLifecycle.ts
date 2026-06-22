@@ -1,12 +1,14 @@
 import type { Ref, ShallowRef } from 'vue';
 import type { EngineSyncHandles } from '@/composables/useEngineProjectSync';
 import type { useTransport } from '@/composables/useTransport';
+import { type AnalyserBridge, createAnalyserBridge } from '@/engine/analyser';
 import { createAutomationSync } from '@/engine/automation-sync';
 import { createEngine, type EngineHandle } from '@/engine/engine';
 import { resolvePresetName } from '@/engine/instruments';
 import { createMeterBridge, type MeterBridge } from '@/engine/meters';
 import { createMidiSync } from '@/engine/midi-sync';
 import { createMixerSync, linearToDb } from '@/engine/mixer-sync';
+import { createScopeBridge, type ScopeBridge } from '@/engine/scope';
 import { createStripSync } from '@/engine/strip-sync';
 import { createTransportSync } from '@/engine/transport-sync';
 import { ensureWasm } from '@/lib/wasm';
@@ -18,6 +20,8 @@ type RunAction = (action: () => Promise<void>) => Promise<void>;
 
 export interface EngineLifecycleOptions {
   bridge: ShallowRef<MeterBridge | null>;
+  analyser: ShallowRef<AnalyserBridge | null>;
+  scope: ShallowRef<ScopeBridge | null>;
   ctxState: Ref<string>;
   errorMessage: Ref<string>;
   handle: ShallowRef<EngineHandle | null>;
@@ -94,6 +98,8 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
         transportSync: nextTransportSync,
       });
       options.bridge.value = createMeterBridge(h);
+      options.analyser.value = createAnalyserBridge(h);
+      options.scope.value = createScopeBridge(h);
       options.ctxState.value = h.ctx.state;
       h.ctx.addEventListener('statechange', () => {
         options.ctxState.value = h.ctx.state;

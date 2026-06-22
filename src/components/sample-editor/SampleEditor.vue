@@ -2,7 +2,13 @@
 import { computed, markRaw, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { setupCanvas } from '@/components/piano-roll/theme';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
-import { type LoadedAudioAsset, loadAsset, saveAsset } from '@/persistence/assets';
+import {
+  type AudioAssetMeta,
+  type LoadedAudioAsset,
+  listAssets,
+  loadAsset,
+  saveAsset,
+} from '@/persistence/assets';
 import { setClipWarp } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import type { ClipWarp } from '@/project/types';
@@ -15,7 +21,9 @@ import {
   selectVersion,
   type VersionHistoryState,
 } from '@/ui/sample-editor/history';
-import { sliceRangeAt, snapFrameToOnsets } from '@/ui/sample-editor/onsets';
+import type { MatchEqAnalysis } from '@/ui/sample-editor/match-eq-analysis';
+import { formatMidiNote, parseMidiNote } from '@/ui/sample-editor/note-names';
+import { downmixToMono, sliceRangeAt, snapFrameToOnsets } from '@/ui/sample-editor/onsets';
 import {
   applyGainDb,
   fadeInLinear,
@@ -27,6 +35,7 @@ import {
   silence,
   trimToRange,
 } from '@/ui/sample-editor/ops';
+import { MODE_OPTIONS, modeMaskFor, ROOT_OPTIONS, scaleName } from '@/ui/sample-editor/scales';
 import {
   beginSelection,
   clampFrameIndex,
@@ -44,13 +53,25 @@ import {
   segmentStretchRatios,
 } from '@/ui/sample-editor/warp-controls';
 import {
+  analyzeMatchEqToReference,
   declickRange,
   denoiseRange,
   detectOnsetFrames,
+  harmonicRange,
   loadSampleEditorWasm,
+  matchEqToReference,
+  noteStretchRange,
+  percussiveRange,
+  pitchCorrectRange,
   pitchShiftRange,
+  type RoomMorphPreset,
+  roomMorphChannels,
   type SampleEditorWasmOps,
+  scaleCorrectRange,
+  splitSilenceFrames,
   timeStretchRange,
+  tuneToReferenceRange,
+  voiceChangeRange,
   wasmOpAvailability,
 } from '@/ui/sample-editor/wasm-ops';
 import { computePeaks } from '@/ui/waveform/peaks';
@@ -132,7 +153,98 @@ const wasmAvail = computed(() => wasmOpAvailability(wasmOps.value));
 const gainDbInput = ref('3');
 const normalizeTargetInput = ref('-1');
 const pitchInput = ref('0');
+const tuneNoteInput = ref('A4');
+/** "Tune to scale" target: root pitch class and Mode ordinal (as strings). */
+const scaleRootInput = ref('0');
+const scaleModeInput = ref('0');
+/** Voice-change controls: pitch transpose (semitones) and formant scale. */
+const voicePitchInput = ref('0');
+const voiceFormantInput = ref('1');
 const stretchInput = ref('1');
+/** Silence-split threshold in dB below the peak. */
+const silenceThresholdInput = ref('40');
+
+/**
+ * Room shapes offered by the "Place in room" reverb, smallest to largest. Each
+ * pairs shoebox dimensions with a libsonare wall-material preset (1 concrete,
+ * 2 wood, 4 carpet).
+ */
+const ROOM_PRESETS: ReadonlyArray<{ id: string; preset: RoomMorphPreset }> = [
+  { id: 'smallRoom', preset: { lengthM: 4, widthM: 3, heightM: 2.6, materialPreset: 2 } },
+  { id: 'largeRoom', preset: { lengthM: 9, widthM: 7, heightM: 3.5, materialPreset: 4 } },
+  { id: 'concertHall', preset: { lengthM: 24, widthM: 16, heightM: 10, materialPreset: 1 } },
+];
+/** Selected room shape id (see {@link ROOM_PRESETS}). */
+const roomPresetId = ref(ROOM_PRESETS[0].id);
+/** Room reverb wet/dry mix as a percentage string (0 = dry, 100 = fully wet). */
+const roomWetInput = ref('35');
+
+/** Stored audio assets offered as the Match EQ reference. */
+const referenceAssets = ref<AudioAssetMeta[]>([]);
+/** Selected reference asset id ('' = none picked). */
+const referenceAssetId = ref('');
+/** Parallel match strength as a percentage string (100 = fully matched). */
+const matchEqAmountInput = ref('100');
+/** Latest Match EQ analysis against the reference (null = none run). */
+const matchEqAnalysis = ref<MatchEqAnalysis | null>(null);
+/** True while a Match EQ analysis is awaiting the engine. */
+const analyzingMatchEq = ref(false);
+
+/** Reference picker options: a placeholder plus every other stored asset. */
+const referenceOptions = computed(() => [
+  { value: '', label: t.value.shell.sampleEditor.selectReference },
+  ...referenceAssets.value
+    .filter((meta) => meta.id !== currentAssetId.value)
+    .map((meta) => ({ value: meta.id, label: meta.name })),
+]);
+
+/** Room-shape picker options labelled from the localized preset names. */
+const roomPresetOptions = computed(() =>
+  ROOM_PRESETS.map((entry) => ({
+    value: entry.id,
+    label:
+      t.value.shell.sampleEditor.roomPresets[
+        entry.id as keyof typeof t.value.shell.sampleEditor.roomPresets
+      ],
+  })),
+);
+
+/** Viewport size for the inline match EQ curve preview, in SVG user units. */
+const MATCH_EQ_CURVE_WIDTH = 240;
+const MATCH_EQ_CURVE_HEIGHT = 64;
+/** Half-range of the curve's symmetric dB axis (gains clamp to ±this). */
+const MATCH_EQ_CURVE_DB_RANGE = 12;
+
+/**
+ * Maps the match EQ curve to an SVG polyline string: frequency on a log x axis
+ * (first..last), gain on a symmetric dB y axis clamped to ±MATCH_EQ_CURVE_DB_RANGE
+ * (0 dB centered). Empty when fewer than two points are available.
+ */
+const matchEqCurvePoints = computed(() => {
+  const curve = matchEqAnalysis.value?.curve;
+  if (!curve || curve.frequencies.length < 2) return '';
+  const first = curve.frequencies[0];
+  const last = curve.frequencies[curve.frequencies.length - 1];
+  const logFirst = Math.log(Math.max(first, 1));
+  const logSpan = Math.log(Math.max(last, 1)) - logFirst;
+  if (!(logSpan > 0)) return '';
+  return curve.frequencies
+    .map((frequency, index) => {
+      const x = ((Math.log(Math.max(frequency, 1)) - logFirst) / logSpan) * MATCH_EQ_CURVE_WIDTH;
+      const clamped = Math.max(
+        -MATCH_EQ_CURVE_DB_RANGE,
+        Math.min(MATCH_EQ_CURVE_DB_RANGE, curve.gainDb[index]),
+      );
+      const y = (0.5 - clamped / (2 * MATCH_EQ_CURVE_DB_RANGE)) * MATCH_EQ_CURVE_HEIGHT;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+});
+
+// A new reference (or none) invalidates the displayed analysis.
+watch(referenceAssetId, () => {
+  matchEqAnalysis.value = null;
+});
 
 /** Peak targets (in dB) offered by the normalize control. */
 const NORMALIZE_TARGET_OPTIONS: { value: string; label: string }[] = [
@@ -211,6 +323,13 @@ watch(
     void loadCurrent(assetId);
   },
 );
+
+// The current asset cannot be its own reference; keep the picker list fresh
+// (new edited versions become selectable references too).
+watch(currentAssetId, (id) => {
+  if (referenceAssetId.value === id) referenceAssetId.value = '';
+  void refreshReferenceAssets();
+});
 
 // --- Drawing -----------------------------------------------------------------
 
@@ -476,6 +595,75 @@ async function onPitchShift(): Promise<void> {
   );
 }
 
+async function onPitchCorrect(): Promise<void> {
+  const ops = wasmOps.value;
+  if (!ops) return;
+  const targetMidi = parseMidiNote(tuneNoteInput.value);
+  if (targetMidi === null) {
+    error.value = t.value.shell.sampleEditor.errors.tune;
+    return;
+  }
+  await runOp(
+    formatMessage(t.value.shell.sampleEditor.ops.tune, { note: formatMidiNote(targetMidi) }),
+    (channels, range) =>
+      pitchCorrectRange(ops, channels, asset.value?.meta.sampleRate ?? 48000, targetMidi, range),
+  );
+}
+
+async function onTuneReference(): Promise<void> {
+  const ops = wasmOps.value;
+  if (!ops) return;
+  await runOp(t.value.shell.sampleEditor.ops.tuneReference, (channels, range) =>
+    tuneToReferenceRange(ops, channels, asset.value?.meta.sampleRate ?? 48000, range),
+  );
+}
+
+async function onScaleCorrect(): Promise<void> {
+  const ops = wasmOps.value;
+  if (!ops) return;
+  const root = Number(scaleRootInput.value);
+  const mode = Number(scaleModeInput.value);
+  await runOp(
+    formatMessage(t.value.shell.sampleEditor.ops.tuneScale, { scale: scaleName(root, mode) }),
+    (channels, range) =>
+      scaleCorrectRange(
+        ops,
+        channels,
+        asset.value?.meta.sampleRate ?? 48000,
+        root,
+        modeMaskFor(mode),
+        range,
+      ),
+  );
+}
+
+async function onVoiceChange(): Promise<void> {
+  const ops = wasmOps.value;
+  if (!ops) return;
+  const pitchSemitones = parseNumber(voicePitchInput.value);
+  const formantFactor = parseNumber(voiceFormantInput.value);
+  if (pitchSemitones === null || formantFactor === null || formantFactor <= 0) {
+    error.value = t.value.shell.sampleEditor.errors.voice;
+    return;
+  }
+  await runOp(
+    formatMessage(t.value.shell.sampleEditor.ops.voice, {
+      sign: pitchSemitones >= 0 ? '+' : '',
+      semitones: pitchSemitones,
+      formant: formantFactor,
+    }),
+    (channels, range) =>
+      voiceChangeRange(
+        ops,
+        channels,
+        asset.value?.meta.sampleRate ?? 48000,
+        pitchSemitones,
+        formantFactor,
+        range,
+      ),
+  );
+}
+
 async function onTimeStretch(): Promise<void> {
   const ops = wasmOps.value;
   const rate = parseNumber(stretchInput.value);
@@ -486,6 +674,21 @@ async function onTimeStretch(): Promise<void> {
   }
   await runOp(formatMessage(t.value.shell.sampleEditor.ops.stretch, { rate }), (channels, range) =>
     timeStretchRange(ops, channels, asset.value?.meta.sampleRate ?? 48000, rate, range),
+  );
+}
+
+async function onNoteStretch(): Promise<void> {
+  const ops = wasmOps.value;
+  const rate = parseNumber(stretchInput.value);
+  if (!ops) return;
+  if (rate === null || rate <= 0) {
+    error.value = t.value.shell.sampleEditor.errors.stretch;
+    return;
+  }
+  await runOp(
+    formatMessage(t.value.shell.sampleEditor.ops.noteStretch, { rate }),
+    (channels, range) =>
+      noteStretchRange(ops, channels, asset.value?.meta.sampleRate ?? 48000, rate, range),
   );
 }
 
@@ -505,6 +708,121 @@ async function onDenoise(): Promise<void> {
   );
 }
 
+async function onHarmonic(): Promise<void> {
+  const ops = wasmOps.value;
+  if (!ops) return;
+  await runOp(t.value.shell.sampleEditor.ops.harmonic, (channels, range) =>
+    harmonicRange(ops, channels, asset.value?.meta.sampleRate ?? 48000, range),
+  );
+}
+
+async function onPercussive(): Promise<void> {
+  const ops = wasmOps.value;
+  if (!ops) return;
+  await runOp(t.value.shell.sampleEditor.ops.percussive, (channels, range) =>
+    percussiveRange(ops, channels, asset.value?.meta.sampleRate ?? 48000, range),
+  );
+}
+
+/**
+ * Places the whole file in a synthesized room, extending it with the reverb
+ * tail (room reverb is a whole-signal effect, so it ignores any selection).
+ */
+async function onPlaceInRoom(): Promise<void> {
+  const ops = wasmOps.value;
+  if (!ops) return;
+  const entry = ROOM_PRESETS.find((candidate) => candidate.id === roomPresetId.value);
+  if (!entry) return;
+  // Clamp the user's percentage to [0, 100] before mapping to a [0, 1] wet mix.
+  const wetPercent = parseNumber(roomWetInput.value) ?? 35;
+  const wet = Math.min(Math.max(wetPercent, 0), 100) / 100;
+  const roomName =
+    t.value.shell.sampleEditor.roomPresets[
+      entry.id as keyof typeof t.value.shell.sampleEditor.roomPresets
+    ];
+  await runOp(
+    formatMessage(t.value.shell.sampleEditor.ops.placeInRoom, { room: roomName }),
+    (channels) =>
+      roomMorphChannels(ops, channels, asset.value?.meta.sampleRate ?? 48000, entry.preset, wet),
+  );
+}
+
+/** Re-lists the stored assets offered as Match EQ references. */
+async function refreshReferenceAssets(): Promise<void> {
+  try {
+    referenceAssets.value = await listAssets();
+  } catch {
+    referenceAssets.value = [];
+  }
+}
+
+/**
+ * EQ-matches the selection (or whole file) to a chosen reference asset's
+ * tonal balance, producing a new version. The reference is loaded and
+ * downmixed to mono before the synchronous range transform runs.
+ */
+async function onMatchEq(): Promise<void> {
+  const ops = wasmOps.value;
+  const refId = referenceAssetId.value;
+  if (!ops || refId === '' || opsDisabled.value) return;
+  error.value = null;
+  let referenceMono: Float32Array;
+  try {
+    const reference = await loadAsset(refId);
+    referenceMono = downmixToMono(reference.channels);
+  } catch (err) {
+    error.value = errorMessage(err);
+    return;
+  }
+  const referenceName = referenceAssets.value.find((meta) => meta.id === refId)?.name ?? '';
+  // Clamp the user's percentage to [0, 100] before mapping to a [0, 1] mix.
+  const amountPercent = parseNumber(matchEqAmountInput.value) ?? 100;
+  const amount = Math.min(Math.max(amountPercent, 0), 100) / 100;
+  await runOp(
+    formatMessage(t.value.shell.sampleEditor.ops.matchEq, { reference: referenceName }),
+    (channels, range) =>
+      matchEqToReference(
+        ops,
+        channels,
+        asset.value?.meta.sampleRate ?? 48000,
+        referenceMono,
+        range,
+        amount,
+      ),
+  );
+  // The applied match changes the source, so the previous analysis is stale.
+  matchEqAnalysis.value = null;
+}
+
+/**
+ * Analyzes the selection (or whole file) against the chosen reference and shows
+ * the match EQ curve, tonal balance and loudness comparison. Read-only: no new
+ * version is created.
+ */
+async function onAnalyzeMatchEq(): Promise<void> {
+  const ops = wasmOps.value;
+  const loaded = asset.value;
+  const refId = referenceAssetId.value;
+  if (!ops || !loaded || refId === '' || opsDisabled.value || analyzingMatchEq.value) return;
+  error.value = null;
+  analyzingMatchEq.value = true;
+  try {
+    const reference = await loadAsset(refId);
+    const referenceMono = downmixToMono(reference.channels);
+    matchEqAnalysis.value = analyzeMatchEqToReference(
+      ops,
+      loaded.channels,
+      loaded.meta.sampleRate,
+      referenceMono,
+      selRange.value,
+    );
+  } catch (err) {
+    error.value = errorMessage(err);
+  } finally {
+    analyzingMatchEq.value = false;
+  }
+}
+
 /**
  * Detects transient onsets across the whole file and shows them as overlay
  * markers. The markers do not alter the audio; they snap selection edges and
@@ -517,6 +835,24 @@ function onDetectTransients(): void {
   error.value = null;
   try {
     onsetFrames.value = detectOnsetFrames(ops, loaded.channels, loaded.meta.sampleRate);
+  } catch (err) {
+    error.value = errorMessage(err);
+  }
+}
+
+/**
+ * Splits the whole file on silence and shows the cut boundaries as the same
+ * overlay markers the transient detector uses (a click then selects the slice —
+ * silent or not — between two cuts). The audio is untouched.
+ */
+function onSplitSilence(): void {
+  const ops = wasmOps.value;
+  const loaded = asset.value;
+  if (!ops || !loaded) return;
+  error.value = null;
+  const topDb = parseNumber(silenceThresholdInput.value);
+  try {
+    onsetFrames.value = splitSilenceFrames(ops, loaded.channels, topDb ?? undefined);
   } catch (err) {
     error.value = errorMessage(err);
   }
@@ -627,6 +963,7 @@ function onAddAnchor(): void {
 
 onMounted(() => {
   void loadCurrent(props.assetId);
+  void refreshReferenceAssets();
   void loadSampleEditorWasm().then((ops) => {
     wasmOps.value = ops;
   });
@@ -727,6 +1064,80 @@ onBeforeUnmount(() => {
         {{ t.shell.sampleEditor.apply }}
       </button>
       <label>
+        {{ t.shell.sampleEditor.tune }}
+        <input v-model="tuneNoteInput" class="num" type="text" />
+      </label>
+      <button
+        type="button"
+        :disabled="opsDisabled || !wasmAvail.pitchCorrect"
+        :title="
+          wasmAvail.pitchCorrect ? t.shell.sampleEditor.tuneTitle : t.shell.sampleEditor.unavailable
+        "
+        @click="onPitchCorrect"
+      >
+        {{ t.shell.sampleEditor.apply }}
+      </button>
+      <button
+        type="button"
+        :disabled="opsDisabled || !wasmAvail.tuneReference"
+        :title="
+          wasmAvail.tuneReference
+            ? t.shell.sampleEditor.tuneReferenceTitle
+            : t.shell.sampleEditor.unavailable
+        "
+        @click="onTuneReference"
+      >
+        {{ t.shell.sampleEditor.tuneReference }}
+      </button>
+      <label>{{ t.shell.sampleEditor.tuneScale }}</label>
+      <SelectMenu
+        :model-value="scaleRootInput"
+        size="sm"
+        :options="ROOT_OPTIONS"
+        :disabled="opsDisabled || !wasmAvail.scaleCorrect"
+        :aria-label="t.shell.sampleEditor.scaleRoot"
+        @change="(value: string) => (scaleRootInput = value)"
+      />
+      <SelectMenu
+        :model-value="scaleModeInput"
+        size="sm"
+        :options="MODE_OPTIONS"
+        :disabled="opsDisabled || !wasmAvail.scaleCorrect"
+        :aria-label="t.shell.sampleEditor.scaleMode"
+        @change="(value: string) => (scaleModeInput = value)"
+      />
+      <button
+        type="button"
+        :disabled="opsDisabled || !wasmAvail.scaleCorrect"
+        :title="
+          wasmAvail.scaleCorrect
+            ? t.shell.sampleEditor.tuneScaleTitle
+            : t.shell.sampleEditor.unavailable
+        "
+        @click="onScaleCorrect"
+      >
+        {{ t.shell.sampleEditor.apply }}
+      </button>
+      <span class="sep" />
+      <label>
+        {{ t.shell.sampleEditor.voicePitch }}
+        <input v-model="voicePitchInput" class="num" type="number" step="1" /> st
+      </label>
+      <label>
+        {{ t.shell.sampleEditor.voiceFormant }}
+        <input v-model="voiceFormantInput" class="num" type="number" step="0.05" min="0.1" /> ×
+      </label>
+      <button
+        type="button"
+        :disabled="opsDisabled || !wasmAvail.voiceChange"
+        :title="
+          wasmAvail.voiceChange ? t.shell.sampleEditor.voiceTitle : t.shell.sampleEditor.unavailable
+        "
+        @click="onVoiceChange"
+      >
+        {{ t.shell.sampleEditor.voice }}
+      </button>
+      <label>
         {{ t.shell.sampleEditor.stretch }}
         <input v-model="stretchInput" class="num" type="number" step="0.05" min="0.1" /> ×
       </label>
@@ -739,6 +1150,18 @@ onBeforeUnmount(() => {
         @click="onTimeStretch"
       >
         {{ t.shell.sampleEditor.apply }}
+      </button>
+      <button
+        type="button"
+        :disabled="opsDisabled || !wasmAvail.noteStretch"
+        :title="
+          wasmAvail.noteStretch
+            ? t.shell.sampleEditor.noteStretchTitle
+            : t.shell.sampleEditor.unavailable
+        "
+        @click="onNoteStretch"
+      >
+        {{ t.shell.sampleEditor.noteStretch }}
       </button>
       <button
         type="button"
@@ -763,6 +1186,75 @@ onBeforeUnmount(() => {
       <span class="sep" />
       <button
         type="button"
+        :disabled="opsDisabled || !wasmAvail.harmonic"
+        :title="
+          wasmAvail.harmonic ? t.shell.sampleEditor.harmonicTitle : t.shell.sampleEditor.unavailable
+        "
+        @click="onHarmonic"
+      >
+        {{ t.shell.sampleEditor.harmonic }}
+      </button>
+      <button
+        type="button"
+        :disabled="opsDisabled || !wasmAvail.percussive"
+        :title="
+          wasmAvail.percussive
+            ? t.shell.sampleEditor.percussiveTitle
+            : t.shell.sampleEditor.unavailable
+        "
+        @click="onPercussive"
+      >
+        {{ t.shell.sampleEditor.percussive }}
+      </button>
+      <span class="sep" />
+      <SelectMenu
+        :model-value="referenceAssetId"
+        size="sm"
+        :options="referenceOptions"
+        :disabled="opsDisabled || !wasmAvail.matchEq"
+        :aria-label="t.shell.sampleEditor.matchReference"
+        @change="(value: string) => (referenceAssetId = value)"
+      />
+      <button
+        type="button"
+        :disabled="opsDisabled || !wasmAvail.matchEq || referenceAssetId === ''"
+        :title="
+          wasmAvail.matchEq ? t.shell.sampleEditor.matchEqTitle : t.shell.sampleEditor.unavailable
+        "
+        @click="onMatchEq"
+      >
+        {{ t.shell.sampleEditor.matchEq }}
+      </button>
+      <label :title="t.shell.sampleEditor.matchEqAmountTitle">
+        {{ t.shell.sampleEditor.matchEqAmount }}
+        <input
+          v-model="matchEqAmountInput"
+          class="num"
+          type="number"
+          step="5"
+          min="0"
+          max="100"
+          :disabled="opsDisabled || !wasmAvail.matchEq"
+        />
+        %
+      </label>
+      <button
+        type="button"
+        :disabled="
+          opsDisabled || !wasmAvail.matchEqAnalyze || referenceAssetId === '' || analyzingMatchEq
+        "
+        :title="
+          wasmAvail.matchEqAnalyze
+            ? t.shell.sampleEditor.matchEqAnalyzeTitle
+            : t.shell.sampleEditor.unavailable
+        "
+        @click="onAnalyzeMatchEq"
+      >
+        {{ t.shell.sampleEditor.matchEqAnalyze }}
+      </button>
+      <span class="sep" />
+      <button
+        type="button"
         :disabled="opsDisabled || !wasmAvail.detectOnsets"
         :title="
           wasmAvail.detectOnsets
@@ -773,6 +1265,22 @@ onBeforeUnmount(() => {
       >
         {{ t.shell.sampleEditor.detectTransients }}
       </button>
+      <label>
+        {{ t.shell.sampleEditor.silenceThreshold }}
+        <input v-model="silenceThresholdInput" class="num" type="number" step="1" min="1" /> dB
+      </label>
+      <button
+        type="button"
+        :disabled="opsDisabled || !wasmAvail.splitSilence"
+        :title="
+          wasmAvail.splitSilence
+            ? t.shell.sampleEditor.splitSilenceTitle
+            : t.shell.sampleEditor.unavailable
+        "
+        @click="onSplitSilence"
+      >
+        {{ t.shell.sampleEditor.splitSilence }}
+      </button>
       <button
         v-if="onsetFrames.length > 0"
         type="button"
@@ -781,8 +1289,83 @@ onBeforeUnmount(() => {
       >
         {{ formatMessage(t.shell.sampleEditor.clearTransients, { count: onsetFrames.length }) }}
       </button>
+      <span class="sep" />
+      <SelectMenu
+        :model-value="roomPresetId"
+        size="sm"
+        :options="roomPresetOptions"
+        :disabled="opsDisabled || !wasmAvail.roomMorph"
+        :aria-label="t.shell.sampleEditor.roomPreset"
+        @change="(value: string) => (roomPresetId = value)"
+      />
+      <label :title="t.shell.sampleEditor.roomWetTitle">
+        {{ t.shell.sampleEditor.roomWet }}
+        <input
+          v-model="roomWetInput"
+          class="num"
+          type="number"
+          step="5"
+          min="0"
+          max="100"
+          :disabled="opsDisabled || !wasmAvail.roomMorph"
+        />
+        %
+      </label>
+      <button
+        type="button"
+        :disabled="opsDisabled || !wasmAvail.roomMorph"
+        :title="
+          wasmAvail.roomMorph
+            ? t.shell.sampleEditor.placeInRoomTitle
+            : t.shell.sampleEditor.unavailable
+        "
+        @click="onPlaceInRoom"
+      >
+        {{ t.shell.sampleEditor.placeInRoom }}
+      </button>
     </div>
     <p v-if="error" class="error">{{ error }}</p>
+    <div v-if="matchEqAnalysis" class="match-eq-analysis">
+      <div class="match-eq-head">
+        <span class="match-eq-title">{{ t.shell.sampleEditor.matchEqAnalysisTitle }}</span>
+        <span v-if="matchEqAnalysis.loudness" class="match-eq-loudness">
+          {{ t.shell.sampleEditor.matchEqLoudness }}:
+          {{ matchEqAnalysis.loudness.sourceLufs.toFixed(1) }} →
+          {{ matchEqAnalysis.loudness.referenceLufs.toFixed(1) }} LUFS
+          ({{ matchEqAnalysis.loudness.gainToMatchDb >= 0 ? '+' : ''
+          }}{{ matchEqAnalysis.loudness.gainToMatchDb.toFixed(1) }} dB)
+        </span>
+      </div>
+      <svg
+        v-if="matchEqCurvePoints"
+        class="match-eq-curve"
+        :viewBox="`0 0 ${MATCH_EQ_CURVE_WIDTH} ${MATCH_EQ_CURVE_HEIGHT}`"
+        preserveAspectRatio="none"
+        role="img"
+        :aria-label="t.shell.sampleEditor.matchEqCurveLabel"
+      >
+        <line
+          class="match-eq-zero"
+          x1="0"
+          :y1="MATCH_EQ_CURVE_HEIGHT / 2"
+          :x2="MATCH_EQ_CURVE_WIDTH"
+          :y2="MATCH_EQ_CURVE_HEIGHT / 2"
+        />
+        <polyline class="match-eq-line" :points="matchEqCurvePoints" />
+      </svg>
+      <ul v-if="matchEqAnalysis.tonalBalance.length > 0" class="match-eq-bands">
+        <li
+          v-for="(band, index) in matchEqAnalysis.tonalBalance"
+          :key="index"
+          :class="{ over: band.deviationDb > 0, under: band.deviationDb < 0 }"
+        >
+          <span class="match-eq-band-hz">{{ Math.round(band.lowHz) }}–{{ Math.round(band.highHz) }} Hz</span>
+          <span class="match-eq-band-db">
+            {{ band.deviationDb >= 0 ? '+' : '' }}{{ band.deviationDb.toFixed(1) }} dB
+          </span>
+        </li>
+      </ul>
+    </div>
     <div
       ref="wrapRef"
       class="wave-wrap"
@@ -975,6 +1558,80 @@ onBeforeUnmount(() => {
 .error {
   margin: 0;
   color: var(--danger);
+}
+
+.match-eq-analysis {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-inset);
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+.match-eq-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  justify-content: space-between;
+}
+
+.match-eq-title {
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
+}
+
+.match-eq-loudness {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.match-eq-curve {
+  width: 100%;
+  height: 64px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.match-eq-zero {
+  stroke: var(--border);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.match-eq-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.match-eq-bands {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.6rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.match-eq-bands li {
+  display: flex;
+  gap: 0.3rem;
+  color: var(--text-3);
+}
+
+.match-eq-bands li.over .match-eq-band-db {
+  color: var(--warning, #e0a030);
+}
+
+.match-eq-bands li.under .match-eq-band-db {
+  color: var(--accent);
 }
 
 .wave-wrap {

@@ -46,13 +46,15 @@ describe('ingestAudioBuffer', () => {
   it('runs the provided analysis functions and stores their tags', async () => {
     const detectBpm = vi.fn(() => 123.5);
     const detectKey = vi.fn(() => ({ name: 'A minor', shortName: 'Am' }));
+    const lufs = vi.fn(() => ({ integratedLufs: -14.2 }));
     const meta = await ingestAudioBuffer(stereo(), 44100, 'Loop', {
-      analysis: { detectBpm, detectKey },
+      analysis: { detectBpm, detectKey, lufs },
     });
-    expect(meta.tags).toEqual({ bpm: 123.5, key: 'Am' });
+    expect(meta.tags).toEqual({ bpm: 123.5, key: 'Am', lufs: -14.2 });
     // Analysis sees a mono mixdown at the asset rate.
     expect(detectBpm).toHaveBeenCalledWith(mixdownToMono(stereo()), 44100);
     expect(detectKey).toHaveBeenCalledWith(mixdownToMono(stereo()), 44100);
+    expect(lufs).toHaveBeenCalledWith(mixdownToMono(stereo()), 44100);
   });
 
   it('caller tags win over detected ones', async () => {
@@ -109,6 +111,17 @@ describe('analyzeAudioTags', () => {
     expect(analyzeAudioTags(stereo(), 44100, { detectKey: () => ({ name: 'C major' }) })).toEqual({
       key: 'C major',
     });
+  });
+
+  it('stores a finite integrated loudness and drops a silent -Infinity', () => {
+    expect(analyzeAudioTags(stereo(), 44100, { lufs: () => ({ integratedLufs: -14.2 }) })).toEqual({
+      lufs: -14.2,
+    });
+    expect(
+      analyzeAudioTags(stereo(), 44100, {
+        lufs: () => ({ integratedLufs: Number.NEGATIVE_INFINITY }),
+      }),
+    ).toEqual({});
   });
 });
 

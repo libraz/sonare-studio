@@ -312,7 +312,11 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       for (const send of track.mixer?.sends ?? []) {
         const busId = busNumberByStoreId.get(send.busId);
         if (busId === undefined || !newBusIdSet.has(busId)) continue;
-        desired.push({ busId, levelDb: send.levelDb, enabled: send.enabled });
+        const entry: EngineTrackSend = { busId, levelDb: send.levelDb, enabled: send.enabled };
+        // Default (post-fader) stays absent so the JSON change-detection below
+        // matches existing scenes; only pre-fader is sent explicitly.
+        if (send.timing === 'preFader') entry.sendTiming = 'preFader';
+        desired.push(entry);
       }
       const json = JSON.stringify(desired);
       if ((lastSendsByTrack.get(track.id) ?? '[]') !== json) {

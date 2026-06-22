@@ -21,6 +21,8 @@ export interface AudioAnalysisFunctions {
   detectBpm?: (samples: Float32Array, sampleRate?: number) => number;
   /** Returns the detected key (mono samples + sample rate). */
   detectKey?: (samples: Float32Array, sampleRate?: number) => { name: string; shortName?: string };
+  /** Returns the EBU R128 loudness (mono samples + sample rate). */
+  lufs?: (samples: Float32Array, sampleRate?: number) => { integratedLufs: number };
 }
 
 /** Options for {@link ingestAudioBuffer}. */
@@ -76,7 +78,11 @@ export function mixdownToMono(channels: ReadonlyArray<Float32Array>): Float32Arr
 export async function resolveAudioAnalysis(): Promise<AudioAnalysisFunctions | null> {
   try {
     const wasm = (await ensureWasm()) as unknown as AudioAnalysisFunctions;
-    if (typeof wasm.detectBpm === 'function' || typeof wasm.detectKey === 'function') {
+    if (
+      typeof wasm.detectBpm === 'function' ||
+      typeof wasm.detectKey === 'function' ||
+      typeof wasm.lufs === 'function'
+    ) {
       return wasm;
     }
   } catch {
@@ -86,7 +92,7 @@ export async function resolveAudioAnalysis(): Promise<AudioAnalysisFunctions | n
 }
 
 /**
- * Runs tempo/key analysis over a mono mixdown and returns the resulting tags.
+ * Runs tempo/key/loudness analysis over a mono mixdown and returns the tags.
  * Every analysis step is best-effort: detector errors or unusable results
  * yield no tag rather than failing the import.
  *
@@ -118,6 +124,15 @@ export function analyzeAudioTags(
       if (typeof label === 'string' && label.length > 0) tags.key = label;
     } catch {
       // Best effort: no key tag.
+    }
+  }
+  if (typeof analysis.lufs === 'function') {
+    try {
+      const loudness = analysis.lufs(mono, sampleRate);
+      // Silence yields -Infinity; only keep a finite measurement.
+      if (Number.isFinite(loudness?.integratedLufs)) tags.lufs = loudness.integratedLufs;
+    } catch {
+      // Best effort: no loudness tag.
     }
   }
   return tags;

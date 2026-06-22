@@ -1,12 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  analyzeMatchEqToReference,
   declickRange,
   denoiseRange,
   detectOnsetFrames,
+  harmonicRange,
   loadSampleEditorWasm,
+  matchEqToReference,
+  noteStretchRange,
+  percussiveRange,
+  pitchCorrectRange,
   pitchShiftRange,
+  roomMorphChannels,
   type SampleEditorWasmOps,
+  scaleCorrectRange,
+  splitSilenceFrames,
   timeStretchRange,
+  tuneToReferenceRange,
+  voiceChangeRange,
   wasmOpAvailability,
 } from '@/ui/sample-editor/wasm-ops';
 
@@ -31,10 +42,21 @@ describe('wasmOpAvailability', () => {
   it('reports all false for a missing module', () => {
     expect(wasmOpAvailability(null)).toEqual({
       pitchShift: false,
+      pitchCorrect: false,
+      tuneReference: false,
+      scaleCorrect: false,
+      voiceChange: false,
+      harmonic: false,
+      percussive: false,
       timeStretch: false,
+      noteStretch: false,
       declick: false,
       denoise: false,
       detectOnsets: false,
+      splitSilence: false,
+      matchEq: false,
+      matchEqAnalyze: false,
+      roomMorph: false,
     });
     expect(wasmOpAvailability(undefined).pitchShift).toBe(false);
   });
@@ -42,16 +64,214 @@ describe('wasmOpAvailability', () => {
   it('reports per-function availability', () => {
     const mod: SampleEditorWasmOps = {
       pitchShift: (samples) => samples,
+      pitchCorrectToMidi: (samples) => samples,
       masteringRepairDeclick: (samples) => samples,
       detectOnsets: () => new Float32Array(),
+      splitSilence: () => new Int32Array(),
+      masteringPairProcess: (_name, source) => ({ samples: source, sampleRate: 48000 }),
     };
     expect(wasmOpAvailability(mod)).toEqual({
       pitchShift: true,
+      pitchCorrect: true,
+      // Needs estimateTuning + pitchShift; estimateTuning is absent here.
+      tuneReference: false,
+      // Needs pitchYin + scaleQuantizeMidi + pitchCorrectToMidi; only the last is present.
+      scaleCorrect: false,
+      voiceChange: false,
+      harmonic: false,
+      percussive: false,
       timeStretch: false,
+      noteStretch: false,
       declick: true,
       denoise: false,
       detectOnsets: true,
+      splitSilence: true,
+      matchEq: true,
+      // masteringPairAnalyze is absent in this module.
+      matchEqAnalyze: false,
+      // roomMorph is absent in this module.
+      roomMorph: false,
     });
+  });
+
+  it('reports scaleCorrect only with the full pitch+quantize+correct trio', () => {
+    const full: SampleEditorWasmOps = {
+      pitchYin: () => ({ medianF0: 440 }),
+      scaleQuantizeMidi: (_root, _mask, midi) => midi,
+      pitchCorrectToMidi: (samples) => samples,
+    };
+    expect(wasmOpAvailability(full).scaleCorrect).toBe(true);
+    expect(wasmOpAvailability({ pitchYin: () => ({ medianF0: 440 }) }).scaleCorrect).toBe(false);
+  });
+
+  it('reports tuneReference only with both estimateTuning and pitchShift', () => {
+    const both: SampleEditorWasmOps = { estimateTuning: () => 0, pitchShift: (s) => s };
+    expect(wasmOpAvailability(both).tuneReference).toBe(true);
+    expect(wasmOpAvailability({ estimateTuning: () => 0 }).tuneReference).toBe(false);
+    expect(wasmOpAvailability({ pitchShift: (s) => s }).tuneReference).toBe(false);
+  });
+});
+
+describe('matchEqToReference', () => {
+  it('matches each channel against the same mono reference over the range', () => {
+    const reference = new Float32Array([0.5, 0.25]);
+    const masteringPairProcess = vi.fn(
+      (name: string, source: Float32Array, ref: Float32Array, sampleRate?: number) => {
+        expect(name).toBe('match.applyMatchEq');
+        expect([...ref]).toEqual([0.5, 0.25]);
+        expect(sampleRate).toBe(48000);
+        // Return a recognizable transform: scale the source by 2.
+        return { samples: source.map((v) => v * 2) as Float32Array, sampleRate: 48000 };
+      },
+    );
+    const out = matchEqToReference(
+      { masteringPairProcess },
+      ch([1, 2, 3, 4], [5, 6, 7, 8]),
+      48000,
+      reference,
+      {
+        startFrame: 1,
+        endFrame: 3,
+      },
+    );
+    expect(plain(out)).toEqual([
+      [1, 4, 6, 4],
+      [5, 12, 14, 8],
+    ]);
+    expect(masteringPairProcess).toHaveBeenCalledTimes(2);
+  });
+
+  it('defaults to the whole file without a range', () => {
+    const masteringPairProcess = vi.fn((_name, source: Float32Array) => ({
+      samples: source.map((v) => -v) as Float32Array,
+      sampleRate: 48000,
+    }));
+    const out = matchEqToReference(
+      { masteringPairProcess },
+      ch([1, 2]),
+      48000,
+      new Float32Array([1]),
+    );
+    expect(plain(out)).toEqual([[-1, -2]]);
+  });
+
+  it('blends the matched signal back toward the dry segment for amount < 1', () => {
+    // applyMatchEq doubles the source; abCrossfade linearly mixes a -> b by mix.
+    const masteringPairProcess = vi.fn(
+      (
+        name: string,
+        a: Float32Array,
+        b: Float32Array,
+        _sampleRate?: number,
+        params?: { mix?: number },
+      ) => {
+        if (name === 'match.applyMatchEq') {
+          return { samples: a.map((v) => v * 2) as Float32Array, sampleRate: 48000 };
+        }
+        expect(name).toBe('match.abCrossfade');
+        const mix = params?.mix ?? 0;
+        return {
+          samples: a.map((v, i) => v * (1 - mix) + b[i] * mix) as Float32Array,
+          sampleRate: 48000,
+        };
+      },
+    );
+    const out = matchEqToReference(
+      { masteringPairProcess },
+      ch([1, 2]),
+      48000,
+      new Float32Array([1]),
+      null,
+      0.5,
+    );
+    // dry [1, 2], matched [2, 4], blended 50/50 -> [1.5, 3].
+    expect(plain(out)).toEqual([[1.5, 3]]);
+    expect(masteringPairProcess).toHaveBeenCalledWith(
+      'match.abCrossfade',
+      expect.anything(),
+      expect.anything(),
+      48000,
+      { mix: 0.5 },
+    );
+  });
+
+  it('returns the dry segment without matching when amount is 0', () => {
+    const masteringPairProcess = vi.fn((_name, source: Float32Array) => ({
+      samples: source.map((v) => v * 2) as Float32Array,
+      sampleRate: 48000,
+    }));
+    const out = matchEqToReference(
+      { masteringPairProcess },
+      ch([1, 2]),
+      48000,
+      new Float32Array([1]),
+      null,
+      0,
+    );
+    expect(plain(out)).toEqual([[1, 2]]);
+    expect(masteringPairProcess).not.toHaveBeenCalled();
+  });
+
+  it('throws when unavailable, the sample rate is invalid, or the reference is empty', () => {
+    expect(() => matchEqToReference({}, ch([1]), 48000, new Float32Array([1]))).toThrow(
+      /unavailable/,
+    );
+    const mod: SampleEditorWasmOps = {
+      masteringPairProcess: (_name, source) => ({ samples: source, sampleRate: 48000 }),
+    };
+    expect(() => matchEqToReference(mod, ch([1]), 0, new Float32Array([1]))).toThrow(RangeError);
+    expect(() => matchEqToReference(mod, ch([1]), 48000, new Float32Array())).toThrow(/empty/);
+  });
+});
+
+describe('analyzeMatchEqToReference', () => {
+  it('downmixes the range to mono and parses the three analyses', () => {
+    const reference = new Float32Array([0.5, 0.25]);
+    const masteringPairAnalyze = vi.fn(
+      (name: string, source: Float32Array, ref: Float32Array, sampleRate?: number) => {
+        // The source is the channel average over the [1, 3) range: (2+6)/2, (3+7)/2.
+        expect([...source]).toEqual([4, 5]);
+        expect([...ref]).toEqual([0.5, 0.25]);
+        expect(sampleRate).toBe(48000);
+        if (name === 'match.matchEqCurve') return '{"frequencies":[100,1000],"gainDb":[1,-1]}';
+        if (name === 'match.tonalBalance') {
+          return '{"bands":[{"lowHz":20,"highHz":200,"sourceDb":-10,"referenceDb":-12,"deviationDb":2}]}';
+        }
+        return '{"sourceLufs":-14,"referenceLufs":-9,"gainToMatchDb":5}';
+      },
+    );
+    const analysis = analyzeMatchEqToReference(
+      { masteringPairAnalyze },
+      ch([1, 2, 3, 4], [5, 6, 7, 8]),
+      48000,
+      reference,
+      { startFrame: 1, endFrame: 3 },
+    );
+    expect(analysis.curve).toEqual({ frequencies: [100, 1000], gainDb: [1, -1] });
+    expect(analysis.tonalBalance).toEqual([
+      { lowHz: 20, highHz: 200, sourceDb: -10, referenceDb: -12, deviationDb: 2 },
+    ]);
+    expect(analysis.loudness).toEqual({ sourceLufs: -14, referenceLufs: -9, gainToMatchDb: 5 });
+    expect(masteringPairAnalyze).toHaveBeenCalledTimes(3);
+  });
+
+  it('throws when unavailable, the sample rate is invalid, the reference is empty, or the range is empty', () => {
+    expect(() => analyzeMatchEqToReference({}, ch([1]), 48000, new Float32Array([1]))).toThrow(
+      /unavailable/,
+    );
+    const mod: SampleEditorWasmOps = { masteringPairAnalyze: () => '{}' };
+    expect(() => analyzeMatchEqToReference(mod, ch([1]), 0, new Float32Array([1]))).toThrow(
+      RangeError,
+    );
+    expect(() => analyzeMatchEqToReference(mod, ch([1]), 48000, new Float32Array())).toThrow(
+      /empty/,
+    );
+    expect(() =>
+      analyzeMatchEqToReference(mod, ch([1, 2]), 48000, new Float32Array([1]), {
+        startFrame: 1,
+        endFrame: 1,
+      }),
+    ).toThrow(/empty range/);
   });
 });
 
@@ -73,6 +293,34 @@ describe('detectOnsetFrames', () => {
     expect(() => detectOnsetFrames({}, [new Float32Array([1])], 48000)).toThrow(/unavailable/);
     const mod: SampleEditorWasmOps = { detectOnsets: () => new Float32Array() };
     expect(() => detectOnsetFrames(mod, [new Float32Array([1])], 0)).toThrow(RangeError);
+  });
+});
+
+describe('splitSilenceFrames', () => {
+  it('downmixes to mono and returns the interior cut frames', () => {
+    const splitSilence = vi.fn((samples: Float32Array, topDb?: number) => {
+      // The detector should receive the channel average over 8 frames.
+      expect([...samples]).toEqual([1, 0, 0, 0, 0, 0, 0, 0]);
+      expect(topDb).toBe(30);
+      return new Int32Array([0, 2, 5, 8]); // intervals -> interior cuts 2, 5.
+    });
+    const left = new Float32Array([2, 0, 0, 0, 0, 0, 0, 0]);
+    const right = new Float32Array([0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(splitSilenceFrames({ splitSilence }, [left, right], 30)).toEqual([2, 5]);
+    expect(splitSilence).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes topDb through as undefined when omitted', () => {
+    const splitSilence = vi.fn(() => new Int32Array([0, 4]));
+    splitSilenceFrames({ splitSilence }, [new Float32Array(4)]);
+    expect(splitSilence).toHaveBeenCalledWith(expect.any(Float32Array), undefined);
+  });
+
+  it('throws when splitSilence is unavailable or topDb is not positive', () => {
+    expect(() => splitSilenceFrames({}, [new Float32Array([1])])).toThrow(/unavailable/);
+    const mod: SampleEditorWasmOps = { splitSilence: () => new Int32Array() };
+    expect(() => splitSilenceFrames(mod, [new Float32Array([1])], 0)).toThrow(RangeError);
+    expect(() => splitSilenceFrames(mod, [new Float32Array([1])], Number.NaN)).toThrow(RangeError);
   });
 });
 
@@ -127,6 +375,168 @@ describe('pitchShiftRange', () => {
   });
 });
 
+describe('pitchCorrectRange', () => {
+  it('retunes each channel over the range, auto-detecting the source pitch', () => {
+    const pitchCorrectToMidi = vi.fn(
+      (samples: Float32Array, _sampleRate?: number, current?: number, target?: number) => {
+        // The source pitch is auto-detected (current omitted).
+        expect(current).toBeUndefined();
+        return samples.map((v) => v + (target ?? 0)) as Float32Array;
+      },
+    );
+    const mod: SampleEditorWasmOps = { pitchCorrectToMidi };
+    const out = pitchCorrectRange(mod, ch([1, 2, 3, 4], [5, 6, 7, 8]), 48000, 69, {
+      startFrame: 1,
+      endFrame: 3,
+    });
+    expect(plain(out)).toEqual([
+      [1, 71, 72, 4],
+      [5, 75, 76, 8],
+    ]);
+    expect(pitchCorrectToMidi).toHaveBeenCalledTimes(2);
+    expect(pitchCorrectToMidi.mock.calls[0][1]).toBe(48000);
+  });
+
+  it('defaults to the whole file without a range', () => {
+    const mod: SampleEditorWasmOps = {
+      pitchCorrectToMidi: (samples) => samples.map((v) => -v) as Float32Array,
+    };
+    expect(plain(pitchCorrectRange(mod, ch([1, 2]), 48000, 60))).toEqual([[-1, -2]]);
+  });
+
+  it('throws when unavailable or the target note is out of range', () => {
+    expect(() => pitchCorrectRange({}, ch([1]), 48000, 60)).toThrow(/unavailable/);
+    const mod: SampleEditorWasmOps = { pitchCorrectToMidi: (samples) => samples };
+    expect(() => pitchCorrectRange(mod, ch([1]), 48000, 60.5)).toThrow(RangeError);
+    expect(() => pitchCorrectRange(mod, ch([1]), 48000, -1)).toThrow(RangeError);
+    expect(() => pitchCorrectRange(mod, ch([1]), 48000, 128)).toThrow(RangeError);
+  });
+});
+
+describe('scaleCorrectRange', () => {
+  it('detects pitch on the mono downmix and retunes every channel to the scale target', () => {
+    const pitchYin = vi.fn((samples: Float32Array) => {
+      // The detector sees the channel average over the range: ([2,3]+[6,7])/2.
+      expect([...samples]).toEqual([4, 5]);
+      return { medianF0: 440 };
+    });
+    const scaleQuantizeMidi = vi.fn((root: number, mask: number, midi: number) => {
+      expect(root).toBe(0);
+      expect(mask).toBe(0b101010110101);
+      expect(midi).toBeCloseTo(69); // hzToMidi(440)
+      return 67; // snap A4 -> G4
+    });
+    const pitchCorrectToMidi = vi.fn(
+      (samples: Float32Array, _sr?: number, current?: number, target?: number) => {
+        expect(current).toBeCloseTo(69);
+        expect(target).toBe(67);
+        return samples.map((v) => v + (target ?? 0)) as Float32Array;
+      },
+    );
+    const mod: SampleEditorWasmOps = { pitchYin, scaleQuantizeMidi, pitchCorrectToMidi };
+    const out = scaleCorrectRange(mod, ch([1, 2, 3, 4], [5, 6, 7, 8]), 48000, 0, 0b101010110101, {
+      startFrame: 1,
+      endFrame: 3,
+    });
+    expect(plain(out)).toEqual([
+      [1, 69, 70, 4],
+      [5, 73, 74, 8],
+    ]);
+    expect(pitchYin).toHaveBeenCalledTimes(1);
+    expect(pitchCorrectToMidi).toHaveBeenCalledTimes(2);
+  });
+
+  it('throws when a required function is missing or no pitch is detected', () => {
+    const base = {
+      scaleQuantizeMidi: (_r: number, _m: number, midi: number) => midi,
+      pitchCorrectToMidi: (samples: Float32Array) => samples,
+    };
+    expect(() => scaleCorrectRange(base, ch([1]), 48000, 0, 1)).toThrow(/unavailable/);
+    const unvoiced: SampleEditorWasmOps = { ...base, pitchYin: () => ({ medianF0: 0 }) };
+    expect(() => scaleCorrectRange(unvoiced, ch([1, 2]), 48000, 0, 1)).toThrow(/detect a pitch/);
+  });
+});
+
+describe('tuneToReferenceRange', () => {
+  it('estimates tuning on the mono downmix and shifts every channel by its opposite', () => {
+    const estimateTuning = vi.fn((samples: Float32Array) => {
+      // The estimator sees the channel average over the range: ([2,3]+[6,7])/2.
+      expect([...samples]).toEqual([4, 5]);
+      return 0.25; // a quarter-semitone sharp
+    });
+    const pitchShift = vi.fn((samples: Float32Array, _sr: number, semitones: number) => {
+      expect(semitones).toBeCloseTo(-0.25); // correct downward to A440
+      return samples.map((v) => v * 10) as Float32Array;
+    });
+    const mod: SampleEditorWasmOps = { estimateTuning, pitchShift };
+    const out = tuneToReferenceRange(mod, ch([1, 2, 3, 4], [5, 6, 7, 8]), 48000, {
+      startFrame: 1,
+      endFrame: 3,
+    });
+    expect(plain(out)).toEqual([
+      [1, 20, 30, 4],
+      [5, 60, 70, 8],
+    ]);
+    expect(estimateTuning).toHaveBeenCalledTimes(1);
+    expect(pitchShift).toHaveBeenCalledTimes(2);
+  });
+
+  it('throws when a required function is missing or the tuning is not finite', () => {
+    expect(() => tuneToReferenceRange({ pitchShift: (s) => s }, ch([1]), 48000)).toThrow(
+      /unavailable/,
+    );
+    expect(() => tuneToReferenceRange({ estimateTuning: () => 0 }, ch([1]), 48000)).toThrow(
+      /unavailable/,
+    );
+    const broken: SampleEditorWasmOps = {
+      estimateTuning: () => Number.NaN,
+      pitchShift: (s) => s,
+    };
+    expect(() => tuneToReferenceRange(broken, ch([1, 2]), 48000)).toThrow(/tuning offset/);
+  });
+});
+
+describe('voiceChangeRange', () => {
+  it('passes pitch and formant options through per channel over the range', () => {
+    const voiceChange = vi.fn(
+      (
+        samples: Float32Array,
+        _sampleRate?: number,
+        options?: { pitchSemitones?: number; formantFactor?: number },
+      ) => {
+        expect(options).toEqual({ pitchSemitones: 3, formantFactor: 1.2 });
+        return samples.map((v) => v + (options?.pitchSemitones ?? 0)) as Float32Array;
+      },
+    );
+    const mod: SampleEditorWasmOps = { voiceChange };
+    const out = voiceChangeRange(mod, ch([1, 2, 3, 4], [5, 6, 7, 8]), 48000, 3, 1.2, {
+      startFrame: 1,
+      endFrame: 3,
+    });
+    expect(plain(out)).toEqual([
+      [1, 5, 6, 4],
+      [5, 9, 10, 8],
+    ]);
+    expect(voiceChange).toHaveBeenCalledTimes(2);
+    expect(voiceChange.mock.calls[0][1]).toBe(48000);
+  });
+
+  it('defaults to the whole file without a range', () => {
+    const mod: SampleEditorWasmOps = {
+      voiceChange: (samples) => samples.map((v) => -v) as Float32Array,
+    };
+    expect(plain(voiceChangeRange(mod, ch([1, 2]), 48000, 0, 1))).toEqual([[-1, -2]]);
+  });
+
+  it('throws when unavailable or the parameters are invalid', () => {
+    expect(() => voiceChangeRange({}, ch([1]), 48000, 0, 1)).toThrow(/unavailable/);
+    const mod: SampleEditorWasmOps = { voiceChange: (samples) => samples };
+    expect(() => voiceChangeRange(mod, ch([1]), 48000, Number.NaN, 1)).toThrow(RangeError);
+    expect(() => voiceChangeRange(mod, ch([1]), 48000, 0, 0)).toThrow(RangeError);
+    expect(() => voiceChangeRange(mod, ch([1]), 48000, 0, -1)).toThrow(RangeError);
+  });
+});
+
 describe('timeStretchRange', () => {
   it('splices a length-changing segment back (total length changes)', () => {
     // Rate 2 halves the duration: keep every other sample.
@@ -168,6 +578,81 @@ describe('timeStretchRange', () => {
   });
 });
 
+describe('noteStretchRange', () => {
+  it('passes the whole buffer with the range as the region bounds', () => {
+    const noteStretch = vi.fn(
+      (samples: Float32Array, _sampleRate?: number, _options?: Record<string, number>) => samples,
+    );
+    const mod: SampleEditorWasmOps = { noteStretch };
+    const out = noteStretchRange(mod, ch([1, 2, 3, 4, 5]), 48000, 2, {
+      startFrame: 1,
+      endFrame: 4,
+    });
+    // The detector sees the entire buffer, not just the selected region.
+    expect([...noteStretch.mock.calls[0][0]]).toEqual([1, 2, 3, 4, 5]);
+    expect(noteStretch.mock.calls[0][1]).toBe(48000);
+    expect(noteStretch.mock.calls[0][2]).toEqual({
+      onsetSample: 1,
+      offsetSample: 4,
+      stretchRatio: 2,
+    });
+    expect(plain(out)).toEqual([[1, 2, 3, 4, 5]]);
+  });
+
+  it('trims channels to the shortest result so output stays planar', () => {
+    let call = 0;
+    const mod: SampleEditorWasmOps = {
+      noteStretch: (samples) => {
+        call += 1;
+        return call === 1 ? samples.slice(0, 3) : samples.slice(0, 4);
+      },
+    };
+    const out = noteStretchRange(mod, ch([1, 2, 3, 4], [5, 6, 7, 8]), 48000, 1.5);
+    expect(plain(out)).toEqual([
+      [1, 2, 3],
+      [5, 6, 7],
+    ]);
+  });
+
+  it('throws when noteStretch is unavailable, the ratio is invalid, or the range is empty', () => {
+    expect(() => noteStretchRange({}, ch([1]), 48000, 2)).toThrow(/unavailable/);
+    const mod: SampleEditorWasmOps = { noteStretch: (samples) => samples };
+    expect(() => noteStretchRange(mod, ch([1]), 48000, 0)).toThrow(RangeError);
+    expect(() => noteStretchRange(mod, ch([1]), 48000, -1)).toThrow(RangeError);
+    expect(() =>
+      noteStretchRange(mod, ch([1, 2, 3]), 48000, 2, { startFrame: 2, endFrame: 2 }),
+    ).toThrow(RangeError);
+  });
+});
+
+describe('HPSS separation', () => {
+  it('harmonicRange delegates per channel over the range', () => {
+    const harmonic = vi.fn(
+      (samples: Float32Array, _sampleRate: number) => samples.map((v) => v * 0.5) as Float32Array,
+    );
+    const out = harmonicRange({ harmonic }, ch([2, 4, 6], [8, 10, 12]), 44100, {
+      startFrame: 1,
+      endFrame: 3,
+    });
+    expect(plain(out)).toEqual([
+      [2, 2, 3],
+      [8, 5, 6],
+    ]);
+    expect(harmonic).toHaveBeenCalledWith(expect.any(Float32Array), 44100);
+    expect(harmonic).toHaveBeenCalledTimes(2);
+  });
+
+  it('percussiveRange delegates per channel over the whole file by default', () => {
+    const percussive = vi.fn((samples: Float32Array) => samples.map((v) => -v) as Float32Array);
+    expect(plain(percussiveRange({ percussive }, ch([1, 2]), 48000))).toEqual([[-1, -2]]);
+  });
+
+  it('both throw when the separator is unavailable', () => {
+    expect(() => harmonicRange({}, ch([1]), 48000)).toThrow(/unavailable/);
+    expect(() => percussiveRange({}, ch([1]), 48000)).toThrow(/unavailable/);
+  });
+});
+
 describe('repair operations', () => {
   it('declickRange delegates with the sample rate over the range', () => {
     const masteringRepairDeclick = vi.fn(
@@ -195,5 +680,64 @@ describe('repair operations', () => {
   it('both throw when the processor is unavailable', () => {
     expect(() => declickRange({}, ch([1]), 48000)).toThrow(/unavailable/);
     expect(() => denoiseRange({}, ch([1]), 48000)).toThrow(/unavailable/);
+  });
+});
+
+describe('roomMorphChannels', () => {
+  const preset = { lengthM: 4, widthM: 3, heightM: 2.6, materialPreset: 2 };
+
+  it('processes whole channels, forwards the room options, and tail-extends', () => {
+    const roomMorph = vi.fn(
+      (samples: Float32Array, _sampleRate: number, options?: Record<string, number | boolean>) => {
+        expect(options).toEqual({
+          lengthM: 4,
+          widthM: 3,
+          heightM: 2.6,
+          materialPreset: 2,
+          wet: 0.5,
+        });
+        // Echo the input then append a two-sample "tail" so the result is longer.
+        return new Float32Array([...samples, 0, 0]);
+      },
+    );
+    const out = roomMorphChannels({ roomMorph }, ch([1, 2], [3, 4]), 48000, preset, 0.5);
+    expect(plain(out)).toEqual([
+      [1, 2, 0, 0],
+      [3, 4, 0, 0],
+    ]);
+    expect(roomMorph).toHaveBeenCalledTimes(2);
+    expect(roomMorph.mock.calls[0][1]).toBe(48000);
+  });
+
+  it('trims channels to the shortest result to stay planar', () => {
+    let call = 0;
+    const roomMorph = vi.fn((samples: Float32Array) => {
+      call += 1;
+      // Second channel comes back one sample shorter.
+      return call === 1 ? new Float32Array([...samples, 0, 0]) : new Float32Array([...samples, 0]);
+    });
+    const out = roomMorphChannels({ roomMorph }, ch([1, 2], [3, 4]), 48000, preset, 0.3);
+    expect(out.every((channel) => channel.length === 3)).toBe(true);
+  });
+
+  it('clamps the wet mix to [0, 1] and falls back to 0.35 for non-finite values', () => {
+    const seen: number[] = [];
+    const roomMorph = vi.fn(
+      (samples: Float32Array, _sr: number, options?: Record<string, number | boolean>) => {
+        seen.push(options?.wet as number);
+        return samples;
+      },
+    );
+    roomMorphChannels({ roomMorph }, ch([1]), 48000, preset, 2);
+    roomMorphChannels({ roomMorph }, ch([1]), 48000, preset, -1);
+    roomMorphChannels({ roomMorph }, ch([1]), 48000, preset, Number.NaN);
+    expect(seen).toEqual([1, 0, 0.35]);
+  });
+
+  it('throws when unavailable, the sample rate is invalid, or there are no channels', () => {
+    expect(() => roomMorphChannels({}, ch([1]), 48000, preset, 0.5)).toThrow(/unavailable/);
+    const mod: SampleEditorWasmOps = { roomMorph: (samples) => samples };
+    expect(() => roomMorphChannels(mod, ch([1]), 0, preset, 0.5)).toThrow(RangeError);
+    expect(() => roomMorphChannels(mod, [], 48000, preset, 0.5)).toThrow(RangeError);
   });
 });

@@ -86,6 +86,11 @@ export function formatBpm(bpm: number): string {
   return `${Math.round(bpm * 10) / 10}`;
 }
 
+/** Formats an integrated-loudness tag in LUFS, e.g. `-14.2 LUFS`. */
+export function formatLufs(lufs: number): string {
+  return `${Math.round(lufs * 10) / 10} LUFS`;
+}
+
 /** The unique key tags across the given assets, sorted for a dropdown. */
 export function collectKeyTags(assets: ReadonlyArray<AudioAssetMeta>): string[] {
   const keys = new Set<string>();
@@ -133,12 +138,13 @@ export function filterAssets(
 }
 
 /** Sort orders offered by the media browser. */
-export type AssetSortKey = 'name' | 'duration' | 'bpm';
+export type AssetSortKey = 'name' | 'duration' | 'bpm' | 'loudness';
 
 /**
  * Returns a sorted copy of the assets. `'name'` sorts alphabetically,
- * `'duration'` shortest-first, `'bpm'` slowest-first with untagged assets
- * last; all orders break ties by name then id, so sorting is deterministic.
+ * `'duration'` shortest-first, `'bpm'` slowest-first, `'loudness'`
+ * loudest-first (highest LUFS), all with untagged assets last; every order
+ * breaks ties by name then id, so sorting is deterministic.
  *
  * @param assets - Asset metadata to sort.
  * @param sortKey - The requested order.
@@ -160,6 +166,13 @@ export function sortAssets(
         const bpmA = a.tags?.bpm ?? Number.POSITIVE_INFINITY;
         const bpmB = b.tags?.bpm ?? Number.POSITIVE_INFINITY;
         return bpmA - bpmB || byName(a, b);
+      });
+      break;
+    case 'loudness':
+      sorted.sort((a, b) => {
+        const lufsA = a.tags?.lufs ?? Number.NEGATIVE_INFINITY;
+        const lufsB = b.tags?.lufs ?? Number.NEGATIVE_INFINITY;
+        return lufsB - lufsA || byName(a, b);
       });
       break;
     default:

@@ -7,6 +7,7 @@ import {
   formatBpm,
   formatChannels,
   formatDuration,
+  formatLufs,
   formatSampleRate,
   parseBpmRange,
   referencedAssetIds,
@@ -78,6 +79,8 @@ describe('duration and display formatting', () => {
     expect(formatSampleRate(44100)).toBe('44.1 kHz');
     expect(formatBpm(120)).toBe('120');
     expect(formatBpm(97.46)).toBe('97.5');
+    expect(formatLufs(-14)).toBe('-14 LUFS');
+    expect(formatLufs(-14.23)).toBe('-14.2 LUFS');
   });
 });
 
@@ -132,9 +135,9 @@ describe('filterAssets', () => {
 
 describe('sortAssets', () => {
   const assets = [
-    meta({ id: 'b', name: 'Beta', numFrames: 24000, tags: { bpm: 140 } }),
+    meta({ id: 'b', name: 'Beta', numFrames: 24000, tags: { bpm: 140, lufs: -20 } }),
     meta({ id: 'a', name: 'Alpha', numFrames: 96000 }),
-    meta({ id: 'c', name: 'Gamma', numFrames: 48000, tags: { bpm: 90 } }),
+    meta({ id: 'c', name: 'Gamma', numFrames: 48000, tags: { bpm: 90, lufs: -8 } }),
   ];
 
   it('sorts by name without mutating the input', () => {
@@ -151,6 +154,10 @@ describe('sortAssets', () => {
     expect(sortAssets(assets, 'bpm').map((a) => a.id)).toEqual(['c', 'b', 'a']);
   });
 
+  it('sorts by loudness loudest-first with untagged assets last', () => {
+    expect(sortAssets(assets, 'loudness').map((a) => a.id)).toEqual(['c', 'b', 'a']);
+  });
+
   it('breaks ties by name then id', () => {
     const tied = [
       meta({ id: 'y', name: 'Same', numFrames: 100 }),
@@ -158,6 +165,7 @@ describe('sortAssets', () => {
     ];
     expect(sortAssets(tied, 'duration').map((a) => a.id)).toEqual(['x', 'y']);
     expect(sortAssets(tied, 'bpm').map((a) => a.id)).toEqual(['x', 'y']);
+    expect(sortAssets(tied, 'loudness').map((a) => a.id)).toEqual(['x', 'y']);
   });
 });
 

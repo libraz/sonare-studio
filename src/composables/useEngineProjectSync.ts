@@ -2,10 +2,15 @@ import { ref, type ShallowRef, watch } from 'vue';
 import type { useTransport } from '@/composables/useTransport';
 import type { AutomationSync } from '@/engine/automation-sync';
 import type { EngineHandle } from '@/engine/engine';
-import { busMeterTargetId, MAX_BUS_METER_TARGETS } from '@/engine/meter-targets';
+import {
+  busMeterTargetId,
+  MASTER_METER_TARGET_ID,
+  MAX_BUS_METER_TARGETS,
+} from '@/engine/meter-targets';
 import type { MeterBridge, MeterSource } from '@/engine/meters';
 import type { MidiSync } from '@/engine/midi-sync';
 import type { MixerSync } from '@/engine/mixer-sync';
+import type { ScopeBridge, ScopeSource } from '@/engine/scope';
 import type { StripSync } from '@/engine/strip-sync';
 import type { TransportSync } from '@/engine/transport-sync';
 import { describeError } from '@/lib/errors';
@@ -20,6 +25,7 @@ type Transport = ReturnType<typeof useTransport>;
 
 export interface EngineProjectSyncOptions {
   bridge: ShallowRef<MeterBridge | null>;
+  scope: ShallowRef<ScopeBridge | null>;
   errorMessage: { value: string };
   handle: ShallowRef<EngineHandle | null>;
   transport: Transport;
@@ -43,7 +49,7 @@ function clipScheduleKey(clip: EditorClip): string {
 }
 
 export function useEngineProjectSync(options: EngineProjectSyncOptions) {
-  const { bridge, errorMessage, handle, transport } = options;
+  const { bridge, scope, errorMessage, handle, transport } = options;
   const store = useProjectStore();
 
   let scheduledClips: ScheduledProjectClip[] = [];
@@ -120,6 +126,32 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     const busIndex = busNumber - 1;
     if (busIndex < 0 || busIndex >= MAX_BUS_METER_TARGETS) return null;
     return b.forTarget(busMeterTargetId(busIndex));
+  }
+
+  /** Master-output scope source (spectrum + goniometer), or null pre-engine. */
+  function masterScopeSource(): ScopeSource | null {
+    return scope.value?.forTarget(MASTER_METER_TARGET_ID) ?? null;
+  }
+
+  /** Per-track scope source, addressed by the same lane id the meters use. */
+  function trackScopeSource(trackId: number): ScopeSource | null {
+    const s = scope.value;
+    const sync = mixerSync;
+    if (!s || !sync) return null;
+    const laneIndex = sync.laneTrackIds().indexOf(trackId);
+    return laneIndex >= 0 ? s.forTarget(laneIndex + 1) : null;
+  }
+
+  /** Per-bus scope source, addressed by the same bus id the meters use. */
+  function busScopeSource(storeBusId: string): ScopeSource | null {
+    const s = scope.value;
+    const sync = stripSync;
+    if (!s || !sync) return null;
+    const busNumber = sync.busIdFor(storeBusId);
+    if (busNumber === undefined) return null;
+    const busIndex = busNumber - 1;
+    if (busIndex < 0 || busIndex >= MAX_BUS_METER_TARGETS) return null;
+    return s.forTarget(busMeterTargetId(busIndex));
   }
 
   function effectiveTempoSegments(): { startPpq: number; bpm: number; endBpm?: number }[] {
@@ -243,6 +275,9 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     applyNow,
     applyToEngine,
     busMeterSource,
+    busScopeSource,
+    masterScopeSource,
+    trackScopeSource,
     disposeEngineProjectSync,
     effectiveTempoSegments,
     hasMidiSync: () => midiSync !== null,

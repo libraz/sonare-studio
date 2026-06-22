@@ -1,7 +1,15 @@
+import { ensureWasm } from '@/lib/wasm';
+import { loadAsset } from '@/persistence/assets';
+import { type AudioSectionAnalyzer, analyzeAudioClipSections } from '../audio-sections';
 import { allocateMarkerId, allocateSectionId, getProject, useProjectStore } from '../store';
-import { DEFAULT_SECTION_COLOR, type TempoSegment, type TimeSignatureSegment } from '../types';
+import {
+  clipKind,
+  DEFAULT_SECTION_COLOR,
+  type TempoSegment,
+  type TimeSignatureSegment,
+} from '../types';
 import { execute } from './history';
-import { validatePpq } from './utils';
+import { requireClip, validatePpq } from './utils';
 
 /**
  * Adds or updates a timeline marker as one undoable edit. Markers are
@@ -93,6 +101,36 @@ export function setSections(sections: ReadonlyArray<SectionInput>): void {
       .sort((a, b) => a.startPpq - b.startPpq || a.endPpq - b.endPpq || a.id - b.id);
     store.refresh();
   });
+}
+
+/**
+ * Detects song sections from an audio clip with libsonare's `analyzeSections`
+ * and merges them into the section list (one undoable edit), replacing any
+ * existing sections that start within the clip's region so re-running is
+ * idempotent. Resolves to 0 when the analyzer is unavailable or nothing is
+ * detected.
+ *
+ * @param clipId Editor id of an audio clip.
+ * @returns The number of sections detected in the clip.
+ */
+export async function detectSectionsFromAudioClip(clipId: number): Promise<number> {
+  const store = useProjectStore();
+  const clip = requireClip(store, clipId);
+  if (clipKind(clip) !== 'audio') {
+    throw new RangeError(`Clip ${clipId} is not an audio clip`);
+  }
+  const wasm = (await ensureWasm()) as unknown as { analyzeSections?: AudioSectionAnalyzer };
+  if (typeof wasm.analyzeSections !== 'function') return 0;
+  const detected = await analyzeAudioClipSections(clip, store.tempoBpm, {
+    loadAudioAsset: loadAsset,
+    analyzeSections: wasm.analyzeSections,
+  });
+  const clipEnd = clip.startPpq + clip.lengthPpq;
+  const kept = store.sections.filter(
+    (section) => section.startPpq < clip.startPpq || section.startPpq >= clipEnd,
+  );
+  setSections([...kept, ...detected]);
+  return detected.length;
 }
 
 /**

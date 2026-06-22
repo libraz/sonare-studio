@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   downmixToMono,
   onsetSecondsToFrames,
+  silenceSplitMarkers,
   sliceRangeAt,
   snapFrameToOnsets,
 } from '@/ui/sample-editor/onsets';
@@ -71,5 +72,26 @@ describe('sliceRangeAt', () => {
   it('returns null before the first onset or when the slice would be empty', () => {
     expect(sliceRangeAt(50, onsets, 2000)).toBeNull();
     expect(sliceRangeAt(900, [900], 900)).toBeNull();
+  });
+});
+
+describe('silenceSplitMarkers', () => {
+  it('keeps the interior cut boundaries of the non-silent intervals, sorted', () => {
+    // Two non-silent regions [0, 500] and [900, 2000]; the cuts are 500 and 900.
+    const intervals = new Int32Array([0, 500, 900, 2000]);
+    expect(silenceSplitMarkers(intervals, 2000)).toEqual([500, 900]);
+  });
+
+  it('drops boundaries at 0, at/after the end, non-finite, and dedupes', () => {
+    expect(silenceSplitMarkers([0, 0, 100, 100, 2000, Number.NaN, 2500], 2000)).toEqual([100]);
+  });
+
+  it('rounds fractional boundaries to whole frames', () => {
+    expect(silenceSplitMarkers([10.4, 10.6], 2000)).toEqual([10, 11]);
+  });
+
+  it('returns an empty list for no interior cuts', () => {
+    expect(silenceSplitMarkers([0, 2000], 2000)).toEqual([]);
+    expect(silenceSplitMarkers([], 2000)).toEqual([]);
   });
 });

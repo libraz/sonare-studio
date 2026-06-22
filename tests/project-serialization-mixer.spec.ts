@@ -6,6 +6,7 @@ import {
   addVcaGroup,
   clearHistory,
   setSend,
+  setStripChannelDelaySamples,
   setStripEq,
   setStripGain,
   setStripOutputBus,
@@ -118,6 +119,19 @@ describe('project serialization with instruments and mixer (schema v3)', () => {
     await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
     expect(serializeProject()).toEqual(doc);
     expect(store.tracks[0].mixer?.outputBusId).toBe(busId);
+  });
+
+  it('round-trips a pre-fader send and a channel alignment delay', async () => {
+    const trackId = store.tracks[0].id;
+    const busId = addMixerBus({ name: 'FX' });
+    setSend(trackId, busId, { levelDb: -6, enabled: true, timing: 'preFader' });
+    setStripChannelDelaySamples(trackId, 192);
+    const doc = serializeProject();
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    expect(serializeProject()).toEqual(doc);
+    expect(store.tracks[0].mixer?.sends[0].timing).toBe('preFader');
+    expect(store.tracks[0].mixer?.channelDelaySamples).toBe(192);
   });
 
   it('round-trips VCA groups and the per-track solo-safe / VCA assignment', async () => {

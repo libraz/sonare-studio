@@ -119,7 +119,7 @@ function onKeydown(event: KeyboardEvent): void {
   align-items: center;
   justify-content: center;
   padding: 1.5rem;
-  background: rgba(17, 24, 39, 0.28);
+  background: var(--scrim);
   -webkit-backdrop-filter: blur(3px);
   backdrop-filter: blur(3px);
 }

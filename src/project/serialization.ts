@@ -18,6 +18,7 @@ import {
 } from './annotations';
 import type { AutomationLaneState, AutomationParam, AutomationPoint } from './automation';
 import type { EditorChordSymbol } from './chords';
+import { clearMixerSnapshots } from './command/mixer-snapshots';
 import { clearHistory } from './commands';
 import { cloneInstrument, type TrackInstrument } from './instrument';
 import { cloneCcLanes } from './midi-cc';
@@ -510,4 +511,6 @@ export async function loadProjectDocument(doc: ProjectDocument): Promise<void> {
   const store = useProjectStore();
   await store.loadDocument(doc);
   clearHistory();
+  // Session-only A/B mixer snapshots belong to the previous project.
+  clearMixerSnapshots();
 }

@@ -1,0 +1,129 @@
+<script setup lang="ts">
+import { computed } from 'vue';
+import {
+  activeMixerSnapshotSlot,
+  type MixerSnapshotSlot,
+  mixerSnapshotFilled,
+  recallMixerSnapshot,
+  saveMixerSnapshot,
+} from '@/project/commands';
+import { formatMessage, useI18n } from '@/ui/i18n';
+
+/**
+ * Mixer A/B snapshot controls for the mixer toolbar: two slots (A, B) that
+ * each store the current audible mix and recall it later. The letter button
+ * recalls (disabled until the slot is stored, highlighted when it is the
+ * active slot); the adjacent store button captures the current mix. Recall is
+ * undoable, so an A/B switch can be reverted.
+ */
+
+const { t } = useI18n();
+
+const SLOTS: readonly MixerSnapshotSlot[] = ['A', 'B'];
+
+const active = computed(() => activeMixerSnapshotSlot());
+const filled = computed<Record<MixerSnapshotSlot, boolean>>(() => ({
+  A: mixerSnapshotFilled('A'),
+  B: mixerSnapshotFilled('B'),
+}));
+
+function recallTitle(slot: MixerSnapshotSlot): string {
+  const key = filled.value[slot]
+    ? t.value.shell.mixer.snapshots.recall
+    : t.value.shell.mixer.snapshots.empty;
+  return formatMessage(key, { slot });
+}
+
+function storeTitle(slot: MixerSnapshotSlot): string {
+  return formatMessage(t.value.shell.mixer.snapshots.store, { slot });
+}
+</script>
+
+<template>
+  <div class="snapshots" role="group" :aria-label="t.shell.mixer.snapshots.region">
+    <span class="snapshots-label">{{ t.shell.mixer.snapshots.label }}</span>
+    <span v-for="slot in SLOTS" :key="slot" class="snapshot-slot">
+      <button
+        type="button"
+        class="snapshot-recall"
+        :class="{ active: active === slot, filled: filled[slot] }"
+        :disabled="!filled[slot]"
+        :title="recallTitle(slot)"
+        :aria-label="recallTitle(slot)"
+        @click="recallMixerSnapshot(slot)"
+      >
+        {{ slot }}
+      </button>
+      <button
+        type="button"
+        class="snapshot-store"
+        :title="storeTitle(slot)"
+        :aria-label="storeTitle(slot)"
+        @click="saveMixerSnapshot(slot)"
+      >
+        ⤓
+      </button>
+    </span>
+  </div>
+</template>
+
+<style scoped>
+.snapshots {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+.snapshots-label {
+  font: var(--fw-bold) 8px var(--font-sans);
+  letter-spacing: 0.06em;
+  color: var(--text-4);
+  user-select: none;
+}
+
+.snapshot-slot {
+  display: inline-flex;
+  align-items: center;
+}
+
+.snapshot-recall,
+.snapshot-store {
+  font: var(--fw-semibold) 10px var(--font-sans);
+  color: var(--text-2);
+  background: var(--surface-3);
+  padding: 2px var(--sp-2);
+  cursor: pointer;
+  box-shadow: var(--control-lift);
+  transition: background var(--dur-1) var(--ease-out);
+}
+
+.snapshot-recall {
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  min-width: 16px;
+}
+
+.snapshot-store {
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  color: var(--text-4);
+}
+
+.snapshot-recall:hover:not(:disabled),
+.snapshot-store:hover {
+  background: var(--surface-4);
+  box-shadow: var(--control-lift-hover);
+}
+
+.snapshot-recall:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.snapshot-recall.filled {
+  color: var(--text-1);
+}
+
+.snapshot-recall.active {
+  color: var(--surface-0);
+  background: var(--accent);
+}
+</style>

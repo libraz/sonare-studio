@@ -53,6 +53,8 @@ export interface AudioAssetTags {
   bpm?: number;
   /** Detected musical key (display string, e.g. "Am"). */
   key?: string;
+  /** Integrated loudness in LUFS (EBU R128). */
+  lufs?: number;
 }
 
 /** Metadata sidecar describing one stored audio asset. */

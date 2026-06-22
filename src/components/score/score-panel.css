@@ -141,14 +141,14 @@
 
 .score-body :deep(.score-note-playing),
 .score-body :deep(.score-note-playing *) {
-  fill: #2563eb;
-  color: #2563eb;
-  stroke: #2563eb;
+  fill: var(--accent);
+  color: var(--accent);
+  stroke: var(--accent);
 }
 
 .score-toolbar button.active {
-  background: #2563eb;
-  color: #fff;
+  background: var(--accent);
+  color: var(--accent-text);
 }
 
 .annotation-palette {
@@ -171,8 +171,8 @@
 }
 
 .annotation-palette button.active {
-  background: #2563eb;
-  color: #fff;
+  background: var(--accent);
+  color: var(--accent-text);
 }
 
 .palette-dynamics {
@@ -189,7 +189,7 @@
   align-items: center;
   justify-content: center;
   font-size: var(--fs-md);
-  color: #4b5563;
+  color: var(--text-3);
   pointer-events: none;
 }
 

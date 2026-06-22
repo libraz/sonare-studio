@@ -72,6 +72,16 @@ interface FakeAnnotationChord {
   modulation_boundary: boolean;
 }
 
+/** One stored assist sidecar, mirroring the wasm `ProjectAssistSidecar`. */
+interface FakeSidecar {
+  moduleId: string;
+  schemaVersion: number;
+  targetTrackId: number;
+  regionStartPpq: number;
+  regionEndPpq: number;
+  payload: Uint8Array;
+}
+
 interface FakeState {
   tempoSegments: Array<{ startPpq: number; bpm: number; endBpm: number }>;
   timeSignatures: Array<{ startPpq: number; numerator: number; denominator: number }>;
@@ -82,6 +92,7 @@ interface FakeState {
   chords: FakeAnnotationChord[];
   sourceCount: number;
   sources: Map<number, FakeSource>;
+  assistSidecars: FakeSidecar[];
 }
 
 /** Packs a UMP MIDI 1.0 channel-voice word with the real binding layout. */
@@ -114,6 +125,7 @@ function cloneState(state: FakeState): FakeState {
     chords: state.chords.map((c) => ({ ...c, extensions: [...c.extensions] })),
     sourceCount: state.sourceCount,
     sources: new Map([...state.sources].map(([id, source]) => [id, { ...source }])),
+    assistSidecars: state.assistSidecars.map((s) => ({ ...s, payload: s.payload.slice() })),
   };
 }
 
@@ -130,6 +142,7 @@ export class FakeProject {
     chords: [],
     sourceCount: 0,
     sources: new Map(),
+    assistSidecars: [],
   };
   private history: FakeState[] = [];
   private future: FakeState[] = [];
@@ -237,6 +250,46 @@ export class FakeProject {
         endBpm: s.endBpm ?? 0,
       }));
     });
+  }
+
+  setAssistSidecar(
+    moduleId: string,
+    schemaVersion: number,
+    targetTrackId: number,
+    regionStartPpq: number,
+    regionEndPpq: number,
+    payload: Uint8Array,
+  ): void {
+    this.edit(() => {
+      // Keyed by module id + target scope (track + region): same key updates.
+      const entry: FakeSidecar = {
+        moduleId,
+        schemaVersion,
+        targetTrackId,
+        regionStartPpq,
+        regionEndPpq,
+        payload: payload.slice(),
+      };
+      const index = this.state.assistSidecars.findIndex(
+        (s) =>
+          s.moduleId === moduleId &&
+          s.targetTrackId === targetTrackId &&
+          s.regionStartPpq === regionStartPpq &&
+          s.regionEndPpq === regionEndPpq,
+      );
+      if (index >= 0) this.state.assistSidecars[index] = entry;
+      else this.state.assistSidecars.push(entry);
+    });
+  }
+
+  assistSidecarCount(): number {
+    return this.state.assistSidecars.length;
+  }
+
+  getAssistSidecar(index: number): FakeSidecar {
+    const sidecar = this.state.assistSidecars[index];
+    if (!sidecar) throw new RangeError(`Unknown assist sidecar index ${index}`);
+    return { ...sidecar, payload: sidecar.payload.slice() };
   }
 
   setTimeSignatures(

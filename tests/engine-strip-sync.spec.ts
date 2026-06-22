@@ -323,6 +323,37 @@ describe('createStripSync', () => {
     expect(engine.setBusGain).not.toHaveBeenCalled();
   });
 
+  it('marks a pre-fader send explicitly and leaves post-fader sends bare', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const track = makeTrack(
+      1,
+      makeStrip({
+        sends: [
+          { busId: 'A', levelDb: -6, enabled: true, timing: 'preFader' },
+          { busId: 'B', levelDb: -12, enabled: true, timing: 'postFader' },
+        ],
+      }),
+    );
+
+    sync.sync([track], makeMixer({ buses: [makeBus('A'), makeBus('B')] }));
+    // Pre-fader carries sendTiming; post-fader (the engine default) stays absent.
+    expect(engine.setSends).toHaveBeenCalledWith(1, [
+      { busId: 1, levelDb: -6, enabled: true, sendTiming: 'preFader' },
+      { busId: 2, levelDb: -12, enabled: true },
+    ]);
+    clearCalls(engine);
+
+    // Flipping the timing re-sends the track.
+    const flipped = makeTrack(
+      1,
+      makeStrip({ sends: [{ busId: 'A', levelDb: -6, enabled: true }] }),
+    );
+    sync.sync([flipped], makeMixer({ buses: [makeBus('A'), makeBus('B')] }));
+    expect(engine.setSends).toHaveBeenCalledTimes(1);
+    expect(engine.setSends).toHaveBeenCalledWith(1, [{ busId: 1, levelDb: -6, enabled: true }]);
+  });
+
   it('prunes sends to a removed bus before re-declaring and never reuses its number', () => {
     const { handle, engine } = makeHandle();
     const sync = createStripSync(handle);

@@ -1,3 +1,4 @@
+import type { SendTiming } from '@/wasm/index.js';
 import {
   cloneInstrument,
   instrumentEquals,
@@ -5,15 +6,25 @@ import {
   validateTrackInstrument,
 } from '../instrument';
 import {
+  cloneMixerState,
   cloneStrip,
   createDefaultStrip,
+  DEFAULT_PAN_LAW,
+  DEFAULT_PAN_MODE,
   type InsertSlot,
+  MAX_CHANNEL_DELAY_SAMPLES,
   MAX_MIXER_BUSES,
   MAX_STRIP_GAIN_DB,
   MAX_VCA_GROUPS,
   MIN_STRIP_GAIN_DB,
   type MixerStrip,
+  PAN_LAW_IDS,
+  PAN_MODE_IDS,
+  type PanLawId,
+  type PanModeId,
+  type ProjectMixerState,
   type StripEq,
+  type StripSend,
 } from '../mixer';
 import { useProjectStore } from '../store';
 import type { EditorTrack } from '../types';
@@ -338,17 +349,18 @@ export function setStripEq(
 
 /**
  * Adds, updates or removes a send from a strip to a bus as one undoable edit.
- * Track sends feed the engine's realtime bus lanes (post-fader); master sends
- * have no engine routing and stay UI-only.
+ * Track sends feed the engine's realtime bus lanes; master sends have no engine
+ * routing and stay UI-only. The send tap point (pre/post-fader) is preserved
+ * across level/enabled updates unless a new `timing` is supplied.
  *
  * @param target Track id or 'master'.
  * @param busId Destination bus id (must exist).
- * @param send New level/enabled state, or null to remove the send.
+ * @param send New level/enabled/timing state, or null to remove the send.
  */
 export function setSend(
   target: MixerStripTarget,
   busId: string,
-  send: { levelDb: number; enabled?: boolean } | null,
+  send: { levelDb: number; enabled?: boolean; timing?: SendTiming } | null,
 ): void {
   const store = useProjectStore();
   const strip = currentStrip(store, target);
@@ -364,13 +376,134 @@ export function setSend(
     if (send === null) {
       if (existing >= 0) next.sends = next.sends.filter((s) => s.busId !== busId);
     } else {
-      const entry = { busId, levelDb: send.levelDb, enabled: send.enabled ?? true };
+      const prevTiming = existing >= 0 ? next.sends[existing].timing : undefined;
+      const timing = send.timing ?? prevTiming;
+      const entry: StripSend = { busId, levelDb: send.levelDb, enabled: send.enabled ?? true };
+      // Keep the field absent for the default (post-fader) so neutral strips stay neutral.
+      if (timing !== undefined && timing !== 'postFader') entry.timing = timing;
       if (existing >= 0) next.sends[existing] = entry;
       else next.sends = [...next.sends, entry];
     }
     writeStrip(store, target, next);
     store.refresh();
   });
+}
+
+/**
+ * Sets a track strip's channel alignment delay in whole samples as one
+ * undoable edit. Mirrored to the engine strip panner
+ * (setTrackStripChannelDelaySamples) and folded into plugin-delay
+ * compensation. Track strips only (the master/bus lanes have no alignment
+ * delay stage).
+ *
+ * @param trackId Id of the track.
+ * @param samples Delay in samples (integer in [0, MAX_CHANNEL_DELAY_SAMPLES]).
+ */
+export function setStripChannelDelaySamples(trackId: number, samples: number): void {
+  const store = useProjectStore();
+  const strip = currentStrip(store, trackId);
+  if (!Number.isInteger(samples) || samples < 0 || samples > MAX_CHANNEL_DELAY_SAMPLES) {
+    throw new RangeError(
+      `Channel delay must be an integer in [0, ${MAX_CHANNEL_DELAY_SAMPLES}] samples, got ${samples}`,
+    );
+  }
+  if ((strip.channelDelaySamples ?? 0) === samples) return;
+  executeApp(() => {
+    const next = cloneStrip(strip);
+    // Keep the field absent at 0 so neutral strips stay neutral.
+    if (samples === 0) delete next.channelDelaySamples;
+    else next.channelDelaySamples = samples;
+    writeStrip(store, trackId, next);
+    store.refresh();
+  });
+}
+
+/**
+ * Sets a track strip's pan law as one undoable edit. Mirrored to the engine
+ * strip panner (setTrackStripPanLaw). Track strips only (the master/bus lanes
+ * have no strip panner).
+ *
+ * @param trackId Id of the track.
+ * @param law New pan law (one of {@link PAN_LAW_IDS}).
+ */
+export function setStripPanLaw(trackId: number, law: PanLawId): void {
+  const store = useProjectStore();
+  const strip = currentStrip(store, trackId);
+  if (!PAN_LAW_IDS.includes(law)) {
+    throw new RangeError(`Unknown pan law: ${law}`);
+  }
+  if ((strip.panLaw ?? DEFAULT_PAN_LAW) === law) return;
+  executeApp(() => {
+    const next = cloneStrip(strip);
+    // Keep the field absent at the default so neutral strips stay neutral.
+    if (law === DEFAULT_PAN_LAW) delete next.panLaw;
+    else next.panLaw = law;
+    writeStrip(store, trackId, next);
+    store.refresh();
+  });
+}
+
+/**
+ * Sets a track strip's pan mode as one undoable edit. Mirrored to the engine
+ * strip panner (setTrackStripPanMode). Track strips only.
+ *
+ * @param trackId Id of the track.
+ * @param mode New pan mode (one of {@link PAN_MODE_IDS}).
+ */
+export function setStripPanMode(trackId: number, mode: PanModeId): void {
+  const store = useProjectStore();
+  const strip = currentStrip(store, trackId);
+  if (!PAN_MODE_IDS.includes(mode)) {
+    throw new RangeError(`Unknown pan mode: ${mode}`);
+  }
+  if ((strip.panMode ?? DEFAULT_PAN_MODE) === mode) return;
+  executeApp(() => {
+    const next = cloneStrip(strip);
+    // Keep the field absent at the default so neutral strips stay neutral.
+    if (mode === DEFAULT_PAN_MODE) delete next.panMode;
+    else next.panMode = mode;
+    writeStrip(store, trackId, next);
+    store.refresh();
+  });
+}
+
+/**
+ * Sets a track strip's independent left/right pan positions (used in 'dualPan'
+ * mode) as one undoable edit. Mirrored to the engine strip panner
+ * (setTrackStripDualPan). Track strips only.
+ *
+ * @param trackId Id of the track.
+ * @param left New left-channel pan in [-1, 1].
+ * @param right New right-channel pan in [-1, 1].
+ * @param options Gesture coalescing for slider drags.
+ */
+export function setStripDualPan(
+  trackId: number,
+  left: number,
+  right: number,
+  options?: CommandGestureOptions,
+): void {
+  const store = useProjectStore();
+  const strip = currentStrip(store, trackId);
+  if (!Number.isFinite(left) || left < -1 || left > 1) {
+    throw new RangeError(`Dual-pan left must be in [-1, 1], got ${left}`);
+  }
+  if (!Number.isFinite(right) || right < -1 || right > 1) {
+    throw new RangeError(`Dual-pan right must be in [-1, 1], got ${right}`);
+  }
+  const key = `strip-dual-pan:${trackId}`;
+  if (strip.dualPan?.left === left && strip.dualPan?.right === right && !hasPendingGesture(key)) {
+    return;
+  }
+  executeApp(
+    () => {
+      const next = cloneStrip(strip);
+      next.dualPan = { left, right };
+      writeStrip(store, trackId, next);
+      store.refresh();
+    },
+    { key, commit: options?.commit ?? true },
+  );
 }
 
 /**
@@ -676,6 +809,149 @@ export function setTrackVca(trackId: number, groupId: string | null): void {
       else next.vcaId = groupId;
       return next;
     });
+    store.refresh();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Mixer A/B snapshots (session-only capture/restore of the audible mix)
+// ---------------------------------------------------------------------------
+
+/** One track's captured mix state within a {@link MixerSnapshot}. */
+export interface MixerSnapshotTrack {
+  /** Track id the entry restores onto (matched by id; missing tracks skipped). */
+  id: number;
+  /** Captured channel strip (gain/pan/inserts/EQ/sends/output routing). */
+  mixer: MixerStrip;
+  /** Captured mute flag. */
+  mute: boolean;
+  /** Captured solo flag. */
+  solo: boolean;
+  /** Captured solo-safe flag (omitted when not solo-safe). */
+  soloSafe?: boolean;
+  /** Captured VCA group membership (omitted when unassigned). */
+  vcaId?: string;
+}
+
+/**
+ * A snapshot of the audible mixer state for A/B comparison: the project mixer
+ * state (master strip, buses, VCA groups, mastering chain) plus each track's
+ * strip and mix flags. Session-only — not part of the persisted project.
+ */
+export interface MixerSnapshot {
+  /** Project mixer state (master, buses, VCA groups, mastering chain). */
+  mixer: ProjectMixerState;
+  /** Per-track captured strip and mix flags, in capture order. */
+  tracks: MixerSnapshotTrack[];
+}
+
+/**
+ * Builds a snapshot from raw mixer state and tracks (pure; exported for
+ * tests). All nested data is deep-copied so the snapshot is detached from the
+ * live store.
+ *
+ * @param mixer Project mixer state to capture.
+ * @param tracks Tracks whose strips and mix flags to capture.
+ * @returns A detached snapshot.
+ */
+export function buildMixerSnapshot(
+  mixer: ProjectMixerState,
+  tracks: ReadonlyArray<EditorTrack>,
+): MixerSnapshot {
+  return {
+    mixer: cloneMixerState(mixer),
+    tracks: tracks.map((track) => {
+      const entry: MixerSnapshotTrack = {
+        id: track.id,
+        mixer: cloneStrip(track.mixer ?? createDefaultStrip()),
+        mute: track.mute,
+        solo: track.solo,
+      };
+      if (track.soloSafe !== undefined) entry.soloSafe = track.soloSafe;
+      if (track.vcaId !== undefined) entry.vcaId = track.vcaId;
+      return entry;
+    }),
+  };
+}
+
+/**
+ * Restores a track's send routing against a valid bus-id set: drops sends to
+ * buses that no longer exist and clears an output-bus that is gone (routing it
+ * back to the master mix), so the restored strip never references a missing
+ * bus (which the engine would reject).
+ */
+function sanitizeStripRouting(strip: MixerStrip, validBusIds: ReadonlySet<string>): MixerStrip {
+  const next = cloneStrip(strip);
+  next.sends = next.sends.filter((send) => validBusIds.has(send.busId));
+  if (next.outputBusId !== undefined && !validBusIds.has(next.outputBusId)) {
+    delete next.outputBusId;
+  }
+  return next;
+}
+
+/**
+ * Computes the store state to apply when restoring a snapshot (pure; exported
+ * for tests). Restores the project mixer state wholesale and, for each current
+ * track also present in the snapshot, its captured strip and mix flags. Tracks
+ * absent from the snapshot keep their current strip and flags. Every track's
+ * send routing is sanitized against the restored bus set, and VCA membership
+ * against the restored VCA groups, so the result is always engine-valid.
+ *
+ * @param snapshot The snapshot to restore.
+ * @param currentTracks The tracks currently in the store.
+ * @returns The mixer state and tracks to assign back to the store.
+ */
+export function mergeMixerSnapshot(
+  snapshot: MixerSnapshot,
+  currentTracks: ReadonlyArray<EditorTrack>,
+): { mixer: ProjectMixerState; tracks: EditorTrack[] } {
+  const mixer = cloneMixerState(snapshot.mixer);
+  const validBusIds = new Set(mixer.buses.map((bus) => bus.id));
+  const validVcaIds = new Set((mixer.vcaGroups ?? []).map((group) => group.id));
+  const byId = new Map(snapshot.tracks.map((entry) => [entry.id, entry]));
+  const tracks = currentTracks.map((track) => {
+    const entry = byId.get(track.id);
+    const next: EditorTrack = { ...track };
+    if (entry) {
+      next.mixer = entry.mixer;
+      next.mute = entry.mute;
+      next.solo = entry.solo;
+      if (entry.soloSafe !== undefined) next.soloSafe = entry.soloSafe;
+      else delete next.soloSafe;
+      if (entry.vcaId !== undefined) next.vcaId = entry.vcaId;
+      else delete next.vcaId;
+    }
+    if (next.mixer) next.mixer = sanitizeStripRouting(next.mixer, validBusIds);
+    if (next.vcaId !== undefined && !validVcaIds.has(next.vcaId)) delete next.vcaId;
+    return next;
+  });
+  return { mixer, tracks };
+}
+
+/**
+ * Captures the current mixer state as a snapshot for A/B comparison.
+ *
+ * @returns A detached snapshot of the live mixer state.
+ */
+export function captureMixerSnapshot(): MixerSnapshot {
+  const store = useProjectStore();
+  return buildMixerSnapshot(store.mixer, store.tracks);
+}
+
+/**
+ * Restores a previously captured mixer snapshot as one undoable edit. The
+ * audible mix (faders/pan/inserts/EQ/sends/buses/VCA/mute/solo) reverts to the
+ * snapshot for tracks and buses that still exist; the engine resyncs from the
+ * store mutation. Tracks added since the snapshot keep their settings.
+ *
+ * @param snapshot The snapshot to restore.
+ */
+export function applyMixerSnapshot(snapshot: MixerSnapshot): void {
+  const store = useProjectStore();
+  executeApp(() => {
+    const { mixer, tracks } = mergeMixerSnapshot(snapshot, store.tracks);
+    store.mixer = mixer;
+    store.tracks = tracks;
     store.refresh();
   });
 }

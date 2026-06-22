@@ -55,6 +55,28 @@ export function onsetSecondsToFrames(
 }
 
 /**
+ * Turns silence-split intervals (a flat [start0, end0, start1, end1, …] list of
+ * sample positions bounding the non-silent regions) into interior cut markers:
+ * every distinct boundary strictly inside (0, totalFrames), sorted ascending.
+ * Boundaries at 0 or at/after the end are dropped (they need no cut), as are
+ * non-finite and out-of-range entries. The markers feed the same overlay as the
+ * transient onsets, so a click picks the slice (silent or not) between two cuts.
+ *
+ * @param boundaries Flat interval bounds in samples (the detector's output).
+ * @param totalFrames Total frames; only cuts inside (0, totalFrames) are kept.
+ * @returns Cut positions in ascending order.
+ */
+export function silenceSplitMarkers(boundaries: ArrayLike<number>, totalFrames: number): number[] {
+  const frames = new Set<number>();
+  for (let i = 0; i < boundaries.length; i++) {
+    const frame = boundaries[i];
+    if (!Number.isFinite(frame) || frame <= 0 || frame >= totalFrames) continue;
+    frames.add(Math.round(frame));
+  }
+  return [...frames].sort((a, b) => a - b);
+}
+
+/**
  * Snaps a frame to the nearest onset within `tolerance` frames, returning the
  * frame unchanged when none is close enough. On a tie the earlier onset wins.
  *

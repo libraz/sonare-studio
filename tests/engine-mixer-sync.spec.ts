@@ -28,6 +28,10 @@ function makeHandle(): {
     setStripGain: ReturnType<typeof vi.fn>;
     setStripPan: ReturnType<typeof vi.fn>;
     setSoloMute: ReturnType<typeof vi.fn>;
+    setTrackStripChannelDelaySamples: ReturnType<typeof vi.fn>;
+    setTrackStripPanLaw: ReturnType<typeof vi.fn>;
+    setTrackStripPanMode: ReturnType<typeof vi.fn>;
+    setTrackStripDualPan: ReturnType<typeof vi.fn>;
   };
 } {
   const engine = {
@@ -35,6 +39,10 @@ function makeHandle(): {
     setStripGain: vi.fn(),
     setStripPan: vi.fn(),
     setSoloMute: vi.fn(),
+    setTrackStripChannelDelaySamples: vi.fn(),
+    setTrackStripPanLaw: vi.fn(),
+    setTrackStripPanMode: vi.fn(),
+    setTrackStripDualPan: vi.fn(),
   };
   const handle = { engine } as unknown as EngineHandle;
   return { handle, engine };
@@ -103,6 +111,75 @@ describe('createMixerSync', () => {
     expect(engine.setStripGain).toHaveBeenCalledWith(1, linearToDb(0.5) - 3);
     expect(engine.setStripPan).toHaveBeenCalledWith(1, 0.5);
     expect(engine.setSoloMute).toHaveBeenCalledWith(1, true, false);
+  });
+
+  it('mirrors the channel alignment delay and resends only on change', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMixerSync(handle);
+    const delayed = makeTrack(1, { mixer: { ...createDefaultStrip(), channelDelaySamples: 128 } });
+
+    sync.sync([delayed, makeTrack(2)], neutralMaster());
+    // Track 1 carries a delay; track 2 (neutral) is sent 0 once.
+    expect(engine.setTrackStripChannelDelaySamples).toHaveBeenCalledWith(1, 128);
+    expect(engine.setTrackStripChannelDelaySamples).toHaveBeenCalledWith(2, 0);
+    engine.setTrackStripChannelDelaySamples.mockClear();
+
+    // An unchanged sync sends nothing.
+    sync.sync([delayed, makeTrack(2)], neutralMaster());
+    expect(engine.setTrackStripChannelDelaySamples).not.toHaveBeenCalled();
+
+    // Changing the delay (rounded to whole samples) resends only that track.
+    sync.sync(
+      [
+        makeTrack(1, { mixer: { ...createDefaultStrip(), channelDelaySamples: 64.4 } }),
+        makeTrack(2),
+      ],
+      neutralMaster(),
+    );
+    expect(engine.setTrackStripChannelDelaySamples).toHaveBeenCalledTimes(1);
+    expect(engine.setTrackStripChannelDelaySamples).toHaveBeenCalledWith(1, 64);
+  });
+
+  it('mirrors pan law, pan mode and dual pan, resending only on change', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMixerSync(handle);
+
+    // First sync sets the defaults (pan law -3 dB, balance) and the derived
+    // dual pan (both channels at the strip pan position, here 0).
+    sync.sync([makeTrack(1)], neutralMaster());
+    expect(engine.setTrackStripPanLaw).toHaveBeenCalledWith(1, 'const3dB');
+    expect(engine.setTrackStripPanMode).toHaveBeenCalledWith(1, 'balance');
+    expect(engine.setTrackStripDualPan).toHaveBeenCalledWith(1, 0, 0);
+    engine.setTrackStripPanLaw.mockClear();
+    engine.setTrackStripPanMode.mockClear();
+    engine.setTrackStripDualPan.mockClear();
+
+    // An unchanged sync sends nothing.
+    sync.sync([makeTrack(1)], neutralMaster());
+    expect(engine.setTrackStripPanLaw).not.toHaveBeenCalled();
+    expect(engine.setTrackStripPanMode).not.toHaveBeenCalled();
+    expect(engine.setTrackStripDualPan).not.toHaveBeenCalled();
+
+    // Switching mode and dual pan resends only those, with clamped positions.
+    sync.sync(
+      [
+        makeTrack(1, {
+          mixer: {
+            ...createDefaultStrip(),
+            panLaw: 'const6dB',
+            panMode: 'dualPan',
+            dualPan: { left: -1, right: 2 },
+          },
+        }),
+      ],
+      neutralMaster(),
+    );
+    expect(engine.setTrackStripPanLaw).toHaveBeenCalledTimes(1);
+    expect(engine.setTrackStripPanLaw).toHaveBeenCalledWith(1, 'const6dB');
+    expect(engine.setTrackStripPanMode).toHaveBeenCalledTimes(1);
+    expect(engine.setTrackStripPanMode).toHaveBeenCalledWith(1, 'dualPan');
+    expect(engine.setTrackStripDualPan).toHaveBeenCalledTimes(1);
+    expect(engine.setTrackStripDualPan).toHaveBeenCalledWith(1, -1, 1);
   });
 
   it('treats a missing strip as neutral and clamps the strip pan', () => {

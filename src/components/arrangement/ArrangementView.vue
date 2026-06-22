@@ -6,7 +6,9 @@ import type { AutomationParam } from '@/project/automation';
 import {
   addMidiClip,
   deleteClip,
+  detectSectionsFromAudioClip,
   duplicateClip,
+  extractMelodyFromAudioClip,
   moveClip,
   renameClip,
   setActiveClip,
@@ -16,6 +18,7 @@ import {
   setClipFades,
   setClipLoop,
   setMarker,
+  splitAudioClipToStems,
   splitClip,
   trimClip,
 } from '@/project/commands';
@@ -91,6 +94,87 @@ const { t } = useI18n();
 
 /** Initialization/runtime error surfaced above the view. */
 const error = ref('');
+
+/** True while a section detection is awaiting the engine. */
+const isDetectingSections = ref(false);
+
+/** True while a melody extraction is awaiting the engine. */
+const isExtractingMelody = ref(false);
+
+/** True while a stem separation is awaiting the engine. */
+const isSplittingStems = ref(false);
+
+/** The active clip when it is an audio clip carrying an asset, else null. */
+const detectableAudioClip = computed(() => {
+  const clip = store.activeClip;
+  return clip && isAudioClip(clip) && clip.assetId !== undefined ? clip : null;
+});
+
+/**
+ * Detects song sections from the active audio clip and merges them into the
+ * section lane. Surfaces an error when analysis fails or finds nothing.
+ */
+function detectSections(): void {
+  const clip = detectableAudioClip.value;
+  if (!clip || isDetectingSections.value) return;
+  error.value = '';
+  isDetectingSections.value = true;
+  void (async () => {
+    try {
+      const count = await detectSectionsFromAudioClip(clip.id);
+      if (count === 0) error.value = t.value.shell.arrangement.noSectionsDetected;
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : String(err);
+    } finally {
+      isDetectingSections.value = false;
+    }
+  })();
+}
+
+/**
+ * Transcribes the active audio clip's melody to a new MIDI clip/track. Surfaces
+ * an error when analysis fails or finds no notes.
+ */
+function extractMelody(): void {
+  const clip = detectableAudioClip.value;
+  if (!clip || isExtractingMelody.value) return;
+  error.value = '';
+  isExtractingMelody.value = true;
+  void (async () => {
+    try {
+      const newClipId = await extractMelodyFromAudioClip(clip.id);
+      if (newClipId < 0) error.value = t.value.shell.arrangement.noMelodyDetected;
+      else setActiveClip(newClipId);
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : String(err);
+    } finally {
+      isExtractingMelody.value = false;
+    }
+  })();
+}
+
+/**
+ * Splits the active audio clip into harmonic/percussive/residual stems, each on
+ * a new audio track. Surfaces an error when separation is unavailable or finds
+ * no audible window.
+ */
+function splitToStems(): void {
+  const clip = detectableAudioClip.value;
+  if (!clip || isSplittingStems.value) return;
+  error.value = '';
+  isSplittingStems.value = true;
+  void (async () => {
+    try {
+      const newClipIds = await splitAudioClipToStems(clip.id);
+      if (newClipIds.length === 0) error.value = t.value.shell.arrangement.noStemsSeparated;
+      else setActiveClip(newClipIds[0]);
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : String(err);
+    } finally {
+      isSplittingStems.value = false;
+    }
+  })();
+}
 
 /** Default horizontal zoom in px per quarter note (one 4/4 bar = 40 px). */
 const DEFAULT_PX_PER_PPQ = 10;
@@ -437,7 +521,36 @@ onBeforeUnmount(() => {
         gridTemplateRows: `${SECTION_LANE_HEIGHT_PX}px 1fr`,
       }"
     >
-      <div class="cell-corner">{{ t.shell.arrangement.sections }}</div>
+      <div class="cell-corner">
+        <span class="cell-corner-label">{{ t.shell.arrangement.sections }}</span>
+        <button
+          type="button"
+          class="section-detect"
+          :disabled="detectableAudioClip === null || isDetectingSections"
+          :title="t.shell.arrangement.detectSectionsTitle"
+          @click="detectSections"
+        >
+          {{ t.shell.arrangement.detectSections }}
+        </button>
+        <button
+          type="button"
+          class="section-detect"
+          :disabled="detectableAudioClip === null || isExtractingMelody"
+          :title="t.shell.arrangement.extractMelodyTitle"
+          @click="extractMelody"
+        >
+          {{ t.shell.arrangement.extractMelody }}
+        </button>
+        <button
+          type="button"
+          class="section-detect"
+          :disabled="detectableAudioClip === null || isSplittingStems"
+          :title="t.shell.arrangement.splitStemsTitle"
+          @click="splitToStems"
+        >
+          {{ t.shell.arrangement.splitStems }}
+        </button>
+      </div>
       <SectionLane class="cell-sections" :range="range" :revision="revision" @seek="onSeek" />
       <TrackHeaderList
         class="cell-headers"
@@ -521,6 +634,7 @@ onBeforeUnmount(() => {
 .cell-corner {
   display: flex;
   align-items: center;
+  gap: var(--sp-2);
   padding: 0 var(--sp-4);
   font: var(--fw-semibold) 9px var(--font-sans);
   letter-spacing: 0.08em;
@@ -529,6 +643,35 @@ onBeforeUnmount(() => {
   border-right: 1px solid var(--border-strong);
   border-bottom: 1px solid var(--border-strong);
   box-shadow: var(--raise-hi);
+}
+
+.cell-corner-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.section-detect {
+  flex: none;
+  padding: 1px var(--sp-2);
+  font: var(--fw-semibold) 9px var(--font-sans);
+  letter-spacing: 0.04em;
+  color: var(--text-2);
+  background: var(--surface-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.section-detect:hover:not(:disabled) {
+  color: var(--text-1);
+  border-color: var(--accent);
+}
+
+.section-detect:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .cell-sections {

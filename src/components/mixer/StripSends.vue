@@ -71,6 +71,21 @@ function onToggleEnabled(busId: string): void {
   setSend(props.target, busId, { levelDb: existing.levelDb, enabled: !existing.enabled });
 }
 
+/** True when the send taps the source before the fader (default is post). */
+function isPreFader(busId: string): boolean {
+  return sendFor(busId)?.timing === 'preFader';
+}
+
+function onToggleTiming(busId: string): void {
+  const existing = sendFor(busId);
+  if (!existing) return;
+  setSend(props.target, busId, {
+    levelDb: existing.levelDb,
+    enabled: existing.enabled,
+    timing: existing.timing === 'preFader' ? 'postFader' : 'preFader',
+  });
+}
+
 function onRemove(busId: string): void {
   if (!sendFor(busId)) return;
   setSend(props.target, busId, null);
@@ -102,6 +117,18 @@ function onRemove(busId: string): void {
         @click="onToggleEnabled(bus.id)"
       >
         {{ bus.name }}
+      </button>
+      <button
+        v-if="!isMaster && sendFor(bus.id)"
+        type="button"
+        class="send-timing"
+        :class="{ pre: isPreFader(bus.id) }"
+        :title="
+          isPreFader(bus.id) ? t.shell.mixer.sends.preFaderTitle : t.shell.mixer.sends.postFaderTitle
+        "
+        @click="onToggleTiming(bus.id)"
+      >
+        {{ isPreFader(bus.id) ? t.shell.mixer.sends.preFader : t.shell.mixer.sends.postFader }}
       </button>
       <MixerKnob
         :value="levelFor(bus.id)"
@@ -175,6 +202,24 @@ function onRemove(busId: string): void {
 
 .send-name.unset {
   color: var(--text-4);
+}
+
+.send-timing {
+  flex: none;
+  font: var(--fw-bold) 7px var(--font-sans);
+  letter-spacing: 0.04em;
+  color: var(--text-4);
+  background: transparent;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-1);
+  padding: 0 3px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.send-timing.pre {
+  color: var(--accent);
+  border-color: var(--accent-muted);
 }
 
 .send-remove {

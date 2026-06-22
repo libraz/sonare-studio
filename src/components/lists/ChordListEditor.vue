@@ -7,7 +7,12 @@ import {
   type EditorChordSymbol,
   formatChordName,
 } from '@/project/chords';
-import { clearProjectChords, detectChordsForClip, setProjectChords } from '@/project/commands';
+import {
+  clearProjectChords,
+  detectChordsForClip,
+  detectChordsFromAudioClip,
+  setProjectChords,
+} from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { barLengthPpq, formatBarBeat, parseBarBeat } from './bar-beat';
@@ -33,9 +38,10 @@ const QUALITY_OPTIONS = CHORD_QUALITY_CHOICES.map((choice) => ({
  * has no per-symbol ids, so every edit rebuilds the whole list and commits it
  * through {@link setProjectChords} (one undoable entry per change).
  *
- * "Detect from clip" estimates chords from the active MIDI clip's notes (app
- * -side music theory, not the engine's audio detector) and merges them in;
- * "Add at playhead" inserts a one-bar C major at the transport position.
+ * "Detect from clip" fills the track from the active clip: a MIDI clip uses
+ * app-side music theory over its notes, while an audio clip runs libsonare's
+ * audio chord detector over its source window. "Add at playhead" inserts a
+ * one-bar C major at the transport position.
  */
 
 const props = defineProps<{
@@ -51,12 +57,20 @@ const emit = defineEmits<{
 const store = useProjectStore();
 const { t } = useI18n();
 const errorMessage = ref('');
+/** True while an audio-clip detection is awaiting the engine. */
+const isDetecting = ref(false);
 
-/** Active clip id when it is a MIDI clip, else -1 (detection source). */
-const detectClipId = computed(() => {
-  const clip = store.clips.find((c) => c.id === store.clipId);
-  if (!clip || (clip.kind ?? 'midi') !== 'midi') return -1;
-  return clip.id;
+/**
+ * The active clip's detection kind: 'midi' for MIDI clips, 'audio' for audio
+ * clips that carry an asset, or null when nothing detectable is active.
+ */
+const detectKind = computed<'midi' | 'audio' | null>(() => {
+  const clip = store.activeClip;
+  if (!clip) return null;
+  const kind = clip.kind ?? 'midi';
+  if (kind === 'midi') return 'midi';
+  if (kind === 'audio' && clip.assetId !== undefined) return 'audio';
+  return null;
 });
 
 /** Bar length in PPQ at a position, from the active time signature. */
@@ -135,12 +149,22 @@ function addAtPlayhead(): void {
   ]);
 }
 
-function detectFromClip(): void {
-  if (detectClipId.value < 0) return;
+async function detectFromClip(): Promise<void> {
+  const clip = store.activeClip;
+  const kind = detectKind.value;
+  if (!clip || kind === null || isDetecting.value) return;
   errorMessage.value = '';
-  const count = detectChordsForClip(detectClipId.value);
-  if (count === 0) {
-    errorMessage.value = t.value.shell.lists.chords.noneDetected;
+  try {
+    isDetecting.value = true;
+    const count =
+      kind === 'audio' ? await detectChordsFromAudioClip(clip.id) : detectChordsForClip(clip.id);
+    if (count === 0) {
+      errorMessage.value = t.value.shell.lists.chords.noneDetected;
+    }
+  } catch {
+    errorMessage.value = t.value.shell.lists.chords.detectFailed;
+  } finally {
+    isDetecting.value = false;
   }
 }
 
@@ -240,7 +264,11 @@ function clearAll(): void {
     <p v-if="errorMessage" class="list-error" role="alert">{{ errorMessage }}</p>
     <div class="list-actions">
       <button type="button" @click="addAtPlayhead">{{ t.shell.lists.common.addAtPlayhead }}</button>
-      <button type="button" :disabled="detectClipId < 0" @click="detectFromClip">
+      <button
+        type="button"
+        :disabled="detectKind === null || isDetecting"
+        @click="detectFromClip"
+      >
         {{ t.shell.lists.chords.detectFromClip }}
       </button>
       <button

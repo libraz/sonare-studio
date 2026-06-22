@@ -11,7 +11,14 @@
  * can be mapped back to project tracks.
  */
 
-import { clampPan, type MixerStrip } from '@/project/mixer';
+import {
+  clampPan,
+  DEFAULT_PAN_LAW,
+  DEFAULT_PAN_MODE,
+  type MixerStrip,
+  type PanLawId,
+  type PanModeId,
+} from '@/project/mixer';
 import type { EditorTrack } from '@/project/types';
 import type { EngineHandle } from './engine';
 
@@ -35,6 +42,11 @@ interface LaneState {
   pan: number;
   solo: boolean;
   mute: boolean;
+  channelDelaySamples: number;
+  panLaw: PanLawId;
+  panMode: PanModeId;
+  dualPanLeft: number;
+  dualPanRight: number;
 }
 
 /** Mirrors store mixer state onto a running engine. */
@@ -86,17 +98,33 @@ export function createMixerSync(handle: EngineHandle): MixerSync {
     for (const track of tracks) {
       const strip = track.mixer;
       const vcaOffset = track.vcaId !== undefined ? (vcaGainDb?.get(track.vcaId) ?? 0) : 0;
+      const pan = clampPan(strip?.pan ?? 0);
       const next: LaneState = {
         gainDb: linearToDb(track.volume) + (strip?.gainDb ?? 0) + vcaOffset,
-        pan: clampPan(strip?.pan ?? 0),
+        pan,
         solo: track.solo || (anySolo && track.soloSafe === true),
         mute: track.mute,
+        channelDelaySamples: Math.max(0, Math.round(strip?.channelDelaySamples ?? 0)),
+        panLaw: strip?.panLaw ?? DEFAULT_PAN_LAW,
+        panMode: strip?.panMode ?? DEFAULT_PAN_MODE,
+        // Dual pan defaults to the strip pan position on both channels.
+        dualPanLeft: clampPan(strip?.dualPan?.left ?? pan),
+        dualPanRight: clampPan(strip?.dualPan?.right ?? pan),
       };
       const prev = laneStates.get(track.id);
       if (prev?.gainDb !== next.gainDb) handle.engine.setStripGain(track.id, next.gainDb);
       if (prev?.pan !== next.pan) handle.engine.setStripPan(track.id, next.pan);
       if (prev?.solo !== next.solo || prev?.mute !== next.mute) {
         handle.engine.setSoloMute(track.id, next.solo, next.mute);
+      }
+      if (prev?.channelDelaySamples !== next.channelDelaySamples) {
+        handle.engine.setTrackStripChannelDelaySamples(track.id, next.channelDelaySamples);
+      }
+      if (prev?.panLaw !== next.panLaw) handle.engine.setTrackStripPanLaw(track.id, next.panLaw);
+      if (prev?.panMode !== next.panMode)
+        handle.engine.setTrackStripPanMode(track.id, next.panMode);
+      if (prev?.dualPanLeft !== next.dualPanLeft || prev?.dualPanRight !== next.dualPanRight) {
+        handle.engine.setTrackStripDualPan(track.id, next.dualPanLeft, next.dualPanRight);
       }
       laneStates.set(track.id, next);
     }

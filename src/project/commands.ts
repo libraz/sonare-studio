@@ -1,9 +1,16 @@
+export type { AssistSidecar } from './command/assist';
+export { listAssistSidecars, setAssistSidecar } from './command/assist';
 export {
   removeAutomationLane,
   setAutomationLaneEnabled,
   setAutomationLanePoints,
 } from './command/automation';
-export { clearProjectChords, detectChordsForClip, setProjectChords } from './command/chords';
+export {
+  clearProjectChords,
+  detectChordsForClip,
+  detectChordsFromAudioClip,
+  setProjectChords,
+} from './command/chords';
 export type { AddAudioClipInput, AddBouncedClipInput, AddMidiClipInput } from './command/clips';
 export {
   addAudioClip,
@@ -40,12 +47,17 @@ export {
   setMasteringParam,
   setMasteringPreset,
 } from './command/mastering';
+export { extractMelodyFromAudioClip } from './command/melody';
 export { bakeClipMidiFx } from './command/midi-fx';
-export type { MixerStripTarget } from './command/mixer';
+export type { MixerSnapshot, MixerSnapshotTrack, MixerStripTarget } from './command/mixer';
 export {
   addInsert,
   addMixerBus,
   addVcaGroup,
+  applyMixerSnapshot,
+  buildMixerSnapshot,
+  captureMixerSnapshot,
+  mergeMixerSnapshot,
   removeInsert,
   removeMixerBus,
   removeVcaGroup,
@@ -54,15 +66,27 @@ export {
   setInsertSidechain,
   setMixerBusGain,
   setSend,
+  setStripChannelDelaySamples,
+  setStripDualPan,
   setStripEq,
   setStripGain,
   setStripOutputBus,
   setStripPan,
+  setStripPanLaw,
+  setStripPanMode,
   setTrackInstrument,
   setTrackSoloSafe,
   setTrackVca,
   setVcaGroupGain,
 } from './command/mixer';
+export type { MixerSnapshotSlot } from './command/mixer-snapshots';
+export {
+  activeMixerSnapshotSlot,
+  clearMixerSnapshots,
+  mixerSnapshotFilled,
+  recallMixerSnapshot,
+  saveMixerSnapshot,
+} from './command/mixer-snapshots';
 export {
   addNote,
   deleteNotes,
@@ -82,8 +106,10 @@ export {
   setDisplayTranspose,
   setNoteAnnotation,
 } from './command/score-annotations';
+export { splitAudioClipToStems } from './command/stems';
 export type { SectionInput } from './command/timeline';
 export {
+  detectSectionsFromAudioClip,
   removeMarker,
   setMarker,
   setSections,

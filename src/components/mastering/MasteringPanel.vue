@@ -4,6 +4,7 @@ import MasteringLoudnessReadout from '@/components/mastering/MasteringLoudnessRe
 import MixerKnob from '@/components/mixer/MixerKnob.vue';
 import { renderMixdownInWorker } from '@/export/client';
 import type { MixdownResult } from '@/export/mixdown';
+import { ensureWasm } from '@/lib/wasm';
 import {
   addMasteringProcessor,
   type CommandGestureOptions,
@@ -16,6 +17,11 @@ import { createDefaultMasteringChain, type MasteringChainState } from '@/project
 import { serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import {
+  type MasteringSuggestion,
+  parseMasteringSuggestion,
+  suggestedPreset,
+} from '@/ui/mastering/assistant';
 import {
   clampControlValue,
   type MasteringControl,
@@ -34,13 +40,14 @@ import {
   type PreviewRenderFn,
 } from '@/ui/mastering/preview';
 import { DEFAULT_PREVIEW_BARS, derivePreviewRange } from '@/ui/mastering/preview-range';
+import { parseStreamingPreview, type StreamingTarget } from '@/ui/mastering/streaming';
 import { createAudioPreview } from '@/ui/media/preview';
 import {
   categoryLabel,
-  groupInsertCatalog,
+  groupInsertCatalogEntries,
   humanizeInsertName,
   type InsertCatalogGroup,
-  loadInsertCatalog,
+  loadInsertCatalogEntries,
 } from '@/ui/mixer/insert-catalog';
 import { createValueGesture, type ValueGesture } from '@/ui/mixer/strip-gestures';
 
@@ -120,6 +127,106 @@ function togglePresetMenu(): void {
 function onSelectPreset(preset: string | null): void {
   presetMenuOpen.value = false;
   runCommand(() => setMasteringPreset(preset));
+}
+
+// --- Mastering assistant --------------------------------------------------------
+
+const suggestion = ref<MasteringSuggestion | null>(null);
+const suggesting = ref(false);
+
+/** Averages the rendered channels to a mono buffer for the assistant. */
+function downmixMono(channels: ReadonlyArray<Float32Array>): Float32Array {
+  if (channels.length === 1) return channels[0];
+  const frames = channels[0]?.length ?? 0;
+  const out = new Float32Array(frames);
+  for (const channel of channels) {
+    const n = Math.min(frames, channel.length);
+    for (let i = 0; i < n; i++) out[i] += channel[i];
+  }
+  const inv = channels.length === 0 ? 0 : 1 / channels.length;
+  for (let i = 0; i < frames; i++) out[i] *= inv;
+  return out;
+}
+
+/**
+ * Analyzes the chain-free (bypassed) render of the preview range with the
+ * libsonare mastering assistant and applies its top genre as a preset. The
+ * assistant's genre candidates are preset identifiers, so the suggestion maps
+ * straight onto the (undoable) preset selector; the alternatives are shown as
+ * chips the user can apply instead. Renders a preview first when none is ready.
+ */
+async function onAutoSuggest(): Promise<void> {
+  if (suggesting.value) return;
+  suggesting.value = true;
+  error.value = '';
+  try {
+    if (!previewState.value?.bypassed || previewStale.value) await onPreview();
+    const source = previewState.value?.bypassed;
+    if (!source) {
+      if (!error.value) error.value = t.value.shell.mastering.assistant.needsPreview;
+      return;
+    }
+    const wasm = await ensureWasm();
+    const suggest = wasm.masteringAssistantSuggest;
+    if (typeof suggest !== 'function') {
+      error.value = t.value.shell.mastering.assistant.unavailable;
+      return;
+    }
+    const parsed = parseMasteringSuggestion(
+      suggest(downmixMono(source.channels), source.sampleRate),
+    );
+    suggestion.value = parsed;
+    if (presetCatalog.value.length === 0) presetCatalog.value = loadMasteringPresetCatalog();
+    const preset = suggestedPreset(parsed, presetCatalog.value);
+    if (preset) runCommand(() => setMasteringPreset(preset));
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    suggesting.value = false;
+  }
+}
+
+// --- Streaming targets ----------------------------------------------------------
+
+const streamingTargets = ref<StreamingTarget[] | null>(null);
+const checkingTargets = ref(false);
+
+/**
+ * Measures the chain-applied (processed) render against the streaming-platform
+ * loudness targets (Spotify / Apple Music / YouTube, from the wasm side) and
+ * shows, per platform, the normalization gain each would apply and whether that
+ * gain risks clipping the ceiling. Renders a preview first when none is ready.
+ */
+async function onCheckTargets(): Promise<void> {
+  if (checkingTargets.value) return;
+  checkingTargets.value = true;
+  error.value = '';
+  try {
+    if (!previewState.value?.processed || previewStale.value) await onPreview();
+    const source = previewState.value?.processed;
+    if (!source) {
+      if (!error.value) error.value = t.value.shell.mastering.assistant.needsPreview;
+      return;
+    }
+    const wasm = await ensureWasm();
+    const preview = wasm.masteringStreamingPreview;
+    if (typeof preview !== 'function') {
+      error.value = t.value.shell.mastering.streaming.unavailable;
+      return;
+    }
+    streamingTargets.value = parseStreamingPreview(
+      preview(downmixMono(source.channels), source.sampleRate),
+    );
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    checkingTargets.value = false;
+  }
+}
+
+/** Normalization gain with an explicit sign (e.g. '+1.2', '-3.4'). */
+function signedGain(value: number): string {
+  return `${value >= 0 ? '+' : ''}${value.toFixed(1)}`;
 }
 
 // --- Processor rack ------------------------------------------------------------
@@ -246,7 +353,8 @@ const catalog = ref<InsertCatalogGroup[]>([]);
 
 function toggleAddMenu(): void {
   if (!addMenuOpen.value) {
-    catalog.value = groupInsertCatalog(loadInsertCatalog());
+    // The mastering chain runs offline, so it may use the full processor set.
+    catalog.value = groupInsertCatalogEntries(loadInsertCatalogEntries('offline'));
   }
   addMenuOpen.value = !addMenuOpen.value;
 }
@@ -460,9 +568,54 @@ onBeforeUnmount(() => {
           </p>
         </div>
       </div>
+      <button
+        type="button"
+        class="assist-button"
+        :disabled="suggesting"
+        :title="t.shell.mastering.assistant.title"
+        @click="onAutoSuggest"
+      >
+        {{ suggesting ? t.shell.mastering.assistant.analyzing : t.shell.mastering.assistant.suggest }}
+      </button>
       <span class="toolbar-spacer" />
     </div>
     <p v-if="error" class="mastering-error" role="alert">{{ error }}</p>
+    <div v-if="suggestion" class="assist-result">
+      <div class="assist-candidates">
+        <span class="assist-label">{{ t.shell.mastering.assistant.recommended }}</span>
+        <button
+          v-for="candidate in suggestion.genreCandidates"
+          :key="candidate.name"
+          type="button"
+          class="assist-chip"
+          :class="{ active: candidate.name === chain.preset }"
+          @click="onSelectPreset(candidate.name)"
+        >
+          {{ humanizePresetName(candidate.name) }}
+          <span class="assist-score">{{ Math.round(candidate.score * 100) }}</span>
+        </button>
+      </div>
+      <ul v-if="suggestion.explanation.length" class="assist-explain">
+        <li v-for="(line, index) in suggestion.explanation" :key="index">{{ line }}</li>
+      </ul>
+      <div v-if="suggestion.profile" class="assist-profile">
+        <span>{{
+          formatMessage(t.shell.mastering.assistant.lufs, {
+            value: suggestion.profile.integratedLufs.toFixed(1),
+          })
+        }}</span>
+        <span>{{
+          formatMessage(t.shell.mastering.assistant.lra, {
+            value: suggestion.profile.lraLu.toFixed(1),
+          })
+        }}</span>
+        <span>{{
+          formatMessage(t.shell.mastering.assistant.truePeak, {
+            value: suggestion.profile.truePeakDb.toFixed(1),
+          })
+        }}</span>
+      </div>
+    </div>
     <div class="mastering-body">
       <div class="chain-rack">
         <template v-for="(slot, index) in chain.processors" :key="`${index}:${slot.processor}`">
@@ -560,7 +713,10 @@ onBeforeUnmount(() => {
                 class="catalog-item"
                 @click="onAddProcessor(processor.id)"
               >
-                {{ processor.label }}
+                <span class="catalog-item-label">{{ processor.label }}</span>
+                <span v-if="processor.stereoOnly" class="catalog-item-tag">{{
+                  t.shell.inserts.stereoOnly
+                }}</span>
               </button>
             </div>
           </div>
@@ -621,6 +777,15 @@ onBeforeUnmount(() => {
           <span v-if="previewStale" class="preview-stale" :title="t.shell.mastering.staleTitle">
             {{ t.shell.mastering.stale }}
           </span>
+          <button
+            type="button"
+            class="targets-button"
+            :disabled="checkingTargets"
+            :title="t.shell.mastering.streaming.title"
+            @click="onCheckTargets"
+          >
+            {{ checkingTargets ? t.shell.mastering.streaming.checking : t.shell.mastering.streaming.check }}
+          </button>
         </div>
         <div v-if="previewState?.status === 'rendering'" class="preview-progress">
           <div class="progress-track">
@@ -635,6 +800,26 @@ onBeforeUnmount(() => {
           {{ previewState?.error }}
         </p>
         <MasteringLoudnessReadout :rows="loudnessRows" :clip-warning="clipWarning" />
+        <table v-if="streamingTargets && streamingTargets.length" class="targets-table">
+          <thead>
+            <tr>
+              <th class="targets-name">{{ t.shell.mastering.streaming.platform }}</th>
+              <th>{{ t.shell.mastering.streaming.lufs }}</th>
+              <th>{{ t.shell.mastering.streaming.gain }}</th>
+              <th>{{ t.shell.mastering.streaming.peak }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="target in streamingTargets" :key="target.name">
+              <td class="targets-name">{{ target.name }}</td>
+              <td>{{ target.integratedLufs.toFixed(1) }}</td>
+              <td>{{ signedGain(target.normalizationGainDb) }}</td>
+              <td :class="{ risk: target.ceilingRisk }" :title="target.ceilingRisk ? t.shell.mastering.streaming.ceilingRisk : ''">
+                {{ target.truePeakDb.toFixed(1) }}<span v-if="target.ceilingRisk" aria-hidden="true"> ⚠</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
   </div>

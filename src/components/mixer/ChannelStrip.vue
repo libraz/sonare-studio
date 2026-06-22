@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { promptDialog } from '@/composables/useDialogs';
+import type { AnalyserBridge } from '@/engine/analyser';
 import type { MeterSource } from '@/engine/meters';
 import { linearToDb } from '@/engine/mixer-sync';
+import type { ScopeSource } from '@/engine/scope';
 import type { AutomationParam } from '@/project/automation';
 import { evaluateAutomationValue } from '@/project/automation';
 import type { MixerStripTarget } from '@/project/commands';
@@ -13,23 +15,40 @@ import {
   renameTrack,
   setActiveTrack,
   setAutomationLanePoints,
+  setStripChannelDelaySamples,
+  setStripDualPan,
   setStripGain,
   setStripOutputBus,
   setStripPan,
+  setStripPanLaw,
+  setStripPanMode,
   setTrackMute,
   setTrackSolo,
   setTrackSoloSafe,
   setTrackVca,
 } from '@/project/commands';
-import { createDefaultStrip, MAX_VCA_GROUPS, type MixerStrip } from '@/project/mixer';
+import {
+  createDefaultStrip,
+  DEFAULT_PAN_LAW,
+  DEFAULT_PAN_MODE,
+  MAX_CHANNEL_DELAY_SAMPLES,
+  MAX_VCA_GROUPS,
+  type MixerStrip,
+  PAN_LAW_IDS,
+  PAN_MODE_IDS,
+  type PanLawId,
+  type PanModeId,
+} from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 import {
   type AutomationWriteGesture,
+  type AutomationWriteMode,
   automationStripMode,
   createAutomationWriteGesture,
+  isAutomationWriteMode,
   toggleAutomationStripMode,
 } from '@/ui/mixer/automation-mode';
 import { FADER_MAX_DB, FADER_MIN_DB, formatDb, formatPan } from '@/ui/mixer/db-scale';
@@ -38,6 +57,8 @@ import InsertRack from './InsertRack.vue';
 import MasterMeterReadout from './MasterMeterReadout.vue';
 import MixerFader from './MixerFader.vue';
 import MixerKnob from './MixerKnob.vue';
+import SpectrumAnalyzer from './SpectrumAnalyzer.vue';
+import StereoGoniometer from './StereoGoniometer.vue';
 import StripEqSection from './StripEqSection.vue';
 import StripMeter from './StripMeter.vue';
 import StripSends from './StripSends.vue';
@@ -51,15 +72,17 @@ import StripSends from './StripSends.vue';
  * The meter is live whenever a source is supplied (master output or the
  * track's engine lane); without one the strip shows a placeholder.
  *
- * The R/W buttons control the strip's session-only automation mode: in
+ * The R/T/L buttons control the strip's session-only automation mode: in
  * 'read' the fader/pan display follows the lane value at the playhead (the
- * control is non-interactive while following), in 'write' drags touch-record
- * breakpoints into the lane instead of driving the manual strip commands.
+ * control is non-interactive while following), in 'touch'/'latch' drags
+ * record breakpoints into the lane instead of driving the manual strip
+ * commands. Touch reads the lane back on either side of the touched span;
+ * latch holds the last recorded value to the end of the lane.
  *
  * Frozen tracks carry a snowflake tag next to the name (the strip's fader,
  * pan and sends stay live while the track plays its baked render).
  *
- * Group-track strips are tagged GROUP and drop the R/W and solo controls:
+ * Group-track strips are tagged GROUP and drop the R/T/L and solo controls:
  * their level is the group bus gain (no automation lane), and bus solo is
  * not supported. Fader, mute, inserts and EQ keep working through the
  * group-bus sync layer.
@@ -71,12 +94,16 @@ const props = withDefaults(
     target: MixerStripTarget;
     /** Live meter source for this strip; null shows a placeholder meter. */
     bridge?: MeterSource | null;
+    /** Master analyser tap (master strip only); null draws placeholders. */
+    analyser?: AnalyserBridge | null;
+    /** Engine scope source (per-target spectrum + goniometer), when available. */
+    scope?: ScopeSource | null;
     /** Playhead position getter in PPQ (lane follow / touch recording). */
     positionPpq?: () => number;
     /** True while the transport runs (continuous touch recording). */
     isPlaying?: boolean;
   }>(),
-  { bridge: null, positionPpq: undefined, isPlaying: false },
+  { bridge: null, analyser: null, scope: null, positionPpq: undefined, isPlaying: false },
 );
 
 const store = useProjectStore();
@@ -299,8 +326,12 @@ let writeFaderGesture: AutomationWriteGesture | null = null;
 let writePanGesture: AutomationWriteGesture | null = null;
 
 /** Starts a touch-record gesture committing into one of this strip's lanes. */
-function beginWriteGesture(param: AutomationParam): AutomationWriteGesture {
+function beginWriteGesture(
+  param: AutomationParam,
+  mode: AutomationWriteMode,
+): AutomationWriteGesture {
   return createAutomationWriteGesture({
+    mode,
     existingPoints: laneFor(param)?.points ?? [],
     positionPpq: () => props.positionPpq?.() ?? 0,
     isPlaying: () => props.isPlaying,
@@ -314,10 +345,10 @@ let activeGainGesture: ValueGesture | null = null;
 let activePanGesture: ValueGesture | null = null;
 
 function onGainChange(db: number, commit: boolean): void {
-  if (autoMode.value === 'write') {
+  if (isAutomationWriteMode(autoMode.value)) {
     // Touch recording: the drag writes lane breakpoints (in the engine lane
     // dB domain) instead of the manual strip command, which a lane overrides.
-    if (!writeFaderGesture) writeFaderGesture = beginWriteGesture('faderDb');
+    if (!writeFaderGesture) writeFaderGesture = beginWriteGesture('faderDb', autoMode.value);
     writeFaderGesture.update(laneOffsetDb.value + db);
     writeGainDb.value = db;
     if (commit) {
@@ -338,8 +369,8 @@ function onGainChange(db: number, commit: boolean): void {
 }
 
 function onPanChange(pan: number, commit: boolean): void {
-  if (autoMode.value === 'write') {
-    if (!writePanGesture) writePanGesture = beginWriteGesture('pan');
+  if (isAutomationWriteMode(autoMode.value)) {
+    if (!writePanGesture) writePanGesture = beginWriteGesture('pan', autoMode.value);
     writePanGesture.update(pan);
     writePan.value = pan;
     if (commit) {
@@ -359,6 +390,80 @@ function onPanChange(pan: number, commit: boolean): void {
   activePanGesture = null;
 }
 
+// --- Strip options popover (channel delay, pan law/mode, dual pan) ------------
+
+/** Channel delay is a track-lane strip feature (not master/group lane strips). */
+const canStripOptions = computed(() => typeof props.target === 'number' && !isGroup.value);
+const optionsOpen = ref(false);
+const optionsMenu = ref<HTMLDivElement | null>(null);
+
+/** Current channel alignment delay in samples (0 when unset). */
+const channelDelaySamples = computed(() => strip.value.channelDelaySamples ?? 0);
+
+/** Current pan law (default when unset). */
+const panLaw = computed<PanLawId>(() => strip.value.panLaw ?? DEFAULT_PAN_LAW);
+/** Current pan mode (default when unset). */
+const panMode = computed<PanModeId>(() => strip.value.panMode ?? DEFAULT_PAN_MODE);
+/** Left/right pan positions for dual-pan mode (default to the strip pan). */
+const dualPanLeft = computed(() => strip.value.dualPan?.left ?? strip.value.pan);
+const dualPanRight = computed(() => strip.value.dualPan?.right ?? strip.value.pan);
+
+/** Pan law options for the selector (labels from i18n, value = PanLawId). */
+const panLawOptions = computed(() =>
+  PAN_LAW_IDS.map((id) => ({ value: id, label: t.value.shell.mixer.strip.panLaws[id] })),
+);
+/** Pan mode options for the selector (labels from i18n, value = PanModeId). */
+const panModeOptions = computed(() =>
+  PAN_MODE_IDS.map((id) => ({ value: id, label: t.value.shell.mixer.strip.panModes[id] })),
+);
+
+/** True when any strip-panner option deviates from neutral. */
+const hasStripOptions = computed(
+  () =>
+    channelDelaySamples.value > 0 ||
+    panLaw.value !== DEFAULT_PAN_LAW ||
+    panMode.value !== DEFAULT_PAN_MODE ||
+    strip.value.dualPan !== undefined,
+);
+
+function onChannelDelayInput(event: Event): void {
+  if (typeof props.target !== 'number') return;
+  const raw = Number.parseInt((event.target as HTMLInputElement).value, 10);
+  const samples = Number.isFinite(raw) ? Math.min(MAX_CHANNEL_DELAY_SAMPLES, Math.max(0, raw)) : 0;
+  setStripChannelDelaySamples(props.target, samples);
+}
+
+function onPanLawChange(value: string): void {
+  if (typeof props.target !== 'number') return;
+  setStripPanLaw(props.target, value as PanLawId);
+}
+
+function onPanModeChange(value: string): void {
+  if (typeof props.target !== 'number') return;
+  setStripPanMode(props.target, value as PanModeId);
+}
+
+/** Commits a dual-pan slider edit, keeping the unchanged channel as-is. */
+function onDualPanInput(channel: 'left' | 'right', event: Event): void {
+  if (typeof props.target !== 'number') return;
+  const raw = Number.parseFloat((event.target as HTMLInputElement).value);
+  const value = Number.isFinite(raw) ? Math.min(1, Math.max(-1, raw)) : 0;
+  const left = channel === 'left' ? value : dualPanLeft.value;
+  const right = channel === 'right' ? value : dualPanRight.value;
+  setStripDualPan(props.target, left, right);
+}
+
+function onOptionsPointerDown(event: PointerEvent): void {
+  if (!(event.target instanceof Node) || !optionsMenu.value?.contains(event.target)) {
+    optionsOpen.value = false;
+  }
+}
+
+watch(optionsOpen, (open) => {
+  if (open) document.addEventListener('pointerdown', onOptionsPointerDown, true);
+  else document.removeEventListener('pointerdown', onOptionsPointerDown, true);
+});
+
 onBeforeUnmount(() => {
   // Close any in-flight gesture so the pending history entry is committed.
   activeGainGesture?.cancel();
@@ -366,6 +471,7 @@ onBeforeUnmount(() => {
   // Commit any in-flight touch recording so its points are not lost.
   writeFaderGesture?.end();
   writePanGesture?.end();
+  document.removeEventListener('pointerdown', onOptionsPointerDown, true);
 });
 </script>
 
@@ -407,14 +513,25 @@ onBeforeUnmount(() => {
       </button>
       <button
         type="button"
-        class="toggle strip-auto-w"
-        :class="{ on: autoMode === 'write' }"
-        :title="t.shell.mixer.strip.automationWriteTitle"
-        :aria-label="formatMessage(t.shell.mixer.strip.automationWrite, { name })"
-        :aria-pressed="autoMode === 'write'"
-        @click="toggleAutomationStripMode(props.target, 'write')"
+        class="toggle strip-auto-t"
+        :class="{ on: autoMode === 'touch' }"
+        :title="t.shell.mixer.strip.automationTouchTitle"
+        :aria-label="formatMessage(t.shell.mixer.strip.automationTouch, { name })"
+        :aria-pressed="autoMode === 'touch'"
+        @click="toggleAutomationStripMode(props.target, 'touch')"
       >
-        W
+        T
+      </button>
+      <button
+        type="button"
+        class="toggle strip-auto-l"
+        :class="{ on: autoMode === 'latch' }"
+        :title="t.shell.mixer.strip.automationLatchTitle"
+        :aria-label="formatMessage(t.shell.mixer.strip.automationLatch, { name })"
+        :aria-pressed="autoMode === 'latch'"
+        @click="toggleAutomationStripMode(props.target, 'latch')"
+      >
+        L
       </button>
     </div>
 
@@ -444,17 +561,106 @@ onBeforeUnmount(() => {
     <div class="strip-spacer" />
 
     <div class="strip-pan">
-      <MixerKnob
-        :value="displayedPan"
-        :min="-1"
-        :max="1"
-        :default-value="0"
-        :label="t.shell.mixer.strip.pan"
-        :display="formatPan(displayedPan)"
-        :size="24"
-        :disabled="followsPan"
-        @change="onPanChange"
-      />
+      <div class="strip-pan-knob">
+        <MixerKnob
+          :value="displayedPan"
+          :min="-1"
+          :max="1"
+          :default-value="0"
+          :label="t.shell.mixer.strip.pan"
+          :display="formatPan(displayedPan)"
+          :size="24"
+          :disabled="followsPan"
+          @change="onPanChange"
+        />
+        <div v-if="canStripOptions" ref="optionsMenu" class="strip-options">
+          <button
+            type="button"
+            class="strip-options-btn"
+            :class="{ on: hasStripOptions }"
+            :title="t.shell.mixer.strip.options"
+            :aria-label="formatMessage(t.shell.mixer.strip.optionsNamed, { name })"
+            aria-haspopup="menu"
+            :aria-expanded="optionsOpen"
+            @click="optionsOpen = !optionsOpen"
+          >
+            ⚙
+          </button>
+          <div v-if="optionsOpen" class="strip-options-popover" role="menu">
+            <label class="strip-options-row">
+              <span class="strip-options-label">{{ t.shell.mixer.strip.channelDelay }}</span>
+              <span class="strip-options-field">
+                <input
+                  type="number"
+                  min="0"
+                  :max="MAX_CHANNEL_DELAY_SAMPLES"
+                  step="1"
+                  :value="channelDelaySamples"
+                  :aria-label="t.shell.mixer.strip.channelDelay"
+                  @change="onChannelDelayInput"
+                />
+                <span class="strip-options-unit">{{ t.shell.mixer.strip.samples }}</span>
+              </span>
+            </label>
+            <div class="strip-options-row">
+              <span class="strip-options-label">{{ t.shell.mixer.strip.panLaw }}</span>
+              <span class="strip-options-field">
+                <SelectMenu
+                  :model-value="panLaw"
+                  size="sm"
+                  :options="panLawOptions"
+                  :aria-label="t.shell.mixer.strip.panLaw"
+                  @change="onPanLawChange"
+                />
+              </span>
+            </div>
+            <div class="strip-options-row">
+              <span class="strip-options-label">{{ t.shell.mixer.strip.panMode }}</span>
+              <span class="strip-options-field">
+                <SelectMenu
+                  :model-value="panMode"
+                  size="sm"
+                  :options="panModeOptions"
+                  :aria-label="t.shell.mixer.strip.panMode"
+                  @change="onPanModeChange"
+                />
+              </span>
+            </div>
+            <template v-if="panMode === 'dualPan'">
+              <label class="strip-options-row">
+                <span class="strip-options-label">{{ t.shell.mixer.strip.dualPanLeft }}</span>
+                <span class="strip-options-field">
+                  <input
+                    type="range"
+                    min="-1"
+                    max="1"
+                    step="0.01"
+                    :value="dualPanLeft"
+                    :aria-label="t.shell.mixer.strip.dualPanLeft"
+                    @input="onDualPanInput('left', $event)"
+                  />
+                  <span class="strip-options-unit">{{ formatPan(dualPanLeft) }}</span>
+                </span>
+              </label>
+              <label class="strip-options-row">
+                <span class="strip-options-label">{{ t.shell.mixer.strip.dualPanRight }}</span>
+                <span class="strip-options-field">
+                  <input
+                    type="range"
+                    min="-1"
+                    max="1"
+                    step="0.01"
+                    :value="dualPanRight"
+                    :aria-label="t.shell.mixer.strip.dualPanRight"
+                    @input="onDualPanInput('right', $event)"
+                  />
+                  <span class="strip-options-unit">{{ formatPan(dualPanRight) }}</span>
+                </span>
+              </label>
+            </template>
+          </div>
+        </div>
+      </div>
       <div v-if="track" class="strip-toggles">
         <button
           type="button"
@@ -504,6 +710,11 @@ onBeforeUnmount(() => {
       :bridge="props.bridge"
       :target-lufs="appSettings.settings.loudnessTargetLufs"
     />
+
+    <div v-if="isMaster || props.scope?.available" class="strip-analyzers">
+      <SpectrumAnalyzer :analyser="props.analyser" :scope="props.scope" :height="isMaster ? 48 : 32" />
+      <StereoGoniometer :analyser="props.analyser" :scope="props.scope" :size="isMaster ? 88 : 64" />
+    </div>
   </div>
 </template>
 
@@ -601,7 +812,12 @@ onBeforeUnmount(() => {
   background: var(--success);
 }
 
-.strip-auto-w.on {
+.strip-auto-t.on {
+  color: var(--surface-0);
+  background: #fbbf24;
+}
+
+.strip-auto-l.on {
   color: var(--surface-0);
   background: #f87171;
 }
@@ -638,6 +854,80 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-2);
+}
+
+.strip-pan-knob {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.strip-options {
+  position: relative;
+}
+
+.strip-options-btn {
+  width: 14px;
+  height: 14px;
+  font: 9px system-ui, sans-serif;
+  line-height: 1;
+  color: var(--text-4);
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.strip-options-btn.on {
+  color: var(--accent);
+}
+
+.strip-options-popover {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  z-index: 20;
+  min-width: 132px;
+  padding: var(--sp-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border-raised);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-pop);
+}
+
+.strip-options-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.strip-options-label {
+  font: var(--fw-semibold) 8px var(--font-sans);
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+}
+
+.strip-options-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.strip-options-field input {
+  width: 64px;
+  font: 10px var(--font-sans);
+  color: var(--text-2);
+  background: var(--inset-well);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-1);
+  padding: 1px 4px;
+}
+
+.strip-options-unit {
+  font: 8px var(--font-sans);
+  color: var(--text-4);
 }
 
 .strip-toggles {
@@ -688,5 +978,14 @@ onBeforeUnmount(() => {
   font: 10px ui-monospace, monospace;
   color: var(--text-3);
   user-select: none;
+}
+
+.strip-analyzers {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--border-subtle);
 }
 </style>

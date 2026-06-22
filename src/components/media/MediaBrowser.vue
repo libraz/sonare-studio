@@ -15,6 +15,7 @@ import {
   formatBpm,
   formatChannels,
   formatDuration,
+  formatLufs,
   formatSampleRate,
   parseBpmRange,
   referencedAssetIds,
@@ -103,6 +104,7 @@ const sortOptions = computed<ReadonlyArray<{ value: AssetSortKey; label: string 
   { value: 'name', label: t.value.shell.media.sortName },
   { value: 'duration', label: t.value.shell.media.sortDuration },
   { value: 'bpm', label: t.value.shell.media.sortBpm },
+  { value: 'loudness', label: t.value.shell.media.sortLoudness },
 ]);
 const displayedAssets = computed(() =>
   sortAssets(
@@ -267,6 +269,7 @@ function assetSummary(asset: AudioAssetMeta): string {
   ];
   if (asset.tags?.bpm !== undefined) parts.push(`${formatBpm(asset.tags.bpm)} BPM`);
   if (asset.tags?.key) parts.push(asset.tags.key);
+  if (asset.tags?.lufs !== undefined) parts.push(formatLufs(asset.tags.lufs));
   return parts.join(' · ');
 }
 

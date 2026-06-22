@@ -21,10 +21,14 @@ import {
   setMasteringPreset,
   setMixerBusGain,
   setSend,
+  setStripChannelDelaySamples,
+  setStripDualPan,
   setStripEq,
   setStripGain,
   setStripOutputBus,
   setStripPan,
+  setStripPanLaw,
+  setStripPanMode,
   setTrackFrozen,
   setTrackGroup,
   setTrackInstrument,
@@ -154,6 +158,53 @@ describe('mixer commands', () => {
     });
   });
 
+  describe('setStripChannelDelaySamples', () => {
+    it('sets, clears and validates the channel delay undoably', () => {
+      setStripChannelDelaySamples(trackId, 256);
+      expect(store.tracks[0].mixer?.channelDelaySamples).toBe(256);
+      // 0 clears the field so a neutral strip stays neutral.
+      setStripChannelDelaySamples(trackId, 0);
+      expect(store.tracks[0].mixer?.channelDelaySamples).toBeUndefined();
+      undo();
+      expect(store.tracks[0].mixer?.channelDelaySamples).toBe(256);
+      expect(() => setStripChannelDelaySamples(trackId, -1)).toThrow(RangeError);
+      expect(() => setStripChannelDelaySamples(trackId, 1.5)).toThrow(RangeError);
+      expect(() => setStripChannelDelaySamples(trackId, 1e9)).toThrow(RangeError);
+    });
+  });
+
+  describe('pan law / mode / dual pan', () => {
+    it('sets pan law, clearing the field at the default, undoably', () => {
+      setStripPanLaw(trackId, 'const6dB');
+      expect(store.tracks[0].mixer?.panLaw).toBe('const6dB');
+      // The default clears the field so a neutral strip stays neutral.
+      setStripPanLaw(trackId, 'const3dB');
+      expect(store.tracks[0].mixer?.panLaw).toBeUndefined();
+      undo();
+      expect(store.tracks[0].mixer?.panLaw).toBe('const6dB');
+      expect(() => setStripPanLaw(trackId, 'bogus' as 'const3dB')).toThrow(RangeError);
+    });
+
+    it('sets pan mode, clearing the field at the default, undoably', () => {
+      setStripPanMode(trackId, 'dualPan');
+      expect(store.tracks[0].mixer?.panMode).toBe('dualPan');
+      setStripPanMode(trackId, 'balance');
+      expect(store.tracks[0].mixer?.panMode).toBeUndefined();
+      undo();
+      expect(store.tracks[0].mixer?.panMode).toBe('dualPan');
+      expect(() => setStripPanMode(trackId, 'bogus' as 'balance')).toThrow(RangeError);
+    });
+
+    it('sets and validates dual-pan positions undoably', () => {
+      setStripDualPan(trackId, -0.5, 0.75);
+      expect(store.tracks[0].mixer?.dualPan).toEqual({ left: -0.5, right: 0.75 });
+      undo();
+      expect(store.tracks[0].mixer?.dualPan).toBeUndefined();
+      expect(() => setStripDualPan(trackId, -2, 0)).toThrow(RangeError);
+      expect(() => setStripDualPan(trackId, 0, Number.NaN)).toThrow(RangeError);
+    });
+  });
+
   describe('insert commands', () => {
     it('adds, edits, bypasses and removes inserts undoably', () => {
       const index = addInsert(trackId, 'dynamics.compressor', { thresholdDb: -18 });
@@ -268,6 +319,27 @@ describe('mixer commands', () => {
       undo();
       expect(store.tracks[0].mixer?.sends).toHaveLength(1);
       expect(() => setSend(trackId, 'nope', { levelDb: 0 })).toThrow(RangeError);
+    });
+
+    it('sets and preserves the send tap point (pre/post-fader)', () => {
+      const busId = addMixerBus({ name: 'FX' });
+      // Default send omits timing (post-fader).
+      setSend(trackId, busId, { levelDb: -12 });
+      expect(store.tracks[0].mixer?.sends[0].timing).toBeUndefined();
+      // Switching to pre-fader records the field.
+      setSend(trackId, busId, { levelDb: -12, enabled: true, timing: 'preFader' });
+      expect(store.tracks[0].mixer?.sends[0].timing).toBe('preFader');
+      // A level edit without a timing preserves the pre-fader tap.
+      setSend(trackId, busId, { levelDb: -3 });
+      expect(store.tracks[0].mixer?.sends[0]).toEqual({
+        busId,
+        levelDb: -3,
+        enabled: true,
+        timing: 'preFader',
+      });
+      // Switching back to post-fader drops the field so neutral stays neutral.
+      setSend(trackId, busId, { levelDb: -3, enabled: true, timing: 'postFader' });
+      expect(store.tracks[0].mixer?.sends[0].timing).toBeUndefined();
     });
 
     it('rejects adding a bus beyond the engine limit', () => {

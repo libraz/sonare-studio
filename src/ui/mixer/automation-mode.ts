@@ -1,26 +1,44 @@
 /**
- * Per-strip automation R/W modes and the touch-record write gesture.
+ * Per-strip automation R/T/L modes and the touch-record write gesture.
  *
  * The mode map is session-only module state (never persisted): channel strips
- * toggle it from their R/W buttons and the app shell drops 'write' modes back
- * to 'read' when the transport stops. The write gesture turns a fader/pan
- * drag into automation breakpoints: while playing it records a throttled
- * point stream, stationary it moves a single breakpoint at the playhead, and
- * gesture end merges the recording over the lane's existing points in one
- * undoable command call (made by the caller-provided commit).
+ * toggle it from their R/T/L buttons and the app shell drops the write-class
+ * modes (touch/latch) back to 'read' when the transport stops. A write gesture
+ * turns a fader/pan drag into automation breakpoints: while playing it records
+ * a throttled point stream, stationary it moves a single breakpoint at the
+ * playhead, and gesture end merges the recording into the lane's existing
+ * points in one undoable command call (made by the caller-provided commit).
+ *
+ * The two write-class modes differ only in how the recording is merged on
+ * release: 'touch' replaces just the touched span and reads the existing
+ * automation back on either side, while 'latch' replaces the touched span and
+ * everything after it, so the last recorded value latches (holds) to the end
+ * of the lane.
  */
 
 import { reactive } from 'vue';
 import type { AutomationPoint } from '@/project/automation';
 
-/** Automation mode of one mixer strip ('off' = no follow, no recording). */
-export type AutomationStripMode = 'off' | 'read' | 'write';
+/**
+ * Automation mode of one mixer strip ('off' = no follow, no recording;
+ * 'read' = follow the lane; 'touch'/'latch' = record drags, see the module
+ * doc for the release difference).
+ */
+export type AutomationStripMode = 'off' | 'read' | 'touch' | 'latch';
+
+/** Write-class modes that record a drag (as opposed to 'off'/'read'). */
+export type AutomationWriteMode = 'touch' | 'latch';
 
 /** Minimum playhead advance between recorded points while playing, in PPQ. */
 export const AUTOMATION_WRITE_THROTTLE_PPQ = 1 / 16;
 
 /** Replace window around a single recorded breakpoint, in PPQ. */
 export const AUTOMATION_WRITE_REPLACE_WINDOW_PPQ = 1 / 32;
+
+/** True when a mode records drags (touch or latch). */
+export function isAutomationWriteMode(mode: AutomationStripMode): mode is AutomationWriteMode {
+  return mode === 'touch' || mode === 'latch';
+}
 
 /** Session-only mode per strip target; absent entries mean 'off'. */
 const modes = reactive(new Map<number | 'master', AutomationStripMode>());
@@ -36,12 +54,16 @@ export function automationStripMode(target: number | 'master'): AutomationStripM
 
 /**
  * Toggles a strip's automation mode. Activating one mode deactivates the
- * other (read/write are exclusive); toggling the active mode turns it off.
+ * others (read/touch/latch are mutually exclusive); toggling the active mode
+ * turns it off.
  *
  * @param target Strip target: a track id or 'master'.
  * @param mode Mode the button represents.
  */
-export function toggleAutomationStripMode(target: number | 'master', mode: 'read' | 'write'): void {
+export function toggleAutomationStripMode(
+  target: number | 'master',
+  mode: 'read' | AutomationWriteMode,
+): void {
   if (modes.get(target) === mode) modes.delete(target);
   else modes.set(target, mode);
 }
@@ -57,10 +79,10 @@ export function setAutomationStripMode(target: number | 'master', mode: Automati
   else modes.set(target, mode);
 }
 
-/** Drops every strip in 'write' mode back to 'read' (transport stop). */
+/** Drops every strip in a write-class mode back to 'read' (transport stop). */
 export function disengageAutomationWriteModes(): void {
   for (const [target, mode] of modes) {
-    if (mode === 'write') modes.set(target, 'read');
+    if (isAutomationWriteMode(mode)) modes.set(target, 'read');
   }
 }
 
@@ -71,6 +93,8 @@ export function resetAutomationStripModes(): void {
 
 /** Dependencies of one automation write (touch-record) gesture. */
 export interface AutomationWriteGestureOptions {
+  /** Write-class mode that controls the release merge (touch vs latch). */
+  mode: AutomationWriteMode;
   /** Lane points as they were when the gesture started (copied, not held). */
   existingPoints: ReadonlyArray<AutomationPoint>;
   /** Current playhead position in PPQ. */
@@ -95,11 +119,16 @@ export interface AutomationWriteGesture {
  * While playing, each update records a point at the playhead, throttled to
  * one point per {@link AUTOMATION_WRITE_THROTTLE_PPQ} of playhead advance
  * (a backward jump — loop wrap — always records). Stationary, the gesture
- * keeps a single breakpoint that follows the latest value. `end()` replaces
- * the existing points inside the recorded PPQ span (a single breakpoint uses
- * a ±{@link AUTOMATION_WRITE_REPLACE_WINDOW_PPQ} window) with the recording
- * and hands the merged list to `commit` exactly once; ending without any
- * update commits nothing.
+ * keeps a single breakpoint that follows the latest value. `end()` merges the
+ * recording into the existing points and hands the result to `commit` exactly
+ * once; ending without any update commits nothing.
+ *
+ * The merge depends on the mode: 'touch' replaces only the recorded PPQ span
+ * (a single breakpoint uses a ±{@link AUTOMATION_WRITE_REPLACE_WINDOW_PPQ}
+ * window) and keeps existing points on either side, so automation reads back
+ * after the touched region; 'latch' keeps existing points before the span but
+ * drops every point from the span onward, so the last recorded value latches
+ * (holds flat) to the end of the lane.
  *
  * @param options Gesture dependencies (see {@link AutomationWriteGestureOptions}).
  */
@@ -150,8 +179,13 @@ export function createAutomationWriteGesture(
         lo -= AUTOMATION_WRITE_REPLACE_WINDOW_PPQ;
         hi += AUTOMATION_WRITE_REPLACE_WINDOW_PPQ;
       }
-      const merged = existing.filter((point) => point.ppq < lo || point.ppq > hi).concat(recorded);
-      options.commit(merged);
+      // Touch keeps existing points on both sides of the recorded span; latch
+      // keeps only those before it, so the last value holds to the lane end.
+      const kept =
+        options.mode === 'latch'
+          ? existing.filter((point) => point.ppq < lo)
+          : existing.filter((point) => point.ppq < lo || point.ppq > hi);
+      options.commit(kept.concat(recorded));
     },
   };
 }

@@ -53,8 +53,10 @@ import { useShortcuts } from '@/composables/useShortcuts';
 import { useStepInput } from '@/composables/useStepInput';
 import { useTransport } from '@/composables/useTransport';
 import { useTransportControls } from '@/composables/useTransportControls';
+import type { AnalyserBridge } from '@/engine/analyser';
 import type { EngineHandle } from '@/engine/engine';
 import type { MeterBridge } from '@/engine/meters';
+import type { ScopeBridge } from '@/engine/scope';
 import { ensureWasm } from '@/lib/wasm';
 import { quantizeSelection } from '@/project/commands';
 import { serializeProject } from '@/project/serialization';
@@ -80,6 +82,8 @@ const busy = ref(false);
 /** Plain (non-reactive) engine objects; the meter bridge must not be wrapped in reactive(). */
 const handle = shallowRef<EngineHandle | null>(null);
 const bridge = shallowRef<MeterBridge | null>(null);
+const analyser = shallowRef<AnalyserBridge | null>(null);
+const scope = shallowRef<ScopeBridge | null>(null);
 
 const transport = useTransport(() => handle.value);
 const {
@@ -225,13 +229,18 @@ const {
   syncTransportState,
   trackMeterSource,
   busMeterSource,
+  masterScopeSource,
+  trackScopeSource,
+  busScopeSource,
   automationSync,
   midiSync,
   mixerLaneTrackIds,
-} = useEngineProjectSync({ bridge, errorMessage, handle, transport });
+} = useEngineProjectSync({ bridge, scope, errorMessage, handle, transport });
 
 const { ensureEngineStarted, playTestTone, renderOffline, startEngine } = useEngineLifecycle({
   bridge,
+  analyser,
+  scope,
   ctxState,
   errorMessage,
   handle,
@@ -435,6 +444,8 @@ if (import.meta.env.DEV) {
 
 useAppLifecycle({
   bridge,
+  analyser,
+  scope,
   errorMessage,
   handle,
   version,
@@ -764,8 +775,12 @@ useAppLifecycle({
           <MixerPanel
             class="mixer-host"
             :bridge="bridge"
+            :analyser="analyser"
+            :master-scope="masterScopeSource()"
             :meter-for="trackMeterSource"
             :bus-meter-for="busMeterSource"
+            :scope-for="trackScopeSource"
+            :bus-scope-for="busScopeSource"
             :position-ppq="() => positionPpq"
             :is-playing="isPlaying"
           />

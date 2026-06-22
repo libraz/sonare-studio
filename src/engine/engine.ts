@@ -5,12 +5,25 @@ import { init as initWorkletModule, SonareEngine } from '@/wasm/worklet.js';
 /** Fixed same-origin path of the self-contained AudioWorklet module bundle. */
 const WORKLET_MODULE_URL = '/sonare-engine-worklet.js';
 
+/** Default scope telemetry interval in frames (~47 Hz at 48 kHz). */
+const DEFAULT_SCOPE_INTERVAL_FRAMES = 1024;
+/** Default scope spectrum band count. */
+const DEFAULT_SCOPE_BANDS = 96;
+
 /** Options for {@link createEngine}. */
 export interface CreateEngineOptions {
   /** Transport mode; 'auto' degrades to postMessage when SharedArrayBuffer is unavailable. */
   mode?: 'auto' | 'sab' | 'postMessage';
   /** Output channel count (default 2). */
   channelCount?: number;
+  /**
+   * Scope telemetry (per-target spectrum + goniometer) interval in frames.
+   * 0 disables scope telemetry. Defaults to {@link DEFAULT_SCOPE_INTERVAL_FRAMES}.
+   * Only flows in SAB mode on the embind runtime.
+   */
+  scopeIntervalFrames?: number;
+  /** Scope spectrum band count. Defaults to {@link DEFAULT_SCOPE_BANDS}. */
+  scopeBands?: number;
 }
 
 /** A running audio engine instance with its owning AudioContext. */
@@ -74,6 +87,8 @@ export async function createEngine(options: CreateEngineOptions = {}): Promise<E
       moduleUrl: WORKLET_MODULE_URL,
       mode: options.mode ?? 'auto',
       channelCount: options.channelCount ?? 2,
+      scopeIntervalFrames: options.scopeIntervalFrames ?? DEFAULT_SCOPE_INTERVAL_FRAMES,
+      scopeBands: options.scopeBands ?? DEFAULT_SCOPE_BANDS,
       nodeFactory: (context, processorName, nodeOptions) => {
         const node = new AudioWorkletNode(context, processorName, {
           ...nodeOptions,

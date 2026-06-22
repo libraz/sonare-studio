@@ -2,12 +2,43 @@
  * Insert-processor catalog helpers for the add-insert popover.
  *
  * Processor names follow the wasm catalog convention 'category.camelName'
- * (e.g. 'dynamics.compressor'). The catalog itself is runtime data
- * (masteringProcessorNames); a curated static fallback keeps the popover
- * usable when the module is not loaded (tests, early boot).
+ * (e.g. 'dynamics.compressor'). The catalog itself is runtime data; a curated
+ * static fallback keeps the popover usable when the module is not loaded
+ * (tests, early boot).
+ *
+ * The structured `masteringProcessorCatalog()` is the source of truth when the
+ * module is loaded: each entry carries `kind` (realtime/offline/pair),
+ * `realtimeInsertable` and `stereoOnly`, so the popover can offer exactly the
+ * ids a scope accepts and tag stereo-only processors. Two legacy name catalogs
+ * are the fallback (and must not be confused):
+ * - `masteringInsertNames()` — processors the realtime engine accepts as strip
+ *   inserts. Mixer strips (track/bus/master) are validated against this set, so
+ *   their popover MUST use it or the engine throws "Unsupported insert
+ *   processor" when the scene syncs. Equal to the catalog's `realtimeInsertable`
+ *   set.
+ * - `masteringProcessorNames()` — the full processor set (a superset), valid in
+ *   the offline mastering chain only.
  */
 
 import { getWasmModule } from '@/project/store';
+
+/** Processor classification from the wasm catalog (subset used by the popover). */
+export type InsertProcessorKind = 'realtime' | 'offline' | 'pair';
+
+/** One entry of the structured wasm processor catalog (the fields we consume). */
+interface WasmCatalogEntry {
+  id: string;
+  kind: InsertProcessorKind;
+  realtimeInsertable: boolean;
+  stereoOnly: boolean;
+}
+
+/**
+ * Where an insert catalog will be used:
+ * - `'realtime'` — a mixer strip insert (engine-validated subset).
+ * - `'offline'` — the offline mastering chain (full processor set).
+ */
+export type InsertCatalogScope = 'realtime' | 'offline';
 
 /** One selectable processor in the add-insert popover. */
 export interface InsertProcessorEntry {
@@ -15,6 +46,13 @@ export interface InsertProcessorEntry {
   id: string;
   /** Human-readable name (e.g. 'Compressor'). */
   label: string;
+  /**
+   * Classification from the wasm catalog, when known. Undefined on the static
+   * fallback path (no module loaded).
+   */
+  kind?: InsertProcessorKind;
+  /** True for stereo-only processors (no mono implementation), when known. */
+  stereoOnly?: boolean;
 }
 
 /** One category group of the add-insert popover. */
@@ -115,11 +153,25 @@ export function categoryLabel(category: string): string {
  * @returns Non-empty groups only.
  */
 export function groupInsertCatalog(names: readonly string[]): InsertCatalogGroup[] {
+  return groupInsertCatalogEntries(names.map((id) => ({ id, label: humanizeInsertName(id) })));
+}
+
+/**
+ * Groups pre-built catalog entries (carrying `kind`/`stereoOnly` metadata) by
+ * their category prefix, preserving the metadata. Ordering matches
+ * {@link groupInsertCatalog}.
+ *
+ * @param entries Catalog entries (already humanized).
+ * @returns Non-empty groups only.
+ */
+export function groupInsertCatalogEntries(
+  entries: readonly InsertProcessorEntry[],
+): InsertCatalogGroup[] {
   const byCategory = new Map<string, InsertProcessorEntry[]>();
-  for (const id of names) {
-    const category = id.includes('.') ? id.slice(0, id.indexOf('.')) : 'other';
+  for (const entry of entries) {
+    const category = entry.id.includes('.') ? entry.id.slice(0, entry.id.indexOf('.')) : 'other';
     const list = byCategory.get(category) ?? [];
-    list.push({ id, label: humanizeInsertName(id) });
+    list.push(entry);
     byCategory.set(category, list);
   }
   const knownOrder = CATEGORY_LABELS.map(([key]) => key);
@@ -139,16 +191,81 @@ export function groupInsertCatalog(names: readonly string[]): InsertCatalogGroup
 }
 
 /**
- * Loads the processor catalog from the wasm module, falling back to the
- * curated static list when the module (or the function) is unavailable.
+ * Reads the structured `masteringProcessorCatalog()` from the wasm module, or
+ * null when the module/function is unavailable.
  */
-export function loadInsertCatalog(): string[] {
+function loadWasmCatalog(): WasmCatalogEntry[] | null {
+  try {
+    const wasm = getWasmModule() as unknown as {
+      masteringProcessorCatalog?: () => WasmCatalogEntry[];
+    };
+    const entries = wasm.masteringProcessorCatalog?.();
+    if (entries && entries.length > 0) return entries;
+  } catch {
+    // Module not loaded yet.
+  }
+  return null;
+}
+
+/** Keeps the catalog entries a scope offers: realtime-insertable, or non-pair. */
+function entryInScope(entry: WasmCatalogEntry, scope: InsertCatalogScope): boolean {
+  // Pair (match.*) processors are reference-pair tools, never chain inserts.
+  return scope === 'realtime' ? entry.realtimeInsertable : entry.kind !== 'pair';
+}
+
+/**
+ * Loads the processor catalog as structured entries (with `kind`/`stereoOnly`
+ * metadata) for the given scope. Prefers `masteringProcessorCatalog()`; falls
+ * back to the name catalogs (no metadata), then the curated static list.
+ *
+ * @param scope `'realtime'` keeps the engine's insert-safe subset (mixer
+ *   strips); `'offline'` keeps the full set minus pair processors (mastering
+ *   chain).
+ * @returns Catalog entries in catalog order.
+ */
+export function loadInsertCatalogEntries(
+  scope: InsertCatalogScope = 'realtime',
+): InsertProcessorEntry[] {
+  const catalog = loadWasmCatalog();
+  if (catalog) {
+    return catalog
+      .filter((entry) => entryInScope(entry, scope))
+      .map((entry) => ({
+        id: entry.id,
+        label: humanizeInsertName(entry.id),
+        kind: entry.kind,
+        stereoOnly: entry.stereoOnly,
+      }));
+  }
+  return loadInsertCatalog(scope).map((id) => ({ id, label: humanizeInsertName(id) }));
+}
+
+/**
+ * Loads the processor ids for a scope, falling back to the curated static list
+ * when the module is unavailable. Prefer {@link loadInsertCatalogEntries} when
+ * the `kind`/`stereoOnly` metadata is useful.
+ *
+ * @param scope Which catalog to load: `'realtime'` returns the engine's
+ *   insert-safe subset (`masteringInsertNames`) for mixer strips; `'offline'`
+ *   returns the full processor set (`masteringProcessorNames`) for the
+ *   mastering chain. Each falls back to the other catalog function when its
+ *   own is missing, and to the curated static list when neither is available.
+ * @returns Catalog processor ids.
+ */
+export function loadInsertCatalog(scope: InsertCatalogScope = 'realtime'): string[] {
+  const catalog = loadWasmCatalog();
+  if (catalog) {
+    return catalog.filter((entry) => entryInScope(entry, scope)).map((entry) => entry.id);
+  }
   try {
     const wasm = getWasmModule() as unknown as {
       masteringProcessorNames?: () => string[];
       masteringInsertNames?: () => string[];
     };
-    const names = wasm.masteringProcessorNames?.() ?? wasm.masteringInsertNames?.();
+    const names =
+      scope === 'offline'
+        ? (wasm.masteringProcessorNames?.() ?? wasm.masteringInsertNames?.())
+        : (wasm.masteringInsertNames?.() ?? wasm.masteringProcessorNames?.());
     if (names && names.length > 0) return names;
   } catch {
     // Module not loaded yet; use the fallback below.
