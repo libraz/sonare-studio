@@ -167,4 +167,5 @@ The app is a static site, but it must be served cross-origin isolated:
 
 ## License
 
-Apache-2.0
+GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later). See
+[LICENSE](./LICENSE).
