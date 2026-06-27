@@ -352,9 +352,12 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
     const sampleRate = handle.ctx.sampleRate;
 
     // The engine holds a single global SoundFont: with several distinct
-    // fonts requested the last one loaded wins, so make that audible.
+    // fonts requested the last one loaded wins, so make that audible. Frozen
+    // tracks play their baked render, not the synth, so they neither need a
+    // font nor count toward the single-font contention.
     const fontIds = new Set<string>();
     for (const track of tracks) {
+      if (track.frozen !== undefined) continue;
       if (track.kind === 'midi' && track.instrument?.kind === 'sf2') {
         fontIds.add(track.instrument.fontId);
       }
@@ -367,6 +370,9 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
 
     for (const track of tracks) {
       if (track.kind !== 'midi') continue;
+      // A frozen track plays from its baked asset; loading its instrument (and,
+      // for SF2, the global SoundFont) would thrash the single font slot.
+      if (track.frozen !== undefined) continue;
       const instrumentKey = JSON.stringify(track.instrument ?? null);
       if (lastInstrumentKeyByTrack.get(track.id) === instrumentKey) continue;
       const instrument = track.instrument;

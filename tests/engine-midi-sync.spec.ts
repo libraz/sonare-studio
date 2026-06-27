@@ -553,6 +553,33 @@ describe('createMidiSync', () => {
     expect(engine.setSf2Instrument).toHaveBeenCalledTimes(2);
   });
 
+  it('does not load a font or bind an instrument for a frozen SF2 track', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const { handle, engine } = makeHandle();
+      const loadFont = vi.fn(async () => new Uint8Array([1]));
+      const sync = createMidiSync(handle, { loadFont });
+      const tracks = [
+        // A live SF2 track plus a frozen one requesting a different font: the
+        // frozen track must neither load its font nor trip the contention warn.
+        makeTrack(1, { instrument: { kind: 'sf2', fontId: 'font-a' } }),
+        makeTrack(2, {
+          instrument: { kind: 'sf2', fontId: 'font-b' },
+          frozen: { assetId: 'baked-1' },
+        }),
+      ];
+
+      await sync.sync(tracks, [], TEMPO_120);
+      expect(loadFont).toHaveBeenCalledTimes(1);
+      expect(loadFont).toHaveBeenCalledWith('font-a');
+      expect(engine.setSf2Instrument).toHaveBeenCalledTimes(1);
+      expect(engine.setSf2Instrument).toHaveBeenCalledWith(1, {});
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('warns when tracks request distinct SoundFonts and loads both', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
