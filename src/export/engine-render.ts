@@ -34,7 +34,7 @@ import {
   type MixdownResult,
   type MixdownStem,
 } from '@/export/mixdown';
-import { linearToDb, peakDb } from '@/lib/db';
+import { peakDb } from '@/lib/db';
 import { ensureWasm } from '@/lib/wasm';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import { automationCurveCode } from '@/project/automation';
@@ -45,9 +45,11 @@ import {
   clampPan,
   DEFAULT_PAN_LAW,
   DEFAULT_PAN_MODE,
+  laneGainDb,
   masteringChainIsActive,
   type PanLawId,
   type PanModeId,
+  vcaOffsetDb,
 } from '@/project/mixer';
 import {
   applyAudioClipFades,
@@ -563,10 +565,9 @@ export async function renderProjectWithEngine(
       } else {
         // Lane fader includes the strip trim and the track's VCA group offset,
         // so a VCA-attenuated track exports at the level it plays back at.
-        const vcaOffset = track.vcaId !== undefined ? (vcaGainDbById.get(track.vcaId) ?? 0) : 0;
         engine.setParameter(
           laneParamId(index, ENGINE_MIXER_PARAM_FADER_DB),
-          linearToDb(track.volume) + (strip?.gainDb ?? 0) + vcaOffset,
+          laneGainDb(track.volume, strip?.gainDb, vcaOffsetDb(track.vcaId, vcaGainDbById)),
         );
         const pan = clampPan(strip?.pan ?? 0);
         engine.setParameter(laneParamId(index, ENGINE_MIXER_PARAM_PAN), pan);

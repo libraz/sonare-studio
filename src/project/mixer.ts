@@ -21,6 +21,7 @@
  * chain is an additional export-only stage.
  */
 
+import { linearToDb } from '@/lib/db';
 import type { EqBand, SendTiming } from '@/wasm/index.js';
 import { canonicalJson, fnv1a32Hex } from './hash';
 
@@ -199,6 +200,40 @@ export interface ProjectMixerState {
   vcaGroups?: VcaGroup[];
   /** Mastering chain for offline mixdown renders; absent = none. */
   masteringChain?: MasteringChainState;
+}
+
+/**
+ * Resolves a track's VCA group fader offset in dB.
+ *
+ * @param vcaId The track's VCA group id; absent = unassigned (0 dB).
+ * @param vcaGainDb Group id -> fader offset map; omit when there are no groups.
+ * @returns The group's dB offset, or 0 when unassigned/unknown.
+ */
+export function vcaOffsetDb(
+  vcaId: string | undefined,
+  vcaGainDb: ReadonlyMap<string, number> | undefined,
+): number {
+  return vcaId !== undefined ? (vcaGainDb?.get(vcaId) ?? 0) : 0;
+}
+
+/**
+ * Effective lane fader gain in dB for a track: its linear volume converted to
+ * dB plus the strip trim plus its VCA group offset. Shared by realtime
+ * mixer-sync, the automation-clear restore path and the offline renderer so the
+ * three derivations never drift (a VCA-attenuated track that loses its fader
+ * automation must restore to the same level it plays at).
+ *
+ * @param volume Linear track volume (>= 0, 1 = unity).
+ * @param stripGainDb Strip trim in dB; absent = 0.
+ * @param vcaOffset The track's VCA group offset in dB (see {@link vcaOffsetDb}).
+ * @returns The combined lane fader gain in dB.
+ */
+export function laneGainDb(
+  volume: number,
+  stripGainDb: number | undefined,
+  vcaOffset: number,
+): number {
+  return linearToDb(volume) + (stripGainDb ?? 0) + vcaOffset;
 }
 
 /** Maximum number of send buses (the realtime engine's bus lane limit). */

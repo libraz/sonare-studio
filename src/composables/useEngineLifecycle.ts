@@ -7,12 +7,12 @@ import { createEngine, type EngineHandle } from '@/engine/engine';
 import { resolvePresetName } from '@/engine/instruments';
 import { createMeterBridge, type MeterBridge } from '@/engine/meters';
 import { createMidiSync } from '@/engine/midi-sync';
-import { createMixerSync, linearToDb } from '@/engine/mixer-sync';
+import { createMixerSync } from '@/engine/mixer-sync';
 import { createScopeBridge, type ScopeBridge } from '@/engine/scope';
 import { createStripSync } from '@/engine/strip-sync';
 import { createTransportSync } from '@/engine/transport-sync';
 import { ensureWasm } from '@/lib/wasm';
-import { clampPan } from '@/project/mixer';
+import { clampPan, laneGainDb, vcaOffsetDb } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 
 type Transport = ReturnType<typeof useTransport>;
@@ -80,7 +80,16 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
           const track = store.tracks.find((entry) => entry.id === target);
           if (!track) return;
           if (param === 'faderDb') {
-            h.engine.setStripGain(target, linearToDb(track.volume) + (track.mixer?.gainDb ?? 0));
+            // Restore the same effective level mixer-sync holds, VCA offset
+            // included, so a VCA member doesn't jump when its automation clears.
+            const vcaGroups = store.mixer.vcaGroups ?? [];
+            const vcaGainDb = vcaGroups.length
+              ? new Map(vcaGroups.map((group) => [group.id, group.gainDb]))
+              : undefined;
+            h.engine.setStripGain(
+              target,
+              laneGainDb(track.volume, track.mixer?.gainDb, vcaOffsetDb(track.vcaId, vcaGainDb)),
+            );
           } else {
             h.engine.setStripPan(target, clampPan(track.mixer?.pan ?? 0));
           }

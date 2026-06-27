@@ -11,14 +11,15 @@
  * can be mapped back to project tracks.
  */
 
-import { linearToDb } from '@/lib/db';
 import {
   clampPan,
   DEFAULT_PAN_LAW,
   DEFAULT_PAN_MODE,
+  laneGainDb,
   type MixerStrip,
   type PanLawId,
   type PanModeId,
+  vcaOffsetDb,
 } from '@/project/mixer';
 import type { EditorTrack } from '@/project/types';
 import type { EngineHandle } from './engine';
@@ -88,10 +89,10 @@ export function createMixerSync(handle: EngineHandle): MixerSync {
     const anySolo = tracks.some((track) => track.solo);
     for (const track of tracks) {
       const strip = track.mixer;
-      const vcaOffset = track.vcaId !== undefined ? (vcaGainDb?.get(track.vcaId) ?? 0) : 0;
+      const vcaOffset = vcaOffsetDb(track.vcaId, vcaGainDb);
       const pan = clampPan(strip?.pan ?? 0);
       const next: LaneState = {
-        gainDb: linearToDb(track.volume) + (strip?.gainDb ?? 0) + vcaOffset,
+        gainDb: laneGainDb(track.volume, strip?.gainDb, vcaOffset),
         pan,
         solo: track.solo || (anySolo && track.soloSafe === true),
         mute: track.mute,

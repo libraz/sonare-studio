@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
 import { createMixerSync, linearToDb, SILENCE_DB } from '@/engine/mixer-sync';
-import { createDefaultStrip, type MixerStrip } from '@/project/mixer';
+import { createDefaultStrip, laneGainDb, type MixerStrip, vcaOffsetDb } from '@/project/mixer';
 import type { EditorTrack } from '@/project/types';
 
 /** Builds a track mirror entry with overridable fields. */
@@ -330,5 +330,22 @@ describe('createMixerSync', () => {
     expect(engine.setStripGain.mock.calls.map((call) => call[0])).not.toContain(2);
     expect(engine.setStripPan.mock.calls.map((call) => call[0])).not.toContain(2);
     expect(engine.setSoloMute).toHaveBeenCalledWith(2, false, true);
+  });
+});
+
+describe('laneGainDb / vcaOffsetDb', () => {
+  it('resolves a VCA group offset, defaulting unassigned and unknown ids to 0', () => {
+    const groups = new Map([['vca-1', -6]]);
+    expect(vcaOffsetDb('vca-1', groups)).toBe(-6);
+    expect(vcaOffsetDb('missing', groups)).toBe(0);
+    expect(vcaOffsetDb(undefined, groups)).toBe(0);
+    expect(vcaOffsetDb('vca-1', undefined)).toBe(0);
+  });
+
+  it('combines volume, strip trim and VCA offset like the live lane fader', () => {
+    expect(laneGainDb(1, undefined, 0)).toBeCloseTo(0, 9);
+    expect(laneGainDb(1, -3, -6)).toBeCloseTo(-9, 9);
+    // Matches mixer-sync's derivation for a VCA member: linearToDb(volume).
+    expect(laneGainDb(0.5, 0, 0)).toBeCloseTo(linearToDb(0.5), 9);
   });
 });
