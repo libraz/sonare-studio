@@ -7,7 +7,7 @@ import type { EngineHandle } from '@/engine/engine';
 import type { Recorder, RecordingResult, StartRecordingOptions } from '@/engine/recorder';
 import { NoMicrophoneError } from '@/engine/recorder';
 import type { AudioAssetMeta } from '@/persistence/assets';
-import { addAudioTrack, clearHistory } from '@/project/commands';
+import { addAudioTrack, clearHistory, setTempoSegments } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 
 vi.mock('@/lib/wasm', async () => {
@@ -447,6 +447,38 @@ describe('useRecording', () => {
     expect(recording.isRecording.value).toBe(false);
     expect(recording.inputLevel.value).toBe(0);
     expect(recording.error.value).toMatch(/disconnected/i);
+  });
+
+  it('lengths a take through the tempo map when the project tempo varies', async () => {
+    // Two constant segments: 120 BPM, then 240 BPM from ppq 1.
+    setTempoSegments([
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 1, bpm: 240 },
+    ]);
+    const { recording, fake } = setup();
+    const trackId = addAudioTrack({ name: 'Vox' });
+    recording.arm(trackId);
+    // 0.75 s captured from ppq 0: the first 0.5 s fills ppq[0,1) at 120 BPM and
+    // the remaining 0.25 s spans ppq[1,2) at 240 BPM -> 2 ppq. The old scalar
+    // math (0.75 * 120/60) would have produced 1.5.
+    fake.setResult({ channels: [new Float32Array(36000)], sampleRate: 48000, startPpq: 0 });
+
+    expect(await recording.record()).toBe(true);
+    const clipId = await recording.stopRecord();
+    const clip = store.clips.find((c) => c.id === clipId);
+    expect(clip?.lengthPpq).toBeCloseTo(2, 6);
+  });
+
+  it('lengths a take with the scalar tempo when the map is flat (backward compatible)', async () => {
+    const { recording, fake } = setup();
+    const trackId = addAudioTrack({ name: 'Vox' });
+    recording.arm(trackId);
+    // 0.5 s at a flat 120 BPM -> 1 ppq, matching the previous scalar result.
+    fake.setResult({ channels: [new Float32Array(24000)], sampleRate: 48000, startPpq: 0 });
+    expect(await recording.record()).toBe(true);
+    const clipId = await recording.stopRecord();
+    const clip = store.clips.find((c) => c.id === clipId);
+    expect(clip?.lengthPpq).toBeCloseTo(1, 6);
   });
 
   describe('cycle recording', () => {

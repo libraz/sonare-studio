@@ -26,6 +26,11 @@ import { ingestAudioBuffer } from '@/project/audio-import';
 import { addAudioClip } from '@/project/commands';
 import { ppqToSeconds } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
+import {
+  normalizeTempoMap,
+  ppqToSeconds as ppqToSecondsMap,
+  secondsToPpq as secondsToPpqMap,
+} from '@/project/tempo-map';
 import { timeSignatureAt } from '@/project/time-signature';
 import type { UseTransportReturn } from './useTransport';
 
@@ -350,6 +355,11 @@ export function useRecording(
     if (trackId === null) return null;
     const loop = recordingLoop;
     recordingLoop = null;
+    // Convert captured wall-clock seconds back to grid PPQ through the full
+    // tempo map (constant-tempo projects collapse to the old scalar math), so a
+    // take on a tempo ramp lands the right length and cycle splits hit the loop
+    // boundaries instead of drifting.
+    const tempoMap = normalizeTempoMap(store.tempoSegments, recordingTempoBpm);
     try {
       recordingCounter += 1;
       const name = `Recording ${recordingCounter}`;
@@ -357,8 +367,9 @@ export function useRecording(
       // register every completed pass as one take of a single clip.
       if (loop) {
         const loopLengthPpq = loop.endPpq - loop.startPpq;
-        const framesPerPpq = ppqToSeconds(1, recordingTempoBpm) * result.sampleRate;
-        const cycleFrames = Math.round(loopLengthPpq * framesPerPpq);
+        const loopSeconds =
+          ppqToSecondsMap(tempoMap, loop.endPpq) - ppqToSecondsMap(tempoMap, loop.startPpq);
+        const cycleFrames = Math.round(loopSeconds * result.sampleRate);
         const cycles = cycleFrames > 0 ? Math.floor(result.channels[0].length / cycleFrames) : 0;
         if (cycles >= 2) {
           const takes: { assetId: string; name: string }[] = [];
@@ -382,7 +393,9 @@ export function useRecording(
         }
       }
       const meta = await ingest(result.channels, result.sampleRate, name);
-      const lengthPpq = (result.channels[0].length / result.sampleRate) * (recordingTempoBpm / 60);
+      const recordedSeconds = result.channels[0].length / result.sampleRate;
+      const startSeconds = ppqToSecondsMap(tempoMap, result.startPpq);
+      const lengthPpq = secondsToPpqMap(tempoMap, startSeconds + recordedSeconds) - result.startPpq;
       return await addAudioClip({
         trackId,
         assetId: meta.id,
