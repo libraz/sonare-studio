@@ -138,13 +138,48 @@ function captureSnapshot(store: ReturnType<typeof useProjectStore>): MirrorSnaps
 }
 
 /**
+ * Resolves which active track/clip the view should show after an undo/redo.
+ *
+ * Editor navigation between commands (setActiveClip/setActiveTrack) is not
+ * recorded in history, so undoing an unrelated command must not yank the view
+ * back to wherever it happened to be when that command ran. The view therefore
+ * stays put unless the command being undone/redone *itself* moved the active
+ * track/clip (e.g. delete/create), in which case the target snapshot's value is
+ * restored.
+ *
+ * @param store The project store (read for the current live view).
+ * @param before The undone command's pre-state snapshot.
+ * @param after The undone command's post-state snapshot.
+ * @param target The snapshot being restored (before for undo, after for redo).
+ * @returns The active track/clip ids the view should adopt.
+ */
+function resolveView(
+  store: ReturnType<typeof useProjectStore>,
+  before: MirrorSnapshot,
+  after: MirrorSnapshot,
+  target: MirrorSnapshot,
+): { activeTrackId: number; activeClipId: number } {
+  return {
+    activeTrackId:
+      before.activeTrackId === after.activeTrackId ? store.activeTrackId : target.activeTrackId,
+    activeClipId: before.activeClipId === after.activeClipId ? store.clipId : target.activeClipId,
+  };
+}
+
+/**
  * Restores app-level mirror state from a snapshot and refreshes from the
  * Project, using the snapshot's per-clip notes as id hints. Call after the
  * matching Project.undo()/redo() calls so structural state parses back.
+ *
+ * @param store The project store to restore into.
+ * @param snapshot The snapshot to restore (before for undo, after for redo).
+ * @param view The active track/clip the view should adopt (see resolveView);
+ *   a target that no longer exists falls back to the snapshot's own ids.
  */
 function restoreSnapshot(
   store: ReturnType<typeof useProjectStore>,
   snapshot: MirrorSnapshot,
+  view: { activeTrackId: number; activeClipId: number },
 ): void {
   store.tracks = snapshot.tracks.map(cloneTrack);
   store.clips = snapshot.clips.map(cloneClip);
@@ -160,8 +195,12 @@ function restoreSnapshot(
   store.mixer = cloneMixerState(snapshot.mixer);
   store.scoreAnnotations = cloneScoreAnnotations(snapshot.scoreAnnotations);
   store.displayTransposeSemitones = snapshot.displayTransposeSemitones;
-  store.activeTrackId = snapshot.activeTrackId;
-  store.clipId = snapshot.activeClipId;
+  // Keep the requested view when it still exists; otherwise fall back to the
+  // snapshot's own (always-consistent) active ids.
+  const trackExists = store.tracks.some((track) => track.id === view.activeTrackId);
+  const clipExists = store.clips.some((clip) => clip.id === view.activeClipId);
+  store.activeTrackId = trackExists ? view.activeTrackId : snapshot.activeTrackId;
+  store.clipId = clipExists ? view.activeClipId : snapshot.activeClipId;
   const hints = new Map(snapshot.clips.map((clip) => [clip.id, clip.notes]));
   store.refresh(hints);
 }
@@ -271,8 +310,9 @@ export function undo(): boolean {
   const store = useProjectStore();
   const project = getProject();
   redoStack.push(entry);
+  const view = resolveView(store, entry.before, entry.after, entry.before);
   for (let i = 0; i < entry.projectEdits; i++) project.undo();
-  restoreSnapshot(store, entry.before);
+  restoreSnapshot(store, entry.before, view);
   return true;
 }
 
@@ -289,8 +329,9 @@ export function redo(): boolean {
   const store = useProjectStore();
   const project = getProject();
   undoStack.push(entry);
+  const view = resolveView(store, entry.before, entry.after, entry.after);
   for (let i = 0; i < entry.projectEdits; i++) project.redo();
-  restoreSnapshot(store, entry.after);
+  restoreSnapshot(store, entry.after, view);
   return true;
 }
 

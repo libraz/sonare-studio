@@ -255,6 +255,28 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(store.notes.map((n) => n.id)).toEqual([noteId]);
     });
 
+    it('undoing an unrelated command keeps the current active clip', () => {
+      const trackId = store.tracks[0].id;
+      const firstClipId = store.clipId;
+      const secondClipId = addMidiClip({ trackId, startPpq: 32, lengthPpq: 8 });
+      setActiveClip(firstClipId);
+
+      // A command that does not touch the active clip, then the user navigates
+      // the piano roll to another clip (editor-only, not recorded in history).
+      setTrackVolume(trackId, 0.5);
+      setActiveClip(secondClipId);
+      expect(store.clipId).toBe(secondClipId);
+
+      // Undo/redo of the volume change must leave the current view in place,
+      // not yank it back to whichever clip was active when the command ran.
+      expect(undo()).toBe(true);
+      expect(store.tracks[0].volume).toBe(1);
+      expect(store.clipId).toBe(secondClipId);
+      expect(redo()).toBe(true);
+      expect(store.tracks[0].volume).toBe(0.5);
+      expect(store.clipId).toBe(secondClipId);
+    });
+
     it('renameClip is app-level metadata and undoable', () => {
       const clipId = store.clipId;
       renameClip(clipId, 'Chorus');
