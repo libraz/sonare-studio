@@ -23,6 +23,7 @@ import { smfToProjectDocument } from '@/project/smf';
 import { useProjectStore } from '@/project/store';
 import { makeDemoDocument, type TemplateName } from '@/project/templates';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { midiCcBindingsKey } from '@/ui/midi/midi-learn';
 import { createFocusTrap, type FocusTrap } from '@/ui/settings/focus-trap';
 import {
   loadRecentProjects,
@@ -80,6 +81,10 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
         store.mixer,
         store.scoreAnnotations,
         store.displayTransposeSemitones,
+        store.automationLanes,
+        store.chords,
+        // The binding map is mutated in place, so observe its contents.
+        midiCcBindingsKey(store.midiCcBindings),
       ] as const,
     () => {
       if (store.initialized) dirty.value = true;

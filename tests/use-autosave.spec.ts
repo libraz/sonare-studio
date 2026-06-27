@@ -4,7 +4,13 @@ import { effectScope, nextTick } from 'vue';
 import { useAutosave } from '@/composables/useAutosave';
 import { ProjectNotFoundError } from '@/persistence/opfs';
 import { decodeSzd, encodeSzd } from '@/persistence/szd';
-import { addNote, clearHistory, setSelection } from '@/project/commands';
+import {
+  addNote,
+  clearAllMidiCcBindings,
+  clearHistory,
+  setMidiCcBinding,
+  setSelection,
+} from '@/project/commands';
 import { serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 
@@ -116,6 +122,25 @@ describe('useAutosave', () => {
     await flushWatchers();
     await vi.advanceTimersByTimeAsync(2000);
     expect(opfsMocks.saveProject).not.toHaveBeenCalled();
+  });
+
+  it('autosaves when MIDI-learn bindings change (added and cleared)', async () => {
+    createAutosave();
+    setMidiCcBinding('gain:master', { channel: 0, controller: 7 });
+    await flushWatchers();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(opfsMocks.saveProject).toHaveBeenCalledTimes(1);
+    expect(decodeSzd(opfsMocks.saveProject.mock.calls[0][1]).midiCcBindings).toEqual([
+      { target: 'gain:master', channel: 0, controller: 7 },
+    ]);
+
+    // Clearing the binding (in place) is observed too and saves the empty map.
+    opfsMocks.saveProject.mockClear();
+    clearAllMidiCcBindings();
+    await flushWatchers();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(opfsMocks.saveProject).toHaveBeenCalledTimes(1);
+    expect(decodeSzd(opfsMocks.saveProject.mock.calls[0][1]).midiCcBindings).toBeUndefined();
   });
 
   it('saveNow flushes the pending debounce and saves immediately', async () => {

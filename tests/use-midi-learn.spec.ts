@@ -1,10 +1,12 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useMidiLearn } from '@/composables/useMidiLearn';
+import { useProjectStore } from '@/project/store';
 import {
   ccToGainDb,
   ccToPan,
   ccToRange,
+  type MidiCcBinding,
   midiLearnInsertTargetId,
   midiLearnInstrumentTargetId,
 } from '@/ui/midi/midi-learn';
@@ -13,10 +15,28 @@ const setStripGain = vi.fn();
 const setStripPan = vi.fn();
 const listQuickControls = vi.fn();
 const setQuickControl = vi.fn();
+// The binding commands persist into the store map (the composable's
+// `bindings`); the mock mutates that same map so the assertions still observe
+// real binding state without standing up the full command/history stack.
+const setMidiCcBinding = vi.fn((id: string, binding: MidiCcBinding) => {
+  useProjectStore().midiCcBindings.set(id, { ...binding });
+});
+const clearMidiCcBinding = vi.fn((id: string) => {
+  const map = useProjectStore().midiCcBindings;
+  const had = map.has(id);
+  map.delete(id);
+  return had;
+});
+const clearAllMidiCcBindings = vi.fn(() => {
+  useProjectStore().midiCcBindings.clear();
+});
 
 vi.mock('@/project/commands', () => ({
   setStripGain: (...args: unknown[]) => setStripGain(...args),
   setStripPan: (...args: unknown[]) => setStripPan(...args),
+  setMidiCcBinding: (...args: [string, MidiCcBinding]) => setMidiCcBinding(...args),
+  clearMidiCcBinding: (...args: [string]) => clearMidiCcBinding(...args),
+  clearAllMidiCcBindings: () => clearAllMidiCcBindings(),
 }));
 
 vi.mock('@/project/quick-controls', () => ({
@@ -31,6 +51,9 @@ beforeEach(() => {
   setStripPan.mockReset();
   listQuickControls.mockReset();
   setQuickControl.mockReset();
+  setMidiCcBinding.mockClear();
+  clearMidiCcBinding.mockClear();
+  clearAllMidiCcBindings.mockClear();
 });
 
 afterEach(() => {

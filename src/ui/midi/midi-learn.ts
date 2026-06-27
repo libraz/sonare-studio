@@ -43,6 +43,26 @@ export interface MidiCcBinding {
   controller: number;
 }
 
+/**
+ * Builds a stable signature of a CC-binding map's contents. Bindings live in a
+ * map that is mutated in place (`set`/`delete`/`clear`), so its reference never
+ * changes; a watcher that wants to react to binding edits (to mark the project
+ * dirty or schedule an autosave) must observe this signature, which iterates the
+ * map and therefore tracks those mutations. The order-independent sort keeps the
+ * signature identical regardless of insertion order.
+ *
+ * @param bindings Live MIDI-learn binding map keyed by target id.
+ * @returns A deterministic string that changes whenever any binding is added,
+ *   removed or remapped.
+ */
+export function midiCcBindingsKey(bindings: ReadonlyMap<string, MidiCcBinding>): string {
+  const parts: string[] = [];
+  for (const [id, binding] of bindings) {
+    parts.push(`${id}=${binding.channel}:${binding.controller}`);
+  }
+  return parts.sort().join('|');
+}
+
 /** Lowest / highest 7-bit MIDI value. */
 export const MIDI_VALUE_MAX = 127;
 const MIDI_VALUE_CENTER = 64;

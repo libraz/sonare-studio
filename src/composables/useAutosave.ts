@@ -9,6 +9,7 @@ import {
 import { decodeSzd, encodeSzd } from '@/persistence/szd';
 import { loadProjectDocument, serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
+import { midiCcBindingsKey } from '@/ui/midi/midi-learn';
 
 /** Default debounce delay between the last edit and the autosave write. */
 const DEFAULT_INTERVAL_MS = 30000;
@@ -141,6 +142,10 @@ export function useAutosave(options: UseAutosaveOptions = {}): UseAutosaveReturn
         store.mixer,
         store.scoreAnnotations,
         store.displayTransposeSemitones,
+        store.automationLanes,
+        store.chords,
+        // The binding map is mutated in place, so observe its contents.
+        midiCcBindingsKey(store.midiCcBindings),
       ] as const,
     () => {
       if (store.initialized) scheduleSave();

@@ -8,6 +8,20 @@ import { useProjectStore } from '@/project/store';
 vi.mock('@/project/commands', () => ({
   setStripGain: vi.fn(),
   setStripPan: vi.fn(),
+  // The binding commands mutate the store map in place (the same map the panel
+  // reads), so model that here without the full command/history stack.
+  setMidiCcBinding: vi.fn((id: string, binding: { channel: number; controller: number }) => {
+    useProjectStore().midiCcBindings.set(id, { ...binding });
+  }),
+  clearMidiCcBinding: vi.fn((id: string) => {
+    const map = useProjectStore().midiCcBindings;
+    const had = map.has(id);
+    map.delete(id);
+    return had;
+  }),
+  clearAllMidiCcBindings: vi.fn(() => {
+    useProjectStore().midiCcBindings.clear();
+  }),
 }));
 
 const TRACKS = [

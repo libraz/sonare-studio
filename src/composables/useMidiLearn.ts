@@ -1,6 +1,13 @@
 import type { InjectionKey, Ref } from 'vue';
 import { getCurrentScope, onScopeDispose, ref } from 'vue';
-import { type MixerStripTarget, setStripGain, setStripPan } from '@/project/commands';
+import {
+  clearAllMidiCcBindings,
+  clearMidiCcBinding,
+  type MixerStripTarget,
+  setMidiCcBinding,
+  setStripGain,
+  setStripPan,
+} from '@/project/commands';
 import {
   listQuickControls,
   type QuickControlTarget,
@@ -184,7 +191,7 @@ export function useMidiLearn(): MidiLearnHandle {
 
   function clearId(id: string): void {
     clearTimer(id);
-    bindings.delete(id);
+    clearMidiCcBinding(id);
     if (armed.value === id) armed.value = null;
   }
 
@@ -194,7 +201,7 @@ export function useMidiLearn(): MidiLearnHandle {
 
   function clearAll(): void {
     for (const id of commitTimers.keys()) clearTimer(id);
-    bindings.clear();
+    clearAllMidiCcBindings();
     armed.value = null;
   }
 
@@ -218,7 +225,7 @@ export function useMidiLearn(): MidiLearnHandle {
     if (armed.value !== null) {
       const id = armed.value;
       armed.value = null;
-      bindings.set(id, { channel: message.channel, controller: message.controller });
+      setMidiCcBinding(id, { channel: message.channel, controller: message.controller });
       apply(id, message.value);
       return;
     }

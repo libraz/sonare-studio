@@ -1,3 +1,4 @@
+import type { MidiCcBinding } from '@/ui/midi/midi-learn';
 import { cloneScoreAnnotations, type ScoreAnnotations } from '../annotations';
 import { type AutomationLaneState, cloneAutomationLane } from '../automation';
 import { cloneInstrument } from '../instrument';
@@ -29,11 +30,21 @@ interface MirrorSnapshot {
   markers: EditorMarker[];
   sections: EditorSection[];
   automationLanes: AutomationLaneState[];
+  midiCcBindings: Map<string, MidiCcBinding>;
   mixer: ProjectMixerState;
   scoreAnnotations: ScoreAnnotations;
   displayTransposeSemitones: number;
   activeTrackId: number;
   activeClipId: number;
+}
+
+/** Deep-copies the MIDI-learn binding map into a detached plain map. */
+function cloneMidiCcBindings(
+  bindings: ReadonlyMap<string, MidiCcBinding>,
+): Map<string, MidiCcBinding> {
+  const next = new Map<string, MidiCcBinding>();
+  for (const [id, binding] of bindings) next.set(id, { ...binding });
+  return next;
 }
 
 /**
@@ -117,6 +128,7 @@ function captureSnapshot(store: ReturnType<typeof useProjectStore>): MirrorSnaps
     markers: store.markers.map((marker) => ({ ...marker })),
     sections: store.sections.map((section) => ({ ...section })),
     automationLanes: store.automationLanes.map(cloneAutomationLane),
+    midiCcBindings: cloneMidiCcBindings(store.midiCcBindings),
     mixer: cloneMixerState(store.mixer),
     scoreAnnotations: cloneScoreAnnotations(store.scoreAnnotations),
     displayTransposeSemitones: store.displayTransposeSemitones,
@@ -139,6 +151,12 @@ function restoreSnapshot(
   store.markers = snapshot.markers.map((marker) => ({ ...marker }));
   store.sections = snapshot.sections.map((section) => ({ ...section }));
   store.automationLanes = snapshot.automationLanes.map(cloneAutomationLane);
+  // The binding map's identity is shared with the MIDI-learn composable, so
+  // restore its contents in place rather than replacing the map.
+  store.midiCcBindings.clear();
+  for (const [id, binding] of snapshot.midiCcBindings) {
+    store.midiCcBindings.set(id, { ...binding });
+  }
   store.mixer = cloneMixerState(snapshot.mixer);
   store.scoreAnnotations = cloneScoreAnnotations(snapshot.scoreAnnotations);
   store.displayTransposeSemitones = snapshot.displayTransposeSemitones;
