@@ -898,6 +898,23 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(canUndo()).toBe(false);
     });
 
+    it('setMarker does not consume an undo slot when nothing changes', () => {
+      const id = setMarker(null, 8, 'Chorus');
+      // A redo target to confirm the no-op leaves the redo stack intact.
+      setMarker(id, 16, 'Chorus 2');
+      undo();
+      expect(store.markers.find((m) => m.id === id)).toMatchObject({ ppq: 8, name: 'Chorus' });
+      expect(canRedo()).toBe(true);
+
+      // Re-confirming the current fields is a no-op: no history entry pushed,
+      // so the redo stack survives.
+      const result = setMarker(id, 8, 'Chorus');
+      expect(result).toBe(id);
+      expect(canRedo()).toBe(true);
+      redo();
+      expect(store.markers.find((m) => m.id === id)).toMatchObject({ ppq: 16, name: 'Chorus 2' });
+    });
+
     it('setSections replaces the sorted list, keeps explicit ids, and is undoable', () => {
       setSections([
         { name: 'Chorus', startPpq: 16, endPpq: 32 },

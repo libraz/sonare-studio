@@ -24,8 +24,12 @@ import { requireClip, validatePpq } from './utils';
 export function setMarker(markerId: number | null, ppq: number, name: string): number {
   const store = useProjectStore();
   validatePpq(ppq, 'Marker ppq');
-  if (markerId !== null && markerId !== 0 && !store.markers.some((m) => m.id === markerId)) {
-    throw new RangeError(`Unknown marker id: ${markerId}`);
+  if (markerId !== null && markerId !== 0) {
+    const existing = store.markers.find((m) => m.id === markerId);
+    if (!existing) throw new RangeError(`Unknown marker id: ${markerId}`);
+    // Re-confirming a marker with unchanged fields must not consume an undo
+    // slot (or discard the redo stack).
+    if (existing.ppq === ppq && existing.name === name) return markerId;
   }
   return execute(0, () => {
     if (markerId === null || markerId === 0) {
