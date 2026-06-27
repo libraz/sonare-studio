@@ -1,6 +1,14 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
-import { decodeSzd, encodeSzd, readSzdMeta, SZD_APP_ID, SzdFormatError } from '@/persistence/szd';
+import {
+  decodeSzd,
+  decodeSzdBundle,
+  encodeSzd,
+  readSzdMeta,
+  SZD_APP_ID,
+  SzdFormatError,
+  type SzdMediaBundle,
+} from '@/persistence/szd';
 import { PROJECT_DOCUMENT_SCHEMA_VERSION, type ProjectDocument } from '@/project/serialization';
 
 /** Builds a small but representative project document. */
@@ -191,5 +199,65 @@ describe('szd encode/decode', () => {
       'meta.json': strToU8('not json'),
     });
     expect(decodeSzd(badMeta)).toEqual(doc);
+  });
+});
+
+describe('szd media bundle', () => {
+  const bundle: SzdMediaBundle = {
+    assets: [
+      { id: 'asset1', meta: strToU8('{"id":"asset1"}'), pcm: new Uint8Array([1, 2, 3, 4]) },
+      { id: 'asset2', meta: strToU8('{"id":"asset2"}'), pcm: new Uint8Array([5, 6, 7, 8]) },
+    ],
+    fonts: [{ id: 'fontA', meta: strToU8('{"id":"fontA"}'), sf2: new Uint8Array([9, 10]) }],
+  };
+
+  it('round-trips bundled assets and fonts alongside the document', () => {
+    const doc = makeDocument();
+    const bytes = encodeSzd(doc, {}, bundle);
+    // The document still decodes unchanged.
+    expect(decodeSzd(bytes)).toEqual(doc);
+    const decoded = decodeSzdBundle(bytes);
+    // Normalize byte buffers (unzip returns views) for a stable comparison.
+    const normAsset = (a: { id: string; meta: Uint8Array; pcm: Uint8Array }) => ({
+      id: a.id,
+      meta: strFromU8(a.meta),
+      pcm: Array.from(a.pcm),
+    });
+    const normFont = (f: { id: string; meta: Uint8Array; sf2: Uint8Array }) => ({
+      id: f.id,
+      meta: strFromU8(f.meta),
+      sf2: Array.from(f.sf2),
+    });
+    expect(decoded.assets.map(normAsset).sort((a, b) => a.id.localeCompare(b.id))).toEqual(
+      bundle.assets.map(normAsset),
+    );
+    expect(decoded.fonts.map(normFont)).toEqual(bundle.fonts.map(normFont));
+  });
+
+  it('yields an empty bundle for archives written without media', () => {
+    const decoded = decodeSzdBundle(encodeSzd(makeDocument()));
+    expect(decoded).toEqual({ assets: [], fonts: [] });
+  });
+
+  it('skips entries missing their sidecar or payload half', () => {
+    const bytes = zipSync({
+      'project.json': strToU8(JSON.stringify(makeDocument())),
+      'assets/orphan.pcm': new Uint8Array([1, 2, 3, 4]), // no .json sidecar
+      'fonts/orphan.json': strToU8('{"id":"orphan"}'), // no .sf2 payload
+    });
+    expect(decodeSzdBundle(bytes)).toEqual({ assets: [], fonts: [] });
+  });
+
+  it('does not bundle entries with unsafe ids', () => {
+    const bytes = encodeSzd(
+      makeDocument(),
+      {},
+      {
+        assets: [{ id: '../escape', meta: strToU8('{}'), pcm: new Uint8Array([0, 0, 0, 0]) }],
+        fonts: [],
+      },
+    );
+    const names = Object.keys(unzipSync(bytes));
+    expect(names.some((n) => n.includes('escape'))).toBe(false);
   });
 });

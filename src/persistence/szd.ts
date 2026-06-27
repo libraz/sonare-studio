@@ -21,6 +21,12 @@ const PROJECT_ENTRY = 'project.json';
 /** Zip entry name of the archive metadata. */
 const META_ENTRY = 'meta.json';
 
+/** Zip directory holding bundled audio-asset payloads + sidecars. */
+const ASSETS_PREFIX = 'assets/';
+
+/** Zip directory holding bundled SoundFont payloads + sidecars. */
+const FONTS_PREFIX = 'fonts/';
+
 /**
  * Fixed zip-entry timestamp used when the caller provides no savedAt, keeping
  * encoding deterministic (zip DOS times only cover 1980-2099, so the Unix
@@ -33,6 +39,41 @@ export interface SzdEncodeMeta {
   /** Save timestamp as an ISO 8601 string; omitted when the caller has none. */
   savedAt?: string;
 }
+
+/** One bundled audio asset: its sidecar JSON bytes and raw PCM payload. */
+export interface SzdAssetEntry {
+  /** Asset id (zip base name; must be a safe file name). */
+  id: string;
+  /** Metadata sidecar bytes (the asset store's `<id>.json`). */
+  meta: Uint8Array;
+  /** Raw interleaved float32 PCM bytes (the asset store's `<id>.pcm`). */
+  pcm: Uint8Array;
+}
+
+/** One bundled SoundFont: its sidecar JSON bytes and raw SF2 payload. */
+export interface SzdFontEntry {
+  /** Font id (zip base name; must be a safe file name). */
+  id: string;
+  /** Metadata sidecar bytes (the font store's `<id>.json`). */
+  meta: Uint8Array;
+  /** Raw SF2 bytes (the font store's `<id>.sf2`). */
+  sf2: Uint8Array;
+}
+
+/**
+ * Media bundled inside a .szd archive so a project carries its audio and
+ * SoundFonts across machines (OPFS slots keep the media out-of-band, but disk
+ * export/import has no shared store to draw from).
+ */
+export interface SzdMediaBundle {
+  /** Bundled audio assets referenced by the document. */
+  assets: ReadonlyArray<SzdAssetEntry>;
+  /** Bundled SoundFonts referenced by the document. */
+  fonts: ReadonlyArray<SzdFontEntry>;
+}
+
+/** Base name pattern shared with the asset/font stores (safe zip entry names). */
+const MEDIA_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 /** Shape of the meta.json entry inside a .szd archive. */
 export interface SzdMetaDocument {
@@ -63,19 +104,31 @@ export class SzdFormatError extends Error {
  * @param meta Optional caller-provided metadata (e.g. the save timestamp).
  * @returns Zip archive bytes ready for OPFS or a file download.
  */
-export function encodeSzd(doc: ProjectDocument, meta: SzdEncodeMeta = {}): Uint8Array {
+export function encodeSzd(
+  doc: ProjectDocument,
+  meta: SzdEncodeMeta = {},
+  bundle?: SzdMediaBundle,
+): Uint8Array {
   const metaDoc: SzdMetaDocument = {
     schemaVersion: doc.schemaVersion,
     app: SZD_APP_ID,
   };
   if (meta.savedAt !== undefined) metaDoc.savedAt = meta.savedAt;
-  return zipSync(
-    {
-      [PROJECT_ENTRY]: strToU8(JSON.stringify(doc)),
-      [META_ENTRY]: strToU8(JSON.stringify(metaDoc)),
-    },
-    { mtime: meta.savedAt ?? DEFAULT_ZIP_MTIME },
-  );
+  const entries: Record<string, Uint8Array> = {
+    [PROJECT_ENTRY]: strToU8(JSON.stringify(doc)),
+    [META_ENTRY]: strToU8(JSON.stringify(metaDoc)),
+  };
+  for (const asset of bundle?.assets ?? []) {
+    if (!MEDIA_ID_PATTERN.test(asset.id)) continue;
+    entries[`${ASSETS_PREFIX}${asset.id}.json`] = asset.meta;
+    entries[`${ASSETS_PREFIX}${asset.id}.pcm`] = asset.pcm;
+  }
+  for (const font of bundle?.fonts ?? []) {
+    if (!MEDIA_ID_PATTERN.test(font.id)) continue;
+    entries[`${FONTS_PREFIX}${font.id}.json`] = font.meta;
+    entries[`${FONTS_PREFIX}${font.id}.sf2`] = font.sf2;
+  }
+  return zipSync(entries, { mtime: meta.savedAt ?? DEFAULT_ZIP_MTIME });
 }
 
 /** Parses a zip entry as JSON, mapping failures to {@link SzdFormatError}. */
@@ -169,6 +222,40 @@ export function decodeSzd(bytes: Uint8Array): ProjectDocument {
     throw new SzdFormatError(`Invalid project file: missing ${PROJECT_ENTRY} entry`);
   }
   return validateDocument(parseEntryJson(projectBytes, PROJECT_ENTRY));
+}
+
+/**
+ * Extracts the bundled media (audio assets + SoundFonts) from a .szd archive.
+ *
+ * Each asset/font is a `<id>.json` sidecar paired with a payload (`.pcm` for
+ * assets, `.sf2` for fonts); entries missing either half are skipped. Archives
+ * written before media bundling simply yield empty arrays.
+ *
+ * @param bytes Archive bytes produced by {@link encodeSzd}.
+ * @returns The bundled assets and fonts (empty when none are present).
+ * @throws SzdFormatError when the bytes are not a readable zip archive.
+ */
+export function decodeSzdBundle(bytes: Uint8Array): SzdMediaBundle {
+  let entries: Record<string, Uint8Array>;
+  try {
+    entries = unzipSync(bytes);
+  } catch {
+    throw new SzdFormatError('Invalid project file: not a readable .szd (zip) archive');
+  }
+  const assets: SzdAssetEntry[] = [];
+  const fonts: SzdFontEntry[] = [];
+  for (const [name, data] of Object.entries(entries)) {
+    if (name.startsWith(ASSETS_PREFIX) && name.endsWith('.pcm')) {
+      const id = name.slice(ASSETS_PREFIX.length, -'.pcm'.length);
+      const meta = entries[`${ASSETS_PREFIX}${id}.json`];
+      if (meta && MEDIA_ID_PATTERN.test(id)) assets.push({ id, meta, pcm: data });
+    } else if (name.startsWith(FONTS_PREFIX) && name.endsWith('.sf2')) {
+      const id = name.slice(FONTS_PREFIX.length, -'.sf2'.length);
+      const meta = entries[`${FONTS_PREFIX}${id}.json`];
+      if (meta && MEDIA_ID_PATTERN.test(id)) fonts.push({ id, meta, sf2: data });
+    }
+  }
+  return { assets, fonts };
 }
 
 /**

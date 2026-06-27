@@ -2,6 +2,7 @@ import { computed, nextTick, type Ref, ref, watch } from 'vue';
 import type { useAutosave } from '@/composables/useAutosave';
 import { promptDialog } from '@/composables/useDialogs';
 import { describeError } from '@/lib/errors';
+import { gatherProjectBundle, restoreProjectBundle } from '@/persistence/bundle';
 import { downloadSzd, pickAndReadSzd } from '@/persistence/local-file';
 import {
   deleteProject,
@@ -11,7 +12,7 @@ import {
   type StoredProjectInfo,
   saveProject,
 } from '@/persistence/opfs';
-import { decodeSzd, encodeSzd } from '@/persistence/szd';
+import { decodeSzd, decodeSzdBundle, encodeSzd } from '@/persistence/szd';
 import { exportProjectSmf } from '@/project/export';
 import {
   loadProjectDocument,
@@ -220,7 +221,18 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     void runAction(async () => {
       const picked = await pickAndReadSzd();
       if (!picked) return;
-      await loadProjectDocument(decodeSzd(picked.bytes));
+      const doc = decodeSzd(picked.bytes);
+      // Restore any bundled audio/SoundFonts into OPFS so the document's ids
+      // resolve; without a store there is nowhere to put them (clips stay
+      // silent), and a restore hiccup must not block opening the project.
+      if (opfsAvailable) {
+        try {
+          await restoreProjectBundle(decodeSzdBundle(picked.bytes));
+        } catch (err) {
+          errorMessage.value = describeError(err);
+        }
+      }
+      await loadProjectDocument(doc);
       await markClean();
       openDialogOpen.value = false;
     });
@@ -282,7 +294,11 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   function exportSzdAction(): void {
     closeProjectMenu();
     void runAction(async () => {
-      const bytes = encodeSzd(serializeProject(), { savedAt: new Date().toISOString() });
+      const doc = serializeProject();
+      // Disk exports travel to other machines/browsers, so bundle the
+      // referenced audio + SoundFonts the OPFS store would otherwise hold.
+      const bundle = opfsAvailable ? await gatherProjectBundle(doc) : undefined;
+      const bytes = encodeSzd(doc, { savedAt: new Date().toISOString() }, bundle);
       downloadSzd(store.projectName, bytes);
     });
   }
