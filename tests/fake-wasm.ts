@@ -864,6 +864,36 @@ export function fakeLufs(
 }
 
 /**
+ * Mirrors lufsInterleaved(): channel-weighted integrated loudness from an
+ * interleaved buffer (no K-weighting/gating, all channel weights 1.0, so it
+ * sums the per-channel mean square). For one channel this equals fakeLufs;
+ * for dual-mono stereo it reads ~+3 LU as BS.1770 requires.
+ */
+export function fakeLufsInterleaved(
+  samples: Float32Array,
+  channels: number,
+  _sampleRate = 48000,
+): { integratedLufs: number; momentaryLufs: number; shortTermLufs: number; loudnessRange: number } {
+  const frames = channels > 0 ? Math.floor(samples.length / channels) : 0;
+  let total = 0;
+  for (let c = 0; c < channels; c++) {
+    let sum = 0;
+    for (let i = 0; i < frames; i++) {
+      const sample = samples[i * channels + c];
+      sum += sample * sample;
+    }
+    total += frames > 0 ? sum / frames : 0;
+  }
+  const loudness = total > 0 ? -0.691 + 10 * Math.log10(total) : Number.NEGATIVE_INFINITY;
+  return {
+    integratedLufs: loudness,
+    momentaryLufs: loudness,
+    shortTermLufs: loudness,
+    loudnessRange: 0,
+  };
+}
+
+/**
  * Mirrors masterAudioStereo's result envelope; the fake applies no DSP and
  * copies the input through (preset chains need the real wasm).
  */
@@ -942,5 +972,6 @@ export function createFakeWasmModule(): typeof import('@/wasm/index.js') {
     meteringPeakDb: fakeMeteringPeakDb,
     meteringTruePeakDb: fakeMeteringTruePeakDb,
     lufs: fakeLufs,
+    lufsInterleaved: fakeLufsInterleaved,
   } as unknown as typeof import('@/wasm/index.js');
 }

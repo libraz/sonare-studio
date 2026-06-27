@@ -828,11 +828,22 @@ export async function renderProjectWithEngine(
       // True peak stays absent when the metering call fails.
     }
   }
-  if (metering?.integratedLufs && totalFrames > 0) {
+  if (totalFrames > 0 && (metering?.interleavedLufs || metering?.integratedLufs)) {
     try {
-      const mono = new Float32Array(totalFrames);
-      for (let i = 0; i < totalFrames; i++) mono[i] = 0.5 * (mixL[i] + mixR[i]);
-      report.lufs = metering.integratedLufs(mono, sampleRate);
+      if (metering.interleavedLufs) {
+        // Channel-weighted BS.1770 over the actual stereo deliverable; a mono
+        // downmix would mis-measure decorrelated or panned material.
+        const interleaved = new Float32Array(totalFrames * 2);
+        for (let i = 0; i < totalFrames; i++) {
+          interleaved[2 * i] = mixL[i];
+          interleaved[2 * i + 1] = mixR[i];
+        }
+        report.lufs = metering.interleavedLufs(interleaved, 2, sampleRate);
+      } else if (metering.integratedLufs) {
+        const mono = new Float32Array(totalFrames);
+        for (let i = 0; i < totalFrames; i++) mono[i] = 0.5 * (mixL[i] + mixR[i]);
+        report.lufs = metering.integratedLufs(mono, sampleRate);
+      }
     } catch {
       // Loudness stays absent when the metering call fails.
     }

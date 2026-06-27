@@ -540,6 +540,45 @@ describe('renderProjectWithEngine', () => {
   });
 });
 
+describe('renderProjectWithEngine loudness metering', () => {
+  it('measures channel-weighted BS.1770 over the interleaved stereo mix', async () => {
+    const engine = new FakeEngine();
+    const interleavedLufs = vi.fn(() => -9.7);
+    const integratedLufs = vi.fn(() => -12.7);
+    const result = await renderProjectWithEngine(makeDoc(), {
+      ...renderOptions(engine),
+      deps: { mastering: null, metering: { interleavedLufs, integratedLufs } },
+    });
+
+    // The interleaved seam wins; the mono downmix fallback is never used.
+    expect(integratedLufs).not.toHaveBeenCalled();
+    expect(interleavedLufs).toHaveBeenCalledTimes(1);
+    const [samples, channels, sampleRate] = interleavedLufs.mock.calls[0];
+    expect(channels).toBe(2);
+    expect(sampleRate).toBe(48000);
+    expect(samples.length).toBe(result.totalFrames * 2);
+    // Both channels carry the engine fill (0.25): L then R interleaved.
+    expect(samples[0]).toBeCloseTo(0.25, 5);
+    expect(samples[1]).toBeCloseTo(0.25, 5);
+    expect(result.report.lufs).toBe(-9.7);
+  });
+
+  it('falls back to the mono downmix when only the legacy seam exists', async () => {
+    const engine = new FakeEngine();
+    const integratedLufs = vi.fn(() => -12.7);
+    const result = await renderProjectWithEngine(makeDoc(), {
+      ...renderOptions(engine),
+      deps: { mastering: null, metering: { integratedLufs } },
+    });
+
+    expect(integratedLufs).toHaveBeenCalledTimes(1);
+    const [mono] = integratedLufs.mock.calls[0];
+    expect(mono.length).toBe(result.totalFrames);
+    expect(mono[0]).toBeCloseTo(0.25, 5);
+    expect(result.report.lufs).toBe(-12.7);
+  });
+});
+
 /** Fake baked freeze asset: half a second of stereo at the render rate. */
 function frozenAsset(frames = 24000): LoadedAudioAsset {
   return {

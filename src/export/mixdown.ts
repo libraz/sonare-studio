@@ -65,6 +65,13 @@ export interface MeteringDeps {
   truePeakDb?(samples: Float32Array, sampleRate: number): number;
   /** Integrated loudness of a mono downmix in LUFS. */
   integratedLufs?(samples: Float32Array, sampleRate: number): number;
+  /**
+   * Channel-weighted integrated loudness (ITU-R BS.1770 / EBU R128) measured
+   * directly from an interleaved buffer of `frames * channels` samples. This is
+   * the standards-correct measurement of a stereo deliverable; the mono
+   * `integratedLufs` is only a fallback for builds without this seam.
+   */
+  interleavedLufs?(samples: Float32Array, channels: number, sampleRate: number): number;
 }
 
 /** All injectable wasm seams of an offline render. */
@@ -127,6 +134,11 @@ interface MixdownWasmSurface {
   ) => { left: Float32Array; right: Float32Array };
   meteringTruePeakDb?: (samples: Float32Array, sampleRate?: number) => number;
   lufs?: (samples: Float32Array, sampleRate?: number) => { integratedLufs: number };
+  lufsInterleaved?: (
+    samples: Float32Array,
+    channels: number,
+    sampleRate?: number,
+  ) => { integratedLufs: number };
 }
 
 /**
@@ -162,8 +174,14 @@ export async function createWasmMixdownDeps(): Promise<MixdownDeps> {
   if (typeof lufs === 'function') {
     metering.integratedLufs = (samples, sampleRate) => lufs(samples, sampleRate).integratedLufs;
   }
+  const lufsInterleaved = wasm.lufsInterleaved;
+  if (typeof lufsInterleaved === 'function') {
+    metering.interleavedLufs = (samples, channels, sampleRate) =>
+      lufsInterleaved(samples, channels, sampleRate).integratedLufs;
+  }
   return {
     mastering,
-    metering: metering.truePeakDb || metering.integratedLufs ? metering : null,
+    metering:
+      metering.truePeakDb || metering.integratedLufs || metering.interleavedLufs ? metering : null,
   };
 }
