@@ -182,12 +182,16 @@ export function useTransportControls(options: TransportControlsOptions) {
       if (ppq >= options.loopEndPpq.value) void options.recording.stopRecord();
       return;
     }
-    if (!autoPunchArming && ppq <= options.loopStartPpq.value) {
-      autoPunchArming = true;
-      void options.recording.record(options.loopStartPpq.value).finally(() => {
-        autoPunchArming = false;
-      });
-    }
+    if (autoPunchArming || ppq >= options.loopEndPpq.value) return;
+    // Punch in at the left locator when the playhead is still approaching it
+    // (the engine opens a sample-accurate window there), or at the current
+    // position when playback started inside the window — otherwise starting
+    // past the locator would never arm and the take would be missed entirely.
+    const punchAt = ppq <= options.loopStartPpq.value ? options.loopStartPpq.value : ppq;
+    autoPunchArming = true;
+    void options.recording.record(punchAt).finally(() => {
+      autoPunchArming = false;
+    });
   });
 
   return {
