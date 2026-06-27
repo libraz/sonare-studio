@@ -76,6 +76,18 @@ class FakeEngine implements OfflineRenderEngine {
   setSoloMute(laneIndex: number, solo: boolean, mute: boolean): void {
     this.record('setSoloMute', laneIndex, solo, mute);
   }
+  setTrackStripPanLaw(trackId: number, panLaw: unknown): void {
+    this.record('setTrackStripPanLaw', trackId, panLaw);
+  }
+  setTrackStripPanMode(trackId: number, panMode: unknown): void {
+    this.record('setTrackStripPanMode', trackId, panMode);
+  }
+  setTrackStripDualPan(trackId: number, leftPan: number, rightPan: number): void {
+    this.record('setTrackStripDualPan', trackId, leftPan, rightPan);
+  }
+  setTrackStripChannelDelaySamples(trackId: number, delaySamples: number): void {
+    this.record('setTrackStripChannelDelaySamples', trackId, delaySamples);
+  }
   setParameter(paramId: number, value: number): void {
     this.record('setParameter', paramId, value);
   }
@@ -851,5 +863,76 @@ describe('renderProjectWithEngine with group tracks and sidechains', () => {
     const engine = new FakeEngine();
     await renderProjectWithEngine(doc, renderOptions(engine));
     expect(engine.named('setLaneSidechain')).toEqual([['setLaneSidechain', 2, 0, 1]]);
+  });
+});
+
+describe('renderProjectWithEngine mixer parity with live playback', () => {
+  /** Drums lane (track index 1) fader/pan parameter ids. */
+  const drumsFader = 0x4d580101;
+
+  it('folds a VCA group offset into the member lane fader', async () => {
+    const doc = makeDoc();
+    (doc.mixer as { vcaGroups?: unknown }).vcaGroups = [{ id: 'vca-1', name: 'Drums', gainDb: -6 }];
+    (doc.tracks[1] as { vcaId?: string }).vcaId = 'vca-1';
+
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    const params = new Map(engine.named('setParameter').map(([, id, value]) => [id, value]));
+    // Drums: unity volume + 2 dB strip trim - 6 dB VCA offset.
+    expect(params.get(drumsFader)).toBeCloseTo(linearToDb(1) + 2 - 6, 5);
+  });
+
+  it('keeps a solo-safe lane audible while another track is soloed', async () => {
+    const doc = makeDoc();
+    (doc.tracks[0] as { solo: boolean }).solo = true;
+    (doc.tracks[1] as { soloSafe?: boolean }).soloSafe = true;
+
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    // Mix pass: the soloed Keys lane and the solo-safe Drums lane both solo.
+    expect(engine.named('setSoloMute')).toEqual([
+      ['setSoloMute', 0, true, false],
+      ['setSoloMute', 1, true, false],
+    ]);
+  });
+
+  it('applies pan law, mode, dual-pan and channel delay; omits defaults', async () => {
+    const doc = makeDoc();
+    Object.assign((doc.tracks[1] as { mixer: Record<string, unknown> }).mixer, {
+      panLaw: 'const6dB',
+      panMode: 'dualPan',
+      dualPan: { left: -1, right: 1 },
+      channelDelaySamples: 128,
+    });
+
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    expect(engine.named('setTrackStripPanLaw')).toEqual([['setTrackStripPanLaw', 2, 'const6dB']]);
+    expect(engine.named('setTrackStripPanMode')).toEqual([['setTrackStripPanMode', 2, 'dualPan']]);
+    expect(engine.named('setTrackStripDualPan')).toEqual([['setTrackStripDualPan', 2, -1, 1]]);
+    expect(engine.named('setTrackStripChannelDelaySamples')).toEqual([
+      ['setTrackStripChannelDelaySamples', 2, 128],
+    ]);
+    // The Keys lane keeps engine defaults, so no calls reference track 1.
+    for (const name of ['setTrackStripPanLaw', 'setTrackStripPanMode']) {
+      expect(engine.named(name).some(([, trackId]) => trackId === 1)).toBe(false);
+    }
+  });
+
+  it('marks a pre-fader send in the lane descriptor', async () => {
+    const doc = makeDoc();
+    (doc.tracks[1] as { mixer: { sends: Array<Record<string, unknown>> } }).mixer.sends[0].timing =
+      'preFader';
+
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    expect(engine.named('setTrackLanes')[0][1]).toEqual([
+      { trackId: 1 },
+      { trackId: 2, sends: [{ busId: 1, levelDb: -9, enabled: true, sendTiming: 'preFader' }] },
+    ]);
   });
 });

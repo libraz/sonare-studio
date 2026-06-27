@@ -41,7 +41,14 @@ import { automationCurveCode } from '@/project/automation';
 import { audioClipSegments } from '@/project/comping';
 import { loadFont } from '@/project/fonts';
 import { DEFAULT_SYNTH_PRESET } from '@/project/instrument';
-import { clampPan, masteringChainIsActive } from '@/project/mixer';
+import {
+  clampPan,
+  DEFAULT_PAN_LAW,
+  DEFAULT_PAN_MODE,
+  masteringChainIsActive,
+  type PanLawId,
+  type PanModeId,
+} from '@/project/mixer';
 import {
   applyAudioClipFades,
   isTrackAudible,
@@ -99,6 +106,10 @@ export interface OfflineRenderEngine {
   setTrackStripEqBandJson(trackId: number, bandIndex: number, bandJson: string): void;
   setMasterStripEqBandJson(bandIndex: number, bandJson: string): void;
   setSoloMute(laneIndex: number, solo: boolean, mute: boolean): void;
+  setTrackStripPanLaw(trackId: number, panLaw: PanLawId | number): void;
+  setTrackStripPanMode(trackId: number, panMode: PanModeId | number): void;
+  setTrackStripDualPan(trackId: number, leftPan: number, rightPan: number): void;
+  setTrackStripChannelDelaySamples(trackId: number, delaySamples: number): void;
   setParameter(paramId: number, value: number): void;
   setAutomationLane(
     paramId: number,
@@ -125,6 +136,8 @@ interface SendSpec {
   busId: number;
   levelDb?: number;
   enabled?: boolean;
+  /** Pre/post-fader tap; absent = post-fader (the engine default). */
+  sendTiming?: 'preFader';
 }
 
 /** One engine audio clip schedule (planar PCM at the render rate). */
@@ -275,6 +288,17 @@ export async function renderProjectWithEngine(
   // Synthetic numeric track ids: documents store tracks positionally.
   const trackIds = doc.tracks.map((_, index) => index + 1);
 
+  // VCA group fader offsets (id -> dB): a member track's lane gain is raised by
+  // its group's offset, exactly as live mixer-sync folds it in. VCAs carry no
+  // audio of their own.
+  const vcaGainDbById = new Map<string, number>();
+  for (const group of doc.mixer?.vcaGroups ?? []) vcaGainDbById.set(group.id, group.gainDb);
+
+  // Solo-safe tracks join the solo group whenever any track is soloed, so the
+  // mix keeps them audible (master FX returns, cue lanes) instead of ducking
+  // them with the rest — matching live mixer-sync.
+  const anySolo = doc.tracks.some((track) => track.solo);
+
   // Buses first (sends must reference declared buses): the document's send
   // buses in order, then one bus per group track (matching live strip-sync).
   const busNumberById = new Map<string, number>();
@@ -303,6 +327,9 @@ export async function renderProjectWithEngine(
         busId: busNumberById.get(send.busId) as number,
         levelDb: send.levelDb,
         enabled: send.enabled,
+        // Pre-fader is the only non-default tap; post-fader stays absent so the
+        // engine keeps its historical default (matches live strip-sync).
+        ...(send.timing === 'preFader' ? { sendTiming: 'preFader' as const } : {}),
       }));
     // Output bus: group routing wins; otherwise an explicit per-track output
     // bus (non-group tracks only), resolved to its engine bus number and
@@ -522,21 +549,43 @@ export async function renderProjectWithEngine(
         });
       }
       if (pass.stemIndices === null) {
-        engine.setSoloMute(index, track.solo, track.mute);
+        // Solo-safe lanes stay in the solo group while any solo is active.
+        const solo = track.solo || (anySolo && track.soloSafe === true);
+        engine.setSoloMute(index, solo, track.mute);
       } else {
         engine.setSoloMute(index, false, !pass.stemIndices.has(index));
       }
       if (pass.freezeIndex === index) {
-        // Pre-fader freeze: the lane renders at unity/centered; the live
-        // fader/pan keep applying to the baked audio afterwards.
+        // Pre-fader freeze: the lane renders at unity/centered with neutral pan
+        // shaping; the live fader/pan/pan-law keep applying to the baked audio.
         engine.setParameter(laneParamId(index, ENGINE_MIXER_PARAM_FADER_DB), 0);
         engine.setParameter(laneParamId(index, ENGINE_MIXER_PARAM_PAN), 0);
       } else {
+        // Lane fader includes the strip trim and the track's VCA group offset,
+        // so a VCA-attenuated track exports at the level it plays back at.
+        const vcaOffset = track.vcaId !== undefined ? (vcaGainDbById.get(track.vcaId) ?? 0) : 0;
         engine.setParameter(
           laneParamId(index, ENGINE_MIXER_PARAM_FADER_DB),
-          linearToDb(track.volume) + (strip?.gainDb ?? 0),
+          linearToDb(track.volume) + (strip?.gainDb ?? 0) + vcaOffset,
         );
-        engine.setParameter(laneParamId(index, ENGINE_MIXER_PARAM_PAN), clampPan(strip?.pan ?? 0));
+        const pan = clampPan(strip?.pan ?? 0);
+        engine.setParameter(laneParamId(index, ENGINE_MIXER_PARAM_PAN), pan);
+        // Pan law / mode / dual-pan / channel-delay shape the lane exactly as
+        // live mixer-sync does; emit only the non-defaults to keep the command
+        // budget small (the engine starts each lane at these defaults).
+        const panLaw = strip?.panLaw ?? DEFAULT_PAN_LAW;
+        if (panLaw !== DEFAULT_PAN_LAW) engine.setTrackStripPanLaw(trackId, panLaw);
+        const panMode = strip?.panMode ?? DEFAULT_PAN_MODE;
+        if (panMode !== DEFAULT_PAN_MODE) engine.setTrackStripPanMode(trackId, panMode);
+        if (strip?.dualPan) {
+          engine.setTrackStripDualPan(
+            trackId,
+            clampPan(strip.dualPan.left),
+            clampPan(strip.dualPan.right),
+          );
+        }
+        const channelDelay = Math.max(0, Math.round(strip?.channelDelaySamples ?? 0));
+        if (channelDelay > 0) engine.setTrackStripChannelDelaySamples(trackId, channelDelay);
       }
     });
 
