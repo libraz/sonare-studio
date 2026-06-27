@@ -7,6 +7,8 @@
  * applies to the whole file. Ranges are clamped to the buffer bounds.
  */
 
+import { dbToLinear } from '@/lib/db';
+
 /** A half-open frame range over planar audio buffers. */
 export interface SampleRange {
   /** First frame of the range (inclusive). */
@@ -55,7 +57,7 @@ export function resolveRange(
 
 /** Converts decibels to a linear gain factor (0 dB = 1.0). */
 export function dbToGain(db: number): number {
-  return 10 ** (db / 20);
+  return dbToLinear(db);
 }
 
 /** Copies every channel (the shared starting point of all in-range edits). */

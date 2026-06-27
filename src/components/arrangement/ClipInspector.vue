@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { dbToLinear, peakDb } from '@/lib/db';
 import { setClipFades, setClipGain, setClipLoop } from '@/project/commands';
-import { dbToLinear } from '@/project/mixer';
 import { type EditorClip, isAudioClip } from '@/project/types';
 import { useI18n } from '@/ui/i18n';
 
@@ -38,7 +38,7 @@ const isAudio = computed(() => props.clip !== null && isAudioClip(props.clip));
 const gainDb = computed<string>(() => {
   const gain = props.clip?.gain ?? 1;
   if (gain <= 0) return '-inf';
-  const db = 20 * Math.log10(gain);
+  const db = peakDb(gain);
   return db <= GAIN_FLOOR_DB ? '-inf' : db.toFixed(1);
 });
 

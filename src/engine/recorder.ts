@@ -27,6 +27,7 @@
  * here starts playback.
  */
 
+import { dbToLinear } from '@/lib/db';
 import { ensureWasm } from '@/lib/wasm';
 import type { EngineHandle } from './engine';
 
@@ -268,7 +269,7 @@ async function defaultBindInput(
 
 /** Converts a peak in dBFS to linear amplitude (non-finite values map to 0). */
 function dbPeakToLinear(db: number): number {
-  return Number.isFinite(db) ? 10 ** (db / 20) : 0;
+  return Number.isFinite(db) ? dbToLinear(db) : 0;
 }
 
 /**

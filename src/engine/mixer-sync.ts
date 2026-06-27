@@ -11,6 +11,7 @@
  * can be mapped back to project tracks.
  */
 
+import { linearToDb } from '@/lib/db';
 import {
   clampPan,
   DEFAULT_PAN_LAW,
@@ -22,19 +23,9 @@ import {
 import type { EditorTrack } from '@/project/types';
 import type { EngineHandle } from './engine';
 
-/** Fader floor used for a linear volume of 0 (effectively silence). */
-export const SILENCE_DB = -120;
-
-/**
- * Converts a linear volume factor to decibels, clamped to the silence floor.
- *
- * @param volume Linear volume (>= 0; 1 = unity).
- * @returns Gain in dB (SILENCE_DB for 0).
- */
-export function linearToDb(volume: number): number {
-  if (!(volume > 0)) return SILENCE_DB;
-  return Math.max(SILENCE_DB, 20 * Math.log10(volume));
-}
+// The fader silence floor and linear->dB conversion live in the shared
+// @/lib/db module; re-exported so existing engine importers keep one site.
+export { linearToDb, SILENCE_DB } from '@/lib/db';
 
 /** The per-lane values mirrored to the engine, kept for change detection. */
 interface LaneState {

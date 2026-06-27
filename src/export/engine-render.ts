@@ -24,7 +24,6 @@
  */
 
 import { buildMidiClipSchedules } from '@/engine/midi-sync';
-import { linearToDb } from '@/engine/mixer-sync';
 import { busSceneJson, groupBusGainDb, stripSceneJson } from '@/engine/strip-sync';
 import {
   MixdownCancelledError,
@@ -35,6 +34,7 @@ import {
   type MixdownResult,
   type MixdownStem,
 } from '@/export/mixdown';
+import { linearToDb, peakDb } from '@/lib/db';
 import { ensureWasm } from '@/lib/wasm';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import { automationCurveCode } from '@/project/automation';
@@ -742,7 +742,7 @@ export async function renderProjectWithEngine(
       sampleRate,
       totalFrames,
       report: {
-        peakDb: freezePeak > 0 ? 20 * Math.log10(freezePeak) : Number.NEGATIVE_INFINITY,
+        peakDb: peakDb(freezePeak),
       },
     };
   }
@@ -815,7 +815,7 @@ export async function renderProjectWithEngine(
     if (b > peak) peak = b;
   }
   const report: MixdownReport = {
-    peakDb: peak > 0 ? 20 * Math.log10(peak) : Number.NEGATIVE_INFINITY,
+    peakDb: peakDb(peak),
   };
   const metering = deps?.metering ?? null;
   if (metering?.truePeakDb && totalFrames > 0) {

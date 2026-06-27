@@ -287,15 +287,9 @@ export function isDefaultMixerState(state: ProjectMixerState): boolean {
   );
 }
 
-/**
- * Converts decibels to a linear amplitude factor.
- *
- * @param db Gain in dB.
- * @returns Linear factor (1 for 0 dB).
- */
-export function dbToLinear(db: number): number {
-  return 10 ** (db / 20);
-}
+// dB <-> linear conversions live in the shared @/lib/db module; re-exported
+// here so existing mixer importers keep a single import site.
+export { dbToLinear } from '@/lib/db';
 
 /** Clamps a pan value to [-1, 1]. */
 export function clampPan(pan: number): number {

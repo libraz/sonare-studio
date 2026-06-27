@@ -8,6 +8,7 @@ import type { MeterBridge, MeterSource } from '@/engine/meters';
 import type { MidiSync } from '@/engine/midi-sync';
 import { renderMixdownInWorker } from '@/export/client';
 import { encodeWav } from '@/export/wav';
+import { peakDb } from '@/lib/db';
 import { ingestAudioBuffer } from '@/project/audio-import';
 import type { AutomationParam, AutomationPoint } from '@/project/automation';
 import {
@@ -74,7 +75,7 @@ function peakOf(channels: Float32Array[]): number {
       if (a > peak) peak = a;
     }
   }
-  return peak > 0 ? 20 * Math.log10(peak) : Number.NEGATIVE_INFINITY;
+  return peakDb(peak);
 }
 
 function fnv1a(bytes: Uint8Array): string {
