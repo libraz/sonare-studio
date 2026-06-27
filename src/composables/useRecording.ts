@@ -344,6 +344,10 @@ export function useRecording(
     isRecording.value = false;
     const trackId = recordingTrackId ?? armedTrackId.value;
     recordingTrackId = null;
+    // Consume the loop state up front so an empty take or a failed stop cannot
+    // leave it set to bleed into the next recording.
+    const loop = recordingLoop;
+    recordingLoop = null;
     let result: RecordingResult | null;
     try {
       result = await recorder.stop();
@@ -353,8 +357,6 @@ export function useRecording(
     }
     if (!result || result.channels.length === 0 || result.channels[0].length === 0) return null;
     if (trackId === null) return null;
-    const loop = recordingLoop;
-    recordingLoop = null;
     // Convert captured wall-clock seconds back to grid PPQ through the full
     // tempo map (constant-tempo projects collapse to the old scalar math), so a
     // take on a tempo ramp lands the right length and cycle splits hit the loop
