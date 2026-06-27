@@ -111,6 +111,16 @@ describe('useAutosave', () => {
     expect(opfsMocks.saveProject).toHaveBeenCalledWith('backup-slot', expect.any(Uint8Array));
   });
 
+  it('cancelPending drops a scheduled save without writing', async () => {
+    const autosave = createAutosave();
+    addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+    await flushWatchers();
+    // A save is now scheduled; cancel it before the debounce elapses.
+    autosave.cancelPending();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(opfsMocks.saveProject).not.toHaveBeenCalled();
+  });
+
   it('ignores editor-only state changes (selection)', async () => {
     createAutosave();
     const id = addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });

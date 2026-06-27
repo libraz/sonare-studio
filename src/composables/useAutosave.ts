@@ -52,6 +52,12 @@ export interface UseAutosaveReturn {
    * @throws Error when the stored bytes are corrupt or fail to replay.
    */
   restoreAutosave(): Promise<boolean>;
+  /**
+   * Cancels a pending debounced write without saving. Used when the project
+   * reaches a clean state (e.g. just after a load) so the change watcher's
+   * scheduled save does not redundantly re-persist unchanged content.
+   */
+  cancelPending(): void;
   /** Stops watching and cancels any pending write. Called on scope dispose. */
   dispose(): void;
 }
@@ -188,5 +194,5 @@ export function useAutosave(options: UseAutosaveOptions = {}): UseAutosaveReturn
     onScopeDispose(dispose);
   }
 
-  return { lastSavedAt, saving, lastError, saveNow, restoreAutosave, dispose };
+  return { lastSavedAt, saving, lastError, saveNow, restoreAutosave, cancelPending, dispose };
 }

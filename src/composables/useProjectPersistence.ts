@@ -109,6 +109,10 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
 
   async function markClean(): Promise<void> {
     await nextTick();
+    // Reaching a clean state (after a load/save) means the change watcher may
+    // have scheduled a save for content that is already persisted; drop it so
+    // boot and open do not write a redundant autosave.
+    autosave.cancelPending();
     dirty.value = false;
   }
 
