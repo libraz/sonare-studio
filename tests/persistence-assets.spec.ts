@@ -103,13 +103,23 @@ describe('audio asset store', () => {
     ).rejects.toThrow(InvalidAssetError);
   });
 
-  it('stores and round-trips tags', async () => {
+  it('stores and round-trips tags, including the LUFS loudness measurement', async () => {
     const meta = await saveAsset(
-      { name: 'Loop', sampleRate: 48000, tags: { bpm: 128, key: 'Am' } },
+      { name: 'Loop', sampleRate: 48000, tags: { bpm: 128, key: 'Am', lufs: -14.3 } },
       stereo(),
     );
+    clearAudioAssetCache(); // force the OPFS read path so validateMeta runs
+    expect((await loadAssetMeta(meta.id)).tags).toEqual({ bpm: 128, key: 'Am', lufs: -14.3 });
+  });
+
+  it('round-trips a loudness-only tag (no bpm/key)', async () => {
+    const meta = await saveAsset(
+      { name: 'Loud', sampleRate: 48000, tags: { lufs: -9.5 } },
+      stereo(),
+    );
+    expect(meta.tags).toEqual({ lufs: -9.5 });
     clearAudioAssetCache();
-    expect((await loadAssetMeta(meta.id)).tags).toEqual({ bpm: 128, key: 'Am' });
+    expect((await loadAssetMeta(meta.id)).tags).toEqual({ lufs: -9.5 });
   });
 
   it('rejects malformed inputs', async () => {

@@ -162,7 +162,9 @@ export async function ingestAudioBuffer(
       name,
       sampleRate,
       ...(options.id !== undefined ? { id: options.id } : {}),
-      ...(tags.bpm !== undefined || tags.key !== undefined ? { tags } : {}),
+      ...(tags.bpm !== undefined || tags.key !== undefined || tags.lufs !== undefined
+        ? { tags }
+        : {}),
     },
     channels,
   );

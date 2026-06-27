@@ -274,7 +274,9 @@ function validateMeta(value: unknown, id: string): AudioAssetMeta {
     const raw = meta.tags as AudioAssetTags;
     if (typeof raw.bpm === 'number' && Number.isFinite(raw.bpm) && raw.bpm > 0) tags.bpm = raw.bpm;
     if (typeof raw.key === 'string' && raw.key.length > 0) tags.key = raw.key;
-    if (tags.bpm !== undefined || tags.key !== undefined) out.tags = tags;
+    if (typeof raw.lufs === 'number' && Number.isFinite(raw.lufs)) tags.lufs = raw.lufs;
+    if (tags.bpm !== undefined || tags.key !== undefined || tags.lufs !== undefined)
+      out.tags = tags;
   }
   return out;
 }
@@ -332,7 +334,10 @@ export async function saveAsset(
     numChannels,
     numFrames,
   };
-  if (input.tags && (input.tags.bpm !== undefined || input.tags.key !== undefined)) {
+  if (
+    input.tags &&
+    (input.tags.bpm !== undefined || input.tags.key !== undefined || input.tags.lufs !== undefined)
+  ) {
     meta.tags = { ...input.tags };
   }
 

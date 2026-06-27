@@ -66,6 +66,7 @@ function makeFakeRecorder() {
   let armed: number | null = null;
   let recording = false;
   let levelListener: ((peak: number) => void) | null = null;
+  let micLostListener: (() => void) | null = null;
   let nextResult: RecordingResult | null = {
     channels: [new Float32Array(24000)],
     sampleRate: 48000,
@@ -93,6 +94,12 @@ function makeFakeRecorder() {
         levelListener = null;
       };
     }),
+    onMicrophoneLost: vi.fn((listener: () => void) => {
+      micLostListener = listener;
+      return () => {
+        micLostListener = null;
+      };
+    }),
     start: vi.fn(async (options: StartRecordingOptions) => {
       recording = true;
       lastStart = options;
@@ -107,6 +114,11 @@ function makeFakeRecorder() {
   return {
     rec,
     emitLevel: (peak: number) => levelListener?.(peak),
+    emitMicLost: () => {
+      mic = false;
+      recording = false;
+      micLostListener?.();
+    },
     setResult: (result: RecordingResult | null) => {
       nextResult = result;
     },
@@ -420,6 +432,21 @@ describe('useRecording', () => {
     recording.dispose();
     expect(fake.rec.dispose).toHaveBeenCalledTimes(1);
     expect(recording.micReady.value).toBe(false);
+  });
+
+  it('surfaces a device loss: clears mic state, stops recording and shows an error', async () => {
+    const { recording, fake } = setup();
+    await recording.requestMic();
+    expect(recording.micReady.value).toBe(true);
+    fake.emitLevel(0.3);
+    expect(recording.inputLevel.value).toBe(0.3);
+
+    fake.emitMicLost();
+
+    expect(recording.micReady.value).toBe(false);
+    expect(recording.isRecording.value).toBe(false);
+    expect(recording.inputLevel.value).toBe(0);
+    expect(recording.error.value).toMatch(/disconnected/i);
   });
 
   describe('cycle recording', () => {

@@ -26,6 +26,7 @@ import { ingestAudioBuffer } from '@/project/audio-import';
 import { addAudioClip } from '@/project/commands';
 import { ppqToSeconds } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
+import { timeSignatureAt } from '@/project/time-signature';
 import type { UseTransportReturn } from './useTransport';
 
 /** Error message shown when recording is attempted before the engine runs. */
@@ -136,6 +137,7 @@ export function useRecording(
   let recorder: Recorder | null = null;
   let recorderHandle: EngineHandle | null = null;
   let unsubscribeLevel: (() => void) | null = null;
+  let unsubscribeMicLost: (() => void) | null = null;
   let countInTimer: ReturnType<typeof setTimeout> | null = null;
   let restoreMetronomeOff = false;
   let recordingTrackId: number | null = null;
@@ -154,6 +156,7 @@ export function useRecording(
     if (!handle) return null;
     if (recorder && recorderHandle === handle) return recorder;
     unsubscribeLevel?.();
+    unsubscribeMicLost?.();
     recorder?.dispose();
     micReady.value = false;
     inputLevel.value = 0;
@@ -162,18 +165,20 @@ export function useRecording(
     unsubscribeLevel = recorder.onLevel((peak) => {
       inputLevel.value = peak;
     });
+    unsubscribeMicLost = recorder.onMicrophoneLost(() => {
+      // The capture device disappeared: stop any in-flight take, drop the mic
+      // state and prompt the user to reconnect (the recorder already discarded
+      // the partial take, so no silent all-zero clip lands).
+      finishCountIn();
+      isRecording.value = false;
+      recordingTrackId = null;
+      recordingLoop = null;
+      micReady.value = false;
+      inputLevel.value = 0;
+      error.value = 'The microphone was disconnected. Reconnect a device and request it again.';
+    });
     recorder.setMonitor(monitorEnabled.value);
     return recorder;
-  };
-
-  /** Returns the time signature in effect at a position (4/4 fallback). */
-  const timeSignatureAt = (ppq: number): { numerator: number; denominator: number } => {
-    let current: { numerator: number; denominator: number } = { numerator: 4, denominator: 4 };
-    for (const segment of store.timeSignatures) {
-      if (segment.startPpq <= ppq) current = segment;
-      else break;
-    }
-    return current;
   };
 
   /** Cancels the count-in timer and restores the metronome when we forced it on. */
@@ -277,7 +282,7 @@ export function useRecording(
     // rolling transport records from the current position immediately.
     let countInPpq = 0;
     if (!explicitStart && !wasRolling && countInBars.value > 0) {
-      const meter = timeSignatureAt(startPpq);
+      const meter = timeSignatureAt(store.timeSignatures, startPpq);
       const barPpq = meter.numerator * (4 / meter.denominator);
       // The pre-roll cannot reach before the timeline start.
       countInPpq = Math.min(startPpq, countInBars.value * barPpq);
@@ -405,6 +410,8 @@ export function useRecording(
     stopWatching();
     unsubscribeLevel?.();
     unsubscribeLevel = null;
+    unsubscribeMicLost?.();
+    unsubscribeMicLost = null;
     recorder?.dispose();
     recorder = null;
     recorderHandle = null;

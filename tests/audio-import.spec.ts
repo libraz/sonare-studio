@@ -57,6 +57,16 @@ describe('ingestAudioBuffer', () => {
     expect(lufs).toHaveBeenCalledWith(mixdownToMono(stereo()), 44100);
   });
 
+  it('persists a loudness-only measurement (no bpm/key detected)', async () => {
+    const meta = await ingestAudioBuffer(stereo(), 44100, 'Loud loop', {
+      analysis: { lufs: () => ({ integratedLufs: -11.7 }) },
+    });
+    expect(meta.tags).toEqual({ lufs: -11.7 });
+    clearAudioAssetCache(); // force the OPFS read path
+    const loaded = await loadAsset(meta.id);
+    expect(loaded.meta.tags).toEqual({ lufs: -11.7 });
+  });
+
   it('caller tags win over detected ones', async () => {
     const meta = await ingestAudioBuffer(stereo(), 44100, 'Loop', {
       analysis: { detectBpm: () => 100 },
@@ -65,10 +75,14 @@ describe('ingestAudioBuffer', () => {
     expect(meta.tags).toEqual({ bpm: 95 });
   });
 
-  it('is a graceful no-op when the wasm module exposes no analysis', async () => {
-    // The mocked wasm module (fake-wasm) has no detectBpm/detectKey.
+  it('persists the default wasm loudness analysis (no bpm/key detector exposed)', async () => {
+    // The mocked wasm module (fake-wasm) exposes lufs() but no detectBpm/detectKey,
+    // so the default import path stores a loudness-only tag.
     const meta = await ingestAudioBuffer(stereo(), 44100, 'Plain');
-    expect(meta.tags).toBeUndefined();
+    expect(meta.tags?.bpm).toBeUndefined();
+    expect(meta.tags?.key).toBeUndefined();
+    expect(meta.tags?.lufs).toBeTypeOf('number');
+    expect(Number.isFinite(meta.tags?.lufs)).toBe(true);
   });
 
   it('tolerates throwing or useless detectors', async () => {

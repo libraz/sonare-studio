@@ -258,7 +258,7 @@ const { ensureEngineStarted, playTestTone, renderOffline, startEngine } = useEng
 
 // --- Live note preview -------------------------------------------------------
 
-const { auditionNote, previewNote } = useNotePreview({
+const { auditionNote, previewNote, previewNoteOn, previewNoteOff } = useNotePreview({
   errorMessage,
   handle,
   hasMidiSync,
@@ -283,6 +283,8 @@ const {
   stepInput,
   ensureWasm,
   previewNote,
+  previewNoteOn,
+  previewNoteOff,
   runAction,
 });
 

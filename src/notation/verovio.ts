@@ -99,12 +99,19 @@ export class VerovioClient {
   private readonly pending = new Map<number, PendingRequest>();
   private nextId = 1;
   private disposed = false;
+  /** Set when the worker dies; later sends reject with this instead of hanging. */
+  private fatalError: Error | null = null;
 
   /** @param worker Optional worker instance (injected in tests); defaults to the bundled one. */
   constructor(worker?: Worker) {
     this.worker = worker ?? createVerovioWorker();
     this.worker.addEventListener('message', this.handleMessage as EventListener);
     this.worker.addEventListener('error', this.handleWorkerError as EventListener);
+  }
+
+  /** True once the worker has died fatally; the client is unusable and must be replaced. */
+  get failed(): boolean {
+    return this.fatalError !== null;
   }
 
   /**
@@ -165,6 +172,9 @@ export class VerovioClient {
   }
 
   private send(body: VerovioRequestBody): Promise<VerovioResponse> {
+    if (this.fatalError) {
+      return Promise.reject(this.fatalError);
+    }
     if (this.disposed) {
       return Promise.reject(new Error('VerovioClient is disposed'));
     }
@@ -191,8 +201,17 @@ export class VerovioClient {
   };
 
   private readonly handleWorkerError = (event: ErrorEvent): void => {
-    // A worker-level script error is fatal for all in-flight requests.
-    this.rejectAll(new Error(event.message || 'Verovio worker error'));
+    // A worker-level script error is fatal: the worker can no longer answer, so
+    // mark the client dead and tear it down. Otherwise later sends would queue
+    // pending requests that never resolve, hanging the score panel forever.
+    if (this.disposed) {
+      return;
+    }
+    const error = new Error(event.message || 'Verovio worker error');
+    this.fatalError = error;
+    this.disposed = true;
+    this.worker.terminate();
+    this.rejectAll(error);
   };
 
   private rejectAll(error: Error): void {

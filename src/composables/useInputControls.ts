@@ -1,4 +1,4 @@
-import { computed, type Ref, ref } from 'vue';
+import { computed, getCurrentScope, onScopeDispose, type Ref, ref } from 'vue';
 import { useMidiLearn } from '@/composables/useMidiLearn';
 import { useMusicTyping } from '@/composables/useMusicTyping';
 import type { useStepInput } from '@/composables/useStepInput';
@@ -14,13 +14,25 @@ export interface InputControlsOptions {
   stepInput: StepInput;
   ensureWasm: () => Promise<{ RealtimeEngine: new () => RealtimeEngine }>;
   previewNote: (pitch: number, velocity: number) => Promise<void>;
+  /** Starts a sustained live note (held MIDI key) on the audible engine. */
+  previewNoteOn: (pitch: number, velocity: number) => Promise<void>;
+  /** Releases a sustained live note started by previewNoteOn. */
+  previewNoteOff: (pitch: number) => void;
   runAction: RunAction;
 }
 
 const MIDI_INPUT_ALL = '';
 
 export function useInputControls(options: InputControlsOptions) {
-  const { errorMessage, positionPpq, previewNote, runAction, stepInput } = options;
+  const {
+    errorMessage,
+    positionPpq,
+    previewNote,
+    previewNoteOn,
+    previewNoteOff,
+    runAction,
+    stepInput,
+  } = options;
   const musicTyping = useMusicTyping({
     onNoteOn: ({ pitch, velocity }) => {
       void previewNote(pitch, velocity);
@@ -31,9 +43,14 @@ export function useInputControls(options: InputControlsOptions) {
   const midiLearn = useMidiLearn();
   const midiLearnOpen = ref(false);
   const webMidi = useWebMidi({
+    // Live MIDI keys sustain through the audible engine: note-on rings until the
+    // matching key release, instead of a fixed-length blip.
     onNoteOn: ({ pitch, velocity }) => {
-      void previewNote(pitch, velocity);
+      void previewNoteOn(pitch, velocity);
       stepInput.enterNote(pitch, velocity);
+    },
+    onNoteOff: ({ pitch }) => {
+      previewNoteOff(pitch);
     },
     onControlChange: (event) => midiLearn.handleCc(event),
   });
@@ -70,6 +87,16 @@ export function useInputControls(options: InputControlsOptions) {
       if (!ok) {
         errorMessage.value = webMidi.error.value ?? 'Web MIDI is unavailable in this browser.';
       }
+    });
+  }
+
+  // Release the binding's routing engine when the owning scope disposes, so the
+  // wasm instance is not leaked across engine restarts / unmounts.
+  if (getCurrentScope()) {
+    onScopeDispose(() => {
+      webMidi.disconnect();
+      midiRoutingEngine?.destroy();
+      midiRoutingEngine = null;
     });
   }
 

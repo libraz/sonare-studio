@@ -181,4 +181,19 @@ describe('VerovioClient', () => {
     await expect(first).rejects.toThrow('worker exploded');
     await expect(second).rejects.toThrow('worker exploded');
   });
+
+  it('self-disables after a fatal worker error so later calls reject instead of hanging', async () => {
+    const { client, worker } = createClient();
+    const inFlight = client.load('<score-partwise/>');
+
+    worker.fail('worker exploded');
+    await expect(inFlight).rejects.toThrow('worker exploded');
+
+    // The dead worker is torn down, and new requests reject immediately with the
+    // original error rather than queuing a pending promise that never resolves.
+    expect(worker.terminated).toBe(true);
+    const postedBefore = worker.posted.length;
+    await expect(client.renderPage(1)).rejects.toThrow('worker exploded');
+    expect(worker.posted).toHaveLength(postedBefore);
+  });
 });

@@ -107,9 +107,18 @@ function makeHandle(sampleRate = 100, baseLatency = 0) {
 
 /** Builds injectable mic/bind fakes. */
 function makeDeps() {
-  const tracks = [
-    { stop: vi.fn(), getSettings: () => ({ channelCount: 2 }) },
-  ] as unknown as MediaStreamTrack[];
+  const endedListeners = new Set<() => void>();
+  const track = {
+    stop: vi.fn(),
+    getSettings: () => ({ channelCount: 2 }),
+    addEventListener: vi.fn((type: string, listener: () => void) => {
+      if (type === 'ended') endedListeners.add(listener);
+    }),
+    removeEventListener: vi.fn((type: string, listener: () => void) => {
+      if (type === 'ended') endedListeners.delete(listener);
+    }),
+  };
+  const tracks = [track] as unknown as MediaStreamTrack[];
   const stream = {
     getAudioTracks: () => tracks,
     getTracks: () => tracks,
@@ -125,7 +134,11 @@ function makeDeps() {
     }),
   );
   const deps: RecorderOptions = { getUserMedia, bindInput };
-  return { deps, stream, source, bindingClose, getUserMedia, bindInput };
+  /** Fires the device 'ended' event (e.g. the mic was unplugged). */
+  const endTrack = (): void => {
+    for (const listener of [...endedListeners]) listener();
+  };
+  return { deps, stream, source, bindingClose, getUserMedia, bindInput, track, endTrack };
 }
 
 /** Full-capacity ramp buffers: channel c holds value i * (c + 1) at index i. */
@@ -584,6 +597,80 @@ describe('createRecorder teardown', () => {
     expect(recorder.hasMicrophone()).toBe(false);
     expect(bindingClose).toHaveBeenCalled();
     expect(configureCapture).not.toHaveBeenCalled();
+  });
+});
+
+describe('createRecorder device loss', () => {
+  it('tears down the binding and notifies subscribers when the device ends', async () => {
+    const { handle } = makeHandle();
+    const { deps, bindingClose, endTrack } = makeDeps();
+    const recorder = createRecorder(handle, deps);
+    const lost = vi.fn();
+    recorder.onMicrophoneLost(lost);
+
+    await recorder.requestMicrophone();
+    expect(recorder.hasMicrophone()).toBe(true);
+
+    endTrack(); // the mic was unplugged
+
+    expect(lost).toHaveBeenCalledTimes(1);
+    expect(recorder.hasMicrophone()).toBe(false);
+    expect(bindingClose).toHaveBeenCalled();
+  });
+
+  it('aborts an in-flight take when the device ends mid-recording', async () => {
+    const { handle, armRecord, resetCapture } = makeHandle();
+    const { deps, endTrack } = makeDeps();
+    const recorder = createRecorder(handle, deps);
+    await recorder.requestMicrophone();
+    recorder.arm(2);
+    await recorder.start({ startPpq: 0, tempoBpm: 120 });
+    expect(recorder.isRecording()).toBe(true);
+
+    endTrack();
+
+    expect(recorder.isRecording()).toBe(false);
+    expect(armRecord).toHaveBeenLastCalledWith(2, false);
+    expect(resetCapture).toHaveBeenCalled();
+    // The discarded take cannot be stopped (there is none in progress).
+    await expect(recorder.stop()).rejects.toBeInstanceOf(RecorderStateError);
+  });
+
+  it('lets the user reacquire a microphone after a device loss', async () => {
+    const { handle } = makeHandle();
+    const { deps } = makeDeps();
+    const recorder = createRecorder(handle, deps);
+    await recorder.requestMicrophone();
+    recorder.onMicrophoneLost(() => {})();
+    // After loss, requestMicrophone re-runs getUserMedia (binding was cleared).
+    const { deps: deps2, endTrack } = makeDeps();
+    const recorder2 = createRecorder(handle, deps2);
+    await recorder2.requestMicrophone();
+    endTrack();
+    expect(recorder2.hasMicrophone()).toBe(false);
+    await recorder2.requestMicrophone();
+    expect(recorder2.hasMicrophone()).toBe(true);
+  });
+
+  it('resets the input level to zero after a take so the meter does not freeze', async () => {
+    const { handle, emitMeter, setStatus, setAudio } = makeHandle(100);
+    const { deps } = makeDeps();
+    const recorder = createRecorder(handle, deps);
+    const levels: number[] = [];
+    recorder.onLevel((peak) => levels.push(peak));
+    await recorder.requestMicrophone();
+    recorder.arm(1);
+    await recorder.start({ startPpq: 0, tempoBpm: 120, recordOffsetSamples: 0 });
+
+    emitMeter(meterSnapshot(INPUT_METER_TARGET_ID, 0)); // 0 dBFS -> peak 1
+    expect(levels.at(-1)).toBeGreaterThan(0);
+
+    setStatus({ capturedFrames: 4 });
+    setAudio(rampChannels(2, 4));
+    await recorder.stop();
+
+    // Stopping drops the meter to zero instead of leaving the last peak frozen.
+    expect(levels.at(-1)).toBe(0);
   });
 });
 

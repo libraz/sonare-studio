@@ -192,6 +192,16 @@ export interface Recorder {
    */
   onLevel(listener: (peak: number) => void): () => void;
   /**
+   * Subscribes to microphone-loss events: fired once when the capture device
+   * disappears (its track ends — unplugged, or the OS default input changes).
+   * The binding is torn down before listeners run, so {@link hasMicrophone}
+   * returns false and any in-flight take is discarded. Callers should surface
+   * an error and let the user re-request the microphone.
+   *
+   * @returns An unsubscribe function.
+   */
+  onMicrophoneLost(listener: () => void): () => void;
+  /**
    * Starts capturing the armed track through the engine record path: sizes
    * the capture buffer for the full take, resets the capture counters, arms
    * the engine (engine.armRecord) and sets the punch window (engine.punch)
@@ -261,6 +271,29 @@ function dbPeakToLinear(db: number): number {
   return Number.isFinite(db) ? 10 ** (db / 20) : 0;
 }
 
+/**
+ * Attaches an `ended` listener to every audio track of a stream so the
+ * recorder learns when the capture device disappears (unplugged, or the OS
+ * default input changes out from under us). A live but unmonitored device
+ * fires no further audio, so without this the engine would keep capturing
+ * silence into the take with no signal to the user.
+ *
+ * @param stream The captured media stream.
+ * @param onLost Invoked once when any track ends.
+ * @returns A cleanup function that removes every listener.
+ */
+function attachTrackEndedListeners(stream: MediaStream, onLost: () => void): () => void {
+  const cleanups: Array<() => void> = [];
+  for (const track of stream.getAudioTracks()) {
+    const handler = (): void => onLost();
+    track.addEventListener('ended', handler);
+    cleanups.push(() => track.removeEventListener('ended', handler));
+  }
+  return () => {
+    for (const cleanup of cleanups) cleanup();
+  };
+}
+
 /** Immutable state of one in-flight take. */
 interface ActiveTake {
   trackId: number;
@@ -296,6 +329,15 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
   const levelListeners = new Set<(peak: number) => void>();
   let levelPeak = 0;
   let lastLevelEmit = 0;
+  const micLostListeners = new Set<() => void>();
+  /** Removes the device `ended` listeners attached to the current binding. */
+  let detachTrackListeners: (() => void) | null = null;
+
+  /** Drops the input level to zero and notifies meters (e.g. after a take or mic loss). */
+  const resetLevel = (): void => {
+    levelPeak = 0;
+    for (const listener of levelListeners) listener(0);
+  };
 
   // Input level: snapshots tagged with the input meter target id carry the
   // capture peak in dBFS; master and lane records are ignored here.
@@ -328,6 +370,30 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     });
   };
 
+  /**
+   * Handles the capture device vanishing mid-session: aborts any in-flight
+   * take, tears down the binding so hasMicrophone() reports false, and lets
+   * subscribers (UI) prompt the user to reconnect. Idempotent.
+   */
+  const handleMicrophoneLost = (): void => {
+    if (!binding) return;
+    detachTrackListeners?.();
+    detachTrackListeners = null;
+    if (take) {
+      const active = take;
+      take = null;
+      handle.engine.armRecord(active.trackId, false);
+      void handle.engine.resetCapture().catch(() => {
+        // The device is gone; a failed reset is harmless.
+      });
+    }
+    binding.close();
+    binding = null;
+    micPromise = null;
+    resetLevel();
+    for (const listener of [...micLostListeners]) listener();
+  };
+
   /** One-shot microphone acquisition shared by concurrent callers. */
   const openMicrophone = async (): Promise<void> => {
     const getUserMedia = options.getUserMedia ?? defaultGetUserMedia();
@@ -354,6 +420,8 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
       throw new RecorderStateError('Recorder has been disposed');
     }
     binding = bound;
+    // Learn when the device disappears so a take never silently fills with zeros.
+    detachTrackListeners = attachTrackEndedListeners(bound.stream, handleMicrophoneLost);
     // The idle config makes the input source and the monitor state live on
     // the engine before any take starts.
     sendCaptureConfig(idleBufferFrames);
@@ -435,6 +503,8 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     await handle.engine.resetCapture();
     // Back to the idle config so the monitor state survives between takes.
     if (binding) sendCaptureConfig(idleBufferFrames);
+    // Drop the input meter so it does not freeze on the last take's peak.
+    resetLevel();
     // capturedAudio returns full-capacity planar buffers; only the first
     // capturedFrames samples of each channel are valid.
     let frames = status.capturedFrames;
@@ -452,6 +522,8 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     if (disposed) return;
     disposed = true;
     unsubscribeMeter();
+    detachTrackListeners?.();
+    detachTrackListeners = null;
     if (take) {
       const active = take;
       take = null;
@@ -464,6 +536,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     binding = null;
     micPromise = null;
     levelListeners.clear();
+    micLostListeners.clear();
   };
 
   return {
@@ -485,6 +558,12 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
       levelListeners.add(listener);
       return () => {
         levelListeners.delete(listener);
+      };
+    },
+    onMicrophoneLost(listener: () => void): () => void {
+      micLostListeners.add(listener);
+      return () => {
+        micLostListeners.delete(listener);
       };
     },
     start,

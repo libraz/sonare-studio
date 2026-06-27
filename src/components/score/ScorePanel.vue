@@ -27,6 +27,7 @@ import {
   setSelection,
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
+import { timeSignatureAt } from '@/project/time-signature';
 import { MAJOR_MODE_MASK } from '@/project/types';
 import { useI18n } from '@/ui/i18n';
 import {
@@ -69,8 +70,6 @@ const { t } = useI18n();
 const RETRANSCRIBE_DEBOUNCE_MS = 600;
 /** Selection matching tolerance on the quantized onset grid, in PPQ. */
 const ONSET_MATCH_EPSILON_PPQ = 1e-3;
-/** Default time signature until the project models a meter map. */
-const DEFAULT_TIME_SIG = { beats: 4, beatUnit: 4 } as const;
 
 // --- Toolbar state -----------------------------------------------------------
 
@@ -149,12 +148,22 @@ const VIEW_ZOOM_MIN = 0.25;
 const VIEW_ZOOM_MAX = 4;
 const VIEW_ZOOM_STEP = 1.2;
 
-/** Engraved measure length in PPQ (the score is always notated in 4/4). */
-const MEASURE_LEN_PPQ = timeSigLengthPpq(DEFAULT_TIME_SIG);
+/**
+ * Time signature in effect at the clip start, taken from the project's meter
+ * map (4/4 fallback when none is modelled). The score is notated in this
+ * meter so bar lines, beaming, rests and chord placement match the project.
+ */
+const clipTimeSig = computed<{ beats: number; beatUnit: number }>(() => {
+  const meter = timeSignatureAt(store.timeSignatures, store.clipStartPpq);
+  return { beats: meter.numerator, beatUnit: meter.denominator };
+});
+
+/** Engraved measure length in PPQ for the clip's time signature. */
+const measureLenPpq = computed(() => timeSigLengthPpq(clipTimeSig.value));
 
 /** Whole measures the real clip content spans. */
 const actualMeasures = computed(() =>
-  Math.max(1, Math.ceil(store.clipLengthPpq / MEASURE_LEN_PPQ)),
+  Math.max(1, Math.ceil(store.clipLengthPpq / measureLenPpq.value)),
 );
 
 /**
@@ -170,7 +179,7 @@ const padMeasures = computed(() =>
 
 /** Clip length (real content plus padding) fed to the transcriber, in PPQ. */
 const paddedClipLengthPpq = computed(
-  () => (actualMeasures.value + padMeasures.value) * MEASURE_LEN_PPQ,
+  () => (actualMeasures.value + padMeasures.value) * measureLenPpq.value,
 );
 
 /** CSS width factor: >= 1 so zoom-out fills via padding, never shrinks below. */
@@ -277,6 +286,12 @@ function screenLayoutOptions() {
  * notes -> quantizeToScore -> (optional chord symbols) -> MusicXML -> Verovio.
  */
 async function transcribe(): Promise<void> {
+  // A previously crashed worker leaves the client permanently failed; replace it
+  // so the user can recover by re-transcribing instead of reloading the app.
+  if (client.value?.failed) {
+    client.value.dispose();
+    client.value = new VerovioClient();
+  }
   const verovio = client.value;
   if (!verovio || !store.initialized || store.clipLengthPpq <= 0) return;
   const gen = ++generation;
@@ -286,7 +301,7 @@ async function transcribe(): Promise<void> {
     const fifths = keyFifths();
     const score = quantizeToScore(store.notes, {
       divisionPpq: divisionPpq(),
-      timeSig: { ...DEFAULT_TIME_SIG },
+      timeSig: { ...clipTimeSig.value },
       keyFifths: fifths,
       clipStartPpq: store.clipStartPpq,
       // Padded with trailing empty measures so the line fills the width when
@@ -308,7 +323,7 @@ async function transcribe(): Promise<void> {
         const estimated: EstimatedChordSymbol[] = estimateChordSymbols(store.notes, {
           clipStartPpq: store.clipStartPpq,
           clipLengthPpq: store.clipLengthPpq,
-          measureLengthPpq: timeSigLengthPpq(DEFAULT_TIME_SIG),
+          measureLengthPpq: measureLenPpq.value,
           keyFifths: fifths,
         });
         const symbols = await canonicalizeChordSymbols(estimated);
