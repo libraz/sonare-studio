@@ -4,7 +4,7 @@ import { type AutomationLaneState, cloneAutomationLane } from '../automation';
 import { cloneInstrument } from '../instrument';
 import { cloneCcLanes } from '../midi-cc';
 import { cloneMixerState, cloneStrip, type ProjectMixerState } from '../mixer';
-import { getProject, useProjectStore } from '../store';
+import { getProject, setHistoryResetHook, useProjectStore } from '../store';
 import type { EditorClip, EditorMarker, EditorNote, EditorSection, EditorTrack } from '../types';
 
 /**
@@ -310,3 +310,6 @@ export function clearHistory(): void {
   redoStack.length = 0;
   pendingGesture = null;
 }
+
+// Let the store drop history as part of dispose() so the two never drift.
+setHistoryResetHook(clearHistory);

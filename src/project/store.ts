@@ -95,6 +95,20 @@ let nextSectionId = 1;
 // roll source registrations back (see addAudioClip in src/project/commands.ts).
 let audioSourceIds = new Map<string, number>();
 
+// Optional hook the command layer registers so disposing the store also drops
+// the undo/redo history; without it, history snapshots would dangle against a
+// deleted Project. Kept as a hook to avoid a store -> command-layer import.
+let historyResetHook: (() => void) | null = null;
+
+/**
+ * Registers a callback invoked by {@link dispose} to clear the command-layer
+ * undo/redo history, keeping the two in lockstep. Called once by the history
+ * module at import time.
+ */
+export function setHistoryResetHook(hook: (() => void) | null): void {
+  historyResetHook = hook;
+}
+
 /**
  * Returns the live wasm Project handle.
  *
@@ -1064,10 +1078,12 @@ export const useProjectStore = defineStore('project', () => {
   }
 
   /**
-   * Releases the wasm Project and resets the mirror. Call clearHistory() from
-   * src/project/commands.ts alongside this to drop the undo/redo snapshots.
+   * Releases the wasm Project and resets the mirror. The command layer's
+   * undo/redo history is dropped through the registered reset hook so its
+   * snapshots cannot dangle against the deleted Project.
    */
   function dispose(): void {
+    historyResetHook?.();
     if (project) {
       project.delete();
       project = null;

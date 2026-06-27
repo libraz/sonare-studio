@@ -1142,5 +1142,20 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(store.tracks[0]).toMatchObject({ name: 'Grand', color: '#aa0000' });
       expect(store.markers.map((m) => m.name)).toEqual(['Hit']);
     });
+
+    it('dispose() drops the undo/redo history so snapshots cannot dangle', () => {
+      addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+      setMarker(null, 4, 'Hit');
+      undo();
+      expect(canUndo()).toBe(true);
+      expect(canRedo()).toBe(true);
+
+      // Disposing the store must clear history on its own (no separate
+      // clearHistory call), or later undo()/redo() would replay against a
+      // deleted Project.
+      store.dispose();
+      expect(canUndo()).toBe(false);
+      expect(canRedo()).toBe(false);
+    });
   });
 });
