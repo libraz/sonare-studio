@@ -14,6 +14,12 @@
  *   cue marker named "Section: <name>".
  * - Audio warps/stretching are not exported (clips reference plain files).
  * - Per-clip gain has no DAWproject attribute and is dropped.
+ * - Per-clip MIDI expression lanes (CC, pitch bend, channel/poly pressure)
+ *   have no portable representation here yet and are dropped.
+ * - A VCA group's own fader is not a DAWproject concept; its dB offset is
+ *   folded into each member track's channel volume instead.
+ * - Send/group/aux routing is flattened: every track addresses the master
+ *   channel directly (sends and submix buses are not reconstructed).
  * - Instruments, insert effects and the mastering chain are vendor-specific
  *   device state with no portable representation; only channel volume, pan,
  *   mute and solo travel.
@@ -94,10 +100,8 @@ interface AudioAssetEntry {
 /** Neutral strip values used when a track carries no mixer strip. */
 const NEUTRAL_STRIP: Pick<MixerStrip, 'gainDb' | 'pan'> = { gainDb: 0, pan: 0 };
 
-/** Clamps a linear channel volume into the exported [0, 2] parameter range. */
-function clampVolume(volume: number): number {
-  return Math.min(2, Math.max(0, volume));
-}
+/** Conventional upper bound of a DAWproject linear Volume parameter (+6 dB). */
+const DEFAULT_VOLUME_MAX = 2;
 
 /** Maps a [-1, 1] balance pan to the DAWproject normalized [0, 1] range. */
 function panToNormalized(pan: number): number {
@@ -203,11 +207,22 @@ function channelElement(
   solo: boolean,
   destination?: string,
 ): XmlElement {
+  // Preserve loud gains instead of clamping at +6 dB: widen the parameter's
+  // max to fit any value above the conventional bound (a member track folding
+  // in a VCA offset can legitimately exceed it) so nothing is silently lost.
+  const value = Math.max(0, volume);
   return {
     name: 'Channel',
     attributes: { id, role, audioChannels: 2, solo, destination },
     children: [
-      realParameter('Volume', `${id}-volume`, 'linear', clampVolume(volume), 0, 2),
+      realParameter(
+        'Volume',
+        `${id}-volume`,
+        'linear',
+        value,
+        0,
+        Math.max(DEFAULT_VOLUME_MAX, value),
+      ),
       realParameter('Pan', `${id}-pan`, 'normalized', panToNormalized(pan), 0, 1),
       { name: 'Mute', attributes: { id: `${id}-mute`, value: mute } },
     ],
@@ -216,8 +231,15 @@ function channelElement(
 
 /** Builds the Structure track list (regular tracks plus the master track). */
 function structureElement(doc: ProjectDocument): XmlElement {
+  // A VCA carries no audio of its own; DAWproject has no VCA concept, so its
+  // per-member dB offset is folded into each assigned track's channel volume
+  // (matching the realtime mixer's per-member gain delta).
+  const vcaGainDbById = new Map(
+    (doc.mixer?.vcaGroups ?? []).map((group) => [group.id, group.gainDb]),
+  );
   const tracks: XmlElement[] = doc.tracks.map((track, index) => {
     const strip = track.mixer ?? NEUTRAL_STRIP;
+    const vcaOffsetDb = track.vcaId !== undefined ? (vcaGainDbById.get(track.vcaId) ?? 0) : 0;
     return {
       name: 'Track',
       attributes: {
@@ -231,7 +253,7 @@ function structureElement(doc: ProjectDocument): XmlElement {
         channelElement(
           `channel-${index}`,
           track.kind === 'aux' ? 'effect' : 'regular',
-          track.volume * dbToLinear(strip.gainDb),
+          track.volume * dbToLinear(strip.gainDb) * dbToLinear(vcaOffsetDb),
           strip.pan,
           track.mute,
           track.solo,
@@ -430,6 +452,12 @@ function audioClipElement(
     playStart: ppqToSeconds(clip.sourceOffsetPpq, tempoBpm),
     name: clip.name,
   };
+  if (clip.loopEnabled) {
+    // Loop bounds follow the clip's content time unit (seconds for audio).
+    const loopLengthPpq = clip.loopLengthPpq > 0 ? clip.loopLengthPpq : clip.lengthPpq;
+    attributes['loopStart'] = ppqToSeconds(clip.sourceOffsetPpq, tempoBpm);
+    attributes['loopEnd'] = ppqToSeconds(clip.sourceOffsetPpq + loopLengthPpq, tempoBpm);
+  }
   const fadeIn = clip.fadeInPpq ?? 0;
   const fadeOut = clip.fadeOutPpq ?? 0;
   if (fadeIn > 0 || fadeOut > 0) {
@@ -445,6 +473,8 @@ function audioClipElement(
         name: 'Audio',
         attributes: {
           id: `audio-${trackIndex}-${clipIndex}`,
+          // MediaFile recommends an explicit time unit for its duration.
+          timeUnit: 'seconds',
           channels: asset.numChannels,
           sampleRate: asset.sampleRate,
           duration: asset.durationSec,

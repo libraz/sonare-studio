@@ -203,13 +203,47 @@ describe('exportDawproject structure', () => {
     expect(attr(channel0, 'destination')).toBe(attr(masterChannel, 'id'));
   });
 
-  it('clamps channel volume into the exported [0, 2] range', async () => {
+  it('preserves loud gains above +6 dB by widening the volume parameter range', async () => {
     const doc = makeDoc([
       makeTrack([], { volume: 1, mixer: { gainDb: 24, pan: 0, inserts: [], sends: [] } }),
     ]);
     const project = await exportProjectXml(doc);
     const volume = project.querySelector('Structure > Track Volume');
-    expect(floatAttr(volume, 'value')).toBe(2);
+    // +24 dB ≈ 15.85 linear must not be clamped to the conventional [0, 2] cap.
+    expect(floatAttr(volume, 'value')).toBeCloseTo(dbToLinear(24), 5);
+    expect(floatAttr(volume, 'max')).toBeCloseTo(dbToLinear(24), 5);
+  });
+
+  it('keeps the conventional volume max for in-range gains', async () => {
+    const doc = makeDoc([
+      makeTrack([], { volume: 1, mixer: { gainDb: 0, pan: 0, inserts: [], sends: [] } }),
+    ]);
+    const project = await exportProjectXml(doc);
+    const volume = project.querySelector('Structure > Track Volume');
+    expect(floatAttr(volume, 'value')).toBe(1);
+    expect(floatAttr(volume, 'max')).toBe(2);
+  });
+
+  it('folds a VCA group offset into each member track channel volume', async () => {
+    const doc = makeDoc(
+      [
+        makeTrack([], { name: 'A', volume: 1, vcaId: 'vca-1' }),
+        makeTrack([], { name: 'B', volume: 0.5 }),
+      ],
+      {
+        mixer: {
+          master: { gainDb: 0, pan: 0, inserts: [], sends: [] },
+          buses: [],
+          vcaGroups: [{ id: 'vca-1', name: 'Group', gainDb: -6 }],
+        },
+      },
+    );
+    const project = await exportProjectXml(doc);
+    const tracks = project.querySelectorAll('Structure > Track');
+    const memberVolume = tracks[0].querySelector('Channel > Volume');
+    const nonMemberVolume = tracks[1].querySelector('Channel > Volume');
+    expect(floatAttr(memberVolume, 'value')).toBeCloseTo(dbToLinear(-6), 5);
+    expect(floatAttr(nonMemberVolume, 'value')).toBeCloseTo(0.5, 5);
   });
 
   it('maps aux tracks to effect channels', async () => {
@@ -394,8 +428,33 @@ describe('exportDawproject audio', () => {
     // clip window (sourceOffsetPpq 1 + lengthPpq 4 = 2.5 s at 120 BPM).
     expect(attr(audio, 'channels')).toBe('2');
     expect(attr(audio, 'sampleRate')).toBe(String(SAMPLE_RATE));
+    expect(attr(audio, 'timeUnit')).toBe('seconds');
     expect(floatAttr(audio, 'duration')).toBeCloseTo(2.5, 6);
     expect(attr(audio?.querySelector('File'), 'path')).toBe('audio/asset-1.wav');
+  });
+
+  it('exports loop windows on looping audio clips in seconds', async () => {
+    const project = await exportProjectXml(
+      makeDoc([
+        makeTrack([makeAudioClip({ loopEnabled: true, loopLengthPpq: 2 })], { kind: 'audio' }),
+      ]),
+    );
+    const clip = project.querySelector('Arrangement Clip');
+    // sourceOffsetPpq 1 at 120 BPM = 0.5 s; loop spans loopLengthPpq 2 = 1 s.
+    expect(floatAttr(clip, 'loopStart')).toBeCloseTo(0.5, 6);
+    expect(floatAttr(clip, 'loopEnd')).toBeCloseTo(1.5, 6);
+  });
+
+  it('loops over the clip length when an audio clip omits its loop length', async () => {
+    const project = await exportProjectXml(
+      makeDoc([
+        makeTrack([makeAudioClip({ loopEnabled: true, loopLengthPpq: 0 })], { kind: 'audio' }),
+      ]),
+    );
+    const clip = project.querySelector('Arrangement Clip');
+    // Falls back to lengthPpq 4 = 2 s past the 0.5 s source offset.
+    expect(floatAttr(clip, 'loopStart')).toBeCloseTo(0.5, 6);
+    expect(floatAttr(clip, 'loopEnd')).toBeCloseTo(2.5, 6);
   });
 
   it('keeps the structural reference when an asset fails to load', async () => {
