@@ -5,6 +5,7 @@ import {
   createRecorder,
   defaultRecordOffsetSamples,
   INPUT_METER_TARGET_ID,
+  inputLatencySamples,
   MICROPHONE_CONSTRAINTS,
   NoMicrophoneError,
   NotSupportedError,
@@ -106,11 +107,16 @@ function makeHandle(sampleRate = 100, baseLatency = 0) {
 }
 
 /** Builds injectable mic/bind fakes. */
-function makeDeps() {
+function makeDeps(options: { trackLatencySeconds?: number } = {}) {
   const endedListeners = new Set<() => void>();
   const track = {
     stop: vi.fn(),
-    getSettings: () => ({ channelCount: 2 }),
+    getSettings: () => ({
+      channelCount: 2,
+      ...(options.trackLatencySeconds !== undefined
+        ? { latency: options.trackLatencySeconds }
+        : {}),
+    }),
     addEventListener: vi.fn((type: string, listener: () => void) => {
       if (type === 'ended') endedListeners.add(listener);
     }),
@@ -346,6 +352,21 @@ describe('createRecorder capture', () => {
     const channel = (await recorder.stop())?.channels[0] as Float32Array;
     expect(channel.length).toBe(20);
     expect(channel[0]).toBe(10);
+  });
+
+  it('adds the device input latency to the default offset', async () => {
+    // baseLatency 0.1 s + track input latency 0.05 s at 100 Hz = 15 frames.
+    const { handle, setStatus, setAudio } = makeHandle(100, 0.1);
+    const { deps } = makeDeps({ trackLatencySeconds: 0.05 });
+    const recorder = createRecorder(handle, deps);
+    await recorder.requestMicrophone();
+    recorder.arm(1);
+    await recorder.start({ startPpq: 0, tempoBpm: 120 });
+    setAudio(rampChannels(1, 100));
+    setStatus({ capturedFrames: 30 });
+    const channel = (await recorder.stop())?.channels[0] as Float32Array;
+    expect(channel.length).toBe(15);
+    expect(channel[0]).toBe(15);
   });
 
   it('preserves stereo channels independently', async () => {
@@ -683,5 +704,24 @@ describe('defaultRecordOffsetSamples', () => {
   it('tolerates missing latency fields', () => {
     const ctx = { sampleRate: 48000 } as AudioContext;
     expect(defaultRecordOffsetSamples(ctx)).toBe(0);
+  });
+});
+
+describe('inputLatencySamples', () => {
+  /** Builds a stream whose audio tracks report the given latencies (seconds). */
+  function streamWithLatencies(...latencies: Array<number | undefined>): MediaStream {
+    const tracks = latencies.map((latency) => ({
+      getSettings: () => (latency !== undefined ? { latency } : {}),
+    })) as unknown as MediaStreamTrack[];
+    return { getAudioTracks: () => tracks } as unknown as MediaStream;
+  }
+
+  it('converts the largest reported track latency to samples', () => {
+    expect(inputLatencySamples(streamWithLatencies(0.01, 0.02), 48000)).toBe(960);
+  });
+
+  it('returns 0 when no track reports a latency', () => {
+    expect(inputLatencySamples(streamWithLatencies(undefined), 48000)).toBe(0);
+    expect(inputLatencySamples(streamWithLatencies(), 48000)).toBe(0);
   });
 });

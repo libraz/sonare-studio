@@ -115,7 +115,8 @@ export interface StartRecordingOptions {
    * captured frames are dropped when the take is assembled. A sound played
    * at timeline position T reaches the capture input roughly this many
    * samples late, so trimming the head re-aligns the take to `startPpq`.
-   * Defaults to {@link defaultRecordOffsetSamples} of the engine context.
+   * Defaults to {@link defaultRecordOffsetSamples} of the engine context plus
+   * the device's reported input latency ({@link inputLatencySamples}).
    */
   recordOffsetSamples?: number;
   /**
@@ -248,6 +249,29 @@ export function defaultRecordOffsetSamples(ctx: AudioContext): number {
   const output =
     typeof outputLatency === 'number' && Number.isFinite(outputLatency) ? outputLatency : 0;
   return Math.max(0, Math.round((base + output) * ctx.sampleRate));
+}
+
+/**
+ * Estimates the capture input latency of a media stream in samples: the
+ * largest `latency` setting (seconds) the browser reports across the stream's
+ * audio tracks. The Web Audio API does not surface input latency on the
+ * AudioContext, but capture tracks may carry a `latency` hint (Chromium), so
+ * adding it to {@link defaultRecordOffsetSamples} re-aligns takes that would
+ * otherwise land a few milliseconds late. Returns 0 when no track reports it.
+ *
+ * @param stream The captured media stream.
+ * @param sampleRate Capture sample rate in Hz.
+ * @returns Input latency in samples (>= 0).
+ */
+export function inputLatencySamples(stream: MediaStream, sampleRate: number): number {
+  let maxLatencySeconds = 0;
+  for (const track of stream.getAudioTracks()) {
+    const latency = (track.getSettings() as MediaTrackSettings & { latency?: number }).latency;
+    if (typeof latency === 'number' && Number.isFinite(latency) && latency > maxLatencySeconds) {
+      maxLatencySeconds = latency;
+    }
+  }
+  return Math.max(0, Math.round(maxLatencySeconds * sampleRate));
 }
 
 /** Resolves the bound getUserMedia function, or null when unavailable. */
@@ -473,8 +497,14 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
         `Recording maxDurationSeconds must be finite and > 0, got ${maxDurationSeconds}`,
       );
     }
+    // The default offset compensates both the playback path (base + output
+    // latency) and the capture path (the device's reported input latency), so
+    // a take lands on its start position rather than a few ms late. An explicit
+    // override replaces the whole estimate.
     const offsetSamples =
-      startOptions.recordOffsetSamples ?? defaultRecordOffsetSamples(handle.ctx);
+      startOptions.recordOffsetSamples ??
+      defaultRecordOffsetSamples(handle.ctx) +
+        inputLatencySamples(binding.stream, handle.ctx.sampleRate);
     if (!Number.isFinite(offsetSamples) || offsetSamples < 0) {
       throw new RangeError(
         `Recording recordOffsetSamples must be finite and >= 0, got ${offsetSamples}`,
