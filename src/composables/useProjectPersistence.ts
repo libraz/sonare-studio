@@ -13,7 +13,7 @@ import {
   saveProject,
 } from '@/persistence/opfs';
 import { decodeSzd, decodeSzdBundle, encodeSzd } from '@/persistence/szd';
-import { exportProjectSmf } from '@/project/export';
+import { exportProjectClipFile, exportProjectSmf } from '@/project/export';
 import {
   loadProjectDocument,
   type ProjectDocument,
@@ -319,6 +319,17 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     });
   }
 
+  function exportMidi2Action(): void {
+    closeProjectMenu();
+    void runAction(async () => {
+      const result = exportProjectClipFile();
+      downloadBlobFile(
+        new Blob([new Uint8Array(result.bytes)], { type: 'audio/midi' }),
+        result.filename,
+      );
+    });
+  }
+
   function disposeOpenDialogTrap(): void {
     openDialogTrap?.deactivate();
     openDialogTrap = null;
@@ -352,6 +363,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     saveProjectAsAction,
     exportSzdAction,
     exportSmfAction,
+    exportMidi2Action,
     disposeProjectPersistence: disposeOpenDialogTrap,
   };
 }

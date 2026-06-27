@@ -24,6 +24,7 @@ const emit = defineEmits<{
   audioImportInputRef: [el: HTMLInputElement | null];
   closeProjectMenu: [];
   exportDawproject: [];
+  exportMidi2: [];
   exportSmf: [];
   exportSzd: [];
   helpMenuRef: [el: HTMLElement | null];
@@ -137,6 +138,9 @@ const { t } = useI18n();
         </button>
         <button type="button" role="menuitem" @click="emit('exportSmf')">
           {{ t.shell.project.exportSmf }}
+        </button>
+        <button type="button" role="menuitem" @click="emit('exportMidi2')">
+          {{ t.shell.project.exportMidi2 }}
         </button>
         <button type="button" role="menuitem" @click="emit('openExportDialog')">
           {{ t.shell.project.exportAudio }}

@@ -2,6 +2,7 @@
 import { computed, markRaw, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { promptDialog } from '@/composables/useDialogs';
 import { useEditorTool } from '@/composables/useEditorTool';
+import { useFileDownloads } from '@/composables/useFileDownloads';
 import type { AutomationParam } from '@/project/automation';
 import {
   addMidiClip,
@@ -22,6 +23,7 @@ import {
   splitClip,
   trimClip,
 } from '@/project/commands';
+import { exportClipSmf } from '@/project/export';
 import { useProjectStore } from '@/project/store';
 import { isAudioClip } from '@/project/types';
 import { assetLengthPpq, audioClipSourceBounds } from '@/ui/arrangement/audio-clip-content';
@@ -91,6 +93,7 @@ const emit = defineEmits<{
 
 const store = useProjectStore();
 const { t } = useI18n();
+const { downloadBlobFile } = useFileDownloads();
 
 /** Initialization/runtime error surfaced above the view. */
 const error = ref('');
@@ -414,9 +417,14 @@ function onClipContext(payload: {
       label: clip.loopEnabled ? 'Disable loop' : 'Enable loop',
       run: () => setClipLoop(clip.id, !clip.loopEnabled),
     },
+  ];
+  if (!isAudioClip(clip)) {
+    items.push({ id: 'export-midi', label: 'Export MIDI…', run: () => exportClipToSmf(clip.id) });
+  }
+  items.push(
     { id: 'sep-1', separator: true },
     { id: 'delete', label: 'Delete', danger: true, run: () => deleteClip(clip.id) },
-  ];
+  );
   openContextMenu(payload.x, payload.y, items);
 }
 
@@ -430,6 +438,22 @@ function onRulerContext(payload: { x: number; y: number; ppq: number }): void {
     },
   ];
   openContextMenu(payload.x, payload.y, items);
+}
+
+/** Exports a single MIDI clip to a Standard MIDI File download. */
+function exportClipToSmf(clipId: number): void {
+  error.value = '';
+  void (async () => {
+    try {
+      const result = await exportClipSmf(clipId);
+      downloadBlobFile(
+        new Blob([new Uint8Array(result.bytes)], { type: 'audio/midi' }),
+        result.filename,
+      );
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : String(err);
+    }
+  })();
 }
 
 /** Renames a clip via a prompt, ignoring an empty or unchanged name. */

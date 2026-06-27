@@ -170,6 +170,7 @@ const {
   saveProjectAsAction,
   exportSzdAction,
   exportSmfAction,
+  exportMidi2Action,
   disposeProjectPersistence,
 } = useProjectPersistence({
   autosave,
@@ -482,6 +483,7 @@ useAppLifecycle({
       @audio-import-input-ref="(el) => (audioImportInput = el)"
       @close-project-menu="closeProjectMenu"
       @export-dawproject="exportDawprojectAction"
+      @export-midi2="exportMidi2Action"
       @export-smf="exportSmfAction"
       @export-szd="exportSzdAction"
       @help-menu-ref="(el) => (helpMenuRoot = el)"
