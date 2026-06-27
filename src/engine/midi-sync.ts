@@ -129,9 +129,20 @@ export function buildMidiClipSchedules(
     if (track?.kind !== 'midi' || clipKind(clip) !== 'midi') continue;
     // Frozen tracks play their baked render; their MIDI stays silent.
     if (track.frozen !== undefined) continue;
+    // Looping clips repeat a loop region to fill the clip span: events are
+    // generated for the region only and the engine repeats them. A zero/absent
+    // loop length means the whole clip (then looping is a no-op until the clip
+    // is drawn longer than the region). The event window is the loop region.
+    const looping = clip.loopEnabled === true;
+    const loopRegionPpq =
+      looping && clip.loopLengthPpq > 0
+        ? Math.min(clip.loopLengthPpq, clip.lengthPpq)
+        : clip.lengthPpq;
+    const windowPpq = looping ? loopRegionPpq : clip.lengthPpq;
     // A muted clip (gain <= 0) plays no notes, but its CC lanes still send:
     // controllers are not gain-scaled, and a CC-only clip is legitimate.
-    const notes = clip.gain > 0 ? clipPlaybackNotes(clip) : [];
+    const notes =
+      clip.gain > 0 ? clipPlaybackNotes(looping ? { ...clip, lengthPpq: windowPpq } : clip) : [];
     const ccLanes = (clip.ccLanes ?? []).filter((lane) => lane.points.length > 0);
     const pitchBendLanes = (clip.pitchBendLanes ?? []).filter((lane) => lane.points.length > 0);
     const channelPressureLanes = (clip.channelPressureLanes ?? []).filter(
@@ -154,6 +165,12 @@ export function buildMidiClipSchedules(
     // inside the clip stay exact.
     const lengthSamples =
       ppqToSamples(tempoMap, clip.startPpq + clip.lengthPpq, sampleRate) - startSample;
+    // Loop region length in samples (engine repeats [0, loopLengthSamples)
+    // across [0, lengthSamples)); at least one sample so the engine never
+    // divides by zero.
+    const loopLengthSamples = looping
+      ? Math.max(1, ppqToSamples(tempoMap, clip.startPpq + windowPpq, sampleRate) - startSample)
+      : 0;
     const events: EngineMidiEvent[] = [];
 
     const instrument = track.instrument;
@@ -200,7 +217,7 @@ export function buildMidiClipSchedules(
       // One sample before the nominal end keeps this note-off strictly before
       // a same-pitch note-on of the next note (legato) despite the engine's
       // unstable same-frame sort; the floor keeps the note at least 1 sample.
-      const endPpq = Math.min(note.startPpq + note.durationPpq, clip.lengthPpq);
+      const endPpq = Math.min(note.startPpq + note.durationPpq, windowPpq);
       const offFrame = Math.max(
         onFrame + 1,
         ppqToSamples(tempoMap, clip.startPpq + endPpq, sampleRate) - 1,
@@ -216,7 +233,7 @@ export function buildMidiClipSchedules(
       const channel = clamp(lane.channel, 0, 15);
       const controller = clamp(lane.controller, 0, 127);
       for (const point of lane.points) {
-        if (point.ppq < 0 || point.ppq > clip.lengthPpq) continue;
+        if (point.ppq < 0 || point.ppq > windowPpq) continue;
         let frame = ppqToSamples(tempoMap, clip.startPpq + point.ppq, sampleRate);
         if (shiftFrameZero && frame === 0) frame = 1;
         events.push(
@@ -230,7 +247,7 @@ export function buildMidiClipSchedules(
     for (const lane of pitchBendLanes) {
       const channel = clamp(lane.channel, 0, 15);
       for (const point of lane.points) {
-        if (point.ppq < 0 || point.ppq > clip.lengthPpq) continue;
+        if (point.ppq < 0 || point.ppq > windowPpq) continue;
         let frame = ppqToSamples(tempoMap, clip.startPpq + point.ppq, sampleRate);
         if (shiftFrameZero && frame === 0) frame = 1;
         const value = clamp(Math.round(point.value), 0, 16383);
@@ -243,7 +260,7 @@ export function buildMidiClipSchedules(
     for (const lane of channelPressureLanes) {
       const channel = clamp(lane.channel, 0, 15);
       for (const point of lane.points) {
-        if (point.ppq < 0 || point.ppq > clip.lengthPpq) continue;
+        if (point.ppq < 0 || point.ppq > windowPpq) continue;
         let frame = ppqToSamples(tempoMap, clip.startPpq + point.ppq, sampleRate);
         if (shiftFrameZero && frame === 0) frame = 1;
         events.push(
@@ -255,7 +272,7 @@ export function buildMidiClipSchedules(
       const channel = clamp(lane.channel, 0, 15);
       const pitch = clamp(lane.pitch, 0, 127);
       for (const point of lane.points) {
-        if (point.ppq < 0 || point.ppq > clip.lengthPpq) continue;
+        if (point.ppq < 0 || point.ppq > windowPpq) continue;
         let frame = ppqToSamples(tempoMap, clip.startPpq + point.ppq, sampleRate);
         if (shiftFrameZero && frame === 0) frame = 1;
         events.push(
@@ -272,6 +289,7 @@ export function buildMidiClipSchedules(
       startSample,
       startPpq: clip.startPpq,
       lengthSamples,
+      ...(looping ? { loop: true, loopLengthSamples } : {}),
       events,
     });
   }

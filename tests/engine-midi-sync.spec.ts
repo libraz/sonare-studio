@@ -189,6 +189,47 @@ describe('buildMidiClipSchedules', () => {
     expect(velocityFor(0.001)).toBe(1);
   });
 
+  it('loops a clip: windows events to the loop region and carries the loop length', () => {
+    const clip = makeClip(1, 1, {
+      startPpq: 0,
+      lengthPpq: 8,
+      loopEnabled: true,
+      loopLengthPpq: 2,
+      notes: [
+        makeNote({ id: 1, pitch: 60, startPpq: 0, durationPpq: 1 }),
+        makeNote({ id: 2, pitch: 64, startPpq: 3, durationPpq: 1 }), // outside the loop region
+      ],
+    });
+    const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], TEMPO_120, SAMPLE_RATE);
+    expect(schedule.loop).toBe(true);
+    expect(schedule.lengthSamples).toBe(8 * SPP);
+    expect(schedule.loopLengthSamples).toBe(2 * SPP);
+    // Only the note inside the 2-PPQ loop region is scheduled; the engine repeats it.
+    expect(schedule.events).toEqual([
+      { renderFrame: 0, word0: noteOnWord(0, 60, 100), wordCount: 1 },
+      { renderFrame: SPP - 1, word0: noteOffWord(0, 60), wordCount: 1 },
+    ]);
+  });
+
+  it('treats loopEnabled with no loop length as looping the whole clip', () => {
+    const clip = makeClip(1, 1, { lengthPpq: 4, loopEnabled: true, loopLengthPpq: 0 });
+    const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], TEMPO_120, SAMPLE_RATE);
+    expect(schedule.loop).toBe(true);
+    expect(schedule.loopLengthSamples).toBe(4 * SPP);
+    expect(schedule.lengthSamples).toBe(4 * SPP);
+  });
+
+  it('omits loop fields for non-looping clips', () => {
+    const [schedule] = buildMidiClipSchedules(
+      [makeTrack(1)],
+      [makeClip(1, 1)],
+      TEMPO_120,
+      SAMPLE_RATE,
+    );
+    expect(schedule.loop).toBeUndefined();
+    expect(schedule.loopLengthSamples).toBeUndefined();
+  });
+
   it('skips clips with no audible content or no MIDI home', () => {
     const tracks = [makeTrack(1), makeTrack(2, { kind: 'audio' })];
     const clips = [
