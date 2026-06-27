@@ -102,6 +102,15 @@ describe('szd encode/decode', () => {
     expect(() => decodeSzd(bytes)).toThrow(/"masterAutomation"/);
   });
 
+  it('rejects present but non-array optional top-level collections', () => {
+    for (const field of ['chords', 'midiCcBindings'] as const) {
+      const doc = makeDocument() as unknown as Record<string, unknown>;
+      doc[field] = 'oops';
+      const bytes = zipSync({ 'project.json': strToU8(JSON.stringify(doc)) });
+      expect(() => decodeSzd(bytes)).toThrow(new RegExp(`"${field}"`));
+    }
+  });
+
   it('is deterministic for the same input (no clock reads)', () => {
     const doc = makeDocument();
     expect(encodeSzd(doc)).toEqual(encodeSzd(doc));
