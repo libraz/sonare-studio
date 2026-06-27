@@ -10,6 +10,11 @@ import { validatePpq } from './utils';
  * suggestion payloads, model outputs — that travels with the project but does
  * not affect rendering. The studio writes none today; this exposes the
  * undoable write and a read-back so a future assist feature can own the format.
+ *
+ * NOT YET PERSISTED: serializeProject()/.szd save-load do not round-trip
+ * sidecars, so they live only on the in-memory wasm Project and are lost on
+ * reload. The first feature to write sidecars MUST add serialization support
+ * (see src/project/serialization.ts) before relying on them surviving a save.
  */
 
 /** One stored assist sidecar (mirrors the wasm `ProjectAssistSidecar`). */

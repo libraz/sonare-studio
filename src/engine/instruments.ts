@@ -1,8 +1,9 @@
 /**
  * Offline MIDI prerender helpers: bounce a MIDI phrase to audio buffers with
- * a libsonare instrument, cache the renders, and normalize levels. These
- * serve the offline export renderer (src/export/mixdown.ts) and UI audition
- * (src/ui/devices/audition.ts); realtime playback does not prerender — MIDI
+ * a libsonare instrument, cache the renders, and normalize levels. These serve
+ * UI audition (src/ui/devices/audition.ts) and note preview
+ * (src/composables/useNotePreview.ts). Neither realtime playback nor the
+ * offline export renderer (src/export/engine-render.ts) prerenders — MIDI
  * clips and instruments are engine state fed by the engine's MIDI scheduling
  * (src/engine/midi-sync.ts).
  */
