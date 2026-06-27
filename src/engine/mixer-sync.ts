@@ -119,6 +119,32 @@ export function createMixerSync(handle: EngineHandle): MixerSync {
       }
       laneStates.set(track.id, next);
     }
+    // Lanes whose track was deleted keep their (fixed) index but must fall
+    // silent, or stale content would still play — most dangerously, a leftover
+    // solo would duck every live track. Mute each once and remember it.
+    const currentIds = new Set(tracks.map((track) => track.id));
+    for (const laneId of laneIds) {
+      if (currentIds.has(laneId)) continue;
+      const prev = laneStates.get(laneId);
+      if (prev?.mute && !prev.solo) continue;
+      handle.engine.setSoloMute(laneId, false, true);
+      laneStates.set(
+        laneId,
+        prev
+          ? { ...prev, solo: false, mute: true }
+          : {
+              gainDb: 0,
+              pan: 0,
+              solo: false,
+              mute: true,
+              channelDelaySamples: 0,
+              panLaw: DEFAULT_PAN_LAW,
+              panMode: DEFAULT_PAN_MODE,
+              dualPanLeft: 0,
+              dualPanRight: 0,
+            },
+      );
+    }
     const masterNext = { gainDb: master.gainDb, pan: clampPan(master.pan) };
     if (masterState?.gainDb !== masterNext.gainDb) {
       handle.engine.setStripGain('master', masterNext.gainDb);

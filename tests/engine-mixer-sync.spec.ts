@@ -97,6 +97,26 @@ describe('createMixerSync', () => {
     expect(engine.setTrackLanes).toHaveBeenCalledTimes(1);
   });
 
+  it('mutes a deleted track lane once and keeps it in the registry', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMixerSync(handle);
+
+    // Track 2 is soloed, then removed: its lane must fall silent so the stale
+    // solo cannot duck the surviving track.
+    sync.sync([makeTrack(1), makeTrack(2, { solo: true })], neutralMaster());
+    engine.setSoloMute.mockClear();
+
+    sync.sync([makeTrack(1)], neutralMaster());
+    expect(engine.setSoloMute).toHaveBeenCalledWith(2, false, true);
+    // The lane index is retained (append-only contract).
+    expect(sync.laneTrackIds()).toEqual([1, 2]);
+
+    // A subsequent unchanged sync does not re-issue the mute.
+    engine.setSoloMute.mockClear();
+    sync.sync([makeTrack(1)], neutralMaster());
+    expect(engine.setSoloMute).not.toHaveBeenCalledWith(2, false, true);
+  });
+
   it('sends gain, pan and solo/mute per track on the first sync', () => {
     const { handle, engine } = makeHandle();
     const sync = createMixerSync(handle);
@@ -293,7 +313,7 @@ describe('createMixerSync', () => {
     expect(engine.setStripGain).toHaveBeenCalledWith(1, 0);
   });
 
-  it('keeps the lane of a removed track and sends it no commands', () => {
+  it('keeps the lane of a removed track, redeclaring nothing but muting it', () => {
     const { handle, engine } = makeHandle();
     const sync = createMixerSync(handle);
 
@@ -306,11 +326,9 @@ describe('createMixerSync', () => {
     sync.sync([makeTrack(1)], neutralMaster());
     expect(sync.laneTrackIds()).toEqual([1, 2]);
     expect(engine.setTrackLanes).not.toHaveBeenCalled();
-    const targets = [
-      ...engine.setStripGain.mock.calls,
-      ...engine.setStripPan.mock.calls,
-      ...engine.setSoloMute.mock.calls,
-    ].map((call) => call[0]);
-    expect(targets).not.toContain(2);
+    // The removed lane gets only a one-time silencing mute, no level changes.
+    expect(engine.setStripGain.mock.calls.map((call) => call[0])).not.toContain(2);
+    expect(engine.setStripPan.mock.calls.map((call) => call[0])).not.toContain(2);
+    expect(engine.setSoloMute).toHaveBeenCalledWith(2, false, true);
   });
 });
