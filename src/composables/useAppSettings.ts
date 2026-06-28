@@ -84,6 +84,7 @@ function applyDocumentPreferences(): void {
   const root = document.documentElement;
   root.dataset.theme = resolvedTheme.value;
   root.dataset.themePreference = state.theme;
+  root.dataset.density = state.editorDensity;
   root.lang = resolvedLanguage.value;
 }
 
@@ -96,10 +97,11 @@ window.addEventListener('languagechange', () => {
   browserLanguages.value = readBrowserLanguages();
 });
 
-watch([resolvedTheme, resolvedLanguage, () => state.theme], applyDocumentPreferences, {
-  flush: 'sync',
-  immediate: true,
-});
+watch(
+  [resolvedTheme, resolvedLanguage, () => state.theme, () => state.editorDensity],
+  applyDocumentPreferences,
+  { flush: 'sync', immediate: true },
+);
 
 /**
  * Vue composable exposing the app-wide user preferences.

@@ -187,4 +187,12 @@ describe('useAppSettings', () => {
     expect(document.documentElement.dataset.themePreference).toBe('dark');
     expect(document.documentElement.lang).toBe('ja');
   });
+
+  it('reflects the editor density on the document for CSS to consume', () => {
+    const app = useAppSettings();
+    app.update({ editorDensity: 'compact' });
+    expect(document.documentElement.dataset.density).toBe('compact');
+    app.update({ editorDensity: 'comfortable' });
+    expect(document.documentElement.dataset.density).toBe('comfortable');
+  });
 });

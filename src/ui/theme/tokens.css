@@ -181,6 +181,22 @@
   --dur-3: 240ms; /* modal entrance */
 }
 
+/* --- Compact editor density -------------------------------------------
+ * Tightens the spacing scale and the small font steps so editor panels pack
+ * more into the same height. Driven by the editorDensity preference through
+ * the root data-density attribute; orthogonal to the color theme. */
+:root[data-density='compact'] {
+  --sp-1: 1px;
+  --sp-2: 3px;
+  --sp-3: 4px;
+  --sp-4: 6px;
+  --sp-5: 9px;
+  --sp-6: 12px;
+  --fs-xs: 10px;
+  --fs-sm: 11px;
+  --fs-md: 12px;
+}
+
 :root[data-theme='dark'] {
   --surface-0: #0b0d11;
   --surface-1: #101216;
