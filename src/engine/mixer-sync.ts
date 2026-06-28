@@ -109,14 +109,25 @@ export function createMixerSync(handle: EngineHandle): MixerSync {
       if (prev?.solo !== next.solo || prev?.mute !== next.mute) {
         handle.engine.setSoloMute(track.id, next.solo, next.mute);
       }
-      if (prev?.channelDelaySamples !== next.channelDelaySamples) {
+      if (
+        prev
+          ? prev.channelDelaySamples !== next.channelDelaySamples
+          : next.channelDelaySamples !== 0
+      ) {
         handle.engine.setTrackStripChannelDelaySamples(track.id, next.channelDelaySamples);
       }
-      if (prev?.panLaw !== next.panLaw) handle.engine.setTrackStripPanLaw(track.id, next.panLaw);
-      if (prev?.panMode !== next.panMode)
+      if (prev ? prev.panLaw !== next.panLaw : next.panLaw !== DEFAULT_PAN_LAW) {
+        handle.engine.setTrackStripPanLaw(track.id, next.panLaw);
+      }
+      if (prev ? prev.panMode !== next.panMode : next.panMode !== DEFAULT_PAN_MODE) {
         handle.engine.setTrackStripPanMode(track.id, next.panMode);
+      }
       if (prev?.dualPanLeft !== next.dualPanLeft || prev?.dualPanRight !== next.dualPanRight) {
-        handle.engine.setTrackStripDualPan(track.id, next.dualPanLeft, next.dualPanRight);
+        const defaultDualPan =
+          !prev && next.dualPanLeft === next.pan && next.dualPanRight === next.pan;
+        if (!defaultDualPan) {
+          handle.engine.setTrackStripDualPan(track.id, next.dualPanLeft, next.dualPanRight);
+        }
       }
       laneStates.set(track.id, next);
     }

@@ -139,9 +139,9 @@ describe('createMixerSync', () => {
     const delayed = makeTrack(1, { mixer: { ...createDefaultStrip(), channelDelaySamples: 128 } });
 
     sync.sync([delayed, makeTrack(2)], neutralMaster());
-    // Track 1 carries a delay; track 2 (neutral) is sent 0 once.
+    // Track 1 carries a delay; track 2 (neutral) does not need an initial no-op 0.
     expect(engine.setTrackStripChannelDelaySamples).toHaveBeenCalledWith(1, 128);
-    expect(engine.setTrackStripChannelDelaySamples).toHaveBeenCalledWith(2, 0);
+    expect(engine.setTrackStripChannelDelaySamples).not.toHaveBeenCalledWith(2, 0);
     engine.setTrackStripChannelDelaySamples.mockClear();
 
     // An unchanged sync sends nothing.
@@ -164,12 +164,11 @@ describe('createMixerSync', () => {
     const { handle, engine } = makeHandle();
     const sync = createMixerSync(handle);
 
-    // First sync sets the defaults (pan law -3 dB, balance) and the derived
-    // dual pan (both channels at the strip pan position, here 0).
+    // First sync skips neutral defaults; the engine already starts with these values.
     sync.sync([makeTrack(1)], neutralMaster());
-    expect(engine.setTrackStripPanLaw).toHaveBeenCalledWith(1, 'const3dB');
-    expect(engine.setTrackStripPanMode).toHaveBeenCalledWith(1, 'balance');
-    expect(engine.setTrackStripDualPan).toHaveBeenCalledWith(1, 0, 0);
+    expect(engine.setTrackStripPanLaw).not.toHaveBeenCalled();
+    expect(engine.setTrackStripPanMode).not.toHaveBeenCalled();
+    expect(engine.setTrackStripDualPan).not.toHaveBeenCalled();
     engine.setTrackStripPanLaw.mockClear();
     engine.setTrackStripPanMode.mockClear();
     engine.setTrackStripDualPan.mockClear();
