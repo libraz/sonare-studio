@@ -137,6 +137,133 @@ class FakeEngine implements OfflineRenderEngine {
   }
 }
 
+const SAMPLES_PER_PPQ = 24000;
+const MASTER_FADER_PARAM_ID = 0x4d58ff01;
+
+/** Decodes the status nibble from a packed MIDI 1.0 UMP channel-voice word. */
+function midiStatus(word0: number): number {
+  return (word0 >>> 20) & 0xf;
+}
+
+/** Decodes the note number from a packed MIDI 1.0 UMP channel-voice word. */
+function midiNote(word0: number): number {
+  return (word0 >>> 8) & 0x7f;
+}
+
+/** Decodes the velocity/data1 byte from a packed MIDI 1.0 UMP channel-voice word. */
+function midiData1(word0: number): number {
+  return word0 & 0x7f;
+}
+
+/**
+ * Fake renderer that turns scheduled content into deterministic audio, so
+ * tests assert the audible contract rather than only the command stream.
+ */
+class AudibilityEngine extends FakeEngine {
+  private cursor = 0;
+  private laneIds: number[] = [];
+  private laneSoloMute = new Map<number, { solo: boolean; mute: boolean }>();
+  private masterGain = 1;
+  private audioClips: Array<{
+    trackId: number;
+    startSample: number;
+    lengthSamples: number;
+    gain: number;
+  }> = [];
+  private midiNotes: Array<{ trackId: number; startFrame: number; endFrame: number }> = [];
+
+  setTrackLanes(lanes: Array<number | { trackId: number }>): void {
+    super.setTrackLanes(lanes);
+    this.laneIds = lanes.map((lane) => (typeof lane === 'number' ? lane : lane.trackId));
+  }
+
+  setSoloMute(laneIndex: number, solo: boolean, mute: boolean): void {
+    super.setSoloMute(laneIndex, solo, mute);
+    this.laneSoloMute.set(laneIndex, { solo, mute });
+  }
+
+  setParameter(paramId: number, value: number): void {
+    super.setParameter(paramId, value);
+    if (paramId === MASTER_FADER_PARAM_ID) this.masterGain = 10 ** (value / 20);
+  }
+
+  setClips(
+    clips: Array<{ trackId: number; startPpq: number; lengthSamples: number; gain?: number }>,
+  ): void {
+    super.setClips(clips);
+    this.audioClips = clips.map((clip) => ({
+      trackId: clip.trackId,
+      startSample: Math.round(clip.startPpq * SAMPLES_PER_PPQ),
+      lengthSamples: clip.lengthSamples,
+      gain: clip.gain ?? 1,
+    }));
+  }
+
+  setMidiClips(
+    clips: Array<{
+      destinationId: number;
+      events: Array<{ renderFrame: number; word0: number }>;
+    }>,
+  ): void {
+    super.setMidiClips(clips);
+    this.midiNotes = [];
+    for (const clip of clips) {
+      const active = new Map<number, number[]>();
+      for (const event of clip.events) {
+        const status = midiStatus(event.word0);
+        const note = midiNote(event.word0);
+        if (status === 0x9 && midiData1(event.word0) > 0) {
+          active.set(note, [...(active.get(note) ?? []), event.renderFrame]);
+          continue;
+        }
+        if (status !== 0x8 && status !== 0x9) continue;
+        const starts = active.get(note);
+        const startFrame = starts?.shift();
+        if (startFrame === undefined || event.renderFrame <= startFrame) continue;
+        this.midiNotes.push({
+          trackId: clip.destinationId,
+          startFrame,
+          endFrame: event.renderFrame,
+        });
+      }
+    }
+  }
+
+  seekSample(sample: number): void {
+    super.seekSample(sample);
+    this.cursor = sample;
+  }
+
+  process(channels: Float32Array[]): Float32Array[] {
+    const anySolo = [...this.laneSoloMute.values()].some((state) => state.solo);
+    const audibleTrackIds = new Set(
+      this.laneIds.filter((trackId, laneIndex) => {
+        const state = this.laneSoloMute.get(laneIndex) ?? { solo: false, mute: false };
+        return !state.mute && (!anySolo || state.solo) && trackId !== undefined;
+      }),
+    );
+    for (let frameOffset = 0; frameOffset < channels[0].length; frameOffset++) {
+      const frame = this.cursor + frameOffset;
+      let sample = 0;
+      for (const clip of this.audioClips) {
+        if (!audibleTrackIds.has(clip.trackId)) continue;
+        if (frame >= clip.startSample && frame < clip.startSample + clip.lengthSamples) {
+          sample += clip.gain;
+        }
+      }
+      for (const note of this.midiNotes) {
+        if (!audibleTrackIds.has(note.trackId)) continue;
+        if (frame >= note.startFrame && frame < note.endFrame) sample += 1;
+      }
+      sample *= this.masterGain;
+      channels[0][frameOffset] = sample;
+      (channels[1] ?? channels[0])[frameOffset] = sample;
+    }
+    this.cursor += channels[0].length;
+    return channels;
+  }
+}
+
 /** Minimal valid document: one MIDI track and one audio track + a send bus. */
 function makeDoc(): ProjectDocument {
   return {
@@ -273,6 +400,46 @@ function renderOptions(engine: FakeEngine) {
 }
 
 describe('renderProjectWithEngine', () => {
+  it('renders audible MIDI notes and audio clips through the master fader', async () => {
+    const engine = new AudibilityEngine();
+    const result = await renderProjectWithEngine(makeDoc(), renderOptions(engine));
+    const masterGain = 10 ** (-3 / 20);
+
+    // The MIDI note starts at the timeline head on track 1.
+    expect(result.channels[0][0]).toBeCloseTo(masterGain, 5);
+    // Between the one-PPQ MIDI note and the audio clip there is silence.
+    expect(result.channels[0][30000]).toBeCloseTo(0, 5);
+    // The audio clip starts at PPQ 2 on track 2 and carries its clip gain.
+    expect(result.channels[0][2 * SAMPLES_PER_PPQ]).toBeCloseTo(0.8 * masterGain, 5);
+  });
+
+  it('keeps muted tracks silent in the rendered output', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].mute = true;
+    const result = await renderProjectWithEngine(doc, renderOptions(new AudibilityEngine()));
+
+    expect(result.channels[0][0]).toBeGreaterThan(0);
+    expect(result.channels[0][2 * SAMPLES_PER_PPQ]).toBeCloseTo(0, 5);
+  });
+
+  it('renders only soloed lanes while preserving solo-safe lanes', async () => {
+    const soloDoc = makeDoc();
+    soloDoc.tracks[1].solo = true;
+    const soloOnly = await renderProjectWithEngine(soloDoc, renderOptions(new AudibilityEngine()));
+    expect(soloOnly.channels[0][0]).toBeCloseTo(0, 5);
+    expect(soloOnly.channels[0][2 * SAMPLES_PER_PPQ]).toBeGreaterThan(0);
+
+    const soloSafeDoc = makeDoc();
+    soloSafeDoc.tracks[0].soloSafe = true;
+    soloSafeDoc.tracks[1].solo = true;
+    const withSoloSafe = await renderProjectWithEngine(
+      soloSafeDoc,
+      renderOptions(new AudibilityEngine()),
+    );
+    expect(withSoloSafe.channels[0][0]).toBeGreaterThan(0);
+    expect(withSoloSafe.channels[0][2 * SAMPLES_PER_PPQ]).toBeGreaterThan(0);
+  });
+
   it('replays lanes, buses, sends, params, automation and clips onto the engine', async () => {
     const engine = new FakeEngine();
     const result = await renderProjectWithEngine(makeDoc(), renderOptions(engine));
