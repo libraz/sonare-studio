@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import TransportIcon from '@/components/shell/TransportIcon.vue';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { formatSavedAt } from '@/ui/shell/format';
 
@@ -70,7 +71,8 @@ const { t } = useI18n();
         :aria-expanded="projectMenuOpen"
         @click="emit('updateProjectMenuOpen', !projectMenuOpen)"
       >
-        {{ t.shell.project.trigger }} ▾
+        {{ t.shell.project.trigger }}
+        <TransportIcon class="menu-chevron" name="chevron-down" />
       </button>
       <div
         v-if="projectMenuOpen"
@@ -200,7 +202,12 @@ const { t } = useI18n();
     />
     <span class="project-name" :title="projectName">
       {{ projectName }}
-      <span v-if="dirty" class="dirty-dot" :title="t.shell.project.unsavedChanges">•</span>
+      <span
+        v-if="dirty"
+        class="dirty-dot"
+        :title="t.shell.project.unsavedChanges"
+        aria-hidden="true"
+      ></span>
     </span>
     <span class="bar-spacer" />
     <button
@@ -226,7 +233,8 @@ const { t } = useI18n();
         :title="t.shell.layout.title"
         @click="emit('updateLayoutMenuOpen', !layoutMenuOpen)"
       >
-        {{ t.shell.layout.trigger }} ▾
+        {{ t.shell.layout.trigger }}
+        <TransportIcon class="menu-chevron" name="chevron-down" />
       </button>
       <div
         v-if="layoutMenuOpen"
@@ -261,7 +269,8 @@ const { t } = useI18n();
         :aria-expanded="helpMenuOpen"
         @click="emit('updateHelpMenuOpen', !helpMenuOpen)"
       >
-        {{ t.shell.help.trigger }} ▾
+        {{ t.shell.help.trigger }}
+        <TransportIcon class="menu-chevron" name="chevron-down" />
       </button>
       <div v-if="helpMenuOpen" class="menu-pop" role="menu" :aria-label="t.shell.help.menuLabel">
         <button type="button" role="menuitem" @click="emit('openShortcutsHelp')">
@@ -284,7 +293,7 @@ const { t } = useI18n();
       :title="t.shell.settingsButton.title"
       @click="emit('openSettings')"
     >
-      ⚙
+      <TransportIcon name="settings" />
     </button>
     <span v-if="autosaveLastSavedAt" class="autosave-state">
       {{ formatMessage(t.shell.savedAt, { time: formatSavedAt(autosaveLastSavedAt) }) }}

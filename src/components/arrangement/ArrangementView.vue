@@ -682,15 +682,21 @@ onBeforeUnmount(() => {
   font: var(--fw-semibold) 9px var(--font-sans);
   letter-spacing: 0.04em;
   color: var(--text-2);
-  background: var(--surface-1);
-  border: 1px solid var(--border-strong);
+  background: var(--surface-3);
   border-radius: var(--radius-sm);
+  box-shadow: var(--control-lift);
   cursor: pointer;
+  transition: background var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
 }
 
 .section-detect:hover:not(:disabled) {
   color: var(--text-1);
-  border-color: var(--accent);
+  background: var(--surface-4);
+  box-shadow: var(--control-lift-hover);
+}
+
+.section-detect:focus-visible {
+  box-shadow: var(--control-lift), var(--ring);
 }
 
 .section-detect:disabled {

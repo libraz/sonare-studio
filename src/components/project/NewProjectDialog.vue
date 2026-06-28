@@ -189,14 +189,14 @@ function templateDescription(name: TemplateName): string {
   align-items: center;
   justify-content: center;
   background: var(--scrim);
-  -webkit-backdrop-filter: blur(3px);
-  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: var(--scrim-blur);
+  backdrop-filter: var(--scrim-blur);
 }
 
 .dialog {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: var(--sp-5);
   width: min(34rem, calc(100vw - 2rem));
   max-height: calc(100vh - 4rem);
   padding: 1.25rem 1.4rem;
@@ -216,14 +216,14 @@ function templateDescription(name: TemplateName): string {
 
 .dialog-title {
   margin: 0;
-  font-size: var(--fs-lg);
+  font-size: var(--fs-xl);
   font-weight: var(--fw-bold);
   letter-spacing: 0.04em;
 }
 
 .dialog-columns {
   display: flex;
-  gap: 0.75rem;
+  gap: var(--sp-5);
   min-height: 0;
 }
 
@@ -232,7 +232,8 @@ function templateDescription(name: TemplateName): string {
   margin: 0;
   padding: 0;
   list-style: none;
-  border: 1px solid var(--border);
+  background: var(--surface-inset);
+  box-shadow: var(--control-edge), var(--inset-well);
   border-radius: var(--radius-sm);
   overflow: auto;
 }
@@ -240,8 +241,8 @@ function templateDescription(name: TemplateName): string {
 .template-item {
   display: flex;
   flex-direction: column;
-  gap: 0.1rem;
-  padding: 0.4rem 0.6rem;
+  gap: var(--sp-1);
+  padding: var(--sp-3) var(--sp-3);
   cursor: pointer;
   border-bottom: 1px solid var(--surface-2);
   transition: background var(--dur-1) var(--ease-out);
@@ -271,15 +272,16 @@ function templateDescription(name: TemplateName): string {
 
 .template-preview {
   flex: 1;
-  border: 1px solid var(--border);
+  background: var(--surface-inset);
+  box-shadow: var(--control-edge), var(--inset-well);
   border-radius: var(--radius-sm);
-  padding: 0.4rem 0.6rem;
+  padding: var(--sp-3) var(--sp-3);
   overflow: auto;
   max-height: 16rem;
 }
 
 .preview-title {
-  margin: 0 0 0.3rem;
+  margin: 0 0 var(--sp-2);
   font-size: var(--fs-xs);
   font-weight: var(--fw-semibold);
   color: var(--text-3);
@@ -298,13 +300,13 @@ function templateDescription(name: TemplateName): string {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: var(--sp-1);
 }
 
 .preview-track {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--sp-3);
   white-space: nowrap;
 }
 
@@ -320,27 +322,17 @@ function templateDescription(name: TemplateName): string {
   border: 1px solid var(--warning);
   border-radius: var(--radius-sm);
   color: var(--warning-text);
-  padding: 0.4rem 0.6rem;
+  padding: var(--sp-3) var(--sp-3);
 }
 
 .dialog-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 0.5rem;
+  gap: var(--sp-4);
 }
 
-.dialog-actions .primary {
-  background: var(--accent-strong);
-  border: 1px solid var(--accent);
-  color: var(--text-1);
-  border-radius: var(--radius-sm);
-  padding: 0.25rem 0.9rem;
-  cursor: pointer;
-  box-shadow: var(--raise-hi);
-  transition: background var(--dur-1) var(--ease-out);
-}
-
-.dialog-actions .primary:hover {
-  background: var(--accent-hover);
+/* Share one height across secondary and the canonical .primary action. */
+.dialog-actions button {
+  padding: var(--sp-2) var(--sp-5);
 }
 </style>

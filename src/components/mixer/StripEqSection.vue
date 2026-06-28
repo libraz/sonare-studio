@@ -395,16 +395,15 @@ function onQChange(bandIndex: number, value: number, commit: boolean): void {
   height: 7px;
   flex: none;
   border-radius: 50%;
-  border: 1px solid var(--border-raised);
-  background: transparent;
-  box-shadow: none;
+  border: none;
+  background: var(--surface-3);
+  box-shadow: var(--control-edge);
   padding: 0;
   cursor: pointer;
 }
 
 .eq-power.on {
   background: var(--success);
-  border-color: var(--success);
 }
 
 .eq-title {

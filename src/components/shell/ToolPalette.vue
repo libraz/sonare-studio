@@ -82,7 +82,7 @@ function toolHint(id: EditorToolId): string {
 
 .tool-button.active {
   background: var(--accent-strong);
-  color: var(--text-1);
+  color: var(--accent-text);
 }
 
 .tool-glyph {

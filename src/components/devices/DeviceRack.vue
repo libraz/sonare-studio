@@ -532,7 +532,7 @@ function displayInstrumentKind(): string {
               </label>
               <button
                 type="button"
-                class="use-sf2"
+                class="use-sf2 primary"
                 :disabled="sf2Selection.fontId === null"
                 @click="useSf2"
               >
@@ -543,7 +543,7 @@ function displayInstrumentKind(): string {
 
           <div v-else class="picker-body">
             <p class="patch-summary">{{ patchSummary }}</p>
-            <button type="button" class="edit-patch" @click="openPatchEditor">
+            <button type="button" class="edit-patch primary" @click="openPatchEditor">
               {{ t.shell.devicesPanel.editPatch }}
             </button>
           </div>

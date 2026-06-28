@@ -51,12 +51,20 @@ export interface ArrangementRowLayout {
   hitTest(y: number): ArrangementRowHit | null;
 }
 
+/** One comp selection segment: which take plays from a clip-relative start. */
+interface TakeRowCompSegment {
+  /** Index into the clip's takes list. */
+  takeIndex: number;
+}
+
 /** The clip fields {@link trackTakeRowCount} reads. */
 export interface TakeRowClip {
   /** Id of the owning track. */
   trackId: number;
   /** Alternative recordings of the clip; absent or empty = no take rows. */
   takes?: ReadonlyArray<unknown>;
+  /** Comp selection over the takes; absent/empty = take 0 throughout. */
+  compSegments?: ReadonlyArray<TakeRowCompSegment>;
 }
 
 /**
@@ -73,6 +81,31 @@ export function trackTakeRowCount(clips: ReadonlyArray<TakeRowClip>, trackId: nu
     if (clip.trackId === trackId) count = Math.max(count, clip.takes?.length ?? 0);
   }
   return count;
+}
+
+/**
+ * Returns the take row index that is live for a takes-expanded track, or -1
+ * when none is unambiguously active. A take is active when every comped clip
+ * on the track resolves to a single take and they all select the same index
+ * (a clip's comp resolves to one take when it has no segments or all its
+ * segments name the same index). When clips disagree, or any clip is comped
+ * across multiple takes, there is no single track-wide active row.
+ *
+ * @param clips All arrangement clips.
+ * @param trackId Id of the track.
+ */
+export function trackActiveTakeIndex(clips: ReadonlyArray<TakeRowClip>, trackId: number): number {
+  let active = -1;
+  for (const clip of clips) {
+    if (clip.trackId !== trackId || (clip.takes?.length ?? 0) === 0) continue;
+    const segments = clip.compSegments ?? [];
+    const index = segments.length > 0 ? segments[0].takeIndex : 0;
+    // A clip comped across several takes has no single live take.
+    if (segments.some((segment) => segment.takeIndex !== index)) return -1;
+    if (active === -1) active = index;
+    else if (active !== index) return -1;
+  }
+  return active;
 }
 
 /**

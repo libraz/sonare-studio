@@ -28,3 +28,30 @@
   font-size: var(--fs-xs);
   color: var(--text-4);
 }
+
+.diag-facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin: var(--sp-2) 0 0;
+  list-style: none;
+  padding: 0;
+}
+
+.diag-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-4);
+}
+
+.diag-row dt {
+  color: var(--text-3);
+}
+
+.diag-row dd {
+  margin: 0;
+  text-align: right;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}

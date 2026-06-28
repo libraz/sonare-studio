@@ -37,6 +37,8 @@
   box-shadow: var(--control-lift-hover);
 }
 
+/* Compact variant of the shared .control-menu popover language: frosted glass,
+   hairline rim and accent-fill item hover to match every other app menu. */
 .add-track-items {
   position: absolute;
   top: calc(100% + 2px);
@@ -45,11 +47,13 @@
   display: flex;
   flex-direction: column;
   min-width: 110px;
-  background: var(--surface-3);
+  padding: var(--sp-1);
+  background: var(--glass-3);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-pop);
-  overflow: hidden;
+  box-shadow: var(--glass-hairline), var(--shadow-pop);
 }
 
 .add-track-items button {
@@ -58,14 +62,16 @@
   background: transparent;
   border: none;
   box-shadow: none;
+  border-radius: var(--radius-xs);
   padding: 5px var(--sp-4);
   text-align: left;
   cursor: pointer;
-  transition: background var(--dur-1) var(--ease-out);
+  transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
 }
 
 .add-track-items button:hover {
-  background: var(--surface-4);
+  background: var(--accent);
+  color: var(--accent-text);
 }
 
 .headers-error {
@@ -105,15 +111,16 @@
 }
 
 .track-header.track-frozen {
-  background: #161c24;
+  /* Cool, theme-aware tint marking a baked/frozen lane. */
+  background: color-mix(in srgb, var(--surface-1), var(--accent) 12%);
 }
 
 .track-header.track-frozen .track-name {
-  color: #9bb8cc;
+  color: color-mix(in srgb, var(--text-2), var(--accent) 40%);
 }
 
 .track-header.track-frozen.active {
-  background: #1b2530;
+  background: var(--surface-selected);
 }
 
 .track-header.dragging {
@@ -128,7 +135,7 @@
   display: flex;
   align-items: center;
   padding: 0 3px;
-  color: var(--surface-4);
+  color: var(--text-4);
   font: 10px var(--font-sans);
   letter-spacing: -1px;
   cursor: grab;
@@ -137,7 +144,12 @@
 }
 
 .track-grip:hover {
-  color: var(--text-4);
+  color: var(--text-3);
+}
+
+.track-header.dragging .track-grip,
+.track-grip:active {
+  cursor: grabbing;
 }
 
 .track-swatch {
@@ -234,6 +246,14 @@
   transition: background var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
 }
 
+/* Compose the global focus ring onto the control face: the per-control
+   box-shadow outranks focus-visible.css, so it must re-emit the ring itself. */
+.toggle:focus-visible,
+.track-bounce:focus-visible,
+.takes-flatten:focus-visible {
+  box-shadow: var(--control-lift), var(--ring);
+}
+
 .toggle.arm.on {
   color: #fff;
   background: var(--danger);
@@ -256,12 +276,12 @@
 
 .toggle.takes.on {
   color: var(--surface-0);
-  background: #a78bfa;
+  background: color-mix(in srgb, var(--accent), var(--danger) 45%);
 }
 
 .toggle.freeze.on {
   color: var(--surface-0);
-  background: #7dd3fc;
+  background: color-mix(in srgb, var(--accent), var(--success) 40%);
 }
 
 .toggle.freeze:disabled,
@@ -322,8 +342,23 @@
   box-sizing: border-box;
   padding: 0 var(--sp-3) 0 15px;
   font: var(--fw-semibold) 9px var(--font-sans);
+  font-variant-numeric: tabular-nums;
   color: var(--text-3);
   border-bottom: 1px solid var(--border-subtle);
+  transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
+}
+
+.take-label-row:hover {
+  background: var(--surface-selected);
+  color: var(--text-2);
+}
+
+/* Live/comped take: left accent bar plus a selected tint so the active take
+   reads at a glance from the rest of the stack. */
+.take-label-row.take-active {
+  background: var(--surface-selected);
+  color: var(--text-1);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .take-label-row:last-child {
@@ -374,11 +409,77 @@
   cursor: not-allowed;
 }
 
+/* Recessed groove + raised thumb mini-slider, matching the control-face system
+   instead of the bare native UA track. The pan variant adds a center detent. */
 .mini-slider {
   flex: 1;
   min-width: 0;
-  height: 10px;
-  accent-color: var(--accent);
+  height: 14px;
+  margin: 0;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+}
+
+.mini-slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: var(--radius-xs);
+  background: var(--surface-inset);
+  box-shadow: var(--inset-well);
+}
+
+.mini-slider::-moz-range-track {
+  height: 4px;
+  border-radius: var(--radius-xs);
+  background: var(--surface-inset);
+  box-shadow: var(--inset-well);
+}
+
+.mini-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 8px;
+  height: 12px;
+  margin-top: -4px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: var(--control-bg);
+  box-shadow: var(--control-lift);
+}
+
+.mini-slider::-moz-range-thumb {
+  width: 8px;
+  height: 12px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: var(--control-bg);
+  box-shadow: var(--control-lift);
+}
+
+.mini-slider:focus-visible {
+  outline: none;
+}
+
+.mini-slider:focus-visible::-webkit-slider-thumb {
+  box-shadow: var(--control-lift), var(--ring);
+}
+
+.mini-slider:focus-visible::-moz-range-thumb {
+  box-shadow: var(--control-lift), var(--ring);
+}
+
+/* Center detent: a hairline tick at 50% marks the pan-center (0) position. */
+.mini-slider--pan::-webkit-slider-runnable-track {
+  background:
+    linear-gradient(var(--border-strong), var(--border-strong)) 50% / 1px 100% no-repeat,
+    var(--surface-inset);
+}
+
+.mini-slider--pan::-moz-range-track {
+  background:
+    linear-gradient(var(--border-strong), var(--border-strong)) 50% / 1px 100% no-repeat,
+    var(--surface-inset);
 }
 
 .track-group-select,

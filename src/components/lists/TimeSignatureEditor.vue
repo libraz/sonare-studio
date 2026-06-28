@@ -7,6 +7,7 @@ import { useProjectStore } from '@/project/store';
 import { isAudioClip, type TimeSignatureSegment } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { barBeatFromPpq, formatBarBeat, parseBarBeat } from './bar-beat';
+import ListIcon from './ListIcon.vue';
 import {
   MAX_TIME_SIGNATURE_NUMERATOR,
   mergeTimeSignatureSegments,
@@ -240,7 +241,7 @@ function apply(): void {
               :aria-label="formatMessage(t.shell.lists.meter.deleteEntry, { row: index + 1 })"
               @click="deleteRow(index)"
             >
-              ✕
+              <ListIcon name="delete" />
             </button>
           </td>
         </tr>
@@ -262,120 +263,11 @@ function apply(): void {
       <button type="button" :disabled="!dirty" @click="revert">
         {{ t.shell.lists.common.revert }}
       </button>
-      <button type="button" :disabled="!dirty" @click="apply">
+      <button type="button" class="primary" :disabled="!dirty" @click="apply">
         {{ t.shell.lists.common.apply }}
       </button>
     </div>
   </div>
 </template>
 
-<style scoped>
-.list-editor {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  padding: 0.5rem 0.75rem;
-  font-size: var(--fs-sm);
-  color: var(--text-2);
-  overflow: auto;
-  min-height: 0;
-}
-
-.list-table {
-  border-collapse: collapse;
-  width: 100%;
-}
-
-.list-table th {
-  text-align: left;
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-semibold);
-  color: var(--text-3);
-  padding: 0.15rem 0.4rem 0.15rem 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.list-table td {
-  padding: 0.12rem 0.4rem 0.12rem 0;
-}
-
-/* Layout applies to both native inputs and SelectMenu wrappers sharing this class. */
-.cell-input {
-  width: 100%;
-  box-sizing: border-box;
-}
-
-/* The sunken field face is only for real inputs; SelectMenu carries its own face. */
-input.cell-input {
-  background: var(--surface-inset);
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--text-1);
-  font: inherit;
-  font-variant-numeric: tabular-nums;
-  padding: 0.15rem 0.3rem;
-  box-shadow: var(--control-edge), var(--inset-well);
-  transition: box-shadow var(--dur-1) var(--ease-out);
-}
-
-input.cell-input:focus {
-  outline: none;
-  box-shadow: inset 0 0 0 1px var(--accent), var(--inset-well), var(--ring);
-}
-
-.cell-number {
-  width: 5.5rem;
-}
-
-.cell-actions {
-  width: 1.6rem;
-  text-align: right;
-}
-
-.row-button {
-  background: none;
-  border: none;
-  box-shadow: none;
-  color: var(--text-3);
-  cursor: pointer;
-  padding: 0.1rem 0.25rem;
-  font-size: var(--fs-xs);
-  transition: color var(--dur-1) var(--ease-out);
-}
-
-.row-button:hover {
-  color: var(--danger);
-}
-
-.list-empty {
-  margin: 0;
-  color: var(--text-3);
-}
-
-.list-error {
-  margin: 0;
-  background: var(--danger-surface);
-  border: 1px solid var(--danger);
-  border-radius: var(--radius-sm);
-  color: var(--danger-text);
-  padding: 0.25rem 0.5rem;
-}
-
-.list-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.list-spacer {
-  flex: 1;
-}
-
-.visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-}
-</style>
+<style scoped src="./lists.css"></style>

@@ -144,7 +144,7 @@ onBeforeUnmount(() => {
 .mm-lufs {
   display: flex;
   justify-content: space-between;
-  gap: var(--sp-1);
+  gap: var(--sp-2);
 }
 
 .mm-cell {
@@ -163,7 +163,8 @@ onBeforeUnmount(() => {
 }
 
 .mm-value {
-  font: 10px ui-monospace, monospace;
+  font: var(--fs-2xs) var(--font-mono);
+  font-variant-numeric: tabular-nums;
   color: var(--text-2);
 }
 
@@ -186,7 +187,7 @@ onBeforeUnmount(() => {
 }
 
 .mm-target.over .mm-value {
-  color: #f59e0b;
+  color: var(--warning);
   font-weight: 700;
 }
 
@@ -229,7 +230,7 @@ onBeforeUnmount(() => {
   top: 0;
   bottom: 0;
   right: 0;
-  background: #f59e0b;
+  background: var(--warning);
 }
 
 .mm-corr {

@@ -530,7 +530,11 @@ onBeforeUnmount(() => {
         {{ t.shell.mixer.strip.group }}
       </span>
       <span v-if="track?.frozen" class="strip-frozen-tag" :title="t.shell.mixer.strip.frozenTitle">
-        ❄
+        <svg viewBox="0 0 16 16" width="8" height="8" fill="none" stroke="currentColor"
+          stroke-width="1.4" stroke-linecap="round" aria-hidden="true">
+          <path d="M8 1.5v13M2.4 4.75l11.2 6.5M2.4 11.25l11.2-6.5" />
+          <path d="M8 4.2 6.5 2.7M8 4.2 9.5 2.7M8 11.8l-1.5 1.5M8 11.8l1.5 1.5" />
+        </svg>
       </span>
       <span
         v-if="vcaGroupName"
@@ -626,7 +630,11 @@ onBeforeUnmount(() => {
             :aria-expanded="optionsOpen"
             @click="optionsOpen = !optionsOpen"
           >
-            ⚙
+            <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor"
+              stroke-width="1.3" aria-hidden="true">
+              <circle cx="8" cy="8" r="2.1" />
+              <path d="M8 1.4v2M8 12.6v2M1.4 8h2M12.6 8h2M3.3 3.3l1.4 1.4M11.3 11.3l1.4 1.4M12.7 3.3l-1.4 1.4M4.7 11.3l-1.4 1.4" />
+            </svg>
           </button>
           <div v-if="optionsOpen" class="strip-options-popover" role="menu">
             <label class="strip-options-row">
@@ -867,13 +875,13 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: left;
-  font: 600 10px system-ui, sans-serif;
+  font: 600 var(--fs-2xs) var(--font-sans);
   color: var(--text-2);
 }
 
 .strip-group-tag {
   flex: none;
-  font: 700 7px system-ui, sans-serif;
+  font: 700 7px var(--font-sans);
   letter-spacing: 0.06em;
   color: var(--surface-0);
   background: #a78bfa;
@@ -882,12 +890,13 @@ onBeforeUnmount(() => {
 }
 
 .strip-frozen-tag {
+  display: inline-flex;
+  align-items: center;
   flex: none;
-  font: 700 8px system-ui, sans-serif;
   color: var(--surface-0);
   background: #7dd3fc;
   border-radius: 2px;
-  padding: 1px 3px;
+  padding: 2px;
 }
 
 .strip-vca-tag {
@@ -895,10 +904,10 @@ onBeforeUnmount(() => {
   max-width: 4rem;
   overflow: hidden;
   text-overflow: ellipsis;
-  font: 700 7px system-ui, sans-serif;
+  font: 700 7px var(--font-sans);
   letter-spacing: 0.04em;
   color: var(--surface-0);
-  background: #fbbf24;
+  background: var(--warning);
   border-radius: 2px;
   padding: 1px 3px;
 }
@@ -915,12 +924,12 @@ onBeforeUnmount(() => {
 
 .strip-auto-t.on {
   color: var(--surface-0);
-  background: #fbbf24;
+  background: var(--warning);
 }
 
 .strip-auto-l.on {
   color: var(--surface-0);
-  background: #f87171;
+  background: var(--danger);
 }
 
 .strip-section {
@@ -969,9 +978,11 @@ onBeforeUnmount(() => {
 }
 
 .strip-options-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 14px;
   height: 14px;
-  font: 9px system-ui, sans-serif;
   line-height: 1;
   color: var(--text-4);
   background: transparent;
@@ -1022,11 +1033,12 @@ onBeforeUnmount(() => {
 
 .strip-options-field input {
   width: 64px;
-  font: 10px var(--font-sans);
+  font: var(--fs-2xs) var(--font-sans);
   color: var(--text-2);
-  background: var(--inset-well);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-1);
+  background: var(--surface-inset);
+  border: none;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--control-edge), var(--inset-well);
   padding: 1px 4px;
 }
 
@@ -1044,7 +1056,7 @@ onBeforeUnmount(() => {
 .toggle {
   width: 16px;
   height: 14px;
-  font: 700 9px system-ui, sans-serif;
+  font: 700 9px var(--font-sans);
   line-height: 1;
   color: var(--text-3);
   background: var(--surface-3);
@@ -1069,7 +1081,7 @@ onBeforeUnmount(() => {
 
 /* Solo-safe is shown as a persistent outline on the S button. */
 .toggle.solo.safe {
-  box-shadow: inset 0 0 0 1px #fbbf24;
+  box-shadow: inset 0 0 0 1px var(--warning);
 }
 
 .strip-fader-row {
@@ -1080,7 +1092,8 @@ onBeforeUnmount(() => {
 
 .strip-readout {
   text-align: center;
-  font: 10px ui-monospace, monospace;
+  font: var(--fs-2xs) var(--font-mono);
+  font-variant-numeric: tabular-nums;
   color: var(--text-3);
   user-select: none;
 }

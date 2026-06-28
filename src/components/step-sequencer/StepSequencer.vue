@@ -77,6 +77,9 @@ const fillDensity = ref(25);
 /** One-line status / error feedback under the toolbar. */
 const status = ref('');
 
+/** Severity of the current status message, driving its tokenised color. */
+const statusType = ref<'info' | 'warning' | 'error'>('info');
+
 const activeClip = computed(() => store.clips.find((clip) => clip.id === store.clipId) ?? null);
 
 /** True when the active clip exists and holds MIDI content. */
@@ -131,6 +134,7 @@ function setMode(mode: SequencerMode): void {
   pattern.value = next;
   selectedRow.value = 0;
   status.value = '';
+  statusType.value = 'info';
 }
 
 function onRootPitchChange(event: Event): void {
@@ -229,12 +233,14 @@ function applyToClip(): void {
   const clip = activeClip.value;
   if (!clip || !canTargetClip.value) {
     status.value = t.value.shell.stepSequencer.status.noActiveApply;
+    statusType.value = 'warning';
     return;
   }
   const baked = bakePattern(pattern.value, { basePpq: clip.sourceOffsetPpq });
   const plan = planNoteReplacement(store.notes, baked);
   if (isEmptyPlan(plan)) {
     status.value = t.value.shell.stepSequencer.status.alreadyMatches;
+    statusType.value = 'info';
     return;
   }
   try {
@@ -243,12 +249,14 @@ function applyToClip(): void {
     for (const note of plan.additions) addNote(note);
   } catch (err) {
     status.value = err instanceof Error ? err.message : String(err);
+    statusType.value = 'error';
     return;
   }
   status.value = formatMessage(t.value.shell.stepSequencer.status.applied, {
     count: baked.length,
     name: clip.name,
   });
+  statusType.value = 'info';
   emit('applied', baked.length);
 }
 
@@ -256,21 +264,25 @@ function pullFromClip(): void {
   const clip = activeClip.value;
   if (!clip || !canTargetClip.value) {
     status.value = t.value.shell.stepSequencer.status.noActivePull;
+    statusType.value = 'warning';
     return;
   }
   const result = patternFromNotes(store.notes, pattern.value, clip.sourceOffsetPpq);
   pattern.value = result.pattern;
   const captured = store.notes.length - result.droppedNotes;
-  status.value =
-    result.droppedNotes > 0
-      ? formatMessage(t.value.shell.stepSequencer.status.pulledDropped, {
-          count: captured,
-          dropped: result.droppedNotes,
-        })
-      : formatMessage(t.value.shell.stepSequencer.status.pulled, {
-          count: captured,
-          name: clip.name,
-        });
+  if (result.droppedNotes > 0) {
+    status.value = formatMessage(t.value.shell.stepSequencer.status.pulledDropped, {
+      count: captured,
+      dropped: result.droppedNotes,
+    });
+    statusType.value = 'warning';
+  } else {
+    status.value = formatMessage(t.value.shell.stepSequencer.status.pulled, {
+      count: captured,
+      name: clip.name,
+    });
+    statusType.value = 'info';
+  }
   emit('pulled', captured);
 }
 
@@ -343,7 +355,9 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
           :aria-label="t.shell.stepSequencer.shiftLeft"
           @click="shiftSelectedRow(-1)"
         >
-          ◀
+          <svg class="tool-glyph" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M10 3 5 8l5 5" />
+          </svg>
         </button>
         <button
           type="button"
@@ -352,7 +366,9 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
           :aria-label="t.shell.stepSequencer.shiftRight"
           @click="shiftSelectedRow(1)"
         >
-          ▶
+          <svg class="tool-glyph" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M6 3l5 5-5 5" />
+          </svg>
         </button>
         <div class="euclid-anchor">
           <button
@@ -425,7 +441,7 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
       <div class="tool-group tool-group-apply">
         <button
           type="button"
-          class="tool-button tool-button-primary"
+          class="tool-button primary"
           data-test="apply"
           :disabled="!canTargetClip"
           @click="applyToClip"
@@ -443,24 +459,33 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
         </button>
       </div>
     </div>
-    <p v-if="status" class="seq-status" data-test="status">{{ status }}</p>
+    <p
+      v-if="status"
+      class="seq-status"
+      :class="`seq-status-${statusType}`"
+      data-test="status"
+    >
+      {{ status }}
+    </p>
     <StepGrid
       :pattern="pattern"
       :selected-row="selectedRow"
       @set-step="onSetStep"
       @select-row="selectedRow = $event"
     />
-    <div class="param-tabs">
+    <div class="param-tabs" role="tablist">
       <button
         v-for="kind in STEP_PARAM_KINDS"
         :key="kind"
         type="button"
+        role="tab"
         class="param-tab"
         :class="{ 'param-tab-active': paramTab === kind }"
+        :aria-selected="paramTab === kind"
         :data-test="`param-tab-${kind}`"
         @click="paramTab = kind"
       >
-        {{ kind === 'velocity' ? 'VEL' : kind === 'gate' ? 'GATE' : 'OFS' }}
+        {{ t.shell.stepSequencer.params[kind] }}
       </button>
       <span class="param-row-name">{{ pattern.rows[selectedRow]?.name ?? '' }}</span>
     </div>
@@ -478,6 +503,11 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
 
 <style scoped>
 .step-sequencer {
+  /* Single source of truth for the grid/lane alignment contract: the row-label
+     gutter width and the minimum cell width are shared with StepGrid and
+     StepParamLane (custom properties inherit into their scoped styles). */
+  --seq-row-label-w: 110px;
+  --seq-cell-min: 8px;
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -490,8 +520,8 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.3rem 0.5rem;
+  gap: var(--sp-5);
+  padding: var(--sp-2) var(--sp-4);
   background: var(--surface-2);
   border-bottom: 1px solid var(--border-strong);
   box-shadow: var(--raise-hi);
@@ -500,7 +530,7 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
 .tool-group {
   display: flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: var(--sp-2);
 }
 
 .tool-group-apply {
@@ -520,8 +550,9 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
   color: var(--text-1);
   border: none;
   border-radius: var(--radius-sm);
-  padding: 0.1rem 0.25rem;
+  padding: var(--sp-1) var(--sp-2);
   font: inherit;
+  font-variant-numeric: tabular-nums;
   box-shadow: var(--control-edge), var(--inset-well);
   width: 3.5rem;
 }
@@ -536,7 +567,7 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
 }
 
 .tool-button {
-  padding: 0.15rem 0.5rem;
+  padding: var(--sp-1) var(--sp-4);
   border-radius: var(--radius-sm);
   background: var(--surface-3);
   color: var(--text-2);
@@ -557,10 +588,16 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
   cursor: default;
 }
 
-.tool-button-primary {
-  border-color: var(--accent-strong);
-  background: var(--accent-strong);
-  color: var(--accent-text);
+/* Crisp inline chevron for the row-shift buttons; inherits the label color. */
+.tool-glyph {
+  display: block;
+  width: 0.9em;
+  height: 0.9em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .euclid-anchor {
@@ -574,12 +611,13 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
   z-index: 10;
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
-  padding: 0.5rem;
-  background: var(--surface-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-pop);
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  background: var(--glass-3);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--glass-hairline), var(--shadow-pop);
 }
 
 .seq-status {
@@ -590,38 +628,60 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
   border-bottom: 1px solid var(--border-strong);
 }
 
+/* Neutral information keeps the muted toolbar color. */
+.seq-status-info {
+  color: var(--text-3);
+}
+
+/* Recoverable conditions (no clip, dropped notes) read as a warning tint. */
+.seq-status-warning {
+  color: var(--warning-text);
+  background: var(--warning-surface);
+}
+
+/* Failed bakes read as an error tint. */
+.seq-status-error {
+  color: var(--danger-text);
+  background: var(--danger-surface);
+}
+
 .param-tabs {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
-  padding: 0.2rem 0.5rem;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-4);
   background: var(--surface-2);
   border-top: 1px solid var(--border-strong);
 }
 
 .param-tab {
-  padding: 0.1rem 0.5rem;
+  padding: var(--sp-1) var(--sp-4);
   border: none;
-  border-radius: var(--radius-full);
+  border-radius: 0;
   background: transparent;
   box-shadow: none;
   color: var(--text-3);
-  font: var(--fw-semibold) 10px var(--font-sans);
+  font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
   letter-spacing: 0.08em;
   cursor: pointer;
-  transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
+  transition: color var(--dur-1) var(--ease-out);
 }
 
-/* Active = accent-tinted fill, no outline border on the pill. */
+.param-tab:hover {
+  color: var(--text-1);
+}
+
+/* Active = accent underline, matching the canonical tab focus indicator. */
 .param-tab-active {
-  background: var(--accent-soft);
   color: var(--accent);
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 .param-row-name {
   margin-left: auto;
   color: var(--text-4);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
+  font-variant-numeric: tabular-nums;
 }
 
 .param-lane-row {
@@ -633,7 +693,7 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
 
 .param-lane-spacer {
   flex: none;
-  width: 110px;
+  width: var(--seq-row-label-w);
 }
 
 .param-lane-cell {

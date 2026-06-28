@@ -372,8 +372,31 @@ onBeforeUnmount(() => {
     <p v-if="previewError" class="error">{{ previewError }}</p>
     <p v-if="deleteError" class="error">{{ deleteError }}</p>
 
-    <p v-if="loaded && displayedAssets.length === 0" class="empty">
-      {{ assets.length === 0 ? t.shell.media.empty : t.shell.media.noMatches }}
+    <div
+      v-if="loaded && displayedAssets.length === 0 && assets.length === 0"
+      class="empty-state"
+    >
+      <svg class="empty-glyph" viewBox="0 0 48 48" width="48" height="48" aria-hidden="true">
+        <path
+          d="M6 30l8-9 6 7 7-10 9 12"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+        <path
+          d="M30 16h12M36 10v12"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+        />
+      </svg>
+      <p class="empty-state-message">{{ t.shell.media.empty }}</p>
+    </div>
+    <p v-else-if="loaded && displayedAssets.length === 0" class="empty">
+      {{ t.shell.media.noMatches }}
     </p>
     <ul v-else class="asset-list">
       <li
@@ -383,6 +406,14 @@ onBeforeUnmount(() => {
         draggable="true"
         @dragstart="onRowDragStart($event, asset.id)"
       >
+        <svg class="drag-grip" viewBox="0 0 6 14" width="6" height="14" aria-hidden="true">
+          <circle cx="1.5" cy="3" r="1" fill="currentColor" />
+          <circle cx="4.5" cy="3" r="1" fill="currentColor" />
+          <circle cx="1.5" cy="7" r="1" fill="currentColor" />
+          <circle cx="4.5" cy="7" r="1" fill="currentColor" />
+          <circle cx="1.5" cy="11" r="1" fill="currentColor" />
+          <circle cx="4.5" cy="11" r="1" fill="currentColor" />
+        </svg>
         <button
           type="button"
           class="preview-button"
@@ -395,7 +426,18 @@ onBeforeUnmount(() => {
           "
           @click="togglePreview(asset)"
         >
-          {{ playingId === asset.id ? '■' : '▶' }}
+          <svg
+            v-if="playingId === asset.id"
+            viewBox="0 0 12 12"
+            width="9"
+            height="9"
+            aria-hidden="true"
+          >
+            <rect x="2.5" y="2.5" width="7" height="7" fill="currentColor" />
+          </svg>
+          <svg v-else viewBox="0 0 12 12" width="9" height="9" aria-hidden="true">
+            <path d="M3.5 2.5L9.5 6l-6 3.5z" fill="currentColor" />
+          </svg>
         </button>
         <div class="asset-info">
           <span class="asset-name" :title="asset.name">{{ asset.name }}</span>
@@ -424,7 +466,15 @@ onBeforeUnmount(() => {
             :aria-label="formatMessage(t.shell.media.deleteAssetNamed, { name: asset.name })"
             @click="requestDelete(asset.id)"
           >
-            ×
+            <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">
+              <path
+                d="M3 3l6 6M9 3l-6 6"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linecap="round"
+              />
+            </svg>
           </button>
         </div>
       </li>
@@ -436,42 +486,34 @@ onBeforeUnmount(() => {
 .media-browser {
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: var(--sp-3);
   height: 100%;
   min-height: 0;
-  padding: 0.5rem;
+  padding: var(--sp-4);
   background: var(--surface-2);
   color: var(--text-1);
   font-size: var(--fs-sm);
 }
 
+/* On-brand drop target: a soft accent tint plus an inset accent ring. */
 .media-browser.drag-over {
-  outline: 1px dashed var(--accent);
-  outline-offset: -3px;
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 2px var(--accent);
+  transition: background var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease-out);
 }
 
 .toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.35rem;
+  gap: var(--sp-2);
 }
 
+/* Inherit the canonical input face and focus ring; only tighten the metrics. */
 .toolbar input[type='search'],
 .toolbar input[type='text'] {
-  background: var(--surface-inset);
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--text-1);
   font-size: var(--fs-xs);
-  padding: 0.2rem 0.35rem;
-  box-shadow: var(--control-edge), var(--inset-well);
-}
-
-.toolbar input[type='search']:focus-visible,
-.toolbar input[type='text']:focus-visible {
-  outline: none;
-  box-shadow: inset 0 0 0 1px var(--accent), var(--inset-well), var(--ring);
+  padding: var(--sp-1) var(--sp-2);
 }
 
 .filter-key {
@@ -492,7 +534,7 @@ onBeforeUnmount(() => {
 }
 
 .filter-bpm.invalid {
-  box-shadow: inset 0 0 0 1px var(--danger), var(--inset-well);
+  box-shadow: inset 0 0 0 1px var(--danger), var(--control-edge), var(--inset-well);
 }
 
 .sync-toggle {
@@ -504,20 +546,12 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+/* Inherits the shared control face from controls.css; only the metrics differ. */
 .import-button {
-  background: var(--surface-selected);
   border-radius: var(--radius-sm);
   color: var(--text-1);
-  cursor: pointer;
   font-size: var(--fs-xs);
   padding: 0.2rem 0.6rem;
-  box-shadow: var(--control-lift);
-  transition: filter var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
-}
-
-.import-button:not(:disabled):hover {
-  filter: brightness(1.15);
-  box-shadow: var(--control-lift-hover);
 }
 
 .import-button:disabled {
@@ -539,7 +573,8 @@ onBeforeUnmount(() => {
   padding: 0.3rem 0.5rem;
   list-style: none;
   background: var(--danger-surface);
-  border: 1px solid var(--danger);
+  /* Inset danger ring matches the system edge form used on .danger buttons. */
+  box-shadow: inset 0 0 0 1px var(--danger);
   border-radius: var(--radius-sm);
   color: var(--danger-text);
   font-size: var(--fs-xs);
@@ -556,8 +591,31 @@ onBeforeUnmount(() => {
 }
 
 .empty {
-  margin: 0.4rem 0 0;
+  margin: var(--sp-3) 0 0;
   color: var(--text-3);
+}
+
+/* Inviting onboarding frame shown when no assets have been imported yet. */
+.empty-state {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  min-height: 0;
+  padding: var(--sp-7);
+  color: var(--text-3);
+  text-align: center;
+}
+
+.empty-glyph {
+  color: var(--text-4);
+}
+
+.empty-state-message {
+  margin: 0;
+  font-weight: var(--fw-semibold);
 }
 
 .asset-list {
@@ -566,21 +624,21 @@ onBeforeUnmount(() => {
   padding: 0;
   list-style: none;
   overflow-y: auto;
-  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   min-height: 0;
   background: var(--surface-inset);
-  box-shadow: var(--inset-well);
+  /* Recessed well with a crisp rim — no drawn border (system retires 1px borders). */
+  box-shadow: var(--control-edge), var(--inset-well);
 }
 
 .asset-row {
   display: flex;
   align-items: center;
-  gap: 0.45rem;
-  padding: 0.25rem 0.5rem;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-4);
   border-bottom: 1px solid var(--border-subtle);
   cursor: grab;
-  transition: background var(--dur-1) var(--ease-out);
+  transition: background var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
 }
 
 .asset-row:last-child {
@@ -592,17 +650,33 @@ onBeforeUnmount(() => {
   box-shadow: var(--raise-hi);
 }
 
-.preview-button {
+/* Picking the row up for an arrangement drag reads as a lift. */
+.asset-row:active {
+  cursor: grabbing;
+  box-shadow: var(--shadow-2);
+}
+
+/* Grip dots: a discoverable drag affordance, brightening on row hover. */
+.drag-grip {
   flex: none;
+  color: var(--text-4);
+  transition: color var(--dur-1) var(--ease-out);
+}
+
+.asset-row:hover .drag-grip {
+  color: var(--text-3);
+}
+
+/* Inherits the shared control face from controls.css; only the metrics differ. */
+.preview-button {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
   width: 1.5rem;
   height: 1.4rem;
-  background: var(--surface-3);
   border-radius: var(--radius-sm);
   color: var(--text-1);
-  cursor: pointer;
-  font-size: 10px;
-  line-height: 1;
-  box-shadow: var(--control-lift);
 }
 
 .preview-button.playing {
@@ -629,34 +703,34 @@ onBeforeUnmount(() => {
   color: var(--text-3);
   font-size: var(--fs-xs);
   white-space: nowrap;
+  /* Align the numeric fields (duration, BPM, LUFS) column-to-column across rows. */
+  font-variant-numeric: tabular-nums;
 }
 
 .row-actions {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--sp-2);
 }
 
+/* Inherits the shared control face and hover/active from controls.css; compact metrics only. */
 .row-actions button {
-  background: var(--surface-3);
   border-radius: var(--radius-sm);
   color: var(--text-1);
-  cursor: pointer;
   font-size: var(--fs-xs);
-  padding: 0.15rem 0.45rem;
-  box-shadow: var(--control-lift);
-  transition: filter var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
-}
-
-.row-actions button:not(:disabled):hover {
-  filter: brightness(1.2);
-  box-shadow: var(--control-lift-hover);
+  padding: var(--sp-1) var(--sp-3);
 }
 
 .row-actions button:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+.delete-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .row-actions .danger {
@@ -668,5 +742,7 @@ onBeforeUnmount(() => {
 .confirm-label {
   color: var(--danger-text);
   font-size: var(--fs-xs);
+  /* Slightly heavier than passive metadata so the destructive prompt stands out. */
+  font-weight: var(--fw-medium);
 }
 </style>

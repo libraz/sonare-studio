@@ -35,6 +35,7 @@ import { type EditorTrack, TRACK_COLOR_PALETTE, type TrackKind } from '@/project
 import {
   AUTOMATION_LANE_HEIGHT_PX,
   TAKE_LANE_HEIGHT_PX,
+  trackActiveTakeIndex,
   trackTakeRowCount,
 } from '@/ui/arrangement/automation-rows';
 import { formatMessage, useI18n } from '@/ui/i18n';
@@ -292,6 +293,11 @@ function isTakesExpanded(track: EditorTrack): boolean {
 /** Number of take sub-rows the track shows when expanded (0 = no comped clips). */
 function takeRowCount(track: EditorTrack): number {
   return trackTakeRowCount(store.clips, track.id);
+}
+
+/** Live/comped take row index for the track, or -1 when none is unambiguous. */
+function activeTakeIndex(track: EditorTrack): number {
+  return trackActiveTakeIndex(store.clips, track.id);
 }
 
 function onToggleTakes(track: EditorTrack): void {
@@ -773,7 +779,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   @change="onVolumeChange(track, $event)"
                 />
                 <input
-                  class="mini-slider"
+                  class="mini-slider mini-slider--pan"
                   type="range"
                   min="-1"
                   max="1"
@@ -818,6 +824,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
             v-if="isTakesExpanded(track) && takeRowCount(track) > 0"
             :row-count="takeRowCount(track)"
             :row-height="TAKE_LANE_HEIGHT_PX"
+            :active-take="activeTakeIndex(track)"
           />
           <TrackAutomationStrip
             v-if="isAutomationExpanded(track)"

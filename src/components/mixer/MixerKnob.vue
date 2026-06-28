@@ -251,7 +251,7 @@ function onMidiForget(): void {
 .knob {
   position: relative;
   border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, #2c313c, #1a1d24 70%);
+  background: radial-gradient(circle at 35% 30%, var(--surface-4), var(--surface-2) 72%);
   border: 1px solid var(--border);
   box-shadow: var(--raise-hi);
   cursor: ns-resize;
@@ -289,7 +289,7 @@ function onMidiForget(): void {
   height: 38%;
   margin-left: -1px;
   border-radius: 1px;
-  background: #9fc4f5;
+  background: var(--accent);
 }
 
 .knob-label {

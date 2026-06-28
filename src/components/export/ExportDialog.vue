@@ -416,8 +416,15 @@ function onKeydown(event: KeyboardEvent): void {
         <li v-for="error in errors" :key="error">{{ error }}</li>
       </ul>
 
-      <div v-if="busy" class="export-progress">
-        <div class="progress-track">
+      <div v-if="busy" class="export-progress" aria-live="polite">
+        <div
+          class="progress-track"
+          role="progressbar"
+          :aria-valuenow="Math.round(progress * 100)"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          :aria-label="progressStageLabel"
+        >
           <div class="progress-fill" :style="{ width: `${Math.round(progress * 100)}%` }" />
         </div>
         <span class="progress-stage">{{ progressStageLabel }}</span>
@@ -469,14 +476,14 @@ function onKeydown(event: KeyboardEvent): void {
   align-items: center;
   justify-content: center;
   background: var(--scrim);
-  -webkit-backdrop-filter: blur(3px);
-  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: var(--scrim-blur);
+  backdrop-filter: var(--scrim-blur);
 }
 
 .dialog {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: var(--sp-5);
   width: min(30rem, calc(100vw - 2rem));
   max-height: calc(100vh - 4rem);
   padding: 1.25rem 1.4rem;
@@ -497,7 +504,7 @@ function onKeydown(event: KeyboardEvent): void {
 
 .dialog-title {
   margin: 0;
-  font-size: var(--fs-lg);
+  font-size: var(--fs-xl);
   font-weight: var(--fw-bold);
   letter-spacing: 0.04em;
 }
@@ -505,8 +512,8 @@ function onKeydown(event: KeyboardEvent): void {
 .dialog-grid {
   display: grid;
   grid-template-columns: 7rem 1fr;
-  row-gap: 0.55rem;
-  column-gap: 0.6rem;
+  row-gap: var(--sp-4);
+  column-gap: var(--sp-3);
   align-items: baseline;
 }
 
@@ -521,7 +528,7 @@ function onKeydown(event: KeyboardEvent): void {
 .field {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: var(--sp-3);
   flex-wrap: wrap;
   min-width: 0;
 }
@@ -529,41 +536,23 @@ function onKeydown(event: KeyboardEvent): void {
 .format-options {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: var(--sp-3);
 }
 
 .radio-row {
-  gap: 1rem;
+  gap: var(--sp-6);
 }
 
 .check-label {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: var(--sp-2);
   cursor: pointer;
 }
 
 .check-label.disabled {
   color: var(--text-4);
   cursor: default;
-}
-
-select,
-input[type='text'] {
-  background: var(--surface-inset);
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--text-1);
-  font-size: var(--fs-sm);
-  padding: 0.2rem 0.35rem;
-  box-shadow: var(--control-edge), var(--inset-well);
-}
-
-select:focus,
-select:focus-visible,
-input[type='text']:focus,
-input[type='text']:focus-visible {
-  box-shadow: inset 0 0 0 1px var(--accent), var(--inset-well), var(--ring);
 }
 
 .filename-input {
@@ -582,7 +571,7 @@ input[type='text']:focus-visible {
 
 .dialog-errors {
   margin: 0;
-  padding: 0.4rem 0.6rem 0.4rem 1.5rem;
+  padding: var(--sp-3) var(--sp-3) var(--sp-3) 1.5rem;
   background: var(--warning-surface);
   border: 1px solid var(--warning);
   border-radius: var(--radius-sm);
@@ -592,14 +581,14 @@ input[type='text']:focus-visible {
 .export-progress {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: var(--sp-3);
 }
 
 .progress-track {
   flex: 1;
   height: 0.45rem;
   background: var(--surface-inset);
-  border: 1px solid var(--border);
+  box-shadow: var(--control-edge), var(--inset-well);
   border-radius: 999px;
   overflow: hidden;
 }
@@ -607,7 +596,7 @@ input[type='text']:focus-visible {
 .progress-fill {
   height: 100%;
   background: var(--accent);
-  transition: width 120ms linear;
+  transition: width var(--dur-1) linear;
 }
 
 .progress-stage {
@@ -627,11 +616,11 @@ input[type='text']:focus-visible {
 .export-report {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 0.4rem 0.6rem;
+  padding: var(--sp-3) var(--sp-3);
 }
 
 .report-title {
-  margin: 0 0 0.3rem;
+  margin: 0 0 var(--sp-2);
   font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-3);
@@ -642,8 +631,8 @@ input[type='text']:focus-visible {
 .report-grid {
   display: grid;
   grid-template-columns: auto 1fr;
-  column-gap: 0.8rem;
-  row-gap: 0.15rem;
+  column-gap: var(--sp-5);
+  row-gap: var(--sp-1);
   margin: 0;
 }
 
@@ -658,7 +647,7 @@ input[type='text']:focus-visible {
 
 .dialog-error {
   margin: 0;
-  padding: 0.4rem 0.6rem;
+  padding: var(--sp-3) var(--sp-3);
   background: var(--danger-surface);
   border: 1px solid var(--danger);
   border-radius: var(--radius-sm);
@@ -668,21 +657,12 @@ input[type='text']:focus-visible {
 .dialog-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 0.5rem;
+  gap: var(--sp-4);
 }
 
-.dialog-actions .primary {
-  background: var(--accent-strong);
-  border: 1px solid var(--accent);
-  color: var(--text-1);
-  border-radius: var(--radius-sm);
-  padding: 0.25rem 0.9rem;
-  cursor: pointer;
-}
-
-.dialog-actions .primary:disabled {
-  opacity: 0.5;
-  cursor: default;
+/* Share one height across secondary and the canonical .primary action. */
+.dialog-actions button {
+  padding: var(--sp-2) var(--sp-5);
 }
 
 .cancel-render {

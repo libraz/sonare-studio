@@ -602,6 +602,7 @@ const MESSAGES = {
         displayQuantizeTitle:
           'Display quantize: changes the engraved view only, never the MIDI data',
         displayQuantize: 'Display quantize',
+        displayQuantizeShort: 'DQ',
         transcribeTitle: 'Re-transcribe the clip (non-destructive)',
         transcribe: 'Transcribe',
         refreshTitle: 'Re-render the current page',
@@ -776,6 +777,7 @@ const MESSAGES = {
           detectFailed: 'Could not analyze the clip for chords.',
           empty: 'No chords - detect them from a clip or add one at the playhead.',
           detectFromClip: 'Detect from clip',
+          detectFromClipTitle: 'Detect chord symbols from the active audio or MIDI clip',
         },
       },
       mastering: {
@@ -864,6 +866,11 @@ const MESSAGES = {
         fill: 'Fill',
         applyToClip: 'Apply to clip',
         pullFromClip: 'Pull from clip',
+        params: {
+          velocity: 'VEL',
+          gate: 'GATE',
+          offset: 'OFS',
+        },
         status: {
           noActiveApply: 'No active MIDI clip to apply to.',
           alreadyMatches: 'Clip already matches the pattern.',
@@ -1167,6 +1174,7 @@ const MESSAGES = {
       },
       openProject: {
         title: 'Open project',
+        projectsList: 'Saved projects',
         loadProject: 'Load {name}',
         deleteProject: 'Delete {name}',
         delete: 'Delete',
@@ -1880,6 +1888,7 @@ const MESSAGES = {
         tools: 'スコアツール',
         displayQuantizeTitle: '表示クオンタイズ: 譜面表示のみ変更し、MIDIデータは変更しません',
         displayQuantize: '表示クオンタイズ',
+        displayQuantizeShort: 'DQ',
         transcribeTitle: 'クリップを再採譜（非破壊）',
         transcribe: '採譜',
         refreshTitle: '現在のページを再レンダー',
@@ -2053,6 +2062,7 @@ const MESSAGES = {
           detectFailed: 'クリップのコード解析に失敗しました。',
           empty: 'コードはありません。クリップから検出するか再生ヘッド位置に追加してください。',
           detectFromClip: 'クリップから検出',
+          detectFromClipTitle: 'アクティブなオーディオ/MIDIクリップからコードを検出',
         },
       },
       mastering: {
@@ -2142,6 +2152,11 @@ const MESSAGES = {
         fill: 'フィル',
         applyToClip: 'クリップへ適用',
         pullFromClip: 'クリップから取得',
+        params: {
+          velocity: 'VEL',
+          gate: 'GATE',
+          offset: 'OFS',
+        },
         status: {
           noActiveApply: '適用先のアクティブなMIDIクリップがありません。',
           alreadyMatches: 'クリップはすでにパターンと一致しています。',
@@ -2443,6 +2458,7 @@ const MESSAGES = {
       },
       openProject: {
         title: 'プロジェクトを開く',
+        projectsList: '保存済みプロジェクト',
         loadProject: '{name} を読み込む',
         deleteProject: '{name} を削除',
         delete: '削除',

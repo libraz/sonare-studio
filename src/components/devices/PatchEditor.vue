@@ -25,6 +25,7 @@ import {
 import { resolveSynthEnums } from '@/ui/devices/synth-enums';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { wrapTabFocus } from '@/ui/settings/focus-trap';
+import { TOKENS } from '@/ui/theme/tokens';
 import type { SynthEnumTables, SynthPatch } from '@/wasm/index.js';
 
 /**
@@ -230,6 +231,16 @@ function envelopeInputs(): {
 // getContext only once instead of logging on every redraw.
 let canvas2dAvailable = true;
 
+/**
+ * Reads a canvas palette token off the live element, falling back to the
+ * tokens.ts mirror when computed styles are unavailable (jsdom). Keeps the
+ * renderer in sync with the palette instead of baking in literals.
+ */
+function canvasToken(el: HTMLElement, name: string, fallback: string): string {
+  const value = getComputedStyle(el).getPropertyValue(name).trim();
+  return value.length > 0 ? value : fallback;
+}
+
 /** Redraws the mini amp-envelope curve (no-op where canvas 2D is missing). */
 function drawEnvelope(): void {
   const canvas = envelopeCanvas.value;
@@ -246,7 +257,7 @@ function drawEnvelope(): void {
   }
   const { width, height } = canvas;
   ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = '#14161b';
+  ctx.fillStyle = canvasToken(canvas, '--canvas-surface-2', TOKENS.surface2);
   ctx.fillRect(0, 0, width, height);
   const env = envelopeInputs();
   const points = adsrEnvelopePoints(
@@ -257,7 +268,7 @@ function drawEnvelope(): void {
     width - 2,
     height - 4,
   );
-  ctx.strokeStyle = '#60a5fa';
+  ctx.strokeStyle = canvasToken(canvas, '--canvas-accent', TOKENS.accent);
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   points.forEach((point, index) => {
@@ -563,8 +574,8 @@ function onKeydown(event: KeyboardEvent): void {
   align-items: center;
   justify-content: center;
   background: var(--scrim);
-  -webkit-backdrop-filter: blur(3px);
-  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: var(--scrim-blur);
+  backdrop-filter: var(--scrim-blur);
 }
 
 .patch-dialog {
@@ -625,11 +636,11 @@ function onKeydown(event: KeyboardEvent): void {
 
 .patch-error {
   margin: 0;
-  padding: 2px 6px;
+  padding: var(--sp-1) var(--sp-3);
   background: var(--danger-surface);
   color: var(--danger-text);
-  font: 10px/1.4 system-ui, sans-serif;
-  border-radius: 3px;
+  font: var(--fs-2xs)/1.4 system-ui, sans-serif;
+  border-radius: var(--radius-xs);
 }
 
 .patch-sections {
@@ -641,7 +652,7 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 .patch-section {
-  border: 1px solid var(--border);
+  box-shadow: var(--control-edge);
   border-radius: var(--radius-sm);
   padding: 0.4rem 0.5rem;
   display: flex;
@@ -651,7 +662,7 @@ function onKeydown(event: KeyboardEvent): void {
 
 .section-title {
   margin: 0 0 0.15rem;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
   color: var(--text-3);
   letter-spacing: 0.08em;
@@ -670,7 +681,7 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 .field-label {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   white-space: nowrap;
   overflow: hidden;
@@ -678,25 +689,32 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 .field-value {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   color: var(--text-2);
   text-align: right;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .field-row input[type='range'] {
   width: 100%;
   height: 12px;
   accent-color: var(--accent);
+  border-radius: var(--radius-xs);
+}
+
+.field-row input[type='range']:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .enum-row select,
 .mod-row select {
   background: var(--surface-2);
   color: var(--text-2);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  box-shadow: var(--inset-well);
+  border: none;
+  border-radius: var(--radius-xs);
+  box-shadow: var(--control-edge), var(--inset-well);
   font-size: var(--fs-xs);
   padding: 1px 2px;
   min-width: 0;
@@ -705,9 +723,8 @@ function onKeydown(event: KeyboardEvent): void {
 .envelope-canvas {
   width: 100%;
   height: 48px;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  box-shadow: var(--inset-well);
+  border-radius: var(--radius-xs);
+  box-shadow: inset 0 0 0 1px var(--canvas-border), var(--inset-well);
 }
 
 .mod-matrix {
@@ -729,10 +746,10 @@ function onKeydown(event: KeyboardEvent): void {
   background: var(--surface-2);
   color: var(--text-2);
   border: none;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   box-shadow: var(--control-edge), var(--inset-well);
   font-size: var(--fs-xs);
-  padding: 1px 4px;
+  padding: 1px var(--sp-2);
 }
 
 .mod-remove {
@@ -755,8 +772,8 @@ function onKeydown(event: KeyboardEvent): void {
   color: var(--text-2);
   border-radius: var(--radius-sm);
   box-shadow: var(--control-lift);
-  font: 600 10px system-ui, sans-serif;
-  padding: 2px 8px;
+  font: 600 var(--fs-2xs) system-ui, sans-serif;
+  padding: var(--sp-1) var(--sp-4);
   cursor: pointer;
 }
 
@@ -775,22 +792,9 @@ function onKeydown(event: KeyboardEvent): void {
   flex: 1;
 }
 
-.patch-actions button {
-  background: var(--surface-3);
-  color: var(--text-2);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--control-lift);
-  padding: 0.25rem 0.9rem;
-  cursor: pointer;
-  font-size: var(--fs-sm);
-}
-
-.patch-actions .primary {
-  background: var(--accent-strong);
-  border-color: var(--accent);
-  color: var(--text-1);
-}
-
+/* Secondary buttons (Close, Audition) inherit the :where(button) control face;
+ * Apply uses the shared .primary accent pill. Only the audition accent ring is
+ * declared locally. */
 .patch-actions .audition {
   box-shadow: inset 0 0 0 1px var(--accent), var(--shadow-1);
 }

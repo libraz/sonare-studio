@@ -1,0 +1,111 @@
+/*
+ * Shared shell for the project list editors (tempo / meter / key / chords /
+ * markers). Each editor pulls this in via <style scoped src="./lists.css">
+ * and adds only its genuinely unique cell-width and row-hover tweaks, so a
+ * density or token retune lands in one place instead of five.
+ */
+
+.list-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-5);
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  overflow: auto;
+  min-height: 0;
+}
+
+.list-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.list-table th {
+  text-align: left;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--text-3);
+  padding: var(--sp-1) var(--sp-2) var(--sp-1) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.list-table td {
+  padding: var(--sp-1) var(--sp-2) var(--sp-1) 0;
+}
+
+/* Layout applies to both native inputs and SelectMenu wrappers sharing this class. */
+.cell-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* The sunken field face is only for real inputs; SelectMenu carries its own face. */
+input.cell-input {
+  background: var(--surface-inset);
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  padding: var(--sp-1) var(--sp-3);
+  box-shadow: var(--control-edge), var(--inset-well);
+  transition: box-shadow var(--dur-1) var(--ease-out);
+}
+
+input.cell-input:focus {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--accent), var(--inset-well), var(--ring);
+}
+
+.cell-number {
+  width: 5.5rem;
+}
+
+.cell-seek {
+  width: 1.6rem;
+}
+
+.cell-actions {
+  width: 1.6rem;
+  text-align: right;
+}
+
+/* The delete affordance tints red on hover; the canonical .row-button face lives in controls.css. */
+.cell-actions .row-button:hover:not(:disabled) {
+  color: var(--danger);
+}
+
+.list-empty {
+  margin: 0;
+  padding: var(--sp-5) 0;
+  text-align: center;
+  color: var(--text-3);
+}
+
+.list-error {
+  margin: 0;
+  background: var(--danger-surface);
+  border-radius: var(--radius-sm);
+  color: var(--danger-text);
+  padding: var(--sp-2) var(--sp-4);
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+
+.list-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+.list-spacer {
+  flex: 1;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}

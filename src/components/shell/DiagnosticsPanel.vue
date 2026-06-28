@@ -30,20 +30,38 @@ const { t } = useI18n();
     </div>
     <p v-if="renderInfo">{{ renderInfo }}</p>
     <p class="diag-shortcuts">{{ t.shell.diagnostics.shortcuts }}</p>
-    <ul v-if="handle">
-      <li>mode: <strong>{{ handle.capabilities.mode }}</strong></li>
-      <li>runtimeTarget: <strong>{{ handle.capabilities.runtimeTarget }}</strong></li>
-      <li>
-        abiCompatible:
-        <strong>{{ handle.capabilities.abiCompatible ?? t.shell.diagnostics.unknown }}</strong>
-      </li>
-      <li v-if="handle.capabilities.degradedReason">
-        degradedReason: <strong>{{ handle.capabilities.degradedReason }}</strong>
-      </li>
-      <li>ctx.state: <strong>{{ ctxState }}</strong></li>
-      <li>ctx.sampleRate: <strong>{{ handle.ctx.sampleRate }}</strong> Hz</li>
-      <li>destination channels: <strong>{{ handle.ctx.destination.maxChannelCount }}</strong></li>
-    </ul>
+    <dl v-if="handle" class="diag-facts">
+      <div class="diag-row">
+        <dt>mode</dt>
+        <dd><strong>{{ handle.capabilities.mode }}</strong></dd>
+      </div>
+      <div class="diag-row">
+        <dt>runtimeTarget</dt>
+        <dd><strong>{{ handle.capabilities.runtimeTarget }}</strong></dd>
+      </div>
+      <div class="diag-row">
+        <dt>abiCompatible</dt>
+        <dd>
+          <strong>{{ handle.capabilities.abiCompatible ?? t.shell.diagnostics.unknown }}</strong>
+        </dd>
+      </div>
+      <div v-if="handle.capabilities.degradedReason" class="diag-row">
+        <dt>degradedReason</dt>
+        <dd><strong>{{ handle.capabilities.degradedReason }}</strong></dd>
+      </div>
+      <div class="diag-row">
+        <dt>ctx.state</dt>
+        <dd><strong>{{ ctxState }}</strong></dd>
+      </div>
+      <div class="diag-row">
+        <dt>ctx.sampleRate</dt>
+        <dd><strong>{{ handle.ctx.sampleRate }}</strong> Hz</dd>
+      </div>
+      <div class="diag-row">
+        <dt>destination channels</dt>
+        <dd><strong>{{ handle.ctx.destination.maxChannelCount }}</strong></dd>
+      </div>
+    </dl>
   </details>
 </template>
 

@@ -27,7 +27,7 @@
   line-height: 1;
   color: var(--text-2);
   background: var(--surface-3);
-  border: 1px solid var(--border);
+  box-shadow: var(--control-edge);
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
@@ -35,6 +35,7 @@
 .transport-nav:hover:not(:disabled) {
   background: var(--surface-4);
   color: var(--text-1);
+  box-shadow: var(--control-edge-hover);
 }
 
 .transport-nav:disabled {
@@ -48,19 +49,19 @@
   gap: 1px;
   padding: 2px;
   background: var(--surface-inset);
-  border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  box-shadow: inset 0 1px 2px rgb(0 0 0 / 22%);
+  box-shadow: var(--control-edge), var(--inset-well);
 }
 
 .transport-cluster .transport-nav {
   min-width: 26px;
   background: transparent;
-  border-color: transparent;
+  box-shadow: none;
 }
 
 .transport-cluster .transport-nav:hover:not(:disabled) {
   background: var(--surface-3);
+  box-shadow: none;
 }
 
 .cluster-divider {
@@ -81,7 +82,7 @@
   line-height: 1;
   color: var(--text-2);
   background: var(--surface-3);
-  border: 1px solid var(--border);
+  box-shadow: var(--control-lift);
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
@@ -89,6 +90,7 @@
 .transport-key:hover:not(:disabled) {
   background: var(--surface-4);
   color: var(--text-1);
+  box-shadow: var(--control-lift-hover);
 }
 
 .transport-key:disabled {
@@ -98,11 +100,10 @@
 
 .transport-key.play.active {
   color: var(--accent-text);
-  border-color: var(--accent);
   background: var(--accent);
   box-shadow:
     0 0 0 1px var(--accent),
-    0 0 10px rgb(10 132 255 / 38%);
+    0 0 10px color-mix(in srgb, var(--accent) 38%, transparent);
 }
 
 .transport-key:focus-visible,
@@ -114,8 +115,8 @@
 
 .transport-key.cycle.active {
   color: var(--accent);
-  border-color: var(--accent);
   background: var(--accent-muted);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
 .locator-group {
@@ -131,11 +132,11 @@
 .punch-indicator {
   align-self: center;
   padding: 1px 5px;
-  border: 1px solid var(--danger);
   border-radius: var(--radius-sm);
   background: var(--danger-surface);
+  box-shadow: inset 0 0 0 1px var(--danger);
   color: var(--danger-text);
-  font: var(--fw-bold) 9px var(--font-sans);
+  font: var(--fw-bold) var(--fs-2xs) var(--font-sans);
   letter-spacing: 0.08em;
   cursor: pointer;
 }
@@ -173,12 +174,21 @@
 
 @keyframes record-blink {
   50% {
-    color: #7a1d1d;
+    color: color-mix(in srgb, var(--danger) 55%, transparent);
+  }
+}
+
+/* Recording must stay obvious without flicker: hold a solid danger fill. */
+@media (prefers-reduced-motion: reduce) {
+  .record-button.recording,
+  .record-button.counting-in {
+    animation: none;
+    color: var(--danger);
   }
 }
 
 .record-settings {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   padding: 0.2rem 0.3rem;
 }
 
@@ -226,8 +236,8 @@
   width: 56px;
   height: 8px;
   background: var(--surface-3);
-  border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--control-edge), var(--inset-well);
   overflow: hidden;
 }
 
@@ -244,14 +254,13 @@
   gap: var(--sp-3);
   padding: 3px var(--sp-3) 3px var(--sp-2);
   background: var(--surface-inset);
-  border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  box-shadow: var(--inset-well);
+  box-shadow: var(--control-edge), var(--inset-well);
 }
 
 .module-cap {
   padding-left: 2px;
-  font: var(--fw-bold) 8px var(--font-sans);
+  font: var(--fw-bold) var(--fs-2xs) var(--font-sans);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--text-4);
@@ -271,7 +280,7 @@
 }
 
 .tempo-unit {
-  font-size: 9px;
+  font-size: var(--fs-2xs);
   font-weight: var(--fw-semibold);
   letter-spacing: 0.04em;
   color: var(--text-4);
@@ -288,23 +297,25 @@
   line-height: 1;
   color: var(--text-3);
   background: var(--surface-2);
-  border: 1px solid var(--border);
+  box-shadow: var(--control-edge);
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition:
     background-color var(--dur-1) var(--ease-out),
-    color var(--dur-1) var(--ease-out);
+    color var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-1) var(--ease-out);
 }
 
 .click-toggle:hover:not(:disabled) {
   background: var(--surface-4);
   color: var(--text-1);
+  box-shadow: var(--control-edge-hover);
 }
 
 .click-toggle.active {
   color: var(--accent);
-  border-color: var(--accent);
   background: var(--accent-muted);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
 .click-toggle:disabled {
@@ -330,11 +341,11 @@
 }
 
 .time-display.playing {
-  border-color: rgb(10 132 255 / 55%);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
   box-shadow:
     inset 0 1px 3px rgb(0 0 0 / 55%),
-    inset 0 0 14px rgb(10 132 255 / 16%),
-    0 0 0 1px rgb(10 132 255 / 28%);
+    inset 0 0 14px color-mix(in srgb, var(--accent) 16%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 .time-register {
@@ -350,7 +361,7 @@
 }
 
 .time-cap {
-  font: var(--fw-bold) 8px var(--font-sans);
+  font: var(--fw-bold) var(--fs-2xs) var(--font-sans);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--canvas-text-4);
@@ -375,14 +386,14 @@
 }
 
 .time-display.playing .position-bbt {
-  color: #eaf3ff;
-  text-shadow: 0 0 8px rgb(10 132 255 / 55%);
+  color: var(--canvas-text-1);
+  text-shadow: 0 0 8px color-mix(in srgb, var(--accent) 55%, transparent);
 }
 
 .position-bbt:focus-visible {
   outline: none;
-  color: #ffffff;
-  text-shadow: 0 0 8px rgb(10 132 255 / 65%);
+  color: var(--accent-text);
+  text-shadow: 0 0 8px color-mix(in srgb, var(--accent) 65%, transparent);
 }
 
 .position-seconds {

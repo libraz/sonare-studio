@@ -201,6 +201,84 @@
 }
 
 /*
+ * Small uppercase group heading ("eyebrow" / section label). The single idiom
+ * for muted, tracked, all-caps group titles — components add this class instead
+ * of re-declaring the same font-size / weight / tracking and drifting on each.
+ */
+.section-label {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/*
+ * Status / category badge — a crisp face (hairline ring, no drawn border) in the
+ * borderless control language. Tint variants read the semantic tokens so they
+ * stay correct in both themes. Replaces hand-rolled tag styles.
+ */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 0 var(--sp-2);
+  min-height: 14px;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  line-height: 1.4;
+  color: var(--text-3);
+  background: var(--surface-3);
+  border-radius: var(--radius-xs);
+  box-shadow: var(--control-edge);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.badge.accent {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.badge.danger {
+  color: var(--danger-text);
+  background: var(--danger-surface);
+}
+
+.badge.warning {
+  color: var(--warning-text);
+  background: var(--warning-surface);
+}
+
+/*
+ * Canonical underline tab. The active and focus indicators use the SAME
+ * mechanism (inset bottom shadow, matching focus-visible.css) so they coincide
+ * exactly. Tablists add .tab to each button and .active to the current one,
+ * deleting their local underline rules.
+ */
+.tab {
+  background: none;
+  border: none;
+  box-shadow: none;
+  border-radius: 0;
+  color: var(--text-3);
+  font-weight: var(--fw-medium);
+  padding: var(--sp-3) var(--sp-4);
+}
+
+.tab:hover:not(:disabled) {
+  background: none;
+  color: var(--text-1);
+  box-shadow: none;
+}
+
+.tab.active {
+  color: var(--text-1);
+  background: none;
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/*
  * Floating right-click menu shared by the mixer knob and fader (and any other
  * control using useControlInteractions). Frosted glass popover.
  */

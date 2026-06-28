@@ -102,6 +102,7 @@
   --glass-3: rgba(255, 255, 255, 0.86); /* modals / elevated popovers */
   --glass-blur: saturate(170%) blur(20px);
   --glass-blur-strong: saturate(180%) blur(30px);
+  --scrim-blur: blur(3px); /* backdrop blur behind modal dialogs */
   --glass-hairline: inset 0 1px 0 rgba(255, 255, 255, 0.65),
     inset 0 0 0 1px rgba(17, 24, 39, 0.06);
 
@@ -111,6 +112,7 @@
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui,
     "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SF Mono", "Roboto Mono", monospace;
+  --fs-2xs: 10px; /* sanctioned floor for dense meta text (tags, ticks, readouts) */
   --fs-xs: 11px;
   --fs-sm: 12px;
   --fs-md: 13px;
@@ -128,11 +130,14 @@
   --sp-4: 8px;
   --sp-5: 12px;
   --sp-6: 16px;
+  --sp-7: 20px; /* container padding / dialog gutters */
+  --sp-8: 24px; /* modal scrim padding, large section gaps */
 
   /* --- Radius -----------------------------------------------------------
    * Tightened from the early "iOS pill" scale toward a more precise,
    * pro-tool corner: controls read as crisp faces, not bubbly capsules.
    * Containers (popovers, modals) keep softer corners for the glass feel. */
+  --radius-xs: 3px; /* micro radius for tags / dense inset wells */
   --radius-sm: 5px;
   --radius-md: 7px;
   --radius-lg: 11px;

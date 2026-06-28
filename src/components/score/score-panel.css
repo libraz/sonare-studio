@@ -9,8 +9,8 @@
 .score-toolbar {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.35rem 0.75rem;
+  gap: var(--sp-4);
+  padding: var(--sp-3) var(--sp-5);
   background: var(--surface-1);
   border-bottom: 1px solid var(--border-strong);
   flex-wrap: wrap;
@@ -21,7 +21,7 @@
 .bar-field {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: var(--sp-3);
   white-space: nowrap;
 }
 
@@ -43,13 +43,19 @@
 .score-zoom {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: var(--sp-3);
 }
 
 .score-zoom-btn {
   min-width: 1.7rem;
   padding: 0.1rem 0.35rem;
   font-weight: var(--fw-semibold);
+}
+
+/* Center the inline glyph icons (zoom, page nav) within their buttons and
+   inherit the button's text colour via currentColor. */
+.score-toolbar button svg {
+  display: block;
 }
 
 .score-zoom-readout {
@@ -70,14 +76,29 @@
   z-index: 20;
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
-  padding: 0.6rem 0.75rem;
-  background: var(--surface-3);
-  border: 1px solid var(--border-strong);
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-5);
+  background: var(--glass-3);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
   border-radius: var(--radius-md);
-  box-shadow: var(--shadow-pop);
+  box-shadow: var(--glass-hairline), var(--shadow-pop);
   font-size: var(--fs-sm);
   min-width: 12rem;
+}
+
+/* Entrance / exit for the layout popover and annotation palette: a gentle
+   fade with a short rise. Durations collapse to 0 under reduced-motion. */
+.popover-enter-active,
+.popover-leave-active {
+  transition: opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out);
+}
+
+.popover-enter-from,
+.popover-leave-to {
+  opacity: 0;
+  transform: translateY(-2px) scale(0.98);
 }
 
 .layout-row {
@@ -129,7 +150,9 @@
   max-width: none;
   height: auto;
   background: #fff;
-  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
+  /* Lift the white "paper" off the canvas with a tokenized elevation so it
+     reads correctly on both light and dark backdrops. */
+  box-shadow: var(--shadow-2);
 }
 
 .score-body :deep(g.note) {
@@ -149,6 +172,9 @@
 .score-toolbar button.active {
   background: var(--accent);
   color: var(--accent-text);
+  /* Read the toggle as pressed-in: drop the raised lift for the inset well plus
+     a thin accent gloss so an engaged state is unmistakable in both themes. */
+  box-shadow: var(--control-edge), var(--inset-well), inset 0 1px 0 rgba(255, 255, 255, 0.18);
 }
 
 .annotation-palette {
@@ -156,23 +182,44 @@
   z-index: 30;
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
-  padding: 0.45rem 0.5rem;
-  background: var(--surface-3);
-  border: 1px solid var(--border-strong);
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--glass-3);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
   border-radius: var(--radius-md);
-  box-shadow: var(--shadow-pop);
+  box-shadow: var(--glass-hairline), var(--shadow-pop);
   font-size: var(--fs-xs);
 }
 
 .palette-row {
   display: flex;
-  gap: 0.25rem;
+  gap: var(--sp-2);
 }
 
 .annotation-palette button.active {
   background: var(--accent);
   color: var(--accent-text);
+  /* Same pressed-in toggle treatment as the toolbar's active buttons. */
+  box-shadow: var(--control-edge), var(--inset-well), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.annotation-palette button svg {
+  display: block;
+}
+
+/* Dismiss affordance: a borderless ghost icon button (mirrors .row-button) and
+   pushed to the trailing edge so it reads as "close", not another action pill. */
+.annotation-palette button.palette-close {
+  margin-left: auto;
+  background: none;
+  box-shadow: none;
+  color: var(--text-3);
+}
+
+.annotation-palette button.palette-close:hover:not(:disabled) {
+  background: none;
+  color: var(--text-1);
 }
 
 .palette-dynamics {
@@ -186,8 +233,10 @@
   position: absolute;
   inset: 0;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: var(--sp-4);
   font-size: var(--fs-md);
   color: var(--text-3);
   pointer-events: none;
@@ -195,4 +244,31 @@
 
 .score-loading {
   background: color-mix(in srgb, var(--surface-1), transparent 25%);
+}
+
+/* Muted notation glyph anchoring the empty state above its onboarding text. */
+.score-empty-glyph {
+  color: var(--text-4);
+}
+
+/* Breathe the "Engraving..." label so the wait reads as active, not stalled.
+   Collapses to a static label under prefers-reduced-motion. */
+.score-loading .score-state-text {
+  animation: score-loading-pulse 1.4s var(--ease-out) infinite;
+}
+
+@keyframes score-loading-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .score-loading .score-state-text {
+    animation: none;
+  }
 }

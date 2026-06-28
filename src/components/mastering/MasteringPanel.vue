@@ -2,6 +2,8 @@
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue';
 import MasteringLoudnessReadout from '@/components/mastering/MasteringLoudnessReadout.vue';
 import MixerKnob from '@/components/mixer/MixerKnob.vue';
+import CloseIcon from '@/components/shell/CloseIcon.vue';
+import TransportIcon from '@/components/shell/TransportIcon.vue';
 import { renderMixdownInWorker } from '@/export/client';
 import type { MixdownResult } from '@/export/mixdown';
 import { ensureWasm } from '@/lib/wasm';
@@ -539,7 +541,8 @@ onBeforeUnmount(() => {
           :aria-expanded="presetMenuOpen"
           @click="togglePresetMenu"
         >
-          {{ presetLabel }} ▾
+          <span class="preset-label">{{ presetLabel }}</span>
+          <TransportIcon name="chevron-down" class="preset-caret" />
         </button>
         <div v-if="presetMenuOpen" class="preset-menu" role="menu">
           <input
@@ -633,7 +636,14 @@ onBeforeUnmount(() => {
             @dragend="onDragEnd"
           >
             <span class="chain-drag" :title="t.shell.mastering.dragReorder" aria-hidden="true">
-              ⋮⋮
+              <svg class="chain-drag-icon" viewBox="0 0 6 10" fill="currentColor" focusable="false">
+                <circle cx="1.5" cy="2" r="0.9" />
+                <circle cx="4.5" cy="2" r="0.9" />
+                <circle cx="1.5" cy="5" r="0.9" />
+                <circle cx="4.5" cy="5" r="0.9" />
+                <circle cx="1.5" cy="8" r="0.9" />
+                <circle cx="4.5" cy="8" r="0.9" />
+              </svg>
             </span>
             <button
               type="button"
@@ -671,7 +681,7 @@ onBeforeUnmount(() => {
               "
               @click="onRemove(index)"
             >
-              ×
+              <CloseIcon class="chain-remove-icon" />
             </button>
           </div>
           <div v-if="expandedIndex === index" class="chain-params">
@@ -772,7 +782,8 @@ onBeforeUnmount(() => {
             :disabled="!activeResult"
             @click="onTogglePlay"
           >
-            {{ isPlaying ? `■ ${t.shell.mastering.stop}` : `▶ ${t.shell.mastering.play}` }}
+            <TransportIcon :name="isPlaying ? 'stop' : 'play'" class="play-icon" />
+            <span>{{ isPlaying ? t.shell.mastering.stop : t.shell.mastering.play }}</span>
           </button>
           <span v-if="previewStale" class="preview-stale" :title="t.shell.mastering.staleTitle">
             {{ t.shell.mastering.stale }}
@@ -815,7 +826,18 @@ onBeforeUnmount(() => {
               <td>{{ target.integratedLufs.toFixed(1) }}</td>
               <td>{{ signedGain(target.normalizationGainDb) }}</td>
               <td :class="{ risk: target.ceilingRisk }" :title="target.ceilingRisk ? t.shell.mastering.streaming.ceilingRisk : ''">
-                {{ target.truePeakDb.toFixed(1) }}<span v-if="target.ceilingRisk" aria-hidden="true"> ⚠</span>
+                {{ target.truePeakDb.toFixed(1) }}<svg
+                  v-if="target.ceilingRisk"
+                  class="targets-warn-icon"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                  focusable="false"
+                ><path d="M8 2.5 14.5 13.5H1.5Z" /><path d="M8 6.5v3.2" /><path d="M8 11.8v0.2" /></svg>
               </td>
             </tr>
           </tbody>

@@ -15,7 +15,8 @@ export type TransportIconName =
   | 'play'
   | 'record'
   | 'chevron-down'
-  | 'metronome';
+  | 'metronome'
+  | 'settings';
 
 defineProps<{ name: TransportIconName }>();
 </script>
@@ -90,6 +91,14 @@ defineProps<{ name: TransportIconName }>();
       <path d="M9.4 4.5 14.6 4.5 17.6 19.5 6.4 19.5 Z" />
       <path d="M11.6 18 15 7.5" />
     </g>
+
+    <!-- Settings: a cogwheel with a hollow centre. -->
+    <path
+      v-else-if="name === 'settings'"
+      fill-rule="evenodd"
+      clip-rule="evenodd"
+      d="M10.6 2.5h2.8l.5 2.4a7 7 0 0 1 1.7 1l2.3-.9 1.4 2.4-1.8 1.6a7 7 0 0 1 0 2l1.8 1.6-1.4 2.4-2.3-.9a7 7 0 0 1-1.7 1l-.5 2.4h-2.8l-.5-2.4a7 7 0 0 1-1.7-1l-2.3.9-1.4-2.4 1.8-1.6a7 7 0 0 1 0-2L4.2 7.4l1.4-2.4 2.3.9a7 7 0 0 1 1.7-1l.5-2.4ZM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"
+    />
   </svg>
 </template>
 

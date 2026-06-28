@@ -232,11 +232,11 @@ function onEscape(field: FieldDef, event: KeyboardEvent): void {
 .info-line {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.25rem 0.5rem;
+  gap: var(--sp-5);
+  padding: var(--sp-2) var(--sp-4);
   background: var(--surface-3);
   border-bottom: 1px solid var(--border);
-  font-size: 0.75rem;
+  font-size: var(--fs-sm);
   color: var(--text-2);
   user-select: none;
 }
@@ -244,19 +244,19 @@ function onEscape(field: FieldDef, event: KeyboardEvent): void {
 .info-line__field {
   display: flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: var(--sp-2);
 }
 
 .info-line__label {
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  font-size: 0.65rem;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
 .info-line__input {
   width: 4.5rem;
-  padding: 0.15rem 0.3rem;
+  padding: var(--sp-1) var(--sp-2);
   background: var(--surface-inset);
   border: none;
   border-radius: var(--radius-sm);
@@ -264,10 +264,10 @@ function onEscape(field: FieldDef, event: KeyboardEvent): void {
   color: var(--text-1);
   font: inherit;
   font-variant-numeric: tabular-nums;
-  transition: border-color var(--dur-1) var(--ease-out);
+  transition: box-shadow var(--dur-1) var(--ease-out);
 }
 
-.info-line__input:focus {
+.info-line__input:focus-visible {
   outline: none;
   box-shadow: inset 0 0 0 1px var(--accent), var(--inset-well), var(--ring);
 }

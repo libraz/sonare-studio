@@ -269,10 +269,10 @@ function tickTopPx(db: number): number {
   height: 14px;
   margin-top: -7px;
   border-radius: 3px;
-  background: linear-gradient(#343a47, #20242d);
+  background: linear-gradient(var(--surface-4), var(--surface-2));
   border: 1px solid var(--border-raised);
   box-shadow:
-    0 1px 3px rgba(0, 0, 0, 0.6),
+    var(--shadow-1),
     var(--raise-hi);
   pointer-events: none;
   transition: border-color var(--dur-1) var(--ease-out);

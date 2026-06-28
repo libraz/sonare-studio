@@ -120,8 +120,8 @@ function onKeydown(event: KeyboardEvent): void {
   justify-content: center;
   padding: 1.5rem;
   background: var(--scrim);
-  -webkit-backdrop-filter: blur(3px);
-  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: var(--scrim-blur);
+  backdrop-filter: var(--scrim-blur);
 }
 
 .modal-card {

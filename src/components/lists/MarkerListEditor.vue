@@ -5,6 +5,7 @@ import { useProjectStore } from '@/project/store';
 import type { EditorMarker } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { formatBarBeat, parseBarBeat } from './bar-beat';
+import ListIcon from './ListIcon.vue';
 
 /**
  * Marker list editor: one row per timeline marker (bars.beats position +
@@ -104,7 +105,7 @@ function onSeek(marker: EditorMarker): void {
               :aria-label="formatMessage(t.shell.lists.markers.seekTo, { name: marker.name })"
               @click.stop="onSeek(marker)"
             >
-              ▶
+              <ListIcon name="seek" />
             </button>
           </td>
           <td>
@@ -135,7 +136,7 @@ function onSeek(marker: EditorMarker): void {
               :aria-label="formatMessage(t.shell.lists.markers.delete, { name: marker.name })"
               @click.stop="onDelete(marker)"
             >
-              ✕
+              <ListIcon name="delete" />
             </button>
           </td>
         </tr>
@@ -149,120 +150,29 @@ function onSeek(marker: EditorMarker): void {
   </div>
 </template>
 
+<style scoped src="./lists.css"></style>
+
 <style scoped>
-.list-editor {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  padding: 0.5rem 0.75rem;
-  font-size: var(--fs-sm);
-  color: var(--text-2);
-  overflow: auto;
-  min-height: 0;
-}
-
-.list-table {
-  border-collapse: collapse;
-  width: 100%;
-}
-
-.list-table th {
-  text-align: left;
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-semibold);
-  color: var(--text-3);
-  padding: 0.15rem 0.4rem 0.15rem 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.list-table td {
-  padding: 0.12rem 0.4rem 0.12rem 0;
-}
-
+/*
+ * The whole row seeks the transport, unlike the non-clickable tempo/meter
+ * rows. A left accent edge plus an accent-tinted seek glyph on hover make that
+ * affordance explicit.
+ */
 .marker-row {
   cursor: pointer;
+  transition: box-shadow var(--dur-1) var(--ease-out);
 }
 
 .marker-row:hover {
   background: var(--surface-2);
+  box-shadow: inset 2px 0 0 var(--accent-muted);
 }
 
-.cell-input {
-  width: 100%;
-  box-sizing: border-box;
-  background: var(--surface-inset);
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--text-1);
-  font: inherit;
-  font-variant-numeric: tabular-nums;
-  padding: 0.15rem 0.3rem;
-  box-shadow: var(--control-edge), var(--inset-well);
-  transition: box-shadow var(--dur-1) var(--ease-out);
-}
-
-.cell-input:focus {
-  outline: none;
-  box-shadow: inset 0 0 0 1px var(--accent), var(--inset-well), var(--ring);
+.marker-row:hover .cell-seek .row-button {
+  color: var(--accent);
 }
 
 .cell-position {
   width: 5.5rem;
-}
-
-.cell-seek {
-  width: 1.6rem;
-}
-
-.cell-actions {
-  width: 1.6rem;
-  text-align: right;
-}
-
-.row-button {
-  background: none;
-  border: none;
-  box-shadow: none;
-  color: var(--text-3);
-  cursor: pointer;
-  padding: 0.1rem 0.25rem;
-  font-size: var(--fs-xs);
-  transition: color var(--dur-1) var(--ease-out);
-}
-
-.row-button:hover {
-  color: var(--text-1);
-}
-
-.cell-actions .row-button:hover {
-  color: var(--danger);
-}
-
-.list-empty {
-  margin: 0;
-  color: var(--text-3);
-}
-
-.list-error {
-  margin: 0;
-  background: var(--danger-surface);
-  border: 1px solid var(--danger);
-  border-radius: var(--radius-sm);
-  color: var(--danger-text);
-  padding: 0.25rem 0.5rem;
-}
-
-.list-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
 }
 </style>

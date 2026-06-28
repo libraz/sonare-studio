@@ -29,17 +29,18 @@ defineProps<{
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--sp-3);
   max-width: 22rem;
   margin: auto;
-  padding: 0.9rem 1.1rem;
-  background: rgba(27, 30, 37, 0.85);
-  border: 1px dashed var(--border);
+  padding: var(--sp-5) var(--sp-6);
+  background: var(--canvas-surface-2);
   border-radius: var(--radius-lg);
   color: var(--text-3);
   font-size: var(--fs-sm);
   text-align: center;
-  box-shadow: var(--shadow-1);
+  /* Soft solid edge + drop shadow reads as a finished surface rather than
+     the wireframe feel a dashed border gives. */
+  box-shadow: var(--control-edge), var(--shadow-1);
 }
 
 .hint-title {
@@ -56,6 +57,6 @@ defineProps<{
 }
 
 .hint-action {
-  margin-top: 0.2rem;
+  margin-top: var(--sp-1);
 }
 </style>

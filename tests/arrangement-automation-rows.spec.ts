@@ -7,6 +7,7 @@ import {
   automationYToValue,
   buildRowLayout,
   TAKE_LANE_HEIGHT_PX,
+  trackActiveTakeIndex,
   trackTakeRowCount,
 } from '@/ui/arrangement/automation-rows';
 
@@ -114,6 +115,50 @@ describe('arrangement automation rows', () => {
       expect(trackTakeRowCount(clips, 1)).toBe(3);
       expect(trackTakeRowCount(clips, 2)).toBe(1);
       expect(trackTakeRowCount(clips, 3)).toBe(0);
+    });
+  });
+
+  describe('trackActiveTakeIndex', () => {
+    it('treats a comp-less clip as playing take 0', () => {
+      expect(trackActiveTakeIndex([{ trackId: 1, takes: [{}, {}] }], 1)).toBe(0);
+    });
+
+    it('reads the selected take from a single-segment comp', () => {
+      const clips = [{ trackId: 1, takes: [{}, {}, {}], compSegments: [{ takeIndex: 2 }] }];
+      expect(trackActiveTakeIndex(clips, 1)).toBe(2);
+    });
+
+    it('returns -1 when a clip is comped across several takes', () => {
+      const clips = [
+        { trackId: 1, takes: [{}, {}], compSegments: [{ takeIndex: 0 }, { takeIndex: 1 }] },
+      ];
+      expect(trackActiveTakeIndex(clips, 1)).toBe(-1);
+    });
+
+    it('returns the shared take when every comped clip agrees', () => {
+      const clips = [
+        { trackId: 1, takes: [{}, {}], compSegments: [{ takeIndex: 1 }] },
+        { trackId: 1, takes: [{}, {}], compSegments: [{ takeIndex: 1 }, { takeIndex: 1 }] },
+      ];
+      expect(trackActiveTakeIndex(clips, 1)).toBe(1);
+    });
+
+    it('returns -1 when comped clips select different takes', () => {
+      const clips = [
+        { trackId: 1, takes: [{}, {}], compSegments: [{ takeIndex: 0 }] },
+        { trackId: 1, takes: [{}, {}], compSegments: [{ takeIndex: 1 }] },
+      ];
+      expect(trackActiveTakeIndex(clips, 1)).toBe(-1);
+    });
+
+    it('ignores clips without takes and tracks with none', () => {
+      const clips = [
+        { trackId: 1, takes: [{}, {}], compSegments: [{ takeIndex: 1 }] },
+        { trackId: 1 },
+        { trackId: 2, takes: [{}] },
+      ];
+      expect(trackActiveTakeIndex(clips, 1)).toBe(1);
+      expect(trackActiveTakeIndex(clips, 3)).toBe(-1);
     });
   });
 

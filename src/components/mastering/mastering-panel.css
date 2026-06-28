@@ -11,16 +11,18 @@
 .mastering-toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-4);
   padding: 3px 8px;
   border-bottom: 1px solid var(--border-strong);
   flex: none;
 }
 
 .mastering-title {
-  font: 700 9px system-ui, sans-serif;
+  /* Out-rank the controls it labels: a higher-contrast tier than --text-4 so
+     the panel's own heading does not read as the faintest element. */
+  font: 700 var(--fs-xs) var(--font-sans);
   letter-spacing: 0.08em;
-  color: var(--text-4);
+  color: var(--text-3);
   user-select: none;
 }
 
@@ -33,7 +35,10 @@
 }
 
 .preset-button {
-  font: 600 10px system-ui, sans-serif;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font: 600 var(--fs-2xs) var(--font-sans);
   color: var(--text-3);
   background: var(--surface-3);
   border-radius: var(--radius-sm);
@@ -41,6 +46,12 @@
   cursor: pointer;
   box-shadow: var(--control-lift);
   transition: background var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
+}
+
+.preset-caret {
+  flex: none;
+  width: 11px;
+  height: 11px;
 }
 
 .preset-button.set {
@@ -70,11 +81,11 @@
 .preset-search {
   width: 100%;
   box-sizing: border-box;
-  font: 10px system-ui, sans-serif;
+  font: var(--fs-2xs) var(--font-sans);
   color: var(--text-2);
   background: var(--surface-2);
   border: none;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   box-shadow: var(--control-edge), var(--inset-well);
   padding: 2px 5px;
   margin-bottom: 3px;
@@ -89,13 +100,13 @@
   display: block;
   width: 100%;
   text-align: left;
-  font: 10px system-ui, sans-serif;
+  font: var(--fs-2xs) var(--font-sans);
   color: var(--text-2);
   background: transparent;
   border: none;
   box-shadow: none;
   padding: 3px 6px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
 }
 
@@ -114,7 +125,7 @@
 
 .preset-empty {
   margin: 0;
-  font: 9px system-ui, sans-serif;
+  font: var(--fs-2xs) var(--font-sans);
   color: var(--text-4);
   padding: 3px 6px;
 }
@@ -124,12 +135,12 @@
   padding: 2px 8px;
   background: var(--danger-surface);
   color: var(--danger-text);
-  font: 10px/1.4 system-ui, sans-serif;
+  font: var(--fs-2xs)/1.4 var(--font-sans);
   flex: none;
 }
 
 .assist-button {
-  font: 600 10px system-ui, sans-serif;
+  font: 600 var(--fs-2xs) var(--font-sans);
   color: var(--text-3);
   background: var(--surface-3);
   border: none;
@@ -167,7 +178,7 @@
 }
 
 .assist-label {
-  font: 600 9px system-ui, sans-serif;
+  font: 600 var(--fs-2xs) var(--font-sans);
   color: var(--text-3);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -177,7 +188,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font: 10px system-ui, sans-serif;
+  font: var(--fs-2xs) var(--font-sans);
   color: var(--text-2);
   background: var(--surface-3);
   border: 1px solid var(--border);
@@ -203,25 +214,25 @@
 .assist-explain {
   margin: 0;
   padding-left: 14px;
-  font: 10px/1.5 system-ui, sans-serif;
+  font: var(--fs-2xs)/1.5 var(--font-sans);
   color: var(--text-3);
 }
 
 .assist-profile {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  font: 10px system-ui, sans-serif;
+  gap: var(--sp-5);
+  font: var(--fs-2xs) var(--font-sans);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
 
 .mastering-body {
   display: flex;
-  gap: 10px;
+  gap: var(--sp-5);
   flex: 1;
   min-height: 0;
-  padding: 6px 8px;
+  padding: var(--sp-3) var(--sp-4);
   overflow: auto;
 }
 
@@ -238,10 +249,10 @@
   align-items: center;
   gap: 4px;
   background: var(--surface-3);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  box-shadow: var(--raise-hi);
+  border-radius: var(--radius-xs);
+  box-shadow: var(--control-edge), var(--raise-hi);
   padding: 2px 4px;
+  transition: box-shadow var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out);
 }
 
 .chain-slot.dragging {
@@ -249,7 +260,8 @@
 }
 
 .chain-slot.drop-target {
-  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
 .chain-slot.bypassed .chain-name {
@@ -258,7 +270,7 @@
 
 .chain-drag {
   flex: none;
-  font: 9px system-ui, sans-serif;
+  font: var(--fs-2xs) var(--font-sans);
   color: var(--text-4);
   cursor: grab;
   user-select: none;
@@ -289,7 +301,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: left;
-  font: 10px system-ui, sans-serif;
+  font: var(--fs-2xs) var(--font-sans);
   color: var(--text-2);
   background: transparent;
   border: none;
@@ -304,13 +316,13 @@
 
 .chain-badge {
   flex: none;
-  font: 700 7px system-ui, sans-serif;
+  font: 700 var(--fs-2xs) var(--font-sans);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-4);
   background: var(--surface-2);
   border: 1px solid var(--border);
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   padding: 1px 3px;
 }
 
@@ -320,7 +332,7 @@
   background: transparent;
   box-shadow: none;
   color: var(--text-4);
-  font: 10px system-ui, sans-serif;
+  font: var(--fs-2xs) var(--font-sans);
   line-height: 1;
   padding: 0 1px;
   cursor: pointer;
@@ -337,14 +349,14 @@
   justify-content: center;
   background: var(--surface-inset);
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   box-shadow: var(--inset-well);
   padding: 4px 2px;
 }
 
 .chain-params-empty {
   margin: 0;
-  font: 9px system-ui, sans-serif;
+  font: var(--fs-2xs) var(--font-sans);
   color: var(--text-4);
 }
 
@@ -354,12 +366,12 @@
 
 .chain-add {
   width: 100%;
-  font: 600 9px system-ui, sans-serif;
+  font: 600 var(--fs-2xs) var(--font-sans);
   color: var(--text-3);
   background: transparent;
   border: 1px dashed var(--border);
   box-shadow: none;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   padding: 3px 0;
   cursor: pointer;
 }
@@ -385,7 +397,7 @@
 }
 
 .catalog-category {
-  font: 700 8px system-ui, sans-serif;
+  font: 700 var(--fs-2xs) var(--font-sans);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-4);
@@ -399,7 +411,7 @@
   gap: var(--sp-2);
   width: 100%;
   text-align: left;
-  font: 10px system-ui, sans-serif;
+  font: var(--fs-2xs) var(--font-sans);
   color: var(--text-2);
   background: transparent;
   border: none;
@@ -414,12 +426,12 @@
 
 .catalog-item-tag {
   flex: none;
-  font: 8px system-ui, sans-serif;
+  font: var(--fs-2xs) var(--font-sans);
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-3);
-  border: 1px solid var(--border-2);
-  border-radius: var(--radius-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   padding: 0 4px;
 }
 
@@ -441,7 +453,7 @@
 .preview-cancel,
 .play-button,
 .targets-button {
-  font: 600 10px system-ui, sans-serif;
+  font: 600 var(--fs-2xs) var(--font-sans);
   color: var(--text-2);
   background: var(--surface-3);
   border: none;
@@ -540,7 +552,7 @@
 .preview-progress {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-3);
 }
 
 .progress-track {
@@ -555,7 +567,7 @@
 .progress-fill {
   height: 100%;
   background: var(--accent);
-  transition: width 0.15s linear;
+  transition: width var(--dur-2) linear;
 }
 
 .progress-stage {
@@ -571,7 +583,7 @@
   gap: 3px;
   background: var(--surface-inset);
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   box-shadow: var(--inset-well);
   padding: 5px 6px;
 }
@@ -580,7 +592,7 @@
 .loudness-row {
   display: grid;
   grid-template-columns: 60px 1fr 1fr;
-  gap: 8px;
+  gap: var(--sp-4);
   align-items: center;
 }
 
@@ -616,11 +628,13 @@
   display: block;
   height: 100%;
   background: var(--meter-green);
+  /* Ease the bar to its new level when a fresh render lands instead of snapping. */
+  transition: width var(--dur-2) var(--ease-out);
 }
 
 .loudness-value {
   flex: none;
-  font: 9px ui-monospace, monospace;
+  font: 9px var(--font-mono);
   color: var(--text-2);
   min-width: 70px;
   text-align: right;

@@ -108,7 +108,7 @@ async function onRename(): Promise<void> {
   font: var(--fw-bold) 7px var(--font-sans);
   letter-spacing: 0.06em;
   color: var(--surface-0);
-  background: #fbbf24;
+  background: var(--warning);
   border-radius: var(--radius-sm);
   padding: 0 3px;
   flex: none;

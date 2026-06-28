@@ -102,7 +102,7 @@ onBeforeUnmount(() => {
 }
 
 .strip-gr-value {
-  font: 9px ui-monospace, monospace;
+  font: 9px var(--font-mono);
   color: var(--text-2);
 }
 </style>

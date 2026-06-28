@@ -100,7 +100,15 @@ function pct(value: number): string {
         :aria-label="t.shell.pianoRoll.midiTransform.close"
         @click="emit('close')"
       >
-        ×
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+          <path
+            d="M4 4l8 8M12 4l-8 8"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+          />
+        </svg>
       </button>
     </header>
 
@@ -329,10 +337,11 @@ function pct(value: number): string {
   width: 280px;
   display: flex;
   flex-direction: column;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-pop);
+  background: var(--glass-3);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--glass-hairline), var(--shadow-pop);
   font-family: var(--font-sans);
   color: var(--text-2);
 }
@@ -353,14 +362,16 @@ function pct(value: number): string {
 }
 
 .fx-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: transparent;
   box-shadow: none;
   color: var(--text-3);
-  font-size: var(--fs-lg);
   line-height: 1;
   cursor: pointer;
-  padding: 0 var(--sp-1);
+  padding: var(--sp-1);
 }
 
 .fx-close:hover {
@@ -420,25 +431,20 @@ function pct(value: number): string {
   gap: var(--sp-1);
 }
 
+/* Inherits the controls.css raised-face baseline (hover/active/press); only the
+ * compact metrics and surface tint differ from the canonical button. */
 .fx-chip {
   flex: 0 0 auto;
   padding: 2px var(--sp-2);
   font-size: var(--fs-xs);
   border-radius: var(--radius-sm);
   background: var(--surface-3);
-  color: var(--text-2);
-  box-shadow: var(--control-lift);
-  cursor: pointer;
-}
-
-.fx-chip:hover {
-  box-shadow: var(--control-lift-hover);
 }
 
 .fx-chip-active {
   background: var(--accent);
-  border-color: var(--accent);
   color: var(--accent-text);
+  box-shadow: var(--raise-hi), var(--shadow-1);
 }
 
 .fx-foot {
@@ -463,19 +469,12 @@ function pct(value: number): string {
   font-size: var(--fs-xs);
   border-radius: var(--radius-sm);
   background: var(--surface-3);
-  color: var(--text-2);
-  box-shadow: var(--control-lift);
-  cursor: pointer;
-}
-
-.fx-btn:hover {
-  box-shadow: var(--control-lift-hover);
 }
 
 .fx-btn-primary {
   background: var(--accent);
-  border-color: var(--accent);
   color: var(--accent-text);
+  box-shadow: var(--raise-hi), var(--shadow-1);
 }
 
 .fx-btn-primary:disabled {

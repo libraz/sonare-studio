@@ -123,41 +123,9 @@ const modeOptions = computed(() => {
   </div>
 </template>
 
+<style scoped src="./lists.css"></style>
+
 <style scoped>
-.list-editor {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  padding: 0.5rem 0.75rem;
-  font-size: var(--fs-sm);
-  color: var(--text-2);
-  overflow: auto;
-  min-height: 0;
-}
-
-.list-table {
-  border-collapse: collapse;
-  width: 100%;
-}
-
-.list-table th {
-  text-align: left;
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-semibold);
-  color: var(--text-3);
-  padding: 0.15rem 0.4rem 0.15rem 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.list-table td {
-  padding: 0.12rem 0.4rem 0.12rem 0;
-}
-
-.cell-input {
-  width: 100%;
-  box-sizing: border-box;
-}
-
 .cell-number {
   width: 4.5rem;
 }
@@ -169,11 +137,13 @@ const modeOptions = computed(() => {
 .list-readout {
   margin: 0;
   color: var(--text-1);
-  font-weight: 600;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
 }
 
 .list-hint {
   margin: 0;
   color: var(--text-3);
+  font-size: var(--fs-xs);
 }
 </style>

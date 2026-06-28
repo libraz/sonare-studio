@@ -708,7 +708,7 @@ onBeforeUnmount(() => {
   <section class="score-panel">
     <div class="score-toolbar" role="toolbar" :aria-label="t.shell.score.tools">
       <label class="bar-field" :title="t.shell.score.displayQuantizeTitle">
-        DQ
+        {{ t.shell.score.displayQuantizeShort }}
         <SelectMenu
           v-model="dqKey"
           :options="dqOptions"
@@ -749,6 +749,7 @@ onBeforeUnmount(() => {
         <button type="button" aria-haspopup="true" :aria-expanded="layoutOpen" @click="layoutOpen = !layoutOpen">
           {{ t.shell.score.layout }}
         </button>
+        <Transition name="popover">
         <div v-if="layoutOpen" class="layout-popover">
           <label class="layout-row">
             {{ t.shell.score.page }}
@@ -794,6 +795,7 @@ onBeforeUnmount(() => {
             />
           </label>
         </div>
+        </Transition>
       </div>
       <div class="score-zoom" role="group" :aria-label="t.shell.score.zoom">
         <button
@@ -804,7 +806,15 @@ onBeforeUnmount(() => {
           :title="t.shell.score.zoomOut"
           @click="zoomView(1 / VIEW_ZOOM_STEP)"
         >
-          −
+          <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">
+            <path
+              d="M3 7h8"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+            />
+          </svg>
         </button>
         <span class="score-zoom-readout" aria-live="polite">{{ zoomPercent }}%</span>
         <button
@@ -815,7 +825,15 @@ onBeforeUnmount(() => {
           :title="t.shell.score.zoomIn"
           @click="zoomView(VIEW_ZOOM_STEP)"
         >
-          +
+          <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">
+            <path
+              d="M7 3v8M3 7h8"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+            />
+          </svg>
         </button>
       </div>
       <span class="bar-spacer" />
@@ -825,7 +843,16 @@ onBeforeUnmount(() => {
         :aria-label="t.shell.score.previousPage"
         @click="gotoPage(page - 1)"
       >
-        ◀
+        <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">
+          <path
+            d="M9 3L5 7l4 4"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
       </button>
       <span class="score-page-indicator" aria-live="polite">
         {{ pageCount > 0 ? `${page} / ${pageCount}` : '– / –' }}
@@ -836,7 +863,16 @@ onBeforeUnmount(() => {
         :aria-label="t.shell.score.nextPage"
         @click="gotoPage(page + 1)"
       >
-        ▶
+        <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">
+          <path
+            d="M5 3l4 4-4 4"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
       </button>
       <span class="bar-spacer" />
       <button type="button" :disabled="exporting || pageCount === 0" @click="onPrint">
@@ -859,18 +895,40 @@ onBeforeUnmount(() => {
         @click="onSvgClick"
         v-html="svg"
       />
-      <div v-if="loading" class="score-loading">{{ t.shell.score.engraving }}</div>
-      <div v-else-if="!svg" class="score-empty">{{ t.shell.score.empty }}</div>
-      <ScoreAnnotationPalette
-        v-if="annotateEnabled && annotationNoteId !== null"
-        :annotation="annotationCurrent"
-        :position="palettePos"
-        :slur-armed="slurArmed"
-        @apply="applyAnnotation"
-        @clear="clearAnnotation"
-        @close="closePalette"
-        @slur-armed-change="slurArmed = $event"
-      />
+      <div v-if="loading" class="score-loading">
+        <span class="score-state-text">{{ t.shell.score.engraving }}</span>
+      </div>
+      <div v-else-if="!svg" class="score-empty">
+        <svg
+          class="score-empty-glyph"
+          viewBox="0 0 24 36"
+          width="40"
+          height="60"
+          aria-hidden="true"
+        >
+          <!-- Five-line staff with a stylised treble clef as a visual anchor. -->
+          <g fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round">
+            <path d="M2 8h20M2 13h20M2 18h20M2 23h20M2 28h20" opacity="0.45" />
+            <path
+              d="M13 4c-3 1-4 4-3.5 7l2 11c.4 2.6-1.4 4.5-3.2 4.2-1.6-.3-2.4-2-1.4-3.2.9-1 2.5-.5 2.5.8"
+              stroke-width="1.6"
+            />
+          </g>
+        </svg>
+        <span class="score-state-text">{{ t.shell.score.empty }}</span>
+      </div>
+      <Transition name="popover">
+        <ScoreAnnotationPalette
+          v-if="annotateEnabled && annotationNoteId !== null"
+          :annotation="annotationCurrent"
+          :position="palettePos"
+          :slur-armed="slurArmed"
+          @apply="applyAnnotation"
+          @clear="clearAnnotation"
+          @close="closePalette"
+          @slur-armed-change="slurArmed = $event"
+        />
+      </Transition>
     </div>
   </section>
 </template>

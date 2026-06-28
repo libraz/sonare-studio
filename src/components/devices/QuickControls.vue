@@ -234,7 +234,7 @@ onBeforeUnmount(closeMenu);
     </div>
     <div
       v-if="menu.open"
-      class="qc-menu"
+      class="qc-menu control-menu"
       :style="{ left: `${menu.x}px`, top: `${menu.y}px` }"
       role="menu"
     >
@@ -266,37 +266,38 @@ onBeforeUnmount(closeMenu);
 .quick-controls {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--sp-2);
 }
 
 .qc-error {
   margin: 0;
-  padding: 2px 6px;
+  padding: var(--sp-1) var(--sp-3);
   background: var(--danger-surface);
   color: var(--danger-text);
-  font: 10px/1.4 system-ui, sans-serif;
-  border-radius: 3px;
+  font: var(--fs-2xs)/1.4 system-ui, sans-serif;
+  border-radius: var(--radius-xs);
 }
 
 .qc-empty {
   margin: 0;
-  padding: 6px;
+  padding: var(--sp-4);
+  text-align: center;
   color: var(--text-4);
-  font: 11px system-ui, sans-serif;
+  font: var(--fs-xs) system-ui, sans-serif;
 }
 
 .qc-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px 4px;
-  padding: 6px 2px;
+  gap: var(--sp-4) var(--sp-2);
+  padding: var(--sp-3) var(--sp-1);
 }
 
 .qc-cell {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: var(--sp-1);
   min-width: 0;
 }
 
@@ -305,9 +306,9 @@ onBeforeUnmount(closeMenu);
   width: 34px;
   height: 34px;
   border-radius: var(--radius-full);
-  background: radial-gradient(circle at 35% 30%, #2c313c, #1a1d24 70%);
-  border: 1px solid var(--border);
-  box-shadow: var(--inset-well);
+  /* Theme-aware raised knob well: lighter highlight at the top, recessed face. */
+  background: radial-gradient(circle at 35% 30%, var(--surface-4), var(--surface-3) 70%);
+  box-shadow: var(--control-edge), var(--inset-well);
   cursor: ns-resize;
   touch-action: none;
 }
@@ -346,46 +347,22 @@ onBeforeUnmount(closeMenu);
 }
 
 .qc-value {
-  font: 10px system-ui, sans-serif;
+  font: var(--fs-2xs) system-ui, sans-serif;
   color: var(--text-2);
+  font-variant-numeric: tabular-nums;
 }
 
 .qc-knob-bound {
-  border-color: var(--accent-muted);
+  box-shadow: inset 0 0 0 1px var(--accent-muted), var(--inset-well);
 }
 
 .qc-knob-armed {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 1px var(--accent);
 }
 
+/* Positioning only; the shared .control-menu primitive supplies the glass face. */
 .qc-menu {
-  position: fixed;
   z-index: 60;
-  display: flex;
-  flex-direction: column;
-  min-width: 120px;
-  padding: 2px;
-  background: var(--surface-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-pop);
-}
-
-.qc-menu button {
-  text-align: left;
-  font: 11px system-ui, sans-serif;
-  color: var(--text-2);
-  background: transparent;
-  border: none;
-  box-shadow: none;
-  padding: 4px 8px;
-  border-radius: 3px;
-  cursor: pointer;
-}
-
-.qc-menu button:hover {
-  background: var(--surface-4);
 }
 
 .qc-menu-armed {

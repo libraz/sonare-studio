@@ -173,6 +173,7 @@ function onLoopToggle(): void {
 
 .ci-num {
   width: 4.5rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .ci-unit {
@@ -184,6 +185,10 @@ function onLoopToggle(): void {
 }
 
 .ci-redetect {
+  /* Compact face matching the inspector density; lift comes from the button baseline. */
   margin-left: auto;
+  font: var(--fw-semibold) 10px var(--font-sans);
+  padding: 2px var(--sp-3);
+  border-radius: var(--radius-sm);
 }
 </style>

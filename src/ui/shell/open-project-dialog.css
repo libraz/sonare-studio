@@ -6,8 +6,8 @@
   align-items: center;
   justify-content: center;
   background: var(--scrim);
-  -webkit-backdrop-filter: blur(3px);
-  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: var(--scrim-blur);
+  backdrop-filter: var(--scrim-blur);
 }
 
 .modal {
@@ -26,7 +26,8 @@
 
 .modal-title {
   margin: 0 0 0.75rem;
-  font-size: var(--fs-lg);
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-bold);
   color: var(--text-1);
 }
 
@@ -43,6 +44,16 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  border-radius: var(--radius-sm);
+  transition: box-shadow var(--dur-1) var(--ease-out);
+}
+
+.stored-row.selected {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.stored-row.selected .stored-load {
+  background: var(--accent-muted);
 }
 
 .stored-load {
@@ -52,8 +63,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  background: var(--surface-3);
-  border: 1px solid var(--border);
+  background: var(--control-bg);
+  box-shadow: var(--control-lift);
   border-radius: var(--radius-sm);
   color: var(--text-2);
   font-size: var(--fs-sm);
@@ -69,6 +80,7 @@
   font-size: var(--fs-xs);
   color: var(--text-4);
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .stored-delete {

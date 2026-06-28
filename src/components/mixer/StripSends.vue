@@ -210,8 +210,8 @@ function onRemove(busId: string): void {
   letter-spacing: 0.04em;
   color: var(--text-4);
   background: transparent;
-  border: 1px solid var(--border-2);
-  border-radius: var(--radius-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   padding: 0 3px;
   line-height: 1.4;
   cursor: pointer;

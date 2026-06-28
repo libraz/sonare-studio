@@ -108,7 +108,10 @@ function fillHeight(velocity: number): string {
         @click="emit('select-row', rowIndex)"
       >
         <span class="row-name">{{ row.name }}</span>
-        <span v-if="row.muted" class="row-mute-flag">M</span>
+        <svg v-if="row.muted" class="row-mute-flag" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M2 6h2.5L8 3v10L4.5 10H2z" />
+          <path class="row-mute-slash" d="M11 5l4 6m0-6l-4 6" />
+        </svg>
       </button>
       <div class="row-cells">
         <div
@@ -153,7 +156,7 @@ function fillHeight(velocity: number): string {
 
 .row-label {
   flex: none;
-  width: 110px;
+  width: var(--seq-row-label-w);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -186,10 +189,20 @@ function fillHeight(velocity: number): string {
   white-space: nowrap;
 }
 
+/* Muted-lane affordance: a speaker-slash glyph tinted with the warning token,
+   replacing the former bare 'M' text marker. */
 .row-mute-flag {
   flex: none;
-  font-weight: var(--fw-bold);
-  color: var(--warning);
+  width: 0.9em;
+  height: 0.9em;
+  fill: var(--warning);
+}
+
+.row-mute-slash {
+  fill: none;
+  stroke: var(--warning);
+  stroke-width: 1.5;
+  stroke-linecap: round;
 }
 
 .row-cells {
@@ -202,7 +215,7 @@ function fillHeight(velocity: number): string {
 .grid-cell {
   position: relative;
   flex: 1;
-  min-width: 8px;
+  min-width: var(--seq-cell-min);
   border-radius: 2px;
   background: var(--surface-inset);
   overflow: hidden;
@@ -223,16 +236,12 @@ function fillHeight(velocity: number): string {
   left: 0;
   right: 0;
   bottom: 0;
-  background: #4f86d8;
+  background: var(--accent);
   border-radius: 2px 2px 0 0;
   transition: background var(--dur-1) var(--ease-out);
 }
 
-.row-selected .cell-fill {
-  background: var(--accent);
-}
-
 .cell-active {
-  box-shadow: inset 0 0 0 1px rgba(10, 132, 255, 0.6);
+  box-shadow: inset 0 0 0 1px var(--accent-muted);
 }
 </style>

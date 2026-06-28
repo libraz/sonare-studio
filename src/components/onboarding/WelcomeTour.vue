@@ -245,7 +245,7 @@ onBeforeUnmount(() => {
   position: fixed;
   inset: 0;
   z-index: 60;
-  background: rgba(17, 24, 39, 0.32);
+  background: var(--scrim);
 }
 
 .tour-highlight {
@@ -281,11 +281,12 @@ onBeforeUnmount(() => {
   margin: 0;
   color: var(--text-3);
   font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
 }
 
 .tour-title {
   margin: 0;
-  font-size: var(--fs-md);
+  font-size: var(--fs-lg);
   font-weight: var(--fw-bold);
   letter-spacing: 0.02em;
 }
@@ -299,22 +300,28 @@ onBeforeUnmount(() => {
 .tour-actions {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  margin-top: 0.2rem;
+  gap: var(--sp-4);
+  margin-top: var(--sp-1);
 }
 
 .tour-spacer {
   flex: 1;
 }
 
+/* De-emphasized action: mirrors the .row-button recipe so skip stays
+   subordinate to Next without reading as a web-style underlined link. */
 .tour-skip {
   background: none;
   border: none;
   box-shadow: none;
   color: var(--text-3);
   cursor: pointer;
-  padding: 0.25rem 0;
-  text-decoration: underline;
+  padding: var(--sp-2) var(--sp-3);
+  transition: color var(--dur-1) var(--ease-out);
+}
+
+.tour-skip:hover {
+  color: var(--text-1);
 }
 
 .tour-actions button:not(.tour-skip) {

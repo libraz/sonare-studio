@@ -74,6 +74,7 @@ import {
   voiceChangeRange,
   wasmOpAvailability,
 } from '@/ui/sample-editor/wasm-ops';
+import { colorWithAlpha, TOKENS } from '@/ui/theme/tokens';
 import { computePeaks } from '@/ui/waveform/peaks';
 
 /**
@@ -114,15 +115,15 @@ const WHEEL_ZOOM_SENSITIVITY = 0.01;
 /** Pointer distance (CSS px) within which a selection edge snaps to an onset. */
 const ONSET_SNAP_PX = 6;
 
-/** Canvas color tokens (matches the app's dark theme). */
+/** Canvas color tokens, derived from the dark palette mirror in tokens.ts. */
 const COLORS = {
-  background: '#15171c',
-  waveform: '#4fa8e8',
-  centerLine: 'rgba(255, 255, 255, 0.12)',
-  laneSeparator: 'rgba(255, 255, 255, 0.1)',
-  selectionFill: 'rgba(96, 165, 250, 0.16)',
-  selectionEdge: 'rgba(96, 165, 250, 0.85)',
-  onsetMarker: 'rgba(250, 204, 21, 0.7)',
+  background: TOKENS.surface2,
+  waveform: TOKENS.accent,
+  centerLine: colorWithAlpha(TOKENS.border, 0.7),
+  laneSeparator: colorWithAlpha(TOKENS.border, 0.6),
+  selectionFill: colorWithAlpha(TOKENS.accent, 0.16),
+  selectionEdge: colorWithAlpha(TOKENS.accent, 0.85),
+  onsetMarker: colorWithAlpha(TOKENS.warning, 0.7),
 } as const;
 
 const wrapRef = ref<HTMLDivElement | null>(null);
@@ -995,6 +996,16 @@ onBeforeUnmount(() => {
       <span class="readout">{{ readout }}</span>
       <span class="spacer" />
       <button type="button" :disabled="!asset" @click="zoomToFit">
+        <svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true">
+          <path
+            d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
         {{ t.shell.sampleEditor.fit }}
       </button>
       <button
@@ -1029,12 +1040,34 @@ onBeforeUnmount(() => {
       </button>
       <span class="sep" />
       <button type="button" :disabled="opsDisabled" @click="onFadeIn">
+        <svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true">
+          <path
+            d="M2 14 14 2v12Z"
+            fill="currentColor"
+          />
+        </svg>
         {{ t.shell.sampleEditor.fadeIn }}
       </button>
       <button type="button" :disabled="opsDisabled" @click="onFadeOut">
+        <svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true">
+          <path
+            d="M2 2 14 14H2Z"
+            fill="currentColor"
+          />
+        </svg>
         {{ t.shell.sampleEditor.fadeOut }}
       </button>
       <button type="button" :disabled="opsDisabled" @click="onReverse">
+        <svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true">
+          <path
+            d="M3 5h8l-2-2M13 11H5l2 2"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
         {{ t.shell.sampleEditor.reverse }}
       </button>
       <button type="button" :disabled="opsDisabled" @click="onSilence">
@@ -1046,6 +1079,18 @@ onBeforeUnmount(() => {
         :title="t.shell.sampleEditor.trimTitle"
         @click="onTrim"
       >
+        <svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true">
+          <path
+            d="M14 3 6.5 9M14 13 6.5 7"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+          <circle cx="4" cy="5" r="2" fill="none" stroke="currentColor" stroke-width="1.5" />
+          <circle cx="4" cy="11" r="2" fill="none" stroke="currentColor" stroke-width="1.5" />
+        </svg>
         {{ t.shell.sampleEditor.trim }}
       </button>
       <span class="sep" />
@@ -1369,6 +1414,8 @@ onBeforeUnmount(() => {
     <div
       ref="wrapRef"
       class="wave-wrap"
+      tabindex="0"
+      :aria-label="t.shell.sampleEditor.waveform"
       @pointerdown="onPointerDown"
       @pointermove="onPointerMove"
       @pointerup="onPointerUp"
@@ -1378,6 +1425,9 @@ onBeforeUnmount(() => {
       <canvas ref="canvasRef" class="wave-canvas" role="img" :aria-label="t.shell.sampleEditor.waveform" />
       <div v-if="busy || loading" class="busy">
         {{ busy ? t.shell.sampleEditor.processing : t.shell.sampleEditor.loading }}
+      </div>
+      <div v-else-if="!asset" class="empty-state">
+        {{ t.shell.sampleEditor.emptyMessage }}
       </div>
     </div>
     <div class="history">
@@ -1494,37 +1544,63 @@ onBeforeUnmount(() => {
 
 .toolbar .num {
   width: 56px;
+  /* Steady digit width so scrubbed numeric values don't jitter. */
+  font-variant-numeric: tabular-nums;
 }
 
+/* Dense pro-tool controls on the shared raised-face recipe (no drawn border). */
 .toolbar input {
   background: var(--surface-inset);
   color: var(--text-1);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 2px 4px;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: var(--sp-1) var(--sp-2);
   font: inherit;
-  box-shadow: var(--inset-well);
+  box-shadow: var(--control-edge), var(--inset-well);
 }
 
 .toolbar button {
-  background: var(--surface-3);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  background: var(--control-bg);
   color: var(--text-1);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 2px 8px;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: var(--sp-1) var(--sp-3);
   font: inherit;
   cursor: pointer;
-  box-shadow: var(--raise-hi);
-  transition: filter var(--dur-1) var(--ease-out);
+  box-shadow: var(--control-lift);
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-1) var(--ease-out);
+}
+
+/* Inline glyph that scans by shape; inherits the button's text color. */
+.btn-icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--text-3);
+}
+
+.toolbar button:not(:disabled):hover .btn-icon {
+  color: currentColor;
+}
+
+.toolbar button:disabled .btn-icon {
+  color: currentColor;
 }
 
 .toolbar button:disabled {
-  opacity: 0.45;
+  color: var(--text-4);
+  box-shadow: var(--control-edge);
   cursor: default;
 }
 
 .toolbar button:not(:disabled):hover {
-  filter: brightness(1.2);
+  background: var(--control-bg-hover);
+  box-shadow: var(--control-lift-hover);
 }
 
 .asset-name {
@@ -1563,8 +1639,8 @@ onBeforeUnmount(() => {
 .match-eq-analysis {
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
-  padding: 0.5rem 0.6rem;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-5);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface-inset);
@@ -1576,7 +1652,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 0.5rem;
+  gap: var(--sp-4);
   justify-content: space-between;
 }
 
@@ -1613,7 +1689,7 @@ onBeforeUnmount(() => {
 .match-eq-bands {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.25rem 0.6rem;
+  gap: var(--sp-2) var(--sp-5);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -1622,12 +1698,12 @@ onBeforeUnmount(() => {
 
 .match-eq-bands li {
   display: flex;
-  gap: 0.3rem;
+  gap: var(--sp-2);
   color: var(--text-3);
 }
 
 .match-eq-bands li.over .match-eq-band-db {
-  color: var(--warning, #e0a030);
+  color: var(--warning);
 }
 
 .match-eq-bands li.under .match-eq-band-db {
@@ -1645,6 +1721,11 @@ onBeforeUnmount(() => {
   box-shadow: var(--inset-well);
 }
 
+.wave-wrap:focus-visible {
+  outline: 2px solid transparent; /* visible under forced-colors mode */
+  box-shadow: var(--inset-well), var(--ring);
+}
+
 .wave-canvas {
   display: block;
   width: 100%;
@@ -1656,8 +1737,22 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(11, 13, 17, 0.6);
+  background: var(--scrim);
   color: var(--text-1);
+}
+
+/* No-asset guidance over the empty dark canvas (keeps the canvas aesthetic). */
+.empty-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--sp-5);
+  text-align: center;
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  pointer-events: none;
 }
 
 .history {
@@ -1673,24 +1768,33 @@ onBeforeUnmount(() => {
 }
 
 .history-entry {
-  background: var(--surface-3);
+  background: var(--control-bg);
   color: var(--text-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 1px 8px;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: var(--sp-1) var(--sp-3);
   font: inherit;
   cursor: pointer;
-  box-shadow: var(--raise-hi);
-  transition: filter var(--dur-1) var(--ease-out);
+  box-shadow: var(--control-lift);
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-1) var(--ease-out);
+}
+
+.history-entry:not(:disabled):hover {
+  background: var(--control-bg-hover);
+  box-shadow: var(--control-lift-hover);
 }
 
 .history-entry.current {
-  border-color: var(--accent);
+  background: var(--surface-selected);
   color: var(--text-1);
+  box-shadow: inset 0 0 0 1px var(--accent), var(--control-edge);
 }
 
 .history-entry:disabled {
-  opacity: 0.45;
+  color: var(--text-4);
+  box-shadow: var(--control-edge);
   cursor: default;
 }
 
@@ -1709,8 +1813,14 @@ onBeforeUnmount(() => {
 }
 
 .warp-toggle.on {
-  border-color: var(--accent);
+  background: var(--surface-selected);
   color: var(--text-1);
+  box-shadow: inset 0 0 0 1px var(--accent), var(--control-edge);
+}
+
+.warp-toggle.on:not(:disabled):hover {
+  background: var(--surface-selected);
+  box-shadow: inset 0 0 0 1px var(--accent), var(--control-edge);
 }
 
 .warp-segments {

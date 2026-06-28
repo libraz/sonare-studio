@@ -122,7 +122,7 @@ function onKeydown(event: KeyboardEvent): void {
           <dl class="shortcut-list">
             <template v-for="row in section.rows" :key="row.id">
               <dt class="shortcut-label">{{ row.label }}</dt>
-              <dd class="shortcut-keys">{{ row.keys }}</dd>
+              <dd class="shortcut-keys"><span class="keys-chip">{{ row.keys }}</span></dd>
             </template>
           </dl>
         </section>
@@ -145,8 +145,8 @@ function onKeydown(event: KeyboardEvent): void {
   align-items: center;
   justify-content: center;
   background: var(--scrim);
-  -webkit-backdrop-filter: blur(3px);
-  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: var(--scrim-blur);
+  backdrop-filter: var(--scrim-blur);
 }
 
 .dialog {
@@ -214,9 +214,19 @@ function onKeydown(event: KeyboardEvent): void {
 .shortcut-keys {
   margin: 0;
   font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
   text-align: right;
   color: var(--text-1);
+}
+
+/* Subtle keycap so the bindings column reads as discrete keys, not prose. */
+.keys-chip {
+  display: inline-block;
+  background: var(--surface-inset);
+  box-shadow: var(--control-edge);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--sp-2);
 }
 
 .dialog-actions {

@@ -16,6 +16,7 @@ import {
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { barLengthPpq, formatBarBeat, parseBarBeat } from './bar-beat';
+import ListIcon from './ListIcon.vue';
 
 /** Pitch-class options for the root / slash-bass pickers (value = pitch class). */
 const PITCH_CLASS_OPTIONS = CHORD_PITCH_CLASS_NAMES.map((name, pc) => ({
@@ -199,7 +200,7 @@ function clearAll(): void {
               "
               @click="onSeek(chord)"
             >
-              ▶
+              <ListIcon name="seek" />
             </button>
           </td>
           <td>
@@ -254,7 +255,7 @@ function clearAll(): void {
               "
               @click="onDelete(index)"
             >
-              ✕
+              <ListIcon name="delete" />
             </button>
           </td>
         </tr>
@@ -267,6 +268,7 @@ function clearAll(): void {
       <button
         type="button"
         :disabled="detectKind === null || isDetecting"
+        :title="t.shell.lists.chords.detectFromClipTitle"
         @click="detectFromClip"
       >
         {{ t.shell.lists.chords.detectFromClip }}
@@ -283,62 +285,11 @@ function clearAll(): void {
   </div>
 </template>
 
+<style scoped src="./lists.css"></style>
+
 <style scoped>
-.list-editor {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  padding: 0.5rem 0.75rem;
-  font-size: var(--fs-sm);
-  color: var(--text-2);
-  overflow: auto;
-  min-height: 0;
-}
-
-.list-table {
-  border-collapse: collapse;
-  width: 100%;
-}
-
-.list-table th {
-  text-align: left;
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-semibold);
-  color: var(--text-3);
-  padding: 0.15rem 0.4rem 0.15rem 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.list-table td {
-  padding: 0.12rem 0.4rem 0.12rem 0;
-}
-
 .chord-row:hover {
   background: var(--surface-2);
-}
-
-/* Layout applies to both native inputs and SelectMenu wrappers sharing this class. */
-.cell-input {
-  width: 100%;
-  box-sizing: border-box;
-}
-
-/* The sunken field face is only for real inputs; SelectMenu carries its own face. */
-input.cell-input {
-  background: var(--surface-inset);
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--text-1);
-  font: inherit;
-  font-variant-numeric: tabular-nums;
-  padding: 0.15rem 0.3rem;
-  box-shadow: var(--control-edge), var(--inset-well);
-  transition: box-shadow var(--dur-1) var(--ease-out);
-}
-
-input.cell-input:focus {
-  outline: none;
-  box-shadow: inset 0 0 0 1px var(--accent), var(--inset-well), var(--ring);
 }
 
 .cell-position {
@@ -355,64 +306,11 @@ input.cell-input:focus {
   white-space: nowrap;
 }
 
-.cell-seek {
-  width: 1.6rem;
-}
-
-.cell-actions {
-  width: 1.6rem;
-  text-align: right;
-}
-
-.row-button {
-  background: none;
-  border: none;
-  box-shadow: none;
-  color: var(--text-3);
-  cursor: pointer;
-  padding: 0.1rem 0.25rem;
-  font-size: var(--fs-xs);
-  transition: color var(--dur-1) var(--ease-out);
-}
-
-.row-button:hover {
-  color: var(--text-1);
-}
-
-.cell-actions .row-button:hover {
-  color: var(--danger);
-}
-
-.list-empty {
-  margin: 0;
-  color: var(--text-3);
-}
-
-.list-error {
-  margin: 0;
-  background: var(--danger-surface);
-  border: 1px solid var(--danger);
-  border-radius: var(--radius-sm);
-  color: var(--danger-text);
-  padding: 0.25rem 0.5rem;
-}
-
 .list-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
   flex-wrap: wrap;
 }
 
 .clear-button:hover:not(:disabled) {
   color: var(--danger-text);
-}
-
-.visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
 }
 </style>

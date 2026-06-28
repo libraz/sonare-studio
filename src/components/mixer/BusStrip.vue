@@ -229,16 +229,19 @@ async function onRename(): Promise<void> {
   width: 19px;
   height: 16px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
+  border: none;
   background: var(--surface-3);
   color: var(--text-4);
   font: var(--fw-bold) 8px var(--font-sans);
   cursor: pointer;
+  box-shadow: var(--control-lift);
+  transition:
+    background var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
 }
 
 .bus-auto-button.on {
   color: var(--accent);
-  border-color: var(--accent);
   background: var(--accent-muted);
 }
 

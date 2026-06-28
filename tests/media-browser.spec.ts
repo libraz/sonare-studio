@@ -101,7 +101,7 @@ describe('MediaBrowser', () => {
 
   it('shows the empty state and the list error', async () => {
     const empty = await mountBrowser();
-    expect(empty.find('.empty').text()).toContain('No audio assets');
+    expect(empty.find('.empty-state').text()).toContain('No audio assets');
 
     assetStore.listAssets.mockRejectedValue(new Error('OPFS is unavailable'));
     const failed = await mountBrowser();
@@ -230,7 +230,7 @@ describe('MediaBrowser', () => {
     await rowButton(wrapper, 'Loop', '.danger').trigger('click');
     await flushPromises();
     expect(assetStore.deleteAsset).toHaveBeenCalledWith('a1');
-    expect(wrapper.find('.empty').exists()).toBe(true);
+    expect(wrapper.find('.empty-state').exists()).toBe(true);
   });
 
   it('cancel keeps the asset', async () => {
@@ -269,13 +269,12 @@ describe('MediaBrowser', () => {
     await flushPromises();
     expect(factory).toHaveBeenCalledTimes(1);
     expect(context.sources[0].started).toBe(true);
-    expect(play.text()).toBe('■');
     expect(play.classes()).toContain('playing');
 
     await play.trigger('click');
     await flushPromises();
     expect(context.sources[0].stopped).toBe(true);
-    expect(play.text()).toBe('▶');
+    expect(play.classes()).not.toContain('playing');
   });
 
   it('shows a preview error when the asset cannot be loaded', async () => {

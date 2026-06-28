@@ -2,6 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import StepSequencer from '@/components/step-sequencer/StepSequencer.vue';
+import * as commands from '@/project/commands';
 import { addNote, canUndo, clearHistory, undo } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { type StepPattern, withStep, withSwing } from '@/ui/step-sequencer/pattern';
@@ -157,6 +158,39 @@ describe('StepSequencer (apply / pull integration)', () => {
     const flags = vm.pattern.rows[0].steps.map((step) => step.active);
     expect(flags.filter(Boolean)).toHaveLength(3);
     expect(flags[0]).toBe(true);
+  });
+
+  it('flags a missing target clip as a warning status', async () => {
+    const wrapper = await mountSequencer();
+    store.clipId = -1;
+    await wrapper.vm.$nextTick();
+    // The disabled toolbar button cannot dispatch, so drive the action directly.
+    (wrapper.vm as unknown as SequencerVm).applyToClip();
+    await wrapper.vm.$nextTick();
+
+    const status = wrapper.find('[data-test="status"]');
+    expect(status.text()).toContain('No active MIDI clip to apply to.');
+    expect(status.classes()).toContain('seq-status-warning');
+  });
+
+  it('flags a failed bake as an error status', async () => {
+    const wrapper = await mountSequencer();
+    const vm = wrapper.vm as unknown as SequencerVm;
+    const kickRow = vm.pattern.rows.length - 1;
+    vm.pattern = withStep(vm.pattern, kickRow, 0, { active: true });
+
+    const spy = vi.spyOn(commands, 'addNote').mockImplementation(() => {
+      throw new Error('boom');
+    });
+    try {
+      await wrapper.find('[data-test="apply"]').trigger('click');
+    } finally {
+      spy.mockRestore();
+    }
+
+    const status = wrapper.find('[data-test="status"]');
+    expect(status.text()).toContain('boom');
+    expect(status.classes()).toContain('seq-status-error');
   });
 
   it('randomizes deterministically from the seed input', async () => {

@@ -90,8 +90,21 @@ function toggleArticulation(value: NoteArticulation): void {
       <button type="button" :title="t.shell.score.annotations.clearTitle" @click="emit('clear')">
         {{ t.shell.score.annotations.clear }}
       </button>
-      <button type="button" :aria-label="t.shell.score.annotations.close" @click="emit('close')">
-        ×
+      <button
+        type="button"
+        class="palette-close"
+        :aria-label="t.shell.score.annotations.close"
+        @click="emit('close')"
+      >
+        <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">
+          <path
+            d="M4 4l6 6M10 4l-6 6"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+          />
+        </svg>
       </button>
     </div>
   </div>

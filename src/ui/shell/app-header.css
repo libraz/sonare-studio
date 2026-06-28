@@ -32,8 +32,11 @@
 }
 
 .menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
   background: none;
-  border: 1px solid transparent;
+  border: none;
   box-shadow: none;
   color: var(--text-2);
   font-size: var(--fs-sm);
@@ -43,6 +46,7 @@
   cursor: pointer;
   transition:
     background-color var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-1) var(--ease-out),
     color var(--dur-1) var(--ease-out);
 }
 
@@ -53,8 +57,26 @@
 
 .menu-trigger[aria-expanded='true'] {
   background: var(--surface-3);
-  border-color: var(--border);
+  box-shadow: var(--control-edge);
   color: var(--text-1);
+}
+
+.menu-trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+/* Disclosure chevron mirrors the SelectMenu trigger: it flips on open. */
+.menu-chevron {
+  width: 11px;
+  height: 11px;
+  color: var(--text-3);
+  transition: transform var(--dur-1) var(--ease-out);
+}
+
+.menu-trigger[aria-expanded='true'] .menu-chevron {
+  transform: rotate(180deg);
+  color: var(--accent);
 }
 
 .menu-pop {
@@ -103,7 +125,7 @@
 
 .menu-section {
   padding: 2px 0.6rem;
-  font: var(--fw-bold) 9px var(--font-sans);
+  font: var(--fw-bold) var(--fs-2xs) var(--font-sans);
   letter-spacing: 0.07em;
   text-transform: uppercase;
   color: var(--text-4);
@@ -125,8 +147,13 @@
 }
 
 .dirty-dot {
-  color: var(--warning);
-  margin-left: 0.2rem;
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 0.3rem;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  vertical-align: middle;
 }
 
 .autosave-state {
@@ -150,7 +177,14 @@
 }
 
 .settings-button {
-  font-size: var(--fs-lg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   line-height: 1;
-  padding: 0.2rem 0.45rem;
+  padding: 0.3rem;
+  color: var(--text-2);
+}
+
+.settings-button:hover {
+  color: var(--text-1);
 }

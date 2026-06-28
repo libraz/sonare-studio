@@ -285,7 +285,16 @@ onBeforeUnmount(() => {
           :title="t.shell.inserts.dragReorder"
           aria-hidden="true"
           @dragstart="onDragStart(index, $event)"
-        >⋮⋮</span>
+        >
+          <svg viewBox="0 0 6 10" width="6" height="10" focusable="false">
+            <circle cx="1.5" cy="1.5" r="1" />
+            <circle cx="4.5" cy="1.5" r="1" />
+            <circle cx="1.5" cy="5" r="1" />
+            <circle cx="4.5" cy="5" r="1" />
+            <circle cx="1.5" cy="8.5" r="1" />
+            <circle cx="4.5" cy="8.5" r="1" />
+          </svg>
+        </span>
         <button
           type="button"
           class="insert-power"
@@ -391,6 +400,7 @@ onBeforeUnmount(() => {
 }
 
 .insert-slot {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 3px;
@@ -400,9 +410,17 @@ onBeforeUnmount(() => {
   padding: 1px 3px;
 }
 
-.insert-slot.drag-over {
-  border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent-muted);
+/* Explicit landing line above the hovered slot during a reorder drag. */
+.insert-slot.drag-over::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -2px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  pointer-events: none;
 }
 
 .insert-slot.bypassed .insert-name {
@@ -428,16 +446,15 @@ onBeforeUnmount(() => {
   height: 7px;
   flex: none;
   border-radius: 50%;
-  border: 1px solid var(--border-raised);
-  background: transparent;
-  box-shadow: none;
+  border: none;
+  background: var(--surface-3);
+  box-shadow: var(--control-edge);
   padding: 0;
   cursor: pointer;
 }
 
 .insert-power.on {
   background: var(--success);
-  border-color: var(--success);
 }
 
 .insert-name {
@@ -564,8 +581,8 @@ onBeforeUnmount(() => {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-3);
-  border: 1px solid var(--border-2);
-  border-radius: var(--radius-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   padding: 0 4px;
 }
 

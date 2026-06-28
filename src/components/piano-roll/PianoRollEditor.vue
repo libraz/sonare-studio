@@ -620,7 +620,18 @@ onBeforeUnmount(() => {
             :aria-label="t.shell.pianoRoll.zoomOutHorizontal"
             @click="zoomHorizontal(1 / ZOOM_BUTTON_STEP)"
           >
-            ↔−
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+              <path
+                d="M2 8h12M2 8l2.5-2.5M2 8l2.5 2.5M14 8l-2.5-2.5M14 8l-2.5 2.5"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path d="M5.5 2.5h5" fill="none" stroke="currentColor" stroke-width="1.6"
+                stroke-linecap="round" />
+            </svg>
           </button>
           <button
             type="button"
@@ -629,7 +640,18 @@ onBeforeUnmount(() => {
             :aria-label="t.shell.pianoRoll.zoomInHorizontal"
             @click="zoomHorizontal(ZOOM_BUTTON_STEP)"
           >
-            ↔+
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+              <path
+                d="M2 8h12M2 8l2.5-2.5M2 8l2.5 2.5M14 8l-2.5-2.5M14 8l-2.5 2.5"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path d="M8 0v5M5.5 2.5h5" fill="none" stroke="currentColor" stroke-width="1.6"
+                stroke-linecap="round" />
+            </svg>
           </button>
         </span>
         <span class="zoom-pair">
@@ -640,7 +662,18 @@ onBeforeUnmount(() => {
             :aria-label="t.shell.pianoRoll.zoomOutVertical"
             @click="zoomVertical(1 / ZOOM_BUTTON_STEP)"
           >
-            ↕−
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+              <path
+                d="M8 2v12M8 2L5.5 4.5M8 2l2.5 2.5M8 14l-2.5-2.5M8 14l2.5-2.5"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path d="M11 8h3.5" fill="none" stroke="currentColor" stroke-width="1.6"
+                stroke-linecap="round" />
+            </svg>
           </button>
           <button
             type="button"
@@ -649,7 +682,18 @@ onBeforeUnmount(() => {
             :aria-label="t.shell.pianoRoll.zoomInVertical"
             @click="zoomVertical(ZOOM_BUTTON_STEP)"
           >
-            ↕+
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+              <path
+                d="M8 2v12M8 2L5.5 4.5M8 2l2.5 2.5M8 14l-2.5-2.5M8 14l2.5-2.5"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path d="M12.75 6.25v3.5M11 8h3.5" fill="none" stroke="currentColor" stroke-width="1.6"
+                stroke-linecap="round" />
+            </svg>
           </button>
         </span>
       </div>
@@ -911,25 +955,23 @@ onBeforeUnmount(() => {
   gap: 2px;
 }
 
+/* Inherits the controls.css raised-face baseline (hover/active/press); only the
+ * compact metrics and surface tint differ from the canonical button. */
 .zoom-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex: none;
   min-width: 1.6rem;
   padding: 0.1rem 0.3rem;
-  font: var(--fw-semibold) 11px var(--font-sans);
-  color: var(--text-2);
+  font: var(--fw-semibold) var(--fs-xs) var(--font-sans);
   background: var(--surface-3);
   border-radius: var(--radius-sm);
-  box-shadow: var(--control-lift);
-  cursor: pointer;
 }
 
-.zoom-btn:hover {
-  box-shadow: var(--control-lift-hover);
+.zoom-btn:hover:not(:disabled),
+.fx-toggle:hover:not(:disabled) {
   color: var(--text-1);
-}
-
-.zoom-btn:active {
-  box-shadow: var(--control-edge), var(--inset-well);
 }
 
 .fx-toggle {
@@ -938,22 +980,14 @@ onBeforeUnmount(() => {
   font: var(--fs-xs)/1.4 var(--font-sans);
   font-weight: var(--fw-semibold);
   letter-spacing: 0.02em;
-  color: var(--text-2);
   background: var(--surface-3);
   border-radius: var(--radius-sm);
-  box-shadow: var(--control-lift);
-  cursor: pointer;
-}
-
-.fx-toggle:hover:not(:disabled) {
-  box-shadow: var(--control-lift-hover);
-  color: var(--text-1);
 }
 
 .fx-toggle-active {
   background: var(--accent);
-  border-color: var(--accent);
   color: var(--accent-text);
+  box-shadow: var(--raise-hi), var(--shadow-1);
 }
 
 .fx-toggle:disabled {
@@ -998,9 +1032,21 @@ onBeforeUnmount(() => {
   background: var(--surface-3);
 }
 
+.legend-chip:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+/* Pair the accent tint with a thin inner ring so the active chip is
+ * unambiguous against a merely hovered one. */
 .legend-chip-active {
   background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent-muted);
   color: var(--text-1);
+}
+
+.legend-chip-active:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--accent-muted), var(--ring);
 }
 
 .chip-swatch {
@@ -1008,6 +1054,11 @@ onBeforeUnmount(() => {
   height: 10px;
   border-radius: 50%;
   flex: none;
+}
+
+/* Redundant non-color cue for the active track beyond the accent tint. */
+.legend-chip-active .chip-swatch {
+  box-shadow: 0 0 0 2px var(--accent-muted);
 }
 
 .chip-name {
@@ -1060,7 +1111,7 @@ onBeforeUnmount(() => {
   background: transparent;
   box-shadow: none;
   color: var(--text-4);
-  font: var(--fw-semibold) 9px var(--font-sans);
+  font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
   letter-spacing: 0.06em;
   cursor: pointer;
   transition: background var(--dur-1) var(--ease-out);
@@ -1116,7 +1167,9 @@ onBeforeUnmount(() => {
 
 .scroll-thumb {
   position: absolute;
-  background: var(--surface-4);
+  /* Lift the resting fill toward text-4 so the thumb is legible against the
+   * inset track even before hover; brightens on hover, darkens while grabbing. */
+  background: color-mix(in srgb, var(--text-4) 55%, var(--surface-4));
   border-radius: var(--radius-sm);
   transition: background var(--dur-1) var(--ease-out);
 }
@@ -1125,13 +1178,17 @@ onBeforeUnmount(() => {
   background: var(--text-4);
 }
 
+.scroll-track:active .scroll-thumb {
+  background: var(--text-3);
+}
+
 .scroll-thumb-v {
-  left: 2px;
-  right: 2px;
+  left: 1px;
+  right: 1px;
 }
 
 .scroll-thumb-h {
-  top: 2px;
-  bottom: 2px;
+  top: 1px;
+  bottom: 1px;
 }
 </style>

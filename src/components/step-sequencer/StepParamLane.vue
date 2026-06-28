@@ -80,6 +80,7 @@ function onPointerUp(): void {
   <div
     ref="lane"
     class="param-lane"
+    tabindex="0"
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
@@ -112,6 +113,15 @@ function onPointerUp(): void {
   cursor: ns-resize;
 }
 
+.param-lane:focus {
+  outline: none;
+}
+
+/* Make the draggable editing surface legible to keyboard / focus users. */
+.param-lane:focus-visible {
+  box-shadow: var(--inset-well), var(--ring);
+}
+
 .lane-center-line {
   position: absolute;
   left: var(--sp-2);
@@ -130,18 +140,24 @@ function onPointerUp(): void {
 .bar-slot {
   position: relative;
   flex: 1;
-  min-width: 8px;
+  min-width: var(--seq-cell-min);
 }
 
 .bar {
   position: absolute;
   left: 1px;
   right: 1px;
-  background: #4f86d8;
+  background: var(--accent);
   border-radius: 1px;
+  transition: background var(--dur-1) var(--ease-out);
+}
+
+/* Highlight the step under the cursor so the editable column is obvious. */
+.bar-slot:hover .bar {
+  background: var(--accent-hover);
 }
 
 .bar-inactive .bar {
-  background: #2e3542;
+  background: var(--surface-4);
 }
 </style>

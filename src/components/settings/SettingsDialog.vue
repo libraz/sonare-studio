@@ -24,7 +24,7 @@ import {
   formatKeyCombo,
 } from '@/ui/settings/key-combo';
 import type { LayoutBindings } from '@/ui/settings/layouts';
-import type { ShortcutActionDef } from '@/ui/settings/shortcuts';
+import type { ShortcutActionDef, ShortcutScope } from '@/ui/settings/shortcuts';
 
 /**
  * Tabbed application-settings modal: General preferences, shortcut remapping
@@ -218,6 +218,10 @@ function shortcutGroupLabel(group: string): string {
   return t.value.shortcuts.groups[group as keyof typeof t.value.shortcuts.groups] ?? group;
 }
 
+function shortcutScopeLabel(scope: ShortcutScope): string {
+  return t.value.dialogs.shortcutsHelp.scopes[scope] ?? scope;
+}
+
 function onCaptureKeydown(event: KeyboardEvent): void {
   event.preventDefault();
   event.stopPropagation();
@@ -328,328 +332,330 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-if="props.open" class="dialog-overlay" @click.self="close">
-    <div
-      ref="dialogRef"
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      :aria-label="t.settings.title"
-      tabindex="-1"
-      @keydown="onDialogKeydown"
-    >
-      <h2 class="dialog-title">{{ t.settings.title }}</h2>
+  <Transition name="dialog">
+    <div v-if="props.open" class="dialog-overlay" @click.self="close">
       <div
-        class="tabs"
-        role="tablist"
-        :aria-label="t.settings.sectionsLabel"
-        @keydown="onTabKeydown"
+        ref="dialogRef"
+        class="dialog"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="t.settings.title"
+        tabindex="-1"
+        @keydown="onDialogKeydown"
       >
-        <button
-          v-for="tab in TABS"
-          :key="tab.id"
-          type="button"
-          class="tab"
-          :class="{ active: activeTab === tab.id }"
-          role="tab"
-          :aria-selected="activeTab === tab.id"
-          :aria-controls="`settings-panel-${tab.id}`"
-          :tabindex="activeTab === tab.id ? 0 : -1"
-          @click="activeTab = tab.id"
+        <h2 class="dialog-title">{{ t.settings.title }}</h2>
+        <div
+          class="tabs"
+          role="tablist"
+          :aria-label="t.settings.sectionsLabel"
+          @keydown="onTabKeydown"
         >
-          {{ tab.label }}
-        </button>
-      </div>
-
-      <div
-        v-if="activeTab === 'general'"
-        id="settings-panel-general"
-        class="panel"
-        role="tabpanel"
-        :aria-label="t.settings.tabs.general"
-      >
-        <div class="row">
-          <span class="row-label">{{ t.settings.general.language }}</span>
-          <SelectMenu
-            class="row-select"
-            :model-value="appSettings.settings.language"
-            :options="LANGUAGE_OPTIONS"
-            :aria-label="t.settings.general.language"
-            size="sm"
-            @change="onLanguageChange"
-          />
-        </div>
-        <div class="row">
-          <span class="row-label">{{ t.settings.general.theme }}</span>
-          <SelectMenu
-            class="row-select"
-            :model-value="appSettings.settings.theme"
-            :options="THEME_OPTIONS"
-            :aria-label="t.settings.general.theme"
-            size="sm"
-            @change="onThemeChange"
-          />
-        </div>
-        <div class="row">
-          <span class="row-label">{{ t.settings.general.editorDensity }}</span>
-          <SelectMenu
-            class="row-select"
-            :model-value="appSettings.settings.editorDensity"
-            :options="EDITOR_DENSITY_OPTIONS"
-            :aria-label="t.settings.general.editorDensity"
-            size="sm"
-            @change="onEditorDensityChange"
-          />
-        </div>
-        <label class="row">
-          <span class="row-label">{{ t.settings.general.snapDefault }}</span>
-          <input
-            type="checkbox"
-            :checked="appSettings.settings.snapDefault"
-            @change="appSettings.set('snapDefault', ($event.target as HTMLInputElement).checked)"
-          />
-        </label>
-        <label class="row">
-          <span class="row-label">{{ t.settings.general.countInBars }}</span>
-          <input
-            type="number"
-            :min="COUNT_IN_BARS_MIN"
-            :max="COUNT_IN_BARS_MAX"
-            :value="appSettings.settings.countInBars"
-            @change="onCountInInput"
-          />
-        </label>
-        <label class="row">
-          <span class="row-label">{{ t.settings.general.monitorDefault }}</span>
-          <input
-            type="checkbox"
-            :checked="appSettings.settings.monitorDefault"
-            @change="appSettings.set('monitorDefault', ($event.target as HTMLInputElement).checked)"
-          />
-        </label>
-        <label class="row">
-          <span class="row-label">{{ t.settings.general.autosaveInterval }}</span>
-          <input
-            type="number"
-            :min="AUTOSAVE_INTERVAL_MIN_MS / 1000"
-            :max="AUTOSAVE_INTERVAL_MAX_MS / 1000"
-            :value="autosaveSeconds"
-            @change="onAutosaveSecondsInput"
-          />
-        </label>
-        <label class="row">
-          <span class="row-label">{{ t.settings.general.loudnessTarget }}</span>
-          <input
-            type="number"
-            :min="LOUDNESS_TARGET_MIN_LUFS"
-            :max="LOUDNESS_TARGET_MAX_LUFS"
-            :value="appSettings.settings.loudnessTargetLufs"
-            @change="onLoudnessTargetInput"
-          />
-        </label>
-        <label class="row">
-          <span class="row-label">{{ t.settings.general.scrollFollowPlayhead }}</span>
-          <input
-            type="checkbox"
-            :checked="appSettings.settings.scrollFollowPlayhead"
-            @change="
-              appSettings.set('scrollFollowPlayhead', ($event.target as HTMLInputElement).checked)
-            "
-          />
-        </label>
-        <label class="row">
-          <span class="row-label">{{ t.settings.general.confirmDestructive }}</span>
-          <input
-            type="checkbox"
-            :checked="appSettings.settings.confirmDestructive"
-            @change="
-              appSettings.set('confirmDestructive', ($event.target as HTMLInputElement).checked)
-            "
-          />
-        </label>
-        <div class="panel-actions">
-          <button type="button" @click="appSettings.reset()">
-            {{ t.settings.general.resetDefaults }}
-          </button>
-        </div>
-      </div>
-
-      <div
-        v-else-if="activeTab === 'shortcuts'"
-        id="settings-panel-shortcuts"
-        class="panel"
-        role="tabpanel"
-        :aria-label="t.settings.tabs.shortcuts"
-      >
-        <p v-if="shortcuts.conflicts.value.length > 0" class="conflict-banner" role="alert">
-          {{ t.settings.shortcuts.conflict }}
-        </p>
-        <div class="shortcut-filters">
-          <input
-            v-model="shortcutQuery"
-            type="search"
-            class="shortcut-search"
-            :placeholder="t.settings.shortcuts.searchPlaceholder"
-            :aria-label="t.settings.shortcuts.searchLabel"
-          />
-          <SelectMenu
-            v-model="shortcutGroup"
-            :options="shortcutGroupOptions"
-            class="shortcut-group"
-            :aria-label="t.settings.shortcuts.categoryLabel"
-            size="sm"
-          />
-        </div>
-        <table class="shortcut-table">
-          <thead>
-            <tr>
-              <th scope="col">{{ t.settings.shortcuts.action }}</th>
-              <th scope="col">{{ t.settings.shortcuts.category }}</th>
-              <th scope="col">{{ t.settings.shortcuts.scope }}</th>
-              <th scope="col">{{ t.settings.shortcuts.keys }}</th>
-              <th scope="col">
-                <span class="visually-hidden">{{ t.settings.shortcuts.editHidden }}</span>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-if="visibleShortcuts.length === 0">
-              <td class="shortcut-empty" colspan="5">{{ t.settings.shortcuts.noMatches }}</td>
-            </tr>
-            <tr
-              v-for="action in visibleShortcuts"
-              :key="action.id"
-              :class="{ conflict: conflictActionIds.has(action.id) }"
-              :data-action-id="action.id"
-            >
-              <td>{{ shortcutActionLabel(action) }}</td>
-              <td class="group-cell">{{ shortcutGroupLabel(action.group) }}</td>
-              <td class="scope-cell">{{ action.when }}</td>
-              <td class="keys-cell">
-                <span v-if="capturingId === action.id" class="capturing">
-                  {{ t.settings.shortcuts.capturing }}
-                </span>
-                <span v-else>{{ keysText(action) }}</span>
-              </td>
-              <td class="edit-cell">
-                <template v-if="action.customizable">
-                  <button
-                    type="button"
-                    class="small"
-                    :aria-label="
-                      formatMessage(t.settings.shortcuts.changeKeys, {
-                        action: shortcutActionLabel(action),
-                      })
-                    "
-                    @click="capturingId === action.id ? stopCapture() : startCapture(action.id)"
-                  >
-                    {{
-                      capturingId === action.id
-                        ? t.settings.shortcuts.cancel
-                        : t.settings.shortcuts.edit
-                    }}
-                  </button>
-                  <button
-                    v-if="shortcuts.isOverridden(action.id)"
-                    type="button"
-                    class="small"
-                    :aria-label="
-                      formatMessage(t.settings.shortcuts.resetKeys, {
-                        action: shortcutActionLabel(action),
-                      })
-                    "
-                    @click="resetActionKeys(action.id)"
-                  >
-                    {{ t.settings.shortcuts.reset }}
-                  </button>
-                </template>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-        <div class="panel-actions">
-          <button type="button" @click="shortcuts.resetAll()">
-            {{ t.settings.shortcuts.resetAll }}
-          </button>
-        </div>
-      </div>
-
-      <div
-        v-else
-        id="settings-panel-layouts"
-        class="panel"
-        role="tabpanel"
-        :aria-label="t.settings.tabs.layouts"
-      >
-        <h3 class="panel-heading">{{ t.settings.layouts.presets }}</h3>
-        <ul class="layout-list">
-          <li v-for="layout in namedLayouts.presets" :key="layout.name" class="layout-item">
-            <span class="layout-name">{{ layout.name }}</span>
-            <span class="layout-actions">
-              <button
-                type="button"
-                class="small"
-                :disabled="props.layoutBindings === null"
-                @click="applyLayout(layout.name)"
-              >
-                {{ t.settings.layouts.apply }}
-              </button>
-            </span>
-          </li>
-        </ul>
-        <h3 class="panel-heading">{{ t.settings.layouts.myLayouts }}</h3>
-        <p v-if="namedLayouts.userLayouts.value.length === 0" class="layout-empty">
-          {{ t.settings.layouts.noSaved }}
-        </p>
-        <ul v-else class="layout-list">
-          <li
-            v-for="layout in namedLayouts.userLayouts.value"
-            :key="layout.name"
-            class="layout-item"
-          >
-            <span class="layout-name">{{ layout.name }}</span>
-            <span class="layout-actions">
-              <button
-                type="button"
-                class="small"
-                :disabled="props.layoutBindings === null"
-                @click="applyLayout(layout.name)"
-              >
-                {{ t.settings.layouts.apply }}
-              </button>
-              <button type="button" class="small" @click="renameLayout(layout.name)">
-                {{ t.settings.layouts.rename }}
-              </button>
-              <button type="button" class="small" @click="deleteLayout(layout.name)">
-                {{ t.settings.layouts.delete }}
-              </button>
-            </span>
-          </li>
-        </ul>
-        <div class="layout-save">
-          <input
-            v-model="newLayoutName"
-            type="text"
-            :placeholder="t.settings.layouts.layoutNamePlaceholder"
-            :aria-label="t.settings.layouts.newLayoutName"
-            @keydown.enter.prevent="saveCurrentLayout"
-          />
           <button
+            v-for="tab in TABS"
+            :key="tab.id"
             type="button"
-            :disabled="props.layoutBindings === null"
-            @click="saveCurrentLayout"
+            class="tab"
+            :class="{ active: activeTab === tab.id }"
+            role="tab"
+            :aria-selected="activeTab === tab.id"
+            :aria-controls="`settings-panel-${tab.id}`"
+            :tabindex="activeTab === tab.id ? 0 : -1"
+            @click="activeTab = tab.id"
           >
-            {{ t.settings.layouts.saveCurrent }}
+            {{ tab.label }}
           </button>
         </div>
-        <p v-if="layoutError !== ''" class="layout-error" role="alert">{{ layoutError }}</p>
-      </div>
 
-      <div class="dialog-actions">
-        <button type="button" class="primary" @click="close">{{ t.settings.close }}</button>
+        <div
+          v-if="activeTab === 'general'"
+          id="settings-panel-general"
+          class="panel"
+          role="tabpanel"
+          :aria-label="t.settings.tabs.general"
+        >
+          <div class="row">
+            <span class="row-label">{{ t.settings.general.language }}</span>
+            <SelectMenu
+              class="row-select"
+              :model-value="appSettings.settings.language"
+              :options="LANGUAGE_OPTIONS"
+              :aria-label="t.settings.general.language"
+              size="sm"
+              @change="onLanguageChange"
+            />
+          </div>
+          <div class="row">
+            <span class="row-label">{{ t.settings.general.theme }}</span>
+            <SelectMenu
+              class="row-select"
+              :model-value="appSettings.settings.theme"
+              :options="THEME_OPTIONS"
+              :aria-label="t.settings.general.theme"
+              size="sm"
+              @change="onThemeChange"
+            />
+          </div>
+          <div class="row">
+            <span class="row-label">{{ t.settings.general.editorDensity }}</span>
+            <SelectMenu
+              class="row-select"
+              :model-value="appSettings.settings.editorDensity"
+              :options="EDITOR_DENSITY_OPTIONS"
+              :aria-label="t.settings.general.editorDensity"
+              size="sm"
+              @change="onEditorDensityChange"
+            />
+          </div>
+          <label class="row">
+            <span class="row-label">{{ t.settings.general.snapDefault }}</span>
+            <input
+              type="checkbox"
+              :checked="appSettings.settings.snapDefault"
+              @change="appSettings.set('snapDefault', ($event.target as HTMLInputElement).checked)"
+            />
+          </label>
+          <label class="row">
+            <span class="row-label">{{ t.settings.general.countInBars }}</span>
+            <input
+              type="number"
+              :min="COUNT_IN_BARS_MIN"
+              :max="COUNT_IN_BARS_MAX"
+              :value="appSettings.settings.countInBars"
+              @change="onCountInInput"
+            />
+          </label>
+          <label class="row">
+            <span class="row-label">{{ t.settings.general.monitorDefault }}</span>
+            <input
+              type="checkbox"
+              :checked="appSettings.settings.monitorDefault"
+              @change="appSettings.set('monitorDefault', ($event.target as HTMLInputElement).checked)"
+            />
+          </label>
+          <label class="row">
+            <span class="row-label">{{ t.settings.general.autosaveInterval }}</span>
+            <input
+              type="number"
+              :min="AUTOSAVE_INTERVAL_MIN_MS / 1000"
+              :max="AUTOSAVE_INTERVAL_MAX_MS / 1000"
+              :value="autosaveSeconds"
+              @change="onAutosaveSecondsInput"
+            />
+          </label>
+          <label class="row">
+            <span class="row-label">{{ t.settings.general.loudnessTarget }}</span>
+            <input
+              type="number"
+              :min="LOUDNESS_TARGET_MIN_LUFS"
+              :max="LOUDNESS_TARGET_MAX_LUFS"
+              :value="appSettings.settings.loudnessTargetLufs"
+              @change="onLoudnessTargetInput"
+            />
+          </label>
+          <label class="row">
+            <span class="row-label">{{ t.settings.general.scrollFollowPlayhead }}</span>
+            <input
+              type="checkbox"
+              :checked="appSettings.settings.scrollFollowPlayhead"
+              @change="
+                appSettings.set('scrollFollowPlayhead', ($event.target as HTMLInputElement).checked)
+              "
+            />
+          </label>
+          <label class="row">
+            <span class="row-label">{{ t.settings.general.confirmDestructive }}</span>
+            <input
+              type="checkbox"
+              :checked="appSettings.settings.confirmDestructive"
+              @change="
+                appSettings.set('confirmDestructive', ($event.target as HTMLInputElement).checked)
+              "
+            />
+          </label>
+          <div class="panel-actions">
+            <button type="button" @click="appSettings.reset()">
+              {{ t.settings.general.resetDefaults }}
+            </button>
+          </div>
+        </div>
+
+        <div
+          v-else-if="activeTab === 'shortcuts'"
+          id="settings-panel-shortcuts"
+          class="panel"
+          role="tabpanel"
+          :aria-label="t.settings.tabs.shortcuts"
+        >
+          <p v-if="shortcuts.conflicts.value.length > 0" class="conflict-banner" role="alert">
+            {{ t.settings.shortcuts.conflict }}
+          </p>
+          <div class="shortcut-filters">
+            <input
+              v-model="shortcutQuery"
+              type="search"
+              class="shortcut-search"
+              :placeholder="t.settings.shortcuts.searchPlaceholder"
+              :aria-label="t.settings.shortcuts.searchLabel"
+            />
+            <SelectMenu
+              v-model="shortcutGroup"
+              :options="shortcutGroupOptions"
+              class="shortcut-group"
+              :aria-label="t.settings.shortcuts.categoryLabel"
+              size="sm"
+            />
+          </div>
+          <table class="shortcut-table">
+            <thead>
+              <tr>
+                <th scope="col">{{ t.settings.shortcuts.action }}</th>
+                <th scope="col">{{ t.settings.shortcuts.category }}</th>
+                <th scope="col">{{ t.settings.shortcuts.scope }}</th>
+                <th scope="col">{{ t.settings.shortcuts.keys }}</th>
+                <th scope="col">
+                  <span class="visually-hidden">{{ t.settings.shortcuts.editHidden }}</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="visibleShortcuts.length === 0">
+                <td class="shortcut-empty" colspan="5">{{ t.settings.shortcuts.noMatches }}</td>
+              </tr>
+              <tr
+                v-for="action in visibleShortcuts"
+                :key="action.id"
+                :class="{ conflict: conflictActionIds.has(action.id) }"
+                :data-action-id="action.id"
+              >
+                <td>{{ shortcutActionLabel(action) }}</td>
+                <td class="group-cell">{{ shortcutGroupLabel(action.group) }}</td>
+                <td class="scope-cell">{{ shortcutScopeLabel(action.when) }}</td>
+                <td class="keys-cell">
+                  <span v-if="capturingId === action.id" class="capturing">
+                    {{ t.settings.shortcuts.capturing }}
+                  </span>
+                  <span v-else class="keys-chip">{{ keysText(action) }}</span>
+                </td>
+                <td class="edit-cell">
+                  <template v-if="action.customizable">
+                    <button
+                      type="button"
+                      class="small"
+                      :aria-label="
+                        formatMessage(t.settings.shortcuts.changeKeys, {
+                          action: shortcutActionLabel(action),
+                        })
+                      "
+                      @click="capturingId === action.id ? stopCapture() : startCapture(action.id)"
+                    >
+                      {{
+                        capturingId === action.id
+                          ? t.settings.shortcuts.cancel
+                          : t.settings.shortcuts.edit
+                      }}
+                    </button>
+                    <button
+                      v-if="shortcuts.isOverridden(action.id)"
+                      type="button"
+                      class="small"
+                      :aria-label="
+                        formatMessage(t.settings.shortcuts.resetKeys, {
+                          action: shortcutActionLabel(action),
+                        })
+                      "
+                      @click="resetActionKeys(action.id)"
+                    >
+                      {{ t.settings.shortcuts.reset }}
+                    </button>
+                  </template>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="panel-actions">
+            <button type="button" @click="shortcuts.resetAll()">
+              {{ t.settings.shortcuts.resetAll }}
+            </button>
+          </div>
+        </div>
+
+        <div
+          v-else
+          id="settings-panel-layouts"
+          class="panel"
+          role="tabpanel"
+          :aria-label="t.settings.tabs.layouts"
+        >
+          <h3 class="panel-heading">{{ t.settings.layouts.presets }}</h3>
+          <ul class="layout-list">
+            <li v-for="layout in namedLayouts.presets" :key="layout.name" class="layout-item">
+              <span class="layout-name">{{ layout.name }}</span>
+              <span class="layout-actions">
+                <button
+                  type="button"
+                  class="small"
+                  :disabled="props.layoutBindings === null"
+                  @click="applyLayout(layout.name)"
+                >
+                  {{ t.settings.layouts.apply }}
+                </button>
+              </span>
+            </li>
+          </ul>
+          <h3 class="panel-heading">{{ t.settings.layouts.myLayouts }}</h3>
+          <p v-if="namedLayouts.userLayouts.value.length === 0" class="layout-empty">
+            {{ t.settings.layouts.noSaved }}
+          </p>
+          <ul v-else class="layout-list">
+            <li
+              v-for="layout in namedLayouts.userLayouts.value"
+              :key="layout.name"
+              class="layout-item"
+            >
+              <span class="layout-name">{{ layout.name }}</span>
+              <span class="layout-actions">
+                <button
+                  type="button"
+                  class="small"
+                  :disabled="props.layoutBindings === null"
+                  @click="applyLayout(layout.name)"
+                >
+                  {{ t.settings.layouts.apply }}
+                </button>
+                <button type="button" class="small" @click="renameLayout(layout.name)">
+                  {{ t.settings.layouts.rename }}
+                </button>
+                <button type="button" class="small" @click="deleteLayout(layout.name)">
+                  {{ t.settings.layouts.delete }}
+                </button>
+              </span>
+            </li>
+          </ul>
+          <div class="layout-save">
+            <input
+              v-model="newLayoutName"
+              type="text"
+              :placeholder="t.settings.layouts.layoutNamePlaceholder"
+              :aria-label="t.settings.layouts.newLayoutName"
+              @keydown.enter.prevent="saveCurrentLayout"
+            />
+            <button
+              type="button"
+              :disabled="props.layoutBindings === null"
+              @click="saveCurrentLayout"
+            >
+              {{ t.settings.layouts.saveCurrent }}
+            </button>
+          </div>
+          <p v-if="layoutError !== ''" class="layout-error" role="alert">{{ layoutError }}</p>
+        </div>
+
+        <div class="dialog-actions">
+          <button type="button" class="primary" @click="close">{{ t.settings.close }}</button>
+        </div>
       </div>
     </div>
-  </div>
+  </Transition>
 </template>
 
 <style scoped>
@@ -661,21 +667,52 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   background: var(--scrim);
-  -webkit-backdrop-filter: blur(3px);
-  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: var(--scrim-blur);
+  backdrop-filter: var(--scrim-blur);
+}
+
+/* Entrance/exit motion mirrors the canonical modal: the scrim fades while the
+ * panel springs in. Durations collapse to 0 under prefers-reduced-motion. */
+.dialog-enter-active,
+.dialog-leave-active {
+  transition: opacity var(--dur-2) var(--ease-out);
+}
+
+.dialog-enter-active .dialog {
+  transition: transform var(--dur-3) var(--ease-spring),
+    opacity var(--dur-2) var(--ease-out);
+}
+
+.dialog-leave-active .dialog {
+  transition: transform var(--dur-2) var(--ease-out),
+    opacity var(--dur-2) var(--ease-out);
+}
+
+.dialog-enter-from,
+.dialog-leave-to {
+  opacity: 0;
+}
+
+.dialog-enter-from .dialog {
+  opacity: 0;
+  transform: scale(0.94) translateY(8px);
+}
+
+.dialog-leave-to .dialog {
+  opacity: 0;
+  transform: scale(0.97);
 }
 
 .dialog {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: var(--sp-4);
   width: min(38rem, calc(100vw - 2rem));
   max-height: calc(100vh - 4rem);
-  padding: 1.25rem 1.4rem;
+  padding: var(--sp-6);
   background: var(--glass-3);
   -webkit-backdrop-filter: var(--glass-blur-strong);
   backdrop-filter: var(--glass-blur-strong);
-  border: 1px solid var(--border);
   border-radius: var(--radius-xl);
   box-shadow: var(--glass-hairline), var(--shadow-modal);
   color: var(--text-1);
@@ -695,7 +732,7 @@ onBeforeUnmount(() => {
 
 .tabs {
   display: flex;
-  gap: 0.25rem;
+  gap: var(--sp-2);
   border-bottom: 1px solid var(--border);
 }
 
@@ -706,7 +743,7 @@ onBeforeUnmount(() => {
   border-radius: 0;
   border-bottom: 2px solid transparent;
   color: var(--text-3);
-  padding: 0.3rem 0.7rem;
+  padding: var(--sp-3) var(--sp-5);
   cursor: pointer;
   font-size: var(--fs-sm);
   transition:
@@ -722,7 +759,7 @@ onBeforeUnmount(() => {
 .panel {
   display: flex;
   flex-direction: column;
-  gap: 0.45rem;
+  gap: var(--sp-3);
   overflow: auto;
   min-height: 12rem;
 }
@@ -740,7 +777,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: var(--sp-5);
 }
 
 .row-label {
@@ -751,18 +788,10 @@ onBeforeUnmount(() => {
   width: 4.5rem;
 }
 
+/* Tighter radius than the controls.css input baseline; face/focus inherited. */
 .row input {
-  background: var(--surface-inset);
-  border: none;
   border-radius: var(--radius-sm);
-  color: var(--text-1);
   padding: 0.15rem 0.3rem;
-  box-shadow: var(--control-edge), var(--inset-well);
-}
-
-.row input:focus,
-.row input:focus-visible {
-  box-shadow: inset 0 0 0 1px var(--accent), var(--inset-well), var(--ring);
 }
 
 .row-select {
@@ -771,8 +800,8 @@ onBeforeUnmount(() => {
 
 .shortcut-filters {
   display: flex;
-  gap: 0.5rem;
-  margin-bottom: 0.5rem;
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-4);
 }
 
 .shortcut-search {
@@ -788,7 +817,7 @@ onBeforeUnmount(() => {
   color: var(--text-3);
   font-style: italic;
   text-align: center;
-  padding: 0.6rem 0.4rem;
+  padding: var(--sp-4) var(--sp-3);
 }
 
 .group-cell {
@@ -828,7 +857,18 @@ onBeforeUnmount(() => {
 
 .keys-cell {
   font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* Render the current binding as a subtle keycap so the keys column reads as
+ * the scannable, editable value rather than plain inline text. */
+.keys-chip {
+  display: inline-block;
+  background: var(--surface-inset);
+  box-shadow: var(--control-edge);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--sp-2);
 }
 
 .capturing {
@@ -893,7 +933,7 @@ button.small:disabled {
 }
 
 .layout-name {
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
 }
 
 .layout-empty {
