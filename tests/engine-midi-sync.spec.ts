@@ -617,7 +617,7 @@ describe('createMidiSync', () => {
     expect(sync.scheduledClipCount()).toBe(1);
   });
 
-  it('warns when tracks request distinct SoundFonts and loads both', async () => {
+  it('warns on distinct SoundFonts and loads only the last track in order', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
       const { handle, engine } = makeHandle();
@@ -630,10 +630,39 @@ describe('createMidiSync', () => {
 
       await sync.sync(tracks, [], TEMPO_120);
       expect(warn).toHaveBeenCalledTimes(1);
-      expect(loadFont).toHaveBeenCalledTimes(2);
-      expect(loadFont).toHaveBeenNthCalledWith(1, 'font-a');
-      expect(loadFont).toHaveBeenNthCalledWith(2, 'font-b');
-      expect(engine.loadSoundFont).toHaveBeenCalledTimes(2);
+      // Only the winning font (the last SF2 track in order) loads into the
+      // single global slot, deterministically and matching the offline render.
+      expect(loadFont).toHaveBeenCalledTimes(1);
+      expect(loadFont).toHaveBeenCalledWith('font-b');
+      expect(engine.loadSoundFont).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('keeps the winning font fixed when a non-last SF2 track is edited', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const { handle } = makeHandle();
+      const loadFont = vi.fn(async (fontId: string) => new Uint8Array([fontId.length]));
+      const sync = createMidiSync(handle, { loadFont });
+      const tracks = [
+        makeTrack(1, { instrument: { kind: 'sf2', fontId: 'font-a' } }),
+        makeTrack(2, { instrument: { kind: 'sf2', fontId: 'font-b' } }),
+      ];
+      await sync.sync(tracks, [], TEMPO_120);
+      expect(loadFont).toHaveBeenLastCalledWith('font-b');
+
+      // Editing the first (non-winning) track must not steal the global slot:
+      // the last track in order still wins, so live stays consistent.
+      const edited = [
+        makeTrack(1, { instrument: { kind: 'sf2', fontId: 'font-c' } }),
+        makeTrack(2, { instrument: { kind: 'sf2', fontId: 'font-b' } }),
+      ];
+      await sync.sync(edited, [], TEMPO_120);
+      // font-b is already the loaded winner, so no extra font load happens.
+      expect(loadFont).toHaveBeenCalledTimes(1);
+      expect(loadFont).toHaveBeenLastCalledWith('font-b');
     } finally {
       warn.mockRestore();
     }

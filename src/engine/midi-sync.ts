@@ -364,16 +364,27 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
     // tracks play their baked render, not the synth, so they neither need a
     // font nor count toward the single-font contention.
     const fontIds = new Set<string>();
+    let winningFontId: string | undefined;
     for (const track of tracks) {
       if (track.frozen !== undefined) continue;
       if (track.kind === 'midi' && track.instrument?.kind === 'sf2') {
         fontIds.add(track.instrument.fontId);
+        // Last SF2 track in track order wins the single global slot.
+        winningFontId = track.instrument.fontId;
       }
     }
     if (fontIds.size > 1) {
       console.warn(
-        `MIDI sync: ${fontIds.size} distinct SoundFonts requested, but the engine holds a single global SoundFont — the last loaded font wins.`,
+        `MIDI sync: ${fontIds.size} distinct SoundFonts requested, but the engine holds a single global SoundFont — the last track's font wins.`,
       );
+    }
+    // Load the global SoundFont once, deterministically (the last SF2 track in
+    // track order), so live playback matches the offline render regardless of
+    // which track's instrument was edited most recently.
+    if (winningFontId !== undefined && winningFontId !== loadedFontId) {
+      const bytes = await loadFontBytes(winningFontId);
+      handle.engine.loadSoundFont(bytes);
+      loadedFontId = winningFontId;
     }
 
     for (const track of tracks) {
@@ -391,11 +402,8 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
       } else if (instrument.kind === 'synth-patch') {
         handle.engine.setSynthInstrument(track.id, instrument.patch as Record<string, unknown>);
       } else {
-        if (instrument.fontId !== loadedFontId) {
-          const bytes = await loadFontBytes(instrument.fontId);
-          handle.engine.loadSoundFont(bytes);
-          loadedFontId = instrument.fontId;
-        }
+        // The global SoundFont is already loaded above (last SF2 track wins);
+        // binding the track just points it at that shared font.
         handle.engine.setSf2Instrument(track.id, {});
       }
       lastInstrumentKeyByTrack.set(track.id, instrumentKey);
