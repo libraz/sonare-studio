@@ -161,11 +161,13 @@ function midiData1(word0: number): number {
  */
 class AudibilityEngine extends FakeEngine {
   private cursor = 0;
+  private playing = false;
   private laneIds: number[] = [];
   private laneSoloMute = new Map<number, { solo: boolean; mute: boolean }>();
   private masterGain = 1;
   private audioClips: Array<{
     trackId: number;
+    channels: Float32Array[];
     startSample: number;
     lengthSamples: number;
     gain: number;
@@ -188,11 +190,18 @@ class AudibilityEngine extends FakeEngine {
   }
 
   setClips(
-    clips: Array<{ trackId: number; startPpq: number; lengthSamples: number; gain?: number }>,
+    clips: Array<{
+      trackId: number;
+      channels?: Float32Array[];
+      startPpq: number;
+      lengthSamples: number;
+      gain?: number;
+    }>,
   ): void {
     super.setClips(clips);
     this.audioClips = clips.map((clip) => ({
       trackId: clip.trackId,
+      channels: clip.channels ?? [],
       startSample: Math.round(clip.startPpq * SAMPLES_PER_PPQ),
       lengthSamples: clip.lengthSamples,
       gain: clip.gain ?? 1,
@@ -234,7 +243,18 @@ class AudibilityEngine extends FakeEngine {
     this.cursor = sample;
   }
 
+  play(): void {
+    super.play();
+    this.playing = true;
+  }
+
+  stop(): void {
+    super.stop();
+    this.playing = false;
+  }
+
   process(channels: Float32Array[]): Float32Array[] {
+    if (!this.playing) return channels;
     const anySolo = [...this.laneSoloMute.values()].some((state) => state.solo);
     const audibleTrackIds = new Set(
       this.laneIds.filter((trackId, laneIndex) => {
@@ -248,7 +268,8 @@ class AudibilityEngine extends FakeEngine {
       for (const clip of this.audioClips) {
         if (!audibleTrackIds.has(clip.trackId)) continue;
         if (frame >= clip.startSample && frame < clip.startSample + clip.lengthSamples) {
-          sample += clip.gain;
+          const clipFrame = frame - clip.startSample;
+          sample += (clip.channels[0]?.[clipFrame] ?? 1) * clip.gain;
         }
       }
       for (const note of this.midiNotes) {
