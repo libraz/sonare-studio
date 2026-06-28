@@ -1,7 +1,9 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { busAutomationTarget } from '@/project/automation';
 import {
   addMidiClip,
+  addMixerBus,
   addNote,
   addTrack,
   bakeClipMidiFx,
@@ -19,6 +21,7 @@ import {
   redo,
   removeAutomationLane,
   removeMarker,
+  removeMixerBus,
   removeTrack,
   renameClip,
   renameTrack,
@@ -1014,6 +1017,35 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       );
       setAutomationLanePoints('master', 'faderDb', [{ ppq: 0, value: 0 }]);
       expect(store.automationLanes[0].target).toBe('master');
+    });
+
+    it('supports fader automation on mixer buses and rejects bus pan automation', () => {
+      const busId = addMixerBus({ name: 'FX' });
+      const target = busAutomationTarget(busId);
+
+      setAutomationLanePoints(target, 'faderDb', [{ ppq: 0, value: -9 }]);
+
+      expect(store.automationLanes).toEqual([
+        { target, param: 'faderDb', points: [{ ppq: 0, value: -9 }], enabled: true },
+      ]);
+      expect(() => setAutomationLanePoints(target, 'pan', [{ ppq: 0, value: 0 }])).toThrow(
+        /buses only support fader/i,
+      );
+      expect(() => setAutomationLanePoints(busAutomationTarget('missing'), 'faderDb', [])).toThrow(
+        RangeError,
+      );
+    });
+
+    it('removes bus automation lanes when the bus is removed', () => {
+      const busId = addMixerBus({ name: 'FX' });
+      const target = busAutomationTarget(busId);
+      setAutomationLanePoints(target, 'faderDb', [{ ppq: 0, value: -9 }]);
+
+      removeMixerBus(busId);
+
+      expect(store.automationLanes).toEqual([]);
+      undo();
+      expect(store.automationLanes[0]?.target).toBe(target);
     });
 
     it('setAutomationLaneEnabled toggles and is a no-op for missing lanes', () => {

@@ -13,6 +13,7 @@ import {
   addAudioTrack,
   addGroupTrack,
   addTrack,
+  addVcaGroup,
   removeTrack,
   renameTrack,
   reorderTracks,
@@ -23,10 +24,12 @@ import {
   setTrackMute,
   setTrackPan,
   setTrackSolo,
+  setTrackVca,
   setTrackVolume,
 } from '@/project/commands';
 import { flattenClipComp } from '@/project/comp-flatten';
 import { bounceTrackRange, freezeTrack, unfreezeTrack } from '@/project/freeze';
+import { MAX_VCA_GROUPS } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import { type EditorTrack, TRACK_COLOR_PALETTE, type TrackKind } from '@/project/types';
 import {
@@ -207,6 +210,29 @@ const groupOptions = computed<{ value: string | number; label: string }[]>(() =>
 function onGroupChange(track: EditorTrack, value: string | number): void {
   try {
     setTrackGroup(track.id, value === GROUP_NONE ? null : Number(value));
+    error.value = '';
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
+}
+
+// --- VCA membership ----------------------------------------------------------
+
+/** VCA groups available as remote fader targets. */
+const vcaGroups = computed(() => store.mixer.vcaGroups ?? []);
+
+/** Sentinel value for the "No VCA" option. */
+const VCA_NONE = '';
+
+/** VCA picker options: "No VCA" plus every mixer VCA group. */
+const vcaOptions = computed<{ value: string; label: string }[]>(() => [
+  { value: VCA_NONE, label: t.value.shell.arrangement.trackHeader.noVca },
+  ...vcaGroups.value.map((group) => ({ value: group.id, label: group.name })),
+]);
+
+function onVcaChange(track: EditorTrack, value: string): void {
+  try {
+    setTrackVca(track.id, value === VCA_NONE ? null : value);
     error.value = '';
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
@@ -491,6 +517,26 @@ function onContextMenu(track: EditorTrack, event: MouseEvent): void {
       });
     }
   }
+  const groups = store.mixer.vcaGroups ?? [];
+  if (groups.length > 0 || groups.length < MAX_VCA_GROUPS) {
+    items.push({ id: 'sep-vca', separator: true });
+    for (const group of groups) {
+      const assigned = track.vcaId === group.id;
+      items.push({
+        id: `vca-${group.id}`,
+        label: group.name,
+        checked: assigned,
+        run: () => setTrackVca(track.id, assigned ? null : group.id),
+      });
+    }
+    if (groups.length < MAX_VCA_GROUPS) {
+      items.push({
+        id: 'vca-new',
+        label: t.value.shell.arrangement.trackHeader.newVcaGroup,
+        run: () => setTrackVca(track.id, addVcaGroup()),
+      });
+    }
+  }
   items.push(
     { id: 'sep-3', separator: true },
     {
@@ -753,6 +799,17 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                     formatMessage(t.shell.arrangement.trackHeader.groupOf, { name: track.name })
                   "
                   @change="onGroupChange(track, $event)"
+                />
+                <SelectMenu
+                  v-if="vcaGroups.length > 0"
+                  class="track-vca-select"
+                  size="sm"
+                  :model-value="track.vcaId ?? VCA_NONE"
+                  :options="vcaOptions"
+                  :aria-label="
+                    formatMessage(t.shell.arrangement.trackHeader.vcaOf, { name: track.name })
+                  "
+                  @change="onVcaChange(track, String($event))"
                 />
               </div>
             </div>

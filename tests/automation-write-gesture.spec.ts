@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { AutomationPoint } from '@/project/automation';
+import { busAutomationTarget } from '@/project/automation';
 import {
   AUTOMATION_WRITE_REPLACE_WINDOW_PPQ,
   AUTOMATION_WRITE_THROTTLE_PPQ,
   type AutomationWriteMode,
+  automationStripMode,
   createAutomationWriteGesture,
+  disengageAutomationWriteModes,
   isAutomationWriteMode,
+  resetAutomationStripModes,
+  setAutomationStripMode,
 } from '@/ui/mixer/automation-mode';
 
 /**
@@ -37,6 +42,18 @@ describe('isAutomationWriteMode', () => {
     expect(isAutomationWriteMode('latch')).toBe(true);
     expect(isAutomationWriteMode('read')).toBe(false);
     expect(isAutomationWriteMode('off')).toBe(false);
+  });
+});
+
+describe('automation strip modes', () => {
+  it('drops bus write modes back to read on transport stop', () => {
+    const target = busAutomationTarget('fx');
+    resetAutomationStripModes();
+
+    setAutomationStripMode(target, 'touch');
+    disengageAutomationWriteModes();
+
+    expect(automationStripMode(target)).toBe('read');
   });
 });
 

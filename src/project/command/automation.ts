@@ -1,7 +1,10 @@
 import {
   type AutomationParam,
   type AutomationPoint,
+  type AutomationTarget,
   automationLaneKey,
+  busIdFromAutomationTarget,
+  isBusAutomationTarget,
   sanitizeAutomationPoints,
 } from '../automation';
 import { useProjectStore } from '../store';
@@ -10,19 +13,30 @@ import { requireTrack } from './utils';
 
 /**
  * Validates an automation lane target: 'master' is always valid; numeric
- * targets must name an existing track (throws RangeError otherwise).
+ * targets must name an existing track; bus targets must name an existing bus
+ * and can only automate faderDb.
  */
 function validateAutomationTarget(
   store: ReturnType<typeof useProjectStore>,
-  target: number | 'master',
+  target: AutomationTarget,
+  param: AutomationParam,
 ): void {
-  if (target !== 'master') requireTrack(store, target);
+  if (target === 'master') return;
+  if (isBusAutomationTarget(target)) {
+    if (param !== 'faderDb') throw new RangeError('Mixer buses only support fader automation');
+    const busId = busIdFromAutomationTarget(target);
+    if (!store.mixer.buses.some((bus) => bus.id === busId)) {
+      throw new RangeError(`Unknown mixer bus id: ${busId}`);
+    }
+    return;
+  }
+  requireTrack(store, target);
 }
 
 /** Returns the index of the lane addressing (target, param), or -1. */
 function findAutomationLane(
   store: ReturnType<typeof useProjectStore>,
-  target: number | 'master',
+  target: AutomationTarget,
   param: AutomationParam,
 ): number {
   const key = automationLaneKey(target, param);
@@ -43,12 +57,12 @@ function findAutomationLane(
  * @param points New point list (replaces the lane's points).
  */
 export function setAutomationLanePoints(
-  target: number | 'master',
+  target: AutomationTarget,
   param: AutomationParam,
   points: ReadonlyArray<AutomationPoint>,
 ): void {
   const store = useProjectStore();
-  validateAutomationTarget(store, target);
+  validateAutomationTarget(store, target, param);
   const sanitized = sanitizeAutomationPoints(param, points);
   const index = findAutomationLane(store, target, param);
   if (sanitized.length === 0 && index < 0) return;
@@ -78,7 +92,7 @@ export function setAutomationLanePoints(
  * @param enabled New enabled state.
  */
 export function setAutomationLaneEnabled(
-  target: number | 'master',
+  target: AutomationTarget,
   param: AutomationParam,
   enabled: boolean,
 ): void {
@@ -100,7 +114,7 @@ export function setAutomationLaneEnabled(
  * @param target Lane target: a track id or 'master'.
  * @param param Automated parameter.
  */
-export function removeAutomationLane(target: number | 'master', param: AutomationParam): void {
+export function removeAutomationLane(target: AutomationTarget, param: AutomationParam): void {
   const store = useProjectStore();
   const index = findAutomationLane(store, target, param);
   if (index < 0) return;

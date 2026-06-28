@@ -381,7 +381,8 @@
   accent-color: var(--accent);
 }
 
-.track-group-select {
+.track-group-select,
+.track-vca-select {
   /* Pass-through wrapper: the inner SelectMenu trigger carries the control face. */
   flex: 1;
   min-width: 0;

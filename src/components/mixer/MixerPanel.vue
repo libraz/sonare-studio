@@ -205,6 +205,8 @@ onBeforeUnmount(() => {
         :key="bus.id"
         :bus="bus"
         :bridge="props.busMeterFor ? props.busMeterFor(bus.id) : null"
+        :position-ppq="props.positionPpq"
+        :is-playing="props.isPlaying"
       />
       <VcaStrip v-for="group in store.mixer.vcaGroups ?? []" :key="group.id" :group="group" />
       <div class="strips-spacer" />

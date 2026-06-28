@@ -49,6 +49,7 @@ import {
   masteringChainIsActive,
   type PanLawId,
   type PanModeId,
+  stripHasDsp,
   vcaOffsetDb,
 } from '@/project/mixer';
 import {
@@ -113,6 +114,7 @@ export interface OfflineRenderEngine {
   setTrackStripDualPan(trackId: number, leftPan: number, rightPan: number): void;
   setTrackStripChannelDelaySamples(trackId: number, delaySamples: number): void;
   setParameter(paramId: number, value: number): void;
+  busAutomationParamId(busId: number): number;
   setAutomationLane(
     paramId: number,
     points: Array<{ ppq: number; value: number; curveToNext?: number }>,
@@ -315,11 +317,14 @@ export async function renderProjectWithEngine(
     groupBusByTrackIndex.set(index, busId);
     buses.push({
       busId,
-      gainDb: groupBusGainDb({
-        volume: track.volume,
-        mute: track.mute,
-        ...(track.mixer !== undefined ? { mixer: track.mixer } : {}),
-      } as Parameters<typeof groupBusGainDb>[0]),
+      gainDb: groupBusGainDb(
+        {
+          volume: track.volume,
+          mute: track.mute,
+          ...(track.mixer !== undefined ? { mixer: track.mixer } : {}),
+        } as Parameters<typeof groupBusGainDb>[0],
+        vcaOffsetDb(track.vcaId, vcaGainDbById),
+      ),
     });
   });
   const lanes = doc.tracks.map((track, index) => {
@@ -527,6 +532,19 @@ export async function renderProjectWithEngine(
           ),
     );
 
+    for (const bus of doc.mixer?.buses ?? []) {
+      const busId = busNumberById.get(bus.id);
+      if (busId === undefined) continue;
+      const enabledInserts = (bus.strip?.inserts ?? []).filter((slot) => slot.enabled);
+      if (enabledInserts.length === 0) continue;
+      engine.setBusStripJson(
+        busId,
+        busSceneJson(busId, { ...(bus.strip as object), inserts: enabledInserts } as NonNullable<
+          typeof bus.strip
+        >),
+      );
+    }
+
     // Per-track strips (inserts + EQ + bypass flags), lane base fader/pan and
     // solo/mute — the same state the live mixer/strip syncs install. A stem
     // pass instead isolates one lane by muting every other one (solo would
@@ -539,7 +557,7 @@ export async function renderProjectWithEngine(
         // the audible group level was already baked into the bus gain.
         const busId = groupBusByTrackIndex.get(index);
         const enabledInserts = (strip?.inserts ?? []).filter((slot) => slot.enabled);
-        if (busId !== undefined && enabledInserts.length > 0) {
+        if (busId !== undefined && stripHasDsp(strip)) {
           engine.setBusStripJson(
             busId,
             busSceneJson(busId, { ...(strip as object), inserts: enabledInserts } as NonNullable<
@@ -549,7 +567,7 @@ export async function renderProjectWithEngine(
         }
         return;
       }
-      if (track.frozen === undefined && strip && (strip.inserts.length > 0 || strip.eq)) {
+      if (track.frozen === undefined && strip && stripHasDsp(strip)) {
         // Frozen tracks bypass their strip DSP (baked into the render).
         engine.setTrackStripJson(trackId, stripSceneJson(trackId, strip));
         strip.inserts.forEach((slot, insertIndex) => {
@@ -620,7 +638,7 @@ export async function renderProjectWithEngine(
     // Master strip: inserts/EQ only with the chain enabled; gain/pan whenever
     // the pass renders master levels (stems are pre-master).
     const master = doc.mixer?.master;
-    if (pass.masterStrip && master && (master.inserts.length > 0 || master.eq)) {
+    if (pass.masterStrip && master && stripHasDsp(master)) {
       engine.setMasterStripJson(stripSceneJson('master', master));
       master.inserts.forEach((slot, insertIndex) => {
         if (!slot.enabled) engine.setMasterStripInsertBypassed(insertIndex, true);
@@ -656,6 +674,21 @@ export async function renderProjectWithEngine(
         const kind = lane.param === 'pan' ? ENGINE_MIXER_PARAM_PAN : ENGINE_MIXER_PARAM_FADER_DB;
         engine.setAutomationLane(
           masterParamId(kind),
+          lane.points.map((point) => ({
+            ppq: point.ppq,
+            value: point.value,
+            curveToNext: automationCurveCode(point.curve),
+          })),
+        );
+      }
+    }
+    for (const bus of doc.mixer?.buses ?? []) {
+      const busId = busNumberById.get(bus.id);
+      if (busId === undefined) continue;
+      for (const lane of bus.automation ?? []) {
+        if (!lane.enabled || lane.param !== 'faderDb' || lane.points.length === 0) continue;
+        engine.setAutomationLane(
+          engine.busAutomationParamId(busId),
           lane.points.map((point) => ({
             ppq: point.ppq,
             value: point.value,

@@ -15,7 +15,11 @@ import {
   DISPLAY_TRANSPOSE_MIN,
   type ScoreAnnotations,
 } from './annotations';
-import { type AutomationLaneState, sanitizeAutomationEntries } from './automation';
+import {
+  type AutomationLaneState,
+  busAutomationTarget,
+  sanitizeAutomationEntries,
+} from './automation';
 import {
   chordsFromAnnotation,
   type EditorChordSymbol,
@@ -848,7 +852,12 @@ export const useProjectStore = defineStore('project', () => {
       project = created;
       audioSourceIds = loadedSourceIds;
       projectName.value = doc.name || DEFAULT_PROJECT_NAME;
-      mixer.value = doc.mixer ? cloneMixerState(doc.mixer) : createDefaultMixerState();
+      mixer.value = doc.mixer
+        ? cloneMixerState({
+            ...doc.mixer,
+            buses: doc.mixer.buses.map(({ automation: _automation, ...bus }) => bus),
+          })
+        : createDefaultMixerState();
       tracks.value = trackMirror;
       clips.value = [];
       markers.value = doc.markers.map((marker) => ({
@@ -869,6 +878,9 @@ export const useProjectStore = defineStore('project', () => {
       automationLanes.value = [
         ...laneMirror,
         ...sanitizeAutomationEntries(doc.masterAutomation, 'master'),
+        ...(doc.mixer?.buses.flatMap((bus) =>
+          sanitizeAutomationEntries(bus.automation, busAutomationTarget(bus.id)),
+        ) ?? []),
       ];
       // CC bindings are mutated in place to keep the map identity stable for
       // any long-lived MIDI-learn handle; malformed entries are dropped.

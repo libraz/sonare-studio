@@ -10,7 +10,7 @@ import { renderMixdownInWorker } from '@/export/client';
 import { encodeWav } from '@/export/wav';
 import { peakDb } from '@/lib/db';
 import { ingestAudioBuffer } from '@/project/audio-import';
-import type { AutomationParam, AutomationPoint } from '@/project/automation';
+import type { AutomationParam, AutomationPoint, AutomationTarget } from '@/project/automation';
 import {
   addAudioClip,
   addAudioTrack,
@@ -191,17 +191,17 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
     setLoopRange: (startPpq: number, endPpq: number, enabled: boolean) =>
       transport.setLoop(startPpq, endPpq, enabled),
     setAutomationLanePoints: (
-      target: number | 'master',
+      target: AutomationTarget,
       param: AutomationParam,
       points: AutomationPoint[],
     ) => setAutomationLanePoints(target, param, points),
-    removeAutomationLane: (target: number | 'master', param: AutomationParam) =>
+    removeAutomationLane: (target: AutomationTarget, param: AutomationParam) =>
       removeAutomationLane(target, param),
-    automationLanePoints: (target: number | 'master', param: AutomationParam) =>
+    automationLanePoints: (target: AutomationTarget, param: AutomationParam) =>
       store.automationLanes.find((lane) => lane.target === target && lane.param === param)
         ?.points ?? [],
-    stripAutomationMode: (target: number | 'master') => automationStripMode(target),
-    setStripAutomationMode: (target: number | 'master', mode: AutomationStripMode) =>
+    stripAutomationMode: (target: AutomationTarget) => automationStripMode(target),
+    setStripAutomationMode: (target: AutomationTarget, mode: AutomationStripMode) =>
       setAutomationStripMode(target, mode),
     automationLaneCount: () => handle.value?.engine.automationLaneCount() ?? 0,
     automationInstalledParamIds: () => ctx.automationSync()?.installedParamIds() ?? [],

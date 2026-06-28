@@ -17,7 +17,7 @@
  */
 
 import { reactive } from 'vue';
-import type { AutomationPoint } from '@/project/automation';
+import type { AutomationPoint, AutomationTarget } from '@/project/automation';
 
 /**
  * Automation mode of one mixer strip ('off' = no follow, no recording;
@@ -41,14 +41,14 @@ export function isAutomationWriteMode(mode: AutomationStripMode): mode is Automa
 }
 
 /** Session-only mode per strip target; absent entries mean 'off'. */
-const modes = reactive(new Map<number | 'master', AutomationStripMode>());
+const modes = reactive(new Map<AutomationTarget, AutomationStripMode>());
 
 /**
  * Returns the automation mode of a strip.
  *
- * @param target Strip target: a track id or 'master'.
+ * @param target Strip target: a track id, 'master', or a mixer bus target.
  */
-export function automationStripMode(target: number | 'master'): AutomationStripMode {
+export function automationStripMode(target: AutomationTarget): AutomationStripMode {
   return modes.get(target) ?? 'off';
 }
 
@@ -57,11 +57,11 @@ export function automationStripMode(target: number | 'master'): AutomationStripM
  * others (read/touch/latch are mutually exclusive); toggling the active mode
  * turns it off.
  *
- * @param target Strip target: a track id or 'master'.
+ * @param target Strip target: a track id, 'master', or a mixer bus target.
  * @param mode Mode the button represents.
  */
 export function toggleAutomationStripMode(
-  target: number | 'master',
+  target: AutomationTarget,
   mode: 'read' | AutomationWriteMode,
 ): void {
   if (modes.get(target) === mode) modes.delete(target);
@@ -71,10 +71,10 @@ export function toggleAutomationStripMode(
 /**
  * Sets a strip's automation mode directly ('off' clears the entry).
  *
- * @param target Strip target: a track id or 'master'.
+ * @param target Strip target: a track id, 'master', or a mixer bus target.
  * @param mode New mode.
  */
-export function setAutomationStripMode(target: number | 'master', mode: AutomationStripMode): void {
+export function setAutomationStripMode(target: AutomationTarget, mode: AutomationStripMode): void {
   if (mode === 'off') modes.delete(target);
   else modes.set(target, mode);
 }

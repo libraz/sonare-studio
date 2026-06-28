@@ -10,11 +10,14 @@ import {
   addVcaGroup,
   canUndo,
   clearHistory,
+  mixerBusStripTarget,
   redo,
   removeInsert,
   removeMixerBus,
   removeTrack,
   removeVcaGroup,
+  renameMixerBus,
+  renameVcaGroup,
   setInsertEnabled,
   setInsertParam,
   setInsertSidechain,
@@ -25,10 +28,13 @@ import {
   setStripDualPan,
   setStripEq,
   setStripGain,
+  setStripInputTrim,
   setStripOutputBus,
   setStripPan,
   setStripPanLaw,
   setStripPanMode,
+  setStripPolarityInvert,
+  setStripWidth,
   setTrackFrozen,
   setTrackGroup,
   setTrackInstrument,
@@ -58,6 +64,29 @@ describe('mixer commands', () => {
     clearHistory();
     await store.init();
     trackId = store.tracks[0].id;
+  });
+
+  describe('strip-local DSP controls', () => {
+    it('sets and clears input trim, width and polarity as undoable strip data', () => {
+      setStripInputTrim(trackId, 6);
+      setStripWidth(trackId, 0.5);
+      setStripPolarityInvert(trackId, true, false);
+
+      expect(store.tracks[0].mixer?.inputTrimDb).toBe(6);
+      expect(store.tracks[0].mixer?.width).toBe(0.5);
+      expect(store.tracks[0].mixer?.polarityInvertLeft).toBe(true);
+
+      setStripInputTrim(trackId, 0);
+      setStripWidth(trackId, 1);
+      setStripPolarityInvert(trackId, false, false);
+
+      expect(store.tracks[0].mixer?.inputTrimDb).toBeUndefined();
+      expect(store.tracks[0].mixer?.width).toBeUndefined();
+      expect(store.tracks[0].mixer?.polarityInvertLeft).toBeUndefined();
+
+      expect(undo()).toBe(true);
+      expect(store.tracks[0].mixer?.polarityInvertLeft).toBe(true);
+    });
   });
 
   describe('setTrackInstrument', () => {
@@ -298,6 +327,16 @@ describe('mixer commands', () => {
       expect(() => setMixerBusGain(busId, Number.POSITIVE_INFINITY)).toThrow(RangeError);
     });
 
+    it('renames a bus undoably without changing its id', () => {
+      const busId = addMixerBus({ name: 'Reverb' });
+      renameMixerBus(busId, '  Plate  ');
+      expect(store.mixer.buses[0]).toMatchObject({ id: busId, name: 'Plate' });
+      undo();
+      expect(store.mixer.buses[0]).toMatchObject({ id: busId, name: 'Reverb' });
+      expect(() => renameMixerBus(busId, '   ')).toThrow(RangeError);
+      expect(() => renameMixerBus('missing', 'FX')).toThrow(RangeError);
+    });
+
     it('coalesces a bus-gain drag into one history entry', () => {
       const busId = addMixerBus();
       setMixerBusGain(busId, -3, { commit: false });
@@ -306,6 +345,26 @@ describe('mixer commands', () => {
       expect(store.mixer.buses[0].gainDb).toBe(-12);
       undo();
       expect(store.mixer.buses[0].gainDb).toBe(0);
+    });
+
+    it('edits a bus return insert chain through the shared strip commands', () => {
+      const busId = addMixerBus({ name: 'FX' });
+      const target = mixerBusStripTarget(busId);
+      const index = addInsert(target, 'dynamics.compressor', { thresholdDb: -20 });
+      setInsertParam(target, index, 'ratio', 4);
+
+      expect(store.mixer.buses[0].strip?.inserts).toEqual([
+        {
+          processor: 'dynamics.compressor',
+          params: { thresholdDb: -20, ratio: 4 },
+          enabled: true,
+        },
+      ]);
+
+      removeInsert(target, index);
+      expect(store.mixer.buses[0].strip?.inserts).toEqual([]);
+      undo();
+      expect(store.mixer.buses[0].strip?.inserts).toHaveLength(1);
     });
 
     it('upserts and removes sends undoably', () => {
@@ -539,6 +598,22 @@ describe('mixer commands', () => {
       undo();
       expect(store.tracks[0].mixer?.inserts[0].sidechainSourceTrackId).toBe(sourceId);
     });
+
+    it('removing the source track also clears bus insert sidechains', () => {
+      const busId = addMixerBus({ name: 'Parallel Comp' });
+      const target = mixerBusStripTarget(busId);
+      const sourceId = addAudioTrack({ name: 'Kick' });
+      addInsert(target, 'dynamics.compressor');
+      // Bus sidechains are not exposed for editing, but stale/imported project
+      // data can still carry a source id and must be cleaned with track removal.
+      store.mixer.buses[0].strip!.inserts[0].sidechainSourceTrackId = sourceId;
+
+      removeTrack(sourceId);
+
+      expect(store.mixer.buses[0].strip?.inserts[0].sidechainSourceTrackId).toBeUndefined();
+      undo();
+      expect(store.mixer.buses[0].strip?.inserts[0].sidechainSourceTrackId).toBe(sourceId);
+    });
   });
 
   describe('solo-safe', () => {
@@ -577,6 +652,19 @@ describe('mixer commands', () => {
       expect(() => setTrackVca(trackId, 'nope')).toThrow(RangeError);
       setTrackVca(trackId, null);
       expect(store.tracks[0].vcaId).toBeUndefined();
+    });
+
+    it('renames a group undoably without changing member assignments', () => {
+      const id = addVcaGroup({ name: 'Band' });
+      setTrackVca(trackId, id);
+      renameVcaGroup(id, '  Drums  ');
+      expect(store.mixer.vcaGroups?.[0]).toMatchObject({ id, name: 'Drums' });
+      expect(store.tracks[0].vcaId).toBe(id);
+      undo();
+      expect(store.mixer.vcaGroups?.[0]).toMatchObject({ id, name: 'Band' });
+      expect(store.tracks[0].vcaId).toBe(id);
+      expect(() => renameVcaGroup(id, '   ')).toThrow(RangeError);
+      expect(() => renameVcaGroup('missing', 'FX')).toThrow(RangeError);
     });
 
     it('sets the group gain with range validation', () => {

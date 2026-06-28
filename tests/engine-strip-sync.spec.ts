@@ -120,6 +120,28 @@ describe('stripSceneJson', () => {
     });
   });
 
+  it('declares strip-local trim width and polarity fields', () => {
+    const strip = makeStrip({
+      inputTrimDb: 3,
+      width: 0.5,
+      polarityInvertRight: true,
+    });
+    expect(JSON.parse(stripSceneJson(7, strip))).toEqual({
+      version: 1,
+      strips: [
+        {
+          id: 'track-7',
+          inserts: [],
+          inputTrimDb: 3,
+          width: 0.5,
+          polarityInvertRight: true,
+        },
+      ],
+      buses: [],
+      connections: [],
+    });
+  });
+
   it('uses the master strip id for the master target', () => {
     const parsed = JSON.parse(stripSceneJson('master', makeStrip())) as {
       strips: Array<{ id: string }>;
@@ -176,6 +198,23 @@ describe('createStripSync', () => {
     clearCalls(engine);
     sync.sync([track], makeMixer());
     expect(totalCalls(engine)).toBe(0);
+  });
+
+  it('resends strip JSON when strip-local DSP fields change', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const track = makeTrack(1, makeStrip({ inputTrimDb: 3 }));
+    const mixer = makeMixer();
+
+    sync.sync([track], mixer);
+    clearCalls(engine);
+
+    sync.sync([{ ...track, mixer: makeStrip({ inputTrimDb: 6 }) }], mixer);
+
+    expect(engine.setTrackStripJson).toHaveBeenCalledWith(
+      1,
+      stripSceneJson(1, makeStrip({ inputTrimDb: 6 })),
+    );
   });
 
   it('toggles only the bypass flag when an insert is enabled/disabled', () => {
@@ -455,6 +494,7 @@ describe('groupBusGainDb', () => {
     const track = makeGroupTrack(1, makeStrip({ gainDb: -2 }));
     track.volume = 0.5;
     expect(groupBusGainDb(track)).toBeCloseTo(linearToDb(0.5) - 2, 6);
+    expect(groupBusGainDb(track, -6)).toBeCloseTo(linearToDb(0.5) - 2 - 6, 6);
   });
 
   it('is unity for a default group track without a strip', () => {
@@ -499,6 +539,16 @@ describe('createStripSync group routing', () => {
     expect(totalCalls(engine)).toBe(0);
   });
 
+  it('folds a group track VCA offset into its group bus gain', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const group = { ...makeGroupTrack(10), vcaId: 'vca-1' };
+
+    sync.sync([group], makeMixer({ vcaGroups: [{ id: 'vca-1', name: 'Group VCA', gainDb: -6 }] }));
+    expect(engine.setTrackBuses).toHaveBeenCalledTimes(1);
+    expect(engine.setTrackBuses).toHaveBeenCalledWith([{ busId: 1, gainDb: -6 }]);
+  });
+
   it('keeps a group bus number stable when user buses are added later', () => {
     const { handle, engine } = makeHandle();
     const sync = createStripSync(handle);
@@ -511,6 +561,27 @@ describe('createStripSync group routing', () => {
       { busId: 2, gainDb: 0 },
       { busId: 1, gainDb: 0 },
     ]);
+  });
+
+  it('sends user bus inserts via the bus strip and clears them when removed', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const inserts = [
+      { processor: 'dynamics.compressor', params: { thresholdDb: -20 }, enabled: true },
+      { processor: 'saturation.tape', params: { drive: 0.4 }, enabled: false },
+    ];
+    const bus = { ...makeBus('FX'), strip: makeStrip({ inserts }) };
+
+    sync.sync([], makeMixer({ buses: [bus] }));
+    expect(engine.setBusStripJson).toHaveBeenCalledTimes(1);
+    expect(engine.setBusStripJson).toHaveBeenCalledWith(
+      1,
+      busSceneJson(1, makeStrip({ inserts: [inserts[0]] })),
+    );
+    clearCalls(engine);
+
+    sync.sync([], makeMixer({ buses: [{ ...makeBus('FX'), strip: makeStrip() }] }));
+    expect(engine.setBusStripJson).toHaveBeenCalledWith(1, busSceneJson(1, makeStrip()));
   });
 
   it('routes a member back to the master mix when its membership clears', () => {

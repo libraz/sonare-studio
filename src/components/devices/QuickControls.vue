@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, reactive, ref } from 'vue';
 import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
+import { isMixerBusStripTarget } from '@/project/commands';
 import {
   listQuickControls,
   type QuickControl,
@@ -140,15 +141,18 @@ const menu = reactive<{ open: boolean; x: number; y: number; controlId: string }
 
 /** Learn target id for a control on the current device target. */
 function learnTargetId(controlId: string): string {
-  return props.target.type === 'instrument'
-    ? midiLearnInstrumentTargetId(props.target.trackId, controlId)
-    : midiLearnInsertTargetId(props.target.trackId, props.target.index, controlId);
+  if (props.target.type === 'instrument') {
+    return midiLearnInstrumentTargetId(props.target.trackId, controlId);
+  }
+  if (isMixerBusStripTarget(props.target.trackId)) return '';
+  return midiLearnInsertTargetId(props.target.trackId, props.target.index, controlId);
 }
 
 /** MIDI-learn state for a control, or undefined when the handle is absent. */
 function learnState(controlId: string): 'unbound' | 'armed' | 'bound' | undefined {
   if (!midiLearn) return undefined;
   const id = learnTargetId(controlId);
+  if (id === '') return undefined;
   if (midiLearn.isArmedId(id)) return 'armed';
   return midiLearn.bindingForId(id) ? 'bound' : 'unbound';
 }
@@ -167,6 +171,7 @@ function closeMenu(): void {
 
 function onKnobContextMenu(control: QuickControl, event: MouseEvent): void {
   if (!midiLearn) return;
+  if (props.target.type === 'insert' && isMixerBusStripTarget(props.target.trackId)) return;
   event.preventDefault();
   menu.open = true;
   menu.x = event.clientX;
@@ -176,12 +181,14 @@ function onKnobContextMenu(control: QuickControl, event: MouseEvent): void {
 }
 
 function onMidiLearn(): void {
-  midiLearn?.armId(learnTargetId(menu.controlId));
+  const id = learnTargetId(menu.controlId);
+  if (id !== '') midiLearn?.armId(id);
   closeMenu();
 }
 
 function onMidiForget(): void {
-  midiLearn?.clearId(learnTargetId(menu.controlId));
+  const id = learnTargetId(menu.controlId);
+  if (id !== '') midiLearn?.clearId(id);
   closeMenu();
 }
 

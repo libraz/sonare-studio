@@ -18,7 +18,10 @@
 import {
   type AutomationLaneState,
   type AutomationParam,
+  type AutomationTarget,
   automationCurveCode,
+  busIdFromAutomationTarget,
+  isBusAutomationTarget,
 } from '@/project/automation';
 import type { EngineHandle } from './engine';
 
@@ -26,8 +29,10 @@ import type { EngineHandle } from './engine';
 export interface AutomationSyncOptions {
   /** Track ids already declared as engine mixer lanes (safe to resolve). */
   knownTrackIds: () => readonly number[];
+  /** Engine bus number for a project bus id, or undefined when not declared. */
+  busIdFor?: (storeBusId: string) => number | undefined;
   /** Re-pushes the manual strip value after a lane has been cleared. */
-  restoreParam: (target: number | 'master', param: AutomationParam) => void;
+  restoreParam: (target: AutomationTarget, param: AutomationParam) => void;
 }
 
 /** Mirrors store automation lanes onto a running engine. */
@@ -40,7 +45,7 @@ export interface AutomationSync {
 
 /** Bookkeeping for one installed engine lane, kept for change detection. */
 interface InstalledLane {
-  target: number | 'master';
+  target: AutomationTarget;
   param: AutomationParam;
   json: string;
 }
@@ -66,7 +71,16 @@ export function createAutomationSync(
     const effectiveParamIds = new Set<number>();
     for (const lane of lanes) {
       if (!lane.enabled) continue;
-      if (lane.target !== 'master' && !knownTracks.has(lane.target)) continue;
+      let paramId: number | undefined;
+      if (isBusAutomationTarget(lane.target)) {
+        if (lane.param !== 'faderDb') continue;
+        const busId = options.busIdFor?.(busIdFromAutomationTarget(lane.target));
+        if (busId === undefined) continue;
+        paramId = handle.engine.busAutomationParamId(busId);
+      } else {
+        if (lane.target !== 'master' && !knownTracks.has(lane.target)) continue;
+        paramId = handle.engine.automationParamId(lane.target, lane.param);
+      }
       const points = lane.points
         .filter((point) => Number.isFinite(point.ppq) && Number.isFinite(point.value))
         .map((point) => ({
@@ -75,7 +89,6 @@ export function createAutomationSync(
           curveToNext: automationCurveCode(point.curve),
         }));
       if (points.length === 0) continue;
-      const paramId = handle.engine.automationParamId(lane.target, lane.param);
       effectiveParamIds.add(paramId);
       const json = JSON.stringify(points);
       if (installed.get(paramId)?.json === json) continue;

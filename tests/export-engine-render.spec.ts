@@ -91,6 +91,10 @@ class FakeEngine implements OfflineRenderEngine {
   setParameter(paramId: number, value: number): void {
     this.record('setParameter', paramId, value);
   }
+  busAutomationParamId(busId: number): number {
+    this.record('busAutomationParamId', busId);
+    return 0x4d590000 | busId;
+  }
   setAutomationLane(paramId: number, points: unknown): void {
     this.record('setAutomationLane', paramId, points);
   }
@@ -225,6 +229,41 @@ function fakeAsset(): LoadedAudioAsset {
   };
 }
 
+/** Expected UMP MIDI 1.0 channel-voice word for a note-on. */
+function noteOnWord(channel: number, pitch: number, velocity: number): number {
+  return (0x2 << 28) | (0x9 << 20) | (channel << 16) | (pitch << 8) | velocity;
+}
+
+/** Expected UMP MIDI 1.0 channel-voice word for a note-off. */
+function noteOffWord(channel: number, pitch: number, velocity = 0): number {
+  return (0x2 << 28) | (0x8 << 20) | (channel << 16) | (pitch << 8) | velocity;
+}
+
+/** Expected UMP MIDI 1.0 channel-voice word for a control change. */
+function ccWord(channel: number, controller: number, value: number): number {
+  return (0x2 << 28) | (0xb << 20) | (channel << 16) | (controller << 8) | value;
+}
+
+/** Expected UMP MIDI 1.0 channel-voice word for channel pressure. */
+function channelPressureWord(channel: number, value: number): number {
+  return (0x2 << 28) | (0xd << 20) | (channel << 16) | (value << 8);
+}
+
+/** Expected UMP MIDI 1.0 channel-voice word for polyphonic key pressure. */
+function polyPressureWord(channel: number, pitch: number, value: number): number {
+  return (0x2 << 28) | (0xa << 20) | (channel << 16) | (pitch << 8) | value;
+}
+
+/** Expected UMP MIDI 1.0 channel-voice word for pitch bend. */
+function pitchBendWord(channel: number, value: number): number {
+  return (0x2 << 28) | (0xe << 20) | (channel << 16) | ((value & 0x7f) << 8) | (value >> 7);
+}
+
+/** Expected UMP MIDI 1.0 channel-voice word for a program change. */
+function pcWord(channel: number, program: number): number {
+  return (0x2 << 28) | (0xc << 20) | (channel << 16) | (program << 8);
+}
+
 function renderOptions(engine: FakeEngine) {
   return {
     deps: null,
@@ -299,6 +338,93 @@ describe('renderProjectWithEngine', () => {
       { trackId: 1, outputBusId: 1 },
       { trackId: 2, sends: [{ busId: 1, levelDb: -9, enabled: true }] },
     ]);
+  });
+
+  it('preserves MIDI performance lanes from document clips in offline schedules', async () => {
+    const doc = makeDoc();
+    const clip = doc.tracks[0].clips[0];
+    clip.notes = [];
+    clip.ccLanes = [{ controller: 11, channel: 2, points: [{ ppq: 0.5, value: 96 }] }];
+    clip.pitchBendLanes = [{ channel: 2, points: [{ ppq: 1, value: 4096 }] }];
+    clip.channelPressureLanes = [{ channel: 2, points: [{ ppq: 1.5, value: 70 }] }];
+    clip.polyPressureLanes = [{ channel: 2, pitch: 64, points: [{ ppq: 2, value: 80 }] }];
+
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    const midi = engine.named('setMidiClips')[0][1] as Array<{
+      events: Array<{ renderFrame: number; word0: number; wordCount: number }>;
+    }>;
+    expect(midi).toHaveLength(1);
+    expect(midi[0].events).toEqual([
+      { renderFrame: 12000, word0: ccWord(2, 11, 96), wordCount: 1 },
+      { renderFrame: 24000, word0: pitchBendWord(2, 4096), wordCount: 1 },
+      { renderFrame: 36000, word0: channelPressureWord(2, 70), wordCount: 1 },
+      { renderFrame: 48000, word0: polyPressureWord(2, 64, 80), wordCount: 1 },
+    ]);
+  });
+
+  it('renders MIDI clips from the source-offset note window', async () => {
+    const doc = makeDoc();
+    const clip = doc.tracks[0].clips[0];
+    clip.startPpq = 1;
+    clip.sourceOffsetPpq = 2;
+    clip.lengthPpq = 2;
+    clip.notes = [
+      { pitch: 60, velocity: 100, startPpq: 1, durationPpq: 1, channel: 0 },
+      { pitch: 67, velocity: 90, offVelocity: 32, startPpq: 2, durationPpq: 1, channel: 1 },
+      { pitch: 69, velocity: 80, startPpq: 3, durationPpq: 1, channel: 1 },
+      { pitch: 71, velocity: 70, startPpq: 4, durationPpq: 1, channel: 1 },
+    ];
+
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    const midi = engine.named('setMidiClips')[0][1] as Array<{
+      startSample: number;
+      lengthSamples: number;
+      events: Array<{ renderFrame: number; word0: number; wordCount: number }>;
+    }>;
+    expect(midi).toHaveLength(1);
+    expect(midi[0].startSample).toBe(24000);
+    expect(midi[0].lengthSamples).toBe(48000);
+    expect(midi[0].events).toEqual([
+      { renderFrame: 24000, word0: noteOnWord(1, 67, 90), wordCount: 1 },
+      { renderFrame: 47999, word0: noteOffWord(1, 67, 32), wordCount: 1 },
+      { renderFrame: 48000, word0: noteOnWord(1, 69, 80), wordCount: 1 },
+      { renderFrame: 71999, word0: noteOffWord(1, 69), wordCount: 1 },
+    ]);
+  });
+
+  it('loads and binds SF2 instruments for offline MIDI playback', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].instrument = { kind: 'sf2', fontId: 'font-a', bank: 130, program: 5 };
+    const fontBytes = new Uint8Array([1, 2, 3]);
+    const loadFont = vi.fn(async () => fontBytes);
+    const engine = new FakeEngine();
+
+    await renderProjectWithEngine(doc, { ...renderOptions(engine), loadFont });
+
+    expect(loadFont).toHaveBeenCalledTimes(1);
+    expect(loadFont).toHaveBeenCalledWith('font-a');
+    expect(engine.named('loadSoundFont')).toEqual([['loadSoundFont', fontBytes]]);
+    expect(engine.named('setSf2Instrument')).toEqual([['setSf2Instrument', {}, 1]]);
+    expect(engine.named('setSynthInstrument')).toEqual([]);
+
+    const midi = engine.named('setMidiClips')[0][1] as Array<{
+      events: Array<{ renderFrame: number; word0: number; wordCount: number }>;
+    }>;
+    expect(midi[0].events.slice(0, 3)).toEqual([
+      { renderFrame: 0, word0: ccWord(0, 0, 1), wordCount: 1 },
+      { renderFrame: 0, word0: ccWord(0, 32, 2), wordCount: 1 },
+      { renderFrame: 0, word0: pcWord(0, 5), wordCount: 1 },
+    ]);
+    // The clip starts at frame 0, so its note-on is shifted after the prelude.
+    expect(midi[0].events[3]).toEqual({
+      renderFrame: 1,
+      word0: noteOnWord(0, 60, 96),
+      wordCount: 1,
+    });
   });
 
   it('renders an explicit window with a pre-roll before its start', async () => {
@@ -381,6 +507,74 @@ describe('renderProjectWithEngine', () => {
     expect(mixParams.get(0x4d58ff01)).toBeCloseTo(-3, 5);
   });
 
+  it('includes solo-safe tracks in stem exports while another track is soloed', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].solo = true;
+    doc.tracks[1].soloSafe = true;
+
+    const engines: FakeEngine[] = [];
+    const result = await renderProjectWithEngine(doc, {
+      deps: null,
+      loadAudioAsset: async () => fakeAsset(),
+      createEngine: () => {
+        const engine = new FakeEngine();
+        engines.push(engine);
+        return engine;
+      },
+      stems: true,
+    });
+
+    expect(result.stems?.map((stem) => stem.trackIndex)).toEqual([0, 1]);
+    expect(result.stems?.map((stem) => stem.name)).toEqual(['Keys', 'Drums']);
+    // Mix + two audible stem passes: the solo-safe lane is treated as audible.
+    expect(engines).toHaveLength(3);
+  });
+
+  it('applies the mastering preset and enabled processors to the final stereo mix only', async () => {
+    const doc = makeDoc();
+    doc.mixer = {
+      ...doc.mixer,
+      masteringChain: {
+        preset: 'streaming',
+        processors: [
+          { processor: 'eq.tilt', params: { tiltDb: 1 }, enabled: true },
+          { processor: 'saturation.tape', params: { drive: 0.4 }, enabled: false },
+          { processor: 'maximizer.truePeakLimiter', params: { ceilingDb: -1 }, enabled: true },
+        ],
+      },
+    };
+    const applyPreset = vi.fn((_preset, left: Float32Array, right: Float32Array) => ({
+      left: Float32Array.from(left, (value) => value * 2),
+      right: Float32Array.from(right, (value) => value * 2),
+    }));
+    const processStereo = vi.fn((name: string, left: Float32Array, right: Float32Array) => {
+      const gain = name === 'eq.tilt' ? 0.5 : 0.25;
+      return {
+        left: Float32Array.from(left, (value) => value * gain),
+        right: Float32Array.from(right, (value) => value * gain),
+      };
+    });
+
+    const result = await renderProjectWithEngine(doc, {
+      ...renderOptions(new FakeEngine()),
+      deps: { mastering: { applyPreset, processStereo }, metering: null },
+    });
+
+    expect(applyPreset).toHaveBeenCalledWith(
+      'streaming',
+      expect.any(Float32Array),
+      expect.any(Float32Array),
+      48000,
+    );
+    expect(processStereo.mock.calls.map(([name]) => name)).toEqual([
+      'eq.tilt',
+      'maximizer.truePeakLimiter',
+    ]);
+    expect(result.channels[0][0]).toBeCloseTo(0.25 * 2 * 0.5 * 0.25, 5);
+    expect(result.channels[1][0]).toBeCloseTo(0.25 * 2 * 0.5 * 0.25, 5);
+    expect(result.report.peakDb).toBeCloseTo(20 * Math.log10(0.0625), 5);
+  });
+
   it('cancels between checkpoints and still destroys the engine', async () => {
     const engine = new FakeEngine();
     let blocks = 0;
@@ -438,6 +632,24 @@ describe('renderProjectWithEngine', () => {
     expect(clips[0].channels[0][1000]).toBe(500);
     // An unwarped slice would read source frame i here (4000, not 2000).
     expect(clips[0].channels[0][4000]).toBe(2000);
+  });
+
+  it('does not send empty audio clip windows to the offline engine', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].clips[0].sourceOffsetPpq = 100;
+    doc.tracks[1].clips[0].lengthPpq = 1;
+    const engine = new FakeEngine();
+
+    await renderProjectWithEngine(doc, {
+      deps: null,
+      createEngine: () => engine,
+      loadAudioAsset: async () => fakeAsset(),
+    });
+
+    expect(engine.named('setClips')).toEqual([]);
+    // MIDI still schedules, so this only proves the empty audio window was
+    // dropped rather than the whole render being skipped.
+    expect(engine.named('setMidiClips')).toHaveLength(1);
   });
 
   it('keeps the unwarped comp path for a clip with takes and warp', async () => {
@@ -647,20 +859,47 @@ describe('renderProjectWithEngine with frozen tracks', () => {
   it('a frozen MIDI track contributes no MIDI schedules', async () => {
     const doc = makeDoc();
     doc.tracks[0].frozen = { assetId: 'frozen-1' };
+    doc.tracks[0].instrument = { kind: 'sf2', fontId: 'font-a', bank: 1, program: 5 };
     const engine = new FakeEngine();
+    const loadFont = vi.fn(async () => new Uint8Array([1, 2, 3]));
     await renderProjectWithEngine(doc, {
       deps: null,
       createEngine: () => engine,
       loadAudioAsset: loadFrozenOrClipAsset(),
+      loadFont,
     });
 
     // The only MIDI clip lives on the frozen track: nothing is scheduled.
     expect(engine.named('setMidiClips')).toEqual([]);
+    // Frozen MIDI plays only its baked asset; it must not bind a synth/SF2 or
+    // touch the engine's global SoundFont slot.
+    expect(loadFont).not.toHaveBeenCalled();
+    expect(engine.named('loadSoundFont')).toEqual([]);
+    expect(engine.named('setSf2Instrument')).toEqual([]);
+    expect(engine.named('setSynthInstrument')).toEqual([]);
     // The baked render plays on lane 1, the audio track keeps its own clip.
     const clips = engine.named('setClips')[0][1] as Array<Record<string, unknown>>;
     expect(clips).toHaveLength(2);
     expect(clips[0]).toMatchObject({ trackId: 1, startPpq: 0, gain: 1 });
     expect(clips[1]).toMatchObject({ trackId: 2, startPpq: 2 });
+  });
+
+  it('keeps a frozen track silent when its baked asset is empty', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].frozen = { assetId: 'frozen-empty' };
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, {
+      deps: null,
+      createEngine: () => engine,
+      loadAudioAsset: async (assetId: string) =>
+        assetId === 'frozen-empty' ? frozenAsset(0) : fakeAsset(),
+    });
+
+    // The frozen track's own clip is skipped, and the empty baked render is
+    // not sent to the engine as a zero-length clip.
+    expect(engine.named('setClips')).toEqual([]);
+    // The unfrozen MIDI track still plays through MIDI scheduling.
+    expect(engine.named('setMidiClips')).toHaveLength(1);
   });
 
   it('freezeTrackIndex renders one isolated pre-fader pass', async () => {
@@ -734,6 +973,24 @@ describe('renderProjectWithEngine with frozen tracks', () => {
     expect(result.report.peakDb).toBeCloseTo(20 * Math.log10(0.25), 5);
   });
 
+  it('freezeTrackIndex strips group output routing from the frozen lane', async () => {
+    const doc = makeGroupDoc();
+    const engine = new FakeEngine();
+
+    await renderProjectWithEngine(doc, {
+      ...renderOptions(engine),
+      freezeTrackIndex: 1,
+    });
+
+    // The Drums lane normally routes to the Drum Bus group output, but a
+    // pre-fader freeze must not bake that downstream group bus into the asset.
+    expect(engine.named('setTrackLanes')[0][1]).toEqual([
+      { trackId: 1 },
+      { trackId: 2 },
+      { trackId: 3 },
+    ]);
+  });
+
   it('rejects an out-of-range freeze track index', async () => {
     for (const freezeTrackIndex of [-1, 2, 0.5]) {
       await expect(
@@ -743,6 +1000,15 @@ describe('renderProjectWithEngine with frozen tracks', () => {
         }),
       ).rejects.toThrow(RangeError);
     }
+  });
+
+  it('rejects freezing a group track at the render layer', async () => {
+    await expect(
+      renderProjectWithEngine(makeGroupDoc(), {
+        ...renderOptions(new FakeEngine()),
+        freezeTrackIndex: 2,
+      }),
+    ).rejects.toThrow(/Group tracks cannot be frozen/);
   });
 });
 
@@ -790,6 +1056,46 @@ describe('renderProjectWithEngine with group tracks and sidechains', () => {
       { trackId: 2, sends: [{ busId: 1, levelDb: -9, enabled: true }], outputBusId: 2 },
       { trackId: 3 },
     ]);
+  });
+
+  it('does not force muted group members into a group stem', async () => {
+    const doc = makeGroupDoc();
+    doc.tracks[1].mute = true;
+    const engines: FakeEngine[] = [];
+
+    const result = await renderProjectWithEngine(doc, {
+      deps: null,
+      loadAudioAsset: async () => fakeAsset(),
+      createEngine: () => {
+        const engine = new FakeEngine();
+        engines.push(engine);
+        return engine;
+      },
+      stems: true,
+    });
+
+    expect(result.stems?.map((stem) => stem.trackIndex)).toEqual([0, 2]);
+    const groupStemPass = engines[2];
+    // The muted Drums member must stay muted even though the Drum Bus stem is
+    // being isolated. Previously it was added to stemIndices and leaked audio.
+    expect(groupStemPass.named('setSoloMute')).toEqual([
+      ['setSoloMute', 0, false, true],
+      ['setSoloMute', 1, false, true],
+    ]);
+  });
+
+  it('folds a group track VCA offset into the exported group bus gain', async () => {
+    const doc = makeGroupDoc();
+    (doc.mixer as { vcaGroups?: unknown }).vcaGroups = [
+      { id: 'vca-1', name: 'Group VCA', gainDb: -6 },
+    ];
+    (doc.tracks[2] as { vcaId?: string }).vcaId = 'vca-1';
+
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    const buses = engine.named('setTrackBuses')[0][1] as Array<{ busId: number; gainDb: number }>;
+    expect(buses[1].gainDb).toBeCloseTo(linearToDb(0.5) - 2 - 6, 5);
   });
 
   it('sends only the enabled group inserts to the bus strip and keeps the group lane neutral', async () => {
@@ -933,6 +1239,67 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
     expect(engine.named('setTrackLanes')[0][1]).toEqual([
       { trackId: 1 },
       { trackId: 2, sends: [{ busId: 1, levelDb: -9, enabled: true, sendTiming: 'preFader' }] },
+    ]);
+  });
+
+  it('replays user bus insert chains before rendering', async () => {
+    const doc = makeDoc();
+    (doc.mixer?.buses[0] as unknown as { strip: Record<string, unknown> }).strip = {
+      gainDb: 0,
+      pan: 0,
+      sends: [],
+      inserts: [
+        { processor: 'dynamics.compressor', params: { thresholdDb: -20 }, enabled: true },
+        { processor: 'saturation.tape', params: { drive: 0.4 }, enabled: false },
+      ],
+    };
+
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    expect(engine.named('setBusStripJson')).toHaveLength(1);
+    expect(JSON.parse(engine.named('setBusStripJson')[0][2] as string)).toEqual({
+      version: 1,
+      strips: [],
+      buses: [
+        {
+          id: 'bus-1',
+          role: 'submix',
+          inserts: [
+            { slot: 'pre', processor: 'dynamics.compressor', params: '{"thresholdDb":-20}' },
+          ],
+        },
+      ],
+      connections: [],
+    });
+  });
+
+  it('replays bus gain automation lanes before rendering', async () => {
+    const doc = makeDoc();
+    if (doc.mixer) {
+      doc.mixer.buses[0].automation = [
+        {
+          param: 'faderDb',
+          enabled: true,
+          points: [
+            { ppq: 0, value: -12 },
+            { ppq: 960, value: -3, curve: 'hold' },
+          ],
+        },
+      ];
+    }
+
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    expect(engine.named('busAutomationParamId')).toEqual([['busAutomationParamId', 1]]);
+    expect(engine.named('setAutomationLane')).toContainEqual([
+      'setAutomationLane',
+      0x4d590001,
+      [
+        { ppq: 0, value: -12, curveToNext: 0 },
+        { ppq: 960, value: -3, curveToNext: 2 },
+      ],
     ]);
   });
 });

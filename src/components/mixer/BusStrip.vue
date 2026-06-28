@@ -1,10 +1,31 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
+import { promptDialog } from '@/composables/useDialogs';
 import type { MeterSource } from '@/engine/meters';
-import { removeMixerBus, setMixerBusGain } from '@/project/commands';
+import {
+  type BusAutomationTarget,
+  busAutomationTarget,
+  evaluateAutomationValue,
+} from '@/project/automation';
+import {
+  mixerBusStripTarget,
+  removeMixerBus,
+  renameMixerBus,
+  setAutomationLanePoints,
+  setMixerBusGain,
+} from '@/project/commands';
 import type { MixerBus } from '@/project/mixer';
+import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import {
+  type AutomationWriteGesture,
+  automationStripMode,
+  createAutomationWriteGesture,
+  isAutomationWriteMode,
+  toggleAutomationStripMode,
+} from '@/ui/mixer/automation-mode';
 import { formatDb } from '@/ui/mixer/db-scale';
+import InsertRack from './InsertRack.vue';
 import MixerFader from './MixerFader.vue';
 import StripMeter from './StripMeter.vue';
 
@@ -22,19 +43,80 @@ const props = withDefaults(
     bus: MixerBus;
     /** Live meter source for this bus; null shows a placeholder meter. */
     bridge?: MeterSource | null;
+    /** Playhead position getter in PPQ (automation follow/recording). */
+    positionPpq?: () => number;
+    /** True while the transport runs (automation touch recording). */
+    isPlaying?: boolean;
   }>(),
-  { bridge: null },
+  { bridge: null, positionPpq: undefined, isPlaying: false },
 );
 
-const gainDb = computed(() => props.bus.gainDb);
+const store = useProjectStore();
+const automationTarget = computed<BusAutomationTarget>(() => busAutomationTarget(props.bus.id));
+const stripTarget = computed(() => mixerBusStripTarget(props.bus.id));
 const { t } = useI18n();
+const autoMode = computed(() => automationStripMode(automationTarget.value));
+const faderLane = computed(() =>
+  store.automationLanes.find(
+    (lane) => lane.target === automationTarget.value && lane.param === 'faderDb',
+  ),
+);
+const followsFader = computed(
+  () =>
+    autoMode.value === 'read' &&
+    faderLane.value !== undefined &&
+    faderLane.value.enabled &&
+    faderLane.value.points.length > 0,
+);
+let writeFaderGesture: AutomationWriteGesture | null = null;
+const writeGainDb = ref<number | null>(null);
+
+const gainDb = computed(() =>
+  writeGainDb.value !== null
+    ? writeGainDb.value
+    : followsFader.value && faderLane.value
+      ? evaluateAutomationValue(faderLane.value.points, props.positionPpq?.() ?? 0)
+      : props.bus.gainDb,
+);
+
+function beginWriteGesture(): AutomationWriteGesture {
+  return createAutomationWriteGesture({
+    mode: autoMode.value === 'latch' ? 'latch' : 'touch',
+    existingPoints: faderLane.value?.points ?? [],
+    positionPpq: () => props.positionPpq?.() ?? 0,
+    isPlaying: () => props.isPlaying,
+    commit: (points) => setAutomationLanePoints(automationTarget.value, 'faderDb', points),
+  });
+}
 
 function onFaderChange(db: number, commit: boolean): void {
+  if (isAutomationWriteMode(autoMode.value)) {
+    if (!writeFaderGesture) writeFaderGesture = beginWriteGesture();
+    writeFaderGesture.update(db);
+    writeGainDb.value = db;
+    if (commit) {
+      writeFaderGesture.end();
+      writeFaderGesture = null;
+      writeGainDb.value = null;
+    }
+    return;
+  }
   setMixerBusGain(props.bus.id, db, { commit });
 }
 
 function onRemove(): void {
   removeMixerBus(props.bus.id);
+}
+
+async function onRename(): Promise<void> {
+  const next = await promptDialog({
+    title: t.value.shell.mixer.strip.renameBusTitle,
+    message: t.value.shell.mixer.strip.renameBusMessage,
+    defaultValue: props.bus.name,
+    placeholder: props.bus.name,
+    confirmLabel: t.value.shell.mixer.strip.renameBusConfirm,
+  });
+  if (next && next !== props.bus.name) renameMixerBus(props.bus.id, next);
 }
 </script>
 
@@ -42,7 +124,14 @@ function onRemove(): void {
   <div class="bus-strip">
     <div class="bus-header">
       <span class="bus-tag">{{ t.shell.mixer.strip.bus }}</span>
-      <span class="bus-name" :title="props.bus.name">{{ props.bus.name }}</span>
+      <button
+        type="button"
+        class="bus-name"
+        :title="t.shell.mixer.strip.renameBusTitle"
+        @click="onRename"
+      >
+        {{ props.bus.name }}
+      </button>
       <button
         type="button"
         class="bus-remove"
@@ -51,6 +140,44 @@ function onRemove(): void {
         @click="onRemove"
       >
         ×
+      </button>
+    </div>
+    <div class="bus-inserts">
+      <InsertRack :target="stripTarget" />
+    </div>
+    <div class="bus-auto">
+      <button
+        type="button"
+        class="bus-auto-button"
+        :class="{ on: autoMode === 'read' }"
+        :title="t.shell.mixer.strip.automationReadTitle"
+        :aria-label="formatMessage(t.shell.mixer.strip.automationRead, { name: props.bus.name })"
+        :aria-pressed="autoMode === 'read'"
+        @click="toggleAutomationStripMode(automationTarget, 'read')"
+      >
+        R
+      </button>
+      <button
+        type="button"
+        class="bus-auto-button"
+        :class="{ on: autoMode === 'touch' }"
+        :title="t.shell.mixer.strip.automationTouchTitle"
+        :aria-label="formatMessage(t.shell.mixer.strip.automationTouch, { name: props.bus.name })"
+        :aria-pressed="autoMode === 'touch'"
+        @click="toggleAutomationStripMode(automationTarget, 'touch')"
+      >
+        T
+      </button>
+      <button
+        type="button"
+        class="bus-auto-button"
+        :class="{ on: autoMode === 'latch' }"
+        :title="t.shell.mixer.strip.automationLatchTitle"
+        :aria-label="formatMessage(t.shell.mixer.strip.automationLatch, { name: props.bus.name })"
+        :aria-pressed="autoMode === 'latch'"
+        @click="toggleAutomationStripMode(automationTarget, 'latch')"
+      >
+        L
       </button>
     </div>
     <div class="bus-fader-row">
@@ -67,7 +194,7 @@ function onRemove(): void {
   flex-direction: column;
   align-items: center;
   gap: var(--sp-3);
-  width: 72px;
+  width: 96px;
   flex: none;
   box-sizing: border-box;
   padding: var(--sp-3) var(--sp-3) var(--sp-4);
@@ -81,6 +208,36 @@ function onRemove(): void {
   align-items: center;
   gap: var(--sp-1);
   width: 100%;
+}
+
+.bus-inserts {
+  width: 100%;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--sp-2);
+}
+
+.bus-auto {
+  display: flex;
+  justify-content: center;
+  gap: var(--sp-1);
+  width: 100%;
+}
+
+.bus-auto-button {
+  width: 19px;
+  height: 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-3);
+  color: var(--text-4);
+  font: var(--fw-bold) 8px var(--font-sans);
+  cursor: pointer;
+}
+
+.bus-auto-button.on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-muted);
 }
 
 .bus-tag {
@@ -99,8 +256,18 @@ function onRemove(): void {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  text-align: left;
   font: var(--fw-semibold) 10px var(--font-sans);
   color: var(--text-2);
+  cursor: pointer;
+}
+
+.bus-name:hover {
+  color: var(--text-1);
 }
 
 .bus-remove {

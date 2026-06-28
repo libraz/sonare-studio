@@ -1,5 +1,12 @@
 import type { SendTiming } from '@/wasm/index.js';
 import {
+  type AutomationLaneState,
+  busAutomationTarget,
+  busIdFromAutomationTarget,
+  cloneAutomationLane,
+  isBusAutomationTarget,
+} from '../automation';
+import {
   cloneInstrument,
   instrumentEquals,
   type TrackInstrument,
@@ -11,12 +18,17 @@ import {
   createDefaultStrip,
   DEFAULT_PAN_LAW,
   DEFAULT_PAN_MODE,
+  DEFAULT_STRIP_WIDTH,
   type InsertSlot,
   MAX_CHANNEL_DELAY_SAMPLES,
+  MAX_INPUT_TRIM_DB,
   MAX_MIXER_BUSES,
   MAX_STRIP_GAIN_DB,
+  MAX_STRIP_WIDTH,
   MAX_VCA_GROUPS,
+  MIN_INPUT_TRIM_DB,
   MIN_STRIP_GAIN_DB,
+  MIN_STRIP_WIDTH,
   type MixerStrip,
   PAN_LAW_IDS,
   PAN_MODE_IDS,
@@ -77,8 +89,24 @@ export function setTrackInstrument(
   );
 }
 
-/** Addresses a mixer strip: a track id, or 'master' for the master strip. */
-export type MixerStripTarget = number | 'master';
+/** Addresses a mixer strip: a track id, 'master', or a send-return bus. */
+export type MixerBusStripTarget = `bus:${string}`;
+export type MixerStripTarget = number | 'master' | MixerBusStripTarget;
+
+/** Builds the target id used by shared strip UI/components for a mixer bus. */
+export function mixerBusStripTarget(busId: string): MixerBusStripTarget {
+  return `bus:${busId}`;
+}
+
+/** True when a strip target addresses a mixer bus. */
+export function isMixerBusStripTarget(target: MixerStripTarget): target is MixerBusStripTarget {
+  return typeof target === 'string' && target.startsWith('bus:');
+}
+
+/** Returns the bus id embedded in a bus strip target. */
+export function mixerBusIdFromTarget(target: MixerBusStripTarget): string {
+  return target.slice('bus:'.length);
+}
 
 /** Returns the current strip of a target (a neutral strip when absent). */
 function currentStrip(
@@ -86,6 +114,12 @@ function currentStrip(
   target: MixerStripTarget,
 ): MixerStrip {
   if (target === 'master') return store.mixer.master;
+  if (isMixerBusStripTarget(target)) {
+    const busId = mixerBusIdFromTarget(target);
+    const bus = store.mixer.buses.find((entry) => entry.id === busId);
+    if (!bus) throw new RangeError(`Unknown mixer bus id: ${busId}`);
+    return bus.strip ?? createDefaultStrip();
+  }
   const track = requireTrack(store, target);
   return track.mixer ?? createDefaultStrip();
 }
@@ -98,6 +132,17 @@ function writeStrip(
 ): void {
   if (target === 'master') {
     store.mixer = { ...store.mixer, master: strip };
+    return;
+  }
+  if (isMixerBusStripTarget(target)) {
+    const busId = mixerBusIdFromTarget(target);
+    if (!store.mixer.buses.some((bus) => bus.id === busId)) {
+      throw new RangeError(`Unknown mixer bus id: ${busId}`);
+    }
+    store.mixer = {
+      ...store.mixer,
+      buses: store.mixer.buses.map((bus) => (bus.id === busId ? { ...bus, strip } : bus)),
+    };
     return;
   }
   store.tracks = store.tracks.map((t) => (t.id === target ? { ...t, mixer: strip } : t));
@@ -169,6 +214,105 @@ export function setStripPan(
     },
     { key, commit: options?.commit ?? true },
   );
+}
+
+/**
+ * Sets a strip's pre-insert input trim as one undoable edit. The trim is
+ * encoded into the engine strip scene JSON, so track, group-bus and master
+ * strips all render it in realtime and export.
+ *
+ * @param target Track id or 'master'.
+ * @param trimDb New input trim in dB (finite, within [-48, 48]).
+ * @param options Gesture coalescing for slider drags.
+ */
+export function setStripInputTrim(
+  target: MixerStripTarget,
+  trimDb: number,
+  options?: CommandGestureOptions,
+): void {
+  const store = useProjectStore();
+  const strip = currentStrip(store, target);
+  if (!Number.isFinite(trimDb) || trimDb < MIN_INPUT_TRIM_DB || trimDb > MAX_INPUT_TRIM_DB) {
+    throw new RangeError(
+      `Input trim must be within [${MIN_INPUT_TRIM_DB}, ${MAX_INPUT_TRIM_DB}] dB, got ${trimDb}`,
+    );
+  }
+  const key = `strip-input-trim:${String(target)}`;
+  if ((strip.inputTrimDb ?? 0) === trimDb && !hasPendingGesture(key)) return;
+  executeApp(
+    () => {
+      const next = cloneStrip(strip);
+      if (trimDb === 0) delete next.inputTrimDb;
+      else next.inputTrimDb = trimDb;
+      writeStrip(store, target, next);
+      store.refresh();
+    },
+    { key, commit: options?.commit ?? true },
+  );
+}
+
+/**
+ * Sets a strip's stereo width multiplier as one undoable edit.
+ *
+ * @param target Track id or 'master'.
+ * @param width New width in [0, 2].
+ * @param options Gesture coalescing for slider drags.
+ */
+export function setStripWidth(
+  target: MixerStripTarget,
+  width: number,
+  options?: CommandGestureOptions,
+): void {
+  const store = useProjectStore();
+  const strip = currentStrip(store, target);
+  if (!Number.isFinite(width) || width < MIN_STRIP_WIDTH || width > MAX_STRIP_WIDTH) {
+    throw new RangeError(
+      `Strip width must be in [${MIN_STRIP_WIDTH}, ${MAX_STRIP_WIDTH}], got ${width}`,
+    );
+  }
+  const key = `strip-width:${String(target)}`;
+  if ((strip.width ?? DEFAULT_STRIP_WIDTH) === width && !hasPendingGesture(key)) return;
+  executeApp(
+    () => {
+      const next = cloneStrip(strip);
+      if (width === DEFAULT_STRIP_WIDTH) delete next.width;
+      else next.width = width;
+      writeStrip(store, target, next);
+      store.refresh();
+    },
+    { key, commit: options?.commit ?? true },
+  );
+}
+
+/**
+ * Sets left/right polarity inversion as one undoable edit.
+ *
+ * @param target Track id or 'master'.
+ * @param left Whether to invert the left channel.
+ * @param right Whether to invert the right channel.
+ */
+export function setStripPolarityInvert(
+  target: MixerStripTarget,
+  left: boolean,
+  right: boolean,
+): void {
+  const store = useProjectStore();
+  const strip = currentStrip(store, target);
+  if (
+    (strip.polarityInvertLeft === true) === left &&
+    (strip.polarityInvertRight === true) === right
+  ) {
+    return;
+  }
+  executeApp(() => {
+    const next = cloneStrip(strip);
+    if (left) next.polarityInvertLeft = true;
+    else delete next.polarityInvertLeft;
+    if (right) next.polarityInvertRight = true;
+    else delete next.polarityInvertRight;
+    writeStrip(store, target, next);
+    store.refresh();
+  });
 }
 
 /**
@@ -521,6 +665,9 @@ export function setStripOutputBus(target: MixerStripTarget, busId: string | null
   if (target === 'master') {
     throw new RangeError('The master strip has no output bus to route');
   }
+  if (isMixerBusStripTarget(target)) {
+    throw new RangeError('A bus return strip has no output bus to route');
+  }
   const track = requireTrack(store, target);
   if (track.kind === 'group') {
     throw new RangeError('Group tracks carry their own bus and cannot be re-routed');
@@ -614,6 +761,8 @@ export function removeMixerBus(busId: string): void {
       master: detachBus(store.mixer.master),
       buses: store.mixer.buses.filter((bus) => bus.id !== busId),
     };
+    const target = busAutomationTarget(busId);
+    store.automationLanes = store.automationLanes.filter((lane) => lane.target !== target);
     store.refresh();
   });
 }
@@ -654,6 +803,31 @@ export function setMixerBusGain(
     },
     { key, commit: options?.commit ?? true },
   );
+}
+
+/**
+ * Renames a mixer bus as one undoable edit. The id stays stable, so sends and
+ * output-bus routes keep working.
+ *
+ * @param busId Target bus id.
+ * @param name New display name (trimmed, non-empty).
+ */
+export function renameMixerBus(busId: string, name: string): void {
+  const store = useProjectStore();
+  const bus = store.mixer.buses.find((entry) => entry.id === busId);
+  if (!bus) throw new RangeError(`Unknown mixer bus id: ${busId}`);
+  const nextName = name.trim();
+  if (nextName.length === 0) throw new RangeError('Mixer bus name must not be empty');
+  if (bus.name === nextName) return;
+  executeApp(() => {
+    store.mixer = {
+      ...store.mixer,
+      buses: store.mixer.buses.map((entry) =>
+        entry.id === busId ? { ...entry, name: nextName } : entry,
+      ),
+    };
+    store.refresh();
+  });
 }
 
 /**
@@ -743,6 +917,32 @@ export function removeVcaGroup(groupId: string): void {
     store.mixer = {
       ...store.mixer,
       vcaGroups: groups.filter((group) => group.id !== groupId),
+    };
+    store.refresh();
+  });
+}
+
+/**
+ * Renames a VCA control group as one undoable edit. Member tracks keep their
+ * assignment because the stable group id is unchanged.
+ *
+ * @param groupId Target group id.
+ * @param name New display name (trimmed, non-empty).
+ */
+export function renameVcaGroup(groupId: string, name: string): void {
+  const store = useProjectStore();
+  const groups = store.mixer.vcaGroups ?? [];
+  const group = groups.find((entry) => entry.id === groupId);
+  if (!group) throw new RangeError(`Unknown VCA group id: ${groupId}`);
+  const nextName = name.trim();
+  if (nextName.length === 0) throw new RangeError('VCA group name must not be empty');
+  if (group.name === nextName) return;
+  executeApp(() => {
+    store.mixer = {
+      ...store.mixer,
+      vcaGroups: groups.map((entry) =>
+        entry.id === groupId ? { ...entry, name: nextName } : entry,
+      ),
     };
     store.refresh();
   });
@@ -843,6 +1043,8 @@ export interface MixerSnapshot {
   mixer: ProjectMixerState;
   /** Per-track captured strip and mix flags, in capture order. */
   tracks: MixerSnapshotTrack[];
+  /** Mixer-scoped automation lanes, currently bus fader automation. */
+  automationLanes?: AutomationLaneState[];
 }
 
 /**
@@ -857,8 +1059,17 @@ export interface MixerSnapshot {
 export function buildMixerSnapshot(
   mixer: ProjectMixerState,
   tracks: ReadonlyArray<EditorTrack>,
+  automationLanes: ReadonlyArray<AutomationLaneState> = [],
 ): MixerSnapshot {
-  return {
+  const validBusIds = new Set(mixer.buses.map((bus) => bus.id));
+  const mixerAutomationLanes = automationLanes
+    .filter(
+      (lane) =>
+        isBusAutomationTarget(lane.target) &&
+        validBusIds.has(busIdFromAutomationTarget(lane.target)),
+    )
+    .map(cloneAutomationLane);
+  const snapshot: MixerSnapshot = {
     mixer: cloneMixerState(mixer),
     tracks: tracks.map((track) => {
       const entry: MixerSnapshotTrack = {
@@ -872,6 +1083,8 @@ export function buildMixerSnapshot(
       return entry;
     }),
   };
+  if (mixerAutomationLanes.length > 0) snapshot.automationLanes = mixerAutomationLanes;
+  return snapshot;
 }
 
 /**
@@ -904,7 +1117,8 @@ function sanitizeStripRouting(strip: MixerStrip, validBusIds: ReadonlySet<string
 export function mergeMixerSnapshot(
   snapshot: MixerSnapshot,
   currentTracks: ReadonlyArray<EditorTrack>,
-): { mixer: ProjectMixerState; tracks: EditorTrack[] } {
+  currentAutomationLanes: ReadonlyArray<AutomationLaneState> = [],
+): { mixer: ProjectMixerState; tracks: EditorTrack[]; automationLanes: AutomationLaneState[] } {
   const mixer = cloneMixerState(snapshot.mixer);
   const validBusIds = new Set(mixer.buses.map((bus) => bus.id));
   const validVcaIds = new Set((mixer.vcaGroups ?? []).map((group) => group.id));
@@ -925,7 +1139,15 @@ export function mergeMixerSnapshot(
     if (next.vcaId !== undefined && !validVcaIds.has(next.vcaId)) delete next.vcaId;
     return next;
   });
-  return { mixer, tracks };
+  const restoredBusTargets = new Set([...validBusIds].map(busAutomationTarget));
+  const automationLanes = currentAutomationLanes
+    .filter((lane) => !isBusAutomationTarget(lane.target))
+    .map(cloneAutomationLane);
+  for (const lane of snapshot.automationLanes ?? []) {
+    if (!isBusAutomationTarget(lane.target) || !restoredBusTargets.has(lane.target)) continue;
+    automationLanes.push(cloneAutomationLane(lane));
+  }
+  return { mixer, tracks, automationLanes };
 }
 
 /**
@@ -935,7 +1157,7 @@ export function mergeMixerSnapshot(
  */
 export function captureMixerSnapshot(): MixerSnapshot {
   const store = useProjectStore();
-  return buildMixerSnapshot(store.mixer, store.tracks);
+  return buildMixerSnapshot(store.mixer, store.tracks, store.automationLanes);
 }
 
 /**
@@ -949,9 +1171,14 @@ export function captureMixerSnapshot(): MixerSnapshot {
 export function applyMixerSnapshot(snapshot: MixerSnapshot): void {
   const store = useProjectStore();
   executeApp(() => {
-    const { mixer, tracks } = mergeMixerSnapshot(snapshot, store.tracks);
+    const { mixer, tracks, automationLanes } = mergeMixerSnapshot(
+      snapshot,
+      store.tracks,
+      store.automationLanes,
+    );
     store.mixer = mixer;
     store.tracks = tracks;
+    store.automationLanes = automationLanes;
     store.refresh();
   });
 }

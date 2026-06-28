@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createAutomationSync } from '@/engine/automation-sync';
 import type { EngineHandle } from '@/engine/engine';
-import type { AutomationLaneState, AutomationPoint } from '@/project/automation';
+import {
+  type AutomationLaneState,
+  type AutomationPoint,
+  type AutomationTarget,
+  busAutomationTarget,
+} from '@/project/automation';
 
 /** Param ids the stub hands out: track ids map to 1000 + id (faderDb) / 2000 + id (pan). */
 function stubParamId(target: string | number, kind: 'faderDb' | 'pan'): number {
@@ -14,11 +19,13 @@ function makeHandle(): {
   handle: EngineHandle;
   engine: {
     automationParamId: ReturnType<typeof vi.fn>;
+    busAutomationParamId: ReturnType<typeof vi.fn>;
     setAutomationLane: ReturnType<typeof vi.fn>;
   };
 } {
   const engine = {
     automationParamId: vi.fn(stubParamId),
+    busAutomationParamId: vi.fn((busId: number) => 3000 + busId),
     setAutomationLane: vi.fn(),
   };
   const handle = { engine } as unknown as EngineHandle;
@@ -27,7 +34,7 @@ function makeHandle(): {
 
 /** Builds a lane with overridable fields. */
 function makeLane(
-  target: number | 'master',
+  target: AutomationTarget,
   points: AutomationPoint[],
   overrides: Partial<AutomationLaneState> = {},
 ): AutomationLaneState {
@@ -35,6 +42,23 @@ function makeLane(
 }
 
 describe('createAutomationSync', () => {
+  it('installs a bus fader lane through the bus automation parameter id', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createAutomationSync(handle, {
+      knownTrackIds: () => [],
+      busIdFor: (busId) => (busId === 'fx' ? 2 : undefined),
+      restoreParam: vi.fn(),
+    });
+
+    sync.sync([makeLane(busAutomationTarget('fx'), [{ ppq: 0, value: -9 }])]);
+
+    expect(engine.busAutomationParamId).toHaveBeenCalledWith(2);
+    expect(engine.automationParamId).not.toHaveBeenCalled();
+    expect(engine.setAutomationLane).toHaveBeenCalledWith(3002, [
+      { ppq: 0, value: -9, curveToNext: 0 },
+    ]);
+  });
+
   it('installs an effective lane with curve codes on its points', () => {
     const { handle, engine } = makeHandle();
     const restoreParam = vi.fn();

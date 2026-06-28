@@ -1,10 +1,14 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { busAutomationTarget } from '@/project/automation';
 import {
+  addAudioTrack,
   addInsert,
   addMixerBus,
   addVcaGroup,
   clearHistory,
+  mixerBusStripTarget,
+  setAutomationLanePoints,
   setSend,
   setStripChannelDelaySamples,
   setStripEq,
@@ -119,6 +123,68 @@ describe('project serialization with instruments and mixer (schema v3)', () => {
     await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
     expect(serializeProject()).toEqual(doc);
     expect(store.tracks[0].mixer?.outputBusId).toBe(busId);
+  });
+
+  it('round-trips a bus return insert chain through the document', async () => {
+    const busId = addMixerBus({ name: 'FX' });
+    addInsert(mixerBusStripTarget(busId), 'dynamics.compressor', { thresholdDb: -18 });
+    const doc = serializeProject();
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+
+    expect(serializeProject()).toEqual(doc);
+    expect(store.mixer.buses[0].strip?.inserts).toEqual([
+      { processor: 'dynamics.compressor', params: { thresholdDb: -18 }, enabled: true },
+    ]);
+  });
+
+  it('round-trips bus gain automation through the bus document entry', async () => {
+    const busId = addMixerBus({ name: 'FX' });
+    const target = busAutomationTarget(busId);
+    setAutomationLanePoints(target, 'faderDb', [
+      { ppq: 0, value: -12 },
+      { ppq: 960, value: -3, curve: 'hold' },
+    ]);
+    const doc = serializeProject();
+
+    expect(doc.mixer?.buses[0].automation).toEqual([
+      {
+        param: 'faderDb',
+        enabled: true,
+        points: [
+          { ppq: 0, value: -12 },
+          { ppq: 960, value: -3, curve: 'hold' },
+        ],
+      },
+    ]);
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    expect(store.automationLanes).toEqual([
+      {
+        target,
+        param: 'faderDb',
+        enabled: true,
+        points: [
+          { ppq: 0, value: -12 },
+          { ppq: 960, value: -3, curve: 'hold' },
+        ],
+      },
+    ]);
+    expect(serializeProject()).toEqual(doc);
+  });
+
+  it('drops unsupported mixer-scope sidechain ids when serializing', () => {
+    const sourceId = addAudioTrack({ name: 'Kick' });
+    const busId = addMixerBus({ name: 'FX' });
+    addInsert(mixerBusStripTarget(busId), 'dynamics.compressor', { thresholdDb: -18 });
+    store.mixer.buses[0].strip!.inserts[0].sidechainSourceTrackId = sourceId;
+    addInsert('master', 'dynamics.compressor', { thresholdDb: -18 });
+    store.mixer.master.inserts[0].sidechainSourceTrackId = sourceId;
+
+    const doc = serializeProject();
+
+    expect(doc.mixer?.buses[0].strip?.inserts[0].sidechainSourceTrackId).toBeUndefined();
+    expect(doc.mixer?.master.inserts[0].sidechainSourceTrackId).toBeUndefined();
   });
 
   it('round-trips a pre-fader send and a channel alignment delay', async () => {

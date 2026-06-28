@@ -6,8 +6,8 @@
  * Engine contract (libsonare):
  * - A track strip set via setTrackStripJson is an extra processing stage
  *   independent of the lane fader/pan owned by mixer-sync (setStripGain /
- *   setStripPan), so the scene strips sent here stay neutral: inserts and EQ
- *   only, no faderDb/pan deviation.
+ *   setStripPan). Scene strips therefore omit faderDb/pan, but they do carry
+ *   channel-strip DSP fields such as input trim, stereo width and polarity.
  * - The strip has a dedicated per-band EQ (separate from the inserts) edited
  *   via setStripEq. It starts empty after every strip JSON send — a full
  *   re-send replaces the whole strip, so the bypass flags and every EQ band
@@ -24,7 +24,7 @@
  * - The master strip has no engine-side sends; mixer.master.sends is ignored.
  */
 
-import type { MixerStrip, ProjectMixerState } from '@/project/mixer';
+import { type MixerStrip, type ProjectMixerState, vcaOffsetDb } from '@/project/mixer';
 import type { EditorTrack } from '@/project/types';
 import type { EngineTrackSend, EqBand } from '@/wasm/index.js';
 import type { EngineHandle } from './engine';
@@ -68,9 +68,9 @@ export function busSceneJson(
  * stacked (mixer-sync lane semantics), muted groups floored to silence, the
  * result clamped to the engine's bus gain range.
  */
-export function groupBusGainDb(track: EditorTrack): number {
+export function groupBusGainDb(track: EditorTrack, vcaOffset = 0): number {
   if (track.mute) return -120;
-  const combined = linearToDb(track.volume) + (track.mixer?.gainDb ?? 0);
+  const combined = linearToDb(track.volume) + (track.mixer?.gainDb ?? 0) + vcaOffset;
   return Math.min(24, Math.max(-120, combined));
 }
 
@@ -99,7 +99,14 @@ export function stripSceneJson(
     return { slot: 'pre', processor: slot.processor, params: JSON.stringify(slot.params) };
   });
   const id = target === 'master' ? 'master' : `track-${target}`;
-  return JSON.stringify({ version: 1, strips: [{ id, inserts }], buses: [], connections: [] });
+  const sceneStrip: Record<string, unknown> = { id, inserts };
+  const inputTrimDb = strip?.inputTrimDb ?? 0;
+  if (inputTrimDb !== 0) sceneStrip.inputTrimDb = inputTrimDb;
+  const width = strip?.width ?? 1;
+  if (width !== 1) sceneStrip.width = width;
+  if (strip?.polarityInvertLeft === true) sceneStrip.polarityInvertLeft = true;
+  if (strip?.polarityInvertRight === true) sceneStrip.polarityInvertRight = true;
+  return JSON.stringify({ version: 1, strips: [sceneStrip], buses: [], connections: [] });
 }
 
 /** What was last sent for one strip target, kept for change detection. */
@@ -156,15 +163,24 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     sendStripJson: (sceneJson: string) => void,
   ): StripMemory | undefined => {
     const inserts = strip?.inserts ?? [];
-    const structureKey = JSON.stringify(
-      inserts.map((slot) => ({ processor: slot.processor, params: slot.params })),
-    );
+    const structureKey = JSON.stringify({
+      inputTrimDb: strip?.inputTrimDb ?? 0,
+      width: strip?.width ?? 1,
+      polarityInvertLeft: strip?.polarityInvertLeft === true,
+      polarityInvertRight: strip?.polarityInvertRight === true,
+      inserts: inserts.map((slot) => ({ processor: slot.processor, params: slot.params })),
+    });
     // Individual band enabled/bypassed flags are forwarded as-is inside the
     // band objects; an EQ disabled as a whole contributes no bands.
     const effectiveEqBands: EqBand[] = strip?.eq?.enabled ? strip.eq.bands : [];
     const enabled = inserts.map((slot) => slot.enabled);
 
-    if (!memory && inserts.length === 0 && effectiveEqBands.length === 0) {
+    const hasSceneDsp =
+      (strip?.inputTrimDb ?? 0) !== 0 ||
+      (strip?.width ?? 1) !== 1 ||
+      strip?.polarityInvertLeft === true ||
+      strip?.polarityInvertRight === true;
+    if (!memory && !hasSceneDsp && inserts.length === 0 && effectiveEqBands.length === 0) {
       return undefined;
     }
 
@@ -211,6 +227,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
   const sync = (tracks: ReadonlyArray<EditorTrack>, mixer: ProjectMixerState): void => {
     // Group tracks consume engine buses next to the user send buses.
     const groupTracks = tracks.filter((track) => track.kind === 'group');
+    const vcaGainDb = new Map((mixer.vcaGroups ?? []).map((group) => [group.id, group.gainDb]));
     if (mixer.buses.length + groupTracks.length > MAX_ENGINE_BUSES) {
       throw new Error(
         `Too many mixer buses for the engine: ${mixer.buses.length} send buses + ` +
@@ -246,7 +263,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       })),
       ...groupTracks.map((group) => ({
         busId: groupBusByTrackId.get(group.id) as number,
-        gainDb: groupBusGainDb(group),
+        gainDb: groupBusGainDb(group, vcaOffsetDb(group.vcaId, vcaGainDb)),
       })),
     ];
 
@@ -326,7 +343,31 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     }
 
     // Track strips (group tracks carry their inserts on their bus strip
-    // instead of the silent lane strip), then the master strip.
+    // instead of the silent lane strip), then return-bus strips and master.
+    for (const bus of mixer.buses) {
+      const busId = busNumberByStoreId.get(bus.id) as number;
+      if (!bus.strip && !lastBusStrip.has(busId)) continue;
+      const inserts = bus.strip?.inserts ?? [];
+      const structureKey = JSON.stringify(
+        inserts.map((slot) => ({
+          processor: slot.processor,
+          params: slot.params,
+          enabled: slot.enabled,
+        })),
+      );
+      if (lastBusStrip.get(busId) !== structureKey) {
+        const audible = {
+          ...(bus.strip ?? { inserts: [] }),
+          inserts: inserts.filter((slot) => slot.enabled),
+        };
+        handle.engine.setBusStripJson(
+          busId,
+          busSceneJson(busId, audible as MixerStrip, insertCatalog),
+        );
+        lastBusStrip.set(busId, structureKey);
+      }
+    }
+
     for (const track of tracks) {
       if (track.kind === 'group') {
         const busId = groupBusByTrackId.get(track.id) as number;

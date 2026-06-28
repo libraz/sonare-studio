@@ -16,7 +16,13 @@ import {
   type DocumentNoteAnnotation,
   type DocumentScoreSettings,
 } from './annotations';
-import type { AutomationLaneState, AutomationParam, AutomationPoint } from './automation';
+import {
+  type AutomationLaneState,
+  type AutomationParam,
+  type AutomationPoint,
+  busAutomationTarget,
+  isBusAutomationTarget,
+} from './automation';
 import type { EditorChordSymbol } from './chords';
 import { clearMixerSnapshots } from './command/mixer-snapshots';
 import { clearHistory } from './commands';
@@ -26,6 +32,7 @@ import {
   cloneMixerState,
   cloneStrip,
   isDefaultMixerState,
+  type MixerBus,
   type MixerStrip,
   type ProjectMixerState,
 } from './mixer';
@@ -174,6 +181,18 @@ export interface DocumentAutomationLane {
   enabled: boolean;
 }
 
+/** Mixer bus persisted in a project document, with optional bus automation. */
+export type DocumentMixerBus = MixerBus & {
+  /** Automation lanes targeting this bus; absent = none. */
+  automation?: DocumentAutomationLane[];
+};
+
+/** Project mixer document shape, allowing automation on each bus entry. */
+export type DocumentMixerState = Omit<ProjectMixerState, 'buses'> & {
+  /** Send buses with optional automation lanes. */
+  buses: DocumentMixerBus[];
+};
+
 /** One track of the document, with its clips. */
 export interface DocumentTrack {
   /** Track display name. */
@@ -290,7 +309,7 @@ export interface ProjectDocument {
   /** Chord-track symbols ordered by position; absent/empty = no chord track. */
   chords?: EditorChordSymbol[];
   /** Project mixer state; absent (schema < 3 or all-default) = defaults. */
-  mixer?: ProjectMixerState;
+  mixer?: DocumentMixerState;
   /** Score display settings; absent = defaults (no display transpose). */
   score?: DocumentScoreSettings;
   /** MIDI-learn CC bindings; absent/empty = none. */
@@ -462,7 +481,22 @@ export function serializeProject(): ProjectDocument {
   if (store.chords.length > 0) doc.chords = store.chords.map((chord) => ({ ...chord }));
   // The project mixer state is omitted while it is entirely default, so
   // documents from mixer-less sessions look exactly like older ones.
-  if (!isDefaultMixerState(store.mixer)) doc.mixer = cloneMixerState(store.mixer);
+  if (!isDefaultMixerState(store.mixer)) {
+    const mixer = cloneMixerState(store.mixer) as DocumentMixerState;
+    // Master and user bus inserts cannot be keyed from session track ids in a
+    // portable document. Track insert sidechains were converted positionally
+    // above; unsupported/dangling mixer-scope keys are dropped here.
+    for (const slot of mixer.master.inserts) delete slot.sidechainSourceTrackId;
+    for (const bus of mixer.buses) {
+      for (const slot of bus.strip?.inserts ?? []) delete slot.sidechainSourceTrackId;
+      const target = busAutomationTarget(bus.id);
+      const automation = store.automationLanes.filter(
+        (lane) => lane.target === target && isBusAutomationTarget(lane.target),
+      );
+      if (automation.length > 0) bus.automation = automation.map(toDocumentAutomationLane);
+    }
+    doc.mixer = mixer;
+  }
   // Score display settings are likewise omitted while default.
   if (store.displayTransposeSemitones !== 0) {
     doc.score = { displayTransposeSemitones: store.displayTransposeSemitones };

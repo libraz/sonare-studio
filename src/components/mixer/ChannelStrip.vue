@@ -9,7 +9,6 @@ import { linearToDb } from '@/engine/mixer-sync';
 import type { ScopeSource } from '@/engine/scope';
 import type { AutomationParam } from '@/project/automation';
 import { evaluateAutomationValue } from '@/project/automation';
-import type { MixerStripTarget } from '@/project/commands';
 import {
   addVcaGroup,
   renameTrack,
@@ -18,10 +17,13 @@ import {
   setStripChannelDelaySamples,
   setStripDualPan,
   setStripGain,
+  setStripInputTrim,
   setStripOutputBus,
   setStripPan,
   setStripPanLaw,
   setStripPanMode,
+  setStripPolarityInvert,
+  setStripWidth,
   setTrackMute,
   setTrackSolo,
   setTrackSoloSafe,
@@ -31,8 +33,13 @@ import {
   createDefaultStrip,
   DEFAULT_PAN_LAW,
   DEFAULT_PAN_MODE,
+  DEFAULT_STRIP_WIDTH,
   MAX_CHANNEL_DELAY_SAMPLES,
+  MAX_INPUT_TRIM_DB,
+  MAX_STRIP_WIDTH,
   MAX_VCA_GROUPS,
+  MIN_INPUT_TRIM_DB,
+  MIN_STRIP_WIDTH,
   type MixerStrip,
   PAN_LAW_IDS,
   PAN_MODE_IDS,
@@ -91,7 +98,7 @@ import StripSends from './StripSends.vue';
 const props = withDefaults(
   defineProps<{
     /** Strip target: a track id or 'master'. */
-    target: MixerStripTarget;
+    target: number | 'master';
     /** Live meter source for this strip; null shows a placeholder meter. */
     bridge?: MeterSource | null;
     /** Master analyser tap (master strip only); null draws placeholders. */
@@ -390,13 +397,21 @@ function onPanChange(pan: number, commit: boolean): void {
   activePanGesture = null;
 }
 
-// --- Strip options popover (channel delay, pan law/mode, dual pan) ------------
+// --- Strip options popover (trim, width, polarity, pan-law shaping) -----------
 
-/** Channel delay is a track-lane strip feature (not master/group lane strips). */
-const canStripOptions = computed(() => typeof props.target === 'number' && !isGroup.value);
+/** Strip-local DSP options are available on track and master strips, not groups. */
+const canStripOptions = computed(() => !isGroup.value);
+/** Panner detail controls are track-lane features (not master/group strips). */
+const canTrackPannerOptions = computed(() => typeof props.target === 'number' && !isGroup.value);
 const optionsOpen = ref(false);
 const optionsMenu = ref<HTMLDivElement | null>(null);
 
+/** Current pre-insert trim in dB (0 when unset). */
+const inputTrimDb = computed(() => strip.value.inputTrimDb ?? 0);
+/** Current stereo width multiplier (1 when unset). */
+const stripWidth = computed(() => strip.value.width ?? DEFAULT_STRIP_WIDTH);
+const polarityLeft = computed(() => strip.value.polarityInvertLeft === true);
+const polarityRight = computed(() => strip.value.polarityInvertRight === true);
 /** Current channel alignment delay in samples (0 when unset). */
 const channelDelaySamples = computed(() => strip.value.channelDelaySamples ?? 0);
 
@@ -420,11 +435,37 @@ const panModeOptions = computed(() =>
 /** True when any strip-panner option deviates from neutral. */
 const hasStripOptions = computed(
   () =>
+    inputTrimDb.value !== 0 ||
+    stripWidth.value !== DEFAULT_STRIP_WIDTH ||
+    polarityLeft.value ||
+    polarityRight.value ||
     channelDelaySamples.value > 0 ||
     panLaw.value !== DEFAULT_PAN_LAW ||
     panMode.value !== DEFAULT_PAN_MODE ||
     strip.value.dualPan !== undefined,
 );
+
+function onInputTrimInput(event: Event, commit: boolean): void {
+  const raw = Number.parseFloat((event.target as HTMLInputElement).value);
+  const value = Number.isFinite(raw)
+    ? Math.min(MAX_INPUT_TRIM_DB, Math.max(MIN_INPUT_TRIM_DB, raw))
+    : 0;
+  setStripInputTrim(props.target, value, { commit });
+}
+
+function onWidthInput(event: Event, commit: boolean): void {
+  const raw = Number.parseFloat((event.target as HTMLInputElement).value);
+  const value = Number.isFinite(raw)
+    ? Math.min(MAX_STRIP_WIDTH, Math.max(MIN_STRIP_WIDTH, raw))
+    : DEFAULT_STRIP_WIDTH;
+  setStripWidth(props.target, value, { commit });
+}
+
+function onPolarityToggle(channel: 'left' | 'right'): void {
+  const left = channel === 'left' ? !polarityLeft.value : polarityLeft.value;
+  const right = channel === 'right' ? !polarityRight.value : polarityRight.value;
+  setStripPolarityInvert(props.target, left, right);
+}
 
 function onChannelDelayInput(event: Event): void {
   if (typeof props.target !== 'number') return;
@@ -588,6 +629,63 @@ onBeforeUnmount(() => {
           </button>
           <div v-if="optionsOpen" class="strip-options-popover" role="menu">
             <label class="strip-options-row">
+              <span class="strip-options-label">{{ t.shell.mixer.strip.inputTrim }}</span>
+              <span class="strip-options-field">
+                <input
+                  type="range"
+                  :min="MIN_INPUT_TRIM_DB"
+                  :max="MAX_INPUT_TRIM_DB"
+                  step="0.5"
+                  :value="inputTrimDb"
+                  :aria-label="t.shell.mixer.strip.inputTrim"
+                  @input="onInputTrimInput($event, false)"
+                  @change="onInputTrimInput($event, true)"
+                />
+                <span class="strip-options-unit">{{ formatDb(inputTrimDb) }}</span>
+              </span>
+            </label>
+            <label class="strip-options-row">
+              <span class="strip-options-label">{{ t.shell.mixer.strip.width }}</span>
+              <span class="strip-options-field">
+                <input
+                  type="range"
+                  :min="MIN_STRIP_WIDTH"
+                  :max="MAX_STRIP_WIDTH"
+                  step="0.01"
+                  :value="stripWidth"
+                  :aria-label="t.shell.mixer.strip.width"
+                  @input="onWidthInput($event, false)"
+                  @change="onWidthInput($event, true)"
+                />
+                <span class="strip-options-unit">{{ stripWidth.toFixed(2) }}</span>
+              </span>
+            </label>
+            <div class="strip-options-row">
+              <span class="strip-options-label">{{ t.shell.mixer.strip.polarity }}</span>
+              <span class="strip-options-field strip-options-toggles">
+                <button
+                  type="button"
+                  class="toggle"
+                  :class="{ on: polarityLeft }"
+                  :aria-pressed="polarityLeft"
+                  :aria-label="t.shell.mixer.strip.polarityLeft"
+                  @click="onPolarityToggle('left')"
+                >
+                  L
+                </button>
+                <button
+                  type="button"
+                  class="toggle"
+                  :class="{ on: polarityRight }"
+                  :aria-pressed="polarityRight"
+                  :aria-label="t.shell.mixer.strip.polarityRight"
+                  @click="onPolarityToggle('right')"
+                >
+                  R
+                </button>
+              </span>
+            </div>
+            <label v-if="canTrackPannerOptions" class="strip-options-row">
               <span class="strip-options-label">{{ t.shell.mixer.strip.channelDelay }}</span>
               <span class="strip-options-field">
                 <input
@@ -602,7 +700,7 @@ onBeforeUnmount(() => {
                 <span class="strip-options-unit">{{ t.shell.mixer.strip.samples }}</span>
               </span>
             </label>
-            <div class="strip-options-row">
+            <div v-if="canTrackPannerOptions" class="strip-options-row">
               <span class="strip-options-label">{{ t.shell.mixer.strip.panLaw }}</span>
               <span class="strip-options-field">
                 <SelectMenu
@@ -614,7 +712,7 @@ onBeforeUnmount(() => {
                 />
               </span>
             </div>
-            <div class="strip-options-row">
+            <div v-if="canTrackPannerOptions" class="strip-options-row">
               <span class="strip-options-label">{{ t.shell.mixer.strip.panMode }}</span>
               <span class="strip-options-field">
                 <SelectMenu
@@ -626,7 +724,7 @@ onBeforeUnmount(() => {
                 />
               </span>
             </div>
-            <template v-if="panMode === 'dualPan'">
+            <template v-if="canTrackPannerOptions && panMode === 'dualPan'">
               <label class="strip-options-row">
                 <span class="strip-options-label">{{ t.shell.mixer.strip.dualPanLeft }}</span>
                 <span class="strip-options-field">
@@ -913,6 +1011,10 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.strip-options-toggles {
+  gap: var(--sp-1);
 }
 
 .strip-options-field input {

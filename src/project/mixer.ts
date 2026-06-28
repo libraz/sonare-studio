@@ -96,6 +96,21 @@ export const DEFAULT_PAN_LAW: PanLawId = 'const3dB';
 /** Default pan mode (balance). */
 export const DEFAULT_PAN_MODE: PanModeId = 'balance';
 
+/** Default stereo width (unchanged mid/side balance). */
+export const DEFAULT_STRIP_WIDTH = 1;
+
+/** Lowest accepted input trim in dB. */
+export const MIN_INPUT_TRIM_DB = -48;
+
+/** Highest accepted input trim in dB. */
+export const MAX_INPUT_TRIM_DB = 48;
+
+/** Lowest accepted stereo width multiplier. */
+export const MIN_STRIP_WIDTH = 0;
+
+/** Highest accepted stereo width multiplier. */
+export const MAX_STRIP_WIDTH = 2;
+
 /** Channel EQ as a list of libsonare EqBand descriptors. */
 export interface StripEq {
   /** False bypasses the whole EQ. */
@@ -110,6 +125,20 @@ export interface MixerStrip {
   gainDb: number;
   /** Stereo balance in [-1, 1] (0 = centered). */
   pan: number;
+  /**
+   * Pre-insert input trim in dB. This is engine channel-strip DSP, separate
+   * from the lane fader used for track volume/strip gain. Absent = 0 dB.
+   */
+  inputTrimDb?: number;
+  /**
+   * Stereo width multiplier applied in the channel strip (0 = mono, 1 =
+   * unchanged, 2 = wide). Absent = {@link DEFAULT_STRIP_WIDTH}.
+   */
+  width?: number;
+  /** Invert the left channel polarity before the strip output stage. */
+  polarityInvertLeft?: boolean;
+  /** Invert the right channel polarity before the strip output stage. */
+  polarityInvertRight?: boolean;
   /** Insert chain, applied in order. */
   inserts: InsertSlot[];
   /** Sends to mixer buses (audible on tracks; UI-only on the master strip). */
@@ -173,6 +202,8 @@ export interface MixerBus {
   name: string;
   /** Bus gain in dB (0 = unity). */
   gainDb: number;
+  /** Optional return-bus insert strip. Sends sum through this chain. */
+  strip?: MixerStrip;
 }
 
 /**
@@ -290,6 +321,10 @@ export function isDefaultStrip(strip: MixerStrip): boolean {
     strip.sends.length === 0 &&
     strip.eq === undefined &&
     strip.outputBusId === undefined &&
+    (strip.inputTrimDb ?? 0) === 0 &&
+    (strip.width ?? DEFAULT_STRIP_WIDTH) === DEFAULT_STRIP_WIDTH &&
+    strip.polarityInvertLeft !== true &&
+    strip.polarityInvertRight !== true &&
     (strip.channelDelaySamples ?? 0) === 0 &&
     (strip.panLaw ?? DEFAULT_PAN_LAW) === DEFAULT_PAN_LAW &&
     (strip.panMode ?? DEFAULT_PAN_MODE) === DEFAULT_PAN_MODE &&
@@ -339,20 +374,24 @@ export function eqIsActive(eq: StripEq | undefined): boolean {
 
 /**
  * True when a strip carries buffer-level DSP (enabled inserts or an active
- * EQ). Gain and pan are excluded: they are applied as cheap per-schedule
- * operations outside the processed-buffer cache.
+ * EQ), including the strip-local input trim, width and polarity stages. Gain
+ * and pan are excluded: they are applied as cheap per-schedule operations
+ * outside the processed-buffer cache.
  */
 export function stripHasDsp(strip: MixerStrip | undefined): boolean {
   if (!strip) return false;
+  if ((strip.inputTrimDb ?? 0) !== 0) return true;
+  if ((strip.width ?? DEFAULT_STRIP_WIDTH) !== DEFAULT_STRIP_WIDTH) return true;
+  if (strip.polarityInvertLeft === true || strip.polarityInvertRight === true) return true;
   if (strip.inserts.some((slot) => slot.enabled)) return true;
   return eqIsActive(strip.eq);
 }
 
 /**
  * Deterministic identity segment for processed-buffer cache keys: hashes the
- * DSP-relevant strip content (enabled inserts in order with their params,
- * plus the active EQ bands). Gain and pan are excluded on purpose (see
- * {@link stripHasDsp}).
+ * DSP-relevant strip content (input trim, width, polarity, enabled inserts in
+ * order with their params, plus the active EQ bands). Gain and pan are
+ * excluded on purpose (see {@link stripHasDsp}).
  *
  * @param strip Strip to identify (undefined = neutral).
  * @returns A stable key segment ('none' for strips without DSP).
@@ -360,6 +399,10 @@ export function stripHasDsp(strip: MixerStrip | undefined): boolean {
 export function stripCacheSegment(strip: MixerStrip | undefined): string {
   if (!strip || !stripHasDsp(strip)) return 'none';
   const identity = {
+    inputTrimDb: strip.inputTrimDb ?? 0,
+    width: strip.width ?? DEFAULT_STRIP_WIDTH,
+    polarityInvertLeft: strip.polarityInvertLeft === true,
+    polarityInvertRight: strip.polarityInvertRight === true,
     inserts: strip.inserts
       .filter((slot) => slot.enabled)
       .map((slot) => ({ processor: slot.processor, params: slot.params })),

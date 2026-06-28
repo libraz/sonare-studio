@@ -7,10 +7,13 @@ import {
   addGroupTrack,
   addMidiClip,
   addTrack,
+  addVcaGroup,
   clearHistory,
   setTrackFrozen,
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
+import { closeContextMenu, useContextMenuState } from '@/ui/menu/context-menu';
+import { selectOption, selectValueText } from './helpers/select-menu';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -49,9 +52,39 @@ describe('track freeze / bounce UI', () => {
     store = useProjectStore();
     store.dispose();
     clearHistory();
+    closeContextMenu();
     vi.clearAllMocks();
     await store.init();
     trackId = store.tracks[0].id;
+  });
+
+  describe('TrackHeaderList VCA picker', () => {
+    it('assigns and clears VCA membership from the track header', async () => {
+      addVcaGroup({ id: 'vca-drums', name: 'Drums VCA' });
+      const wrapper = mountHeaders();
+
+      expect(selectValueText(wrapper, '.track-vca-select')).toBe('No VCA');
+
+      await selectOption(wrapper, '.track-vca-select', 'Drums VCA');
+      expect(store.tracks[0].vcaId).toBe('vca-drums');
+      expect(selectValueText(wrapper, '.track-vca-select')).toBe('Drums VCA');
+
+      await selectOption(wrapper, '.track-vca-select', 'No VCA');
+      expect(store.tracks[0].vcaId).toBeUndefined();
+    });
+
+    it('creates and assigns a VCA group from the track header context menu', async () => {
+      const wrapper = mountHeaders();
+      await wrapper.find('.track-header').trigger('contextmenu', { clientX: 10, clientY: 10 });
+
+      const menu = useContextMenuState();
+      const item = menu.items.find((entry) => entry.id === 'vca-new');
+      expect(item?.label).toBe('New VCA group');
+
+      item?.run?.();
+      expect(store.mixer.vcaGroups).toHaveLength(1);
+      expect(store.tracks[0].vcaId).toBe(store.mixer.vcaGroups?.[0]?.id);
+    });
   });
 
   describe('TrackHeaderList freeze toggle', () => {

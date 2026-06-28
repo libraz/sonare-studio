@@ -1,9 +1,15 @@
 /**
  * Automation lane model: plain data describing parameter automation over the
  * timeline (app-level metadata, like markers and sections). Lanes target a
- * track or the master strip and hold points kept sorted by PPQ by the
- * commands layer (src/project/commands.ts).
+ * track, the master strip, or a mixer bus and hold points kept sorted by PPQ
+ * by the commands layer (src/project/commands.ts).
  */
+
+/** A mixer bus automation target encoded with its stable project bus id. */
+export type BusAutomationTarget = `bus:${string}`;
+
+/** Lane target: a track id, the master strip, or a mixer bus. */
+export type AutomationTarget = number | 'master' | BusAutomationTarget;
 
 /** Parameter automatable by a lane. */
 export type AutomationParam = 'faderDb' | 'pan';
@@ -23,8 +29,8 @@ export interface AutomationPoint {
 
 /** One automation lane: a target, the automated parameter and its points. */
 export interface AutomationLaneState {
-  /** Lane target: a track id or 'master'. */
-  target: number | 'master';
+  /** Lane target: a track id, 'master', or a mixer bus target. */
+  target: AutomationTarget;
   /** Automated parameter. */
   param: AutomationParam;
   /** Points sorted by ascending PPQ (the commands layer keeps the order). */
@@ -85,8 +91,23 @@ export function clampAutomationValue(param: AutomationParam, value: number): num
  * @param param Automated parameter.
  * @returns The "<target>:<param>" key.
  */
-export function automationLaneKey(target: number | 'master', param: AutomationParam): string {
+export function automationLaneKey(target: AutomationTarget, param: AutomationParam): string {
   return `${target}:${param}`;
+}
+
+/** Encodes a mixer bus id into an automation lane target. */
+export function busAutomationTarget(busId: string): BusAutomationTarget {
+  return `bus:${busId}`;
+}
+
+/** True when the automation target names a mixer bus. */
+export function isBusAutomationTarget(target: AutomationTarget): target is BusAutomationTarget {
+  return typeof target === 'string' && target.startsWith('bus:');
+}
+
+/** Extracts the project bus id from a bus automation target. */
+export function busIdFromAutomationTarget(target: BusAutomationTarget): string {
+  return target.slice(4);
 }
 
 /** True when the value is one of the {@link AutomationCurve} names. */
@@ -205,7 +226,7 @@ export function evaluateAutomationValue(
  */
 export function sanitizeAutomationEntries(
   value: unknown,
-  target: number | 'master',
+  target: AutomationTarget,
 ): AutomationLaneState[] {
   if (!Array.isArray(value)) return [];
   const out: AutomationLaneState[] = [];

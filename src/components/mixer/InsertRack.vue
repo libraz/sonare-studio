@@ -3,7 +3,11 @@ import { computed, inject, onBeforeUnmount, ref, watch } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
 import type { CommandGestureOptions, MixerStripTarget } from '@/project/commands';
-import { setInsertSidechain } from '@/project/commands';
+import {
+  isMixerBusStripTarget,
+  mixerBusIdFromTarget,
+  setInsertSidechain,
+} from '@/project/commands';
 import { createDefaultStrip, type InsertSlot, type MixerStrip } from '@/project/mixer';
 import { listQuickControls, type QuickControl, setQuickControl } from '@/project/quick-controls';
 import { useProjectStore } from '@/project/store';
@@ -49,6 +53,10 @@ const { t } = useI18n();
 
 const strip = computed<MixerStrip>(() => {
   if (props.target === 'master') return store.mixer.master;
+  if (isMixerBusStripTarget(props.target)) {
+    const busId = mixerBusIdFromTarget(props.target);
+    return store.mixer.buses.find((bus) => bus.id === busId)?.strip ?? createDefaultStrip();
+  }
   const track = store.tracks.find((t) => t.id === props.target);
   return track?.mixer ?? createDefaultStrip();
 });
@@ -116,22 +124,25 @@ const midiLearn = inject(MIDI_LEARN_KEY, null);
 
 /** Learn target id for a control on the currently expanded insert slot. */
 function learnTargetId(control: QuickControl): string {
+  if (isMixerBusStripTarget(props.target)) return '';
   return midiLearnInsertTargetId(props.target, expandedIndex.value ?? -1, control.id);
 }
 
 /** MIDI-learn state for a control's knob menu, or undefined when unavailable. */
 function learnState(control: QuickControl): 'unbound' | 'armed' | 'bound' | undefined {
-  if (!midiLearn) return undefined;
+  if (!midiLearn || isMixerBusStripTarget(props.target)) return undefined;
   const id = learnTargetId(control);
   if (midiLearn.isArmedId(id)) return 'armed';
   return midiLearn.bindingForId(id) ? 'bound' : 'unbound';
 }
 
 function onMidiLearn(control: QuickControl): void {
+  if (isMixerBusStripTarget(props.target)) return;
   midiLearn?.armId(learnTargetId(control));
 }
 
 function onMidiForget(control: QuickControl): void {
+  if (isMixerBusStripTarget(props.target)) return;
   midiLearn?.clearId(learnTargetId(control));
 }
 
@@ -202,11 +213,11 @@ const sidechainOptions = computed<{ value: number; label: string }[]>(() => [
 
 /** True when the slot gets a key-source select (keyed insert on a track strip). */
 function hasSidechainSelect(slot: InsertSlot): boolean {
-  return props.target !== 'master' && isSidechainKeyedProcessor(slot.processor);
+  return typeof props.target === 'number' && isSidechainKeyedProcessor(slot.processor);
 }
 
 function onSidechainChange(index: number, value: number): void {
-  if (props.target === 'master') return;
+  if (typeof props.target !== 'number') return;
   try {
     setInsertSidechain(props.target, index, value === SIDECHAIN_NONE ? null : value);
     error.value = '';

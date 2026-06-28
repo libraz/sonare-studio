@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { removeVcaGroup, setVcaGroupGain } from '@/project/commands';
+import { promptDialog } from '@/composables/useDialogs';
+import { removeVcaGroup, renameVcaGroup, setVcaGroupGain } from '@/project/commands';
 import type { VcaGroup } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
@@ -36,13 +37,31 @@ function onFaderChange(db: number, commit: boolean): void {
 function onRemove(): void {
   removeVcaGroup(props.group.id);
 }
+
+async function onRename(): Promise<void> {
+  const next = await promptDialog({
+    title: t.value.shell.mixer.strip.renameVcaTitle,
+    message: t.value.shell.mixer.strip.renameVcaMessage,
+    defaultValue: props.group.name,
+    placeholder: props.group.name,
+    confirmLabel: t.value.shell.mixer.strip.renameVcaConfirm,
+  });
+  if (next && next !== props.group.name) renameVcaGroup(props.group.id, next);
+}
 </script>
 
 <template>
   <div class="vca-strip">
     <div class="vca-header">
       <span class="vca-tag">{{ t.shell.mixer.strip.vca }}</span>
-      <span class="vca-name" :title="props.group.name">{{ props.group.name }}</span>
+      <button
+        type="button"
+        class="vca-name"
+        :title="t.shell.mixer.strip.renameVcaTitle"
+        @click="onRename"
+      >
+        {{ props.group.name }}
+      </button>
       <button
         type="button"
         class="vca-remove"
@@ -101,8 +120,18 @@ function onRemove(): void {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  text-align: left;
   font: var(--fw-semibold) 10px var(--font-sans);
   color: var(--text-2);
+  cursor: pointer;
+}
+
+.vca-name:hover {
+  color: var(--text-1);
 }
 
 .vca-remove {

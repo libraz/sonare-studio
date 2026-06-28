@@ -99,6 +99,24 @@ export function removeTrack(trackId: number): void {
       }
       return next;
     });
+    let mixerChanged = false;
+    const buses = store.mixer.buses.map((bus) => {
+      if (!bus.strip?.inserts.some((slot) => slot.sidechainSourceTrackId === trackId)) return bus;
+      mixerChanged = true;
+      return {
+        ...bus,
+        strip: {
+          ...cloneStrip(bus.strip),
+          inserts: bus.strip.inserts.map((slot) => {
+            if (slot.sidechainSourceTrackId !== trackId) return { ...slot };
+            const cleared = { ...slot };
+            delete cleared.sidechainSourceTrackId;
+            return cleared;
+          }),
+        },
+      };
+    });
+    if (mixerChanged) store.mixer = { ...store.mixer, buses };
     if (store.activeTrackId === trackId) {
       store.activeTrackId = -1;
       store.clipId = -1;

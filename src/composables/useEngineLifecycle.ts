@@ -12,6 +12,7 @@ import { createScopeBridge, type ScopeBridge } from '@/engine/scope';
 import { createStripSync } from '@/engine/strip-sync';
 import { createTransportSync } from '@/engine/transport-sync';
 import { ensureWasm } from '@/lib/wasm';
+import { busIdFromAutomationTarget, isBusAutomationTarget } from '@/project/automation';
 import { clampPan, laneGainDb, vcaOffsetDb } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 
@@ -71,7 +72,16 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
       const nextStripSync = createStripSync(h, { insertCatalog });
       const nextAutomationSync = createAutomationSync(h, {
         knownTrackIds: () => nextMixerSync.laneTrackIds(),
+        busIdFor: (storeBusId) => nextStripSync.busIdFor(storeBusId),
         restoreParam: (target, param) => {
+          if (isBusAutomationTarget(target)) {
+            if (param !== 'faderDb') return;
+            const storeBusId = busIdFromAutomationTarget(target);
+            const busId = nextStripSync.busIdFor(storeBusId);
+            const bus = store.mixer.buses.find((entry) => entry.id === storeBusId);
+            if (busId !== undefined && bus) h.engine.setBusGain(busId, bus.gainDb);
+            return;
+          }
           if (target === 'master') {
             if (param === 'faderDb') h.engine.setStripGain('master', store.mixer.master.gainDb);
             else h.engine.setStripPan('master', clampPan(store.mixer.master.pan));

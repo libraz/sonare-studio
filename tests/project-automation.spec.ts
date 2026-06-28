@@ -4,9 +4,12 @@ import {
   type AutomationPoint,
   automationCurveCode,
   automationLaneKey,
+  busAutomationTarget,
+  busIdFromAutomationTarget,
   clampAutomationValue,
   cloneAutomationLane,
   evaluateAutomationValue,
+  isBusAutomationTarget,
   sanitizeAutomationEntries,
   sanitizeAutomationPoints,
 } from '@/project/automation';
@@ -52,6 +55,14 @@ describe('automation model', () => {
     it('builds "<target>:<param>" keys', () => {
       expect(automationLaneKey('master', 'pan')).toBe('master:pan');
       expect(automationLaneKey(5, 'faderDb')).toBe('5:faderDb');
+      expect(automationLaneKey(busAutomationTarget('fx'), 'faderDb')).toBe('bus:fx:faderDb');
+    });
+
+    it('encodes and detects bus targets', () => {
+      const target = busAutomationTarget('fx');
+      expect(isBusAutomationTarget(target)).toBe(true);
+      expect(isBusAutomationTarget('master')).toBe(false);
+      expect(busIdFromAutomationTarget(target)).toBe('fx');
     });
   });
 

@@ -13,7 +13,9 @@
 import type { SynthPatch } from '@/wasm/index.js';
 import {
   type CommandGestureOptions,
+  isMixerBusStripTarget,
   type MixerStripTarget,
+  mixerBusIdFromTarget,
   setInsertParam,
   setTrackInstrument,
 } from './commands';
@@ -155,6 +157,12 @@ function defaultResolveInsertParams(processor: string): string[] {
 function requireStrip(target: MixerStripTarget): MixerStrip {
   const store = useProjectStore();
   if (target === 'master') return store.mixer.master;
+  if (isMixerBusStripTarget(target)) {
+    const busId = mixerBusIdFromTarget(target);
+    const bus = store.mixer.buses.find((entry) => entry.id === busId);
+    if (!bus) throw new RangeError(`Unknown mixer bus id: ${busId}`);
+    return bus.strip ?? { gainDb: 0, pan: 0, inserts: [], sends: [] };
+  }
   const track = store.tracks.find((t) => t.id === target);
   if (!track) throw new RangeError(`Unknown track id: ${target}`);
   return track.mixer ?? { gainDb: 0, pan: 0, inserts: [], sends: [] };
