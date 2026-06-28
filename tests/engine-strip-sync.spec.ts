@@ -480,6 +480,33 @@ describe('busSceneJson', () => {
     });
   });
 
+  it('emits the bus output trim, width, and polarity when non-default', () => {
+    const strip = makeStrip({ inputTrimDb: -4, width: 1.5, polarityInvertLeft: true });
+    expect(JSON.parse(busSceneJson(2, strip))).toEqual({
+      version: 1,
+      strips: [],
+      buses: [
+        {
+          id: 'bus-2',
+          role: 'submix',
+          inserts: [],
+          inputTrimDb: -4,
+          width: 1.5,
+          polarityInvertLeft: true,
+        },
+      ],
+      connections: [],
+    });
+  });
+
+  it('omits the bus output trim, width, and polarity at their defaults', () => {
+    const parsed = JSON.parse(busSceneJson(2, makeStrip({ inputTrimDb: 0, width: 1 })));
+    expect(parsed.buses[0]).not.toHaveProperty('inputTrimDb');
+    expect(parsed.buses[0]).not.toHaveProperty('width');
+    expect(parsed.buses[0]).not.toHaveProperty('polarityInvertLeft');
+    expect(parsed.buses[0]).not.toHaveProperty('polarityInvertRight');
+  });
+
   it('rejects a processor not in the insert catalog, unless the catalog is null', () => {
     const strip = makeStrip({ inserts: [{ processor: 'made.up', params: {}, enabled: true }] });
     expect(() => busSceneJson(1, strip, new Set(['dynamics.compressor']))).toThrow(
@@ -640,6 +667,28 @@ describe('createStripSync group routing', () => {
       1,
       busSceneJson(1, makeStrip({ inserts: toggled })),
     );
+  });
+
+  it('re-sends the bus strip when only its output trim changes', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const inserts = [{ processor: 'dynamics.compressor', params: {}, enabled: true }];
+
+    sync.sync([makeGroupTrack(10, makeStrip({ inserts }))], makeMixer());
+    clearCalls(engine);
+
+    // A trim-only edit (no insert change) must still re-send the bus scene.
+    sync.sync([makeGroupTrack(10, makeStrip({ inserts, inputTrimDb: -3 }))], makeMixer());
+    expect(engine.setBusStripJson).toHaveBeenCalledTimes(1);
+    expect(engine.setBusStripJson).toHaveBeenCalledWith(
+      1,
+      busSceneJson(1, makeStrip({ inserts, inputTrimDb: -3 })),
+    );
+    clearCalls(engine);
+
+    // Re-applying the same trimmed state stays silent.
+    sync.sync([makeGroupTrack(10, makeStrip({ inserts, inputTrimDb: -3 }))], makeMixer());
+    expect(engine.setBusStripJson).not.toHaveBeenCalled();
   });
 
   it('adjusts only the bus gain when the audible group level changes', () => {

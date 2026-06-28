@@ -55,11 +55,43 @@ export function busSceneJson(
     }
     return { slot: 'pre', processor: slot.processor, params: JSON.stringify(slot.params) };
   });
+  // The bus carries the same output trim/width/polarity stages a strip exposes;
+  // each is emitted only when non-default so an unshaped bus stays byte-identical.
+  const bus: {
+    id: string;
+    role: string;
+    inserts: typeof inserts;
+    inputTrimDb?: number;
+    width?: number;
+    polarityInvertLeft?: boolean;
+    polarityInvertRight?: boolean;
+  } = { id: `bus-${busId}`, role: 'submix', inserts };
+  const inputTrimDb = strip?.inputTrimDb ?? 0;
+  if (inputTrimDb !== 0) bus.inputTrimDb = inputTrimDb;
+  const width = strip?.width ?? 1;
+  if (width !== 1) bus.width = width;
+  if (strip?.polarityInvertLeft === true) bus.polarityInvertLeft = true;
+  if (strip?.polarityInvertRight === true) bus.polarityInvertRight = true;
+  return JSON.stringify({ version: 1, strips: [], buses: [bus], connections: [] });
+}
+
+/**
+ * Change-detection key for a bus strip's audible DSP. Folds the insert structure
+ * together with the output trim/width/polarity stages so a change in any of them
+ * re-sends the bus scene (the insert structure alone would miss a trim/width/
+ * polarity edit that touched no insert).
+ */
+function busStripDspKey(strip: MixerStrip | undefined): string {
   return JSON.stringify({
-    version: 1,
-    strips: [],
-    buses: [{ id: `bus-${busId}`, role: 'submix', inserts }],
-    connections: [],
+    inserts: (strip?.inserts ?? []).map((slot) => ({
+      processor: slot.processor,
+      params: slot.params,
+      enabled: slot.enabled,
+    })),
+    inputTrimDb: strip?.inputTrimDb ?? 0,
+    width: strip?.width ?? 1,
+    polarityInvertLeft: strip?.polarityInvertLeft === true,
+    polarityInvertRight: strip?.polarityInvertRight === true,
   });
 }
 
@@ -348,13 +380,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       const busId = busNumberByStoreId.get(bus.id) as number;
       if (!bus.strip && !lastBusStrip.has(busId)) continue;
       const inserts = bus.strip?.inserts ?? [];
-      const structureKey = JSON.stringify(
-        inserts.map((slot) => ({
-          processor: slot.processor,
-          params: slot.params,
-          enabled: slot.enabled,
-        })),
-      );
+      const structureKey = busStripDspKey(bus.strip);
       if (lastBusStrip.get(busId) !== structureKey) {
         const audible = {
           ...(bus.strip ?? { inserts: [] }),
@@ -372,13 +398,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       if (track.kind === 'group') {
         const busId = groupBusByTrackId.get(track.id) as number;
         const inserts = track.mixer?.inserts ?? [];
-        const structureKey = JSON.stringify(
-          inserts.map((slot) => ({
-            processor: slot.processor,
-            params: slot.params,
-            enabled: slot.enabled,
-          })),
-        );
+        const structureKey = busStripDspKey(track.mixer);
         if (lastBusStrip.get(busId) !== structureKey) {
           // Bus strips have no engine-side bypass toggles; disabled inserts
           // are simply omitted from the (re-sent) scene.
