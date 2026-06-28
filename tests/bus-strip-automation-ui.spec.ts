@@ -59,6 +59,24 @@ describe('BusStrip automation UI', () => {
     expect(wrapper.getComponent(MixerFader).props('valueDb')).toBe(-9);
   });
 
+  it('writes bus output trim, width, and polarity from the shaping popover', async () => {
+    const wrapper = mountStrip();
+    await wrapper.find('.strip-options-btn').trigger('click');
+    const ranges = wrapper.findAll('.strip-options-popover input[type="range"]');
+    expect(ranges).toHaveLength(2);
+
+    await ranges[0].setValue('-6');
+    await ranges[0].trigger('change');
+    expect(store.mixer.buses[0].strip?.inputTrimDb).toBe(-6);
+
+    await ranges[1].setValue('1.5');
+    await ranges[1].trigger('change');
+    expect(store.mixer.buses[0].strip?.width).toBe(1.5);
+
+    await wrapper.findAll('.strip-options-toggles .toggle')[0].trigger('click');
+    expect(store.mixer.buses[0].strip?.polarityInvertLeft).toBe(true);
+  });
+
   it('writes touch automation from the bus fader', async () => {
     const wrapper = mountStrip(960);
     await wrapper
