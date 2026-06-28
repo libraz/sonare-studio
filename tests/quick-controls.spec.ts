@@ -113,6 +113,27 @@ describe('quick controls', () => {
       expect(controls.find((c) => c.id === 'mix')).toMatchObject({ min: 0, max: 1, value: 0.4 });
     });
 
+    it('infers the Q-factor range only for a real Q parameter', () => {
+      addInsert(trackId, 'custom.filter');
+      const controls = listQuickControls(
+        { type: 'insert', trackId, index: 0 },
+        { resolveInsertParams: () => ['resonanceQ', 'q'] },
+      );
+      expect(controls.find((c) => c.id === 'resonanceQ')).toMatchObject({ min: 0.1, max: 18 });
+      expect(controls.find((c) => c.id === 'q')).toMatchObject({ min: 0.1, max: 18 });
+    });
+
+    it('does not misread a param merely starting with q as a Q factor', () => {
+      addInsert(trackId, 'custom.weird');
+      const controls = listQuickControls(
+        { type: 'insert', trackId, index: 0 },
+        { resolveInsertParams: () => ['quantize', 'quality'] },
+      );
+      // Falls back to the normalized [0, 1] amount range, not the Q range.
+      expect(controls.find((c) => c.id === 'quantize')).toMatchObject({ min: 0, max: 1 });
+      expect(controls.find((c) => c.id === 'quality')).toMatchObject({ min: 0, max: 1 });
+    });
+
     it('caps the listing at eight controls', () => {
       const names = Array.from({ length: 12 }, (_, i) => `param${i}`);
       addInsert(trackId, 'custom.many');

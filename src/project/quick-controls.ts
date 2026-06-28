@@ -103,7 +103,10 @@ const PARAM_RANGE_RULES: ReadonlyArray<ParamRangeRule> = [
   { test: /ratio$/i, min: 1, max: 20, fallback: 4 },
   { test: /Ms$/, min: 0, max: 5000, unit: 'ms', fallback: 10 },
   { test: /Hz$/, min: 20, max: 20000, unit: 'Hz', fallback: 1000 },
-  { test: /(^q|Q)$/, min: 0.1, max: 18, fallback: Math.SQRT1_2 },
+  // Filter Q factor: a standalone 'q' or a name ending in 'Q' (e.g.
+  // 'resonanceQ', 'bandQ'). The start anchor must also end the string, or any
+  // name merely starting with 'q' (e.g. 'quantize') would be misread as a Q.
+  { test: /^q$|Q$/, min: 0.1, max: 18, fallback: Math.SQRT1_2 },
 ];
 
 /** Fallback range for parameters no rule matches (normalized amounts). */
