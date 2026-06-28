@@ -33,7 +33,7 @@ export interface EngineLifecycleOptions {
   runAction: RunAction;
   setEngineSyncHandles: (handles: EngineSyncHandles) => void;
   syncAutomationState: () => void;
-  syncMidiState: () => void;
+  syncMidiState: () => Promise<void>;
   syncMixerState: () => void;
   syncTransportState: () => void;
 }
@@ -134,7 +134,7 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
       options.syncMixerState();
       options.syncAutomationState();
       options.syncTransportState();
-      options.syncMidiState();
+      await options.syncMidiState();
       await options.applyToEngine();
     });
   }

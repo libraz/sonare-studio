@@ -166,14 +166,15 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     transport.setTempoMap(effectiveTempoSegments());
   }
 
-  function syncMidiState(): void {
+  function syncMidiState(): Promise<void> {
     const m = midiSync;
-    if (!m || !store.initialized) return;
+    if (!m || !store.initialized) return midiSyncQueue;
     midiSyncQueue = midiSyncQueue
       .then(() => m.sync(store.tracks, store.clips, effectiveTempoSegments()))
       .catch((err) => {
         errorMessage.value = describeError(err);
       });
+    return midiSyncQueue;
   }
 
   function applyNow(): void {
