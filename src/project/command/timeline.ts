@@ -125,10 +125,15 @@ export async function detectSectionsFromAudioClip(clipId: number): Promise<numbe
   }
   const wasm = (await ensureWasm()) as unknown as { analyzeSections?: AudioSectionAnalyzer };
   if (typeof wasm.analyzeSections !== 'function') return 0;
-  const detected = await analyzeAudioClipSections(clip, store.tempoBpm, {
-    loadAudioAsset: loadAsset,
-    analyzeSections: wasm.analyzeSections,
-  });
+  const detected = await analyzeAudioClipSections(
+    clip,
+    store.tempoBpm,
+    {
+      loadAudioAsset: loadAsset,
+      analyzeSections: wasm.analyzeSections,
+    },
+    store.tempoSegments,
+  );
   const clipEnd = clip.startPpq + clip.lengthPpq;
   const kept = store.sections.filter(
     (section) => section.startPpq < clip.startPpq || section.startPpq >= clipEnd,

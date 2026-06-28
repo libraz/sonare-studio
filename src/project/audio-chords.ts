@@ -17,7 +17,8 @@ import type { LoadedAudioAsset } from '@/persistence/assets';
 import { mixdownToMono } from './audio-import';
 import type { EditorChordSymbol } from './chords';
 import { sliceAudioClipWindow } from './scheduling';
-import type { EditorClip } from './types';
+import { normalizeTempoMap, ppqToSeconds, secondsToPpq } from './tempo-map';
+import type { EditorClip, TempoSegment } from './types';
 
 /** A chord returned by the engine's audio detector (the fields we consume). */
 export interface DetectedAudioChord {
@@ -53,15 +54,19 @@ export interface AudioChordDeps {
  * asset, the tempo is non-positive, or the source window is empty.
  *
  * @param clip Audio clip to analyze.
- * @param tempoBpm Constant tempo (> 0) used for both the window slice and the
- *   seconds-to-PPQ mapping.
+ * @param tempoBpm Constant tempo (> 0) used for the window slice (the clip
+ *   plays at its native sample rate, so the slice is fixed-tempo).
  * @param deps Injected asset loader and chord detector.
+ * @param tempoSegments Project tempo map; detection times are placed on the
+ *   timeline through it, so chords land correctly when the tempo varies under
+ *   the clip. Empty (the default) reduces to the constant `tempoBpm` mapping.
  * @returns Detected chord symbols (unsorted; the caller sanitizes).
  */
 export async function analyzeAudioClipChords(
   clip: EditorClip,
   tempoBpm: number,
   deps: AudioChordDeps,
+  tempoSegments: ReadonlyArray<TempoSegment> = [],
 ): Promise<EditorChordSymbol[]> {
   if (clip.assetId === undefined || !(tempoBpm > 0)) return [];
   const asset = await deps.loadAudioAsset(clip.assetId);
@@ -76,12 +81,18 @@ export async function analyzeAudioClipChords(
   if (mono.length === 0) return [];
   const result = deps.detectChords(mono, asset.meta.sampleRate);
   const clipEndPpq = clip.startPpq + clip.lengthPpq;
-  // Inverse of scheduling.ppqToSeconds(ppq, tempoBpm) = ppq * 60 / tempoBpm.
-  const secondsToClipPpq = (seconds: number): number => (seconds * tempoBpm) / 60;
+  // Map window-relative detection seconds onto the timeline through the tempo
+  // map: the inverse of how playback positions the clip. The clip's audio
+  // starts at clip.startPpq, so a detection time `s` lands at the PPQ whose
+  // elapsed seconds is (clip start seconds + s).
+  const map = normalizeTempoMap(tempoSegments, tempoBpm);
+  const clipStartSeconds = ppqToSeconds(map, clip.startPpq);
+  const secondsToTimelinePpq = (seconds: number): number =>
+    secondsToPpq(map, clipStartSeconds + Math.max(0, seconds));
   const symbols: EditorChordSymbol[] = [];
   for (const chord of result.chords ?? []) {
-    const startPpq = clip.startPpq + secondsToClipPpq(Math.max(0, chord.start));
-    const endPpq = Math.min(clipEndPpq, clip.startPpq + secondsToClipPpq(chord.end));
+    const startPpq = secondsToTimelinePpq(chord.start);
+    const endPpq = Math.min(clipEndPpq, secondsToTimelinePpq(chord.end));
     if (!(endPpq > startPpq)) continue;
     const symbol: EditorChordSymbol = {
       startPpq,

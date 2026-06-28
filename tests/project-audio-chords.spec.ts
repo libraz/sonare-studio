@@ -62,6 +62,32 @@ describe('analyzeAudioClipChords', () => {
     ]);
   });
 
+  it('places detection seconds through the project tempo map when it varies', async () => {
+    // Tempo map: 60 BPM (1 s/quarter) until PPQ 4, then 120 BPM (0.5 s/quarter).
+    // Window second 4 sits exactly on the change (PPQ 4); each later second is
+    // worth two quarters, so second 5 -> PPQ 6 and second 6 -> PPQ 8 — not the
+    // PPQ 10 / 12 a constant 120 BPM, nor the PPQ 5 / 6 a constant 60 BPM, gives.
+    const det = detector([
+      { root: 0, bass: 0, quality: 0, start: 0, end: 4 },
+      { root: 7, bass: 7, quality: 0, start: 4, end: 5 },
+      { root: 5, bass: 5, quality: 0, start: 5, end: 6 },
+    ]);
+    const symbols = await analyzeAudioClipChords(
+      audioClip({ startPpq: 0, lengthPpq: 16 }),
+      60,
+      { loadAudioAsset: async () => asset(48000 * 8), detectChords: det.fn },
+      [
+        { startPpq: 0, bpm: 60 },
+        { startPpq: 4, bpm: 120 },
+      ],
+    );
+    expect(symbols).toEqual([
+      { startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 },
+      { startPpq: 4, endPpq: 6, rootPc: 7, quality: 0 },
+      { startPpq: 6, endPpq: 8, rootPc: 5, quality: 0 },
+    ]);
+  });
+
   it('carries a slash bass only when the bass differs from the root', async () => {
     const det = detector([{ root: 7, bass: 0, quality: 4, start: 0, end: 1 }]);
     const [symbol] = await analyzeAudioClipChords(audioClip(), 120, {

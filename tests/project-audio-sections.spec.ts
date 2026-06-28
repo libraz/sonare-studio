@@ -64,6 +64,34 @@ describe('analyzeAudioClipSections', () => {
     ]);
   });
 
+  it('places section seconds through the project tempo map when it varies', async () => {
+    // 60 BPM (1 s/quarter) until PPQ 4, then 120 BPM (0.5 s/quarter): window
+    // second 4 lands on PPQ 4 and each later second is two quarters, so a
+    // section ending at second 6 reaches PPQ 8 — not PPQ 12 at a constant tempo.
+    const an = analyzer([
+      { type: 0, start: 0, end: 4 },
+      { type: 3, start: 4, end: 6 },
+    ]);
+    const sections = await analyzeAudioClipSections(
+      clipWindow({ startPpq: 0, lengthPpq: 16 }),
+      60,
+      { loadAudioAsset: async () => asset(48000 * 8), analyzeSections: an.fn },
+      [
+        { startPpq: 0, bpm: 60 },
+        { startPpq: 4, bpm: 120 },
+      ],
+    );
+    expect(sections).toEqual([
+      { name: SECTION_TYPE_NAMES[0], color: TRACK_COLOR_PALETTE[0], startPpq: 0, endPpq: 4 },
+      {
+        name: SECTION_TYPE_NAMES[3],
+        color: TRACK_COLOR_PALETTE[3 % TRACK_COLOR_PALETTE.length],
+        startPpq: 4,
+        endPpq: 8,
+      },
+    ]);
+  });
+
   it('labels an out-of-range type as the trailing fallback', async () => {
     const an = analyzer([{ type: 99, start: 0, end: 1 }]);
     const [section] = await analyzeAudioClipSections(clipWindow(), 120, {

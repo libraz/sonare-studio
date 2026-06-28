@@ -15,7 +15,8 @@
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { mixdownToMono } from './audio-import';
 import { sliceAudioClipWindow } from './scheduling';
-import { TRACK_COLOR_PALETTE } from './types';
+import { normalizeTempoMap, ppqToSeconds, secondsToPpq } from './tempo-map';
+import { type TempoSegment, TRACK_COLOR_PALETTE } from './types';
 
 /**
  * Section labels indexed by libsonare `SectionType` ordinal
@@ -78,15 +79,19 @@ function labelAndColor(type: number): { name: string; color: string } {
  * no asset, the tempo is non-positive, or the source window is empty.
  *
  * @param clip Audio clip to analyze (needs `assetId`).
- * @param tempoBpm Constant tempo (> 0) used for the slice and the
- *   seconds-to-PPQ mapping.
+ * @param tempoBpm Constant tempo (> 0) used for the window slice (the clip
+ *   plays at its native sample rate, so the slice is fixed-tempo).
  * @param deps Injected asset loader and section analyzer.
+ * @param tempoSegments Project tempo map; detection times are placed on the
+ *   timeline through it, so sections land correctly when the tempo varies under
+ *   the clip. Empty (the default) reduces to the constant `tempoBpm` mapping.
  * @returns Detected sections (unsorted; `setSections` sorts and assigns ids).
  */
 export async function analyzeAudioClipSections(
   clip: { assetId?: string; startPpq: number; lengthPpq: number; sourceOffsetPpq: number },
   tempoBpm: number,
   deps: AudioSectionDeps,
+  tempoSegments: ReadonlyArray<TempoSegment> = [],
 ): Promise<DetectedSectionInput[]> {
   if (clip.assetId === undefined || !(tempoBpm > 0)) return [];
   const asset = await deps.loadAudioAsset(clip.assetId);
@@ -101,12 +106,17 @@ export async function analyzeAudioClipSections(
   if (mono.length === 0) return [];
   const sections = deps.analyzeSections(mono, asset.meta.sampleRate);
   const clipEndPpq = clip.startPpq + clip.lengthPpq;
-  // Inverse of scheduling.ppqToSeconds(ppq, tempoBpm) = ppq * 60 / tempoBpm.
-  const secondsToClipPpq = (seconds: number): number => (seconds * tempoBpm) / 60;
+  // Map window-relative detection seconds onto the timeline through the tempo
+  // map (the inverse of how playback positions the clip), so sections stay
+  // aligned when the tempo varies under the clip.
+  const map = normalizeTempoMap(tempoSegments, tempoBpm);
+  const clipStartSeconds = ppqToSeconds(map, clip.startPpq);
+  const secondsToTimelinePpq = (seconds: number): number =>
+    secondsToPpq(map, clipStartSeconds + Math.max(0, seconds));
   const out: DetectedSectionInput[] = [];
   for (const section of sections ?? []) {
-    const startPpq = clip.startPpq + secondsToClipPpq(Math.max(0, section.start));
-    const endPpq = Math.min(clipEndPpq, clip.startPpq + secondsToClipPpq(section.end));
+    const startPpq = secondsToTimelinePpq(section.start);
+    const endPpq = Math.min(clipEndPpq, secondsToTimelinePpq(section.end));
     if (!(endPpq > startPpq)) continue;
     out.push({ ...labelAndColor(section.type), startPpq, endPpq });
   }

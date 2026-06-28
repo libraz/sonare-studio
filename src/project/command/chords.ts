@@ -114,10 +114,15 @@ export async function detectChordsFromAudioClip(clipId: number): Promise<number>
   }
   const wasm = (await ensureWasm()) as unknown as { detectChords?: AudioChordDetector };
   if (typeof wasm.detectChords !== 'function') return 0;
-  const detected = await analyzeAudioClipChords(clip, store.tempoBpm, {
-    loadAudioAsset: loadAsset,
-    detectChords: wasm.detectChords,
-  });
+  const detected = await analyzeAudioClipChords(
+    clip,
+    store.tempoBpm,
+    {
+      loadAudioAsset: loadAsset,
+      detectChords: wasm.detectChords,
+    },
+    store.tempoSegments,
+  );
   const clipEnd = clip.startPpq + clip.lengthPpq;
   const kept = store.chords.filter(
     (chord) => chord.startPpq < clip.startPpq || chord.startPpq >= clipEnd,
