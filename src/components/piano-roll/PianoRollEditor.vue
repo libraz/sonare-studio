@@ -86,6 +86,7 @@ const overlayEnabled = ref(true);
 const lanes = usePianoRollLanes();
 const {
   laneParam,
+  laneChannel,
   laneCc,
   lanePitchBend,
   laneChannelPressure,
@@ -386,6 +387,18 @@ function onRootPointerDown(): void {
         >
           {{ t.shell.pianoRoll.polyPressureLaneTab }}
         </button>
+        <select
+          v-if="!noteLaneActive"
+          class="lane-channel"
+          :title="t.shell.pianoRoll.laneChannelTitle"
+          :aria-label="t.shell.pianoRoll.laneChannelTitle"
+          :value="laneChannel"
+          @change="laneChannel = Number(($event.target as HTMLSelectElement).value)"
+        >
+          <option v-for="ch in 16" :key="ch" :value="ch - 1">
+            {{ t.shell.pianoRoll.laneChannelPrefix }}{{ ch }}
+          </option>
+        </select>
       </div>
       <VelocityLane
         v-if="noteLaneActive"
@@ -570,6 +583,18 @@ function onRootPointerDown(): void {
   height: 1px;
   margin: 1px 4px;
   background: var(--border);
+}
+
+.lane-channel {
+  flex: none;
+  min-height: 0;
+  padding: 0 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  color: var(--text-2);
+  font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
+  cursor: pointer;
 }
 
 .cell-velocity {

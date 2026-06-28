@@ -898,6 +898,8 @@ export const ja = {
       pressureLaneTitle: 'チャンネルプレッシャー（アフタータッチ）レーン',
       polyPressureLaneTab: 'PAT',
       polyPressureLaneTitle: 'ポリフォニックキープレッシャーレーン（ノートを1つ選択）',
+      laneChannelTitle: 'エクスプレッションレーンが編集する MIDI チャンネル',
+      laneChannelPrefix: 'Ch',
       parameterLane: 'ノートパラメーターレーン',
       context: {
         quantizeStarts: '開始位置をクオンタイズ',

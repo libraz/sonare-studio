@@ -27,21 +27,21 @@ export interface PianoRollCcLanes {
    * null when zero or several notes are selected (per-key pressure needs one).
    */
   polyPressurePitch: ComputedRef<number | null>;
-  /** Breakpoints of the active clip's selected CC lane (empty when none). */
+  /** Breakpoints of the active clip's selected CC lane on the lane channel (empty when none). */
   activeCcPoints: ComputedRef<ClipCcPoint[]>;
-  /** Breakpoints of the active clip's pitch-bend lane on channel 0 (empty when none). */
+  /** Breakpoints of the active clip's pitch-bend lane on the lane channel (empty when none). */
   activePitchBendPoints: ComputedRef<ClipPitchBendPoint[]>;
-  /** Breakpoints of the active clip's channel-pressure lane on channel 0 (empty when none). */
+  /** Breakpoints of the active clip's channel-pressure lane on the lane channel (empty when none). */
   activeChannelPressurePoints: ComputedRef<ClipPressurePoint[]>;
-  /** Breakpoints of the selected note's poly-pressure lane on channel 0 (empty when none). */
+  /** Breakpoints of the selected note's poly-pressure lane on the lane channel (empty when none). */
   activePolyPressurePoints: ComputedRef<ClipPressurePoint[]>;
-  /** Commits a CC lane edit for the active controller on channel 0. */
+  /** Commits a CC lane edit for the active controller on the lane channel. */
   commitCcPoints(points: ClipCcPoint[]): void;
-  /** Commits a pitch-bend lane edit on channel 0. */
+  /** Commits a pitch-bend lane edit on the lane channel. */
   commitPitchBendPoints(points: ClipPitchBendPoint[]): void;
-  /** Commits a channel-pressure lane edit on channel 0. */
+  /** Commits a channel-pressure lane edit on the lane channel. */
   commitChannelPressurePoints(points: ClipPressurePoint[]): void;
-  /** Commits a poly-pressure lane edit for the selected note's pitch on channel 0. */
+  /** Commits a poly-pressure lane edit for the selected note's pitch on the lane channel. */
   commitPolyPressurePoints(points: ClipPressurePoint[]): void;
   /** Horizontal snap for lane points, following the grid when snapping is on. */
   ccSnap(ppq: number): number;
@@ -73,19 +73,25 @@ export function usePianoRollCcLanes(options: UsePianoRollCcLanesOptions): PianoR
 
   const activeCcPoints = computed<ClipCcPoint[]>(() => {
     if (lanes.laneCc.value === null) return [];
-    const lane = store.activeClip?.ccLanes?.find((l) => l.controller === lanes.laneCc.value);
+    const lane = store.activeClip?.ccLanes?.find(
+      (l) => l.controller === lanes.laneCc.value && l.channel === lanes.laneChannel.value,
+    );
     return lane?.points ?? [];
   });
 
   const activePitchBendPoints = computed<ClipPitchBendPoint[]>(() => {
     if (!lanes.lanePitchBend.value) return [];
-    const lane = store.activeClip?.pitchBendLanes?.find((l) => l.channel === 0);
+    const lane = store.activeClip?.pitchBendLanes?.find(
+      (l) => l.channel === lanes.laneChannel.value,
+    );
     return lane?.points ?? [];
   });
 
   const activeChannelPressurePoints = computed<ClipPressurePoint[]>(() => {
     if (!lanes.laneChannelPressure.value) return [];
-    const lane = store.activeClip?.channelPressureLanes?.find((l) => l.channel === 0);
+    const lane = store.activeClip?.channelPressureLanes?.find(
+      (l) => l.channel === lanes.laneChannel.value,
+    );
     return lane?.points ?? [];
   });
 
@@ -93,28 +99,28 @@ export function usePianoRollCcLanes(options: UsePianoRollCcLanesOptions): PianoR
     const pitch = polyPressurePitch.value;
     if (!lanes.lanePolyPressure.value || pitch === null) return [];
     const lane = store.activeClip?.polyPressureLanes?.find(
-      (l) => l.channel === 0 && l.pitch === pitch,
+      (l) => l.channel === lanes.laneChannel.value && l.pitch === pitch,
     );
     return lane?.points ?? [];
   });
 
   function commitCcPoints(points: ClipCcPoint[]): void {
     if (lanes.laneCc.value === null) return;
-    setClipCcLane(store.clipId, lanes.laneCc.value, 0, points);
+    setClipCcLane(store.clipId, lanes.laneCc.value, lanes.laneChannel.value, points);
   }
 
   function commitPitchBendPoints(points: ClipPitchBendPoint[]): void {
-    setClipPitchBend(store.clipId, 0, points);
+    setClipPitchBend(store.clipId, lanes.laneChannel.value, points);
   }
 
   function commitChannelPressurePoints(points: ClipPressurePoint[]): void {
-    setClipChannelPressure(store.clipId, 0, points);
+    setClipChannelPressure(store.clipId, lanes.laneChannel.value, points);
   }
 
   function commitPolyPressurePoints(points: ClipPressurePoint[]): void {
     const pitch = polyPressurePitch.value;
     if (pitch === null) return;
-    setClipPolyPressure(store.clipId, 0, pitch, points);
+    setClipPolyPressure(store.clipId, lanes.laneChannel.value, pitch, points);
   }
 
   function ccSnap(ppq: number): number {

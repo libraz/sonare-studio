@@ -16,6 +16,12 @@ export interface PianoRollLanes {
   /** Note parameter shown in the bottom lane (tab strip in the lane header). */
   laneParam: Ref<LaneParamId>;
   /**
+   * MIDI channel (0-15) the expression lanes (CC / pitch-bend / channel- and
+   * poly-pressure) read and write. Note lanes are unaffected (notes carry their
+   * own channel); this selects which channel's curve the bottom lane edits.
+   */
+  laneChannel: Ref<number>;
+  /**
    * Active CC controller in the bottom lane, or null when a note-parameter lane
    * is shown. When set, the bottom lane edits the active clip's CC breakpoints
    * for this controller instead of per-note values.
@@ -50,6 +56,7 @@ export interface PianoRollLanes {
  */
 export function usePianoRollLanes(): PianoRollLanes {
   const laneParam = ref<LaneParamId>('velocity');
+  const laneChannel = ref(0);
   const laneCc = ref<number | null>(null);
   const lanePitchBend = ref(false);
   const laneChannelPressure = ref(false);
@@ -97,6 +104,7 @@ export function usePianoRollLanes(): PianoRollLanes {
 
   return {
     laneParam,
+    laneChannel,
     laneCc,
     lanePitchBend,
     laneChannelPressure,

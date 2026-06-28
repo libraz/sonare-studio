@@ -901,6 +901,8 @@ export const en = {
       pressureLaneTitle: 'Channel pressure (aftertouch) lane',
       polyPressureLaneTab: 'PAT',
       polyPressureLaneTitle: 'Polyphonic key pressure lane (select one note)',
+      laneChannelTitle: 'MIDI channel the expression lane edits',
+      laneChannelPrefix: 'Ch',
       parameterLane: 'Note parameter lane',
       context: {
         quantizeStarts: 'Quantize starts',
