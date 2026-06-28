@@ -18,6 +18,10 @@ export interface InputControlsOptions {
   previewNoteOn: (pitch: number, velocity: number) => Promise<void>;
   /** Releases a sustained live note started by previewNoteOn. */
   previewNoteOff: (pitch: number) => void;
+  /** Captures an incoming note-on for MIDI recording (when armed/rolling). */
+  onRecordNoteOn?: (event: { pitch: number; velocity: number; channel: number }) => void;
+  /** Captures an incoming note-off for MIDI recording (when armed/rolling). */
+  onRecordNoteOff?: (event: { pitch: number; velocity: number; channel: number }) => void;
   runAction: RunAction;
 }
 
@@ -45,12 +49,15 @@ export function useInputControls(options: InputControlsOptions) {
   const webMidi = useWebMidi({
     // Live MIDI keys sustain through the audible engine: note-on rings until the
     // matching key release, instead of a fixed-length blip.
-    onNoteOn: ({ pitch, velocity }) => {
+    onNoteOn: (event) => {
+      const { pitch, velocity } = event;
       void previewNoteOn(pitch, velocity);
       stepInput.enterNote(pitch, velocity);
+      options.onRecordNoteOn?.(event);
     },
-    onNoteOff: ({ pitch }) => {
-      previewNoteOff(pitch);
+    onNoteOff: (event) => {
+      previewNoteOff(event.pitch);
+      options.onRecordNoteOff?.(event);
     },
     onControlChange: (event) => midiLearn.handleCc(event),
   });

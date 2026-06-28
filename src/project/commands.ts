@@ -55,6 +55,8 @@ export {
   setMidiCcBinding,
 } from './command/midi-bindings';
 export { bakeClipMidiFx, clearTrackMidiFx, setTrackMidiFx } from './command/midi-fx';
+export type { AddRecordedMidiClipInput } from './command/midi-recording';
+export { addRecordedMidiClip } from './command/midi-recording';
 export type { MixerSnapshot, MixerSnapshotTrack, MixerStripTarget } from './command/mixer';
 export {
   addInsert,

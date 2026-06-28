@@ -484,7 +484,7 @@ function onContextMenu(track: EditorTrack, event: MouseEvent): void {
       run: () => setTrackSolo(track.id, !track.solo),
     },
   ];
-  if (track.kind === 'audio') {
+  if (track.kind === 'audio' || track.kind === 'midi') {
     items.push({
       id: 'arm',
       label: isArmed(track)
@@ -642,7 +642,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
               </div>
               <div class="track-controls" @click.stop>
                 <button
-                  v-if="track.kind === 'audio'"
+                  v-if="track.kind === 'audio' || track.kind === 'midi'"
                   type="button"
                   class="toggle arm"
                   :class="{ on: isArmed(track) }"

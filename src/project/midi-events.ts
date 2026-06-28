@@ -15,12 +15,20 @@ export interface SerializedMidiEvent {
   data1: number;
 }
 
-/** A note-on or note-off boundary decoded from a packed UMP word. */
-interface DecodedNoteEvent {
+/**
+ * A note-on or note-off boundary at a timeline position. Used both when
+ * decoding serialized events and when capturing live MIDI input for recording.
+ */
+export interface NoteBoundaryEvent {
+  /** Boundary position in PPQ. */
   ppq: number;
+  /** Whether this boundary opens ('on') or closes ('off') a note. */
   kind: 'on' | 'off';
+  /** MIDI channel (0-15). */
   channel: number;
+  /** MIDI note number (0-127). */
   pitch: number;
+  /** Velocity (note-on velocity, or release velocity for note-offs). */
   velocity: number;
 }
 
@@ -34,7 +42,7 @@ export type RawNote = Omit<EditorNote, 'id'>;
  * @param data0 Packed 32-bit UMP word.
  * @returns The decoded boundary, or null for non-note events.
  */
-function decodeNoteEvent(ppq: number, data0: number): DecodedNoteEvent | null {
+function decodeNoteEvent(ppq: number, data0: number): NoteBoundaryEvent | null {
   if (((data0 >>> 28) & 0xf) !== UMP_MIDI1_CHANNEL_VOICE) return null;
   const status = (data0 >>> 20) & 0xf;
   const channel = (data0 >>> 16) & 0xf;
@@ -68,11 +76,29 @@ function decodeNoteEvent(ppq: number, data0: number): DecodedNoteEvent | null {
  * @returns Recovered notes sorted by start position.
  */
 export function pairEventsIntoNotes(events: ReadonlyArray<SerializedMidiEvent>): RawNote[] {
-  const decoded: DecodedNoteEvent[] = [];
+  const decoded: NoteBoundaryEvent[] = [];
   for (const event of events) {
     const note = decodeNoteEvent(event.ppq, event.data0);
     if (note) decoded.push(note);
   }
+  return pairNoteBoundariesIntoNotes(decoded);
+}
+
+/**
+ * Pairs note-on/note-off boundaries back into notes, FIFO per (channel, pitch).
+ *
+ * The input may be unsorted (live capture arrives in wall-clock order, which
+ * is not necessarily PPQ order under a tempo ramp): boundaries are sorted with
+ * note-offs before note-ons at the same PPQ so back-to-back repeats pair
+ * correctly. Unmatched boundaries and zero/negative-length pairs are dropped.
+ *
+ * @param boundaries Note-on/note-off boundaries (decoded or captured).
+ * @returns Recovered notes sorted by start position.
+ */
+export function pairNoteBoundariesIntoNotes(
+  boundaries: ReadonlyArray<NoteBoundaryEvent>,
+): RawNote[] {
+  const decoded = boundaries.slice();
   decoded.sort(
     (a, b) =>
       a.ppq - b.ppq ||

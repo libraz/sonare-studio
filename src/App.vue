@@ -42,6 +42,7 @@ import { useEngineProjectSync } from '@/composables/useEngineProjectSync';
 import { useFileDownloads } from '@/composables/useFileDownloads';
 import { useInputControls } from '@/composables/useInputControls';
 import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
+import { useMidiRecording } from '@/composables/useMidiRecording';
 import { useNotePreview } from '@/composables/useNotePreview';
 import { useOutsidePopovers } from '@/composables/useOutsidePopovers';
 import { useProjectAudioAssets } from '@/composables/useProjectAudioAssets';
@@ -142,8 +143,9 @@ const { confirmAction, runAction } = useActionGuards({ appSettings, busy, errorM
 // --- Recording -----------------------------------------------------------------
 
 const recording = useRecording(() => handle.value, transport);
+const midiRecording = useMidiRecording(transport);
 const { armedTrackIds, recordMenuOpen, recordMenuRoot, onArmTrack, onCountInChange, toggleRecord } =
-  useRecordingControls({ appSettings, errorMessage, recording });
+  useRecordingControls({ appSettings, errorMessage, recording, midiRecording });
 
 let bootPromise: Promise<void> | null = null;
 
@@ -293,6 +295,8 @@ const {
   previewNote,
   previewNoteOn,
   previewNoteOff,
+  onRecordNoteOn: midiRecording.captureNoteOn,
+  onRecordNoteOff: midiRecording.captureNoteOff,
   runAction,
 });
 
