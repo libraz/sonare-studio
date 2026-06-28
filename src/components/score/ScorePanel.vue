@@ -17,7 +17,7 @@ import { timeSignatureAt } from '@/project/time-signature';
 import { MAJOR_MODE_MASK } from '@/project/types';
 import { useI18n } from '@/ui/i18n';
 import { SCORE_PAGE_FORMATS, type ScoreLayoutSettings } from '@/ui/score/layout';
-import { usePlayheadSync } from '@/ui/score/use-playhead-sync';
+import { type PlayheadSync, usePlayheadSync } from '@/ui/score/use-playhead-sync';
 import { useScoreInteractions } from '@/ui/score/use-score-interactions';
 import { useScoreNotation } from '@/ui/score/use-score-notation';
 import type { Key } from '@/wasm/index.js';
@@ -203,17 +203,9 @@ function layoutSettings(): ScoreLayoutSettings {
   };
 }
 
-// --- Playhead highlight ---------------------------------------------------------
-
-const playhead = usePlayheadSync({
-  svgHost,
-  svg: computed(() => notation.svg.value),
-  getTimemap: () => notation.getTimemap(),
-  getClipStartPpq: () => store.clipStartPpq,
-  getPositionPpq: () => props.positionPpq,
-});
-
 // --- Transcription pipeline ---------------------------------------------------
+
+let playhead: PlayheadSync | undefined;
 
 const notation = useScoreNotation({
   store,
@@ -225,7 +217,17 @@ const notation = useScoreNotation({
   getKeyFifths: keyFifths,
   getChordsEnabled: () => chordsEnabled.value,
   getLayoutSettings: layoutSettings,
-  resetPlayheadScan: () => playhead.resetScan(),
+  resetPlayheadScan: () => playhead?.resetScan(),
+});
+
+// --- Playhead highlight ---------------------------------------------------------
+
+playhead = usePlayheadSync({
+  svgHost,
+  svg: computed(() => notation.svg.value),
+  getTimemap: () => notation.getTimemap(),
+  getClipStartPpq: () => store.clipStartPpq,
+  getPositionPpq: () => props.positionPpq,
 });
 
 // --- Click-to-seek / select ------------------------------------------------------

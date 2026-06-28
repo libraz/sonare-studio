@@ -19,10 +19,10 @@ import {
   type NotatedPart,
   type NotatedScore,
   type NotatedTimeSig,
-  type ScoreMetadata,
   type NotatedVoice,
   type NotatedVoiceNumber,
   ppqToDivisions,
+  type ScoreMetadata,
 } from './model';
 import { type SpelledPitch, spellPitch } from './pitch-spelling';
 
