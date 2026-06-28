@@ -39,6 +39,8 @@ import type { Key } from '@/wasm/index.js';
 const props = defineProps<{
   /** Playhead position getter in PPQ; omit to disable playhead highlight. */
   positionPpq?: () => number;
+  /** True while the transport is playing; enables horizontal score following. */
+  isPlaying?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -108,15 +110,7 @@ const pageMarginMm = ref(10);
 const scalePercent = ref(50);
 const spacingStaff = ref(12);
 
-/**
- * On-screen zoom of the engraved (single continuous) system.
- *
- * At 100% the system fills the panel width exactly. Zooming IN (>100%) enlarges
- * the notes and the body scrolls horizontally (the SVG grows past the panel).
- * Zooming OUT (<100%) keeps the FULL width and shrinks the notes by padding the
- * line with trailing empty measures — so the staff always spans the panel with
- * no blank tail and no distortion, instead of shrinking into a narrow block.
- */
+/** On-screen zoom relative to the height-fit score size. */
 const viewZoom = ref(1);
 const VIEW_ZOOM_MIN = 0.25;
 const VIEW_ZOOM_MAX = 4;
@@ -140,24 +134,8 @@ const actualMeasures = computed(() =>
   Math.max(1, Math.ceil(store.clipLengthPpq / measureLenPpq.value)),
 );
 
-/**
- * Empty measures appended to fill the panel width when zoomed out below 100%.
- * Showing `actualMeasures / viewZoom` measures across the same width shrinks the
- * notes proportionally; the extra measures past the real content are blank.
- */
-const padMeasures = computed(() =>
-  viewZoom.value >= 1
-    ? 0
-    : Math.max(0, Math.ceil(actualMeasures.value / viewZoom.value) - actualMeasures.value),
-);
-
-/** Clip length (real content plus padding) fed to the transcriber, in PPQ. */
-const paddedClipLengthPpq = computed(
-  () => (actualMeasures.value + padMeasures.value) * measureLenPpq.value,
-);
-
-/** CSS width factor: >= 1 so zoom-out fills via padding, never shrinks below. */
-const widthFactor = computed(() => Math.max(1, viewZoom.value));
+/** Clip length fed to the transcriber, rounded up to complete measures. */
+const screenClipLengthPpq = computed(() => actualMeasures.value * measureLenPpq.value);
 
 /** On-screen zoom as a rounded percentage for the toolbar readout. */
 const zoomPercent = computed(() => Math.round(viewZoom.value * 100));
@@ -170,6 +148,7 @@ function zoomView(factor: number): void {
 // --- Render state ------------------------------------------------------------
 
 const svgHost = ref<HTMLDivElement | null>(null);
+const scoreSvgHeightPx = ref(1);
 
 /** Verovio worker client; created on mount, disposed on unmount. */
 const client = shallowRef<VerovioClient | null>(null);
@@ -213,7 +192,7 @@ const notation = useScoreNotation({
   getDivisionPpq: divisionPpq,
   getTimeSig: () => clipTimeSig.value,
   getMeasureLenPpq: () => measureLenPpq.value,
-  getPaddedClipLengthPpq: () => paddedClipLengthPpq.value,
+  getScreenClipLengthPpq: () => screenClipLengthPpq.value,
   getKeyFifths: keyFifths,
   getChordsEnabled: () => chordsEnabled.value,
   getLayoutSettings: layoutSettings,
@@ -228,6 +207,7 @@ playhead = usePlayheadSync({
   getTimemap: () => notation.getTimemap(),
   getClipStartPpq: () => store.clipStartPpq,
   getPositionPpq: () => props.positionPpq,
+  getIsPlaying: () => props.isPlaying === true,
 });
 
 // --- Click-to-seek / select ------------------------------------------------------
@@ -327,9 +307,8 @@ watch([() => store.scoreAnnotations, () => store.displayTransposeSemitones], sch
 watch([dqKey, chordsEnabled, () => store.scaleHighlight], () => void notation.transcribe(), {
   deep: true,
 });
-// Zoom-out padding changes the number of (empty) measures, so the score must be
-// re-engraved; zoom-in (padMeasures stays 0) only updates the CSS width.
-watch(padMeasures, () => void notation.transcribe());
+// Meter or clip length changes can alter the rounded measure extent.
+watch(screenClipLengthPpq, () => void notation.transcribe());
 watch(
   [pageFormat, landscape, pageMarginMm, scalePercent, spacingStaff],
   () => void notation.applyLayout(),
@@ -351,8 +330,27 @@ watch(
   },
 );
 
+let resizeObserver: ResizeObserver | null = null;
+
+function updateScoreFitHeight(): void {
+  const el = svgHost.value;
+  if (!el) return;
+  const style = getComputedStyle(el);
+  const paddingTop = Number.parseFloat(style.paddingTop);
+  const paddingBottom = Number.parseFloat(style.paddingBottom);
+  const paddingY =
+    (Number.isFinite(paddingTop) ? paddingTop : 0) +
+    (Number.isFinite(paddingBottom) ? paddingBottom : 0);
+  scoreSvgHeightPx.value = Math.max(1, el.clientHeight - paddingY);
+}
+
 onMounted(() => {
   client.value = new VerovioClient();
+  updateScoreFitHeight();
+  if (svgHost.value && typeof ResizeObserver !== 'undefined') {
+    resizeObserver = new ResizeObserver(updateScoreFitHeight);
+    resizeObserver.observe(svgHost.value);
+  }
   void notation.transcribe();
 });
 
@@ -361,6 +359,8 @@ onBeforeUnmount(() => {
     clearTimeout(retranscribeTimer);
     retranscribeTimer = null;
   }
+  resizeObserver?.disconnect();
+  resizeObserver = null;
   notation.bumpGeneration();
   client.value?.dispose();
   client.value = null;
@@ -407,7 +407,7 @@ onBeforeUnmount(() => {
         class="score-body"
         role="img"
         :aria-label="t.shell.score.engravedScore"
-        :style="{ '--score-zoom': widthFactor }"
+        :style="{ '--score-svg-height': `${scoreSvgHeightPx * viewZoom}px` }"
         @click="interactions.onSvgClick"
         v-html="notation.svg.value"
       />

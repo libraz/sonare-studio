@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useEditorTool } from '@/composables/useEditorTool';
 import { formatPitch } from '@/lib/pitch';
 import {
@@ -23,6 +23,7 @@ import {
   PIANO_ROLL_CC_LANES,
 } from '@/project/midi-cc';
 import { useProjectStore } from '@/project/store';
+import { nextPlayheadFollowStart } from '@/ui/arrangement/playhead-follow';
 import { useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 import BreakpointLane from './BreakpointLane.vue';
@@ -59,6 +60,8 @@ import VelocityLane from './VelocityLane.vue';
 const props = defineProps<{
   /** Playhead position getter in PPQ; omit to hide the playhead. */
   positionPpq?: () => number;
+  /** True while the transport is playing; enables playhead follow scrolling. */
+  isPlaying?: boolean;
   /**
    * Audible-feedback hook: plays a short preview of a note's pitch/velocity
    * when one is clicked or created. Omit to edit silently.
@@ -71,6 +74,11 @@ const { t } = useI18n();
 
 /** Whether the MIDI-FX transform popover is open. */
 const fxPanelOpen = ref(false);
+
+/** Per-frame horizontal follow interpolation for piano-roll playback. */
+const PLAYHEAD_FOLLOW_SMOOTHING = 0.42;
+/** Small PPQ threshold below which snapping avoids endless tiny repaints. */
+const PLAYHEAD_FOLLOW_EPSILON_PPQ = 0.0005;
 
 const viewport = usePianoRollViewport({
   // A transform targets a specific clip; close the popover on clip change.
@@ -244,6 +252,14 @@ function onGhostActivate(ghost: GhostNote): void {
 
 const { tool } = useEditorTool();
 
+/** Playhead in the active clip's source-relative frame, matching note PPQ. */
+function localPositionPpq(): number {
+  const position = props.positionPpq?.() ?? 0;
+  const clip = store.activeClip;
+  if (!clip) return position;
+  return position - clip.startPpq + clip.sourceOffsetPpq;
+}
+
 const interactions = useNoteInteractions({
   view: range,
   getNotes: () => store.notes,
@@ -270,6 +286,53 @@ function onKeyDown(event: KeyboardEvent): void {
 function onRootPointerDown(): void {
   root.value?.focus();
 }
+
+let followRaf: number | null = null;
+
+function stopPlayheadFollow(): void {
+  if (followRaf !== null) cancelAnimationFrame(followRaf);
+  followRaf = null;
+}
+
+function followPlayheadTick(): void {
+  followRaf = null;
+  if (!props.isPlaying) return;
+  if (props.positionPpq) {
+    const ppq = localPositionPpq();
+    const nextStart = nextPlayheadFollowStart(range, ppq);
+    if (nextStart !== null) {
+      const delta = nextStart - range.startPpq;
+      const smoothed =
+        Math.abs(delta) <= PLAYHEAD_FOLLOW_EPSILON_PPQ
+          ? nextStart
+          : range.startPpq + delta * PLAYHEAD_FOLLOW_SMOOTHING;
+      range.setStartPpq(smoothed);
+      bump();
+    }
+  }
+  followRaf = requestAnimationFrame(followPlayheadTick);
+}
+
+function startPlayheadFollow(): void {
+  if (followRaf !== null || typeof requestAnimationFrame !== 'function') return;
+  followRaf = requestAnimationFrame(followPlayheadTick);
+}
+
+watch(
+  () => props.isPlaying,
+  (playing) => {
+    if (playing) startPlayheadFollow();
+    else stopPlayheadFollow();
+  },
+);
+
+onMounted(() => {
+  if (props.isPlaying) startPlayheadFollow();
+});
+
+onBeforeUnmount(() => {
+  stopPlayheadFollow();
+});
 </script>
 
 <template>
@@ -304,7 +367,7 @@ function onRootPointerDown(): void {
           :grid-ppq="gridPpq"
           :clip-length-ppq="store.clipLengthPpq"
           :interactions="interactions"
-          :position-ppq="props.positionPpq"
+          :position-ppq="props.positionPpq ? localPositionPpq : undefined"
           :note-color="noteColor"
           :ghost-notes="ghostNotes"
           @view-resize="viewport.onGridResize"

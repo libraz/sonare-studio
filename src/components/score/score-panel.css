@@ -47,14 +47,13 @@
 
 .score-body :deep(svg) {
   display: block;
-  margin: 0 auto;
-  /* The engraving is one continuous system cropped to its content
-   * (adjustPageWidth), so width:100% makes it span the full panel width — no
-   * trailing blank space. Scaling is uniform via the viewBox (no distortion).
-   * Zoom > 100% overflows and the body scrolls horizontally. */
-  width: calc(var(--score-zoom, 1) * 100%);
+  margin: 0;
+  /* The engraving is one continuous system cropped to its content. The display
+   * scale is height-driven; width remains the SVG's natural aspect-ratio result
+   * and overflows horizontally for scrolling instead of being squeezed to fit. */
+  width: auto;
   max-width: none;
-  height: auto;
+  height: var(--score-svg-height, 100%);
   background: #fff;
   /* Lift the white "paper" off the canvas with a tokenized elevation so it
      reads correctly on both light and dark backdrops. */

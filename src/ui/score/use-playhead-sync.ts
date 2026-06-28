@@ -14,6 +14,7 @@
 
 import { type Ref, watchEffect } from 'vue';
 import type { VerovioTimemapEntry } from '@/notation/verovio';
+import { nextHorizontalFollowScrollLeft } from '@/ui/arrangement/playhead-follow';
 
 /** Options wiring the playhead sync to the rendered score. */
 export interface PlayheadSyncOptions {
@@ -27,6 +28,8 @@ export interface PlayheadSyncOptions {
   getClipStartPpq: () => number;
   /** Reads the playhead position in PPQ, or undefined to disable the highlight. */
   getPositionPpq: () => (() => number) | undefined;
+  /** True while the transport is playing; enables horizontal score following. */
+  getIsPlaying?: () => boolean;
 }
 
 /** The playhead sync surface bound by the score panel. */
@@ -87,6 +90,26 @@ export function usePlayheadSync(options: PlayheadSyncOptions): PlayheadSync {
         }
       }
     }
+    if (options.getIsPlaying?.() === true) followHighlightedNote(host, next);
+  }
+
+  /** Horizontally scrolls the score so the current note remains in view. */
+  function followHighlightedNote(host: HTMLElement, ids: ReadonlySet<string>): void {
+    const id = ids.values().next().value;
+    if (id === undefined) return;
+    const el = host.querySelector(`#${CSS.escape(id)}`);
+    if (!(el instanceof Element)) return;
+    const hostRect = host.getBoundingClientRect();
+    const elRect = el.getBoundingClientRect();
+    const itemLeft = host.scrollLeft + elRect.left - hostRect.left;
+    const itemRight = host.scrollLeft + elRect.right - hostRect.left;
+    const nextScroll = nextHorizontalFollowScrollLeft(
+      host.clientWidth,
+      host.scrollLeft,
+      itemLeft,
+      itemRight,
+    );
+    if (nextScroll !== null) host.scrollLeft = nextScroll;
   }
 
   watchEffect(() => {

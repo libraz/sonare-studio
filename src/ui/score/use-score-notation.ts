@@ -48,8 +48,8 @@ export interface ScoreNotationOptions {
   getTimeSig: () => { beats: number; beatUnit: number };
   /** Engraved measure length in PPQ for the clip's time signature. */
   getMeasureLenPpq: () => number;
-  /** Clip length including zoom-out padding, in PPQ. */
-  getPaddedClipLengthPpq: () => number;
+  /** Clip length rendered on screen, rounded to complete measures, in PPQ. */
+  getScreenClipLengthPpq: () => number;
   /** Key signature fifths derived from the scale highlight configuration. */
   getKeyFifths: () => number;
   /** True when chord symbols should be estimated and engraved. */
@@ -154,9 +154,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
         timeSig: { ...options.getTimeSig() },
         keyFifths: fifths,
         clipStartPpq: store.clipStartPpq,
-        // Padded with trailing empty measures so the line fills the width when
-        // zoomed out (never shrinks into a narrow block).
-        clipLengthPpq: options.getPaddedClipLengthPpq(),
+        clipLengthPpq: options.getScreenClipLengthPpq(),
         clef: 'grand',
         partName: 'Piano',
         // Engraving-only transpose; the underlying MIDI notes never change.

@@ -763,6 +763,7 @@ useAppLifecycle({
           <PianoRollEditor
             class="piano-roll-host"
             :position-ppq="() => positionPpq"
+            :is-playing="isPlaying"
             :audition="auditionNote"
           />
           <div
@@ -786,6 +787,7 @@ useAppLifecycle({
             class="score-host"
             :style="scoreResized ? { flex: 'none', height: `${scoreHeight}px` } : undefined"
             :position-ppq="() => positionPpq"
+            :is-playing="isPlaying"
             @seek="onSeek"
           />
         </section>

@@ -15,10 +15,10 @@ export interface PlayheadFollowMargins {
   right: number;
 }
 
-/** Default follow window: keep the playhead between 12% and 82% of the view. */
+/** Default follow window: keep the playhead between 12% and 68% of the view. */
 export const DEFAULT_PLAYHEAD_FOLLOW_MARGINS: PlayheadFollowMargins = {
   left: 0.12,
-  right: 0.82,
+  right: 0.68,
 };
 
 /**
@@ -52,6 +52,44 @@ export function nextPlayheadFollowStart(
   if (x > rightPx) {
     const start = Math.max(0, playheadPpq - rightPx / range.pxPerPpq);
     return start === range.startPpq ? null : start;
+  }
+
+  return null;
+}
+
+/**
+ * Returns the scrollLeft that keeps an item's horizontal bounds inside the
+ * follow window, or null when no DOM scroll is needed.
+ */
+export function nextHorizontalFollowScrollLeft(
+  viewportWidthPx: number,
+  scrollLeftPx: number,
+  itemLeftPx: number,
+  itemRightPx: number,
+  margins: PlayheadFollowMargins = DEFAULT_PLAYHEAD_FOLLOW_MARGINS,
+): number | null {
+  if (
+    viewportWidthPx <= 0 ||
+    !Number.isFinite(scrollLeftPx) ||
+    !Number.isFinite(itemLeftPx) ||
+    !Number.isFinite(itemRightPx) ||
+    margins.left < 0 ||
+    margins.right <= margins.left ||
+    margins.right > 1
+  ) {
+    return null;
+  }
+
+  const leftBoundary = scrollLeftPx + viewportWidthPx * margins.left;
+  if (itemLeftPx < leftBoundary) {
+    const next = Math.max(0, itemLeftPx - viewportWidthPx * margins.left);
+    return next === scrollLeftPx ? null : next;
+  }
+
+  const rightBoundary = scrollLeftPx + viewportWidthPx * margins.right;
+  if (itemRightPx > rightBoundary) {
+    const next = Math.max(0, itemRightPx - viewportWidthPx * margins.right);
+    return next === scrollLeftPx ? null : next;
   }
 
   return null;
