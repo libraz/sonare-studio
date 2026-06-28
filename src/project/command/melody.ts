@@ -31,10 +31,16 @@ export async function extractMelodyFromAudioClip(clipId: number): Promise<number
   }
   const wasm = (await ensureWasm()) as unknown as { analyzeMelody?: AudioMelodyAnalyzer };
   if (typeof wasm.analyzeMelody !== 'function') return -1;
-  const notes = await analyzeAudioClipMelody(clip, store.tempoBpm, {
-    loadAudioAsset: loadAsset,
-    analyzeMelody: wasm.analyzeMelody,
-  });
+  const notes = await analyzeAudioClipMelody(
+    clip,
+    store.tempoBpm,
+    {
+      loadAudioAsset: loadAsset,
+      analyzeMelody: wasm.analyzeMelody,
+    },
+    {},
+    store.tempoSegments,
+  );
   if (notes.length === 0) return -1;
 
   const project = getProject();

@@ -4,9 +4,14 @@ import { analyzeAudioClipMelody, type DetectedMelodyPoint } from '@/project/audi
 
 /** A minimal audio-clip window with neutral defaults. */
 function clipWindow(
-  overrides: Partial<{ assetId?: string; lengthPpq: number; sourceOffsetPpq: number }> = {},
+  overrides: Partial<{
+    assetId?: string;
+    startPpq: number;
+    lengthPpq: number;
+    sourceOffsetPpq: number;
+  }> = {},
 ) {
-  return { assetId: 'asset-1', lengthPpq: 4, sourceOffsetPpq: 0, ...overrides };
+  return { assetId: 'asset-1', startPpq: 0, lengthPpq: 4, sourceOffsetPpq: 0, ...overrides };
 }
 
 /** A loaded mono asset with `frames` samples at `sampleRate`. */
@@ -58,6 +63,32 @@ describe('analyzeAudioClipMelody', () => {
     expect(seen).toHaveLength(1);
     expect(seen[0].sampleRate).toBe(48000);
     expect(seen[0].length).toBeGreaterThan(0);
+  });
+
+  it('maps frame seconds to clip PPQ through the project tempo map when it varies', async () => {
+    // 60 BPM (1 s/PPQ) until PPQ 2, then 120 BPM (0.5 s/PPQ). The pitch change
+    // at 2 s lands on PPQ 2, and the run to the unvoiced frame at 3 s reaches
+    // PPQ 4 (two quarters in that second) — twice the duration a constant
+    // 60 BPM would give that tail.
+    const { fn } = analyzer([
+      { time: 0.0, frequency: 440, confidence: 1 },
+      { time: 2.0, frequency: 493.88, confidence: 1 },
+      { time: 3.0, frequency: 0, confidence: 0 },
+    ]);
+    const notes = await analyzeAudioClipMelody(
+      clipWindow({ startPpq: 0, lengthPpq: 8 }),
+      60,
+      { loadAudioAsset: async () => asset(48000 * 8), analyzeMelody: fn },
+      {},
+      [
+        { startPpq: 0, bpm: 60 },
+        { startPpq: 2, bpm: 120 },
+      ],
+    );
+    expect(notes).toEqual([
+      { pitch: 69, startPpq: 0, durationPpq: 2, velocity: 127 },
+      { pitch: 71, startPpq: 2, durationPpq: 2, velocity: 127 },
+    ]);
   });
 
   it('drops notes shorter than the minimum length', async () => {

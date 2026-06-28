@@ -15,6 +15,8 @@
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { mixdownToMono } from './audio-import';
 import { sliceAudioClipWindow } from './scheduling';
+import { normalizeTempoMap, ppqToSeconds, secondsToPpq } from './tempo-map';
+import type { TempoSegment } from './types';
 
 /** One frame of the melody contour returned by the engine. */
 export interface DetectedMelodyPoint {
@@ -82,16 +84,21 @@ function velocityFromConfidence(meanConfidence: number): number {
  * non-positive, or the source window is empty.
  *
  * @param clip Audio clip to analyze (needs `assetId`).
- * @param tempoBpm Constant tempo (> 0) used for the slice and seconds-to-PPQ.
+ * @param tempoBpm Constant tempo (> 0) used for the window slice (the clip
+ *   plays at its native sample rate, so the slice is fixed-tempo).
  * @param deps Injected asset loader and melody analyzer.
  * @param options Optional minimum note length.
+ * @param tempoSegments Project tempo map; frame times become clip-relative PPQ
+ *   through it, so the transcription stays aligned when the tempo varies under
+ *   the clip. Empty (the default) reduces to the constant `tempoBpm` mapping.
  * @returns Detected notes sorted by start (ids/channel assigned by the command).
  */
 export async function analyzeAudioClipMelody(
-  clip: { assetId?: string; lengthPpq: number; sourceOffsetPpq: number },
+  clip: { assetId?: string; startPpq: number; lengthPpq: number; sourceOffsetPpq: number },
   tempoBpm: number,
   deps: AudioMelodyDeps,
   options: MelodyExtractOptions = {},
+  tempoSegments: ReadonlyArray<TempoSegment> = [],
 ): Promise<MelodyNoteInput[]> {
   if (clip.assetId === undefined || !(tempoBpm > 0)) return [];
   const asset = await deps.loadAudioAsset(clip.assetId);
@@ -106,9 +113,14 @@ export async function analyzeAudioClipMelody(
   if (mono.length === 0) return [];
   const points = deps.analyzeMelody(mono, asset.meta.sampleRate).points ?? [];
   const minNoteSeconds = options.minNoteSeconds ?? 0.05;
-  // Inverse of scheduling.ppqToSeconds(ppq, tempoBpm) = ppq * 60 / tempoBpm.
-  const secondsToClipPpq = (seconds: number): number => (seconds * tempoBpm) / 60;
-  const windowEndSeconds = (clip.lengthPpq * 60) / tempoBpm;
+  // Map window-relative frame seconds to clip-relative PPQ through the tempo
+  // map (the inverse of how the new MIDI clip plays back), so the transcription
+  // stays aligned when the tempo varies under the clip.
+  const map = normalizeTempoMap(tempoSegments, tempoBpm);
+  const clipStartSeconds = ppqToSeconds(map, clip.startPpq);
+  const secondsToClipPpq = (seconds: number): number =>
+    secondsToPpq(map, clipStartSeconds + seconds) - clip.startPpq;
+  const windowEndSeconds = ppqToSeconds(map, clip.startPpq + clip.lengthPpq) - clipStartSeconds;
 
   const notes: MelodyNoteInput[] = [];
   let runMidi: number | null = null;
