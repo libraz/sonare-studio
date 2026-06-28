@@ -548,12 +548,6 @@ onBeforeUnmount(() => {
       <span class="toolbar-spacer" />
     </div>
     <p v-if="error" class="mastering-error" role="alert">{{ error }}</p>
-    <AssistantPanel
-      v-if="suggestion"
-      :suggestion="suggestion"
-      :preset="chain.preset"
-      @select="onSelectPreset"
-    />
     <div class="mastering-body">
       <ProcessorRack
         ref="processorRackRef"
@@ -575,27 +569,35 @@ onBeforeUnmount(() => {
         @toggle-add-menu="toggleAddMenu"
         @add-processor="onAddProcessor"
       />
-      <PreviewPane
-        :rendering="previewState?.status === 'rendering'"
-        :progress="previewState?.progress ?? 0"
-        :stage="previewState?.stage ?? ''"
-        :render-error="renderError"
-        :has-processed="!!previewState?.processed"
-        :has-bypassed="!!previewState?.bypassed"
-        :variant="variant"
-        :can-play="!!activeResult"
-        :is-playing="isPlaying"
-        :stale="previewStale"
-        :checking-targets="checkingTargets"
-        :loudness-rows="loudnessRows"
-        :clip-warning="clipWarning"
-        :streaming-targets="streamingTargets"
-        @preview="onPreview"
-        @cancel="onCancelPreview"
-        @select-variant="onSelectVariant"
-        @toggle-play="onTogglePlay"
-        @check-targets="onCheckTargets"
-      />
+      <div class="mastering-workspace">
+        <AssistantPanel
+          v-if="suggestion"
+          :suggestion="suggestion"
+          :preset="chain.preset"
+          @select="onSelectPreset"
+        />
+        <PreviewPane
+          :rendering="previewState?.status === 'rendering'"
+          :progress="previewState?.progress ?? 0"
+          :stage="previewState?.stage ?? ''"
+          :render-error="renderError"
+          :has-processed="!!previewState?.processed"
+          :has-bypassed="!!previewState?.bypassed"
+          :variant="variant"
+          :can-play="!!activeResult"
+          :is-playing="isPlaying"
+          :stale="previewStale"
+          :checking-targets="checkingTargets"
+          :loudness-rows="loudnessRows"
+          :clip-warning="clipWarning"
+          :streaming-targets="streamingTargets"
+          @preview="onPreview"
+          @cancel="onCancelPreview"
+          @select-variant="onSelectVariant"
+          @toggle-play="onTogglePlay"
+          @check-targets="onCheckTargets"
+        />
+      </div>
     </div>
   </div>
 </template>

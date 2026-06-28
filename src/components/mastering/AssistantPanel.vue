@@ -23,42 +23,46 @@ const { t } = useI18n();
 </script>
 
 <template>
-  <div class="assist-result">
-    <div class="assist-candidates">
-      <span class="assist-label">{{ t.shell.mastering.assistant.recommended }}</span>
-      <button
-        v-for="candidate in suggestion.genreCandidates"
-        :key="candidate.name"
-        type="button"
-        class="assist-chip"
-        :class="{ active: candidate.name === preset }"
-        @click="emit('select', candidate.name)"
-      >
-        {{ humanizePresetName(candidate.name) }}
-        <span class="assist-score">{{ Math.round(candidate.score * 100) }}</span>
-      </button>
+  <section class="assist-result" :aria-label="t.shell.mastering.assistant.recommended">
+    <div v-if="suggestion.genreCandidates.length" class="assist-section">
+      <div class="assist-heading">{{ t.shell.mastering.assistant.recommended }}</div>
+      <div class="assist-candidates">
+        <button
+          v-for="candidate in suggestion.genreCandidates"
+          :key="candidate.name"
+          type="button"
+          class="assist-chip"
+          :class="{ active: candidate.name === preset }"
+          @click="emit('select', candidate.name)"
+        >
+          <span class="assist-chip-name">{{ humanizePresetName(candidate.name) }}</span>
+          <span class="assist-score">{{ Math.round(candidate.score * 100) }}</span>
+        </button>
+      </div>
     </div>
-    <ul v-if="suggestion.explanation.length" class="assist-explain">
-      <li v-for="(line, index) in suggestion.explanation" :key="index">{{ line }}</li>
-    </ul>
+    <div v-if="suggestion.explanation.length" class="assist-section">
+      <ul class="assist-explain">
+        <li v-for="(line, index) in suggestion.explanation" :key="index">{{ line }}</li>
+      </ul>
+    </div>
     <div v-if="suggestion.profile" class="assist-profile">
-      <span>{{
+      <span class="assist-metric">{{
         formatMessage(t.shell.mastering.assistant.lufs, {
           value: suggestion.profile.integratedLufs.toFixed(1),
         })
       }}</span>
-      <span>{{
+      <span class="assist-metric">{{
         formatMessage(t.shell.mastering.assistant.lra, {
           value: suggestion.profile.lraLu.toFixed(1),
         })
       }}</span>
-      <span>{{
+      <span class="assist-metric">{{
         formatMessage(t.shell.mastering.assistant.truePeak, {
           value: suggestion.profile.truePeakDb.toFixed(1),
         })
       }}</span>
     </div>
-  </div>
+  </section>
 </template>
 
 <style scoped src="./assistant-panel.css"></style>

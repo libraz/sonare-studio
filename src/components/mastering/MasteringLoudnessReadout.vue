@@ -42,3 +42,5 @@ const { t } = useI18n();
     </p>
   </div>
 </template>
+
+<style scoped src="./mastering-loudness-readout.css"></style>
