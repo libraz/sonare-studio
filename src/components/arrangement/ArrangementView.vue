@@ -33,6 +33,7 @@ import {
   buildRowLayout,
   trackTakeRowCount,
 } from '@/ui/arrangement/automation-rows';
+import { nextPlayheadFollowStart } from '@/ui/arrangement/playhead-follow';
 import { barRangeAt } from '@/ui/arrangement/ruler';
 import { useAutomationInteractions } from '@/ui/arrangement/use-automation-interactions';
 import {
@@ -74,6 +75,8 @@ import {
 const props = defineProps<{
   /** Playhead position getter in PPQ; omit to hide the playhead. */
   positionPpq?: () => number;
+  /** True while the transport is playing; enables playhead follow scrolling. */
+  isPlaying?: boolean;
   /** Whether the transport loop is enabled (shown on the ruler). */
   loopEnabled?: boolean;
   /** Transport loop start in PPQ. */
@@ -385,6 +388,32 @@ function onCanvasResize(): void {
   bump();
 }
 
+let followRaf: number | null = null;
+
+function stopPlayheadFollow(): void {
+  if (followRaf !== null) cancelAnimationFrame(followRaf);
+  followRaf = null;
+}
+
+function followPlayheadTick(): void {
+  followRaf = null;
+  if (!props.isPlaying) return;
+  const ppq = props.positionPpq?.();
+  if (ppq !== undefined) {
+    const nextStart = nextPlayheadFollowStart(range, ppq);
+    if (nextStart !== null) {
+      range.setStartPpq(nextStart);
+      bump();
+    }
+  }
+  followRaf = requestAnimationFrame(followPlayheadTick);
+}
+
+function startPlayheadFollow(): void {
+  if (followRaf !== null || typeof requestAnimationFrame !== 'function') return;
+  followRaf = requestAnimationFrame(followPlayheadTick);
+}
+
 function onSeek(ppq: number): void {
   emit('seek', ppq);
 }
@@ -522,7 +551,16 @@ watch(
   },
 );
 
+watch(
+  () => props.isPlaying,
+  (playing) => {
+    if (playing) startPlayheadFollow();
+    else stopPlayheadFollow();
+  },
+);
+
 onMounted(async () => {
+  if (props.isPlaying) startPlayheadFollow();
   try {
     await store.init();
   } catch (err) {
@@ -531,6 +569,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  stopPlayheadFollow();
   painter.dispose();
 });
 </script>

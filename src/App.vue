@@ -535,6 +535,7 @@ useAppLifecycle({
         <ArrangementView
           ref="arrangementRef"
           :position-ppq="() => positionPpq"
+          :is-playing="isPlaying"
           :loop-enabled="loopEnabled"
           :loop-start-ppq="loopStartPpq"
           :loop-end-ppq="loopEndPpq"
