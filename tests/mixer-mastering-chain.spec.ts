@@ -5,6 +5,7 @@ import {
   clearHistory,
   redo,
   removeMasteringProcessor,
+  reorderMasteringProcessor,
   setMasteringEnabled,
   setMasteringParam,
   setMasteringPreset,
@@ -137,6 +138,38 @@ describe('mastering chain commands', () => {
     setMasteringParam(0, 'tiltDb', 2);
     setMasteringPreset(null);
     expect(undo()).toBe(false);
+  });
+
+  it('reorders a processor as a single undoable edit', () => {
+    addMasteringProcessor('eq.tilt', { tiltDb: 1 });
+    addMasteringProcessor('dynamics.compressor', { thresholdDb: -12 });
+    addMasteringProcessor('saturation.tape');
+    setMasteringEnabled(2, false);
+    clearHistory();
+
+    reorderMasteringProcessor(2, 0);
+    expect(store.mixer.masteringChain?.processors).toEqual([
+      { processor: 'saturation.tape', params: {}, enabled: false },
+      { processor: 'eq.tilt', params: { tiltDb: 1 }, enabled: true },
+      { processor: 'dynamics.compressor', params: { thresholdDb: -12 }, enabled: true },
+    ]);
+    // The whole move is one undo step, not one per add/remove primitive.
+    expect(undo()).toBe(true);
+    expect(store.mixer.masteringChain?.processors.map((p) => p.processor)).toEqual([
+      'eq.tilt',
+      'dynamics.compressor',
+      'saturation.tape',
+    ]);
+    expect(undo()).toBe(false);
+  });
+
+  it('treats an in-place reorder as a no-op and validates indices', () => {
+    addMasteringProcessor('eq.tilt');
+    clearHistory();
+    reorderMasteringProcessor(0, 0);
+    expect(undo()).toBe(false);
+    expect(() => reorderMasteringProcessor(0, 1)).toThrow(RangeError);
+    expect(() => reorderMasteringProcessor(-1, 0)).toThrow(RangeError);
   });
 
   it('validates names, params and indices', () => {

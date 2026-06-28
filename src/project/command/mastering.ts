@@ -113,6 +113,32 @@ export function removeMasteringProcessor(index: number): void {
 }
 
 /**
+ * Moves a mastering processor from one slot index to another as one undoable
+ * edit. Reordering through the per-slot add/remove primitives would record a
+ * separate undo step for each primitive (and momentarily drop and re-create
+ * slots); this performs the whole move atomically, preserving each slot's
+ * params and enabled state.
+ *
+ * @param from Index of the slot to move.
+ * @param to Destination index after the move (slots in between shift to fill).
+ */
+export function reorderMasteringProcessor(from: number, to: number): void {
+  const store = useProjectStore();
+  const chain = currentMasteringChain(store);
+  requireMasteringProcessor(chain, from);
+  requireMasteringProcessor(chain, to);
+  if (from === to) return;
+  executeApp(() => {
+    const processors = [...chain.processors];
+    const [moved] = processors.splice(from, 1);
+    processors.splice(to, 0, moved);
+    chain.processors = processors;
+    writeMasteringChain(store, chain);
+    store.refresh();
+  });
+}
+
+/**
  * Enables or bypasses a mastering processor slot as one undoable edit.
  *
  * @param index Slot index.

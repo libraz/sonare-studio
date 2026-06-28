@@ -43,6 +43,7 @@ export { canRedo, canUndo, clearHistory, redo, undo } from './command/history';
 export {
   addMasteringProcessor,
   removeMasteringProcessor,
+  reorderMasteringProcessor,
   setMasteringEnabled,
   setMasteringParam,
   setMasteringPreset,
