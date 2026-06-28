@@ -72,6 +72,7 @@ export function clipPlaybackNotes(clip: ClipNoteWindow): MidiNote[] {
     .map((note) => ({
       note: note.pitch,
       velocity: note.velocity,
+      ...(note.offVelocity !== undefined ? { offVelocity: note.offVelocity } : {}),
       startPpq: note.startPpq - clip.sourceOffsetPpq,
       durationPpq: note.durationPpq,
       channel: note.channel,

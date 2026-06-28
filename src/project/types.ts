@@ -405,12 +405,13 @@ export const MAJOR_MODE_MASK = 0b101010110101;
  * (e.g., for prerenderMidiClip).
  *
  * @param note Editor note to convert.
- * @returns Engine-facing note (drops the editor id and off velocity).
+ * @returns Engine-facing note (drops only the editor id).
  */
 export function editorNoteToMidiNote(note: EditorNote): MidiNote {
   return {
     note: note.pitch,
     velocity: note.velocity,
+    ...(note.offVelocity !== undefined ? { offVelocity: note.offVelocity } : {}),
     startPpq: note.startPpq,
     durationPpq: note.durationPpq,
     channel: note.channel,

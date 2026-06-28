@@ -28,9 +28,9 @@ const wasmMock = vi.hoisted(() => {
       ppq,
       data0: (9 << 20) | (ch << 16) | (note << 8) | vel,
     }));
-    static midiNoteOff = vi.fn((ppq: number, _g: number, ch: number, note: number) => ({
+    static midiNoteOff = vi.fn((ppq: number, _g: number, ch: number, note: number, vel = 0) => ({
       ppq,
-      data0: (8 << 20) | (ch << 16) | (note << 8),
+      data0: (8 << 20) | (ch << 16) | (note << 8) | vel,
     }));
   }
 
@@ -52,6 +52,8 @@ beforeEach(() => {
   clearPrerenderCache();
   wasmMock.bounceWithSynthInstrument.mockClear();
   wasmMock.deleteSpy.mockClear();
+  wasmMock.MockProject.midiNoteOn.mockClear();
+  wasmMock.MockProject.midiNoteOff.mockClear();
 });
 
 describe('midiClipCacheKey', () => {
@@ -81,6 +83,7 @@ describe('midiClipCacheKey', () => {
     for (const patch of [
       { note: 61 },
       { velocity: 101 },
+      { offVelocity: 32 },
       { startPpq: 0.5 },
       { durationPpq: 2 },
       { channel: 3 },
@@ -99,11 +102,18 @@ describe('midiClipCacheKey', () => {
 
 describe('noteEventsFromNotes', () => {
   it('expands each note into an on/off pair at the correct PPQ', () => {
-    const events = noteEventsFromNotes([{ note: 60, velocity: 100, startPpq: 1, durationPpq: 2 }]);
+    const events = noteEventsFromNotes([
+      { note: 60, velocity: 100, offVelocity: 42, startPpq: 1, durationPpq: 2 },
+    ]);
     expect(events).toEqual([
       { ppq: 1, kind: 'on', note: 60, velocity: 100, channel: 0 },
-      { ppq: 3, kind: 'off', note: 60, velocity: 0, channel: 0 },
+      { ppq: 3, kind: 'off', note: 60, velocity: 42, channel: 0 },
     ]);
+  });
+
+  it('defaults omitted note-off velocity to 0', () => {
+    const events = noteEventsFromNotes([{ note: 60, velocity: 100, startPpq: 0, durationPpq: 1 }]);
+    expect(events[1]).toEqual({ ppq: 1, kind: 'off', note: 60, velocity: 0, channel: 0 });
   });
 
   it('sorts by PPQ with note-off before note-on at the same position', () => {
@@ -129,6 +139,11 @@ describe('noteEventsFromNotes', () => {
     ).toThrow(RangeError);
     expect(() =>
       noteEventsFromNotes([{ note: 60, velocity: 100, startPpq: 0, durationPpq: 1, channel: 16 }]),
+    ).toThrow(RangeError);
+    expect(() =>
+      noteEventsFromNotes([
+        { note: 60, velocity: 100, offVelocity: 128, startPpq: 0, durationPpq: 1 },
+      ]),
     ).toThrow(RangeError);
   });
 });
@@ -171,6 +186,14 @@ describe('prerenderMidiClip', () => {
     expect(Array.from(first[0])).toEqual([0.25, 0.5, 0.75]);
     expect(Array.from(first[1])).toEqual([-0.25, -0.5, -0.75]);
     expect(wasmMock.deleteSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes note-off velocity to the scratch project MIDI events', async () => {
+    await prerenderMidiClip(
+      [{ note: 60, velocity: 100, offVelocity: 37, startPpq: 0, durationPpq: 1 }],
+      OPTS,
+    );
+    expect(wasmMock.MockProject.midiNoteOff).toHaveBeenCalledWith(1, 0, 0, 60, 37);
   });
 
   it('re-bounces when render-relevant options change', async () => {

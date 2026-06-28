@@ -25,9 +25,9 @@ function noteOnWord(channel: number, pitch: number, velocity: number): number {
   return (0x2 << 28) | (0x9 << 20) | (channel << 16) | (pitch << 8) | velocity;
 }
 
-/** Expected UMP MIDI 1.0 channel-voice word for a note-off (velocity 0). */
-function noteOffWord(channel: number, pitch: number): number {
-  return (0x2 << 28) | (0x8 << 20) | (channel << 16) | (pitch << 8);
+/** Expected UMP MIDI 1.0 channel-voice word for a note-off. */
+function noteOffWord(channel: number, pitch: number, velocity = 0): number {
+  return (0x2 << 28) | (0x8 << 20) | (channel << 16) | (pitch << 8) | velocity;
 }
 
 /** Expected UMP MIDI 1.0 channel-voice word for a control change. */
@@ -187,6 +187,18 @@ describe('buildMidiClipSchedules', () => {
     expect(velocityFor(0.5)).toBe(50);
     expect(velocityFor(2)).toBe(127);
     expect(velocityFor(0.001)).toBe(1);
+  });
+
+  it('encodes note-off velocity without scaling it by clip gain', () => {
+    const clip = makeClip(1, 1, {
+      gain: 0.5,
+      notes: [makeNote({ velocity: 100, offVelocity: 45 })],
+    });
+    const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], TEMPO_120, SAMPLE_RATE);
+    expect(schedule.events).toEqual([
+      { renderFrame: 0, word0: noteOnWord(0, 60, 50), wordCount: 1 },
+      { renderFrame: SPP - 1, word0: noteOffWord(0, 60, 45), wordCount: 1 },
+    ]);
   });
 
   it('loops a clip: windows events to the loop region and carries the loop length', () => {
@@ -580,6 +592,31 @@ describe('createMidiSync', () => {
     }
   });
 
+  it('clears MIDI schedules when a track freezes and restores them when it unfreezes', async () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMidiSync(handle);
+    const live = makeTrack(1);
+    const frozen = makeTrack(1, { frozen: { assetId: 'baked-1' } });
+    const clips = [makeClip(1, 1)];
+
+    await sync.sync([live], clips, TEMPO_120);
+    expect(engine.setMidiClips).toHaveBeenLastCalledWith([
+      expect.objectContaining({ id: 1, trackId: 1 }),
+    ]);
+    expect(sync.scheduledClipCount()).toBe(1);
+
+    await sync.sync([frozen], clips, TEMPO_120);
+    expect(engine.setMidiClips).toHaveBeenLastCalledWith([]);
+    expect(sync.scheduledClipCount()).toBe(0);
+
+    await sync.sync([live], clips, TEMPO_120);
+    expect(engine.setMidiClips).toHaveBeenCalledTimes(3);
+    expect(engine.setMidiClips).toHaveBeenLastCalledWith([
+      expect.objectContaining({ id: 1, trackId: 1 }),
+    ]);
+    expect(sync.scheduledClipCount()).toBe(1);
+  });
+
   it('warns when tracks request distinct SoundFonts and loads both', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
@@ -623,6 +660,59 @@ describe('createMidiSync', () => {
     expect(engine.setMidiClips).toHaveBeenCalledTimes(2);
     const resent = engine.setMidiClips.mock.calls[1][0];
     expect(resent[0].events[0].word0).toBe(noteOnWord(0, 60, 64));
+  });
+
+  it('re-sends when only note-off velocity changes', async () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMidiSync(handle);
+    const tracks = [makeTrack(1)];
+
+    await sync.sync(
+      tracks,
+      [makeClip(1, 1, { notes: [makeNote({ offVelocity: 16 })] })],
+      TEMPO_120,
+    );
+    await sync.sync(
+      tracks,
+      [makeClip(1, 1, { notes: [makeNote({ offVelocity: 96 })] })],
+      TEMPO_120,
+    );
+
+    expect(engine.setMidiClips).toHaveBeenCalledTimes(2);
+    const resent = engine.setMidiClips.mock.calls[1][0];
+    expect(resent[0].events[1].word0).toBe(noteOffWord(0, 60, 96));
+  });
+
+  it('re-sends when only MIDI expression lanes change', async () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMidiSync(handle);
+    const tracks = [makeTrack(1)];
+    const base = makeClip(1, 1, {
+      notes: [],
+      ccLanes: [{ controller: 11, channel: 0, points: [{ ppq: 0, value: 64 }] }],
+      pitchBendLanes: [{ channel: 0, points: [{ ppq: 1, value: 8192 }] }],
+      channelPressureLanes: [{ channel: 0, points: [{ ppq: 2, value: 32 }] }],
+      polyPressureLanes: [{ channel: 0, pitch: 60, points: [{ ppq: 3, value: 48 }] }],
+    });
+    const edited = makeClip(1, 1, {
+      notes: [],
+      ccLanes: [{ controller: 11, channel: 0, points: [{ ppq: 0, value: 96 }] }],
+      pitchBendLanes: [{ channel: 0, points: [{ ppq: 1, value: 4096 }] }],
+      channelPressureLanes: [{ channel: 0, points: [{ ppq: 2, value: 64 }] }],
+      polyPressureLanes: [{ channel: 0, pitch: 60, points: [{ ppq: 3, value: 80 }] }],
+    });
+
+    await sync.sync(tracks, [base], TEMPO_120);
+    await sync.sync(tracks, [edited], TEMPO_120);
+
+    expect(engine.setMidiClips).toHaveBeenCalledTimes(2);
+    const events = engine.setMidiClips.mock.calls[1][0][0].events;
+    expect(events).toEqual([
+      { renderFrame: 0, word0: ccWord(0, 11, 96), wordCount: 1 },
+      { renderFrame: SPP, word0: pitchBendWord(0, 4096), wordCount: 1 },
+      { renderFrame: 2 * SPP, word0: channelPressureWord(0, 64), wordCount: 1 },
+      { renderFrame: 3 * SPP, word0: polyPressureWord(0, 60, 80), wordCount: 1 },
+    ]);
   });
 
   it('re-bakes and re-sends the clip frames after a tempo-map change', async () => {

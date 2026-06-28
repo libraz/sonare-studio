@@ -23,6 +23,8 @@ export interface MidiNote {
   note: number;
   /** Note-on velocity (integer, 1-127). */
   velocity: number;
+  /** Optional note-off/release velocity (integer, 0-127); omitted = 0. */
+  offVelocity?: number;
   /** Note start within the clip, in PPQ (fractional allowed, >= 0). */
   startPpq: number;
   /** Note length in PPQ (> 0). */
@@ -93,7 +95,7 @@ export interface NoteEvent {
   kind: 'off' | 'on';
   /** MIDI note number (0-127). */
   note: number;
-  /** Velocity (note-on velocity for 'on', 0 for 'off'). */
+  /** Velocity (note-on velocity for 'on', release velocity for 'off'). */
   velocity: number;
   /** MIDI channel (0-15). */
   channel: number;
@@ -139,6 +141,12 @@ function validateNote(n: MidiNote): void {
   if (!Number.isInteger(n.velocity) || n.velocity < 1 || n.velocity > 127) {
     throw new RangeError(`MIDI velocity must be an integer in [1, 127], got ${n.velocity}`);
   }
+  if (
+    n.offVelocity !== undefined &&
+    (!Number.isInteger(n.offVelocity) || n.offVelocity < 0 || n.offVelocity > 127)
+  ) {
+    throw new RangeError(`MIDI offVelocity must be an integer in [0, 127], got ${n.offVelocity}`);
+  }
   if (!Number.isInteger(channel) || channel < 0 || channel > 15) {
     throw new RangeError(`MIDI channel must be an integer in [0, 15], got ${channel}`);
   }
@@ -169,7 +177,7 @@ export function noteEventsFromNotes(notes: ReadonlyArray<MidiNote>): NoteEvent[]
       ppq: n.startPpq + n.durationPpq,
       kind: 'off',
       note: n.note,
-      velocity: 0,
+      velocity: n.offVelocity ?? 0,
       channel,
     });
   }
@@ -201,7 +209,12 @@ export function midiClipCacheKey(
   const tempoBpm = options.tempoBpm ?? DEFAULT_TEMPO_BPM;
   const instrument = instrumentCacheSegment(resolveInstrument(options));
   const canonical = notes
-    .map((n) => `${n.startPpq}:${n.durationPpq}:${n.note}:${n.velocity}:${n.channel ?? 0}`)
+    .map(
+      (n) =>
+        `${n.startPpq}:${n.durationPpq}:${n.note}:${n.velocity}:${n.offVelocity ?? 0}:${
+          n.channel ?? 0
+        }`,
+    )
     .sort()
     .join(';');
   const hash = fnv1a32(canonical).toString(16).padStart(8, '0');
@@ -324,7 +337,7 @@ export async function prerenderMidiClip(
     const noteEvents = events.map((e) =>
       e.kind === 'on'
         ? wasm.Project.midiNoteOn(e.ppq, 0, e.channel, e.note, e.velocity)
-        : wasm.Project.midiNoteOff(e.ppq, 0, e.channel, e.note),
+        : wasm.Project.midiNoteOff(e.ppq, 0, e.channel, e.note, e.velocity),
     );
     let interleaved: Float32Array;
     if (instrument.kind === 'sf2') {

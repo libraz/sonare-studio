@@ -223,7 +223,15 @@ export function buildMidiClipSchedules(
         ppqToSamples(tempoMap, clip.startPpq + endPpq, sampleRate) - 1,
       );
       events.push(voiceEvent(onFrame, STATUS_NOTE_ON, channel, note.note, velocity));
-      events.push(voiceEvent(offFrame, STATUS_NOTE_OFF, channel, note.note, 0));
+      events.push(
+        voiceEvent(
+          offFrame,
+          STATUS_NOTE_OFF,
+          channel,
+          note.note,
+          clamp(note.offVelocity ?? 0, 0, 127),
+        ),
+      );
     }
 
     // CC lanes emit one discrete control-change event per breakpoint (the
