@@ -178,4 +178,24 @@ describe('referencedAssetIds', () => {
   it('returns an empty set for no clips', () => {
     expect(referencedAssetIds([]).size).toBe(0);
   });
+
+  it('collects assetIds held only by inactive comp takes', () => {
+    const ids = referencedAssetIds([
+      { assetId: 'active', takes: [{ assetId: 'active' }, { assetId: 'take2' }] },
+    ]);
+    expect([...ids].sort()).toEqual(['active', 'take2']);
+  });
+
+  it('collects assetIds held only by frozen tracks', () => {
+    const ids = referencedAssetIds([], [{ frozen: { assetId: 'baked' } }, {}]);
+    expect([...ids]).toEqual(['baked']);
+  });
+
+  it('combines clip, take and frozen references', () => {
+    const ids = referencedAssetIds(
+      [{ assetId: 'clip', takes: [{ assetId: 'take' }] }],
+      [{ frozen: { assetId: 'frozen' } }],
+    );
+    expect([...ids].sort()).toEqual(['clip', 'frozen', 'take']);
+  });
 });

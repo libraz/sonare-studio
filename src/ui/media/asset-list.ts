@@ -182,18 +182,47 @@ export function sortAssets(
   return sorted;
 }
 
+/** Minimal clip shape read by {@link referencedAssetIds}. */
+interface ReferencedClip {
+  /** Active audio asset id, if any. */
+  assetId?: string;
+  /** Alternative cycle-recording takes, each holding its own asset. */
+  takes?: ReadonlyArray<{ assetId: string }>;
+}
+
+/** Minimal track shape read by {@link referencedAssetIds}. */
+interface ReferencedTrack {
+  /** Frozen render, holding the baked audio asset while the track is frozen. */
+  frozen?: { assetId: string };
+}
+
 /**
- * Collects the asset ids referenced by the given clips (their `assetId`
- * fields). The media browser blocks deletion of referenced assets so
- * project clips never lose their audio.
+ * Collects the asset ids referenced anywhere in the project: active clip
+ * audio, every comp take (including non-selected ones) and frozen-track
+ * renders. The media browser blocks deletion of referenced assets so a
+ * project never loses audio held only by an inactive take or a frozen track.
  *
- * @param clips - Clip mirrors (only `assetId` is read).
+ * This must stay in lockstep with {@link collectReferencedAssetIds} in
+ * `src/persistence/bundle.ts`, which performs the same walk over the
+ * serialized document for disk bundling.
+ *
+ * @param clips - Clip mirrors (`assetId` and `takes` are read).
+ * @param tracks - Track mirrors (`frozen.assetId` is read); defaults to none.
  * @returns The set of referenced asset ids.
  */
-export function referencedAssetIds(clips: ReadonlyArray<{ assetId?: string }>): Set<string> {
+export function referencedAssetIds(
+  clips: ReadonlyArray<ReferencedClip>,
+  tracks: ReadonlyArray<ReferencedTrack> = [],
+): Set<string> {
   const ids = new Set<string>();
   for (const clip of clips) {
     if (clip.assetId) ids.add(clip.assetId);
+    for (const take of clip.takes ?? []) {
+      if (take.assetId) ids.add(take.assetId);
+    }
+  }
+  for (const track of tracks) {
+    if (track.frozen?.assetId) ids.add(track.frozen.assetId);
   }
   return ids;
 }

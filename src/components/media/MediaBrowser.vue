@@ -117,8 +117,8 @@ const displayedAssets = computed(() =>
   ),
 );
 
-/** Asset ids referenced by project clips; deleting these is blocked. */
-const referencedIds = computed(() => referencedAssetIds(store.clips));
+/** Asset ids referenced by clips, comp takes or frozen tracks; deletion is blocked. */
+const referencedIds = computed(() => referencedAssetIds(store.clips, store.tracks));
 
 // --- Import ----------------------------------------------------------------
 
