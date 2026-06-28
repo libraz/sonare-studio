@@ -3,6 +3,7 @@ import type { useAutosave } from '@/composables/useAutosave';
 import { promptDialog } from '@/composables/useDialogs';
 import { describeError } from '@/lib/errors';
 import { gatherProjectBundle, restoreProjectBundle } from '@/persistence/bundle';
+import { garbageCollectMedia } from '@/persistence/gc';
 import { downloadSzd, pickAndReadSzd } from '@/persistence/local-file';
 import {
   deleteProject,
@@ -106,6 +107,22 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   const recentMenuNames = computed(() =>
     recentProjects.value.filter((name) => name !== store.projectName && name !== AUTOSAVE_SLOT),
   );
+
+  /**
+   * Reclaims OPFS audio/SoundFont storage no project references any more, after
+   * an edit that may have orphaned media (a save that dropped clips, a deleted
+   * project). Best-effort and never throws: storage hygiene must not break the
+   * action that triggered it. The live document is passed so its media — even
+   * if not yet written to a slot — is preserved.
+   */
+  async function reclaimUnusedMedia(): Promise<void> {
+    if (!opfsAvailable) return;
+    try {
+      await garbageCollectMedia({ liveDocument: serializeProject() });
+    } catch {
+      // Reclaiming is opportunistic; a failure leaves the orphans for next time.
+    }
+  }
 
   async function markClean(): Promise<void> {
     await nextTick();
@@ -222,6 +239,8 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       recentProjects.value = withoutRecent(recentProjects.value, name);
       saveRecentProjects(recentProjects.value);
       await refreshStoredProjects();
+      // Deleting a project may strand media only it referenced.
+      await reclaimUnusedMedia();
     });
   }
 
@@ -273,6 +292,8 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     rememberRecentProject(name);
     await autosave.saveNow();
     await markClean();
+    // Edits since the last save may have stranded imported media.
+    await reclaimUnusedMedia();
   }
 
   function saveProjectAction(): void {
