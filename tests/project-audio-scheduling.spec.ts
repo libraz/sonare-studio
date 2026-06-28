@@ -246,6 +246,20 @@ describe('scheduleProjectClips with audio clips', () => {
     expect(loadAudioAsset).toHaveBeenNthCalledWith(2, 'asset-x');
   });
 
+  it('skips audio clips whose sliced source window is empty', async () => {
+    store.tracks = [makeTrack(1)];
+    // Offset beyond the asset length: slicing produces a zero-length buffer.
+    store.clips = [makeAudioClip(10, 1, { sourceOffsetPpq: 100, lengthPpq: 1 })];
+    const { handle, addClip } = makeHandle(10);
+
+    const scheduled = await scheduleProjectClips(handle, {
+      loadAudioAsset: async () => makeAsset(20),
+    });
+
+    expect(scheduled).toEqual([]);
+    expect(addClip).not.toHaveBeenCalled();
+  });
+
   it('schedules only audio clips; MIDI clips are realtime engine state', async () => {
     store.tracks = [makeTrack(1), makeTrack(2, { kind: 'midi' })];
     const midiClip = makeAudioClip(20, 2, {

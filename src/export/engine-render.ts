@@ -354,6 +354,7 @@ export async function renderProjectWithEngine(
   // Pre-load instrument fonts once; engine passes then configure synchronously.
   const fontBytesById = new Map<string, Uint8Array>();
   for (const track of doc.tracks) {
+    if (track.frozen !== undefined) continue;
     if (track.kind === 'midi' && track.instrument?.kind === 'sf2') {
       if (!fontBytesById.has(track.instrument.fontId)) {
         fontBytesById.set(track.instrument.fontId, await loadFontBytes(track.instrument.fontId));
@@ -666,6 +667,7 @@ export async function renderProjectWithEngine(
     for (let index = 0; index < doc.tracks.length; index++) {
       const track = doc.tracks[index];
       if (track.kind !== 'midi') continue;
+      if (track.frozen !== undefined) continue;
       const instrument = track.instrument;
       const destinationId = trackIds[index];
       if (instrument === undefined) {
@@ -768,6 +770,9 @@ export async function renderProjectWithEngine(
     if (!Number.isInteger(freezeIndex) || freezeIndex < 0 || freezeIndex >= doc.tracks.length) {
       throw new RangeError(`Freeze track index ${freezeIndex} is out of range`);
     }
+    if (doc.tracks[freezeIndex].kind === 'group') {
+      throw new RangeError('Group tracks cannot be frozen');
+    }
     const channels = await runPass(
       {
         masterStrip: false,
@@ -821,7 +826,7 @@ export async function renderProjectWithEngine(
     const stemIndices = new Set<number>([trackIndex]);
     if (track.kind === 'group') {
       doc.tracks.forEach((member, memberIndex) => {
-        if (member.groupIndex === trackIndex) stemIndices.add(memberIndex);
+        if (member.groupIndex === trackIndex && !member.mute) stemIndices.add(memberIndex);
       });
     }
     const channels = await runPass(

@@ -57,23 +57,27 @@ describe('isTrackAudible', () => {
     expect(isTrackAudible(tracks[1], tracks)).toBe(false);
   });
 
-  it('with any solo active, only soloed tracks are audible', () => {
+  it('with any solo active, only soloed and solo-safe tracks are audible', () => {
     const tracks: TrackAudibilityState[] = [
       { mute: false, solo: true },
       { mute: false, solo: false },
+      { mute: false, solo: false, soloSafe: true },
     ];
     expect(isTrackAudible(tracks[0], tracks)).toBe(true);
     expect(isTrackAudible(tracks[1], tracks)).toBe(false);
+    expect(isTrackAudible(tracks[2], tracks)).toBe(true);
   });
 
-  it('mute wins over the track’s own solo', () => {
+  it('mute wins over the track’s own solo and solo-safe state', () => {
     const tracks: TrackAudibilityState[] = [
       { mute: true, solo: true },
+      { mute: true, solo: false, soloSafe: true },
       { mute: false, solo: false },
     ];
     expect(isTrackAudible(tracks[0], tracks)).toBe(false);
-    // The muted solo still counts as "a solo exists" for the others.
     expect(isTrackAudible(tracks[1], tracks)).toBe(false);
+    // The muted solo still counts as "a solo exists" for the others.
+    expect(isTrackAudible(tracks[2], tracks)).toBe(false);
   });
 
   it('covers the full mute x solo x any-solo matrix', () => {
@@ -86,10 +90,14 @@ describe('isTrackAudible', () => {
     }> = [
       { track: { mute: false, solo: false }, others: noSolo, audible: true },
       { track: { mute: false, solo: false }, others: someSolo, audible: false },
+      { track: { mute: false, solo: false, soloSafe: true }, others: noSolo, audible: true },
+      { track: { mute: false, solo: false, soloSafe: true }, others: someSolo, audible: true },
       { track: { mute: false, solo: true }, others: noSolo, audible: true },
       { track: { mute: false, solo: true }, others: someSolo, audible: true },
       { track: { mute: true, solo: false }, others: noSolo, audible: false },
       { track: { mute: true, solo: false }, others: someSolo, audible: false },
+      { track: { mute: true, solo: false, soloSafe: true }, others: noSolo, audible: false },
+      { track: { mute: true, solo: false, soloSafe: true }, others: someSolo, audible: false },
       { track: { mute: true, solo: true }, others: noSolo, audible: false },
       { track: { mute: true, solo: true }, others: someSolo, audible: false },
     ];
@@ -106,13 +114,21 @@ describe('clipPlaybackNotes', () => {
       lengthPpq: 4,
       notes: [
         { id: 1, pitch: 60, velocity: 100, startPpq: 0, durationPpq: 1, channel: 0 }, // before window
-        { id: 2, pitch: 62, velocity: 90, startPpq: 2, durationPpq: 1, channel: 1 }, // window start
+        {
+          id: 2,
+          pitch: 62,
+          velocity: 90,
+          offVelocity: 30,
+          startPpq: 2,
+          durationPpq: 1,
+          channel: 1,
+        }, // window start
         { id: 3, pitch: 64, velocity: 80, startPpq: 5.5, durationPpq: 1, channel: 0 }, // inside
         { id: 4, pitch: 65, velocity: 70, startPpq: 6, durationPpq: 1, channel: 0 }, // at window end
       ],
     });
     expect(clipPlaybackNotes(clip)).toEqual([
-      { note: 62, velocity: 90, startPpq: 0, durationPpq: 1, channel: 1 },
+      { note: 62, velocity: 90, offVelocity: 30, startPpq: 0, durationPpq: 1, channel: 1 },
       { note: 64, velocity: 80, startPpq: 3.5, durationPpq: 1, channel: 0 },
     ]);
   });

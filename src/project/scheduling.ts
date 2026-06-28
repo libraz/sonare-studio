@@ -24,12 +24,12 @@ import { clipKind } from './types';
 import { bakeWarpedClip } from './warp';
 
 /** The mute/solo subset of a track relevant to audibility. */
-export type TrackAudibilityState = Pick<EditorTrack, 'mute' | 'solo'>;
+export type TrackAudibilityState = Pick<EditorTrack, 'mute' | 'solo' | 'soloSafe'>;
 
 /**
  * Decides whether a track is audible under the solo/mute rules: when any
- * track is soloed only soloed tracks play, and mute always silences a track
- * (mute wins over its own solo).
+ * track is soloed only soloed and solo-safe tracks play, and mute always
+ * silences a track (mute wins over its own solo/solo-safe status).
  *
  * @param track Track to test.
  * @param tracks All tracks of the project (to detect active solos).
@@ -41,7 +41,7 @@ export function isTrackAudible(
 ): boolean {
   if (track.mute) return false;
   const anySolo = tracks.some((t) => t.solo);
-  return anySolo ? track.solo : true;
+  return anySolo ? track.solo || track.soloSafe === true : true;
 }
 
 /**
