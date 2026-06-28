@@ -399,6 +399,14 @@ export async function renderProjectWithEngine(
         loopLengthPpq: clip.loopLengthPpq,
         // Document notes drop the editor id; synthesize stable ones.
         notes: clip.notes.map((note, noteIndex) => ({ id: noteIndex + 1, ...note })),
+        ...(clip.ccLanes !== undefined ? { ccLanes: clip.ccLanes } : {}),
+        ...(clip.pitchBendLanes !== undefined ? { pitchBendLanes: clip.pitchBendLanes } : {}),
+        ...(clip.channelPressureLanes !== undefined
+          ? { channelPressureLanes: clip.channelPressureLanes }
+          : {}),
+        ...(clip.polyPressureLanes !== undefined
+          ? { polyPressureLanes: clip.polyPressureLanes }
+          : {}),
       });
     });
   });
