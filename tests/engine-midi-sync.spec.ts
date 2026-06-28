@@ -598,6 +598,21 @@ describe('createMidiSync', () => {
     expect(engine.setSf2Instrument).toHaveBeenCalledTimes(2);
   });
 
+  it('forwards the SF2 master gain and voice cap when binding the track', async () => {
+    const { handle, engine } = makeHandle();
+    const loadFont = vi.fn(async () => new Uint8Array([1, 2, 3]));
+    const sync = createMidiSync(handle, { loadFont });
+    const tracks = [
+      makeTrack(1, { instrument: { kind: 'sf2', fontId: 'font-a', gain: 1.5, polyphony: 24 } }),
+      makeTrack(2, { instrument: { kind: 'sf2', fontId: 'font-a' } }),
+    ];
+
+    await sync.sync(tracks, [], TEMPO_120);
+    // Track 1 carries explicit gain/polyphony; track 2 keeps the engine defaults.
+    expect(engine.setSf2Instrument).toHaveBeenNthCalledWith(1, 1, { gain: 1.5, polyphony: 24 });
+    expect(engine.setSf2Instrument).toHaveBeenNthCalledWith(2, 2, {});
+  });
+
   it('does not load a font or bind an instrument for a frozen SF2 track', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {

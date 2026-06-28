@@ -368,6 +368,8 @@ export const en = {
       storedSoundFonts: 'Stored SoundFonts',
       bank: 'Bank',
       program: 'Program',
+      gain: 'Gain',
+      polyphony: 'Voices',
       loadSf2: 'Load .sf2…',
       useSoundFont: 'Use SoundFont',
       editPatch: 'Edit patch…',

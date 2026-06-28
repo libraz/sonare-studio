@@ -365,6 +365,8 @@ export const ja = {
       storedSoundFonts: '保存済みSoundFont',
       bank: 'バンク',
       program: 'プログラム',
+      gain: 'ゲイン',
+      polyphony: '同時発音数',
       loadSf2: '.sf2を読み込み...',
       useSoundFont: 'SoundFontを使用',
       editPatch: 'パッチを編集...',

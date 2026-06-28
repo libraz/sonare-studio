@@ -26,7 +26,7 @@
  */
 
 import { loadFont } from '@/project/fonts';
-import { DEFAULT_SYNTH_PRESET } from '@/project/instrument';
+import { DEFAULT_SYNTH_PRESET, sf2PlaybackConfig } from '@/project/instrument';
 import { midiFxConfigJson } from '@/project/midi-fx';
 import { clipPlaybackNotes } from '@/project/scheduling';
 import { normalizeTempoMap, ppqToSamples } from '@/project/tempo-map';
@@ -407,8 +407,9 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
         handle.engine.setSynthInstrument(track.id, instrument.patch as Record<string, unknown>);
       } else {
         // The global SoundFont is already loaded above (last SF2 track wins);
-        // binding the track just points it at that shared font.
-        handle.engine.setSf2Instrument(track.id, {});
+        // binding the track points it at that shared font and applies the
+        // track's master gain / voice cap (omitted fields keep engine defaults).
+        handle.engine.setSf2Instrument(track.id, sf2PlaybackConfig(instrument));
       }
       lastInstrumentKeyByTrack.set(track.id, instrumentKey);
     }

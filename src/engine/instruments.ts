@@ -13,6 +13,7 @@ import { loadFont as loadStoredFont } from '@/project/fonts';
 import {
   DEFAULT_SYNTH_PRESET,
   instrumentCacheSegment,
+  sf2PlaybackConfig,
   type TrackInstrument,
 } from '@/project/instrument';
 import type { ProjectMidiEvent } from '@/wasm/index.js';
@@ -345,7 +346,9 @@ export async function prerenderMidiClip(
       const usedChannels = [...new Set(events.map((e) => e.channel))];
       const programEvents = sf2ProgramEvents(wasm, instrument, usedChannels);
       project.setMidiEvents(clipId, [...programEvents, ...noteEvents]);
-      interleaved = project.bounceWithSf2Instrument({}, { numChannels: 2 });
+      interleaved = project.bounceWithSf2Instrument(sf2PlaybackConfig(instrument), {
+        numChannels: 2,
+      });
     } else {
       project.setMidiEvents(clipId, noteEvents);
       const patch =

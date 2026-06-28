@@ -105,6 +105,25 @@ describe('DeviceRack.vue', () => {
     });
   });
 
+  it('commits the SF2 master gain and voice cap from the picker', async () => {
+    const wrapper = mount(DeviceRack);
+    await wrapper.find('.instrument-button').trigger('click');
+    const sf2Tab = wrapper.findAll('.picker-tab').find((tab) => tab.text() === 'SF2');
+    await sf2Tab?.trigger('click');
+    await flushPromises();
+
+    await wrapper.findAll('.font-option')[0].trigger('click');
+    await wrapper.find('.sf2-gain').setValue('1.5');
+    await wrapper.find('.sf2-polyphony').setValue('24');
+    await wrapper.find('.use-sf2').trigger('click');
+    expect(store.tracks[0].instrument).toEqual({
+      kind: 'sf2',
+      fontId: 'fontaaaa00000001',
+      gain: 1.5,
+      polyphony: 24,
+    });
+  });
+
   it('imports a .sf2 file into the font store and selects it', async () => {
     const wrapper = mount(DeviceRack);
     await wrapper.find('.instrument-button').trigger('click');

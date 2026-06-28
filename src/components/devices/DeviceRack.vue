@@ -18,8 +18,13 @@ import { filterPresets } from '@/ui/devices/preset-filter';
 import {
   buildSf2Instrument,
   clampBank,
+  clampGain,
+  clampPolyphony,
   clampProgram,
   createSf2Selection,
+  MAX_SF2_GAIN,
+  MAX_SF2_POLYPHONY,
+  MIN_SF2_POLYPHONY,
 } from '@/ui/devices/sf2-model';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import PatchEditor from './PatchEditor.vue';
@@ -228,6 +233,16 @@ function onBankInput(event: Event): void {
 function onProgramInput(event: Event): void {
   const raw = Number((event.target as HTMLInputElement).value);
   sf2Selection.value = { ...sf2Selection.value, program: clampProgram(raw) };
+}
+
+function onGainInput(event: Event): void {
+  const raw = Number((event.target as HTMLInputElement).value);
+  sf2Selection.value = { ...sf2Selection.value, gain: clampGain(raw) };
+}
+
+function onPolyphonyInput(event: Event): void {
+  const raw = Number((event.target as HTMLInputElement).value);
+  sf2Selection.value = { ...sf2Selection.value, polyphony: clampPolyphony(raw) };
 }
 
 function useSf2(): void {
@@ -516,6 +531,30 @@ function displayInstrumentKind(): string {
                   max="127"
                   :value="sf2Selection.program"
                   @input="onProgramInput"
+                />
+              </label>
+              <label class="sf2-field">
+                <span>{{ t.shell.devicesPanel.gain }}</span>
+                <input
+                  class="sf2-gain"
+                  type="number"
+                  min="0"
+                  :max="MAX_SF2_GAIN"
+                  step="0.1"
+                  :value="sf2Selection.gain"
+                  @input="onGainInput"
+                />
+              </label>
+              <label class="sf2-field">
+                <span>{{ t.shell.devicesPanel.polyphony }}</span>
+                <input
+                  class="sf2-polyphony"
+                  type="number"
+                  :min="MIN_SF2_POLYPHONY"
+                  :max="MAX_SF2_POLYPHONY"
+                  step="1"
+                  :value="sf2Selection.polyphony"
+                  @input="onPolyphonyInput"
                 />
               </label>
             </div>

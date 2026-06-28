@@ -40,6 +40,10 @@ export interface Sf2Instrument {
   bank?: number;
   /** MIDI program number (0-127); omitted = program 0. */
   program?: number;
+  /** Linear master output gain (> 0); omitted = engine default (0.5). */
+  gain?: number;
+  /** Max simultaneous voices (integer in [1, 64]); omitted = engine default (48). */
+  polyphony?: number;
 }
 
 /** Instrument used to render a track's MIDI clips. */
@@ -108,6 +112,16 @@ export function validateTrackInstrument(instrument: TrackInstrument): void {
       if (program !== undefined && (!Number.isInteger(program) || program < 0 || program > 127)) {
         throw new RangeError(`SF2 program must be an integer in [0, 127], got ${program}`);
       }
+      const { gain, polyphony } = instrument;
+      if (gain !== undefined && (!Number.isFinite(gain) || gain <= 0)) {
+        throw new RangeError(`SF2 gain must be a positive number, got ${gain}`);
+      }
+      if (
+        polyphony !== undefined &&
+        (!Number.isInteger(polyphony) || polyphony < 1 || polyphony > 64)
+      ) {
+        throw new RangeError(`SF2 polyphony must be an integer in [1, 64], got ${polyphony}`);
+      }
       return;
     }
     default: {
@@ -128,6 +142,27 @@ export function validateTrackInstrument(instrument: TrackInstrument): void {
  * @param instrument Instrument to identify.
  * @returns A stable key segment.
  */
+/**
+ * Engine player config (master gain + voice cap) an SF2 instrument plays with.
+ *
+ * Only the fields the instrument sets explicitly are returned; anything it
+ * leaves unset is omitted so the engine applies its own defaults (gain 0.5,
+ * 48 voices). The same config drives live playback (setSf2Instrument) and the
+ * offline bounce (bounceWithSf2Instrument).
+ *
+ * @param instrument SF2 instrument to read.
+ * @returns A config object with only the explicitly-set gain/polyphony fields.
+ */
+export function sf2PlaybackConfig(instrument: Sf2Instrument): {
+  gain?: number;
+  polyphony?: number;
+} {
+  const config: { gain?: number; polyphony?: number } = {};
+  if (instrument.gain !== undefined) config.gain = instrument.gain;
+  if (instrument.polyphony !== undefined) config.polyphony = instrument.polyphony;
+  return config;
+}
+
 export function instrumentCacheSegment(instrument: TrackInstrument): string {
   switch (instrument.kind) {
     case 'synth-preset':
@@ -137,7 +172,7 @@ export function instrumentCacheSegment(instrument: TrackInstrument): string {
     case 'sf2':
       return `sf2=${encodeURIComponent(instrument.fontId)}:${instrument.bank ?? -1}:${
         instrument.program ?? -1
-      }`;
+      }:${instrument.gain ?? -1}:${instrument.polyphony ?? -1}`;
     default: {
       const exhaustive: never = instrument;
       throw new RangeError(`Unknown instrument kind: ${JSON.stringify(exhaustive)}`);

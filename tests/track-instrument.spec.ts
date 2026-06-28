@@ -11,6 +11,7 @@ import {
   instrumentCacheSegment,
   instrumentEquals,
   isDefaultInstrument,
+  sf2PlaybackConfig,
   type TrackInstrument,
   trackInstrument,
   validateTrackInstrument,
@@ -123,9 +124,9 @@ describe('instrumentCacheSegment', () => {
     ).not.toBe(base);
   });
 
-  it('identifies sf2 instruments by font, bank and program', () => {
+  it('identifies sf2 instruments by font, bank, program, gain and polyphony', () => {
     const base = instrumentCacheSegment({ kind: 'sf2', fontId: 'font-a', bank: 0, program: 12 });
-    expect(base).toBe('sf2=font-a:0:12');
+    expect(base).toBe('sf2=font-a:0:12:-1:-1');
     expect(
       instrumentCacheSegment({ kind: 'sf2', fontId: 'font-b', bank: 0, program: 12 }),
     ).not.toBe(base);
@@ -135,7 +136,21 @@ describe('instrumentCacheSegment', () => {
     expect(
       instrumentCacheSegment({ kind: 'sf2', fontId: 'font-a', bank: 0, program: 13 }),
     ).not.toBe(base);
-    expect(instrumentCacheSegment({ kind: 'sf2', fontId: 'font-a' })).toBe('sf2=font-a:-1:-1');
+    expect(
+      instrumentCacheSegment({ kind: 'sf2', fontId: 'font-a', bank: 0, program: 12, gain: 1 }),
+    ).not.toBe(base);
+    expect(
+      instrumentCacheSegment({
+        kind: 'sf2',
+        fontId: 'font-a',
+        bank: 0,
+        program: 12,
+        polyphony: 32,
+      }),
+    ).not.toBe(base);
+    expect(instrumentCacheSegment({ kind: 'sf2', fontId: 'font-a' })).toBe(
+      'sf2=font-a:-1:-1:-1:-1',
+    );
   });
 });
 
@@ -211,6 +226,37 @@ describe('instrument helpers', () => {
     );
     expect(() => validateTrackInstrument({ kind: 'sf2', fontId: '' })).toThrow(RangeError);
     expect(() => validateTrackInstrument({ kind: 'sf2', fontId: 'gm', program: 5 })).not.toThrow();
+    expect(() => validateTrackInstrument({ kind: 'sf2', fontId: 'gm', gain: 0 })).toThrow(
+      RangeError,
+    );
+    expect(() => validateTrackInstrument({ kind: 'sf2', fontId: 'gm', gain: -1 })).toThrow(
+      RangeError,
+    );
+    expect(() => validateTrackInstrument({ kind: 'sf2', fontId: 'gm', polyphony: 0 })).toThrow(
+      RangeError,
+    );
+    expect(() => validateTrackInstrument({ kind: 'sf2', fontId: 'gm', polyphony: 65 })).toThrow(
+      RangeError,
+    );
+    expect(() => validateTrackInstrument({ kind: 'sf2', fontId: 'gm', polyphony: 1.5 })).toThrow(
+      RangeError,
+    );
+    expect(() =>
+      validateTrackInstrument({ kind: 'sf2', fontId: 'gm', gain: 1.5, polyphony: 32 }),
+    ).not.toThrow();
+  });
+
+  it('sf2PlaybackConfig returns only explicitly-set gain/polyphony', () => {
+    expect(sf2PlaybackConfig({ kind: 'sf2', fontId: 'gm' })).toEqual({});
+    expect(sf2PlaybackConfig({ kind: 'sf2', fontId: 'gm', bank: 1, program: 4 })).toEqual({});
+    expect(sf2PlaybackConfig({ kind: 'sf2', fontId: 'gm', gain: 1.25 })).toEqual({ gain: 1.25 });
+    expect(sf2PlaybackConfig({ kind: 'sf2', fontId: 'gm', polyphony: 24 })).toEqual({
+      polyphony: 24,
+    });
+    expect(sf2PlaybackConfig({ kind: 'sf2', fontId: 'gm', gain: 0.8, polyphony: 16 })).toEqual({
+      gain: 0.8,
+      polyphony: 16,
+    });
   });
 });
 
@@ -243,7 +289,19 @@ describe('prerenderMidiClip per instrument kind', () => {
     expect(loadFont).toHaveBeenCalledWith('my-font');
     expect(wasmMock.loadSoundFont).toHaveBeenCalledWith(fontBytes);
     expect(wasmMock.bounceWithSf2Instrument).toHaveBeenCalledTimes(1);
+    // No explicit gain/polyphony => empty config keeps the engine defaults.
+    expect(wasmMock.bounceWithSf2Instrument.mock.calls[0][0]).toEqual({});
     expect(wasmMock.bounceWithSynthInstrument).not.toHaveBeenCalled();
+  });
+
+  it('forwards the SF2 master gain and voice cap to the bounce', async () => {
+    const loadFont = vi.fn(async () => new Uint8Array([4]));
+    await prerenderMidiClip(NOTES, {
+      ...OPTS,
+      instrument: { kind: 'sf2', fontId: 'my-font', gain: 1.5, polyphony: 24 },
+      loadFont,
+    });
+    expect(wasmMock.bounceWithSf2Instrument.mock.calls[0][0]).toEqual({ gain: 1.5, polyphony: 24 });
   });
 
   it('prepends bank/program select events per used channel', async () => {

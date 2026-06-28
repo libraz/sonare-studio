@@ -41,7 +41,7 @@ import { ensureWasm } from '@/lib/wasm';
 import { loadAsset } from '@/persistence/assets';
 import { automationCurveCode } from '@/project/automation';
 import { loadFont } from '@/project/fonts';
-import { DEFAULT_SYNTH_PRESET } from '@/project/instrument';
+import { DEFAULT_SYNTH_PRESET, sf2PlaybackConfig } from '@/project/instrument';
 import { midiFxConfigJson } from '@/project/midi-fx';
 import {
   clampPan,
@@ -361,7 +361,7 @@ export async function renderProjectWithEngine(
           engine.loadSoundFont(bytes);
           loadedFontId = instrument.fontId;
         }
-        engine.setSf2Instrument({}, destinationId);
+        engine.setSf2Instrument(sf2PlaybackConfig(instrument), destinationId);
       }
       // Apply the track's live, non-destructive MIDI-FX insert so the export
       // matches live playback (the same engine transform, applied here rather
