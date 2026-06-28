@@ -212,7 +212,7 @@ function appendScoreHeader(lines: string[], metadata: ScoreMetadata | undefined)
  *   each part only (they are score-constant in the model); `<time>` is
  *   re-emitted whenever it differs from the previous measure.
  * - Grand-staff parts (`clef: 'grand'`) get two staves; note events are
- *   assigned to staff 1 (treble) when their lowest pitch is >= middle C
+ *   assigned to staff 1 (treble) when their mean pitch is >= middle C
  *   (MIDI 60) and staff 2 (bass) otherwise. Rests inherit the staff of the
  *   nearest preceding note in the same voice (looking ahead to the first
  *   note when a voice starts with rests; all-rest voices default to staff 1).
@@ -588,16 +588,23 @@ function groupChordSymbolsByMeasure(
 }
 
 /**
- * Returns the staff a note event belongs to in a grand staff: treble when
- * the lowest pitch reaches middle C, bass otherwise.
+ * Returns the staff a note event belongs to in a grand staff: treble when the
+ * chord's mean pitch reaches middle C, bass otherwise.
+ *
+ * Using the centre of mass rather than the lowest pitch keeps a chord whose
+ * body sits above middle C on the treble staff even when its lowest note dips
+ * just below the split, which matches how a player reads a right-hand voicing.
+ * A single note reduces to comparing that pitch against the split point.
  */
 function noteStaff(event: NotatedEvent): StaffNumber {
-  return event.pitches[0] >= GRAND_STAFF_SPLIT_MIDI ? 1 : 2;
+  if (event.pitches.length === 0) return 1;
+  const mean = event.pitches.reduce((sum, pitch) => sum + pitch, 0) / event.pitches.length;
+  return mean >= GRAND_STAFF_SPLIT_MIDI ? 1 : 2;
 }
 
 /**
  * Assigns a staff to every event of a grand-staff part. Notes split at
- * middle C by their lowest pitch; rests inherit the staff of the preceding
+ * middle C by their mean pitch; rests inherit the staff of the preceding
  * note in the same voice (chained across measures), leading rests adopt the
  * first note's staff, and all-rest voices default to staff 1.
  */

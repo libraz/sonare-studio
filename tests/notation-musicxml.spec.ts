@@ -263,6 +263,37 @@ describe('serializeMusicXml structure', () => {
     expect(q(measureRestNote, 'staff').textContent).toBe('2');
   });
 
+  it('assigns chords to a grand staff by their mean pitch, not the lowest note', () => {
+    const half: NoteValue = { base: 'half', dots: 0 };
+    const measure: NotatedMeasure = {
+      index: 0,
+      startPpq: 0,
+      lengthPpq: 4,
+      timeSig: { beats: 4, beatUnit: 4 },
+      voices: [
+        {
+          voice: 1,
+          events: [
+            // B3 + E5: lowest note dips below middle C but the body is treble.
+            note([59, 76], 1, 0, 2, half),
+            // C3 + G4: a high top note must not pull a bass-centred chord up.
+            note([48, 67], 1, 2, 2, half),
+          ],
+        },
+      ],
+    };
+    const score: NotatedScore = {
+      parts: [{ id: 'P1', name: 'Piano', clef: 'grand', measures: [measure] }],
+      keyFifths: 0,
+      divisions: 960,
+    };
+    const measureEl = q(parse(serializeMusicXml(score)), 'part[id="P1"] > measure');
+    const staffs = qa(measureEl, 'note')
+      .filter((n) => n.querySelector('chord') === null)
+      .map((n) => q(n, 'staff').textContent);
+    expect(staffs).toEqual(['1', '2']);
+  });
+
   it('emits harmony elements at their measure offsets', () => {
     const [first, second] = qa(doc, 'measure');
     const firstHarmonies = qa(first, 'harmony');
