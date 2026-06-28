@@ -27,6 +27,7 @@ import {
 import { formatDb } from '@/ui/mixer/db-scale';
 import InsertRack from './InsertRack.vue';
 import MixerFader from './MixerFader.vue';
+import StripGrMeter from './StripGrMeter.vue';
 import StripMeter from './StripMeter.vue';
 
 /**
@@ -185,6 +186,7 @@ async function onRename(): Promise<void> {
       <StripMeter :bridge="props.bridge" :placeholder="!props.bridge" :height="120" />
     </div>
     <span class="bus-readout">{{ formatDb(gainDb) }} dB</span>
+    <StripGrMeter :bridge="props.bridge" />
   </div>
 </template>
 

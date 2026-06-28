@@ -67,6 +67,7 @@ import MixerKnob from './MixerKnob.vue';
 import SpectrumAnalyzer from './SpectrumAnalyzer.vue';
 import StereoGoniometer from './StereoGoniometer.vue';
 import StripEqSection from './StripEqSection.vue';
+import StripGrMeter from './StripGrMeter.vue';
 import StripMeter from './StripMeter.vue';
 import StripSends from './StripSends.vue';
 
@@ -802,6 +803,8 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="strip-readout">{{ formatDb(displayedGainDb) }} dB</div>
+
+    <StripGrMeter v-if="!isMaster" :bridge="props.bridge" />
 
     <MasterMeterReadout
       v-if="isMaster"
