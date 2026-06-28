@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch, watchEffect } from 'vue';
 import ScoreAnnotationPalette from '@/components/score/ScoreAnnotationPalette.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
+import { projectFilename } from '@/lib/filename';
 import {
   canonicalizeChordSymbols,
   type EstimatedChordSymbol,
@@ -463,14 +464,14 @@ function onExportPdf(): void {
     const pages = await renderAllPages();
     if (pages.length === 0) return;
     const blob = await exportPdf(pages, scorePageDimsMm(layoutSettings()));
-    downloadBlob(blob, 'score.pdf');
+    downloadBlob(blob, projectFilename(store.projectName, '.pdf', 'score'));
   });
 }
 
 function onExportMusicXml(): void {
   if (!currentXml) return;
   void runExport(async () => {
-    exportMusicXml(currentXml, 'score.musicxml');
+    exportMusicXml(currentXml, projectFilename(store.projectName, '.musicxml', 'score'));
   });
 }
 

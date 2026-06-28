@@ -30,6 +30,7 @@
 
 import { strToU8, zipSync } from 'fflate';
 import { encodeWav } from '@/export/wav';
+import { projectFilename } from '@/lib/filename';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import { clampPan, dbToLinear, type MixerStrip } from '@/project/mixer';
 import { ppqToSeconds } from '@/project/scheduling';
@@ -599,6 +600,5 @@ export async function exportDawproject(
  * filesystem-hostile characters replaced, plus the .dawproject extension.
  */
 export function dawprojectFilename(projectName: string): string {
-  const sanitized = projectName.replace(/[\\/:*?"<>|]/g, '_').trim();
-  return `${sanitized.length > 0 ? sanitized : 'project'}${DAWPROJECT_FILE_EXTENSION}`;
+  return projectFilename(projectName, DAWPROJECT_FILE_EXTENSION);
 }
