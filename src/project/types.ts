@@ -1,5 +1,6 @@
 import type { MidiNote } from '@/engine/instruments';
 import type { TrackInstrument } from './instrument';
+import type { MidiFxConfig } from './midi-fx';
 import type { MixerStrip } from './mixer';
 
 /**
@@ -142,6 +143,14 @@ export interface EditorTrack {
    * = the default synth preset (see src/project/instrument.ts).
    */
   instrument?: TrackInstrument;
+  /**
+   * Live, non-destructive MIDI-FX transform applied to the track's MIDI before
+   * synthesis (app-level metadata; absent = no transform). Unlike a clip bake
+   * it never rewrites stored notes, so it can be edited or bypassed freely; the
+   * engine mirrors it in realtime and the offline render applies the same
+   * transform (see src/engine/midi-sync.ts and src/export/engine-render.ts).
+   */
+  midiFx?: MidiFxConfig;
   /**
    * Mixer channel strip (app-level metadata); absent = a neutral strip. The
    * strip is audible in realtime through the engine (see src/project/mixer.ts).

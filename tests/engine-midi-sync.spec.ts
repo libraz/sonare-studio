@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
 import { buildMidiClipSchedules, createMidiSync } from '@/engine/midi-sync';
 import { DEFAULT_SYNTH_PRESET } from '@/project/instrument';
+import { DEFAULT_MIDI_FX_CONFIG, midiFxConfigJson } from '@/project/midi-fx';
 import type { EditorClip, EditorNote, EditorTrack, TempoSegment } from '@/project/types';
 import type { SynthPatch } from '@/wasm/index.js';
 
@@ -101,6 +102,8 @@ function makeHandle(): {
     setSynthInstrument: ReturnType<typeof vi.fn>;
     loadSoundFont: ReturnType<typeof vi.fn>;
     setSf2Instrument: ReturnType<typeof vi.fn>;
+    clearMidiFx: ReturnType<typeof vi.fn>;
+    setMidiFx: ReturnType<typeof vi.fn>;
   };
 } {
   const engine = {
@@ -108,6 +111,8 @@ function makeHandle(): {
     setSynthInstrument: vi.fn(),
     loadSoundFont: vi.fn(),
     setSf2Instrument: vi.fn(),
+    clearMidiFx: vi.fn(),
+    setMidiFx: vi.fn(),
   };
   const handle = { ctx: { sampleRate: SAMPLE_RATE }, engine } as unknown as EngineHandle;
   return { handle, engine };
@@ -537,6 +542,34 @@ describe('createMidiSync', () => {
     expect(engine.setSynthInstrument).toHaveBeenCalledTimes(1);
     expect(engine.setSynthInstrument.mock.calls[0]).toEqual([1, patch]);
     expect(engine.setSynthInstrument.mock.calls[0][1]).toBe(patch);
+  });
+
+  it('installs, dedupes and clears live MIDI-FX per track', async () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMidiSync(handle);
+    const midiFx = { ...DEFAULT_MIDI_FX_CONFIG, transposeSemitones: 12 };
+    const expectedJson = midiFxConfigJson(midiFx);
+
+    await sync.sync([makeTrack(1, { midiFx })], [], TEMPO_120);
+    expect(engine.setMidiFx).toHaveBeenCalledWith(1, expectedJson);
+    expect(engine.clearMidiFx).not.toHaveBeenCalled();
+
+    await sync.sync([makeTrack(1, { midiFx })], [], TEMPO_120);
+    expect(engine.setMidiFx).toHaveBeenCalledTimes(1);
+
+    await sync.sync([makeTrack(1)], [], TEMPO_120);
+    expect(engine.clearMidiFx).toHaveBeenCalledWith(1);
+  });
+
+  it('does not install MIDI-FX for frozen tracks', async () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMidiSync(handle);
+    const midiFx = { ...DEFAULT_MIDI_FX_CONFIG, transposeSemitones: 12 };
+
+    await sync.sync([makeTrack(1, { frozen: { assetId: 'baked-1' }, midiFx })], [], TEMPO_120);
+
+    expect(engine.setMidiFx).not.toHaveBeenCalled();
+    expect(engine.clearMidiFx).not.toHaveBeenCalled();
   });
 
   it('loads a SoundFont once per font id and binds each sf2 track', async () => {

@@ -11,6 +11,7 @@ import {
   canUndo,
   clearHistory,
   clearProjectChords,
+  clearTrackMidiFx,
   deleteClip,
   detectChordsForClip,
   duplicateClip,
@@ -43,6 +44,7 @@ import {
   setTempoSegments,
   setTimeSignatures,
   setTrackColor,
+  setTrackMidiFx,
   setTrackMute,
   setTrackPan,
   setTrackSolo,
@@ -185,6 +187,46 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       setTrackMute(trackId, false);
       setTrackSolo(trackId, false);
       expect(canUndo()).toBe(false);
+    });
+
+    it('setTrackMidiFx stores a non-destructive transform and is undoable', () => {
+      const trackId = store.tracks[0].id;
+      expect(setTrackMidiFx(trackId, sanitizeMidiFxConfig({ transposeSemitones: 12 }))).toBe(true);
+      expect(store.tracks[0].midiFx?.transposeSemitones).toBe(12);
+      expect(undo()).toBe(true);
+      expect(store.tracks[0].midiFx).toBeUndefined();
+    });
+
+    it('setTrackMidiFx with a no-op transform clears instead of storing identity', () => {
+      const trackId = store.tracks[0].id;
+      setTrackMidiFx(trackId, sanitizeMidiFxConfig({ transposeSemitones: 7 }));
+      // Re-applying an identity transform removes the stored entry.
+      expect(setTrackMidiFx(trackId, sanitizeMidiFxConfig({}))).toBe(true);
+      expect(store.tracks[0].midiFx).toBeUndefined();
+    });
+
+    it('re-applying the same MIDI-FX transform pushes no history entry', () => {
+      const trackId = store.tracks[0].id;
+      setTrackMidiFx(trackId, sanitizeMidiFxConfig({ transposeSemitones: 5 }));
+      clearHistory();
+      expect(setTrackMidiFx(trackId, sanitizeMidiFxConfig({ transposeSemitones: 5 }))).toBe(false);
+      expect(canUndo()).toBe(false);
+    });
+
+    it('clearTrackMidiFx removes the transform and is undoable, no-op when absent', () => {
+      const trackId = store.tracks[0].id;
+      expect(clearTrackMidiFx(trackId)).toBe(false);
+      setTrackMidiFx(trackId, sanitizeMidiFxConfig({ velocityScale: 1.5 }));
+      expect(clearTrackMidiFx(trackId)).toBe(true);
+      expect(store.tracks[0].midiFx).toBeUndefined();
+      expect(undo()).toBe(true);
+      expect(store.tracks[0].midiFx?.velocityScale).toBe(1.5);
+    });
+
+    it('setTrackMidiFx throws for an unknown track', () => {
+      expect(() => setTrackMidiFx(9999, sanitizeMidiFxConfig({ transposeSemitones: 1 }))).toThrow(
+        RangeError,
+      );
     });
 
     it('reorderTracks permutes the mirror order and is undoable', () => {

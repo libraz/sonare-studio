@@ -54,7 +54,7 @@ export {
   clearMidiCcBinding,
   setMidiCcBinding,
 } from './command/midi-bindings';
-export { bakeClipMidiFx } from './command/midi-fx';
+export { bakeClipMidiFx, clearTrackMidiFx, setTrackMidiFx } from './command/midi-fx';
 export type { MixerSnapshot, MixerSnapshotTrack, MixerStripTarget } from './command/mixer';
 export {
   addInsert,

@@ -27,6 +27,7 @@
 
 import { loadFont } from '@/project/fonts';
 import { DEFAULT_SYNTH_PRESET } from '@/project/instrument';
+import { midiFxConfigJson } from '@/project/midi-fx';
 import { clipPlaybackNotes } from '@/project/scheduling';
 import { normalizeTempoMap, ppqToSamples } from '@/project/tempo-map';
 import { clipKind, type EditorClip, type EditorTrack, type TempoSegment } from '@/project/types';
@@ -348,6 +349,9 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
   const loadFontBytes = options.loadFont ?? loadFont;
   const resolvePreset = options.resolvePreset ?? ((preset: string) => preset);
   const lastInstrumentKeyByTrack = new Map<number, string>();
+  // Last MIDI-FX JSON sent per track ('' = none); diffs install/bypass the
+  // engine's live non-destructive MIDI-FX insert without re-sending clips.
+  const lastMidiFxKeyByTrack = new Map<number, string>();
   let loadedFontId: string | undefined;
   let lastClipsKey: string | undefined;
   let clipCount = 0;
@@ -407,6 +411,23 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
         handle.engine.setSf2Instrument(track.id, {});
       }
       lastInstrumentKeyByTrack.set(track.id, instrumentKey);
+    }
+
+    // Mirror each track's live, non-destructive MIDI-FX insert. The engine
+    // transforms the destination's MIDI before synthesis, so a change installs
+    // or bypasses the insert without touching the scheduled clips. Frozen tracks
+    // play their baked asset (no live MIDI), so they neither install nor need to
+    // bypass an insert.
+    for (const track of tracks) {
+      if (track.kind !== 'midi' || track.frozen !== undefined) continue;
+      const midiFxKey = track.midiFx !== undefined ? (midiFxConfigJson(track.midiFx) ?? '') : '';
+      if (lastMidiFxKeyByTrack.get(track.id) === midiFxKey) continue;
+      if (midiFxKey === '') {
+        handle.engine.clearMidiFx(track.id);
+      } else {
+        handle.engine.setMidiFx(track.id, midiFxKey);
+      }
+      lastMidiFxKeyByTrack.set(track.id, midiFxKey);
     }
 
     const schedules = buildMidiClipSchedules(tracks, clips, tempoSegments, sampleRate);
