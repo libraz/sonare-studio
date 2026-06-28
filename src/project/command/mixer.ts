@@ -479,6 +479,9 @@ export function setStripEq(
     throw new RangeError('Strip EQ requires a bands array');
   }
   const key = `strip-eq:${String(target)}`;
+  // Skip a redundant edit so re-applying an unchanged EQ adds no undo step;
+  // a live band drag (pending gesture) still commits so coalescing works.
+  if (JSON.stringify(strip.eq ?? null) === JSON.stringify(eq) && !hasPendingGesture(key)) return;
   executeApp(
     () => {
       const next = cloneStrip(strip);

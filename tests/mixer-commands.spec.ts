@@ -307,6 +307,29 @@ describe('mixer commands', () => {
       undo();
       expect(store.tracks[0].mixer).toBeUndefined();
     });
+
+    it('re-applying an identical EQ adds no undo step', () => {
+      const eq = { enabled: true, bands: [{ type: 'Peak', frequencyHz: 1000, gainDb: 3 }] };
+      setStripEq(trackId, eq);
+      expect(canUndo()).toBe(true);
+      undo();
+      expect(canUndo()).toBe(false);
+      // A second, value-identical apply must not push history on its own.
+      setStripEq(trackId, eq);
+      setStripEq(trackId, {
+        enabled: true,
+        bands: [{ type: 'Peak', frequencyHz: 1000, gainDb: 3 }],
+      });
+      undo();
+      expect(store.tracks[0].mixer?.eq).toBeUndefined();
+      expect(canUndo()).toBe(false);
+    });
+
+    it('clearing an already-absent EQ is a no-op', () => {
+      expect(canUndo()).toBe(false);
+      setStripEq(trackId, null);
+      expect(canUndo()).toBe(false);
+    });
   });
 
   describe('buses and sends', () => {
