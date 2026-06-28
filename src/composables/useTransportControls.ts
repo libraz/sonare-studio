@@ -189,7 +189,7 @@ export function useTransportControls(options: TransportControlsOptions) {
     // past the locator would never arm and the take would be missed entirely.
     const punchAt = ppq <= options.loopStartPpq.value ? options.loopStartPpq.value : ppq;
     autoPunchArming = true;
-    void options.recording.record(punchAt).finally(() => {
+    void options.recording.record(punchAt, options.loopEndPpq.value).finally(() => {
       autoPunchArming = false;
     });
   });

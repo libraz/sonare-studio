@@ -88,13 +88,13 @@ export interface UseRecordingReturn {
    * off), starts the transport when stopped, and begins capturing.
    *
    * @param startAtPpq Explicit punch-in position; when omitted the current
-   *   playhead is used. Pass the left locator slightly before the playhead
-   *   reaches it for sample-accurate auto-punch (the engine punch window opens
-   *   exactly at this position). An explicit start never count-ins or
-   *   cycle-splits.
+   *   playhead is used.
+   * @param endAtPpq Optional explicit punch-out position. Pass the right
+   *   locator for sample-accurate auto-punch out. An explicit start/end never
+   *   count-ins or cycle-splits.
    * @returns True when recording started; false with `error` set otherwise.
    */
-  record(startAtPpq?: number): Promise<boolean>;
+  record(startAtPpq?: number, endAtPpq?: number): Promise<boolean>;
   /**
    * Stops capturing, ingests the take as an audio asset and adds an audio
    * clip at the recorded position. The transport keeps rolling.
@@ -243,11 +243,12 @@ export function useRecording(
     ensureRecorder()?.setMonitor(enabled, gain);
   };
 
-  const record = async (startAtPpq?: number): Promise<boolean> => {
+  const record = async (startAtPpq?: number, endAtPpq?: number): Promise<boolean> => {
     error.value = null;
     if (isRecording.value) return false;
     const explicitStart =
       startAtPpq !== undefined && Number.isFinite(startAtPpq) && startAtPpq >= 0;
+    const explicitEnd = endAtPpq !== undefined && Number.isFinite(endAtPpq);
     const rec = ensureRecorder();
     if (!rec) {
       error.value = ENGINE_NOT_STARTED_MESSAGE;
@@ -283,6 +284,11 @@ export function useRecording(
     ) {
       startPpq = transport.loopStartPpq.value;
     }
+    const endPpq = explicitEnd ? (endAtPpq as number) : undefined;
+    if (endPpq !== undefined && endPpq <= startPpq) {
+      error.value = 'The punch-out locator must be after the punch-in locator.';
+      return false;
+    }
     // Count-in only applies when starting from stop; punching in on a
     // rolling transport records from the current position immediately.
     let countInPpq = 0;
@@ -304,11 +310,27 @@ export function useRecording(
         return false;
       }
     }
+    const startOptions: Parameters<Recorder['start']>[0] = { startPpq, tempoBpm };
+    if (endPpq !== undefined) {
+      const tempoMap = normalizeTempoMap(store.tempoSegments, tempoBpm);
+      const startSeconds = ppqToSecondsMap(tempoMap, startPpq);
+      const endSeconds = ppqToSecondsMap(tempoMap, endPpq);
+      if (
+        !Number.isFinite(startSeconds) ||
+        !Number.isFinite(endSeconds) ||
+        endSeconds <= startSeconds
+      ) {
+        error.value = 'The punch-out locator must be after the punch-in locator.';
+        return false;
+      }
+      startOptions.endPpq = endPpq;
+      startOptions.maxDurationSeconds = endSeconds - startSeconds;
+    }
     try {
       rec.arm(trackId);
       // The punch window starts at startPpq, so the count-in pre-roll (the
       // transport was seeked earlier above) is never part of the capture.
-      await rec.start({ startPpq, tempoBpm });
+      await rec.start(startOptions);
     } catch (err) {
       finishCountIn();
       error.value = messageOf(err);

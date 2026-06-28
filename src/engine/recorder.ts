@@ -108,6 +108,11 @@ export interface RecordingResult {
 export interface StartRecordingOptions {
   /** Timeline position in PPQ where the recorded material begins (>= 0). */
   startPpq: number;
+  /**
+   * Optional timeline position in PPQ where capture closes. When omitted, the
+   * recorder uses `maxDurationSeconds` as the punch-out bound.
+   */
+  endPpq?: number;
   /** Tempo in BPM used for all PPQ/time conversions (> 0). */
   tempoBpm: number;
   /**
@@ -491,7 +496,17 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     if (!Number.isFinite(tempoBpm) || tempoBpm <= 0) {
       throw new RangeError(`Recording tempoBpm must be finite and > 0, got ${tempoBpm}`);
     }
-    const maxDurationSeconds = startOptions.maxDurationSeconds ?? DEFAULT_MAX_DURATION_SECONDS;
+    const hasEndPpq = startOptions.endPpq !== undefined;
+    const endPpq = startOptions.endPpq ?? 0;
+    if (hasEndPpq && (!Number.isFinite(endPpq) || endPpq <= startPpq)) {
+      throw new RangeError(
+        `Recording endPpq must be finite and greater than startPpq, got ${endPpq}`,
+      );
+    }
+    const punchDurationSeconds = hasEndPpq
+      ? ((endPpq - startPpq) * 60) / tempoBpm
+      : DEFAULT_MAX_DURATION_SECONDS;
+    const maxDurationSeconds = startOptions.maxDurationSeconds ?? punchDurationSeconds;
     if (!Number.isFinite(maxDurationSeconds) || maxDurationSeconds <= 0) {
       throw new RangeError(
         `Recording maxDurationSeconds must be finite and > 0, got ${maxDurationSeconds}`,
@@ -515,9 +530,13 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     sendCaptureConfig(Math.max(1, Math.ceil(maxDurationSeconds * sampleRate)));
     await handle.engine.resetCapture();
     handle.engine.armRecord(trackId, true);
-    // Punch-out = the max-duration bound; stop() disarms earlier as needed.
-    // The half-open window keeps any count-in pre-roll out of the buffer.
-    handle.engine.punch(startPpq, startPpq + (maxDurationSeconds * tempoBpm) / 60);
+    // Punch-out = explicit endPpq or the max-duration bound; stop() disarms
+    // earlier as needed. The half-open window keeps any count-in pre-roll out
+    // of the buffer and lets auto-punch close sample-accurately at R.
+    handle.engine.punch(
+      startPpq,
+      hasEndPpq ? endPpq : startPpq + (maxDurationSeconds * tempoBpm) / 60,
+    );
     take = { trackId, startPpq, offsetSamples, sampleRate };
   };
 

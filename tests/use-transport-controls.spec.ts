@@ -20,7 +20,7 @@ function harness() {
   const armedTrackId = ref<number | null>(1);
   const isRecording = ref(false);
 
-  const record = vi.fn(async (_at?: number) => {
+  const record = vi.fn(async (_at?: number, _end?: number) => {
     isRecording.value = true;
     return true;
   });
@@ -96,14 +96,14 @@ describe('useTransportControls auto-punch', () => {
     h.positionPpq.value = 8; // still before the window
     await nextTick();
     expect(h.record).toHaveBeenCalledTimes(1);
-    expect(h.record).toHaveBeenCalledWith(16);
+    expect(h.record).toHaveBeenCalledWith(16, 32);
   });
 
   it('punches in at the current position when playback starts inside the window', async () => {
     h.positionPpq.value = 20; // started already inside [16, 32)
     await nextTick();
     expect(h.record).toHaveBeenCalledTimes(1);
-    expect(h.record).toHaveBeenCalledWith(20);
+    expect(h.record).toHaveBeenCalledWith(20, 32);
   });
 
   it('does not arm twice while a punch-in is pending', async () => {

@@ -270,6 +270,12 @@ describe('createRecorder state machine', () => {
     await expect(
       recorder.start({ startPpq: 0, tempoBpm: 120, maxDurationSeconds: 0 }),
     ).rejects.toBeInstanceOf(RangeError);
+    await expect(recorder.start({ startPpq: 4, endPpq: 4, tempoBpm: 120 })).rejects.toBeInstanceOf(
+      RangeError,
+    );
+    await expect(recorder.start({ startPpq: 4, endPpq: 2, tempoBpm: 120 })).rejects.toBeInstanceOf(
+      RangeError,
+    );
     expect(recorder.isRecording()).toBe(false);
   });
 });
@@ -314,6 +320,22 @@ describe('createRecorder capture', () => {
     );
     // 300 s at 120 BPM = 600 PPQ.
     expect(punch).toHaveBeenCalledWith(4, 604);
+  });
+
+  it('uses an explicit punch-out position as the capture bound', async () => {
+    const { handle, configureCapture, punch } = makeHandle(100);
+    const { deps } = makeDeps();
+    const recorder = createRecorder(handle, deps);
+    await recorder.requestMicrophone();
+    recorder.arm(1);
+
+    await recorder.start({ startPpq: 8, endPpq: 20, tempoBpm: 120 });
+
+    // 12 PPQ at 120 BPM = 6 s; at 100 Hz the capture buffer is 600 frames.
+    expect(configureCapture).toHaveBeenLastCalledWith(
+      expect.objectContaining({ bufferFrames: 600 }),
+    );
+    expect(punch).toHaveBeenCalledWith(8, 20);
   });
 
   it('trims the latency offset from the head and returns the rest', async () => {

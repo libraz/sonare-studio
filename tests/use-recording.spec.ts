@@ -331,6 +331,52 @@ describe('useRecording', () => {
     expect(clip?.takes ?? []).toHaveLength(0); // single linear take, never cycle-split
   });
 
+  it('passes an explicit punch-out position through to the recorder', async () => {
+    const { recording, fake, transport } = setup();
+    const trackId = addAudioTrack();
+    recording.arm(trackId);
+    recording.countInBars.value = 1;
+    transport.isPlaying.value = true;
+    transport.positionSeconds.value = 6;
+
+    expect(await recording.record(4, 12)).toBe(true);
+    expect(fake.getLastStart()).toEqual({
+      startPpq: 4,
+      tempoBpm: 120,
+      endPpq: 12,
+      maxDurationSeconds: 4,
+    });
+  });
+
+  it('sizes an explicit punch range through the project tempo map', async () => {
+    setTempoSegments([
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 1, bpm: 60 },
+    ]);
+    const { recording, fake, transport } = setup();
+    const trackId = addAudioTrack();
+    recording.arm(trackId);
+    transport.isPlaying.value = true;
+
+    expect(await recording.record(1, 3)).toBe(true);
+    expect(fake.getLastStart()).toEqual({
+      startPpq: 1,
+      tempoBpm: 120,
+      endPpq: 3,
+      maxDurationSeconds: 2,
+    });
+  });
+
+  it('rejects an explicit punch-out at or before the punch-in', async () => {
+    const { recording, fake } = setup();
+    const trackId = addAudioTrack();
+    recording.arm(trackId);
+
+    expect(await recording.record(8, 8)).toBe(false);
+    expect(recording.error.value).toBe('The punch-out locator must be after the punch-in locator.');
+    expect(fake.rec.start).not.toHaveBeenCalled();
+  });
+
   it('surfaces microphone errors from record()', async () => {
     const { recording, fake } = setup();
     const trackId = addAudioTrack();
