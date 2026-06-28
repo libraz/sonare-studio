@@ -76,6 +76,8 @@ const MESSAGES = {
     },
     shell: {
       savedAt: 'saved {time}',
+      autosaveFailed:
+        'Autosave failed — your recent changes are not stored. Save the project manually.',
       project: {
         trigger: 'Project',
         menuLabel: 'Project menu',
@@ -1354,6 +1356,8 @@ const MESSAGES = {
     },
     shell: {
       savedAt: '{time} に保存',
+      autosaveFailed:
+        '自動保存に失敗しました。最近の変更は保存されていません。手動でプロジェクトを保存してください。',
       project: {
         trigger: 'プロジェクト',
         menuLabel: 'プロジェクトメニュー',

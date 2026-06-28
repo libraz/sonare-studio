@@ -62,6 +62,27 @@ export function isOpfsAvailable(): boolean {
 }
 
 /**
+ * Asks the browser to mark this origin's storage as persistent so the OPFS
+ * projects, assets and fonts are not silently evicted under storage pressure.
+ *
+ * Best-effort: returns the granted state, or false when the Storage API or
+ * `persist()` is unavailable or throws. Safe to call once at startup; the
+ * grant is sticky, so a repeat call is cheap and idempotent.
+ *
+ * @returns True when storage is (now or already) persistent.
+ */
+export async function requestPersistentStorage(): Promise<boolean> {
+  const storage = typeof navigator !== 'undefined' ? navigator.storage : undefined;
+  if (typeof storage?.persist !== 'function') return false;
+  try {
+    if (typeof storage.persisted === 'function' && (await storage.persisted())) return true;
+    return await storage.persist();
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Sanitizes a project name into a safe file base name (no extension).
  *
  * A trailing ".szd" is dropped, filesystem-unsafe characters become "_" and

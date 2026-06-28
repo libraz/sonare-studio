@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, provide, ref, shallowRef } from 'vue';
+import { computed, provide, ref, shallowRef, watch } from 'vue';
 import ArrangementView from '@/components/arrangement/ArrangementView.vue';
 import ClipInspector from '@/components/arrangement/ClipInspector.vue';
 import DeviceRack from '@/components/devices/DeviceRack.vue';
@@ -128,6 +128,12 @@ store.snapEnabled = appSettings.settings.snapDefault;
 
 // The autosave quiet period follows the preference live (read per schedule).
 const autosave = useAutosave({ intervalMs: () => appSettings.settings.autosaveIntervalMs });
+
+// Surface a failed background autosave: the user's recent edits are not on
+// disk, so warn them to save manually rather than failing silently.
+watch(autosave.lastError, (error) => {
+  if (error) errorMessage.value = t.value.shell.autosaveFailed;
+});
 const { downloadBlobFile, lastDownload } = useFileDownloads();
 
 const { confirmAction, runAction } = useActionGuards({ appSettings, busy, errorMessage });

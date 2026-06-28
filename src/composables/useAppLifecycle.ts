@@ -5,6 +5,7 @@ import type { MeterBridge } from '@/engine/meters';
 import type { ScopeBridge } from '@/engine/scope';
 import { describeError } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
+import { requestPersistentStorage } from '@/persistence/opfs';
 
 export interface AppLifecycleOptions {
   bridge: ShallowRef<MeterBridge | null>;
@@ -26,6 +27,9 @@ export function useAppLifecycle(options: AppLifecycleOptions) {
   onMounted(async () => {
     window.addEventListener('keydown', options.onGlobalKeyDown);
     window.addEventListener('pointerdown', options.onWindowPointerDown);
+    // Best-effort: keep the browser from evicting the project store. Never
+    // blocks boot — a denied or unsupported grant just leaves storage default.
+    void requestPersistentStorage();
     try {
       const wasm = await ensureWasm();
       options.version.value = wasm.version();

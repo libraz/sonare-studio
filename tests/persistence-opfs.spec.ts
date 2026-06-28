@@ -9,6 +9,7 @@ import {
   ProjectAlreadyExistsError,
   ProjectNotFoundError,
   renameProject,
+  requestPersistentStorage,
   sanitizeProjectName,
   saveProject,
 } from '@/persistence/opfs';
@@ -136,5 +137,51 @@ describe('sanitizeProjectName', () => {
 
   it('drops a trailing .szd extension case-insensitively', () => {
     expect(sanitizeProjectName('demo.SZD')).toBe('demo');
+  });
+});
+
+describe('requestPersistentStorage', () => {
+  const original = Object.getOwnPropertyDescriptor(navigator, 'storage');
+
+  function stubStorage(storage: unknown): void {
+    Object.defineProperty(navigator, 'storage', { value: storage, configurable: true });
+  }
+
+  afterEach(() => {
+    if (original) Object.defineProperty(navigator, 'storage', original);
+    else Object.defineProperty(navigator, 'storage', { value: undefined, configurable: true });
+  });
+
+  it('returns false when the Storage persist API is absent', async () => {
+    stubStorage({});
+    expect(await requestPersistentStorage()).toBe(false);
+  });
+
+  it('returns true without requesting when storage is already persisted', async () => {
+    let persistCalls = 0;
+    stubStorage({
+      persisted: async () => true,
+      persist: async () => {
+        persistCalls += 1;
+        return false;
+      },
+    });
+    expect(await requestPersistentStorage()).toBe(true);
+    expect(persistCalls).toBe(0);
+  });
+
+  it('requests a grant and returns it when not yet persisted', async () => {
+    stubStorage({ persisted: async () => false, persist: async () => true });
+    expect(await requestPersistentStorage()).toBe(true);
+  });
+
+  it('returns false when persist throws', async () => {
+    stubStorage({
+      persisted: async () => false,
+      persist: async () => {
+        throw new Error('denied');
+      },
+    });
+    expect(await requestPersistentStorage()).toBe(false);
   });
 });
