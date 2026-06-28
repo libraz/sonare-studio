@@ -128,6 +128,38 @@ function grandStaffFixture(): NotatedScore {
   };
 }
 
+describe('serializeMusicXml metadata header', () => {
+  it('always records the encoding software', () => {
+    const doc = parse(serializeMusicXml(grandStaffFixture()));
+    expect(q(doc, 'identification > encoding > software').textContent).toBe('sonare studio');
+  });
+
+  it('omits work-title when no title is set', () => {
+    const doc = parse(serializeMusicXml(grandStaffFixture()));
+    expect(doc.querySelector('work')).toBeNull();
+  });
+
+  it('emits work-title and composer when present, escaping markup', () => {
+    const score = { ...grandStaffFixture(), metadata: { title: 'A & B', composer: 'Me <x>' } };
+    const doc = parse(serializeMusicXml(score));
+    expect(q(doc, 'work > work-title').textContent).toBe('A & B');
+    expect(q(doc, 'identification > creator[type="composer"]').textContent).toBe('Me <x>');
+  });
+
+  it('treats a blank title as absent', () => {
+    const score = { ...grandStaffFixture(), metadata: { title: '   ' } };
+    const doc = parse(serializeMusicXml(score));
+    expect(doc.querySelector('work')).toBeNull();
+  });
+
+  it('places the header before the part-list', () => {
+    const score = { ...grandStaffFixture(), metadata: { title: 'Song' } };
+    const xml = serializeMusicXml(score);
+    expect(xml.indexOf('<work>')).toBeLessThan(xml.indexOf('<part-list>'));
+    expect(xml.indexOf('<identification>')).toBeLessThan(xml.indexOf('<part-list>'));
+  });
+});
+
 describe('serializeMusicXml structure', () => {
   const xml = serializeMusicXml(grandStaffFixture());
   const doc = parse(xml);
@@ -413,6 +445,9 @@ describe('serializeMusicXml golden output', () => {
       '<?xml version="1.0" encoding="UTF-8"?>',
       '<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">',
       '<score-partwise version="4.0">',
+      '<identification>',
+      '<encoding><software>sonare studio</software></encoding>',
+      '</identification>',
       '<part-list>',
       '<score-part id="P1"><part-name>Lead</part-name></score-part>',
       '</part-list>',

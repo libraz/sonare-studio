@@ -162,6 +162,8 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
         // Engraving-only transpose; the underlying MIDI notes never change.
         displayTransposeSemitones: store.displayTransposeSemitones,
       });
+      const title = store.projectName.trim();
+      if (title) score.metadata = { title };
       const annotations = store.scoreAnnotations[store.clipId];
       if (annotations && Object.keys(annotations).length > 0) {
         score.noteAnnotations = { ...annotations };

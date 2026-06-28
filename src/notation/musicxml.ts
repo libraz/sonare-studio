@@ -19,6 +19,7 @@ import {
   type NotatedPart,
   type NotatedScore,
   type NotatedTimeSig,
+  type ScoreMetadata,
   type NotatedVoice,
   type NotatedVoiceNumber,
   ppqToDivisions,
@@ -175,6 +176,33 @@ export function escapeXml(text: string): string {
   return text.replace(/[&<>"']/g, (ch) => XML_ESCAPES[ch]);
 }
 
+/** Software credit written into the MusicXML `<encoding>` block. */
+const ENCODING_SOFTWARE = 'sonare studio';
+
+/**
+ * Appends the optional `<work>` / `<identification>` header.
+ *
+ * `<work-title>` is emitted only when a non-empty title is present; the
+ * `<identification>` block carries the composer credit (when set) and always
+ * records the encoding software so exported files are self-describing.
+ *
+ * @param lines Output line buffer.
+ * @param metadata Optional score metadata.
+ */
+function appendScoreHeader(lines: string[], metadata: ScoreMetadata | undefined): void {
+  const title = metadata?.title?.trim();
+  const composer = metadata?.composer?.trim();
+  if (title) {
+    lines.push(`<work><work-title>${escapeXml(title)}</work-title></work>`);
+  }
+  lines.push('<identification>');
+  if (composer) {
+    lines.push(`<creator type="composer">${escapeXml(composer)}</creator>`);
+  }
+  lines.push(`<encoding><software>${escapeXml(ENCODING_SOFTWARE)}</software></encoding>`);
+  lines.push('</identification>');
+}
+
 /**
  * Serializes a {@link NotatedScore} to a MusicXML 4.0 `score-partwise`
  * document.
@@ -210,8 +238,9 @@ export function serializeMusicXml(score: NotatedScore): string {
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">',
     '<score-partwise version="4.0">',
-    '<part-list>',
   ];
+  appendScoreHeader(lines, score.metadata);
+  lines.push('<part-list>');
   for (const part of score.parts) {
     lines.push(
       `<score-part id="${escapeXml(part.id)}"><part-name>${escapeXml(part.name)}</part-name></score-part>`,

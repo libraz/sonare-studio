@@ -242,10 +242,20 @@ export interface NotatedChordSymbol {
   romanNumeral?: string;
 }
 
+/** Score-level bibliographic metadata (MusicXML `<work>` / `<identification>`). */
+export interface ScoreMetadata {
+  /** Work title (MusicXML `<work-title>`); omitted or empty = no title. */
+  title?: string;
+  /** Composer credit (MusicXML `<creator type="composer">`). */
+  composer?: string;
+}
+
 /** The complete display-only score handed to the MusicXML serializer. */
 export interface NotatedScore {
   /** Parts in display order (top staff first). */
   parts: NotatedPart[];
+  /** Optional bibliographic metadata (title / composer) for the score header. */
+  metadata?: ScoreMetadata;
   /**
    * Key signature as MusicXML `<fifths>`: positive = sharps, negative =
    * flats, 0 = C major / A minor. Range -7..7.
