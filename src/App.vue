@@ -24,6 +24,7 @@ import AppHeader from '@/components/shell/AppHeader.vue';
 import ContextMenu from '@/components/shell/ContextMenu.vue';
 import DiagnosticsPanel from '@/components/shell/DiagnosticsPanel.vue';
 import DialogHost from '@/components/shell/DialogHost.vue';
+import ErrorBanner from '@/components/shell/ErrorBanner.vue';
 import MidiLearnPanel from '@/components/shell/MidiLearnPanel.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToolPalette from '@/components/shell/ToolPalette.vue';
@@ -517,7 +518,7 @@ useAppLifecycle({
       @update-project-menu-open="(open) => (projectMenuOpen = open)"
     />
 
-    <p v-if="errorMessage" class="error-box" role="alert">{{ errorMessage }}</p>
+    <ErrorBanner :message="errorMessage" @dismiss="errorMessage = ''" />
 
     <main class="main-row">
       <div class="workspace">

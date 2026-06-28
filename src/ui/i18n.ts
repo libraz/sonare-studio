@@ -78,6 +78,7 @@ const MESSAGES = {
       savedAt: 'saved {time}',
       autosaveFailed:
         'Autosave failed — your recent changes are not stored. Save the project manually.',
+      dismissError: 'Dismiss',
       project: {
         trigger: 'Project',
         menuLabel: 'Project menu',
@@ -1358,6 +1359,7 @@ const MESSAGES = {
       savedAt: '{time} に保存',
       autosaveFailed:
         '自動保存に失敗しました。最近の変更は保存されていません。手動でプロジェクトを保存してください。',
+      dismissError: '閉じる',
       project: {
         trigger: 'プロジェクト',
         menuLabel: 'プロジェクトメニュー',

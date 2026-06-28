@@ -26,18 +26,7 @@
   color: var(--accent-text);
 }
 
-.error-box {
-  margin: 0.4rem 0.75rem;
-  background: var(--danger-surface);
-  border: 1px solid color-mix(in srgb, var(--danger), transparent 60%);
-  color: var(--danger-text);
-  padding: 0.5rem 0.75rem;
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-1);
-  white-space: pre-wrap;
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-medium);
-}
+/* The error banner's own styles live in ErrorBanner.vue. */
 
 .main-row {
   flex: 1;
