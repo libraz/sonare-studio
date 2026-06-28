@@ -733,12 +733,14 @@ useAppLifecycle({
               >
                 {{ t.shell.editor.midiLearn }}
               </button>
-              <MidiLearnPanel
-                v-if="midiLearnOpen"
-                :learn="midiLearn"
-                :tracks="store.tracks"
-                @close="midiLearnOpen = false"
-              />
+              <Transition name="pop">
+                <MidiLearnPanel
+                  v-if="midiLearnOpen"
+                  :learn="midiLearn"
+                  :tracks="store.tracks"
+                  @close="midiLearnOpen = false"
+                />
+              </Transition>
             </span>
             <button
               type="button"
@@ -845,9 +847,11 @@ useAppLifecycle({
       </section>
       </div>
 
-      <aside v-if="deviceRackOpen" class="right-zone" :aria-label="t.shell.devices.panelLabel">
-        <DeviceRack :transport-playing="isPlaying" />
-      </aside>
+      <Transition name="slide-right">
+        <aside v-if="deviceRackOpen" class="right-zone" :aria-label="t.shell.devices.panelLabel">
+          <DeviceRack :transport-playing="isPlaying" />
+        </aside>
+      </Transition>
     </main>
 
     <DiagnosticsPanel

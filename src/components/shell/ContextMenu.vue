@@ -48,6 +48,7 @@ function run(item: ContextMenuItem): void {
 </script>
 
 <template>
+  <Transition name="pop">
   <div
     v-if="state.open"
     ref="menuEl"
@@ -73,4 +74,5 @@ function run(item: ContextMenuItem): void {
       </button>
     </template>
   </div>
+  </Transition>
 </template>

@@ -1,0 +1,30 @@
+.targets-table {
+  margin-top: 6px;
+  border-collapse: collapse;
+  font: 10px system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+
+.targets-table th {
+  font: 600 9px system-ui, sans-serif;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  text-align: right;
+  padding: 1px 8px;
+}
+
+.targets-table td {
+  text-align: right;
+  padding: 1px 8px;
+}
+
+.targets-table .targets-name {
+  text-align: left;
+  color: var(--text-3);
+}
+
+.targets-table td.risk {
+  color: var(--warning);
+}

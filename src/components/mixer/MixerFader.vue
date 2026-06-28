@@ -171,6 +171,7 @@ function tickTopPx(db: number): number {
       <span class="fader-unity" :style="{ top: `${tickTopPx(0)}px` }" />
       <span class="fader-thumb" :style="{ top: `${thumbTopPx}px` }" />
     </div>
+    <Transition name="pop">
     <div
       v-if="interactions.menu.open"
       class="control-menu"
@@ -192,6 +193,7 @@ function tickTopPx(db: number): number {
         {{ t.shell.mixer.controls.pasteValue }}
       </button>
     </div>
+    </Transition>
   </div>
 </template>
 

@@ -639,6 +639,10 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--border-subtle);
   cursor: grab;
   transition: background var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
+  /* Each row fades and rises in as it mounts — imported or filtered-in assets
+   * appear rather than blink. One-shot (no TransitionGroup), so removal stays
+   * immediate; the shared keyframe lives in motion.css. */
+  animation: view-enter var(--dur-2) var(--ease-out);
 }
 
 .asset-row:last-child {

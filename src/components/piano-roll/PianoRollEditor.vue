@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, markRaw, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, ref } from 'vue';
 import { useEditorTool } from '@/composables/useEditorTool';
 import { formatPitch } from '@/lib/pitch';
 import {
@@ -10,11 +10,6 @@ import {
   quantizeSelectionLengths,
   redo,
   setActiveClip,
-  setActiveTrack,
-  setClipCcLane,
-  setClipChannelPressure,
-  setClipPitchBend,
-  setClipPolyPressure,
   setSelection,
   snapSelectionToScale,
   splitNote,
@@ -28,20 +23,21 @@ import {
   PIANO_ROLL_CC_LANES,
 } from '@/project/midi-cc';
 import { useProjectStore } from '@/project/store';
-import type { ClipCcPoint, ClipPitchBendPoint, ClipPressurePoint } from '@/project/types';
-import { createPainter } from '@/ui/canvas/painter';
-import { TimelineRange } from '@/ui/canvas/timeline-range';
 import { useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 import BreakpointLane from './BreakpointLane.vue';
-import { createNoteExtentCache } from './content-extent';
 import KeyboardColumn from './KeyboardColumn.vue';
-import { LANE_PARAMS, type LaneParamId } from './lane-params';
-import MidiFxPanel from './MidiFxPanel.vue';
+import { LANE_PARAMS } from './lane-params';
 import NoteGridCanvas from './NoteGridCanvas.vue';
-import { buildGhostNotes, contentCenterPitch, type GhostNote } from './overlay';
+import { buildGhostNotes, type GhostNote } from './overlay';
+import PianoRollToolbar from './PianoRollToolbar.vue';
 import { DEFAULT_NOTE_COLOR, type NoteColorFn } from './theme';
 import { useNoteInteractions } from './use-note-interactions';
+import { usePianoRollCcLanes } from './use-piano-roll-cc-lanes';
+import { usePianoRollLanes } from './use-piano-roll-lanes';
+import { usePianoRollScrollbar } from './use-piano-roll-scrollbar';
+import { usePianoRollViewport } from './use-piano-roll-viewport';
+import { usePianoRollZoom } from './use-piano-roll-zoom';
 import VelocityLane from './VelocityLane.vue';
 
 /**
@@ -73,201 +69,68 @@ const props = defineProps<{
 const store = useProjectStore();
 const { t } = useI18n();
 
-/** Initialization/runtime error surfaced above the editor. */
-const error = ref('');
+/** Whether the MIDI-FX transform popover is open. */
+const fxPanelOpen = ref(false);
 
-/** Default horizontal zoom in px per quarter note (zoomed out for an overview). */
-const DEFAULT_PX_PER_PPQ = 38;
-/** Default pitch row height in px (compact so more of the range is visible). */
-const DEFAULT_ROW_HEIGHT = 10;
-/** Pitch placed near the vertical center on first layout (C5). */
-const INITIAL_CENTER_PITCH = 72;
-/** Wheel-to-zoom sensitivity for ⌘wheel / pinch gestures. */
-const ZOOM_WHEEL_SENSITIVITY = 0.0035;
-/** Per-click zoom multiplier for the toolbar zoom buttons. */
-const ZOOM_BUTTON_STEP = 1.2;
-/** Row-height bounds for vertical zoom (px). */
-const MIN_ROW_HEIGHT = 5;
-const MAX_ROW_HEIGHT = 40;
-
-// The TimelineRange and painter are plain (non-reactive) objects; views are
-// invalidated through the `revision` counter after every range mutation.
-const range = markRaw(
-  new TimelineRange({
-    widthPx: 1,
-    heightPx: 1,
-    pxPerPpq: DEFAULT_PX_PER_PPQ,
-    rowHeight: DEFAULT_ROW_HEIGHT,
-  }),
-);
-const painter = markRaw(createPainter());
-
-/** Bumped after any TimelineRange mutation to trigger canvas redraws. */
-const revision = ref(0);
-
-function bump(): void {
-  revision.value++;
-}
-
-/** Snap grid step in PPQ derived from the store's divisions-per-whole-note. */
-const gridPpq = computed(() => 4 / store.snapDivision);
+const viewport = usePianoRollViewport({
+  // A transform targets a specific clip; close the popover on clip change.
+  onClipChange: () => {
+    fxPanelOpen.value = false;
+  },
+});
+const { range, painter, revision, error, gridPpq, root, gridCell, hTrack, vTrack, bump } = viewport;
 
 /** Whether the multi-track ghost overlay is drawn. */
 const overlayEnabled = ref(true);
 
-/** Note parameter shown in the bottom lane (tab strip in the lane header). */
-const laneParam = ref<LaneParamId>('velocity');
+const lanes = usePianoRollLanes();
+const {
+  laneParam,
+  laneCc,
+  lanePitchBend,
+  laneChannelPressure,
+  lanePolyPressure,
+  noteLaneActive,
+  selectNoteLane,
+  selectCcLane,
+  selectPitchBendLane,
+  selectChannelPressureLane,
+  selectPolyPressureLane,
+} = lanes;
 
-/**
- * Active CC controller in the bottom lane, or null when a note-parameter lane
- * is shown. When set, the bottom lane edits the active clip's CC breakpoints
- * for this controller instead of per-note values.
- */
-const laneCc = ref<number | null>(null);
+const ccLanes = usePianoRollCcLanes({ lanes, gridPpq });
+const {
+  polyPressurePitch,
+  activeCcPoints,
+  activePitchBendPoints,
+  activeChannelPressurePoints,
+  activePolyPressurePoints,
+  commitCcPoints,
+  commitPitchBendPoints,
+  commitChannelPressurePoints,
+  commitPolyPressurePoints,
+  ccSnap,
+} = ccLanes;
 
-/** Whether the bottom lane edits the active clip's pitch-bend curve. */
-const lanePitchBend = ref(false);
+const { onWheel, zoomHorizontal, zoomVertical } = usePianoRollZoom({ range, gridCell, bump });
 
-/** Whether the bottom lane edits the active clip's channel-pressure curve. */
-const laneChannelPressure = ref(false);
-
-/** Whether the bottom lane edits the selected note's poly-pressure curve. */
-const lanePolyPressure = ref(false);
-
-/** Clears every non-note lane mode so a single mode owns the bottom lane. */
-function clearExpressionLanes(): void {
-  laneCc.value = null;
-  lanePitchBend.value = false;
-  laneChannelPressure.value = false;
-  lanePolyPressure.value = false;
-}
-
-/** Switches the bottom lane to a note-parameter view. */
-function selectNoteLane(id: LaneParamId): void {
-  laneParam.value = id;
-  clearExpressionLanes();
-}
-
-/** Switches the bottom lane to a CC controller view. */
-function selectCcLane(controller: number): void {
-  clearExpressionLanes();
-  laneCc.value = controller;
-}
-
-/** Switches the bottom lane to the pitch-bend view. */
-function selectPitchBendLane(): void {
-  clearExpressionLanes();
-  lanePitchBend.value = true;
-}
-
-/** Switches the bottom lane to the channel-pressure (aftertouch) view. */
-function selectChannelPressureLane(): void {
-  clearExpressionLanes();
-  laneChannelPressure.value = true;
-}
-
-/** Switches the bottom lane to the poly-pressure (per-key aftertouch) view. */
-function selectPolyPressureLane(): void {
-  clearExpressionLanes();
-  lanePolyPressure.value = true;
-}
-
-/** True when a note-parameter lane (not an expression lane) is shown. */
-const noteLaneActive = computed(
-  () =>
-    laneCc.value === null &&
-    !lanePitchBend.value &&
-    !laneChannelPressure.value &&
-    !lanePolyPressure.value,
-);
-
-/**
- * Pitch the poly-pressure lane targets: the single selected note's pitch, or
- * null when zero or several notes are selected (per-key pressure needs one).
- */
-const polyPressurePitch = computed<number | null>(() => {
-  if (store.selection.size !== 1) return null;
-  const [id] = store.selection;
-  return store.notes.find((n) => n.id === id)?.pitch ?? null;
-});
+const { vThumbStyle, hThumbStyle, onVScrollDown, onHScrollDown, onScrollMove, onScrollUp } =
+  usePianoRollScrollbar({
+    range,
+    revision,
+    hTrack,
+    vTrack,
+    contentPpq: viewport.contentPpq,
+    bump,
+  });
 
 /** Active clip color for the CC curve. */
 const trackColor = computed(() => store.activeTrack?.color ?? DEFAULT_NOTE_COLOR);
-
-/** Whether the MIDI-FX transform popover is open. */
-const fxPanelOpen = ref(false);
 
 /** True when a MIDI clip is active and can receive a transform. */
 const canTransform = computed(
   () => store.clipId >= 0 && (store.activeClip?.kind ?? 'midi') === 'midi',
 );
-
-/** Toggles the transform popover (closing it when no MIDI clip is active). */
-function toggleFxPanel(): void {
-  if (!canTransform.value) return;
-  fxPanelOpen.value = !fxPanelOpen.value;
-}
-
-/** Breakpoints of the active clip's selected CC lane (empty when none). */
-const activeCcPoints = computed<ClipCcPoint[]>(() => {
-  if (laneCc.value === null) return [];
-  const lane = store.activeClip?.ccLanes?.find((l) => l.controller === laneCc.value);
-  return lane?.points ?? [];
-});
-
-/** Breakpoints of the active clip's pitch-bend lane on channel 0 (empty when none). */
-const activePitchBendPoints = computed<ClipPitchBendPoint[]>(() => {
-  if (!lanePitchBend.value) return [];
-  const lane = store.activeClip?.pitchBendLanes?.find((l) => l.channel === 0);
-  return lane?.points ?? [];
-});
-
-/** Breakpoints of the active clip's channel-pressure lane on channel 0 (empty when none). */
-const activeChannelPressurePoints = computed<ClipPressurePoint[]>(() => {
-  if (!laneChannelPressure.value) return [];
-  const lane = store.activeClip?.channelPressureLanes?.find((l) => l.channel === 0);
-  return lane?.points ?? [];
-});
-
-/** Commits a CC lane edit for the active controller on channel 0. */
-function commitCcPoints(points: ClipCcPoint[]): void {
-  if (laneCc.value === null) return;
-  setClipCcLane(store.clipId, laneCc.value, 0, points);
-}
-
-/** Commits a pitch-bend lane edit on channel 0. */
-function commitPitchBendPoints(points: ClipPitchBendPoint[]): void {
-  setClipPitchBend(store.clipId, 0, points);
-}
-
-/** Commits a channel-pressure lane edit on channel 0. */
-function commitChannelPressurePoints(points: ClipPressurePoint[]): void {
-  setClipChannelPressure(store.clipId, 0, points);
-}
-
-/** Breakpoints of the selected note's poly-pressure lane on channel 0 (empty when none). */
-const activePolyPressurePoints = computed<ClipPressurePoint[]>(() => {
-  const pitch = polyPressurePitch.value;
-  if (!lanePolyPressure.value || pitch === null) return [];
-  const lane = store.activeClip?.polyPressureLanes?.find(
-    (l) => l.channel === 0 && l.pitch === pitch,
-  );
-  return lane?.points ?? [];
-});
-
-/** Commits a poly-pressure lane edit for the selected note's pitch on channel 0. */
-function commitPolyPressurePoints(points: ClipPressurePoint[]): void {
-  const pitch = polyPressurePitch.value;
-  if (pitch === null) return;
-  setClipPolyPressure(store.clipId, 0, pitch, points);
-}
-
-/** Horizontal snap for lane points, following the grid when snapping is on. */
-function ccSnap(ppq: number): number {
-  if (!store.snapEnabled) return ppq;
-  const step = gridPpq.value;
-  return step > 0 ? Math.round(ppq / step) * step : ppq;
-}
 
 /** Read-only ghost notes from all non-active clips (empty when overlay off). */
 const ghostNotes = computed<GhostNote[]>(() =>
@@ -378,13 +241,6 @@ function onGhostActivate(ghost: GhostNote): void {
   setSelection([ghost.noteId]);
 }
 
-/** Legend chip click: focuses the track (activates its first clip, if any). */
-function onLegendClick(trackId: number): void {
-  // Re-clicking the active track keeps the currently active clip.
-  if (trackId === store.activeTrackId) return;
-  setActiveTrack(trackId);
-}
-
 const { tool } = useEditorTool();
 
 const interactions = useNoteInteractions({
@@ -398,82 +254,6 @@ const interactions = useNoteInteractions({
   commands: { addNote, updateNotes, deleteNotes, setSelection, splitNote },
   ...(props.audition ? { onAudition: props.audition } : {}),
 });
-
-const root = ref<HTMLDivElement | null>(null);
-const gridCell = ref<HTMLDivElement | null>(null);
-const hTrack = ref<HTMLDivElement | null>(null);
-const vTrack = ref<HTMLDivElement | null>(null);
-
-let initialScrollDone = false;
-
-/** Centers the view on middle-register pitches after the first layout pass. */
-function onGridResize(): void {
-  if (!initialScrollDone && range.heightPx > 1) {
-    initialScrollDone = true;
-    const rowTop = (127 - INITIAL_CENTER_PITCH) * range.rowHeight;
-    range.setScrollY(rowTop - range.heightPx / 2);
-  }
-  bump();
-}
-
-/** Re-centers the view vertically on the active clip's note content. */
-function centerOnActiveClip(): void {
-  if (range.heightPx <= 1) return;
-  const center = contentCenterPitch(store.notes);
-  if (center === null) return;
-  const rowTop = (127 - center) * range.rowHeight;
-  range.setScrollY(rowTop + range.rowHeight / 2 - range.heightPx / 2);
-  bump();
-}
-
-// Follow active-clip switches: re-center vertically on the new content while
-// preserving the horizontal scroll position.
-watch(
-  () => store.clipId,
-  () => {
-    centerOnActiveClip();
-    // A transform targets a specific clip; close the popover on clip change.
-    fxPanelOpen.value = false;
-  },
-);
-
-/** Extent of the note content, cached per note-mirror identity. */
-const noteExtentPpq = createNoteExtentCache();
-
-/** Total horizontal content extent in PPQ (clip length, notes and view). */
-function contentPpq(): number {
-  return Math.max(store.clipLengthPpq, noteExtentPpq(store.notes), range.endPpq);
-}
-
-function onWheel(event: WheelEvent): void {
-  const anchorEl = gridCell.value;
-  if (!anchorEl) return;
-  if (event.metaKey || event.ctrlKey) {
-    const anchorX = event.clientX - anchorEl.getBoundingClientRect().left;
-    range.zoomAt(anchorX, Math.exp(-event.deltaY * ZOOM_WHEEL_SENSITIVITY));
-  } else if (event.shiftKey) {
-    range.scrollByPx(event.deltaY + event.deltaX);
-  } else {
-    range.scrollByPx(event.deltaX);
-    range.scrollByY(event.deltaY);
-  }
-  bump();
-}
-
-/** Zooms the timeline horizontally around the viewport center. */
-function zoomHorizontal(factor: number): void {
-  range.zoomAt(range.widthPx / 2, factor);
-  bump();
-}
-
-/** Zooms the pitch rows vertically, keeping the viewport center pitch in place. */
-function zoomVertical(factor: number): void {
-  const centerRow = (range.scrollY + range.heightPx / 2) / range.rowHeight;
-  const next = Math.min(MAX_ROW_HEIGHT, Math.max(MIN_ROW_HEIGHT, range.rowHeight * factor));
-  range.setRowHeight(next);
-  range.setScrollY(centerRow * range.rowHeight - range.heightPx / 2);
-  bump();
-}
 
 function onKeyDown(event: KeyboardEvent): void {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
@@ -489,96 +269,6 @@ function onKeyDown(event: KeyboardEvent): void {
 function onRootPointerDown(): void {
   root.value?.focus();
 }
-
-// --- Scrollbars -----------------------------------------------------------
-
-interface ScrollDrag {
-  axis: 'h' | 'v';
-  startClient: number;
-  startValue: number;
-  contentSize: number;
-  trackPx: number;
-  spanPpq: number;
-}
-
-let scrollDrag: ScrollDrag | null = null;
-
-const vThumbStyle = computed(() => {
-  void revision.value;
-  const content = Math.max(1, range.contentHeightPx);
-  const sizePct = Math.max(4, Math.min(100, (range.heightPx / content) * 100));
-  const topPct = Math.min(100 - sizePct, (range.scrollY / content) * 100);
-  return { top: `${topPct}%`, height: `${sizePct}%` };
-});
-
-const hThumbStyle = computed(() => {
-  void revision.value;
-  // Track the store notes so the thumb resizes when content grows.
-  void store.notes;
-  const content = Math.max(1e-6, contentPpq());
-  const span = range.endPpq - range.startPpq;
-  const sizePct = Math.max(4, Math.min(100, (span / content) * 100));
-  const leftPct = Math.min(100 - sizePct, (range.startPpq / content) * 100);
-  return { left: `${leftPct}%`, width: `${sizePct}%` };
-});
-
-function onVScrollDown(event: PointerEvent): void {
-  const track = vTrack.value;
-  if (!track || event.button !== 0) return;
-  (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-  scrollDrag = {
-    axis: 'v',
-    startClient: event.clientY,
-    startValue: range.scrollY,
-    contentSize: range.contentHeightPx,
-    trackPx: Math.max(1, track.clientHeight),
-    spanPpq: 0,
-  };
-}
-
-function onHScrollDown(event: PointerEvent): void {
-  const track = hTrack.value;
-  if (!track || event.button !== 0) return;
-  (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-  scrollDrag = {
-    axis: 'h',
-    startClient: event.clientX,
-    startValue: range.startPpq,
-    contentSize: contentPpq(),
-    trackPx: Math.max(1, track.clientWidth),
-    spanPpq: range.endPpq - range.startPpq,
-  };
-}
-
-function onScrollMove(event: PointerEvent): void {
-  const drag = scrollDrag;
-  if (!drag) return;
-  if (drag.axis === 'v') {
-    const dy = event.clientY - drag.startClient;
-    range.setScrollY(drag.startValue + (dy * drag.contentSize) / drag.trackPx);
-  } else {
-    const dx = event.clientX - drag.startClient;
-    const target = drag.startValue + (dx * drag.contentSize) / drag.trackPx;
-    range.setStartPpq(Math.min(target, drag.contentSize - drag.spanPpq));
-  }
-  bump();
-}
-
-function onScrollUp(): void {
-  scrollDrag = null;
-}
-
-onMounted(async () => {
-  try {
-    await store.init();
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
-  }
-});
-
-onBeforeUnmount(() => {
-  painter.dispose();
-});
 </script>
 
 <template>
@@ -592,128 +282,14 @@ onBeforeUnmount(() => {
     @pointerdown="onRootPointerDown"
   >
     <p v-if="error" class="piano-roll-error" role="alert">{{ error }}</p>
-    <div class="roll-toolbar">
-      <label class="overlay-toggle">
-        <input v-model="overlayEnabled" type="checkbox" />
-        {{ t.shell.pianoRoll.overlay }}
-      </label>
-      <div class="track-legend">
-        <button
-          v-for="track in store.tracks"
-          :key="track.id"
-          type="button"
-          class="legend-chip"
-          :class="{ 'legend-chip-active': track.id === store.activeTrackId }"
-          :title="track.name"
-          @click="onLegendClick(track.id)"
-        >
-          <span class="chip-swatch" :style="{ background: track.color }" />
-          <span class="chip-name">{{ track.name }}</span>
-        </button>
-      </div>
-      <div class="zoom-cluster" role="group" :aria-label="t.shell.pianoRoll.zoom">
-        <span class="zoom-pair">
-          <button
-            type="button"
-            class="zoom-btn"
-            :title="t.shell.pianoRoll.zoomOutTimeTitle"
-            :aria-label="t.shell.pianoRoll.zoomOutHorizontal"
-            @click="zoomHorizontal(1 / ZOOM_BUTTON_STEP)"
-          >
-            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-              <path
-                d="M2 8h12M2 8l2.5-2.5M2 8l2.5 2.5M14 8l-2.5-2.5M14 8l-2.5 2.5"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.4"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-              <path d="M5.5 2.5h5" fill="none" stroke="currentColor" stroke-width="1.6"
-                stroke-linecap="round" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            class="zoom-btn"
-            :title="t.shell.pianoRoll.zoomInTimeTitle"
-            :aria-label="t.shell.pianoRoll.zoomInHorizontal"
-            @click="zoomHorizontal(ZOOM_BUTTON_STEP)"
-          >
-            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-              <path
-                d="M2 8h12M2 8l2.5-2.5M2 8l2.5 2.5M14 8l-2.5-2.5M14 8l-2.5 2.5"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.4"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-              <path d="M8 0v5M5.5 2.5h5" fill="none" stroke="currentColor" stroke-width="1.6"
-                stroke-linecap="round" />
-            </svg>
-          </button>
-        </span>
-        <span class="zoom-pair">
-          <button
-            type="button"
-            class="zoom-btn"
-            :title="t.shell.pianoRoll.zoomOutPitchTitle"
-            :aria-label="t.shell.pianoRoll.zoomOutVertical"
-            @click="zoomVertical(1 / ZOOM_BUTTON_STEP)"
-          >
-            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-              <path
-                d="M8 2v12M8 2L5.5 4.5M8 2l2.5 2.5M8 14l-2.5-2.5M8 14l2.5-2.5"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.4"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-              <path d="M11 8h3.5" fill="none" stroke="currentColor" stroke-width="1.6"
-                stroke-linecap="round" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            class="zoom-btn"
-            :title="t.shell.pianoRoll.zoomInPitchTitle"
-            :aria-label="t.shell.pianoRoll.zoomInVertical"
-            @click="zoomVertical(ZOOM_BUTTON_STEP)"
-          >
-            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-              <path
-                d="M8 2v12M8 2L5.5 4.5M8 2l2.5 2.5M8 14l-2.5-2.5M8 14l2.5-2.5"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.4"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-              <path d="M12.75 6.25v3.5M11 8h3.5" fill="none" stroke="currentColor" stroke-width="1.6"
-                stroke-linecap="round" />
-            </svg>
-          </button>
-        </span>
-      </div>
-      <button
-        type="button"
-        class="fx-toggle"
-        :class="{ 'fx-toggle-active': fxPanelOpen }"
-        :disabled="!canTransform"
-        :aria-expanded="fxPanelOpen"
-        :title="t.shell.pianoRoll.midiFxTitle"
-        @click="toggleFxPanel"
-      >
-        {{ t.shell.pianoRoll.midiFx }}
-      </button>
-      <MidiFxPanel
-        v-if="fxPanelOpen && canTransform"
-        :clip-id="store.clipId"
-        @close="fxPanelOpen = false"
-      />
-    </div>
+    <PianoRollToolbar
+      v-model:overlay-enabled="overlayEnabled"
+      v-model:fx-panel-open="fxPanelOpen"
+      :can-transform="canTransform"
+      :clip-id="store.clipId"
+      @zoom-horizontal="zoomHorizontal"
+      @zoom-vertical="zoomVertical"
+    />
     <div class="piano-roll-layout">
       <KeyboardColumn class="cell-keyboard" :range="range" :revision="revision" :painter="painter" />
       <div ref="gridCell" class="cell-grid">
@@ -730,7 +306,7 @@ onBeforeUnmount(() => {
           :position-ppq="props.positionPpq"
           :note-color="noteColor"
           :ghost-notes="ghostNotes"
-          @view-resize="onGridResize"
+          @view-resize="viewport.onGridResize"
           @ghost-activate="onGhostActivate"
           @note-context="onNoteContext"
         />
@@ -927,144 +503,6 @@ onBeforeUnmount(() => {
   background: var(--danger-surface);
   color: var(--danger-text);
   font: var(--fs-sm)/1.4 var(--font-sans);
-}
-
-.roll-toolbar {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.25rem 0.5rem;
-  background: var(--surface-2);
-  border-bottom: 1px solid var(--border-strong);
-  box-shadow: var(--raise-hi);
-  font: var(--fs-sm)/1.4 var(--font-sans);
-}
-
-.zoom-cluster {
-  margin-left: auto;
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-
-.zoom-pair {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-/* Inherits the controls.css raised-face baseline (hover/active/press); only the
- * compact metrics and surface tint differ from the canonical button. */
-.zoom-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  min-width: 1.6rem;
-  padding: 0.1rem 0.3rem;
-  font: var(--fw-semibold) var(--fs-xs) var(--font-sans);
-  background: var(--surface-3);
-  border-radius: var(--radius-sm);
-}
-
-.zoom-btn:hover:not(:disabled),
-.fx-toggle:hover:not(:disabled) {
-  color: var(--text-1);
-}
-
-.fx-toggle {
-  flex: 0 0 auto;
-  padding: 0.15rem 0.6rem;
-  font: var(--fs-xs)/1.4 var(--font-sans);
-  font-weight: var(--fw-semibold);
-  letter-spacing: 0.02em;
-  background: var(--surface-3);
-  border-radius: var(--radius-sm);
-}
-
-.fx-toggle-active {
-  background: var(--accent);
-  color: var(--accent-text);
-  box-shadow: var(--raise-hi), var(--shadow-1);
-}
-
-.fx-toggle:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.overlay-toggle {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  white-space: nowrap;
-  cursor: pointer;
-  color: var(--text-3);
-}
-
-.track-legend {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  min-width: 0;
-  overflow-x: auto;
-}
-
-.legend-chip {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  padding: 0.1rem 0.45rem;
-  border: none;
-  border-radius: var(--radius-full);
-  background: transparent;
-  box-shadow: none;
-  color: var(--text-3);
-  font: inherit;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background var(--dur-1) var(--ease-out);
-}
-
-.legend-chip:hover {
-  background: var(--surface-3);
-}
-
-.legend-chip:focus-visible {
-  outline: none;
-  box-shadow: var(--ring);
-}
-
-/* Pair the accent tint with a thin inner ring so the active chip is
- * unambiguous against a merely hovered one. */
-.legend-chip-active {
-  background: var(--accent-soft);
-  box-shadow: inset 0 0 0 1px var(--accent-muted);
-  color: var(--text-1);
-}
-
-.legend-chip-active:focus-visible {
-  box-shadow: inset 0 0 0 1px var(--accent-muted), var(--ring);
-}
-
-.chip-swatch {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  flex: none;
-}
-
-/* Redundant non-color cue for the active track beyond the accent tint. */
-.legend-chip-active .chip-swatch {
-  box-shadow: 0 0 0 2px var(--accent-muted);
-}
-
-.chip-name {
-  max-width: 9rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .piano-roll-layout {

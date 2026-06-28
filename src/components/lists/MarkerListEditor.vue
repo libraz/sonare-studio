@@ -91,7 +91,7 @@ function onSeek(marker: EditorMarker): void {
           <th scope="col"><span class="visually-hidden">{{ t.shell.lists.columns.actions }}</span></th>
         </tr>
       </thead>
-      <tbody>
+      <TransitionGroup tag="tbody" name="list-row">
         <tr
           v-for="marker in store.markers"
           :key="marker.id"
@@ -140,7 +140,7 @@ function onSeek(marker: EditorMarker): void {
             </button>
           </td>
         </tr>
-      </tbody>
+      </TransitionGroup>
     </table>
     <p v-if="store.markers.length === 0" class="list-empty">{{ t.shell.lists.markers.empty }}</p>
     <p v-if="errorMessage" class="list-error" role="alert">{{ errorMessage }}</p>

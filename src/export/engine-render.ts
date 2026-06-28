@@ -21,225 +21,64 @@
  * track with every other lane muted, master strip/levels and the mastering
  * chain skipped (post-strip, pre-master). A stem therefore includes the
  * track's bus/send contributions.
+ *
+ * Setup builders (bus routing, SoundFont preload, MIDI program, audio clips,
+ * render window) live in engine-render-context.ts / engine-render-clips.ts;
+ * shared types/constants in engine-render-types.ts and the loudness/peak
+ * report in engine-render-report.ts. This module is the orchestrator: it
+ * configures and drives the engine passes and re-exports the public surface.
  */
 
-import { buildMidiClipSchedules } from '@/engine/midi-sync';
-import { busSceneJson, groupBusGainDb, stripSceneJson } from '@/engine/strip-sync';
+import { busSceneJson, stripSceneJson } from '@/engine/strip-sync';
 import {
   MixdownCancelledError,
-  type MixdownDeps,
-  type MixdownRange,
-  type MixdownRangePpq,
   type MixdownReport,
   type MixdownResult,
   type MixdownStem,
 } from '@/export/mixdown';
 import { peakDb } from '@/lib/db';
 import { ensureWasm } from '@/lib/wasm';
-import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
+import { loadAsset } from '@/persistence/assets';
 import { automationCurveCode } from '@/project/automation';
-import { audioClipSegments } from '@/project/comping';
 import { loadFont } from '@/project/fonts';
 import { DEFAULT_SYNTH_PRESET } from '@/project/instrument';
+import { midiFxConfigJson } from '@/project/midi-fx';
 import {
   clampPan,
   DEFAULT_PAN_LAW,
   DEFAULT_PAN_MODE,
   laneGainDb,
   masteringChainIsActive,
-  type PanLawId,
-  type PanModeId,
   stripHasDsp,
   vcaOffsetDb,
 } from '@/project/mixer';
+import { isTrackAudible } from '@/project/scheduling';
+import type { ProjectDocument } from '@/project/serialization';
+import { normalizeTempoMap } from '@/project/tempo-map';
+import { buildAudioClips } from './engine-render-clips';
 import {
-  applyAudioClipFades,
-  isTrackAudible,
-  resampleChannelsLinear,
-  sliceAudioClipWindow,
-} from '@/project/scheduling';
-import type { DocumentClip, ProjectDocument } from '@/project/serialization';
-import { normalizeTempoMap, ppqToSamples } from '@/project/tempo-map';
-import type { EditorClip, EditorTrack } from '@/project/types';
-import { bakeWarpedClip } from '@/project/warp';
+  buildBusRouting,
+  buildMidiSchedules,
+  preloadSoundFonts,
+  resolveRenderWindow,
+} from './engine-render-context';
+import { buildReport } from './engine-render-report';
+import {
+  BLOCKS_PER_CHECKPOINT,
+  DEFAULT_TEMPO_BPM,
+  ENGINE_MIXER_PARAM_FADER_DB,
+  ENGINE_MIXER_PARAM_PAN,
+  type EngineRenderOptions,
+  laneParamId,
+  masterParamId,
+  type OfflineRenderEngine,
+  PREROLL_SECONDS,
+  RENDER_BLOCK_FRAMES,
+  type RenderPass,
+  resolveRange,
+} from './engine-render-types';
 
-/** Reserved engine mixer parameter namespace (mirrors the facade encoding). */
-const ENGINE_MIXER_TARGET_BASE = 0x4d580000;
-/** Lane byte addressing the master strip in the reserved namespace. */
-const ENGINE_MIXER_LANE_MASTER = 0xff;
-/** Parameter kind: lane/master fader gain in dB. */
-const ENGINE_MIXER_PARAM_FADER_DB = 1;
-/** Parameter kind: lane/master stereo pan in [-1, 1]. */
-const ENGINE_MIXER_PARAM_PAN = 2;
-
-/** Frames processed per offline block. */
-const RENDER_BLOCK_FRAMES = 1024;
-
-/** Blocks between progress/cancellation checkpoints (~0.7 s at 48 kHz). */
-const BLOCKS_PER_CHECKPOINT = 32;
-
-/** Release tail appended after the last clip for 'project' renders, in seconds. */
-const RELEASE_TAIL_SECONDS = 2;
-
-/**
- * Audible pre-roll rendered and discarded before the capture window, in
- * seconds. settleParameters snaps parameter smoothers, but stateful DSP
- * (dynamics envelopes, sidechain keys, reverb tails) only converges while
- * audio actually renders; without the pre-roll the first blocks of every
- * windowed render carry an audible transient (e.g. an unducked sidechain).
- */
-const PREROLL_SECONDS = 0.5;
-
-/** Tempo assumed when the document carries no tempo segment. */
-const DEFAULT_TEMPO_BPM = 120;
-
-/**
- * Minimal surface of the wasm RealtimeEngine used by the renderer. Kept
- * structural so tests can inject a fake engine.
- */
-export interface OfflineRenderEngine {
-  setTrackLanes(lanes: Array<{ trackId: number; sends?: SendSpec[]; outputBusId?: number }>): void;
-  setTrackBuses(buses: Array<{ busId: number; gainDb?: number }>): void;
-  setTrackStripJson(trackId: number, sceneJson: string): void;
-  setBusStripJson(busId: number, sceneJson: string): void;
-  setMasterStripJson(sceneJson: string): void;
-  setLaneSidechain(trackId: number, insertIndex: number, sourceTrackId: number): void;
-  setTrackStripInsertBypassed(trackId: number, insertIndex: number, bypassed: boolean): void;
-  setMasterStripInsertBypassed(insertIndex: number, bypassed: boolean): void;
-  setTrackStripEqBandJson(trackId: number, bandIndex: number, bandJson: string): void;
-  setMasterStripEqBandJson(bandIndex: number, bandJson: string): void;
-  setSoloMute(laneIndex: number, solo: boolean, mute: boolean): void;
-  setTrackStripPanLaw(trackId: number, panLaw: PanLawId | number): void;
-  setTrackStripPanMode(trackId: number, panMode: PanModeId | number): void;
-  setTrackStripDualPan(trackId: number, leftPan: number, rightPan: number): void;
-  setTrackStripChannelDelaySamples(trackId: number, delaySamples: number): void;
-  setParameter(paramId: number, value: number): void;
-  busAutomationParamId(busId: number): number;
-  setAutomationLane(
-    paramId: number,
-    points: Array<{ ppq: number; value: number; curveToNext?: number }>,
-  ): void;
-  setTempoSegments(
-    segments: ReadonlyArray<{ startPpq: number; bpm: number; endBpm?: number }>,
-  ): void;
-  setClips(clips: EngineClipSpec[]): void;
-  setMidiClips(clips: ReadonlyArray<unknown>): void;
-  setSynthInstrument(patch?: object | string, destinationId?: number): void;
-  loadSoundFont(data: Uint8Array): void;
-  setSf2Instrument(config?: object, destinationId?: number): void;
-  seekSample(timelineSample: number): void;
-  settleParameters(): void;
-  play(): void;
-  stop(): void;
-  process(channels: Float32Array[]): Float32Array[];
-  destroy(): void;
-}
-
-/** One engine track send (numeric engine bus id). */
-interface SendSpec {
-  busId: number;
-  levelDb?: number;
-  enabled?: boolean;
-  /** Pre/post-fader tap; absent = post-fader (the engine default). */
-  sendTiming?: 'preFader';
-}
-
-/** One engine audio clip schedule (planar PCM at the render rate). */
-interface EngineClipSpec {
-  trackId: number;
-  channels: Float32Array[];
-  startPpq: number;
-  lengthSamples: number;
-  gain?: number;
-}
-
-/** Options for {@link renderProjectWithEngine}. */
-export interface EngineRenderOptions {
-  /** Output sample rate in Hz; defaults to the document sample rate. */
-  sampleRate?: number;
-  /** Render range (default 'project'). */
-  range?: MixdownRange;
-  /** Loop window used when range is 'loop'. */
-  loopRegion?: MixdownRangePpq;
-  /**
-   * True (default) applies the master strip (inserts/EQ) and the project
-   * mastering chain. False renders the raw engine mix (master gain/pan still
-   * apply, as they are audible in live playback).
-   */
-  includeMasterChain?: boolean;
-  /** True also returns one stereo stem per track (post-strip, pre-master). */
-  stems?: boolean;
-  /**
-   * Renders ONE track's pre-fader signal in isolation (freeze/bounce-in-
-   * place): every other lane is muted, the track's sends, fader/pan and
-   * fader/pan automation are excluded (they stay live on the frozen track)
-   * and master strip/levels are skipped. The result is the mixdown channels.
-   */
-  freezeTrackIndex?: number;
-  /** Mastering/metering seams; undefined derives them from the wasm module. */
-  deps?: Pick<MixdownDeps, 'mastering' | 'metering'> | null;
-  /** Audio asset loader (defaults to the OPFS asset store's loadAsset). */
-  loadAudioAsset?: (assetId: string) => Promise<LoadedAudioAsset>;
-  /** SoundFont loader for 'sf2' instruments (defaults to the OPFS font store). */
-  loadFont?: (fontId: string) => Promise<Uint8Array>;
-  /** Synth preset name resolver (defaults to identity). */
-  resolvePreset?: (preset: string) => string;
-  /** Progress callback: fraction in [0, 1] plus the stage being entered. */
-  onProgress?: (progress: number, stage: string) => void;
-  /** Cancellation flag, checked between render checkpoints. */
-  shouldCancel?: () => boolean;
-  /** Awaited between checkpoints so worker cancel messages are processed. */
-  yieldBetweenBlocks?: () => Promise<void>;
-  /** Engine factory override (tests); defaults to the wasm RealtimeEngine. */
-  createEngine?: (sampleRate: number, blockSize: number) => OfflineRenderEngine;
-}
-
-/** Resolves the render window in PPQ; endPpq null = up to the content end. */
-function resolveRange(options: EngineRenderOptions): { startPpq: number; endPpq: number | null } {
-  const range = options.range ?? 'project';
-  if (range === 'project') return { startPpq: 0, endPpq: null };
-  const window = range === 'loop' ? options.loopRegion : range;
-  if (range === 'loop' && !window) {
-    throw new RangeError("Render range 'loop' requires options.loopRegion");
-  }
-  const { startPpq, endPpq } = window as MixdownRangePpq;
-  if (!Number.isFinite(startPpq) || startPpq < 0 || !Number.isFinite(endPpq)) {
-    throw new RangeError('Render range PPQ values must be finite and >= 0');
-  }
-  if (endPpq <= startPpq) {
-    throw new RangeError(`Render range end (${endPpq}) must be after its start (${startPpq})`);
-  }
-  return { startPpq, endPpq };
-}
-
-/** Reserved engine parameter id for one lane parameter. */
-function laneParamId(laneIndex: number, kind: number): number {
-  return ENGINE_MIXER_TARGET_BASE | ((laneIndex & 0xff) << 8) | (kind & 0xff);
-}
-
-/** Reserved engine parameter id for one master strip parameter. */
-function masterParamId(kind: number): number {
-  return ENGINE_MIXER_TARGET_BASE | (ENGINE_MIXER_LANE_MASTER << 8) | (kind & 0xff);
-}
-
-/** What one engine pass renders. */
-interface RenderPass {
-  /** Apply the master strip scene (inserts/EQ). */
-  masterStrip: boolean;
-  /** Apply master gain/pan and master automation lanes. */
-  masterLevels: boolean;
-  /**
-   * Non-null isolates these track indices (every other lane muted). A plain
-   * track stem holds just its own index; a group stem holds the group and
-   * its member indices so the submix renders through the group bus.
-   */
-  stemIndices: ReadonlySet<number> | null;
-  /**
-   * Non-null renders this track pre-fader (freeze): its sends are stripped,
-   * its base fader/pan stay neutral and its fader/pan automation is skipped.
-   */
-  freezeIndex: number | null;
-}
+export type { EngineRenderOptions, OfflineRenderEngine } from './engine-render-types';
 
 /**
  * Renders a project document to a stereo mixdown (and optional per-track
@@ -292,231 +131,30 @@ export async function renderProjectWithEngine(
   // Synthetic numeric track ids: documents store tracks positionally.
   const trackIds = doc.tracks.map((_, index) => index + 1);
 
-  // VCA group fader offsets (id -> dB): a member track's lane gain is raised by
-  // its group's offset, exactly as live mixer-sync folds it in. VCAs carry no
-  // audio of their own.
-  const vcaGainDbById = new Map<string, number>();
-  for (const group of doc.mixer?.vcaGroups ?? []) vcaGainDbById.set(group.id, group.gainDb);
-
-  // Solo-safe tracks join the solo group whenever any track is soloed, so the
-  // mix keeps them audible (master FX returns, cue lanes) instead of ducking
-  // them with the rest — matching live mixer-sync.
-  const anySolo = doc.tracks.some((track) => track.solo);
-
-  // Buses first (sends must reference declared buses): the document's send
-  // buses in order, then one bus per group track (matching live strip-sync).
-  const busNumberById = new Map<string, number>();
-  const buses = (doc.mixer?.buses ?? []).map((bus, index) => {
-    busNumberById.set(bus.id, index + 1);
-    return { busId: index + 1, gainDb: bus.gainDb };
-  });
-  const groupBusByTrackIndex = new Map<number, number>();
-  doc.tracks.forEach((track, index) => {
-    if (track.kind !== 'group') return;
-    const busId = buses.length + 1;
-    groupBusByTrackIndex.set(index, busId);
-    buses.push({
-      busId,
-      gainDb: groupBusGainDb(
-        {
-          volume: track.volume,
-          mute: track.mute,
-          ...(track.mixer !== undefined ? { mixer: track.mixer } : {}),
-        } as Parameters<typeof groupBusGainDb>[0],
-        vcaOffsetDb(track.vcaId, vcaGainDbById),
-      ),
-    });
-  });
-  const lanes = doc.tracks.map((track, index) => {
-    const sends: SendSpec[] = (track.mixer?.sends ?? [])
-      .filter((send) => busNumberById.has(send.busId))
-      .map((send) => ({
-        busId: busNumberById.get(send.busId) as number,
-        levelDb: send.levelDb,
-        enabled: send.enabled,
-        // Pre-fader is the only non-default tap; post-fader stays absent so the
-        // engine keeps its historical default (matches live strip-sync).
-        ...(send.timing === 'preFader' ? { sendTiming: 'preFader' as const } : {}),
-      }));
-    // Output bus: group routing wins; otherwise an explicit per-track output
-    // bus (non-group tracks only), resolved to its engine bus number and
-    // honored only when the bus was actually declared (matches live
-    // strip-sync, which the engine requires).
-    let outputBus: number | undefined;
-    if (track.groupIndex !== undefined) {
-      outputBus = groupBusByTrackIndex.get(track.groupIndex);
-    } else if (track.kind !== 'group' && track.mixer?.outputBusId !== undefined) {
-      const busNumber = busNumberById.get(track.mixer.outputBusId);
-      if (busNumber !== undefined) outputBus = busNumber;
-    }
-    return {
-      trackId: trackIds[index],
-      ...(sends.length > 0 ? { sends } : {}),
-      ...(outputBus !== undefined ? { outputBusId: outputBus } : {}),
-    };
-  });
+  // Bus/send routing, VCA offsets, solo state and lane specs (live strip-sync
+  // ordering: send buses first, then one bus per group track).
+  const { vcaGainDbById, anySolo, busNumberById, buses, groupBusByTrackIndex, lanes } =
+    buildBusRouting(doc, trackIds);
 
   // Pre-load instrument fonts once; engine passes then configure synchronously.
-  const fontBytesById = new Map<string, Uint8Array>();
-  for (const track of doc.tracks) {
-    if (track.frozen !== undefined) continue;
-    if (track.kind === 'midi' && track.instrument?.kind === 'sf2') {
-      if (!fontBytesById.has(track.instrument.fontId)) {
-        fontBytesById.set(track.instrument.fontId, await loadFontBytes(track.instrument.fontId));
-      }
-    }
-  }
-  if (fontBytesById.size > 1) {
-    console.warn(
-      `Engine render: ${fontBytesById.size} distinct SoundFonts requested, but the engine holds a single global SoundFont — the last loaded font wins.`,
-    );
-  }
+  const fontBytesById = await preloadSoundFonts(doc, loadFontBytes);
 
   // MIDI clip schedules via the live builder (velocity-folded clip gain,
   // SF2 preludes, tempo-map-exact sample positions).
-  const midiTracks: EditorTrack[] = doc.tracks.map((track, index) => ({
-    id: trackIds[index],
-    name: track.name,
-    color: track.color,
-    kind: track.kind,
-    mute: track.mute,
-    solo: track.solo,
-    volume: track.volume,
-    pan: track.pan,
-    order: index,
-    ...(track.instrument !== undefined ? { instrument: track.instrument } : {}),
-    ...(track.mixer !== undefined ? { mixer: track.mixer } : {}),
-    ...(track.frozen !== undefined ? { frozen: { ...track.frozen } } : {}),
-  }));
-  const midiClips: EditorClip[] = [];
-  doc.tracks.forEach((track, trackIndex) => {
-    track.clips.forEach((clip, clipIndex) => {
-      if ((clip.kind ?? 'midi') !== 'midi') return;
-      midiClips.push({
-        id: trackIndex * 10_000 + clipIndex + 1,
-        trackId: trackIds[trackIndex],
-        name: clip.name,
-        startPpq: clip.startPpq,
-        lengthPpq: clip.lengthPpq,
-        sourceOffsetPpq: clip.sourceOffsetPpq,
-        gain: clip.gain,
-        loopEnabled: clip.loopEnabled,
-        loopLengthPpq: clip.loopLengthPpq,
-        // Document notes drop the editor id; synthesize stable ones.
-        notes: clip.notes.map((note, noteIndex) => ({ id: noteIndex + 1, ...note })),
-        ...(clip.ccLanes !== undefined ? { ccLanes: clip.ccLanes } : {}),
-        ...(clip.pitchBendLanes !== undefined ? { pitchBendLanes: clip.pitchBendLanes } : {}),
-        ...(clip.channelPressureLanes !== undefined
-          ? { channelPressureLanes: clip.channelPressureLanes }
-          : {}),
-        ...(clip.polyPressureLanes !== undefined
-          ? { polyPressureLanes: clip.polyPressureLanes }
-          : {}),
-      });
-    });
-  });
-  const midiSchedules =
-    midiClips.length > 0
-      ? buildMidiClipSchedules(midiTracks, midiClips, tempoSegments, sampleRate)
-      : [];
+  const midiSchedules = buildMidiSchedules(doc, trackIds, tempoSegments, sampleRate);
 
   // Audio clips: the live scheduling transforms (slice window, baked fades,
   // linear resample to the render rate), placed at their timeline PPQ.
-  const audioClips: EngineClipSpec[] = [];
-  const renderAudioClip = async (clip: DocumentClip, trackId: number): Promise<void> => {
-    if (clip.gain <= 0) return;
-    // A clip expands to one engine clip per comp segment (one segment for
-    // clips without takes), matching live scheduling exactly.
-    for (const segment of audioClipSegments(clip)) {
-      let asset: LoadedAudioAsset;
-      try {
-        asset = await loadAudio(segment.assetId);
-      } catch {
-        // Missing or unreadable asset: leave the slice silent, like live playback.
-        continue;
-      }
-      // Tempo-following clips bake their window through the offline stretch
-      // instead of the fixed-rate slice (takes-free clips only).
-      let channels =
-        clip.warp?.enabled && (clip.takes?.length ?? 0) === 0
-          ? await bakeWarpedClip(asset.channels, asset.meta.sampleRate, clip, sliceTempoBpm, {
-              cacheKey: segment.assetId,
-            })
-          : sliceAudioClipWindow(
-              asset.channels,
-              asset.meta.sampleRate,
-              segment.sourceOffsetPpq,
-              segment.lengthPpq,
-              sliceTempoBpm,
-            );
-      channels = applyAudioClipFades(
-        channels,
-        asset.meta.sampleRate,
-        sliceTempoBpm,
-        segment.fadeInPpq,
-        segment.fadeOutPpq,
-      );
-      channels = resampleChannelsLinear(channels, asset.meta.sampleRate, sampleRate);
-      if (channels.length === 0 || channels[0].length === 0) continue;
-      audioClips.push({
-        trackId,
-        channels,
-        startPpq: clip.startPpq + segment.offsetPpq,
-        lengthSamples: channels[0].length,
-        gain: clip.gain,
-      });
-    }
-  };
-  for (let index = 0; index < doc.tracks.length; index++) {
-    const track = doc.tracks[index];
-    // Frozen tracks play their baked pre-fader render from the timeline
-    // start instead of their own clips.
-    if (track.frozen !== undefined) {
-      try {
-        const asset = await loadAudio(track.frozen.assetId);
-        const channels = resampleChannelsLinear(
-          asset.channels.map((channel) => channel.slice()),
-          asset.meta.sampleRate,
-          sampleRate,
-        );
-        if (channels.length > 0 && channels[0].length > 0) {
-          audioClips.push({
-            trackId: trackIds[index],
-            channels,
-            startPpq: 0,
-            lengthSamples: channels[0].length,
-            gain: 1,
-          });
-        }
-      } catch {
-        // Missing or unreadable frozen asset: the track stays silent.
-      }
-      continue;
-    }
-    for (const clip of track.clips) {
-      if ((clip.kind ?? 'midi') !== 'audio') continue;
-      checkCancel();
-      await renderAudioClip(clip, trackIds[index]);
-    }
-  }
+  const audioClips = await buildAudioClips(doc, {
+    trackIds,
+    sliceTempoBpm,
+    sampleRate,
+    loadAudio,
+    checkCancel,
+  });
 
   // Resolve the render window in frames.
-  const startSample = ppqToSamples(tempoMap, range.startPpq, sampleRate);
-  let endSample: number;
-  if (range.endPpq !== null) {
-    endSample = ppqToSamples(tempoMap, range.endPpq, sampleRate);
-  } else {
-    let contentEndPpq = 0;
-    for (const track of doc.tracks) {
-      for (const clip of track.clips) {
-        contentEndPpq = Math.max(contentEndPpq, clip.startPpq + clip.lengthPpq);
-      }
-    }
-    endSample =
-      ppqToSamples(tempoMap, contentEndPpq, sampleRate) +
-      Math.round(RELEASE_TAIL_SECONDS * sampleRate);
-  }
-  const totalFrames = Math.max(0, endSample - startSample);
+  const { startSample, totalFrames } = resolveRenderWindow(doc, tempoMap, range, sampleRate);
 
   /** Replays the pre-built program onto a fresh engine (synchronous). */
   const configureEngine = (engine: OfflineRenderEngine, pass: RenderPass): void => {
@@ -725,6 +363,13 @@ export async function renderProjectWithEngine(
         }
         engine.setSf2Instrument({}, destinationId);
       }
+      // Apply the track's live, non-destructive MIDI-FX insert so the export
+      // matches live playback (the same engine transform, applied here rather
+      // than baked into the notes).
+      if (track.midiFx !== undefined) {
+        const json = midiFxConfigJson(track.midiFx);
+        if (json !== null) engine.setMidiFx(destinationId, json);
+      }
     }
 
     if (midiSchedules.length > 0) engine.setMidiClips(midiSchedules);
@@ -903,47 +548,13 @@ export async function renderProjectWithEngine(
   // Loudness/peak report (same shape as renderMixdown).
   checkCancel();
   options.onProgress?.(0.97, 'metering');
-  let peak = 0;
-  for (let i = 0; i < mixL.length; i++) {
-    const a = Math.abs(mixL[i]);
-    const b = Math.abs(mixR[i]);
-    if (a > peak) peak = a;
-    if (b > peak) peak = b;
-  }
-  const report: MixdownReport = {
-    peakDb: peakDb(peak),
-  };
-  const metering = deps?.metering ?? null;
-  if (metering?.truePeakDb && totalFrames > 0) {
-    try {
-      report.truePeakDb = Math.max(
-        metering.truePeakDb(mixL, sampleRate),
-        metering.truePeakDb(mixR, sampleRate),
-      );
-    } catch {
-      // True peak stays absent when the metering call fails.
-    }
-  }
-  if (totalFrames > 0 && (metering?.interleavedLufs || metering?.integratedLufs)) {
-    try {
-      if (metering.interleavedLufs) {
-        // Channel-weighted BS.1770 over the actual stereo deliverable; a mono
-        // downmix would mis-measure decorrelated or panned material.
-        const interleaved = new Float32Array(totalFrames * 2);
-        for (let i = 0; i < totalFrames; i++) {
-          interleaved[2 * i] = mixL[i];
-          interleaved[2 * i + 1] = mixR[i];
-        }
-        report.lufs = metering.interleavedLufs(interleaved, 2, sampleRate);
-      } else if (metering.integratedLufs) {
-        const mono = new Float32Array(totalFrames);
-        for (let i = 0; i < totalFrames; i++) mono[i] = 0.5 * (mixL[i] + mixR[i]);
-        report.lufs = metering.integratedLufs(mono, sampleRate);
-      }
-    } catch {
-      // Loudness stays absent when the metering call fails.
-    }
-  }
+  const report: MixdownReport = buildReport(
+    mixL,
+    mixR,
+    sampleRate,
+    totalFrames,
+    deps?.metering ?? null,
+  );
   options.onProgress?.(1, 'done');
 
   const result: MixdownResult = { channels: [mixL, mixR], sampleRate, totalFrames, report };

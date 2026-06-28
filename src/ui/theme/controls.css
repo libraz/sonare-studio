@@ -112,6 +112,27 @@
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
+/*
+ * A quick spring pop when a toggle is checked. A keyframe declared on :checked
+ * runs once as the state flips on; it leaves the box at scale 1, so the resting
+ * face is unchanged. Collapses to nothing under reduced motion (--dur-2 = 0ms).
+ */
+@keyframes control-check-pop {
+  0% {
+    transform: scale(0.7);
+  }
+  55% {
+    transform: scale(1.12);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+:where(input[type='checkbox'], input[type='radio']):checked {
+  animation: control-check-pop var(--dur-2) var(--ease-spring);
+}
+
 :where(input[type='checkbox'], input[type='radio']):focus-visible {
   outline: 2px solid transparent;
   box-shadow: var(--control-edge), var(--ring);
@@ -138,6 +159,10 @@
   padding: var(--sp-2) 0.95rem;
   font-weight: var(--fw-semibold);
   cursor: pointer;
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-1) var(--ease-out),
+    transform var(--dur-1) var(--ease-out);
 }
 
 .primary:hover:not(:disabled) {
@@ -147,6 +172,7 @@
 .primary:active:not(:disabled) {
   background-color: var(--accent-active);
   box-shadow: inset 0 1px 2px rgba(17, 24, 39, 0.25);
+  transform: translateY(0.5px);
 }
 
 .primary:disabled {
@@ -170,6 +196,10 @@
   padding: var(--sp-2) 0.95rem;
   font-weight: var(--fw-semibold);
   cursor: pointer;
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-1) var(--ease-out),
+    transform var(--dur-1) var(--ease-out);
 }
 
 .danger-action:hover:not(:disabled) {
@@ -178,6 +208,7 @@
 
 .danger-action:active:not(:disabled) {
   box-shadow: inset 0 1px 2px rgba(17, 24, 39, 0.25);
+  transform: translateY(0.5px);
 }
 
 /*
@@ -192,6 +223,7 @@
   cursor: pointer;
   padding: var(--sp-1) var(--sp-2);
   font-size: var(--fs-xs);
+  transition: color var(--dur-1) var(--ease-out);
 }
 
 .row-button:hover:not(:disabled) {
@@ -264,6 +296,9 @@
   color: var(--text-3);
   font-weight: var(--fw-medium);
   padding: var(--sp-3) var(--sp-4);
+  transition:
+    color var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-2) var(--ease-out);
 }
 
 .tab:hover:not(:disabled) {
@@ -307,6 +342,9 @@
   color: var(--text-2);
   font-size: var(--fs-xs);
   padding: var(--sp-2) var(--sp-3);
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
 }
 
 .control-menu button:hover:not(:disabled) {

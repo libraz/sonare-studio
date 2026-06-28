@@ -1,0 +1,119 @@
+.preview-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.preview-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.preview-button,
+.preview-cancel,
+.play-button,
+.targets-button {
+  font: 600 var(--fs-2xs) var(--font-sans);
+  color: var(--text-2);
+  background: var(--surface-3);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  cursor: pointer;
+  box-shadow: var(--control-lift);
+  transition: background var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
+}
+
+.preview-button:disabled,
+.play-button:disabled,
+.targets-button:disabled {
+  color: var(--text-4);
+  cursor: default;
+}
+
+.preview-button:not(:disabled):hover,
+.preview-cancel:hover,
+.play-button:not(:disabled):hover,
+.targets-button:not(:disabled):hover {
+  background: var(--surface-4);
+  box-shadow: var(--control-lift-hover);
+}
+
+.ab-toggle {
+  display: flex;
+}
+
+.ab-button {
+  font: 700 10px system-ui, sans-serif;
+  color: var(--text-3);
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.ab-button:first-child {
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+
+.ab-button:last-child {
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  border-left: none;
+}
+
+.ab-button.active {
+  color: var(--accent);
+  background: var(--surface-4);
+}
+
+.ab-button:disabled {
+  color: var(--text-4);
+  cursor: default;
+}
+
+.preview-stale {
+  font: 600 9px system-ui, sans-serif;
+  color: var(--warning);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.preview-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.progress-track {
+  flex: 1;
+  height: 4px;
+  background: var(--surface-inset);
+  border-radius: 2px;
+  box-shadow: var(--inset-well);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width var(--dur-2) linear;
+}
+
+.progress-stage {
+  flex: none;
+  font: 9px system-ui, sans-serif;
+  color: var(--text-4);
+  min-width: 80px;
+}
+
+.mastering-error {
+  margin: 0;
+  padding: 2px 8px;
+  background: var(--danger-surface);
+  color: var(--danger-text);
+  font: var(--fs-2xs)/1.4 var(--font-sans);
+  flex: none;
+}

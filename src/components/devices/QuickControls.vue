@@ -232,6 +232,7 @@ onBeforeUnmount(closeMenu);
         <span class="qc-value">{{ formatControlValue(control.value, control.unit) }}</span>
       </div>
     </div>
+    <Transition name="pop">
     <div
       v-if="menu.open"
       class="qc-menu control-menu"
@@ -259,6 +260,7 @@ onBeforeUnmount(closeMenu);
         {{ t.shell.mixer.controls.midiForget }}
       </button>
     </div>
+    </Transition>
   </div>
 </template>
 

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue';
-import MasteringLoudnessReadout from '@/components/mastering/MasteringLoudnessReadout.vue';
-import MixerKnob from '@/components/mixer/MixerKnob.vue';
-import CloseIcon from '@/components/shell/CloseIcon.vue';
-import TransportIcon from '@/components/shell/TransportIcon.vue';
+import AssistantPanel from '@/components/mastering/AssistantPanel.vue';
+import PresetSelector from '@/components/mastering/PresetSelector.vue';
+import PreviewPane from '@/components/mastering/PreviewPane.vue';
+import ProcessorRack from '@/components/mastering/ProcessorRack.vue';
 import { renderMixdownInWorker } from '@/export/client';
 import type { MixdownResult } from '@/export/mixdown';
 import { ensureWasm } from '@/lib/wasm';
@@ -18,7 +18,7 @@ import {
 import { createDefaultMasteringChain, type MasteringChainState } from '@/project/mixer';
 import { serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
-import { formatMessage, useI18n } from '@/ui/i18n';
+import { useI18n } from '@/ui/i18n';
 import {
   type MasteringSuggestion,
   parseMasteringSuggestion,
@@ -45,9 +45,7 @@ import { DEFAULT_PREVIEW_BARS, derivePreviewRange } from '@/ui/mastering/preview
 import { parseStreamingPreview, type StreamingTarget } from '@/ui/mastering/streaming';
 import { createAudioPreview } from '@/ui/media/preview';
 import {
-  categoryLabel,
   groupInsertCatalogEntries,
-  humanizeInsertName,
   type InsertCatalogGroup,
   loadInsertCatalogEntries,
 } from '@/ui/mixer/insert-catalog';
@@ -60,6 +58,11 @@ import { createValueGesture, type ValueGesture } from '@/ui/mixer/strip-gestures
  * rendered by the export worker, and a loudness readout for the previewed
  * audio. All chain edits go through the undoable mastering commands; preview
  * playback uses a panel-local AudioContext and never touches the engine.
+ *
+ * The panel owns all orchestration — the preview controller, the panel-local
+ * playback, the wasm analyses and the popover dismissal — and delegates the
+ * presentation to the preset selector, assistant, processor rack and preview
+ * pane child components.
  */
 
 const props = withDefaults(
@@ -105,8 +108,8 @@ function runCommand(action: () => void): void {
 
 // --- Preset selector -----------------------------------------------------------
 
+const presetSelectorRef = ref<InstanceType<typeof PresetSelector> | null>(null);
 const presetMenuOpen = ref(false);
-const presetMenuEl = ref<HTMLDivElement | null>(null);
 const presetQuery = ref('');
 const presetCatalog = ref<string[]>([]);
 
@@ -226,11 +229,6 @@ async function onCheckTargets(): Promise<void> {
   }
 }
 
-/** Normalization gain with an explicit sign (e.g. '+1.2', '-3.4'). */
-function signedGain(value: number): string {
-  return `${value >= 0 ? '+' : ''}${value.toFixed(1)}`;
-}
-
 // --- Processor rack ------------------------------------------------------------
 
 const expandedIndex = ref<number | null>(null);
@@ -242,10 +240,6 @@ const expandedControls = computed<MasteringControl[]>(() => {
   if (!slot) return [];
   return masteringProcessorControls(slot);
 });
-
-function processorCategory(processor: string): string {
-  return processor.includes('.') ? processor.slice(0, processor.indexOf('.')) : 'other';
-}
 
 function toggleExpanded(index: number): void {
   expandedIndex.value = expandedIndex.value === index ? null : index;
@@ -298,13 +292,6 @@ function onParamChange(
   }
 }
 
-/** Formatted knob value with the control's unit. */
-function controlDisplay(control: MasteringControl): string {
-  const value =
-    Math.abs(control.value) >= 100 ? Math.round(control.value) : control.value.toFixed(1);
-  return control.unit ? `${value} ${control.unit}` : `${value}`;
-}
-
 // --- Drag reorder ----------------------------------------------------------------
 
 const dragIndex = ref<number | null>(null);
@@ -349,8 +336,8 @@ function onDragEnd(): void {
 
 // --- Add processor popover -------------------------------------------------------
 
+const processorRackRef = ref<InstanceType<typeof ProcessorRack> | null>(null);
 const addMenuOpen = ref(false);
-const addMenuEl = ref<HTMLDivElement | null>(null);
 const catalog = ref<InsertCatalogGroup[]>([]);
 
 function toggleAddMenu(): void {
@@ -372,8 +359,10 @@ function onAddProcessor(processorId: string): void {
 
 function onDocumentPointerDown(event: PointerEvent): void {
   if (!(event.target instanceof Node)) return;
-  if (!addMenuEl.value?.contains(event.target)) addMenuOpen.value = false;
-  if (!presetMenuEl.value?.contains(event.target)) presetMenuOpen.value = false;
+  const addMenuEl = processorRackRef.value?.addMenuEl;
+  const presetMenuEl = presetSelectorRef.value?.root;
+  if (!addMenuEl?.contains(event.target)) addMenuOpen.value = false;
+  if (!presetMenuEl?.contains(event.target)) presetMenuOpen.value = false;
 }
 
 const anyMenuOpen = computed(() => addMenuOpen.value || presetMenuOpen.value);
@@ -520,6 +509,11 @@ const clipWarning = computed(() =>
   isClippingRisk(previewState.value?.processed?.report.truePeakDb),
 );
 
+/** Render failure message, surfaced only while the controller is in error. */
+const renderError = computed(() =>
+  previewState.value?.status === 'error' ? (previewState.value?.error ?? null) : null,
+);
+
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', onDocumentPointerDown, true);
   controller.dispose();
@@ -531,46 +525,17 @@ onBeforeUnmount(() => {
   <div class="mastering-panel">
     <div class="mastering-toolbar">
       <span class="mastering-title">{{ t.shell.mastering.title }}</span>
-      <div ref="presetMenuEl" class="preset-wrap">
-        <button
-          type="button"
-          class="preset-button"
-          :class="{ set: chain.preset !== undefined }"
-          :title="t.shell.mastering.presetTitle"
-          aria-haspopup="menu"
-          :aria-expanded="presetMenuOpen"
-          @click="togglePresetMenu"
-        >
-          <span class="preset-label">{{ presetLabel }}</span>
-          <TransportIcon name="chevron-down" class="preset-caret" />
-        </button>
-        <div v-if="presetMenuOpen" class="preset-menu" role="menu">
-          <input
-            v-model="presetQuery"
-            type="search"
-            class="preset-search"
-            :placeholder="t.shell.mastering.searchPresets"
-            :aria-label="t.shell.mastering.searchPresets"
-          />
-          <button type="button" role="menuitem" class="preset-item none" @click="onSelectPreset(null)">
-            {{ t.shell.mastering.noPreset }}
-          </button>
-          <button
-            v-for="preset in filteredPresets"
-            :key="preset"
-            type="button"
-            role="menuitem"
-            class="preset-item"
-            :class="{ active: preset === chain.preset }"
-            @click="onSelectPreset(preset)"
-          >
-            {{ humanizePresetName(preset) }}
-          </button>
-          <p v-if="filteredPresets.length === 0" class="preset-empty">
-            {{ t.shell.mastering.noMatches }}
-          </p>
-        </div>
-      </div>
+      <PresetSelector
+        ref="presetSelectorRef"
+        :preset="chain.preset"
+        :preset-label="presetLabel"
+        :menu-open="presetMenuOpen"
+        :query="presetQuery"
+        :filtered-presets="filteredPresets"
+        @toggle="togglePresetMenu"
+        @update:query="presetQuery = $event"
+        @select="onSelectPreset"
+      />
       <button
         type="button"
         class="assist-button"
@@ -583,266 +548,54 @@ onBeforeUnmount(() => {
       <span class="toolbar-spacer" />
     </div>
     <p v-if="error" class="mastering-error" role="alert">{{ error }}</p>
-    <div v-if="suggestion" class="assist-result">
-      <div class="assist-candidates">
-        <span class="assist-label">{{ t.shell.mastering.assistant.recommended }}</span>
-        <button
-          v-for="candidate in suggestion.genreCandidates"
-          :key="candidate.name"
-          type="button"
-          class="assist-chip"
-          :class="{ active: candidate.name === chain.preset }"
-          @click="onSelectPreset(candidate.name)"
-        >
-          {{ humanizePresetName(candidate.name) }}
-          <span class="assist-score">{{ Math.round(candidate.score * 100) }}</span>
-        </button>
-      </div>
-      <ul v-if="suggestion.explanation.length" class="assist-explain">
-        <li v-for="(line, index) in suggestion.explanation" :key="index">{{ line }}</li>
-      </ul>
-      <div v-if="suggestion.profile" class="assist-profile">
-        <span>{{
-          formatMessage(t.shell.mastering.assistant.lufs, {
-            value: suggestion.profile.integratedLufs.toFixed(1),
-          })
-        }}</span>
-        <span>{{
-          formatMessage(t.shell.mastering.assistant.lra, {
-            value: suggestion.profile.lraLu.toFixed(1),
-          })
-        }}</span>
-        <span>{{
-          formatMessage(t.shell.mastering.assistant.truePeak, {
-            value: suggestion.profile.truePeakDb.toFixed(1),
-          })
-        }}</span>
-      </div>
-    </div>
+    <AssistantPanel
+      v-if="suggestion"
+      :suggestion="suggestion"
+      :preset="chain.preset"
+      @select="onSelectPreset"
+    />
     <div class="mastering-body">
-      <div class="chain-rack">
-        <template v-for="(slot, index) in chain.processors" :key="`${index}:${slot.processor}`">
-          <div
-            class="chain-slot"
-            :class="{
-              bypassed: !slot.enabled,
-              dragging: dragIndex === index,
-              'drop-target': dragOverIndex === index && dragIndex !== index,
-            }"
-            draggable="true"
-            @dragstart="onDragStart(index, $event)"
-            @dragover="onDragOver(index, $event)"
-            @drop="onDrop(index)"
-            @dragend="onDragEnd"
-          >
-            <span class="chain-drag" :title="t.shell.mastering.dragReorder" aria-hidden="true">
-              <svg class="chain-drag-icon" viewBox="0 0 6 10" fill="currentColor" focusable="false">
-                <circle cx="1.5" cy="2" r="0.9" />
-                <circle cx="4.5" cy="2" r="0.9" />
-                <circle cx="1.5" cy="5" r="0.9" />
-                <circle cx="4.5" cy="5" r="0.9" />
-                <circle cx="1.5" cy="8" r="0.9" />
-                <circle cx="4.5" cy="8" r="0.9" />
-              </svg>
-            </span>
-            <button
-              type="button"
-              class="chain-power"
-              :class="{ on: slot.enabled }"
-              :title="
-                slot.enabled ? t.shell.mastering.bypassProcessor : t.shell.mastering.enableProcessor
-              "
-              :aria-label="
-                formatMessage(t.shell.mastering.processorPower, {
-                  name: humanizeInsertName(slot.processor),
-                })
-              "
-              :aria-pressed="slot.enabled"
-              @click="onToggleEnabled(index)"
-            />
-            <button
-              type="button"
-              class="chain-name"
-              :class="{ expanded: expandedIndex === index }"
-              :title="slot.processor"
-              @click="toggleExpanded(index)"
-            >
-              {{ humanizeInsertName(slot.processor) }}
-            </button>
-            <span class="chain-badge">{{ categoryLabel(processorCategory(slot.processor)) }}</span>
-            <button
-              type="button"
-              class="chain-remove"
-              :title="t.shell.mastering.removeProcessor"
-              :aria-label="
-                formatMessage(t.shell.mastering.removeNamed, {
-                  name: humanizeInsertName(slot.processor),
-                })
-              "
-              @click="onRemove(index)"
-            >
-              <CloseIcon class="chain-remove-icon" />
-            </button>
-          </div>
-          <div v-if="expandedIndex === index" class="chain-params">
-            <p v-if="expandedControls.length === 0" class="chain-params-empty">
-              {{ t.shell.mastering.noParameters }}
-            </p>
-            <MixerKnob
-              v-for="control in expandedControls"
-              :key="control.id"
-              :value="control.value"
-              :min="control.min"
-              :max="control.max"
-              :label="control.name"
-              :display="controlDisplay(control)"
-              :size="22"
-              @change="(value, commit) => onParamChange(index, control, value, commit)"
-            />
-          </div>
-        </template>
-        <div ref="addMenuEl" class="chain-add-wrap">
-          <button
-            type="button"
-            class="chain-add"
-            :title="t.shell.mastering.addProcessorTitle"
-            aria-haspopup="menu"
-            :aria-expanded="addMenuOpen"
-            @click="toggleAddMenu"
-          >
-            {{ t.shell.mastering.addProcessor }}
-          </button>
-          <div v-if="addMenuOpen" class="chain-catalog" role="menu">
-            <div v-for="group in catalog" :key="group.category" class="catalog-group">
-              <div class="catalog-category">{{ group.label }}</div>
-              <button
-                v-for="processor in group.processors"
-                :key="processor.id"
-                type="button"
-                role="menuitem"
-                class="catalog-item"
-                @click="onAddProcessor(processor.id)"
-              >
-                <span class="catalog-item-label">{{ processor.label }}</span>
-                <span v-if="processor.stereoOnly" class="catalog-item-tag">{{
-                  t.shell.inserts.stereoOnly
-                }}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="preview-pane">
-        <div class="preview-controls">
-          <button
-            type="button"
-            class="preview-button"
-            :disabled="previewState?.status === 'rendering'"
-            @click="onPreview"
-          >
-            {{ t.shell.mastering.preview }}
-          </button>
-          <button
-            v-if="previewState?.status === 'rendering'"
-            type="button"
-            class="preview-cancel"
-            @click="onCancelPreview"
-          >
-            {{ t.shell.mastering.cancel }}
-          </button>
-          <div class="ab-toggle" role="group" :aria-label="t.shell.mastering.abComparison">
-            <button
-              type="button"
-              class="ab-button"
-              :class="{ active: variant === 'processed' }"
-              :disabled="!previewState?.processed"
-              :title="t.shell.mastering.withChain"
-              :aria-label="t.shell.mastering.previewWithChain"
-              :aria-pressed="variant === 'processed'"
-              @click="onSelectVariant('processed')"
-            >
-              A
-            </button>
-            <button
-              type="button"
-              class="ab-button"
-              :class="{ active: variant === 'bypassed' }"
-              :disabled="!previewState?.bypassed"
-              :title="t.shell.mastering.chainBypassed"
-              :aria-label="t.shell.mastering.previewBypassed"
-              :aria-pressed="variant === 'bypassed'"
-              @click="onSelectVariant('bypassed')"
-            >
-              B
-            </button>
-          </div>
-          <button
-            type="button"
-            class="play-button"
-            :disabled="!activeResult"
-            @click="onTogglePlay"
-          >
-            <TransportIcon :name="isPlaying ? 'stop' : 'play'" class="play-icon" />
-            <span>{{ isPlaying ? t.shell.mastering.stop : t.shell.mastering.play }}</span>
-          </button>
-          <span v-if="previewStale" class="preview-stale" :title="t.shell.mastering.staleTitle">
-            {{ t.shell.mastering.stale }}
-          </span>
-          <button
-            type="button"
-            class="targets-button"
-            :disabled="checkingTargets"
-            :title="t.shell.mastering.streaming.title"
-            @click="onCheckTargets"
-          >
-            {{ checkingTargets ? t.shell.mastering.streaming.checking : t.shell.mastering.streaming.check }}
-          </button>
-        </div>
-        <div v-if="previewState?.status === 'rendering'" class="preview-progress">
-          <div class="progress-track">
-            <div
-              class="progress-fill"
-              :style="{ width: `${Math.round((previewState?.progress ?? 0) * 100)}%` }"
-            />
-          </div>
-          <span class="progress-stage">{{ previewState?.stage }}</span>
-        </div>
-        <p v-if="previewState?.status === 'error'" class="mastering-error" role="alert">
-          {{ previewState?.error }}
-        </p>
-        <MasteringLoudnessReadout :rows="loudnessRows" :clip-warning="clipWarning" />
-        <table v-if="streamingTargets && streamingTargets.length" class="targets-table">
-          <thead>
-            <tr>
-              <th class="targets-name">{{ t.shell.mastering.streaming.platform }}</th>
-              <th>{{ t.shell.mastering.streaming.lufs }}</th>
-              <th>{{ t.shell.mastering.streaming.gain }}</th>
-              <th>{{ t.shell.mastering.streaming.peak }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="target in streamingTargets" :key="target.name">
-              <td class="targets-name">{{ target.name }}</td>
-              <td>{{ target.integratedLufs.toFixed(1) }}</td>
-              <td>{{ signedGain(target.normalizationGainDb) }}</td>
-              <td :class="{ risk: target.ceilingRisk }" :title="target.ceilingRisk ? t.shell.mastering.streaming.ceilingRisk : ''">
-                {{ target.truePeakDb.toFixed(1) }}<svg
-                  v-if="target.ceilingRisk"
-                  class="targets-warn-icon"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.4"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  aria-hidden="true"
-                  focusable="false"
-                ><path d="M8 2.5 14.5 13.5H1.5Z" /><path d="M8 6.5v3.2" /><path d="M8 11.8v0.2" /></svg>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <ProcessorRack
+        ref="processorRackRef"
+        :processors="chain.processors"
+        :expanded-index="expandedIndex"
+        :expanded-controls="expandedControls"
+        :drag-index="dragIndex"
+        :drag-over-index="dragOverIndex"
+        :add-menu-open="addMenuOpen"
+        :catalog="catalog"
+        @toggle-enabled="onToggleEnabled"
+        @toggle-expanded="toggleExpanded"
+        @remove="onRemove"
+        @param-change="onParamChange"
+        @drag-start="onDragStart"
+        @drag-over="onDragOver"
+        @drop="onDrop"
+        @drag-end="onDragEnd"
+        @toggle-add-menu="toggleAddMenu"
+        @add-processor="onAddProcessor"
+      />
+      <PreviewPane
+        :rendering="previewState?.status === 'rendering'"
+        :progress="previewState?.progress ?? 0"
+        :stage="previewState?.stage ?? ''"
+        :render-error="renderError"
+        :has-processed="!!previewState?.processed"
+        :has-bypassed="!!previewState?.bypassed"
+        :variant="variant"
+        :can-play="!!activeResult"
+        :is-playing="isPlaying"
+        :stale="previewStale"
+        :checking-targets="checkingTargets"
+        :loudness-rows="loudnessRows"
+        :clip-warning="clipWarning"
+        :streaming-targets="streamingTargets"
+        @preview="onPreview"
+        @cancel="onCancelPreview"
+        @select-variant="onSelectVariant"
+        @toggle-play="onTogglePlay"
+        @check-targets="onCheckTargets"
+      />
     </div>
   </div>
 </template>

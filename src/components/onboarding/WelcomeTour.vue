@@ -199,6 +199,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <Transition name="fade">
   <div v-if="visible && step" class="tour-overlay" @click.self="onSkip">
     <div
       v-if="anchorRect"
@@ -238,6 +239,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
   </div>
+  </Transition>
 </template>
 
 <style scoped>
@@ -254,6 +256,13 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-md);
   box-shadow: 0 0 0 4px var(--accent-muted);
   pointer-events: none;
+  /* Glide the spotlight to each step's anchor as its inline rect updates.
+   * CSS does not transition the initial render, so the first step is instant. */
+  transition:
+    left var(--dur-2) var(--ease-out),
+    top var(--dur-2) var(--ease-out),
+    width var(--dur-2) var(--ease-out),
+    height var(--dur-2) var(--ease-out);
 }
 
 .tour-tooltip {
@@ -271,6 +280,10 @@ onBeforeUnmount(() => {
   box-shadow: var(--glass-hairline), var(--shadow-pop);
   color: var(--text-1);
   font-size: var(--fs-sm);
+  /* Glide alongside the spotlight when advancing between steps. */
+  transition:
+    left var(--dur-2) var(--ease-out),
+    top var(--dur-2) var(--ease-out);
 }
 
 .tour-tooltip:focus {

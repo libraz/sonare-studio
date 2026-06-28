@@ -191,24 +191,26 @@ onBeforeUnmount(() => {
     </div>
     <p v-if="error" class="mixer-error" role="alert">{{ error }}</p>
     <div class="mixer-strips">
-      <ChannelStrip
-        v-for="track in visibleTracks"
-        :key="track.id"
-        :target="track.id"
-        :bridge="props.meterFor ? props.meterFor(track.id) : null"
-        :scope="props.scopeFor ? props.scopeFor(track.id) : null"
-        :position-ppq="props.positionPpq"
-        :is-playing="props.isPlaying"
-      />
-      <BusStrip
-        v-for="bus in store.mixer.buses"
-        :key="bus.id"
-        :bus="bus"
-        :bridge="props.busMeterFor ? props.busMeterFor(bus.id) : null"
-        :position-ppq="props.positionPpq"
-        :is-playing="props.isPlaying"
-      />
-      <VcaStrip v-for="group in store.mixer.vcaGroups ?? []" :key="group.id" :group="group" />
+      <TransitionGroup tag="div" name="strip" class="strip-flow">
+        <ChannelStrip
+          v-for="track in visibleTracks"
+          :key="track.id"
+          :target="track.id"
+          :bridge="props.meterFor ? props.meterFor(track.id) : null"
+          :scope="props.scopeFor ? props.scopeFor(track.id) : null"
+          :position-ppq="props.positionPpq"
+          :is-playing="props.isPlaying"
+        />
+        <BusStrip
+          v-for="bus in store.mixer.buses"
+          :key="bus.id"
+          :bus="bus"
+          :bridge="props.busMeterFor ? props.busMeterFor(bus.id) : null"
+          :position-ppq="props.positionPpq"
+          :is-playing="props.isPlaying"
+        />
+        <VcaStrip v-for="group in store.mixer.vcaGroups ?? []" :key="group.id" :group="group" />
+      </TransitionGroup>
       <div class="strips-spacer" />
       <ChannelStrip
         class="master-strip"
@@ -366,6 +368,16 @@ onBeforeUnmount(() => {
   min-height: 0;
   overflow-x: auto;
   overflow-y: auto;
+}
+
+/* Holds just the dynamic track/bus/VCA strips so add/remove can animate
+ * without touching the spacer or the sticky master strip outside it.
+ * position:relative anchors a leaving strip's absolute leave transition. */
+.strip-flow {
+  display: flex;
+  align-items: stretch;
+  flex: none;
+  position: relative;
 }
 
 .strips-spacer {

@@ -41,6 +41,19 @@ defineProps<{
   /* Soft solid edge + drop shadow reads as a finished surface rather than
      the wireframe feel a dashed border gives. */
   box-shadow: var(--control-edge), var(--shadow-1);
+  /* Gentle spring scale-in when the shell drops the hint into an empty zone. */
+  animation: hint-card-in var(--dur-3) var(--ease-spring);
+}
+
+@keyframes hint-card-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
 }
 
 .hint-title {

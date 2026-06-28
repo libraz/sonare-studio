@@ -1,0 +1,275 @@
+/*
+ * Shared motion layer — the single home for app-wide animation.
+ *
+ * Imported globally (unscoped) after controls.css so the named Vue <Transition>
+ * class sets below are visible to every component, scoped or not: a component
+ * writes <Transition name="pop"> and inherits the entrance/exit choreography
+ * defined here once, instead of re-declaring enter/leave keyframes per file.
+ *
+ * Everything reads the motion tokens in tokens.css (--dur-*, --ease-*), which
+ * already collapse to 0ms under prefers-reduced-motion — so honouring the OS
+ * setting needs no extra rules here; a 0ms duration makes each transition and
+ * one-shot keyframe resolve instantly.
+ */
+
+/* --- fade: opacity only ------------------------------------------------
+ * The neutral cross-state. For content that should appear/disappear without
+ * implying direction (banners, overlays, swapped panels). */
+.fade-enter-active {
+  transition: opacity var(--dur-2) var(--ease-out);
+}
+.fade-leave-active {
+  transition: opacity var(--dur-1) var(--ease-out);
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+/* --- pop: scale + lift + fade -----------------------------------------
+ * The popover/menu idiom — dropdowns, context menus, control menus. Grows in
+ * from just under its anchor with a gentle spring, leaves quickly by fading. */
+.pop-enter-active {
+  transition:
+    opacity var(--dur-1) var(--ease-out),
+    transform var(--dur-2) var(--ease-spring);
+  transform-origin: top center;
+}
+.pop-leave-active {
+  transition:
+    opacity var(--dur-1) var(--ease-out),
+    transform var(--dur-1) var(--ease-out);
+  transform-origin: top center;
+}
+.pop-enter-from {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.97);
+}
+.pop-leave-to {
+  opacity: 0;
+  transform: scale(0.98);
+}
+
+/* --- scale: centred zoom + fade ---------------------------------------
+ * For elements that grow from their own centre (toasts, floating cards) rather
+ * than from a top anchor. */
+.scale-enter-active {
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-3) var(--ease-spring);
+}
+.scale-leave-active {
+  transition:
+    opacity var(--dur-1) var(--ease-out),
+    transform var(--dur-1) var(--ease-out);
+}
+.scale-enter-from {
+  opacity: 0;
+  transform: scale(0.94);
+}
+.scale-leave-to {
+  opacity: 0;
+  transform: scale(0.97);
+}
+
+/* --- slide-up / slide-down: directional reveals -----------------------
+ * Panels and drawers that slide in from an edge. slide-up enters from below
+ * (inspectors, footers); slide-down enters from above (toolbars, alerts). */
+.slide-up-enter-active,
+.slide-down-enter-active {
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out);
+}
+.slide-up-leave-active,
+.slide-down-leave-active {
+  transition:
+    opacity var(--dur-1) var(--ease-out),
+    transform var(--dur-1) var(--ease-out);
+}
+.slide-up-enter-from,
+.slide-up-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.slide-down-enter-from,
+.slide-down-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+
+/* slide-right enters from the right edge (side panels docked on the right);
+ * slide-left from the left. */
+.slide-right-enter-active,
+.slide-left-enter-active {
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out);
+}
+.slide-right-leave-active,
+.slide-left-leave-active {
+  transition:
+    opacity var(--dur-1) var(--ease-out),
+    transform var(--dur-1) var(--ease-out);
+}
+.slide-right-enter-from,
+.slide-right-leave-to {
+  opacity: 0;
+  transform: translateX(12px);
+}
+.slide-left-enter-from,
+.slide-left-leave-to {
+  opacity: 0;
+  transform: translateX(-12px);
+}
+
+/* --- list / list-row: TransitionGroup choreography --------------------
+ * For keyed v-for collections (list editors, mixer strips, device racks). New
+ * rows lift in, removed rows fade out without collapsing the layout abruptly,
+ * and survivors glide to their new position via the *-move class. Use
+ * <TransitionGroup name="list" .../> for div-based lists; for table bodies pass
+ * tag="tbody" name="list-row" — that variant drops the absolute leave, since a
+ * <tr> cannot be pulled out of flow without collapsing the table layout. */
+.list-enter-active,
+.list-row-enter-active {
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out);
+}
+.list-leave-active {
+  transition:
+    opacity var(--dur-1) var(--ease-out),
+    transform var(--dur-1) var(--ease-out);
+  /* Pull the leaving item out of flow so survivors animate up into its place. */
+  position: absolute;
+}
+.list-row-leave-active {
+  transition:
+    opacity var(--dur-1) var(--ease-out),
+    transform var(--dur-1) var(--ease-out);
+}
+.list-move,
+.list-row-move {
+  transition: transform var(--dur-2) var(--ease-out);
+}
+.list-enter-from,
+.list-row-enter-from {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+.list-leave-to,
+.list-row-leave-to {
+  opacity: 0;
+  transform: translateY(-2px);
+}
+
+/* --- strip: horizontal TransitionGroup (mixer channel strips) ---------
+ * New strips rise and scale in from the bottom; removed strips leave out of
+ * flow (absolute) so the survivors glide left to close the gap via *-move.
+ * The container must be position:relative for the absolute leave to anchor. */
+.strip-enter-active {
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-spring);
+  transform-origin: bottom center;
+}
+.strip-leave-active {
+  transition:
+    opacity var(--dur-1) var(--ease-out),
+    transform var(--dur-1) var(--ease-out);
+  position: absolute;
+  transform-origin: bottom center;
+}
+.strip-move {
+  transition: transform var(--dur-2) var(--ease-out);
+}
+.strip-enter-from {
+  opacity: 0;
+  transform: scale(0.92) translateY(8px);
+}
+.strip-leave-to {
+  opacity: 0;
+  transform: scale(0.92);
+}
+
+/* --- One-shot view entrance -------------------------------------------
+ * Applied to a container so its content fades and rises in whenever it becomes
+ * visible. Because CSS replays a declared animation each time an element returns
+ * from display:none, this animates v-show panel swaps (dock tabs) with no
+ * overlap or layout jank — the hidden panel is display:none and never paints. */
+@keyframes view-enter {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.view-enter {
+  animation: view-enter var(--dur-2) var(--ease-out);
+}
+
+/* --- One-shot pop entrance --------------------------------------------
+ * A spring scale-in for badges, chips and status pills that mount in response
+ * to a state change, so they assert themselves rather than blink into place. */
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.animate-pop {
+  animation: pop-in var(--dur-2) var(--ease-spring);
+}
+
+/* --- Loading shimmer ---------------------------------------------------
+ * A sweeping highlight for skeleton/placeholder surfaces while content loads.
+ * Pauses under reduced motion (the duration token is unrelated, so guard it). */
+@keyframes shimmer {
+  from {
+    background-position: -150% 0;
+  }
+  to {
+    background-position: 250% 0;
+  }
+}
+.shimmer {
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--surface-4) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  animation: shimmer 1.3s var(--ease-out) infinite;
+}
+
+/* --- Soft attention pulse ---------------------------------------------
+ * A gentle opacity breathe for "live"/"pending" affordances that should read as
+ * active without the hard blink reserved for recording. */
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+.pulse-soft {
+  animation: pulse-soft 1.6s var(--ease-out) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shimmer,
+  .pulse-soft {
+    animation: none;
+  }
+}

@@ -74,6 +74,7 @@ const { t } = useI18n();
         {{ t.shell.project.trigger }}
         <TransportIcon class="menu-chevron" name="chevron-down" />
       </button>
+      <Transition name="pop">
       <div
         v-if="projectMenuOpen"
         class="menu-pop"
@@ -151,6 +152,7 @@ const { t } = useI18n();
           {{ t.shell.project.exportDawproject }}
         </button>
       </div>
+      </Transition>
     </div>
     <nav class="menu-bar" :aria-label="t.shell.menus.barLabel">
       <button
@@ -236,6 +238,7 @@ const { t } = useI18n();
         {{ t.shell.layout.trigger }}
         <TransportIcon class="menu-chevron" name="chevron-down" />
       </button>
+      <Transition name="pop">
       <div
         v-if="layoutMenuOpen"
         class="menu-pop"
@@ -256,6 +259,7 @@ const { t } = useI18n();
           {{ t.shell.layout.saveCurrent }}
         </button>
       </div>
+      </Transition>
     </div>
     <div
       :ref="(el) => emit('helpMenuRef', el as HTMLElement | null)"
@@ -272,6 +276,7 @@ const { t } = useI18n();
         {{ t.shell.help.trigger }}
         <TransportIcon class="menu-chevron" name="chevron-down" />
       </button>
+      <Transition name="pop">
       <div v-if="helpMenuOpen" class="menu-pop" role="menu" :aria-label="t.shell.help.menuLabel">
         <button type="button" role="menuitem" @click="emit('openShortcutsHelp')">
           {{ t.shell.help.shortcuts }}
@@ -284,6 +289,7 @@ const { t } = useI18n();
           {{ t.shell.help.about }}
         </button>
       </div>
+      </Transition>
     </div>
     <button
       type="button"

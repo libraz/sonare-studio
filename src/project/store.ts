@@ -9,12 +9,7 @@ import {
   withMidiLearnTargetScope,
 } from '@/ui/midi/midi-learn';
 import type { Project, ProjectMidiEvent } from '@/wasm/index.js';
-import {
-  annotationsFromDocument,
-  DISPLAY_TRANSPOSE_MAX,
-  DISPLAY_TRANSPOSE_MIN,
-  type ScoreAnnotations,
-} from './annotations';
+import { DISPLAY_TRANSPOSE_MAX, DISPLAY_TRANSPOSE_MIN, type ScoreAnnotations } from './annotations';
 import {
   type AutomationLaneState,
   busAutomationTarget,
@@ -27,14 +22,8 @@ import {
   toProjectChordSymbols,
 } from './chords';
 import { cloneInstrument } from './instrument';
-import { cloneCcLanes, isValidChannel, isValidController, sanitizeCcPoints } from './midi-cc';
-import {
-  noteKey,
-  notesToProjectMidiEvents,
-  pairEventsIntoNotes,
-  type RawNote,
-  type SerializedMidiEvent,
-} from './midi-events';
+import { notesToProjectMidiEvents, type RawNote } from './midi-events';
+import { isMidiFxNoop, sanitizeMidiFxConfig } from './midi-fx';
 import {
   cloneMixerState,
   cloneStrip,
@@ -42,12 +31,15 @@ import {
   type ProjectMixerState,
 } from './mixer';
 import type { DocumentClip, ProjectDocument } from './serialization';
+import { applyDocumentClipMetadata, restoreDocumentScoreAnnotations } from './store-load';
 import {
-  type ClipCcLane,
-  type ClipChannelPressureLane,
-  type ClipKind,
-  type ClipPitchBendLane,
-  type ClipPolyPressureLane,
+  buildClipMirror,
+  buildTrackMirror,
+  type NoteIdHints,
+  refreshTempoMeter,
+  type SerializedProjectDoc,
+} from './store-refresh';
+import {
   DEFAULT_SECTION_COLOR,
   type EditorClip,
   type EditorMarker,
@@ -59,7 +51,6 @@ import {
   type TempoSegment,
   type TimeSignatureSegment,
   TRACK_COLOR_PALETTE,
-  type TrackKind,
 } from './types';
 
 type WasmModule = typeof import('@/wasm/index.js');
@@ -178,71 +169,6 @@ export function placeholderSourceAudio(): {
   return { audio: new Float32Array(1), audioChannels: 1, audioSampleRate: DEFAULT_SAMPLE_RATE };
 }
 
-/** Shape of one serialized tempo segment inside the Project JSON document. */
-interface SerializedTempoSegment {
-  start_ppq: number;
-  bpm: number;
-  end_bpm?: number;
-}
-
-/** Shape of one serialized time signature inside the Project JSON document. */
-interface SerializedTimeSignature {
-  start_ppq: number;
-  numerator: number;
-  denominator: number;
-}
-
-/** Shape of one serialized track inside the Project JSON document. */
-interface SerializedTrack {
-  id: number;
-  kind: number;
-  name: string;
-}
-
-/** Shape of one serialized clip fade (the binding nests length and curve). */
-interface SerializedClipFade {
-  length_ppq?: number;
-  curve?: number;
-}
-
-/** Shape of one serialized clip inside the Project JSON document. */
-interface SerializedClip {
-  id: number;
-  track_id: number;
-  start_ppq: number;
-  length_ppq: number;
-  source_offset_ppq: number;
-  gain: number;
-  loop_mode: number;
-  loop_length_ppq: number;
-  /** Flat fade lengths (older bindings); omitted when not serialized. */
-  fade_in_ppq?: number;
-  fade_out_ppq?: number;
-  /** Nested fade objects (current binding); omitted when not serialized. */
-  fade_in?: SerializedClipFade;
-  fade_out?: SerializedClipFade;
-}
-
-/** Reads a clip fade length from either serialized form, or null. */
-function serializedFadePpq(
-  flat: number | undefined,
-  nested: SerializedClipFade | undefined,
-): number | null {
-  if (typeof flat === 'number') return flat;
-  if (nested && typeof nested.length_ppq === 'number') return nested.length_ppq;
-  return null;
-}
-
-/** Minimal slice of the Project JSON document this store reads. */
-interface SerializedProjectDoc {
-  midi_content?: Record<string, unknown>;
-  tempo_segments?: SerializedTempoSegment[];
-  time_signatures?: SerializedTimeSignature[];
-  tracks?: SerializedTrack[];
-  clips?: SerializedClip[];
-  annotation?: { chords?: unknown };
-}
-
 /**
  * Expands editor notes into a sorted flat event list for setMidiEvents.
  * Note-offs sort before note-ons at the same PPQ so a repeated pitch releases
@@ -255,37 +181,8 @@ export function notesToProjectEvents(notes: ReadonlyArray<RawNote>): ProjectMidi
   return notesToProjectMidiEvents(notes, getWasmModule());
 }
 
-/** Maps a serialized track-kind ordinal to the string form. */
-function trackKindFromOrdinal(kind: number): TrackKind {
-  if (kind === 0) return 'audio';
-  if (kind === 2) return 'aux';
-  return 'midi';
-}
-
 /** Per-clip note id hints accepted by {@link useProjectStore refresh}. */
-export type NoteIdHints =
-  | ReadonlyArray<EditorNote>
-  | ReadonlyMap<number, ReadonlyArray<EditorNote>>;
-
-/**
- * Re-associates editor ids onto raw notes by exact content key against the
- * given hints. Notes with no matching hint receive fresh ids.
- */
-function assignNoteIds(raw: RawNote[], hints: ReadonlyArray<EditorNote>): EditorNote[] {
-  const pool = new Map<string, EditorNote[]>();
-  for (const hint of hints) {
-    const key = noteKey(hint);
-    const bucket = pool.get(key) ?? [];
-    bucket.push(hint);
-    pool.set(key, bucket);
-  }
-  return raw.map((candidate) => {
-    const match = pool.get(noteKey(candidate))?.shift();
-    // Prefer the hint's exact field values: durations recovered from the
-    // Project are subject to floating-point noise (offPpq - startPpq).
-    return match ? { ...match } : { id: nextNoteId++, ...candidate };
-  });
-}
+export type { NoteIdHints };
 
 /**
  * Pinia store mirroring the wasm Project for the arrangement and the
@@ -402,21 +299,6 @@ export const useProjectStore = defineStore('project', () => {
     return map;
   });
 
-  /** Builds a default track mirror entry for a track first seen in the Project. */
-  function defaultTrackMirror(serialized: SerializedTrack, index: number): EditorTrack {
-    return {
-      id: serialized.id,
-      name: serialized.name ?? `Track ${index + 1}`,
-      color: TRACK_COLOR_PALETTE[index % TRACK_COLOR_PALETTE.length],
-      kind: trackKindFromOrdinal(serialized.kind),
-      mute: false,
-      solo: false,
-      volume: 1,
-      pan: 0,
-      order: index,
-    };
-  }
-
   /**
    * Re-reads the mirror from the Project (the source of truth).
    *
@@ -440,20 +322,10 @@ export const useProjectStore = defineStore('project', () => {
     const doc = JSON.parse(project.toJson()) as SerializedProjectDoc;
 
     // Tempo and meter mirrors.
-    const tempoDoc = Array.isArray(doc.tempo_segments) ? doc.tempo_segments : [];
-    tempoSegments.value = tempoDoc.map((s) => {
-      const segment: TempoSegment = { startPpq: s.start_ppq, bpm: s.bpm };
-      if (typeof s.end_bpm === 'number' && s.end_bpm > 0) segment.endBpm = s.end_bpm;
-      return segment;
-    });
-    const bpm = tempoDoc[0]?.bpm;
-    if (typeof bpm === 'number' && Number.isFinite(bpm) && bpm > 0) tempoBpm.value = bpm;
-    const meterDoc = Array.isArray(doc.time_signatures) ? doc.time_signatures : [];
-    timeSignatures.value = meterDoc.map((s) => ({
-      startPpq: s.start_ppq,
-      numerator: s.numerator,
-      denominator: s.denominator,
-    }));
+    const tempoMeter = refreshTempoMeter(doc);
+    tempoSegments.value = tempoMeter.tempoSegments;
+    if (tempoMeter.tempoBpm !== null) tempoBpm.value = tempoMeter.tempoBpm;
+    timeSignatures.value = tempoMeter.timeSignatures;
 
     // Chord-track mirror: read back the Project's annotation stream (the chord
     // commands write it through annotateChords, so it round-trips here).
@@ -461,121 +333,18 @@ export const useProjectStore = defineStore('project', () => {
 
     // Track mirror: structure from the Project, app fields + order from the
     // current mirror; tracks first seen in the Project are appended.
-    const docTracks = Array.isArray(doc.tracks) ? doc.tracks : [];
-    const docTrackById = new Map(docTracks.map((t) => [t.id, t]));
-    const knownIds = new Set(tracks.value.map((t) => t.id));
-    const nextTracks: EditorTrack[] = [];
-    for (const previous of tracks.value) {
-      const serialized = docTrackById.get(previous.id);
-      if (!serialized) continue;
-      // Group tracks live as aux tracks in the Project; the app-level 'group'
-      // kind survives refresh as long as the Project still reports aux.
-      const projectKind = trackKindFromOrdinal(serialized.kind);
-      nextTracks.push({
-        ...previous,
-        name: serialized.name ?? previous.name,
-        kind: previous.kind === 'group' && projectKind === 'aux' ? 'group' : projectKind,
-      });
-    }
-    for (const serialized of docTracks) {
-      if (!knownIds.has(serialized.id)) {
-        nextTracks.push(defaultTrackMirror(serialized, nextTracks.length));
-      }
-    }
-    nextTracks.forEach((track, index) => {
-      track.order = index;
-    });
+    const { tracks: nextTracks, trackOrder } = buildTrackMirror(doc, tracks.value);
     tracks.value = nextTracks;
-    const trackOrder = new Map(nextTracks.map((track, index) => [track.id, index]));
 
     // Clip mirror: structure from the Project, names from the current mirror,
     // notes recovered per clip with id hints.
-    const hintMap = idHints instanceof Map ? idHints : null;
-    const activeHints = Array.isArray(idHints) ? idHints : null;
-    const previousClipById = new Map(clips.value.map((clip) => [clip.id, clip]));
-    const docClips = Array.isArray(doc.clips) ? doc.clips : [];
-    const nextClips: EditorClip[] = docClips
-      .filter((serialized) => trackOrder.has(serialized.track_id))
-      .map((serialized) => {
-        const previous = previousClipById.get(serialized.id);
-        const stored = doc.midi_content?.[String(serialized.id)];
-        const events = Array.isArray(stored) ? (stored as SerializedMidiEvent[]) : [];
-        const hints =
-          hintMap?.get(serialized.id) ??
-          (activeHints && serialized.id === clipId.value ? activeHints : null) ??
-          previous?.notes ??
-          [];
-        const entry: EditorClip = {
-          id: serialized.id,
-          trackId: serialized.track_id,
-          name: previous?.name ?? `Clip ${serialized.id}`,
-          startPpq: serialized.start_ppq,
-          lengthPpq: serialized.length_ppq,
-          sourceOffsetPpq: serialized.source_offset_ppq ?? 0,
-          gain: serialized.gain ?? 1,
-          loopEnabled: serialized.loop_mode === 1,
-          loopLengthPpq: serialized.loop_length_ppq ?? 0,
-          notes: assignNoteIds(pairEventsIntoNotes(events), hints),
-        };
-        // Clip kind and asset reference are app-level mirror metadata (the
-        // Project document does not expose them); fade lengths prefer the
-        // serialized values when the binding reports them.
-        if (previous?.kind !== undefined) entry.kind = previous.kind;
-        if (previous?.assetId !== undefined) entry.assetId = previous.assetId;
-        if (previous?.takes !== undefined) {
-          entry.takes = previous.takes.map((take) => ({ ...take }));
-          if (previous.compSegments !== undefined) {
-            entry.compSegments = previous.compSegments.map((segment) => ({ ...segment }));
-          }
-        }
-        if (previous?.warp !== undefined) {
-          entry.warp = {
-            ...previous.warp,
-            ...(previous.warp.anchors !== undefined
-              ? { anchors: previous.warp.anchors.map((anchor) => ({ ...anchor })) }
-              : {}),
-          };
-        }
-        // CC lanes are app-level metadata, carried forward across refreshes.
-        const ccLanes = cloneCcLanes(previous?.ccLanes);
-        if (ccLanes !== undefined) entry.ccLanes = ccLanes;
-        if (previous?.pitchBendLanes !== undefined && previous.pitchBendLanes.length > 0) {
-          entry.pitchBendLanes = previous.pitchBendLanes.map((lane) => ({
-            channel: lane.channel,
-            points: lane.points.map((point) => ({ ...point })),
-          }));
-        }
-        if (
-          previous?.channelPressureLanes !== undefined &&
-          previous.channelPressureLanes.length > 0
-        ) {
-          entry.channelPressureLanes = previous.channelPressureLanes.map((lane) => ({
-            channel: lane.channel,
-            points: lane.points.map((point) => ({ ...point })),
-          }));
-        }
-        if (previous?.polyPressureLanes !== undefined && previous.polyPressureLanes.length > 0) {
-          entry.polyPressureLanes = previous.polyPressureLanes.map((lane) => ({
-            channel: lane.channel,
-            pitch: lane.pitch,
-            points: lane.points.map((point) => ({ ...point })),
-          }));
-        }
-        const fadeIn =
-          serializedFadePpq(serialized.fade_in_ppq, serialized.fade_in) ?? previous?.fadeInPpq ?? 0;
-        if (fadeIn > 0) entry.fadeInPpq = fadeIn;
-        const fadeOut =
-          serializedFadePpq(serialized.fade_out_ppq, serialized.fade_out) ??
-          previous?.fadeOutPpq ??
-          0;
-        if (fadeOut > 0) entry.fadeOutPpq = fadeOut;
-        return entry;
-      });
-    nextClips.sort(
-      (a, b) =>
-        (trackOrder.get(a.trackId) ?? 0) - (trackOrder.get(b.trackId) ?? 0) ||
-        a.startPpq - b.startPpq ||
-        a.id - b.id,
+    const nextClips = buildClipMirror(
+      doc,
+      clips.value,
+      trackOrder,
+      clipId.value,
+      idHints,
+      allocateNoteId,
     );
     clips.value = nextClips;
 
@@ -713,6 +482,12 @@ export const useProjectStore = defineStore('project', () => {
         // version 3; older documents simply have neither (defaults apply).
         if (track.instrument !== undefined)
           mirrorEntry.instrument = cloneInstrument(track.instrument);
+        // Restore the live MIDI-FX transform; drop a no-op so an identity entry
+        // never lingers in the mirror or re-serializes.
+        if (track.midiFx !== undefined) {
+          const midiFx = sanitizeMidiFxConfig(track.midiFx);
+          if (!isMidiFxNoop(midiFx)) mirrorEntry.midiFx = midiFx;
+        }
         if (track.soloSafe === true) mirrorEntry.soloSafe = true;
         // Restore the VCA assignment only when the referenced group survives in
         // the document mixer, so dangling ids never leak into the session.
@@ -907,174 +682,10 @@ export const useProjectStore = defineStore('project', () => {
       refresh();
       // Clip names, kinds and asset references are app metadata: apply them
       // after refresh built the clip mirror from the Project.
-      clips.value = clips.value.map((clip) => {
-        const meta = clipMeta.get(clip.id);
-        if (!meta) return clip;
-        const next: EditorClip = { ...clip, name: meta.name };
-        const kind: ClipKind = meta.kind === 'audio' ? 'audio' : 'midi';
-        if (kind === 'audio') {
-          next.kind = 'audio';
-          if (meta.assetId !== undefined) next.assetId = meta.assetId;
-          if ((meta.fadeInPpq ?? 0) > 0) next.fadeInPpq = meta.fadeInPpq as number;
-          if ((meta.fadeOutPpq ?? 0) > 0) next.fadeOutPpq = meta.fadeOutPpq as number;
-          // Takes/comping are document metadata; malformed selections are
-          // re-sanitized on expansion (src/project/comping.ts).
-          if (Array.isArray(meta.takes) && meta.takes.length > 0) {
-            next.takes = meta.takes
-              .filter((take) => typeof take?.assetId === 'string' && take.assetId.length > 0)
-              .map((take) => ({ assetId: take.assetId, name: String(take.name ?? '') }));
-            if (next.takes.length === 0) {
-              delete next.takes;
-            } else if (Array.isArray(meta.compSegments) && meta.compSegments.length > 0) {
-              next.compSegments = meta.compSegments.map((segment) => ({
-                startPpq: Number(segment.startPpq),
-                takeIndex: Number(segment.takeIndex),
-              }));
-            }
-          }
-          if (
-            meta.warp !== undefined &&
-            typeof meta.warp.enabled === 'boolean' &&
-            Number.isFinite(meta.warp.sourceBpm) &&
-            meta.warp.sourceBpm > 0
-          ) {
-            next.warp = {
-              enabled: meta.warp.enabled,
-              sourceBpm: meta.warp.sourceBpm,
-              ...(Array.isArray(meta.warp.anchors) && meta.warp.anchors.length > 0
-                ? {
-                    anchors: meta.warp.anchors.map((anchor) => ({
-                      ppq: Number(anchor.ppq),
-                      sourceSeconds: Number(anchor.sourceSeconds),
-                    })),
-                  }
-                : {}),
-            };
-          }
-        }
-        // CC lanes are MIDI-clip metadata; hydrate and re-sanitize them against
-        // the clip window (malformed lanes/points drop out).
-        if (kind === 'midi' && Array.isArray(meta.ccLanes) && meta.ccLanes.length > 0) {
-          const lanes: ClipCcLane[] = [];
-          for (const lane of meta.ccLanes) {
-            if (!isValidController(lane.controller) || !isValidChannel(lane.channel)) continue;
-            const points = sanitizeCcPoints(
-              Array.isArray(lane.points) ? lane.points : [],
-              clip.lengthPpq,
-            );
-            if (points.length > 0) {
-              lanes.push({ controller: lane.controller, channel: lane.channel, points });
-            }
-          }
-          if (lanes.length > 0) {
-            lanes.sort((a, b) => a.controller - b.controller);
-            next.ccLanes = lanes;
-          }
-        }
-        if (
-          kind === 'midi' &&
-          Array.isArray(meta.pitchBendLanes) &&
-          meta.pitchBendLanes.length > 0
-        ) {
-          const lanes: ClipPitchBendLane[] = [];
-          for (const lane of meta.pitchBendLanes) {
-            if (!isValidChannel(lane.channel)) continue;
-            const points = (Array.isArray(lane.points) ? lane.points : [])
-              .map((point) => ({
-                ppq: Number(point.ppq),
-                value: Math.round(Number(point.value)),
-              }))
-              .filter(
-                (point) =>
-                  Number.isFinite(point.ppq) &&
-                  point.ppq >= 0 &&
-                  point.ppq <= clip.lengthPpq &&
-                  Number.isInteger(point.value) &&
-                  point.value >= 0 &&
-                  point.value <= 16383,
-              )
-              .sort((a, b) => a.ppq - b.ppq);
-            if (points.length > 0) lanes.push({ channel: lane.channel, points });
-          }
-          if (lanes.length > 0) {
-            lanes.sort((a, b) => a.channel - b.channel);
-            next.pitchBendLanes = lanes;
-          }
-        }
-        if (
-          kind === 'midi' &&
-          Array.isArray(meta.channelPressureLanes) &&
-          meta.channelPressureLanes.length > 0
-        ) {
-          const lanes: ClipChannelPressureLane[] = [];
-          for (const lane of meta.channelPressureLanes) {
-            if (!isValidChannel(lane.channel)) continue;
-            const points = (Array.isArray(lane.points) ? lane.points : [])
-              .map((point) => ({
-                ppq: Number(point.ppq),
-                value: Math.round(Number(point.value)),
-              }))
-              .filter(
-                (point) =>
-                  Number.isFinite(point.ppq) &&
-                  point.ppq >= 0 &&
-                  point.ppq <= clip.lengthPpq &&
-                  Number.isInteger(point.value) &&
-                  point.value >= 0 &&
-                  point.value <= 127,
-              )
-              .sort((a, b) => a.ppq - b.ppq);
-            if (points.length > 0) lanes.push({ channel: lane.channel, points });
-          }
-          if (lanes.length > 0) {
-            lanes.sort((a, b) => a.channel - b.channel);
-            next.channelPressureLanes = lanes;
-          }
-        }
-        if (
-          kind === 'midi' &&
-          Array.isArray(meta.polyPressureLanes) &&
-          meta.polyPressureLanes.length > 0
-        ) {
-          const lanes: ClipPolyPressureLane[] = [];
-          for (const lane of meta.polyPressureLanes) {
-            if (!isValidChannel(lane.channel)) continue;
-            const pitch = Math.round(Number(lane.pitch));
-            if (!Number.isInteger(pitch) || pitch < 0 || pitch > 127) continue;
-            const points = (Array.isArray(lane.points) ? lane.points : [])
-              .map((point) => ({
-                ppq: Number(point.ppq),
-                value: Math.round(Number(point.value)),
-              }))
-              .filter(
-                (point) =>
-                  Number.isFinite(point.ppq) &&
-                  point.ppq >= 0 &&
-                  point.ppq <= clip.lengthPpq &&
-                  Number.isInteger(point.value) &&
-                  point.value >= 0 &&
-                  point.value <= 127,
-              )
-              .sort((a, b) => a.ppq - b.ppq);
-            if (points.length > 0) lanes.push({ channel: lane.channel, pitch, points });
-          }
-          if (lanes.length > 0) {
-            lanes.sort((a, b) => a.channel - b.channel || a.pitch - b.pitch);
-            next.polyPressureLanes = lanes;
-          }
-        }
-        return next;
-      });
+      clips.value = applyDocumentClipMetadata(clips.value, clipMeta);
       // Score annotations are content-addressed in the document; re-associate
       // them onto the freshly assigned editor note ids per clip.
-      const nextAnnotations: ScoreAnnotations = {};
-      for (const clip of clips.value) {
-        const meta = clipMeta.get(clip.id);
-        if (!meta?.scoreAnnotations || meta.scoreAnnotations.length === 0) continue;
-        const byNote = annotationsFromDocument(meta.scoreAnnotations, clip.notes);
-        if (Object.keys(byNote).length > 0) nextAnnotations[clip.id] = byNote;
-      }
-      scoreAnnotations.value = nextAnnotations;
+      scoreAnnotations.value = restoreDocumentScoreAnnotations(clips.value, clipMeta);
       const transpose = doc.score?.displayTransposeSemitones ?? 0;
       displayTransposeSemitones.value =
         Number.isInteger(transpose) &&

@@ -1,74 +1,42 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, onBeforeUnmount } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { promptDialog } from '@/composables/useDialogs';
 import type { AnalyserBridge } from '@/engine/analyser';
 import type { MeterSource } from '@/engine/meters';
-import { linearToDb } from '@/engine/mixer-sync';
 import type { ScopeSource } from '@/engine/scope';
-import type { AutomationParam } from '@/project/automation';
-import { evaluateAutomationValue } from '@/project/automation';
 import {
   addVcaGroup,
   renameTrack,
   setActiveTrack,
-  setAutomationLanePoints,
-  setStripChannelDelaySamples,
-  setStripDualPan,
   setStripGain,
-  setStripInputTrim,
   setStripOutputBus,
   setStripPan,
-  setStripPanLaw,
-  setStripPanMode,
-  setStripPolarityInvert,
-  setStripWidth,
   setTrackMute,
   setTrackSolo,
   setTrackSoloSafe,
   setTrackVca,
 } from '@/project/commands';
-import {
-  createDefaultStrip,
-  DEFAULT_PAN_LAW,
-  DEFAULT_PAN_MODE,
-  DEFAULT_STRIP_WIDTH,
-  MAX_CHANNEL_DELAY_SAMPLES,
-  MAX_INPUT_TRIM_DB,
-  MAX_STRIP_WIDTH,
-  MAX_VCA_GROUPS,
-  MIN_INPUT_TRIM_DB,
-  MIN_STRIP_WIDTH,
-  type MixerStrip,
-  PAN_LAW_IDS,
-  PAN_MODE_IDS,
-  type PanLawId,
-  type PanModeId,
-} from '@/project/mixer';
+import { createDefaultStrip, MAX_VCA_GROUPS, type MixerStrip } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
-import {
-  type AutomationWriteGesture,
-  type AutomationWriteMode,
-  automationStripMode,
-  createAutomationWriteGesture,
-  isAutomationWriteMode,
-  toggleAutomationStripMode,
-} from '@/ui/mixer/automation-mode';
-import { FADER_MAX_DB, FADER_MIN_DB, formatDb, formatPan } from '@/ui/mixer/db-scale';
-import { gainGesture, panGesture, type ValueGesture } from '@/ui/mixer/strip-gestures';
+import { formatDb, formatPan } from '@/ui/mixer/db-scale';
+import { useStripAutomation } from '@/ui/mixer/use-strip-automation';
+import { useStripGestures } from '@/ui/mixer/use-strip-gestures';
 import InsertRack from './InsertRack.vue';
 import MasterMeterReadout from './MasterMeterReadout.vue';
 import MixerFader from './MixerFader.vue';
 import MixerKnob from './MixerKnob.vue';
 import SpectrumAnalyzer from './SpectrumAnalyzer.vue';
 import StereoGoniometer from './StereoGoniometer.vue';
+import StripAutomationControls from './StripAutomationControls.vue';
 import StripEqSection from './StripEqSection.vue';
 import StripGrMeter from './StripGrMeter.vue';
 import StripMeter from './StripMeter.vue';
+import StripOptionsPopover from './StripOptionsPopover.vue';
 import StripSends from './StripSends.vue';
 
 /**
@@ -264,256 +232,34 @@ function onContextMenu(event: MouseEvent): void {
   openContextMenu(event.clientX, event.clientY, items);
 }
 
-// --- Automation R/W mode --------------------------------------------------------
+// --- Automation follow + fader / pan gestures ---------------------------------
 
-const autoMode = computed(() => automationStripMode(props.target));
-
-/** Finds this strip's lane for a parameter (undefined when absent). */
-function laneFor(param: AutomationParam) {
-  return store.automationLanes.find((lane) => lane.target === props.target && lane.param === param);
-}
-
-const faderLane = computed(() => laneFor('faderDb'));
-const panLane = computed(() => laneFor('pan'));
-
-/**
- * dB offset between the strip fader domain and the engine lane fader domain
- * (the engine lane fader is linearToDb(track.volume) + strip.gainDb; the
- * master strip has no track volume term).
- */
-const laneOffsetDb = computed(() => (isMaster.value ? 0 : linearToDb(track.value?.volume ?? 1)));
-
-/** True when the fader display follows the lane (read mode, usable lane). */
-const followsFader = computed(
-  () =>
-    autoMode.value === 'read' &&
-    faderLane.value !== undefined &&
-    faderLane.value.enabled &&
-    faderLane.value.points.length > 0,
-);
-
-/** True when the pan display follows the lane (read mode, usable lane). */
-const followsPan = computed(
-  () =>
-    autoMode.value === 'read' &&
-    panLane.value !== undefined &&
-    panLane.value.enabled &&
-    panLane.value.points.length > 0,
-);
-
-/** Live drag value during a write-mode gesture (display only), or null. */
-const writeGainDb = ref<number | null>(null);
-const writePan = ref<number | null>(null);
-
-/** Fader value shown on the throw: write drag > lane follow > strip state. */
-const displayedGainDb = computed(() => {
-  if (writeGainDb.value !== null) return writeGainDb.value;
-  const lane = faderLane.value;
-  if (followsFader.value && lane) {
-    const db =
-      evaluateAutomationValue(lane.points, props.positionPpq?.() ?? 0) - laneOffsetDb.value;
-    return Math.min(FADER_MAX_DB, Math.max(FADER_MIN_DB, db));
-  }
-  return strip.value.gainDb;
+const automation = useStripAutomation({
+  target: () => props.target,
+  isMaster,
+  track,
+  strip,
+  positionPpq: () => props.positionPpq?.() ?? 0,
+  isPlaying: () => props.isPlaying,
 });
 
-/** Pan value shown on the knob: write drag > lane follow > strip state. */
-const displayedPan = computed(() => {
-  if (writePan.value !== null) return writePan.value;
-  const lane = panLane.value;
-  if (followsPan.value && lane) {
-    return Math.min(
-      1,
-      Math.max(-1, evaluateAutomationValue(lane.points, props.positionPpq?.() ?? 0)),
-    );
-  }
-  return strip.value.pan;
+const { followsFader, followsPan, displayedGainDb, displayedPan } = automation;
+
+const gestures = useStripGestures({
+  target: () => props.target,
+  strip,
+  automation,
 });
 
-let writeFaderGesture: AutomationWriteGesture | null = null;
-let writePanGesture: AutomationWriteGesture | null = null;
-
-/** Starts a touch-record gesture committing into one of this strip's lanes. */
-function beginWriteGesture(
-  param: AutomationParam,
-  mode: AutomationWriteMode,
-): AutomationWriteGesture {
-  return createAutomationWriteGesture({
-    mode,
-    existingPoints: laneFor(param)?.points ?? [],
-    positionPpq: () => props.positionPpq?.() ?? 0,
-    isPlaying: () => props.isPlaying,
-    commit: (points) => setAutomationLanePoints(props.target, param, points),
-  });
-}
-
-// --- Fader / pan gestures -----------------------------------------------------
-
-let activeGainGesture: ValueGesture | null = null;
-let activePanGesture: ValueGesture | null = null;
-
-function onGainChange(db: number, commit: boolean): void {
-  if (isAutomationWriteMode(autoMode.value)) {
-    // Touch recording: the drag writes lane breakpoints (in the engine lane
-    // dB domain) instead of the manual strip command, which a lane overrides.
-    if (!writeFaderGesture) writeFaderGesture = beginWriteGesture('faderDb', autoMode.value);
-    writeFaderGesture.update(laneOffsetDb.value + db);
-    writeGainDb.value = db;
-    if (commit) {
-      writeFaderGesture.end();
-      writeFaderGesture = null;
-      writeGainDb.value = null;
-    }
-    return;
-  }
-  if (!commit) {
-    if (!activeGainGesture) activeGainGesture = gainGesture(props.target, strip.value.gainDb);
-    activeGainGesture.update(db);
-    return;
-  }
-  if (activeGainGesture) activeGainGesture.end(db);
-  else gainGesture(props.target, strip.value.gainDb).end(db);
-  activeGainGesture = null;
-}
-
-function onPanChange(pan: number, commit: boolean): void {
-  if (isAutomationWriteMode(autoMode.value)) {
-    if (!writePanGesture) writePanGesture = beginWriteGesture('pan', autoMode.value);
-    writePanGesture.update(pan);
-    writePan.value = pan;
-    if (commit) {
-      writePanGesture.end();
-      writePanGesture = null;
-      writePan.value = null;
-    }
-    return;
-  }
-  if (!commit) {
-    if (!activePanGesture) activePanGesture = panGesture(props.target, strip.value.pan);
-    activePanGesture.update(pan);
-    return;
-  }
-  if (activePanGesture) activePanGesture.end(pan);
-  else panGesture(props.target, strip.value.pan).end(pan);
-  activePanGesture = null;
-}
-
-// --- Strip options popover (trim, width, polarity, pan-law shaping) -----------
+const { onGainChange, onPanChange } = gestures;
 
 /** Strip-local DSP options are available on track and master strips, not groups. */
 const canStripOptions = computed(() => !isGroup.value);
-/** Panner detail controls are track-lane features (not master/group strips). */
-const canTrackPannerOptions = computed(() => typeof props.target === 'number' && !isGroup.value);
-const optionsOpen = ref(false);
-const optionsMenu = ref<HTMLDivElement | null>(null);
-
-/** Current pre-insert trim in dB (0 when unset). */
-const inputTrimDb = computed(() => strip.value.inputTrimDb ?? 0);
-/** Current stereo width multiplier (1 when unset). */
-const stripWidth = computed(() => strip.value.width ?? DEFAULT_STRIP_WIDTH);
-const polarityLeft = computed(() => strip.value.polarityInvertLeft === true);
-const polarityRight = computed(() => strip.value.polarityInvertRight === true);
-/** Current channel alignment delay in samples (0 when unset). */
-const channelDelaySamples = computed(() => strip.value.channelDelaySamples ?? 0);
-
-/** Current pan law (default when unset). */
-const panLaw = computed<PanLawId>(() => strip.value.panLaw ?? DEFAULT_PAN_LAW);
-/** Current pan mode (default when unset). */
-const panMode = computed<PanModeId>(() => strip.value.panMode ?? DEFAULT_PAN_MODE);
-/** Left/right pan positions for dual-pan mode (default to the strip pan). */
-const dualPanLeft = computed(() => strip.value.dualPan?.left ?? strip.value.pan);
-const dualPanRight = computed(() => strip.value.dualPan?.right ?? strip.value.pan);
-
-/** Pan law options for the selector (labels from i18n, value = PanLawId). */
-const panLawOptions = computed(() =>
-  PAN_LAW_IDS.map((id) => ({ value: id, label: t.value.shell.mixer.strip.panLaws[id] })),
-);
-/** Pan mode options for the selector (labels from i18n, value = PanModeId). */
-const panModeOptions = computed(() =>
-  PAN_MODE_IDS.map((id) => ({ value: id, label: t.value.shell.mixer.strip.panModes[id] })),
-);
-
-/** True when any strip-panner option deviates from neutral. */
-const hasStripOptions = computed(
-  () =>
-    inputTrimDb.value !== 0 ||
-    stripWidth.value !== DEFAULT_STRIP_WIDTH ||
-    polarityLeft.value ||
-    polarityRight.value ||
-    channelDelaySamples.value > 0 ||
-    panLaw.value !== DEFAULT_PAN_LAW ||
-    panMode.value !== DEFAULT_PAN_MODE ||
-    strip.value.dualPan !== undefined,
-);
-
-function onInputTrimInput(event: Event, commit: boolean): void {
-  const raw = Number.parseFloat((event.target as HTMLInputElement).value);
-  const value = Number.isFinite(raw)
-    ? Math.min(MAX_INPUT_TRIM_DB, Math.max(MIN_INPUT_TRIM_DB, raw))
-    : 0;
-  setStripInputTrim(props.target, value, { commit });
-}
-
-function onWidthInput(event: Event, commit: boolean): void {
-  const raw = Number.parseFloat((event.target as HTMLInputElement).value);
-  const value = Number.isFinite(raw)
-    ? Math.min(MAX_STRIP_WIDTH, Math.max(MIN_STRIP_WIDTH, raw))
-    : DEFAULT_STRIP_WIDTH;
-  setStripWidth(props.target, value, { commit });
-}
-
-function onPolarityToggle(channel: 'left' | 'right'): void {
-  const left = channel === 'left' ? !polarityLeft.value : polarityLeft.value;
-  const right = channel === 'right' ? !polarityRight.value : polarityRight.value;
-  setStripPolarityInvert(props.target, left, right);
-}
-
-function onChannelDelayInput(event: Event): void {
-  if (typeof props.target !== 'number') return;
-  const raw = Number.parseInt((event.target as HTMLInputElement).value, 10);
-  const samples = Number.isFinite(raw) ? Math.min(MAX_CHANNEL_DELAY_SAMPLES, Math.max(0, raw)) : 0;
-  setStripChannelDelaySamples(props.target, samples);
-}
-
-function onPanLawChange(value: string): void {
-  if (typeof props.target !== 'number') return;
-  setStripPanLaw(props.target, value as PanLawId);
-}
-
-function onPanModeChange(value: string): void {
-  if (typeof props.target !== 'number') return;
-  setStripPanMode(props.target, value as PanModeId);
-}
-
-/** Commits a dual-pan slider edit, keeping the unchanged channel as-is. */
-function onDualPanInput(channel: 'left' | 'right', event: Event): void {
-  if (typeof props.target !== 'number') return;
-  const raw = Number.parseFloat((event.target as HTMLInputElement).value);
-  const value = Number.isFinite(raw) ? Math.min(1, Math.max(-1, raw)) : 0;
-  const left = channel === 'left' ? value : dualPanLeft.value;
-  const right = channel === 'right' ? value : dualPanRight.value;
-  setStripDualPan(props.target, left, right);
-}
-
-function onOptionsPointerDown(event: PointerEvent): void {
-  if (!(event.target instanceof Node) || !optionsMenu.value?.contains(event.target)) {
-    optionsOpen.value = false;
-  }
-}
-
-watch(optionsOpen, (open) => {
-  if (open) document.addEventListener('pointerdown', onOptionsPointerDown, true);
-  else document.removeEventListener('pointerdown', onOptionsPointerDown, true);
-});
 
 onBeforeUnmount(() => {
-  // Close any in-flight gesture so the pending history entry is committed.
-  activeGainGesture?.cancel();
-  activePanGesture?.cancel();
-  // Commit any in-flight touch recording so its points are not lost.
-  writeFaderGesture?.end();
-  writePanGesture?.end();
-  document.removeEventListener('pointerdown', onOptionsPointerDown, true);
+  // Close any in-flight gesture so the pending history entry is committed and
+  // any in-flight touch recording keeps its points.
+  gestures.cleanup();
 });
 </script>
 
@@ -545,41 +291,7 @@ onBeforeUnmount(() => {
       </span>
     </button>
 
-    <div v-if="!isGroup" class="strip-auto">
-      <button
-        type="button"
-        class="toggle strip-auto-r"
-        :class="{ on: autoMode === 'read' }"
-        :title="t.shell.mixer.strip.automationReadTitle"
-        :aria-label="formatMessage(t.shell.mixer.strip.automationRead, { name })"
-        :aria-pressed="autoMode === 'read'"
-        @click="toggleAutomationStripMode(props.target, 'read')"
-      >
-        R
-      </button>
-      <button
-        type="button"
-        class="toggle strip-auto-t"
-        :class="{ on: autoMode === 'touch' }"
-        :title="t.shell.mixer.strip.automationTouchTitle"
-        :aria-label="formatMessage(t.shell.mixer.strip.automationTouch, { name })"
-        :aria-pressed="autoMode === 'touch'"
-        @click="toggleAutomationStripMode(props.target, 'touch')"
-      >
-        T
-      </button>
-      <button
-        type="button"
-        class="toggle strip-auto-l"
-        :class="{ on: autoMode === 'latch' }"
-        :title="t.shell.mixer.strip.automationLatchTitle"
-        :aria-label="formatMessage(t.shell.mixer.strip.automationLatch, { name })"
-        :aria-pressed="autoMode === 'latch'"
-        @click="toggleAutomationStripMode(props.target, 'latch')"
-      >
-        L
-      </button>
-    </div>
+    <StripAutomationControls v-if="!isGroup" :target="props.target" :name="name" />
 
     <div class="strip-section">
       <InsertRack :target="props.target" />
@@ -619,154 +331,7 @@ onBeforeUnmount(() => {
           :disabled="followsPan"
           @change="onPanChange"
         />
-        <div v-if="canStripOptions" ref="optionsMenu" class="strip-options">
-          <button
-            type="button"
-            class="strip-options-btn"
-            :class="{ on: hasStripOptions }"
-            :title="t.shell.mixer.strip.options"
-            :aria-label="formatMessage(t.shell.mixer.strip.optionsNamed, { name })"
-            aria-haspopup="menu"
-            :aria-expanded="optionsOpen"
-            @click="optionsOpen = !optionsOpen"
-          >
-            <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor"
-              stroke-width="1.3" aria-hidden="true">
-              <circle cx="8" cy="8" r="2.1" />
-              <path d="M8 1.4v2M8 12.6v2M1.4 8h2M12.6 8h2M3.3 3.3l1.4 1.4M11.3 11.3l1.4 1.4M12.7 3.3l-1.4 1.4M4.7 11.3l-1.4 1.4" />
-            </svg>
-          </button>
-          <div v-if="optionsOpen" class="strip-options-popover" role="menu">
-            <label class="strip-options-row">
-              <span class="strip-options-label">{{ t.shell.mixer.strip.inputTrim }}</span>
-              <span class="strip-options-field">
-                <input
-                  type="range"
-                  :min="MIN_INPUT_TRIM_DB"
-                  :max="MAX_INPUT_TRIM_DB"
-                  step="0.5"
-                  :value="inputTrimDb"
-                  :aria-label="t.shell.mixer.strip.inputTrim"
-                  @input="onInputTrimInput($event, false)"
-                  @change="onInputTrimInput($event, true)"
-                />
-                <span class="strip-options-unit">{{ formatDb(inputTrimDb) }}</span>
-              </span>
-            </label>
-            <label class="strip-options-row">
-              <span class="strip-options-label">{{ t.shell.mixer.strip.width }}</span>
-              <span class="strip-options-field">
-                <input
-                  type="range"
-                  :min="MIN_STRIP_WIDTH"
-                  :max="MAX_STRIP_WIDTH"
-                  step="0.01"
-                  :value="stripWidth"
-                  :aria-label="t.shell.mixer.strip.width"
-                  @input="onWidthInput($event, false)"
-                  @change="onWidthInput($event, true)"
-                />
-                <span class="strip-options-unit">{{ stripWidth.toFixed(2) }}</span>
-              </span>
-            </label>
-            <div class="strip-options-row">
-              <span class="strip-options-label">{{ t.shell.mixer.strip.polarity }}</span>
-              <span class="strip-options-field strip-options-toggles">
-                <button
-                  type="button"
-                  class="toggle"
-                  :class="{ on: polarityLeft }"
-                  :aria-pressed="polarityLeft"
-                  :aria-label="t.shell.mixer.strip.polarityLeft"
-                  @click="onPolarityToggle('left')"
-                >
-                  L
-                </button>
-                <button
-                  type="button"
-                  class="toggle"
-                  :class="{ on: polarityRight }"
-                  :aria-pressed="polarityRight"
-                  :aria-label="t.shell.mixer.strip.polarityRight"
-                  @click="onPolarityToggle('right')"
-                >
-                  R
-                </button>
-              </span>
-            </div>
-            <label v-if="canTrackPannerOptions" class="strip-options-row">
-              <span class="strip-options-label">{{ t.shell.mixer.strip.channelDelay }}</span>
-              <span class="strip-options-field">
-                <input
-                  type="number"
-                  min="0"
-                  :max="MAX_CHANNEL_DELAY_SAMPLES"
-                  step="1"
-                  :value="channelDelaySamples"
-                  :aria-label="t.shell.mixer.strip.channelDelay"
-                  @change="onChannelDelayInput"
-                />
-                <span class="strip-options-unit">{{ t.shell.mixer.strip.samples }}</span>
-              </span>
-            </label>
-            <div v-if="canTrackPannerOptions" class="strip-options-row">
-              <span class="strip-options-label">{{ t.shell.mixer.strip.panLaw }}</span>
-              <span class="strip-options-field">
-                <SelectMenu
-                  :model-value="panLaw"
-                  size="sm"
-                  :options="panLawOptions"
-                  :aria-label="t.shell.mixer.strip.panLaw"
-                  @change="onPanLawChange"
-                />
-              </span>
-            </div>
-            <div v-if="canTrackPannerOptions" class="strip-options-row">
-              <span class="strip-options-label">{{ t.shell.mixer.strip.panMode }}</span>
-              <span class="strip-options-field">
-                <SelectMenu
-                  :model-value="panMode"
-                  size="sm"
-                  :options="panModeOptions"
-                  :aria-label="t.shell.mixer.strip.panMode"
-                  @change="onPanModeChange"
-                />
-              </span>
-            </div>
-            <template v-if="canTrackPannerOptions && panMode === 'dualPan'">
-              <label class="strip-options-row">
-                <span class="strip-options-label">{{ t.shell.mixer.strip.dualPanLeft }}</span>
-                <span class="strip-options-field">
-                  <input
-                    type="range"
-                    min="-1"
-                    max="1"
-                    step="0.01"
-                    :value="dualPanLeft"
-                    :aria-label="t.shell.mixer.strip.dualPanLeft"
-                    @input="onDualPanInput('left', $event)"
-                  />
-                  <span class="strip-options-unit">{{ formatPan(dualPanLeft) }}</span>
-                </span>
-              </label>
-              <label class="strip-options-row">
-                <span class="strip-options-label">{{ t.shell.mixer.strip.dualPanRight }}</span>
-                <span class="strip-options-field">
-                  <input
-                    type="range"
-                    min="-1"
-                    max="1"
-                    step="0.01"
-                    :value="dualPanRight"
-                    :aria-label="t.shell.mixer.strip.dualPanRight"
-                    @input="onDualPanInput('right', $event)"
-                  />
-                  <span class="strip-options-unit">{{ formatPan(dualPanRight) }}</span>
-                </span>
-              </label>
-            </template>
-          </div>
-        </div>
+        <StripOptionsPopover v-if="canStripOptions" :target="props.target" :name="name" />
       </div>
       <div v-if="track" class="strip-toggles">
         <button
@@ -912,26 +477,6 @@ onBeforeUnmount(() => {
   padding: 1px 3px;
 }
 
-.strip-auto {
-  display: flex;
-  gap: var(--sp-1);
-}
-
-.strip-auto-r.on {
-  color: var(--surface-0);
-  background: var(--success);
-}
-
-.strip-auto-t.on {
-  color: var(--surface-0);
-  background: var(--warning);
-}
-
-.strip-auto-l.on {
-  color: var(--surface-0);
-  background: var(--danger);
-}
-
 .strip-section {
   border-top: 1px solid var(--border-subtle);
   padding-top: var(--sp-2);
@@ -971,80 +516,6 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 2px;
-}
-
-.strip-options {
-  position: relative;
-}
-
-.strip-options-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 14px;
-  line-height: 1;
-  color: var(--text-4);
-  background: transparent;
-  border: none;
-  box-shadow: none;
-  padding: 0;
-  cursor: pointer;
-}
-
-.strip-options-btn.on {
-  color: var(--accent);
-}
-
-.strip-options-popover {
-  position: absolute;
-  top: calc(100% + 2px);
-  left: 0;
-  z-index: 20;
-  min-width: 132px;
-  padding: var(--sp-2);
-  background: var(--surface-2);
-  border: 1px solid var(--border-raised);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-pop);
-}
-
-.strip-options-row {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.strip-options-label {
-  font: var(--fw-semibold) 8px var(--font-sans);
-  letter-spacing: 0.04em;
-  color: var(--text-3);
-}
-
-.strip-options-field {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.strip-options-toggles {
-  gap: var(--sp-1);
-}
-
-.strip-options-field input {
-  width: 64px;
-  font: var(--fs-2xs) var(--font-sans);
-  color: var(--text-2);
-  background: var(--surface-inset);
-  border: none;
-  border-radius: var(--radius-sm);
-  box-shadow: var(--control-edge), var(--inset-well);
-  padding: 1px 4px;
-}
-
-.strip-options-unit {
-  font: 8px var(--font-sans);
-  color: var(--text-4);
 }
 
 .strip-toggles {

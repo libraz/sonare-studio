@@ -179,6 +179,21 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+  /* Fade the panel in whenever a tab reveals it. CSS replays a declared
+   * animation each time an element returns from display:none, so this animates
+   * the v-show tab swap without overlap (the hidden panel never paints).
+   * Opacity-only on purpose: a transform here would re-anchor the mixer's
+   * position:fixed control menus while it ran. */
+  animation: dock-body-in var(--dur-2) var(--ease-out);
+}
+
+@keyframes dock-body-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .editor-toolbar {

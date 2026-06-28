@@ -1,0 +1,84 @@
+.score-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: var(--sp-3) var(--sp-5);
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border-strong);
+  flex-wrap: wrap;
+  font-size: var(--fs-sm);
+  box-shadow: var(--raise-hi);
+}
+
+.bar-field {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+  white-space: nowrap;
+}
+
+.bar-field :deep(.select-trigger) {
+  width: 5rem;
+}
+
+.bar-spacer {
+  width: 0.75rem;
+}
+
+.score-page-indicator {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+  min-width: 3.5rem;
+  text-align: center;
+}
+
+.score-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.score-zoom-btn {
+  min-width: 1.7rem;
+  padding: 0.1rem 0.35rem;
+  font-weight: var(--fw-semibold);
+}
+
+/* Center the inline glyph icons (zoom, page nav) within their buttons and
+   inherit the button's text colour via currentColor. */
+.score-toolbar button svg {
+  display: block;
+}
+
+.score-zoom-readout {
+  min-width: 2.6rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.layout-host {
+  position: relative;
+}
+
+/* Entrance / exit for the layout popover: a gentle fade with a short rise.
+   Durations collapse to 0 under reduced-motion. */
+.popover-enter-active,
+.popover-leave-active {
+  transition: opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out);
+}
+
+.popover-enter-from,
+.popover-leave-to {
+  opacity: 0;
+  transform: translateY(-2px) scale(0.98);
+}
+
+.score-toolbar button.active {
+  background: var(--accent);
+  color: var(--accent-text);
+  /* Read the toggle as pressed-in: drop the raised lift for the inset well plus
+     a thin accent gloss so an engaged state is unmistakable in both themes. */
+  box-shadow: var(--control-edge), var(--inset-well), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}

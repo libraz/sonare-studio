@@ -21,12 +21,14 @@ import {
   setTimeSignatures,
   setTrackColor,
   setTrackInstrument,
+  setTrackMidiFx,
   setTrackMute,
   setTrackPan,
   setTrackSolo,
   setTrackVolume,
 } from '@/project/commands';
 import { exportClipSmf, exportProjectClipFile, exportProjectSmf } from '@/project/export';
+import { sanitizeMidiFxConfig } from '@/project/midi-fx';
 import {
   loadProjectDocument,
   PROJECT_DOCUMENT_SCHEMA_VERSION,
@@ -167,6 +169,26 @@ describe('project serialization', () => {
     await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
     expect(serializeProject()).toEqual(doc);
     expect(store.activeClip?.ccLanes).toEqual(doc.tracks[0].clips[0].ccLanes);
+  });
+
+  it('round-trips a track live MIDI-FX transform through the document', async () => {
+    const trackId = store.tracks[0].id;
+    setTrackMidiFx(trackId, sanitizeMidiFxConfig({ transposeSemitones: 12, velocityScale: 1.5 }));
+    const doc = serializeProject();
+    expect(doc.tracks[0].midiFx).toMatchObject({ transposeSemitones: 12, velocityScale: 1.5 });
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    expect(serializeProject()).toEqual(doc);
+    expect(store.tracks[0].midiFx?.transposeSemitones).toBe(12);
+  });
+
+  it('omits an identity track MIDI-FX transform from the document', async () => {
+    const doc = serializeProject();
+    // An identity transform injected into a loaded document never round-trips
+    // back: loading drops the no-op so it stays out of the re-serialized doc.
+    doc.tracks[0].midiFx = sanitizeMidiFxConfig({});
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    expect(serializeProject().tracks[0].midiFx).toBeUndefined();
   });
 
   it('round-trips imported clip pitch-bend lanes through the document', async () => {

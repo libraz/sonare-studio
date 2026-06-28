@@ -190,6 +190,7 @@ function onMidiForget(): void {
       <span class="knob-pointer" :style="{ transform: `rotate(${angleDeg}deg)` }" />
     </div>
     <span v-if="props.label" class="knob-label">{{ props.label }}</span>
+    <Transition name="pop">
     <div
       v-if="interactions.menu.open"
       class="control-menu"
@@ -237,6 +238,7 @@ function onMidiForget(): void {
         {{ t.shell.mixer.controls.midiForget }}
       </button>
     </div>
+    </Transition>
   </div>
 </template>
 

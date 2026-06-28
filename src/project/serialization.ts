@@ -28,6 +28,7 @@ import { clearMixerSnapshots } from './command/mixer-snapshots';
 import { clearHistory } from './commands';
 import { cloneInstrument, type TrackInstrument } from './instrument';
 import { cloneCcLanes } from './midi-cc';
+import { isMidiFxNoop, type MidiFxConfig, sanitizeMidiFxConfig } from './midi-fx';
 import {
   cloneMixerState,
   cloneStrip,
@@ -213,6 +214,8 @@ export interface DocumentTrack {
   clips: DocumentClip[];
   /** Track instrument; absent (schema < 3) = the default synth preset. */
   instrument?: TrackInstrument;
+  /** Live non-destructive MIDI-FX transform; absent = none. */
+  midiFx?: MidiFxConfig;
   /** Mixer channel strip; absent (schema < 3) = a neutral strip. */
   mixer?: MixerStrip;
   /** Automation lanes targeting this track; absent = none. */
@@ -432,6 +435,12 @@ export function serializeProject(): ProjectDocument {
           .map((clip) => toDocumentClip(clip, store.scoreAnnotations[clip.id])),
       };
       if (track.instrument !== undefined) out.instrument = cloneInstrument(track.instrument);
+      // The live MIDI-FX transform rides the track; serialize it only when it
+      // actually changes notes (an identity transform stays out of the document).
+      if (track.midiFx !== undefined) {
+        const midiFx = sanitizeMidiFxConfig(track.midiFx);
+        if (!isMidiFxNoop(midiFx)) out.midiFx = midiFx;
+      }
       if (track.mixer !== undefined) {
         out.mixer = cloneStrip(track.mixer);
         // Insert sidechain sources are session track ids; store them as

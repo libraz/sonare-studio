@@ -1,43 +1,25 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch, watchEffect } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import ScoreAnnotationPalette from '@/components/score/ScoreAnnotationPalette.vue';
-import SelectMenu from '@/components/shell/SelectMenu.vue';
-import { projectFilename } from '@/lib/filename';
-import {
-  canonicalizeChordSymbols,
-  type EstimatedChordSymbol,
-  estimateChordSymbols,
-} from '@/notation/chords';
-import { exportMusicXml } from '@/notation/io';
+import ScoreToolbar from '@/components/score/ScoreToolbar.vue';
 import { timeSigLengthPpq } from '@/notation/model';
-import { serializeMusicXml } from '@/notation/musicxml';
 import { keyToKeyFifths } from '@/notation/pitch-spelling';
-import { downloadBlob, exportPdf, printScore } from '@/notation/print';
-import { quantizeToScore } from '@/notation/quantize';
 import { VerovioClient } from '@/notation/verovio';
-import {
-  DISPLAY_TRANSPOSE_MAX,
-  DISPLAY_TRANSPOSE_MIN,
-  type ScoreNoteAnnotation,
-} from '@/project/annotations';
+import type { ScoreNoteAnnotation } from '@/project/annotations';
 import {
   clearNoteAnnotation,
   type NoteAnnotationUpdate,
   setDisplayTranspose,
   setNoteAnnotation,
-  setSelection,
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { timeSignatureAt } from '@/project/time-signature';
 import { MAJOR_MODE_MASK } from '@/project/types';
 import { useI18n } from '@/ui/i18n';
-import {
-  SCORE_PAGE_FORMATS,
-  type ScoreLayoutSettings,
-  scorePageDimsMm,
-  scorePrintLayoutOptions,
-  scoreScreenLayoutOptions,
-} from '@/ui/score/layout';
+import { SCORE_PAGE_FORMATS, type ScoreLayoutSettings } from '@/ui/score/layout';
+import { usePlayheadSync } from '@/ui/score/use-playhead-sync';
+import { useScoreInteractions } from '@/ui/score/use-score-interactions';
+import { useScoreNotation } from '@/ui/score/use-score-notation';
 import type { Key } from '@/wasm/index.js';
 
 /**
@@ -69,8 +51,6 @@ const { t } = useI18n();
 
 /** Delay after the last note edit before the score is re-transcribed. */
 const RETRANSCRIBE_DEBOUNCE_MS = 600;
-/** Selection matching tolerance on the quantized onset grid, in PPQ. */
-const ONSET_MATCH_EPSILON_PPQ = 1e-3;
 
 // --- Toolbar state -----------------------------------------------------------
 
@@ -106,12 +86,6 @@ const dqOptions = computed(() =>
 
 // --- Annotation state ----------------------------------------------------------
 
-/** Display transpose choices offered in the layout popover (semitones). */
-const TRANSPOSE_CHOICES: ReadonlyArray<number> = Array.from(
-  { length: DISPLAY_TRANSPOSE_MAX - DISPLAY_TRANSPOSE_MIN + 1 },
-  (_, i) => DISPLAY_TRANSPOSE_MIN + i,
-);
-
 /** True while the Annotate tool is active (note clicks open the palette). */
 const annotateEnabled = ref(false);
 /** Editor note id the floating palette currently edits (null = closed). */
@@ -128,7 +102,6 @@ const annotationCurrent = computed<ScoreNoteAnnotation>(() => {
   return store.scoreAnnotations[store.clipId]?.[id] ?? {};
 });
 
-const layoutOpen = ref(false);
 const pageFormat = ref<keyof typeof SCORE_PAGE_FORMATS>('a4');
 const landscape = ref(false);
 const pageMarginMm = ref(10);
@@ -194,48 +167,13 @@ function zoomView(factor: number): void {
   viewZoom.value = Math.min(VIEW_ZOOM_MAX, Math.max(VIEW_ZOOM_MIN, viewZoom.value * factor));
 }
 
-/** Page format options for the layout popover select. */
-const pageFormatOptions = computed(() =>
-  Object.entries(SCORE_PAGE_FORMATS).map(([key, format]) => ({ value: key, label: format.label })),
-);
-
-/** Orientation options; values mirror the boolean `landscape` flag. */
-const ORIENTATION_OPTIONS: ReadonlyArray<{ value: 'portrait' | 'landscape'; label: string }> = [
-  { value: 'portrait', label: 'Portrait' },
-  { value: 'landscape', label: 'Landscape' },
-];
-
-/** String proxy over the boolean `landscape` flag for the select binding. */
-const orientation = computed<'portrait' | 'landscape'>({
-  get: () => (landscape.value ? 'landscape' : 'portrait'),
-  set: (value) => {
-    landscape.value = value === 'landscape';
-  },
-});
-
-/** Display transpose options for the layout popover select (semitones). */
-const transposeOptions = computed(() =>
-  TRANSPOSE_CHOICES.map((n) => ({ value: n, label: n > 0 ? `+${n}` : String(n) })),
-);
-
 // --- Render state ------------------------------------------------------------
 
-const loading = ref(false);
-const exporting = ref(false);
-const error = ref('');
-const svg = ref('');
-const page = ref(1);
-const pageCount = ref(0);
 const svgHost = ref<HTMLDivElement | null>(null);
 
-/** MusicXML of the last successful transcription (export source). */
-let currentXml = '';
-/** Timemap of the last successful load (paired with the same load's SVG ids). */
-let timemap: ReadonlyArray<{ qstamp: number; on?: string[]; off?: string[] }> = [];
 /** Verovio worker client; created on mount, disposed on unmount. */
 const client = shallowRef<VerovioClient | null>(null);
 
-let generation = 0;
 let retranscribeTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** Current Display Quantize grid step in PPQ. */
@@ -265,323 +203,41 @@ function layoutSettings(): ScoreLayoutSettings {
   };
 }
 
-/** Verovio layout options for the current settings (page units are 1/10 mm). */
-function layoutOptions() {
-  return scorePrintLayoutOptions(layoutSettings());
-}
+// --- Playhead highlight ---------------------------------------------------------
 
-/**
- * On-screen layout: one continuous system with NO line/system breaks, cropped
- * to the content on both axes. The engraved strip then scrolls horizontally
- * instead of wrapping to multiple lines. Print/PDF use the paginated
- * `layoutOptions()` above instead.
- */
-function screenLayoutOptions() {
-  return scoreScreenLayoutOptions(layoutSettings());
-}
+const playhead = usePlayheadSync({
+  svgHost,
+  svg: computed(() => notation.svg.value),
+  getTimemap: () => notation.getTimemap(),
+  getClipStartPpq: () => store.clipStartPpq,
+  getPositionPpq: () => props.positionPpq,
+});
 
 // --- Transcription pipeline ---------------------------------------------------
 
-/**
- * Re-runs the full non-destructive pipeline:
- * notes -> quantizeToScore -> (optional chord symbols) -> MusicXML -> Verovio.
- */
-async function transcribe(): Promise<void> {
-  // A previously crashed worker leaves the client permanently failed; replace it
-  // so the user can recover by re-transcribing instead of reloading the app.
-  if (client.value?.failed) {
-    client.value.dispose();
-    client.value = new VerovioClient();
-  }
-  const verovio = client.value;
-  if (!verovio || !store.initialized || store.clipLengthPpq <= 0) return;
-  const gen = ++generation;
-  loading.value = true;
-  error.value = '';
-  try {
-    const fifths = keyFifths();
-    const score = quantizeToScore(store.notes, {
-      divisionPpq: divisionPpq(),
-      timeSig: { ...clipTimeSig.value },
-      keyFifths: fifths,
-      clipStartPpq: store.clipStartPpq,
-      // Padded with trailing empty measures so the line fills the width when
-      // zoomed out (never shrinks into a narrow block).
-      clipLengthPpq: paddedClipLengthPpq.value,
-      clef: 'grand',
-      partName: 'Piano',
-      // Engraving-only transpose; the underlying MIDI notes never change.
-      displayTransposeSemitones: store.displayTransposeSemitones,
-    });
-    const annotations = store.scoreAnnotations[store.clipId];
-    if (annotations && Object.keys(annotations).length > 0) {
-      score.noteAnnotations = { ...annotations };
-    }
-    if (chordsEnabled.value) {
-      // Chord symbols are best-effort: any wasm failure degrades silently to
-      // a score without harmony instead of failing the whole render.
-      try {
-        const estimated: EstimatedChordSymbol[] = estimateChordSymbols(store.notes, {
-          clipStartPpq: store.clipStartPpq,
-          clipLengthPpq: store.clipLengthPpq,
-          measureLengthPpq: measureLenPpq.value,
-          keyFifths: fifths,
-        });
-        const symbols = await canonicalizeChordSymbols(estimated);
-        if (symbols.length > 0) score.chordSymbols = symbols;
-      } catch {
-        // Degrade silently: render the score without chord symbols.
-      }
-    }
-    const xml = serializeMusicXml(score);
-    const count = await verovio.load(xml, screenLayoutOptions());
-    if (gen !== generation) return;
-    currentXml = xml;
-    pageCount.value = count;
-    page.value = Math.min(Math.max(page.value, 1), Math.max(count, 1));
-    const [pageSvg, entries] = await Promise.all([
-      verovio.renderPage(page.value),
-      verovio.getTimemap(),
-    ]);
-    if (gen !== generation) return;
-    svg.value = pageSvg;
-    timemap = entries;
-    resetPlayheadScan();
-  } catch (err) {
-    if (gen !== generation) return;
-    error.value = err instanceof Error ? err.message : String(err);
-  } finally {
-    if (gen === generation) loading.value = false;
-  }
-}
-
-/** Re-renders the current page from the already loaded score. */
-async function refresh(): Promise<void> {
-  const verovio = client.value;
-  if (!verovio || pageCount.value === 0) return;
-  const gen = ++generation;
-  loading.value = true;
-  error.value = '';
-  try {
-    const pageSvg = await verovio.renderPage(page.value);
-    if (gen !== generation) return;
-    svg.value = pageSvg;
-    resetPlayheadScan();
-  } catch (err) {
-    if (gen !== generation) return;
-    error.value = err instanceof Error ? err.message : String(err);
-  } finally {
-    if (gen === generation) loading.value = false;
-  }
-}
-
-/** Applies the layout settings to the loaded score and re-renders. */
-async function applyLayout(): Promise<void> {
-  const verovio = client.value;
-  if (!verovio || pageCount.value === 0) {
-    void transcribe();
-    return;
-  }
-  const gen = ++generation;
-  loading.value = true;
-  error.value = '';
-  try {
-    const count = await verovio.setLayout(screenLayoutOptions());
-    if (gen !== generation) return;
-    pageCount.value = count;
-    page.value = Math.min(Math.max(page.value, 1), Math.max(count, 1));
-    // Note ids survive redoLayout, so the existing timemap stays valid.
-    const pageSvg = await verovio.renderPage(page.value);
-    if (gen !== generation) return;
-    svg.value = pageSvg;
-    resetPlayheadScan();
-  } catch (err) {
-    if (gen !== generation) return;
-    error.value = err instanceof Error ? err.message : String(err);
-  } finally {
-    if (gen === generation) loading.value = false;
-  }
-}
-
-function gotoPage(target: number): void {
-  if (pageCount.value === 0) return;
-  const next = Math.min(Math.max(target, 1), pageCount.value);
-  if (next === page.value) return;
-  page.value = next;
-  void refresh();
-}
-
-// --- Print / export ------------------------------------------------------------
-
-/**
- * Renders every page for print/export using the PAGINATED A4 layout (the
- * on-screen view is a single continuous system, which would print as one
- * oversized strip), then restores the continuous screen layout.
- */
-async function renderAllPages(): Promise<string[]> {
-  const verovio = client.value;
-  if (!verovio || pageCount.value === 0) return [];
-  try {
-    const count = await verovio.setLayout(layoutOptions());
-    const pages: string[] = [];
-    for (let p = 1; p <= count; p++) {
-      pages.push(await verovio.renderPage(p));
-    }
-    return pages;
-  } finally {
-    // Restore the on-screen continuous layout and re-render the current page.
-    const screenCount = await verovio.setLayout(screenLayoutOptions());
-    pageCount.value = screenCount;
-    page.value = Math.min(Math.max(page.value, 1), Math.max(screenCount, 1));
-    svg.value = await verovio.renderPage(page.value);
-    resetPlayheadScan();
-  }
-}
-
-/** Runs an export action with the busy flag and error reporting. */
-async function runExport(action: () => Promise<void>): Promise<void> {
-  if (exporting.value) return;
-  exporting.value = true;
-  error.value = '';
-  try {
-    await action();
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
-  } finally {
-    exporting.value = false;
-  }
-}
-
-function onPrint(): void {
-  void runExport(async () => {
-    const pages = await renderAllPages();
-    if (pages.length > 0) printScore(pages, scorePageDimsMm(layoutSettings()));
-  });
-}
-
-function onExportPdf(): void {
-  void runExport(async () => {
-    const pages = await renderAllPages();
-    if (pages.length === 0) return;
-    const blob = await exportPdf(pages, scorePageDimsMm(layoutSettings()));
-    downloadBlob(blob, projectFilename(store.projectName, '.pdf', 'score'));
-  });
-}
-
-function onExportMusicXml(): void {
-  if (!currentXml) return;
-  void runExport(async () => {
-    exportMusicXml(currentXml, projectFilename(store.projectName, '.musicxml', 'score'));
-  });
-}
-
-// --- Playhead highlight ---------------------------------------------------------
-
-/** Incremental timemap scan state (reset on every render / backwards seek). */
-let scanIndex = 0;
-let scanQstamp = Number.NEGATIVE_INFINITY;
-const soundingIds = new Set<string>();
-const highlightedIds = new Set<string>();
-
-function resetPlayheadScan(): void {
-  scanIndex = 0;
-  scanQstamp = Number.NEGATIVE_INFINITY;
-  soundingIds.clear();
-  highlightedIds.clear();
-}
-
-/** Note ids sounding at a quarter-note position (amortized forward scan). */
-function soundingIdsAt(qpos: number): ReadonlySet<string> {
-  if (qpos < scanQstamp) {
-    scanIndex = 0;
-    soundingIds.clear();
-  }
-  scanQstamp = qpos;
-  while (scanIndex < timemap.length && timemap[scanIndex].qstamp <= qpos) {
-    const entry = timemap[scanIndex];
-    for (const id of entry.off ?? []) soundingIds.delete(id);
-    for (const id of entry.on ?? []) soundingIds.add(id);
-    scanIndex++;
-  }
-  return soundingIds;
-}
-
-/** Toggles the playing CSS class on SVG note groups to match the playhead. */
-function updatePlayhead(ppq: number): void {
-  const host = svgHost.value;
-  if (!host) return;
-  const next = soundingIdsAt(ppq - store.clipStartPpq);
-  for (const id of [...highlightedIds]) {
-    if (!next.has(id)) {
-      host.querySelector(`#${CSS.escape(id)}`)?.classList.remove('score-note-playing');
-      highlightedIds.delete(id);
-    }
-  }
-  for (const id of next) {
-    if (!highlightedIds.has(id)) {
-      const el = host.querySelector(`#${CSS.escape(id)}`);
-      if (el) {
-        el.classList.add('score-note-playing');
-        highlightedIds.add(id);
-      }
-    }
-  }
-}
-
-watchEffect(() => {
-  // Track both the rendered SVG and the playhead position.
-  void svg.value;
-  const getter = props.positionPpq;
-  if (!getter) return;
-  updatePlayhead(getter());
+const notation = useScoreNotation({
+  store,
+  client,
+  getDivisionPpq: divisionPpq,
+  getTimeSig: () => clipTimeSig.value,
+  getMeasureLenPpq: () => measureLenPpq.value,
+  getPaddedClipLengthPpq: () => paddedClipLengthPpq.value,
+  getKeyFifths: keyFifths,
+  getChordsEnabled: () => chordsEnabled.value,
+  getLayoutSettings: layoutSettings,
+  resetPlayheadScan: () => playhead.resetScan(),
 });
 
 // --- Click-to-seek / select ------------------------------------------------------
 
-/**
- * Quantized onset of an editor note, mirroring the display quantizer's grid
- * rounding (nearest grid step anchored at the clip start, clamped into the
- * clip window). Returns null for notes outside the notated window.
- */
-function quantizedOnsetPpq(note: { startPpq: number; durationPpq: number }): number | null {
-  const clipStart = store.clipStartPpq;
-  const clipEnd = clipStart + store.clipLengthPpq;
-  if (note.startPpq + note.durationPpq <= clipStart || note.startPpq >= clipEnd) return null;
-  const grid = divisionPpq();
-  const snapped = clipStart + Math.round((note.startPpq - clipStart) / grid) * grid;
-  return Math.min(Math.max(snapped, clipStart), clipEnd - grid);
-}
-
-/**
- * Resolves the editor notes a clicked score note stands for: primarily notes
- * whose quantized onset matches the note's qstamp; when none match (e.g. the
- * tail of a tie chain), notes whose raw interval contains the position.
- */
-function noteIdsAt(ppq: number): number[] {
-  const exact: number[] = [];
-  const sounding: number[] = [];
-  for (const note of store.notes) {
-    const onset = quantizedOnsetPpq(note);
-    if (onset !== null && Math.abs(onset - ppq) < ONSET_MATCH_EPSILON_PPQ) exact.push(note.id);
-    if (note.startPpq <= ppq && ppq < note.startPpq + note.durationPpq) sounding.push(note.id);
-  }
-  return exact.length > 0 ? exact : sounding;
-}
-
-/** Click on an engraved note: seek the transport and select the source notes. */
-function onSvgClick(event: MouseEvent): void {
-  const target = event.target;
-  if (!(target instanceof Element)) return;
-  const group = target.closest('g.note');
-  if (!group?.id) return;
-  const entry = timemap.find((e) => e.on?.includes(group.id));
-  if (!entry) return;
-  const ppq = store.clipStartPpq + entry.qstamp;
-  const ids = noteIdsAt(ppq);
-  if (annotateEnabled.value) onAnnotateClick(event, ids);
-  emit('seek', ppq);
-  setSelection(ids);
-}
+const interactions = useScoreInteractions({
+  store,
+  getTimemap: () => notation.getTimemap(),
+  getDivisionPpq: divisionPpq,
+  seek: (ppq) => emit('seek', ppq),
+  isAnnotateEnabled: () => annotateEnabled.value,
+  onAnnotateClick,
+});
 
 // --- Annotation palette ------------------------------------------------------------
 
@@ -616,9 +272,9 @@ function applyAnnotation(update: NoteAnnotationUpdate): void {
   if (id === null) return;
   try {
     setNoteAnnotation(store.clipId, id, update);
-    error.value = '';
+    notation.setError('');
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    notation.setError(err instanceof Error ? err.message : String(err));
   }
 }
 
@@ -628,9 +284,9 @@ function clearAnnotation(): void {
   if (id === null) return;
   try {
     clearNoteAnnotation(store.clipId, id);
-    error.value = '';
+    notation.setError('');
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    notation.setError(err instanceof Error ? err.message : String(err));
   }
 }
 
@@ -644,9 +300,9 @@ function closePalette(): void {
 function onTransposeChange(value: number): void {
   try {
     setDisplayTranspose(value);
-    error.value = '';
+    notation.setError('');
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    notation.setError(err instanceof Error ? err.message : String(err));
   }
 }
 
@@ -656,7 +312,7 @@ function scheduleRetranscribe(): void {
   if (retranscribeTimer !== null) clearTimeout(retranscribeTimer);
   retranscribeTimer = setTimeout(() => {
     retranscribeTimer = null;
-    void transcribe();
+    void notation.transcribe();
   }, RETRANSCRIBE_DEBOUNCE_MS);
 }
 
@@ -666,11 +322,16 @@ watch(() => store.notes, scheduleRetranscribe);
 // Annotations and display transpose are replaced wholesale by their commands
 // too; both only affect engraving, so they re-transcribe debounced like edits.
 watch([() => store.scoreAnnotations, () => store.displayTransposeSemitones], scheduleRetranscribe);
-watch([dqKey, chordsEnabled, () => store.scaleHighlight], () => void transcribe(), { deep: true });
+watch([dqKey, chordsEnabled, () => store.scaleHighlight], () => void notation.transcribe(), {
+  deep: true,
+});
 // Zoom-out padding changes the number of (empty) measures, so the score must be
 // re-engraved; zoom-in (padMeasures stays 0) only updates the CSS width.
-watch(padMeasures, () => void transcribe());
-watch([pageFormat, landscape, pageMarginMm, scalePercent, spacingStaff], () => void applyLayout());
+watch(padMeasures, () => void notation.transcribe());
+watch(
+  [pageFormat, landscape, pageMarginMm, scalePercent, spacingStaff],
+  () => void notation.applyLayout(),
+);
 watch(annotateEnabled, (enabled) => {
   if (!enabled) closePalette();
 });
@@ -690,7 +351,7 @@ watch(
 
 onMounted(() => {
   client.value = new VerovioClient();
-  void transcribe();
+  void notation.transcribe();
 });
 
 onBeforeUnmount(() => {
@@ -698,7 +359,7 @@ onBeforeUnmount(() => {
     clearTimeout(retranscribeTimer);
     retranscribeTimer = null;
   }
-  generation++;
+  notation.bumpGeneration();
   client.value?.dispose();
   client.value = null;
 });
@@ -706,184 +367,37 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="score-panel">
-    <div class="score-toolbar" role="toolbar" :aria-label="t.shell.score.tools">
-      <label class="bar-field" :title="t.shell.score.displayQuantizeTitle">
-        {{ t.shell.score.displayQuantizeShort }}
-        <SelectMenu
-          v-model="dqKey"
-          :options="dqOptions"
-          :aria-label="t.shell.score.displayQuantize"
-          size="sm"
-        />
-      </label>
-      <button
-        type="button"
-        :disabled="loading"
-        :title="t.shell.score.transcribeTitle"
-        @click="transcribe"
-      >
-        {{ t.shell.score.transcribe }}
-      </button>
-      <button
-        type="button"
-        :disabled="loading || pageCount === 0"
-        :title="t.shell.score.refreshTitle"
-        @click="refresh"
-      >
-        {{ t.shell.score.refresh }}
-      </button>
-      <label class="bar-field" :title="t.shell.score.chordsTitle">
-        <input v-model="chordsEnabled" type="checkbox" />
-        {{ t.shell.score.chords }}
-      </label>
-      <button
-        type="button"
-        :class="{ active: annotateEnabled }"
-        :aria-pressed="annotateEnabled"
-        :title="t.shell.score.annotateTitle"
-        @click="annotateEnabled = !annotateEnabled"
-      >
-        {{ t.shell.score.annotate }}
-      </button>
-      <div class="layout-host">
-        <button type="button" aria-haspopup="true" :aria-expanded="layoutOpen" @click="layoutOpen = !layoutOpen">
-          {{ t.shell.score.layout }}
-        </button>
-        <Transition name="popover">
-        <div v-if="layoutOpen" class="layout-popover">
-          <label class="layout-row">
-            {{ t.shell.score.page }}
-            <SelectMenu
-              v-model="pageFormat"
-              :options="pageFormatOptions"
-              :aria-label="t.shell.score.pageFormat"
-              size="sm"
-            />
-          </label>
-          <label class="layout-row">
-            {{ t.shell.score.orientation }}
-            <SelectMenu
-              v-model="orientation"
-              :options="ORIENTATION_OPTIONS"
-              :aria-label="t.shell.score.orientation"
-              size="sm"
-            />
-          </label>
-          <label class="layout-row">
-            {{ t.shell.score.margin }}
-            <input v-model.number="pageMarginMm" type="number" min="0" max="40" step="1" />
-          </label>
-          <label class="layout-row">
-            {{ t.shell.score.scale }}
-            <input v-model.number="scalePercent" type="number" min="20" max="100" step="5" />
-          </label>
-          <label class="layout-row">
-            {{ t.shell.score.staffSpacing }}
-            <input v-model.number="spacingStaff" type="number" min="0" max="48" step="1" />
-          </label>
-          <label
-            class="layout-row"
-            :title="t.shell.score.transposeTitle"
-          >
-            {{ t.shell.score.transpose }}
-            <SelectMenu
-              :model-value="store.displayTransposeSemitones"
-              :options="transposeOptions"
-              :aria-label="t.shell.score.displayTranspose"
-              size="sm"
-              @change="onTransposeChange"
-            />
-          </label>
-        </div>
-        </Transition>
-      </div>
-      <div class="score-zoom" role="group" :aria-label="t.shell.score.zoom">
-        <button
-          type="button"
-          class="score-zoom-btn"
-          :disabled="viewZoom <= VIEW_ZOOM_MIN"
-          :aria-label="t.shell.score.zoomOut"
-          :title="t.shell.score.zoomOut"
-          @click="zoomView(1 / VIEW_ZOOM_STEP)"
-        >
-          <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">
-            <path
-              d="M3 7h8"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.6"
-              stroke-linecap="round"
-            />
-          </svg>
-        </button>
-        <span class="score-zoom-readout" aria-live="polite">{{ zoomPercent }}%</span>
-        <button
-          type="button"
-          class="score-zoom-btn"
-          :disabled="viewZoom >= VIEW_ZOOM_MAX"
-          :aria-label="t.shell.score.zoomIn"
-          :title="t.shell.score.zoomIn"
-          @click="zoomView(VIEW_ZOOM_STEP)"
-        >
-          <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">
-            <path
-              d="M7 3v8M3 7h8"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.6"
-              stroke-linecap="round"
-            />
-          </svg>
-        </button>
-      </div>
-      <span class="bar-spacer" />
-      <button
-        type="button"
-        :disabled="page <= 1 || loading"
-        :aria-label="t.shell.score.previousPage"
-        @click="gotoPage(page - 1)"
-      >
-        <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">
-          <path
-            d="M9 3L5 7l4 4"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.6"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          />
-        </svg>
-      </button>
-      <span class="score-page-indicator" aria-live="polite">
-        {{ pageCount > 0 ? `${page} / ${pageCount}` : '– / –' }}
-      </span>
-      <button
-        type="button"
-        :disabled="page >= pageCount || loading"
-        :aria-label="t.shell.score.nextPage"
-        @click="gotoPage(page + 1)"
-      >
-        <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">
-          <path
-            d="M5 3l4 4-4 4"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.6"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          />
-        </svg>
-      </button>
-      <span class="bar-spacer" />
-      <button type="button" :disabled="exporting || pageCount === 0" @click="onPrint">
-        {{ t.shell.score.print }}
-      </button>
-      <button type="button" :disabled="exporting || pageCount === 0" @click="onExportPdf">PDF</button>
-      <button type="button" :disabled="exporting || !currentXml" @click="onExportMusicXml">
-        MusicXML
-      </button>
-    </div>
-    <p v-if="error" class="score-error" role="alert">{{ error }}</p>
+    <ScoreToolbar
+      v-model:dq-key="dqKey"
+      v-model:chords-enabled="chordsEnabled"
+      v-model:annotate-enabled="annotateEnabled"
+      v-model:page-format="pageFormat"
+      v-model:landscape="landscape"
+      v-model:page-margin-mm="pageMarginMm"
+      v-model:scale-percent="scalePercent"
+      v-model:spacing-staff="spacingStaff"
+      v-model:page="notation.page.value"
+      :dq-options="dqOptions"
+      :loading="notation.loading.value"
+      :exporting="notation.exporting.value"
+      :page-count="notation.pageCount.value"
+      :has-xml="!!notation.getCurrentXml()"
+      :zoom-percent="zoomPercent"
+      :zoom-min="VIEW_ZOOM_MIN"
+      :zoom-max="VIEW_ZOOM_MAX"
+      :zoom-step="VIEW_ZOOM_STEP"
+      :view-zoom="viewZoom"
+      :transpose="store.displayTransposeSemitones"
+      @transcribe="notation.transcribe"
+      @refresh="notation.refresh"
+      @zoom="zoomView"
+      @goto-page="notation.gotoPage"
+      @print="notation.onPrint"
+      @export-pdf="notation.onExportPdf"
+      @export-music-xml="notation.onExportMusicXml"
+      @transpose-change="onTransposeChange"
+    />
+    <p v-if="notation.error.value" class="score-error" role="alert">{{ notation.error.value }}</p>
     <div class="score-body-wrap">
       <!-- biome-ignore lint/security/noDangerouslySetInnerHtml: SVG produced locally by the Verovio worker -->
       <div
@@ -892,13 +406,13 @@ onBeforeUnmount(() => {
         role="img"
         :aria-label="t.shell.score.engravedScore"
         :style="{ '--score-zoom': widthFactor }"
-        @click="onSvgClick"
-        v-html="svg"
+        @click="interactions.onSvgClick"
+        v-html="notation.svg.value"
       />
-      <div v-if="loading" class="score-loading">
+      <div v-if="notation.loading.value" class="score-loading">
         <span class="score-state-text">{{ t.shell.score.engraving }}</span>
       </div>
-      <div v-else-if="!svg" class="score-empty">
+      <div v-else-if="!notation.svg.value" class="score-empty">
         <svg
           class="score-empty-glyph"
           viewBox="0 0 24 36"

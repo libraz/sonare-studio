@@ -16,6 +16,17 @@
   font-weight: 600;
   font-size: var(--fs-sm);
   color: var(--text-3);
+  transition: color var(--dur-1) var(--ease-out);
+}
+
+.diagnostics summary:hover {
+  color: var(--text-1);
+}
+
+/* Native <details> reveals instantly; fade the body in when it opens so the
+ * panel unfolds rather than snapping. The shared keyframe lives in motion.css. */
+.diagnostics[open] > summary ~ * {
+  animation: view-enter var(--dur-2) var(--ease-out);
 }
 
 .diag-actions {

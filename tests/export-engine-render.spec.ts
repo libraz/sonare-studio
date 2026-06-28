@@ -129,6 +129,7 @@ class FakeEngine implements OfflineRenderEngine {
     this.record('stop');
   }
   process(channels: Float32Array[]): Float32Array[] {
+    this.record('process', channels[0].length);
     for (const channel of channels) channel.fill(this.fill);
     return channels;
   }
@@ -139,6 +140,9 @@ class FakeEngine implements OfflineRenderEngine {
 
 const SAMPLES_PER_PPQ = 24000;
 const MASTER_FADER_PARAM_ID = 0x4d58ff01;
+const ENGINE_MIXER_TARGET_BASE = 0x4d580000;
+const ENGINE_MIXER_PARAM_FADER_DB = 1;
+const ENGINE_MIXER_LANE_MASTER = 0xff;
 
 /** Decodes the status nibble from a packed MIDI 1.0 UMP channel-voice word. */
 function midiStatus(word0: number): number {
@@ -162,9 +166,15 @@ function midiData1(word0: number): number {
 class AudibilityEngine extends FakeEngine {
   private cursor = 0;
   private playing = false;
+  private tempoSegments: Array<{ startPpq: number; bpm: number; endBpm?: number }> = [
+    { startPpq: 0, bpm: 120 },
+  ];
   private laneIds: number[] = [];
   private laneSoloMute = new Map<number, { solo: boolean; mute: boolean }>();
+  private laneGainByIndex = new Map<number, number>();
+  private laneGainAutomation = new Map<number, Array<{ sample: number; value: number }>>();
   private masterGain = 1;
+  private masterGainAutomation: Array<{ sample: number; value: number }> = [];
   private audioClips: Array<{
     trackId: number;
     channels: Float32Array[];
@@ -172,7 +182,12 @@ class AudibilityEngine extends FakeEngine {
     lengthSamples: number;
     gain: number;
   }> = [];
-  private midiNotes: Array<{ trackId: number; startFrame: number; endFrame: number }> = [];
+  private midiNotes: Array<{
+    trackId: number;
+    startFrame: number;
+    endFrame: number;
+    velocity: number;
+  }> = [];
 
   setTrackLanes(lanes: Array<number | { trackId: number }>): void {
     super.setTrackLanes(lanes);
@@ -187,6 +202,48 @@ class AudibilityEngine extends FakeEngine {
   setParameter(paramId: number, value: number): void {
     super.setParameter(paramId, value);
     if (paramId === MASTER_FADER_PARAM_ID) this.masterGain = 10 ** (value / 20);
+    if ((paramId & 0xffff0000) !== ENGINE_MIXER_TARGET_BASE) return;
+    const laneIndex = (paramId >>> 8) & 0xff;
+    const kind = paramId & 0xff;
+    if (laneIndex !== ENGINE_MIXER_LANE_MASTER && kind === ENGINE_MIXER_PARAM_FADER_DB) {
+      this.laneGainByIndex.set(laneIndex, 10 ** (value / 20));
+    }
+  }
+
+  private ppqToSample(ppq: number): number {
+    const segments = [...this.tempoSegments].sort((a, b) => a.startPpq - b.startPpq);
+    let samples = 0;
+    for (let i = 0; i < segments.length; i++) {
+      const segment = segments[i];
+      const nextStart = segments[i + 1]?.startPpq ?? Number.POSITIVE_INFINITY;
+      if (ppq <= segment.startPpq) break;
+      const end = Math.min(ppq, nextStart);
+      samples += ((end - segment.startPpq) * 60 * 48000) / segment.bpm;
+      if (ppq < nextStart) break;
+    }
+    return Math.round(samples);
+  }
+
+  setTempoSegments(segments: Array<{ startPpq: number; bpm: number; endBpm?: number }>): void {
+    super.setTempoSegments(segments);
+    this.tempoSegments = segments.length > 0 ? segments : [{ startPpq: 0, bpm: 120 }];
+  }
+
+  setAutomationLane(paramId: number, points: Array<{ ppq: number; value: number }>): void {
+    super.setAutomationLane(paramId, points);
+    const automation = points
+      .map((point) => ({ sample: this.ppqToSample(point.ppq), value: 10 ** (point.value / 20) }))
+      .sort((a, b) => a.sample - b.sample);
+    if (paramId === MASTER_FADER_PARAM_ID) {
+      this.masterGainAutomation = automation;
+      return;
+    }
+    if ((paramId & 0xffff0000) !== ENGINE_MIXER_TARGET_BASE) return;
+    const laneIndex = (paramId >>> 8) & 0xff;
+    const kind = paramId & 0xff;
+    if (laneIndex !== ENGINE_MIXER_LANE_MASTER && kind === ENGINE_MIXER_PARAM_FADER_DB) {
+      this.laneGainAutomation.set(laneIndex, automation);
+    }
   }
 
   setClips(
@@ -202,7 +259,7 @@ class AudibilityEngine extends FakeEngine {
     this.audioClips = clips.map((clip) => ({
       trackId: clip.trackId,
       channels: clip.channels ?? [],
-      startSample: Math.round(clip.startPpq * SAMPLES_PER_PPQ),
+      startSample: this.ppqToSample(clip.startPpq),
       lengthSamples: clip.lengthSamples,
       gain: clip.gain ?? 1,
     }));
@@ -211,29 +268,70 @@ class AudibilityEngine extends FakeEngine {
   setMidiClips(
     clips: Array<{
       destinationId: number;
+      startSample?: number;
+      lengthSamples?: number;
+      loop?: boolean;
+      loopLengthSamples?: number;
       events: Array<{ renderFrame: number; word0: number }>;
     }>,
   ): void {
     super.setMidiClips(clips);
     this.midiNotes = [];
     for (const clip of clips) {
-      const active = new Map<number, number[]>();
+      const active = new Map<number, Array<{ startFrame: number; velocity: number }>>();
+      const notes: Array<{
+        trackId: number;
+        startFrame: number;
+        endFrame: number;
+        velocity: number;
+      }> = [];
       for (const event of clip.events) {
         const status = midiStatus(event.word0);
         const note = midiNote(event.word0);
-        if (status === 0x9 && midiData1(event.word0) > 0) {
-          active.set(note, [...(active.get(note) ?? []), event.renderFrame]);
+        const velocity = midiData1(event.word0);
+        if (status === 0x9 && velocity > 0) {
+          active.set(note, [
+            ...(active.get(note) ?? []),
+            { startFrame: event.renderFrame, velocity },
+          ]);
           continue;
         }
         if (status !== 0x8 && status !== 0x9) continue;
         const starts = active.get(note);
-        const startFrame = starts?.shift();
-        if (startFrame === undefined || event.renderFrame <= startFrame) continue;
-        this.midiNotes.push({
+        const start = starts?.shift();
+        if (start === undefined || event.renderFrame <= start.startFrame) continue;
+        notes.push({
           trackId: clip.destinationId,
-          startFrame,
+          startFrame: start.startFrame,
           endFrame: event.renderFrame,
+          velocity: start.velocity,
         });
+      }
+      if (
+        clip.loop !== true ||
+        clip.loopLengthSamples === undefined ||
+        clip.lengthSamples === undefined
+      ) {
+        this.midiNotes.push(...notes);
+        continue;
+      }
+      const startSample = clip.startSample ?? 0;
+      const endSample = startSample + clip.lengthSamples;
+      for (const note of notes) {
+        for (
+          let loopStart = startSample;
+          loopStart < endSample;
+          loopStart += clip.loopLengthSamples
+        ) {
+          const shift = loopStart - startSample;
+          const startFrame = note.startFrame + shift;
+          if (startFrame >= endSample) break;
+          this.midiNotes.push({
+            ...note,
+            startFrame,
+            endFrame: Math.min(note.endFrame + shift, endSample),
+          });
+        }
       }
     }
   }
@@ -262,23 +360,41 @@ class AudibilityEngine extends FakeEngine {
         return !state.mute && (!anySolo || state.solo) && trackId !== undefined;
       }),
     );
+    const laneGainForTrack = (trackId: number, frame: number): number => {
+      const laneIndex = this.laneIds.indexOf(trackId);
+      const automated = [...(this.laneGainAutomation.get(laneIndex) ?? [])]
+        .reverse()
+        .find((point) => frame >= point.sample)?.value;
+      return automated ?? this.laneGainByIndex.get(laneIndex) ?? 1;
+    };
     for (let frameOffset = 0; frameOffset < channels[0].length; frameOffset++) {
       const frame = this.cursor + frameOffset;
-      let sample = 0;
+      const masterGain =
+        [...this.masterGainAutomation].reverse().find((point) => frame >= point.sample)?.value ??
+        this.masterGain;
+      let leftSample = 0;
+      let rightSample = 0;
       for (const clip of this.audioClips) {
         if (!audibleTrackIds.has(clip.trackId)) continue;
         if (frame >= clip.startSample && frame < clip.startSample + clip.lengthSamples) {
           const clipFrame = frame - clip.startSample;
-          sample += (clip.channels[0]?.[clipFrame] ?? 1) * clip.gain;
+          const laneGain = laneGainForTrack(clip.trackId, frame);
+          const left = clip.channels[0]?.[clipFrame] ?? 1;
+          const right = (clip.channels[1] ?? clip.channels[0])?.[clipFrame] ?? left;
+          leftSample += left * clip.gain * laneGain;
+          rightSample += right * clip.gain * laneGain;
         }
       }
       for (const note of this.midiNotes) {
         if (!audibleTrackIds.has(note.trackId)) continue;
-        if (frame >= note.startFrame && frame < note.endFrame) sample += 1;
+        if (frame >= note.startFrame && frame < note.endFrame) {
+          const value = (note.velocity / 127) * laneGainForTrack(note.trackId, frame);
+          leftSample += value;
+          rightSample += value;
+        }
       }
-      sample *= this.masterGain;
-      channels[0][frameOffset] = sample;
-      (channels[1] ?? channels[0])[frameOffset] = sample;
+      channels[0][frameOffset] = leftSample * masterGain;
+      (channels[1] ?? channels[0])[frameOffset] = rightSample * masterGain;
     }
     this.cursor += channels[0].length;
     return channels;
@@ -420,6 +536,38 @@ function renderOptions(engine: FakeEngine) {
   };
 }
 
+function midiAmplitude(velocity: number): number {
+  return velocity / 127;
+}
+
+function dbGain(db: number): number {
+  return 10 ** (db / 20);
+}
+
+function defaultMasterGain(): number {
+  return dbGain(-3);
+}
+
+function defaultMidiLaneGain(): number {
+  return dbGain(-24);
+}
+
+function defaultAudioLaneGain(): number {
+  return dbGain(2);
+}
+
+function defaultMidiLevel(velocity: number, masterGain = defaultMasterGain()): number {
+  return midiAmplitude(velocity) * defaultMidiLaneGain() * masterGain;
+}
+
+function defaultAudioLevel(
+  sample: number,
+  clipGain = 0.8,
+  masterGain = defaultMasterGain(),
+): number {
+  return sample * clipGain * defaultAudioLaneGain() * masterGain;
+}
+
 describe('renderProjectWithEngine', () => {
   it('renders audible MIDI notes and audio clips through the master fader', async () => {
     const engine = new AudibilityEngine();
@@ -427,11 +575,658 @@ describe('renderProjectWithEngine', () => {
     const masterGain = 10 ** (-3 / 20);
 
     // The MIDI note starts at the timeline head on track 1.
-    expect(result.channels[0][0]).toBeCloseTo(masterGain, 5);
+    expect(result.channels[0][0]).toBeCloseTo(defaultMidiLevel(96, masterGain), 5);
     // Between the one-PPQ MIDI note and the audio clip there is silence.
     expect(result.channels[0][30000]).toBeCloseTo(0, 5);
     // The audio clip starts at PPQ 2 on track 2 and carries its clip gain.
-    expect(result.channels[0][2 * SAMPLES_PER_PPQ]).toBeCloseTo(0.8 * masterGain, 5);
+    expect(result.channels[0][2 * SAMPLES_PER_PPQ]).toBeCloseTo(
+      defaultAudioLevel(0.5, 0.8, masterGain),
+      5,
+    );
+  });
+
+  it('stops MIDI notes audibly at note-off and starts the next note cleanly', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].mute = true;
+    doc.tracks[0].clips[0].notes = [
+      { pitch: 60, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 },
+      { pitch: 64, velocity: 96, startPpq: 1, durationPpq: 1, channel: 0 },
+    ];
+
+    const result = await renderProjectWithEngine(doc, renderOptions(new AudibilityEngine()));
+    const masterGain = 10 ** (-3 / 20);
+
+    expect(result.channels[0][0]).toBeCloseTo(defaultMidiLevel(96, masterGain), 5);
+    expect(result.channels[0][SAMPLES_PER_PPQ - 2]).toBeCloseTo(
+      defaultMidiLevel(96, masterGain),
+      5,
+    );
+    // note-offs are scheduled one sample before the nominal end and are
+    // exclusive in this audible fake, so the boundary frame is silent.
+    expect(result.channels[0][SAMPLES_PER_PPQ - 1]).toBeCloseTo(0, 5);
+    expect(result.channels[0][SAMPLES_PER_PPQ]).toBeCloseTo(defaultMidiLevel(96, masterGain), 5);
+    expect(result.channels[0][2 * SAMPLES_PER_PPQ - 1]).toBeCloseTo(0, 5);
+  });
+
+  it('renders MIDI note velocity and clip gain as audible level', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].mute = true;
+    doc.tracks[0].clips[0].gain = 0.5;
+    doc.tracks[0].clips[0].notes = [
+      { pitch: 60, velocity: 100, startPpq: 0, durationPpq: 1, channel: 0 },
+    ];
+
+    const result = await renderProjectWithEngine(doc, renderOptions(new AudibilityEngine()));
+
+    // buildMidiClipSchedules folds clip gain into note-on velocity: 100 * 0.5.
+    expect(result.channels[0][0]).toBeCloseTo(defaultMidiLevel(50), 5);
+  });
+
+  it('sums simultaneous MIDI notes by their audible velocities', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].mute = true;
+    doc.tracks[0].clips[0].notes = [
+      { pitch: 60, velocity: 64, startPpq: 0, durationPpq: 1, channel: 0 },
+      { pitch: 67, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 },
+    ];
+
+    const result = await renderProjectWithEngine(doc, renderOptions(new AudibilityEngine()));
+    const masterGain = 10 ** (-3 / 20);
+
+    expect(result.channels[0][0]).toBeCloseTo(
+      (midiAmplitude(64) + midiAmplitude(96)) * defaultMidiLaneGain() * masterGain,
+      5,
+    );
+  });
+
+  it('sums simultaneous MIDI notes across channels without dropping either note', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].mute = true;
+    doc.tracks[0].clips[0].notes = [
+      { pitch: 60, velocity: 48, startPpq: 0, durationPpq: 1, channel: 0 },
+      { pitch: 60, velocity: 80, startPpq: 0, durationPpq: 1, channel: 1 },
+    ];
+
+    const result = await renderProjectWithEngine(doc, renderOptions(new AudibilityEngine()));
+
+    expect(result.channels[0][0]).toBeCloseTo(
+      (midiAmplitude(48) + midiAmplitude(80)) * defaultMidiLaneGain() * defaultMasterGain(),
+      5,
+    );
+  });
+
+  it('keeps overlapping same-pitch MIDI notes audible until the last note-off', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].mute = true;
+    doc.tracks[0].clips[0].notes = [
+      { pitch: 60, velocity: 64, startPpq: 0, durationPpq: 2, channel: 0 },
+      { pitch: 60, velocity: 32, startPpq: 1, durationPpq: 2, channel: 0 },
+    ];
+
+    const result = await renderProjectWithEngine(doc, renderOptions(new AudibilityEngine()));
+    const masterGain = 10 ** (-3 / 20);
+
+    expect(result.channels[0][0]).toBeCloseTo(defaultMidiLevel(64, masterGain), 5);
+    expect(result.channels[0][SAMPLES_PER_PPQ]).toBeCloseTo(
+      (midiAmplitude(64) + midiAmplitude(32)) * defaultMidiLaneGain() * masterGain,
+      5,
+    );
+    expect(result.channels[0][2 * SAMPLES_PER_PPQ - 1]).toBeCloseTo(
+      defaultMidiLevel(32, masterGain),
+      5,
+    );
+    expect(result.channels[0][3 * SAMPLES_PER_PPQ - 1]).toBeCloseTo(0, 5);
+  });
+
+  it('renders audible MIDI clip loops and drops notes outside the loop region', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].mute = true;
+    const clip = doc.tracks[0].clips[0];
+    clip.lengthPpq = 4;
+    clip.loopEnabled = true;
+    clip.loopLengthPpq = 2;
+    clip.notes = [
+      { pitch: 60, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 },
+      { pitch: 64, velocity: 96, startPpq: 3, durationPpq: 1, channel: 0 },
+    ];
+
+    const result = await renderProjectWithEngine(doc, renderOptions(new AudibilityEngine()));
+
+    expect(result.channels[0][0]).toBeCloseTo(defaultMidiLevel(96), 5);
+    expect(result.channels[0][SAMPLES_PER_PPQ]).toBeCloseTo(0, 5);
+    expect(result.channels[0][2 * SAMPLES_PER_PPQ]).toBeCloseTo(defaultMidiLevel(96), 5);
+    expect(result.channels[0][3 * SAMPLES_PER_PPQ]).toBeCloseTo(0, 5);
+  });
+
+  it('sums overlapping MIDI and audio content into the stereo output', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].clips[0].startPpq = 0;
+    doc.tracks[1].clips[0].lengthPpq = 1;
+
+    const result = await renderProjectWithEngine(doc, renderOptions(new AudibilityEngine()));
+    const masterGain = 10 ** (-3 / 20);
+    const expected =
+      midiAmplitude(96) * defaultMidiLaneGain() * masterGain +
+      defaultAudioLevel(0.5, 0.8, masterGain);
+
+    expect(result.channels[0][0]).toBeCloseTo(expected, 5);
+    expect(result.channels[1][0]).toBeCloseTo(expected, 5);
+  });
+
+  it('renders a range starting inside a sustained MIDI note from output frame zero', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].mute = true;
+    doc.tracks[0].clips[0].notes = [
+      { pitch: 60, velocity: 96, startPpq: 0, durationPpq: 4, channel: 0 },
+    ];
+
+    const result = await renderProjectWithEngine(doc, {
+      ...renderOptions(new AudibilityEngine()),
+      range: { startPpq: 1, endPpq: 3 },
+    });
+
+    expect(result.totalFrames).toBe(2 * SAMPLES_PER_PPQ);
+    expect(result.channels[0][0]).toBeCloseTo(defaultMidiLevel(96), 5);
+    expect(result.channels[0][result.totalFrames - 1]).toBeCloseTo(defaultMidiLevel(96), 5);
+  });
+
+  it('renders a range starting inside an audio clip from the matching clip frame', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].mute = true;
+    doc.tracks[1].clips[0].startPpq = 1;
+    doc.tracks[1].clips[0].lengthPpq = 4;
+
+    const ramp = new Float32Array(48000);
+    for (let i = 0; i < ramp.length; i++) ramp[i] = i / 48000;
+    const result = await renderProjectWithEngine(doc, {
+      deps: null,
+      createEngine: () => new AudibilityEngine(),
+      loadAudioAsset: async () => ({
+        meta: {
+          id: 'asset-1',
+          name: 'range-ramp.wav',
+          sampleRate: 48000,
+          numChannels: 1,
+          numFrames: ramp.length,
+        },
+        channels: [ramp],
+      }),
+      range: { startPpq: 2, endPpq: 3 },
+    });
+
+    expect(result.totalFrames).toBe(SAMPLES_PER_PPQ);
+    // The render starts one PPQ after the audio clip start, so output frame 0
+    // reads source/render clip frame 24000.
+    expect(result.channels[0][0]).toBeCloseTo(defaultAudioLevel(24000 / 48000), 5);
+  });
+
+  it('renders the loop range with audible MIDI and audio from loop frame zero', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].clips[0].notes = [
+      { pitch: 60, velocity: 96, startPpq: 0, durationPpq: 4, channel: 0 },
+    ];
+    doc.tracks[1].clips[0].startPpq = 1;
+    doc.tracks[1].clips[0].lengthPpq = 4;
+
+    const result = await renderProjectWithEngine(doc, {
+      ...renderOptions(new AudibilityEngine()),
+      range: 'loop',
+      loopRegion: { startPpq: 2, endPpq: 3 },
+    });
+    const expected = defaultMidiLevel(96) + defaultAudioLevel(0.5);
+
+    expect(result.totalFrames).toBe(SAMPLES_PER_PPQ);
+    expect(result.channels[0][0]).toBeCloseTo(expected, 5);
+    expect(result.channels[1][0]).toBeCloseTo(expected, 5);
+  });
+
+  it('renders range stems from the matching MIDI and audio frame zero', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].clips[0].notes = [
+      { pitch: 60, velocity: 96, startPpq: 0, durationPpq: 4, channel: 0 },
+    ];
+    doc.tracks[1].clips[0].startPpq = 1;
+    doc.tracks[1].clips[0].lengthPpq = 4;
+
+    const ramp = new Float32Array(48000);
+    for (let i = 0; i < ramp.length; i++) ramp[i] = i / 48000;
+    const result = await renderProjectWithEngine(doc, {
+      deps: null,
+      createEngine: () => new AudibilityEngine(),
+      loadAudioAsset: async () => ({
+        meta: {
+          id: 'asset-1',
+          name: 'range-stem-ramp.wav',
+          sampleRate: 48000,
+          numChannels: 1,
+          numFrames: ramp.length,
+        },
+        channels: [ramp],
+      }),
+      range: { startPpq: 2, endPpq: 3 },
+      stems: true,
+    });
+
+    const keysStem = result.stems?.find((stem) => stem.name === 'Keys');
+    const drumsStem = result.stems?.find((stem) => stem.name === 'Drums');
+    expect(result.totalFrames).toBe(SAMPLES_PER_PPQ);
+    expect(keysStem?.channels[0][0]).toBeCloseTo(defaultMidiLevel(96, 1), 5);
+    expect(drumsStem?.channels[0][0]).toBeCloseTo(
+      (24000 / 48000) * 0.8 * defaultAudioLaneGain(),
+      5,
+    );
+  });
+
+  it('renders master fader automation as audible level changes', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].mute = true;
+    doc.tracks[0].automation = [];
+    doc.tracks[0].volume = 1;
+    doc.tracks[0].clips[0].notes = [
+      { pitch: 60, velocity: 127, startPpq: 0, durationPpq: 4, channel: 0 },
+    ];
+    doc.masterAutomation = [
+      {
+        param: 'faderDb',
+        enabled: true,
+        points: [
+          { ppq: 0, value: -12 },
+          { ppq: 2, value: 0 },
+        ],
+      },
+    ];
+
+    const result = await renderProjectWithEngine(doc, renderOptions(new AudibilityEngine()));
+
+    expect(result.channels[0][0]).toBeCloseTo(10 ** (-12 / 20), 5);
+    expect(result.channels[0][2 * SAMPLES_PER_PPQ - 1]).toBeCloseTo(10 ** (-12 / 20), 5);
+    expect(result.channels[0][2 * SAMPLES_PER_PPQ]).toBeCloseTo(1, 5);
+  });
+
+  it('renders track fader automation as audible level changes', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].mute = true;
+    doc.tracks[0].volume = 1;
+    doc.tracks[0].clips[0].notes = [
+      { pitch: 60, velocity: 127, startPpq: 0, durationPpq: 4, channel: 0 },
+    ];
+    doc.tracks[0].automation = [
+      {
+        param: 'faderDb',
+        enabled: true,
+        points: [
+          { ppq: 0, value: -12 },
+          { ppq: 2, value: 0 },
+        ],
+      },
+    ];
+
+    const result = await renderProjectWithEngine(doc, renderOptions(new AudibilityEngine()));
+    const masterGain = defaultMasterGain();
+
+    expect(result.channels[0][0]).toBeCloseTo(dbGain(-12) * masterGain, 5);
+    expect(result.channels[0][2 * SAMPLES_PER_PPQ - 1]).toBeCloseTo(dbGain(-12) * masterGain, 5);
+    expect(result.channels[0][2 * SAMPLES_PER_PPQ]).toBeCloseTo(masterGain, 5);
+  });
+
+  it('renders audio track fader automation as audible level changes', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].mute = true;
+    doc.tracks[1].volume = 1;
+    const mixer = doc.tracks[1].mixer as NonNullable<(typeof doc.tracks)[number]['mixer']>;
+    mixer.gainDb = 0;
+    doc.tracks[1].clips[0].startPpq = 0;
+    doc.tracks[1].clips[0].lengthPpq = 4;
+    doc.tracks[1].automation = [
+      {
+        param: 'faderDb',
+        enabled: true,
+        points: [
+          { ppq: 0, value: -18 },
+          { ppq: 1, value: 0 },
+        ],
+      },
+    ];
+
+    const result = await renderProjectWithEngine(doc, renderOptions(new AudibilityEngine()));
+    const masterGain = defaultMasterGain();
+
+    expect(result.channels[0][0]).toBeCloseTo(0.5 * 0.8 * dbGain(-18) * masterGain, 5);
+    expect(result.channels[0][SAMPLES_PER_PPQ - 1]).toBeCloseTo(
+      0.5 * 0.8 * dbGain(-18) * masterGain,
+      5,
+    );
+    expect(result.channels[0][SAMPLES_PER_PPQ]).toBeCloseTo(0.5 * 0.8 * masterGain, 5);
+  });
+
+  it('starts ranged renders with the active master and track automation values', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].mute = true;
+    doc.tracks[1].volume = 1;
+    const mixer = doc.tracks[1].mixer as NonNullable<(typeof doc.tracks)[number]['mixer']>;
+    mixer.gainDb = 0;
+    doc.tracks[1].clips[0].startPpq = 0;
+    doc.tracks[1].clips[0].lengthPpq = 4;
+    doc.tracks[1].automation = [
+      {
+        param: 'faderDb',
+        enabled: true,
+        points: [
+          { ppq: 0, value: -24 },
+          { ppq: 1, value: -6 },
+        ],
+      },
+    ];
+    doc.masterAutomation = [
+      {
+        param: 'faderDb',
+        enabled: true,
+        points: [
+          { ppq: 0, value: -18 },
+          { ppq: 1, value: -3 },
+        ],
+      },
+    ];
+
+    const result = await renderProjectWithEngine(doc, {
+      ...renderOptions(new AudibilityEngine()),
+      range: { startPpq: 1, endPpq: 2 },
+    });
+
+    expect(result.totalFrames).toBe(SAMPLES_PER_PPQ);
+    expect(result.channels[0][0]).toBeCloseTo(0.5 * 0.8 * dbGain(-6) * dbGain(-3), 5);
+  });
+
+  it('renders stems with track fader automation but without master gain', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].mute = true;
+    doc.tracks[0].volume = 1;
+    doc.tracks[0].clips[0].notes = [
+      { pitch: 60, velocity: 127, startPpq: 0, durationPpq: 4, channel: 0 },
+    ];
+    doc.tracks[0].automation = [
+      {
+        param: 'faderDb',
+        enabled: true,
+        points: [
+          { ppq: 0, value: -12 },
+          { ppq: 2, value: 0 },
+        ],
+      },
+    ];
+
+    const result = await renderProjectWithEngine(doc, {
+      deps: null,
+      createEngine: () => new AudibilityEngine(),
+      loadAudioAsset: async () => fakeAsset(),
+      stems: true,
+    });
+
+    const keysStem = result.stems?.find((stem) => stem.name === 'Keys');
+    expect(keysStem?.channels[0][0]).toBeCloseTo(dbGain(-12), 5);
+    expect(keysStem?.channels[0][2 * SAMPLES_PER_PPQ - 1]).toBeCloseTo(dbGain(-12), 5);
+    expect(keysStem?.channels[0][2 * SAMPLES_PER_PPQ]).toBeCloseTo(1, 5);
+  });
+
+  it('renders MIDI after a tempo change at the tempo-mapped sample position', async () => {
+    const doc = makeDoc();
+    doc.tempoSegments = [
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 4, bpm: 60 },
+    ];
+    doc.tracks[1].mute = true;
+    doc.tracks[0].clips[0].startPpq = 4;
+    doc.tracks[0].clips[0].lengthPpq = 2;
+    doc.tracks[0].clips[0].notes = [
+      { pitch: 60, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 },
+    ];
+
+    const result = await renderProjectWithEngine(doc, renderOptions(new AudibilityEngine()));
+    const noteStart = 4 * SAMPLES_PER_PPQ;
+    const slowPpqFrames = 2 * SAMPLES_PER_PPQ;
+
+    expect(result.channels[0][noteStart - 1]).toBeCloseTo(0, 5);
+    expect(result.channels[0][noteStart]).toBeCloseTo(midiAmplitude(96) * defaultMasterGain(), 5);
+    expect(result.channels[0][noteStart + slowPpqFrames - 2]).toBeCloseTo(
+      midiAmplitude(96) * defaultMasterGain(),
+      5,
+    );
+    expect(result.channels[0][noteStart + slowPpqFrames - 1]).toBeCloseTo(0, 5);
+  });
+
+  it('renders audio after a tempo change at the tempo-mapped sample position', async () => {
+    const doc = makeDoc();
+    doc.tempoSegments = [
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 4, bpm: 60 },
+    ];
+    doc.tracks[0].mute = true;
+    doc.tracks[1].clips[0].startPpq = 5;
+    doc.tracks[1].clips[0].lengthPpq = 1;
+
+    const result = await renderProjectWithEngine(doc, renderOptions(new AudibilityEngine()));
+    // PPQ 4 is 96k frames at 120 BPM. One more PPQ at 60 BPM adds 48k.
+    const audioStart = 4 * SAMPLES_PER_PPQ + 2 * SAMPLES_PER_PPQ;
+
+    expect(result.channels[0][audioStart - 1]).toBeCloseTo(0, 5);
+    expect(result.channels[0][audioStart]).toBeCloseTo(defaultAudioLevel(0.5), 5);
+  });
+
+  it('renders audio clip source-offset samples in the audible output', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].mute = true;
+    doc.tracks[1].clips[0].sourceOffsetPpq = 1;
+    doc.tracks[1].clips[0].lengthPpq = 1;
+
+    const ramp = new Float32Array(48000);
+    for (let i = 0; i < ramp.length; i++) ramp[i] = i / 48000;
+    const result = await renderProjectWithEngine(doc, {
+      deps: null,
+      createEngine: () => new AudibilityEngine(),
+      loadAudioAsset: async () => ({
+        meta: {
+          id: 'asset-1',
+          name: 'ramp.wav',
+          sampleRate: 48000,
+          numChannels: 1,
+          numFrames: ramp.length,
+        },
+        channels: [ramp],
+      }),
+    });
+
+    const masterGain = 10 ** (-3 / 20);
+    const audioStart = 2 * SAMPLES_PER_PPQ;
+    expect(result.channels[0][audioStart]).toBeCloseTo(
+      defaultAudioLevel(24000 / 48000, 0.8, masterGain),
+      5,
+    );
+    expect(result.channels[0][audioStart + 1000]).toBeCloseTo(
+      defaultAudioLevel(25000 / 48000, 0.8, masterGain),
+      5,
+    );
+  });
+
+  it('keeps audio clips silent after the loaded source asset ends', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].mute = true;
+    doc.tracks[1].clips[0].startPpq = 0;
+    doc.tracks[1].clips[0].lengthPpq = 4;
+    const source = new Float32Array(SAMPLES_PER_PPQ).fill(0.5);
+
+    const result = await renderProjectWithEngine(doc, {
+      deps: null,
+      createEngine: () => new AudibilityEngine(),
+      loadAudioAsset: async () => ({
+        meta: {
+          id: 'asset-1',
+          name: 'short.wav',
+          sampleRate: 48000,
+          numChannels: 1,
+          numFrames: source.length,
+        },
+        channels: [source],
+      }),
+    });
+
+    expect(result.channels[0][SAMPLES_PER_PPQ - 1]).toBeCloseTo(defaultAudioLevel(0.5), 5);
+    expect(result.channels[0][SAMPLES_PER_PPQ]).toBeCloseTo(0, 5);
+    expect(result.channels[1][SAMPLES_PER_PPQ]).toBeCloseTo(0, 5);
+  });
+
+  it('renders resampled audio asset samples at the project sample rate', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].mute = true;
+    doc.tracks[1].clips[0].lengthPpq = 1;
+
+    const sourceRate = 24000;
+    const source = new Float32Array(sourceRate);
+    for (let i = 0; i < source.length; i++) source[i] = i / sourceRate;
+    const result = await renderProjectWithEngine(doc, {
+      deps: null,
+      createEngine: () => new AudibilityEngine(),
+      loadAudioAsset: async () => ({
+        meta: {
+          id: 'asset-1',
+          name: 'half-rate-ramp.wav',
+          sampleRate: sourceRate,
+          numChannels: 1,
+          numFrames: source.length,
+        },
+        channels: [source],
+      }),
+    });
+
+    const masterGain = 10 ** (-3 / 20);
+    const audioStart = 2 * SAMPLES_PER_PPQ;
+    // One PPQ is 0.5s: 12k source frames become 24k render frames.
+    expect(result.channels[0][audioStart]).toBeCloseTo(0, 5);
+    expect(result.channels[0][audioStart + SAMPLES_PER_PPQ - 1]).toBeCloseTo(
+      defaultAudioLevel(11999 / sourceRate, 0.8, masterGain),
+      4,
+    );
+  });
+
+  it('renders stereo audio asset channels independently', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].mute = true;
+    doc.tracks[1].clips[0].lengthPpq = 1;
+
+    const frames = 48000;
+    const left = new Float32Array(frames).fill(0.25);
+    const right = new Float32Array(frames).fill(0.75);
+    const result = await renderProjectWithEngine(doc, {
+      deps: null,
+      createEngine: () => new AudibilityEngine(),
+      loadAudioAsset: async () => ({
+        meta: {
+          id: 'asset-1',
+          name: 'stereo.wav',
+          sampleRate: 48000,
+          numChannels: 2,
+          numFrames: frames,
+        },
+        channels: [left, right],
+      }),
+    });
+
+    const masterGain = 10 ** (-3 / 20);
+    const audioStart = 2 * SAMPLES_PER_PPQ;
+    expect(result.channels[0][audioStart]).toBeCloseTo(defaultAudioLevel(0.25, 0.8, masterGain), 5);
+    expect(result.channels[1][audioStart]).toBeCloseTo(defaultAudioLevel(0.75, 0.8, masterGain), 5);
+  });
+
+  it('keeps gain-zero audio clips silent and out of the engine clip list', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].mute = true;
+    doc.tracks[1].clips[0].gain = 0;
+    const engine = new AudibilityEngine();
+
+    const result = await renderProjectWithEngine(doc, renderOptions(engine));
+
+    expect(engine.named('setClips')).toEqual([]);
+    expect(result.channels[0][2 * SAMPLES_PER_PPQ]).toBeCloseTo(0, 5);
+    expect(result.channels[1][2 * SAMPLES_PER_PPQ]).toBeCloseTo(0, 5);
+  });
+
+  it('duplicates mono audio assets to the right channel audibly', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].mute = true;
+    doc.tracks[1].clips[0].lengthPpq = 1;
+
+    const mono = new Float32Array(48000).fill(0.6);
+    const result = await renderProjectWithEngine(doc, {
+      deps: null,
+      createEngine: () => new AudibilityEngine(),
+      loadAudioAsset: async () => ({
+        meta: {
+          id: 'asset-1',
+          name: 'mono.wav',
+          sampleRate: 48000,
+          numChannels: 1,
+          numFrames: mono.length,
+        },
+        channels: [mono],
+      }),
+    });
+
+    const expected = defaultAudioLevel(0.6);
+    const audioStart = 2 * SAMPLES_PER_PPQ;
+    expect(result.channels[0][audioStart]).toBeCloseTo(expected, 5);
+    expect(result.channels[1][audioStart]).toBeCloseTo(expected, 5);
+  });
+
+  it('renders baked audio clip fades in the audible output', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].mute = true;
+    doc.tracks[1].clips[0].fadeInPpq = 1;
+    doc.tracks[1].clips[0].fadeOutPpq = 1;
+    const result = await renderProjectWithEngine(doc, renderOptions(new AudibilityEngine()));
+    const masterGain = 10 ** (-3 / 20);
+    const audioStart = 2 * SAMPLES_PER_PPQ;
+
+    expect(result.channels[0][audioStart]).toBeCloseTo(0, 5);
+    expect(result.channels[0][audioStart + SAMPLES_PER_PPQ / 2]).toBeCloseTo(
+      defaultAudioLevel(0.5 * 0.5, 0.8, masterGain),
+      5,
+    );
+    expect(result.channels[0][audioStart + SAMPLES_PER_PPQ]).toBeCloseTo(
+      defaultAudioLevel(0.5, 0.8, masterGain),
+      4,
+    );
+    expect(result.channels[0][audioStart + 2 * SAMPLES_PER_PPQ - 1]).toBeCloseTo(0, 5);
+  });
+
+  it('renders baked fades independently on stereo audio channels', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].mute = true;
+    doc.tracks[1].clips[0].fadeInPpq = 1;
+    doc.tracks[1].clips[0].fadeOutPpq = 1;
+    const frames = 48000;
+    const left = new Float32Array(frames).fill(0.25);
+    const right = new Float32Array(frames).fill(0.75);
+
+    const result = await renderProjectWithEngine(doc, {
+      deps: null,
+      createEngine: () => new AudibilityEngine(),
+      loadAudioAsset: async () => ({
+        meta: {
+          id: 'asset-1',
+          name: 'fade-stereo.wav',
+          sampleRate: 48000,
+          numChannels: 2,
+          numFrames: frames,
+        },
+        channels: [left, right],
+      }),
+    });
+    const audioStart = 2 * SAMPLES_PER_PPQ;
+    const fadeMid = audioStart + SAMPLES_PER_PPQ / 2;
+
+    expect(result.channels[0][fadeMid]).toBeCloseTo(defaultAudioLevel(0.25 * 0.5), 5);
+    expect(result.channels[1][fadeMid]).toBeCloseTo(defaultAudioLevel(0.75 * 0.5), 5);
+    expect(result.channels[0][audioStart + 2 * SAMPLES_PER_PPQ - 1]).toBeCloseTo(0, 5);
+    expect(result.channels[1][audioStart + 2 * SAMPLES_PER_PPQ - 1]).toBeCloseTo(0, 5);
   });
 
   it('keeps muted tracks silent in the rendered output', async () => {
@@ -459,6 +1254,29 @@ describe('renderProjectWithEngine', () => {
     );
     expect(withSoloSafe.channels[0][0]).toBeGreaterThan(0);
     expect(withSoloSafe.channels[0][2 * SAMPLES_PER_PPQ]).toBeGreaterThan(0);
+  });
+
+  it('keeps muted solo and muted solo-safe lanes silent', async () => {
+    const mutedSoloDoc = makeDoc();
+    mutedSoloDoc.tracks[1].solo = true;
+    mutedSoloDoc.tracks[1].mute = true;
+    const mutedSolo = await renderProjectWithEngine(
+      mutedSoloDoc,
+      renderOptions(new AudibilityEngine()),
+    );
+    expect(mutedSolo.channels[0][0]).toBeCloseTo(0, 5);
+    expect(mutedSolo.channels[0][2 * SAMPLES_PER_PPQ]).toBeCloseTo(0, 5);
+
+    const mutedSoloSafeDoc = makeDoc();
+    mutedSoloSafeDoc.tracks[0].soloSafe = true;
+    mutedSoloSafeDoc.tracks[0].mute = true;
+    mutedSoloSafeDoc.tracks[1].solo = true;
+    const mutedSoloSafe = await renderProjectWithEngine(
+      mutedSoloSafeDoc,
+      renderOptions(new AudibilityEngine()),
+    );
+    expect(mutedSoloSafe.channels[0][0]).toBeCloseTo(0, 5);
+    expect(mutedSoloSafe.channels[0][2 * SAMPLES_PER_PPQ]).toBeGreaterThan(0);
   });
 
   it('replays lanes, buses, sends, params, automation and clips onto the engine', async () => {
@@ -552,6 +1370,45 @@ describe('renderProjectWithEngine', () => {
     ]);
   });
 
+  it('keeps MIDI performance-only clips audibly silent', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].mute = true;
+    const clip = doc.tracks[0].clips[0];
+    clip.notes = [];
+    clip.ccLanes = [{ controller: 11, channel: 0, points: [{ ppq: 0, value: 96 }] }];
+    clip.pitchBendLanes = [{ channel: 0, points: [{ ppq: 1, value: 4096 }] }];
+    clip.channelPressureLanes = [{ channel: 0, points: [{ ppq: 2, value: 70 }] }];
+    clip.polyPressureLanes = [{ channel: 0, pitch: 64, points: [{ ppq: 3, value: 80 }] }];
+    const engine = new AudibilityEngine();
+
+    const result = await renderProjectWithEngine(doc, renderOptions(engine));
+
+    expect(engine.named('setMidiClips')).toHaveLength(1);
+    expect(result.channels[0][0]).toBeCloseTo(0, 5);
+    expect(result.channels[0][SAMPLES_PER_PPQ]).toBeCloseTo(0, 5);
+    expect(result.channels[0][2 * SAMPLES_PER_PPQ]).toBeCloseTo(0, 5);
+    expect(result.channels[0][3 * SAMPLES_PER_PPQ]).toBeCloseTo(0, 5);
+  });
+
+  it('keeps gain-zero MIDI notes silent while preserving controller schedules', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].mute = true;
+    const clip = doc.tracks[0].clips[0];
+    clip.gain = 0;
+    clip.notes = [{ pitch: 60, velocity: 127, startPpq: 0, durationPpq: 1, channel: 0 }];
+    clip.ccLanes = [{ controller: 11, channel: 0, points: [{ ppq: 0, value: 96 }] }];
+    const engine = new AudibilityEngine();
+
+    const result = await renderProjectWithEngine(doc, renderOptions(engine));
+    const midi = engine.named('setMidiClips')[0][1] as Array<{
+      events: Array<{ word0: number }>;
+    }>;
+
+    expect(midi[0].events.map((event) => midiStatus(event.word0))).toEqual([0xb]);
+    expect(result.channels[0][0]).toBeCloseTo(0, 5);
+    expect(result.channels[0][SAMPLES_PER_PPQ - 2]).toBeCloseTo(0, 5);
+  });
+
   it('renders MIDI clips from the source-offset note window', async () => {
     const doc = makeDoc();
     const clip = doc.tracks[0].clips[0];
@@ -615,6 +1472,156 @@ describe('renderProjectWithEngine', () => {
     });
   });
 
+  it('binds synth patch instruments before audible MIDI playback', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].mute = true;
+    const patch = { preset: 'saw-lead', cutoffHz: 800 };
+    doc.tracks[0].instrument = { kind: 'synth-patch', patch };
+    const engine = new AudibilityEngine();
+
+    const result = await renderProjectWithEngine(doc, renderOptions(engine));
+
+    expect(engine.named('setSynthInstrument')).toEqual([['setSynthInstrument', patch, 1]]);
+    expect(result.channels[0][0]).toBeCloseTo(defaultMidiLevel(96), 5);
+  });
+
+  it('loads SF2 instruments before audible MIDI playback', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].mute = true;
+    doc.tracks[0].instrument = { kind: 'sf2', fontId: 'font-a', bank: 130, program: 5 };
+    const fontBytes = new Uint8Array([1, 2, 3]);
+    const engine = new AudibilityEngine();
+
+    const result = await renderProjectWithEngine(doc, {
+      ...renderOptions(engine),
+      loadFont: async () => fontBytes,
+    });
+
+    expect(engine.named('loadSoundFont')).toEqual([['loadSoundFont', fontBytes]]);
+    expect(engine.named('setSf2Instrument')).toEqual([['setSf2Instrument', {}, 1]]);
+    expect(result.channels[0][0]).toBeCloseTo(0, 5);
+    expect(result.channels[0][1]).toBeCloseTo(defaultMidiLevel(96), 5);
+  });
+
+  it('warns and binds multiple SF2 tracks in track order for offline playback', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const doc = makeDoc();
+      doc.tracks[1].mute = true;
+      doc.tracks[0].instrument = { kind: 'sf2', fontId: 'font-a' };
+      doc.tracks.push({
+        name: 'Brass',
+        color: '#fc0',
+        kind: 'midi',
+        mute: false,
+        solo: false,
+        volume: 1,
+        pan: 0,
+        instrument: { kind: 'sf2', fontId: 'font-b' },
+        clips: [
+          {
+            name: 'brass',
+            startPpq: 0,
+            lengthPpq: 1,
+            sourceOffsetPpq: 0,
+            gain: 1,
+            loopEnabled: false,
+            loopLengthPpq: 0,
+            notes: [{ pitch: 67, velocity: 80, startPpq: 0, durationPpq: 1, channel: 0 }],
+          },
+        ],
+      } as (typeof doc.tracks)[number]);
+      const bytesById = new Map([
+        ['font-a', new Uint8Array([1])],
+        ['font-b', new Uint8Array([2])],
+      ]);
+      const loadFont = vi.fn(async (fontId: string) => bytesById.get(fontId) ?? new Uint8Array());
+      const engine = new FakeEngine();
+
+      await renderProjectWithEngine(doc, { ...renderOptions(engine), loadFont });
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(loadFont.mock.calls.map(([fontId]) => fontId)).toEqual(['font-a', 'font-b']);
+      expect(engine.named('loadSoundFont')).toEqual([
+        ['loadSoundFont', bytesById.get('font-a')],
+        ['loadSoundFont', bytesById.get('font-b')],
+      ]);
+      expect(engine.named('setSf2Instrument')).toEqual([
+        ['setSf2Instrument', {}, 1],
+        ['setSf2Instrument', {}, 3],
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('renders multiple MIDI instruments on separate destinations and stems', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].mute = true;
+    doc.tracks[0].automation = [];
+    doc.tracks[0].volume = 1;
+    doc.tracks[0].instrument = { kind: 'synth-preset', preset: 'e-piano' };
+    doc.tracks[0].clips[0].notes = [
+      { pitch: 60, velocity: 64, startPpq: 0, durationPpq: 1, channel: 0 },
+    ];
+    doc.tracks.push({
+      name: 'Lead',
+      color: '#f0a',
+      kind: 'midi',
+      mute: false,
+      solo: false,
+      volume: 0.25,
+      pan: 0,
+      instrument: { kind: 'synth-patch', patch: { preset: 'saw-lead', cutoffHz: 1200 } },
+      clips: [
+        {
+          name: 'lead',
+          startPpq: 0,
+          lengthPpq: 1,
+          sourceOffsetPpq: 0,
+          gain: 1,
+          loopEnabled: false,
+          loopLengthPpq: 0,
+          notes: [{ pitch: 72, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 }],
+        },
+      ],
+    } as (typeof doc.tracks)[number]);
+    const engines: AudibilityEngine[] = [];
+    const result = await renderProjectWithEngine(doc, {
+      deps: null,
+      loadAudioAsset: async () => fakeAsset(),
+      createEngine: () => {
+        const engine = new AudibilityEngine();
+        engines.push(engine);
+        return engine;
+      },
+      stems: true,
+    });
+    const leadGain = dbGain(linearToDb(0.25));
+    const instrumentCalls = engines.flatMap((engine) => engine.named('setSynthInstrument'));
+
+    expect(instrumentCalls).toEqual([
+      ['setSynthInstrument', 'e-piano', 1],
+      ['setSynthInstrument', { preset: 'saw-lead', cutoffHz: 1200 }, 3],
+      ['setSynthInstrument', 'e-piano', 1],
+      ['setSynthInstrument', { preset: 'saw-lead', cutoffHz: 1200 }, 3],
+      ['setSynthInstrument', 'e-piano', 1],
+      ['setSynthInstrument', { preset: 'saw-lead', cutoffHz: 1200 }, 3],
+    ]);
+    expect(result.channels[0][0]).toBeCloseTo(
+      (midiAmplitude(64) + midiAmplitude(96) * leadGain) * defaultMasterGain(),
+      5,
+    );
+    expect(result.stems?.find((stem) => stem.name === 'Keys')?.channels[0][0]).toBeCloseTo(
+      midiAmplitude(64),
+      5,
+    );
+    expect(result.stems?.find((stem) => stem.name === 'Lead')?.channels[0][0]).toBeCloseTo(
+      midiAmplitude(96) * leadGain,
+      5,
+    );
+  });
+
   it('renders an explicit window with a pre-roll before its start', async () => {
     const engine = new FakeEngine();
     const result = await renderProjectWithEngine(makeDoc(), {
@@ -626,6 +1633,55 @@ describe('renderProjectWithEngine', () => {
     // stateful DSP is already in motion at the capture start.
     expect(engine.named('seekSample')[0][1]).toBe(0);
     expect(result.totalFrames).toBe(2 * 24000);
+  });
+
+  it('settles engine parameters before playback reaches the captured window', async () => {
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(makeDoc(), {
+      ...renderOptions(engine),
+      range: { startPpq: 2, endPpq: 3 },
+    });
+
+    const callNames = engine.calls.map(([name]) => name);
+    const seekIndex = callNames.indexOf('seekSample');
+    const firstProcessIndex = callNames.indexOf('process');
+    const settleIndex = callNames.indexOf('settleParameters');
+    const playIndex = callNames.indexOf('play');
+
+    expect(engine.named('seekSample')[0][1]).toBe(SAMPLES_PER_PPQ);
+    expect(seekIndex).toBeLessThan(firstProcessIndex);
+    expect(firstProcessIndex).toBeLessThan(settleIndex);
+    expect(settleIndex).toBeLessThan(playIndex);
+    expect(callNames.lastIndexOf('stop')).toBeGreaterThan(playIndex);
+  });
+
+  it('reports progress and yields between long render checkpoints', async () => {
+    const onProgress = vi.fn();
+    const yieldBetweenBlocks = vi.fn(async () => {});
+
+    await renderProjectWithEngine(makeDoc(), {
+      ...renderOptions(new FakeEngine()),
+      range: { startPpq: 0, endPpq: 8 },
+      onProgress,
+      yieldBetweenBlocks,
+    });
+
+    expect(yieldBetweenBlocks).toHaveBeenCalled();
+    expect(onProgress).toHaveBeenCalledWith(0, 'engine.prepare');
+    expect(onProgress.mock.calls.some(([, stage]) => stage === 'engine.render')).toBe(true);
+    expect(onProgress.mock.calls.at(-1)).toEqual([1, 'done']);
+  });
+
+  it('rejects loop and explicit render ranges that cannot produce audio', async () => {
+    await expect(
+      renderProjectWithEngine(makeDoc(), { ...renderOptions(new FakeEngine()), range: 'loop' }),
+    ).rejects.toThrow(/loopRegion/);
+    await expect(
+      renderProjectWithEngine(makeDoc(), {
+        ...renderOptions(new FakeEngine()),
+        range: { startPpq: 2, endPpq: 2 },
+      }),
+    ).rejects.toThrow(/must be after/);
   });
 
   it('skips the master strip scene but keeps gain/pan without the master chain', async () => {
@@ -763,6 +1819,63 @@ describe('renderProjectWithEngine', () => {
     expect(result.report.peakDb).toBeCloseTo(20 * Math.log10(0.0625), 5);
   });
 
+  it('keeps stem renders pre-master while mastering changes the final mix', async () => {
+    const doc = makeDoc();
+    doc.mixer = {
+      ...doc.mixer,
+      masteringChain: {
+        processors: [{ processor: 'maximizer.truePeakLimiter', params: {}, enabled: true }],
+      },
+    };
+    const processStereo = vi.fn((_name: string, left: Float32Array, right: Float32Array) => ({
+      left: Float32Array.from(left, (value) => value * 0.1),
+      right: Float32Array.from(right, (value) => value * 0.1),
+    }));
+
+    const result = await renderProjectWithEngine(doc, {
+      ...renderOptions(new FakeEngine()),
+      deps: { mastering: { processStereo }, metering: null },
+      stems: true,
+    });
+
+    expect(processStereo).toHaveBeenCalledTimes(1);
+    expect(result.channels[0][0]).toBeCloseTo(0.025, 5);
+    expect(result.channels[1][0]).toBeCloseTo(0.025, 5);
+    expect(result.stems?.[0].channels[0][0]).toBeCloseTo(0.25, 5);
+    expect(result.stems?.[1].channels[0][0]).toBeCloseTo(0.25, 5);
+    expect(result.report.peakDb).toBeCloseTo(20 * Math.log10(0.025), 5);
+  });
+
+  it('reports peak from the stereo mix after independent mastering output', async () => {
+    class StereoFillEngine extends FakeEngine {
+      process(channels: Float32Array[]): Float32Array[] {
+        channels[0].fill(0.2);
+        (channels[1] ?? channels[0]).fill(0.4);
+        return channels;
+      }
+    }
+    const doc = makeDoc();
+    doc.mixer = {
+      ...doc.mixer,
+      masteringChain: {
+        processors: [{ processor: 'eq.tilt', params: {}, enabled: true }],
+      },
+    };
+    const processStereo = vi.fn((_name: string, left: Float32Array, right: Float32Array) => ({
+      left: Float32Array.from(left, (value) => value * 0.5),
+      right: Float32Array.from(right, (value) => value * 2),
+    }));
+
+    const result = await renderProjectWithEngine(doc, {
+      ...renderOptions(new StereoFillEngine()),
+      deps: { mastering: { processStereo }, metering: null },
+    });
+
+    expect(result.channels[0][0]).toBeCloseTo(0.1, 5);
+    expect(result.channels[1][0]).toBeCloseTo(0.8, 5);
+    expect(result.report.peakDb).toBeCloseTo(20 * Math.log10(0.8), 5);
+  });
+
   it('cancels between checkpoints and still destroys the engine', async () => {
     const engine = new FakeEngine();
     let blocks = 0;
@@ -822,6 +1935,37 @@ describe('renderProjectWithEngine', () => {
     expect(clips[0].channels[0][4000]).toBe(2000);
   });
 
+  it('renders warped audio clips audibly from the stretched sample positions', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].mute = true;
+    doc.tracks[1].clips[0].warp = { enabled: true, sourceBpm: 240 };
+    const rampFrames = 48000;
+    const ramp = new Float32Array(rampFrames);
+    for (let i = 0; i < rampFrames; i++) ramp[i] = i / rampFrames;
+
+    const result = await renderProjectWithEngine(doc, {
+      deps: null,
+      createEngine: () => new AudibilityEngine(),
+      loadAudioAsset: async () => ({
+        meta: {
+          id: 'asset-1',
+          name: 'warped-ramp.wav',
+          sampleRate: 48000,
+          numChannels: 1,
+          numFrames: rampFrames,
+        },
+        channels: [ramp],
+      }),
+    });
+    const audioStart = 2 * SAMPLES_PER_PPQ;
+
+    expect(result.channels[0][audioStart]).toBeCloseTo(0, 5);
+    expect(result.channels[0][audioStart + 4000]).toBeCloseTo(
+      defaultAudioLevel(2000 / rampFrames),
+      5,
+    );
+  });
+
   it('does not send empty audio clip windows to the offline engine', async () => {
     const doc = makeDoc();
     doc.tracks[1].clips[0].sourceOffsetPpq = 100;
@@ -838,6 +1982,23 @@ describe('renderProjectWithEngine', () => {
     // MIDI still schedules, so this only proves the empty audio window was
     // dropped rather than the whole render being skipped.
     expect(engine.named('setMidiClips')).toHaveLength(1);
+  });
+
+  it('keeps missing audio assets silent without cancelling MIDI playback', async () => {
+    const doc = makeDoc();
+    const engine = new AudibilityEngine();
+
+    const result = await renderProjectWithEngine(doc, {
+      deps: null,
+      createEngine: () => engine,
+      loadAudioAsset: async () => {
+        throw new Error('missing asset');
+      },
+    });
+
+    expect(engine.named('setClips')).toEqual([]);
+    expect(result.channels[0][0]).toBeCloseTo(defaultMidiLevel(96), 5);
+    expect(result.channels[0][2 * SAMPLES_PER_PPQ]).toBeCloseTo(0, 5);
   });
 
   it('keeps the unwarped comp path for a clip with takes and warp', async () => {
@@ -950,9 +2111,105 @@ describe('renderProjectWithEngine', () => {
     expect(clips[1].channels[0][0]).toBe(24000);
     expect(clips[1].channels[0][23999]).toBe(47999);
   });
+
+  it('renders comped audio segments audibly at their segment positions', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].mute = true;
+    const drumClip = doc.tracks[1].clips[0];
+    drumClip.takes = [
+      { assetId: 'asset-1', name: 'Take 1' },
+      { assetId: 'asset-2', name: 'Take 2' },
+    ];
+    drumClip.compSegments = [
+      { startPpq: 0, takeIndex: 0 },
+      { startPpq: 1, takeIndex: 1 },
+    ];
+    const rampFrames = 48000;
+    const ramp = new Float32Array(rampFrames);
+    for (let i = 0; i < rampFrames; i++) ramp[i] = i / rampFrames;
+
+    const result = await renderProjectWithEngine(doc, {
+      deps: null,
+      createEngine: () => new AudibilityEngine(),
+      loadAudioAsset: async (assetId: string) =>
+        assetId === 'asset-2'
+          ? {
+              meta: {
+                id: 'asset-2',
+                name: 'take2-ramp.wav',
+                sampleRate: 48000,
+                numChannels: 1,
+                numFrames: rampFrames,
+              },
+              channels: [ramp],
+            }
+          : fakeAsset(),
+    });
+
+    expect(result.channels[0][2 * SAMPLES_PER_PPQ]).toBeCloseTo(defaultAudioLevel(0.5), 5);
+    expect(result.channels[0][3 * SAMPLES_PER_PPQ]).toBeCloseTo(defaultAudioLevel(0.5), 5);
+    expect(result.channels[0][3 * SAMPLES_PER_PPQ + 1000]).toBeCloseTo(
+      defaultAudioLevel(25000 / rampFrames),
+      5,
+    );
+  });
 });
 
 describe('renderProjectWithEngine loudness metering', () => {
+  it('meters the final stereo mix after mastering processors', async () => {
+    const doc = makeDoc();
+    doc.mixer = {
+      ...doc.mixer,
+      masteringChain: {
+        processors: [{ processor: 'maximizer.truePeakLimiter', params: {}, enabled: true }],
+      },
+    };
+    const processStereo = vi.fn((_name: string, left: Float32Array, right: Float32Array) => ({
+      left: Float32Array.from(left, (value) => value * 0.5),
+      right: Float32Array.from(right, (value) => value * 0.25),
+    }));
+    const interleavedLufs = vi.fn(() => -8.5);
+
+    const result = await renderProjectWithEngine(doc, {
+      ...renderOptions(new FakeEngine()),
+      deps: { mastering: { processStereo }, metering: { interleavedLufs } },
+    });
+
+    expect(interleavedLufs).toHaveBeenCalledTimes(1);
+    const [samples] = interleavedLufs.mock.calls[0];
+    expect(samples[0]).toBeCloseTo(0.25 * 0.5, 5);
+    expect(samples[1]).toBeCloseTo(0.25 * 0.25, 5);
+    expect(result.report.lufs).toBe(-8.5);
+  });
+
+  it('meters only the final mastered mix when stems are also exported', async () => {
+    const doc = makeDoc();
+    doc.mixer = {
+      ...doc.mixer,
+      masteringChain: {
+        processors: [{ processor: 'maximizer.truePeakLimiter', params: {}, enabled: true }],
+      },
+    };
+    const processStereo = vi.fn((_name: string, left: Float32Array, right: Float32Array) => ({
+      left: Float32Array.from(left, (value) => value * 0.25),
+      right: Float32Array.from(right, (value) => value * 0.25),
+    }));
+    const interleavedLufs = vi.fn(() => -6.25);
+
+    const result = await renderProjectWithEngine(doc, {
+      ...renderOptions(new FakeEngine()),
+      deps: { mastering: { processStereo }, metering: { interleavedLufs } },
+      stems: true,
+    });
+
+    expect(interleavedLufs).toHaveBeenCalledTimes(1);
+    const [samples] = interleavedLufs.mock.calls[0];
+    expect(samples[0]).toBeCloseTo(0.25 * 0.25, 5);
+    expect(samples[1]).toBeCloseTo(0.25 * 0.25, 5);
+    expect(result.stems?.[0].channels[0][0]).toBeCloseTo(0.25, 5);
+    expect(result.report.lufs).toBe(-6.25);
+  });
+
   it('measures channel-weighted BS.1770 over the interleaved stereo mix', async () => {
     const engine = new FakeEngine();
     const interleavedLufs = vi.fn(() => -9.7);
@@ -1042,6 +2299,20 @@ describe('renderProjectWithEngine with frozen tracks', () => {
     // The frozen lane gets no strip JSON; the unfrozen MIDI track still plays.
     expect(engine.named('setTrackStripJson')).toEqual([]);
     expect(engine.named('setMidiClips')).toHaveLength(1);
+  });
+
+  it('renders frozen audio assets audibly through live lane and master levels', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].frozen = { assetId: 'frozen-1' };
+    const result = await renderProjectWithEngine(doc, {
+      ...renderOptions(new AudibilityEngine()),
+      loadAudioAsset: loadFrozenOrClipAsset(),
+    });
+    const frozenLevel = 0.75 * defaultAudioLaneGain() * defaultMasterGain();
+
+    expect(result.channels[0][0]).toBeCloseTo(defaultMidiLevel(96) + frozenLevel, 5);
+    expect(result.channels[0][SAMPLES_PER_PPQ - 1]).toBeCloseTo(frozenLevel, 5);
+    expect(result.channels[0][SAMPLES_PER_PPQ]).toBeCloseTo(0, 5);
   });
 
   it('a frozen MIDI track contributes no MIDI schedules', async () => {
@@ -1161,6 +2432,30 @@ describe('renderProjectWithEngine with frozen tracks', () => {
     expect(result.report.peakDb).toBeCloseTo(20 * Math.log10(0.25), 5);
   });
 
+  it('freezeTrackIndex excludes track fader automation from the audible pre-fader render', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].mute = true;
+    doc.tracks[1].automation = [
+      {
+        param: 'faderDb',
+        enabled: true,
+        points: [
+          { ppq: 0, value: -48 },
+          { ppq: 2, value: 0 },
+        ],
+      },
+    ];
+
+    const result = await renderProjectWithEngine(doc, {
+      ...renderOptions(new AudibilityEngine()),
+      freezeTrackIndex: 1,
+    });
+
+    // The audio clip sample is 0.5 and clip gain is 0.8. The track fader,
+    // its +2 dB strip trim and master gain are intentionally excluded.
+    expect(result.channels[0][2 * SAMPLES_PER_PPQ]).toBeCloseTo(0.5 * 0.8, 5);
+  });
+
   it('freezeTrackIndex strips group output routing from the frozen lane', async () => {
     const doc = makeGroupDoc();
     const engine = new FakeEngine();
@@ -1270,6 +2565,37 @@ describe('renderProjectWithEngine with group tracks and sidechains', () => {
       ['setSoloMute', 0, false, true],
       ['setSoloMute', 1, false, true],
     ]);
+  });
+
+  it('renders routed group members into a group stem audibly', async () => {
+    const result = await renderProjectWithEngine(makeGroupDoc(), {
+      deps: null,
+      loadAudioAsset: async () => fakeAsset(),
+      createEngine: () => new AudibilityEngine(),
+      stems: true,
+    });
+
+    const groupStem = result.stems?.find((stem) => stem.trackIndex === 2);
+    expect(groupStem?.channels[0][0]).toBeCloseTo(0, 5);
+    expect(groupStem?.channels[0][2 * SAMPLES_PER_PPQ]).toBeCloseTo(
+      0.5 * 0.8 * defaultAudioLaneGain(),
+      5,
+    );
+  });
+
+  it('keeps muted routed members silent in the audible group stem', async () => {
+    const doc = makeGroupDoc();
+    doc.tracks[1].mute = true;
+    const result = await renderProjectWithEngine(doc, {
+      deps: null,
+      loadAudioAsset: async () => fakeAsset(),
+      createEngine: () => new AudibilityEngine(),
+      stems: true,
+    });
+
+    const groupStem = result.stems?.find((stem) => stem.trackIndex === 2);
+    expect(groupStem?.channels[0][2 * SAMPLES_PER_PPQ]).toBeCloseTo(0, 5);
+    expect(groupStem?.channels[1][2 * SAMPLES_PER_PPQ]).toBeCloseTo(0, 5);
   });
 
   it('folds a group track VCA offset into the exported group bus gain', async () => {
@@ -1427,6 +2753,20 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
     expect(engine.named('setTrackLanes')[0][1]).toEqual([
       { trackId: 1 },
       { trackId: 2, sends: [{ busId: 1, levelDb: -9, enabled: true, sendTiming: 'preFader' }] },
+    ]);
+  });
+
+  it('preserves disabled sends as disabled lane descriptors', async () => {
+    const doc = makeDoc();
+    (doc.tracks[1] as { mixer: { sends: Array<Record<string, unknown>> } }).mixer.sends[0].enabled =
+      false;
+
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    expect(engine.named('setTrackLanes')[0][1]).toEqual([
+      { trackId: 1 },
+      { trackId: 2, sends: [{ busId: 1, levelDb: -9, enabled: false }] },
     ]);
   });
 

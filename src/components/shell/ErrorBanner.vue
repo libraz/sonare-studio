@@ -14,18 +14,20 @@ const { t } = useI18n();
 </script>
 
 <template>
-  <p v-if="message" class="error-box" role="alert">
-    <span class="error-text">{{ message }}</span>
-    <button
-      type="button"
-      class="error-dismiss"
-      :aria-label="t.shell.dismissError"
-      :title="t.shell.dismissError"
-      @click="emit('dismiss')"
-    >
-      ✕
-    </button>
-  </p>
+  <Transition name="slide-down">
+    <p v-if="message" class="error-box" role="alert">
+      <span class="error-text">{{ message }}</span>
+      <button
+        type="button"
+        class="error-dismiss"
+        :aria-label="t.shell.dismissError"
+        :title="t.shell.dismissError"
+        @click="emit('dismiss')"
+      >
+        ✕
+      </button>
+    </p>
+  </Transition>
 </template>
 
 <style scoped>

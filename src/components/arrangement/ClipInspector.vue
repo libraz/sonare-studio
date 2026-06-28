@@ -74,6 +74,7 @@ function onLoopToggle(): void {
 </script>
 
 <template>
+  <Transition name="fade">
   <div v-if="props.clip" class="clip-inspector" :aria-label="t.shell.arrangement.clipInspector.label">
     <span class="ci-name" :title="props.clip.name">{{ props.clip.name }}</span>
 
@@ -139,6 +140,7 @@ function onLoopToggle(): void {
       {{ t.shell.arrangement.clipInspector.redetect }}
     </button>
   </div>
+  </Transition>
 </template>
 
 <style scoped>
