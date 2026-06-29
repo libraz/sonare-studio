@@ -24,7 +24,7 @@ import {
   ppqToDivisions,
   type ScoreMetadata,
 } from './model';
-import { type SpelledPitch, spellPitch } from './pitch-spelling';
+import { type SpelledPitch, type Step, spellPitch } from './pitch-spelling';
 
 /** Staff number within a grand staff (1 = treble, 2 = bass). */
 type StaffNumber = 1 | 2;
@@ -68,12 +68,12 @@ const CHORD_QUALITY_KIND: ReadonlyMap<number, string> = new Map([
   [15, 'dominant-ninth'],
 ]);
 
-/** MusicXML articulation element per annotation marking. */
-const ARTICULATION_XML: Readonly<Record<NoteArticulation, string>> = {
-  staccato: '<staccato/>',
-  accent: '<accent/>',
-  tenuto: '<tenuto/>',
-  marcato: '<strong-accent/>',
+/** MusicXML articulation element name per annotation marking. */
+const ARTICULATION_ELEMENT: Readonly<Record<NoteArticulation, string>> = {
+  staccato: 'staccato',
+  accent: 'accent',
+  tenuto: 'tenuto',
+  marcato: 'strong-accent',
 };
 
 /** Highest `<slur>` number-level allowed by MusicXML. */
@@ -93,12 +93,17 @@ interface AnnotationIndex {
   articulations: Map<NotatedEvent, NoteArticulation>;
   /** Slur numbers starting on the event. */
   slurStarts: Map<NotatedEvent, number[]>;
+  /** Slur placement attributes keyed by start event and slur number. */
+  slurStartPlacements: Map<NotatedEvent, Map<number, string>>;
   /** Slur numbers stopping on the event. */
   slurStops: Map<NotatedEvent, number[]>;
 }
 
 /** Beam marks keyed by event, one array entry per MusicXML beam level. */
 type BeamIndex = ReadonlyMap<NotatedEvent, ReadonlyArray<string>>;
+
+/** Explicit accidental text by event and pitch index within a note/chord. */
+type AccidentalIndex = ReadonlyMap<NotatedEvent, ReadonlyMap<number, string>>;
 
 /** Appends a value to a keyed list inside a map. */
 function pushMapped<K>(map: Map<K, number[]>, key: K, value: number): void {
@@ -120,6 +125,7 @@ function buildAnnotationIndex(score: NotatedScore): AnnotationIndex {
     dynamics: new Map(),
     articulations: new Map(),
     slurStarts: new Map(),
+    slurStartPlacements: new Map(),
     slurStops: new Map(),
   };
   const annotations = score.noteAnnotations;
@@ -166,9 +172,17 @@ function buildAnnotationIndex(score: NotatedScore): AnnotationIndex {
     while (active.some((entry) => entry.number === number) && number < MAX_SLUR_NUMBER) number++;
     active.push({ endPpq: slur.stop.startPpq, number });
     pushMapped(index.slurStarts, slur.start, number);
+    const placements = index.slurStartPlacements.get(slur.start) ?? new Map<number, string>();
+    placements.set(number, slurPlacement(slur.start));
+    index.slurStartPlacements.set(slur.start, placements);
     pushMapped(index.slurStops, slur.stop, number);
   }
   return index;
+}
+
+/** Default slur placement by voice direction. */
+function slurPlacement(event: NotatedEvent): string {
+  return event.voice === 1 || event.voice === 3 ? 'above' : 'below';
 }
 
 /** Replacement table for XML-reserved characters. */
@@ -284,7 +298,7 @@ function serializePart(
   const symbolsByMeasure = groupChordSymbolsByMeasure(chordSymbols, part.measures);
   lines.push(`<part id="${escapeXml(part.id)}">`);
   let prevTimeSig: NotatedTimeSig | undefined;
-  for (const measure of part.measures) {
+  for (const [measureIndex, measure] of part.measures.entries()) {
     serializeMeasure(
       lines,
       measure,
@@ -294,6 +308,7 @@ function serializePart(
       symbolsByMeasure.get(measure.index) ?? [],
       staffMap,
       annotations,
+      measureIndex === part.measures.length - 1,
     );
     prevTimeSig = measure.timeSig;
   }
@@ -313,12 +328,14 @@ function serializeMeasure(
   chordSymbols: ReadonlyArray<NotatedChordSymbol>,
   staffMap: ReadonlyMap<NotatedEvent, StaffNumber> | undefined,
   annotations: AnnotationIndex,
+  isLastMeasure: boolean,
 ): void {
   lines.push(`<measure number="${measure.index + 1}">`);
   const attributes = measureAttributesXml(measure, part.clef, score, prevTimeSig);
   if (attributes !== undefined) {
     lines.push(attributes);
   }
+  const accidentals = buildAccidentalIndex(measure, score, staffMap);
   for (const symbol of chordSymbols) {
     const harmony = harmonyXml(symbol, measure, score);
     if (harmony !== undefined) {
@@ -330,8 +347,11 @@ function serializeMeasure(
     if (voiceIndex > 0) {
       lines.push(`<backup><duration>${measureDivisions}</duration></backup>`);
     }
-    serializeVoice(lines, voice, measure, score, staffMap, annotations);
+    serializeVoice(lines, voice, measure, score, staffMap, annotations, accidentals);
   });
+  if (isLastMeasure) {
+    lines.push('<barline location="right"><bar-style>light-heavy</bar-style></barline>');
+  }
   lines.push('</measure>');
 }
 
@@ -380,6 +400,7 @@ function clefXml(clef: NotatedClef): string {
     case 'grand':
       return (
         '<staves>2</staves>' +
+        '<part-symbol top-staff="1" bottom-staff="2">brace</part-symbol>' +
         '<clef number="1"><sign>G</sign><line>2</line></clef>' +
         '<clef number="2"><sign>F</sign><line>4</line></clef>'
       );
@@ -396,6 +417,7 @@ function serializeVoice(
   score: NotatedScore,
   staffMap: ReadonlyMap<NotatedEvent, StaffNumber> | undefined,
   annotations: AnnotationIndex,
+  accidentals: AccidentalIndex,
 ): void {
   const measureRest = isWholeMeasureRest(voice, measure);
   const beams = buildBeamIndex(voice, measure, staffMap);
@@ -412,9 +434,56 @@ function serializeVoice(
           `<direction placement="below"><direction-type><dynamics><${dynamics}/></dynamics></direction-type>${staffXml}</direction>`,
         );
       }
-      pushNoteEvent(lines, event, measure, score, staff, annotations, beams);
+      pushNoteEvent(lines, event, measure, score, staff, annotations, beams, accidentals);
     }
   }
+}
+
+/** Builds explicit accidentals only when the visible pitch state changes. */
+function buildAccidentalIndex(
+  measure: NotatedMeasure,
+  score: NotatedScore,
+  staffMap: ReadonlyMap<NotatedEvent, StaffNumber> | undefined,
+): AccidentalIndex {
+  const accidentals = new Map<NotatedEvent, Map<number, string>>();
+  const state = new Map<string, number>();
+  const noteEvents = measure.voices
+    .flatMap((voice) => voice.events)
+    .filter((event) => event.kind === 'note')
+    .sort((a, b) => a.startPpq - b.startPpq || a.voice - b.voice);
+  for (const event of noteEvents) {
+    if (event.tieStop && !event.tieStart) continue;
+    const staff = staffMap?.get(event) ?? 1;
+    event.pitches.forEach((midi, pitchIndex) => {
+      const pitch = spellPitch(midi, score.keyFifths);
+      const key = `${staff}:${pitch.step}:${pitch.octave}`;
+      const current = state.get(key) ?? keySignatureAlter(pitch.step, score.keyFifths);
+      if (pitch.alter !== current) {
+        const value = accidentalName(pitch.alter);
+        const eventAccidentals = accidentals.get(event) ?? new Map<number, string>();
+        eventAccidentals.set(pitchIndex, value);
+        accidentals.set(event, eventAccidentals);
+        state.set(key, pitch.alter);
+      }
+    });
+  }
+  return accidentals;
+}
+
+/** Key-signature alteration for a diatonic step. */
+function keySignatureAlter(step: Step, fifths: number): number {
+  const sharpSteps: Step[] = ['F', 'C', 'G', 'D', 'A', 'E', 'B'];
+  const flatSteps: Step[] = ['B', 'E', 'A', 'D', 'G', 'C', 'F'];
+  if (fifths > 0) return sharpSteps.slice(0, fifths).includes(step) ? 1 : 0;
+  if (fifths < 0) return flatSteps.slice(0, -fifths).includes(step) ? -1 : 0;
+  return 0;
+}
+
+/** MusicXML accidental name for supported spellings. */
+function accidentalName(alter: number): string {
+  if (alter > 0) return 'sharp';
+  if (alter < 0) return 'flat';
+  return 'natural';
 }
 
 /**
@@ -541,8 +610,32 @@ function restXml(
     return `<note><rest measure="yes"/><duration>${duration}</duration><voice>${event.voice}</voice>${staffXml}</note>`;
   }
   const duration = ppqToDivisions(event.durationPpq, score.divisions);
+  const rest = restElementXml(event, measure, staff);
   const dots = '<dot/>'.repeat(event.value.dots);
-  return `<note><rest/><duration>${duration}</duration><voice>${event.voice}</voice><type>${event.value.base}</type>${dots}${staffXml}</note>`;
+  return `<note>${rest}<duration>${duration}</duration><voice>${event.voice}</voice><type>${event.value.base}</type>${dots}${staffXml}</note>`;
+}
+
+/** Builds a rest element, positioning multi-voice rests away from the staff center. */
+function restElementXml(
+  event: NotatedEvent,
+  measure: NotatedMeasure,
+  staff: StaffNumber | undefined,
+): string {
+  if (measure.voices.length < 2) return '<rest/>';
+  const position = restDisplayPitch(event.voice, staff ?? 1);
+  return `<rest><display-step>${position.step}</display-step><display-octave>${position.octave}</display-octave></rest>`;
+}
+
+/** Display pitch used only to move rests vertically in multi-voice notation. */
+function restDisplayPitch(
+  voice: NotatedVoiceNumber,
+  staff: StaffNumber,
+): Readonly<{ step: Step; octave: number }> {
+  const upperVoice = voice === 1 || voice === 3;
+  if (staff === 2) {
+    return upperVoice ? { step: 'D', octave: 3 } : { step: 'F', octave: 2 };
+  }
+  return upperVoice ? { step: 'B', octave: 4 } : { step: 'D', octave: 4 };
 }
 
 /**
@@ -559,6 +652,7 @@ function pushNoteEvent(
   staff: StaffNumber | undefined,
   annotations: AnnotationIndex,
   beams: BeamIndex,
+  accidentals: AccidentalIndex,
 ): void {
   const duration = ppqToDivisions(event.durationPpq, score.divisions);
   const ties = tieXml(event);
@@ -569,13 +663,19 @@ function pushNoteEvent(
   event.pitches.forEach((midi, pitchIndex) => {
     const chord = pitchIndex > 0 ? '<chord/>' : '';
     const pitch = pitchXml(spellPitch(midi, score.keyFifths));
+    const accidental = accidentalXml(accidentals.get(event)?.get(pitchIndex));
     const notations = notationsXml(event, annotations, pitchIndex === 0);
     const beam = pitchIndex === 0 ? beamMarks : '';
     const stemMark = pitchIndex === 0 ? stem : '';
     lines.push(
-      `<note>${chord}${pitch}<duration>${duration}</duration>${ties}<voice>${event.voice}</voice><type>${event.value.base}</type>${dots}${stemMark}${staffXml}${beam}${notations}</note>`,
+      `<note>${chord}${pitch}<duration>${duration}</duration>${ties}<voice>${event.voice}</voice><type>${event.value.base}</type>${dots}${accidental}${stemMark}${staffXml}${beam}${notations}</note>`,
     );
   });
+}
+
+/** Builds an explicit MusicXML accidental element. */
+function accidentalXml(accidental: string | undefined): string {
+  return accidental === undefined ? '' : `<accidental>${accidental}</accidental>`;
 }
 
 /** Builds a stem direction for multi-voice measures, leaving single voices to engraver defaults. */
@@ -640,14 +740,21 @@ function notationsXml(
       inner += `<slur type="stop" number="${number}"/>`;
     }
     for (const number of annotations.slurStarts.get(event) ?? []) {
-      inner += `<slur type="start" number="${number}"/>`;
+      const placement = annotations.slurStartPlacements.get(event)?.get(number);
+      const placementXml = placement === undefined ? '' : ` placement="${placement}"`;
+      inner += `<slur type="start" number="${number}"${placementXml}/>`;
     }
     const articulation = annotations.articulations.get(event);
     if (articulation !== undefined) {
-      inner += `<articulations>${ARTICULATION_XML[articulation]}</articulations>`;
+      inner += `<articulations>${articulationXml(articulation, event)}</articulations>`;
     }
   }
   return inner === '' ? '' : `<notations>${inner}</notations>`;
+}
+
+/** Builds a voice-aware articulation element. */
+function articulationXml(articulation: NoteArticulation, event: NotatedEvent): string {
+  return `<${ARTICULATION_ELEMENT[articulation]} placement="${slurPlacement(event)}"/>`;
 }
 
 /**

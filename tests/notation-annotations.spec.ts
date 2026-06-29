@@ -168,10 +168,10 @@ describe('serializeMusicXml dynamics', () => {
 describe('serializeMusicXml articulations', () => {
   it('maps each marking to its MusicXML articulation element', () => {
     const expected = {
-      staccato: '<articulations><staccato/></articulations>',
-      accent: '<articulations><accent/></articulations>',
-      tenuto: '<articulations><tenuto/></articulations>',
-      marcato: '<articulations><strong-accent/></articulations>',
+      staccato: '<articulations><staccato placement="above"/></articulations>',
+      accent: '<articulations><accent placement="above"/></articulations>',
+      tenuto: '<articulations><tenuto placement="above"/></articulations>',
+      marcato: '<articulations><strong-accent placement="above"/></articulations>',
     } as const;
     for (const [articulation, fragment] of Object.entries(expected)) {
       const xml = engrave([makeNote(1, 72, 0, 1)], {
@@ -191,7 +191,7 @@ describe('serializeMusicXml articulations', () => {
       .split('\n')
       .filter((line) => line.startsWith('<note>') && line.includes('<pitch>'));
     expect(noteLines).toHaveLength(2);
-    expect(noteLines[0]).toContain('<articulations><staccato/></articulations>');
+    expect(noteLines[0]).toContain('<articulations><staccato placement="above"/></articulations>');
     expect(noteLines[0]).not.toContain('<chord/>');
     expect(noteLines[1]).toContain('<chord/>');
     expect(noteLines[1]).not.toContain('<articulations>');
@@ -203,7 +203,7 @@ describe('serializeMusicXml articulations', () => {
     const noteLines = xml.split('\n').filter((line) => line.startsWith('<note>'));
     const attack = noteLines.find((line) => line.includes('<tie type="start"/>'));
     const tail = noteLines.find((line) => line.includes('<tie type="stop"/>'));
-    expect(attack).toContain('<articulations><accent/></articulations>');
+    expect(attack).toContain('<articulations><accent placement="above"/></articulations>');
     expect(tail).not.toContain('<articulations>');
   });
 });
@@ -215,7 +215,9 @@ describe('serializeMusicXml slurs', () => {
     });
     parse(xml);
     const noteLines = xml.split('\n').filter((line) => line.startsWith('<note>'));
-    expect(noteLines[0]).toContain('<notations><slur type="start" number="1"/></notations>');
+    expect(noteLines[0]).toContain(
+      '<notations><slur type="start" number="1" placement="above"/></notations>',
+    );
     expect(noteLines[1]).toContain('<notations><slur type="stop" number="1"/></notations>');
   });
 
@@ -225,8 +227,8 @@ describe('serializeMusicXml slurs', () => {
       { 1: { slurToNoteId: 3 }, 2: { slurToNoteId: 4 } },
     );
     parse(xml);
-    expect(xml).toContain('<slur type="start" number="1"/>');
-    expect(xml).toContain('<slur type="start" number="2"/>');
+    expect(xml).toContain('<slur type="start" number="1" placement="above"/>');
+    expect(xml).toContain('<slur type="start" number="2" placement="above"/>');
     expect(xml).toContain('<slur type="stop" number="1"/>');
     expect(xml).toContain('<slur type="stop" number="2"/>');
   });
@@ -239,9 +241,9 @@ describe('serializeMusicXml slurs', () => {
     parse(xml);
     const slurs = xml.match(/<slur [^>]*\/>/g) ?? [];
     expect(slurs).toEqual([
-      '<slur type="start" number="1"/>',
+      '<slur type="start" number="1" placement="above"/>',
       '<slur type="stop" number="1"/>',
-      '<slur type="start" number="1"/>',
+      '<slur type="start" number="1" placement="above"/>',
       '<slur type="stop" number="1"/>',
     ]);
   });
