@@ -294,6 +294,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@fontsource-variable/bricolage-grotesque@npm:^5.2.10":
+  version: 5.2.10
+  resolution: "@fontsource-variable/bricolage-grotesque@npm:5.2.10"
+  checksum: 10c0/5963126874a66170093b2639f534b502cba78315fe50bfbdceb0ce124beb922071a69fdb6d66a7ab0983a67435ca3b466fe0722e5bd4bbcd525e352d9a03c499
+  languageName: node
+  linkType: hard
+
 "@isaacs/cliui@npm:^8.0.2":
   version: 8.0.2
   resolution: "@isaacs/cliui@npm:8.0.2"
@@ -1962,6 +1969,7 @@ __metadata:
   dependencies:
     "@biomejs/biome": "npm:^2.5"
     "@breezystack/lamejs": "npm:^1.2.7"
+    "@fontsource-variable/bricolage-grotesque": "npm:^5.2.10"
     "@vitejs/plugin-vue": "npm:^6"
     "@vue/test-utils": "npm:^2.4"
     fflate: "npm:^0.8"

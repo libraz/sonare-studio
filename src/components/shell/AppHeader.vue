@@ -28,7 +28,10 @@ const { t } = useI18n();
 
 <template>
   <header class="app-bar">
-    <span class="app-title">sonare studio</span>
+    <span class="app-title">
+      <span class="app-title-mark">sonare</span>
+      <span class="app-title-sub">studio</span>
+    </span>
 
     <MenuBar :menus="menus" :aria-label="t.shell.menus.barLabel" />
 

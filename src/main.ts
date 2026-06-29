@@ -2,6 +2,11 @@ import { createPinia } from 'pinia';
 import { createApp } from 'vue';
 import { vTooltip } from '@/ui/tooltip';
 import App from './App.vue';
+// The display face for the wordmark — a modern variable grotesque, self-hosted
+// so it ships with the bundle rather than depending on a font CDN at runtime.
+// Only the Latin subset is fetched for the "sonare studio" mark thanks to its
+// unicode-range. Registered before the tokens that reference it.
+import '@fontsource-variable/bricolage-grotesque/standard.css';
 // Global design tokens first, then the base layer (document reset, dark UA
 // chrome, scrollbars), the shared control primitives, the keyboard-focus ring
 // and the shared motion layer that build on them — imported here so they apply

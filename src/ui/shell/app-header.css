@@ -15,11 +15,48 @@
   z-index: 2;
 }
 
+/* Brand wordmark: a modern grotesque set tight and lowercase — bold "sonare"
+ * carrying a calm indigo→blue gradient that echoes the background blooms, run
+ * straight into a lighter, muted "studio". The gradient is a local custom
+ * property so the dark theme can swap to a brighter ramp without restating the
+ * type rules. */
 .app-title {
-  font-weight: 700;
-  letter-spacing: 0.04em;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3em;
   margin-right: 0.5rem;
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-optical-sizing: auto;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  --brand-gradient: linear-gradient(118deg, #243b6e 0%, #2f6fd0 54%, #6478e6 100%);
+}
+
+.app-title-mark {
+  font-weight: 680;
   color: var(--text-1);
+}
+
+/* Clip the gradient to the glyphs where supported; the plain ink color above
+ * keeps the mark legible on the rare engine without background-clip: text. */
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  .app-title-mark {
+    background: var(--brand-gradient);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+  }
+}
+
+.app-title-sub {
+  font-weight: 380;
+  color: var(--text-3);
+}
+
+[data-theme='dark'] .app-title {
+  --brand-gradient: linear-gradient(118deg, #9fb8ff 0%, #7aa6ff 52%, #b3aaff 100%);
 }
 
 .project-menu {
