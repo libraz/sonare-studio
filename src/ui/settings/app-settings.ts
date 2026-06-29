@@ -25,6 +25,12 @@ export type ResolvedAppLanguage = 'en' | 'ja';
 /** UI density of the editor panels. */
 export type EditorDensity = 'comfortable' | 'compact';
 
+/** Piano-roll ghost-note overlay scope. */
+export type PianoRollGhostMode = 'all' | 'active-track' | 'none';
+
+/** Piano-roll note color mapping. */
+export type PianoRollNoteColorMode = 'track' | 'velocity' | 'channel';
+
 /** User-level application preferences. */
 export interface AppSettings {
   /** Color theme; 'system' follows the OS preference. */
@@ -45,6 +51,16 @@ export interface AppSettings {
   scrollFollowPlayhead: boolean;
   /** Whether the piano-roll bottom velocity / CC lane is shown. */
   pianoRollLaneVisible: boolean;
+  /** Whether newly drawn piano-roll notes snap to the highlighted scale. */
+  pianoRollSnapToScale: boolean;
+  /** Which non-active clips appear as piano-roll ghost notes. */
+  pianoRollGhostMode: PianoRollGhostMode;
+  /** Whether muted tracks are hidden from the piano-roll ghost overlay. */
+  pianoRollGhostHideMuted: boolean;
+  /** How editable piano-roll notes are colored. */
+  pianoRollNoteColorMode: PianoRollNoteColorMode;
+  /** Whether pitch-changing piano-roll drags audition the destination pitch. */
+  pianoRollAuditionDrag: boolean;
   /** Ask for confirmation before destructive actions (delete project, discard edits). */
   confirmDestructive: boolean;
   /**
@@ -77,6 +93,11 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   autosaveIntervalMs: 30000,
   scrollFollowPlayhead: true,
   pianoRollLaneVisible: true,
+  pianoRollSnapToScale: false,
+  pianoRollGhostMode: 'all',
+  pianoRollGhostHideMuted: true,
+  pianoRollNoteColorMode: 'track',
+  pianoRollAuditionDrag: true,
   confirmDestructive: true,
   loudnessTargetLufs: -14,
 };
@@ -101,6 +122,17 @@ function asTheme(value: unknown, fallback: AppTheme): AppTheme {
 
 function asLanguage(value: unknown, fallback: AppLanguage): AppLanguage {
   return value === 'system' || value === 'en' || value === 'ja' ? value : fallback;
+}
+
+function asPianoRollGhostMode(value: unknown, fallback: PianoRollGhostMode): PianoRollGhostMode {
+  return value === 'all' || value === 'active-track' || value === 'none' ? value : fallback;
+}
+
+function asPianoRollNoteColorMode(
+  value: unknown,
+  fallback: PianoRollNoteColorMode,
+): PianoRollNoteColorMode {
+  return value === 'track' || value === 'velocity' || value === 'channel' ? value : fallback;
 }
 
 /**
@@ -136,6 +168,20 @@ export function sanitizeAppSettings(raw: unknown): AppSettings {
     ),
     scrollFollowPlayhead: asBoolean(source.scrollFollowPlayhead, defaults.scrollFollowPlayhead),
     pianoRollLaneVisible: asBoolean(source.pianoRollLaneVisible, defaults.pianoRollLaneVisible),
+    pianoRollSnapToScale: asBoolean(source.pianoRollSnapToScale, defaults.pianoRollSnapToScale),
+    pianoRollGhostMode: asPianoRollGhostMode(
+      source.pianoRollGhostMode,
+      defaults.pianoRollGhostMode,
+    ),
+    pianoRollGhostHideMuted: asBoolean(
+      source.pianoRollGhostHideMuted,
+      defaults.pianoRollGhostHideMuted,
+    ),
+    pianoRollNoteColorMode: asPianoRollNoteColorMode(
+      source.pianoRollNoteColorMode,
+      defaults.pianoRollNoteColorMode,
+    ),
+    pianoRollAuditionDrag: asBoolean(source.pianoRollAuditionDrag, defaults.pianoRollAuditionDrag),
     confirmDestructive: asBoolean(source.confirmDestructive, defaults.confirmDestructive),
     loudnessTargetLufs: asIntInRange(
       source.loudnessTargetLufs,

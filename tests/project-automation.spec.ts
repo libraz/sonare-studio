@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   AUTOMATION_CURVE_CODES,
+  AUTOMATION_INSERT_VALUE_LIMIT,
   type AutomationPoint,
   automationCurveCode,
   automationLaneKey,
@@ -9,7 +10,11 @@ import {
   clampAutomationValue,
   cloneAutomationLane,
   evaluateAutomationValue,
+  insertAutomationParam,
+  isAutomationParam,
   isBusAutomationTarget,
+  isInsertAutomationParam,
+  parseInsertAutomationParam,
   sanitizeAutomationEntries,
   sanitizeAutomationPoints,
 } from '@/project/automation';
@@ -293,6 +298,92 @@ describe('automation model', () => {
           enabled: true,
         },
         { target: 2, param: 'pan', points: [], enabled: false },
+      ]);
+    });
+  });
+
+  describe('insert automation params', () => {
+    it('encodes and round-trips index + paramName', () => {
+      const param = insertAutomationParam(2, 'thresholdDb');
+      expect(param).toBe('insert:2:thresholdDb');
+      expect(isInsertAutomationParam(param)).toBe(true);
+      expect(parseInsertAutomationParam(param)).toEqual({
+        insertIndex: 2,
+        paramName: 'thresholdDb',
+      });
+    });
+
+    it('keeps a paramName that itself contains colons', () => {
+      const param = insertAutomationParam(0, 'band:1:gain');
+      expect(param).toBe('insert:0:band:1:gain');
+      expect(parseInsertAutomationParam(param)).toEqual({
+        insertIndex: 0,
+        paramName: 'band:1:gain',
+      });
+    });
+
+    it('rejects malformed tokens', () => {
+      expect(isInsertAutomationParam('faderDb')).toBe(false);
+      expect(parseInsertAutomationParam('faderDb')).toBeUndefined();
+      expect(parseInsertAutomationParam('insert:2')).toBeUndefined();
+      expect(parseInsertAutomationParam('insert:2:')).toBeUndefined();
+      expect(parseInsertAutomationParam('insert:-1:gain')).toBeUndefined();
+      expect(parseInsertAutomationParam('insert:1.5:gain')).toBeUndefined();
+      expect(parseInsertAutomationParam('insert:x:gain')).toBeUndefined();
+    });
+
+    it('isAutomationParam accepts faderDb/pan and valid insert tokens only', () => {
+      expect(isAutomationParam('faderDb')).toBe(true);
+      expect(isAutomationParam('pan')).toBe(true);
+      expect(isAutomationParam('insert:0:gainDb')).toBe(true);
+      expect(isAutomationParam('volume')).toBe(false);
+      expect(isAutomationParam('insert:-1:gainDb')).toBe(false);
+      expect(isAutomationParam(5)).toBe(false);
+    });
+
+    it('clamps insert values to the wide finite sentinel', () => {
+      const param = insertAutomationParam(0, 'gainDb');
+      expect(clampAutomationValue(param, 5)).toBe(5);
+      expect(clampAutomationValue(param, AUTOMATION_INSERT_VALUE_LIMIT * 2)).toBe(
+        AUTOMATION_INSERT_VALUE_LIMIT,
+      );
+      expect(clampAutomationValue(param, -AUTOMATION_INSERT_VALUE_LIMIT * 2)).toBe(
+        -AUTOMATION_INSERT_VALUE_LIMIT,
+      );
+    });
+
+    it('builds unique lane keys across slots, params and targets', () => {
+      const keys = new Set([
+        automationLaneKey(1, insertAutomationParam(0, 'gainDb')),
+        automationLaneKey(1, insertAutomationParam(1, 'gainDb')),
+        automationLaneKey(1, insertAutomationParam(0, 'mix')),
+        automationLaneKey('master', insertAutomationParam(0, 'gainDb')),
+        automationLaneKey(1, 'faderDb'),
+      ]);
+      expect(keys.size).toBe(5);
+      expect(automationLaneKey(1, insertAutomationParam(0, 'gainDb'))).toBe('1:insert:0:gainDb');
+    });
+
+    it('sanitizeAutomationEntries keeps valid insert lanes and drops malformed ones', () => {
+      const lanes = sanitizeAutomationEntries(
+        [
+          {
+            param: insertAutomationParam(0, 'thresholdDb'),
+            points: [{ ppq: 0, value: -12 }],
+            enabled: true,
+          },
+          { param: 'insert:-1:gainDb', points: [{ ppq: 0, value: 0 }], enabled: true },
+          { param: 'insert:0:', points: [{ ppq: 0, value: 0 }], enabled: true },
+        ],
+        3,
+      );
+      expect(lanes).toEqual([
+        {
+          target: 3,
+          param: 'insert:0:thresholdDb',
+          points: [{ ppq: 0, value: -12 }],
+          enabled: true,
+        },
       ]);
     });
   });

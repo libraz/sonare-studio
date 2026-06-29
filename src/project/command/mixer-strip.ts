@@ -1,4 +1,5 @@
 import type { SendTiming } from '@/wasm/index.js';
+import { remapInsertLanesAfterRemoval, remapInsertLanesAfterReorder } from '../automation-insert';
 import {
   cloneInstrument,
   type ExternalMidiInstrument,
@@ -423,7 +424,10 @@ export function addInsert(
 }
 
 /**
- * Removes an insert slot as one undoable edit.
+ * Removes an insert slot as one undoable edit. Insert-parameter automation
+ * lanes targeting this strip are remapped in the same edit (the removed slot's
+ * lane drops, later slots shift down by one), so undo restores both the strip
+ * and the lanes together.
  *
  * @param target Track id or 'master'.
  * @param index Slot index (later slots shift down).
@@ -436,6 +440,41 @@ export function removeInsert(target: MixerStripTarget, index: number): void {
     const next = cloneStrip(strip);
     next.inserts = next.inserts.filter((_, i) => i !== index);
     writeStrip(store, target, next);
+    store.automationLanes = remapInsertLanesAfterRemoval(store.automationLanes, target, index);
+    store.refresh();
+  });
+}
+
+/**
+ * Moves an insert slot to a new position within a strip as one undoable edit.
+ * Insert-parameter automation lanes targeting this strip follow their slot to
+ * the new index (see {@link remapInsertLanesAfterReorder}), so undo restores
+ * both the chain order and the lanes together. The destination is clamped into
+ * range; a no-op move (same position) does nothing.
+ *
+ * @param target Track id or 'master'.
+ * @param fromIndex Slot index to move.
+ * @param toIndex Destination index (clamped into [0, inserts.length - 1]).
+ */
+export function reorderInsert(target: MixerStripTarget, fromIndex: number, toIndex: number): void {
+  const store = useProjectStore();
+  const strip = currentStrip(store, target);
+  requireInsert(strip, fromIndex);
+  const clamped = Math.min(strip.inserts.length - 1, Math.max(0, Math.trunc(toIndex)));
+  if (clamped === fromIndex) return;
+  executeApp(() => {
+    const next = cloneStrip(strip);
+    const inserts = [...next.inserts];
+    const [moved] = inserts.splice(fromIndex, 1);
+    inserts.splice(clamped, 0, moved);
+    next.inserts = inserts;
+    writeStrip(store, target, next);
+    store.automationLanes = remapInsertLanesAfterReorder(
+      store.automationLanes,
+      target,
+      fromIndex,
+      clamped,
+    );
     store.refresh();
   });
 }

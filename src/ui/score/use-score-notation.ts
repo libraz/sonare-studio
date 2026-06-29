@@ -22,11 +22,21 @@ import {
   estimateChordSymbols,
 } from '@/notation/chords';
 import { exportMusicXml } from '@/notation/io';
-import { serializeMusicXml } from '@/notation/musicxml';
+import { DEFAULT_DIVISIONS, type NotatedMeasure, type NotatedScore } from '@/notation/model';
+import { extractPartScore, serializeMusicXml } from '@/notation/musicxml';
 import { downloadBlob, exportPdf, printScore } from '@/notation/print';
 import { quantizeToScore } from '@/notation/quantize';
 import { VerovioClient, type VerovioTimemapEntry } from '@/notation/verovio';
 import type { useProjectStore } from '@/project/store';
+import { normalizeTempoMap, tempoAtPpq } from '@/project/tempo-map';
+import {
+  clipKind,
+  type EditorMarker,
+  type EditorNote,
+  type EditorSection,
+  type TempoSegment,
+  type TimeSignatureSegment,
+} from '@/project/types';
 import {
   type ScoreLayoutSettings,
   scorePageDimsMm,
@@ -35,6 +45,9 @@ import {
 } from '@/ui/score/layout';
 
 type ProjectStore = ReturnType<typeof useProjectStore>;
+
+/** Tolerance for matching section starts to engraved measure boundaries. */
+const PPQ_EPSILON = 1e-6;
 
 /** Reactive inputs and collaborators the pipeline reads on every transcription. */
 export interface ScoreNotationOptions {
@@ -50,10 +63,16 @@ export interface ScoreNotationOptions {
   getMeasureLenPpq: () => number;
   /** Clip length rendered on screen, rounded to complete measures, in PPQ. */
   getScreenClipLengthPpq: () => number;
+  /** Project time-signature map used for measure-by-measure notation. */
+  getTimeSignatures?: () => ReadonlyArray<TimeSignatureSegment>;
   /** Key signature fifths derived from the scale highlight configuration. */
   getKeyFifths: () => number;
   /** True when chord symbols should be estimated and engraved. */
   getChordsEnabled: () => boolean;
+  /** True when all overlapping MIDI tracks should be engraved as parts. */
+  getFullScoreEnabled?: () => boolean;
+  /** Active transport loop range in project PPQ, or null when disabled/unusable. */
+  getLoopRegion?: () => { startPpq: number; endPpq: number } | null;
   /** Current layout settings (page, orientation, margins, scale, spacing). */
   getLayoutSettings: () => ScoreLayoutSettings;
   /** Resets the playhead highlight scan after every render / layout change. */
@@ -96,6 +115,8 @@ export interface ScoreNotation {
   onExportPdf: () => void;
   /** Export action: download the last transcription's MusicXML. */
   onExportMusicXml: () => void;
+  /** Export action: download the current part's MusicXML. */
+  onExportPartMusicXml: () => void;
 }
 
 /** Wires the non-destructive notation pipeline for the score panel. */
@@ -111,6 +132,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
 
   /** MusicXML of the last successful transcription (export source). */
   let currentXml = '';
+  let currentScore: NotatedScore | null = null;
   /** Timemap of the last successful load (paired with the same load's SVG ids). */
   let timemap: ReadonlyArray<VerovioTimemapEntry> = [];
 
@@ -149,19 +171,72 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
     error.value = '';
     try {
       const fifths = options.getKeyFifths();
-      const score = quantizeToScore(store.notes, {
-        divisionPpq: options.getDivisionPpq(),
-        timeSig: { ...options.getTimeSig() },
-        keyFifths: fifths,
-        clipStartPpq: store.clipStartPpq,
-        clipLengthPpq: options.getScreenClipLengthPpq(),
-        clef: 'grand',
-        partName: 'Piano',
-        // Engraving-only transpose; the underlying MIDI notes never change.
-        displayTransposeSemitones: store.displayTransposeSemitones,
-      });
+      const score =
+        options.getFullScoreEnabled?.() === true
+          ? buildFullScore(store, {
+              divisionPpq: options.getDivisionPpq(),
+              timeSig: { ...options.getTimeSig() },
+              keyFifths: fifths,
+              clipStartPpq: store.clipStartPpq,
+              clipLengthPpq: options.getScreenClipLengthPpq(),
+              timeSignatures: options.getTimeSignatures?.(),
+              displayTransposeSemitones: store.displayTransposeSemitones,
+            })
+          : quantizeToScore(store.notes, {
+              divisionPpq: options.getDivisionPpq(),
+              timeSig: { ...options.getTimeSig() },
+              keyFifths: fifths,
+              clipStartPpq: store.clipStartPpq,
+              clipLengthPpq: options.getScreenClipLengthPpq(),
+              timeSignatures: options.getTimeSignatures?.(),
+              clef: 'grand',
+              partName: 'Piano',
+              // Engraving-only transpose; the underlying MIDI notes never change.
+              displayTransposeSemitones: store.displayTransposeSemitones,
+            });
       const title = store.projectName.trim();
       if (title) score.metadata = { title };
+      applySectionMarks(
+        score,
+        store.sections,
+        store.clipStartPpq,
+        store.clipLengthPpq,
+        options.getMeasureLenPpq(),
+      );
+      applyLayoutBreaks(
+        score,
+        store.sections,
+        store.clipStartPpq,
+        options.getMeasureLenPpq(),
+        options.getLayoutSettings(),
+      );
+      applyMarkerTexts(
+        score,
+        store.markers,
+        store.clipStartPpq,
+        store.clipLengthPpq,
+        options.getMeasureLenPpq(),
+      );
+      applyTempoMarks(
+        score,
+        store.tempoSegments,
+        store.tempoBpm,
+        store.clipStartPpq,
+        store.clipLengthPpq,
+        options.getMeasureLenPpq(),
+      );
+      applyMultiMeasureRests(score);
+      const loopRegion = options.getLoopRegion?.() ?? null;
+      if (loopRegion) {
+        applyLoopMarks(
+          score,
+          loopRegion.startPpq,
+          loopRegion.endPpq,
+          store.clipStartPpq,
+          store.clipLengthPpq,
+          options.getMeasureLenPpq(),
+        );
+      }
       const annotations = store.scoreAnnotations[store.clipId];
       if (annotations && Object.keys(annotations).length > 0) {
         score.noteAnnotations = { ...annotations };
@@ -185,6 +260,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
       const xml = serializeMusicXml(score);
       const count = await verovio.load(xml, screenLayoutOptions());
       if (gen !== generation) return;
+      currentScore = score;
       currentXml = xml;
       pageCount.value = count;
       page.value = Math.min(Math.max(page.value, 1), Math.max(count, 1));
@@ -310,7 +386,12 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
     void runExport(async () => {
       const pages = await renderAllPages();
       if (pages.length === 0) return;
-      const blob = await exportPdf(pages, scorePageDimsMm(options.getLayoutSettings()));
+      const title = store.projectName.trim() || 'score';
+      const blob = await exportPdf(pages, scorePageDimsMm(options.getLayoutSettings()), {
+        title,
+        author: 'sonare studio',
+        subject: 'Engraved score',
+      });
       downloadBlob(blob, projectFilename(store.projectName, '.pdf', 'score'));
     });
   }
@@ -319,6 +400,16 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
     if (!currentXml) return;
     void runExport(async () => {
       exportMusicXml(currentXml, projectFilename(store.projectName, '.musicxml', 'score'));
+    });
+  }
+
+  function onExportPartMusicXml(): void {
+    if (!currentScore || currentScore.parts.length === 0) return;
+    const score = currentScore;
+    void runExport(async () => {
+      const partScore = extractPartScore(score, 0);
+      const xml = serializeMusicXml(partScore);
+      exportMusicXml(xml, projectFilename(store.projectName, '.part.musicxml', 'score-part'));
     });
   }
 
@@ -344,5 +435,312 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
     onPrint,
     onExportPdf,
     onExportMusicXml,
+    onExportPartMusicXml,
   };
+}
+
+interface FullScoreBuildOptions {
+  divisionPpq: number;
+  timeSig: { beats: number; beatUnit: number };
+  keyFifths: number;
+  clipStartPpq: number;
+  clipLengthPpq: number;
+  timeSignatures?: ReadonlyArray<TimeSignatureSegment>;
+  displayTransposeSemitones: number;
+}
+
+function buildFullScore(store: ProjectStore, options: FullScoreBuildOptions): NotatedScore {
+  const windowEnd = options.clipStartPpq + options.clipLengthPpq;
+  const parts = store.tracks
+    .filter((track) => track.kind === 'midi')
+    .map((track, index) => {
+      const notes = store.clips
+        .filter(
+          (clip) =>
+            clip.trackId === track.id &&
+            clipKind(clip) === 'midi' &&
+            clip.startPpq < windowEnd &&
+            clip.startPpq + clip.lengthPpq > options.clipStartPpq,
+        )
+        .flatMap((clip) => timelineNotesForClip(clip.notes, clip.startPpq, clip.sourceOffsetPpq));
+      const score = quantizeToScore(notes, {
+        divisionPpq: options.divisionPpq,
+        timeSig: options.timeSig,
+        keyFifths: options.keyFifths,
+        clipStartPpq: options.clipStartPpq,
+        clipLengthPpq: options.clipLengthPpq,
+        timeSignatures: options.timeSignatures,
+        partId: `P${index + 1}`,
+        partName: track.name || `Track ${index + 1}`,
+        displayTransposeSemitones: options.displayTransposeSemitones,
+      });
+      return score.parts[0];
+    })
+    .filter((part) => part !== undefined);
+  if (parts.length === 0) {
+    return quantizeToScore([], {
+      divisionPpq: options.divisionPpq,
+      timeSig: options.timeSig,
+      keyFifths: options.keyFifths,
+      clipStartPpq: options.clipStartPpq,
+      clipLengthPpq: options.clipLengthPpq,
+      timeSignatures: options.timeSignatures,
+      partName: 'Score',
+      displayTransposeSemitones: options.displayTransposeSemitones,
+    });
+  }
+  return {
+    parts,
+    keyFifths: options.keyFifths,
+    divisions: DEFAULT_DIVISIONS,
+  };
+}
+
+function timelineNotesForClip(
+  notes: ReadonlyArray<EditorNote>,
+  clipStartPpq: number,
+  sourceOffsetPpq: number,
+): EditorNote[] {
+  return notes.map((note) => ({
+    ...note,
+    startPpq: clipStartPpq + note.startPpq - sourceOffsetPpq,
+  }));
+}
+
+/** Adds section labels and double bars for section starts aligned to score measures. */
+export function applySectionMarks(
+  score: NotatedScore,
+  sections: ReadonlyArray<EditorSection>,
+  clipStartPpq: number,
+  clipLengthPpq: number,
+  measureLenPpq: number,
+): void {
+  if (sections.length === 0 || measureLenPpq <= 0 || score.parts.length === 0) return;
+  const measureCount = score.parts[0].measures.length;
+  const clipEndPpq = clipStartPpq + clipLengthPpq;
+  const rehearsals: Record<number, string> = {};
+  const barlines: Record<number, 'double'> = {};
+  for (const section of sections) {
+    if (
+      section.startPpq < clipStartPpq - PPQ_EPSILON ||
+      section.startPpq >= clipEndPpq - PPQ_EPSILON
+    ) {
+      continue;
+    }
+    const rel = section.startPpq - clipStartPpq;
+    const measureIndex = Math.round(rel / measureLenPpq);
+    if (measureIndex < 0 || measureIndex >= measureCount) continue;
+    if (Math.abs(rel - measureIndex * measureLenPpq) > PPQ_EPSILON) continue;
+    const name = section.name.trim();
+    if (name) rehearsals[measureIndex] = name;
+    if (measureIndex > 0) barlines[measureIndex - 1] = 'double';
+  }
+  if (Object.keys(rehearsals).length > 0) score.measureRehearsals = rehearsals;
+  if (Object.keys(barlines).length > 0) score.measureBarlines = barlines;
+}
+
+/** Adds repeat marks for an active loop range aligned to score measures. */
+export function applyLoopMarks(
+  score: NotatedScore,
+  loopStartPpq: number,
+  loopEndPpq: number,
+  clipStartPpq: number,
+  clipLengthPpq: number,
+  measureLenPpq: number,
+): void {
+  if (measureLenPpq <= 0 || score.parts.length === 0) return;
+  if (loopEndPpq <= loopStartPpq + PPQ_EPSILON) return;
+  const measureCount = score.parts[0].measures.length;
+  const clipEndPpq = clipStartPpq + clipLengthPpq;
+  if (loopStartPpq < clipStartPpq - PPQ_EPSILON || loopEndPpq > clipEndPpq + PPQ_EPSILON) return;
+  const startRel = loopStartPpq - clipStartPpq;
+  const endRel = loopEndPpq - clipStartPpq;
+  const startIndex = Math.round(startRel / measureLenPpq);
+  const endBoundaryIndex = Math.round(endRel / measureLenPpq);
+  if (startIndex < 0 || startIndex >= measureCount || endBoundaryIndex <= startIndex) return;
+  if (endBoundaryIndex > measureCount) return;
+  if (Math.abs(startRel - startIndex * measureLenPpq) > PPQ_EPSILON) return;
+  if (Math.abs(endRel - endBoundaryIndex * measureLenPpq) > PPQ_EPSILON) return;
+  const endIndex = endBoundaryIndex - 1;
+  const repeats: Record<number, 'start' | 'end' | 'start-end'> = {
+    ...(score.measureRepeats ?? {}),
+  };
+  repeats[startIndex] = repeats[startIndex] === 'end' ? 'start-end' : 'start';
+  repeats[endIndex] = repeats[endIndex] === 'start' ? 'start-end' : 'end';
+  score.measureRepeats = repeats;
+}
+
+/** Adds metronome marks at the score start and measure-aligned tempo changes. */
+export function applyTempoMarks(
+  score: NotatedScore,
+  tempoSegments: ReadonlyArray<TempoSegment>,
+  fallbackBpm: number,
+  clipStartPpq: number,
+  clipLengthPpq: number,
+  measureLenPpq: number,
+): void {
+  if (measureLenPpq <= 0 || score.parts.length === 0) return;
+  const measureCount = score.parts[0].measures.length;
+  const clipEndPpq = clipStartPpq + clipLengthPpq;
+  const tempoMap = normalizeTempoMap(tempoSegments, fallbackBpm);
+  const tempos: Record<number, number> = { 0: tempoAtPpq(tempoMap, clipStartPpq) };
+  const tempoTexts: Record<number, { text: string; bpm?: number }> = {};
+  let hasTempoText = false;
+  for (const segment of tempoSegments) {
+    if (
+      segment.startPpq <= clipStartPpq + PPQ_EPSILON ||
+      segment.startPpq >= clipEndPpq - PPQ_EPSILON
+    ) {
+      continue;
+    }
+    const rel = segment.startPpq - clipStartPpq;
+    const measureIndex = Math.round(rel / measureLenPpq);
+    if (measureIndex < 0 || measureIndex >= measureCount) continue;
+    if (Math.abs(rel - measureIndex * measureLenPpq) > PPQ_EPSILON) continue;
+    tempos[measureIndex] = tempoAtPpq(tempoMap, segment.startPpq);
+  }
+  const sortedSegments = [...tempoSegments]
+    .filter((segment) => Number.isFinite(segment.startPpq))
+    .sort((a, b) => a.startPpq - b.startPpq);
+  for (let i = 0; i < sortedSegments.length - 1; i += 1) {
+    const segment = sortedSegments[i];
+    const next = sortedSegments[i + 1];
+    if (
+      segment.endBpm === undefined ||
+      !Number.isFinite(segment.endBpm) ||
+      segment.endBpm <= 0 ||
+      Math.abs(segment.endBpm - segment.bpm) < PPQ_EPSILON
+    ) {
+      continue;
+    }
+    const startIndex = measureIndexForPpq(
+      segment.startPpq,
+      clipStartPpq,
+      measureLenPpq,
+      measureCount,
+    );
+    if (startIndex !== undefined) {
+      tempoTexts[startIndex] = {
+        text: segment.endBpm < segment.bpm ? 'rit.' : 'accel.',
+        bpm: tempoAtPpq(tempoMap, segment.startPpq),
+      };
+      hasTempoText = true;
+    }
+    const endIndex = measureIndexForPpq(next.startPpq, clipStartPpq, measureLenPpq, measureCount);
+    if (endIndex !== undefined) {
+      tempoTexts[endIndex] = {
+        text: 'a tempo',
+        bpm: tempoAtPpq(tempoMap, next.startPpq),
+      };
+      tempos[endIndex] = tempoAtPpq(tempoMap, next.startPpq);
+      hasTempoText = true;
+    }
+  }
+  score.measureTempos = tempos;
+  if (hasTempoText) score.measureTempoTexts = tempoTexts;
+}
+
+/** Adds conservative system/page breaks for printable performance scores. */
+export function applyLayoutBreaks(
+  score: NotatedScore,
+  sections: ReadonlyArray<EditorSection>,
+  clipStartPpq: number,
+  measureLenPpq: number,
+  settings: Pick<ScoreLayoutSettings, 'barsPerSystem' | 'barsPerPage'> = {
+    barsPerSystem: 4,
+    barsPerPage: 16,
+  },
+): void {
+  if (measureLenPpq <= 0 || score.parts.length === 0) return;
+  const measureCount = score.parts[0].measures.length;
+  const breaks: Record<number, 'system' | 'page'> = {};
+  const barsPerSystem = Math.max(0, Math.round(settings.barsPerSystem));
+  const barsPerPage = Math.max(0, Math.round(settings.barsPerPage));
+  if (barsPerSystem > 0) {
+    for (let index = barsPerSystem; index < measureCount; index += barsPerSystem) {
+      breaks[index] = 'system';
+    }
+  }
+  if (barsPerPage > 0) {
+    for (let index = barsPerPage; index < measureCount; index += barsPerPage) {
+      breaks[index] = 'page';
+    }
+  }
+  for (const section of sections) {
+    const measureIndex = measureIndexForPpq(
+      section.startPpq,
+      clipStartPpq,
+      measureLenPpq,
+      measureCount,
+    );
+    if (measureIndex !== undefined && measureIndex > 0 && breaks[measureIndex] !== 'page') {
+      breaks[measureIndex] = 'system';
+    }
+  }
+  if (Object.keys(breaks).length > 0) score.measureBreaks = breaks;
+}
+
+/** Adds measure-aligned timeline markers as general score text directions. */
+export function applyMarkerTexts(
+  score: NotatedScore,
+  markers: ReadonlyArray<EditorMarker>,
+  clipStartPpq: number,
+  clipLengthPpq: number,
+  measureLenPpq: number,
+): void {
+  if (markers.length === 0 || measureLenPpq <= 0 || score.parts.length === 0) return;
+  const measureCount = score.parts[0].measures.length;
+  const clipEndPpq = clipStartPpq + clipLengthPpq;
+  const texts: Record<number, Array<{ text: string; defaultY?: number }>> = {};
+  for (const marker of markers) {
+    if (marker.ppq < clipStartPpq - PPQ_EPSILON || marker.ppq >= clipEndPpq - PPQ_EPSILON) continue;
+    const measureIndex = measureIndexForPpq(marker.ppq, clipStartPpq, measureLenPpq, measureCount);
+    if (measureIndex === undefined) continue;
+    const text = marker.name.trim();
+    if (!text) continue;
+    const list = texts[measureIndex] ?? [];
+    list.push({ text, defaultY: 24 - list.length * 8 });
+    texts[measureIndex] = list;
+  }
+  if (Object.keys(texts).length > 0) score.measureTexts = texts;
+}
+
+/** Marks consecutive empty measures as multi-measure rests when safe. */
+export function applyMultiMeasureRests(score: NotatedScore): void {
+  if (score.parts.length !== 1) return;
+  const measures = score.parts[0].measures;
+  const rests: Record<number, { count: number }> = {};
+  let start = -1;
+  for (let index = 0; index <= measures.length; index += 1) {
+    const empty = index < measures.length && isEmptyMeasure(measures[index]);
+    if (empty && start < 0) start = index;
+    if ((!empty || index === measures.length) && start >= 0) {
+      const count = index - start;
+      if (count >= 2) rests[start] = { count };
+      start = -1;
+    }
+  }
+  if (Object.keys(rests).length > 0) score.multiMeasureRests = rests;
+}
+
+function measureIndexForPpq(
+  ppq: number,
+  clipStartPpq: number,
+  measureLenPpq: number,
+  measureCount: number,
+): number | undefined {
+  const rel = ppq - clipStartPpq;
+  const index = Math.round(rel / measureLenPpq);
+  if (index < 0 || index >= measureCount) return undefined;
+  return Math.abs(rel - index * measureLenPpq) <= PPQ_EPSILON ? index : undefined;
+}
+
+function isEmptyMeasure(measure: NotatedMeasure): boolean {
+  return measure.voices.every(
+    (voice) =>
+      voice.events.length === 1 &&
+      voice.events[0].kind === 'rest' &&
+      Math.abs(voice.events[0].startPpq - measure.startPpq) <= PPQ_EPSILON &&
+      Math.abs(voice.events[0].durationPpq - measure.lengthPpq) <= PPQ_EPSILON,
+  );
 }

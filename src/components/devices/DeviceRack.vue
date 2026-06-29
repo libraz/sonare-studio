@@ -8,6 +8,7 @@ import { useWebMidiOutputs } from '@/composables/useWebMidiOutputs';
 import {
   addInsert,
   removeInsert,
+  reorderInsert,
   setInsertEnabled,
   setProjectExternalMidiDefault,
   setProjectExternalMidiDefaultForTracks,
@@ -57,6 +58,12 @@ withDefaults(
      * hint instead of pretending the change is instant.
      */
     transportPlaying?: boolean;
+    /**
+     * Playhead position getter in PPQ, forwarded to Quick Controls so an
+     * insert knob can touch-record automation while its strip is in a write
+     * mode. Omitted (tests, no transport) disables knob touch recording.
+     */
+    positionPpq?: () => number;
   }>(),
   { transportPlaying: false },
 );
@@ -507,6 +514,23 @@ function selectInsert(index: number): void {
   selectedDevice.value = index;
 }
 
+/**
+ * Reorders an insert and keeps the selection on the same slot by remapping the
+ * selected index the same way the moved slot shifts the rows it crosses.
+ */
+function onMoveInsert(from: number, to: number): void {
+  const track = activeTrack.value;
+  if (!track || from === to) return;
+  run(() => {
+    reorderInsert(track.id, from, to);
+    const selected = selectedDevice.value;
+    if (typeof selected !== 'number') return;
+    if (selected === from) selectedDevice.value = to;
+    else if (from < to && selected > from && selected <= to) selectedDevice.value = selected - 1;
+    else if (from > to && selected >= to && selected < from) selectedDevice.value = selected + 1;
+  });
+}
+
 function displayInstrumentKind(): string {
   const current = instrument.value;
   if (current?.kind === 'synth-preset') return t.value.shell.devicesPanel.kindPreset;
@@ -832,6 +856,7 @@ function displayInstrumentKind(): string {
         @toggle-insert="onToggleInsert"
         @remove-insert="onRemoveInsert"
         @select-insert="selectInsert"
+        @move-insert="onMoveInsert"
       />
 
       <div class="rack-quick-controls">
@@ -840,6 +865,8 @@ function displayInstrumentKind(): string {
           v-if="quickControlTarget"
           :key="quickControlKey"
           :target="quickControlTarget"
+          :position-ppq="positionPpq"
+          :is-playing="transportPlaying"
         />
         <p v-else class="chain-empty">{{ t.shell.devicesPanel.noDeviceSelected }}</p>
       </div>

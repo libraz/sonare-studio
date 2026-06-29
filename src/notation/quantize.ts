@@ -45,10 +45,13 @@ import {
   noteValueToPpq,
   timeSigLengthPpq,
 } from '@/notation/model';
-import type { EditorNote } from '@/project/types';
+import type { EditorNote, TimeSignatureSegment } from '@/project/types';
 
 /** Comparison tolerance for PPQ arithmetic on IEEE doubles. */
 const EPSILON = 1e-6;
+
+/** General MIDI percussion channel (MIDI channel 10, stored as 0-based 9). */
+const GM_PERCUSSION_CHANNEL = 9;
 
 /** Duration of a 64th note in PPQ — the finest representable display value. */
 const SIXTY_FOURTH_PPQ = 0.0625;
@@ -67,8 +70,10 @@ export interface QuantizeOptions {
    * non-binary (tuplet) grids are not representable by the notation model.
    */
   divisionPpq: number;
-  /** Time signature applied to every measure. */
+  /** Fallback time signature applied when no time-signature map entry is active. */
   timeSig: NotatedTimeSig;
+  /** Optional project time-signature map for measure-by-measure meter changes. */
+  timeSignatures?: ReadonlyArray<TimeSignatureSegment>;
   /** Key signature as MusicXML fifths (-7..7), passed through to the score. */
   keyFifths: number;
   /**
@@ -107,6 +112,10 @@ interface GridNote {
   pitch: number;
   startPpq: number;
   endPpq: number;
+  /** MIDI channel from the source note (0-based). */
+  channel: number;
+  /** Source note-on velocity. */
+  velocity: number;
   /** Editor note id, used only as a deterministic sort tiebreaker. */
   id: number;
 }
@@ -117,6 +126,10 @@ interface VoiceUnit {
   pitches: number[];
   startPpq: number;
   endPpq: number;
+  /** Source MIDI channels merged into this unit (ascending, deduplicated). */
+  channels: number[];
+  /** Representative source note-on velocity for display accents. */
+  velocity: number;
   /** Editor note ids merged into this unit (ascending, deduplicated). */
   ids: number[];
 }
@@ -140,6 +153,7 @@ interface ResolvedOptions {
   partName: string;
   clef?: NotatedClef;
   displayTransposeSemitones: number;
+  timeSignatures: ReadonlyArray<TimeSignatureSegment>;
 }
 
 /** All 21 representable note values, longest first, with their PPQ lengths. */
@@ -244,6 +258,7 @@ function resolveOptions(options: QuantizeOptions): ResolvedOptions {
     partName: options.partName ?? '',
     clef: options.clef,
     displayTransposeSemitones,
+    timeSignatures: options.timeSignatures ?? [],
   };
 }
 
@@ -273,7 +288,14 @@ function quantizeToGrid(notes: readonly EditorNote[], opts: ResolvedOptions): Gr
     if (end - start <= EPSILON) continue;
     // Display transpose shifts the engraved pitch only; the input is untouched.
     const pitch = Math.min(127, Math.max(0, note.pitch + shift));
-    out.push({ pitch, startPpq: start, endPpq: end, id: note.id });
+    out.push({
+      pitch,
+      startPpq: start,
+      endPpq: end,
+      channel: note.channel,
+      velocity: note.velocity,
+      id: note.id,
+    });
   }
   // Deterministic order: onset, then higher pitch first, then editor id.
   out.sort((a, b) => a.startPpq - b.startPpq || b.pitch - a.pitch || a.id - b.id);
@@ -302,16 +324,21 @@ function clusterChords(notes: GridNote[]): VoiceUnit[] {
       if (used[a]) continue;
       const top = group[a];
       const pitches = new Set<number>([top.pitch]);
+      const channels = new Set<number>([top.channel]);
       const ids = new Set<number>([top.id]);
+      let velocity = top.velocity;
       used[a] = true;
       for (let b = a + 1; b < group.length; b++) {
         if (used[b]) continue;
         if (
           Math.abs(group[b].endPpq - top.endPpq) <= EPSILON &&
-          top.pitch - group[b].pitch <= CHORD_PITCH_SPAN
+          top.pitch - group[b].pitch <= CHORD_PITCH_SPAN &&
+          canClusterTogether(top, group[b])
         ) {
           pitches.add(group[b].pitch);
+          channels.add(group[b].channel);
           ids.add(group[b].id);
+          velocity = Math.max(velocity, group[b].velocity);
           used[b] = true;
         }
       }
@@ -319,12 +346,32 @@ function clusterChords(notes: GridNote[]): VoiceUnit[] {
         pitches: [...pitches].sort((x, y) => x - y),
         startPpq: top.startPpq,
         endPpq: top.endPpq,
+        channels: [...channels].sort((x, y) => x - y),
+        velocity,
         ids: [...ids].sort((x, y) => x - y),
       });
     }
     i = j;
   }
   return units;
+}
+
+/** Returns true when simultaneous notes should share one chord event. */
+function canClusterTogether(a: GridNote, b: GridNote): boolean {
+  if (a.channel !== GM_PERCUSSION_CHANNEL && b.channel !== GM_PERCUSSION_CHANNEL) return true;
+  if (a.channel !== b.channel) return false;
+  return percussionVoiceGroup(a.pitch) === percussionVoiceGroup(b.pitch);
+}
+
+/** Drum-set voice group: 1 = upper kit voice, 2 = kick/low-foot voice. */
+function percussionVoiceGroup(pitch: number): 1 | 2 {
+  switch (pitch) {
+    case 35:
+    case 36:
+      return 2;
+    default:
+      return 1;
+  }
 }
 
 /** Mean MIDI pitch of a pitch list (used as the voice-proximity metric). */
@@ -382,7 +429,9 @@ function separateVoices(units: VoiceUnit[], maxVoices: number): VoiceUnit[][] {
       if (Math.abs(last.startPpq - unit.startPpq) <= EPSILON) {
         // Same onset: widen the sounding event into a chord.
         last.pitches = [...new Set([...last.pitches, ...unit.pitches])].sort((a, b) => a - b);
+        last.channels = [...new Set([...last.channels, ...unit.channels])].sort((a, b) => a - b);
         last.ids = [...new Set([...last.ids, ...unit.ids])].sort((a, b) => a - b);
+        last.velocity = Math.max(last.velocity, unit.velocity);
         last.endPpq = Math.max(last.endPpq, unit.endPpq);
       } else {
         // Later onset: cut the sounding event short and start the new one.
@@ -423,17 +472,51 @@ function nextGroupBoundary(ppq: number, measureStartPpq: number, groupLen: numbe
  */
 function buildMeasureGrid(
   opts: ResolvedOptions,
-): Array<{ index: number; startPpq: number; lengthPpq: number }> {
-  const measureLen = timeSigLengthPpq(opts.timeSig);
-  const clipLen = opts.clipEndPpq - opts.clipStartPpq;
-  const count = Math.max(1, Math.ceil(clipLen / measureLen - EPSILON));
-  const measures: Array<{ index: number; startPpq: number; lengthPpq: number }> = [];
-  for (let index = 0; index < count; index++) {
-    const startPpq = opts.clipStartPpq + index * measureLen;
-    const lengthPpq = index === count - 1 ? opts.clipEndPpq - startPpq : measureLen;
-    measures.push({ index, startPpq, lengthPpq });
+): Array<{ index: number; startPpq: number; lengthPpq: number; timeSig: NotatedTimeSig }> {
+  const changes = opts.timeSignatures
+    .filter((segment) => Number.isFinite(segment.startPpq))
+    .sort((a, b) => a.startPpq - b.startPpq);
+  const measures: Array<{
+    index: number;
+    startPpq: number;
+    lengthPpq: number;
+    timeSig: NotatedTimeSig;
+  }> = [];
+  let cursor = opts.clipStartPpq;
+  while (cursor < opts.clipEndPpq - EPSILON || measures.length === 0) {
+    const timeSig = timeSigAt(changes, cursor, opts.timeSig);
+    const measureLen = timeSigLengthPpq(timeSig);
+    const nextChange = changes.find((segment) => segment.startPpq > cursor + EPSILON);
+    const naturalEnd = cursor + measureLen;
+    const endPpq = Math.min(
+      opts.clipEndPpq,
+      nextChange !== undefined && nextChange.startPpq < naturalEnd - EPSILON
+        ? nextChange.startPpq
+        : naturalEnd,
+    );
+    measures.push({
+      index: measures.length,
+      startPpq: cursor,
+      lengthPpq: Math.max(SIXTY_FOURTH_PPQ, endPpq - cursor),
+      timeSig,
+    });
+    cursor = endPpq;
   }
   return measures;
+}
+
+function timeSigAt(
+  changes: ReadonlyArray<TimeSignatureSegment>,
+  ppq: number,
+  fallback: NotatedTimeSig,
+): NotatedTimeSig {
+  let current = fallback;
+  for (const change of changes) {
+    if (change.startPpq <= ppq + EPSILON) {
+      current = { beats: change.numerator, beatUnit: change.denominator };
+    } else break;
+  }
+  return current;
 }
 
 /**
@@ -534,8 +617,7 @@ function decomposeRest(
  */
 function splitUnitsIntoMeasures(
   units: VoiceUnit[],
-  measures: Array<{ index: number; startPpq: number; lengthPpq: number }>,
-  groupLen: number,
+  measures: Array<{ index: number; startPpq: number; lengthPpq: number; timeSig: NotatedTimeSig }>,
   voice: NotatedVoiceNumber,
 ): NotatedEvent[][] {
   const perMeasure: NotatedEvent[][] = measures.map(() => []);
@@ -546,7 +628,12 @@ function splitUnitsIntoMeasures(
       const segStart = Math.max(unit.startPpq, measure.startPpq);
       const segEnd = Math.min(unit.endPpq, measureEnd);
       if (segEnd - segStart <= EPSILON) continue;
-      for (const piece of decomposeNote(segStart, segEnd, measure.startPpq, groupLen)) {
+      for (const piece of decomposeNote(
+        segStart,
+        segEnd,
+        measure.startPpq,
+        beatGroupPpq(measure.timeSig),
+      )) {
         pieces.push({ ...piece, measureIndex: measure.index });
       }
     }
@@ -561,6 +648,8 @@ function splitUnitsIntoMeasures(
         tieStart: k < pieces.length - 1,
         tieStop: k > 0,
         sourceIds: [...unit.ids],
+        midiChannels: [...unit.channels],
+        velocity: unit.velocity,
       });
     });
   }
@@ -639,10 +728,9 @@ export function quantizeToScore(
   const units = clusterChords(gridNotes);
   const voiceUnits = separateVoices(units, opts.maxVoices);
   const measures = buildMeasureGrid(opts);
-  const groupLen = beatGroupPpq(opts.timeSig);
 
   const perVoiceMeasureEvents = voiceUnits.map((vu, vi) =>
-    splitUnitsIntoMeasures(vu, measures, groupLen, (vi + 1) as NotatedVoiceNumber),
+    splitUnitsIntoMeasures(vu, measures, (vi + 1) as NotatedVoiceNumber),
   );
 
   const notatedMeasures: NotatedMeasure[] = measures.map((measure) => {
@@ -651,16 +739,23 @@ export function quantizeToScore(
       const events = perVoiceMeasureEvents[vi][measure.index];
       // Voice 1 is always present; higher voices only where they sound.
       if (vi > 0 && events.length === 0) continue;
-      voices.push(fillVoiceMeasure(measure, events, groupLen, (vi + 1) as NotatedVoiceNumber));
+      voices.push(
+        fillVoiceMeasure(
+          measure,
+          events,
+          beatGroupPpq(measure.timeSig),
+          (vi + 1) as NotatedVoiceNumber,
+        ),
+      );
     }
     if (voices.length === 0) {
-      voices.push(fillVoiceMeasure(measure, [], groupLen, 1));
+      voices.push(fillVoiceMeasure(measure, [], beatGroupPpq(measure.timeSig), 1));
     }
     return {
       index: measure.index,
       startPpq: measure.startPpq,
       lengthPpq: measure.lengthPpq,
-      timeSig: { ...opts.timeSig },
+      timeSig: { ...measure.timeSig },
       voices,
     };
   });

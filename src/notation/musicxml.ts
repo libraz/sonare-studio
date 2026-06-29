@@ -12,12 +12,18 @@
 
 import type { NoteArticulation, NoteDynamics } from '@/project/annotations';
 import {
+  type NotatedBarlineStyle,
   type NotatedChordSymbol,
   type NotatedClef,
   type NotatedEvent,
   type NotatedMeasure,
+  type NotatedMeasureBreak,
+  type NotatedMeasureText,
+  type NotatedMultiMeasureRest,
   type NotatedPart,
+  type NotatedRepeatMark,
   type NotatedScore,
+  type NotatedTempoText,
   type NotatedTimeSig,
   type NotatedVoice,
   type NotatedVoiceNumber,
@@ -68,6 +74,24 @@ const CHORD_QUALITY_KIND: ReadonlyMap<number, string> = new Map([
   [15, 'dominant-ninth'],
 ]);
 
+/** Display suffixes preserved on MusicXML `<kind text="...">` where useful. */
+const CHORD_QUALITY_TEXT: ReadonlyMap<number, string> = new Map([
+  [1, 'm'],
+  [2, 'dim'],
+  [3, 'aug'],
+  [4, '7'],
+  [5, 'maj7'],
+  [6, 'm7'],
+  [7, 'sus2'],
+  [8, 'sus4'],
+  [10, 'add9'],
+  [11, 'm(add9)'],
+  [12, 'dim7'],
+  [13, 'm7b5'],
+  [14, 'maj9'],
+  [15, '9'],
+]);
+
 /** MusicXML articulation element name per annotation marking. */
 const ARTICULATION_ELEMENT: Readonly<Record<NoteArticulation, string>> = {
   staccato: 'staccato',
@@ -78,6 +102,9 @@ const ARTICULATION_ELEMENT: Readonly<Record<NoteArticulation, string>> = {
 
 /** Highest `<slur>` number-level allowed by MusicXML. */
 const MAX_SLUR_NUMBER = 16;
+
+/** General MIDI percussion channel (MIDI channel 10, stored as 0-based 9). */
+const GM_PERCUSSION_CHANNEL = 9;
 
 /**
  * Display annotations resolved onto engraved events. Built once per
@@ -104,6 +131,13 @@ type BeamIndex = ReadonlyMap<NotatedEvent, ReadonlyArray<string>>;
 
 /** Explicit accidental text by event and pitch index within a note/chord. */
 type AccidentalIndex = ReadonlyMap<NotatedEvent, ReadonlyMap<number, string>>;
+
+interface PercussionDisplay {
+  step: Step;
+  octave: number;
+  notehead?: string;
+  name: string;
+}
 
 /** Appends a value to a keyed list inside a map. */
 function pushMapped<K>(map: Map<K, number[]>, key: K, value: number): void {
@@ -207,6 +241,20 @@ export function escapeXml(text: string): string {
 /** Software credit written into the MusicXML `<encoding>` block. */
 const ENCODING_SOFTWARE = 'sonare studio';
 
+/** MusicXML tenths per millimeter under the default 40 tenths / 7 mm scaling. */
+const TENTHS_PER_MM = 40 / 7;
+
+/** A4 portrait page geometry in millimeters. */
+const A4_PAGE_MM = { width: 210, height: 297 } as const;
+
+/** Conservative printable margins in MusicXML tenths. */
+const PAGE_MARGIN_TENTHS = {
+  left: 70,
+  right: 70,
+  top: 70,
+  bottom: 70,
+} as const;
+
 /**
  * Appends the optional `<work>` / `<identification>` header.
  *
@@ -229,6 +277,80 @@ function appendScoreHeader(lines: string[], metadata: ScoreMetadata | undefined)
   }
   lines.push(`<encoding><software>${escapeXml(ENCODING_SOFTWARE)}</software></encoding>`);
   lines.push('</identification>');
+}
+
+/** Appends stable print-layout defaults for MusicXML importers. */
+function appendScoreDefaults(lines: string[]): void {
+  const pageWidth = Math.round(A4_PAGE_MM.width * TENTHS_PER_MM);
+  const pageHeight = Math.round(A4_PAGE_MM.height * TENTHS_PER_MM);
+  lines.push('<defaults>');
+  lines.push('<scaling><millimeters>7</millimeters><tenths>40</tenths></scaling>');
+  lines.push(
+    '<page-layout>' +
+      `<page-height>${pageHeight}</page-height>` +
+      `<page-width>${pageWidth}</page-width>` +
+      '<page-margins type="both">' +
+      `<left-margin>${PAGE_MARGIN_TENTHS.left}</left-margin>` +
+      `<right-margin>${PAGE_MARGIN_TENTHS.right}</right-margin>` +
+      `<top-margin>${PAGE_MARGIN_TENTHS.top}</top-margin>` +
+      `<bottom-margin>${PAGE_MARGIN_TENTHS.bottom}</bottom-margin>` +
+      '</page-margins>' +
+      '</page-layout>',
+  );
+  lines.push(
+    '<system-layout>' +
+      '<system-margins><left-margin>0</left-margin><right-margin>0</right-margin></system-margins>' +
+      '<system-distance>150</system-distance>' +
+      '<top-system-distance>100</top-system-distance>' +
+      '</system-layout>',
+  );
+  lines.push('<staff-layout><staff-distance>80</staff-distance></staff-layout>');
+  lines.push(
+    '<appearance>' +
+      '<line-width type="beam">5</line-width>' +
+      '<line-width type="bracket">4</line-width>' +
+      '<line-width type="dashes">1</line-width>' +
+      '<line-width type="enclosure">1</line-width>' +
+      '<line-width type="ending">1.2</line-width>' +
+      '<line-width type="extend">1</line-width>' +
+      '<line-width type="heavy barline">5</line-width>' +
+      '<line-width type="leger">1.6</line-width>' +
+      '<line-width type="light barline">1.6</line-width>' +
+      '<line-width type="octave shift">1.2</line-width>' +
+      '<line-width type="pedal">1.2</line-width>' +
+      '<line-width type="slur middle">1.6</line-width>' +
+      '<line-width type="slur tip">0.5</line-width>' +
+      '<line-width type="staff">1.1</line-width>' +
+      '<line-width type="stem">1</line-width>' +
+      '<line-width type="tie middle">1.6</line-width>' +
+      '<line-width type="tie tip">0.5</line-width>' +
+      '<note-size type="cue">60</note-size>' +
+      '<note-size type="grace">60</note-size>' +
+      '</appearance>',
+  );
+  lines.push('</defaults>');
+}
+
+/** Appends printable title/composer/part credits when metadata is present. */
+function appendScoreCredits(lines: string[], metadata: ScoreMetadata | undefined): void {
+  const title = metadata?.title?.trim();
+  const composer = metadata?.composer?.trim();
+  const partName = metadata?.partName?.trim();
+  if (title) {
+    lines.push(
+      `<credit page="1"><credit-type>title</credit-type><credit-words justify="center" valign="top" default-y="1600" font-size="18">${escapeXml(title)}</credit-words></credit>`,
+    );
+  }
+  if (composer) {
+    lines.push(
+      `<credit page="1"><credit-type>composer</credit-type><credit-words justify="right" valign="top" default-y="1560" font-size="11">${escapeXml(composer)}</credit-words></credit>`,
+    );
+  }
+  if (partName) {
+    lines.push(
+      `<credit page="1"><credit-type>part name</credit-type><credit-words justify="left" valign="top" default-y="1560" font-size="12">${escapeXml(partName)}</credit-words></credit>`,
+    );
+  }
 }
 
 /**
@@ -268,11 +390,11 @@ export function serializeMusicXml(score: NotatedScore): string {
     '<score-partwise version="4.0">',
   ];
   appendScoreHeader(lines, score.metadata);
+  appendScoreDefaults(lines);
+  appendScoreCredits(lines, score.metadata);
   lines.push('<part-list>');
   for (const part of score.parts) {
-    lines.push(
-      `<score-part id="${escapeXml(part.id)}"><part-name>${escapeXml(part.name)}</part-name></score-part>`,
-    );
+    lines.push(scorePartXml(part));
   }
   lines.push('</part-list>');
   const annotations = buildAnnotationIndex(score);
@@ -282,6 +404,118 @@ export function serializeMusicXml(score: NotatedScore): string {
   });
   lines.push('</score-partwise>');
   return lines.join('\n');
+}
+
+/**
+ * Returns a new score containing one part, preserving shared score annotations
+ * useful for a printed part. The input score is not mutated.
+ */
+export function extractPartScore(
+  score: NotatedScore,
+  partIdOrIndex: string | number,
+): NotatedScore {
+  const index =
+    typeof partIdOrIndex === 'number'
+      ? partIdOrIndex
+      : score.parts.findIndex((part) => part.id === partIdOrIndex);
+  const part = score.parts[index];
+  if (part === undefined) {
+    throw new RangeError(`Unknown score part: ${String(partIdOrIndex)}`);
+  }
+  return {
+    ...score,
+    metadata: {
+      ...score.metadata,
+      partName: part.name,
+    },
+    parts: [part],
+  };
+}
+
+/** Builds a score-part entry with a deterministic abbreviation. */
+function scorePartXml(part: NotatedPart): string {
+  const name = escapeXml(part.name);
+  const abbreviation = escapeXml(partAbbreviation(part.name));
+  const instruments = partUsesPercussionMap(part) ? percussionScoreInstrumentsXml(part) : '';
+  return `<score-part id="${escapeXml(part.id)}"><part-name>${name}</part-name><part-abbreviation>${abbreviation}</part-abbreviation>${instruments}</score-part>`;
+}
+
+/** Conservatively infers drum/percussion parts from their display name. */
+function isPercussionPartName(part: NotatedPart): boolean {
+  return /\b(drum|drums|kit|percussion|perc|cajon|conga|bongo)\b/i.test(part.name);
+}
+
+/**
+ * Uses MIDI channel metadata as the primary percussion signal. Part-name
+ * inference remains only as a compatibility fallback for hand-authored scores
+ * that do not carry source channel metadata.
+ */
+function partUsesPercussionMap(part: NotatedPart): boolean {
+  let sawChannelMetadata = false;
+  for (const measure of part.measures) {
+    for (const voice of measure.voices) {
+      for (const event of voice.events) {
+        if (event.kind !== 'note' || event.midiChannels === undefined) continue;
+        if (event.midiChannels.length > 0) sawChannelMetadata = true;
+        if (event.midiChannels.includes(GM_PERCUSSION_CHANNEL)) return true;
+      }
+    }
+  }
+  return sawChannelMetadata ? false : isPercussionPartName(part);
+}
+
+/** Returns true when a note event should be serialized with a drum map. */
+function eventUsesPercussionMap(event: NotatedEvent, partPercussionFallback: boolean): boolean {
+  if (event.midiChannels !== undefined && event.midiChannels.length > 0) {
+    return event.midiChannels.includes(GM_PERCUSSION_CHANNEL);
+  }
+  return partPercussionFallback;
+}
+
+/** Returns percussion pitches used by this part, sorted by GM note number. */
+function percussionPitches(part: NotatedPart): number[] {
+  const pitches = new Set<number>();
+  for (const measure of part.measures) {
+    for (const voice of measure.voices) {
+      for (const event of voice.events) {
+        if (event.kind !== 'note' || !eventUsesPercussionMap(event, true)) continue;
+        for (const pitch of event.pitches) pitches.add(pitch);
+      }
+    }
+  }
+  return [...pitches].sort((a, b) => a - b);
+}
+
+/** Builds part-list instrument metadata for drum maps. */
+function percussionScoreInstrumentsXml(part: NotatedPart): string {
+  return percussionPitches(part)
+    .map((pitch) => {
+      const id = percussionInstrumentId(part.id, pitch);
+      const display = percussionDisplay(pitch);
+      return (
+        `<score-instrument id="${id}"><instrument-name>${escapeXml(display.name)}</instrument-name></score-instrument>` +
+        `<midi-instrument id="${id}"><midi-channel>10</midi-channel><midi-unpitched>${pitch + 1}</midi-unpitched></midi-instrument>`
+      );
+    })
+    .join('');
+}
+
+/** Stable MusicXML score-instrument id for one GM percussion pitch. */
+function percussionInstrumentId(partId: string, midi: number): string {
+  return `${escapeXml(partId)}-I${midi}`;
+}
+
+/** Derives a compact part abbreviation when the model has no explicit one. */
+function partAbbreviation(name: string): string {
+  const trimmed = name.trim();
+  if (trimmed === '') return '';
+  const words = trimmed.split(/\s+/);
+  if (words.length === 1) return trimmed.length <= 12 ? trimmed : `${trimmed.slice(0, 11)}.`;
+  const initials = words
+    .filter((word) => /[A-Za-z0-9]/.test(word))
+    .map((word) => word[0].toUpperCase())
+    .join('');
+  return initials.length > 0 && initials.length <= 6 ? initials : `${trimmed.slice(0, 11)}.`;
 }
 
 /**
@@ -295,22 +529,41 @@ function serializePart(
   annotations: AnnotationIndex,
 ): void {
   const staffMap = part.clef === 'grand' ? buildStaffMap(part) : undefined;
+  const percussion = partUsesPercussionMap(part);
   const symbolsByMeasure = groupChordSymbolsByMeasure(chordSymbols, part.measures);
   lines.push(`<part id="${escapeXml(part.id)}">`);
   let prevTimeSig: NotatedTimeSig | undefined;
+  let prevClef: NotatedClef | undefined;
   for (const [measureIndex, measure] of part.measures.entries()) {
+    const measureClef = clefForMeasure(part.clef, measure, prevClef);
+    const keyFifths = score.measureKeyFifths?.[measure.index];
+    const percussionLegend =
+      percussion && measureIndex === 0 ? percussionLegendDirectionXml(part) : '';
     serializeMeasure(
       lines,
       measure,
-      part,
       score,
       prevTimeSig,
+      measureClef,
+      prevClef,
+      keyFifths,
+      percussion,
+      percussionLegend,
       symbolsByMeasure.get(measure.index) ?? [],
       staffMap,
       annotations,
-      measureIndex === part.measures.length - 1,
+      score.measureBarlines?.[measure.index] ??
+        (measureIndex === part.measures.length - 1 ? 'final' : undefined),
+      score.measureRepeats?.[measure.index],
+      score.measureBreaks?.[measure.index],
+      score.measureRehearsals?.[measure.index],
+      score.measureTempos?.[measure.index],
+      score.measureTempoTexts?.[measure.index],
+      score.measureTexts?.[measure.index],
+      score.multiMeasureRests?.[measure.index],
     );
     prevTimeSig = measure.timeSig;
+    prevClef = measureClef;
   }
   lines.push('</part>');
 }
@@ -322,18 +575,66 @@ function serializePart(
 function serializeMeasure(
   lines: string[],
   measure: NotatedMeasure,
-  part: NotatedPart,
   score: NotatedScore,
   prevTimeSig: NotatedTimeSig | undefined,
+  measureClef: NotatedClef,
+  prevClef: NotatedClef | undefined,
+  keyFifths: number | undefined,
+  percussion: boolean,
+  percussionLegend: string,
   chordSymbols: ReadonlyArray<NotatedChordSymbol>,
   staffMap: ReadonlyMap<NotatedEvent, StaffNumber> | undefined,
   annotations: AnnotationIndex,
-  isLastMeasure: boolean,
+  rightBarline: NotatedBarlineStyle | undefined,
+  repeat: NotatedRepeatMark | undefined,
+  measureBreak: NotatedMeasureBreak | undefined,
+  rehearsal: string | undefined,
+  tempoBpm: number | undefined,
+  tempoText: NotatedTempoText | undefined,
+  measureTexts: ReadonlyArray<NotatedMeasureText> | undefined,
+  multiMeasureRest: NotatedMultiMeasureRest | undefined,
 ): void {
   lines.push(`<measure number="${measure.index + 1}">`);
-  const attributes = measureAttributesXml(measure, part.clef, score, prevTimeSig);
+  const printXml = measurePrintXml(measureBreak);
+  if (printXml !== '') {
+    lines.push(printXml);
+  }
+  const attributes = measureAttributesXml(
+    measure,
+    measureClef,
+    score,
+    prevTimeSig,
+    prevClef,
+    keyFifths,
+    percussion,
+  );
   if (attributes !== undefined) {
     lines.push(attributes);
+  }
+  if (percussionLegend !== '') {
+    lines.push(percussionLegend);
+  }
+  const rehearsalXml = rehearsalDirectionXml(rehearsal);
+  if (rehearsalXml !== '') {
+    lines.push(rehearsalXml);
+  }
+  const tempoXml = tempoDirectionXml(tempoBpm);
+  if (tempoXml !== '') {
+    lines.push(tempoXml);
+  }
+  const tempoTextXml = tempoTextDirectionXml(tempoText);
+  if (tempoTextXml !== '') {
+    lines.push(tempoTextXml);
+  }
+  for (const text of measureTexts ?? []) {
+    const textXml = measureTextDirectionXml(text);
+    if (textXml !== '') lines.push(textXml);
+  }
+  const leftRepeat = repeat === 'start' || repeat === 'start-end';
+  if (leftRepeat) {
+    lines.push(
+      '<barline location="left"><bar-style>heavy-light</bar-style><repeat direction="forward"/></barline>',
+    );
   }
   const accidentals = buildAccidentalIndex(measure, score, staffMap);
   for (const symbol of chordSymbols) {
@@ -343,16 +644,124 @@ function serializeMeasure(
     }
   }
   const measureDivisions = ppqToDivisions(measure.lengthPpq, score.divisions);
-  measure.voices.forEach((voice, voiceIndex) => {
-    if (voiceIndex > 0) {
-      lines.push(`<backup><duration>${measureDivisions}</duration></backup>`);
-    }
-    serializeVoice(lines, voice, measure, score, staffMap, annotations, accidentals);
-  });
-  if (isLastMeasure) {
-    lines.push('<barline location="right"><bar-style>light-heavy</bar-style></barline>');
+  if (multiMeasureRest !== undefined && isSerializableMultiMeasureRest(measure, multiMeasureRest)) {
+    lines.push(multiMeasureRestXml(measure, score, multiMeasureRest));
+  } else {
+    measure.voices.forEach((voice, voiceIndex) => {
+      if (voiceIndex > 0) {
+        lines.push(`<backup><duration>${measureDivisions}</duration></backup>`);
+      }
+      serializeVoice(lines, voice, measure, score, staffMap, annotations, accidentals, percussion);
+    });
+  }
+  const rightRepeat = repeat === 'end' || repeat === 'start-end';
+  const barline = barlineXml(rightBarline, rightRepeat);
+  if (barline !== '') {
+    lines.push(barline);
   }
   lines.push('</measure>');
+}
+
+/** Builds layout break metadata before a measure. */
+function measurePrintXml(measureBreak: NotatedMeasureBreak | undefined): string {
+  switch (measureBreak) {
+    case 'system':
+      return '<print new-system="yes"/>';
+    case 'page':
+      return '<print new-page="yes"/>';
+    case undefined:
+      return '';
+  }
+}
+
+/** Builds a rehearsal mark direction for section labels. */
+function rehearsalDirectionXml(label: string | undefined): string {
+  const text = label?.trim();
+  if (!text) return '';
+  return `<direction placement="above"><direction-type><rehearsal default-y="40">${escapeXml(text)}</rehearsal></direction-type></direction>`;
+}
+
+/** Builds a metronome tempo direction plus playback tempo. */
+function tempoDirectionXml(bpm: number | undefined): string {
+  if (bpm === undefined || !Number.isFinite(bpm) || bpm <= 0) return '';
+  const text = tempoText(bpm);
+  return `<direction placement="above"><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>${text}</per-minute></metronome></direction-type><sound tempo="${text}"/></direction>`;
+}
+
+/** Builds a textual tempo directive such as rit., accel. or a tempo. */
+function tempoTextDirectionXml(mark: NotatedTempoText | undefined): string {
+  if (mark === undefined) return '';
+  const text = mark.text.trim();
+  if (!text) return '';
+  const sound =
+    mark.bpm !== undefined && Number.isFinite(mark.bpm) && mark.bpm > 0
+      ? `<sound tempo="${tempoText(mark.bpm)}"/>`
+      : '';
+  return `<direction placement="above"><direction-type><words default-y="30" font-style="italic">${escapeXml(text)}</words></direction-type>${sound}</direction>`;
+}
+
+/** Builds a general text direction. */
+function measureTextDirectionXml(mark: NotatedMeasureText): string {
+  const text = mark.text.trim();
+  if (!text) return '';
+  const defaultY =
+    mark.defaultY !== undefined && Number.isFinite(mark.defaultY)
+      ? ` default-y="${mark.defaultY}"`
+      : '';
+  return `<direction placement="above"><direction-type><words${defaultY}>${escapeXml(text)}</words></direction-type></direction>`;
+}
+
+/** Builds a compact first-system drum-map legend for printed percussion parts. */
+function percussionLegendDirectionXml(part: NotatedPart): string {
+  const items = percussionPitches(part)
+    .slice(0, 8)
+    .map((pitch) => `${percussionDisplay(pitch).name}=${pitch}`)
+    .join(', ');
+  if (items === '') return '';
+  return `<direction placement="above"><direction-type><words default-y="18" font-size="8">${escapeXml(`Drum map: ${items}`)}</words></direction-type></direction>`;
+}
+
+/** Formats BPM with at most one decimal place. */
+function tempoText(bpm: number): string {
+  const rounded = Math.round(bpm * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
+
+/** True when the marked measure can safely represent a multi-measure rest. */
+function isSerializableMultiMeasureRest(
+  measure: NotatedMeasure,
+  rest: NotatedMultiMeasureRest,
+): boolean {
+  return (
+    rest.count >= 2 && measure.voices.length === 1 && isWholeMeasureRest(measure.voices[0], measure)
+  );
+}
+
+/** Builds a MusicXML multi-measure rest start measure. */
+function multiMeasureRestXml(
+  measure: NotatedMeasure,
+  score: NotatedScore,
+  rest: NotatedMultiMeasureRest,
+): string {
+  const duration = ppqToDivisions(measure.lengthPpq, score.divisions);
+  return `<attributes><measure-style><multiple-rest>${rest.count}</multiple-rest></measure-style></attributes><note><rest measure="yes"/><duration>${duration}</duration><voice>1</voice></note>`;
+}
+
+/** Builds an explicit right barline. */
+function barlineXml(style: NotatedBarlineStyle | undefined, repeatEnd: boolean): string {
+  if (repeatEnd) {
+    return '<barline location="right"><bar-style>light-heavy</bar-style><repeat direction="backward"/></barline>';
+  }
+  switch (style) {
+    case 'regular':
+      return '<barline location="right"><bar-style>regular</bar-style></barline>';
+    case 'double':
+      return '<barline location="right"><bar-style>light-light</bar-style></barline>';
+    case 'final':
+      return '<barline location="right"><bar-style>light-heavy</bar-style></barline>';
+    case undefined:
+      return '';
+  }
 }
 
 /**
@@ -366,12 +775,18 @@ function measureAttributesXml(
   clef: NotatedClef,
   score: NotatedScore,
   prevTimeSig: NotatedTimeSig | undefined,
+  prevClef: NotatedClef | undefined,
+  keyFifths: number | undefined,
+  percussion: boolean,
 ): string | undefined {
   const isFirst = prevTimeSig === undefined;
   const parts: string[] = [];
   if (isFirst) {
     parts.push(`<divisions>${score.divisions}</divisions>`);
-    parts.push(`<key><fifths>${score.keyFifths}</fifths></key>`);
+    parts.push(`<key><fifths>${keyFifths ?? score.keyFifths}</fifths></key>`);
+    parts.push('<measure-style><measure-numbering>system</measure-numbering></measure-style>');
+  } else if (keyFifths !== undefined) {
+    parts.push(`<key><fifths>${keyFifths}</fifths></key>`);
   }
   const timeChanged =
     prevTimeSig === undefined ||
@@ -382,16 +797,34 @@ function measureAttributesXml(
       `<time><beats>${measure.timeSig.beats}</beats><beat-type>${measure.timeSig.beatUnit}</beat-type></time>`,
     );
   }
-  if (isFirst) {
-    parts.push(clefXml(clef));
+  if (isFirst || clef !== prevClef) {
+    parts.push(clefXml(clef, percussion));
   }
   return parts.length > 0 ? `<attributes>${parts.join('')}</attributes>` : undefined;
+}
+
+/** Chooses a conservative temporary clef for a single-staff measure. */
+function clefForMeasure(
+  partClef: NotatedClef,
+  measure: NotatedMeasure,
+  prevClef: NotatedClef | undefined,
+): NotatedClef {
+  if (partClef === 'grand') return 'grand';
+  const pitches = measure.voices.flatMap((voice) =>
+    voice.events.flatMap((event) => (event.kind === 'note' ? event.pitches : [])),
+  );
+  if (pitches.length === 0) return prevClef ?? partClef;
+  const mean = pitches.reduce((sum, pitch) => sum + pitch, 0) / pitches.length;
+  if (partClef === 'treble' && mean < 52) return 'bass';
+  if (partClef === 'bass' && mean >= 67) return 'treble';
+  return partClef;
 }
 
 /**
  * Returns the clef (and staves, for grand staff) attribute fragment.
  */
-function clefXml(clef: NotatedClef): string {
+function clefXml(clef: NotatedClef, percussion = false): string {
+  if (percussion) return '<clef><sign>percussion</sign></clef>';
   switch (clef) {
     case 'treble':
       return '<clef><sign>G</sign><line>2</line></clef>';
@@ -418,25 +851,66 @@ function serializeVoice(
   staffMap: ReadonlyMap<NotatedEvent, StaffNumber> | undefined,
   annotations: AnnotationIndex,
   accidentals: AccidentalIndex,
+  percussion: boolean,
 ): void {
   const measureRest = isWholeMeasureRest(voice, measure);
   const beams = buildBeamIndex(voice, measure, staffMap);
+  let lastInferredDynamic: NoteDynamics | undefined;
   for (const event of voice.events) {
     const staff = staffMap?.get(event);
     if (event.kind === 'rest') {
-      lines.push(restXml(event, measure, score, measureRest, staff));
+      lines.push(restXml(event, measure, score, measureRest, staff, beams, percussion));
     } else {
       const dynamics = annotations.dynamics.get(event);
       if (dynamics !== undefined) {
         // Dynamics are directions emitted right before the note they apply to.
         const staffXml = staff === undefined ? '' : `<staff>${staff}</staff>`;
+        const placement = dynamicsPlacement(event, measure);
         lines.push(
-          `<direction placement="below"><direction-type><dynamics><${dynamics}/></dynamics></direction-type>${staffXml}</direction>`,
+          `<direction placement="${placement}"><direction-type><dynamics><${dynamics}/></dynamics></direction-type>${staffXml}</direction>`,
         );
+      } else if (eventUsesPercussionMap(event, percussion)) {
+        const inferred = inferredDynamics(event);
+        if (inferred !== undefined && inferred !== lastInferredDynamic) {
+          const staffXml = staff === undefined ? '' : `<staff>${staff}</staff>`;
+          const placement = dynamicsPlacement(event, measure);
+          lines.push(
+            `<direction placement="${placement}"><direction-type><dynamics><${inferred}/></dynamics></direction-type>${staffXml}</direction>`,
+          );
+          lastInferredDynamic = inferred;
+        }
       }
-      pushNoteEvent(lines, event, measure, score, staff, annotations, beams, accidentals);
+      pushNoteEvent(
+        lines,
+        event,
+        measure,
+        score,
+        staff,
+        annotations,
+        beams,
+        accidentals,
+        percussion,
+      );
     }
   }
+}
+
+/** Coarse display dynamics inferred from note-on velocity for percussion parts. */
+function inferredDynamics(event: NotatedEvent): NoteDynamics | undefined {
+  const velocity = event.velocity;
+  if (velocity === undefined) return undefined;
+  if (velocity >= 120) return 'ff';
+  if (velocity >= 108) return 'f';
+  if (velocity >= 88) return 'mf';
+  if (velocity >= 68) return 'mp';
+  if (velocity >= 48) return 'p';
+  return 'pp';
+}
+
+/** Places multi-voice dynamics with their voice; single-voice dynamics stay below. */
+function dynamicsPlacement(event: NotatedEvent, measure: NotatedMeasure): string {
+  if (measure.voices.length < 2) return 'below';
+  return slurPlacement(event);
 }
 
 /** Builds explicit accidentals only when the visible pitch state changes. */
@@ -488,7 +962,7 @@ function accidentalName(alter: number): string {
 
 /**
  * Computes explicit MusicXML beam markings for each voice. Consecutive
- * beammable notes are grouped within the same staff; rests and unbeammable
+ * beammable notes and short rests are grouped within the same staff; unbeammable
  * values break a group, leaving isolated short notes as flagged notes.
  */
 function buildBeamIndex(
@@ -501,7 +975,7 @@ function buildBeamIndex(
   let group: NotatedEvent[] = [];
   let groupStaff: StaffNumber | undefined;
   const flush = () => {
-    if (group.length >= 2) assignBeams(group, beams);
+    if (group.filter((event) => event.kind === 'note').length >= 2) assignBeams(group, beams);
     group = [];
     groupStaff = undefined;
   };
@@ -509,14 +983,9 @@ function buildBeamIndex(
     const staff = staffMap?.get(event);
     const startsNewBeatGroup =
       group.length > 0 && isBeatGroupBoundary(event.startPpq, measure.startPpq, groupLen);
-    if (
-      event.kind !== 'note' ||
-      beamLevel(event) === 0 ||
-      staff !== groupStaff ||
-      startsNewBeatGroup
-    ) {
+    if (beamLevel(event) === 0 || staff !== groupStaff || startsNewBeatGroup) {
       flush();
-      if (event.kind === 'note' && beamLevel(event) > 0) {
+      if (beamLevel(event) > 0) {
         group = [event];
         groupStaff = staff;
       }
@@ -603,16 +1072,21 @@ function restXml(
   score: NotatedScore,
   isMeasureRest: boolean,
   staff: StaffNumber | undefined,
+  beams: BeamIndex,
+  percussion: boolean,
 ): string {
+  const printObject =
+    percussion && measure.voices.length > 1 && event.voice > 1 ? ' print-object="no"' : '';
   const staffXml = staff === undefined ? '' : `<staff>${staff}</staff>`;
   if (isMeasureRest) {
     const duration = ppqToDivisions(measure.lengthPpq, score.divisions);
-    return `<note><rest measure="yes"/><duration>${duration}</duration><voice>${event.voice}</voice>${staffXml}</note>`;
+    return `<note${printObject}><rest measure="yes"/><duration>${duration}</duration><voice>${event.voice}</voice>${staffXml}</note>`;
   }
   const duration = ppqToDivisions(event.durationPpq, score.divisions);
   const rest = restElementXml(event, measure, staff);
   const dots = '<dot/>'.repeat(event.value.dots);
-  return `<note>${rest}<duration>${duration}</duration><voice>${event.voice}</voice><type>${event.value.base}</type>${dots}${staffXml}</note>`;
+  const beamMarks = beamXml(beams.get(event) ?? []);
+  return `<note${printObject}>${rest}<duration>${duration}</duration><voice>${event.voice}</voice><type>${event.value.base}</type>${dots}${staffXml}${beamMarks}</note>`;
 }
 
 /** Builds a rest element, positioning multi-voice rests away from the staff center. */
@@ -653,24 +1127,129 @@ function pushNoteEvent(
   annotations: AnnotationIndex,
   beams: BeamIndex,
   accidentals: AccidentalIndex,
+  percussion: boolean,
 ): void {
   const duration = ppqToDivisions(event.durationPpq, score.divisions);
   const ties = tieXml(event);
   const dots = '<dot/>'.repeat(event.value.dots);
-  const stem = stemXml(event, measure);
   const staffXml = staff === undefined ? '' : `<staff>${staff}</staff>`;
   const beamMarks = beamXml(beams.get(event) ?? []);
+  const eventPercussion = eventUsesPercussionMap(event, percussion);
   event.pitches.forEach((midi, pitchIndex) => {
     const chord = pitchIndex > 0 ? '<chord/>' : '';
-    const pitch = pitchXml(spellPitch(midi, score.keyFifths));
-    const accidental = accidentalXml(accidentals.get(event)?.get(pitchIndex));
-    const notations = notationsXml(event, annotations, pitchIndex === 0);
+    const display = eventPercussion ? percussionDisplay(midi) : undefined;
+    const instrument = eventPercussion
+      ? `<instrument id="${percussionInstrumentId(scorePartIdForEvent(score, event), midi)}"/>`
+      : '';
+    const pitch = eventPercussion
+      ? unpitchedXml(display ?? percussionDisplay(midi))
+      : pitchXml(spellPitch(midi, score.keyFifths));
+    const accidental = eventPercussion
+      ? ''
+      : accidentalXml(accidentals.get(event)?.get(pitchIndex));
+    const notehead = eventPercussion ? noteheadXml(display ?? percussionDisplay(midi), event) : '';
+    const notations = notationsXml(
+      event,
+      annotations,
+      pitchIndex === 0,
+      eventPercussion,
+      midi,
+      measure,
+    );
     const beam = pitchIndex === 0 ? beamMarks : '';
-    const stemMark = pitchIndex === 0 ? stem : '';
+    const stemMark = pitchIndex === 0 ? stemXml(event, measure, eventPercussion) : '';
     lines.push(
-      `<note>${chord}${pitch}<duration>${duration}</duration>${ties}<voice>${event.voice}</voice><type>${event.value.base}</type>${dots}${accidental}${stemMark}${staffXml}${beam}${notations}</note>`,
+      `<note>${chord}${instrument}${pitch}<duration>${duration}</duration>${ties}<voice>${event.voice}</voice><type>${event.value.base}</type>${dots}${accidental}${stemMark}${notehead}${staffXml}${beam}${notations}</note>`,
     );
   });
+}
+
+/** Finds the owning part id for an event. */
+function scorePartIdForEvent(score: NotatedScore, event: NotatedEvent): string {
+  for (const part of score.parts) {
+    for (const measure of part.measures) {
+      for (const voice of measure.voices) {
+        if (voice.events.includes(event)) return part.id;
+      }
+    }
+  }
+  return score.parts[0]?.id ?? 'P1';
+}
+
+/** Maps common GM drum notes to readable percussion positions and names. */
+function percussionDisplay(midi: number): PercussionDisplay {
+  switch (midi) {
+    case 35:
+      return { step: 'F', octave: 4, notehead: 'normal', name: 'Acoustic Bass Drum' };
+    case 36:
+      return { step: 'F', octave: 4, notehead: 'normal', name: 'Bass Drum 1' };
+    case 37:
+      return { step: 'B', octave: 4, notehead: 'normal', name: 'Side Stick' };
+    case 38:
+      return { step: 'C', octave: 5, notehead: 'normal', name: 'Acoustic Snare' };
+    case 39:
+      return { step: 'C', octave: 5, notehead: 'normal', name: 'Hand Clap' };
+    case 40:
+      return { step: 'C', octave: 5, notehead: 'normal', name: 'Electric Snare' };
+    case 41:
+      return { step: 'F', octave: 4, notehead: 'normal', name: 'Low Floor Tom' };
+    case 42:
+      return { step: 'G', octave: 5, notehead: 'x', name: 'Closed Hi-Hat' };
+    case 43:
+      return { step: 'G', octave: 4, notehead: 'normal', name: 'High Floor Tom' };
+    case 44:
+      return { step: 'F', octave: 5, notehead: 'x', name: 'Pedal Hi-Hat' };
+    case 45:
+      return { step: 'A', octave: 4, notehead: 'normal', name: 'Low Tom' };
+    case 46:
+      return { step: 'A', octave: 5, notehead: 'x', name: 'Open Hi-Hat' };
+    case 47:
+      return { step: 'B', octave: 4, notehead: 'normal', name: 'Low-Mid Tom' };
+    case 48:
+      return { step: 'D', octave: 5, notehead: 'normal', name: 'Hi-Mid Tom' };
+    case 49:
+      return { step: 'C', octave: 6, notehead: 'x', name: 'Crash Cymbal 1' };
+    case 50:
+      return { step: 'E', octave: 5, notehead: 'normal', name: 'High Tom' };
+    case 51:
+      return { step: 'D', octave: 6, notehead: 'x', name: 'Ride Cymbal 1' };
+    case 52:
+      return { step: 'C', octave: 6, notehead: 'x', name: 'Chinese Cymbal' };
+    case 53:
+      return { step: 'D', octave: 6, notehead: 'normal', name: 'Ride Bell' };
+    case 54:
+      return { step: 'B', octave: 5, notehead: 'x', name: 'Tambourine' };
+    case 55:
+      return { step: 'C', octave: 6, notehead: 'x', name: 'Splash Cymbal' };
+    case 56:
+      return { step: 'B', octave: 4, notehead: 'x', name: 'Cowbell' };
+    case 57:
+      return { step: 'C', octave: 6, notehead: 'x', name: 'Crash Cymbal 2' };
+    case 58:
+      return { step: 'A', octave: 5, notehead: 'x', name: 'Vibraslap' };
+    case 59:
+      return { step: 'D', octave: 6, notehead: 'x', name: 'Ride Cymbal 2' };
+    default:
+      return {
+        step: 'C',
+        octave: 5,
+        notehead: midi >= 42 && midi <= 59 ? 'x' : 'normal',
+        name: `GM Percussion ${midi}`,
+      };
+  }
+}
+
+/** Builds a MusicXML unpitched notehead location. */
+function unpitchedXml(display: PercussionDisplay): string {
+  return `<unpitched><display-step>${display.step}</display-step><display-octave>${display.octave}</display-octave></unpitched>`;
+}
+
+/** Builds an optional MusicXML notehead. */
+function noteheadXml(display: PercussionDisplay, event: NotatedEvent): string {
+  if (display.notehead === undefined) return '';
+  const parentheses =
+    event.velocity !== undefined && event.velocity <= 45 ? ' parentheses="yes"' : '';
+  return `<notehead${parentheses}>${display.notehead}</notehead>`;
 }
 
 /** Builds an explicit MusicXML accidental element. */
@@ -679,9 +1258,14 @@ function accidentalXml(accidental: string | undefined): string {
 }
 
 /** Builds a stem direction for multi-voice measures, leaving single voices to engraver defaults. */
-function stemXml(event: NotatedEvent, measure: NotatedMeasure): string {
+function stemXml(event: NotatedEvent, measure: NotatedMeasure, percussion = false): string {
   if (measure.voices.length < 2 || event.value.base === 'whole') return '';
-  const direction = event.voice === 1 || event.voice === 3 ? 'up' : 'down';
+  const direction =
+    percussion && event.voice === 2
+      ? 'down'
+      : event.voice === 1 || event.voice === 3
+        ? 'up'
+        : 'down';
   return `<stem>${direction}</stem>`;
 }
 
@@ -727,6 +1311,9 @@ function notationsXml(
   event: NotatedEvent,
   annotations: AnnotationIndex,
   isFirstPitch: boolean,
+  percussion = false,
+  midi?: number,
+  measure?: NotatedMeasure,
 ): string {
   let inner = '';
   if (event.tieStop) {
@@ -747,9 +1334,60 @@ function notationsXml(
     const articulation = annotations.articulations.get(event);
     if (articulation !== undefined) {
       inner += `<articulations>${articulationXml(articulation, event)}</articulations>`;
+    } else if (percussion && event.velocity !== undefined && event.velocity >= 112) {
+      inner += `<articulations><accent placement="${slurPlacement(event)}"/></articulations>`;
+    }
+  }
+  if (percussion && midi !== undefined) {
+    const technical = percussionTechnicalXml(midi);
+    if (technical !== '') inner += technical;
+    if (measure !== undefined && isPercussionRoll(event, measure, midi)) {
+      inner += '<ornaments><tremolo type="single">3</tremolo></ornaments>';
     }
   }
   return inner === '' ? '' : `<notations>${inner}</notations>`;
+}
+
+/** Builds percussion technique markings for common GM drum articulations. */
+function percussionTechnicalXml(midi: number): string {
+  switch (midi) {
+    case 42:
+      return '<technical><stopped/></technical>';
+    case 46:
+      return '<technical><open-string/></technical>';
+    default:
+      return '';
+  }
+}
+
+/** Returns true when repeated short drum notes should carry a roll/tremolo mark. */
+function isPercussionRoll(event: NotatedEvent, measure: NotatedMeasure, midi: number): boolean {
+  if (!isRollCandidate(midi) || event.durationPpq > 0.25 + PPQ_EPSILON) return false;
+  const groupLen = beatGroupPpq(measure.timeSig);
+  const groupIndex = Math.floor((event.startPpq - measure.startPpq) / groupLen + PPQ_EPSILON);
+  let count = 0;
+  for (const voice of measure.voices) {
+    for (const candidate of voice.events) {
+      if (
+        candidate.kind !== 'note' ||
+        candidate.voice !== event.voice ||
+        candidate.durationPpq > 0.25 + PPQ_EPSILON ||
+        !candidate.pitches.includes(midi)
+      ) {
+        continue;
+      }
+      const candidateGroup = Math.floor(
+        (candidate.startPpq - measure.startPpq) / groupLen + PPQ_EPSILON,
+      );
+      if (candidateGroup === groupIndex) count++;
+    }
+  }
+  return count >= 3;
+}
+
+/** Drum notes for which rapid repeated hits are conventionally roll-like. */
+function isRollCandidate(midi: number): boolean {
+  return [37, 38, 40, 41, 43, 45, 47, 48, 50].includes(midi);
 }
 
 /** Builds a voice-aware articulation element. */
@@ -772,12 +1410,7 @@ function harmonyXml(
   const root = spellPitch(GRAND_STAFF_SPLIT_MIDI + symbol.rootPc, score.keyFifths);
   const rootAlter = root.alter === 0 ? '' : `<root-alter>${root.alter}</root-alter>`;
   const rootXml = `<root><root-step>${root.step}</root-step>${rootAlter}</root>`;
-  const kindName =
-    symbol.quality === undefined ? undefined : CHORD_QUALITY_KIND.get(symbol.quality);
-  const kindXml =
-    kindName === undefined
-      ? `<kind text="${escapeXml(symbol.text)}">other</kind>`
-      : `<kind>${kindName}</kind>`;
+  const kindXml = chordKindXml(symbol);
   let bassXml = '';
   if (isPitchClass(symbol.bassPc)) {
     const bass = spellPitch(GRAND_STAFF_SPLIT_MIDI + symbol.bassPc, score.keyFifths);
@@ -786,7 +1419,27 @@ function harmonyXml(
   }
   const offset = ppqToDivisions(symbol.ppq - measure.startPpq, score.divisions);
   const offsetXml = offset === 0 ? '' : `<offset>${offset}</offset>`;
-  return `<harmony>${rootXml}${kindXml}${bassXml}${offsetXml}</harmony>`;
+  return `<harmony>${rootXml}${kindXml}${bassXml}${chordDegreeXml(symbol)}${offsetXml}</harmony>`;
+}
+
+/** Builds a MusicXML chord kind while preserving compact display suffixes. */
+function chordKindXml(symbol: NotatedChordSymbol): string {
+  const quality = symbol.quality;
+  const add9BaseKind = quality === 10 ? 'major' : quality === 11 ? 'minor' : undefined;
+  const kindName =
+    add9BaseKind ?? (quality === undefined ? undefined : CHORD_QUALITY_KIND.get(quality));
+  if (kindName === undefined) {
+    return `<kind text="${escapeXml(symbol.text)}">other</kind>`;
+  }
+  const text = quality === undefined ? undefined : CHORD_QUALITY_TEXT.get(quality);
+  const textXml = text === undefined ? '' : ` text="${escapeXml(text)}"`;
+  return `<kind${textXml}>${kindName}</kind>`;
+}
+
+/** Adds explicit MusicXML degree data for add9 chord qualities. */
+function chordDegreeXml(symbol: NotatedChordSymbol): string {
+  if (symbol.quality !== 10 && symbol.quality !== 11) return '';
+  return '<degree><degree-value>9</degree-value><degree-alter>0</degree-alter><degree-type>add</degree-type></degree>';
 }
 
 /**

@@ -46,6 +46,11 @@ describe('sanitizeAppSettings', () => {
       autosaveIntervalMs: 60000,
       scrollFollowPlayhead: DEFAULT_APP_SETTINGS.scrollFollowPlayhead,
       pianoRollLaneVisible: DEFAULT_APP_SETTINGS.pianoRollLaneVisible,
+      pianoRollSnapToScale: DEFAULT_APP_SETTINGS.pianoRollSnapToScale,
+      pianoRollGhostMode: DEFAULT_APP_SETTINGS.pianoRollGhostMode,
+      pianoRollGhostHideMuted: DEFAULT_APP_SETTINGS.pianoRollGhostHideMuted,
+      pianoRollNoteColorMode: DEFAULT_APP_SETTINGS.pianoRollNoteColorMode,
+      pianoRollAuditionDrag: DEFAULT_APP_SETTINGS.pianoRollAuditionDrag,
       confirmDestructive: false,
       loudnessTargetLufs: DEFAULT_APP_SETTINGS.loudnessTargetLufs,
     });

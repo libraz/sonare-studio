@@ -10,8 +10,14 @@ beforeEach(() => {
 });
 
 /** Builds an EditorNote fixture with editor defaults. */
-function makeNote(pitch: number, startPpq: number, durationPpq: number, id = nextId++): EditorNote {
-  return { id, pitch, velocity: 96, startPpq, durationPpq, channel: 0 };
+function makeNote(
+  pitch: number,
+  startPpq: number,
+  durationPpq: number,
+  id = nextId++,
+  overrides: Partial<EditorNote> = {},
+): EditorNote {
+  return { id, pitch, velocity: 96, startPpq, durationPpq, channel: 0, ...overrides };
 }
 
 /** Default options: 16th grid, 4/4, C major, two measures (0..8). */
@@ -129,6 +135,27 @@ describe('quantizeToScore: score shell', () => {
     expect(score.parts[0].measures[0].timeSig).toEqual({ beats: 4, beatUnit: 4 });
   });
 
+  it('carries source MIDI channels onto notated events', () => {
+    const score = quantize(
+      [
+        makeNote(36, 0, 0.5, nextId++, { channel: 9 }),
+        makeNote(38, 0, 0.5, nextId++, { channel: 9 }),
+      ],
+      baseOptions({ clipLengthPpq: 4 }),
+    );
+    const event = score.parts[0].measures[0].voices[0].events[0];
+    expect(event.kind).toBe('note');
+    expect(event.midiChannels).toEqual([9]);
+  });
+
+  it('keeps representative velocity on notated events', () => {
+    const score = quantize(
+      [makeNote(60, 0, 1, nextId++, { velocity: 118 })],
+      baseOptions({ clipLengthPpq: 4 }),
+    );
+    expect(score.parts[0].measures[0].voices[0].events[0].velocity).toBe(118);
+  });
+
   it('uses defaults for part id and name', () => {
     const score = quantize([], baseOptions());
     expect(score.parts[0].id).toBe('P1');
@@ -144,6 +171,25 @@ describe('quantizeToScore: score shell', () => {
       [0, 3],
       [3, 3],
       [6, 3],
+    ]);
+  });
+
+  it('lays out measures from a project time-signature map', () => {
+    const score = quantize(
+      [],
+      baseOptions({
+        clipLengthPpq: 10,
+        timeSignatures: [
+          { startPpq: 0, numerator: 4, denominator: 4 },
+          { startPpq: 4, numerator: 3, denominator: 4 },
+        ],
+      }),
+    );
+
+    expect(score.parts[0].measures.map((m) => [m.startPpq, m.lengthPpq, m.timeSig])).toEqual([
+      [0, 4, { beats: 4, beatUnit: 4 }],
+      [4, 3, { beats: 3, beatUnit: 4 }],
+      [7, 3, { beats: 3, beatUnit: 4 }],
     ]);
   });
 });
@@ -231,6 +277,19 @@ describe('quantizeToScore: chords', () => {
       baseOptions(),
     );
     expect(voiceEvents(score, 0, 1)[0]).toEqual(n([60, 64], 0, 1, 'quarter'));
+  });
+
+  it('separates simultaneous kick and upper-kit notes into drum voices', () => {
+    const score = quantize(
+      [
+        makeNote(36, 0, 0.5, nextId++, { channel: 9 }),
+        makeNote(38, 0, 0.5, nextId++, { channel: 9 }),
+        makeNote(42, 0, 0.5, nextId++, { channel: 9 }),
+      ],
+      baseOptions({ clipLengthPpq: 4 }),
+    );
+    expect(voiceEvents(score, 0, 1)[0]).toEqual(n([38, 42], 0, 0.5, 'eighth'));
+    expect(voiceEvents(score, 0, 2)[0]).toEqual(n([36], 0, 0.5, 'eighth'));
   });
 
   it('splits simultaneous notes wider than an octave into voices', () => {

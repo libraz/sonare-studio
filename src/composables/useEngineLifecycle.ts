@@ -13,8 +13,12 @@ import { createStripSync } from '@/engine/strip-sync';
 import { createTransportSync } from '@/engine/transport-sync';
 import { createWebMidiOutput } from '@/engine/web-midi-output';
 import { ensureWasm } from '@/lib/wasm';
-import { busIdFromAutomationTarget, isBusAutomationTarget } from '@/project/automation';
-import { clampPan, laneGainDb, vcaOffsetDb } from '@/project/mixer';
+import {
+  busIdFromAutomationTarget,
+  isBusAutomationTarget,
+  parseInsertAutomationParam,
+} from '@/project/automation';
+import { clampPan, laneGainDb, type MixerStrip, vcaOffsetDb } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 
 type Transport = ReturnType<typeof useTransport>;
@@ -75,6 +79,50 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
         knownTrackIds: () => nextMixerSync.laneTrackIds(),
         busIdFor: (storeBusId) => nextStripSync.busIdFor(storeBusId),
         restoreParam: (target, param) => {
+          const insertRef = parseInsertAutomationParam(param);
+          if (insertRef) {
+            // Clearing an insert lane leaves the engine at its last automated
+            // sample; re-push the strip's stored manual value so the parameter
+            // returns to its project value.
+            const slotValue = (strip: MixerStrip | undefined): number | undefined => {
+              const raw = strip?.inserts[insertRef.insertIndex]?.params[insertRef.paramName];
+              return typeof raw === 'number' ? raw : undefined;
+            };
+            if (target === 'master') {
+              const value = slotValue(store.mixer.master);
+              if (value !== undefined) {
+                h.engine.setMasterStripInsertParamByName(
+                  insertRef.insertIndex,
+                  insertRef.paramName,
+                  value,
+                );
+              }
+            } else if (isBusAutomationTarget(target)) {
+              const storeBusId = busIdFromAutomationTarget(target);
+              const busId = nextStripSync.busIdFor(storeBusId);
+              const bus = store.mixer.buses.find((entry) => entry.id === storeBusId);
+              const value = slotValue(bus?.strip);
+              if (busId !== undefined && value !== undefined) {
+                h.engine.setBusStripInsertParamByName(
+                  busId,
+                  insertRef.insertIndex,
+                  insertRef.paramName,
+                  value,
+                );
+              }
+            } else if (typeof target === 'number') {
+              const value = slotValue(store.tracks.find((entry) => entry.id === target)?.mixer);
+              if (value !== undefined) {
+                h.engine.setTrackStripInsertParamByName(
+                  target,
+                  insertRef.insertIndex,
+                  insertRef.paramName,
+                  value,
+                );
+              }
+            }
+            return;
+          }
           if (isBusAutomationTarget(target)) {
             if (param !== 'faderDb') return;
             const storeBusId = busIdFromAutomationTarget(target);

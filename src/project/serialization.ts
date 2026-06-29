@@ -76,7 +76,11 @@ import type { ClipKind, EditorClip, EditorNote, TrackKind } from './types';
  *   at the document level — because track ids are session-scoped and loading
  *   assigns fresh ones. Both fields are omitted when empty, so every existing
  *   version-3 document remains valid and loaders that predate them simply
- *   ignore them.
+ *   ignore them. A lane's `param` may, besides 'faderDb'/'pan', be an
+ *   insert-parameter token "insert:<index>:<paramName>" (see
+ *   src/project/automation.ts) automating an insert slot of the targeted
+ *   strip; older loaders drop the lane as an unknown param, so this stays
+ *   additive within version 3.
  *   Additionally (still version 3, additive): MIDI clips may carry optional
  *   `ccLanes` (continuous-controller automation, see src/project/midi-cc.ts),
  *   omitted when the clip has none, so every existing version-3 document

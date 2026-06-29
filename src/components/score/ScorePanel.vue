@@ -42,6 +42,12 @@ const props = defineProps<{
   positionPpq?: () => number;
   /** True while the transport is playing; enables horizontal score following. */
   isPlaying?: boolean;
+  /** True when the transport loop region should be engraved as repeats. */
+  loopEnabled?: boolean;
+  /** Transport loop start in project PPQ. */
+  loopStartPpq?: number;
+  /** Transport loop end in project PPQ. */
+  loopEndPpq?: number;
 }>();
 
 const emit = defineEmits<{
@@ -77,6 +83,7 @@ const DQ_CHOICES: ReadonlyArray<DqChoice> = [
 
 const dqKey = ref('16');
 const chordsEnabled = ref(false);
+const fullScoreEnabled = ref(false);
 
 /** Display Quantize options for the toolbar select (triplet grids disabled). */
 const dqOptions = computed(() =>
@@ -110,6 +117,8 @@ const landscape = ref(false);
 const pageMarginMm = ref(10);
 const scalePercent = ref(50);
 const spacingStaff = ref(12);
+const barsPerSystem = ref(4);
+const barsPerPage = ref(16);
 
 /** On-screen zoom relative to the height-fit score size. */
 const viewZoom = ref(1);
@@ -180,6 +189,8 @@ function layoutSettings(): ScoreLayoutSettings {
     pageMarginMm: pageMarginMm.value,
     scalePercent: scalePercent.value,
     spacingStaff: spacingStaff.value,
+    barsPerSystem: barsPerSystem.value,
+    barsPerPage: barsPerPage.value,
   };
 }
 
@@ -194,8 +205,17 @@ const notation = useScoreNotation({
   getTimeSig: () => clipTimeSig.value,
   getMeasureLenPpq: () => measureLenPpq.value,
   getScreenClipLengthPpq: () => screenClipLengthPpq.value,
+  getTimeSignatures: () => store.timeSignatures,
   getKeyFifths: keyFifths,
   getChordsEnabled: () => chordsEnabled.value,
+  getFullScoreEnabled: () => fullScoreEnabled.value,
+  getLoopRegion: () =>
+    props.loopEnabled === true &&
+    props.loopStartPpq !== undefined &&
+    props.loopEndPpq !== undefined &&
+    props.loopEndPpq > props.loopStartPpq
+      ? { startPpq: props.loopStartPpq, endPpq: props.loopEndPpq }
+      : null,
   getLayoutSettings: layoutSettings,
   resetPlayheadScan: () => playhead?.resetScan(),
 });
@@ -304,16 +324,31 @@ function scheduleRetranscribe(): void {
 watch(() => store.notes, scheduleRetranscribe);
 // Annotations and display transpose are replaced wholesale by their commands
 // too; both only affect engraving, so they re-transcribe debounced like edits.
-watch([() => store.scoreAnnotations, () => store.displayTransposeSemitones], scheduleRetranscribe);
-watch([dqKey, chordsEnabled, () => store.scaleHighlight], () => void notation.transcribe(), {
-  deep: true,
-});
+watch(
+  [
+    () => store.scoreAnnotations,
+    () => store.displayTransposeSemitones,
+    () => store.sections,
+    () => props.loopEnabled,
+    () => props.loopStartPpq,
+    () => props.loopEndPpq,
+  ],
+  scheduleRetranscribe,
+);
+watch(
+  [dqKey, chordsEnabled, fullScoreEnabled, () => store.scaleHighlight],
+  () => void notation.transcribe(),
+  {
+    deep: true,
+  },
+);
 // Meter or clip length changes can alter the rounded measure extent.
 watch(screenClipLengthPpq, () => void notation.transcribe());
 watch(
   [pageFormat, landscape, pageMarginMm, scalePercent, spacingStaff],
   () => void notation.applyLayout(),
 );
+watch([barsPerSystem, barsPerPage], () => void notation.transcribe());
 watch(annotateEnabled, (enabled) => {
   if (!enabled) closePalette();
 });
@@ -373,12 +408,15 @@ onBeforeUnmount(() => {
     <ScoreToolbar
       v-model:dq-key="dqKey"
       v-model:chords-enabled="chordsEnabled"
+      v-model:full-score-enabled="fullScoreEnabled"
       v-model:annotate-enabled="annotateEnabled"
       v-model:page-format="pageFormat"
       v-model:landscape="landscape"
       v-model:page-margin-mm="pageMarginMm"
       v-model:scale-percent="scalePercent"
       v-model:spacing-staff="spacingStaff"
+      v-model:bars-per-system="barsPerSystem"
+      v-model:bars-per-page="barsPerPage"
       v-model:page="notation.page.value"
       :dq-options="dqOptions"
       :loading="notation.loading.value"
@@ -398,6 +436,7 @@ onBeforeUnmount(() => {
       @print="notation.onPrint"
       @export-pdf="notation.onExportPdf"
       @export-music-xml="notation.onExportMusicXml"
+      @export-part-music-xml="notation.onExportPartMusicXml"
       @transpose-change="onTransposeChange"
     />
     <p v-if="notation.error.value" class="score-error" role="alert">{{ notation.error.value }}</p>

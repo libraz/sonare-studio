@@ -40,12 +40,15 @@ defineProps<{
 
 const dqKey = defineModel<string>('dqKey', { required: true });
 const chordsEnabled = defineModel<boolean>('chordsEnabled', { required: true });
+const fullScoreEnabled = defineModel<boolean>('fullScoreEnabled', { required: true });
 const annotateEnabled = defineModel<boolean>('annotateEnabled', { required: true });
 const pageFormat = defineModel<ScorePageFormatKey>('pageFormat', { required: true });
 const landscape = defineModel<boolean>('landscape', { required: true });
 const pageMarginMm = defineModel<number>('pageMarginMm', { required: true });
 const scalePercent = defineModel<number>('scalePercent', { required: true });
 const spacingStaff = defineModel<number>('spacingStaff', { required: true });
+const barsPerSystem = defineModel<number>('barsPerSystem', { required: true });
+const barsPerPage = defineModel<number>('barsPerPage', { required: true });
 const page = defineModel<number>('page', { required: true });
 
 const emit = defineEmits<{
@@ -63,6 +66,8 @@ const emit = defineEmits<{
   exportPdf: [];
   /** Export the score's MusicXML. */
   exportMusicXml: [];
+  /** Export the current part as MusicXML. */
+  exportPartMusicXml: [];
   /** Request a display transpose change in semitones. */
   transposeChange: [value: number];
 }>();
@@ -106,6 +111,12 @@ const layoutOpen = ref(false);
       size="sm"
     />
     <ToggleButton
+      v-model="fullScoreEnabled"
+      :label="t.shell.score.fullScore"
+      :title="t.shell.score.fullScoreTitle"
+      size="sm"
+    />
+    <ToggleButton
       v-model="annotateEnabled"
       :label="t.shell.score.annotate"
       :title="t.shell.score.annotateTitle"
@@ -123,6 +134,8 @@ const layoutOpen = ref(false);
           v-model:page-margin-mm="pageMarginMm"
           v-model:scale-percent="scalePercent"
           v-model:spacing-staff="spacingStaff"
+          v-model:bars-per-system="barsPerSystem"
+          v-model:bars-per-page="barsPerPage"
           :transpose="transpose"
           @transpose-change="emit('transposeChange', $event)"
         />
@@ -214,6 +227,9 @@ const layoutOpen = ref(false);
     </button>
     <button type="button" :disabled="exporting || !hasXml" @click="emit('exportMusicXml')">
       MusicXML
+    </button>
+    <button type="button" :disabled="exporting || !hasXml" @click="emit('exportPartMusicXml')">
+      Part XML
     </button>
   </div>
 </template>

@@ -22,8 +22,15 @@ import {
   automationCurveCode,
   busIdFromAutomationTarget,
   isBusAutomationTarget,
+  parseInsertAutomationParam,
 } from '@/project/automation';
 import type { EngineHandle } from './engine';
+
+type MixerAutomationParam = 'faderDb' | 'pan';
+
+function isMixerAutomationParam(param: AutomationParam): param is MixerAutomationParam {
+  return param === 'faderDb' || param === 'pan';
+}
 
 /** Options for {@link createAutomationSync}. */
 export interface AutomationSyncOptions {
@@ -72,12 +79,43 @@ export function createAutomationSync(
     for (const lane of lanes) {
       if (!lane.enabled) continue;
       let paramId: number | undefined;
-      if (isBusAutomationTarget(lane.target)) {
+      const insertRef = parseInsertAutomationParam(lane.param);
+      if (insertRef) {
+        // Insert-parameter lane: the engine resolves the JSON-key name to the
+        // reserved insert-automation id (and the strip selector) from its own
+        // strip state. A negative result means the strip, insert, or key is not
+        // (yet) known to the engine, so the lane is skipped this pass.
+        let insertId: number;
+        if (lane.target === 'master') {
+          insertId = handle.engine.resolveMasterInsertAutomationId(
+            insertRef.insertIndex,
+            insertRef.paramName,
+          );
+        } else if (isBusAutomationTarget(lane.target)) {
+          const busId = options.busIdFor?.(busIdFromAutomationTarget(lane.target));
+          if (busId === undefined) continue;
+          insertId = handle.engine.resolveBusInsertAutomationId(
+            busId,
+            insertRef.insertIndex,
+            insertRef.paramName,
+          );
+        } else {
+          if (!knownTracks.has(lane.target)) continue;
+          insertId = handle.engine.resolveTrackInsertAutomationId(
+            lane.target,
+            insertRef.insertIndex,
+            insertRef.paramName,
+          );
+        }
+        if (!Number.isFinite(insertId) || insertId < 0) continue;
+        paramId = insertId;
+      } else if (isBusAutomationTarget(lane.target)) {
         if (lane.param !== 'faderDb') continue;
         const busId = options.busIdFor?.(busIdFromAutomationTarget(lane.target));
         if (busId === undefined) continue;
         paramId = handle.engine.busAutomationParamId(busId);
       } else {
+        if (!isMixerAutomationParam(lane.param)) continue;
         if (lane.target !== 'master' && !knownTracks.has(lane.target)) continue;
         paramId = handle.engine.automationParamId(lane.target, lane.param);
       }

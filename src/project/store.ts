@@ -15,6 +15,7 @@ import {
   busAutomationTarget,
   sanitizeAutomationEntries,
 } from './automation';
+import { pruneInsertLanesAgainstStrips } from './automation-insert';
 import {
   chordsFromAnnotation,
   type EditorChordSymbol,
@@ -657,13 +658,22 @@ export const useProjectStore = defineStore('project', () => {
         }))
         .sort((a, b) => a.startPpq - b.startPpq || a.endPpq - b.endPpq);
       // Older documents have no automation; malformed entries are dropped.
-      automationLanes.value = [
-        ...laneMirror,
-        ...sanitizeAutomationEntries(doc.masterAutomation, 'master'),
-        ...(doc.mixer?.buses.flatMap((bus) =>
-          sanitizeAutomationEntries(bus.automation, busAutomationTarget(bus.id)),
-        ) ?? []),
-      ];
+      // Insert lanes are then pruned against the restored strips so a slot
+      // index past the strip's insert count never lingers.
+      automationLanes.value = pruneInsertLanesAgainstStrips(
+        [
+          ...laneMirror,
+          ...sanitizeAutomationEntries(doc.masterAutomation, 'master'),
+          ...(doc.mixer?.buses.flatMap((bus) =>
+            sanitizeAutomationEntries(bus.automation, busAutomationTarget(bus.id)),
+          ) ?? []),
+        ],
+        {
+          trackStrips: new Map(trackMirror.map((track) => [track.id, track.mixer])),
+          master: mixer.value.master,
+          busStrips: new Map(mixer.value.buses.map((bus) => [bus.id, bus.strip])),
+        },
+      );
       // CC bindings are mutated in place to keep the map identity stable for
       // any long-lived MIDI-learn handle; malformed entries are dropped.
       // Track-scoped targets hold a positional index, rebound to the freshly

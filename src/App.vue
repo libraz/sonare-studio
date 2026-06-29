@@ -766,6 +766,7 @@ useAppLifecycle({
             class="piano-roll-host"
             :position-ppq="() => positionPpq"
             :is-playing="isPlaying"
+            :force-lane-hidden="scoreVisible"
             :audition="auditionNote"
           />
           <div
@@ -790,6 +791,9 @@ useAppLifecycle({
             :style="scoreResized ? { flex: 'none', height: `${scoreHeight}px` } : undefined"
             :position-ppq="() => positionPpq"
             :is-playing="isPlaying"
+            :loop-enabled="loopEnabled"
+            :loop-start-ppq="loopStartPpq"
+            :loop-end-ppq="loopEndPpq"
             @seek="onSeek"
           />
         </section>
@@ -858,7 +862,7 @@ useAppLifecycle({
 
       <Transition name="slide-right">
         <aside v-if="deviceRackOpen" class="right-zone" :aria-label="t.shell.devices.panelLabel">
-          <DeviceRack :transport-playing="isPlaying" />
+          <DeviceRack :transport-playing="isPlaying" :position-ppq="() => positionPpq" />
         </aside>
       </Transition>
     </main>

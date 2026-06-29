@@ -10,6 +10,7 @@ import { cloneNotes, execute } from './history';
 
 /** Default note-on velocity for newly created notes. */
 const DEFAULT_VELOCITY = 96;
+const MIN_DURATION_PPQ = 0.0625;
 
 /** Throws RangeError when a note has out-of-range or non-finite fields. */
 function validateNote(note: Omit<EditorNote, 'id'>): void {
@@ -52,6 +53,11 @@ function commit(nextNotes: EditorNote[]): void {
     project.setMidiEvents(store.clipId, notesToProjectEvents(nextNotes));
     store.refresh(nextNotes);
   });
+}
+
+function selectedNotes(): EditorNote[] {
+  const store = useProjectStore();
+  return store.notes.filter((note) => store.selection.has(note.id));
 }
 
 /**
@@ -117,6 +123,122 @@ export function deleteNotes(ids: Iterable<number>): void {
   const next = store.notes.filter((note) => !drop.has(note.id)).map((note) => ({ ...note }));
   if (next.length === store.notes.length) return;
   commit(next);
+}
+
+/** Duplicates the selected notes by a PPQ offset as one undoable edit. */
+export function duplicateSelection(deltaPpq: number): number[] {
+  const store = useProjectStore();
+  const selected = selectedNotes();
+  if (selected.length === 0 || !Number.isFinite(deltaPpq)) return [];
+  const copies = selected.map((note) => ({
+    ...note,
+    id: allocateNoteId(),
+    startPpq: Math.max(0, note.startPpq + deltaPpq),
+  }));
+  commit([...cloneNotes(store.notes), ...copies]);
+  setSelection(copies.map((note) => note.id));
+  return copies.map((note) => note.id);
+}
+
+/** Repeats the selected notes `count` times at a fixed PPQ spacing. */
+export function repeatSelection(count: number, stepPpq: number): number[] {
+  const store = useProjectStore();
+  const selected = selectedNotes();
+  if (selected.length === 0 || count < 1 || !(stepPpq > 0)) return [];
+  const copies: EditorNote[] = [];
+  for (let i = 1; i <= Math.floor(count); i++) {
+    for (const note of selected) {
+      copies.push({ ...note, id: allocateNoteId(), startPpq: note.startPpq + stepPpq * i });
+    }
+  }
+  commit([...cloneNotes(store.notes), ...copies]);
+  setSelection(copies.map((note) => note.id));
+  return copies.map((note) => note.id);
+}
+
+/** Extends selected notes to the next selected note on the same pitch/channel. */
+export function legatoSelection(gapPpq = 0): void {
+  const selected = selectedNotes().sort((a, b) => a.startPpq - b.startPpq);
+  if (selected.length < 2) return;
+  const byKey = new Map<string, EditorNote[]>();
+  for (const note of selected) {
+    const key = `${note.pitch}:${note.channel}`;
+    byKey.set(key, [...(byKey.get(key) ?? []), note]);
+  }
+  const updates: EditorNoteUpdate[] = [];
+  for (const group of byKey.values()) {
+    group.sort((a, b) => a.startPpq - b.startPpq);
+    for (let i = 0; i + 1 < group.length; i++) {
+      const note = group[i];
+      const next = group[i + 1];
+      const durationPpq = Math.max(MIN_DURATION_PPQ, next.startPpq - note.startPpq - gapPpq);
+      if (durationPpq !== note.durationPpq) updates.push({ id: note.id, durationPpq });
+    }
+  }
+  updateNotes(updates);
+}
+
+/** Merges adjacent or overlapping selected notes with matching pitch/channel. */
+export function mergeSelection(): void {
+  const store = useProjectStore();
+  const selectedIds = new Set(store.selection);
+  const selected = selectedNotes().sort((a, b) => a.pitch - b.pitch || a.startPpq - b.startPpq);
+  if (selected.length < 2) return;
+  const keep = new Set<number>();
+  const drop = new Set<number>();
+  const merged = new Map<number, EditorNote>();
+  for (const note of selected) {
+    const lastId = [...keep]
+      .map((id) => merged.get(id) ?? store.notes.find((n) => n.id === id))
+      .findLast(
+        (candidate) => candidate?.pitch === note.pitch && candidate.channel === note.channel,
+      )?.id;
+    const last =
+      lastId !== undefined
+        ? (merged.get(lastId) ?? store.notes.find((n) => n.id === lastId))
+        : undefined;
+    if (last && note.startPpq <= last.startPpq + last.durationPpq + 1e-9) {
+      const end = Math.max(last.startPpq + last.durationPpq, note.startPpq + note.durationPpq);
+      merged.set(last.id, { ...last, durationPpq: end - last.startPpq });
+      drop.add(note.id);
+    } else {
+      keep.add(note.id);
+      merged.set(note.id, { ...note });
+    }
+  }
+  if (drop.size === 0) return;
+  const next = store.notes
+    .filter((note) => !drop.has(note.id))
+    .map((note) => (selectedIds.has(note.id) ? (merged.get(note.id) ?? { ...note }) : { ...note }));
+  commit(next);
+  setSelection([...keep].filter((id) => !drop.has(id)));
+}
+
+/** Removes overlapping duplicate note tails by shortening or deleting overlaps. */
+export function cleanupOverlaps(): void {
+  const store = useProjectStore();
+  const notes = cloneNotes(store.notes).sort(
+    (a, b) => a.pitch - b.pitch || a.channel - b.channel || a.startPpq - b.startPpq,
+  );
+  const drop = new Set<number>();
+  const updates = new Map<number, EditorNote>();
+  const lastByKey = new Map<string, EditorNote>();
+  for (const note of notes) {
+    const key = `${note.pitch}:${note.channel}`;
+    const prev = lastByKey.get(key);
+    if (prev && note.startPpq < prev.startPpq + prev.durationPpq) {
+      const nextDuration = note.startPpq - prev.startPpq;
+      if (nextDuration < MIN_DURATION_PPQ) drop.add(prev.id);
+      else updates.set(prev.id, { ...prev, durationPpq: nextDuration });
+    }
+    lastByKey.set(key, updates.get(note.id) ?? note);
+  }
+  if (drop.size === 0 && updates.size === 0) return;
+  const next = store.notes
+    .filter((note) => !drop.has(note.id))
+    .map((note) => updates.get(note.id) ?? { ...note });
+  commit(next);
+  setSelection([...store.selection].filter((id) => !drop.has(id)));
 }
 
 /**
@@ -269,6 +391,67 @@ export function snapSelectionToScale(): void {
   if (changed) commit(next);
 }
 
+/** Selects notes matching any pitch in the current selection. */
+export function selectSamePitch(): void {
+  const store = useProjectStore();
+  const pitches = new Set(selectedNotes().map((note) => note.pitch));
+  if (pitches.size === 0) return;
+  setSelection(store.notes.filter((note) => pitches.has(note.pitch)).map((note) => note.id));
+}
+
+/** Selects notes matching any MIDI channel in the current selection. */
+export function selectSameChannel(): void {
+  const store = useProjectStore();
+  const channels = new Set(selectedNotes().map((note) => note.channel));
+  if (channels.size === 0) return;
+  setSelection(store.notes.filter((note) => channels.has(note.channel)).map((note) => note.id));
+}
+
+/** Selects notes whose velocity lies inside the current selection's velocity range. */
+export function selectVelocityRange(): void {
+  const store = useProjectStore();
+  const selected = selectedNotes();
+  if (selected.length === 0) return;
+  const min = Math.min(...selected.map((note) => note.velocity));
+  const max = Math.max(...selected.map((note) => note.velocity));
+  setSelection(
+    store.notes
+      .filter((note) => note.velocity >= min && note.velocity <= max)
+      .map((note) => note.id),
+  );
+}
+
+/** Selects notes outside the active highlighted scale. */
+export function selectOutOfScale(): void {
+  const store = useProjectStore();
+  const mask = store.highlightedPitchClasses;
+  if (!mask.some(Boolean)) return;
+  setSelection(
+    store.notes.filter((note) => !mask[((note.pitch % 12) + 12) % 12]).map((note) => note.id),
+  );
+}
+
+/** Selects notes that overlap another note with the same pitch and channel. */
+export function selectOverlaps(): void {
+  const store = useProjectStore();
+  const ids = new Set<number>();
+  const byKey = new Map<string, EditorNote[]>();
+  for (const note of store.notes) {
+    const key = `${note.pitch}:${note.channel}`;
+    byKey.set(key, [...(byKey.get(key) ?? []), note]);
+  }
+  for (const group of byKey.values()) {
+    group.sort((a, b) => a.startPpq - b.startPpq);
+    for (let i = 0; i + 1 < group.length; i++) {
+      if (group[i].startPpq + group[i].durationPpq > group[i + 1].startPpq) {
+        ids.add(group[i].id);
+        ids.add(group[i + 1].id);
+      }
+    }
+  }
+  setSelection(ids);
+}
+
 /**
  * Quantizes the lengths (durations) of the selected notes to the snap grid as
  * one undoable edit, complementing {@link quantizeSelection} which moves their
@@ -292,6 +475,88 @@ export function quantizeSelectionLengths(strength = 1): void {
     return { ...note, durationPpq: rounded };
   });
   if (changed) commit(next);
+}
+
+/** Quantizes selected note ends to the snap grid as one undoable edit. */
+export function quantizeSelectionEnds(strength = 1): void {
+  const store = useProjectStore();
+  if (store.selection.size === 0) return;
+  const gridPpq = 4 / store.snapDivision;
+  const updates: EditorNoteUpdate[] = [];
+  for (const note of store.notes) {
+    if (!store.selection.has(note.id)) continue;
+    const end = note.startPpq + note.durationPpq;
+    const target = Math.max(note.startPpq + MIN_DURATION_PPQ, Math.round(end / gridPpq) * gridPpq);
+    const nextEnd = end + (target - end) * strength;
+    const durationPpq = Math.max(MIN_DURATION_PPQ, nextEnd - note.startPpq);
+    if (durationPpq !== note.durationPpq) updates.push({ id: note.id, durationPpq });
+  }
+  updateNotes(updates);
+}
+
+/** Normalizes selected velocities so the loudest selected note reaches target. */
+export function normalizeSelectionVelocity(target = 100): void {
+  const selected = selectedNotes();
+  if (selected.length === 0) return;
+  const max = Math.max(...selected.map((note) => note.velocity));
+  if (max <= 0) return;
+  const scale = clampInt(target, 1, 127) / max;
+  updateNotes(
+    selected.map((note) => ({
+      id: note.id,
+      velocity: clampInt(note.velocity * scale, 1, 127),
+    })),
+  );
+}
+
+/** Applies a linear velocity fade across selected notes ordered by start time. */
+export function fadeSelectionVelocity(from = 40, to = 110): void {
+  const selected = selectedNotes().sort((a, b) => a.startPpq - b.startPpq || a.pitch - b.pitch);
+  if (selected.length === 0) return;
+  const start = clampInt(from, 1, 127);
+  const end = clampInt(to, 1, 127);
+  updateNotes(
+    selected.map((note, index) => {
+      const t = selected.length <= 1 ? 1 : index / (selected.length - 1);
+      return { id: note.id, velocity: clampInt(start + (end - start) * t, 1, 127) };
+    }),
+  );
+}
+
+/** Compresses or expands selected velocities around their average. */
+export function scaleSelectionVelocityDynamics(amount: number): void {
+  const selected = selectedNotes();
+  if (selected.length === 0 || !Number.isFinite(amount)) return;
+  const avg = selected.reduce((sum, note) => sum + note.velocity, 0) / selected.length;
+  updateNotes(
+    selected.map((note) => ({
+      id: note.id,
+      velocity: clampInt(avg + (note.velocity - avg) * amount, 1, 127),
+    })),
+  );
+}
+
+/** Moves selected notes one scale degree up or down using active scale classes. */
+export function transposeSelectionDiatonic(steps: number): void {
+  const store = useProjectStore();
+  const selected = selectedNotes();
+  const mask = store.highlightedPitchClasses;
+  if (selected.length === 0 || !mask.some(Boolean) || !Number.isFinite(steps) || steps === 0) {
+    return;
+  }
+  const dir = steps > 0 ? 1 : -1;
+  const count = Math.abs(Math.trunc(steps));
+  const updates: EditorNoteUpdate[] = [];
+  for (const note of selected) {
+    let pitch = note.pitch;
+    for (let step = 0; step < count; step++) {
+      let next = pitch + dir;
+      while (next >= 0 && next <= 127 && !mask[((next % 12) + 12) % 12]) next += dir;
+      pitch = Math.min(127, Math.max(0, next));
+    }
+    if (pitch !== note.pitch) updates.push({ id: note.id, pitch });
+  }
+  updateNotes(updates);
 }
 
 /**

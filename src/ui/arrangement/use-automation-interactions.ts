@@ -12,7 +12,11 @@
 
 import { type Ref, ref } from 'vue';
 import type { AutomationCurve, AutomationParam, AutomationPoint } from '@/project/automation';
-import { automationValueToY, automationYToValue } from './automation-rows';
+import {
+  type AutomationValueDomain,
+  automationValueToY,
+  automationYToValue,
+} from './automation-rows';
 import type { ClipPoint } from './clip-hit';
 import {
   type ClipModifiers,
@@ -41,6 +45,8 @@ export interface AutomationSublane {
   top: number;
   /** Sublane height in px. */
   height: number;
+  /** Display domain for an insert-parameter sublane; absent = fader/pan/[0,1]. */
+  insertDomain?: AutomationValueDomain;
 }
 
 /** View contract for the automation gestures. */
@@ -162,7 +168,13 @@ export function useAutomationInteractions(
   ): number {
     for (let i = points.length - 1; i >= 0; i--) {
       const x = view.ppqToX(points[i].ppq);
-      const y = automationValueToY(sublane.param, points[i].value, sublane.top, sublane.height);
+      const y = automationValueToY(
+        sublane.param,
+        points[i].value,
+        sublane.top,
+        sublane.height,
+        sublane.insertDomain,
+      );
       if (Math.hypot(point.x - x, point.y - y) <= AUTOMATION_POINT_HIT_RADIUS_PX) return i;
     }
     return -1;
@@ -178,7 +190,13 @@ export function useAutomationInteractions(
     const ppq = modifiers.meta === true ? Math.max(0, raw) : snapToStep(raw, options.getGridPpq());
     return {
       ppq,
-      value: automationYToValue(sublane.param, point.y, sublane.top, sublane.height),
+      value: automationYToValue(
+        sublane.param,
+        point.y,
+        sublane.top,
+        sublane.height,
+        sublane.insertDomain,
+      ),
     };
   }
 

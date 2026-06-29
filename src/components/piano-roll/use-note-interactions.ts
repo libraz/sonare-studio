@@ -82,6 +82,10 @@ export interface UseNoteInteractionsOptions {
   getGridPpq(): number;
   /** Returns the active editor tool (absent = always the select tool). */
   getTool?(): EditorToolId;
+  /** Returns the editable clip length in PPQ; absent means no right-edge clamp. */
+  getMaxPpq?(): number;
+  /** Optionally maps a raw pointer pitch to the pitch that should be created. */
+  resolveCreatedPitch?(pitch: number): number;
   /** Mutation commands invoked when gestures commit. */
   commands: InteractionCommands;
   /** Drag start threshold in px. Default {@link DEFAULT_DRAG_THRESHOLD_PX}. */
@@ -97,6 +101,8 @@ export interface UseNoteInteractionsOptions {
    * audition (e.g. in unit tests).
    */
   onAudition?(pitch: number, velocity: number): void;
+  /** Audition the destination pitch while a move drag crosses pitch rows. */
+  auditionDuringDrag?: boolean | (() => boolean);
 }
 
 /** CSS cursor reflecting what a pointer press at the hovered point would do. */
@@ -114,6 +120,8 @@ export interface NoteInteractions {
   previewNotes: Ref<EditorNote[] | null>;
   /** Cursor to show over the note grid. */
   cursor: Ref<InteractionCursor>;
+  /** Floating readout shown during draw/move/resize/erase gestures. */
+  gestureReadout: Ref<{ text: string; x: number; y: number } | null>;
   /** Handles pointerdown on the note grid (point in local px). */
   onPointerDown(point: InteractionPoint, modifiers?: InteractionModifiers): void;
   /** Handles pointermove (both hover feedback and drag updates). */
@@ -248,8 +256,10 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
   const marquee = ref<MarqueeRect | null>(null);
   const previewNotes = ref<EditorNote[] | null>(null);
   const cursor = ref<InteractionCursor>('default');
+  const gestureReadout = ref<{ text: string; x: number; y: number } | null>(null);
 
   let gesture: Gesture = { kind: 'none' };
+  let lastDragAuditionPitch: number | null = null;
 
   function hitOptions(): { resizeTolerancePx?: number } {
     return options.resizeTolerancePx === undefined
@@ -278,13 +288,47 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     return Math.min(MAX_PITCH, Math.max(MIN_PITCH, pitch));
   }
 
+  function createdPitch(point: InteractionPoint): number {
+    return clampPitch(
+      options.resolveCreatedPitch?.(view.yToPitch(point.y)) ?? view.yToPitch(point.y),
+    );
+  }
+
+  function clampPpq(ppq: number): number {
+    const max = options.getMaxPpq?.();
+    return max !== undefined && Number.isFinite(max)
+      ? Math.min(max, Math.max(0, ppq))
+      : Math.max(0, ppq);
+  }
+
+  function clampStartPpq(ppq: number): number {
+    const max = options.getMaxPpq?.();
+    const end =
+      max !== undefined && Number.isFinite(max) ? max - minDuration : Number.POSITIVE_INFINITY;
+    return Math.min(end, clampPpq(ppq));
+  }
+
+  function formatPpq(value: number): string {
+    return String(Math.round(value * 1000) / 1000);
+  }
+
+  function setReadout(point: InteractionPoint, text: string): void {
+    gestureReadout.value = { text, x: point.x + 12, y: point.y - 12 };
+  }
+
+  function shouldAuditionDuringDrag(): boolean {
+    return typeof options.auditionDuringDrag === 'function'
+      ? options.auditionDuringDrag()
+      : options.auditionDuringDrag === true;
+  }
+
   /** Resolves the grid-snapped start cell of a draw at the pointer x. */
   function drawStartPpq(point: InteractionPoint, modifiers: InteractionModifiers): number {
     const step = options.getGridPpq();
     const ppq = view.xToPpq(point.x);
     return modifiers.meta === true || !(step > 0)
-      ? Math.max(0, ppq)
-      : Math.max(0, Math.floor(ppq / step) * step);
+      ? clampStartPpq(ppq)
+      : clampStartPpq(Math.floor(ppq / step) * step);
   }
 
   /** Resolves the snapped length of an in-flight draw, kept at >= one grid cell. */
@@ -297,7 +341,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     const minLen = step > 0 ? step : DEFAULT_MIN_DURATION_PPQ;
     const raw = view.xToPpq(point.x);
     const end = modifiers.meta === true ? raw : snapToStep(raw, step);
-    return Math.max(minLen, end - g.startPpq);
+    return Math.max(minLen, clampPpq(end) - g.startPpq);
   }
 
   /** Builds the rendered note list for an in-flight draw (draft note id -1). */
@@ -375,6 +419,13 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
       maxPitch = Math.max(maxPitch, origin.pitch);
     }
     if (minStart + deltaPpq < 0) deltaPpq = -minStart;
+    const max = options.getMaxPpq?.();
+    if (max !== undefined && Number.isFinite(max)) {
+      let maxEnd = Number.NEGATIVE_INFINITY;
+      for (const origin of g.origins.values())
+        maxEnd = Math.max(maxEnd, origin.startPpq + origin.durationPpq);
+      if (maxEnd + deltaPpq > max) deltaPpq = max - maxEnd;
+    }
     let deltaPitch = Math.round((g.start.y - point.y) / view.rowHeight);
     deltaPitch = Math.min(MAX_PITCH - maxPitch, Math.max(MIN_PITCH - minPitch, deltaPitch));
     return { deltaPpq, deltaPitch };
@@ -397,7 +448,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     const rawDelta = view.xToPpq(point.x) - view.xToPpq(g.start.x);
     if (g.edge === 'end') {
       const end = grabbed.startPpq + grabbed.durationPpq;
-      const targetEnd = bypass ? end + rawDelta : snapToStep(end + rawDelta, step);
+      const targetEnd = clampPpq(bypass ? end + rawDelta : snapToStep(end + rawDelta, step));
       let delta = targetEnd - end;
       for (const origin of g.origins.values()) {
         delta = Math.max(delta, minDuration - origin.durationPpq);
@@ -481,7 +532,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
   function onPointerDown(point: InteractionPoint, modifiers: InteractionModifiers = {}): void {
     const tool = currentTool();
     if (tool === 'draw') {
-      const pitch = clampPitch(view.yToPitch(point.y));
+      const pitch = createdPitch(point);
       gesture = {
         kind: 'draw-note',
         start: point,
@@ -489,7 +540,9 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
         pitch,
       };
       previewNotes.value = buildDrawPreview(gesture, point, modifiers);
+      setReadout(point, `Draw ${formatPpq(drawLength(gesture, point, modifiers))} ppq`);
       options.onAudition?.(pitch, DEFAULT_DRAW_VELOCITY);
+      lastDragAuditionPitch = pitch;
       return;
     }
     if (tool === 'erase') {
@@ -498,6 +551,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
       if (eraseHit) ids.add(Number(eraseHit.id));
       gesture = { kind: 'erase', ids };
       previewNotes.value = buildErasePreview(ids);
+      if (ids.size > 0) setReadout(point, `Erase ${ids.size}`);
       return;
     }
     if (tool === 'split') {
@@ -519,6 +573,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     const id = Number(hit.id);
     const hitNote = notes.find((note) => note.id === id);
     if (hitNote) options.onAudition?.(hitNote.pitch, hitNote.velocity);
+    lastDragAuditionPitch = hitNote?.pitch ?? null;
     const wasSelected = options.getSelection().has(id);
     if (modifiers.shift) {
       if (!wasSelected) commands.setSelection([...options.getSelection(), id]);
@@ -583,12 +638,14 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     }
     if (gesture.kind === 'draw-note') {
       previewNotes.value = buildDrawPreview(gesture, point, modifiers);
+      setReadout(point, `Draw ${formatPpq(drawLength(gesture, point, modifiers))} ppq`);
       return;
     }
     if (gesture.kind === 'erase') {
       const hit = hitTestNote(toRects(options.getNotes()), point, view, hitOptions());
       if (hit) gesture.ids.add(Number(hit.id));
       previewNotes.value = buildErasePreview(gesture.ids);
+      if (gesture.ids.size > 0) setReadout(point, `Erase ${gesture.ids.size}`);
       return;
     }
     if (gesture.kind === 'pending-note' || gesture.kind === 'pending-marquee') {
@@ -597,11 +654,35 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
       if (gesture.kind === 'none') return;
     }
     if (gesture.kind === 'move') {
-      previewNotes.value = buildMovePreview(gesture, moveDeltas(gesture, point, modifiers));
+      const deltas = moveDeltas(gesture, point, modifiers);
+      previewNotes.value = buildMovePreview(gesture, deltas);
+      const pitch =
+        deltas.deltaPitch === 0
+          ? '0 st'
+          : `${deltas.deltaPitch > 0 ? '+' : ''}${deltas.deltaPitch} st`;
+      const time =
+        deltas.deltaPpq === 0
+          ? '0 ppq'
+          : `${deltas.deltaPpq > 0 ? '+' : ''}${formatPpq(deltas.deltaPpq)} ppq`;
+      setReadout(point, `${gesture.duplicate ? 'Copy' : 'Move'} ${time}, ${pitch}`);
+      if (shouldAuditionDuringDrag()) {
+        const grabbed = gesture.origins.get(gesture.grabbedId);
+        const nextPitch = grabbed ? grabbed.pitch + deltas.deltaPitch : null;
+        if (nextPitch !== null && nextPitch !== lastDragAuditionPitch) {
+          lastDragAuditionPitch = nextPitch;
+          options.onAudition?.(nextPitch, grabbed?.velocity ?? DEFAULT_DRAW_VELOCITY);
+        }
+      }
       return;
     }
     if (gesture.kind === 'resize') {
-      previewNotes.value = buildResizePreview(gesture, resizeDelta(gesture, point, modifiers));
+      const delta = resizeDelta(gesture, point, modifiers);
+      previewNotes.value = buildResizePreview(gesture, delta);
+      const grabbed = gesture.origins.get(gesture.grabbedId);
+      const nextLength = grabbed
+        ? resizedExtent(gesture.edge, grabbed, delta).durationPpq
+        : DEFAULT_MIN_DURATION_PPQ;
+      setReadout(point, `Length ${formatPpq(nextLength)} ppq`);
       return;
     }
     if (gesture.kind === 'marquee') {
@@ -614,7 +695,9 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     gesture = { kind: 'none' };
     marquee.value = null;
     previewNotes.value = null;
+    gestureReadout.value = null;
     cursor.value = 'default';
+    lastDragAuditionPitch = null;
     if (g.kind === 'draw-note') {
       const id = commands.addNote({
         pitch: g.pitch,
@@ -695,8 +778,17 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
       modifiers.meta === true || !(step > 0)
         ? Math.max(0, ppq)
         : Math.max(0, Math.floor(ppq / step) * step);
-    const durationPpq = step > 0 ? step : DEFAULT_MIN_DURATION_PPQ;
-    const pitch = view.yToPitch(point.y);
+    const max = options.getMaxPpq?.();
+    const durationPpq =
+      max !== undefined && Number.isFinite(max)
+        ? Math.min(
+            step > 0 ? step : DEFAULT_MIN_DURATION_PPQ,
+            Math.max(DEFAULT_MIN_DURATION_PPQ, max - startPpq),
+          )
+        : step > 0
+          ? step
+          : DEFAULT_MIN_DURATION_PPQ;
+    const pitch = createdPitch(point);
     const id = commands.addNote({ pitch, startPpq, durationPpq });
     commands.setSelection([id]);
     options.onAudition?.(pitch, DEFAULT_DRAW_VELOCITY);
@@ -712,7 +804,9 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     gesture = { kind: 'none' };
     marquee.value = null;
     previewNotes.value = null;
+    gestureReadout.value = null;
     cursor.value = 'default';
+    lastDragAuditionPitch = null;
   }
 
   function onKeyDown(key: string): boolean {
@@ -734,6 +828,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     marquee,
     previewNotes,
     cursor,
+    gestureReadout,
     onPointerDown,
     onPointerMove,
     onPointerUp,

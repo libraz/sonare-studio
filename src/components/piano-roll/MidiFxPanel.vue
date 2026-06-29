@@ -23,6 +23,8 @@ import { useI18n } from '@/ui/i18n';
 const props = defineProps<{
   /** Target MIDI clip id. */
   clipId: number;
+  /** Number of notes in the target clip, used for a non-destructive preview summary. */
+  noteCount?: number;
 }>();
 
 const emit = defineEmits<{
@@ -57,6 +59,19 @@ const arpPresetId = computed(() => {
 
 /** True when the transform would leave every note unchanged. */
 const noop = computed(() => isMidiFxNoop(sanitizeMidiFxConfig(config)));
+const previewSummary = computed(() => {
+  const sanitized = sanitizeMidiFxConfig(config);
+  const count = props.noteCount ?? 0;
+  if (isMidiFxNoop(sanitized)) return t.value.shell.pianoRoll.midiTransform.previewNoop;
+  const voices =
+    sanitized.arpeggiatorIntervals.length > 0
+      ? sanitized.arpeggiatorIntervals.length
+      : sanitized.chordIntervals.length > 0
+        ? sanitized.chordIntervals.length
+        : 1;
+  const output = count > 0 ? count * voices : voices;
+  return `${t.value.shell.pianoRoll.midiTransform.preview}: ${count} -> ${output}`;
+});
 
 /** Selects a harmonize preset (replaces the interval set). */
 function selectChord(intervals: number[]): void {
@@ -113,6 +128,7 @@ function pct(value: number): string {
     </header>
 
     <div class="fx-body">
+      <div class="fx-preview" aria-live="polite">{{ previewSummary }}</div>
       <section class="fx-group">
         <div class="fx-row">
           <label class="fx-label" for="fx-transpose">
@@ -392,6 +408,15 @@ function pct(value: number): string {
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
+}
+
+.fx-preview {
+  padding: var(--sp-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-inset);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
 }
 
 .fx-group-head {

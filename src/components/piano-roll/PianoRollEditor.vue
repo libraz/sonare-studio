@@ -6,16 +6,31 @@ import { useEditorTool } from '@/composables/useEditorTool';
 import { formatPitch } from '@/lib/pitch';
 import {
   addNote,
+  cleanupOverlaps,
   deleteNotes,
+  duplicateSelection,
+  fadeSelectionVelocity,
   humanizeSelectionVelocity,
+  legatoSelection,
+  mergeSelection,
+  normalizeSelectionVelocity,
   quantizeSelection,
+  quantizeSelectionEnds,
   quantizeSelectionLengths,
   redo,
+  repeatSelection,
+  scaleSelectionVelocityDynamics,
+  selectOutOfScale,
+  selectOverlaps,
+  selectSameChannel,
+  selectSamePitch,
+  selectVelocityRange,
   setActiveClip,
   setSelection,
   snapSelectionToScale,
   splitNote,
   transposeSelection,
+  transposeSelectionDiatonic,
   undo,
   updateNotes,
 } from '@/project/commands';
@@ -26,13 +41,16 @@ import {
 } from '@/project/midi-cc';
 import { useProjectStore } from '@/project/store';
 import { nextPlayheadFollowStart } from '@/ui/arrangement/playhead-follow';
+import { beatLengthPpq, rulerTicks } from '@/ui/arrangement/ruler';
 import { useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 import BreakpointLane from './BreakpointLane.vue';
 import KeyboardColumn from './KeyboardColumn.vue';
-import { LANE_PARAMS } from './lane-params';
+import { LANE_PARAMS, type LaneParamId } from './lane-params';
 import NoteGridCanvas from './NoteGridCanvas.vue';
 import { buildGhostNotes, type GhostNote } from './overlay';
+import PianoRollMinimap from './PianoRollMinimap.vue';
+import PianoRollRuler from './PianoRollRuler.vue';
 import PianoRollToolbar from './PianoRollToolbar.vue';
 import { DEFAULT_NOTE_COLOR, type NoteColorFn } from './theme';
 import { useNoteInteractions } from './use-note-interactions';
@@ -64,6 +82,8 @@ const props = defineProps<{
   positionPpq?: () => number;
   /** True while the transport is playing; enables playhead follow scrolling. */
   isPlaying?: boolean;
+  /** Hides the bottom velocity / CC lane without changing the saved user preference. */
+  forceLaneHidden?: boolean;
   /**
    * Audible-feedback hook: plays a short preview of a note's pitch/velocity
    * when one is clicked or created. Omit to edit silently.
@@ -93,15 +113,22 @@ const { range, painter, revision, error, gridPpq, root, gridCell, hTrack, vTrack
 
 /** Whether the multi-track ghost overlay is drawn. */
 const overlayEnabled = ref(true);
+const hoverStatus = ref<{ ppq: number; pitch: number } | null>(null);
 
 /**
  * Whether the bottom velocity / CC parameter lane block is shown. Backed by the
  * shared user preference so the choice is remembered across editors, clip
  * re-opens and restarts; toggling the lane writes the preference through.
  */
-const laneVisible = computed({
+const savedLaneVisible = computed({
   get: () => appSettings.settings.pianoRollLaneVisible,
   set: (value: boolean) => appSettings.set('pianoRollLaneVisible', value),
+});
+const laneVisible = computed({
+  get: () => (props.forceLaneHidden === true ? false : savedLaneVisible.value),
+  set: (value: boolean) => {
+    savedLaneVisible.value = value;
+  },
 });
 
 /** The scrollable lane-parameter tab column on the left of the lane. */
@@ -177,6 +204,74 @@ const laneChannelOptions = computed(() =>
   })),
 );
 
+const snapToScaleEnabled = computed({
+  get: () => appSettings.settings.pianoRollSnapToScale,
+  set: (value: boolean) => appSettings.set('pianoRollSnapToScale', value),
+});
+const ghostMode = computed({
+  get: () => appSettings.settings.pianoRollGhostMode,
+  set: (value: 'all' | 'active-track' | 'none') => appSettings.set('pianoRollGhostMode', value),
+});
+const ghostHideMuted = computed({
+  get: () => appSettings.settings.pianoRollGhostHideMuted,
+  set: (value: boolean) => appSettings.set('pianoRollGhostHideMuted', value),
+});
+const noteColorMode = computed({
+  get: () => appSettings.settings.pianoRollNoteColorMode,
+  set: (value: 'track' | 'velocity' | 'channel') =>
+    appSettings.set('pianoRollNoteColorMode', value),
+});
+const auditionDrag = computed({
+  get: () => appSettings.settings.pianoRollAuditionDrag,
+  set: (value: boolean) => appSettings.set('pianoRollAuditionDrag', value),
+});
+
+const laneModeOptions = computed(() => [
+  ...LANE_PARAMS.map((laneSpec) => ({
+    value: `note:${laneSpec.id}`,
+    label: `${t.value.shell.pianoRoll.laneGroupNote} · ${laneSpec.label}`,
+  })),
+  ...PIANO_ROLL_CC_LANES.map((cc) => ({
+    value: `cc:${cc.controller}`,
+    label: `${t.value.shell.pianoRoll.laneGroupCc} · ${cc.label}`,
+  })),
+  {
+    value: 'expr:bend',
+    label: `${t.value.shell.pianoRoll.laneGroupExpression} · ${t.value.shell.pianoRoll.bendLaneTab}`,
+  },
+  {
+    value: 'expr:pressure',
+    label: `${t.value.shell.pianoRoll.laneGroupExpression} · ${t.value.shell.pianoRoll.pressureLaneTab}`,
+  },
+  {
+    value: 'expr:poly-pressure',
+    label: `${t.value.shell.pianoRoll.laneGroupExpression} · ${t.value.shell.pianoRoll.polyPressureLaneTab}`,
+  },
+]);
+
+const laneMode = computed({
+  get: () => {
+    if (noteLaneActive.value) return `note:${laneParam.value}`;
+    if (laneCc.value !== null) return `cc:${laneCc.value}`;
+    if (lanePitchBend.value) return 'expr:bend';
+    if (laneChannelPressure.value) return 'expr:pressure';
+    return 'expr:poly-pressure';
+  },
+  set: (value: string) => {
+    if (value.startsWith('note:')) {
+      selectNoteLane(value.slice(5) as LaneParamId);
+      return;
+    }
+    if (value.startsWith('cc:')) {
+      selectCcLane(Number(value.slice(3)));
+      return;
+    }
+    if (value === 'expr:bend') selectPitchBendLane();
+    else if (value === 'expr:pressure') selectChannelPressureLane();
+    else selectPolyPressureLane();
+  },
+});
+
 const ccLanes = usePianoRollCcLanes({ lanes, gridPpq });
 const {
   polyPressurePitch,
@@ -213,12 +308,20 @@ const canTransform = computed(
 
 /** Read-only ghost notes from all non-active clips (empty when overlay off). */
 const ghostNotes = computed<GhostNote[]>(() =>
-  overlayEnabled.value
-    ? buildGhostNotes({
-        clips: store.clips,
-        tracks: store.tracks,
-        activeClipId: store.clipId,
-      })
+  overlayEnabled.value && ghostMode.value !== 'none'
+    ? (() => {
+        const tracks = store.tracks.filter((track) => {
+          if (ghostHideMuted.value && track.mute) return false;
+          if (ghostMode.value === 'active-track') return track.id === store.activeTrackId;
+          return true;
+        });
+        const trackIds = new Set(tracks.map((track) => track.id));
+        return buildGhostNotes({
+          clips: store.clips.filter((clip) => trackIds.has(clip.trackId)),
+          tracks,
+          activeClipId: store.clipId,
+        });
+      })()
     : [],
 );
 
@@ -229,8 +332,72 @@ const ghostNotes = computed<GhostNote[]>(() =>
  */
 const noteColor = computed<NoteColorFn>(() => {
   const color = store.activeTrack?.color ?? DEFAULT_NOTE_COLOR;
+  if (noteColorMode.value === 'velocity') {
+    return (note) => {
+      const hue = 210 - Math.round((note.velocity / 127) * 170);
+      return `hsl(${hue} 78% 58%)`;
+    };
+  }
+  if (noteColorMode.value === 'channel') {
+    return (note) => `hsl(${(note.channel * 37) % 360} 72% 58%)`;
+  }
   return () => color;
 });
+
+function fitTimeToSpan(startPpq: number, endPpq: number): void {
+  const width = Math.max(1, range.widthPx);
+  const paddedStart = Math.max(0, startPpq - 0.5);
+  const paddedEnd = Math.max(paddedStart + 0.25, endPpq + 0.5);
+  const targetPxPerPpq = width / (paddedEnd - paddedStart);
+  range.zoomAt(0, targetPxPerPpq / range.pxPerPpq);
+  range.setStartPpq(paddedStart);
+  bump();
+}
+
+function fitPitchToNotes(notes: ReadonlyArray<{ pitch: number }>): void {
+  if (notes.length === 0 || range.heightPx <= 0) return;
+  let minPitch = 127;
+  let maxPitch = 0;
+  for (const note of notes) {
+    minPitch = Math.min(minPitch, note.pitch);
+    maxPitch = Math.max(maxPitch, note.pitch);
+  }
+  const span = Math.max(1, maxPitch - minPitch + 1);
+  const rowHeight = Math.min(40, Math.max(5, (range.heightPx - 16) / (span + 2)));
+  range.setRowHeight(rowHeight);
+  const centerPitch = (minPitch + maxPitch) / 2;
+  const rowTop = (127 - centerPitch) * range.rowHeight;
+  range.setScrollY(rowTop + range.rowHeight / 2 - range.heightPx / 2);
+}
+
+function fitClip(): void {
+  fitTimeToSpan(0, store.clipLengthPpq);
+}
+
+function fitNotes(): void {
+  if (store.notes.length === 0) {
+    fitClip();
+    return;
+  }
+  const endPpq = Math.max(...store.notes.map((note) => note.startPpq + note.durationPpq));
+  const startPpq = Math.min(...store.notes.map((note) => note.startPpq));
+  fitTimeToSpan(startPpq, endPpq);
+  fitPitchToNotes(store.notes);
+  bump();
+}
+
+function fitSelection(): void {
+  const selected = store.selectedNotes;
+  if (selected.length === 0) {
+    fitNotes();
+    return;
+  }
+  const endPpq = Math.max(...selected.map((note) => note.startPpq + note.durationPpq));
+  const startPpq = Math.min(...selected.map((note) => note.startPpq));
+  fitTimeToSpan(startPpq, endPpq);
+  fitPitchToNotes(selected);
+  bump();
+}
 
 /** Maximum per-note random velocity jitter applied by the Humanize action. */
 const HUMANIZE_VELOCITY_AMOUNT = 12;
@@ -239,37 +406,160 @@ const HUMANIZE_VELOCITY_AMOUNT = 12;
 function selectionOpItems(): ContextMenuItem[] {
   return [
     {
-      id: 'quantize',
-      label: t.value.shell.pianoRoll.context.quantizeStarts,
-      hint: 'Q',
-      run: () => quantizeSelection(),
+      id: 'edit-submenu',
+      label: t.value.shell.pianoRoll.context.edit,
+      children: [
+        {
+          id: 'duplicate-grid',
+          label: t.value.shell.pianoRoll.context.duplicateByGrid,
+          hint: '⌥→',
+          run: () => duplicateSelection(gridPpq.value),
+        },
+        {
+          id: 'repeat-bar',
+          label: t.value.shell.pianoRoll.context.repeatBar,
+          run: () => repeatSelection(3, 4),
+        },
+        { id: 'sep-edit-tools', separator: true },
+        {
+          id: 'legato',
+          label: t.value.shell.pianoRoll.context.legato,
+          run: () => legatoSelection(),
+        },
+        {
+          id: 'merge',
+          label: t.value.shell.pianoRoll.context.merge,
+          run: () => mergeSelection(),
+        },
+        {
+          id: 'cleanup-overlaps',
+          label: t.value.shell.pianoRoll.context.cleanupOverlaps,
+          run: () => cleanupOverlaps(),
+        },
+      ],
     },
     {
-      id: 'quantize-len',
-      label: t.value.shell.pianoRoll.context.quantizeLengths,
-      run: () => quantizeSelectionLengths(),
+      id: 'quantize-submenu',
+      label: t.value.shell.pianoRoll.context.quantize,
+      children: [
+        {
+          id: 'quantize',
+          label: t.value.shell.pianoRoll.context.quantizeStarts,
+          hint: 'Q',
+          run: () => quantizeSelection(),
+        },
+        {
+          id: 'quantize-len',
+          label: t.value.shell.pianoRoll.context.quantizeLengths,
+          run: () => quantizeSelectionLengths(),
+        },
+        {
+          id: 'quantize-end',
+          label: t.value.shell.pianoRoll.context.quantizeEnds,
+          run: () => quantizeSelectionEnds(),
+        },
+      ],
     },
     {
-      id: 'transpose-up',
-      label: t.value.shell.pianoRoll.context.transposeUpOctave,
-      hint: '⇧⌘↑',
-      run: () => transposeSelection(12),
+      id: 'transpose-submenu',
+      label: t.value.shell.pianoRoll.context.transpose,
+      children: [
+        {
+          id: 'transpose-up',
+          label: t.value.shell.pianoRoll.context.transposeUpOctave,
+          hint: '⇧⌘↑',
+          run: () => transposeSelection(12),
+        },
+        {
+          id: 'transpose-down',
+          label: t.value.shell.pianoRoll.context.transposeDownOctave,
+          hint: '⇧⌘↓',
+          run: () => transposeSelection(-12),
+        },
+        { id: 'sep-transpose', separator: true },
+        {
+          id: 'diatonic-up',
+          label: t.value.shell.pianoRoll.context.diatonicUp,
+          run: () => transposeSelectionDiatonic(1),
+        },
+        {
+          id: 'diatonic-down',
+          label: t.value.shell.pianoRoll.context.diatonicDown,
+          run: () => transposeSelectionDiatonic(-1),
+        },
+        {
+          id: 'snap-scale',
+          label: t.value.shell.pianoRoll.context.snapToScale,
+          run: () => snapSelectionToScale(),
+        },
+      ],
     },
     {
-      id: 'transpose-down',
-      label: t.value.shell.pianoRoll.context.transposeDownOctave,
-      hint: '⇧⌘↓',
-      run: () => transposeSelection(-12),
+      id: 'velocity-submenu',
+      label: t.value.shell.pianoRoll.context.velocity,
+      children: [
+        {
+          id: 'humanize',
+          label: t.value.shell.pianoRoll.context.humanizeVelocity,
+          run: () => humanizeSelectionVelocity(HUMANIZE_VELOCITY_AMOUNT),
+        },
+        {
+          id: 'vel-fade-in',
+          label: t.value.shell.pianoRoll.context.velocityFadeIn,
+          run: () => fadeSelectionVelocity(40, 110),
+        },
+        {
+          id: 'vel-fade-out',
+          label: t.value.shell.pianoRoll.context.velocityFadeOut,
+          run: () => fadeSelectionVelocity(110, 40),
+        },
+        {
+          id: 'vel-normalize',
+          label: t.value.shell.pianoRoll.context.velocityNormalize,
+          run: () => normalizeSelectionVelocity(110),
+        },
+        {
+          id: 'vel-compress',
+          label: t.value.shell.pianoRoll.context.velocityCompress,
+          run: () => scaleSelectionVelocityDynamics(0.6),
+        },
+        {
+          id: 'vel-expand',
+          label: t.value.shell.pianoRoll.context.velocityExpand,
+          run: () => scaleSelectionVelocityDynamics(1.35),
+        },
+      ],
     },
     {
-      id: 'humanize',
-      label: t.value.shell.pianoRoll.context.humanizeVelocity,
-      run: () => humanizeSelectionVelocity(HUMANIZE_VELOCITY_AMOUNT),
-    },
-    {
-      id: 'snap-scale',
-      label: t.value.shell.pianoRoll.context.snapToScale,
-      run: () => snapSelectionToScale(),
+      id: 'select-submenu',
+      label: t.value.shell.pianoRoll.context.select,
+      children: [
+        {
+          id: 'select-same-pitch',
+          label: t.value.shell.pianoRoll.context.selectSamePitch,
+          run: () => selectSamePitch(),
+        },
+        {
+          id: 'select-same-channel',
+          label: t.value.shell.pianoRoll.context.selectSameChannel,
+          run: () => selectSameChannel(),
+        },
+        {
+          id: 'select-velocity-range',
+          label: t.value.shell.pianoRoll.context.selectVelocityRange,
+          run: () => selectVelocityRange(),
+        },
+        {
+          id: 'select-out-scale',
+          label: t.value.shell.pianoRoll.context.selectOutOfScale,
+          run: () => selectOutOfScale(),
+        },
+        {
+          id: 'select-overlaps',
+          label: t.value.shell.pianoRoll.context.selectOverlaps,
+          run: () => selectOverlaps(),
+        },
+      ],
     },
   ];
 }
@@ -330,6 +620,19 @@ function localPositionPpq(): number {
   return position - clip.startPpq + clip.sourceOffsetPpq;
 }
 
+function resolveCreatedPitch(pitch: number): number {
+  if (!snapToScaleEnabled.value) return pitch;
+  const mask = store.highlightedPitchClasses;
+  if (!mask.some(Boolean) || mask[((pitch % 12) + 12) % 12]) return pitch;
+  for (let distance = 1; distance <= 12; distance++) {
+    const up = pitch + distance;
+    if (up <= 127 && mask[((up % 12) + 12) % 12]) return up;
+    const down = pitch - distance;
+    if (down >= 0 && mask[((down % 12) + 12) % 12]) return down;
+  }
+  return pitch;
+}
+
 const interactions = useNoteInteractions({
   view: range,
   getNotes: () => store.notes,
@@ -338,7 +641,10 @@ const interactions = useNoteInteractions({
   // the drawn gridlines keep following the configured division.
   getGridPpq: () => (store.snapEnabled ? gridPpq.value : 0),
   getTool: () => tool.value,
+  getMaxPpq: () => store.clipLengthPpq,
+  resolveCreatedPitch,
   commands: { addNote, updateNotes, deleteNotes, setSelection, splitNote },
+  auditionDuringDrag: () => auditionDrag.value,
   ...(props.audition ? { onAudition: props.audition } : {}),
 });
 
@@ -349,8 +655,95 @@ function onKeyDown(event: KeyboardEvent): void {
     else undo();
     return;
   }
+  if (handleKeyboardEdit(event)) return;
   if (interactions.onKeyDown(event.key)) event.preventDefault();
 }
+
+function handleKeyboardEdit(event: KeyboardEvent): boolean {
+  const selected = store.selectedNotes;
+  if (selected.length === 0) return false;
+  const step = store.snapEnabled ? gridPpq.value : 0.0625;
+  let updates: Parameters<typeof updateNotes>[0] = [];
+  if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+    const delta = event.key === 'ArrowLeft' ? -step : step;
+    if (event.altKey) {
+      const ids = selected.map((note) =>
+        addNote({
+          pitch: note.pitch,
+          startPpq: Math.max(0, note.startPpq + delta),
+          durationPpq: note.durationPpq,
+          velocity: note.velocity,
+          channel: note.channel,
+          ...(note.offVelocity !== undefined ? { offVelocity: note.offVelocity } : {}),
+        }),
+      );
+      setSelection(ids);
+    } else {
+      updates = selected.map((note) => ({
+        id: note.id,
+        startPpq: Math.max(0, note.startPpq + delta),
+      }));
+    }
+  } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+    const semitones = event.shiftKey ? 12 : 1;
+    const delta = event.key === 'ArrowUp' ? semitones : -semitones;
+    if (event.altKey) {
+      const ids = selected.map((note) =>
+        addNote({
+          pitch: Math.min(127, Math.max(0, note.pitch + delta)),
+          startPpq: note.startPpq,
+          durationPpq: note.durationPpq,
+          velocity: note.velocity,
+          channel: note.channel,
+          ...(note.offVelocity !== undefined ? { offVelocity: note.offVelocity } : {}),
+        }),
+      );
+      setSelection(ids);
+    } else {
+      updates = selected.map((note) => ({
+        id: note.id,
+        pitch: Math.min(127, Math.max(0, note.pitch + delta)),
+      }));
+    }
+  } else if (event.key === '[' || event.key === ']') {
+    const delta = event.key === '[' ? -step : step;
+    updates = selected.map((note) => ({
+      id: note.id,
+      durationPpq: Math.max(0.0625, note.durationPpq + delta),
+    }));
+  } else {
+    return false;
+  }
+  event.preventDefault();
+  if (updates.length > 0) updateNotes(updates);
+  return true;
+}
+
+function scrollMinimapTo(centerPpq: number): void {
+  range.setStartPpq(centerPpq - (range.endPpq - range.startPpq) / 2);
+  bump();
+}
+
+const statusText = computed(() => {
+  const hover = hoverStatus.value;
+  const selection = store.selection.size;
+  const snap = store.snapEnabled ? `${Math.round(4 / gridPpq.value)}` : 'off';
+  if (!hover) {
+    return `${selection} selected · Snap ${snap}`;
+  }
+  const ticks = rulerTicks(store.timeSignatures, 0, hover.ppq + 0.001, 100);
+  const bar = [...ticks].reverse().find((tick) => tick.kind === 'bar');
+  const beatLength = beatLengthPpq(
+    [...store.timeSignatures].reverse().find((segment) => segment.startPpq <= hover.ppq) ?? {
+      startPpq: 0,
+      numerator: 4,
+      denominator: 4,
+    },
+  );
+  const beat = bar ? Math.floor((hover.ppq - bar.ppq) / beatLength) + 1 : 1;
+  const barLabel = bar?.barNumber ?? 1;
+  return `${formatPitch(hover.pitch)} · ${barLabel}.${beat} · ${hover.ppq.toFixed(3)} ppq · ${selection} selected · Snap ${snap}`;
+});
 
 /** Focuses the editor so keyboard shortcuts work after any click inside it. */
 function onRootPointerDown(): void {
@@ -421,12 +814,40 @@ onBeforeUnmount(() => {
       v-model:overlay-enabled="overlayEnabled"
       v-model:fx-panel-open="fxPanelOpen"
       v-model:lane-visible="laneVisible"
+      v-model:snap-to-scale="snapToScaleEnabled"
+      v-model:ghost-mode="ghostMode"
+      v-model:ghost-hide-muted="ghostHideMuted"
+      v-model:note-color-mode="noteColorMode"
+      v-model:audition-drag="auditionDrag"
       :can-transform="canTransform"
       :clip-id="store.clipId"
+      :note-count="store.notes.length"
+      :lane-toggle-disabled="props.forceLaneHidden === true"
       @zoom-horizontal="zoomHorizontal"
       @zoom-vertical="zoomVertical"
+      @fit-clip="fitClip"
+      @fit-notes="fitNotes"
+      @fit-selection="fitSelection"
     />
     <div class="piano-roll-layout" :class="{ 'lane-hidden': !laneVisible }">
+      <PianoRollMinimap
+        class="cell-minimap"
+        :range="range"
+        :revision="revision"
+        :painter="painter"
+        :notes="store.notes"
+        :clip-length-ppq="store.clipLengthPpq"
+        @scroll-to="scrollMinimapTo"
+      />
+      <div class="cell-ruler-corner" />
+      <PianoRollRuler
+        class="cell-ruler"
+        :range="range"
+        :revision="revision"
+        :painter="painter"
+        :clip-length-ppq="store.clipLengthPpq"
+        :time-signatures="store.timeSignatures"
+      />
       <KeyboardColumn class="cell-keyboard" :range="range" :revision="revision" :painter="painter" />
       <div ref="gridCell" class="cell-grid">
         <NoteGridCanvas
@@ -445,6 +866,7 @@ onBeforeUnmount(() => {
           @view-resize="viewport.onGridResize"
           @ghost-activate="onGhostActivate"
           @note-context="onNoteContext"
+          @hover-status="hoverStatus = $event"
         />
       </div>
       <div
@@ -464,66 +886,13 @@ onBeforeUnmount(() => {
         :aria-label="t.shell.pianoRoll.noteLaneParameter"
         @wheel="onLabelWheel"
       >
-        <button
-          v-for="laneSpec in LANE_PARAMS"
-          :key="laneSpec.id"
-          type="button"
-          class="lane-tab"
-          :class="{ 'lane-tab-active': noteLaneActive && laneParam === laneSpec.id }"
-          v-tooltip="laneSpec.title"
-          role="tab"
-          :aria-selected="noteLaneActive && laneParam === laneSpec.id"
-          @click="selectNoteLane(laneSpec.id)"
-        >
-          {{ laneSpec.label }}
-        </button>
-        <span class="lane-divider" aria-hidden="true" />
-        <button
-          v-for="cc in PIANO_ROLL_CC_LANES"
-          :key="`cc-${cc.controller}`"
-          type="button"
-          class="lane-tab"
-          :class="{ 'lane-tab-active': laneCc === cc.controller }"
-          v-tooltip="cc.title"
-          role="tab"
-          :aria-selected="laneCc === cc.controller"
-          @click="selectCcLane(cc.controller)"
-        >
-          {{ cc.label }}
-        </button>
-        <button
-          type="button"
-          class="lane-tab"
-          :class="{ 'lane-tab-active': lanePitchBend }"
-          v-tooltip="t.shell.pianoRoll.bendLaneTitle"
-          role="tab"
-          :aria-selected="lanePitchBend"
-          @click="selectPitchBendLane()"
-        >
-          {{ t.shell.pianoRoll.bendLaneTab }}
-        </button>
-        <button
-          type="button"
-          class="lane-tab"
-          :class="{ 'lane-tab-active': laneChannelPressure }"
-          v-tooltip="t.shell.pianoRoll.pressureLaneTitle"
-          role="tab"
-          :aria-selected="laneChannelPressure"
-          @click="selectChannelPressureLane()"
-        >
-          {{ t.shell.pianoRoll.pressureLaneTab }}
-        </button>
-        <button
-          type="button"
-          class="lane-tab"
-          :class="{ 'lane-tab-active': lanePolyPressure }"
-          v-tooltip="t.shell.pianoRoll.polyPressureLaneTitle"
-          role="tab"
-          :aria-selected="lanePolyPressure"
-          @click="selectPolyPressureLane()"
-        >
-          {{ t.shell.pianoRoll.polyPressureLaneTab }}
-        </button>
+        <SelectMenu
+          v-model="laneMode"
+          class="lane-mode-select"
+          size="sm"
+          :options="laneModeOptions"
+          :aria-label="t.shell.pianoRoll.noteLaneParameter"
+        />
         <SelectMenu
           v-if="!noteLaneActive"
           v-model="laneChannel"
@@ -622,6 +991,7 @@ onBeforeUnmount(() => {
         <div class="scroll-thumb scroll-thumb-h" :style="hThumbStyle" />
       </div>
       <div class="cell-corner-br" />
+      <div class="cell-status" aria-live="polite">{{ statusText }}</div>
     </div>
   </div>
 </template>
@@ -657,14 +1027,14 @@ onBeforeUnmount(() => {
   min-height: 0;
   display: grid;
   grid-template-columns: 72px 1fr 12px;
-  grid-template-rows: 1fr 132px 12px;
+  grid-template-rows: 18px 24px 1fr 132px 12px 22px;
 }
 
 /* Collapse the parameter-lane row when the user hides the block; the grid and
  * scrollbars keep the full remaining height. The lane cells are removed from
  * layout so their canvases stop sizing/painting while hidden. */
 .piano-roll-layout.lane-hidden {
-  grid-template-rows: 1fr 0 12px;
+  grid-template-rows: 18px 24px 1fr 0 12px 22px;
 }
 
 .piano-roll-layout.lane-hidden .cell-velocity-label,
@@ -673,23 +1043,37 @@ onBeforeUnmount(() => {
   display: none;
 }
 
+.cell-minimap {
+  grid-area: 1 / 1 / 2 / 4;
+}
+
+.cell-ruler-corner {
+  grid-area: 2 / 1;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-strong);
+}
+
+.cell-ruler {
+  grid-area: 2 / 2;
+}
+
 .cell-keyboard {
-  grid-area: 1 / 1;
+  grid-area: 3 / 1;
 }
 
 .cell-grid {
-  grid-area: 1 / 2;
+  grid-area: 3 / 2;
   position: relative;
   min-width: 0;
   min-height: 0;
 }
 
 .cell-vscroll {
-  grid-area: 1 / 3;
+  grid-area: 3 / 3;
 }
 
 .cell-velocity-label {
-  grid-area: 2 / 1;
+  grid-area: 4 / 1;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -722,6 +1106,16 @@ onBeforeUnmount(() => {
   transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
 }
 
+.lane-group-label {
+  flex: none;
+  padding: 3px 2px 1px;
+  color: var(--text-4);
+  font: var(--fw-semibold) 8px/1 var(--font-sans);
+  letter-spacing: 0.08em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
 .lane-tab:hover {
   background: var(--surface-3);
   color: var(--text-2);
@@ -750,28 +1144,47 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 
+.lane-mode-select {
+  flex: none;
+  min-width: 0;
+}
+
 .cell-velocity {
-  grid-area: 2 / 2;
+  grid-area: 4 / 2;
   border-top: 1px solid var(--border-strong);
 }
 
 .cell-corner {
-  grid-area: 2 / 3;
+  grid-area: 4 / 3;
   background: var(--surface-2);
 }
 
 .cell-hscroll-spacer {
-  grid-area: 3 / 1;
+  grid-area: 5 / 1;
   background: var(--surface-2);
 }
 
 .cell-hscroll {
-  grid-area: 3 / 2;
+  grid-area: 5 / 2;
 }
 
 .cell-corner-br {
-  grid-area: 3 / 3;
+  grid-area: 5 / 3;
   background: var(--surface-2);
+}
+
+.cell-status {
+  grid-area: 6 / 1 / 7 / 4;
+  display: flex;
+  align-items: center;
+  padding: 0 0.5rem;
+  border-top: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text-3);
+  font: var(--fs-xs) / 1.2 var(--font-sans);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .scroll-track {

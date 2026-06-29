@@ -6,7 +6,7 @@ import type {
   NotatedVoiceNumber,
   NoteValue,
 } from '@/notation/model';
-import { escapeXml, serializeMusicXml } from '@/notation/musicxml';
+import { escapeXml, extractPartScore, serializeMusicXml } from '@/notation/musicxml';
 
 /** Builds a note/chord event with sensible defaults. */
 function note(
@@ -146,6 +146,8 @@ describe('serializeMusicXml metadata header', () => {
     const doc = parse(serializeMusicXml(score));
     expect(q(doc, 'work > work-title').textContent).toBe('A & B');
     expect(q(doc, 'identification > creator[type="composer"]').textContent).toBe('Me <x>');
+    expect(q(doc, 'credit-type').textContent).toBe('title');
+    expect(q(doc, 'credit-words').textContent).toBe('A & B');
   });
 
   it('treats a blank title as absent', () => {
@@ -159,6 +161,21 @@ describe('serializeMusicXml metadata header', () => {
     const xml = serializeMusicXml(score);
     expect(xml.indexOf('<work>')).toBeLessThan(xml.indexOf('<part-list>'));
     expect(xml.indexOf('<identification>')).toBeLessThan(xml.indexOf('<part-list>'));
+  });
+
+  it('emits A4 print-layout defaults before the part-list', () => {
+    const xml = serializeMusicXml(grandStaffFixture());
+    const doc = parse(xml);
+    const defaults = q(doc, 'defaults');
+    expect(xml.indexOf('<defaults>')).toBeLessThan(xml.indexOf('<part-list>'));
+    expect(q(defaults, 'scaling > millimeters').textContent).toBe('7');
+    expect(q(defaults, 'scaling > tenths').textContent).toBe('40');
+    expect(q(defaults, 'page-layout > page-height').textContent).toBe('1697');
+    expect(q(defaults, 'page-layout > page-width').textContent).toBe('1200');
+    expect(q(defaults, 'page-margins[type="both"] > left-margin').textContent).toBe('70');
+    expect(q(defaults, 'system-layout > system-distance').textContent).toBe('150');
+    expect(q(defaults, 'staff-layout > staff-distance').textContent).toBe('80');
+    expect(q(defaults, 'appearance > line-width[type="staff"]').textContent).toBe('1.1');
   });
 });
 
@@ -180,6 +197,15 @@ describe('serializeMusicXml structure', () => {
     expect(scoreParts).toHaveLength(1);
     expect(scoreParts[0].getAttribute('id')).toBe('P1');
     expect(q(scoreParts[0], 'part-name').textContent).toBe('Piano');
+    expect(q(scoreParts[0], 'part-abbreviation').textContent).toBe('Piano');
+  });
+
+  it('derives compact part abbreviations for long multi-word names', () => {
+    const score = grandStaffFixture();
+    score.parts = [{ ...score.parts[0], name: 'Electric Grand Piano' }];
+    const scorePart = q(parse(serializeMusicXml(score)), 'part-list > score-part');
+    expect(q(scorePart, 'part-name').textContent).toBe('Electric Grand Piano');
+    expect(q(scorePart, 'part-abbreviation').textContent).toBe('EGP');
   });
 
   it('emits all measures with 1-based numbers', () => {
@@ -195,11 +221,109 @@ describe('serializeMusicXml structure', () => {
     expect(q(barline, 'bar-style').textContent).toBe('light-heavy');
   });
 
+  it('emits section rehearsal marks and explicit double barlines', () => {
+    const score = grandStaffFixture();
+    score.measureRehearsals = { 0: 'Verse & A', 1: 'Chorus' };
+    score.measureBarlines = { 0: 'double' };
+    const [first, second] = qa(parse(serializeMusicXml(score)), 'part[id="P1"] > measure');
+    expect(q(first, 'direction rehearsal').textContent).toBe('Verse & A');
+    expect(q(first, 'barline[location="right"] > bar-style').textContent).toBe('light-light');
+    expect(q(second, 'direction rehearsal').textContent).toBe('Chorus');
+    expect(q(second, 'barline[location="right"] > bar-style').textContent).toBe('light-heavy');
+  });
+
+  it('emits forward and backward repeat barlines', () => {
+    const score = grandStaffFixture();
+    score.measureRepeats = { 0: 'start', 1: 'end' };
+    const [first, second] = qa(parse(serializeMusicXml(score)), 'part[id="P1"] > measure');
+    const startRepeat = q(first, 'barline[location="left"]');
+    expect(q(startRepeat, 'bar-style').textContent).toBe('heavy-light');
+    expect(q(startRepeat, 'repeat').getAttribute('direction')).toBe('forward');
+    const endRepeat = q(second, 'barline[location="right"]');
+    expect(q(endRepeat, 'bar-style').textContent).toBe('light-heavy');
+    expect(q(endRepeat, 'repeat').getAttribute('direction')).toBe('backward');
+  });
+
+  it('emits metronome tempo marks with playback tempo', () => {
+    const score = grandStaffFixture();
+    score.measureTempos = { 0: 120, 1: 96.5 };
+    const [first, second] = qa(parse(serializeMusicXml(score)), 'part[id="P1"] > measure');
+    expect(q(first, 'metronome > beat-unit').textContent).toBe('quarter');
+    expect(q(first, 'metronome > per-minute').textContent).toBe('120');
+    expect(q(first, 'direction sound').getAttribute('tempo')).toBe('120');
+    expect(q(second, 'metronome > per-minute').textContent).toBe('96.5');
+    expect(q(second, 'direction sound').getAttribute('tempo')).toBe('96.5');
+  });
+
+  it('emits textual tempo-change directions with optional playback tempo', () => {
+    const score = grandStaffFixture();
+    score.measureTempoTexts = {
+      0: { text: 'rit.', bpm: 120 },
+      1: { text: 'a tempo' },
+    };
+    const [first, second] = qa(parse(serializeMusicXml(score)), 'part[id="P1"] > measure');
+    expect(q(first, 'direction words').textContent).toBe('rit.');
+    expect(q(first, 'direction sound').getAttribute('tempo')).toBe('120');
+    expect(q(second, 'direction words').textContent).toBe('a tempo');
+  });
+
+  it('emits general measure text directions with vertical offsets', () => {
+    const score = grandStaffFixture();
+    score.measureTexts = { 0: [{ text: 'Solo', defaultY: 24 }] };
+    const first = qa(parse(serializeMusicXml(score)), 'part[id="P1"] > measure')[0];
+    const words = q(first, 'direction words');
+    expect(words.textContent).toBe('Solo');
+    expect(words.getAttribute('default-y')).toBe('24');
+  });
+
+  it('emits measure-level key changes after the opening key signature', () => {
+    const score = grandStaffFixture();
+    score.measureKeyFifths = { 1: -3 };
+    const [first, second] = qa(parse(serializeMusicXml(score)), 'part[id="P1"] > measure');
+    expect(q(first, 'attributes > key > fifths').textContent).toBe('1');
+    expect(q(second, 'attributes > key > fifths').textContent).toBe('-3');
+  });
+
+  it('emits explicit system and page breaks before measures', () => {
+    const score = grandStaffFixture();
+    score.measureBreaks = { 0: 'page', 1: 'system' };
+    const [first, second] = qa(parse(serializeMusicXml(score)), 'part[id="P1"] > measure');
+    expect(q(first, 'print').getAttribute('new-page')).toBe('yes');
+    expect(q(second, 'print').getAttribute('new-system')).toBe('yes');
+  });
+
+  it('emits multi-measure rest measure-style on the start measure', () => {
+    const score = grandStaffFixture();
+    const empty = rest(1, 4, 4, { base: 'whole', dots: 0 });
+    score.parts[0].measures[1].voices = [{ voice: 1, events: [empty] }];
+    score.multiMeasureRests = { 1: { count: 2 } };
+    const second = qa(parse(serializeMusicXml(score)), 'part[id="P1"] > measure')[1];
+    expect(q(second, 'measure-style > multiple-rest').textContent).toBe('2');
+  });
+
+  it('extracts a single part score while preserving shared notation metadata', () => {
+    const score = grandStaffFixture();
+    score.parts.push({
+      id: 'P2',
+      name: 'Violin',
+      clef: 'treble',
+      measures: score.parts[0].measures,
+    });
+    const partScore = extractPartScore(score, 'P2');
+    expect(partScore.parts).toHaveLength(1);
+    expect(partScore.parts[0].id).toBe('P2');
+    expect(partScore.metadata?.partName).toBe('Violin');
+    const doc = parse(serializeMusicXml(partScore));
+    expect(qa(doc, 'part-list > score-part')).toHaveLength(1);
+    expect(q(doc, 'credit-type').textContent).toBe('part name');
+  });
+
   it('emits divisions, key, time and grand-staff clefs in the first measure only', () => {
     const [first, second] = qa(doc, 'measure');
     const attrs = q(first, 'attributes');
     expect(q(attrs, 'divisions').textContent).toBe('960');
     expect(q(attrs, 'key > fifths').textContent).toBe('1');
+    expect(q(attrs, 'measure-style > measure-numbering').textContent).toBe('system');
     expect(q(attrs, 'time > beats').textContent).toBe('4');
     expect(q(attrs, 'time > beat-type').textContent).toBe('4');
     expect(q(attrs, 'staves').textContent).toBe('2');
@@ -316,17 +440,21 @@ describe('serializeMusicXml structure', () => {
     expect(firstHarmonies[0].querySelector('offset')).toBeNull();
     expect(q(firstHarmonies[1], 'root > root-step').textContent).toBe('C');
     expect(q(firstHarmonies[1], 'kind').textContent).toBe('major-seventh');
+    expect(q(firstHarmonies[1], 'kind').getAttribute('text')).toBe('maj7');
     expect(q(firstHarmonies[1], 'offset').textContent).toBe('1920');
     expect(qa(second, 'harmony')).toHaveLength(2);
   });
 
-  it('falls back to kind other with the display text for exotic qualities', () => {
+  it('serializes add9 qualities as a base kind plus an added degree', () => {
     const second = qa(doc, 'measure')[1];
-    const exotic = qa(second, 'harmony')[0];
-    const kind = q(exotic, 'kind');
-    expect(kind.textContent).toBe('other');
-    expect(kind.getAttribute('text')).toBe('Bm(add9)');
-    expect(q(exotic, 'root > root-step').textContent).toBe('B');
+    const add9 = qa(second, 'harmony')[0];
+    const kind = q(add9, 'kind');
+    expect(kind.textContent).toBe('minor');
+    expect(kind.getAttribute('text')).toBe('m(add9)');
+    expect(q(add9, 'root > root-step').textContent).toBe('B');
+    expect(q(add9, 'degree > degree-value').textContent).toBe('9');
+    expect(q(add9, 'degree > degree-alter').textContent).toBe('0');
+    expect(q(add9, 'degree > degree-type').textContent).toBe('add');
   });
 
   it('spells slash-chord basses with the key signature', () => {
@@ -407,6 +535,48 @@ describe('serializeMusicXml attribute changes and clefs', () => {
       divisions: 960,
     };
     expect(parse(serializeMusicXml(score)).querySelector('part-symbol')).toBeNull();
+  });
+
+  it('emits conservative temporary clef changes for extreme single-staff ranges', () => {
+    const whole: NoteValue = { base: 'whole', dots: 0 };
+    const score: NotatedScore = {
+      parts: [
+        {
+          id: 'P1',
+          name: 'Cello',
+          clef: 'treble',
+          measures: [
+            {
+              index: 0,
+              startPpq: 0,
+              lengthPpq: 4,
+              timeSig: { beats: 4, beatUnit: 4 },
+              voices: [{ voice: 1, events: [note([72], 1, 0, 4, whole)] }],
+            },
+            {
+              index: 1,
+              startPpq: 4,
+              lengthPpq: 4,
+              timeSig: { beats: 4, beatUnit: 4 },
+              voices: [{ voice: 1, events: [note([40], 1, 4, 4, whole)] }],
+            },
+            {
+              index: 2,
+              startPpq: 8,
+              lengthPpq: 4,
+              timeSig: { beats: 4, beatUnit: 4 },
+              voices: [{ voice: 1, events: [rest(1, 8, 4, whole)] }],
+            },
+          ],
+        },
+      ],
+      keyFifths: 0,
+      divisions: 960,
+    };
+    const measures = qa(parse(serializeMusicXml(score)), 'measure');
+    expect(q(measures[0], 'attributes > clef > sign').textContent).toBe('G');
+    expect(q(measures[1], 'attributes > clef > sign').textContent).toBe('F');
+    expect(measures[2].querySelector('attributes > clef')).toBeNull();
   });
 
   it('escapes XML-reserved characters in names and harmony text', () => {
@@ -628,6 +798,296 @@ describe('serializeMusicXml beams', () => {
       (beam) => beam.textContent,
     );
     expect(beams).toEqual(['begin', 'continue', 'end', 'begin', 'continue', 'end']);
+  });
+
+  it('keeps a short rest inside a beamed beat group', () => {
+    const eighth: NoteValue = { base: 'eighth', dots: 0 };
+    const score: NotatedScore = {
+      parts: [
+        {
+          id: 'P1',
+          name: 'Lead',
+          clef: 'treble',
+          measures: [
+            {
+              index: 0,
+              startPpq: 0,
+              lengthPpq: 1.5,
+              timeSig: { beats: 3, beatUnit: 8 },
+              voices: [
+                {
+                  voice: 1,
+                  events: [
+                    note([60], 1, 0, 0.5, eighth),
+                    rest(1, 0.5, 0.5, eighth),
+                    note([62], 1, 1, 0.5, eighth),
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      keyFifths: 0,
+      divisions: 960,
+    };
+
+    const beams = qa(parse(serializeMusicXml(score)), 'beam[number="1"]').map(
+      (beam) => beam.textContent,
+    );
+    expect(beams).toEqual(['begin', 'continue', 'end']);
+  });
+});
+
+describe('serializeMusicXml percussion', () => {
+  it('uses MIDI channel 10 to emit unpitched noteheads with a percussion clef', () => {
+    const eighth: NoteValue = { base: 'eighth', dots: 0 };
+    const score: NotatedScore = {
+      parts: [
+        {
+          id: 'P1',
+          name: 'Track 1',
+          clef: 'treble',
+          measures: [
+            {
+              index: 0,
+              startPpq: 0,
+              lengthPpq: 1.5,
+              timeSig: { beats: 3, beatUnit: 8 },
+              voices: [
+                {
+                  voice: 1,
+                  events: [
+                    { ...note([36], 1, 0, 0.5, eighth), midiChannels: [9] },
+                    { ...note([38], 1, 0.5, 0.5, eighth), midiChannels: [9] },
+                    { ...note([42], 1, 1, 0.5, eighth), midiChannels: [9] },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      keyFifths: 0,
+      divisions: 960,
+    };
+
+    const doc = parse(serializeMusicXml(score));
+    expect(q(doc, 'clef > sign').textContent).toBe('percussion');
+    expect(qa(doc, 'pitch')).toHaveLength(0);
+    expect(qa(doc, 'unpitched')).toHaveLength(3);
+    expect(qa(doc, 'notehead').map((notehead) => notehead.textContent)).toEqual([
+      'normal',
+      'normal',
+      'x',
+    ]);
+    expect(qa(doc, 'score-instrument instrument-name').map((el) => el.textContent)).toEqual([
+      'Bass Drum 1',
+      'Acoustic Snare',
+      'Closed Hi-Hat',
+    ]);
+    expect(qa(doc, 'note instrument').map((el) => el.getAttribute('id'))).toEqual([
+      'P1-I36',
+      'P1-I38',
+      'P1-I42',
+    ]);
+    expect(q(doc, 'direction words').textContent).toContain('Drum map:');
+  });
+
+  it('does not turn a named drum part into percussion when MIDI channel data says melodic', () => {
+    const quarter: NoteValue = { base: 'quarter', dots: 0 };
+    const score: NotatedScore = {
+      parts: [
+        {
+          id: 'P1',
+          name: 'Drums',
+          clef: 'treble',
+          measures: [
+            {
+              index: 0,
+              startPpq: 0,
+              lengthPpq: 1,
+              timeSig: { beats: 1, beatUnit: 4 },
+              voices: [
+                {
+                  voice: 1,
+                  events: [{ ...note([60], 1, 0, 1, quarter), midiChannels: [0] }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      keyFifths: 0,
+      divisions: 960,
+    };
+
+    const doc = parse(serializeMusicXml(score));
+    expect(q(doc, 'clef > sign').textContent).toBe('G');
+    expect(qa(doc, 'pitch')).toHaveLength(1);
+    expect(qa(doc, 'unpitched')).toHaveLength(0);
+  });
+
+  it('emits drum accents from high velocity and ghost noteheads from low velocity', () => {
+    const eighth: NoteValue = { base: 'eighth', dots: 0 };
+    const score: NotatedScore = {
+      parts: [
+        {
+          id: 'P1',
+          name: 'Kit',
+          clef: 'treble',
+          measures: [
+            {
+              index: 0,
+              startPpq: 0,
+              lengthPpq: 1,
+              timeSig: { beats: 2, beatUnit: 8 },
+              voices: [
+                {
+                  voice: 1,
+                  events: [
+                    { ...note([38], 1, 0, 0.5, eighth), midiChannels: [9], velocity: 120 },
+                    { ...note([38], 1, 0.5, 0.5, eighth), midiChannels: [9], velocity: 36 },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      keyFifths: 0,
+      divisions: 960,
+    };
+
+    const doc = parse(serializeMusicXml(score));
+    expect(qa(doc, 'articulations > accent')).toHaveLength(1);
+    expect(q(doc, 'dynamics > ff')).toBeTruthy();
+    expect(q(doc, 'dynamics > pp')).toBeTruthy();
+    expect(qa(doc, 'notehead').map((el) => el.getAttribute('parentheses'))).toEqual([null, 'yes']);
+  });
+
+  it('emits open and closed hi-hat technique markings', () => {
+    const eighth: NoteValue = { base: 'eighth', dots: 0 };
+    const score: NotatedScore = {
+      parts: [
+        {
+          id: 'P1',
+          name: 'Kit',
+          clef: 'treble',
+          measures: [
+            {
+              index: 0,
+              startPpq: 0,
+              lengthPpq: 1,
+              timeSig: { beats: 2, beatUnit: 8 },
+              voices: [
+                {
+                  voice: 1,
+                  events: [
+                    { ...note([42], 1, 0, 0.5, eighth), midiChannels: [9] },
+                    { ...note([46], 1, 0.5, 0.5, eighth), midiChannels: [9] },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      keyFifths: 0,
+      divisions: 960,
+    };
+
+    const doc = parse(serializeMusicXml(score));
+    expect(qa(doc, 'technical > stopped')).toHaveLength(1);
+    expect(qa(doc, 'technical > open-string')).toHaveLength(1);
+  });
+
+  it('marks rapid snare repetitions as percussion rolls', () => {
+    const sixteenth: NoteValue = { base: '16th', dots: 0 };
+    const score: NotatedScore = {
+      parts: [
+        {
+          id: 'P1',
+          name: 'Kit',
+          clef: 'treble',
+          measures: [
+            {
+              index: 0,
+              startPpq: 0,
+              lengthPpq: 1,
+              timeSig: { beats: 1, beatUnit: 4 },
+              voices: [
+                {
+                  voice: 1,
+                  events: [
+                    { ...note([38], 1, 0, 0.25, sixteenth), midiChannels: [9] },
+                    { ...note([38], 1, 0.25, 0.25, sixteenth), midiChannels: [9] },
+                    { ...note([38], 1, 0.5, 0.25, sixteenth), midiChannels: [9] },
+                    { ...note([38], 1, 0.75, 0.25, sixteenth), midiChannels: [9] },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      keyFifths: 0,
+      divisions: 960,
+    };
+
+    const tremolos = qa(parse(serializeMusicXml(score)), 'ornaments > tremolo');
+    expect(tremolos).toHaveLength(4);
+    expect(tremolos.map((el) => el.getAttribute('type'))).toEqual([
+      'single',
+      'single',
+      'single',
+      'single',
+    ]);
+  });
+
+  it('hides lower drum-voice rests while preserving their durations', () => {
+    const eighth: NoteValue = { base: 'eighth', dots: 0 };
+    const score: NotatedScore = {
+      parts: [
+        {
+          id: 'P1',
+          name: 'Kit',
+          clef: 'treble',
+          measures: [
+            {
+              index: 0,
+              startPpq: 0,
+              lengthPpq: 1,
+              timeSig: { beats: 2, beatUnit: 8 },
+              voices: [
+                {
+                  voice: 1,
+                  events: [
+                    { ...note([42], 1, 0, 0.5, eighth), midiChannels: [9] },
+                    { ...note([42], 1, 0.5, 0.5, eighth), midiChannels: [9] },
+                  ],
+                },
+                {
+                  voice: 2,
+                  events: [
+                    { ...note([36], 2, 0, 0.5, eighth), midiChannels: [9] },
+                    rest(2, 0.5, 0.5, eighth),
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      keyFifths: 0,
+      divisions: 960,
+    };
+
+    const hiddenRest = qa(parse(serializeMusicXml(score)), 'note[print-object="no"]').find(
+      (el) => el.querySelector('rest') !== null,
+    );
+    expect(hiddenRest).toBeDefined();
+    expect(q(hiddenRest as Element, 'duration').textContent).toBe('480');
   });
 });
 
@@ -862,6 +1322,70 @@ describe('serializeMusicXml articulations', () => {
   });
 });
 
+describe('serializeMusicXml dynamics', () => {
+  it('keeps single-voice dynamics below the staff', () => {
+    const quarter: NoteValue = { base: 'quarter', dots: 0 };
+    const score: NotatedScore = {
+      parts: [
+        {
+          id: 'P1',
+          name: 'Lead',
+          clef: 'treble',
+          measures: [
+            {
+              index: 0,
+              startPpq: 0,
+              lengthPpq: 1,
+              timeSig: { beats: 1, beatUnit: 4 },
+              voices: [{ voice: 1, events: [note([72], 1, 0, 1, quarter, {}, [1])] }],
+            },
+          ],
+        },
+      ],
+      keyFifths: 0,
+      divisions: 960,
+      noteAnnotations: { 1: { dynamics: 'f' } },
+    };
+    expect(q(parse(serializeMusicXml(score)), 'direction').getAttribute('placement')).toBe('below');
+  });
+
+  it('places multi-voice dynamics with their voices', () => {
+    const half: NoteValue = { base: 'half', dots: 0 };
+    const score: NotatedScore = {
+      parts: [
+        {
+          id: 'P1',
+          name: 'Lead',
+          clef: 'treble',
+          measures: [
+            {
+              index: 0,
+              startPpq: 0,
+              lengthPpq: 2,
+              timeSig: { beats: 2, beatUnit: 4 },
+              voices: [
+                { voice: 1, events: [note([72], 1, 0, 2, half, {}, [1])] },
+                { voice: 2, events: [note([48], 2, 0, 2, half, {}, [2])] },
+              ],
+            },
+          ],
+        },
+      ],
+      keyFifths: 0,
+      divisions: 960,
+      noteAnnotations: {
+        1: { dynamics: 'f' },
+        2: { dynamics: 'p' },
+      },
+    };
+    const directions = qa(parse(serializeMusicXml(score)), 'direction');
+    expect(directions.map((direction) => direction.getAttribute('placement'))).toEqual([
+      'above',
+      'below',
+    ]);
+  });
+});
+
 describe('serializeMusicXml accidentals', () => {
   it('emits accidentals when a pitch leaves and returns to the measure state', () => {
     const quarter: NoteValue = { base: 'quarter', dots: 0 };
@@ -1091,12 +1615,19 @@ describe('serializeMusicXml golden output', () => {
       '<identification>',
       '<encoding><software>sonare studio</software></encoding>',
       '</identification>',
+      '<defaults>',
+      '<scaling><millimeters>7</millimeters><tenths>40</tenths></scaling>',
+      '<page-layout><page-height>1697</page-height><page-width>1200</page-width><page-margins type="both"><left-margin>70</left-margin><right-margin>70</right-margin><top-margin>70</top-margin><bottom-margin>70</bottom-margin></page-margins></page-layout>',
+      '<system-layout><system-margins><left-margin>0</left-margin><right-margin>0</right-margin></system-margins><system-distance>150</system-distance><top-system-distance>100</top-system-distance></system-layout>',
+      '<staff-layout><staff-distance>80</staff-distance></staff-layout>',
+      '<appearance><line-width type="beam">5</line-width><line-width type="bracket">4</line-width><line-width type="dashes">1</line-width><line-width type="enclosure">1</line-width><line-width type="ending">1.2</line-width><line-width type="extend">1</line-width><line-width type="heavy barline">5</line-width><line-width type="leger">1.6</line-width><line-width type="light barline">1.6</line-width><line-width type="octave shift">1.2</line-width><line-width type="pedal">1.2</line-width><line-width type="slur middle">1.6</line-width><line-width type="slur tip">0.5</line-width><line-width type="staff">1.1</line-width><line-width type="stem">1</line-width><line-width type="tie middle">1.6</line-width><line-width type="tie tip">0.5</line-width><note-size type="cue">60</note-size><note-size type="grace">60</note-size></appearance>',
+      '</defaults>',
       '<part-list>',
-      '<score-part id="P1"><part-name>Lead</part-name></score-part>',
+      '<score-part id="P1"><part-name>Lead</part-name><part-abbreviation>Lead</part-abbreviation></score-part>',
       '</part-list>',
       '<part id="P1">',
       '<measure number="1">',
-      '<attributes><divisions>960</divisions><key><fifths>0</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>',
+      '<attributes><divisions>960</divisions><key><fifths>0</fifths></key><measure-style><measure-numbering>system</measure-numbering></measure-style><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>',
       '<note><pitch><step>C</step><octave>4</octave></pitch><duration>1920</duration><voice>1</voice><type>half</type></note>',
       '<note><pitch><step>D</step><octave>4</octave></pitch><duration>1440</duration><voice>1</voice><type>quarter</type><dot/></note>',
       '<note><rest/><duration>480</duration><voice>1</voice><type>eighth</type></note>',

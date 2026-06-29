@@ -6,6 +6,7 @@ import {
   type AutomationPoint,
   type AutomationTarget,
   busAutomationTarget,
+  insertAutomationParam,
 } from '@/project/automation';
 
 /** Param ids the stub hands out: track ids map to 1000 + id (faderDb) / 2000 + id (pan). */
@@ -21,12 +22,26 @@ function makeHandle(): {
     automationParamId: ReturnType<typeof vi.fn>;
     busAutomationParamId: ReturnType<typeof vi.fn>;
     setAutomationLane: ReturnType<typeof vi.fn>;
+    resolveTrackInsertAutomationId: ReturnType<typeof vi.fn>;
+    resolveMasterInsertAutomationId: ReturnType<typeof vi.fn>;
+    resolveBusInsertAutomationId: ReturnType<typeof vi.fn>;
   };
 } {
+  // Insert resolvers hand out a deterministic id; an 'unknown' param name
+  // models a strip/insert/key the engine cannot resolve (returns -1).
   const engine = {
     automationParamId: vi.fn(stubParamId),
     busAutomationParamId: vi.fn((busId: number) => 3000 + busId),
     setAutomationLane: vi.fn(),
+    resolveTrackInsertAutomationId: vi.fn((trackId: number, _insert: number, name: string) =>
+      name === 'unknown' ? -1 : 5000 + Number(trackId),
+    ),
+    resolveMasterInsertAutomationId: vi.fn((_insert: number, name: string) =>
+      name === 'unknown' ? -1 : 6000,
+    ),
+    resolveBusInsertAutomationId: vi.fn((busId: number, _insert: number, name: string) =>
+      name === 'unknown' ? -1 : 7000 + busId,
+    ),
   };
   const handle = { engine } as unknown as EngineHandle;
   return { handle, engine };
@@ -159,6 +174,46 @@ describe('createAutomationSync', () => {
     sync.sync([makeLane(7, [{ ppq: 0, value: -6 }])]);
     expect(engine.setAutomationLane).toHaveBeenCalledTimes(1);
     expect(sync.installedParamIds()).toStrictEqual([stubParamId(7, 'faderDb')]);
+  });
+
+  it('installs an insert-parameter lane via the engine-resolved insert id', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createAutomationSync(handle, {
+      knownTrackIds: () => [1],
+      restoreParam: vi.fn(),
+    });
+
+    sync.sync([
+      makeLane(1, [{ ppq: 0, value: 0.5 }], {
+        param: insertAutomationParam(0, 'drive'),
+      }),
+    ]);
+
+    // The insert lane resolves through the insert id, never the fader/pan path.
+    expect(engine.resolveTrackInsertAutomationId).toHaveBeenCalledWith(1, 0, 'drive');
+    expect(engine.automationParamId).not.toHaveBeenCalled();
+    expect(engine.setAutomationLane).toHaveBeenCalledWith(5001, [
+      { ppq: 0, value: 0.5, curveToNext: 0 },
+    ]);
+    expect(sync.installedParamIds()).toStrictEqual([5001]);
+  });
+
+  it('skips an insert lane the engine cannot resolve (negative id)', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createAutomationSync(handle, {
+      knownTrackIds: () => [1],
+      restoreParam: vi.fn(),
+    });
+
+    sync.sync([
+      makeLane(1, [{ ppq: 0, value: 0.5 }], {
+        param: insertAutomationParam(9, 'unknown'),
+      }),
+    ]);
+
+    expect(engine.resolveTrackInsertAutomationId).toHaveBeenCalledWith(1, 9, 'unknown');
+    expect(engine.setAutomationLane).not.toHaveBeenCalled();
+    expect(sync.installedParamIds()).toStrictEqual([]);
   });
 
   it('drops non-finite points and skips lanes left without any', () => {

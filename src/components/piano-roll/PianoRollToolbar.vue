@@ -1,7 +1,11 @@
 <script setup lang="ts">
+import { computed } from 'vue';
+import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
+import { useEditorTool } from '@/composables/useEditorTool';
 import { setActiveTrack } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
+import { EDITOR_TOOL_DEFS } from '@/ui/editor/tools';
 import { useI18n } from '@/ui/i18n';
 import MidiFxPanel from './MidiFxPanel.vue';
 import { ZOOM_BUTTON_STEP } from './use-piano-roll-zoom';
@@ -17,12 +21,23 @@ import { ZOOM_BUTTON_STEP } from './use-piano-roll-zoom';
 const overlayEnabled = defineModel<boolean>('overlayEnabled', { required: true });
 const fxPanelOpen = defineModel<boolean>('fxPanelOpen', { required: true });
 const laneVisible = defineModel<boolean>('laneVisible', { required: true });
+const snapToScale = defineModel<boolean>('snapToScale', { required: true });
+const ghostMode = defineModel<'all' | 'active-track' | 'none'>('ghostMode', { required: true });
+const ghostHideMuted = defineModel<boolean>('ghostHideMuted', { required: true });
+const noteColorMode = defineModel<'track' | 'velocity' | 'channel'>('noteColorMode', {
+  required: true,
+});
+const auditionDrag = defineModel<boolean>('auditionDrag', { required: true });
 
 const props = defineProps<{
   /** True when a MIDI clip is active and can receive a transform. */
   canTransform: boolean;
   /** Active clip id passed to the transform popover. */
   clipId: number;
+  /** Active clip note count passed to the transform preview. */
+  noteCount: number;
+  /** Disable the lane toggle while another panel temporarily owns that space. */
+  laneToggleDisabled?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -30,10 +45,30 @@ const emit = defineEmits<{
   zoomHorizontal: [factor: number];
   /** Zoom the pitch rows vertically by the given factor. */
   zoomVertical: [factor: number];
+  /** Fit the full clip window. */
+  fitClip: [];
+  /** Fit all notes in the active clip. */
+  fitNotes: [];
+  /** Fit the current note selection, falling back to all notes. */
+  fitSelection: [];
 }>();
 
 const store = useProjectStore();
 const { t } = useI18n();
+const { tool } = useEditorTool();
+const activeTool = computed(
+  () => EDITOR_TOOL_DEFS.find((def) => def.id === tool.value) ?? EDITOR_TOOL_DEFS[0],
+);
+const ghostModeOptions = computed(() => [
+  { value: 'all' as const, label: t.value.shell.pianoRoll.ghostAll },
+  { value: 'active-track' as const, label: t.value.shell.pianoRoll.ghostActiveTrack },
+  { value: 'none' as const, label: t.value.shell.pianoRoll.ghostNone },
+]);
+const noteColorModeOptions = computed(() => [
+  { value: 'track' as const, label: t.value.shell.pianoRoll.colorTrack },
+  { value: 'velocity' as const, label: t.value.shell.pianoRoll.colorVelocity },
+  { value: 'channel' as const, label: t.value.shell.pianoRoll.colorChannel },
+]);
 
 /** Toggles the transform popover (closing it when no MIDI clip is active). */
 function toggleFxPanel(): void {
@@ -52,6 +87,42 @@ function onLegendClick(trackId: number): void {
 <template>
   <div class="roll-toolbar">
     <ToggleButton v-model="overlayEnabled" :label="t.shell.pianoRoll.overlay" size="sm" />
+    <ToggleButton
+      v-model="snapToScale"
+      :label="t.shell.pianoRoll.snapScaleToggle"
+      :title="t.shell.pianoRoll.snapScaleToggleTitle"
+      size="sm"
+    />
+    <div class="tool-readout" :title="activeTool.hint" aria-live="polite">
+      <span class="tool-readout__glyph" aria-hidden="true">{{ activeTool.glyph }}</span>
+      <span>{{ activeTool.label }}</span>
+    </div>
+    <SelectMenu
+      v-model="ghostMode"
+      class="toolbar-select"
+      size="sm"
+      :options="ghostModeOptions"
+      :aria-label="t.shell.pianoRoll.ghostMode"
+    />
+    <ToggleButton
+      v-model="ghostHideMuted"
+      :label="t.shell.pianoRoll.ghostHideMuted"
+      :title="t.shell.pianoRoll.ghostHideMutedTitle"
+      size="sm"
+    />
+    <SelectMenu
+      v-model="noteColorMode"
+      class="toolbar-select"
+      size="sm"
+      :options="noteColorModeOptions"
+      :aria-label="t.shell.pianoRoll.noteColorMode"
+    />
+    <ToggleButton
+      v-model="auditionDrag"
+      :label="t.shell.pianoRoll.auditionDrag"
+      :title="t.shell.pianoRoll.auditionDragTitle"
+      size="sm"
+    />
     <div class="track-legend">
       <button
         v-for="track in store.tracks"
@@ -67,6 +138,35 @@ function onLegendClick(trackId: number): void {
       </button>
     </div>
     <div class="zoom-cluster" role="group" :aria-label="t.shell.pianoRoll.zoom">
+      <span class="fit-pair">
+        <button
+          type="button"
+          class="fit-btn"
+          v-tooltip="t.shell.pianoRoll.fitClipTitle"
+          :aria-label="t.shell.pianoRoll.fitClip"
+          @click="emit('fitClip')"
+        >
+          Clip
+        </button>
+        <button
+          type="button"
+          class="fit-btn"
+          v-tooltip="t.shell.pianoRoll.fitNotesTitle"
+          :aria-label="t.shell.pianoRoll.fitNotes"
+          @click="emit('fitNotes')"
+        >
+          Notes
+        </button>
+        <button
+          type="button"
+          class="fit-btn"
+          v-tooltip="t.shell.pianoRoll.fitSelectionTitle"
+          :aria-label="t.shell.pianoRoll.fitSelection"
+          @click="emit('fitSelection')"
+        >
+          Sel
+        </button>
+      </span>
       <span class="zoom-pair">
         <button
           type="button"
@@ -158,6 +258,7 @@ function onLegendClick(trackId: number): void {
       size="sm"
       :label="t.shell.pianoRoll.laneToggle"
       :title="t.shell.pianoRoll.laneToggleTitle"
+      :disabled="props.laneToggleDisabled === true"
     />
     <button
       type="button"
@@ -173,6 +274,7 @@ function onLegendClick(trackId: number): void {
     <MidiFxPanel
       v-if="fxPanelOpen && canTransform"
       :clip-id="clipId"
+      :note-count="noteCount"
       @close="fxPanelOpen = false"
     />
   </div>
@@ -199,7 +301,35 @@ function onLegendClick(trackId: number): void {
   gap: 0.4rem;
 }
 
+.tool-readout {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 4.8rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface-inset);
+  color: var(--text-2);
+  font: var(--fw-semibold) var(--fs-xs) / 1.4 var(--font-sans);
+}
+
+.tool-readout__glyph {
+  color: var(--accent);
+}
+
+.toolbar-select {
+  flex: 0 0 auto;
+  min-width: 6.4rem;
+}
+
 .zoom-pair {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.fit-pair {
   display: flex;
   align-items: center;
   gap: 2px;
@@ -207,7 +337,8 @@ function onLegendClick(trackId: number): void {
 
 /* Inherits the controls.css raised-face baseline (hover/active/press); only the
  * compact metrics and surface tint differ from the canonical button. */
-.zoom-btn {
+.zoom-btn,
+.fit-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -219,7 +350,13 @@ function onLegendClick(trackId: number): void {
   border-radius: var(--radius-sm);
 }
 
+.fit-btn {
+  min-width: 2.4rem;
+  padding-inline: 0.45rem;
+}
+
 .zoom-btn:hover:not(:disabled),
+.fit-btn:hover:not(:disabled),
 .fx-toggle:hover:not(:disabled) {
   color: var(--text-1);
 }

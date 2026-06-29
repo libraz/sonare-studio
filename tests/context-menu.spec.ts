@@ -34,6 +34,24 @@ describe('cleanItems', () => {
     ];
     expect(cleanItems(items).map((i) => i.id)).toEqual(['a', 's', 'b']);
   });
+
+  it('cleans submenu items and drops empty submenus', () => {
+    const items: ContextMenuItem[] = [
+      {
+        id: 'sub',
+        label: 'Sub',
+        children: [
+          { id: 's0', separator: true },
+          { id: 'a', label: 'A', run: noop },
+          { id: 's1', separator: true },
+        ],
+      },
+      { id: 'empty', label: 'Empty', children: [{ id: 'sep', separator: true }] },
+    ];
+    const cleaned = cleanItems(items);
+    expect(cleaned.map((i) => i.id)).toEqual(['sub']);
+    expect(cleaned[0].children?.map((i) => i.id)).toEqual(['a']);
+  });
 });
 
 describe('openContextMenu', () => {
@@ -53,6 +71,16 @@ describe('openContextMenu', () => {
       { id: 'live', label: 'Live', run: noop },
     ]);
     expect(state.items.map((i) => i.id)).toEqual(['live']);
+  });
+
+  it('opens when an item only has actionable submenu children', () => {
+    const state = useContextMenuState();
+    openContextMenu(0, 0, [
+      { id: 'sub', label: 'Sub', children: [{ id: 'child', label: 'Child', run: noop }] },
+    ]);
+    expect(state.open).toBe(true);
+    expect(state.items.map((i) => i.id)).toEqual(['sub']);
+    expect(state.items[0].children?.map((i) => i.id)).toEqual(['child']);
   });
 
   it('does not open a menu that has no actionable item', () => {

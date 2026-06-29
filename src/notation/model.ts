@@ -176,6 +176,17 @@ export interface NotatedEvent {
    * pipeline never writes through these ids back to MIDI data.
    */
   sourceIds?: number[];
+  /**
+   * MIDI channels whose source notes produced this event (0-based, ascending,
+   * absent for rests or hand-authored fixtures). Used by serializers for
+   * channel-dependent display such as General MIDI percussion on channel 10.
+   */
+  midiChannels?: number[];
+  /**
+   * Representative note-on velocity of the source notes (1-127), when produced
+   * from editor notes. Serializers may use this for display-only accents.
+   */
+  velocity?: number;
 }
 
 /** All events of one voice within one measure, in onset order. */
@@ -242,12 +253,45 @@ export interface NotatedChordSymbol {
   romanNumeral?: string;
 }
 
+/** Right barline style for a notated measure. */
+export type NotatedBarlineStyle = 'regular' | 'double' | 'final';
+
+/** Repeat marks attached to a measure boundary. */
+export type NotatedRepeatMark = 'start' | 'end' | 'start-end';
+
+/** Explicit layout break before a measure. */
+export type NotatedMeasureBreak = 'system' | 'page';
+
+/** Textual tempo/change directive such as "rit.", "accel." or "a tempo". */
+export interface NotatedTempoText {
+  /** Display text shown above the staff. */
+  text: string;
+  /** Optional playback tempo at the same measure, in BPM. */
+  bpm?: number;
+}
+
+/** General text direction displayed above the staff. */
+export interface NotatedMeasureText {
+  /** Text shown in the score, e.g. "Solo", "pizz.", "Cue". */
+  text: string;
+  /** Optional vertical offset in MusicXML tenths. */
+  defaultY?: number;
+}
+
+/** Multi-measure rest span starting at a measure. */
+export interface NotatedMultiMeasureRest {
+  /** Number of consecutive empty measures represented by the start measure. */
+  count: number;
+}
+
 /** Score-level bibliographic metadata (MusicXML `<work>` / `<identification>`). */
 export interface ScoreMetadata {
   /** Work title (MusicXML `<work-title>`); omitted or empty = no title. */
   title?: string;
   /** Composer credit (MusicXML `<creator type="composer">`). */
   composer?: string;
+  /** Part name for extracted part scores or headers. */
+  partName?: string;
 }
 
 /** The complete display-only score handed to the MusicXML serializer. */
@@ -265,6 +309,24 @@ export interface NotatedScore {
   divisions: number;
   /** Optional chord symbols, sorted by `ppq`, shared by all parts. */
   chordSymbols?: NotatedChordSymbol[];
+  /** Optional right barline style overrides, keyed by zero-based measure index. */
+  measureBarlines?: Readonly<Record<number, NotatedBarlineStyle>>;
+  /** Optional repeat marks, keyed by zero-based measure index. */
+  measureRepeats?: Readonly<Record<number, NotatedRepeatMark>>;
+  /** Optional layout breaks before a measure, keyed by zero-based measure index. */
+  measureBreaks?: Readonly<Record<number, NotatedMeasureBreak>>;
+  /** Optional rehearsal/section labels, keyed by zero-based measure index. */
+  measureRehearsals?: Readonly<Record<number, string>>;
+  /** Optional metronome tempo marks in BPM, keyed by zero-based measure index. */
+  measureTempos?: Readonly<Record<number, number>>;
+  /** Optional key signature changes in fifths, keyed by zero-based measure index. */
+  measureKeyFifths?: Readonly<Record<number, number>>;
+  /** Optional textual tempo/change directives, keyed by zero-based measure index. */
+  measureTempoTexts?: Readonly<Record<number, NotatedTempoText>>;
+  /** Optional general text directions, keyed by zero-based measure index. */
+  measureTexts?: Readonly<Record<number, ReadonlyArray<NotatedMeasureText>>>;
+  /** Optional multi-measure rest spans, keyed by zero-based start measure index. */
+  multiMeasureRests?: Readonly<Record<number, NotatedMultiMeasureRest>>;
   /**
    * Optional display annotations keyed by editor note id, resolved against
    * {@link NotatedEvent.sourceIds}. Ids matching no event (e.g. annotations

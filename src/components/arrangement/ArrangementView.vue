@@ -24,6 +24,7 @@ import {
   trimClip,
 } from '@/project/commands';
 import { exportClipSmf } from '@/project/export';
+import { insertParamDomainForStrip } from '@/project/insert-param-domains';
 import { useProjectStore } from '@/project/store';
 import { isAudioClip } from '@/project/types';
 import { assetLengthPpq, audioClipSourceBounds } from '@/ui/arrangement/audio-clip-content';
@@ -331,11 +332,14 @@ const automation = useAutomationInteractions({
       const hit = rowLayout.value.hitTest(point.y - RULER_HEIGHT_PX + scrollY.value);
       if (hit?.zone !== 'automation') return null;
       const track = store.tracks[hit.index];
+      const param = automationParams.value[track.id] ?? 'faderDb';
+      const insertDomain = insertParamDomainForStrip(track.mixer, param);
       return {
         trackId: track.id,
-        param: automationParams.value[track.id] ?? 'faderDb',
+        param,
         top: RULER_HEIGHT_PX + rowLayout.value.automationTop(hit.index) - scrollY.value,
         height: AUTOMATION_LANE_HEIGHT_PX,
+        ...(insertDomain ? { insertDomain: { min: insertDomain.min, max: insertDomain.max } } : {}),
       };
     },
   },

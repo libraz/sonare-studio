@@ -9,15 +9,22 @@ import {
   bakeClipMidiFx,
   canRedo,
   canUndo,
+  cleanupOverlaps,
   clearHistory,
   clearProjectChords,
   clearTrackMidiFx,
   deleteClip,
   detectChordsForClip,
   duplicateClip,
+  duplicateSelection,
+  fadeSelectionVelocity,
   humanizeSelectionVelocity,
+  legatoSelection,
+  mergeSelection,
   moveClip,
+  normalizeSelectionVelocity,
   nudgeSelectionVelocity,
+  quantizeSelectionEnds,
   quantizeSelectionLengths,
   redo,
   removeAutomationLane,
@@ -27,6 +34,13 @@ import {
   renameClip,
   renameTrack,
   reorderTracks,
+  repeatSelection,
+  scaleSelectionVelocityDynamics,
+  selectOutOfScale,
+  selectOverlaps,
+  selectSameChannel,
+  selectSamePitch,
+  selectVelocityRange,
   setActiveClip,
   setActiveTrack,
   setAutomationLaneEnabled,
@@ -53,6 +67,7 @@ import {
   splitClip,
   splitNote,
   transposeSelection,
+  transposeSelectionDiatonic,
   trimClip,
   undo,
 } from '@/project/commands';
@@ -827,6 +842,49 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(noteById(a)?.durationPpq).toBe(4);
     });
 
+    it('quantizes note ends to the snap grid', () => {
+      const a = addNote({ pitch: 60, startPpq: 0.1, durationPpq: 1.7 });
+      setSelection([a]);
+      store.snapDivision = 4; // grid = 1 PPQ
+      quantizeSelectionEnds();
+      expect(noteById(a)?.startPpq).toBe(0.1);
+      expect(noteById(a)?.durationPpq).toBeCloseTo(1.9, 9);
+    });
+
+    it('duplicates and repeats the selection as one undoable edit', () => {
+      const [a, b] = threeNotesSelectFirstTwo();
+      const copies = duplicateSelection(1);
+      expect(copies).toHaveLength(2);
+      expect(store.selection).toEqual(new Set(copies));
+      expect(store.notes.map((n) => n.startPpq).sort((x, y) => x - y)).toContain(1);
+      undo();
+      expect(noteById(a)).toBeDefined();
+      expect(store.notes).toHaveLength(3);
+      setSelection([a, b]);
+      const repeated = repeatSelection(2, 4);
+      expect(repeated).toHaveLength(4);
+      expect(store.notes).toHaveLength(7);
+    });
+
+    it('applies legato, merge, and overlap cleanup', () => {
+      const a = addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+      const b = addNote({ pitch: 60, startPpq: 2, durationPpq: 1 });
+      setSelection([a, b]);
+      legatoSelection();
+      expect(noteById(a)?.durationPpq).toBe(2);
+      mergeSelection();
+      expect(store.notes).toHaveLength(1);
+    });
+
+    it('cleans up overlapping notes', () => {
+      addNote({ pitch: 64, startPpq: 0, durationPpq: 4 });
+      addNote({ pitch: 64, startPpq: 2, durationPpq: 1 });
+      cleanupOverlaps();
+      expect(
+        store.notes.find((note) => note.pitch === 64 && note.startPpq === 0)?.durationPpq,
+      ).toBe(2);
+    });
+
     it('nudges and clamps selection velocity', () => {
       const [a, , c] = threeNotesSelectFirstTwo();
       nudgeSelectionVelocity(20);
@@ -843,6 +901,17 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       humanizeSelectionVelocity(10, () => values.shift() ?? 0.5);
       expect(noteById(a)?.velocity).toBe(90);
       expect(noteById(b)?.velocity).toBe(70);
+    });
+
+    it('fades, normalizes, and scales selected velocity dynamics', () => {
+      const [a, b] = threeNotesSelectFirstTwo();
+      fadeSelectionVelocity(20, 100);
+      expect(noteById(a)?.velocity).toBe(20);
+      expect(noteById(b)?.velocity).toBe(100);
+      normalizeSelectionVelocity(120);
+      expect(noteById(b)?.velocity).toBe(120);
+      scaleSelectionVelocityDynamics(0);
+      expect(noteById(a)?.velocity).toBe(noteById(b)?.velocity);
     });
 
     it('is a no-op with an empty selection', () => {
@@ -874,6 +943,36 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       undo();
       expect(noteById(sharp)?.pitch).toBe(61);
       expect(noteById(d)?.pitch).toBe(62);
+    });
+
+    it('selects by pitch, channel, velocity range, out-of-scale notes, and overlaps', () => {
+      store.scaleHighlight = { enabled: true, rootPc: 0, modeMask: 0b101011010101 };
+      const a = addNote({ pitch: 60, startPpq: 0, durationPpq: 2, velocity: 50, channel: 1 });
+      const b = addNote({ pitch: 60, startPpq: 1, durationPpq: 1, velocity: 80, channel: 1 });
+      const c = addNote({ pitch: 61, startPpq: 4, durationPpq: 1, velocity: 70, channel: 2 });
+      setSelection([a]);
+      selectSamePitch();
+      expect(store.selection).toEqual(new Set([a, b]));
+      setSelection([c]);
+      selectSameChannel();
+      expect(store.selection).toEqual(new Set([c]));
+      setSelection([a, c]);
+      selectVelocityRange();
+      expect(store.selection).toEqual(new Set([a, c]));
+      selectOutOfScale();
+      expect(store.selection).toEqual(new Set([c]));
+      selectOverlaps();
+      expect(store.selection).toEqual(new Set([a, b]));
+    });
+
+    it('transposes diatonically within the active scale', () => {
+      store.scaleHighlight = { enabled: true, rootPc: 0, modeMask: 0b101011010101 };
+      const c = addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+      setSelection([c]);
+      transposeSelectionDiatonic(1);
+      expect(noteById(c)?.pitch).toBe(62);
+      transposeSelectionDiatonic(-1);
+      expect(noteById(c)?.pitch).toBe(60);
     });
 
     it('does not push an undo entry when every selected note is already in scale', () => {

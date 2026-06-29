@@ -60,6 +60,9 @@ export interface OfflineRenderEngine {
   setTrackStripChannelDelaySamples(trackId: number, delaySamples: number): void;
   setParameter(paramId: number, value: number): void;
   busAutomationParamId(busId: number): number;
+  resolveTrackInsertAutomationId(trackId: number, insertIndex: number, paramName: string): number;
+  resolveMasterInsertAutomationId(insertIndex: number, paramName: string): number;
+  resolveBusInsertAutomationId(busId: number, insertIndex: number, paramName: string): number;
   setAutomationLane(
     paramId: number,
     points: Array<{ ppq: number; value: number; curveToNext?: number }>,

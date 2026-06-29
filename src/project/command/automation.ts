@@ -4,23 +4,55 @@ import {
   type AutomationTarget,
   automationLaneKey,
   busIdFromAutomationTarget,
+  type InsertParamRef,
   isBusAutomationTarget,
+  parseInsertAutomationParam,
   sanitizeAutomationPoints,
 } from '../automation';
+import type { MixerStrip } from '../mixer';
 import { useProjectStore } from '../store';
 import { execute } from './history';
+import { currentStrip, type MixerStripTarget } from './mixer-internal';
 import { requireTrack } from './utils';
 
 /**
- * Validates an automation lane target: 'master' is always valid; numeric
- * targets must name an existing track; bus targets must name an existing bus
- * and can only automate faderDb.
+ * Validates that the strip behind an insert lane carries the addressed slot.
+ *
+ * @param strip Strip the lane targets.
+ * @param ref Decoded insert slot reference.
+ * @param target Lane target (for the error message).
+ * @throws RangeError when the slot index is absent on the strip.
+ */
+function requireInsertOnStrip(
+  strip: MixerStrip,
+  ref: InsertParamRef,
+  target: AutomationTarget,
+): void {
+  if (!strip.inserts[ref.insertIndex]) {
+    throw new RangeError(
+      `Strip ${String(target)} has no insert at index ${ref.insertIndex} to automate`,
+    );
+  }
+}
+
+/**
+ * Validates an automation lane target/param pair: 'master' is always valid;
+ * numeric targets must name an existing track; bus targets must name an
+ * existing bus and can automate only faderDb or an insert parameter. An insert
+ * parameter is allowed on any strip and is checked against the strip's slots.
  */
 function validateAutomationTarget(
   store: ReturnType<typeof useProjectStore>,
   target: AutomationTarget,
   param: AutomationParam,
 ): void {
+  const insertRef = parseInsertAutomationParam(param);
+  if (insertRef !== undefined) {
+    // The strip lookup also validates the target (unknown track/bus throws).
+    const strip = currentStrip(store, target as MixerStripTarget);
+    requireInsertOnStrip(strip, insertRef, target);
+    return;
+  }
   if (target === 'master') return;
   if (isBusAutomationTarget(target)) {
     if (param !== 'faderDb') throw new RangeError('Mixer buses only support fader automation');

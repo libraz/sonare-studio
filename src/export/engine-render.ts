@@ -39,7 +39,7 @@ import {
 import { peakDb } from '@/lib/db';
 import { ensureWasm } from '@/lib/wasm';
 import { loadAsset } from '@/persistence/assets';
-import { automationCurveCode } from '@/project/automation';
+import { automationCurveCode, parseInsertAutomationParam } from '@/project/automation';
 import { loadFont } from '@/project/fonts';
 import { DEFAULT_SYNTH_PRESET, sf2PlaybackConfig } from '@/project/instrument';
 import { midiFxConfigJson } from '@/project/midi-fx';
@@ -295,44 +295,71 @@ export async function renderProjectWithEngine(
       if (pass.freezeIndex === index) return;
       for (const lane of track.automation ?? []) {
         if (!lane.enabled || lane.points.length === 0) continue;
+        const points = lane.points.map((point) => ({
+          ppq: point.ppq,
+          value: point.value,
+          curveToNext: automationCurveCode(point.curve),
+        }));
+        // Insert-parameter lanes resolve to the engine's reserved insert id
+        // (and strip selector) from the strip state already installed above; a
+        // negative id means the insert or key is unknown and is skipped.
+        const insertRef = parseInsertAutomationParam(lane.param);
+        if (insertRef) {
+          const id = engine.resolveTrackInsertAutomationId(
+            trackIds[index],
+            insertRef.insertIndex,
+            insertRef.paramName,
+          );
+          if (id >= 0) engine.setAutomationLane(id, points);
+          continue;
+        }
         const kind = lane.param === 'pan' ? ENGINE_MIXER_PARAM_PAN : ENGINE_MIXER_PARAM_FADER_DB;
-        engine.setAutomationLane(
-          laneParamId(index, kind),
-          lane.points.map((point) => ({
-            ppq: point.ppq,
-            value: point.value,
-            curveToNext: automationCurveCode(point.curve),
-          })),
-        );
+        engine.setAutomationLane(laneParamId(index, kind), points);
       }
     });
     if (pass.masterLevels) {
       for (const lane of doc.masterAutomation ?? []) {
         if (!lane.enabled || lane.points.length === 0) continue;
+        const points = lane.points.map((point) => ({
+          ppq: point.ppq,
+          value: point.value,
+          curveToNext: automationCurveCode(point.curve),
+        }));
+        const insertRef = parseInsertAutomationParam(lane.param);
+        if (insertRef) {
+          const id = engine.resolveMasterInsertAutomationId(
+            insertRef.insertIndex,
+            insertRef.paramName,
+          );
+          if (id >= 0) engine.setAutomationLane(id, points);
+          continue;
+        }
         const kind = lane.param === 'pan' ? ENGINE_MIXER_PARAM_PAN : ENGINE_MIXER_PARAM_FADER_DB;
-        engine.setAutomationLane(
-          masterParamId(kind),
-          lane.points.map((point) => ({
-            ppq: point.ppq,
-            value: point.value,
-            curveToNext: automationCurveCode(point.curve),
-          })),
-        );
+        engine.setAutomationLane(masterParamId(kind), points);
       }
     }
     for (const bus of doc.mixer?.buses ?? []) {
       const busId = busNumberById.get(bus.id);
       if (busId === undefined) continue;
       for (const lane of bus.automation ?? []) {
-        if (!lane.enabled || lane.param !== 'faderDb' || lane.points.length === 0) continue;
-        engine.setAutomationLane(
-          engine.busAutomationParamId(busId),
-          lane.points.map((point) => ({
-            ppq: point.ppq,
-            value: point.value,
-            curveToNext: automationCurveCode(point.curve),
-          })),
-        );
+        if (!lane.enabled || lane.points.length === 0) continue;
+        const points = lane.points.map((point) => ({
+          ppq: point.ppq,
+          value: point.value,
+          curveToNext: automationCurveCode(point.curve),
+        }));
+        const insertRef = parseInsertAutomationParam(lane.param);
+        if (insertRef) {
+          const id = engine.resolveBusInsertAutomationId(
+            busId,
+            insertRef.insertIndex,
+            insertRef.paramName,
+          );
+          if (id >= 0) engine.setAutomationLane(id, points);
+          continue;
+        }
+        if (lane.param !== 'faderDb') continue;
+        engine.setAutomationLane(engine.busAutomationParamId(busId), points);
       }
     }
 

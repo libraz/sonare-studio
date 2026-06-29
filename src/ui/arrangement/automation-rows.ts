@@ -164,13 +164,20 @@ export interface AutomationValueDomain {
 /**
  * Returns the value domain a sublane displays. Fader automation draws the
  * musically useful [-60, +12] dB window (narrower than the model's clamp
- * range); pan draws its full [-1, 1] range.
+ * range); pan draws its full [-1, 1] range. Any other parameter (an insert
+ * parameter) uses the supplied `insertDomain`, falling back to [0, 1].
  *
  * @param param Automated parameter.
+ * @param insertDomain Display domain for an insert parameter; absent = [0, 1].
  * @returns The min/max values mapped onto the sublane height.
  */
-export function automationValueDomain(param: AutomationParam): AutomationValueDomain {
-  return param === 'faderDb' ? { min: -60, max: 12 } : { min: -1, max: 1 };
+export function automationValueDomain(
+  param: AutomationParam,
+  insertDomain?: AutomationValueDomain,
+): AutomationValueDomain {
+  if (param === 'faderDb') return { min: -60, max: 12 };
+  if (param === 'pan') return { min: -1, max: 1 };
+  return insertDomain ?? { min: 0, max: 1 };
 }
 
 /** Clamps a number into [0, 1]. */
@@ -186,6 +193,7 @@ function clamp01(t: number): number {
  * @param value Automation value.
  * @param top Sublane top edge in viewport px.
  * @param height Sublane height in px.
+ * @param insertDomain Display domain for an insert parameter; absent = [0, 1].
  * @returns Y in viewport px (max value at the top).
  */
 export function automationValueToY(
@@ -193,8 +201,9 @@ export function automationValueToY(
   value: number,
   top: number,
   height: number,
+  insertDomain?: AutomationValueDomain,
 ): number {
-  const domain = automationValueDomain(param);
+  const domain = automationValueDomain(param, insertDomain);
   const t = clamp01((value - domain.min) / (domain.max - domain.min));
   const innerTop = top + AUTOMATION_LANE_PAD_PX;
   const innerHeight = Math.max(1, height - 2 * AUTOMATION_LANE_PAD_PX);
@@ -209,6 +218,7 @@ export function automationValueToY(
  * @param y Y in viewport px.
  * @param top Sublane top edge in viewport px.
  * @param height Sublane height in px.
+ * @param insertDomain Display domain for an insert parameter; absent = [0, 1].
  * @returns The automation value at y.
  */
 export function automationYToValue(
@@ -216,8 +226,9 @@ export function automationYToValue(
   y: number,
   top: number,
   height: number,
+  insertDomain?: AutomationValueDomain,
 ): number {
-  const domain = automationValueDomain(param);
+  const domain = automationValueDomain(param, insertDomain);
   const innerTop = top + AUTOMATION_LANE_PAD_PX;
   const innerHeight = Math.max(1, height - 2 * AUTOMATION_LANE_PAD_PX);
   const t = clamp01((y - innerTop) / innerHeight);

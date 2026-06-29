@@ -16,7 +16,8 @@
  * pattern replaces the active clip's notes), the mastering tab (processors
  * added to the project chain change the rendered mixdown bytes), the audio
  * export dialog (a 16-bit WAV download with an audible peak and a loudness
- * report), and the DAWproject export (a zip with a project.xml entry).
+ * report), MIDI exports (SMF and MIDI 2.0 clip-file downloads), and the
+ * DAWproject export (a zip with a project.xml entry).
  * It also asserts cross-origin isolation, dismisses the first-run welcome
  * tour, applies a score annotation through the annotate palette, opens the
  * shortcut help with '?', remaps a shortcut in the settings dialog (with
@@ -247,8 +248,8 @@ try {
 
   // --- Named layouts: presets rearrange the workspace -------------------------
 
-  await page.click('.menu-trigger:has-text("Layout")');
-  await page.locator('.menu-pop [role="menuitem"]').filter({ hasText: /^Mix$/ }).click();
+  await page.click('.app-menubar__trigger:has-text("Window")');
+  await page.locator('.menu-panel [role="menuitem"]').filter({ hasText: /^Mix$/ }).click();
   await page.waitForFunction(
     () => document.querySelector('.arrange-zone')?.style.flexBasis === '180px',
     null,
@@ -265,9 +266,9 @@ try {
   } else {
     console.info('Mix layout applied: mixer tab, 180px arrangement, rack closed');
   }
-  await page.click('.menu-trigger:has-text("Layout")');
+  await page.click('.app-menubar__trigger:has-text("Window")');
   await page
-    .locator('.menu-pop [role="menuitem"]')
+    .locator('.menu-panel [role="menuitem"]')
     .filter({ hasText: /^Compose$/ })
     .click();
   await page.waitForSelector('.right-zone', { timeout: 5000 });
@@ -315,8 +316,11 @@ try {
 
   // Save the project to OPFS via the project menu, then reload the page and
   // accept the autosave-restore prompt: the two-track project must survive.
-  await page.click('.project-menu .menu-trigger');
-  await page.click('.menu-pop .menu-save');
+  await page.click('.app-menubar__trigger:has-text("File")');
+  await page
+    .locator('.menu-panel [role="menuitem"]')
+    .filter({ hasText: /^Save$/ })
+    .click();
   await page.waitForSelector('.autosave-state', { timeout: 15000 });
   console.info('project saved to OPFS');
 
@@ -1757,8 +1761,11 @@ try {
 
   // --- Export dialog: WAV 16-bit mixdown download -----------------------------
 
-  await page.click('.project-menu .menu-trigger');
-  await page.click('.menu-pop button:has-text("Export Audio…")');
+  await page.click('.app-menubar__trigger:has-text("File")');
+  await page
+    .locator('.menu-panel [role="menuitem"]')
+    .filter({ hasText: /^Export Audio…$/ })
+    .click();
   await page.waitForSelector('.dialog .export-button:not([disabled])', { timeout: 10000 });
   // Defaults are WAV / 16-bit / 48 kHz / whole project / master chain on.
   await page.click('.dialog .export-button');
@@ -1830,10 +1837,69 @@ try {
   }
   await page.click('.dialog .close-button');
 
+  // --- MIDI export: SMF + MIDI 2.0 clip-file downloads ------------------------
+
+  await page.click('.app-menubar__trigger:has-text("File")');
+  await page
+    .locator('.menu-panel [role="menuitem"]')
+    .filter({ hasText: /^Export SMF$/ })
+    .click();
+  await page.waitForFunction(
+    () => window.__sonareDebug.lastDownload()?.filename.endsWith('.mid') === true,
+    null,
+    { timeout: 60000 },
+  );
+  const smfInfo = await page.evaluate(async () => {
+    const download = window.__sonareDebug.lastDownload();
+    const bytes = new Uint8Array(await download.blob.arrayBuffer());
+    const tag = (off, length = 4) => String.fromCharCode(...bytes.subarray(off, off + length));
+    return {
+      filename: download.filename,
+      byteLength: bytes.length,
+      header: tag(0),
+    };
+  });
+  if (smfInfo.header !== 'MThd' || smfInfo.byteLength <= 14) {
+    fail(`SMF download is not a valid MIDI header: ${JSON.stringify(smfInfo)}`);
+  } else {
+    console.info(`SMF exported: ${smfInfo.filename}, ${smfInfo.byteLength} bytes`);
+  }
+
+  await page.click('.app-menubar__trigger:has-text("File")');
+  await page
+    .locator('.menu-panel [role="menuitem"]')
+    .filter({ hasText: /^Export MIDI 2\.0 clip file$/ })
+    .click();
+  await page.waitForFunction(
+    () => window.__sonareDebug.lastDownload()?.filename.endsWith('.midi2') === true,
+    null,
+    { timeout: 60000 },
+  );
+  const midi2Info = await page.evaluate(async () => {
+    const download = window.__sonareDebug.lastDownload();
+    const bytes = new Uint8Array(await download.blob.arrayBuffer());
+    const tag = (off, length = 4) => String.fromCharCode(...bytes.subarray(off, off + length));
+    return {
+      filename: download.filename,
+      byteLength: bytes.length,
+      header: tag(0),
+    };
+  });
+  if (midi2Info.header !== 'SMF2' || midi2Info.byteLength <= 4) {
+    fail(`MIDI 2.0 clip-file download is not valid: ${JSON.stringify(midi2Info)}`);
+  } else {
+    console.info(
+      `MIDI 2.0 clip file exported: ${midi2Info.filename}, ${midi2Info.byteLength} bytes`,
+    );
+  }
+
   // --- DAWproject export: zip magic + project.xml entry ------------------------
 
-  await page.click('.project-menu .menu-trigger');
-  await page.click('.menu-pop button:has-text("Export DAWproject")');
+  await page.click('.app-menubar__trigger:has-text("File")');
+  await page
+    .locator('.menu-panel [role="menuitem"]')
+    .filter({ hasText: /^Export DAWproject$/ })
+    .click();
   await page.waitForFunction(
     () => window.__sonareDebug.lastDownload()?.filename.endsWith('.dawproject') === true,
     null,

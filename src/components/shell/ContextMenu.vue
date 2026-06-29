@@ -14,14 +14,25 @@ import {
 
 const state = useContextMenuState();
 const menuEl = ref<HTMLElement | null>(null);
+const submenuEl = ref<HTMLElement | null>(null);
+const activeSubmenuId = ref<string | null>(null);
 
 /** Displayed position, clamped to the viewport after the menu measures. */
 const pos = reactive({ x: 0, y: 0 });
+const submenu = reactive<{ open: boolean; x: number; y: number; items: ContextMenuItem[] }>({
+  open: false,
+  x: 0,
+  y: 0,
+  items: [],
+});
 
 watch(
   () => [state.open, state.x, state.y, state.items] as const,
   async () => {
     if (!state.open) return;
+    activeSubmenuId.value = null;
+    submenu.open = false;
+    submenu.items = [];
     pos.x = state.x;
     pos.y = state.y;
     await nextTick();
@@ -45,6 +56,48 @@ function run(item: ContextMenuItem): void {
   closeContextMenu();
   action();
 }
+
+function hasSubmenu(item: ContextMenuItem): boolean {
+  return item.children?.some((child) => !child.separator) === true;
+}
+
+async function openSubmenu(item: ContextMenuItem, target: HTMLElement): Promise<void> {
+  if (!hasSubmenu(item) || item.disabled || !item.children) {
+    activeSubmenuId.value = null;
+    submenu.open = false;
+    submenu.items = [];
+    return;
+  }
+  activeSubmenuId.value = item.id;
+  const rect = target.getBoundingClientRect();
+  submenu.items = item.children;
+  submenu.x = rect.right + 4;
+  submenu.y = rect.top;
+  submenu.open = true;
+  await nextTick();
+  const el = submenuEl.value;
+  if (!el) return;
+  const subRect = el.getBoundingClientRect();
+  const margin = 4;
+  if (subRect.right > window.innerWidth) {
+    submenu.x = Math.max(margin, rect.left - subRect.width - 4);
+  }
+  if (subRect.bottom > window.innerHeight) {
+    submenu.y = Math.max(margin, window.innerHeight - subRect.height - margin);
+  }
+}
+
+function onItemEnter(item: ContextMenuItem, event: MouseEvent): void {
+  void openSubmenu(item, event.currentTarget as HTMLElement);
+}
+
+function onItemClick(item: ContextMenuItem, event: MouseEvent): void {
+  if (hasSubmenu(item)) {
+    void openSubmenu(item, event.currentTarget as HTMLElement);
+    return;
+  }
+  run(item);
+}
 </script>
 
 <template>
@@ -63,16 +116,51 @@ function run(item: ContextMenuItem): void {
         type="button"
         role="menuitem"
         class="context-menu-item"
-        :class="{ danger: item.danger }"
+        :class="{
+          danger: item.danger,
+          'has-submenu': hasSubmenu(item),
+          'submenu-open': activeSubmenuId === item.id,
+        }"
         :disabled="item.disabled"
         :aria-checked="item.checked === undefined ? undefined : item.checked"
-        @click="run(item)"
+        :aria-haspopup="hasSubmenu(item) ? 'menu' : undefined"
+        :aria-expanded="hasSubmenu(item) ? activeSubmenuId === item.id : undefined"
+        @mouseenter="onItemEnter(item, $event)"
+        @click="onItemClick(item, $event)"
       >
         <span class="context-menu-check" aria-hidden="true">{{ item.checked ? '✓' : '' }}</span>
         <span class="context-menu-label">{{ item.label }}</span>
         <span v-if="item.hint" class="context-menu-hint">{{ item.hint }}</span>
+        <span v-if="hasSubmenu(item)" class="context-menu-arrow" aria-hidden="true">›</span>
       </button>
     </template>
   </div>
+  </Transition>
+  <Transition name="pop">
+    <div
+      v-if="state.open && submenu.open"
+      ref="submenuEl"
+      class="context-menu context-submenu control-menu"
+      :style="{ left: `${submenu.x}px`, top: `${submenu.y}px` }"
+      role="menu"
+    >
+      <template v-for="child in submenu.items" :key="child.id">
+        <div v-if="child.separator" class="context-menu-sep" role="separator" />
+        <button
+          v-else
+          type="button"
+          role="menuitem"
+          class="context-menu-item"
+          :class="{ danger: child.danger }"
+          :disabled="child.disabled"
+          :aria-checked="child.checked === undefined ? undefined : child.checked"
+          @click="run(child)"
+        >
+          <span class="context-menu-check" aria-hidden="true">{{ child.checked ? '✓' : '' }}</span>
+          <span class="context-menu-label">{{ child.label }}</span>
+          <span v-if="child.hint" class="context-menu-hint">{{ child.hint }}</span>
+        </button>
+      </template>
+    </div>
   </Transition>
 </template>

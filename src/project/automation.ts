@@ -11,8 +11,24 @@ export type BusAutomationTarget = `bus:${string}`;
 /** Lane target: a track id, the master strip, or a mixer bus. */
 export type AutomationTarget = number | 'master' | BusAutomationTarget;
 
+/**
+ * An insert-parameter automation target encoded as a structured string token
+ * "insert:<index>:<paramName>". The strip the insert lives on is named by the
+ * lane's {@link AutomationTarget} (track id / 'master' / bus), so the token
+ * only carries the slot index and the processor's JSON-key parameter name.
+ */
+export type InsertAutomationParam = `insert:${number}:${string}`;
+
 /** Parameter automatable by a lane. */
-export type AutomationParam = 'faderDb' | 'pan';
+export type AutomationParam = 'faderDb' | 'pan' | InsertAutomationParam;
+
+/** The slot index and parameter name decoded from an {@link InsertAutomationParam}. */
+export interface InsertParamRef {
+  /** Insert slot index on the targeted strip (integer >= 0). */
+  insertIndex: number;
+  /** Processor JSON-key parameter name (may itself contain ':'). */
+  paramName: string;
+}
 
 /** Interpolation curve from a point toward the next one. */
 export type AutomationCurve = 'linear' | 'exponential' | 'hold' | 's-curve';
@@ -60,6 +76,15 @@ export const AUTOMATION_PAN_MIN = -1;
 export const AUTOMATION_PAN_MAX = 1;
 
 /**
+ * Symmetric clamp bound for insert-parameter automation values. Insert params
+ * have no shared range (each processor parameter has its own), so values are
+ * only guarded against non-finite extremes with a wide, non-destructive
+ * sentinel; per-parameter display ranges live in
+ * src/project/insert-param-domains.ts.
+ */
+export const AUTOMATION_INSERT_VALUE_LIMIT = 1e6;
+
+/**
  * Returns the numeric wire code of a curve.
  *
  * @param curve Curve name; absent defaults to 'linear'.
@@ -74,14 +99,17 @@ export function automationCurveCode(curve?: AutomationCurve): number {
  *
  * @param param Automated parameter.
  * @param value Raw value (finite).
- * @returns The value clamped to [-120, 24] dB for 'faderDb' or [-1, 1] for
- *   'pan'.
+ * @returns The value clamped to [-120, 24] dB for 'faderDb', [-1, 1] for
+ *   'pan', or the wide [-1e6, 1e6] sentinel for an insert parameter.
  */
 export function clampAutomationValue(param: AutomationParam, value: number): number {
   if (param === 'faderDb') {
     return Math.min(AUTOMATION_FADER_DB_MAX, Math.max(AUTOMATION_FADER_DB_MIN, value));
   }
-  return Math.min(AUTOMATION_PAN_MAX, Math.max(AUTOMATION_PAN_MIN, value));
+  if (param === 'pan') {
+    return Math.min(AUTOMATION_PAN_MAX, Math.max(AUTOMATION_PAN_MIN, value));
+  }
+  return Math.min(AUTOMATION_INSERT_VALUE_LIMIT, Math.max(-AUTOMATION_INSERT_VALUE_LIMIT, value));
 }
 
 /**
@@ -110,14 +138,58 @@ export function busIdFromAutomationTarget(target: BusAutomationTarget): string {
   return target.slice(4);
 }
 
+/**
+ * Encodes an insert slot index and parameter name into an automation param
+ * token. The strip is carried by the lane's target, so only the slot index and
+ * the processor's JSON-key parameter name are embedded.
+ *
+ * @param insertIndex Insert slot index on the targeted strip.
+ * @param paramName Processor JSON-key parameter name (may contain ':').
+ * @returns The "insert:<index>:<paramName>" token.
+ */
+export function insertAutomationParam(
+  insertIndex: number,
+  paramName: string,
+): InsertAutomationParam {
+  return `insert:${insertIndex}:${paramName}`;
+}
+
+/** True when an automation param token addresses an insert parameter. */
+export function isInsertAutomationParam(param: string): param is InsertAutomationParam {
+  return param.startsWith('insert:');
+}
+
+/**
+ * Decodes an insert automation param token into its slot index and parameter
+ * name. The token is "insert:<index>:<paramName>"; only the first two ':'
+ * separators are structural, so a parameter name containing ':' survives.
+ *
+ * @param param Candidate token.
+ * @returns The decoded reference, or undefined when the token is malformed
+ *   (non-integer/negative index or an empty parameter name).
+ */
+export function parseInsertAutomationParam(param: string): InsertParamRef | undefined {
+  if (!isInsertAutomationParam(param)) return undefined;
+  const rest = param.slice('insert:'.length);
+  const separator = rest.indexOf(':');
+  if (separator < 0) return undefined;
+  const indexText = rest.slice(0, separator);
+  const paramName = rest.slice(separator + 1);
+  if (paramName.length === 0) return undefined;
+  const insertIndex = Number(indexText);
+  if (!Number.isInteger(insertIndex) || insertIndex < 0) return undefined;
+  return { insertIndex, paramName };
+}
+
 /** True when the value is one of the {@link AutomationCurve} names. */
 function isAutomationCurve(value: unknown): value is AutomationCurve {
   return typeof value === 'string' && value in AUTOMATION_CURVE_CODES;
 }
 
-/** True when the value is one of the {@link AutomationParam} names. */
+/** True when the value is a valid {@link AutomationParam}. */
 export function isAutomationParam(value: unknown): value is AutomationParam {
-  return value === 'faderDb' || value === 'pan';
+  if (value === 'faderDb' || value === 'pan') return true;
+  return typeof value === 'string' && parseInsertAutomationParam(value) !== undefined;
 }
 
 /**

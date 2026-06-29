@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { formatPitch } from '@/lib/pitch';
 import type { EditorNote } from '@/project/types';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
@@ -64,11 +65,15 @@ const emit = defineEmits<{
   'ghost-activate': [ghost: GhostNote];
   /** Right-click on the grid: noteId is null when no note was hit. */
   'note-context': [payload: { x: number; y: number; noteId: number | null; ppq: number }];
+  /** Hovered musical position for status readouts. */
+  'hover-status': [payload: { ppq: number; pitch: number } | null];
 }>();
 
 const wrapper = ref<HTMLDivElement | null>(null);
 const baseCanvas = ref<HTMLCanvasElement | null>(null);
 const overlayCanvas = ref<HTMLCanvasElement | null>(null);
+const hoveredGhost = ref<GhostNote | null>(null);
+const hoverPoint = ref<InteractionPoint | null>(null);
 
 /** Unique painter layer suffix so several editors can share one painter. */
 const layerId = Math.random().toString(36).slice(2, 8);
@@ -79,6 +84,9 @@ const COLORS = PIANO_ROLL_COLORS;
 const BEATS_PER_BAR = 4;
 /** Minimum px spacing before a vertical gridline family is drawn. */
 const MIN_GRID_SPACING_PX = 6;
+const LABEL_MIN_ROW_HEIGHT = 13;
+const LABEL_MIN_NOTE_WIDTH = 26;
+const SHORT_NOTE_WARNING_PPQ = 0.0625;
 
 function scheduleBase(): void {
   props.painter.schedule(`note-grid-base-${layerId}`, drawBase);
@@ -106,6 +114,21 @@ function drawVerticalLines(
   for (let ppq = first; ppq < props.range.endPpq; ppq += step) {
     ctx.fillRect(Math.round(props.range.ppqToX(ppq)), 0, 1, height);
   }
+}
+
+function noteOverlaps(note: EditorNote, notes: ReadonlyArray<EditorNote>): boolean {
+  const end = note.startPpq + note.durationPpq;
+  return notes.some(
+    (other) =>
+      other.id !== note.id &&
+      other.pitch === note.pitch &&
+      note.startPpq < other.startPpq + other.durationPpq &&
+      end > other.startPpq,
+  );
+}
+
+function hasScaleMask(): boolean {
+  return props.highlightedPitchClasses.some(Boolean);
 }
 
 /** Draws background rows, gridlines and note rectangles. */
@@ -173,6 +196,7 @@ function drawBase(): void {
   // Notes: gesture preview replaces the store mirror while dragging.
   const list = props.interactions.previewNotes.value ?? props.notes;
   const colorOf = props.noteColor ?? ((): string => DEFAULT_NOTE_COLOR);
+  const scaleMaskActive = hasScaleMask();
   for (const note of list) {
     if (!isNoteInView(note, viewWindow)) continue;
     const y = range.pitchToY(note.pitch);
@@ -185,6 +209,22 @@ function drawBase(): void {
     ctx.lineWidth = selected ? 1.5 : 1;
     ctx.strokeStyle = selected ? COLORS.noteSelectedBorder : COLORS.noteBorder;
     strokeRoundRect(ctx, x + 0.5, y + 1.5, noteW - 1, noteH - 1, 2);
+
+    const pitchClass = ((note.pitch % 12) + 12) % 12;
+    const offScale = scaleMaskActive && !props.highlightedPitchClasses[pitchClass];
+    const tooShort = note.durationPpq <= SHORT_NOTE_WARNING_PPQ;
+    const overlap = noteOverlaps(note, list);
+    if (overlap || offScale || tooShort) {
+      ctx.fillStyle = overlap ? COLORS.noteError : COLORS.noteWarning;
+      ctx.fillRect(x + 2, y + 2, Math.max(2, Math.min(noteW - 4, 18)), 2);
+    }
+
+    if (range.rowHeight >= LABEL_MIN_ROW_HEIGHT && noteW >= LABEL_MIN_NOTE_WIDTH) {
+      ctx.fillStyle = COLORS.noteText;
+      ctx.font = '10px system-ui, sans-serif';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(formatPitch(note.pitch), x + 5, y + range.rowHeight / 2, noteW - 8);
+    }
   }
 }
 
@@ -209,6 +249,57 @@ function drawOverlay(): void {
     ctx.strokeStyle = COLORS.marqueeStroke;
     ctx.lineWidth = 1;
     ctx.strokeRect(x + 0.5, y + 0.5, mw, mh);
+  }
+
+  const readout = props.interactions.gestureReadout?.value ?? null;
+  if (readout) {
+    ctx.font = '11px system-ui, sans-serif';
+    const paddingX = 7;
+    const paddingY = 4;
+    const metrics = ctx.measureText(readout.text);
+    const boxW = metrics.width + paddingX * 2;
+    const boxH = 20;
+    const x = Math.min(Math.max(4, readout.x), w - boxW - 4);
+    const y = Math.min(Math.max(4, readout.y), h - boxH - 4);
+    ctx.fillStyle = COLORS.hudBackground;
+    fillRoundRect(ctx, x, y, boxW, boxH, 4);
+    ctx.fillStyle = COLORS.hudText;
+    ctx.textBaseline = 'middle';
+    ctx.fillText(readout.text, x + paddingX, y + boxH / 2 + paddingY * 0.05);
+  }
+
+  const ghost = hoveredGhost.value;
+  if (ghost) {
+    const x = props.range.ppqToX(ghost.startPpq);
+    const y = props.range.pitchToY(ghost.pitch);
+    const ghostW = Math.max(2, ghost.durationPpq * props.range.pxPerPpq - 1);
+    const noteH = Math.max(2, props.range.rowHeight - 2);
+    ctx.strokeStyle = COLORS.noteSelectedBorder;
+    ctx.lineWidth = 1.5;
+    strokeRoundRect(ctx, x + 0.5, y + 1.5, ghostW - 1, noteH - 1, 2);
+    const text = `${ghost.trackName} · ${formatPitch(ghost.pitch)}`;
+    ctx.font = '11px system-ui, sans-serif';
+    const boxW = ctx.measureText(text).width + 14;
+    const boxH = 20;
+    const labelX = Math.min(Math.max(4, x + 8), w - boxW - 4);
+    const labelY = Math.min(Math.max(4, y - 22), h - boxH - 4);
+    ctx.fillStyle = COLORS.hudBackground;
+    fillRoundRect(ctx, labelX, labelY, boxW, boxH, 4);
+    ctx.fillStyle = COLORS.hudText;
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, labelX + 7, labelY + boxH / 2);
+  }
+
+  const guide = hoverPoint.value;
+  if (guide) {
+    ctx.strokeStyle = COLORS.rulerBeat;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(Math.round(guide.x) + 0.5, 0);
+    ctx.lineTo(Math.round(guide.x) + 0.5, h);
+    ctx.moveTo(0, Math.round(guide.y) + 0.5);
+    ctx.lineTo(w, Math.round(guide.y) + 0.5);
+    ctx.stroke();
   }
 
   if (props.positionPpq) {
@@ -278,7 +369,13 @@ watch(
 );
 
 watch(
-  () => props.interactions.marquee.value,
+  () =>
+    [
+      props.interactions.marquee.value,
+      props.interactions.gestureReadout?.value ?? null,
+      hoveredGhost.value,
+      hoverPoint.value,
+    ] as const,
   () => scheduleOverlay(),
 );
 
@@ -309,7 +406,17 @@ function onPointerDown(event: PointerEvent): void {
 }
 
 function onPointerMove(event: PointerEvent): void {
-  props.interactions.onPointerMove(localPoint(event), modifiers(event));
+  const point = localPoint(event);
+  const mods = modifiers(event);
+  hoveredGhost.value = mods.alt
+    ? null
+    : hitTestGhost(props.notes, props.ghostNotes ?? [], point, props.range);
+  hoverPoint.value = point;
+  emit('hover-status', {
+    ppq: Math.max(0, props.range.xToPpq(point.x)),
+    pitch: props.range.yToPitch(point.y),
+  });
+  props.interactions.onPointerMove(point, mods);
 }
 
 function onPointerUp(event: PointerEvent): void {
@@ -318,7 +425,17 @@ function onPointerUp(event: PointerEvent): void {
 }
 
 function onPointerCancel(): void {
+  hoveredGhost.value = null;
+  hoverPoint.value = null;
+  emit('hover-status', null);
   props.interactions.cancel();
+}
+
+function onPointerLeave(): void {
+  hoveredGhost.value = null;
+  hoverPoint.value = null;
+  emit('hover-status', null);
+  scheduleOverlay();
 }
 
 function onDoubleClick(event: MouseEvent): void {
@@ -346,6 +463,7 @@ function onContextMenu(event: MouseEvent): void {
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
     @pointercancel="onPointerCancel"
+    @pointerleave="onPointerLeave"
     @dblclick="onDoubleClick"
     @contextmenu="onContextMenu"
   >

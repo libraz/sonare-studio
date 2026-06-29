@@ -50,6 +50,32 @@ export const PIANO_ROLL_COLORS = {
   laneCenter: 'rgba(255, 255, 255, 0.18)',
   /** In-flight value readout while a lane drag runs. */
   laneValueText: '#9aa1ad',
+  /** Ruler strip background. */
+  rulerBackground: '#20232a',
+  /** Ruler beat tick. */
+  rulerBeat: 'rgba(255, 255, 255, 0.12)',
+  /** Ruler bar tick. */
+  rulerBar: 'rgba(255, 255, 255, 0.28)',
+  /** Ruler bar number. */
+  rulerText: '#b7beca',
+  /** Warning accent for suspicious note geometry. */
+  noteWarning: '#f59e0b',
+  /** Error accent for overlapping notes. */
+  noteError: '#ef4444',
+  /** Soft text drawn inside large enough notes. */
+  noteText: 'rgba(255, 255, 255, 0.82)',
+  /** Floating gesture readout background. */
+  hudBackground: 'rgba(8, 10, 14, 0.84)',
+  /** Floating gesture readout text. */
+  hudText: '#f3f5f9',
+  /** Piano-roll minimap background. */
+  minimapBackground: '#111318',
+  /** Piano-roll minimap note marks. */
+  minimapNote: 'rgba(148, 163, 184, 0.72)',
+  /** Piano-roll minimap visible-window fill. */
+  minimapViewportFill: 'rgba(79, 168, 232, 0.18)',
+  /** Piano-roll minimap visible-window outline. */
+  minimapViewportStroke: 'rgba(243, 245, 249, 0.8)',
 } as const;
 
 /** Default track color applied to notes until per-track colors exist. */

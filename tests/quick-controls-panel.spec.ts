@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import QuickControls from '@/components/devices/QuickControls.vue';
 import { addInsert, clearHistory, undo } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
+import { resetAutomationStripModes, setAutomationStripMode } from '@/ui/mixer/automation-mode';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -43,6 +44,7 @@ describe('QuickControls.vue', () => {
     clearHistory();
     await store.init();
     trackId = store.tracks[0].id;
+    resetAutomationStripModes();
   });
 
   it('renders one knob per quick control with name and value readouts', () => {
@@ -112,6 +114,76 @@ describe('QuickControls.vue', () => {
     firePointer(knob, 'pointerup', { pointerId: 3, clientY: 250 });
     await wrapper.vm.$nextTick();
     expect(store.tracks[0].mixer?.inserts[0].params.thresholdDb).toBe(-60);
+  });
+
+  it('touch-records an insert knob into an automation lane in a write mode', async () => {
+    addInsert(trackId, 'dynamics.compressor');
+    // The strip is armed for touch recording; the playhead getter is supplied.
+    setAutomationStripMode(trackId, 'touch');
+    const wrapper = mount(QuickControls, {
+      props: {
+        target: { type: 'insert', trackId, index: 0 },
+        positionPpq: () => 0,
+        isPlaying: false,
+      },
+    });
+    const knob = wrapper.find('[data-control="thresholdDb"]');
+    firePointer(knob, 'pointerdown', { button: 0, pointerId: 5, clientY: 100 });
+    firePointer(knob, 'pointermove', { pointerId: 5, clientY: 130 });
+    firePointer(knob, 'pointerup', { pointerId: 5, clientY: 130 });
+    await wrapper.vm.$nextTick();
+
+    // The drag wrote a lane, not the manual parameter (which stays unset).
+    expect(store.tracks[0].mixer?.inserts[0].params.thresholdDb).toBeUndefined();
+    const lane = store.automationLanes.find(
+      (l) => l.target === trackId && l.param === 'insert:0:thresholdDb',
+    );
+    expect(lane).toBeDefined();
+    expect(lane?.points.length).toBeGreaterThan(0);
+  });
+
+  it('still drives the insert parameter manually when no write mode is armed', async () => {
+    addInsert(trackId, 'dynamics.compressor');
+    const wrapper = mount(QuickControls, {
+      props: {
+        target: { type: 'insert', trackId, index: 0 },
+        positionPpq: () => 0,
+        isPlaying: false,
+      },
+    });
+    const knob = wrapper.find('[data-control="thresholdDb"]');
+    firePointer(knob, 'pointerdown', { button: 0, pointerId: 6, clientY: 100 });
+    firePointer(knob, 'pointermove', { pointerId: 6, clientY: 250 });
+    firePointer(knob, 'pointerup', { pointerId: 6, clientY: 250 });
+    await wrapper.vm.$nextTick();
+    expect(store.tracks[0].mixer?.inserts[0].params.thresholdDb).toBe(-60);
+    expect(store.automationLanes).toHaveLength(0);
+  });
+
+  it('adds and removes an insert automation lane from the knob context menu', async () => {
+    addInsert(trackId, 'dynamics.compressor');
+    const wrapper = mount(QuickControls, {
+      props: { target: { type: 'insert', trackId, index: 0 }, positionPpq: () => 0 },
+    });
+    const knob = wrapper.find('[data-control="thresholdDb"]');
+
+    // First open: the entry seeds a lane holding the current value.
+    await knob.trigger('contextmenu', { clientX: 5, clientY: 5 });
+    const menuButton = wrapper.find('.qc-menu button');
+    expect(menuButton.exists()).toBe(true);
+    await menuButton.trigger('click');
+    await wrapper.vm.$nextTick();
+    const lane = store.automationLanes.find(
+      (l) => l.target === trackId && l.param === 'insert:0:thresholdDb',
+    );
+    expect(lane).toBeDefined();
+    expect(lane?.points).toHaveLength(1);
+
+    // Second open: the same entry removes the existing lane.
+    await knob.trigger('contextmenu', { clientX: 5, clientY: 5 });
+    await wrapper.find('.qc-menu button').trigger('click');
+    await wrapper.vm.$nextTick();
+    expect(store.automationLanes.find((l) => l.param === 'insert:0:thresholdDb')).toBeUndefined();
   });
 
   it('adjusts values from the keyboard as committed steps', async () => {

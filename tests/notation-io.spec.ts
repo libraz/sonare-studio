@@ -5,6 +5,7 @@ import {
   downloadBlob,
   exportPdf,
   mmToPt,
+  PRINT_CLEANUP_FALLBACK_MS,
   PRINT_PAGE_CLASS,
   PRINT_ROOT_CLASS,
   printScore,
@@ -16,6 +17,7 @@ const pdfState = vi.hoisted(() => ({
   instances: [] as Array<{
     options: unknown;
     addPageCalls: unknown[][];
+    propertiesCalls: unknown[];
     svgCalls: Array<{ tag: string; options: unknown }>;
     outputCalls: string[];
   }>,
@@ -26,7 +28,13 @@ vi.mock('jspdf', () => {
     record: (typeof pdfState.instances)[number];
 
     constructor(options: unknown) {
-      this.record = { options, addPageCalls: [], svgCalls: [], outputCalls: [] };
+      this.record = {
+        options,
+        addPageCalls: [],
+        propertiesCalls: [],
+        svgCalls: [],
+        outputCalls: [],
+      };
       pdfState.instances.push(this.record);
     }
 
@@ -38,6 +46,11 @@ vi.mock('jspdf', () => {
     svg(element: Element, options: unknown): Promise<this> {
       this.record.svgCalls.push({ tag: element.tagName.toLowerCase(), options });
       return Promise.resolve(this);
+    }
+
+    setProperties(properties: unknown): this {
+      this.record.propertiesCalls.push(properties);
+      return this;
     }
 
     output(type: string): Blob {
@@ -80,6 +93,7 @@ describe('buildPrintPageCss', () => {
     expect(css).toContain('break-after: page;');
     expect(css).toContain('width: 210mm;');
     expect(css).toContain('height: 297mm;');
+    expect(css).toContain('print-color-adjust: exact;');
   });
 });
 
@@ -139,7 +153,7 @@ describe('downloads', () => {
 });
 
 describe('printScore', () => {
-  it('injects pages and a print stylesheet, prints, then restores the DOM', () => {
+  it('keeps pages through print and restores the DOM after afterprint', () => {
     let pagesAtPrintTime = -1;
     let styleAtPrintTime = '';
     const printSpy = vi.fn(() => {
@@ -153,8 +167,23 @@ describe('printScore', () => {
     expect(printSpy).toHaveBeenCalledTimes(1);
     expect(pagesAtPrintTime).toBe(2);
     expect(styleAtPrintTime).toContain('@page { size: 210mm 297mm; margin: 0; }');
+    expect(document.querySelectorAll(`.${PRINT_PAGE_CLASS}`)).toHaveLength(2);
+    window.dispatchEvent(new Event('afterprint'));
     expect(document.querySelector(`.${PRINT_ROOT_CLASS}`)).toBeNull();
     expect(document.head.querySelector('style')).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
+  it('restores the DOM after a fallback timeout when afterprint is missing', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('print', vi.fn());
+
+    printScore([SVG_PAGE], A4);
+
+    expect(document.querySelector(`.${PRINT_ROOT_CLASS}`)).not.toBeNull();
+    vi.advanceTimersByTime(PRINT_CLEANUP_FALLBACK_MS);
+    expect(document.querySelector(`.${PRINT_ROOT_CLASS}`)).toBeNull();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -186,6 +215,14 @@ describe('exportPdf', () => {
     expect(pdfState.instances).toHaveLength(1);
     const doc = pdfState.instances[0];
     expect(doc.options).toEqual({ unit: 'mm', format: [210, 297], orientation: 'portrait' });
+    expect(doc.propertiesCalls).toEqual([
+      {
+        title: 'score',
+        author: 'sonare studio',
+        subject: 'Engraved score',
+        creator: 'sonare studio',
+      },
+    ]);
     // First page comes from the constructor; addPage runs between pages only.
     expect(doc.addPageCalls).toEqual([
       [[210, 297], 'portrait'],
@@ -205,6 +242,16 @@ describe('exportPdf', () => {
       unit: 'mm',
       format: [297, 210],
       orientation: 'landscape',
+    });
+  });
+
+  it('writes supplied PDF metadata', async () => {
+    await exportPdf([SVG_PAGE], A4, { title: 'Etude', author: 'Composer', subject: 'Practice' });
+    expect(pdfState.instances[0].propertiesCalls[0]).toEqual({
+      title: 'Etude',
+      author: 'Composer',
+      subject: 'Practice',
+      creator: 'sonare studio',
     });
   });
 

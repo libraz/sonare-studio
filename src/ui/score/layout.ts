@@ -15,6 +15,8 @@ export interface ScoreLayoutSettings {
   pageMarginMm: number;
   scalePercent: number;
   spacingStaff: number;
+  barsPerSystem: number;
+  barsPerPage: number;
 }
 
 /** Page dimensions in millimeters honoring the orientation setting. */

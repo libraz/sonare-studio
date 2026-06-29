@@ -98,6 +98,18 @@ class FakeEngine implements OfflineRenderEngine {
   setAutomationLane(paramId: number, points: unknown): void {
     this.record('setAutomationLane', paramId, points);
   }
+  resolveTrackInsertAutomationId(trackId: number, insertIndex: number, paramName: string): number {
+    this.record('resolveTrackInsertAutomationId', trackId, insertIndex, paramName);
+    return paramName === 'unknown' ? -1 : (0xe0000000 | (trackId << 16) | (insertIndex << 8)) >>> 0;
+  }
+  resolveMasterInsertAutomationId(insertIndex: number, paramName: string): number {
+    this.record('resolveMasterInsertAutomationId', insertIndex, paramName);
+    return paramName === 'unknown' ? -1 : (0xe1ff0000 | (insertIndex << 8)) >>> 0;
+  }
+  resolveBusInsertAutomationId(busId: number, insertIndex: number, paramName: string): number {
+    this.record('resolveBusInsertAutomationId', busId, insertIndex, paramName);
+    return paramName === 'unknown' ? -1 : (0xe1fe0000 | (busId << 8) | insertIndex) >>> 0;
+  }
   setTempoSegments(segments: unknown): void {
     this.record('setTempoSegments', segments);
   }
@@ -966,6 +978,33 @@ describe('renderProjectWithEngine', () => {
     expect(keysStem?.channels[0][0]).toBeCloseTo(dbGain(-12), 5);
     expect(keysStem?.channels[0][2 * SAMPLES_PER_PPQ - 1]).toBeCloseTo(dbGain(-12), 5);
     expect(keysStem?.channels[0][2 * SAMPLES_PER_PPQ]).toBeCloseTo(1, 5);
+  });
+
+  it('routes an insert-parameter lane to its resolved insert id, not the fader id', async () => {
+    const doc = makeDoc();
+    // Track 0 and master each carry only an insert-parameter automation lane.
+    doc.tracks[0].mixer = { gainDb: 0, pan: 0, inserts: [], sends: [] };
+    doc.tracks[0].automation = [
+      { param: 'insert:0:gainDb', enabled: true, points: [{ ppq: 0, value: 3 }] },
+    ];
+    doc.masterAutomation = [
+      { param: 'insert:0:gainDb', enabled: true, points: [{ ppq: 0, value: 3 }] },
+    ];
+
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    const trackFaderId = ENGINE_MIXER_TARGET_BASE | (0 << 8) | ENGINE_MIXER_PARAM_FADER_DB;
+    const masterFaderId = MASTER_FADER_PARAM_ID;
+    const automated = new Set(engine.named('setAutomationLane').map(([, id]) => id as number));
+    // The insert lanes resolve to their reserved insert ids, never the fader id.
+    expect(automated.has(trackFaderId)).toBe(false);
+    expect(automated.has(masterFaderId)).toBe(false);
+    // Track 0 is engine track id 1 (positional ids are 1-based).
+    const trackInsertId = (0xe0000000 | (1 << 16) | (0 << 8)) >>> 0;
+    const masterInsertId = (0xe1ff0000 | (0 << 8)) >>> 0;
+    expect(automated.has(trackInsertId)).toBe(true);
+    expect(automated.has(masterInsertId)).toBe(true);
   });
 
   it('renders MIDI after a tempo change at the tempo-mapped sample position', async () => {

@@ -7,6 +7,7 @@ import SelectMenu from '@/components/shell/SelectMenu.vue';
 import {
   type AutomationLaneState,
   type AutomationParam,
+  insertAutomationParam,
   isAutomationParam,
 } from '@/project/automation';
 import {
@@ -30,7 +31,7 @@ import {
 import { flattenClipComp } from '@/project/comp-flatten';
 import { bounceTrackRange, freezeTrack, unfreezeTrack } from '@/project/freeze';
 import { MAX_VCA_GROUPS } from '@/project/mixer';
-import { useProjectStore } from '@/project/store';
+import { getWasmModule, useProjectStore } from '@/project/store';
 import { type EditorTrack, TRACK_COLOR_PALETTE, type TrackKind } from '@/project/types';
 import {
   AUTOMATION_LANE_HEIGHT_PX,
@@ -390,13 +391,48 @@ async function onBounce(track: EditorTrack): Promise<void> {
   }
 }
 
-/** Parameter choices for a track's automation sublane picker. */
-const automationParamOptions = computed<ReadonlyArray<{ value: AutomationParam; label: string }>>(
-  () => [
+/** Realtime-automatable parameter descriptor of an insert processor. */
+interface InsertParamInfo {
+  name: string;
+  rtSafe: boolean;
+}
+
+/** Reads a processor's realtime-automatable params, or [] when unavailable. */
+function insertParamInfo(processor: string): InsertParamInfo[] {
+  try {
+    const wasm = getWasmModule() as unknown as {
+      masteringInsertParamInfo?: (name: string) => InsertParamInfo[];
+    };
+    return wasm.masteringInsertParamInfo?.(processor) ?? [];
+  } catch {
+    // Module not loaded yet.
+    return [];
+  }
+}
+
+/**
+ * Parameter choices for a track's automation sublane picker: the fader and pan
+ * lanes plus, per insert slot, that processor's realtime-safe parameters as
+ * insert-parameter automation targets.
+ */
+function automationParamOptions(
+  track: EditorTrack,
+): ReadonlyArray<{ value: AutomationParam; label: string }> {
+  const options: { value: AutomationParam; label: string }[] = [
     { value: 'faderDb', label: t.value.shell.arrangement.trackHeader.volumeDb },
     { value: 'pan', label: t.value.shell.arrangement.trackHeader.pan },
-  ],
-);
+  ];
+  (track.mixer?.inserts ?? []).forEach((slot, index) => {
+    for (const param of insertParamInfo(slot.processor)) {
+      if (!param.rtSafe) continue;
+      options.push({
+        value: insertAutomationParam(index, param.name),
+        label: `${slot.processor} · ${param.name}`,
+      });
+    }
+  });
+  return options;
+}
 
 function onAutomationParamChange(track: EditorTrack, value: string): void {
   if (isAutomationParam(value)) emit('automationParam', track.id, value);
@@ -830,7 +866,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
             :track="track"
             :lane="automationLaneFor(track)"
             :param="automationParamFor(track)"
-            :options="automationParamOptions"
+            :options="automationParamOptions(track)"
             @param-change="onAutomationParamChange"
             @enabled-change="onAutomationEnabledChange"
           />

@@ -18,6 +18,8 @@ const props = defineProps<{
   pageMarginMm: number;
   scalePercent: number;
   spacingStaff: number;
+  barsPerSystem: number;
+  barsPerPage: number;
   /** Current display transpose in semitones (driven by the project store). */
   transpose: number;
 }>();
@@ -28,6 +30,8 @@ const emit = defineEmits<{
   'update:pageMarginMm': [value: number];
   'update:scalePercent': [value: number];
   'update:spacingStaff': [value: number];
+  'update:barsPerSystem': [value: number];
+  'update:barsPerPage': [value: number];
   /** Requests a display transpose change in semitones. */
   transposeChange: [value: number];
 }>();
@@ -81,6 +85,16 @@ const spacingModel = computed<number>({
   set: (value) => emit('update:spacingStaff', value),
 });
 
+const barsPerSystemModel = computed<number>({
+  get: () => props.barsPerSystem,
+  set: (value) => emit('update:barsPerSystem', value),
+});
+
+const barsPerPageModel = computed<number>({
+  get: () => props.barsPerPage,
+  set: (value) => emit('update:barsPerPage', value),
+});
+
 /** Display transpose options for the popover select (semitones). */
 const transposeOptions = computed(() =>
   TRANSPOSE_CHOICES.map((n) => ({ value: n, label: n > 0 ? `+${n}` : String(n) })),
@@ -118,6 +132,14 @@ const transposeOptions = computed(() =>
     <label class="layout-row">
       {{ t.shell.score.staffSpacing }}
       <input v-model.number="spacingModel" type="number" min="0" max="48" step="1" />
+    </label>
+    <label class="layout-row">
+      {{ t.shell.score.barsPerSystem }}
+      <input v-model.number="barsPerSystemModel" type="number" min="0" max="12" step="1" />
+    </label>
+    <label class="layout-row">
+      {{ t.shell.score.barsPerPage }}
+      <input v-model.number="barsPerPageModel" type="number" min="0" max="48" step="1" />
     </label>
     <label
       class="layout-row"

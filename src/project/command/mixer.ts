@@ -35,6 +35,7 @@ export {
 export {
   addInsert,
   removeInsert,
+  reorderInsert,
   setInsertEnabled,
   setInsertParam,
   setInsertSidechain,

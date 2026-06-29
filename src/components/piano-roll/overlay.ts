@@ -37,6 +37,8 @@ export interface GhostNote {
   durationPpq: number;
   /** Fill color (desaturated, translucent track color). */
   color: string;
+  /** Display name of the source track. */
+  trackName: string;
 }
 
 /**
@@ -125,12 +127,14 @@ export interface BuildGhostNotesOptions {
 export function buildGhostNotes(options: BuildGhostNotesOptions): GhostNote[] {
   const { clips, tracks, activeClipId } = options;
   const colorByTrack = new Map(tracks.map((track) => [track.id, ghostNoteColor(track.color)]));
+  const nameByTrack = new Map(tracks.map((track) => [track.id, track.name]));
   const fallbackColor = ghostNoteColor(DEFAULT_NOTE_COLOR);
   const active = clips.find((clip) => clip.id === activeClipId) ?? null;
   const out: GhostNote[] = [];
   for (const clip of clips) {
     if (clip.id === activeClipId) continue;
     const color = colorByTrack.get(clip.trackId) ?? fallbackColor;
+    const trackName = nameByTrack.get(clip.trackId) ?? 'Track';
     const offset = clipFrameOffsetPpq(clip, active);
     const windowStart = clip.sourceOffsetPpq;
     const windowEnd = clip.sourceOffsetPpq + clip.lengthPpq;
@@ -144,6 +148,7 @@ export function buildGhostNotes(options: BuildGhostNotesOptions): GhostNote[] {
         startPpq: note.startPpq + offset,
         durationPpq: note.durationPpq,
         color,
+        trackName,
       });
     }
   }

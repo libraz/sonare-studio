@@ -2,7 +2,17 @@
 import { computed, inject, onBeforeUnmount, reactive, ref } from 'vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
 import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
-import { isMixerBusStripTarget } from '@/project/commands';
+import {
+  type AutomationTarget,
+  busAutomationTarget,
+  insertAutomationParam,
+} from '@/project/automation';
+import {
+  isMixerBusStripTarget,
+  mixerBusIdFromTarget,
+  removeAutomationLane,
+  setAutomationLanePoints,
+} from '@/project/commands';
 import {
   listQuickControls,
   type QuickControl,
@@ -10,9 +20,17 @@ import {
   type QuickControlTarget,
   setQuickControl,
 } from '@/project/quick-controls';
+import { useProjectStore } from '@/project/store';
 import { formatControlValue, knobRotationDeg, knobValueForDrag } from '@/ui/devices/knob-math';
 import { useI18n } from '@/ui/i18n';
 import { midiLearnInsertTargetId, midiLearnInstrumentTargetId } from '@/ui/midi/midi-learn';
+import {
+  type AutomationWriteGesture,
+  type AutomationWriteMode,
+  automationStripMode,
+  createAutomationWriteGesture,
+  isAutomationWriteMode,
+} from '@/ui/mixer/automation-mode';
 
 /**
  * Quick Controls: up to eight knobs for the selected device (instrument or
@@ -26,9 +44,17 @@ const props = defineProps<{
   target: QuickControlTarget;
   /** Optional catalog resolvers (tests, custom catalogs). */
   resolvers?: QuickControlResolvers;
+  /**
+   * Playhead position getter in PPQ. Present enables touch-recording an insert
+   * knob into automation when its strip is in a write (touch/latch) mode.
+   */
+  positionPpq?: () => number;
+  /** True while the transport runs (continuous touch recording). */
+  isPlaying?: boolean;
 }>();
 
 const { t } = useI18n();
+const store = useProjectStore();
 /** Surfaced when a control edit rejects. */
 const error = ref('');
 
@@ -48,6 +74,81 @@ function apply(id: string, value: number, commit: boolean): void {
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   }
+}
+
+// --- Insert-knob touch recording ---------------------------------------------
+
+/** Strip automation target for an insert device, or null (instrument). */
+const insertAutomationTarget = computed<AutomationTarget | null>(() => {
+  if (props.target.type !== 'insert') return null;
+  const strip = props.target.trackId;
+  if (strip === 'master') return 'master';
+  if (typeof strip === 'number') return strip;
+  if (isMixerBusStripTarget(strip)) return busAutomationTarget(mixerBusIdFromTarget(strip));
+  return null;
+});
+
+/** Insert param token for a control on this device, or null (instrument). */
+function insertParamToken(controlId: string): ReturnType<typeof insertAutomationParam> | null {
+  if (props.target.type !== 'insert') return null;
+  return insertAutomationParam(props.target.index, controlId);
+}
+
+/** Write context decided when a write-mode insert-knob drag begins. */
+interface KnobWriteContext {
+  mode: AutomationWriteMode;
+  target: AutomationTarget;
+  param: ReturnType<typeof insertAutomationParam>;
+}
+
+/** Resolves the touch-record context for a control, or null (not recording). */
+function writeContextFor(controlId: string): KnobWriteContext | null {
+  if (props.positionPpq === undefined) return null;
+  const target = insertAutomationTarget.value;
+  const param = insertParamToken(controlId);
+  if (target === null || param === null) return null;
+  const mode = automationStripMode(target);
+  if (!isAutomationWriteMode(mode)) return null;
+  return { mode, target, param };
+}
+
+/** Set for the dragged knob while it touch-records (null in manual modes). */
+let writeContext: KnobWriteContext | null = null;
+let writeGesture: AutomationWriteGesture | null = null;
+/** Live value shown on the knob being touch-recorded (id + value), or null. */
+const writeValue = ref<{ id: string; value: number } | null>(null);
+
+/** Knob value shown: the live write drag for that knob, else the store value. */
+function shownValue(control: QuickControl): number {
+  return writeValue.value?.id === control.id ? writeValue.value.value : control.value;
+}
+
+/** Feeds a write-mode drag value into the lane gesture (lazily started). */
+function recordWrite(controlId: string, value: number): void {
+  const ctx = writeContext;
+  if (!ctx) return;
+  if (!writeGesture) {
+    const lane = store.automationLanes.find(
+      (entry) => entry.target === ctx.target && entry.param === ctx.param,
+    );
+    writeGesture = createAutomationWriteGesture({
+      mode: ctx.mode,
+      existingPoints: lane?.points ?? [],
+      positionPpq: () => Math.max(0, props.positionPpq?.() ?? 0),
+      isPlaying: () => props.isPlaying === true,
+      commit: (points) => setAutomationLanePoints(ctx.target, ctx.param, points),
+    });
+  }
+  writeGesture.update(value);
+  writeValue.value = { id: controlId, value };
+}
+
+/** Closes any in-flight write gesture, committing its recorded points. */
+function endWrite(): void {
+  writeGesture?.end();
+  writeGesture = null;
+  writeContext = null;
+  writeValue.value = null;
 }
 
 // --- Knob dragging -----------------------------------------------------------
@@ -79,6 +180,9 @@ function onKnobPointerDown(control: QuickControl, event: PointerEvent): void {
     max: control.max,
     moved: false,
   };
+  // A write-mode strip turns this drag into a touch-recording of the lane
+  // instead of a manual parameter edit; null keeps the manual command path.
+  writeContext = writeContextFor(control.id);
 }
 
 function onKnobPointerMove(event: PointerEvent): void {
@@ -93,13 +197,20 @@ function onKnobPointerMove(event: PointerEvent): void {
   );
   if (value === active.lastValue) return;
   drag.value = { ...active, lastValue: value, moved: true };
-  apply(active.id, value, false);
+  if (writeContext) recordWrite(active.id, value);
+  else apply(active.id, value, false);
 }
 
 function onKnobPointerUp(event: PointerEvent): void {
   const active = drag.value;
   if (!active || event.pointerId !== active.pointerId) return;
   drag.value = null;
+  // A write-mode drag commits its recorded points (a click without movement
+  // opened no gesture and records nothing).
+  if (writeGesture || writeContext) {
+    endWrite();
+    return;
+  }
   // Closing the gesture with the final value lands the drag as one history
   // entry; a click without movement opened no gesture and commits a no-op.
   if (active.moved) apply(active.id, active.lastValue, true);
@@ -171,14 +282,42 @@ function closeMenu(): void {
 }
 
 function onKnobContextMenu(control: QuickControl, event: MouseEvent): void {
-  if (!midiLearn) return;
-  if (props.target.type === 'insert' && isMixerBusStripTarget(props.target.trackId)) return;
+  // Open when the knob has at least one menu action: MIDI learn (when a handle
+  // is injected and the target is mappable) or automation (any insert knob).
+  const midiAvailable = midiLearn !== null && learnTargetId(control.id) !== '';
+  const automateAvailable = insertAutomationTarget.value !== null;
+  if (!midiAvailable && !automateAvailable) return;
   event.preventDefault();
   menu.open = true;
   menu.x = event.clientX;
   menu.y = event.clientY;
   menu.controlId = control.id;
   window.addEventListener('pointerdown', onOutsidePointerDown, true);
+}
+
+/** Existing automation lane for a control's insert param, or undefined. */
+function automationLaneFor(controlId: string) {
+  const target = insertAutomationTarget.value;
+  const param = insertParamToken(controlId);
+  if (target === null || param === null) return undefined;
+  return store.automationLanes.find((lane) => lane.target === target && lane.param === param);
+}
+
+/** Creates or removes the automation lane for the menu's control. */
+function onToggleAutomation(): void {
+  const target = insertAutomationTarget.value;
+  const param = insertParamToken(menu.controlId);
+  if (target !== null && param !== null) {
+    if (automationLaneFor(menu.controlId)) {
+      removeAutomationLane(target, param);
+    } else {
+      // Seed a breakpoint holding the current value so the lane exists and is
+      // selectable; further points come from drawing or touch recording.
+      const value = controls.value.find((control) => control.id === menu.controlId)?.value ?? 0;
+      setAutomationLanePoints(target, param, [{ ppq: 0, value }]);
+    }
+  }
+  closeMenu();
 }
 
 function onMidiLearn(): void {
@@ -193,7 +332,11 @@ function onMidiForget(): void {
   closeMenu();
 }
 
-onBeforeUnmount(closeMenu);
+onBeforeUnmount(() => {
+  closeMenu();
+  // Commit any in-flight touch recording so its points are not lost.
+  endWrite();
+});
 </script>
 
 <template>
@@ -218,7 +361,7 @@ onBeforeUnmount(closeMenu);
           :aria-label="control.name"
           :aria-valuemin="control.min"
           :aria-valuemax="control.max"
-          :aria-valuenow="control.value"
+          :aria-valuenow="shownValue(control)"
           @pointerdown="onKnobPointerDown(control, $event)"
           @pointermove="onKnobPointerMove"
           @pointerup="onKnobPointerUp"
@@ -229,12 +372,12 @@ onBeforeUnmount(closeMenu);
           <div
             class="qc-knob-indicator"
             :style="{
-              transform: `rotate(${knobRotationDeg(control.value, control.min, control.max)}deg)`,
+              transform: `rotate(${knobRotationDeg(shownValue(control), control.min, control.max)}deg)`,
             }"
           />
         </div>
         <span class="qc-name" v-tooltip="control.name">{{ control.name }}</span>
-        <span class="qc-value">{{ formatControlValue(control.value, control.unit) }}</span>
+        <span class="qc-value">{{ formatControlValue(shownValue(control), control.unit) }}</span>
       </div>
     </div>
     <Transition name="pop">
@@ -245,6 +388,19 @@ onBeforeUnmount(closeMenu);
       role="menu"
     >
       <button
+        v-if="insertAutomationTarget !== null"
+        type="button"
+        role="menuitem"
+        @click="onToggleAutomation"
+      >
+        {{
+          automationLaneFor(menu.controlId)
+            ? t.shell.mixer.controls.removeAutomation
+            : t.shell.mixer.controls.automateParam
+        }}
+      </button>
+      <button
+        v-if="learnState(menu.controlId) !== undefined"
         type="button"
         role="menuitem"
         :class="{ 'qc-menu-armed': learnState(menu.controlId) === 'armed' }"

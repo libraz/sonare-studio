@@ -19,6 +19,7 @@ import {
   type AutomationParam,
   evaluateAutomationValue,
 } from '@/project/automation';
+import { insertParamDomainForStrip } from '@/project/insert-param-domains';
 import type { EditorTrack } from '@/project/types';
 import {
   AUTOMATION_LANE_HEIGHT_PX,
@@ -107,6 +108,10 @@ export function drawAutomationSublane(
 ): void {
   const { range, automationParams, automationLanes, automation, colors } = context;
   const param = automationParams[track.id] ?? 'faderDb';
+  const insertDomainInfo = insertParamDomainForStrip(track.mixer, param);
+  const insertDomain = insertDomainInfo
+    ? { min: insertDomainInfo.min, max: insertDomainInfo.max }
+    : undefined;
   ctx.save();
   ctx.beginPath();
   const clipTop = Math.max(top, RULER_HEIGHT_PX);
@@ -114,8 +119,8 @@ export function drawAutomationSublane(
   ctx.clip();
   ctx.fillStyle = colors.automationLane;
   ctx.fillRect(0, top, w, height);
-  const domain = automationValueDomain(param);
-  const midY = automationValueToY(param, (domain.min + domain.max) / 2, top, height);
+  const domain = automationValueDomain(param, insertDomain);
+  const midY = automationValueToY(param, (domain.min + domain.max) / 2, top, height, insertDomain);
   ctx.fillStyle = colors.automationMidline;
   ctx.fillRect(0, Math.round(midY), w, 1);
 
@@ -142,7 +147,7 @@ export function drawAutomationSublane(
   ctx.beginPath();
   for (let i = 0; i < xs.length; i++) {
     const value = evaluateAutomationValue(points, range.xToPpq(xs[i]));
-    const y = automationValueToY(param, value, top, height);
+    const y = automationValueToY(param, value, top, height, insertDomain);
     if (i === 0) ctx.moveTo(xs[i], y);
     else ctx.lineTo(xs[i], y);
   }
@@ -152,7 +157,7 @@ export function drawAutomationSublane(
   for (let i = 0; i < points.length; i++) {
     const x = range.ppqToX(points[i].ppq);
     if (x < -AUTOMATION_POINT_RADIUS_PX || x > w + AUTOMATION_POINT_RADIUS_PX) continue;
-    const y = automationValueToY(param, points[i].value, top, height);
+    const y = automationValueToY(param, points[i].value, top, height, insertDomain);
     const hovered =
       !previewing &&
       hover !== null &&

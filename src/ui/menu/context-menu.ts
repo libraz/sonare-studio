@@ -25,6 +25,8 @@ export interface ContextMenuItem {
   checked?: boolean;
   /** Action run on click; the menu closes first, then the action runs. */
   run?: () => void;
+  /** Nested actions shown as a submenu. */
+  children?: ContextMenuItem[];
   /** Greys the item out and ignores clicks. */
   disabled?: boolean;
   /** Renders the item with destructive styling. */
@@ -73,7 +75,9 @@ export function cleanItems(items: readonly ContextMenuItem[]): ContextMenuItem[]
       if (out.length === 0 || out[out.length - 1].separator) continue;
       out.push(item);
     } else {
-      out.push(item);
+      const children = item.children ? cleanItems(item.children) : undefined;
+      if (item.children && !children?.some((child) => !child.separator)) continue;
+      out.push(children ? { ...item, children } : item);
     }
   }
   while (out.length > 0 && out[out.length - 1].separator) out.pop();
@@ -99,7 +103,7 @@ export function closeContextMenu(): void {
  * @param items - Candidate menu items; cleaned before display.
  */
 export function openContextMenu(x: number, y: number, items: readonly ContextMenuItem[]): void {
-  const usable = items.filter((item) => item.separator || item.run);
+  const usable = items.filter((item) => item.separator || item.run || item.children);
   const cleaned = cleanItems(usable);
   if (!cleaned.some((item) => !item.separator)) {
     closeContextMenu();

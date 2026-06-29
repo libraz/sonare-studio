@@ -374,6 +374,31 @@
   color: var(--text-4);
 }
 
+.insert-row.dragging {
+  opacity: 0.5;
+}
+
+.insert-row.drag-over {
+  border-color: var(--accent);
+  box-shadow: inset 0 2px 0 -1px var(--accent), var(--raise-hi);
+}
+
+.insert-grip {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 0 2px;
+  color: var(--text-4);
+  cursor: grab;
+  font-size: 10px;
+  line-height: 1;
+  user-select: none;
+}
+
+.insert-row.dragging .insert-grip {
+  cursor: grabbing;
+}
+
 .insert-power {
   flex: none;
   width: 20px;

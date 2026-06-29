@@ -13,6 +13,13 @@ export interface PageLayout {
   pageHeightMm: number;
 }
 
+/** Optional PDF document metadata. */
+export interface PdfMetadata {
+  title?: string;
+  author?: string;
+  subject?: string;
+}
+
 /** Points per millimetre (72 pt per inch / 25.4 mm per inch). */
 const PT_PER_MM = 72 / 25.4;
 
@@ -42,6 +49,9 @@ export const PRINT_ROOT_CLASS = 'sonare-print-root';
 /** Class name of each page wrapper inside the print container. */
 export const PRINT_PAGE_CLASS = 'sonare-print-page';
 
+/** Fallback cleanup delay when a browser does not fire `afterprint`. */
+export const PRINT_CLEANUP_FALLBACK_MS = 60_000;
+
 /**
  * Builds the print stylesheet for a page layout: an `@page` rule fixing the
  * physical paper size and `@media print` rules that show only the injected
@@ -58,11 +68,14 @@ export function buildPrintPageCss(layout: PageLayout): string {
     `  body > *:not(.${PRINT_ROOT_CLASS}) { display: none !important; }`,
     `  .${PRINT_ROOT_CLASS} { display: block !important; }`,
     `  .${PRINT_PAGE_CLASS} {`,
+    '    box-sizing: border-box;',
     `    width: ${pageWidthMm}mm;`,
     `    height: ${pageHeightMm}mm;`,
     '    overflow: hidden;',
     '    break-after: page;',
     '    page-break-after: always;',
+    '    print-color-adjust: exact;',
+    '    -webkit-print-color-adjust: exact;',
     '  }',
     `  .${PRINT_PAGE_CLASS} > svg { width: 100%; height: 100%; }`,
     '}',
@@ -83,6 +96,9 @@ export function buildPrintPageCss(layout: PageLayout): string {
 function parseSvgPage(svg: string): Element {
   const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml');
   if (parsed.getElementsByTagName('parsererror').length > 0) {
+    throw new Error('Invalid SVG page markup');
+  }
+  if (parsed.documentElement.tagName.toLowerCase() !== 'svg') {
     throw new Error('Invalid SVG page markup');
   }
   return parsed.documentElement;
@@ -116,11 +132,22 @@ export function printScore(svgPages: string[], layout: PageLayout): void {
 
   document.head.append(style);
   document.body.append(root);
-  try {
-    window.print();
-  } finally {
+  let cleanupTimer: ReturnType<typeof setTimeout> | null = null;
+  const cleanup = () => {
+    if (cleanupTimer !== null) {
+      clearTimeout(cleanupTimer);
+      cleanupTimer = null;
+    }
+    window.removeEventListener('afterprint', cleanup);
     root.remove();
     style.remove();
+  };
+  try {
+    window.addEventListener('afterprint', cleanup, { once: true });
+    window.print();
+    cleanupTimer = setTimeout(cleanup, PRINT_CLEANUP_FALLBACK_MS);
+  } finally {
+    if (cleanupTimer === null) cleanup();
   }
 }
 
@@ -136,12 +163,22 @@ export function printScore(svgPages: string[], layout: PageLayout): void {
  * @returns The finished PDF as a Blob (hand to {@link downloadBlob}).
  * @throws TypeError when svgPages is empty.
  */
-export async function exportPdf(svgPages: string[], layout: PageLayout): Promise<Blob> {
+export async function exportPdf(
+  svgPages: string[],
+  layout: PageLayout,
+  metadata: PdfMetadata = {},
+): Promise<Blob> {
   if (svgPages.length === 0) throw new TypeError('exportPdf requires at least one SVG page');
   const [{ jsPDF }] = await Promise.all([import('jspdf'), import('svg2pdf.js')]);
   const format: [number, number] = [layout.pageWidthMm, layout.pageHeightMm];
   const orientation = layout.pageWidthMm > layout.pageHeightMm ? 'landscape' : 'portrait';
   const doc = new jsPDF({ unit: 'mm', format, orientation });
+  doc.setProperties?.({
+    title: metadata.title?.trim() || 'score',
+    author: metadata.author?.trim() || 'sonare studio',
+    subject: metadata.subject?.trim() || 'Engraved score',
+    creator: 'sonare studio',
+  });
   for (let i = 0; i < svgPages.length; i++) {
     if (i > 0) doc.addPage(format, orientation);
     await doc.svg(parseSvgPage(svgPages[i]), {

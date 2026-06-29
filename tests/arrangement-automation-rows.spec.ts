@@ -167,6 +167,14 @@ describe('arrangement automation rows', () => {
       expect(automationValueDomain('faderDb')).toEqual({ min: -60, max: 12 });
       expect(automationValueDomain('pan')).toEqual({ min: -1, max: 1 });
     });
+
+    it('uses the supplied insert domain, falling back to [0, 1]', () => {
+      expect(automationValueDomain('insert:0:thresholdDb', { min: -60, max: 0 })).toEqual({
+        min: -60,
+        max: 0,
+      });
+      expect(automationValueDomain('insert:0:thresholdDb')).toEqual({ min: 0, max: 1 });
+    });
   });
 
   describe('automationValueToY / automationYToValue', () => {
@@ -200,6 +208,20 @@ describe('arrangement automation rows', () => {
     it('clamps y positions outside the padded band to the domain edges', () => {
       expect(automationYToValue('pan', top - 50, top, height)).toBe(1);
       expect(automationYToValue('pan', top + height + 50, top, height)).toBe(-1);
+    });
+
+    it('threads an insert domain through y conversion and back', () => {
+      const param = 'insert:0:thresholdDb';
+      const insertDomain = { min: -60, max: 0 };
+      expect(automationValueToY(param, 0, top, height, insertDomain)).toBe(innerTop);
+      expect(automationValueToY(param, -60, top, height, insertDomain)).toBe(innerBottom);
+      for (const value of [-60, -30, -6, 0]) {
+        const y = automationValueToY(param, value, top, height, insertDomain);
+        expect(automationYToValue(param, y, top, height, insertDomain)).toBeCloseTo(value, 12);
+      }
+      // Without a domain the insert lane falls back to [0, 1].
+      expect(automationValueToY(param, 1, top, height)).toBe(innerTop);
+      expect(automationValueToY(param, 0, top, height)).toBe(innerBottom);
     });
   });
 });
