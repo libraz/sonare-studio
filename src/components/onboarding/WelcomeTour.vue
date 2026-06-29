@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useI18n } from '@/ui/i18n';
 import {
   type AnchorRect,
@@ -45,6 +45,39 @@ const isLast = ref(false);
 const anchorRect = ref<AnchorRect | null>(null);
 const placement = ref<TooltipPlacement>({ left: 0, top: 0, side: 'bottom' });
 const tooltipRef = ref<HTMLElement | null>(null);
+
+/**
+ * Highlight box clamped to the viewport. A full-bleed anchor (e.g. a panel
+ * spanning the whole width) would otherwise push its left/right borders a few
+ * pixels off-screen, making the spotlight look borderless. Keeping the 2px
+ * border inside the viewport ensures the outline always reads as a frame.
+ */
+const highlightStyle = computed(() => {
+  const rect = anchorRect.value;
+  if (rect === null) return {};
+  const pad = 4;
+  // Keep the full 2px border + halo within the viewport edge.
+  const margin = 2;
+  let left = rect.left - pad;
+  let top = rect.top - pad;
+  let right = rect.left + rect.width + pad;
+  let bottom = rect.top + rect.height + pad;
+  // clientWidth/Height exclude the scrollbar gutter that innerWidth/Height
+  // include; clamping to those keeps the right/bottom border on-screen rather
+  // than tucked behind a scrollbar where the fixed overlay does not paint.
+  const viewW = document.documentElement.clientWidth;
+  const viewH = document.documentElement.clientHeight;
+  left = Math.max(margin, left);
+  top = Math.max(margin, top);
+  right = Math.min(viewW - margin, right);
+  bottom = Math.min(viewH - margin, bottom);
+  return {
+    left: `${left}px`,
+    top: `${top}px`,
+    width: `${Math.max(0, right - left)}px`,
+    height: `${Math.max(0, bottom - top)}px`,
+  };
+});
 
 let sequence: TourSequence | null = null;
 
@@ -204,12 +237,7 @@ onBeforeUnmount(() => {
     <div
       v-if="anchorRect"
       class="tour-highlight"
-      :style="{
-        left: `${anchorRect.left - 4}px`,
-        top: `${anchorRect.top - 4}px`,
-        width: `${anchorRect.width + 8}px`,
-        height: `${anchorRect.height + 8}px`,
-      }"
+      :style="highlightStyle"
     />
     <div
       ref="tooltipRef"

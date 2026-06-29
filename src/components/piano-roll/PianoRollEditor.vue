@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
+import { useAppSettings } from '@/composables/useAppSettings';
 import { useEditorTool } from '@/composables/useEditorTool';
 import { formatPitch } from '@/lib/pitch';
 import {
@@ -72,6 +73,7 @@ const props = defineProps<{
 
 const store = useProjectStore();
 const { t } = useI18n();
+const appSettings = useAppSettings();
 
 /** Whether the MIDI-FX transform popover is open. */
 const fxPanelOpen = ref(false);
@@ -92,8 +94,15 @@ const { range, painter, revision, error, gridPpq, root, gridCell, hTrack, vTrack
 /** Whether the multi-track ghost overlay is drawn. */
 const overlayEnabled = ref(true);
 
-/** Whether the bottom velocity / CC parameter lane block is shown. */
-const laneVisible = ref(true);
+/**
+ * Whether the bottom velocity / CC parameter lane block is shown. Backed by the
+ * shared user preference so the choice is remembered across editors, clip
+ * re-opens and restarts; toggling the lane writes the preference through.
+ */
+const laneVisible = computed({
+  get: () => appSettings.settings.pianoRollLaneVisible,
+  set: (value: boolean) => appSettings.set('pianoRollLaneVisible', value),
+});
 
 /** The scrollable lane-parameter tab column on the left of the lane. */
 const laneLabelColumn = ref<HTMLElement | null>(null);

@@ -43,6 +43,8 @@ export interface AppSettings {
   autosaveIntervalMs: number;
   /** Whether the arrangement/piano-roll views follow the playhead. */
   scrollFollowPlayhead: boolean;
+  /** Whether the piano-roll bottom velocity / CC lane is shown. */
+  pianoRollLaneVisible: boolean;
   /** Ask for confirmation before destructive actions (delete project, discard edits). */
   confirmDestructive: boolean;
   /**
@@ -74,6 +76,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   monitorDefault: false,
   autosaveIntervalMs: 30000,
   scrollFollowPlayhead: true,
+  pianoRollLaneVisible: true,
   confirmDestructive: true,
   loudnessTargetLufs: -14,
 };
@@ -132,6 +135,7 @@ export function sanitizeAppSettings(raw: unknown): AppSettings {
       defaults.autosaveIntervalMs,
     ),
     scrollFollowPlayhead: asBoolean(source.scrollFollowPlayhead, defaults.scrollFollowPlayhead),
+    pianoRollLaneVisible: asBoolean(source.pianoRollLaneVisible, defaults.pianoRollLaneVisible),
     confirmDestructive: asBoolean(source.confirmDestructive, defaults.confirmDestructive),
     loudnessTargetLufs: asIntInRange(
       source.loudnessTargetLufs,

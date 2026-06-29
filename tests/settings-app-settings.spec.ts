@@ -45,6 +45,7 @@ describe('sanitizeAppSettings', () => {
       monitorDefault: DEFAULT_APP_SETTINGS.monitorDefault,
       autosaveIntervalMs: 60000,
       scrollFollowPlayhead: DEFAULT_APP_SETTINGS.scrollFollowPlayhead,
+      pianoRollLaneVisible: DEFAULT_APP_SETTINGS.pianoRollLaneVisible,
       confirmDestructive: false,
       loudnessTargetLufs: DEFAULT_APP_SETTINGS.loudnessTargetLufs,
     });
