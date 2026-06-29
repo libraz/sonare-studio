@@ -197,7 +197,7 @@ onBeforeUnmount(() => {
       <button
         type="button"
         class="bus-name"
-        :title="t.shell.mixer.strip.renameBusTitle"
+        v-tooltip="t.shell.mixer.strip.renameBusTitle"
         @click="onRename"
       >
         {{ props.bus.name }}
@@ -207,7 +207,7 @@ onBeforeUnmount(() => {
           type="button"
           class="strip-options-btn"
           :class="{ on: hasStripOptions }"
-          :title="t.shell.mixer.strip.options"
+          v-tooltip="t.shell.mixer.strip.options"
           :aria-label="formatMessage(t.shell.mixer.strip.optionsNamed, { name: props.bus.name })"
           aria-haspopup="menu"
           :aria-expanded="optionsOpen"
@@ -284,7 +284,7 @@ onBeforeUnmount(() => {
       <button
         type="button"
         class="bus-remove"
-        :title="t.shell.mixer.strip.removeBusTitle"
+        v-tooltip="t.shell.mixer.strip.removeBusTitle"
         :aria-label="formatMessage(t.shell.mixer.strip.removeBus, { name: props.bus.name })"
         @click="onRemove"
       >
@@ -299,7 +299,7 @@ onBeforeUnmount(() => {
         type="button"
         class="bus-auto-button"
         :class="{ on: autoMode === 'read' }"
-        :title="t.shell.mixer.strip.automationReadTitle"
+        v-tooltip="t.shell.mixer.strip.automationReadTitle"
         :aria-label="formatMessage(t.shell.mixer.strip.automationRead, { name: props.bus.name })"
         :aria-pressed="autoMode === 'read'"
         @click="toggleAutomationStripMode(automationTarget, 'read')"
@@ -310,7 +310,7 @@ onBeforeUnmount(() => {
         type="button"
         class="bus-auto-button"
         :class="{ on: autoMode === 'touch' }"
-        :title="t.shell.mixer.strip.automationTouchTitle"
+        v-tooltip="t.shell.mixer.strip.automationTouchTitle"
         :aria-label="formatMessage(t.shell.mixer.strip.automationTouch, { name: props.bus.name })"
         :aria-pressed="autoMode === 'touch'"
         @click="toggleAutomationStripMode(automationTarget, 'touch')"
@@ -321,7 +321,7 @@ onBeforeUnmount(() => {
         type="button"
         class="bus-auto-button"
         :class="{ on: autoMode === 'latch' }"
-        :title="t.shell.mixer.strip.automationLatchTitle"
+        v-tooltip="t.shell.mixer.strip.automationLatchTitle"
         :aria-label="formatMessage(t.shell.mixer.strip.automationLatch, { name: props.bus.name })"
         :aria-pressed="autoMode === 'latch'"
         @click="toggleAutomationStripMode(automationTarget, 'latch')"

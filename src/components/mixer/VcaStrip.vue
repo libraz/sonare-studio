@@ -57,7 +57,7 @@ async function onRename(): Promise<void> {
       <button
         type="button"
         class="vca-name"
-        :title="t.shell.mixer.strip.renameVcaTitle"
+        v-tooltip="t.shell.mixer.strip.renameVcaTitle"
         @click="onRename"
       >
         {{ props.group.name }}
@@ -65,7 +65,7 @@ async function onRename(): Promise<void> {
       <button
         type="button"
         class="vca-remove"
-        :title="t.shell.mixer.strip.removeVcaTitle"
+        v-tooltip="t.shell.mixer.strip.removeVcaTitle"
         :aria-label="formatMessage(t.shell.mixer.strip.removeVca, { name: props.group.name })"
         @click="onRemove"
       >

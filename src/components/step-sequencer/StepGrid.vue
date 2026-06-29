@@ -104,7 +104,7 @@ function fillHeight(velocity: number): string {
       <button
         type="button"
         class="row-label"
-        :title="`${row.name} (${row.pitch})`"
+        v-tooltip="`${row.name} (${row.pitch})`"
         @click="emit('select-row', rowIndex)"
       >
         <span class="row-name">{{ row.name }}</span>

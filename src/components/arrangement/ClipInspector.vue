@@ -77,7 +77,7 @@ function onLoopToggle(): void {
 <template>
   <Transition name="fade">
   <div v-if="props.clip" class="clip-inspector" :aria-label="t.shell.arrangement.clipInspector.label">
-    <span class="ci-name" :title="props.clip.name">{{ props.clip.name }}</span>
+    <span class="ci-name" v-tooltip="props.clip.name">{{ props.clip.name }}</span>
 
     <label class="ci-field">
       {{ t.shell.arrangement.clipInspector.gain }}
@@ -134,7 +134,7 @@ function onLoopToggle(): void {
       v-if="isAudio"
       type="button"
       class="ci-redetect"
-      :title="t.shell.arrangement.clipInspector.redetectTitle"
+      v-tooltip="t.shell.arrangement.clipInspector.redetectTitle"
       @click="emit('redetectTempo', props.clip.id)"
     >
       {{ t.shell.arrangement.clipInspector.redetect }}

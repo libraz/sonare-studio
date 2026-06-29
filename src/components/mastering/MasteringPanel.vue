@@ -540,7 +540,7 @@ onBeforeUnmount(() => {
         type="button"
         class="assist-button"
         :disabled="suggesting"
-        :title="t.shell.mastering.assistant.title"
+        v-tooltip="t.shell.mastering.assistant.title"
         @click="onAutoSuggest"
       >
         {{ suggesting ? t.shell.mastering.assistant.analyzing : t.shell.mastering.assistant.suggest }}

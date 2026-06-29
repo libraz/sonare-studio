@@ -205,7 +205,7 @@ function onEscape(field: FieldDef, event: KeyboardEvent): void {
 
 <template>
   <div class="info-line" role="group" :aria-label="t.shell.pianoRoll.info.label">
-    <label v-for="field in fields" :key="field.key" class="info-line__field" :title="field.title">
+    <label v-for="field in fields" :key="field.key" class="info-line__field" v-tooltip="field.title">
       <span class="info-line__label">{{ field.label }}</span>
       <input
         class="info-line__input"

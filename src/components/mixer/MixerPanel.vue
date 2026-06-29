@@ -141,7 +141,7 @@ onBeforeUnmount(() => {
       <button
         type="button"
         class="toolbar-button"
-        :title="t.shell.mixer.addBusTitle"
+        v-tooltip="t.shell.mixer.addBusTitle"
         @click="onAddBus"
       >
         {{ t.shell.mixer.addBus }}
@@ -149,7 +149,7 @@ onBeforeUnmount(() => {
       <button
         type="button"
         class="toolbar-button"
-        :title="t.shell.mixer.addVcaTitle"
+        v-tooltip="t.shell.mixer.addVcaTitle"
         :disabled="!canAddVca"
         @click="onAddVca"
       >
@@ -159,7 +159,7 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="toolbar-button"
-          :title="t.shell.mixer.viewTitle"
+          v-tooltip="t.shell.mixer.viewTitle"
           aria-haspopup="menu"
           :aria-expanded="menuOpen"
           @click="menuOpen = !menuOpen"

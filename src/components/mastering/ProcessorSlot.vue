@@ -74,7 +74,7 @@ function controlDisplay(control: MasteringControl): string {
     @drop="emit('drop', index)"
     @dragend="emit('drag-end')"
   >
-    <span class="chain-drag" :title="t.shell.mastering.dragReorder" aria-hidden="true">
+    <span class="chain-drag" v-tooltip="t.shell.mastering.dragReorder" aria-hidden="true">
       <svg class="chain-drag-icon" viewBox="0 0 6 10" fill="currentColor" focusable="false">
         <circle cx="1.5" cy="2" r="0.9" />
         <circle cx="4.5" cy="2" r="0.9" />
@@ -88,7 +88,7 @@ function controlDisplay(control: MasteringControl): string {
       type="button"
       class="chain-power"
       :class="{ on: slot.enabled }"
-      :title="slot.enabled ? t.shell.mastering.bypassProcessor : t.shell.mastering.enableProcessor"
+      v-tooltip="slot.enabled ? t.shell.mastering.bypassProcessor : t.shell.mastering.enableProcessor"
       :aria-label="
         formatMessage(t.shell.mastering.processorPower, {
           name: humanizeInsertName(slot.processor),
@@ -101,7 +101,7 @@ function controlDisplay(control: MasteringControl): string {
       type="button"
       class="chain-name"
       :class="{ expanded }"
-      :title="slot.processor"
+      v-tooltip="slot.processor"
       @click="emit('toggle-expanded', index)"
     >
       {{ humanizeInsertName(slot.processor) }}
@@ -110,7 +110,7 @@ function controlDisplay(control: MasteringControl): string {
     <button
       type="button"
       class="chain-remove"
-      :title="t.shell.mastering.removeProcessor"
+      v-tooltip="t.shell.mastering.removeProcessor"
       :aria-label="
         formatMessage(t.shell.mastering.removeNamed, {
           name: humanizeInsertName(slot.processor),

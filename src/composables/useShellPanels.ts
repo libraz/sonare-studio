@@ -19,6 +19,7 @@ export interface ShellPanelsOptions {
 export function useShellPanels(options: ShellPanelsOptions) {
   const settingsOpen = ref(false);
   const aboutOpen = ref(false);
+  const diagnosticsOpen = ref(false);
   const helpOpen = ref(false);
   const helpMenuOpen = ref(false);
   const helpMenuRoot = ref<HTMLElement | null>(null);
@@ -69,8 +70,14 @@ export function useShellPanels(options: ShellPanelsOptions) {
     aboutOpen.value = true;
   }
 
+  function openDiagnostics(): void {
+    helpMenuOpen.value = false;
+    diagnosticsOpen.value = true;
+  }
+
   return {
     aboutOpen,
+    diagnosticsOpen,
     helpMenuOpen,
     helpMenuRoot,
     helpOpen,
@@ -81,6 +88,7 @@ export function useShellPanels(options: ShellPanelsOptions) {
     tourRef,
     applyNamedLayout,
     openAbout,
+    openDiagnostics,
     openShortcutsHelp,
     openWelcomeTour,
     saveCurrentLayoutAction,

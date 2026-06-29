@@ -244,6 +244,7 @@ onBeforeUnmount(() => {
         v-if="open"
         ref="listRef"
         class="select-list"
+        :class="`is-${props.size}`"
         :style="menuStyle"
         role="listbox"
         :aria-label="props.ariaLabel"
@@ -361,6 +362,9 @@ onBeforeUnmount(() => {
   margin: 0;
   padding: var(--sp-2);
   list-style: none;
+  /* Teleported to <body>, so the list cannot inherit the trigger's context;
+   * pin the option type scale to the trigger size instead of the body font. */
+  font-size: var(--fs-sm);
   overflow: auto;
   background: var(--glass-3);
   -webkit-backdrop-filter: var(--glass-blur);
@@ -376,15 +380,24 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: var(--sp-3);
   padding: var(--sp-2) var(--sp-3);
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   color: var(--text-2);
   cursor: pointer;
   white-space: nowrap;
+  font-size: inherit;
+}
+
+.select-list.is-sm {
+  font-size: var(--fs-xs);
+}
+
+.select-list.is-sm .select-option {
+  padding: var(--sp-1) var(--sp-3);
 }
 
 .select-option.is-active {
-  background: var(--accent);
-  color: var(--accent-text);
+  background: var(--accent-soft);
+  color: var(--text-1);
 }
 
 .select-option.is-selected {
@@ -393,7 +406,7 @@ onBeforeUnmount(() => {
 }
 
 .select-option.is-active.is-selected {
-  color: var(--accent-text);
+  color: var(--text-1);
 }
 
 .select-option.is-disabled {
@@ -412,7 +425,7 @@ onBeforeUnmount(() => {
 }
 
 .select-option.is-active .select-check {
-  color: var(--accent-text);
+  color: var(--accent);
 }
 
 .select-pop-enter-active {

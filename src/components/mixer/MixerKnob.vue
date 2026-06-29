@@ -177,7 +177,7 @@ function onMidiForget(): void {
       :aria-valuemax="props.max"
       :aria-valuenow="props.value"
       :aria-valuetext="displayText"
-      :title="`${props.label ? `${props.label} ` : ''}${displayText}`"
+      v-tooltip="`${props.label ? `${props.label} ` : ''}${displayText}`"
       @pointerdown="onPointerDown"
       @pointermove="onPointerMove"
       @pointerup="onPointerUp"

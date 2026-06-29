@@ -54,7 +54,7 @@ export const TOUR_STEPS: TourStep[] = [
   },
   {
     id: 'menu',
-    target: '.project-menu',
+    target: '.app-menubar:not(.app-menubar--end)',
     title: 'Project menu',
     body: 'New, open, save, audio import and all export options.',
   },

@@ -279,7 +279,7 @@ function apply(): void {
       <button
         type="button"
         :disabled="detectableAudioClip === null || isDetecting"
-        :title="t.shell.lists.tempo.detectFromClipTitle"
+        v-tooltip="t.shell.lists.tempo.detectFromClipTitle"
         @click="detectFromClip"
       >
         {{ t.shell.lists.tempo.detectFromClip }}
@@ -287,7 +287,7 @@ function apply(): void {
       <button
         type="button"
         :disabled="detectableAudioClip === null || isDetecting"
-        :title="t.shell.lists.tempo.detectMapFromClipTitle"
+        v-tooltip="t.shell.lists.tempo.detectMapFromClipTitle"
         @click="detectMapFromClip"
       >
         {{ t.shell.lists.tempo.detectMapFromClip }}

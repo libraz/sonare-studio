@@ -590,7 +590,7 @@ onBeforeUnmount(() => {
           type="button"
           class="section-detect"
           :disabled="detectableAudioClip === null || isDetectingSections"
-          :title="t.shell.arrangement.detectSectionsTitle"
+          v-tooltip="t.shell.arrangement.detectSectionsTitle"
           @click="detectSections"
         >
           {{ t.shell.arrangement.detectSections }}
@@ -599,7 +599,7 @@ onBeforeUnmount(() => {
           type="button"
           class="section-detect"
           :disabled="detectableAudioClip === null || isExtractingMelody"
-          :title="t.shell.arrangement.extractMelodyTitle"
+          v-tooltip="t.shell.arrangement.extractMelodyTitle"
           @click="extractMelody"
         >
           {{ t.shell.arrangement.extractMelody }}
@@ -608,7 +608,7 @@ onBeforeUnmount(() => {
           type="button"
           class="section-detect"
           :disabled="detectableAudioClip === null || isSplittingStems"
-          :title="t.shell.arrangement.splitStemsTitle"
+          v-tooltip="t.shell.arrangement.splitStemsTitle"
           @click="splitToStems"
         >
           {{ t.shell.arrangement.splitStems }}

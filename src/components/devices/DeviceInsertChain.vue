@@ -37,7 +37,7 @@ const { t } = useI18n();
           type="button"
           class="insert-power"
           :class="{ on: insertSlot.enabled }"
-          :title="insertSlot.enabled ? t.shell.inserts.bypass : t.shell.inserts.enable"
+          v-tooltip="insertSlot.enabled ? t.shell.inserts.bypass : t.shell.inserts.enable"
           :aria-label="
             formatMessage(t.shell.inserts.power, { name: insertLabel(insertSlot.processor) })
           "
@@ -49,7 +49,7 @@ const { t } = useI18n();
         <button
           type="button"
           class="insert-name"
-          :title="insertSlot.processor"
+          v-tooltip="insertSlot.processor"
           @click="emit('selectInsert', index)"
         >
           {{ insertLabel(insertSlot.processor) }}
@@ -58,7 +58,7 @@ const { t } = useI18n();
         <button
           type="button"
           class="insert-remove"
-          :title="t.shell.inserts.remove"
+          v-tooltip="t.shell.inserts.remove"
           :aria-label="
             formatMessage(t.shell.inserts.removeNamed, { name: insertLabel(insertSlot.processor) })
           "

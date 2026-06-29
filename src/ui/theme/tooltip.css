@@ -1,0 +1,38 @@
+/*
+ * Shared tooltip chip styling for the `v-tooltip` directive (src/ui/tooltip.ts).
+ * A single frosted-glass chip is positioned in the body by the directive; these
+ * rules give it the app's material and a soft scale-in. Durations read the
+ * motion tokens, so the reveal collapses to an instant swap under reduced
+ * motion.
+ */
+.app-tooltip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 200;
+  max-width: 20rem;
+  padding: var(--sp-1) var(--sp-3);
+  background: var(--glass-3);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--glass-hairline), var(--shadow-pop);
+  color: var(--text-1);
+  font-family: var(--font-sans);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  line-height: 1.4;
+  white-space: normal;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(2px) scale(0.97);
+  transition:
+    opacity var(--dur-1) var(--ease-out),
+    transform var(--dur-2) var(--ease-out);
+}
+
+.app-tooltip.is-visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}

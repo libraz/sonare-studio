@@ -74,7 +74,7 @@ const countInOptions = computed(() =>
         class="transport-nav"
         :disabled="!handle"
         :aria-label="t.shell.transport.goToStart"
-        :title="t.shell.transport.goToStartTitle"
+        v-tooltip="t.shell.transport.goToStartTitle"
         @click="emit('seekToStart')"
       >
         <TransportIcon name="to-start" />
@@ -84,7 +84,7 @@ const countInOptions = computed(() =>
         class="transport-nav"
         :disabled="!handle"
         :aria-label="t.shell.transport.nudgeBack"
-        :title="t.shell.transport.nudgeBackTitle"
+        v-tooltip="t.shell.transport.nudgeBackTitle"
         @click="emit('nudgeByBar', -1)"
       >
         <TransportIcon name="rewind" />
@@ -94,7 +94,7 @@ const countInOptions = computed(() =>
         class="transport-nav"
         :disabled="!handle"
         :aria-label="t.shell.transport.nudgeForward"
-        :title="t.shell.transport.nudgeForwardTitle"
+        v-tooltip="t.shell.transport.nudgeForwardTitle"
         @click="emit('nudgeByBar', 1)"
       >
         <TransportIcon name="forward" />
@@ -104,7 +104,7 @@ const countInOptions = computed(() =>
         class="transport-nav"
         :disabled="!handle"
         :aria-label="t.shell.transport.goToEnd"
-        :title="t.shell.transport.goToEndTitle"
+        v-tooltip="t.shell.transport.goToEndTitle"
         @click="emit('seekToEnd')"
       >
         <TransportIcon name="to-end" />
@@ -117,7 +117,7 @@ const countInOptions = computed(() =>
         :disabled="!handle"
         :aria-label="t.shell.transport.cycle"
         :aria-pressed="loopEnabled"
-        :title="shortcutTitle(t.shell.transport.cycleTitle, 'transport.toggleLoop')"
+        v-tooltip="shortcutTitle(t.shell.transport.cycleTitle, 'transport.toggleLoop')"
         @click="emit('toggleLoop')"
       >
         <TransportIcon name="cycle" />
@@ -127,7 +127,7 @@ const countInOptions = computed(() =>
         class="transport-key stop"
         :disabled="!handle || !isPlaying"
         :aria-label="t.shell.transport.stop"
-        :title="t.shell.transport.stopTitle"
+        v-tooltip="t.shell.transport.stopTitle"
         @click="emit('stopPlayback')"
       >
         <TransportIcon name="stop" />
@@ -139,7 +139,7 @@ const countInOptions = computed(() =>
         :disabled="!storeInitialized"
         :aria-label="t.shell.transport.play"
         :aria-pressed="isPlaying"
-        :title="t.shell.transport.playTitle"
+        v-tooltip="t.shell.transport.playTitle"
         @click="emit('startPlayback')"
       >
         <TransportIcon name="play" />
@@ -159,7 +159,7 @@ const countInOptions = computed(() =>
           :aria-label="t.shell.transport.record"
           :aria-pressed="recording.isRecording.value"
           :disabled="!handle || (!recording.isRecording.value && recording.armedTrackId.value === null)"
-          :title="
+          v-tooltip="
             recording.isRecording.value
               ? t.shell.transport.recordStopTitle
               : t.shell.transport.recordStartTitle
@@ -174,7 +174,7 @@ const countInOptions = computed(() =>
           :aria-label="t.shell.transport.recordingSettings"
           aria-haspopup="true"
           :aria-expanded="recordMenuOpen"
-          :title="t.shell.transport.recordingSettings"
+          v-tooltip="t.shell.transport.recordingSettings"
           @click="emit('updateRecordMenuOpen', !recordMenuOpen)"
         >
           <TransportIcon name="chevron-down" />
@@ -217,7 +217,7 @@ const countInOptions = computed(() =>
         <span
           v-if="recording.armedTrackId.value !== null"
           class="input-level"
-          :title="t.shell.transport.inputLevel"
+          v-tooltip="t.shell.transport.inputLevel"
         >
           <span
             class="input-level-fill"
@@ -250,7 +250,7 @@ const countInOptions = computed(() =>
         :disabled="!handle"
         :aria-label="t.shell.transport.metronome"
         :aria-pressed="metronomeEnabled"
-        :title="t.shell.transport.metronome"
+        v-tooltip="t.shell.transport.metronome"
         @click="emit('toggleMetronome')"
       >
         <TransportIcon name="metronome" />
@@ -265,7 +265,7 @@ const countInOptions = computed(() =>
           class="transport-nav locator"
           :disabled="!handle"
           :aria-label="t.shell.transport.setLeftLocator"
-          :title="shortcutTitle(t.shell.transport.setLeftLocatorTitle, 'transport.setLeftLocator')"
+          v-tooltip="shortcutTitle(t.shell.transport.setLeftLocatorTitle, 'transport.setLeftLocator')"
           @click="emit('setLeftLocator')"
         >
           L
@@ -275,7 +275,7 @@ const countInOptions = computed(() =>
           class="transport-nav locator"
           :disabled="!handle"
           :aria-label="t.shell.transport.setRightLocator"
-          :title="
+          v-tooltip="
             shortcutTitle(t.shell.transport.setRightLocatorTitle, 'transport.setRightLocator')
           "
           @click="emit('setRightLocator')"
@@ -288,7 +288,7 @@ const countInOptions = computed(() =>
         type="button"
         class="punch-indicator"
         :aria-label="t.shell.transport.autoPunchArmed"
-        :title="t.shell.transport.autoPunchArmedTitle"
+        v-tooltip="t.shell.transport.autoPunchArmedTitle"
         @click="emit('toggleAutoPunch')"
       >
         {{ t.shell.transport.punch }}
@@ -307,7 +307,7 @@ const countInOptions = computed(() =>
           spellcheck="false"
           :value="bbtDisplay"
           :aria-label="t.shell.transport.playheadPosition"
-          :title="t.shell.transport.playheadPositionTitle"
+          v-tooltip="t.shell.transport.playheadPositionTitle"
           @focus="emit('bbtFocus')"
           @input="emit('updateBbtDraft', ($event.target as HTMLInputElement).value)"
           @keydown.enter="($event.target as HTMLInputElement).blur()"

@@ -194,7 +194,7 @@ watch(
     class="spectrum"
     role="img"
     :aria-label="t.shell.mixer.analyzer.spectrum"
-    :title="t.shell.mixer.analyzer.spectrum"
+    v-tooltip="t.shell.mixer.analyzer.spectrum"
   />
 </template>
 

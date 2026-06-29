@@ -221,7 +221,7 @@ watch(
     :class="{ placeholder: props.placeholder }"
     role="img"
     :aria-label="t.shell.mixer.meter.strip"
-    :title="title"
+    v-tooltip="title"
     @click="onClick"
   />
 </template>

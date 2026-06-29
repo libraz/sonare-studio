@@ -250,7 +250,6 @@ describe('MediaBrowser', () => {
     const wrapper = await mountBrowser();
     const button = rowButton(wrapper, 'Loop', '.delete-button');
     expect(button.attributes('disabled')).toBeDefined();
-    expect(button.attributes('title')).toContain('In use');
     await button.trigger('click');
     expect(wrapper.find('.danger').exists()).toBe(false);
     expect(assetStore.deleteAsset).not.toHaveBeenCalled();

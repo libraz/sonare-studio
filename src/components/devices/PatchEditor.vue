@@ -356,7 +356,7 @@ function onKeydown(event: KeyboardEvent): void {
             {{ formatMessage(t.shell.patchEditor.basedOn, { preset: draft.preset }) }}
           </span>
         </h2>
-        <button type="button" class="patch-close" :title="t.shell.patchEditor.close" @click="onClose">
+        <button type="button" class="patch-close" v-tooltip="t.shell.patchEditor.close" @click="onClose">
           ×
         </button>
       </header>
@@ -536,7 +536,7 @@ function onKeydown(event: KeyboardEvent): void {
             <button
               type="button"
               class="mod-remove"
-              :title="formatMessage(t.shell.patchEditor.removeRouting, { row: index + 1 })"
+              v-tooltip="formatMessage(t.shell.patchEditor.removeRouting, { row: index + 1 })"
               @click="removeModRow(index)"
             >
               ×

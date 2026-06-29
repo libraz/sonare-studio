@@ -36,7 +36,7 @@ onBeforeUnmount(() => {
     <button
       type="button"
       class="add-track"
-      :title="t.shell.arrangement.addTrack.title"
+      v-tooltip="t.shell.arrangement.addTrack.title"
       aria-haspopup="menu"
       :aria-expanded="open"
       @click="open = !open"

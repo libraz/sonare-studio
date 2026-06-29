@@ -422,7 +422,7 @@ onBeforeUnmount(() => {
           type="button"
           class="preview-button"
           :class="{ playing: playingId === asset.id }"
-          :title="playingId === asset.id ? t.shell.media.stopPreview : t.shell.media.preview"
+          v-tooltip="playingId === asset.id ? t.shell.media.stopPreview : t.shell.media.preview"
           :aria-label="
             playingId === asset.id
               ? formatMessage(t.shell.media.stopAsset, { name: asset.name })
@@ -444,7 +444,7 @@ onBeforeUnmount(() => {
           </svg>
         </button>
         <div class="asset-info">
-          <span class="asset-name" :title="asset.name">{{ asset.name }}</span>
+          <span class="asset-name" v-tooltip="asset.name">{{ asset.name }}</span>
           <span class="asset-summary">{{ assetSummary(asset) }}</span>
         </div>
         <div v-if="pendingDeleteId === asset.id" class="row-actions confirm">
@@ -462,7 +462,7 @@ onBeforeUnmount(() => {
             type="button"
             class="delete-button"
             :disabled="referencedIds.has(asset.id)"
-            :title="
+            v-tooltip="
               referencedIds.has(asset.id)
                 ? t.shell.media.deleteBlocked
                 : t.shell.media.deleteAsset

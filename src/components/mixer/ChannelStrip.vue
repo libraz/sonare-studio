@@ -269,13 +269,13 @@ onBeforeUnmount(() => {
     :class="{ active, master: isMaster }"
     @contextmenu.prevent="onContextMenu"
   >
-    <button type="button" class="strip-header" :title="name" @click="onHeaderClick">
+    <button type="button" class="strip-header" v-tooltip="name" @click="onHeaderClick">
       <span class="strip-color" :style="{ background: color }" />
       <span class="strip-name">{{ name }}</span>
-      <span v-if="isGroup" class="strip-group-tag" :title="t.shell.mixer.strip.groupSubmix">
+      <span v-if="isGroup" class="strip-group-tag" v-tooltip="t.shell.mixer.strip.groupSubmix">
         {{ t.shell.mixer.strip.group }}
       </span>
-      <span v-if="track?.frozen" class="strip-frozen-tag" :title="t.shell.mixer.strip.frozenTitle">
+      <span v-if="track?.frozen" class="strip-frozen-tag" v-tooltip="t.shell.mixer.strip.frozenTitle">
         <svg viewBox="0 0 16 16" width="8" height="8" fill="none" stroke="currentColor"
           stroke-width="1.4" stroke-linecap="round" aria-hidden="true">
           <path d="M8 1.5v13M2.4 4.75l11.2 6.5M2.4 11.25l11.2-6.5" />
@@ -285,7 +285,7 @@ onBeforeUnmount(() => {
       <span
         v-if="vcaGroupName"
         class="strip-vca-tag"
-        :title="formatMessage(t.shell.mixer.strip.vcaGroup, { name: vcaGroupName })"
+        v-tooltip="formatMessage(t.shell.mixer.strip.vcaGroup, { name: vcaGroupName })"
       >
         {{ vcaGroupName }}
       </span>
@@ -338,7 +338,7 @@ onBeforeUnmount(() => {
           type="button"
           class="toggle mute"
           :class="{ on: track.mute }"
-          :title="t.shell.mixer.strip.mute"
+          v-tooltip="t.shell.mixer.strip.mute"
           :aria-label="formatMessage(t.shell.mixer.strip.muteNamed, { name })"
           :aria-pressed="track.mute"
           @click="setTrackMute(track.id, !track.mute)"
@@ -350,7 +350,7 @@ onBeforeUnmount(() => {
           type="button"
           class="toggle solo"
           :class="{ on: track.solo, safe: isSoloSafe }"
-          :title="isSoloSafe ? t.shell.mixer.strip.soloSafeTitle : t.shell.mixer.strip.solo"
+          v-tooltip="isSoloSafe ? t.shell.mixer.strip.soloSafeTitle : t.shell.mixer.strip.solo"
           :aria-label="formatMessage(t.shell.mixer.strip.soloNamed, { name })"
           :aria-pressed="track.solo"
           @click="setTrackSolo(track.id, !track.solo)"

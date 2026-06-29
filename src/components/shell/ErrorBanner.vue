@@ -21,7 +21,7 @@ const { t } = useI18n();
         type="button"
         class="error-dismiss"
         :aria-label="t.shell.dismissError"
-        :title="t.shell.dismissError"
+        v-tooltip="t.shell.dismissError"
         @click="emit('dismiss')"
       >
         ✕

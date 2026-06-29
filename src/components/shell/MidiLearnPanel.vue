@@ -178,7 +178,7 @@ const deviceBindings = computed<DeviceBindingRow[]>(() => {
           <span class="ml-col-head">{{ t.shell.midiLearn.deviceControls }}</span>
         </div>
         <div v-for="row in deviceBindings" :key="row.id" class="ml-device-row">
-          <span class="ml-device-name" :title="row.label">{{ row.label }}</span>
+          <span class="ml-device-name" v-tooltip="row.label">{{ row.label }}</span>
           <span class="ml-device-binding">{{ formatMidiCcBinding(row.binding) }}</span>
           <button
             type="button"

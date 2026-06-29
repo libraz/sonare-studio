@@ -74,7 +74,7 @@ const layoutOpen = ref(false);
 
 <template>
   <div class="score-toolbar" role="toolbar" :aria-label="t.shell.score.tools">
-    <label class="bar-field" :title="t.shell.score.displayQuantizeTitle">
+    <label class="bar-field" v-tooltip="t.shell.score.displayQuantizeTitle">
       {{ t.shell.score.displayQuantizeShort }}
       <SelectMenu
         v-model="dqKey"
@@ -86,7 +86,7 @@ const layoutOpen = ref(false);
     <button
       type="button"
       :disabled="loading"
-      :title="t.shell.score.transcribeTitle"
+      v-tooltip="t.shell.score.transcribeTitle"
       @click="emit('transcribe')"
     >
       {{ t.shell.score.transcribe }}
@@ -94,7 +94,7 @@ const layoutOpen = ref(false);
     <button
       type="button"
       :disabled="loading || pageCount === 0"
-      :title="t.shell.score.refreshTitle"
+      v-tooltip="t.shell.score.refreshTitle"
       @click="emit('refresh')"
     >
       {{ t.shell.score.refresh }}
@@ -134,7 +134,7 @@ const layoutOpen = ref(false);
         class="score-zoom-btn"
         :disabled="viewZoom <= zoomMin"
         :aria-label="t.shell.score.zoomOut"
-        :title="t.shell.score.zoomOut"
+        v-tooltip="t.shell.score.zoomOut"
         @click="emit('zoom', 1 / zoomStep)"
       >
         <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">
@@ -153,7 +153,7 @@ const layoutOpen = ref(false);
         class="score-zoom-btn"
         :disabled="viewZoom >= zoomMax"
         :aria-label="t.shell.score.zoomIn"
-        :title="t.shell.score.zoomIn"
+        v-tooltip="t.shell.score.zoomIn"
         @click="emit('zoom', zoomStep)"
       >
         <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">

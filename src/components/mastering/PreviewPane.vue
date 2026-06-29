@@ -78,7 +78,7 @@ const { t } = useI18n();
           class="ab-button"
           :class="{ active: variant === 'processed' }"
           :disabled="!hasProcessed"
-          :title="t.shell.mastering.withChain"
+          v-tooltip="t.shell.mastering.withChain"
           :aria-label="t.shell.mastering.previewWithChain"
           :aria-pressed="variant === 'processed'"
           @click="emit('select-variant', 'processed')"
@@ -90,7 +90,7 @@ const { t } = useI18n();
           class="ab-button"
           :class="{ active: variant === 'bypassed' }"
           :disabled="!hasBypassed"
-          :title="t.shell.mastering.chainBypassed"
+          v-tooltip="t.shell.mastering.chainBypassed"
           :aria-label="t.shell.mastering.previewBypassed"
           :aria-pressed="variant === 'bypassed'"
           @click="emit('select-variant', 'bypassed')"
@@ -102,14 +102,14 @@ const { t } = useI18n();
         <TransportIcon :name="isPlaying ? 'stop' : 'play'" class="play-icon" />
         <span>{{ isPlaying ? t.shell.mastering.stop : t.shell.mastering.play }}</span>
       </button>
-      <span v-if="stale" class="preview-stale" :title="t.shell.mastering.staleTitle">
+      <span v-if="stale" class="preview-stale" v-tooltip="t.shell.mastering.staleTitle">
         {{ t.shell.mastering.stale }}
       </span>
       <button
         type="button"
         class="targets-button"
         :disabled="checkingTargets"
-        :title="t.shell.mastering.streaming.title"
+        v-tooltip="t.shell.mastering.streaming.title"
         @click="emit('check-targets')"
       >
         {{ checkingTargets ? t.shell.mastering.streaming.checking : t.shell.mastering.streaming.check }}

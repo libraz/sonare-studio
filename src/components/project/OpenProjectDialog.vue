@@ -118,7 +118,7 @@ function onKeydown(event: KeyboardEvent): void {
           <button
             type="button"
             class="stored-load"
-            :title="formatMessage(t.dialogs.openProject.loadProject, { name: info.name })"
+            v-tooltip="formatMessage(t.dialogs.openProject.loadProject, { name: info.name })"
             @click="emit('openProject', info.name)"
           >
             {{ info.name }}
@@ -127,7 +127,7 @@ function onKeydown(event: KeyboardEvent): void {
           <button
             type="button"
             class="stored-delete"
-            :title="formatMessage(t.dialogs.openProject.deleteProject, { name: info.name })"
+            v-tooltip="formatMessage(t.dialogs.openProject.deleteProject, { name: info.name })"
             @click="emit('deleteProject', info.name)"
           >
             {{ t.dialogs.openProject.delete }}

@@ -1,4 +1,4 @@
-import { type Ref, ref, type ShallowRef } from 'vue';
+import { type ComputedRef, computed, type Ref, ref, type ShallowRef } from 'vue';
 import type { useRecording } from '@/composables/useRecording';
 import type { useShortcuts } from '@/composables/useShortcuts';
 import type { EngineHandle } from '@/engine/engine';
@@ -17,31 +17,48 @@ import {
 import { useProjectStore } from '@/project/store';
 import type { EditorToolId } from '@/ui/editor/tools';
 import { useI18n } from '@/ui/i18n';
-import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
+import type { MenuBarItem, MenuBarMenu } from '@/ui/menu/menu-bar';
 import { detectPlatform, formatKeyCombo } from '@/ui/settings/key-combo';
 
 type Recording = ReturnType<typeof useRecording>;
 type Shortcuts = ReturnType<typeof useShortcuts>;
 type FocusZone = 'arrange' | 'editor';
-type MenuBarId = 'edit' | 'view' | 'transport';
 
 interface ArrangementCommands {
   cutAtPlayhead: () => void;
 }
 
 export interface AppShortcutsMenuOptions {
+  deviceRackOpen: Ref<boolean>;
   editorTool: Ref<EditorToolId>;
   handle: ShallowRef<EngineHandle | null>;
   helpOpen: Ref<boolean>;
   isPlaying: Ref<boolean>;
+  layouts: Ref<readonly { name: string }[]>;
   loopEnabled: Ref<boolean>;
   opfsAvailable: boolean;
+  recentNames: Ref<readonly string[]>;
   recording: Recording;
   scoreVisible: Ref<boolean>;
   settingsOpen: Ref<boolean>;
   shortcuts: Shortcuts;
+  applyNamedLayout: (name: string) => void;
+  exportDawproject: () => void;
+  exportMidi2: () => void;
+  exportSmf: () => void;
+  exportSzd: () => void;
+  importAudio: () => void;
+  importMidi: () => void;
   nudgeByBar: (direction: -1 | 1) => void;
+  openAbout: () => void;
+  openDiagnostics: () => void;
+  openExportDialog: () => void;
+  openNewDialog: () => void;
   openOpenDialog: () => void;
+  openRecentProject: (name: string) => void;
+  openShortcutsHelp: () => void;
+  openWelcomeTour: () => void;
+  saveCurrentLayout: () => void;
   saveProjectAction: () => void;
   saveProjectAsAction: () => void;
   seekToEnd: () => void;
@@ -49,6 +66,7 @@ export interface AppShortcutsMenuOptions {
   setEditorTool: (tool: EditorToolId) => void;
   setLeftLocator: () => void;
   setRightLocator: () => void;
+  toggleDeviceRack: () => void;
   toggleLoop: () => void;
   togglePlayback: () => void;
   toggleRecord: () => void;
@@ -207,11 +225,12 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
     return hint ? `${base} (${hint})` : base;
   }
 
+  /** Menu row that runs a registered shortcut action (and shows its key hint). */
   function actionItem(
     actionId: string,
     label: string,
     extra: { disabled?: boolean; checked?: boolean } = {},
-  ): ContextMenuItem {
+  ): MenuBarItem {
     return {
       id: actionId,
       label,
@@ -224,94 +243,192 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
     };
   }
 
-  function menuBarItems(menu: MenuBarId): ContextMenuItem[] {
-    const noSelection = store.selection.size === 0;
-    switch (menu) {
-      case 'edit':
-        return [
-          actionItem('edit.undo', t.value.shortcuts.actions['edit.undo'], { disabled: !canUndo() }),
-          actionItem('edit.redo', t.value.shortcuts.actions['edit.redo'], { disabled: !canRedo() }),
-          { id: 'sep1', separator: true },
-          actionItem('edit.selectAllNotes', t.value.shortcuts.actions['edit.selectAllNotes']),
-          actionItem(
-            'edit.quantizeSelection',
-            t.value.shortcuts.actions['edit.quantizeSelection'],
-            {
-              disabled: noSelection,
-            },
-          ),
-          { id: 'sep2', separator: true },
-          actionItem('edit.deleteSelectedNotes', t.value.shortcuts.menu.deleteSelection, {
-            disabled: noSelection,
-          }),
-        ];
-      case 'view':
-        return [
-          actionItem('view.toggleSnap', t.value.shortcuts.menu.snapToGrid, {
-            checked: store.snapEnabled,
-          }),
-          actionItem('view.toggleScorePanel', t.value.shortcuts.menu.scorePanel, {
-            checked: options.scoreVisible.value,
-          }),
-          { id: 'sep1', separator: true },
-          actionItem('tool.select', t.value.shortcuts.actions['tool.select'], {
-            checked: options.editorTool.value === 'select',
-          }),
-          actionItem('tool.draw', t.value.shortcuts.actions['tool.draw'], {
-            checked: options.editorTool.value === 'draw',
-          }),
-          actionItem('tool.split', t.value.shortcuts.actions['tool.split'], {
-            checked: options.editorTool.value === 'split',
-          }),
-          actionItem('tool.erase', t.value.shortcuts.actions['tool.erase'], {
-            checked: options.editorTool.value === 'erase',
-          }),
-        ];
-      case 'transport': {
-        const engineReady = Boolean(options.handle.value);
-        const canRecord = engineReady && options.recording.armedTrackId.value !== null;
-        return [
-          actionItem(
-            'transport.togglePlayback',
-            options.isPlaying.value ? t.value.shortcuts.menu.stop : t.value.shortcuts.menu.play,
-          ),
-          actionItem('transport.toggleLoop', t.value.shortcuts.menu.loop, {
-            checked: options.loopEnabled.value,
-          }),
-          actionItem(
-            'transport.toggleRecord',
-            t.value.shortcuts.actions['transport.toggleRecord'],
-            {
-              disabled: !canRecord,
-              checked: options.recording.isRecording.value,
-            },
-          ),
-          { id: 'sep1', separator: true },
-          actionItem('transport.toStart', t.value.shortcuts.actions['transport.toStart'], {
-            disabled: !engineReady,
-          }),
-          actionItem('transport.toEnd', t.value.shortcuts.actions['transport.toEnd'], {
-            disabled: !engineReady,
-          }),
-          actionItem('transport.nudgeBack', t.value.shortcuts.actions['transport.nudgeBack'], {
-            disabled: !engineReady,
-          }),
-          actionItem(
-            'transport.nudgeForward',
-            t.value.shortcuts.actions['transport.nudgeForward'],
-            {
-              disabled: !engineReady,
-            },
-          ),
-        ];
-      }
-    }
+  /** Menu row that runs an arbitrary callback (file / help / layout commands). */
+  function commandItem(
+    id: string,
+    label: string,
+    run: () => void,
+    extra: { disabled?: boolean; checked?: boolean; hintFor?: string } = {},
+  ): MenuBarItem {
+    return {
+      id,
+      label,
+      hint: extra.hintFor ? hintFor(extra.hintFor) : undefined,
+      disabled: extra.disabled,
+      checked: extra.checked,
+      run,
+    };
   }
 
-  function openMenuBar(menu: MenuBarId, event: MouseEvent): void {
-    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    openContextMenu(rect.left, rect.bottom + 2, menuBarItems(menu));
+  const sep = (id: string): MenuBarItem => ({ id, separator: true });
+  const heading = (id: string, text: string): MenuBarItem => ({ id, heading: text });
+
+  function fileItems(): MenuBarItem[] {
+    const m = t.value.shell.project;
+    const noOpfs = !options.opfsAvailable;
+    const items: MenuBarItem[] = [
+      commandItem('file.new', m.new, options.openNewDialog),
+      commandItem('file.open', m.open, options.openOpenDialog, {
+        disabled: noOpfs,
+        hintFor: 'project.open',
+      }),
+      sep('file.sep-save'),
+      commandItem('file.save', m.save, options.saveProjectAction, {
+        disabled: noOpfs,
+        hintFor: 'project.save',
+      }),
+      commandItem('file.saveAs', m.saveAs, options.saveProjectAsAction, {
+        disabled: noOpfs,
+        hintFor: 'project.saveAs',
+      }),
+    ];
+    const recent = options.recentNames.value;
+    if (recent.length > 0) {
+      items.push(sep('file.sep-recent'), heading('file.recent', m.recent));
+      for (const name of recent) {
+        items.push(
+          commandItem(`file.recent.${name}`, name, () => options.openRecentProject(name), {
+            disabled: noOpfs,
+          }),
+        );
+      }
+    }
+    items.push(
+      sep('file.sep-import'),
+      commandItem('file.importMidi', m.importMidi, options.importMidi),
+      commandItem('file.importAudio', m.importAudio, options.importAudio),
+      sep('file.sep-export'),
+      commandItem('file.exportSzd', m.exportSzd, options.exportSzd),
+      commandItem('file.exportSmf', m.exportSmf, options.exportSmf),
+      commandItem('file.exportMidi2', m.exportMidi2, options.exportMidi2),
+      commandItem('file.exportAudio', m.exportAudio, options.openExportDialog),
+      commandItem('file.exportDawproject', m.exportDawproject, options.exportDawproject),
+    );
+    return items;
   }
+
+  function editItems(): MenuBarItem[] {
+    const a = t.value.shortcuts.actions;
+    const noSelection = store.selection.size === 0;
+    const noClip = !store.activeClip;
+    return [
+      actionItem('edit.undo', a['edit.undo'], { disabled: !canUndo() }),
+      actionItem('edit.redo', a['edit.redo'], { disabled: !canRedo() }),
+      sep('edit.sep-select'),
+      actionItem('edit.selectAllNotes', a['edit.selectAllNotes']),
+      actionItem('edit.quantizeSelection', a['edit.quantizeSelection'], { disabled: noSelection }),
+      actionItem('edit.deleteSelectedNotes', t.value.shortcuts.menu.deleteSelection, {
+        disabled: noSelection,
+      }),
+      heading('edit.transpose', t.value.shortcuts.menu.transpose),
+      actionItem('edit.transposeUp', a['edit.transposeUp'], { disabled: noSelection }),
+      actionItem('edit.transposeDown', a['edit.transposeDown'], { disabled: noSelection }),
+      actionItem('edit.transposeOctaveUp', a['edit.transposeOctaveUp'], { disabled: noSelection }),
+      actionItem('edit.transposeOctaveDown', a['edit.transposeOctaveDown'], {
+        disabled: noSelection,
+      }),
+      heading('edit.clip', t.value.shortcuts.menu.clip),
+      actionItem('arrange.duplicateClip', a['arrange.duplicateClip'], { disabled: noClip }),
+      actionItem('arrange.splitClipAtPlayhead', a['arrange.splitClipAtPlayhead'], {
+        disabled: noClip,
+      }),
+      actionItem('arrange.deleteClip', a['arrange.deleteClip'], { disabled: noClip }),
+    ];
+  }
+
+  function viewItems(): MenuBarItem[] {
+    const a = t.value.shortcuts.actions;
+    return [
+      actionItem('view.toggleSnap', t.value.shortcuts.menu.snapToGrid, {
+        checked: store.snapEnabled,
+      }),
+      actionItem('view.toggleScorePanel', t.value.shortcuts.menu.scorePanel, {
+        checked: options.scoreVisible.value,
+      }),
+      commandItem('view.deviceRack', t.value.shortcuts.menu.deviceRack, options.toggleDeviceRack, {
+        checked: options.deviceRackOpen.value,
+      }),
+      heading('view.tools', t.value.shortcuts.menu.tools),
+      actionItem('tool.select', a['tool.select'], {
+        checked: options.editorTool.value === 'select',
+      }),
+      actionItem('tool.draw', a['tool.draw'], { checked: options.editorTool.value === 'draw' }),
+      actionItem('tool.split', a['tool.split'], { checked: options.editorTool.value === 'split' }),
+      actionItem('tool.erase', a['tool.erase'], { checked: options.editorTool.value === 'erase' }),
+    ];
+  }
+
+  function transportItems(): MenuBarItem[] {
+    const a = t.value.shortcuts.actions;
+    const engineReady = Boolean(options.handle.value);
+    const canRecord = engineReady && options.recording.armedTrackId.value !== null;
+    return [
+      actionItem(
+        'transport.togglePlayback',
+        options.isPlaying.value ? t.value.shortcuts.menu.stop : t.value.shortcuts.menu.play,
+      ),
+      actionItem('transport.toggleLoop', t.value.shortcuts.menu.loop, {
+        checked: options.loopEnabled.value,
+      }),
+      actionItem('transport.toggleRecord', a['transport.toggleRecord'], {
+        disabled: !canRecord,
+        checked: options.recording.isRecording.value,
+      }),
+      sep('transport.sep-nav'),
+      actionItem('transport.toStart', a['transport.toStart'], { disabled: !engineReady }),
+      actionItem('transport.toEnd', a['transport.toEnd'], { disabled: !engineReady }),
+      actionItem('transport.nudgeBack', a['transport.nudgeBack'], { disabled: !engineReady }),
+      actionItem('transport.nudgeForward', a['transport.nudgeForward'], { disabled: !engineReady }),
+      heading('transport.locators', t.value.shortcuts.menu.locators),
+      actionItem('transport.setLeftLocator', a['transport.setLeftLocator']),
+      actionItem('transport.setRightLocator', a['transport.setRightLocator']),
+    ];
+  }
+
+  function helpItems(): MenuBarItem[] {
+    const h = t.value.shell.help;
+    return [
+      commandItem('help.shortcuts', h.shortcuts, options.openShortcutsHelp, {
+        hintFor: 'help.shortcuts',
+      }),
+      commandItem('help.welcomeTour', h.welcomeTour, options.openWelcomeTour),
+      sep('help.sep-about'),
+      commandItem('help.diagnostics', h.diagnostics, options.openDiagnostics),
+      commandItem('help.about', h.about, options.openAbout),
+    ];
+  }
+
+  /** The left command bar: File / Edit / View / Transport / Help. */
+  const menuBarModel: ComputedRef<MenuBarMenu[]> = computed(() => {
+    const m = t.value.shell.menus;
+    return [
+      { id: 'file', label: m.file, ariaLabel: t.value.shell.project.menuLabel, items: fileItems() },
+      { id: 'edit', label: m.edit, items: editItems() },
+      { id: 'view', label: m.view, items: viewItems() },
+      { id: 'transport', label: m.transport, items: transportItems() },
+      {
+        id: 'help',
+        label: t.value.shell.help.trigger,
+        ariaLabel: t.value.shell.help.menuLabel,
+        items: helpItems(),
+      },
+    ];
+  });
+
+  /** The right-aligned Layout picker: saved layouts plus "save current". */
+  const layoutMenu: ComputedRef<MenuBarMenu> = computed(() => {
+    const l = t.value.shell.layout;
+    const items: MenuBarItem[] = options.layouts.value.map((layout) =>
+      commandItem(`layout.${layout.name}`, layout.name, () =>
+        options.applyNamedLayout(layout.name),
+      ),
+    );
+    items.push(
+      sep('layout.sep-save'),
+      commandItem('layout.saveCurrent', l.saveCurrent, options.saveCurrentLayout),
+    );
+    return { id: 'layout', label: l.trigger, ariaLabel: l.menuLabel, items };
+  });
 
   function onGlobalKeyDown(event: KeyboardEvent): void {
     if (event.defaultPrevented || isEditableTarget(event.target)) return;
@@ -324,8 +441,9 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
   return {
     arrangementRef,
     focusZone,
+    layoutMenu,
+    menuBarModel,
     onGlobalKeyDown,
-    openMenuBar,
     shortcutTitle,
   };
 }

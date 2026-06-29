@@ -268,7 +268,7 @@ function clearAll(): void {
       <button
         type="button"
         :disabled="detectKind === null || isDetecting"
-        :title="t.shell.lists.chords.detectFromClipTitle"
+        v-tooltip="t.shell.lists.chords.detectFromClipTitle"
         @click="detectFromClip"
       >
         {{ t.shell.lists.chords.detectFromClip }}

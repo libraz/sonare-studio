@@ -254,7 +254,7 @@ function apply(): void {
       <button
         type="button"
         :disabled="detectableAudioClip === null || isDetecting"
-        :title="t.shell.lists.meter.detectFromClipTitle"
+        v-tooltip="t.shell.lists.meter.detectFromClipTitle"
         @click="detectFromClip"
       >
         {{ t.shell.lists.meter.detectFromClip }}

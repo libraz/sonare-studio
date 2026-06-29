@@ -278,7 +278,7 @@ onMounted(() => {
 <template>
   <div class="sample-editor">
     <div class="toolbar">
-      <span class="asset-name" :title="currentAssetId">
+      <span class="asset-name" v-tooltip="currentAssetId">
         {{ asset?.meta.name ?? t.shell.sampleEditor.loading }}
       </span>
       <span v-if="assetInfo" class="asset-info">{{ assetInfo }}</span>
@@ -300,7 +300,7 @@ onMounted(() => {
       <button
         type="button"
         :disabled="!asset"
-        :title="t.shell.sampleEditor.useInProjectTitle"
+        v-tooltip="t.shell.sampleEditor.useInProjectTitle"
         @click="onApply"
       >
         {{ t.shell.sampleEditor.useInProject }}
@@ -365,7 +365,7 @@ onMounted(() => {
       <button
         type="button"
         :disabled="opsDisabled || !selRange"
-        :title="t.shell.sampleEditor.trimTitle"
+        v-tooltip="t.shell.sampleEditor.trimTitle"
         @click="onTrim"
       >
         <svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true">
@@ -390,7 +390,7 @@ onMounted(() => {
       <button
         type="button"
         :disabled="opsDisabled || !wasmAvail.pitchShift"
-        :title="
+        v-tooltip="
           wasmAvail.pitchShift ? t.shell.sampleEditor.pitchTitle : t.shell.sampleEditor.unavailable
         "
         @click="onPitchShift"
@@ -404,7 +404,7 @@ onMounted(() => {
       <button
         type="button"
         :disabled="opsDisabled || !wasmAvail.pitchCorrect"
-        :title="
+        v-tooltip="
           wasmAvail.pitchCorrect ? t.shell.sampleEditor.tuneTitle : t.shell.sampleEditor.unavailable
         "
         @click="onPitchCorrect"
@@ -414,7 +414,7 @@ onMounted(() => {
       <button
         type="button"
         :disabled="opsDisabled || !wasmAvail.tuneReference"
-        :title="
+        v-tooltip="
           wasmAvail.tuneReference
             ? t.shell.sampleEditor.tuneReferenceTitle
             : t.shell.sampleEditor.unavailable
@@ -443,7 +443,7 @@ onMounted(() => {
       <button
         type="button"
         :disabled="opsDisabled || !wasmAvail.scaleCorrect"
-        :title="
+        v-tooltip="
           wasmAvail.scaleCorrect
             ? t.shell.sampleEditor.tuneScaleTitle
             : t.shell.sampleEditor.unavailable
@@ -464,7 +464,7 @@ onMounted(() => {
       <button
         type="button"
         :disabled="opsDisabled || !wasmAvail.voiceChange"
-        :title="
+        v-tooltip="
           wasmAvail.voiceChange ? t.shell.sampleEditor.voiceTitle : t.shell.sampleEditor.unavailable
         "
         @click="onVoiceChange"
@@ -478,7 +478,7 @@ onMounted(() => {
       <button
         type="button"
         :disabled="opsDisabled || !wasmAvail.timeStretch"
-        :title="
+        v-tooltip="
           wasmAvail.timeStretch ? t.shell.sampleEditor.stretchTitle : t.shell.sampleEditor.unavailable
         "
         @click="onTimeStretch"
@@ -488,7 +488,7 @@ onMounted(() => {
       <button
         type="button"
         :disabled="opsDisabled || !wasmAvail.noteStretch"
-        :title="
+        v-tooltip="
           wasmAvail.noteStretch
             ? t.shell.sampleEditor.noteStretchTitle
             : t.shell.sampleEditor.unavailable
@@ -500,7 +500,7 @@ onMounted(() => {
       <button
         type="button"
         :disabled="opsDisabled || !wasmAvail.declick"
-        :title="
+        v-tooltip="
           wasmAvail.declick ? t.shell.sampleEditor.declickTitle : t.shell.sampleEditor.unavailable
         "
         @click="onDeclick"
@@ -510,7 +510,7 @@ onMounted(() => {
       <button
         type="button"
         :disabled="opsDisabled || !wasmAvail.denoise"
-        :title="
+        v-tooltip="
           wasmAvail.denoise ? t.shell.sampleEditor.denoiseTitle : t.shell.sampleEditor.unavailable
         "
         @click="onDenoise"
@@ -521,7 +521,7 @@ onMounted(() => {
       <button
         type="button"
         :disabled="opsDisabled || !wasmAvail.harmonic"
-        :title="
+        v-tooltip="
           wasmAvail.harmonic ? t.shell.sampleEditor.harmonicTitle : t.shell.sampleEditor.unavailable
         "
         @click="onHarmonic"
@@ -531,7 +531,7 @@ onMounted(() => {
       <button
         type="button"
         :disabled="opsDisabled || !wasmAvail.percussive"
-        :title="
+        v-tooltip="
           wasmAvail.percussive
             ? t.shell.sampleEditor.percussiveTitle
             : t.shell.sampleEditor.unavailable
@@ -552,14 +552,14 @@ onMounted(() => {
       <button
         type="button"
         :disabled="opsDisabled || !wasmAvail.matchEq || referenceAssetId === ''"
-        :title="
+        v-tooltip="
           wasmAvail.matchEq ? t.shell.sampleEditor.matchEqTitle : t.shell.sampleEditor.unavailable
         "
         @click="onMatchEq"
       >
         {{ t.shell.sampleEditor.matchEq }}
       </button>
-      <label :title="t.shell.sampleEditor.matchEqAmountTitle">
+      <label v-tooltip="t.shell.sampleEditor.matchEqAmountTitle">
         {{ t.shell.sampleEditor.matchEqAmount }}
         <input
           v-model="matchEqAmountInput"
@@ -577,7 +577,7 @@ onMounted(() => {
         :disabled="
           opsDisabled || !wasmAvail.matchEqAnalyze || referenceAssetId === '' || analyzingMatchEq
         "
-        :title="
+        v-tooltip="
           wasmAvail.matchEqAnalyze
             ? t.shell.sampleEditor.matchEqAnalyzeTitle
             : t.shell.sampleEditor.unavailable
@@ -590,7 +590,7 @@ onMounted(() => {
       <button
         type="button"
         :disabled="opsDisabled || !wasmAvail.detectOnsets"
-        :title="
+        v-tooltip="
           wasmAvail.detectOnsets
             ? t.shell.sampleEditor.detectTransientsTitle
             : t.shell.sampleEditor.unavailable
@@ -606,7 +606,7 @@ onMounted(() => {
       <button
         type="button"
         :disabled="opsDisabled || !wasmAvail.splitSilence"
-        :title="
+        v-tooltip="
           wasmAvail.splitSilence
             ? t.shell.sampleEditor.splitSilenceTitle
             : t.shell.sampleEditor.unavailable
@@ -618,7 +618,7 @@ onMounted(() => {
       <button
         v-if="onsetFrames.length > 0"
         type="button"
-        :title="t.shell.sampleEditor.clearTransientsTitle"
+        v-tooltip="t.shell.sampleEditor.clearTransientsTitle"
         @click="onClearTransients"
       >
         {{ formatMessage(t.shell.sampleEditor.clearTransients, { count: onsetFrames.length }) }}
@@ -632,7 +632,7 @@ onMounted(() => {
         :aria-label="t.shell.sampleEditor.roomPreset"
         @change="(value: string) => (roomPresetId = value)"
       />
-      <label :title="t.shell.sampleEditor.roomWetTitle">
+      <label v-tooltip="t.shell.sampleEditor.roomWetTitle">
         {{ t.shell.sampleEditor.roomWet }}
         <input
           v-model="roomWetInput"
@@ -648,7 +648,7 @@ onMounted(() => {
       <button
         type="button"
         :disabled="opsDisabled || !wasmAvail.roomMorph"
-        :title="
+        v-tooltip="
           wasmAvail.roomMorph
             ? t.shell.sampleEditor.placeInRoomTitle
             : t.shell.sampleEditor.unavailable
@@ -728,7 +728,7 @@ onMounted(() => {
         class="history-entry"
         :class="{ current: index === historyState.currentIndex }"
         :disabled="busy"
-        :title="versionTitle(version)"
+        v-tooltip="versionTitle(version)"
         @click="onSelectVersion(index)"
       >
         {{ version.label }}
@@ -761,7 +761,7 @@ onMounted(() => {
         <span
           v-if="warpRatioHint"
           class="warp-segments"
-          :title="t.shell.sampleEditor.ratioTitle"
+          v-tooltip="t.shell.sampleEditor.ratioTitle"
         >
           {{ warpRatioHint }}
         </span>
@@ -794,7 +794,7 @@ onMounted(() => {
         <button
           type="button"
           class="warp-anchor-remove"
-          :title="t.shell.sampleEditor.removeAnchorTitle"
+          v-tooltip="t.shell.sampleEditor.removeAnchorTitle"
           @click="onRemoveAnchor(index)"
         >
           {{ t.shell.sampleEditor.remove }}

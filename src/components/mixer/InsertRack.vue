@@ -282,7 +282,7 @@ onBeforeUnmount(() => {
         <span
           class="insert-drag"
           draggable="true"
-          :title="t.shell.inserts.dragReorder"
+          v-tooltip="t.shell.inserts.dragReorder"
           aria-hidden="true"
           @dragstart="onDragStart(index, $event)"
         >
@@ -299,7 +299,7 @@ onBeforeUnmount(() => {
           type="button"
           class="insert-power"
           :class="{ on: slot.enabled }"
-          :title="slot.enabled ? t.shell.inserts.bypass : t.shell.inserts.enable"
+          v-tooltip="slot.enabled ? t.shell.inserts.bypass : t.shell.inserts.enable"
           :aria-label="
             formatMessage(t.shell.inserts.power, { name: humanizeInsertName(slot.processor) })
           "
@@ -310,7 +310,7 @@ onBeforeUnmount(() => {
           type="button"
           class="insert-name"
           :class="{ expanded: expandedIndex === index }"
-          :title="slot.processor"
+          v-tooltip="slot.processor"
           @click="toggleExpanded(index)"
         >
           {{ humanizeInsertName(slot.processor) }}
@@ -318,7 +318,7 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="insert-remove"
-          :title="t.shell.inserts.remove"
+          v-tooltip="t.shell.inserts.remove"
           :aria-label="
             formatMessage(t.shell.inserts.removeNamed, { name: humanizeInsertName(slot.processor) })
           "
@@ -362,7 +362,7 @@ onBeforeUnmount(() => {
       <button
         type="button"
         class="insert-add"
-        :title="t.shell.inserts.add"
+        v-tooltip="t.shell.inserts.add"
         aria-haspopup="menu"
         :aria-expanded="addMenuOpen"
         @click="openAddMenu"

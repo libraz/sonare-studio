@@ -74,7 +74,7 @@ function toggleArticulation(value: NoteArticulation): void {
         type="button"
         :class="{ active: slurArmed }"
         :aria-pressed="slurArmed"
-        :title="t.shell.score.annotations.slurTitle"
+        v-tooltip="t.shell.score.annotations.slurTitle"
         @click="emit('slurArmedChange', !slurArmed)"
       >
         {{ slurArmed ? t.shell.score.annotations.slurArmed : t.shell.score.annotations.slur }}
@@ -82,12 +82,12 @@ function toggleArticulation(value: NoteArticulation): void {
       <button
         v-if="annotation.slurToNoteId !== undefined"
         type="button"
-        :title="t.shell.score.annotations.unslurTitle"
+        v-tooltip="t.shell.score.annotations.unslurTitle"
         @click="emit('apply', { slurToNoteId: null })"
       >
         {{ t.shell.score.annotations.unslur }}
       </button>
-      <button type="button" :title="t.shell.score.annotations.clearTitle" @click="emit('clear')">
+      <button type="button" v-tooltip="t.shell.score.annotations.clearTitle" @click="emit('clear')">
         {{ t.shell.score.annotations.clear }}
       </button>
       <button

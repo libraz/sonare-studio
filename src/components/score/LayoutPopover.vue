@@ -121,7 +121,7 @@ const transposeOptions = computed(() =>
     </label>
     <label
       class="layout-row"
-      :title="t.shell.score.transposeTitle"
+      v-tooltip="t.shell.score.transposeTitle"
     >
       {{ t.shell.score.transpose }}
       <SelectMenu

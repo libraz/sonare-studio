@@ -48,7 +48,7 @@ function storeTitle(slot: MixerSnapshotSlot): string {
         class="snapshot-recall"
         :class="{ active: active === slot, filled: filled[slot] }"
         :disabled="!filled[slot]"
-        :title="recallTitle(slot)"
+        v-tooltip="recallTitle(slot)"
         :aria-label="recallTitle(slot)"
         @click="recallMixerSnapshot(slot)"
       >
@@ -57,7 +57,7 @@ function storeTitle(slot: MixerSnapshotSlot): string {
       <button
         type="button"
         class="snapshot-store"
-        :title="storeTitle(slot)"
+        v-tooltip="storeTitle(slot)"
         :aria-label="storeTitle(slot)"
         @click="saveMixerSnapshot(slot)"
       >

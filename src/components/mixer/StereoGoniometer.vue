@@ -147,7 +147,7 @@ watch(
     class="goniometer"
     role="img"
     :aria-label="t.shell.mixer.analyzer.goniometer"
-    :title="t.shell.mixer.analyzer.goniometer"
+    v-tooltip="t.shell.mixer.analyzer.goniometer"
   />
 </template>
 

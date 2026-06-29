@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useEditorTool } from '@/composables/useEditorTool';
 import { formatPitch } from '@/lib/pitch';
@@ -92,6 +92,40 @@ const { range, painter, revision, error, gridPpq, root, gridCell, hTrack, vTrack
 /** Whether the multi-track ghost overlay is drawn. */
 const overlayEnabled = ref(true);
 
+/** Whether the bottom velocity / CC parameter lane block is shown. */
+const laneVisible = ref(true);
+
+/** The scrollable lane-parameter tab column on the left of the lane. */
+const laneLabelColumn = ref<HTMLElement | null>(null);
+
+/**
+ * The editor root swallows wheel events for zoom/pan (it preventDefaults them),
+ * which also blocks native scrolling of this overflowing tab column. When the
+ * column can scroll, stop the event before it reaches the root so the browser
+ * scrolls the column normally; otherwise let it bubble up to zoom as usual.
+ */
+function onLabelWheel(event: WheelEvent): void {
+  const column = laneLabelColumn.value;
+  if (!column || column.scrollHeight <= column.clientHeight) return;
+  event.stopPropagation();
+}
+
+/** Scrolls the active tab to the vertical center of the column when it changes. */
+function centerActiveLaneTab(): void {
+  void nextTick(() => {
+    const column = laneLabelColumn.value;
+    const active = column?.querySelector<HTMLElement>('.lane-tab-active');
+    if (!column || !active) return;
+    // Measure relative to the column viewport (offsetTop is unreliable here —
+    // it is relative to the offsetParent, not this scroll container).
+    const columnRect = column.getBoundingClientRect();
+    const activeRect = active.getBoundingClientRect();
+    const delta = activeRect.top - columnRect.top - (column.clientHeight - activeRect.height) / 2;
+    const max = column.scrollHeight - column.clientHeight;
+    column.scrollTop = Math.max(0, Math.min(max, column.scrollTop + delta));
+  });
+}
+
 const lanes = usePianoRollLanes();
 const {
   laneParam,
@@ -107,6 +141,24 @@ const {
   selectChannelPressureLane,
   selectPolyPressureLane,
 } = lanes;
+
+// Keep the selected parameter tab in view: re-center it whenever the active
+// lane changes or the block is revealed, so the choice is never hidden off
+// the bottom of the scrollable column.
+watch(
+  [
+    laneParam,
+    laneCc,
+    lanePitchBend,
+    laneChannelPressure,
+    lanePolyPressure,
+    noteLaneActive,
+    laneVisible,
+  ],
+  () => {
+    if (laneVisible.value) centerActiveLaneTab();
+  },
+);
 
 /** The 16 MIDI channel options for the CC-lane channel picker (0-based value). */
 const laneChannelOptions = computed(() =>
@@ -337,6 +389,7 @@ watch(
 
 onMounted(() => {
   if (props.isPlaying) startPlayheadFollow();
+  centerActiveLaneTab();
 });
 
 onBeforeUnmount(() => {
@@ -358,12 +411,13 @@ onBeforeUnmount(() => {
     <PianoRollToolbar
       v-model:overlay-enabled="overlayEnabled"
       v-model:fx-panel-open="fxPanelOpen"
+      v-model:lane-visible="laneVisible"
       :can-transform="canTransform"
       :clip-id="store.clipId"
       @zoom-horizontal="zoomHorizontal"
       @zoom-vertical="zoomVertical"
     />
-    <div class="piano-roll-layout">
+    <div class="piano-roll-layout" :class="{ 'lane-hidden': !laneVisible }">
       <KeyboardColumn class="cell-keyboard" :range="range" :revision="revision" :painter="painter" />
       <div ref="gridCell" class="cell-grid">
         <NoteGridCanvas
@@ -395,9 +449,11 @@ onBeforeUnmount(() => {
         <div class="scroll-thumb scroll-thumb-v" :style="vThumbStyle" />
       </div>
       <div
+        ref="laneLabelColumn"
         class="cell-velocity-label"
         role="tablist"
         :aria-label="t.shell.pianoRoll.noteLaneParameter"
+        @wheel="onLabelWheel"
       >
         <button
           v-for="laneSpec in LANE_PARAMS"
@@ -405,7 +461,7 @@ onBeforeUnmount(() => {
           type="button"
           class="lane-tab"
           :class="{ 'lane-tab-active': noteLaneActive && laneParam === laneSpec.id }"
-          :title="laneSpec.title"
+          v-tooltip="laneSpec.title"
           role="tab"
           :aria-selected="noteLaneActive && laneParam === laneSpec.id"
           @click="selectNoteLane(laneSpec.id)"
@@ -419,7 +475,7 @@ onBeforeUnmount(() => {
           type="button"
           class="lane-tab"
           :class="{ 'lane-tab-active': laneCc === cc.controller }"
-          :title="cc.title"
+          v-tooltip="cc.title"
           role="tab"
           :aria-selected="laneCc === cc.controller"
           @click="selectCcLane(cc.controller)"
@@ -430,7 +486,7 @@ onBeforeUnmount(() => {
           type="button"
           class="lane-tab"
           :class="{ 'lane-tab-active': lanePitchBend }"
-          :title="t.shell.pianoRoll.bendLaneTitle"
+          v-tooltip="t.shell.pianoRoll.bendLaneTitle"
           role="tab"
           :aria-selected="lanePitchBend"
           @click="selectPitchBendLane()"
@@ -441,7 +497,7 @@ onBeforeUnmount(() => {
           type="button"
           class="lane-tab"
           :class="{ 'lane-tab-active': laneChannelPressure }"
-          :title="t.shell.pianoRoll.pressureLaneTitle"
+          v-tooltip="t.shell.pianoRoll.pressureLaneTitle"
           role="tab"
           :aria-selected="laneChannelPressure"
           @click="selectChannelPressureLane()"
@@ -452,7 +508,7 @@ onBeforeUnmount(() => {
           type="button"
           class="lane-tab"
           :class="{ 'lane-tab-active': lanePolyPressure }"
-          :title="t.shell.pianoRoll.polyPressureLaneTitle"
+          v-tooltip="t.shell.pianoRoll.polyPressureLaneTitle"
           role="tab"
           :aria-selected="lanePolyPressure"
           @click="selectPolyPressureLane()"
@@ -592,7 +648,20 @@ onBeforeUnmount(() => {
   min-height: 0;
   display: grid;
   grid-template-columns: 72px 1fr 12px;
-  grid-template-rows: 1fr 96px 12px;
+  grid-template-rows: 1fr 132px 12px;
+}
+
+/* Collapse the parameter-lane row when the user hides the block; the grid and
+ * scrollbars keep the full remaining height. The lane cells are removed from
+ * layout so their canvases stop sizing/painting while hidden. */
+.piano-roll-layout.lane-hidden {
+  grid-template-rows: 1fr 0 12px;
+}
+
+.piano-roll-layout.lane-hidden .cell-velocity-label,
+.piano-roll-layout.lane-hidden .cell-velocity,
+.piano-roll-layout.lane-hidden .cell-corner {
+  display: none;
 }
 
 .cell-keyboard {
@@ -619,32 +688,43 @@ onBeforeUnmount(() => {
   padding: 2px;
   background: var(--surface-2);
   border-top: 1px solid var(--border-strong);
-  overflow: hidden;
+  /* Each tab keeps a legible fixed height; when the full set of note + CC
+   * lanes does not fit the column scrolls rather than crushing the labels. */
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
 }
 
 .lane-tab {
-  flex: 1;
-  min-height: 0;
-  padding: 0;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 16px;
+  padding: 1px 2px;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
   box-shadow: none;
   color: var(--text-4);
-  font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
+  font: var(--fw-semibold) var(--fs-2xs)/1 var(--font-sans);
   letter-spacing: 0.06em;
   cursor: pointer;
-  transition: background var(--dur-1) var(--ease-out);
+  transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
 }
 
 .lane-tab:hover {
   background: var(--surface-3);
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
-.lane-tab-active {
-  background: var(--surface-3);
-  color: var(--text-1);
+/* Accent fill so the selected parameter reads clearly in both themes (the grey
+ * surface tint was too faint against the panel, especially in light mode). */
+.lane-tab-active,
+.lane-tab-active:hover {
+  background: var(--accent);
+  color: var(--accent-text);
+  box-shadow: var(--raise-hi), var(--shadow-1);
 }
 
 .lane-divider {

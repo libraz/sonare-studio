@@ -38,7 +38,7 @@ function signedGain(value: number): string {
         <td class="targets-name">{{ target.name }}</td>
         <td>{{ target.integratedLufs.toFixed(1) }}</td>
         <td>{{ signedGain(target.normalizationGainDb) }}</td>
-        <td :class="{ risk: target.ceilingRisk }" :title="target.ceilingRisk ? t.shell.mastering.streaming.ceilingRisk : ''">
+        <td :class="{ risk: target.ceilingRisk }" v-tooltip="target.ceilingRisk ? t.shell.mastering.streaming.ceilingRisk : ''">
           {{ target.truePeakDb.toFixed(1) }}<svg
             v-if="target.ceilingRisk"
             class="targets-warn-icon"

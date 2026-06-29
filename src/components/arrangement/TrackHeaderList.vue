@@ -586,7 +586,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
           <div class="track-row" :style="{ height: `${props.laneHeight}px` }">
             <div
               class="track-grip"
-              :title="t.shell.arrangement.trackHeader.dragReorder"
+              v-tooltip="t.shell.arrangement.trackHeader.dragReorder"
               aria-hidden="true"
               @click.stop
               @pointerdown.stop="onGripPointerDown(track, index, $event)"
@@ -600,7 +600,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
               type="button"
               class="track-swatch"
               :style="{ background: track.color }"
-              :title="t.shell.arrangement.trackHeader.cycleColor"
+              v-tooltip="t.shell.arrangement.trackHeader.cycleColor"
               :aria-label="
                 formatMessage(t.shell.arrangement.trackHeader.cycleColorOf, { name: track.name })
               "
@@ -608,7 +608,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
             />
             <div class="track-main">
               <div class="track-name-row">
-                <span class="track-kind" :title="trackKindLabel[track.kind]">
+                <span class="track-kind" v-tooltip="trackKindLabel[track.kind]">
                   {{ TRACK_KIND_GLYPHS[track.kind] }}
                 </span>
                 <input
@@ -628,7 +628,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                 <button
                   type="button"
                   class="track-delete"
-                  :title="t.shell.arrangement.trackHeader.deleteTrack"
+                  v-tooltip="t.shell.arrangement.trackHeader.deleteTrack"
                   :aria-label="
                     formatMessage(t.shell.arrangement.trackHeader.deleteTrackNamed, {
                       name: track.name,
@@ -645,7 +645,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   type="button"
                   class="toggle arm"
                   :class="{ on: isArmed(track) }"
-                  :title="t.shell.arrangement.trackHeader.recordArm"
+                  v-tooltip="t.shell.arrangement.trackHeader.recordArm"
                   :aria-label="
                     formatMessage(t.shell.arrangement.trackHeader.recordArmNamed, {
                       name: track.name,
@@ -660,7 +660,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   type="button"
                   class="toggle mute"
                   :class="{ on: track.mute }"
-                  :title="t.shell.arrangement.trackHeader.mute"
+                  v-tooltip="t.shell.arrangement.trackHeader.mute"
                   :aria-label="
                     formatMessage(t.shell.arrangement.trackHeader.muteNamed, { name: track.name })
                   "
@@ -673,7 +673,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   type="button"
                   class="toggle solo"
                   :class="{ on: track.solo }"
-                  :title="t.shell.arrangement.trackHeader.solo"
+                  v-tooltip="t.shell.arrangement.trackHeader.solo"
                   :aria-label="
                     formatMessage(t.shell.arrangement.trackHeader.soloNamed, { name: track.name })
                   "
@@ -686,7 +686,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   type="button"
                   class="toggle automation"
                   :class="{ on: isAutomationExpanded(track) }"
-                  :title="t.shell.arrangement.trackHeader.automationLane"
+                  v-tooltip="t.shell.arrangement.trackHeader.automationLane"
                   :aria-label="
                     formatMessage(t.shell.arrangement.trackHeader.automationLaneOf, {
                       name: track.name,
@@ -703,7 +703,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   class="toggle freeze"
                   :class="{ on: track.frozen !== undefined, busy: isFreezing(track) }"
                   :disabled="isFreezing(track)"
-                  :title="
+                  v-tooltip="
                     track.frozen
                       ? t.shell.arrangement.trackHeader.unfreezeTitle
                       : t.shell.arrangement.trackHeader.freezeTitle
@@ -722,7 +722,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   class="track-bounce"
                   :class="{ busy: isBouncing(track) }"
                   :disabled="isBouncing(track)"
-                  :title="t.shell.arrangement.trackHeader.bounceTitle"
+                  v-tooltip="t.shell.arrangement.trackHeader.bounceTitle"
                   :aria-label="
                     formatMessage(t.shell.arrangement.trackHeader.bounceNamed, { name: track.name })
                   "
@@ -735,7 +735,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   type="button"
                   class="toggle takes"
                   :class="{ on: isTakesExpanded(track) }"
-                  :title="t.shell.arrangement.trackHeader.takeLanes"
+                  v-tooltip="t.shell.arrangement.trackHeader.takeLanes"
                   :aria-label="
                     formatMessage(t.shell.arrangement.trackHeader.takeLanesOf, {
                       name: track.name,
@@ -750,7 +750,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   v-if="takeRowCount(track) > 0 && isTakesExpanded(track)"
                   type="button"
                   class="takes-flatten"
-                  :title="t.shell.arrangement.trackHeader.flattenTitle"
+                  v-tooltip="t.shell.arrangement.trackHeader.flattenTitle"
                   :aria-label="
                     formatMessage(t.shell.arrangement.trackHeader.flattenNamed, {
                       name: track.name,
@@ -767,7 +767,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   max="2"
                   step="0.01"
                   :value="track.volume"
-                  :title="
+                  v-tooltip="
                     formatMessage(t.shell.arrangement.trackHeader.volumeTitle, {
                       value: track.volume.toFixed(2),
                     })
@@ -784,7 +784,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   max="1"
                   step="0.01"
                   :value="track.pan"
-                  :title="
+                  v-tooltip="
                     formatMessage(t.shell.arrangement.trackHeader.panTitle, {
                       value: track.pan.toFixed(2),
                     })

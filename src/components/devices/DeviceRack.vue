@@ -405,7 +405,7 @@ function displayInstrumentKind(): string {
           type="button"
           class="instrument-button"
           :class="{ selected: selectedDevice === 'instrument' }"
-          :title="t.shell.devicesPanel.changeInstrument"
+          v-tooltip="t.shell.devicesPanel.changeInstrument"
           aria-haspopup="dialog"
           :aria-expanded="pickerOpen"
           @click="onInstrumentClick"

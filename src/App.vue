@@ -118,6 +118,13 @@ const applyStateText = computed(() => {
   if (applyPending.value) return t.value.shell.editor.pending;
   return formatMessage(t.value.shell.editor.clipCount, { count: String(scheduledCount.value) });
 });
+
+/** Engine status dot state: off (no engine), pending (bouncing), or running. */
+const engineStatusState = computed(() => {
+  if (!handle.value) return 'off';
+  if (applyPending.value) return 'pending';
+  return 'on';
+});
 const localizedTourSteps = computed(() =>
   TOUR_STEPS.map((step) => {
     const copy = { ...step };
@@ -155,8 +162,6 @@ let bootPromise: Promise<void> | null = null;
 const {
   dirty,
   opfsAvailable,
-  projectMenuOpen,
-  projectMenuRoot,
   midiImportInput,
   newDialogOpen,
   openDialogOpen,
@@ -380,16 +385,14 @@ const {
 
 const {
   aboutOpen,
-  helpMenuOpen,
-  helpMenuRoot,
+  diagnosticsOpen,
   helpOpen,
-  layoutMenuOpen,
-  layoutMenuRoot,
   namedLayouts,
   settingsOpen,
   tourRef,
   applyNamedLayout,
   openAbout,
+  openDiagnostics,
   openShortcutsHelp,
   openWelcomeTour,
   saveCurrentLayoutAction,
@@ -402,28 +405,43 @@ const {
 });
 
 const { onWindowPointerDown } = useOutsidePopovers([
-  { open: projectMenuOpen, root: projectMenuRoot, close: closeProjectMenu },
   { open: recordMenuOpen, root: recordMenuRoot, close: () => (recordMenuOpen.value = false) },
-  { open: layoutMenuOpen, root: layoutMenuRoot, close: () => (layoutMenuOpen.value = false) },
-  { open: helpMenuOpen, root: helpMenuRoot, close: () => (helpMenuOpen.value = false) },
 ]);
 
 // --- App-level keyboard shortcuts ---------------------------------------------
 
-const { arrangementRef, focusZone, onGlobalKeyDown, openMenuBar, shortcutTitle } =
+const { arrangementRef, focusZone, layoutMenu, menuBarModel, onGlobalKeyDown, shortcutTitle } =
   useAppShortcutsMenu({
+    deviceRackOpen,
     editorTool,
     handle,
     helpOpen,
     isPlaying,
+    layouts: namedLayouts.layouts,
     loopEnabled,
     opfsAvailable,
+    recentNames: recentMenuNames,
     recording,
     scoreVisible,
     settingsOpen,
     shortcuts,
+    applyNamedLayout,
+    exportDawproject: exportDawprojectAction,
+    exportMidi2: exportMidi2Action,
+    exportSmf: exportSmfAction,
+    exportSzd: exportSzdAction,
+    importAudio: importAudioAction,
+    importMidi: importMidiAction,
     nudgeByBar,
+    openAbout,
+    openDiagnostics,
+    openExportDialog,
+    openNewDialog,
     openOpenDialog,
+    openRecentProject,
+    openShortcutsHelp,
+    openWelcomeTour,
+    saveCurrentLayout: saveCurrentLayoutAction,
     saveProjectAction,
     saveProjectAsAction,
     seekToEnd,
@@ -431,6 +449,7 @@ const { arrangementRef, focusZone, onGlobalKeyDown, openMenuBar, shortcutTitle }
     setEditorTool,
     setLeftLocator,
     setRightLocator,
+    toggleDeviceRack,
     toggleLoop,
     togglePlayback,
     toggleRecord,
@@ -482,45 +501,15 @@ useAppLifecycle({
       :autosave-last-saved-at="autosave.lastSavedAt.value"
       :device-rack-open="deviceRackOpen"
       :dirty="dirty"
-      :help-menu-open="helpMenuOpen"
-      :layout-menu-open="layoutMenuOpen"
-      :layouts="namedLayouts.layouts.value"
-      :opfs-available="opfsAvailable"
-      :project-menu-open="projectMenuOpen"
+      :layout-menu="layoutMenu"
+      :menus="menuBarModel"
       :project-name="store.projectName"
-      :recent-menu-names="recentMenuNames"
-      :shortcut-title="shortcutTitle"
-      @apply-named-layout="applyNamedLayout"
       @audio-import-change="onAudioImportChange"
       @audio-import-input-ref="(el) => (audioImportInput = el)"
-      @close-project-menu="closeProjectMenu"
-      @export-dawproject="exportDawprojectAction"
-      @export-midi2="exportMidi2Action"
-      @export-smf="exportSmfAction"
-      @export-szd="exportSzdAction"
-      @help-menu-ref="(el) => (helpMenuRoot = el)"
-      @import-audio="importAudioAction"
-      @import-midi="importMidiAction"
-      @layout-menu-ref="(el) => (layoutMenuRoot = el)"
       @midi-import-change="onMidiImportChange"
       @midi-import-input-ref="(el) => (midiImportInput = el)"
-      @open-about="openAbout"
-      @open-export-dialog="openExportDialog"
-      @open-menu-bar="openMenuBar"
-      @open-new-dialog="openNewDialog"
-      @open-open-dialog="openOpenDialog"
-      @open-recent-project="openRecentProject"
       @open-settings="settingsOpen = true"
-      @open-shortcuts-help="openShortcutsHelp"
-      @open-welcome-tour="openWelcomeTour"
-      @project-menu-ref="(el) => (projectMenuRoot = el)"
-      @save-current-layout="saveCurrentLayoutAction"
-      @save-project="saveProjectAction"
-      @save-project-as="saveProjectAsAction"
       @toggle-device-rack="toggleDeviceRack"
-      @update-help-menu-open="(open) => (helpMenuOpen = open)"
-      @update-layout-menu-open="(open) => (layoutMenuOpen = open)"
-      @update-project-menu-open="(open) => (projectMenuOpen = open)"
     />
 
     <ErrorBanner :message="errorMessage" @dismiss="errorMessage = ''" />
@@ -557,7 +546,7 @@ useAppLifecycle({
         :aria-valuemin="arrangeHeightMin"
         :aria-valuemax="arrangeHeightMax"
         tabindex="0"
-        :title="t.shell.editor.resizeArrangementTitle"
+        v-tooltip="t.shell.editor.resizeArrangementTitle"
         @pointerdown="onDividerPointerDown"
         @pointermove="onDividerPointerMove"
         @pointerup="onDividerPointerUp"
@@ -646,7 +635,7 @@ useAppLifecycle({
             class="dock-tab dock-tab-toggle dock-tab-score"
             :class="{ active: scoreVisible }"
             :aria-pressed="scoreVisible"
-            :title="t.shell.editor.toggleScoreTitle"
+            v-tooltip="t.shell.editor.toggleScoreTitle"
             @click="toggleScorePanel"
           >
             {{ t.shell.editor.tabs.score }}
@@ -657,7 +646,7 @@ useAppLifecycle({
             type="button"
             class="dock-collapse"
             :aria-pressed="dockCollapsed"
-            :title="dockCollapsed ? t.shell.editor.expandDock : t.shell.editor.collapseDock"
+            v-tooltip="dockCollapsed ? t.shell.editor.expandDock : t.shell.editor.collapseDock"
             :aria-label="t.shell.editor.toggleDock"
             @click="toggleDockCollapsed"
           >
@@ -685,7 +674,7 @@ useAppLifecycle({
             <button
               type="button"
               :disabled="store.selection.size === 0"
-              :title="t.shell.editor.quantizeTitle"
+              v-tooltip="t.shell.editor.quantizeTitle"
               @click="quantizeSelection()"
             >
               {{ t.shell.editor.quantize }}
@@ -739,7 +728,7 @@ useAppLifecycle({
                 class="midi-learn-toggle"
                 :class="{ 'midi-learn-toggle-active': midiLearnOpen }"
                 :aria-expanded="midiLearnOpen"
-                :title="t.shell.editor.midiLearnTitle"
+                v-tooltip="t.shell.editor.midiLearnTitle"
                 @click="midiLearnOpen = !midiLearnOpen"
               >
                 {{ t.shell.editor.midiLearn }}
@@ -756,13 +745,19 @@ useAppLifecycle({
             <button
               type="button"
               :disabled="!handle || !store.initialized"
-              :title="t.shell.editor.applyTitle"
+              v-tooltip="t.shell.editor.applyTitle"
               @click="applyNow"
             >
               {{ t.shell.editor.apply }}
             </button>
-            <span class="apply-state">
-              {{ applyStateText }}
+            <span
+              class="engine-status"
+              :class="`engine-status-${engineStatusState}`"
+              role="status"
+              v-tooltip="`${t.shell.editor.engineStatus}: ${applyStateText}`"
+              :aria-label="`${t.shell.editor.engineStatus}: ${applyStateText}`"
+            >
+              <span class="engine-status-dot" aria-hidden="true" />
             </span>
           </div>
           <InfoLine />
@@ -781,7 +776,7 @@ useAppLifecycle({
             :aria-valuenow="Math.round(scoreHeight)"
             :aria-valuemin="scoreHeightMin"
             tabindex="0"
-            :title="t.shell.editor.resizeScoreTitle"
+            v-tooltip="t.shell.editor.resizeScoreTitle"
             @pointerdown="onScoreDividerPointerDown"
             @pointermove="onScoreDividerPointerMove"
             @pointerup="onScoreDividerPointerUp"
@@ -867,15 +862,6 @@ useAppLifecycle({
       </Transition>
     </main>
 
-    <DiagnosticsPanel
-      :busy="busy"
-      :ctx-state="ctxState"
-      :handle="handle"
-      :render-info="renderInfo"
-      @render-offline="renderOffline"
-      @test-tone="playTestTone"
-    />
-
     <TransportBar
       :auto-punch-enabled="autoPunchEnabled"
       :bbt-display="bbtDisplay"
@@ -954,6 +940,17 @@ useAppLifecycle({
       :version="version"
       :isolated="isolated"
       @close="aboutOpen = false"
+    />
+
+    <DiagnosticsPanel
+      :open="diagnosticsOpen"
+      :busy="busy"
+      :ctx-state="ctxState"
+      :handle="handle"
+      :render-info="renderInfo"
+      @close="diagnosticsOpen = false"
+      @render-offline="renderOffline"
+      @test-tone="playTestTone"
     />
 
     <WelcomeTour ref="tourRef" :steps="localizedTourSteps" />

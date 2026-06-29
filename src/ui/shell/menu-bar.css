@@ -1,0 +1,163 @@
+/* Application menu bar — the File / Edit / View / Transport / Help row and the
+ * right-aligned Layout picker. One visual language for every top-level menu:
+ * flat text triggers that highlight on hover / open, and a solid dropdown with
+ * an aligned check column, label and shortcut-hint column. */
+
+.app-menubar {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.app-menubar__slot {
+  position: relative;
+}
+
+.app-menubar__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  background: none;
+  border: none;
+  box-shadow: none;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+
+.app-menubar__trigger:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+.app-menubar__trigger.open {
+  background: var(--surface-3);
+  color: var(--text-1);
+  box-shadow: var(--control-edge);
+}
+
+.app-menubar__trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+/* Disclosure chevron — only the picker-style menus opt in; it flips on open. */
+.app-menubar__chevron {
+  width: 11px;
+  height: 11px;
+  color: var(--text-3);
+  transition: transform var(--dur-1) var(--ease-out);
+}
+
+.app-menubar__trigger.open .app-menubar__chevron {
+  transform: rotate(180deg);
+  color: var(--accent);
+}
+
+/* --- Dropdown panel ------------------------------------------------------- */
+
+.menu-panel {
+  position: absolute;
+  top: calc(100% + 5px);
+  left: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  min-width: 13rem;
+  max-width: 22rem;
+  padding: var(--sp-1);
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--glass-hairline), var(--shadow-pop);
+}
+
+.menu-panel--end {
+  left: auto;
+  right: 0;
+}
+
+.menu-panel__item {
+  display: grid;
+  grid-template-columns: 1.15em 1fr auto;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  box-shadow: none;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  line-height: 1.3;
+  padding: 0.36rem 0.55rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background-color var(--dur-1) var(--ease-out);
+}
+
+/* Keyboard / pointer highlight share one resting style so focus never jumps. */
+.menu-panel__item.active:not(:disabled),
+.menu-panel__item:hover:not(:disabled) {
+  background: var(--surface-4);
+  color: var(--text-1);
+}
+
+.menu-panel__item:focus-visible {
+  outline: none;
+}
+
+.menu-panel__item:disabled {
+  color: var(--text-4);
+  cursor: default;
+}
+
+.menu-panel__item.danger {
+  color: var(--danger, #d9534f);
+}
+
+.menu-panel__check {
+  font-size: var(--fs-xs);
+  color: var(--accent);
+  text-align: center;
+}
+
+.menu-panel__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu-panel__hint {
+  justify-self: end;
+  font-size: var(--fs-2xs);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  color: var(--text-4);
+}
+
+.menu-panel__item.active:not(:disabled) .menu-panel__hint,
+.menu-panel__item:hover:not(:disabled) .menu-panel__hint {
+  color: var(--text-3);
+}
+
+.menu-panel__sep {
+  height: 1px;
+  margin: 4px 0.3rem;
+  background: var(--border);
+}
+
+.menu-panel__heading {
+  padding: 0.35rem 0.55rem 0.2rem;
+  font: var(--fw-bold) var(--fs-2xs) var(--font-sans);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-4);
+}

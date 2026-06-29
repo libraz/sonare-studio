@@ -224,7 +224,7 @@
 }
 
 .editor-toolbar > .midi-learn-anchor,
-.editor-toolbar > .apply-state,
+.editor-toolbar > .engine-status,
 .editor-toolbar > button {
   flex: none;
 }
@@ -235,9 +235,42 @@
   font-variant-numeric: tabular-nums;
 }
 
-.apply-state {
-  font-size: var(--fs-xs);
-  color: var(--text-3);
+/* Engine health reduced to a single dot — the verbose text ("engine off",
+ * clip count) lives in the tooltip / accessible label instead of taking up
+ * permanent bar space. */
+.engine-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.15rem;
+}
+
+.engine-status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: var(--radius-full);
+  background: var(--text-4);
+  transition: background var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
+}
+
+.engine-status-on .engine-status-dot {
+  background: var(--success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 28%, transparent);
+}
+
+.engine-status-pending .engine-status-dot {
+  background: var(--warning);
+  animation: engine-status-pulse 1s var(--ease-out) infinite;
+}
+
+@keyframes engine-status-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
 }
 
 .piano-roll-host {

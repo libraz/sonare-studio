@@ -157,7 +157,7 @@ function tickTopPx(db: number): number {
       :aria-valuenow="props.valueDb"
       :aria-valuetext="`${formatDb(props.valueDb)} dB`"
       :tabindex="props.disabled ? -1 : 0"
-      :title="formatMessage(t.shell.mixer.controls.gainTitle, { value: formatDb(props.valueDb) })"
+      v-tooltip="formatMessage(t.shell.mixer.controls.gainTitle, { value: formatDb(props.valueDb) })"
       @pointerdown="onPointerDown"
       @pointermove="onPointerMove"
       @pointerup="onPointerUp"

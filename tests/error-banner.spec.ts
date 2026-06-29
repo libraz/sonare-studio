@@ -33,6 +33,5 @@ describe('ErrorBanner', () => {
     wrapper = mount(ErrorBanner, { props: { message: 'oops' } });
     const button = wrapper.find('.error-dismiss');
     expect(button.attributes('aria-label')).toBeTruthy();
-    expect(button.attributes('title')).toBe(button.attributes('aria-label'));
   });
 });

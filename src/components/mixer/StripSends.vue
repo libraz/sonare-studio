@@ -96,18 +96,19 @@ function onRemove(busId: string): void {
   <div
     v-if="buses.length > 0"
     class="sends"
-    :title="isMaster ? t.shell.mixer.sends.masterTitle : t.shell.mixer.sends.stripTitle"
+    v-tooltip="isMaster ? t.shell.mixer.sends.masterTitle : t.shell.mixer.sends.stripTitle"
   >
     <span class="sends-title">
       {{ t.shell.mixer.sends.title }}
       <span v-if="isMaster" class="sends-note"> · {{ t.shell.mixer.sends.routingOnly }}</span>
     </span>
+    <TransitionGroup tag="div" name="list-row" class="send-rows">
     <div v-for="bus in buses" :key="bus.id" class="send-row">
       <button
         type="button"
         class="send-name"
         :class="{ off: sendFor(bus.id)?.enabled === false, unset: !sendFor(bus.id) }"
-        :title="
+        v-tooltip="
           sendFor(bus.id)
             ? sendFor(bus.id)?.enabled === false
               ? t.shell.mixer.sends.mutedTitle
@@ -123,7 +124,7 @@ function onRemove(busId: string): void {
         type="button"
         class="send-timing"
         :class="{ pre: isPreFader(bus.id) }"
-        :title="
+        v-tooltip="
           isPreFader(bus.id) ? t.shell.mixer.sends.preFaderTitle : t.shell.mixer.sends.postFaderTitle
         "
         @click="onToggleTiming(bus.id)"
@@ -142,13 +143,14 @@ function onRemove(busId: string): void {
         v-if="sendFor(bus.id)"
         type="button"
         class="send-remove"
-        :title="t.shell.mixer.sends.remove"
+        v-tooltip="t.shell.mixer.sends.remove"
         @click="onRemove(bus.id)"
       >
         ×
       </button>
       <span v-else class="send-remove-spacer" />
     </div>
+    </TransitionGroup>
   </div>
 </template>
 
@@ -171,6 +173,12 @@ function onRemove(busId: string): void {
   letter-spacing: 0;
   text-transform: none;
   color: var(--text-4);
+}
+
+.send-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .send-row {

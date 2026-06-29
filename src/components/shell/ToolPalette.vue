@@ -33,7 +33,7 @@ function toolHint(id: EditorToolId): string {
       :class="{ active: tool === def.id }"
       :aria-pressed="tool === def.id"
       :aria-label="formatMessage(t.shell.tools.toolLabel, { name: toolName(def.id) })"
-      :title="
+      v-tooltip="
         formatMessage(t.shell.tools.toolTitle, {
           name: toolName(def.id),
           key: def.key,

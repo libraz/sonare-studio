@@ -290,7 +290,7 @@ function onQChange(bandIndex: number, value: number, commit: boolean): void {
         type="button"
         class="eq-power"
         :class="{ on: eq?.enabled }"
-        :title="eq?.enabled ? t.shell.mixer.eq.bypass : t.shell.mixer.eq.enable"
+        v-tooltip="eq?.enabled ? t.shell.mixer.eq.bypass : t.shell.mixer.eq.enable"
         :aria-label="t.shell.mixer.eq.power"
         :aria-pressed="eq?.enabled === true"
         @click="onTogglePower"
@@ -301,7 +301,7 @@ function onQChange(bandIndex: number, value: number, commit: boolean): void {
         v-if="eq && eq.bands.length < MAX_BANDS"
         type="button"
         class="eq-add"
-        :title="t.shell.mixer.eq.addTitle"
+        v-tooltip="t.shell.mixer.eq.addTitle"
         :aria-label="t.shell.mixer.eq.add"
         @click="addBand"
       >
@@ -323,7 +323,7 @@ function onQChange(bandIndex: number, value: number, commit: boolean): void {
         <button
           type="button"
           class="eq-band-label"
-          :title="
+          v-tooltip="
             formatMessage(t.shell.mixer.eq.bandTypeTitle, { label: bandLabel(band, index) })
           "
           @click="openBandMenu(index, $event)"

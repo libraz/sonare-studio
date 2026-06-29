@@ -16,6 +16,7 @@ import { ZOOM_BUTTON_STEP } from './use-piano-roll-zoom';
 
 const overlayEnabled = defineModel<boolean>('overlayEnabled', { required: true });
 const fxPanelOpen = defineModel<boolean>('fxPanelOpen', { required: true });
+const laneVisible = defineModel<boolean>('laneVisible', { required: true });
 
 const props = defineProps<{
   /** True when a MIDI clip is active and can receive a transform. */
@@ -58,7 +59,7 @@ function onLegendClick(trackId: number): void {
         type="button"
         class="legend-chip"
         :class="{ 'legend-chip-active': track.id === store.activeTrackId }"
-        :title="track.name"
+        v-tooltip="track.name"
         @click="onLegendClick(track.id)"
       >
         <span class="chip-swatch" :style="{ background: track.color }" />
@@ -70,7 +71,7 @@ function onLegendClick(trackId: number): void {
         <button
           type="button"
           class="zoom-btn"
-          :title="t.shell.pianoRoll.zoomOutTimeTitle"
+          v-tooltip="t.shell.pianoRoll.zoomOutTimeTitle"
           :aria-label="t.shell.pianoRoll.zoomOutHorizontal"
           @click="emit('zoomHorizontal', 1 / ZOOM_BUTTON_STEP)"
         >
@@ -90,7 +91,7 @@ function onLegendClick(trackId: number): void {
         <button
           type="button"
           class="zoom-btn"
-          :title="t.shell.pianoRoll.zoomInTimeTitle"
+          v-tooltip="t.shell.pianoRoll.zoomInTimeTitle"
           :aria-label="t.shell.pianoRoll.zoomInHorizontal"
           @click="emit('zoomHorizontal', ZOOM_BUTTON_STEP)"
         >
@@ -112,7 +113,7 @@ function onLegendClick(trackId: number): void {
         <button
           type="button"
           class="zoom-btn"
-          :title="t.shell.pianoRoll.zoomOutPitchTitle"
+          v-tooltip="t.shell.pianoRoll.zoomOutPitchTitle"
           :aria-label="t.shell.pianoRoll.zoomOutVertical"
           @click="emit('zoomVertical', 1 / ZOOM_BUTTON_STEP)"
         >
@@ -132,7 +133,7 @@ function onLegendClick(trackId: number): void {
         <button
           type="button"
           class="zoom-btn"
-          :title="t.shell.pianoRoll.zoomInPitchTitle"
+          v-tooltip="t.shell.pianoRoll.zoomInPitchTitle"
           :aria-label="t.shell.pianoRoll.zoomInVertical"
           @click="emit('zoomVertical', ZOOM_BUTTON_STEP)"
         >
@@ -151,13 +152,20 @@ function onLegendClick(trackId: number): void {
         </button>
       </span>
     </div>
+    <ToggleButton
+      v-model="laneVisible"
+      class="lane-toggle"
+      size="sm"
+      :label="t.shell.pianoRoll.laneToggle"
+      :title="t.shell.pianoRoll.laneToggleTitle"
+    />
     <button
       type="button"
       class="fx-toggle"
       :class="{ 'fx-toggle-active': fxPanelOpen }"
       :disabled="!canTransform"
       :aria-expanded="fxPanelOpen"
-      :title="t.shell.pianoRoll.midiFxTitle"
+      v-tooltip="t.shell.pianoRoll.midiFxTitle"
       @click="toggleFxPanel"
     >
       {{ t.shell.pianoRoll.midiFx }}
@@ -214,6 +222,10 @@ function onLegendClick(trackId: number): void {
 .zoom-btn:hover:not(:disabled),
 .fx-toggle:hover:not(:disabled) {
   color: var(--text-1);
+}
+
+.lane-toggle {
+  flex: none;
 }
 
 .fx-toggle {

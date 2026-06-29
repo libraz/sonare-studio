@@ -89,7 +89,7 @@ defineExpose({ addMenuEl });
       <button
         type="button"
         class="chain-add"
-        :title="t.shell.mastering.addProcessorTitle"
+        v-tooltip="t.shell.mastering.addProcessorTitle"
         aria-haspopup="menu"
         :aria-expanded="addMenuOpen"
         @click="emit('toggle-add-menu')"

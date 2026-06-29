@@ -1,5 +1,6 @@
 import { createPinia } from 'pinia';
 import { createApp } from 'vue';
+import { vTooltip } from '@/ui/tooltip';
 import App from './App.vue';
 // Global design tokens first, then the base layer (document reset, dark UA
 // chrome, scrollbars), the shared control primitives, the keyboard-focus ring
@@ -10,5 +11,6 @@ import '@/ui/theme/base.css';
 import '@/ui/theme/controls.css';
 import '@/ui/theme/focus-visible.css';
 import '@/ui/theme/motion.css';
+import '@/ui/theme/tooltip.css';
 
-createApp(App).use(createPinia()).mount('#app');
+createApp(App).use(createPinia()).directive('tooltip', vTooltip).mount('#app');

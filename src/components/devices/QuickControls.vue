@@ -228,7 +228,7 @@ onBeforeUnmount(closeMenu);
             }"
           />
         </div>
-        <span class="qc-name" :title="control.name">{{ control.name }}</span>
+        <span class="qc-name" v-tooltip="control.name">{{ control.name }}</span>
         <span class="qc-value">{{ formatControlValue(control.value, control.unit) }}</span>
       </div>
     </div>

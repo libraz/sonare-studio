@@ -45,7 +45,7 @@ defineExpose({ root });
       type="button"
       class="preset-button"
       :class="{ set: preset !== undefined }"
-      :title="t.shell.mastering.presetTitle"
+      v-tooltip="t.shell.mastering.presetTitle"
       aria-haspopup="menu"
       :aria-expanded="menuOpen"
       @click="emit('toggle')"
