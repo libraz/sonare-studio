@@ -101,7 +101,7 @@ export const ja = {
       unsavedChanges: '未保存の変更',
     },
     menus: {
-      barLabel: 'ファイル、編集、表示、トランスポート、ヘルプメニュー',
+      barLabel: 'アプリケーションメニュー',
       file: 'ファイル',
       edit: '編集',
       editTitle: '編集: 取り消し、やり直し、選択、クオンタイズ',
@@ -109,6 +109,8 @@ export const ja = {
       viewTitle: '表示: スナップ、スコアパネル、エディターツール',
       transport: 'トランスポート',
       transportTitle: 'トランスポート: 再生、ループ、録音、移動',
+      window: 'ウィンドウ',
+      options: 'オプション',
     },
     layout: {
       trigger: 'レイアウト',
@@ -160,6 +162,10 @@ export const ja = {
       toggle: 'デバイス',
       toggleTitle: 'デバイスラックパネルを切り替え',
       panelLabel: 'デバイスラックパネル',
+    },
+    theme: {
+      switchToLight: 'ライトモードに切り替え',
+      switchToDark: 'ダークモードに切り替え',
     },
     sampleEditor: {
       title: 'サンプルエディター',

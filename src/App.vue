@@ -113,6 +113,9 @@ const appSettings = useAppSettings();
 const { t } = useI18n();
 const shortcuts = useShortcuts();
 const { tool: editorTool, setTool: setEditorTool } = useEditorTool();
+function toggleTheme(): void {
+  appSettings.set('theme', appSettings.resolvedTheme.value === 'dark' ? 'light' : 'dark');
+}
 const applyStateText = computed(() => {
   if (!handle.value) return t.value.shell.editor.engineOff;
   if (applyPending.value) return t.value.shell.editor.pending;
@@ -499,14 +502,14 @@ useAppLifecycle({
       :autosave-last-saved-at="autosave.lastSavedAt.value"
       :device-rack-open="deviceRackOpen"
       :dirty="dirty"
-      :layout-menu="layoutMenu"
       :menus="menuBarModel"
       :project-name="store.projectName"
+      :resolved-theme="appSettings.resolvedTheme.value"
       @audio-import-change="onAudioImportChange"
       @audio-import-input-ref="(el) => (audioImportInput = el)"
       @midi-import-change="onMidiImportChange"
       @midi-import-input-ref="(el) => (midiImportInput = el)"
-      @open-settings="settingsOpen = true"
+      @toggle-theme="toggleTheme"
       @toggle-device-rack="toggleDeviceRack"
     />
 

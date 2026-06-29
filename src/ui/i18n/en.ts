@@ -101,7 +101,7 @@ export const en = {
       unsavedChanges: 'Unsaved changes',
     },
     menus: {
-      barLabel: 'File, edit, view, transport and help menus',
+      barLabel: 'Application menus',
       file: 'File',
       edit: 'Edit',
       editTitle: 'Edit: undo, redo, selection, quantize',
@@ -109,6 +109,8 @@ export const en = {
       viewTitle: 'View: snap, score panel, editor tools',
       transport: 'Transport',
       transportTitle: 'Transport: play, loop, record, navigation',
+      window: 'Window',
+      options: 'Options',
     },
     layout: {
       trigger: 'Layout',
@@ -160,6 +162,10 @@ export const en = {
       toggle: 'Devices',
       toggleTitle: 'Toggle the device rack panel',
       panelLabel: 'Device rack panel',
+    },
+    theme: {
+      switchToLight: 'Switch to light mode',
+      switchToDark: 'Switch to dark mode',
     },
     sampleEditor: {
       title: 'Sample editor',

@@ -3,15 +3,16 @@ import MenuBar from '@/components/shell/MenuBar.vue';
 import TransportIcon from '@/components/shell/TransportIcon.vue';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import type { MenuBarMenu } from '@/ui/menu/menu-bar';
+import type { ResolvedAppTheme } from '@/ui/settings/app-settings';
 import { formatSavedAt } from '@/ui/shell/format';
 
 defineProps<{
   autosaveLastSavedAt: Date | null;
   deviceRackOpen: boolean;
   dirty: boolean;
-  layoutMenu: MenuBarMenu;
   menus: readonly MenuBarMenu[];
   projectName: string;
+  resolvedTheme: ResolvedAppTheme;
 }>();
 
 const emit = defineEmits<{
@@ -19,7 +20,7 @@ const emit = defineEmits<{
   audioImportInputRef: [el: HTMLInputElement | null];
   midiImportChange: [event: Event];
   midiImportInputRef: [el: HTMLInputElement | null];
-  openSettings: [];
+  toggleTheme: [];
   toggleDeviceRack: [];
 }>();
 
@@ -67,33 +68,36 @@ const { t } = useI18n();
 
     <span class="bar-spacer" />
 
+    <span v-if="autosaveLastSavedAt" class="autosave-state">
+      {{ formatMessage(t.shell.savedAt, { time: formatSavedAt(autosaveLastSavedAt) }) }}
+    </span>
+
     <button
       type="button"
-      class="devices-toggle"
+      class="header-tool devices-toggle"
       :class="{ active: deviceRackOpen }"
+      :aria-label="t.shell.devices.toggleTitle"
       :aria-pressed="deviceRackOpen"
       v-tooltip="t.shell.devices.toggleTitle"
       @click="emit('toggleDeviceRack')"
     >
-      {{ t.shell.devices.toggle }}
+      <TransportIcon name="panel-right" />
+      <span>{{ t.shell.devices.toggle }}</span>
     </button>
-
-    <MenuBar :menus="[layoutMenu]" align="end" chevron :aria-label="layoutMenu.label" />
 
     <button
       type="button"
-      class="settings-button"
-      :aria-label="t.shell.settingsButton.label"
-      aria-haspopup="dialog"
-      v-tooltip="t.shell.settingsButton.title"
-      @click="emit('openSettings')"
+      class="header-tool theme-toggle"
+      :aria-label="
+        resolvedTheme === 'dark' ? t.shell.theme.switchToLight : t.shell.theme.switchToDark
+      "
+      v-tooltip="
+        resolvedTheme === 'dark' ? t.shell.theme.switchToLight : t.shell.theme.switchToDark
+      "
+      @click="emit('toggleTheme')"
     >
-      <TransportIcon name="settings" />
+      <TransportIcon :name="resolvedTheme === 'dark' ? 'sun' : 'moon'" />
     </button>
-
-    <span v-if="autosaveLastSavedAt" class="autosave-state">
-      {{ formatMessage(t.shell.savedAt, { time: formatSavedAt(autosaveLastSavedAt) }) }}
-    </span>
   </header>
 </template>
 

@@ -342,12 +342,6 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
       actionItem('view.toggleSnap', t.value.shortcuts.menu.snapToGrid, {
         checked: store.snapEnabled,
       }),
-      actionItem('view.toggleScorePanel', t.value.shortcuts.menu.scorePanel, {
-        checked: options.scoreVisible.value,
-      }),
-      commandItem('view.deviceRack', t.value.shortcuts.menu.deviceRack, options.toggleDeviceRack, {
-        checked: options.deviceRackOpen.value,
-      }),
       heading('view.tools', t.value.shortcuts.menu.tools),
       actionItem('tool.select', a['tool.select'], {
         checked: options.editorTool.value === 'select',
@@ -356,6 +350,38 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
       actionItem('tool.split', a['tool.split'], { checked: options.editorTool.value === 'split' }),
       actionItem('tool.erase', a['tool.erase'], { checked: options.editorTool.value === 'erase' }),
     ];
+  }
+
+  function windowItems(): MenuBarItem[] {
+    const l = t.value.shell.layout;
+    const items: MenuBarItem[] = [
+      commandItem(
+        'window.deviceRack',
+        t.value.shortcuts.menu.deviceRack,
+        options.toggleDeviceRack,
+        {
+          checked: options.deviceRackOpen.value,
+        },
+      ),
+      actionItem('view.toggleScorePanel', t.value.shortcuts.menu.scorePanel, {
+        checked: options.scoreVisible.value,
+      }),
+    ];
+    if (options.layouts.value.length > 0) {
+      items.push(sep('window.sep-layouts'), heading('window.layouts', l.trigger));
+      for (const layout of options.layouts.value) {
+        items.push(
+          commandItem(`window.layout.${layout.name}`, layout.name, () =>
+            options.applyNamedLayout(layout.name),
+          ),
+        );
+      }
+    }
+    items.push(
+      sep('window.sep-save-layout'),
+      commandItem('window.saveLayout', l.saveCurrent, options.saveCurrentLayout),
+    );
+    return items;
   }
 
   function transportItems(): MenuBarItem[] {
@@ -385,15 +411,29 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
     ];
   }
 
+  function optionsItems(): MenuBarItem[] {
+    const h = t.value.shell.help;
+    return [
+      commandItem(
+        'options.settings',
+        t.value.settings.title,
+        () => {
+          options.settingsOpen.value = true;
+        },
+        { hintFor: 'app.settings' },
+      ),
+      commandItem('options.shortcuts', h.shortcuts, options.openShortcutsHelp, {
+        hintFor: 'help.shortcuts',
+      }),
+    ];
+  }
+
   function helpItems(): MenuBarItem[] {
     const h = t.value.shell.help;
     return [
-      commandItem('help.shortcuts', h.shortcuts, options.openShortcutsHelp, {
-        hintFor: 'help.shortcuts',
-      }),
       commandItem('help.welcomeTour', h.welcomeTour, options.openWelcomeTour),
-      sep('help.sep-about'),
       commandItem('help.diagnostics', h.diagnostics, options.openDiagnostics),
+      sep('help.sep-about'),
       commandItem('help.about', h.about, options.openAbout),
     ];
   }
@@ -406,6 +446,8 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
       { id: 'edit', label: m.edit, items: editItems() },
       { id: 'view', label: m.view, items: viewItems() },
       { id: 'transport', label: m.transport, items: transportItems() },
+      { id: 'window', label: m.window, items: windowItems() },
+      { id: 'options', label: m.options, items: optionsItems() },
       {
         id: 'help',
         label: t.value.shell.help.trigger,

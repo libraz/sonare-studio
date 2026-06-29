@@ -7,6 +7,7 @@ let wrapper: VueWrapper | null = null;
 
 const exportSmf = vi.fn();
 const exportMidi2 = vi.fn();
+const openSettings = vi.fn();
 
 /** A File menu carrying the two distinct export actions under test. */
 function fileMenu(): MenuBarMenu {
@@ -20,7 +21,13 @@ function fileMenu(): MenuBarMenu {
   };
 }
 
-const emptyLayoutMenu: MenuBarMenu = { id: 'layout', label: 'Layout', items: [] };
+function optionsMenu(): MenuBarMenu {
+  return {
+    id: 'options',
+    label: 'Options',
+    items: [{ id: 'options.settings', label: 'Settings', run: openSettings }],
+  };
+}
 
 /** Mounts AppHeader and opens the File menu in the command bar. */
 async function openFileMenu(): Promise<VueWrapper> {
@@ -30,9 +37,9 @@ async function openFileMenu(): Promise<VueWrapper> {
       autosaveLastSavedAt: null,
       deviceRackOpen: false,
       dirty: false,
-      layoutMenu: emptyLayoutMenu,
       menus: [fileMenu()],
       projectName: 'Demo',
+      resolvedTheme: 'light',
     },
   });
   const trigger = wrapper.findAll('button').find((node) => node.text() === 'File');
@@ -45,6 +52,7 @@ afterEach(() => {
   wrapper = null;
   exportSmf.mockReset();
   exportMidi2.mockReset();
+  openSettings.mockReset();
   document.body.textContent = '';
 });
 
@@ -66,5 +74,40 @@ describe('AppHeader export menu', () => {
     expect(exportMidi2).toHaveBeenCalledTimes(1);
     // The legacy SMF export stays a separate action.
     expect(exportSmf).not.toHaveBeenCalled();
+  });
+
+  it('offers settings from the Options menu', async () => {
+    wrapper = mount(AppHeader, {
+      attachTo: document.body,
+      props: {
+        autosaveLastSavedAt: null,
+        deviceRackOpen: false,
+        dirty: false,
+        menus: [optionsMenu()],
+        projectName: 'Demo',
+        resolvedTheme: 'light',
+      },
+    });
+    const trigger = wrapper.findAll('button').find((node) => node.text() === 'Options');
+    await trigger?.trigger('click');
+    const item = wrapper.findAll('[role="menuitem"]').find((node) => node.text() === 'Settings');
+    await item?.trigger('click');
+    expect(openSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it('emits one theme toggle action from the right-side button', async () => {
+    wrapper = mount(AppHeader, {
+      attachTo: document.body,
+      props: {
+        autosaveLastSavedAt: null,
+        deviceRackOpen: false,
+        dirty: false,
+        menus: [fileMenu()],
+        projectName: 'Demo',
+        resolvedTheme: 'dark',
+      },
+    });
+    await wrapper.get('.theme-toggle').trigger('click');
+    expect(wrapper.emitted('toggleTheme')).toHaveLength(1);
   });
 });

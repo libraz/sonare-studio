@@ -16,7 +16,10 @@ export type TransportIconName =
   | 'record'
   | 'chevron-down'
   | 'metronome'
-  | 'settings';
+  | 'settings'
+  | 'panel-right'
+  | 'sun'
+  | 'moon';
 
 defineProps<{ name: TransportIconName }>();
 </script>
@@ -98,6 +101,37 @@ defineProps<{ name: TransportIconName }>();
       fill-rule="evenodd"
       clip-rule="evenodd"
       d="M10.6 2.5h2.8l.5 2.4a7 7 0 0 1 1.7 1l2.3-.9 1.4 2.4-1.8 1.6a7 7 0 0 1 0 2l1.8 1.6-1.4 2.4-2.3-.9a7 7 0 0 1-1.7 1l-.5 2.4h-2.8l-.5-2.4a7 7 0 0 1-1.7-1l-2.3.9-1.4-2.4 1.8-1.6a7 7 0 0 1 0-2L4.2 7.4l1.4-2.4 2.3.9a7 7 0 0 1 1.7-1l.5-2.4ZM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"
+    />
+
+    <g
+      v-else-if="name === 'panel-right'"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.8"
+      stroke-linejoin="round"
+    >
+      <rect x="4" y="5" width="16" height="14" rx="2" />
+      <path d="M14 5v14" />
+    </g>
+
+    <g
+      v-else-if="name === 'sun'"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.8"
+      stroke-linecap="round"
+    >
+      <circle cx="12" cy="12" r="3.4" />
+      <path d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M6 6l1.4 1.4M16.6 16.6 18 18M18 6l-1.4 1.4M7.4 16.6 6 18" />
+    </g>
+
+    <path
+      v-else-if="name === 'moon'"
+      d="M18.5 15.1A7 7 0 0 1 8.9 5.5a7.5 7.5 0 1 0 9.6 9.6Z"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.8"
+      stroke-linejoin="round"
     />
   </svg>
 </template>
