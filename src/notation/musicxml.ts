@@ -32,6 +32,17 @@ type StaffNumber = 1 | 2;
 /** MIDI split point between the staves of a grand staff (middle C / C4). */
 const GRAND_STAFF_SPLIT_MIDI = 60;
 
+/** MusicXML beam level per beammable note value. */
+const BEAM_LEVEL_BY_BASE: Readonly<Record<string, number | undefined>> = {
+  whole: undefined,
+  half: undefined,
+  quarter: undefined,
+  eighth: 1,
+  '16th': 2,
+  '32nd': 3,
+  '64th': 4,
+};
+
 /** Comparison tolerance for PPQ arithmetic on IEEE doubles. */
 const PPQ_EPSILON = 1e-9;
 
@@ -85,6 +96,9 @@ interface AnnotationIndex {
   /** Slur numbers stopping on the event. */
   slurStops: Map<NotatedEvent, number[]>;
 }
+
+/** Beam marks keyed by event, one array entry per MusicXML beam level. */
+type BeamIndex = ReadonlyMap<NotatedEvent, ReadonlyArray<string>>;
 
 /** Appends a value to a keyed list inside a map. */
 function pushMapped<K>(map: Map<K, number[]>, key: K, value: number): void {
@@ -384,6 +398,7 @@ function serializeVoice(
   annotations: AnnotationIndex,
 ): void {
   const measureRest = isWholeMeasureRest(voice, measure);
+  const beams = buildBeamIndex(voice, measure, staffMap);
   for (const event of voice.events) {
     const staff = staffMap?.get(event);
     if (event.kind === 'rest') {
@@ -397,7 +412,99 @@ function serializeVoice(
           `<direction placement="below"><direction-type><dynamics><${dynamics}/></dynamics></direction-type>${staffXml}</direction>`,
         );
       }
-      pushNoteEvent(lines, event, score, staff, annotations);
+      pushNoteEvent(lines, event, measure, score, staff, annotations, beams);
+    }
+  }
+}
+
+/**
+ * Computes explicit MusicXML beam markings for each voice. Consecutive
+ * beammable notes are grouped within the same staff; rests and unbeammable
+ * values break a group, leaving isolated short notes as flagged notes.
+ */
+function buildBeamIndex(
+  voice: NotatedVoice,
+  measure: NotatedMeasure,
+  staffMap: ReadonlyMap<NotatedEvent, StaffNumber> | undefined,
+): BeamIndex {
+  const beams = new Map<NotatedEvent, string[]>();
+  const groupLen = beatGroupPpq(measure.timeSig);
+  let group: NotatedEvent[] = [];
+  let groupStaff: StaffNumber | undefined;
+  const flush = () => {
+    if (group.length >= 2) assignBeams(group, beams);
+    group = [];
+    groupStaff = undefined;
+  };
+  for (const event of voice.events) {
+    const staff = staffMap?.get(event);
+    const startsNewBeatGroup =
+      group.length > 0 && isBeatGroupBoundary(event.startPpq, measure.startPpq, groupLen);
+    if (
+      event.kind !== 'note' ||
+      beamLevel(event) === 0 ||
+      staff !== groupStaff ||
+      startsNewBeatGroup
+    ) {
+      flush();
+      if (event.kind === 'note' && beamLevel(event) > 0) {
+        group = [event];
+        groupStaff = staff;
+      }
+      continue;
+    }
+    group.push(event);
+  }
+  flush();
+  return beams;
+}
+
+/**
+ * Beat-group length used for beaming: denominator beats in simple meters and
+ * dotted beats in compound meters such as 6/8.
+ */
+function beatGroupPpq(timeSig: NotatedTimeSig): number {
+  const beatLen = 4 / timeSig.beatUnit;
+  const compound = timeSig.beatUnit >= 8 && timeSig.beats % 3 === 0;
+  return compound ? beatLen * 3 : beatLen;
+}
+
+/** Returns true for beat-group boundaries after the measure start. */
+function isBeatGroupBoundary(ppq: number, measureStartPpq: number, groupLen: number): boolean {
+  if (ppq <= measureStartPpq + PPQ_EPSILON) return false;
+  const rel = (ppq - measureStartPpq) / groupLen;
+  return Math.abs(rel - Math.round(rel)) < PPQ_EPSILON;
+}
+
+/** Returns the number of beams required by an event's notated value. */
+function beamLevel(event: NotatedEvent): number {
+  return BEAM_LEVEL_BY_BASE[event.value.base] ?? 0;
+}
+
+/** Assigns first-level beams plus secondary hook/continue marks for one group. */
+function assignBeams(group: NotatedEvent[], beams: Map<NotatedEvent, string[]>): void {
+  const maxLevel = Math.max(...group.map(beamLevel));
+  for (let level = 1; level <= maxLevel; level++) {
+    const members = group.filter((event) => beamLevel(event) >= level);
+    if (members.length === 0) continue;
+    for (const event of members) {
+      const index = members.indexOf(event);
+      const previous = members[index - 1];
+      const next = members[index + 1];
+      const previousAdjacent =
+        previous !== undefined &&
+        Math.abs(previous.startPpq + previous.durationPpq - event.startPpq) < PPQ_EPSILON;
+      const nextAdjacent =
+        next !== undefined &&
+        Math.abs(event.startPpq + event.durationPpq - next.startPpq) < PPQ_EPSILON;
+      let value: string;
+      if (previousAdjacent && nextAdjacent) value = 'continue';
+      else if (nextAdjacent) value = 'begin';
+      else if (previousAdjacent) value = 'end';
+      else value = index === 0 ? 'forward hook' : 'backward hook';
+      const eventBeams = beams.get(event) ?? [];
+      eventBeams[level - 1] = value;
+      beams.set(event, eventBeams);
     }
   }
 }
@@ -447,22 +554,46 @@ function restXml(
 function pushNoteEvent(
   lines: string[],
   event: NotatedEvent,
+  measure: NotatedMeasure,
   score: NotatedScore,
   staff: StaffNumber | undefined,
   annotations: AnnotationIndex,
+  beams: BeamIndex,
 ): void {
   const duration = ppqToDivisions(event.durationPpq, score.divisions);
   const ties = tieXml(event);
   const dots = '<dot/>'.repeat(event.value.dots);
+  const stem = stemXml(event, measure);
   const staffXml = staff === undefined ? '' : `<staff>${staff}</staff>`;
+  const beamMarks = beamXml(beams.get(event) ?? []);
   event.pitches.forEach((midi, pitchIndex) => {
     const chord = pitchIndex > 0 ? '<chord/>' : '';
     const pitch = pitchXml(spellPitch(midi, score.keyFifths));
     const notations = notationsXml(event, annotations, pitchIndex === 0);
+    const beam = pitchIndex === 0 ? beamMarks : '';
+    const stemMark = pitchIndex === 0 ? stem : '';
     lines.push(
-      `<note>${chord}${pitch}<duration>${duration}</duration>${ties}<voice>${event.voice}</voice><type>${event.value.base}</type>${dots}${staffXml}${notations}</note>`,
+      `<note>${chord}${pitch}<duration>${duration}</duration>${ties}<voice>${event.voice}</voice><type>${event.value.base}</type>${dots}${stemMark}${staffXml}${beam}${notations}</note>`,
     );
   });
+}
+
+/** Builds a stem direction for multi-voice measures, leaving single voices to engraver defaults. */
+function stemXml(event: NotatedEvent, measure: NotatedMeasure): string {
+  if (measure.voices.length < 2 || event.value.base === 'whole') return '';
+  const direction = event.voice === 1 || event.voice === 3 ? 'up' : 'down';
+  return `<stem>${direction}</stem>`;
+}
+
+/** Builds explicit MusicXML beam elements, or an empty string for flagged notes. */
+function beamXml(beams: ReadonlyArray<string>): string {
+  let xml = '';
+  beams.forEach((value, index) => {
+    if (value !== undefined) {
+      xml += `<beam number="${index + 1}">${value}</beam>`;
+    }
+  });
+  return xml;
 }
 
 /**

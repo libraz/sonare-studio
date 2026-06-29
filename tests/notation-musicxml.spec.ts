@@ -434,6 +434,216 @@ describe('serializeMusicXml attribute changes and clefs', () => {
   });
 });
 
+describe('serializeMusicXml beams', () => {
+  it('emits explicit beams for consecutive eighth notes grouped by beat', () => {
+    const eighth: NoteValue = { base: 'eighth', dots: 0 };
+    const score: NotatedScore = {
+      parts: [
+        {
+          id: 'P1',
+          name: 'Lead',
+          clef: 'treble',
+          measures: [
+            {
+              index: 0,
+              startPpq: 0,
+              lengthPpq: 2,
+              timeSig: { beats: 2, beatUnit: 4 },
+              voices: [
+                {
+                  voice: 1,
+                  events: [
+                    note([60], 1, 0, 0.5, eighth),
+                    note([62], 1, 0.5, 0.5, eighth),
+                    note([64], 1, 1, 0.5, eighth),
+                    note([65], 1, 1.5, 0.5, eighth),
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      keyFifths: 0,
+      divisions: 960,
+    };
+    const doc = parse(serializeMusicXml(score));
+    const beams = qa(doc, 'beam[number="1"]').map((beam) => beam.textContent);
+    expect(beams).toEqual(['begin', 'end', 'begin', 'end']);
+  });
+
+  it('emits secondary beams for sixteenth-note runs', () => {
+    const sixteenth: NoteValue = { base: '16th', dots: 0 };
+    const score: NotatedScore = {
+      parts: [
+        {
+          id: 'P1',
+          name: 'Lead',
+          clef: 'treble',
+          measures: [
+            {
+              index: 0,
+              startPpq: 0,
+              lengthPpq: 1,
+              timeSig: { beats: 1, beatUnit: 4 },
+              voices: [
+                {
+                  voice: 1,
+                  events: [
+                    note([60], 1, 0, 0.25, sixteenth),
+                    note([62], 1, 0.25, 0.25, sixteenth),
+                    note([64], 1, 0.5, 0.25, sixteenth),
+                    note([65], 1, 0.75, 0.25, sixteenth),
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      keyFifths: 0,
+      divisions: 960,
+    };
+    const doc = parse(serializeMusicXml(score));
+    expect(qa(doc, 'beam[number="1"]').map((beam) => beam.textContent)).toEqual([
+      'begin',
+      'continue',
+      'continue',
+      'end',
+    ]);
+    expect(qa(doc, 'beam[number="2"]').map((beam) => beam.textContent)).toEqual([
+      'begin',
+      'continue',
+      'continue',
+      'end',
+    ]);
+  });
+
+  it('emits beams on the first pitch of a chord only', () => {
+    const eighth: NoteValue = { base: 'eighth', dots: 0 };
+    const score: NotatedScore = {
+      parts: [
+        {
+          id: 'P1',
+          name: 'Lead',
+          clef: 'treble',
+          measures: [
+            {
+              index: 0,
+              startPpq: 0,
+              lengthPpq: 1,
+              timeSig: { beats: 1, beatUnit: 4 },
+              voices: [
+                {
+                  voice: 1,
+                  events: [note([60, 64], 1, 0, 0.5, eighth), note([62], 1, 0.5, 0.5, eighth)],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      keyFifths: 0,
+      divisions: 960,
+    };
+    const notes = qa(parse(serializeMusicXml(score)), 'note');
+    expect(notes[0].querySelector('beam[number="1"]')?.textContent).toBe('begin');
+    expect(notes[1].querySelector('chord')).not.toBeNull();
+    expect(notes[1].querySelector('beam')).toBeNull();
+    expect(notes[2].querySelector('beam[number="1"]')?.textContent).toBe('end');
+  });
+
+  it('uses dotted-beat groups in compound meters', () => {
+    const eighth: NoteValue = { base: 'eighth', dots: 0 };
+    const score: NotatedScore = {
+      parts: [
+        {
+          id: 'P1',
+          name: 'Lead',
+          clef: 'treble',
+          measures: [
+            {
+              index: 0,
+              startPpq: 0,
+              lengthPpq: 3,
+              timeSig: { beats: 6, beatUnit: 8 },
+              voices: [
+                {
+                  voice: 1,
+                  events: [
+                    note([60], 1, 0, 0.5, eighth),
+                    note([62], 1, 0.5, 0.5, eighth),
+                    note([64], 1, 1, 0.5, eighth),
+                    note([65], 1, 1.5, 0.5, eighth),
+                    note([67], 1, 2, 0.5, eighth),
+                    note([69], 1, 2.5, 0.5, eighth),
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      keyFifths: 0,
+      divisions: 960,
+    };
+    const beams = qa(parse(serializeMusicXml(score)), 'beam[number="1"]').map(
+      (beam) => beam.textContent,
+    );
+    expect(beams).toEqual(['begin', 'continue', 'end', 'begin', 'continue', 'end']);
+  });
+});
+
+describe('serializeMusicXml stems', () => {
+  it('emits explicit stem directions for multi-voice measures', () => {
+    const doc = parse(serializeMusicXml(grandStaffFixture()));
+    const [first] = qa(doc, 'measure');
+    const notes = qa(first, 'note').filter(
+      (noteEl) => noteEl.querySelector('pitch') !== null && noteEl.querySelector('chord') === null,
+    );
+    const stemsByVoice = notes.map((noteEl) => ({
+      voice: q(noteEl, 'voice').textContent,
+      stem: q(noteEl, 'stem').textContent,
+    }));
+    expect(stemsByVoice).toEqual([
+      { voice: '1', stem: 'up' },
+      { voice: '1', stem: 'up' },
+      { voice: '1', stem: 'up' },
+      { voice: '2', stem: 'down' },
+    ]);
+  });
+
+  it('leaves single-voice stems to the engraver', () => {
+    const eighth: NoteValue = { base: 'eighth', dots: 0 };
+    const score: NotatedScore = {
+      parts: [
+        {
+          id: 'P1',
+          name: 'Lead',
+          clef: 'treble',
+          measures: [
+            {
+              index: 0,
+              startPpq: 0,
+              lengthPpq: 1,
+              timeSig: { beats: 1, beatUnit: 4 },
+              voices: [
+                {
+                  voice: 1,
+                  events: [note([60], 1, 0, 0.5, eighth), note([62], 1, 0.5, 0.5, eighth)],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      keyFifths: 0,
+      divisions: 960,
+    };
+    expect(qa(parse(serializeMusicXml(score)), 'stem')).toHaveLength(0);
+  });
+});
+
 describe('escapeXml', () => {
   it('escapes all five reserved characters and leaves the rest alone', () => {
     expect(escapeXml(`a&b<c>d"e'f`)).toBe('a&amp;b&lt;c&gt;d&quot;e&apos;f');
@@ -502,16 +712,16 @@ describe('serializeMusicXml golden output', () => {
     // Spot-check exact lines that exercise chords, ties, staves and harmony.
     const lines = a.split('\n');
     expect(lines).toContain(
-      '<note><pitch><step>G</step><octave>4</octave></pitch><duration>960</duration><voice>1</voice><type>quarter</type><staff>1</staff></note>',
+      '<note><pitch><step>G</step><octave>4</octave></pitch><duration>960</duration><voice>1</voice><type>quarter</type><stem>up</stem><staff>1</staff></note>',
     );
     expect(lines).toContain(
       '<note><chord/><pitch><step>B</step><octave>4</octave></pitch><duration>960</duration><voice>1</voice><type>quarter</type><staff>1</staff></note>',
     );
     expect(lines).toContain(
-      '<note><pitch><step>B</step><octave>4</octave></pitch><duration>1920</duration><tie type="start"/><voice>1</voice><type>half</type><staff>1</staff><notations><tied type="start"/></notations></note>',
+      '<note><pitch><step>B</step><octave>4</octave></pitch><duration>1920</duration><tie type="start"/><voice>1</voice><type>half</type><stem>up</stem><staff>1</staff><notations><tied type="start"/></notations></note>',
     );
     expect(lines).toContain(
-      '<note><pitch><step>B</step><octave>4</octave></pitch><duration>1920</duration><tie type="stop"/><voice>1</voice><type>half</type><staff>1</staff><notations><tied type="stop"/></notations></note>',
+      '<note><pitch><step>B</step><octave>4</octave></pitch><duration>1920</duration><tie type="stop"/><voice>1</voice><type>half</type><stem>up</stem><staff>1</staff><notations><tied type="stop"/></notations></note>',
     );
     expect(lines).toContain(
       '<note><rest measure="yes"/><duration>3840</duration><voice>2</voice><staff>2</staff></note>',
