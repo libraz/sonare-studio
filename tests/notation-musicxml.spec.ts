@@ -1001,6 +1001,49 @@ describe('serializeMusicXml accidentals', () => {
       'sharp',
     ]);
   });
+
+  it('uses tied continuations to seed the measure accidental state', () => {
+    const half: NoteValue = { base: 'half', dots: 0 };
+    const quarter: NoteValue = { base: 'quarter', dots: 0 };
+    const score: NotatedScore = {
+      parts: [
+        {
+          id: 'P1',
+          name: 'Lead',
+          clef: 'treble',
+          measures: [
+            {
+              index: 0,
+              startPpq: 0,
+              lengthPpq: 2,
+              timeSig: { beats: 2, beatUnit: 4 },
+              voices: [{ voice: 1, events: [note([61], 1, 0, 2, half, { tieStart: true })] }],
+            },
+            {
+              index: 1,
+              startPpq: 2,
+              lengthPpq: 2,
+              timeSig: { beats: 2, beatUnit: 4 },
+              voices: [
+                {
+                  voice: 1,
+                  events: [
+                    note([61], 1, 2, 1, quarter, { tieStop: true }),
+                    note([61], 1, 3, 1, quarter),
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      keyFifths: 0,
+      divisions: 960,
+    };
+    expect(qa(parse(serializeMusicXml(score)), 'accidental').map((el) => el.textContent)).toEqual([
+      'sharp',
+    ]);
+  });
 });
 
 describe('escapeXml', () => {

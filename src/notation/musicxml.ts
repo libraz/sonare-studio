@@ -452,19 +452,19 @@ function buildAccidentalIndex(
     .filter((event) => event.kind === 'note')
     .sort((a, b) => a.startPpq - b.startPpq || a.voice - b.voice);
   for (const event of noteEvents) {
-    if (event.tieStop && !event.tieStart) continue;
+    const suppressDisplay = event.tieStop && !event.tieStart;
     const staff = staffMap?.get(event) ?? 1;
     event.pitches.forEach((midi, pitchIndex) => {
       const pitch = spellPitch(midi, score.keyFifths);
       const key = `${staff}:${pitch.step}:${pitch.octave}`;
       const current = state.get(key) ?? keySignatureAlter(pitch.step, score.keyFifths);
-      if (pitch.alter !== current) {
+      if (!suppressDisplay && pitch.alter !== current) {
         const value = accidentalName(pitch.alter);
         const eventAccidentals = accidentals.get(event) ?? new Map<number, string>();
         eventAccidentals.set(pitchIndex, value);
         accidentals.set(event, eventAccidentals);
-        state.set(key, pitch.alter);
       }
+      if (pitch.alter !== current) state.set(key, pitch.alter);
     });
   }
   return accidentals;
