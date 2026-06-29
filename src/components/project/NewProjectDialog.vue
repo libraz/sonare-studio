@@ -125,6 +125,7 @@ function templateDescription(name: TemplateName): string {
 </script>
 
 <template>
+  <Transition name="dialog">
   <div v-if="props.open" class="dialog-overlay" @click.self="onCancel">
     <div
       ref="dialogRef"
@@ -178,6 +179,7 @@ function templateDescription(name: TemplateName): string {
       </div>
     </div>
   </div>
+  </Transition>
 </template>
 
 <style scoped>

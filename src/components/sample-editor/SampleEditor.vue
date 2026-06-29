@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, shallowRef, watch } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
+import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
@@ -736,16 +737,13 @@ onMounted(() => {
     <div v-if="warpClip" class="warp">
       <div class="toolbar">
         <span class="warp-title">{{ t.shell.sampleEditor.warp }}</span>
-        <button
-          type="button"
-          class="warp-toggle"
-          :class="{ on: warpEnabled }"
-          :aria-pressed="warpEnabled"
+        <ToggleButton
+          :model-value="warpEnabled"
+          :label="t.shell.sampleEditor.followTempo"
           :title="t.shell.sampleEditor.warpTitle"
-          @click="onToggleWarp"
-        >
-          {{ t.shell.sampleEditor.followTempo }}
-        </button>
+          size="sm"
+          @update:model-value="onToggleWarp"
+        />
         <label>
           {{ t.shell.sampleEditor.sourceBpm }}
           <input
@@ -1098,17 +1096,6 @@ onMounted(() => {
   color: var(--text-3);
   font-weight: var(--fw-semibold);
   margin-right: 2px;
-}
-
-.warp-toggle.on {
-  background: var(--surface-selected);
-  color: var(--text-1);
-  box-shadow: inset 0 0 0 1px var(--accent), var(--control-edge);
-}
-
-.warp-toggle.on:not(:disabled):hover {
-  background: var(--surface-selected);
-  box-shadow: inset 0 0 0 1px var(--accent), var(--control-edge);
 }
 
 .warp-segments {

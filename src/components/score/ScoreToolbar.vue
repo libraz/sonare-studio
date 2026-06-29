@@ -2,6 +2,7 @@
 import { ref } from 'vue';
 import LayoutPopover from '@/components/score/LayoutPopover.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
+import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { useI18n } from '@/ui/i18n';
 import type { ScorePageFormatKey } from '@/ui/score/layout';
 
@@ -98,19 +99,18 @@ const layoutOpen = ref(false);
     >
       {{ t.shell.score.refresh }}
     </button>
-    <label class="bar-field" :title="t.shell.score.chordsTitle">
-      <input v-model="chordsEnabled" type="checkbox" />
-      {{ t.shell.score.chords }}
-    </label>
-    <button
-      type="button"
-      :class="{ active: annotateEnabled }"
-      :aria-pressed="annotateEnabled"
+    <ToggleButton
+      v-model="chordsEnabled"
+      :label="t.shell.score.chords"
+      :title="t.shell.score.chordsTitle"
+      size="sm"
+    />
+    <ToggleButton
+      v-model="annotateEnabled"
+      :label="t.shell.score.annotate"
       :title="t.shell.score.annotateTitle"
-      @click="annotateEnabled = !annotateEnabled"
-    >
-      {{ t.shell.score.annotate }}
-    </button>
+      size="sm"
+    />
     <div class="layout-host">
       <button type="button" aria-haspopup="true" :aria-expanded="layoutOpen" @click="layoutOpen = !layoutOpen">
         {{ t.shell.score.layout }}

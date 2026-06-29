@@ -87,7 +87,7 @@ describe('MasteringPanel.vue', () => {
     const items = wrapper.findAll('.preset-item:not(.none)');
     expect(items.length).toBe(5);
 
-    await wrapper.find('.preset-search').setValue('hip');
+    await wrapper.find('.preset-search input').setValue('hip');
     const filtered = wrapper.findAll('.preset-item:not(.none)');
     expect(filtered).toHaveLength(1);
     expect(filtered[0].text()).toBe('Hip Hop');

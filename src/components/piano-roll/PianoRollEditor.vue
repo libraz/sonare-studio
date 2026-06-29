@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useEditorTool } from '@/composables/useEditorTool';
 import { formatPitch } from '@/lib/pitch';
 import {
@@ -106,6 +107,14 @@ const {
   selectChannelPressureLane,
   selectPolyPressureLane,
 } = lanes;
+
+/** The 16 MIDI channel options for the CC-lane channel picker (0-based value). */
+const laneChannelOptions = computed(() =>
+  Array.from({ length: 16 }, (_, i) => ({
+    value: i,
+    label: `${t.value.shell.pianoRoll.laneChannelPrefix}${i + 1}`,
+  })),
+);
 
 const ccLanes = usePianoRollCcLanes({ lanes, gridPpq });
 const {
@@ -450,18 +459,15 @@ onBeforeUnmount(() => {
         >
           {{ t.shell.pianoRoll.polyPressureLaneTab }}
         </button>
-        <select
+        <SelectMenu
           v-if="!noteLaneActive"
+          v-model="laneChannel"
           class="lane-channel"
-          :title="t.shell.pianoRoll.laneChannelTitle"
+          size="sm"
+          :options="laneChannelOptions"
           :aria-label="t.shell.pianoRoll.laneChannelTitle"
-          :value="laneChannel"
-          @change="laneChannel = Number(($event.target as HTMLSelectElement).value)"
-        >
-          <option v-for="ch in 16" :key="ch" :value="ch - 1">
-            {{ t.shell.pianoRoll.laneChannelPrefix }}{{ ch }}
-          </option>
-        </select>
+          :title="t.shell.pianoRoll.laneChannelTitle"
+        />
       </div>
       <VelocityLane
         v-if="noteLaneActive"
@@ -648,16 +654,11 @@ onBeforeUnmount(() => {
   background: var(--border);
 }
 
+/* Keep the channel picker from stretching as a flex item in the lane column;
+ * the frosted trigger carries its own surface, padding and typography. */
 .lane-channel {
   flex: none;
   min-height: 0;
-  padding: 0 2px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-3);
-  color: var(--text-2);
-  font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
-  cursor: pointer;
 }
 
 .cell-velocity {

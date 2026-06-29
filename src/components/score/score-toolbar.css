@@ -74,11 +74,3 @@
   opacity: 0;
   transform: translateY(-2px) scale(0.98);
 }
-
-.score-toolbar button.active {
-  background: var(--accent);
-  color: var(--accent-text);
-  /* Read the toggle as pressed-in: drop the raised lift for the inset well plus
-     a thin accent gloss so an engaged state is unmistakable in both themes. */
-  box-shadow: var(--control-edge), var(--inset-well), inset 0 1px 0 rgba(255, 255, 255, 0.18);
-}

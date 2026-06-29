@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
+import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { useProjectStore } from '@/project/store';
 import { useI18n } from '@/ui/i18n';
 import {
@@ -109,10 +110,11 @@ const modeOptions = computed(() => {
             />
           </td>
           <td class="cell-toggle">
-            <input
+            <ToggleButton
               v-model="enabled"
-              type="checkbox"
+              :label="t.shell.lists.columns.highlight"
               :aria-label="t.shell.lists.key.highlight"
+              size="sm"
             />
           </td>
         </tr>

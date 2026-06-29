@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { dbToLinear, peakDb } from '@/lib/db';
 import { setClipFades, setClipGain, setClipLoop } from '@/project/commands';
 import { type EditorClip, isAudioClip } from '@/project/types';
@@ -120,15 +121,14 @@ function onLoopToggle(): void {
       </label>
     </template>
 
-    <label class="ci-field ci-loop">
-      <input
-        type="checkbox"
-        :checked="props.clip.loopEnabled"
-        :aria-label="t.shell.arrangement.clipInspector.loopAria"
-        @change="onLoopToggle"
-      />
-      {{ t.shell.arrangement.clipInspector.loop }}
-    </label>
+    <ToggleButton
+      class="ci-loop"
+      size="sm"
+      :model-value="props.clip.loopEnabled"
+      :label="t.shell.arrangement.clipInspector.loop"
+      :aria-label="t.shell.arrangement.clipInspector.loopAria"
+      @update:model-value="onLoopToggle"
+    />
 
     <button
       v-if="isAudio"
@@ -183,7 +183,7 @@ function onLoopToggle(): void {
 }
 
 .ci-loop {
-  gap: var(--sp-1);
+  flex: 0 0 auto;
 }
 
 .ci-redetect {

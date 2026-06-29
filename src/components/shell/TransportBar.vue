@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import LevelMeter from '@/components/LevelMeter.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
+import ToggleButton from '@/components/shell/ToggleButton.vue';
 import TransportIcon from '@/components/shell/TransportIcon.vue';
 import type { useRecording } from '@/composables/useRecording';
 import type { EngineHandle } from '@/engine/engine';
@@ -184,14 +185,12 @@ const countInOptions = computed(() =>
           role="group"
           :aria-label="t.shell.transport.recordingSettings"
         >
-          <label class="bar-field">
-            <input
-              type="checkbox"
-              :checked="recording.monitorEnabled.value"
-              @change="recording.setMonitor(!recording.monitorEnabled.value)"
-            />
-            {{ t.shell.transport.monitorInput }}
-          </label>
+          <ToggleButton
+            :model-value="recording.monitorEnabled.value"
+            :label="t.shell.transport.monitorInput"
+            size="sm"
+            @update:model-value="recording.setMonitor($event)"
+          />
           <label class="bar-field">
             {{ t.shell.transport.countIn }}
             <SelectMenu
@@ -202,22 +201,18 @@ const countInOptions = computed(() =>
               @change="emit('countInChange', $event)"
             />
           </label>
-          <label
-            class="bar-field"
+          <ToggleButton
+            :model-value="autoPunchEnabled"
+            :label="t.shell.transport.autoPunch"
+            size="sm"
+            :disabled="!hasLocatorWindow"
             :title="
               hasLocatorWindow
                 ? t.shell.transport.autoPunchReadyTitle
                 : t.shell.transport.autoPunchNeedsWindowTitle
             "
-          >
-            <input
-              type="checkbox"
-              :checked="autoPunchEnabled"
-              :disabled="!hasLocatorWindow"
-              @change="emit('toggleAutoPunch')"
-            />
-            {{ t.shell.transport.autoPunch }}
-          </label>
+            @update:model-value="emit('toggleAutoPunch')"
+          />
         </div>
         <span
           v-if="recording.armedTrackId.value !== null"

@@ -369,6 +369,7 @@ onBeforeUnmount(() => {
       >
         {{ t.shell.inserts.addButton }}
       </button>
+      <Transition name="pop">
       <div v-if="addMenuOpen" class="insert-catalog" role="menu">
         <div v-for="group in catalog" :key="group.category" class="catalog-group">
           <div class="catalog-category">{{ group.label }}</div>
@@ -387,6 +388,7 @@ onBeforeUnmount(() => {
           </button>
         </div>
       </div>
+      </Transition>
     </div>
     <p v-if="error" class="insert-error" role="alert">{{ error }}</p>
   </div>
@@ -544,6 +546,7 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-pop);
   padding: 2px 0;
+  transform-origin: top left;
 }
 
 .catalog-category {

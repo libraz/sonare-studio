@@ -379,6 +379,7 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
           >
             {{ t.shell.stepSequencer.euclid }}
           </button>
+          <Transition name="pop">
           <div v-if="euclidOpen" class="euclid-popover">
             <label class="tool-label">
               {{ t.shell.stepSequencer.pulses }}
@@ -404,6 +405,7 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
               {{ t.shell.stepSequencer.fillRow }}
             </button>
           </div>
+          </Transition>
         </div>
       </div>
       <div class="tool-group">
@@ -608,6 +610,8 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
   position: absolute;
   top: calc(100% + 4px);
   left: 0;
+  /* Grow from the trigger's lower-left, where the popover is anchored. */
+  transform-origin: top left;
   z-index: 10;
   display: flex;
   flex-direction: column;

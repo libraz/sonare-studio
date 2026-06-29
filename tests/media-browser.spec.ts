@@ -114,9 +114,9 @@ describe('MediaBrowser', () => {
       meta({ id: 'b', name: 'Bass' }),
     ]);
     const wrapper = await mountBrowser();
-    await wrapper.find('.filter-text').setValue('drum');
+    await wrapper.find('.filter-text input').setValue('drum');
     expect(rowNames(wrapper)).toEqual(['Drum Loop']);
-    await wrapper.find('.filter-text').setValue('zzz');
+    await wrapper.find('.filter-text input').setValue('zzz');
     expect(wrapper.find('.empty').text()).toBe('No assets match the filters.');
   });
 
@@ -308,9 +308,11 @@ describe('MediaBrowser', () => {
       previewContextFactory: () => asAudioContext(context),
     });
 
-    const toggle = wrapper.find('.sync-toggle input');
+    const toggle = wrapper.find('.sync-toggle');
     expect(toggle.exists()).toBe(true);
-    await toggle.setValue(true);
+    expect(toggle.attributes('aria-pressed')).toBe('false');
+    await toggle.trigger('click');
+    expect(toggle.attributes('aria-pressed')).toBe('true');
     await rowButton(wrapper, 'Loop', '.preview-button').trigger('click');
     await flushPromises();
     // Rate 0.5 (60 / 120) doubles the buffer length.
@@ -328,7 +330,7 @@ describe('MediaBrowser', () => {
     const wrapper = await mountBrowser({
       previewContextFactory: () => asAudioContext(context),
     });
-    await wrapper.find('.sync-toggle input').setValue(true);
+    await wrapper.find('.sync-toggle').trigger('click');
     await rowButton(wrapper, 'Loop', '.preview-button').trigger('click');
     await flushPromises();
     expect(timeStretch).not.toHaveBeenCalled();

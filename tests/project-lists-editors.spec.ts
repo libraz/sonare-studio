@@ -2,6 +2,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import ChordListEditor from '@/components/lists/ChordListEditor.vue';
+import KeyListEditor from '@/components/lists/KeyListEditor.vue';
 import MarkerListEditor from '@/components/lists/MarkerListEditor.vue';
 import ProjectListsPanel from '@/components/lists/ProjectListsPanel.vue';
 import TempoMapEditor from '@/components/lists/TempoMapEditor.vue';
@@ -112,6 +113,21 @@ describe('project list editors', () => {
       await buttonByText(wrapper, 'Revert').trigger('click');
       expect(wrapper.findAll('tbody tr')).toHaveLength(1);
       expect(canUndo()).toBe(false);
+      wrapper.unmount();
+    });
+  });
+
+  describe('KeyListEditor', () => {
+    it('shows and toggles the scale highlight control', async () => {
+      const wrapper = mount(KeyListEditor);
+      const toggle = wrapper.get('button[aria-label="Highlight the key in the piano roll"]');
+
+      expect(toggle.text()).toBe('Highlight');
+      expect(toggle.attributes('aria-pressed')).toBe('true');
+      await toggle.trigger('click');
+
+      expect(store.scaleHighlight.enabled).toBe(false);
+      expect(toggle.attributes('aria-pressed')).toBe('false');
       wrapper.unmount();
     });
   });

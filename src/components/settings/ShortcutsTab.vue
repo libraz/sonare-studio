@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref } from 'vue';
+import SearchField from '@/components/shell/SearchField.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useShortcuts } from '@/composables/useShortcuts';
 import { formatMessage, useI18n } from '@/ui/i18n';
@@ -86,9 +87,8 @@ onBeforeUnmount(stopCapture);
       {{ t.settings.shortcuts.conflict }}
     </p>
     <div class="shortcut-filters">
-      <input
+      <SearchField
         v-model="shortcutQuery"
-        type="search"
         class="shortcut-search"
         :placeholder="t.settings.shortcuts.searchPlaceholder"
         :aria-label="t.settings.shortcuts.searchLabel"

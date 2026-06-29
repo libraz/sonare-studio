@@ -708,18 +708,6 @@ function onKeydown(event: KeyboardEvent): void {
   outline-offset: 2px;
 }
 
-.enum-row select,
-.mod-row select {
-  background: var(--surface-2);
-  color: var(--text-2);
-  border: none;
-  border-radius: var(--radius-xs);
-  box-shadow: var(--control-edge), var(--inset-well);
-  font-size: var(--fs-xs);
-  padding: 1px 2px;
-  min-width: 0;
-}
-
 .envelope-canvas {
   width: 100%;
   height: 48px;

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue';
+import SearchField from '@/components/shell/SearchField.vue';
 import TransportIcon from '@/components/shell/TransportIcon.vue';
 import { useI18n } from '@/ui/i18n';
 import { humanizePresetName } from '@/ui/mastering/preset-catalog';
@@ -52,14 +53,15 @@ defineExpose({ root });
       <span class="preset-label">{{ presetLabel }}</span>
       <TransportIcon name="chevron-down" class="preset-caret" />
     </button>
+    <Transition name="pop">
     <div v-if="menuOpen" class="preset-menu" role="menu">
-      <input
-        :value="query"
-        type="search"
+      <SearchField
+        :model-value="query"
+        size="sm"
         class="preset-search"
         :placeholder="t.shell.mastering.searchPresets"
         :aria-label="t.shell.mastering.searchPresets"
-        @input="emit('update:query', ($event.target as HTMLInputElement).value)"
+        @update:model-value="emit('update:query', $event)"
       />
       <button type="button" role="menuitem" class="preset-item none" @click="emit('select', null)">
         {{ t.shell.mastering.noPreset }}
@@ -79,6 +81,7 @@ defineExpose({ root });
         {{ t.shell.mastering.noMatches }}
       </p>
     </div>
+    </Transition>
   </div>
 </template>
 

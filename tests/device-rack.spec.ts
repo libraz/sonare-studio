@@ -74,7 +74,7 @@ describe('DeviceRack.vue', () => {
     await wrapper.find('.instrument-button').trigger('click');
     expect(wrapper.find('.instrument-picker').exists()).toBe(true);
 
-    await wrapper.find('.preset-search').setValue('lead');
+    await wrapper.find('.preset-search input').setValue('lead');
     const options = wrapper.findAll('.preset-option');
     expect(options.map((o) => o.text())).toEqual(['saw-lead', 'square-lead']);
 

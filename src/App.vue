@@ -27,6 +27,7 @@ import DialogHost from '@/components/shell/DialogHost.vue';
 import ErrorBanner from '@/components/shell/ErrorBanner.vue';
 import MidiLearnPanel from '@/components/shell/MidiLearnPanel.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
+import ToggleButton from '@/components/shell/ToggleButton.vue';
 import ToolPalette from '@/components/shell/ToolPalette.vue';
 import TransportBar from '@/components/shell/TransportBar.vue';
 import StepSequencer from '@/components/step-sequencer/StepSequencer.vue';
@@ -675,10 +676,12 @@ useAppLifecycle({
                   :aria-label="t.shell.editor.snap"
                 />
               </label>
-            <label class="bar-field" :title="t.shell.editor.snapToggleTitle">
-              <input v-model="store.snapEnabled" type="checkbox" />
-              {{ t.shell.editor.snapOn }}
-            </label>
+            <ToggleButton
+              v-model="store.snapEnabled"
+              size="sm"
+              :label="t.shell.editor.snapOn"
+              :title="t.shell.editor.snapToggleTitle"
+            />
             <button
               type="button"
               :disabled="store.selection.size === 0"
@@ -687,22 +690,25 @@ useAppLifecycle({
             >
               {{ t.shell.editor.quantize }}
             </button>
-            <label class="bar-field">
-              <input v-model="store.scaleHighlight.enabled" type="checkbox" />
-              {{ t.shell.editor.scaleHighlight }}
-            </label>
-            <label class="bar-field" :title="t.shell.editor.musicTypingTitle">
-              <input
-                :checked="musicTyping.enabled.value"
-                type="checkbox"
-                @change="toggleMusicTyping"
-              />
-              {{ t.shell.editor.musicTyping }}
-            </label>
-            <label class="bar-field" :title="t.shell.editor.stepInputTitle">
-              <input :checked="stepInput.armed.value" type="checkbox" @change="toggleStepInput" />
-              {{ t.shell.editor.stepInput }}
-            </label>
+            <ToggleButton
+              v-model="store.scaleHighlight.enabled"
+              size="sm"
+              :label="t.shell.editor.scaleHighlight"
+            />
+            <ToggleButton
+              :model-value="musicTyping.enabled.value"
+              size="sm"
+              :label="t.shell.editor.musicTyping"
+              :title="t.shell.editor.musicTypingTitle"
+              @update:model-value="toggleMusicTyping"
+            />
+            <ToggleButton
+              :model-value="stepInput.armed.value"
+              size="sm"
+              :label="t.shell.editor.stepInput"
+              :title="t.shell.editor.stepInputTitle"
+              @update:model-value="toggleStepInput"
+            />
             <span v-if="stepInput.armed.value" class="step-cursor">
               @ {{ formatBarBeatTick(stepInput.cursorPpq.value, store.timeSignatures) }}
             </span>

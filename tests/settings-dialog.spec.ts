@@ -75,9 +75,13 @@ describe('SettingsDialog', () => {
 
   it('writes General changes through the settings store', async () => {
     const w = open();
-    const snap = w.findAll('input[type="checkbox"]')[0];
-    await snap.setValue(false);
+    const snap = w.get('button[aria-label="Snap to grid by default"]');
+    expect(snap.attributes('aria-pressed')).toBe('true');
+    expect(snap.text()).toBe('On');
+    await snap.trigger('click');
     expect(useAppSettings().settings.snapDefault).toBe(false);
+    expect(snap.attributes('aria-pressed')).toBe('false');
+    expect(snap.text()).toBe('Off');
   });
 
   it('writes language and theme changes through the settings store', async () => {
@@ -132,7 +136,7 @@ describe('SettingsDialog', () => {
   it('filters the shortcut list by search query', async () => {
     const w = open();
     await w.findAll('[role="tab"]')[1].trigger('click');
-    await w.find('.shortcut-search').setValue('quantize');
+    await w.find('input[aria-label="Search shortcuts"]').setValue('quantize');
     const ids = w.findAll('tbody [data-action-id]').map((row) => row.attributes('data-action-id'));
     expect(ids).toEqual(['edit.quantizeSelection']);
   });
@@ -148,7 +152,7 @@ describe('SettingsDialog', () => {
   it('shows an empty state when nothing matches the search', async () => {
     const w = open();
     await w.findAll('[role="tab"]')[1].trigger('click');
-    await w.find('.shortcut-search').setValue('zzzznomatch');
+    await w.find('input[aria-label="Search shortcuts"]').setValue('zzzznomatch');
     expect(w.findAll('tbody [data-action-id]')).toHaveLength(0);
     expect(w.find('.shortcut-empty').exists()).toBe(true);
   });

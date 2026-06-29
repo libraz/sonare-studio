@@ -43,16 +43,18 @@ onBeforeUnmount(() => {
     >
       {{ t.shell.arrangement.addTrack.trigger }} ▾
     </button>
-    <div v-if="open" class="add-track-items" role="menu">
-      <button type="button" role="menuitem" @click="onAdd('midi')">
-        {{ t.shell.arrangement.addTrack.midi }}
-      </button>
-      <button type="button" role="menuitem" @click="onAdd('audio')">
-        {{ t.shell.arrangement.addTrack.audio }}
-      </button>
-      <button type="button" role="menuitem" @click="onAdd('group')">
-        {{ t.shell.arrangement.addTrack.group }}
-      </button>
-    </div>
+    <Transition name="pop">
+      <div v-if="open" class="add-track-items" role="menu">
+        <button type="button" role="menuitem" @click="onAdd('midi')">
+          {{ t.shell.arrangement.addTrack.midi }}
+        </button>
+        <button type="button" role="menuitem" @click="onAdd('audio')">
+          {{ t.shell.arrangement.addTrack.audio }}
+        </button>
+        <button type="button" role="menuitem" @click="onAdd('group')">
+          {{ t.shell.arrangement.addTrack.group }}
+        </button>
+      </div>
+    </Transition>
   </div>
 </template>

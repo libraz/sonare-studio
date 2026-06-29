@@ -96,6 +96,7 @@ defineExpose({ addMenuEl });
       >
         {{ t.shell.mastering.addProcessor }}
       </button>
+      <Transition name="pop">
       <div v-if="addMenuOpen" class="chain-catalog" role="menu">
         <div v-for="group in catalog" :key="group.category" class="catalog-group">
           <div class="catalog-category">{{ group.label }}</div>
@@ -114,6 +115,7 @@ defineExpose({ addMenuEl });
           </button>
         </div>
       </div>
+      </Transition>
     </div>
   </div>
 </template>

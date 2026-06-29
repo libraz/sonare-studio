@@ -219,6 +219,7 @@ onBeforeUnmount(() => {
             <path d="M8 1.4v2M8 12.6v2M1.4 8h2M12.6 8h2M3.3 3.3l1.4 1.4M11.3 11.3l1.4 1.4M12.7 3.3l-1.4 1.4M4.7 11.3l-1.4 1.4" />
           </svg>
         </button>
+        <Transition name="pop">
         <div v-if="optionsOpen" class="strip-options-popover" role="menu">
           <label class="strip-options-row">
             <span class="strip-options-label">{{ t.shell.mixer.strip.inputTrim }}</span>
@@ -278,6 +279,7 @@ onBeforeUnmount(() => {
             </span>
           </div>
         </div>
+        </Transition>
       </div>
       <button
         type="button"
@@ -491,6 +493,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border-raised);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-pop);
+  transform-origin: top right;
 }
 
 .strip-options-row {

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue';
+import SearchField from '@/components/shell/SearchField.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
+import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { ensureWasm } from '@/lib/wasm';
 import { type AudioAssetMeta, deleteAsset, listAssets, loadAsset } from '@/persistence/assets';
 import { decodeAndIngest } from '@/project/audio-import';
@@ -302,10 +304,9 @@ onBeforeUnmount(() => {
     @drop="onDrop"
   >
     <div class="toolbar">
-      <input
+      <SearchField
         v-model="filterText"
         class="filter-text"
-        type="search"
         :placeholder="t.shell.media.filterByName"
         :aria-label="t.shell.media.filterAssetsByName"
       />
@@ -331,10 +332,13 @@ onBeforeUnmount(() => {
         :aria-label="t.shell.media.sortAssets"
         size="sm"
       />
-      <label v-if="timeStretchFn" class="sync-toggle">
-        <input v-model="syncToTempo" type="checkbox" />
-        {{ t.shell.media.syncTempo }}
-      </label>
+      <ToggleButton
+        v-if="timeStretchFn"
+        v-model="syncToTempo"
+        class="sync-toggle"
+        :label="t.shell.media.syncTempo"
+        size="sm"
+      />
       <button
         type="button"
         class="import-button"
@@ -535,15 +539,6 @@ onBeforeUnmount(() => {
 
 .filter-bpm.invalid {
   box-shadow: inset 0 0 0 1px var(--danger), var(--control-edge), var(--inset-well);
-}
-
-.sync-toggle {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  color: var(--text-3);
-  font-size: var(--fs-xs);
-  white-space: nowrap;
 }
 
 /* Inherits the shared control face from controls.css; only the metrics differ. */

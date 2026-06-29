@@ -29,6 +29,8 @@ export const en = {
       scrollFollowPlayhead: 'Scroll view to follow playhead',
       confirmDestructive: 'Confirm destructive actions',
       loudnessTarget: 'Loudness target (LUFS)',
+      toggleOn: 'On',
+      toggleOff: 'Off',
       resetDefaults: 'Reset to defaults',
     },
     shortcuts: {

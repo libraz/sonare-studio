@@ -173,37 +173,7 @@ onBeforeUnmount(() => {
   backdrop-filter: var(--scrim-blur);
 }
 
-/* Entrance/exit motion mirrors the canonical modal: the scrim fades while the
- * panel springs in. Durations collapse to 0 under prefers-reduced-motion. */
-.dialog-enter-active,
-.dialog-leave-active {
-  transition: opacity var(--dur-2) var(--ease-out);
-}
-
-.dialog-enter-active .dialog {
-  transition: transform var(--dur-3) var(--ease-spring),
-    opacity var(--dur-2) var(--ease-out);
-}
-
-.dialog-leave-active .dialog {
-  transition: transform var(--dur-2) var(--ease-out),
-    opacity var(--dur-2) var(--ease-out);
-}
-
-.dialog-enter-from,
-.dialog-leave-to {
-  opacity: 0;
-}
-
-.dialog-enter-from .dialog {
-  opacity: 0;
-  transform: scale(0.94) translateY(8px);
-}
-
-.dialog-leave-to .dialog {
-  opacity: 0;
-  transform: scale(0.97);
-}
+/* Entrance/exit motion is the shared `dialog` transition in motion.css. */
 
 .dialog {
   display: flex;

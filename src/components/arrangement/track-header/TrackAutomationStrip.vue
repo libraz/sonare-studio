@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import SelectMenu from '@/components/shell/SelectMenu.vue';
+import ToggleButton from '@/components/shell/ToggleButton.vue';
 import type { AutomationLaneState, AutomationParam } from '@/project/automation';
 import type { EditorTrack } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
@@ -13,7 +14,7 @@ defineProps<{
 
 const emit = defineEmits<{
   paramChange: [track: EditorTrack, value: string];
-  enabledChange: [track: EditorTrack, event: Event];
+  enabledChange: [track: EditorTrack, enabled: boolean];
 }>();
 
 const { t } = useI18n();
@@ -30,20 +31,17 @@ const { t } = useI18n();
       :aria-label="formatMessage(t.shell.arrangement.automation.parameter, { name: track.name })"
       @change="emit('paramChange', track, $event)"
     />
-    <label
+    <ToggleButton
       class="automation-enable"
+      size="sm"
+      :model-value="lane?.enabled ?? false"
+      :disabled="lane === null"
+      :label="t.shell.arrangement.automation.on"
+      :aria-label="formatMessage(t.shell.arrangement.automation.enable, { name: track.name })"
       :title="
         lane ? t.shell.arrangement.automation.applyTitle : t.shell.arrangement.automation.emptyTitle
       "
-    >
-      <input
-        type="checkbox"
-        :checked="lane?.enabled ?? false"
-        :disabled="lane === null"
-        :aria-label="formatMessage(t.shell.arrangement.automation.enable, { name: track.name })"
-        @change="emit('enabledChange', track, $event)"
-      />
-      {{ t.shell.arrangement.automation.on }}
-    </label>
+      @update:model-value="emit('enabledChange', track, $event)"
+    />
   </div>
 </template>

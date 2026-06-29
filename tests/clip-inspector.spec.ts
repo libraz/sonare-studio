@@ -85,7 +85,7 @@ describe('ClipInspector', () => {
 
   it('toggles loop through the command', async () => {
     wrapper = mount(ClipInspector, { props: { clip: audioClip({ loopEnabled: false }) } });
-    await wrapper.find('input[aria-label="Loop the clip window"]').setValue(true);
+    await wrapper.find('.ci-loop').trigger('click');
     expect(setClipLoop).toHaveBeenCalledWith(7, true);
   });
 

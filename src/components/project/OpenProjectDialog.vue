@@ -87,6 +87,7 @@ function onKeydown(event: KeyboardEvent): void {
 </script>
 
 <template>
+  <Transition name="dialog">
   <div v-if="open" class="modal-overlay" @click.self="emit('close')">
     <div
       :ref="(el) => emit('dialogRef', el as HTMLElement | null)"
@@ -145,6 +146,7 @@ function onKeydown(event: KeyboardEvent): void {
       </div>
     </div>
   </div>
+  </Transition>
 </template>
 
 <style scoped src="@/ui/shell/open-project-dialog.css"></style>

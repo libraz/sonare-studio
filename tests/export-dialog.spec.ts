@@ -212,6 +212,80 @@ describe('ExportDialog', () => {
     expect(emitted[0][0].filename).toBe('My Song.wav');
   });
 
+  it('passes WAV dither to the encoder when the dither toggle is enabled', async () => {
+    const control = makeRender();
+    const encode = vi.fn(() => new Uint8Array([1, 2, 3]));
+    const { wrapper, download } = mountDialog(control, {
+      encoders: [
+        {
+          id: 'wav',
+          label: 'WAV (PCM)',
+          extension: '.wav',
+          mime: 'audio/wav',
+          encode,
+        },
+      ],
+    });
+
+    const dither = wrapper.get('.wav-dither');
+    expect(dither.attributes('aria-pressed')).toBe('false');
+    await dither.trigger('click');
+    expect(dither.attributes('aria-pressed')).toBe('true');
+    await clickExport(wrapper);
+
+    const result = makeResult();
+    control.resolve(result);
+    await flushPromises();
+
+    expect(encode).toHaveBeenCalledWith(result.channels, 48000, { bitDepth: 16, dither: true });
+    expect(download).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables dither outside 16-bit WAV and leaves the encoder option false', async () => {
+    const control = makeRender();
+    const encode = vi.fn(() => new Uint8Array([1]));
+    const { wrapper } = mountDialog(control, {
+      encoders: [
+        {
+          id: 'wav',
+          label: 'WAV (PCM)',
+          extension: '.wav',
+          mime: 'audio/wav',
+          encode,
+        },
+      ],
+    });
+
+    await selectOption(wrapper, '.wav-bit-depth', '24-bit PCM');
+    const dither = wrapper.get('.wav-dither');
+    expect(dither.attributes('disabled')).toBeDefined();
+    await dither.trigger('click');
+    expect(dither.attributes('aria-pressed')).toBe('false');
+    await clickExport(wrapper);
+    control.resolve(makeResult());
+    await flushPromises();
+
+    expect(encode.mock.calls[0][2]).toEqual({ bitDepth: 24, dither: false });
+  });
+
+  it('passes includeMasterChain false when the master-chain toggle is disabled', async () => {
+    const control = makeRender();
+    const { wrapper } = mountDialog(control);
+
+    const includeMasterChain = wrapper.get('.include-master-chain');
+    expect(includeMasterChain.attributes('aria-pressed')).toBe('true');
+    await includeMasterChain.trigger('click');
+    expect(includeMasterChain.attributes('aria-pressed')).toBe('false');
+    await clickExport(wrapper);
+
+    expect(control.options()).toEqual({
+      sampleRate: 48000,
+      range: 'project',
+      includeMasterChain: false,
+      stems: false,
+    });
+  });
+
   it('passes the loop window to the render seam', async () => {
     const control = makeRender();
     const { wrapper } = mountDialog(control, {

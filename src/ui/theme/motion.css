@@ -72,6 +72,39 @@
   transform: scale(0.97);
 }
 
+/* --- dialog: scrim fade + card spring ---------------------------------
+ * The canonical modal entrance — the full-screen scrim fades in while the
+ * dialog card springs up from slightly below, and reverses on close. Wrap the
+ * v-if scrim overlay in <Transition name="dialog">: the overlay's direct child
+ * (the card) is the element that springs, so this works regardless of the
+ * card's own class name. Durations collapse to 0 under reduced motion. */
+.dialog-enter-active,
+.dialog-leave-active {
+  transition: opacity var(--dur-2) var(--ease-out);
+}
+.dialog-enter-active > * {
+  transition:
+    transform var(--dur-3) var(--ease-spring),
+    opacity var(--dur-2) var(--ease-out);
+}
+.dialog-leave-active > * {
+  transition:
+    transform var(--dur-2) var(--ease-out),
+    opacity var(--dur-2) var(--ease-out);
+}
+.dialog-enter-from,
+.dialog-leave-to {
+  opacity: 0;
+}
+.dialog-enter-from > * {
+  opacity: 0;
+  transform: scale(0.94) translateY(8px);
+}
+.dialog-leave-to > * {
+  opacity: 0;
+  transform: scale(0.97);
+}
+
 /* --- slide-up / slide-down: directional reveals -----------------------
  * Panels and drawers that slide in from an edge. slide-up enters from below
  * (inspectors, footers); slide-down enters from above (toolbars, alerts). */

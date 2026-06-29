@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
+import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { type ExportRenderHandle, renderMixdownInWorker } from '@/export/client';
 import { type AudioEncoder, listEncoders, WAV_ENCODER_ID } from '@/export/codecs';
 import {
@@ -287,6 +288,7 @@ function onKeydown(event: KeyboardEvent): void {
 </script>
 
 <template>
+  <Transition name="dialog">
   <div v-if="props.open" class="dialog-overlay" @click.self="onClose">
     <div
       ref="dialogRef"
@@ -318,15 +320,13 @@ function onKeydown(event: KeyboardEvent): void {
               :disabled="busy"
               :aria-label="t.dialogs.exportAudio.bitDepth"
             />
-            <label class="check-label">
-              <input
-                v-model="model.wavDither"
-                type="checkbox"
-                class="wav-dither"
-                :disabled="busy || model.wavBitDepth !== 16"
-              />
-              {{ t.dialogs.exportAudio.dither }}
-            </label>
+            <ToggleButton
+              v-model="model.wavDither"
+              class="wav-dither"
+              size="sm"
+              :label="t.dialogs.exportAudio.dither"
+              :disabled="busy || model.wavBitDepth !== 16"
+            />
           </div>
           <div v-if="model.encoderId === MP3_ENCODER_ID" class="format-options mp3-options">
             <SelectMenu
@@ -385,15 +385,13 @@ function onKeydown(event: KeyboardEvent): void {
 
         <span class="field-label">{{ t.dialogs.exportAudio.masterChain }}</span>
         <div class="field">
-          <label class="check-label">
-            <input
-              v-model="model.includeMasterChain"
-              type="checkbox"
-              class="include-master-chain"
-              :disabled="busy"
-            />
-            {{ t.dialogs.exportAudio.includeMasterChain }}
-          </label>
+          <ToggleButton
+            v-model="model.includeMasterChain"
+            class="include-master-chain"
+            size="sm"
+            :label="t.dialogs.exportAudio.includeMasterChain"
+            :disabled="busy"
+          />
         </div>
 
         <label class="field-label" for="export-filename">
@@ -465,6 +463,7 @@ function onKeydown(event: KeyboardEvent): void {
       </div>
     </div>
   </div>
+  </Transition>
 </template>
 
 <style scoped>

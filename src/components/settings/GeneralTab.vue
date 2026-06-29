@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
+import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { useI18n } from '@/ui/i18n';
 import {
@@ -122,14 +123,20 @@ function onLoudnessTargetInput(event: Event): void {
         @change="onEditorDensityChange"
       />
     </div>
-    <label class="row">
+    <div class="row">
       <span class="row-label">{{ t.settings.general.snapDefault }}</span>
-      <input
-        type="checkbox"
-        :checked="appSettings.settings.snapDefault"
-        @change="appSettings.set('snapDefault', ($event.target as HTMLInputElement).checked)"
+      <ToggleButton
+        :model-value="appSettings.settings.snapDefault"
+        :label="
+          appSettings.settings.snapDefault
+            ? t.settings.general.toggleOn
+            : t.settings.general.toggleOff
+        "
+        :aria-label="t.settings.general.snapDefault"
+        size="sm"
+        @update:model-value="appSettings.set('snapDefault', $event)"
       />
-    </label>
+    </div>
     <label class="row">
       <span class="row-label">{{ t.settings.general.countInBars }}</span>
       <input
@@ -140,14 +147,20 @@ function onLoudnessTargetInput(event: Event): void {
         @change="onCountInInput"
       />
     </label>
-    <label class="row">
+    <div class="row">
       <span class="row-label">{{ t.settings.general.monitorDefault }}</span>
-      <input
-        type="checkbox"
-        :checked="appSettings.settings.monitorDefault"
-        @change="appSettings.set('monitorDefault', ($event.target as HTMLInputElement).checked)"
+      <ToggleButton
+        :model-value="appSettings.settings.monitorDefault"
+        :label="
+          appSettings.settings.monitorDefault
+            ? t.settings.general.toggleOn
+            : t.settings.general.toggleOff
+        "
+        :aria-label="t.settings.general.monitorDefault"
+        size="sm"
+        @update:model-value="appSettings.set('monitorDefault', $event)"
       />
-    </label>
+    </div>
     <label class="row">
       <span class="row-label">{{ t.settings.general.autosaveInterval }}</span>
       <input
@@ -168,26 +181,34 @@ function onLoudnessTargetInput(event: Event): void {
         @change="onLoudnessTargetInput"
       />
     </label>
-    <label class="row">
+    <div class="row">
       <span class="row-label">{{ t.settings.general.scrollFollowPlayhead }}</span>
-      <input
-        type="checkbox"
-        :checked="appSettings.settings.scrollFollowPlayhead"
-        @change="
-          appSettings.set('scrollFollowPlayhead', ($event.target as HTMLInputElement).checked)
+      <ToggleButton
+        :model-value="appSettings.settings.scrollFollowPlayhead"
+        :label="
+          appSettings.settings.scrollFollowPlayhead
+            ? t.settings.general.toggleOn
+            : t.settings.general.toggleOff
         "
+        :aria-label="t.settings.general.scrollFollowPlayhead"
+        size="sm"
+        @update:model-value="appSettings.set('scrollFollowPlayhead', $event)"
       />
-    </label>
-    <label class="row">
+    </div>
+    <div class="row">
       <span class="row-label">{{ t.settings.general.confirmDestructive }}</span>
-      <input
-        type="checkbox"
-        :checked="appSettings.settings.confirmDestructive"
-        @change="
-          appSettings.set('confirmDestructive', ($event.target as HTMLInputElement).checked)
+      <ToggleButton
+        :model-value="appSettings.settings.confirmDestructive"
+        :label="
+          appSettings.settings.confirmDestructive
+            ? t.settings.general.toggleOn
+            : t.settings.general.toggleOff
         "
+        :aria-label="t.settings.general.confirmDestructive"
+        size="sm"
+        @update:model-value="appSettings.set('confirmDestructive', $event)"
       />
-    </label>
+    </div>
     <div class="panel-actions">
       <button type="button" @click="appSettings.reset()">
         {{ t.settings.general.resetDefaults }}

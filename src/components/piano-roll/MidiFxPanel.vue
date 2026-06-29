@@ -372,6 +372,7 @@ function pct(value: number): string {
   line-height: 1;
   cursor: pointer;
   padding: var(--sp-1);
+  transition: color var(--dur-1) var(--ease-out);
 }
 
 .fx-close:hover {

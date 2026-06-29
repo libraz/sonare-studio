@@ -248,6 +248,7 @@ const deviceBindings = computed<DeviceBindingRow[]>(() => {
   line-height: 1;
   cursor: pointer;
   padding: 0 var(--sp-1);
+  transition: color var(--dur-1) var(--ease-out);
 }
 
 .ml-close:hover {
@@ -389,6 +390,7 @@ const deviceBindings = computed<DeviceBindingRow[]>(() => {
   line-height: 1;
   cursor: pointer;
   padding: 0 2px;
+  transition: color var(--dur-1) var(--ease-out);
 }
 
 .ml-clear:hover {

@@ -402,8 +402,7 @@ function onAutomationParamChange(track: EditorTrack, value: string): void {
   if (isAutomationParam(value)) emit('automationParam', track.id, value);
 }
 
-function onAutomationEnabledChange(track: EditorTrack, event: Event): void {
-  const enabled = (event.target as HTMLInputElement).checked;
+function onAutomationEnabledChange(track: EditorTrack, enabled: boolean): void {
   setAutomationLaneEnabled(track.id, automationParamFor(track), enabled);
 }
 

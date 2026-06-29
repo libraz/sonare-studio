@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { setActiveTrack } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { useI18n } from '@/ui/i18n';
@@ -49,10 +50,7 @@ function onLegendClick(trackId: number): void {
 
 <template>
   <div class="roll-toolbar">
-    <label class="overlay-toggle">
-      <input v-model="overlayEnabled" type="checkbox" />
-      {{ t.shell.pianoRoll.overlay }}
-    </label>
+    <ToggleButton v-model="overlayEnabled" :label="t.shell.pianoRoll.overlay" size="sm" />
     <div class="track-legend">
       <button
         v-for="track in store.tracks"
@@ -237,15 +235,6 @@ function onLegendClick(trackId: number): void {
 .fx-toggle:disabled {
   opacity: 0.45;
   cursor: not-allowed;
-}
-
-.overlay-toggle {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  white-space: nowrap;
-  cursor: pointer;
-  color: var(--text-3);
 }
 
 .track-legend {

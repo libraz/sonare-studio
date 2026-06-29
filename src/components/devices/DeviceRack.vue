@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import DeviceInsertChain from '@/components/devices/DeviceInsertChain.vue';
+import SearchField from '@/components/shell/SearchField.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { addInsert, removeInsert, setInsertEnabled, setTrackInstrument } from '@/project/commands';
 import { listFonts, loadFontMeta, type SoundFontMeta, saveFont } from '@/project/fonts';
@@ -417,6 +418,7 @@ function displayInstrumentKind(): string {
           {{ t.shell.devicesPanel.instrumentGateHint }}
         </p>
 
+        <Transition name="pop">
         <div
           v-if="pickerOpen"
           class="instrument-picker"
@@ -457,10 +459,10 @@ function displayInstrumentKind(): string {
           </div>
 
           <div v-if="pickerTab === 'presets'" class="picker-body">
-            <input
+            <SearchField
               v-model="presetQuery"
               class="preset-search"
-              type="search"
+              size="sm"
               :placeholder="t.shell.devicesPanel.searchPresets"
               :aria-label="t.shell.devicesPanel.searchPresets"
             />
@@ -587,6 +589,7 @@ function displayInstrumentKind(): string {
             </button>
           </div>
         </div>
+        </Transition>
       </div>
 
       <DeviceInsertChain

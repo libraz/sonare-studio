@@ -392,21 +392,6 @@
 
 .automation-enable {
   flex: none;
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  font: var(--fw-semibold) 9px var(--font-sans);
-  color: var(--text-3);
-  cursor: pointer;
-}
-
-.automation-enable input {
-  margin: 0;
-  accent-color: var(--accent);
-}
-
-.automation-enable input:disabled {
-  cursor: not-allowed;
 }
 
 /* Recessed groove + raised thumb mini-slider, matching the control-face system
