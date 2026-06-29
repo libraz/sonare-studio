@@ -397,7 +397,12 @@ export const en = {
       midiUnavailable: 'Web MIDI is unavailable in this browser.',
       channel: 'Channel',
       sendClock: 'Send MIDI clock',
-      useExternalMidi: 'Use external MIDI',
+      saveExternalMidiDefault: 'Save project default',
+      useProjectExternalMidi: 'Use project default',
+      useProjectExternalMidiForAll: 'Use default on all MIDI tracks',
+      useExternalMidi: 'Use custom on this track',
+      leaveProjectExternalMidi: 'Use track setting',
+      externalMidiUsingProject: 'This track is using the project External MIDI default.',
       externalMidiBounceHint: 'External MIDI tracks are silent in audio exports.',
     },
     patchEditor: {

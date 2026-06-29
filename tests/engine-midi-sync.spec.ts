@@ -541,6 +541,25 @@ describe('createMidiSync', () => {
     expect(engine.setSf2Instrument).not.toHaveBeenCalled();
   });
 
+  it('routes a project-inherited external-midi track externally', async () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMidiSync(handle);
+    const track = makeTrack(1, {
+      externalMidiMode: 'project',
+      instrument: { kind: 'synth-preset', preset: 'saw-lead' },
+    });
+
+    await sync.sync([track], [], TEMPO_120, {
+      kind: 'external-midi',
+      outputPortId: 'out-1',
+      channel: 2,
+      sendClock: true,
+    });
+    expect(engine.setMidiDestinationExternal).toHaveBeenCalledWith(1, true);
+    expect(engine.setSynthInstrument).not.toHaveBeenCalled();
+    expect(engine.setExternalMidiClockEnabled).toHaveBeenCalledWith(true);
+  });
+
   it('clears external routing for an internal track and toggles the clock with sendClock', async () => {
     const { handle, engine } = makeHandle();
     const sync = createMidiSync(handle);

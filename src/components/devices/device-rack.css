@@ -253,7 +253,11 @@
 
 .use-sf2,
 .edit-patch,
-.use-external {
+.use-external,
+.save-external-default,
+.use-project-external,
+.use-project-external-all,
+.leave-project-external {
   background: var(--accent-strong);
   border: 1px solid var(--accent);
   border-radius: var(--radius-sm);
@@ -263,8 +267,20 @@
   cursor: pointer;
 }
 
+.use-external,
+.save-external-default,
+.use-project-external-all,
+.leave-project-external {
+  background: var(--surface-2);
+  border-color: var(--border-subtle);
+  color: var(--text-2);
+}
+
 .use-sf2:disabled,
-.use-external:disabled {
+.use-external:disabled,
+.save-external-default:disabled,
+.use-project-external:disabled,
+.use-project-external-all:disabled {
   opacity: 0.4;
   cursor: default;
 }
@@ -300,7 +316,14 @@
   color: var(--text-3);
 }
 
+.external-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
 .external-empty,
+.external-status,
 .external-bounce-hint {
   margin: 0;
   color: var(--text-4);

@@ -174,9 +174,11 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     if (!m || !store.initialized) return midiSyncQueue;
     // Keep the external-MIDI routing table in step with the tracks' instruments
     // so drained events reach the right port/channel.
-    webMidiOutput?.syncRoutes(store.tracks);
+    webMidiOutput?.syncRoutes(store.tracks, store.projectExternalMidi);
     midiSyncQueue = midiSyncQueue
-      .then(() => m.sync(store.tracks, store.clips, effectiveTempoSegments()))
+      .then(() =>
+        m.sync(store.tracks, store.clips, effectiveTempoSegments(), store.projectExternalMidi),
+      )
       .catch((err) => {
         errorMessage.value = describeError(err);
       });

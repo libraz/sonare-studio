@@ -5,9 +5,17 @@ import EmptyState from '@/components/shell/EmptyState.vue';
 import SearchField from '@/components/shell/SearchField.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useWebMidiOutputs } from '@/composables/useWebMidiOutputs';
-import { addInsert, removeInsert, setInsertEnabled, setTrackInstrument } from '@/project/commands';
+import {
+  addInsert,
+  removeInsert,
+  setInsertEnabled,
+  setProjectExternalMidiDefault,
+  setProjectExternalMidiDefaultForTracks,
+  setTrackExternalMidiMode,
+  setTrackInstrument,
+} from '@/project/commands';
 import { listFonts, loadFontMeta, type SoundFontMeta, saveFont } from '@/project/fonts';
-import { trackInstrument } from '@/project/instrument';
+import { type ExternalMidiInstrument, effectiveTrackInstrument } from '@/project/instrument';
 import type { QuickControlTarget } from '@/project/quick-controls';
 import { getWasmModule, useProjectStore } from '@/project/store';
 import {
@@ -65,10 +73,16 @@ const activeTrack = computed(() => {
 
 const instrument = computed(() => {
   const track = activeTrack.value;
-  return track && track.kind === 'midi' ? trackInstrument(track) : null;
+  return track && track.kind === 'midi'
+    ? effectiveTrackInstrument(track, store.projectExternalMidi)
+    : null;
 });
 
 const inserts = computed(() => activeTrack.value?.mixer?.inserts ?? []);
+
+const activeTrackUsesProjectExternal = computed(
+  () => activeTrack.value?.externalMidiMode === 'project' && store.projectExternalMidi !== null,
+);
 
 /** Runs an action surfacing thrown errors in the rack banner. */
 function run(action: () => void): void {
@@ -301,7 +315,13 @@ const externalPortOptions = computed<{ value: string; label: string }[]>(() => [
 
 /** Seeds the external selection from the current instrument (or sane defaults). */
 function syncExternalSelection(): void {
-  const current = instrument.value;
+  const track = activeTrack.value;
+  const current =
+    track?.externalMidiMode === 'project'
+      ? store.projectExternalMidi
+      : track?.instrument?.kind === 'external-midi'
+        ? track.instrument
+        : store.projectExternalMidi;
   externalSelection.value =
     current?.kind === 'external-midi'
       ? {
@@ -329,19 +349,52 @@ function onExternalClockToggle(event: Event): void {
   };
 }
 
+function selectedExternalInstrument(): ExternalMidiInstrument | null {
+  const sel = externalSelection.value;
+  if (sel.outputPortId.length === 0) return null;
+  return {
+    kind: 'external-midi',
+    outputPortId: sel.outputPortId,
+    channel: sel.channel,
+    ...(sel.sendClock ? { sendClock: true } : {}),
+  };
+}
+
 function useExternalMidi(): void {
   const track = activeTrack.value;
-  const sel = externalSelection.value;
-  if (!track || sel.outputPortId.length === 0) return;
-  run(() =>
-    setTrackInstrument(track.id, {
-      kind: 'external-midi',
-      outputPortId: sel.outputPortId,
-      channel: sel.channel,
-      ...(sel.sendClock ? { sendClock: true } : {}),
-    }),
-  );
+  const next = selectedExternalInstrument();
+  if (!track || !next) return;
+  run(() => setTrackInstrument(track.id, next));
   pickerOpen.value = false;
+}
+
+function saveProjectExternalMidi(): void {
+  const next = selectedExternalInstrument();
+  if (!next) return;
+  run(() => setProjectExternalMidiDefault(next));
+}
+
+function useProjectExternalMidi(): void {
+  const track = activeTrack.value;
+  const next = selectedExternalInstrument();
+  if (!track || !next) return;
+  run(() => setProjectExternalMidiDefaultForTracks(next, [track.id]));
+  pickerOpen.value = false;
+}
+
+function useProjectExternalMidiForAll(): void {
+  const next = selectedExternalInstrument();
+  if (!next) return;
+  const trackIds = store.tracks.filter((track) => track.kind === 'midi').map((track) => track.id);
+  if (trackIds.length === 0) return;
+  run(() => setProjectExternalMidiDefaultForTracks(next, trackIds));
+  pickerOpen.value = false;
+}
+
+function leaveProjectExternalMidi(): void {
+  const track = activeTrack.value;
+  if (!track) return;
+  run(() => setTrackExternalMidiMode(track.id, null));
 }
 
 // --- Patch tab / editor ------------------------------------------------------------
@@ -718,15 +771,52 @@ function displayInstrumentKind(): string {
                 />
                 <span>{{ t.shell.devicesPanel.sendClock }}</span>
               </label>
+              <p v-if="activeTrackUsesProjectExternal" class="external-status">
+                {{ t.shell.devicesPanel.externalMidiUsingProject }}
+              </p>
               <p class="external-bounce-hint">{{ t.shell.devicesPanel.externalMidiBounceHint }}</p>
-              <button
-                type="button"
-                class="use-external primary"
-                :disabled="externalSelection.outputPortId.length === 0"
-                @click="useExternalMidi"
-              >
-                {{ t.shell.devicesPanel.useExternalMidi }}
-              </button>
+              <div class="external-actions">
+                <button
+                  type="button"
+                  class="save-external-default"
+                  :disabled="externalSelection.outputPortId.length === 0"
+                  @click="saveProjectExternalMidi"
+                >
+                  {{ t.shell.devicesPanel.saveExternalMidiDefault }}
+                </button>
+                <button
+                  type="button"
+                  class="use-project-external primary"
+                  :disabled="externalSelection.outputPortId.length === 0"
+                  @click="useProjectExternalMidi"
+                >
+                  {{ t.shell.devicesPanel.useProjectExternalMidi }}
+                </button>
+                <button
+                  type="button"
+                  class="use-project-external-all"
+                  :disabled="externalSelection.outputPortId.length === 0"
+                  @click="useProjectExternalMidiForAll"
+                >
+                  {{ t.shell.devicesPanel.useProjectExternalMidiForAll }}
+                </button>
+                <button
+                  type="button"
+                  class="use-external"
+                  :disabled="externalSelection.outputPortId.length === 0"
+                  @click="useExternalMidi"
+                >
+                  {{ t.shell.devicesPanel.useExternalMidi }}
+                </button>
+                <button
+                  v-if="activeTrack?.externalMidiMode === 'project'"
+                  type="button"
+                  class="leave-project-external"
+                  @click="leaveProjectExternalMidi"
+                >
+                  {{ t.shell.devicesPanel.leaveProjectExternalMidi }}
+                </button>
+              </div>
             </template>
           </div>
         </div>

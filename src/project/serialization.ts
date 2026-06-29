@@ -26,7 +26,12 @@ import {
 import type { EditorChordSymbol } from './chords';
 import { clearMixerSnapshots } from './command/mixer-snapshots';
 import { clearHistory } from './commands';
-import { cloneInstrument, type TrackInstrument } from './instrument';
+import {
+  cloneInstrument,
+  type ExternalMidiInstrument,
+  type TrackInstrument,
+  validateTrackInstrument,
+} from './instrument';
 import { cloneCcLanes } from './midi-cc';
 import { isMidiFxNoop, type MidiFxConfig, sanitizeMidiFxConfig } from './midi-fx';
 import {
@@ -88,6 +93,9 @@ import type { ClipKind, EditorClip, EditorNote, TrackKind } from './types';
  *   Additionally (still version 3, additive): the document may carry an optional
  *   `midiCcBindings` list (MIDI-learn CC mappings, see src/ui/midi/midi-learn.ts)
  *   restored into the session learn handle on load; omitted when there are none.
+ *   Additionally (still version 3, additive): the document may carry an
+ *   optional `externalMidiDefault` route, and tracks may opt into it with
+ *   `externalMidiMode: "project"`.
  *
  * Loaders accept any version up to this one; version-1 documents load
  * unchanged (every clip is MIDI).
@@ -214,6 +222,8 @@ export interface DocumentTrack {
   clips: DocumentClip[];
   /** Track instrument; absent (schema < 3) = the default synth preset. */
   instrument?: TrackInstrument;
+  /** External MIDI route source; absent = use this track's own instrument. */
+  externalMidiMode?: 'project';
   /** Live non-destructive MIDI-FX transform; absent = none. */
   midiFx?: MidiFxConfig;
   /** Mixer channel strip; absent (schema < 3) = a neutral strip. */
@@ -313,6 +323,8 @@ export interface ProjectDocument {
   chords?: EditorChordSymbol[];
   /** Project mixer state; absent (schema < 3 or all-default) = defaults. */
   mixer?: DocumentMixerState;
+  /** Project-level External MIDI route; tracks opt into it per entry. */
+  externalMidiDefault?: ExternalMidiInstrument;
   /** Score display settings; absent = defaults (no display transpose). */
   score?: DocumentScoreSettings;
   /** MIDI-learn CC bindings; absent/empty = none. */
@@ -435,6 +447,9 @@ export function serializeProject(): ProjectDocument {
           .map((clip) => toDocumentClip(clip, store.scoreAnnotations[clip.id])),
       };
       if (track.instrument !== undefined) out.instrument = cloneInstrument(track.instrument);
+      if (track.externalMidiMode === 'project' && store.projectExternalMidi !== null) {
+        out.externalMidiMode = 'project';
+      }
       // The live MIDI-FX transform rides the track; serialize it only when it
       // actually changes notes (an identity transform stays out of the document).
       if (track.midiFx !== undefined) {
@@ -506,6 +521,9 @@ export function serializeProject(): ProjectDocument {
     }
     doc.mixer = mixer;
   }
+  if (store.projectExternalMidi !== null) {
+    doc.externalMidiDefault = cloneInstrument(store.projectExternalMidi) as ExternalMidiInstrument;
+  }
   // Score display settings are likewise omitted while default.
   if (store.displayTransposeSemitones !== 0) {
     doc.score = { displayTransposeSemitones: store.displayTransposeSemitones };
@@ -552,6 +570,12 @@ export function serializeProject(): ProjectDocument {
  */
 export async function loadProjectDocument(doc: ProjectDocument): Promise<void> {
   const store = useProjectStore();
+  if (doc.externalMidiDefault !== undefined) {
+    validateTrackInstrument(doc.externalMidiDefault);
+    if (doc.externalMidiDefault.kind !== 'external-midi') {
+      throw new RangeError('Project externalMidiDefault must be an external-midi instrument');
+    }
+  }
   await store.loadDocument(doc);
   clearHistory();
   // Session-only A/B mixer snapshots belong to the previous project.

@@ -144,6 +144,12 @@ export interface EditorTrack {
    */
   instrument?: TrackInstrument;
   /**
+   * External-MIDI routing mode (app-level metadata). When set to 'project',
+   * this track inherits the project's shared External MIDI route instead of
+   * using its own instrument for realtime MIDI output.
+   */
+  externalMidiMode?: 'project';
+  /**
    * Live, non-destructive MIDI-FX transform applied to the track's MIDI before
    * synthesis (app-level metadata; absent = no transform). Unlike a clip bake
    * it never rewrites stored notes, so it can be edited or bypassed freely; the

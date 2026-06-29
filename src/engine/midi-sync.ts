@@ -26,7 +26,11 @@
  */
 
 import { loadFont } from '@/project/fonts';
-import { DEFAULT_SYNTH_PRESET, sf2PlaybackConfig } from '@/project/instrument';
+import {
+  type ExternalMidiInstrument,
+  effectiveTrackInstrument,
+  sf2PlaybackConfig,
+} from '@/project/instrument';
 import { midiFxConfigJson } from '@/project/midi-fx';
 import { clipPlaybackNotes } from '@/project/scheduling';
 import { normalizeTempoMap, ppqToSamples } from '@/project/tempo-map';
@@ -117,6 +121,7 @@ export function buildMidiClipSchedules(
   clips: ReadonlyArray<EditorClip>,
   tempoSegments: ReadonlyArray<TempoSegment>,
   sampleRate: number,
+  projectExternalMidi?: ExternalMidiInstrument | null,
 ): EngineMidiClipSchedule[] {
   if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
     throw new RangeError(`Sample rate must be finite and > 0, got ${sampleRate}`);
@@ -174,7 +179,7 @@ export function buildMidiClipSchedules(
       : 0;
     const events: EngineMidiEvent[] = [];
 
-    const instrument = track.instrument;
+    const instrument = effectiveTrackInstrument(track, projectExternalMidi);
     const sf2 = instrument?.kind === 'sf2' ? instrument : undefined;
     const hasPrelude = sf2 !== undefined && (sf2.bank !== undefined || sf2.program !== undefined);
     if (sf2 && hasPrelude) {
@@ -331,6 +336,7 @@ export interface MidiSync {
     tracks: ReadonlyArray<EditorTrack>,
     clips: ReadonlyArray<EditorClip>,
     tempoSegments: ReadonlyArray<TempoSegment>,
+    projectExternalMidi?: ExternalMidiInstrument | null,
   ): Promise<void>;
   /** Number of MIDI clip schedules in the last setMidiClips call (0 before any). */
   scheduledClipCount(): number;
@@ -361,6 +367,7 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
     tracks: ReadonlyArray<EditorTrack>,
     clips: ReadonlyArray<EditorClip>,
     tempoSegments: ReadonlyArray<TempoSegment>,
+    projectExternalMidi?: ExternalMidiInstrument | null,
   ): Promise<void> => {
     const sampleRate = handle.ctx.sampleRate;
 
@@ -372,10 +379,11 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
     let winningFontId: string | undefined;
     for (const track of tracks) {
       if (track.frozen !== undefined) continue;
-      if (track.kind === 'midi' && track.instrument?.kind === 'sf2') {
-        fontIds.add(track.instrument.fontId);
+      const instrument = effectiveTrackInstrument(track, projectExternalMidi);
+      if (track.kind === 'midi' && instrument.kind === 'sf2') {
+        fontIds.add(instrument.fontId);
         // Last SF2 track in track order wins the single global slot.
-        winningFontId = track.instrument.fontId;
+        winningFontId = instrument.fontId;
       }
     }
     if (fontIds.size > 1) {
@@ -397,16 +405,17 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
       // A frozen track plays from its baked asset; loading its instrument (and,
       // for SF2, the global SoundFont) would thrash the single font slot.
       if (track.frozen !== undefined) continue;
-      const instrumentKey = JSON.stringify(track.instrument ?? null);
+      const instrument = effectiveTrackInstrument(track, projectExternalMidi);
+      const instrumentKey = JSON.stringify({
+        mode: track.externalMidiMode ?? 'track',
+        instrument,
+      });
       if (lastInstrumentKeyByTrack.get(track.id) === instrumentKey) continue;
-      const instrument = track.instrument;
       // Route an external-MIDI track to the engine's external output (its MIDI
       // leaves the engine instead of driving a built-in synth); any other kind
       // clears that routing so it plays internally again.
-      handle.engine.setMidiDestinationExternal(track.id, instrument?.kind === 'external-midi');
-      if (instrument === undefined) {
-        handle.engine.setSynthInstrument(track.id, resolvePreset(DEFAULT_SYNTH_PRESET));
-      } else if (instrument.kind === 'synth-preset') {
+      handle.engine.setMidiDestinationExternal(track.id, instrument.kind === 'external-midi');
+      if (instrument.kind === 'synth-preset') {
         handle.engine.setSynthInstrument(track.id, resolvePreset(instrument.preset));
       } else if (instrument.kind === 'synth-patch') {
         handle.engine.setSynthInstrument(track.id, instrument.patch as Record<string, unknown>);
@@ -440,19 +449,23 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
 
     // Forward MIDI clock + transport to external ports only when some external
     // track opts in, so internal-only projects never emit clock traffic.
-    const clockEnabled = tracks.some(
-      (track) =>
-        track.kind === 'midi' &&
-        track.frozen === undefined &&
-        track.instrument?.kind === 'external-midi' &&
-        track.instrument.sendClock === true,
-    );
+    const clockEnabled = tracks.some((track) => {
+      if (track.kind !== 'midi' || track.frozen !== undefined) return false;
+      const instrument = effectiveTrackInstrument(track, projectExternalMidi);
+      return instrument.kind === 'external-midi' && instrument.sendClock === true;
+    });
     if (clockEnabled !== lastClockEnabled) {
       handle.engine.setExternalMidiClockEnabled(clockEnabled);
       lastClockEnabled = clockEnabled;
     }
 
-    const schedules = buildMidiClipSchedules(tracks, clips, tempoSegments, sampleRate);
+    const schedules = buildMidiClipSchedules(
+      tracks,
+      clips,
+      tempoSegments,
+      sampleRate,
+      projectExternalMidi,
+    );
     const clipsKey = JSON.stringify(schedules);
     if (clipsKey !== lastClipsKey) {
       handle.engine.setMidiClips(schedules);

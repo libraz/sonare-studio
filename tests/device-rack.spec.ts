@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import DeviceRack from '@/components/devices/DeviceRack.vue';
 import {
   addAudioTrack,
+  addTrack,
   clearHistory,
   setActiveTrack,
   setTrackInstrument,
@@ -43,6 +44,15 @@ describe('DeviceRack.vue', () => {
     store.dispose();
     clearHistory();
     vi.clearAllMocks();
+    Object.defineProperty(globalThis.navigator, 'requestMIDIAccess', {
+      configurable: true,
+      value: vi.fn(async () => ({
+        outputs: new Map([['out-1', { id: 'out-1', name: 'Main Out' }]]),
+        onstatechange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    });
     await store.init();
     trackId = store.tracks[0].id;
   });
@@ -141,6 +151,39 @@ describe('DeviceRack.vue', () => {
     // The freshly stored font becomes the picker selection.
     await wrapper.find('.use-sf2').trigger('click');
     expect(store.tracks[0].instrument).toEqual({ kind: 'sf2', fontId: 'savedfont0000003' });
+  });
+
+  it('applies a project External MIDI default to every MIDI track while leaving audio tracks alone', async () => {
+    const secondMidiId = addTrack({ name: 'Pad' });
+    const audioId = addAudioTrack({ name: 'Mic' });
+    setActiveTrack(trackId);
+    const wrapper = mount(DeviceRack);
+
+    await wrapper.find('.instrument-button').trigger('click');
+    const externalTab = wrapper
+      .findAll('.picker-tab')
+      .find((tab) => tab.text() === 'External MIDI');
+    await externalTab?.trigger('click');
+    await flushPromises();
+
+    await selectOption(wrapper, '.external-field .select-menu', 'Main Out');
+    await wrapper.find('.external-channel').setValue('4');
+    await wrapper.find('.external-clock input').setValue(true);
+    await wrapper.find('.use-project-external-all').trigger('click');
+
+    const expected = {
+      kind: 'external-midi',
+      outputPortId: 'out-1',
+      channel: 3,
+      sendClock: true,
+    };
+    expect(store.projectExternalMidi).toEqual(expected);
+    expect(store.tracks.find((track) => track.id === trackId)?.externalMidiMode).toBe('project');
+    expect(store.tracks.find((track) => track.id === secondMidiId)?.externalMidiMode).toBe(
+      'project',
+    );
+    expect(store.tracks.find((track) => track.id === audioId)?.instrument).toBeUndefined();
+    expect(store.tracks.find((track) => track.id === audioId)?.externalMidiMode).toBeUndefined();
   });
 
   it('summarizes the patch tab and opens the patch editor', async () => {

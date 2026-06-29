@@ -16,6 +16,7 @@ import {
   setClipLoop,
   setMarker,
   setProjectChords,
+  setProjectExternalMidiDefaultForTracks,
   setSections,
   setTempoSegments,
   setTimeSignatures,
@@ -180,6 +181,27 @@ describe('project serialization', () => {
     await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
     expect(serializeProject()).toEqual(doc);
     expect(store.tracks[0].midiFx?.transposeSemitones).toBe(12);
+  });
+
+  it('round-trips the project External MIDI default and inherited tracks', async () => {
+    const trackId = store.tracks[0].id;
+    setProjectExternalMidiDefaultForTracks(
+      { kind: 'external-midi', outputPortId: 'out-1', channel: 4, sendClock: true },
+      [trackId],
+    );
+    const doc = serializeProject();
+    expect(doc.externalMidiDefault).toEqual({
+      kind: 'external-midi',
+      outputPortId: 'out-1',
+      channel: 4,
+      sendClock: true,
+    });
+    expect(doc.tracks[0].externalMidiMode).toBe('project');
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    expect(serializeProject()).toEqual(doc);
+    expect(store.projectExternalMidi).toEqual(doc.externalMidiDefault);
+    expect(store.tracks[0].externalMidiMode).toBe('project');
   });
 
   it('omits an identity track MIDI-FX transform from the document', async () => {

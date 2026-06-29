@@ -85,6 +85,20 @@ export function trackInstrument(track: { instrument?: TrackInstrument }): TrackI
   return track.instrument ?? defaultTrackInstrument();
 }
 
+/**
+ * Returns the instrument currently used by a track after applying project-level
+ * External MIDI inheritance. A track only inherits when it explicitly opts into
+ * project mode and a project route exists; otherwise normal track instrument
+ * fallback applies.
+ */
+export function effectiveTrackInstrument(
+  track: { instrument?: TrackInstrument; externalMidiMode?: 'project' },
+  projectExternalMidi: ExternalMidiInstrument | null | undefined,
+): TrackInstrument {
+  if (track.externalMidiMode === 'project' && projectExternalMidi) return projectExternalMidi;
+  return trackInstrument(track);
+}
+
 /** Deep-copies an instrument (instruments are plain JSON data). */
 export function cloneInstrument(instrument: TrackInstrument): TrackInstrument {
   return JSON.parse(JSON.stringify(instrument)) as TrackInstrument;

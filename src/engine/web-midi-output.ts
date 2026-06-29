@@ -17,7 +17,7 @@
  * per-block postMessage cadence.
  */
 
-import type { TrackInstrument } from '@/project/instrument';
+import { type ExternalMidiInstrument, effectiveTrackInstrument } from '@/project/instrument';
 import type { EditorTrack } from '@/project/types';
 import type { EngineHandle } from './engine';
 
@@ -51,7 +51,10 @@ export interface WebMidiOutputBridge {
   /** Replaces the destination → port/channel routing table. */
   setRoutes(routes: readonly ExternalMidiRoute[]): void;
   /** Derives and applies routes from the project's external-MIDI tracks. */
-  syncRoutes(tracks: ReadonlyArray<EditorTrack>): void;
+  syncRoutes(
+    tracks: ReadonlyArray<EditorTrack>,
+    projectExternalMidi?: ExternalMidiInstrument | null,
+  ): void;
   /**
    * Requests MIDI access and begins delivering engine MIDI to ports. Degrades
    * gracefully: resolves false (with available updated) when Web MIDI is
@@ -80,10 +83,14 @@ interface NavigatorWithMidi {
 }
 
 /** Builds external-MIDI routes from a project's tracks (exported for tests). */
-export function routesFromTracks(tracks: ReadonlyArray<EditorTrack>): ExternalMidiRoute[] {
+export function routesFromTracks(
+  tracks: ReadonlyArray<EditorTrack>,
+  projectExternalMidi?: ExternalMidiInstrument | null,
+): ExternalMidiRoute[] {
   const routes: ExternalMidiRoute[] = [];
   for (const track of tracks) {
-    const instrument: TrackInstrument | undefined = track.instrument;
+    if (track.kind !== 'midi') continue;
+    const instrument = effectiveTrackInstrument(track, projectExternalMidi);
     if (instrument?.kind !== 'external-midi') continue;
     routes.push({
       destinationId: track.id,
@@ -163,8 +170,11 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
       routes = [...next];
       rebuildRouteIndex();
     },
-    syncRoutes(tracks: ReadonlyArray<EditorTrack>): void {
-      routes = routesFromTracks(tracks);
+    syncRoutes(
+      tracks: ReadonlyArray<EditorTrack>,
+      projectExternalMidi?: ExternalMidiInstrument | null,
+    ): void {
+      routes = routesFromTracks(tracks, projectExternalMidi);
       rebuildRouteIndex();
     },
     async start(): Promise<boolean> {

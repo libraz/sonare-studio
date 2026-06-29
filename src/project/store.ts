@@ -21,7 +21,7 @@ import {
   sanitizeChordSymbols,
   toProjectChordSymbols,
 } from './chords';
-import { cloneInstrument } from './instrument';
+import { cloneInstrument, type ExternalMidiInstrument } from './instrument';
 import { notesToProjectMidiEvents, type RawNote } from './midi-events';
 import { isMidiFxNoop, sanitizeMidiFxConfig } from './midi-fx';
 import {
@@ -217,6 +217,8 @@ export const useProjectStore = defineStore('project', () => {
   const midiCcBindings = ref(new Map<string, MidiCcBinding>());
   /** Project mixer state: master strip + buses (app-level metadata). */
   const mixer = ref<ProjectMixerState>(createDefaultMixerState());
+  /** Shared External MIDI route tracks can opt into. */
+  const projectExternalMidi = ref<ExternalMidiInstrument | null>(null);
   /** Id of the active (focused) track (-1 when there is none). */
   const activeTrackId = ref(-1);
   /** Id of the active MIDI clip edited by the piano roll (-1 when none). */
@@ -395,6 +397,7 @@ export const useProjectStore = defineStore('project', () => {
     audioSourceIds = new Map();
     projectName.value = DEFAULT_PROJECT_NAME;
     mixer.value = createDefaultMixerState();
+    projectExternalMidi.value = null;
     tracks.value = [
       {
         id: trackId,
@@ -482,6 +485,7 @@ export const useProjectStore = defineStore('project', () => {
         // version 3; older documents simply have neither (defaults apply).
         if (track.instrument !== undefined)
           mirrorEntry.instrument = cloneInstrument(track.instrument);
+        if (track.externalMidiMode === 'project') mirrorEntry.externalMidiMode = 'project';
         // Restore the live MIDI-FX transform; drop a no-op so an identity entry
         // never lingers in the mirror or re-serializes.
         if (track.midiFx !== undefined) {
@@ -633,6 +637,9 @@ export const useProjectStore = defineStore('project', () => {
             buses: doc.mixer.buses.map(({ automation: _automation, ...bus }) => bus),
           })
         : createDefaultMixerState();
+      projectExternalMidi.value = doc.externalMidiDefault
+        ? (cloneInstrument(doc.externalMidiDefault) as ExternalMidiInstrument)
+        : null;
       tracks.value = trackMirror;
       clips.value = [];
       markers.value = doc.markers.map((marker) => ({
@@ -725,6 +732,7 @@ export const useProjectStore = defineStore('project', () => {
     automationLanes.value = [];
     midiCcBindings.value.clear();
     mixer.value = createDefaultMixerState();
+    projectExternalMidi.value = null;
     activeTrackId.value = -1;
     clipId.value = -1;
     clipStartPpq.value = 0;
@@ -751,6 +759,7 @@ export const useProjectStore = defineStore('project', () => {
     automationLanes,
     midiCcBindings,
     mixer,
+    projectExternalMidi,
     activeTrackId,
     clipId,
     clipStartPpq,

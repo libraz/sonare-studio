@@ -75,6 +75,23 @@ describe('routesFromTracks', () => {
       { destinationId: 5, outputPortId: 'p2', channel: 0, sendClock: true },
     ]);
   });
+
+  it('extracts inherited project external-midi routes', () => {
+    const tracks = [
+      { id: 1, kind: 'midi', externalMidiMode: 'project' },
+      {
+        id: 2,
+        kind: 'midi',
+        instrument: { kind: 'external-midi', outputPortId: 'p2', channel: 8 },
+      },
+    ] as unknown as EditorTrack[];
+    expect(
+      routesFromTracks(tracks, { kind: 'external-midi', outputPortId: 'p1', channel: 2 }),
+    ).toEqual([
+      { destinationId: 1, outputPortId: 'p1', channel: 2 },
+      { destinationId: 2, outputPortId: 'p2', channel: 8 },
+    ]);
+  });
 });
 
 describe('createWebMidiOutput', () => {

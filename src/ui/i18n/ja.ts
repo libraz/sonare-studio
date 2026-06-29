@@ -394,7 +394,12 @@ export const ja = {
       midiUnavailable: 'このブラウザーではWeb MIDIを利用できません。',
       channel: 'チャンネル',
       sendClock: 'MIDIクロックを送信',
-      useExternalMidi: '外部MIDIを使用',
+      saveExternalMidiDefault: 'プロジェクト共通として保存',
+      useProjectExternalMidi: '共通設定を使用',
+      useProjectExternalMidiForAll: '全MIDIトラックで共通設定を使用',
+      useExternalMidi: 'このトラックだけ個別設定',
+      leaveProjectExternalMidi: 'トラック設定に戻す',
+      externalMidiUsingProject: 'このトラックはプロジェクト共通の外部MIDI設定を使用しています。',
       externalMidiBounceHint: '外部MIDIトラックは音声書き出しでは無音になります。',
     },
     patchEditor: {

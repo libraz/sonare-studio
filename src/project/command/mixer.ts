@@ -38,6 +38,8 @@ export {
   setInsertEnabled,
   setInsertParam,
   setInsertSidechain,
+  setProjectExternalMidiDefault,
+  setProjectExternalMidiDefaultForTracks,
   setSend,
   setStripChannelDelaySamples,
   setStripDualPan,
@@ -50,7 +52,10 @@ export {
   setStripPanMode,
   setStripPolarityInvert,
   setStripWidth,
+  setTrackExternalMidiMode,
+  setTrackExternalMidiModes,
   setTrackInstrument,
+  setTrackInstruments,
 } from './mixer-strip';
 export {
   addVcaGroup,
