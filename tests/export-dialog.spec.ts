@@ -1,6 +1,7 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import { unzipSync } from 'fflate';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { nextTick } from 'vue';
 import ExportDialog from '@/components/export/ExportDialog.vue';
 import type { ExportRenderHandle } from '@/export/client';
 import {
@@ -11,7 +12,39 @@ import {
 import { encodeWav } from '@/export/wav';
 import type { ProjectDocument } from '@/project/serialization';
 import type { ExportRenderOptions } from '@/workers/export.worker';
-import { readOptionLabels, selectOption } from './helpers/select-menu';
+import { chooseOption, openOptionLabels } from './helpers/select-menu';
+
+// AppModal teleports its content (and SelectMenu its dropdown) to <body>, so the
+// dialog is queried through the document rather than the wrapper, and events are
+// dispatched natively. The mounts use attachTo: document.body so the teleported
+// trees live in the real document where the SelectMenu helper looks for options.
+
+function q<T extends Element = HTMLElement>(selector: string): T | null {
+  return document.body.querySelector<T>(selector);
+}
+
+/** Opens the SelectMenu matched by `selector` via its teleported trigger. */
+async function openSelect(selector: string): Promise<void> {
+  q(`${selector} .select-trigger`)?.click();
+  await flushPromises();
+}
+
+/** Opens the SelectMenu and picks the option labelled `label`. */
+async function selectOption(selector: string, label: string): Promise<void> {
+  await openSelect(selector);
+  await chooseOption(label);
+}
+
+/** Reads every option label of the SelectMenu matched by `selector`. */
+async function readOptionLabels(selector: string): Promise<string[]> {
+  await openSelect(selector);
+  const labels = openOptionLabels();
+  q(`${selector} .select-trigger`)?.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+  );
+  await flushPromises();
+  return labels;
+}
 
 /** Minimal valid project document for the render seam. */
 function makeDocument(): ProjectDocument {
@@ -90,25 +123,36 @@ interface MountOptions {
   }> | null;
 }
 
+let mounted: VueWrapper[] = [];
+
+function track<W extends VueWrapper>(wrapper: W): W {
+  mounted.push(wrapper);
+  return wrapper;
+}
+
 function mountDialog(control: RenderControl, options: MountOptions = {}) {
   const download = vi.fn();
-  const wrapper = mount(ExportDialog, {
-    props: {
-      open: true,
-      getDocument: makeDocument,
-      projectName: 'My Song',
-      hasLoop: options.hasLoop ?? false,
-      loopRegion: options.loopRegion ?? null,
-      render: control.render,
-      download,
-      encoders: options.encoders ?? null,
-    },
-  });
+  const wrapper = track(
+    mount(ExportDialog, {
+      props: {
+        open: true,
+        getDocument: makeDocument,
+        projectName: 'My Song',
+        hasLoop: options.hasLoop ?? false,
+        loopRegion: options.loopRegion ?? null,
+        render: control.render,
+        download,
+        encoders: options.encoders ?? null,
+      },
+      attachTo: document.body,
+    }),
+  );
   return { wrapper, download };
 }
 
-async function clickExport(wrapper: VueWrapper): Promise<void> {
-  await wrapper.find('.export-button').trigger('click');
+async function clickExport(): Promise<void> {
+  q('.export-button')?.click();
+  await nextTick();
 }
 
 async function downloadedBytes(download: ReturnType<typeof vi.fn>): Promise<Uint8Array> {
@@ -116,23 +160,41 @@ async function downloadedBytes(download: ReturnType<typeof vi.fn>): Promise<Uint
   return new Uint8Array(await blob.arrayBuffer());
 }
 
+/** Selects a radio input and notifies the v-model binding. */
+async function checkRadio(selector: string): Promise<void> {
+  const input = q<HTMLInputElement>(selector);
+  if (!input) throw new Error(`radio not found: ${selector}`);
+  input.checked = true;
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  await nextTick();
+}
+
+afterEach(() => {
+  for (const wrapper of mounted) wrapper.unmount();
+  mounted = [];
+  document.body.innerHTML = '';
+});
+
 describe('ExportDialog', () => {
   it('renders nothing while closed', () => {
-    const wrapper = mount(ExportDialog, {
-      props: { open: false, getDocument: makeDocument },
-    });
-    expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
+    track(
+      mount(ExportDialog, {
+        props: { open: false, getDocument: makeDocument },
+        attachTo: document.body,
+      }),
+    );
+    expect(q('[role="dialog"]')).toBeNull();
   });
 
   it('lists the registered encoders (WAV and MP3)', async () => {
-    const { wrapper } = mountDialog(makeRender());
-    const labels = await readOptionLabels(wrapper, '.format-select');
+    mountDialog(makeRender());
+    const labels = await readOptionLabels('.format-select');
     expect(labels.some((l) => l.includes('WAV'))).toBe(true);
     expect(labels.some((l) => l.includes('MP3'))).toBe(true);
   });
 
   it('hides MP3 when the registry lacks it (injected encoder list)', async () => {
-    const { wrapper } = mountDialog(makeRender(), {
+    mountDialog(makeRender(), {
       encoders: [
         {
           id: 'wav',
@@ -143,42 +205,43 @@ describe('ExportDialog', () => {
         },
       ],
     });
-    const labels = await readOptionLabels(wrapper, '.format-select');
+    const labels = await readOptionLabels('.format-select');
     expect(labels).toEqual(['WAV (PCM)']);
   });
 
   it('shows WAV options by default and MP3 options after switching formats', async () => {
-    const { wrapper } = mountDialog(makeRender());
-    expect(wrapper.find('.wav-bit-depth').exists()).toBe(true);
-    expect(wrapper.find('.mp3-bitrate').exists()).toBe(false);
-    await selectOption(wrapper, '.format-select', 'MP3 (CBR)');
-    expect(wrapper.find('.wav-bit-depth').exists()).toBe(false);
-    expect(wrapper.find('.mp3-bitrate').exists()).toBe(true);
+    mountDialog(makeRender());
+    expect(q('.wav-bit-depth')).not.toBeNull();
+    expect(q('.mp3-bitrate')).toBeNull();
+    await selectOption('.format-select', 'MP3 (CBR)');
+    expect(q('.wav-bit-depth')).toBeNull();
+    expect(q('.mp3-bitrate')).not.toBeNull();
   });
 
   it('disables the loop range without a loop region', () => {
-    const { wrapper } = mountDialog(makeRender());
-    expect((wrapper.find('.range-loop').element as HTMLInputElement).disabled).toBe(true);
-    const withLoop = mountDialog(makeRender(), {
+    mountDialog(makeRender());
+    expect(q<HTMLInputElement>('.range-loop')?.disabled).toBe(true);
+    document.body.innerHTML = '';
+    mountDialog(makeRender(), {
       hasLoop: true,
       loopRegion: { startPpq: 0, endPpq: 8 },
     });
-    expect((withLoop.wrapper.find('.range-loop').element as HTMLInputElement).disabled).toBe(false);
+    expect(q<HTMLInputElement>('.range-loop')?.disabled).toBe(false);
   });
 
   it('shows a validation error and disables Export for MP3 at 96 kHz', async () => {
-    const { wrapper } = mountDialog(makeRender());
-    await selectOption(wrapper, '.format-select', 'MP3 (CBR)');
-    await selectOption(wrapper, '.sample-rate-select', '96 kHz');
-    expect(wrapper.find('.dialog-errors').text()).toContain('MP3 supports 44.1 kHz and 48 kHz');
-    expect((wrapper.find('.export-button').element as HTMLButtonElement).disabled).toBe(true);
+    mountDialog(makeRender());
+    await selectOption('.format-select', 'MP3 (CBR)');
+    await selectOption('.sample-rate-select', '96 kHz');
+    expect(q('.dialog-errors')?.textContent).toContain('MP3 supports 44.1 kHz and 48 kHz');
+    expect(q<HTMLButtonElement>('.export-button')?.disabled).toBe(true);
   });
 
   it('exports a WAV mixdown: progress, download, report and exported event', async () => {
     const control = makeRender();
     const { wrapper, download } = mountDialog(control);
-    await selectOption(wrapper, '.wav-bit-depth', '24-bit PCM');
-    await clickExport(wrapper);
+    await selectOption('.wav-bit-depth', '24-bit PCM');
+    await clickExport();
 
     expect(control.render).toHaveBeenCalledTimes(1);
     expect(control.options()).toEqual({
@@ -190,8 +253,8 @@ describe('ExportDialog', () => {
 
     control.progress()?.(0.5, 'clip:0:0');
     await flushPromises();
-    expect(wrapper.find('.progress-stage').text()).toBe('clip:0:0');
-    expect(wrapper.find('.progress-fill').attributes('style')).toContain('width: 50%');
+    expect(q('.progress-stage')?.textContent).toBe('clip:0:0');
+    expect(q('.progress-fill')?.getAttribute('style')).toContain('width: 50%');
 
     const result = makeResult();
     control.resolve(result);
@@ -202,10 +265,10 @@ describe('ExportDialog', () => {
     const bytes = await downloadedBytes(download);
     expect(bytes).toEqual(encodeWav(result.channels, 48000, { bitDepth: 24 }));
 
-    expect(wrapper.find('.export-report').exists()).toBe(true);
-    expect(wrapper.find('.report-peak').text()).toBe('-6.0 dBFS');
-    expect(wrapper.find('.report-true-peak').text()).toBe('-5.8 dBTP');
-    expect(wrapper.find('.report-lufs').text()).toBe('-14.2 LUFS');
+    expect(q('.export-report')).not.toBeNull();
+    expect(q('.report-peak')?.textContent).toBe('-6.0 dBFS');
+    expect(q('.report-true-peak')?.textContent).toBe('-5.8 dBTP');
+    expect(q('.report-lufs')?.textContent).toBe('-14.2 LUFS');
 
     const emitted = wrapper.emitted('exported') as Array<[{ filename: string }]>;
     expect(emitted).toHaveLength(1);
@@ -215,7 +278,7 @@ describe('ExportDialog', () => {
   it('passes WAV dither to the encoder when the dither toggle is enabled', async () => {
     const control = makeRender();
     const encode = vi.fn(() => new Uint8Array([1, 2, 3]));
-    const { wrapper, download } = mountDialog(control, {
+    const { download } = mountDialog(control, {
       encoders: [
         {
           id: 'wav',
@@ -227,11 +290,12 @@ describe('ExportDialog', () => {
       ],
     });
 
-    const dither = wrapper.get('.wav-dither');
-    expect(dither.attributes('aria-pressed')).toBe('false');
-    await dither.trigger('click');
-    expect(dither.attributes('aria-pressed')).toBe('true');
-    await clickExport(wrapper);
+    const dither = q('.wav-dither');
+    expect(dither?.getAttribute('aria-pressed')).toBe('false');
+    dither?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await nextTick();
+    expect(dither?.getAttribute('aria-pressed')).toBe('true');
+    await clickExport();
 
     const result = makeResult();
     control.resolve(result);
@@ -244,7 +308,7 @@ describe('ExportDialog', () => {
   it('disables dither outside 16-bit WAV and leaves the encoder option false', async () => {
     const control = makeRender();
     const encode = vi.fn(() => new Uint8Array([1]));
-    const { wrapper } = mountDialog(control, {
+    mountDialog(control, {
       encoders: [
         {
           id: 'wav',
@@ -256,12 +320,13 @@ describe('ExportDialog', () => {
       ],
     });
 
-    await selectOption(wrapper, '.wav-bit-depth', '24-bit PCM');
-    const dither = wrapper.get('.wav-dither');
-    expect(dither.attributes('disabled')).toBeDefined();
-    await dither.trigger('click');
-    expect(dither.attributes('aria-pressed')).toBe('false');
-    await clickExport(wrapper);
+    await selectOption('.wav-bit-depth', '24-bit PCM');
+    const dither = q<HTMLButtonElement>('.wav-dither');
+    expect(dither?.disabled).toBe(true);
+    dither?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await nextTick();
+    expect(dither?.getAttribute('aria-pressed')).toBe('false');
+    await clickExport();
     control.resolve(makeResult());
     await flushPromises();
 
@@ -270,13 +335,14 @@ describe('ExportDialog', () => {
 
   it('passes includeMasterChain false when the master-chain toggle is disabled', async () => {
     const control = makeRender();
-    const { wrapper } = mountDialog(control);
+    mountDialog(control);
 
-    const includeMasterChain = wrapper.get('.include-master-chain');
-    expect(includeMasterChain.attributes('aria-pressed')).toBe('true');
-    await includeMasterChain.trigger('click');
-    expect(includeMasterChain.attributes('aria-pressed')).toBe('false');
-    await clickExport(wrapper);
+    const includeMasterChain = q('.include-master-chain');
+    expect(includeMasterChain?.getAttribute('aria-pressed')).toBe('true');
+    includeMasterChain?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await nextTick();
+    expect(includeMasterChain?.getAttribute('aria-pressed')).toBe('false');
+    await clickExport();
 
     expect(control.options()).toEqual({
       sampleRate: 48000,
@@ -288,21 +354,21 @@ describe('ExportDialog', () => {
 
   it('passes the loop window to the render seam', async () => {
     const control = makeRender();
-    const { wrapper } = mountDialog(control, {
+    mountDialog(control, {
       hasLoop: true,
       loopRegion: { startPpq: 4, endPpq: 20 },
     });
-    await wrapper.find('.range-loop').setValue(true);
-    await clickExport(wrapper);
+    await checkRadio('.range-loop');
+    await clickExport();
     expect(control.options().range).toBe('loop');
     expect(control.options().loopRegion).toEqual({ startPpq: 4, endPpq: 20 });
   });
 
   it('zips stems into one WAV file per track', async () => {
     const control = makeRender();
-    const { wrapper, download } = mountDialog(control);
-    await wrapper.find('.mode-stems').setValue(true);
-    await clickExport(wrapper);
+    const { download } = mountDialog(control);
+    await checkRadio('.mode-stems');
+    await clickExport();
     expect(control.options().stems).toBe(true);
 
     const stems = [
@@ -335,69 +401,80 @@ describe('ExportDialog', () => {
 
   it('surfaces an error when stems mode returns no stems', async () => {
     const control = makeRender();
-    const { wrapper, download } = mountDialog(control);
-    await wrapper.find('.mode-stems').setValue(true);
-    await clickExport(wrapper);
+    const { download } = mountDialog(control);
+    await checkRadio('.mode-stems');
+    await clickExport();
     control.resolve(makeResult());
     await flushPromises();
     expect(download).not.toHaveBeenCalled();
-    expect(wrapper.find('.dialog-error').text()).toContain('No stems were rendered');
+    expect(q('.dialog-error')?.textContent).toContain('No stems were rendered');
   });
 
   it('cancel during render rejects quietly with a cancelled note', async () => {
     const control = makeRender();
     const { wrapper, download } = mountDialog(control);
-    await clickExport(wrapper);
-    await wrapper.find('.cancel-render').trigger('click');
+    await clickExport();
+    q('.cancel-render')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await nextTick();
     expect(control.cancel).toHaveBeenCalledTimes(1);
     control.reject(new MixdownCancelledError());
     await flushPromises();
 
-    expect(wrapper.find('.export-cancelled').exists()).toBe(true);
-    expect(wrapper.find('.dialog-error').exists()).toBe(false);
+    expect(q('.export-cancelled')).not.toBeNull();
+    expect(q('.dialog-error')).toBeNull();
     expect(wrapper.emitted('exported')).toBeUndefined();
     expect(download).not.toHaveBeenCalled();
     // The dialog is usable again.
-    expect((wrapper.find('.export-button').element as HTMLButtonElement).disabled).toBe(false);
+    expect(q<HTMLButtonElement>('.export-button')?.disabled).toBe(false);
   });
 
   it('shows render errors inline and re-enables the form', async () => {
     const control = makeRender();
     const { wrapper } = mountDialog(control);
-    await clickExport(wrapper);
+    await clickExport();
     control.reject(new Error('asset missing'));
     await flushPromises();
-    expect(wrapper.find('.dialog-error').text()).toBe('asset missing');
+    expect(q('.dialog-error')?.textContent).toBe('asset missing');
     expect(wrapper.emitted('exported')).toBeUndefined();
-    expect((wrapper.find('.export-button').element as HTMLButtonElement).disabled).toBe(false);
+    expect(q<HTMLButtonElement>('.export-button')?.disabled).toBe(false);
   });
 
   it('blocks Close while busy and emits close when idle', async () => {
     const control = makeRender();
     const { wrapper } = mountDialog(control);
-    await clickExport(wrapper);
-    expect((wrapper.find('.close-button').element as HTMLButtonElement).disabled).toBe(true);
-    await wrapper.find('.close-button').trigger('click');
+    await clickExport();
+    expect(q<HTMLButtonElement>('.close-button')?.disabled).toBe(true);
+    q('.close-button')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await nextTick();
     expect(wrapper.emitted('close')).toBeUndefined();
 
     control.resolve(makeResult());
     await flushPromises();
-    await wrapper.find('.close-button').trigger('click');
+    q('.close-button')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await nextTick();
     expect(wrapper.emitted('close')).toHaveLength(1);
   });
 
   it('emits close from Escape and the overlay when idle', async () => {
     const { wrapper } = mountDialog(makeRender());
-    await wrapper.find('[role="dialog"]').trigger('keydown', { key: 'Escape' });
-    await wrapper.find('.dialog-overlay').trigger('click');
+    q('[role="dialog"]')?.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    );
+    await nextTick();
+    q('.modal-scrim')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await nextTick();
     expect(wrapper.emitted('close')).toHaveLength(2);
   });
 
   it('reseeds the filename from the project name when reopened', async () => {
     const { wrapper } = mountDialog(makeRender());
-    await wrapper.find('.filename-input').setValue('custom name');
+    const filename = q<HTMLInputElement>('.filename-input');
+    if (!filename) throw new Error('filename input not found');
+    filename.value = 'custom name';
+    filename.dispatchEvent(new Event('input', { bubbles: true }));
+    await nextTick();
     await wrapper.setProps({ open: false });
     await wrapper.setProps({ open: true });
-    expect((wrapper.find('.filename-input').element as HTMLInputElement).value).toBe('My Song');
+    expect(q<HTMLInputElement>('.filename-input')?.value).toBe('My Song');
   });
 });

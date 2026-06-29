@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
+import AppModal from '@/components/shell/AppModal.vue';
 import type { StoredProjectInfo } from '@/persistence/opfs';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { formatSize } from '@/ui/shell/format';
@@ -12,9 +13,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: [];
   deleteProject: [name: string];
-  dialogRef: [el: HTMLElement | null];
   importSzd: [];
-  keydown: [event: KeyboardEvent];
   openProject: [name: string];
 }>();
 
@@ -78,27 +77,20 @@ function onKeydown(event: KeyboardEvent): void {
       }
       break;
     }
-    default:
-      // Escape and focus-trap handling stay with the shell.
-      emit('keydown', event);
-      break;
+    // Escape and the focus trap are owned by AppModal.
   }
 }
 </script>
 
 <template>
-  <Transition name="dialog">
-  <div v-if="open" class="modal-overlay" @click.self="emit('close')">
-    <div
-      :ref="(el) => emit('dialogRef', el as HTMLElement | null)"
-      class="modal"
-      role="dialog"
-      aria-modal="true"
-      :aria-label="t.dialogs.openProject.title"
-      tabindex="-1"
-      @keydown="onKeydown"
-    >
-      <h2 class="modal-title">{{ t.dialogs.openProject.title }}</h2>
+  <AppModal
+    :open="open"
+    size="sm"
+    :aria-label="t.dialogs.openProject.title"
+    @close="emit('close')"
+    @keydown="onKeydown"
+  >
+    <template #title>{{ t.dialogs.openProject.title }}</template>
       <ul
         ref="listRef"
         class="stored-list"
@@ -137,16 +129,14 @@ function onKeydown(event: KeyboardEvent): void {
           {{ t.dialogs.openProject.empty }}
         </li>
       </ul>
-      <div class="modal-actions">
-        <button type="button" @click="emit('importSzd')">
-          {{ t.dialogs.openProject.importSzd }}
-        </button>
-        <span class="bar-spacer" />
-        <button type="button" @click="emit('close')">{{ t.dialogs.openProject.close }}</button>
-      </div>
-    </div>
-  </div>
-  </Transition>
+    <template #actions>
+      <button type="button" @click="emit('importSzd')">
+        {{ t.dialogs.openProject.importSzd }}
+      </button>
+      <span class="bar-spacer" />
+      <button type="button" @click="emit('close')">{{ t.dialogs.openProject.close }}</button>
+    </template>
+  </AppModal>
 </template>
 
 <style scoped src="@/ui/shell/open-project-dialog.css"></style>

@@ -79,10 +79,3 @@
   color: var(--text-3);
   font-style: italic;
 }
-
-.preset-empty {
-  margin: 0;
-  font: var(--fs-2xs) var(--font-sans);
-  color: var(--text-4);
-  padding: 3px 6px;
-}

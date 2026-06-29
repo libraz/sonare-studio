@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import ScoreAnnotationPalette from '@/components/score/ScoreAnnotationPalette.vue';
 import ScoreToolbar from '@/components/score/ScoreToolbar.vue';
+import EmptyState from '@/components/shell/EmptyState.vue';
 import { timeSigLengthPpq } from '@/notation/model';
 import { keyToKeyFifths } from '@/notation/pitch-spelling';
 import { VerovioClient } from '@/notation/verovio';
@@ -414,25 +415,20 @@ onBeforeUnmount(() => {
       <div v-if="notation.loading.value" class="score-loading">
         <span class="score-state-text">{{ t.shell.score.engraving }}</span>
       </div>
-      <div v-else-if="!notation.svg.value" class="score-empty">
-        <svg
-          class="score-empty-glyph"
-          viewBox="0 0 24 36"
-          width="40"
-          height="60"
-          aria-hidden="true"
-        >
-          <!-- Five-line staff with a stylised treble clef as a visual anchor. -->
-          <g fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round">
-            <path d="M2 8h20M2 13h20M2 18h20M2 23h20M2 28h20" opacity="0.45" />
-            <path
-              d="M13 4c-3 1-4 4-3.5 7l2 11c.4 2.6-1.4 4.5-3.2 4.2-1.6-.3-2.4-2-1.4-3.2.9-1 2.5-.5 2.5.8"
-              stroke-width="1.6"
-            />
-          </g>
-        </svg>
-        <span class="score-state-text">{{ t.shell.score.empty }}</span>
-      </div>
+      <EmptyState v-else-if="!notation.svg.value" :message="t.shell.score.empty">
+        <template #icon>
+          <svg viewBox="0 0 24 36" width="40" height="60" aria-hidden="true">
+            <!-- Five-line staff with a stylised treble clef as a visual anchor. -->
+            <g fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round">
+              <path d="M2 8h20M2 13h20M2 18h20M2 23h20M2 28h20" opacity="0.45" />
+              <path
+                d="M13 4c-3 1-4 4-3.5 7l2 11c.4 2.6-1.4 4.5-3.2 4.2-1.6-.3-2.4-2-1.4-3.2.9-1 2.5-.5 2.5.8"
+                stroke-width="1.6"
+              />
+            </g>
+          </svg>
+        </template>
+      </EmptyState>
       <Transition name="popover">
         <ScoreAnnotationPalette
           v-if="annotateEnabled && annotationNoteId !== null"

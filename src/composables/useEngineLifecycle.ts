@@ -11,6 +11,7 @@ import { createMixerSync } from '@/engine/mixer-sync';
 import { createScopeBridge, type ScopeBridge } from '@/engine/scope';
 import { createStripSync } from '@/engine/strip-sync';
 import { createTransportSync } from '@/engine/transport-sync';
+import { createWebMidiOutput } from '@/engine/web-midi-output';
 import { ensureWasm } from '@/lib/wasm';
 import { busIdFromAutomationTarget, isBusAutomationTarget } from '@/project/automation';
 import { clampPan, laneGainDb, vcaOffsetDb } from '@/project/mixer';
@@ -109,12 +110,19 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
         resolvePreset: (preset) => resolvePresetName(wasm as never, preset),
       });
       const nextTransportSync = createTransportSync(h);
+      // External-MIDI delivery: subscribes to the engine's drained MIDI output
+      // and writes it to Web MIDI ports. Best-effort access request — when Web
+      // MIDI is unavailable or denied the bridge stays idle (internal tracks
+      // are unaffected).
+      const nextWebMidiOutput = createWebMidiOutput(h);
+      void nextWebMidiOutput.start();
       options.setEngineSyncHandles({
         mixerSync: nextMixerSync,
         stripSync: nextStripSync,
         automationSync: nextAutomationSync,
         midiSync: nextMidiSync,
         transportSync: nextTransportSync,
+        webMidiOutput: nextWebMidiOutput,
       });
       options.bridge.value = createMeterBridge(h);
       options.analyser.value = createAnalyserBridge(h);

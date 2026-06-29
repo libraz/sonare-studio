@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
+import AppModal from '@/components/shell/AppModal.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { type ExportRenderHandle, renderMixdownInWorker } from '@/export/client';
@@ -27,7 +28,6 @@ import {
 import type { WavBitDepth } from '@/export/wav';
 import type { ProjectDocument } from '@/project/serialization';
 import { useI18n } from '@/ui/i18n';
-import { wrapTabFocus } from '@/ui/settings/focus-trap';
 import type { ExportRenderOptions } from '@/workers/export.worker';
 
 /**
@@ -86,7 +86,6 @@ const emit = defineEmits<{
 registerMp3Encoder();
 
 const { t } = useI18n();
-const dialogRef = ref<HTMLElement | null>(null);
 const model = ref<ExportOptionsModel>(createDefaultExportOptions(props.projectName));
 const encoderList = ref<AudioEncoder[]>(resolveEncoders());
 const busy = ref(false);
@@ -102,20 +101,12 @@ function resolveEncoders(): AudioEncoder[] {
   return props.encoders ? [...props.encoders] : listEncoders();
 }
 
-/** Element focused before the dialog opened, restored on close. */
-let previousFocus: HTMLElement | null = null;
-
 watch(
   () => props.open,
   (open) => {
-    if (!open) {
-      if (previousFocus?.isConnected) previousFocus.focus();
-      previousFocus = null;
-      return;
-    }
-    const active = document.activeElement;
-    previousFocus = active instanceof HTMLElement ? active : null;
+    if (!open) return;
     // Fresh state per session: new defaults seeded from the project name.
+    // Focus, the trap and restoration are owned by AppModal.
     model.value = createDefaultExportOptions(props.projectName);
     encoderList.value = resolveEncoders();
     errorMessage.value = '';
@@ -123,7 +114,6 @@ watch(
     report.value = null;
     progress.value = 0;
     stage.value = '';
-    void nextTick(() => dialogRef.value?.focus());
   },
 );
 
@@ -275,32 +265,29 @@ function onClose(): void {
   emit('close');
 }
 
+/**
+ * While a render is in flight the modal is non-dismissable, so AppModal stops
+ * consuming Escape and forwards it here — let it cancel the render instead of
+ * closing. When idle, AppModal handles Escape/overlay as a close itself.
+ */
 function onKeydown(event: KeyboardEvent): void {
-  if (dialogRef.value !== null && wrapTabFocus(event, dialogRef.value)) return;
   if (event.key !== 'Escape') return;
   event.preventDefault();
-  if (busy.value) {
-    onCancelRender();
-  } else {
-    emit('close');
-  }
+  if (busy.value) onCancelRender();
 }
 </script>
 
 <template>
-  <Transition name="dialog">
-  <div v-if="props.open" class="dialog-overlay" @click.self="onClose">
-    <div
-      ref="dialogRef"
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      :aria-label="t.dialogs.exportAudio.title"
-      tabindex="-1"
-      @keydown="onKeydown"
-    >
-      <h2 class="dialog-title">{{ t.dialogs.exportAudio.title }}</h2>
-
+  <AppModal
+    :open="props.open"
+    :aria-label="t.dialogs.exportAudio.title"
+    :dismissable="!busy"
+    :close-on-overlay="!busy"
+    @close="onClose"
+    @keydown="onKeydown"
+  >
+    <template #title>{{ t.dialogs.exportAudio.title }}</template>
+    <div class="dialog-body">
       <div class="dialog-grid">
         <label class="field-label" for="export-format">{{ t.dialogs.exportAudio.format }}</label>
         <div class="field">
@@ -452,60 +439,23 @@ function onKeydown(event: KeyboardEvent): void {
       </div>
 
       <p v-if="errorMessage" class="dialog-error" role="alert">{{ errorMessage }}</p>
-
-      <div class="dialog-actions">
-        <button type="button" class="close-button" :disabled="busy" @click="onClose">
-          {{ t.dialogs.exportAudio.close }}
-        </button>
-        <button type="button" class="primary export-button" :disabled="!canExport" @click="onExport">
-          {{ t.dialogs.exportAudio.export }}
-        </button>
-      </div>
     </div>
-  </div>
-  </Transition>
+    <template #actions>
+      <button type="button" class="close-button" :disabled="busy" @click="onClose">
+        {{ t.dialogs.exportAudio.close }}
+      </button>
+      <button type="button" class="primary export-button" :disabled="!canExport" @click="onExport">
+        {{ t.dialogs.exportAudio.export }}
+      </button>
+    </template>
+  </AppModal>
 </template>
 
 <style scoped>
-.dialog-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--scrim);
-  -webkit-backdrop-filter: var(--scrim-blur);
-  backdrop-filter: var(--scrim-blur);
-}
-
-.dialog {
+.dialog-body {
   display: flex;
   flex-direction: column;
   gap: var(--sp-5);
-  width: min(30rem, calc(100vw - 2rem));
-  max-height: calc(100vh - 4rem);
-  padding: 1.25rem 1.4rem;
-  overflow: auto;
-  background: var(--glass-3);
-  -webkit-backdrop-filter: var(--glass-blur-strong);
-  backdrop-filter: var(--glass-blur-strong);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--glass-hairline), var(--shadow-modal);
-  color: var(--text-1);
-  font-size: var(--fs-sm);
-}
-
-.dialog:focus {
-  outline: none;
-}
-
-.dialog-title {
-  margin: 0;
-  font-size: var(--fs-xl);
-  font-weight: var(--fw-bold);
-  letter-spacing: 0.04em;
 }
 
 .dialog-grid {
@@ -651,17 +601,6 @@ function onKeydown(event: KeyboardEvent): void {
   border: 1px solid var(--danger);
   border-radius: var(--radius-sm);
   color: var(--danger-text);
-}
-
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--sp-4);
-}
-
-/* Share one height across secondary and the canonical .primary action. */
-.dialog-actions button {
-  padding: var(--sp-2) var(--sp-5);
 }
 
 .cancel-render {

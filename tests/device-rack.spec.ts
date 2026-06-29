@@ -50,7 +50,7 @@ describe('DeviceRack.vue', () => {
   it('shows an empty state when no track is active', async () => {
     store.activeTrackId = -1;
     const wrapper = mount(DeviceRack);
-    expect(wrapper.find('.rack-empty').exists()).toBe(true);
+    expect(wrapper.find('.empty-state').exists()).toBe(true);
     expect(wrapper.find('.instrument-button').exists()).toBe(false);
   });
 

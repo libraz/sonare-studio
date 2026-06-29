@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import EmptyState from '@/components/shell/EmptyState.vue';
 import { detectActiveAudioClipTempo, detectActiveAudioClipTempoMap } from '@/project/audio-tempo';
 import { setTempoSegments } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
@@ -272,7 +273,7 @@ function apply(): void {
         </tr>
       </tbody>
     </table>
-    <p v-if="rows.length === 0" class="list-empty">{{ t.shell.lists.tempo.empty }}</p>
+    <EmptyState v-if="rows.length === 0" variant="inline" :message="t.shell.lists.tempo.empty" />
     <p v-for="error in errors" :key="error" class="list-error" role="alert">{{ error }}</p>
     <div class="list-actions">
       <button type="button" @click="addRow">{{ t.shell.lists.tempo.add }}</button>

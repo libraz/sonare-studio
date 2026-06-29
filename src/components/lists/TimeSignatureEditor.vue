@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import EmptyState from '@/components/shell/EmptyState.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { detectActiveAudioClipTimeSignatures } from '@/project/audio-tempo';
 import { setTimeSignatures } from '@/project/commands';
@@ -247,7 +248,7 @@ function apply(): void {
         </tr>
       </tbody>
     </table>
-    <p v-if="rows.length === 0" class="list-empty">{{ t.shell.lists.meter.empty }}</p>
+    <EmptyState v-if="rows.length === 0" variant="inline" :message="t.shell.lists.meter.empty" />
     <p v-for="error in errors" :key="error" class="list-error" role="alert">{{ error }}</p>
     <div class="list-actions">
       <button type="button" @click="addRow">{{ t.shell.lists.meter.add }}</button>

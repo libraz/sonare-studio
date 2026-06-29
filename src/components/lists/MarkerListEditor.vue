@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue';
+import EmptyState from '@/components/shell/EmptyState.vue';
 import { removeMarker, setMarker } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import type { EditorMarker } from '@/project/types';
@@ -142,7 +143,7 @@ function onSeek(marker: EditorMarker): void {
         </tr>
       </TransitionGroup>
     </table>
-    <p v-if="store.markers.length === 0" class="list-empty">{{ t.shell.lists.markers.empty }}</p>
+    <EmptyState v-if="store.markers.length === 0" variant="inline" :message="t.shell.lists.markers.empty" />
     <p v-if="errorMessage" class="list-error" role="alert">{{ errorMessage }}</p>
     <div class="list-actions">
       <button type="button" @click="addAtPlayhead">{{ t.shell.lists.common.addAtPlayhead }}</button>

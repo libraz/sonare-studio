@@ -354,6 +354,7 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
   const lastMidiFxKeyByTrack = new Map<number, string>();
   let loadedFontId: string | undefined;
   let lastClipsKey: string | undefined;
+  let lastClockEnabled: boolean | undefined;
   let clipCount = 0;
 
   const sync = async (
@@ -399,18 +400,24 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
       const instrumentKey = JSON.stringify(track.instrument ?? null);
       if (lastInstrumentKeyByTrack.get(track.id) === instrumentKey) continue;
       const instrument = track.instrument;
+      // Route an external-MIDI track to the engine's external output (its MIDI
+      // leaves the engine instead of driving a built-in synth); any other kind
+      // clears that routing so it plays internally again.
+      handle.engine.setMidiDestinationExternal(track.id, instrument?.kind === 'external-midi');
       if (instrument === undefined) {
         handle.engine.setSynthInstrument(track.id, resolvePreset(DEFAULT_SYNTH_PRESET));
       } else if (instrument.kind === 'synth-preset') {
         handle.engine.setSynthInstrument(track.id, resolvePreset(instrument.preset));
       } else if (instrument.kind === 'synth-patch') {
         handle.engine.setSynthInstrument(track.id, instrument.patch as Record<string, unknown>);
-      } else {
+      } else if (instrument.kind === 'sf2') {
         // The global SoundFont is already loaded above (last SF2 track wins);
         // binding the track points it at that shared font and applies the
         // track's master gain / voice cap (omitted fields keep engine defaults).
         handle.engine.setSf2Instrument(track.id, sf2PlaybackConfig(instrument));
       }
+      // external-midi: no internal instrument is bound; the engine routes the
+      // track's MIDI to the external output queue (drained by useWebMidiOutput).
       lastInstrumentKeyByTrack.set(track.id, instrumentKey);
     }
 
@@ -429,6 +436,20 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
         handle.engine.setMidiFx(track.id, midiFxKey);
       }
       lastMidiFxKeyByTrack.set(track.id, midiFxKey);
+    }
+
+    // Forward MIDI clock + transport to external ports only when some external
+    // track opts in, so internal-only projects never emit clock traffic.
+    const clockEnabled = tracks.some(
+      (track) =>
+        track.kind === 'midi' &&
+        track.frozen === undefined &&
+        track.instrument?.kind === 'external-midi' &&
+        track.instrument.sendClock === true,
+    );
+    if (clockEnabled !== lastClockEnabled) {
+      handle.engine.setExternalMidiClockEnabled(clockEnabled);
+      lastClockEnabled = clockEnabled;
     }
 
     const schedules = buildMidiClipSchedules(tracks, clips, tempoSegments, sampleRate);

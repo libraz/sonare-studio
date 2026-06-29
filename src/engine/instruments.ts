@@ -110,8 +110,19 @@ const CACHE_KEY_VERSION = 'v1';
  * given, otherwise the simple preset option wrapped as a 'synth-preset'
  * instrument (default 'e-piano').
  */
-function resolveInstrument(options: PrerenderMidiClipOptions): TrackInstrument {
-  if (options.instrument) return options.instrument;
+function resolveInstrument(
+  options: PrerenderMidiClipOptions,
+): Exclude<TrackInstrument, { kind: 'external-midi' }> {
+  const instrument = options.instrument;
+  if (instrument) {
+    // External-MIDI tracks have no renderable internal instrument (their audio
+    // comes from an external device). Preview/bounce them through the default
+    // synth so auditioning still produces sound rather than silence/an error.
+    if (instrument.kind === 'external-midi') {
+      return { kind: 'synth-preset', preset: DEFAULT_SYNTH_PRESET };
+    }
+    return instrument;
+  }
   return { kind: 'synth-preset', preset: options.preset ?? DEFAULT_SYNTH_PRESET };
 }
 

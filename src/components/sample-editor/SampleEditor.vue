@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, shallowRef, watch } from 'vue';
+import EmptyState from '@/components/shell/EmptyState.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
@@ -715,9 +716,7 @@ onMounted(() => {
       <div v-if="busy || loading" class="busy">
         {{ busy ? t.shell.sampleEditor.processing : t.shell.sampleEditor.loading }}
       </div>
-      <div v-else-if="!asset" class="empty-state">
-        {{ t.shell.sampleEditor.emptyMessage }}
-      </div>
+      <EmptyState v-else-if="!asset" :message="t.shell.sampleEditor.emptyMessage" />
     </div>
     <div class="history">
       <span class="history-title">{{ t.shell.sampleEditor.history }}</span>
@@ -1025,20 +1024,6 @@ onMounted(() => {
   justify-content: center;
   background: var(--scrim);
   color: var(--text-1);
-}
-
-/* No-asset guidance over the empty dark canvas (keeps the canvas aesthetic). */
-.empty-state {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 var(--sp-5);
-  text-align: center;
-  color: var(--text-3);
-  font-size: var(--fs-sm);
-  pointer-events: none;
 }
 
 .history {

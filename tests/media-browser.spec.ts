@@ -117,7 +117,7 @@ describe('MediaBrowser', () => {
     await wrapper.find('.filter-text input').setValue('drum');
     expect(rowNames(wrapper)).toEqual(['Drum Loop']);
     await wrapper.find('.filter-text input').setValue('zzz');
-    expect(wrapper.find('.empty').text()).toBe('No assets match the filters.');
+    expect(wrapper.find('.empty-state').text()).toBe('No assets match the filters.');
   });
 
   it('offers the key tags as dropdown options and filters by them', async () => {

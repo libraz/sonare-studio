@@ -278,6 +278,9 @@ export function setQuickControl(
     if (instrument.kind === 'sf2') {
       throw new RangeError('SF2 instruments expose no quick controls');
     }
+    if (instrument.kind === 'external-midi') {
+      throw new RangeError('External MIDI instruments expose no quick controls');
+    }
     const clamped = Math.min(spec.max, Math.max(spec.min, value));
     const basePatch: SynthPatch =
       instrument.kind === 'synth-patch' ? { ...instrument.patch } : { preset: instrument.preset };

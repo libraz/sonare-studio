@@ -1,21 +1,58 @@
-import { mount } from '@vue/test-utils';
-import { describe, expect, it } from 'vitest';
+import { mount, type VueWrapper } from '@vue/test-utils';
+import { afterEach, describe, expect, it } from 'vitest';
+import { nextTick } from 'vue';
 import NewProjectDialog from '@/components/project/NewProjectDialog.vue';
 import type { ProjectDocument } from '@/project/serialization';
 import { PROJECT_DOCUMENT_SCHEMA_VERSION } from '@/project/serialization';
 import { TEMPLATE_NAMES } from '@/project/templates';
 
+// AppModal teleports its content to <body>, so the dialog is queried through
+// the document rather than the wrapper, and events are dispatched natively.
+
+let wrapper: VueWrapper | null = null;
+
+function open(props: Record<string, unknown> = {}): VueWrapper {
+  wrapper = mount(NewProjectDialog, {
+    props: { open: true, ...props },
+    attachTo: document.body,
+  });
+  return wrapper;
+}
+
+function q<T extends Element = HTMLElement>(selector: string): T | null {
+  return document.body.querySelector<T>(selector);
+}
+
+function qa<T extends Element = HTMLElement>(selector: string): T[] {
+  return Array.from(document.body.querySelectorAll<T>(selector));
+}
+
+function button(label: string): HTMLButtonElement | undefined {
+  return qa<HTMLButtonElement>('button').find((b) => b.textContent?.trim() === label);
+}
+
+async function keydown(key: string): Promise<void> {
+  q('[role="dialog"]')?.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+  await nextTick();
+}
+
+afterEach(() => {
+  wrapper?.unmount();
+  wrapper = null;
+  document.body.innerHTML = '';
+});
+
 describe('NewProjectDialog', () => {
   it('renders nothing while closed', () => {
-    const wrapper = mount(NewProjectDialog, { props: { open: false } });
-    expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
+    wrapper = mount(NewProjectDialog, { props: { open: false }, attachTo: document.body });
+    expect(q('[role="dialog"]')).toBeNull();
   });
 
   it('lists every built-in template', () => {
-    const wrapper = mount(NewProjectDialog, { props: { open: true } });
-    const options = wrapper.findAll('[role="option"]');
+    open();
+    const options = qa('[role="option"]');
     expect(options).toHaveLength(TEMPLATE_NAMES.length);
-    expect(options.map((o) => o.find('.template-label').text())).toEqual([
+    expect(options.map((o) => o.querySelector('.template-label')?.textContent)).toEqual([
       'Empty',
       'Band',
       'GM Orchestra',
@@ -25,24 +62,32 @@ describe('NewProjectDialog', () => {
   });
 
   it('previews the selected template tracks', async () => {
-    const wrapper = mount(NewProjectDialog, { props: { open: true } });
-    expect(wrapper.find('.preview-empty').text()).toBe('No tracks');
+    open();
+    expect(q('.empty-state')?.textContent?.trim()).toBe('No tracks');
 
-    const band = wrapper.findAll('[role="option"]')[1];
-    await band.trigger('click');
-    expect(band.attributes('aria-selected')).toBe('true');
-    const tracks = wrapper.findAll('.preview-track');
-    expect(tracks.map((t) => t.text())).toEqual(['Drums', 'Bass', 'Piano', 'Guitar', 'Vocal']);
+    const band = qa('[role="option"]')[1];
+    band.click();
+    await nextTick();
+    expect(band.getAttribute('aria-selected')).toBe('true');
+    const tracks = qa('.preview-track');
+    expect(tracks.map((t) => t.textContent?.trim())).toEqual([
+      'Drums',
+      'Bass',
+      'Piano',
+      'Guitar',
+      'Vocal',
+    ]);
   });
 
   it('emits a fresh document for the selected template on Create', async () => {
-    const wrapper = mount(NewProjectDialog, { props: { open: true } });
-    await wrapper.findAll('[role="option"]')[1].trigger('click');
-    const create = wrapper.findAll('button').find((b) => b.text() === 'Create');
-    await create?.trigger('click');
-    await create?.trigger('click');
+    open();
+    qa('[role="option"]')[1].click();
+    await nextTick();
+    button('Create')?.click();
+    button('Create')?.click();
+    await nextTick();
 
-    const emitted = wrapper.emitted('create') as Array<
+    const emitted = wrapper?.emitted('create') as Array<
       [{ document: ProjectDocument; template: string }]
     >;
     expect(emitted).toHaveLength(2);
@@ -55,39 +100,43 @@ describe('NewProjectDialog', () => {
   });
 
   it('emits cancel from the Cancel button, Escape and the overlay', async () => {
-    const wrapper = mount(NewProjectDialog, { props: { open: true } });
-    const cancel = wrapper.findAll('button').find((b) => b.text() === 'Cancel');
-    await cancel?.trigger('click');
-    await wrapper.find('[role="dialog"]').trigger('keydown', { key: 'Escape' });
-    await wrapper.find('.dialog-overlay').trigger('click');
-    expect(wrapper.emitted('cancel')).toHaveLength(3);
+    open();
+    button('Cancel')?.click();
+    await keydown('Escape');
+    q('.modal-scrim')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await nextTick();
+    expect(wrapper?.emitted('cancel')).toHaveLength(3);
   });
 
   it('supports keyboard selection and Enter-to-create', async () => {
-    const wrapper = mount(NewProjectDialog, { props: { open: true } });
-    const dialog = wrapper.find('[role="dialog"]');
-    await dialog.trigger('keydown', { key: 'ArrowDown' });
-    await dialog.trigger('keydown', { key: 'ArrowDown' });
-    await dialog.trigger('keydown', { key: 'ArrowUp' });
-    await dialog.trigger('keydown', { key: 'Enter' });
+    open();
+    await keydown('ArrowDown');
+    await keydown('ArrowDown');
+    await keydown('ArrowUp');
+    await keydown('Enter');
 
-    const emitted = wrapper.emitted('create') as Array<[{ template: string }]>;
+    const emitted = wrapper?.emitted('create') as Array<[{ template: string }]>;
     expect(emitted[0][0].template).toBe('band');
   });
 
   it('shows the unsaved-changes warning only when requested', () => {
-    const clean = mount(NewProjectDialog, { props: { open: true } });
-    expect(clean.find('.dialog-warning').exists()).toBe(false);
+    open();
+    expect(q('.dialog-warning')).toBeNull();
+    wrapper?.unmount();
+    document.body.innerHTML = '';
 
-    const dirty = mount(NewProjectDialog, { props: { open: true, unsavedChanges: true } });
-    expect(dirty.find('.dialog-warning').text()).toContain('unsaved changes');
+    open({ unsavedChanges: true });
+    expect(q('.dialog-warning')?.textContent).toContain('unsaved changes');
   });
 
   it('renders custom warning slot content', () => {
-    const wrapper = mount(NewProjectDialog, {
+    wrapper = mount(NewProjectDialog, {
       props: { open: true, unsavedChanges: true },
       slots: { warning: 'Project "Demo" was edited 5 minutes ago.' },
+      attachTo: document.body,
     });
-    expect(wrapper.find('.dialog-warning').text()).toBe('Project "Demo" was edited 5 minutes ago.');
+    expect(q('.dialog-warning')?.textContent?.trim()).toBe(
+      'Project "Demo" was edited 5 minutes ago.',
+    );
   });
 });

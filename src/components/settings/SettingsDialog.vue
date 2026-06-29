@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import GeneralTab from '@/components/settings/GeneralTab.vue';
 import LayoutsTab from '@/components/settings/LayoutsTab.vue';
 import ShortcutsTab from '@/components/settings/ShortcutsTab.vue';
+import AppModal from '@/components/shell/AppModal.vue';
 import { useI18n } from '@/ui/i18n';
-import { createFocusTrap, type FocusTrap } from '@/ui/settings/focus-trap';
 import type { LayoutBindings } from '@/ui/settings/layouts';
 
 /**
@@ -41,21 +41,11 @@ const TABS = computed<ReadonlyArray<{ id: TabId; label: string }>>(() => [
 ]);
 const activeTab = ref<TabId>('general');
 
-const dialogRef = ref<HTMLElement | null>(null);
+const bodyRef = ref<HTMLElement | null>(null);
 const shortcutsTab = ref<InstanceType<typeof ShortcutsTab> | null>(null);
-let trap: FocusTrap | null = null;
 
 function close(): void {
   emit('close');
-}
-
-function onDialogKeydown(event: KeyboardEvent): void {
-  // While capturing a shortcut, the window-level capture listener consumes
-  // every key (including Escape), so this handler never closes mid-capture.
-  if (event.key === 'Escape') {
-    event.preventDefault();
-    close();
-  }
 }
 
 /** Moves the tab selection by `delta`, wrapping around. */
@@ -76,130 +66,74 @@ function onTabKeydown(event: KeyboardEvent): void {
   }
 }
 
-/** Reclaims focus onto the dialog after a tab removes a focused control. */
+/** Reclaims focus onto the dialog body after a tab removes a focused control. */
 function focusDialog(): void {
-  dialogRef.value?.focus();
+  bodyRef.value?.focus();
 }
 
-// --- Open/close lifecycle ----------------------------------------------------
-// Registered last so the immediate run can safely reach every declaration.
-
+// AppModal owns the overlay, focus trap, Escape and focus restoration; this
+// dialog only has to stop an in-flight shortcut capture when it goes away.
 watch(
   () => props.open,
   (open) => {
-    if (open) {
-      void nextTick(() => {
-        if (dialogRef.value === null) return;
-        trap = createFocusTrap(dialogRef.value);
-        trap.activate();
-      });
-    } else {
-      shortcutsTab.value?.stopCapture();
-      trap?.deactivate();
-      trap = null;
-    }
+    if (!open) shortcutsTab.value?.stopCapture();
   },
-  { immediate: true },
 );
 
 onBeforeUnmount(() => {
   shortcutsTab.value?.stopCapture();
-  trap?.deactivate();
-  trap = null;
 });
 </script>
 
 <template>
-  <Transition name="dialog">
-    <div v-if="props.open" class="dialog-overlay" @click.self="close">
+  <AppModal :open="props.open" :aria-label="t.settings.title" @close="close">
+    <template #title>{{ t.settings.title }}</template>
+    <div ref="bodyRef" class="dialog-body" tabindex="-1">
       <div
-        ref="dialogRef"
-        class="dialog"
-        role="dialog"
-        aria-modal="true"
-        :aria-label="t.settings.title"
-        tabindex="-1"
-        @keydown="onDialogKeydown"
+        class="tabs"
+        role="tablist"
+        :aria-label="t.settings.sectionsLabel"
+        @keydown="onTabKeydown"
       >
-        <h2 class="dialog-title">{{ t.settings.title }}</h2>
-        <div
-          class="tabs"
-          role="tablist"
-          :aria-label="t.settings.sectionsLabel"
-          @keydown="onTabKeydown"
+        <button
+          v-for="tab in TABS"
+          :key="tab.id"
+          type="button"
+          class="tab"
+          :class="{ active: activeTab === tab.id }"
+          role="tab"
+          :aria-selected="activeTab === tab.id"
+          :aria-controls="`settings-panel-${tab.id}`"
+          :tabindex="activeTab === tab.id ? 0 : -1"
+          @click="activeTab = tab.id"
         >
-          <button
-            v-for="tab in TABS"
-            :key="tab.id"
-            type="button"
-            class="tab"
-            :class="{ active: activeTab === tab.id }"
-            role="tab"
-            :aria-selected="activeTab === tab.id"
-            :aria-controls="`settings-panel-${tab.id}`"
-            :tabindex="activeTab === tab.id ? 0 : -1"
-            @click="activeTab = tab.id"
-          >
-            {{ tab.label }}
-          </button>
-        </div>
-
-        <GeneralTab v-if="activeTab === 'general'" />
-        <ShortcutsTab
-          v-else-if="activeTab === 'shortcuts'"
-          ref="shortcutsTab"
-          @request-focus="focusDialog"
-        />
-        <LayoutsTab v-else :layout-bindings="props.layoutBindings" />
-
-        <div class="dialog-actions">
-          <button type="button" class="primary" @click="close">{{ t.settings.close }}</button>
-        </div>
+          {{ tab.label }}
+        </button>
       </div>
+
+      <GeneralTab v-if="activeTab === 'general'" />
+      <ShortcutsTab
+        v-else-if="activeTab === 'shortcuts'"
+        ref="shortcutsTab"
+        @request-focus="focusDialog"
+      />
+      <LayoutsTab v-else :layout-bindings="props.layoutBindings" />
     </div>
-  </Transition>
+    <template #actions>
+      <button type="button" class="primary" @click="close">{{ t.settings.close }}</button>
+    </template>
+  </AppModal>
 </template>
 
 <style scoped>
-.dialog-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--scrim);
-  -webkit-backdrop-filter: var(--scrim-blur);
-  backdrop-filter: var(--scrim-blur);
-}
-
-/* Entrance/exit motion is the shared `dialog` transition in motion.css. */
-
-.dialog {
+.dialog-body {
   display: flex;
   flex-direction: column;
   gap: var(--sp-4);
-  width: min(38rem, calc(100vw - 2rem));
-  max-height: calc(100vh - 4rem);
-  padding: var(--sp-6);
-  background: var(--glass-3);
-  -webkit-backdrop-filter: var(--glass-blur-strong);
-  backdrop-filter: var(--glass-blur-strong);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--glass-hairline), var(--shadow-modal);
-  color: var(--text-1);
-  font-size: var(--fs-sm);
 }
 
-.dialog:focus {
+.dialog-body:focus {
   outline: none;
-}
-
-.dialog-title {
-  margin: 0;
-  font-size: var(--fs-lg);
-  font-weight: var(--fw-bold);
-  letter-spacing: 0.04em;
 }
 
 .tabs {
@@ -238,26 +172,5 @@ onBeforeUnmount(() => {
   overflow: auto;
   min-height: 12rem;
   animation: view-enter var(--dur-2) var(--ease-out);
-}
-
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-}
-
-.dialog-actions .primary {
-  background: var(--accent-strong);
-  border: 1px solid var(--accent);
-  color: var(--text-1);
-  border-radius: var(--radius-sm);
-  padding: 0.25rem 0.9rem;
-  cursor: pointer;
-  box-shadow: var(--raise-hi);
-  transition: background var(--dur-1) var(--ease-out);
-}
-
-.dialog-actions .primary:hover {
-  background: var(--accent-hover);
 }
 </style>

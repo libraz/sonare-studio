@@ -299,7 +299,7 @@ export function createPatchDraft(
   resolvePreset?: PresetPatchResolver,
 ): SynthPatch {
   const draft: SynthPatch = {};
-  if (!instrument || instrument.kind === 'sf2') return draft;
+  if (!instrument || instrument.kind === 'sf2' || instrument.kind === 'external-midi') return draft;
   const presetName =
     instrument.kind === 'synth-preset' ? instrument.preset : instrument.patch.preset;
   if (presetName !== undefined && resolvePreset) {

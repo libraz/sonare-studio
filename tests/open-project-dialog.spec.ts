@@ -1,7 +1,11 @@
-import { mount } from '@vue/test-utils';
-import { describe, expect, it } from 'vitest';
+import { mount, type VueWrapper } from '@vue/test-utils';
+import { afterEach, describe, expect, it } from 'vitest';
+import { nextTick } from 'vue';
 import OpenProjectDialog from '@/components/project/OpenProjectDialog.vue';
 import type { StoredProjectInfo } from '@/persistence/opfs';
+
+// AppModal teleports the dialog to <body>, so it is queried through the document
+// and keyboard events are dispatched natively on the dialog card.
 
 const projects: StoredProjectInfo[] = [
   { name: 'Alpha', size: 1024 },
@@ -9,90 +13,100 @@ const projects: StoredProjectInfo[] = [
   { name: 'Gamma', size: 4096 },
 ];
 
+let wrapper: VueWrapper | null = null;
+
+function open(storedProjects: StoredProjectInfo[]): VueWrapper {
+  wrapper = mount(OpenProjectDialog, {
+    props: { open: true, storedProjects },
+    attachTo: document.body,
+  });
+  return wrapper;
+}
+
+function q<T extends Element = HTMLElement>(selector: string): T | null {
+  return document.body.querySelector<T>(selector);
+}
+
+function qa<T extends Element = HTMLElement>(selector: string): T[] {
+  return Array.from(document.body.querySelectorAll<T>(selector));
+}
+
+function activeDescendant(): string | null {
+  return q('[role="listbox"]')?.getAttribute('aria-activedescendant') ?? null;
+}
+
+async function keydown(key: string): Promise<void> {
+  q('[role="dialog"]')?.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+  await nextTick();
+}
+
+afterEach(() => {
+  wrapper?.unmount();
+  wrapper = null;
+  document.body.innerHTML = '';
+});
+
 describe('OpenProjectDialog', () => {
   it('renders nothing while closed', () => {
-    const wrapper = mount(OpenProjectDialog, {
+    wrapper = mount(OpenProjectDialog, {
       props: { open: false, storedProjects: projects },
+      attachTo: document.body,
     });
-    expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
+    expect(q('[role="dialog"]')).toBeNull();
   });
 
   it('exposes the saved projects as a listbox of options', () => {
-    const wrapper = mount(OpenProjectDialog, {
-      props: { open: true, storedProjects: projects },
-    });
-    const listbox = wrapper.find('[role="listbox"]');
-    expect(listbox.exists()).toBe(true);
-    expect(wrapper.findAll('[role="option"]')).toHaveLength(projects.length);
+    open(projects);
+    expect(q('[role="listbox"]')).not.toBeNull();
+    expect(qa('[role="option"]')).toHaveLength(projects.length);
   });
 
   it('tracks the keyboard selection via aria-activedescendant', async () => {
-    const wrapper = mount(OpenProjectDialog, {
-      props: { open: true, storedProjects: projects },
-    });
-    const listbox = wrapper.find('[role="listbox"]');
-    const dialog = wrapper.find('[role="dialog"]');
+    open(projects);
+    const options = qa('[role="option"]');
+    const firstId = options[0].id;
+    expect(activeDescendant()).toBe(firstId);
+    expect(options[0].getAttribute('aria-selected')).toBe('true');
 
-    const firstId = wrapper.findAll('[role="option"]')[0].attributes('id');
-    expect(listbox.attributes('aria-activedescendant')).toBe(firstId);
-    expect(wrapper.findAll('[role="option"]')[0].attributes('aria-selected')).toBe('true');
+    await keydown('ArrowDown');
+    const secondId = qa('[role="option"]')[1].id;
+    expect(activeDescendant()).toBe(secondId);
+    expect(qa('[role="option"]')[1].getAttribute('aria-selected')).toBe('true');
 
-    await dialog.trigger('keydown', { key: 'ArrowDown' });
-    const secondId = wrapper.findAll('[role="option"]')[1].attributes('id');
-    expect(listbox.attributes('aria-activedescendant')).toBe(secondId);
-    expect(wrapper.findAll('[role="option"]')[1].attributes('aria-selected')).toBe('true');
-
-    await dialog.trigger('keydown', { key: 'ArrowUp' });
-    expect(listbox.attributes('aria-activedescendant')).toBe(firstId);
+    await keydown('ArrowUp');
+    expect(activeDescendant()).toBe(firstId);
   });
 
   it('clamps the selection at the list bounds', async () => {
-    const wrapper = mount(OpenProjectDialog, {
-      props: { open: true, storedProjects: projects },
-    });
-    const listbox = wrapper.find('[role="listbox"]');
-    const dialog = wrapper.find('[role="dialog"]');
-
-    await dialog.trigger('keydown', { key: 'ArrowUp' });
-    expect(listbox.attributes('aria-activedescendant')).toBe(
-      wrapper.findAll('[role="option"]')[0].attributes('id'),
-    );
+    open(projects);
+    await keydown('ArrowUp');
+    expect(activeDescendant()).toBe(qa('[role="option"]')[0].id);
 
     for (let i = 0; i < 5; i += 1) {
-      await dialog.trigger('keydown', { key: 'ArrowDown' });
+      await keydown('ArrowDown');
     }
-    expect(listbox.attributes('aria-activedescendant')).toBe(
-      wrapper.findAll('[role="option"]')[projects.length - 1].attributes('id'),
-    );
+    expect(activeDescendant()).toBe(qa('[role="option"]')[projects.length - 1].id);
   });
 
   it('opens the highlighted project on Enter', async () => {
-    const wrapper = mount(OpenProjectDialog, {
-      props: { open: true, storedProjects: projects },
-    });
-    const dialog = wrapper.find('[role="dialog"]');
-    await dialog.trigger('keydown', { key: 'ArrowDown' });
-    await dialog.trigger('keydown', { key: 'Enter' });
+    open(projects);
+    await keydown('ArrowDown');
+    await keydown('Enter');
 
-    const emitted = wrapper.emitted('openProject') as Array<[string]>;
+    const emitted = wrapper?.emitted('openProject') as Array<[string]>;
     expect(emitted).toHaveLength(1);
     expect(emitted[0][0]).toBe('Beta');
   });
 
-  it('forwards other keys to the shell for Escape and focus handling', async () => {
-    const wrapper = mount(OpenProjectDialog, {
-      props: { open: true, storedProjects: projects },
-    });
-    await wrapper.find('[role="dialog"]').trigger('keydown', { key: 'Escape' });
-    expect(wrapper.emitted('keydown')).toHaveLength(1);
+  it('emits close on Escape (AppModal owns dismissal)', async () => {
+    open(projects);
+    await keydown('Escape');
+    expect(wrapper?.emitted('close')).toHaveLength(1);
   });
 
   it('omits aria-activedescendant when there are no saved projects', () => {
-    const wrapper = mount(OpenProjectDialog, {
-      props: { open: true, storedProjects: [] },
-    });
-    const listbox = wrapper.find('[role="listbox"]');
-    expect(listbox.attributes('aria-activedescendant')).toBeUndefined();
-    expect(wrapper.find('.stored-empty').exists()).toBe(true);
+    open([]);
+    expect(activeDescendant()).toBeNull();
+    expect(q('.stored-empty')).not.toBeNull();
   });
 });

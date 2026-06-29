@@ -104,6 +104,8 @@ function makeHandle(): {
     setSf2Instrument: ReturnType<typeof vi.fn>;
     clearMidiFx: ReturnType<typeof vi.fn>;
     setMidiFx: ReturnType<typeof vi.fn>;
+    setMidiDestinationExternal: ReturnType<typeof vi.fn>;
+    setExternalMidiClockEnabled: ReturnType<typeof vi.fn>;
   };
 } {
   const engine = {
@@ -113,6 +115,8 @@ function makeHandle(): {
     setSf2Instrument: vi.fn(),
     clearMidiFx: vi.fn(),
     setMidiFx: vi.fn(),
+    setMidiDestinationExternal: vi.fn(),
+    setExternalMidiClockEnabled: vi.fn(),
   };
   const handle = { ctx: { sampleRate: SAMPLE_RATE }, engine } as unknown as EngineHandle;
   return { handle, engine };
@@ -522,6 +526,41 @@ describe('createMidiSync', () => {
     await sync.sync([makeTrack(1), makeTrack(2, { kind: 'audio' })], [], TEMPO_120);
     expect(engine.setSynthInstrument).toHaveBeenCalledTimes(1);
     expect(engine.setSynthInstrument).toHaveBeenCalledWith(1, DEFAULT_SYNTH_PRESET);
+  });
+
+  it('routes an external-midi track externally without binding an internal synth', async () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMidiSync(handle);
+    const track = makeTrack(1, {
+      instrument: { kind: 'external-midi', outputPortId: 'out-1', channel: 2 },
+    });
+
+    await sync.sync([track], [], TEMPO_120);
+    expect(engine.setMidiDestinationExternal).toHaveBeenCalledWith(1, true);
+    expect(engine.setSynthInstrument).not.toHaveBeenCalled();
+    expect(engine.setSf2Instrument).not.toHaveBeenCalled();
+  });
+
+  it('clears external routing for an internal track and toggles the clock with sendClock', async () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMidiSync(handle);
+
+    await sync.sync([makeTrack(1)], [], TEMPO_120);
+    expect(engine.setMidiDestinationExternal).toHaveBeenCalledWith(1, false);
+    // No external track opted into clock, so it stays disabled.
+    expect(engine.setExternalMidiClockEnabled).toHaveBeenCalledWith(false);
+
+    engine.setExternalMidiClockEnabled.mockClear();
+    await sync.sync(
+      [
+        makeTrack(1, {
+          instrument: { kind: 'external-midi', outputPortId: 'out-1', channel: 0, sendClock: true },
+        }),
+      ],
+      [],
+      TEMPO_120,
+    );
+    expect(engine.setExternalMidiClockEnabled).toHaveBeenCalledWith(true);
   });
 
   it('applies the preset resolver to preset names', async () => {

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue';
+import EmptyState from '@/components/shell/EmptyState.vue';
 import { promptDialog } from '@/composables/useDialogs';
 import { useLayouts } from '@/composables/useLayouts';
 import { useI18n } from '@/ui/i18n';
@@ -94,9 +95,11 @@ function renameLayout(name: string): void {
       </li>
     </ul>
     <h3 class="panel-heading">{{ t.settings.layouts.myLayouts }}</h3>
-    <p v-if="namedLayouts.userLayouts.value.length === 0" class="layout-empty">
-      {{ t.settings.layouts.noSaved }}
-    </p>
+    <EmptyState
+      v-if="namedLayouts.userLayouts.value.length === 0"
+      variant="inline"
+      :message="t.settings.layouts.noSaved"
+    />
     <ul v-else class="layout-list">
       <li
         v-for="layout in namedLayouts.userLayouts.value"
@@ -197,11 +200,6 @@ button.small:disabled {
 
 .layout-name {
   font-weight: var(--fw-semibold);
-}
-
-.layout-empty {
-  margin: 0;
-  color: var(--text-3);
 }
 
 .layout-save {

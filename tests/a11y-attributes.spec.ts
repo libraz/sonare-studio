@@ -1,5 +1,6 @@
 import { mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
+import { nextTick } from 'vue';
 import MixerFader from '@/components/mixer/MixerFader.vue';
 import MixerKnob from '@/components/mixer/MixerKnob.vue';
 import NewProjectDialog from '@/components/project/NewProjectDialog.vue';
@@ -54,11 +55,16 @@ describe('MixerKnob accessibility', () => {
 });
 
 describe('NewProjectDialog modal accessibility', () => {
+  // AppModal teleports the dialog to <body>, so it is queried via the document.
+  const dialogEl = () => document.body.querySelector<HTMLElement>('[role="dialog"]');
+
   it('marks the dialog as modal with an accessible name', () => {
-    const wrapper = mount(NewProjectDialog, { props: { open: true } });
-    const dialog = wrapper.find('[role="dialog"]');
-    expect(dialog.attributes('aria-modal')).toBe('true');
-    expect(dialog.attributes('aria-label')).toBe('New project');
+    const wrapper = mount(NewProjectDialog, { props: { open: true }, attachTo: document.body });
+    const dialog = dialogEl();
+    expect(dialog?.getAttribute('aria-modal')).toBe('true');
+    expect(dialog?.getAttribute('aria-label')).toBe('New project');
+    wrapper.unmount();
+    document.body.innerHTML = '';
   });
 
   it('keeps Tab cycling inside the dialog', async () => {
@@ -66,17 +72,19 @@ describe('NewProjectDialog modal accessibility', () => {
       props: { open: true },
       attachTo: document.body,
     });
-    const dialog = wrapper.find<HTMLElement>('[role="dialog"]');
-    const buttons = wrapper.findAll('button');
-    const last = buttons[buttons.length - 1].element;
+    const dialog = dialogEl() as HTMLElement;
+    const buttons = Array.from(document.body.querySelectorAll('button'));
+    const last = buttons[buttons.length - 1];
     last.focus();
     expect(document.activeElement).toBe(last);
 
     // Tab from the last focusable element wraps to the first.
-    await dialog.trigger('keydown', { key: 'Tab' });
-    expect(dialog.element.contains(document.activeElement)).toBe(true);
+    dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    await nextTick();
+    expect(dialog.contains(document.activeElement)).toBe(true);
     expect(document.activeElement).not.toBe(last);
     wrapper.unmount();
+    document.body.innerHTML = '';
   });
 
   it('restores focus to the previously focused element on close', async () => {
@@ -90,11 +98,12 @@ describe('NewProjectDialog modal accessibility', () => {
     });
     await wrapper.setProps({ open: true });
     await wrapper.vm.$nextTick();
-    expect(document.activeElement).toBe(wrapper.find('[role="dialog"]').element);
+    expect(document.activeElement).toBe(dialogEl());
 
     await wrapper.setProps({ open: false });
     expect(document.activeElement).toBe(trigger);
     wrapper.unmount();
     trigger.remove();
+    document.body.innerHTML = '';
   });
 });

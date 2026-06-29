@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, ref, watch } from 'vue';
+import EmptyState from '@/components/shell/EmptyState.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
 import type { CommandGestureOptions, MixerStripTarget } from '@/project/commands';
@@ -339,9 +340,11 @@ onBeforeUnmount(() => {
             @change="(value) => onSidechainChange(index, value)"
           />
         </label>
-        <p v-if="expandedControls.length === 0" class="insert-params-empty">
-          {{ t.shell.inserts.noParameters }}
-        </p>
+        <EmptyState
+          v-if="expandedControls.length === 0"
+          variant="inline"
+          :message="t.shell.inserts.noParameters"
+        />
         <MixerKnob
           v-for="control in expandedControls"
           :key="control.id"
@@ -505,12 +508,6 @@ onBeforeUnmount(() => {
   border-radius: 3px;
   padding: var(--sp-2) var(--sp-1);
   box-shadow: var(--inset-well);
-}
-
-.insert-params-empty {
-  margin: 0;
-  font: 9px var(--font-sans);
-  color: var(--text-4);
 }
 
 .insert-add-wrap {

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, reactive, ref } from 'vue';
+import EmptyState from '@/components/shell/EmptyState.vue';
 import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
 import { isMixerBusStripTarget } from '@/project/commands';
 import {
@@ -198,7 +199,11 @@ onBeforeUnmount(closeMenu);
 <template>
   <div class="quick-controls" :aria-label="t.shell.devicesPanel.quickControls">
     <p v-if="error" class="qc-error" role="alert">{{ error }}</p>
-    <p v-if="controls.length === 0" class="qc-empty">{{ t.shell.devicesPanel.noControls }}</p>
+    <EmptyState
+      v-if="controls.length === 0"
+      variant="inline"
+      :message="t.shell.devicesPanel.noControls"
+    />
     <div v-else class="qc-grid">
       <div v-for="control in controls" :key="control.id" class="qc-cell">
         <div
@@ -278,14 +283,6 @@ onBeforeUnmount(closeMenu);
   color: var(--danger-text);
   font: var(--fs-2xs)/1.4 system-ui, sans-serif;
   border-radius: var(--radius-xs);
-}
-
-.qc-empty {
-  margin: 0;
-  padding: var(--sp-4);
-  text-align: center;
-  color: var(--text-4);
-  font: var(--fs-xs) system-ui, sans-serif;
 }
 
 .qc-grid {

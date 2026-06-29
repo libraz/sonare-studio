@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue';
+import EmptyState from '@/components/shell/EmptyState.vue';
 import SearchField from '@/components/shell/SearchField.vue';
 import TransportIcon from '@/components/shell/TransportIcon.vue';
 import { useI18n } from '@/ui/i18n';
@@ -77,9 +78,11 @@ defineExpose({ root });
       >
         {{ humanizePresetName(item) }}
       </button>
-      <p v-if="filteredPresets.length === 0" class="preset-empty">
-        {{ t.shell.mastering.noMatches }}
-      </p>
+      <EmptyState
+        v-if="filteredPresets.length === 0"
+        variant="inline"
+        :message="t.shell.mastering.noMatches"
+      />
     </div>
     </Transition>
   </div>

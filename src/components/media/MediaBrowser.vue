@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue';
+import EmptyState from '@/components/shell/EmptyState.vue';
 import SearchField from '@/components/shell/SearchField.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
@@ -376,32 +377,35 @@ onBeforeUnmount(() => {
     <p v-if="previewError" class="error">{{ previewError }}</p>
     <p v-if="deleteError" class="error">{{ deleteError }}</p>
 
-    <div
+    <EmptyState
       v-if="loaded && displayedAssets.length === 0 && assets.length === 0"
-      class="empty-state"
+      :message="t.shell.media.empty"
     >
-      <svg class="empty-glyph" viewBox="0 0 48 48" width="48" height="48" aria-hidden="true">
-        <path
-          d="M6 30l8-9 6 7 7-10 9 12"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        />
-        <path
-          d="M30 16h12M36 10v12"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-        />
-      </svg>
-      <p class="empty-state-message">{{ t.shell.media.empty }}</p>
-    </div>
-    <p v-else-if="loaded && displayedAssets.length === 0" class="empty">
-      {{ t.shell.media.noMatches }}
-    </p>
+      <template #icon>
+        <svg viewBox="0 0 48 48" width="48" height="48">
+          <path
+            d="M6 30l8-9 6 7 7-10 9 12"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+          <path
+            d="M30 16h12M36 10v12"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+          />
+        </svg>
+      </template>
+    </EmptyState>
+    <EmptyState
+      v-else-if="loaded && displayedAssets.length === 0"
+      variant="inline"
+      :message="t.shell.media.noMatches"
+    />
     <ul v-else class="asset-list">
       <li
         v-for="asset in displayedAssets"
@@ -585,34 +589,7 @@ onBeforeUnmount(() => {
   font-size: var(--fs-xs);
 }
 
-.empty {
-  margin: var(--sp-3) 0 0;
-  color: var(--text-3);
-}
-
 /* Inviting onboarding frame shown when no assets have been imported yet. */
-.empty-state {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--sp-3);
-  min-height: 0;
-  padding: var(--sp-7);
-  color: var(--text-3);
-  text-align: center;
-}
-
-.empty-glyph {
-  color: var(--text-4);
-}
-
-.empty-state-message {
-  margin: 0;
-  font-weight: var(--fw-semibold);
-}
-
 .asset-list {
   flex: 1;
   margin: 0;

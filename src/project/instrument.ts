@@ -46,8 +46,28 @@ export interface Sf2Instrument {
   polyphony?: number;
 }
 
+/**
+ * Instrument variant: the track's MIDI is sent to an external device over a Web
+ * MIDI output port instead of being rendered by a built-in synth. Realtime
+ * only — the offline bounce has no external device, so an external-midi track
+ * is silent in audio exports (its notes still export to SMF).
+ */
+export interface ExternalMidiInstrument {
+  kind: 'external-midi';
+  /** Web MIDI output port id (a navigator.requestMIDIAccess outputs key). */
+  outputPortId: string;
+  /** MIDI channel transmitted to the device (0-15). */
+  channel: number;
+  /** When true, forward MIDI clock + transport to the port for tempo sync. */
+  sendClock?: boolean;
+}
+
 /** Instrument used to render a track's MIDI clips. */
-export type TrackInstrument = SynthPresetInstrument | SynthPatchInstrument | Sf2Instrument;
+export type TrackInstrument =
+  | SynthPresetInstrument
+  | SynthPatchInstrument
+  | Sf2Instrument
+  | ExternalMidiInstrument;
 
 /** Preset rendered when a track carries no explicit instrument. */
 export const DEFAULT_SYNTH_PRESET = 'e-piano';
@@ -124,6 +144,24 @@ export function validateTrackInstrument(instrument: TrackInstrument): void {
       }
       return;
     }
+    case 'external-midi': {
+      if (typeof instrument.outputPortId !== 'string' || instrument.outputPortId.length === 0) {
+        throw new RangeError('External MIDI instrument requires a non-empty outputPortId');
+      }
+      if (
+        !Number.isInteger(instrument.channel) ||
+        instrument.channel < 0 ||
+        instrument.channel > 15
+      ) {
+        throw new RangeError(
+          `External MIDI channel must be an integer in [0, 15], got ${instrument.channel}`,
+        );
+      }
+      if (instrument.sendClock !== undefined && typeof instrument.sendClock !== 'boolean') {
+        throw new RangeError('External MIDI sendClock must be a boolean when present');
+      }
+      return;
+    }
     default: {
       const exhaustive: never = instrument;
       throw new RangeError(`Unknown instrument kind: ${JSON.stringify(exhaustive)}`);
@@ -173,6 +211,12 @@ export function instrumentCacheSegment(instrument: TrackInstrument): string {
       return `sf2=${encodeURIComponent(instrument.fontId)}:${instrument.bank ?? -1}:${
         instrument.program ?? -1
       }:${instrument.gain ?? -1}:${instrument.polyphony ?? -1}`;
+    case 'external-midi':
+      // External-MIDI tracks are not bounced; this segment exists only to keep
+      // the cache key exhaustive over the instrument union.
+      return `ext=${encodeURIComponent(instrument.outputPortId)}:${instrument.channel}:${
+        instrument.sendClock ? 1 : 0
+      }`;
     default: {
       const exhaustive: never = instrument;
       throw new RangeError(`Unknown instrument kind: ${JSON.stringify(exhaustive)}`);

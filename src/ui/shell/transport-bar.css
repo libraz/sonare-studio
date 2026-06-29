@@ -328,13 +328,10 @@
   align-items: stretch;
   gap: var(--sp-5);
   padding: var(--sp-2) var(--sp-5);
-  background: linear-gradient(180deg, var(--canvas-surface-2), var(--canvas-surface-0));
-  border: 1px solid var(--canvas-border);
+  background: var(--surface-inset);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  box-shadow:
-    inset 0 1px 3px rgb(0 0 0 / 55%),
-    inset 0 0 0 1px rgb(0 0 0 / 28%),
-    var(--shadow-1);
+  box-shadow: var(--inset-well);
   transition:
     border-color var(--dur-2) var(--ease-out),
     box-shadow var(--dur-2) var(--ease-out);
@@ -343,9 +340,9 @@
 .time-display.playing {
   border-color: color-mix(in srgb, var(--accent) 55%, transparent);
   box-shadow:
-    inset 0 1px 3px rgb(0 0 0 / 55%),
-    inset 0 0 14px color-mix(in srgb, var(--accent) 16%, transparent),
-    0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
+    var(--inset-well),
+    inset 0 0 12px color-mix(in srgb, var(--accent) 12%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .time-register {
@@ -357,14 +354,14 @@
 
 .time-secondary {
   padding-left: var(--sp-5);
-  border-left: 1px solid var(--canvas-border);
+  border-left: 1px solid var(--border);
 }
 
 .time-cap {
   font: var(--fw-bold) var(--fs-2xs) var(--font-sans);
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--canvas-text-4);
+  color: var(--text-4);
   user-select: none;
 }
 
@@ -374,7 +371,7 @@
   border: none;
   background: none;
   box-shadow: none;
-  color: var(--canvas-text-1);
+  color: var(--text-1);
   font-family: var(--font-mono);
   font-size: 22px;
   font-weight: var(--fw-medium);
@@ -386,24 +383,34 @@
 }
 
 .time-display.playing .position-bbt {
-  color: var(--canvas-text-1);
-  text-shadow: 0 0 8px color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent);
 }
 
 .position-bbt:focus-visible {
   outline: none;
-  color: var(--accent-text);
-  text-shadow: 0 0 8px color-mix(in srgb, var(--accent) 65%, transparent);
+  color: var(--accent);
 }
 
 .position-seconds {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   font-size: var(--fs-md);
-  color: var(--canvas-text-3);
+  color: var(--text-3);
   line-height: 1.05;
 }
 
 .bar-spacer {
   flex: 1;
+}
+
+/* The meter is a genuine dark "screen" (its colour ramp needs a dark field);
+ * recess it in a light inset well so it reads as an intentional readout rather
+ * than a bare dark patch floating on the glass chrome. */
+.meter-frame {
+  display: inline-flex;
+  padding: 3px;
+  background: var(--surface-inset);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--inset-well);
 }

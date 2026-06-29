@@ -31,6 +31,13 @@ const props = withDefaults(
 const emit = defineEmits<{
   /** The user requested dismissal (overlay click, Escape, or close affordance). */
   close: [];
+  /**
+   * A key was pressed inside the modal that the shell did not consume (i.e. not
+   * a trapped Tab nor a dismissing Escape). Lets a dialog add its own keyboard
+   * behaviour — arrow-key list navigation, Enter-to-confirm — while the shell
+   * keeps owning the focus trap and Escape.
+   */
+  keydown: [event: KeyboardEvent];
 }>();
 
 const { t } = useI18n();
@@ -62,7 +69,9 @@ function onKeydown(event: KeyboardEvent): void {
   if (event.key === 'Escape' && props.dismissable) {
     event.preventDefault();
     emit('close');
+    return;
   }
+  emit('keydown', event);
 }
 </script>
 

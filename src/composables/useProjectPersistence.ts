@@ -25,7 +25,6 @@ import { useProjectStore } from '@/project/store';
 import { makeDemoDocument, type TemplateName } from '@/project/templates';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { midiCcBindingsKey } from '@/ui/midi/midi-learn';
-import { createFocusTrap, type FocusTrap } from '@/ui/settings/focus-trap';
 import {
   loadRecentProjects,
   saveRecentProjects,
@@ -65,9 +64,6 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   const openDialogOpen = ref(false);
   const storedProjects = ref<StoredProjectInfo[]>([]);
   const recentProjects = ref<string[]>(loadRecentProjects());
-  const openDialogRef = ref<HTMLElement | null>(null);
-
-  let openDialogTrap: FocusTrap | null = null;
 
   watch(
     () =>
@@ -91,18 +87,6 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       if (store.initialized) dirty.value = true;
     },
   );
-
-  watch(openDialogOpen, (open) => {
-    if (open) {
-      void nextTick(() => {
-        if (openDialogRef.value === null) return;
-        openDialogTrap = createFocusTrap(openDialogRef.value);
-        openDialogTrap.activate();
-      });
-    } else {
-      disposeOpenDialogTrap();
-    }
-  });
 
   const recentMenuNames = computed(() =>
     recentProjects.value.filter((name) => name !== store.projectName && name !== AUTOSAVE_SLOT),
@@ -165,13 +149,6 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
 
   function closeProjectMenu(): void {
     projectMenuOpen.value = false;
-  }
-
-  function onOpenDialogKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      openDialogOpen.value = false;
-    }
   }
 
   function openNewDialog(): void {
@@ -355,9 +332,9 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     });
   }
 
-  function disposeOpenDialogTrap(): void {
-    openDialogTrap?.deactivate();
-    openDialogTrap = null;
+  /** No teardown needed: AppModal owns the open-dialog focus-trap lifecycle. */
+  function disposeProjectPersistence(): void {
+    // Intentionally empty.
   }
 
   return {
@@ -370,11 +347,9 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     openDialogOpen,
     storedProjects,
     recentMenuNames,
-    openDialogRef,
     bootProject,
     markClean,
     closeProjectMenu,
-    onOpenDialogKeydown,
     openNewDialog,
     onCreateProject,
     openOpenDialog,
@@ -389,6 +364,6 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     exportSzdAction,
     exportSmfAction,
     exportMidi2Action,
-    disposeProjectPersistence: disposeOpenDialogTrap,
+    disposeProjectPersistence,
   };
 }

@@ -22,6 +22,8 @@ export function instrumentKindLabel(instrument: TrackInstrument): string {
       return 'Patch';
     case 'sf2':
       return 'SF2';
+    case 'external-midi':
+      return 'MIDI';
     default:
       return '';
   }
@@ -54,6 +56,8 @@ export function instrumentLabel(instrument: TrackInstrument, fontName?: string |
       const name = fontName ?? `${instrument.fontId.slice(0, 8)}…`;
       return `${name} · ${instrument.bank ?? 0}:${instrument.program ?? 0}`;
     }
+    case 'external-midi':
+      return `External · ch ${instrument.channel + 1}`;
     default:
       return '';
   }

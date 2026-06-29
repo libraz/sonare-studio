@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, ref } from 'vue';
+import AppModal from '@/components/shell/AppModal.vue';
+import EmptyState from '@/components/shell/EmptyState.vue';
 import type { ProjectDocument } from '@/project/serialization';
 import { createTemplate, TEMPLATE_NAMES, type TemplateName } from '@/project/templates';
 import { useI18n } from '@/ui/i18n';
-import { wrapTabFocus } from '@/ui/settings/focus-trap';
 
 /**
  * Modal template picker for creating a new project. Lists the built-in
@@ -53,27 +54,9 @@ const templateInfo = computed<Record<TemplateName, { label: string; description:
 }));
 
 const selected = ref<TemplateName>('empty');
-const dialogRef = ref<HTMLElement | null>(null);
 
 /** Fresh document of the selected template, used for the track preview. */
 const preview = computed<ProjectDocument>(() => createTemplate(selected.value));
-
-/** Element focused before the dialog opened, restored on close. */
-let previousFocus: HTMLElement | null = null;
-
-watch(
-  () => props.open,
-  (open, wasOpen) => {
-    if (open && !wasOpen) {
-      const active = document.activeElement;
-      previousFocus = active instanceof HTMLElement ? active : null;
-      void nextTick(() => dialogRef.value?.focus());
-    } else if (!open && wasOpen) {
-      if (previousFocus?.isConnected) previousFocus.focus();
-      previousFocus = null;
-    }
-  },
-);
 
 function onCreate(): void {
   // Emit a fresh document (not the preview) so the shell owns a private copy.
@@ -91,13 +74,9 @@ function moveSelection(delta: number): void {
   selected.value = TEMPLATE_NAMES[next];
 }
 
+/** Template-list navigation and confirm; the modal shell owns Tab and Escape. */
 function onKeydown(event: KeyboardEvent): void {
-  if (dialogRef.value !== null && wrapTabFocus(event, dialogRef.value)) return;
   switch (event.key) {
-    case 'Escape':
-      event.preventDefault();
-      onCancel();
-      break;
     case 'Enter':
       event.preventDefault();
       onCreate();
@@ -125,18 +104,14 @@ function templateDescription(name: TemplateName): string {
 </script>
 
 <template>
-  <Transition name="dialog">
-  <div v-if="props.open" class="dialog-overlay" @click.self="onCancel">
-    <div
-      ref="dialogRef"
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      :aria-label="t.dialogs.newProject.title"
-      tabindex="-1"
-      @keydown="onKeydown"
-    >
-      <h2 class="dialog-title">{{ t.dialogs.newProject.title }}</h2>
+  <AppModal
+    :open="props.open"
+    :aria-label="t.dialogs.newProject.title"
+    @close="onCancel"
+    @keydown="onKeydown"
+  >
+    <template #title>{{ t.dialogs.newProject.title }}</template>
+    <div class="dialog-body">
       <div class="dialog-columns">
         <ul class="template-list" role="listbox" :aria-label="t.dialogs.newProject.templates">
           <li
@@ -155,9 +130,11 @@ function templateDescription(name: TemplateName): string {
         </ul>
         <div class="template-preview" :aria-label="t.dialogs.newProject.templateTracks">
           <h3 class="preview-title">{{ t.dialogs.newProject.tracks }}</h3>
-          <p v-if="preview.tracks.length === 0" class="preview-empty">
-            {{ t.dialogs.newProject.noTracks }}
-          </p>
+          <EmptyState
+            v-if="preview.tracks.length === 0"
+            variant="inline"
+            :message="t.dialogs.newProject.noTracks"
+          />
           <ul v-else class="preview-tracks">
             <li v-for="track in preview.tracks" :key="track.name" class="preview-track">
               <span class="track-color" :style="{ background: track.color }" />
@@ -171,56 +148,21 @@ function templateDescription(name: TemplateName): string {
           {{ t.dialogs.newProject.warning }}
         </slot>
       </div>
-      <div class="dialog-actions">
-        <button type="button" @click="onCancel">{{ t.dialogs.newProject.cancel }}</button>
-        <button type="button" class="primary" @click="onCreate">
-          {{ t.dialogs.newProject.create }}
-        </button>
-      </div>
     </div>
-  </div>
-  </Transition>
+    <template #actions>
+      <button type="button" @click="onCancel">{{ t.dialogs.newProject.cancel }}</button>
+      <button type="button" class="primary" @click="onCreate">
+        {{ t.dialogs.newProject.create }}
+      </button>
+    </template>
+  </AppModal>
 </template>
 
 <style scoped>
-.dialog-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--scrim);
-  -webkit-backdrop-filter: var(--scrim-blur);
-  backdrop-filter: var(--scrim-blur);
-}
-
-.dialog {
+.dialog-body {
   display: flex;
   flex-direction: column;
   gap: var(--sp-5);
-  width: min(34rem, calc(100vw - 2rem));
-  max-height: calc(100vh - 4rem);
-  padding: 1.25rem 1.4rem;
-  background: var(--glass-3);
-  -webkit-backdrop-filter: var(--glass-blur-strong);
-  backdrop-filter: var(--glass-blur-strong);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--glass-hairline), var(--shadow-modal);
-  color: var(--text-1);
-  font-size: var(--fs-sm);
-}
-
-.dialog:focus {
-  outline: none;
-}
-
-.dialog-title {
-  margin: 0;
-  font-size: var(--fs-xl);
-  font-weight: var(--fw-bold);
-  letter-spacing: 0.04em;
 }
 
 .dialog-columns {
@@ -291,11 +233,6 @@ function templateDescription(name: TemplateName): string {
   letter-spacing: 0.06em;
 }
 
-.preview-empty {
-  margin: 0;
-  color: var(--text-3);
-}
-
 .preview-tracks {
   margin: 0;
   padding: 0;
@@ -325,16 +262,5 @@ function templateDescription(name: TemplateName): string {
   border-radius: var(--radius-sm);
   color: var(--warning-text);
   padding: var(--sp-3) var(--sp-3);
-}
-
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--sp-4);
-}
-
-/* Share one height across secondary and the canonical .primary action. */
-.dialog-actions button {
-  padding: var(--sp-2) var(--sp-5);
 }
 </style>

@@ -13,6 +13,7 @@ import type { MixerSync } from '@/engine/mixer-sync';
 import type { ScopeBridge, ScopeSource } from '@/engine/scope';
 import type { StripSync } from '@/engine/strip-sync';
 import type { TransportSync } from '@/engine/transport-sync';
+import type { WebMidiOutputBridge } from '@/engine/web-midi-output';
 import { describeError } from '@/lib/errors';
 import type { ScheduledProjectClip } from '@/project/scheduling';
 import { scheduleProjectClips } from '@/project/scheduling';
@@ -37,6 +38,7 @@ export interface EngineSyncHandles {
   mixerSync: MixerSync | null;
   stripSync: StripSync | null;
   transportSync: TransportSync | null;
+  webMidiOutput: WebMidiOutputBridge | null;
 }
 
 function trackScheduleKey(track: EditorTrack): string {
@@ -58,6 +60,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
   let automationSync: AutomationSync | null = null;
   let midiSync: MidiSync | null = null;
   let transportSync: TransportSync | null = null;
+  let webMidiOutput: WebMidiOutputBridge | null = null;
   let applyGeneration = 0;
   let applyTimer: ReturnType<typeof setTimeout> | null = null;
   let midiSyncQueue: Promise<void> = Promise.resolve();
@@ -169,6 +172,9 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
   function syncMidiState(): Promise<void> {
     const m = midiSync;
     if (!m || !store.initialized) return midiSyncQueue;
+    // Keep the external-MIDI routing table in step with the tracks' instruments
+    // so drained events reach the right port/channel.
+    webMidiOutput?.syncRoutes(store.tracks);
     midiSyncQueue = midiSyncQueue
       .then(() => m.sync(store.tracks, store.clips, effectiveTempoSegments()))
       .catch((err) => {
@@ -191,6 +197,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     automationSync = handles.automationSync;
     midiSync = handles.midiSync;
     transportSync = handles.transportSync;
+    webMidiOutput = handles.webMidiOutput;
   }
 
   function disposeEngineProjectSync(): void {
@@ -205,6 +212,8 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     automationSync = null;
     midiSync = null;
     transportSync = null;
+    webMidiOutput?.dispose();
+    webMidiOutput = null;
   }
 
   watch(

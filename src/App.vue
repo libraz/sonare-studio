@@ -167,11 +167,9 @@ const {
   openDialogOpen,
   storedProjects,
   recentMenuNames,
-  openDialogRef,
   bootProject,
   markClean,
   closeProjectMenu,
-  onOpenDialogKeydown,
   openNewDialog,
   onCreateProject,
   openOpenDialog,
@@ -921,9 +919,7 @@ useAppLifecycle({
       :stored-projects="storedProjects"
       @close="openDialogOpen = false"
       @delete-project="deleteStoredProject"
-      @dialog-ref="(el) => (openDialogRef = el)"
       @import-szd="importSzdFile"
-      @keydown="onOpenDialogKeydown"
       @open-project="openStoredProject"
     />
 

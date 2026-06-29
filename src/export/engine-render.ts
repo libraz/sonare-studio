@@ -355,7 +355,7 @@ export async function renderProjectWithEngine(
         engine.setSynthInstrument(resolvePreset(instrument.preset), destinationId);
       } else if (instrument.kind === 'synth-patch') {
         engine.setSynthInstrument(instrument.patch as Record<string, unknown>, destinationId);
-      } else {
+      } else if (instrument.kind === 'sf2') {
         const bytes = fontBytesById.get(instrument.fontId);
         if (bytes && instrument.fontId !== loadedFontId) {
           engine.loadSoundFont(bytes);
@@ -363,6 +363,8 @@ export async function renderProjectWithEngine(
         }
         engine.setSf2Instrument(sf2PlaybackConfig(instrument), destinationId);
       }
+      // External-MIDI tracks have no internal instrument and no external device
+      // during an offline render, so they bind nothing here and stay silent.
       // Apply the track's live, non-destructive MIDI-FX insert so the export
       // matches live playback (the same engine transform, applied here rather
       // than baked into the notes).

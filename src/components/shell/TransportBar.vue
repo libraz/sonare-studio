@@ -320,7 +320,9 @@ const countInOptions = computed(() =>
       </div>
     </div>
 
-    <LevelMeter :bridge="bridge" :width="120" :height="36" />
+    <span class="meter-frame">
+      <LevelMeter :bridge="bridge" :width="120" :height="36" />
+    </span>
   </footer>
 </template>
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import EmptyState from '@/components/shell/EmptyState.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import {
   CHORD_PITCH_CLASS_NAMES,
@@ -261,7 +262,7 @@ function clearAll(): void {
         </tr>
       </tbody>
     </table>
-    <p v-if="store.chords.length === 0" class="list-empty">{{ t.shell.lists.chords.empty }}</p>
+    <EmptyState v-if="store.chords.length === 0" variant="inline" :message="t.shell.lists.chords.empty" />
     <p v-if="errorMessage" class="list-error" role="alert">{{ errorMessage }}</p>
     <div class="list-actions">
       <button type="button" @click="addAtPlayhead">{{ t.shell.lists.common.addAtPlayhead }}</button>

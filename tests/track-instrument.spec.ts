@@ -246,6 +246,55 @@ describe('instrument helpers', () => {
     ).not.toThrow();
   });
 
+  it('validateTrackInstrument checks external-midi fields', () => {
+    expect(() =>
+      validateTrackInstrument({ kind: 'external-midi', outputPortId: '', channel: 0 }),
+    ).toThrow(RangeError);
+    expect(() =>
+      validateTrackInstrument({ kind: 'external-midi', outputPortId: 'out-1', channel: -1 }),
+    ).toThrow(RangeError);
+    expect(() =>
+      validateTrackInstrument({ kind: 'external-midi', outputPortId: 'out-1', channel: 16 }),
+    ).toThrow(RangeError);
+    expect(() =>
+      validateTrackInstrument({ kind: 'external-midi', outputPortId: 'out-1', channel: 1.5 }),
+    ).toThrow(RangeError);
+    expect(() =>
+      validateTrackInstrument({ kind: 'external-midi', outputPortId: 'out-1', channel: 9 }),
+    ).not.toThrow();
+    expect(() =>
+      validateTrackInstrument({
+        kind: 'external-midi',
+        outputPortId: 'out-1',
+        channel: 0,
+        sendClock: true,
+      }),
+    ).not.toThrow();
+  });
+
+  it('instrumentCacheSegment distinguishes external-midi configurations', () => {
+    const base = instrumentCacheSegment({
+      kind: 'external-midi',
+      outputPortId: 'out-1',
+      channel: 0,
+    });
+    expect(base).toBe('ext=out-1:0:0');
+    expect(
+      instrumentCacheSegment({ kind: 'external-midi', outputPortId: 'out-2', channel: 0 }),
+    ).not.toBe(base);
+    expect(
+      instrumentCacheSegment({ kind: 'external-midi', outputPortId: 'out-1', channel: 3 }),
+    ).not.toBe(base);
+    expect(
+      instrumentCacheSegment({
+        kind: 'external-midi',
+        outputPortId: 'out-1',
+        channel: 0,
+        sendClock: true,
+      }),
+    ).toBe('ext=out-1:0:1');
+  });
+
   it('sf2PlaybackConfig returns only explicitly-set gain/polyphony', () => {
     expect(sf2PlaybackConfig({ kind: 'sf2', fontId: 'gm' })).toEqual({});
     expect(sf2PlaybackConfig({ kind: 'sf2', fontId: 'gm', bank: 1, program: 4 })).toEqual({});

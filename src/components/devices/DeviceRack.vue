@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import DeviceInsertChain from '@/components/devices/DeviceInsertChain.vue';
+import EmptyState from '@/components/shell/EmptyState.vue';
 import SearchField from '@/components/shell/SearchField.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
+import { useWebMidiOutputs } from '@/composables/useWebMidiOutputs';
 import { addInsert, removeInsert, setInsertEnabled, setTrackInstrument } from '@/project/commands';
 import { listFonts, loadFontMeta, type SoundFontMeta, saveFont } from '@/project/fonts';
 import { trackInstrument } from '@/project/instrument';
@@ -142,7 +144,7 @@ const quickControlKey = computed(() => {
 
 // --- Instrument picker popover --------------------------------------------------
 
-type PickerTab = 'presets' | 'sf2' | 'patch';
+type PickerTab = 'presets' | 'sf2' | 'patch' | 'external';
 
 const pickerOpen = ref(false);
 const pickerTab = ref<PickerTab>('presets');
@@ -168,15 +170,19 @@ function onInstrumentClick(): void {
   if (!pickerOpen.value) return;
   refreshPresetCatalog();
   sf2Selection.value = createSf2Selection(instrument.value);
+  syncExternalSelection();
   if (instrument.value?.kind === 'sf2') pickerTab.value = 'sf2';
   else if (instrument.value?.kind === 'synth-patch') pickerTab.value = 'patch';
+  else if (instrument.value?.kind === 'external-midi') pickerTab.value = 'external';
   else pickerTab.value = 'presets';
   if (pickerTab.value === 'sf2') void refreshFonts();
+  if (pickerTab.value === 'external') void webMidiOutputs.refresh();
 }
 
 function openTab(tab: PickerTab): void {
   pickerTab.value = tab;
   if (tab === 'sf2') void refreshFonts();
+  if (tab === 'external') void webMidiOutputs.refresh();
 }
 
 /** Closes the picker when the pointer goes down outside of it. */
@@ -269,6 +275,73 @@ async function onSf2FileChange(event: Event): Promise<void> {
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   }
+}
+
+// --- External MIDI tab -------------------------------------------------------------
+
+const webMidiOutputs = useWebMidiOutputs();
+
+interface ExternalSelection {
+  outputPortId: string;
+  channel: number;
+  sendClock: boolean;
+}
+
+const externalSelection = ref<ExternalSelection>({
+  outputPortId: '',
+  channel: 0,
+  sendClock: false,
+});
+
+/** Output ports as SelectMenu options (empty placeholder while none chosen). */
+const externalPortOptions = computed<{ value: string; label: string }[]>(() => [
+  { value: '', label: t.value.shell.devicesPanel.externalMidiPort },
+  ...webMidiOutputs.outputs.value.map((port) => ({ value: port.id, label: port.name })),
+]);
+
+/** Seeds the external selection from the current instrument (or sane defaults). */
+function syncExternalSelection(): void {
+  const current = instrument.value;
+  externalSelection.value =
+    current?.kind === 'external-midi'
+      ? {
+          outputPortId: current.outputPortId,
+          channel: current.channel,
+          sendClock: current.sendClock === true,
+        }
+      : { outputPortId: '', channel: 0, sendClock: false };
+}
+
+function onExternalPortChange(portId: string): void {
+  externalSelection.value = { ...externalSelection.value, outputPortId: portId };
+}
+
+function onExternalChannelInput(event: Event): void {
+  const raw = Number((event.target as HTMLInputElement).value);
+  const channel = Number.isFinite(raw) ? Math.min(15, Math.max(0, Math.round(raw - 1))) : 0;
+  externalSelection.value = { ...externalSelection.value, channel };
+}
+
+function onExternalClockToggle(event: Event): void {
+  externalSelection.value = {
+    ...externalSelection.value,
+    sendClock: (event.target as HTMLInputElement).checked,
+  };
+}
+
+function useExternalMidi(): void {
+  const track = activeTrack.value;
+  const sel = externalSelection.value;
+  if (!track || sel.outputPortId.length === 0) return;
+  run(() =>
+    setTrackInstrument(track.id, {
+      kind: 'external-midi',
+      outputPortId: sel.outputPortId,
+      channel: sel.channel,
+      ...(sel.sendClock ? { sendClock: true } : {}),
+    }),
+  );
+  pickerOpen.value = false;
 }
 
 // --- Patch tab / editor ------------------------------------------------------------
@@ -386,6 +459,7 @@ function displayInstrumentKind(): string {
   if (current?.kind === 'synth-preset') return t.value.shell.devicesPanel.kindPreset;
   if (current?.kind === 'synth-patch') return t.value.shell.devicesPanel.kindPatch;
   if (current?.kind === 'sf2') return t.value.shell.devicesPanel.kindSf2;
+  if (current?.kind === 'external-midi') return t.value.shell.devicesPanel.kindExternalMidi;
   return '';
 }
 </script>
@@ -398,7 +472,7 @@ function displayInstrumentKind(): string {
     </header>
     <p v-if="error" class="rack-error" role="alert">{{ error }}</p>
 
-    <p v-if="!activeTrack" class="rack-empty">{{ t.shell.devicesPanel.empty }}</p>
+    <EmptyState v-if="!activeTrack" variant="inline" :message="t.shell.devicesPanel.empty" />
     <template v-else>
       <div v-if="instrument" ref="pickerRoot" class="instrument-slot">
         <button
@@ -456,6 +530,16 @@ function displayInstrumentKind(): string {
             >
               {{ t.shell.devicesPanel.patch }}
             </button>
+            <button
+              type="button"
+              class="picker-tab"
+              role="tab"
+              :aria-selected="pickerTab === 'external'"
+              :class="{ active: pickerTab === 'external' }"
+              @click="openTab('external')"
+            >
+              {{ t.shell.devicesPanel.externalMidi }}
+            </button>
           </div>
 
           <div v-if="pickerTab === 'presets'" class="picker-body">
@@ -466,9 +550,11 @@ function displayInstrumentKind(): string {
               :placeholder="t.shell.devicesPanel.searchPresets"
               :aria-label="t.shell.devicesPanel.searchPresets"
             />
-            <p v-if="filteredPresets.length === 0" class="picker-empty">
-              {{ t.shell.devicesPanel.noMatchingPresets }}
-            </p>
+            <EmptyState
+              v-if="filteredPresets.length === 0"
+              variant="inline"
+              :message="t.shell.devicesPanel.noMatchingPresets"
+            />
             <ul v-else class="preset-list" role="listbox" :aria-label="t.shell.devicesPanel.synthPresets">
               <li v-for="preset in filteredPresets" :key="preset">
                 <button
@@ -487,12 +573,16 @@ function displayInstrumentKind(): string {
           </div>
 
           <div v-else-if="pickerTab === 'sf2'" class="picker-body">
-            <p v-if="fontsLoading" class="picker-empty">
-              {{ t.shell.devicesPanel.loadingFonts }}
-            </p>
-            <p v-else-if="fonts.length === 0" class="picker-empty">
-              {{ t.shell.devicesPanel.noStoredSoundFonts }}
-            </p>
+            <EmptyState
+              v-if="fontsLoading"
+              variant="inline"
+              :message="t.shell.devicesPanel.loadingFonts"
+            />
+            <EmptyState
+              v-else-if="fonts.length === 0"
+              variant="inline"
+              :message="t.shell.devicesPanel.noStoredSoundFonts"
+            />
             <ul
               v-else
               class="font-list"
@@ -582,11 +672,62 @@ function displayInstrumentKind(): string {
             </div>
           </div>
 
-          <div v-else class="picker-body">
+          <div v-else-if="pickerTab === 'patch'" class="picker-body">
             <p class="patch-summary">{{ patchSummary }}</p>
             <button type="button" class="edit-patch primary" @click="openPatchEditor">
               {{ t.shell.devicesPanel.editPatch }}
             </button>
+          </div>
+
+          <div v-else class="picker-body">
+            <EmptyState
+              v-if="webMidiOutputs.available.value === false"
+              variant="inline"
+              :message="t.shell.devicesPanel.midiUnavailable"
+            />
+            <template v-else>
+              <label class="external-field">
+                <span>{{ t.shell.devicesPanel.externalMidiPort }}</span>
+                <SelectMenu
+                  :model-value="externalSelection.outputPortId"
+                  :options="externalPortOptions"
+                  size="sm"
+                  :aria-label="t.shell.devicesPanel.externalMidiOutputs"
+                  @update:model-value="onExternalPortChange"
+                />
+              </label>
+              <p v-if="webMidiOutputs.outputs.value.length === 0" class="external-empty">
+                {{ t.shell.devicesPanel.noMidiOutputs }}
+              </p>
+              <label class="external-field">
+                <span>{{ t.shell.devicesPanel.channel }}</span>
+                <input
+                  class="external-channel"
+                  type="number"
+                  min="1"
+                  max="16"
+                  :value="externalSelection.channel + 1"
+                  @input="onExternalChannelInput"
+                />
+              </label>
+              <label class="external-clock">
+                <input
+                  type="checkbox"
+                  :checked="externalSelection.sendClock"
+                  @change="onExternalClockToggle"
+                />
+                <span>{{ t.shell.devicesPanel.sendClock }}</span>
+              </label>
+              <p class="external-bounce-hint">{{ t.shell.devicesPanel.externalMidiBounceHint }}</p>
+              <button
+                type="button"
+                class="use-external primary"
+                :disabled="externalSelection.outputPortId.length === 0"
+                @click="useExternalMidi"
+              >
+                {{ t.shell.devicesPanel.useExternalMidi }}
+              </button>
+            </template>
           </div>
         </div>
         </Transition>

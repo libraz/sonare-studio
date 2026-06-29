@@ -62,7 +62,7 @@ describe('QuickControls.vue', () => {
     const wrapper = mount(QuickControls, {
       props: { target: { type: 'instrument', trackId } },
     });
-    expect(wrapper.find('.qc-empty').exists()).toBe(true);
+    expect(wrapper.find('.empty-state').exists()).toBe(true);
     expect(wrapper.findAll('.qc-knob')).toHaveLength(0);
   });
 

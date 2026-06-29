@@ -76,13 +76,6 @@ input.cell-input:focus {
   color: var(--danger);
 }
 
-.list-empty {
-  margin: 0;
-  padding: var(--sp-5) 0;
-  text-align: center;
-  color: var(--text-3);
-}
-
 .list-error {
   margin: 0;
   background: var(--danger-surface);

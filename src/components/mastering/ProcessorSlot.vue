@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import MixerKnob from '@/components/mixer/MixerKnob.vue';
 import CloseIcon from '@/components/shell/CloseIcon.vue';
+import EmptyState from '@/components/shell/EmptyState.vue';
 import type { InsertSlot } from '@/project/mixer';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import type { MasteringControl } from '@/ui/mastering/chain-controls';
@@ -122,9 +123,11 @@ function controlDisplay(control: MasteringControl): string {
     </button>
   </div>
   <div v-if="expanded" class="chain-params">
-    <p v-if="controls.length === 0" class="chain-params-empty">
-      {{ t.shell.mastering.noParameters }}
-    </p>
+    <EmptyState
+      v-if="controls.length === 0"
+      variant="inline"
+      :message="t.shell.mastering.noParameters"
+    />
     <MixerKnob
       v-for="control in controls"
       :key="control.id"

@@ -46,8 +46,7 @@
 }
 
 .rack-empty,
-.chain-empty,
-.picker-empty {
+.chain-empty {
   margin: 0;
   padding: var(--sp-4);
   text-align: center;
@@ -253,7 +252,8 @@
 }
 
 .use-sf2,
-.edit-patch {
+.edit-patch,
+.use-external {
   background: var(--accent-strong);
   border: 1px solid var(--accent);
   border-radius: var(--radius-sm);
@@ -263,7 +263,8 @@
   cursor: pointer;
 }
 
-.use-sf2:disabled {
+.use-sf2:disabled,
+.use-external:disabled {
   opacity: 0.4;
   cursor: default;
 }
@@ -271,6 +272,39 @@
 .patch-summary {
   margin: 0;
   color: var(--text-3);
+}
+
+.external-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  color: var(--text-3);
+}
+
+.external-field input {
+  width: 4.4rem;
+  background: var(--surface-0);
+  border: none;
+  border-radius: var(--radius-xs);
+  box-shadow: var(--control-edge), var(--inset-well);
+  color: var(--text-1);
+  font-size: var(--fs-xs);
+  padding: var(--sp-1) var(--sp-2);
+}
+
+.external-clock {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--text-3);
+}
+
+.external-empty,
+.external-bounce-hint {
+  margin: 0;
+  color: var(--text-4);
+  font-size: var(--fs-2xs);
 }
 
 .chain-title {

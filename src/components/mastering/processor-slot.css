@@ -107,9 +107,3 @@
   box-shadow: var(--inset-well);
   padding: 4px 2px;
 }
-
-.chain-params-empty {
-  margin: 0;
-  font: var(--fs-2xs) var(--font-sans);
-  color: var(--text-4);
-}

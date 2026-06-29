@@ -125,8 +125,7 @@
   min-width: 1.8rem;
 }
 
-.score-loading,
-.score-empty {
+.score-loading {
   position: absolute;
   inset: 0;
   display: flex;
@@ -141,11 +140,6 @@
 
 .score-loading {
   background: color-mix(in srgb, var(--surface-1), transparent 25%);
-}
-
-/* Muted notation glyph anchoring the empty state above its onboarding text. */
-.score-empty-glyph {
-  color: var(--text-4);
 }
 
 /* Breathe the "Engraving..." label so the wait reads as active, not stalled.
