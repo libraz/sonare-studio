@@ -13,7 +13,7 @@ import {
   type StoredProjectInfo,
   saveProject,
 } from '@/persistence/opfs';
-import { decodeSzd, decodeSzdBundle, encodeSzd } from '@/persistence/szd';
+import { decodeSzd, decodeSzdBundle, encodeSzd, SZD_FILE_EXTENSION } from '@/persistence/szd';
 import { makeBwv565Document } from '@/project/demo/bwv565';
 import { exportProjectClipFile, exportProjectSmf } from '@/project/export';
 import {
@@ -268,6 +268,14 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     void runAction(async () => {
       const picked = await pickAndReadSzd();
       if (!picked) return;
+      // Guard against a non-project file slipping past the picker hint: the
+      // archive must carry the .szd extension before we try to decode it.
+      if (!picked.name.toLowerCase().endsWith(SZD_FILE_EXTENSION)) {
+        errorMessage.value = formatMessage(t.value.shell.project.importInvalidType, {
+          name: picked.name,
+        });
+        return;
+      }
       const doc = decodeSzd(picked.bytes);
       // Restore any bundled audio/SoundFonts into OPFS so the document's ids
       // resolve; without a store there is nowhere to put them (clips stay

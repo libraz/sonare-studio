@@ -990,6 +990,7 @@ useAppLifecycle({
       @demo="openDemo"
       @open-project="openStoredProject"
       @import-project="importSzdFile"
+      @import-midi="importMidiAction"
     />
 
     <ContextMenu />

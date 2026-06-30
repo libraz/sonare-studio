@@ -101,6 +101,7 @@ export const ja = {
       exportAudio: 'オーディオを書き出し...',
       exportDawproject: 'DAWprojectを書き出し',
       unsavedChanges: '未保存の変更',
+      importInvalidType: '「{name}」は .szd プロジェクトファイルではありません。',
     },
     menus: {
       barLabel: 'アプリケーションメニュー',
@@ -180,7 +181,11 @@ export const ja = {
       demoDesc: 'トッカータとフーガ ニ短調 BWV 565',
       openHeading: '保存済みプロジェクトを開く',
       projectMeta: '{size}・{date}',
-      importFromFile: 'ファイルから読み込む...',
+      importFromFile: '.szd プロジェクトを読み込む...',
+      importMidiFile: 'MIDI ファイルを読み込む...',
+      noticeBody:
+        '個人プロジェクトの試作品です。libsonare を用いたブラウザネイティブの DAW で、現状のまま無保証で提供されます。',
+      noticeRepoLabel: 'github.com/libraz/libsonare',
     },
     sampleEditor: {
       title: 'サンプルエディター',

@@ -41,11 +41,16 @@ const emit = defineEmits<{
   demo: [];
   /** Open a saved project by name. */
   openProject: [name: string];
-  /** Import a project from a local file. */
+  /** Import a .szd project from a local file. */
   importProject: [];
+  /** Import a MIDI file as a new project. */
+  importMidi: [];
 }>();
 
 const { t, locale } = useI18n();
+
+/** Upstream audio engine — surfaced in the launcher disclaimer. */
+const LIBSONARE_URL = 'https://github.com/libraz/libsonare';
 
 /**
  * The headline action gets the brand-bordered primary treatment: continuing a
@@ -137,11 +142,27 @@ function projectMeta(info: StoredProjectInfo): string {
             </div>
           </template>
 
-          <button v-if="props.opfsAvailable" type="button" class="ss-import" data-testid="start-import"
-            @click="emit('importProject')">
-            {{ t.shell.startScreen.importFromFile }}
-          </button>
+          <div class="ss-imports">
+            <button v-if="props.opfsAvailable" type="button" class="ss-import"
+              data-testid="start-import" @click="emit('importProject')">
+              {{ t.shell.startScreen.importFromFile }}
+            </button>
+            <button type="button" class="ss-import" data-testid="start-import-midi"
+              @click="emit('importMidi')">
+              {{ t.shell.startScreen.importMidiFile }}
+            </button>
+          </div>
         </div>
+
+        <footer class="ss-notice">
+          <p class="ss-notice-text">{{ t.shell.startScreen.noticeBody }}</p>
+          <a class="ss-notice-link" :href="LIBSONARE_URL" target="_blank" rel="noopener noreferrer">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true">
+              <path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48l-.01-1.7c-2.78.6-3.37-1.34-3.37-1.34-.46-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.89 1.53 2.34 1.09 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.02a9.5 9.5 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.38.2 2.4.1 2.65.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.69-4.57 4.94.36.31.68.92.68 1.85l-.01 2.74c0 .27.18.58.69.48A10 10 0 0 0 12 2Z" />
+            </svg>
+            {{ t.shell.startScreen.noticeRepoLabel }}
+          </a>
+        </footer>
       </div>
     </div>
   </Teleport>
@@ -344,9 +365,15 @@ function projectMeta(info: StoredProjectInfo): string {
 }
 
 /* --- Import (dashed) -------------------------------------------------- */
+.ss-imports {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  gap: var(--sp-3);
+}
+
 .ss-import {
   width: 100%;
-  padding: var(--sp-4);
+  padding: var(--sp-4) var(--sp-3);
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius-sm);
   background: none;
@@ -365,6 +392,51 @@ function projectMeta(info: StoredProjectInfo): string {
 }
 
 .ss-import:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+/* --- Disclaimer footer ------------------------------------------------ */
+.ss-notice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-5) var(--sp-7) var(--sp-6);
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-1);
+  text-align: center;
+}
+
+.ss-notice-text {
+  margin: 0;
+  max-width: 34ch;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: var(--text-4);
+}
+
+.ss-notice-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  text-decoration: none;
+  transition:
+    color var(--dur-1) var(--ease-out),
+    background var(--dur-1) var(--ease-out);
+}
+
+.ss-notice-link:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.ss-notice-link:focus-visible {
   outline: none;
   box-shadow: var(--ring);
 }

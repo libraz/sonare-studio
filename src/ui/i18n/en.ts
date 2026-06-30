@@ -101,6 +101,7 @@ export const en = {
       exportAudio: 'Export Audio...',
       exportDawproject: 'Export DAWproject',
       unsavedChanges: 'Unsaved changes',
+      importInvalidType: '"{name}" is not a .szd project file.',
     },
     menus: {
       barLabel: 'Application menus',
@@ -180,7 +181,11 @@ export const en = {
       demoDesc: 'Toccata and Fugue in D minor, BWV 565',
       openHeading: 'Open a saved project',
       projectMeta: '{size} · {date}',
-      importFromFile: 'Import from a file...',
+      importFromFile: 'Import a .szd project...',
+      importMidiFile: 'Import a MIDI file...',
+      noticeBody:
+        'A personal prototype — a browser-native DAW built on libsonare. Experimental software, provided as-is with no warranty.',
+      noticeRepoLabel: 'github.com/libraz/libsonare',
     },
     sampleEditor: {
       title: 'Sample editor',

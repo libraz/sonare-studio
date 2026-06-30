@@ -110,6 +110,9 @@ export async function pickAndReadSzd(): Promise<PickedSzdFile | null> {
     try {
       const [handle] = await picker({
         multiple: false,
+        // Constrain the picker to .szd: hide the "all files" escape hatch so the
+        // dialog only offers project archives.
+        excludeAcceptAllOption: true,
         types: [
           {
             description: 'Sonare Studio project',
