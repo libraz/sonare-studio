@@ -25,11 +25,73 @@ import {
 } from '@/ui/arrangement/audio-clip-content';
 import { audioAssetMergedPeaks, requestAudioAsset } from '@/ui/arrangement/audio-clip-data';
 import { FADE_HANDLE_SIZE_PX, fadeHandleXs } from '@/ui/arrangement/audio-fades';
-import { clipContentMode, densityBuckets, miniNoteRects } from '@/ui/arrangement/clip-content';
+import {
+  type ClipNoteSpan,
+  clipContentMode,
+  densityBuckets,
+  miniNoteRects,
+  type UnitRect,
+} from '@/ui/arrangement/clip-content';
 import type { ClipInteractions } from '@/ui/arrangement/use-clip-interactions';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 
 type ArrangementColors = typeof ARRANGEMENT_COLORS;
+
+// Per-clip memo of the zoom-dependent note-content geometry. The arrangement
+// repaints its entire base layer on every playhead-follow frame, but a clip's
+// mini-note rects and per-bar densities depend only on its note array and
+// window — both immutable during playback — not on the horizontal scroll.
+// Keyed by the note array identity: an edit rebuilds that array (store refresh
+// or command-history clone), so it misses and recomputes, and the entry is
+// dropped automatically once the old array is no longer referenced.
+interface MiniNoteCacheEntry {
+  windowStartPpq: number;
+  windowLengthPpq: number;
+  rects: UnitRect[];
+}
+const miniNoteRectsCache = new WeakMap<ReadonlyArray<ClipNoteSpan>, MiniNoteCacheEntry>();
+
+function cachedMiniNoteRects(
+  notes: ReadonlyArray<ClipNoteSpan>,
+  windowStartPpq: number,
+  windowLengthPpq: number,
+): UnitRect[] {
+  const hit = miniNoteRectsCache.get(notes);
+  if (hit && hit.windowStartPpq === windowStartPpq && hit.windowLengthPpq === windowLengthPpq) {
+    return hit.rects;
+  }
+  const rects = miniNoteRects(notes, windowStartPpq, windowLengthPpq);
+  miniNoteRectsCache.set(notes, { windowStartPpq, windowLengthPpq, rects });
+  return rects;
+}
+
+interface DensityCacheEntry {
+  windowStartPpq: number;
+  windowLengthPpq: number;
+  bucketPpq: number;
+  densities: number[];
+}
+const densityBucketsCache = new WeakMap<ReadonlyArray<ClipNoteSpan>, DensityCacheEntry>();
+
+function cachedDensityBuckets(
+  notes: ReadonlyArray<ClipNoteSpan>,
+  windowStartPpq: number,
+  windowLengthPpq: number,
+  bucketPpq: number,
+): number[] {
+  const hit = densityBucketsCache.get(notes);
+  if (
+    hit &&
+    hit.windowStartPpq === windowStartPpq &&
+    hit.windowLengthPpq === windowLengthPpq &&
+    hit.bucketPpq === bucketPpq
+  ) {
+    return hit.densities;
+  }
+  const densities = densityBuckets(notes, windowStartPpq, windowLengthPpq, bucketPpq);
+  densityBucketsCache.set(notes, { windowStartPpq, windowLengthPpq, bucketPpq, densities });
+  return densities;
+}
 
 /** Minimum clip width in px before the name label is drawn. */
 export const MIN_NAME_WIDTH_PX = 28;
@@ -98,6 +160,11 @@ export function drawClip(
   const hPx = laneHeight - 5;
   if (y + hPx < RULER_HEIGHT_PX || y > range.heightPx) return;
 
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, RULER_HEIGHT_PX, range.widthPx, range.heightPx - RULER_HEIGHT_PX);
+  ctx.clip();
+
   ctx.fillStyle = colorWithAlpha(track.color, selected ? 0.4 : 0.26);
   fillRoundRect(ctx, x, y, wPx, hPx, 3);
 
@@ -114,7 +181,11 @@ export function drawClip(
   } else if (contentH > 2 && source.notes.length > 0) {
     if (clipContentMode(range.pxPerPpq) === 'mini-notes') {
       ctx.fillStyle = colorWithAlpha(track.color, 0.95);
-      for (const rect of miniNoteRects(source.notes, source.sourceOffsetPpq, source.lengthPpq)) {
+      for (const rect of cachedMiniNoteRects(
+        source.notes,
+        source.sourceOffsetPpq,
+        source.lengthPpq,
+      )) {
         ctx.fillRect(
           x + rect.u * wPx,
           contentTop + rect.v * contentH,
@@ -123,7 +194,7 @@ export function drawClip(
         );
       }
     } else {
-      const buckets = densityBuckets(
+      const buckets = cachedDensityBuckets(
         source.notes,
         source.sourceOffsetPpq,
         source.lengthPpq,
@@ -153,6 +224,7 @@ export function drawClip(
   ctx.lineWidth = selected ? 1.5 : 1;
   ctx.strokeStyle = selected ? colors.clipSelectedBorder : colors.clipBorder;
   strokeRoundRect(ctx, x + 0.5, y + 0.5, wPx - 1, hPx - 1, 3);
+  ctx.restore();
 }
 
 /**
@@ -369,9 +441,15 @@ function drawDraft(
   if (x + wPx < 0 || x > range.widthPx) return;
   const y = laneTop(laneIndex) + 2;
   const hPx = laneHeight - 5;
+  if (y + hPx < RULER_HEIGHT_PX || y > range.heightPx) return;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, RULER_HEIGHT_PX, range.widthPx, range.heightPx - RULER_HEIGHT_PX);
+  ctx.clip();
   ctx.fillStyle = colors.draftFill;
   fillRoundRect(ctx, x, y, wPx, hPx, 3);
   ctx.lineWidth = 1;
   ctx.strokeStyle = colors.draftStroke;
   strokeRoundRect(ctx, x + 0.5, y + 0.5, wPx - 1, hPx - 1, 3);
+  ctx.restore();
 }

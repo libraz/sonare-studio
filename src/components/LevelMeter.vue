@@ -41,6 +41,7 @@ interface ChannelState {
 }
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
+let canvasCtx: CanvasRenderingContext2D | null = null;
 let rafId = 0;
 let lastTs = 0;
 /** True once the floor state was painted; idle frames are then skipped. */
@@ -59,6 +60,7 @@ function resizeCanvas(): void {
   canvas.height = Math.round(props.height * dpr);
   canvas.style.width = `${props.width}px`;
   canvas.style.height = `${props.height}px`;
+  canvasCtx = canvas.getContext('2d');
   // Resizing clears the backing store, so the next frame must repaint.
   idleFrameDrawn = false;
 }
@@ -142,7 +144,7 @@ function drawBar(
 function draw(ts: number): void {
   rafId = requestAnimationFrame(draw);
   const canvas = canvasRef.value;
-  const ctx = canvas?.getContext('2d');
+  const ctx = canvasCtx;
   if (!canvas || !ctx) return;
 
   const dt = lastTs > 0 ? Math.min((ts - lastTs) / 1000, 0.1) : 0;
@@ -200,6 +202,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   cancelAnimationFrame(rafId);
+  canvasCtx = null;
 });
 
 watch(

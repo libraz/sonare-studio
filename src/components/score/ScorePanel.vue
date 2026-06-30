@@ -166,6 +166,7 @@ const scoreSvgHeightPx = ref(1);
 const client = shallowRef<VerovioClient | null>(null);
 
 let retranscribeTimer: ReturnType<typeof setTimeout> | null = null;
+let notesHandledForClipId: number | null = null;
 
 /** Current Display Quantize grid step in PPQ. */
 function divisionPpq(): number {
@@ -321,9 +322,34 @@ function scheduleRetranscribe(): void {
   }, RETRANSCRIBE_DEBOUNCE_MS);
 }
 
+// The active clip is navigation, not a note edit: switch the score immediately
+// so playhead following does not keep scanning the previous clip's timemap.
+watch(
+  () => store.clipId,
+  () => {
+    if (retranscribeTimer !== null) {
+      clearTimeout(retranscribeTimer);
+      retranscribeTimer = null;
+    }
+    closePalette();
+    playhead?.resetScan();
+    notesHandledForClipId = store.clipId;
+    void notation.transcribe();
+  },
+);
 // The note mirror is replaced wholesale on every command, so identity
-// tracking fires once per edit. Option changes re-transcribe immediately.
-watch(() => store.notes, scheduleRetranscribe);
+// tracking fires once per edit. Debounce only when the clip itself did not
+// change; clip changes are handled immediately above.
+watch(
+  () => store.notes,
+  () => {
+    if (notesHandledForClipId === store.clipId) {
+      notesHandledForClipId = null;
+      return;
+    }
+    scheduleRetranscribe();
+  },
+);
 // Annotations and display transpose are replaced wholesale by their commands
 // too; both only affect engraving, so they re-transcribe debounced like edits.
 watch(
@@ -354,12 +380,9 @@ watch([barsPerSystem, barsPerPage], () => void notation.transcribe());
 watch(annotateEnabled, (enabled) => {
   if (!enabled) closePalette();
 });
-// The palette targets a note of the active clip; close it on clip switches
-// and when its note disappears (deleted or replaced by other edits).
-watch(
-  () => store.clipId,
-  () => closePalette(),
-);
+// The palette targets a note of the active clip; close it when its note
+// disappears (deleted or replaced by other edits). Clip switches are handled by
+// the immediate transcribe watcher above.
 watch(
   () => store.notes,
   (notes) => {

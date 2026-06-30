@@ -188,6 +188,15 @@ const DEFAULT_PX_PER_PPQ = 10;
 /** Wheel-to-zoom sensitivity for ⌘wheel / pinch gestures. */
 const ZOOM_WHEEL_SENSITIVITY = 0.0035;
 
+/** Per-frame horizontal follow interpolation for arrangement playback. */
+const PLAYHEAD_FOLLOW_SMOOTHING = 0.42;
+/** Small PPQ threshold below which snapping avoids endless tiny repaints. */
+const PLAYHEAD_FOLLOW_EPSILON_PPQ = 0.0005;
+/** Follow scrolling redraws the full arrangement base layer, so cap it below display refresh. */
+const PLAYHEAD_FOLLOW_INTERVAL_MS = 33;
+/** Ignore sub-pixel follow movement; the overlay playhead still updates every frame. */
+const PLAYHEAD_FOLLOW_MIN_PX = 1;
+
 // The TimelineRange and painter are plain (non-reactive) objects; views are
 // invalidated through the `revision` counter after every range mutation.
 const range = markRaw(new TimelineRange({ widthPx: 1, heightPx: 1, pxPerPpq: DEFAULT_PX_PER_PPQ }));
@@ -393,21 +402,40 @@ function onCanvasResize(): void {
 }
 
 let followRaf: number | null = null;
+let lastFollowFrameMs = 0;
 
 function stopPlayheadFollow(): void {
   if (followRaf !== null) cancelAnimationFrame(followRaf);
   followRaf = null;
 }
 
-function followPlayheadTick(): void {
+// Following pins the playhead at the right margin and then scrolls every frame
+// to keep it there. Each scroll bumps `revision`, which repaints the whole base
+// layer (lanes, grid, every clip waveform, take and automation sublanes, ruler)
+// — far too costly at display refresh. Throttle the scroll to ~30 Hz, smooth it,
+// and skip sub-pixel moves so the base repaint stays affordable; the overlay
+// playhead still tracks every frame on its own cheap layer.
+function followPlayheadTick(now = performance.now()): void {
   followRaf = null;
   if (!props.isPlaying) return;
+  if (now - lastFollowFrameMs < PLAYHEAD_FOLLOW_INTERVAL_MS) {
+    followRaf = requestAnimationFrame(followPlayheadTick);
+    return;
+  }
+  lastFollowFrameMs = now;
   const ppq = props.positionPpq?.();
   if (ppq !== undefined) {
     const nextStart = nextPlayheadFollowStart(range, ppq);
     if (nextStart !== null) {
-      range.setStartPpq(nextStart);
-      bump();
+      const delta = nextStart - range.startPpq;
+      if (Math.abs(delta * range.pxPerPpq) >= PLAYHEAD_FOLLOW_MIN_PX) {
+        const smoothed =
+          Math.abs(delta) <= PLAYHEAD_FOLLOW_EPSILON_PPQ
+            ? nextStart
+            : range.startPpq + delta * PLAYHEAD_FOLLOW_SMOOTHING;
+        range.setStartPpq(smoothed);
+        bump();
+      }
     }
   }
   followRaf = requestAnimationFrame(followPlayheadTick);
@@ -415,6 +443,7 @@ function followPlayheadTick(): void {
 
 function startPlayheadFollow(): void {
   if (followRaf !== null || typeof requestAnimationFrame !== 'function') return;
+  lastFollowFrameMs = 0;
   followRaf = requestAnimationFrame(followPlayheadTick);
 }
 

@@ -164,7 +164,7 @@ describe('useTransport', () => {
     ]);
     transport.play();
     // 3 s of audio: 2 s cover ppq 0..4 at 120 BPM, then 1 s = 1 ppq at 60 BPM.
-    mock.emitTelemetry({ type: 0, audibleTimelineSample: 3 * 48000 });
+    mock.emitTelemetry({ type: 0, timelineSample: 3 * 48000 });
     expect(transport.positionPpq.value).toBeCloseTo(5, 9);
     // ppq 6 = 2 s (ppq 0..4 at 120) + 2 s (ppq 4..6 at 60).
     expect(transport.seekPpq(6)).toBe(true);
@@ -217,15 +217,31 @@ describe('useTransport', () => {
     expect(mock.setMetronome).toHaveBeenLastCalledWith({ enabled: false });
   });
 
-  it('updates positionSeconds from ProcessBlock telemetry', () => {
+  it('updates positionSeconds from the non-latency-compensated timeline telemetry', () => {
     const mock = createMockHandle(48000);
     const { transport } = setup(mock.handle);
     transport.play();
-    mock.emitTelemetry({ type: 0, audibleTimelineSample: 96000 });
+    mock.emitTelemetry({
+      type: 0,
+      timelineSample: 96000,
+      audibleTimelineSample: 72000,
+    });
     expect(transport.positionSeconds.value).toBe(2);
     // Non-ProcessBlock records (e.g. errors) must not move the playhead.
-    mock.emitTelemetry({ type: 1, audibleTimelineSample: 480000 });
+    mock.emitTelemetry({ type: 1, timelineSample: 480000 });
     expect(transport.positionSeconds.value).toBe(2);
+  });
+
+  it('falls back to audibleTimelineSample when timelineSample is unavailable', () => {
+    const mock = createMockHandle(48000);
+    const { transport } = setup(mock.handle);
+    transport.play();
+    mock.emitTelemetry({
+      type: 0,
+      timelineSample: Number.NaN,
+      audibleTimelineSample: 48000,
+    });
+    expect(transport.positionSeconds.value).toBe(1);
   });
 
   it('stops reacting to telemetry after dispose()', () => {
@@ -233,7 +249,7 @@ describe('useTransport', () => {
     const { transport } = setup(mock.handle);
     transport.play();
     transport.dispose();
-    mock.emitTelemetry({ type: 0, audibleTimelineSample: 48000 });
+    mock.emitTelemetry({ type: 0, timelineSample: 48000 });
     expect(transport.positionSeconds.value).toBe(0);
   });
 });

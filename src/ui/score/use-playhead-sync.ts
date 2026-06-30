@@ -19,6 +19,7 @@ const FOLLOW_INTERVAL_MS = 120;
 const MIN_SCROLL_DELTA_PX = 2;
 const OVERLAY_CLASS = 'score-playhead-overlay';
 const MARKER_CLASS = 'score-playhead-marker';
+const POSITIONED_CLASS = 'is-positioned';
 const MARKER_PAD_X = 8;
 const MARKER_PAD_Y = 6;
 const MARKER_MIN_WIDTH = 22;
@@ -50,6 +51,8 @@ interface MarkerGroup {
   key: string;
   ids: string[];
   bounds: Pick<ElementBounds, 'left' | 'right' | 'top' | 'bottom'>;
+  /** True for the whole-measure band drawn during playback. */
+  measure?: boolean;
 }
 
 /** Options wiring the playhead sync to the rendered score. */
@@ -242,9 +245,12 @@ export function usePlayheadSync(options: PlayheadSyncOptions): PlayheadSync {
       if (bounds) {
         return [
           {
-            key: `measure:${result.measureId}`,
+            // Stable key (not per-measure) so the same element is reused and
+            // glides from measure to measure instead of popping in fresh.
+            key: 'measure',
             ids: [...result.ids],
             bounds,
+            measure: true,
           },
         ];
       }
@@ -290,10 +296,11 @@ export function usePlayheadSync(options: PlayheadSyncOptions): PlayheadSync {
     }
     for (const group of groups) {
       const { bounds } = group;
-      const marker = markerElements.get(group.key) ?? document.createElement('div');
-      if (!markerElements.has(group.key)) {
+      const existing = markerElements.get(group.key);
+      const marker = existing ?? document.createElement('div');
+      if (!existing) {
         marker.className = `${MARKER_CLASS} ${
-          group.key.startsWith('measure:') ? `${MARKER_CLASS}-measure` : `${MARKER_CLASS}-note`
+          group.measure ? `${MARKER_CLASS}-measure` : `${MARKER_CLASS}-note`
         }`;
         overlay.append(marker);
         markerElements.set(group.key, marker);
@@ -305,6 +312,9 @@ export function usePlayheadSync(options: PlayheadSyncOptions): PlayheadSync {
       const markerHeight = Math.max(MARKER_MIN_HEIGHT, height + MARKER_PAD_Y * 2);
       const markerLeft = bounds.left + width / 2 - markerWidth / 2;
       const markerTop = bounds.top + height / 2 - markerHeight / 2;
+      // Enable the glide only once the marker has been placed; the first frame
+      // positions it without a transition so it never animates from the origin.
+      if (existing) marker.classList.add(POSITIONED_CLASS);
       marker.style.transform = `translate(${markerLeft}px, ${markerTop}px)`;
       marker.style.width = `${markerWidth}px`;
       marker.style.height = `${markerHeight}px`;

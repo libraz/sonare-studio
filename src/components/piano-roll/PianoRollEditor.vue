@@ -111,6 +111,8 @@ const viewport = usePianoRollViewport({
   // A transform targets a specific clip; close the popover on clip change.
   onClipChange: () => {
     fxPanelOpen.value = false;
+    stopPlayheadFollow();
+    if (props.isPlaying && appSettings.settings.scrollFollowPlayhead) startPlayheadFollow();
   },
 });
 const { range, painter, revision, error, gridPpq, root, gridCell, hTrack, vTrack, bump } = viewport;

@@ -77,51 +77,76 @@
   z-index: 2;
 }
 
+/* "Now sounding" highlight drawn over the engraving. The score paper is always
+ * white (even under the dark theme), so the highlight is tuned for black
+ * notation on white: a warm amber wash light enough to keep noteheads legible,
+ * a crisp amber ring, and a soft glow. Amber is reserved for this state — it
+ * reads as a highlighter and is never confused with the blue selection/accent
+ * or the red transport playhead used elsewhere. */
 .score-body :deep(.score-playhead-marker) {
   position: absolute;
   left: 0;
   top: 0;
   box-sizing: border-box;
-  border: 1px solid rgba(0, 92, 230, 0.72);
-  border-radius: 8px;
+  border: 1.5px solid rgba(230, 144, 10, 0.9);
+  border-radius: var(--radius-md);
   background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.58), rgba(255, 255, 255, 0.12) 42%),
-    linear-gradient(90deg, rgba(0, 99, 255, 0.2), rgba(0, 199, 255, 0.12)),
-    rgba(0, 99, 255, 0.08);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0) 60%),
+    rgba(255, 184, 48, 0.16);
   box-shadow:
-    0 0 0 2px rgba(255, 255, 255, 0.98),
-    0 0 0 4px rgba(0, 99, 255, 0.2),
-    0 7px 20px rgba(0, 92, 230, 0.2),
-    inset 0 1px 0 rgba(255, 255, 255, 0.82),
-    inset 0 -1px 0 rgba(0, 92, 230, 0.18);
+    0 0 0 3px rgba(255, 190, 60, 0.3),
+    0 4px 14px rgba(214, 130, 0, 0.28),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.55);
   will-change: transform;
 }
 
-.score-body :deep(.score-playhead-marker::before) {
-  position: absolute;
-  top: 4px;
-  bottom: 4px;
-  left: 4px;
-  width: 3px;
-  border-radius: var(--radius-full);
-  background: linear-gradient(180deg, #00c7ff, #005cff);
-  box-shadow: 0 0 8px rgba(0, 99, 255, 0.38);
-  content: "";
+/* Glide between positions so discrete note/measure steps and transport latency
+ * smooth out instead of snapping. Gated behind `.is-positioned` (added after a
+ * marker's first placement) so a freshly created marker appears in place rather
+ * than flying in from the overlay origin. --dur-1 collapses to 0 under
+ * prefers-reduced-motion, which disables the glide automatically. */
+.score-body :deep(.score-playhead-marker.is-positioned) {
+  transition:
+    transform var(--dur-1) var(--ease-out),
+    width var(--dur-1) var(--ease-out),
+    height var(--dur-1) var(--ease-out);
 }
 
-.score-body :deep(.score-playhead-marker::after) {
-  position: absolute;
-  inset: 2px;
-  border-radius: 6px;
-  background: radial-gradient(circle at 35% 35%, rgba(255, 255, 255, 0.42), transparent 58%);
-  content: "";
-}
-
+/* Measure band (playback): a column over the current measure with a stronger
+ * downbeat (left) edge, breathing so it reads as the transport actively
+ * sounding rather than a static selection. */
 .score-body :deep(.score-playhead-marker-measure) {
-  border-left-width: 6px;
+  border-left-width: 3px;
   background:
-    linear-gradient(90deg, rgba(0, 87, 255, 0.2), rgba(255, 204, 51, 0.12)),
-    rgba(255, 255, 255, 0.1);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0) 70%),
+    linear-gradient(
+      90deg,
+      rgba(255, 184, 48, 0.22),
+      rgba(255, 184, 48, 0.1)
+    );
+  animation: score-playhead-pulse 1.3s var(--ease-out) infinite;
+}
+
+@keyframes score-playhead-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 3px rgba(255, 190, 60, 0.26),
+      0 4px 16px rgba(214, 130, 0, 0.26),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+  }
+  50% {
+    box-shadow:
+      0 0 0 4px rgba(255, 190, 60, 0.42),
+      0 6px 22px rgba(214, 130, 0, 0.42),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .score-body :deep(.score-playhead-marker-measure) {
+    animation: none;
+  }
 }
 
 .annotation-palette {

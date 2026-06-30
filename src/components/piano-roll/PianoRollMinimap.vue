@@ -35,10 +35,6 @@ function contentEndPpq(): number {
   return Math.max(1, props.clipLengthPpq, noteEnd, props.range.endPpq);
 }
 
-function xForPpq(ppq: number): number {
-  return (ppq / contentEndPpq()) * widthPx;
-}
-
 function yForPitch(pitch: number): number {
   return ((127 - pitch) / 127) * heightPx;
 }
@@ -55,16 +51,21 @@ function draw(): void {
   ctx.fillStyle = COLORS.minimapBackground;
   ctx.fillRect(0, 0, widthPx, heightPx);
 
+  // Resolve the time-to-x scale once: contentEndPpq() reduces over every note,
+  // so calling it per note (twice) made draw() O(notes^2) and dominated the
+  // playback frame on dense clips.
+  const scaleX = widthPx / contentEndPpq();
+
   ctx.fillStyle = COLORS.minimapNote;
   for (const note of props.notes) {
-    const x = xForPpq(note.startPpq);
-    const w = Math.max(1, xForPpq(note.startPpq + note.durationPpq) - x);
+    const x = note.startPpq * scaleX;
+    const w = Math.max(1, note.durationPpq * scaleX);
     const y = yForPitch(note.pitch);
     ctx.fillRect(x, y, w, 2);
   }
 
-  const viewX = xForPpq(props.range.startPpq);
-  const viewW = Math.max(6, xForPpq(props.range.endPpq) - viewX);
+  const viewX = props.range.startPpq * scaleX;
+  const viewW = Math.max(6, (props.range.endPpq - props.range.startPpq) * scaleX);
   ctx.fillStyle = COLORS.minimapViewportFill;
   ctx.fillRect(viewX, 0, viewW, heightPx);
   ctx.strokeStyle = COLORS.minimapViewportStroke;

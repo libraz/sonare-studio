@@ -399,6 +399,7 @@ onBeforeUnmount(() => {
 watch(
   () => [props.revision, props.highlightedPitchClasses, props.gridPpq, props.clipLengthPpq],
   () => {
+    lastPlayheadX = Number.NaN;
     scheduleBackground();
     scheduleNotes();
     scheduleOverlay();

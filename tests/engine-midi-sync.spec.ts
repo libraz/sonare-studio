@@ -591,6 +591,71 @@ describe('createMidiSync', () => {
     expect(engine.setSynthInstrument).toHaveBeenCalledWith(1, 'va:saw-lead');
   });
 
+  it('falls back to the default synth when an imported preset fails to bind', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const { handle, engine } = makeHandle();
+      engine.setSynthInstrument.mockImplementationOnce(() => {
+        throw new Error('failed to bind MIDI instrument');
+      });
+      const sync = createMidiSync(handle);
+      const track = makeTrack(1, {
+        instrument: { kind: 'synth-preset', preset: 'acoustic-piano' },
+      });
+
+      await sync.sync([track], [], TEMPO_120);
+
+      expect(engine.setSynthInstrument).toHaveBeenNthCalledWith(1, 1, 'acoustic-piano');
+      expect(engine.setSynthInstrument).toHaveBeenNthCalledWith(2, 1, DEFAULT_SYNTH_PRESET);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'synth-preset:acoustic-piano failed to bind on track 1 (Track 1) destination 1',
+        ),
+        expect.any(Error),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('reports the track and instrument when MIDI instrument fallback also fails', async () => {
+    const { handle, engine } = makeHandle();
+    engine.setSynthInstrument.mockImplementation(() => {
+      throw new Error('failed to bind MIDI instrument');
+    });
+    const sync = createMidiSync(handle);
+    const track = makeTrack(1, { instrument: { kind: 'synth-preset', preset: 'acoustic-piano' } });
+
+    await expect(sync.sync([track], [], TEMPO_120)).rejects.toThrow(
+      'Failed to bind MIDI instrument for track 1 (Track 1) destination 1: synth-preset:acoustic-piano',
+    );
+  });
+
+  it('reuses an existing destination after the internal instrument limit', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const { handle, engine } = makeHandle();
+      const sync = createMidiSync(handle);
+      const tracks = Array.from({ length: 17 }, (_, index) =>
+        makeTrack(index + 1, {
+          instrument: { kind: 'synth-preset', preset: 'acoustic-piano' },
+        }),
+      );
+      const clips = tracks.map((track) => makeClip(track.id, track.id));
+
+      await sync.sync(tracks, clips, TEMPO_120);
+
+      expect(engine.setSynthInstrument).toHaveBeenCalledTimes(16);
+      expect(engine.setSynthInstrument).toHaveBeenNthCalledWith(16, 16, 'acoustic-piano');
+      const schedules = engine.setMidiClips.mock.calls[0][0];
+      expect(schedules[15]).toMatchObject({ trackId: 16, destinationId: 16 });
+      expect(schedules[16]).toMatchObject({ trackId: 17, destinationId: 1 });
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('passes a synth patch object through unchanged', async () => {
     const { handle, engine } = makeHandle();
     const sync = createMidiSync(handle);

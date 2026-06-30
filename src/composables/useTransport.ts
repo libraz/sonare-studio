@@ -17,13 +17,13 @@ export interface UseTransportReturn {
   isPlaying: Ref<boolean>;
   /**
    * Playhead position in seconds, derived from engine telemetry
-   * (`audibleTimelineSample / ctx.sampleRate`). Updated via requestAnimationFrame
+   * (`timelineSample / ctx.sampleRate`). Updated via requestAnimationFrame
    * polling while playing; also set optimistically by `seek()` / `seekPpq()`.
    */
   positionSeconds: Ref<number>;
   /**
    * Playhead position in PPQ (quarter-note pulses), converted from the engine's
-   * `audibleTimelineSample` through the project tempo map (which replicates the
+   * `timelineSample` through the project tempo map (which replicates the
    * engine's tempo math), so it is exact under tempo segments and ramps. Also
    * set optimistically by `seek()` / `seekPpq()`.
    */
@@ -123,7 +123,7 @@ export interface UseTransportReturn {
  * requestAnimationFrame loop calls `engine.pollTelemetry()` (drains the SAB
  * telemetry ring in 'sab' mode; a no-op in 'postMessage' mode where telemetry
  * arrives as port messages) and an `onTelemetry` subscription converts
- * `audibleTimelineSample` to seconds using the AudioContext sample rate and to
+ * `timelineSample` to seconds using the AudioContext sample rate and to
  * PPQ through the project tempo map (set via `setTempoMap`), replicating the
  * engine's tempo math so the PPQ playhead is exact under segments and ramps.
  *
@@ -151,6 +151,11 @@ export function useTransport(
   let unsubscribeTelemetry: (() => void) | null = null;
   let rafId: number | null = null;
 
+  const telemetryPositionSample = (telemetry: SonareEngineTelemetryRecord): number => {
+    if (Number.isFinite(telemetry.timelineSample)) return telemetry.timelineSample;
+    return telemetry.audibleTimelineSample;
+  };
+
   /** Subscribes the position listener to the handle's engine (resubscribes when the engine changes). */
   const ensureTelemetrySubscription = (handle: EngineHandle): void => {
     if (subscribedEngine === handle.engine) return;
@@ -159,8 +164,9 @@ export function useTransport(
     unsubscribeTelemetry = handle.engine.onTelemetry(
       (telemetry: SonareEngineTelemetryRecord): void => {
         if (telemetry.type !== TELEMETRY_PROCESS_BLOCK) return;
-        positionSeconds.value = telemetry.audibleTimelineSample / sampleRate;
-        positionPpq.value = samplesToPpq(tempoMap, telemetry.audibleTimelineSample, sampleRate);
+        const sample = telemetryPositionSample(telemetry);
+        positionSeconds.value = sample / sampleRate;
+        positionPpq.value = samplesToPpq(tempoMap, sample, sampleRate);
       },
     );
     subscribedEngine = handle.engine;
