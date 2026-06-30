@@ -102,6 +102,10 @@ const fxPanelOpen = ref(false);
 const PLAYHEAD_FOLLOW_SMOOTHING = 0.42;
 /** Small PPQ threshold below which snapping avoids endless tiny repaints. */
 const PLAYHEAD_FOLLOW_EPSILON_PPQ = 0.0005;
+/** Follow scrolling redraws the full piano-roll base layer, so cap it below display refresh. */
+const PLAYHEAD_FOLLOW_INTERVAL_MS = 33;
+/** Ignore sub-pixel follow movement; the overlay playhead still updates every frame. */
+const PLAYHEAD_FOLLOW_MIN_PX = 1;
 
 const viewport = usePianoRollViewport({
   // A transform targets a specific clip; close the popover on clip change.
@@ -751,26 +755,34 @@ function onRootPointerDown(): void {
 }
 
 let followRaf: number | null = null;
+let lastFollowFrameMs = 0;
 
 function stopPlayheadFollow(): void {
   if (followRaf !== null) cancelAnimationFrame(followRaf);
   followRaf = null;
 }
 
-function followPlayheadTick(): void {
+function followPlayheadTick(now = performance.now()): void {
   followRaf = null;
-  if (!props.isPlaying) return;
+  if (!props.isPlaying || !appSettings.settings.scrollFollowPlayhead) return;
+  if (now - lastFollowFrameMs < PLAYHEAD_FOLLOW_INTERVAL_MS) {
+    followRaf = requestAnimationFrame(followPlayheadTick);
+    return;
+  }
+  lastFollowFrameMs = now;
   if (props.positionPpq) {
     const ppq = localPositionPpq();
     const nextStart = nextPlayheadFollowStart(range, ppq);
     if (nextStart !== null) {
       const delta = nextStart - range.startPpq;
-      const smoothed =
-        Math.abs(delta) <= PLAYHEAD_FOLLOW_EPSILON_PPQ
-          ? nextStart
-          : range.startPpq + delta * PLAYHEAD_FOLLOW_SMOOTHING;
-      range.setStartPpq(smoothed);
-      bump();
+      if (Math.abs(delta * range.pxPerPpq) >= PLAYHEAD_FOLLOW_MIN_PX) {
+        const smoothed =
+          Math.abs(delta) <= PLAYHEAD_FOLLOW_EPSILON_PPQ
+            ? nextStart
+            : range.startPpq + delta * PLAYHEAD_FOLLOW_SMOOTHING;
+        range.setStartPpq(smoothed);
+        bump();
+      }
     }
   }
   followRaf = requestAnimationFrame(followPlayheadTick);
@@ -778,19 +790,20 @@ function followPlayheadTick(): void {
 
 function startPlayheadFollow(): void {
   if (followRaf !== null || typeof requestAnimationFrame !== 'function') return;
+  lastFollowFrameMs = 0;
   followRaf = requestAnimationFrame(followPlayheadTick);
 }
 
 watch(
-  () => props.isPlaying,
-  (playing) => {
-    if (playing) startPlayheadFollow();
+  () => [props.isPlaying, appSettings.settings.scrollFollowPlayhead],
+  ([playing, follow]) => {
+    if (playing && follow) startPlayheadFollow();
     else stopPlayheadFollow();
   },
 );
 
 onMounted(() => {
-  if (props.isPlaying) startPlayheadFollow();
+  if (props.isPlaying && appSettings.settings.scrollFollowPlayhead) startPlayheadFollow();
   centerActiveLaneTab();
 });
 

@@ -1,5 +1,5 @@
 import { mount, type VueWrapper } from '@vue/test-utils';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ref } from 'vue';
 import NoteGridCanvas from '@/components/piano-roll/NoteGridCanvas.vue';
 import type { NoteInteractions } from '@/components/piano-roll/use-note-interactions';
@@ -47,6 +47,10 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+beforeEach(() => {
+  vi.mocked(painter.schedule).mockClear();
+});
+
 function mountGrid(noteId: number | null) {
   vi.stubGlobal(
     'ResizeObserver',
@@ -91,5 +95,17 @@ describe('NoteGridCanvas', () => {
 
     expect(event.defaultPrevented).toBe(true);
     expect(wrapper.emitted('note-context')).toEqual([[{ x: 150, y: 675, noteId: 1, ppq: 1.5 }]]);
+  });
+
+  it('repaints only the note layer when selection changes', async () => {
+    wrapper = mountGrid(1);
+    vi.mocked(painter.schedule).mockClear();
+
+    await wrapper.setProps({ selection: new Set([1]) });
+
+    const layers = vi.mocked(painter.schedule).mock.calls.map(([layer]) => layer);
+    expect(layers.some((layer) => layer.startsWith('note-grid-notes-'))).toBe(true);
+    expect(layers.some((layer) => layer.startsWith('note-grid-background-'))).toBe(false);
+    expect(layers.some((layer) => layer.startsWith('note-grid-overlay-'))).toBe(false);
   });
 });

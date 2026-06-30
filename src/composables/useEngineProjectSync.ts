@@ -172,6 +172,11 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
   function syncMidiState(): Promise<void> {
     const m = midiSync;
     if (!m || !store.initialized) return midiSyncQueue;
+    // Instrument binding targets engine lanes by track id. When a MIDI file is
+    // imported while the engine is already running, the MIDI watcher can fire
+    // before the track/mixer watcher declares the new lanes, so declare them
+    // here as a precondition of binding instruments.
+    syncMixerState();
     // Keep the external-MIDI routing table in step with the tracks' instruments
     // so drained events reach the right port/channel.
     webMidiOutput?.syncRoutes(store.tracks, store.projectExternalMidi);

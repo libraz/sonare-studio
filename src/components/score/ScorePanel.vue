@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vu
 import ScoreAnnotationPalette from '@/components/score/ScoreAnnotationPalette.vue';
 import ScoreToolbar from '@/components/score/ScoreToolbar.vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
+import { useAppSettings } from '@/composables/useAppSettings';
 import { timeSigLengthPpq } from '@/notation/model';
 import { keyToKeyFifths } from '@/notation/pitch-spelling';
 import { VerovioClient } from '@/notation/verovio';
@@ -57,6 +58,7 @@ const emit = defineEmits<{
 
 const store = useProjectStore();
 const { t } = useI18n();
+const appSettings = useAppSettings();
 
 /** Delay after the last note edit before the score is re-transcribed. */
 const RETRANSCRIBE_DEBOUNCE_MS = 600;
@@ -228,7 +230,7 @@ playhead = usePlayheadSync({
   getTimemap: () => notation.getTimemap(),
   getClipStartPpq: () => store.clipStartPpq,
   getPositionPpq: () => props.positionPpq,
-  getIsPlaying: () => props.isPlaying === true,
+  getIsPlaying: () => props.isPlaying === true && appSettings.settings.scrollFollowPlayhead,
 });
 
 // --- Click-to-seek / select ------------------------------------------------------

@@ -5,7 +5,7 @@ import type { EditorNote } from '@/project/types';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 import { useI18n } from '@/ui/i18n';
-import { type GhostNote, hitTestGhost, isNoteInView } from './overlay';
+import { type GhostNote, hitTestGhost } from './overlay';
 import {
   DEFAULT_NOTE_COLOR,
   fillRoundRect,
@@ -21,12 +21,13 @@ import type {
   InteractionPoint,
   NoteInteractions,
 } from './use-note-interactions';
+import { visibleNotesInWindow } from './visible-notes';
 
 /**
  * Scrollable/zoomable note grid canvas of the piano roll: pitch rows, beat and
  * bar gridlines, note rectangles, marquee and playhead overlay. Rendering is
- * split into a base layer (rows, grid, notes) and an overlay layer (marquee,
- * playhead) so playhead motion does not redraw the notes.
+ * split into background (rows/grid), note and overlay layers so common updates
+ * repaint the smallest useful surface.
  */
 
 const props = defineProps<{
@@ -70,7 +71,8 @@ const emit = defineEmits<{
 }>();
 
 const wrapper = ref<HTMLDivElement | null>(null);
-const baseCanvas = ref<HTMLCanvasElement | null>(null);
+const backgroundCanvas = ref<HTMLCanvasElement | null>(null);
+const notesCanvas = ref<HTMLCanvasElement | null>(null);
 const overlayCanvas = ref<HTMLCanvasElement | null>(null);
 const hoveredGhost = ref<GhostNote | null>(null);
 const hoverPoint = ref<InteractionPoint | null>(null);
@@ -88,8 +90,12 @@ const LABEL_MIN_ROW_HEIGHT = 13;
 const LABEL_MIN_NOTE_WIDTH = 26;
 const SHORT_NOTE_WARNING_PPQ = 0.0625;
 
-function scheduleBase(): void {
-  props.painter.schedule(`note-grid-base-${layerId}`, drawBase);
+function scheduleBackground(): void {
+  props.painter.schedule(`note-grid-background-${layerId}`, drawBackground);
+}
+
+function scheduleNotes(): void {
+  props.painter.schedule(`note-grid-notes-${layerId}`, drawNotes);
 }
 
 function scheduleOverlay(): void {
@@ -97,7 +103,8 @@ function scheduleOverlay(): void {
 }
 
 function scheduleAll(): void {
-  scheduleBase();
+  scheduleBackground();
+  scheduleNotes();
   scheduleOverlay();
 }
 
@@ -116,24 +123,44 @@ function drawVerticalLines(
   }
 }
 
-function noteOverlaps(note: EditorNote, notes: ReadonlyArray<EditorNote>): boolean {
-  const end = note.startPpq + note.durationPpq;
-  return notes.some(
-    (other) =>
-      other.id !== note.id &&
-      other.pitch === note.pitch &&
-      note.startPpq < other.startPpq + other.durationPpq &&
-      end > other.startPpq,
-  );
+function overlappingNoteIds(notes: ReadonlyArray<EditorNote>): Set<number> {
+  const byPitch = new Map<number, EditorNote[]>();
+  for (const note of notes) {
+    const group = byPitch.get(note.pitch);
+    if (group) group.push(note);
+    else byPitch.set(note.pitch, [note]);
+  }
+
+  const ids = new Set<number>();
+  for (const group of byPitch.values()) {
+    group.sort((a, b) => a.startPpq - b.startPpq || a.id - b.id);
+    let active: EditorNote | null = null;
+    let activeEnd = Number.NEGATIVE_INFINITY;
+    for (const note of group) {
+      const end = note.startPpq + note.durationPpq;
+      if (active && note.startPpq < activeEnd) {
+        ids.add(active.id);
+        ids.add(note.id);
+        if (end > activeEnd) {
+          active = note;
+          activeEnd = end;
+        }
+      } else {
+        active = note;
+        activeEnd = end;
+      }
+    }
+  }
+  return ids;
 }
 
 function hasScaleMask(): boolean {
   return props.highlightedPitchClasses.some(Boolean);
 }
 
-/** Draws background rows, gridlines and note rectangles. */
-function drawBase(): void {
-  const canvas = baseCanvas.value;
+/** Draws background rows and gridlines. */
+function drawBackground(): void {
+  const canvas = backgroundCanvas.value;
   if (!canvas) return;
   const ctx = getCanvasContext(canvas);
   if (!ctx) return;
@@ -174,6 +201,20 @@ function drawBase(): void {
     ctx.fillStyle = COLORS.beyondClip;
     ctx.fillRect(Math.max(0, clipEndX), 0, w - Math.max(0, clipEndX), h);
   }
+}
+
+/** Draws ghost and editable note rectangles. */
+function drawNotes(): void {
+  const canvas = notesCanvas.value;
+  if (!canvas) return;
+  const ctx = getCanvasContext(canvas);
+  if (!ctx) return;
+  const range = props.range;
+  const w = range.widthPx;
+  const h = range.heightPx;
+  ctx.clearRect(0, 0, w, h);
+  const lowPitch = range.yToPitch(h - 1);
+  const highPitch = range.yToPitch(0);
 
   const viewWindow = {
     startPpq: range.startPpq,
@@ -184,8 +225,8 @@ function drawBase(): void {
   const noteH = Math.max(2, range.rowHeight - 2);
 
   // Ghost notes from non-active clips draw under the editable notes.
-  for (const ghost of props.ghostNotes ?? []) {
-    if (!isNoteInView(ghost, viewWindow)) continue;
+  const visibleGhosts = visibleNotesInWindow(props.ghostNotes ?? [], viewWindow);
+  for (const ghost of visibleGhosts) {
     const y = range.pitchToY(ghost.pitch);
     const x = range.ppqToX(ghost.startPpq);
     const ghostW = Math.max(2, ghost.durationPpq * range.pxPerPpq - 1);
@@ -195,10 +236,11 @@ function drawBase(): void {
 
   // Notes: gesture preview replaces the store mirror while dragging.
   const list = props.interactions.previewNotes.value ?? props.notes;
+  const visibleNotes = visibleNotesInWindow(list, viewWindow);
   const colorOf = props.noteColor ?? ((): string => DEFAULT_NOTE_COLOR);
   const scaleMaskActive = hasScaleMask();
-  for (const note of list) {
-    if (!isNoteInView(note, viewWindow)) continue;
+  const overlapIds = overlappingNoteIds(visibleNotes);
+  for (const note of visibleNotes) {
     const y = range.pitchToY(note.pitch);
     const x = range.ppqToX(note.startPpq);
     const noteW = Math.max(2, note.durationPpq * range.pxPerPpq - 1);
@@ -213,7 +255,7 @@ function drawBase(): void {
     const pitchClass = ((note.pitch % 12) + 12) % 12;
     const offScale = scaleMaskActive && !props.highlightedPitchClasses[pitchClass];
     const tooShort = note.durationPpq <= SHORT_NOTE_WARNING_PPQ;
-    const overlap = noteOverlaps(note, list);
+    const overlap = overlapIds.has(note.id);
     if (overlap || offScale || tooShort) {
       ctx.fillStyle = overlap ? COLORS.noteError : COLORS.noteWarning;
       ctx.fillRect(x + 2, y + 2, Math.max(2, Math.min(noteW - 4, 18)), 2);
@@ -338,7 +380,8 @@ onMounted(() => {
     const h = entry.contentRect.height;
     if (w <= 0 || h <= 0) return;
     props.range.resize(w, h);
-    if (baseCanvas.value) setupCanvas(baseCanvas.value, w, h);
+    if (backgroundCanvas.value) setupCanvas(backgroundCanvas.value, w, h);
+    if (notesCanvas.value) setupCanvas(notesCanvas.value, w, h);
     if (overlayCanvas.value) setupCanvas(overlayCanvas.value, w, h);
     emit('view-resize', w, h);
     scheduleAll();
@@ -354,18 +397,27 @@ onBeforeUnmount(() => {
 });
 
 watch(
-  () => [
-    props.revision,
-    props.notes,
-    props.selection,
-    props.highlightedPitchClasses,
-    props.gridPpq,
-    props.clipLengthPpq,
-    props.ghostNotes,
-    props.noteColor,
-    props.interactions.previewNotes.value,
-  ],
-  scheduleAll,
+  () => [props.revision, props.highlightedPitchClasses, props.gridPpq, props.clipLengthPpq],
+  () => {
+    scheduleBackground();
+    scheduleNotes();
+    scheduleOverlay();
+  },
+);
+
+watch(
+  () => [props.notes, props.ghostNotes, props.noteColor, props.interactions.previewNotes.value],
+  () => {
+    scheduleNotes();
+    scheduleOverlay();
+  },
+);
+
+watch(
+  () => props.selection,
+  () => {
+    scheduleNotes();
+  },
 );
 
 watch(
@@ -468,11 +520,12 @@ function onContextMenu(event: MouseEvent): void {
     @contextmenu="onContextMenu"
   >
     <canvas
-      ref="baseCanvas"
+      ref="backgroundCanvas"
       class="note-grid-layer"
       role="img"
       :aria-label="t.shell.pianoRoll.noteGrid"
     />
+    <canvas ref="notesCanvas" class="note-grid-layer" aria-hidden="true" />
     <canvas ref="overlayCanvas" class="note-grid-layer" aria-hidden="true" />
   </div>
 </template>

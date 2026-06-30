@@ -5,7 +5,7 @@ import type {
   SonareEngineTransportRequestMessage,
   SonareRealtimeEngineWorkletProcessorOptions,
 } from '@/wasm/worklet.js';
-import { init, SonareRealtimeEngineWorkletProcessor } from '@/wasm/worklet.js';
+import { init, isInitialized, SonareRealtimeEngineWorkletProcessor } from '@/wasm/worklet.js';
 
 // AudioWorkletGlobalScope globals are not part of the TS DOM/WebWorker libs.
 declare const AudioWorkletProcessor: new () => { readonly port: MessagePort };
@@ -17,6 +17,11 @@ declare function registerProcessor(
 type EngineProcessorOptions = SonareRealtimeEngineWorkletProcessorOptions & {
   /** Sonare embind WASM bytes, supplied by the main thread (no fetch in worklets). */
   wasmBinary?: ArrayBuffer;
+};
+
+type WorkletGlobal = typeof globalThis & {
+  SonareEmbindInitPromise?: Promise<void>;
+  SonareEmbindModuleFactory?: (opts?: object) => Promise<unknown>;
 };
 
 // The AudioWorkletGlobalScope has no URL constructor, but the bundled Emscripten
@@ -60,17 +65,39 @@ class SonareEngineWorklet extends AudioWorkletProcessor {
     super();
     const processorOptions = options?.processorOptions ?? {};
     const port = this.port;
-    port.onmessage = (event: MessageEvent) => {
+    const onMessage = (event: MessageEvent) => {
       if (this.bridge) {
         this.dispatch(event.data);
       } else {
         this.pending.push(event.data);
       }
     };
+    if ('addEventListener' in port && typeof port.addEventListener === 'function') {
+      port.addEventListener('message', onMessage);
+      port.start?.();
+    } else {
+      port.onmessage = onMessage;
+    }
     const { wasmBinary } = processorOptions;
     // The published init() type only declares locateFile, but options pass through
     // to the Emscripten factory, which accepts wasmBinary.
-    void (init as (opts?: object) => Promise<void>)(wasmBinary ? { wasmBinary } : undefined)
+    const scope = globalThis as WorkletGlobal;
+    const initOptions = {
+      locateFile: (path: string) => path,
+      ...(wasmBinary ? { wasmBinary } : {}),
+      ...(scope.SonareEmbindModuleFactory
+        ? { moduleFactory: scope.SonareEmbindModuleFactory }
+        : {}),
+    };
+    const initPromise = (async () => {
+      if (scope.SonareEmbindInitPromise) {
+        await scope.SonareEmbindInitPromise;
+      }
+      if (!isInitialized()) {
+        await (init as (opts?: object) => Promise<void>)(initOptions);
+      }
+    })();
+    void initPromise
       .then(() => {
         this.bridge = new SonareRealtimeEngineWorkletProcessor(processorOptions, {
           postMessage: (message) => port.postMessage(message),
