@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import AppModal from '@/components/shell/AppModal.vue';
+import BrandMark from '@/components/shell/BrandMark.vue';
 import { useI18n } from '@/ui/i18n';
 
 /**
@@ -30,7 +31,7 @@ const { t } = useI18n();
     <template #title>{{ t.dialogs.about.title }}</template>
 
     <div class="about">
-      <p class="about-brand">sonare studio</p>
+      <BrandMark class="about-brand" size="md" />
       <p class="about-tagline">{{ t.dialogs.about.tagline }}</p>
 
       <dl class="about-facts">
@@ -64,11 +65,7 @@ const { t } = useI18n();
 }
 
 .about-brand {
-  margin: 0;
-  font-size: var(--fs-xl);
-  font-weight: var(--fw-bold);
-  letter-spacing: 0.02em;
-  color: var(--text-1);
+  margin-bottom: var(--sp-1);
 }
 
 .about-tagline {

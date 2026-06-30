@@ -9,7 +9,9 @@ A digital audio workstation that runs entirely in the browser, built on the
 - Engraved score view (Verovio) with chord symbol estimation, page layout
   controls, print, PDF and MusicXML export — strictly non-destructive: the
   score is derived from the MIDI notes and never writes back to them
-- Mixer with per-strip gain/pan/sends, EQ, insert effects and metering
+- Mixer with per-strip gain/pan/sends, EQ, insert effects and metering, plus
+  spectrum analyzer and goniometer scopes on the master and every strip
+- Parameter automation for fader, pan and insert-effect controls
 - Track instruments: built-in synth presets and SoundFont (SF2) playback
 - Step sequencer with pattern, Euclidean and randomize tools
 - Microphone recording with monitoring, count-in and metronome
@@ -19,12 +21,17 @@ A digital audio workstation that runs entirely in the browser, built on the
   File, MusicXML
 - Projects persist as `.szd` files (zip-packed JSON + assets) in the browser's
   origin-private file system (OPFS), with autosave and local file
-  import/export; Web MIDI input is supported where available
+  import/export; Web MIDI input, and output to external devices via a shared
+  project-default route, are supported where available
 - Display-only score annotations (dynamics, articulations, slurs) and an
   engraving-only transpose, applied from the score panel's Annotate palette
+- A unified menu bar (including Window and Options menus) with a header
+  light/dark theme toggle
 - Remappable keyboard shortcuts with a `?` cheatsheet overlay, an application
-  settings dialog, named workspace layouts (Compose / Mix / Score presets plus
-  saved layouts) and a first-run welcome tour
+  settings dialog (theme, language, editor density, playhead follow), named
+  workspace layouts (Compose / Mix / Score presets plus saved layouts) and a
+  first-run welcome tour; the editors and arrangement follow the playhead
+  during playback
 
 ## Requirements
 

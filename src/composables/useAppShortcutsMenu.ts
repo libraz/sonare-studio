@@ -56,6 +56,8 @@ export interface AppShortcutsMenuOptions {
   openNewDialog: () => void;
   openOpenDialog: () => void;
   openRecentProject: (name: string) => void;
+  openStartScreen: () => void;
+  openDemo: () => void;
   openShortcutsHelp: () => void;
   openWelcomeTour: () => void;
   saveCurrentLayout: () => void;
@@ -267,11 +269,13 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
     const m = t.value.shell.project;
     const noOpfs = !options.opfsAvailable;
     const items: MenuBarItem[] = [
+      commandItem('file.startScreen', m.startScreen, options.openStartScreen),
       commandItem('file.new', m.new, options.openNewDialog),
       commandItem('file.open', m.open, options.openOpenDialog, {
         disabled: noOpfs,
         hintFor: 'project.open',
       }),
+      commandItem('file.openDemo', m.openDemo, options.openDemo),
       sep('file.sep-save'),
       commandItem('file.save', m.save, options.saveProjectAction, {
         disabled: noOpfs,

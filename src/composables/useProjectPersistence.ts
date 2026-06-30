@@ -14,6 +14,7 @@ import {
   saveProject,
 } from '@/persistence/opfs';
 import { decodeSzd, decodeSzdBundle, encodeSzd } from '@/persistence/szd';
+import { makeBwv565Document } from '@/project/demo/bwv565';
 import { exportProjectClipFile, exportProjectSmf } from '@/project/export';
 import {
   loadProjectDocument,
@@ -22,7 +23,7 @@ import {
 } from '@/project/serialization';
 import { smfToProjectDocument } from '@/project/smf';
 import { useProjectStore } from '@/project/store';
-import { makeDemoDocument, type TemplateName } from '@/project/templates';
+import { createTemplate, type TemplateName } from '@/project/templates';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { midiCcBindingsKey } from '@/ui/midi/midi-learn';
 import {
@@ -62,6 +63,8 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   const midiImportInput = ref<HTMLInputElement | null>(null);
   const newDialogOpen = ref(false);
   const openDialogOpen = ref(false);
+  const startScreenOpen = ref(false);
+  const hasAutosave = ref(false);
   const storedProjects = ref<StoredProjectInfo[]>([]);
   const recentProjects = ref<string[]>(loadRecentProjects());
 
@@ -117,29 +120,66 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     dirty.value = false;
   }
 
+  /**
+   * Boots into the start screen rather than silently loading content. A clean
+   * empty project is loaded first so the shell renders behind the launcher
+   * overlay; the user then picks what to open (continue last session, a new or
+   * saved project, or the demo song). This keeps a first-time visitor from
+   * landing in an unfamiliar project they never created.
+   */
   async function bootProject(): Promise<void> {
-    let restored = false;
+    await loadProjectDocument(createTemplate('empty'));
+    await markClean();
+    let autosavePresent = false;
     if (isOpfsAvailable()) {
       try {
         const stored = await listProjects();
-        if (
-          stored.some((info) => info.name === AUTOSAVE_SLOT) &&
-          (await confirmAction(t.value.dialogs.prompts.restoreSessionMessage, {
-            title: t.value.dialogs.prompts.restoreSessionTitle,
-            danger: false,
-            confirmLabel: t.value.dialogs.prompts.restore,
-          }))
-        ) {
-          restored = await autosave.restoreAutosave();
-        }
+        autosavePresent = stored.some((info) => info.name === AUTOSAVE_SLOT);
+        storedProjects.value = stored.filter((info) => info.name !== AUTOSAVE_SLOT);
       } catch (err) {
         errorMessage.value = describeError(err);
       }
     }
-    if (!restored) {
-      await loadProjectDocument(makeDemoDocument());
+    hasAutosave.value = autosavePresent;
+    startScreenOpen.value = true;
+  }
+
+  /** Reopens the start screen, refreshing its saved-project list and autosave state. */
+  async function openStartScreen(): Promise<void> {
+    closeProjectMenu();
+    if (isOpfsAvailable()) {
+      try {
+        const stored = await listProjects();
+        hasAutosave.value = stored.some((info) => info.name === AUTOSAVE_SLOT);
+        storedProjects.value = stored.filter((info) => info.name !== AUTOSAVE_SLOT);
+      } catch (err) {
+        errorMessage.value = describeError(err);
+      }
     }
-    await markClean();
+    startScreenOpen.value = true;
+  }
+
+  /** Restores the autosaved session from the start screen's "continue" action. */
+  function continueSession(): void {
+    void runAction(async () => {
+      if (!(await confirmDiscard())) return;
+      const restored = await autosave.restoreAutosave();
+      if (restored) {
+        await markClean();
+        startScreenOpen.value = false;
+      }
+    });
+  }
+
+  /** Loads the bundled demo song (lazily fetched) and dismisses the start screen. */
+  function openDemo(): void {
+    closeProjectMenu();
+    void runAction(async () => {
+      if (!(await confirmDiscard())) return;
+      await loadProjectDocument(await makeBwv565Document());
+      await markClean();
+      startScreenOpen.value = false;
+    });
   }
 
   function rememberRecentProject(name: string): void {
@@ -161,6 +201,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     void runAction(async () => {
       await loadProjectDocument(payload.document);
       await markClean();
+      startScreenOpen.value = false;
     });
   }
 
@@ -195,6 +236,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       rememberRecentProject(name);
       await markClean();
       openDialogOpen.value = false;
+      startScreenOpen.value = false;
     });
   }
 
@@ -240,6 +282,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       await loadProjectDocument(doc);
       await markClean();
       openDialogOpen.value = false;
+      startScreenOpen.value = false;
     });
   }
 
@@ -259,6 +302,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       await loadProjectDocument(doc);
       await markClean();
       openDialogOpen.value = false;
+      startScreenOpen.value = false;
     });
   }
 
@@ -345,9 +389,14 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     midiImportInput,
     newDialogOpen,
     openDialogOpen,
+    startScreenOpen,
+    hasAutosave,
     storedProjects,
     recentMenuNames,
     bootProject,
+    openStartScreen,
+    continueSession,
+    openDemo,
     markClean,
     closeProjectMenu,
     openNewDialog,

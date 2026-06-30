@@ -13,41 +13,8 @@
 }
 
 .app-title {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 0.28em;
   flex: 0 0 auto;
   margin-right: 0.35rem;
-  font-family: var(--font-display);
-  font-size: 16px;
-  font-optical-sizing: auto;
-  letter-spacing: 0;
-  line-height: 1;
-  --brand-gradient: linear-gradient(118deg, #243b6e 0%, #2f6fd0 54%, #6478e6 100%);
-}
-
-.app-title-mark {
-  font-weight: 720;
-  color: var(--text-1);
-}
-
-@supports ((-webkit-background-clip: text) or (background-clip: text)) {
-  .app-title-mark {
-    background: var(--brand-gradient);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-    -webkit-text-fill-color: transparent;
-  }
-}
-
-.app-title-sub {
-  font-weight: 420;
-  color: var(--text-3);
-}
-
-[data-theme='dark'] .app-title {
-  --brand-gradient: linear-gradient(118deg, #9fb8ff 0%, #7aa6ff 52%, #b3aaff 100%);
 }
 
 .project-menu {

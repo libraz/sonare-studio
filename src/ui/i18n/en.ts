@@ -85,6 +85,8 @@ export const en = {
       new: 'New...',
       open: 'Open...',
       openTitle: 'Open a saved project',
+      startScreen: 'Start screen...',
+      openDemo: 'Open demo song',
       save: 'Save',
       saveTitle: 'Save to browser storage',
       saveAs: 'Save As...',
@@ -166,6 +168,19 @@ export const en = {
     theme: {
       switchToLight: 'Switch to light mode',
       switchToDark: 'Switch to dark mode',
+    },
+    startScreen: {
+      label: 'Start screen',
+      subtitle: 'A digital audio workstation in your browser',
+      continueTitle: 'Continue last session',
+      continueDesc: 'Restore your autosaved project',
+      newTitle: 'New project',
+      newDesc: 'Start from a template',
+      demoTitle: 'Open the demo song',
+      demoDesc: 'Toccata and Fugue in D minor, BWV 565',
+      openHeading: 'Open a saved project',
+      projectMeta: '{size} · {date}',
+      importFromFile: 'Import from a file...',
     },
     sampleEditor: {
       title: 'Sample editor',

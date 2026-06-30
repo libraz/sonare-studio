@@ -27,6 +27,7 @@ import DialogHost from '@/components/shell/DialogHost.vue';
 import ErrorBanner from '@/components/shell/ErrorBanner.vue';
 import MidiLearnPanel from '@/components/shell/MidiLearnPanel.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
+import StartScreen from '@/components/shell/StartScreen.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
 import ToolPalette from '@/components/shell/ToolPalette.vue';
 import TransportBar from '@/components/shell/TransportBar.vue';
@@ -168,9 +169,14 @@ const {
   midiImportInput,
   newDialogOpen,
   openDialogOpen,
+  startScreenOpen,
+  hasAutosave,
   storedProjects,
   recentMenuNames,
   bootProject,
+  openStartScreen,
+  continueSession,
+  openDemo,
   markClean,
   closeProjectMenu,
   openNewDialog,
@@ -405,6 +411,20 @@ const {
   persistDockCollapsed,
 });
 
+// Defer the first-run welcome tour until the start screen is dismissed so the
+// two onboarding surfaces never overlap. Mirrors WelcomeTour's own seen flag.
+const TOUR_SEEN_KEY = 'sonare-studio.tourSeen';
+watch(startScreenOpen, (open, wasOpen) => {
+  if (!wasOpen || open) return;
+  let seen = false;
+  try {
+    seen = localStorage.getItem(TOUR_SEEN_KEY) !== null;
+  } catch {
+    seen = false;
+  }
+  if (!seen) tourRef.value?.open();
+});
+
 const { onWindowPointerDown } = useOutsidePopovers([
   { open: recordMenuOpen, root: recordMenuRoot, close: () => (recordMenuOpen.value = false) },
 ]);
@@ -440,6 +460,8 @@ const { arrangementRef, focusZone, layoutMenu, menuBarModel, onGlobalKeyDown, sh
     openNewDialog,
     openOpenDialog,
     openRecentProject,
+    openStartScreen,
+    openDemo,
     openShortcutsHelp,
     openWelcomeTour,
     saveCurrentLayout: saveCurrentLayoutAction,
@@ -956,7 +978,19 @@ useAppLifecycle({
       @test-tone="playTestTone"
     />
 
-    <WelcomeTour ref="tourRef" :steps="localizedTourSteps" />
+    <WelcomeTour ref="tourRef" :steps="localizedTourSteps" :auto-start="false" />
+
+    <StartScreen
+      :open="startScreenOpen"
+      :opfs-available="opfsAvailable"
+      :has-autosave="hasAutosave"
+      :stored-projects="storedProjects"
+      @continue-session="continueSession"
+      @new-project="openNewDialog"
+      @demo="openDemo"
+      @open-project="openStoredProject"
+      @import-project="importSzdFile"
+    />
 
     <ContextMenu />
 

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import BrandMark from '@/components/shell/BrandMark.vue';
 import MenuBar from '@/components/shell/MenuBar.vue';
 import TransportIcon from '@/components/shell/TransportIcon.vue';
 import { formatMessage, useI18n } from '@/ui/i18n';
@@ -29,10 +30,7 @@ const { t } = useI18n();
 
 <template>
   <header class="app-bar">
-    <span class="app-title">
-      <span class="app-title-mark">sonare</span>
-      <span class="app-title-sub">studio</span>
-    </span>
+    <BrandMark class="app-title" size="sm" />
 
     <MenuBar :menus="menus" :aria-label="t.shell.menus.barLabel" />
 

@@ -88,28 +88,31 @@ try {
   const page = await browser.newPage();
   page.on('pageerror', (err) => console.error('pageerror:', err.message));
 
-  // The shell offers to restore an autosave with a confirm() on boot. Decline
-  // on the first load (start from the demo project) and accept after the
-  // OPFS-save step below so the reload restores the saved state.
-  let acceptRestore = false;
+  // Accept any incidental confirm() dialogs (e.g. the delete-project prompt).
   page.on('dialog', (dialog) => {
-    if (dialog.type() === 'confirm' && dialog.message().includes('Restore')) {
-      void (acceptRestore ? dialog.accept() : dialog.dismiss());
-    } else {
-      void dialog.accept();
-    }
+    void dialog.accept();
   });
 
   await page.goto(baseUrl, { waitUntil: 'load' });
 
-  // Wait for the project store to initialize and the demo phrase to be seeded.
+  // The shell boots into the start screen rather than auto-loading content;
+  // open the bundled demo song to seed an editable project.
+  await page.waitForSelector('[data-testid="start-demo"]', { timeout: 30000 });
+  await page.click('[data-testid="start-demo"]');
   await page.waitForFunction(
     () => window.__sonareDebug?.initialized() === true && window.__sonareDebug.noteCount() > 0,
     null,
     { timeout: 30000 },
   );
+  // The demo carries a rubato tempo map; flatten it to a constant 120 BPM so the
+  // timing-sensitive scenarios below stay deterministic.
+  await page.evaluate(() => window.__sonareDebug.setTempoSegments([{ startPpq: 0, bpm: 120 }]));
+  await page.waitForFunction(() => window.__sonareDebug.applyPending() === false, null, {
+    timeout: 20000,
+  });
   const seededCount = await page.evaluate(() => window.__sonareDebug.noteCount());
-  console.info(`store initialized, seeded notes: ${seededCount}`);
+  const demoTrackCount = await page.evaluate(() => window.__sonareDebug.trackCount());
+  console.info(`demo loaded, seeded notes: ${seededCount}, tracks: ${demoTrackCount}`);
 
   // The app must be cross-origin isolated (COOP/COEP) so SharedArrayBuffer
   // and the realtime engine's shared-memory transport are available.
@@ -285,19 +288,22 @@ try {
   await page.waitForSelector('.right-zone', { state: 'detached', timeout: 5000 });
 
   // Add a MIDI track via the arrangement header column's add-track menu.
+  const expectedTracks = demoTrackCount + 1;
   await page.click('.track-headers .add-track');
   await page.click('.add-track-items button:has-text("MIDI track")');
-  await page.waitForFunction(() => window.__sonareDebug.trackCount() === 2, null, {
-    timeout: 5000,
-  });
+  await page.waitForFunction(
+    (expected) => window.__sonareDebug.trackCount() === expected,
+    expectedTracks,
+    { timeout: 5000 },
+  );
   const headerCount = await page.locator('.track-headers .track-header').count();
-  if (headerCount !== 2) {
-    fail(`expected 2 track headers after adding a track, got ${headerCount}`);
+  if (headerCount !== expectedTracks) {
+    fail(`expected ${expectedTracks} track headers after adding a track, got ${headerCount}`);
   } else {
-    console.info('track added: 2 track headers');
+    console.info(`track added: ${expectedTracks} track headers`);
   }
 
-  // Double-click lane 2 of the arrangement canvas to create a one-bar clip.
+  // Double-click the newly added (empty) bottom lane to create a one-bar clip.
   const clipsBefore = await page.evaluate(() => window.__sonareDebug.clipCount());
   const arrangeCanvas = page.locator('.arrangement-canvas');
   await arrangeCanvas.waitFor({ state: 'visible', timeout: 5000 });
@@ -305,17 +311,19 @@ try {
   if (!arrangeBox || arrangeBox.width <= 0 || arrangeBox.height <= 0) {
     fail(`arrangement canvas has no size: ${JSON.stringify(arrangeBox)}`);
   }
-  // Lane 2 starts below the 28 px ruler plus one 56 px lane; aim mid-lane.
-  await page.mouse.dblclick(arrangeBox.x + arrangeBox.width * 0.3, arrangeBox.y + 28 + 56 + 28);
+  // The added lane sits below the 28 px ruler plus the demo's lanes (56 px each);
+  // aim mid-lane.
+  const newLaneY = arrangeBox.y + 28 + demoTrackCount * 56 + 28;
+  await page.mouse.dblclick(arrangeBox.x + arrangeBox.width * 0.3, newLaneY);
   await page.waitForFunction(
     (before) => window.__sonareDebug.clipCount() === before + 1,
     clipsBefore,
     { timeout: 5000 },
   );
-  console.info(`clip created on lane 2: ${clipsBefore} -> ${clipsBefore + 1}`);
+  console.info(`clip created on the new lane: ${clipsBefore} -> ${clipsBefore + 1}`);
 
   // Save the project to OPFS via the project menu, then reload the page and
-  // accept the autosave-restore prompt: the two-track project must survive.
+  // continue the autosaved session: the project must survive.
   await page.click('.app-menubar__trigger:has-text("File")');
   await page
     .locator('.menu-panel [role="menuitem"]')
@@ -324,18 +332,22 @@ try {
   await page.waitForSelector('.autosave-state', { timeout: 15000 });
   console.info('project saved to OPFS');
 
-  acceptRestore = true;
   await page.reload({ waitUntil: 'load' });
+  // The start screen offers to continue the autosaved session after a reload.
+  await page.waitForSelector('[data-testid="start-continue"]', { timeout: 30000 });
+  await page.click('[data-testid="start-continue"]');
   await page.waitForFunction(
-    () => window.__sonareDebug?.initialized() === true && window.__sonareDebug.trackCount() === 2,
-    null,
+    (expected) =>
+      window.__sonareDebug?.initialized() === true &&
+      window.__sonareDebug.trackCount() === expected,
+    expectedTracks,
     { timeout: 30000 },
   );
   const restoredHeaders = await page.locator('.track-headers .track-header').count();
-  if (restoredHeaders !== 2) {
-    fail(`expected 2 track headers after reload, got ${restoredHeaders}`);
+  if (restoredHeaders !== expectedTracks) {
+    fail(`expected ${expectedTracks} track headers after reload, got ${restoredHeaders}`);
   } else {
-    console.info('project restored after reload: 2 track headers');
+    console.info(`project restored after reload: ${expectedTracks} track headers`);
   }
 
   // The shortcut override must survive the reload (localStorage) and still

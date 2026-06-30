@@ -85,6 +85,8 @@ export const ja = {
       new: '新規...',
       open: '開く...',
       openTitle: '保存済みプロジェクトを開く',
+      startScreen: 'スタート画面...',
+      openDemo: 'デモ曲を開く',
       save: '保存',
       saveTitle: 'ブラウザストレージに保存',
       saveAs: '別名で保存...',
@@ -166,6 +168,19 @@ export const ja = {
     theme: {
       switchToLight: 'ライトモードに切り替え',
       switchToDark: 'ダークモードに切り替え',
+    },
+    startScreen: {
+      label: 'スタート画面',
+      subtitle: 'ブラウザで動くデジタルオーディオワークステーション',
+      continueTitle: '前回の続き',
+      continueDesc: '自動保存されたプロジェクトを復元',
+      newTitle: '新規プロジェクト',
+      newDesc: 'テンプレートから始める',
+      demoTitle: 'デモ曲を開く',
+      demoDesc: 'トッカータとフーガ ニ短調 BWV 565',
+      openHeading: '保存済みプロジェクトを開く',
+      projectMeta: '{size}・{date}',
+      importFromFile: 'ファイルから読み込む...',
     },
     sampleEditor: {
       title: 'サンプルエディター',
