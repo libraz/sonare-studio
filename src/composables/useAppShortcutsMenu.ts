@@ -34,6 +34,7 @@ export interface AppShortcutsMenuOptions {
   handle: ShallowRef<EngineHandle | null>;
   helpOpen: Ref<boolean>;
   isPlaying: Ref<boolean>;
+  isGlobalShortcutBlocked?: () => boolean;
   layouts: Ref<readonly { name: string }[]>;
   loopEnabled: Ref<boolean>;
   opfsAvailable: boolean;
@@ -478,6 +479,7 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
 
   function onGlobalKeyDown(event: KeyboardEvent): void {
     if (event.defaultPrevented || isEditableTarget(event.target)) return;
+    if (options.isGlobalShortcutBlocked?.() === true) return;
     const scope = focusZone.value === 'arrange' ? 'arrangement' : 'editor';
     const actionId = options.shortcuts.match(event, scope);
     if (actionId === null) return;

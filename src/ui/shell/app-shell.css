@@ -46,12 +46,15 @@
 }
 
 .right-zone {
+  position: relative;
   flex: none;
+  z-index: 30;
   width: 300px;
   min-width: 0;
   display: flex;
   flex-direction: column;
   border-left: 1px solid var(--border-strong);
+  background: var(--surface-2);
   overflow: hidden;
 }
 
@@ -315,4 +318,3 @@
   flex: 1;
   min-height: 0;
 }
-

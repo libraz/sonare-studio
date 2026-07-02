@@ -24,8 +24,10 @@ const props = withDefaults(
     closeOnOverlay?: boolean;
     /** Dismiss on the Escape key. */
     dismissable?: boolean;
+    /** Stacking layer. The launcher sits below regular modals it can open. */
+    layer?: 'modal' | 'launcher';
   }>(),
-  { size: 'md', closeOnOverlay: true, dismissable: true },
+  { size: 'md', closeOnOverlay: true, dismissable: true, layer: 'modal' },
 );
 
 const emit = defineEmits<{
@@ -78,7 +80,12 @@ function onKeydown(event: KeyboardEvent): void {
 <template>
   <Teleport to="body">
     <Transition name="modal">
-      <div v-if="props.open" class="modal-scrim" @click.self="onOverlayClick">
+      <div
+        v-if="props.open"
+        class="modal-scrim"
+        :class="{ 'is-launcher-layer': props.layer === 'launcher' }"
+        @click.self="onOverlayClick"
+      >
         <div
           ref="dialogRef"
           class="modal-card"
@@ -131,6 +138,10 @@ function onKeydown(event: KeyboardEvent): void {
   background: var(--scrim);
   -webkit-backdrop-filter: var(--scrim-blur);
   backdrop-filter: var(--scrim-blur);
+}
+
+.modal-scrim.is-launcher-layer {
+  z-index: 90;
 }
 
 .modal-card {

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import AppModal from '@/components/shell/AppModal.vue';
 import BrandMark from '@/components/shell/BrandMark.vue';
 import type { StoredProjectInfo } from '@/persistence/opfs';
 import { formatMessage, useI18n } from '@/ui/i18n';
@@ -73,10 +74,15 @@ function projectMeta(info: StoredProjectInfo): string {
 </script>
 
 <template>
-  <Teleport to="body">
-    <div v-if="props.open" class="ss-overlay" role="dialog" aria-modal="true"
-      :aria-label="t.shell.startScreen.label">
-      <div class="ss-modal">
+  <AppModal
+    :open="props.open"
+    :aria-label="t.shell.startScreen.label"
+    size="md"
+    layer="launcher"
+    :dismissable="false"
+    :close-on-overlay="false"
+  >
+    <div class="ss-content">
         <header class="ss-head">
           <BrandMark size="lg" />
           <p class="ss-subtitle">{{ t.shell.startScreen.subtitle }}</p>
@@ -163,36 +169,13 @@ function projectMeta(info: StoredProjectInfo): string {
             {{ t.shell.startScreen.noticeRepoLabel }}
           </a>
         </footer>
-      </div>
     </div>
-  </Teleport>
+  </AppModal>
 </template>
 
 <style scoped>
-.ss-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 90;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--sp-8);
-  background: var(--scrim);
-  -webkit-backdrop-filter: var(--scrim-blur);
-  backdrop-filter: var(--scrim-blur);
-  animation: ss-fade var(--dur-3) var(--ease-out);
-}
-
-.ss-modal {
-  width: 420px;
-  max-width: 100%;
-  max-height: 100%;
+.ss-content {
   overflow: hidden auto;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-modal);
-  animation: ss-rise var(--dur-3) var(--ease-spring);
 }
 
 .ss-head {
@@ -439,22 +422,5 @@ function projectMeta(info: StoredProjectInfo): string {
 .ss-notice-link:focus-visible {
   outline: none;
   box-shadow: var(--ring);
-}
-
-@keyframes ss-fade {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes ss-rise {
-  from { opacity: 0; transform: translateY(8px) scale(0.98); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .ss-overlay,
-  .ss-modal {
-    animation: none;
-  }
 }
 </style>

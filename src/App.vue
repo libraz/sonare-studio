@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, provide, ref, shallowRef, watch } from 'vue';
+import { computed, nextTick, provide, ref, shallowRef, watch } from 'vue';
 import ArrangementView from '@/components/arrangement/ArrangementView.vue';
 import ClipInspector from '@/components/arrangement/ClipInspector.vue';
 import DeviceRack from '@/components/devices/DeviceRack.vue';
@@ -62,7 +62,7 @@ import type { EngineHandle } from '@/engine/engine';
 import type { MeterBridge } from '@/engine/meters';
 import type { ScopeBridge } from '@/engine/scope';
 import { ensureWasm } from '@/lib/wasm';
-import { quantizeSelection } from '@/project/commands';
+import { quantizeSelection, setActiveTrack } from '@/project/commands';
 import { serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { isAudioClip } from '@/project/types';
@@ -157,7 +157,7 @@ const { confirmAction, runAction } = useActionGuards({ appSettings, busy, errorM
 const recording = useRecording(() => handle.value, transport);
 const midiRecording = useMidiRecording(transport);
 const { armedTrackIds, recordMenuOpen, recordMenuRoot, onArmTrack, onCountInChange, toggleRecord } =
-  useRecordingControls({ appSettings, errorMessage, recording, midiRecording });
+  useRecordingControls({ appSettings, errorMessage, recording, midiRecording, transport });
 
 let bootPromise: Promise<void> | null = null;
 
@@ -388,6 +388,18 @@ const {
   toggleScorePanel,
 } = useAppShellLayout();
 
+const instrumentPickerRequest = ref(0);
+
+async function openTrackInstrumentPicker(trackId: number): Promise<void> {
+  setActiveTrack(trackId);
+  if (!deviceRackOpen.value) {
+    deviceRackOpen.value = true;
+    persistDeviceRackOpen();
+  }
+  await nextTick();
+  instrumentPickerRequest.value += 1;
+}
+
 // --- Settings, shortcut help, named layouts, welcome tour -----------------------
 
 const {
@@ -425,6 +437,18 @@ watch(startScreenOpen, (open, wasOpen) => {
   if (!seen) tourRef.value?.open();
 });
 
+const globalShortcutsBlocked = computed(
+  () =>
+    startScreenOpen.value ||
+    newDialogOpen.value ||
+    openDialogOpen.value ||
+    exportDialogOpen.value ||
+    settingsOpen.value ||
+    helpOpen.value ||
+    aboutOpen.value ||
+    diagnosticsOpen.value,
+);
+
 const { onWindowPointerDown } = useOutsidePopovers([
   { open: recordMenuOpen, root: recordMenuRoot, close: () => (recordMenuOpen.value = false) },
 ]);
@@ -437,6 +461,7 @@ const { arrangementRef, focusZone, layoutMenu, menuBarModel, onGlobalKeyDown, sh
     editorTool,
     handle,
     helpOpen,
+    isGlobalShortcutBlocked: () => globalShortcutsBlocked.value,
     isPlaying,
     layouts: namedLayouts.layouts,
     loopEnabled,
@@ -555,6 +580,7 @@ useAppLifecycle({
           :armed-track-ids="armedTrackIds"
           @seek="onSeek"
           @arm="onArmTrack"
+          @change-instrument="openTrackInstrumentPicker"
         />
         <ClipInspector :clip="store.activeClip" @redetect-tempo="onRedetectClipTempo" />
       </section>
@@ -884,7 +910,11 @@ useAppLifecycle({
 
       <Transition name="slide-right">
         <aside v-if="deviceRackOpen" class="right-zone" :aria-label="t.shell.devices.panelLabel">
-          <DeviceRack :transport-playing="isPlaying" :position-ppq="() => positionPpq" />
+          <DeviceRack
+            :transport-playing="isPlaying"
+            :position-ppq="() => positionPpq"
+            :instrument-picker-request="instrumentPickerRequest"
+          />
         </aside>
       </Transition>
     </main>

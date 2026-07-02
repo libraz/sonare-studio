@@ -21,8 +21,8 @@ import { TRACK_COLOR_PALETTE } from '@/project/types';
 /** Sample rate of the demo document, in Hz. */
 const DEMO_SAMPLE_RATE = 48000;
 
-/** Built-in synth preset used for every voice (an organ toccata). */
-const DEMO_PRESET = 'organ';
+/** Built-in pipe-organ physical model preset used for every voice. */
+const DEMO_PRESET = 'church-organ';
 
 /** Shape of the generated `bwv565.json` asset. */
 interface Bwv565Asset {
