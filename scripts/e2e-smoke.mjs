@@ -25,7 +25,9 @@
  * and applies the named workspace layout presets.
  *
  * Playwright is resolved from /tmp/node_modules; fflate from the project's
- * own node_modules. Usage:
+ * own node_modules. By default the bundled Playwright Chromium is used; set
+ * SONARE_E2E_BROWSER_CHANNEL=chrome to force the local Chrome channel.
+ * Usage:
  *   yarn dev --port 5199   # in the project root, in the background
  *   node scripts/e2e-smoke.mjs [baseUrl]
  */
@@ -72,9 +74,10 @@ function makeWavBytes(seconds, frequencyHz, sampleRate = 44100, amplitude = 0.8)
   return Buffer.concat([header, data]);
 }
 
+const browserChannel = process.env.SONARE_E2E_BROWSER_CHANNEL;
 const browser = await chromium.launch({
   headless: true,
-  channel: 'chrome',
+  ...(browserChannel ? { channel: browserChannel } : {}),
   args: [
     '--autoplay-policy=no-user-gesture-required',
     '--mute-audio',
