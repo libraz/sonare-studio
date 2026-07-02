@@ -7,9 +7,9 @@ WASM_BUILD_DIR="$JS_DIST_DIR"
 DEST_DIR="src/wasm"
 
 # Required files
-# Emscripten artifacts: main module + the dedicated realtime AudioWorklet
-# runtime (sonare-rt, C-ABI-only build selectable via runtimeTarget).
-WASM_FILES=("sonare.wasm" "sonare.js" "sonare-rt.wasm" "sonare-rt.js" "sonare-rt-module.js")
+# Emscripten artifacts: main module used by the offline API and realtime
+# AudioWorklet. The obsolete sonare-rt C-ABI runtime is pruned below.
+WASM_FILES=("sonare.wasm" "sonare.js")
 # tsup bundle: index.* is the high-level API, worklet.* is the AudioWorklet
 # entry that index.d.ts re-exports its types from.
 JS_FILES=("index.js" "index.d.ts" "worklet.js" "worklet.d.ts")
@@ -21,6 +21,7 @@ OBSOLETE_FILES=(
   "public_types.js" "public_types.d.ts"
   "stream_types.js" "stream_types.d.ts"
   "wasm_types.js" "wasm_types.d.ts"
+  "sonare-rt.wasm" "sonare-rt.js" "sonare-rt-module.js"
 )
 
 echo "📦 Copying WASM files from libsonare..."
@@ -104,8 +105,7 @@ fi
 WASM_CHANGED=false
 JS_CHANGED=false
 
-# Compare every Emscripten artifact, not just sonare.wasm — a sonare-rt-only
-# rebuild must still trigger a copy.
+# Compare every Emscripten artifact, not just sonare.wasm.
 for file in "${WASM_FILES[@]}"; do
   if [ ! -f "$DEST_DIR/$file" ] || ! cmp -s "$WASM_BUILD_DIR/$file" "$DEST_DIR/$file"; then
     WASM_CHANGED=true
@@ -235,8 +235,9 @@ if [ ${#STALE_CHUNKS[@]} -gt 0 ]; then
   done
 fi
 
-# Update meta.json if WASM changed
-if $WASM_CHANGED; then
+# Update meta.json whenever copied assets changed. A JS-only libsonare release
+# can still change the package version and asset sizes.
+if $WASM_CHANGED || $JS_CHANGED; then
   echo ""
   ./scripts/update-wasm-meta.sh
 fi
