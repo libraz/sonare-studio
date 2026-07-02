@@ -143,6 +143,19 @@ describe('smfToProjectDocument', () => {
     ]);
   });
 
+  it('keeps an imported MIDI track with an empty clip', async () => {
+    const bytes = smf(1, 480, [
+      [...meta(0, 0x51, [0x07, 0xa1, 0x20]), ...eot()],
+      [...meta(0, 0x03, ascii('Empty Pad')), ...eot()],
+    ]);
+
+    const doc = await smfToProjectDocument(bytes, 'empty.mid');
+
+    expect(doc.tracks).toHaveLength(1);
+    expect(doc.tracks[0].clips).toHaveLength(1);
+    expect(doc.tracks[0].clips[0].notes).toEqual([]);
+  });
+
   it('imports timeline meta events as markers', async () => {
     const bytes = smf(1, 480, [
       [
@@ -215,6 +228,64 @@ describe('smfToProjectDocument', () => {
     expect(doc.tracks.map((track) => track.clips[0].notes[0].channel)).toEqual([0, 1, 9]);
   });
 
+  it('keeps notes sustained across program changes in their note-on group', async () => {
+    const bytes = smf(0, 480, [
+      [
+        ...varLen(0),
+        0xc0,
+        0,
+        ...varLen(0),
+        0x90,
+        60,
+        100,
+        ...varLen(240),
+        0xc0,
+        38,
+        ...varLen(240),
+        0x80,
+        60,
+        0,
+        ...varLen(0),
+        0x90,
+        64,
+        100,
+        ...varLen(480),
+        0x80,
+        64,
+        0,
+        ...eot(),
+      ],
+    ]);
+
+    const doc = await smfToProjectDocument(bytes, 'held.mid');
+
+    expect(doc.tracks).toHaveLength(2);
+    expect(doc.tracks.map((track) => track.instrument)).toEqual([
+      { kind: 'synth-preset', preset: 'acoustic-piano' },
+      { kind: 'synth-preset', preset: 'sub-bass' },
+    ]);
+    expect(doc.tracks[0].clips[0].notes).toEqual([
+      { pitch: 60, velocity: 100, startPpq: 0, durationPpq: 1, channel: 0 },
+    ]);
+    expect(doc.tracks[1].clips[0].notes).toEqual([
+      { pitch: 64, velocity: 100, startPpq: 1, durationPpq: 1, channel: 0 },
+    ]);
+  });
+
+  it('assigns GM program 0 to note-only MIDI tracks without program changes', async () => {
+    const bytes = smf(0, 480, [
+      [...varLen(0), 0x90, 60, 100, ...varLen(480), 0x80, 60, 0, ...eot()],
+    ]);
+
+    const doc = await smfToProjectDocument(bytes, 'plain.mid');
+
+    expect(doc.tracks).toHaveLength(1);
+    expect(doc.tracks[0].instrument).toEqual({ kind: 'synth-preset', preset: 'acoustic-piano' });
+    expect(doc.tracks[0].clips[0].notes).toEqual([
+      { pitch: 60, velocity: 100, startPpq: 0, durationPpq: 1, channel: 0 },
+    ]);
+  });
+
   it('rejects SMPTE time division', async () => {
     const bytes = smf(0, 0xe250, [[...eot()]]);
     await expect(smfToProjectDocument(bytes)).rejects.toThrow(/SMF|MIDI|import|SMPTE/i);
@@ -277,6 +348,69 @@ describe('smfToProjectDocument', () => {
     expect(roundTrip.tracks[0].clips[0].polyPressureLanes).toEqual([
       { channel: 0, pitch: 36, points: [{ ppq: 0.75, value: 90 }] },
     ]);
+  });
+
+  it('round-trips app synth presets through GM program changes', async () => {
+    const presets = [
+      'acoustic-piano',
+      'e-piano',
+      'organ',
+      'electric-guitar',
+      'sub-bass',
+      'warm-pad',
+      'brass',
+      'saw-lead',
+      'square-lead',
+      'pluck',
+      'drum-kit',
+      'sine',
+    ];
+    const source: ProjectDocument = {
+      schemaVersion: 3,
+      name: 'Presets',
+      sampleRate: 48000,
+      tempoSegments: [{ startPpq: 0, bpm: 120 }],
+      timeSignatures: [{ startPpq: 0, numerator: 4, denominator: 4 }],
+      tracks: presets.map((preset, index) => ({
+        name: preset,
+        color: '#000',
+        kind: 'midi',
+        mute: false,
+        solo: false,
+        volume: 1,
+        pan: 0,
+        instrument: { kind: 'synth-preset', preset },
+        clips: [
+          {
+            name: preset,
+            startPpq: index,
+            lengthPpq: 1,
+            sourceOffsetPpq: 0,
+            gain: 1,
+            loopEnabled: false,
+            loopLengthPpq: 0,
+            kind: 'midi',
+            notes: [
+              {
+                pitch: 60,
+                velocity: 100,
+                startPpq: 0,
+                durationPpq: 1,
+                channel: 0,
+              },
+            ],
+          },
+        ],
+      })),
+      markers: [],
+      sections: [],
+    };
+
+    const roundTrip = await smfToProjectDocument(await projectDocumentToSmf(source), 'presets.mid');
+
+    expect(roundTrip.tracks.map((track) => track.instrument)).toEqual(
+      presets.map((preset) => ({ kind: 'synth-preset', preset })),
+    );
   });
 
   it('exports timeline markers as MIDI meta events', async () => {

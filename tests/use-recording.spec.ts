@@ -606,6 +606,41 @@ describe('useRecording', () => {
       expect(clip.compSegments).toEqual([{ startPpq: 0, takeIndex: 1 }]);
     });
 
+    it('anchors split boundaries instead of accumulating rounded loop-frame drift', async () => {
+      const { recording, fake, transport } = setup();
+      const trackId = addAudioTrack({ name: 'Vox' });
+      recording.arm(trackId);
+      setTempoSegments([{ startPpq: 0, bpm: 123 }]);
+      setLoop(transport, 0, 1);
+      const framesPerCycle = (60 / 123) * 48000;
+      const captureFrames = Math.round(framesPerCycle * 3);
+      fake.setResult({
+        channels: [makeCapture(captureFrames)],
+        sampleRate: 48000,
+        startPpq: 0,
+      });
+      ingestMock.mockImplementation(async (channels, sampleRate, name) => ({
+        id: name,
+        name,
+        sampleRate,
+        numChannels: channels.length,
+        numFrames: channels[0]?.length ?? 0,
+      }));
+
+      await recording.record();
+      const clipId = await recording.stopRecord();
+
+      expect(clipId).not.toBeNull();
+      expect(ingestMock.mock.calls.map((call) => call[0][0].length)).toEqual([
+        Math.round(framesPerCycle),
+        Math.round(framesPerCycle * 2) - Math.round(framesPerCycle),
+        Math.round(framesPerCycle * 3) - Math.round(framesPerCycle * 2),
+      ]);
+      const clip = store.clips.find((c) => c.id === clipId);
+      expect(clip?.takes).toHaveLength(3);
+      expect(clip?.lengthPpq).toBe(1);
+    });
+
     it('falls back to one linear clip when fewer than two passes complete', async () => {
       const { recording, fake, transport } = setup();
       const trackId = addAudioTrack();

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { NoteBoundaryEvent, RawNote } from '@/project/midi-events';
-import { finalizeRecording, quantizeRecordedNotes } from '@/project/midi-recording';
+import {
+  finalizeRecording,
+  foldRecordedNotesIntoLoop,
+  quantizeRecordedNotes,
+} from '@/project/midi-recording';
 
 /** A clip-relative note with neutral defaults. */
 function note(over: Partial<RawNote> & Pick<RawNote, 'startPpq' | 'durationPpq'>): RawNote {
@@ -68,5 +72,29 @@ describe('finalizeRecording', () => {
         stopPpq: 4,
       }),
     ).toBeNull(); // unmatched note-on, no notes survive
+  });
+});
+
+describe('foldRecordedNotesIntoLoop', () => {
+  it('wraps later passes into one loop-length overdub', () => {
+    const out = foldRecordedNotesIntoLoop(
+      [
+        note({ pitch: 60, startPpq: 0.5, durationPpq: 1 }),
+        note({ pitch: 64, startPpq: 4.25, durationPpq: 0.5 }),
+      ],
+      4,
+    );
+    expect(out).toEqual([
+      note({ pitch: 64, startPpq: 0.25, durationPpq: 0.5 }),
+      note({ pitch: 60, startPpq: 0.5, durationPpq: 1 }),
+    ]);
+  });
+
+  it('splits notes that sustain across the loop boundary', () => {
+    const out = foldRecordedNotesIntoLoop([note({ startPpq: 3.5, durationPpq: 1 })], 4);
+    expect(out).toEqual([
+      note({ startPpq: 0, durationPpq: 0.5 }),
+      note({ startPpq: 3.5, durationPpq: 0.5 }),
+    ]);
   });
 });

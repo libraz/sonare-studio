@@ -393,15 +393,20 @@ export function useRecording(
         const loopLengthPpq = loop.endPpq - loop.startPpq;
         const loopSeconds =
           ppqToSecondsMap(tempoMap, loop.endPpq) - ppqToSecondsMap(tempoMap, loop.startPpq);
-        const cycleFrames = Math.round(loopSeconds * result.sampleRate);
-        const cycles = cycleFrames > 0 ? Math.floor(result.channels[0].length / cycleFrames) : 0;
+        const framesPerCycle = loopSeconds * result.sampleRate;
+        let cycles = 0;
+        while (
+          framesPerCycle > 0 &&
+          Math.round((cycles + 1) * framesPerCycle) <= result.channels[0].length
+        ) {
+          cycles += 1;
+        }
         if (cycles >= 2) {
           const takes: { assetId: string; name: string }[] = [];
           for (let cycle = 0; cycle < cycles; cycle++) {
-            const begin = cycle * cycleFrames;
-            const slice = result.channels.map((channel) =>
-              channel.slice(begin, begin + cycleFrames),
-            );
+            const begin = Math.round(cycle * framesPerCycle);
+            const end = Math.round((cycle + 1) * framesPerCycle);
+            const slice = result.channels.map((channel) => channel.slice(begin, end));
             const takeName = `${name} — Take ${cycle + 1}`;
             const takeMeta = await ingest(slice, result.sampleRate, takeName);
             takes.push({ assetId: takeMeta.id, name: takeName });

@@ -212,6 +212,7 @@ export function useTransport(
     if (!handle) return false;
     const ok = handle.engine.transport.stop(sampleTime);
     if (ok) {
+      handle.engine.pushMidiPanic();
       isPlaying.value = false;
       stopPolling();
     }

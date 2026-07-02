@@ -2,6 +2,7 @@ import { computed, type Ref, ref, watch } from 'vue';
 import type { useAppSettings } from '@/composables/useAppSettings';
 import type { useMidiRecording } from '@/composables/useMidiRecording';
 import type { useRecording } from '@/composables/useRecording';
+import type { UseTransportReturn } from '@/composables/useTransport';
 import { useProjectStore } from '@/project/store';
 
 type AppSettings = ReturnType<typeof useAppSettings>;
@@ -13,19 +14,22 @@ export interface RecordingControlsOptions {
   errorMessage: Ref<string>;
   recording: Recording;
   midiRecording: MidiRecording;
+  transport: UseTransportReturn;
 }
 
 export function useRecordingControls(options: RecordingControlsOptions) {
-  const { appSettings, errorMessage, recording, midiRecording } = options;
+  const { appSettings, errorMessage, recording, midiRecording, transport } = options;
   const store = useProjectStore();
   const recordMenuOpen = ref(false);
   const recordMenuRoot = ref<HTMLElement | null>(null);
 
   recording.countInBars.value = appSettings.settings.countInBars;
+  midiRecording.countInBars.value = appSettings.settings.countInBars;
   watch(
     () => appSettings.settings.countInBars,
     (bars) => {
       recording.countInBars.value = bars;
+      midiRecording.countInBars.value = bars;
     },
   );
   if (appSettings.settings.monitorDefault) recording.setMonitor(true);
@@ -67,10 +71,24 @@ export function useRecordingControls(options: RecordingControlsOptions) {
       if (midiRecording.isRecording.value) midiRecording.stopRecord();
       return;
     }
-    // MIDI starts first so it owns the transport punch-in; audio then records
-    // from the rolling transport.
-    if (midiRecording.armedTrackId.value !== null) midiRecording.record();
-    if (recording.armedTrackId.value !== null) void recording.record();
+    const midiArmed = midiRecording.armedTrackId.value !== null;
+    const audioArmed = recording.armedTrackId.value !== null;
+    if (
+      midiArmed &&
+      audioArmed &&
+      !transport.isPlaying.value &&
+      appSettings.settings.countInBars > 0
+    ) {
+      const startPpq = Math.max(0, transport.positionPpq.value);
+      void recording.record().then((started) => {
+        if (started) midiRecording.record(startPpq);
+      });
+      return;
+    }
+    // MIDI starts first so it owns the transport punch-in when there is no
+    // shared count-in; audio then records from the rolling transport.
+    if (midiArmed) midiRecording.record();
+    if (audioArmed) void recording.record();
   }
 
   return {

@@ -21,6 +21,8 @@ const SMF_EDGE_PAD_PPQ = 1 / 480;
 const PPQ_INTEGER_EPSILON = 1 / 256;
 
 const STATUS_POLY_PRESSURE = 0xa;
+const STATUS_NOTE_OFF = 0x8;
+const STATUS_NOTE_ON = 0x9;
 const STATUS_CONTROL_CHANGE = 0xb;
 const STATUS_PROGRAM_CHANGE = 0xc;
 const STATUS_CHANNEL_PRESSURE = 0xd;
@@ -148,6 +150,7 @@ function presetForGmProgram(program: number, ch: number, bank?: number): string 
   if (program < 56) return 'warm-pad';
   if (program < 64) return 'brass';
   if (program < 80) return 'organ';
+  if (program === 80) return 'square-lead';
   if (program < 88) return 'saw-lead';
   if (program < 96) return 'warm-pad';
   if (program < 112) return 'pluck';
@@ -160,7 +163,7 @@ function gmProgramForPreset(preset: string): number {
     case 'acoustic-piano':
       return 0;
     case 'e-piano':
-      return 4;
+      return 8;
     case 'organ':
       return 16;
     case 'electric-guitar':
@@ -176,11 +179,11 @@ function gmProgramForPreset(preset: string): number {
     case 'square-lead':
       return 80;
     case 'pluck':
-      return 45;
+      return 104;
     case 'drum-kit':
       return 0;
     case 'sine':
-      return 80;
+      return 120;
     default:
       return 4;
   }
@@ -303,13 +306,52 @@ function groupKey(programs: ReadonlyArray<ProgramEntry>, ch: number, ppq: number
   const program = programAt(programs, ch, ppq);
   return {
     channel: ch,
-    ...(program ? { program: program.program } : {}),
+    program: program?.program ?? 0,
     ...(program?.bank !== undefined ? { bank: program.bank } : {}),
   };
 }
 
 function groupKeyText(key: TrackGroupKey): string {
   return `${key.channel}:${key.bank ?? -1}:${key.program ?? -1}`;
+}
+
+function isNoteOn(event: SerializedMidiEvent): boolean {
+  return statusNibble(event) === STATUS_NOTE_ON && data2(event) > 0;
+}
+
+function isNoteOff(event: SerializedMidiEvent): boolean {
+  const status = statusNibble(event);
+  return status === STATUS_NOTE_OFF || (status === STATUS_NOTE_ON && data2(event) === 0);
+}
+
+/**
+ * Assigns note-off boundaries to the same import group as their note-on. This
+ * keeps sustained notes intact when a Program Change occurs before note-off.
+ */
+function noteEventGroupOverrides(
+  events: ReadonlyArray<SerializedMidiEvent>,
+  programs: ReadonlyArray<ProgramEntry>,
+): Map<SerializedMidiEvent, TrackGroupKey> {
+  const ordered = events.map((event, index) => ({ event, index }));
+  ordered.sort((a, b) => a.event.ppq - b.event.ppq || a.index - b.index);
+  const pending = new Map<string, TrackGroupKey[]>();
+  const overrides = new Map<SerializedMidiEvent, TrackGroupKey>();
+  for (const { event } of ordered) {
+    if (!isNoteOn(event) && !isNoteOff(event)) continue;
+    const ch = channel(event);
+    const key = `${ch}:${data1(event)}`;
+    if (isNoteOn(event)) {
+      const group = groupKey(programs, ch, event.ppq);
+      const queue = pending.get(key) ?? [];
+      queue.push(group);
+      pending.set(key, queue);
+      overrides.set(event, group);
+      continue;
+    }
+    const group = pending.get(key)?.shift();
+    if (group !== undefined) overrides.set(event, group);
+  }
+  return overrides;
 }
 
 function pushCc(
@@ -468,9 +510,18 @@ function trackDocument(
   nameSuffix = '',
 ): DocumentTrack {
   const programs = programsFromEvents(events);
+  const defaultProgram =
+    programs.length === 0 && events.some((event) => isNoteOn(event))
+      ? {
+          ppq: 0,
+          channel: channel(events.find((event) => isNoteOn(event)) as SerializedMidiEvent),
+          program: 0,
+        }
+      : undefined;
   const firstProgram =
     programs.find((entry) => entry.channel === 9 || entry.bank === 128) ??
     programs[0] ??
+    defaultProgram ??
     (events.some((event) => channel(event) === 9)
       ? { ppq: 0, channel: 9, program: 0, bank: 128 }
       : undefined);
@@ -502,10 +553,11 @@ function splitTrackByChannelAndProgram(
   index: number,
 ): DocumentTrack[] {
   const programs = programsFromEvents(events);
+  const noteGroups = noteEventGroupOverrides(events, programs);
   const groups = new Map<string, { key: TrackGroupKey; events: SerializedMidiEvent[] }>();
   for (const event of events) {
     const ch = channel(event);
-    const key = groupKey(programs, ch, event.ppq);
+    const key = noteGroups.get(event) ?? groupKey(programs, ch, event.ppq);
     const text = groupKeyText(key);
     const group = groups.get(text) ?? { key, events: [] };
     group.events.push(event);
@@ -536,7 +588,6 @@ function documentFromProjectJson(json: string, fileName?: string): ProjectDocume
     const track = tracksById.get(clip.track_id);
     if (track?.kind !== 1) continue;
     const events = extractEvents(parsed.midi_content?.[String(clip.id)]);
-    if (events.length === 0) continue;
     tracks.push(...splitTrackByChannelAndProgram(track, clip, events, tracks.length));
   }
   return {
@@ -732,7 +783,13 @@ async function projectFromDocument(
       if (preset) {
         const program = clampInt(gmProgramForPreset(preset), 0, 127);
         const channels = new Set([0, ...clip.notes.map((note) => clampInt(note.channel, 0, 15))]);
-        for (const ch of channels) events.unshift(wasm.Project.midiProgram(0, 0, ch, program));
+        for (const ch of channels) {
+          if (preset === 'drum-kit') {
+            events.unshift(...wasm.Project.midiBankProgram(0, 0, ch, 1, 0, program));
+          } else {
+            events.unshift(wasm.Project.midiProgram(0, 0, ch, program));
+          }
+        }
       } else if (instrument?.kind === 'sf2') {
         const bank = clampInt(instrument.bank ?? 0, 0, 16383);
         const program = clampInt(instrument.program ?? 0, 0, 127);

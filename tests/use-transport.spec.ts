@@ -15,6 +15,7 @@ interface MockHandle {
     setLoop: ReturnType<typeof vi.fn>;
   };
   setMetronome: ReturnType<typeof vi.fn>;
+  pushMidiPanic: ReturnType<typeof vi.fn>;
   pollTelemetry: ReturnType<typeof vi.fn>;
   emitTelemetry: (record: Partial<SonareEngineTelemetryRecord>) => void;
 }
@@ -30,11 +31,13 @@ function createMockHandle(sampleRate = 48000): MockHandle {
     setLoop: vi.fn(() => true),
   };
   const setMetronome = vi.fn();
+  const pushMidiPanic = vi.fn();
   const pollTelemetry = vi.fn(() => []);
   let telemetryListener: ((record: SonareEngineTelemetryRecord) => void) | null = null;
   const engine = {
     transport,
     setMetronome,
+    pushMidiPanic,
     pollTelemetry,
     onTelemetry: vi.fn((cb: (record: SonareEngineTelemetryRecord) => void) => {
       telemetryListener = cb;
@@ -61,7 +64,7 @@ function createMockHandle(sampleRate = 48000): MockHandle {
       ...record,
     });
   };
-  return { handle, transport, setMetronome, pollTelemetry, emitTelemetry };
+  return { handle, transport, setMetronome, pushMidiPanic, pollTelemetry, emitTelemetry };
 }
 
 describe('useTransport', () => {
@@ -101,6 +104,7 @@ describe('useTransport', () => {
     transport.play();
     expect(transport.stop(12345)).toBe(true);
     expect(mock.transport.stop).toHaveBeenCalledWith(12345);
+    expect(mock.pushMidiPanic).toHaveBeenCalledTimes(1);
     expect(transport.isPlaying.value).toBe(false);
   });
 

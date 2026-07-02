@@ -9,6 +9,9 @@
 
 import type { ClipCompSegment, ClipTake } from './types';
 
+/** Default short comp-boundary crossfade used to avoid clicks at hard edits. */
+export const DEFAULT_COMP_CROSSFADE_PPQ = 0.02;
+
 /** The clip fields the comping helpers read (Editor and Document clips both fit). */
 export interface CompableClipFields {
   lengthPpq: number;
@@ -56,7 +59,13 @@ export function sanitizeCompSegments(
         segment.takeIndex >= 0 &&
         segment.takeIndex < takeCount,
     )
-    .map((segment) => ({ startPpq: Math.max(0, segment.startPpq), takeIndex: segment.takeIndex }));
+    .map((segment) => ({
+      startPpq: Math.max(0, segment.startPpq),
+      takeIndex: segment.takeIndex,
+      ...(Number.isFinite(segment.crossfadePpq)
+        ? { crossfadePpq: Math.max(0, segment.crossfadePpq as number) }
+        : {}),
+    }));
   // Stable sort; for equal starts the later entry wins below.
   valid.sort((a, b) => a.startPpq - b.startPpq);
   const result: ClipCompSegment[] = [];
@@ -64,6 +73,7 @@ export function sanitizeCompSegments(
     const previous = result[result.length - 1];
     if (previous && previous.startPpq === segment.startPpq) {
       previous.takeIndex = segment.takeIndex;
+      if (segment.crossfadePpq !== undefined) previous.crossfadePpq = segment.crossfadePpq;
       continue;
     }
     result.push(segment);
@@ -121,6 +131,31 @@ export function compSegmentsWithRange(
   return sanitizeCompSegments(next, takeCount, clip.lengthPpq);
 }
 
+function compBoundaryCrossfadePpq(
+  selection: ReadonlyArray<ClipCompSegment>,
+  boundaryIndex: number,
+  clipLengthPpq: number,
+): number {
+  const boundary = selection[boundaryIndex];
+  const previous = selection[boundaryIndex - 1];
+  if (!boundary || !previous) return 0;
+  const requested = boundary.crossfadePpq ?? DEFAULT_COMP_CROSSFADE_PPQ;
+  if (requested <= 0) return 0;
+  const boundaryPpq = boundary.startPpq;
+  const previousLength = boundaryPpq - previous.startPpq;
+  const nextStart =
+    boundaryIndex + 1 < selection.length ? selection[boundaryIndex + 1].startPpq : clipLengthPpq;
+  const nextLength = nextStart - boundaryPpq;
+  const half = Math.min(
+    requested / 2,
+    Math.max(0, previousLength),
+    Math.max(0, nextLength),
+    Math.max(0, boundaryPpq),
+    Math.max(0, clipLengthPpq - boundaryPpq),
+  );
+  return half * 2;
+}
+
 /**
  * Expands an audio clip into its playable segments. A clip without takes is
  * one segment over its own asset; a clip with takes follows its comp
@@ -150,19 +185,28 @@ export function audioClipSegments(clip: CompableClipFields): AudioClipSegment[] 
     takes.length,
     clip.lengthPpq,
   );
+  const boundaryCrossfades = selection.map((_, index) =>
+    compBoundaryCrossfadePpq(selection, index, clip.lengthPpq),
+  );
   const result: AudioClipSegment[] = [];
   for (let i = 0; i < selection.length; i++) {
     const segment = selection[i];
     const endPpq = i + 1 < selection.length ? selection[i + 1].startPpq : clip.lengthPpq;
-    const lengthPpq = endPpq - segment.startPpq;
+    const fadeInPpq = i === 0 ? (clip.fadeInPpq ?? 0) : boundaryCrossfades[i];
+    const fadeOutPpq =
+      i === selection.length - 1 ? (clip.fadeOutPpq ?? 0) : boundaryCrossfades[i + 1];
+    const startExtensionPpq = i === 0 ? 0 : fadeInPpq / 2;
+    const endExtensionPpq = i === selection.length - 1 ? 0 : fadeOutPpq / 2;
+    const offsetPpq = segment.startPpq - startExtensionPpq;
+    const lengthPpq = endPpq - segment.startPpq + startExtensionPpq + endExtensionPpq;
     if (lengthPpq <= 0) continue;
     result.push({
       assetId: takes[segment.takeIndex].assetId,
-      offsetPpq: segment.startPpq,
+      offsetPpq,
       lengthPpq,
-      sourceOffsetPpq: clip.sourceOffsetPpq + segment.startPpq,
-      fadeInPpq: i === 0 ? (clip.fadeInPpq ?? 0) : 0,
-      fadeOutPpq: i === selection.length - 1 ? (clip.fadeOutPpq ?? 0) : 0,
+      sourceOffsetPpq: clip.sourceOffsetPpq + offsetPpq,
+      fadeInPpq,
+      fadeOutPpq,
     });
   }
   return result;

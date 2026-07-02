@@ -271,8 +271,8 @@ describe('audioClipSegments', () => {
       fadeOutPpq: 0.25,
       compSegments: [
         { startPpq: 0, takeIndex: 0 },
-        { startPpq: 2, takeIndex: 1 },
-        { startPpq: 5, takeIndex: 2 },
+        { startPpq: 2, takeIndex: 1, crossfadePpq: 0 },
+        { startPpq: 5, takeIndex: 2, crossfadePpq: 0 },
       ],
     });
     expect(audioClipSegments(clip)).toEqual([
@@ -307,7 +307,7 @@ describe('audioClipSegments', () => {
     const clip = makeCompClip({
       compSegments: [
         { startPpq: 5, takeIndex: 1 },
-        { startPpq: 5, takeIndex: 2 },
+        { startPpq: 5, takeIndex: 2, crossfadePpq: 0 },
         { startPpq: -1, takeIndex: 0 },
       ],
     });
@@ -326,6 +326,34 @@ describe('audioClipSegments', () => {
         lengthPpq: 3,
         sourceOffsetPpq: 5,
         fadeInPpq: 0,
+        fadeOutPpq: 0,
+      },
+    ]);
+  });
+
+  it('adds a short default crossfade around internal comp boundaries', () => {
+    const clip = makeCompClip({
+      compSegments: [
+        { startPpq: 0, takeIndex: 0 },
+        { startPpq: 2, takeIndex: 1 },
+      ],
+    });
+
+    expect(audioClipSegments(clip)).toEqual([
+      {
+        assetId: 'take-a',
+        offsetPpq: 0,
+        lengthPpq: 2.01,
+        sourceOffsetPpq: 0,
+        fadeInPpq: 0,
+        fadeOutPpq: 0.02,
+      },
+      {
+        assetId: 'take-b',
+        offsetPpq: 1.99,
+        lengthPpq: 6.01,
+        sourceOffsetPpq: 1.99,
+        fadeInPpq: 0.02,
         fadeOutPpq: 0,
       },
     ]);
@@ -555,7 +583,7 @@ describe('take and comping commands', () => {
     const clipId = await addCompedClip();
     setClipCompSegments(clipId, [
       { startPpq: 0, takeIndex: 0 },
-      { startPpq: 2, takeIndex: 1 },
+      { startPpq: 2, takeIndex: 1, crossfadePpq: 0 },
     ]);
     expect(() => dropClipTakes(clipId)).toThrow(/multi-segment/);
 
@@ -571,7 +599,7 @@ describe('take and comping commands', () => {
     expect(restored?.takes).toEqual(twoTakes());
     expect(restored?.compSegments).toEqual([
       { startPpq: 0, takeIndex: 0 },
-      { startPpq: 2, takeIndex: 1 },
+      { startPpq: 2, takeIndex: 1, crossfadePpq: 0 },
     ]);
     expect(restored?.assetId).toBe('take-a');
 

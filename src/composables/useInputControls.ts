@@ -7,6 +7,7 @@ import type { RealtimeEngine } from '@/wasm/index.js';
 
 type StepInput = ReturnType<typeof useStepInput>;
 type RunAction = (action: () => Promise<void>) => Promise<void>;
+type RecordNoteEvent = { pitch: number; velocity: number; channel: number; timeStampMs?: number };
 
 export interface InputControlsOptions {
   errorMessage: Ref<string>;
@@ -19,9 +20,9 @@ export interface InputControlsOptions {
   /** Releases a sustained live note started by previewNoteOn. */
   previewNoteOff: (pitch: number) => void;
   /** Captures an incoming note-on for MIDI recording (when armed/rolling). */
-  onRecordNoteOn?: (event: { pitch: number; velocity: number; channel: number }) => void;
+  onRecordNoteOn?: (event: RecordNoteEvent) => void;
   /** Captures an incoming note-off for MIDI recording (when armed/rolling). */
-  onRecordNoteOff?: (event: { pitch: number; velocity: number; channel: number }) => void;
+  onRecordNoteOff?: (event: RecordNoteEvent) => void;
   runAction: RunAction;
 }
 

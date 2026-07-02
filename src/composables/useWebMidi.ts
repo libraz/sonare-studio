@@ -24,6 +24,8 @@ export interface WebMidiNoteEvent {
   velocity: number;
   /** MIDI channel (0-15). */
   channel: number;
+  /** Web MIDI event timestamp in milliseconds, when provided by the browser. */
+  timeStampMs?: number;
 }
 
 /** A control-change (CC) message received from a Web MIDI input. */
@@ -108,11 +110,17 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
     const channel = data[0] & 0x0f;
     const pitch = data[1] & 0x7f;
     const velocity = data[2] & 0x7f;
+    const timeStampMs = Number.isFinite(event.timeStamp) ? event.timeStamp : undefined;
     if (status === STATUS_NOTE_ON && velocity > 0) {
-      options.onNoteOn?.({ pitch, velocity, channel });
+      options.onNoteOn?.({ pitch, velocity, channel, timeStampMs });
     } else if (status === STATUS_NOTE_OFF || status === STATUS_NOTE_ON) {
       // A note-on with velocity 0 is a note-off per MIDI 1.0 semantics.
-      options.onNoteOff?.({ pitch, velocity: status === STATUS_NOTE_OFF ? velocity : 0, channel });
+      options.onNoteOff?.({
+        pitch,
+        velocity: status === STATUS_NOTE_OFF ? velocity : 0,
+        channel,
+        timeStampMs,
+      });
     } else if (status === STATUS_CONTROL_CHANGE) {
       // data[1] = controller number, data[2] = value (both 7-bit).
       options.onControlChange?.({ controller: pitch, value: velocity, channel });

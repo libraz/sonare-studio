@@ -22,6 +22,42 @@ export function quantizeRecordedNotes(notes: ReadonlyArray<RawNote>, gridPpq: nu
   return quantized;
 }
 
+/**
+ * Folds a linear loop capture into one loop-length overdub clip.
+ *
+ * Notes are wrapped modulo loopLengthPpq; notes crossing the loop boundary are
+ * split so playback inside a looping clip does not depend on sustain across
+ * the clip end.
+ */
+export function foldRecordedNotesIntoLoop(
+  notes: ReadonlyArray<RawNote>,
+  loopLengthPpq: number,
+): RawNote[] {
+  if (!Number.isFinite(loopLengthPpq) || loopLengthPpq <= 0) return notes.slice();
+  const out: RawNote[] = [];
+  for (const note of notes) {
+    const endPpq = note.startPpq + note.durationPpq;
+    let cursor = note.startPpq;
+    while (cursor < endPpq - 1e-9) {
+      const loopIndex = Math.floor(cursor / loopLengthPpq);
+      const loopStart = loopIndex * loopLengthPpq;
+      const inLoopStart = cursor - loopStart;
+      const segmentEnd = Math.min(endPpq, loopStart + loopLengthPpq);
+      const durationPpq = segmentEnd - cursor;
+      if (durationPpq > 1e-9) {
+        out.push({
+          ...note,
+          startPpq: Math.max(0, inLoopStart),
+          durationPpq,
+        });
+      }
+      cursor = segmentEnd;
+    }
+  }
+  out.sort((a, b) => a.startPpq - b.startPpq || a.pitch - b.pitch || a.channel - b.channel);
+  return out;
+}
+
 /** Result of finalizing a captured performance into a placeable clip. */
 export interface FinalizedRecording {
   /** Notes relative to the clip window (startPpq from 0). */

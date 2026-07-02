@@ -50,10 +50,11 @@ function makeTransport() {
 }
 
 /** A recording handle whose clip command records its input instead of editing. */
-function setup() {
+function setup(options: { now?: () => number } = {}) {
   const calls: AddRecordedMidiClipInput[] = [];
   const t = makeTransport();
   const recording = useMidiRecording(t.transport, {
+    now: options.now,
     addRecordedMidiClip: (input) => {
       calls.push(input);
       return 1;
@@ -97,6 +98,21 @@ describe('useMidiRecording', () => {
     expect(recording.isRecording.value).toBe(false);
   });
 
+  it('starts stopped MIDI recording with a count-in pre-roll', () => {
+    const { recording, positionPpq, seekPpq, play, transport } = setup();
+    recording.arm(store.tracks[0].id);
+    recording.countInBars.value = 1;
+    positionPpq.value = 8;
+
+    expect(recording.record()).toBe(true);
+
+    expect(transport.toggleMetronome).toHaveBeenCalledWith(true);
+    expect(seekPpq).toHaveBeenCalledWith(4);
+    expect(play).toHaveBeenCalledOnce();
+    expect(recording.isCountingIn.value).toBe(true);
+    expect(recording.stopRecord()).toBeNull();
+  });
+
   it('closes a key still held at the punch-out with an implicit release', () => {
     const { recording, positionPpq, calls } = setup();
     recording.arm(store.tracks[0].id);
@@ -108,6 +124,32 @@ describe('useMidiRecording', () => {
     expect(calls[0].notes).toEqual([
       { pitch: 67, velocity: 100, startPpq: 1, durationPpq: 4, channel: 0 },
     ]);
+  });
+
+  it('keeps held notes across loop wraps by recording monotonic PPQ', () => {
+    const { recording, positionPpq, transport, calls } = setup();
+    recording.arm(store.tracks[0].id);
+    transport.loopEnabled.value = true;
+    transport.loopStartPpq.value = 4;
+    transport.loopEndPpq.value = 8;
+    positionPpq.value = 4;
+    recording.record();
+
+    positionPpq.value = 7.5;
+    recording.captureNoteOn({ pitch: 60, velocity: 96, channel: 0 });
+    positionPpq.value = 4.5; // transport wrapped to the loop start
+    recording.captureNoteOff({ pitch: 60, velocity: 0, channel: 0 });
+    positionPpq.value = 5;
+
+    expect(recording.stopRecord()).toBe(1);
+    expect(calls[0]).toMatchObject({
+      startPpq: 4,
+      lengthPpq: 4,
+      notes: [
+        { pitch: 60, velocity: 96, startPpq: 0, durationPpq: 0.5, channel: 0 },
+        { pitch: 60, velocity: 96, startPpq: 3.5, durationPpq: 0.5, channel: 0 },
+      ],
+    });
   });
 
   it('applies the input-quantize grid to captured note starts', () => {
@@ -122,6 +164,20 @@ describe('useMidiRecording', () => {
     positionPpq.value = 4;
     recording.stopRecord();
     expect(calls[0].notes[0].startPpq).toBe(1);
+  });
+
+  it('uses Web MIDI timestamps for sub-frame capture timing', () => {
+    const { recording, positionPpq, calls } = setup({ now: () => 1000 });
+    recording.arm(store.tracks[0].id);
+    recording.record();
+    positionPpq.value = 0;
+    recording.captureNoteOn({ pitch: 60, velocity: 90, channel: 0, timeStampMs: 1010 });
+    recording.captureNoteOff({ pitch: 60, velocity: 0, channel: 0, timeStampMs: 1035 });
+    positionPpq.value = 1;
+    recording.stopRecord();
+
+    expect(calls[0].notes[0].startPpq).toBeCloseTo(0.02, 6);
+    expect(calls[0].notes[0].durationPpq).toBeCloseTo(0.05, 6);
   });
 
   it('ends an in-flight take when the transport stops', () => {

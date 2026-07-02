@@ -183,6 +183,12 @@ export interface ClipCompSegment {
   startPpq: number;
   /** Index into the clip's takes list. */
   takeIndex: number;
+  /**
+   * Crossfade duration at this segment's start, in PPQ. Omitted uses the
+   * project default; zero keeps a hard edit for explicit sound-design cuts.
+   * Ignored on the first segment.
+   */
+  crossfadePpq?: number;
 }
 
 /** One warp anchor: a clip-relative beat pinned to a source time. */

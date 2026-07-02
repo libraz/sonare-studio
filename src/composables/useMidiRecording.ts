@@ -14,8 +14,16 @@ import { getCurrentScope, onScopeDispose, type Ref, ref, watch } from 'vue';
 import { describeError } from '@/lib/errors';
 import { addRecordedMidiClip as addRecordedMidiClipCommand } from '@/project/commands';
 import type { NoteBoundaryEvent } from '@/project/midi-events';
-import { finalizeRecording } from '@/project/midi-recording';
+import { finalizeRecording, foldRecordedNotesIntoLoop } from '@/project/midi-recording';
+import { ppqToSeconds } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
+import {
+  type NormalizedTempoMap,
+  normalizeTempoMap,
+  ppqToSeconds as ppqToSecondsMap,
+  secondsToPpq as secondsToPpqMap,
+} from '@/project/tempo-map';
+import { timeSignatureAt } from '@/project/time-signature';
 import type { UseTransportReturn } from './useTransport';
 
 /** A note-on/note-off received from a MIDI input (channel-voice, 7-bit). */
@@ -26,12 +34,16 @@ export interface CapturedNoteEvent {
   velocity: number;
   /** MIDI channel (0-15). */
   channel: number;
+  /** Input event timestamp in milliseconds, when provided by Web MIDI. */
+  timeStampMs?: number;
 }
 
 /** Injectable dependencies for {@link useMidiRecording} (tests / alternatives). */
 export interface UseMidiRecordingOptions {
   /** Clip-creation command; defaults to addRecordedMidiClip from commands. */
   addRecordedMidiClip?: typeof addRecordedMidiClipCommand;
+  /** High-resolution clock in milliseconds, injectable for tests. */
+  now?: () => number;
 }
 
 /** Reactive MIDI recording state and actions returned by {@link useMidiRecording}. */
@@ -40,6 +52,10 @@ export interface UseMidiRecordingReturn {
   armedTrackId: Ref<number | null>;
   /** True between a successful record() and the matching stopRecord(). */
   isRecording: Ref<boolean>;
+  /** True while the metronome count-in pre-roll is running. */
+  isCountingIn: Ref<boolean>;
+  /** Count-in length in bars applied by record() when starting from stop. */
+  countInBars: Ref<number>;
   /** Last user-facing error message, or null. Cleared by the next action. */
   error: Ref<string | null>;
   /**
@@ -89,9 +105,12 @@ export function useMidiRecording(
 ): UseMidiRecordingReturn {
   const store = useProjectStore();
   const addClip = options.addRecordedMidiClip ?? addRecordedMidiClipCommand;
+  const now = options.now ?? (() => globalThis.performance?.now?.() ?? Date.now());
 
   const armedTrackId = ref<number | null>(null);
   const isRecording = ref(false);
+  const isCountingIn = ref(false);
+  const countInBars = ref(0);
   const error = ref<string | null>(null);
   const inputQuantizeDenominator = ref(0);
 
@@ -99,6 +118,50 @@ export function useMidiRecording(
   let held = new Map<string, CapturedNoteEvent>();
   let recordingStartPpq = 0;
   let recordingCounter = 0;
+  let countInTimer: ReturnType<typeof setTimeout> | null = null;
+  let restoreMetronomeOff = false;
+  let recordingLoopLengthPpq = 0;
+  let recordingWrapOffsetPpq = 0;
+  let lastCapturePpq = 0;
+  let recordingTempoMap: NormalizedTempoMap | null = null;
+  let recordingStartSeconds = 0;
+  let recordingStartTimestampMs: number | null = null;
+  let recordingLoop: { startPpq: number; endPpq: number } | null = null;
+
+  function finishCountIn(): void {
+    if (countInTimer !== null) {
+      globalThis.clearTimeout(countInTimer);
+      countInTimer = null;
+    }
+    isCountingIn.value = false;
+    if (restoreMetronomeOff) {
+      transport.toggleMetronome(false);
+      restoreMetronomeOff = false;
+    }
+  }
+
+  function currentRecordingPpq(timeStampMs?: number): number {
+    if (
+      timeStampMs !== undefined &&
+      Number.isFinite(timeStampMs) &&
+      recordingTempoMap !== null &&
+      recordingStartTimestampMs !== null
+    ) {
+      const seconds = recordingStartSeconds + (timeStampMs - recordingStartTimestampMs) / 1000;
+      const ppq = secondsToPpqMap(recordingTempoMap, seconds);
+      if (ppq > lastCapturePpq) lastCapturePpq = ppq;
+      return ppq;
+    }
+    const raw = Math.max(0, transport.positionPpq.value);
+    if (raw < recordingStartPpq - 1e-9) return raw;
+    let ppq = raw + recordingWrapOffsetPpq;
+    if (recordingLoopLengthPpq > 0 && ppq < lastCapturePpq - 1e-9) {
+      recordingWrapOffsetPpq += recordingLoopLengthPpq;
+      ppq = raw + recordingWrapOffsetPpq;
+    }
+    if (ppq > lastCapturePpq) lastCapturePpq = ppq;
+    return ppq;
+  }
 
   const arm = (trackId: number | null): void => {
     error.value = null;
@@ -124,7 +187,7 @@ export function useMidiRecording(
 
   const captureNoteOn = (event: CapturedNoteEvent): void => {
     if (!isRecording.value) return;
-    const ppq = Math.max(0, transport.positionPpq.value);
+    const ppq = currentRecordingPpq(event.timeStampMs);
     buffer.push({
       ppq,
       kind: 'on',
@@ -137,7 +200,7 @@ export function useMidiRecording(
 
   const captureNoteOff = (event: CapturedNoteEvent): void => {
     if (!isRecording.value) return;
-    const ppq = Math.max(0, transport.positionPpq.value);
+    const ppq = currentRecordingPpq(event.timeStampMs);
     buffer.push({
       ppq,
       kind: 'off',
@@ -163,9 +226,22 @@ export function useMidiRecording(
     }
     const explicit = startAtPpq !== undefined && Number.isFinite(startAtPpq) && startAtPpq >= 0;
     let startPpq = explicit ? (startAtPpq as number) : Math.max(0, transport.positionPpq.value);
-    if (!transport.isPlaying.value) {
-      transport.seekPpq(startPpq);
+    const wasRolling = transport.isPlaying.value;
+    let countInPpq = 0;
+    const tempoBpm = transport.tempo.value;
+    if (!explicit && !wasRolling && countInBars.value > 0) {
+      const meter = timeSignatureAt(store.timeSignatures, startPpq);
+      const barPpq = meter.numerator * (4 / meter.denominator);
+      countInPpq = Math.min(startPpq, countInBars.value * barPpq);
+    }
+    if (!wasRolling) {
+      if (countInPpq > 0 && !transport.metronomeEnabled.value) {
+        transport.toggleMetronome(true);
+        restoreMetronomeOff = true;
+      }
+      transport.seekPpq(startPpq - countInPpq);
       if (!transport.play()) {
+        finishCountIn();
         error.value = 'The engine rejected the transport play command.';
         return false;
       }
@@ -176,15 +252,41 @@ export function useMidiRecording(
     buffer = [];
     held = new Map();
     recordingStartPpq = startPpq;
+    recordingTempoMap = normalizeTempoMap(store.tempoSegments, tempoBpm);
+    recordingStartSeconds = ppqToSecondsMap(recordingTempoMap, startPpq);
+    recordingStartTimestampMs =
+      !wasRolling && countInPpq > 0 ? now() + ppqToSeconds(countInPpq, tempoBpm) * 1000 : now();
+    recordingLoopLengthPpq =
+      transport.loopEnabled.value && transport.loopEndPpq.value > transport.loopStartPpq.value
+        ? transport.loopEndPpq.value - transport.loopStartPpq.value
+        : 0;
+    recordingLoop =
+      !explicit &&
+      recordingLoopLengthPpq > 0 &&
+      Math.abs(startPpq - transport.loopStartPpq.value) < 1e-6
+        ? { startPpq: transport.loopStartPpq.value, endPpq: transport.loopEndPpq.value }
+        : null;
+    recordingWrapOffsetPpq = 0;
+    lastCapturePpq = startPpq;
     isRecording.value = true;
+    if (countInPpq > 0) {
+      isCountingIn.value = true;
+      countInTimer = globalThis.setTimeout(() => {
+        countInTimer = null;
+        finishCountIn();
+      }, ppqToSeconds(countInPpq, tempoBpm) * 1000);
+    }
     return true;
   };
 
   const stopRecord = (): number | null => {
     if (!isRecording.value) return null;
+    finishCountIn();
     isRecording.value = false;
     const trackId = armedTrackId.value;
-    const stopPpq = Math.max(recordingStartPpq, transport.positionPpq.value);
+    const loop = recordingLoop;
+    recordingLoop = null;
+    const stopPpq = Math.max(recordingStartPpq, currentRecordingPpq());
     // Close any keys still held at the punch-out with an implicit release, so a
     // note sustained across the stop is recorded instead of dropped.
     for (const event of held.values()) {
@@ -210,11 +312,17 @@ export function useMidiRecording(
     if (!finalized) return null;
     try {
       recordingCounter += 1;
+      const loopLengthPpq = loop ? loop.endPpq - loop.startPpq : 0;
+      const notes =
+        loopLengthPpq > 0
+          ? foldRecordedNotesIntoLoop(finalized.notes, loopLengthPpq)
+          : finalized.notes;
+      if (notes.length === 0) return null;
       return addClip({
         trackId,
-        startPpq: recordingStartPpq,
-        lengthPpq: finalized.lengthPpq,
-        notes: finalized.notes,
+        startPpq: loop?.startPpq ?? recordingStartPpq,
+        lengthPpq: loopLengthPpq > 0 ? loopLengthPpq : finalized.lengthPpq,
+        notes,
         name: `MIDI Recording ${recordingCounter}`,
       });
     } catch (err) {
@@ -234,9 +342,11 @@ export function useMidiRecording(
 
   const dispose = (): void => {
     stopWatching();
+    finishCountIn();
     isRecording.value = false;
     buffer = [];
     held = new Map();
+    recordingLoop = null;
   };
 
   if (getCurrentScope()) {
@@ -246,6 +356,8 @@ export function useMidiRecording(
   return {
     armedTrackId,
     isRecording,
+    isCountingIn,
+    countInBars,
     error,
     inputQuantizeDenominator,
     arm,
