@@ -49,6 +49,14 @@ describe('project store', () => {
     expect(store.selection.size).toBe(0);
   });
 
+  it('updates the Project sample rate when init is called after engine startup', async () => {
+    expect(JSON.parse(getProject().toJson()).sample_rate).toBe(48000);
+
+    await store.init({ sampleRate: 44100 });
+
+    expect(JSON.parse(getProject().toJson()).sample_rate).toBe(44100);
+  });
+
   it('addNote writes a note-on/note-off pair through to the Project', () => {
     const id = addNote({ pitch: 60, startPpq: 1, durationPpq: 0.5, velocity: 100 });
     expect(store.notes).toHaveLength(1);

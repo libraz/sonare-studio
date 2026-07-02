@@ -225,6 +225,28 @@ export class FakeProject {
     ];
   }
 
+  static gmInstrumentName(program: number): string | null {
+    return FAKE_GM_INSTRUMENTS[program] ?? null;
+  }
+
+  static gmProgramForName(name: string): number {
+    return FAKE_GM_INSTRUMENTS.findIndex((entry) => entry.toLowerCase() === name.toLowerCase());
+  }
+
+  static gmFamilyName(family: number): string | null {
+    return FAKE_GM_FAMILIES[family] ?? null;
+  }
+
+  static gmFamilyFirstProgram(family: number): number {
+    return family >= 0 && family < FAKE_GM_FAMILIES.length ? family * 8 : -1;
+  }
+
+  static gm2InstrumentName(bankLsb: number, program: number): string | null {
+    if (bankLsb === 1 && program === 24) return 'Ukulele';
+    if (bankLsb === 1 && program === 25) return '12-String Guitar';
+    return FakeProject.gmInstrumentName(program);
+  }
+
   /** Pushes one history entry, then applies the mutation. */
   private edit<T>(mutate: () => T): T {
     this.history.push(cloneState(this.state));
@@ -777,6 +799,39 @@ export const FAKE_SYNTH_PRESETS = [
   'electric-guitar',
   'drum-kit',
 ] as const;
+
+const FAKE_GM_FAMILIES = [
+  'Piano',
+  'Chromatic Percussion',
+  'Organ',
+  'Guitar',
+  'Bass',
+  'Strings',
+  'Ensemble',
+  'Brass',
+  'Reed',
+  'Pipe',
+  'Synth Lead',
+  'Synth Pad',
+  'Synth Effects',
+  'Ethnic',
+  'Percussive',
+  'Sound Effects',
+] as const;
+
+const FAKE_GM_INSTRUMENTS = Array.from({ length: 128 }, (_, index) => `Program ${index}`);
+FAKE_GM_INSTRUMENTS[0] = 'Acoustic Grand Piano';
+FAKE_GM_INSTRUMENTS[16] = 'Drawbar Organ';
+FAKE_GM_INSTRUMENTS[19] = 'Church Organ';
+FAKE_GM_INSTRUMENTS[24] = 'Nylon Guitar';
+FAKE_GM_INSTRUMENTS[25] = 'Steel Guitar';
+FAKE_GM_INSTRUMENTS[26] = 'Jazz Guitar';
+FAKE_GM_INSTRUMENTS[27] = 'Clean Guitar';
+FAKE_GM_INSTRUMENTS[32] = 'Acoustic Bass';
+FAKE_GM_INSTRUMENTS[33] = 'Fingered Bass';
+FAKE_GM_INSTRUMENTS[34] = 'Picked Bass';
+FAKE_GM_INSTRUMENTS[56] = 'Trumpet';
+FAKE_GM_INSTRUMENTS[73] = 'Flute';
 
 /** Insert parameter names per processor the fake catalog reports. */
 export const FAKE_INSERT_PARAMS: Record<string, string[]> = {

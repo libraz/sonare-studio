@@ -60,6 +60,9 @@ function makeHandle(): {
   engine: {
     setTrackStripJson: ReturnType<typeof vi.fn>;
     setMasterStripJson: ReturnType<typeof vi.fn>;
+    setTrackStripInsertParamByName: ReturnType<typeof vi.fn>;
+    setMasterStripInsertParamByName: ReturnType<typeof vi.fn>;
+    setBusStripInsertParamByName: ReturnType<typeof vi.fn>;
     setStripEq: ReturnType<typeof vi.fn>;
     setStripInsertBypassed: ReturnType<typeof vi.fn>;
     setTrackBuses: ReturnType<typeof vi.fn>;
@@ -73,6 +76,9 @@ function makeHandle(): {
   const engine = {
     setTrackStripJson: vi.fn(),
     setMasterStripJson: vi.fn(),
+    setTrackStripInsertParamByName: vi.fn(),
+    setMasterStripInsertParamByName: vi.fn(),
+    setBusStripInsertParamByName: vi.fn(),
     setStripEq: vi.fn(),
     setStripInsertBypassed: vi.fn(),
     setTrackBuses: vi.fn(),
@@ -234,7 +240,7 @@ describe('createStripSync', () => {
     expect(engine.setStripInsertBypassed).toHaveBeenCalledWith(1, 1, false);
   });
 
-  it('re-sends the strip JSON, bypass flags and EQ bands on a param change', () => {
+  it('patches numeric insert param changes without re-sending strip JSON', () => {
     const { handle, engine } = makeHandle();
     const sync = createStripSync(handle);
     const band: EqBand = { frequencyHz: 200, gainDb: 3, enabled: true };
@@ -252,12 +258,29 @@ describe('createStripSync', () => {
 
     const next = stripFor(-12);
     sync.sync([makeTrack(1, next)], makeMixer());
+    expect(engine.setTrackStripJson).not.toHaveBeenCalled();
+    expect(engine.setTrackStripInsertParamByName).toHaveBeenCalledTimes(1);
+    expect(engine.setTrackStripInsertParamByName).toHaveBeenCalledWith(1, 0, 'thresholdDb', -12);
+    expect(engine.setStripInsertBypassed).not.toHaveBeenCalled();
+    expect(engine.setStripEq).not.toHaveBeenCalled();
+  });
+
+  it('re-sends strip JSON when a non-numeric insert param changes', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const stripFor = (mode: boolean): MixerStrip =>
+      makeStrip({
+        inserts: [{ processor: 'dynamics.compressor', params: { mode }, enabled: true }],
+      });
+
+    sync.sync([makeTrack(1, stripFor(false))], makeMixer());
+    clearCalls(engine);
+
+    const next = stripFor(true);
+    sync.sync([makeTrack(1, next)], makeMixer());
     expect(engine.setTrackStripJson).toHaveBeenCalledTimes(1);
     expect(engine.setTrackStripJson).toHaveBeenCalledWith(1, stripSceneJson(1, next));
-    expect(engine.setStripInsertBypassed).toHaveBeenCalledTimes(1);
-    expect(engine.setStripInsertBypassed).toHaveBeenCalledWith(1, 1, true);
-    expect(engine.setStripEq).toHaveBeenCalledTimes(1);
-    expect(engine.setStripEq).toHaveBeenCalledWith(1, 0, band);
+    expect(engine.setTrackStripInsertParamByName).not.toHaveBeenCalled();
   });
 
   it('sends the strip JSON and every EQ band, then diffs band edits', () => {
@@ -330,6 +353,23 @@ describe('createStripSync', () => {
     expect(engine.setStripEq).toHaveBeenCalledWith('master', 0, band);
   });
 
+  it('patches master insert numeric params without replacing the master strip', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const masterFor = (drive: number): MixerStrip =>
+      makeStrip({
+        inserts: [{ processor: 'saturation.tape', params: { drive }, enabled: true }],
+      });
+
+    sync.sync([], makeMixer({ master: masterFor(0.2) }));
+    clearCalls(engine);
+
+    sync.sync([], makeMixer({ master: masterFor(0.6) }));
+    expect(engine.setMasterStripJson).not.toHaveBeenCalled();
+    expect(engine.setMasterStripInsertParamByName).toHaveBeenCalledTimes(1);
+    expect(engine.setMasterStripInsertParamByName).toHaveBeenCalledWith(0, 'drive', 0.6);
+  });
+
   it('declares buses before sends, then adjusts gains and re-declares additions', () => {
     const { handle, engine } = makeHandle();
     const sync = createStripSync(handle);
@@ -393,7 +433,7 @@ describe('createStripSync', () => {
     expect(engine.setSends).toHaveBeenCalledWith(1, [{ busId: 1, levelDb: -6, enabled: true }]);
   });
 
-  it('prunes sends to a removed bus before re-declaring and never reuses its number', () => {
+  it('prunes sends to a removed bus before re-declaring and compacts bus numbers', () => {
     const { handle, engine } = makeHandle();
     const sync = createStripSync(handle);
     const track = makeTrack(1, makeStrip({ sends: [{ busId: 'B', levelDb: -6, enabled: true }] }));
@@ -413,15 +453,42 @@ describe('createStripSync', () => {
     );
     clearCalls(engine);
 
-    // A later bus gets a fresh number; the removed bus's number is not recycled.
+    // A later bus reuses the freed visible meter/scope slot.
     sync.sync([track], makeMixer({ buses: [makeBus('A'), makeBus('C')] }));
     expect(sync.busIdFor('A')).toBe(1);
-    expect(sync.busIdFor('B')).toBe(2);
-    expect(sync.busIdFor('C')).toBe(3);
+    expect(sync.busIdFor('B')).toBeUndefined();
+    expect(sync.busIdFor('C')).toBe(2);
     expect(sync.busIdFor('D')).toBeUndefined();
     expect(engine.setTrackBuses).toHaveBeenCalledWith([
       { busId: 1, gainDb: 0 },
-      { busId: 3, gainDb: 0 },
+      { busId: 2, gainDb: 0 },
+    ]);
+  });
+
+  it('keeps replacement buses inside the engine bus telemetry range', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const initialBuses = Array.from({ length: MAX_ENGINE_BUSES }, (_, index) =>
+      makeBus(`bus-${index + 1}`),
+    );
+    const replacementBuses = [...initialBuses.slice(1), makeBus('replacement')];
+    const track = makeTrack(
+      1,
+      makeStrip({ sends: [{ busId: 'replacement', levelDb: -9, enabled: true }] }),
+    );
+
+    sync.sync([], makeMixer({ buses: initialBuses }));
+    clearCalls(engine);
+    sync.sync([track], makeMixer({ buses: replacementBuses }));
+
+    expect(sync.busIdFor('bus-1')).toBeUndefined();
+    expect(sync.busIdFor('bus-2')).toBe(1);
+    expect(sync.busIdFor('replacement')).toBe(MAX_ENGINE_BUSES);
+    expect(engine.setTrackBuses).toHaveBeenCalledWith(
+      replacementBuses.map((_, index) => ({ busId: index + 1, gainDb: 0 })),
+    );
+    expect(engine.setSends).toHaveBeenCalledWith(1, [
+      { busId: MAX_ENGINE_BUSES, levelDb: -9, enabled: true },
     ]);
   });
 
@@ -576,7 +643,7 @@ describe('createStripSync group routing', () => {
     expect(engine.setTrackBuses).toHaveBeenCalledWith([{ busId: 1, gainDb: -6 }]);
   });
 
-  it('keeps a group bus number stable when user buses are added later', () => {
+  it('compacts group bus numbers after user buses are added later', () => {
     const { handle, engine } = makeHandle();
     const sync = createStripSync(handle);
 
@@ -585,8 +652,8 @@ describe('createStripSync group routing', () => {
 
     sync.sync([makeGroupTrack(10)], makeMixer({ buses: [makeBus('A')] }));
     expect(engine.setTrackBuses).toHaveBeenLastCalledWith([
-      { busId: 2, gainDb: 0 },
       { busId: 1, gainDb: 0 },
+      { busId: 2, gainDb: 0 },
     ]);
   });
 
@@ -609,6 +676,28 @@ describe('createStripSync group routing', () => {
 
     sync.sync([], makeMixer({ buses: [{ ...makeBus('FX'), strip: makeStrip() }] }));
     expect(engine.setBusStripJson).toHaveBeenCalledWith(1, busSceneJson(1, makeStrip()));
+  });
+
+  it('patches enabled user bus insert numeric params without replacing the bus strip', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const busFor = (thresholdDb: number): MixerBus => ({
+      ...makeBus('FX'),
+      strip: makeStrip({
+        inserts: [
+          { processor: 'gate.expander', params: { floorDb: -80 }, enabled: false },
+          { processor: 'dynamics.compressor', params: { thresholdDb }, enabled: true },
+        ],
+      }),
+    });
+
+    sync.sync([], makeMixer({ buses: [busFor(-20)] }));
+    clearCalls(engine);
+
+    sync.sync([], makeMixer({ buses: [busFor(-12)] }));
+    expect(engine.setBusStripJson).not.toHaveBeenCalled();
+    expect(engine.setBusStripInsertParamByName).toHaveBeenCalledTimes(1);
+    expect(engine.setBusStripInsertParamByName).toHaveBeenCalledWith(1, 0, 'thresholdDb', -12);
   });
 
   it('routes a member back to the master mix when its membership clears', () => {
@@ -667,6 +756,29 @@ describe('createStripSync group routing', () => {
       1,
       busSceneJson(1, makeStrip({ inserts: toggled })),
     );
+  });
+
+  it('patches enabled group insert numeric params without replacing the group bus strip', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const groupFor = (thresholdDb: number): EditorTrack =>
+      makeGroupTrack(
+        10,
+        makeStrip({
+          inserts: [
+            { processor: 'gate.expander', params: { floorDb: -80 }, enabled: false },
+            { processor: 'dynamics.compressor', params: { thresholdDb }, enabled: true },
+          ],
+        }),
+      );
+
+    sync.sync([groupFor(-20)], makeMixer());
+    clearCalls(engine);
+
+    sync.sync([groupFor(-12)], makeMixer());
+    expect(engine.setBusStripJson).not.toHaveBeenCalled();
+    expect(engine.setBusStripInsertParamByName).toHaveBeenCalledTimes(1);
+    expect(engine.setBusStripInsertParamByName).toHaveBeenCalledWith(1, 0, 'thresholdDb', -12);
   });
 
   it('re-sends the bus strip when only its output trim changes', () => {

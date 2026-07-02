@@ -74,6 +74,66 @@ describe('createAutomationSync', () => {
     ]);
   });
 
+  it('maps group-track fader automation to the group bus parameter id', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createAutomationSync(handle, {
+      knownTrackIds: () => [10],
+      groupBusIdFor: (trackId) => (trackId === 10 ? 4 : undefined),
+      restoreParam: vi.fn(),
+    });
+
+    sync.sync([makeLane(10, [{ ppq: 0, value: -7 }])]);
+
+    expect(engine.busAutomationParamId).toHaveBeenCalledWith(4);
+    expect(engine.automationParamId).not.toHaveBeenCalled();
+    expect(engine.setAutomationLane).toHaveBeenCalledWith(3004, [
+      { ppq: 0, value: -7, curveToNext: 0 },
+    ]);
+  });
+
+  it('maps group-track insert automation to the group bus insert resolver', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createAutomationSync(handle, {
+      knownTrackIds: () => [10],
+      groupBusIdFor: (trackId) => (trackId === 10 ? 4 : undefined),
+      restoreParam: vi.fn(),
+    });
+
+    sync.sync([
+      makeLane(10, [{ ppq: 0, value: 0.5 }], {
+        param: insertAutomationParam(1, 'drive'),
+      }),
+    ]);
+
+    expect(engine.resolveBusInsertAutomationId).toHaveBeenCalledWith(4, 1, 'drive');
+    expect(engine.resolveTrackInsertAutomationId).not.toHaveBeenCalled();
+    expect(engine.setAutomationLane).toHaveBeenCalledWith(7004, [
+      { ppq: 0, value: 0.5, curveToNext: 0 },
+    ]);
+  });
+
+  it('uses enabled-only insert indexes for bus insert automation when provided', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createAutomationSync(handle, {
+      knownTrackIds: () => [],
+      busIdFor: (busId) => (busId === 'fx' ? 2 : undefined),
+      busInsertIndexFor: (busId, index) => (busId === 'fx' && index === 2 ? 1 : undefined),
+      restoreParam: vi.fn(),
+    });
+
+    sync.sync([
+      makeLane(busAutomationTarget('fx'), [{ ppq: 0, value: 0.5 }], {
+        param: insertAutomationParam(2, 'drive'),
+      }),
+      makeLane(busAutomationTarget('fx'), [{ ppq: 0, value: 0.25 }], {
+        param: insertAutomationParam(0, 'drive'),
+      }),
+    ]);
+
+    expect(engine.resolveBusInsertAutomationId).toHaveBeenCalledTimes(1);
+    expect(engine.resolveBusInsertAutomationId).toHaveBeenCalledWith(2, 1, 'drive');
+  });
+
   it('installs an effective lane with curve codes on its points', () => {
     const { handle, engine } = makeHandle();
     const restoreParam = vi.fn();

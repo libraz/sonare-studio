@@ -119,6 +119,62 @@ describe('createWebMidiOutput', () => {
     bridge.dispose();
   });
 
+  it('sends all-notes-off to the old output/channel when a route is removed', async () => {
+    const port = fakePort('p1');
+    const { handle } = setup([port]);
+    const bridge = createWebMidiOutput(handle);
+    await bridge.start();
+    bridge.setRoutes([{ destinationId: 2, outputPortId: 'p1', channel: 5 }]);
+    port.sent.length = 0;
+
+    bridge.setRoutes([]);
+    expect(port.sent).toEqual([[0xb5, 123, 0]]);
+    bridge.dispose();
+  });
+
+  it('sends all-notes-off to the old output/channel when syncRoutes reroutes a track', async () => {
+    const oldPort = fakePort('p1');
+    const newPort = fakePort('p2');
+    const { handle } = setup([oldPort, newPort]);
+    const bridge = createWebMidiOutput(handle);
+    await bridge.start();
+    bridge.syncRoutes([
+      {
+        id: 2,
+        kind: 'midi',
+        instrument: { kind: 'external-midi', outputPortId: 'p1', channel: 5 },
+      } as unknown as EditorTrack,
+    ]);
+    oldPort.sent.length = 0;
+
+    bridge.syncRoutes([
+      {
+        id: 2,
+        kind: 'midi',
+        instrument: { kind: 'external-midi', outputPortId: 'p2', channel: 1 },
+      } as unknown as EditorTrack,
+    ]);
+    expect(oldPort.sent).toEqual([[0xb5, 123, 0]]);
+    expect(newPort.sent).toEqual([]);
+    bridge.dispose();
+  });
+
+  it('dedupes all-notes-off per output/channel on route changes', async () => {
+    const port = fakePort('p1');
+    const { handle } = setup([port]);
+    const bridge = createWebMidiOutput(handle);
+    await bridge.start();
+    bridge.setRoutes([
+      { destinationId: 2, outputPortId: 'p1', channel: 5 },
+      { destinationId: 3, outputPortId: 'p1', channel: 5 },
+    ]);
+    port.sent.length = 0;
+
+    bridge.setRoutes([]);
+    expect(port.sent).toEqual([[0xb5, 123, 0]]);
+    bridge.dispose();
+  });
+
   it('broadcasts transport/clock bytes only to clock-enabled ports', async () => {
     const clockPort = fakePort('p1');
     const plainPort = fakePort('p2');
@@ -142,8 +198,9 @@ describe('createWebMidiOutput', () => {
     await bridge.start();
     bridge.setRoutes([{ destinationId: 2, outputPortId: 'p1', channel: 0 }]);
     bridge.dispose();
+    expect(port.sent).toEqual([[0xb0, 123, 0]]);
     emit([{ destinationId: 2, bytes: [0x90, 60, 100] }]);
-    expect(port.sent).toEqual([]);
+    expect(port.sent).toEqual([[0xb0, 123, 0]]);
   });
 
   it('reports unavailability when Web MIDI is missing', async () => {

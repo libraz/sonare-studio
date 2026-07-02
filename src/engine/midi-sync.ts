@@ -359,9 +359,9 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
   const loadFontBytes = options.loadFont ?? loadFont;
   const resolvePreset = options.resolvePreset ?? ((preset: string) => preset);
   const lastInstrumentKeyByDestination = new Map<number, string>();
-  // Last MIDI-FX JSON sent per track ('' = none); diffs install/bypass the
+  // Last MIDI-FX JSON sent per MIDI destination ('' = none); diffs install/bypass the
   // engine's live non-destructive MIDI-FX insert without re-sending clips.
-  const lastMidiFxKeyByTrack = new Map<number, string>();
+  const lastMidiFxKeyByDestination = new Map<number, string>();
   let loadedFontId: string | undefined;
   let lastClipsKey: string | undefined;
   let lastClockEnabled: boolean | undefined;
@@ -530,14 +530,15 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
     // bypass an insert.
     for (const track of tracks) {
       if (track.kind !== 'midi' || track.frozen !== undefined) continue;
+      const destinationId = destinationByTrack.get(track.id) ?? track.id;
       const midiFxKey = track.midiFx !== undefined ? (midiFxConfigJson(track.midiFx) ?? '') : '';
-      if (lastMidiFxKeyByTrack.get(track.id) === midiFxKey) continue;
+      if (lastMidiFxKeyByDestination.get(destinationId) === midiFxKey) continue;
       if (midiFxKey === '') {
-        handle.engine.clearMidiFx(track.id);
+        handle.engine.clearMidiFx(destinationId);
       } else {
-        handle.engine.setMidiFx(track.id, midiFxKey);
+        handle.engine.setMidiFx(destinationId, midiFxKey);
       }
-      lastMidiFxKeyByTrack.set(track.id, midiFxKey);
+      lastMidiFxKeyByDestination.set(destinationId, midiFxKey);
     }
 
     // Forward MIDI clock + transport to external ports only when some external

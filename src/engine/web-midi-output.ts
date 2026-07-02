@@ -82,6 +82,9 @@ interface NavigatorWithMidi {
   requestMIDIAccess?(options?: { sysex?: boolean }): Promise<MidiAccessLike>;
 }
 
+/** MIDI CC used by the standard All Notes Off panic message. */
+const MIDI_CC_ALL_NOTES_OFF = 123;
+
 /** Builds external-MIDI routes from a project's tracks (exported for tests). */
 export function routesFromTracks(
   tracks: ReadonlyArray<EditorTrack>,
@@ -113,6 +116,11 @@ function withChannel(bytes: number[], channel: number): number[] {
     return [(status & 0xf0) | (channel & 0x0f), ...bytes.slice(1)];
   }
   return bytes;
+}
+
+/** Stable route identity for one physical output/channel pair. */
+function outputChannelKey(route: ExternalMidiRoute): string {
+  return `${route.outputPortId}:${route.channel & 0x0f}`;
 }
 
 /**
@@ -147,6 +155,32 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
       : [];
   };
 
+  const sendAllNotesOff = (route: ExternalMidiRoute): void => {
+    access?.outputs
+      .get(route.outputPortId)
+      ?.send([0xb0 | (route.channel & 0x0f), MIDI_CC_ALL_NOTES_OFF, 0]);
+  };
+
+  const panicChangedRoutes = (next: readonly ExternalMidiRoute[]): void => {
+    if (!access || routes.length === 0) return;
+    const nextByDestination = new Map(next.map((route) => [route.destinationId, route]));
+    const panickedOutputs = new Set<string>();
+    for (const route of routes) {
+      const nextRoute = nextByDestination.get(route.destinationId);
+      if (
+        nextRoute &&
+        nextRoute.outputPortId === route.outputPortId &&
+        (nextRoute.channel & 0x0f) === (route.channel & 0x0f)
+      ) {
+        continue;
+      }
+      const key = outputChannelKey(route);
+      if (panickedOutputs.has(key)) continue;
+      sendAllNotesOff(route);
+      panickedOutputs.add(key);
+    }
+  };
+
   const deliver = (events: ReadonlyArray<{ destinationId: number; bytes: number[] }>): void => {
     if (disposed || !access) return;
     for (const event of events) {
@@ -167,6 +201,7 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
     available: () => available,
     outputs: () => outputsList,
     setRoutes(next: readonly ExternalMidiRoute[]): void {
+      panicChangedRoutes(next);
       routes = [...next];
       rebuildRouteIndex();
     },
@@ -174,7 +209,9 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
       tracks: ReadonlyArray<EditorTrack>,
       projectExternalMidi?: ExternalMidiInstrument | null,
     ): void {
-      routes = routesFromTracks(tracks, projectExternalMidi);
+      const next = routesFromTracks(tracks, projectExternalMidi);
+      panicChangedRoutes(next);
+      routes = next;
       rebuildRouteIndex();
     },
     async start(): Promise<boolean> {
@@ -200,6 +237,7 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
     dispose(): void {
       if (disposed) return;
       disposed = true;
+      panicChangedRoutes([]);
       unsubscribe();
       access = null;
       routes = [];

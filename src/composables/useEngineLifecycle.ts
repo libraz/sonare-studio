@@ -18,6 +18,7 @@ import {
   isBusAutomationTarget,
   parseInsertAutomationParam,
 } from '@/project/automation';
+import { enabledInsertAutomationIndex } from '@/project/automation-insert';
 import { clampPan, laneGainDb, type MixerStrip, vcaOffsetDb } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 
@@ -78,6 +79,17 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
       const nextAutomationSync = createAutomationSync(h, {
         knownTrackIds: () => nextMixerSync.laneTrackIds(),
         busIdFor: (storeBusId) => nextStripSync.busIdFor(storeBusId),
+        groupBusIdFor: (trackId) => nextStripSync.groupBusIdFor(trackId),
+        busInsertIndexFor: (storeBusId, index) =>
+          enabledInsertAutomationIndex(
+            store.mixer.buses.find((entry) => entry.id === storeBusId)?.strip,
+            index,
+          ),
+        groupInsertIndexFor: (trackId, index) =>
+          enabledInsertAutomationIndex(
+            store.tracks.find((entry) => entry.id === trackId)?.mixer,
+            index,
+          ),
         restoreParam: (target, param) => {
           const insertRef = parseInsertAutomationParam(param);
           if (insertRef) {
@@ -102,16 +114,39 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
               const busId = nextStripSync.busIdFor(storeBusId);
               const bus = store.mixer.buses.find((entry) => entry.id === storeBusId);
               const value = slotValue(bus?.strip);
-              if (busId !== undefined && value !== undefined) {
+              const engineInsertIndex = enabledInsertAutomationIndex(
+                bus?.strip,
+                insertRef.insertIndex,
+              );
+              if (busId !== undefined && value !== undefined && engineInsertIndex !== undefined) {
                 h.engine.setBusStripInsertParamByName(
                   busId,
-                  insertRef.insertIndex,
+                  engineInsertIndex,
                   insertRef.paramName,
                   value,
                 );
               }
             } else if (typeof target === 'number') {
-              const value = slotValue(store.tracks.find((entry) => entry.id === target)?.mixer);
+              const track = store.tracks.find((entry) => entry.id === target);
+              const groupBusId = nextStripSync.groupBusIdFor(target);
+              const value = slotValue(track?.mixer);
+              const engineInsertIndex = enabledInsertAutomationIndex(
+                track?.mixer,
+                insertRef.insertIndex,
+              );
+              if (
+                groupBusId !== undefined &&
+                value !== undefined &&
+                engineInsertIndex !== undefined
+              ) {
+                h.engine.setBusStripInsertParamByName(
+                  groupBusId,
+                  engineInsertIndex,
+                  insertRef.paramName,
+                  value,
+                );
+                return;
+              }
               if (value !== undefined) {
                 h.engine.setTrackStripInsertParamByName(
                   target,
@@ -138,6 +173,20 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
           }
           const track = store.tracks.find((entry) => entry.id === target);
           if (!track) return;
+          const groupBusId =
+            typeof target === 'number' ? nextStripSync.groupBusIdFor(target) : undefined;
+          if (groupBusId !== undefined) {
+            if (param !== 'faderDb') return;
+            const vcaGroups = store.mixer.vcaGroups ?? [];
+            const vcaGainDb = vcaGroups.length
+              ? new Map(vcaGroups.map((group) => [group.id, group.gainDb]))
+              : undefined;
+            h.engine.setBusGain(
+              groupBusId,
+              laneGainDb(track.volume, track.mixer?.gainDb, vcaOffsetDb(track.vcaId, vcaGainDb)),
+            );
+            return;
+          }
           if (param === 'faderDb') {
             // Restore the same effective level mixer-sync holds, VCA offset
             // included, so a VCA member doesn't jump when its automation clears.

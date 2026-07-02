@@ -19,6 +19,7 @@ import type { ScheduledProjectClip } from '@/project/scheduling';
 import { scheduleProjectClips } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
 import { type EditorClip, type EditorTrack, isAudioClip } from '@/project/types';
+import { automationStripMode, automationStripModeRevision } from '@/ui/mixer/automation-mode';
 
 const APPLY_DEBOUNCE_MS = 400;
 
@@ -43,6 +44,16 @@ export interface EngineSyncHandles {
 
 function trackScheduleKey(track: EditorTrack): string {
   return `${track.id}|${track.kind}|${track.frozen?.assetId ?? ''}`;
+}
+
+function trackMidiSyncKey(track: EditorTrack): string {
+  return [
+    track.id,
+    JSON.stringify(track.instrument ?? null),
+    track.externalMidiMode ?? '',
+    JSON.stringify(track.midiFx ?? null),
+    track.frozen?.assetId ?? '',
+  ].join('|');
 }
 
 function clipScheduleKey(clip: EditorClip): string {
@@ -109,7 +120,9 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
 
   function syncAutomationState(): void {
     if (!automationSync || !store.initialized) return;
-    automationSync.sync(store.automationLanes);
+    automationSync.sync(
+      store.automationLanes.filter((lane) => automationStripMode(lane.target) !== 'off'),
+    );
   }
 
   function trackMeterSource(trackId: number): MeterSource | null {
@@ -242,17 +255,20 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
           .filter((clip) => !isAudioClip(clip))
           .map(clipScheduleKey)
           .join('\n'),
-        store.tracks
-          .map(
-            (track) =>
-              `${track.id}|${JSON.stringify(track.instrument ?? null)}|${track.frozen?.assetId ?? ''}`,
-          )
-          .join('\n'),
+        store.tracks.map(trackMidiSyncKey).join('\n'),
         JSON.stringify(effectiveTempoSegments()),
       ].join('\0'),
     (next, prev) => {
       if (next !== prev) syncMidiState();
     },
+    { flush: 'sync' },
+  );
+  watch(
+    () => JSON.stringify(store.projectExternalMidi),
+    (next, prev) => {
+      if (next !== prev) syncMidiState();
+    },
+    { flush: 'sync' },
   );
   watch(
     () => store.tracks,
@@ -270,6 +286,12 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
   );
   watch(
     () => JSON.stringify(store.automationLanes),
+    (next, prev) => {
+      if (next !== prev) syncAutomationState();
+    },
+  );
+  watch(
+    () => automationStripModeRevision(),
     (next, prev) => {
       if (next !== prev) syncAutomationState();
     },

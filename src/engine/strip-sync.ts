@@ -24,10 +24,16 @@
  * - The master strip has no engine-side sends; mixer.master.sends is ignored.
  */
 
-import { type MixerStrip, type ProjectMixerState, vcaOffsetDb } from '@/project/mixer';
+import {
+  type InsertSlot,
+  type MixerStrip,
+  type ProjectMixerState,
+  vcaOffsetDb,
+} from '@/project/mixer';
 import type { EditorTrack } from '@/project/types';
 import type { EngineTrackSend, EqBand } from '@/wasm/index.js';
 import type { EngineHandle } from './engine';
+import { engineBusStrip, engineEqBands, stripSceneFieldsHaveDsp } from './engine-declaration';
 import { linearToDb } from './mixer-sync';
 
 /** Maximum number of mixer buses the realtime engine supports. */
@@ -76,26 +82,6 @@ export function busSceneJson(
 }
 
 /**
- * Change-detection key for a bus strip's audible DSP. Folds the insert structure
- * together with the output trim/width/polarity stages so a change in any of them
- * re-sends the bus scene (the insert structure alone would miss a trim/width/
- * polarity edit that touched no insert).
- */
-function busStripDspKey(strip: MixerStrip | undefined): string {
-  return JSON.stringify({
-    inserts: (strip?.inserts ?? []).map((slot) => ({
-      processor: slot.processor,
-      params: slot.params,
-      enabled: slot.enabled,
-    })),
-    inputTrimDb: strip?.inputTrimDb ?? 0,
-    width: strip?.width ?? 1,
-    polarityInvertLeft: strip?.polarityInvertLeft === true,
-    polarityInvertRight: strip?.polarityInvertRight === true,
-  });
-}
-
-/**
  * Combined audible gain of a group track in dB: track volume and strip gain
  * stacked (mixer-sync lane semantics), muted groups floored to silence, the
  * result clamped to the engine's bus gain range.
@@ -141,10 +127,69 @@ export function stripSceneJson(
   return JSON.stringify({ version: 1, strips: [sceneStrip], buses: [], connections: [] });
 }
 
+/** Insert params that affect scene structure; numeric values can be patched in place. */
+function insertParamStructure(
+  params: InsertSlot['params'],
+): Record<string, number | boolean | null> {
+  return Object.fromEntries(
+    Object.entries(params)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, value]) => [key, typeof value === 'number' ? null : value]),
+  );
+}
+
+/** Numeric insert params last seen by the engine, keyed by insert index. */
+function insertNumericParams(inserts: ReadonlyArray<InsertSlot>): Array<Record<string, number>> {
+  return inserts.map((slot) =>
+    Object.fromEntries(
+      Object.entries(slot.params)
+        .filter((entry): entry is [string, number] => typeof entry[1] === 'number')
+        .sort(([a], [b]) => a.localeCompare(b)),
+    ),
+  );
+}
+
+/** Replays changed numeric insert params without replacing the whole strip scene. */
+function syncInsertNumericParams(
+  previous: ReadonlyArray<Record<string, number>>,
+  next: ReadonlyArray<Record<string, number>>,
+  sendInsertParam: (insertIndex: number, paramName: string, value: number) => void,
+): void {
+  for (let insertIndex = 0; insertIndex < next.length; insertIndex += 1) {
+    const previousParams = previous[insertIndex] ?? {};
+    for (const [paramName, value] of Object.entries(next[insertIndex])) {
+      if (previousParams[paramName] !== value) sendInsertParam(insertIndex, paramName, value);
+    }
+  }
+}
+
+/**
+ * Change-detection key for a bus strip's audible DSP. Folds the insert structure
+ * together with the output trim/width/polarity stages so a change in any of them
+ * re-sends the bus scene (the insert structure alone would miss a trim/width/
+ * polarity edit that touched no insert). Numeric insert values are excluded so
+ * knob drags can use the realtime param setter instead of replacing the scene.
+ */
+function busStripDspKey(strip: MixerStrip | undefined): string {
+  return JSON.stringify({
+    inserts: (strip?.inserts ?? []).map((slot) => ({
+      processor: slot.processor,
+      params: insertParamStructure(slot.params),
+      enabled: slot.enabled,
+    })),
+    inputTrimDb: strip?.inputTrimDb ?? 0,
+    width: strip?.width ?? 1,
+    polarityInvertLeft: strip?.polarityInvertLeft === true,
+    polarityInvertRight: strip?.polarityInvertRight === true,
+  });
+}
+
 /** What was last sent for one strip target, kept for change detection. */
 interface StripMemory {
-  /** Insert structure identity (processor + params; enabled flags excluded). */
+  /** Insert structure identity (processor + non-numeric params; enabled flags excluded). */
   structureKey: string;
+  /** Numeric insert params last applied through the scene or param setter. */
+  insertParams: Array<Record<string, number>>;
   /** Per-insert enabled flag as last applied (index = scene insert index). */
   enabled: boolean[];
   /** Serialized EQ band as last applied (index = engine band index). */
@@ -157,6 +202,8 @@ export interface StripSync {
   sync(tracks: ReadonlyArray<EditorTrack>, mixer: ProjectMixerState): void;
   /** Engine bus id assigned to a store bus id (undefined when never seen). */
   busIdFor(storeBusId: string): number | undefined;
+  /** Engine bus id assigned to a group track id (undefined when never seen). */
+  groupBusIdFor(trackId: number): number | undefined;
 }
 
 /**
@@ -171,16 +218,17 @@ export interface StripSync {
  */
 export function createStripSync(handle: EngineHandle, options: StripSyncOptions = {}): StripSync {
   const insertCatalog = options.insertCatalog ?? null;
-  // Engine bus numbers are assigned once per store bus id and never reused
-  // within the session, so stale sends can never alias a recycled number.
+  // Engine bus numbers are compacted to the currently declared bus set so UI
+  // meter/scope targets stay within the engine's fixed bus telemetry range.
+  // When a number is reassigned, bus-related diff caches are reset and sends /
+  // output routing are replayed so stale engine state cannot alias the new bus.
   const busNumberByStoreId = new Map<string, number>();
-  let nextBusNumber = 1;
   let lastBusList: number[] = [];
   const lastBusGain = new Map<number, number>();
   const lastSendsByTrack = new Map<number, string>();
   const trackStripMemory = new Map<number, StripMemory>();
   const lastOutputBus = new Map<number, number>();
-  const lastBusStrip = new Map<number, string>();
+  const lastBusStrip = new Map<number, StripMemory>();
   const lastSidechains = new Map<string, { trackId: number; index: number; source: number }>();
   let masterStripMemory: StripMemory | undefined;
 
@@ -193,25 +241,26 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     strip: MixerStrip | undefined,
     memory: StripMemory | undefined,
     sendStripJson: (sceneJson: string) => void,
+    sendInsertParam: (insertIndex: number, paramName: string, value: number) => void,
   ): StripMemory | undefined => {
     const inserts = strip?.inserts ?? [];
+    const insertParams = insertNumericParams(inserts);
     const structureKey = JSON.stringify({
       inputTrimDb: strip?.inputTrimDb ?? 0,
       width: strip?.width ?? 1,
       polarityInvertLeft: strip?.polarityInvertLeft === true,
       polarityInvertRight: strip?.polarityInvertRight === true,
-      inserts: inserts.map((slot) => ({ processor: slot.processor, params: slot.params })),
+      inserts: inserts.map((slot) => ({
+        processor: slot.processor,
+        params: insertParamStructure(slot.params),
+      })),
     });
     // Individual band enabled/bypassed flags are forwarded as-is inside the
     // band objects; an EQ disabled as a whole contributes no bands.
-    const effectiveEqBands: EqBand[] = strip?.eq?.enabled ? strip.eq.bands : [];
+    const effectiveEqBands = engineEqBands(strip);
     const enabled = inserts.map((slot) => slot.enabled);
 
-    const hasSceneDsp =
-      (strip?.inputTrimDb ?? 0) !== 0 ||
-      (strip?.width ?? 1) !== 1 ||
-      strip?.polarityInvertLeft === true ||
-      strip?.polarityInvertRight === true;
+    const hasSceneDsp = stripSceneFieldsHaveDsp(strip);
     if (!memory && !hasSceneDsp && inserts.length === 0 && effectiveEqBands.length === 0) {
       return undefined;
     }
@@ -228,10 +277,12 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
         handle.engine.setStripEq(target, i, effectiveEqBands[i]);
         eqBandJson.push(JSON.stringify(effectiveEqBands[i]));
       }
-      return { structureKey, enabled, eqBandJson };
+      return { structureKey, insertParams, enabled, eqBandJson };
     }
 
-    // Structure unchanged: toggle bypass flags and diff EQ bands in place.
+    // Structure unchanged: patch numeric insert params, toggle bypass flags
+    // and diff EQ bands in place.
+    syncInsertNumericParams(memory.insertParams, insertParams, sendInsertParam);
     for (let i = 0; i < enabled.length; i += 1) {
       if (memory.enabled[i] !== enabled[i]) {
         handle.engine.setStripInsertBypassed(target, i, !enabled[i]);
@@ -246,7 +297,35 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       if (memory.eqBandJson[i] !== json) handle.engine.setStripEq(target, i, nextBand);
       eqBandJson.push(json);
     }
-    return { structureKey, enabled, eqBandJson };
+    return { structureKey, insertParams, enabled, eqBandJson };
+  };
+
+  const syncBusStrip = (
+    busId: number,
+    strip: MixerStrip | undefined,
+    memory: StripMemory | undefined,
+  ): StripMemory | undefined => {
+    const structureKey = busStripDspKey(strip);
+    const audible = engineBusStrip(strip);
+    const audibleInserts = audible?.inserts ?? [];
+    const insertParams = insertNumericParams(audibleInserts);
+    const hasSceneDsp = stripSceneFieldsHaveDsp(strip);
+
+    if (!memory && !hasSceneDsp && audibleInserts.length === 0) {
+      return undefined;
+    }
+
+    if (!memory || memory.structureKey !== structureKey) {
+      // Bus strips have no engine-side bypass toggles; disabled inserts are
+      // omitted from the scene, so enable/disable still changes structure.
+      handle.engine.setBusStripJson(busId, busSceneJson(busId, audible, insertCatalog));
+      return { structureKey, insertParams, enabled: [], eqBandJson: [] };
+    }
+
+    syncInsertNumericParams(memory.insertParams, insertParams, (insertIndex, paramName, value) => {
+      handle.engine.setBusStripInsertParamByName(busId, insertIndex, paramName, value);
+    });
+    return { structureKey, insertParams, enabled: [], eqBandJson: [] };
   };
 
   // The sync phase order is load-bearing:
@@ -267,18 +346,21 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       );
     }
 
-    for (const bus of mixer.buses) {
-      if (!busNumberByStoreId.has(bus.id)) {
-        busNumberByStoreId.set(bus.id, nextBusNumber);
-        nextBusNumber += 1;
-      }
-    }
-    for (const group of groupTracks) {
-      const key = `group:${group.id}`;
-      if (!busNumberByStoreId.has(key)) {
-        busNumberByStoreId.set(key, nextBusNumber);
-        nextBusNumber += 1;
-      }
+    const busKeys = [
+      ...mixer.buses.map((bus) => bus.id),
+      ...groupTracks.map((group) => `group:${group.id}`),
+    ];
+    const busMappingChanged =
+      busNumberByStoreId.size !== busKeys.length ||
+      busKeys.some((key, index) => busNumberByStoreId.get(key) !== index + 1);
+    if (busMappingChanged) {
+      busNumberByStoreId.clear();
+      busKeys.forEach((key, index) => {
+        busNumberByStoreId.set(key, index + 1);
+      });
+      lastBusList = [];
+      lastBusGain.clear();
+      lastBusStrip.clear();
     }
     const groupBusByTrackId = new Map(
       groupTracks.map((group) => [group.id, busNumberByStoreId.get(`group:${group.id}`) as number]),
@@ -379,48 +461,41 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     for (const bus of mixer.buses) {
       const busId = busNumberByStoreId.get(bus.id) as number;
       if (!bus.strip && !lastBusStrip.has(busId)) continue;
-      const inserts = bus.strip?.inserts ?? [];
-      const structureKey = busStripDspKey(bus.strip);
-      if (lastBusStrip.get(busId) !== structureKey) {
-        const audible = {
-          ...(bus.strip ?? { inserts: [] }),
-          inserts: inserts.filter((slot) => slot.enabled),
-        };
-        handle.engine.setBusStripJson(
-          busId,
-          busSceneJson(busId, audible as MixerStrip, insertCatalog),
-        );
-        lastBusStrip.set(busId, structureKey);
-      }
+      const memory = syncBusStrip(busId, bus.strip, lastBusStrip.get(busId));
+      if (memory) lastBusStrip.set(busId, memory);
     }
 
     for (const track of tracks) {
       if (track.kind === 'group') {
         const busId = groupBusByTrackId.get(track.id) as number;
-        const inserts = track.mixer?.inserts ?? [];
-        const structureKey = busStripDspKey(track.mixer);
-        if (lastBusStrip.get(busId) !== structureKey) {
-          // Bus strips have no engine-side bypass toggles; disabled inserts
-          // are simply omitted from the (re-sent) scene.
-          const audible = { ...track.mixer, inserts: inserts.filter((slot) => slot.enabled) };
-          handle.engine.setBusStripJson(
-            busId,
-            busSceneJson(busId, audible as MixerStrip, insertCatalog),
-          );
-          lastBusStrip.set(busId, structureKey);
-        }
+        const memory = syncBusStrip(busId, track.mixer, lastBusStrip.get(busId));
+        if (memory) lastBusStrip.set(busId, memory);
         continue;
       }
       // Frozen tracks bypass their strip DSP: the inserts/EQ are baked into
       // the frozen render, so the engine strip goes neutral while frozen.
       const stripState = track.frozen !== undefined ? undefined : track.mixer;
-      const memory = syncStrip(track.id, stripState, trackStripMemory.get(track.id), (json) =>
-        handle.engine.setTrackStripJson(track.id, json),
+      const memory = syncStrip(
+        track.id,
+        stripState,
+        trackStripMemory.get(track.id),
+        (json) => {
+          handle.engine.setTrackStripJson(track.id, json);
+        },
+        (insertIndex, paramName, value) =>
+          handle.engine.setTrackStripInsertParamByName(track.id, insertIndex, paramName, value),
       );
       if (memory) trackStripMemory.set(track.id, memory);
     }
-    masterStripMemory = syncStrip('master', mixer.master, masterStripMemory, (json) =>
-      handle.engine.setMasterStripJson(json),
+    masterStripMemory = syncStrip(
+      'master',
+      mixer.master,
+      masterStripMemory,
+      (json) => {
+        handle.engine.setMasterStripJson(json);
+      },
+      (insertIndex, paramName, value) =>
+        handle.engine.setMasterStripInsertParamByName(insertIndex, paramName, value),
     );
 
     // Insert sidechain keys, replayed after the strips exist. Bindings are
@@ -449,5 +524,9 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     }
   };
 
-  return { sync, busIdFor: (storeBusId) => busNumberByStoreId.get(storeBusId) };
+  return {
+    sync,
+    busIdFor: (storeBusId) => busNumberByStoreId.get(storeBusId),
+    groupBusIdFor: (trackId) => busNumberByStoreId.get(`group:${trackId}`),
+  };
 }

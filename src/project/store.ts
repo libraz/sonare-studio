@@ -379,10 +379,21 @@ export const useProjectStore = defineStore('project', () => {
    *
    * @param options Optional overrides (sampleRate defaults to 48000 Hz).
    */
+  function applySampleRateIfProvided(options: { sampleRate?: number }): boolean {
+    const current = project;
+    if (!current) return false;
+    if (options.sampleRate !== undefined && options.sampleRate > 0) {
+      current.setSampleRate(options.sampleRate);
+    }
+    return true;
+  }
+
   async function init(options: { sampleRate?: number } = {}): Promise<void> {
-    if (project) return;
+    if (applySampleRateIfProvided(options)) return;
     const mod = await ensureWasm();
-    if (project) return; // another init() call won the race while awaiting
+    // Another init() call may have won the race while awaiting; still apply
+    // the caller's concrete hardware rate when provided.
+    if (applySampleRateIfProvided(options)) return;
     wasmModule = mod;
     const created = new mod.Project();
     created.setSampleRate(options.sampleRate ?? DEFAULT_SAMPLE_RATE);

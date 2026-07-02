@@ -684,6 +684,32 @@ describe('createMidiSync', () => {
     expect(engine.clearMidiFx).toHaveBeenCalledWith(1);
   });
 
+  it('installs MIDI-FX on the deduped MIDI destination used by schedules', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const { handle, engine } = makeHandle();
+      const sync = createMidiSync(handle);
+      const midiFx = { ...DEFAULT_MIDI_FX_CONFIG, transposeSemitones: 12 };
+      const expectedJson = midiFxConfigJson(midiFx);
+      const tracks = Array.from({ length: 17 }, (_, index) =>
+        makeTrack(index + 1, {
+          instrument: { kind: 'synth-preset', preset: 'acoustic-piano' },
+          ...(index === 16 ? { midiFx } : {}),
+        }),
+      );
+      const clips = tracks.map((track) => makeClip(track.id, track.id));
+
+      await sync.sync(tracks, clips, TEMPO_120);
+
+      const schedules = engine.setMidiClips.mock.calls[0][0];
+      expect(schedules[16]).toMatchObject({ trackId: 17, destinationId: 1 });
+      expect(engine.setMidiFx).toHaveBeenCalledWith(1, expectedJson);
+      expect(engine.setMidiFx).not.toHaveBeenCalledWith(17, expectedJson);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('does not install MIDI-FX for frozen tracks', async () => {
     const { handle, engine } = makeHandle();
     const sync = createMidiSync(handle);
