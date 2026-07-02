@@ -69,6 +69,7 @@ describe('DeviceRack.vue', () => {
     expect(wrapper.find('.rack-track').text()).toBe(store.tracks[0].name);
     expect(wrapper.find('.instrument-name').text()).toBe('e-piano');
     expect(wrapper.find('.instrument-kind').text()).toBe('Preset');
+    expect(wrapper.find('.instrument-source').text()).toBe('Built-in NativeSynth fallback preset');
   });
 
   it('hides the instrument slot for audio tracks but keeps the insert chain', () => {
@@ -86,12 +87,21 @@ describe('DeviceRack.vue', () => {
 
     await wrapper.find('.preset-search input').setValue('lead');
     const options = wrapper.findAll('.preset-option');
-    expect(options.map((o) => o.text())).toEqual(['saw-lead', 'square-lead']);
+    expect(options.map((o) => o.find('.preset-name').text())).toEqual(['saw-lead', 'square-lead']);
+    expect(wrapper.find('.preset-group-title').text()).toBe('Synths');
 
     await options[0].trigger('click');
     expect(store.tracks[0].instrument).toEqual({ kind: 'synth-preset', preset: 'saw-lead' });
     expect(wrapper.find('.instrument-picker').exists()).toBe(false);
     expect(wrapper.find('.instrument-name').text()).toBe('saw-lead');
+  });
+
+  it('opens the instrument picker from a shell request', async () => {
+    const wrapper = mount(DeviceRack, { props: { instrumentPickerRequest: 1 } });
+    expect(wrapper.find('.instrument-picker').exists()).toBe(false);
+
+    await wrapper.setProps({ instrumentPickerRequest: 2 });
+    expect(wrapper.find('.instrument-picker').exists()).toBe(true);
   });
 
   it('lists stored fonts on the SF2 tab and commits a SoundFont selection', async () => {
@@ -218,6 +228,14 @@ describe('DeviceRack.vue', () => {
     expect(store.tracks[0].mixer?.inserts).toHaveLength(0);
     // Selection falls back to the instrument quick controls.
     expect(wrapper.find('[data-control="cutoffHz"]').exists()).toBe(true);
+  });
+
+  it('uses the shared realtime insert catalog for the add-insert picker', async () => {
+    const wrapper = mount(DeviceRack);
+
+    await selectOption(wrapper, '.add-insert', 'Tilt (eq)');
+
+    expect(store.tracks[0].mixer?.inserts[0].processor).toBe('eq.tilt');
   });
 
   it('resolves the stored font name for the sf2 caption', async () => {

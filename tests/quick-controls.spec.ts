@@ -64,6 +64,32 @@ describe('quick controls', () => {
       expect(controls.find((c) => c.id === 'drive')?.value).toBe(0.9);
     });
 
+    it('prioritizes amp and body controls for guitar and bass presets', () => {
+      setTrackInstrument(trackId, { kind: 'synth-preset', preset: 'electric-guitar' });
+      const controls = listQuickControls(
+        { type: 'instrument', trackId },
+        { resolvePresetPatch: () => ({ bodyMix: 0.45, busDrive: 0.25, gain: 0.7 }) },
+      );
+      expect(controls.map((c) => c.id)).toEqual([
+        'drive',
+        'bodyMix',
+        'busDrive',
+        'gain',
+        'cutoffHz',
+        'resonanceQ',
+        'ampAttackMs',
+        'ampReleaseMs',
+      ]);
+      expect(controls.find((c) => c.id === 'bodyMix')).toMatchObject({
+        name: 'Body',
+        value: 0.45,
+      });
+      expect(controls.find((c) => c.id === 'busDrive')).toMatchObject({
+        name: 'Amp Drive',
+        value: 0.25,
+      });
+    });
+
     it('uses the wasm preset catalog by default (fake module)', () => {
       // fakeSynthPresetPatch reports cutoffHz 12000 for every known preset.
       const controls = listQuickControls({ type: 'instrument', trackId });
@@ -100,7 +126,12 @@ describe('quick controls', () => {
         unit: 'dB',
       });
       expect(controls.find((c) => c.id === 'ratio')).toMatchObject({ min: 1, max: 20, value: 4 });
-      expect(controls.find((c) => c.id === 'attackMs')).toMatchObject({ unit: 'ms', value: 10 });
+      expect(controls.find((c) => c.id === 'attackMs')).toMatchObject({
+        min: 0,
+        max: 200,
+        unit: 'ms',
+        value: 10,
+      });
     });
 
     it('falls back to explicitly set params for unknown processors', () => {
@@ -177,6 +208,8 @@ describe('quick controls', () => {
       addInsert(trackId, 'dynamics.compressor');
       setQuickControl({ type: 'insert', trackId, index: 0 }, 'thresholdDb', -200);
       expect(store.tracks[0].mixer?.inserts[0].params.thresholdDb).toBe(-60);
+      setQuickControl({ type: 'insert', trackId, index: 0 }, 'attackMs', 900);
+      expect(store.tracks[0].mixer?.inserts[0].params.attackMs).toBe(200);
     });
 
     it('coalesces a knob drag into one undo step', () => {

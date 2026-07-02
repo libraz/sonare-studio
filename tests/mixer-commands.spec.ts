@@ -430,6 +430,13 @@ describe('mixer commands', () => {
       expect(() => addMixerBus()).toThrow(RangeError);
     });
 
+    it('counts group tracks against the engine bus limit when adding send buses', () => {
+      addGroupTrack();
+      for (let i = 1; i < MAX_MIXER_BUSES; i++) addMixerBus();
+      expect(store.mixer.buses).toHaveLength(MAX_MIXER_BUSES - 1);
+      expect(() => addMixerBus()).toThrow(RangeError);
+    });
+
     it('removing a bus keeps the mastering chain', () => {
       const busId = addMixerBus();
       setMasteringPreset('club');
@@ -506,6 +513,13 @@ describe('mixer commands', () => {
       expect(store.tracks.some((t) => t.id === groupId)).toBe(false);
       expect(redo()).toBe(true);
       expect(store.tracks.find((t) => t.id === groupId)?.kind).toBe('group');
+    });
+
+    it('counts send buses against the engine bus limit when adding group tracks', () => {
+      for (let i = 1; i < MAX_MIXER_BUSES; i++) addMixerBus();
+      const groupId = addGroupTrack();
+      expect(store.tracks.find((track) => track.id === groupId)?.kind).toBe('group');
+      expect(() => addGroupTrack()).toThrow(RangeError);
     });
 
     it('setTrackGroup sets and clears the membership undoably', () => {

@@ -1,4 +1,4 @@
-import { cloneStrip, type MixerStrip } from '../mixer';
+import { assertCanAddEngineBus, cloneStrip, type MixerStrip } from '../mixer';
 import { getProject, useProjectStore } from '../store';
 import { type EditorTrack, TRACK_COLOR_PALETTE, type TrackKind } from '../types';
 import { execute } from './history';
@@ -134,6 +134,8 @@ export function removeTrack(trackId: number): void {
  * @returns The new track id.
  */
 export function addGroupTrack(input: Omit<AddTrackInput, 'kind'> = {}): number {
+  const store = useProjectStore();
+  assertCanAddEngineBus(store.mixer.buses.length, store.tracks);
   return addTrack({ ...input, kind: 'group' });
 }
 

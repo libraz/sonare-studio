@@ -16,7 +16,7 @@
  * of the lane.
  */
 
-import { reactive } from 'vue';
+import { reactive, ref } from 'vue';
 import type { AutomationPoint, AutomationTarget } from '@/project/automation';
 
 /**
@@ -42,6 +42,12 @@ export function isAutomationWriteMode(mode: AutomationStripMode): mode is Automa
 
 /** Session-only mode per strip target; absent entries mean 'off'. */
 const modes = reactive(new Map<AutomationTarget, AutomationStripMode>());
+const revision = ref(0);
+
+/** Monotonic token that changes whenever any strip automation mode changes. */
+export function automationStripModeRevision(): number {
+  return revision.value;
+}
 
 /**
  * Returns the automation mode of a strip.
@@ -66,6 +72,7 @@ export function toggleAutomationStripMode(
 ): void {
   if (modes.get(target) === mode) modes.delete(target);
   else modes.set(target, mode);
+  revision.value += 1;
 }
 
 /**
@@ -75,19 +82,28 @@ export function toggleAutomationStripMode(
  * @param mode New mode.
  */
 export function setAutomationStripMode(target: AutomationTarget, mode: AutomationStripMode): void {
+  const current = automationStripMode(target);
+  if (current === mode) return;
   if (mode === 'off') modes.delete(target);
   else modes.set(target, mode);
+  revision.value += 1;
 }
 
 /** Drops every strip in a write-class mode back to 'read' (transport stop). */
 export function disengageAutomationWriteModes(): void {
+  let changed = false;
   for (const [target, mode] of modes) {
-    if (isAutomationWriteMode(mode)) modes.set(target, 'read');
+    if (isAutomationWriteMode(mode)) {
+      modes.set(target, 'read');
+      changed = true;
+    }
   }
+  if (changed) revision.value += 1;
 }
 
 /** Clears all strip automation modes (tests). */
 export function resetAutomationStripModes(): void {
+  if (modes.size > 0) revision.value += 1;
   modes.clear();
 }
 
@@ -117,11 +133,12 @@ export interface AutomationWriteGesture {
  * Creates a touch-record gesture for one automation lane.
  *
  * While playing, each update records a point at the playhead, throttled to
- * one point per {@link AUTOMATION_WRITE_THROTTLE_PPQ} of playhead advance
- * (a backward jump — loop wrap — always records). Stationary, the gesture
- * keeps a single breakpoint that follows the latest value. `end()` merges the
- * recording into the existing points and hands the result to `commit` exactly
- * once; ending without any update commits nothing.
+ * one point per {@link AUTOMATION_WRITE_THROTTLE_PPQ} of playhead advance.
+ * When the playhead jumps backward (loop wrap), the new pass replaces any
+ * already-recorded points at or after the wrapped PPQ, so the last pass wins.
+ * Stationary, the gesture keeps a single breakpoint that follows the latest
+ * value. `end()` merges the recording into the existing points and hands the
+ * result to `commit` exactly once; ending without any update commits nothing.
  *
  * The merge depends on the mode: 'touch' replaces only the recorded PPQ span
  * (a single breakpoint uses a ±{@link AUTOMATION_WRITE_REPLACE_WINDOW_PPQ}
@@ -153,7 +170,12 @@ export function createAutomationWriteGesture(
         return;
       }
       const last = recorded[recorded.length - 1];
-      if (!last || ppq < last.ppq || ppq - last.ppq >= AUTOMATION_WRITE_THROTTLE_PPQ) {
+      if (last && ppq < last.ppq) {
+        while (recorded.length > 0 && recorded[recorded.length - 1].ppq >= ppq) recorded.pop();
+        if (pending && pending.ppq >= ppq) pending = null;
+      }
+      const nextLast = recorded[recorded.length - 1];
+      if (!nextLast || ppq - nextLast.ppq >= AUTOMATION_WRITE_THROTTLE_PPQ) {
         recorded.push({ ppq, value });
         pending = null;
       } else {

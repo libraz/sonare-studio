@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { filterPresets } from '@/ui/devices/preset-filter';
+import { filterPresets, groupPresets, presetCategory } from '@/ui/devices/preset-filter';
 
 const CATALOG = ['sine', 'saw-lead', 'square-lead', 'e-piano', 'warm-pad', 'sub-bass', 'pluck'];
 
@@ -39,5 +39,22 @@ describe('filterPresets', () => {
 
   it('trims surrounding whitespace from the query', () => {
     expect(filterPresets(CATALOG, '  pluck  ')).toEqual(['pluck']);
+  });
+
+  it('classifies and groups instrument-oriented presets', () => {
+    expect(presetCategory('electric-guitar')).toBe('guitars');
+    expect(presetCategory('Harpsichord')).toBe('keys');
+    expect(presetCategory('bass-picked')).toBe('basses');
+    expect(presetCategory('Bassoon')).toBe('winds');
+    expect(presetCategory('church-organ')).toBe('organs');
+    expect(
+      groupPresets(['electric-guitar', 'Harpsichord', 'bass-picked', 'Bassoon', 'saw-lead'], ''),
+    ).toEqual([
+      { category: 'keys', presets: ['Harpsichord'] },
+      { category: 'guitars', presets: ['electric-guitar'] },
+      { category: 'basses', presets: ['bass-picked'] },
+      { category: 'winds', presets: ['Bassoon'] },
+      { category: 'synths', presets: ['saw-lead'] },
+    ]);
   });
 });

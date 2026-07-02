@@ -46,6 +46,24 @@ export function stripForAutomationTarget(
 }
 
 /**
+ * Converts a store insert slot index to the engine insert index used by bus
+ * strips, where disabled slots are omitted from the sent scene. Returns
+ * undefined when the target slot is missing or disabled.
+ */
+export function enabledInsertAutomationIndex(
+  strip: MixerStrip | undefined,
+  storeInsertIndex: number,
+): number | undefined {
+  const slot = strip?.inserts[storeInsertIndex];
+  if (!slot?.enabled) return undefined;
+  let engineIndex = 0;
+  for (let i = 0; i < storeInsertIndex; i += 1) {
+    if (strip?.inserts[i]?.enabled) engineIndex += 1;
+  }
+  return engineIndex;
+}
+
+/**
  * Rebuilds the lane list after an insert slot was removed from a strip,
  * remapping or dropping the insert lanes that target that strip:
  *

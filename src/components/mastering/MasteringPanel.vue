@@ -11,6 +11,7 @@ import {
   addMasteringProcessor,
   type CommandGestureOptions,
   removeMasteringProcessor,
+  reorderMasteringProcessor,
   setMasteringEnabled,
   setMasteringParam,
   setMasteringPreset,
@@ -29,7 +30,6 @@ import {
   type MasteringControl,
   masteringProcessorControls,
 } from '@/ui/mastering/chain-controls';
-import { applyChainReorder, planChainReorder } from '@/ui/mastering/chain-reorder';
 import { isClippingRisk } from '@/ui/mastering/loudness';
 import {
   filterPresetCatalog,
@@ -317,14 +317,7 @@ function onDrop(index: number): void {
   dragOverIndex.value = null;
   if (from === null || from === index) return;
   runCommand(() => {
-    const steps = planChainReorder(chain.value.processors, from, index);
-    applyChainReorder(steps, {
-      remove: removeMasteringProcessor,
-      append: (processor, params) => {
-        addMasteringProcessor(processor, params);
-      },
-      setEnabled: setMasteringEnabled,
-    });
+    reorderMasteringProcessor(from, index);
   });
   expandedIndex.value = null;
 }

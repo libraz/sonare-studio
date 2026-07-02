@@ -5,9 +5,14 @@
  */
 
 import type { MixerStripTarget } from '@/project/commands';
-import { addInsert, removeInsert, setInsertEnabled, setInsertSidechain } from '@/project/commands';
+import {
+  addInsert,
+  removeInsert,
+  reorderInsert,
+  setInsertEnabled,
+  setInsertSidechain,
+} from '@/project/commands';
 import type { InsertSlot } from '@/project/mixer';
-import { applyChainReorder, moveIndex, planChainReorder } from '@/ui/mastering/chain-reorder';
 
 /** Insert processors whose sidechain can be keyed from another track. */
 export const SIDECHAIN_KEYED_PROCESSORS: readonly string[] = [
@@ -29,6 +34,7 @@ export function isSidechainKeyedProcessor(processor: string): boolean {
 export interface InsertRackCommands {
   addInsert: typeof addInsert;
   removeInsert: typeof removeInsert;
+  reorderInsert: typeof reorderInsert;
   setInsertEnabled: typeof setInsertEnabled;
   setInsertSidechain: typeof setInsertSidechain;
 }
@@ -37,6 +43,7 @@ export interface InsertRackCommands {
 const defaultCommands: InsertRackCommands = {
   addInsert,
   removeInsert,
+  reorderInsert,
   setInsertEnabled,
   setInsertSidechain,
 };
@@ -104,10 +111,9 @@ export function adjustExpandedAfterRemove(expanded: number | null, removed: numb
 }
 
 /**
- * Drag-reorders a strip's insert chain, moving the slot at `from` to `to`. The
- * move is planned over the append/remove/set-enabled primitives (shared with
- * the mastering rack) and then sidechain key sources — which the append
- * primitive does not carry — are restored on the moved slots.
+ * Drag-reorders a strip's insert chain, moving the slot at `from` to `to`.
+ * The command layer performs the move atomically so insert automation lanes
+ * and sidechain sources follow the moved slot in the same undo entry.
  *
  * @param target Track id or 'master'.
  * @param slots Current insert chain, in order.
@@ -122,25 +128,6 @@ export function reorderInsertSlots(
   to: number,
   commands: InsertRackCommands = defaultCommands,
 ): void {
-  const steps = planChainReorder(slots, from, to);
-  if (steps.length === 0) return;
-  applyChainReorder(steps, {
-    remove: (index) => commands.removeInsert(target, index),
-    append: (processor, params) => {
-      commands.addInsert(target, processor, params);
-    },
-    setEnabled: (index, enabled) => commands.setInsertEnabled(target, index, enabled),
-  });
-  // Sidechain sources only exist on track strips and are dropped by append.
-  if (typeof target === 'number') {
-    const start = Math.min(from, to);
-    moveIndex(slots, from, to)
-      .slice(start)
-      .forEach((slot, offset) => {
-        const source = slot.sidechainSourceTrackId;
-        if (source !== undefined && source !== null) {
-          commands.setInsertSidechain(target, start + offset, source);
-        }
-      });
-  }
+  if (from === to || slots.length === 0) return;
+  commands.reorderInsert(target, from, to);
 }

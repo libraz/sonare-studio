@@ -19,6 +19,7 @@ import {
   setInsertParam,
   setTrackInstrument,
 } from './commands';
+import { INSERT_PARAM_DOMAIN_FALLBACK, insertParamDomain } from './insert-param-domains';
 import { trackInstrument } from './instrument';
 import type { InsertSlot, MixerStrip } from './mixer';
 import { getWasmModule, useProjectStore } from './store';
@@ -83,6 +84,35 @@ const SYNTH_QUICK_CONTROLS: ReadonlyArray<SynthControlSpec> = [
   { id: 'gain', name: 'Gain', min: 0, max: 2, fallback: 1 },
 ];
 
+/** Amp/body-oriented controls for plucked-string presets such as guitar/bass. */
+const PLUCKED_STRING_QUICK_CONTROLS: ReadonlyArray<SynthControlSpec> = [
+  { id: 'drive', name: 'Pre Drive', min: 0, max: 1, fallback: 0 },
+  { id: 'bodyMix', name: 'Body', min: 0, max: 1, fallback: 0.35 },
+  { id: 'busDrive', name: 'Amp Drive', min: 0, max: 1, fallback: 0 },
+  { id: 'gain', name: 'Output', min: 0, max: 2, fallback: 1 },
+  { id: 'cutoffHz', name: 'Tone', min: 20, max: 20000, unit: 'Hz', fallback: 18000 },
+  { id: 'resonanceQ', name: 'Cab Q', min: 0.1, max: 20, fallback: Math.SQRT1_2 },
+  { id: 'ampAttackMs', name: 'Pick', min: 0, max: 5000, unit: 'ms', fallback: 5 },
+  { id: 'ampReleaseMs', name: 'Damp', min: 0, max: 5000, unit: 'ms', fallback: 120 },
+];
+
+function isPluckedStringPreset(
+  presetName: string | undefined,
+  basePatch: SynthPatch | null,
+): boolean {
+  const lower = presetName?.toLowerCase() ?? '';
+  if (
+    lower.includes('guitar') ||
+    lower.includes('bass') ||
+    lower.includes('harp') ||
+    lower.includes('pluck')
+  ) {
+    return true;
+  }
+  const mode = basePatch?.engineMode;
+  return mode === 'karplus-strong' || mode === 3 || basePatch?.body === 'guitar';
+}
+
 /** One insert-parameter range heuristic, matched by name pattern. */
 interface ParamRangeRule {
   test: RegExp;
@@ -112,9 +142,19 @@ const PARAM_RANGE_RULES: ReadonlyArray<ParamRangeRule> = [
 /** Fallback range for parameters no rule matches (normalized amounts). */
 const DEFAULT_PARAM_RULE: Omit<ParamRangeRule, 'test'> = { min: 0, max: 1, fallback: 0 };
 
-/** Returns the range rule for an insert parameter name. */
-function paramRule(name: string): Omit<ParamRangeRule, 'test'> {
-  return PARAM_RANGE_RULES.find((rule) => rule.test.test(name)) ?? DEFAULT_PARAM_RULE;
+/** Returns the range rule for an insert parameter, preferring the shared domain catalog. */
+function paramRule(processor: string, name: string): Omit<ParamRangeRule, 'test'> {
+  const heuristic = PARAM_RANGE_RULES.find((rule) => rule.test.test(name)) ?? DEFAULT_PARAM_RULE;
+  const domain = insertParamDomain(processor, name);
+  if (domain !== INSERT_PARAM_DOMAIN_FALLBACK) {
+    return {
+      min: domain.min,
+      max: domain.max,
+      ...(domain.unit ? { unit: domain.unit } : {}),
+      fallback: Math.min(domain.max, Math.max(domain.min, heuristic.fallback)),
+    };
+  }
+  return heuristic;
 }
 
 /** Splits a camelCase parameter name into a capitalized display name. */
@@ -211,7 +251,10 @@ export function listQuickControls(
     const presetName = instrument.kind === 'synth-preset' ? instrument.preset : patch?.preset;
     const resolvePreset = resolvers.resolvePresetPatch ?? defaultResolvePresetPatch;
     const basePatch = presetName !== undefined ? resolvePreset(presetName) : null;
-    return SYNTH_QUICK_CONTROLS.map((spec) => {
+    const specs = isPluckedStringPreset(presetName, basePatch)
+      ? PLUCKED_STRING_QUICK_CONTROLS
+      : SYNTH_QUICK_CONTROLS;
+    return specs.map((spec) => {
       const value = patchValue(patch, spec.id) ?? patchValue(basePatch, spec.id) ?? spec.fallback;
       const control: QuickControl = {
         id: spec.id,
@@ -230,7 +273,7 @@ export function listQuickControls(
   const setNames = Object.keys(slot.params).filter((name) => typeof slot.params[name] === 'number');
   const names = [...new Set([...catalogNames, ...setNames])].slice(0, MAX_QUICK_CONTROLS);
   return names.map((name) => {
-    const rule = paramRule(name);
+    const rule = paramRule(slot.processor, name);
     const raw = slot.params[name];
     const control: QuickControl = {
       id: name,
@@ -269,7 +312,9 @@ export function setQuickControl(
     throw new RangeError(`Quick control value must be finite, got ${value}`);
   }
   if (target.type === 'instrument') {
-    const spec = SYNTH_QUICK_CONTROLS.find((entry) => entry.id === id);
+    const spec =
+      SYNTH_QUICK_CONTROLS.find((entry) => entry.id === id) ??
+      PLUCKED_STRING_QUICK_CONTROLS.find((entry) => entry.id === id);
     if (!spec) throw new RangeError(`Unknown instrument quick control: ${id}`);
     const store = useProjectStore();
     const track = store.tracks.find((t) => t.id === target.trackId);
@@ -288,8 +333,8 @@ export function setQuickControl(
     setTrackInstrument(target.trackId, { kind: 'synth-patch', patch }, options);
     return;
   }
-  requireInsertSlot(target);
-  const rule = paramRule(id);
+  const slot = requireInsertSlot(target);
+  const rule = paramRule(slot.processor, id);
   const clamped = Math.min(rule.max, Math.max(rule.min, value));
   setInsertParam(target.trackId, target.index, id, clamped, options);
 }

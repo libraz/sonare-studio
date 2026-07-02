@@ -19,14 +19,9 @@ import { listFonts, loadFontMeta, type SoundFontMeta, saveFont } from '@/project
 import { type ExternalMidiInstrument, effectiveTrackInstrument } from '@/project/instrument';
 import type { QuickControlTarget } from '@/project/quick-controls';
 import { getWasmModule, useProjectStore } from '@/project/store';
-import {
-  insertCategory,
-  insertLabel,
-  instrumentLabel,
-  patchBaseLabel,
-} from '@/ui/devices/device-labels';
+import { instrumentLabel, patchBaseLabel } from '@/ui/devices/device-labels';
 import { patchEditCount } from '@/ui/devices/patch-draft';
-import { filterPresets } from '@/ui/devices/preset-filter';
+import { groupPresets, type PresetCategory } from '@/ui/devices/preset-filter';
 import {
   buildSf2Instrument,
   clampBank,
@@ -39,6 +34,7 @@ import {
   MIN_SF2_POLYPHONY,
 } from '@/ui/devices/sf2-model';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { type InsertProcessorEntry, loadInsertCatalogEntries } from '@/ui/mixer/insert-catalog';
 import PatchEditor from './PatchEditor.vue';
 import QuickControls from './QuickControls.vue';
 
@@ -50,7 +46,7 @@ import QuickControls from './QuickControls.vue';
  * every edit through the undoable command layer.
  */
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     /**
      * True while the engine transport plays. Instrument swaps are stop-gated
@@ -64,8 +60,13 @@ withDefaults(
      * mode. Omitted (tests, no transport) disables knob touch recording.
      */
     positionPpq?: () => number;
+    /**
+     * Monotonic request counter from the shell. Incrementing it opens the
+     * active MIDI track's instrument picker from outside the rack.
+     */
+    instrumentPickerRequest?: number;
   }>(),
-  { transportPlaying: false },
+  { transportPlaying: false, instrumentPickerRequest: 0 },
 );
 
 const store = useProjectStore();
@@ -173,7 +174,14 @@ const pickerRoot = ref<HTMLElement | null>(null);
 
 const presetQuery = ref('');
 const presetCatalog = ref<string[]>([]);
-const filteredPresets = computed(() => filterPresets(presetCatalog.value, presetQuery.value));
+const presetGroups = computed(() => groupPresets(presetCatalog.value, presetQuery.value));
+const filteredPresetCount = computed(() =>
+  presetGroups.value.reduce((sum, group) => sum + group.presets.length, 0),
+);
+
+function presetCategoryLabel(category: PresetCategory): string {
+  return t.value.shell.devicesPanel.presetCategories[category];
+}
 
 function refreshPresetCatalog(): void {
   try {
@@ -185,10 +193,10 @@ function refreshPresetCatalog(): void {
   }
 }
 
-function onInstrumentClick(): void {
+function openInstrumentPicker(): void {
+  if (!instrument.value) return;
   selectedDevice.value = 'instrument';
-  pickerOpen.value = !pickerOpen.value;
-  if (!pickerOpen.value) return;
+  pickerOpen.value = true;
   refreshPresetCatalog();
   sf2Selection.value = createSf2Selection(instrument.value);
   syncExternalSelection();
@@ -199,6 +207,21 @@ function onInstrumentClick(): void {
   if (pickerTab.value === 'sf2') void refreshFonts();
   if (pickerTab.value === 'external') void webMidiOutputs.refresh();
 }
+
+function onInstrumentClick(): void {
+  if (pickerOpen.value) {
+    pickerOpen.value = false;
+    return;
+  }
+  openInstrumentPicker();
+}
+
+watch(
+  () => props.instrumentPickerRequest,
+  (request, previous) => {
+    if (request > previous) openInstrumentPicker();
+  },
+);
 
 function openTab(tab: PickerTab): void {
   pickerTab.value = tab;
@@ -263,6 +286,10 @@ function onProgramInput(event: Event): void {
   sf2Selection.value = { ...sf2Selection.value, program: clampProgram(raw) };
 }
 
+function selectSf2Program(program: number): void {
+  sf2Selection.value = { ...sf2Selection.value, program: clampProgram(program) };
+}
+
 function onGainInput(event: Event): void {
   const raw = Number((event.target as HTMLInputElement).value);
   sf2Selection.value = { ...sf2Selection.value, gain: clampGain(raw) };
@@ -280,6 +307,95 @@ function useSf2(): void {
   run(() => setTrackInstrument(track.id, next));
   pickerOpen.value = false;
 }
+
+// --- SF2 GM / GM2 program browser ---------------------------------------------
+
+interface GmFamilyView {
+  index: number;
+  name: string;
+  firstProgram: number;
+}
+
+const gmFamilies = computed<GmFamilyView[]>(() => {
+  try {
+    const wasm = getWasmModule() as unknown as {
+      Project?: {
+        gmFamilyName?: (family: number) => string | null;
+        gmFamilyFirstProgram?: (family: number) => number;
+      };
+    };
+    const Project = wasm.Project;
+    if (
+      !Project ||
+      typeof Project.gmFamilyName !== 'function' ||
+      typeof Project.gmFamilyFirstProgram !== 'function'
+    ) {
+      return [];
+    }
+    return Array.from({ length: 16 }, (_, index) => ({
+      index,
+      name: Project.gmFamilyName?.(index) ?? `Family ${index + 1}`,
+      firstProgram: Project.gmFamilyFirstProgram?.(index) ?? index * 8,
+    }));
+  } catch {
+    return [];
+  }
+});
+
+const selectedGmFamily = computed(() => Math.floor(sf2Selection.value.program / 8));
+
+const gmFamilyOptions = computed(() =>
+  gmFamilies.value.map((family) => ({
+    value: String(family.index),
+    label: `${family.index + 1}. ${family.name}`,
+  })),
+);
+
+function onGmFamilyChange(value: string): void {
+  const family = Number(value);
+  if (!Number.isInteger(family)) return;
+  const firstProgram = gmFamilies.value.find((entry) => entry.index === family)?.firstProgram;
+  if (firstProgram !== undefined) selectSf2Program(firstProgram);
+}
+
+function gmInstrumentName(program: number): string {
+  try {
+    const wasm = getWasmModule() as unknown as {
+      Project?: { gmInstrumentName?: (program: number) => string | null };
+    };
+    return wasm.Project?.gmInstrumentName?.(program) ?? `Program ${program}`;
+  } catch {
+    return `Program ${program}`;
+  }
+}
+
+function gm2InstrumentName(bank: number, program: number): string | null {
+  try {
+    const wasm = getWasmModule() as unknown as {
+      Project?: { gm2InstrumentName?: (bankLsb: number, program: number) => string | null };
+    };
+    return wasm.Project?.gm2InstrumentName?.(bank & 0x7f, program) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+const sf2ProgramName = computed(() => {
+  const { bank, program } = sf2Selection.value;
+  return gm2InstrumentName(bank, program) ?? gmInstrumentName(program);
+});
+
+const sf2ProgramOptions = computed(() => {
+  const first = selectedGmFamily.value * 8;
+  return Array.from({ length: 8 }, (_, offset) => {
+    const program = first + offset;
+    return {
+      program,
+      gmName: gmInstrumentName(program),
+      gm2Name: gm2InstrumentName(sf2Selection.value.bank, program),
+    };
+  });
+});
 
 async function onSf2FileChange(event: Event): Promise<void> {
   const input = event.target as HTMLInputElement;
@@ -433,29 +549,10 @@ function openPatchEditor(): void {
 
 // --- Insert chain ------------------------------------------------------------------
 
-/** Offered when the runtime insert catalog is unavailable. */
-const FALLBACK_INSERT_CHOICES = [
-  'dynamics.compressor',
-  'dynamics.limiter',
-  'eq.parametric',
-  'eq.tilt',
-  'saturation.tape',
-  'saturation.softClipper',
-  'stereo.imager',
-  'spectral.airBand',
-];
-
-const insertCatalog = ref<string[]>([]);
+const insertCatalog = ref<InsertProcessorEntry[]>([]);
 
 function refreshInsertCatalog(): void {
-  try {
-    const wasm = getWasmModule() as unknown as { masteringInsertNames?: () => string[] };
-    const names =
-      typeof wasm.masteringInsertNames === 'function' ? wasm.masteringInsertNames() : [];
-    insertCatalog.value = names.length > 0 ? names : [...FALLBACK_INSERT_CHOICES];
-  } catch {
-    insertCatalog.value = [...FALLBACK_INSERT_CHOICES];
-  }
+  insertCatalog.value = loadInsertCatalogEntries('realtime');
 }
 
 watch(
@@ -475,9 +572,9 @@ const addInsertValue = ref(ADD_INSERT_PLACEHOLDER);
 /** Add-insert picker options: placeholder prompt plus the runtime catalog. */
 const addInsertOptions = computed<{ value: string; label: string; disabled?: boolean }[]>(() => [
   { value: ADD_INSERT_PLACEHOLDER, label: t.value.shell.devicesPanel.addInsert, disabled: true },
-  ...insertCatalog.value.map((name) => ({
-    value: name,
-    label: `${insertLabel(name)} (${insertCategory(name) || name})`,
+  ...insertCatalog.value.map((entry) => ({
+    value: entry.id,
+    label: `${entry.label} (${entry.id.includes('.') ? entry.id.slice(0, entry.id.indexOf('.')) : entry.id})`,
   })),
 ]);
 
@@ -539,6 +636,15 @@ function displayInstrumentKind(): string {
   if (current?.kind === 'external-midi') return t.value.shell.devicesPanel.kindExternalMidi;
   return '';
 }
+
+const instrumentSourceCaption = computed(() => {
+  const current = instrument.value;
+  if (current?.kind === 'sf2') return t.value.shell.devicesPanel.sourceSf2;
+  if (current?.kind === 'external-midi') return t.value.shell.devicesPanel.sourceExternalMidi;
+  if (current?.kind === 'synth-patch') return t.value.shell.devicesPanel.sourceBuiltinPatch;
+  if (current?.kind === 'synth-preset') return t.value.shell.devicesPanel.sourceBuiltinPreset;
+  return '';
+});
 </script>
 
 <template>
@@ -565,6 +671,7 @@ function displayInstrumentKind(): string {
           <span class="instrument-name">{{ instrumentCaption }}</span>
           <span class="instrument-caret" aria-hidden="true">▾</span>
         </button>
+        <p class="instrument-source">{{ instrumentSourceCaption }}</p>
         <p v-if="transportPlaying" class="instrument-gate-hint">
           {{ t.shell.devicesPanel.instrumentGateHint }}
         </p>
@@ -628,25 +735,31 @@ function displayInstrumentKind(): string {
               :aria-label="t.shell.devicesPanel.searchPresets"
             />
             <EmptyState
-              v-if="filteredPresets.length === 0"
+              v-if="filteredPresetCount === 0"
               variant="inline"
               :message="t.shell.devicesPanel.noMatchingPresets"
             />
-            <ul v-else class="preset-list" role="listbox" :aria-label="t.shell.devicesPanel.synthPresets">
-              <li v-for="preset in filteredPresets" :key="preset">
-                <button
-                  type="button"
-                  class="preset-option"
-                  role="option"
-                  :aria-selected="
-                    instrument.kind === 'synth-preset' && instrument.preset === preset
-                  "
-                  @click="choosePreset(preset)"
-                >
-                  {{ preset }}
-                </button>
-              </li>
-            </ul>
+            <div v-else class="preset-groups" role="listbox" :aria-label="t.shell.devicesPanel.synthPresets">
+              <section v-for="group in presetGroups" :key="group.category" class="preset-group">
+                <h4 class="preset-group-title">{{ presetCategoryLabel(group.category) }}</h4>
+                <ul class="preset-list">
+                  <li v-for="preset in group.presets" :key="preset">
+                    <button
+                      type="button"
+                      class="preset-option"
+                      role="option"
+                      :aria-selected="
+                        instrument.kind === 'synth-preset' && instrument.preset === preset
+                      "
+                      @click="choosePreset(preset)"
+                    >
+                      <span class="preset-name">{{ preset }}</span>
+                      <span class="preset-source">{{ t.shell.devicesPanel.builtinFallback }}</span>
+                    </button>
+                  </li>
+                </ul>
+              </section>
+            </div>
           </div>
 
           <div v-else-if="pickerTab === 'sf2'" class="picker-body">
@@ -726,6 +839,37 @@ function displayInstrumentKind(): string {
                   @input="onPolyphonyInput"
                 />
               </label>
+            </div>
+            <div class="sf2-program-browser">
+              <div class="sf2-current-program">
+                <span class="sf2-current-label">{{ t.shell.devicesPanel.selectedProgram }}</span>
+                <strong>{{ sf2Selection.program }} · {{ sf2ProgramName }}</strong>
+              </div>
+              <label v-if="gmFamilyOptions.length > 0" class="sf2-family">
+                <span>{{ t.shell.devicesPanel.programFamily }}</span>
+                <SelectMenu
+                  :model-value="String(selectedGmFamily)"
+                  :options="gmFamilyOptions"
+                  size="sm"
+                  :aria-label="t.shell.devicesPanel.programFamily"
+                  @update:model-value="onGmFamilyChange"
+                />
+              </label>
+              <div class="sf2-program-grid" role="listbox" :aria-label="t.shell.devicesPanel.program">
+                <button
+                  v-for="option in sf2ProgramOptions"
+                  :key="option.program"
+                  type="button"
+                  class="sf2-program-option"
+                  :class="{ selected: sf2Selection.program === option.program }"
+                  role="option"
+                  :aria-selected="sf2Selection.program === option.program"
+                  @click="selectSf2Program(option.program)"
+                >
+                  <span class="sf2-program-number">{{ option.program }}</span>
+                  <span class="sf2-program-name">{{ option.gm2Name ?? option.gmName }}</span>
+                </button>
+              </div>
             </div>
             <div class="sf2-actions">
               <label class="load-sf2">

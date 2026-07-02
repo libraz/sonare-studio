@@ -2,6 +2,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { type AutomationLaneState, insertAutomationParam } from '@/project/automation';
 import {
+  enabledInsertAutomationIndex,
   pruneInsertLanesAgainstStrips,
   remapInsertLanesAfterRemoval,
   remapInsertLanesAfterReorder,
@@ -117,6 +118,22 @@ describe('pruneInsertLanesAgainstStrips', () => {
       busStrips: new Map(),
     });
     expect(result.map((l) => `${l.target}:${l.param}`)).toEqual(['1:insert:0:gainDb', '1:faderDb']);
+  });
+});
+
+describe('enabledInsertAutomationIndex', () => {
+  it('maps store slot indexes to enabled-only engine indexes', () => {
+    const strip = createDefaultStrip();
+    strip.inserts = [
+      { processor: 'gain.gain', params: {}, enabled: false },
+      { processor: 'gain.gain', params: {}, enabled: true },
+      { processor: 'gain.gain', params: {}, enabled: true },
+    ];
+
+    expect(enabledInsertAutomationIndex(strip, 0)).toBeUndefined();
+    expect(enabledInsertAutomationIndex(strip, 1)).toBe(0);
+    expect(enabledInsertAutomationIndex(strip, 2)).toBe(1);
+    expect(enabledInsertAutomationIndex(strip, 3)).toBeUndefined();
   });
 });
 

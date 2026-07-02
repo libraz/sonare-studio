@@ -14,6 +14,7 @@ function mockCommands(addReturn = 0): InsertRackCommands {
   return {
     addInsert: vi.fn(() => addReturn),
     removeInsert: vi.fn(),
+    reorderInsert: vi.fn(),
     setInsertEnabled: vi.fn(),
     setInsertSidechain: vi.fn(),
   };
@@ -92,37 +93,20 @@ describe('reorderInsertSlots', () => {
     ];
   }
 
-  it('rebuilds only the suffix from the lower index and restores bypass state', () => {
+  it('delegates reorder to the atomic command layer', () => {
     const commands = mockCommands();
     reorderInsertSlots(7, chain(), 2, 0, commands);
-    // Suffix from index 0 is removed high-to-low, then re-appended in new order.
-    expect(commands.removeInsert).toHaveBeenNthCalledWith(1, 7, 2);
-    expect(commands.removeInsert).toHaveBeenNthCalledWith(3, 7, 0);
-    expect((commands.addInsert as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[1])).toEqual([
-      'dynamics.duckingProcessor',
-      'eq.parametric',
-      'saturation.tape',
-    ]);
-    // The bypassed tape slot lands at index 2 and is re-bypassed.
-    expect(commands.setInsertEnabled).toHaveBeenCalledWith(7, 2, false);
-  });
-
-  it('restores the sidechain key source on the moved slot (track strips)', () => {
-    const commands = mockCommands();
-    reorderInsertSlots(7, chain(), 2, 0, commands);
-    // The ducking slot moved to index 0; its key source is re-applied there.
-    expect(commands.setInsertSidechain).toHaveBeenCalledWith(7, 0, 9);
-  });
-
-  it('skips sidechain restore for the master strip', () => {
-    const commands = mockCommands();
-    reorderInsertSlots('master', chain(), 2, 0, commands);
+    expect(commands.reorderInsert).toHaveBeenCalledWith(7, 2, 0);
+    expect(commands.removeInsert).not.toHaveBeenCalled();
+    expect(commands.addInsert).not.toHaveBeenCalled();
+    expect(commands.setInsertEnabled).not.toHaveBeenCalled();
     expect(commands.setInsertSidechain).not.toHaveBeenCalled();
   });
 
   it('is a no-op for an unchanged position', () => {
     const commands = mockCommands();
     reorderInsertSlots(7, chain(), 1, 1, commands);
+    expect(commands.reorderInsert).not.toHaveBeenCalled();
     expect(commands.removeInsert).not.toHaveBeenCalled();
     expect(commands.addInsert).not.toHaveBeenCalled();
   });

@@ -270,6 +270,25 @@ export function laneGainDb(
 /** Maximum number of send buses (the realtime engine's bus lane limit). */
 export const MAX_MIXER_BUSES = 8;
 
+/** Counts the engine bus lanes consumed by send buses plus group tracks. */
+export function engineBusCount(
+  sendBusCount: number,
+  tracks: ReadonlyArray<{ kind: string }>,
+): number {
+  return sendBusCount + tracks.filter((track) => track.kind === 'group').length;
+}
+
+/** Throws when adding more engine bus lanes would exceed the realtime limit. */
+export function assertCanAddEngineBus(
+  sendBusCount: number,
+  tracks: ReadonlyArray<{ kind: string }>,
+): void {
+  const count = engineBusCount(sendBusCount, tracks);
+  if (count >= MAX_MIXER_BUSES) {
+    throw new RangeError(`Mixer bus limit reached (${MAX_MIXER_BUSES})`);
+  }
+}
+
 /** Maximum number of VCA control groups (UI/sanity bound, not an engine limit). */
 export const MAX_VCA_GROUPS = 8;
 

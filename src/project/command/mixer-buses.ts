@@ -1,5 +1,6 @@
 import { busAutomationTarget } from '../automation';
 import {
+  assertCanAddEngineBus,
   cloneStrip,
   MAX_MIXER_BUSES,
   MAX_STRIP_GAIN_DB,
@@ -29,9 +30,7 @@ export interface AddMixerBusInput {
  */
 export function addMixerBus(input: AddMixerBusInput = {}): string {
   const store = useProjectStore();
-  if (store.mixer.buses.length >= MAX_MIXER_BUSES) {
-    throw new RangeError(`Mixer bus limit reached (${MAX_MIXER_BUSES})`);
-  }
+  assertCanAddEngineBus(store.mixer.buses.length, store.tracks);
   let id = input.id;
   if (id !== undefined) {
     if (id.length === 0) throw new RangeError('Mixer bus id must not be empty');

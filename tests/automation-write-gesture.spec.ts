@@ -143,6 +143,47 @@ describe('createAutomationWriteGesture', () => {
     ]);
   });
 
+  it('touch keeps only the latest loop pass when the playhead wraps backward', () => {
+    const h = harness('touch', [], true);
+    h.seek(3);
+    h.gesture.update(1);
+    h.seek(3 + AUTOMATION_WRITE_THROTTLE_PPQ);
+    h.gesture.update(2);
+    h.seek(1);
+    h.gesture.update(9);
+    h.seek(1 + AUTOMATION_WRITE_THROTTLE_PPQ);
+    h.gesture.update(10);
+    h.gesture.end();
+
+    expect(h.commits[0]).toEqual([
+      { ppq: 1, value: 9 },
+      { ppq: 1 + AUTOMATION_WRITE_THROTTLE_PPQ, value: 10 },
+    ]);
+  });
+
+  it('latch keeps only the latest loop pass before merging with existing points', () => {
+    const h = harness(
+      'latch',
+      [
+        { ppq: 0.5, value: -12 },
+        { ppq: 4, value: -3 },
+      ],
+      true,
+    );
+    h.seek(3);
+    h.gesture.update(1);
+    h.seek(3 + AUTOMATION_WRITE_THROTTLE_PPQ);
+    h.gesture.update(2);
+    h.seek(1);
+    h.gesture.update(9);
+    h.gesture.end();
+
+    expect(h.commits[0]).toEqual([
+      { ppq: 0.5, value: -12 },
+      { ppq: 1, value: 9 },
+    ]);
+  });
+
   it('latch single-breakpoint window matches the touch lower bound', () => {
     // A point just before the ±window lower bound is kept; one inside is dropped.
     const existing: AutomationPoint[] = [

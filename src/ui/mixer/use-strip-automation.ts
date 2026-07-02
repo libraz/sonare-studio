@@ -16,7 +16,7 @@ import { linearToDb } from '@/engine/mixer-sync';
 import type { AutomationParam } from '@/project/automation';
 import { evaluateAutomationValue } from '@/project/automation';
 import { setAutomationLanePoints } from '@/project/commands';
-import type { MixerStrip } from '@/project/mixer';
+import { type MixerStrip, vcaOffsetDb } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
 import {
@@ -88,10 +88,17 @@ export function useStripAutomation(options: StripAutomationOptions): StripAutoma
 
   /**
    * dB offset between the strip fader domain and the engine lane fader domain
-   * (the engine lane fader is linearToDb(track.volume) + strip.gainDb; the
-   * master strip has no track volume term).
+   * (the engine lane fader is linearToDb(track.volume) + strip.gainDb +
+   * vcaOffsetDb(track.vcaId); the master strip has no track/VCA term).
    */
-  const laneOffsetDb = computed(() => (isMaster.value ? 0 : linearToDb(track.value?.volume ?? 1)));
+  const laneOffsetDb = computed(() => {
+    if (isMaster.value) return 0;
+    const currentTrack = track.value;
+    const vcaGainDb = new Map(
+      (store.mixer.vcaGroups ?? []).map((group) => [group.id, group.gainDb]),
+    );
+    return linearToDb(currentTrack?.volume ?? 1) + vcaOffsetDb(currentTrack?.vcaId, vcaGainDb);
+  });
 
   /** True when the fader display follows the lane (read mode, usable lane). */
   const followsFader = computed(
