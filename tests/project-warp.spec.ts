@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { normalizeTempoMap } from '@/project/tempo-map';
 import type { WarpAnchor } from '@/project/types';
 import {
   bakeWarpedClip,
@@ -224,6 +225,29 @@ describe('bakeWarpedClip', () => {
     expect(rate).toBeCloseTo(2, 10);
     // Fake decimation: output frame i reads source frame 2i.
     expect(Array.from(baked[0])).toEqual(Array.from({ length: 20 }, (_, i) => 2 * i));
+  });
+
+  it('outputs exactly the clip window across tempo-map changes', async () => {
+    const stretch = makeFakeStretch();
+    const tempoMap = normalizeTempoMap([
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 2, bpm: 60 },
+    ]);
+    const clip = makeWarpClip({
+      startPpq: 1,
+      lengthPpq: 2,
+      warp: { enabled: true, sourceBpm: 60 },
+    });
+    const baked = await bakeWarpedClip([ramp(20)], 10, clip, tempoMap, { stretch });
+
+    expect(baked).toHaveLength(1);
+    // Timeline 1..3 PPQ is 0.5 s at 120 BPM plus 1 s at 60 BPM.
+    expect(baked[0].length).toBe(15);
+    expect(stretch).toHaveBeenCalledTimes(1);
+    const [samples, sampleRate, rate] = stretch.mock.calls[0] as [Float32Array, number, number];
+    expect(samples.length).toBe(20);
+    expect(sampleRate).toBe(10);
+    expect(rate).toBeCloseTo(20 / 15, 10);
   });
 
   it('places segments at their target offsets and bypasses rate-1 segments', async () => {

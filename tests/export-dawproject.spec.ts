@@ -433,6 +433,22 @@ describe('exportDawproject audio', () => {
     expect(attr(audio?.querySelector('File'), 'path')).toBe('audio/asset-1.wav');
   });
 
+  it('uses the tempo map for audio content seconds', async () => {
+    const doc = makeDoc([makeTrack([makeAudioClip()], { kind: 'audio' })], {
+      tempoSegments: [
+        { startPpq: 0, bpm: 120 },
+        { startPpq: 2, bpm: 60 },
+      ],
+    });
+    const project = await exportProjectXml(doc, { includeAudio: false });
+
+    const clip = project.querySelector('Arrangement Clip');
+    expect(attr(clip, 'contentTimeUnit')).toBe('seconds');
+    // sourceOffsetPpq 1 => 0.5 s; source window end 5 PPQ => 4.0 s.
+    expect(floatAttr(clip, 'playStart')).toBeCloseTo(0.5, 6);
+    expect(floatAttr(clip?.querySelector('Audio'), 'duration')).toBeCloseTo(4, 6);
+  });
+
   it('exports loop windows on looping audio clips in seconds', async () => {
     const project = await exportProjectXml(
       makeDoc([

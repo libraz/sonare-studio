@@ -11,6 +11,7 @@ import { vcaOffsetDb } from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
 import { type NormalizedTempoMap, ppqToSamples } from '@/project/tempo-map';
 import type { EditorClip, EditorTrack, TempoSegment } from '@/project/types';
+import type { EngineMidiClipSchedule } from '@/wasm/index.js';
 import { RELEASE_TAIL_SECONDS, type SendSpec } from './engine-render-types';
 
 /** One engine track lane spec (numeric ids, optional sends/output bus). */
@@ -161,7 +162,7 @@ export function buildMidiSchedules(
   trackIds: number[],
   tempoSegments: ReadonlyArray<TempoSegment>,
   sampleRate: number,
-): unknown[] {
+): EngineMidiClipSchedule[] {
   const midiTracks: EditorTrack[] = doc.tracks.map((track, index) => ({
     id: trackIds[index],
     name: track.name,
@@ -223,6 +224,7 @@ export interface RenderWindow {
  * @param tempoMap Normalized tempo map for PPQ-to-sample conversion.
  * @param range Resolved PPQ range (endPpq null = up to content end).
  * @param sampleRate Render sample rate in Hz.
+ * @param releaseTailSeconds Tail appended after content for open project renders.
  * @returns The window's start/end samples and total frame count.
  */
 export function resolveRenderWindow(
@@ -230,6 +232,7 @@ export function resolveRenderWindow(
   tempoMap: NormalizedTempoMap,
   range: { startPpq: number; endPpq: number | null },
   sampleRate: number,
+  releaseTailSeconds = RELEASE_TAIL_SECONDS,
 ): RenderWindow {
   const startSample = ppqToSamples(tempoMap, range.startPpq, sampleRate);
   let endSample: number;
@@ -244,7 +247,7 @@ export function resolveRenderWindow(
     }
     endSample =
       ppqToSamples(tempoMap, contentEndPpq, sampleRate) +
-      Math.round(RELEASE_TAIL_SECONDS * sampleRate);
+      Math.round(Math.max(0, releaseTailSeconds) * sampleRate);
   }
   const totalFrames = Math.max(0, endSample - startSample);
   return { startSample, endSample, totalFrames };

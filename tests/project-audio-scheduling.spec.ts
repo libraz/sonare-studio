@@ -10,6 +10,7 @@ import {
   sliceAudioClipWindow,
 } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
+import { normalizeTempoMap } from '@/project/tempo-map';
 import type { EditorClip, EditorTrack } from '@/project/types';
 import { clearWarpBakeCache } from '@/project/warp';
 
@@ -105,6 +106,19 @@ describe('audio scheduling helpers', () => {
     expect(sliced).toEqual([new Float32Array([3, 4, 5, 6])]);
   });
 
+  it('sliceAudioClipWindow follows a variable tempo map for source frames', () => {
+    const channels = [new Float32Array(Array.from({ length: 30 }, (_, i) => i + 1))];
+    const tempoMap = normalizeTempoMap([
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 2, bpm: 60 },
+    ]);
+    // Source 1..3 PPQ covers 0.5 s at 120 BPM, then 1 s at 60 BPM: 15 frames at 10 Hz.
+    const sliced = sliceAudioClipWindow(channels, 10, 1, 2, tempoMap);
+    expect(sliced).toEqual([
+      new Float32Array([6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]),
+    ]);
+  });
+
   it('sliceAudioClipWindow clamps to the available frames', () => {
     const channels = [new Float32Array([1, 2, 3])];
     expect(sliceAudioClipWindow(channels, 4, 1, 4, 120)).toEqual([new Float32Array([3])]);
@@ -174,6 +188,22 @@ describe('scheduleProjectClips with audio clips', () => {
     await scheduleProjectClips(handle, { loadAudioAsset: async () => makeAsset(20) });
     const channels = addClip.mock.calls[0][1] as Float32Array[];
     expect(channels[0]).toEqual(new Float32Array([11, 12, 13, 14, 15]));
+  });
+
+  it('slices scheduled clips with the project tempo map', async () => {
+    store.tracks = [makeTrack(1)];
+    store.tempoSegments = [
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 2, bpm: 60 },
+    ];
+    store.clips = [makeAudioClip(10, 1, { sourceOffsetPpq: 1, lengthPpq: 2 })];
+    const { handle, addClip } = makeHandle(10);
+
+    await scheduleProjectClips(handle, { loadAudioAsset: async () => makeAsset(30) });
+    const channels = addClip.mock.calls[0][1] as Float32Array[];
+    expect(channels[0]).toEqual(
+      new Float32Array([6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]),
+    );
   });
 
   it('bakes fades into the scheduled buffer edges', async () => {
@@ -325,6 +355,28 @@ describe('scheduleProjectClips with audio clips', () => {
     );
   });
 
+  it('bakes a warp-enabled clip to the project tempo-map length', async () => {
+    store.tracks = [makeTrack(1)];
+    store.tempoSegments = [
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 2, bpm: 60 },
+    ];
+    store.clips = [
+      makeAudioClip(10, 1, {
+        startPpq: 1,
+        lengthPpq: 2,
+        warp: { enabled: true, sourceBpm: 60 },
+      }),
+    ];
+    const { handle, addClip } = makeHandle(10);
+
+    await scheduleProjectClips(handle, { loadAudioAsset: async () => makeAsset(20) });
+    const channels = addClip.mock.calls[0][1] as Float32Array[];
+    expect(channels[0].length).toBe(15);
+    expect(timeStretch).toHaveBeenCalledTimes(1);
+    expect(timeStretch.mock.calls[0][2]).toBeCloseTo(20 / 15, 10);
+  });
+
   it('keeps the unwarped comp path for a clip with takes and warp', async () => {
     store.tracks = [makeTrack(1)];
     store.clips = [
@@ -423,7 +475,7 @@ describe('scheduleProjectClips with audio clips', () => {
         ],
         compSegments: [
           { startPpq: 0, takeIndex: 0 },
-          { startPpq: 2, takeIndex: 1 },
+          { startPpq: 2, takeIndex: 1, crossfadePpq: 0 },
         ],
       }),
     ];
@@ -460,5 +512,57 @@ describe('scheduleProjectClips with audio clips', () => {
     expect((secondChannels as Float32Array[])[0]).toEqual(
       new Float32Array([111, 112, 113, 114, 115, 116, 117, 118, 119, 120]),
     );
+  });
+
+  it('smooths the rendered comp boundary with the default crossfade', async () => {
+    store.tracks = [makeTrack(1)];
+    store.clips = [
+      makeAudioClip(10, 1, {
+        startPpq: 8,
+        lengthPpq: 4,
+        assetId: 'asset-a',
+        takes: [
+          { assetId: 'asset-a', name: 'Take 1' },
+          { assetId: 'asset-b', name: 'Take 2' },
+        ],
+        compSegments: [
+          { startPpq: 0, takeIndex: 0 },
+          { startPpq: 2, takeIndex: 1 },
+        ],
+      }),
+    ];
+    const sampleRate = 1000;
+    const { handle, addClip } = makeHandle(sampleRate);
+    const loadAudioAsset = vi.fn(async (assetId: string): Promise<LoadedAudioAsset> => {
+      const value = assetId === 'asset-a' ? 1 : -1;
+      return {
+        meta: { id: assetId, name: assetId, sampleRate, numChannels: 1, numFrames: 2500 },
+        channels: [new Float32Array(2500).fill(value)],
+      };
+    });
+
+    await scheduleProjectClips(handle, { loadAudioAsset });
+
+    const boundaryPpq = 10;
+    const windowStartPpq = boundaryPpq - 0.03;
+    const rendered = new Float32Array(60);
+    for (const [, channels, startPpq] of addClip.mock.calls) {
+      const offset = Math.round(
+        ppqToSeconds((startPpq as number) - windowStartPpq, 120) * sampleRate,
+      );
+      const channel = (channels as Float32Array[])[0];
+      for (let i = 0; i < channel.length; i += 1) {
+        const target = offset + i;
+        if (target >= 0 && target < rendered.length) rendered[target] += channel[i];
+      }
+    }
+
+    let maxStep = 0;
+    for (let i = 1; i < rendered.length; i += 1) {
+      maxStep = Math.max(maxStep, Math.abs(rendered[i] - rendered[i - 1]));
+    }
+    expect(Math.max(...rendered)).toBeGreaterThan(0.9);
+    expect(Math.min(...rendered)).toBeLessThan(-0.9);
+    expect(maxStep).toBeLessThan(0.5);
   });
 });

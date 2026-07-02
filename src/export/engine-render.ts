@@ -29,6 +29,8 @@
  * configures and drives the engine passes and re-exports the public surface.
  */
 
+import { engineAutomationPoints, engineBusStrip, engineEqBands } from '@/engine/engine-declaration';
+import { resolvePresetName } from '@/engine/instruments';
 import { busSceneJson, stripSceneJson } from '@/engine/strip-sync';
 import {
   MixdownCancelledError,
@@ -39,7 +41,8 @@ import {
 import { peakDb } from '@/lib/db';
 import { ensureWasm } from '@/lib/wasm';
 import { loadAsset } from '@/persistence/assets';
-import { automationCurveCode, parseInsertAutomationParam } from '@/project/automation';
+import { parseInsertAutomationParam } from '@/project/automation';
+import { enabledInsertAutomationIndex } from '@/project/automation-insert';
 import { loadFont } from '@/project/fonts';
 import { DEFAULT_SYNTH_PRESET, sf2PlaybackConfig } from '@/project/instrument';
 import { midiFxConfigJson } from '@/project/midi-fx';
@@ -65,6 +68,7 @@ import {
 import { buildReport } from './engine-render-report';
 import {
   BLOCKS_PER_CHECKPOINT,
+  busParamId,
   DEFAULT_TEMPO_BPM,
   ENGINE_MIXER_PARAM_FADER_DB,
   ENGINE_MIXER_PARAM_PAN,
@@ -101,7 +105,7 @@ export async function renderProjectWithEngine(
   const includeMasterChain = options.includeMasterChain ?? true;
   const loadAudio = options.loadAudioAsset ?? loadAsset;
   const loadFontBytes = options.loadFont ?? loadFont;
-  const resolvePreset = options.resolvePreset ?? ((preset: string) => preset);
+  let resolvePreset = options.resolvePreset ?? ((preset: string) => preset);
   const checkCancel = () => {
     if (options.shouldCancel?.()) throw new MixdownCancelledError();
   };
@@ -116,6 +120,9 @@ export async function renderProjectWithEngine(
   let deps = options.deps;
   if (!createEngine || deps === undefined) {
     const wasm = await ensureWasm();
+    if (!options.resolvePreset) {
+      resolvePreset = (preset: string) => resolvePresetName(wasm, preset);
+    }
     if (!createEngine) {
       createEngine = (rate, blockSize) =>
         new wasm.RealtimeEngine(rate, blockSize, 4096) as unknown as OfflineRenderEngine;
@@ -148,13 +155,20 @@ export async function renderProjectWithEngine(
   const audioClips = await buildAudioClips(doc, {
     trackIds,
     sliceTempoBpm,
+    tempoMap,
     sampleRate,
     loadAudio,
     checkCancel,
   });
 
   // Resolve the render window in frames.
-  const { startSample, totalFrames } = resolveRenderWindow(doc, tempoMap, range, sampleRate);
+  const { startSample, totalFrames } = resolveRenderWindow(
+    doc,
+    tempoMap,
+    range,
+    sampleRate,
+    options.releaseTailSeconds,
+  );
 
   /** Replays the pre-built program onto a fresh engine (synchronous). */
   const configureEngine = (engine: OfflineRenderEngine, pass: RenderPass): void => {
@@ -173,20 +187,19 @@ export async function renderProjectWithEngine(
     for (const bus of doc.mixer?.buses ?? []) {
       const busId = busNumberById.get(bus.id);
       if (busId === undefined) continue;
-      const enabledInserts = (bus.strip?.inserts ?? []).filter((slot) => slot.enabled);
-      if (enabledInserts.length === 0) continue;
-      engine.setBusStripJson(
-        busId,
-        busSceneJson(busId, { ...(bus.strip as object), inserts: enabledInserts } as NonNullable<
-          typeof bus.strip
-        >),
-      );
+      if (!stripHasDsp(bus.strip)) continue;
+      engine.setBusStripJson(busId, busSceneJson(busId, engineBusStrip(bus.strip)));
     }
 
     // Per-track strips (inserts + EQ + bypass flags), lane base fader/pan and
     // solo/mute — the same state the live mixer/strip syncs install. A stem
     // pass instead isolates one lane by muting every other one (solo would
     // also keep the document's own soloed tracks audible).
+    const soloedGroupTrackIndices = new Set(
+      doc.tracks
+        .map((track, index) => (track.kind === 'group' && track.solo ? index : -1))
+        .filter((index) => index >= 0),
+    );
     doc.tracks.forEach((track, index) => {
       const strip = track.mixer;
       const trackId = trackIds[index];
@@ -194,14 +207,8 @@ export async function renderProjectWithEngine(
         // Group inserts ride the group's bus strip (the lane stays silent);
         // the audible group level was already baked into the bus gain.
         const busId = groupBusByTrackIndex.get(index);
-        const enabledInserts = (strip?.inserts ?? []).filter((slot) => slot.enabled);
         if (busId !== undefined && stripHasDsp(strip)) {
-          engine.setBusStripJson(
-            busId,
-            busSceneJson(busId, { ...(strip as object), inserts: enabledInserts } as NonNullable<
-              typeof strip
-            >),
-          );
+          engine.setBusStripJson(busId, busSceneJson(busId, engineBusStrip(strip)));
         }
         return;
       }
@@ -211,13 +218,16 @@ export async function renderProjectWithEngine(
         strip.inserts.forEach((slot, insertIndex) => {
           if (!slot.enabled) engine.setTrackStripInsertBypassed(trackId, insertIndex, true);
         });
-        strip.eq?.bands.forEach((band, bandIndex) => {
+        engineEqBands(strip).forEach((band, bandIndex) => {
           engine.setTrackStripEqBandJson(trackId, bandIndex, JSON.stringify(band));
         });
       }
       if (pass.stemIndices === null) {
         // Solo-safe lanes stay in the solo group while any solo is active.
-        const solo = track.solo || (anySolo && track.soloSafe === true);
+        const solo =
+          track.solo ||
+          (track.groupIndex !== undefined && soloedGroupTrackIndices.has(track.groupIndex)) ||
+          (anySolo && track.soloSafe === true);
         engine.setSoloMute(index, solo, track.mute);
       } else {
         engine.setSoloMute(index, false, !pass.stemIndices.has(index));
@@ -281,7 +291,7 @@ export async function renderProjectWithEngine(
       master.inserts.forEach((slot, insertIndex) => {
         if (!slot.enabled) engine.setMasterStripInsertBypassed(insertIndex, true);
       });
-      master.eq?.bands.forEach((band, bandIndex) => {
+      engineEqBands(master).forEach((band, bandIndex) => {
         engine.setMasterStripEqBandJson(bandIndex, JSON.stringify(band));
       });
     }
@@ -292,25 +302,41 @@ export async function renderProjectWithEngine(
 
     // Automation lanes (track entries + master), enabled lanes only.
     doc.tracks.forEach((track, index) => {
-      if (pass.freezeIndex === index) return;
       for (const lane of track.automation ?? []) {
         if (!lane.enabled || lane.points.length === 0) continue;
-        const points = lane.points.map((point) => ({
-          ppq: point.ppq,
-          value: point.value,
-          curveToNext: automationCurveCode(point.curve),
-        }));
+        if (pass.freezeIndex === index && (lane.param === 'faderDb' || lane.param === 'pan')) {
+          continue;
+        }
+        const points = engineAutomationPoints(lane.points);
+        if (points.length === 0) continue;
         // Insert-parameter lanes resolve to the engine's reserved insert id
         // (and strip selector) from the strip state already installed above; a
         // negative id means the insert or key is unknown and is skipped.
         const insertRef = parseInsertAutomationParam(lane.param);
         if (insertRef) {
+          const groupBusId = track.kind === 'group' ? groupBusByTrackIndex.get(index) : undefined;
+          if (groupBusId !== undefined) {
+            const insertIndex = enabledInsertAutomationIndex(track.mixer, insertRef.insertIndex);
+            if (insertIndex === undefined) continue;
+            const id = engine.resolveBusInsertAutomationId(
+              groupBusId,
+              insertIndex,
+              insertRef.paramName,
+            );
+            if (id >= 0) engine.setAutomationLane(id, points);
+            continue;
+          }
           const id = engine.resolveTrackInsertAutomationId(
             trackIds[index],
             insertRef.insertIndex,
             insertRef.paramName,
           );
           if (id >= 0) engine.setAutomationLane(id, points);
+          continue;
+        }
+        const groupBusId = track.kind === 'group' ? groupBusByTrackIndex.get(index) : undefined;
+        if (groupBusId !== undefined) {
+          if (lane.param === 'faderDb') engine.setAutomationLane(busParamId(groupBusId), points);
           continue;
         }
         const kind = lane.param === 'pan' ? ENGINE_MIXER_PARAM_PAN : ENGINE_MIXER_PARAM_FADER_DB;
@@ -320,11 +346,8 @@ export async function renderProjectWithEngine(
     if (pass.masterLevels) {
       for (const lane of doc.masterAutomation ?? []) {
         if (!lane.enabled || lane.points.length === 0) continue;
-        const points = lane.points.map((point) => ({
-          ppq: point.ppq,
-          value: point.value,
-          curveToNext: automationCurveCode(point.curve),
-        }));
+        const points = engineAutomationPoints(lane.points);
+        if (points.length === 0) continue;
         const insertRef = parseInsertAutomationParam(lane.param);
         if (insertRef) {
           const id = engine.resolveMasterInsertAutomationId(
@@ -343,23 +366,18 @@ export async function renderProjectWithEngine(
       if (busId === undefined) continue;
       for (const lane of bus.automation ?? []) {
         if (!lane.enabled || lane.points.length === 0) continue;
-        const points = lane.points.map((point) => ({
-          ppq: point.ppq,
-          value: point.value,
-          curveToNext: automationCurveCode(point.curve),
-        }));
+        const points = engineAutomationPoints(lane.points);
+        if (points.length === 0) continue;
         const insertRef = parseInsertAutomationParam(lane.param);
         if (insertRef) {
-          const id = engine.resolveBusInsertAutomationId(
-            busId,
-            insertRef.insertIndex,
-            insertRef.paramName,
-          );
+          const insertIndex = enabledInsertAutomationIndex(bus?.strip, insertRef.insertIndex);
+          if (insertIndex === undefined) continue;
+          const id = engine.resolveBusInsertAutomationId(busId, insertIndex, insertRef.paramName);
           if (id >= 0) engine.setAutomationLane(id, points);
           continue;
         }
         if (lane.param !== 'faderDb') continue;
-        engine.setAutomationLane(engine.busAutomationParamId(busId), points);
+        engine.setAutomationLane(busParamId(busId), points);
       }
     }
 

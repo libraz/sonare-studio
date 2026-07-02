@@ -6,7 +6,7 @@
 
 import type { MixdownDeps, MixdownRange, MixdownRangePpq } from '@/export/mixdown';
 import type { LoadedAudioAsset } from '@/persistence/assets';
-import type { PanLawId, PanModeId } from '@/project/mixer';
+import type { EngineClip, EngineTrackSend, RealtimeEngine } from '@/wasm/index.js';
 
 /** Reserved engine mixer parameter namespace (mirrors the facade encoding). */
 export const ENGINE_MIXER_TARGET_BASE = 0x4d580000;
@@ -38,63 +38,49 @@ export const PREROLL_SECONDS = 0.5;
 /** Tempo assumed when the document carries no tempo segment. */
 export const DEFAULT_TEMPO_BPM = 120;
 
-/**
- * Minimal surface of the wasm RealtimeEngine used by the renderer. Kept
- * structural so tests can inject a fake engine.
- */
-export interface OfflineRenderEngine {
-  setTrackLanes(lanes: Array<{ trackId: number; sends?: SendSpec[]; outputBusId?: number }>): void;
-  setTrackBuses(buses: Array<{ busId: number; gainDb?: number }>): void;
-  setTrackStripJson(trackId: number, sceneJson: string): void;
-  setBusStripJson(busId: number, sceneJson: string): void;
-  setMasterStripJson(sceneJson: string): void;
-  setLaneSidechain(trackId: number, insertIndex: number, sourceTrackId: number): void;
-  setTrackStripInsertBypassed(trackId: number, insertIndex: number, bypassed: boolean): void;
-  setMasterStripInsertBypassed(insertIndex: number, bypassed: boolean): void;
-  setTrackStripEqBandJson(trackId: number, bandIndex: number, bandJson: string): void;
-  setMasterStripEqBandJson(bandIndex: number, bandJson: string): void;
-  setSoloMute(laneIndex: number, solo: boolean, mute: boolean): void;
-  setTrackStripPanLaw(trackId: number, panLaw: PanLawId | number): void;
-  setTrackStripPanMode(trackId: number, panMode: PanModeId | number): void;
-  setTrackStripDualPan(trackId: number, leftPan: number, rightPan: number): void;
-  setTrackStripChannelDelaySamples(trackId: number, delaySamples: number): void;
-  setParameter(paramId: number, value: number): void;
-  busAutomationParamId(busId: number): number;
-  resolveTrackInsertAutomationId(trackId: number, insertIndex: number, paramName: string): number;
-  resolveMasterInsertAutomationId(insertIndex: number, paramName: string): number;
-  resolveBusInsertAutomationId(busId: number, insertIndex: number, paramName: string): number;
-  setAutomationLane(
-    paramId: number,
-    points: Array<{ ppq: number; value: number; curveToNext?: number }>,
-  ): void;
-  setTempoSegments(
-    segments: ReadonlyArray<{ startPpq: number; bpm: number; endBpm?: number }>,
-  ): void;
-  setClips(clips: EngineClipSpec[]): void;
-  setMidiClips(clips: ReadonlyArray<unknown>): void;
-  setSynthInstrument(patch?: object | string, destinationId?: number): void;
-  loadSoundFont(data: Uint8Array): void;
-  setSf2Instrument(config?: object, destinationId?: number): void;
-  setMidiFx(destinationId: number, configJson: string): void;
-  seekSample(timelineSample: number): void;
-  settleParameters(): void;
-  play(): void;
-  stop(): void;
-  process(channels: Float32Array[]): Float32Array[];
-  destroy(): void;
-}
+/** Minimal, real-ABI-derived surface of RealtimeEngine used by the renderer. */
+export type OfflineRenderEngine = Pick<
+  RealtimeEngine,
+  | 'setTrackLanes'
+  | 'setTrackBuses'
+  | 'setTrackStripJson'
+  | 'setBusStripJson'
+  | 'setMasterStripJson'
+  | 'setLaneSidechain'
+  | 'setTrackStripInsertBypassed'
+  | 'setMasterStripInsertBypassed'
+  | 'setTrackStripEqBandJson'
+  | 'setMasterStripEqBandJson'
+  | 'setSoloMute'
+  | 'setTrackStripPanLaw'
+  | 'setTrackStripPanMode'
+  | 'setTrackStripDualPan'
+  | 'setTrackStripChannelDelaySamples'
+  | 'setParameter'
+  | 'resolveTrackInsertAutomationId'
+  | 'resolveMasterInsertAutomationId'
+  | 'resolveBusInsertAutomationId'
+  | 'setAutomationLane'
+  | 'setTempoSegments'
+  | 'setClips'
+  | 'setMidiClips'
+  | 'setSynthInstrument'
+  | 'loadSoundFont'
+  | 'setSf2Instrument'
+  | 'setMidiFx'
+  | 'seekSample'
+  | 'settleParameters'
+  | 'play'
+  | 'stop'
+  | 'process'
+  | 'destroy'
+>;
 
 /** One engine track send (numeric engine bus id). */
-export interface SendSpec {
-  busId: number;
-  levelDb?: number;
-  enabled?: boolean;
-  /** Pre/post-fader tap; absent = post-fader (the engine default). */
-  sendTiming?: 'preFader';
-}
+export type SendSpec = EngineTrackSend;
 
 /** One engine audio clip schedule (planar PCM at the render rate). */
-export interface EngineClipSpec {
+export interface EngineClipSpec extends EngineClip {
   trackId: number;
   channels: Float32Array[];
   startPpq: number;
@@ -108,6 +94,8 @@ export interface EngineRenderOptions {
   sampleRate?: number;
   /** Render range (default 'project'). */
   range?: MixdownRange;
+  /** Release tail appended after the final clip for project-range renders (default 2 seconds). */
+  releaseTailSeconds?: number;
   /** Loop window used when range is 'loop'. */
   loopRegion?: MixdownRangePpq;
   /**
@@ -191,4 +179,9 @@ export function laneParamId(laneIndex: number, kind: number): number {
 /** Reserved engine parameter id for one master strip parameter. */
 export function masterParamId(kind: number): number {
   return ENGINE_MIXER_TARGET_BASE | (ENGINE_MIXER_LANE_MASTER << 8) | (kind & 0xff);
+}
+
+/** Packed mixer parameter id for a bus fader lane (mirrors the live facade). */
+export function busParamId(busId: number, kind = ENGINE_MIXER_PARAM_FADER_DB): number {
+  return ENGINE_MIXER_TARGET_BASE | (((254 - busId) & 0xff) << 8) | (kind & 0xff);
 }

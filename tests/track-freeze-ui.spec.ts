@@ -85,6 +85,18 @@ describe('track freeze / bounce UI', () => {
       expect(store.mixer.vcaGroups).toHaveLength(1);
       expect(store.tracks[0].vcaId).toBe(store.mixer.vcaGroups?.[0]?.id);
     });
+
+    it('offers instrument changes from MIDI track context menus', async () => {
+      const wrapper = mountHeaders();
+      await wrapper.find('.track-header').trigger('contextmenu', { clientX: 10, clientY: 10 });
+
+      const menu = useContextMenuState();
+      const item = menu.items.find((entry) => entry.id === 'change-instrument');
+      expect(item?.label).toBe('Change instrument...');
+
+      item?.run?.();
+      expect(wrapper.emitted('changeInstrument')).toEqual([[trackId]]);
+    });
   });
 
   describe('TrackHeaderList freeze toggle', () => {

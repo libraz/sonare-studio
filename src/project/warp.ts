@@ -11,6 +11,7 @@
  */
 
 import { ensureWasm } from '@/lib/wasm';
+import { type NormalizedTempoMap, ppqToSamples } from './tempo-map';
 import type { ClipWarp, WarpAnchor } from './types';
 
 /** Maximum cached bakes (whole-clip buffers; ~few MB each). */
@@ -30,10 +31,14 @@ export interface WarpSegment {
 
 /** The clip fields the warp bake reads. */
 export interface WarpableClipFields {
+  startPpq?: number;
   lengthPpq: number;
   sourceOffsetPpq: number;
   warp?: ClipWarp;
 }
+
+/** Tempo source used when baking warped clip target frames. */
+export type WarpBakeTempo = number | NormalizedTempoMap;
 
 /**
  * Normalizes warp anchors: finite values, strictly inside the clip window,
@@ -122,6 +127,16 @@ async function wasmStretch(): Promise<StretchFn> {
   return (samples, sampleRate, rate) => wasm.timeStretch(samples, sampleRate, rate);
 }
 
+function targetSampleAt(tempo: WarpBakeTempo, ppq: number, sampleRate: number): number {
+  return typeof tempo === 'number'
+    ? Math.round(ppq * (60 / tempo) * sampleRate)
+    : ppqToSamples(tempo, ppq, sampleRate);
+}
+
+function tempoCacheKey(tempo: WarpBakeTempo): string {
+  return typeof tempo === 'number' ? String(tempo) : JSON.stringify(tempo.segments);
+}
+
 /**
  * Bakes a warped clip's audible window at the given tempo: every stretch
  * segment of the source is time-stretched so its beats land on the project
@@ -131,23 +146,30 @@ async function wasmStretch(): Promise<StretchFn> {
  * @param channels Source asset channels (planar PCM).
  * @param sampleRate Source (and output) sample rate in Hz.
  * @param clip Clip window and warp state.
- * @param tempoBpm Project tempo the bake targets.
+ * @param tempo Project tempo the bake targets.
  * @param options.cacheKey Cache identity (e.g. the asset id); absent = uncached.
  * @param options.stretch Stretch seam override (tests).
- * @returns Planar channels covering exactly the clip window at tempoBpm.
+ * @returns Planar channels covering exactly the clip window at the target tempo.
  */
 export async function bakeWarpedClip(
   channels: ReadonlyArray<Float32Array>,
   sampleRate: number,
   clip: WarpableClipFields,
-  tempoBpm: number,
+  tempo: WarpBakeTempo,
   options: { cacheKey?: string; stretch?: StretchFn } = {},
 ): Promise<Float32Array[]> {
   const segments = warpSegments(clip);
   if (segments.length === 0 || channels.length === 0) return [];
+  const clipStartPpq = Number.isFinite(clip.startPpq) ? (clip.startPpq ?? 0) : 0;
+  const targetOrigin = targetSampleAt(tempo, clipStartPpq, sampleRate);
+  const totalFrames = Math.max(
+    0,
+    targetSampleAt(tempo, clipStartPpq + clip.lengthPpq, sampleRate) - targetOrigin,
+  );
+  if (totalFrames === 0) return [];
   const key =
     options.cacheKey !== undefined
-      ? `${options.cacheKey}|${sampleRate}|${tempoBpm}|${clip.lengthPpq}|${clip.sourceOffsetPpq}|${JSON.stringify(clip.warp)}`
+      ? `${options.cacheKey}|${sampleRate}|${tempoCacheKey(tempo)}|${clipStartPpq}|${clip.lengthPpq}|${clip.sourceOffsetPpq}|${JSON.stringify(clip.warp)}`
       : null;
   if (key) {
     const cached = bakeCache.get(key);
@@ -156,8 +178,6 @@ export async function bakeWarpedClip(
     if (cached) return cached.map((channel) => channel.slice());
   }
   const stretch = options.stretch ?? (await wasmStretch());
-  const secondsPerPpq = 60 / tempoBpm;
-  const totalFrames = Math.round(clip.lengthPpq * secondsPerPpq * sampleRate);
   const baked = channels.map(() => new Float32Array(totalFrames));
   for (const segment of segments) {
     const sourceBegin = Math.round(segment.sourceStartSeconds * sampleRate);
@@ -166,10 +186,13 @@ export async function bakeWarpedClip(
       Math.round((segment.sourceStartSeconds + segment.sourceLengthSeconds) * sampleRate),
     );
     if (sourceEnd <= sourceBegin) continue;
-    const targetBegin = Math.round(segment.ppq * secondsPerPpq * sampleRate);
+    const targetBegin =
+      targetSampleAt(tempo, clipStartPpq + segment.ppq, sampleRate) - targetOrigin;
     const targetFrames = Math.min(
       totalFrames - targetBegin,
-      Math.round(segment.lengthPpq * secondsPerPpq * sampleRate),
+      targetSampleAt(tempo, clipStartPpq + segment.ppq + segment.lengthPpq, sampleRate) -
+        targetOrigin -
+        targetBegin,
     );
     if (targetFrames <= 0) continue;
     const rate = (sourceEnd - sourceBegin) / targetFrames;

@@ -19,6 +19,7 @@ import type { MidiNote } from '@/engine/instruments';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import { audioClipSegments } from './comping';
 import { useProjectStore } from './store';
+import { type NormalizedTempoMap, normalizeTempoMap, ppqToSamples } from './tempo-map';
 import type { EditorNote, EditorTrack } from './types';
 import { clipKind } from './types';
 import { bakeWarpedClip } from './warp';
@@ -90,17 +91,21 @@ export function ppqToSeconds(ppq: number, tempoBpm: number): number {
   return (ppq * 60) / tempoBpm;
 }
 
+/** Tempo source used when cutting PPQ windows into audio-source frames. */
+export type AudioClipSliceTempo = number | NormalizedTempoMap;
+
 /**
  * Cuts an audio clip's source window out of the asset buffers: the window
- * [sourceOffsetPpq, sourceOffsetPpq + lengthPpq) is converted to frames at
- * the asset sample rate (constant tempo) and sliced per channel, clamped to
- * the available frames. The returned buffers are fresh copies.
+ * [sourceOffsetPpq, sourceOffsetPpq + lengthPpq) is converted to frames at the
+ * asset sample rate and sliced per channel, clamped to the available frames.
+ * A constant BPM preserves the legacy conversion; a tempo map matches the
+ * engine's variable-tempo PPQ-to-sample math.
  *
  * @param channels Planar asset channel buffers.
  * @param sampleRate Asset sample rate in Hz.
  * @param sourceOffsetPpq Offset of the clip window into the source, in PPQ.
  * @param lengthPpq Clip window length in PPQ.
- * @param tempoBpm Tempo used to convert PPQ to time.
+ * @param tempo Tempo used to convert PPQ to source frames.
  * @returns One sliced copy per channel (possibly zero-length).
  */
 export function sliceAudioClipWindow(
@@ -108,15 +113,19 @@ export function sliceAudioClipWindow(
   sampleRate: number,
   sourceOffsetPpq: number,
   lengthPpq: number,
-  tempoBpm: number,
+  tempo: AudioClipSliceTempo,
 ): Float32Array[] {
   const frames = channels[0]?.length ?? 0;
-  const start = Math.min(
-    frames,
-    Math.max(0, Math.round(ppqToSeconds(sourceOffsetPpq, tempoBpm) * sampleRate)),
-  );
-  const count = Math.max(0, Math.round(ppqToSeconds(lengthPpq, tempoBpm) * sampleRate));
-  const end = Math.min(frames, start + count);
+  const startFrame =
+    typeof tempo === 'number'
+      ? Math.round(ppqToSeconds(sourceOffsetPpq, tempo) * sampleRate)
+      : ppqToSamples(tempo, sourceOffsetPpq, sampleRate);
+  const endFrame =
+    typeof tempo === 'number'
+      ? startFrame + Math.round(ppqToSeconds(lengthPpq, tempo) * sampleRate)
+      : ppqToSamples(tempo, sourceOffsetPpq + lengthPpq, sampleRate);
+  const start = Math.min(frames, Math.max(0, startFrame));
+  const end = Math.min(frames, Math.max(start, endFrame));
   return channels.map((channel) => channel.slice(start, end));
 }
 
@@ -225,6 +234,8 @@ export interface ScheduleProjectClipsOptions {
   sampleRate?: number;
   /** Tempo used for the bounce; defaults to the store's tempo. */
   tempoBpm?: number;
+  /** Tempo map used by source-window slicing; defaults to the store map. */
+  tempoSegments?: ReadonlyArray<{ startPpq: number; bpm: number; endBpm?: number }>;
   /**
    * Audio asset loader (defaults to the OPFS asset store's loadAsset).
    * Injectable for tests and alternative storage backends.
@@ -264,6 +275,7 @@ export async function scheduleProjectClips(
 ): Promise<ScheduledProjectClip[]> {
   const store = useProjectStore();
   const tempoBpm = options.tempoBpm ?? store.tempoBpm;
+  const tempoMap = normalizeTempoMap(options.tempoSegments ?? store.tempoSegments, tempoBpm);
   const loadAudio = options.loadAudioAsset ?? loadAsset;
   const scheduled: ScheduledProjectClip[] = [];
   for (const track of store.tracks) {
@@ -306,7 +318,7 @@ export async function scheduleProjectClips(
         // stretch instead of the fixed-rate slice (takes-free clips only).
         let channels =
           clip.warp?.enabled && (clip.takes?.length ?? 0) === 0
-            ? await bakeWarpedClip(asset.channels, asset.meta.sampleRate, clip, tempoBpm, {
+            ? await bakeWarpedClip(asset.channels, asset.meta.sampleRate, clip, tempoMap, {
                 cacheKey: segment.assetId,
               })
             : sliceAudioClipWindow(
@@ -314,7 +326,7 @@ export async function scheduleProjectClips(
                 asset.meta.sampleRate,
                 segment.sourceOffsetPpq,
                 segment.lengthPpq,
-                tempoBpm,
+                tempoMap,
               );
         channels = applyAudioClipFades(
           channels,

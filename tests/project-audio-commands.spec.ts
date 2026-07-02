@@ -113,6 +113,44 @@ describe('audio track and clip commands', () => {
     expect(docSecond?.source_id).toBe(docFirst?.source_id);
   });
 
+  it('addAudioClip can seed preserved audio clip attributes when rebasing an asset', async () => {
+    const trackId = addAudioTrack({ name: 'Audio' });
+    const clipId = await addAudioClip({
+      trackId,
+      assetId: 'edited-asset',
+      startPpq: 4,
+      lengthPpq: 8,
+      sourceOffsetPpq: 1.5,
+      gain: 0.75,
+      fadeInPpq: 0.25,
+      fadeOutPpq: 0.5,
+      loopEnabled: true,
+      loopLengthPpq: 2,
+      warp: { enabled: true, sourceBpm: 96, anchors: [{ ppq: 2, sourceSeconds: 1 }] },
+    });
+
+    expect(store.clips.find((c) => c.id === clipId)).toMatchObject({
+      trackId,
+      kind: 'audio',
+      assetId: 'edited-asset',
+      startPpq: 4,
+      lengthPpq: 8,
+      sourceOffsetPpq: 1.5,
+      gain: 0.75,
+      fadeInPpq: 0.25,
+      fadeOutPpq: 0.5,
+      loopEnabled: true,
+      loopLengthPpq: 2,
+      warp: { enabled: true, sourceBpm: 96, anchors: [{ ppq: 2, sourceSeconds: 1 }] },
+    });
+    const docClip = readDoc().clips.find((clip) => clip.id === clipId);
+    expect(docClip).toMatchObject({
+      source_offset_ppq: 1.5,
+      fade_in_ppq: 0.25,
+      fade_out_ppq: 0.5,
+    });
+  });
+
   it('addAudioClip undo/redo reverts the whole command at once', async () => {
     const trackId = addAudioTrack();
     const first = await addAudioClip({ trackId, assetId: 'asset-x', lengthPpq: 8 });

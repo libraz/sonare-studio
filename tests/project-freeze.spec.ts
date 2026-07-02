@@ -67,7 +67,8 @@ describe('track freeze and bounce-in-place', () => {
       expect(doc.tracks[1].name).toBe('Vox');
       // Whole-project freeze: no range, isolated pre-fader pass, default deps
       // disabled (no wasm mastering/metering seams needed for a freeze).
-      expect(options).toEqual({ freezeTrackIndex: 1, deps: null });
+      expect(options).toMatchObject({ freezeTrackIndex: 1, deps: null });
+      expect(options?.resolvePreset?.('unknown-preset')).toBe('e-piano');
 
       expect(ingest).toHaveBeenCalledTimes(1);
       const [channels, sampleRate, name] = ingest.mock.calls[0];
@@ -84,7 +85,7 @@ describe('track freeze and bounce-in-place', () => {
     it('freezes the first (MIDI) track with index 0', async () => {
       const midiId = store.tracks[0].id;
       await freezeTrack(midiId, { render, ingest });
-      expect(render.mock.calls[0][1]).toEqual({ freezeTrackIndex: 0, deps: null });
+      expect(render.mock.calls[0][1]).toMatchObject({ freezeTrackIndex: 0, deps: null });
       expect(ingest.mock.calls[0][2]).toBe(`${store.tracks[0].name} (frozen)`);
       expect(store.tracks[0].frozen).toEqual({ assetId: 'baked-1' });
     });
@@ -130,7 +131,7 @@ describe('track freeze and bounce-in-place', () => {
       const clipId = await bounceTrackRange(gtrId, 4, 12, { render, ingest });
 
       expect(render).toHaveBeenCalledTimes(1);
-      expect(render.mock.calls[0][1]).toEqual({
+      expect(render.mock.calls[0][1]).toMatchObject({
         freezeTrackIndex: 1,
         deps: null,
         range: { startPpq: 4, endPpq: 12 },

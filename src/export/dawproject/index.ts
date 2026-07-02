@@ -24,8 +24,7 @@
  *   device state with no portable representation; only channel volume, pan,
  *   mute and solo travel.
  * - Audio-clip content times use seconds (per the format's convention for
- *   media), converted at the first tempo segment's BPM — the same constant
- *   tempo assumption the offline mixdown renderer makes.
+ *   media), converted through the project tempo map.
  */
 
 import { strToU8, zipSync } from 'fflate';
@@ -33,8 +32,8 @@ import { encodeWav } from '@/export/wav';
 import { projectFilename } from '@/lib/filename';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import { clampPan, dbToLinear, type MixerStrip } from '@/project/mixer';
-import { ppqToSeconds } from '@/project/scheduling';
 import type { DocumentClip, DocumentTempoSegment, ProjectDocument } from '@/project/serialization';
+import { type NormalizedTempoMap, normalizeTempoMap, ppqToSeconds } from '@/project/tempo-map';
 import { serializeXml, type XmlElement } from './xml';
 
 /** File extension of DAWproject archives. */
@@ -144,7 +143,7 @@ function audioEntryPath(assetId: string, usedPaths: Set<string>): string {
  */
 async function collectAudioAssets(
   doc: ProjectDocument,
-  tempoBpm: number,
+  tempoMap: NormalizedTempoMap,
   includeAudio: boolean,
   loadAudio: (assetId: string) => Promise<LoadedAudioAsset>,
 ): Promise<Map<string, AudioAssetEntry>> {
@@ -153,7 +152,7 @@ async function collectAudioAssets(
   for (const track of doc.tracks) {
     for (const clip of track.clips) {
       if (!isAudioClip(clip) || !clip.assetId) continue;
-      const windowSec = ppqToSeconds(clip.sourceOffsetPpq + clip.lengthPpq, tempoBpm);
+      const windowSec = ppqToSeconds(tempoMap, clip.sourceOffsetPpq + clip.lengthPpq);
       const existing = assets.get(clip.assetId);
       if (existing) {
         // Grow the estimated duration so every clip window stays in range.
@@ -437,12 +436,12 @@ function midiClipElement(clip: DocumentClip, trackIndex: number, clipIndex: numb
 /**
  * Builds one audio clip element referencing its media file. Clip placement is
  * in beats (the surrounding lanes' time unit); the content offset uses
- * seconds, converted at the constant project tempo. Warps are not exported.
+ * seconds, converted through the project tempo map. Warps are not exported.
  */
 function audioClipElement(
   clip: DocumentClip,
   asset: AudioAssetEntry,
-  tempoBpm: number,
+  tempoMap: NormalizedTempoMap,
   trackIndex: number,
   clipIndex: number,
 ): XmlElement {
@@ -450,14 +449,14 @@ function audioClipElement(
     time: clip.startPpq,
     duration: clip.lengthPpq,
     contentTimeUnit: 'seconds',
-    playStart: ppqToSeconds(clip.sourceOffsetPpq, tempoBpm),
+    playStart: ppqToSeconds(tempoMap, clip.sourceOffsetPpq),
     name: clip.name,
   };
   if (clip.loopEnabled) {
     // Loop bounds follow the clip's content time unit (seconds for audio).
     const loopLengthPpq = clip.loopLengthPpq > 0 ? clip.loopLengthPpq : clip.lengthPpq;
-    attributes['loopStart'] = ppqToSeconds(clip.sourceOffsetPpq, tempoBpm);
-    attributes['loopEnd'] = ppqToSeconds(clip.sourceOffsetPpq + loopLengthPpq, tempoBpm);
+    attributes['loopStart'] = ppqToSeconds(tempoMap, clip.sourceOffsetPpq);
+    attributes['loopEnd'] = ppqToSeconds(tempoMap, clip.sourceOffsetPpq + loopLengthPpq);
   }
   const fadeIn = clip.fadeInPpq ?? 0;
   const fadeOut = clip.fadeOutPpq ?? 0;
@@ -490,7 +489,7 @@ function audioClipElement(
 function arrangementElement(
   doc: ProjectDocument,
   assets: Map<string, AudioAssetEntry>,
-  tempoBpm: number,
+  tempoMap: NormalizedTempoMap,
 ): XmlElement {
   const children: XmlElement[] = [];
   if (doc.timeSignatures.length > 1) {
@@ -528,7 +527,7 @@ function arrangementElement(
                 attributes: { time: clip.startPpq, duration: clip.lengthPpq, name: clip.name },
               };
             }
-            return audioClipElement(clip, asset, tempoBpm, trackIndex, clipIndex);
+            return audioClipElement(clip, asset, tempoMap, trackIndex, clipIndex);
           }),
         },
       ];
@@ -548,8 +547,8 @@ function projectElement(
   doc: ProjectDocument,
   assets: Map<string, AudioAssetEntry>,
   applicationVersion: string,
+  tempoMap: NormalizedTempoMap,
 ): XmlElement {
-  const tempoBpm = doc.tempoSegments[0]?.bpm ?? DEFAULT_TEMPO_BPM;
   return {
     name: 'Project',
     attributes: { version: DAWPROJECT_FORMAT_VERSION },
@@ -560,7 +559,7 @@ function projectElement(
       },
       transportElement(doc),
       structureElement(doc),
-      arrangementElement(doc, assets, tempoBpm),
+      arrangementElement(doc, assets, tempoMap),
     ],
   };
 }
@@ -581,12 +580,12 @@ export async function exportDawproject(
   doc: ProjectDocument,
   options: DawprojectExportOptions,
 ): Promise<Uint8Array> {
-  const tempoBpm = doc.tempoSegments[0]?.bpm ?? DEFAULT_TEMPO_BPM;
+  const tempoMap = normalizeTempoMap(doc.tempoSegments, DEFAULT_TEMPO_BPM);
   const loadAudio = options.loadAudioAsset ?? loadAsset;
-  const assets = await collectAudioAssets(doc, tempoBpm, options.includeAudio, loadAudio);
+  const assets = await collectAudioAssets(doc, tempoMap, options.includeAudio, loadAudio);
   const applicationVersion = options.applicationVersion ?? DEFAULT_APPLICATION_VERSION;
   const entries: Record<string, Uint8Array> = {
-    'project.xml': strToU8(serializeXml(projectElement(doc, assets, applicationVersion))),
+    'project.xml': strToU8(serializeXml(projectElement(doc, assets, applicationVersion, tempoMap))),
     'metadata.xml': strToU8(serializeXml(metadataElement(doc))),
   };
   for (const asset of assets.values()) {

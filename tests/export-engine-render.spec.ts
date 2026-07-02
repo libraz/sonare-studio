@@ -91,10 +91,6 @@ class FakeEngine implements OfflineRenderEngine {
   setParameter(paramId: number, value: number): void {
     this.record('setParameter', paramId, value);
   }
-  busAutomationParamId(busId: number): number {
-    this.record('busAutomationParamId', busId);
-    return 0x4d590000 | busId;
-  }
   setAutomationLane(paramId: number, points: unknown): void {
     this.record('setAutomationLane', paramId, points);
   }
@@ -155,6 +151,7 @@ const MASTER_FADER_PARAM_ID = 0x4d58ff01;
 const ENGINE_MIXER_TARGET_BASE = 0x4d580000;
 const ENGINE_MIXER_PARAM_FADER_DB = 1;
 const ENGINE_MIXER_LANE_MASTER = 0xff;
+const BUS_1_FADER_PARAM_ID = 0x4d58fd01;
 
 /** Decodes the status nibble from a packed MIDI 1.0 UMP channel-voice word. */
 function midiStatus(word0: number): number {
@@ -1366,6 +1363,18 @@ describe('renderProjectWithEngine', () => {
     expect(engine.destroyed).toBe(true);
   });
 
+  it('allows project renders to override the release tail length', async () => {
+    const engine = new FakeEngine();
+    const result = await renderProjectWithEngine(makeDoc(), {
+      ...renderOptions(engine),
+      releaseTailSeconds: 5,
+    });
+
+    // Content ends at ppq 4 (= 2 s at 120 BPM); the caller can extend the tail
+    // for long reverb/delay releases without changing explicit range renders.
+    expect(result.totalFrames).toBe(4 * 24000 + 5 * 48000);
+  });
+
   it('routes a track output bus into its lane descriptor', async () => {
     const doc = makeDoc();
     // Route the Keys track (engine track 1) into bus 'bus-a' (engine bus 1).
@@ -1974,6 +1983,77 @@ describe('renderProjectWithEngine', () => {
     expect(clips[0].channels[0][4000]).toBe(2000);
   });
 
+  it('bakes warped audio clips to the document tempo-map length', async () => {
+    const doc = makeDoc();
+    doc.tempoSegments = [
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 3, bpm: 60 },
+    ];
+    doc.tracks[1].clips[0].warp = { enabled: true, sourceBpm: 60 };
+
+    const rampFrames = 96000;
+    const ramp = new Float32Array(rampFrames);
+    for (let i = 0; i < rampFrames; i++) ramp[i] = i;
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, {
+      deps: null,
+      createEngine: () => engine,
+      loadAudioAsset: async () => ({
+        meta: {
+          id: 'asset-1',
+          name: 'warped-variable-tempo.wav',
+          sampleRate: 48000,
+          numChannels: 1,
+          numFrames: rampFrames,
+        },
+        channels: [ramp],
+      }),
+    });
+
+    const clips = engine.named('setClips')[0][1] as Array<{
+      channels: Float32Array[];
+      lengthSamples: number;
+    }>;
+    expect(clips).toHaveLength(1);
+    // Clip 2..4 PPQ spans 0.5 s at 120 BPM plus 1 s at 60 BPM.
+    expect(clips[0].lengthSamples).toBe(72000);
+    expect(clips[0].channels[0].length).toBe(72000);
+    expect(timeStretch).toHaveBeenCalledTimes(1);
+    expect(timeStretch.mock.calls[0][2]).toBeCloseTo(96000 / 72000, 10);
+  });
+
+  it('slices unwarped audio clips with the document tempo map', async () => {
+    const doc = makeDoc();
+    doc.tempoSegments = [
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 1, bpm: 60 },
+    ];
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, {
+      deps: null,
+      createEngine: () => engine,
+      loadAudioAsset: async () => ({
+        meta: {
+          id: 'asset-1',
+          name: 'variable-tempo.wav',
+          sampleRate: 48000,
+          numChannels: 1,
+          numFrames: 96000,
+        },
+        channels: [new Float32Array(96000).fill(0.5)],
+      }),
+    });
+
+    const clips = engine.named('setClips')[0][1] as Array<{
+      channels: Float32Array[];
+      lengthSamples: number;
+    }>;
+    expect(clips).toHaveLength(1);
+    // Source 0..2 PPQ spans 0.5 s at 120 BPM and 1 s at 60 BPM.
+    expect(clips[0].lengthSamples).toBe(72000);
+    expect(clips[0].channels[0].length).toBe(72000);
+  });
+
   it('renders warped audio clips audibly from the stretched sample positions', async () => {
     const doc = makeDoc();
     doc.tracks[0].mute = true;
@@ -2050,7 +2130,7 @@ describe('renderProjectWithEngine', () => {
     ];
     drumClip.compSegments = [
       { startPpq: 0, takeIndex: 0 },
-      { startPpq: 1, takeIndex: 1 },
+      { startPpq: 1, takeIndex: 1, crossfadePpq: 0 },
     ];
 
     const rampFrames = 48000;
@@ -2098,7 +2178,7 @@ describe('renderProjectWithEngine', () => {
     ];
     drumClip.compSegments = [
       { startPpq: 0, takeIndex: 0 },
-      { startPpq: 1, takeIndex: 1 },
+      { startPpq: 1, takeIndex: 1, crossfadePpq: 0 },
     ];
 
     // asset-1: constant stereo 0.5 (fakeAsset); asset-2: a mono index ramp so
@@ -2161,7 +2241,7 @@ describe('renderProjectWithEngine', () => {
     ];
     drumClip.compSegments = [
       { startPpq: 0, takeIndex: 0 },
-      { startPpq: 1, takeIndex: 1 },
+      { startPpq: 1, takeIndex: 1, crossfadePpq: 0 },
     ];
     const rampFrames = 48000;
     const ramp = new Float32Array(rampFrames);
@@ -2406,6 +2486,7 @@ describe('renderProjectWithEngine with frozen tracks', () => {
     doc.tracks[1].automation = [
       { param: 'faderDb', enabled: true, points: [{ ppq: 0, value: -12 }] },
       { param: 'pan', enabled: true, points: [{ ppq: 0, value: 1 }] },
+      { param: 'insert:0:thresholdDb', enabled: true, points: [{ ppq: 0, value: -18 }] },
     ];
     // Its insert chain IS part of the pre-fader signal and must render.
     (doc.tracks[1].mixer as { inserts: unknown[] }).inserts = [
@@ -2446,13 +2527,17 @@ describe('renderProjectWithEngine with frozen tracks', () => {
     expect(params.has(0x4d58ff01)).toBe(false);
     expect(params.has(0x4d58ff02)).toBe(false);
 
-    // The frozen lane's faderDb/pan automation is excluded; other lanes keep
-    // theirs and master automation is skipped with the master levels.
+    // The frozen lane's faderDb/pan automation is excluded; insert automation
+    // still renders into the baked pre-fader DSP. Other lanes keep theirs and
+    // master automation is skipped with the master levels.
     const laneIds = new Set(engine.named('setAutomationLane').map(([, id]) => id));
     expect(laneIds.has(0x4d580101)).toBe(false);
     expect(laneIds.has(0x4d580102)).toBe(false);
     expect(laneIds.has(0x4d580001)).toBe(true);
     expect(laneIds.has(0x4d58ff02)).toBe(false);
+    expect(engine.named('resolveTrackInsertAutomationId')).toEqual([
+      ['resolveTrackInsertAutomationId', 2, 0, 'thresholdDb'],
+    ]);
 
     // Every other lane is muted; the frozen lane stays audible.
     expect(engine.named('setSoloMute')).toEqual([
@@ -2622,6 +2707,52 @@ describe('renderProjectWithEngine with group tracks and sidechains', () => {
     );
   });
 
+  it('expands a soloed group track to its routed member lanes in the mix pass', async () => {
+    const doc = makeGroupDoc();
+    doc.tracks[2].solo = true;
+
+    const result = await renderProjectWithEngine(doc, {
+      deps: null,
+      loadAudioAsset: async () => fakeAsset(),
+      createEngine: () => new AudibilityEngine(),
+    });
+
+    expect(result.channels[0][0]).toBeCloseTo(0, 5);
+    expect(result.channels[0][2 * SAMPLES_PER_PPQ]).toBeCloseTo(
+      0.5 * 0.8 * defaultAudioLaneGain() * defaultMasterGain(),
+      5,
+    );
+  });
+
+  it('maps group-track automation to the group bus in export', async () => {
+    const doc = makeGroupDoc();
+    doc.tracks[2].automation = [
+      { param: 'faderDb', enabled: true, points: [{ ppq: 0, value: -10 }] },
+      { param: 'insert:0:thresholdDb', enabled: true, points: [{ ppq: 0, value: -24 }] },
+    ];
+
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    expect(engine.named('setAutomationLane')).toContainEqual([
+      'setAutomationLane',
+      0x4d58fc01,
+      [{ ppq: 0, value: -10, curveToNext: 0 }],
+    ]);
+    expect(engine.named('resolveBusInsertAutomationId')).toContainEqual([
+      'resolveBusInsertAutomationId',
+      2,
+      0,
+      'thresholdDb',
+    ]);
+    expect(engine.named('resolveTrackInsertAutomationId')).not.toContainEqual([
+      'resolveTrackInsertAutomationId',
+      3,
+      0,
+      'thresholdDb',
+    ]);
+  });
+
   it('keeps muted routed members silent in the audible group stem', async () => {
     const doc = makeGroupDoc();
     doc.tracks[1].mute = true;
@@ -2698,6 +2829,55 @@ describe('renderProjectWithEngine with group tracks and sidechains', () => {
     const buses = engine.named('setTrackBuses')[0][1] as Array<{ busId: number; gainDb: number }>;
     expect(buses[1].gainDb).toBe(-120);
     expect(engine.named('setBusStripJson')).toEqual([]);
+  });
+
+  it('does not send disabled track or master EQ bands to the offline engine', async () => {
+    const doc = makeDoc();
+    const trackMixer = doc.tracks[1].mixer as NonNullable<
+      ProjectDocument['tracks'][number]['mixer']
+    >;
+    trackMixer.inserts = [{ processor: 'dynamics.compressor', params: {}, enabled: true }];
+    trackMixer.eq = {
+      enabled: false,
+      bands: [{ type: 'peak', frequency: 1000, gainDb: 9, q: 1 }],
+    };
+    const master = doc.mixer?.master as NonNullable<ProjectDocument['mixer']>['master'];
+    master.inserts = [{ processor: 'dynamics.limiter', params: {}, enabled: true }];
+    master.eq = {
+      enabled: false,
+      bands: [{ type: 'highShelf', frequency: 8000, gainDb: 6, q: 0.7 }],
+    };
+
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    expect(engine.named('setTrackStripJson').map(([, trackId]) => trackId)).toContain(2);
+    expect(engine.named('setMasterStripJson')).toHaveLength(1);
+    expect(engine.named('setTrackStripEqBandJson')).toEqual([]);
+    expect(engine.named('setMasterStripEqBandJson')).toEqual([]);
+  });
+
+  it('sends send-bus strip DSP when trim, width, or polarity is active without inserts', async () => {
+    const doc = makeDoc();
+    if (doc.mixer) {
+      doc.mixer.buses[0].strip = {
+        inputTrimDb: -3,
+        width: 0,
+        polarityInvertLeft: true,
+        inserts: [],
+        sends: [],
+      };
+    }
+
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    const busStrips = engine.named('setBusStripJson');
+    expect(busStrips).toHaveLength(1);
+    expect(busStrips[0][1]).toBe(1);
+    expect(JSON.parse(busStrips[0][2] as string)).toMatchObject({
+      buses: [{ id: 'bus-1', inserts: [] }],
+    });
   });
 
   it('binds positional insert sidechains to lane ids and drops invalid references', async () => {
@@ -2859,14 +3039,90 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
     const engine = new FakeEngine();
     await renderProjectWithEngine(doc, renderOptions(engine));
 
-    expect(engine.named('busAutomationParamId')).toEqual([['busAutomationParamId', 1]]);
     expect(engine.named('setAutomationLane')).toContainEqual([
       'setAutomationLane',
-      0x4d590001,
+      BUS_1_FADER_PARAM_ID,
       [
         { ppq: 0, value: -12, curveToNext: 0 },
         { ppq: 960, value: -3, curveToNext: 2 },
       ],
     ]);
+  });
+
+  it('maps bus insert automation through enabled-only insert indexes in export', async () => {
+    const doc = makeDoc();
+    if (doc.mixer) {
+      doc.mixer.buses[0].strip = {
+        inserts: [
+          { processor: 'saturation.tape', params: {}, enabled: false },
+          { processor: 'dynamics.compressor', params: { thresholdDb: -20 }, enabled: true },
+        ],
+        sends: [],
+      };
+      doc.mixer.buses[0].automation = [
+        {
+          param: 'insert:1:thresholdDb',
+          enabled: true,
+          points: [{ ppq: 0, value: -24 }],
+        },
+        {
+          param: 'insert:0:drive',
+          enabled: true,
+          points: [{ ppq: 0, value: 0.5 }],
+        },
+      ];
+    }
+
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    expect(engine.named('resolveBusInsertAutomationId')).toEqual([
+      ['resolveBusInsertAutomationId', 1, 0, 'thresholdDb'],
+    ]);
+  });
+
+  it('filters non-finite automation points before installing lanes', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].automation = [
+      {
+        param: 'faderDb',
+        enabled: true,
+        points: [
+          { ppq: 0, value: -12 },
+          { ppq: Number.NaN, value: -6 },
+          { ppq: 4, value: Number.NaN },
+        ],
+      },
+    ];
+    doc.masterAutomation = [{ param: 'faderDb', enabled: true, points: [{ ppq: 0, value: NaN }] }];
+    if (doc.mixer) {
+      doc.mixer.buses[0].automation = [
+        {
+          param: 'faderDb',
+          enabled: true,
+          points: [
+            { ppq: 0, value: -9 },
+            { ppq: Number.POSITIVE_INFINITY, value: -3 },
+          ],
+        },
+      ];
+    }
+
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    expect(engine.named('setAutomationLane')).toContainEqual([
+      'setAutomationLane',
+      0x4d580001,
+      [{ ppq: 0, value: -12, curveToNext: 0 }],
+    ]);
+    expect(engine.named('setAutomationLane')).toContainEqual([
+      'setAutomationLane',
+      BUS_1_FADER_PARAM_ID,
+      [{ ppq: 0, value: -9, curveToNext: 0 }],
+    ]);
+    expect(engine.named('setAutomationLane').some(([, id]) => id === MASTER_FADER_PARAM_ID)).toBe(
+      false,
+    );
   });
 });

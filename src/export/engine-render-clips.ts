@@ -14,6 +14,7 @@ import {
   sliceAudioClipWindow,
 } from '@/project/scheduling';
 import type { DocumentClip, ProjectDocument } from '@/project/serialization';
+import type { NormalizedTempoMap } from '@/project/tempo-map';
 import { bakeWarpedClip } from '@/project/warp';
 import type { EngineClipSpec } from './engine-render-types';
 
@@ -23,6 +24,8 @@ export interface AudioClipBuildContext {
   trackIds: number[];
   /** Tempo (BPM) used by the fixed-rate slice transforms. */
   sliceTempoBpm: number;
+  /** Tempo map used by source-window slicing. */
+  tempoMap: NormalizedTempoMap;
   /** Render sample rate in Hz. */
   sampleRate: number;
   /** Audio asset loader. */
@@ -44,7 +47,7 @@ export async function buildAudioClips(
   doc: ProjectDocument,
   context: AudioClipBuildContext,
 ): Promise<EngineClipSpec[]> {
-  const { trackIds, sliceTempoBpm, sampleRate, loadAudio, checkCancel } = context;
+  const { trackIds, sliceTempoBpm, tempoMap, sampleRate, loadAudio, checkCancel } = context;
   const audioClips: EngineClipSpec[] = [];
   const renderAudioClip = async (clip: DocumentClip, trackId: number): Promise<void> => {
     if (clip.gain <= 0) return;
@@ -62,7 +65,7 @@ export async function buildAudioClips(
       // instead of the fixed-rate slice (takes-free clips only).
       let channels =
         clip.warp?.enabled && (clip.takes?.length ?? 0) === 0
-          ? await bakeWarpedClip(asset.channels, asset.meta.sampleRate, clip, sliceTempoBpm, {
+          ? await bakeWarpedClip(asset.channels, asset.meta.sampleRate, clip, tempoMap, {
               cacheKey: segment.assetId,
             })
           : sliceAudioClipWindow(
@@ -70,7 +73,7 @@ export async function buildAudioClips(
               asset.meta.sampleRate,
               segment.sourceOffsetPpq,
               segment.lengthPpq,
-              sliceTempoBpm,
+              tempoMap,
             );
       channels = applyAudioClipFades(
         channels,

@@ -6,7 +6,9 @@
  * state (freeze) or places the render as a new audio clip (bounce).
  */
 
+import { resolvePresetName } from '@/engine/instruments';
 import { renderProjectWithEngine } from '@/export/engine-render';
+import { ensureWasm } from '@/lib/wasm';
 import { ingestAudioBuffer } from './audio-import';
 import { addBouncedClip, setTrackFrozen } from './commands';
 import { serializeProject } from './serialization';
@@ -44,9 +46,11 @@ async function renderFrozen(
   }
   const { render } = resolveSeams(options);
   const doc = serializeProject();
+  const wasm = await ensureWasm();
   return render(doc, {
     freezeTrackIndex: trackIndex,
     deps: null,
+    resolvePreset: (preset) => resolvePresetName(wasm, preset),
     ...(range !== null ? { range } : {}),
   });
 }

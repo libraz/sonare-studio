@@ -6,7 +6,7 @@ import {
   setAudioSourceId,
   useProjectStore,
 } from '../store';
-import { type ClipTake, TRACK_COLOR_PALETTE } from '../types';
+import { type ClipCompSegment, type ClipTake, type ClipWarp, TRACK_COLOR_PALETTE } from '../types';
 import { execute } from './history';
 import { requireTrack, validatePpq } from './utils';
 
@@ -90,6 +90,18 @@ export interface AddAudioClipInput {
   lengthPpq?: number;
   /** Linear playback gain (>= 0). Defaults to 1. */
   gain?: number;
+  /** Offset of the clip window into the source, in PPQ. Defaults to 0. */
+  sourceOffsetPpq?: number;
+  /** Fade-in length in PPQ. Defaults to no fade. */
+  fadeInPpq?: number;
+  /** Fade-out length in PPQ. Defaults to no fade. */
+  fadeOutPpq?: number;
+  /** True when the clip loops its window. Defaults to false. */
+  loopEnabled?: boolean;
+  /** Loop length in PPQ. Defaults to 0/full clip window. */
+  loopLengthPpq?: number;
+  /** Tempo-follow metadata to preserve when rebasing an audio clip. */
+  warp?: ClipWarp;
   /** Clip display name (app-level); defaults to "Clip N". */
   name?: string;
   /**
@@ -98,6 +110,8 @@ export interface AddAudioClipInput {
    * must reference that take's asset.
    */
   takes?: ClipTake[];
+  /** Comp selection over `takes`; defaults to the active take throughout. */
+  compSegments?: ClipCompSegment[];
   /** Take initially selected (defaults to the last); used with `takes`. */
   activeTakeIndex?: number;
 }
@@ -140,6 +154,20 @@ export async function addAudioClip(input: AddAudioClipInput): Promise<number> {
   }
   const finalLengthPpq = lengthPpq;
   const gain = input.gain ?? 1;
+  const sourceOffsetPpq = input.sourceOffsetPpq ?? 0;
+  validatePpq(sourceOffsetPpq, 'Clip sourceOffsetPpq');
+  for (const [value, label] of [
+    [input.fadeInPpq, 'Clip fadeInPpq'],
+    [input.fadeOutPpq, 'Clip fadeOutPpq'],
+  ] as const) {
+    if (value !== undefined && (!Number.isFinite(value) || value < 0)) {
+      throw new RangeError(`${label} must be finite and >= 0, got ${value}`);
+    }
+  }
+  const loopLengthPpq = input.loopLengthPpq ?? 0;
+  if (loopLengthPpq !== 0 && (!Number.isFinite(loopLengthPpq) || loopLengthPpq <= 0)) {
+    throw new RangeError(`Loop length must be finite and > 0, got ${loopLengthPpq}`);
+  }
   // Reuse the asset's registered source when it is still on the Project
   // (undo may have rolled the registration back; then re-register).
   let takes: ClipTake[] | undefined;
@@ -161,12 +189,19 @@ export async function addAudioClip(input: AddAudioClipInput): Promise<number> {
   const known = getAudioSourceId(input.assetId);
   const sourceId =
     known !== undefined && known >= 1 && known <= project.sourceCount() ? known : undefined;
-  return execute(sourceId === undefined ? 2 : 3, () => {
+  const fadeIn = input.fadeInPpq ?? 0;
+  const fadeOut = input.fadeOutPpq ?? 0;
+  const projectSteps =
+    (sourceId === undefined ? 2 : 3) +
+    (fadeIn > 0 || fadeOut > 0 ? 1 : 0) +
+    (input.loopEnabled ? 1 : 0);
+  return execute(projectSteps, () => {
     const newClipId = project.addClip({
       trackId: input.trackId,
       isMidi: false,
       startPpq,
       lengthPpq: finalLengthPpq,
+      sourceOffsetPpq,
       gain,
       // The binding requires non-empty inline audio on every clip-source
       // registration; the real PCM stays in the asset store (the source is
@@ -179,6 +214,12 @@ export async function addAudioClip(input: AddAudioClipInput): Promise<number> {
     } else {
       project.setClipSource(newClipId, sourceId);
     }
+    if (fadeIn > 0 || fadeOut > 0) {
+      project.setClipFade(newClipId, { lengthPpq: fadeIn }, { lengthPpq: fadeOut });
+    }
+    if (input.loopEnabled) {
+      project.setClipLoop(newClipId, 'loop', loopLengthPpq || finalLengthPpq);
+    }
     // Seed the mirror entry so refresh keeps the kind/asset metadata.
     store.clips = [
       ...store.clips,
@@ -188,17 +229,26 @@ export async function addAudioClip(input: AddAudioClipInput): Promise<number> {
         name: input.name ?? `Clip ${newClipId}`,
         startPpq,
         lengthPpq: finalLengthPpq,
-        sourceOffsetPpq: 0,
+        sourceOffsetPpq,
         gain,
-        loopEnabled: false,
-        loopLengthPpq: 0,
+        loopEnabled: input.loopEnabled ?? false,
+        loopLengthPpq,
         notes: [],
         kind: 'audio',
         assetId: input.assetId,
+        ...(input.fadeInPpq !== undefined && input.fadeInPpq > 0
+          ? { fadeInPpq: input.fadeInPpq }
+          : {}),
+        ...(input.fadeOutPpq !== undefined && input.fadeOutPpq > 0
+          ? { fadeOutPpq: input.fadeOutPpq }
+          : {}),
+        ...(input.warp !== undefined ? { warp: structuredClone(input.warp) as ClipWarp } : {}),
         ...(takes !== undefined
           ? {
               takes,
-              compSegments: [{ startPpq: 0, takeIndex: activeTakeIndex }],
+              compSegments: input.compSegments
+                ? input.compSegments.map((segment) => ({ ...segment }))
+                : [{ startPpq: 0, takeIndex: activeTakeIndex }],
             }
           : {}),
       },

@@ -17,7 +17,6 @@ function makeRecordingEngine(): {
 } {
   const calls: Array<[string, ...unknown[]]> = [];
   const realReturns: Record<string, (...args: unknown[]) => unknown> = {
-    busAutomationParamId: (busId) => 0x4d590000 | (busId as number),
     process: (channels) => channels,
     destroy: () => undefined,
   };
