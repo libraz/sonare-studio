@@ -1,7 +1,7 @@
 import type { MidiCcBinding } from '@/ui/midi/midi-learn';
 import { cloneScoreAnnotations, type ScoreAnnotations } from '../annotations';
 import { type AutomationLaneState, cloneAutomationLane } from '../automation';
-import { cloneInstrument } from '../instrument';
+import { cloneInstrument, type ExternalMidiInstrument } from '../instrument';
 import { cloneCcLanes } from '../midi-cc';
 import { cloneMixerState, cloneStrip, type ProjectMixerState } from '../mixer';
 import { getProject, setHistoryResetHook, useProjectStore } from '../store';
@@ -31,6 +31,7 @@ interface MirrorSnapshot {
   sections: EditorSection[];
   automationLanes: AutomationLaneState[];
   midiCcBindings: Map<string, MidiCcBinding>;
+  projectExternalMidi: ExternalMidiInstrument | null;
   mixer: ProjectMixerState;
   scoreAnnotations: ScoreAnnotations;
   displayTransposeSemitones: number;
@@ -56,6 +57,11 @@ interface HistoryEntry {
   projectEdits: number;
   before: MirrorSnapshot;
   after: MirrorSnapshot;
+}
+
+export interface HistoryReferencedMediaIds {
+  assetIds: Set<string>;
+  fontIds: Set<string>;
 }
 
 const undoStack: HistoryEntry[] = [];
@@ -129,6 +135,10 @@ function captureSnapshot(store: ReturnType<typeof useProjectStore>): MirrorSnaps
     sections: store.sections.map((section) => ({ ...section })),
     automationLanes: store.automationLanes.map(cloneAutomationLane),
     midiCcBindings: cloneMidiCcBindings(store.midiCcBindings),
+    projectExternalMidi:
+      store.projectExternalMidi === null
+        ? null
+        : (cloneInstrument(store.projectExternalMidi) as ExternalMidiInstrument),
     mixer: cloneMixerState(store.mixer),
     scoreAnnotations: cloneScoreAnnotations(store.scoreAnnotations),
     displayTransposeSemitones: store.displayTransposeSemitones,
@@ -192,6 +202,10 @@ function restoreSnapshot(
   for (const [id, binding] of snapshot.midiCcBindings) {
     store.midiCcBindings.set(id, { ...binding });
   }
+  store.projectExternalMidi =
+    snapshot.projectExternalMidi === null
+      ? null
+      : (cloneInstrument(snapshot.projectExternalMidi) as ExternalMidiInstrument);
   store.mixer = cloneMixerState(snapshot.mixer);
   store.scoreAnnotations = cloneScoreAnnotations(snapshot.scoreAnnotations);
   store.displayTransposeSemitones = snapshot.displayTransposeSemitones;
@@ -203,6 +217,36 @@ function restoreSnapshot(
   store.clipId = clipExists ? view.activeClipId : snapshot.activeClipId;
   const hints = new Map(snapshot.clips.map((clip) => [clip.id, clip.notes]));
   store.refresh(hints);
+}
+
+function foldSnapshotMediaIds(snapshot: MirrorSnapshot, refs: HistoryReferencedMediaIds): void {
+  for (const track of snapshot.tracks) {
+    if (track.frozen?.assetId) refs.assetIds.add(track.frozen.assetId);
+    if (track.instrument?.kind === 'sf2' && track.instrument.fontId) {
+      refs.fontIds.add(track.instrument.fontId);
+    }
+  }
+  for (const clip of snapshot.clips) {
+    if (clip.assetId) refs.assetIds.add(clip.assetId);
+    for (const take of clip.takes ?? []) {
+      if (take.assetId) refs.assetIds.add(take.assetId);
+    }
+  }
+}
+
+/**
+ * Returns media ids still reachable from undo/redo history. Save-time GC must
+ * preserve these because the live document can legitimately drop an asset
+ * (unfreeze/delete) and later restore it through undo.
+ */
+export function collectHistoryReferencedMediaIds(): HistoryReferencedMediaIds {
+  const refs: HistoryReferencedMediaIds = { assetIds: new Set(), fontIds: new Set() };
+  for (const entry of [...undoStack, ...redoStack]) {
+    foldSnapshotMediaIds(entry.before, refs);
+    foldSnapshotMediaIds(entry.after, refs);
+  }
+  if (pendingGesture) foldSnapshotMediaIds(pendingGesture.before, refs);
+  return refs;
 }
 
 /** Pushes a finished history entry, trimming overflow and dropping redo. */

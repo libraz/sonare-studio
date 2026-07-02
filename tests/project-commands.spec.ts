@@ -13,6 +13,7 @@ import {
   clearHistory,
   clearProjectChords,
   clearTrackMidiFx,
+  collectHistoryReferencedMediaIds,
   deleteClip,
   detectChordsForClip,
   duplicateClip,
@@ -53,11 +54,14 @@ import {
   setClipPolyPressure,
   setMarker,
   setProjectChords,
+  setProjectExternalMidiDefault,
+  setProjectExternalMidiDefaultForTracks,
   setSections,
   setSelection,
   setTempoSegments,
   setTimeSignatures,
   setTrackColor,
+  setTrackFrozen,
   setTrackMidiFx,
   setTrackMute,
   setTrackPan,
@@ -242,6 +246,46 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(() => setTrackMidiFx(9999, sanitizeMidiFxConfig({ transposeSemitones: 1 }))).toThrow(
         RangeError,
       );
+    });
+
+    it('restores the shared External MIDI route on undo and redo', () => {
+      const trackId = store.tracks[0].id;
+      const routeA = {
+        kind: 'external-midi' as const,
+        outputPortId: 'port-a',
+        channel: 0,
+        name: 'Port A',
+      };
+      const routeB = {
+        kind: 'external-midi' as const,
+        outputPortId: 'port-b',
+        channel: 3,
+        name: 'Port B',
+      };
+
+      setProjectExternalMidiDefaultForTracks(routeA, [trackId]);
+      expect(store.projectExternalMidi).toEqual(routeA);
+      expect(store.tracks[0].externalMidiMode).toBe('project');
+
+      setProjectExternalMidiDefault(routeB);
+      expect(store.projectExternalMidi).toEqual(routeB);
+      expect(undo()).toBe(true);
+      expect(store.projectExternalMidi).toEqual(routeA);
+      expect(store.tracks[0].externalMidiMode).toBe('project');
+      expect(redo()).toBe(true);
+      expect(store.projectExternalMidi).toEqual(routeB);
+      expect(store.tracks[0].externalMidiMode).toBe('project');
+    });
+
+    it('keeps frozen asset ids reachable while unfreeze is undoable', () => {
+      const trackId = store.tracks[0].id;
+      setTrackFrozen(trackId, { assetId: 'frozen-audio' });
+      setTrackFrozen(trackId, null);
+
+      const refs = collectHistoryReferencedMediaIds();
+      expect([...refs.assetIds]).toContain('frozen-audio');
+      expect(undo()).toBe(true);
+      expect(store.tracks[0].frozen?.assetId).toBe('frozen-audio');
     });
 
     it('reorderTracks permutes the mirror order and is undoable', () => {

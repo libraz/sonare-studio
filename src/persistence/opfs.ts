@@ -93,6 +93,7 @@ export async function requestPersistentStorage(): Promise<boolean> {
  */
 export function sanitizeProjectName(name: string): string {
   const cleaned = name
+    .trim()
     .replace(/\.szd$/i, '')
     // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are unsafe in filenames
     .replace(/[\u0000-\u001f\\/:*?"<>|]/g, '_')
@@ -101,6 +102,11 @@ export function sanitizeProjectName(name: string): string {
     throw new InvalidProjectNameError(name);
   }
   return cleaned;
+}
+
+/** True when a sanitized project name is reserved for internal storage slots. */
+export function isReservedProjectName(name: string): boolean {
+  return sanitizeProjectName(name).toLowerCase() === 'autosave';
 }
 
 /** True when an error is a DOMException-style NotFoundError. */

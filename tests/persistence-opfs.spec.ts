@@ -3,6 +3,7 @@ import {
   deleteProject,
   InvalidProjectNameError,
   isOpfsAvailable,
+  isReservedProjectName,
   listProjects,
   loadProject,
   OpfsUnavailableError,
@@ -137,6 +138,12 @@ describe('sanitizeProjectName', () => {
 
   it('drops a trailing .szd extension case-insensitively', () => {
     expect(sanitizeProjectName('demo.SZD')).toBe('demo');
+  });
+
+  it('detects the reserved autosave slot case-insensitively after sanitizing', () => {
+    expect(sanitizeProjectName('autosave')).toBe('autosave');
+    expect(isReservedProjectName(' autosave.SZD ')).toBe(true);
+    expect(isReservedProjectName('my autosave')).toBe(false);
   });
 });
 

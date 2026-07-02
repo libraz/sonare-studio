@@ -8,12 +8,14 @@ import { downloadSzd, pickAndReadSzd } from '@/persistence/local-file';
 import {
   deleteProject,
   isOpfsAvailable,
+  isReservedProjectName,
   listProjects,
   loadProject,
   type StoredProjectInfo,
   saveProject,
 } from '@/persistence/opfs';
 import { decodeSzd, decodeSzdBundle, encodeSzd, SZD_FILE_EXTENSION } from '@/persistence/szd';
+import { collectHistoryReferencedMediaIds } from '@/project/commands';
 import { makeBwv565Document } from '@/project/demo/bwv565';
 import { exportProjectClipFile, exportProjectSmf } from '@/project/export';
 import {
@@ -105,7 +107,12 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   async function reclaimUnusedMedia(): Promise<void> {
     if (!opfsAvailable) return;
     try {
-      await garbageCollectMedia({ liveDocument: serializeProject() });
+      const historyRefs = collectHistoryReferencedMediaIds();
+      await garbageCollectMedia({
+        liveDocument: serializeProject(),
+        referencedAssetIds: historyRefs.assetIds,
+        referencedFontIds: historyRefs.fontIds,
+      });
     } catch {
       // Reclaiming is opportunistic; a failure leaves the orphans for next time.
     }
@@ -118,6 +125,10 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     // boot and open do not write a redundant autosave.
     autosave.cancelPending();
     dirty.value = false;
+  }
+
+  async function saveLoadedProjectToAutosave(): Promise<void> {
+    await autosave.saveNow();
   }
 
   /**
@@ -177,6 +188,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     void runAction(async () => {
       if (!(await confirmDiscard())) return;
       await loadProjectDocument(await makeBwv565Document());
+      await saveLoadedProjectToAutosave();
       await markClean();
       startScreenOpen.value = false;
     });
@@ -200,6 +212,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     newDialogOpen.value = false;
     void runAction(async () => {
       await loadProjectDocument(payload.document);
+      await saveLoadedProjectToAutosave();
       await markClean();
       startScreenOpen.value = false;
     });
@@ -234,6 +247,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       await loadProjectDocument(decodeSzd(bytes));
       store.projectName = name;
       rememberRecentProject(name);
+      await saveLoadedProjectToAutosave();
       await markClean();
       openDialogOpen.value = false;
       startScreenOpen.value = false;
@@ -288,6 +302,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
         }
       }
       await loadProjectDocument(doc);
+      await saveLoadedProjectToAutosave();
       await markClean();
       openDialogOpen.value = false;
       startScreenOpen.value = false;
@@ -308,6 +323,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       if (!(await confirmDiscard())) return;
       const doc = await smfToProjectDocument(await file.arrayBuffer(), file.name);
       await loadProjectDocument(doc);
+      await saveLoadedProjectToAutosave();
       await markClean();
       openDialogOpen.value = false;
       startScreenOpen.value = false;
@@ -315,6 +331,9 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   }
 
   async function saveToOpfs(name: string): Promise<void> {
+    if (isReservedProjectName(name)) {
+      throw new Error('Project name "autosave" is reserved for internal recovery data.');
+    }
     const doc = serializeProject();
     const bytes = encodeSzd(doc, { savedAt: new Date().toISOString() });
     await saveProject(name, bytes);

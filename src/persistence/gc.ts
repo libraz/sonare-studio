@@ -39,6 +39,10 @@ export interface MediaGcOptions {
    * alone.
    */
   liveDocument?: ProjectDocument;
+  /** Media ids that are not in the live document but must be retained. */
+  referencedAssetIds?: Iterable<string>;
+  /** SoundFont ids that are not in the live document but must be retained. */
+  referencedFontIds?: Iterable<string>;
   /** When true, computes what would be removed without deleting anything. */
   dryRun?: boolean;
 }
@@ -74,6 +78,7 @@ function assetBytes(meta: Pick<AudioAssetMeta, 'numFrames' | 'numChannels'>): nu
  */
 export async function collectReferencedMediaIds(
   liveDocument?: ProjectDocument,
+  extra?: { assetIds?: Iterable<string>; fontIds?: Iterable<string> },
 ): Promise<{ assetIds: Set<string>; fontIds: Set<string>; complete: boolean }> {
   const assetIds = new Set<string>();
   const fontIds = new Set<string>();
@@ -85,6 +90,8 @@ export async function collectReferencedMediaIds(
   };
 
   if (liveDocument) fold(liveDocument);
+  for (const id of extra?.assetIds ?? []) assetIds.add(id);
+  for (const id of extra?.fontIds ?? []) fontIds.add(id);
 
   for (const info of await listProjects()) {
     try {
@@ -119,7 +126,10 @@ export async function garbageCollectMedia(options: MediaGcOptions = {}): Promise
   };
   if (!isOpfsAvailable()) return empty;
 
-  const { assetIds, fontIds, complete } = await collectReferencedMediaIds(options.liveDocument);
+  const { assetIds, fontIds, complete } = await collectReferencedMediaIds(options.liveDocument, {
+    assetIds: options.referencedAssetIds,
+    fontIds: options.referencedFontIds,
+  });
   if (!complete) return { ...empty, incompleteReferences: true };
 
   const [assets, fonts] = await Promise.all([listAssets(), listFonts()]);

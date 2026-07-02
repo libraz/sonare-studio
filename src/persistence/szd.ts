@@ -173,12 +173,23 @@ function validateDocument(value: unknown): ProjectDocument {
     if (!Array.isArray(doc[field])) {
       throw new SzdFormatError(`Invalid project file: "${field}" is not an array`);
     }
+    if (
+      !doc[field].every((item) => typeof item === 'object' && item !== null && !Array.isArray(item))
+    ) {
+      throw new SzdFormatError(`Invalid project file: "${field}" contains a non-object entry`);
+    }
   }
   // Optional collections must still be arrays when present (older documents
   // simply omit them; loading injects the defaults).
   for (const field of ['masterAutomation', 'chords', 'midiCcBindings'] as const) {
     if (doc[field] !== undefined && !Array.isArray(doc[field])) {
       throw new SzdFormatError(`Invalid project file: "${field}" is not an array`);
+    }
+    if (
+      doc[field] !== undefined &&
+      !doc[field].every((item) => typeof item === 'object' && item !== null && !Array.isArray(item))
+    ) {
+      throw new SzdFormatError(`Invalid project file: "${field}" contains a non-object entry`);
     }
   }
   return doc as ProjectDocument;

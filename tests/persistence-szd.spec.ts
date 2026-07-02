@@ -199,6 +199,27 @@ describe('szd encode/decode', () => {
     expect(() => decodeSzd(bytes)).toThrow(/"tracks"/);
   });
 
+  it('rejects non-object entries in top-level collections', () => {
+    for (const field of [
+      'tempoSegments',
+      'timeSignatures',
+      'tracks',
+      'markers',
+      'sections',
+      'masterAutomation',
+      'chords',
+      'midiCcBindings',
+    ] as const) {
+      const doc = { ...makeDocument(), masterAutomation: [], chords: [], midiCcBindings: [] } as
+        | ProjectDocument
+        | Record<string, unknown>;
+      doc[field] = [null];
+      const bytes = zipSync({ 'project.json': strToU8(JSON.stringify(doc)) });
+      expect(() => decodeSzd(bytes), field).toThrow(SzdFormatError);
+      expect(() => decodeSzd(bytes), field).toThrow(new RegExp(`"${field}".*non-object`));
+    }
+  });
+
   it('tolerates a missing or unreadable meta.json', () => {
     const doc = makeDocument();
     const noMeta = zipSync({ 'project.json': strToU8(JSON.stringify(doc)) });

@@ -38,8 +38,15 @@ export {
   splitClip,
   trimClip,
 } from './command/clips';
-export type { CommandGestureOptions } from './command/history';
-export { canRedo, canUndo, clearHistory, redo, undo } from './command/history';
+export type { CommandGestureOptions, HistoryReferencedMediaIds } from './command/history';
+export {
+  canRedo,
+  canUndo,
+  clearHistory,
+  collectHistoryReferencedMediaIds,
+  redo,
+  undo,
+} from './command/history';
 export {
   addMasteringProcessor,
   removeMasteringProcessor,

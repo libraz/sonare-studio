@@ -89,6 +89,23 @@ describe('media garbage collection', () => {
     expect((await listFonts()).map((f) => f.id)).toEqual(['keepFont']);
   });
 
+  it('preserves media referenced only by protected undo history ids', async () => {
+    await saveAsset({ id: 'undoAsset', name: 'Undo', sampleRate: 48000 }, mono());
+    await saveAsset({ id: 'orphan', name: 'Orphan', sampleRate: 48000 }, mono());
+    await saveFont({ id: 'undoFont', name: 'Undo' }, new Uint8Array([1, 2, 3]));
+    await saveFont({ id: 'orphanFont', name: 'Orphan' }, new Uint8Array([9]));
+
+    const result = await garbageCollectMedia({
+      referencedAssetIds: ['undoAsset'],
+      referencedFontIds: ['undoFont'],
+    });
+
+    expect(result.removedAssetIds).toEqual(['orphan']);
+    expect(result.removedFontIds).toEqual(['orphanFont']);
+    expect((await listAssets()).map((a) => a.id)).toEqual(['undoAsset']);
+    expect((await listFonts()).map((f) => f.id)).toEqual(['undoFont']);
+  });
+
   it('preserves media held only by an unbundled autosave slot', async () => {
     await saveAsset({ id: 'slotAsset', name: 'Slot', sampleRate: 48000 }, mono());
     await saveFont({ id: 'slotFont', name: 'Slot' }, new Uint8Array([1, 2, 3]));

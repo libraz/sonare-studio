@@ -88,11 +88,30 @@ export function useProjectAudioAssets(options: ProjectAudioAssetsOptions) {
       trackId: clip.trackId,
       startPpq: clip.startPpq,
       lengthPpq: clip.lengthPpq,
+      sourceOffsetPpq: clip.sourceOffsetPpq,
       gain: clip.gain,
       name: clip.name,
+      loopEnabled: clip.loopEnabled,
+      loopLengthPpq: clip.loopLengthPpq,
+      fadeInPpq: clip.fadeInPpq,
+      fadeOutPpq: clip.fadeOutPpq,
+      warp: clip.warp ? structuredClone(clip.warp) : undefined,
     };
+    const activeTakeIndex = clip.compSegments?.[0]?.takeIndex ?? 0;
+    const takes =
+      clip.takes && clip.takes.length > 0
+        ? clip.takes.map((take, index) => ({
+            ...take,
+            assetId: index === activeTakeIndex ? assetId : take.assetId,
+          }))
+        : undefined;
+    const compSegments = clip.compSegments?.map((segment) => ({ ...segment }));
     deleteClip(clipId);
-    const newClipId = await addAudioClip({ assetId, ...placement });
+    const newClipId = await addAudioClip({
+      assetId,
+      ...placement,
+      ...(takes ? { takes, activeTakeIndex, compSegments } : {}),
+    });
     setActiveClip(newClipId);
   }
 
