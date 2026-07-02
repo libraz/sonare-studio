@@ -43,6 +43,17 @@ export const KEY_MODE_CHOICES: ReadonlyArray<KeyModeChoice> = [
   { id: 'locrian', label: 'Locrian', semitoneOffset: 11 },
 ];
 
+/** libsonare `Mode` ordinal by UI mode id. */
+const MODE_ORDINAL_BY_ID: Readonly<Record<string, number>> = {
+  major: 0,
+  minor: 1,
+  dorian: 2,
+  phrygian: 3,
+  lydian: 4,
+  mixolydian: 5,
+  locrian: 6,
+};
+
 /**
  * Rotates a 12-bit interval mask so the scale degree `semitoneOffset`
  * semitones above the original root becomes the new root: bit i of the
@@ -84,6 +95,18 @@ export function matchModeChoiceId(mask: number): string | null {
     if (rotateModeMask(MAJOR_MODE_MASK, choice.semitoneOffset) === mask) return choice.id;
   }
   return null;
+}
+
+/**
+ * Converts a mode choice id to the libsonare `Mode` ordinal.
+ *
+ * @param id One of the {@link KEY_MODE_CHOICES} ids.
+ * @returns Mode ordinal (Major = 0, Minor = 1, Dorian = 2, ...).
+ */
+export function modeOrdinalForChoice(id: string): number {
+  const ordinal = MODE_ORDINAL_BY_ID[id];
+  if (ordinal === undefined) throw new RangeError(`Unknown key mode: ${id}`);
+  return ordinal;
 }
 
 /**

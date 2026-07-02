@@ -28,8 +28,10 @@ export interface ChordEstimateOptions {
   clipStartPpq: number;
   /** Length of the notated window in PPQ (> 0). */
   clipLengthPpq: number;
-  /** Measure length in PPQ (> 0), e.g. 4 for 4/4. */
+  /** Measure length in PPQ (> 0), e.g. 4 for 4/4. Used when measures is omitted. */
   measureLengthPpq: number;
+  /** Actual score measures; when provided, chord windows follow their starts and lengths. */
+  measures?: ReadonlyArray<{ startPpq: number; lengthPpq: number }>;
   /** Key signature fifths (-7..7) used to spell chord root/bass names. */
   keyFifths: number;
 }
@@ -45,6 +47,12 @@ interface ChordTemplate {
   quality: number;
   intervals: ReadonlyArray<number>;
   suffix: string;
+}
+
+/** One absolute PPQ region used for chord estimation. */
+interface ChordWindow {
+  start: number;
+  end: number;
 }
 
 /**
@@ -69,6 +77,32 @@ const CHORD_TEMPLATES: ReadonlyArray<ChordTemplate> = [
 const PRESENCE_EPSILON = 1e-9;
 /** Penalty factor for template tones that are absent from the measure. */
 const MISSING_TONE_PENALTY = 0.5;
+
+function chordWindows(options: ChordEstimateOptions): ChordWindow[] {
+  const { clipStartPpq, clipLengthPpq, measureLengthPpq } = options;
+  const clipEndPpq = clipStartPpq + clipLengthPpq;
+  if (options.measures !== undefined) {
+    const windows = options.measures
+      .filter(
+        (measure) =>
+          Number.isFinite(measure.startPpq) &&
+          Number.isFinite(measure.lengthPpq) &&
+          measure.lengthPpq > 0,
+      )
+      .map((measure) => ({
+        start: Math.max(clipStartPpq, measure.startPpq),
+        end: Math.min(clipEndPpq, measure.startPpq + measure.lengthPpq),
+      }))
+      .filter((window) => window.end > window.start)
+      .sort((a, b) => a.start - b.start);
+    if (windows.length > 0) return windows;
+  }
+  const measureCount = Math.ceil(clipLengthPpq / measureLengthPpq);
+  return Array.from({ length: measureCount }, (_, index) => {
+    const start = clipStartPpq + index * measureLengthPpq;
+    return { start, end: Math.min(start + measureLengthPpq, clipEndPpq) };
+  });
+}
 
 /** Spells a pitch class as a chord-symbol token, e.g. 'C#', 'Bb', 'F'. */
 function pitchClassName(pc: number, keyFifths: number): string {
@@ -108,13 +142,9 @@ export function estimateChordSymbols(
   ) {
     throw new RangeError('Chord estimation requires a positive clip window and measure length');
   }
-  const clipEndPpq = clipStartPpq + clipLengthPpq;
-  const measureCount = Math.ceil(clipLengthPpq / measureLengthPpq);
   const out: EstimatedChordSymbol[] = [];
 
-  for (let index = 0; index < measureCount; index++) {
-    const start = clipStartPpq + index * measureLengthPpq;
-    const end = Math.min(start + measureLengthPpq, clipEndPpq);
+  for (const { start, end } of chordWindows(options)) {
     const weights = new Array<number>(12).fill(0);
     let bassPitch = Number.POSITIVE_INFINITY;
     for (const note of notes) {

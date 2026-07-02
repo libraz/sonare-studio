@@ -27,10 +27,12 @@ import { extractPartScore, serializeMusicXml } from '@/notation/musicxml';
 import { downloadBlob, exportPdf, printScore } from '@/notation/print';
 import { quantizeToScore } from '@/notation/quantize';
 import { VerovioClient, type VerovioTimemapEntry } from '@/notation/verovio';
+import { clipPlaybackNotes } from '@/project/scheduling';
 import type { useProjectStore } from '@/project/store';
 import { normalizeTempoMap, tempoAtPpq } from '@/project/tempo-map';
 import {
   clipKind,
+  type EditorClip,
   type EditorMarker,
   type EditorNote,
   type EditorSection,
@@ -249,6 +251,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
             clipStartPpq: store.clipStartPpq,
             clipLengthPpq: store.clipLengthPpq,
             measureLengthPpq: options.getMeasureLenPpq(),
+            measures: score.parts[0]?.measures,
             keyFifths: fifths,
           });
           const symbols = await canonicalizeChordSymbols(estimated);
@@ -449,7 +452,7 @@ interface FullScoreBuildOptions {
   displayTransposeSemitones: number;
 }
 
-function buildFullScore(store: ProjectStore, options: FullScoreBuildOptions): NotatedScore {
+export function buildFullScore(store: ProjectStore, options: FullScoreBuildOptions): NotatedScore {
   const windowEnd = options.clipStartPpq + options.clipLengthPpq;
   const parts = store.tracks
     .filter((track) => track.kind === 'midi')
@@ -462,7 +465,7 @@ function buildFullScore(store: ProjectStore, options: FullScoreBuildOptions): No
             clip.startPpq < windowEnd &&
             clip.startPpq + clip.lengthPpq > options.clipStartPpq,
         )
-        .flatMap((clip) => timelineNotesForClip(clip.notes, clip.startPpq, clip.sourceOffsetPpq));
+        .flatMap((clip) => timelinePlaybackNotesForClip(clip));
       const score = quantizeToScore(notes, {
         divisionPpq: options.divisionPpq,
         timeSig: options.timeSig,
@@ -496,15 +499,20 @@ function buildFullScore(store: ProjectStore, options: FullScoreBuildOptions): No
   };
 }
 
-function timelineNotesForClip(
-  notes: ReadonlyArray<EditorNote>,
-  clipStartPpq: number,
-  sourceOffsetPpq: number,
+function timelinePlaybackNotesForClip(
+  clip: Pick<EditorClip, 'notes' | 'startPpq' | 'lengthPpq' | 'sourceOffsetPpq'>,
 ): EditorNote[] {
-  return notes.map((note) => ({
-    ...note,
-    startPpq: clipStartPpq + note.startPpq - sourceOffsetPpq,
-  }));
+  return clipPlaybackNotes(clip).map(
+    (note, index): EditorNote => ({
+      id: index,
+      pitch: note.note,
+      velocity: note.velocity,
+      ...(note.offVelocity !== undefined ? { offVelocity: note.offVelocity } : {}),
+      startPpq: clip.startPpq + note.startPpq,
+      durationPpq: note.durationPpq,
+      channel: note.channel ?? 0,
+    }),
+  );
 }
 
 /** Adds section labels and double bars for section starts aligned to score measures. */
@@ -516,7 +524,6 @@ export function applySectionMarks(
   measureLenPpq: number,
 ): void {
   if (sections.length === 0 || measureLenPpq <= 0 || score.parts.length === 0) return;
-  const measureCount = score.parts[0].measures.length;
   const clipEndPpq = clipStartPpq + clipLengthPpq;
   const rehearsals: Record<number, string> = {};
   const barlines: Record<number, 'double'> = {};
@@ -527,10 +534,8 @@ export function applySectionMarks(
     ) {
       continue;
     }
-    const rel = section.startPpq - clipStartPpq;
-    const measureIndex = Math.round(rel / measureLenPpq);
-    if (measureIndex < 0 || measureIndex >= measureCount) continue;
-    if (Math.abs(rel - measureIndex * measureLenPpq) > PPQ_EPSILON) continue;
+    const measureIndex = measureIndexForPpq(score, section.startPpq, clipStartPpq, measureLenPpq);
+    if (measureIndex === undefined) continue;
     const name = section.name.trim();
     if (name) rehearsals[measureIndex] = name;
     if (measureIndex > 0) barlines[measureIndex - 1] = 'double';
@@ -553,14 +558,16 @@ export function applyLoopMarks(
   const measureCount = score.parts[0].measures.length;
   const clipEndPpq = clipStartPpq + clipLengthPpq;
   if (loopStartPpq < clipStartPpq - PPQ_EPSILON || loopEndPpq > clipEndPpq + PPQ_EPSILON) return;
-  const startRel = loopStartPpq - clipStartPpq;
-  const endRel = loopEndPpq - clipStartPpq;
-  const startIndex = Math.round(startRel / measureLenPpq);
-  const endBoundaryIndex = Math.round(endRel / measureLenPpq);
+  const startIndex = measureIndexForPpq(score, loopStartPpq, clipStartPpq, measureLenPpq);
+  const endBoundaryIndex = measureBoundaryIndexForPpq(
+    score,
+    loopEndPpq,
+    clipStartPpq,
+    measureLenPpq,
+  );
+  if (startIndex === undefined || endBoundaryIndex === undefined) return;
   if (startIndex < 0 || startIndex >= measureCount || endBoundaryIndex <= startIndex) return;
   if (endBoundaryIndex > measureCount) return;
-  if (Math.abs(startRel - startIndex * measureLenPpq) > PPQ_EPSILON) return;
-  if (Math.abs(endRel - endBoundaryIndex * measureLenPpq) > PPQ_EPSILON) return;
   const endIndex = endBoundaryIndex - 1;
   const repeats: Record<number, 'start' | 'end' | 'start-end'> = {
     ...(score.measureRepeats ?? {}),
@@ -580,7 +587,6 @@ export function applyTempoMarks(
   measureLenPpq: number,
 ): void {
   if (measureLenPpq <= 0 || score.parts.length === 0) return;
-  const measureCount = score.parts[0].measures.length;
   const clipEndPpq = clipStartPpq + clipLengthPpq;
   const tempoMap = normalizeTempoMap(tempoSegments, fallbackBpm);
   const tempos: Record<number, number> = { 0: tempoAtPpq(tempoMap, clipStartPpq) };
@@ -593,10 +599,8 @@ export function applyTempoMarks(
     ) {
       continue;
     }
-    const rel = segment.startPpq - clipStartPpq;
-    const measureIndex = Math.round(rel / measureLenPpq);
-    if (measureIndex < 0 || measureIndex >= measureCount) continue;
-    if (Math.abs(rel - measureIndex * measureLenPpq) > PPQ_EPSILON) continue;
+    const measureIndex = measureIndexForPpq(score, segment.startPpq, clipStartPpq, measureLenPpq);
+    if (measureIndex === undefined) continue;
     tempos[measureIndex] = tempoAtPpq(tempoMap, segment.startPpq);
   }
   const sortedSegments = [...tempoSegments]
@@ -613,12 +617,7 @@ export function applyTempoMarks(
     ) {
       continue;
     }
-    const startIndex = measureIndexForPpq(
-      segment.startPpq,
-      clipStartPpq,
-      measureLenPpq,
-      measureCount,
-    );
+    const startIndex = measureIndexForPpq(score, segment.startPpq, clipStartPpq, measureLenPpq);
     if (startIndex !== undefined) {
       tempoTexts[startIndex] = {
         text: segment.endBpm < segment.bpm ? 'rit.' : 'accel.',
@@ -626,7 +625,7 @@ export function applyTempoMarks(
       };
       hasTempoText = true;
     }
-    const endIndex = measureIndexForPpq(next.startPpq, clipStartPpq, measureLenPpq, measureCount);
+    const endIndex = measureIndexForPpq(score, next.startPpq, clipStartPpq, measureLenPpq);
     if (endIndex !== undefined) {
       tempoTexts[endIndex] = {
         text: 'a tempo',
@@ -644,7 +643,7 @@ export function applyTempoMarks(
 export function applyLayoutBreaks(
   score: NotatedScore,
   sections: ReadonlyArray<EditorSection>,
-  clipStartPpq: number,
+  _clipStartPpq: number,
   measureLenPpq: number,
   settings: Pick<ScoreLayoutSettings, 'barsPerSystem' | 'barsPerPage'> = {
     barsPerSystem: 4,
@@ -667,12 +666,7 @@ export function applyLayoutBreaks(
     }
   }
   for (const section of sections) {
-    const measureIndex = measureIndexForPpq(
-      section.startPpq,
-      clipStartPpq,
-      measureLenPpq,
-      measureCount,
-    );
+    const measureIndex = measureIndexForPpq(score, section.startPpq, _clipStartPpq, measureLenPpq);
     if (measureIndex !== undefined && measureIndex > 0 && breaks[measureIndex] !== 'page') {
       breaks[measureIndex] = 'system';
     }
@@ -689,12 +683,11 @@ export function applyMarkerTexts(
   measureLenPpq: number,
 ): void {
   if (markers.length === 0 || measureLenPpq <= 0 || score.parts.length === 0) return;
-  const measureCount = score.parts[0].measures.length;
   const clipEndPpq = clipStartPpq + clipLengthPpq;
   const texts: Record<number, Array<{ text: string; defaultY?: number }>> = {};
   for (const marker of markers) {
     if (marker.ppq < clipStartPpq - PPQ_EPSILON || marker.ppq >= clipEndPpq - PPQ_EPSILON) continue;
-    const measureIndex = measureIndexForPpq(marker.ppq, clipStartPpq, measureLenPpq, measureCount);
+    const measureIndex = measureIndexForPpq(score, marker.ppq, clipStartPpq, measureLenPpq);
     if (measureIndex === undefined) continue;
     const text = marker.name.trim();
     if (!text) continue;
@@ -723,7 +716,19 @@ export function applyMultiMeasureRests(score: NotatedScore): void {
   if (Object.keys(rests).length > 0) score.multiMeasureRests = rests;
 }
 
-function measureIndexForPpq(
+function scoreMeasures(score: NotatedScore): ReadonlyArray<NotatedMeasure> {
+  return score.parts[0]?.measures ?? [];
+}
+
+function measuresUseClipOrigin(
+  measures: ReadonlyArray<NotatedMeasure>,
+  clipStartPpq: number,
+): boolean {
+  const first = measures[0];
+  return first !== undefined && Math.abs(first.startPpq - clipStartPpq) <= PPQ_EPSILON;
+}
+
+function legacyMeasureIndexForPpq(
   ppq: number,
   clipStartPpq: number,
   measureLenPpq: number,
@@ -733,6 +738,44 @@ function measureIndexForPpq(
   const index = Math.round(rel / measureLenPpq);
   if (index < 0 || index >= measureCount) return undefined;
   return Math.abs(rel - index * measureLenPpq) <= PPQ_EPSILON ? index : undefined;
+}
+
+function measureIndexForPpq(
+  score: NotatedScore,
+  ppq: number,
+  clipStartPpq: number,
+  measureLenPpq: number,
+): number | undefined {
+  const measures = scoreMeasures(score);
+  if (!measuresUseClipOrigin(measures, clipStartPpq)) {
+    return legacyMeasureIndexForPpq(ppq, clipStartPpq, measureLenPpq, measures.length);
+  }
+  for (let index = 0; index < measures.length; index += 1) {
+    if (Math.abs(ppq - measures[index].startPpq) <= PPQ_EPSILON) return index;
+  }
+  return undefined;
+}
+
+function measureBoundaryIndexForPpq(
+  score: NotatedScore,
+  ppq: number,
+  clipStartPpq: number,
+  measureLenPpq: number,
+): number | undefined {
+  const measures = scoreMeasures(score);
+  if (!measuresUseClipOrigin(measures, clipStartPpq)) {
+    const rel = ppq - clipStartPpq;
+    const index = Math.round(rel / measureLenPpq);
+    if (index < 0 || index > measures.length) return undefined;
+    return Math.abs(rel - index * measureLenPpq) <= PPQ_EPSILON ? index : undefined;
+  }
+  const startIndex = measureIndexForPpq(score, ppq, clipStartPpq, measureLenPpq);
+  if (startIndex !== undefined) return startIndex;
+  const last = measures[measures.length - 1];
+  if (last && Math.abs(ppq - (last.startPpq + last.lengthPpq)) <= PPQ_EPSILON) {
+    return measures.length;
+  }
+  return undefined;
 }
 
 function isEmptyMeasure(measure: NotatedMeasure): boolean {

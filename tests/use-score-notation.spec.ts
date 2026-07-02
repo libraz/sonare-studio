@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { NotatedMeasure, NotatedScore } from '@/notation/model';
-import type { EditorSection } from '@/project/types';
+import type { EditorClip, EditorSection, EditorTrack } from '@/project/types';
 import {
   applyLayoutBreaks,
   applyLoopMarks,
@@ -8,6 +8,7 @@ import {
   applyMultiMeasureRests,
   applySectionMarks,
   applyTempoMarks,
+  buildFullScore,
 } from '@/ui/score/use-score-notation';
 
 function measure(index: number): NotatedMeasure {
@@ -17,6 +18,21 @@ function measure(index: number): NotatedMeasure {
     lengthPpq: 4,
     timeSig: { beats: 4, beatUnit: 4 },
     voices: [{ voice: 1, events: [] }],
+  };
+}
+
+function meterMeasure(
+  index: number,
+  startPpq: number,
+  lengthPpq: number,
+  beats: number,
+  beatUnit: number,
+): NotatedMeasure {
+  return {
+    ...measure(index),
+    startPpq,
+    lengthPpq,
+    timeSig: { beats, beatUnit },
   };
 }
 
@@ -56,6 +72,89 @@ function score(): NotatedScore {
   };
 }
 
+function track(id: number): EditorTrack {
+  return {
+    id,
+    name: `Track ${id}`,
+    color: '#60a5fa',
+    kind: 'midi',
+    mute: false,
+    solo: false,
+    volume: 1,
+    pan: 0,
+    order: 0,
+  };
+}
+
+function midiClip(overrides: Partial<EditorClip> = {}): EditorClip {
+  return {
+    id: 1,
+    trackId: 1,
+    name: 'Clip',
+    startPpq: 8,
+    lengthPpq: 2,
+    sourceOffsetPpq: 2,
+    gain: 1,
+    loopEnabled: false,
+    loopLengthPpq: 0,
+    notes: [
+      { id: 1, pitch: 60, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 },
+      { id: 2, pitch: 62, velocity: 96, startPpq: 2, durationPpq: 1, channel: 0 },
+      { id: 3, pitch: 64, velocity: 96, startPpq: 3, durationPpq: 1, channel: 0 },
+      { id: 4, pitch: 65, velocity: 96, startPpq: 4, durationPpq: 1, channel: 0 },
+    ],
+    ...overrides,
+  };
+}
+
+function variableMeterScore(): NotatedScore {
+  return {
+    parts: [
+      {
+        id: 'P1',
+        name: 'Lead',
+        clef: 'treble',
+        measures: [
+          meterMeasure(0, 0, 4, 4, 4),
+          meterMeasure(1, 4, 3, 3, 4),
+          meterMeasure(2, 7, 3, 3, 4),
+        ],
+      },
+    ],
+    keyFifths: 0,
+    divisions: 960,
+  };
+}
+
+describe('buildFullScore', () => {
+  it('uses playback note windows so trimmed MIDI clips do not show hidden notes', () => {
+    const out = buildFullScore(
+      {
+        tracks: [track(1)],
+        clips: [midiClip()],
+      } as never,
+      {
+        divisionPpq: 1,
+        timeSig: { beats: 4, beatUnit: 4 },
+        keyFifths: 0,
+        clipStartPpq: 8,
+        clipLengthPpq: 4,
+        displayTransposeSemitones: 0,
+      },
+    );
+
+    const notes = out.parts[0].measures
+      .flatMap((measure) => measure.voices)
+      .flatMap((voice) => voice.events)
+      .filter((event) => event.kind === 'note');
+
+    expect(notes.map((event) => [event.startPpq, event.pitches])).toEqual([
+      [8, [62]],
+      [9, [64]],
+    ]);
+  });
+});
+
 function section(id: number, name: string, startPpq: number, endPpq = startPpq + 4): EditorSection {
   return { id, name, color: '#64748b', startPpq, endPpq };
 }
@@ -81,6 +180,13 @@ describe('applySectionMarks', () => {
     expect(out.measureRehearsals).toEqual({ 1: 'B' });
     expect(out.measureBarlines).toEqual({ 0: 'double' });
   });
+
+  it('uses score measure starts after time-signature changes', () => {
+    const out = variableMeterScore();
+    applySectionMarks(out, [section(1, 'Bridge', 7)], 0, 10, 4);
+    expect(out.measureRehearsals).toEqual({ 2: 'Bridge' });
+    expect(out.measureBarlines).toEqual({ 1: 'double' });
+  });
 });
 
 describe('applyLoopMarks', () => {
@@ -104,6 +210,12 @@ describe('applyLoopMarks', () => {
     const outOfClip = score();
     applyLoopMarks(outOfClip, 4, 16, 0, 12, 4);
     expect(outOfClip.measureRepeats).toBeUndefined();
+  });
+
+  it('uses score measure starts for loops after time-signature changes', () => {
+    const out = variableMeterScore();
+    applyLoopMarks(out, 4, 10, 0, 10, 4);
+    expect(out.measureRepeats).toEqual({ 1: 'start', 2: 'end' });
   });
 });
 
@@ -162,6 +274,22 @@ describe('applyTempoMarks', () => {
       2: { text: 'accel.', bpm: 90 },
     });
   });
+
+  it('uses score measure starts for tempo changes after time-signature changes', () => {
+    const out = variableMeterScore();
+    applyTempoMarks(
+      out,
+      [
+        { startPpq: 0, bpm: 120 },
+        { startPpq: 7, bpm: 96 },
+      ],
+      120,
+      0,
+      10,
+      4,
+    );
+    expect(out.measureTempos).toEqual({ 0: 120, 2: 96 });
+  });
 });
 
 describe('applyLayoutBreaks', () => {
@@ -188,6 +316,15 @@ describe('applyLayoutBreaks', () => {
       16: 'page',
     });
   });
+
+  it('uses score measure starts for section layout breaks after time-signature changes', () => {
+    const out = variableMeterScore();
+    applyLayoutBreaks(out, [section(1, 'Bridge', 7)], 0, 4, {
+      barsPerSystem: 0,
+      barsPerPage: 0,
+    });
+    expect(out.measureBreaks).toEqual({ 2: 'system' });
+  });
 });
 
 describe('applyMarkerTexts', () => {
@@ -209,6 +346,12 @@ describe('applyMarkerTexts', () => {
       0: [{ text: 'Solo', defaultY: 24 }],
       1: [{ text: 'pizz.', defaultY: 24 }],
     });
+  });
+
+  it('uses score measure starts for markers after time-signature changes', () => {
+    const out = variableMeterScore();
+    applyMarkerTexts(out, [{ id: 1, ppq: 7, name: 'To Coda' }], 0, 10, 4);
+    expect(out.measureTexts).toEqual({ 2: [{ text: 'To Coda', defaultY: 24 }] });
   });
 });
 

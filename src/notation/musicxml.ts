@@ -27,7 +27,9 @@ import {
   type NotatedTimeSig,
   type NotatedVoice,
   type NotatedVoiceNumber,
+  type NoteValue,
   ppqToDivisions,
+  ppqToNoteValue,
   type ScoreMetadata,
 } from './model';
 import { type SpelledPitch, type Step, spellPitch } from './pitch-spelling';
@@ -595,10 +597,11 @@ function serializeMeasure(
   multiMeasureRest: NotatedMultiMeasureRest | undefined,
 ): void {
   lines.push(`<measure number="${measure.index + 1}">`);
-  const printXml = measurePrintXml(measureBreak);
+  const printXml = measurePrintXml(measureBreak, prevTimeSig === undefined);
   if (printXml !== '') {
     lines.push(printXml);
   }
+  const activeKeyFifths = keyFifths ?? score.keyFifths;
   const attributes = measureAttributesXml(
     measure,
     measureClef,
@@ -618,7 +621,7 @@ function serializeMeasure(
   if (rehearsalXml !== '') {
     lines.push(rehearsalXml);
   }
-  const tempoXml = tempoDirectionXml(tempoBpm);
+  const tempoXml = tempoDirectionXml(tempoBpm, measure.timeSig);
   if (tempoXml !== '') {
     lines.push(tempoXml);
   }
@@ -636,9 +639,9 @@ function serializeMeasure(
       '<barline location="left"><bar-style>heavy-light</bar-style><repeat direction="forward"/></barline>',
     );
   }
-  const accidentals = buildAccidentalIndex(measure, score, staffMap);
+  const accidentals = buildAccidentalIndex(measure, activeKeyFifths, staffMap);
   for (const symbol of chordSymbols) {
-    const harmony = harmonyXml(symbol, measure, score);
+    const harmony = harmonyXml(symbol, measure, score, activeKeyFifths);
     if (harmony !== undefined) {
       lines.push(harmony);
     }
@@ -651,7 +654,17 @@ function serializeMeasure(
       if (voiceIndex > 0) {
         lines.push(`<backup><duration>${measureDivisions}</duration></backup>`);
       }
-      serializeVoice(lines, voice, measure, score, staffMap, annotations, accidentals, percussion);
+      serializeVoice(
+        lines,
+        voice,
+        measure,
+        score,
+        staffMap,
+        annotations,
+        accidentals,
+        percussion,
+        activeKeyFifths,
+      );
     });
   }
   const rightRepeat = repeat === 'end' || repeat === 'start-end';
@@ -662,15 +675,19 @@ function serializeMeasure(
   lines.push('</measure>');
 }
 
-/** Builds layout break metadata before a measure. */
-function measurePrintXml(measureBreak: NotatedMeasureBreak | undefined): string {
+/** Builds layout break and measure-numbering metadata before a measure. */
+function measurePrintXml(
+  measureBreak: NotatedMeasureBreak | undefined,
+  firstMeasure: boolean,
+): string {
+  const numbering = firstMeasure ? '<measure-numbering>system</measure-numbering>' : '';
   switch (measureBreak) {
     case 'system':
-      return '<print new-system="yes"/>';
+      return `<print new-system="yes">${numbering}</print>`;
     case 'page':
-      return '<print new-page="yes"/>';
+      return `<print new-page="yes">${numbering}</print>`;
     case undefined:
-      return '';
+      return numbering === '' ? '' : `<print>${numbering}</print>`;
   }
 }
 
@@ -682,10 +699,18 @@ function rehearsalDirectionXml(label: string | undefined): string {
 }
 
 /** Builds a metronome tempo direction plus playback tempo. */
-function tempoDirectionXml(bpm: number | undefined): string {
+function tempoDirectionXml(bpm: number | undefined, timeSig: NotatedTimeSig): string {
   if (bpm === undefined || !Number.isFinite(bpm) || bpm <= 0) return '';
-  const text = tempoText(bpm);
-  return `<direction placement="above"><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>${text}</per-minute></metronome></direction-type><sound tempo="${text}"/></direction>`;
+  const beatGroup = beatGroupPpq(timeSig);
+  const perMinute = tempoText(bpm / beatGroup);
+  const playbackTempo = tempoText(bpm);
+  return `<direction placement="above"><direction-type><metronome>${metronomeBeatUnitXml(beatGroup)}<per-minute>${perMinute}</per-minute></metronome></direction-type><sound tempo="${playbackTempo}"/></direction>`;
+}
+
+/** Builds the metronome beat unit for a PPQ beat group. */
+function metronomeBeatUnitXml(ppq: number): string {
+  const value = ppqToNoteValue(ppq);
+  return `<beat-unit>${value.base}</beat-unit>${'<beat-unit-dot/>'.repeat(value.dots)}`;
 }
 
 /** Builds a textual tempo directive such as rit., accel. or a tempo. */
@@ -784,7 +809,6 @@ function measureAttributesXml(
   if (isFirst) {
     parts.push(`<divisions>${score.divisions}</divisions>`);
     parts.push(`<key><fifths>${keyFifths ?? score.keyFifths}</fifths></key>`);
-    parts.push('<measure-style><measure-numbering>system</measure-numbering></measure-style>');
   } else if (keyFifths !== undefined) {
     parts.push(`<key><fifths>${keyFifths}</fifths></key>`);
   }
@@ -852,6 +876,7 @@ function serializeVoice(
   annotations: AnnotationIndex,
   accidentals: AccidentalIndex,
   percussion: boolean,
+  keyFifths: number,
 ): void {
   const measureRest = isWholeMeasureRest(voice, measure);
   const beams = buildBeamIndex(voice, measure, staffMap);
@@ -890,6 +915,7 @@ function serializeVoice(
         beams,
         accidentals,
         percussion,
+        keyFifths,
       );
     }
   }
@@ -916,7 +942,7 @@ function dynamicsPlacement(event: NotatedEvent, measure: NotatedMeasure): string
 /** Builds explicit accidentals only when the visible pitch state changes. */
 function buildAccidentalIndex(
   measure: NotatedMeasure,
-  score: NotatedScore,
+  keyFifths: number,
   staffMap: ReadonlyMap<NotatedEvent, StaffNumber> | undefined,
 ): AccidentalIndex {
   const accidentals = new Map<NotatedEvent, Map<number, string>>();
@@ -929,9 +955,9 @@ function buildAccidentalIndex(
     const suppressDisplay = event.tieStop && !event.tieStart;
     const staff = staffMap?.get(event) ?? 1;
     event.pitches.forEach((midi, pitchIndex) => {
-      const pitch = spellPitch(midi, score.keyFifths);
+      const pitch = spellPitch(midi, keyFifths);
       const key = `${staff}:${pitch.step}:${pitch.octave}`;
-      const current = state.get(key) ?? keySignatureAlter(pitch.step, score.keyFifths);
+      const current = state.get(key) ?? keySignatureAlter(pitch.step, keyFifths);
       if (!suppressDisplay && pitch.alter !== current) {
         const value = accidentalName(pitch.alter);
         const eventAccidentals = accidentals.get(event) ?? new Map<number, string>();
@@ -1085,8 +1111,9 @@ function restXml(
   const duration = ppqToDivisions(event.durationPpq, score.divisions);
   const rest = restElementXml(event, measure, staff);
   const dots = '<dot/>'.repeat(event.value.dots);
+  const timeModification = timeModificationXml(event.value);
   const beamMarks = beamXml(beams.get(event) ?? []);
-  return `<note${printObject}>${rest}<duration>${duration}</duration><voice>${event.voice}</voice><type>${event.value.base}</type>${dots}${staffXml}${beamMarks}</note>`;
+  return `<note${printObject}>${rest}<duration>${duration}</duration><voice>${event.voice}</voice><type>${event.value.base}</type>${dots}${timeModification}${staffXml}${beamMarks}</note>`;
 }
 
 /** Builds a rest element, positioning multi-voice rests away from the staff center. */
@@ -1128,10 +1155,12 @@ function pushNoteEvent(
   beams: BeamIndex,
   accidentals: AccidentalIndex,
   percussion: boolean,
+  keyFifths: number,
 ): void {
   const duration = ppqToDivisions(event.durationPpq, score.divisions);
   const ties = tieXml(event);
   const dots = '<dot/>'.repeat(event.value.dots);
+  const timeModification = timeModificationXml(event.value);
   const staffXml = staff === undefined ? '' : `<staff>${staff}</staff>`;
   const beamMarks = beamXml(beams.get(event) ?? []);
   const eventPercussion = eventUsesPercussionMap(event, percussion);
@@ -1143,7 +1172,7 @@ function pushNoteEvent(
       : '';
     const pitch = eventPercussion
       ? unpitchedXml(display ?? percussionDisplay(midi))
-      : pitchXml(spellPitch(midi, score.keyFifths));
+      : pitchXml(spellPitch(midi, keyFifths));
     const accidental = eventPercussion
       ? ''
       : accidentalXml(accidentals.get(event)?.get(pitchIndex));
@@ -1159,9 +1188,15 @@ function pushNoteEvent(
     const beam = pitchIndex === 0 ? beamMarks : '';
     const stemMark = pitchIndex === 0 ? stemXml(event, measure, eventPercussion) : '';
     lines.push(
-      `<note>${chord}${instrument}${pitch}<duration>${duration}</duration>${ties}<voice>${event.voice}</voice><type>${event.value.base}</type>${dots}${accidental}${stemMark}${notehead}${staffXml}${beam}${notations}</note>`,
+      `<note>${chord}${instrument}${pitch}<duration>${duration}</duration>${ties}<voice>${event.voice}</voice><type>${event.value.base}</type>${dots}${timeModification}${accidental}${stemMark}${notehead}${staffXml}${beam}${notations}</note>`,
     );
   });
+}
+
+/** Serializes MusicXML tuplet timing for one note value. */
+function timeModificationXml(value: NoteValue): string {
+  if (!value.tuplet) return '';
+  return `<time-modification><actual-notes>${value.tuplet.actual}</actual-notes><normal-notes>${value.tuplet.normal}</normal-notes></time-modification>`;
 }
 
 /** Finds the owning part id for an event. */
@@ -1323,6 +1358,7 @@ function notationsXml(
     inner += '<tied type="start"/>';
   }
   if (isFirstPitch) {
+    inner += tupletBracketXml(event, measure);
     for (const number of annotations.slurStops.get(event) ?? []) {
       inner += `<slur type="stop" number="${number}"/>`;
     }
@@ -1346,6 +1382,42 @@ function notationsXml(
     }
   }
   return inner === '' ? '' : `<notations>${inner}</notations>`;
+}
+
+/** Emits tuplet bracket start/stop marks for the first and last event in a group. */
+function tupletBracketXml(event: NotatedEvent, measure: NotatedMeasure | undefined): string {
+  if (!event.value.tuplet || measure === undefined) return '';
+  const voice = measure.voices.find((entry) => entry.voice === event.voice);
+  if (!voice) return '';
+  const index = voice.events.indexOf(event);
+  if (index < 0) return '';
+  const prev = voice.events[index - 1];
+  const next = voice.events[index + 1];
+  const hasPrev =
+    prev !== undefined &&
+    sameTuplet(prev, event) &&
+    Math.abs(prev.startPpq + prev.durationPpq - event.startPpq) < PPQ_EPSILON;
+  const hasNext =
+    next !== undefined &&
+    sameTuplet(next, event) &&
+    Math.abs(event.startPpq + event.durationPpq - next.startPpq) < PPQ_EPSILON;
+  let xml = '';
+  if (!hasPrev) xml += '<tuplet type="start"/>';
+  if (!hasNext) xml += '<tuplet type="stop"/>';
+  return xml;
+}
+
+/** True when two events belong to the same simple tuplet ratio. */
+function sameTuplet(a: NotatedEvent, b: NotatedEvent): boolean {
+  const left = a.value.tuplet;
+  const right = b.value.tuplet;
+  return (
+    left !== undefined &&
+    right !== undefined &&
+    left.actual === right.actual &&
+    left.normal === right.normal &&
+    a.value.base === b.value.base
+  );
 }
 
 /** Builds percussion technique markings for common GM drum articulations. */
@@ -1403,17 +1475,18 @@ function harmonyXml(
   symbol: NotatedChordSymbol,
   measure: NotatedMeasure,
   score: NotatedScore,
+  keyFifths: number,
 ): string | undefined {
   if (!isPitchClass(symbol.rootPc)) {
     return undefined;
   }
-  const root = spellPitch(GRAND_STAFF_SPLIT_MIDI + symbol.rootPc, score.keyFifths);
+  const root = spellPitch(GRAND_STAFF_SPLIT_MIDI + symbol.rootPc, keyFifths);
   const rootAlter = root.alter === 0 ? '' : `<root-alter>${root.alter}</root-alter>`;
   const rootXml = `<root><root-step>${root.step}</root-step>${rootAlter}</root>`;
   const kindXml = chordKindXml(symbol);
   let bassXml = '';
   if (isPitchClass(symbol.bassPc)) {
-    const bass = spellPitch(GRAND_STAFF_SPLIT_MIDI + symbol.bassPc, score.keyFifths);
+    const bass = spellPitch(GRAND_STAFF_SPLIT_MIDI + symbol.bassPc, keyFifths);
     const bassAlter = bass.alter === 0 ? '' : `<bass-alter>${bass.alter}</bass-alter>`;
     bassXml = `<bass><bass-step>${bass.step}</bass-step>${bassAlter}</bass>`;
   }

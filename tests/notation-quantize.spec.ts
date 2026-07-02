@@ -112,7 +112,9 @@ function voiceEvents(score: NotatedScore, measureIndex: number, voiceNo: number)
     pitches: e.pitches,
     start: e.startPpq,
     dur: e.durationPpq,
-    value: e.value.base + '.'.repeat(e.value.dots),
+    value: `${e.value.base}${'.'.repeat(e.value.dots)}${
+      e.value.tuplet ? `t${e.value.tuplet.actual}:${e.value.tuplet.normal}` : ''
+    }`,
     tie: e.tieStart && e.tieStop ? 'both' : e.tieStart ? 'start' : e.tieStop ? 'stop' : 'none',
   }));
 }
@@ -214,6 +216,29 @@ describe('quantizeToScore: grid quantization', () => {
   it('supports the finest grid (64th notes)', () => {
     const score = quantize([makeNote(60, 0, 0.01)], baseOptions({ divisionPpq: 0.0625 }));
     expect(voiceEvents(score, 0, 1)[0]).toEqual(n([60], 0, 0.0625, '64th'));
+  });
+
+  it('supports eighth-note triplet quantization', () => {
+    const score = quantize(
+      [makeNote(60, 0, 1 / 3), makeNote(62, 1 / 3, 1 / 3), makeNote(64, 2 / 3, 1 / 3)],
+      baseOptions({ divisionPpq: 1 / 3, clipLengthPpq: 4 }),
+    );
+
+    const events = voiceEvents(score, 0, 1);
+    expect(events.map((event) => [event.kind, event.pitches, event.value])).toEqual([
+      ['note', [60], 'eightht3:2'],
+      ['note', [62], 'eightht3:2'],
+      ['note', [64], 'eightht3:2'],
+      ['rest', [], 'quarter'],
+      ['rest', [], 'quarter'],
+      ['rest', [], 'quarter'],
+    ]);
+    expect(events[0].start).toBeCloseTo(0, 9);
+    expect(events[1].start).toBeCloseTo(1 / 3, 9);
+    expect(events[2].start).toBeCloseTo(2 / 3, 9);
+    expect(events[0].dur).toBeCloseTo(1 / 3, 9);
+    expect(events[1].dur).toBeCloseTo(1 / 3, 9);
+    expect(events[2].dur).toBeCloseTo(1 / 3, 9);
   });
 
   it('does not mutate the input notes', () => {

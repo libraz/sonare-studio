@@ -255,6 +255,41 @@ describe('serializeMusicXml structure', () => {
     expect(q(second, 'direction sound').getAttribute('tempo')).toBe('96.5');
   });
 
+  it('uses dotted-quarter metronome marks for compound meter', () => {
+    const score: NotatedScore = {
+      ...grandStaffFixture(),
+      parts: [
+        {
+          id: 'P1',
+          name: 'Piano',
+          clef: 'treble',
+          measures: [
+            {
+              index: 0,
+              startPpq: 0,
+              lengthPpq: 3,
+              timeSig: { beats: 6, beatUnit: 8 },
+              voices: [
+                {
+                  voice: 1,
+                  events: [rest(1, 0, 3, { base: 'half', dots: 1 })],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      measureTempos: { 0: 120 },
+    };
+
+    const first = q(parse(serializeMusicXml(score)), 'part[id="P1"] > measure');
+
+    expect(q(first, 'metronome > beat-unit').textContent).toBe('quarter');
+    expect(q(first, 'metronome > beat-unit-dot')).not.toBeNull();
+    expect(q(first, 'metronome > per-minute').textContent).toBe('80');
+    expect(q(first, 'direction sound').getAttribute('tempo')).toBe('120');
+  });
+
   it('emits textual tempo-change directions with optional playback tempo', () => {
     const score = grandStaffFixture();
     score.measureTempoTexts = {
@@ -282,6 +317,35 @@ describe('serializeMusicXml structure', () => {
     const [first, second] = qa(parse(serializeMusicXml(score)), 'part[id="P1"] > measure');
     expect(q(first, 'attributes > key > fifths').textContent).toBe('1');
     expect(q(second, 'attributes > key > fifths').textContent).toBe('-3');
+  });
+
+  it('uses measure-level key changes for pitch spelling and accidentals', () => {
+    const quarter: NoteValue = { base: 'quarter', dots: 0 };
+    const score: NotatedScore = {
+      parts: [
+        {
+          id: 'P1',
+          name: 'Lead',
+          clef: 'treble',
+          measures: [
+            {
+              index: 0,
+              startPpq: 0,
+              lengthPpq: 1,
+              timeSig: { beats: 1, beatUnit: 4 },
+              voices: [{ voice: 1, events: [note([70], 1, 0, 1, quarter)] }],
+            },
+          ],
+        },
+      ],
+      keyFifths: 0,
+      measureKeyFifths: { 0: -1 },
+      divisions: 960,
+    };
+    const noteEl = q(parse(serializeMusicXml(score)), 'note');
+    expect(q(noteEl, 'pitch > step').textContent).toBe('B');
+    expect(q(noteEl, 'pitch > alter').textContent).toBe('-1');
+    expect(noteEl.querySelector('accidental')).toBeNull();
   });
 
   it('emits explicit system and page breaks before measures', () => {
@@ -323,7 +387,8 @@ describe('serializeMusicXml structure', () => {
     const attrs = q(first, 'attributes');
     expect(q(attrs, 'divisions').textContent).toBe('960');
     expect(q(attrs, 'key > fifths').textContent).toBe('1');
-    expect(q(attrs, 'measure-style > measure-numbering').textContent).toBe('system');
+    expect(q(first, 'print > measure-numbering').textContent).toBe('system');
+    expect(attrs.querySelector('measure-numbering')).toBeNull();
     expect(q(attrs, 'time > beats').textContent).toBe('4');
     expect(q(attrs, 'time > beat-type').textContent).toBe('4');
     expect(q(attrs, 'staves').textContent).toBe('2');
@@ -677,6 +742,52 @@ describe('serializeMusicXml beams', () => {
     const doc = parse(serializeMusicXml(score));
     const beams = qa(doc, 'beam[number="1"]').map((beam) => beam.textContent);
     expect(beams).toEqual(['begin', 'end', 'begin', 'end']);
+  });
+
+  it('emits triplet time-modification and bracket notations', () => {
+    const triplet: NoteValue = { base: 'eighth', dots: 0, tuplet: { actual: 3, normal: 2 } };
+    const score: NotatedScore = {
+      parts: [
+        {
+          id: 'P1',
+          name: 'Triplets',
+          clef: 'treble',
+          measures: [
+            {
+              index: 0,
+              startPpq: 0,
+              lengthPpq: 1,
+              timeSig: { beats: 1, beatUnit: 4 },
+              voices: [
+                {
+                  voice: 1,
+                  events: [
+                    note([60], 1, 0, 1 / 3, triplet),
+                    note([62], 1, 1 / 3, 1 / 3, triplet),
+                    note([64], 1, 2 / 3, 1 / 3, triplet),
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      keyFifths: 0,
+      divisions: 960,
+    };
+    const doc = parse(serializeMusicXml(score));
+    expect(qa(doc, 'note > duration').map((el) => el.textContent)).toEqual(['320', '320', '320']);
+    expect(qa(doc, 'time-modification > actual-notes').map((el) => el.textContent)).toEqual([
+      '3',
+      '3',
+      '3',
+    ]);
+    expect(qa(doc, 'time-modification > normal-notes').map((el) => el.textContent)).toEqual([
+      '2',
+      '2',
+      '2',
+    ]);
+    expect(qa(doc, 'tuplet').map((el) => el.getAttribute('type'))).toEqual(['start', 'stop']);
   });
 
   it('emits secondary beams for sixteenth-note runs', () => {
@@ -1627,7 +1738,8 @@ describe('serializeMusicXml golden output', () => {
       '</part-list>',
       '<part id="P1">',
       '<measure number="1">',
-      '<attributes><divisions>960</divisions><key><fifths>0</fifths></key><measure-style><measure-numbering>system</measure-numbering></measure-style><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>',
+      '<print><measure-numbering>system</measure-numbering></print>',
+      '<attributes><divisions>960</divisions><key><fifths>0</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>',
       '<note><pitch><step>C</step><octave>4</octave></pitch><duration>1920</duration><voice>1</voice><type>half</type></note>',
       '<note><pitch><step>D</step><octave>4</octave></pitch><duration>1440</duration><voice>1</voice><type>quarter</type><dot/></note>',
       '<note><rest/><duration>480</duration><voice>1</voice><type>eighth</type></note>',

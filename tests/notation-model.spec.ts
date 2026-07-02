@@ -32,6 +32,15 @@ describe('noteValueToPpq', () => {
     expect(noteValueToPpq({ base: 'quarter', dots: 2 })).toBe(1.75);
     expect(noteValueToPpq({ base: 'whole', dots: 2 })).toBe(7);
   });
+
+  it('scales triplet values by 2:3', () => {
+    expect(noteValueToPpq({ base: 'eighth', dots: 0, tuplet: { actual: 3, normal: 2 } })).toBe(
+      1 / 3,
+    );
+    expect(noteValueToPpq({ base: 'quarter', dots: 0, tuplet: { actual: 3, normal: 2 } })).toBe(
+      2 / 3,
+    );
+  });
 });
 
 describe('ppqToNoteValue', () => {
@@ -45,6 +54,11 @@ describe('ppqToNoteValue', () => {
   });
 
   it('snaps near misses to the nearest representable value', () => {
+    expect(ppqToNoteValue(1 / 3)).toEqual({
+      base: 'eighth',
+      dots: 0,
+      tuplet: { actual: 3, normal: 2 },
+    });
     expect(ppqToNoteValue(0.95)).toEqual({ base: 'quarter', dots: 0 });
     expect(ppqToNoteValue(0.9)).toEqual({ base: 'eighth', dots: 2 });
     expect(ppqToNoteValue(1.6)).toEqual({ base: 'quarter', dots: 1 });

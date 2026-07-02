@@ -32,7 +32,6 @@
 
 import {
   DEFAULT_DIVISIONS,
-  NOTE_VALUE_BASE_PPQ,
   NOTE_VALUE_BASES,
   type NotatedClef,
   type NotatedEvent,
@@ -66,8 +65,8 @@ export const CHORD_PITCH_SPAN = 12;
 export interface QuantizeOptions {
   /**
    * Display-quantize grid step in PPQ (quarter = 1.0), e.g. 0.25 for a 16th
-   * grid. Must be a positive multiple of a 64th note (0.0625 PPQ); finer or
-   * non-binary (tuplet) grids are not representable by the notation model.
+   * grid or 1/3 for eighth-note triplets. Must be representable by the
+   * notation model and integral in the score's MusicXML divisions.
    */
   divisionPpq: number;
   /** Fallback time signature applied when no time-signature map entry is active. */
@@ -164,6 +163,8 @@ const VALUES_DESC: ReadonlyArray<{ value: NoteValue; ppq: number }> = (() => {
       const value: NoteValue = { base, dots };
       all.push({ value, ppq: noteValueToPpq(value) });
     }
+    const triplet: NoteValue = { base, dots: 0, tuplet: { actual: 3, normal: 2 } };
+    all.push({ value: triplet, ppq: noteValueToPpq(triplet) });
   }
   all.sort((a, b) => b.ppq - a.ppq);
   return all;
@@ -180,13 +181,18 @@ function snapToStep(value: number, step: number): number {
   return Math.round(value / step) * step;
 }
 
+/** Returns true when `ppq` is a duration the model can spell directly. */
+function isRepresentableDuration(ppq: number): boolean {
+  return exactNoteValue(ppq) !== undefined;
+}
+
 /** Returns the single exact NoteValue for a duration, or undefined when none matches. */
 function exactNoteValue(ppq: number): NoteValue | undefined {
-  for (const base of NOTE_VALUE_BASES) {
-    for (const dots of [0, 1, 2] as const) {
-      if (Math.abs(ppq - NOTE_VALUE_BASE_PPQ[base] * (2 - 2 ** -dots)) <= EPSILON) {
-        return { base, dots };
-      }
+  for (const { value, ppq: valuePpq } of VALUES_DESC) {
+    if (Math.abs(ppq - valuePpq) <= EPSILON) {
+      return value.tuplet
+        ? { base: value.base, dots: value.dots, tuplet: { ...value.tuplet } }
+        : { base: value.base, dots: value.dots };
     }
   }
   return undefined;
@@ -198,10 +204,12 @@ function resolveOptions(options: QuantizeOptions): ResolvedOptions {
   if (
     !Number.isFinite(divisionPpq) ||
     divisionPpq < SIXTY_FOURTH_PPQ - EPSILON ||
-    !isMultipleOf(divisionPpq, SIXTY_FOURTH_PPQ)
+    Math.abs(divisionPpq * DEFAULT_DIVISIONS - Math.round(divisionPpq * DEFAULT_DIVISIONS)) >
+      EPSILON ||
+    (!isMultipleOf(divisionPpq, SIXTY_FOURTH_PPQ) && !isRepresentableDuration(divisionPpq))
   ) {
     throw new RangeError(
-      `quantizeToScore: divisionPpq must be a positive multiple of ${SIXTY_FOURTH_PPQ} PPQ, got ${divisionPpq}`,
+      `quantizeToScore: divisionPpq must be a representable grid >= ${SIXTY_FOURTH_PPQ} PPQ, got ${divisionPpq}`,
     );
   }
   if (!Number.isInteger(timeSig.beats) || timeSig.beats < 1) {
@@ -239,7 +247,9 @@ function resolveOptions(options: QuantizeOptions): ResolvedOptions {
       `quantizeToScore: displayTransposeSemitones must be an integer, got ${displayTransposeSemitones}`,
     );
   }
-  const grid = snapToStep(divisionPpq, SIXTY_FOURTH_PPQ);
+  const grid = isMultipleOf(divisionPpq, SIXTY_FOURTH_PPQ)
+    ? snapToStep(divisionPpq, SIXTY_FOURTH_PPQ)
+    : divisionPpq;
   const start = snapToStep(clipStartPpq, SIXTY_FOURTH_PPQ);
   const length = snapToStep(clipLengthPpq, SIXTY_FOURTH_PPQ);
   if (length <= 0) {

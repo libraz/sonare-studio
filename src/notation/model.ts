@@ -19,12 +19,22 @@ export type NoteValueBase = 'whole' | 'half' | 'quarter' | 'eighth' | '16th' | '
 /** Number of augmentation dots on a note value. */
 export type NoteValueDots = 0 | 1 | 2;
 
+/** Tuplet timing ratio for a notated value. */
+export interface NoteTuplet {
+  /** Number of written notes in the tuplet group, e.g. 3 for triplets. */
+  actual: number;
+  /** Number of normal notes they occupy, e.g. 2 for triplets. */
+  normal: number;
+}
+
 /** A notatable duration: a base note value plus augmentation dots. */
 export interface NoteValue {
   /** Undotted base duration. */
   base: NoteValueBase;
   /** Augmentation dots (0 = plain, 1 = dotted, 2 = double-dotted). */
   dots: NoteValueDots;
+  /** Optional tuplet ratio. Currently produced for triplets (3 in the time of 2). */
+  tuplet?: NoteTuplet;
 }
 
 /** Duration of each undotted base value in PPQ (quarter note = 1.0). */
@@ -69,7 +79,8 @@ const PPQ_EPSILON = 1e-9;
  */
 export function noteValueToPpq(value: NoteValue): number {
   // 0 dots -> x1, 1 dot -> x1.5, 2 dots -> x1.75.
-  return NOTE_VALUE_BASE_PPQ[value.base] * (2 - 2 ** -value.dots);
+  const written = NOTE_VALUE_BASE_PPQ[value.base] * (2 - 2 ** -value.dots);
+  return value.tuplet ? written * (value.tuplet.normal / value.tuplet.actual) : written;
 }
 
 /**
@@ -99,6 +110,9 @@ export function ppqToNoteValue(ppq: number): NoteValue {
         bestDiff = diff;
       }
     }
+    const triplet: NoteValue = { base, dots: 0, tuplet: { actual: 3, normal: 2 } };
+    const diff = Math.abs(ppq - noteValueToPpq(triplet));
+    if (diff < PPQ_EPSILON) return triplet;
   }
   return best;
 }

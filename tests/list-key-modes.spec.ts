@@ -4,6 +4,7 @@ import {
   keyLabel,
   matchModeChoiceId,
   modeMaskForChoice,
+  modeOrdinalForChoice,
   rotateModeMask,
 } from '@/components/lists/key-modes';
 import { MAJOR_MODE_MASK } from '@/project/types';
@@ -49,6 +50,20 @@ describe('modeMaskForChoice / matchModeChoiceId', () => {
 
   it('throws on unknown mode ids', () => {
     expect(() => modeMaskForChoice('bebop')).toThrow(RangeError);
+  });
+
+  it('maps mode ids to libsonare mode ordinals', () => {
+    expect(modeOrdinalForChoice('major')).toBe(0);
+    expect(modeOrdinalForChoice('minor')).toBe(1);
+    expect(modeOrdinalForChoice('dorian')).toBe(2);
+    expect(modeOrdinalForChoice('phrygian')).toBe(3);
+    expect(modeOrdinalForChoice('lydian')).toBe(4);
+    expect(modeOrdinalForChoice('mixolydian')).toBe(5);
+    expect(modeOrdinalForChoice('locrian')).toBe(6);
+  });
+
+  it('rejects unknown mode ids for ordinal conversion', () => {
+    expect(() => modeOrdinalForChoice('bebop')).toThrow(RangeError);
   });
 });
 

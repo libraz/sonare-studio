@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
+import { matchModeChoiceId, modeOrdinalForChoice } from '@/components/lists/key-modes';
 import ScoreAnnotationPalette from '@/components/score/ScoreAnnotationPalette.vue';
 import ScoreToolbar from '@/components/score/ScoreToolbar.vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
@@ -16,9 +17,9 @@ import {
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { timeSignatureAt } from '@/project/time-signature';
-import { MAJOR_MODE_MASK } from '@/project/types';
 import { useI18n } from '@/ui/i18n';
 import { SCORE_PAGE_FORMATS, type ScoreLayoutSettings } from '@/ui/score/layout';
+import { scoreOmitsMidiFx } from '@/ui/score/midi-fx-notice';
 import { type PlayheadSync, usePlayheadSync } from '@/ui/score/use-playhead-sync';
 import { useScoreInteractions } from '@/ui/score/use-score-interactions';
 import { useScoreNotation } from '@/ui/score/use-score-notation';
@@ -65,8 +66,7 @@ const RETRANSCRIBE_DEBOUNCE_MS = 600;
 
 // --- Toolbar state -----------------------------------------------------------
 
-/** One Display Quantize grid choice. Triplet grids are listed but disabled:
- *  the notation model only represents binary (dotted) note values. */
+/** One Display Quantize grid choice. */
 interface DqChoice {
   key: string;
   label: string;
@@ -79,15 +79,15 @@ const DQ_CHOICES: ReadonlyArray<DqChoice> = [
   { key: '8', label: '1/8', divisionPpq: 0.5 },
   { key: '16', label: '1/16', divisionPpq: 0.25 },
   { key: '32', label: '1/32', divisionPpq: 0.125 },
-  { key: '8t', label: '1/8 T', divisionPpq: 1 / 3, disabled: true },
-  { key: '16t', label: '1/16 T', divisionPpq: 1 / 6, disabled: true },
+  { key: '8t', label: '1/8 T', divisionPpq: 1 / 3 },
+  { key: '16t', label: '1/16 T', divisionPpq: 1 / 6 },
 ];
 
 const dqKey = ref('16');
 const chordsEnabled = ref(false);
 const fullScoreEnabled = ref(false);
 
-/** Display Quantize options for the toolbar select (triplet grids disabled). */
+/** Display Quantize options for the toolbar select. */
 const dqOptions = computed(() =>
   DQ_CHOICES.map((choice) => ({
     value: choice.key,
@@ -151,6 +151,7 @@ const screenClipLengthPpq = computed(() => actualMeasures.value * measureLenPpq.
 
 /** On-screen zoom as a rounded percentage for the toolbar readout. */
 const zoomPercent = computed(() => Math.round(viewZoom.value * 100));
+const midiFxNoticeVisible = computed(() => scoreOmitsMidiFx(store.activeTrack));
 
 /** Multiplies the on-screen zoom by a factor, clamped to the zoom bounds. */
 function zoomView(factor: number): void {
@@ -175,14 +176,17 @@ function divisionPpq(): number {
 }
 
 /**
- * Key signature fifths derived from the scale highlight configuration. Only
- * the major mode mask is mappable; other masks fall back to C major.
+ * Key signature fifths derived from the scale highlight configuration.
+ * Diatonic mode masks map to their matching MusicXML key signature; custom
+ * masks fall back to C major.
  */
 function keyFifths(): number {
   const cfg = store.scaleHighlight;
-  if (!cfg.enabled || cfg.modeMask !== MAJOR_MODE_MASK) return 0;
+  if (!cfg.enabled) return 0;
+  const modeId = matchModeChoiceId(cfg.modeMask);
+  if (modeId === null) return 0;
   const root = (((cfg.rootPc % 12) + 12) % 12) as Key['root'];
-  return keyToKeyFifths({ root, mode: 0 });
+  return keyToKeyFifths({ root, mode: modeOrdinalForChoice(modeId) as Key['mode'] });
 }
 
 function layoutSettings(): ScoreLayoutSettings {
@@ -465,6 +469,9 @@ onBeforeUnmount(() => {
       @transpose-change="onTransposeChange"
     />
     <p v-if="notation.error.value" class="score-error" role="alert">{{ notation.error.value }}</p>
+    <p v-if="midiFxNoticeVisible" class="score-notice" role="note">
+      {{ t.shell.score.midiFxNotice }}
+    </p>
     <div class="score-body-wrap">
       <!-- biome-ignore lint/security/noDangerouslySetInnerHtml: SVG produced locally by the Verovio worker -->
       <div

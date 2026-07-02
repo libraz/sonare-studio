@@ -30,6 +30,15 @@
   white-space: pre-wrap;
 }
 
+.score-notice {
+  margin: 0;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-3);
+  padding: 0.35rem 0.75rem;
+  font-size: var(--fs-sm);
+}
+
 .score-body-wrap {
   position: relative;
   flex: 1;

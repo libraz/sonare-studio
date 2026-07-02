@@ -73,6 +73,45 @@ describe('estimateChordSymbols', () => {
     expect(symbols[1]).toMatchObject({ ppq: 4, text: 'G7', rootPc: 7, quality: 4 });
   });
 
+  it('uses actual score measure windows when provided', () => {
+    const symbols = estimateChordSymbols(
+      [
+        // 4/4 bar: C, then 3/4 bar starting at PPQ 4: G.
+        note(60, 0, 4),
+        note(64, 0, 4),
+        note(67, 0, 4),
+        note(55, 4, 3),
+        note(59, 4, 3),
+        note(62, 4, 3),
+        // Next 3/4 bar starts at PPQ 7; fixed 4-PPQ windows would miss this boundary.
+        note(65, 7, 3),
+        note(69, 7, 3),
+        note(72, 7, 3),
+      ],
+      {
+        ...OPTIONS,
+        clipLengthPpq: 10,
+        measures: [
+          { startPpq: 0, lengthPpq: 4 },
+          { startPpq: 4, lengthPpq: 3 },
+          { startPpq: 7, lengthPpq: 3 },
+        ],
+      },
+    );
+
+    expect(
+      symbols.map((symbol) => ({
+        ppq: symbol.ppq,
+        endPpq: symbol.endPpq,
+        text: symbol.text,
+      })),
+    ).toEqual([
+      { ppq: 0, endPpq: 4, text: 'C' },
+      { ppq: 4, endPpq: 7, text: 'G' },
+      { ppq: 7, endPpq: 10, text: 'F' },
+    ]);
+  });
+
   it('detects a minor triad', () => {
     const symbols = estimateChordSymbols([note(57, 0, 4), note(60, 0, 4), note(64, 0, 4)], OPTIONS);
     expect(symbols[0]).toMatchObject({ text: 'Am', rootPc: 9, quality: 1 });
