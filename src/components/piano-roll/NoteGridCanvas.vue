@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { formatPitch } from '@/lib/pitch';
-import type { EditorNote } from '@/project/types';
+import type { EditorNote, TimeSignatureSegment } from '@/project/types';
+import { rulerTicks } from '@/ui/arrangement/ruler';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 import { useI18n } from '@/ui/i18n';
@@ -47,6 +48,8 @@ const props = defineProps<{
   gridPpq: number;
   /** Length of the edited clip in PPQ; the region past it is shaded. */
   clipLengthPpq: number;
+  /** Project time signatures for bar/beat gridlines. */
+  timeSignatures: TimeSignatureSegment[];
   /** Gesture state machine shared with the container. */
   interactions: NoteInteractions;
   /** Playhead position getter in PPQ; omit to hide the playhead. */
@@ -82,8 +85,6 @@ const layerId = Math.random().toString(36).slice(2, 8);
 
 const COLORS = PIANO_ROLL_COLORS;
 
-/** Beats per bar for bar gridlines (4/4 assumed until meter support lands). */
-const BEATS_PER_BAR = 4;
 /** Minimum px spacing before a vertical gridline family is drawn. */
 const MIN_GRID_SPACING_PX = 6;
 const LABEL_MIN_ROW_HEIGHT = 13;
@@ -120,6 +121,20 @@ function drawVerticalLines(
   const first = Math.ceil(props.range.startPpq / step) * step;
   for (let ppq = first; ppq < props.range.endPpq; ppq += step) {
     ctx.fillRect(Math.round(props.range.ppqToX(ppq)), 0, 1, height);
+  }
+}
+
+/** Draws meter-aware beat/bar lines from the same tick model as the ruler. */
+function drawMeterLines(ctx: CanvasRenderingContext2D, height: number): void {
+  for (const tick of rulerTicks(
+    props.timeSignatures,
+    props.range.startPpq,
+    props.range.endPpq,
+    props.range.pxPerPpq,
+    { minBeatSpacingPx: MIN_GRID_SPACING_PX, minBarLabelSpacingPx: Number.POSITIVE_INFINITY },
+  )) {
+    ctx.fillStyle = tick.kind === 'bar' ? COLORS.gridBar : COLORS.gridBeat;
+    ctx.fillRect(Math.round(props.range.ppqToX(tick.ppq)), 0, 1, height);
   }
 }
 
@@ -192,8 +207,7 @@ function drawBackground(): void {
 
   // Vertical gridlines, finest first so stronger lines draw on top.
   if (props.gridPpq < 1) drawVerticalLines(ctx, props.gridPpq, COLORS.gridFine, h);
-  drawVerticalLines(ctx, 1, COLORS.gridBeat, h);
-  drawVerticalLines(ctx, BEATS_PER_BAR, COLORS.gridBar, h);
+  drawMeterLines(ctx, h);
 
   // Shade the region past the clip end.
   const clipEndX = range.ppqToX(props.clipLengthPpq);
@@ -397,7 +411,13 @@ onBeforeUnmount(() => {
 });
 
 watch(
-  () => [props.revision, props.highlightedPitchClasses, props.gridPpq, props.clipLengthPpq],
+  () => [
+    props.revision,
+    props.highlightedPitchClasses,
+    props.gridPpq,
+    props.clipLengthPpq,
+    props.timeSignatures,
+  ],
   () => {
     lastPlayheadX = Number.NaN;
     scheduleBackground();

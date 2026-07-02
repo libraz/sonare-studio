@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, markRaw, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useAppSettings } from '@/composables/useAppSettings';
 import { promptDialog } from '@/composables/useDialogs';
 import { useEditorTool } from '@/composables/useEditorTool';
 import { useFileDownloads } from '@/composables/useFileDownloads';
@@ -93,8 +94,11 @@ const emit = defineEmits<{
   seek: [ppq: number];
   /** Request to (dis)arm a track for recording (re-emitted from the headers). */
   arm: [trackId: number, armed: boolean];
+  /** Request to open a MIDI track's instrument picker. */
+  changeInstrument: [trackId: number];
 }>();
 
+const appSettings = useAppSettings();
 const store = useProjectStore();
 const { t } = useI18n();
 const { downloadBlobFile } = useFileDownloads();
@@ -417,7 +421,7 @@ function stopPlayheadFollow(): void {
 // playhead still tracks every frame on its own cheap layer.
 function followPlayheadTick(now = performance.now()): void {
   followRaf = null;
-  if (!props.isPlaying) return;
+  if (!props.isPlaying || !appSettings.settings.scrollFollowPlayhead) return;
   if (now - lastFollowFrameMs < PLAYHEAD_FOLLOW_INTERVAL_MS) {
     followRaf = requestAnimationFrame(followPlayheadTick);
     return;
@@ -585,15 +589,15 @@ watch(
 );
 
 watch(
-  () => props.isPlaying,
-  (playing) => {
-    if (playing) startPlayheadFollow();
+  () => [props.isPlaying, appSettings.settings.scrollFollowPlayhead],
+  ([playing, follow]) => {
+    if (playing && follow) startPlayheadFollow();
     else stopPlayheadFollow();
   },
 );
 
 onMounted(async () => {
-  if (props.isPlaying) startPlayheadFollow();
+  if (props.isPlaying && appSettings.settings.scrollFollowPlayhead) startPlayheadFollow();
   try {
     await store.init();
   } catch (err) {
@@ -661,6 +665,7 @@ onBeforeUnmount(() => {
         :loop-start-ppq="props.loopStartPpq ?? 0"
         :loop-end-ppq="props.loopEndPpq ?? 0"
         @arm="(trackId, armed) => emit('arm', trackId, armed)"
+        @change-instrument="(trackId) => emit('changeInstrument', trackId)"
         @toggle-automation="onToggleAutomation"
         @automation-param="onAutomationParamChange"
         @toggle-takes="onToggleTakes"

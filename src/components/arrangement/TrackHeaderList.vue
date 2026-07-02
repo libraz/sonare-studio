@@ -96,6 +96,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   /** Request to (dis)arm a track for recording. */
   arm: [trackId: number, armed: boolean];
+  /** Request to open the active MIDI track's instrument picker. */
+  changeInstrument: [trackId: number];
   /** Request to expand/collapse a track's automation sublane. */
   toggleAutomation: [trackId: number, expanded: boolean];
   /** Request to switch the parameter a track's automation sublane edits. */
@@ -526,6 +528,13 @@ function onContextMenu(track: EditorTrack, event: MouseEvent): void {
         ? t.value.shell.arrangement.trackHeader.disarmRecording
         : t.value.shell.arrangement.trackHeader.recordEnable,
       run: () => onToggleArm(track),
+    });
+  }
+  if (track.kind === 'midi') {
+    items.push({
+      id: 'change-instrument',
+      label: t.value.shell.arrangement.trackHeader.changeInstrument,
+      run: () => emit('changeInstrument', track.id),
     });
   }
   items.push(

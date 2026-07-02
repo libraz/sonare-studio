@@ -75,6 +75,7 @@ function mountGrid(noteId: number | null) {
       highlightedPitchClasses: Array.from({ length: 12 }, () => false),
       gridPpq: 0.25,
       clipLengthPpq: 16,
+      timeSignatures: [{ startPpq: 0, numerator: 4, denominator: 4 }],
       interactions: makeInteractions(noteId),
     },
   });
@@ -107,5 +108,15 @@ describe('NoteGridCanvas', () => {
     expect(layers.some((layer) => layer.startsWith('note-grid-notes-'))).toBe(true);
     expect(layers.some((layer) => layer.startsWith('note-grid-background-'))).toBe(false);
     expect(layers.some((layer) => layer.startsWith('note-grid-overlay-'))).toBe(false);
+  });
+
+  it('repaints the background when time signatures change', async () => {
+    wrapper = mountGrid(1);
+    vi.mocked(painter.schedule).mockClear();
+
+    await wrapper.setProps({ timeSignatures: [{ startPpq: 0, numerator: 3, denominator: 4 }] });
+
+    const layers = vi.mocked(painter.schedule).mock.calls.map(([layer]) => layer);
+    expect(layers.some((layer) => layer.startsWith('note-grid-background-'))).toBe(true);
   });
 });

@@ -874,6 +874,7 @@ onBeforeUnmount(() => {
           :highlighted-pitch-classes="store.highlightedPitchClasses"
           :grid-ppq="gridPpq"
           :clip-length-ppq="store.clipLengthPpq"
+          :time-signatures="store.timeSignatures"
           :interactions="interactions"
           :position-ppq="props.positionPpq ? localPositionPpq : undefined"
           :note-color="noteColor"

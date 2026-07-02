@@ -453,6 +453,14 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
       for (const origin of g.origins.values()) {
         delta = Math.max(delta, minDuration - origin.durationPpq);
       }
+      const max = options.getMaxPpq?.();
+      if (max !== undefined && Number.isFinite(max)) {
+        let maxEnd = Number.NEGATIVE_INFINITY;
+        for (const origin of g.origins.values()) {
+          maxEnd = Math.max(maxEnd, origin.startPpq + origin.durationPpq);
+        }
+        if (maxEnd + delta > max) delta = max - maxEnd;
+      }
       return delta;
     }
     const targetStart = bypass

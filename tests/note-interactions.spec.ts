@@ -27,7 +27,7 @@ function makeNote(partial: Partial<EditorNote> & { id: number }): EditorNote {
  * View geometry: 100 px per PPQ, 10 px rows, no scroll. A pitch-60 note at
  * PPQ [1, 2) therefore covers x [100, 200) and y [670, 680).
  */
-function makeHarness(notes: EditorNote[], initialSelection: number[] = []) {
+function makeHarness(notes: EditorNote[], initialSelection: number[] = [], maxPpq?: number) {
   const view = new TimelineRange({ widthPx: 800, heightPx: 1280, pxPerPpq: 100, rowHeight: 10 });
   let selection = new Set<number>(initialSelection);
   let nextId = 100;
@@ -48,6 +48,7 @@ function makeHarness(notes: EditorNote[], initialSelection: number[] = []) {
     getSelection: () => selection,
     getGridPpq: () => 0.25,
     getTool: () => tool,
+    ...(maxPpq === undefined ? {} : { getMaxPpq: () => maxPpq }),
     commands,
     onAudition,
   });
@@ -211,6 +212,21 @@ describe('useNoteInteractions', () => {
       interactions.onPointerUp({ x: 0, y: 675 }, { meta: true });
       const update = mocked(commands.updateNotes).mock.calls[0][0][0];
       expect(update.durationPpq).toBeGreaterThan(0);
+    });
+
+    it('clamps a multi-note end resize to the clip length', () => {
+      const notes = [
+        makeNote({ id: 1, startPpq: 1, durationPpq: 1 }),
+        makeNote({ id: 2, startPpq: 3.25, durationPpq: 0.5 }),
+      ];
+      const { commands, interactions } = makeHarness(notes, [1, 2], 4);
+      interactions.onPointerDown({ x: 197, y: 675 }); // grabs note 1 end
+      interactions.onPointerMove({ x: 300, y: 675 }); // requested +1 PPQ, clamped to +0.25
+      interactions.onPointerUp({ x: 300, y: 675 });
+      expect(commands.updateNotes).toHaveBeenCalledWith([
+        { id: 1, durationPpq: 1.25 },
+        { id: 2, durationPpq: 0.75 },
+      ]);
     });
   });
 
