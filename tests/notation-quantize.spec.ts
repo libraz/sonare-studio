@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { type NotatedScore, noteValueToPpq } from '@/notation/model';
-import { type QuantizeOptions, quantizeToScore } from '@/notation/quantize';
+import {
+  assignGrandStaffUnits,
+  type QuantizeOptions,
+  quantizeToScore,
+  splitUnitAcrossStaves,
+  staffForMeanPitch,
+  type VoiceUnit,
+} from '@/notation/quantize';
 import type { EditorNote } from '@/project/types';
 
 let nextId = 1;
@@ -510,6 +517,79 @@ describe('quantizeToScore: voice separation', () => {
     ]);
     expect(score.parts[0].measures[0].voices[0].events[1].staff).toBe(1);
     expect(score.parts[0].measures[0].voices[1].events[1].staff).toBe(2);
+  });
+
+  it('keeps a fast right-hand figure over a sustained bass on the treble staff', () => {
+    const score = quantize(
+      [
+        makeNote(52, 0, 4), // sustained inner voice on the lower staff
+        makeNote(80, 0, 0.25), // right-hand interval on the downbeat
+        makeNote(66, 0, 0.25),
+        makeNote(62, 0.25, 0.25), // fast right-hand figure near the split
+        makeNote(61, 0.5, 0.25),
+        makeNote(63, 0.75, 0.25),
+      ],
+      baseOptions({ clef: 'grand', clipLengthPpq: 4 }),
+    );
+
+    const noteEvents = score.parts[0].measures[0].voices.flatMap((v) =>
+      v.events.filter((e) => e.kind === 'note'),
+    );
+    const staffOf = (pitch: number) => noteEvents.find((e) => e.pitches.includes(pitch))?.staff;
+    // A running group mean would drag the figure below the sustained bass and
+    // flip it to the lower staff; per-voice continuity keeps it on the treble.
+    expect(staffOf(62)).toBe(1);
+    expect(staffOf(61)).toBe(1);
+    expect(staffOf(63)).toBe(1);
+    expect(staffOf(52)).toBe(2);
+  });
+});
+
+describe('grand-staff split helpers', () => {
+  /** Builds a chord unit fixture with ascending, deduplicated pitches. */
+  function makeUnit(pitches: number[], overrides: Partial<VoiceUnit> = {}): VoiceUnit {
+    return {
+      pitches: [...pitches].sort((a, b) => a - b),
+      startPpq: 0,
+      endPpq: 2,
+      channels: [0],
+      velocity: 96,
+      ids: [1],
+      ...overrides,
+    };
+  }
+
+  it('places a mean pitch at or above the split on the upper staff', () => {
+    expect(staffForMeanPitch(60, 60)).toBe(1);
+    expect(staffForMeanPitch(72, 60)).toBe(1);
+    expect(staffForMeanPitch(59, 60)).toBe(2);
+    expect(staffForMeanPitch(48, 50)).toBe(2);
+  });
+
+  it('splits an oversized chord that straddles the split across both staves', () => {
+    const split = splitUnitAcrossStaves(makeUnit([48, 52, 64, 72]), 60);
+    expect(split).toBeDefined();
+    expect(split?.upper.pitches).toEqual([64, 72]);
+    expect(split?.lower.pitches).toEqual([48, 52]);
+    // Both halves keep the source unit's timing and identity.
+    expect(split?.upper.startPpq).toBe(0);
+    expect(split?.lower.ids).toEqual([1]);
+  });
+
+  it('keeps a hand-sized straddling chord on one staff', () => {
+    expect(splitUnitAcrossStaves(makeUnit([59, 71]), 60)).toBeUndefined(); // octave
+    expect(splitUnitAcrossStaves(makeUnit([56, 64]), 60)).toBeUndefined(); // minor sixth
+  });
+
+  it('does not split a wide chord that sits entirely on one side of the split', () => {
+    expect(splitUnitAcrossStaves(makeUnit([62, 84]), 60)).toBeUndefined();
+    expect(splitUnitAcrossStaves(makeUnit([36, 58]), 60)).toBeUndefined();
+  });
+
+  it('assigns the halves of a split two-hand cluster to the upper and lower pools', () => {
+    const { upper, lower } = assignGrandStaffUnits([makeUnit([40, 48, 67, 79])], 60);
+    expect(upper.map((u) => u.pitches)).toEqual([[67, 79]]);
+    expect(lower.map((u) => u.pitches)).toEqual([[40, 48]]);
   });
 });
 

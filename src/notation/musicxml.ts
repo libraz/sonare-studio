@@ -43,6 +43,7 @@ import {
   type ScoreMetadata,
 } from './model';
 import { type SpelledPitch, type Step, spellPitch } from './pitch-spelling';
+import { staffForMeanPitch } from './quantize';
 
 /** Staff number within a grand staff (1 = treble, 2 = bass). */
 type StaffNumber = 1 | 2;
@@ -1413,6 +1414,7 @@ function pushNoteEvent(
       eventPercussion,
       midi,
       measure,
+      pitchIndex,
     );
     const lyricXml = pitchIndex === 0 ? lyricsXml(lyrics.get(event) ?? []) : '';
     const beam = pitchIndex === 0 ? beamMarks : '';
@@ -1591,6 +1593,7 @@ function notationsXml(
   percussion = false,
   midi?: number,
   measure?: NotatedMeasure,
+  pitchIndex = 0,
 ): string {
   let inner = '';
   if (event.tieStop) {
@@ -1639,6 +1642,13 @@ function notationsXml(
     const ornament = annotations.ornaments.get(event);
     if (ornament !== undefined) {
       inner += ornamentXml(ornament);
+    }
+  }
+  if (!percussion) {
+    // Fingering is per-note: each chord pitch carries its own finger number.
+    const fingering = event.fingering?.[pitchIndex];
+    if (fingering !== undefined) {
+      inner += `<technical><fingering>${fingering}</fingering></technical>`;
     }
   }
   if (percussion && midi !== undefined) {
@@ -1854,7 +1864,7 @@ function noteStaff(event: NotatedEvent): StaffNumber {
   if (event.staff === 1 || event.staff === 2) return event.staff;
   if (event.pitches.length === 0) return 1;
   const mean = event.pitches.reduce((sum, pitch) => sum + pitch, 0) / event.pitches.length;
-  return mean >= GRAND_STAFF_SPLIT_MIDI ? 1 : 2;
+  return staffForMeanPitch(mean, GRAND_STAFF_SPLIT_MIDI);
 }
 
 /**

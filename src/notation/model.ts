@@ -191,6 +191,20 @@ export interface NotatedEvent {
    */
   staff?: 1 | 2;
   /**
+   * Estimated piano fingering, one entry per pitch in {@link pitches} and
+   * index-aligned with it (1 = thumb .. 5 = pinky). Present only when
+   * fingering estimation is requested; absent leaves the note unfingered and
+   * the serializer emits no `<fingering>`.
+   */
+  fingering?: number[];
+  /**
+   * True when this note is engraved on the staff opposite the hand its pitch
+   * center would fall to on a grand staff (a hand cross: the left hand
+   * reaching above, or the right hand below, the split). Present only when
+   * fingering estimation is requested; absent means no crossing.
+   */
+  handCross?: boolean;
+  /**
    * Editor note ids whose quantized notes produced this event (absent for
    * rests). Used only to attach display annotations to engraved notes; the
    * pipeline never writes through these ids back to MIDI data.
