@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="sonare studio">
+  <rect width="512" height="512" rx="88" fill="#0b0d10"/>
+  <path d="M120 304c0-75 61-136 136-136s136 61 136 136" fill="none" stroke="#8debd1" stroke-width="42" stroke-linecap="round"/>
+  <path d="M152 304c0-57 46-104 104-104s104 47 104 104" fill="none" stroke="#f4d35e" stroke-width="26" stroke-linecap="round"/>
+  <circle cx="176" cy="336" r="34" fill="#e85d75"/>
+  <circle cx="256" cy="336" r="34" fill="#8debd1"/>
+  <circle cx="336" cy="336" r="34" fill="#f4d35e"/>
+  <path d="M142 408h228" stroke="#f7f4ed" stroke-width="24" stroke-linecap="round"/>
+</svg>

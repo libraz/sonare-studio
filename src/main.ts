@@ -2,6 +2,7 @@ import { createPinia } from 'pinia';
 import { createApp } from 'vue';
 import { vTooltip } from '@/ui/tooltip';
 import App from './App.vue';
+import { registerServiceWorker } from './pwa';
 // The display face for the wordmark — a modern variable grotesque, self-hosted
 // so it ships with the bundle rather than depending on a font CDN at runtime.
 // Only the Latin subset is fetched for the "sonare studio" mark thanks to its
@@ -19,3 +20,7 @@ import '@/ui/theme/motion.css';
 import '@/ui/theme/tooltip.css';
 
 createApp(App).use(createPinia()).directive('tooltip', vTooltip).mount('#app');
+
+void registerServiceWorker().catch((error) => {
+  console.warn('Service Worker registration failed', error);
+});
