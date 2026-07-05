@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import MediaBrowser from '@/components/media/MediaBrowser.vue';
 import type { AudioAssetMeta, LoadedAudioAsset } from '@/persistence/assets';
 import { useProjectStore } from '@/project/store';
-import type { EditorClip } from '@/project/types';
+import type { EditorClip, EditorTrack } from '@/project/types';
 import { ASSET_DRAG_MIME } from '@/ui/media/asset-drag';
 import { asAudioContext, createFakeAudioContext } from './fake-audio-context';
 import { readOptionLabels, selectOption } from './helpers/select-menu';
@@ -44,6 +44,15 @@ function loaded(metaOverrides: Partial<AudioAssetMeta> = {}): LoadedAudioAsset {
   };
 }
 
+/** Creates a manually-resolved promise for async race tests. */
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
 /** A minimal audio clip mirror referencing an asset. */
 function audioClip(assetId: string): EditorClip {
   return {
@@ -59,6 +68,22 @@ function audioClip(assetId: string): EditorClip {
     notes: [],
     kind: 'audio',
     assetId,
+  };
+}
+
+/** A minimal track mirror for reference-guard tests. */
+function track(overrides: Partial<EditorTrack> = {}): EditorTrack {
+  return {
+    id: 1,
+    name: 'Audio',
+    color: '#60a5fa',
+    kind: 'audio',
+    mute: false,
+    solo: false,
+    volume: 1,
+    pan: 0,
+    order: 0,
+    ...overrides,
   };
 }
 
@@ -89,14 +114,42 @@ describe('MediaBrowser', () => {
 
   it('lists assets with formatted metadata after mount', async () => {
     assetStore.listAssets.mockResolvedValue([
-      meta({ id: 'a', name: 'Drum Loop', tags: { bpm: 120, key: 'Am' } }),
+      meta({
+        id: 'a',
+        name: 'Drum Loop',
+        tags: {
+          bpm: 120,
+          key: 'Am',
+          timeSignature: '7/8',
+          grooveType: 'breakbeat',
+          dynamicRangeDb: 8.25,
+          brightness: 0.61,
+        },
+      }),
       meta({ id: 'b', name: 'Bass', numChannels: 1, numFrames: 96000, sampleRate: 44100 }),
     ]);
     const wrapper = await mountBrowser();
     expect(rowNames(wrapper)).toEqual(['Bass', 'Drum Loop']);
     const summaries = wrapper.findAll('.asset-summary').map((s) => s.text());
-    expect(summaries[1]).toBe('0:01.0 · stereo · 48 kHz · 120 BPM · Am');
+    expect(summaries[1]).toBe(
+      '0:01.0 · stereo · 48 kHz · 120 BPM · Am · 7/8 · breakbeat · DR 8.3 dB · Bright 0.61',
+    );
     expect(summaries[0]).toBe('0:02.2 · mono · 44.1 kHz');
+  });
+
+  it('refreshes the asset list when the panel becomes visible again', async () => {
+    assetStore.listAssets
+      .mockResolvedValueOnce([meta({ id: 'a', name: 'Before' })])
+      .mockResolvedValueOnce([meta({ id: 'b', name: 'After' })]);
+
+    const wrapper = await mountBrowser({ visible: false });
+    expect(rowNames(wrapper)).toEqual(['Before']);
+
+    await wrapper.setProps({ visible: true });
+    await flushPromises();
+
+    expect(assetStore.listAssets).toHaveBeenCalledTimes(2);
+    expect(rowNames(wrapper)).toEqual(['After']);
   });
 
   it('shows the empty state and the list error', async () => {
@@ -255,6 +308,39 @@ describe('MediaBrowser', () => {
     expect(assetStore.deleteAsset).not.toHaveBeenCalled();
   });
 
+  it('blocks deleting assets referenced only by inactive comp takes', async () => {
+    assetStore.listAssets.mockResolvedValue([meta({ id: 'take-a', name: 'Take A' })]);
+    const store = useProjectStore();
+    const clip = audioClip('active-a');
+    clip.takes = [
+      { assetId: 'active-a', name: 'Take 1' },
+      { assetId: 'take-a', name: 'Take 2' },
+    ];
+    store.clips = [clip];
+
+    const wrapper = await mountBrowser();
+    const button = rowButton(wrapper, 'Take A', '.delete-button');
+
+    expect(button.attributes('disabled')).toBeDefined();
+    await button.trigger('click');
+    expect(wrapper.find('.danger').exists()).toBe(false);
+    expect(assetStore.deleteAsset).not.toHaveBeenCalled();
+  });
+
+  it('blocks deleting assets referenced only by frozen tracks', async () => {
+    assetStore.listAssets.mockResolvedValue([meta({ id: 'frozen-a', name: 'Frozen A' })]);
+    const store = useProjectStore();
+    store.tracks = [track({ frozen: { assetId: 'frozen-a' } })];
+
+    const wrapper = await mountBrowser();
+    const button = rowButton(wrapper, 'Frozen A', '.delete-button');
+
+    expect(button.attributes('disabled')).toBeDefined();
+    await button.trigger('click');
+    expect(wrapper.find('.danger').exists()).toBe(false);
+    expect(assetStore.deleteAsset).not.toHaveBeenCalled();
+  });
+
   it('previews an asset through the injected context factory, lazily', async () => {
     assetStore.listAssets.mockResolvedValue([meta({ id: 'a1', name: 'Loop' })]);
     assetStore.loadAsset.mockResolvedValue(loaded({ id: 'a1', name: 'Loop' }));
@@ -274,6 +360,49 @@ describe('MediaBrowser', () => {
     await flushPromises();
     expect(context.sources[0].stopped).toBe(true);
     expect(play.classes()).not.toContain('playing');
+  });
+
+  it('ignores a stale preview load when a newer asset is requested first', async () => {
+    assetStore.listAssets.mockResolvedValue([
+      meta({ id: 'a1', name: 'Loop A' }),
+      meta({ id: 'a2', name: 'Loop B' }),
+    ]);
+    const first = deferred<LoadedAudioAsset>();
+    const second = deferred<LoadedAudioAsset>();
+    assetStore.loadAsset.mockImplementation((id) => (id === 'a1' ? first.promise : second.promise));
+    const context = createFakeAudioContext();
+    const wrapper = await mountBrowser({
+      previewContextFactory: () => asAudioContext(context),
+    });
+
+    await rowButton(wrapper, 'Loop A', '.preview-button').trigger('click');
+    await rowButton(wrapper, 'Loop B', '.preview-button').trigger('click');
+    second.resolve(loaded({ id: 'a2', name: 'Loop B' }));
+    await flushPromises();
+    first.resolve(loaded({ id: 'a1', name: 'Loop A' }));
+    await flushPromises();
+
+    expect(context.sources).toHaveLength(1);
+    expect(context.sources[0].started).toBe(true);
+    expect(rowButton(wrapper, 'Loop B', '.preview-button').classes()).toContain('playing');
+    expect(rowButton(wrapper, 'Loop A', '.preview-button').classes()).not.toContain('playing');
+  });
+
+  it('does not start preview playback after the browser unmounts', async () => {
+    assetStore.listAssets.mockResolvedValue([meta({ id: 'a1', name: 'Loop' })]);
+    const pending = deferred<LoadedAudioAsset>();
+    assetStore.loadAsset.mockReturnValue(pending.promise);
+    const context = createFakeAudioContext();
+    const wrapper = await mountBrowser({
+      previewContextFactory: () => asAudioContext(context),
+    });
+
+    await rowButton(wrapper, 'Loop', '.preview-button').trigger('click');
+    wrapper.unmount();
+    pending.resolve(loaded({ id: 'a1', name: 'Loop' }));
+    await flushPromises();
+
+    expect(context.sources).toHaveLength(0);
   });
 
   it('shows a preview error when the asset cannot be loaded', async () => {

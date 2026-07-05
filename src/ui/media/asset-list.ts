@@ -5,6 +5,11 @@
  */
 
 import type { AudioAssetMeta } from '@/persistence/assets';
+import {
+  type AssetReferenceClip,
+  type AssetReferenceTrack,
+  collectReferencedAudioAssetIds,
+} from '@/project/asset-references';
 
 /** Inclusive BPM bounds parsed from the BPM filter input. */
 export interface BpmRange {
@@ -182,20 +187,6 @@ export function sortAssets(
   return sorted;
 }
 
-/** Minimal clip shape read by {@link referencedAssetIds}. */
-interface ReferencedClip {
-  /** Active audio asset id, if any. */
-  assetId?: string;
-  /** Alternative cycle-recording takes, each holding its own asset. */
-  takes?: ReadonlyArray<{ assetId: string }>;
-}
-
-/** Minimal track shape read by {@link referencedAssetIds}. */
-interface ReferencedTrack {
-  /** Frozen render, holding the baked audio asset while the track is frozen. */
-  frozen?: { assetId: string };
-}
-
 /**
  * Collects the asset ids referenced anywhere in the project: active clip
  * audio, every comp take (including non-selected ones) and frozen-track
@@ -211,18 +202,8 @@ interface ReferencedTrack {
  * @returns The set of referenced asset ids.
  */
 export function referencedAssetIds(
-  clips: ReadonlyArray<ReferencedClip>,
-  tracks: ReadonlyArray<ReferencedTrack> = [],
+  clips: Iterable<AssetReferenceClip>,
+  tracks: Iterable<AssetReferenceTrack> = [],
 ): Set<string> {
-  const ids = new Set<string>();
-  for (const clip of clips) {
-    if (clip.assetId) ids.add(clip.assetId);
-    for (const take of clip.takes ?? []) {
-      if (take.assetId) ids.add(take.assetId);
-    }
-  }
-  for (const track of tracks) {
-    if (track.frozen?.assetId) ids.add(track.frozen.assetId);
-  }
-  return ids;
+  return collectReferencedAudioAssetIds(clips, tracks);
 }

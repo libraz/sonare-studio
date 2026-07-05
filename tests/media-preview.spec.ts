@@ -67,6 +67,7 @@ describe('createAudioPreview', () => {
     preview.play('a', source());
     preview.play('b', source());
     expect(context.sources[0].stopped).toBe(true);
+    expect(context.sources[0].onended).toBeNull();
     expect(changes).toEqual(['a', 'b']);
     expect(preview.playingId()).toBe('b');
   });
@@ -107,6 +108,7 @@ describe('createAudioPreview', () => {
     preview.play('a', source());
     preview.dispose();
     expect(context.sources[0].stopped).toBe(true);
+    expect(context.sources[0].onended).toBeNull();
     expect(context.gains[0].disconnected).toBe(true);
     expect(context.closed).toBe(true);
     expect(changes).toEqual(['a', null]);

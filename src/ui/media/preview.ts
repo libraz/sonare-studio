@@ -75,6 +75,7 @@ export function createAudioPreview(options: AudioPreviewOptions = {}): AudioPrev
     if (!current) return;
     const { node } = current;
     current = null;
+    node.onended = null;
     try {
       node.stop();
     } catch {

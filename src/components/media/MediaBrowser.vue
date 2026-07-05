@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
 import SearchField from '@/components/shell/SearchField.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
@@ -46,13 +46,18 @@ import {
  * the engine itself audible.
  */
 
-const props = defineProps<{
-  /**
-   * Factory for the preview AudioContext (created lazily on first play).
-   * Defaults to `() => new AudioContext()`; injectable for tests.
-   */
-  previewContextFactory?: PreviewContextFactory;
-}>();
+const props = withDefaults(
+  defineProps<{
+    /** True while the browser panel is visible; refreshes the list when shown. */
+    visible?: boolean;
+    /**
+     * Factory for the preview AudioContext (created lazily on first play).
+     * Defaults to `() => new AudioContext()`; injectable for tests.
+     */
+    previewContextFactory?: PreviewContextFactory;
+  }>(),
+  { visible: true },
+);
 
 const emit = defineEmits<{
   /** The user asked to add this asset to the project. */
@@ -191,6 +196,8 @@ const playingId = ref<string | null>(null);
 const previewError = ref<string | null>(null);
 const syncToTempo = ref(false);
 const timeStretchFn = shallowRef<TimeStretchFunction | null>(null);
+let disposed = false;
+let previewGeneration = 0;
 
 const preview = createAudioPreview({
   contextFactory: props.previewContextFactory,
@@ -203,12 +210,15 @@ const preview = createAudioPreview({
 /** Starts or stops decode-free preview playback of an asset. */
 async function togglePreview(asset: AudioAssetMeta): Promise<void> {
   if (playingId.value === asset.id) {
+    previewGeneration++;
     preview.stop();
     return;
   }
   previewError.value = null;
+  const generation = ++previewGeneration;
   try {
     const loadedAsset = await loadAsset(asset.id);
+    if (disposed || generation !== previewGeneration) return;
     let channels: ReadonlyArray<Float32Array> = loadedAsset.channels;
     const stretch = timeStretchFn.value;
     const assetBpm = asset.tags?.bpm;
@@ -220,6 +230,7 @@ async function togglePreview(asset: AudioAssetMeta): Promise<void> {
     }
     preview.play(asset.id, { channels, sampleRate: loadedAsset.meta.sampleRate });
   } catch (error) {
+    if (disposed || generation !== previewGeneration) return;
     previewError.value = errorMessage(error);
   }
 }
@@ -263,6 +274,10 @@ function onRowDragStart(event: DragEvent, assetId: string): void {
   setAssetDragData(event.dataTransfer, assetId);
 }
 
+function formatTagNumber(value: number, digits = 1): string {
+  return value.toFixed(digits);
+}
+
 /** One-line metadata summary shown under the asset name. */
 function assetSummary(asset: AudioAssetMeta): string {
   const parts = [
@@ -272,6 +287,12 @@ function assetSummary(asset: AudioAssetMeta): string {
   ];
   if (asset.tags?.bpm !== undefined) parts.push(`${formatBpm(asset.tags.bpm)} BPM`);
   if (asset.tags?.key) parts.push(asset.tags.key);
+  if (asset.tags?.timeSignature) parts.push(asset.tags.timeSignature);
+  if (asset.tags?.grooveType) parts.push(asset.tags.grooveType);
+  if (asset.tags?.dynamicRangeDb !== undefined)
+    parts.push(`DR ${formatTagNumber(asset.tags.dynamicRangeDb)} dB`);
+  if (asset.tags?.brightness !== undefined)
+    parts.push(`Bright ${formatTagNumber(asset.tags.brightness, 2)}`);
   if (asset.tags?.lufs !== undefined) parts.push(formatLufs(asset.tags.lufs));
   return parts.join(' · ');
 }
@@ -282,6 +303,7 @@ onMounted(() => {
   // silently unavailable when the module does not expose it.
   void ensureWasm()
     .then((mod) => {
+      if (disposed) return;
       const fn = (mod as { timeStretch?: unknown }).timeStretch;
       if (typeof fn === 'function') timeStretchFn.value = fn as TimeStretchFunction;
     })
@@ -290,7 +312,16 @@ onMounted(() => {
     });
 });
 
+watch(
+  () => props.visible,
+  (visible, wasVisible) => {
+    if (visible && wasVisible === false) void refresh();
+  },
+);
+
 onBeforeUnmount(() => {
+  disposed = true;
+  previewGeneration++;
   preview.dispose();
 });
 </script>
