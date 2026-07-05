@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { useI18n } from '@/ui/i18n';
+import { useShortcutBlockingOverlay } from '@/ui/overlay-registry';
 import { wrapTabFocus } from '@/ui/settings/focus-trap';
 
 /**
@@ -44,6 +45,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const dialogRef = ref<HTMLElement | null>(null);
+useShortcutBlockingOverlay(computed(() => props.open));
 
 /** Element focused before the modal opened, restored on close. */
 let previousFocus: HTMLElement | null = null;

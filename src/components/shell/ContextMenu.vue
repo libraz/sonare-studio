@@ -46,9 +46,36 @@ watch(
     if (rect.bottom > window.innerHeight) {
       pos.y = Math.max(margin, window.innerHeight - rect.height - margin);
     }
+    focusFirstItem(el);
   },
   { flush: 'post' },
 );
+
+function menuItems(root: HTMLElement | null): HTMLButtonElement[] {
+  if (!root) return [];
+  return [...root.querySelectorAll<HTMLButtonElement>('.context-menu-item')].filter(
+    (button) => !button.disabled,
+  );
+}
+
+function focusFirstItem(root: HTMLElement | null): void {
+  menuItems(root)[0]?.focus();
+}
+
+function moveFocus(root: HTMLElement | null, direction: -1 | 1): void {
+  const items = menuItems(root);
+  if (items.length === 0) return;
+  const active = document.activeElement;
+  const index = active instanceof HTMLButtonElement ? items.indexOf(active) : -1;
+  const next = index === -1 ? 0 : (index + direction + items.length) % items.length;
+  items[next].focus();
+}
+
+function focusEdge(root: HTMLElement | null, edge: 'first' | 'last'): void {
+  const items = menuItems(root);
+  const item = edge === 'first' ? items[0] : items[items.length - 1];
+  item?.focus();
+}
 
 function run(item: ContextMenuItem): void {
   if (item.disabled || item.separator || !item.run) return;
@@ -98,6 +125,65 @@ function onItemClick(item: ContextMenuItem, event: MouseEvent): void {
   }
   run(item);
 }
+
+function itemForButton(button: HTMLButtonElement | null): ContextMenuItem | undefined {
+  if (!button) return undefined;
+  const id = button.dataset.menuItemId;
+  return [...state.items, ...submenu.items].find((item) => item.id === id);
+}
+
+function onMenuKeydown(event: KeyboardEvent, root: HTMLElement | null): void {
+  switch (event.key) {
+    case 'ArrowDown':
+      event.preventDefault();
+      moveFocus(root, 1);
+      break;
+    case 'ArrowUp':
+      event.preventDefault();
+      moveFocus(root, -1);
+      break;
+    case 'Home':
+      event.preventDefault();
+      focusEdge(root, 'first');
+      break;
+    case 'End':
+      event.preventDefault();
+      focusEdge(root, 'last');
+      break;
+    case 'Enter':
+    case ' ': {
+      event.preventDefault();
+      const button =
+        document.activeElement instanceof HTMLButtonElement ? document.activeElement : null;
+      const item = itemForButton(button);
+      if (!item) return;
+      if (hasSubmenu(item) && button) void openSubmenu(item, button);
+      else run(item);
+      break;
+    }
+    case 'ArrowRight': {
+      const button =
+        document.activeElement instanceof HTMLButtonElement ? document.activeElement : null;
+      const item = itemForButton(button);
+      if (!item || !button || !hasSubmenu(item)) return;
+      event.preventDefault();
+      void openSubmenu(item, button).then(() => focusFirstItem(submenuEl.value));
+      break;
+    }
+    case 'ArrowLeft': {
+      if (!submenu.open) return;
+      event.preventDefault();
+      const parentId = activeSubmenuId.value;
+      submenu.open = false;
+      submenu.items = [];
+      activeSubmenuId.value = null;
+      menuItems(menuEl.value)
+        .find((button) => button.dataset.menuItemId === parentId)
+        ?.focus();
+      break;
+    }
+  }
+}
 </script>
 
 <template>
@@ -108,6 +194,7 @@ function onItemClick(item: ContextMenuItem, event: MouseEvent): void {
     class="context-menu control-menu"
     :style="{ left: `${pos.x}px`, top: `${pos.y}px` }"
     role="menu"
+    @keydown="onMenuKeydown($event, menuEl)"
   >
     <template v-for="item in state.items" :key="item.id">
       <div v-if="item.separator" class="context-menu-sep" role="separator" />
@@ -116,6 +203,7 @@ function onItemClick(item: ContextMenuItem, event: MouseEvent): void {
         type="button"
         role="menuitem"
         class="context-menu-item"
+        :data-menu-item-id="item.id"
         :class="{
           danger: item.danger,
           'has-submenu': hasSubmenu(item),
@@ -143,6 +231,7 @@ function onItemClick(item: ContextMenuItem, event: MouseEvent): void {
       class="context-menu context-submenu control-menu"
       :style="{ left: `${submenu.x}px`, top: `${submenu.y}px` }"
       role="menu"
+      @keydown="onMenuKeydown($event, submenuEl)"
     >
       <template v-for="child in submenu.items" :key="child.id">
         <div v-if="child.separator" class="context-menu-sep" role="separator" />
@@ -151,6 +240,7 @@ function onItemClick(item: ContextMenuItem, event: MouseEvent): void {
           type="button"
           role="menuitem"
           class="context-menu-item"
+          :data-menu-item-id="child.id"
           :class="{ danger: child.danger }"
           :disabled="child.disabled"
           :aria-checked="child.checked === undefined ? undefined : child.checked"

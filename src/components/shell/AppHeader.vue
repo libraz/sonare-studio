@@ -9,6 +9,8 @@ import { formatSavedAt } from '@/ui/shell/format';
 
 defineProps<{
   autosaveLastSavedAt: Date | null;
+  canRedo: boolean;
+  canUndo: boolean;
   deviceRackOpen: boolean;
   dirty: boolean;
   menus: readonly MenuBarMenu[];
@@ -21,8 +23,10 @@ const emit = defineEmits<{
   audioImportInputRef: [el: HTMLInputElement | null];
   midiImportChange: [event: Event];
   midiImportInputRef: [el: HTMLInputElement | null];
+  redo: [];
   toggleTheme: [];
   toggleDeviceRack: [];
+  undo: [];
 }>();
 
 const { t } = useI18n();
@@ -65,6 +69,29 @@ const { t } = useI18n();
     </span>
 
     <span class="bar-spacer" />
+
+    <div class="history-tools" :aria-label="t.shell.menus.edit">
+      <button
+        type="button"
+        class="header-tool icon-tool undo-toggle"
+        :aria-label="t.shortcuts.actions['edit.undo']"
+        :disabled="!canUndo"
+        v-tooltip="t.shortcuts.actions['edit.undo']"
+        @click="emit('undo')"
+      >
+        <TransportIcon name="undo" />
+      </button>
+      <button
+        type="button"
+        class="header-tool icon-tool redo-toggle"
+        :aria-label="t.shortcuts.actions['edit.redo']"
+        :disabled="!canRedo"
+        v-tooltip="t.shortcuts.actions['edit.redo']"
+        @click="emit('redo')"
+      >
+        <TransportIcon name="redo" />
+      </button>
+    </div>
 
     <span v-if="autosaveLastSavedAt" class="autosave-state">
       {{ formatMessage(t.shell.savedAt, { time: formatSavedAt(autosaveLastSavedAt) }) }}

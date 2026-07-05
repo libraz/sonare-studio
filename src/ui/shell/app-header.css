@@ -170,6 +170,12 @@
   display: none;
 }
 
+.history-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .header-tool {
   display: inline-flex;
   align-items: center;
@@ -187,9 +193,20 @@
   white-space: nowrap;
 }
 
+.header-tool:disabled {
+  color: var(--text-4);
+  cursor: default;
+  opacity: 0.55;
+}
+
 .header-tool:hover {
   background: var(--surface-3);
   color: var(--text-1);
+}
+
+.header-tool:hover:disabled {
+  background: transparent;
+  color: var(--text-4);
 }
 
 .header-tool:focus-visible {
@@ -204,6 +221,11 @@
 }
 
 .theme-toggle {
+  width: 28px;
+  padding: 0;
+}
+
+.icon-tool {
   width: 28px;
   padding: 0;
 }

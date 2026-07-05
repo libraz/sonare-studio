@@ -15,9 +15,16 @@ import {
   undo,
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
+import { clipKind } from '@/project/types';
 import type { EditorToolId } from '@/ui/editor/tools';
 import { useI18n } from '@/ui/i18n';
-import type { MenuBarItem, MenuBarMenu } from '@/ui/menu/menu-bar';
+import { isEditableTarget } from '@/ui/keyboard';
+import {
+  cleanMenuItems,
+  isNavigable,
+  type MenuBarItem,
+  type MenuBarMenu,
+} from '@/ui/menu/menu-bar';
 import { detectPlatform, formatKeyCombo } from '@/ui/settings/key-combo';
 
 type Recording = ReturnType<typeof useRecording>;
@@ -30,6 +37,7 @@ interface ArrangementCommands {
 
 export interface AppShortcutsMenuOptions {
   deviceRackOpen: Ref<boolean>;
+  commandPaletteOpen: Ref<boolean>;
   editorTool: Ref<EditorToolId>;
   handle: ShallowRef<EngineHandle | null>;
   helpOpen: Ref<boolean>;
@@ -45,10 +53,14 @@ export interface AppShortcutsMenuOptions {
   shortcuts: Shortcuts;
   applyNamedLayout: (name: string) => void;
   exportDawproject: () => void;
+  exportBrowserBackup: () => void;
   exportMidi2: () => void;
+  exportMusicXml: () => void;
   exportSmf: () => void;
   exportSzd: () => void;
   importAudio: () => void;
+  importBrowserBackup: () => void;
+  importDawproject: () => void;
   importMidi: () => void;
   nudgeByBar: (direction: -1 | 1) => void;
   openAbout: () => void;
@@ -74,12 +86,6 @@ export interface AppShortcutsMenuOptions {
   togglePlayback: () => void;
   toggleRecord: () => void;
   toggleScorePanel: () => void;
-}
-
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  const tag = target.tagName;
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
 }
 
 export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
@@ -210,6 +216,9 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
       case 'app.settings':
         options.settingsOpen.value = true;
         return true;
+      case 'app.commandPalette':
+        options.commandPaletteOpen.value = true;
+        return true;
       case 'help.shortcuts':
         options.helpOpen.value = true;
         return true;
@@ -269,6 +278,7 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
   function fileItems(): MenuBarItem[] {
     const m = t.value.shell.project;
     const noOpfs = !options.opfsAvailable;
+    const noMidiClip = !store.activeClip || clipKind(store.activeClip) !== 'midi';
     const items: MenuBarItem[] = [
       commandItem('file.startScreen', m.startScreen, options.openStartScreen),
       commandItem('file.new', m.new, options.openNewDialog),
@@ -302,10 +312,20 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
       sep('file.sep-import'),
       commandItem('file.importMidi', m.importMidi, options.importMidi),
       commandItem('file.importAudio', m.importAudio, options.importAudio),
+      commandItem('file.importDawproject', m.importDawproject, options.importDawproject),
+      commandItem('file.importBackup', m.importBackup, options.importBrowserBackup, {
+        disabled: noOpfs,
+      }),
       sep('file.sep-export'),
       commandItem('file.exportSzd', m.exportSzd, options.exportSzd),
+      commandItem('file.exportBackup', m.exportBackup, options.exportBrowserBackup, {
+        disabled: noOpfs,
+      }),
       commandItem('file.exportSmf', m.exportSmf, options.exportSmf),
       commandItem('file.exportMidi2', m.exportMidi2, options.exportMidi2),
+      commandItem('file.exportMusicXml', m.exportMusicXml, options.exportMusicXml, {
+        disabled: noMidiClip,
+      }),
       commandItem('file.exportAudio', m.exportAudio, options.openExportDialog),
       commandItem('file.exportDawproject', m.exportDawproject, options.exportDawproject),
     );
@@ -477,6 +497,20 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
     return { id: 'layout', label: l.trigger, ariaLabel: l.menuLabel, items };
   });
 
+  const commandPaletteItems = computed(() => {
+    const menus: MenuBarMenu[] = [...menuBarModel.value, layoutMenu.value];
+    return menus.flatMap((menu) =>
+      cleanMenuItems(menu.items)
+        .filter(isNavigable)
+        .map((item) => ({
+          id: `${menu.id}.${item.id}`,
+          label: `${menu.label}: ${item.label}`,
+          ...(item.hint ? { hint: item.hint } : {}),
+          run: item.run as () => void,
+        })),
+    );
+  });
+
   function onGlobalKeyDown(event: KeyboardEvent): void {
     if (event.defaultPrevented || isEditableTarget(event.target)) return;
     if (options.isGlobalShortcutBlocked?.() === true) return;
@@ -489,6 +523,7 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
   return {
     arrangementRef,
     focusZone,
+    commandPaletteItems,
     layoutMenu,
     menuBarModel,
     onGlobalKeyDown,

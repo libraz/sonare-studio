@@ -107,11 +107,23 @@
 .dock-tabs {
   display: flex;
   align-items: stretch;
+  min-width: 0;
   background: var(--surface-1);
   border-bottom: 1px solid var(--border-strong);
 }
 
+.dock-tab-scroll {
+  display: flex;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
 .dock-tab {
+  flex: 0 0 auto;
   background: none;
   border: none;
   box-shadow: none;
@@ -122,6 +134,7 @@
   font: var(--fw-semibold) var(--fs-sm) var(--font-sans);
   padding: 0.4rem 1rem;
   cursor: default;
+  white-space: nowrap;
   transition:
     color var(--dur-1) var(--ease-out),
     background-color var(--dur-1) var(--ease-out),
@@ -159,11 +172,8 @@
   box-shadow: inset 0 -2px 0 var(--border-hi);
 }
 
-.dock-tabs-spacer {
-  flex: 1;
-}
-
 .dock-collapse {
+  flex: 0 0 auto;
   background: none;
   border: none;
   box-shadow: none;

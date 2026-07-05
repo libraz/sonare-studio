@@ -35,6 +35,8 @@ async function openFileMenu(): Promise<VueWrapper> {
     attachTo: document.body,
     props: {
       autosaveLastSavedAt: null,
+      canRedo: false,
+      canUndo: false,
       deviceRackOpen: false,
       dirty: false,
       menus: [fileMenu()],
@@ -81,6 +83,8 @@ describe('AppHeader export menu', () => {
       attachTo: document.body,
       props: {
         autosaveLastSavedAt: null,
+        canRedo: false,
+        canUndo: false,
         deviceRackOpen: false,
         dirty: false,
         menus: [optionsMenu()],
@@ -100,6 +104,8 @@ describe('AppHeader export menu', () => {
       attachTo: document.body,
       props: {
         autosaveLastSavedAt: null,
+        canRedo: false,
+        canUndo: false,
         deviceRackOpen: false,
         dirty: false,
         menus: [fileMenu()],
@@ -109,5 +115,33 @@ describe('AppHeader export menu', () => {
     });
     await wrapper.get('.theme-toggle').trigger('click');
     expect(wrapper.emitted('toggleTheme')).toHaveLength(1);
+  });
+
+  it('renders permanent undo and redo controls with disabled state', async () => {
+    wrapper = mount(AppHeader, {
+      attachTo: document.body,
+      props: {
+        autosaveLastSavedAt: null,
+        canRedo: false,
+        canUndo: true,
+        deviceRackOpen: false,
+        dirty: false,
+        menus: [fileMenu()],
+        projectName: 'Demo',
+        resolvedTheme: 'dark',
+      },
+    });
+
+    expect(wrapper.get('.undo-toggle').attributes('disabled')).toBeUndefined();
+    expect(wrapper.get('.redo-toggle').attributes('disabled')).toBeDefined();
+
+    await wrapper.get('.undo-toggle').trigger('click');
+    await wrapper.setProps({ canRedo: true, canUndo: false });
+    await wrapper.get('.redo-toggle').trigger('click');
+
+    expect(wrapper.emitted('undo')).toHaveLength(1);
+    expect(wrapper.emitted('redo')).toHaveLength(1);
+    expect(wrapper.get('.undo-toggle').attributes('disabled')).toBeDefined();
+    expect(wrapper.get('.redo-toggle').attributes('disabled')).toBeUndefined();
   });
 });

@@ -32,6 +32,7 @@ const states = new WeakMap<HTMLElement, TooltipState>();
 
 let chip: HTMLDivElement | null = null;
 let showTimer: ReturnType<typeof setTimeout> | undefined;
+let timerAnchor: HTMLElement | null = null;
 let anchor: HTMLElement | null = null;
 
 /** Lazily creates the shared tooltip chip. */
@@ -63,6 +64,8 @@ function reposition(el: HTMLElement): void {
 /** Hides and detaches the shared chip from the current anchor. */
 function hide(): void {
   clearTimeout(showTimer);
+  showTimer = undefined;
+  timerAnchor = null;
   anchor = null;
   if (!chip) return;
   chip.classList.remove('is-visible');
@@ -125,7 +128,12 @@ function setup(el: HTMLElement, value: unknown): void {
     const current = states.get(el);
     if (!current?.text) return;
     clearTimeout(showTimer);
-    showTimer = setTimeout(() => show(el, current.text), SHOW_DELAY_MS);
+    timerAnchor = el;
+    showTimer = setTimeout(() => {
+      showTimer = undefined;
+      timerAnchor = null;
+      show(el, current.text);
+    }, SHOW_DELAY_MS);
   };
   const onLeave = (): void => {
     if (anchor === el || showTimer) hide();
@@ -177,7 +185,7 @@ function teardown(el: HTMLElement): void {
   el.removeEventListener('pointerleave', state.onLeave);
   el.removeEventListener('focus', state.onFocus, true);
   el.removeEventListener('blur', state.onLeave, true);
-  if (anchor === el) hide();
+  if (anchor === el || timerAnchor === el) hide();
   states.delete(el);
 }
 

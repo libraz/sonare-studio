@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   type ContextMenuItem,
   cleanItems,
@@ -114,5 +114,19 @@ describe('closeContextMenu', () => {
     closeContextMenu();
     expect(state.open).toBe(false);
     expect(state.items).toEqual([]);
+  });
+
+  it('removes global close listeners', () => {
+    const add = vi.spyOn(window, 'addEventListener');
+    const remove = vi.spyOn(window, 'removeEventListener');
+    openContextMenu(10, 10, [{ id: 'a', label: 'A', run: noop }]);
+
+    expect(add).toHaveBeenCalledWith('pointerdown', expect.any(Function), true);
+    expect(add).toHaveBeenCalledWith('keydown', expect.any(Function), true);
+
+    closeContextMenu();
+
+    expect(remove).toHaveBeenCalledWith('pointerdown', expect.any(Function), true);
+    expect(remove).toHaveBeenCalledWith('keydown', expect.any(Function), true);
   });
 });
