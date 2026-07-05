@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
+import { REALTIME_VOICE_CHANGER_PROCESSOR } from '@/engine/realtime-voice-changer';
 import type { RecorderOptions } from '@/engine/recorder';
 import {
   createRecorder,
@@ -7,10 +8,12 @@ import {
   INPUT_METER_TARGET_ID,
   inputLatencySamples,
   MICROPHONE_CONSTRAINTS,
+  microphoneConstraints,
   NoMicrophoneError,
   NotSupportedError,
   RecorderStateError,
 } from '@/engine/recorder';
+import { STREAMING_RETUNE_PROCESSOR } from '@/engine/streaming-retune';
 
 /** Builds a full meter snapshot; only targetId and the peak fields matter here. */
 function meterSnapshot(targetId: number, peakDbL: number, peakDbR = peakDbL) {
@@ -40,7 +43,7 @@ interface FakeCaptureStatus {
   overflowCount: number;
   armed: boolean;
   punchEnabled: boolean;
-  source: 'input';
+  source: 'input' | 'output';
   recordOffsetSamples: number;
 }
 
@@ -147,6 +150,24 @@ function makeDeps(options: { trackLatencySeconds?: number } = {}) {
   return { deps, stream, source, bindingClose, getUserMedia, bindInput, track, endTrack };
 }
 
+class FakeAudioNode {
+  readonly connect = vi.fn();
+  readonly disconnect = vi.fn();
+}
+
+class FakeAudioWorkletNode extends FakeAudioNode {
+  static instances: FakeAudioWorkletNode[] = [];
+  readonly port = { postMessage: vi.fn() };
+  constructor(
+    readonly context: BaseAudioContext,
+    readonly name: string,
+    readonly options: AudioWorkletNodeOptions,
+  ) {
+    super();
+    FakeAudioWorkletNode.instances.push(this);
+  }
+}
+
 /** Full-capacity ramp buffers: channel c holds value i * (c + 1) at index i. */
 function rampChannels(channels: number, capacityFrames: number): Float32Array[] {
   const result: Float32Array[] = [];
@@ -159,10 +180,23 @@ function rampChannels(channels: number, capacityFrames: number): Float32Array[] 
 }
 
 afterEach(() => {
+  FakeAudioWorkletNode.instances = [];
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('createRecorder microphone acquisition', () => {
+  it('builds tracking-quality constraints for the selected input device', () => {
+    expect(microphoneConstraints()).toEqual(MICROPHONE_CONSTRAINTS);
+    expect(microphoneConstraints('usb-mic')).toEqual({
+      audio: {
+        ...(MICROPHONE_CONSTRAINTS.audio as MediaTrackConstraints),
+        deviceId: { exact: 'usb-mic' },
+      },
+      video: false,
+    });
+  });
+
   it('requests tracking-quality constraints, binds the stream and configures the capture', async () => {
     const { handle, node, configureCapture } = makeHandle(100);
     const { deps, getUserMedia, bindInput, stream } = makeDeps();
@@ -195,6 +229,53 @@ describe('createRecorder microphone acquisition', () => {
     await recorder.requestMicrophone();
     expect(getUserMedia).toHaveBeenCalledTimes(1);
     expect(configureCapture).toHaveBeenCalledTimes(1);
+  });
+
+  it('requests the selected input device when one is configured', async () => {
+    const { handle } = makeHandle(100);
+    const { deps, getUserMedia } = makeDeps();
+    const recorder = createRecorder(handle, { ...deps, inputDeviceId: 'usb-mic' });
+
+    await recorder.requestMicrophone();
+
+    expect(getUserMedia).toHaveBeenCalledWith(microphoneConstraints('usb-mic'));
+  });
+
+  it('chains voice changer and StreamingRetune for the default input binding', async () => {
+    vi.stubGlobal('AudioWorkletNode', FakeAudioWorkletNode);
+    const { handle, ctx, node } = makeHandle(48_000);
+    const source = new FakeAudioNode();
+    (
+      ctx as AudioContext & { createMediaStreamSource: ReturnType<typeof vi.fn> }
+    ).createMediaStreamSource = vi.fn(() => source);
+    const { stream, getUserMedia } = makeDeps();
+    const recorder = createRecorder(handle, {
+      getUserMedia,
+      voiceChangerPreset: 'bright-idol',
+      streamingRetuneSemitones: 7,
+    });
+
+    await recorder.requestMicrophone();
+
+    const [voiceNode, retuneNode] = FakeAudioWorkletNode.instances;
+    expect((ctx as AudioContext).createMediaStreamSource).toHaveBeenCalledWith(stream);
+    expect(voiceNode.name).toBe(REALTIME_VOICE_CHANGER_PROCESSOR);
+    expect(retuneNode.name).toBe(STREAMING_RETUNE_PROCESSOR);
+    expect(source.connect).toHaveBeenCalledWith(voiceNode);
+    expect(voiceNode.connect).toHaveBeenCalledWith(retuneNode);
+    expect(retuneNode.connect).toHaveBeenCalledWith(node);
+    expect(retuneNode.options.processorOptions).toMatchObject({ semitones: 7, mix: 1 });
+
+    expect(recorder.setVoiceChangerPreset('dark-villain')).toBe(true);
+    expect(recorder.setStreamingRetuneSemitones(-5)).toBe(true);
+    expect(voiceNode.port.postMessage).toHaveBeenCalledWith({
+      type: 'setConfig',
+      preset: 'dark-villain',
+    });
+    expect(retuneNode.port.postMessage).toHaveBeenCalledWith({
+      type: 'setConfig',
+      config: { semitones: -5, mix: 1 },
+    });
   });
 
   it('throws NotSupportedError when no capture API exists', async () => {
@@ -277,6 +358,37 @@ describe('createRecorder state machine', () => {
       RangeError,
     );
     expect(recorder.isRecording()).toBe(false);
+  });
+
+  it('records the master output without requesting a microphone', async () => {
+    const { handle, configureCapture, armRecord, punch, setStatus, setAudio } = makeHandle(100);
+    const { deps, getUserMedia } = makeDeps();
+    const recorder = createRecorder(handle, { ...deps, captureSource: 'output' });
+
+    await recorder.requestMicrophone();
+    expect(getUserMedia).not.toHaveBeenCalled();
+    expect(recorder.hasMicrophone()).toBe(true);
+
+    recorder.arm(7);
+    await recorder.start({ startPpq: 2, endPpq: 4, tempoBpm: 60 });
+
+    expect(configureCapture).toHaveBeenLastCalledWith({
+      bufferFrames: 200,
+      channels: 2,
+      source: 'output',
+      recordOffsetSamples: 0,
+      inputMonitor: { enabled: false, gain: 1 },
+    });
+    expect(armRecord).toHaveBeenLastCalledWith(7, true);
+    expect(punch).toHaveBeenLastCalledWith(2, 4);
+
+    setStatus({ capturedFrames: 3, source: 'output' });
+    setAudio([new Float32Array([1, 2, 3])]);
+    await expect(recorder.stop()).resolves.toMatchObject({
+      sampleRate: 100,
+      startPpq: 2,
+      channels: [new Float32Array([1, 2, 3])],
+    });
   });
 });
 
@@ -378,12 +490,18 @@ describe('createRecorder capture', () => {
 
   it('adds the device input latency to the default offset', async () => {
     // baseLatency 0.1 s + track input latency 0.05 s at 100 Hz = 15 frames.
-    const { handle, setStatus, setAudio } = makeHandle(100, 0.1);
+    const { handle, configureCapture, setStatus, setAudio } = makeHandle(100, 0.1);
     const { deps } = makeDeps({ trackLatencySeconds: 0.05 });
     const recorder = createRecorder(handle, deps);
     await recorder.requestMicrophone();
+    expect(configureCapture).toHaveBeenLastCalledWith(
+      expect.objectContaining({ recordOffsetSamples: 15 }),
+    );
     recorder.arm(1);
     await recorder.start({ startPpq: 0, tempoBpm: 120 });
+    expect(configureCapture).toHaveBeenLastCalledWith(
+      expect.objectContaining({ recordOffsetSamples: 15 }),
+    );
     setAudio(rampChannels(1, 100));
     setStatus({ capturedFrames: 30 });
     const channel = (await recorder.stop())?.channels[0] as Float32Array;
@@ -448,7 +566,7 @@ describe('createRecorder capture', () => {
     await recorder.start({ startPpq: 0, tempoBpm: 120, recordOffsetSamples: 0 });
     setAudio(rampChannels(1, 100));
     setStatus({ capturedFrames: 30, overflowCount: 7 });
-    expect(await recorder.stop()).not.toBeNull();
+    expect(await recorder.stop()).toMatchObject({ overflowCount: 7 });
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('capture overflow: 7 samples'));
   });
@@ -487,8 +605,8 @@ describe('createRecorder monitoring', () => {
   });
 
   it('re-sends the capture config when the monitor is toggled', async () => {
-    const { handle, configureCapture } = makeHandle(100);
-    const { deps } = makeDeps();
+    const { handle, configureCapture } = makeHandle(100, 0.1);
+    const { deps } = makeDeps({ trackLatencySeconds: 0.05 });
     const recorder = createRecorder(handle, deps);
     await recorder.requestMicrophone();
 
@@ -496,6 +614,7 @@ describe('createRecorder monitoring', () => {
     expect(configureCapture).toHaveBeenLastCalledWith(
       expect.objectContaining({
         bufferFrames: 100,
+        recordOffsetSamples: 15,
         inputMonitor: { enabled: true, gain: 2 },
       }),
     );
@@ -503,7 +622,10 @@ describe('createRecorder monitoring', () => {
     recorder.setMonitor(false);
     expect(recorder.monitorEnabled()).toBe(false);
     expect(configureCapture).toHaveBeenLastCalledWith(
-      expect.objectContaining({ inputMonitor: { enabled: false, gain: 2 } }),
+      expect.objectContaining({
+        recordOffsetSamples: 15,
+        inputMonitor: { enabled: false, gain: 2 },
+      }),
     );
 
     expect(() => recorder.setMonitor(true, -1)).toThrow(RangeError);

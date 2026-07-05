@@ -11,8 +11,8 @@
  * count-in pre-roll (transport seeked earlier than the punch-in) is excluded
  * from the take without any host-side frame skipping. The engine treats
  * recordOffsetSamples as metadata only and never shifts captured samples;
- * record-latency compensation is applied here by trimming the head of the
- * take in stop().
+ * record-latency compensation is sent to the engine and also applied here by
+ * trimming the head of the take in stop().
  *
  * Input monitoring is engine-side: the capture config's inputMonitor switch
  * controls whether the microphone input is also mixed into the engine output.
@@ -29,7 +29,13 @@
 
 import { dbToLinear } from '@/lib/db';
 import { ensureWasm } from '@/lib/wasm';
+import type { EngineCaptureStatus, RealtimeVoiceChangerConfigInput } from '@/wasm/index.js';
 import type { EngineHandle } from './engine';
+import {
+  bindRealtimeVoiceChangerInput,
+  bindRealtimeVoiceChangerRetuneInput,
+} from './realtime-voice-changer';
+import { bindStreamingRetuneInput, clampStreamingRetuneSemitones } from './streaming-retune';
 
 /** Thrown when the environment cannot capture microphone audio at all. */
 export class NotSupportedError extends Error {
@@ -70,11 +76,21 @@ export const MICROPHONE_CONSTRAINTS: MediaStreamConstraints = {
   video: false,
 };
 
+export function microphoneConstraints(inputDeviceId?: string): MediaStreamConstraints {
+  const audio = { ...(MICROPHONE_CONSTRAINTS.audio as MediaTrackConstraints) };
+  const deviceId = inputDeviceId?.trim();
+  if (deviceId) audio.deviceId = { exact: deviceId };
+  return { audio, video: false };
+}
+
 /**
  * Meter target id of the engine's input-capture level: snapshots with this
  * targetId carry the microphone peak (dBFS) alongside master/lane records.
  */
 export const INPUT_METER_TARGET_ID = 0xffff;
+
+/** Engine capture source used for a take. */
+export type RecordingCaptureSource = Extract<EngineCaptureStatus['source'], 'input' | 'output'>;
 
 /**
  * Capture buffer length in seconds configured while idle: a small allocation
@@ -102,6 +118,8 @@ export interface RecordingResult {
   sampleRate: number;
   /** Timeline position in PPQ where the recorded material begins. */
   startPpq: number;
+  /** Number of samples dropped because the engine capture buffer filled. */
+  overflowCount?: number;
 }
 
 /** Options for {@link Recorder.start}. */
@@ -137,6 +155,10 @@ export interface MicrophoneBinding {
   stream: MediaStream;
   /** The Web Audio source node wrapping the stream. */
   source: AudioNode;
+  /** Updates an in-place realtime voice changer binding, when present. */
+  setVoiceChangerPreset?(preset: RealtimeVoiceChangerConfigInput): void;
+  /** Updates an in-place StreamingRetune binding, when present. */
+  setStreamingRetuneConfig?(config: { semitones?: number; mix?: number; grainSize?: number }): void;
   /** Disconnects the source and stops the stream tracks. */
   close(): void;
 }
@@ -154,6 +176,17 @@ export interface RecorderOptions {
     engineNode: AudioWorkletNode,
     options: { stream: MediaStream; stopTracksOnClose: boolean },
   ) => Promise<MicrophoneBinding>;
+  /** Optional realtime voice changer preset inserted between microphone and engine input. */
+  voiceChangerPreset?: RealtimeVoiceChangerConfigInput | null;
+  /** Optional StreamingRetune semitone shift inserted between microphone and engine input. */
+  streamingRetuneSemitones?: number;
+  /**
+   * Capture source. `input` records the raw microphone path; `output` records
+   * the engine master output and does not require microphone access.
+   */
+  captureSource?: RecordingCaptureSource;
+  /** Preferred audioinput device id. Empty/omitted uses the browser/OS default input. */
+  inputDeviceId?: string;
   /** Minimum interval between input-level callbacks in ms (default 50). */
   levelIntervalMs?: number;
 }
@@ -190,6 +223,10 @@ export interface Recorder {
   setMonitor(enabled: boolean, gain?: number): void;
   /** Current monitor state. */
   monitorEnabled(): boolean;
+  /** Updates an active realtime voice changer worklet, when this recorder is using one. */
+  setVoiceChangerPreset(preset: RealtimeVoiceChangerConfigInput): boolean;
+  /** Updates an active StreamingRetune worklet, when this recorder is using one. */
+  setStreamingRetuneSemitones(semitones: number): boolean;
   /**
    * Subscribes to throttled input peak levels (linear, 0..1+, max across
    * channels since the previous callback), derived from the engine's
@@ -346,6 +383,7 @@ interface ActiveTake {
  */
 export function createRecorder(handle: EngineHandle, options: RecorderOptions = {}): Recorder {
   const levelIntervalMs = options.levelIntervalMs ?? DEFAULT_LEVEL_INTERVAL_MS;
+  const captureSource: RecordingCaptureSource = options.captureSource ?? 'input';
   /** Idle capture buffer size keeping the input path configured between takes. */
   const idleBufferFrames = Math.max(1, Math.ceil(MONITOR_BUFFER_SECONDS * handle.ctx.sampleRate));
   let disposed = false;
@@ -384,21 +422,32 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
   });
 
   /**
-   * (Re)sends the engine capture config: raw input source, stereo, and the
-   * current monitor state. Re-sending preserves armed state and buffered
-   * audio, so this doubles as the monitor toggle. recordOffsetSamples is
-   * engine-side metadata only; the actual latency trim happens in stop().
+   * (Re)sends the engine capture config. Input capture uses the raw microphone
+   * source and current monitor state; output capture records the master output
+   * and keeps input monitoring disabled. Re-sending preserves armed state and
+   * buffered audio. recordOffsetSamples is also applied host-side in stop()
+   * so stored takes stay aligned even on engines that only treat it as
+   * monitor/capture metadata.
    */
-  const sendCaptureConfig = (bufferFrames: number): void => {
+  const sendCaptureConfig = (bufferFrames: number, recordOffsetSamples = 0): void => {
     captureBufferFrames = bufferFrames;
     handle.engine.configureCapture({
       bufferFrames,
       channels: 2,
-      source: 'input',
-      recordOffsetSamples: 0,
-      inputMonitor: { enabled: monitorOn, gain: monitorGainValue },
+      source: captureSource,
+      recordOffsetSamples,
+      inputMonitor: {
+        enabled: captureSource === 'input' && monitorOn,
+        gain: monitorGainValue,
+      },
     });
   };
+
+  const currentInputOffsetSamples = (): number =>
+    captureSource === 'input' && binding
+      ? defaultRecordOffsetSamples(handle.ctx) +
+        inputLatencySamples(binding.stream, handle.ctx.sampleRate)
+      : 0;
 
   /**
    * Handles the capture device vanishing mid-session: aborts any in-flight
@@ -434,13 +483,39 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     }
     let stream: MediaStream;
     try {
-      stream = await getUserMedia(MICROPHONE_CONSTRAINTS);
+      stream = await getUserMedia(microphoneConstraints(options.inputDeviceId));
     } catch (err) {
       throw new NoMicrophoneError(
         `Microphone access failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
-    const bindInput = options.bindInput ?? defaultBindInput;
+    const retuneSemitones = clampStreamingRetuneSemitones(options.streamingRetuneSemitones ?? 0);
+    const bindInput =
+      options.bindInput ??
+      (retuneSemitones !== 0 && options.voiceChangerPreset
+        ? (ctx, engineNode, bindOptions) =>
+            bindRealtimeVoiceChangerRetuneInput(ctx, engineNode, {
+              ...bindOptions,
+              preset: options.voiceChangerPreset ?? 'neutral-monitor',
+              semitones: retuneSemitones,
+              channelCount: 1,
+            })
+        : retuneSemitones !== 0
+          ? (ctx, engineNode, bindOptions) =>
+              bindStreamingRetuneInput(ctx, engineNode, {
+                ...bindOptions,
+                semitones: retuneSemitones,
+                mix: 1,
+                channelCount: 1,
+              })
+          : options.voiceChangerPreset
+            ? (ctx, engineNode, bindOptions) =>
+                bindRealtimeVoiceChangerInput(ctx, engineNode, {
+                  ...bindOptions,
+                  preset: options.voiceChangerPreset ?? 'neutral-monitor',
+                  channelCount: 1,
+                })
+            : defaultBindInput);
     const bound = await bindInput(handle.ctx, handle.engine.node, {
       stream,
       stopTracksOnClose: true,
@@ -454,13 +529,14 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     detachTrackListeners = attachTrackEndedListeners(bound.stream, handleMicrophoneLost);
     // The idle config makes the input source and the monitor state live on
     // the engine before any take starts.
-    sendCaptureConfig(idleBufferFrames);
+    sendCaptureConfig(idleBufferFrames, currentInputOffsetSamples());
   };
 
   const requestMicrophone = (): Promise<void> => {
     if (disposed) {
       return Promise.reject(new RecorderStateError('Recorder has been disposed'));
     }
+    if (captureSource === 'output') return Promise.resolve();
     if (binding) return Promise.resolve();
     if (!micPromise) {
       micPromise = openMicrophone().catch((err) => {
@@ -481,13 +557,30 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     monitorOn = enabled;
     // Re-send with the current buffer size (the recording size while a take
     // is running) so toggling the monitor never shrinks an active capture.
-    if (binding) sendCaptureConfig(captureBufferFrames);
+    if (binding) sendCaptureConfig(captureBufferFrames, currentInputOffsetSamples());
+  };
+
+  const setVoiceChangerPreset = (preset: RealtimeVoiceChangerConfigInput): boolean => {
+    if (!binding?.setVoiceChangerPreset) return false;
+    binding.setVoiceChangerPreset(preset);
+    return true;
+  };
+
+  const setStreamingRetuneSemitones = (semitones: number): boolean => {
+    if (!binding?.setStreamingRetuneConfig) return false;
+    binding.setStreamingRetuneConfig({
+      semitones: clampStreamingRetuneSemitones(semitones),
+      mix: 1,
+    });
+    return true;
   };
 
   const start = async (startOptions: StartRecordingOptions): Promise<void> => {
     if (disposed) throw new RecorderStateError('Recorder has been disposed');
     if (take) throw new RecorderStateError('Recording is already in progress');
-    if (!binding) throw new RecorderStateError('Request the microphone before recording');
+    if (captureSource === 'input' && !binding) {
+      throw new RecorderStateError('Request the microphone before recording');
+    }
     if (armedTrack === null) throw new RecorderStateError('Arm a track before recording');
     const { startPpq, tempoBpm } = startOptions;
     if (!Number.isFinite(startPpq) || startPpq < 0) {
@@ -518,8 +611,10 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     // override replaces the whole estimate.
     const offsetSamples =
       startOptions.recordOffsetSamples ??
-      defaultRecordOffsetSamples(handle.ctx) +
-        inputLatencySamples(binding.stream, handle.ctx.sampleRate);
+      (captureSource === 'input' && binding
+        ? defaultRecordOffsetSamples(handle.ctx) +
+          inputLatencySamples(binding.stream, handle.ctx.sampleRate)
+        : 0);
     if (!Number.isFinite(offsetSamples) || offsetSamples < 0) {
       throw new RangeError(
         `Recording recordOffsetSamples must be finite and >= 0, got ${offsetSamples}`,
@@ -527,7 +622,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     }
     const sampleRate = handle.ctx.sampleRate;
     const trackId = armedTrack;
-    sendCaptureConfig(Math.max(1, Math.ceil(maxDurationSeconds * sampleRate)));
+    sendCaptureConfig(Math.max(1, Math.ceil(maxDurationSeconds * sampleRate)), offsetSamples);
     await handle.engine.resetCapture();
     handle.engine.armRecord(trackId, true);
     // Punch-out = explicit endPpq or the max-duration bound; stop() disarms
@@ -552,7 +647,9 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     }
     await handle.engine.resetCapture();
     // Back to the idle config so the monitor state survives between takes.
-    if (binding) sendCaptureConfig(idleBufferFrames);
+    if (captureSource === 'output' || binding) {
+      sendCaptureConfig(idleBufferFrames, currentInputOffsetSamples());
+    }
     // Drop the input meter so it does not freeze on the last take's peak.
     resetLevel();
     // capturedAudio returns full-capacity planar buffers; only the first
@@ -565,7 +662,12 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     const kept = frames - active.offsetSamples;
     if (kept <= 0 || captured.length === 0) return null;
     const channels = captured.map((channel) => channel.slice(active.offsetSamples, frames));
-    return { channels, sampleRate: active.sampleRate, startPpq: active.startPpq };
+    return {
+      channels,
+      sampleRate: active.sampleRate,
+      startPpq: active.startPpq,
+      ...(status.overflowCount > 0 ? { overflowCount: status.overflowCount } : {}),
+    };
   };
 
   const dispose = (): void => {
@@ -591,7 +693,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
 
   return {
     requestMicrophone,
-    hasMicrophone: () => binding !== null,
+    hasMicrophone: () => captureSource === 'output' || binding !== null,
     arm(trackId: number): void {
       if (take) throw new RecorderStateError('Cannot change the armed track while recording');
       armedTrack = trackId;
@@ -604,6 +706,8 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     isRecording: () => take !== null,
     setMonitor,
     monitorEnabled: () => monitorOn,
+    setVoiceChangerPreset,
+    setStreamingRetuneSemitones,
     onLevel(listener: (peak: number) => void): () => void {
       levelListeners.add(listener);
       return () => {

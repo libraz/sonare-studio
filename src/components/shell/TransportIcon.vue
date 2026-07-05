@@ -18,6 +18,8 @@ export type TransportIconName =
   | 'metronome'
   | 'settings'
   | 'panel-right'
+  | 'undo'
+  | 'redo'
   | 'sun'
   | 'moon';
 
@@ -112,6 +114,30 @@ defineProps<{ name: TransportIconName }>();
     >
       <rect x="4" y="5" width="16" height="14" rx="2" />
       <path d="M14 5v14" />
+    </g>
+
+    <g
+      v-else-if="name === 'undo'"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.9"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <path d="M9 7 5 11l4 4" />
+      <path d="M5 11h8.5a4.5 4.5 0 1 1 0 9H11" />
+    </g>
+
+    <g
+      v-else-if="name === 'redo'"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.9"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <path d="m15 7 4 4-4 4" />
+      <path d="M19 11h-8.5a4.5 4.5 0 1 0 0 9H13" />
     </g>
 
     <g

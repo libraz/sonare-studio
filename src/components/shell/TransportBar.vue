@@ -1,15 +1,20 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import LevelMeter from '@/components/LevelMeter.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
 import TransportIcon from '@/components/shell/TransportIcon.vue';
+import type { useMidiRecording } from '@/composables/useMidiRecording';
 import type { useRecording } from '@/composables/useRecording';
+import type { RecordingInputDeviceOption } from '@/composables/useRecordingControls';
 import type { EngineHandle } from '@/engine/engine';
 import type { MeterBridge } from '@/engine/meters';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import type { RealtimeVoiceChangerConfigInput } from '@/wasm/index.js';
 
 type Recording = ReturnType<typeof useRecording>;
+type MidiRecording = ReturnType<typeof useMidiRecording>;
+type CustomVoiceChangerPreset = Exclude<RealtimeVoiceChangerConfigInput, string>;
 
 const props = defineProps<{
   autoPunchEnabled: boolean;
@@ -23,6 +28,8 @@ const props = defineProps<{
   metronomeEnabled: boolean;
   positionSeconds: number;
   recording: Recording;
+  recordingInputDeviceOptions: readonly RecordingInputDeviceOption[];
+  midiRecording: MidiRecording;
   recordMenuOpen: boolean;
   shortcutTitle: (base: string, actionId: string) => string;
   storeInitialized: boolean;
@@ -34,7 +41,10 @@ const emit = defineEmits<{
   bbtBlur: [];
   bbtFocus: [];
   countInChange: [bars: number];
+  midiInputQuantizeChange: [denominator: number];
   nudgeByBar: [direction: -1 | 1];
+  recordInputDeviceChange: [deviceId: string];
+  recordSourceChange: [source: 'input' | 'output'];
   recordMenuRef: [el: HTMLElement | null];
   seekToEnd: [];
   seekToStart: [];
@@ -64,6 +74,84 @@ const countInOptions = computed(() =>
           : formatMessage(t.value.shell.transport.countInMany, { count: String(choice.value) }),
   })),
 );
+
+const voiceChangerOptions = computed(() => [
+  { value: 'off', label: t.value.shell.transport.voiceChangerOff },
+  { value: 'neutral-monitor', label: t.value.shell.transport.voiceChangerNeutral },
+  { value: 'bright-idol', label: t.value.shell.transport.voiceChangerBright },
+  { value: 'soft-whisper', label: t.value.shell.transport.voiceChangerSoft },
+  { value: 'deep-narrator', label: t.value.shell.transport.voiceChangerDeep },
+  { value: 'robot-mascot', label: t.value.shell.transport.voiceChangerRobot },
+  { value: 'dark-villain', label: t.value.shell.transport.voiceChangerDark },
+  { value: 'custom-json', label: t.value.shell.transport.voiceChangerCustom },
+]);
+
+const recordingSourceOptions = computed(() => [
+  { value: 'input', label: t.value.shell.transport.recordSourceInput },
+  { value: 'output', label: t.value.shell.transport.recordSourceOutput },
+]);
+
+const midiInputQuantizeOptions = computed(() => [
+  { value: 0, label: t.value.shell.transport.midiInputQuantizeOff },
+  { value: 4, label: t.value.shell.transport.midiInputQuantizeQuarter },
+  { value: 8, label: t.value.shell.transport.midiInputQuantizeEighth },
+  { value: 16, label: t.value.shell.transport.midiInputQuantizeSixteenth },
+  { value: 32, label: t.value.shell.transport.midiInputQuantizeThirtySecond },
+]);
+
+const customVoiceOpen = ref(false);
+const customVoiceJson = ref('{\n  "schemaVersion": 1,\n  "macros": {},\n  "dsp": {}\n}');
+const customVoiceError = ref('');
+const voiceChangerSelectValue = computed(() =>
+  typeof props.recording.voiceChangerPreset.value === 'string'
+    ? props.recording.voiceChangerPreset.value
+    : 'custom-json',
+);
+const showCustomVoiceEditor = computed(
+  () => customVoiceOpen.value || typeof props.recording.voiceChangerPreset.value === 'object',
+);
+
+function onVoiceChangerChange(value: string | number): void {
+  const next = String(value);
+  if (next === 'custom-json') {
+    customVoiceOpen.value = true;
+    customVoiceError.value = '';
+    return;
+  }
+  customVoiceOpen.value = false;
+  customVoiceError.value = '';
+  props.recording.setVoiceChangerPreset(next as Recording['voiceChangerPreset']['value']);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function onApplyCustomVoicePreset(): void {
+  customVoiceError.value = '';
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(customVoiceJson.value);
+  } catch {
+    customVoiceError.value = t.value.shell.transport.voiceChangerJsonInvalid;
+    return;
+  }
+  if (
+    !isPlainObject(parsed) ||
+    parsed.schemaVersion !== 1 ||
+    ('macros' in parsed && !isPlainObject(parsed.macros)) ||
+    ('dsp' in parsed && !isPlainObject(parsed.dsp))
+  ) {
+    customVoiceError.value = t.value.shell.transport.voiceChangerJsonInvalid;
+    return;
+  }
+  props.recording.setVoiceChangerPreset(parsed as unknown as CustomVoiceChangerPreset);
+}
+
+function onRetuneInput(event: Event): void {
+  const value = Number((event.target as HTMLInputElement).value);
+  props.recording.setStreamingRetuneSemitones(Number.isFinite(value) ? value : 0);
+}
 </script>
 
 <template>
@@ -185,10 +273,33 @@ const countInOptions = computed(() =>
           role="group"
           :aria-label="t.shell.transport.recordingSettings"
         >
+          <label class="bar-field">
+            {{ t.shell.transport.recordSource }}
+            <SelectMenu
+              :model-value="recording.captureSource.value"
+              :options="recordingSourceOptions"
+              size="sm"
+              :disabled="recording.isRecording.value"
+              :aria-label="t.shell.transport.recordSource"
+              @change="emit('recordSourceChange', $event === 'output' ? 'output' : 'input')"
+            />
+          </label>
+          <label class="bar-field">
+            {{ t.shell.transport.inputDevice }}
+            <SelectMenu
+              :model-value="recording.inputDeviceId.value"
+              :options="recordingInputDeviceOptions"
+              size="sm"
+              :disabled="recording.isRecording.value || recording.captureSource.value === 'output'"
+              :aria-label="t.shell.transport.inputDevice"
+              @change="emit('recordInputDeviceChange', String($event))"
+            />
+          </label>
           <ToggleButton
             :model-value="recording.monitorEnabled.value"
             :label="t.shell.transport.monitorInput"
             size="sm"
+            :disabled="recording.captureSource.value === 'output'"
             @update:model-value="recording.setMonitor($event)"
           />
           <label class="bar-field">
@@ -199,6 +310,64 @@ const countInOptions = computed(() =>
               size="sm"
               :aria-label="t.shell.transport.countIn"
               @change="emit('countInChange', $event)"
+            />
+          </label>
+          <label class="bar-field">
+            {{ t.shell.transport.midiInputQuantize }}
+            <SelectMenu
+              :model-value="midiRecording.inputQuantizeDenominator.value"
+              :options="midiInputQuantizeOptions"
+              size="sm"
+              :disabled="midiRecording.isRecording.value"
+              :aria-label="t.shell.transport.midiInputQuantize"
+              @change="emit('midiInputQuantizeChange', Number($event))"
+            />
+          </label>
+          <label class="bar-field">
+            {{ t.shell.transport.voiceChanger }}
+            <SelectMenu
+              :model-value="voiceChangerSelectValue"
+              :options="voiceChangerOptions"
+              size="sm"
+              :disabled="recording.isRecording.value || recording.captureSource.value === 'output'"
+              :aria-label="t.shell.transport.voiceChanger"
+              @change="onVoiceChangerChange"
+            />
+          </label>
+          <div v-if="showCustomVoiceEditor" class="voice-json-field">
+            <label>
+              {{ t.shell.transport.voiceChangerJson }}
+              <textarea
+                v-model="customVoiceJson"
+                rows="5"
+                spellcheck="false"
+                :disabled="recording.isRecording.value || recording.captureSource.value === 'output'"
+                :aria-label="t.shell.transport.voiceChangerJson"
+              />
+            </label>
+            <button
+              type="button"
+              :disabled="recording.isRecording.value || recording.captureSource.value === 'output'"
+              @click="onApplyCustomVoicePreset"
+            >
+              {{ t.shell.transport.voiceChangerApply }}
+            </button>
+            <p v-if="customVoiceError" class="voice-json-error" role="alert">
+              {{ customVoiceError }}
+            </p>
+          </div>
+          <label class="bar-field">
+            {{ t.shell.transport.retune }}
+            <input
+              class="num"
+              type="number"
+              min="-24"
+              max="24"
+              step="1"
+              :value="recording.streamingRetuneSemitones.value"
+              :disabled="recording.isRecording.value || recording.captureSource.value === 'output'"
+              :aria-label="t.shell.transport.retune"
+              @change="onRetuneInput"
             />
           </label>
           <ToggleButton

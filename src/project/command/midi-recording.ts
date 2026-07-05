@@ -1,5 +1,12 @@
 import type { RawNote } from '../midi-events';
 import { getProject, notesToProjectEvents, useProjectStore } from '../store';
+import type {
+  ClipCcLane,
+  ClipChannelPressureLane,
+  ClipPitchBendLane,
+  ClipPolyPressureLane,
+  ClipProgramChangeLane,
+} from '../types';
 import { execute } from './history';
 import { requireTrack } from './utils';
 
@@ -13,6 +20,16 @@ export interface AddRecordedMidiClipInput {
   lengthPpq: number;
   /** Recorded notes, relative to the clip window (startPpq from 0). */
   notes: ReadonlyArray<RawNote>;
+  /** Recorded continuous-controller lanes, relative to the clip window. */
+  ccLanes?: ReadonlyArray<ClipCcLane>;
+  /** Recorded pitch-bend lanes, relative to the clip window. */
+  pitchBendLanes?: ReadonlyArray<ClipPitchBendLane>;
+  /** Recorded program-change lanes, relative to the clip window. */
+  programChangeLanes?: ReadonlyArray<ClipProgramChangeLane>;
+  /** Recorded channel-pressure lanes, relative to the clip window. */
+  channelPressureLanes?: ReadonlyArray<ClipChannelPressureLane>;
+  /** Recorded polyphonic key-pressure lanes, relative to the clip window. */
+  polyPressureLanes?: ReadonlyArray<ClipPolyPressureLane>;
   /** Clip display name (app-level); defaults to "Clip N". */
   name?: string;
 }
@@ -57,7 +74,14 @@ export function addRecordedMidiClip(input: AddRecordedMidiClipInput): number {
     if (events.length > 0) {
       project.setMidiEvents(newClipId, events);
     }
-    if (input.name !== undefined) {
+    if (
+      input.name !== undefined ||
+      input.ccLanes !== undefined ||
+      input.pitchBendLanes !== undefined ||
+      input.programChangeLanes !== undefined ||
+      input.channelPressureLanes !== undefined ||
+      input.polyPressureLanes !== undefined
+    ) {
       // Seed the mirror entry so refresh keeps the app-level name; refresh
       // rebuilds the notes from the Project.
       store.clips = [
@@ -65,7 +89,7 @@ export function addRecordedMidiClip(input: AddRecordedMidiClipInput): number {
         {
           id: newClipId,
           trackId: input.trackId,
-          name: input.name,
+          name: input.name ?? `Clip ${newClipId}`,
           startPpq: input.startPpq,
           lengthPpq: input.lengthPpq,
           sourceOffsetPpq: 0,
@@ -73,6 +97,46 @@ export function addRecordedMidiClip(input: AddRecordedMidiClipInput): number {
           loopEnabled: false,
           loopLengthPpq: 0,
           notes: [],
+          ...(input.ccLanes !== undefined
+            ? {
+                ccLanes: input.ccLanes.map((lane) => ({
+                  ...lane,
+                  points: lane.points.map((p) => ({ ...p })),
+                })),
+              }
+            : {}),
+          ...(input.pitchBendLanes !== undefined
+            ? {
+                pitchBendLanes: input.pitchBendLanes.map((lane) => ({
+                  ...lane,
+                  points: lane.points.map((p) => ({ ...p })),
+                })),
+              }
+            : {}),
+          ...(input.programChangeLanes !== undefined
+            ? {
+                programChangeLanes: input.programChangeLanes.map((lane) => ({
+                  ...lane,
+                  points: lane.points.map((p) => ({ ...p })),
+                })),
+              }
+            : {}),
+          ...(input.channelPressureLanes !== undefined
+            ? {
+                channelPressureLanes: input.channelPressureLanes.map((lane) => ({
+                  ...lane,
+                  points: lane.points.map((p) => ({ ...p })),
+                })),
+              }
+            : {}),
+          ...(input.polyPressureLanes !== undefined
+            ? {
+                polyPressureLanes: input.polyPressureLanes.map((lane) => ({
+                  ...lane,
+                  points: lane.points.map((p) => ({ ...p })),
+                })),
+              }
+            : {}),
         },
       ];
     }

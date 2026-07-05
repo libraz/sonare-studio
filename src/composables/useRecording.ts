@@ -19,11 +19,13 @@ import type { MaybeRefOrGetter, Ref } from 'vue';
 import { getCurrentScope, onScopeDispose, ref, toValue, watch } from 'vue';
 import type { EngineHandle } from '@/engine/engine';
 import type { Recorder, RecordingResult } from '@/engine/recorder';
-import { createRecorder } from '@/engine/recorder';
+import { createRecorder, type RecordingCaptureSource } from '@/engine/recorder';
+import { clampStreamingRetuneSemitones } from '@/engine/streaming-retune';
 import { describeError } from '@/lib/errors';
 import type { AudioAssetMeta } from '@/persistence/assets';
 import { ingestAudioBuffer } from '@/project/audio-import';
 import { addAudioClip } from '@/project/commands';
+import { loopRecordingSplits, loopRecordingTakeSlices } from '@/project/loop-recording';
 import { ppqToSeconds } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
 import {
@@ -32,15 +34,33 @@ import {
   secondsToPpq as secondsToPpqMap,
 } from '@/project/tempo-map';
 import { timeSignatureAt } from '@/project/time-signature';
+import type { RealtimeVoiceChangerConfigInput } from '@/wasm/index.js';
 import type { UseTransportReturn } from './useTransport';
 
 /** Error message shown when recording is attempted before the engine runs. */
 const ENGINE_NOT_STARTED_MESSAGE = 'Start the engine before recording.';
+const RECORDING_OVERFLOW_MESSAGE =
+  'Recording reached the capture buffer limit; the end of the take was dropped.';
+
+interface RecordingChannelRoute {
+  trackId: number;
+  channelIndex: number | null;
+}
+
+export type RecordingVoiceChangerPreset = 'off' | RealtimeVoiceChangerConfigInput;
 
 /** Injectable dependencies for {@link useRecording} (tests / alternatives). */
 export interface UseRecordingOptions {
   /** Recorder factory; defaults to createRecorder from src/engine/recorder. */
-  createRecorder?: (handle: EngineHandle) => Recorder;
+  createRecorder?: (
+    handle: EngineHandle,
+    options?: {
+      voiceChangerPreset?: RealtimeVoiceChangerConfigInput | null;
+      streamingRetuneSemitones?: number;
+      captureSource?: RecordingCaptureSource;
+      inputDeviceId?: string;
+    },
+  ) => Recorder;
   /**
    * Take ingestion into the asset store; defaults to ingestAudioBuffer with
    * tempo/key analysis disabled (recordings should land instantly).
@@ -52,6 +72,8 @@ export interface UseRecordingOptions {
 export interface UseRecordingReturn {
   /** The armed (record-destination) audio track id, or null. */
   armedTrackId: Ref<number | null>;
+  /** All armed audio track ids. Multiple tracks receive the same input take. */
+  armedTrackIds: Ref<readonly number[]>;
   /** True between a successful record() and the matching stopRecord(). */
   isRecording: Ref<boolean>;
   /** True while the metronome count-in pre-roll is running. */
@@ -64,6 +86,14 @@ export interface UseRecordingReturn {
   monitorEnabled: Ref<boolean>;
   /** Count-in length in bars applied by record() when starting from stop. */
   countInBars: Ref<number>;
+  /** Realtime voice changer preset applied to the next microphone binding. */
+  voiceChangerPreset: Ref<RecordingVoiceChangerPreset>;
+  /** StreamingRetune semitone shift applied to the next microphone binding. */
+  streamingRetuneSemitones: Ref<number>;
+  /** Capture source: raw microphone input or the engine master output. */
+  captureSource: Ref<RecordingCaptureSource>;
+  /** Selected browser audioinput device id; empty string uses the default input. */
+  inputDeviceId: Ref<string>;
   /** Last user-facing error message, or null. Cleared by the next action. */
   error: Ref<string | null>;
   /**
@@ -77,11 +107,21 @@ export interface UseRecordingReturn {
    * Non-audio tracks are rejected with `error` set.
    */
   arm(trackId: number | null): void;
+  /** Arms/disarms one audio track without clearing other armed audio tracks. */
+  setTrackArmed(trackId: number, armed: boolean): void;
   /**
    * Enables/disables input monitoring (delegates to the recorder; the
    * desired state is remembered until the engine and microphone exist).
    */
   setMonitor(enabled: boolean, gain?: number): void;
+  /** Sets the realtime voice changer preset for microphone recording/monitoring. */
+  setVoiceChangerPreset(preset: RecordingVoiceChangerPreset): void;
+  /** Sets StreamingRetune semitone shift for microphone recording/monitoring. */
+  setStreamingRetuneSemitones(semitones: number): void;
+  /** Sets the source captured by the next recording take. */
+  setCaptureSource(source: RecordingCaptureSource): void;
+  /** Sets the microphone input device used by the next input capture binding. */
+  setInputDeviceId(deviceId: string): void;
   /**
    * Starts recording on the armed track: requests the microphone when needed,
    * pre-rolls the count-in (metronome forced on for its duration when it was
@@ -131,12 +171,17 @@ export function useRecording(
       ingestAudioBuffer(channels, sampleRate, name, { analysis: null }));
 
   const armedTrackId = ref<number | null>(null);
+  const armedTrackIds = ref<number[]>([]);
   const isRecording = ref(false);
   const isCountingIn = ref(false);
   const inputLevel = ref(0);
   const micReady = ref(false);
   const monitorEnabled = ref(false);
   const countInBars = ref(0);
+  const voiceChangerPreset = ref<RecordingVoiceChangerPreset>('off');
+  const streamingRetuneSemitones = ref(0);
+  const captureSource = ref<RecordingCaptureSource>('input');
+  const inputDeviceId = ref('');
   const error = ref<string | null>(null);
 
   let recorder: Recorder | null = null;
@@ -145,8 +190,9 @@ export function useRecording(
   let unsubscribeMicLost: (() => void) | null = null;
   let countInTimer: ReturnType<typeof setTimeout> | null = null;
   let restoreMetronomeOff = false;
-  let recordingTrackId: number | null = null;
+  let recordingTrackIds: number[] = [];
   let recordingTempoBpm = 120;
+  let recordingCaptureSource: RecordingCaptureSource = 'input';
   let recordingCounter = 0;
   let recordingLoop: { startPpq: number; endPpq: number } | null = null;
 
@@ -165,7 +211,15 @@ export function useRecording(
     recorder?.dispose();
     micReady.value = false;
     inputLevel.value = 0;
-    recorder = recorderFactory(handle);
+    recorder = recorderFactory(handle, {
+      voiceChangerPreset:
+        voiceChangerPreset.value === 'off'
+          ? null
+          : (voiceChangerPreset.value as RealtimeVoiceChangerConfigInput),
+      streamingRetuneSemitones: streamingRetuneSemitones.value,
+      captureSource: captureSource.value,
+      inputDeviceId: inputDeviceId.value,
+    });
     recorderHandle = handle;
     unsubscribeLevel = recorder.onLevel((peak) => {
       inputLevel.value = peak;
@@ -176,7 +230,8 @@ export function useRecording(
       // the partial take, so no silent all-zero clip lands).
       finishCountIn();
       isRecording.value = false;
-      recordingTrackId = null;
+      recordingTrackIds = [];
+      recordingCaptureSource = captureSource.value;
       recordingLoop = null;
       micReady.value = false;
       inputLevel.value = 0;
@@ -206,6 +261,10 @@ export function useRecording(
       error.value = ENGINE_NOT_STARTED_MESSAGE;
       return false;
     }
+    if (captureSource.value === 'output') {
+      micReady.value = true;
+      return true;
+    }
     try {
       await rec.requestMicrophone();
     } catch (err) {
@@ -224,6 +283,7 @@ export function useRecording(
     }
     if (trackId === null) {
       armedTrackId.value = null;
+      armedTrackIds.value = [];
       return;
     }
     const track = store.tracks.find((t) => t.id === trackId);
@@ -236,11 +296,119 @@ export function useRecording(
       return;
     }
     armedTrackId.value = trackId;
+    armedTrackIds.value = [trackId];
+  };
+
+  const setTrackArmed = (trackId: number, armed: boolean): void => {
+    error.value = null;
+    if (isRecording.value) {
+      error.value = 'Cannot change the armed track while recording.';
+      return;
+    }
+    const track = store.tracks.find((t) => t.id === trackId);
+    if (!track) {
+      error.value = `Unknown track id: ${trackId}`;
+      return;
+    }
+    if (track.kind !== 'audio') {
+      error.value = 'Recording requires an audio track.';
+      return;
+    }
+    const next = armed
+      ? Array.from(new Set([...armedTrackIds.value, trackId]))
+      : armedTrackIds.value.filter((id) => id !== trackId);
+    armedTrackIds.value = next;
+    armedTrackId.value = next[0] ?? null;
   };
 
   const setMonitor = (enabled: boolean, gain?: number): void => {
     monitorEnabled.value = enabled;
     ensureRecorder()?.setMonitor(enabled, gain);
+  };
+
+  const resetRecorderBinding = (): void => {
+    if (!recorder) return;
+    unsubscribeLevel?.();
+    unsubscribeLevel = null;
+    unsubscribeMicLost?.();
+    unsubscribeMicLost = null;
+    recorder.dispose();
+    recorder = null;
+    recorderHandle = null;
+    micReady.value = false;
+    inputLevel.value = 0;
+  };
+
+  const setVoiceChangerPreset = (preset: RecordingVoiceChangerPreset): void => {
+    error.value = null;
+    if (isRecording.value) {
+      voiceChangerPreset.value = preset;
+      if (preset === 'off' || !recorder?.setVoiceChangerPreset(preset)) {
+        error.value = 'Voice changer changes will apply to the next microphone binding.';
+      }
+      return;
+    }
+    voiceChangerPreset.value = preset;
+    resetRecorderBinding();
+  };
+
+  const setStreamingRetuneSemitones = (semitones: number): void => {
+    error.value = null;
+    if (isRecording.value) {
+      streamingRetuneSemitones.value = clampStreamingRetuneSemitones(semitones);
+      if (!recorder?.setStreamingRetuneSemitones(streamingRetuneSemitones.value)) {
+        error.value = 'Retune changes will apply to the next microphone binding.';
+      }
+      return;
+    }
+    streamingRetuneSemitones.value = clampStreamingRetuneSemitones(semitones);
+    resetRecorderBinding();
+  };
+
+  const setCaptureSource = (source: RecordingCaptureSource): void => {
+    error.value = null;
+    if (source !== 'input' && source !== 'output') {
+      error.value = `Unknown recording source: ${source}`;
+      return;
+    }
+    if (isRecording.value) {
+      error.value = 'Recording source changes will apply to the next take.';
+      return;
+    }
+    if (captureSource.value === source) return;
+    captureSource.value = source;
+    resetRecorderBinding();
+  };
+
+  const setInputDeviceId = (deviceId: string): void => {
+    error.value = null;
+    const next = deviceId.trim();
+    if (isRecording.value) {
+      error.value = 'Input device changes will apply to the next take.';
+      return;
+    }
+    if (inputDeviceId.value === next) return;
+    inputDeviceId.value = next;
+    resetRecorderBinding();
+  };
+
+  const recordingChannelRoutes = (
+    trackIds: ReadonlyArray<number>,
+    source: RecordingCaptureSource,
+    channelCount: number,
+  ): RecordingChannelRoute[] => {
+    if (source !== 'input' || trackIds.length <= 1 || channelCount < trackIds.length) {
+      return trackIds.map((trackId) => ({ trackId, channelIndex: null }));
+    }
+    return trackIds.map((trackId, trackIndex) => {
+      const track = store.tracks.find((entry) => entry.id === trackId);
+      const requested = track?.kind === 'audio' ? track.recordInputChannel : undefined;
+      const channelIndex =
+        requested !== undefined && requested >= 0 && requested < channelCount
+          ? requested
+          : trackIndex;
+      return { trackId, channelIndex };
+    });
   };
 
   const record = async (startAtPpq?: number, endAtPpq?: number): Promise<boolean> => {
@@ -254,17 +422,23 @@ export function useRecording(
       error.value = ENGINE_NOT_STARTED_MESSAGE;
       return false;
     }
-    const trackId = armedTrackId.value;
-    if (trackId === null) {
+    const targetTrackIds = [...armedTrackIds.value];
+    if (targetTrackIds.length === 0) {
       error.value = 'Arm an audio track before recording.';
       return false;
     }
-    const track = store.tracks.find((t) => t.id === trackId);
-    if (track?.kind !== 'audio') {
+    if (
+      targetTrackIds.some((id) => {
+        const track = store.tracks.find((t) => t.id === id);
+        return track?.kind !== 'audio';
+      })
+    ) {
       error.value = 'Recording requires an audio track.';
       return false;
     }
-    if (!rec.hasMicrophone() && !(await requestMic())) return false;
+    if (captureSource.value === 'input' && !rec.hasMicrophone() && !(await requestMic())) {
+      return false;
+    }
 
     const tempoBpm = transport.tempo.value;
     let startPpq = Math.max(0, transport.positionPpq.value);
@@ -327,7 +501,7 @@ export function useRecording(
       startOptions.maxDurationSeconds = endSeconds - startSeconds;
     }
     try {
-      rec.arm(trackId);
+      rec.arm(targetTrackIds[0]);
       // The punch window starts at startPpq, so the count-in pre-roll (the
       // transport was seeked earlier above) is never part of the capture.
       await rec.start(startOptions);
@@ -336,8 +510,9 @@ export function useRecording(
       error.value = messageOf(err);
       return false;
     }
-    recordingTrackId = trackId;
+    recordingTrackIds = targetTrackIds;
     recordingTempoBpm = tempoBpm;
+    recordingCaptureSource = captureSource.value;
     // Cycle mode: loop enabled and the capture starts at the loop start (a
     // punch-in elsewhere, or an explicit auto-punch, records one linear take).
     const loopStart = transport.loopStartPpq.value;
@@ -364,8 +539,11 @@ export function useRecording(
     if (!isRecording.value || !recorder) return null;
     finishCountIn();
     isRecording.value = false;
-    const trackId = recordingTrackId ?? armedTrackId.value;
-    recordingTrackId = null;
+    const targetTrackIds =
+      recordingTrackIds.length > 0 ? recordingTrackIds : [...armedTrackIds.value];
+    recordingTrackIds = [];
+    const recordSource = recordingCaptureSource;
+    recordingCaptureSource = captureSource.value;
     // Consume the loop state up front so an empty take or a failed stop cannot
     // leave it set to bleed into the next recording.
     const loop = recordingLoop;
@@ -378,7 +556,8 @@ export function useRecording(
       return null;
     }
     if (!result || result.channels.length === 0 || result.channels[0].length === 0) return null;
-    if (trackId === null) return null;
+    if (targetTrackIds.length === 0) return null;
+    const overflowed = (result.overflowCount ?? 0) > 0;
     // Convert captured wall-clock seconds back to grid PPQ through the full
     // tempo map (constant-tempo projects collapse to the old scalar math), so a
     // take on a tempo ramp lands the right length and cycle splits hit the loop
@@ -394,44 +573,65 @@ export function useRecording(
         const loopSeconds =
           ppqToSecondsMap(tempoMap, loop.endPpq) - ppqToSecondsMap(tempoMap, loop.startPpq);
         const framesPerCycle = loopSeconds * result.sampleRate;
-        let cycles = 0;
-        while (
-          framesPerCycle > 0 &&
-          Math.round((cycles + 1) * framesPerCycle) <= result.channels[0].length
-        ) {
-          cycles += 1;
-        }
-        if (cycles >= 2) {
-          const takes: { assetId: string; name: string }[] = [];
-          for (let cycle = 0; cycle < cycles; cycle++) {
-            const begin = Math.round(cycle * framesPerCycle);
-            const end = Math.round((cycle + 1) * framesPerCycle);
-            const slice = result.channels.map((channel) => channel.slice(begin, end));
-            const takeName = `${name} — Take ${cycle + 1}`;
-            const takeMeta = await ingest(slice, result.sampleRate, takeName);
-            takes.push({ assetId: takeMeta.id, name: takeName });
+        const splits = loopRecordingSplits(result.channels[0].length, framesPerCycle);
+        if (splits.length >= 2) {
+          const routes = recordingChannelRoutes(
+            targetTrackIds,
+            recordSource,
+            result.channels.length,
+          );
+          let firstClipId: number | null = null;
+          for (const route of routes) {
+            const takes: { assetId: string; name: string }[] = [];
+            const sourceChannels =
+              route.channelIndex === null ? result.channels : [result.channels[route.channelIndex]];
+            for (const takeSlice of loopRecordingTakeSlices(sourceChannels, splits)) {
+              const takeName = `${name} — Take ${takeSlice.index + 1}`;
+              const takeMeta = await ingest(takeSlice.channels, result.sampleRate, takeName);
+              takes.push({ assetId: takeMeta.id, name: takeName });
+            }
+            if (takes.length < 2) continue;
+            const clipId = await addAudioClip({
+              trackId: route.trackId,
+              assetId: takes[takes.length - 1].assetId,
+              startPpq: loop.startPpq,
+              lengthPpq: loopLengthPpq,
+              name,
+              takes,
+            });
+            firstClipId ??= clipId;
           }
-          return await addAudioClip({
-            trackId,
-            assetId: takes[takes.length - 1].assetId,
-            startPpq: loop.startPpq,
-            lengthPpq: loopLengthPpq,
-            name,
-            takes,
-          });
+          if (overflowed) error.value = RECORDING_OVERFLOW_MESSAGE;
+          return firstClipId;
         }
       }
-      const meta = await ingest(result.channels, result.sampleRate, name);
       const recordedSeconds = result.channels[0].length / result.sampleRate;
       const startSeconds = ppqToSecondsMap(tempoMap, result.startPpq);
       const lengthPpq = secondsToPpqMap(tempoMap, startSeconds + recordedSeconds) - result.startPpq;
-      return await addAudioClip({
-        trackId,
-        assetId: meta.id,
-        startPpq: result.startPpq,
-        lengthPpq,
-        name,
-      });
+      let firstClipId: number | null = null;
+      const routes = recordingChannelRoutes(targetTrackIds, recordSource, result.channels.length);
+      const sharedMeta = routes.some((route) => route.channelIndex !== null)
+        ? null
+        : await ingest(result.channels, result.sampleRate, name);
+      for (const route of routes) {
+        const meta =
+          sharedMeta ??
+          (await ingest(
+            [result.channels[route.channelIndex as number]],
+            result.sampleRate,
+            `${name} — Ch ${(route.channelIndex as number) + 1}`,
+          ));
+        const clipId = await addAudioClip({
+          trackId: route.trackId,
+          assetId: meta.id,
+          startPpq: result.startPpq,
+          lengthPpq,
+          name,
+        });
+        firstClipId ??= clipId;
+      }
+      if (overflowed) error.value = RECORDING_OVERFLOW_MESSAGE;
+      return firstClipId;
     } catch (err) {
       error.value = `Failed to store the recording: ${messageOf(err)}`;
       return null;
@@ -457,7 +657,7 @@ export function useRecording(
     recorder?.dispose();
     recorder = null;
     recorderHandle = null;
-    recordingTrackId = null;
+    recordingTrackIds = [];
     isRecording.value = false;
     micReady.value = false;
   };
@@ -468,16 +668,26 @@ export function useRecording(
 
   return {
     armedTrackId,
+    armedTrackIds,
     isRecording,
     isCountingIn,
     inputLevel,
     micReady,
     monitorEnabled,
     countInBars,
+    voiceChangerPreset,
+    streamingRetuneSemitones,
+    captureSource,
+    inputDeviceId,
     error,
     requestMic,
     arm,
+    setTrackArmed,
     setMonitor,
+    setVoiceChangerPreset,
+    setStreamingRetuneSemitones,
+    setCaptureSource,
+    setInputDeviceId,
     record,
     stopRecord,
     dispose,

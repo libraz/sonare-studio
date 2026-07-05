@@ -1,4 +1,4 @@
-import { computed, type Ref, ref, type ShallowRef, watch } from 'vue';
+import { computed, onScopeDispose, type Ref, ref, type ShallowRef, watch } from 'vue';
 import {
   barBeatFromPpq,
   formatBarBeatTick,
@@ -49,6 +49,8 @@ export function useTransportControls(options: TransportControlsOptions) {
   const bbtDisplay = computed(() => (bbtEditing.value ? bbtDraft.value : positionBbt.value));
 
   let autoPunchArming = false;
+  let disposed = false;
+  let playbackStartGeneration = 0;
 
   function togglePlayback(): void {
     if (options.isPlaying.value) {
@@ -61,7 +63,9 @@ export function useTransportControls(options: TransportControlsOptions) {
   function startPlayback(): void {
     if (options.isPlaying.value) return;
     if (!options.handle.value) {
+      const generation = ++playbackStartGeneration;
       void options.ensureEngineStarted().then((h) => {
+        if (disposed || generation !== playbackStartGeneration || options.isPlaying.value) return;
         if (h) options.transport.play();
       });
       return;
@@ -70,6 +74,7 @@ export function useTransportControls(options: TransportControlsOptions) {
   }
 
   function stopPlayback(): void {
+    playbackStartGeneration++;
     if (options.handle.value) options.transport.stop();
   }
 
@@ -192,6 +197,11 @@ export function useTransportControls(options: TransportControlsOptions) {
     void options.recording.record(punchAt, options.loopEndPpq.value).finally(() => {
       autoPunchArming = false;
     });
+  });
+
+  onScopeDispose(() => {
+    disposed = true;
+    playbackStartGeneration++;
   });
 
   return {

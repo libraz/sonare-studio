@@ -70,6 +70,29 @@ describe('addRecordedMidiClip', () => {
     expect(store.notes).toEqual([]);
   });
 
+  it('preserves recorded program-change lanes across refresh and history', () => {
+    const trackId = store.tracks[0].id;
+    const clipId = addRecordedMidiClip({
+      trackId,
+      startPpq: 0,
+      lengthPpq: 4,
+      notes: [],
+      programChangeLanes: [{ channel: 2, points: [{ ppq: 1, program: 24 }] }],
+    });
+    setActiveClip(clipId);
+    expect(store.activeClip?.programChangeLanes).toEqual([
+      { channel: 2, points: [{ ppq: 1, program: 24 }] },
+    ]);
+
+    expect(undo()).toBe(true);
+    expect(store.clips.find((clip) => clip.id === clipId)).toBeUndefined();
+    expect(redo()).toBe(true);
+    setActiveClip(clipId);
+    expect(store.activeClip?.programChangeLanes).toEqual([
+      { channel: 2, points: [{ ppq: 1, program: 24 }] },
+    ]);
+  });
+
   it('rejects recording onto a non-MIDI track', () => {
     const audioTrackId = addAudioTrack({ name: 'Vox' });
     expect(() =>

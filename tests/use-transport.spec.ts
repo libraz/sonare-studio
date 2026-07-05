@@ -79,6 +79,7 @@ describe('useTransport', () => {
 
   afterEach(() => {
     for (const dispose of disposers.splice(0)) dispose();
+    vi.unstubAllGlobals();
   });
 
   it('play() delegates to engine.transport.play and sets isPlaying', () => {
@@ -185,6 +186,23 @@ describe('useTransport', () => {
     expect(transport.positionSeconds.value).toBe(4);
   });
 
+  it('exposes a copied tempo map for downstream timing consumers', () => {
+    const mock = createMockHandle();
+    const { transport } = setup(mock.handle);
+    const segments = [
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 4, bpm: 90, endBpm: 60 },
+    ];
+
+    transport.setTempoMap(segments);
+    segments[1].bpm = 1;
+
+    expect(transport.tempoSegments.value).toEqual([
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 4, bpm: 90, endBpm: 60 },
+    ]);
+  });
+
   it('setLoop() delegates and mirrors the loop range', () => {
     const mock = createMockHandle();
     const { transport } = setup(mock.handle);
@@ -255,5 +273,20 @@ describe('useTransport', () => {
     transport.dispose();
     mock.emitTelemetry({ type: 0, timelineSample: 48000 });
     expect(transport.positionSeconds.value).toBe(0);
+  });
+
+  it('cancels the telemetry polling frame on dispose()', () => {
+    const requestAnimationFrame = vi.fn(() => 51);
+    const cancelAnimationFrame = vi.fn();
+    vi.stubGlobal('requestAnimationFrame', requestAnimationFrame);
+    vi.stubGlobal('cancelAnimationFrame', cancelAnimationFrame);
+    const mock = createMockHandle();
+    const { transport } = setup(mock.handle);
+
+    expect(transport.play()).toBe(true);
+    expect(requestAnimationFrame).toHaveBeenCalledTimes(1);
+
+    transport.dispose();
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(51);
   });
 });

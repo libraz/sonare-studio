@@ -2,6 +2,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { effectScope, nextTick, ref, shallowRef } from 'vue';
 import { useTransportControls } from '@/composables/useTransportControls';
+import type { EngineHandle } from '@/engine/engine';
 import { useProjectStore } from '@/project/store';
 
 vi.mock('@/lib/wasm', async () => {
@@ -9,6 +10,15 @@ vi.mock('@/lib/wasm', async () => {
   const fakeModule = createFakeWasmModule();
   return { ensureWasm: async () => fakeModule };
 });
+
+/** Creates a manually-resolved promise for async race tests. */
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
 
 /** Builds a transport-controls harness with controllable refs and fakes. */
 function harness() {
@@ -141,5 +151,76 @@ describe('useTransportControls auto-punch', () => {
     h.positionPpq.value = 20;
     await nextTick();
     expect(h.record).not.toHaveBeenCalled();
+  });
+});
+
+describe('useTransportControls playback start races', () => {
+  beforeEach(async () => {
+    setActivePinia(createPinia());
+    const store = useProjectStore();
+    store.dispose();
+    await store.init();
+  });
+
+  function playbackHarness() {
+    const pendingStart = deferred<EngineHandle | null>();
+    const isPlaying = ref(false);
+    const transport = {
+      play: vi.fn(),
+      stop: vi.fn(),
+      seekPpq: vi.fn(),
+      setLoop: vi.fn(),
+      setTempo: vi.fn(),
+    } as unknown as Parameters<typeof useTransportControls>[0]['transport'];
+    const recording = {
+      armedTrackId: ref<number | null>(null),
+      isRecording: ref(false),
+      record: vi.fn(async () => true),
+      stopRecord: vi.fn(async () => true),
+    } as unknown as Parameters<typeof useTransportControls>[0]['recording'];
+    const scope = effectScope();
+    const controls = scope.run(() =>
+      useTransportControls({
+        errorMessage: ref(''),
+        handle: shallowRef(null),
+        isPlaying,
+        loopEnabled: ref(false),
+        loopEndPpq: ref(0),
+        loopStartPpq: ref(0),
+        positionPpq: ref(0),
+        recording,
+        tempo: ref(120),
+        transport,
+        ensureEngineStarted: () => pendingStart.promise,
+        onStopped: () => {},
+        scheduleApply: () => {},
+        syncTransportState: () => {},
+      }),
+    );
+    if (!controls) throw new Error('effect scope did not run');
+    return { controls, scope, pendingStart, transport };
+  }
+
+  it('does not play after a pending engine start is stopped', async () => {
+    const h = playbackHarness();
+
+    h.controls.startPlayback();
+    h.controls.stopPlayback();
+    h.pendingStart.resolve({} as EngineHandle);
+    await nextTick();
+
+    expect(h.transport.play).not.toHaveBeenCalled();
+    h.scope.stop();
+  });
+
+  it('does not play after the owning scope is stopped during engine start', async () => {
+    const h = playbackHarness();
+
+    h.controls.startPlayback();
+    h.scope.stop();
+    h.pendingStart.resolve({} as EngineHandle);
+    await nextTick();
+
+    expect(h.transport.play).not.toHaveBeenCalled();
   });
 });

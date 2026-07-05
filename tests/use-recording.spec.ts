@@ -1,13 +1,18 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { computed, ref } from 'vue';
+import { computed, effectScope, ref } from 'vue';
 import { useRecording } from '@/composables/useRecording';
 import type { UseTransportReturn } from '@/composables/useTransport';
 import type { EngineHandle } from '@/engine/engine';
 import type { Recorder, RecordingResult, StartRecordingOptions } from '@/engine/recorder';
 import { NoMicrophoneError } from '@/engine/recorder';
 import type { AudioAssetMeta } from '@/persistence/assets';
-import { addAudioTrack, clearHistory, setTempoSegments } from '@/project/commands';
+import {
+  addAudioTrack,
+  clearHistory,
+  setTempoSegments,
+  setTrackRecordInputChannel,
+} from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 
 vi.mock('@/lib/wasm', async () => {
@@ -88,6 +93,8 @@ function makeFakeRecorder() {
     isRecording: () => recording,
     setMonitor: vi.fn(),
     monitorEnabled: () => false,
+    setVoiceChangerPreset: vi.fn(() => true),
+    setStreamingRetuneSemitones: vi.fn(() => true),
     onLevel: vi.fn((listener: (peak: number) => void) => {
       levelListener = listener;
       return () => {
@@ -128,15 +135,19 @@ function makeFakeRecorder() {
 
 const fakeHandle = { engine: {}, ctx: { sampleRate: 48000 } } as unknown as EngineHandle;
 
-const ingestMock = vi.fn(
-  async (channels: Float32Array[], sampleRate: number, name: string): Promise<AudioAssetMeta> => ({
-    id: 'rec-asset',
-    name,
-    sampleRate,
-    numChannels: channels.length,
-    numFrames: channels[0]?.length ?? 0,
-  }),
-);
+const defaultIngest = async (
+  channels: Float32Array[],
+  sampleRate: number,
+  name: string,
+): Promise<AudioAssetMeta> => ({
+  id: 'rec-asset',
+  name,
+  sampleRate,
+  numChannels: channels.length,
+  numFrames: channels[0]?.length ?? 0,
+});
+
+const ingestMock = vi.fn(defaultIngest);
 
 describe('useRecording', () => {
   let store: ReturnType<typeof useProjectStore>;
@@ -161,7 +172,8 @@ describe('useRecording', () => {
     store = useProjectStore();
     store.dispose();
     clearHistory();
-    ingestMock.mockClear();
+    ingestMock.mockReset();
+    ingestMock.mockImplementation(defaultIngest);
     await store.init();
   });
 
@@ -196,9 +208,127 @@ describe('useRecording', () => {
     recording.arm(audioTrackId);
     expect(recording.error.value).toBeNull();
     expect(recording.armedTrackId.value).toBe(audioTrackId);
+    expect(recording.armedTrackIds.value).toEqual([audioTrackId]);
 
     recording.arm(null);
     expect(recording.armedTrackId.value).toBeNull();
+    expect(recording.armedTrackIds.value).toEqual([]);
+  });
+
+  it('arms multiple audio tracks and lands one captured take on each destination', async () => {
+    const { recording, fake } = setup();
+    const firstTrackId = addAudioTrack({ name: 'Vox 1' });
+    const secondTrackId = addAudioTrack({ name: 'Vox 2' });
+
+    recording.setTrackArmed(firstTrackId, true);
+    recording.setTrackArmed(secondTrackId, true);
+    expect(recording.armedTrackId.value).toBe(firstTrackId);
+    expect(recording.armedTrackIds.value).toEqual([firstTrackId, secondTrackId]);
+
+    expect(await recording.record()).toBe(true);
+    expect(fake.rec.arm).toHaveBeenCalledWith(firstTrackId);
+
+    const firstClipId = await recording.stopRecord();
+    expect(firstClipId).not.toBeNull();
+    expect(ingestMock).toHaveBeenCalledTimes(1);
+
+    const clips = store.clips.filter((clip) => clip.kind === 'audio');
+    expect(clips).toHaveLength(2);
+    expect(clips.map((clip) => clip.trackId)).toEqual([firstTrackId, secondTrackId]);
+    expect(new Set(clips.map((clip) => clip.assetId))).toEqual(new Set(['rec-asset']));
+  });
+
+  it('splits multi-channel input captures across multiple armed audio tracks', async () => {
+    const { recording, fake } = setup();
+    const firstTrackId = addAudioTrack({ name: 'Mic 1' });
+    const secondTrackId = addAudioTrack({ name: 'Mic 2' });
+    fake.setResult({
+      channels: [new Float32Array([1, 1, 1]), new Float32Array([2, 2, 2])],
+      sampleRate: 48000,
+      startPpq: 0,
+    });
+    ingestMock.mockImplementation(async (channels, sampleRate, name) => ({
+      id: name.includes('Ch 1') ? 'mic-1-asset' : 'mic-2-asset',
+      name,
+      sampleRate,
+      numChannels: channels.length,
+      numFrames: channels[0]?.length ?? 0,
+    }));
+
+    recording.setTrackArmed(firstTrackId, true);
+    recording.setTrackArmed(secondTrackId, true);
+
+    expect(await recording.record()).toBe(true);
+    const firstClipId = await recording.stopRecord();
+
+    expect(firstClipId).not.toBeNull();
+    expect(ingestMock).toHaveBeenCalledTimes(2);
+    expect(ingestMock.mock.calls.map((call) => call[0].length)).toEqual([1, 1]);
+    expect(ingestMock.mock.calls.map((call) => call[0][0][0])).toEqual([1, 2]);
+    expect(ingestMock.mock.calls.map((call) => call[2])).toEqual([
+      'Recording 1 — Ch 1',
+      'Recording 1 — Ch 2',
+    ]);
+
+    const clips = store.clips.filter((clip) => clip.kind === 'audio');
+    expect(clips.map((clip) => [clip.trackId, clip.assetId])).toEqual([
+      [firstTrackId, 'mic-1-asset'],
+      [secondTrackId, 'mic-2-asset'],
+    ]);
+  });
+
+  it('uses track record-input channel overrides when splitting input captures', async () => {
+    const { recording, fake } = setup();
+    const firstTrackId = addAudioTrack({ name: 'Mic 2' });
+    const secondTrackId = addAudioTrack({ name: 'Mic 1' });
+    setTrackRecordInputChannel(firstTrackId, 1);
+    setTrackRecordInputChannel(secondTrackId, 0);
+    fake.setResult({
+      channels: [new Float32Array([1, 1, 1]), new Float32Array([2, 2, 2])],
+      sampleRate: 48000,
+      startPpq: 0,
+    });
+    ingestMock.mockImplementation(async (channels, sampleRate, name) => ({
+      id: `${name}-${channels[0][0]}`,
+      name,
+      sampleRate,
+      numChannels: channels.length,
+      numFrames: channels[0]?.length ?? 0,
+    }));
+
+    recording.setTrackArmed(firstTrackId, true);
+    recording.setTrackArmed(secondTrackId, true);
+
+    expect(await recording.record()).toBe(true);
+    await recording.stopRecord();
+
+    expect(ingestMock).toHaveBeenCalledTimes(2);
+    expect(ingestMock.mock.calls.map((call) => call[0][0][0])).toEqual([2, 1]);
+    expect(ingestMock.mock.calls.map((call) => call[2])).toEqual([
+      'Recording 1 — Ch 2',
+      'Recording 1 — Ch 1',
+    ]);
+  });
+
+  it('duplicates captures when there are fewer input channels than armed audio tracks', async () => {
+    const { recording, fake } = setup();
+    const firstTrackId = addAudioTrack({ name: 'Mic 1' });
+    const secondTrackId = addAudioTrack({ name: 'Mic 2' });
+    fake.setResult({
+      channels: [new Float32Array([1, 1, 1])],
+      sampleRate: 48000,
+      startPpq: 0,
+    });
+
+    recording.setTrackArmed(firstTrackId, true);
+    recording.setTrackArmed(secondTrackId, true);
+
+    expect(await recording.record()).toBe(true);
+    await recording.stopRecord();
+
+    expect(ingestMock).toHaveBeenCalledTimes(1);
+    const clips = store.clips.filter((clip) => clip.kind === 'audio');
+    expect(new Set(clips.map((clip) => clip.assetId))).toEqual(new Set(['rec-asset']));
   });
 
   it('record() without an armed track sets an error', async () => {
@@ -242,6 +372,59 @@ describe('useRecording', () => {
     // DAW-standard: the transport keeps rolling after the take ends.
     expect(stop).not.toHaveBeenCalled();
     expect(transport.isPlaying.value).toBe(true);
+  });
+
+  it('records the master output without requesting microphone access', async () => {
+    const { recording, fake, factory } = setup();
+    const trackId = addAudioTrack({ name: 'Bounce' });
+    recording.arm(trackId);
+    recording.setCaptureSource('output');
+
+    expect(recording.captureSource.value).toBe('output');
+    expect(await recording.record()).toBe(true);
+
+    expect(factory).toHaveBeenCalledWith(
+      fakeHandle,
+      expect.objectContaining({ captureSource: 'output' }),
+    );
+    expect(fake.rec.requestMicrophone).not.toHaveBeenCalled();
+    expect(fake.rec.arm).toHaveBeenCalledWith(trackId);
+  });
+
+  it('passes the selected input device id to the recorder factory', async () => {
+    const { recording, factory } = setup();
+    const trackId = addAudioTrack({ name: 'Vox' });
+    recording.arm(trackId);
+    recording.setInputDeviceId('usb-mic');
+
+    expect(recording.inputDeviceId.value).toBe('usb-mic');
+    expect(await recording.requestMic()).toBe(true);
+
+    expect(factory).toHaveBeenCalledWith(
+      fakeHandle,
+      expect.objectContaining({ inputDeviceId: 'usb-mic' }),
+    );
+  });
+
+  it('surfaces capture overflow after storing the truncated recording', async () => {
+    const { recording, fake } = setup();
+    const trackId = addAudioTrack({ name: 'Vox' });
+    recording.arm(trackId);
+    fake.setResult({
+      channels: [new Float32Array(24000)],
+      sampleRate: 48000,
+      startPpq: 0,
+      overflowCount: 12,
+    });
+
+    expect(await recording.record()).toBe(true);
+    const clipId = await recording.stopRecord();
+
+    expect(clipId).not.toBeNull();
+    expect(ingestMock).toHaveBeenCalledTimes(1);
+    expect(recording.error.value).toBe(
+      'Recording reached the capture buffer limit; the end of the take was dropped.',
+    );
   });
 
   it('pre-rolls the count-in with a temporary metronome and restores it', async () => {
@@ -458,6 +641,112 @@ describe('useRecording', () => {
     expect(fake.rec.setMonitor).toHaveBeenLastCalledWith(false, undefined);
   });
 
+  it('passes the selected realtime voice changer preset to new recorders', async () => {
+    const { recording, factory, fake } = setup();
+    recording.setVoiceChangerPreset('bright-idol');
+    await recording.requestMic();
+
+    expect(recording.voiceChangerPreset.value).toBe('bright-idol');
+    expect(factory).toHaveBeenCalledWith(
+      fakeHandle,
+      expect.objectContaining({
+        voiceChangerPreset: 'bright-idol',
+        streamingRetuneSemitones: 0,
+      }),
+    );
+
+    recording.setVoiceChangerPreset('off');
+    expect(fake.rec.dispose).toHaveBeenCalledTimes(1);
+    await recording.requestMic();
+    expect(factory).toHaveBeenLastCalledWith(
+      fakeHandle,
+      expect.objectContaining({
+        voiceChangerPreset: null,
+        streamingRetuneSemitones: 0,
+      }),
+    );
+  });
+
+  it('passes custom realtime voice changer JSON presets to new recorders', async () => {
+    const { recording, factory } = setup();
+    const preset = {
+      schemaVersion: 1 as const,
+      name: 'Telephone',
+      macros: { wet: 0.8 },
+      dsp: { formantFactor: 1.2 },
+    };
+
+    recording.setVoiceChangerPreset(preset);
+    await recording.requestMic();
+
+    expect(recording.voiceChangerPreset.value).toEqual(preset);
+    expect(factory).toHaveBeenCalledWith(
+      fakeHandle,
+      expect.objectContaining({
+        voiceChangerPreset: preset,
+        streamingRetuneSemitones: 0,
+      }),
+    );
+  });
+
+  it('passes StreamingRetune semitones to new recorders', async () => {
+    const { recording, factory } = setup();
+    recording.setStreamingRetuneSemitones(99);
+    await recording.requestMic();
+
+    expect(recording.streamingRetuneSemitones.value).toBe(24);
+    expect(factory).toHaveBeenCalledWith(
+      fakeHandle,
+      expect.objectContaining({
+        voiceChangerPreset: null,
+        streamingRetuneSemitones: 24,
+      }),
+    );
+  });
+
+  it('hot-swaps realtime voice changer changes while recording when the binding supports it', async () => {
+    const { recording, fake } = setup();
+    const trackId = addAudioTrack({ name: 'Vox' });
+    recording.arm(trackId);
+    recording.setVoiceChangerPreset('bright-idol');
+    await recording.record();
+
+    recording.setVoiceChangerPreset('dark-villain');
+
+    expect(recording.voiceChangerPreset.value).toBe('dark-villain');
+    expect(fake.rec.setVoiceChangerPreset).toHaveBeenCalledWith('dark-villain');
+    expect(recording.error.value).toBeNull();
+  });
+
+  it('defers voice changer type changes while recording when the active binding cannot update', async () => {
+    const { recording, fake } = setup();
+    vi.mocked(fake.rec.setVoiceChangerPreset).mockReturnValue(false);
+    const trackId = addAudioTrack({ name: 'Vox' });
+    recording.arm(trackId);
+    await recording.record();
+
+    recording.setVoiceChangerPreset('dark-villain');
+
+    expect(recording.voiceChangerPreset.value).toBe('dark-villain');
+    expect(recording.error.value).toBe(
+      'Voice changer changes will apply to the next microphone binding.',
+    );
+  });
+
+  it('hot-swaps StreamingRetune changes while recording when the binding supports it', async () => {
+    const { recording, fake } = setup();
+    const trackId = addAudioTrack({ name: 'Vox' });
+    recording.arm(trackId);
+    recording.setStreamingRetuneSemitones(3);
+    await recording.record();
+
+    recording.setStreamingRetuneSemitones(9.4);
+
+    expect(recording.streamingRetuneSemitones.value).toBe(9);
+    expect(fake.rec.setStreamingRetuneSemitones).toHaveBeenCalledWith(9);
+    expect(recording.error.value).toBeNull();
+  });
+
   it('setMonitor without an engine only records the desired state', () => {
     const { recording, factory } = setup(null);
     recording.setMonitor(true);
@@ -478,6 +767,32 @@ describe('useRecording', () => {
     recording.dispose();
     expect(fake.rec.dispose).toHaveBeenCalledTimes(1);
     expect(recording.micReady.value).toBe(false);
+  });
+
+  it('clears the count-in timer when its owning scope is stopped', async () => {
+    vi.useFakeTimers();
+    let context: ReturnType<typeof setup> | undefined;
+    const scope = effectScope();
+    scope.run(() => {
+      context = setup();
+    });
+    if (!context) throw new Error('effect scope did not run');
+    const { recording, transport, toggleMetronome } = context;
+    const trackId = addAudioTrack();
+    recording.arm(trackId);
+    recording.countInBars.value = 1;
+    transport.positionSeconds.value = 4;
+
+    expect(await recording.record()).toBe(true);
+    expect(recording.isCountingIn.value).toBe(true);
+
+    scope.stop();
+    expect(recording.isCountingIn.value).toBe(false);
+    expect(toggleMetronome).toHaveBeenNthCalledWith(1, true);
+    expect(toggleMetronome).toHaveBeenNthCalledWith(2, false);
+
+    vi.advanceTimersByTime(2000);
+    expect(toggleMetronome).toHaveBeenCalledTimes(2);
   });
 
   it('surfaces a device loss: clears mic state, stops recording and shows an error', async () => {
@@ -604,6 +919,80 @@ describe('useRecording', () => {
         { assetId: 'take-asset-2', name: 'Recording 1 — Take 2' },
       ]);
       expect(clip.compSegments).toEqual([{ startPpq: 0, takeIndex: 1 }]);
+    });
+
+    it('splits multi-channel loop takes across multiple armed audio tracks', async () => {
+      const { recording, fake, transport } = setup();
+      const firstTrackId = addAudioTrack({ name: 'Mic 1' });
+      const secondTrackId = addAudioTrack({ name: 'Mic 2' });
+      recording.setTrackArmed(firstTrackId, true);
+      recording.setTrackArmed(secondTrackId, true);
+      setLoop(transport, 0, 4);
+      fake.setResult({
+        channels: [
+          makeCapture(cycleFrames * 2),
+          makeCapture(cycleFrames * 2).map((value) => value + 10),
+        ],
+        sampleRate: 48000,
+        startPpq: 0,
+      });
+      ingestMock.mockImplementation(async (channels, sampleRate, name) => ({
+        id: `${name}-${channels[0][0]}`,
+        name,
+        sampleRate,
+        numChannels: channels.length,
+        numFrames: channels[0]?.length ?? 0,
+      }));
+
+      expect(await recording.record()).toBe(true);
+      await recording.stopRecord();
+
+      expect(ingestMock).toHaveBeenCalledTimes(4);
+      expect(ingestMock.mock.calls.map((call) => call[0].length)).toEqual([1, 1, 1, 1]);
+      expect(ingestMock.mock.calls.map((call) => call[0][0][0])).toEqual([1, 2, 11, 12]);
+      const clips = store.clips.filter((clip) => clip.kind === 'audio');
+      expect(clips).toHaveLength(2);
+      expect(clips.map((clip) => clip.trackId)).toEqual([firstTrackId, secondTrackId]);
+      expect(clips[0].takes?.map((take) => take.assetId)).toEqual([
+        'Recording 1 — Take 1-1',
+        'Recording 1 — Take 2-2',
+      ]);
+      expect(clips[1].takes?.map((take) => take.assetId)).toEqual([
+        'Recording 1 — Take 1-11',
+        'Recording 1 — Take 2-12',
+      ]);
+    });
+
+    it('uses track record-input channel overrides for loop takes', async () => {
+      const { recording, fake, transport } = setup();
+      const firstTrackId = addAudioTrack({ name: 'Mic 2' });
+      const secondTrackId = addAudioTrack({ name: 'Mic 1' });
+      setTrackRecordInputChannel(firstTrackId, 1);
+      setTrackRecordInputChannel(secondTrackId, 0);
+      recording.setTrackArmed(firstTrackId, true);
+      recording.setTrackArmed(secondTrackId, true);
+      setLoop(transport, 0, 4);
+      fake.setResult({
+        channels: [
+          makeCapture(cycleFrames * 2),
+          makeCapture(cycleFrames * 2).map((value) => value + 10),
+        ],
+        sampleRate: 48000,
+        startPpq: 0,
+      });
+      ingestMock.mockImplementation(async (channels, sampleRate, name) => ({
+        id: `${name}-${channels[0][0]}`,
+        name,
+        sampleRate,
+        numChannels: channels.length,
+        numFrames: channels[0]?.length ?? 0,
+      }));
+
+      expect(await recording.record()).toBe(true);
+      await recording.stopRecord();
+
+      expect(ingestMock).toHaveBeenCalledTimes(4);
+      expect(ingestMock.mock.calls.map((call) => call[0][0][0])).toEqual([11, 12, 1, 2]);
     });
 
     it('anchors split boundaries instead of accumulating rounded loop-frame drift', async () => {

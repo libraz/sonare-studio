@@ -30,6 +30,8 @@ export interface UseTransportReturn {
   positionPpq: Ref<number>;
   /** Last tempo set through this composable, in BPM. The engine exposes no tempo getter. */
   tempo: Ref<number>;
+  /** Project tempo segments currently used for PPQ <-> seconds conversions. */
+  tempoSegments: Ref<ReadonlyArray<TempoSegment>>;
   /** True when a loop region is active (last successful `setLoop` had `enabled !== false`). */
   loopEnabled: Ref<boolean>;
   /** Loop region start in PPQ (quarter-note pulses). */
@@ -137,6 +139,7 @@ export function useTransport(
   const positionSeconds = ref(0);
   const positionPpq = ref(0);
   const tempo = ref(DEFAULT_TEMPO_BPM);
+  const tempoSegments = ref<TempoSegment[]>([]);
   const loopEnabled = ref(false);
   const loopStartPpq = ref(0);
   const loopEndPpq = ref(0);
@@ -248,6 +251,7 @@ export function useTransport(
   };
 
   const setTempoMap = (segments: ReadonlyArray<TempoSegment>): void => {
+    tempoSegments.value = segments.map((segment) => ({ ...segment }));
     tempoMap = normalizeTempoMap(segments, tempo.value);
     positionSeconds.value = ppqToSeconds(tempoMap, positionPpq.value);
   };
@@ -289,6 +293,7 @@ export function useTransport(
     positionSeconds,
     positionPpq,
     tempo,
+    tempoSegments,
     loopEnabled,
     loopStartPpq,
     loopEndPpq,

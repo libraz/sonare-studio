@@ -1,4 +1,4 @@
-import { computed, type Ref, ref, watch } from 'vue';
+import { computed, getCurrentScope, onScopeDispose, type Ref, ref, watch } from 'vue';
 import type { useAppSettings } from '@/composables/useAppSettings';
 import type { useMidiRecording } from '@/composables/useMidiRecording';
 import type { useRecording } from '@/composables/useRecording';
@@ -8,6 +8,12 @@ import { useProjectStore } from '@/project/store';
 type AppSettings = ReturnType<typeof useAppSettings>;
 type Recording = ReturnType<typeof useRecording>;
 type MidiRecording = ReturnType<typeof useMidiRecording>;
+
+export interface RecordingInputDeviceOption {
+  value: string;
+  label: string;
+  disabled?: boolean;
+}
 
 export interface RecordingControlsOptions {
   appSettings: AppSettings;
@@ -22,9 +28,42 @@ export function useRecordingControls(options: RecordingControlsOptions) {
   const store = useProjectStore();
   const recordMenuOpen = ref(false);
   const recordMenuRoot = ref<HTMLElement | null>(null);
+  const inputDevices = ref<MediaDeviceInfo[]>([]);
+  let disposed = false;
+  let sharedRecordGeneration = 0;
+
+  const recordingInputDeviceOptions = computed<RecordingInputDeviceOption[]>(() => {
+    const selected = appSettings.settings.recordingInputDeviceId;
+    const options: RecordingInputDeviceOption[] = [
+      { value: '', label: 'Default input' },
+      ...inputDevices.value.map((device, index) => ({
+        value: device.deviceId,
+        label: device.label || `Input ${index + 1}`,
+      })),
+    ];
+    if (selected && !options.some((option) => option.value === selected)) {
+      options.push({ value: selected, label: 'Selected input (unavailable)', disabled: true });
+    }
+    return options;
+  });
+
+  async function refreshInputDevices(): Promise<void> {
+    const devices = globalThis.navigator?.mediaDevices;
+    if (!devices || typeof devices.enumerateDevices !== 'function') {
+      inputDevices.value = [];
+      return;
+    }
+    try {
+      const list = await devices.enumerateDevices();
+      inputDevices.value = list.filter((device) => device.kind === 'audioinput');
+    } catch {
+      inputDevices.value = [];
+    }
+  }
 
   recording.countInBars.value = appSettings.settings.countInBars;
   midiRecording.countInBars.value = appSettings.settings.countInBars;
+  midiRecording.inputQuantizeDenominator.value = appSettings.settings.midiInputQuantizeDenominator;
   watch(
     () => appSettings.settings.countInBars,
     (bars) => {
@@ -32,13 +71,46 @@ export function useRecordingControls(options: RecordingControlsOptions) {
       midiRecording.countInBars.value = bars;
     },
   );
+  watch(
+    () => appSettings.settings.midiInputQuantizeDenominator,
+    (denominator) => {
+      midiRecording.inputQuantizeDenominator.value = denominator;
+    },
+  );
   if (appSettings.settings.monitorDefault) recording.setMonitor(true);
+  recording.setCaptureSource(appSettings.settings.recordingCaptureSource);
+  recording.setInputDeviceId(appSettings.settings.recordingInputDeviceId);
+  recording.setVoiceChangerPreset(appSettings.settings.recordingVoiceChangerPreset);
+  recording.setStreamingRetuneSemitones(appSettings.settings.recordingRetuneSemitones);
+  watch(
+    () => appSettings.settings.recordingCaptureSource,
+    (source) => {
+      recording.setCaptureSource(source);
+    },
+  );
+  watch(
+    () => appSettings.settings.recordingInputDeviceId,
+    (deviceId) => {
+      recording.setInputDeviceId(deviceId);
+    },
+  );
+  watch(
+    () => appSettings.settings.recordingVoiceChangerPreset,
+    (preset) => {
+      recording.setVoiceChangerPreset(preset);
+    },
+  );
+  watch(
+    () => appSettings.settings.recordingRetuneSemitones,
+    (semitones) => {
+      recording.setStreamingRetuneSemitones(semitones);
+    },
+  );
 
   // Both an audio and a MIDI track can be armed at once (they share one
   // transport); the meter highlights every armed destination.
   const armedTrackIds = computed(() => {
-    const ids: number[] = [];
-    if (recording.armedTrackId.value !== null) ids.push(recording.armedTrackId.value);
+    const ids = [...recording.armedTrackIds.value];
     if (midiRecording.armedTrackId.value !== null) ids.push(midiRecording.armedTrackId.value);
     return ids;
   });
@@ -54,6 +126,54 @@ export function useRecordingControls(options: RecordingControlsOptions) {
     appSettings.set('countInBars', bars);
   }
 
+  function onMidiInputQuantizeChange(denominator: number): void {
+    appSettings.set('midiInputQuantizeDenominator', denominator);
+  }
+
+  function onRecordSourceChange(source: 'input' | 'output'): void {
+    appSettings.set('recordingCaptureSource', source);
+  }
+
+  function onRecordInputDeviceChange(deviceId: string): void {
+    appSettings.set('recordingInputDeviceId', deviceId);
+  }
+
+  watch(recordMenuOpen, (open) => {
+    if (open) void refreshInputDevices();
+  });
+
+  type LegacyDeviceChangeMediaDevices = MediaDevices & {
+    ondevicechange?: ((event: Event) => void) | null;
+  };
+  const mediaDevices = globalThis.navigator?.mediaDevices as
+    | LegacyDeviceChangeMediaDevices
+    | undefined;
+  if (mediaDevices && typeof mediaDevices.addEventListener === 'function') {
+    mediaDevices.addEventListener('devicechange', refreshInputDevices);
+    if (getCurrentScope()) {
+      onScopeDispose(() => {
+        mediaDevices.removeEventListener('devicechange', refreshInputDevices);
+      });
+    }
+  } else if (mediaDevices && 'ondevicechange' in mediaDevices) {
+    const previous = mediaDevices.ondevicechange ?? null;
+    mediaDevices.ondevicechange = (event: Event) => {
+      previous?.call(mediaDevices, event);
+      void refreshInputDevices();
+    };
+    if (getCurrentScope()) {
+      onScopeDispose(() => {
+        mediaDevices.ondevicechange = previous;
+      });
+    }
+  }
+  if (getCurrentScope()) {
+    onScopeDispose(() => {
+      disposed = true;
+      sharedRecordGeneration++;
+    });
+  }
+
   function onArmTrack(trackId: number, armed: boolean): void {
     // Route the arm to the recorder that matches the track kind: MIDI tracks
     // capture note events, audio tracks capture the microphone.
@@ -61,12 +181,13 @@ export function useRecordingControls(options: RecordingControlsOptions) {
     if (track?.kind === 'midi') {
       midiRecording.arm(armed ? trackId : null);
     } else {
-      recording.arm(armed ? trackId : null);
+      recording.setTrackArmed(trackId, armed);
     }
   }
 
   function toggleRecord(): void {
     if (recording.isRecording.value || midiRecording.isRecording.value) {
+      sharedRecordGeneration++;
       if (recording.isRecording.value) void recording.stopRecord();
       if (midiRecording.isRecording.value) midiRecording.stopRecord();
       return;
@@ -80,8 +201,11 @@ export function useRecordingControls(options: RecordingControlsOptions) {
       appSettings.settings.countInBars > 0
     ) {
       const startPpq = Math.max(0, transport.positionPpq.value);
+      const generation = ++sharedRecordGeneration;
       void recording.record().then((started) => {
+        if (disposed || generation !== sharedRecordGeneration) return;
         if (started) midiRecording.record(startPpq);
+        else midiRecording.record();
       });
       return;
     }
@@ -95,8 +219,13 @@ export function useRecordingControls(options: RecordingControlsOptions) {
     armedTrackIds,
     recordMenuOpen,
     recordMenuRoot,
+    recordingInputDeviceOptions,
     onArmTrack,
     onCountInChange,
+    onMidiInputQuantizeChange,
+    onRecordInputDeviceChange,
+    onRecordSourceChange,
+    refreshInputDevices,
     toggleRecord,
   };
 }
