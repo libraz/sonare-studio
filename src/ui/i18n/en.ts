@@ -99,6 +99,7 @@ export const en = {
       importMidi: 'Import MIDI...',
       importAudio: 'Import audio...',
       importDawproject: 'Import DAWproject...',
+      importMusicXml: 'Import MusicXML...',
       importBackup: 'Restore browser backup...',
       exportSzd: 'Export .szd',
       exportBackup: 'Export browser backup',

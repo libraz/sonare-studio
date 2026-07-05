@@ -1,0 +1,316 @@
+import { describe, expect, it } from 'vitest';
+import type {
+  NotatedEvent,
+  NotatedMeasure,
+  NotatedScore,
+  NotatedVoiceNumber,
+  NoteValue,
+} from '@/notation/model';
+import { serializeMusicXml } from '@/notation/musicxml';
+import { importMusicXml, MusicXmlImportError } from '@/notation/musicxml-import';
+import type { DocumentNote } from '@/project/serialization';
+
+const QUARTER: NoteValue = { base: 'quarter', dots: 0 };
+const HALF: NoteValue = { base: 'half', dots: 0 };
+const WHOLE: NoteValue = { base: 'whole', dots: 0 };
+
+/** Builds a note/chord event with sensible defaults. */
+function note(
+  pitches: number[],
+  voice: NotatedVoiceNumber,
+  startPpq: number,
+  durationPpq: number,
+  value: NoteValue,
+  ties: { tieStart?: boolean; tieStop?: boolean } = {},
+): NotatedEvent {
+  return {
+    kind: 'note',
+    pitches,
+    voice,
+    startPpq,
+    durationPpq,
+    value,
+    tieStart: ties.tieStart ?? false,
+    tieStop: ties.tieStop ?? false,
+  };
+}
+
+/** Builds a rest event with sensible defaults. */
+function rest(
+  voice: NotatedVoiceNumber,
+  startPpq: number,
+  durationPpq: number,
+  value: NoteValue,
+): NotatedEvent {
+  return {
+    kind: 'rest',
+    pitches: [],
+    voice,
+    startPpq,
+    durationPpq,
+    value,
+    tieStart: false,
+    tieStop: false,
+  };
+}
+
+/** Returns the notes of the first clip of a track, sorted by onset then pitch. */
+function trackNotes(doc: ReturnType<typeof importMusicXml>, trackIndex: number): DocumentNote[] {
+  return doc.tracks[trackIndex].clips[0].notes;
+}
+
+describe('importMusicXml error handling', () => {
+  it('rejects malformed XML', () => {
+    expect(() => importMusicXml('<score-partwise><part')).toThrow(MusicXmlImportError);
+  });
+
+  it('rejects a non-score root element', () => {
+    expect(() => importMusicXml('<html><body/></html>')).toThrow(MusicXmlImportError);
+  });
+
+  it('rejects score-timewise documents', () => {
+    expect(() => importMusicXml('<score-timewise version="4.0"></score-timewise>')).toThrow(
+      MusicXmlImportError,
+    );
+  });
+
+  it('returns an empty-but-valid project for a score with no parts', () => {
+    const doc = importMusicXml('<score-partwise version="4.0"><part-list/></score-partwise>');
+    expect(doc.tracks).toEqual([]);
+    expect(doc.tempoSegments).toEqual([{ startPpq: 0, bpm: 120 }]);
+    expect(doc.timeSignatures).toEqual([]);
+  });
+
+  it('does not throw on a part with an empty measure', () => {
+    const xml =
+      '<score-partwise version="4.0"><part-list><score-part id="P1">' +
+      '<part-name>Empty</part-name></score-part></part-list>' +
+      '<part id="P1"><measure number="1"/></part></score-partwise>';
+    const doc = importMusicXml(xml);
+    expect(doc.tracks).toHaveLength(1);
+    expect(trackNotes(doc, 0)).toEqual([]);
+  });
+});
+
+describe('importMusicXml note timing', () => {
+  it('maps pitch, octave, alter and divisions-based durations to PPQ', () => {
+    const xml =
+      '<score-partwise version="4.0"><part-list><score-part id="P1">' +
+      '<part-name>Lead</part-name></score-part></part-list>' +
+      '<part id="P1"><measure number="1">' +
+      '<attributes><divisions>2</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes>' +
+      '<note><pitch><step>C</step><octave>4</octave></pitch><duration>2</duration></note>' +
+      '<note><pitch><step>F</step><alter>1</alter><octave>4</octave></pitch><duration>2</duration></note>' +
+      '<note><rest/><duration>2</duration></note>' +
+      '<note><pitch><step>B</step><alter>-1</alter><octave>3</octave></pitch><duration>2</duration></note>' +
+      '</measure></part></score-partwise>';
+    const notes = trackNotes(importMusicXml(xml), 0);
+    expect(notes).toEqual([
+      { pitch: 60, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 },
+      { pitch: 66, velocity: 96, startPpq: 1, durationPpq: 1, channel: 0 },
+      { pitch: 58, velocity: 96, startPpq: 3, durationPpq: 1, channel: 0 },
+    ]);
+  });
+
+  it('stacks chord notes at a single onset', () => {
+    const xml =
+      '<score-partwise version="4.0"><part-list><score-part id="P1"/></part-list>' +
+      '<part id="P1"><measure number="1">' +
+      '<attributes><divisions>1</divisions></attributes>' +
+      '<note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration></note>' +
+      '<note><chord/><pitch><step>E</step><octave>4</octave></pitch><duration>4</duration></note>' +
+      '<note><chord/><pitch><step>G</step><octave>4</octave></pitch><duration>4</duration></note>' +
+      '</measure></part></score-partwise>';
+    const notes = trackNotes(importMusicXml(xml), 0);
+    expect(notes.map((n) => n.pitch)).toEqual([60, 64, 67]);
+    expect(notes.every((n) => n.startPpq === 0 && n.durationPpq === 4)).toBe(true);
+  });
+
+  it('merges tied notes into one sustained note', () => {
+    const xml =
+      '<score-partwise version="4.0"><part-list><score-part id="P1"/></part-list>' +
+      '<part id="P1">' +
+      '<measure number="1"><attributes><divisions>1</divisions>' +
+      '<time><beats>4</beats><beat-type>4</beat-type></time></attributes>' +
+      '<note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration>' +
+      '<tie type="start"/></note></measure>' +
+      '<measure number="2">' +
+      '<note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration>' +
+      '<tie type="stop"/></note></measure>' +
+      '</part></score-partwise>';
+    const notes = trackNotes(importMusicXml(xml), 0);
+    expect(notes).toEqual([{ pitch: 60, velocity: 96, startPpq: 0, durationPpq: 8, channel: 0 }]);
+  });
+
+  it('applies backup to layer a second voice at the measure start', () => {
+    const xml =
+      '<score-partwise version="4.0"><part-list><score-part id="P1"/></part-list>' +
+      '<part id="P1"><measure number="1">' +
+      '<attributes><divisions>1</divisions></attributes>' +
+      '<note><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice></note>' +
+      '<backup><duration>4</duration></backup>' +
+      '<note><pitch><step>C</step><octave>3</octave></pitch><duration>4</duration><voice>2</voice></note>' +
+      '</measure></part></score-partwise>';
+    const notes = trackNotes(importMusicXml(xml), 0);
+    expect(notes).toEqual([
+      { pitch: 48, velocity: 96, startPpq: 0, durationPpq: 4, channel: 0 },
+      { pitch: 72, velocity: 96, startPpq: 0, durationPpq: 4, channel: 0 },
+    ]);
+  });
+
+  it('advances the cursor for forward elements', () => {
+    const xml =
+      '<score-partwise version="4.0"><part-list><score-part id="P1"/></part-list>' +
+      '<part id="P1"><measure number="1">' +
+      '<attributes><divisions>1</divisions></attributes>' +
+      '<forward><duration>2</duration></forward>' +
+      '<note><pitch><step>C</step><octave>4</octave></pitch><duration>2</duration></note>' +
+      '</measure></part></score-partwise>';
+    const notes = trackNotes(importMusicXml(xml), 0);
+    expect(notes).toEqual([{ pitch: 60, velocity: 96, startPpq: 2, durationPpq: 2, channel: 0 }]);
+  });
+});
+
+describe('importMusicXml global maps', () => {
+  it('reads tempo from a sound direction and time signature from attributes', () => {
+    const xml =
+      '<score-partwise version="4.0"><part-list><score-part id="P1"/></part-list>' +
+      '<part id="P1"><measure number="1">' +
+      '<attributes><divisions>1</divisions><time><beats>3</beats><beat-type>4</beat-type></time></attributes>' +
+      '<direction><sound tempo="90"/></direction>' +
+      '<note><pitch><step>C</step><octave>4</octave></pitch><duration>3</duration></note>' +
+      '</measure></part></score-partwise>';
+    const doc = importMusicXml(xml);
+    expect(doc.tempoSegments).toEqual([{ startPpq: 0, bpm: 90 }]);
+    expect(doc.timeSignatures).toEqual([{ startPpq: 0, numerator: 3, denominator: 4 }]);
+  });
+
+  it('derives tempo from a metronome mark with a dotted beat unit', () => {
+    const xml =
+      '<score-partwise version="4.0"><part-list><score-part id="P1"/></part-list>' +
+      '<part id="P1"><measure number="1">' +
+      '<attributes><divisions>1</divisions></attributes>' +
+      '<direction><direction-type><metronome><beat-unit>quarter</beat-unit>' +
+      '<beat-unit-dot/><per-minute>80</per-minute></metronome></direction-type></direction>' +
+      '<note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration></note>' +
+      '</measure></part></score-partwise>';
+    expect(importMusicXml(xml).tempoSegments).toEqual([{ startPpq: 0, bpm: 120 }]);
+  });
+
+  it('records the key signature as a marker', () => {
+    const xml =
+      '<score-partwise version="4.0"><part-list><score-part id="P1"/></part-list>' +
+      '<part id="P1"><measure number="1">' +
+      '<attributes><divisions>1</divisions><key><fifths>-3</fifths></key></attributes>' +
+      '<note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration></note>' +
+      '</measure></part></score-partwise>';
+    expect(importMusicXml(xml).markers).toEqual([{ ppq: 0, name: 'Key: Eb major' }]);
+  });
+
+  it('maps an unpitched note onto the percussion channel', () => {
+    const xml =
+      '<score-partwise version="4.0"><part-list><score-part id="P1">' +
+      '<part-name>Drums</part-name>' +
+      '<midi-instrument id="P1-I37"><midi-channel>10</midi-channel>' +
+      '<midi-unpitched>37</midi-unpitched></midi-instrument></score-part></part-list>' +
+      '<part id="P1"><measure number="1">' +
+      '<attributes><divisions>1</divisions></attributes>' +
+      '<note><unpitched><display-step>E</display-step><display-octave>4</display-octave></unpitched>' +
+      '<duration>1</duration><instrument id="P1-I37"/></note>' +
+      '</measure></part></score-partwise>';
+    const notes = trackNotes(importMusicXml(xml), 0);
+    expect(notes).toEqual([{ pitch: 36, velocity: 96, startPpq: 0, durationPpq: 1, channel: 9 }]);
+  });
+});
+
+describe('importMusicXml multi-part', () => {
+  it('creates one track per part', () => {
+    const xml =
+      '<score-partwise version="4.0"><part-list>' +
+      '<score-part id="P1"><part-name>Flute</part-name></score-part>' +
+      '<score-part id="P2"><part-name>Cello</part-name></score-part></part-list>' +
+      '<part id="P1"><measure number="1"><attributes><divisions>1</divisions></attributes>' +
+      '<note><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration></note></measure></part>' +
+      '<part id="P2"><measure number="1"><attributes><divisions>1</divisions></attributes>' +
+      '<note><pitch><step>C</step><octave>3</octave></pitch><duration>4</duration></note></measure></part>' +
+      '</score-partwise>';
+    const doc = importMusicXml(xml);
+    expect(doc.tracks.map((t) => t.name)).toEqual(['Flute', 'Cello']);
+    expect(trackNotes(doc, 0)[0].pitch).toBe(72);
+    expect(trackNotes(doc, 1)[0].pitch).toBe(48);
+  });
+});
+
+describe('importMusicXml round-trip with the serializer', () => {
+  it('recovers pitches, onsets and durations from serialized output', () => {
+    const measures: NotatedMeasure[] = [
+      {
+        index: 0,
+        startPpq: 0,
+        lengthPpq: 4,
+        timeSig: { beats: 4, beatUnit: 4 },
+        voices: [
+          {
+            voice: 1,
+            events: [
+              note([60, 64, 67], 1, 0, 1, QUARTER),
+              note([62], 1, 1, 1, QUARTER),
+              note([64], 1, 2, 2, HALF, { tieStart: true }),
+            ],
+          },
+        ],
+      },
+      {
+        index: 1,
+        startPpq: 4,
+        lengthPpq: 4,
+        timeSig: { beats: 4, beatUnit: 4 },
+        voices: [
+          {
+            voice: 1,
+            events: [note([64], 1, 4, 2, HALF, { tieStop: true }), rest(1, 6, 2, HALF)],
+          },
+        ],
+      },
+    ];
+    const score: NotatedScore = {
+      parts: [{ id: 'P1', name: 'Piano', clef: 'treble', measures }],
+      keyFifths: 0,
+      divisions: 960,
+    };
+    const doc = importMusicXml(serializeMusicXml(score));
+    expect(doc.tracks).toHaveLength(1);
+    expect(trackNotes(doc, 0)).toEqual([
+      { pitch: 60, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 },
+      { pitch: 64, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 },
+      { pitch: 67, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 },
+      { pitch: 62, velocity: 96, startPpq: 1, durationPpq: 1, channel: 0 },
+      { pitch: 64, velocity: 96, startPpq: 2, durationPpq: 4, channel: 0 },
+    ]);
+  });
+
+  it('round-trips a whole-measure rest to an empty but valid clip', () => {
+    const score: NotatedScore = {
+      parts: [
+        {
+          id: 'P1',
+          name: 'Rest',
+          clef: 'treble',
+          measures: [
+            {
+              index: 0,
+              startPpq: 0,
+              lengthPpq: 4,
+              timeSig: { beats: 4, beatUnit: 4 },
+              voices: [{ voice: 1, events: [rest(1, 0, 4, WHOLE)] }],
+            },
+          ],
+        },
+      ],
+      keyFifths: 0,
+      divisions: 960,
+    };
+    const doc = importMusicXml(serializeMusicXml(score));
+    expect(trackNotes(doc, 0)).toEqual([]);
+  });
+});

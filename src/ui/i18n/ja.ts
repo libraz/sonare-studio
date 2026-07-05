@@ -99,6 +99,7 @@ export const ja = {
       importMidi: 'MIDIを読み込み...',
       importAudio: 'オーディオを読み込み...',
       importDawproject: 'DAWprojectを読み込み...',
+      importMusicXml: 'MusicXMLを読み込み...',
       importBackup: 'ブラウザバックアップを復元...',
       exportSzd: '.szdを書き出し',
       exportBackup: 'ブラウザバックアップを書き出し',

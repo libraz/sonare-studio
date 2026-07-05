@@ -6,7 +6,11 @@
  * module deliberately stays focused on MusicXML and filename handling.
  */
 
+import type { ProjectDocument } from '@/project/serialization';
+import { importMusicXml } from './musicxml-import';
 import { downloadBlob } from './print';
+
+export { importMusicXml, MusicXmlImportError } from './musicxml-import';
 
 /** MIME type for MusicXML downloads. */
 const MUSICXML_MIME = 'application/vnd.recordare.musicxml+xml';
@@ -34,4 +38,15 @@ export function ensureFileExtension(filename: string, extension: string): string
 export function exportMusicXml(xml: string, filename: string): void {
   const blob = new Blob([xml], { type: MUSICXML_MIME });
   downloadBlob(blob, ensureFileExtension(filename, '.musicxml'));
+}
+
+/**
+ * Reads a MusicXML file into a project document.
+ *
+ * @param file A `.musicxml` / `.xml` file chosen by the user.
+ * @returns The imported project document.
+ * @throws MusicXmlImportError When the file is not well-formed or supported.
+ */
+export async function importMusicXmlFile(file: Blob & { name?: string }): Promise<ProjectDocument> {
+  return importMusicXml(await file.text(), file.name);
 }

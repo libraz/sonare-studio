@@ -61,6 +61,7 @@ export interface AppShortcutsMenuOptions {
   importAudio: () => void;
   importBrowserBackup: () => void;
   importDawproject: () => void;
+  importMusicXml: () => void;
   importMidi: () => void;
   nudgeByBar: (direction: -1 | 1) => void;
   openAbout: () => void;
@@ -313,6 +314,7 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
       commandItem('file.importMidi', m.importMidi, options.importMidi),
       commandItem('file.importAudio', m.importAudio, options.importAudio),
       commandItem('file.importDawproject', m.importDawproject, options.importDawproject),
+      commandItem('file.importMusicXml', m.importMusicXml, options.importMusicXml),
       commandItem('file.importBackup', m.importBackup, options.importBrowserBackup, {
         disabled: noOpfs,
       }),

@@ -3,6 +3,7 @@ import type { useAutosave } from '@/composables/useAutosave';
 import { promptDialog } from '@/composables/useDialogs';
 import { importDawprojectWithMedia } from '@/export/dawproject';
 import { describeError } from '@/lib/errors';
+import { importMusicXml } from '@/notation/io';
 import { createBrowserBackup, restoreBrowserBackup } from '@/persistence/backup';
 import { gatherProjectBundle, restoreProjectBundle } from '@/persistence/bundle';
 import { garbageCollectMedia } from '@/persistence/gc';
@@ -13,6 +14,7 @@ import {
   pickAndReadDawproject,
   pickAndReadExternalAudioFiles,
   pickAndReadSzd,
+  pickViaInputElement,
 } from '@/persistence/local-file';
 import {
   deleteProject,
@@ -307,6 +309,27 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     midiImportInput.value?.click();
   }
 
+  function importMusicXmlAction(): void {
+    closeProjectMenu();
+    void runAction(async () => {
+      if (!(await confirmDiscard())) return;
+      const picked = await pickViaInputElement({
+        accept: '.musicxml,.xml',
+        read: async (files) => {
+          const file = files[0];
+          if (!file) return null;
+          return { name: file.name, text: await file.text() };
+        },
+      });
+      if (!picked) return;
+      await loadProjectDocument(importMusicXml(picked.text, picked.name));
+      await saveLoadedProjectToAutosave();
+      await markClean();
+      openDialogOpen.value = false;
+      startScreenOpen.value = false;
+    });
+  }
+
   function normalizeMediaPath(path: string): string {
     return path.replaceAll('\\', '/').toLowerCase();
   }
@@ -521,6 +544,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     deleteStoredProject,
     importSzdFile,
     importDawprojectAction,
+    importMusicXmlAction,
     importMidiAction,
     onMidiImportChange,
     saveProjectAction,
