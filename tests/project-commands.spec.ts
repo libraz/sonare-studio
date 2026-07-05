@@ -1274,6 +1274,23 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(store.clipId).toBe(firstClipId);
       expect(() => setActiveTrack(9999)).toThrow(RangeError);
     });
+
+    it('setActiveTrack keeps the timeline window when switching tracks', () => {
+      // The outgoing active clip sits late in the timeline (as during playback);
+      // switching tracks should land on the new track's clip that overlaps that
+      // window, not its first clip, so the score/piano-roll stays aligned.
+      const otherTrackId = addTrack({ name: 'Other' });
+      addMidiClip({ trackId: otherTrackId, startPpq: 0, lengthPpq: 16 });
+      const lateClipId = addMidiClip({ trackId: otherTrackId, startPpq: 64, lengthPpq: 16 });
+
+      const originTrackId = store.tracks[0].id;
+      const windowClipId = addMidiClip({ trackId: originTrackId, startPpq: 64, lengthPpq: 16 });
+      setActiveClip(windowClipId);
+      expect(store.clipStartPpq).toBe(64);
+
+      setActiveTrack(otherTrackId);
+      expect(store.clipId).toBe(lateClipId);
+    });
   });
 
   describe('marker and section commands', () => {

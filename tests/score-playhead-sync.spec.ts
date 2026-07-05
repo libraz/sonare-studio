@@ -188,6 +188,120 @@ describe('usePlayheadSync', () => {
     scope.stop();
   });
 
+  it('tints every note of the sounding harmony and untints them when they stop', async () => {
+    const host = document.createElement('div');
+    defineReadonlyNumber(host, 'clientWidth', 100);
+    defineReadonlyNumber(host, 'scrollWidth', 1000);
+    host.getBoundingClientRect = vi.fn(() => rect(0, 100));
+
+    const low = makeSvgElement('low', 'note', rect(80, 90));
+    const high = makeSvgElement('high', 'note', rect(82, 92));
+    host.append(low, high);
+
+    vi.spyOn(performance, 'now').mockReturnValue(1000);
+    const ppq = ref(0);
+    const isPlaying = ref(true);
+
+    const scope = effectScope();
+    scope.run(() => {
+      usePlayheadSync({
+        svgHost: ref(host),
+        svg: ref('<svg />'),
+        getTimemap: () => [
+          { tstamp: 0, qstamp: 0, on: ['low', 'high'] },
+          { tstamp: 100, qstamp: 1, off: ['low', 'high'] },
+        ],
+        getClipStartPpq: () => 0,
+        getPositionPpq: () => () => ppq.value,
+        getIsPlaying: () => isPlaying.value,
+      });
+    });
+
+    await nextTick();
+    expect(low.classList.contains('score-note-sounding')).toBe(true);
+    expect(high.classList.contains('score-note-sounding')).toBe(true);
+
+    ppq.value = 1;
+    await nextTick();
+    expect(low.classList.contains('score-note-sounding')).toBe(false);
+    expect(high.classList.contains('score-note-sounding')).toBe(false);
+
+    scope.stop();
+  });
+
+  it('does not tint notes while the transport is stopped', async () => {
+    const host = document.createElement('div');
+    defineReadonlyNumber(host, 'clientWidth', 100);
+    defineReadonlyNumber(host, 'scrollWidth', 1000);
+    host.getBoundingClientRect = vi.fn(() => rect(0, 100));
+    const n1 = makeSvgElement('n1', 'note', rect(80, 90));
+    host.append(n1);
+
+    vi.spyOn(performance, 'now').mockReturnValue(1000);
+    const scope = effectScope();
+    scope.run(() => {
+      usePlayheadSync({
+        svgHost: ref(host),
+        svg: ref('<svg />'),
+        getTimemap: () => [{ tstamp: 0, qstamp: 0, on: ['n1'] }],
+        getClipStartPpq: () => 0,
+        getPositionPpq: () => () => 0,
+        getIsPlaying: () => false,
+      });
+    });
+
+    await nextTick();
+    expect(n1.classList.contains('score-note-sounding')).toBe(false);
+
+    scope.stop();
+  });
+
+  it('re-highlights the newly rendered notes after the score re-renders', async () => {
+    // Models a track switch mid-playback: the SVG (v-html) is replaced with a
+    // different track's notes, the timemap swaps and the panel resets the scan.
+    // The highlight must rebuild against the new elements, not keep stale ones.
+    const host = document.createElement('div');
+    defineReadonlyNumber(host, 'clientWidth', 100);
+    defineReadonlyNumber(host, 'scrollWidth', 1000);
+    host.getBoundingClientRect = vi.fn(() => rect(0, 100));
+    host.append(makeSvgElement('a1', 'note', rect(300, 320)));
+
+    const ppq = ref(0);
+    const svg = ref('<svg>A</svg>');
+    let timemap: VerovioTimemapEntry[] = [{ tstamp: 0, qstamp: 0, on: ['a1'] }];
+    vi.spyOn(performance, 'now').mockReturnValue(1000);
+
+    const scope = effectScope();
+    const sync = scope.run(() =>
+      usePlayheadSync({
+        svgHost: ref(host),
+        svg,
+        getTimemap: () => timemap,
+        getClipStartPpq: () => 0,
+        getPositionPpq: () => () => ppq.value,
+        getIsPlaying: () => true,
+      }),
+    );
+
+    await nextTick();
+    let markers = host.querySelectorAll('.score-playhead-marker');
+    expect(markers).toHaveLength(1);
+    expect((markers[0] as HTMLElement).dataset.noteIds).toBe('a1');
+
+    host.replaceChildren(makeSvgElement('b1', 'note', rect(600, 620)));
+    timemap = [{ tstamp: 0, qstamp: 0, on: ['b1'] }];
+    svg.value = '<svg>B</svg>';
+    sync?.resetScan();
+    ppq.value = 0.001;
+    await nextTick();
+
+    markers = host.querySelectorAll('.score-playhead-marker');
+    expect(markers).toHaveLength(1);
+    expect((markers[0] as HTMLElement).dataset.noteIds).toBe('b1');
+
+    scope.stop();
+  });
+
   it('keeps playback highlighting while score following is disabled', async () => {
     const host = document.createElement('div');
     defineReadonlyNumber(host, 'clientWidth', 100);

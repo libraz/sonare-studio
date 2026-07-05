@@ -47,6 +47,10 @@
   padding: 0.45rem 0.75rem;
   background: var(--surface-2);
   border-bottom: 1px solid var(--border-subtle);
+  /* Anchor the font size on the container so the standalone buttons (which sit
+     outside the labels and only declare `font: inherit`) match the labels and
+     controls instead of falling back to the larger document default. */
+  font-size: var(--fs-sm);
 }
 
 .score-marker-tools label {
@@ -127,6 +131,19 @@
   /* Make the whole note group (notehead + stem + the space between) clickable,
      not just the painted glyph outlines. */
   pointer-events: bounding-box;
+}
+
+/* Currently-sounding notes during playback: tint the note glyphs a vivid red so
+   the sounding harmony (every simultaneous voice/hand) stands out against the
+   black engraving, complementing the amber "now sounding" band. CSS overrides
+   Verovio's fill presentation attributes, and the whole subtree is tinted so
+   noteheads, stems, flags and beams all turn together. The transition eases the
+   color on/off; it collapses to 0 under reduced motion via --dur-1. */
+.score-body :deep(g.note.score-note-sounding),
+.score-body :deep(g.note.score-note-sounding *) {
+  fill: var(--score-note-sounding, #e5484d);
+  color: var(--score-note-sounding, #e5484d);
+  transition: fill var(--dur-1) var(--ease-out);
 }
 
 .score-body :deep(.score-playhead-overlay) {

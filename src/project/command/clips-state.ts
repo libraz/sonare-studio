@@ -206,9 +206,25 @@ export function setActiveClip(clipId: number): void {
 export function setActiveTrack(trackId: number): void {
   const store = useProjectStore();
   requireTrack(store, trackId);
+  // Anchor the new active clip to the outgoing clip's timeline window rather
+  // than always taking the track's first clip. Switching tracks during playback
+  // otherwise strands the score/piano-roll on a clip that does not contain the
+  // playhead, so the score highlight has nothing to follow and stalls. Prefer
+  // the earliest clip on the new track that overlaps the current window; fall
+  // back to the track's first clip when none overlaps (or nothing was active).
+  const anchorStart = store.clipStartPpq;
+  const anchorEnd = anchorStart + store.clipLengthPpq;
+  const candidates = store.clips
+    .filter((clip) => clip.trackId === trackId)
+    .sort((a, b) => a.startPpq - b.startPpq);
+  const overlapping =
+    store.clipId >= 0
+      ? candidates.find(
+          (clip) => clip.startPpq < anchorEnd && clip.startPpq + clip.lengthPpq > anchorStart,
+        )
+      : undefined;
   store.activeTrackId = trackId;
-  const first = store.clips.find((clip) => clip.trackId === trackId) ?? null;
-  store.clipId = first?.id ?? -1;
+  store.clipId = (overlapping ?? candidates[0])?.id ?? -1;
   store.selection = new Set();
   store.refresh();
 }

@@ -19,6 +19,10 @@ const FOLLOW_INTERVAL_MS = 120;
 const MIN_SCROLL_DELTA_PX = 2;
 const OVERLAY_CLASS = 'score-playhead-overlay';
 const MARKER_CLASS = 'score-playhead-marker';
+/** Class tinting the glyphs of every note sounding at the playhead. */
+const SOUNDING_NOTE_CLASS = 'score-note-sounding';
+/** Shared empty id set for clearing the sounding tint without allocating. */
+const EMPTY_IDS: ReadonlySet<string> = new Set();
 const POSITIONED_CLASS = 'is-positioned';
 const MARKER_PAD_X = 8;
 const MARKER_PAD_Y = 6;
@@ -90,6 +94,9 @@ export function usePlayheadSync(options: PlayheadSyncOptions): PlayheadSync {
   const measureElements = new Map<string, Element>();
   const boundsCache = new Map<string, ElementBounds>();
   const markerElements = new Map<string, HTMLElement>();
+  // Note `<g>` elements currently carrying the sounding tint, so the class can be
+  // diffed off notes that stop sounding without re-scanning the whole score.
+  const highlightedNotes = new Set<Element>();
   let indexedSvg = '';
   let followedTargetKey: string | null = null;
   let lastFollowMs = Number.NEGATIVE_INFINITY;
@@ -100,8 +107,36 @@ export function usePlayheadSync(options: PlayheadSyncOptions): PlayheadSync {
     markerElements.clear();
   }
 
+  function clearNoteHighlight(): void {
+    for (const el of highlightedNotes) el.classList.remove(SOUNDING_NOTE_CLASS);
+    highlightedNotes.clear();
+  }
+
+  /**
+   * Tints every note sounding at the playhead, covering the full harmony (all
+   * simultaneous voices/hands the scan reports as on), and untints notes that
+   * have stopped. A no-op when `ids` is empty (e.g. transport stopped).
+   */
+  function applyNoteHighlight(ids: ReadonlySet<string>): void {
+    for (const el of [...highlightedNotes]) {
+      const id = el.getAttribute('id');
+      if (!id || !ids.has(id)) {
+        el.classList.remove(SOUNDING_NOTE_CLASS);
+        highlightedNotes.delete(el);
+      }
+    }
+    for (const id of ids) {
+      const el = noteElements.get(id);
+      if (el && !highlightedNotes.has(el)) {
+        el.classList.add(SOUNDING_NOTE_CLASS);
+        highlightedNotes.add(el);
+      }
+    }
+  }
+
   function resetScan(): void {
     clearMarkers();
+    clearNoteHighlight();
     scanIndex = 0;
     scanQstamp = Number.NEGATIVE_INFINITY;
     currentMeasureId = null;
@@ -129,6 +164,9 @@ export function usePlayheadSync(options: PlayheadSyncOptions): PlayheadSync {
     const svg = options.svg.value;
     if (svg === indexedSvg && noteElements.size > 0) return;
     clearMarkers();
+    // The rebuilt index holds fresh element refs; the old highlighted nodes are
+    // detached by the v-html swap, so drop them before re-tinting next frame.
+    clearNoteHighlight();
     noteElements.clear();
     measureElements.clear();
     boundsCache.clear();
@@ -331,6 +369,7 @@ export function usePlayheadSync(options: PlayheadSyncOptions): PlayheadSync {
     const next = scanAt(ppq - options.getClipStartPpq());
     const playing = options.getIsPlaying?.() === true;
     updateMarkers(host, next, playing);
+    applyNoteHighlight(playing ? next.ids : EMPTY_IDS);
     if (playing && options.getFollowEnabled?.() !== false) followHighlightedItem(host, next);
   }
 
@@ -362,13 +401,22 @@ export function usePlayheadSync(options: PlayheadSyncOptions): PlayheadSync {
     }
   }
 
-  watchEffect(() => {
-    // Track both the rendered SVG and the playhead position.
-    void options.svg.value;
-    const getter = options.getPositionPpq();
-    if (!getter) return;
-    updatePlayhead(getter());
-  });
+  watchEffect(
+    () => {
+      // Track both the rendered SVG and the playhead position.
+      void options.svg.value;
+      const getter = options.getPositionPpq();
+      if (!getter) return;
+      updatePlayhead(getter());
+    },
+    // The SVG reaches the DOM through the host's v-html, patched during the
+    // component's render. Flush after that patch so the element index is (re)built
+    // against the newly rendered notes; a default pre-flush run would index the
+    // stale DOM, cache it as current, then never rebuild — stranding the
+    // highlight and stalling follow after a re-render (e.g. switching tracks
+    // mid-playback).
+    { flush: 'post' },
+  );
 
   onScopeDispose(resetScan);
 
