@@ -44,14 +44,31 @@ function baseLayoutOptions(settings: ScoreLayoutSettings): LayoutOptions {
     svgViewBox: true,
     header: 'none',
     footer: 'none',
+    // Verovio's setOptions merges rather than resets, so any option one layout
+    // variant enables sticks around when switching to another. Default the
+    // content-cropping flags off here so the paginated print layout always
+    // fills the full page; only the screen layout opts back in below.
+    adjustPageHeight: false,
+    adjustPageWidth: false,
   };
 }
 
-/** Paginated Verovio layout used for print/PDF export. */
+/**
+ * Paginated Verovio layout used for print/PDF export.
+ *
+ * `line` honors the system breaks injected per `barsPerSystem` (see
+ * `applyLayoutBreaks`) so each system holds a bounded, readable number of
+ * measures, while pages break automatically to fill each sheet — so every
+ * measure is emitted across as many pages as needed. Pure `auto` ignores the
+ * injected breaks and can collapse a busy run into one oversized, unreadable
+ * system; `encoded` also forces the injected page breaks, which leaves pages
+ * half-empty. With no injected breaks (`barsPerSystem` = 0) Verovio falls back
+ * to automatic system breaks.
+ */
 export function scorePrintLayoutOptions(settings: ScoreLayoutSettings): LayoutOptions {
   return {
     ...baseLayoutOptions(settings),
-    breaks: 'auto',
+    breaks: 'line',
   };
 }
 
