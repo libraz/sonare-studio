@@ -19,6 +19,9 @@ const pdfState = vi.hoisted(() => ({
     addPageCalls: unknown[][];
     propertiesCalls: unknown[];
     svgCalls: Array<{ tag: string; options: unknown }>;
+    fontSizeCalls: number[];
+    textColorCalls: number[];
+    textCalls: Array<{ text: string; x: number; y: number; options: unknown }>;
     outputCalls: string[];
   }>,
 }));
@@ -33,6 +36,9 @@ vi.mock('jspdf', () => {
         addPageCalls: [],
         propertiesCalls: [],
         svgCalls: [],
+        fontSizeCalls: [],
+        textColorCalls: [],
+        textCalls: [],
         outputCalls: [],
       };
       pdfState.instances.push(this.record);
@@ -50,6 +56,21 @@ vi.mock('jspdf', () => {
 
     setProperties(properties: unknown): this {
       this.record.propertiesCalls.push(properties);
+      return this;
+    }
+
+    setFontSize(size: number): this {
+      this.record.fontSizeCalls.push(size);
+      return this;
+    }
+
+    setTextColor(gray: number): this {
+      this.record.textColorCalls.push(gray);
+      return this;
+    }
+
+    text(text: string, x: number, y: number, options?: unknown): this {
+      this.record.textCalls.push({ text, x, y, options });
       return this;
     }
 
@@ -233,6 +254,11 @@ describe('exportPdf', () => {
       expect(call.tag).toBe('svg');
       expect(call.options).toEqual({ x: 0, y: 0, width: 210, height: 297 });
     }
+    expect(doc.textCalls).toEqual([
+      { text: 'Page 1 / 3', x: 105, y: 290, options: { align: 'center' } },
+      { text: 'Page 2 / 3', x: 105, y: 290, options: { align: 'center' } },
+      { text: 'Page 3 / 3', x: 105, y: 290, options: { align: 'center' } },
+    ]);
     expect(doc.outputCalls).toEqual(['blob']);
   });
 
@@ -253,6 +279,19 @@ describe('exportPdf', () => {
       subject: 'Practice',
       creator: 'sonare studio',
     });
+  });
+
+  it('draws a PDF header title and can suppress page numbers', async () => {
+    await exportPdf([SVG_PAGE], A4, {
+      title: 'Etude',
+      headerTitle: 'Etude - Violin',
+      pageNumbers: false,
+    });
+    expect(pdfState.instances[0].fontSizeCalls).toEqual([8]);
+    expect(pdfState.instances[0].textColorCalls).toEqual([80]);
+    expect(pdfState.instances[0].textCalls).toEqual([
+      { text: 'Etude - Violin', x: 7, y: 7, options: { align: 'left' } },
+    ]);
   });
 
   it('rejects malformed SVG markup', async () => {

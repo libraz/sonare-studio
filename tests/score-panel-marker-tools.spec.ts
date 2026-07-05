@@ -1,0 +1,178 @@
+import { mount } from '@vue/test-utils';
+import { createPinia, setActivePinia } from 'pinia';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { nextTick, ref } from 'vue';
+import ScorePanel from '@/components/score/ScorePanel.vue';
+import { clearHistory } from '@/project/commands';
+import { useProjectStore } from '@/project/store';
+
+vi.mock('@/lib/wasm', async () => {
+  const { createFakeWasmModule } = await import('./fake-wasm');
+  const fakeModule = createFakeWasmModule();
+  return { ensureWasm: async () => fakeModule };
+});
+
+const commandMocks = vi.hoisted(() => ({
+  setMarker: vi.fn(),
+}));
+
+vi.mock('@/project/commands', async (importActual) => {
+  const actual = await importActual<typeof import('@/project/commands')>();
+  return {
+    ...actual,
+    setMarker: commandMocks.setMarker,
+  };
+});
+
+const notationMocks = vi.hoisted(() => ({
+  transcribe: vi.fn(async () => undefined),
+  setError: vi.fn(),
+}));
+
+vi.mock('@/ui/score/use-score-notation', () => ({
+  useScoreNotation: () => ({
+    loading: ref(false),
+    exporting: ref(false),
+    error: ref(''),
+    svg: ref(''),
+    page: ref(1),
+    pageCount: ref(1),
+    getTimemap: () => [],
+    getCurrentXml: () => '<score-partwise />',
+    bumpGeneration: vi.fn(),
+    transcribe: notationMocks.transcribe,
+    refresh: vi.fn(async () => undefined),
+    applyLayout: vi.fn(async () => undefined),
+    gotoPage: vi.fn(),
+    setError: notationMocks.setError,
+    onPrint: vi.fn(),
+    onExportPdf: vi.fn(),
+    onExportMusicXml: vi.fn(),
+    onExportPartMusicXml: vi.fn(),
+  }),
+}));
+
+vi.mock('@/ui/score/use-playhead-sync', () => ({
+  usePlayheadSync: () => ({
+    resetScan: vi.fn(),
+  }),
+}));
+
+vi.mock('@/notation/verovio', () => ({
+  VerovioClient: class {
+    failed = false;
+    dispose = vi.fn();
+  },
+}));
+
+function field(wrapper: ReturnType<typeof mount>, label: string) {
+  const input = wrapper.find(`[aria-label="${label}"]`);
+  expect(input.exists()).toBe(true);
+  return input;
+}
+
+describe('ScorePanel marker tools', () => {
+  let store: ReturnType<typeof useProjectStore>;
+
+  beforeEach(async () => {
+    setActivePinia(createPinia());
+    store = useProjectStore();
+    store.dispose();
+    clearHistory();
+    vi.clearAllMocks();
+    await store.init();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('adds structured lyric markers at the current score edit position', async () => {
+    const wrapper = mount(ScorePanel, {
+      props: {
+        positionPpq: () => 5.25,
+      },
+      global: {
+        stubs: {
+          EmptyState: true,
+          ScoreAnnotationPalette: true,
+          ScoreToolbar: true,
+        },
+      },
+    });
+
+    await field(wrapper, 'Lyric').setValue('glo');
+    await field(wrapper, 'Verse').setValue('2');
+    await field(wrapper, 'Syllabic').setValue('begin');
+    await wrapper.find('label.inline-check input').setValue(true);
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === 'Add lyric')
+      ?.trigger('click');
+    await nextTick();
+
+    expect(commandMocks.setMarker).toHaveBeenCalledWith(null, 5.25, 'Lyric 2: begin: glo~');
+    expect(notationMocks.setError).toHaveBeenCalledWith('');
+    expect(notationMocks.transcribe).toHaveBeenCalled();
+    expect((field(wrapper, 'Lyric').element as HTMLInputElement).value).toBe('');
+  });
+
+  it('adds key markers snapped to the containing score measure', async () => {
+    const wrapper = mount(ScorePanel, {
+      props: {
+        positionPpq: () => 6.75,
+      },
+      global: {
+        stubs: {
+          EmptyState: true,
+          ScoreAnnotationPalette: true,
+          ScoreToolbar: true,
+        },
+      },
+    });
+
+    await field(wrapper, 'Key').setValue('Bb');
+    await field(wrapper, 'Mode').setValue('minor');
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === 'Add key')
+      ?.trigger('click');
+    await nextTick();
+
+    expect(commandMocks.setMarker).toHaveBeenCalledWith(null, 4, 'Key: Bb minor');
+    expect(notationMocks.setError).toHaveBeenCalledWith('');
+    expect(notationMocks.transcribe).toHaveBeenCalled();
+  });
+
+  it('clears a pending retranscribe timer on unmount', async () => {
+    vi.useFakeTimers();
+    const wrapper = mount(ScorePanel, {
+      global: {
+        stubs: {
+          EmptyState: true,
+          ScoreAnnotationPalette: true,
+          ScoreToolbar: true,
+        },
+      },
+    });
+    await nextTick();
+    notationMocks.transcribe.mockClear();
+
+    store.notes = [
+      {
+        id: 1,
+        pitch: 60,
+        velocity: 100,
+        startPpq: 0,
+        durationPpq: 1,
+        channel: 0,
+      },
+    ];
+    await nextTick();
+
+    wrapper.unmount();
+    vi.runOnlyPendingTimers();
+
+    expect(notationMocks.transcribe).not.toHaveBeenCalled();
+  });
+});

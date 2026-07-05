@@ -185,6 +185,12 @@ export interface NotatedEvent {
   /** True when this event continues a tie from the previous event. */
   tieStop: boolean;
   /**
+   * Explicit staff assignment for grand-staff events (1 = treble, 2 = bass).
+   * When absent, serializers may infer staff from pitch for hand-authored
+   * fixtures.
+   */
+  staff?: 1 | 2;
+  /**
    * Editor note ids whose quantized notes produced this event (absent for
    * rests). Used only to attach display annotations to engraved notes; the
    * pipeline never writes through these ids back to MIDI data.
@@ -292,6 +298,25 @@ export interface NotatedMeasureText {
   defaultY?: number;
 }
 
+/** MusicXML lyric syllabic value. */
+export type NotatedLyricSyllabic = 'single' | 'begin' | 'middle' | 'end';
+
+/** Lyric syllable attached to the first note event at an absolute PPQ. */
+export interface NotatedLyric {
+  /** Absolute PPQ position of the note attack receiving this lyric. */
+  ppq: number;
+  /** Lyric syllable or word shown under the staff. */
+  text: string;
+  /** Verse number (`<lyric number>`), 1-based. Omitted means serializer order. */
+  verse?: number;
+  /** Syllabic position for hyphenated lyrics. Defaults to `single`. */
+  syllabic?: NotatedLyricSyllabic;
+  /** Emits a MusicXML lyric extend mark for melisma. */
+  extend?: boolean;
+  /** Optional target part id; omitted attaches to the first matching part. */
+  partId?: string;
+}
+
 /** Multi-measure rest span starting at a measure. */
 export interface NotatedMultiMeasureRest {
   /** Number of consecutive empty measures represented by the start measure. */
@@ -339,6 +364,8 @@ export interface NotatedScore {
   measureTempoTexts?: Readonly<Record<number, NotatedTempoText>>;
   /** Optional general text directions, keyed by zero-based measure index. */
   measureTexts?: Readonly<Record<number, ReadonlyArray<NotatedMeasureText>>>;
+  /** Optional lyric syllables resolved to note attacks by PPQ. */
+  lyrics?: ReadonlyArray<NotatedLyric>;
   /** Optional multi-measure rest spans, keyed by zero-based start measure index. */
   multiMeasureRests?: Readonly<Record<number, NotatedMultiMeasureRest>>;
   /**

@@ -49,6 +49,7 @@ const scalePercent = defineModel<number>('scalePercent', { required: true });
 const spacingStaff = defineModel<number>('spacingStaff', { required: true });
 const barsPerSystem = defineModel<number>('barsPerSystem', { required: true });
 const barsPerPage = defineModel<number>('barsPerPage', { required: true });
+const grandStaffSplitPitch = defineModel<number>('grandStaffSplitPitch', { required: true });
 const page = defineModel<number>('page', { required: true });
 
 const emit = defineEmits<{
@@ -136,6 +137,7 @@ const layoutOpen = ref(false);
           v-model:spacing-staff="spacingStaff"
           v-model:bars-per-system="barsPerSystem"
           v-model:bars-per-page="barsPerPage"
+          v-model:grand-staff-split-pitch="grandStaffSplitPitch"
           :transpose="transpose"
           @transpose-change="emit('transposeChange', $event)"
         />

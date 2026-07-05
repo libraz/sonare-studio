@@ -60,6 +60,10 @@ interface ChordWindow {
  * audio-domain ChordQuality ordinals (Major = 0).
  */
 const CHORD_TEMPLATES: ReadonlyArray<ChordTemplate> = [
+  { quality: 14, intervals: [0, 4, 7, 11, 2], suffix: 'maj9' }, // major 9
+  { quality: 15, intervals: [0, 4, 7, 10, 2], suffix: '9' }, // dominant 9
+  { quality: 10, intervals: [0, 4, 7, 2], suffix: 'add9' }, // add 9
+  { quality: 11, intervals: [0, 3, 7, 2], suffix: 'm(add9)' }, // minor add 9
   { quality: 0, intervals: [0, 4, 7], suffix: '' }, // major
   { quality: 1, intervals: [0, 3, 7], suffix: 'm' }, // minor
   { quality: 4, intervals: [0, 4, 7, 10], suffix: '7' }, // dominant 7

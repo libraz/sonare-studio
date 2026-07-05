@@ -52,16 +52,33 @@ describe('score annotation commands', () => {
     const noteId = addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
     setNoteAnnotation(store.clipId, noteId, { dynamics: 'mp' });
     setNoteAnnotation(store.clipId, noteId, { articulation: 'staccato' });
+    setNoteAnnotation(store.clipId, noteId, { ornament: 'trill' });
     expect(store.scoreAnnotations[store.clipId]?.[noteId]).toEqual({
       dynamics: 'mp',
       articulation: 'staccato',
+      ornament: 'trill',
     });
 
     setNoteAnnotation(store.clipId, noteId, { dynamics: null });
-    expect(store.scoreAnnotations[store.clipId]?.[noteId]).toEqual({ articulation: 'staccato' });
+    expect(store.scoreAnnotations[store.clipId]?.[noteId]).toEqual({
+      articulation: 'staccato',
+      ornament: 'trill',
+    });
+
+    setNoteAnnotation(store.clipId, noteId, { articulation: null });
+    expect(store.scoreAnnotations[store.clipId]?.[noteId]).toEqual({ ornament: 'trill' });
 
     // Clearing the last field drops the entry (and the clip bucket) entirely.
-    setNoteAnnotation(store.clipId, noteId, { articulation: null });
+    setNoteAnnotation(store.clipId, noteId, { ornament: null });
+    expect(store.scoreAnnotations).toEqual({});
+  });
+
+  it('stores and clears explicit grand-staff overrides', () => {
+    const noteId = addNote({ pitch: 55, startPpq: 0, durationPpq: 1 });
+    setNoteAnnotation(store.clipId, noteId, { staffOverride: 1 });
+    expect(store.scoreAnnotations[store.clipId]?.[noteId]).toEqual({ staffOverride: 1 });
+
+    setNoteAnnotation(store.clipId, noteId, { staffOverride: null });
     expect(store.scoreAnnotations).toEqual({});
   });
 
@@ -70,6 +87,51 @@ describe('score annotation commands', () => {
     const b = addNote({ pitch: 64, startPpq: 1, durationPpq: 1 });
     setNoteAnnotation(store.clipId, a, { slurToNoteId: b });
     expect(store.scoreAnnotations[store.clipId]?.[a]).toEqual({ slurToNoteId: b });
+  });
+
+  it('stores hairpins between notes of the same clip', () => {
+    const a = addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+    const b = addNote({ pitch: 64, startPpq: 1, durationPpq: 1 });
+    setNoteAnnotation(store.clipId, a, { hairpin: 'crescendo', hairpinToNoteId: b });
+    expect(store.scoreAnnotations[store.clipId]?.[a]).toEqual({
+      hairpin: 'crescendo',
+      hairpinToNoteId: b,
+    });
+    setNoteAnnotation(store.clipId, a, { hairpin: null });
+    expect(store.scoreAnnotations).toEqual({});
+  });
+
+  it('stores line spans between notes of the same clip', () => {
+    const a = addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+    const b = addNote({ pitch: 64, startPpq: 1, durationPpq: 1 });
+    setNoteAnnotation(store.clipId, a, { lineSpan: 'ottava-15-up', lineSpanToNoteId: b });
+    expect(store.scoreAnnotations[store.clipId]?.[a]).toEqual({
+      lineSpan: 'ottava-15-up',
+      lineSpanToNoteId: b,
+    });
+    setNoteAnnotation(store.clipId, a, { lineSpan: null });
+    expect(store.scoreAnnotations).toEqual({});
+  });
+
+  it('stores multiple simultaneous line spans from one note', () => {
+    const a = addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+    const b = addNote({ pitch: 64, startPpq: 1, durationPpq: 1 });
+    const c = addNote({ pitch: 67, startPpq: 2, durationPpq: 1 });
+
+    setNoteAnnotation(store.clipId, a, {
+      addLineSpan: { lineSpan: 'ottava-up', lineSpanToNoteId: b },
+    });
+    setNoteAnnotation(store.clipId, a, {
+      addLineSpan: { lineSpan: 'glissando', lineSpanToNoteId: c },
+    });
+
+    expect(store.scoreAnnotations[store.clipId]?.[a]).toEqual({
+      lineSpan: 'ottava-up',
+      lineSpanToNoteId: b,
+      lineSpans: [{ lineSpan: 'glissando', lineSpanToNoteId: c }],
+    });
+    setNoteAnnotation(store.clipId, a, { lineSpan: null });
+    expect(store.scoreAnnotations).toEqual({});
   });
 
   it('validates inputs', () => {
@@ -83,10 +145,28 @@ describe('score annotation commands', () => {
     expect(() =>
       setNoteAnnotation(store.clipId, a, { articulation: 'spiccato' as unknown as 'accent' }),
     ).toThrow(RangeError);
+    expect(() =>
+      setNoteAnnotation(store.clipId, a, { ornament: 'shake' as unknown as 'trill' }),
+    ).toThrow(RangeError);
+    expect(() =>
+      setNoteAnnotation(store.clipId, a, { hairpin: 'swell' as unknown as 'crescendo' }),
+    ).toThrow(RangeError);
+    expect(() =>
+      setNoteAnnotation(store.clipId, a, { lineSpan: 'slide' as unknown as 'glissando' }),
+    ).toThrow(RangeError);
+    expect(() => setNoteAnnotation(store.clipId, a, { staffOverride: 3 as 1 })).toThrow(RangeError);
     // Slur targets must exist and start strictly after the source.
     expect(() => setNoteAnnotation(store.clipId, a, { slurToNoteId: 9999 })).toThrow(RangeError);
     expect(() => setNoteAnnotation(store.clipId, a, { slurToNoteId: a })).toThrow(RangeError);
     expect(() => setNoteAnnotation(store.clipId, a, { slurToNoteId: b })).toThrow(RangeError);
+    expect(() => setNoteAnnotation(store.clipId, a, { hairpinToNoteId: 9999 })).toThrow(RangeError);
+    expect(() => setNoteAnnotation(store.clipId, a, { hairpinToNoteId: a })).toThrow(RangeError);
+    expect(() => setNoteAnnotation(store.clipId, a, { hairpinToNoteId: b })).toThrow(RangeError);
+    expect(() => setNoteAnnotation(store.clipId, a, { lineSpanToNoteId: 9999 })).toThrow(
+      RangeError,
+    );
+    expect(() => setNoteAnnotation(store.clipId, a, { lineSpanToNoteId: a })).toThrow(RangeError);
+    expect(() => setNoteAnnotation(store.clipId, a, { lineSpanToNoteId: b })).toThrow(RangeError);
   });
 
   it('clearNoteAnnotation removes the whole entry and is undoable', () => {
@@ -149,8 +229,27 @@ describe('score annotation serialization', () => {
   it('serializes annotations content-addressed and round-trips through load', async () => {
     const a = addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
     const b = addNote({ pitch: 64, startPpq: 1.5, durationPpq: 0.5, channel: 2 });
-    setNoteAnnotation(store.clipId, a, { dynamics: 'mf', articulation: 'accent', slurToNoteId: b });
-    setNoteAnnotation(store.clipId, b, { articulation: 'staccato' });
+    const c = addNote({ pitch: 67, startPpq: 2, durationPpq: 0.5, channel: 2 });
+    setNoteAnnotation(store.clipId, a, {
+      dynamics: 'mf',
+      articulation: 'accent',
+      ornament: 'trill',
+      staffOverride: 1,
+      slurToNoteId: b,
+      hairpin: 'crescendo',
+      hairpinToNoteId: b,
+      lineSpan: 'ottava-15-down',
+      lineSpanToNoteId: b,
+    });
+    setNoteAnnotation(store.clipId, a, {
+      addLineSpan: {
+        lineSpan: 'glissando',
+        lineSpanToNoteId: c,
+        glissandoLineType: 'wavy',
+        glissandoText: 'slide up',
+      },
+    });
+    setNoteAnnotation(store.clipId, b, { articulation: 'staccato', ornament: 'fermata' });
     setDisplayTranspose(12);
 
     const doc = serializeProject();
@@ -161,9 +260,23 @@ describe('score annotation serialization', () => {
         channel: 0,
         dynamics: 'mf',
         articulation: 'accent',
+        ornament: 'trill',
+        staffOverride: 1,
         slurTo: { pitch: 64, startPpq: 1.5, channel: 2 },
+        hairpin: 'crescendo',
+        hairpinTo: { pitch: 64, startPpq: 1.5, channel: 2 },
+        lineSpan: 'ottava-15-down',
+        lineSpanTo: { pitch: 64, startPpq: 1.5, channel: 2 },
+        lineSpans: [
+          {
+            lineSpan: 'glissando',
+            lineSpanTo: { pitch: 67, startPpq: 2, channel: 2 },
+            glissandoLineType: 'wavy',
+            glissandoText: 'slide up',
+          },
+        ],
       },
-      { pitch: 64, startPpq: 1.5, channel: 2, articulation: 'staccato' },
+      { pitch: 64, startPpq: 1.5, channel: 2, articulation: 'staccato', ornament: 'fermata' },
     ]);
     expect(doc.score).toEqual({ displayTransposeSemitones: 12 });
 
@@ -171,15 +284,34 @@ describe('score annotation serialization', () => {
     // Fresh editor ids: re-associate by note content.
     const loadedA = store.notes.find((n) => n.pitch === 60);
     const loadedB = store.notes.find((n) => n.pitch === 64);
+    const loadedC = store.notes.find((n) => n.pitch === 67);
     expect(loadedA).toBeDefined();
     expect(loadedB).toBeDefined();
+    expect(loadedC).toBeDefined();
     const annotations = store.scoreAnnotations[store.clipId];
     expect(annotations?.[(loadedA as { id: number }).id]).toEqual({
       dynamics: 'mf',
       articulation: 'accent',
+      ornament: 'trill',
+      staffOverride: 1,
       slurToNoteId: (loadedB as { id: number }).id,
+      hairpin: 'crescendo',
+      hairpinToNoteId: (loadedB as { id: number }).id,
+      lineSpan: 'ottava-15-down',
+      lineSpanToNoteId: (loadedB as { id: number }).id,
+      lineSpans: [
+        {
+          lineSpan: 'glissando',
+          lineSpanToNoteId: (loadedC as { id: number }).id,
+          glissandoLineType: 'wavy',
+          glissandoText: 'slide up',
+        },
+      ],
     });
-    expect(annotations?.[(loadedB as { id: number }).id]).toEqual({ articulation: 'staccato' });
+    expect(annotations?.[(loadedB as { id: number }).id]).toEqual({
+      articulation: 'staccato',
+      ornament: 'fermata',
+    });
     expect(store.displayTransposeSemitones).toBe(12);
 
     // Re-serializing yields the same document (annotation order is content-sorted).
@@ -230,7 +362,18 @@ describe('annotation document converters', () => {
 
   it('annotationsToDocument skips entries that lose every field', () => {
     // A slur whose target was deleted leaves no payload behind.
-    const entries = annotationsToDocument({ 10: { slurToNoteId: 999 } }, notes);
+    const entries = annotationsToDocument(
+      {
+        10: {
+          slurToNoteId: 999,
+          hairpin: 'crescendo',
+          hairpinToNoteId: 999,
+          lineSpan: 'glissando',
+          lineSpanToNoteId: 999,
+        },
+      },
+      notes,
+    );
     expect(entries).toEqual([]);
   });
 

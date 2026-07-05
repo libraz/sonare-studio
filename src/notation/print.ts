@@ -18,10 +18,17 @@ export interface PdfMetadata {
   title?: string;
   author?: string;
   subject?: string;
+  /** Optional title drawn at the top of every exported PDF page. */
+  headerTitle?: string;
+  /** Whether to draw "Page X / N" at the bottom of each PDF page. Defaults to true. */
+  pageNumbers?: boolean;
 }
 
 /** Points per millimetre (72 pt per inch / 25.4 mm per inch). */
 const PT_PER_MM = 72 / 25.4;
+
+/** Conservative margin used for PDF-only headers and footers. */
+const PDF_OVERLAY_MARGIN_MM = 7;
 
 /**
  * Converts millimetres to PostScript points.
@@ -179,6 +186,8 @@ export async function exportPdf(
     subject: metadata.subject?.trim() || 'Engraved score',
     creator: 'sonare studio',
   });
+  const headerTitle = metadata.headerTitle?.trim() || metadata.title?.trim() || '';
+  const pageNumbers = metadata.pageNumbers !== false;
   for (let i = 0; i < svgPages.length; i++) {
     if (i > 0) doc.addPage(format, orientation);
     await doc.svg(parseSvgPage(svgPages[i]), {
@@ -187,8 +196,42 @@ export async function exportPdf(
       width: layout.pageWidthMm,
       height: layout.pageHeightMm,
     });
+    appendPdfPageOverlay(doc, layout, i + 1, svgPages.length, headerTitle, pageNumbers);
   }
   return doc.output('blob');
+}
+
+function appendPdfPageOverlay(
+  doc: {
+    setFontSize?: (size: number) => unknown;
+    setTextColor?: (gray: number) => unknown;
+    text?: (
+      text: string,
+      x: number,
+      y: number,
+      options?: { align?: 'left' | 'center' | 'right' },
+    ) => unknown;
+  },
+  layout: PageLayout,
+  page: number,
+  pageCount: number,
+  headerTitle: string,
+  pageNumbers: boolean,
+): void {
+  if (headerTitle === '' && !pageNumbers) return;
+  doc.setFontSize?.(8);
+  doc.setTextColor?.(80);
+  if (headerTitle !== '') {
+    doc.text?.(headerTitle, PDF_OVERLAY_MARGIN_MM, PDF_OVERLAY_MARGIN_MM, { align: 'left' });
+  }
+  if (pageNumbers) {
+    doc.text?.(
+      `Page ${page} / ${pageCount}`,
+      layout.pageWidthMm / 2,
+      layout.pageHeightMm - PDF_OVERLAY_MARGIN_MM,
+      { align: 'center' },
+    );
+  }
 }
 
 /**

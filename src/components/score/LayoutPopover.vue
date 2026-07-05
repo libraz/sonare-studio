@@ -20,6 +20,7 @@ const props = defineProps<{
   spacingStaff: number;
   barsPerSystem: number;
   barsPerPage: number;
+  grandStaffSplitPitch: number;
   /** Current display transpose in semitones (driven by the project store). */
   transpose: number;
 }>();
@@ -32,6 +33,7 @@ const emit = defineEmits<{
   'update:spacingStaff': [value: number];
   'update:barsPerSystem': [value: number];
   'update:barsPerPage': [value: number];
+  'update:grandStaffSplitPitch': [value: number];
   /** Requests a display transpose change in semitones. */
   transposeChange: [value: number];
 }>();
@@ -95,6 +97,11 @@ const barsPerPageModel = computed<number>({
   set: (value) => emit('update:barsPerPage', value),
 });
 
+const grandStaffSplitPitchModel = computed<number>({
+  get: () => props.grandStaffSplitPitch,
+  set: (value) => emit('update:grandStaffSplitPitch', value),
+});
+
 /** Display transpose options for the popover select (semitones). */
 const transposeOptions = computed(() =>
   TRANSPOSE_CHOICES.map((n) => ({ value: n, label: n > 0 ? `+${n}` : String(n) })),
@@ -140,6 +147,10 @@ const transposeOptions = computed(() =>
     <label class="layout-row">
       {{ t.shell.score.barsPerPage }}
       <input v-model.number="barsPerPageModel" type="number" min="0" max="48" step="1" />
+    </label>
+    <label class="layout-row" v-tooltip="t.shell.score.grandStaffSplitTitle">
+      {{ t.shell.score.grandStaffSplit }}
+      <input v-model.number="grandStaffSplitPitchModel" type="number" min="0" max="127" step="1" />
     </label>
     <label
       class="layout-row"

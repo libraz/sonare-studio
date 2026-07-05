@@ -22,7 +22,13 @@ import {
   estimateChordSymbols,
 } from '@/notation/chords';
 import { exportMusicXml } from '@/notation/io';
-import { DEFAULT_DIVISIONS, type NotatedMeasure, type NotatedScore } from '@/notation/model';
+import {
+  DEFAULT_DIVISIONS,
+  type NotatedLyric,
+  type NotatedLyricSyllabic,
+  type NotatedMeasure,
+  type NotatedScore,
+} from '@/notation/model';
 import { extractPartScore, serializeMusicXml } from '@/notation/musicxml';
 import { downloadBlob, exportPdf, printScore } from '@/notation/print';
 import { quantizeToScore } from '@/notation/quantize';
@@ -73,6 +79,8 @@ export interface ScoreNotationOptions {
   getChordsEnabled: () => boolean;
   /** True when all overlapping MIDI tracks should be engraved as parts. */
   getFullScoreEnabled?: () => boolean;
+  /** Grand-staff split pitch as MIDI note number (defaulted by quantizeToScore). */
+  getGrandStaffSplitPitch?: () => number;
   /** Active transport loop range in project PPQ, or null when disabled/unusable. */
   getLoopRegion?: () => { startPpq: number; endPpq: number } | null;
   /** Current layout settings (page, orientation, margins, scale, spacing). */
@@ -183,6 +191,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
               clipLengthPpq: options.getScreenClipLengthPpq(),
               timeSignatures: options.getTimeSignatures?.(),
               displayTransposeSemitones: store.displayTransposeSemitones,
+              grandStaffSplitPitch: options.getGrandStaffSplitPitch?.(),
             })
           : quantizeToScore(store.notes, {
               divisionPpq: options.getDivisionPpq(),
@@ -193,6 +202,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
               timeSignatures: options.getTimeSignatures?.(),
               clef: 'grand',
               partName: 'Piano',
+              grandStaffSplitPitch: options.getGrandStaffSplitPitch?.(),
               // Engraving-only transpose; the underlying MIDI notes never change.
               displayTransposeSemitones: store.displayTransposeSemitones,
             });
@@ -213,6 +223,14 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
         options.getLayoutSettings(),
       );
       applyMarkerTexts(
+        score,
+        store.markers,
+        store.clipStartPpq,
+        store.clipLengthPpq,
+        options.getMeasureLenPpq(),
+      );
+      applyLyricMarks(score, store.markers, store.clipStartPpq, store.clipLengthPpq);
+      applyKeySignatureMarks(
         score,
         store.markers,
         store.clipStartPpq,
@@ -394,6 +412,8 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
         title,
         author: 'sonare studio',
         subject: 'Engraved score',
+        headerTitle: title,
+        pageNumbers: true,
       });
       downloadBlob(blob, projectFilename(store.projectName, '.pdf', 'score'));
     });
@@ -450,6 +470,7 @@ interface FullScoreBuildOptions {
   clipLengthPpq: number;
   timeSignatures?: ReadonlyArray<TimeSignatureSegment>;
   displayTransposeSemitones: number;
+  grandStaffSplitPitch?: number;
 }
 
 export function buildFullScore(store: ProjectStore, options: FullScoreBuildOptions): NotatedScore {
@@ -687,6 +708,8 @@ export function applyMarkerTexts(
   const texts: Record<number, Array<{ text: string; defaultY?: number }>> = {};
   for (const marker of markers) {
     if (marker.ppq < clipStartPpq - PPQ_EPSILON || marker.ppq >= clipEndPpq - PPQ_EPSILON) continue;
+    if (keySignaturePayload(marker.name) !== null) continue;
+    if (lyricPayload(marker.name) !== null) continue;
     const measureIndex = measureIndexForPpq(score, marker.ppq, clipStartPpq, measureLenPpq);
     if (measureIndex === undefined) continue;
     const text = marker.name.trim();
@@ -696,6 +719,63 @@ export function applyMarkerTexts(
     texts[measureIndex] = list;
   }
   if (Object.keys(texts).length > 0) score.measureTexts = texts;
+}
+
+/** Adds MusicXML lyrics from "Lyric: ..." timeline markers. */
+export function applyLyricMarks(
+  score: NotatedScore,
+  markers: ReadonlyArray<EditorMarker>,
+  clipStartPpq: number,
+  clipLengthPpq: number,
+): void {
+  if (markers.length === 0 || score.parts.length === 0) return;
+  const clipEndPpq = clipStartPpq + clipLengthPpq;
+  const lyrics = markers
+    .filter((marker) => marker.ppq >= clipStartPpq - PPQ_EPSILON && marker.ppq < clipEndPpq)
+    .sort((a, b) => a.ppq - b.ppq || a.id - b.id)
+    .flatMap((marker) => {
+      const lyric = lyricPayload(marker.name);
+      return lyric === null ? [] : [{ ppq: marker.ppq, ...lyric }];
+    });
+  if (lyrics.length > 0) score.lyrics = lyrics;
+}
+
+/** Adds MusicXML key-signature changes from measure-aligned "Key: ..." markers. */
+export function applyKeySignatureMarks(
+  score: NotatedScore,
+  markers: ReadonlyArray<EditorMarker>,
+  clipStartPpq: number,
+  clipLengthPpq: number,
+  measureLenPpq: number,
+): void {
+  if (markers.length === 0 || measureLenPpq <= 0 || score.parts.length === 0) return;
+  const clipEndPpq = clipStartPpq + clipLengthPpq;
+  const keyMarkers = markers
+    .map((marker) => ({ marker, key: keySignaturePayload(marker.name) }))
+    .filter(
+      (entry): entry is { marker: EditorMarker; key: { fifths: number } } => entry.key !== null,
+    )
+    .sort((a, b) => a.marker.ppq - b.marker.ppq || a.marker.id - b.marker.id);
+  if (keyMarkers.length === 0) return;
+
+  let activeFifths = score.keyFifths;
+  for (const { marker, key } of keyMarkers) {
+    if (marker.ppq <= clipStartPpq + PPQ_EPSILON) activeFifths = key.fifths;
+  }
+
+  const changes: Record<number, number> = {};
+  if (activeFifths !== score.keyFifths) changes[0] = activeFifths;
+  for (const { marker, key } of keyMarkers) {
+    if (marker.ppq <= clipStartPpq + PPQ_EPSILON || marker.ppq >= clipEndPpq - PPQ_EPSILON) {
+      continue;
+    }
+    const measureIndex = measureIndexForPpq(score, marker.ppq, clipStartPpq, measureLenPpq);
+    if (measureIndex === undefined) continue;
+    if (key.fifths === activeFifths) continue;
+    activeFifths = key.fifths;
+    changes[measureIndex] = key.fifths;
+  }
+  if (Object.keys(changes).length > 0) score.measureKeyFifths = changes;
 }
 
 /** Marks consecutive empty measures as multi-measure rests when safe. */
@@ -776,6 +856,70 @@ function measureBoundaryIndexForPpq(
     return measures.length;
   }
   return undefined;
+}
+
+function keySignaturePayload(name: string): { fifths: number } | null {
+  const match = name.trim().match(/^Key:\s*([A-G](?:b|#)?)\s+(major|minor)$/i);
+  if (!match) return null;
+  const tonic = `${match[1][0].toUpperCase()}${match[1].slice(1)}`;
+  const mode = match[2].toLowerCase();
+  const major = new Map([
+    ['Cb', -7],
+    ['Gb', -6],
+    ['Db', -5],
+    ['Ab', -4],
+    ['Eb', -3],
+    ['Bb', -2],
+    ['F', -1],
+    ['C', 0],
+    ['G', 1],
+    ['D', 2],
+    ['A', 3],
+    ['E', 4],
+    ['B', 5],
+    ['F#', 6],
+    ['C#', 7],
+  ]);
+  const minor = new Map([
+    ['Ab', -7],
+    ['Eb', -6],
+    ['Bb', -5],
+    ['F', -4],
+    ['C', -3],
+    ['G', -2],
+    ['D', -1],
+    ['A', 0],
+    ['E', 1],
+    ['B', 2],
+    ['F#', 3],
+    ['C#', 4],
+    ['G#', 5],
+    ['D#', 6],
+    ['A#', 7],
+  ]);
+  const fifths = mode === 'major' ? major.get(tonic) : minor.get(tonic);
+  return fifths === undefined ? null : { fifths };
+}
+
+function lyricPayload(name: string): Omit<NotatedLyric, 'ppq' | 'partId'> | null {
+  const match = name.trim().match(/^Lyric(?:\s+#?(\d+))?:\s*(.+)$/i);
+  if (!match) return null;
+  const verse = match[1] === undefined ? undefined : Number(match[1]);
+  if (verse !== undefined && (!Number.isInteger(verse) || verse < 1)) return null;
+  let text = match[2].trim();
+  const syllabicMatch = text.match(/^(single|begin|middle|end):\s*(.+)$/i);
+  const syllabic = syllabicMatch?.[1].toLowerCase() as NotatedLyricSyllabic | undefined;
+  if (syllabicMatch) text = syllabicMatch[2].trim();
+  const extend = text.endsWith('~');
+  if (extend) text = text.slice(0, -1).trimEnd();
+  return text === ''
+    ? null
+    : {
+        text,
+        ...(verse !== undefined ? { verse } : {}),
+        ...(syllabic !== undefined ? { syllabic } : {}),
+        ...(extend ? { extend } : {}),
+      };
 }
 
 function isEmptyMeasure(measure: NotatedMeasure): boolean {

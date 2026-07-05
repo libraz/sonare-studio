@@ -10,12 +10,22 @@
  * on any particular whitespace beyond well-formedness.
  */
 
-import type { NoteArticulation, NoteDynamics } from '@/project/annotations';
+import type {
+  GlissandoLineType,
+  NoteArticulation,
+  NoteDynamics,
+  NoteHairpin,
+  NoteLineSpan,
+  NoteOrnament,
+  PedalLineSpanStyle,
+} from '@/project/annotations';
+import { scoreAnnotationLineSpans } from '@/project/annotations';
 import {
   type NotatedBarlineStyle,
   type NotatedChordSymbol,
   type NotatedClef,
   type NotatedEvent,
+  type NotatedLyric,
   type NotatedMeasure,
   type NotatedMeasureBreak,
   type NotatedMeasureText,
@@ -120,12 +130,30 @@ interface AnnotationIndex {
   dynamics: Map<NotatedEvent, NoteDynamics>;
   /** Articulation to emit inside the event's `<notations>`. */
   articulations: Map<NotatedEvent, NoteArticulation>;
+  /** Ornament to emit inside the event's `<notations>`. */
+  ornaments: Map<NotatedEvent, NoteOrnament>;
   /** Slur numbers starting on the event. */
   slurStarts: Map<NotatedEvent, number[]>;
   /** Slur placement attributes keyed by start event and slur number. */
   slurStartPlacements: Map<NotatedEvent, Map<number, string>>;
   /** Slur numbers stopping on the event. */
   slurStops: Map<NotatedEvent, number[]>;
+  /** Hairpin wedges starting on the event. */
+  hairpinStarts: Map<NotatedEvent, Array<{ number: number; type: NoteHairpin }>>;
+  /** Hairpin wedge numbers stopping on the event. */
+  hairpinStops: Map<NotatedEvent, number[]>;
+  /** Other line/span markings starting on the event. */
+  lineSpanStarts: Map<NotatedEvent, LineSpanRender[]>;
+  /** Other line/span markings stopping on the event. */
+  lineSpanStops: Map<NotatedEvent, LineSpanRender[]>;
+}
+
+interface LineSpanRender {
+  number: number;
+  type: NoteLineSpan;
+  pedalStyle?: PedalLineSpanStyle;
+  glissandoLineType?: GlissandoLineType;
+  glissandoText?: string;
 }
 
 /** Beam marks keyed by event, one array entry per MusicXML beam level. */
@@ -133,6 +161,9 @@ type BeamIndex = ReadonlyMap<NotatedEvent, ReadonlyArray<string>>;
 
 /** Explicit accidental text by event and pitch index within a note/chord. */
 type AccidentalIndex = ReadonlyMap<NotatedEvent, ReadonlyMap<number, string>>;
+
+/** Lyric syllables resolved onto note attack events. */
+type LyricIndex = ReadonlyMap<NotatedEvent, ReadonlyArray<NotatedLyric>>;
 
 interface PercussionDisplay {
   step: Step;
@@ -160,33 +191,52 @@ function buildAnnotationIndex(score: NotatedScore): AnnotationIndex {
   const index: AnnotationIndex = {
     dynamics: new Map(),
     articulations: new Map(),
+    ornaments: new Map(),
     slurStarts: new Map(),
     slurStartPlacements: new Map(),
     slurStops: new Map(),
+    hairpinStarts: new Map(),
+    hairpinStops: new Map(),
+    lineSpanStarts: new Map(),
+    lineSpanStops: new Map(),
   };
   const annotations = score.noteAnnotations;
   if (annotations === undefined) return index;
   const attackByNoteId = new Map<number, NotatedEvent>();
+  const eventsByNoteId = new Map<number, NotatedEvent[]>();
   for (const part of score.parts) {
     for (const measure of part.measures) {
       for (const voice of measure.voices) {
         for (const event of voice.events) {
-          if (event.kind !== 'note' || event.tieStop || event.sourceIds === undefined) continue;
+          if (event.kind !== 'note' || event.sourceIds === undefined) continue;
           for (const id of event.sourceIds) {
-            if (!attackByNoteId.has(id)) attackByNoteId.set(id, event);
+            const events = eventsByNoteId.get(id) ?? [];
+            events.push(event);
+            eventsByNoteId.set(id, events);
+            if (!event.tieStop && !attackByNoteId.has(id)) attackByNoteId.set(id, event);
           }
         }
       }
     }
   }
   const slurs: Array<{ start: NotatedEvent; stop: NotatedEvent }> = [];
+  const hairpins: Array<{ start: NotatedEvent; stop: NotatedEvent; type: NoteHairpin }> = [];
+  const lineSpans: Array<
+    { start: NotatedEvent; stop: NotatedEvent } & Omit<LineSpanRender, 'number'>
+  > = [];
   for (const [idKey, annotation] of Object.entries(annotations)) {
     const event = attackByNoteId.get(Number(idKey));
     if (event === undefined) continue; // Orphaned annotation: ignore.
+    if (annotation.staffOverride === 1 || annotation.staffOverride === 2) {
+      for (const sourceEvent of eventsByNoteId.get(Number(idKey)) ?? []) {
+        sourceEvent.staff = annotation.staffOverride;
+      }
+    }
     if (annotation.dynamics !== undefined) index.dynamics.set(event, annotation.dynamics);
     if (annotation.articulation !== undefined) {
       index.articulations.set(event, annotation.articulation);
     }
+    if (annotation.ornament !== undefined) index.ornaments.set(event, annotation.ornament);
     if (annotation.slurToNoteId !== undefined) {
       const target = attackByNoteId.get(annotation.slurToNoteId);
       if (
@@ -195,6 +245,35 @@ function buildAnnotationIndex(score: NotatedScore): AnnotationIndex {
         target.startPpq > event.startPpq + PPQ_EPSILON
       ) {
         slurs.push({ start: event, stop: target });
+      }
+    }
+    if (annotation.hairpin !== undefined && annotation.hairpinToNoteId !== undefined) {
+      const target = attackByNoteId.get(annotation.hairpinToNoteId);
+      if (
+        target !== undefined &&
+        target !== event &&
+        target.startPpq > event.startPpq + PPQ_EPSILON
+      ) {
+        hairpins.push({ start: event, stop: target, type: annotation.hairpin });
+      }
+    }
+    for (const span of scoreAnnotationLineSpans(annotation)) {
+      const target = attackByNoteId.get(span.lineSpanToNoteId);
+      if (
+        target !== undefined &&
+        target !== event &&
+        target.startPpq > event.startPpq + PPQ_EPSILON
+      ) {
+        lineSpans.push({
+          start: event,
+          stop: target,
+          type: span.lineSpan,
+          ...(span.pedalStyle !== undefined ? { pedalStyle: span.pedalStyle } : {}),
+          ...(span.glissandoLineType !== undefined
+            ? { glissandoLineType: span.glissandoLineType }
+            : {}),
+          ...(span.glissandoText !== undefined ? { glissandoText: span.glissandoText } : {}),
+        });
       }
     }
   }
@@ -213,7 +292,83 @@ function buildAnnotationIndex(score: NotatedScore): AnnotationIndex {
     index.slurStartPlacements.set(slur.start, placements);
     pushMapped(index.slurStops, slur.stop, number);
   }
+  hairpins.sort((a, b) => a.start.startPpq - b.start.startPpq || a.stop.startPpq - b.stop.startPpq);
+  active.length = 0;
+  for (const hairpin of hairpins) {
+    for (let i = active.length - 1; i >= 0; i--) {
+      if (active[i].endPpq <= hairpin.start.startPpq + PPQ_EPSILON) active.splice(i, 1);
+    }
+    let number = 1;
+    while (active.some((entry) => entry.number === number) && number < MAX_SLUR_NUMBER) number++;
+    active.push({ endPpq: hairpin.stop.startPpq, number });
+    const starts = index.hairpinStarts.get(hairpin.start) ?? [];
+    starts.push({ number, type: hairpin.type });
+    index.hairpinStarts.set(hairpin.start, starts);
+    pushMapped(index.hairpinStops, hairpin.stop, number);
+  }
+  lineSpans.sort(
+    (a, b) => a.start.startPpq - b.start.startPpq || a.stop.startPpq - b.stop.startPpq,
+  );
+  active.length = 0;
+  for (const lineSpan of lineSpans) {
+    for (let i = active.length - 1; i >= 0; i--) {
+      if (active[i].endPpq <= lineSpan.start.startPpq + PPQ_EPSILON) active.splice(i, 1);
+    }
+    let number = 1;
+    while (active.some((entry) => entry.number === number) && number < MAX_SLUR_NUMBER) number++;
+    active.push({ endPpq: lineSpan.stop.startPpq, number });
+    const render: LineSpanRender = {
+      number,
+      type: lineSpan.type,
+      ...(lineSpan.pedalStyle !== undefined ? { pedalStyle: lineSpan.pedalStyle } : {}),
+      ...(lineSpan.glissandoLineType !== undefined
+        ? { glissandoLineType: lineSpan.glissandoLineType }
+        : {}),
+      ...(lineSpan.glissandoText !== undefined ? { glissandoText: lineSpan.glissandoText } : {}),
+    };
+    const starts = index.lineSpanStarts.get(lineSpan.start) ?? [];
+    starts.push(render);
+    index.lineSpanStarts.set(lineSpan.start, starts);
+    const stops = index.lineSpanStops.get(lineSpan.stop) ?? [];
+    stops.push(render);
+    index.lineSpanStops.set(lineSpan.stop, stops);
+  }
   return index;
+}
+
+/** Resolves score-level lyric entries onto the first matching note attack. */
+function buildLyricIndex(score: NotatedScore): LyricIndex {
+  const lyrics = score.lyrics;
+  if (lyrics === undefined || lyrics.length === 0) return new Map();
+  const events: Array<{ partId: string; event: NotatedEvent }> = [];
+  for (const part of score.parts) {
+    for (const measure of part.measures) {
+      for (const voice of measure.voices) {
+        for (const event of voice.events) {
+          if (event.kind === 'note' && !event.tieStop) events.push({ partId: part.id, event });
+        }
+      }
+    }
+  }
+  const index = new Map<NotatedEvent, NotatedLyric[]>();
+  for (const lyric of [...lyrics].sort(compareLyrics)) {
+    const text = lyric.text.trim();
+    if (text === '') continue;
+    const match = events.find(
+      ({ partId, event }) =>
+        (lyric.partId === undefined || lyric.partId === partId) &&
+        Math.abs(event.startPpq - lyric.ppq) <= PPQ_EPSILON,
+    );
+    if (match === undefined) continue;
+    const list = index.get(match.event) ?? [];
+    list.push({ ...lyric, text });
+    index.set(match.event, list);
+  }
+  return index;
+}
+
+function compareLyrics(a: NotatedLyric, b: NotatedLyric): number {
+  return a.ppq - b.ppq || (a.verse ?? 1) - (b.verse ?? 1) || a.text.localeCompare(b.text);
 }
 
 /** Default slur placement by voice direction. */
@@ -400,9 +555,10 @@ export function serializeMusicXml(score: NotatedScore): string {
   }
   lines.push('</part-list>');
   const annotations = buildAnnotationIndex(score);
+  const lyrics = buildLyricIndex(score);
   score.parts.forEach((part, partIndex) => {
     const chordSymbols = partIndex === 0 ? (score.chordSymbols ?? []) : [];
-    serializePart(lines, part, score, chordSymbols, annotations);
+    serializePart(lines, part, score, chordSymbols, annotations, lyrics);
   });
   lines.push('</score-partwise>');
   return lines.join('\n');
@@ -529,6 +685,7 @@ function serializePart(
   score: NotatedScore,
   chordSymbols: ReadonlyArray<NotatedChordSymbol>,
   annotations: AnnotationIndex,
+  lyrics: LyricIndex,
 ): void {
   const staffMap = part.clef === 'grand' ? buildStaffMap(part) : undefined;
   const percussion = partUsesPercussionMap(part);
@@ -536,9 +693,11 @@ function serializePart(
   lines.push(`<part id="${escapeXml(part.id)}">`);
   let prevTimeSig: NotatedTimeSig | undefined;
   let prevClef: NotatedClef | undefined;
+  let activeKeyFifths = score.keyFifths;
   for (const [measureIndex, measure] of part.measures.entries()) {
     const measureClef = clefForMeasure(part.clef, measure, prevClef);
     const keyFifths = score.measureKeyFifths?.[measure.index];
+    if (keyFifths !== undefined) activeKeyFifths = keyFifths;
     const percussionLegend =
       percussion && measureIndex === 0 ? percussionLegendDirectionXml(part) : '';
     serializeMeasure(
@@ -549,11 +708,13 @@ function serializePart(
       measureClef,
       prevClef,
       keyFifths,
+      activeKeyFifths,
       percussion,
       percussionLegend,
       symbolsByMeasure.get(measure.index) ?? [],
       staffMap,
       annotations,
+      lyrics,
       score.measureBarlines?.[measure.index] ??
         (measureIndex === part.measures.length - 1 ? 'final' : undefined),
       score.measureRepeats?.[measure.index],
@@ -582,11 +743,13 @@ function serializeMeasure(
   measureClef: NotatedClef,
   prevClef: NotatedClef | undefined,
   keyFifths: number | undefined,
+  activeKeyFifths: number,
   percussion: boolean,
   percussionLegend: string,
   chordSymbols: ReadonlyArray<NotatedChordSymbol>,
   staffMap: ReadonlyMap<NotatedEvent, StaffNumber> | undefined,
   annotations: AnnotationIndex,
+  lyrics: LyricIndex,
   rightBarline: NotatedBarlineStyle | undefined,
   repeat: NotatedRepeatMark | undefined,
   measureBreak: NotatedMeasureBreak | undefined,
@@ -601,7 +764,6 @@ function serializeMeasure(
   if (printXml !== '') {
     lines.push(printXml);
   }
-  const activeKeyFifths = keyFifths ?? score.keyFifths;
   const attributes = measureAttributesXml(
     measure,
     measureClef,
@@ -641,8 +803,7 @@ function serializeMeasure(
   }
   const accidentals = buildAccidentalIndex(measure, activeKeyFifths, staffMap);
   for (const symbol of chordSymbols) {
-    const harmony = harmonyXml(symbol, measure, score, activeKeyFifths);
-    if (harmony !== undefined) {
+    for (const harmony of harmonyXml(symbol, measure, score, activeKeyFifths)) {
       lines.push(harmony);
     }
   }
@@ -661,6 +822,7 @@ function serializeMeasure(
         score,
         staffMap,
         annotations,
+        lyrics,
         accidentals,
         percussion,
         activeKeyFifths,
@@ -874,6 +1036,7 @@ function serializeVoice(
   score: NotatedScore,
   staffMap: ReadonlyMap<NotatedEvent, StaffNumber> | undefined,
   annotations: AnnotationIndex,
+  lyrics: LyricIndex,
   accidentals: AccidentalIndex,
   percussion: boolean,
   keyFifths: number,
@@ -886,19 +1049,47 @@ function serializeVoice(
     if (event.kind === 'rest') {
       lines.push(restXml(event, measure, score, measureRest, staff, beams, percussion));
     } else {
+      const staffXml = staff === undefined ? '' : `<staff>${staff}</staff>`;
+      const placement = dynamicsPlacement(event, measure);
+      for (const number of annotations.hairpinStops.get(event) ?? []) {
+        lines.push(
+          `<direction placement="${placement}"><direction-type><wedge type="stop" number="${number}"/></direction-type>${staffXml}</direction>`,
+        );
+      }
+      for (const hairpin of annotations.hairpinStarts.get(event) ?? []) {
+        lines.push(
+          `<direction placement="${placement}"><direction-type><wedge type="${hairpin.type}" number="${hairpin.number}"/></direction-type>${staffXml}</direction>`,
+        );
+      }
+      for (const lineSpan of annotations.lineSpanStops.get(event) ?? []) {
+        if (lineSpan.type === 'glissando') continue;
+        lines.push(
+          lineSpanDirectionXml(
+            lineSpan as LineSpanRender & { type: Exclude<NoteLineSpan, 'glissando'> },
+            'stop',
+            staffXml,
+          ),
+        );
+      }
+      for (const lineSpan of annotations.lineSpanStarts.get(event) ?? []) {
+        if (lineSpan.type === 'glissando') continue;
+        lines.push(
+          lineSpanDirectionXml(
+            lineSpan as LineSpanRender & { type: Exclude<NoteLineSpan, 'glissando'> },
+            'start',
+            staffXml,
+          ),
+        );
+      }
       const dynamics = annotations.dynamics.get(event);
       if (dynamics !== undefined) {
         // Dynamics are directions emitted right before the note they apply to.
-        const staffXml = staff === undefined ? '' : `<staff>${staff}</staff>`;
-        const placement = dynamicsPlacement(event, measure);
         lines.push(
           `<direction placement="${placement}"><direction-type><dynamics><${dynamics}/></dynamics></direction-type>${staffXml}</direction>`,
         );
       } else if (eventUsesPercussionMap(event, percussion)) {
         const inferred = inferredDynamics(event);
         if (inferred !== undefined && inferred !== lastInferredDynamic) {
-          const staffXml = staff === undefined ? '' : `<staff>${staff}</staff>`;
-          const placement = dynamicsPlacement(event, measure);
           lines.push(
             `<direction placement="${placement}"><direction-type><dynamics><${inferred}/></dynamics></direction-type>${staffXml}</direction>`,
           );
@@ -912,6 +1103,7 @@ function serializeVoice(
         score,
         staff,
         annotations,
+        lyrics,
         beams,
         accidentals,
         percussion,
@@ -937,6 +1129,40 @@ function inferredDynamics(event: NotatedEvent): NoteDynamics | undefined {
 function dynamicsPlacement(event: NotatedEvent, measure: NotatedMeasure): string {
   if (measure.voices.length < 2) return 'below';
   return slurPlacement(event);
+}
+
+function octaveShiftDirection(lineSpan: Exclude<NoteLineSpan, 'pedal' | 'glissando'>): {
+  placement: 'above' | 'below';
+  shift: 'up' | 'down';
+  size: 8 | 15;
+} {
+  switch (lineSpan) {
+    case 'ottava-up':
+      return { placement: 'above', shift: 'up', size: 8 };
+    case 'ottava-down':
+      return { placement: 'below', shift: 'down', size: 8 };
+    case 'ottava-15-up':
+      return { placement: 'above', shift: 'up', size: 15 };
+    case 'ottava-15-down':
+      return { placement: 'below', shift: 'down', size: 15 };
+  }
+}
+
+/** Builds non-glissando span directions. */
+function lineSpanDirectionXml(
+  lineSpan: LineSpanRender & { type: Exclude<NoteLineSpan, 'glissando'> },
+  position: 'start' | 'stop',
+  staffXml: string,
+): string {
+  if (lineSpan.type === 'pedal') {
+    const line = lineSpan.pedalStyle === 'sign' ? 'no' : 'yes';
+    const sign =
+      lineSpan.pedalStyle === 'sign' ? ` sign="${position === 'start' ? 'yes' : 'no'}"` : '';
+    return `<direction placement="below"><direction-type><pedal type="${position}" line="${line}"${sign} number="${lineSpan.number}"/></direction-type>${staffXml}</direction>`;
+  }
+  const { placement, shift, size } = octaveShiftDirection(lineSpan.type);
+  const type = position === 'stop' ? 'stop' : shift;
+  return `<direction placement="${placement}"><direction-type><octave-shift type="${type}" size="${size}" number="${lineSpan.number}"/></direction-type>${staffXml}</direction>`;
 }
 
 /** Builds explicit accidentals only when the visible pitch state changes. */
@@ -1113,7 +1339,9 @@ function restXml(
   const dots = '<dot/>'.repeat(event.value.dots);
   const timeModification = timeModificationXml(event.value);
   const beamMarks = beamXml(beams.get(event) ?? []);
-  return `<note${printObject}>${rest}<duration>${duration}</duration><voice>${event.voice}</voice><type>${event.value.base}</type>${dots}${timeModification}${staffXml}${beamMarks}</note>`;
+  const tupletNotations = tupletBracketXml(event, measure);
+  const notations = tupletNotations === '' ? '' : `<notations>${tupletNotations}</notations>`;
+  return `<note${printObject}>${rest}<duration>${duration}</duration><voice>${event.voice}</voice><type>${event.value.base}</type>${dots}${timeModification}${staffXml}${beamMarks}${notations}</note>`;
 }
 
 /** Builds a rest element, positioning multi-voice rests away from the staff center. */
@@ -1152,6 +1380,7 @@ function pushNoteEvent(
   score: NotatedScore,
   staff: StaffNumber | undefined,
   annotations: AnnotationIndex,
+  lyrics: LyricIndex,
   beams: BeamIndex,
   accidentals: AccidentalIndex,
   percussion: boolean,
@@ -1185,12 +1414,25 @@ function pushNoteEvent(
       midi,
       measure,
     );
+    const lyricXml = pitchIndex === 0 ? lyricsXml(lyrics.get(event) ?? []) : '';
     const beam = pitchIndex === 0 ? beamMarks : '';
     const stemMark = pitchIndex === 0 ? stemXml(event, measure, eventPercussion) : '';
     lines.push(
-      `<note>${chord}${instrument}${pitch}<duration>${duration}</duration>${ties}<voice>${event.voice}</voice><type>${event.value.base}</type>${dots}${timeModification}${accidental}${stemMark}${notehead}${staffXml}${beam}${notations}</note>`,
+      `<note>${chord}${pitch}<duration>${duration}</duration>${ties}${instrument}<voice>${event.voice}</voice><type>${event.value.base}</type>${dots}${accidental}${timeModification}${stemMark}${notehead}${staffXml}${beam}${notations}${lyricXml}</note>`,
     );
   });
+}
+
+/** Builds MusicXML lyric elements for one note event. */
+function lyricsXml(lyrics: ReadonlyArray<NotatedLyric>): string {
+  return lyrics
+    .map((lyric, index) => {
+      const number = lyric.verse ?? index + 1;
+      const syllabic = lyric.syllabic ?? 'single';
+      const extend = lyric.extend === true ? '<extend/>' : '';
+      return `<lyric number="${number}"><syllabic>${syllabic}</syllabic><text>${escapeXml(lyric.text)}</text>${extend}</lyric>`;
+    })
+    .join('');
 }
 
 /** Serializes MusicXML tuplet timing for one note value. */
@@ -1367,11 +1609,36 @@ function notationsXml(
       const placementXml = placement === undefined ? '' : ` placement="${placement}"`;
       inner += `<slur type="start" number="${number}"${placementXml}/>`;
     }
+    for (const lineSpan of annotations.lineSpanStops.get(event) ?? []) {
+      if (lineSpan.type === 'glissando') {
+        const lineType =
+          lineSpan.glissandoLineType === undefined
+            ? ''
+            : ` line-type="${lineSpan.glissandoLineType}"`;
+        inner += `<glissando type="stop" number="${lineSpan.number}"${lineType}/>`;
+      }
+    }
+    for (const lineSpan of annotations.lineSpanStarts.get(event) ?? []) {
+      if (lineSpan.type === 'glissando') {
+        const lineType =
+          lineSpan.glissandoLineType === undefined
+            ? ''
+            : ` line-type="${lineSpan.glissandoLineType}"`;
+        inner +=
+          lineSpan.glissandoText === undefined
+            ? `<glissando type="start" number="${lineSpan.number}"${lineType}/>`
+            : `<glissando type="start" number="${lineSpan.number}"${lineType}>${escapeXml(lineSpan.glissandoText)}</glissando>`;
+      }
+    }
     const articulation = annotations.articulations.get(event);
     if (articulation !== undefined) {
       inner += `<articulations>${articulationXml(articulation, event)}</articulations>`;
     } else if (percussion && event.velocity !== undefined && event.velocity >= 112) {
       inner += `<articulations><accent placement="${slurPlacement(event)}"/></articulations>`;
+    }
+    const ornament = annotations.ornaments.get(event);
+    if (ornament !== undefined) {
+      inner += ornamentXml(ornament);
     }
   }
   if (percussion && midi !== undefined) {
@@ -1467,23 +1734,39 @@ function articulationXml(articulation: NoteArticulation, event: NotatedEvent): s
   return `<${ARTICULATION_ELEMENT[articulation]} placement="${slurPlacement(event)}"/>`;
 }
 
+/** Builds a MusicXML ornament or expression notation. */
+function ornamentXml(ornament: NoteOrnament): string {
+  switch (ornament) {
+    case 'trill':
+      return '<ornaments><trill-mark/></ornaments>';
+    case 'turn':
+      return '<ornaments><turn/></ornaments>';
+    case 'mordent':
+      return '<ornaments><mordent/></ornaments>';
+    case 'fermata':
+      return '<fermata type="upright"/>';
+  }
+}
+
 /**
- * Builds one `<harmony>` element for a chord symbol, or undefined when the
- * symbol has no usable root pitch class (e.g. the 255 "unknown" sentinel).
+ * Builds MusicXML `<harmony>` elements for a chord symbol. The primary entry
+ * remains a pop/jazz root-based symbol; Roman numeral text is preserved as an
+ * alternate functional harmony when present.
  */
 function harmonyXml(
   symbol: NotatedChordSymbol,
   measure: NotatedMeasure,
   score: NotatedScore,
   keyFifths: number,
-): string | undefined {
+): string[] {
   if (!isPitchClass(symbol.rootPc)) {
-    return undefined;
+    return [];
   }
   const root = spellPitch(GRAND_STAFF_SPLIT_MIDI + symbol.rootPc, keyFifths);
   const rootAlter = root.alter === 0 ? '' : `<root-alter>${root.alter}</root-alter>`;
   const rootXml = `<root><root-step>${root.step}</root-step>${rootAlter}</root>`;
   const kindXml = chordKindXml(symbol);
+  const degreeXml = chordDegreeXml(symbol);
   let bassXml = '';
   if (isPitchClass(symbol.bassPc)) {
     const bass = spellPitch(GRAND_STAFF_SPLIT_MIDI + symbol.bassPc, keyFifths);
@@ -1492,7 +1775,14 @@ function harmonyXml(
   }
   const offset = ppqToDivisions(symbol.ppq - measure.startPpq, score.divisions);
   const offsetXml = offset === 0 ? '' : `<offset>${offset}</offset>`;
-  return `<harmony>${rootXml}${kindXml}${bassXml}${chordDegreeXml(symbol)}${offsetXml}</harmony>`;
+  const harmonies = [`<harmony>${rootXml}${kindXml}${bassXml}${degreeXml}${offsetXml}</harmony>`];
+  const romanNumeral = symbol.romanNumeral?.trim();
+  if (romanNumeral !== undefined && romanNumeral !== '') {
+    harmonies.push(
+      `<harmony type="alternate"><function>${escapeXml(romanNumeral)}</function>${kindXml}${degreeXml}${offsetXml}</harmony>`,
+    );
+  }
+  return harmonies;
 }
 
 /** Builds a MusicXML chord kind while preserving compact display suffixes. */
@@ -1561,6 +1851,7 @@ function groupChordSymbolsByMeasure(
  * A single note reduces to comparing that pitch against the split point.
  */
 function noteStaff(event: NotatedEvent): StaffNumber {
+  if (event.staff === 1 || event.staff === 2) return event.staff;
   if (event.pitches.length === 0) return 1;
   const mean = event.pitches.reduce((sum, pitch) => sum + pitch, 0) / event.pitches.length;
   return mean >= GRAND_STAFF_SPLIT_MIDI ? 1 : 2;

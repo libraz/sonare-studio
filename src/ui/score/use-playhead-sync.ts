@@ -67,8 +67,10 @@ export interface PlayheadSyncOptions {
   getClipStartPpq: () => number;
   /** Reads the playhead position in PPQ, or undefined to disable the highlight. */
   getPositionPpq: () => (() => number) | undefined;
-  /** True while the transport is playing; enables horizontal score following. */
+  /** True while the transport is playing; enables playback-style highlighting. */
   getIsPlaying?: () => boolean;
+  /** True when playback should also scroll the score to follow the playhead. */
+  getFollowEnabled?: () => boolean;
 }
 
 /** The playhead sync surface bound by the score panel. */
@@ -329,7 +331,7 @@ export function usePlayheadSync(options: PlayheadSyncOptions): PlayheadSync {
     const next = scanAt(ppq - options.getClipStartPpq());
     const playing = options.getIsPlaying?.() === true;
     updateMarkers(host, next, playing);
-    if (playing) followHighlightedItem(host, next);
+    if (playing && options.getFollowEnabled?.() !== false) followHighlightedItem(host, next);
   }
 
   /** Horizontally scrolls the score by measure when possible, note otherwise. */

@@ -2,8 +2,8 @@
  * Non-destructive score annotations.
  *
  * Annotations are display-only metadata attached to editor notes for the
- * engraved score view (dynamics, articulations, slurs) plus score-wide
- * display settings (display transpose). They are app-level state like
+ * engraved score view (dynamics, articulations, ornaments, slurs, hairpins,
+ * line spans) plus score-wide display settings (display transpose). They are app-level state like
  * markers/sections: the wasm Project never sees them and they are never
  * written back to MIDI data.
  *
@@ -32,6 +32,46 @@ export const NOTE_ARTICULATIONS: ReadonlyArray<NoteArticulation> = [
   'marcato',
 ];
 
+/** Ornament or expressive mark attached to a note. */
+export type NoteOrnament = 'trill' | 'turn' | 'mordent' | 'fermata';
+
+/** All ornament markings. */
+export const NOTE_ORNAMENTS: ReadonlyArray<NoteOrnament> = ['trill', 'turn', 'mordent', 'fermata'];
+
+/** Hairpin/dynamic wedge spanning from one note to a later note. */
+export type NoteHairpin = 'crescendo' | 'diminuendo';
+
+/** All hairpin markings. */
+export const NOTE_HAIRPINS: ReadonlyArray<NoteHairpin> = ['crescendo', 'diminuendo'];
+
+/** Other note-to-note span markings. */
+export type NoteLineSpan =
+  | 'ottava-up'
+  | 'ottava-down'
+  | 'ottava-15-up'
+  | 'ottava-15-down'
+  | 'pedal'
+  | 'glissando';
+
+/** All line span markings. */
+export const NOTE_LINE_SPANS: ReadonlyArray<NoteLineSpan> = [
+  'ottava-up',
+  'ottava-down',
+  'ottava-15-up',
+  'ottava-15-down',
+  'pedal',
+  'glissando',
+];
+
+/** Pedal MusicXML display style. */
+export type PedalLineSpanStyle = 'line' | 'sign';
+
+/** Glissando MusicXML line style. */
+export type GlissandoLineType = 'solid' | 'dashed' | 'dotted' | 'wavy';
+
+/** Explicit grand-staff assignment for one engraved note. */
+export type NoteStaffOverride = 1 | 2;
+
 /** Inclusive bounds for the display transpose setting, in semitones. */
 export const DISPLAY_TRANSPOSE_MIN = -12;
 export const DISPLAY_TRANSPOSE_MAX = 12;
@@ -45,12 +85,46 @@ export interface ScoreNoteAnnotation {
   dynamics?: NoteDynamics;
   /** Articulation marking on the note head. */
   articulation?: NoteArticulation;
+  /** Ornament or expressive mark on the note. */
+  ornament?: NoteOrnament;
   /**
    * Editor note id of a slur target: the slur starts on this note and ends
    * on the target, which must start later. Dangling targets (deleted notes)
    * are ignored at emission time.
    */
   slurToNoteId?: number;
+  /** Hairpin type starting on this note. Requires `hairpinToNoteId`. */
+  hairpin?: NoteHairpin;
+  /** Editor note id where the hairpin stops; must start later than this note. */
+  hairpinToNoteId?: number;
+  /** Other line/span type starting on this note. Requires `lineSpanToNoteId`. */
+  lineSpan?: NoteLineSpan;
+  /** Editor note id where the line/span stops; must start later than this note. */
+  lineSpanToNoteId?: number;
+  /** Pedal display style for the primary line span. */
+  pedalStyle?: PedalLineSpanStyle;
+  /** Glissando line style for the primary line span. */
+  glissandoLineType?: GlissandoLineType;
+  /** Optional glissando text for the primary line span. */
+  glissandoText?: string;
+  /** Additional simultaneous line/spans starting on this note. */
+  lineSpans?: ScoreLineSpanAnnotation[];
+  /** Explicit grand-staff assignment (1 = upper, 2 = lower). */
+  staffOverride?: NoteStaffOverride;
+}
+
+/** One simultaneous line/span attached to a note. */
+export interface ScoreLineSpanAnnotation {
+  /** Line/span type starting on this note. */
+  lineSpan: NoteLineSpan;
+  /** Editor note id where the line/span stops; must start later than this note. */
+  lineSpanToNoteId: number;
+  /** Pedal display style. */
+  pedalStyle?: PedalLineSpanStyle;
+  /** Glissando line style. */
+  glissandoLineType?: GlissandoLineType;
+  /** Optional glissando text. */
+  glissandoText?: string;
 }
 
 /** Per-note annotations of one clip, keyed by editor note id. */
@@ -65,7 +139,12 @@ export function cloneScoreAnnotations(source: Readonly<ScoreAnnotations>): Score
   for (const [clipKey, byNote] of Object.entries(source)) {
     const clipOut: ClipScoreAnnotations = {};
     for (const [noteKey, annotation] of Object.entries(byNote)) {
-      clipOut[Number(noteKey)] = { ...annotation };
+      clipOut[Number(noteKey)] = {
+        ...annotation,
+        ...(annotation.lineSpans
+          ? { lineSpans: annotation.lineSpans.map((span) => ({ ...span })) }
+          : {}),
+      };
     }
     out[Number(clipKey)] = clipOut;
   }
@@ -77,7 +156,36 @@ export function isEmptyScoreAnnotation(annotation: Readonly<ScoreNoteAnnotation>
   return (
     annotation.dynamics === undefined &&
     annotation.articulation === undefined &&
-    annotation.slurToNoteId === undefined
+    annotation.ornament === undefined &&
+    annotation.slurToNoteId === undefined &&
+    annotation.hairpin === undefined &&
+    annotation.hairpinToNoteId === undefined &&
+    annotation.lineSpan === undefined &&
+    annotation.lineSpanToNoteId === undefined &&
+    annotation.pedalStyle === undefined &&
+    annotation.glissandoLineType === undefined &&
+    annotation.glissandoText === undefined &&
+    annotation.staffOverride === undefined &&
+    (annotation.lineSpans === undefined || annotation.lineSpans.length === 0)
+  );
+}
+
+function lineSpanArraysEqual(
+  a: ReadonlyArray<ScoreLineSpanAnnotation> | undefined,
+  b: ReadonlyArray<ScoreLineSpanAnnotation> | undefined,
+): boolean {
+  const left = a ?? [];
+  const right = b ?? [];
+  return (
+    left.length === right.length &&
+    left.every(
+      (entry, index) =>
+        entry.lineSpan === right[index]?.lineSpan &&
+        entry.lineSpanToNoteId === right[index]?.lineSpanToNoteId &&
+        entry.pedalStyle === right[index]?.pedalStyle &&
+        entry.glissandoLineType === right[index]?.glissandoLineType &&
+        entry.glissandoText === right[index]?.glissandoText,
+    )
   );
 }
 
@@ -89,8 +197,51 @@ export function scoreAnnotationEquals(
   return (
     a.dynamics === b.dynamics &&
     a.articulation === b.articulation &&
-    a.slurToNoteId === b.slurToNoteId
+    a.ornament === b.ornament &&
+    a.slurToNoteId === b.slurToNoteId &&
+    a.hairpin === b.hairpin &&
+    a.hairpinToNoteId === b.hairpinToNoteId &&
+    a.lineSpan === b.lineSpan &&
+    a.lineSpanToNoteId === b.lineSpanToNoteId &&
+    a.pedalStyle === b.pedalStyle &&
+    a.glissandoLineType === b.glissandoLineType &&
+    a.glissandoText === b.glissandoText &&
+    a.staffOverride === b.staffOverride &&
+    lineSpanArraysEqual(a.lineSpans, b.lineSpans)
   );
+}
+
+/** Returns legacy and additional line spans without duplicate target/type pairs. */
+export function scoreAnnotationLineSpans(
+  annotation: Readonly<ScoreNoteAnnotation>,
+): ScoreLineSpanAnnotation[] {
+  const out: ScoreLineSpanAnnotation[] = [];
+  const push = (entry: ScoreLineSpanAnnotation): void => {
+    if (
+      !out.some(
+        (existing) =>
+          existing.lineSpan === entry.lineSpan &&
+          existing.lineSpanToNoteId === entry.lineSpanToNoteId,
+      )
+    ) {
+      out.push({ ...entry });
+    }
+  };
+  if (annotation.lineSpan !== undefined && annotation.lineSpanToNoteId !== undefined) {
+    push({
+      lineSpan: annotation.lineSpan,
+      lineSpanToNoteId: annotation.lineSpanToNoteId,
+      ...(annotation.pedalStyle !== undefined ? { pedalStyle: annotation.pedalStyle } : {}),
+      ...(annotation.glissandoLineType !== undefined
+        ? { glissandoLineType: annotation.glissandoLineType }
+        : {}),
+      ...(annotation.glissandoText !== undefined
+        ? { glissandoText: annotation.glissandoText }
+        : {}),
+    });
+  }
+  for (const entry of annotation.lineSpans ?? []) push(entry);
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -117,8 +268,42 @@ export interface DocumentNoteAnnotation extends DocumentNoteRef {
   dynamics?: NoteDynamics;
   /** Articulation marking, when set. */
   articulation?: NoteArticulation;
+  /** Ornament or expressive mark, when set. */
+  ornament?: NoteOrnament;
   /** Slur target note (content-addressed), when a slur starts here. */
   slurTo?: DocumentNoteRef;
+  /** Hairpin type, when a dynamic wedge starts here. */
+  hairpin?: NoteHairpin;
+  /** Hairpin target note (content-addressed), when a hairpin starts here. */
+  hairpinTo?: DocumentNoteRef;
+  /** Other line/span type, when a span starts here. */
+  lineSpan?: NoteLineSpan;
+  /** Other line/span target note (content-addressed), when a span starts here. */
+  lineSpanTo?: DocumentNoteRef;
+  /** Pedal display style for the primary line span. */
+  pedalStyle?: PedalLineSpanStyle;
+  /** Glissando line style for the primary line span. */
+  glissandoLineType?: GlissandoLineType;
+  /** Optional glissando text for the primary line span. */
+  glissandoText?: string;
+  /** Additional simultaneous line/spans starting here. */
+  lineSpans?: DocumentLineSpanAnnotation[];
+  /** Explicit grand-staff assignment (1 = upper, 2 = lower). */
+  staffOverride?: NoteStaffOverride;
+}
+
+/** Persisted form of one additional simultaneous line/span. */
+export interface DocumentLineSpanAnnotation {
+  /** Other line/span type, when a span starts here. */
+  lineSpan: NoteLineSpan;
+  /** Other line/span target note (content-addressed). */
+  lineSpanTo: DocumentNoteRef;
+  /** Pedal display style. */
+  pedalStyle?: PedalLineSpanStyle;
+  /** Glissando line style. */
+  glissandoLineType?: GlissandoLineType;
+  /** Optional glissando text. */
+  glissandoText?: string;
 }
 
 /** Persisted score display settings (omitted from documents when default). */
@@ -163,11 +348,62 @@ export function annotationsToDocument(
     const entry: DocumentNoteAnnotation = toNoteRef(note);
     if (annotation.dynamics !== undefined) entry.dynamics = annotation.dynamics;
     if (annotation.articulation !== undefined) entry.articulation = annotation.articulation;
+    if (annotation.ornament !== undefined) entry.ornament = annotation.ornament;
+    if (annotation.staffOverride !== undefined) entry.staffOverride = annotation.staffOverride;
     if (annotation.slurToNoteId !== undefined) {
       const target = byId.get(annotation.slurToNoteId);
       if (target) entry.slurTo = toNoteRef(target);
     }
-    if (entry.dynamics === undefined && entry.articulation === undefined && !entry.slurTo) {
+    if (annotation.hairpin !== undefined && annotation.hairpinToNoteId !== undefined) {
+      const target = byId.get(annotation.hairpinToNoteId);
+      if (target) {
+        entry.hairpin = annotation.hairpin;
+        entry.hairpinTo = toNoteRef(target);
+      }
+    }
+    if (annotation.lineSpan !== undefined && annotation.lineSpanToNoteId !== undefined) {
+      const target = byId.get(annotation.lineSpanToNoteId);
+      if (target) {
+        entry.lineSpan = annotation.lineSpan;
+        entry.lineSpanTo = toNoteRef(target);
+        if (annotation.pedalStyle !== undefined) entry.pedalStyle = annotation.pedalStyle;
+        if (annotation.glissandoLineType !== undefined) {
+          entry.glissandoLineType = annotation.glissandoLineType;
+        }
+        if (annotation.glissandoText !== undefined) entry.glissandoText = annotation.glissandoText;
+      }
+    }
+    const additionalLineSpans: DocumentLineSpanAnnotation[] = [];
+    for (const span of annotation.lineSpans ?? []) {
+      const target = byId.get(span.lineSpanToNoteId);
+      if (!target) continue;
+      if (
+        annotation.lineSpan === span.lineSpan &&
+        annotation.lineSpanToNoteId === span.lineSpanToNoteId
+      ) {
+        continue;
+      }
+      additionalLineSpans.push({
+        lineSpan: span.lineSpan,
+        lineSpanTo: toNoteRef(target),
+        ...(span.pedalStyle !== undefined ? { pedalStyle: span.pedalStyle } : {}),
+        ...(span.glissandoLineType !== undefined
+          ? { glissandoLineType: span.glissandoLineType }
+          : {}),
+        ...(span.glissandoText !== undefined ? { glissandoText: span.glissandoText } : {}),
+      });
+    }
+    if (additionalLineSpans.length > 0) entry.lineSpans = additionalLineSpans;
+    if (
+      entry.dynamics === undefined &&
+      entry.articulation === undefined &&
+      entry.ornament === undefined &&
+      entry.staffOverride === undefined &&
+      !entry.slurTo &&
+      !entry.hairpinTo &&
+      !entry.lineSpanTo &&
+      (entry.lineSpans === undefined || entry.lineSpans.length === 0)
+    ) {
       continue; // Nothing survived (e.g. a slur whose target was deleted).
     }
     out.push(entry);
@@ -201,10 +437,49 @@ export function annotationsFromDocument(
     const annotation: ScoreNoteAnnotation = {};
     if (entry.dynamics !== undefined) annotation.dynamics = entry.dynamics;
     if (entry.articulation !== undefined) annotation.articulation = entry.articulation;
+    if (entry.ornament !== undefined) annotation.ornament = entry.ornament;
+    if (entry.staffOverride === 1 || entry.staffOverride === 2) {
+      annotation.staffOverride = entry.staffOverride;
+    }
     if (entry.slurTo !== undefined) {
       const targetId = idByKey.get(refKey(entry.slurTo));
       if (targetId !== undefined && targetId !== id) annotation.slurToNoteId = targetId;
     }
+    if (entry.hairpin !== undefined && entry.hairpinTo !== undefined) {
+      const targetId = idByKey.get(refKey(entry.hairpinTo));
+      if (targetId !== undefined && targetId !== id) {
+        annotation.hairpin = entry.hairpin;
+        annotation.hairpinToNoteId = targetId;
+      }
+    }
+    if (entry.lineSpan !== undefined && entry.lineSpanTo !== undefined) {
+      const targetId = idByKey.get(refKey(entry.lineSpanTo));
+      if (targetId !== undefined && targetId !== id) {
+        annotation.lineSpan = entry.lineSpan;
+        annotation.lineSpanToNoteId = targetId;
+        if (entry.pedalStyle !== undefined) annotation.pedalStyle = entry.pedalStyle;
+        if (entry.glissandoLineType !== undefined) {
+          annotation.glissandoLineType = entry.glissandoLineType;
+        }
+        if (entry.glissandoText !== undefined) annotation.glissandoText = entry.glissandoText;
+      }
+    }
+    const lineSpans: ScoreLineSpanAnnotation[] = [];
+    for (const span of entry.lineSpans ?? []) {
+      const targetId = idByKey.get(refKey(span.lineSpanTo));
+      if (targetId !== undefined && targetId !== id) {
+        lineSpans.push({
+          lineSpan: span.lineSpan,
+          lineSpanToNoteId: targetId,
+          ...(span.pedalStyle !== undefined ? { pedalStyle: span.pedalStyle } : {}),
+          ...(span.glissandoLineType !== undefined
+            ? { glissandoLineType: span.glissandoLineType }
+            : {}),
+          ...(span.glissandoText !== undefined ? { glissandoText: span.glissandoText } : {}),
+        });
+      }
+    }
+    if (lineSpans.length > 0) annotation.lineSpans = lineSpans;
     if (!isEmptyScoreAnnotation(annotation)) out[id] = annotation;
   }
   return out;

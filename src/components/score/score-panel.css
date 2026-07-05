@@ -39,6 +39,58 @@
   font-size: var(--fs-sm);
 }
 
+.score-marker-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  padding: 0.45rem 0.75rem;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.score-marker-tools label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+
+.score-marker-tools input,
+.score-marker-tools select {
+  background: var(--surface-inset);
+  color: var(--text-1);
+  border: none;
+  border-radius: var(--radius-md);
+  padding: var(--sp-1) var(--sp-2);
+  font: inherit;
+  box-shadow: var(--control-edge), var(--inset-well);
+}
+
+.score-marker-tools input {
+  width: min(16rem, 34vw);
+}
+
+.score-marker-tools .lyric-verse-input {
+  width: 4.5rem;
+}
+
+.score-marker-tools input[type='checkbox'] {
+  width: auto;
+}
+
+.score-marker-tools button {
+  background: var(--control-bg);
+  color: var(--text-1);
+  border: none;
+  border-radius: var(--radius-md);
+  padding: var(--sp-1) var(--sp-3);
+  font: inherit;
+  box-shadow: var(--control-edge), var(--shadow-1);
+}
+
 .score-body-wrap {
   position: relative;
   flex: 1;
@@ -175,7 +227,20 @@
 
 .palette-row {
   display: flex;
+  align-items: center;
   gap: var(--sp-2);
+}
+
+.palette-text {
+  width: 7rem;
+  min-width: 0;
+  background: var(--surface-inset);
+  color: var(--text-1);
+  border: none;
+  border-radius: var(--radius-md);
+  padding: var(--sp-1) var(--sp-2);
+  font: inherit;
+  box-shadow: var(--control-edge), var(--inset-well);
 }
 
 .annotation-palette button.active {

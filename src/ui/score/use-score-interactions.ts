@@ -18,6 +18,9 @@ import type { useProjectStore } from '@/project/store';
 /** Selection matching tolerance on the quantized onset grid, in PPQ. */
 export const ONSET_MATCH_EPSILON_PPQ = 1e-3;
 
+/** Minimum vertical pointer motion before an annotate drag becomes a staff edit. */
+export const STAFF_DRAG_THRESHOLD_PX = 24;
+
 type ProjectStore = ReturnType<typeof useProjectStore>;
 
 /** Options wiring the interactions to the store, grid and transport. */
@@ -32,6 +35,8 @@ export interface ScoreInteractionsOptions {
   seek: (ppq: number) => void;
   /** Annotate-mode hook invoked with the resolved note ids before seek/select. */
   onAnnotateClick?: (event: MouseEvent, ids: number[]) => void;
+  /** Annotate-mode hook invoked when a note is dragged vertically between staves. */
+  onAnnotateStaffDrag?: (ids: number[], staff: 1 | 2) => void;
   /** True while the annotate tool is active. */
   isAnnotateEnabled: () => boolean;
 }
@@ -40,6 +45,14 @@ export interface ScoreInteractionsOptions {
 export interface ScoreInteractions {
   /** Bound to the score body `@click`: seek + select the source notes. */
   onSvgClick: (event: MouseEvent) => void;
+  /** Bound to `@pointerdown`: starts an annotate-mode staff drag. */
+  onSvgPointerDown: (event: PointerEvent) => void;
+  /** Bound to `@pointermove`: tracks an annotate-mode staff drag. */
+  onSvgPointerMove: (event: PointerEvent) => void;
+  /** Bound to `@pointerup`: commits an annotate-mode staff drag. */
+  onSvgPointerUp: (event: PointerEvent) => void;
+  /** Bound to `@pointercancel`: aborts an annotate-mode staff drag. */
+  onSvgPointerCancel: (event: PointerEvent) => void;
   /** Resolves the editor note ids standing at a quarter-note PPQ position. */
   noteIdsAt: (ppq: number) => number[];
 }
@@ -47,6 +60,16 @@ export interface ScoreInteractions {
 /** Wires click-to-seek / select (and annotate routing) for the score body. */
 export function useScoreInteractions(options: ScoreInteractionsOptions): ScoreInteractions {
   const { store } = options;
+  let staffDrag:
+    | {
+        pointerId: number;
+        startY: number;
+        currentY: number;
+        ids: number[];
+        dragging: boolean;
+      }
+    | undefined;
+  let suppressNextClick = false;
 
   /**
    * Quantized onset of an editor note, mirroring the display quantizer's grid
@@ -78,8 +101,23 @@ export function useScoreInteractions(options: ScoreInteractionsOptions): ScoreIn
     return exact.length > 0 ? exact : sounding;
   }
 
+  function noteIdsFromEventTarget(target: EventTarget | null): number[] {
+    if (!(target instanceof Element)) return [];
+    const group = target.closest('g.note');
+    if (!group?.id) return [];
+    const entry = options.getTimemap().find((e) => e.on?.includes(group.id));
+    if (!entry) return [];
+    return noteIdsAt(store.clipStartPpq + entry.qstamp);
+  }
+
   /** Click on an engraved note: seek the transport and select the source notes. */
   function onSvgClick(event: MouseEvent): void {
+    if (suppressNextClick) {
+      suppressNextClick = false;
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     const target = event.target;
     if (!(target instanceof Element)) return;
     const group = target.closest('g.note');
@@ -93,5 +131,57 @@ export function useScoreInteractions(options: ScoreInteractionsOptions): ScoreIn
     setSelection(ids);
   }
 
-  return { onSvgClick, noteIdsAt };
+  function onSvgPointerDown(event: PointerEvent): void {
+    if (!options.isAnnotateEnabled() || event.button !== 0) return;
+    const ids = noteIdsFromEventTarget(event.target);
+    if (ids.length === 0) return;
+    staffDrag = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      currentY: event.clientY,
+      ids,
+      dragging: false,
+    };
+    if (event.currentTarget instanceof Element) {
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    }
+  }
+
+  function onSvgPointerMove(event: PointerEvent): void {
+    if (staffDrag === undefined || event.pointerId !== staffDrag.pointerId) return;
+    staffDrag.currentY = event.clientY;
+    if (Math.abs(staffDrag.currentY - staffDrag.startY) >= STAFF_DRAG_THRESHOLD_PX) {
+      staffDrag.dragging = true;
+      event.preventDefault();
+    }
+  }
+
+  function onSvgPointerUp(event: PointerEvent): void {
+    if (staffDrag === undefined || event.pointerId !== staffDrag.pointerId) return;
+    const drag = staffDrag;
+    staffDrag = undefined;
+    if (event.currentTarget instanceof Element) {
+      event.currentTarget.releasePointerCapture?.(event.pointerId);
+    }
+    const deltaY = event.clientY - drag.startY;
+    if (!drag.dragging || Math.abs(deltaY) < STAFF_DRAG_THRESHOLD_PX) return;
+    options.onAnnotateStaffDrag?.(drag.ids, deltaY < 0 ? 1 : 2);
+    suppressNextClick = true;
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function onSvgPointerCancel(event: PointerEvent): void {
+    if (staffDrag === undefined || event.pointerId !== staffDrag.pointerId) return;
+    staffDrag = undefined;
+  }
+
+  return {
+    onSvgClick,
+    onSvgPointerDown,
+    onSvgPointerMove,
+    onSvgPointerUp,
+    onSvgPointerCancel,
+    noteIdsAt,
+  };
 }

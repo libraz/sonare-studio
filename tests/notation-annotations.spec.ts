@@ -160,8 +160,32 @@ describe('serializeMusicXml dynamics', () => {
     const xml = engrave([makeNote(1, 40, 0, 1)], { 1: { dynamics: 'pp' } }, { clef: 'grand' });
     parse(xml);
     expect(xml).toContain(
-      '<direction placement="below"><direction-type><dynamics><pp/></dynamics></direction-type><staff>2</staff></direction>',
+      '<direction placement="above"><direction-type><dynamics><pp/></dynamics></direction-type><staff>2</staff></direction>',
     );
+  });
+
+  it('honours explicit staff overrides on grand-staff annotations', () => {
+    const xml = engrave(
+      [makeNote(1, 55, 0, 1)],
+      { 1: { dynamics: 'pp', staffOverride: 1 } },
+      { clef: 'grand' },
+    );
+    parse(xml);
+    expect(xml).toContain(
+      '<direction placement="above"><direction-type><dynamics><pp/></dynamics></direction-type><staff>1</staff></direction>',
+    );
+    expect(xml).toContain('<pitch><step>G</step><octave>3</octave></pitch>');
+    expect(xml).toContain('<staff>1</staff>');
+  });
+
+  it('applies staff overrides across tied note pieces', () => {
+    const xml = engrave([makeNote(1, 55, 3, 2)], { 1: { staffOverride: 1 } }, { clef: 'grand' });
+    parse(xml);
+    const tiedNotes = xml
+      .split('\n')
+      .filter((line) => line.startsWith('<note>') && line.includes('<tie type='));
+    expect(tiedNotes).toHaveLength(2);
+    expect(tiedNotes.every((line) => line.includes('<staff>1</staff>'))).toBe(true);
   });
 });
 
@@ -205,6 +229,34 @@ describe('serializeMusicXml articulations', () => {
     const tail = noteLines.find((line) => line.includes('<tie type="stop"/>'));
     expect(attack).toContain('<articulations><accent placement="above"/></articulations>');
     expect(tail).not.toContain('<articulations>');
+  });
+});
+
+describe('serializeMusicXml ornaments', () => {
+  it('maps each ornament annotation to a MusicXML notation element', () => {
+    const expected = {
+      trill: '<ornaments><trill-mark/></ornaments>',
+      turn: '<ornaments><turn/></ornaments>',
+      mordent: '<ornaments><mordent/></ornaments>',
+      fermata: '<fermata type="upright"/>',
+    } as const;
+    for (const [ornament, fragment] of Object.entries(expected)) {
+      const xml = engrave([makeNote(1, 72, 0, 1)], {
+        1: { ornament: ornament as keyof typeof expected },
+      });
+      parse(xml);
+      expect(xml).toContain(`<notations>${fragment}</notations>`);
+    }
+  });
+
+  it('combines ornaments with articulations on the same note', () => {
+    const xml = engrave([makeNote(1, 72, 0, 1)], {
+      1: { articulation: 'tenuto', ornament: 'trill' },
+    });
+    parse(xml);
+    expect(xml).toContain(
+      '<notations><articulations><tenuto placement="above"/></articulations><ornaments><trill-mark/></ornaments></notations>',
+    );
   });
 });
 
@@ -263,6 +315,159 @@ describe('serializeMusicXml slurs', () => {
   });
 });
 
+describe('serializeMusicXml hairpins', () => {
+  it('emits matched wedge start and stop directions', () => {
+    const xml = engrave([makeNote(1, 60, 0, 1), makeNote(2, 64, 1, 1)], {
+      1: { hairpin: 'crescendo', hairpinToNoteId: 2 },
+    });
+    parse(xml);
+    expect(xml).toContain(
+      '<direction placement="below"><direction-type><wedge type="crescendo" number="1"/></direction-type></direction>',
+    );
+    expect(xml).toContain(
+      '<direction placement="below"><direction-type><wedge type="stop" number="1"/></direction-type></direction>',
+    );
+  });
+
+  it('gives overlapping hairpins distinct numbers and maps diminuendo', () => {
+    const xml = engrave(
+      [makeNote(1, 60, 0, 1), makeNote(2, 64, 1, 1), makeNote(3, 67, 2, 1), makeNote(4, 72, 3, 1)],
+      {
+        1: { hairpin: 'crescendo', hairpinToNoteId: 3 },
+        2: { hairpin: 'diminuendo', hairpinToNoteId: 4 },
+      },
+    );
+    parse(xml);
+    expect(xml).toContain('<wedge type="crescendo" number="1"/>');
+    expect(xml).toContain('<wedge type="diminuendo" number="2"/>');
+    expect(xml).toContain('<wedge type="stop" number="1"/>');
+    expect(xml).toContain('<wedge type="stop" number="2"/>');
+  });
+
+  it('skips hairpins whose target does not resolve after the source', () => {
+    const xml = engrave([makeNote(1, 60, 2, 1), makeNote(2, 64, 0, 1)], {
+      1: { hairpin: 'crescendo', hairpinToNoteId: 2 },
+      2: { hairpin: 'diminuendo', hairpinToNoteId: 999 },
+    });
+    parse(xml);
+    expect(xml).not.toContain('<wedge');
+  });
+});
+
+describe('serializeMusicXml line spans', () => {
+  it('emits glissando start and stop notations', () => {
+    const xml = engrave([makeNote(1, 60, 0, 1), makeNote(2, 64, 1, 1)], {
+      1: { lineSpan: 'glissando', lineSpanToNoteId: 2 },
+    });
+    parse(xml);
+    expect(xml).toContain('<glissando type="start" number="1"/>');
+    expect(xml).toContain('<glissando type="stop" number="1"/>');
+  });
+
+  it('emits styled glissando line type and text', () => {
+    const xml = engrave([makeNote(1, 60, 0, 1), makeNote(2, 64, 1, 1)], {
+      1: {
+        lineSpan: 'glissando',
+        lineSpanToNoteId: 2,
+        glissandoLineType: 'wavy',
+        glissandoText: 'slide up',
+      },
+    });
+    parse(xml);
+    expect(xml).toContain(
+      '<glissando type="start" number="1" line-type="wavy">slide up</glissando>',
+    );
+    expect(xml).toContain('<glissando type="stop" number="1" line-type="wavy"/>');
+  });
+
+  it('emits ottava directions with a matching stop', () => {
+    const xml = engrave([makeNote(1, 72, 0, 1), makeNote(2, 76, 1, 1)], {
+      1: { lineSpan: 'ottava-up', lineSpanToNoteId: 2 },
+    });
+    parse(xml);
+    expect(xml).toContain(
+      '<direction placement="above"><direction-type><octave-shift type="up" size="8" number="1"/></direction-type></direction>',
+    );
+    expect(xml).toContain(
+      '<direction placement="above"><direction-type><octave-shift type="stop" size="8" number="1"/></direction-type></direction>',
+    );
+  });
+
+  it('emits multiple simultaneous line spans from the same note', () => {
+    const xml = engrave([makeNote(1, 72, 0, 1), makeNote(2, 76, 1, 1), makeNote(3, 79, 2, 1)], {
+      1: {
+        lineSpan: 'ottava-up',
+        lineSpanToNoteId: 2,
+        lineSpans: [{ lineSpan: 'glissando', lineSpanToNoteId: 3 }],
+      },
+    });
+    parse(xml);
+    expect(xml).toContain('<octave-shift type="up" size="8" number="1"/>');
+    expect(xml).toContain('<octave-shift type="stop" size="8" number="1"/>');
+    expect(xml).toContain('<glissando type="start" number="2"/>');
+    expect(xml).toContain('<glissando type="stop" number="2"/>');
+  });
+
+  it('emits 15ma and 15mb directions with matching stops', () => {
+    const xml = engrave(
+      [makeNote(1, 72, 0, 1), makeNote(2, 76, 1, 1), makeNote(3, 48, 2, 1), makeNote(4, 43, 3, 1)],
+      {
+        1: { lineSpan: 'ottava-15-up', lineSpanToNoteId: 2 },
+        3: { lineSpan: 'ottava-15-down', lineSpanToNoteId: 4 },
+      },
+    );
+    parse(xml);
+    expect(xml).toContain(
+      '<direction placement="above"><direction-type><octave-shift type="up" size="15" number="1"/></direction-type></direction>',
+    );
+    expect(xml).toContain(
+      '<direction placement="above"><direction-type><octave-shift type="stop" size="15" number="1"/></direction-type></direction>',
+    );
+    expect(xml).toContain(
+      '<direction placement="below"><direction-type><octave-shift type="down" size="15" number="1"/></direction-type></direction>',
+    );
+    expect(xml).toContain(
+      '<direction placement="below"><direction-type><octave-shift type="stop" size="15" number="1"/></direction-type></direction>',
+    );
+  });
+
+  it('emits pedal directions with a matching stop', () => {
+    const xml = engrave([makeNote(1, 48, 0, 1), makeNote(2, 52, 1, 1)], {
+      1: { lineSpan: 'pedal', lineSpanToNoteId: 2 },
+    });
+    parse(xml);
+    expect(xml).toContain(
+      '<direction placement="below"><direction-type><pedal type="start" line="yes" number="1"/></direction-type></direction>',
+    );
+    expect(xml).toContain(
+      '<direction placement="below"><direction-type><pedal type="stop" line="yes" number="1"/></direction-type></direction>',
+    );
+  });
+
+  it('emits pedal sign/star style when requested', () => {
+    const xml = engrave([makeNote(1, 48, 0, 1), makeNote(2, 52, 1, 1)], {
+      1: { lineSpan: 'pedal', lineSpanToNoteId: 2, pedalStyle: 'sign' },
+    });
+    parse(xml);
+    expect(xml).toContain(
+      '<direction placement="below"><direction-type><pedal type="start" line="no" sign="yes" number="1"/></direction-type></direction>',
+    );
+    expect(xml).toContain(
+      '<direction placement="below"><direction-type><pedal type="stop" line="no" sign="no" number="1"/></direction-type></direction>',
+    );
+  });
+
+  it('skips line spans whose target does not resolve after the source', () => {
+    const xml = engrave([makeNote(1, 60, 2, 1), makeNote(2, 64, 0, 1)], {
+      1: { lineSpan: 'glissando', lineSpanToNoteId: 2 },
+      2: { lineSpan: 'pedal', lineSpanToNoteId: 999 },
+    });
+    parse(xml);
+    expect(xml).not.toContain('<glissando');
+    expect(xml).not.toContain('<pedal');
+  });
+});
+
 describe('serializeMusicXml orphaned annotations', () => {
   it('ignores annotations whose note id maps to no engraved event', () => {
     const xml = engrave([makeNote(1, 60, 0, 1)], {
@@ -271,6 +476,7 @@ describe('serializeMusicXml orphaned annotations', () => {
     parse(xml);
     expect(xml).not.toContain('<dynamics>');
     expect(xml).not.toContain('<articulations>');
+    expect(xml).not.toContain('<ornaments>');
     expect(xml).not.toContain('<slur');
   });
 

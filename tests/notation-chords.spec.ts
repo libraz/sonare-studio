@@ -73,6 +73,48 @@ describe('estimateChordSymbols', () => {
     expect(symbols[1]).toMatchObject({ ppq: 4, text: 'G7', rootPc: 7, quality: 4 });
   });
 
+  it('detects add9 and ninth chord qualities before falling back to triads or sevenths', () => {
+    const symbols = estimateChordSymbols(
+      [
+        // Measure 1: Cadd9, measure 2: G9.
+        note(60, 0, 4),
+        note(64, 0, 4),
+        note(67, 0, 4),
+        note(62, 0, 4),
+        note(55, 4, 4),
+        note(59, 4, 4),
+        note(62, 4, 4),
+        note(65, 4, 4),
+        note(69, 4, 4),
+      ],
+      OPTIONS,
+    );
+    expect(symbols).toHaveLength(2);
+    expect(symbols[0]).toMatchObject({ ppq: 0, text: 'Cadd9', rootPc: 0, quality: 10 });
+    expect(symbols[1]).toMatchObject({ ppq: 4, text: 'G9', rootPc: 7, quality: 15 });
+  });
+
+  it('detects minor add9 and major ninth qualities', () => {
+    const symbols = estimateChordSymbols(
+      [
+        // Measure 1: Am(add9), measure 2: Cmaj9.
+        note(57, 0, 4),
+        note(60, 0, 4),
+        note(64, 0, 4),
+        note(59, 0, 4),
+        note(60, 4, 4),
+        note(64, 4, 4),
+        note(67, 4, 4),
+        note(71, 4, 4),
+        note(62, 4, 4),
+      ],
+      OPTIONS,
+    );
+    expect(symbols).toHaveLength(2);
+    expect(symbols[0]).toMatchObject({ ppq: 0, text: 'Am(add9)', rootPc: 9, quality: 11 });
+    expect(symbols[1]).toMatchObject({ ppq: 4, text: 'Cmaj9', rootPc: 0, quality: 14 });
+  });
+
   it('uses actual score measure windows when provided', () => {
     const symbols = estimateChordSymbols(
       [

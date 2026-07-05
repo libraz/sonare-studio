@@ -30,6 +30,7 @@ function makeSvgElement(id: string, className: string, bounds: DOMRect): SVGElem
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -187,6 +188,39 @@ describe('usePlayheadSync', () => {
     scope.stop();
   });
 
+  it('keeps playback highlighting while score following is disabled', async () => {
+    const host = document.createElement('div');
+    defineReadonlyNumber(host, 'clientWidth', 100);
+    defineReadonlyNumber(host, 'scrollWidth', 1000);
+    host.getBoundingClientRect = vi.fn(() => rect(0, 100));
+
+    const m1 = makeSvgElement('m1', 'measure', rect(180, 260));
+    const n1 = makeSvgElement('n1', 'note', rect(190, 200));
+    host.append(m1, n1);
+
+    vi.spyOn(performance, 'now').mockReturnValue(1000);
+    const scope = effectScope();
+    scope.run(() => {
+      usePlayheadSync({
+        svgHost: ref(host),
+        svg: ref('<svg />'),
+        getTimemap: () => [{ tstamp: 0, qstamp: 0, measureOn: 'm1', on: ['n1'] }],
+        getClipStartPpq: () => 0,
+        getPositionPpq: () => () => 0,
+        getIsPlaying: () => true,
+        getFollowEnabled: () => false,
+      });
+    });
+
+    await nextTick();
+
+    const marker = host.querySelector('.score-playhead-marker');
+    expect(marker?.classList.contains('score-playhead-marker-measure')).toBe(true);
+    expect(host.scrollLeft).toBe(0);
+
+    scope.stop();
+  });
+
   it('uses one measure marker during playback', async () => {
     const host = document.createElement('div');
     defineReadonlyNumber(host, 'clientWidth', 100);
@@ -222,5 +256,34 @@ describe('usePlayheadSync', () => {
     expect(high.getBoundingClientRect).not.toHaveBeenCalled();
 
     scope.stop();
+  });
+
+  it('ignores pending idle measure prewarm after scope disposal', async () => {
+    vi.useFakeTimers();
+    const host = document.createElement('div');
+    defineReadonlyNumber(host, 'clientWidth', 100);
+    defineReadonlyNumber(host, 'scrollWidth', 1000);
+    host.getBoundingClientRect = vi.fn(() => rect(0, 100));
+
+    const measure = makeSvgElement('m1', 'measure', rect(10, 120));
+    host.append(measure);
+    const svg = ref('<svg />');
+
+    const scope = effectScope();
+    scope.run(() => {
+      usePlayheadSync({
+        svgHost: ref(host),
+        svg,
+        getTimemap: () => [{ tstamp: 0, qstamp: 0, measureOn: 'm1' }],
+        getClipStartPpq: () => 0,
+        getPositionPpq: () => () => 0,
+      });
+    });
+
+    await nextTick();
+    scope.stop();
+    vi.runOnlyPendingTimers();
+
+    expect(measure.getBoundingClientRect).not.toHaveBeenCalled();
   });
 });

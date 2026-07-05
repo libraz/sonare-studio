@@ -26,6 +26,10 @@ class MockWorker {
     this.listeners.get(type)?.delete(listener);
   }
 
+  listenerCount(type: string): number {
+    return this.listeners.get(type)?.size ?? 0;
+  }
+
   postMessage(message: VerovioRequest): void {
     this.posted.push(message);
   }
@@ -161,6 +165,8 @@ describe('VerovioClient', () => {
     client.dispose();
 
     expect(worker.terminated).toBe(true);
+    expect(worker.listenerCount('message')).toBe(0);
+    expect(worker.listenerCount('error')).toBe(0);
     expect(worker.posted.at(-1)?.type).toBe('destroy');
     await expect(pending).rejects.toThrow('VerovioClient is disposed');
 
@@ -192,6 +198,8 @@ describe('VerovioClient', () => {
     // The dead worker is torn down, and new requests reject immediately with the
     // original error rather than queuing a pending promise that never resolves.
     expect(worker.terminated).toBe(true);
+    expect(worker.listenerCount('message')).toBe(0);
+    expect(worker.listenerCount('error')).toBe(0);
     const postedBefore = worker.posted.length;
     await expect(client.renderPage(1)).rejects.toThrow('worker exploded');
     expect(worker.posted).toHaveLength(postedBefore);

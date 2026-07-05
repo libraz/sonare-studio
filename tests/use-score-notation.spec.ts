@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { NotatedMeasure, NotatedScore } from '@/notation/model';
 import type { EditorClip, EditorSection, EditorTrack } from '@/project/types';
+import { scoreKeyMarkerName, scoreLyricMarkerName } from '@/ui/score/marker-editors';
 import {
+  applyKeySignatureMarks,
   applyLayoutBreaks,
   applyLoopMarks,
+  applyLyricMarks,
   applyMarkerTexts,
   applyMultiMeasureRests,
   applySectionMarks,
@@ -127,6 +130,48 @@ function variableMeterScore(): NotatedScore {
 }
 
 describe('buildFullScore', () => {
+  it('builds one named part per overlapping MIDI track with automatic clefs', () => {
+    const out = buildFullScore(
+      {
+        tracks: [
+          { ...track(1), name: 'Bass' },
+          { ...track(2), name: 'Lead' },
+          { ...track(3), name: 'Audio', kind: 'audio' },
+        ],
+        clips: [
+          midiClip({
+            id: 1,
+            trackId: 1,
+            notes: [{ id: 1, pitch: 36, velocity: 96, startPpq: 2, durationPpq: 1, channel: 0 }],
+          }),
+          midiClip({
+            id: 2,
+            trackId: 2,
+            notes: [{ id: 2, pitch: 72, velocity: 96, startPpq: 2, durationPpq: 1, channel: 0 }],
+          }),
+          midiClip({
+            id: 3,
+            trackId: 3,
+            notes: [{ id: 3, pitch: 60, velocity: 96, startPpq: 2, durationPpq: 1, channel: 0 }],
+          }),
+        ],
+      } as never,
+      {
+        divisionPpq: 1,
+        timeSig: { beats: 4, beatUnit: 4 },
+        keyFifths: 0,
+        clipStartPpq: 8,
+        clipLengthPpq: 4,
+        displayTransposeSemitones: 0,
+      },
+    );
+
+    expect(out.parts.map((part) => [part.id, part.name, part.clef])).toEqual([
+      ['P1', 'Bass', 'bass'],
+      ['P2', 'Lead', 'treble'],
+    ]);
+  });
+
   it('uses playback note windows so trimmed MIDI clips do not show hidden notes', () => {
     const out = buildFullScore(
       {
@@ -336,6 +381,8 @@ describe('applyMarkerTexts', () => {
         { id: 1, ppq: 0, name: 'Solo' },
         { id: 2, ppq: 4, name: 'pizz.' },
         { id: 3, ppq: 6, name: 'ignored' },
+        { id: 4, ppq: 8, name: 'Key: E minor' },
+        { id: 5, ppq: 8, name: 'Lyric: sing' },
       ],
       0,
       12,
@@ -352,6 +399,144 @@ describe('applyMarkerTexts', () => {
     const out = variableMeterScore();
     applyMarkerTexts(out, [{ id: 1, ppq: 7, name: 'To Coda' }], 0, 10, 4);
     expect(out.measureTexts).toEqual({ 2: [{ text: 'To Coda', defaultY: 24 }] });
+  });
+});
+
+describe('applyLyricMarks', () => {
+  it('adds lyric markers as score lyrics in timeline order', () => {
+    const out = score();
+    applyLyricMarks(
+      out,
+      [
+        { id: 1, ppq: 4, name: 'Lyric: world' },
+        { id: 2, ppq: 0, name: 'Lyric: hello' },
+        { id: 3, ppq: 6, name: 'Text: ignored' },
+      ],
+      0,
+      12,
+    );
+
+    expect(out.lyrics).toEqual([
+      { ppq: 0, text: 'hello' },
+      { ppq: 4, text: 'world' },
+    ]);
+  });
+
+  it('parses structured lyric markers for verse, syllabic and melisma extend', () => {
+    const out = score();
+    applyLyricMarks(
+      out,
+      [
+        { id: 1, ppq: 0, name: 'Lyric 2: begin: glo~' },
+        { id: 2, ppq: 4, name: 'Lyric #2: end: ria' },
+        { id: 3, ppq: 8, name: 'Lyric: plain' },
+      ],
+      0,
+      12,
+    );
+
+    expect(out.lyrics).toEqual([
+      { ppq: 0, text: 'glo', verse: 2, syllabic: 'begin', extend: true },
+      { ppq: 4, text: 'ria', verse: 2, syllabic: 'end' },
+      { ppq: 8, text: 'plain' },
+    ]);
+  });
+
+  it('consumes lyric marker names produced by the score marker editor helpers', () => {
+    const out = score();
+    applyLyricMarks(
+      out,
+      [
+        {
+          id: 1,
+          ppq: 0,
+          name: scoreLyricMarkerName('glo', { verse: 3, syllabic: 'begin', extend: true }),
+        },
+        { id: 2, ppq: 4, name: scoreLyricMarkerName('ria', { verse: 3, syllabic: 'end' }) },
+      ],
+      0,
+      12,
+    );
+
+    expect(out.lyrics).toEqual([
+      { ppq: 0, text: 'glo', verse: 3, syllabic: 'begin', extend: true },
+      { ppq: 4, text: 'ria', verse: 3, syllabic: 'end' },
+    ]);
+  });
+
+  it('ignores lyric markers outside the score window', () => {
+    const out = score();
+    applyLyricMarks(
+      out,
+      [
+        { id: 1, ppq: 0, name: 'Lyric: before' },
+        { id: 2, ppq: 8, name: 'Lyric: in' },
+        { id: 3, ppq: 16, name: 'Lyric: after' },
+      ],
+      4,
+      8,
+    );
+
+    expect(out.lyrics).toEqual([{ ppq: 8, text: 'in' }]);
+  });
+});
+
+describe('applyKeySignatureMarks', () => {
+  it('adds measure-aligned key signature changes from key markers', () => {
+    const out = score();
+    applyKeySignatureMarks(
+      out,
+      [
+        { id: 1, ppq: 0, name: 'Key: C major' },
+        { id: 2, ppq: 4, name: 'Key: E minor' },
+        { id: 3, ppq: 6, name: 'Key: Bb major' },
+        { id: 4, ppq: 8, name: 'Key: F# major' },
+      ],
+      0,
+      12,
+      4,
+    );
+
+    expect(out.measureKeyFifths).toEqual({ 1: 1, 2: 6 });
+  });
+
+  it('consumes key marker names produced by the score marker editor helpers', () => {
+    const out = score();
+    applyKeySignatureMarks(
+      out,
+      [
+        { id: 1, ppq: 0, name: scoreKeyMarkerName('C', 'major') },
+        { id: 2, ppq: 4, name: scoreKeyMarkerName('Bb', 'minor') },
+      ],
+      0,
+      12,
+      4,
+    );
+
+    expect(out.measureKeyFifths).toEqual({ 1: -5 });
+  });
+
+  it('uses the latest preceding key marker at the score window start', () => {
+    const out = score();
+    applyKeySignatureMarks(
+      out,
+      [
+        { id: 1, ppq: 0, name: 'Key: F major' },
+        { id: 2, ppq: 4, name: 'Key: D major' },
+        { id: 3, ppq: 12, name: 'Key: Bb major' },
+      ],
+      8,
+      8,
+      4,
+    );
+
+    expect(out.measureKeyFifths).toEqual({ 0: 2, 1: -2 });
+  });
+
+  it('uses score measure starts for key changes after time-signature changes', () => {
+    const out = variableMeterScore();
+    applyKeySignatureMarks(out, [{ id: 1, ppq: 7, name: 'Key: Bb major' }], 0, 10, 4);
+    expect(out.measureKeyFifths).toEqual({ 2: -2 });
   });
 });
 

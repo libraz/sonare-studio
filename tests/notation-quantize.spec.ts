@@ -407,6 +407,110 @@ describe('quantizeToScore: voice separation', () => {
       r(3, 1, 'quarter'),
     ]);
   });
+
+  it('assigns grand-staff upper and lower notes to independent voice pools', () => {
+    const score = quantize(
+      [makeNote(72, 0, 2), makeNote(48, 0, 2), makeNote(52, 1, 1)],
+      baseOptions({ clef: 'grand' }),
+    );
+
+    expect(score.parts[0].measures[0].voices.map((v) => v.voice)).toEqual([1, 3, 4]);
+    expect(voiceEvents(score, 0, 1)[0]).toEqual(n([72], 0, 2, 'half'));
+    expect(voiceEvents(score, 0, 3)[0]).toEqual(n([48], 0, 2, 'half'));
+    expect(voiceEvents(score, 0, 4)).toEqual([
+      r(0, 1, 'quarter'),
+      n([52], 1, 1, 'quarter'),
+      r(2, 1, 'quarter'),
+      r(3, 1, 'quarter'),
+    ]);
+  });
+
+  it('keeps voice 1 present when a grand-staff measure only contains lower staff notes', () => {
+    const score = quantize([makeNote(43, 0, 1)], baseOptions({ clef: 'grand' }));
+
+    expect(score.parts[0].measures[0].voices.map((v) => v.voice)).toEqual([1, 3]);
+    expect(voiceEvents(score, 0, 1)).toEqual([r(0, 4, 'whole')]);
+    expect(voiceEvents(score, 0, 3)[0]).toEqual(n([43], 0, 1, 'quarter'));
+  });
+
+  it('uses the configured grand-staff split pitch for voice and staff assignment', () => {
+    const defaultSplit = quantize([makeNote(55, 0, 1)], baseOptions({ clef: 'grand' }));
+    expect(defaultSplit.parts[0].measures[0].voices.map((v) => v.voice)).toEqual([1, 3]);
+    expect(voiceEvents(defaultSplit, 0, 3)[0]).toEqual(n([55], 0, 1, 'quarter'));
+    expect(defaultSplit.parts[0].measures[0].voices[1].events[0].staff).toBe(2);
+
+    const lowerSplit = quantize(
+      [makeNote(55, 0, 1)],
+      baseOptions({ clef: 'grand', grandStaffSplitPitch: 50 }),
+    );
+    expect(lowerSplit.parts[0].measures[0].voices.map((v) => v.voice)).toEqual([1]);
+    expect(voiceEvents(lowerSplit, 0, 1)[0]).toEqual(n([55], 0, 1, 'quarter'));
+    expect(lowerSplit.parts[0].measures[0].voices[0].events[0].staff).toBe(1);
+  });
+
+  it('keeps split-near right-hand motion on the upper staff by continuity', () => {
+    const score = quantize(
+      [makeNote(72, 0, 1), makeNote(58, 1, 1)],
+      baseOptions({ clef: 'grand' }),
+    );
+
+    expect(score.parts[0].measures[0].voices.map((v) => v.voice)).toEqual([1]);
+    expect(voiceEvents(score, 0, 1).slice(0, 2)).toEqual([
+      n([72], 0, 1, 'quarter'),
+      n([58], 1, 1, 'quarter'),
+    ]);
+    expect(score.parts[0].measures[0].voices[0].events[1].staff).toBe(1);
+  });
+
+  it('keeps split-near left-hand motion on the lower staff by continuity', () => {
+    const score = quantize(
+      [makeNote(48, 0, 1), makeNote(62, 1, 1)],
+      baseOptions({ clef: 'grand' }),
+    );
+
+    expect(score.parts[0].measures[0].voices.map((v) => v.voice)).toEqual([1, 3]);
+    expect(voiceEvents(score, 0, 1)).toEqual([r(0, 4, 'whole')]);
+    expect(voiceEvents(score, 0, 3).slice(0, 2)).toEqual([
+      n([48], 0, 1, 'quarter'),
+      n([62], 1, 1, 'quarter'),
+    ]);
+    expect(score.parts[0].measures[0].voices[1].events[1].staff).toBe(2);
+  });
+
+  it('does not let simultaneous grand-staff notes bias each other at the same onset', () => {
+    const score = quantize(
+      [makeNote(72, 0, 1), makeNote(55, 0, 1)],
+      baseOptions({ clef: 'grand' }),
+    );
+
+    expect(score.parts[0].measures[0].voices.map((v) => v.voice)).toEqual([1, 3]);
+    expect(voiceEvents(score, 0, 1)[0]).toEqual(n([72], 0, 1, 'quarter'));
+    expect(voiceEvents(score, 0, 3)[0]).toEqual(n([55], 0, 1, 'quarter'));
+  });
+
+  it('uses separated MIDI channels as a grand-staff hand bias when their ranges diverge', () => {
+    const score = quantize(
+      [
+        makeNote(72, 0, 1, undefined, { channel: 0 }),
+        makeNote(58, 1, 1, undefined, { channel: 0 }),
+        makeNote(45, 0, 1, undefined, { channel: 1 }),
+        makeNote(65, 1, 1, undefined, { channel: 1 }),
+      ],
+      baseOptions({ clef: 'grand' }),
+    );
+
+    expect(score.parts[0].measures[0].voices.map((v) => v.voice)).toEqual([1, 3]);
+    expect(voiceEvents(score, 0, 1).slice(0, 2)).toEqual([
+      n([72], 0, 1, 'quarter'),
+      n([58], 1, 1, 'quarter'),
+    ]);
+    expect(voiceEvents(score, 0, 3).slice(0, 2)).toEqual([
+      n([45], 0, 1, 'quarter'),
+      n([65], 1, 1, 'quarter'),
+    ]);
+    expect(score.parts[0].measures[0].voices[0].events[1].staff).toBe(1);
+    expect(score.parts[0].measures[0].voices[1].events[1].staff).toBe(2);
+  });
 });
 
 describe('quantizeToScore: barlines and ties', () => {
@@ -555,6 +659,9 @@ describe('quantizeToScore: option validation', () => {
     ['maxVoices too small', { maxVoices: 0 }],
     ['maxVoices too large', { maxVoices: 5 }],
     ['fractional maxVoices', { maxVoices: 1.5 }],
+    ['negative grand staff split', { grandStaffSplitPitch: -1 }],
+    ['grand staff split too high', { grandStaffSplitPitch: 128 }],
+    ['fractional grand staff split', { grandStaffSplitPitch: 60.5 }],
   ];
 
   it.each(invalid)('throws RangeError for %s', (_label, overrides) => {

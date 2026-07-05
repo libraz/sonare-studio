@@ -8,17 +8,29 @@ import { useAppSettings } from '@/composables/useAppSettings';
 import { timeSigLengthPpq } from '@/notation/model';
 import { keyToKeyFifths } from '@/notation/pitch-spelling';
 import { VerovioClient } from '@/notation/verovio';
-import type { ScoreNoteAnnotation } from '@/project/annotations';
+import type { NoteHairpin, NoteLineSpan, ScoreNoteAnnotation } from '@/project/annotations';
 import {
   clearNoteAnnotation,
   type NoteAnnotationUpdate,
   setDisplayTranspose,
+  setMarker,
   setNoteAnnotation,
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { timeSignatureAt } from '@/project/time-signature';
 import { useI18n } from '@/ui/i18n';
 import { SCORE_PAGE_FORMATS, type ScoreLayoutSettings } from '@/ui/score/layout';
+import {
+  SCORE_KEY_MODES,
+  SCORE_KEY_ROOTS,
+  SCORE_LYRIC_SYLLABICS,
+  type ScoreKeyMode,
+  type ScoreKeyRoot,
+  scoreEditPpq,
+  scoreKeyMarkerName,
+  scoreLyricMarkerName,
+  scoreMeasureStartPpq,
+} from '@/ui/score/marker-editors';
 import { scoreOmitsMidiFx } from '@/ui/score/midi-fx-notice';
 import { type PlayheadSync, usePlayheadSync } from '@/ui/score/use-playhead-sync';
 import { useScoreInteractions } from '@/ui/score/use-score-interactions';
@@ -86,6 +98,12 @@ const DQ_CHOICES: ReadonlyArray<DqChoice> = [
 const dqKey = ref('16');
 const chordsEnabled = ref(false);
 const fullScoreEnabled = ref(false);
+const lyricInput = ref('');
+const lyricVerseInput = ref(1);
+const lyricSyllabicInput = ref<(typeof SCORE_LYRIC_SYLLABICS)[number]>('single');
+const lyricExtendInput = ref(false);
+const keyRootInput = ref<ScoreKeyRoot>('C');
+const keyModeInput = ref<ScoreKeyMode>('major');
 
 /** Display Quantize options for the toolbar select. */
 const dqOptions = computed(() =>
@@ -93,6 +111,18 @@ const dqOptions = computed(() =>
     value: choice.key,
     label: choice.label,
     disabled: choice.disabled,
+  })),
+);
+const keyRootOptions = computed(() =>
+  SCORE_KEY_ROOTS.map((root) => ({ value: root, label: root })),
+);
+const keyModeOptions = computed(() =>
+  SCORE_KEY_MODES.map((mode) => ({ value: mode, label: t.value.shell.score.keyModes[mode] })),
+);
+const lyricSyllabicOptions = computed(() =>
+  SCORE_LYRIC_SYLLABICS.map((value) => ({
+    value,
+    label: t.value.shell.score.lyricSyllabics[value],
   })),
 );
 
@@ -106,6 +136,10 @@ const annotationNoteId = ref<number | null>(null);
 const palettePos = ref({ x: 0, y: 0 });
 /** True while waiting for the slur target click ("slur to next selected"). */
 const slurArmed = ref(false);
+/** Hairpin type waiting for a target click, or null when not armed. */
+const hairpinArmed = ref<NoteHairpin | null>(null);
+/** Line/span type waiting for a target click, or null when not armed. */
+const lineSpanArmed = ref<NoteLineSpan | null>(null);
 
 /** Current annotation of the palette's target note (empty when none). */
 const annotationCurrent = computed<ScoreNoteAnnotation>(() => {
@@ -121,6 +155,7 @@ const scalePercent = ref(50);
 const spacingStaff = ref(12);
 const barsPerSystem = ref(4);
 const barsPerPage = ref(16);
+const grandStaffSplitPitch = ref(60);
 
 /** On-screen zoom relative to the height-fit score size. */
 const viewZoom = ref(1);
@@ -216,6 +251,7 @@ const notation = useScoreNotation({
   getKeyFifths: keyFifths,
   getChordsEnabled: () => chordsEnabled.value,
   getFullScoreEnabled: () => fullScoreEnabled.value,
+  getGrandStaffSplitPitch: () => grandStaffSplitPitch.value,
   getLoopRegion: () =>
     props.loopEnabled === true &&
     props.loopStartPpq !== undefined &&
@@ -235,7 +271,8 @@ playhead = usePlayheadSync({
   getTimemap: () => notation.getTimemap(),
   getClipStartPpq: () => store.clipStartPpq,
   getPositionPpq: () => props.positionPpq,
-  getIsPlaying: () => props.isPlaying === true && appSettings.settings.scrollFollowPlayhead,
+  getIsPlaying: () => props.isPlaying === true,
+  getFollowEnabled: () => appSettings.settings.scrollFollowPlayhead,
 });
 
 // --- Click-to-seek / select ------------------------------------------------------
@@ -247,12 +284,13 @@ const interactions = useScoreInteractions({
   seek: (ppq) => emit('seek', ppq),
   isAnnotateEnabled: () => annotateEnabled.value,
   onAnnotateClick,
+  onAnnotateStaffDrag,
 });
 
 // --- Annotation palette ------------------------------------------------------------
 
 /**
- * Annotate-mode note click: completes an armed slur (click A, "Slur…",
+ * Annotate-mode note click: completes an armed slur/hairpin (click A, arm,
  * click B), otherwise retargets the floating palette at the clicked note.
  */
 function onAnnotateClick(event: MouseEvent, ids: number[]): void {
@@ -266,7 +304,29 @@ function onAnnotateClick(event: MouseEvent, ids: number[]): void {
     applyAnnotation({ slurToNoteId: clicked });
     return;
   }
+  if (
+    hairpinArmed.value !== null &&
+    annotationNoteId.value !== null &&
+    clicked !== annotationNoteId.value
+  ) {
+    const hairpin = hairpinArmed.value;
+    hairpinArmed.value = null;
+    applyAnnotation({ hairpin, hairpinToNoteId: clicked });
+    return;
+  }
+  if (
+    lineSpanArmed.value !== null &&
+    annotationNoteId.value !== null &&
+    clicked !== annotationNoteId.value
+  ) {
+    const lineSpan = lineSpanArmed.value;
+    lineSpanArmed.value = null;
+    applyAnnotation({ addLineSpan: { lineSpan, lineSpanToNoteId: clicked } });
+    return;
+  }
   slurArmed.value = false;
+  hairpinArmed.value = null;
+  lineSpanArmed.value = null;
   annotationNoteId.value = clicked;
   const wrap = svgHost.value?.parentElement;
   const rect = wrap?.getBoundingClientRect();
@@ -274,6 +334,20 @@ function onAnnotateClick(event: MouseEvent, ids: number[]): void {
     x: event.clientX - (rect?.left ?? 0) + 8,
     y: event.clientY - (rect?.top ?? 0) + 8,
   };
+}
+
+/** Annotate-mode vertical drag: force the clicked note onto the upper/lower staff. */
+function onAnnotateStaffDrag(ids: number[], staff: 1 | 2): void {
+  const id = ids[0];
+  if (id === undefined) return;
+  try {
+    setNoteAnnotation(store.clipId, id, { staffOverride: staff });
+    notation.setError('');
+    closePalette();
+    void notation.transcribe();
+  } catch (err) {
+    notation.setError(err instanceof Error ? err.message : String(err));
+  }
 }
 
 /** Applies a field-wise annotation edit to the palette's target note. */
@@ -304,6 +378,8 @@ function clearAnnotation(): void {
 function closePalette(): void {
   annotationNoteId.value = null;
   slurArmed.value = false;
+  hairpinArmed.value = null;
+  lineSpanArmed.value = null;
 }
 
 /** Layout popover change handler for the display transpose select. */
@@ -311,6 +387,37 @@ function onTransposeChange(value: number): void {
   try {
     setDisplayTranspose(value);
     notation.setError('');
+  } catch (err) {
+    notation.setError(err instanceof Error ? err.message : String(err));
+  }
+}
+
+function markerEditPpq(): number {
+  return scoreEditPpq(props.positionPpq?.(), store.clipStartPpq, store.clipLengthPpq);
+}
+
+function addLyricMarker(): void {
+  try {
+    const name = scoreLyricMarkerName(lyricInput.value, {
+      verse: lyricVerseInput.value,
+      syllabic: lyricSyllabicInput.value,
+      extend: lyricExtendInput.value,
+    });
+    setMarker(null, markerEditPpq(), name);
+    lyricInput.value = '';
+    notation.setError('');
+    void notation.transcribe();
+  } catch (err) {
+    notation.setError(err instanceof Error ? err.message : String(err));
+  }
+}
+
+function addKeyMarker(): void {
+  try {
+    const ppq = scoreMeasureStartPpq(markerEditPpq(), store.clipStartPpq, measureLenPpq.value);
+    setMarker(null, ppq, scoreKeyMarkerName(keyRootInput.value, keyModeInput.value));
+    notation.setError('');
+    void notation.transcribe();
   } catch (err) {
     notation.setError(err instanceof Error ? err.message : String(err));
   }
@@ -381,6 +488,7 @@ watch(
   () => void notation.applyLayout(),
 );
 watch([barsPerSystem, barsPerPage], () => void notation.transcribe());
+watch(grandStaffSplitPitch, () => void notation.transcribe());
 watch(annotateEnabled, (enabled) => {
   if (!enabled) closePalette();
 });
@@ -446,6 +554,7 @@ onBeforeUnmount(() => {
       v-model:spacing-staff="spacingStaff"
       v-model:bars-per-system="barsPerSystem"
       v-model:bars-per-page="barsPerPage"
+      v-model:grand-staff-split-pitch="grandStaffSplitPitch"
       v-model:page="notation.page.value"
       :dq-options="dqOptions"
       :loading="notation.loading.value"
@@ -472,6 +581,60 @@ onBeforeUnmount(() => {
     <p v-if="midiFxNoticeVisible" class="score-notice" role="note">
       {{ t.shell.score.midiFxNotice }}
     </p>
+    <div class="score-marker-tools" role="group" :aria-label="t.shell.score.markerTools">
+      <label>
+        {{ t.shell.score.lyricText }}
+        <input
+          v-model="lyricInput"
+          type="text"
+          :placeholder="t.shell.score.lyricPlaceholder"
+          :aria-label="t.shell.score.lyricText"
+          @keydown.enter.prevent="addLyricMarker"
+        />
+      </label>
+      <button type="button" @click="addLyricMarker">{{ t.shell.score.addLyric }}</button>
+      <label>
+        {{ t.shell.score.lyricVerse }}
+        <input
+          v-model.number="lyricVerseInput"
+          type="number"
+          min="1"
+          max="16"
+          step="1"
+          class="lyric-verse-input"
+          :aria-label="t.shell.score.lyricVerse"
+        />
+      </label>
+      <label>
+        {{ t.shell.score.lyricSyllabic }}
+        <select v-model="lyricSyllabicInput" :aria-label="t.shell.score.lyricSyllabic">
+          <option v-for="option in lyricSyllabicOptions" :key="option.value" :value="option.value">
+            {{ option.label }}
+          </option>
+        </select>
+      </label>
+      <label class="inline-check">
+        <input v-model="lyricExtendInput" type="checkbox" />
+        {{ t.shell.score.lyricExtend }}
+      </label>
+      <label>
+        {{ t.shell.score.keyRoot }}
+        <select v-model="keyRootInput" :aria-label="t.shell.score.keyRoot">
+          <option v-for="option in keyRootOptions" :key="option.value" :value="option.value">
+            {{ option.label }}
+          </option>
+        </select>
+      </label>
+      <label>
+        {{ t.shell.score.keyMode }}
+        <select v-model="keyModeInput" :aria-label="t.shell.score.keyMode">
+          <option v-for="option in keyModeOptions" :key="option.value" :value="option.value">
+            {{ option.label }}
+          </option>
+        </select>
+      </label>
+      <button type="button" @click="addKeyMarker">{{ t.shell.score.addKey }}</button>
+    </div>
     <div class="score-body-wrap">
       <!-- biome-ignore lint/security/noDangerouslySetInnerHtml: SVG produced locally by the Verovio worker -->
       <div
@@ -480,6 +643,10 @@ onBeforeUnmount(() => {
         role="img"
         :aria-label="t.shell.score.engravedScore"
         :style="{ '--score-svg-height': `${scoreSvgHeightPx * viewZoom}px` }"
+        @pointerdown="interactions.onSvgPointerDown"
+        @pointermove="interactions.onSvgPointerMove"
+        @pointerup="interactions.onSvgPointerUp"
+        @pointercancel="interactions.onSvgPointerCancel"
         @click="interactions.onSvgClick"
         v-html="notation.svg.value"
       />
@@ -506,10 +673,32 @@ onBeforeUnmount(() => {
           :annotation="annotationCurrent"
           :position="palettePos"
           :slur-armed="slurArmed"
+          :hairpin-armed="hairpinArmed"
+          :line-span-armed="lineSpanArmed"
           @apply="applyAnnotation"
           @clear="clearAnnotation"
           @close="closePalette"
-          @slur-armed-change="slurArmed = $event"
+          @slur-armed-change="
+            slurArmed = $event;
+            if ($event) {
+              hairpinArmed = null;
+              lineSpanArmed = null;
+            }
+          "
+          @hairpin-armed-change="
+            hairpinArmed = $event;
+            if ($event !== null) {
+              slurArmed = false;
+              lineSpanArmed = null;
+            }
+          "
+          @line-span-armed-change="
+            lineSpanArmed = $event;
+            if ($event !== null) {
+              slurArmed = false;
+              hairpinArmed = null;
+            }
+          "
         />
       </Transition>
     </div>

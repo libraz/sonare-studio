@@ -167,7 +167,7 @@ export class VerovioClient {
     // Best-effort native teardown; terminate() reclaims the memory regardless.
     const destroy: VerovioRequest = { id: this.nextId++, type: 'destroy' };
     this.worker.postMessage(destroy);
-    this.worker.terminate();
+    this.teardownWorker();
     this.rejectAll(new Error('VerovioClient is disposed'));
   }
 
@@ -210,9 +210,15 @@ export class VerovioClient {
     const error = new Error(event.message || 'Verovio worker error');
     this.fatalError = error;
     this.disposed = true;
-    this.worker.terminate();
+    this.teardownWorker();
     this.rejectAll(error);
   };
+
+  private teardownWorker(): void {
+    this.worker.removeEventListener('message', this.handleMessage as EventListener);
+    this.worker.removeEventListener('error', this.handleWorkerError as EventListener);
+    this.worker.terminate();
+  }
 
   private rejectAll(error: Error): void {
     for (const entry of this.pending.values()) {

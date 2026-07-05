@@ -79,6 +79,78 @@ const tripletMusicXml = `<?xml version="1.0" encoding="UTF-8"?>
 </score-partwise>
 `;
 
+const tripletRestMusicXml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list>
+    <score-part id="P1"><part-name>Triplet Rest Check</part-name></score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>960</divisions>
+        <key><fifths>0</fifths></key>
+        <time><beats>1</beats><beat-type>4</beat-type></time>
+        <clef><sign>G</sign><line>2</line></clef>
+      </attributes>
+      <note>
+        <rest/>
+        <duration>320</duration>
+        <voice>1</voice>
+        <type>eighth</type>
+        <time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>
+        <beam number="1">begin</beam>
+        <notations><tuplet type="start"/></notations>
+      </note>
+      <note>
+        <pitch><step>D</step><octave>4</octave></pitch>
+        <duration>320</duration>
+        <voice>1</voice>
+        <type>eighth</type>
+        <time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>
+        <beam number="1">continue</beam>
+      </note>
+      <note>
+        <pitch><step>E</step><octave>4</octave></pitch>
+        <duration>320</duration>
+        <voice>1</voice>
+        <type>eighth</type>
+        <time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>
+        <beam number="1">end</beam>
+        <notations><tuplet type="stop"/></notations>
+      </note>
+    </measure>
+    <measure number="2">
+      <note>
+        <pitch><step>F</step><octave>4</octave></pitch>
+        <duration>320</duration>
+        <voice>1</voice>
+        <type>eighth</type>
+        <time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>
+        <beam number="1">begin</beam>
+        <notations><tuplet type="start"/></notations>
+      </note>
+      <note>
+        <pitch><step>G</step><octave>4</octave></pitch>
+        <duration>320</duration>
+        <voice>1</voice>
+        <type>eighth</type>
+        <time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>
+        <beam number="1">continue</beam>
+      </note>
+      <note>
+        <rest/>
+        <duration>320</duration>
+        <voice>1</voice>
+        <type>eighth</type>
+        <time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>
+        <beam number="1">end</beam>
+        <notations><tuplet type="stop"/></notations>
+      </note>
+    </measure>
+  </part>
+</score-partwise>
+`;
+
 const module = await createVerovioModule();
 const toolkit = new VerovioToolkit(module);
 console.info(`verovio version: ${toolkit.getVersion()}`);
@@ -119,5 +191,6 @@ function assertRenderable(label, musicXml, expectedOnsets) {
 
 assertRenderable('whole-note', wholeNoteMusicXml, 1);
 assertRenderable('triplet', tripletMusicXml, 3);
+assertRenderable('triplet-rest', tripletRestMusicXml, 4);
 
 toolkit.destroy();

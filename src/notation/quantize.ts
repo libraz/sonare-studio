@@ -55,6 +55,12 @@ const GM_PERCUSSION_CHANNEL = 9;
 /** Duration of a 64th note in PPQ — the finest representable display value. */
 const SIXTY_FOURTH_PPQ = 0.0625;
 
+/** Split-near pitches can follow the previous hand instead of flipping staves. */
+const GRAND_STAFF_AMBIGUOUS_SEMITONES = 7;
+
+/** Maximum melodic leap allowed when carrying an ambiguous note across the split. */
+const GRAND_STAFF_CONTINUITY_SEMITONES = 18;
+
 /**
  * Maximum pitch span (in semitones, measured from the highest pitch) for
  * simultaneous equal-duration notes to merge into one chord event.
@@ -99,6 +105,12 @@ export interface QuantizeOptions {
    */
   clef?: NotatedClef;
   /**
+   * Grand-staff split pitch as MIDI note number. Notes/chords with a mean
+   * pitch at or above this value use the upper staff; lower ones use the lower
+   * staff. Defaults to middle C (60).
+   */
+  grandStaffSplitPitch?: number;
+  /**
    * Display transpose in semitones applied to engraved pitches only (the
    * input notes are never modified — this is a non-destructive view shift).
    * Shifted pitches clamp to the MIDI range 0-127. Defaults to 0.
@@ -133,6 +145,12 @@ interface VoiceUnit {
   ids: number[];
 }
 
+interface AssignedVoiceUnits {
+  voice: NotatedVoiceNumber;
+  staff?: 1 | 2;
+  units: VoiceUnit[];
+}
+
 /** A representable duration slice produced by decomposition. */
 interface DurationPiece {
   startPpq: number;
@@ -151,6 +169,7 @@ interface ResolvedOptions {
   partId: string;
   partName: string;
   clef?: NotatedClef;
+  grandStaffSplitPitch: number;
   displayTransposeSemitones: number;
   timeSignatures: ReadonlyArray<TimeSignatureSegment>;
 }
@@ -247,6 +266,16 @@ function resolveOptions(options: QuantizeOptions): ResolvedOptions {
       `quantizeToScore: displayTransposeSemitones must be an integer, got ${displayTransposeSemitones}`,
     );
   }
+  const grandStaffSplitPitch = options.grandStaffSplitPitch ?? 60;
+  if (
+    !Number.isInteger(grandStaffSplitPitch) ||
+    grandStaffSplitPitch < 0 ||
+    grandStaffSplitPitch > 127
+  ) {
+    throw new RangeError(
+      `quantizeToScore: grandStaffSplitPitch must be an integer in 0..127, got ${grandStaffSplitPitch}`,
+    );
+  }
   const grid = isMultipleOf(divisionPpq, SIXTY_FOURTH_PPQ)
     ? snapToStep(divisionPpq, SIXTY_FOURTH_PPQ)
     : divisionPpq;
@@ -267,6 +296,7 @@ function resolveOptions(options: QuantizeOptions): ResolvedOptions {
     partId: options.partId ?? 'P1',
     partName: options.partName ?? '',
     clef: options.clef,
+    grandStaffSplitPitch,
     displayTransposeSemitones,
     timeSignatures: options.timeSignatures ?? [],
   };
@@ -322,7 +352,39 @@ function quantizeToGrid(notes: readonly EditorNote[], opts: ResolvedOptions): Gr
  * deduplicate. Units keep onset order; simultaneous units stay ordered by
  * descending top pitch (consumed by voice assignment).
  */
-function clusterChords(notes: GridNote[]): VoiceUnit[] {
+function grandStaffChannelBiasForGridNotes(
+  notes: GridNote[],
+  splitPitch: number,
+): ReadonlyMap<number, 1 | 2> {
+  const stats = new Map<number, { sum: number; count: number }>();
+  for (const note of notes) {
+    const stat = stats.get(note.channel) ?? { sum: 0, count: 0 };
+    stat.sum += note.pitch;
+    stat.count += 1;
+    stats.set(note.channel, stat);
+  }
+  const means = [...stats.entries()]
+    .filter(([, stat]) => stat.count > 0)
+    .map(([channel, stat]) => ({ channel, mean: stat.sum / stat.count }))
+    .sort((a, b) => b.mean - a.mean);
+  if (means.length < 2) return new Map();
+  if (means[0].mean - means[means.length - 1].mean < GRAND_STAFF_AMBIGUOUS_SEMITONES) {
+    return new Map();
+  }
+
+  const bias = new Map<number, 1 | 2>();
+  for (const entry of means) {
+    bias.set(entry.channel, entry.mean >= splitPitch ? 1 : 2);
+  }
+  bias.set(means[0].channel, 1);
+  bias.set(means[means.length - 1].channel, 2);
+  return bias;
+}
+
+function clusterChords(
+  notes: GridNote[],
+  channelStaffBias: ReadonlyMap<number, 1 | 2>,
+): VoiceUnit[] {
   const units: VoiceUnit[] = [];
   let i = 0;
   while (i < notes.length) {
@@ -343,7 +405,7 @@ function clusterChords(notes: GridNote[]): VoiceUnit[] {
         if (
           Math.abs(group[b].endPpq - top.endPpq) <= EPSILON &&
           top.pitch - group[b].pitch <= CHORD_PITCH_SPAN &&
-          canClusterTogether(top, group[b])
+          canClusterTogether(top, group[b], channelStaffBias)
         ) {
           pitches.add(group[b].pitch);
           channels.add(group[b].channel);
@@ -367,7 +429,16 @@ function clusterChords(notes: GridNote[]): VoiceUnit[] {
 }
 
 /** Returns true when simultaneous notes should share one chord event. */
-function canClusterTogether(a: GridNote, b: GridNote): boolean {
+function canClusterTogether(
+  a: GridNote,
+  b: GridNote,
+  channelStaffBias: ReadonlyMap<number, 1 | 2>,
+): boolean {
+  if (a.channel !== b.channel) {
+    const aStaff = channelStaffBias.get(a.channel);
+    const bStaff = channelStaffBias.get(b.channel);
+    if (aStaff !== undefined && bStaff !== undefined && aStaff !== bStaff) return false;
+  }
   if (a.channel !== GM_PERCUSSION_CHANNEL && b.channel !== GM_PERCUSSION_CHANNEL) return true;
   if (a.channel !== b.channel) return false;
   return percussionVoiceGroup(a.pitch) === percussionVoiceGroup(b.pitch);
@@ -452,6 +523,166 @@ function separateVoices(units: VoiceUnit[], maxVoices: number): VoiceUnit[][] {
     i = j;
   }
   return voices.filter((v) => v.length > 0);
+}
+
+/** Grand-staff split point: notes at/above the split engrave to the upper staff. */
+function defaultGrandStaffForPitch(pitch: number, splitPitch: number): 1 | 2 {
+  return pitch >= splitPitch ? 1 : 2;
+}
+
+interface GrandStaffContinuity {
+  upperPitch?: number;
+  lowerPitch?: number;
+}
+
+function grandStaffChannelBias(units: VoiceUnit[], splitPitch: number): ReadonlyMap<number, 1 | 2> {
+  const stats = new Map<number, { sum: number; count: number }>();
+  for (const unit of units) {
+    if (unit.channels.length !== 1) continue;
+    const channel = unit.channels[0];
+    const stat = stats.get(channel) ?? { sum: 0, count: 0 };
+    stat.sum += meanPitch(unit.pitches);
+    stat.count += 1;
+    stats.set(channel, stat);
+  }
+  const means = [...stats.entries()]
+    .filter(([, stat]) => stat.count > 0)
+    .map(([channel, stat]) => ({ channel, mean: stat.sum / stat.count }))
+    .sort((a, b) => b.mean - a.mean);
+  if (means.length < 2) return new Map();
+  if (means[0].mean - means[means.length - 1].mean < GRAND_STAFF_AMBIGUOUS_SEMITONES) {
+    return new Map();
+  }
+
+  const bias = new Map<number, 1 | 2>();
+  for (const entry of means) {
+    bias.set(entry.channel, defaultGrandStaffForPitch(entry.mean, splitPitch));
+  }
+  bias.set(means[0].channel, 1);
+  bias.set(means[means.length - 1].channel, 2);
+  return bias;
+}
+
+function nearestStaffByContinuity(pitch: number, context: GrandStaffContinuity): 1 | 2 | undefined {
+  const upperDistance =
+    context.upperPitch === undefined
+      ? Number.POSITIVE_INFINITY
+      : Math.abs(pitch - context.upperPitch);
+  const lowerDistance =
+    context.lowerPitch === undefined
+      ? Number.POSITIVE_INFINITY
+      : Math.abs(pitch - context.lowerPitch);
+  const best = Math.min(upperDistance, lowerDistance);
+  if (best > GRAND_STAFF_CONTINUITY_SEMITONES) return undefined;
+  if (upperDistance < lowerDistance) return 1;
+  if (lowerDistance < upperDistance) return 2;
+  return undefined;
+}
+
+function grandStaffForPitch(
+  pitch: number,
+  splitPitch: number,
+  context: GrandStaffContinuity,
+): 1 | 2 {
+  const defaultStaff = defaultGrandStaffForPitch(pitch, splitPitch);
+  if (Math.abs(pitch - splitPitch) > GRAND_STAFF_AMBIGUOUS_SEMITONES) return defaultStaff;
+  return nearestStaffByContinuity(pitch, context) ?? defaultStaff;
+}
+
+function grandStaffForUnit(
+  unit: VoiceUnit,
+  splitPitch: number,
+  context: GrandStaffContinuity,
+  channelBias: ReadonlyMap<number, 1 | 2>,
+): 1 | 2 {
+  if (unit.channels.length === 1) {
+    const biased = channelBias.get(unit.channels[0]);
+    if (biased !== undefined) return biased;
+  }
+  return grandStaffForPitch(meanPitch(unit.pitches), splitPitch, context);
+}
+
+function assignGrandStaffUnits(
+  units: VoiceUnit[],
+  splitPitch: number,
+): { upper: VoiceUnit[]; lower: VoiceUnit[] } {
+  const upper: VoiceUnit[] = [];
+  const lower: VoiceUnit[] = [];
+  const context: GrandStaffContinuity = {};
+  const channelBias = grandStaffChannelBias(units, splitPitch);
+  const ordered = [...units].sort(
+    (a, b) => a.startPpq - b.startPpq || meanPitch(b.pitches) - meanPitch(a.pitches),
+  );
+  for (let i = 0; i < ordered.length; ) {
+    const start = ordered[i].startPpq;
+    const group: VoiceUnit[] = [];
+    while (i < ordered.length && Math.abs(ordered[i].startPpq - start) <= EPSILON) {
+      group.push(ordered[i]);
+      i++;
+    }
+    const assigned: Array<{ staff: 1 | 2; pitch: number }> = [];
+    for (const unit of group) {
+      const pitch = meanPitch(unit.pitches);
+      const staff = grandStaffForUnit(unit, splitPitch, context, channelBias);
+      (staff === 1 ? upper : lower).push(unit);
+      assigned.push({ staff, pitch });
+    }
+    const upperAssigned = assigned.filter((entry) => entry.staff === 1);
+    if (upperAssigned.length > 0) {
+      context.upperPitch =
+        upperAssigned.reduce((sum, entry) => sum + entry.pitch, 0) / upperAssigned.length;
+    }
+    const lowerAssigned = assigned.filter((entry) => entry.staff === 2);
+    if (lowerAssigned.length > 0) {
+      context.lowerPitch =
+        lowerAssigned.reduce((sum, entry) => sum + entry.pitch, 0) / lowerAssigned.length;
+    }
+  }
+  return { upper, lower };
+}
+
+function grandStaffVoiceNumber(staff: 1 | 2, index: number): NotatedVoiceNumber {
+  const voice = staff === 1 ? index + 1 : index + 3;
+  if (voice < 1 || voice > 4) {
+    throw new RangeError(`quantizeToScore: grand-staff voice index out of range: ${voice}`);
+  }
+  return voice as NotatedVoiceNumber;
+}
+
+/**
+ * Assigns clustered units to notated voices.
+ *
+ * Single-staff parts keep the historical one-pool assignment. Grand-staff
+ * parts split units by pitch center first, then assign voices independently
+ * on each staff: upper staff uses voices 1/2, lower staff uses voices 3/4.
+ */
+function assignVoiceUnits(
+  units: VoiceUnit[],
+  clef: NotatedClef | undefined,
+  maxVoices: number,
+  grandStaffSplitPitch: number,
+): AssignedVoiceUnits[] {
+  if (clef !== 'grand') {
+    return separateVoices(units, maxVoices).map((voiceUnits, index) => ({
+      voice: (index + 1) as NotatedVoiceNumber,
+      units: voiceUnits,
+    }));
+  }
+
+  const { upper, lower } = assignGrandStaffUnits(units, grandStaffSplitPitch);
+  const perStaffVoices = Math.min(2, maxVoices);
+  const assignments: AssignedVoiceUnits[] = [];
+  for (const [staff, staffUnits] of [
+    [1, upper],
+    [2, lower],
+  ] as const) {
+    const voices = separateVoices(staffUnits, perStaffVoices);
+    voices.forEach((voiceUnits, index) => {
+      assignments.push({ voice: grandStaffVoiceNumber(staff, index), staff, units: voiceUnits });
+    });
+  }
+  assignments.sort((a, b) => a.voice - b.voice);
+  return assignments;
 }
 
 /**
@@ -629,6 +860,7 @@ function splitUnitsIntoMeasures(
   units: VoiceUnit[],
   measures: Array<{ index: number; startPpq: number; lengthPpq: number; timeSig: NotatedTimeSig }>,
   voice: NotatedVoiceNumber,
+  staff?: 1 | 2,
 ): NotatedEvent[][] {
   const perMeasure: NotatedEvent[][] = measures.map(() => []);
   for (const unit of units) {
@@ -657,6 +889,7 @@ function splitUnitsIntoMeasures(
         value: piece.value,
         tieStart: k < pieces.length - 1,
         tieStop: k > 0,
+        ...(staff !== undefined ? { staff } : {}),
         sourceIds: [...unit.ids],
         midiChannels: [...unit.channels],
         velocity: unit.velocity,
@@ -675,6 +908,7 @@ function fillVoiceMeasure(
   events: NotatedEvent[],
   groupLen: number,
   voice: NotatedVoiceNumber,
+  staff?: 1 | 2,
 ): NotatedVoice {
   const out: NotatedEvent[] = [];
   const measureEnd = measure.startPpq + measure.lengthPpq;
@@ -689,6 +923,7 @@ function fillVoiceMeasure(
         value: piece.value,
         tieStart: false,
         tieStop: false,
+        ...(staff !== undefined ? { staff } : {}),
       });
     }
   };
@@ -735,31 +970,32 @@ export function quantizeToScore(
 ): NotatedScore {
   const opts = resolveOptions(options);
   const gridNotes = quantizeToGrid(notes, opts);
-  const units = clusterChords(gridNotes);
-  const voiceUnits = separateVoices(units, opts.maxVoices);
+  const channelStaffBias =
+    opts.clef === 'grand'
+      ? grandStaffChannelBiasForGridNotes(gridNotes, opts.grandStaffSplitPitch)
+      : new Map<number, 1 | 2>();
+  const units = clusterChords(gridNotes, channelStaffBias);
+  const voiceUnits = assignVoiceUnits(units, opts.clef, opts.maxVoices, opts.grandStaffSplitPitch);
   const measures = buildMeasureGrid(opts);
 
-  const perVoiceMeasureEvents = voiceUnits.map((vu, vi) =>
-    splitUnitsIntoMeasures(vu, measures, (vi + 1) as NotatedVoiceNumber),
-  );
+  const perVoiceMeasureEvents = voiceUnits.map((entry) => ({
+    voice: entry.voice,
+    staff: entry.staff,
+    measures: splitUnitsIntoMeasures(entry.units, measures, entry.voice, entry.staff),
+  }));
 
   const notatedMeasures: NotatedMeasure[] = measures.map((measure) => {
     const voices: NotatedVoice[] = [];
-    for (let vi = 0; vi < perVoiceMeasureEvents.length; vi++) {
-      const events = perVoiceMeasureEvents[vi][measure.index];
+    for (const entry of perVoiceMeasureEvents) {
+      const events = entry.measures[measure.index];
       // Voice 1 is always present; higher voices only where they sound.
-      if (vi > 0 && events.length === 0) continue;
+      if (entry.voice > 1 && events.length === 0) continue;
       voices.push(
-        fillVoiceMeasure(
-          measure,
-          events,
-          beatGroupPpq(measure.timeSig),
-          (vi + 1) as NotatedVoiceNumber,
-        ),
+        fillVoiceMeasure(measure, events, beatGroupPpq(measure.timeSig), entry.voice, entry.staff),
       );
     }
-    if (voices.length === 0) {
-      voices.push(fillVoiceMeasure(measure, [], beatGroupPpq(measure.timeSig), 1));
+    if (voices[0]?.voice !== 1) {
+      voices.unshift(fillVoiceMeasure(measure, [], beatGroupPpq(measure.timeSig), 1));
     }
     return {
       index: measure.index,
