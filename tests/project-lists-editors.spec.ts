@@ -25,11 +25,42 @@ vi.mock('@/lib/wasm', async () => {
   return { ensureWasm: async () => fakeModule };
 });
 
+const audioTempoMock = vi.hoisted(() => ({
+  detectActiveAudioClipTempo: vi.fn(),
+  detectActiveAudioClipTempoMap: vi.fn(),
+  detectActiveAudioClipTimeSignatures: vi.fn(),
+}));
+vi.mock('@/project/audio-tempo', () => audioTempoMock);
+
 /** Finds a button by its exact trimmed text. */
 function buttonByText(wrapper: VueWrapper, text: string) {
   const button = wrapper.findAll('button').find((b) => b.text() === text);
   if (!button) throw new Error(`Button "${text}" not found`);
   return button;
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+function audioClip(id: number, assetId = `asset-${id}`) {
+  return {
+    id,
+    kind: 'audio',
+    assetId,
+    lengthPpq: 8,
+    sourceOffsetPpq: 0,
+    gain: 1,
+    loopEnabled: false,
+    loopLengthPpq: 0,
+    notes: [],
+    trackId: 1,
+    startPpq: 0,
+  };
 }
 
 describe('project list editors', () => {
@@ -41,6 +72,7 @@ describe('project list editors', () => {
     store = useProjectStore();
     store.dispose();
     clearHistory();
+    vi.clearAllMocks();
     await store.init();
   });
 
@@ -115,6 +147,26 @@ describe('project list editors', () => {
       expect(canUndo()).toBe(false);
       wrapper.unmount();
     });
+
+    it('ignores a stale clip tempo detection after the active clip changes', async () => {
+      const pending = deferred<number | null>();
+      audioTempoMock.detectActiveAudioClipTempo.mockReturnValueOnce(pending.promise);
+      store.tracks = [{ ...store.tracks[0], id: 1 }];
+      store.clips = [audioClip(7), audioClip(8, 'asset-2')];
+      store.clipId = 7;
+      const wrapper = mount(TempoMapEditor);
+
+      await buttonByText(wrapper, 'Detect from clip').trigger('click');
+      store.clipId = 8;
+      pending.resolve(144);
+      await flushPromises();
+
+      expect(audioTempoMock.detectActiveAudioClipTempo).toHaveBeenCalledWith(7);
+      expect(
+        (wrapper.findAll('tbody tr')[0].findAll('input')[1].element as HTMLInputElement).value,
+      ).toBe('120');
+      wrapper.unmount();
+    });
   });
 
   describe('KeyListEditor', () => {
@@ -123,6 +175,8 @@ describe('project list editors', () => {
       const toggle = wrapper.get('button[aria-label="Highlight the key in the piano roll"]');
 
       expect(toggle.text()).toBe('Highlight');
+      expect(wrapper.text()).toContain('Score key changes');
+      expect(wrapper.text()).not.toContain('not supported');
       expect(toggle.attributes('aria-pressed')).toBe('true');
       await toggle.trigger('click');
 
@@ -162,6 +216,27 @@ describe('project list editors', () => {
       await buttonByText(wrapper, 'Apply').trigger('click');
       // The added row inherits 4/4, so the merge keeps a single segment.
       expect(store.timeSignatures).toEqual([{ startPpq: 0, numerator: 4, denominator: 4 }]);
+      wrapper.unmount();
+    });
+
+    it('ignores a stale meter detection after the active clip changes', async () => {
+      const pending =
+        deferred<Array<{ startPpq: number; numerator: number; denominator: number }>>();
+      audioTempoMock.detectActiveAudioClipTimeSignatures.mockReturnValueOnce(pending.promise);
+      store.tracks = [{ ...store.tracks[0], id: 1 }];
+      store.clips = [audioClip(7), audioClip(8, 'asset-2')];
+      store.clipId = 7;
+      const wrapper = mount(TimeSignatureEditor);
+
+      await buttonByText(wrapper, 'Detect from clip').trigger('click');
+      store.clipId = 8;
+      pending.resolve([{ startPpq: 0, numerator: 3, denominator: 4 }]);
+      await flushPromises();
+
+      expect(audioTempoMock.detectActiveAudioClipTimeSignatures).toHaveBeenCalledWith(7, {
+        maxNumerator: 32,
+      });
+      expect(wrapper.findAll('tbody tr')).toHaveLength(0);
       wrapper.unmount();
     });
   });

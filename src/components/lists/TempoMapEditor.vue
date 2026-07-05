@@ -34,6 +34,7 @@ const dirty = ref(false);
 const errors = ref<string[]>([]);
 /** True while a tempo detection is awaiting the engine. */
 const isDetecting = ref(false);
+let detectGeneration = 0;
 
 /** The active clip when it is an audio clip carrying an asset, else null. */
 const detectableAudioClip = computed(() => {
@@ -101,10 +102,14 @@ function deleteRow(index: number): void {
 async function detectFromClip(): Promise<void> {
   const clip = detectableAudioClip.value;
   if (!clip || isDetecting.value) return;
+  const generation = ++detectGeneration;
   errors.value = [];
   isDetecting.value = true;
+  const isCurrent = () =>
+    generation === detectGeneration && detectableAudioClip.value?.id === clip.id;
   try {
     const bpm = await detectActiveAudioClipTempo(clip.id);
+    if (!isCurrent()) return;
     if (bpm === null) {
       errors.value = [t.value.shell.lists.tempo.noneDetected];
       return;
@@ -119,9 +124,10 @@ async function detectFromClip(): Promise<void> {
         : [{ key: nextRowKey++, position: '1.1', bpm: text, endBpm: '' }, ...rows.value];
     dirty.value = true;
   } catch (err) {
+    if (!isCurrent()) return;
     errors.value = [err instanceof Error ? err.message : String(err)];
   } finally {
-    isDetecting.value = false;
+    if (generation === detectGeneration) isDetecting.value = false;
   }
 }
 
@@ -133,13 +139,17 @@ async function detectFromClip(): Promise<void> {
 async function detectMapFromClip(): Promise<void> {
   const clip = detectableAudioClip.value;
   if (!clip || isDetecting.value) return;
+  const generation = ++detectGeneration;
   errors.value = [];
   isDetecting.value = true;
+  const isCurrent = () =>
+    generation === detectGeneration && detectableAudioClip.value?.id === clip.id;
   try {
     const segments = await detectActiveAudioClipTempoMap(clip.id, {
       minBpm: MIN_BPM,
       maxBpm: MAX_BPM,
     });
+    if (!isCurrent()) return;
     if (segments.length === 0) {
       errors.value = [t.value.shell.lists.tempo.noBeatsDetected];
       return;
@@ -152,9 +162,10 @@ async function detectMapFromClip(): Promise<void> {
     }));
     dirty.value = true;
   } catch (err) {
+    if (!isCurrent()) return;
     errors.value = [err instanceof Error ? err.message : String(err)];
   } finally {
-    isDetecting.value = false;
+    if (generation === detectGeneration) isDetecting.value = false;
   }
 }
 

@@ -49,6 +49,7 @@ const dirty = ref(false);
 const errors = ref<string[]>([]);
 /** True while a meter detection is awaiting the engine. */
 const isDetecting = ref(false);
+let detectGeneration = 0;
 
 /** The active clip when it is an audio clip carrying an asset, else null. */
 const detectableAudioClip = computed(() => {
@@ -114,12 +115,16 @@ function deleteRow(index: number): void {
 async function detectFromClip(): Promise<void> {
   const clip = detectableAudioClip.value;
   if (!clip || isDetecting.value) return;
+  const generation = ++detectGeneration;
   errors.value = [];
   isDetecting.value = true;
+  const isCurrent = () =>
+    generation === detectGeneration && detectableAudioClip.value?.id === clip.id;
   try {
     const segments = await detectActiveAudioClipTimeSignatures(clip.id, {
       maxNumerator: MAX_TIME_SIGNATURE_NUMERATOR,
     });
+    if (!isCurrent()) return;
     if (segments.length === 0) {
       errors.value = [t.value.shell.lists.meter.noneDetected];
       return;
@@ -132,9 +137,10 @@ async function detectFromClip(): Promise<void> {
     }));
     dirty.value = true;
   } catch (err) {
+    if (!isCurrent()) return;
     errors.value = [err instanceof Error ? err.message : String(err)];
   } finally {
-    isDetecting.value = false;
+    if (generation === detectGeneration) isDetecting.value = false;
   }
 }
 

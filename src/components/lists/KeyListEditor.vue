@@ -17,10 +17,11 @@ import {
  *
  * The project model stores exactly one key: the scale-highlight
  * configuration (root pitch class + 12-bit interval mask) that drives the
- * piano-roll highlighting. There is no per-range key list to edit, so this
- * editor presents that one key as a single fixed row. Like the piano-roll
- * scale-highlight toggle, changes are editor-only state: they are not
- * undoable and are not part of the saved project document.
+ * piano-roll highlighting. Score key changes are authored as measure-aligned
+ * markers from the Score toolbar, so this editor presents the scale-highlight
+ * key as a single fixed row. Like the piano-roll scale-highlight toggle,
+ * changes are editor-only state: they are not undoable and are not part of
+ * the saved project document.
  */
 
 const store = useProjectStore();

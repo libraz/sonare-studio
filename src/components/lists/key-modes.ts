@@ -4,23 +4,10 @@
  * the root is in the scale). Pure module (no DOM, no framework imports).
  */
 
+import { PITCH_CLASS_NAMES } from '@/lib/pitch';
 import { MAJOR_MODE_MASK } from '@/project/types';
 
-/** Pitch-class display names indexed by pitch class (C = 0). */
-export const PITCH_CLASS_NAMES = [
-  'C',
-  'C#',
-  'D',
-  'D#',
-  'E',
-  'F',
-  'F#',
-  'G',
-  'G#',
-  'A',
-  'A#',
-  'B',
-] as const;
+export { PITCH_CLASS_NAMES };
 
 /** One selectable diatonic mode. */
 export interface KeyModeChoice {
