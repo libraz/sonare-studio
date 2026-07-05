@@ -312,6 +312,12 @@
   box-shadow: var(--control-lift-hover);
 }
 
+.track-record-input-select {
+  width: 58px;
+  flex: none;
+  font: var(--fw-semibold) 9px var(--font-sans);
+}
+
 .takes-flatten {
   height: 14px;
   font: var(--fw-bold) 8px var(--font-sans);

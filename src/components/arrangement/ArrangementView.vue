@@ -7,10 +7,12 @@ import { useFileDownloads } from '@/composables/useFileDownloads';
 import type { AutomationParam } from '@/project/automation';
 import {
   addMidiClip,
+  consolidateAudioClips,
   deleteClip,
   detectSectionsFromAudioClip,
   duplicateClip,
   extractMelodyFromAudioClip,
+  glueMidiClips,
   moveClip,
   renameClip,
   setActiveClip,
@@ -455,6 +457,66 @@ function onSeek(ppq: number): void {
   emit('seek', ppq);
 }
 
+function glueClusterClipIds(clipId: number): number[] {
+  const source = store.clips.find((clip) => clip.id === clipId);
+  if (!source || isAudioClip(source)) return [];
+  const candidates = store.clips
+    .filter(
+      (clip) =>
+        clip.trackId === source.trackId && !isAudioClip(clip) && (clip.kind ?? 'midi') === 'midi',
+    )
+    .sort((a, b) => a.startPpq - b.startPpq || a.id - b.id);
+  const sourceIndex = candidates.findIndex((clip) => clip.id === clipId);
+  if (sourceIndex < 0) return [];
+  const EPSILON = 1e-6;
+  let first = sourceIndex;
+  let last = sourceIndex;
+  while (first > 0) {
+    const prev = candidates[first - 1];
+    const current = candidates[first];
+    if (prev.startPpq + prev.lengthPpq + EPSILON < current.startPpq) break;
+    first--;
+  }
+  while (last < candidates.length - 1) {
+    const current = candidates[last];
+    const next = candidates[last + 1];
+    if (current.startPpq + current.lengthPpq + EPSILON < next.startPpq) break;
+    last++;
+  }
+  return candidates.slice(first, last + 1).map((clip) => clip.id);
+}
+
+function audioConsolidateClipIds(clipId: number): number[] {
+  const source = store.clips.find((clip) => clip.id === clipId);
+  if (!source || !isAudioClip(source)) return [];
+  const candidates = store.clips
+    .filter((clip) => clip.trackId === source.trackId && isAudioClip(clip))
+    .sort((a, b) => a.startPpq - b.startPpq || a.id - b.id);
+  const sourceIndex = candidates.findIndex((clip) => clip.id === clipId);
+  if (sourceIndex < 0) return [];
+  const EPSILON = 1e-6;
+  let first = sourceIndex;
+  let last = sourceIndex;
+  while (first > 0) {
+    const prev = candidates[first - 1];
+    const current = candidates[first];
+    if (prev.startPpq + prev.lengthPpq + EPSILON < current.startPpq) break;
+    first--;
+  }
+  while (last < candidates.length - 1) {
+    const current = candidates[last];
+    const next = candidates[last + 1];
+    if (current.startPpq + current.lengthPpq + EPSILON < next.startPpq) break;
+    last++;
+  }
+  return candidates.slice(first, last + 1).map((entry) => entry.id);
+}
+
+async function consolidateAudioCluster(clipIds: number[]): Promise<void> {
+  const id = await consolidateAudioClips(clipIds);
+  setActiveClip(id);
+}
+
 /** Builds and opens the right-click menu for a clip (or an empty lane). */
 function onClipContext(payload: {
   x: number;
@@ -468,6 +530,8 @@ function onClipContext(payload: {
   const end = clip.startPpq + clip.lengthPpq;
   const splitPpq = snapToStep(payload.ppq, gridPpq.value);
   const canSplit = splitPpq > clip.startPpq && splitPpq < end;
+  const glueIds = glueClusterClipIds(clip.id);
+  const consolidateIds = audioConsolidateClipIds(clip.id);
   const items: ContextMenuItem[] = [
     {
       id: 'split',
@@ -477,6 +541,18 @@ function onClipContext(payload: {
       run: () => setActiveClip(splitClip(clip.id, splitPpq)),
     },
     { id: 'duplicate', label: 'Duplicate', run: () => setActiveClip(duplicateClip(clip.id, end)) },
+    {
+      id: 'glue',
+      label: 'Glue joined clips',
+      disabled: glueIds.length < 2,
+      run: () => setActiveClip(glueMidiClips(glueIds)),
+    },
+    {
+      id: 'consolidate-audio',
+      label: 'Consolidate audio clips',
+      disabled: consolidateIds.length < 2,
+      run: () => void consolidateAudioCluster(consolidateIds),
+    },
     { id: 'rename', label: 'Rename…', run: () => renameClipFromPrompt(clip.id, clip.name) },
     {
       id: 'loop',

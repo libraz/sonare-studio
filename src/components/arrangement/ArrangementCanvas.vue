@@ -142,6 +142,18 @@ const rowLayout = computed(() => {
   );
 });
 
+const activeClip = computed(() => props.clips.find((clip) => clip.id === props.activeClipId));
+
+const liveStatus = computed(() => {
+  const track = props.tracks.find((item) => item.id === props.activeTrackId);
+  const parts: string[] = [];
+  if (track) parts.push(`Track ${track.name} selected`);
+  if (activeClip.value) parts.push(`Clip ${activeClip.value.name} selected`);
+  else parts.push('No clip selected');
+  parts.push(`${props.clips.length} clips on timeline`);
+  return parts.join('. ');
+});
+
 function laneTopFor(index: number): number {
   return RULER_HEIGHT_PX + rowLayout.value.rowTop(index) - props.scrollY;
 }
@@ -329,6 +341,9 @@ const {
       :aria-label="t.shell.arrangement.timeline"
     />
     <canvas ref="overlayCanvas" class="arrangement-layer" aria-hidden="true" />
+    <div class="arrangement-live" role="status" aria-live="polite" aria-atomic="true">
+      {{ liveStatus }}
+    </div>
   </div>
 </template>
 
@@ -347,5 +362,14 @@ const {
   width: 100%;
   height: 100%;
   display: block;
+}
+
+.arrangement-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 </style>

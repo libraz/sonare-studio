@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, ref } from 'vue';
 import AddTrackMenu from '@/components/arrangement/track-header/AddTrackMenu.vue';
 import TrackAutomationStrip from '@/components/arrangement/track-header/TrackAutomationStrip.vue';
 import TrackTakeRows from '@/components/arrangement/track-header/TrackTakeRows.vue';
@@ -24,6 +24,7 @@ import {
   setTrackGroup,
   setTrackMute,
   setTrackPan,
+  setTrackRecordInputChannel,
   setTrackSolo,
   setTrackVca,
   setTrackVolume,
@@ -132,12 +133,15 @@ const error = ref('');
 const editingTrackId = ref<number>(-1);
 const editName = ref('');
 const nameInput = ref<HTMLInputElement[] | HTMLInputElement | null>(null);
+let renameFocusFrame: number | null = null;
 
 function startRename(track: EditorTrack): void {
   editingTrackId.value = track.id;
   editName.value = track.name;
+  if (renameFocusFrame !== null) cancelAnimationFrame(renameFocusFrame);
   // Focus once the input exists in the DOM.
-  requestAnimationFrame(() => {
+  renameFocusFrame = requestAnimationFrame(() => {
+    renameFocusFrame = null;
     const el = nameInput.value;
     const input = Array.isArray(el) ? el[0] : el;
     input?.focus();
@@ -162,6 +166,13 @@ function commitRename(): void {
 function cancelRename(): void {
   editingTrackId.value = -1;
 }
+
+onBeforeUnmount(() => {
+  if (renameFocusFrame !== null) {
+    cancelAnimationFrame(renameFocusFrame);
+    renameFocusFrame = null;
+  }
+});
 
 // --- Per-track controls ----------------------------------------------------
 
@@ -237,6 +248,36 @@ const vcaOptions = computed<{ value: string; label: string }[]>(() => [
 function onVcaChange(track: EditorTrack, value: string): void {
   try {
     setTrackVca(track.id, value === VCA_NONE ? null : value);
+    error.value = '';
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
+}
+
+// --- Recording input channel -------------------------------------------------
+
+/** SelectMenu value used for automatic input-channel assignment. */
+const RECORD_INPUT_AUTO = -1;
+/** Compact fixed menu; actual capture channel availability is known only after recording starts. */
+const RECORD_INPUT_CHANNEL_OPTIONS = 8;
+
+const recordInputChannelOptions = computed<{ value: number; label: string }[]>(() => [
+  { value: RECORD_INPUT_AUTO, label: t.value.shell.arrangement.trackHeader.recordInputAuto },
+  ...Array.from({ length: RECORD_INPUT_CHANNEL_OPTIONS }, (_, index) => ({
+    value: index,
+    label: formatMessage(t.value.shell.arrangement.trackHeader.recordInputChannel, {
+      channel: String(index + 1),
+    }),
+  })),
+]);
+
+function recordInputChannelValue(track: EditorTrack): number {
+  return track.recordInputChannel ?? RECORD_INPUT_AUTO;
+}
+
+function onRecordInputChannelChange(track: EditorTrack, value: number): void {
+  try {
+    setTrackRecordInputChannel(track.id, value === RECORD_INPUT_AUTO ? null : value);
     error.value = '';
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
@@ -838,6 +879,19 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                     formatMessage(t.shell.arrangement.trackHeader.panOf, { name: track.name })
                   "
                   @change="onPanChange(track, $event)"
+                />
+                <SelectMenu
+                  v-if="track.kind === 'audio'"
+                  class="track-record-input-select"
+                  size="sm"
+                  :model-value="recordInputChannelValue(track)"
+                  :options="recordInputChannelOptions"
+                  :aria-label="
+                    formatMessage(t.shell.arrangement.trackHeader.recordInputOf, {
+                      name: track.name,
+                    })
+                  "
+                  @change="onRecordInputChannelChange(track, Number($event))"
                 />
                 <SelectMenu
                   v-if="track.kind !== 'group' && groupTracks.length > 0"

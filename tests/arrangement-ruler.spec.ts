@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   barRangeAt,
   createRulerTickCache,
+  localizeMeter,
   type MeterSegment,
   nearestBarPpq,
   type RulerTick,
@@ -79,6 +80,39 @@ describe('rulerTicks', () => {
     expect(rulerTicks(FOUR_FOUR, 8, 8, 50)).toEqual([]);
     expect(rulerTicks(FOUR_FOUR, 8, 4, 50)).toEqual([]);
     expect(rulerTicks(FOUR_FOUR, 0, 8, 0)).toEqual([]);
+  });
+
+  it('can disable bar labels with a non-finite spacing without suppressing ticks', () => {
+    const ticks = rulerTicks(FOUR_FOUR, 0, 8, 50, {
+      minBeatSpacingPx: 6,
+      minBarLabelSpacingPx: Number.POSITIVE_INFINITY,
+    });
+    expect(ticks.length).toBeGreaterThan(0);
+    expect(bars(ticks).length).toBeGreaterThan(0);
+    expect(ticks.every((tick) => tick.label === undefined)).toBe(true);
+  });
+});
+
+describe('localizeMeter', () => {
+  const mixed: MeterSegment[] = [
+    { startPpq: 0, numerator: 4, denominator: 4 },
+    { startPpq: 8, numerator: 3, denominator: 4 },
+    { startPpq: 17, numerator: 5, denominator: 8 },
+  ];
+
+  it('starts with the meter active at the clip timeline origin', () => {
+    expect(localizeMeter(mixed, 8)).toEqual([
+      { startPpq: 0, numerator: 3, denominator: 4 },
+      { startPpq: 9, numerator: 5, denominator: 8 },
+    ]);
+  });
+
+  it('shifts future meter changes into the clip-local frame', () => {
+    expect(localizeMeter(mixed, 6)).toEqual([
+      { startPpq: 0, numerator: 4, denominator: 4 },
+      { startPpq: 2, numerator: 3, denominator: 4 },
+      { startPpq: 11, numerator: 5, denominator: 8 },
+    ]);
   });
 });
 

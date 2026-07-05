@@ -1,9 +1,10 @@
 import { type DOMWrapper, flushPromises, mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import TrackHeaderList from '@/components/arrangement/TrackHeaderList.vue';
 import ChannelStrip from '@/components/mixer/ChannelStrip.vue';
 import {
+  addAudioTrack,
   addGroupTrack,
   addMidiClip,
   addTrack,
@@ -58,6 +59,24 @@ describe('track freeze / bounce UI', () => {
     trackId = store.tracks[0].id;
   });
 
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('cancels a pending rename focus frame on unmount', async () => {
+    const requestAnimationFrame = vi.fn(() => 24);
+    const cancelAnimationFrame = vi.fn();
+    vi.stubGlobal('requestAnimationFrame', requestAnimationFrame);
+    vi.stubGlobal('cancelAnimationFrame', cancelAnimationFrame);
+    const wrapper = mountHeaders();
+
+    await wrapper.find('.track-name').trigger('dblclick');
+    expect(requestAnimationFrame).toHaveBeenCalledTimes(1);
+
+    wrapper.unmount();
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(24);
+  });
+
   describe('TrackHeaderList VCA picker', () => {
     it('assigns and clears VCA membership from the track header', async () => {
       addVcaGroup({ id: 'vca-drums', name: 'Drums VCA' });
@@ -96,6 +115,35 @@ describe('track freeze / bounce UI', () => {
 
       item?.run?.();
       expect(wrapper.emitted('changeInstrument')).toEqual([[trackId]]);
+    });
+  });
+
+  describe('TrackHeaderList record input channel picker', () => {
+    it('sets and clears an audio track recording input channel', async () => {
+      const audioTrackId = addAudioTrack({ name: 'Mic' });
+      const wrapper = mountHeaders();
+      const headers = wrapper.findAll('.track-header');
+      const audioHeader = headers.find((header) => header.text().includes('Mic'));
+      expect(audioHeader).toBeDefined();
+
+      expect(selectValueText(wrapper, '.track-record-input-select')).toBe('Auto');
+
+      await selectOption(wrapper, '.track-record-input-select', 'Ch 3');
+      expect(store.tracks.find((track) => track.id === audioTrackId)?.recordInputChannel).toBe(2);
+      expect(selectValueText(wrapper, '.track-record-input-select')).toBe('Ch 3');
+
+      await selectOption(wrapper, '.track-record-input-select', 'Auto');
+      expect(
+        store.tracks.find((track) => track.id === audioTrackId)?.recordInputChannel,
+      ).toBeUndefined();
+    });
+
+    it('does not show recording input channels on MIDI or group tracks', () => {
+      addGroupTrack();
+      const wrapper = mountHeaders();
+      const headers = wrapper.findAll('.track-header');
+      expect(headers[0].find('.track-record-input-select').exists()).toBe(false);
+      expect(headers[headers.length - 1].find('.track-record-input-select').exists()).toBe(false);
     });
   });
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, ref } from 'vue';
 import { setSections } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { type EditorSection, TRACK_COLOR_PALETTE } from '@/project/types';
@@ -62,6 +62,7 @@ const resizePreview = ref<{ id: number; startPpq: number; endPpq: number } | nul
 const editingSectionId = ref(-1);
 const editName = ref('');
 const nameInput = ref<HTMLInputElement[] | HTMLInputElement | null>(null);
+let renameFocusFrame: number | null = null;
 
 /** One positioned band in the lane. */
 interface SectionBand {
@@ -173,7 +174,9 @@ function onBandClick(band: SectionBand, event: MouseEvent): void {
 function startRename(band: SectionBand): void {
   editingSectionId.value = band.id;
   editName.value = band.name;
-  requestAnimationFrame(() => {
+  if (renameFocusFrame !== null) cancelAnimationFrame(renameFocusFrame);
+  renameFocusFrame = requestAnimationFrame(() => {
+    renameFocusFrame = null;
     const el = nameInput.value;
     const input = Array.isArray(el) ? el[0] : el;
     input?.focus();
@@ -195,6 +198,13 @@ function commitRename(): void {
 function cancelRename(): void {
   editingSectionId.value = -1;
 }
+
+onBeforeUnmount(() => {
+  if (renameFocusFrame !== null) {
+    cancelAnimationFrame(renameFocusFrame);
+    renameFocusFrame = null;
+  }
+});
 
 /** Creates a section in the empty gap under a double-click. */
 function onLaneDoubleClick(event: MouseEvent): void {

@@ -79,6 +79,36 @@ function normalizeMeter(meter: ReadonlyArray<MeterSegment>): MeterSegment[] {
   return valid;
 }
 
+/**
+ * Converts a project-absolute meter map into a local PPQ frame.
+ *
+ * Piano-roll note positions are clip-source relative: local PPQ 0 maps to
+ * `timelineOriginPpq` on the arrangement timeline. This helper preserves the
+ * meter active at that origin as a local segment at 0, then shifts subsequent
+ * meter changes into the local frame.
+ */
+export function localizeMeter(
+  meter: ReadonlyArray<MeterSegment>,
+  timelineOriginPpq: number,
+): MeterSegment[] {
+  const segments = normalizeMeter(meter);
+  const origin = Number.isFinite(timelineOriginPpq) ? timelineOriginPpq : 0;
+  let active = segments[0];
+  for (const segment of segments) {
+    if (segment.startPpq <= origin) active = segment;
+    else break;
+  }
+  const localized: MeterSegment[] = [
+    { startPpq: 0, numerator: active.numerator, denominator: active.denominator },
+  ];
+  for (const segment of segments) {
+    const shifted = segment.startPpq - origin;
+    if (shifted <= 0) continue;
+    localized.push({ ...segment, startPpq: shifted });
+  }
+  return localized;
+}
+
 /** A bar window on the timeline. */
 export interface BarRange {
   /** Bar start in PPQ. */
@@ -145,6 +175,7 @@ export function rulerTicks(
   if (!(pxPerPpq > 0) || !(endPpq > startPpq)) return [];
   const minBeatSpacing = options.minBeatSpacingPx ?? DEFAULT_MIN_BEAT_SPACING_PX;
   const minLabelSpacing = options.minBarLabelSpacingPx ?? DEFAULT_MIN_BAR_LABEL_SPACING_PX;
+  const drawLabels = Number.isFinite(minLabelSpacing) && minLabelSpacing >= 0;
   const segments = normalizeMeter(meter);
   const ticks: RulerTick[] = [];
   let barsBefore = 0;
@@ -158,7 +189,9 @@ export function rulerTicks(
     const visibleEnd = Math.min(segmentEnd, endPpq);
     if (visibleStart < visibleEnd) {
       let labelEvery = 1;
-      while (bar * pxPerPpq * labelEvery < minLabelSpacing) labelEvery *= 2;
+      if (drawLabels) {
+        while (bar * pxPerPpq * labelEvery < minLabelSpacing) labelEvery *= 2;
+      }
       const drawBeats = beat * pxPerPpq >= minBeatSpacing;
       const firstIndex = Math.max(
         0,
@@ -169,7 +202,7 @@ export function rulerTicks(
         if (barPpq >= visibleStart) {
           const barNumber = barsBefore + k + 1;
           const tick: RulerTick = { ppq: barPpq, kind: 'bar', barNumber };
-          if ((barNumber - 1) % labelEvery === 0) tick.label = String(barNumber);
+          if (drawLabels && (barNumber - 1) % labelEvery === 0) tick.label = String(barNumber);
           ticks.push(tick);
         }
         if (drawBeats) {

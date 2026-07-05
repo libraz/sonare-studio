@@ -22,7 +22,9 @@ import {
 const loadedAssets = new Map<string, LoadedAudioAsset>();
 const failedAssets = new Set<string>();
 const pendingListeners = new Map<string, Set<() => void>>();
+const assetVersions = new Map<string, number>();
 let peaksCache: WaveformPeaksCache | null = null;
+let cacheEpoch = 0;
 
 /** Builds the peaks cache lazily so the wasm delegate is picked up once ready. */
 function ensurePeaksCache(): WaveformPeaksCache {
@@ -73,14 +75,19 @@ export function requestAudioAsset(
   }
   const listeners = new Set<() => void>(onSettled ? [onSettled] : []);
   pendingListeners.set(assetId, listeners);
+  const epoch = cacheEpoch;
+  const version = assetVersions.get(assetId) ?? 0;
   void loadAsset(assetId)
     .then((asset) => {
+      if (epoch !== cacheEpoch || version !== (assetVersions.get(assetId) ?? 0)) return;
       loadedAssets.set(assetId, asset);
     })
     .catch(() => {
+      if (epoch !== cacheEpoch || version !== (assetVersions.get(assetId) ?? 0)) return;
       failedAssets.add(assetId);
     })
     .then(() => {
+      if (epoch !== cacheEpoch || version !== (assetVersions.get(assetId) ?? 0)) return;
       pendingListeners.delete(assetId);
       for (const listener of listeners) listener();
     });
@@ -110,14 +117,18 @@ export function audioAssetMergedPeaks(
 export function invalidateAudioAsset(assetId: string): void {
   loadedAssets.delete(assetId);
   failedAssets.delete(assetId);
+  pendingListeners.delete(assetId);
+  assetVersions.set(assetId, (assetVersions.get(assetId) ?? 0) + 1);
   peaksCache?.invalidate(assetId);
 }
 
 /** Drops every cached asset and peak envelope (e.g. on project teardown). */
 export function clearAudioClipData(): void {
+  cacheEpoch++;
   loadedAssets.clear();
   failedAssets.clear();
   pendingListeners.clear();
+  assetVersions.clear();
   peaksCache?.clear();
   peaksCache = null;
 }
