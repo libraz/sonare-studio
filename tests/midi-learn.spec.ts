@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ccToGainDb,
+  ccToLogRange,
   ccToPan,
   ccToRange,
   clampCcValue,
@@ -8,14 +9,26 @@ import {
   gainDbToCc,
   MIDI_FADER_MAX_DB,
   MIDI_FADER_MIN_DB,
+  midiLearnEqTargetId,
   midiLearnInsertTargetId,
   midiLearnInstrumentTargetId,
+  midiLearnMasteringTargetId,
+  midiLearnSendTargetId,
+  midiLearnStripControlTargetId,
   midiLearnTargetId,
   midiLearnTargetScope,
+  midiLearnTrackStateTargetId,
+  midiLearnVcaTargetId,
   panToCc,
+  parseMidiLearnEqTargetId,
   parseMidiLearnInsertTargetId,
   parseMidiLearnInstrumentTargetId,
+  parseMidiLearnMasteringTargetId,
+  parseMidiLearnSendTargetId,
+  parseMidiLearnStripControlTargetId,
   parseMidiLearnTargetId,
+  parseMidiLearnTrackStateTargetId,
+  parseMidiLearnVcaTargetId,
   rangeToCc,
   sanitizeMidiCcBindings,
   withMidiLearnTargetScope,
@@ -132,6 +145,144 @@ describe('instrument target ids', () => {
   });
 });
 
+describe('send target ids', () => {
+  it('encodes and decodes mixer-send level targets', () => {
+    expect(midiLearnSendTargetId(7, 'bus:verb')).toBe('send:7:bus%3Averb');
+    expect(parseMidiLearnSendTargetId('send:7:bus%3Averb')).toEqual({
+      scope: 7,
+      busId: 'bus:verb',
+      param: 'level',
+    });
+  });
+
+  it('encodes and decodes mixer-send switch and enum targets', () => {
+    expect(midiLearnSendTargetId(7, 'bus:verb', 'enabled')).toBe('send:7:bus%3Averb:enabled');
+    expect(parseMidiLearnSendTargetId('send:7:bus%3Averb:timing')).toEqual({
+      scope: 7,
+      busId: 'bus:verb',
+      param: 'timing',
+    });
+  });
+
+  it('rejects malformed send ids', () => {
+    expect(parseMidiLearnSendTargetId('send:master:bus')).toBeNull();
+    expect(parseMidiLearnSendTargetId('send:7')).toBeNull();
+    expect(parseMidiLearnSendTargetId('send:7:')).toBeNull();
+    expect(parseMidiLearnSendTargetId('gain:7')).toBeNull();
+  });
+});
+
+describe('strip control target ids', () => {
+  it('encodes and decodes track and master strip-local controls', () => {
+    expect(midiLearnStripControlTargetId(7, 'inputTrimDb')).toBe('strip:7:inputTrimDb');
+    expect(midiLearnStripControlTargetId('master', 'width')).toBe('strip:master:width');
+    expect(parseMidiLearnStripControlTargetId('strip:master:polarityLeft')).toEqual({
+      scope: 'master',
+      param: 'polarityLeft',
+    });
+    expect(parseMidiLearnStripControlTargetId('strip:7:panLaw')).toEqual({
+      scope: 7,
+      param: 'panLaw',
+    });
+    expect(parseMidiLearnStripControlTargetId('strip:7:dualPanLeft')).toEqual({
+      scope: 7,
+      param: 'dualPanLeft',
+    });
+    expect(parseMidiLearnStripControlTargetId('strip:master:width')).toEqual({
+      scope: 'master',
+      param: 'width',
+    });
+  });
+
+  it('rejects malformed or master-only-incompatible strip controls', () => {
+    expect(parseMidiLearnStripControlTargetId('strip:7')).toBeNull();
+    expect(parseMidiLearnStripControlTargetId('strip:7:nope')).toBeNull();
+    expect(parseMidiLearnStripControlTargetId('strip:abc:width')).toBeNull();
+    expect(parseMidiLearnStripControlTargetId('strip:master:channelDelaySamples')).toBeNull();
+    expect(parseMidiLearnStripControlTargetId('strip:master:panLaw')).toBeNull();
+    expect(parseMidiLearnStripControlTargetId('strip:master:panMode')).toBeNull();
+    expect(parseMidiLearnStripControlTargetId('strip:master:dualPanLeft')).toBeNull();
+  });
+});
+
+describe('track state target ids', () => {
+  it('encodes and decodes track mute and solo targets', () => {
+    expect(midiLearnTrackStateTargetId(7, 'mute')).toBe('track:7:mute');
+    expect(parseMidiLearnTrackStateTargetId('track:7:solo')).toEqual({
+      trackId: 7,
+      param: 'solo',
+    });
+  });
+
+  it('rejects malformed track state ids', () => {
+    expect(parseMidiLearnTrackStateTargetId('track:master:mute')).toBeNull();
+    expect(parseMidiLearnTrackStateTargetId('track:7')).toBeNull();
+    expect(parseMidiLearnTrackStateTargetId('track:7:soloSafe')).toBeNull();
+    expect(parseMidiLearnTrackStateTargetId('gain:7')).toBeNull();
+  });
+});
+
+describe('VCA target ids', () => {
+  it('encodes and decodes VCA gain, mute, and solo targets', () => {
+    expect(midiLearnVcaTargetId('drum:vca', 'gain')).toBe('vca:drum%3Avca:gain');
+    expect(parseMidiLearnVcaTargetId('vca:drum%3Avca:mute')).toEqual({
+      groupId: 'drum:vca',
+      param: 'mute',
+    });
+    expect(parseMidiLearnVcaTargetId('vca:drum%3Avca:solo')).toEqual({
+      groupId: 'drum:vca',
+      param: 'solo',
+    });
+  });
+
+  it('rejects malformed VCA ids', () => {
+    expect(parseMidiLearnVcaTargetId('vca:drums')).toBeNull();
+    expect(parseMidiLearnVcaTargetId('vca::gain')).toBeNull();
+    expect(parseMidiLearnVcaTargetId('vca:drums:pan')).toBeNull();
+    expect(parseMidiLearnVcaTargetId('track:7:mute')).toBeNull();
+  });
+});
+
+describe('EQ target ids', () => {
+  it('encodes and decodes track and master EQ band targets', () => {
+    expect(midiLearnEqTargetId(7, 2, 'frequencyHz')).toBe('eq:7:2:frequencyHz');
+    expect(parseMidiLearnEqTargetId('eq:master:0:gainDb')).toEqual({
+      scope: 'master',
+      bandIndex: 0,
+      param: 'gainDb',
+    });
+    expect(parseMidiLearnEqTargetId('eq:7:1:q')).toEqual({
+      scope: 7,
+      bandIndex: 1,
+      param: 'q',
+    });
+  });
+
+  it('rejects malformed EQ ids', () => {
+    expect(parseMidiLearnEqTargetId('eq:7')).toBeNull();
+    expect(parseMidiLearnEqTargetId('eq:7:x:gainDb')).toBeNull();
+    expect(parseMidiLearnEqTargetId('eq:7:-1:gainDb')).toBeNull();
+    expect(parseMidiLearnEqTargetId('eq:7:0:type')).toBeNull();
+  });
+});
+
+describe('mastering target ids', () => {
+  it('encodes and decodes mastering processor parameter targets', () => {
+    expect(midiLearnMasteringTargetId(2, 'threshold:db')).toBe('mastering:2:threshold%3Adb');
+    expect(parseMidiLearnMasteringTargetId('mastering:0:tiltDb')).toEqual({
+      index: 0,
+      paramId: 'tiltDb',
+    });
+  });
+
+  it('rejects malformed mastering ids', () => {
+    expect(parseMidiLearnMasteringTargetId('mastering:0')).toBeNull();
+    expect(parseMidiLearnMasteringTargetId('mastering:x:tiltDb')).toBeNull();
+    expect(parseMidiLearnMasteringTargetId('mastering:-1:tiltDb')).toBeNull();
+    expect(parseMidiLearnMasteringTargetId('eq:0:0:q')).toBeNull();
+  });
+});
+
 describe('range mapping', () => {
   it('maps the CC extremes and center across an arbitrary range', () => {
     expect(ccToRange(0, -60, 0)).toBe(-60);
@@ -146,6 +297,12 @@ describe('range mapping', () => {
     expect(rangeToCc(5, 10, 10)).toBe(0);
     expect(rangeToCc(Number.NaN, 0, 1)).toBe(0);
   });
+
+  it('maps a CC value logarithmically across a positive range', () => {
+    expect(ccToLogRange(0, 20, 20000)).toBe(20);
+    expect(ccToLogRange(127, 20, 20000)).toBe(20000);
+    expect(ccToLogRange(64, 0, 1)).toBeCloseTo(64 / 127, 5);
+  });
 });
 
 describe('target scope helpers', () => {
@@ -155,6 +312,15 @@ describe('target scope helpers', () => {
     expect(midiLearnTargetScope('insert:3:0:thresholdDb')).toBe(3);
     expect(midiLearnTargetScope('insert:master:0:gainDb')).toBe('master');
     expect(midiLearnTargetScope('instrument:5:cutoffHz')).toBe(5);
+    expect(midiLearnTargetScope('send:6:bus-1')).toBe(6);
+    expect(midiLearnTargetScope('send:6:bus-1:enabled')).toBe(6);
+    expect(midiLearnTargetScope('track:6:mute')).toBe(6);
+    expect(midiLearnTargetScope('vca:drums:gain')).toBe('global');
+    expect(midiLearnTargetScope('eq:6:0:frequencyHz')).toBe(6);
+    expect(midiLearnTargetScope('eq:master:0:q')).toBe('master');
+    expect(midiLearnTargetScope('mastering:0:tiltDb')).toBe('global');
+    expect(midiLearnTargetScope('strip:6:inputTrimDb')).toBe(6);
+    expect(midiLearnTargetScope('strip:master:width')).toBe('master');
     expect(midiLearnTargetScope('nonsense')).toBeNull();
   });
 
@@ -163,10 +329,21 @@ describe('target scope helpers', () => {
     expect(withMidiLearnTargetScope('pan:7', 2)).toBe('pan:2');
     expect(withMidiLearnTargetScope('insert:3:0:thresholdDb', 9)).toBe('insert:9:0:thresholdDb');
     expect(withMidiLearnTargetScope('instrument:5:cutoffHz', 1)).toBe('instrument:1:cutoffHz');
+    expect(withMidiLearnTargetScope('send:5:bus-1', 8)).toBe('send:8:bus-1');
+    expect(withMidiLearnTargetScope('send:5:bus-1:timing', 8)).toBe('send:8:bus-1:timing');
+    expect(withMidiLearnTargetScope('track:5:solo', 8)).toBe('track:8:solo');
+    expect(withMidiLearnTargetScope('eq:5:0:gainDb', 8)).toBe('eq:8:0:gainDb');
+    expect(withMidiLearnTargetScope('eq:5:0:q', 'master')).toBe('eq:master:0:q');
+    expect(withMidiLearnTargetScope('strip:5:inputTrimDb', 8)).toBe('strip:8:inputTrimDb');
+    expect(withMidiLearnTargetScope('strip:5:width', 'master')).toBe('strip:master:width');
   });
 
   it('refuses to move an instrument target onto the master strip', () => {
     expect(withMidiLearnTargetScope('instrument:5:cutoffHz', 'master')).toBeNull();
+    expect(withMidiLearnTargetScope('send:5:bus-1', 'master')).toBeNull();
+    expect(withMidiLearnTargetScope('track:5:mute', 'master')).toBeNull();
+    expect(withMidiLearnTargetScope('strip:5:panLaw', 'master')).toBeNull();
+    expect(withMidiLearnTargetScope('strip:5:dualPanLeft', 'master')).toBeNull();
     expect(withMidiLearnTargetScope('garbage', 1)).toBeNull();
   });
 });
@@ -177,10 +354,24 @@ describe('sanitizeMidiCcBindings', () => {
       sanitizeMidiCcBindings([
         { target: 'gain:master', channel: 0, controller: 7 },
         { target: 'insert:0:1:ratio', channel: 2, controller: 20, trackScoped: true },
+        { target: 'send:0:bus-1', channel: 3, controller: 21, trackScoped: true },
+        { target: 'strip:0:inputTrimDb', channel: 4, controller: 22, trackScoped: true },
+        { target: 'track:0:mute', channel: 5, controller: 23, trackScoped: true },
+        { target: 'vca:drums:gain', channel: 6, controller: 24 },
+        { target: 'eq:0:1:q', channel: 7, controller: 25, trackScoped: true },
+        { target: 'mastering:0:tiltDb', channel: 8, controller: 26 },
+        { target: 'pan:master', channel: 1, controller: 6, kind: 'rpn', parameter: 2 },
       ]),
     ).toEqual([
       { target: 'gain:master', channel: 0, controller: 7 },
       { target: 'insert:0:1:ratio', channel: 2, controller: 20, trackScoped: true },
+      { target: 'send:0:bus-1', channel: 3, controller: 21, trackScoped: true },
+      { target: 'strip:0:inputTrimDb', channel: 4, controller: 22, trackScoped: true },
+      { target: 'track:0:mute', channel: 5, controller: 23, trackScoped: true },
+      { target: 'vca:drums:gain', channel: 6, controller: 24 },
+      { target: 'eq:0:1:q', channel: 7, controller: 25, trackScoped: true },
+      { target: 'mastering:0:tiltDb', channel: 8, controller: 26 },
+      { target: 'pan:master', channel: 1, controller: 6, kind: 'rpn', parameter: 2 },
     ]);
   });
 
@@ -191,6 +382,7 @@ describe('sanitizeMidiCcBindings', () => {
         { target: 'bogus:1', channel: 0, controller: 7 },
         { target: 'gain:master', channel: 16, controller: 7 },
         { target: 'pan:1', channel: 0, controller: 200 },
+        { target: 'pan:2', channel: 0, controller: 6, kind: 'nrpn', parameter: 20000 },
         { target: 'gain:master', channel: 0, controller: 7 },
         { target: 'gain:master', channel: 1, controller: 8 },
       ]),
@@ -202,5 +394,11 @@ describe('formatMidiCcBinding', () => {
   it('shows a 1-based channel', () => {
     expect(formatMidiCcBinding({ channel: 0, controller: 7 })).toBe('CC 7 · Ch 1');
     expect(formatMidiCcBinding({ channel: 15, controller: 74 })).toBe('CC 74 · Ch 16');
+    expect(formatMidiCcBinding({ channel: 1, controller: 6, kind: 'rpn', parameter: 2 })).toBe(
+      'RPN 2 · Ch 2',
+    );
+    expect(formatMidiCcBinding({ channel: 2, controller: 6, kind: 'nrpn', parameter: 140 })).toBe(
+      'NRPN 140 · Ch 3',
+    );
   });
 });

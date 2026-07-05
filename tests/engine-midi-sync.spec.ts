@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
 import { buildMidiClipSchedules, createMidiSync } from '@/engine/midi-sync';
+import { instrumentAutomationParam } from '@/project/automation';
 import { DEFAULT_SYNTH_PRESET } from '@/project/instrument';
 import { DEFAULT_MIDI_FX_CONFIG, midiFxConfigJson } from '@/project/midi-fx';
 import type { EditorClip, EditorNote, EditorTrack, TempoSegment } from '@/project/types';
@@ -320,6 +321,34 @@ describe('buildMidiClipSchedules', () => {
       ]);
     });
 
+    it('expands linear CC segments into intermediate control-change events', () => {
+      const clip = makeClip(1, 1, {
+        notes: [],
+        ccLanes: [
+          {
+            controller: 1,
+            channel: 0,
+            points: [
+              { ppq: 0, value: 0, curve: 'linear' },
+              { ppq: 1, value: 127 },
+            ],
+          },
+        ],
+      });
+      const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], TEMPO_120, SAMPLE_RATE);
+      expect(schedule.events.length).toBeGreaterThan(2);
+      expect(schedule.events).toContainEqual({
+        renderFrame: SPP / 2,
+        word0: ccWord(0, 1, 64),
+        wordCount: 1,
+      });
+      expect(schedule.events.at(-1)).toEqual({
+        renderFrame: SPP,
+        word0: ccWord(0, 1, 127),
+        wordCount: 1,
+      });
+    });
+
     it('honors the lane channel and drops points outside the clip window', () => {
       const clip = makeClip(1, 1, {
         lengthPpq: 2,
@@ -411,6 +440,17 @@ describe('buildMidiClipSchedules', () => {
   });
 
   describe('aftertouch lanes', () => {
+    it('bakes program-change lanes into MIDI events', () => {
+      const clip = makeClip(1, 1, {
+        notes: [],
+        programChangeLanes: [{ channel: 2, points: [{ ppq: 0.5, program: 12 }] }],
+      });
+      const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], TEMPO_120, SAMPLE_RATE);
+      expect(schedule.events).toEqual([
+        { renderFrame: SPP / 2, word0: pcWord(2, 12), wordCount: 1 },
+      ]);
+    });
+
     it('bakes channel pressure and poly key pressure into MIDI events', () => {
       const clip = makeClip(1, 1, {
         notes: [],
@@ -667,6 +707,78 @@ describe('createMidiSync', () => {
     expect(engine.setSynthInstrument.mock.calls[0][1]).toBe(patch);
   });
 
+  it('applies enabled instrument automation to synth patches at the sync PPQ', async () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMidiSync(handle);
+    const patch: SynthPatch = { preset: 'saw-lead', cutoffHz: 400, resonance: 0.1 };
+    const track = makeTrack(1, { instrument: { kind: 'synth-patch', patch } });
+
+    await sync.sync(
+      [track],
+      [],
+      TEMPO_120,
+      undefined,
+      [
+        {
+          target: 1,
+          param: instrumentAutomationParam('cutoffHz'),
+          enabled: true,
+          points: [
+            { ppq: 0, value: 400 },
+            { ppq: 4, value: 1200 },
+          ],
+        },
+        {
+          target: 1,
+          param: instrumentAutomationParam('resonance'),
+          enabled: false,
+          points: [{ ppq: 0, value: 0.8 }],
+        },
+      ],
+      2,
+    );
+
+    expect(engine.setSynthInstrument).toHaveBeenCalledTimes(1);
+    expect(engine.setSynthInstrument).toHaveBeenCalledWith(1, {
+      preset: 'saw-lead',
+      cutoffHz: 800,
+      resonance: 0.1,
+    });
+    expect(engine.setSynthInstrument.mock.calls[0][1]).not.toBe(patch);
+  });
+
+  it('rebinds synth patches when only instrument automation value changes', async () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMidiSync(handle);
+    const track = makeTrack(1, {
+      instrument: { kind: 'synth-patch', patch: { preset: 'saw-lead', cutoffHz: 400 } },
+    });
+    const lanes = [
+      {
+        target: 1,
+        param: instrumentAutomationParam('cutoffHz'),
+        enabled: true,
+        points: [
+          { ppq: 0, value: 400 },
+          { ppq: 4, value: 1200 },
+        ],
+      },
+    ];
+
+    await sync.sync([track], [], TEMPO_120, undefined, lanes, 0);
+    await sync.sync([track], [], TEMPO_120, undefined, lanes, 4);
+
+    expect(engine.setSynthInstrument).toHaveBeenCalledTimes(2);
+    expect(engine.setSynthInstrument).toHaveBeenNthCalledWith(1, 1, {
+      preset: 'saw-lead',
+      cutoffHz: 400,
+    });
+    expect(engine.setSynthInstrument).toHaveBeenNthCalledWith(2, 1, {
+      preset: 'saw-lead',
+      cutoffHz: 1200,
+    });
+  });
+
   it('installs, dedupes and clears live MIDI-FX per track', async () => {
     const { handle, engine } = makeHandle();
     const sync = createMidiSync(handle);
@@ -917,6 +1029,7 @@ describe('createMidiSync', () => {
       notes: [],
       ccLanes: [{ controller: 11, channel: 0, points: [{ ppq: 0, value: 64 }] }],
       pitchBendLanes: [{ channel: 0, points: [{ ppq: 1, value: 8192 }] }],
+      programChangeLanes: [{ channel: 0, points: [{ ppq: 1.5, program: 8 }] }],
       channelPressureLanes: [{ channel: 0, points: [{ ppq: 2, value: 32 }] }],
       polyPressureLanes: [{ channel: 0, pitch: 60, points: [{ ppq: 3, value: 48 }] }],
     });
@@ -924,6 +1037,7 @@ describe('createMidiSync', () => {
       notes: [],
       ccLanes: [{ controller: 11, channel: 0, points: [{ ppq: 0, value: 96 }] }],
       pitchBendLanes: [{ channel: 0, points: [{ ppq: 1, value: 4096 }] }],
+      programChangeLanes: [{ channel: 0, points: [{ ppq: 1.5, program: 10 }] }],
       channelPressureLanes: [{ channel: 0, points: [{ ppq: 2, value: 64 }] }],
       polyPressureLanes: [{ channel: 0, pitch: 60, points: [{ ppq: 3, value: 80 }] }],
     });
@@ -936,6 +1050,7 @@ describe('createMidiSync', () => {
     expect(events).toEqual([
       { renderFrame: 0, word0: ccWord(0, 11, 96), wordCount: 1 },
       { renderFrame: SPP, word0: pitchBendWord(0, 4096), wordCount: 1 },
+      { renderFrame: 1.5 * SPP, word0: pcWord(0, 10), wordCount: 1 },
       { renderFrame: 2 * SPP, word0: channelPressureWord(0, 64), wordCount: 1 },
       { renderFrame: 3 * SPP, word0: polyPressureWord(0, 60, 80), wordCount: 1 },
     ]);

@@ -77,6 +77,7 @@ interface MidiAccessLike {
   outputs: Map<string, MidiOutputLike>;
   onstatechange: ((event: unknown) => void) | null;
   addEventListener?(type: 'statechange', listener: (event: unknown) => void): void;
+  removeEventListener?(type: 'statechange', listener: (event: unknown) => void): void;
 }
 interface NavigatorWithMidi {
   requestMIDIAccess?(options?: { sysex?: boolean }): Promise<MidiAccessLike>;
@@ -136,6 +137,8 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
   let disposed = false;
   let routes: ExternalMidiRoute[] = [];
   let outputsList: WebMidiOutputInfo[] = [];
+  let onStateChange: ((event: unknown) => void) | null = null;
+  let previousOnStateChange: ((event: unknown) => void) | null = null;
   const routeByDestination = new Map<number, ExternalMidiRoute>();
   let clockPortIds: string[] = [];
 
@@ -225,9 +228,15 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
         access = await nav.requestMIDIAccess({ sysex: false });
         available = true;
         refreshOutputs();
-        const onChange = (): void => refreshOutputs();
-        if (access.addEventListener) access.addEventListener('statechange', onChange);
-        else access.onstatechange = onChange;
+        onStateChange = () => refreshOutputs();
+        if (access.addEventListener) access.addEventListener('statechange', onStateChange);
+        else {
+          previousOnStateChange = access.onstatechange;
+          access.onstatechange = (event: unknown) => {
+            previousOnStateChange?.(event);
+            onStateChange?.(event);
+          };
+        }
         return true;
       } catch {
         available = false;
@@ -239,7 +248,13 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
       disposed = true;
       panicChangedRoutes([]);
       unsubscribe();
+      if (access && onStateChange) {
+        if (access.removeEventListener) access.removeEventListener('statechange', onStateChange);
+        else access.onstatechange = previousOnStateChange;
+      }
       access = null;
+      onStateChange = null;
+      previousOnStateChange = null;
       routes = [];
       routeByDestination.clear();
       clockPortIds = [];

@@ -8,6 +8,10 @@ import {
   useMusicTyping,
   VELOCITY_STEP,
 } from '@/composables/useMusicTyping';
+import {
+  resetShortcutBlockingOverlaysForTest,
+  useShortcutBlockingOverlay,
+} from '@/ui/overlay-registry';
 
 /** Dispatches a keyboard event on window (or bubbled from a given target). */
 function press(key: string, init: KeyboardEventInit = {}, target: EventTarget = window): void {
@@ -24,6 +28,7 @@ describe('useMusicTyping', () => {
   let handle: MusicTypingHandle;
 
   beforeEach(() => {
+    resetShortcutBlockingOverlaysForTest();
     onNoteOn.mockClear();
     onNoteOff.mockClear();
     handle = useMusicTyping({ onNoteOn, onNoteOff });
@@ -32,6 +37,7 @@ describe('useMusicTyping', () => {
 
   afterEach(() => {
     handle.disable();
+    resetShortcutBlockingOverlaysForTest();
     document.body.replaceChildren();
   });
 
@@ -138,6 +144,14 @@ describe('useMusicTyping', () => {
     expect(onNoteOn).not.toHaveBeenCalled();
   });
 
+  it('ignores note keys while a shortcut-blocking overlay is open', () => {
+    useShortcutBlockingOverlay(ref(true));
+
+    press('a');
+
+    expect(onNoteOn).not.toHaveBeenCalled();
+  });
+
   it('ignores key events originating from editable elements', () => {
     const input = document.createElement('input');
     const textarea = document.createElement('textarea');
@@ -175,11 +189,20 @@ describe('useMusicTyping', () => {
 });
 
 describe('useMusicTyping step-input integration', () => {
+  beforeEach(() => {
+    resetShortcutBlockingOverlaysForTest();
+  });
+
+  afterEach(() => {
+    resetShortcutBlockingOverlaysForTest();
+  });
+
   function makeStepTarget(armed: boolean): MusicTypingStepTarget {
     return {
       armed: ref(armed),
       enterNote: vi.fn(() => 1),
       rest: vi.fn(),
+      back: vi.fn(),
     };
   }
 
@@ -203,6 +226,30 @@ describe('useMusicTyping step-input integration', () => {
     handle.disable();
   });
 
+  it('moves the step-input cursor back via Shift+Tab while armed', () => {
+    const stepInput = makeStepTarget(true);
+    const handle = useMusicTyping({ stepInput });
+    handle.enable();
+    press('Tab', { shiftKey: true });
+    expect(stepInput.back).toHaveBeenCalledTimes(1);
+    expect(stepInput.rest).not.toHaveBeenCalled();
+    handle.disable();
+  });
+
+  it('blocks step-input notes and rests while a shortcut-blocking overlay is open', () => {
+    const stepInput = makeStepTarget(true);
+    const handle = useMusicTyping({ stepInput });
+    useShortcutBlockingOverlay(ref(true));
+    handle.enable();
+
+    press('a');
+    press('Tab');
+
+    expect(stepInput.enterNote).not.toHaveBeenCalled();
+    expect(stepInput.rest).not.toHaveBeenCalled();
+    handle.disable();
+  });
+
   it('does not write through the step input while disarmed', () => {
     const stepInput = makeStepTarget(false);
     const handle = useMusicTyping({ stepInput });
@@ -216,7 +263,12 @@ describe('useMusicTyping step-input integration', () => {
 
   it('reflects armed-state changes made after setup', () => {
     const armed = ref(false);
-    const stepInput: MusicTypingStepTarget = { armed, enterNote: vi.fn(() => 1), rest: vi.fn() };
+    const stepInput: MusicTypingStepTarget = {
+      armed,
+      enterNote: vi.fn(() => 1),
+      rest: vi.fn(),
+      back: vi.fn(),
+    };
     const handle = useMusicTyping({ stepInput });
     handle.enable();
     press('a');

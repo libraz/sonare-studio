@@ -25,6 +25,12 @@
  *   scaling note-on velocities.
  */
 
+import {
+  type AutomationLaneState,
+  evaluateAutomationValue,
+  parseInstrumentAutomationParam,
+  sanitizeAutomationPoints,
+} from '@/project/automation';
 import { loadFont } from '@/project/fonts';
 import {
   DEFAULT_SYNTH_PRESET,
@@ -33,8 +39,13 @@ import {
   sf2PlaybackConfig,
   type TrackInstrument,
 } from '@/project/instrument';
+import { expandExpressionPoints, MIDI_PITCH_BEND_MAX } from '@/project/midi-cc';
 import { midiFxConfigJson } from '@/project/midi-fx';
 import { clipPlaybackNotes } from '@/project/scheduling';
+import {
+  collectActiveSoundFontUsage,
+  hasSoundFontSlotConflict,
+} from '@/project/soundfont-conflicts';
 import { normalizeTempoMap, ppqToSamples } from '@/project/tempo-map';
 import { clipKind, type EditorClip, type EditorTrack, type TempoSegment } from '@/project/types';
 import type { EngineMidiClipSchedule, EngineMidiEvent } from '@/wasm/index.js';
@@ -155,6 +166,9 @@ export function buildMidiClipSchedules(
       clip.gain > 0 ? clipPlaybackNotes(looping ? { ...clip, lengthPpq: windowPpq } : clip) : [];
     const ccLanes = (clip.ccLanes ?? []).filter((lane) => lane.points.length > 0);
     const pitchBendLanes = (clip.pitchBendLanes ?? []).filter((lane) => lane.points.length > 0);
+    const programChangeLanes = (clip.programChangeLanes ?? []).filter(
+      (lane) => lane.points.length > 0,
+    );
     const channelPressureLanes = (clip.channelPressureLanes ?? []).filter(
       (lane) => lane.points.length > 0,
     );
@@ -165,6 +179,7 @@ export function buildMidiClipSchedules(
       notes.length === 0 &&
       ccLanes.length === 0 &&
       pitchBendLanes.length === 0 &&
+      programChangeLanes.length === 0 &&
       channelPressureLanes.length === 0 &&
       polyPressureLanes.length === 0
     )
@@ -193,6 +208,7 @@ export function buildMidiClipSchedules(
         ...notes.map((note) => clamp(note.channel ?? 0, 0, 15)),
         ...ccLanes.map((lane) => clamp(lane.channel, 0, 15)),
         ...pitchBendLanes.map((lane) => clamp(lane.channel, 0, 15)),
+        ...programChangeLanes.map((lane) => clamp(lane.channel, 0, 15)),
         ...channelPressureLanes.map((lane) => clamp(lane.channel, 0, 15)),
         ...polyPressureLanes.map((lane) => clamp(lane.channel, 0, 15)),
       ]);
@@ -244,14 +260,13 @@ export function buildMidiClipSchedules(
       );
     }
 
-    // CC lanes emit one discrete control-change event per breakpoint (the
-    // value holds until the next event on playback). Points are clip-window
-    // relative; out-of-window points are dropped.
+    // Expression lanes emit every breakpoint plus generated points for
+    // ramped segments. Points are clip-window relative; out-of-window points
+    // are dropped.
     for (const lane of ccLanes) {
       const channel = clamp(lane.channel, 0, 15);
       const controller = clamp(lane.controller, 0, 127);
-      for (const point of lane.points) {
-        if (point.ppq < 0 || point.ppq > windowPpq) continue;
+      for (const point of expandExpressionPoints(lane.points, windowPpq, 127)) {
         let frame = ppqToSamples(tempoMap, clip.startPpq + point.ppq, sampleRate);
         if (shiftFrameZero && frame === 0) frame = 1;
         events.push(
@@ -260,12 +275,10 @@ export function buildMidiClipSchedules(
       }
     }
 
-    // Pitch bend is a 14-bit value encoded LSB first in MIDI 1.0. Points are
-    // clip-window relative; out-of-window points are dropped.
+    // Pitch bend is a 14-bit value encoded LSB first in MIDI 1.0.
     for (const lane of pitchBendLanes) {
       const channel = clamp(lane.channel, 0, 15);
-      for (const point of lane.points) {
-        if (point.ppq < 0 || point.ppq > windowPpq) continue;
+      for (const point of expandExpressionPoints(lane.points, windowPpq, MIDI_PITCH_BEND_MAX)) {
         let frame = ppqToSamples(tempoMap, clip.startPpq + point.ppq, sampleRate);
         if (shiftFrameZero && frame === 0) frame = 1;
         const value = clamp(Math.round(point.value), 0, 16383);
@@ -273,12 +286,29 @@ export function buildMidiClipSchedules(
       }
     }
 
+    for (const lane of programChangeLanes) {
+      const channel = clamp(lane.channel, 0, 15);
+      for (const point of lane.points) {
+        if (!Number.isFinite(point.ppq) || point.ppq < 0 || point.ppq > windowPpq) continue;
+        let frame = ppqToSamples(tempoMap, clip.startPpq + point.ppq, sampleRate);
+        if (shiftFrameZero && frame === 0) frame = 1;
+        events.push(
+          voiceEvent(
+            frame,
+            STATUS_PROGRAM_CHANGE,
+            channel,
+            clamp(Math.round(point.program), 0, 127),
+            0,
+          ),
+        );
+      }
+    }
+
     // Aftertouch lanes preserve imported performance pressure data. Channel
     // pressure has one 7-bit data byte; poly pressure carries note + pressure.
     for (const lane of channelPressureLanes) {
       const channel = clamp(lane.channel, 0, 15);
-      for (const point of lane.points) {
-        if (point.ppq < 0 || point.ppq > windowPpq) continue;
+      for (const point of expandExpressionPoints(lane.points, windowPpq, 127)) {
         let frame = ppqToSamples(tempoMap, clip.startPpq + point.ppq, sampleRate);
         if (shiftFrameZero && frame === 0) frame = 1;
         events.push(
@@ -289,8 +319,7 @@ export function buildMidiClipSchedules(
     for (const lane of polyPressureLanes) {
       const channel = clamp(lane.channel, 0, 15);
       const pitch = clamp(lane.pitch, 0, 127);
-      for (const point of lane.points) {
-        if (point.ppq < 0 || point.ppq > windowPpq) continue;
+      for (const point of expandExpressionPoints(lane.points, windowPpq, 127)) {
         let frame = ppqToSamples(tempoMap, clip.startPpq + point.ppq, sampleRate);
         if (shiftFrameZero && frame === 0) frame = 1;
         events.push(
@@ -341,6 +370,8 @@ export interface MidiSync {
     clips: ReadonlyArray<EditorClip>,
     tempoSegments: ReadonlyArray<TempoSegment>,
     projectExternalMidi?: ExternalMidiInstrument | null,
+    automationLanes?: ReadonlyArray<AutomationLaneState>,
+    automationPpq?: number,
   ): Promise<void>;
   /** Number of MIDI clip schedules in the last setMidiClips call (0 before any). */
   scheduledClipCount(): number;
@@ -464,11 +495,34 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
     }
   }
 
+  function instrumentWithAutomation(
+    track: EditorTrack,
+    instrument: TrackInstrument,
+    automationLanes?: ReadonlyArray<AutomationLaneState>,
+    automationPpq = 0,
+  ): TrackInstrument {
+    if (instrument.kind !== 'synth-patch' || automationLanes === undefined) return instrument;
+    const ppq = Number.isFinite(automationPpq) ? Math.max(0, automationPpq) : 0;
+    let patch: Record<string, unknown> | undefined;
+    for (const lane of automationLanes) {
+      if (lane.target !== track.id || !lane.enabled) continue;
+      const ref = parseInstrumentAutomationParam(lane.param);
+      if (!ref) continue;
+      const points = sanitizeAutomationPoints(lane.param, lane.points);
+      if (points.length === 0) continue;
+      patch ??= { ...instrument.patch };
+      patch[ref.paramName] = evaluateAutomationValue(points, ppq);
+    }
+    return patch === undefined ? instrument : { kind: 'synth-patch', patch };
+  }
+
   const sync = async (
     tracks: ReadonlyArray<EditorTrack>,
     clips: ReadonlyArray<EditorClip>,
     tempoSegments: ReadonlyArray<TempoSegment>,
     projectExternalMidi?: ExternalMidiInstrument | null,
+    automationLanes?: ReadonlyArray<AutomationLaneState>,
+    automationPpq?: number,
   ): Promise<void> => {
     const sampleRate = handle.ctx.sampleRate;
     const destinationByTrack = midiDestinationAssignments(tracks, projectExternalMidi);
@@ -477,29 +531,24 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
     // fonts requested the last one loaded wins, so make that audible. Frozen
     // tracks play their baked render, not the synth, so they neither need a
     // font nor count toward the single-font contention.
-    const fontIds = new Set<string>();
-    let winningFontId: string | undefined;
-    for (const track of tracks) {
-      if (track.frozen !== undefined) continue;
-      const instrument = effectiveTrackInstrument(track, projectExternalMidi);
-      if (track.kind === 'midi' && instrument.kind === 'sf2') {
-        fontIds.add(instrument.fontId);
-        // Last SF2 track in track order wins the single global slot.
-        winningFontId = instrument.fontId;
-      }
-    }
-    if (fontIds.size > 1) {
+    const soundFontUsage = collectActiveSoundFontUsage(tracks, (track) =>
+      effectiveTrackInstrument(track, projectExternalMidi),
+    );
+    if (hasSoundFontSlotConflict(soundFontUsage)) {
       console.warn(
-        `MIDI sync: ${fontIds.size} distinct SoundFonts requested, but the engine holds a single global SoundFont — the last track's font wins.`,
+        `MIDI sync: ${soundFontUsage.fontIds.length} distinct SoundFonts requested, but the engine holds a single global SoundFont — the last track's font wins.`,
       );
     }
     // Load the global SoundFont once, deterministically (the last SF2 track in
     // track order), so live playback matches the offline render regardless of
     // which track's instrument was edited most recently.
-    if (winningFontId !== undefined && winningFontId !== loadedFontId) {
-      const bytes = await loadFontBytes(winningFontId);
+    if (
+      soundFontUsage.winningFontId !== undefined &&
+      soundFontUsage.winningFontId !== loadedFontId
+    ) {
+      const bytes = await loadFontBytes(soundFontUsage.winningFontId);
       handle.engine.loadSoundFont(bytes);
-      loadedFontId = winningFontId;
+      loadedFontId = soundFontUsage.winningFontId;
     }
 
     for (const track of tracks) {
@@ -507,7 +556,12 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
       // A frozen track plays from its baked asset; loading its instrument (and,
       // for SF2, the global SoundFont) would thrash the single font slot.
       if (track.frozen !== undefined) continue;
-      const instrument = effectiveTrackInstrument(track, projectExternalMidi);
+      const instrument = instrumentWithAutomation(
+        track,
+        effectiveTrackInstrument(track, projectExternalMidi),
+        automationLanes,
+        automationPpq,
+      );
       const instrumentKey = JSON.stringify({
         mode: track.externalMidiMode ?? 'track',
         instrument,

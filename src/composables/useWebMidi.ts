@@ -1,6 +1,7 @@
 import type { Ref } from 'vue';
 import { getCurrentScope, onScopeDispose, ref, watch } from 'vue';
 import { ensureWasm } from '@/lib/wasm';
+import { MidiCc14BitTracker } from '@/ui/midi/midi-cc-input';
 import type { RealtimeEngine, WebMidiBinding, WebMidiInputInfo } from '@/wasm/index.js';
 
 // Structural input/event types derived from the binding so they stay in sync
@@ -14,7 +15,11 @@ type MidiMessageEventLike = Parameters<MidiMessageListener>[0];
 /** MIDI 1.0 status nibbles. */
 const STATUS_NOTE_OFF = 0x80;
 const STATUS_NOTE_ON = 0x90;
+const STATUS_POLY_PRESSURE = 0xa0;
 const STATUS_CONTROL_CHANGE = 0xb0;
+const STATUS_PROGRAM_CHANGE = 0xc0;
+const STATUS_CHANNEL_PRESSURE = 0xd0;
+const STATUS_PITCH_BEND = 0xe0;
 
 /** A note-on or note-off received from a Web MIDI input. */
 export interface WebMidiNoteEvent {
@@ -34,8 +39,52 @@ export interface WebMidiCcEvent {
   controller: number;
   /** Controller value (0-127). */
   value: number;
+  /** Combined 14-bit controller value (0-16383), when an MSB/LSB pair is available. */
+  value14?: number;
+  /** Binding family for decoded parameter input. Omitted means plain CC. */
+  kind?: 'cc' | 'rpn' | 'nrpn';
+  /** RPN/NRPN parameter number (0-16383), when `kind` is not `cc`. */
+  parameter?: number;
   /** MIDI channel (0-15). */
   channel: number;
+  /** Web MIDI event timestamp in milliseconds, when provided by the browser. */
+  timeStampMs?: number;
+}
+
+/** A pitch-bend message received from a Web MIDI input. */
+export interface WebMidiPitchBendEvent {
+  /** MIDI pitch-bend value (0-16383, center = 8192). */
+  value: number;
+  /** MIDI channel (0-15). */
+  channel: number;
+  /** Web MIDI event timestamp in milliseconds, when provided by the browser. */
+  timeStampMs?: number;
+}
+
+/** A program-change message received from a Web MIDI input. */
+export interface WebMidiProgramChangeEvent {
+  /** Program number (0-127). */
+  program: number;
+  /** MIDI channel (0-15). */
+  channel: number;
+  /** Web MIDI event timestamp in milliseconds, when provided by the browser. */
+  timeStampMs?: number;
+}
+
+/** A channel-pressure message received from a Web MIDI input. */
+export interface WebMidiChannelPressureEvent {
+  /** Pressure value (0-127). */
+  value: number;
+  /** MIDI channel (0-15). */
+  channel: number;
+  /** Web MIDI event timestamp in milliseconds, when provided by the browser. */
+  timeStampMs?: number;
+}
+
+/** A polyphonic key-pressure message received from a Web MIDI input. */
+export interface WebMidiPolyPressureEvent extends WebMidiChannelPressureEvent {
+  /** MIDI note number (0-127). */
+  pitch: number;
 }
 
 /** Options for {@link useWebMidi}. */
@@ -48,6 +97,14 @@ export interface UseWebMidiOptions {
   onNoteOff?: (event: WebMidiNoteEvent) => void;
   /** Called for each incoming control-change message (for MIDI learn). */
   onControlChange?: (event: WebMidiCcEvent) => void;
+  /** Called for each incoming pitch-bend message. */
+  onPitchBend?: (event: WebMidiPitchBendEvent) => void;
+  /** Called for each incoming program-change message. */
+  onProgramChange?: (event: WebMidiProgramChangeEvent) => void;
+  /** Called for each incoming channel-pressure message. */
+  onChannelPressure?: (event: WebMidiChannelPressureEvent) => void;
+  /** Called for each incoming polyphonic key-pressure message. */
+  onPolyPressure?: (event: WebMidiPolyPressureEvent) => void;
 }
 
 /** Reactive Web MIDI state and controls returned by {@link useWebMidi}. */
@@ -102,14 +159,15 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
   let binding: WebMidiBinding | null = null;
   let boundEngine: RealtimeEngine | null = null;
   let detachListeners: Array<() => void> = [];
+  const ccTracker = new MidiCc14BitTracker();
 
   function handleMessage(event: MidiMessageEventLike): void {
     const data = event.data;
-    if (!data || data.length < 3) return;
+    if (!data || data.length < 2) return;
     const status = data[0] & 0xf0;
     const channel = data[0] & 0x0f;
     const pitch = data[1] & 0x7f;
-    const velocity = data[2] & 0x7f;
+    const velocity = (data[2] ?? 0) & 0x7f;
     const timeStampMs = Number.isFinite(event.timeStamp) ? event.timeStamp : undefined;
     if (status === STATUS_NOTE_ON && velocity > 0) {
       options.onNoteOn?.({ pitch, velocity, channel, timeStampMs });
@@ -122,8 +180,15 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
         timeStampMs,
       });
     } else if (status === STATUS_CONTROL_CHANGE) {
-      // data[1] = controller number, data[2] = value (both 7-bit).
-      options.onControlChange?.({ controller: pitch, value: velocity, channel });
+      options.onControlChange?.({ ...ccTracker.decode(channel, pitch, velocity), timeStampMs });
+    } else if (status === STATUS_PROGRAM_CHANGE) {
+      options.onProgramChange?.({ program: pitch, channel, timeStampMs });
+    } else if (status === STATUS_POLY_PRESSURE) {
+      options.onPolyPressure?.({ pitch, value: velocity, channel, timeStampMs });
+    } else if (status === STATUS_CHANNEL_PRESSURE) {
+      options.onChannelPressure?.({ value: pitch, channel, timeStampMs });
+    } else if (status === STATUS_PITCH_BEND) {
+      options.onPitchBend?.({ value: pitch | (velocity << 7), channel, timeStampMs });
     }
   }
 

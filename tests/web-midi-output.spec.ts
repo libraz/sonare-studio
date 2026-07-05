@@ -50,6 +50,34 @@ function setup(ports: ReturnType<typeof fakePort>[]) {
   };
 }
 
+function setupLegacyStateChange(ports: ReturnType<typeof fakePort>[], previous = vi.fn()) {
+  const base = setup(ports);
+  const access = {
+    outputs: new Map(ports.map((port) => [port.id, port])),
+    onstatechange: previous as ((event: unknown) => void) | null,
+  };
+  base.requestMIDIAccess.mockResolvedValue(access);
+  return { ...base, access, previous };
+}
+
+function setupEventTargetStateChange(ports: ReturnType<typeof fakePort>[]) {
+  const base = setup(ports);
+  let listener: ((event: unknown) => void) | null = null;
+  const access = {
+    outputs: new Map(ports.map((port) => [port.id, port])),
+    onstatechange: null as ((event: unknown) => void) | null,
+    addEventListener: vi.fn((_type: 'statechange', next: (event: unknown) => void) => {
+      listener = next;
+    }),
+    removeEventListener: vi.fn((_type: 'statechange', next: (event: unknown) => void) => {
+      if (listener === next) listener = null;
+    }),
+    emitStateChange: (event: unknown) => listener?.(event),
+  };
+  base.requestMIDIAccess.mockResolvedValue(access);
+  return { ...base, access };
+}
+
 afterEach(() => {
   (navigator as any).requestMIDIAccess = undefined;
   vi.restoreAllMocks();
@@ -210,5 +238,54 @@ describe('createWebMidiOutput', () => {
     expect(await bridge.start()).toBe(false);
     expect(bridge.available()).toBe(false);
     bridge.dispose();
+  });
+
+  it('chains legacy statechange handlers and restores them on dispose', async () => {
+    const first = fakePort('p1');
+    const second = fakePort('p2');
+    const { access, handle, previous } = setupLegacyStateChange([first]);
+    const bridge = createWebMidiOutput(handle);
+
+    expect(await bridge.start()).toBe(true);
+    expect(bridge.outputs()).toEqual([{ id: 'p1', name: 'Port p1' }]);
+
+    access.outputs.set('p2', second);
+    access.onstatechange?.({ type: 'statechange' });
+
+    expect(previous).toHaveBeenCalledWith({ type: 'statechange' });
+    expect(bridge.outputs()).toEqual([
+      { id: 'p1', name: 'Port p1' },
+      { id: 'p2', name: 'Port p2' },
+    ]);
+
+    bridge.dispose();
+    expect(access.onstatechange).toBe(previous);
+  });
+
+  it('removes EventTarget statechange listeners on dispose', async () => {
+    const first = fakePort('p1');
+    const second = fakePort('p2');
+    const { access, handle } = setupEventTargetStateChange([first]);
+    const bridge = createWebMidiOutput(handle);
+
+    expect(await bridge.start()).toBe(true);
+    expect(access.addEventListener).toHaveBeenCalledTimes(1);
+    expect(access.addEventListener).toHaveBeenCalledWith('statechange', expect.any(Function));
+    expect(bridge.outputs()).toEqual([{ id: 'p1', name: 'Port p1' }]);
+
+    access.outputs.set('p2', second);
+    access.emitStateChange({ type: 'statechange' });
+    expect(bridge.outputs()).toEqual([
+      { id: 'p1', name: 'Port p1' },
+      { id: 'p2', name: 'Port p2' },
+    ]);
+
+    bridge.dispose();
+    expect(access.removeEventListener).toHaveBeenCalledTimes(1);
+    expect(access.removeEventListener).toHaveBeenCalledWith('statechange', expect.any(Function));
+
+    access.outputs.set('p3', fakePort('p3'));
+    access.emitStateChange({ type: 'statechange' });
+    expect(bridge.outputs()).toEqual([]);
   });
 });

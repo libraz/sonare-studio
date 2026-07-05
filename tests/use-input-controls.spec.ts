@@ -4,6 +4,8 @@ import { effectScope, ref } from 'vue';
 const handleCc = vi.fn();
 const webMidiConnect = vi.fn(async () => true);
 const webMidiDisconnect = vi.fn();
+let webMidiOptions: Parameters<typeof import('@/composables/useWebMidi').useWebMidi>[0] | null =
+  null;
 
 vi.mock('@/composables/useMidiLearn', () => ({
   useMidiLearn: () => ({ handleCc }),
@@ -15,15 +17,18 @@ vi.mock('@/composables/useMusicTyping', () => ({
 }));
 
 vi.mock('@/composables/useWebMidi', () => ({
-  useWebMidi: () => ({
-    available: ref(null),
-    inputs: ref([]),
-    selectedInputId: ref<string | null>(null),
-    connected: ref(false),
-    error: ref<string | null>(null),
-    connect: webMidiConnect,
-    disconnect: webMidiDisconnect,
-  }),
+  useWebMidi: (options: Parameters<typeof import('@/composables/useWebMidi').useWebMidi>[0]) => {
+    webMidiOptions = options;
+    return {
+      available: ref(null),
+      inputs: ref([]),
+      selectedInputId: ref<string | null>(null),
+      connected: ref(false),
+      error: ref<string | null>(null),
+      connect: webMidiConnect,
+      disconnect: webMidiDisconnect,
+    };
+  },
 }));
 
 import { useInputControls } from '@/composables/useInputControls';
@@ -60,6 +65,7 @@ function makeOptions() {
 
 beforeEach(() => {
   FakeRealtimeEngine.instances = [];
+  webMidiOptions = null;
   handleCc.mockClear();
   webMidiConnect.mockClear();
   webMidiDisconnect.mockClear();
@@ -97,6 +103,102 @@ describe('useInputControls MIDI routing engine lifecycle', () => {
     await controls.connectWebMidi();
     await controls.connectWebMidi();
     expect(FakeRealtimeEngine.instances).toHaveLength(1);
+    scope.stop();
+  });
+
+  it('routes Web MIDI expression events into recording callbacks', () => {
+    const onRecordControlChange = vi.fn();
+    const onRecordPitchBend = vi.fn();
+    const onRecordProgramChange = vi.fn();
+    const onRecordChannelPressure = vi.fn();
+    const onRecordPolyPressure = vi.fn();
+    const scope = effectScope();
+    scope.run(() => {
+      useInputControls({
+        ...makeOptions(),
+        onRecordControlChange,
+        onRecordPitchBend,
+        onRecordProgramChange,
+        onRecordChannelPressure,
+        onRecordPolyPressure,
+      });
+    });
+
+    webMidiOptions?.onControlChange?.({
+      controller: 64,
+      value: 127,
+      channel: 1,
+      timeStampMs: 123,
+    });
+    webMidiOptions?.onPitchBend?.({ value: 4096, channel: 1, timeStampMs: 124 });
+    webMidiOptions?.onProgramChange?.({ program: 10, channel: 1, timeStampMs: 125 });
+    webMidiOptions?.onChannelPressure?.({ value: 70, channel: 1, timeStampMs: 126 });
+    webMidiOptions?.onPolyPressure?.({ pitch: 60, value: 80, channel: 1, timeStampMs: 127 });
+
+    expect(handleCc).toHaveBeenCalledWith({
+      controller: 64,
+      value: 127,
+      channel: 1,
+      timeStampMs: 123,
+    });
+    expect(onRecordControlChange).toHaveBeenCalledWith({
+      controller: 64,
+      value: 127,
+      channel: 1,
+      timeStampMs: 123,
+    });
+    expect(onRecordPitchBend).toHaveBeenCalledWith({ value: 4096, channel: 1, timeStampMs: 124 });
+    expect(onRecordProgramChange).toHaveBeenCalledWith({
+      program: 10,
+      channel: 1,
+      timeStampMs: 125,
+    });
+    expect(onRecordChannelPressure).toHaveBeenCalledWith({
+      value: 70,
+      channel: 1,
+      timeStampMs: 126,
+    });
+    expect(onRecordPolyPressure).toHaveBeenCalledWith({
+      pitch: 60,
+      value: 80,
+      channel: 1,
+      timeStampMs: 127,
+    });
+    scope.stop();
+  });
+
+  it('uses sustained audible note-on/off for live Web MIDI keys', () => {
+    const options = makeOptions();
+    const onRecordNoteOn = vi.fn();
+    const onRecordNoteOff = vi.fn();
+    const scope = effectScope();
+    scope.run(() => {
+      useInputControls({
+        ...options,
+        onRecordNoteOn,
+        onRecordNoteOff,
+      });
+    });
+
+    webMidiOptions?.onNoteOn?.({ pitch: 60, velocity: 96, channel: 2, timeStampMs: 10 });
+    webMidiOptions?.onNoteOff?.({ pitch: 60, velocity: 64, channel: 2, timeStampMs: 20 });
+
+    expect(options.previewNote).not.toHaveBeenCalled();
+    expect(options.previewNoteOn).toHaveBeenCalledWith(60, 96);
+    expect(options.stepInput.enterNote).toHaveBeenCalledWith(60, 96);
+    expect(onRecordNoteOn).toHaveBeenCalledWith({
+      pitch: 60,
+      velocity: 96,
+      channel: 2,
+      timeStampMs: 10,
+    });
+    expect(options.previewNoteOff).toHaveBeenCalledWith(60);
+    expect(onRecordNoteOff).toHaveBeenCalledWith({
+      pitch: 60,
+      velocity: 64,
+      channel: 2,
+      timeStampMs: 20,
+    });
     scope.stop();
   });
 });

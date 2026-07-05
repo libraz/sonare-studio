@@ -9,7 +9,13 @@
  * discrete CC events, so the lane is genuinely audible during transport.
  */
 
-import type { ClipCcLane, ClipCcPoint, ClipPitchBendPoint, ClipPressurePoint } from './types';
+import type {
+  ClipCcLane,
+  ClipCcPoint,
+  ClipExpressionCurve,
+  ClipPitchBendPoint,
+  ClipPressurePoint,
+} from './types';
 
 /** Lowest MIDI controller number / value. */
 export const MIDI_CC_MIN = 0;
@@ -21,6 +27,10 @@ export const MIDI_CHANNEL_MAX = 15;
 export const MIDI_PITCH_BEND_MAX = 16383;
 /** Pitch-bend value with no bend applied (axis center). */
 export const MIDI_PITCH_BEND_CENTER = 8192;
+/** Default distance between generated ramp points for audible expression curves. */
+export const MIDI_EXPRESSION_RAMP_STEP_PPQ = 1 / 64;
+/** Hard cap per segment so malformed projects cannot explode schedule size. */
+const MAX_EXPRESSION_RAMP_STEPS = 512;
 
 /** One CC controller the piano-roll lane header offers as a tab. */
 export interface CcLaneOption {
@@ -44,6 +54,9 @@ export const PIANO_ROLL_CC_LANES: readonly CcLaneOption[] = [
   { controller: 64, label: 'CC64', title: 'Sustain (CC 64)' },
 ];
 
+/** Expression-lane interpolation modes stored on breakpoints. */
+export const CLIP_EXPRESSION_CURVES: readonly ClipExpressionCurve[] = ['hold', 'linear', 's-curve'];
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
@@ -52,6 +65,22 @@ function clamp(value: number, min: number, max: number): number {
 function clampInt(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
   return clamp(Math.round(value), min, max);
+}
+
+/** Returns true when `curve` is a supported clip expression curve. */
+export function isClipExpressionCurve(curve: unknown): curve is ClipExpressionCurve {
+  return typeof curve === 'string' && CLIP_EXPRESSION_CURVES.includes(curve as ClipExpressionCurve);
+}
+
+function sanitizeCurve(curve: unknown): ClipExpressionCurve | undefined {
+  return isClipExpressionCurve(curve) && curve !== 'hold' ? curve : undefined;
+}
+
+function normalizePointCurve<T extends { ppq: number; value: number; curve?: ClipExpressionCurve }>(
+  point: T,
+): T {
+  const curve = sanitizeCurve(point.curve);
+  return curve ? { ...point, curve } : ({ ppq: point.ppq, value: point.value } as T);
 }
 
 /** True when `controller` is a valid MIDI controller number (integer 0-127). */
@@ -78,12 +107,20 @@ export function sanitizeCcPoints(
   lengthPpq: number,
 ): ClipCcPoint[] {
   const max = Number.isFinite(lengthPpq) && lengthPpq > 0 ? lengthPpq : 0;
-  const byPpq = new Map<number, number>();
+  const byPpq = new Map<number, ClipCcPoint>();
   for (const point of points) {
     if (!Number.isFinite(point.ppq)) continue;
-    byPpq.set(clamp(point.ppq, 0, max), clampInt(point.value, MIDI_CC_MIN, MIDI_CC_MAX));
+    const ppq = clamp(point.ppq, 0, max);
+    byPpq.set(
+      ppq,
+      normalizePointCurve({
+        ppq,
+        value: clampInt(point.value, MIDI_CC_MIN, MIDI_CC_MAX),
+        curve: point.curve,
+      }),
+    );
   }
-  return [...byPpq.entries()].map(([ppq, value]) => ({ ppq, value })).sort((a, b) => a.ppq - b.ppq);
+  return [...byPpq.values()].sort((a, b) => a.ppq - b.ppq);
 }
 
 /**
@@ -101,12 +138,20 @@ export function sanitizePitchBendPoints(
   lengthPpq: number,
 ): ClipPitchBendPoint[] {
   const max = Number.isFinite(lengthPpq) && lengthPpq > 0 ? lengthPpq : 0;
-  const byPpq = new Map<number, number>();
+  const byPpq = new Map<number, ClipPitchBendPoint>();
   for (const point of points) {
     if (!Number.isFinite(point.ppq)) continue;
-    byPpq.set(clamp(point.ppq, 0, max), clampInt(point.value, 0, MIDI_PITCH_BEND_MAX));
+    const ppq = clamp(point.ppq, 0, max);
+    byPpq.set(
+      ppq,
+      normalizePointCurve({
+        ppq,
+        value: clampInt(point.value, 0, MIDI_PITCH_BEND_MAX),
+        curve: point.curve,
+      }),
+    );
   }
-  return [...byPpq.entries()].map(([ppq, value]) => ({ ppq, value })).sort((a, b) => a.ppq - b.ppq);
+  return [...byPpq.values()].sort((a, b) => a.ppq - b.ppq);
 }
 
 /**
@@ -124,12 +169,73 @@ export function sanitizePressurePoints(
   lengthPpq: number,
 ): ClipPressurePoint[] {
   const max = Number.isFinite(lengthPpq) && lengthPpq > 0 ? lengthPpq : 0;
-  const byPpq = new Map<number, number>();
+  const byPpq = new Map<number, ClipPressurePoint>();
   for (const point of points) {
     if (!Number.isFinite(point.ppq)) continue;
-    byPpq.set(clamp(point.ppq, 0, max), clampInt(point.value, MIDI_CC_MIN, MIDI_CC_MAX));
+    const ppq = clamp(point.ppq, 0, max);
+    byPpq.set(
+      ppq,
+      normalizePointCurve({
+        ppq,
+        value: clampInt(point.value, MIDI_CC_MIN, MIDI_CC_MAX),
+        curve: point.curve,
+      }),
+    );
   }
-  return [...byPpq.entries()].map(([ppq, value]) => ({ ppq, value })).sort((a, b) => a.ppq - b.ppq);
+  return [...byPpq.values()].sort((a, b) => a.ppq - b.ppq);
+}
+
+function curveT(curve: ClipExpressionCurve | undefined, t: number): number {
+  if (curve === 's-curve') return t * t * (3 - 2 * t);
+  return t;
+}
+
+/**
+ * Expands expression breakpoint curves into MIDI-event positions. Hold keeps
+ * one event per breakpoint; linear and s-curve segments add generated points
+ * between adjacent breakpoints.
+ */
+export function expandExpressionPoints<
+  T extends { ppq: number; value: number; curve?: ClipExpressionCurve },
+>(
+  points: ReadonlyArray<T>,
+  lengthPpq: number,
+  valueMax: number,
+  stepPpq = MIDI_EXPRESSION_RAMP_STEP_PPQ,
+): Array<{ ppq: number; value: number }> {
+  const max = Number.isFinite(lengthPpq) && lengthPpq > 0 ? lengthPpq : 0;
+  const sorted = points
+    .filter((point) => Number.isFinite(point.ppq) && point.ppq >= 0 && point.ppq <= max)
+    .map((point) => ({
+      ppq: point.ppq,
+      value: clampInt(point.value, 0, valueMax),
+      curve: sanitizeCurve(point.curve),
+    }))
+    .sort((a, b) => a.ppq - b.ppq);
+  const out: Array<{ ppq: number; value: number }> = [];
+  for (let i = 0; i < sorted.length; i++) {
+    const point = sorted[i];
+    out.push({ ppq: point.ppq, value: point.value });
+    const next = sorted[i + 1];
+    if (!next || point.curve === undefined || next.ppq <= point.ppq) continue;
+    const duration = next.ppq - point.ppq;
+    const steps = Math.min(
+      MAX_EXPRESSION_RAMP_STEPS,
+      Math.max(1, Math.ceil(duration / Math.max(1e-6, stepPpq))),
+    );
+    for (let step = 1; step < steps; step++) {
+      const t = step / steps;
+      out.push({
+        ppq: point.ppq + duration * t,
+        value: clampInt(
+          point.value + (next.value - point.value) * curveT(point.curve, t),
+          0,
+          valueMax,
+        ),
+      });
+    }
+  }
+  return out;
 }
 
 /**

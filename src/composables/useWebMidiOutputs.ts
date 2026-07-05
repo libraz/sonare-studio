@@ -46,6 +46,7 @@ export function useWebMidiOutputs(): WebMidiOutputsHandle {
 
   let access: MidiAccessLike | null = null;
   let onChange: (() => void) | null = null;
+  let previousOnStateChange: ((event: unknown) => void) | null = null;
 
   const collect = (): void => {
     outputs.value = access
@@ -56,9 +57,10 @@ export function useWebMidiOutputs(): WebMidiOutputsHandle {
   const detach = (): void => {
     if (access && onChange) {
       if (access.removeEventListener) access.removeEventListener('statechange', onChange);
-      else access.onstatechange = null;
+      else access.onstatechange = previousOnStateChange;
     }
     onChange = null;
+    previousOnStateChange = null;
   };
 
   async function refresh(): Promise<boolean> {
@@ -73,7 +75,13 @@ export function useWebMidiOutputs(): WebMidiOutputsHandle {
         access = await nav.requestMIDIAccess({ sysex: false });
         onChange = collect;
         if (access.addEventListener) access.addEventListener('statechange', onChange);
-        else access.onstatechange = onChange;
+        else {
+          previousOnStateChange = access.onstatechange;
+          access.onstatechange = (event: unknown) => {
+            previousOnStateChange?.(event);
+            onChange?.();
+          };
+        }
       }
       available.value = true;
       collect();

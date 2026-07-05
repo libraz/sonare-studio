@@ -1,5 +1,7 @@
 import type { ComputedRef, Ref } from 'vue';
 import { computed, getCurrentScope, onScopeDispose, ref } from 'vue';
+import { isEditableTarget } from '@/ui/keyboard';
+import { shortcutBlockingOverlayOpen } from '@/ui/overlay-registry';
 import type { StepInputHandle } from './useStepInput';
 
 /**
@@ -54,7 +56,7 @@ export interface MusicTypingNoteOffEvent {
 }
 
 /** The slice of a step-input handle music typing writes through while armed. */
-export type MusicTypingStepTarget = Pick<StepInputHandle, 'armed' | 'enterNote' | 'rest'>;
+export type MusicTypingStepTarget = Pick<StepInputHandle, 'armed' | 'enterNote' | 'rest' | 'back'>;
 
 /** Options for {@link useMusicTyping}. */
 export interface UseMusicTypingOptions {
@@ -90,17 +92,6 @@ export interface MusicTypingHandle {
 /** Clamps a value into [min, max]. */
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
-}
-
-/** True when the event originates from a text-editing element. */
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  const tag = target.tagName;
-  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
-  if (target.isContentEditable) return true;
-  // Fallback on the attribute: jsdom does not implement isContentEditable.
-  const contentEditable = target.getAttribute('contenteditable');
-  return contentEditable === '' || contentEditable === 'true';
 }
 
 /**
@@ -141,12 +132,14 @@ export function useMusicTyping(options: UseMusicTypingOptions = {}): MusicTyping
     const e = event as KeyboardEvent;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (isEditableTarget(e.target)) return;
+    if (shortcutBlockingOverlayOpen.value) return;
     const key = e.key.toLowerCase();
 
     if (key === REST_KEY) {
       if (options.stepInput?.armed.value) {
         e.preventDefault();
-        options.stepInput.rest();
+        if (e.shiftKey) options.stepInput.back();
+        else options.stepInput.rest();
       }
       return;
     }

@@ -8,6 +8,16 @@ import type { RealtimeEngine } from '@/wasm/index.js';
 type StepInput = ReturnType<typeof useStepInput>;
 type RunAction = (action: () => Promise<void>) => Promise<void>;
 type RecordNoteEvent = { pitch: number; velocity: number; channel: number; timeStampMs?: number };
+type RecordCcEvent = { controller: number; value: number; channel: number; timeStampMs?: number };
+type RecordPitchBendEvent = { value: number; channel: number; timeStampMs?: number };
+type RecordProgramChangeEvent = { program: number; channel: number; timeStampMs?: number };
+type RecordChannelPressureEvent = { value: number; channel: number; timeStampMs?: number };
+type RecordPolyPressureEvent = {
+  pitch: number;
+  value: number;
+  channel: number;
+  timeStampMs?: number;
+};
 
 export interface InputControlsOptions {
   errorMessage: Ref<string>;
@@ -23,6 +33,16 @@ export interface InputControlsOptions {
   onRecordNoteOn?: (event: RecordNoteEvent) => void;
   /** Captures an incoming note-off for MIDI recording (when armed/rolling). */
   onRecordNoteOff?: (event: RecordNoteEvent) => void;
+  /** Captures incoming CC for MIDI recording (when armed/rolling). */
+  onRecordControlChange?: (event: RecordCcEvent) => void;
+  /** Captures incoming pitch bend for MIDI recording (when armed/rolling). */
+  onRecordPitchBend?: (event: RecordPitchBendEvent) => void;
+  /** Captures incoming program changes for MIDI recording (when armed/rolling). */
+  onRecordProgramChange?: (event: RecordProgramChangeEvent) => void;
+  /** Captures incoming channel pressure for MIDI recording (when armed/rolling). */
+  onRecordChannelPressure?: (event: RecordChannelPressureEvent) => void;
+  /** Captures incoming polyphonic key pressure for MIDI recording (when armed/rolling). */
+  onRecordPolyPressure?: (event: RecordPolyPressureEvent) => void;
   runAction: RunAction;
 }
 
@@ -60,7 +80,14 @@ export function useInputControls(options: InputControlsOptions) {
       previewNoteOff(event.pitch);
       options.onRecordNoteOff?.(event);
     },
-    onControlChange: (event) => midiLearn.handleCc(event),
+    onControlChange: (event) => {
+      midiLearn.handleCc(event);
+      options.onRecordControlChange?.(event);
+    },
+    onPitchBend: (event) => options.onRecordPitchBend?.(event),
+    onProgramChange: (event) => options.onRecordProgramChange?.(event),
+    onChannelPressure: (event) => options.onRecordChannelPressure?.(event),
+    onPolyPressure: (event) => options.onRecordPolyPressure?.(event),
   });
 
   const midiInputChoices = computed(() => [

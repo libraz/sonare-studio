@@ -33,6 +33,12 @@ export interface MidiCcMessage {
   controller: number;
   /** Controller value (0-127). */
   value: number;
+  /** Combined 14-bit controller value (0-16383), when an MSB/LSB pair is available. */
+  value14?: number;
+  /** Binding family. Omitted means a legacy CC binding. */
+  kind?: 'cc' | 'rpn' | 'nrpn';
+  /** RPN/NRPN parameter number (0-16383), when `kind` is not `cc`. */
+  parameter?: number;
 }
 
 /** A stored binding: the channel + controller a target listens to. */
@@ -41,6 +47,10 @@ export interface MidiCcBinding {
   channel: number;
   /** Controller number (0-127). */
   controller: number;
+  /** Binding family. Omitted means a legacy CC binding. */
+  kind?: 'cc' | 'rpn' | 'nrpn';
+  /** RPN/NRPN parameter number (0-16383), when `kind` is not `cc`. */
+  parameter?: number;
 }
 
 /**
@@ -58,7 +68,9 @@ export interface MidiCcBinding {
 export function midiCcBindingsKey(bindings: ReadonlyMap<string, MidiCcBinding>): string {
   const parts: string[] = [];
   for (const [id, binding] of bindings) {
-    parts.push(`${id}=${binding.channel}:${binding.controller}`);
+    parts.push(
+      `${id}=${binding.kind ?? 'cc'}:${binding.channel}:${binding.controller}:${binding.parameter ?? ''}`,
+    );
   }
   return parts.sort().join('|');
 }
@@ -84,6 +96,14 @@ function clamp(value: number, min: number, max: number): number {
 export function clampCcValue(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return clamp(Math.round(value), 0, MIDI_VALUE_MAX);
+}
+
+/** Maps a 7-bit or optional 14-bit CC message to the legacy 0..127 control range. */
+export function midiCcMessageValue(message: Pick<MidiCcMessage, 'value' | 'value14'>): number {
+  if (typeof message.value14 === 'number' && Number.isFinite(message.value14)) {
+    return clampCcValue((message.value14 / 16383) * MIDI_VALUE_MAX);
+  }
+  return clampCcValue(message.value);
 }
 
 /** Maps a CC value (0-127) to gain in dB across the MIDI fader window. */
@@ -220,6 +240,307 @@ export function parseMidiLearnInstrumentTargetId(id: string): MidiLearnInstrumen
   return { trackId, paramId };
 }
 
+/** Prefix marking a mixer-send level learn target id. */
+const SEND_TARGET_PREFIX = 'send:';
+
+/** Mixer-send controls exposed to MIDI Learn. */
+export type MidiLearnSendParam = 'level' | 'enabled' | 'timing';
+
+/** A decoded mixer-send level learn target. */
+export interface MidiLearnSendTarget {
+  /** Source strip that owns the send (track id only; master sends are not audible). */
+  scope: number;
+  /** Destination mixer bus id. */
+  busId: string;
+  /** Send control. Legacy ids without a param decode as `level`. */
+  param: MidiLearnSendParam;
+}
+
+/**
+ * Encodes a mixer-send level learn target, e.g. `send:7:bus-1`.
+ *
+ * @param scope Source track id.
+ * @param busId Destination mixer bus id.
+ * @returns The encoded target id.
+ */
+export function midiLearnSendTargetId(
+  scope: number,
+  busId: string,
+  param: MidiLearnSendParam = 'level',
+): string {
+  const base = `${SEND_TARGET_PREFIX}${scope}:${encodeURIComponent(busId)}`;
+  return param === 'level' ? base : `${base}:${param}`;
+}
+
+/** Decodes a mixer-send target id, or null when it is malformed. */
+export function parseMidiLearnSendTargetId(id: string): MidiLearnSendTarget | null {
+  if (!id.startsWith(SEND_TARGET_PREFIX)) return null;
+  const rest = id.slice(SEND_TARGET_PREFIX.length);
+  const sep = rest.indexOf(':');
+  if (sep <= 0) return null;
+  const scope = Number(rest.slice(0, sep));
+  if (!Number.isInteger(scope)) return null;
+  const tail = rest.slice(sep + 1);
+  const paramSep = tail.lastIndexOf(':');
+  const maybeParam = paramSep >= 0 ? tail.slice(paramSep + 1) : '';
+  const hasParam = maybeParam === 'level' || maybeParam === 'enabled' || maybeParam === 'timing';
+  const busText = hasParam ? tail.slice(0, paramSep) : tail;
+  if (busText.length === 0) return null;
+  try {
+    const busId = decodeURIComponent(busText);
+    return busId.length > 0 ? { scope, busId, param: hasParam ? maybeParam : 'level' } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Track-state controls exposed to MIDI Learn. */
+export type MidiLearnTrackStateParam = 'mute' | 'solo';
+
+/** Prefix marking a track-state learn target id. */
+const TRACK_STATE_TARGET_PREFIX = 'track:';
+
+/** A decoded track-state target. */
+export interface MidiLearnTrackStateTarget {
+  /** Track whose state is driven. */
+  trackId: number;
+  /** Track-state control id. */
+  param: MidiLearnTrackStateParam;
+}
+
+/**
+ * Encodes a track-state learn target, e.g. `track:7:mute`.
+ *
+ * @param trackId Track id.
+ * @param param Track-state control id.
+ * @returns The encoded target id.
+ */
+export function midiLearnTrackStateTargetId(
+  trackId: number,
+  param: MidiLearnTrackStateParam,
+): string {
+  return `${TRACK_STATE_TARGET_PREFIX}${trackId}:${param}`;
+}
+
+/** Decodes a track-state target id, or null when it is malformed. */
+export function parseMidiLearnTrackStateTargetId(id: string): MidiLearnTrackStateTarget | null {
+  if (!id.startsWith(TRACK_STATE_TARGET_PREFIX)) return null;
+  const rest = id.slice(TRACK_STATE_TARGET_PREFIX.length);
+  const sep = rest.indexOf(':');
+  if (sep <= 0) return null;
+  const trackId = Number(rest.slice(0, sep));
+  if (!Number.isInteger(trackId)) return null;
+  const param = rest.slice(sep + 1);
+  if (param !== 'mute' && param !== 'solo') return null;
+  return { trackId, param };
+}
+
+/** VCA group controls exposed to MIDI Learn. */
+export type MidiLearnVcaParam = 'gain' | 'mute' | 'solo';
+
+/** Prefix marking a VCA-group learn target id. */
+const VCA_TARGET_PREFIX = 'vca:';
+
+/** A decoded VCA-group target. */
+export interface MidiLearnVcaTarget {
+  /** Stable VCA group id. */
+  groupId: string;
+  /** VCA control id. */
+  param: MidiLearnVcaParam;
+}
+
+/**
+ * Encodes a VCA-group learn target, e.g. `vca:drums:gain`.
+ *
+ * @param groupId Stable VCA group id.
+ * @param param VCA control id.
+ * @returns The encoded target id.
+ */
+export function midiLearnVcaTargetId(groupId: string, param: MidiLearnVcaParam): string {
+  return `${VCA_TARGET_PREFIX}${encodeURIComponent(groupId)}:${param}`;
+}
+
+/** Decodes a VCA-group target id, or null when it is malformed. */
+export function parseMidiLearnVcaTargetId(id: string): MidiLearnVcaTarget | null {
+  if (!id.startsWith(VCA_TARGET_PREFIX)) return null;
+  const rest = id.slice(VCA_TARGET_PREFIX.length);
+  const sep = rest.lastIndexOf(':');
+  if (sep <= 0) return null;
+  const param = rest.slice(sep + 1);
+  if (param !== 'gain' && param !== 'mute' && param !== 'solo') return null;
+  try {
+    const groupId = decodeURIComponent(rest.slice(0, sep));
+    return groupId.length > 0 ? { groupId, param } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** EQ band controls exposed to MIDI Learn. */
+export type MidiLearnEqParam = 'frequencyHz' | 'gainDb' | 'q';
+
+/** Prefix marking an EQ-band learn target id. */
+const EQ_TARGET_PREFIX = 'eq:';
+
+/** A decoded EQ-band target. */
+export interface MidiLearnEqTarget {
+  /** Strip whose EQ band is driven. */
+  scope: MidiLearnScope;
+  /** Zero-based EQ band index. */
+  bandIndex: number;
+  /** EQ band field. */
+  param: MidiLearnEqParam;
+}
+
+/**
+ * Encodes an EQ-band learn target, e.g. `eq:7:0:frequencyHz`.
+ *
+ * @param scope Strip scope.
+ * @param bandIndex Zero-based EQ band index.
+ * @param param EQ band field.
+ * @returns The encoded target id.
+ */
+export function midiLearnEqTargetId(
+  scope: MidiLearnScope,
+  bandIndex: number,
+  param: MidiLearnEqParam,
+): string {
+  return `${EQ_TARGET_PREFIX}${scope}:${bandIndex}:${param}`;
+}
+
+/** Decodes an EQ-band target id, or null when it is malformed. */
+export function parseMidiLearnEqTargetId(id: string): MidiLearnEqTarget | null {
+  if (!id.startsWith(EQ_TARGET_PREFIX)) return null;
+  const rest = id.slice(EQ_TARGET_PREFIX.length);
+  const firstSep = rest.indexOf(':');
+  if (firstSep <= 0) return null;
+  const scopeText = rest.slice(0, firstSep);
+  const afterScope = rest.slice(firstSep + 1);
+  const secondSep = afterScope.indexOf(':');
+  if (secondSep <= 0) return null;
+  const bandIndex = Number(afterScope.slice(0, secondSep));
+  if (!Number.isInteger(bandIndex) || bandIndex < 0) return null;
+  const param = afterScope.slice(secondSep + 1);
+  if (param !== 'frequencyHz' && param !== 'gainDb' && param !== 'q') return null;
+  if (scopeText === 'master') return { scope: 'master', bandIndex, param };
+  const trackId = Number(scopeText);
+  if (!Number.isInteger(trackId)) return null;
+  return { scope: trackId, bandIndex, param };
+}
+
+/** Prefix marking a mastering processor parameter learn target id. */
+const MASTERING_TARGET_PREFIX = 'mastering:';
+
+/** A decoded mastering processor parameter target. */
+export interface MidiLearnMasteringTarget {
+  /** Zero-based mastering processor index. */
+  index: number;
+  /** Processor parameter id. */
+  paramId: string;
+}
+
+/**
+ * Encodes a mastering processor learn target, e.g. `mastering:0:thresholdDb`.
+ *
+ * @param index Zero-based mastering processor index.
+ * @param paramId Processor parameter id.
+ * @returns The encoded target id.
+ */
+export function midiLearnMasteringTargetId(index: number, paramId: string): string {
+  return `${MASTERING_TARGET_PREFIX}${index}:${encodeURIComponent(paramId)}`;
+}
+
+/** Decodes a mastering processor target id, or null when it is malformed. */
+export function parseMidiLearnMasteringTargetId(id: string): MidiLearnMasteringTarget | null {
+  if (!id.startsWith(MASTERING_TARGET_PREFIX)) return null;
+  const rest = id.slice(MASTERING_TARGET_PREFIX.length);
+  const sep = rest.indexOf(':');
+  if (sep <= 0) return null;
+  const index = Number(rest.slice(0, sep));
+  if (!Number.isInteger(index) || index < 0) return null;
+  try {
+    const paramId = decodeURIComponent(rest.slice(sep + 1));
+    return paramId.length > 0 ? { index, paramId } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Continuous strip-local DSP controls exposed to MIDI Learn. */
+export type MidiLearnStripControlParam =
+  | 'inputTrimDb'
+  | 'width'
+  | 'polarityLeft'
+  | 'polarityRight'
+  | 'channelDelaySamples'
+  | 'panLaw'
+  | 'panMode'
+  | 'dualPanLeft'
+  | 'dualPanRight';
+
+/** Prefix marking a strip-local control learn target id. */
+const STRIP_CONTROL_TARGET_PREFIX = 'strip:';
+
+/** A decoded strip-local control target. */
+export interface MidiLearnStripControlTarget {
+  /** Strip whose local control is driven. */
+  scope: MidiLearnScope;
+  /** Strip-local continuous control id. */
+  param: MidiLearnStripControlParam;
+}
+
+/**
+ * Encodes a strip-local control target, e.g. `strip:7:inputTrimDb`.
+ *
+ * @param scope Strip scope.
+ * @param param Strip-local control id.
+ * @returns The encoded target id.
+ */
+export function midiLearnStripControlTargetId(
+  scope: MidiLearnScope,
+  param: MidiLearnStripControlParam,
+): string {
+  return `${STRIP_CONTROL_TARGET_PREFIX}${scope}:${param}`;
+}
+
+/** Decodes a strip-local control target id, or null when it is malformed. */
+export function parseMidiLearnStripControlTargetId(id: string): MidiLearnStripControlTarget | null {
+  if (!id.startsWith(STRIP_CONTROL_TARGET_PREFIX)) return null;
+  const rest = id.slice(STRIP_CONTROL_TARGET_PREFIX.length);
+  const sep = rest.indexOf(':');
+  if (sep <= 0) return null;
+  const scopeText = rest.slice(0, sep);
+  const param = rest.slice(sep + 1);
+  if (
+    param !== 'inputTrimDb' &&
+    param !== 'width' &&
+    param !== 'polarityLeft' &&
+    param !== 'polarityRight' &&
+    param !== 'channelDelaySamples' &&
+    param !== 'panLaw' &&
+    param !== 'panMode' &&
+    param !== 'dualPanLeft' &&
+    param !== 'dualPanRight'
+  ) {
+    return null;
+  }
+  if (scopeText === 'master') {
+    if (
+      param === 'channelDelaySamples' ||
+      param === 'panLaw' ||
+      param === 'panMode' ||
+      param === 'dualPanLeft' ||
+      param === 'dualPanRight'
+    ) {
+      return null;
+    }
+    return { scope: 'master', param };
+  }
+  const trackId = Number(scopeText);
+  if (!Number.isInteger(trackId)) return null;
+  return { scope: trackId, param };
+}
+
 /** Maps a CC value (0-127) linearly into the inclusive range [min, max]. */
 export function ccToRange(value: number, min: number, max: number): number {
   const t = clampCcValue(value) / MIDI_VALUE_MAX;
@@ -232,9 +553,34 @@ export function rangeToCc(value: number, min: number, max: number): number {
   return clampCcValue(((value - min) / (max - min)) * MIDI_VALUE_MAX);
 }
 
+/** Maps a CC value logarithmically into a positive range. */
+export function ccToLogRange(value: number, min: number, max: number): number {
+  if (min <= 0 || max <= 0 || min === max) return ccToRange(value, min, max);
+  const t = clampCcValue(value) / MIDI_VALUE_MAX;
+  return min * (max / min) ** t;
+}
+
 /** Formats a binding for display, e.g. "CC 7 · Ch 1". */
 export function formatMidiCcBinding(binding: MidiCcBinding): string {
+  if (binding.kind === 'rpn' || binding.kind === 'nrpn') {
+    const label = binding.kind.toUpperCase();
+    return `${label} ${binding.parameter ?? binding.controller} · Ch ${binding.channel + 1}`;
+  }
   return `CC ${binding.controller} · Ch ${binding.channel + 1}`;
+}
+
+/** True when an incoming MIDI learn message matches a stored binding. */
+export function midiCcBindingMatches(
+  binding: MidiCcBinding,
+  message: Pick<MidiCcMessage, 'channel' | 'controller' | 'kind' | 'parameter'>,
+): boolean {
+  const bindingKind = binding.kind ?? 'cc';
+  const messageKind = message.kind ?? 'cc';
+  if (binding.channel !== message.channel || bindingKind !== messageKind) return false;
+  if (bindingKind === 'rpn' || bindingKind === 'nrpn') {
+    return binding.parameter === message.parameter;
+  }
+  return binding.controller === message.controller;
 }
 
 /** True when an id decodes to any known learn target (strip / insert / instrument). */
@@ -242,22 +588,43 @@ export function isMidiLearnTargetId(id: string): boolean {
   return (
     parseMidiLearnTargetId(id) !== null ||
     parseMidiLearnInsertTargetId(id) !== null ||
-    parseMidiLearnInstrumentTargetId(id) !== null
+    parseMidiLearnInstrumentTargetId(id) !== null ||
+    parseMidiLearnSendTargetId(id) !== null ||
+    parseMidiLearnTrackStateTargetId(id) !== null ||
+    parseMidiLearnVcaTargetId(id) !== null ||
+    parseMidiLearnEqTargetId(id) !== null ||
+    parseMidiLearnMasteringTargetId(id) !== null ||
+    parseMidiLearnStripControlTargetId(id) !== null
   );
 }
+
+/** Persistence scope extracted from a target id. */
+export type MidiLearnTargetScope = MidiLearnScope | 'global';
 
 /**
  * Extracts the track scope a target id is bound to: a track id, 'master', or
  * null when the id does not decode. Track-scoped ids embed a session track id
  * (gain/pan/insert/instrument); 'master' ids are stable across reloads.
  */
-export function midiLearnTargetScope(id: string): MidiLearnScope | null {
+export function midiLearnTargetScope(id: string): MidiLearnTargetScope | null {
   const strip = parseMidiLearnTargetId(id);
   if (strip) return strip.scope;
   const insert = parseMidiLearnInsertTargetId(id);
   if (insert) return insert.scope;
   const instrument = parseMidiLearnInstrumentTargetId(id);
   if (instrument) return instrument.trackId;
+  const send = parseMidiLearnSendTargetId(id);
+  if (send) return send.scope;
+  const trackState = parseMidiLearnTrackStateTargetId(id);
+  if (trackState) return trackState.trackId;
+  const vca = parseMidiLearnVcaTargetId(id);
+  if (vca) return 'global';
+  const eq = parseMidiLearnEqTargetId(id);
+  if (eq) return eq.scope;
+  const mastering = parseMidiLearnMasteringTargetId(id);
+  if (mastering) return 'global';
+  const stripControl = parseMidiLearnStripControlTargetId(id);
+  if (stripControl) return stripControl.scope;
   return null;
 }
 
@@ -280,6 +647,32 @@ export function withMidiLearnTargetScope(id: string, scope: MidiLearnScope): str
     if (scope === 'master') return null;
     return midiLearnInstrumentTargetId(scope, instrument.paramId);
   }
+  const send = parseMidiLearnSendTargetId(id);
+  if (send) {
+    if (scope === 'master') return null;
+    return midiLearnSendTargetId(scope, send.busId, send.param);
+  }
+  const trackState = parseMidiLearnTrackStateTargetId(id);
+  if (trackState) {
+    if (scope === 'master') return null;
+    return midiLearnTrackStateTargetId(scope, trackState.param);
+  }
+  const eq = parseMidiLearnEqTargetId(id);
+  if (eq) return midiLearnEqTargetId(scope, eq.bandIndex, eq.param);
+  const stripControl = parseMidiLearnStripControlTargetId(id);
+  if (stripControl) {
+    if (
+      scope === 'master' &&
+      (stripControl.param === 'channelDelaySamples' ||
+        stripControl.param === 'panLaw' ||
+        stripControl.param === 'panMode' ||
+        stripControl.param === 'dualPanLeft' ||
+        stripControl.param === 'dualPanRight')
+    ) {
+      return null;
+    }
+    return midiLearnStripControlTargetId(scope, stripControl.param);
+  }
   return null;
 }
 
@@ -295,6 +688,10 @@ export interface PersistedMidiCcBinding {
   channel: number;
   /** Controller number (0-127). */
   controller: number;
+  /** Binding family. Omitted means a legacy CC binding. */
+  kind?: 'cc' | 'rpn' | 'nrpn';
+  /** RPN/NRPN parameter number (0-16383), when `kind` is not `cc`. */
+  parameter?: number;
   /** True when `target`'s scope is a track index awaiting load-time rebinding. */
   trackScoped?: boolean;
 }
@@ -318,6 +715,8 @@ export function sanitizeMidiCcBindings(value: unknown): PersistedMidiCcBinding[]
       target?: unknown;
       channel?: unknown;
       controller?: unknown;
+      kind?: unknown;
+      parameter?: unknown;
       trackScoped?: unknown;
     };
     if (typeof candidate.target !== 'string' || !isMidiLearnTargetId(candidate.target)) continue;
@@ -326,8 +725,22 @@ export function sanitizeMidiCcBindings(value: unknown): PersistedMidiCcBinding[]
     const controller = Number(candidate.controller);
     if (!Number.isInteger(channel) || channel < 0 || channel > 15) continue;
     if (!Number.isInteger(controller) || controller < 0 || controller > MIDI_VALUE_MAX) continue;
+    const kind =
+      candidate.kind === 'rpn' || candidate.kind === 'nrpn' || candidate.kind === 'cc'
+        ? candidate.kind
+        : 'cc';
+    let parameter: number | undefined;
+    if (kind === 'rpn' || kind === 'nrpn') {
+      const rawParameter = Number(candidate.parameter);
+      if (!Number.isInteger(rawParameter) || rawParameter < 0 || rawParameter > 16383) continue;
+      parameter = rawParameter;
+    }
     seen.add(candidate.target);
     const binding: PersistedMidiCcBinding = { target: candidate.target, channel, controller };
+    if (kind !== 'cc') {
+      binding.kind = kind;
+      binding.parameter = parameter;
+    }
     if (candidate.trackScoped === true) binding.trackScoped = true;
     out.push(binding);
   }
