@@ -162,6 +162,38 @@ describe('DeviceRack.vue', () => {
     });
   });
 
+  it('commits a multi-timbral channel map with a drum kit and a melodic program', async () => {
+    const wrapper = mount(DeviceRack);
+    await wrapper.find('.instrument-button').trigger('click');
+    const sf2Tab = wrapper.findAll('.picker-tab').find((tab) => tab.text() === 'SF2');
+    await sf2Tab?.trigger('click');
+    await flushPromises();
+    await wrapper.findAll('.font-option')[0].trigger('click');
+
+    // Enable the multi-timbral channel map.
+    await wrapper.find('.sf2-multitimbral-toggle input').setValue(true);
+
+    // Enable the drum channel (channel 10) — its bank defaults to the GM2
+    // drum-set bank (MSB 120, kit 0).
+    const drumRow = wrapper.find('.sf2-channel-row.drum');
+    await drumRow.find('.sf2-channel-toggle input').setValue(true);
+
+    // Enable channel 1 (first row) and give it a melodic program.
+    const firstRow = wrapper.findAll('.sf2-channel-row')[0];
+    await firstRow.find('.sf2-channel-toggle input').setValue(true);
+    await firstRow.find('.sf2-channel-program').setValue('40');
+
+    await wrapper.find('.use-sf2').trigger('click');
+    expect(store.tracks[0].instrument).toEqual({
+      kind: 'sf2',
+      fontId: 'fontaaaa00000001',
+      channelMap: [
+        { channel: 0, program: 40 },
+        { channel: 9, bank: 120 << 7, program: 0 },
+      ],
+    });
+  });
+
   it('warns before applying an SF2 selection that would collide with another active font', async () => {
     const secondTrackId = addTrack({ name: 'Pad' });
     setTrackInstrument(secondTrackId, { kind: 'sf2', fontId: 'fontaaaa00000001' });

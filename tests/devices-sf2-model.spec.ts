@@ -22,6 +22,7 @@ const EMPTY = {
   program: 0,
   gain: SF2_DEFAULT_GAIN,
   polyphony: SF2_DEFAULT_POLYPHONY,
+  channelMap: [],
 };
 
 describe('clampBank / clampProgram', () => {
@@ -72,7 +73,14 @@ describe('createSf2Selection', () => {
         gain: 1.5,
         polyphony: 24,
       }),
-    ).toEqual({ fontId: 'abc123', bank: 128, program: 35, gain: 1.5, polyphony: 24 });
+    ).toEqual({
+      fontId: 'abc123',
+      bank: 128,
+      program: 35,
+      gain: 1.5,
+      polyphony: 24,
+      channelMap: [],
+    });
   });
 
   it('defaults omitted bank/program/gain/polyphony to their engine defaults', () => {
@@ -82,7 +90,24 @@ describe('createSf2Selection', () => {
       program: 0,
       gain: SF2_DEFAULT_GAIN,
       polyphony: SF2_DEFAULT_POLYPHONY,
+      channelMap: [],
     });
+  });
+
+  it('restores and normalizes a multi-timbral channel map', () => {
+    const selection = createSf2Selection({
+      kind: 'sf2',
+      fontId: 'gm',
+      channelMap: [
+        { channel: 9, bank: (120 << 7) | 1, program: 0 },
+        { channel: 0, program: 40 },
+      ],
+    });
+    // Sorted by channel, entries preserved.
+    expect(selection.channelMap).toEqual([
+      { channel: 0, program: 40 },
+      { channel: 9, bank: (120 << 7) | 1, program: 0 },
+    ]);
   });
 });
 
@@ -125,6 +150,26 @@ describe('buildSf2Instrument', () => {
     expect(buildSf2Instrument({ ...EMPTY, fontId: 'abc', gain: 0 })).toEqual({
       kind: 'sf2',
       fontId: 'abc',
+    });
+  });
+
+  it('carries a non-empty channel map, normalized', () => {
+    expect(
+      buildSf2Instrument({
+        ...EMPTY,
+        fontId: 'abc',
+        channelMap: [
+          { channel: 9, bank: (120 << 7) | 1, program: 0 },
+          { channel: 0, program: 40 },
+        ],
+      }),
+    ).toEqual({
+      kind: 'sf2',
+      fontId: 'abc',
+      channelMap: [
+        { channel: 0, program: 40 },
+        { channel: 9, bank: (120 << 7) | 1, program: 0 },
+      ],
     });
   });
 });

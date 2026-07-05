@@ -4,7 +4,7 @@
  * variant.
  */
 
-import type { Sf2Instrument, TrackInstrument } from '@/project/instrument';
+import type { Sf2ChannelProgram, Sf2Instrument, TrackInstrument } from '@/project/instrument';
 
 /** Highest MIDI bank number (MSB * 128 + LSB). */
 export const MAX_SF2_BANK = 16383;
@@ -39,6 +39,41 @@ export interface Sf2Selection {
   gain: number;
   /** Max simultaneous voices (integer in [1, 64]). */
   polyphony: number;
+  /**
+   * Per-channel program overrides for multi-timbral (GM/GS module) rendering.
+   * Empty keeps the instrument single-timbral (bank/program apply to every
+   * channel the phrase uses).
+   */
+  channelMap: Sf2ChannelProgram[];
+}
+
+/** GM percussion channel (0-based); channel 10 in 1-based MIDI terms. */
+export const SF2_DRUM_CHANNEL = 9;
+
+/** Clamps a raw channel input to a valid MIDI channel (0-15). */
+export function clampChannel(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(15, Math.max(0, Math.round(value)));
+}
+
+/**
+ * Normalizes a channel map: clamps each entry, drops duplicates (last wins),
+ * and sorts by channel so the persisted order is stable.
+ *
+ * @param entries Raw channel-map entries.
+ */
+export function normalizeChannelMap(
+  entries: ReadonlyArray<Sf2ChannelProgram>,
+): Sf2ChannelProgram[] {
+  const byChannel = new Map<number, Sf2ChannelProgram>();
+  for (const entry of entries) {
+    const channel = clampChannel(entry.channel);
+    const normalized: Sf2ChannelProgram = { channel };
+    if (entry.bank !== undefined) normalized.bank = clampBank(entry.bank);
+    if (entry.program !== undefined) normalized.program = clampProgram(entry.program);
+    byChannel.set(channel, normalized);
+  }
+  return [...byChannel.values()].sort((a, b) => a.channel - b.channel);
 }
 
 /** Clamps a raw bank input to a valid integer bank number. */
@@ -80,6 +115,7 @@ export function createSf2Selection(instrument?: TrackInstrument | null): Sf2Sele
       program: clampProgram(instrument.program ?? 0),
       gain: clampGain(instrument.gain ?? SF2_DEFAULT_GAIN),
       polyphony: clampPolyphony(instrument.polyphony ?? SF2_DEFAULT_POLYPHONY),
+      channelMap: normalizeChannelMap(instrument.channelMap ?? []),
     };
   }
   return {
@@ -88,6 +124,7 @@ export function createSf2Selection(instrument?: TrackInstrument | null): Sf2Sele
     program: 0,
     gain: SF2_DEFAULT_GAIN,
     polyphony: SF2_DEFAULT_POLYPHONY,
+    channelMap: [],
   };
 }
 
@@ -112,5 +149,7 @@ export function buildSf2Instrument(selection: Sf2Selection): Sf2Instrument | nul
   // worth persisting.
   if (gain > 0 && gain !== SF2_DEFAULT_GAIN) instrument.gain = gain;
   if (polyphony !== SF2_DEFAULT_POLYPHONY) instrument.polyphony = polyphony;
+  const channelMap = normalizeChannelMap(selection.channelMap);
+  if (channelMap.length > 0) instrument.channelMap = channelMap;
   return instrument;
 }

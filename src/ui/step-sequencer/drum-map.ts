@@ -70,6 +70,71 @@ export function gmDrumName(pitch: number): string | null {
   return GM_DRUM_NAMES[pitch] ?? null;
 }
 
+/** GM2 drum-set bank: MSB 120 selects a percussion kit, the LSB picks it. */
+export const GM2_DRUM_BANK_MSB = 120;
+
+/**
+ * Encodes the SF2 channel-map bank number that selects a GM2 drum/SFX kit
+ * (bank MSB 120, kit in the LSB).
+ *
+ * @param kitLsb Kit index (bank LSB, 0-127).
+ */
+export function gm2DrumBank(kitLsb: number): number {
+  return (GM2_DRUM_BANK_MSB << 7) | (kitLsb & 0x7f);
+}
+
+/**
+ * Minimal shape of the wasm GM2 percussion helpers, injected by UI callers so
+ * this module stays free of a hard dependency on the wasm store.
+ */
+export interface DrumKitNameSource {
+  gm2DrumSetName?: (bankLsb: number) => string | null;
+  gm2DrumName?: (bankLsb: number, note: number) => string | null;
+}
+
+/**
+ * Display name of a GM2 drum/SFX kit (bank LSB), via the wasm helper. Returns
+ * null when the kit is unnamed or the helper is unavailable.
+ *
+ * @param kitLsb Kit index (bank LSB, 0-127).
+ * @param source wasm Project helpers (e.g. `getWasmModule().Project`).
+ */
+export function gm2DrumKitName(
+  kitLsb: number,
+  source: DrumKitNameSource | undefined,
+): string | null {
+  try {
+    return source?.gm2DrumSetName?.(kitLsb & 0x7f) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Percussion name for a pitch in a specific GM2 drum kit, falling back to the
+ * GM1 name (then null) when the kit has no override or the helper is
+ * unavailable.
+ *
+ * @param pitch MIDI note number.
+ * @param kitLsb Kit index (bank LSB, 0-127); omitted uses the GM1 map only.
+ * @param source wasm Project helpers (e.g. `getWasmModule().Project`).
+ */
+export function drumNoteName(
+  pitch: number,
+  kitLsb?: number,
+  source?: DrumKitNameSource,
+): string | null {
+  if (kitLsb !== undefined && source) {
+    try {
+      const name = source.gm2DrumName?.(kitLsb & 0x7f, pitch);
+      if (name) return name;
+    } catch {
+      // fall through to the GM1 map
+    }
+  }
+  return gmDrumName(pitch);
+}
+
 /**
  * Default drum-mode rows in display order (top to bottom): the most-used
  * subset of the GM kit covering cymbals, hats, toms, clap, snare and kick.

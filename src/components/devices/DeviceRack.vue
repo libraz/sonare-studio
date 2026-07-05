@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import DeviceInsertChain from '@/components/devices/DeviceInsertChain.vue';
+import Sf2ChannelMap from '@/components/devices/Sf2ChannelMap.vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
 import SearchField from '@/components/shell/SearchField.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
@@ -17,6 +18,7 @@ import {
   setTrackInstrument,
 } from '@/project/commands';
 import { listFonts, loadFont, loadFontMeta, type SoundFontMeta, saveFont } from '@/project/fonts';
+import type { Sf2ChannelProgram } from '@/project/instrument';
 import { type ExternalMidiInstrument, effectiveTrackInstrument } from '@/project/instrument';
 import type { QuickControlTarget } from '@/project/quick-controls';
 import {
@@ -216,6 +218,7 @@ function openInstrumentPicker(): void {
   pickerOpen.value = true;
   refreshPresetCatalog();
   sf2Selection.value = createSf2Selection(instrument.value);
+  sf2MultiTimbral.value = sf2Selection.value.channelMap.length > 0;
   syncExternalSelection();
   if (instrument.value?.kind === 'sf2') pickerTab.value = 'sf2';
   else if (instrument.value?.kind === 'synth-patch') pickerTab.value = 'patch';
@@ -276,6 +279,9 @@ const fonts = ref<SoundFontMeta[]>([]);
 const fontsLoading = ref(false);
 const sf2Selection = ref(createSf2Selection(null));
 const sf2FileInput = ref<HTMLInputElement | null>(null);
+// Whether the SF2 tab shows the multi-timbral channel map. Seeded from the
+// loaded instrument so a saved channel map reopens expanded.
+const sf2MultiTimbral = ref(false);
 
 type Sf2ManifestProbe =
   | { state: 'idle'; text: '' }
@@ -321,6 +327,19 @@ function onProgramInput(event: Event): void {
 
 function selectSf2Program(program: number): void {
   sf2Selection.value = { ...sf2Selection.value, program: clampProgram(program) };
+}
+
+function setMultiTimbral(enabled: boolean): void {
+  sf2MultiTimbral.value = enabled;
+  // Turning the map off drops every per-channel override so the instrument
+  // returns to single-timbral rendering.
+  if (!enabled && sf2Selection.value.channelMap.length > 0) {
+    sf2Selection.value = { ...sf2Selection.value, channelMap: [] };
+  }
+}
+
+function onChannelMapUpdate(channelMap: Sf2ChannelProgram[]): void {
+  sf2Selection.value = { ...sf2Selection.value, channelMap };
 }
 
 function onGainInput(event: Event): void {
@@ -1064,6 +1083,24 @@ const instrumentSourceCaption = computed(() => {
                   <span class="sf2-program-name">{{ option.gm2Name ?? option.gmName }}</span>
                 </button>
               </div>
+            </div>
+            <div class="sf2-multitimbral">
+              <label class="sf2-multitimbral-toggle">
+                <input
+                  type="checkbox"
+                  :checked="sf2MultiTimbral"
+                  @change="setMultiTimbral(($event.target as HTMLInputElement).checked)"
+                />
+                <span class="sf2-multitimbral-label">{{ t.shell.devicesPanel.multiTimbral }}</span>
+                <span class="sf2-multitimbral-hint">{{
+                  t.shell.devicesPanel.multiTimbralHint
+                }}</span>
+              </label>
+              <Sf2ChannelMap
+                v-if="sf2MultiTimbral"
+                :model-value="sf2Selection.channelMap"
+                @update:model-value="onChannelMapUpdate"
+              />
             </div>
             <div class="sf2-actions">
               <label class="load-sf2">
