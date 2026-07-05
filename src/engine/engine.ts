@@ -38,6 +38,11 @@ export interface EngineHandle {
   dispose(): Promise<void>;
 }
 
+interface WorkletReadyPort {
+  addEventListener(type: 'message', listener: (event: MessageEvent) => void): void;
+  removeEventListener(type: 'message', listener: (event: MessageEvent) => void): void;
+}
+
 let wasmBinaryPromise: Promise<ArrayBuffer> | null = null;
 
 /** Fetches the sonare WASM bytes once (same-origin, as COEP require-corp demands). */
@@ -56,6 +61,25 @@ function fetchWasmBinary(): Promise<ArrayBuffer> {
       });
   }
   return wasmBinaryPromise;
+}
+
+export function waitForWorkletReady(port: WorkletReadyPort): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = (): void => {
+      port.removeEventListener('message', onMessage);
+    };
+    const onMessage = (event: MessageEvent): void => {
+      const data = event.data as { type?: unknown; message?: unknown } | null;
+      if (data?.type === 'ready') {
+        cleanup();
+        resolve();
+      } else if (data?.type === 'error') {
+        cleanup();
+        reject(new Error(`Engine worklet failed to initialize: ${String(data.message)}`));
+      }
+    };
+    port.addEventListener('message', onMessage);
+  });
 }
 
 /**
@@ -94,16 +118,7 @@ export async function createEngine(options: CreateEngineOptions = {}): Promise<E
           ...nodeOptions,
           processorOptions: { ...(nodeOptions.processorOptions ?? {}), wasmBinary },
         });
-        workletReady = new Promise<void>((resolve, reject) => {
-          node.port.addEventListener('message', (event: MessageEvent) => {
-            const data = event.data as { type?: unknown; message?: unknown } | null;
-            if (data?.type === 'ready') {
-              resolve();
-            } else if (data?.type === 'error') {
-              reject(new Error(`Engine worklet failed to initialize: ${String(data.message)}`));
-            }
-          });
-        });
+        workletReady = waitForWorkletReady(node.port);
         return node;
       },
     });

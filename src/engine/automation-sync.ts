@@ -22,9 +22,13 @@ import {
   busIdFromAutomationTarget,
   isBusAutomationTarget,
   parseInsertAutomationParam,
+  parseMasteringAutomationParam,
 } from '@/project/automation';
 import type { EngineHandle } from './engine';
-import { engineAutomationPoints } from './engine-declaration';
+import {
+  engineAutomationPoints,
+  engineAutomationPointsWithValueOffset,
+} from './engine-declaration';
 
 type MixerAutomationParam = 'faderDb' | 'pan';
 
@@ -44,6 +48,10 @@ export interface AutomationSyncOptions {
   busInsertIndexFor?: (storeBusId: string, storeInsertIndex: number) => number | undefined;
   /** Engine insert index for a group-track insert slot, after disabled slots are omitted. */
   groupInsertIndexFor?: (trackId: number, storeInsertIndex: number) => number | undefined;
+  /** Engine master-strip insert index for a mastering-chain processor slot. */
+  masteringInsertIndexFor?: (processorIndex: number) => number | undefined;
+  /** Current VCA gain offset for a track/group target, in dB. */
+  vcaOffsetFor?: (trackId: number) => number;
   /** Re-pushes the manual strip value after a lane has been cleared. */
   restoreParam: (target: AutomationTarget, param: AutomationParam) => void;
 }
@@ -85,8 +93,20 @@ export function createAutomationSync(
     for (const lane of lanes) {
       if (!lane.enabled) continue;
       let paramId: number | undefined;
+      const masteringRef = parseMasteringAutomationParam(lane.param);
+      if (masteringRef) {
+        if (lane.target !== 'master') continue;
+        const insertIndex = options.masteringInsertIndexFor?.(masteringRef.processorIndex);
+        if (insertIndex === undefined) continue;
+        const insertId = handle.engine.resolveMasterInsertAutomationId(
+          insertIndex,
+          masteringRef.paramName,
+        );
+        if (!Number.isFinite(insertId) || insertId < 0) continue;
+        paramId = insertId;
+      }
       const insertRef = parseInsertAutomationParam(lane.param);
-      if (insertRef) {
+      if (paramId === undefined && insertRef) {
         // Insert-parameter lane: the engine resolves the JSON-key name to the
         // reserved insert-automation id (and the strip selector) from its own
         // strip state. A negative result means the strip, insert, or key is not
@@ -143,12 +163,12 @@ export function createAutomationSync(
         }
         if (!Number.isFinite(insertId) || insertId < 0) continue;
         paramId = insertId;
-      } else if (isBusAutomationTarget(lane.target)) {
+      } else if (paramId === undefined && isBusAutomationTarget(lane.target)) {
         if (lane.param !== 'faderDb') continue;
         const busId = options.busIdFor?.(busIdFromAutomationTarget(lane.target));
         if (busId === undefined) continue;
         paramId = handle.engine.busAutomationParamId(busId);
-      } else {
+      } else if (paramId === undefined) {
         if (!isMixerAutomationParam(lane.param)) continue;
         const groupBusId =
           typeof lane.target === 'number' ? options.groupBusIdFor?.(lane.target) : undefined;
@@ -156,11 +176,19 @@ export function createAutomationSync(
           if (lane.param !== 'faderDb') continue;
           paramId = handle.engine.busAutomationParamId(groupBusId);
         } else {
-          if (lane.target !== 'master' && !knownTracks.has(lane.target)) continue;
-          paramId = handle.engine.automationParamId(lane.target, lane.param);
+          const mixerTarget = lane.target;
+          if (mixerTarget !== 'master' && typeof mixerTarget !== 'number') continue;
+          if (mixerTarget !== 'master' && !knownTracks.has(mixerTarget)) continue;
+          paramId = handle.engine.automationParamId(mixerTarget, lane.param);
         }
       }
-      const points = engineAutomationPoints(lane.points);
+      const points =
+        typeof lane.target === 'number' && lane.param === 'faderDb'
+          ? engineAutomationPointsWithValueOffset(
+              lane.points,
+              options.vcaOffsetFor?.(lane.target) ?? 0,
+            )
+          : engineAutomationPoints(lane.points);
       if (points.length === 0) continue;
       effectiveParamIds.add(paramId);
       const json = JSON.stringify(points);

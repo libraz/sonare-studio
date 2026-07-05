@@ -197,26 +197,28 @@ function parityFixture(): {
     width: 0.5,
     inserts: [
       { processor: 'dynamics.compressor', enabled: true, params: { thresholdDb: -18 } },
-      { processor: 'saturation.tape', enabled: false, params: { drive: 0.4 } },
+      { processor: 'saturation.tape', enabled: false, params: { driveDb: 0.4 } },
     ],
     eq: { enabled: true, bands: eqBands },
   });
   const busStrip = makeStrip({
     inserts: [
-      { processor: 'utility.gain', enabled: false, params: { gainDb: -12 } },
-      { processor: 'delay.echo', enabled: true, params: { feedback: 0.35 } },
+      { processor: 'stereo.monoMaker', enabled: false, params: { cutoffHz: 120 } },
+      { processor: 'dynamics.limiter', enabled: true, params: { thresholdDb: -3 } },
     ],
   });
   const groupStrip = makeStrip({
     polarityInvertLeft: true,
     inserts: [
-      { processor: 'utility.gain', enabled: false, params: { gainDb: -6 } },
-      { processor: 'filter.ladder', enabled: true, params: { cutoffHz: 900 } },
+      { processor: 'eq.tilt', enabled: false, params: { tiltDb: -1 } },
+      { processor: 'eq.bandPass', enabled: true, params: { frequencyHz: 900 } },
     ],
   });
   const master = makeStrip({
     pan: -0.1,
-    inserts: [{ processor: 'limiter.brickwall', enabled: false, params: { ceilingDb: -1 } }],
+    inserts: [
+      { processor: 'dynamics.brickwallLimiter', enabled: false, params: { ceilingDb: -1 } },
+    ],
     eq: {
       enabled: true,
       bands: [{ enabled: true, type: 'highShelf', frequencyHz: 8000, gainDb: 1 }],
@@ -254,13 +256,13 @@ function parityFixture(): {
     { target: 1, param: 'faderDb', enabled: true, points: [{ ppq: 0, value: -3 }] },
     {
       target: 1,
-      param: insertAutomationParam(1, 'drive'),
+      param: insertAutomationParam(1, 'driveDb'),
       enabled: true,
       points: [{ ppq: 1, value: 0.6, curve: 'hold' }],
     },
     {
       target: busAutomationTarget('bus-a'),
-      param: insertAutomationParam(1, 'feedback'),
+      param: insertAutomationParam(1, 'thresholdDb'),
       enabled: true,
       points: [
         { ppq: 2, value: 0.7 },
@@ -269,7 +271,7 @@ function parityFixture(): {
     },
     {
       target: 2,
-      param: insertAutomationParam(1, 'cutoffHz'),
+      param: insertAutomationParam(1, 'frequencyHz'),
       enabled: true,
       points: [{ ppq: 3, value: 1200 }],
     },

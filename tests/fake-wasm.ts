@@ -40,6 +40,8 @@ interface FakeClip {
   source_id: number;
   fade_in_ppq: number;
   fade_out_ppq: number;
+  warp_ref_id?: number;
+  warp_mode?: number;
 }
 
 /** One registered audio/MIDI source (inline audio or by-reference URI). */
@@ -82,6 +84,12 @@ interface FakeSidecar {
   payload: Uint8Array;
 }
 
+interface FakeWarpMap {
+  id: number;
+  name?: string;
+  anchors: Array<{ warpSample: number; sourceSample: number }>;
+}
+
 interface FakeState {
   tempoSegments: Array<{ startPpq: number; bpm: number; endBpm: number }>;
   timeSignatures: Array<{ startPpq: number; numerator: number; denominator: number }>;
@@ -93,6 +101,7 @@ interface FakeState {
   sourceCount: number;
   sources: Map<number, FakeSource>;
   assistSidecars: FakeSidecar[];
+  warpMaps: Map<number, FakeWarpMap>;
 }
 
 /** Packs a UMP MIDI 1.0 channel-voice word with the real binding layout. */
@@ -126,6 +135,12 @@ function cloneState(state: FakeState): FakeState {
     sourceCount: state.sourceCount,
     sources: new Map([...state.sources].map(([id, source]) => [id, { ...source }])),
     assistSidecars: state.assistSidecars.map((s) => ({ ...s, payload: s.payload.slice() })),
+    warpMaps: new Map(
+      [...state.warpMaps].map(([id, map]) => [
+        id,
+        { ...map, anchors: map.anchors.map((anchor) => ({ ...anchor })) },
+      ]),
+    ),
   };
 }
 
@@ -143,6 +158,7 @@ export class FakeProject {
     sourceCount: 0,
     sources: new Map(),
     assistSidecars: [],
+    warpMaps: new Map(),
   };
   private history: FakeState[] = [];
   private future: FakeState[] = [];
@@ -534,6 +550,44 @@ export class FakeProject {
     });
   }
 
+  setClipWarpRef(clipId: number, warpRefId: number): void {
+    this.edit(() => {
+      const clip = this.requireClip(clipId);
+      if (warpRefId <= 0) delete clip.warp_ref_id;
+      else clip.warp_ref_id = warpRefId;
+    });
+  }
+
+  setClipWarpMode(clipId: number, mode: string | number): void {
+    this.edit(() => {
+      const clip = this.requireClip(clipId);
+      const value =
+        mode === 'repitch' || mode === 1 ? 1 : mode === 'tempo-sync' || mode === 2 ? 2 : 0;
+      if (value === 0) delete clip.warp_mode;
+      else clip.warp_mode = value;
+    });
+  }
+
+  setWarpMap(map: {
+    id: number;
+    name?: string;
+    anchors: ReadonlyArray<{ warpSample: number; sourceSample: number }>;
+  }): void {
+    this.edit(() => {
+      this.state.warpMaps.set(map.id, {
+        id: map.id,
+        ...(map.name !== undefined ? { name: map.name } : {}),
+        anchors: map.anchors.map((anchor) => ({ ...anchor })),
+      });
+    });
+  }
+
+  removeWarpMap(warpRefId: number): void {
+    this.edit(() => {
+      this.state.warpMaps.delete(warpRefId);
+    });
+  }
+
   setMidiEvents(clipId: number, events: ReadonlyArray<FakeEvent>): void {
     this.edit(() => {
       this.requireClip(clipId);
@@ -709,6 +763,56 @@ export class FakeProject {
     return this.soundFont ? 1 : 0;
   }
 
+  soundFontManifest(): Array<{
+    channel: number;
+    bank: number;
+    program: number;
+    backend: 'sf2' | 'synth';
+    presetName: string;
+  }> {
+    const seen = new Set<string>();
+    const manifest: Array<{
+      channel: number;
+      bank: number;
+      program: number;
+      backend: 'sf2' | 'synth';
+      presetName: string;
+    }> = [];
+    const bankMsb = new Map<number, number>();
+    const bankLsb = new Map<number, number>();
+    const programByChannel = new Map<number, number>();
+    for (const events of this.state.midi.values()) {
+      for (const event of events) {
+        const status = (event.data0 >>> 20) & 0xf;
+        const channel = (event.data0 >>> 16) & 0xf;
+        const data1 = (event.data0 >>> 8) & 0xff;
+        const data2 = event.data0 & 0xff;
+        if (status === 0xb && data1 === 0) bankMsb.set(channel, data2 & 0x7f);
+        else if (status === 0xb && data1 === 32) bankLsb.set(channel, data2 & 0x7f);
+        else if (status === 0xc) programByChannel.set(channel, data1 & 0x7f);
+        else if (status === 0x9 && data2 > 0) {
+          const bank = ((bankMsb.get(channel) ?? 0) << 7) | (bankLsb.get(channel) ?? 0);
+          const program = programByChannel.get(channel) ?? 0;
+          const key = `${channel}:${bank}:${program}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const backend = this.soundFont ? 'sf2' : 'synth';
+          manifest.push({
+            channel,
+            bank,
+            program,
+            backend,
+            presetName:
+              backend === 'sf2'
+                ? `SF2 ${bank}:${program}`
+                : (FakeProject.gmInstrumentName(program) ?? `Program ${program}`),
+          });
+        }
+      }
+    }
+    return manifest;
+  }
+
   /** Deterministic stereo render stand-in (3 frames, interleaved L/R). */
   bounceWithSynthInstrument(_instrument?: unknown, _options?: unknown): Float32Array {
     return new Float32Array([0.25, -0.25, 0.5, -0.5, 0.75, -0.75]);
@@ -744,6 +848,11 @@ export class FakeProject {
       })),
       tracks: this.state.tracks.map((t) => ({ id: t.id, kind: t.kind, name: t.name })),
       clips: this.state.clips.map((c) => ({ ...c })),
+      warp_maps: [...this.state.warpMaps.values()].map((map) => ({
+        id: map.id,
+        name: map.name,
+        anchors: map.anchors.map((anchor) => ({ ...anchor })),
+      })),
       markers: this.state.markers.map((m) => ({ ...m })),
       annotation: { chords: this.state.chords.map((c) => ({ ...c })) },
       midi_content: Object.fromEntries(
@@ -796,6 +905,10 @@ export const FAKE_SYNTH_PRESETS = [
   'pluck',
   'organ',
   'brass',
+  'pipe-organ',
+  'bowed-string',
+  'reed',
+  'flute',
   'electric-guitar',
   'drum-kit',
 ] as const;
@@ -843,7 +956,13 @@ export const FAKE_INSERT_PARAMS: Record<string, string[]> = {
     'kneeDb',
     'makeupGainDb',
   ],
+  'dynamics.deesser': ['thresholdDb', 'frequencyHz'],
+  'dynamics.parallelComp': ['thresholdDb', 'mix'],
+  'dynamics.sidechainRouter': ['rangeDb'],
   'eq.tilt': ['tiltDb', 'pivotHz'],
+  'modulation.chorus': ['rateHz', 'depth', 'mix'],
+  'modulation.flanger': ['rateHz', 'depth', 'feedback', 'mix'],
+  'modulation.rotary': ['speed', 'drive', 'mix'],
   'saturation.tape': ['driveDb', 'saturation', 'outputGainDb'],
   'stereo.imager': ['width', 'outputGainDb'],
 };
@@ -854,6 +973,135 @@ export const FAKE_MASTERING_PRESETS = ['pop', 'edm', 'acoustic', 'hipHop', 'spee
 /** Mirrors masteringPresetNames for catalog-aware code paths. */
 export function fakeMasteringPresetNames(): string[] {
   return [...FAKE_MASTERING_PRESETS];
+}
+
+export function fakeMixingScenePresetNames(): string[] {
+  return ['vocalReverbSend', 'drumBusSubgroup', 'commentaryDucking'];
+}
+
+export function fakeMixingScenePresetJson(preset: string): string {
+  const scenes: Record<string, unknown> = {
+    commentaryDucking: {
+      version: 1,
+      buses: [{ id: 'master', role: 'master', inserts: [] }],
+      connections: [
+        { source: 'host', destination: 'master' },
+        { source: 'guest', destination: 'master' },
+        { source: 'music-bed', destination: 'master' },
+      ],
+      strips: [
+        {
+          id: 'host',
+          faderDb: -3,
+          pan: 0,
+          muted: false,
+          soloed: false,
+          sends: [],
+          inserts: [
+            {
+              slot: 'pre',
+              processor: 'dynamics.deesser',
+              params: JSON.stringify({ thresholdDb: -24 }),
+            },
+          ],
+        },
+        { id: 'guest', faderDb: -4, pan: 0.1, muted: false, soloed: false, sends: [], inserts: [] },
+        {
+          id: 'music-bed',
+          faderDb: -18,
+          pan: 0,
+          muted: false,
+          soloed: false,
+          sends: [],
+          inserts: [
+            {
+              slot: 'post',
+              processor: 'dynamics.sidechainRouter',
+              sidechainKey: 'host',
+              params: JSON.stringify({ rangeDb: 18 }),
+            },
+          ],
+        },
+      ],
+      vcaGroups: [{ id: 'voices', gainDb: 0, members: ['host', 'guest'] }],
+    },
+    drumBusSubgroup: {
+      version: 1,
+      buses: [
+        { id: 'master', role: 'master', inserts: [] },
+        { id: 'drum-bus', role: 'subgroup', inserts: [] },
+      ],
+      connections: [
+        { source: 'kick', destination: 'drum-bus' },
+        { source: 'snare', destination: 'drum-bus' },
+        { source: 'drum-bus', destination: 'drum-bus-return' },
+        { source: 'drum-bus-return', destination: 'master' },
+      ],
+      strips: [
+        { id: 'kick', faderDb: -3, pan: 0, muted: false, soloed: false, sends: [], inserts: [] },
+        { id: 'snare', faderDb: -3, pan: 0, muted: false, soloed: false, sends: [], inserts: [] },
+        {
+          id: 'drum-bus-return',
+          faderDb: -2,
+          pan: 0,
+          muted: false,
+          soloed: false,
+          sends: [],
+          inserts: [
+            {
+              slot: 'pre',
+              processor: 'dynamics.parallelComp',
+              params: JSON.stringify({ mix: 0.35 }),
+            },
+          ],
+        },
+      ],
+      vcaGroups: [{ id: 'drums', gainDb: 0, members: ['kick', 'snare'] }],
+    },
+    vocalReverbSend: {
+      version: 1,
+      buses: [
+        { id: 'master', role: 'master', inserts: [] },
+        { id: 'vocal-verb', role: 'aux', inserts: [] },
+      ],
+      connections: [
+        { source: 'vocal', destination: 'master' },
+        { source: 'vocal-verb', destination: 'vocal-verb-return' },
+        { source: 'vocal-verb-return', destination: 'master' },
+      ],
+      strips: [
+        {
+          id: 'vocal',
+          faderDb: -3,
+          pan: 0,
+          muted: false,
+          soloed: false,
+          sends: [{ destinationBusId: 'vocal-verb', sendDb: -14, timing: 'post' }],
+          inserts: [],
+        },
+        {
+          id: 'vocal-verb-return',
+          faderDb: -10,
+          pan: 0,
+          width: 1.25,
+          muted: false,
+          soloed: false,
+          sends: [],
+          inserts: [
+            {
+              slot: 'post',
+              processor: 'stereo.imager',
+              params: JSON.stringify({ width: 1.35 }),
+            },
+          ],
+        },
+      ],
+      vcaGroups: [],
+    },
+  };
+  const scene = scenes[preset];
+  if (!scene) throw new RangeError(`Unknown mixer scene preset: ${preset}`);
+  return JSON.stringify(scene);
 }
 
 /** Mirrors synthPresetNames for catalog-aware code paths. */
@@ -1004,8 +1252,51 @@ export function createFakeWasmModule(): typeof import('@/wasm/index.js') {
     synthPresetNames: fakeSynthPresetNames,
     synthPresetPatch: fakeSynthPresetPatch,
     masteringInsertNames: () => Object.keys(FAKE_INSERT_PARAMS),
+    masteringProcessorCatalog: () =>
+      Object.keys(FAKE_INSERT_PARAMS).map((id) => ({
+        id,
+        kind: 'realtime',
+        realtimeInsertable: true,
+        stereoOnly: id === 'modulation.rotary' || id === 'stereo.imager',
+        latencySamples: 0,
+      })),
     masteringInsertParamNames: (name: string) => FAKE_INSERT_PARAMS[name] ?? [],
     masteringPresetNames: fakeMasteringPresetNames,
+    mixingScenePresetNames: fakeMixingScenePresetNames,
+    mixingScenePresetJson: fakeMixingScenePresetJson,
+    masteringStreamingPreview: (
+      _samples: Float32Array,
+      _sampleRate = 48000,
+      platforms: Array<{ name: string; targetLufs: number; ceilingDb: number }> = [],
+    ) =>
+      JSON.stringify({
+        platforms: (platforms.length
+          ? platforms
+          : [
+              { name: 'Spotify', targetLufs: -14, ceilingDb: -1 },
+              { name: 'Apple Music', targetLufs: -16, ceilingDb: -1 },
+              { name: 'YouTube', targetLufs: -14, ceilingDb: -1 },
+            ]
+        ).map((platform) => ({
+          name: platform.name,
+          integratedLufs: -13,
+          truePeakDb: -0.8,
+          normalizationGainDb: platform.targetLufs + 13,
+          ceilingRisk: -0.8 + platform.targetLufs + 13 > platform.ceilingDb,
+        })),
+      }),
+    masteringStereoAnalyze: (
+      _analysisName: string,
+      _left: Float32Array,
+      _right: Float32Array,
+      _sampleRate = 48000,
+    ) =>
+      JSON.stringify({
+        correlation: 0.42,
+        monoCompatWidth: 0.8,
+        monoCompatPeak: -3.2,
+        likelyMonoCompatible: true,
+      }),
     // Pass-through one-shot stereo processor: copies the input unchanged.
     masteringProcessStereo: (
       _name: string,

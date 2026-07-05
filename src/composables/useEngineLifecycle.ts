@@ -17,13 +17,42 @@ import {
   busIdFromAutomationTarget,
   isBusAutomationTarget,
   parseInsertAutomationParam,
+  parseMasteringAutomationParam,
 } from '@/project/automation';
 import { enabledInsertAutomationIndex } from '@/project/automation-insert';
+import {
+  type InsertLatencyCatalogEntry,
+  insertLatencyResolverFromCatalog,
+} from '@/project/insert-latency';
 import { clampPan, laneGainDb, type MixerStrip, vcaOffsetDb } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
+import type { EditorTrack } from '@/project/types';
 
 type Transport = ReturnType<typeof useTransport>;
 type RunAction = (action: () => Promise<void>) => Promise<void>;
+
+interface AudioContextStateLike {
+  readonly state: string;
+  addEventListener(type: 'statechange', listener: () => void): void;
+  removeEventListener(type: 'statechange', listener: () => void): void;
+}
+
+export function canRestoreTrackInsertAutomationParam(
+  track: Pick<EditorTrack, 'frozen'> | undefined,
+): boolean {
+  return track?.frozen === undefined;
+}
+
+export function bindAudioContextState(ctx: AudioContextStateLike, target: Ref<string>): () => void {
+  const update = (): void => {
+    target.value = ctx.state;
+  };
+  update();
+  ctx.addEventListener('statechange', update);
+  return () => {
+    ctx.removeEventListener('statechange', update);
+  };
+}
 
 export interface EngineLifecycleOptions {
   bridge: ShallowRef<MeterBridge | null>;
@@ -47,6 +76,12 @@ export interface EngineLifecycleOptions {
 export function useEngineLifecycle(options: EngineLifecycleOptions) {
   const store = useProjectStore();
   let engineStartPromise: Promise<void> | null = null;
+  let disposeCtxState: (() => void) | null = null;
+
+  function disposeEngineLifecycle(): void {
+    disposeCtxState?.();
+    disposeCtxState = null;
+  }
 
   async function ensureEngineStarted(): Promise<EngineHandle | null> {
     if (options.handle.value) {
@@ -69,13 +104,36 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
       if (options.handle.value) return;
       const h = await createEngine();
       options.handle.value = h;
-      const nextMixerSync = createMixerSync(h);
-      const wasm = (await ensureWasm()) as unknown as { masteringInsertNames?: () => string[] };
+      const wasm = (await ensureWasm()) as unknown as {
+        masteringInsertNames?: () => string[];
+        masteringProcessorCatalog?: () => InsertLatencyCatalogEntry[];
+      };
       const insertCatalog =
         typeof wasm.masteringInsertNames === 'function'
           ? new Set(wasm.masteringInsertNames())
           : null;
+      const insertLatency =
+        typeof wasm.masteringProcessorCatalog === 'function'
+          ? insertLatencyResolverFromCatalog(wasm.masteringProcessorCatalog(), {
+              sampleRate: h.ctx.sampleRate,
+            })
+          : undefined;
+      const nextMixerSync = createMixerSync(h, { insertLatency });
       const nextStripSync = createStripSync(h, { insertCatalog });
+      const masteringInsertIndexFor = (processorIndex: number): number | undefined => {
+        const processors = store.mixer.masteringChain?.processors ?? [];
+        const slot = processors[processorIndex];
+        if (!slot?.enabled) return undefined;
+        if (insertCatalog && !insertCatalog.has(slot.processor)) return undefined;
+        let engineIndex = store.mixer.master.inserts.length;
+        for (let i = 0; i < processorIndex; i += 1) {
+          const previous = processors[i];
+          if (previous?.enabled && (!insertCatalog || insertCatalog.has(previous.processor))) {
+            engineIndex += 1;
+          }
+        }
+        return engineIndex;
+      };
       const nextAutomationSync = createAutomationSync(h, {
         knownTrackIds: () => nextMixerSync.laneTrackIds(),
         busIdFor: (storeBusId) => nextStripSync.busIdFor(storeBusId),
@@ -90,7 +148,31 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
             store.tracks.find((entry) => entry.id === trackId)?.mixer,
             index,
           ),
+        masteringInsertIndexFor,
+        vcaOffsetFor: (trackId) => {
+          const track = store.tracks.find((entry) => entry.id === trackId);
+          const vcaGroups = store.mixer.vcaGroups ?? [];
+          const vcaGainDb = vcaGroups.length
+            ? new Map(vcaGroups.map((group) => [group.id, group.gainDb]))
+            : undefined;
+          return vcaOffsetDb(track?.vcaId, vcaGainDb);
+        },
         restoreParam: (target, param) => {
+          const masteringRef = parseMasteringAutomationParam(param);
+          if (masteringRef) {
+            if (target !== 'master') return;
+            const slot = store.mixer.masteringChain?.processors[masteringRef.processorIndex];
+            const value = slot?.params[masteringRef.paramName];
+            const engineInsertIndex = masteringInsertIndexFor(masteringRef.processorIndex);
+            if (typeof value === 'number' && engineInsertIndex !== undefined) {
+              h.engine.setMasterStripInsertParamByName(
+                engineInsertIndex,
+                masteringRef.paramName,
+                value,
+              );
+            }
+            return;
+          }
           const insertRef = parseInsertAutomationParam(param);
           if (insertRef) {
             // Clearing an insert lane leaves the engine at its last automated
@@ -128,6 +210,7 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
               }
             } else if (typeof target === 'number') {
               const track = store.tracks.find((entry) => entry.id === target);
+              if (!canRestoreTrackInsertAutomationParam(track)) return;
               const groupBusId = nextStripSync.groupBusIdFor(target);
               const value = slotValue(track?.mixer);
               const engineInsertIndex = enabledInsertAutomationIndex(
@@ -224,10 +307,8 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
       options.bridge.value = createMeterBridge(h);
       options.analyser.value = createAnalyserBridge(h);
       options.scope.value = createScopeBridge(h);
-      options.ctxState.value = h.ctx.state;
-      h.ctx.addEventListener('statechange', () => {
-        options.ctxState.value = h.ctx.state;
-      });
+      disposeEngineLifecycle();
+      disposeCtxState = bindAudioContextState(h.ctx, options.ctxState);
       h.engine.node.onprocessorerror = () => {
         options.errorMessage.value =
           'Engine worklet processor crashed during processing (onprocessorerror).';
@@ -276,6 +357,7 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
   }
 
   return {
+    disposeEngineLifecycle,
     ensureEngineStarted,
     playTestTone,
     renderOffline,

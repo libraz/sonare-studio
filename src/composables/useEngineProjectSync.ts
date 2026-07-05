@@ -15,6 +15,7 @@ import type { StripSync } from '@/engine/strip-sync';
 import type { TransportSync } from '@/engine/transport-sync';
 import type { WebMidiOutputBridge } from '@/engine/web-midi-output';
 import { describeError } from '@/lib/errors';
+import { parseInstrumentAutomationParam } from '@/project/automation';
 import type { ScheduledProjectClip } from '@/project/scheduling';
 import { scheduleProjectClips } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
@@ -59,6 +60,23 @@ function trackMidiSyncKey(track: EditorTrack): string {
 function clipScheduleKey(clip: EditorClip): string {
   const { name: _name, ...rest } = clip;
   return JSON.stringify(rest);
+}
+
+function instrumentAutomationSyncKey(
+  lanes: ReturnType<typeof useProjectStore>['automationLanes'],
+): string {
+  return JSON.stringify(
+    lanes.filter(
+      (lane) => typeof lane.target === 'number' && parseInstrumentAutomationParam(lane.param),
+    ),
+  );
+}
+
+function hasInstrumentAutomation(lanes: ReturnType<typeof useProjectStore>['automationLanes']) {
+  return lanes.some(
+    (lane) =>
+      lane.enabled && typeof lane.target === 'number' && parseInstrumentAutomationParam(lane.param),
+  );
 }
 
 export function useEngineProjectSync(options: EngineProjectSyncOptions) {
@@ -109,20 +127,37 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
   }
 
   function syncMixerState(): void {
-    if (!mixerSync || !stripSync || !store.initialized) return;
-    const vcaGroups = store.mixer.vcaGroups ?? [];
-    const vcaGainDb = vcaGroups.length
-      ? new Map(vcaGroups.map((group) => [group.id, group.gainDb]))
-      : undefined;
-    mixerSync.sync(store.tracks, store.mixer.master, vcaGainDb);
-    stripSync.sync(store.tracks, store.mixer);
+    try {
+      if (!mixerSync || !stripSync || !store.initialized) return;
+      const vcaGroups = store.mixer.vcaGroups ?? [];
+      const vcaGainDb = vcaGroups.length
+        ? new Map(vcaGroups.map((group) => [group.id, group.gainDb]))
+        : undefined;
+      const vcaControls = vcaGroups.length
+        ? new Map(vcaGroups.map((group) => [group.id, group]))
+        : undefined;
+      mixerSync.sync(
+        store.tracks,
+        store.mixer.master,
+        vcaGainDb,
+        vcaControls,
+        store.mixer.soloMode,
+      );
+      stripSync.sync(store.tracks, store.mixer);
+    } catch (err) {
+      errorMessage.value = describeError(err);
+    }
   }
 
   function syncAutomationState(): void {
-    if (!automationSync || !store.initialized) return;
-    automationSync.sync(
-      store.automationLanes.filter((lane) => automationStripMode(lane.target) !== 'off'),
-    );
+    try {
+      if (!automationSync || !store.initialized) return;
+      automationSync.sync(
+        store.automationLanes.filter((lane) => automationStripMode(lane.target) !== 'off'),
+      );
+    } catch (err) {
+      errorMessage.value = describeError(err);
+    }
   }
 
   function trackMeterSource(trackId: number): MeterSource | null {
@@ -177,9 +212,13 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
   }
 
   function syncTransportState(): void {
-    if (!transportSync || !store.initialized) return;
-    transportSync.sync(store.tempoSegments, store.timeSignatures, store.markers);
-    transport.setTempoMap(effectiveTempoSegments());
+    try {
+      if (!transportSync || !store.initialized) return;
+      transportSync.sync(store.tempoSegments, store.timeSignatures, store.markers);
+      transport.setTempoMap(effectiveTempoSegments());
+    } catch (err) {
+      errorMessage.value = describeError(err);
+    }
   }
 
   function syncMidiState(): Promise<void> {
@@ -195,7 +234,14 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     webMidiOutput?.syncRoutes(store.tracks, store.projectExternalMidi);
     midiSyncQueue = midiSyncQueue
       .then(() =>
-        m.sync(store.tracks, store.clips, effectiveTempoSegments(), store.projectExternalMidi),
+        m.sync(
+          store.tracks,
+          store.clips,
+          effectiveTempoSegments(),
+          store.projectExternalMidi,
+          store.automationLanes,
+          transport.positionPpq?.value ?? 0,
+        ),
       )
       .catch((err) => {
         errorMessage.value = describeError(err);
@@ -221,6 +267,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
   }
 
   function disposeEngineProjectSync(): void {
+    applyGeneration++;
     if (applyTimer !== null) {
       clearTimeout(applyTimer);
       applyTimer = null;
@@ -256,10 +303,18 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
           .map(clipScheduleKey)
           .join('\n'),
         store.tracks.map(trackMidiSyncKey).join('\n'),
+        instrumentAutomationSyncKey(store.automationLanes),
         JSON.stringify(effectiveTempoSegments()),
       ].join('\0'),
     (next, prev) => {
       if (next !== prev) syncMidiState();
+    },
+    { flush: 'sync' },
+  );
+  watch(
+    () => transport.positionPpq?.value ?? 0,
+    (next, prev) => {
+      if (next !== prev && hasInstrumentAutomation(store.automationLanes)) syncMidiState();
     },
     { flush: 'sync' },
   );

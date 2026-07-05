@@ -24,24 +24,50 @@
  * localStorage persistence across the reload and a reset back to defaults),
  * and applies the named workspace layout presets.
  *
- * Playwright is resolved from /tmp/node_modules; fflate from the project's
- * own node_modules. By default the bundled Playwright Chromium is used; set
- * SONARE_E2E_BROWSER_CHANNEL=chrome to force the local Chrome channel.
+ * Playwright is resolved from /tmp/node_modules first, then the project and
+ * current working directory. fflate is resolved from the project node_modules.
+ * By default the bundled Playwright Chromium is used; set
+ * SONARE_E2E_BROWSER_CHANNEL=chrome to force the local Chrome channel, or
+ * SONARE_E2E_BROWSER_EXECUTABLE=/path/to/browser to use a specific binary.
+ * Set SONARE_E2E_HEADLESS=0 to debug with a visible browser.
  * Usage:
  *   yarn dev --port 5199   # in the project root, in the background
  *   node scripts/e2e-smoke.mjs [baseUrl]
  */
-import { writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const require = createRequire('/tmp/node_modules/');
-const { chromium } = require('playwright');
-const projectRequire = createRequire(new URL('../node_modules/', import.meta.url));
+const projectRequire = createRequire(new URL('../package.json', import.meta.url));
 const { unzipSync } = projectRequire('fflate');
 
 const baseUrl = process.argv[2] ?? 'http://localhost:5199';
+
+function loadModule(name) {
+  const loaders = [
+    { label: '/tmp/node_modules', require: createRequire(join(tmpdir(), 'sonare-e2e-loader.cjs')) },
+    { label: 'project node_modules', require: projectRequire },
+    {
+      label: 'current working directory',
+      require: createRequire(join(process.cwd(), 'package.json')),
+    },
+  ];
+  const errors = [];
+  for (const loader of loaders) {
+    try {
+      return loader.require(name);
+    } catch (error) {
+      errors.push(`${loader.label}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  throw new Error(
+    `Unable to load ${name}. Install it with "npm --prefix /tmp install ${name}" ` +
+      `or make it available in the project. Tried:\n${errors.join('\n')}`,
+  );
+}
+
+const { chromium } = loadModule('playwright');
 
 /** Fails the run with a message. */
 function fail(message) {
@@ -74,20 +100,39 @@ function makeWavBytes(seconds, frequencyHz, sampleRate = 44100, amplitude = 0.8)
   return Buffer.concat([header, data]);
 }
 
-const browserChannel = process.env.SONARE_E2E_BROWSER_CHANNEL;
-const browser = await chromium.launch({
-  headless: true,
-  ...(browserChannel ? { channel: browserChannel } : {}),
-  args: [
-    '--autoplay-policy=no-user-gesture-required',
-    '--mute-audio',
-    // Fake microphone for the recording flow (tone generator, auto-granted).
-    '--use-fake-device-for-media-stream',
-    '--use-fake-ui-for-media-stream',
-  ],
-});
+async function launchBrowser() {
+  const browserChannel = process.env.SONARE_E2E_BROWSER_CHANNEL;
+  const executablePath = process.env.SONARE_E2E_BROWSER_EXECUTABLE;
+  if (executablePath && !existsSync(executablePath)) {
+    throw new Error(`SONARE_E2E_BROWSER_EXECUTABLE does not exist: ${executablePath}`);
+  }
+  try {
+    return await chromium.launch({
+      headless: process.env.SONARE_E2E_HEADLESS !== '0',
+      ...(executablePath ? { executablePath } : browserChannel ? { channel: browserChannel } : {}),
+      args: [
+        '--autoplay-policy=no-user-gesture-required',
+        '--mute-audio',
+        '--no-sandbox',
+        '--disable-dev-shm-usage',
+        // Fake microphone for the recording flow (tone generator, auto-granted).
+        '--use-fake-device-for-media-stream',
+        '--use-fake-ui-for-media-stream',
+      ],
+    });
+  } catch (error) {
+    throw new Error(
+      `Unable to launch Chromium for E2E smoke. ` +
+        `Try SONARE_E2E_BROWSER_CHANNEL=chrome or ` +
+        `SONARE_E2E_BROWSER_EXECUTABLE=/path/to/chrome. ` +
+        `Original error: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
 
+let browser;
 try {
+  browser = await launchBrowser();
   const page = await browser.newPage();
   page.on('pageerror', (err) => console.error('pageerror:', err.message));
 
@@ -1959,5 +2004,5 @@ try {
 } catch (err) {
   fail(err instanceof Error ? (err.stack ?? err.message) : String(err));
 } finally {
-  await browser.close();
+  await browser?.close();
 }

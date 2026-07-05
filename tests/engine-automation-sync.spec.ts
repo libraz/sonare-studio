@@ -7,6 +7,7 @@ import {
   type AutomationTarget,
   busAutomationTarget,
   insertAutomationParam,
+  masteringAutomationParam,
 } from '@/project/automation';
 
 /** Param ids the stub hands out: track ids map to 1000 + id (faderDb) / 2000 + id (pan). */
@@ -134,6 +135,34 @@ describe('createAutomationSync', () => {
     expect(engine.resolveBusInsertAutomationId).toHaveBeenCalledWith(2, 1, 'drive');
   });
 
+  it('maps mastering-chain automation through the live master strip insert resolver', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createAutomationSync(handle, {
+      knownTrackIds: () => [],
+      masteringInsertIndexFor: (processorIndex) => (processorIndex === 2 ? 4 : undefined),
+      restoreParam: vi.fn(),
+    });
+
+    sync.sync([
+      makeLane('master', [{ ppq: 0, value: -1 }], {
+        param: masteringAutomationParam(2, 'ceilingDb'),
+      }),
+      makeLane('master', [{ ppq: 0, value: 0.5 }], {
+        param: masteringAutomationParam(3, 'drive'),
+      }),
+      makeLane(1, [{ ppq: 0, value: 0.5 }], {
+        param: masteringAutomationParam(2, 'ceilingDb'),
+      }),
+    ]);
+
+    expect(engine.resolveMasterInsertAutomationId).toHaveBeenCalledTimes(1);
+    expect(engine.resolveMasterInsertAutomationId).toHaveBeenCalledWith(4, 'ceilingDb');
+    expect(engine.setAutomationLane).toHaveBeenCalledWith(6000, [
+      { ppq: 0, value: -1, curveToNext: 0 },
+    ]);
+    expect(sync.installedParamIds()).toStrictEqual([6000]);
+  });
+
   it('installs an effective lane with curve codes on its points', () => {
     const { handle, engine } = makeHandle();
     const restoreParam = vi.fn();
@@ -153,6 +182,21 @@ describe('createAutomationSync', () => {
     ]);
     expect(sync.installedParamIds()).toStrictEqual([stubParamId(1, 'faderDb')]);
     expect(restoreParam).not.toHaveBeenCalled();
+  });
+
+  it('adds the current VCA offset to track fader automation values', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createAutomationSync(handle, {
+      knownTrackIds: () => [1],
+      restoreParam: vi.fn(),
+      vcaOffsetFor: (trackId) => (trackId === 1 ? -6 : 0),
+    });
+
+    sync.sync([makeLane(1, [{ ppq: 0, value: -12 }])]);
+
+    expect(engine.setAutomationLane).toHaveBeenCalledWith(stubParamId(1, 'faderDb'), [
+      { ppq: 0, value: -18, curveToNext: 0 },
+    ]);
   });
 
   it('sends nothing on an identical second sync', () => {

@@ -6,12 +6,14 @@ import type { MidiSync } from '@/engine/midi-sync';
 import type { MixerSync } from '@/engine/mixer-sync';
 import type { StripSync } from '@/engine/strip-sync';
 import type { WebMidiOutputBridge } from '@/engine/web-midi-output';
+import { instrumentAutomationParam } from '@/project/automation';
 import {
   setProjectExternalMidiDefault,
   setTrackExternalMidiMode,
   setTrackMidiFx,
 } from '@/project/commands';
 import { sanitizeMidiFxConfig } from '@/project/midi-fx';
+import { type ScheduledProjectClip, scheduleProjectClips } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
 import type { EditorClip, EditorTrack } from '@/project/types';
 import { resetAutomationStripModes, setAutomationStripMode } from '@/ui/mixer/automation-mode';
@@ -19,6 +21,14 @@ import { resetAutomationStripModes, setAutomationStripMode } from '@/ui/mixer/au
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
   return { ensureWasm: async () => createFakeWasmModule() };
+});
+
+vi.mock('@/project/scheduling', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/project/scheduling')>();
+  return {
+    ...actual,
+    scheduleProjectClips: vi.fn(actual.scheduleProjectClips),
+  };
 });
 
 function track(id: number): EditorTrack {
@@ -55,6 +65,7 @@ describe('useEngineProjectSync', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     resetAutomationStripModes();
+    vi.mocked(scheduleProjectClips).mockReset();
   });
 
   it('declares mixer lanes before MIDI instrument binding', async () => {
@@ -175,6 +186,144 @@ describe('useEngineProjectSync', () => {
     scope.stop();
   });
 
+  it('passes instrument automation lanes and the current PPQ to MIDI sync', async () => {
+    const store = useProjectStore();
+    store.dispose();
+    await store.init();
+    store.tracks = [track(1)];
+    store.clips = [clip(1)];
+    store.automationLanes = [
+      {
+        target: 1,
+        param: instrumentAutomationParam('cutoffHz'),
+        enabled: true,
+        points: [{ ppq: 0, value: 900 }],
+      },
+    ];
+
+    const midiSync: MidiSync = {
+      sync: vi.fn(async () => undefined),
+      scheduledClipCount: () => 1,
+    };
+    const transport = {
+      positionPpq: ref(3),
+      setTempoMap: vi.fn(),
+      setTempo: vi.fn(),
+    };
+    const scope = effectScope();
+    const projectSync = scope.run(() =>
+      useEngineProjectSync({
+        bridge: shallowRef(null),
+        scope: shallowRef(null),
+        errorMessage: ref(''),
+        handle: shallowRef(null),
+        transport: transport as never,
+      }),
+    );
+    if (!projectSync) throw new Error('effect scope did not run');
+
+    projectSync.setEngineSyncHandles({
+      mixerSync: null,
+      stripSync: null,
+      automationSync: null,
+      midiSync,
+      transportSync: null,
+      webMidiOutput: null,
+    });
+
+    await projectSync.syncMidiState();
+
+    expect(midiSync.sync).toHaveBeenLastCalledWith(
+      store.tracks,
+      store.clips,
+      [{ startPpq: 0, bpm: store.tempoBpm }],
+      store.projectExternalMidi,
+      store.automationLanes,
+      3,
+    );
+
+    vi.mocked(midiSync.sync).mockClear();
+    transport.positionPpq.value = 4;
+    await nextTick();
+    await vi.waitFor(() => expect(midiSync.sync).toHaveBeenCalledTimes(1));
+    expect(midiSync.sync).toHaveBeenLastCalledWith(
+      store.tracks,
+      store.clips,
+      [{ startPpq: 0, bpm: store.tempoBpm }],
+      store.projectExternalMidi,
+      store.automationLanes,
+      4,
+    );
+
+    vi.mocked(midiSync.sync).mockClear();
+    store.automationLanes = [
+      {
+        target: 1,
+        param: instrumentAutomationParam('cutoffHz'),
+        enabled: true,
+        points: [{ ppq: 0, value: 1200 }],
+      },
+    ];
+    await nextTick();
+    await vi.waitFor(() => expect(midiSync.sync).toHaveBeenCalledTimes(1));
+    scope.stop();
+  });
+
+  it('does not resync MIDI on playhead moves when no instrument automation is active', async () => {
+    const store = useProjectStore();
+    store.dispose();
+    await store.init();
+    store.tracks = [track(1)];
+    store.clips = [clip(1)];
+    store.automationLanes = [
+      { target: 1, param: 'faderDb', enabled: true, points: [{ ppq: 0, value: -6 }] },
+      {
+        target: 1,
+        param: instrumentAutomationParam('cutoffHz'),
+        enabled: false,
+        points: [{ ppq: 0, value: 900 }],
+      },
+    ];
+
+    const midiSync: MidiSync = {
+      sync: vi.fn(async () => undefined),
+      scheduledClipCount: () => 1,
+    };
+    const transport = {
+      positionPpq: ref(3),
+      setTempoMap: vi.fn(),
+      setTempo: vi.fn(),
+    };
+    const scope = effectScope();
+    const projectSync = scope.run(() =>
+      useEngineProjectSync({
+        bridge: shallowRef(null),
+        scope: shallowRef(null),
+        errorMessage: ref(''),
+        handle: shallowRef(null),
+        transport: transport as never,
+      }),
+    );
+    if (!projectSync) throw new Error('effect scope did not run');
+
+    projectSync.setEngineSyncHandles({
+      mixerSync: null,
+      stripSync: null,
+      automationSync: null,
+      midiSync,
+      transportSync: null,
+      webMidiOutput: null,
+    });
+
+    await projectSync.syncMidiState();
+    vi.mocked(midiSync.sync).mockClear();
+    transport.positionPpq.value = 4;
+    await nextTick();
+
+    expect(midiSync.sync).not.toHaveBeenCalled();
+    scope.stop();
+  });
+
   it('keeps off-mode automation lanes out of the engine until read or write mode is enabled', async () => {
     const store = useProjectStore();
     store.dispose();
@@ -213,6 +362,95 @@ describe('useEngineProjectSync', () => {
     await nextTick();
 
     expect(automationSync.sync).toHaveBeenLastCalledWith(store.automationLanes);
+    scope.stop();
+  });
+
+  it('surfaces mixer, automation and transport sync exceptions', async () => {
+    const store = useProjectStore();
+    store.dispose();
+    await store.init();
+    store.tracks = [track(1)];
+
+    const errorMessage = ref('');
+    const scope = effectScope();
+    const projectSync = scope.run(() =>
+      useEngineProjectSync({
+        bridge: shallowRef(null),
+        scope: shallowRef(null),
+        errorMessage,
+        handle: shallowRef(null),
+        transport: { setTempoMap: vi.fn(), setTempo: vi.fn() } as never,
+      }),
+    );
+    if (!projectSync) throw new Error('effect scope did not run');
+
+    projectSync.setEngineSyncHandles({
+      mixerSync: {
+        sync: vi.fn(() => {
+          throw new Error('mixer boom');
+        }),
+        laneTrackIds: () => [],
+      },
+      stripSync: { sync: vi.fn() } as unknown as StripSync,
+      automationSync: {
+        sync: vi.fn(() => {
+          throw new Error('automation boom');
+        }),
+      },
+      midiSync: null,
+      transportSync: {
+        sync: vi.fn(() => {
+          throw new Error('transport boom');
+        }),
+      } as never,
+      webMidiOutput: null,
+    });
+
+    projectSync.syncMixerState();
+    expect(errorMessage.value).toBe('mixer boom');
+    projectSync.syncAutomationState();
+    expect(errorMessage.value).toBe('automation boom');
+    projectSync.syncTransportState();
+    expect(errorMessage.value).toBe('transport boom');
+    scope.stop();
+  });
+
+  it('invalidates an in-flight audio clip apply when project sync is disposed', async () => {
+    const store = useProjectStore();
+    store.dispose();
+    await store.init();
+    const removeClip = vi.fn();
+    const handle = shallowRef({
+      engine: { removeClip },
+    });
+    let resolveSchedule!: (clips: ScheduledProjectClip[]) => void;
+    vi.mocked(scheduleProjectClips).mockReturnValue(
+      new Promise((resolve) => {
+        resolveSchedule = resolve;
+      }),
+    );
+
+    const scope = effectScope();
+    const projectSync = scope.run(() =>
+      useEngineProjectSync({
+        bridge: shallowRef(null),
+        scope: shallowRef(null),
+        errorMessage: ref(''),
+        handle: handle as never,
+        transport: { setTempoMap: vi.fn(), setTempo: vi.fn() } as never,
+      }),
+    );
+    if (!projectSync) throw new Error('effect scope did not run');
+
+    projectSync.applyNow();
+    expect(scheduleProjectClips).toHaveBeenCalledWith(handle.value);
+
+    projectSync.disposeEngineProjectSync();
+    resolveSchedule([{ engineClipId: 99, clipId: 1, trackId: 1 }]);
+    await vi.waitFor(() => expect(removeClip).toHaveBeenCalledWith(99));
+
+    expect(projectSync.scheduledClips()).toEqual([]);
+    expect(projectSync.scheduledCount.value).toBe(0);
     scope.stop();
   });
 });

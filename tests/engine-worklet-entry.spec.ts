@@ -7,6 +7,13 @@ const {
   receiveCommand,
   receiveCaptureRequest,
   receiveTransportRequest,
+  voiceReceiveMessage,
+  indexInit,
+  indexIsInitialized,
+  retuneSetConfig,
+  retuneReset,
+  retuneDelete,
+  retuneProcessMono,
 } = vi.hoisted(() => ({
   init: vi.fn(() => Promise.resolve()),
   isInitialized: vi.fn(() => false),
@@ -14,6 +21,13 @@ const {
   receiveCommand: vi.fn(),
   receiveCaptureRequest: vi.fn(),
   receiveTransportRequest: vi.fn(),
+  voiceReceiveMessage: vi.fn(),
+  indexInit: vi.fn(() => Promise.resolve()),
+  indexIsInitialized: vi.fn(() => false),
+  retuneSetConfig: vi.fn(),
+  retuneReset: vi.fn(),
+  retuneDelete: vi.fn(),
+  retuneProcessMono: vi.fn((samples: Float32Array) => samples),
 }));
 
 vi.mock('@/wasm/worklet.js', () => ({
@@ -27,6 +41,25 @@ vi.mock('@/wasm/worklet.js', () => ({
     process(): boolean {
       return true;
     }
+  },
+  SonareRealtimeVoiceChangerWorkletProcessor: class {
+    receiveMessage = voiceReceiveMessage;
+    process(): boolean {
+      return true;
+    }
+  },
+}));
+
+vi.mock('@/wasm/index.js', () => ({
+  init: indexInit,
+  isInitialized: indexIsInitialized,
+  StreamingRetune: class {
+    constructor(readonly config: unknown) {}
+    prepare = vi.fn();
+    setConfig = retuneSetConfig;
+    reset = retuneReset;
+    delete = retuneDelete;
+    processMono = retuneProcessMono;
   },
 }));
 
@@ -44,7 +77,7 @@ type RegisteredCtor = new (options?: {
   process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean;
 };
 
-let registered: RegisteredCtor;
+const registered = new Map<string, RegisteredCtor>();
 
 beforeAll(async () => {
   class FakeAudioWorkletProcessor {
@@ -55,10 +88,10 @@ beforeAll(async () => {
   }
   (globalThis as Record<string, unknown>).AudioWorkletProcessor = FakeAudioWorkletProcessor;
   (globalThis as Record<string, unknown>).registerProcessor = (
-    _name: string,
+    name: string,
     ctor: RegisteredCtor,
   ) => {
-    registered = ctor;
+    registered.set(name, ctor);
   };
   await import('@/engine/worklet-entry');
 });
@@ -71,13 +104,24 @@ beforeEach(() => {
   receiveCommand.mockClear();
   receiveCaptureRequest.mockClear();
   receiveTransportRequest.mockClear();
+  voiceReceiveMessage.mockClear();
+  indexInit.mockClear();
+  indexIsInitialized.mockClear();
+  indexIsInitialized.mockReturnValue(false);
+  retuneSetConfig.mockClear();
+  retuneReset.mockClear();
+  retuneDelete.mockClear();
+  retuneProcessMono.mockClear();
+  retuneProcessMono.mockImplementation((samples: Float32Array) => samples);
   delete (globalThis as Record<string, unknown>).SonareEmbindInitPromise;
   delete (globalThis as Record<string, unknown>).SonareEmbindModuleFactory;
 });
 
 /** Instantiates the registered processor and drains its async init chain. */
-async function createReadyProcessor() {
-  const instance = new registered({ processorOptions: {} });
+async function createReadyProcessor(name = 'sonare-realtime-engine-processor') {
+  const ctor = registered.get(name);
+  if (!ctor) throw new Error(`Processor was not registered: ${name}`);
+  const instance = new ctor({ processorOptions: {} });
   for (let i = 0; i < 4; i++) {
     await Promise.resolve();
   }
@@ -86,6 +130,11 @@ async function createReadyProcessor() {
 
 describe('worklet-entry dispatch', () => {
   it('registers the processor and posts ready after init', async () => {
+    expect([...registered.keys()]).toEqual([
+      'sonare-realtime-engine-processor',
+      'sonare-realtime-voice-changer-processor',
+      'sonare-streaming-retune-processor',
+    ]);
     const instance = await createReadyProcessor();
     expect(instance.port.postMessage).toHaveBeenCalledWith({
       type: 'ready',
@@ -93,11 +142,45 @@ describe('worklet-entry dispatch', () => {
     });
   });
 
+  it('registers streaming retune and forwards config/reset/destroy controls', async () => {
+    const instance = await createReadyProcessor('sonare-streaming-retune-processor');
+    expect(instance.port.postMessage).toHaveBeenCalledWith({
+      type: 'ready',
+      runtimeTarget: 'embind',
+    });
+    instance.port.onmessage?.({ data: { type: 'setConfig', config: { semitones: 7, mix: 0.5 } } });
+    instance.port.onmessage?.({ data: { type: 'reset' } });
+    instance.port.onmessage?.({ data: { type: 'destroy' } });
+    expect(retuneSetConfig).toHaveBeenCalledWith({ semitones: 7, mix: 0.5 });
+    expect(retuneReset).toHaveBeenCalledTimes(1);
+    expect(retuneDelete).toHaveBeenCalledTimes(1);
+  });
+
+  it('registers realtime voice changer and forwards control messages', async () => {
+    const instance = await createReadyProcessor('sonare-realtime-voice-changer-processor');
+    expect(instance.port.postMessage).toHaveBeenCalledWith({
+      type: 'ready',
+      runtimeTarget: 'embind',
+    });
+    const setConfig = { type: 'setConfig', preset: 'bright-idol' };
+    const reset = { type: 'reset' };
+    const destroy = { type: 'destroy' };
+    instance.port.onmessage?.({ data: setConfig });
+    instance.port.onmessage?.({ data: reset });
+    instance.port.onmessage?.({ data: destroy });
+    expect(voiceReceiveMessage).toHaveBeenCalledTimes(3);
+    expect(voiceReceiveMessage).toHaveBeenNthCalledWith(1, setConfig);
+    expect(voiceReceiveMessage).toHaveBeenNthCalledWith(2, reset);
+    expect(voiceReceiveMessage).toHaveBeenNthCalledWith(3, destroy);
+  });
+
   it('initializes embind with supplied wasm bytes and the bundled module factory', async () => {
     const wasmBinary = new ArrayBuffer(8);
     const moduleFactory = vi.fn();
     (globalThis as Record<string, unknown>).SonareEmbindModuleFactory = moduleFactory;
-    const instance = new registered({ processorOptions: { wasmBinary } });
+    const ctor = registered.get('sonare-realtime-engine-processor');
+    expect(ctor).toBeDefined();
+    const instance = new (ctor as RegisteredCtor)({ processorOptions: { wasmBinary } });
     for (let i = 0; i < 4; i++) {
       await Promise.resolve();
     }
@@ -176,7 +259,9 @@ describe('worklet-entry dispatch', () => {
   });
 
   it('buffers messages that arrive before init completes and replays them in order', async () => {
-    const instance = new registered({ processorOptions: {} });
+    const ctor = registered.get('sonare-realtime-engine-processor');
+    expect(ctor).toBeDefined();
+    const instance = new (ctor as RegisteredCtor)({ processorOptions: {} });
     instance.port.onmessage?.({ data: { type: 'syncMixer' } });
     instance.port.onmessage?.({ data: { type: 11, targetId: 1, sampleTime: -1 } });
     expect(receiveSync).not.toHaveBeenCalled();
@@ -202,11 +287,12 @@ describe('worklet-entry dispatch', () => {
     const previousBase = (globalThis as Record<string, unknown>).AudioWorkletProcessor;
     (globalThis as Record<string, unknown>).AudioWorkletProcessor =
       EventTargetAudioWorkletProcessor;
+    registered.clear();
     (globalThis as Record<string, unknown>).registerProcessor = (
-      _name: string,
+      name: string,
       ctor: RegisteredCtor,
     ) => {
-      registered = ctor;
+      registered.set(name, ctor);
     };
     vi.resetModules();
     await import('@/engine/worklet-entry');
@@ -219,7 +305,9 @@ describe('worklet-entry dispatch', () => {
   });
 
   it('emits silence from process() until the bridge is ready', () => {
-    const instance = new registered({ processorOptions: {} });
+    const ctor = registered.get('sonare-realtime-engine-processor');
+    expect(ctor).toBeDefined();
+    const instance = new (ctor as RegisteredCtor)({ processorOptions: {} });
     const out = [new Float32Array([0.5, 0.5])];
     expect(instance.process([], [out])).toBe(true);
     expect(Array.from(out[0])).toEqual([0, 0]);

@@ -30,6 +30,16 @@ export function engineAutomationPoints(
     }));
 }
 
+/** Encodes automation points and offsets their values by a dB stage such as VCA. */
+export function engineAutomationPointsWithValueOffset(
+  points: ReadonlyArray<{ ppq: number; value: number; curve?: AutomationCurve }>,
+  valueOffset = 0,
+): EngineAutomationPoint[] {
+  const encoded = engineAutomationPoints(points);
+  if (!Number.isFinite(valueOffset) || valueOffset === 0) return encoded;
+  return encoded.map((point) => ({ ...point, value: point.value + valueOffset }));
+}
+
 /** EQ bands that should be declared to the engine for a strip. */
 export function engineEqBands(strip: MixerStrip | undefined): EqBand[] {
   return strip?.eq?.enabled ? strip.eq.bands : [];
@@ -49,4 +59,14 @@ export function stripSceneFieldsHaveDsp(strip: MixerStrip | undefined): boolean 
 export function engineBusStrip(strip: MixerStrip | undefined): MixerStrip | undefined {
   if (!strip) return undefined;
   return { ...strip, inserts: strip.inserts.filter((slot) => slot.enabled) };
+}
+
+/** True when the current engine bus scene ABI can represent audible bus DSP. */
+export function engineBusStripHasDsp(strip: MixerStrip | undefined, includeBusEq = false): boolean {
+  const busStrip = engineBusStrip(strip);
+  return (
+    stripSceneFieldsHaveDsp(strip) ||
+    (busStrip?.inserts.length ?? 0) > 0 ||
+    (includeBusEq && engineEqBands(strip).length > 0)
+  );
 }
