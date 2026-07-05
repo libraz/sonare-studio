@@ -1,11 +1,11 @@
 /**
  * Pure helpers for the master spectrum analyzer and goniometer (vectorscope).
  *
- * The realtime engine does not emit spectrum/vectorscope telemetry, so these
- * displays are fed from a Web Audio `AnalyserNode` tap on the engine output
- * (see src/engine/analyser.ts). This module holds the unit-testable maths that
- * map raw analyser data onto canvas coordinates: log-frequency placement, dB
- * scaling, FFT bin frequencies, and the rotated goniometer projection.
+ * These displays can be fed either from per-target realtime scope telemetry or
+ * from a Web Audio `AnalyserNode` tap on the engine output. This module holds
+ * the unit-testable maths that map raw analyser data onto canvas coordinates:
+ * log-frequency placement, dB scaling, FFT bin frequencies, and the rotated
+ * goniometer projection.
  */
 
 /** Lowest frequency the spectrum display spans, in Hz. */

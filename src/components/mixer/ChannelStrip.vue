@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount } from 'vue';
+import { computed, inject, onBeforeUnmount } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { promptDialog } from '@/composables/useDialogs';
+import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
 import type { AnalyserBridge } from '@/engine/analyser';
 import type { MeterSource } from '@/engine/meters';
 import type { ScopeSource } from '@/engine/scope';
+import type { AutomationParam } from '@/project/automation';
 import {
   addVcaGroup,
   renameTrack,
@@ -23,6 +25,8 @@ import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
+import { type MidiLearnTrackStateParam, midiLearnTrackStateTargetId } from '@/ui/midi/midi-learn';
+import type { AutomationWriteScheduleEvent } from '@/ui/mixer/automation-mode';
 import { formatDb, formatPan } from '@/ui/mixer/db-scale';
 import { useStripAutomation } from '@/ui/mixer/use-strip-automation';
 import { useStripGestures } from '@/ui/mixer/use-strip-gestures';
@@ -58,10 +62,9 @@ import StripSends from './StripSends.vue';
  * Frozen tracks carry a snowflake tag next to the name (the strip's fader,
  * pan and sends stay live while the track plays its baked render).
  *
- * Group-track strips are tagged GROUP and drop the R/T/L and solo controls:
- * their level is the group bus gain (no automation lane), and bus solo is
- * not supported. Fader, mute, inserts and EQ keep working through the
- * group-bus sync layer.
+ * Group-track strips are tagged GROUP and drop controls that the group bus
+ * engine path does not support (R/T/L, solo, sends, output bus and EQ).
+ * Fader, mute and inserts keep working through the group-bus sync layer.
  */
 
 const props = withDefaults(
@@ -76,15 +79,31 @@ const props = withDefaults(
     scope?: ScopeSource | null;
     /** Playhead position getter in PPQ (lane follow / touch recording). */
     positionPpq?: () => number;
+    /** Current playhead sample position, used by future sample-accurate scheduling. */
+    positionSample?: () => number;
     /** True while the transport runs (continuous touch recording). */
     isPlaying?: boolean;
+    /** Optional realtime automation scheduler for write-mode fader/pan drags. */
+    scheduleAutomationWrite?: (
+      target: number | 'master',
+      param: AutomationParam,
+      event: AutomationWriteScheduleEvent,
+    ) => void;
   }>(),
-  { bridge: null, analyser: null, scope: null, positionPpq: undefined, isPlaying: false },
+  {
+    bridge: null,
+    analyser: null,
+    scope: null,
+    positionPpq: undefined,
+    positionSample: undefined,
+    isPlaying: false,
+  },
 );
 
 const store = useProjectStore();
 const { t } = useI18n();
 const appSettings = useAppSettings();
+const midiLearn = inject(MIDI_LEARN_KEY, null);
 
 const isMaster = computed(() => props.target === 'master');
 
@@ -240,7 +259,9 @@ const automation = useStripAutomation({
   track,
   strip,
   positionPpq: () => props.positionPpq?.() ?? 0,
+  positionSample: props.positionSample,
   isPlaying: () => props.isPlaying,
+  scheduleAutomationWrite: props.scheduleAutomationWrite,
 });
 
 const { followsFader, followsPan, displayedGainDb, displayedPan } = automation;
@@ -255,6 +276,29 @@ const { onGainChange, onPanChange } = gestures;
 
 /** Strip-local DSP options are available on track and master strips, not groups. */
 const canStripOptions = computed(() => !isGroup.value);
+
+function learnTrackStateId(param: MidiLearnTrackStateParam): string {
+  return typeof props.target === 'number' ? midiLearnTrackStateTargetId(props.target, param) : '';
+}
+
+function learnTrackState(
+  param: MidiLearnTrackStateParam,
+): 'unbound' | 'armed' | 'bound' | undefined {
+  if (!midiLearn || typeof props.target !== 'number') return undefined;
+  const id = learnTrackStateId(param);
+  if (midiLearn.isArmedId(id)) return 'armed';
+  return midiLearn.bindingForId(id) ? 'bound' : 'unbound';
+}
+
+function onMidiLearnTrackState(param: MidiLearnTrackStateParam): void {
+  const id = learnTrackStateId(param);
+  if (id !== '') midiLearn?.armId(id);
+}
+
+function onMidiForgetTrackState(param: MidiLearnTrackStateParam): void {
+  const id = learnTrackStateId(param);
+  if (id !== '') midiLearn?.clearId(id);
+}
 
 onBeforeUnmount(() => {
   // Close any in-flight gesture so the pending history entry is committed and
@@ -297,11 +341,11 @@ onBeforeUnmount(() => {
       <InsertRack :target="props.target" />
     </div>
 
-    <div class="strip-section">
-      <StripEqSection :target="props.target" />
+    <div v-if="!isGroup" class="strip-section">
+      <StripEqSection :target="props.target" :scope="props.scope" />
     </div>
 
-    <div class="strip-section">
+    <div v-if="!isMaster && !isGroup" class="strip-section">
       <StripSends :target="props.target" />
     </div>
 
@@ -346,6 +390,31 @@ onBeforeUnmount(() => {
           M
         </button>
         <button
+          v-if="learnTrackState('mute')"
+          type="button"
+          class="track-state-midi-learn"
+          :class="learnTrackState('mute')"
+          v-tooltip="
+            learnTrackState('mute') === 'armed'
+              ? t.shell.mixer.controls.midiLearnListening
+              : t.shell.mixer.controls.midiLearn
+          "
+          :aria-label="t.shell.mixer.controls.midiLearn"
+          @click="onMidiLearnTrackState('mute')"
+        >
+          MIDI
+        </button>
+        <button
+          v-if="learnTrackState('mute') === 'bound'"
+          type="button"
+          class="track-state-midi-forget"
+          v-tooltip="t.shell.mixer.controls.midiForget"
+          :aria-label="t.shell.mixer.controls.midiForget"
+          @click="onMidiForgetTrackState('mute')"
+        >
+          ×
+        </button>
+        <button
           v-if="!isGroup"
           type="button"
           class="toggle solo"
@@ -356,6 +425,31 @@ onBeforeUnmount(() => {
           @click="setTrackSolo(track.id, !track.solo)"
         >
           S
+        </button>
+        <button
+          v-if="!isGroup && learnTrackState('solo')"
+          type="button"
+          class="track-state-midi-learn"
+          :class="learnTrackState('solo')"
+          v-tooltip="
+            learnTrackState('solo') === 'armed'
+              ? t.shell.mixer.controls.midiLearnListening
+              : t.shell.mixer.controls.midiLearn
+          "
+          :aria-label="t.shell.mixer.controls.midiLearn"
+          @click="onMidiLearnTrackState('solo')"
+        >
+          MIDI
+        </button>
+        <button
+          v-if="!isGroup && learnTrackState('solo') === 'bound'"
+          type="button"
+          class="track-state-midi-forget"
+          v-tooltip="t.shell.mixer.controls.midiForget"
+          :aria-label="t.shell.mixer.controls.midiForget"
+          @click="onMidiForgetTrackState('solo')"
+        >
+          ×
         </button>
       </div>
     </div>
@@ -553,6 +647,36 @@ onBeforeUnmount(() => {
 /* Solo-safe is shown as a persistent outline on the S button. */
 .toggle.solo.safe {
   box-shadow: inset 0 0 0 1px var(--warning);
+}
+
+.track-state-midi-learn,
+.track-state-midi-forget {
+  flex: none;
+  height: 14px;
+  font: var(--fw-bold) 7px var(--font-sans);
+  line-height: 1;
+  color: var(--text-3);
+  background: var(--surface-3);
+  border: none;
+  border-radius: 3px;
+  padding: 0 4px;
+  cursor: pointer;
+  box-shadow: var(--control-lift);
+}
+
+.track-state-midi-learn.armed {
+  color: var(--surface-0);
+  background: var(--accent);
+}
+
+.track-state-midi-learn.bound {
+  color: var(--accent);
+}
+
+.track-state-midi-forget {
+  width: 14px;
+  padding: 0;
+  color: var(--text-4);
 }
 
 .strip-fader-row {

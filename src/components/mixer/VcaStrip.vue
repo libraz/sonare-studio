@@ -1,10 +1,18 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, inject } from 'vue';
 import { promptDialog } from '@/composables/useDialogs';
-import { removeVcaGroup, renameVcaGroup, setVcaGroupGain } from '@/project/commands';
+import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
+import {
+  removeVcaGroup,
+  renameVcaGroup,
+  setVcaGroupGain,
+  setVcaGroupMute,
+  setVcaGroupSolo,
+} from '@/project/commands';
 import type { VcaGroup } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { type MidiLearnVcaParam, midiLearnVcaTargetId } from '@/ui/midi/midi-learn';
 import { formatDb } from '@/ui/mixer/db-scale';
 import MixerFader from './MixerFader.vue';
 
@@ -22,8 +30,11 @@ const props = defineProps<{
 
 const store = useProjectStore();
 const { t } = useI18n();
+const midiLearn = inject(MIDI_LEARN_KEY, null);
 
 const gainDb = computed(() => props.group.gainDb);
+const muted = computed(() => props.group.mute === true);
+const soloed = computed(() => props.group.solo === true);
 
 /** Number of tracks currently assigned to this group. */
 const memberCount = computed(
@@ -36,6 +47,33 @@ function onFaderChange(db: number, commit: boolean): void {
 
 function onRemove(): void {
   removeVcaGroup(props.group.id);
+}
+
+function onMute(): void {
+  setVcaGroupMute(props.group.id, !muted.value);
+}
+
+function onSolo(): void {
+  setVcaGroupSolo(props.group.id, !soloed.value);
+}
+
+function learnVcaId(param: MidiLearnVcaParam): string {
+  return midiLearnVcaTargetId(props.group.id, param);
+}
+
+function learnVcaState(param: MidiLearnVcaParam): 'armed' | 'bound' | 'unbound' | undefined {
+  if (!midiLearn) return undefined;
+  const id = learnVcaId(param);
+  if (midiLearn.isArmedId(id)) return 'armed';
+  return midiLearn.bindingForId(id) ? 'bound' : 'unbound';
+}
+
+function onMidiLearnVca(param: MidiLearnVcaParam): void {
+  midiLearn?.armId(learnVcaId(param));
+}
+
+function onMidiForgetVca(param: MidiLearnVcaParam): void {
+  midiLearn?.clearId(learnVcaId(param));
 }
 
 async function onRename(): Promise<void> {
@@ -72,8 +110,112 @@ async function onRename(): Promise<void> {
         ×
       </button>
     </div>
+    <div class="vca-buttons">
+      <button
+        type="button"
+        class="vca-toggle"
+        :class="{ 'vca-toggle-active': muted }"
+        :aria-pressed="muted"
+        :aria-label="
+          muted ? t.shell.mixer.strip.unmute : formatMessage(t.shell.mixer.strip.muteNamed, { name: props.group.name })
+        "
+        v-tooltip="muted ? t.shell.mixer.strip.unmute : t.shell.mixer.strip.mute"
+        @click="onMute"
+      >
+        M
+      </button>
+      <button
+        v-if="learnVcaState('mute')"
+        type="button"
+        class="vca-midi-learn"
+        :class="learnVcaState('mute')"
+        v-tooltip="
+          learnVcaState('mute') === 'armed'
+            ? t.shell.mixer.controls.midiLearnListening
+            : t.shell.mixer.controls.midiLearn
+        "
+        :aria-label="t.shell.mixer.controls.midiLearn"
+        @click="onMidiLearnVca('mute')"
+      >
+        MIDI
+      </button>
+      <button
+        v-if="learnVcaState('mute') === 'bound'"
+        type="button"
+        class="vca-midi-forget"
+        v-tooltip="t.shell.mixer.controls.midiForget"
+        :aria-label="t.shell.mixer.controls.midiForget"
+        @click="onMidiForgetVca('mute')"
+      >
+        ×
+      </button>
+      <button
+        type="button"
+        class="vca-toggle"
+        :class="{ 'vca-toggle-active': soloed }"
+        :aria-pressed="soloed"
+        :aria-label="
+          soloed ? t.shell.mixer.strip.unsolo : formatMessage(t.shell.mixer.strip.soloNamed, { name: props.group.name })
+        "
+        v-tooltip="soloed ? t.shell.mixer.strip.unsolo : t.shell.mixer.strip.solo"
+        @click="onSolo"
+      >
+        S
+      </button>
+      <button
+        v-if="learnVcaState('solo')"
+        type="button"
+        class="vca-midi-learn"
+        :class="learnVcaState('solo')"
+        v-tooltip="
+          learnVcaState('solo') === 'armed'
+            ? t.shell.mixer.controls.midiLearnListening
+            : t.shell.mixer.controls.midiLearn
+        "
+        :aria-label="t.shell.mixer.controls.midiLearn"
+        @click="onMidiLearnVca('solo')"
+      >
+        MIDI
+      </button>
+      <button
+        v-if="learnVcaState('solo') === 'bound'"
+        type="button"
+        class="vca-midi-forget"
+        v-tooltip="t.shell.mixer.controls.midiForget"
+        :aria-label="t.shell.mixer.controls.midiForget"
+        @click="onMidiForgetVca('solo')"
+      >
+        ×
+      </button>
+    </div>
     <div class="vca-fader-row">
       <MixerFader :value-db="gainDb" :height="120" @change="onFaderChange" />
+      <div v-if="learnVcaState('gain')" class="vca-fader-midi">
+        <button
+          type="button"
+          class="vca-midi-learn"
+          :class="learnVcaState('gain')"
+          v-tooltip="
+            learnVcaState('gain') === 'armed'
+              ? t.shell.mixer.controls.midiLearnListening
+              : t.shell.mixer.controls.midiLearn
+          "
+          :aria-label="t.shell.mixer.controls.midiLearn"
+          @click="onMidiLearnVca('gain')"
+        >
+          MIDI
+        </button>
+        <button
+          v-if="learnVcaState('gain') === 'bound'"
+          type="button"
+          class="vca-midi-forget"
+          v-tooltip="t.shell.mixer.controls.midiForget"
+          :aria-label="t.shell.mixer.controls.midiForget"
+          @click="onMidiForgetVca('gain')"
+        >
+          ×
+        </button>
+      </div>
     </div>
     <span class="vca-readout">{{ formatDb(gainDb) }} dB</span>
     <span class="vca-members">
@@ -150,12 +292,75 @@ async function onRename(): Promise<void> {
   color: var(--danger-text);
 }
 
+.vca-buttons {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: center;
+  gap: var(--sp-1);
+  width: 100%;
+}
+
+.vca-toggle {
+  min-width: 0;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  color: var(--text-3);
+  font: var(--fw-bold) 10px var(--font-sans);
+  line-height: 1;
+}
+
+.vca-toggle-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text-1);
+}
+
+.vca-midi-learn,
+.vca-midi-forget {
+  flex: none;
+  height: 14px;
+  font: var(--fw-bold) 7px var(--font-sans);
+  line-height: 1;
+  color: var(--text-3);
+  background: var(--surface-3);
+  border: none;
+  border-radius: 3px;
+  padding: 0 4px;
+  cursor: pointer;
+  box-shadow: var(--control-lift);
+}
+
+.vca-midi-learn.armed {
+  color: var(--surface-0);
+  background: var(--accent);
+}
+
+.vca-midi-learn.bound {
+  color: var(--accent);
+}
+
+.vca-midi-forget {
+  width: 14px;
+  padding: 0;
+  color: var(--text-4);
+}
+
 .vca-fader-row {
   display: flex;
   justify-content: center;
   align-items: flex-start;
+  gap: var(--sp-1);
   flex: 1;
   min-height: 0;
+}
+
+.vca-fader-midi {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  align-items: center;
 }
 
 .vca-readout {

@@ -12,15 +12,26 @@
  */
 
 import {
+  type InsertLatencyResolver,
+  maxTrackInsertLatencySamples,
+  trackPdcDelaySamples,
+} from '@/project/insert-latency';
+import {
   clampPan,
   DEFAULT_PAN_LAW,
   DEFAULT_PAN_MODE,
+  effectiveTrackMute,
   laneGainDb,
+  type MixerSoloMode,
   type MixerStrip,
+  normalizeMixerSoloMode,
   type PanLawId,
   type PanModeId,
+  tracksWithVcaSolo,
+  type VcaControlState,
   vcaOffsetDb,
 } from '@/project/mixer';
+import { expandedSoloStates } from '@/project/scheduling';
 import type { EditorTrack } from '@/project/types';
 import type { EngineHandle } from './engine';
 
@@ -51,15 +62,28 @@ export interface MixerSync {
    * @param master Master strip (gainDb/pan audible).
    * @param vcaGainDb VCA group id -> fader offset in dB; a member track's gain
    *   is raised by its group's offset. Omit when there are no VCA groups.
+   * @param vcaControls VCA group id -> mute/solo state folded into member lanes.
+   * @param soloMode Solo audition tap. PFL auditions soloed lanes before their
+   *   fader/pan; in-place/AFL keep the normal lane fader/pan.
    */
   sync(
     tracks: ReadonlyArray<EditorTrack>,
     master: MixerStrip,
     vcaGainDb?: ReadonlyMap<string, number>,
+    vcaControls?: ReadonlyMap<string, VcaControlState>,
+    soloMode?: MixerSoloMode,
   ): void;
   /** Lane order as declared so far (lane index -> project track id). */
   laneTrackIds(): readonly number[];
 }
+
+/** Options for {@link createMixerSync}. */
+export interface MixerSyncOptions {
+  /** Optional processor-latency resolver used for automatic track PDC. */
+  insertLatency?: InsertLatencyResolver;
+}
+
+const zeroInsertLatency: InsertLatencyResolver = () => 0;
 
 /**
  * Creates a mixer sync bound to one engine handle. Create a fresh instance
@@ -68,15 +92,18 @@ export interface MixerSync {
  * @param handle Running engine handle from createEngine.
  * @returns The sync facade.
  */
-export function createMixerSync(handle: EngineHandle): MixerSync {
+export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions = {}): MixerSync {
   const laneIds: number[] = [];
   const laneStates = new Map<number, LaneState>();
   let masterState: { gainDb: number; pan: number } | undefined;
+  const resolveInsertLatency = options.insertLatency ?? zeroInsertLatency;
 
   const sync = (
     tracks: ReadonlyArray<EditorTrack>,
     master: MixerStrip,
     vcaGainDb?: ReadonlyMap<string, number>,
+    vcaControls?: ReadonlyMap<string, VcaControlState>,
+    soloMode?: MixerSoloMode,
   ): void => {
     const known = new Set(laneIds);
     const appended = tracks.filter((track) => !known.has(track.id)).map((track) => track.id);
@@ -84,24 +111,43 @@ export function createMixerSync(handle: EngineHandle): MixerSync {
       laneIds.push(...appended);
       handle.engine.setTrackLanes([...laneIds]);
     }
-    // Solo-safe tracks join the solo group whenever any solo is active, so the
-    // engine keeps them audible instead of silencing them with the rest.
-    const anySolo = tracks.some((track) => track.solo);
+    // Solo-safe tracks join the solo group whenever any solo is active, and a
+    // soloed group track expands to the members whose lanes feed that group.
+    const tracksForSolo = tracksWithVcaSolo(tracks, vcaControls);
+    const soloStates = expandedSoloStates(tracksForSolo, {
+      isGroup: (track) => track.kind === 'group',
+      groupKey: (track) => track.id,
+      memberGroupKey: (track) => track.groupId,
+    });
+    const auditionSoloStates =
+      normalizeMixerSoloMode(soloMode) === 'pfl'
+        ? expandedSoloStates(
+            tracksForSolo.map((track) => ({ ...track, soloSafe: false })),
+            {
+              isGroup: (track) => track.kind === 'group',
+              groupKey: (track) => track.id,
+              memberGroupKey: (track) => track.groupId,
+            },
+          )
+        : [];
+    const maxInsertLatency = maxTrackInsertLatencySamples(tracks, resolveInsertLatency);
     for (const track of tracks) {
+      const trackIndex = tracks.indexOf(track);
       const strip = track.mixer;
       const vcaOffset = vcaOffsetDb(track.vcaId, vcaGainDb);
-      const pan = clampPan(strip?.pan ?? 0);
+      const pflAudition = auditionSoloStates[trackIndex] === true;
+      const pan = pflAudition ? 0 : clampPan(strip?.pan ?? 0);
       const next: LaneState = {
-        gainDb: laneGainDb(track.volume, strip?.gainDb, vcaOffset),
+        gainDb: pflAudition ? 0 : laneGainDb(track.volume, strip?.gainDb, vcaOffset),
         pan,
-        solo: track.solo || (anySolo && track.soloSafe === true),
-        mute: track.mute,
-        channelDelaySamples: Math.max(0, Math.round(strip?.channelDelaySamples ?? 0)),
+        solo: soloStates[trackIndex] ?? false,
+        mute: effectiveTrackMute(track.mute, track.vcaId, vcaControls),
+        channelDelaySamples: trackPdcDelaySamples(track, maxInsertLatency, resolveInsertLatency),
         panLaw: strip?.panLaw ?? DEFAULT_PAN_LAW,
         panMode: strip?.panMode ?? DEFAULT_PAN_MODE,
         // Dual pan defaults to the strip pan position on both channels.
-        dualPanLeft: clampPan(strip?.dualPan?.left ?? pan),
-        dualPanRight: clampPan(strip?.dualPan?.right ?? pan),
+        dualPanLeft: pflAudition ? 0 : clampPan(strip?.dualPan?.left ?? pan),
+        dualPanRight: pflAudition ? 0 : clampPan(strip?.dualPan?.right ?? pan),
       };
       const prev = laneStates.get(track.id);
       if (prev?.gainDb !== next.gainDb) handle.engine.setStripGain(track.id, next.gainDb);

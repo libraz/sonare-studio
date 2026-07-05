@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, inject, onBeforeUnmount, ref, watch } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
+import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
 import {
   setStripChannelDelaySamples,
   setStripDualPan,
@@ -28,6 +29,10 @@ import {
 } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import {
+  type MidiLearnStripControlParam,
+  midiLearnStripControlTargetId,
+} from '@/ui/midi/midi-learn';
 import { formatDb, formatPan } from '@/ui/mixer/db-scale';
 
 /**
@@ -50,6 +55,7 @@ const props = defineProps<{
 
 const store = useProjectStore();
 const { t } = useI18n();
+const midiLearn = inject(MIDI_LEARN_KEY, null);
 
 const strip = computed<MixerStrip>(() => {
   if (props.target === 'master') return store.mixer.master;
@@ -151,6 +157,25 @@ function onDualPanInput(channel: 'left' | 'right', event: Event): void {
   setStripDualPan(props.target, left, right);
 }
 
+function learnTargetId(param: MidiLearnStripControlParam): string {
+  return midiLearnStripControlTargetId(props.target, param);
+}
+
+function learnState(param: MidiLearnStripControlParam): 'unbound' | 'armed' | 'bound' | undefined {
+  if (!midiLearn) return undefined;
+  const id = learnTargetId(param);
+  if (midiLearn.isArmedId(id)) return 'armed';
+  return midiLearn.bindingForId(id) ? 'bound' : 'unbound';
+}
+
+function onMidiLearn(param: MidiLearnStripControlParam): void {
+  midiLearn?.armId(learnTargetId(param));
+}
+
+function onMidiForget(param: MidiLearnStripControlParam): void {
+  midiLearn?.clearId(learnTargetId(param));
+}
+
 function onOptionsPointerDown(event: PointerEvent): void {
   if (!(event.target instanceof Node) || !optionsMenu.value?.contains(event.target)) {
     optionsOpen.value = false;
@@ -201,6 +226,31 @@ onBeforeUnmount(() => {
             @change="onInputTrimInput($event, true)"
           />
           <span class="strip-options-unit">{{ formatDb(inputTrimDb) }}</span>
+          <button
+            v-if="learnState('inputTrimDb')"
+            type="button"
+            class="strip-midi-learn"
+            :class="learnState('inputTrimDb')"
+            v-tooltip="
+              learnState('inputTrimDb') === 'armed'
+                ? t.shell.mixer.controls.midiLearnListening
+                : t.shell.mixer.controls.midiLearn
+            "
+            :aria-label="t.shell.mixer.controls.midiLearn"
+            @click="onMidiLearn('inputTrimDb')"
+          >
+            MIDI
+          </button>
+          <button
+            v-if="learnState('inputTrimDb') === 'bound'"
+            type="button"
+            class="strip-midi-forget"
+            v-tooltip="t.shell.mixer.controls.midiForget"
+            :aria-label="t.shell.mixer.controls.midiForget"
+            @click="onMidiForget('inputTrimDb')"
+          >
+            ×
+          </button>
         </span>
       </label>
       <label class="strip-options-row">
@@ -217,6 +267,31 @@ onBeforeUnmount(() => {
             @change="onWidthInput($event, true)"
           />
           <span class="strip-options-unit">{{ stripWidth.toFixed(2) }}</span>
+          <button
+            v-if="learnState('width')"
+            type="button"
+            class="strip-midi-learn"
+            :class="learnState('width')"
+            v-tooltip="
+              learnState('width') === 'armed'
+                ? t.shell.mixer.controls.midiLearnListening
+                : t.shell.mixer.controls.midiLearn
+            "
+            :aria-label="t.shell.mixer.controls.midiLearn"
+            @click="onMidiLearn('width')"
+          >
+            MIDI
+          </button>
+          <button
+            v-if="learnState('width') === 'bound'"
+            type="button"
+            class="strip-midi-forget"
+            v-tooltip="t.shell.mixer.controls.midiForget"
+            :aria-label="t.shell.mixer.controls.midiForget"
+            @click="onMidiForget('width')"
+          >
+            ×
+          </button>
         </span>
       </label>
       <div class="strip-options-row">
@@ -233,6 +308,31 @@ onBeforeUnmount(() => {
             L
           </button>
           <button
+            v-if="learnState('polarityLeft')"
+            type="button"
+            class="strip-midi-learn"
+            :class="learnState('polarityLeft')"
+            v-tooltip="
+              learnState('polarityLeft') === 'armed'
+                ? t.shell.mixer.controls.midiLearnListening
+                : t.shell.mixer.controls.midiLearn
+            "
+            :aria-label="t.shell.mixer.controls.midiLearn"
+            @click="onMidiLearn('polarityLeft')"
+          >
+            MIDI
+          </button>
+          <button
+            v-if="learnState('polarityLeft') === 'bound'"
+            type="button"
+            class="strip-midi-forget"
+            v-tooltip="t.shell.mixer.controls.midiForget"
+            :aria-label="t.shell.mixer.controls.midiForget"
+            @click="onMidiForget('polarityLeft')"
+          >
+            ×
+          </button>
+          <button
             type="button"
             class="toggle"
             :class="{ on: polarityRight }"
@@ -241,6 +341,31 @@ onBeforeUnmount(() => {
             @click="onPolarityToggle('right')"
           >
             R
+          </button>
+          <button
+            v-if="learnState('polarityRight')"
+            type="button"
+            class="strip-midi-learn"
+            :class="learnState('polarityRight')"
+            v-tooltip="
+              learnState('polarityRight') === 'armed'
+                ? t.shell.mixer.controls.midiLearnListening
+                : t.shell.mixer.controls.midiLearn
+            "
+            :aria-label="t.shell.mixer.controls.midiLearn"
+            @click="onMidiLearn('polarityRight')"
+          >
+            MIDI
+          </button>
+          <button
+            v-if="learnState('polarityRight') === 'bound'"
+            type="button"
+            class="strip-midi-forget"
+            v-tooltip="t.shell.mixer.controls.midiForget"
+            :aria-label="t.shell.mixer.controls.midiForget"
+            @click="onMidiForget('polarityRight')"
+          >
+            ×
           </button>
         </span>
       </div>
@@ -257,6 +382,31 @@ onBeforeUnmount(() => {
             @change="onChannelDelayInput"
           />
           <span class="strip-options-unit">{{ t.shell.mixer.strip.samples }}</span>
+          <button
+            v-if="learnState('channelDelaySamples')"
+            type="button"
+            class="strip-midi-learn"
+            :class="learnState('channelDelaySamples')"
+            v-tooltip="
+              learnState('channelDelaySamples') === 'armed'
+                ? t.shell.mixer.controls.midiLearnListening
+                : t.shell.mixer.controls.midiLearn
+            "
+            :aria-label="t.shell.mixer.controls.midiLearn"
+            @click="onMidiLearn('channelDelaySamples')"
+          >
+            MIDI
+          </button>
+          <button
+            v-if="learnState('channelDelaySamples') === 'bound'"
+            type="button"
+            class="strip-midi-forget"
+            v-tooltip="t.shell.mixer.controls.midiForget"
+            :aria-label="t.shell.mixer.controls.midiForget"
+            @click="onMidiForget('channelDelaySamples')"
+          >
+            ×
+          </button>
         </span>
       </label>
       <div v-if="canTrackPannerOptions" class="strip-options-row">
@@ -269,6 +419,31 @@ onBeforeUnmount(() => {
             :aria-label="t.shell.mixer.strip.panLaw"
             @change="onPanLawChange"
           />
+          <button
+            v-if="learnState('panLaw')"
+            type="button"
+            class="strip-midi-learn"
+            :class="learnState('panLaw')"
+            v-tooltip="
+              learnState('panLaw') === 'armed'
+                ? t.shell.mixer.controls.midiLearnListening
+                : t.shell.mixer.controls.midiLearn
+            "
+            :aria-label="t.shell.mixer.controls.midiLearn"
+            @click="onMidiLearn('panLaw')"
+          >
+            MIDI
+          </button>
+          <button
+            v-if="learnState('panLaw') === 'bound'"
+            type="button"
+            class="strip-midi-forget"
+            v-tooltip="t.shell.mixer.controls.midiForget"
+            :aria-label="t.shell.mixer.controls.midiForget"
+            @click="onMidiForget('panLaw')"
+          >
+            ×
+          </button>
         </span>
       </div>
       <div v-if="canTrackPannerOptions" class="strip-options-row">
@@ -281,6 +456,31 @@ onBeforeUnmount(() => {
             :aria-label="t.shell.mixer.strip.panMode"
             @change="onPanModeChange"
           />
+          <button
+            v-if="learnState('panMode')"
+            type="button"
+            class="strip-midi-learn"
+            :class="learnState('panMode')"
+            v-tooltip="
+              learnState('panMode') === 'armed'
+                ? t.shell.mixer.controls.midiLearnListening
+                : t.shell.mixer.controls.midiLearn
+            "
+            :aria-label="t.shell.mixer.controls.midiLearn"
+            @click="onMidiLearn('panMode')"
+          >
+            MIDI
+          </button>
+          <button
+            v-if="learnState('panMode') === 'bound'"
+            type="button"
+            class="strip-midi-forget"
+            v-tooltip="t.shell.mixer.controls.midiForget"
+            :aria-label="t.shell.mixer.controls.midiForget"
+            @click="onMidiForget('panMode')"
+          >
+            ×
+          </button>
         </span>
       </div>
       <template v-if="canTrackPannerOptions && panMode === 'dualPan'">
@@ -297,6 +497,31 @@ onBeforeUnmount(() => {
               @input="onDualPanInput('left', $event)"
             />
             <span class="strip-options-unit">{{ formatPan(dualPanLeft) }}</span>
+            <button
+              v-if="learnState('dualPanLeft')"
+              type="button"
+              class="strip-midi-learn"
+              :class="learnState('dualPanLeft')"
+              v-tooltip="
+                learnState('dualPanLeft') === 'armed'
+                  ? t.shell.mixer.controls.midiLearnListening
+                  : t.shell.mixer.controls.midiLearn
+              "
+              :aria-label="t.shell.mixer.controls.midiLearn"
+              @click="onMidiLearn('dualPanLeft')"
+            >
+              MIDI
+            </button>
+            <button
+              v-if="learnState('dualPanLeft') === 'bound'"
+              type="button"
+              class="strip-midi-forget"
+              v-tooltip="t.shell.mixer.controls.midiForget"
+              :aria-label="t.shell.mixer.controls.midiForget"
+              @click="onMidiForget('dualPanLeft')"
+            >
+              ×
+            </button>
           </span>
         </label>
         <label class="strip-options-row">
@@ -312,6 +537,31 @@ onBeforeUnmount(() => {
               @input="onDualPanInput('right', $event)"
             />
             <span class="strip-options-unit">{{ formatPan(dualPanRight) }}</span>
+            <button
+              v-if="learnState('dualPanRight')"
+              type="button"
+              class="strip-midi-learn"
+              :class="learnState('dualPanRight')"
+              v-tooltip="
+                learnState('dualPanRight') === 'armed'
+                  ? t.shell.mixer.controls.midiLearnListening
+                  : t.shell.mixer.controls.midiLearn
+              "
+              :aria-label="t.shell.mixer.controls.midiLearn"
+              @click="onMidiLearn('dualPanRight')"
+            >
+              MIDI
+            </button>
+            <button
+              v-if="learnState('dualPanRight') === 'bound'"
+              type="button"
+              class="strip-midi-forget"
+              v-tooltip="t.shell.mixer.controls.midiForget"
+              :aria-label="t.shell.mixer.controls.midiForget"
+              @click="onMidiForget('dualPanRight')"
+            >
+              ×
+            </button>
           </span>
         </label>
       </template>
@@ -393,6 +643,36 @@ onBeforeUnmount(() => {
 
 .strip-options-unit {
   font: 8px var(--font-sans);
+  color: var(--text-4);
+}
+
+.strip-midi-learn,
+.strip-midi-forget {
+  flex: none;
+  height: 14px;
+  font: var(--fw-bold) 7px var(--font-sans);
+  line-height: 1;
+  color: var(--text-3);
+  background: var(--surface-3);
+  border: none;
+  border-radius: 3px;
+  padding: 0 4px;
+  cursor: pointer;
+  box-shadow: var(--control-lift);
+}
+
+.strip-midi-learn.armed {
+  color: var(--surface-0);
+  background: var(--accent);
+}
+
+.strip-midi-learn.bound {
+  color: var(--accent);
+}
+
+.strip-midi-forget {
+  width: 14px;
+  padding: 0;
   color: var(--text-4);
 }
 

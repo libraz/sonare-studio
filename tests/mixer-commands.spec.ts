@@ -8,6 +8,7 @@ import {
   addNote,
   addTrack,
   addVcaGroup,
+  applyMixerSceneJson,
   canUndo,
   clearHistory,
   mixerBusStripTarget,
@@ -23,6 +24,7 @@ import {
   setInsertSidechain,
   setMasteringPreset,
   setMixerBusGain,
+  setMixerSoloMode,
   setSend,
   setStripChannelDelaySamples,
   setStripDualPan,
@@ -41,11 +43,14 @@ import {
   setTrackSoloSafe,
   setTrackVca,
   setVcaGroupGain,
+  setVcaGroupMute,
+  setVcaGroupSolo,
   undo,
 } from '@/project/commands';
 import type { TrackInstrument } from '@/project/instrument';
 import { MAX_MIXER_BUSES, MAX_VCA_GROUPS } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
+import { fakeMixingScenePresetJson } from './fake-wasm';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -128,6 +133,20 @@ describe('mixer commands', () => {
       expect(() => setTrackInstrument(9999, { kind: 'synth-preset', preset: 'sine' })).toThrow(
         RangeError,
       );
+    });
+  });
+
+  describe('setMixerSoloMode', () => {
+    it('stores AFL/PFL modes and clears the default in-place mode undoably', () => {
+      setMixerSoloMode('pfl');
+      expect(store.mixer.soloMode).toBe('pfl');
+      setMixerSoloMode('afl');
+      expect(store.mixer.soloMode).toBe('afl');
+      setMixerSoloMode('inPlace');
+      expect(store.mixer.soloMode).toBeUndefined();
+
+      expect(undo()).toBe(true);
+      expect(store.mixer.soloMode).toBe('afl');
     });
   });
 
@@ -330,6 +349,20 @@ describe('mixer commands', () => {
       setStripEq(trackId, null);
       expect(canUndo()).toBe(false);
     });
+
+    it('rejects bus return EQ because the engine has no bus EQ ABI', () => {
+      const busId = addMixerBus({ name: 'FX' });
+      const target = mixerBusStripTarget(busId);
+
+      expect(() =>
+        setStripEq(target, {
+          enabled: true,
+          bands: [{ type: 'Peak', frequencyHz: 1000, gainDb: 3 }],
+        }),
+      ).toThrow(RangeError);
+      expect(store.mixer.buses[0].strip?.eq).toBeUndefined();
+      expect(canUndo()).toBe(true); // only the bus creation is undoable
+    });
   });
 
   describe('buses and sends', () => {
@@ -401,6 +434,20 @@ describe('mixer commands', () => {
       undo();
       expect(store.tracks[0].mixer?.sends).toHaveLength(1);
       expect(() => setSend(trackId, 'nope', { levelDb: 0 })).toThrow(RangeError);
+      expect(() => setSend('master', busId, { levelDb: -3 })).toThrow(RangeError);
+    });
+
+    it('coalesces send level gestures into one undo entry', () => {
+      const busId = addMixerBus({ name: 'FX' });
+      clearHistory();
+      setSend(trackId, busId, { levelDb: -24 }, { commit: false });
+      setSend(trackId, busId, { levelDb: -12 }, { commit: false });
+      setSend(trackId, busId, { levelDb: -6 });
+
+      expect(store.tracks[0].mixer?.sends).toEqual([{ busId, levelDb: -6, enabled: true }]);
+      expect(undo()).toBe(true);
+      expect(store.tracks[0].mixer).toBeUndefined();
+      expect(undo()).toBe(false);
     });
 
     it('sets and preserves the send tap point (pre/post-fader)', () => {
@@ -447,7 +494,7 @@ describe('mixer commands', () => {
     it('removing a bus cascades the sends referencing it', () => {
       const busId = addMixerBus();
       setSend(trackId, busId, { levelDb: -9 });
-      setSend('master', busId, { levelDb: -3 });
+      store.mixer.master.sends = [{ busId, levelDb: -3, enabled: true }];
       removeMixerBus(busId);
       expect(store.mixer.buses).toEqual([]);
       expect(store.tracks[0].mixer?.sends).toEqual([]);
@@ -616,6 +663,9 @@ describe('mixer commands', () => {
       expect(() => setInsertSidechain(trackId, 0, trackId)).toThrow(/its own track/);
       expect(() => setInsertSidechain(trackId, 0, 9999)).toThrow(RangeError);
       expect(() => setInsertSidechain(9999, 0, sourceId)).toThrow(RangeError);
+      const groupId = addGroupTrack({ name: 'Group' });
+      addInsert(groupId, 'dynamics.compressor');
+      expect(() => setInsertSidechain(groupId, 0, sourceId)).toThrow(/Group track inserts/);
       expect(store.tracks[0].mixer?.inserts[0].sidechainSourceTrackId).toBeUndefined();
     });
 
@@ -668,6 +718,161 @@ describe('mixer commands', () => {
   });
 
   describe('VCA groups', () => {
+    it('applies a mixer scene preset as one undoable template', () => {
+      const result = applyMixerSceneJson(fakeMixingScenePresetJson('vocalReverbSend'));
+
+      expect(result).toEqual({ trackCount: 1, busCount: 1, vcaCount: 0 });
+      expect(store.tracks[0].mixer?.gainDb).toBe(-3);
+      expect(store.tracks[0].mixer?.sends).toEqual([
+        { busId: 'vocal-verb', levelDb: -14, enabled: true },
+      ]);
+      expect(store.mixer.buses[0]).toMatchObject({
+        id: 'vocal-verb',
+        name: 'Vocal Verb',
+        gainDb: -10,
+      });
+      expect(store.mixer.buses[0].strip?.width).toBe(1.25);
+      expect(store.mixer.buses[0].strip?.inserts).toEqual([
+        {
+          processor: 'stereo.imager',
+          params: { width: 1.35 },
+          enabled: true,
+        },
+      ]);
+
+      expect(undo()).toBe(true);
+      expect(store.mixer.buses).toEqual([]);
+      expect(store.tracks[0].mixer).toBeUndefined();
+    });
+
+    it('maps mixer scene VCA groups and sidechain keys onto current tracks', () => {
+      const guestId = addTrack({ name: 'Guest' });
+      const musicId = addTrack({ name: 'Music' });
+
+      const result = applyMixerSceneJson(fakeMixingScenePresetJson('commentaryDucking'));
+
+      expect(result).toEqual({ trackCount: 3, busCount: 0, vcaCount: 1 });
+      expect(store.mixer.vcaGroups).toEqual([{ id: 'voices', name: 'Voices', gainDb: 0 }]);
+      expect(store.tracks[0].vcaId).toBe('voices');
+      expect(store.tracks.find((track) => track.id === guestId)?.vcaId).toBe('voices');
+      const music = store.tracks.find((track) => track.id === musicId);
+      expect(music?.mixer?.gainDb).toBe(-18);
+      expect(music?.mixer?.inserts[0]).toEqual({
+        processor: 'dynamics.sidechainRouter',
+        params: { rangeDb: 18 },
+        enabled: true,
+        sidechainSourceTrackId: trackId,
+      });
+    });
+
+    it('drops mixer scene sidechain keys on group-track insert strips', () => {
+      const groupId = addGroupTrack({ name: 'Group' });
+
+      const result = applyMixerSceneJson(
+        JSON.stringify({
+          version: 1,
+          strips: [
+            { id: 'host' },
+            {
+              id: 'group',
+              inserts: [
+                {
+                  processor: 'dynamics.sidechainRouter',
+                  params: { rangeDb: 12 },
+                  sidechainKey: 'host',
+                },
+              ],
+            },
+          ],
+          buses: [],
+          connections: [],
+        }),
+      );
+
+      const group = store.tracks.find((track) => track.id === groupId);
+      expect(result.trackCount).toBe(2);
+      expect(group?.kind).toBe('group');
+      expect(group?.mixer?.inserts[0]).toEqual({
+        processor: 'dynamics.sidechainRouter',
+        params: { rangeDb: 12 },
+        enabled: true,
+      });
+    });
+
+    it('keeps mixer scene strip mapping bounded to existing tracks', () => {
+      const result = applyMixerSceneJson(
+        JSON.stringify({
+          version: 1,
+          strips: [
+            { id: 'lead', faderDb: -4 },
+            { id: 'extra', faderDb: -18, pan: 1 },
+          ],
+          buses: [],
+          connections: [],
+          vcaGroups: [],
+        }),
+      );
+
+      expect(result).toEqual({ trackCount: 1, busCount: 0, vcaCount: 0 });
+      expect(store.tracks).toHaveLength(1);
+      expect(store.tracks[0].mixer?.gainDb).toBe(-4);
+
+      expect(undo()).toBe(true);
+      expect(store.tracks).toHaveLength(1);
+      expect(store.tracks[0].mixer).toBeUndefined();
+    });
+
+    it('drops mixer scene inserts that are not in the realtime catalog', () => {
+      const result = applyMixerSceneJson(
+        JSON.stringify({
+          version: 1,
+          buses: [
+            {
+              id: 'master',
+              role: 'master',
+              inserts: [
+                { processor: 'dynamics.compressor', params: { thresholdDb: -18 } },
+                { processor: 'effects.reverb.plate', params: { decaySec: 1.8 } },
+              ],
+            },
+            { id: 'room', role: 'aux' },
+          ],
+          connections: [
+            { source: 'lead', destination: 'master' },
+            { source: 'lead', destination: 'room' },
+            { source: 'room', destination: 'room-return' },
+          ],
+          strips: [
+            {
+              id: 'lead',
+              inserts: [
+                { processor: 'stereo.imager', params: { width: 1.2 } },
+                { processor: 'made.up', params: { amount: 1 } },
+              ],
+            },
+            {
+              id: 'room-return',
+              inserts: [
+                { processor: 'saturation.tape', params: { driveDb: 2 } },
+                { processor: 'effects.reverb.plate', params: { decaySec: 2 } },
+              ],
+            },
+          ],
+        }),
+      );
+
+      expect(result).toEqual({ trackCount: 1, busCount: 1, vcaCount: 0 });
+      expect(store.mixer.master.inserts).toEqual([
+        { processor: 'dynamics.compressor', params: { thresholdDb: -18 }, enabled: true },
+      ]);
+      expect(store.tracks[0].mixer?.inserts).toEqual([
+        { processor: 'stereo.imager', params: { width: 1.2 }, enabled: true },
+      ]);
+      expect(store.mixer.buses[0].strip?.inserts).toEqual([
+        { processor: 'saturation.tape', params: { driveDb: 2 }, enabled: true },
+      ]);
+    });
+
     it('adds a group with a default name and undoes it', () => {
       const id = addVcaGroup();
       expect(store.mixer.vcaGroups).toEqual([{ id, name: 'VCA 1', gainDb: 0 }]);
@@ -710,6 +915,22 @@ describe('mixer commands', () => {
       expect(store.mixer.vcaGroups?.[0].gainDb).toBe(-6);
       expect(() => setVcaGroupGain(id, 999)).toThrow(RangeError);
       expect(() => setVcaGroupGain('nope', 0)).toThrow(RangeError);
+    });
+
+    it('sets VCA mute and solo flags undoably', () => {
+      const id = addVcaGroup();
+      setVcaGroupMute(id, true);
+      setVcaGroupSolo(id, true);
+      expect(store.mixer.vcaGroups?.[0]).toMatchObject({ id, mute: true, solo: true });
+
+      undo();
+      expect(store.mixer.vcaGroups?.[0].solo).toBeUndefined();
+      expect(store.mixer.vcaGroups?.[0].mute).toBe(true);
+
+      setVcaGroupMute(id, false);
+      expect(store.mixer.vcaGroups?.[0].mute).toBeUndefined();
+      expect(() => setVcaGroupMute('nope', true)).toThrow(RangeError);
+      expect(() => setVcaGroupSolo('nope', true)).toThrow(RangeError);
     });
 
     it('unassigns member tracks when the group is removed', () => {

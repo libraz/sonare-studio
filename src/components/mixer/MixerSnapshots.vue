@@ -4,13 +4,14 @@ import {
   activeMixerSnapshotSlot,
   type MixerSnapshotSlot,
   mixerSnapshotFilled,
+  mixerSnapshotSlots,
   recallMixerSnapshot,
   saveMixerSnapshot,
 } from '@/project/commands';
 import { formatMessage, useI18n } from '@/ui/i18n';
 
 /**
- * Mixer A/B snapshot controls for the mixer toolbar: two slots (A, B) that
+ * Mixer snapshot controls for the mixer toolbar: slots A-D that
  * each store the current audible mix and recall it later. The letter button
  * recalls (disabled until the slot is stored, highlighted when it is the
  * active slot); the adjacent store button captures the current mix. Recall is
@@ -19,13 +20,16 @@ import { formatMessage, useI18n } from '@/ui/i18n';
 
 const { t } = useI18n();
 
-const SLOTS: readonly MixerSnapshotSlot[] = ['A', 'B'];
+const SLOTS = mixerSnapshotSlots();
 
 const active = computed(() => activeMixerSnapshotSlot());
-const filled = computed<Record<MixerSnapshotSlot, boolean>>(() => ({
-  A: mixerSnapshotFilled('A'),
-  B: mixerSnapshotFilled('B'),
-}));
+const filled = computed<Record<MixerSnapshotSlot, boolean>>(
+  () =>
+    Object.fromEntries(SLOTS.map((slot) => [slot, mixerSnapshotFilled(slot)])) as Record<
+      MixerSnapshotSlot,
+      boolean
+    >,
+);
 
 function recallTitle(slot: MixerSnapshotSlot): string {
   const key = filled.value[slot]

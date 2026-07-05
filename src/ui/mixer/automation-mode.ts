@@ -108,6 +108,16 @@ export function resetAutomationStripModes(): void {
 }
 
 /** Dependencies of one automation write (touch-record) gesture. */
+export interface AutomationWriteScheduleEvent {
+  /** Current playhead position in PPQ. */
+  ppq: number;
+  /** Current playhead position in samples, when the caller can provide it. */
+  samplePos?: number;
+  /** Dragged value in the lane's parameter domain. */
+  value: number;
+}
+
+/** Dependencies of one automation write (touch-record) gesture. */
 export interface AutomationWriteGestureOptions {
   /** Write-class mode that controls the release merge (touch vs latch). */
   mode: AutomationWriteMode;
@@ -115,8 +125,12 @@ export interface AutomationWriteGestureOptions {
   existingPoints: ReadonlyArray<AutomationPoint>;
   /** Current playhead position in PPQ. */
   positionPpq: () => number;
+  /** Current playhead sample position, used by future sample-accurate engine scheduling. */
+  positionSample?: () => number;
   /** True while the transport runs (enables continuous recording). */
   isPlaying: () => boolean;
+  /** Optional realtime scheduling hook; receives every playing drag update. */
+  schedule?: (event: AutomationWriteScheduleEvent) => void;
   /** Receives the merged point list once, at gesture end. */
   commit: (points: AutomationPoint[]) => void;
 }
@@ -169,6 +183,13 @@ export function createAutomationWriteGesture(
         pending = null;
         return;
       }
+      options.schedule?.({
+        ppq,
+        value,
+        ...(options.positionSample !== undefined
+          ? { samplePos: Math.max(0, Math.round(options.positionSample())) }
+          : {}),
+      });
       const last = recorded[recorded.length - 1];
       if (last && ppq < last.ppq) {
         while (recorded.length > 0 && recorded[recorded.length - 1].ppq >= ppq) recorded.pop();

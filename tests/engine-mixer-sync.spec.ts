@@ -133,6 +133,30 @@ describe('createMixerSync', () => {
     expect(engine.setSoloMute).toHaveBeenCalledWith(1, true, false);
   });
 
+  it('uses unity centered lane gain for PFL solo audition only', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMixerSync(handle);
+    const soloed = makeTrack(1, {
+      volume: 0.25,
+      solo: true,
+      mixer: { ...createDefaultStrip(), gainDb: -12, pan: 0.75 },
+    });
+    const soloSafe = makeTrack(2, {
+      soloSafe: true,
+      volume: 0.5,
+      mixer: { ...createDefaultStrip(), gainDb: -6, pan: -0.5 },
+    });
+
+    sync.sync([soloed, soloSafe], neutralMaster(), undefined, undefined, 'pfl');
+
+    expect(engine.setStripGain).toHaveBeenCalledWith(1, 0);
+    expect(engine.setStripPan).toHaveBeenCalledWith(1, 0);
+    expect(engine.setStripGain).toHaveBeenCalledWith(2, linearToDb(0.5) - 6);
+    expect(engine.setStripPan).toHaveBeenCalledWith(2, -0.5);
+    expect(engine.setSoloMute).toHaveBeenCalledWith(1, true, false);
+    expect(engine.setSoloMute).toHaveBeenCalledWith(2, true, false);
+  });
+
   it('mirrors the channel alignment delay and resends only on change', () => {
     const { handle, engine } = makeHandle();
     const sync = createMixerSync(handle);
@@ -158,6 +182,30 @@ describe('createMixerSync', () => {
     );
     expect(engine.setTrackStripChannelDelaySamples).toHaveBeenCalledTimes(1);
     expect(engine.setTrackStripChannelDelaySamples).toHaveBeenCalledWith(1, 64);
+  });
+
+  it('adds automatic insert PDC to the manual channel delay', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMixerSync(handle, {
+      insertLatency: (slot) => (slot.processor === 'linear.eq' ? 128 : 0),
+    });
+    const latent = makeTrack(1, {
+      mixer: {
+        ...createDefaultStrip(),
+        inserts: [{ processor: 'linear.eq', params: {}, enabled: true }],
+      },
+    });
+    const dry = makeTrack(2);
+    const manual = makeTrack(3, {
+      mixer: { ...createDefaultStrip(), channelDelaySamples: 8 },
+    });
+
+    sync.sync([latent, dry, manual], neutralMaster());
+
+    // Track 1 owns the max insert latency, so it needs no compensating delay.
+    expect(engine.setTrackStripChannelDelaySamples).not.toHaveBeenCalledWith(1, 0);
+    expect(engine.setTrackStripChannelDelaySamples).toHaveBeenCalledWith(2, 128);
+    expect(engine.setTrackStripChannelDelaySamples).toHaveBeenCalledWith(3, 136);
   });
 
   it('mirrors pan law, pan mode and dual pan, resending only on change', () => {
@@ -289,6 +337,20 @@ describe('createMixerSync', () => {
     expect(engine.setSoloMute).toHaveBeenCalledWith(2, true, false);
   });
 
+  it('expands a soloed group track to its member lanes in realtime sync', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMixerSync(handle);
+
+    sync.sync(
+      [makeTrack(1), makeTrack(2, { groupId: 3 }), makeTrack(3, { kind: 'group', solo: true })],
+      neutralMaster(),
+    );
+
+    expect(engine.setSoloMute).toHaveBeenCalledWith(1, false, false);
+    expect(engine.setSoloMute).toHaveBeenCalledWith(2, true, false);
+    expect(engine.setSoloMute).toHaveBeenCalledWith(3, true, false);
+  });
+
   it('folds the VCA group offset into a member track gain', () => {
     const { handle, engine } = makeHandle();
     const sync = createMixerSync(handle);
@@ -302,6 +364,21 @@ describe('createMixerSync', () => {
     sync.sync([track], neutralMaster(), new Map([['vca-1', 6]]));
     expect(engine.setStripGain).toHaveBeenCalledTimes(1);
     expect(engine.setStripGain).toHaveBeenCalledWith(1, 3);
+  });
+
+  it('folds VCA mute and solo into member lane state', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMixerSync(handle);
+
+    sync.sync(
+      [makeTrack(1, { vcaId: 'vca-1' }), makeTrack(2)],
+      neutralMaster(),
+      new Map([['vca-1', 0]]),
+      new Map([['vca-1', { mute: true, solo: true }]]),
+    );
+
+    expect(engine.setSoloMute).toHaveBeenCalledWith(1, true, true);
+    expect(engine.setSoloMute).toHaveBeenCalledWith(2, false, false);
   });
 
   it('leaves non-member tracks untouched by VCA offsets', () => {

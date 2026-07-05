@@ -1,5 +1,10 @@
+import { mount } from '@vue/test-utils';
+import { createPinia, setActivePinia } from 'pinia';
 import { describe, expect, it, vi } from 'vitest';
-import type { InsertSlot } from '@/project/mixer';
+import InsertRack from '@/components/mixer/InsertRack.vue';
+import { addAudioTrack, addGroupTrack, addInsert, clearHistory } from '@/project/commands';
+import { createDefaultStrip, type InsertSlot } from '@/project/mixer';
+import { useProjectStore } from '@/project/store';
 import {
   addInsertSlot,
   adjustExpandedAfterRemove,
@@ -8,6 +13,11 @@ import {
   reorderInsertSlots,
   toggleInsertEnabled,
 } from '@/ui/mixer/insert-rack';
+
+vi.mock('@/lib/wasm', async () => {
+  const { createFakeWasmModule } = await import('./fake-wasm');
+  return { ensureWasm: async () => createFakeWasmModule() };
+});
 
 /** Builds a fully mocked command layer for rack assertions. */
 function mockCommands(addReturn = 0): InsertRackCommands {
@@ -109,5 +119,74 @@ describe('reorderInsertSlots', () => {
     expect(commands.reorderInsert).not.toHaveBeenCalled();
     expect(commands.removeInsert).not.toHaveBeenCalled();
     expect(commands.addInsert).not.toHaveBeenCalled();
+  });
+});
+
+describe('InsertRack sidechain source options', () => {
+  it('removes the add-menu outside-click listener on unmount', async () => {
+    setActivePinia(createPinia());
+    const store = useProjectStore();
+    store.dispose();
+    clearHistory();
+    await store.init();
+    const add = vi.spyOn(document, 'addEventListener');
+    const remove = vi.spyOn(document, 'removeEventListener');
+    const wrapper = mount(InsertRack, {
+      props: { target: 'master' },
+      global: {
+        directives: {
+          tooltip: () => undefined,
+        },
+        stubs: {
+          MixerKnob: true,
+          SelectMenu: true,
+          Teleport: true,
+        },
+      },
+    });
+
+    await wrapper.find('.insert-add').trigger('click');
+
+    expect(add).toHaveBeenCalledWith('pointerdown', expect.any(Function), true);
+    wrapper.unmount();
+    expect(remove).toHaveBeenCalledWith('pointerdown', expect.any(Function), true);
+  });
+
+  it('lists group tracks as sidechain key sources for track inserts', async () => {
+    setActivePinia(createPinia());
+    const store = useProjectStore();
+    store.dispose();
+    clearHistory();
+    await store.init();
+    const targetId = store.tracks[0].id;
+    const sourceId = addAudioTrack({ name: 'Kick' });
+    const groupId = addGroupTrack({ name: 'Drum Bus' });
+    store.tracks = store.tracks.map((track) =>
+      track.id === targetId ? { ...track, mixer: createDefaultStrip() } : track,
+    );
+    addInsert(targetId, 'dynamics.sidechainRouter');
+
+    const wrapper = mount(InsertRack, {
+      props: { target: targetId },
+      global: {
+        directives: {
+          tooltip: () => undefined,
+        },
+        stubs: {
+          MixerKnob: true,
+          Teleport: true,
+        },
+      },
+    });
+
+    await wrapper.find('.insert-name').trigger('click');
+    await wrapper.find('.insert-sidechain-select .select-trigger').trigger('click');
+    await wrapper.vm.$nextTick();
+
+    const labels = wrapper.findAll('.select-option').map((option) => option.text());
+    expect(labels).toEqual(['No key', 'Kick', 'Drum Bus']);
+    expect(labels).not.toContain(store.tracks.find((track) => track.id === targetId)?.name);
+    expect(sourceId).not.toBe(groupId);
+    wrapper.unmount();
   });
 });

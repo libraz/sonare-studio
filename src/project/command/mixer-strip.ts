@@ -20,6 +20,8 @@ import {
   MIN_INPUT_TRIM_DB,
   MIN_STRIP_GAIN_DB,
   MIN_STRIP_WIDTH,
+  type MixerSoloMode,
+  normalizeMixerSoloMode,
   PAN_LAW_IDS,
   PAN_MODE_IDS,
   type PanLawId,
@@ -28,7 +30,7 @@ import {
   type StripSend,
 } from '../mixer';
 import { useProjectStore } from '../store';
-import { type CommandGestureOptions, executeApp, hasPendingGesture } from './history';
+import { type CommandGestureOptions, execute, executeApp, hasPendingGesture } from './history';
 import { validateInsertParams } from './insert-params';
 import {
   currentStrip,
@@ -42,6 +44,20 @@ import { requireTrack } from './utils';
 // ---------------------------------------------------------------------------
 // Instrument / mixer commands (app-level metadata, execute(0)-style)
 // ---------------------------------------------------------------------------
+
+/** Sets the project-wide solo audition mode as one undoable edit. */
+export function setMixerSoloMode(mode: MixerSoloMode): void {
+  const store = useProjectStore();
+  const next = normalizeMixerSoloMode(mode);
+  if ((store.mixer.soloMode ?? 'inPlace') === next) return;
+  execute(0, () => {
+    store.mixer = {
+      ...store.mixer,
+      ...(next === 'inPlace' ? { soloMode: undefined } : { soloMode: next }),
+    };
+    store.refresh();
+  });
+}
 
 /**
  * Sets a track's instrument as one undoable edit. Instruments are app-level
@@ -501,8 +517,9 @@ export function setInsertEnabled(target: MixerStripTarget, index: number, enable
 
 /**
  * Sets (or clears with null) the sidechain key source of a track insert as
- * one undoable edit. Only track strips support keyed inserts (the master
- * strip has no engine lane to key from).
+ * one undoable edit. Only non-group track strips support keyed inserts: group
+ * track inserts are rendered as engine bus strips, and the current engine has
+ * no bus-strip sidechain binding API.
  *
  * @param trackId Track owning the insert.
  * @param index Insert slot index.
@@ -515,6 +532,9 @@ export function setInsertSidechain(
 ): void {
   const store = useProjectStore();
   const track = requireTrack(store, trackId);
+  if (track.kind === 'group') {
+    throw new RangeError('Group track inserts do not support sidechain keys');
+  }
   const strip = track.mixer;
   if (!strip) throw new RangeError(`Track ${trackId} has no mixer strip`);
   const slot = requireInsert(strip, index);
@@ -578,6 +598,8 @@ export function setInsertParam(
 /**
  * Replaces a strip's EQ as one undoable edit. Track and master EQ are audible
  * in realtime (mirrored to the engine strip EQ, see src/engine/strip-sync.ts).
+ * Bus return strips currently have no engine-side EQ ABI, so they are rejected
+ * instead of storing an inert EQ state.
  *
  * @param target Track id or 'master'.
  * @param eq New EQ state, or null to remove the EQ.
@@ -589,6 +611,9 @@ export function setStripEq(
   options?: CommandGestureOptions,
 ): void {
   const store = useProjectStore();
+  if (isMixerBusStripTarget(target)) {
+    throw new RangeError('Bus return strips do not support EQ');
+  }
   const strip = currentStrip(store, target);
   if (eq !== null && !Array.isArray(eq.bands)) {
     throw new RangeError('Strip EQ requires a bands array');
@@ -610,10 +635,10 @@ export function setStripEq(
 }
 
 /**
- * Adds, updates or removes a send from a strip to a bus as one undoable edit.
- * Track sends feed the engine's realtime bus lanes; master sends have no engine
- * routing and stay UI-only. The send tap point (pre/post-fader) is preserved
- * across level/enabled updates unless a new `timing` is supplied.
+ * Adds, updates or removes a send from a track strip to a bus as one undoable
+ * edit. Track sends feed the engine's realtime bus lanes. The master strip has
+ * no engine send bus, so new master sends are rejected; clearing a legacy
+ * master send remains allowed for document cleanup.
  *
  * @param target Track id or 'master'.
  * @param busId Destination bus id (must exist).
@@ -623,32 +648,40 @@ export function setSend(
   target: MixerStripTarget,
   busId: string,
   send: { levelDb: number; enabled?: boolean; timing?: SendTiming } | null,
+  options?: CommandGestureOptions,
 ): void {
   const store = useProjectStore();
   const strip = currentStrip(store, target);
+  if (target === 'master' && send !== null) {
+    throw new RangeError('The master strip has no audible send bus');
+  }
   if (!store.mixer.buses.some((bus) => bus.id === busId)) {
     throw new RangeError(`Unknown mixer bus id: ${busId}`);
   }
   if (send !== null && !Number.isFinite(send.levelDb)) {
     throw new RangeError(`Send level must be finite, got ${send.levelDb}`);
   }
-  executeApp(() => {
-    const next = cloneStrip(strip);
-    const existing = next.sends.findIndex((s) => s.busId === busId);
-    if (send === null) {
-      if (existing >= 0) next.sends = next.sends.filter((s) => s.busId !== busId);
-    } else {
-      const prevTiming = existing >= 0 ? next.sends[existing].timing : undefined;
-      const timing = send.timing ?? prevTiming;
-      const entry: StripSend = { busId, levelDb: send.levelDb, enabled: send.enabled ?? true };
-      // Keep the field absent for the default (post-fader) so neutral strips stay neutral.
-      if (timing !== undefined && timing !== 'postFader') entry.timing = timing;
-      if (existing >= 0) next.sends[existing] = entry;
-      else next.sends = [...next.sends, entry];
-    }
-    writeStrip(store, target, next);
-    store.refresh();
-  });
+  const key = `strip-send:${String(target)}:${busId}`;
+  executeApp(
+    () => {
+      const next = cloneStrip(strip);
+      const existing = next.sends.findIndex((s) => s.busId === busId);
+      if (send === null) {
+        if (existing >= 0) next.sends = next.sends.filter((s) => s.busId !== busId);
+      } else {
+        const prevTiming = existing >= 0 ? next.sends[existing].timing : undefined;
+        const timing = send.timing ?? prevTiming;
+        const entry: StripSend = { busId, levelDb: send.levelDb, enabled: send.enabled ?? true };
+        // Keep the field absent for the default (post-fader) so neutral strips stay neutral.
+        if (timing !== undefined && timing !== 'postFader') entry.timing = timing;
+        if (existing >= 0) next.sends[existing] = entry;
+        else next.sends = [...next.sends, entry];
+      }
+      writeStrip(store, target, next);
+      store.refresh();
+    },
+    { key, commit: options?.commit ?? true },
+  );
 }
 
 /**

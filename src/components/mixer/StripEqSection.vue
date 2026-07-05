@@ -1,15 +1,26 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, inject, onBeforeUnmount, ref, watch } from 'vue';
+import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
+import type { ScopeFrame, ScopeSource } from '@/engine/scope';
 import type { CommandGestureOptions, MixerStripTarget } from '@/project/commands';
 import { setStripEq } from '@/project/commands';
 import { createDefaultStrip, type MixerStrip, type StripEq } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
+import { type MidiLearnEqParam, midiLearnEqTargetId } from '@/ui/midi/midi-learn';
 import { formatDb, formatHz } from '@/ui/mixer/db-scale';
 import { eqCurve, eqCurvePath } from '@/ui/mixer/eq-curve';
+import { matchFlatEqBands } from '@/ui/mixer/match-eq';
+import {
+  frequencyToFraction,
+  SPECTRUM_MAX_FREQ,
+  SPECTRUM_MIN_DB,
+  SPECTRUM_MIN_FREQ,
+  spectrumDbToFraction,
+} from '@/ui/mixer/spectrum-model';
 import { createValueGesture, type ValueGesture } from '@/ui/mixer/strip-gestures';
-import type { EqBand, EqBandType } from '@/wasm/index.js';
+import type { EqBand, EqBandPhase, EqBandType, EqStereoPlacement } from '@/wasm/index.js';
 import MixerKnob from './MixerKnob.vue';
 
 /**
@@ -25,10 +36,13 @@ import MixerKnob from './MixerKnob.vue';
 const props = defineProps<{
   /** Strip the section edits: a track id or 'master'. */
   target: MixerStripTarget;
+  /** Per-strip engine spectrum source used as the EQ graph background. */
+  scope?: ScopeSource | null;
 }>();
 
 const store = useProjectStore();
 const { t } = useI18n();
+const midiLearn = inject(MIDI_LEARN_KEY, null);
 
 /** Graph viewBox size in px. */
 const GRAPH_W = 78;
@@ -55,6 +69,27 @@ const BAND_TYPE_CHOICES: ReadonlyArray<{
   { type: 'HighShelf', labelKey: 'highShelf' },
   { type: 'LowPass', labelKey: 'highCut' },
   { type: 'Notch', labelKey: 'notch' },
+];
+
+/** Stereo placements exposed by the compact strip EQ menu. */
+const PLACEMENT_CHOICES: ReadonlyArray<{
+  placement: EqStereoPlacement;
+  labelKey: keyof typeof t.value.shell.mixer.eq.placement;
+}> = [
+  { placement: 'Stereo', labelKey: 'stereo' },
+  { placement: 'Mid', labelKey: 'mid' },
+  { placement: 'Side', labelKey: 'side' },
+];
+
+/** Per-band phase modes supported by the engine EQ. */
+const PHASE_CHOICES: ReadonlyArray<{
+  phase: EqBandPhase;
+  labelKey: keyof typeof t.value.shell.mixer.eq.phase;
+}> = [
+  { phase: 'Inherit', labelKey: 'inherit' },
+  { phase: 'ZeroLatency', labelKey: 'zeroLatency' },
+  { phase: 'NaturalPhase', labelKey: 'natural' },
+  { phase: 'LinearPhase', labelKey: 'linear' },
 ];
 
 /** Band types whose gain knob has no audible effect (cut/notch filters). */
@@ -152,6 +187,56 @@ const curvePath = computed(() => {
   return eqCurvePath(eqCurve(bands, 48), GRAPH_W, GRAPH_H, BAND_GAIN_DB);
 });
 
+const scopeFrame = ref<ScopeFrame | null>(props.scope?.latest ?? null);
+let unsubscribeScope: (() => void) | null = null;
+
+function bindScope(source: ScopeSource | null | undefined): void {
+  unsubscribeScope?.();
+  unsubscribeScope = null;
+  scopeFrame.value = source?.available ? (source.latest ?? null) : null;
+  if (!source?.available) return;
+  unsubscribeScope = source.subscribe((frame) => {
+    scopeFrame.value = frame;
+  });
+}
+
+watch(() => props.scope, bindScope, { immediate: true });
+
+onBeforeUnmount(() => {
+  unsubscribeScope?.();
+  unsubscribeScope = null;
+});
+
+function scopeSpectrumPath(frame: ScopeFrame | null, sampleRate: number | undefined): string {
+  const bands = frame?.bands;
+  if (!bands || bands.length === 0 || !sampleRate) return '';
+  const nyquist = sampleRate / 2;
+  const points: string[] = [];
+  for (let i = 0; i < bands.length; i += 1) {
+    const freq = ((i + 0.5) / bands.length) * nyquist;
+    if (freq < SPECTRUM_MIN_FREQ) continue;
+    if (freq > SPECTRUM_MAX_FREQ) break;
+    const x = frequencyToFraction(freq) * GRAPH_W;
+    const y = (1 - spectrumDbToFraction(bands[i], SPECTRUM_MIN_DB, -12)) * GRAPH_H;
+    points.push(`${x.toFixed(2)} ${y.toFixed(2)}`);
+  }
+  if (points.length === 0) return '';
+  return `M0 ${GRAPH_H} L${points.join(' L')} L${GRAPH_W} ${GRAPH_H} Z`;
+}
+
+const spectrumPath = computed(() =>
+  scopeSpectrumPath(scopeFrame.value, props.scope?.available ? props.scope.sampleRate : undefined),
+);
+
+const canMatchFlat = computed(() => {
+  return (
+    props.scope?.available === true &&
+    scopeFrame.value !== null &&
+    scopeFrame.value.bands.length > 0 &&
+    Number.isFinite(props.scope.sampleRate)
+  );
+});
+
 function onTogglePower(): void {
   const current = eq.value;
   if (!current) {
@@ -159,6 +244,16 @@ function onTogglePower(): void {
   } else {
     setStripEq(props.target, { ...current, enabled: !current.enabled });
   }
+}
+
+function onMatchFlat(): void {
+  if (!canMatchFlat.value || !scopeFrame.value || !props.scope) return;
+  const bands = matchFlatEqBands(scopeFrame.value.bands, {
+    sampleRate: props.scope.sampleRate,
+    maxBands: MAX_BANDS,
+  });
+  if (bands.length === 0) return;
+  setStripEq(props.target, { enabled: true, bands });
 }
 
 // --- Band type / add / remove -------------------------------------------------
@@ -190,6 +285,66 @@ function setBandType(index: number, type: EqBandType): void {
   commitBands(bands.map((b, i) => (i === index ? next : b)));
 }
 
+/** Sets whether a band processes stereo, mid or side content. */
+function setBandPlacement(index: number, placement: EqStereoPlacement): void {
+  const bands = currentBands();
+  const band = bands[index];
+  if (!band || (band.placement ?? 'Stereo') === placement) return;
+  const next: EqBand = { ...band };
+  if (placement === 'Stereo') delete next.placement;
+  else next.placement = placement;
+  commitBands(bands.map((b, i) => (i === index ? next : b)));
+}
+
+/** Sets a band's phase mode, keeping the default inherited mode implicit. */
+function setBandPhase(index: number, phase: EqBandPhase): void {
+  const bands = currentBands();
+  const band = bands[index];
+  if (!band || (band.phase ?? 'Inherit') === phase) return;
+  const next: EqBand = { ...band };
+  if (phase === 'Inherit') delete next.phase;
+  else next.phase = phase;
+  commitBands(bands.map((b, i) => (i === index ? next : b)));
+}
+
+type DynamicMode = 'off' | 'down' | 'up';
+
+/** Maps a band to the compact dynamic EQ mode shown in the menu. */
+function dynamicMode(band: EqBand): DynamicMode {
+  if (!band.dynamic) return 'off';
+  return (band.rangeDb ?? -6) > 0 ? 'up' : 'down';
+}
+
+/** Enables or disables dynamic EQ with practical defaults for new bands. */
+function setBandDynamicMode(index: number, mode: DynamicMode): void {
+  const bands = currentBands();
+  const band = bands[index];
+  if (!band || dynamicMode(band) === mode) return;
+  const next: EqBand = { ...band };
+  if (mode === 'off') {
+    delete next.dynamic;
+    delete next.thresholdDb;
+    delete next.autoThreshold;
+    delete next.ratio;
+    delete next.rangeDb;
+    delete next.attackMs;
+    delete next.releaseMs;
+    delete next.lookaheadMs;
+    delete next.externalSidechain;
+    delete next.sidechainFreqHz;
+    delete next.sidechainQ;
+  } else {
+    const range = Math.abs(band.rangeDb ?? 6);
+    next.dynamic = true;
+    next.thresholdDb = band.thresholdDb ?? -24;
+    next.ratio = band.ratio ?? 2;
+    next.rangeDb = mode === 'up' ? range : -range;
+    next.attackMs = band.attackMs ?? 10;
+    next.releaseMs = band.releaseMs ?? 120;
+  }
+  commitBands(bands.map((b, i) => (i === index ? next : b)));
+}
+
 /** Appends a neutral bell band when under the band cap. */
 function addBand(): void {
   const bands = currentBands();
@@ -206,6 +361,50 @@ function removeBand(index: number): void {
   commitBands(bands.filter((_, i) => i !== index));
 }
 
+const EQ_MIDI_LEARN_LABEL: Record<MidiLearnEqParam, string> = {
+  frequencyHz: 'MIDI Learn Freq',
+  gainDb: 'MIDI Learn Gain',
+  q: 'MIDI Learn Q',
+};
+
+const EQ_MIDI_FORGET_LABEL: Record<MidiLearnEqParam, string> = {
+  frequencyHz: 'Forget MIDI Freq',
+  gainDb: 'Forget MIDI Gain',
+  q: 'Forget MIDI Q',
+};
+
+function learnEqId(index: number, param: MidiLearnEqParam): string {
+  if (typeof props.target !== 'number' && props.target !== 'master') return '';
+  return midiLearnEqTargetId(props.target, index, param);
+}
+
+function appendMidiLearnItems(items: ContextMenuItem[], index: number, band: EqBand): void {
+  if (!midiLearn) return;
+  const params: MidiLearnEqParam[] = bandUsesGain(band)
+    ? ['frequencyHz', 'gainDb', 'q']
+    : ['frequencyHz', 'q'];
+  items.push({ id: 'sep-midi-learn', separator: true });
+  for (const param of params) {
+    const id = learnEqId(index, param);
+    if (id === '') continue;
+    const armed = midiLearn.isArmedId(id);
+    const bound = midiLearn.bindingForId(id) !== undefined;
+    items.push({
+      id: `midi:learn:${param}`,
+      label: armed ? t.value.shell.mixer.controls.midiLearnListening : EQ_MIDI_LEARN_LABEL[param],
+      checked: armed || bound,
+      run: () => midiLearn.armId(id),
+    });
+    if (bound) {
+      items.push({
+        id: `midi:forget:${param}`,
+        label: EQ_MIDI_FORGET_LABEL[param],
+        run: () => midiLearn.clearId(id),
+      });
+    }
+  }
+}
+
 /** Opens the per-band action menu: change type or remove the band. */
 function openBandMenu(index: number, event: MouseEvent): void {
   event.preventDefault();
@@ -217,6 +416,46 @@ function openBandMenu(index: number, event: MouseEvent): void {
     checked: (band.type ?? 'Peak') === choice.type,
     run: () => setBandType(index, choice.type),
   }));
+  items.push({ id: 'sep-placement', separator: true });
+  for (const choice of PLACEMENT_CHOICES) {
+    items.push({
+      id: `placement:${choice.placement}`,
+      label: t.value.shell.mixer.eq.placement[choice.labelKey],
+      checked: (band.placement ?? 'Stereo') === choice.placement,
+      run: () => setBandPlacement(index, choice.placement),
+    });
+  }
+  items.push({ id: 'sep-phase', separator: true });
+  for (const choice of PHASE_CHOICES) {
+    items.push({
+      id: `phase:${choice.phase}`,
+      label: t.value.shell.mixer.eq.phase[choice.labelKey],
+      checked: (band.phase ?? 'Inherit') === choice.phase,
+      run: () => setBandPhase(index, choice.phase),
+    });
+  }
+  items.push({ id: 'sep-dynamic', separator: true });
+  const currentDynamic = dynamicMode(band);
+  items.push(
+    {
+      id: 'dynamic:off',
+      label: t.value.shell.mixer.eq.dynamic.off,
+      checked: currentDynamic === 'off',
+      run: () => setBandDynamicMode(index, 'off'),
+    },
+    {
+      id: 'dynamic:down',
+      label: t.value.shell.mixer.eq.dynamic.down,
+      checked: currentDynamic === 'down',
+      run: () => setBandDynamicMode(index, 'down'),
+    },
+    {
+      id: 'dynamic:up',
+      label: t.value.shell.mixer.eq.dynamic.up,
+      checked: currentDynamic === 'up',
+      run: () => setBandDynamicMode(index, 'up'),
+    },
+  );
   if (currentBands().length > 1) {
     items.push({ id: 'sep', separator: true });
     items.push({
@@ -226,6 +465,7 @@ function openBandMenu(index: number, event: MouseEvent): void {
       run: () => removeBand(index),
     });
   }
+  appendMidiLearnItems(items, index, band);
   openContextMenu(event.clientX, event.clientY, items);
 }
 
@@ -298,6 +538,16 @@ function onQChange(bandIndex: number, value: number, commit: boolean): void {
       <span class="eq-title">EQ</span>
       <span class="eq-head-spacer" />
       <button
+        type="button"
+        class="eq-match"
+        :disabled="!canMatchFlat"
+        v-tooltip="canMatchFlat ? t.shell.mixer.eq.matchFlatTitle : t.shell.mixer.meter.noLive"
+        :aria-label="t.shell.mixer.eq.matchFlat"
+        @click="onMatchFlat"
+      >
+        ≈
+      </button>
+      <button
         v-if="eq && eq.bands.length < MAX_BANDS"
         type="button"
         class="eq-add"
@@ -315,6 +565,7 @@ function onQChange(bandIndex: number, value: number, commit: boolean): void {
       :height="GRAPH_H"
       aria-hidden="true"
     >
+      <path v-if="spectrumPath" :d="spectrumPath" class="eq-spectrum" />
       <line x1="0" :y1="GRAPH_H / 2" :x2="GRAPH_W" :y2="GRAPH_H / 2" class="eq-zero" />
       <path :d="curvePath" class="eq-curve" fill="none" />
     </svg>
@@ -416,7 +667,8 @@ function onQChange(bandIndex: number, value: number, commit: boolean): void {
   flex: 1;
 }
 
-.eq-add {
+.eq-add,
+.eq-match {
   flex: none;
   width: 12px;
   height: 12px;
@@ -433,9 +685,19 @@ function onQChange(bandIndex: number, value: number, commit: boolean): void {
   box-shadow: var(--control-lift);
 }
 
-.eq-add:hover {
+.eq-match {
+  font-size: 9px;
+}
+
+.eq-add:hover,
+.eq-match:hover:not(:disabled) {
   color: var(--text-1);
   box-shadow: var(--control-lift-hover);
+}
+
+.eq-match:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .eq-graph {
@@ -449,6 +711,12 @@ function onQChange(bandIndex: number, value: number, commit: boolean): void {
 .eq-zero {
   stroke: #23262e;
   stroke-width: 1;
+}
+
+.eq-spectrum {
+  fill: rgba(34, 197, 94, 0.16);
+  stroke: rgba(34, 197, 94, 0.35);
+  stroke-width: 0.8;
 }
 
 .eq-curve {

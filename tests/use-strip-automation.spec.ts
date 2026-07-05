@@ -97,4 +97,36 @@ describe('useStripAutomation', () => {
       },
     ]);
   });
+
+  it('forwards write-mode fader drags to the schedule hook with lane-domain values', () => {
+    setAutomationStripMode(1, 'touch');
+    let ppq = 4;
+    let sample = 192000;
+    const scheduled: unknown[] = [];
+    const stripAutomation = useStripAutomation({
+      target: () => 1,
+      isMaster: computed(() => false),
+      track: computed(() => store.tracks[0]),
+      strip: computed(() => store.tracks[0].mixer ?? createDefaultStrip()),
+      positionPpq: () => ppq,
+      positionSample: () => sample,
+      isPlaying: () => true,
+      scheduleAutomationWrite: (...args) => scheduled.push(args),
+    });
+    const gestures = useStripGestures({
+      target: () => 1,
+      strip: computed(() => store.tracks[0].mixer ?? createDefaultStrip()),
+      automation: stripAutomation,
+    });
+
+    gestures.onGainChange(-3, false);
+    ppq = 4.25;
+    sample = 204000;
+    gestures.onGainChange(-2, true);
+
+    expect(scheduled).toEqual([
+      [1, 'faderDb', { ppq: 4, samplePos: 192000, value: -9 }],
+      [1, 'faderDb', { ppq: 4.25, samplePos: 204000, value: -8 }],
+    ]);
+  });
 });

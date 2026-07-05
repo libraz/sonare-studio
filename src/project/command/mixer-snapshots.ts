@@ -1,14 +1,12 @@
 /**
- * Mixer A/B snapshot session state.
+ * Mixer snapshot slot state.
  *
- * Two session-only slots (A and B) hold captured mixer snapshots for quick
- * A/B comparison of the audible mix. Like the undo/redo history this is session
- * state — not part of the persisted project — and is cleared when a project is
- * loaded (see clearMixerSnapshots, called from loadProjectDocument) so a
- * snapshot taken in one project never restores onto another.
+ * Four persisted slots (A-D) hold captured mixer snapshots for quick
+ * comparison of the audible mix. The project serializer converts session track
+ * ids to positional indices so saved snapshots can be restored after load.
  *
  * Recall applies the snapshot through the undoable {@link applyMixerSnapshot}
- * command, so an A/B switch is itself undoable.
+ * command, so a snapshot switch is itself undoable.
  */
 
 import { markRaw, reactive } from 'vue';
@@ -31,7 +29,7 @@ import type { EditorTrack } from '../types';
 import { executeApp } from './history';
 
 // ---------------------------------------------------------------------------
-// Mixer A/B snapshots (session-only capture/restore of the audible mix)
+// Mixer snapshots (capture/restore of the audible mix)
 // ---------------------------------------------------------------------------
 
 /** One track's captured mix state within a {@link MixerSnapshot}. */
@@ -51,9 +49,9 @@ export interface MixerSnapshotTrack {
 }
 
 /**
- * A snapshot of the audible mixer state for A/B comparison: the project mixer
+ * A snapshot of the audible mixer state for comparison: the project mixer
  * state (master strip, buses, VCA groups, mastering chain) plus each track's
- * strip and mix flags. Session-only — not part of the persisted project.
+ * strip and mix flags.
  */
 export interface MixerSnapshot {
   /** Project mixer state (master, buses, VCA groups, mastering chain). */
@@ -201,20 +199,29 @@ export function applyMixerSnapshot(snapshot: MixerSnapshot): void {
 }
 
 // ---------------------------------------------------------------------------
-// A/B snapshot slots
+// Snapshot slots
 // ---------------------------------------------------------------------------
 
-/** One of the two A/B snapshot slots. */
-export type MixerSnapshotSlot = 'A' | 'B';
+export const MIXER_SNAPSHOT_SLOTS = ['A', 'B', 'C', 'D'] as const;
+
+/** One mixer snapshot slot. */
+export type MixerSnapshotSlot = (typeof MIXER_SNAPSHOT_SLOTS)[number];
 
 interface SnapshotRegistry {
-  A: MixerSnapshot | null;
-  B: MixerSnapshot | null;
+  snapshots: Record<MixerSnapshotSlot, MixerSnapshot | null>;
   /** Slot last stored or recalled (drives the active highlight). */
   active: MixerSnapshotSlot | null;
 }
 
-const slots = reactive<SnapshotRegistry>({ A: null, B: null, active: null });
+const slots = reactive<SnapshotRegistry>({
+  snapshots: { A: null, B: null, C: null, D: null },
+  active: null,
+});
+
+/** The supported snapshot slots in display order. */
+export function mixerSnapshotSlots(): readonly MixerSnapshotSlot[] {
+  return MIXER_SNAPSHOT_SLOTS;
+}
 
 /**
  * True when a slot holds a snapshot.
@@ -222,7 +229,7 @@ const slots = reactive<SnapshotRegistry>({ A: null, B: null, active: null });
  * @param slot Slot to query.
  */
 export function mixerSnapshotFilled(slot: MixerSnapshotSlot): boolean {
-  return slots[slot] !== null;
+  return slots.snapshots[slot] !== null;
 }
 
 /** The slot last stored or recalled, or null when none is active. */
@@ -237,7 +244,7 @@ export function activeMixerSnapshotSlot(): MixerSnapshotSlot | null {
  */
 export function saveMixerSnapshot(slot: MixerSnapshotSlot): void {
   // markRaw: the snapshot is plain data we never mutate, so skip deep proxying.
-  slots[slot] = markRaw(captureMixerSnapshot());
+  slots.snapshots[slot] = markRaw(captureMixerSnapshot());
   slots.active = slot;
 }
 
@@ -249,16 +256,42 @@ export function saveMixerSnapshot(slot: MixerSnapshotSlot): void {
  * @returns True when a snapshot was restored, false when the slot was empty.
  */
 export function recallMixerSnapshot(slot: MixerSnapshotSlot): boolean {
-  const snapshot = slots[slot];
+  const snapshot = slots.snapshots[slot];
   if (!snapshot) return false;
   applyMixerSnapshot(snapshot);
   slots.active = slot;
   return true;
 }
 
-/** Clears both slots; call when a project is loaded. */
+/** Clears all slots. */
 export function clearMixerSnapshots(): void {
-  slots.A = null;
-  slots.B = null;
+  for (const slot of MIXER_SNAPSHOT_SLOTS) slots.snapshots[slot] = null;
   slots.active = null;
+}
+
+/** Plain slot state used by project serialization. */
+export interface MixerSnapshotSlotState {
+  snapshots: Partial<Record<MixerSnapshotSlot, MixerSnapshot>>;
+  active: MixerSnapshotSlot | null;
+}
+
+/** Returns deep-copied snapshot slot state for persistence. */
+export function exportMixerSnapshotSlots(): MixerSnapshotSlotState {
+  const snapshots: Partial<Record<MixerSnapshotSlot, MixerSnapshot>> = {};
+  for (const slot of MIXER_SNAPSHOT_SLOTS) {
+    const snapshot = slots.snapshots[slot];
+    if (snapshot) snapshots[slot] = markRaw(JSON.parse(JSON.stringify(snapshot)) as MixerSnapshot);
+  }
+  return { snapshots, active: slots.active };
+}
+
+/** Replaces the current slot registry from persisted snapshot state. */
+export function importMixerSnapshotSlots(state: MixerSnapshotSlotState | null): void {
+  clearMixerSnapshots();
+  if (!state) return;
+  for (const slot of MIXER_SNAPSHOT_SLOTS) {
+    const snapshot = state.snapshots[slot];
+    if (snapshot) slots.snapshots[slot] = markRaw(snapshot);
+  }
+  slots.active = state.active && slots.snapshots[state.active] ? state.active : null;
 }

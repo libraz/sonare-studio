@@ -70,6 +70,8 @@ function makeHandle(): {
     setSends: ReturnType<typeof vi.fn>;
     setTrackOutputBus: ReturnType<typeof vi.fn>;
     setBusStripJson: ReturnType<typeof vi.fn>;
+    setBusStripInsertBypassed?: ReturnType<typeof vi.fn>;
+    setBusStripEq?: ReturnType<typeof vi.fn>;
     setLaneSidechain: ReturnType<typeof vi.fn>;
   };
 } {
@@ -90,6 +92,20 @@ function makeHandle(): {
   };
   const handle = { engine } as unknown as EngineHandle;
   return { handle, engine };
+}
+
+/** EngineHandle stub for engines that expose a smooth bus-insert bypass ABI. */
+function makeHandleWithBusBypass(): ReturnType<typeof makeHandle> {
+  const handle = makeHandle();
+  handle.engine.setBusStripInsertBypassed = vi.fn();
+  return handle;
+}
+
+/** EngineHandle stub for engines that expose future bus EQ band updates. */
+function makeHandleWithBusEq(): ReturnType<typeof makeHandle> {
+  const handle = makeHandle();
+  handle.engine.setBusStripEq = vi.fn();
+  return handle;
 }
 
 /** Total number of engine calls captured across all stubbed methods. */
@@ -287,7 +303,19 @@ describe('createStripSync', () => {
     const { handle, engine } = makeHandle();
     const sync = createStripSync(handle);
     const bands: EqBand[] = [
-      { frequencyHz: 120, gainDb: -2, enabled: true },
+      {
+        frequencyHz: 120,
+        gainDb: -2,
+        enabled: true,
+        placement: 'Mid',
+        phase: 'LinearPhase',
+        dynamic: true,
+        thresholdDb: -24,
+        ratio: 2,
+        rangeDb: -6,
+        attackMs: 10,
+        releaseMs: 120,
+      },
       { frequencyHz: 4000, gainDb: 4, enabled: true },
     ];
 
@@ -368,6 +396,51 @@ describe('createStripSync', () => {
     expect(engine.setMasterStripJson).not.toHaveBeenCalled();
     expect(engine.setMasterStripInsertParamByName).toHaveBeenCalledTimes(1);
     expect(engine.setMasterStripInsertParamByName).toHaveBeenCalledWith(0, 'drive', 0.6);
+  });
+
+  it('appends realtime-safe mastering processors to the live master strip', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle, {
+      insertCatalog: new Set(['dynamics.compressor', 'stereo.imager']),
+    });
+    const master = makeStrip({
+      inserts: [{ processor: 'dynamics.compressor', params: { thresholdDb: -18 }, enabled: true }],
+    });
+
+    sync.sync(
+      [],
+      makeMixer({
+        master,
+        masteringChain: {
+          preset: 'club',
+          processors: [
+            { processor: 'repair.declick', params: {}, enabled: true },
+            { processor: 'stereo.imager', params: { width: 1.2 }, enabled: true },
+            { processor: 'dynamics.compressor', params: { thresholdDb: -24 }, enabled: false },
+          ],
+        },
+      }),
+    );
+
+    expect(engine.setMasterStripJson).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(engine.setMasterStripJson.mock.calls[0][0] as string)).toEqual({
+      version: 1,
+      strips: [
+        {
+          id: 'master',
+          inserts: [
+            {
+              slot: 'pre',
+              processor: 'dynamics.compressor',
+              params: '{"thresholdDb":-18}',
+            },
+            { slot: 'pre', processor: 'stereo.imager', params: '{"width":1.2}' },
+          ],
+        },
+      ],
+      buses: [],
+      connections: [],
+    });
   });
 
   it('declares buses before sends, then adjusts gains and re-declares additions', () => {
@@ -574,6 +647,39 @@ describe('busSceneJson', () => {
     expect(parsed.buses[0]).not.toHaveProperty('polarityInvertRight');
   });
 
+  it('does not serialize inert bus EQ state into the bus scene by default', () => {
+    const parsed = JSON.parse(
+      busSceneJson(
+        2,
+        makeStrip({
+          eq: {
+            enabled: true,
+            bands: [{ enabled: true, type: 'peak', frequencyHz: 1200, gainDb: 4, q: 1 }],
+          },
+        }),
+      ),
+    );
+    expect(parsed.buses[0]).not.toHaveProperty('eq');
+  });
+
+  it('serializes bus EQ state when requested for the future bus EQ ABI', () => {
+    const band: EqBand = { enabled: true, type: 'peak', frequencyHz: 1200, gainDb: 4, q: 1 };
+    const parsed = JSON.parse(
+      busSceneJson(
+        2,
+        makeStrip({
+          eq: {
+            enabled: true,
+            bands: [band],
+          },
+        }),
+        undefined,
+        { includeEq: true },
+      ),
+    );
+    expect(parsed.buses[0].eq).toEqual({ enabled: true, bands: [band] });
+  });
+
   it('rejects a processor not in the insert catalog, unless the catalog is null', () => {
     const strip = makeStrip({ inserts: [{ processor: 'made.up', params: {}, enabled: true }] });
     expect(() => busSceneJson(1, strip, new Set(['dynamics.compressor']))).toThrow(
@@ -643,6 +749,19 @@ describe('createStripSync group routing', () => {
     expect(engine.setTrackBuses).toHaveBeenCalledWith([{ busId: 1, gainDb: -6 }]);
   });
 
+  it('folds a group track VCA mute into its group bus gain', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const group = { ...makeGroupTrack(10), vcaId: 'vca-1' };
+
+    sync.sync(
+      [group],
+      makeMixer({ vcaGroups: [{ id: 'vca-1', name: 'Group VCA', gainDb: 0, mute: true }] }),
+    );
+
+    expect(engine.setTrackBuses).toHaveBeenCalledWith([{ busId: 1, gainDb: -120 }]);
+  });
+
   it('compacts group bus numbers after user buses are added later', () => {
     const { handle, engine } = makeHandle();
     const sync = createStripSync(handle);
@@ -678,6 +797,53 @@ describe('createStripSync group routing', () => {
     expect(engine.setBusStripJson).toHaveBeenCalledWith(1, busSceneJson(1, makeStrip()));
   });
 
+  it('does not send user bus EQ to the track/master EQ ABI', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const bus = {
+      ...makeBus('FX'),
+      strip: makeStrip({
+        eq: {
+          enabled: true,
+          bands: [{ enabled: true, type: 'peak', frequencyHz: 1200, gainDb: 4, q: 1 }],
+        },
+      }),
+    };
+
+    sync.sync([], makeMixer({ buses: [bus] }));
+
+    expect(engine.setStripEq).not.toHaveBeenCalled();
+    expect(engine.setBusStripJson).not.toHaveBeenCalled();
+  });
+
+  it('sends and diffs user bus EQ when the future bus EQ ABI exists', () => {
+    const { handle, engine } = makeHandleWithBusEq();
+    const sync = createStripSync(handle);
+    const band: EqBand = { enabled: true, type: 'peak', frequencyHz: 1200, gainDb: 4, q: 1 };
+    const edited: EqBand = { ...band, gainDb: 2 };
+    const busFor = (bands: EqBand[]): MixerBus => ({
+      ...makeBus('FX'),
+      strip: makeStrip({ eq: { enabled: true, bands } }),
+    });
+
+    sync.sync([], makeMixer({ buses: [busFor([band])] }));
+
+    expect(engine.setBusStripJson).toHaveBeenCalledWith(
+      1,
+      busSceneJson(1, busFor([band]).strip, null, { includeEq: true }),
+    );
+    expect(engine.setBusStripEq).toHaveBeenCalledWith(1, 0, band);
+    clearCalls(engine);
+
+    sync.sync([], makeMixer({ buses: [busFor([edited])] }));
+    expect(engine.setBusStripJson).not.toHaveBeenCalled();
+    expect(engine.setBusStripEq).toHaveBeenCalledWith(1, 0, edited);
+    clearCalls(engine);
+
+    sync.sync([], makeMixer({ buses: [busFor([])] }));
+    expect(engine.setBusStripEq).toHaveBeenCalledWith(1, 0, { enabled: false });
+  });
+
   it('patches enabled user bus insert numeric params without replacing the bus strip', () => {
     const { handle, engine } = makeHandle();
     const sync = createStripSync(handle);
@@ -698,6 +864,31 @@ describe('createStripSync group routing', () => {
     expect(engine.setBusStripJson).not.toHaveBeenCalled();
     expect(engine.setBusStripInsertParamByName).toHaveBeenCalledTimes(1);
     expect(engine.setBusStripInsertParamByName).toHaveBeenCalledWith(1, 0, 'thresholdDb', -12);
+  });
+
+  it('uses bus insert bypass ABI for user bus enable toggles when available', () => {
+    const { handle, engine } = makeHandleWithBusBypass();
+    const sync = createStripSync(handle);
+    const inserts = [
+      { processor: 'dynamics.compressor', params: { thresholdDb: -20 }, enabled: true },
+      { processor: 'saturation.tape', params: { drive: 0.4 }, enabled: false },
+    ];
+    const bus = { ...makeBus('FX'), strip: makeStrip({ inserts }) };
+
+    sync.sync([], makeMixer({ buses: [bus] }));
+    expect(engine.setBusStripJson).toHaveBeenCalledWith(1, busSceneJson(1, makeStrip({ inserts })));
+    expect(engine.setBusStripInsertBypassed).toHaveBeenCalledWith(1, 1, true);
+    clearCalls(engine);
+
+    const toggled = inserts.map((slot, index) => (index === 1 ? { ...slot, enabled: true } : slot));
+    sync.sync(
+      [],
+      makeMixer({ buses: [{ ...makeBus('FX'), strip: makeStrip({ inserts: toggled }) }] }),
+    );
+
+    expect(engine.setBusStripJson).not.toHaveBeenCalled();
+    expect(engine.setBusStripInsertBypassed).toHaveBeenCalledTimes(1);
+    expect(engine.setBusStripInsertBypassed).toHaveBeenCalledWith(1, 1, false);
   });
 
   it('routes a member back to the master mix when its membership clears', () => {
@@ -756,6 +947,28 @@ describe('createStripSync group routing', () => {
       1,
       busSceneJson(1, makeStrip({ inserts: toggled })),
     );
+  });
+
+  it('uses bus insert bypass ABI for group bus enable toggles when available', () => {
+    const { handle, engine } = makeHandleWithBusBypass();
+    const sync = createStripSync(handle);
+    const inserts = [
+      { processor: 'dynamics.compressor', params: { thresholdDb: -20 }, enabled: true },
+      { processor: 'saturation.tape', params: { drive: 0.4 }, enabled: false },
+    ];
+    const group = makeGroupTrack(10, makeStrip({ inserts }));
+
+    sync.sync([group], makeMixer());
+    expect(engine.setBusStripJson).toHaveBeenCalledWith(1, busSceneJson(1, makeStrip({ inserts })));
+    expect(engine.setBusStripInsertBypassed).toHaveBeenCalledWith(1, 1, true);
+    clearCalls(engine);
+
+    const toggled = inserts.map((slot, index) => (index === 1 ? { ...slot, enabled: true } : slot));
+    sync.sync([makeGroupTrack(10, makeStrip({ inserts: toggled }))], makeMixer());
+
+    expect(engine.setBusStripJson).not.toHaveBeenCalled();
+    expect(engine.setBusStripInsertBypassed).toHaveBeenCalledTimes(1);
+    expect(engine.setBusStripInsertBypassed).toHaveBeenCalledWith(1, 1, false);
   });
 
   it('patches enabled group insert numeric params without replacing the group bus strip', () => {
@@ -950,7 +1163,7 @@ describe('createStripSync sidechain bindings', () => {
     expect(engine.setLaneSidechain).toHaveBeenCalledWith(1, 0, null);
   });
 
-  it('ignores self, unknown and group-track sidechain sources', () => {
+  it('binds group tracks as sidechain sources but ignores self, unknown and group-strip targets', () => {
     const { handle, engine } = makeHandle();
     const sync = createStripSync(handle);
 
@@ -958,11 +1171,13 @@ describe('createStripSync sidechain bindings', () => {
       [
         makeTrack(1, keyedStrip(1)),
         makeTrack(2, keyedStrip(99)),
+        makeTrack(3, keyedStrip(10)),
         makeGroupTrack(10, keyedStrip(1)),
       ],
       makeMixer(),
     );
-    expect(engine.setLaneSidechain).not.toHaveBeenCalled();
+    expect(engine.setLaneSidechain).toHaveBeenCalledTimes(1);
+    expect(engine.setLaneSidechain).toHaveBeenCalledWith(3, 0, 10);
   });
 
   it('clears a binding whose source track disappears', () => {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import type { MeterSource } from '@/engine/meters';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import type { MeterSource, StereoMeterLevels } from '@/engine/meters';
 import { useI18n } from '@/ui/i18n';
 import { formatLevel } from '@/ui/mastering/loudness';
 import { gainReductionAmountDb, gainReductionFraction } from '@/ui/mixer/master-meter';
@@ -23,9 +23,6 @@ const props = withDefaults(
 
 const { t } = useI18n();
 
-/** Display refresh interval; gain reduction is read at ~15 Hz. */
-const REFRESH_MS = 66;
-
 const amountDb = ref<number | null>(null);
 
 /** Bar fraction (0..1) of the current reduction over the display scale. */
@@ -33,22 +30,26 @@ const fraction = computed(() =>
   amountDb.value === null ? 0 : gainReductionFraction(amountDb.value),
 );
 
-let rafId = 0;
-let lastTs = 0;
+let unsubscribe: (() => void) | null = null;
 
-function tick(ts: number): void {
-  rafId = requestAnimationFrame(tick);
-  if (ts - lastTs < REFRESH_MS) return;
-  lastTs = ts;
-  amountDb.value = gainReductionAmountDb(props.bridge?.latest?.gainReductionDb) ?? null;
+function update(levels: StereoMeterLevels | undefined): void {
+  amountDb.value = gainReductionAmountDb(levels?.gainReductionDb) ?? null;
 }
 
-onMounted(() => {
-  rafId = requestAnimationFrame(tick);
-});
+watch(
+  () => props.bridge,
+  (bridge) => {
+    unsubscribe?.();
+    unsubscribe = null;
+    update(bridge?.latest);
+    if (bridge) unsubscribe = bridge.subscribe(update);
+  },
+  { immediate: true },
+);
 
 onBeforeUnmount(() => {
-  cancelAnimationFrame(rafId);
+  unsubscribe?.();
+  unsubscribe = null;
 });
 </script>
 

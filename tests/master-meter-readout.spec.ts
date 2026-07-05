@@ -19,6 +19,7 @@ function sourceWith(levels: Partial<StereoMeterLevels>): MeterSource {
 
 let rafCallbacks: FrameRequestCallback[] = [];
 let wrapper: VueWrapper | null = null;
+let cancelAnimationFrameMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   rafCallbacks = [];
@@ -26,7 +27,8 @@ beforeEach(() => {
     rafCallbacks.push(cb);
     return rafCallbacks.length;
   });
-  vi.stubGlobal('cancelAnimationFrame', () => {});
+  cancelAnimationFrameMock = vi.fn();
+  vi.stubGlobal('cancelAnimationFrame', cancelAnimationFrameMock);
 });
 
 afterEach(() => {
@@ -153,5 +155,15 @@ describe('MasterMeterReadout', () => {
     wrapper = mount(MasterMeterReadout, { props: { bridge: null } });
     await tick(wrapper);
     expect(wrapper.find('.master-meter').exists()).toBe(false);
+  });
+
+  it('cancels the polling frame on unmount', () => {
+    wrapper = mount(MasterMeterReadout, { props: { bridge: null } });
+    expect(rafCallbacks).toHaveLength(1);
+
+    wrapper.unmount();
+    wrapper = null;
+
+    expect(cancelAnimationFrameMock).toHaveBeenCalledWith(1);
   });
 });

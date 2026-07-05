@@ -29,6 +29,7 @@ import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import {
   type AutomationWriteGesture,
+  type AutomationWriteScheduleEvent,
   automationStripMode,
   createAutomationWriteGesture,
   isAutomationWriteMode,
@@ -57,10 +58,18 @@ const props = withDefaults(
     bridge?: MeterSource | null;
     /** Playhead position getter in PPQ (automation follow/recording). */
     positionPpq?: () => number;
+    /** Current playhead sample position, used by future sample-accurate scheduling. */
+    positionSample?: () => number;
     /** True while the transport runs (automation touch recording). */
     isPlaying?: boolean;
+    /** Optional realtime automation scheduler for write-mode bus fader drags. */
+    scheduleAutomationWrite?: (
+      target: BusAutomationTarget,
+      param: 'faderDb',
+      event: AutomationWriteScheduleEvent,
+    ) => void;
   }>(),
-  { bridge: null, positionPpq: undefined, isPlaying: false },
+  { bridge: null, positionPpq: undefined, positionSample: undefined, isPlaying: false },
 );
 
 const store = useProjectStore();
@@ -96,7 +105,9 @@ function beginWriteGesture(): AutomationWriteGesture {
     mode: autoMode.value === 'latch' ? 'latch' : 'touch',
     existingPoints: faderLane.value?.points ?? [],
     positionPpq: () => props.positionPpq?.() ?? 0,
+    positionSample: props.positionSample,
     isPlaying: () => props.isPlaying,
+    schedule: (event) => props.scheduleAutomationWrite?.(automationTarget.value, 'faderDb', event),
     commit: (points) => setAutomationLanePoints(automationTarget.value, 'faderDb', points),
   });
 }

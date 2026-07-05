@@ -11,6 +11,9 @@ const FULL = ['dynamics.compressor', 'eq.parametric', 'repair.dereverbClassical'
 /** Structured catalog covering all three kinds plus a stereo-only entry. */
 const CATALOG = [
   { id: 'dynamics.compressor', kind: 'realtime', realtimeInsertable: true, stereoOnly: false },
+  { id: 'modulation.chorus', kind: 'realtime', realtimeInsertable: true, stereoOnly: false },
+  { id: 'modulation.flanger', kind: 'realtime', realtimeInsertable: true, stereoOnly: false },
+  { id: 'modulation.rotary', kind: 'realtime', realtimeInsertable: true, stereoOnly: true },
   { id: 'stereo.imager', kind: 'realtime', realtimeInsertable: true, stereoOnly: true },
   { id: 'repair.dereverbClassical', kind: 'offline', realtimeInsertable: false, stereoOnly: false },
   { id: 'match.applyMatchEq', kind: 'pair', realtimeInsertable: false, stereoOnly: false },
@@ -62,9 +65,18 @@ describe('loadInsertCatalog scope', () => {
       masteringProcessorNames: () => FULL,
     });
     // realtime keeps only realtimeInsertable ids; offline drops pair, keeps the rest.
-    expect(loadInsertCatalog('realtime')).toEqual(['dynamics.compressor', 'stereo.imager']);
+    expect(loadInsertCatalog('realtime')).toEqual([
+      'dynamics.compressor',
+      'modulation.chorus',
+      'modulation.flanger',
+      'modulation.rotary',
+      'stereo.imager',
+    ]);
     expect(loadInsertCatalog('offline')).toEqual([
       'dynamics.compressor',
+      'modulation.chorus',
+      'modulation.flanger',
+      'modulation.rotary',
       'stereo.imager',
       'repair.dereverbClassical',
     ]);
@@ -77,6 +89,9 @@ describe('loadInsertCatalogEntries', () => {
     const entries = loadInsertCatalogEntries('realtime');
     expect(entries).toEqual([
       { id: 'dynamics.compressor', label: 'Compressor', kind: 'realtime', stereoOnly: false },
+      { id: 'modulation.chorus', label: 'Chorus', kind: 'realtime', stereoOnly: false },
+      { id: 'modulation.flanger', label: 'Flanger', kind: 'realtime', stereoOnly: false },
+      { id: 'modulation.rotary', label: 'Rotary', kind: 'realtime', stereoOnly: true },
       { id: 'stereo.imager', label: 'Imager', kind: 'realtime', stereoOnly: true },
     ]);
   });

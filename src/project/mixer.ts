@@ -178,18 +178,24 @@ export interface MixerStrip {
 
 /**
  * Project-level mastering chain applied to the summed stereo mixdown after
- * the master strip — offline export/preview renders only (the realtime engine
- * has no master-bus insert point, so live playback never runs it).
+ * the master strip. Export/preview renders the full chain; live playback
+ * mirrors only enabled processor slots that are valid realtime strip inserts
+ * by appending them to the master strip scene.
  *
  * The preset names a wasm mastering preset (masteringPresetNames catalog) and
  * is applied as a whole chain (masterAudioStereo); the wasm API exposes no
  * per-preset stage list, so the preset stays a single opaque step. The
  * processor slots run after the preset, in order, through the same one-shot
- * stereo processors used by channel-strip inserts.
+ * stereo processors used by channel-strip inserts in export.
  */
 export interface MasteringChainState {
   /** Wasm mastering preset name; absent = no preset stage. */
   preset?: string;
+  /**
+   * Flat mastering preset overrides passed to masterAudioStereo (dot-notation
+   * keys such as 'loudness.targetLufs'). Absent/empty = preset defaults.
+   */
+  presetOverrides?: Record<string, number | boolean>;
   /** Processor slots applied after the preset, in order. */
   processors: InsertSlot[];
 }
@@ -206,11 +212,17 @@ export interface MixerBus {
   strip?: MixerStrip;
 }
 
+/** Solo audition tap mode. In-place is the historical main-mix solo behavior. */
+export type MixerSoloMode = 'inPlace' | 'afl' | 'pfl';
+
+/** Default solo mode: existing in-place after-fader solo in the main mix. */
+export const DEFAULT_MIXER_SOLO_MODE: MixerSoloMode = 'inPlace';
+
 /**
- * A VCA control group: a named fader that offsets the gain of every track
+ * A VCA control group: a named fader/mute/solo controller for every track
  * assigned to it (see {@link EditorTrack.vcaId}). Unlike a bus, a VCA carries
- * no audio of its own — it only shifts member lane gains, so the offset is
- * applied in the frontend mixer sync as a per-member dB delta.
+ * no audio of its own — it shifts member lane gains and folds its mute/solo
+ * into the member lanes.
  */
 export interface VcaGroup {
   /** Stable group id (unique within the project). */
@@ -219,10 +231,16 @@ export interface VcaGroup {
   name: string;
   /** Group fader offset in dB applied to every member (0 = unity). */
   gainDb: number;
+  /** True mutes every member track. Absent/false = not muted. */
+  mute?: boolean;
+  /** True solos every member track. Absent/false = not soloed. */
+  solo?: boolean;
 }
 
 /** Project-wide mixer state: the master strip plus optional buses. */
 export interface ProjectMixerState {
+  /** Solo audition mode. Absent = in-place for older projects. */
+  soloMode?: MixerSoloMode;
   /** Master strip (gain/pan, inserts and EQ are all audible in realtime). */
   master: MixerStrip;
   /** Send buses (realtime engine bus lanes, at most {@link MAX_MIXER_BUSES}). */
@@ -245,6 +263,50 @@ export function vcaOffsetDb(
   vcaGainDb: ReadonlyMap<string, number> | undefined,
 ): number {
   return vcaId !== undefined ? (vcaGainDb?.get(vcaId) ?? 0) : 0;
+}
+
+/** VCA mute/solo fields needed when deriving effective member lane state. */
+export type VcaControlState = Pick<VcaGroup, 'mute' | 'solo'>;
+
+/** True when the assigned VCA group currently mutes its member tracks. */
+export function vcaGroupMuted(
+  vcaId: string | undefined,
+  vcaControls: ReadonlyMap<string, VcaControlState> | undefined,
+): boolean {
+  return vcaId !== undefined && vcaControls?.get(vcaId)?.mute === true;
+}
+
+/** True when the assigned VCA group currently solos its member tracks. */
+export function vcaGroupSoloed(
+  vcaId: string | undefined,
+  vcaControls: ReadonlyMap<string, VcaControlState> | undefined,
+): boolean {
+  return vcaId !== undefined && vcaControls?.get(vcaId)?.solo === true;
+}
+
+/** Effective mute of a track after its assigned VCA group is applied. */
+export function effectiveTrackMute(
+  trackMute: boolean,
+  vcaId: string | undefined,
+  vcaControls: ReadonlyMap<string, VcaControlState> | undefined,
+): boolean {
+  return trackMute || vcaGroupMuted(vcaId, vcaControls);
+}
+
+/**
+ * Returns a track list whose solo flags include soloed VCA groups, leaving the
+ * original objects untouched when no VCA solo is active.
+ */
+export function tracksWithVcaSolo<T extends { solo: boolean; vcaId?: string }>(
+  tracks: ReadonlyArray<T>,
+  vcaControls: ReadonlyMap<string, VcaControlState> | undefined,
+): ReadonlyArray<T> {
+  if (!vcaControls || !tracks.some((track) => vcaGroupSoloed(track.vcaId, vcaControls))) {
+    return tracks;
+  }
+  return tracks.map((track) =>
+    vcaGroupSoloed(track.vcaId, vcaControls) ? { ...track, solo: true } : track,
+  );
 }
 
 /**
@@ -311,6 +373,11 @@ export function createDefaultMixerState(): ProjectMixerState {
   return { master: createDefaultStrip(), buses: [] };
 }
 
+/** Normalizes a mixer solo mode from untrusted documents/UI input. */
+export function normalizeMixerSoloMode(mode: unknown): MixerSoloMode {
+  return mode === 'afl' || mode === 'pfl' || mode === 'inPlace' ? mode : DEFAULT_MIXER_SOLO_MODE;
+}
+
 /** Builds an empty mastering chain: no preset, no processors. */
 export function createDefaultMasteringChain(): MasteringChainState {
   return { processors: [] };
@@ -354,7 +421,11 @@ export function isDefaultStrip(strip: MixerStrip): boolean {
 /** True when a mastering chain is empty (no preset and no processors). */
 export function isDefaultMasteringChain(chain: MasteringChainState | undefined): boolean {
   if (!chain) return true;
-  return chain.preset === undefined && chain.processors.length === 0;
+  return (
+    chain.preset === undefined &&
+    Object.keys(chain.presetOverrides ?? {}).length === 0 &&
+    chain.processors.length === 0
+  );
 }
 
 /**
@@ -370,6 +441,7 @@ export function masteringChainIsActive(chain: MasteringChainState | undefined): 
 export function isDefaultMixerState(state: ProjectMixerState): boolean {
   return (
     isDefaultStrip(state.master) &&
+    normalizeMixerSoloMode(state.soloMode) === DEFAULT_MIXER_SOLO_MODE &&
     state.buses.length === 0 &&
     (state.vcaGroups === undefined || state.vcaGroups.length === 0) &&
     isDefaultMasteringChain(state.masteringChain)

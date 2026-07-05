@@ -22,14 +22,19 @@ export {
   mixerBusIdFromTarget,
   mixerBusStripTarget,
 } from './mixer-internal';
+export type { ApplyMixerSceneResult } from './mixer-scenes';
+export { applyMixerSceneJson } from './mixer-scenes';
 export type {
   MixerSnapshot,
+  MixerSnapshotSlotState,
   MixerSnapshotTrack,
 } from './mixer-snapshots';
 export {
   applyMixerSnapshot,
   buildMixerSnapshot,
   captureMixerSnapshot,
+  exportMixerSnapshotSlots,
+  importMixerSnapshotSlots,
   mergeMixerSnapshot,
 } from './mixer-snapshots';
 export {
@@ -39,6 +44,7 @@ export {
   setInsertEnabled,
   setInsertParam,
   setInsertSidechain,
+  setMixerSoloMode,
   setProjectExternalMidiDefault,
   setProjectExternalMidiDefaultForTracks,
   setSend,
@@ -64,4 +70,6 @@ export {
   renameVcaGroup,
   setTrackVca,
   setVcaGroupGain,
+  setVcaGroupMute,
+  setVcaGroupSolo,
 } from './mixer-vca';

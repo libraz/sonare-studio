@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, inject, ref } from 'vue';
+import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
 import type { MixerStripTarget } from '@/project/commands';
 import { setSend } from '@/project/commands';
 import { createDefaultStrip, type MixerStrip, type StripSend } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import { useI18n } from '@/ui/i18n';
+import { midiLearnSendTargetId } from '@/ui/midi/midi-learn';
 import { formatDb } from '@/ui/mixer/db-scale';
 import MixerKnob from './MixerKnob.vue';
 
@@ -27,6 +29,7 @@ const isMaster = computed(() => props.target === 'master');
 
 const store = useProjectStore();
 const { t } = useI18n();
+const midiLearn = inject(MIDI_LEARN_KEY, null);
 
 /** Send level knob range in dB. */
 const SEND_MIN_DB = -60;
@@ -90,6 +93,31 @@ function onRemove(busId: string): void {
   if (!sendFor(busId)) return;
   setSend(props.target, busId, null);
 }
+
+function learnTargetId(busId: string, param: 'level' | 'enabled' | 'timing' = 'level'): string {
+  return typeof props.target === 'number' ? midiLearnSendTargetId(props.target, busId, param) : '';
+}
+
+function learnState(
+  busId: string,
+  param: 'level' | 'enabled' | 'timing' = 'level',
+): 'unbound' | 'armed' | 'bound' | undefined {
+  if (!midiLearn) return undefined;
+  const id = learnTargetId(busId, param);
+  if (id === '') return undefined;
+  if (midiLearn.isArmedId(id)) return 'armed';
+  return midiLearn.bindingForId(id) ? 'bound' : 'unbound';
+}
+
+function onMidiLearn(busId: string, param: 'level' | 'enabled' | 'timing' = 'level'): void {
+  const id = learnTargetId(busId, param);
+  if (id !== '') midiLearn?.armId(id);
+}
+
+function onMidiForget(busId: string, param: 'level' | 'enabled' | 'timing' = 'level'): void {
+  const id = learnTargetId(busId, param);
+  if (id !== '') midiLearn?.clearId(id);
+}
 </script>
 
 <template>
@@ -120,6 +148,31 @@ function onRemove(busId: string): void {
         {{ bus.name }}
       </button>
       <button
+        v-if="learnState(bus.id, 'enabled')"
+        type="button"
+        class="send-midi-learn"
+        :class="learnState(bus.id, 'enabled')"
+        v-tooltip="
+          learnState(bus.id, 'enabled') === 'armed'
+            ? t.shell.mixer.controls.midiLearnListening
+            : t.shell.mixer.controls.midiLearn
+        "
+        :aria-label="t.shell.mixer.controls.midiLearn"
+        @click="onMidiLearn(bus.id, 'enabled')"
+      >
+        MIDI
+      </button>
+      <button
+        v-if="learnState(bus.id, 'enabled') === 'bound'"
+        type="button"
+        class="send-midi-forget"
+        v-tooltip="t.shell.mixer.controls.midiForget"
+        :aria-label="t.shell.mixer.controls.midiForget"
+        @click="onMidiForget(bus.id, 'enabled')"
+      >
+        ×
+      </button>
+      <button
         v-if="!isMaster && sendFor(bus.id)"
         type="button"
         class="send-timing"
@@ -131,13 +184,41 @@ function onRemove(busId: string): void {
       >
         {{ isPreFader(bus.id) ? t.shell.mixer.sends.preFader : t.shell.mixer.sends.postFader }}
       </button>
+      <button
+        v-if="!isMaster && sendFor(bus.id) && learnState(bus.id, 'timing')"
+        type="button"
+        class="send-midi-learn"
+        :class="learnState(bus.id, 'timing')"
+        v-tooltip="
+          learnState(bus.id, 'timing') === 'armed'
+            ? t.shell.mixer.controls.midiLearnListening
+            : t.shell.mixer.controls.midiLearn
+        "
+        :aria-label="t.shell.mixer.controls.midiLearn"
+        @click="onMidiLearn(bus.id, 'timing')"
+      >
+        MIDI
+      </button>
+      <button
+        v-if="!isMaster && sendFor(bus.id) && learnState(bus.id, 'timing') === 'bound'"
+        type="button"
+        class="send-midi-forget"
+        v-tooltip="t.shell.mixer.controls.midiForget"
+        :aria-label="t.shell.mixer.controls.midiForget"
+        @click="onMidiForget(bus.id, 'timing')"
+      >
+        ×
+      </button>
       <MixerKnob
         :value="levelFor(bus.id)"
         :min="SEND_MIN_DB"
         :max="SEND_MAX_DB"
         :display="`${formatDb(levelFor(bus.id))} dB`"
         :size="18"
+        :midi-learn-state="learnState(bus.id)"
         @change="(value, commit) => onLevelChange(bus.id, value, commit)"
+        @midi-learn="onMidiLearn(bus.id)"
+        @midi-forget="onMidiForget(bus.id)"
       />
       <button
         v-if="sendFor(bus.id)"
@@ -228,6 +309,36 @@ function onRemove(busId: string): void {
 .send-timing.pre {
   color: var(--accent);
   border-color: var(--accent-muted);
+}
+
+.send-midi-learn,
+.send-midi-forget {
+  flex: none;
+  height: 14px;
+  font: var(--fw-bold) 7px var(--font-sans);
+  line-height: 1;
+  color: var(--text-3);
+  background: var(--surface-3);
+  border: none;
+  border-radius: 3px;
+  padding: 0 4px;
+  cursor: pointer;
+  box-shadow: var(--control-lift);
+}
+
+.send-midi-learn.armed {
+  color: var(--surface-0);
+  background: var(--accent);
+}
+
+.send-midi-learn.bound {
+  color: var(--accent);
+}
+
+.send-midi-forget {
+  width: 14px;
+  padding: 0;
+  color: var(--text-4);
 }
 
 .send-remove {

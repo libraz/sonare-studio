@@ -1,13 +1,26 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import SelectMenu from '@/components/shell/SelectMenu.vue';
 import type { AnalyserBridge } from '@/engine/analyser';
 import type { MeterSource } from '@/engine/meters';
 import type { ScopeSource } from '@/engine/scope';
-import { addMixerBus, addVcaGroup } from '@/project/commands';
-import { MAX_VCA_GROUPS } from '@/project/mixer';
+import type { AutomationParam, AutomationTarget } from '@/project/automation';
+import {
+  addMixerBus,
+  addVcaGroup,
+  applyMixerSceneJson,
+  setMixerSoloMode,
+} from '@/project/commands';
+import { MAX_VCA_GROUPS, type MixerSoloMode, normalizeMixerSoloMode } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import type { AutomationWriteScheduleEvent } from '@/ui/mixer/automation-mode';
+import {
+  humanizeMixerScenePreset,
+  loadMixerScenePresetCatalog,
+  loadMixerScenePresetJson,
+} from '@/ui/mixer/scene-presets';
 import BusStrip from './BusStrip.vue';
 import ChannelStrip from './ChannelStrip.vue';
 import MixerSnapshots from './MixerSnapshots.vue';
@@ -45,8 +58,16 @@ const props = withDefaults(
     busScopeFor?: ((busId: string) => ScopeSource | null) | null;
     /** Playhead position getter in PPQ (strip automation follow/recording). */
     positionPpq?: () => number;
+    /** Current playhead sample position, used by future sample-accurate scheduling. */
+    positionSample?: () => number;
     /** True while the transport runs (strip automation touch recording). */
     isPlaying?: boolean;
+    /** Optional realtime automation scheduler for write-mode strip drags. */
+    scheduleAutomationWrite?: (
+      target: AutomationTarget,
+      param: AutomationParam,
+      event: AutomationWriteScheduleEvent,
+    ) => void;
   }>(),
   {
     bridge: null,
@@ -57,6 +78,7 @@ const props = withDefaults(
     scopeFor: null,
     busScopeFor: null,
     positionPpq: undefined,
+    positionSample: undefined,
     isPlaying: false,
   },
 );
@@ -73,6 +95,17 @@ const visibleTracks = computed<EditorTrack[]>(() =>
 
 const hiddenCount = computed(() => store.tracks.length - visibleTracks.value.length);
 
+const soloMode = computed<MixerSoloMode>({
+  get: () => normalizeMixerSoloMode(store.mixer.soloMode),
+  set: (mode) => setMixerSoloMode(mode),
+});
+
+const soloModeOptions = computed(() => [
+  { value: 'inPlace', label: t.value.shell.mixer.soloMode.inPlace },
+  { value: 'afl', label: t.value.shell.mixer.soloMode.afl },
+  { value: 'pfl', label: t.value.shell.mixer.soloMode.pfl },
+]);
+
 function toggleTrackVisible(trackId: number): void {
   const next = new Set(hiddenTrackIds.value);
   if (next.has(trackId)) next.delete(trackId);
@@ -88,6 +121,9 @@ function showAllTracks(): void {
 
 const menuOpen = ref(false);
 const menuEl = ref<HTMLDivElement | null>(null);
+const sceneMenuOpen = ref(false);
+const sceneMenuEl = ref<HTMLDivElement | null>(null);
+const sceneCatalog = ref<string[]>([]);
 
 /** Surfaced when a bus command rejects. */
 const error = ref('');
@@ -113,14 +149,37 @@ function onAddVca(): void {
   }
 }
 
-function onDocumentPointerDown(event: PointerEvent): void {
-  if (!(event.target instanceof Node) || !menuEl.value?.contains(event.target)) {
-    menuOpen.value = false;
+function toggleSceneMenu(): void {
+  if (!sceneMenuOpen.value) sceneCatalog.value = loadMixerScenePresetCatalog();
+  sceneMenuOpen.value = !sceneMenuOpen.value;
+}
+
+function onApplyScenePreset(preset: string): void {
+  try {
+    applyMixerSceneJson(loadMixerScenePresetJson(preset));
+    sceneMenuOpen.value = false;
+    error.value = '';
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
   }
 }
 
-watch(menuOpen, (open) => {
-  if (open) document.addEventListener('pointerdown', onDocumentPointerDown, true);
+function onDocumentPointerDown(event: PointerEvent): void {
+  if (!(event.target instanceof Node)) {
+    menuOpen.value = false;
+    sceneMenuOpen.value = false;
+    return;
+  }
+  if (!menuEl.value?.contains(event.target)) {
+    menuOpen.value = false;
+  }
+  if (!sceneMenuEl.value?.contains(event.target)) {
+    sceneMenuOpen.value = false;
+  }
+}
+
+watch([menuOpen, sceneMenuOpen], ([viewOpen, scenesOpen]) => {
+  if (viewOpen || scenesOpen) document.addEventListener('pointerdown', onDocumentPointerDown, true);
   else document.removeEventListener('pointerdown', onDocumentPointerDown, true);
 });
 
@@ -138,6 +197,39 @@ onBeforeUnmount(() => {
       </span>
       <span class="toolbar-spacer" />
       <MixerSnapshots />
+      <SelectMenu
+        v-model="soloMode"
+        class="solo-mode-select"
+        size="sm"
+        :options="soloModeOptions"
+        :aria-label="t.shell.mixer.soloMode.title"
+        :title="t.shell.mixer.soloMode.title"
+      />
+      <div ref="sceneMenuEl" class="view-menu-wrap">
+        <button
+          type="button"
+          class="toolbar-button"
+          v-tooltip="t.shell.mixer.scenes.title"
+          aria-haspopup="menu"
+          :aria-expanded="sceneMenuOpen"
+          @click="toggleSceneMenu"
+        >
+          {{ t.shell.mixer.scenes.button }} ▾
+        </button>
+        <div v-if="sceneMenuOpen" class="view-menu scene-menu" role="menu">
+          <div class="view-menu-section">{{ t.shell.mixer.scenes.title }}</div>
+          <button
+            v-for="preset in sceneCatalog"
+            :key="preset"
+            type="button"
+            role="menuitem"
+            class="view-menu-action"
+            @click="onApplyScenePreset(preset)"
+          >
+            {{ humanizeMixerScenePreset(preset) }}
+          </button>
+        </div>
+      </div>
       <button
         type="button"
         class="toolbar-button"
@@ -199,7 +291,9 @@ onBeforeUnmount(() => {
           :bridge="props.meterFor ? props.meterFor(track.id) : null"
           :scope="props.scopeFor ? props.scopeFor(track.id) : null"
           :position-ppq="props.positionPpq"
+          :position-sample="props.positionSample"
           :is-playing="props.isPlaying"
+          :schedule-automation-write="props.scheduleAutomationWrite"
         />
         <BusStrip
           v-for="bus in store.mixer.buses"
@@ -207,7 +301,9 @@ onBeforeUnmount(() => {
           :bus="bus"
           :bridge="props.busMeterFor ? props.busMeterFor(bus.id) : null"
           :position-ppq="props.positionPpq"
+          :position-sample="props.positionSample"
           :is-playing="props.isPlaying"
+          :schedule-automation-write="props.scheduleAutomationWrite"
         />
         <VcaStrip v-for="group in store.mixer.vcaGroups ?? []" :key="group.id" :group="group" />
       </TransitionGroup>
@@ -219,7 +315,9 @@ onBeforeUnmount(() => {
         :analyser="props.analyser"
         :scope="props.masterScope"
         :position-ppq="props.positionPpq"
+        :position-sample="props.positionSample"
         :is-playing="props.isPlaying"
+        :schedule-automation-write="props.scheduleAutomationWrite"
       />
     </div>
   </div>

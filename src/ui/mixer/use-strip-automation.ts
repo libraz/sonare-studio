@@ -22,6 +22,7 @@ import type { EditorTrack } from '@/project/types';
 import {
   type AutomationWriteGesture,
   type AutomationWriteMode,
+  type AutomationWriteScheduleEvent,
   automationStripMode,
   createAutomationWriteGesture,
 } from '@/ui/mixer/automation-mode';
@@ -39,8 +40,16 @@ export interface StripAutomationOptions {
   strip: ComputedRef<MixerStrip>;
   /** Playhead position getter in PPQ (lane follow / touch recording). */
   positionPpq: () => number;
+  /** Current playhead sample position, used by future sample-accurate scheduling. */
+  positionSample?: () => number;
   /** True while the transport runs (continuous touch recording). */
   isPlaying: () => boolean;
+  /** Optional realtime automation scheduler for write-mode drags. */
+  scheduleAutomationWrite?: (
+    target: number | 'master',
+    param: AutomationParam,
+    event: AutomationWriteScheduleEvent,
+  ) => void;
 }
 
 /** Reactive automation surface a strip binds to its fader, knob and R/T/L row. */
@@ -152,7 +161,9 @@ export function useStripAutomation(options: StripAutomationOptions): StripAutoma
       mode,
       existingPoints: laneFor(param)?.points ?? [],
       positionPpq,
+      positionSample: options.positionSample,
       isPlaying,
+      schedule: (event) => options.scheduleAutomationWrite?.(options.target(), param, event),
       commit: (points) => setAutomationLanePoints(options.target(), param, points),
     });
   }

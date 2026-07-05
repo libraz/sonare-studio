@@ -2,23 +2,36 @@ import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { busAutomationTarget } from '@/project/automation';
 import {
+  activeMixerSnapshotSlot,
   addAudioTrack,
+  addGroupTrack,
   addInsert,
   addMixerBus,
   addVcaGroup,
   clearHistory,
+  clearMixerSnapshots,
   mixerBusStripTarget,
+  mixerSnapshotFilled,
+  recallMixerSnapshot,
+  saveMixerSnapshot,
   setAutomationLanePoints,
+  setMixerSoloMode,
   setSend,
   setStripChannelDelaySamples,
+  setStripDualPan,
   setStripEq,
   setStripGain,
   setStripOutputBus,
   setStripPan,
+  setStripPanLaw,
+  setStripPanMode,
   setTrackInstrument,
   setTrackSoloSafe,
   setTrackVca,
+  setVcaGroupMute,
+  setVcaGroupSolo,
 } from '@/project/commands';
+import type { InsertSlot } from '@/project/mixer';
 import {
   loadProjectDocument,
   PROJECT_DOCUMENT_SCHEMA_VERSION,
@@ -59,11 +72,14 @@ describe('project serialization with instruments and mixer (schema v3)', () => {
     }
   });
 
-  it('serializes instrument, strips and the project mixer state', () => {
+  it('serializes instrument, strips and the project mixer state', async () => {
     const trackId = store.tracks[0].id;
     setTrackInstrument(trackId, { kind: 'sf2', fontId: 'gm-font', bank: 128, program: 25 });
     setStripGain(trackId, -4.5);
     setStripPan(trackId, 0.3);
+    setStripPanLaw(trackId, 'const6dB');
+    setStripPanMode(trackId, 'dualPan');
+    setStripDualPan(trackId, -0.25, 0.5);
     addInsert(trackId, 'dynamics.compressor', { thresholdDb: -18, ratio: 4 });
     setStripEq(trackId, { enabled: true, bands: [{ type: 'Peak', frequencyHz: 900, gainDb: 2 }] });
     const busId = addMixerBus({ name: 'FX' });
@@ -80,6 +96,9 @@ describe('project serialization with instruments and mixer (schema v3)', () => {
     expect(doc.tracks[0].mixer).toEqual({
       gainDb: -4.5,
       pan: 0.3,
+      panLaw: 'const6dB',
+      panMode: 'dualPan',
+      dualPan: { left: -0.25, right: 0.5 },
       inserts: [
         {
           processor: 'dynamics.compressor',
@@ -95,6 +114,40 @@ describe('project serialization with instruments and mixer (schema v3)', () => {
 
     // JSON round-trip stays lossless (plain data only).
     expect(JSON.parse(JSON.stringify(doc))).toEqual(doc);
+
+    await loadProjectDocument(doc);
+    expect(store.tracks[0].mixer?.panLaw).toBe('const6dB');
+    expect(store.tracks[0].mixer?.panMode).toBe('dualPan');
+    expect(store.tracks[0].mixer?.dualPan).toEqual({ left: -0.25, right: 0.5 });
+  });
+
+  it('drops legacy master sends on save and load because they are not audible', async () => {
+    const busId = addMixerBus({ name: 'FX' });
+    store.mixer.master.sends = [{ busId, levelDb: -6, enabled: true }];
+
+    const doc = serializeProject();
+    expect(doc.mixer?.master.sends).toEqual([]);
+
+    const legacyDoc = JSON.parse(JSON.stringify(doc)) as ProjectDocument;
+    legacyDoc.mixer!.master.sends = [{ busId, levelDb: -6, enabled: true }];
+    await loadProjectDocument(legacyDoc);
+    expect(store.mixer.master.sends).toEqual([]);
+    expect(serializeProject().mixer?.master.sends).toEqual([]);
+  });
+
+  it('round-trips mixer solo audition mode and normalizes invalid documents', async () => {
+    setMixerSoloMode('pfl');
+    const doc = serializeProject();
+    expect(doc.mixer?.soloMode).toBe('pfl');
+
+    await loadProjectDocument(doc);
+    expect(store.mixer.soloMode).toBe('pfl');
+
+    const invalid = JSON.parse(JSON.stringify(doc)) as ProjectDocument;
+    invalid.mixer!.soloMode = 'bad-mode' as never;
+    await loadProjectDocument(invalid);
+    expect(store.mixer.soloMode).toBeUndefined();
+    expect(serializeProject().mixer?.soloMode).toBeUndefined();
   });
 
   it('round-trips: load + re-serialize yields the same document', async () => {
@@ -173,7 +226,7 @@ describe('project serialization with instruments and mixer (schema v3)', () => {
     expect(serializeProject()).toEqual(doc);
   });
 
-  it('drops unsupported mixer-scope sidechain ids when serializing', () => {
+  it('round-trips mixer-scope sidechain ids positionally', async () => {
     const sourceId = addAudioTrack({ name: 'Kick' });
     const busId = addMixerBus({ name: 'FX' });
     addInsert(mixerBusStripTarget(busId), 'dynamics.compressor', { thresholdDb: -18 });
@@ -182,9 +235,58 @@ describe('project serialization with instruments and mixer (schema v3)', () => {
     store.mixer.master.inserts[0].sidechainSourceTrackId = sourceId;
 
     const doc = serializeProject();
+    const sourceIndex = doc.tracks.findIndex((track) => track.name === 'Kick');
+    const busSlot = doc.mixer?.buses[0].strip?.inserts[0] as
+      | (InsertSlot & { sidechainSourceIndex?: number })
+      | undefined;
+    const masterSlot = doc.mixer?.master.inserts[0] as
+      | (InsertSlot & { sidechainSourceIndex?: number })
+      | undefined;
 
-    expect(doc.mixer?.buses[0].strip?.inserts[0].sidechainSourceTrackId).toBeUndefined();
-    expect(doc.mixer?.master.inserts[0].sidechainSourceTrackId).toBeUndefined();
+    expect(busSlot?.sidechainSourceTrackId).toBeUndefined();
+    expect(masterSlot?.sidechainSourceTrackId).toBeUndefined();
+    expect(busSlot?.sidechainSourceIndex).toBe(sourceIndex);
+    expect(masterSlot?.sidechainSourceIndex).toBe(sourceIndex);
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+
+    const reloadedSourceId = store.tracks[sourceIndex].id;
+    expect(store.mixer.buses[0].strip?.inserts[0].sidechainSourceTrackId).toBe(reloadedSourceId);
+    expect(store.mixer.master.inserts[0].sidechainSourceTrackId).toBe(reloadedSourceId);
+    expect(
+      (store.mixer.buses[0].strip?.inserts[0] as InsertSlot & { sidechainSourceIndex?: number })
+        .sidechainSourceIndex,
+    ).toBeUndefined();
+    expect(
+      (store.mixer.master.inserts[0] as InsertSlot & { sidechainSourceIndex?: number })
+        .sidechainSourceIndex,
+    ).toBeUndefined();
+  });
+
+  it('resolves mixer-scope sidechain indices when store.loadDocument is called directly', async () => {
+    const sourceId = addAudioTrack({ name: 'Kick' });
+    const busId = addMixerBus({ name: 'FX' });
+    addInsert(mixerBusStripTarget(busId), 'dynamics.compressor');
+    store.mixer.buses[0].strip!.inserts[0].sidechainSourceTrackId = sourceId;
+    addInsert('master', 'dynamics.compressor');
+    store.mixer.master.inserts[0].sidechainSourceTrackId = sourceId;
+
+    const doc = JSON.parse(JSON.stringify(serializeProject())) as ProjectDocument;
+    const sourceIndex = doc.tracks.findIndex((track) => track.name === 'Kick');
+
+    await store.loadDocument(doc);
+
+    const reloadedSourceId = store.tracks[sourceIndex].id;
+    expect(store.mixer.buses[0].strip?.inserts[0].sidechainSourceTrackId).toBe(reloadedSourceId);
+    expect(store.mixer.master.inserts[0].sidechainSourceTrackId).toBe(reloadedSourceId);
+    expect(
+      (store.mixer.buses[0].strip?.inserts[0] as InsertSlot & { sidechainSourceIndex?: number })
+        .sidechainSourceIndex,
+    ).toBeUndefined();
+    expect(
+      (store.mixer.master.inserts[0] as InsertSlot & { sidechainSourceIndex?: number })
+        .sidechainSourceIndex,
+    ).toBeUndefined();
   });
 
   it('round-trips a pre-fader send and a channel alignment delay', async () => {
@@ -205,13 +307,70 @@ describe('project serialization with instruments and mixer (schema v3)', () => {
     const groupId = addVcaGroup({ name: 'Drums' });
     setTrackVca(trackId, groupId);
     setTrackSoloSafe(trackId, true);
+    setVcaGroupMute(groupId, true);
+    setVcaGroupSolo(groupId, true);
     const doc = serializeProject();
 
     await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
     expect(serializeProject()).toEqual(doc);
-    expect(store.mixer.vcaGroups).toEqual([{ id: groupId, name: 'Drums', gainDb: 0 }]);
+    expect(store.mixer.vcaGroups).toEqual([
+      { id: groupId, name: 'Drums', gainDb: 0, mute: true, solo: true },
+    ]);
     expect(store.tracks[0].vcaId).toBe(groupId);
     expect(store.tracks[0].soloSafe).toBe(true);
+  });
+
+  it('persists mixer snapshot slots with document-track-index bindings', async () => {
+    const trackId = store.tracks[0].id;
+    setStripGain(trackId, -5);
+    saveMixerSnapshot('D');
+    setStripGain(trackId, 3);
+    const doc = serializeProject();
+
+    expect(doc.mixerSnapshots?.active).toBe('D');
+    expect(doc.mixerSnapshots?.slots.D?.tracks[0]).toMatchObject({
+      trackIndex: 0,
+      mute: false,
+      solo: false,
+    });
+    expect((doc.mixerSnapshots?.slots.D?.tracks[0] as { id?: unknown }).id).toBeUndefined();
+
+    clearMixerSnapshots();
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    expect(mixerSnapshotFilled('D')).toBe(true);
+    expect(activeMixerSnapshotSlot()).toBe('D');
+
+    const loadedTrackId = store.tracks[0].id;
+    setStripGain(loadedTrackId, 12);
+    expect(recallMixerSnapshot('D')).toBe(true);
+    expect(store.tracks[0].mixer?.gainDb).toBe(-5);
+  });
+
+  it('drops group-track insert sidechain sources from mixer snapshot slots', async () => {
+    const sourceId = store.tracks[0].id;
+    const groupId = addGroupTrack({ name: 'Group' });
+    addInsert(groupId, 'dynamics.compressor', { thresholdDb: -12 });
+    const group = store.tracks.find((track) => track.id === groupId)!;
+    group.mixer!.inserts[0].sidechainSourceTrackId = sourceId;
+
+    saveMixerSnapshot('D');
+    const doc = serializeProject();
+    const groupIndex = doc.tracks.findIndex((track) => track.kind === 'group');
+    const snapshotTrack = doc.mixerSnapshots?.slots.D?.tracks.find(
+      (entry) => entry.trackIndex === groupIndex,
+    );
+    const snapshotSlot = snapshotTrack?.mixer.inserts[0] as
+      | (InsertSlot & { sidechainSourceIndex?: number })
+      | undefined;
+
+    expect(snapshotSlot?.sidechainSourceTrackId).toBeUndefined();
+    expect(snapshotSlot?.sidechainSourceIndex).toBeUndefined();
+
+    clearMixerSnapshots();
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    expect(recallMixerSnapshot('D')).toBe(true);
+    const loadedGroup = store.tracks.find((track) => track.kind === 'group');
+    expect(loadedGroup?.mixer?.inserts[0].sidechainSourceTrackId).toBeUndefined();
   });
 
   it('drops a track VCA assignment whose group is missing from the document', async () => {

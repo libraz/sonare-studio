@@ -1,3 +1,4 @@
+import type { VcaGroup } from '../mixer';
 import { MAX_STRIP_GAIN_DB, MAX_VCA_GROUPS, MIN_STRIP_GAIN_DB } from '../mixer';
 import { useProjectStore } from '../store';
 import { type CommandGestureOptions, execute, executeApp, hasPendingGesture } from './history';
@@ -130,6 +131,42 @@ export function setVcaGroupGain(
     },
     { key, commit: options?.commit ?? true },
   );
+}
+
+/** Sets or clears a VCA group's mute flag as one undoable edit. */
+export function setVcaGroupMute(groupId: string, mute: boolean): void {
+  setVcaGroupBoolean(groupId, 'mute', mute);
+}
+
+/** Sets or clears a VCA group's solo flag as one undoable edit. */
+export function setVcaGroupSolo(groupId: string, solo: boolean): void {
+  setVcaGroupBoolean(groupId, 'solo', solo);
+}
+
+/** Shared optional boolean setter for VCA group flags. */
+function setVcaGroupBoolean(groupId: string, key: 'mute' | 'solo', value: boolean): void {
+  const store = useProjectStore();
+  const groups = store.mixer.vcaGroups ?? [];
+  const group = groups.find((entry) => entry.id === groupId);
+  if (!group) throw new RangeError(`Unknown VCA group id: ${groupId}`);
+  if ((group[key] ?? false) === value) return;
+  executeApp(() => {
+    store.mixer = {
+      ...store.mixer,
+      vcaGroups: groups.map((entry) =>
+        entry.id === groupId ? withVcaFlag(entry, key, value) : entry,
+      ),
+    };
+    store.refresh();
+  });
+}
+
+/** Sets an optional VCA boolean flag, dropping it when false. */
+function withVcaFlag(group: VcaGroup, key: 'mute' | 'solo', value: boolean): VcaGroup {
+  const next = { ...group };
+  if (value) next[key] = true;
+  else delete next[key];
+  return next;
 }
 
 /**

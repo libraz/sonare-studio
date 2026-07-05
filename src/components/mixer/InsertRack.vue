@@ -153,6 +153,13 @@ function onToggleEnabled(index: number): void {
   toggleInsertEnabled(props.target, index, strip.value.inserts[index]);
 }
 
+function insertPowerTooltip(slot: InsertSlot): string {
+  if (isMixerBusStripTarget(props.target)) {
+    return slot.enabled ? t.value.shell.inserts.busBypass : t.value.shell.inserts.busEnable;
+  }
+  return slot.enabled ? t.value.shell.inserts.bypass : t.value.shell.inserts.enable;
+}
+
 function onRemove(index: number): void {
   removeInsertSlot(props.target, index);
   expandedIndex.value = adjustExpandedAfterRemove(expandedIndex.value, index);
@@ -201,9 +208,9 @@ function onDragEnd(): void {
 /** Sidechain select value meaning "no key source" (track ids are never < 0). */
 const SIDECHAIN_NONE = -1;
 
-/** Tracks selectable as sidechain key sources (other non-group tracks). */
+/** Tracks selectable as sidechain key sources (any other track lane, including groups). */
 const sidechainSources = computed<EditorTrack[]>(() =>
-  store.tracks.filter((track) => track.id !== props.target && track.kind !== 'group'),
+  store.tracks.filter((track) => track.id !== props.target),
 );
 
 /** Key-source options: "No key" plus every selectable source track. */
@@ -300,7 +307,7 @@ onBeforeUnmount(() => {
           type="button"
           class="insert-power"
           :class="{ on: slot.enabled }"
-          v-tooltip="slot.enabled ? t.shell.inserts.bypass : t.shell.inserts.enable"
+          v-tooltip="insertPowerTooltip(slot)"
           :aria-label="
             formatMessage(t.shell.inserts.power, { name: humanizeInsertName(slot.processor) })
           "
