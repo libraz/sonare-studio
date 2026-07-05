@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { promptDialog } from '@/composables/useDialogs';
 import type { MeterSource } from '@/engine/meters';
+import type { ScopeSource } from '@/engine/scope';
 import {
   type BusAutomationTarget,
   busAutomationTarget,
@@ -38,6 +39,8 @@ import {
 import { formatDb } from '@/ui/mixer/db-scale';
 import InsertRack from './InsertRack.vue';
 import MixerFader from './MixerFader.vue';
+import SpectrumAnalyzer from './SpectrumAnalyzer.vue';
+import StereoGoniometer from './StereoGoniometer.vue';
 import StripGrMeter from './StripGrMeter.vue';
 import StripMeter from './StripMeter.vue';
 
@@ -56,6 +59,8 @@ const props = withDefaults(
     bus: MixerBus;
     /** Live meter source for this bus; null shows a placeholder meter. */
     bridge?: MeterSource | null;
+    /** Engine scope source (per-target spectrum + goniometer), when available. */
+    scope?: ScopeSource | null;
     /** Playhead position getter in PPQ (automation follow/recording). */
     positionPpq?: () => number;
     /** Current playhead sample position, used by future sample-accurate scheduling. */
@@ -69,7 +74,13 @@ const props = withDefaults(
       event: AutomationWriteScheduleEvent,
     ) => void;
   }>(),
-  { bridge: null, positionPpq: undefined, positionSample: undefined, isPlaying: false },
+  {
+    bridge: null,
+    scope: null,
+    positionPpq: undefined,
+    positionSample: undefined,
+    isPlaying: false,
+  },
 );
 
 const store = useProjectStore();
@@ -346,6 +357,11 @@ onBeforeUnmount(() => {
     </div>
     <span class="bus-readout">{{ formatDb(gainDb) }} dB</span>
     <StripGrMeter :bridge="props.bridge" />
+
+    <div v-if="props.scope?.available" class="strip-analyzers">
+      <SpectrumAnalyzer :scope="props.scope" :height="32" />
+      <StereoGoniometer :scope="props.scope" :size="64" />
+    </div>
   </div>
 </template>
 
@@ -463,6 +479,15 @@ onBeforeUnmount(() => {
   font: var(--fw-medium) 9px var(--font-mono);
   font-variant-numeric: tabular-nums;
   color: var(--text-3);
+}
+
+.strip-analyzers {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--border-subtle);
 }
 
 /* Output-shaping popover (trim, width, polarity) — mirrors the channel strip. */

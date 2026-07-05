@@ -300,6 +300,7 @@ onBeforeUnmount(() => {
           :key="bus.id"
           :bus="bus"
           :bridge="props.busMeterFor ? props.busMeterFor(bus.id) : null"
+          :scope="props.busScopeFor ? props.busScopeFor(bus.id) : null"
           :position-ppq="props.positionPpq"
           :position-sample="props.positionSample"
           :is-playing="props.isPlaying"
