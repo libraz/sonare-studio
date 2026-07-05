@@ -1,6 +1,7 @@
 import { ensureWasm } from '@/lib/wasm';
 import { type AudioAssetMeta, audioAssetUri, loadAsset, saveAsset } from '@/persistence/assets';
 import {
+  type AudioStemEnhancers,
   type AudioStemSeparator,
   type SeparatedStem,
   separateAudioClipStems,
@@ -16,17 +17,46 @@ import { clipKind, TRACK_COLOR_PALETTE } from '../types';
 import { execute } from './history';
 import { requireClip } from './utils';
 
+function stemSourceToken(
+  clip: Pick<
+    ReturnType<typeof requireClip>,
+    'id' | 'trackId' | 'startPpq' | 'lengthPpq' | 'sourceOffsetPpq' | 'assetId' | 'kind'
+  >,
+): string {
+  return JSON.stringify({
+    id: clip.id,
+    trackId: clip.trackId,
+    startPpq: clip.startPpq,
+    lengthPpq: clip.lengthPpq,
+    sourceOffsetPpq: clip.sourceOffsetPpq,
+    assetId: clip.assetId,
+    kind: clip.kind,
+  });
+}
+
+function isStemSourceCurrent(
+  store: ReturnType<typeof useProjectStore>,
+  clipId: number,
+  token: string,
+): boolean {
+  const current = store.clips.find((entry) => entry.id === clipId);
+  return current !== undefined && stemSourceToken(current) === token;
+}
+
 /**
  * Splits an audio clip into harmonic / percussive / residual stems, each laid
  * down on a new audio track aligned under the source clip, as one undoable
  * edit.
  *
  * The clip's played source window is separated with libsonare's
- * `hpssWithResidual` (delegated; see {@link separateAudioClipStems}); each band
- * is stored as a new audio asset and placed as a clip at the source clip's
- * start with its length and gain. The async work (separation and asset stores)
- * runs first; the tracks, asset sources and clips are then created inside a
- * single `execute`, so undo reverts the whole split at once.
+ * `hpssWithResidual` (delegated; see {@link separateAudioClipStems}); newer
+ * builds can also provide phase-vocoder length repair. Matrix-only
+ * `decompose` / `nnFilter` seams are plumbed as capabilities but are not
+ * applied to waveform stems until an inverse-mask path exists. Each band is
+ * stored as a new audio asset and placed as a clip at the source clip's start
+ * with its length and gain. The async work (separation and asset stores) runs
+ * first; the tracks, asset sources and clips are then created inside a single
+ * `execute`, so undo reverts the whole split at once.
  *
  * @param clipId Id of the audio clip to split.
  * @returns The new clip ids (one per stem, in band order), or [] when stem
@@ -39,13 +69,23 @@ export async function splitAudioClipToStems(clipId: number): Promise<number[]> {
   if (clipKind(clip) !== 'audio') {
     throw new RangeError(`Clip ${clipId} is not an audio clip`);
   }
-  const wasm = (await ensureWasm()) as unknown as { hpssWithResidual?: AudioStemSeparator };
+  const sourceToken = stemSourceToken(clip);
+  const wasm = (await ensureWasm()) as unknown as {
+    hpssWithResidual?: AudioStemSeparator;
+  } & AudioStemEnhancers;
   if (typeof wasm.hpssWithResidual !== 'function') return [];
   const stems = await separateAudioClipStems(clip, store.tempoBpm, {
     loadAudioAsset: loadAsset,
     separateStems: wasm.hpssWithResidual,
+    enhancers: {
+      phaseVocoder: wasm.phaseVocoder,
+      decompose: wasm.decompose,
+      decomposeWithInit: wasm.decomposeWithInit,
+      nnFilter: wasm.nnFilter,
+    },
   });
   if (stems.length === 0) return [];
+  if (!isStemSourceCurrent(store, clipId, sourceToken)) return [];
 
   // Store each band as an asset before touching the Project (async work first).
   const baseName = clip.name;
@@ -57,6 +97,7 @@ export async function splitAudioClipToStems(clipId: number): Promise<number[]> {
     );
     saved.push({ stem, meta });
   }
+  if (!isStemSourceCurrent(store, clipId, sourceToken)) return [];
 
   const project = getProject();
   const startPpq = clip.startPpq;

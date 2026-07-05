@@ -179,6 +179,26 @@ export function setClipPolyPressure(
   pitch: number,
   points: ReadonlyArray<ClipPressurePoint>,
 ): void {
+  setClipPolyPressureForPitches(clipId, channel, [pitch], points);
+}
+
+/**
+ * Replaces the same polyphonic key-pressure curve for several pitches as one
+ * undoable edit. This is the piano-roll multi-note selection path: drawing one
+ * PAT curve can intentionally stamp the same per-key pressure onto a chord.
+ *
+ * @param clipId Id of the MIDI clip.
+ * @param channel MIDI channel the pressure applies to (integer, 0-15).
+ * @param pitches MIDI note numbers the pressure applies to (integers 0-127).
+ * @param points Breakpoints (clip-window-relative PPQ + 0-127 value); empty
+ *   removes the lanes for every pitch.
+ */
+export function setClipPolyPressureForPitches(
+  clipId: number,
+  channel: number,
+  pitches: ReadonlyArray<number>,
+  points: ReadonlyArray<ClipPressurePoint>,
+): void {
   const store = useProjectStore();
   const index = store.clips.findIndex((clip) => clip.id === clipId);
   if (index < 0) throw new RangeError(`Unknown clip id ${clipId}`);
@@ -189,15 +209,28 @@ export function setClipPolyPressure(
   if (!isValidChannel(channel)) {
     throw new RangeError(`Poly-pressure channel must be an integer in [0, 15], got ${channel}`);
   }
-  if (!Number.isInteger(pitch) || pitch < 0 || pitch > 127) {
-    throw new RangeError(`Poly-pressure pitch must be an integer in [0, 127], got ${pitch}`);
+  const targetPitches = [...new Set(pitches)];
+  for (const pitch of targetPitches) {
+    if (!Number.isInteger(pitch) || pitch < 0 || pitch > 127) {
+      throw new RangeError(`Poly-pressure pitch must be an integer in [0, 127], got ${pitch}`);
+    }
   }
+  if (targetPitches.length === 0) return;
   const sanitized = sanitizePressurePoints(points, clip.lengthPpq);
   const others = (clip.polyPressureLanes ?? []).filter(
-    (lane) => lane.channel !== channel || lane.pitch !== pitch,
+    (lane) => lane.channel !== channel || !targetPitches.includes(lane.pitch),
   );
   const nextLanes: ClipPolyPressureLane[] =
-    sanitized.length > 0 ? [...others, { channel, pitch, points: sanitized }] : others;
+    sanitized.length > 0
+      ? [
+          ...others,
+          ...targetPitches.map((pitch) => ({
+            channel,
+            pitch,
+            points: sanitized.map((point) => ({ ...point })),
+          })),
+        ]
+      : others;
   nextLanes.sort((a, b) => a.channel - b.channel || a.pitch - b.pitch);
   execute(0, () => {
     store.clips = store.clips.map((entry, i) => {

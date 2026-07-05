@@ -2,6 +2,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { busAutomationTarget } from '@/project/automation';
 import {
+  addAudioClip,
   addMidiClip,
   addMixerBus,
   addNote,
@@ -19,6 +20,7 @@ import {
   duplicateClip,
   duplicateSelection,
   fadeSelectionVelocity,
+  glueMidiClips,
   humanizeSelectionVelocity,
   legatoSelection,
   mergeSelection,
@@ -52,6 +54,7 @@ import {
   setClipLoop,
   setClipPitchBend,
   setClipPolyPressure,
+  setClipPolyPressureForPitches,
   setMarker,
   setProjectChords,
   setProjectExternalMidiDefault,
@@ -62,6 +65,7 @@ import {
   setTimeSignatures,
   setTrackColor,
   setTrackFrozen,
+  setTrackInstrument,
   setTrackMidiFx,
   setTrackMute,
   setTrackPan,
@@ -288,6 +292,56 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(store.tracks[0].frozen?.assetId).toBe('frozen-audio');
     });
 
+    it('keeps redo-only frozen assets and SF2 fonts reachable after undo', () => {
+      const trackId = store.tracks[0].id;
+      setTrackFrozen(trackId, { assetId: 'frozen-redo' });
+      setTrackInstrument(trackId, { kind: 'sf2', fontId: 'font-redo', bank: 1, program: 42 });
+
+      expect(undo()).toBe(true); // instrument assignment now lives only in redo history
+      expect(undo()).toBe(true); // frozen render now lives only in redo history
+      expect(store.tracks[0].frozen).toBeUndefined();
+      expect(store.tracks[0].instrument).toBeUndefined();
+
+      const refs = collectHistoryReferencedMediaIds();
+      expect([...refs.assetIds]).toContain('frozen-redo');
+      expect([...refs.fontIds]).toContain('font-redo');
+
+      expect(redo()).toBe(true);
+      expect(store.tracks[0].frozen?.assetId).toBe('frozen-redo');
+      expect(redo()).toBe(true);
+      expect(store.tracks[0].instrument).toMatchObject({ kind: 'sf2', fontId: 'font-redo' });
+    });
+
+    it('keeps redo-only audio clip and take assets reachable after undo', async () => {
+      const trackId = store.tracks[0].id;
+      const clipId = await addAudioClip({
+        trackId,
+        assetId: 'active-redo',
+        lengthPpq: 4,
+        takes: [
+          { assetId: 'active-redo', name: 'Main' },
+          { assetId: 'inactive-take-redo', name: 'Alt' },
+        ],
+        activeTakeIndex: 0,
+      });
+
+      expect(undo()).toBe(true);
+      expect(store.clips.some((clip) => clip.id === clipId)).toBe(false);
+
+      const refs = collectHistoryReferencedMediaIds();
+      expect([...refs.assetIds]).toEqual(
+        expect.arrayContaining(['active-redo', 'inactive-take-redo']),
+      );
+
+      expect(redo()).toBe(true);
+      const restored = store.clips.find((clip) => clip.id === clipId);
+      expect(restored?.assetId).toBe('active-redo');
+      expect(restored?.takes?.map((take) => take.assetId)).toEqual([
+        'active-redo',
+        'inactive-take-redo',
+      ]);
+    });
+
     it('reorderTracks permutes the mirror order and is undoable', () => {
       const a = store.tracks[0].id;
       const b = addTrack({ name: 'B' });
@@ -512,6 +566,110 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(() => splitClip(clipId, 100)).toThrow(RangeError);
     });
 
+    it('glueMidiClips consolidates MIDI clips, notes and expression lanes', () => {
+      const trackId = store.tracks[0].id;
+      const firstId = store.clipId;
+      trimClip(firstId, 0, 2);
+      renameClip(firstId, 'Joined');
+      addNote({ pitch: 60, startPpq: 0.25, durationPpq: 0.5 });
+      setClipCcLane(firstId, 1, 0, [{ ppq: 0.5, value: 32 }]);
+
+      const secondId = addMidiClip({ trackId, startPpq: 2, lengthPpq: 2, name: 'Second' });
+      setActiveClip(secondId);
+      addNote({ pitch: 64, startPpq: 0.5, durationPpq: 0.75 });
+      setClipCcLane(secondId, 1, 0, [{ ppq: 1, value: 96 }]);
+      setClipPitchBend(secondId, 0, [{ ppq: 0.25, value: 9000 }]);
+
+      const joinedId = glueMidiClips([secondId, firstId]);
+      const joined = store.clips.find((clip) => clip.id === joinedId);
+      expect(joined).toMatchObject({ trackId, name: 'Joined', startPpq: 0, lengthPpq: 4 });
+      expect(joined?.notes.map((note) => ({ pitch: note.pitch, startPpq: note.startPpq }))).toEqual(
+        [
+          { pitch: 60, startPpq: 0.25 },
+          { pitch: 64, startPpq: 2.5 },
+        ],
+      );
+      expect(joined?.ccLanes).toEqual([
+        {
+          controller: 1,
+          channel: 0,
+          points: [
+            { ppq: 0.5, value: 32 },
+            { ppq: 3, value: 96 },
+          ],
+        },
+      ]);
+      expect(joined?.pitchBendLanes).toEqual([
+        { channel: 0, points: [{ ppq: 2.25, value: 9000 }] },
+      ]);
+      expect(store.clips.some((clip) => clip.id === firstId || clip.id === secondId)).toBe(false);
+
+      expect(undo()).toBe(true);
+      expect(store.clips.some((clip) => clip.id === firstId)).toBe(true);
+      expect(store.clips.some((clip) => clip.id === secondId)).toBe(true);
+      expect(store.clips.some((clip) => clip.id === joinedId)).toBe(false);
+    });
+
+    it('glueMidiClips flattens looping MIDI clips into explicit repeats', () => {
+      const trackId = store.tracks[0].id;
+      const loopId = store.clipId;
+      trimClip(loopId, 0, 5);
+      renameClip(loopId, 'Flattened');
+      addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+      addNote({ pitch: 62, startPpq: 1.5, durationPpq: 1 });
+      setClipCcLane(loopId, 11, 0, [{ ppq: 0.5, value: 64 }]);
+      setClipLoop(loopId, true, 2);
+
+      const tailId = addMidiClip({ trackId, startPpq: 5, lengthPpq: 1, name: 'Tail' });
+      setActiveClip(tailId);
+      addNote({ pitch: 67, startPpq: 0.25, durationPpq: 0.5 });
+
+      const joinedId = glueMidiClips([loopId, tailId]);
+      const joined = store.clips.find((clip) => clip.id === joinedId);
+      expect(joined).toMatchObject({
+        trackId,
+        name: 'Flattened',
+        startPpq: 0,
+        lengthPpq: 6,
+        loopEnabled: false,
+        loopLengthPpq: 0,
+      });
+      expect(
+        joined?.notes.map((note) => ({
+          pitch: note.pitch,
+          startPpq: note.startPpq,
+          durationPpq: note.durationPpq,
+        })),
+      ).toEqual([
+        { pitch: 60, startPpq: 0, durationPpq: 1 },
+        { pitch: 62, startPpq: 1.5, durationPpq: 0.5 },
+        { pitch: 60, startPpq: 2, durationPpq: 1 },
+        { pitch: 62, startPpq: 3.5, durationPpq: 0.5 },
+        { pitch: 60, startPpq: 4, durationPpq: 1 },
+        { pitch: 67, startPpq: 5.25, durationPpq: 0.5 },
+      ]);
+      expect(joined?.ccLanes).toEqual([
+        {
+          controller: 11,
+          channel: 0,
+          points: [
+            { ppq: 0.5, value: 64 },
+            { ppq: 2.5, value: 64 },
+            { ppq: 4.5, value: 64 },
+          ],
+        },
+      ]);
+    });
+
+    it('glueMidiClips validates clip count, kind and track', () => {
+      const firstId = store.clipId;
+      const otherTrackId = addTrack({ name: 'Other' });
+      const otherTrackClipId = addMidiClip({ trackId: otherTrackId, startPpq: 2, lengthPpq: 2 });
+
+      expect(() => glueMidiClips([firstId])).toThrow(RangeError);
+      expect(() => glueMidiClips([firstId, otherTrackClipId])).toThrow(RangeError);
+    });
+
     it('trimClip adjusts start, length and source offset and is undoable', () => {
       const clipId = store.clipId;
       setClipCcLane(clipId, 1, 0, [
@@ -712,6 +870,42 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(() => setClipPolyPressure(clipId, 16, 60, [])).toThrow(RangeError);
       expect(() => setClipPolyPressure(clipId, 0, 128, [])).toThrow(RangeError);
       expect(() => setClipPolyPressure(9999, 0, 60, [])).toThrow(RangeError);
+    });
+
+    it('setClipPolyPressureForPitches updates several keys as one undoable edit', () => {
+      const clipId = store.clipId;
+      setClipPolyPressureForPitches(
+        clipId,
+        2,
+        [64, 60, 64],
+        [
+          { ppq: 0.5, value: 80 },
+          { ppq: 1, value: 200 },
+        ],
+      );
+      expect(store.activeClip?.polyPressureLanes).toEqual([
+        {
+          channel: 2,
+          pitch: 60,
+          points: [
+            { ppq: 0.5, value: 80 },
+            { ppq: 1, value: 127 },
+          ],
+        },
+        {
+          channel: 2,
+          pitch: 64,
+          points: [
+            { ppq: 0.5, value: 80 },
+            { ppq: 1, value: 127 },
+          ],
+        },
+      ]);
+
+      setClipPolyPressureForPitches(clipId, 2, [60, 64], []);
+      expect(store.activeClip?.polyPressureLanes).toBeUndefined();
+      expect(undo()).toBe(true);
+      expect(store.activeClip?.polyPressureLanes?.map((lane) => lane.pitch)).toEqual([60, 64]);
     });
 
     it('bakeClipMidiFx transposes the clip notes as one undoable edit', () => {
@@ -1308,6 +1502,39 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       ]);
       expect(undo()).toBe(true);
       expect(store.tempoBpm).toBe(120);
+    });
+
+    it('unfreezes tracks when the tempo map changes and restores them on undo', () => {
+      const trackId = addTrack({ name: 'Frozen Vox', kind: 'audio' });
+      setTrackFrozen(trackId, { assetId: 'baked-before-tempo-change' });
+
+      setTempoSegments([
+        { startPpq: 0, bpm: 100 },
+        { startPpq: 8, bpm: 140 },
+      ]);
+
+      expect(store.tempoSegments).toEqual([
+        { startPpq: 0, bpm: 100 },
+        { startPpq: 8, bpm: 140 },
+      ]);
+      expect(store.tracks.find((track) => track.id === trackId)?.frozen).toBeUndefined();
+
+      expect(undo()).toBe(true);
+      expect(store.tempoSegments).toEqual([{ startPpq: 0, bpm: 120 }]);
+      expect(store.tracks.find((track) => track.id === trackId)?.frozen).toEqual({
+        assetId: 'baked-before-tempo-change',
+      });
+    });
+
+    it('keeps frozen tracks when setTempoSegments re-applies the same map', () => {
+      const trackId = addTrack({ name: 'Frozen Vox', kind: 'audio' });
+      setTrackFrozen(trackId, { assetId: 'still-current' });
+
+      setTempoSegments([{ startPpq: 0, bpm: 120 }]);
+
+      expect(store.tracks.find((track) => track.id === trackId)?.frozen).toEqual({
+        assetId: 'still-current',
+      });
     });
 
     it('setTempoSegments validates its input', () => {

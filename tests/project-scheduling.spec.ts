@@ -68,6 +68,26 @@ describe('isTrackAudible', () => {
     expect(isTrackAudible(tracks[2], tracks)).toBe(true);
   });
 
+  it('expands a soloed group to its routed members', () => {
+    const tracks = [
+      { mute: false, solo: false },
+      { mute: false, solo: false, groupIndex: 2 },
+      { mute: false, solo: true, kind: 'group' },
+      { mute: false, solo: false },
+    ];
+    const options = {
+      isGroup: (track: (typeof tracks)[number]) => track.kind === 'group',
+      groupKey: (_track: (typeof tracks)[number], index: number) => index,
+      memberGroupKey: (track: (typeof tracks)[number]) => track.groupIndex,
+    };
+
+    expect(isTrackAudible(tracks[0], tracks, options)).toBe(false);
+    expect(isTrackAudible(tracks[1], tracks, options)).toBe(true);
+    expect(isTrackAudible(tracks[2], tracks, options)).toBe(true);
+    const mutedTracks = [tracks[2], { ...tracks[1], mute: true }];
+    expect(isTrackAudible(mutedTracks[1], mutedTracks, options)).toBe(false);
+  });
+
   it('mute wins over the track’s own solo and solo-safe state', () => {
     const tracks: TrackAudibilityState[] = [
       { mute: true, solo: true },

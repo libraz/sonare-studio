@@ -1,4 +1,4 @@
-import { sanitizeCompSegments, takeIndexAtPpq } from '../comping';
+import { sanitizeCompSegments } from '../comping';
 import { cloneCcLanes } from '../midi-cc';
 import type { useProjectStore } from '../store';
 import type {
@@ -7,6 +7,7 @@ import type {
   ClipPitchBendLane,
   ClipPolyPressureLane,
   ClipPressurePoint,
+  ClipProgramChangeLane,
   ClipWarp,
   EditorClip,
   EditorTrack,
@@ -59,7 +60,6 @@ interface DerivedClipMetadataOptions {
 
 interface PpqPoint {
   ppq: number;
-  value: number;
 }
 
 function transformLanePoints<T extends PpqPoint>(
@@ -99,13 +99,26 @@ function transformCompSegments(
     source.lengthPpq,
   );
   const windowEndPpq = windowStartPpq + windowLengthPpq;
+  let firstSource = current[0];
+  for (const segment of current) {
+    if (segment.startPpq <= windowStartPpq) firstSource = segment;
+    else break;
+  }
+  const first: ClipCompSegment = {
+    startPpq: 0,
+    takeIndex: firstSource?.takeIndex ?? 0,
+    ...(firstSource?.startPpq === windowStartPpq && firstSource.crossfadePpq !== undefined
+      ? { crossfadePpq: firstSource.crossfadePpq }
+      : {}),
+  };
   const next = [
-    { startPpq: 0, takeIndex: takeIndexAtPpq(current, windowStartPpq) },
+    first,
     ...current
       .filter((segment) => segment.startPpq > windowStartPpq && segment.startPpq < windowEndPpq)
       .map((segment) => ({
         startPpq: segment.startPpq - windowStartPpq,
         takeIndex: segment.takeIndex,
+        ...(segment.crossfadePpq !== undefined ? { crossfadePpq: segment.crossfadePpq } : {}),
       })),
   ];
   return sanitizeCompSegments(next, takes.length, windowLengthPpq);
@@ -187,6 +200,18 @@ export function withDerivedClipMetadata(
     next.pitchBendLanes = pitchBendLanes;
   } else {
     delete next.pitchBendLanes;
+  }
+
+  const programChangeLanes = source.programChangeLanes
+    ?.map<ClipProgramChangeLane>((lane) => ({
+      channel: lane.channel,
+      points: transformLanePoints(lane.points, windowStartPpq, windowLengthPpq),
+    }))
+    .filter((lane) => lane.points.length > 0);
+  if (programChangeLanes !== undefined && programChangeLanes.length > 0) {
+    next.programChangeLanes = programChangeLanes;
+  } else {
+    delete next.programChangeLanes;
   }
 
   const channelPressureLanes = source.channelPressureLanes

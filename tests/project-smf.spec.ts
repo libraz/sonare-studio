@@ -107,7 +107,11 @@ describe('smfToProjectDocument', () => {
     expect(doc.timeSignatures).toEqual([{ startPpq: 0, numerator: 3, denominator: 4 }]);
     expect(doc.tracks).toHaveLength(1);
     expect(doc.tracks[0].name).toBe('Piano');
-    expect(doc.tracks[0].instrument).toEqual({ kind: 'synth-preset', preset: 'sub-bass' });
+    expect(doc.tracks[0].instrument).toEqual({
+      kind: 'synth-preset',
+      preset: 'sub-bass',
+      gmProgram: 38,
+    });
     expect(doc.tracks[0].clips[0].notes).toEqual([
       {
         pitch: 60,
@@ -123,6 +127,9 @@ describe('smfToProjectDocument', () => {
     ]);
     expect(doc.tracks[0].clips[0].pitchBendLanes).toEqual([
       { channel: 1, points: [{ ppq: 0, value: 12288 }] },
+    ]);
+    expect(doc.tracks[0].clips[0].programChangeLanes).toEqual([
+      { channel: 1, points: [{ ppq: 0, program: 38 }] },
     ]);
     expect(doc.tracks[0].clips[0].channelPressureLanes).toEqual([
       { channel: 1, points: [{ ppq: 0, value: 70 }] },
@@ -221,9 +228,9 @@ describe('smfToProjectDocument', () => {
 
     expect(doc.tracks).toHaveLength(3);
     expect(doc.tracks.map((track) => track.instrument)).toEqual([
-      { kind: 'synth-preset', preset: 'acoustic-piano' },
-      { kind: 'synth-preset', preset: 'sub-bass' },
-      { kind: 'synth-preset', preset: 'drum-kit' },
+      { kind: 'synth-preset', preset: 'acoustic-piano', gmProgram: 0 },
+      { kind: 'synth-preset', preset: 'sub-bass', gmProgram: 38 },
+      { kind: 'synth-preset', preset: 'drum-kit', gmProgram: 0 },
     ]);
     expect(doc.tracks.map((track) => track.clips[0].notes[0].channel)).toEqual([0, 1, 9]);
   });
@@ -261,8 +268,8 @@ describe('smfToProjectDocument', () => {
 
     expect(doc.tracks).toHaveLength(2);
     expect(doc.tracks.map((track) => track.instrument)).toEqual([
-      { kind: 'synth-preset', preset: 'acoustic-piano' },
-      { kind: 'synth-preset', preset: 'sub-bass' },
+      { kind: 'synth-preset', preset: 'acoustic-piano', gmProgram: 0 },
+      { kind: 'synth-preset', preset: 'sub-bass', gmProgram: 38 },
     ]);
     expect(doc.tracks[0].clips[0].notes).toEqual([
       { pitch: 60, velocity: 100, startPpq: 0, durationPpq: 1, channel: 0 },
@@ -280,7 +287,11 @@ describe('smfToProjectDocument', () => {
     const doc = await smfToProjectDocument(bytes, 'plain.mid');
 
     expect(doc.tracks).toHaveLength(1);
-    expect(doc.tracks[0].instrument).toEqual({ kind: 'synth-preset', preset: 'acoustic-piano' });
+    expect(doc.tracks[0].instrument).toEqual({
+      kind: 'synth-preset',
+      preset: 'acoustic-piano',
+      gmProgram: 0,
+    });
     expect(doc.tracks[0].clips[0].notes).toEqual([
       { pitch: 60, velocity: 100, startPpq: 0, durationPpq: 1, channel: 0 },
     ]);
@@ -337,7 +348,11 @@ describe('smfToProjectDocument', () => {
     const roundTrip = await smfToProjectDocument(await projectDocumentToSmf(source), 'export.mid');
 
     expect(roundTrip.tempoSegments).toEqual([{ startPpq: 0, bpm: 100 }]);
-    expect(roundTrip.tracks[0].instrument).toEqual({ kind: 'synth-preset', preset: 'sub-bass' });
+    expect(roundTrip.tracks[0].instrument).toEqual({
+      kind: 'synth-preset',
+      preset: 'sub-bass',
+      gmProgram: 38,
+    });
     expect(roundTrip.tracks[0].clips[0].notes).toEqual(source.tracks[0].clips[0].notes);
     expect(roundTrip.tracks[0].clips[0].pitchBendLanes).toEqual([
       { channel: 0, points: [{ ppq: 0.5, value: 4096 }] },
@@ -348,6 +363,54 @@ describe('smfToProjectDocument', () => {
     expect(roundTrip.tracks[0].clips[0].polyPressureLanes).toEqual([
       { channel: 0, pitch: 36, points: [{ ppq: 0.75, value: 90 }] },
     ]);
+  });
+
+  it('round-trips clip program-change lanes through SMF events', async () => {
+    const source: ProjectDocument = {
+      schemaVersion: 3,
+      name: 'Program lanes',
+      sampleRate: 48000,
+      tempoSegments: [{ startPpq: 0, bpm: 120 }],
+      timeSignatures: [{ startPpq: 0, numerator: 4, denominator: 4 }],
+      tracks: [
+        {
+          name: 'Patch lane',
+          color: '#000',
+          kind: 'midi',
+          mute: false,
+          solo: false,
+          volume: 1,
+          pan: 0,
+          clips: [
+            {
+              name: 'Programs',
+              startPpq: 0,
+              lengthPpq: 2,
+              sourceOffsetPpq: 0,
+              gain: 1,
+              loopEnabled: false,
+              loopLengthPpq: 0,
+              kind: 'midi',
+              programChangeLanes: [
+                {
+                  channel: 2,
+                  points: [{ ppq: 1, program: 24 }],
+                },
+              ],
+              notes: [],
+            },
+          ],
+        },
+      ],
+      markers: [],
+      sections: [],
+    };
+
+    const roundTrip = await smfToProjectDocument(await projectDocumentToSmf(source), 'program.mid');
+
+    expect(roundTrip.tracks[0].clips[0].programChangeLanes).toEqual(
+      source.tracks[0].clips[0].programChangeLanes,
+    );
   });
 
   it('round-trips app synth presets through GM program changes', async () => {
@@ -408,9 +471,53 @@ describe('smfToProjectDocument', () => {
 
     const roundTrip = await smfToProjectDocument(await projectDocumentToSmf(source), 'presets.mid');
 
-    expect(roundTrip.tracks.map((track) => track.instrument)).toEqual(
-      presets.map((preset) => ({ kind: 'synth-preset', preset })),
-    );
+    expect(roundTrip.tracks.map((track) => track.instrument?.preset)).toEqual(presets);
+  });
+
+  it('preserves imported GM bank/program metadata when exporting SMF again', async () => {
+    const source: ProjectDocument = {
+      schemaVersion: 3,
+      name: 'GM',
+      sampleRate: 48000,
+      tempoSegments: [{ startPpq: 0, bpm: 120 }],
+      timeSignatures: [{ startPpq: 0, numerator: 4, denominator: 4 }],
+      tracks: [
+        {
+          name: 'Cello-ish',
+          color: '#000',
+          kind: 'midi',
+          mute: false,
+          solo: false,
+          volume: 1,
+          pan: 0,
+          instrument: { kind: 'synth-preset', preset: 'warm-pad', gmBank: 129, gmProgram: 42 },
+          clips: [
+            {
+              name: 'Phrase',
+              startPpq: 0,
+              lengthPpq: 1,
+              sourceOffsetPpq: 0,
+              gain: 1,
+              loopEnabled: false,
+              loopLengthPpq: 0,
+              kind: 'midi',
+              notes: [{ pitch: 60, velocity: 100, startPpq: 0, durationPpq: 1, channel: 0 }],
+            },
+          ],
+        },
+      ],
+      markers: [],
+      sections: [],
+    };
+
+    const roundTrip = await smfToProjectDocument(await projectDocumentToSmf(source), 'gm.mid');
+
+    expect(roundTrip.tracks[0].instrument).toEqual({
+      kind: 'synth-preset',
+      preset: 'warm-pad',
+      gmBank: 129,
+      gmProgram: 42,
+    });
   });
 
   it('exports timeline markers as MIDI meta events', async () => {

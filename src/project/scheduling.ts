@@ -28,6 +28,50 @@ import { bakeWarpedClip } from './warp';
 export type TrackAudibilityState = Pick<EditorTrack, 'mute' | 'solo' | 'soloSafe'>;
 
 /**
+ * Optional group-membership hooks used to expand a soloed folder/submix track
+ * to the member lanes whose audio actually feeds that group.
+ */
+export interface TrackSoloExpansionOptions<T extends TrackAudibilityState> {
+  /** True when the track is a folder/submix group track. */
+  isGroup?: (track: T, index: number) => boolean;
+  /** Stable key identifying a group track. */
+  groupKey?: (track: T, index: number) => number | string | undefined;
+  /** Stable key of the group this member routes into, if any. */
+  memberGroupKey?: (track: T, index: number) => number | string | undefined;
+}
+
+/**
+ * Computes the effective solo group after expanding soloed group tracks to
+ * their routed members and adding solo-safe lanes while any solo is active.
+ *
+ * @param tracks All tracks in project/lane order.
+ * @param options Optional group membership extractors.
+ * @returns One effective solo flag per track index.
+ */
+export function expandedSoloStates<T extends TrackAudibilityState>(
+  tracks: ReadonlyArray<T>,
+  options: TrackSoloExpansionOptions<T> = {},
+): boolean[] {
+  const anySolo = tracks.some((track) => track.solo);
+  const soloedGroups = new Set<number | string>();
+  if (options.isGroup && options.groupKey) {
+    tracks.forEach((track, index) => {
+      if (!track.solo || !options.isGroup?.(track, index)) return;
+      const key = options.groupKey?.(track, index);
+      if (key !== undefined) soloedGroups.add(key);
+    });
+  }
+  return tracks.map((track, index) => {
+    const memberGroup = options.memberGroupKey?.(track, index);
+    return (
+      track.solo ||
+      (memberGroup !== undefined && soloedGroups.has(memberGroup)) ||
+      (anySolo && track.soloSafe === true)
+    );
+  });
+}
+
+/**
  * Decides whether a track is audible under the solo/mute rules: when any
  * track is soloed only soloed and solo-safe tracks play, and mute always
  * silences a track (mute wins over its own solo/solo-safe status).
@@ -36,13 +80,16 @@ export type TrackAudibilityState = Pick<EditorTrack, 'mute' | 'solo' | 'soloSafe
  * @param tracks All tracks of the project (to detect active solos).
  * @returns True when the track's clips should be scheduled.
  */
-export function isTrackAudible(
-  track: TrackAudibilityState,
-  tracks: ReadonlyArray<TrackAudibilityState>,
+export function isTrackAudible<T extends TrackAudibilityState>(
+  track: T,
+  tracks: ReadonlyArray<T>,
+  options: TrackSoloExpansionOptions<T> = {},
 ): boolean {
   if (track.mute) return false;
   const anySolo = tracks.some((t) => t.solo);
-  return anySolo ? track.solo || track.soloSafe === true : true;
+  if (!anySolo) return true;
+  const index = tracks.indexOf(track);
+  return (expandedSoloStates(tracks, options)[index] ?? track.solo) || track.soloSafe === true;
 }
 
 /**

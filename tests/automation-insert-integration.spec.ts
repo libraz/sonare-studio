@@ -1,7 +1,19 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { busAutomationTarget, insertAutomationParam } from '@/project/automation';
-import { addInsert, addMixerBus, clearHistory, setAutomationLanePoints } from '@/project/commands';
+import {
+  busAutomationTarget,
+  insertAutomationParam,
+  instrumentAutomationParam,
+  masteringAutomationParam,
+} from '@/project/automation';
+import {
+  addInsert,
+  addMasteringProcessor,
+  addMixerBus,
+  clearHistory,
+  setAutomationLanePoints,
+  setTrackInstrument,
+} from '@/project/commands';
 import {
   loadProjectDocument,
   type ProjectDocument,
@@ -59,6 +71,45 @@ describe('insert automation command validation', () => {
       setAutomationLanePoints(busAutomationTarget(busId), 'pan', [{ ppq: 0, value: 0 }]),
     ).toThrow(/only support fader/);
   });
+
+  it('accepts mastering automation only on an existing master-chain processor', () => {
+    addMasteringProcessor('maximizer.truePeakLimiter', { ceilingDb: -1 });
+    expect(() =>
+      setAutomationLanePoints('master', masteringAutomationParam(0, 'ceilingDb'), [
+        { ppq: 0, value: -2 },
+      ]),
+    ).not.toThrow();
+    expect(() =>
+      setAutomationLanePoints(trackId, masteringAutomationParam(0, 'ceilingDb'), [
+        { ppq: 0, value: -2 },
+      ]),
+    ).toThrow(/must target the master/);
+    expect(() =>
+      setAutomationLanePoints('master', masteringAutomationParam(9, 'ceilingDb'), [
+        { ppq: 0, value: -2 },
+      ]),
+    ).toThrow(/Unknown mastering processor/);
+  });
+
+  it('accepts instrument automation only on synth-patch MIDI tracks', () => {
+    setTrackInstrument(trackId, { kind: 'synth-patch', patch: { preset: 'saw-lead' } });
+    expect(() =>
+      setAutomationLanePoints(trackId, instrumentAutomationParam('cutoffHz'), [
+        { ppq: 0, value: 1200 },
+      ]),
+    ).not.toThrow();
+    setTrackInstrument(trackId, { kind: 'synth-preset', preset: 'saw-lead' });
+    expect(() =>
+      setAutomationLanePoints(trackId, instrumentAutomationParam('cutoffHz'), [
+        { ppq: 0, value: 1200 },
+      ]),
+    ).toThrow(/synth-patch/);
+    expect(() =>
+      setAutomationLanePoints('master', instrumentAutomationParam('cutoffHz'), [
+        { ppq: 0, value: 1200 },
+      ]),
+    ).toThrow(/MIDI track/);
+  });
 });
 
 describe('insert automation serialization', () => {
@@ -78,10 +129,18 @@ describe('insert automation serialization', () => {
     addInsert(trackId, 'gain.gain');
     addInsert('master', 'gain.gain');
     addInsert(busAutomationTarget(busId), 'gain.gain');
+    addMasteringProcessor('maximizer.truePeakLimiter', { ceilingDb: -1 });
+    setTrackInstrument(trackId, { kind: 'synth-patch', patch: { preset: 'saw-lead' } });
     setAutomationLanePoints(trackId, insertAutomationParam(0, 'gainDb'), [{ ppq: 0, value: 2 }]);
+    setAutomationLanePoints(trackId, instrumentAutomationParam('cutoffHz'), [
+      { ppq: 2, value: 1800 },
+    ]);
     setAutomationLanePoints('master', insertAutomationParam(0, 'gainDb'), [{ ppq: 4, value: -3 }]);
     setAutomationLanePoints(busAutomationTarget(busId), insertAutomationParam(0, 'gainDb'), [
       { ppq: 8, value: 5 },
+    ]);
+    setAutomationLanePoints('master', masteringAutomationParam(0, 'ceilingDb'), [
+      { ppq: 12, value: -2 },
     ]);
 
     const doc = serializeProject();
@@ -93,7 +152,9 @@ describe('insert automation serialization', () => {
     expect(keyed).toEqual(
       [
         `${reTrackId}:${insertAutomationParam(0, 'gainDb')}`,
+        `${reTrackId}:${instrumentAutomationParam('cutoffHz')}`,
         `master:${insertAutomationParam(0, 'gainDb')}`,
+        `master:${masteringAutomationParam(0, 'ceilingDb')}`,
         `${busAutomationTarget(reBusId)}:${insertAutomationParam(0, 'gainDb')}`,
       ].sort(),
     );

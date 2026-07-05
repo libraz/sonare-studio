@@ -206,6 +206,28 @@ describe('scheduleProjectClips with audio clips', () => {
     );
   });
 
+  it('expands looping audio clips into repeated scheduled source windows', async () => {
+    store.tracks = [makeTrack(1)];
+    store.clips = [
+      makeAudioClip(10, 1, {
+        startPpq: 4,
+        lengthPpq: 3,
+        sourceOffsetPpq: 2,
+        loopEnabled: true,
+        loopLengthPpq: 1,
+      }),
+    ];
+    const { handle, addClip } = makeHandle(10);
+
+    await scheduleProjectClips(handle, { loadAudioAsset: async () => makeAsset(30) });
+
+    expect(addClip).toHaveBeenCalledTimes(3);
+    expect(addClip.mock.calls.map((call) => call[2])).toEqual([4, 5, 6]);
+    for (const [, channels] of addClip.mock.calls) {
+      expect((channels as Float32Array[])[0]).toEqual(new Float32Array([11, 12, 13, 14, 15]));
+    }
+  });
+
   it('bakes fades into the scheduled buffer edges', async () => {
     store.tracks = [makeTrack(1)];
     // Clip 2 PPQ = 1 s = 10 frames at 10 Hz; fades of 0.4 PPQ = 2 frames.

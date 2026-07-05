@@ -16,9 +16,11 @@ export {
   addAudioClip,
   addBouncedClip,
   addMidiClip,
+  consolidateAudioClips,
   deleteClip,
   dropClipTakes,
   duplicateClip,
+  glueMidiClips,
   moveClip,
   renameClip,
   setActiveClip,
@@ -32,6 +34,7 @@ export {
   setClipLoop,
   setClipPitchBend,
   setClipPolyPressure,
+  setClipPolyPressureForPitches,
   setClipTakes,
   setClipWarp,
   setTrackFrozen,
@@ -54,6 +57,7 @@ export {
   setMasteringEnabled,
   setMasteringParam,
   setMasteringPreset,
+  setMasteringPresetOverride,
 } from './command/mastering';
 export { extractMelodyFromAudioClip } from './command/melody';
 export {
@@ -69,6 +73,7 @@ export {
   addInsert,
   addMixerBus,
   addVcaGroup,
+  applyMixerSceneJson,
   applyMixerSnapshot,
   captureMixerSnapshot,
   isMixerBusStripTarget,
@@ -84,6 +89,7 @@ export {
   setInsertParam,
   setInsertSidechain,
   setMixerBusGain,
+  setMixerSoloMode,
   setProjectExternalMidiDefault,
   setProjectExternalMidiDefaultForTracks,
   setSend,
@@ -105,12 +111,17 @@ export {
   setTrackSoloSafe,
   setTrackVca,
   setVcaGroupGain,
+  setVcaGroupMute,
+  setVcaGroupSolo,
 } from './command/mixer';
-export type { MixerSnapshotSlot } from './command/mixer-snapshots';
+export type { MixerSnapshotSlot, MixerSnapshotSlotState } from './command/mixer-snapshots';
 export {
   activeMixerSnapshotSlot,
   clearMixerSnapshots,
+  exportMixerSnapshotSlots,
+  importMixerSnapshotSlots,
   mixerSnapshotFilled,
+  mixerSnapshotSlots,
   recallMixerSnapshot,
   saveMixerSnapshot,
 } from './command/mixer-snapshots';
@@ -170,6 +181,7 @@ export {
   setTrackGroup,
   setTrackMute,
   setTrackPan,
+  setTrackRecordInputChannel,
   setTrackSolo,
   setTrackVolume,
 } from './command/tracks';

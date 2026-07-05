@@ -17,6 +17,8 @@ export interface CompableClipFields {
   lengthPpq: number;
   sourceOffsetPpq: number;
   assetId?: string;
+  loopEnabled?: boolean;
+  loopLengthPpq?: number;
   fadeInPpq?: number;
   fadeOutPpq?: number;
   takes?: ReadonlyArray<ClipTake>;
@@ -163,7 +165,7 @@ function compBoundaryCrossfadePpq(
  * apply only at the clip edges: fade-in on the first segment, fade-out on
  * the last.
  */
-export function audioClipSegments(clip: CompableClipFields): AudioClipSegment[] {
+function audioClipSegmentsInWindow(clip: CompableClipFields): AudioClipSegment[] {
   const takes = clip.takes ?? [];
   if (takes.length === 0) {
     if (clip.assetId === undefined) return [];
@@ -208,6 +210,54 @@ export function audioClipSegments(clip: CompableClipFields): AudioClipSegment[] 
       fadeInPpq,
       fadeOutPpq,
     });
+  }
+  return result;
+}
+
+/**
+ * Expands an audio clip into its playable segments, including source-window
+ * repeats when clip looping is enabled. Repeated segments read the same source
+ * window and are placed later in the clip timeline; clip fade-in/out remain
+ * edges of the whole clip, not every repeat.
+ */
+export function audioClipSegments(clip: CompableClipFields): AudioClipSegment[] {
+  const loopLengthPpq =
+    clip.loopEnabled === true &&
+    Number.isFinite(clip.loopLengthPpq) &&
+    (clip.loopLengthPpq ?? 0) > 0
+      ? (clip.loopLengthPpq as number)
+      : 0;
+  if (loopLengthPpq <= 0 || loopLengthPpq >= clip.lengthPpq) {
+    return audioClipSegmentsInWindow(clip);
+  }
+
+  const loopWindow: CompableClipFields = {
+    ...clip,
+    lengthPpq: loopLengthPpq,
+    loopEnabled: false,
+    loopLengthPpq: 0,
+    fadeInPpq: 0,
+    fadeOutPpq: 0,
+  };
+  const base = audioClipSegmentsInWindow(loopWindow);
+  const result: AudioClipSegment[] = [];
+  for (let repeatOffset = 0; repeatOffset < clip.lengthPpq - 1e-9; repeatOffset += loopLengthPpq) {
+    const remaining = clip.lengthPpq - repeatOffset;
+    for (const segment of base) {
+      if (segment.offsetPpq >= remaining) continue;
+      const lengthPpq = Math.min(segment.lengthPpq, remaining - segment.offsetPpq);
+      if (lengthPpq <= 0) continue;
+      result.push({
+        ...segment,
+        offsetPpq: repeatOffset + segment.offsetPpq,
+        lengthPpq,
+      });
+    }
+  }
+  if (result.length > 0) {
+    result[0] = { ...result[0], fadeInPpq: clip.fadeInPpq ?? 0 };
+    const last = result.length - 1;
+    result[last] = { ...result[last], fadeOutPpq: clip.fadeOutPpq ?? 0 };
   }
   return result;
 }

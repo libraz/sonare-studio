@@ -106,6 +106,14 @@ function cloneClip(clip: EditorClip): EditorClip {
   } else {
     delete next.pitchBendLanes;
   }
+  if (clip.programChangeLanes !== undefined && clip.programChangeLanes.length > 0) {
+    next.programChangeLanes = clip.programChangeLanes.map((lane) => ({
+      channel: lane.channel,
+      points: lane.points.map((point) => ({ ...point })),
+    }));
+  } else {
+    delete next.programChangeLanes;
+  }
   if (clip.channelPressureLanes !== undefined && clip.channelPressureLanes.length > 0) {
     next.channelPressureLanes = clip.channelPressureLanes.map((lane) => ({
       channel: lane.channel,

@@ -11,6 +11,7 @@ import { dropClipTakes } from './commands';
 import { audioClipSegments } from './comping';
 import { resampleChannelsLinear, sliceAudioClipWindow } from './scheduling';
 import { useProjectStore } from './store';
+import type { EditorClip } from './types';
 
 /** Options for {@link flattenClipComp}. */
 export interface FlattenClipCompOptions {
@@ -20,6 +21,28 @@ export interface FlattenClipCompOptions {
   loadAudioAsset?: (assetId: string) => Promise<LoadedAudioAsset>;
   /** Asset ingester (defaults to ingestAudioBuffer without analysis). */
   ingest?: (channels: Float32Array[], sampleRate: number, name: string) => Promise<{ id: string }>;
+}
+
+function flattenClipToken(clip: EditorClip): string {
+  return JSON.stringify({
+    id: clip.id,
+    trackId: clip.trackId,
+    startPpq: clip.startPpq,
+    lengthPpq: clip.lengthPpq,
+    sourceOffsetPpq: clip.sourceOffsetPpq,
+    assetId: clip.assetId,
+    takes: clip.takes,
+    compSegments: clip.compSegments,
+  });
+}
+
+function isFlattenSourceCurrent(
+  store: ReturnType<typeof useProjectStore>,
+  clipId: number,
+  token: string,
+): boolean {
+  const current = store.clips.find((entry) => entry.id === clipId);
+  return current !== undefined && flattenClipToken(current) === token;
 }
 
 /**
@@ -38,6 +61,7 @@ export async function flattenClipComp(
   const clip = store.clips.find((entry) => entry.id === clipId);
   if (!clip) throw new RangeError(`Unknown clip id ${clipId}`);
   if ((clip.takes?.length ?? 0) === 0) throw new RangeError(`Clip ${clipId} has no takes`);
+  const sourceToken = flattenClipToken(clip);
   const segments = audioClipSegments(clip);
   if (segments.length <= 1) {
     // Whole-clip selection: the clip already points at the selected take.
@@ -93,6 +117,7 @@ export async function flattenClipComp(
   }
 
   const meta = await ingest(stitched, sampleRate, `${clip.name} (comp)`);
+  if (!isFlattenSourceCurrent(store, clipId, sourceToken)) return '';
   dropClipTakes(clipId, meta.id);
   return meta.id;
 }

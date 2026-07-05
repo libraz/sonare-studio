@@ -14,7 +14,9 @@ import {
   setInsertSidechain,
   setTrackFrozen,
   setTrackGroup,
+  setTrackRecordInputChannel,
 } from '@/project/commands';
+import { createDefaultMixerState } from '@/project/mixer';
 import {
   loadProjectDocument,
   PROJECT_DOCUMENT_SCHEMA_VERSION,
@@ -112,6 +114,18 @@ describe('project serialization with audio clips (schema v2)', () => {
     const audioClips = store.clips.filter((c) => c.kind === 'audio');
     expect(audioClips).toHaveLength(2);
     expect(audioClips[0]).toMatchObject({ assetId: 'asset-vox', fadeInPpq: 0.5, fadeOutPpq: 1 });
+  });
+
+  it('serializes audio track record input channels and round-trips them', async () => {
+    const trackId = addAudioTrack({ name: 'Mic 3' });
+    setTrackRecordInputChannel(trackId, 2);
+
+    const doc = serializeProject();
+    expect(doc.tracks[1].recordInputChannel).toBe(2);
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    expect(store.tracks.find((track) => track.name === 'Mic 3')?.recordInputChannel).toBe(2);
+    expect(serializeProject()).toEqual(doc);
   });
 
   it('registers one Project source per asset when loading', async () => {
@@ -234,7 +248,8 @@ describe('project serialization with audio clips (schema v2)', () => {
     });
     setClipCompSegments(clipId, [
       { startPpq: 0, takeIndex: 0 },
-      { startPpq: 4, takeIndex: 1 },
+      { startPpq: 4, takeIndex: 1, crossfadePpq: 0 },
+      { startPpq: 6, takeIndex: 0, crossfadePpq: 0.25 },
     ]);
 
     const doc = serializeProject();
@@ -245,7 +260,8 @@ describe('project serialization with audio clips (schema v2)', () => {
     ]);
     expect(docClip.compSegments).toEqual([
       { startPpq: 0, takeIndex: 0 },
-      { startPpq: 4, takeIndex: 1 },
+      { startPpq: 4, takeIndex: 1, crossfadePpq: 0 },
+      { startPpq: 6, takeIndex: 0, crossfadePpq: 0.25 },
     ]);
     // The clip asset follows the take selected at the clip start.
     expect(docClip.assetId).toBe('take-a');
@@ -260,7 +276,8 @@ describe('project serialization with audio clips (schema v2)', () => {
     ]);
     expect(mirror?.compSegments).toEqual([
       { startPpq: 0, takeIndex: 0 },
-      { startPpq: 4, takeIndex: 1 },
+      { startPpq: 4, takeIndex: 1, crossfadePpq: 0 },
+      { startPpq: 6, takeIndex: 0, crossfadePpq: 0.25 },
     ]);
     expect(serializeProject()).toEqual(doc);
   });
@@ -303,6 +320,16 @@ describe('group membership and insert sidechain serialization (schema v3)', () =
 
     // Documents stay plain JSON.
     expect(JSON.parse(JSON.stringify(doc))).toEqual(doc);
+  });
+
+  it('drops group-track insert sidechain sources at serialize time', () => {
+    addInsert(groupId, 'dynamics.compressor', { thresholdDb: -12 });
+    store.tracks[1].mixer!.inserts[0].sidechainSourceTrackId = midiId;
+
+    const doc = serializeProject();
+    const slot = doc.tracks[1].mixer?.inserts[0] as unknown as Record<string, unknown>;
+    expect('sidechainSourceIndex' in slot).toBe(false);
+    expect('sidechainSourceTrackId' in slot).toBe(false);
   });
 
   it('round-trips memberships and sidechains onto fresh session ids', async () => {
@@ -367,6 +394,30 @@ describe('group membership and insert sidechain serialization (schema v3)', () =
     const reserialized = serializeProject();
     expect(reserialized.tracks.every((track) => track.groupIndex === undefined)).toBe(true);
   });
+
+  it('drops group-track insert sidechain sources at load time', async () => {
+    const doc = JSON.parse(JSON.stringify(serializeProject())) as ProjectDocument;
+    doc.tracks[1].mixer = {
+      gainDb: 0,
+      pan: 0,
+      sends: [],
+      inserts: [
+        {
+          processor: 'dynamics.compressor',
+          params: { thresholdDb: -12 },
+          enabled: true,
+          sidechainSourceIndex: 0,
+        } as never,
+      ],
+    };
+
+    await loadProjectDocument(doc);
+
+    const slot = store.tracks[1].mixer?.inserts[0] as unknown as Record<string, unknown>;
+    expect(slot.processor).toBe('dynamics.compressor');
+    expect('sidechainSourceTrackId' in slot).toBe(false);
+    expect('sidechainSourceIndex' in slot).toBe(false);
+  });
 });
 
 describe('track frozen state serialization', () => {
@@ -408,5 +459,18 @@ describe('track frozen state serialization', () => {
     expect(store.tracks.every((track) => track.frozen === undefined)).toBe(true);
     // The invalid state never resurfaces on re-serialize.
     expect(serializeProject().tracks.every((track) => track.frozen === undefined)).toBe(true);
+  });
+
+  it('rejects documents that exceed the realtime engine bus limit', async () => {
+    const doc = JSON.parse(JSON.stringify(serializeProject())) as ProjectDocument;
+    const mixer = createDefaultMixerState();
+    mixer.buses = Array.from({ length: 9 }, (_, index) => ({
+      id: `bus-${index}`,
+      name: `Bus ${index + 1}`,
+      gainDb: 0,
+    }));
+    doc.mixer = mixer;
+
+    await expect(loadProjectDocument(doc)).rejects.toThrow(/Mixer bus limit exceeded/);
   });
 });

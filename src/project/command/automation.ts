@@ -7,6 +7,8 @@ import {
   type InsertParamRef,
   isBusAutomationTarget,
   parseInsertAutomationParam,
+  parseInstrumentAutomationParam,
+  parseMasteringAutomationParam,
   sanitizeAutomationPoints,
 } from '../automation';
 import type { MixerStrip } from '../mixer';
@@ -46,6 +48,30 @@ function validateAutomationTarget(
   target: AutomationTarget,
   param: AutomationParam,
 ): void {
+  const masteringRef = parseMasteringAutomationParam(param);
+  if (masteringRef !== undefined) {
+    if (target !== 'master') {
+      throw new RangeError('Mastering automation must target the master lane');
+    }
+    if (!store.mixer.masteringChain?.processors[masteringRef.processorIndex]) {
+      throw new RangeError(`Unknown mastering processor index: ${masteringRef.processorIndex}`);
+    }
+    return;
+  }
+  const instrumentRef = parseInstrumentAutomationParam(param);
+  if (instrumentRef !== undefined) {
+    if (target === 'master' || isBusAutomationTarget(target)) {
+      throw new RangeError('Instrument automation must target a MIDI track');
+    }
+    const track = requireTrack(store, target);
+    if (track.kind !== 'midi') {
+      throw new RangeError('Instrument automation requires a MIDI track');
+    }
+    if (track.instrument?.kind !== 'synth-patch') {
+      throw new RangeError('Instrument automation requires a synth-patch instrument');
+    }
+    return;
+  }
   const insertRef = parseInsertAutomationParam(param);
   if (insertRef !== undefined) {
     // The strip lookup also validates the target (unknown track/bus throws).

@@ -11,10 +11,16 @@ import {
   cloneAutomationLane,
   evaluateAutomationValue,
   insertAutomationParam,
+  instrumentAutomationParam,
   isAutomationParam,
   isBusAutomationTarget,
   isInsertAutomationParam,
+  isInstrumentAutomationParam,
+  isMasteringAutomationParam,
+  masteringAutomationParam,
   parseInsertAutomationParam,
+  parseInstrumentAutomationParam,
+  parseMasteringAutomationParam,
   sanitizeAutomationEntries,
   sanitizeAutomationPoints,
 } from '@/project/automation';
@@ -332,12 +338,16 @@ describe('automation model', () => {
       expect(parseInsertAutomationParam('insert:x:gain')).toBeUndefined();
     });
 
-    it('isAutomationParam accepts faderDb/pan and valid insert tokens only', () => {
+    it('isAutomationParam accepts faderDb/pan and valid structured tokens only', () => {
       expect(isAutomationParam('faderDb')).toBe(true);
       expect(isAutomationParam('pan')).toBe(true);
       expect(isAutomationParam('insert:0:gainDb')).toBe(true);
+      expect(isAutomationParam('mastering:0:ceilingDb')).toBe(true);
+      expect(isAutomationParam('instrument:cutoffHz')).toBe(true);
       expect(isAutomationParam('volume')).toBe(false);
       expect(isAutomationParam('insert:-1:gainDb')).toBe(false);
+      expect(isAutomationParam('mastering:-1:ceilingDb')).toBe(false);
+      expect(isAutomationParam('instrument:')).toBe(false);
       expect(isAutomationParam(5)).toBe(false);
     });
 
@@ -382,6 +392,101 @@ describe('automation model', () => {
           target: 3,
           param: 'insert:0:thresholdDb',
           points: [{ ppq: 0, value: -12 }],
+          enabled: true,
+        },
+      ]);
+    });
+  });
+
+  describe('mastering automation params', () => {
+    it('encodes and round-trips processor index + paramName', () => {
+      const param = masteringAutomationParam(2, 'ceilingDb');
+      expect(param).toBe('mastering:2:ceilingDb');
+      expect(isMasteringAutomationParam(param)).toBe(true);
+      expect(parseMasteringAutomationParam(param)).toEqual({
+        processorIndex: 2,
+        paramName: 'ceilingDb',
+      });
+    });
+
+    it('keeps a paramName that itself contains colons', () => {
+      const param = masteringAutomationParam(0, 'band:1:gain');
+      expect(param).toBe('mastering:0:band:1:gain');
+      expect(parseMasteringAutomationParam(param)).toEqual({
+        processorIndex: 0,
+        paramName: 'band:1:gain',
+      });
+    });
+
+    it('rejects malformed tokens', () => {
+      expect(isMasteringAutomationParam('insert:0:gainDb')).toBe(false);
+      expect(parseMasteringAutomationParam('mastering:2')).toBeUndefined();
+      expect(parseMasteringAutomationParam('mastering:2:')).toBeUndefined();
+      expect(parseMasteringAutomationParam('mastering:-1:gain')).toBeUndefined();
+      expect(parseMasteringAutomationParam('mastering:1.5:gain')).toBeUndefined();
+      expect(parseMasteringAutomationParam('mastering:x:gain')).toBeUndefined();
+    });
+
+    it('sanitizeAutomationEntries keeps valid mastering lanes and drops malformed ones', () => {
+      const lanes = sanitizeAutomationEntries(
+        [
+          {
+            param: masteringAutomationParam(0, 'ceilingDb'),
+            points: [{ ppq: 0, value: -1 }],
+            enabled: true,
+          },
+          { param: 'mastering:-1:gainDb', points: [{ ppq: 0, value: 0 }], enabled: true },
+          { param: 'mastering:0:', points: [{ ppq: 0, value: 0 }], enabled: true },
+        ],
+        'master',
+      );
+      expect(lanes).toEqual([
+        {
+          target: 'master',
+          param: 'mastering:0:ceilingDb',
+          points: [{ ppq: 0, value: -1 }],
+          enabled: true,
+        },
+      ]);
+    });
+  });
+
+  describe('instrument automation params', () => {
+    it('encodes and round-trips a synth-patch paramName', () => {
+      const param = instrumentAutomationParam('cutoffHz');
+      expect(param).toBe('instrument:cutoffHz');
+      expect(isInstrumentAutomationParam(param)).toBe(true);
+      expect(parseInstrumentAutomationParam(param)).toEqual({ paramName: 'cutoffHz' });
+    });
+
+    it('keeps a paramName that itself contains colons', () => {
+      const param = instrumentAutomationParam('macro:1');
+      expect(param).toBe('instrument:macro:1');
+      expect(parseInstrumentAutomationParam(param)).toEqual({ paramName: 'macro:1' });
+    });
+
+    it('rejects malformed tokens', () => {
+      expect(isInstrumentAutomationParam('mastering:0:gainDb')).toBe(false);
+      expect(parseInstrumentAutomationParam('instrument:')).toBeUndefined();
+    });
+
+    it('sanitizeAutomationEntries keeps valid instrument lanes and drops malformed ones', () => {
+      const lanes = sanitizeAutomationEntries(
+        [
+          {
+            param: instrumentAutomationParam('cutoffHz'),
+            points: [{ ppq: 0, value: 1200 }],
+            enabled: true,
+          },
+          { param: 'instrument:', points: [{ ppq: 0, value: 0 }], enabled: true },
+        ],
+        3,
+      );
+      expect(lanes).toEqual([
+        {
+          target: 3,
+          param: 'instrument:cutoffHz',
+          points: [{ ppq: 0, value: 1200 }],
           enabled: true,
         },
       ]);

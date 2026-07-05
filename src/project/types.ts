@@ -135,9 +135,16 @@ export interface EditorTrack {
    * instrument, inserts/EQ) baked into an asset. While frozen, the track's
    * own content and strip DSP stay silent/bypassed and the baked audio plays
    * instead; fader/pan/sends/automation remain live. Edits to the frozen
-   * content are ignored until the track unfreezes.
+   * content are ignored until the track unfreezes. Tempo-map changes
+   * automatically unfreeze tracks because the baked PCM is fixed to the
+   * tempo map used when it was rendered.
    */
   frozen?: { assetId: string };
+  /**
+   * Zero-based input channel used when splitting a multi-channel microphone
+   * capture onto armed audio tracks. Absent = automatic by armed-track order.
+   */
+  recordInputChannel?: number;
   /**
    * Instrument rendering the track's MIDI clips (app-level metadata); absent
    * = the default synth preset (see src/project/instrument.ts).
@@ -199,18 +206,23 @@ export interface WarpAnchor {
   sourceSeconds: number;
 }
 
+/** Interpolation used from one expression breakpoint to the next. */
+export type ClipExpressionCurve = 'hold' | 'linear' | 's-curve';
+
 /** One breakpoint in a clip CC lane: a clip-window-relative beat and a value. */
 export interface ClipCcPoint {
   /** Position relative to the clip window, in PPQ (>= 0, <= the clip length). */
   ppq: number;
   /** Controller value (integer, 0-127). */
   value: number;
+  /** Curve used from this point to the next; absent = hold for old projects. */
+  curve?: ClipExpressionCurve;
 }
 
 /**
  * One continuous-controller (CC) automation lane inside a MIDI clip. Points are
- * emitted as discrete MIDI CC events at playback (the value holds until the
- * next point), so what the lane draws is exactly what the engine receives.
+ * emitted as MIDI CC events at playback. A point's curve controls the segment
+ * to the next point; absent curves hold the value for backward compatibility.
  */
 export interface ClipCcLane {
   /** MIDI controller number (integer, 0-127, e.g. 1 = mod wheel, 11 = expression). */
@@ -227,11 +239,13 @@ export interface ClipPitchBendPoint {
   ppq: number;
   /** MIDI pitch-bend value (integer, 0-16383; 8192 = center/no bend). */
   value: number;
+  /** Curve used from this point to the next; absent = hold for old projects. */
+  curve?: ClipExpressionCurve;
 }
 
 /**
- * One pitch-bend lane inside a MIDI clip. Points are emitted as discrete
- * MIDI pitch-bend events at playback, preserving imported performance data.
+ * One pitch-bend lane inside a MIDI clip. Points are emitted as MIDI
+ * pitch-bend events at playback, preserving imported performance data.
  */
 export interface ClipPitchBendLane {
   /** MIDI channel the pitch-bend applies to (integer, 0-15). */
@@ -240,12 +254,30 @@ export interface ClipPitchBendLane {
   points: ClipPitchBendPoint[];
 }
 
+/** One breakpoint in a program-change lane: clip-window-relative beat and program number. */
+export interface ClipProgramChangePoint {
+  /** Position relative to the clip window, in PPQ (>= 0, <= the clip length). */
+  ppq: number;
+  /** MIDI program number (integer, 0-127). */
+  program: number;
+}
+
+/** Program-change lane inside a MIDI clip. */
+export interface ClipProgramChangeLane {
+  /** MIDI channel the program change applies to (integer, 0-15). */
+  channel: number;
+  /** Program changes sorted by ppq; an empty lane is dropped. */
+  points: ClipProgramChangePoint[];
+}
+
 /** One breakpoint in an aftertouch lane: clip-window-relative beat and 7-bit pressure. */
 export interface ClipPressurePoint {
   /** Position relative to the clip window, in PPQ (>= 0, <= the clip length). */
   ppq: number;
   /** MIDI pressure value (integer, 0-127). */
   value: number;
+  /** Curve used from this point to the next; absent = hold for old projects. */
+  curve?: ClipExpressionCurve;
 }
 
 /** Channel pressure (monophonic aftertouch) lane inside a MIDI clip. */
@@ -337,6 +369,11 @@ export interface EditorClip {
    * bend. Values are 14-bit MIDI bend values, center at 8192.
    */
   pitchBendLanes?: ClipPitchBendLane[];
+  /**
+   * Program-change lanes (MIDI clips only); absent or empty = the clip sends
+   * no program changes. Programs are MIDI 0-127 values.
+   */
+  programChangeLanes?: ClipProgramChangeLane[];
   /**
    * Channel pressure / monophonic aftertouch lanes (MIDI clips only); absent
    * or empty = the clip sends no channel pressure.

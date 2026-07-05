@@ -1,6 +1,7 @@
 import { getProject, useProjectStore } from '../store';
+import { normalizeTempoMap } from '../tempo-map';
 import type { ClipWarp } from '../types';
-import { sanitizeWarpAnchors } from '../warp';
+import { projectWarpMapDesc, sanitizeWarpAnchors } from '../warp';
 import { execute } from './history';
 import { requireClip, requireTrack } from './utils';
 
@@ -50,6 +51,7 @@ export function setTrackFrozen(trackId: number, frozen: { assetId: string } | nu
  */
 export function setClipWarp(clipId: number, warp: ClipWarp | null): void {
   const store = useProjectStore();
+  const project = getProject();
   const index = store.clips.findIndex((clip) => clip.id === clipId);
   if (index < 0) throw new RangeError(`Unknown clip id ${clipId}`);
   const clip = store.clips[index];
@@ -68,7 +70,22 @@ export function setClipWarp(clipId: number, warp: ClipWarp | null): void {
       ...(anchors.length > 0 ? { anchors } : {}),
     };
   }
-  execute(0, () => {
+  const tempo = normalizeTempoMap(store.tempoSegments, store.tempoBpm);
+  const sampleRate = project.getSampleRate();
+  const nativeMap =
+    next === undefined
+      ? null
+      : projectWarpMapDesc({ ...clip, warp: next, id: clipId }, tempo, sampleRate);
+  execute(3, () => {
+    if (nativeMap === null) {
+      project.setClipWarpMode(clipId, 'off');
+      project.setClipWarpRef(clipId, 0);
+      project.removeWarpMap(clipId);
+    } else {
+      project.setWarpMap(nativeMap);
+      project.setClipWarpRef(clipId, nativeMap.id);
+      project.setClipWarpMode(clipId, next?.enabled ? 'tempo-sync' : 'off');
+    }
     store.clips = store.clips.map((entry, i) => {
       if (i !== index) return entry;
       const updated = { ...entry };

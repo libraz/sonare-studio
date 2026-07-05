@@ -1,5 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { decodeSzd, encodeSzd } from '@/persistence/szd';
 import {
   addMidiClip,
   addNote,
@@ -231,8 +232,17 @@ describe('project serialization', () => {
     expect(store.activeClip?.pitchBendLanes).toEqual(doc.tracks[0].clips[0].pitchBendLanes);
   });
 
-  it('round-trips imported aftertouch lanes through the document', async () => {
+  it('round-trips imported program-change and aftertouch lanes through the document', async () => {
     const doc = serializeProject();
+    doc.tracks[0].clips[0].programChangeLanes = [
+      {
+        channel: 0,
+        points: [
+          { ppq: 0, program: 4 },
+          { ppq: 1, program: 40 },
+        ],
+      },
+    ];
     doc.tracks[0].clips[0].channelPressureLanes = [
       {
         channel: 0,
@@ -253,6 +263,7 @@ describe('project serialization', () => {
     await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
 
     expect(serializeProject()).toEqual(doc);
+    expect(store.activeClip?.programChangeLanes).toEqual(doc.tracks[0].clips[0].programChangeLanes);
     expect(store.activeClip?.channelPressureLanes).toEqual(
       doc.tracks[0].clips[0].channelPressureLanes,
     );
@@ -293,6 +304,16 @@ describe('project serialization', () => {
     expect(canUndo()).toBe(false);
     expect(store.initialized).toBe(true);
     expect(store.activeTrackId).toBe(store.tracks[0].id);
+  });
+
+  it('round-trips a saved .szd through project load and re-serialization losslessly', async () => {
+    buildSampleProject(store);
+    const doc = serializeProject();
+    const saved = encodeSzd(doc, { savedAt: '2026-07-04T00:00:00.000Z' });
+
+    await loadProjectDocument(decodeSzd(saved));
+
+    expect(serializeProject()).toEqual(doc);
   });
 
   it('loading replaces the current project content entirely', async () => {
@@ -369,13 +390,50 @@ describe('project serialization', () => {
     const bassTrackId = store.tracks.find((track) => track.name === 'Bass')?.id as number;
     store.midiCcBindings.set(`gain:${bassTrackId}`, { channel: 0, controller: 7 });
     store.midiCcBindings.set('gain:master', { channel: 1, controller: 10 });
+    store.midiCcBindings.set(`pan:${bassTrackId}`, {
+      channel: 2,
+      controller: 6,
+      kind: 'rpn',
+      parameter: 2,
+    });
+    store.midiCcBindings.set(`strip:${bassTrackId}:inputTrimDb`, {
+      channel: 3,
+      controller: 24,
+    });
+    store.midiCcBindings.set(`send:${bassTrackId}:bus-1:enabled`, {
+      channel: 4,
+      controller: 31,
+    });
+    store.midiCcBindings.set(`track:${bassTrackId}:mute`, {
+      channel: 5,
+      controller: 33,
+    });
+    store.midiCcBindings.set('vca:drums:gain', {
+      channel: 6,
+      controller: 35,
+    });
+    store.midiCcBindings.set(`eq:${bassTrackId}:0:frequencyHz`, {
+      channel: 7,
+      controller: 38,
+    });
+    store.midiCcBindings.set('mastering:0:tiltDb', {
+      channel: 8,
+      controller: 41,
+    });
     // A binding to a track that no longer exists must drop out on serialize.
     store.midiCcBindings.set('pan:99999', { channel: 2, controller: 20 });
 
     const doc = serializeProject();
     expect(doc.midiCcBindings).toEqual([
+      { target: 'eq:0:0:frequencyHz', channel: 7, controller: 38, trackScoped: true },
       { target: 'gain:0', channel: 0, controller: 7, trackScoped: true },
       { target: 'gain:master', channel: 1, controller: 10 },
+      { target: 'mastering:0:tiltDb', channel: 8, controller: 41 },
+      { target: 'pan:0', channel: 2, controller: 6, kind: 'rpn', parameter: 2, trackScoped: true },
+      { target: 'send:0:bus-1:enabled', channel: 4, controller: 31, trackScoped: true },
+      { target: 'strip:0:inputTrimDb', channel: 3, controller: 24, trackScoped: true },
+      { target: 'track:0:mute', channel: 5, controller: 33, trackScoped: true },
+      { target: 'vca:drums:gain', channel: 6, controller: 35 },
     ]);
     // The document is plain JSON (the store map never leaks through).
     expect(JSON.parse(JSON.stringify(doc))).toEqual(doc);
@@ -388,7 +446,37 @@ describe('project serialization', () => {
       controller: 7,
     });
     expect(store.midiCcBindings.get('gain:master')).toEqual({ channel: 1, controller: 10 });
-    expect(store.midiCcBindings.size).toBe(2);
+    expect(store.midiCcBindings.get(`pan:${loadedBass?.id}`)).toEqual({
+      channel: 2,
+      controller: 6,
+      kind: 'rpn',
+      parameter: 2,
+    });
+    expect(store.midiCcBindings.get(`strip:${loadedBass?.id}:inputTrimDb`)).toEqual({
+      channel: 3,
+      controller: 24,
+    });
+    expect(store.midiCcBindings.get(`send:${loadedBass?.id}:bus-1:enabled`)).toEqual({
+      channel: 4,
+      controller: 31,
+    });
+    expect(store.midiCcBindings.get(`track:${loadedBass?.id}:mute`)).toEqual({
+      channel: 5,
+      controller: 33,
+    });
+    expect(store.midiCcBindings.get('vca:drums:gain')).toEqual({
+      channel: 6,
+      controller: 35,
+    });
+    expect(store.midiCcBindings.get(`eq:${loadedBass?.id}:0:frequencyHz`)).toEqual({
+      channel: 7,
+      controller: 38,
+    });
+    expect(store.midiCcBindings.get('mastering:0:tiltDb')).toEqual({
+      channel: 8,
+      controller: 41,
+    });
+    expect(store.midiCcBindings.size).toBe(9);
     // Re-serializing the loaded project yields the same document.
     expect(serializeProject()).toEqual(doc);
   });
@@ -442,6 +530,19 @@ describe('project serialization', () => {
     await expect(loadProjectDocument(bad)).rejects.toThrow(/schema version/);
     // The previous project is untouched.
     expect(serializeProject()).toEqual(doc);
+  });
+
+  it('resets the store when a malformed document fails after project commit', async () => {
+    buildSampleProject(store);
+    const bad = JSON.parse(JSON.stringify(serializeProject())) as ProjectDocument;
+    (bad as unknown as { mixer: unknown }).mixer = { master: {}, buses: {} };
+
+    await expect(loadProjectDocument(bad)).rejects.toThrow();
+
+    expect(store.initialized).toBe(false);
+    expect(store.projectName).toBe('Untitled');
+    expect(store.tracks).toEqual([]);
+    expect(store.clips).toEqual([]);
   });
 });
 

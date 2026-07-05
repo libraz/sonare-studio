@@ -1,5 +1,6 @@
 import { ensureWasm } from '@/lib/wasm';
 import type { ProjectMidiEvent } from '@/wasm/index.js';
+import { expandExpressionPoints, MIDI_PITCH_BEND_MAX } from './midi-cc';
 import {
   notesToProjectMidiEvents,
   pairEventsIntoNotes,
@@ -379,6 +380,18 @@ function pushBend(
   lanes.set(key, lane);
 }
 
+function pushProgramChange(
+  lanes: Map<string, NonNullable<DocumentClip['programChangeLanes']>[number]>,
+  ch: number,
+  ppq: number,
+  program: number,
+): void {
+  const key = String(ch);
+  const lane = lanes.get(key) ?? { channel: ch, points: [] };
+  lane.points.push({ ppq, program });
+  lanes.set(key, lane);
+}
+
 function pushChannelPressure(
   lanes: Map<string, NonNullable<DocumentClip['channelPressureLanes']>[number]>,
   ch: number,
@@ -452,6 +465,7 @@ function clipFromEvents(
   const notes = pairEventsIntoNotes(events);
   const cc = new Map<string, NonNullable<DocumentClip['ccLanes']>[number]>();
   const bends = new Map<string, NonNullable<DocumentClip['pitchBendLanes']>[number]>();
+  const programChanges = new Map<string, NonNullable<DocumentClip['programChangeLanes']>[number]>();
   const channelPressures = new Map<
     string,
     NonNullable<DocumentClip['channelPressureLanes']>[number]
@@ -463,6 +477,8 @@ function clipFromEvents(
     if (status === STATUS_CONTROL_CHANGE) pushCc(cc, data1(event), ch, event.ppq, data2(event));
     if (status === STATUS_PITCH_BEND)
       pushBend(bends, ch, event.ppq, data1(event) | (data2(event) << 7));
+    if (status === STATUS_PROGRAM_CHANGE)
+      pushProgramChange(programChanges, ch, event.ppq, data1(event));
     if (status === STATUS_CHANNEL_PRESSURE)
       pushChannelPressure(channelPressures, ch, event.ppq, data1(event));
     if (status === STATUS_POLY_PRESSURE)
@@ -489,6 +505,9 @@ function clipFromEvents(
     (a, b) => a.channel - b.channel || a.controller - b.controller,
   );
   const pitchBendLanes = sortedLanes(bends.values()).sort((a, b) => a.channel - b.channel);
+  const programChangeLanes = sortedLanes(programChanges.values()).sort(
+    (a, b) => a.channel - b.channel,
+  );
   const channelPressureLanes = sortedLanes(channelPressures.values()).sort(
     (a, b) => a.channel - b.channel,
   );
@@ -497,6 +516,7 @@ function clipFromEvents(
   );
   if (ccLanes.length > 0) clip.ccLanes = ccLanes;
   if (pitchBendLanes.length > 0) clip.pitchBendLanes = pitchBendLanes;
+  if (programChangeLanes.length > 0) clip.programChangeLanes = programChangeLanes;
   if (channelPressureLanes.length > 0) clip.channelPressureLanes = channelPressureLanes;
   if (polyPressureLanes.length > 0) clip.polyPressureLanes = polyPressureLanes;
   return clip;
@@ -530,6 +550,8 @@ function trackDocument(
         instrument: {
           kind: 'synth-preset' as const,
           preset: presetForGmProgram(firstProgram.program, firstProgram.channel, firstProgram.bank),
+          ...(firstProgram.bank !== undefined ? { gmBank: firstProgram.bank } : {}),
+          gmProgram: firstProgram.program,
         },
       }
     : {};
@@ -659,34 +681,39 @@ function clipEvents(clip: DocumentClip, wasm: WasmModule): ProjectMidiEvent[] {
   for (const lane of clip.ccLanes ?? []) {
     const channel = clampInt(lane.channel, 0, 15);
     const controller = clampInt(lane.controller, 0, 127);
-    for (const point of lane.points) {
+    for (const point of expandExpressionPoints(lane.points, lengthPpq, 127)) {
       const ppq = finiteNonNegative(point.ppq, -1);
-      if (ppq < 0 || ppq > lengthPpq) continue;
       events.push(wasm.Project.midiCc(ppq, 0, channel, controller, clampInt(point.value, 0, 127)));
     }
   }
   for (const lane of clip.pitchBendLanes ?? []) {
     const channel = clampInt(lane.channel, 0, 15);
+    for (const point of expandExpressionPoints(lane.points, lengthPpq, MIDI_PITCH_BEND_MAX)) {
+      const ppq = finiteNonNegative(point.ppq, -1);
+      events.push(
+        wasm.Project.midiPitchBend(ppq, 0, channel, clampInt(point.value, 0, MIDI_PITCH_BEND_MAX)),
+      );
+    }
+  }
+  for (const lane of clip.programChangeLanes ?? []) {
+    const channel = clampInt(lane.channel, 0, 15);
     for (const point of lane.points) {
       const ppq = finiteNonNegative(point.ppq, -1);
-      if (ppq < 0 || ppq > lengthPpq) continue;
-      events.push(wasm.Project.midiPitchBend(ppq, 0, channel, clampInt(point.value, 0, 16383)));
+      events.push(wasm.Project.midiProgram(ppq, 0, channel, clampInt(point.program, 0, 127)));
     }
   }
   for (const lane of clip.channelPressureLanes ?? []) {
     const channel = clampInt(lane.channel, 0, 15);
-    for (const point of lane.points) {
+    for (const point of expandExpressionPoints(lane.points, lengthPpq, 127)) {
       const ppq = finiteNonNegative(point.ppq, -1);
-      if (ppq < 0 || ppq > lengthPpq) continue;
       events.push(wasm.Project.midiChannelPressure(ppq, 0, channel, clampInt(point.value, 0, 127)));
     }
   }
   for (const lane of clip.polyPressureLanes ?? []) {
     const channel = clampInt(lane.channel, 0, 15);
     const pitch = clampInt(lane.pitch, 0, 127);
-    for (const point of lane.points) {
+    for (const point of expandExpressionPoints(lane.points, lengthPpq, 127)) {
       const ppq = finiteNonNegative(point.ppq, -1);
-      if (ppq < 0 || ppq > lengthPpq) continue;
       events.push(
         wasm.Project.midiPolyPressure(ppq, 0, channel, pitch, clampInt(point.value, 0, 127)),
       );
@@ -706,6 +733,9 @@ function scratchClipLength(clip: DocumentClip): number {
     clip.notes.some((note) => note.startPpq + note.durationPpq - sourceOffsetPpq >= lengthPpq) ||
     (clip.ccLanes ?? []).some((lane) => lane.points.some((point) => point.ppq >= lengthPpq)) ||
     (clip.pitchBendLanes ?? []).some((lane) =>
+      lane.points.some((point) => point.ppq >= lengthPpq),
+    ) ||
+    (clip.programChangeLanes ?? []).some((lane) =>
       lane.points.some((point) => point.ppq >= lengthPpq),
     ) ||
     (clip.channelPressureLanes ?? []).some((lane) =>
@@ -781,10 +811,28 @@ async function projectFromDocument(
             ? instrument.patch.preset
             : undefined;
       if (preset) {
-        const program = clampInt(gmProgramForPreset(preset), 0, 127);
+        const importedBank =
+          instrument?.kind === 'synth-preset' && instrument.gmBank !== undefined
+            ? clampInt(instrument.gmBank, 0, 16383)
+            : undefined;
+        const program =
+          instrument?.kind === 'synth-preset' && instrument.gmProgram !== undefined
+            ? clampInt(instrument.gmProgram, 0, 127)
+            : clampInt(gmProgramForPreset(preset), 0, 127);
         const channels = new Set([0, ...clip.notes.map((note) => clampInt(note.channel, 0, 15))]);
         for (const ch of channels) {
-          if (preset === 'drum-kit') {
+          if (importedBank !== undefined) {
+            events.unshift(
+              ...wasm.Project.midiBankProgram(
+                0,
+                0,
+                ch,
+                importedBank >> 7,
+                importedBank & 0x7f,
+                program,
+              ),
+            );
+          } else if (preset === 'drum-kit') {
             events.unshift(...wasm.Project.midiBankProgram(0, 0, ch, 1, 0, program));
           } else {
             events.unshift(wasm.Project.midiProgram(0, 0, ch, program));

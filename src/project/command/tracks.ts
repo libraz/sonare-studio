@@ -282,6 +282,36 @@ export function setTrackPan(trackId: number, pan: number): void {
 }
 
 /**
+ * Sets the audio-input channel used when multi-channel input captures are
+ * split across armed audio tracks. The stored channel is zero-based; null
+ * restores automatic assignment by armed-track order.
+ *
+ * @param trackId Id of the audio track.
+ * @param channel Zero-based input channel, or null for automatic assignment.
+ */
+export function setTrackRecordInputChannel(trackId: number, channel: number | null): void {
+  const store = useProjectStore();
+  const track = requireTrack(store, trackId);
+  if (track.kind !== 'audio') {
+    throw new RangeError('Recording input channel can only be set on audio tracks');
+  }
+  if (channel !== null && (!Number.isInteger(channel) || channel < 0)) {
+    throw new RangeError(`Recording input channel must be a non-negative integer, got ${channel}`);
+  }
+  if ((track.recordInputChannel ?? null) === channel) return;
+  execute(0, () => {
+    store.tracks = store.tracks.map((t) => {
+      if (t.id !== trackId) return t;
+      const next: EditorTrack = { ...t };
+      if (channel === null) delete next.recordInputChannel;
+      else next.recordInputChannel = channel;
+      return next;
+    });
+    store.refresh();
+  });
+}
+
+/**
  * Reorders tracks as one undoable edit. Order is app-level display state
  * (the Project has no track-order API).
  *

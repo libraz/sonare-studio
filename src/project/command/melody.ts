@@ -1,6 +1,10 @@
 import { ensureWasm } from '@/lib/wasm';
 import { loadAsset } from '@/persistence/assets';
-import { type AudioMelodyAnalyzer, analyzeAudioClipMelody } from '../audio-melody';
+import {
+  type AudioMelodyAnalyzer,
+  type AudioMelodyDeps,
+  analyzeAudioClipMelody,
+} from '../audio-melody';
 import { getProject, notesToProjectEvents, useProjectStore } from '../store';
 import { clipKind, TRACK_COLOR_PALETTE } from '../types';
 import { execute } from './history';
@@ -29,19 +33,37 @@ export async function extractMelodyFromAudioClip(clipId: number): Promise<number
   if (clipKind(clip) !== 'audio') {
     throw new RangeError(`Clip ${clipId} is not an audio clip`);
   }
-  const wasm = (await ensureWasm()) as unknown as { analyzeMelody?: AudioMelodyAnalyzer };
+  const wasm = (await ensureWasm()) as unknown as {
+    analyzeMelody?: AudioMelodyAnalyzer;
+    detectKey?: AudioMelodyDeps['detectKey'];
+    scaleQuantizeMidi?: AudioMelodyDeps['scaleQuantizeMidi'];
+  };
   if (typeof wasm.analyzeMelody !== 'function') return -1;
+  const rhythmQuantizePpq = store.snapEnabled ? 4 / store.snapDivision : undefined;
   const notes = await analyzeAudioClipMelody(
     clip,
     store.tempoBpm,
     {
       loadAudioAsset: loadAsset,
       analyzeMelody: wasm.analyzeMelody,
+      detectKey: wasm.detectKey,
+      scaleQuantizeMidi: wasm.scaleQuantizeMidi,
     },
-    {},
+    { rhythmQuantizePpq },
     store.tempoSegments,
   );
   if (notes.length === 0) return -1;
+  const current = store.clips.find((entry) => entry.id === clipId);
+  if (
+    !current ||
+    clipKind(current) !== 'audio' ||
+    current.assetId !== clip.assetId ||
+    current.startPpq !== clip.startPpq ||
+    current.lengthPpq !== clip.lengthPpq ||
+    current.sourceOffsetPpq !== clip.sourceOffsetPpq
+  ) {
+    return -1;
+  }
 
   const project = getProject();
   const trackName = `${clip.name} melody`;

@@ -280,6 +280,12 @@ export function buildClipMirror(
           points: lane.points.map((point) => ({ ...point })),
         }));
       }
+      if (previous?.programChangeLanes !== undefined && previous.programChangeLanes.length > 0) {
+        entry.programChangeLanes = previous.programChangeLanes.map((lane) => ({
+          channel: lane.channel,
+          points: lane.points.map((point) => ({ ...point })),
+        }));
+      }
       if (
         previous?.channelPressureLanes !== undefined &&
         previous.channelPressureLanes.length > 0

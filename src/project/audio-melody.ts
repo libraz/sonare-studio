@@ -16,7 +16,7 @@ import type { LoadedAudioAsset } from '@/persistence/assets';
 import { mixdownToMono } from './audio-import';
 import { sliceAudioClipWindow } from './scheduling';
 import { normalizeTempoMap, ppqToSeconds, secondsToPpq } from './tempo-map';
-import type { TempoSegment } from './types';
+import { MAJOR_MODE_MASK, type TempoSegment } from './types';
 
 /** One frame of the melody contour returned by the engine. */
 export interface DetectedMelodyPoint {
@@ -32,6 +32,7 @@ export interface DetectedMelodyPoint {
 export type AudioMelodyAnalyzer = (
   samples: Float32Array,
   sampleRate?: number,
+  options?: { usePyin?: boolean },
 ) => { points: ReadonlyArray<DetectedMelodyPoint> };
 
 /** A detected note ready for a new MIDI clip (clip-relative PPQ). */
@@ -52,13 +53,55 @@ export interface AudioMelodyDeps {
   loadAudioAsset: (assetId: string) => Promise<LoadedAudioAsset>;
   /** The melody analyzer. */
   analyzeMelody: AudioMelodyAnalyzer;
+  /** Optional key detector used to choose the scale for pitch quantization. */
+  detectKey?: (
+    samples: Float32Array,
+    sampleRate?: number,
+  ) => { name?: string; shortName?: string } | null | undefined;
+  /** Optional scale quantizer; receives root pitch class and a 12-bit mode mask. */
+  scaleQuantizeMidi?: (root: number, modeMask: number, midi: number) => number;
 }
 
 /** Tuning for {@link analyzeAudioClipMelody}. */
 export interface MelodyExtractOptions {
   /** Drop notes shorter than this (seconds) to suppress blips. Default 0.05. */
   minNoteSeconds?: number;
+  /** Prefer pYIN when the engine exposes it. Default true. */
+  usePyin?: boolean;
+  /** Quantize note starts/ends to this clip-relative PPQ grid. Omit/0 to keep raw rhythm. */
+  rhythmQuantizePpq?: number;
 }
+
+interface MelodyScale {
+  root: number;
+  modeMask: number;
+}
+
+const NATURAL_MINOR_MODE_MASK = 0b010110101101;
+
+const KEY_ROOTS = new Map<string, number>([
+  ['c', 0],
+  ['b#', 0],
+  ['c#', 1],
+  ['db', 1],
+  ['d', 2],
+  ['d#', 3],
+  ['eb', 3],
+  ['e', 4],
+  ['fb', 4],
+  ['e#', 5],
+  ['f', 5],
+  ['f#', 6],
+  ['gb', 6],
+  ['g', 7],
+  ['g#', 8],
+  ['ab', 8],
+  ['a', 9],
+  ['a#', 10],
+  ['bb', 10],
+  ['b', 11],
+  ['cb', 11],
+]);
 
 /** 12-TET MIDI number of a frequency (A4 = 440 Hz = MIDI 69). */
 function hzToMidi(hz: number): number {
@@ -72,10 +115,103 @@ function pitchOf(point: DetectedMelodyPoint): number | null {
   return midi >= 0 && midi <= 127 ? midi : null;
 }
 
-/** Velocity (1-127) from a mean voicing confidence in [0, 1]. */
-function velocityFromConfidence(meanConfidence: number): number {
-  const scaled = Math.round(meanConfidence * 127);
-  return Math.min(127, Math.max(1, scaled));
+function clampMidi(value: number): number {
+  return Math.min(127, Math.max(0, Math.round(value)));
+}
+
+function parseDetectedScale(
+  key: { name?: string; shortName?: string } | null | undefined,
+): MelodyScale | null {
+  const label = (key?.shortName || key?.name || '').trim();
+  const match = label.match(/^([A-Ga-g])([#b]?)(?:\s*(major|minor|maj|min|m))?/);
+  if (!match) return null;
+  const root = KEY_ROOTS.get(`${match[1].toLowerCase()}${match[2].toLowerCase()}`);
+  if (root === undefined) return null;
+  const modeToken = match[3]?.toLowerCase();
+  const isMinor =
+    modeToken === 'minor' ||
+    modeToken === 'min' ||
+    modeToken === 'm' ||
+    (/^[A-Ga-g][#b]?m$/.test(label) && !/maj/i.test(label));
+  return { root, modeMask: isMinor ? NATURAL_MINOR_MODE_MASK : MAJOR_MODE_MASK };
+}
+
+function detectMelodyScale(
+  mono: Float32Array,
+  sampleRate: number,
+  deps: AudioMelodyDeps,
+): MelodyScale | null {
+  if (typeof deps.detectKey !== 'function' || typeof deps.scaleQuantizeMidi !== 'function') {
+    return null;
+  }
+  try {
+    return parseDetectedScale(deps.detectKey(mono, sampleRate));
+  } catch {
+    return null;
+  }
+}
+
+function quantizePitch(midi: number, scale: MelodyScale | null, deps: AudioMelodyDeps): number {
+  if (!scale || typeof deps.scaleQuantizeMidi !== 'function') return midi;
+  const snapped = deps.scaleQuantizeMidi(scale.root, scale.modeMask, midi);
+  return Number.isFinite(snapped) ? clampMidi(snapped) : midi;
+}
+
+function clampVelocity(value: number): number {
+  return Math.min(127, Math.max(1, Math.round(value)));
+}
+
+function rms(samples: Float32Array, start = 0, end = samples.length): number {
+  const from = Math.max(0, Math.min(samples.length, Math.floor(start)));
+  const to = Math.max(from, Math.min(samples.length, Math.ceil(end)));
+  if (to <= from) return 0;
+  let sum = 0;
+  for (let i = from; i < to; i += 1) {
+    const sample = samples[i];
+    sum += sample * sample;
+  }
+  return Math.sqrt(sum / (to - from));
+}
+
+/**
+ * Note-on velocity from analyzer confidence plus the actual audio envelope.
+ *
+ * Analyzer confidence is not loudness: pYIN often returns mid confidence for a
+ * clearly audible note, so mapping confidence directly to velocity makes
+ * transcribed melodies uniformly weak. The confidence value provides a musical
+ * reliability baseline, while clip-local RMS restores relative performance
+ * dynamics between notes.
+ */
+function velocityFromConfidenceAndLevel(
+  meanConfidence: number,
+  noteRms: number,
+  referenceRms: number,
+): number {
+  const confidence = Math.min(1, Math.max(0, meanConfidence));
+  const confidenceVelocity = 48 + confidence * 79;
+  const levelRatio = referenceRms > 1e-9 ? noteRms / referenceRms : 1;
+  const dynamicFactor = Math.min(1.25, Math.max(0.6, Math.sqrt(levelRatio)));
+  return clampVelocity(confidenceVelocity * dynamicFactor);
+}
+
+function snapToGrid(value: number, grid: number): number {
+  return Math.round(value / grid) * grid;
+}
+
+function quantizeMelodyRhythm(
+  notes: ReadonlyArray<MelodyNoteInput>,
+  grid: number | undefined,
+  clipLengthPpq: number,
+): MelodyNoteInput[] {
+  if (!(grid !== undefined && Number.isFinite(grid) && grid > 0))
+    return notes.map((note) => ({ ...note }));
+  return notes.flatMap((note) => {
+    const start = Math.max(0, Math.min(clipLengthPpq, snapToGrid(note.startPpq, grid)));
+    let end = Math.max(start + grid, snapToGrid(note.startPpq + note.durationPpq, grid));
+    end = Math.min(clipLengthPpq, end);
+    if (!(end > start)) return [];
+    return [{ ...note, startPpq: start, durationPpq: end - start }];
+  });
 }
 
 /**
@@ -111,7 +247,10 @@ export async function analyzeAudioClipMelody(
   );
   const mono = mixdownToMono(window);
   if (mono.length === 0) return [];
-  const points = deps.analyzeMelody(mono, asset.meta.sampleRate).points ?? [];
+  const points =
+    deps.analyzeMelody(mono, asset.meta.sampleRate, { usePyin: options.usePyin ?? true }).points ??
+    [];
+  const scale = detectMelodyScale(mono, asset.meta.sampleRate, deps);
   const minNoteSeconds = options.minNoteSeconds ?? 0.05;
   // Map window-relative frame seconds to clip-relative PPQ through the tempo
   // map (the inverse of how the new MIDI clip plays back), so the transcription
@@ -121,6 +260,7 @@ export async function analyzeAudioClipMelody(
   const secondsToClipPpq = (seconds: number): number =>
     secondsToPpq(map, clipStartSeconds + seconds) - clip.startPpq;
   const windowEndSeconds = ppqToSeconds(map, clip.startPpq + clip.lengthPpq) - clipStartSeconds;
+  const referenceRms = rms(mono);
 
   const notes: MelodyNoteInput[] = [];
   let runMidi: number | null = null;
@@ -137,11 +277,17 @@ export async function analyzeAudioClipMelody(
       const startPpq = Math.max(0, secondsToClipPpq(startSeconds));
       const endPpq = Math.min(clip.lengthPpq, secondsToClipPpq(clampedEnd));
       if (endPpq > startPpq) {
+        const startFrame = startSeconds * asset.meta.sampleRate;
+        const endFrame = clampedEnd * asset.meta.sampleRate;
         notes.push({
           pitch: runMidi,
           startPpq,
           durationPpq: endPpq - startPpq,
-          velocity: velocityFromConfidence(confCount > 0 ? confSum / confCount : 0),
+          velocity: velocityFromConfidenceAndLevel(
+            confCount > 0 ? confSum / confCount : 0,
+            rms(mono, startFrame, endFrame),
+            referenceRms,
+          ),
         });
       }
     }
@@ -156,9 +302,10 @@ export async function analyzeAudioClipMelody(
       flush(point.time); // unvoiced frame ends the run here
       continue;
     }
-    if (midi !== runMidi) {
+    const snappedMidi = quantizePitch(midi, scale, deps);
+    if (snappedMidi !== runMidi) {
       flush(point.time); // pitch change: previous note ends at this frame
-      runMidi = midi;
+      runMidi = snappedMidi;
       runStart = point.time;
     }
     confSum += Math.min(1, Math.max(0, point.confidence));
@@ -166,5 +313,5 @@ export async function analyzeAudioClipMelody(
   }
   flush(windowEndSeconds); // last run extends to the window end
 
-  return notes;
+  return quantizeMelodyRhythm(notes, options.rhythmQuantizePpq, clip.lengthPpq);
 }

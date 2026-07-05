@@ -14,24 +14,13 @@
  * at the wasm boundary. Canvas-free and side-effect-free.
  */
 
+import { PITCH_CLASS_NAMES } from '@/lib/pitch';
+
 /** Sentinel used by the Project annotation encoding for "no pitch class". */
 const PC_NONE = 255;
 
 /** Pitch-class display names (sharp spelling), indexed by pitch class 0..11. */
-export const CHORD_PITCH_CLASS_NAMES = [
-  'C',
-  'C#',
-  'D',
-  'D#',
-  'E',
-  'F',
-  'F#',
-  'G',
-  'G#',
-  'A',
-  'A#',
-  'B',
-] as const;
+export const CHORD_PITCH_CLASS_NAMES = PITCH_CLASS_NAMES;
 
 /** One selectable chord quality: audio-domain ordinal, name suffix, and label. */
 export interface ChordQualityChoice {
@@ -54,6 +43,10 @@ export const CHORD_QUALITY_CHOICES: ReadonlyArray<ChordQualityChoice> = [
   { quality: 4, suffix: '7', label: 'Dominant 7' },
   { quality: 5, suffix: 'maj7', label: 'Major 7' },
   { quality: 6, suffix: 'm7', label: 'Minor 7' },
+  { quality: 10, suffix: 'add9', label: 'Add 9' },
+  { quality: 11, suffix: 'm(add9)', label: 'Minor add 9' },
+  { quality: 14, suffix: 'maj9', label: 'Major 9' },
+  { quality: 15, suffix: '9', label: 'Dominant 9' },
   { quality: 2, suffix: 'dim', label: 'Diminished' },
   { quality: 3, suffix: 'aug', label: 'Augmented' },
   { quality: 8, suffix: 'sus4', label: 'Sus4' },

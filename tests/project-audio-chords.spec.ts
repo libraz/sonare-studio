@@ -88,6 +88,24 @@ describe('analyzeAudioClipChords', () => {
     ]);
   });
 
+  it('accounts for the clip start offset before mapping detection seconds through tempo changes', async () => {
+    // The clip begins at PPQ 2, two seconds into a 60 BPM section. A detection
+    // at window second 2 therefore lands on absolute second 4 / PPQ 4, exactly
+    // at the tempo change; the next detected second advances two PPQ at 120 BPM.
+    const det = detector([{ root: 9, bass: 9, quality: 0, start: 2, end: 3 }]);
+    const symbols = await analyzeAudioClipChords(
+      audioClip({ startPpq: 2, lengthPpq: 8 }),
+      60,
+      { loadAudioAsset: async () => asset(48000 * 8), detectChords: det.fn },
+      [
+        { startPpq: 0, bpm: 60 },
+        { startPpq: 4, bpm: 120 },
+      ],
+    );
+
+    expect(symbols).toEqual([{ startPpq: 4, endPpq: 6, rootPc: 9, quality: 0 }]);
+  });
+
   it('carries a slash bass only when the bass differs from the root', async () => {
     const det = detector([{ root: 7, bass: 0, quality: 4, start: 0, end: 1 }]);
     const [symbol] = await analyzeAudioClipChords(audioClip(), 120, {

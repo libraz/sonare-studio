@@ -1,4 +1,5 @@
 import { annotationsFromDocument, type ScoreAnnotations } from './annotations';
+import { sanitizeCompSegments } from './comping';
 import { isValidChannel, isValidController, sanitizeCcPoints } from './midi-cc';
 import type { DocumentClip } from './serialization';
 import type {
@@ -7,6 +8,7 @@ import type {
   ClipKind,
   ClipPitchBendLane,
   ClipPolyPressureLane,
+  ClipProgramChangeLane,
   EditorClip,
 } from './types';
 
@@ -45,10 +47,18 @@ export function applyDocumentClipMetadata(
         if (next.takes.length === 0) {
           delete next.takes;
         } else if (Array.isArray(meta.compSegments) && meta.compSegments.length > 0) {
-          next.compSegments = meta.compSegments.map((segment) => ({
-            startPpq: Number(segment.startPpq),
-            takeIndex: Number(segment.takeIndex),
-          }));
+          next.compSegments = sanitizeCompSegments(
+            meta.compSegments.map((segment) => ({
+              startPpq: Number(segment.startPpq),
+              takeIndex: Number(segment.takeIndex),
+              ...(Number.isFinite(segment.crossfadePpq)
+                ? { crossfadePpq: Number(segment.crossfadePpq) }
+                : {}),
+            })),
+            next.takes.length,
+            clip.lengthPpq,
+          );
+          if (next.compSegments.length === 0) delete next.compSegments;
         }
       }
       if (
@@ -114,6 +124,36 @@ export function applyDocumentClipMetadata(
       if (lanes.length > 0) {
         lanes.sort((a, b) => a.channel - b.channel);
         next.pitchBendLanes = lanes;
+      }
+    }
+    if (
+      kind === 'midi' &&
+      Array.isArray(meta.programChangeLanes) &&
+      meta.programChangeLanes.length > 0
+    ) {
+      const lanes: ClipProgramChangeLane[] = [];
+      for (const lane of meta.programChangeLanes) {
+        if (!isValidChannel(lane.channel)) continue;
+        const points = (Array.isArray(lane.points) ? lane.points : [])
+          .map((point) => ({
+            ppq: Number(point.ppq),
+            program: Math.round(Number(point.program)),
+          }))
+          .filter(
+            (point) =>
+              Number.isFinite(point.ppq) &&
+              point.ppq >= 0 &&
+              point.ppq <= clip.lengthPpq &&
+              Number.isInteger(point.program) &&
+              point.program >= 0 &&
+              point.program <= 127,
+          )
+          .sort((a, b) => a.ppq - b.ppq);
+        if (points.length > 0) lanes.push({ channel: lane.channel, points });
+      }
+      if (lanes.length > 0) {
+        lanes.sort((a, b) => a.channel - b.channel);
+        next.programChangeLanes = lanes;
       }
     }
     if (

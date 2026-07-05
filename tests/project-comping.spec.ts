@@ -7,6 +7,7 @@ import {
   clearHistory,
   dropClipTakes,
   duplicateClip,
+  moveClip,
   redo,
   setClipActiveTake,
   setClipCompSegments,
@@ -30,6 +31,18 @@ vi.mock('@/lib/wasm', async () => {
   const fakeModule = createFakeWasmModule();
   return { ensureWasm: async () => fakeModule };
 });
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+async function flushPromises(times = 5): Promise<void> {
+  for (let i = 0; i < times; i++) await Promise.resolve();
+}
 
 describe('sanitizeCompSegments', () => {
   it('sorts by start, clamps negatives and pulls the first segment to the clip start', () => {
@@ -478,7 +491,7 @@ describe('take and comping commands', () => {
     const clipId = await addCompedClip();
     setClipCompSegments(clipId, [
       { startPpq: 0, takeIndex: 0 },
-      { startPpq: 3, takeIndex: 1 },
+      { startPpq: 3, takeIndex: 1, crossfadePpq: 0.125 },
     ]);
 
     const copyId = duplicateClip(clipId, 16);
@@ -487,7 +500,7 @@ describe('take and comping commands', () => {
     expect(copy?.takes).toEqual(twoTakes());
     expect(copy?.compSegments).toEqual([
       { startPpq: 0, takeIndex: 0 },
-      { startPpq: 3, takeIndex: 1 },
+      { startPpq: 3, takeIndex: 1, crossfadePpq: 0.125 },
     ]);
     expect(copy?.assetId).toBe('take-a');
   });
@@ -496,8 +509,8 @@ describe('take and comping commands', () => {
     const clipId = await addCompedClip();
     setClipCompSegments(clipId, [
       { startPpq: 0, takeIndex: 0 },
-      { startPpq: 3, takeIndex: 1 },
-      { startPpq: 6, takeIndex: 0 },
+      { startPpq: 3, takeIndex: 1, crossfadePpq: 0 },
+      { startPpq: 6, takeIndex: 0, crossfadePpq: 0.4 },
     ]);
 
     const rightId = splitClip(clipId, 4);
@@ -507,13 +520,13 @@ describe('take and comping commands', () => {
     expect(left?.takes).toEqual(twoTakes());
     expect(left?.compSegments).toEqual([
       { startPpq: 0, takeIndex: 0 },
-      { startPpq: 3, takeIndex: 1 },
+      { startPpq: 3, takeIndex: 1, crossfadePpq: 0 },
     ]);
     expect(left?.assetId).toBe('take-a');
     expect(right?.takes).toEqual(twoTakes());
     expect(right?.compSegments).toEqual([
       { startPpq: 0, takeIndex: 1 },
-      { startPpq: 2, takeIndex: 0 },
+      { startPpq: 2, takeIndex: 0, crossfadePpq: 0.4 },
     ]);
     expect(right?.assetId).toBe('take-b');
   });
@@ -522,8 +535,8 @@ describe('take and comping commands', () => {
     const clipId = await addCompedClip();
     setClipCompSegments(clipId, [
       { startPpq: 0, takeIndex: 0 },
-      { startPpq: 3, takeIndex: 1 },
-      { startPpq: 6, takeIndex: 0 },
+      { startPpq: 3, takeIndex: 1, crossfadePpq: 0.125 },
+      { startPpq: 6, takeIndex: 0, crossfadePpq: 0 },
     ]);
 
     trimClip(clipId, 2, 4);
@@ -532,7 +545,7 @@ describe('take and comping commands', () => {
     expect(trimmed?.takes).toEqual(twoTakes());
     expect(trimmed?.compSegments).toEqual([
       { startPpq: 0, takeIndex: 0 },
-      { startPpq: 1, takeIndex: 1 },
+      { startPpq: 1, takeIndex: 1, crossfadePpq: 0.125 },
     ]);
     expect(trimmed?.assetId).toBe('take-a');
   });
@@ -720,6 +733,32 @@ describe('flattenClipComp', () => {
     expect(channels).toHaveLength(2);
     expect(Array.from(channels[0])).toEqual([1, 2, 3, 4, 105, 106, 107, 108]);
     expect(Array.from(channels[1])).toEqual([1, 2, 3, 4, 205, 206, 207, 208]);
+  });
+
+  it('skips rebasing a flattened comp when the source clip changed during ingest', async () => {
+    const clipId = await addMultiSegmentClip();
+    const loadAudioAsset = makeLoader({
+      'take-a': makeLoadedAsset('take-a', [[1, 2, 3, 4, 5, 6, 7, 8]]),
+      'take-b': makeLoadedAsset('take-b', [[101, 102, 103, 104, 105, 106, 107, 108]]),
+    });
+    const pendingIngest = deferred<{ id: string }>();
+    const ingest = vi.fn(() => pendingIngest.promise);
+
+    const result = flattenClipComp(clipId, { tempoBpm: 120, loadAudioAsset, ingest });
+    await flushPromises();
+    expect(ingest).toHaveBeenCalledTimes(1);
+
+    moveClip(clipId, 1);
+    pendingIngest.resolve({ id: 'late-bake' });
+
+    await expect(result).resolves.toBe('');
+    const clip = store.clips.find((entry) => entry.id === clipId);
+    expect(clip).toMatchObject({ assetId: 'take-a', startPpq: 1 });
+    expect(clip?.takes).toHaveLength(2);
+    expect(clip?.compSegments).toEqual([
+      { startPpq: 0, takeIndex: 0 },
+      { startPpq: 2, takeIndex: 1 },
+    ]);
   });
 
   it('skips the bake for single-segment comps and just drops the takes', async () => {

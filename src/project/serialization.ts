@@ -21,10 +21,19 @@ import {
   type AutomationParam,
   type AutomationPoint,
   busAutomationTarget,
+  cloneAutomationLane,
   isBusAutomationTarget,
 } from './automation';
 import type { EditorChordSymbol } from './chords';
-import { clearMixerSnapshots } from './command/mixer-snapshots';
+import {
+  exportMixerSnapshotSlots,
+  importMixerSnapshotSlots,
+  MIXER_SNAPSHOT_SLOTS,
+  type MixerSnapshot,
+  type MixerSnapshotSlot,
+  type MixerSnapshotSlotState,
+  type MixerSnapshotTrack,
+} from './command/mixer-snapshots';
 import { clearHistory } from './commands';
 import {
   cloneInstrument,
@@ -79,6 +88,10 @@ import type { ClipKind, EditorClip, EditorNote, TrackKind } from './types';
  *   ignore them. A lane's `param` may, besides 'faderDb'/'pan', be an
  *   insert-parameter token "insert:<index>:<paramName>" (see
  *   src/project/automation.ts) automating an insert slot of the targeted
+ *   track.
+ *   Additionally (still version 3, additive): audio tracks may carry optional
+ *   `recordInputChannel`, a zero-based microphone input channel used when
+ *   splitting a multi-channel input recording across armed tracks.
  *   strip; older loaders drop the lane as an unknown param, so this stays
  *   additive within version 3.
  *   Additionally (still version 3, additive): MIDI clips may carry optional
@@ -91,6 +104,9 @@ import type { ClipKind, EditorClip, EditorNote, TrackKind } from './types';
  *   Additionally (still version 3, additive): MIDI clips may carry optional
  *   `pitchBendLanes` imported from SMF pitch-bend events and emitted during
  *   realtime playback/export; omitted when absent.
+ *   Additionally (still version 3, additive): MIDI clips may carry optional
+ *   `programChangeLanes` imported from SMF program-change events and emitted
+ *   during realtime playback/export; omitted when absent.
  *   Additionally (still version 3, additive): MIDI clips may carry optional
  *   `channelPressureLanes` and `polyPressureLanes` imported from aftertouch
  *   events and emitted during realtime playback/export; omitted when absent.
@@ -138,7 +154,7 @@ export interface DocumentClip {
   /** Alternative recordings (cycle takes); audio clips only, omitted when none. */
   takes?: Array<{ assetId: string; name: string }>;
   /** Comp selection over `takes` (clip-window-relative); omitted when absent. */
-  compSegments?: Array<{ startPpq: number; takeIndex: number }>;
+  compSegments?: Array<{ startPpq: number; takeIndex: number; crossfadePpq?: number }>;
   /** Tempo-follow (warp) state; omitted when the clip plays at its recorded rate. */
   warp?: {
     enabled: boolean;
@@ -161,6 +177,11 @@ export interface DocumentClip {
   pitchBendLanes?: Array<{
     channel: number;
     points: Array<{ ppq: number; value: number }>;
+  }>;
+  /** Program-change lanes (MIDI clips), scoped to channel. */
+  programChangeLanes?: Array<{
+    channel: number;
+    points: Array<{ ppq: number; program: number }>;
   }>;
   /** Channel pressure / monophonic aftertouch lanes (MIDI clips). */
   channelPressureLanes?: Array<{
@@ -245,6 +266,8 @@ export interface DocumentTrack {
   vcaId?: string;
   /** Frozen state: the track's baked pre-fader render; absent = not frozen. */
   frozen?: { assetId: string };
+  /** Zero-based microphone input channel for multi-track audio recording. */
+  recordInputChannel?: number;
 }
 
 /** One timeline marker of the document. */
@@ -299,8 +322,32 @@ export interface DocumentMidiCcBinding {
   channel: number;
   /** Controller number (0-127). */
   controller: number;
+  /** Binding family. Omitted means a legacy CC binding. */
+  kind?: 'cc' | 'rpn' | 'nrpn';
+  /** RPN/NRPN parameter number (0-16383), when `kind` is not `cc`. */
+  parameter?: number;
   /** True when `target`'s scope is a track index awaiting load-time rebinding. */
   trackScoped?: boolean;
+}
+
+/** Document-portable mixer snapshot track entry (track id becomes index). */
+export interface DocumentMixerSnapshotTrack extends Omit<MixerSnapshotTrack, 'id'> {
+  /** Track index in the serialized document. */
+  trackIndex: number;
+}
+
+/** Document-portable mixer snapshot. */
+export interface DocumentMixerSnapshot extends Omit<MixerSnapshot, 'tracks'> {
+  /** Per-track captured strip and mix flags, keyed by document track index. */
+  tracks: DocumentMixerSnapshotTrack[];
+}
+
+/** Persisted mixer snapshot slots. */
+export interface DocumentMixerSnapshotSlots {
+  /** Snapshot slots keyed by A-D. */
+  slots: Partial<Record<MixerSnapshotSlot, DocumentMixerSnapshot>>;
+  /** Last active slot, omitted when no persisted slot is active. */
+  active?: MixerSnapshotSlot;
 }
 
 /** Plain JSON-able snapshot of a whole project. */
@@ -333,6 +380,162 @@ export interface ProjectDocument {
   score?: DocumentScoreSettings;
   /** MIDI-learn CC bindings; absent/empty = none. */
   midiCcBindings?: DocumentMidiCcBinding[];
+  /** Persisted mixer snapshot slots; absent/empty = none. */
+  mixerSnapshots?: DocumentMixerSnapshotSlots;
+}
+
+/** Converts track-scoped insert sidechain ids to document track indices. */
+function stripWithSidechainSourceIndices(
+  strip: MixerStrip,
+  tracks: ReadonlyArray<{ id: number }>,
+  allowSidechain = true,
+): MixerStrip {
+  const out = cloneStrip(strip);
+  for (const slot of out.inserts) {
+    if (slot.sidechainSourceTrackId === undefined) continue;
+    const sourceIndex = tracks.findIndex((entry) => entry.id === slot.sidechainSourceTrackId);
+    delete slot.sidechainSourceTrackId;
+    if (allowSidechain && sourceIndex >= 0) {
+      (slot as { sidechainSourceIndex?: number }).sidechainSourceIndex = sourceIndex;
+    }
+  }
+  return out;
+}
+
+/** Converts document track-index sidechain references back to session track ids. */
+function stripWithSidechainSourceIds(
+  strip: MixerStrip,
+  tracks: ReadonlyArray<{ id: number }>,
+  allowSidechain = true,
+): MixerStrip {
+  const out = cloneStrip(strip);
+  for (const slot of out.inserts) {
+    const sourceIndex = (slot as { sidechainSourceIndex?: unknown }).sidechainSourceIndex;
+    delete (slot as { sidechainSourceIndex?: unknown }).sidechainSourceIndex;
+    if (allowSidechain && typeof sourceIndex === 'number' && Number.isInteger(sourceIndex)) {
+      const source = tracks[sourceIndex];
+      if (source) slot.sidechainSourceTrackId = source.id;
+    }
+  }
+  return out;
+}
+
+/** Converts mixer-scope sidechain ids to document track indices. */
+function mixerWithSidechainSourceIndices(
+  mixer: ProjectMixerState,
+  tracks: ReadonlyArray<{ id: number }>,
+): ProjectMixerState {
+  const out = cloneMixerState(mixer);
+  out.master = stripWithSidechainSourceIndices(out.master, tracks);
+  for (const bus of out.buses) {
+    if (bus.strip !== undefined) bus.strip = stripWithSidechainSourceIndices(bus.strip, tracks);
+  }
+  return out;
+}
+
+/** Rebinds mixer-scope document sidechain indices to session track ids. */
+function resolveMixerSidechainSourceIds(
+  mixer: ProjectMixerState,
+  tracks: ReadonlyArray<{ id: number }>,
+): void {
+  const resolveStrip = (strip: MixerStrip): void => {
+    for (const slot of strip.inserts) {
+      const sourceIndex = (slot as { sidechainSourceIndex?: unknown }).sidechainSourceIndex;
+      delete (slot as { sidechainSourceIndex?: unknown }).sidechainSourceIndex;
+      if (
+        typeof sourceIndex === 'number' &&
+        Number.isInteger(sourceIndex) &&
+        sourceIndex >= 0 &&
+        sourceIndex < tracks.length
+      ) {
+        slot.sidechainSourceTrackId = tracks[sourceIndex].id;
+      }
+    }
+  };
+  resolveStrip(mixer.master);
+  for (const bus of mixer.buses) {
+    if (bus.strip !== undefined) resolveStrip(bus.strip);
+  }
+}
+
+/** Converts in-memory mixer snapshot slots to document-portable slots. */
+function toDocumentMixerSnapshotSlots(
+  state: MixerSnapshotSlotState,
+  tracks: ReadonlyArray<{ id: number }>,
+): DocumentMixerSnapshotSlots | undefined {
+  const slots: Partial<Record<MixerSnapshotSlot, DocumentMixerSnapshot>> = {};
+  for (const slot of MIXER_SNAPSHOT_SLOTS) {
+    const snapshot = state.snapshots[slot];
+    if (!snapshot) continue;
+    const entries = snapshot.tracks.flatMap((entry) => {
+      const trackIndex = tracks.findIndex((track) => track.id === entry.id);
+      if (trackIndex < 0) return [];
+      const track = tracks[trackIndex] as { id: number; kind?: string };
+      return [
+        {
+          ...entry,
+          trackIndex,
+          mixer: stripWithSidechainSourceIndices(entry.mixer, tracks, track.kind !== 'group'),
+          id: undefined,
+        },
+      ];
+    });
+    slots[slot] = {
+      mixer: mixerWithSidechainSourceIndices(snapshot.mixer, tracks),
+      tracks: entries.map(({ id: _id, ...entry }) => entry),
+      ...(snapshot.automationLanes !== undefined
+        ? { automationLanes: snapshot.automationLanes.map(cloneAutomationLane) }
+        : {}),
+    };
+  }
+  if (Object.keys(slots).length === 0) return undefined;
+  return {
+    slots,
+    ...(state.active && slots[state.active] ? { active: state.active } : {}),
+  };
+}
+
+/** Converts document mixer snapshot slots back to session-track-id slots. */
+function fromDocumentMixerSnapshotSlots(
+  docSlots: DocumentMixerSnapshotSlots | undefined,
+  tracks: ReadonlyArray<{ id: number }>,
+): MixerSnapshotSlotState | null {
+  if (!docSlots) return null;
+  const snapshots: Partial<Record<MixerSnapshotSlot, MixerSnapshot>> = {};
+  for (const slot of MIXER_SNAPSHOT_SLOTS) {
+    const snapshot = docSlots.slots[slot];
+    if (!snapshot) continue;
+    const mixer = cloneMixerState(snapshot.mixer);
+    resolveMixerSidechainSourceIds(mixer, tracks);
+    snapshots[slot] = {
+      mixer,
+      tracks: snapshot.tracks.flatMap((entry) => {
+        const track = tracks[entry.trackIndex];
+        if (!track) return [];
+        return [
+          {
+            id: track.id,
+            mixer: stripWithSidechainSourceIds(
+              entry.mixer,
+              tracks,
+              (track as { kind?: string }).kind !== 'group',
+            ),
+            mute: entry.mute,
+            solo: entry.solo,
+            ...(entry.soloSafe !== undefined ? { soloSafe: entry.soloSafe } : {}),
+            ...(entry.vcaId !== undefined ? { vcaId: entry.vcaId } : {}),
+          },
+        ];
+      }),
+      ...(snapshot.automationLanes !== undefined
+        ? { automationLanes: snapshot.automationLanes.map(cloneAutomationLane) }
+        : {}),
+    };
+  }
+  return {
+    snapshots,
+    active: docSlots.active && snapshots[docSlots.active] ? docSlots.active : null,
+  };
 }
 
 /** Deep-copies a clip mirror entry into the document shape (no session ids). */
@@ -373,6 +576,12 @@ function toDocumentClip(
   if (ccLanes !== undefined) out.ccLanes = ccLanes;
   if (clip.pitchBendLanes !== undefined && clip.pitchBendLanes.length > 0) {
     out.pitchBendLanes = clip.pitchBendLanes.map((lane) => ({
+      channel: lane.channel,
+      points: lane.points.map((point) => ({ ...point })),
+    }));
+  }
+  if (clip.programChangeLanes !== undefined && clip.programChangeLanes.length > 0) {
+    out.programChangeLanes = clip.programChangeLanes.map((lane) => ({
       channel: lane.channel,
       points: lane.points.map((point) => ({ ...point })),
     }));
@@ -461,19 +670,13 @@ export function serializeProject(): ProjectDocument {
         if (!isMidiFxNoop(midiFx)) out.midiFx = midiFx;
       }
       if (track.mixer !== undefined) {
-        out.mixer = cloneStrip(track.mixer);
         // Insert sidechain sources are session track ids; store them as
         // positional indices (dangling references drop out).
-        for (const slot of out.mixer.inserts) {
-          if (slot.sidechainSourceTrackId === undefined) continue;
-          const sourceIndex = store.tracks.findIndex(
-            (entry) => entry.id === slot.sidechainSourceTrackId,
-          );
-          delete slot.sidechainSourceTrackId;
-          if (sourceIndex >= 0) {
-            (slot as { sidechainSourceIndex?: number }).sidechainSourceIndex = sourceIndex;
-          }
-        }
+        out.mixer = stripWithSidechainSourceIndices(
+          track.mixer,
+          store.tracks,
+          track.kind !== 'group',
+        );
       }
       if (track.groupId !== undefined) {
         const groupIndex = store.tracks.findIndex((entry) => entry.id === track.groupId);
@@ -484,6 +687,14 @@ export function serializeProject(): ProjectDocument {
       // round-trip directly (dangling ids are dropped on load).
       if (track.vcaId !== undefined) out.vcaId = track.vcaId;
       if (track.frozen !== undefined) out.frozen = { ...track.frozen };
+      if (
+        track.kind === 'audio' &&
+        track.recordInputChannel !== undefined &&
+        Number.isInteger(track.recordInputChannel) &&
+        track.recordInputChannel >= 0
+      ) {
+        out.recordInputChannel = track.recordInputChannel;
+      }
       // Track automation rides the track entry (track ids are session-scoped,
       // so a document never stores lane targets); omitted when there is none.
       const automation = store.automationLanes.filter((lane) => lane.target === track.id);
@@ -510,13 +721,12 @@ export function serializeProject(): ProjectDocument {
   // The project mixer state is omitted while it is entirely default, so
   // documents from mixer-less sessions look exactly like older ones.
   if (!isDefaultMixerState(store.mixer)) {
-    const mixer = cloneMixerState(store.mixer) as DocumentMixerState;
-    // Master and user bus inserts cannot be keyed from session track ids in a
-    // portable document. Track insert sidechains were converted positionally
-    // above; unsupported/dangling mixer-scope keys are dropped here.
-    for (const slot of mixer.master.inserts) delete slot.sidechainSourceTrackId;
+    const mixer = mixerWithSidechainSourceIndices(store.mixer, store.tracks) as DocumentMixerState;
+    if ((mixer.soloMode ?? 'inPlace') === 'inPlace') delete mixer.soloMode;
+    // The realtime/export engines have no master-send lane. Drop legacy
+    // master sends so silent UI-only routing does not persist.
+    mixer.master.sends = [];
     for (const bus of mixer.buses) {
-      for (const slot of bus.strip?.inserts ?? []) delete slot.sidechainSourceTrackId;
       const target = busAutomationTarget(bus.id);
       const automation = store.automationLanes.filter(
         (lane) => lane.target === target && isBusAutomationTarget(lane.target),
@@ -534,8 +744,9 @@ export function serializeProject(): ProjectDocument {
   }
   // MIDI-learn CC bindings are app-level metadata; omitted while there are none.
   // Track-scoped targets embed a session track id, so they are stored with the
-  // track's positional index (rebound on load); 'master' targets are stable and
-  // stored verbatim. Dangling track bindings drop out. Sorted for determinism.
+  // track's positional index (rebound on load); 'master' and other global
+  // targets are stable and stored verbatim. Dangling track bindings drop out.
+  // Sorted for determinism.
   if (store.midiCcBindings.size > 0) {
     const entries: DocumentMidiCcBinding[] = [];
     for (const [target, binding] of store.midiCcBindings.entries()) {
@@ -546,7 +757,11 @@ export function serializeProject(): ProjectDocument {
         channel: binding.channel,
         controller: binding.controller,
       };
-      if (scope !== 'master') {
+      if (binding.kind && binding.kind !== 'cc') {
+        out.kind = binding.kind;
+        out.parameter = binding.parameter;
+      }
+      if (scope !== 'master' && scope !== 'global') {
         const index = store.tracks.findIndex((track) => track.id === scope);
         if (index < 0) continue;
         const portable = withMidiLearnTargetScope(target, index);
@@ -562,6 +777,8 @@ export function serializeProject(): ProjectDocument {
       );
     }
   }
+  const mixerSnapshots = toDocumentMixerSnapshotSlots(exportMixerSnapshotSlots(), store.tracks);
+  if (mixerSnapshots) doc.mixerSnapshots = mixerSnapshots;
   return doc;
 }
 
@@ -581,7 +798,7 @@ export async function loadProjectDocument(doc: ProjectDocument): Promise<void> {
     }
   }
   await store.loadDocument(doc);
+  resolveMixerSidechainSourceIds(store.mixer, store.tracks);
   clearHistory();
-  // Session-only A/B mixer snapshots belong to the previous project.
-  clearMixerSnapshots();
+  importMixerSnapshotSlots(fromDocumentMixerSnapshotSlots(doc.mixerSnapshots, store.tracks));
 }

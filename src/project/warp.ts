@@ -11,6 +11,7 @@
  */
 
 import { ensureWasm } from '@/lib/wasm';
+import type { ProjectWarpMapDesc } from '@/wasm/index.js';
 import { type NormalizedTempoMap, ppqToSamples } from './tempo-map';
 import type { ClipWarp, WarpAnchor } from './types';
 
@@ -31,6 +32,7 @@ export interface WarpSegment {
 
 /** The clip fields the warp bake reads. */
 export interface WarpableClipFields {
+  id?: number;
   startPpq?: number;
   lengthPpq: number;
   sourceOffsetPpq: number;
@@ -39,6 +41,11 @@ export interface WarpableClipFields {
 
 /** Tempo source used when baking warped clip target frames. */
 export type WarpBakeTempo = number | NormalizedTempoMap;
+
+/** Fields needed to mirror a clip warp into libsonare's first-class warp API. */
+export interface ProjectWarpMapClipFields extends WarpableClipFields {
+  id: number;
+}
 
 /**
  * Normalizes warp anchors: finite values, strictly inside the clip window,
@@ -72,6 +79,40 @@ export function sanitizeWarpAnchors(
     result.push(anchor);
   }
   return result;
+}
+
+/**
+ * Converts the editor's clip warp metadata into libsonare's first-class
+ * sample-domain warp-map descriptor. The editor keeps explicit anchors as
+ * clip-relative PPQ -> absolute source seconds; Project stores them as
+ * warped-output samples -> source samples.
+ */
+export function projectWarpMapDesc(
+  clip: ProjectWarpMapClipFields,
+  tempo: NormalizedTempoMap,
+  sampleRate: number,
+): ProjectWarpMapDesc | null {
+  const warp = clip.warp;
+  if (!warp || !(warp.sourceBpm > 0) || !(clip.lengthPpq > 0) || !(sampleRate > 0)) return null;
+  const secondsPerSourcePpq = 60 / warp.sourceBpm;
+  const clipStartPpq = clip.startPpq ?? 0;
+  const clipStartSample = ppqToSamples(tempo, clipStartPpq, sampleRate);
+  const points: WarpAnchor[] = [
+    { ppq: 0, sourceSeconds: clip.sourceOffsetPpq * secondsPerSourcePpq },
+    ...sanitizeWarpAnchors(warp.anchors ?? [], clip.lengthPpq),
+    {
+      ppq: clip.lengthPpq,
+      sourceSeconds: (clip.sourceOffsetPpq + clip.lengthPpq) * secondsPerSourcePpq,
+    },
+  ];
+  const anchors = points.map((anchor) => ({
+    warpSample: Math.max(
+      0,
+      ppqToSamples(tempo, clipStartPpq + anchor.ppq, sampleRate) - clipStartSample,
+    ),
+    sourceSample: Math.max(0, Math.round(anchor.sourceSeconds * sampleRate)),
+  }));
+  return { id: clip.id, name: `clip-${clip.id}-warp`, anchors };
 }
 
 /**
@@ -119,11 +160,24 @@ export function clearWarpBakeCache(): void {
   bakeCache.clear();
 }
 
-/** Default stretch seam: the wasm phase-vocoder time stretch. */
+/** Default stretch seam: prefer transient-preserving noteStretch, then timeStretch. */
 async function wasmStretch(): Promise<StretchFn> {
   const wasm = (await ensureWasm()) as unknown as {
+    noteStretch?: (
+      samples: Float32Array,
+      sampleRate?: number,
+      options?: { onsetSample?: number; offsetSample?: number; stretchRatio?: number },
+    ) => Float32Array;
     timeStretch: (samples: Float32Array, sampleRate: number, rate: number) => Float32Array;
   };
+  if (typeof wasm.noteStretch === 'function') {
+    return (samples, sampleRate, rate) =>
+      wasm.noteStretch?.(samples, sampleRate, {
+        onsetSample: 0,
+        offsetSample: samples.length,
+        stretchRatio: rate,
+      }) ?? wasm.timeStretch(samples, sampleRate, rate);
+  }
   return (samples, sampleRate, rate) => wasm.timeStretch(samples, sampleRate, rate);
 }
 

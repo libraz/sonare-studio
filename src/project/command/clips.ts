@@ -15,8 +15,10 @@ export type {
 } from './clips-create';
 export { addAudioClip, addBouncedClip, addMidiClip } from './clips-create';
 export {
+  consolidateAudioClips,
   deleteClip,
   duplicateClip,
+  glueMidiClips,
   moveClip,
   renameClip,
   splitClip,
@@ -27,6 +29,7 @@ export {
   setClipChannelPressure,
   setClipPitchBend,
   setClipPolyPressure,
+  setClipPolyPressureForPitches,
 } from './clips-expression';
 export {
   setActiveClip,

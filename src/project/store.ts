@@ -29,6 +29,9 @@ import {
   cloneMixerState,
   cloneStrip,
   createDefaultMixerState,
+  engineBusCount,
+  MAX_MIXER_BUSES,
+  normalizeMixerSoloMode,
   type ProjectMixerState,
 } from './mixer';
 import type { DocumentClip, ProjectDocument } from './serialization';
@@ -56,6 +59,11 @@ import {
 
 type WasmModule = typeof import('@/wasm/index.js');
 
+type InsertWithDocumentSidechainIndex = {
+  sidechainSourceIndex?: number;
+  sidechainSourceTrackId?: number;
+};
+
 /** Default project tempo in BPM. */
 const DEFAULT_TEMPO_BPM = 120;
 
@@ -64,6 +72,24 @@ const DEFAULT_CLIP_LENGTH_PPQ = 32;
 
 /** Default snap grid: divisions per whole note (16 = sixteenth-note grid). */
 const DEFAULT_SNAP_DIVISION = 16;
+
+function resolveStripSidechainSourceIds(
+  inserts: InsertWithDocumentSidechainIndex[] | undefined,
+  trackMirror: EditorTrack[],
+): void {
+  for (const slot of inserts ?? []) {
+    const sourceIndex = slot.sidechainSourceIndex;
+    if (
+      sourceIndex !== undefined &&
+      Number.isInteger(sourceIndex) &&
+      sourceIndex >= 0 &&
+      sourceIndex < trackMirror.length
+    ) {
+      slot.sidechainSourceTrackId = trackMirror[sourceIndex].id;
+    }
+    delete slot.sidechainSourceIndex;
+  }
+}
 
 /** Default project sample rate used until an AudioContext provides the real one. */
 const DEFAULT_SAMPLE_RATE = 48000;
@@ -457,6 +483,10 @@ export const useProjectStore = defineStore('project', () => {
     if (!Number.isInteger(doc.schemaVersion) || doc.schemaVersion < 1) {
       throw new Error(`Unsupported project document schema version: ${doc.schemaVersion}`);
     }
+    const engineBusTotal = engineBusCount(doc.mixer?.buses.length ?? 0, doc.tracks);
+    if (engineBusTotal > MAX_MIXER_BUSES) {
+      throw new RangeError(`Mixer bus limit exceeded (${engineBusTotal}/${MAX_MIXER_BUSES})`);
+    }
     const mod = await ensureWasm();
     wasmModule = mod;
     const created = new mod.Project();
@@ -519,6 +549,13 @@ export const useProjectStore = defineStore('project', () => {
           track.frozen.assetId.length > 0
         ) {
           mirrorEntry.frozen = { assetId: track.frozen.assetId };
+        }
+        if (
+          track.kind === 'audio' &&
+          Number.isInteger(track.recordInputChannel) &&
+          (track.recordInputChannel as number) >= 0
+        ) {
+          mirrorEntry.recordInputChannel = track.recordInputChannel as number;
         }
         if (track.mixer !== undefined) {
           mirrorEntry.mixer = cloneStrip(track.mixer);
@@ -614,6 +651,7 @@ export const useProjectStore = defineStore('project', () => {
         inserts.forEach((slot, slotIndex) => {
           const sourceIndex = (slot as { sidechainSourceIndex?: number }).sidechainSourceIndex;
           if (
+            entry.kind === 'group' ||
             sourceIndex === undefined ||
             !Number.isInteger(sourceIndex) ||
             sourceIndex < 0 ||
@@ -646,9 +684,23 @@ export const useProjectStore = defineStore('project', () => {
       mixer.value = doc.mixer
         ? cloneMixerState({
             ...doc.mixer,
+            ...(normalizeMixerSoloMode(doc.mixer.soloMode) === 'inPlace'
+              ? { soloMode: undefined }
+              : { soloMode: normalizeMixerSoloMode(doc.mixer.soloMode) }),
+            master: { ...doc.mixer.master, sends: [] },
             buses: doc.mixer.buses.map(({ automation: _automation, ...bus }) => bus),
           })
         : createDefaultMixerState();
+      resolveStripSidechainSourceIds(
+        mixer.value.master.inserts as InsertWithDocumentSidechainIndex[],
+        trackMirror,
+      );
+      for (const bus of mixer.value.buses) {
+        resolveStripSidechainSourceIds(
+          bus.strip?.inserts as InsertWithDocumentSidechainIndex[] | undefined,
+          trackMirror,
+        );
+      }
       projectExternalMidi.value = doc.externalMidiDefault
         ? (cloneInstrument(doc.externalMidiDefault) as ExternalMidiInstrument)
         : null;
@@ -701,6 +753,8 @@ export const useProjectStore = defineStore('project', () => {
         midiCcBindings.value.set(target, {
           channel: binding.channel,
           controller: binding.controller,
+          ...(binding.kind && binding.kind !== 'cc' ? { kind: binding.kind } : {}),
+          ...(binding.parameter !== undefined ? { parameter: binding.parameter } : {}),
         });
       }
       activeTrackId.value = trackMirror[0]?.id ?? -1;
@@ -722,8 +776,11 @@ export const useProjectStore = defineStore('project', () => {
           ? transpose
           : 0;
     } catch (error) {
-      // Keep the previous Project alive when the document fails to replay.
+      // Keep the previous Project alive when replay fails before commit. If a
+      // failure happens after project = created, the old Project is already
+      // gone, so reset the mirror instead of leaving a partial load.
       if (project !== created) created.delete();
+      else dispose();
       throw error;
     }
   }

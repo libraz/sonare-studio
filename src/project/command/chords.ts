@@ -123,6 +123,17 @@ export async function detectChordsFromAudioClip(clipId: number): Promise<number>
     },
     store.tempoSegments,
   );
+  const current = store.clips.find((entry) => entry.id === clipId);
+  if (
+    !current ||
+    clipKind(current) !== 'audio' ||
+    current.assetId !== clip.assetId ||
+    current.startPpq !== clip.startPpq ||
+    current.lengthPpq !== clip.lengthPpq ||
+    current.sourceOffsetPpq !== clip.sourceOffsetPpq
+  ) {
+    return 0;
+  }
   const clipEnd = clip.startPpq + clip.lengthPpq;
   const kept = store.chords.filter(
     (chord) => chord.startPpq < clip.startPpq || chord.startPpq >= clipEnd,

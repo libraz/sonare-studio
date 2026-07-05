@@ -14,6 +14,10 @@ describe('formatChordName', () => {
     expect(formatChordName({ startPpq: 0, endPpq: 4, rootPc: 9, quality: 6 })).toBe('Am7');
     expect(formatChordName({ startPpq: 0, endPpq: 4, rootPc: 7, quality: 4 })).toBe('G7');
     expect(formatChordName({ startPpq: 0, endPpq: 4, rootPc: 2, quality: 1 })).toBe('Dm');
+    expect(formatChordName({ startPpq: 0, endPpq: 4, rootPc: 0, quality: 10 })).toBe('Cadd9');
+    expect(formatChordName({ startPpq: 0, endPpq: 4, rootPc: 9, quality: 11 })).toBe('Am(add9)');
+    expect(formatChordName({ startPpq: 0, endPpq: 4, rootPc: 0, quality: 14 })).toBe('Cmaj9');
+    expect(formatChordName({ startPpq: 0, endPpq: 4, rootPc: 7, quality: 15 })).toBe('G9');
   });
 
   it('appends a slash bass only when it differs from the root', () => {

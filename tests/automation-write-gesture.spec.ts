@@ -11,6 +11,7 @@ import {
   isAutomationWriteMode,
   resetAutomationStripModes,
   setAutomationStripMode,
+  toggleAutomationStripMode,
 } from '@/ui/mixer/automation-mode';
 
 /**
@@ -46,6 +47,22 @@ describe('isAutomationWriteMode', () => {
 });
 
 describe('automation strip modes', () => {
+  it('toggles read, touch and latch as mutually exclusive strip modes', () => {
+    resetAutomationStripModes();
+
+    toggleAutomationStripMode(1, 'read');
+    expect(automationStripMode(1)).toBe('read');
+
+    toggleAutomationStripMode(1, 'touch');
+    expect(automationStripMode(1)).toBe('touch');
+
+    toggleAutomationStripMode(1, 'latch');
+    expect(automationStripMode(1)).toBe('latch');
+
+    toggleAutomationStripMode(1, 'latch');
+    expect(automationStripMode(1)).toBe('off');
+  });
+
   it('drops bus write modes back to read on transport stop', () => {
     const target = busAutomationTarget('fx');
     resetAutomationStripModes();
@@ -119,6 +136,43 @@ describe('createAutomationWriteGesture', () => {
       { ppq: 5, value: 9 },
       { ppq: 2, value: 1 },
       { ppq: 2 + AUTOMATION_WRITE_THROTTLE_PPQ, value: 2 },
+    ]);
+  });
+
+  it('emits every playing update to the realtime schedule hook with sample positions', () => {
+    let ppq = 0;
+    let sample = 0;
+    const scheduled: Array<{ ppq: number; samplePos?: number; value: number }> = [];
+    const commits: AutomationPoint[][] = [];
+    const gesture = createAutomationWriteGesture({
+      mode: 'touch',
+      existingPoints: [],
+      positionPpq: () => ppq,
+      positionSample: () => sample,
+      isPlaying: () => true,
+      schedule: (event) => scheduled.push(event),
+      commit: (points) => commits.push(points),
+    });
+
+    gesture.update(1);
+    ppq += AUTOMATION_WRITE_THROTTLE_PPQ / 2;
+    sample += 32;
+    gesture.update(2);
+    ppq += AUTOMATION_WRITE_THROTTLE_PPQ / 2;
+    sample += 32;
+    gesture.update(3);
+    gesture.end();
+
+    expect(scheduled).toEqual([
+      { ppq: 0, samplePos: 0, value: 1 },
+      { ppq: AUTOMATION_WRITE_THROTTLE_PPQ / 2, samplePos: 32, value: 2 },
+      { ppq: AUTOMATION_WRITE_THROTTLE_PPQ, samplePos: 64, value: 3 },
+    ]);
+    // Lane commits stay PPQ-throttled even though realtime scheduling sees
+    // every drag update.
+    expect(commits[0]).toEqual([
+      { ppq: 0, value: 1 },
+      { ppq: AUTOMATION_WRITE_THROTTLE_PPQ, value: 3 },
     ]);
   });
 

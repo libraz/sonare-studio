@@ -11,6 +11,21 @@ import {
 import { execute } from './history';
 import { requireClip, validatePpq } from './utils';
 
+function tempoSegmentChanged(
+  current: ReadonlyArray<TempoSegment>,
+  next: ReadonlyArray<TempoSegment>,
+): boolean {
+  if (current.length !== next.length) return true;
+  return next.some((segment, index) => {
+    const existing = current[index];
+    return (
+      existing.startPpq !== segment.startPpq ||
+      existing.bpm !== segment.bpm ||
+      (existing.endBpm ?? 0) !== (segment.endBpm ?? 0)
+    );
+  });
+}
+
 /**
  * Adds or updates a timeline marker as one undoable edit. Markers are
  * app-level metadata: the Project's setMarker has no matching removal or
@@ -134,6 +149,17 @@ export async function detectSectionsFromAudioClip(clipId: number): Promise<numbe
     },
     store.tempoSegments,
   );
+  const current = store.clips.find((entry) => entry.id === clipId);
+  if (
+    !current ||
+    clipKind(current) !== 'audio' ||
+    current.assetId !== clip.assetId ||
+    current.startPpq !== clip.startPpq ||
+    current.lengthPpq !== clip.lengthPpq ||
+    current.sourceOffsetPpq !== clip.sourceOffsetPpq
+  ) {
+    return 0;
+  }
   const clipEnd = clip.startPpq + clip.lengthPpq;
   const kept = store.sections.filter(
     (section) => section.startPpq < clip.startPpq || section.startPpq >= clipEnd,
@@ -161,11 +187,20 @@ export function setTempoSegments(segments: ReadonlyArray<TempoSegment>): void {
       throw new RangeError('Tempo segments must have strictly ascending startPpq');
     }
   });
+  const invalidatesFrozenTracks = tempoSegmentChanged(store.tempoSegments, segments);
   execute(1, () => {
     project.setTempoSegments(
       segments.map((s) => ({ startPpq: s.startPpq, bpm: s.bpm, endBpm: s.endBpm ?? 0 })),
     );
     store.refresh();
+    if (invalidatesFrozenTracks) {
+      store.tracks = store.tracks.map((track) => {
+        if (track.frozen === undefined) return track;
+        const next = { ...track };
+        delete next.frozen;
+        return next;
+      });
+    }
   });
 }
 

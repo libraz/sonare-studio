@@ -19,14 +19,48 @@ export type AutomationTarget = number | 'master' | BusAutomationTarget;
  */
 export type InsertAutomationParam = `insert:${number}:${string}`;
 
+/**
+ * A mastering-chain processor parameter automation target encoded as
+ * "mastering:<index>:<paramName>". Unlike strip insert tokens, the slot index
+ * refers to mixer.masteringChain.processors and is mapped to the live master
+ * strip only when the processor is realtime-safe and enabled.
+ */
+export type MasteringAutomationParam = `mastering:${number}:${string}`;
+
+/**
+ * A synth-patch instrument parameter automation target encoded as
+ * "instrument:<paramName>". The lane target names the MIDI track; the token
+ * only carries the SynthPatch JSON-key parameter name.
+ */
+export type InstrumentAutomationParam = `instrument:${string}`;
+
 /** Parameter automatable by a lane. */
-export type AutomationParam = 'faderDb' | 'pan' | InsertAutomationParam;
+export type AutomationParam =
+  | 'faderDb'
+  | 'pan'
+  | InsertAutomationParam
+  | MasteringAutomationParam
+  | InstrumentAutomationParam;
 
 /** The slot index and parameter name decoded from an {@link InsertAutomationParam}. */
 export interface InsertParamRef {
   /** Insert slot index on the targeted strip (integer >= 0). */
   insertIndex: number;
   /** Processor JSON-key parameter name (may itself contain ':'). */
+  paramName: string;
+}
+
+/** The mastering-chain slot index and parameter name decoded from a token. */
+export interface MasteringParamRef {
+  /** Processor slot index in mixer.masteringChain.processors (integer >= 0). */
+  processorIndex: number;
+  /** Processor JSON-key parameter name (may itself contain ':'). */
+  paramName: string;
+}
+
+/** The synth-patch parameter name decoded from an instrument token. */
+export interface InstrumentParamRef {
+  /** SynthPatch JSON-key parameter name (may itself contain ':'). */
   paramName: string;
 }
 
@@ -154,9 +188,44 @@ export function insertAutomationParam(
   return `insert:${insertIndex}:${paramName}`;
 }
 
+/**
+ * Encodes a mastering-chain processor index and parameter name into an
+ * automation param token.
+ *
+ * @param processorIndex Processor slot index in mixer.masteringChain.processors.
+ * @param paramName Processor JSON-key parameter name (may contain ':').
+ * @returns The "mastering:<index>:<paramName>" token.
+ */
+export function masteringAutomationParam(
+  processorIndex: number,
+  paramName: string,
+): MasteringAutomationParam {
+  return `mastering:${processorIndex}:${paramName}`;
+}
+
+/**
+ * Encodes a synth-patch instrument parameter name into an automation token.
+ *
+ * @param paramName SynthPatch JSON-key parameter name (may contain ':').
+ * @returns The "instrument:<paramName>" token.
+ */
+export function instrumentAutomationParam(paramName: string): InstrumentAutomationParam {
+  return `instrument:${paramName}`;
+}
+
 /** True when an automation param token addresses an insert parameter. */
 export function isInsertAutomationParam(param: string): param is InsertAutomationParam {
   return param.startsWith('insert:');
+}
+
+/** True when an automation param token addresses a mastering-chain parameter. */
+export function isMasteringAutomationParam(param: string): param is MasteringAutomationParam {
+  return param.startsWith('mastering:');
+}
+
+/** True when an automation param token addresses a synth-patch instrument parameter. */
+export function isInstrumentAutomationParam(param: string): param is InstrumentAutomationParam {
+  return param.startsWith('instrument:');
 }
 
 /**
@@ -181,6 +250,42 @@ export function parseInsertAutomationParam(param: string): InsertParamRef | unde
   return { insertIndex, paramName };
 }
 
+/**
+ * Decodes a mastering automation param token into its slot index and parameter
+ * name. The token is "mastering:<index>:<paramName>"; only the first two ':'
+ * separators are structural, so a parameter name containing ':' survives.
+ *
+ * @param param Candidate token.
+ * @returns The decoded reference, or undefined when malformed.
+ */
+export function parseMasteringAutomationParam(param: string): MasteringParamRef | undefined {
+  if (!isMasteringAutomationParam(param)) return undefined;
+  const rest = param.slice('mastering:'.length);
+  const separator = rest.indexOf(':');
+  if (separator < 0) return undefined;
+  const indexText = rest.slice(0, separator);
+  const paramName = rest.slice(separator + 1);
+  if (paramName.length === 0) return undefined;
+  const processorIndex = Number(indexText);
+  if (!Number.isInteger(processorIndex) || processorIndex < 0) return undefined;
+  return { processorIndex, paramName };
+}
+
+/**
+ * Decodes an instrument automation param token into its SynthPatch parameter
+ * name. The token is "instrument:<paramName>"; everything after the first ':'
+ * is part of the parameter name.
+ *
+ * @param param Candidate token.
+ * @returns The decoded reference, or undefined when malformed.
+ */
+export function parseInstrumentAutomationParam(param: string): InstrumentParamRef | undefined {
+  if (!isInstrumentAutomationParam(param)) return undefined;
+  const paramName = param.slice('instrument:'.length);
+  if (paramName.length === 0) return undefined;
+  return { paramName };
+}
+
 /** True when the value is one of the {@link AutomationCurve} names. */
 function isAutomationCurve(value: unknown): value is AutomationCurve {
   return typeof value === 'string' && value in AUTOMATION_CURVE_CODES;
@@ -189,7 +294,12 @@ function isAutomationCurve(value: unknown): value is AutomationCurve {
 /** True when the value is a valid {@link AutomationParam}. */
 export function isAutomationParam(value: unknown): value is AutomationParam {
   if (value === 'faderDb' || value === 'pan') return true;
-  return typeof value === 'string' && parseInsertAutomationParam(value) !== undefined;
+  return (
+    typeof value === 'string' &&
+    (parseInsertAutomationParam(value) !== undefined ||
+      parseMasteringAutomationParam(value) !== undefined ||
+      parseInstrumentAutomationParam(value) !== undefined)
+  );
 }
 
 /**

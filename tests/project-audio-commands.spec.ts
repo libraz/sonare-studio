@@ -1,27 +1,38 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { clearAudioAssetCache, saveAsset } from '@/persistence/assets';
+import { clearAudioAssetCache, loadAsset, saveAsset } from '@/persistence/assets';
 import {
   addAudioClip,
   addAudioTrack,
   addTrack,
   clearHistory,
+  consolidateAudioClips,
   duplicateClip,
+  extractMelodyFromAudioClip,
   moveClip,
   redo,
+  setClipCompSegments,
   setClipFades,
   setClipWarp,
+  setTrackRecordInputChannel,
+  splitAudioClipToStems,
   splitClip,
   trimClip,
   undo,
 } from '@/project/commands';
 import { getProject, useProjectStore } from '@/project/store';
+import { MAJOR_MODE_MASK } from '@/project/types';
 import { installMockOpfs, uninstallMockOpfs } from './opfs-mock';
+
+const wasmModule = vi.hoisted(() => ({
+  current: undefined as undefined | Record<string, unknown>,
+}));
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
   const fakeModule = createFakeWasmModule();
-  return { ensureWasm: async () => fakeModule };
+  wasmModule.current = fakeModule as unknown as Record<string, unknown>;
+  return { ensureWasm: async () => wasmModule.current };
 });
 
 /** Shape of the fake Project document this spec reads back. */
@@ -37,11 +48,35 @@ interface FakeDoc {
     source_id: number;
     fade_in_ppq: number;
     fade_out_ppq: number;
+    warp_ref_id?: number;
+    warp_mode?: number;
   }>;
+  warp_maps?: Array<{
+    id: number;
+    name?: string;
+    anchors: Array<{ warpSample: number; sourceSample: number }>;
+  }>;
+  midi_content: Record<string, Array<{ ppq: number; data0: number; data1: number }>>;
 }
 
 function readDoc(): FakeDoc {
   return JSON.parse(getProject().toJson()) as FakeDoc;
+}
+
+function midiToHz(midi: number): number {
+  return 440 * 2 ** ((midi - 69) / 12);
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+async function flushPromises(times = 5): Promise<void> {
+  for (let i = 0; i < times; i++) await Promise.resolve();
 }
 
 describe('audio track and clip commands', () => {
@@ -74,6 +109,29 @@ describe('audio track and clip commands', () => {
     expect(store.tracks.some((t) => t.id === b)).toBe(false);
     redo();
     expect(store.tracks.find((t) => t.id === b)?.kind).toBe('audio');
+  });
+
+  it('sets audio track record input channels undoably', () => {
+    const midiTrackId = addTrack({ name: 'Synth', kind: 'midi' });
+    const audioTrackId = addAudioTrack({ name: 'Mic' });
+
+    setTrackRecordInputChannel(audioTrackId, 3);
+    expect(store.tracks.find((track) => track.id === audioTrackId)?.recordInputChannel).toBe(3);
+
+    undo();
+    expect(
+      store.tracks.find((track) => track.id === audioTrackId)?.recordInputChannel,
+    ).toBeUndefined();
+
+    redo();
+    expect(store.tracks.find((track) => track.id === audioTrackId)?.recordInputChannel).toBe(3);
+
+    setTrackRecordInputChannel(audioTrackId, null);
+    expect(
+      store.tracks.find((track) => track.id === audioTrackId)?.recordInputChannel,
+    ).toBeUndefined();
+    expect(() => setTrackRecordInputChannel(midiTrackId, 0)).toThrow(/audio tracks/);
+    expect(() => setTrackRecordInputChannel(audioTrackId, -1)).toThrow(/non-negative integer/);
   });
 
   it('addAudioClip registers one source per asset and reuses it', async () => {
@@ -204,6 +262,310 @@ describe('audio track and clip commands', () => {
     expect(store.clips.find((c) => c.id === clipId)?.lengthPpq).toBeCloseTo(1, 10);
   });
 
+  it('extracts audio melody with detected-key pitch quantize and snap-grid rhythm quantize', async () => {
+    installMockOpfs();
+    await saveAsset({ id: 'melody-source', name: 'Melody', sampleRate: 48000 }, [
+      new Float32Array(96000).fill(0.25),
+    ]);
+    const analyzeMelody = vi.fn(() => ({
+      points: [
+        { time: 0.12, frequency: midiToHz(66), confidence: 1 },
+        { time: 0.38, frequency: 0, confidence: 0 },
+      ],
+    }));
+    const detectKey = vi.fn(() => ({ name: 'C major' }));
+    const scaleQuantizeMidi = vi.fn((_root: number, _modeMask: number, midi: number) =>
+      midi === 66 ? 65 : midi,
+    );
+    Object.assign(wasmModule.current ?? {}, { analyzeMelody, detectKey, scaleQuantizeMidi });
+
+    const trackId = addAudioTrack({ name: 'Audio' });
+    const clipId = await addAudioClip({ trackId, assetId: 'melody-source', lengthPpq: 4 });
+    store.snapEnabled = true;
+    store.snapDivision = 8; // eighth-note grid = 0.5 PPQ
+
+    const midiClipId = await extractMelodyFromAudioClip(clipId);
+
+    expect(midiClipId).not.toBe(-1);
+    expect(detectKey).toHaveBeenCalledWith(expect.any(Float32Array), 48000);
+    expect(scaleQuantizeMidi).toHaveBeenCalledWith(0, MAJOR_MODE_MASK, 66);
+    const midiEvents = readDoc().midi_content[String(midiClipId)];
+    expect(midiEvents.map((event) => event.ppq)).toEqual([0, 1]);
+    expect(midiEvents.map((event) => (event.data0 >>> 8) & 0x7f)).toEqual([65, 65]);
+  });
+
+  it('consolidates audio clips into one baked asset with gaps, gain and fades', async () => {
+    installMockOpfs();
+    await saveAsset({ id: 'clip-a', name: 'A', sampleRate: 4 }, [new Float32Array([1, 1, 1, 1])]);
+    await saveAsset({ id: 'clip-b', name: 'B', sampleRate: 4 }, [new Float32Array([2, 2, 2, 2])]);
+    const trackId = addAudioTrack({ name: 'Audio' });
+    const first = await addAudioClip({
+      trackId,
+      assetId: 'clip-a',
+      startPpq: 0,
+      lengthPpq: 1,
+      gain: 0.5,
+      fadeInPpq: 0.5,
+      name: 'Part A',
+    });
+    const second = await addAudioClip({
+      trackId,
+      assetId: 'clip-b',
+      startPpq: 2,
+      lengthPpq: 1,
+      sourceOffsetPpq: 0.5,
+      name: 'Part B',
+    });
+
+    const consolidatedId = await consolidateAudioClips([first, second], { tempoBpm: 60 });
+
+    expect(store.clips.some((clip) => clip.id === first || clip.id === second)).toBe(false);
+    const consolidated = store.clips.find((clip) => clip.id === consolidatedId);
+    expect(consolidated).toMatchObject({
+      trackId,
+      kind: 'audio',
+      startPpq: 0,
+      lengthPpq: 3,
+      sourceOffsetPpq: 0,
+      gain: 1,
+      name: 'Part A (consolidated)',
+    });
+    expect(consolidated?.assetId).toBeDefined();
+    const baked = await loadAsset(consolidated?.assetId ?? '');
+    expect(baked.meta.sampleRate).toBe(4);
+    expect(Array.from(baked.channels[0])).toEqual([0, 0.25, 0.5, 0.5, 0, 0, 0, 0, 2, 2, 0, 0]);
+
+    undo();
+    expect(store.clips.some((clip) => clip.id === consolidatedId)).toBe(false);
+    expect(store.clips.find((clip) => clip.id === first)?.assetId).toBe('clip-a');
+    expect(store.clips.find((clip) => clip.id === second)?.assetId).toBe('clip-b');
+  });
+
+  it('skips applying a consolidated asset when source clips changed during ingest', async () => {
+    installMockOpfs();
+    await saveAsset({ id: 'stale-a', name: 'A', sampleRate: 4 }, [new Float32Array([1, 1])]);
+    await saveAsset({ id: 'stale-b', name: 'B', sampleRate: 4 }, [new Float32Array([2, 2])]);
+    const trackId = addAudioTrack({ name: 'Audio' });
+    const first = await addAudioClip({ trackId, assetId: 'stale-a', startPpq: 0, lengthPpq: 1 });
+    const second = await addAudioClip({ trackId, assetId: 'stale-b', startPpq: 1, lengthPpq: 1 });
+    const pendingIngest = deferred<{ id: string }>();
+    const ingest = vi.fn(() => pendingIngest.promise);
+
+    const result = consolidateAudioClips([first, second], { tempoBpm: 60, ingest });
+    await flushPromises();
+    expect(ingest).toHaveBeenCalledTimes(1);
+
+    moveClip(first, 0.5);
+    pendingIngest.resolve({ id: 'stale-consolidated' });
+
+    await expect(result).resolves.toBe(-1);
+    expect(store.clips.find((clip) => clip.id === first)).toMatchObject({
+      assetId: 'stale-a',
+      startPpq: 0.5,
+    });
+    expect(store.clips.find((clip) => clip.id === second)?.assetId).toBe('stale-b');
+    expect(store.clips.some((clip) => clip.assetId === 'stale-consolidated')).toBe(false);
+  });
+
+  it('consolidates looped audio clips by flattening repeats into the baked asset', async () => {
+    installMockOpfs();
+    await saveAsset({ id: 'loop-source', name: 'Loop', sampleRate: 4 }, [
+      new Float32Array([1, 2, 3, 4]),
+    ]);
+    await saveAsset({ id: 'tail-source', name: 'Tail', sampleRate: 4 }, [new Float32Array([9])]);
+    const trackId = addAudioTrack({ name: 'Audio' });
+    const loop = await addAudioClip({
+      trackId,
+      assetId: 'loop-source',
+      startPpq: 0,
+      lengthPpq: 3,
+      loopEnabled: true,
+      loopLengthPpq: 1,
+      fadeOutPpq: 0.5,
+      name: 'Looped',
+    });
+    const tail = await addAudioClip({
+      trackId,
+      assetId: 'tail-source',
+      startPpq: 3,
+      lengthPpq: 0.25,
+      name: 'Tail',
+    });
+
+    const consolidatedId = await consolidateAudioClips([loop, tail], { tempoBpm: 60 });
+    const consolidated = store.clips.find((clip) => clip.id === consolidatedId);
+    const baked = await loadAsset(consolidated?.assetId ?? '');
+
+    expect(consolidated).toMatchObject({ startPpq: 0, lengthPpq: 3.25, loopEnabled: false });
+    expect(Array.from(baked.channels[0])).toEqual([1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 1.5, 0, 9]);
+  });
+
+  it('consolidates take-comp audio clips by baking the selected take segments', async () => {
+    installMockOpfs();
+    await saveAsset({ id: 'take-a', name: 'Take A', sampleRate: 2 }, [
+      new Float32Array([1, 1, 1, 1]),
+    ]);
+    await saveAsset({ id: 'take-b', name: 'Take B', sampleRate: 2 }, [
+      new Float32Array([2, 2, 2, 2]),
+    ]);
+    await saveAsset({ id: 'tail', name: 'Tail', sampleRate: 2 }, [new Float32Array([9])]);
+    const trackId = addAudioTrack({ name: 'Audio' });
+    const comped = await addAudioClip({
+      trackId,
+      assetId: 'take-a',
+      startPpq: 0,
+      lengthPpq: 2,
+      name: 'Comp',
+      activeTakeIndex: 0,
+      takes: [
+        { assetId: 'take-a', name: 'A' },
+        { assetId: 'take-b', name: 'B' },
+      ],
+    });
+    setClipCompSegments(comped, [
+      { startPpq: 0, takeIndex: 0, crossfadePpq: 0 },
+      { startPpq: 1, takeIndex: 1, crossfadePpq: 0 },
+    ]);
+    const tail = await addAudioClip({
+      trackId,
+      assetId: 'tail',
+      startPpq: 2,
+      lengthPpq: 0.5,
+      name: 'Tail',
+    });
+
+    const consolidatedId = await consolidateAudioClips([comped, tail], { tempoBpm: 60 });
+    const consolidated = store.clips.find((clip) => clip.id === consolidatedId);
+    const baked = await loadAsset(consolidated?.assetId ?? '');
+
+    expect(consolidated).toMatchObject({ startPpq: 0, lengthPpq: 2.5, sourceOffsetPpq: 0 });
+    expect(consolidated?.takes).toBeUndefined();
+    expect(consolidated?.compSegments).toBeUndefined();
+    expect(Array.from(baked.channels[0])).toEqual([1, 1, 2, 2, 9]);
+  });
+
+  it('consolidates warped audio clips by baking the warped window', async () => {
+    installMockOpfs();
+    await saveAsset({ id: 'warp-source', name: 'Warp', sampleRate: 10 }, [
+      new Float32Array(Array.from({ length: 40 }, (_, i) => i)),
+    ]);
+    await saveAsset({ id: 'warp-tail', name: 'Tail', sampleRate: 10 }, [
+      new Float32Array([9, 9, 9, 9, 9]),
+    ]);
+    const trackId = addAudioTrack({ name: 'Audio' });
+    const warped = await addAudioClip({
+      trackId,
+      assetId: 'warp-source',
+      startPpq: 0,
+      lengthPpq: 4,
+      name: 'Warped',
+    });
+    setClipWarp(warped, { enabled: true, sourceBpm: 60 });
+    const tail = await addAudioClip({
+      trackId,
+      assetId: 'warp-tail',
+      startPpq: 4,
+      lengthPpq: 1,
+      name: 'Tail',
+    });
+    const stretch = vi.fn((samples: Float32Array, _sampleRate: number, rate: number) => {
+      const frames = Math.max(1, Math.round(samples.length / rate));
+      return new Float32Array(
+        Array.from({ length: frames }, (_, i) => samples[Math.min(samples.length - 1, i * rate)]),
+      );
+    });
+
+    const consolidatedId = await consolidateAudioClips([warped, tail], {
+      tempoBpm: 120,
+      warpStretch: stretch,
+    });
+    const consolidated = store.clips.find((clip) => clip.id === consolidatedId);
+    const baked = await loadAsset(consolidated?.assetId ?? '');
+
+    expect(stretch).toHaveBeenCalledTimes(1);
+    expect(consolidated).toMatchObject({ startPpq: 0, lengthPpq: 5, sourceOffsetPpq: 0 });
+    expect(consolidated?.warp).toBeUndefined();
+    expect(Array.from(baked.channels[0])).toEqual([
+      ...Array.from({ length: 20 }, (_, i) => i * 2),
+      9,
+      9,
+      9,
+      9,
+      9,
+    ]);
+  });
+
+  it('rejects warped take-comp clips during audio consolidate', async () => {
+    installMockOpfs();
+    await saveAsset({ id: 'take-warp-a', name: 'Take A', sampleRate: 2 }, [
+      new Float32Array([1, 1, 1, 1]),
+    ]);
+    await saveAsset({ id: 'take-warp-b', name: 'Take B', sampleRate: 2 }, [
+      new Float32Array([2, 2, 2, 2]),
+    ]);
+    const trackId = addAudioTrack({ name: 'Audio' });
+    const comped = await addAudioClip({
+      trackId,
+      assetId: 'take-warp-a',
+      startPpq: 0,
+      lengthPpq: 2,
+      name: 'Comp',
+      activeTakeIndex: 0,
+      takes: [
+        { assetId: 'take-warp-a', name: 'A' },
+        { assetId: 'take-warp-b', name: 'B' },
+      ],
+    });
+    const tail = await addAudioClip({
+      trackId,
+      assetId: 'take-warp-b',
+      startPpq: 2,
+      lengthPpq: 1,
+      name: 'Tail',
+    });
+    setClipWarp(comped, { enabled: true, sourceBpm: 60 });
+
+    await expect(consolidateAudioClips([comped, tail], { tempoBpm: 120 })).rejects.toThrow(
+      /warped take-comp/,
+    );
+  });
+
+  it('skips stem clip creation when the source clip changes during separation', async () => {
+    installMockOpfs();
+    await saveAsset({ id: 'stem-source', name: 'Stem Source', sampleRate: 4 }, [
+      new Float32Array([1, 2, 3, 4]),
+    ]);
+    const trackId = addAudioTrack({ name: 'Audio' });
+    const clipId = await addAudioClip({
+      trackId,
+      assetId: 'stem-source',
+      startPpq: 0,
+      lengthPpq: 1,
+      name: 'Loop',
+    });
+    const initialTrackCount = store.tracks.length;
+    const initialClipIds = store.clips.map((clip) => clip.id);
+    const hpssWithResidual = vi.fn((samples: Float32Array, sampleRate?: number) => {
+      store.clips = store.clips.map((clip) =>
+        clip.id === clipId ? { ...clip, assetId: 'stem-replaced' } : clip,
+      );
+      return {
+        harmonic: new Float32Array(samples),
+        percussive: new Float32Array(samples),
+        residual: new Float32Array(samples),
+        sampleRate: sampleRate ?? 4,
+      };
+    });
+    Object.assign(wasmModule.current ?? {}, { hpssWithResidual });
+
+    await expect(splitAudioClipToStems(clipId)).resolves.toEqual([]);
+
+    expect(hpssWithResidual).toHaveBeenCalled();
+    expect(store.tracks).toHaveLength(initialTrackCount);
+    expect(store.clips.map((clip) => clip.id)).toEqual(initialClipIds);
+    expect(store.clips.find((clip) => clip.id === clipId)?.assetId).toBe('stem-replaced');
+  });
+
   it('validates its inputs', async () => {
     const trackId = addAudioTrack();
     await expect(addAudioClip({ trackId: 9999, assetId: 'a', lengthPpq: 1 })).rejects.toThrow(
@@ -276,20 +638,50 @@ describe('audio track and clip commands', () => {
         { ppq: 6, sourceSeconds: 3 },
       ],
     });
+    let doc = readDoc();
+    expect(doc.clips.find((c) => c.id === clipId)).toMatchObject({
+      warp_ref_id: clipId,
+      warp_mode: 2,
+    });
+    expect(doc.warp_maps).toEqual([
+      {
+        id: clipId,
+        name: `clip-${clipId}-warp`,
+        anchors: [
+          { warpSample: 0, sourceSample: 0 },
+          { warpSample: 48000, sourceSample: 48000 },
+          { warpSample: 144000, sourceSample: 144000 },
+          { warpSample: 192000, sourceSample: 242526 },
+        ],
+      },
+    ]);
 
     undo();
     expect(store.clips.find((c) => c.id === clipId)?.warp).toBeUndefined();
+    doc = readDoc();
+    expect(doc.clips.find((c) => c.id === clipId)?.warp_ref_id).toBeUndefined();
+    expect(doc.clips.find((c) => c.id === clipId)?.warp_mode).toBeUndefined();
+    expect(doc.warp_maps).toEqual([]);
     redo();
     expect(store.clips.find((c) => c.id === clipId)?.warp).toMatchObject({
       enabled: true,
       sourceBpm: 95,
     });
+    expect(readDoc().clips.find((c) => c.id === clipId)).toMatchObject({
+      warp_ref_id: clipId,
+      warp_mode: 2,
+    });
 
     // null clears the warp state, undoably too.
     setClipWarp(clipId, null);
     expect(store.clips.find((c) => c.id === clipId)?.warp).toBeUndefined();
+    expect(readDoc().warp_maps).toEqual([]);
     undo();
     expect(store.clips.find((c) => c.id === clipId)?.warp).toMatchObject({ sourceBpm: 95 });
+    expect(readDoc().clips.find((c) => c.id === clipId)).toMatchObject({
+      warp_ref_id: clipId,
+      warp_mode: 2,
+    });
   });
 
   it('duplicate, split and trim preserve warp metadata in the derived window', async () => {

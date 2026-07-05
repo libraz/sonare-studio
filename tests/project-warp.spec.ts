@@ -10,6 +10,28 @@ import {
   warpSegments,
 } from '@/project/warp';
 
+const wasmStretchFns = vi.hoisted(() => ({
+  noteStretch: vi.fn(
+    (
+      samples: Float32Array,
+      _sampleRate?: number,
+      options?: { stretchRatio?: number },
+    ): Float32Array => {
+      const rate = options?.stretchRatio ?? 1;
+      const frames = Math.max(1, Math.round(samples.length / rate));
+      return samples.slice(0, frames);
+    },
+  ),
+  timeStretch: vi.fn((samples: Float32Array, _sampleRate: number, rate: number): Float32Array => {
+    const frames = Math.max(1, Math.round(samples.length / rate));
+    return samples.slice(0, frames);
+  }),
+}));
+
+vi.mock('@/lib/wasm', () => ({
+  ensureWasm: async () => wasmStretchFns,
+}));
+
 /** Builds a warp-enabled clip with overridable fields. */
 function makeWarpClip(overrides: Partial<WarpableClipFields> = {}): WarpableClipFields {
   return {
@@ -190,6 +212,8 @@ describe('warpSegments', () => {
 describe('bakeWarpedClip', () => {
   beforeEach(() => {
     clearWarpBakeCache();
+    wasmStretchFns.noteStretch.mockClear();
+    wasmStretchFns.timeStretch.mockClear();
   });
 
   it('returns [] for disabled/invalid warp and for empty channels', async () => {
@@ -225,6 +249,42 @@ describe('bakeWarpedClip', () => {
     expect(rate).toBeCloseTo(2, 10);
     // Fake decimation: output frame i reads source frame 2i.
     expect(Array.from(baked[0])).toEqual(Array.from({ length: 20 }, (_, i) => 2 * i));
+  });
+
+  it('uses noteStretch as the default warp stretch when available', async () => {
+    const baked = await bakeWarpedClip([ramp(40)], 10, makeWarpClip(), 120);
+
+    expect(baked[0]).toHaveLength(20);
+    expect(wasmStretchFns.noteStretch).toHaveBeenCalledTimes(1);
+    expect(wasmStretchFns.noteStretch).toHaveBeenCalledWith(new Float32Array(ramp(40)), 10, {
+      onsetSample: 0,
+      offsetSample: 40,
+      stretchRatio: 2,
+    });
+    expect(wasmStretchFns.timeStretch).not.toHaveBeenCalled();
+  });
+
+  it('uses noteStretch only for anchored segments that need stretching', async () => {
+    const clip = makeWarpClip({
+      warp: { enabled: true, sourceBpm: 60, anchors: [{ ppq: 2, sourceSeconds: 1 }] },
+    });
+    const baked = await bakeWarpedClip([ramp(40)], 10, clip, 120);
+
+    expect(baked[0]).toHaveLength(20);
+    // First segment is rate 1 and is copied directly; only the second segment
+    // needs transient-preserving stretch.
+    expect(wasmStretchFns.noteStretch).toHaveBeenCalledTimes(1);
+    expect(wasmStretchFns.noteStretch).toHaveBeenCalledWith(
+      new Float32Array(ramp(40).subarray(10, 40)),
+      10,
+      {
+        onsetSample: 0,
+        offsetSample: 30,
+        stretchRatio: 3,
+      },
+    );
+    expect(wasmStretchFns.timeStretch).not.toHaveBeenCalled();
+    expect(Array.from(baked[0].subarray(0, 10))).toEqual(Array.from({ length: 10 }, (_, i) => i));
   });
 
   it('outputs exactly the clip window across tempo-map changes', async () => {
