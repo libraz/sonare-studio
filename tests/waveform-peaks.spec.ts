@@ -70,7 +70,7 @@ describe('computePeaks (wasm delegation)', () => {
     expect(options).toEqual({ samplesPerBucket: 2, validate: false });
   });
 
-  it('pads a shorter delegate report to the requested bucket count', () => {
+  it('falls back when a shorter delegate report would leave blank tail buckets', () => {
     const mod: WaveformPeaksModule = {
       waveformPeaks: () => ({
         min: new Float32Array([-1]),
@@ -81,7 +81,7 @@ describe('computePeaks (wasm delegation)', () => {
       }),
     };
     expect(computePeaks([new Float32Array([1, -1, 1, -1])], 3, { wasm: mod })).toEqual([
-      peaks([-1, 0, 0], [1, 0, 0]),
+      peaks([1, -1, -1], [1, -1, 1]),
     ]);
   });
 

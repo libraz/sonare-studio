@@ -5,11 +5,30 @@
  * undoable setClipWarp command.
  */
 
-import { computed, ref, watch } from 'vue';
+import { computed, onScopeDispose, ref, watch } from 'vue';
+import { ensureWasm } from '@/lib/wasm';
+import type { LoadedAudioAsset } from '@/persistence/assets';
+import { loadAsset } from '@/persistence/assets';
+import { mixdownToMono } from '@/project/audio-import';
 import { setClipWarp } from '@/project/commands';
+import { sliceAudioClipWindow } from '@/project/scheduling';
 import type { useProjectStore } from '@/project/store';
 import type { ClipWarp } from '@/project/types';
-import { defaultWarpAnchor, findWarpClip, mergedWarp, segmentStretchRatios } from './warp-controls';
+import {
+  autoWarpFromBeatTimes,
+  defaultWarpAnchor,
+  findWarpClip,
+  mergedWarp,
+  segmentStretchRatios,
+} from './warp-controls';
+
+type BeatDetector = (samples: Float32Array, sampleRate?: number) => number[];
+
+interface AutoWarpDeps {
+  loadAudioAsset?: (assetId: string) => Promise<LoadedAudioAsset>;
+  detectBeats?: BeatDetector;
+  detectDownbeats?: BeatDetector;
+}
 
 /** Options for {@link useSampleWarp}. */
 export interface UseSampleWarpOptions {
@@ -19,6 +38,8 @@ export interface UseSampleWarpOptions {
   assetId: () => string;
   /** Surfaces an error message to the editor's shared error banner. */
   setError: (message: string) => void;
+  /** Optional detector injection for tests or alternate runtimes. */
+  autoWarp?: AutoWarpDeps;
 }
 
 function errorMessage(err: unknown): string {
@@ -32,6 +53,8 @@ function errorMessage(err: unknown): string {
  */
 export function useSampleWarp(options: UseSampleWarpOptions) {
   const { project, assetId, setError } = options;
+  let disposed = false;
+  let autoWarpGeneration = 0;
 
   const warpClip = computed(() => findWarpClip(project.clips, project.clipId, assetId()));
   const warpEnabled = computed(() => warpClip.value?.warp?.enabled ?? false);
@@ -39,7 +62,7 @@ export function useSampleWarp(options: UseSampleWarpOptions) {
   const warpRatioHint = computed(() => {
     const clip = warpClip.value;
     if (!clip) return '';
-    return segmentStretchRatios(clip, project.tempoBpm)
+    return segmentStretchRatios(clip, project.tempoBpm, project.tempoSegments)
       .map((ratio) => `×${ratio.toFixed(2)}`)
       .join(' · ');
   });
@@ -100,6 +123,83 @@ export function useSampleWarp(options: UseSampleWarpOptions) {
     commitWarp({ anchors: [...warpAnchors.value, anchor] });
   }
 
+  async function resolveAutoWarpDeps(): Promise<
+    Required<Pick<AutoWarpDeps, 'loadAudioAsset'>> &
+      Pick<AutoWarpDeps, 'detectBeats' | 'detectDownbeats'>
+  > {
+    if (options.autoWarp?.detectBeats) {
+      return {
+        loadAudioAsset: options.autoWarp.loadAudioAsset ?? loadAsset,
+        detectBeats: options.autoWarp.detectBeats,
+        detectDownbeats: options.autoWarp.detectDownbeats,
+      };
+    }
+    const wasm = (await ensureWasm()) as unknown as {
+      detectBeats?: BeatDetector;
+      detectDownbeats?: BeatDetector;
+    };
+    return {
+      loadAudioAsset: options.autoWarp?.loadAudioAsset ?? loadAsset,
+      detectBeats: wasm.detectBeats,
+      detectDownbeats: wasm.detectDownbeats,
+    };
+  }
+
+  async function onAutoWarp(): Promise<void> {
+    const clip = warpClip.value;
+    if (!clip?.assetId) return;
+    const generation = ++autoWarpGeneration;
+    const source = {
+      id: clip.id,
+      assetId: clip.assetId,
+      sourceOffsetPpq: clip.sourceOffsetPpq,
+      lengthPpq: clip.lengthPpq,
+    };
+    const isCurrent = (): boolean => {
+      if (disposed || generation !== autoWarpGeneration) return false;
+      const current = warpClip.value;
+      return (
+        current?.id === source.id &&
+        current.assetId === source.assetId &&
+        current.sourceOffsetPpq === source.sourceOffsetPpq &&
+        current.lengthPpq === source.lengthPpq
+      );
+    };
+    try {
+      const deps = await resolveAutoWarpDeps();
+      if (!isCurrent()) return;
+      if (typeof deps.detectBeats !== 'function') throw new Error('Auto-Warp requires detectBeats');
+      const asset = await deps.loadAudioAsset(clip.assetId);
+      if (!isCurrent()) return;
+      const window = sliceAudioClipWindow(
+        asset.channels,
+        asset.meta.sampleRate,
+        clip.sourceOffsetPpq,
+        clip.lengthPpq,
+        project.tempoBpm,
+      );
+      const mono = mixdownToMono(window);
+      if (mono.length === 0) throw new Error('Auto-Warp requires a non-empty audio window');
+      const beats = deps.detectBeats(mono, asset.meta.sampleRate);
+      const downbeats =
+        typeof deps.detectDownbeats === 'function'
+          ? deps.detectDownbeats(mono, asset.meta.sampleRate)
+          : [];
+      const warp = autoWarpFromBeatTimes(beats, downbeats, clip.lengthPpq);
+      if (!warp) throw new Error('Auto-Warp could not detect enough beats');
+      if (!isCurrent()) return;
+      commitWarp({ enabled: true, sourceBpm: warp.sourceBpm, anchors: warp.anchors });
+    } catch (err) {
+      if (!isCurrent()) return;
+      setError(errorMessage(err));
+    }
+  }
+
+  onScopeDispose(() => {
+    disposed = true;
+    autoWarpGeneration++;
+  });
+
   return {
     warpClip,
     warpEnabled,
@@ -111,5 +211,6 @@ export function useSampleWarp(options: UseSampleWarpOptions) {
     onAnchorEdit,
     onRemoveAnchor,
     onAddAnchor,
+    onAutoWarp,
   };
 }

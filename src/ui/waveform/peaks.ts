@@ -109,8 +109,10 @@ function computePeaksWasm(
     return null;
   }
   // The delegate derives its own bucket count from samplesPerBucket; pad or
-  // trim each channel-major slice to exactly bucketCount buckets.
-  const copied = Math.min(bucketCount, report.bucketCount);
+  // trim each channel-major slice to exactly bucketCount buckets. A shorter
+  // report would leave the right edge blank, so use the pure path instead.
+  if (report.bucketCount < bucketCount) return null;
+  const copied = bucketCount;
   return channels.map((_, c) => {
     const min = new Float32Array(bucketCount);
     const max = new Float32Array(bucketCount);

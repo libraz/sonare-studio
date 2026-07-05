@@ -1,21 +1,34 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  analyzeImpulseResponseRange,
   analyzeMatchEqToReference,
   declickRange,
+  declipRange,
+  decrackleRange,
+  dehumRange,
   denoiseRange,
+  dereverbRange,
+  detectAcousticRange,
   detectOnsetFrames,
+  estimateRoomRange,
   harmonicRange,
   loadSampleEditorWasm,
   matchEqToReference,
   noteStretchRange,
   percussiveRange,
   pitchCorrectRange,
+  pitchCorrectTimevaryingRange,
   pitchShiftRange,
+  roomEstimateToPreset,
   roomMorphChannels,
   type SampleEditorWasmOps,
   scaleCorrectRange,
+  spectralDenoiseRange,
+  spectralEditRange,
   splitSilenceFrames,
+  synthesizeRirChannels,
   timeStretchRange,
+  trimSilenceRange,
   tuneToReferenceRange,
   voiceChangeRange,
   wasmOpAvailability,
@@ -43,6 +56,7 @@ describe('wasmOpAvailability', () => {
     expect(wasmOpAvailability(null)).toEqual({
       pitchShift: false,
       pitchCorrect: false,
+      pitchCorrectTimevarying: false,
       tuneReference: false,
       scaleCorrect: false,
       voiceChange: false,
@@ -52,11 +66,21 @@ describe('wasmOpAvailability', () => {
       noteStretch: false,
       declick: false,
       denoise: false,
+      declip: false,
+      decrackle: false,
+      dehum: false,
+      dereverb: false,
+      trimSilence: false,
       detectOnsets: false,
       splitSilence: false,
       matchEq: false,
       matchEqAnalyze: false,
       roomMorph: false,
+      synthesizeRir: false,
+      estimateRoom: false,
+      analyzeImpulseResponse: false,
+      detectAcoustic: false,
+      spectralEdit: false,
     });
     expect(wasmOpAvailability(undefined).pitchShift).toBe(false);
   });
@@ -66,13 +90,42 @@ describe('wasmOpAvailability', () => {
       pitchShift: (samples) => samples,
       pitchCorrectToMidi: (samples) => samples,
       masteringRepairDeclick: (samples) => samples,
+      masteringRepairDeclip: (samples) => samples,
+      masteringRepairDehum: (samples) => samples,
       detectOnsets: () => new Float32Array(),
       splitSilence: () => new Int32Array(),
       masteringPairProcess: (_name, source) => ({ samples: source, sampleRate: 48000 }),
+      analyzeImpulseResponse: () => ({
+        rt60: 0,
+        edt: 0,
+        c50: 0,
+        c80: 0,
+        d50: 0,
+        rt60Bands: new Float32Array(),
+        edtBands: new Float32Array(),
+        c50Bands: new Float32Array(),
+        c80Bands: new Float32Array(),
+        confidence: 0,
+        isBlind: false,
+      }),
+      detectAcoustic: () => ({
+        rt60: 0,
+        edt: 0,
+        c50: 0,
+        c80: 0,
+        d50: 0,
+        rt60Bands: new Float32Array(),
+        edtBands: new Float32Array(),
+        c50Bands: new Float32Array(),
+        c80Bands: new Float32Array(),
+        confidence: 0,
+        isBlind: true,
+      }),
     };
     expect(wasmOpAvailability(mod)).toEqual({
       pitchShift: true,
       pitchCorrect: true,
+      pitchCorrectTimevarying: false,
       // Needs estimateTuning + pitchShift; estimateTuning is absent here.
       tuneReference: false,
       // Needs pitchYin + scaleQuantizeMidi + pitchCorrectToMidi; only the last is present.
@@ -84,6 +137,11 @@ describe('wasmOpAvailability', () => {
       noteStretch: false,
       declick: true,
       denoise: false,
+      declip: true,
+      decrackle: false,
+      dehum: true,
+      dereverb: false,
+      trimSilence: false,
       detectOnsets: true,
       splitSilence: true,
       matchEq: true,
@@ -91,6 +149,11 @@ describe('wasmOpAvailability', () => {
       matchEqAnalyze: false,
       // roomMorph is absent in this module.
       roomMorph: false,
+      synthesizeRir: false,
+      estimateRoom: false,
+      analyzeImpulseResponse: true,
+      detectAcoustic: true,
+      spectralEdit: false,
     });
   });
 
@@ -413,6 +476,89 @@ describe('pitchCorrectRange', () => {
   });
 });
 
+describe('pitchCorrectTimevaryingRange', () => {
+  it('detects one mono F0 contour and applies it to every channel', () => {
+    const pitchPyin = vi.fn(
+      (samples: Float32Array, sampleRate?: number, frameLength?: number, hopLength?: number) => {
+        expect([...samples]).toEqual([4, 5]);
+        expect(sampleRate).toBe(48000);
+        expect(frameLength).toBe(2048);
+        expect(hopLength).toBe(512);
+        return {
+          f0: new Float32Array([220, 224]),
+          voicedProb: new Float32Array([0.9, 0.8]),
+          voicedFlag: [true, false],
+          medianF0: 222,
+        };
+      },
+    );
+    const pitchCorrectToMidiTimevarying = vi.fn(
+      (
+        samples: Float32Array,
+        f0: Float32Array,
+        targetMidi: number,
+        sampleRate?: number,
+        hopLength?: number,
+        voiced?: Int32Array,
+        voicedProb?: Float32Array,
+      ) => {
+        expect([...f0]).toEqual([220, 224]);
+        expect(targetMidi).toBe(69);
+        expect(sampleRate).toBe(48000);
+        expect(hopLength).toBe(512);
+        expect(voiced ? [...voiced] : []).toEqual([1, 0]);
+        expect(voicedProb?.[0]).toBeCloseTo(0.9, 6);
+        expect(voicedProb?.[1]).toBeCloseTo(0.8, 6);
+        return samples.map((value) => value + 10) as Float32Array;
+      },
+    );
+
+    const out = pitchCorrectTimevaryingRange(
+      { pitchPyin, pitchCorrectToMidiTimevarying },
+      ch([1, 2, 3, 4], [5, 6, 7, 8]),
+      48000,
+      69,
+      { startFrame: 1, endFrame: 3 },
+    );
+
+    expect(plain(out)).toEqual([
+      [1, 12, 13, 4],
+      [5, 16, 17, 8],
+    ]);
+    expect(pitchPyin).toHaveBeenCalledTimes(1);
+    expect(pitchCorrectToMidiTimevarying).toHaveBeenCalledTimes(2);
+  });
+
+  it('falls back to pitchYin and validates inputs', () => {
+    const pitchYin = vi.fn(() => ({
+      f0: new Float32Array([330]),
+      voicedProb: new Float32Array([1]),
+      voicedFlag: [true],
+      medianF0: 330,
+    }));
+    const pitchCorrectToMidiTimevarying = vi.fn((samples: Float32Array) => samples);
+    const mod: SampleEditorWasmOps = { pitchYin, pitchCorrectToMidiTimevarying };
+
+    expect(plain(pitchCorrectTimevaryingRange(mod, ch([1]), 48000, 60))).toEqual([[1]]);
+    expect(() => pitchCorrectTimevaryingRange({}, ch([1]), 48000, 60)).toThrow(/unavailable/);
+    expect(() => pitchCorrectTimevaryingRange(mod, ch([1]), 48000, 128)).toThrow(RangeError);
+    expect(() =>
+      pitchCorrectTimevaryingRange(mod, ch([1, 2]), 48000, 60, { startFrame: 1, endFrame: 1 }),
+    ).toThrow(RangeError);
+    expect(() =>
+      pitchCorrectTimevaryingRange(
+        {
+          pitchYin: () => ({ f0: new Float32Array([0]), medianF0: 0 }),
+          pitchCorrectToMidiTimevarying,
+        },
+        ch([1]),
+        48000,
+        60,
+      ),
+    ).toThrow(/pitch contour/);
+  });
+});
+
 describe('scaleCorrectRange', () => {
   it('detects pitch on the mono downmix and retunes every channel to the scale target', () => {
     const pitchYin = vi.fn((samples: Float32Array) => {
@@ -653,6 +799,109 @@ describe('HPSS separation', () => {
   });
 });
 
+describe('spectralDenoiseRange', () => {
+  it('delegates a selection-scoped high-frequency attenuation op per channel', () => {
+    const spectralEdit = vi.fn(
+      (samples: Float32Array, _sampleRate: number, _ops?: unknown[], _options?: unknown) =>
+        samples.map((value) => value * 0.25) as Float32Array,
+    );
+
+    const out = spectralDenoiseRange({ spectralEdit }, ch([1, 2, 3], [4, 5, 6]), 48000, {
+      startFrame: 1,
+      endFrame: 3,
+    });
+
+    expect(plain(out)).toEqual([
+      [0.25, 0.5, 0.75],
+      [1, 1.25, 1.5],
+    ]);
+    expect(spectralEdit).toHaveBeenCalledTimes(2);
+    expect(spectralEdit).toHaveBeenCalledWith(
+      expect.any(Float32Array),
+      48000,
+      [
+        {
+          startSample: 1,
+          endSample: 3,
+          lowHz: 4000,
+          highHz: 0,
+          gainDb: -18,
+          mode: 'attenuate',
+        },
+      ],
+      { nFft: 2048, hopLength: 512, window: 'hann' },
+    );
+  });
+
+  it('validates availability and numeric parameters', () => {
+    const mod: SampleEditorWasmOps = { spectralEdit: (samples) => samples };
+
+    expect(() => spectralDenoiseRange({}, ch([1]), 48000)).toThrow(/unavailable/);
+    expect(() => spectralDenoiseRange(mod, ch([1]), 0)).toThrow(RangeError);
+    expect(() => spectralDenoiseRange(mod, ch([1]), 48000, null, -1)).toThrow(RangeError);
+    expect(() => spectralDenoiseRange(mod, ch([1]), 48000, null, 4000, Number.NaN)).toThrow(
+      RangeError,
+    );
+    expect(() =>
+      spectralDenoiseRange(mod, ch([1, 2]), 48000, { startFrame: 1, endFrame: 1 }),
+    ).toThrow(RangeError);
+  });
+});
+
+describe('spectralEditRange', () => {
+  it('delegates a custom rectangular spectral op per channel', () => {
+    const spectralEdit = vi.fn(
+      (samples: Float32Array, _sampleRate: number, _ops?: unknown[], _options?: unknown) =>
+        samples.map((value) => value + 1) as Float32Array,
+    );
+
+    const out = spectralEditRange(
+      { spectralEdit },
+      ch([1, 2, 3], [4, 5, 6]),
+      44100,
+      { startFrame: 0, endFrame: 2 },
+      { lowHz: 250, highHz: 1800, gainDb: -9, mode: 'heal' },
+    );
+
+    expect(plain(out)).toEqual([
+      [2, 3, 4],
+      [5, 6, 7],
+    ]);
+    expect(spectralEdit).toHaveBeenCalledTimes(2);
+    expect(spectralEdit).toHaveBeenCalledWith(
+      expect.any(Float32Array),
+      44100,
+      [
+        {
+          startSample: 0,
+          endSample: 2,
+          lowHz: 250,
+          highHz: 1800,
+          gainDb: -9,
+          mode: 'heal',
+        },
+      ],
+      { nFft: 2048, hopLength: 512, window: 'hann' },
+    );
+  });
+
+  it('validates custom spectral edit bounds', () => {
+    const mod: SampleEditorWasmOps = { spectralEdit: (samples) => samples };
+    const options = { lowHz: 4000, highHz: 3000, gainDb: -6, mode: 'attenuate' as const };
+
+    expect(() => spectralEditRange({}, ch([1]), 48000, null, options)).toThrow(/unavailable/);
+    expect(() => spectralEditRange(mod, ch([1]), 48000, null, options)).toThrow(RangeError);
+    expect(() =>
+      spectralEditRange(mod, ch([1]), 48000, null, {
+        lowHz: 4000,
+        highHz: 0,
+        gainDb: Number.NaN,
+        mode: 'gain',
+      }),
+    ).toThrow(RangeError);
+  });
+});
+
 describe('repair operations', () => {
   it('declickRange delegates with the sample rate over the range', () => {
     const masteringRepairDeclick = vi.fn(
@@ -677,9 +926,57 @@ describe('repair operations', () => {
     ]);
   });
 
-  it('both throw when the processor is unavailable', () => {
+  it('additional repair processors delegate per channel and support shortened output', () => {
+    const masteringRepairDeclip = vi.fn(
+      (samples: Float32Array) =>
+        samples.map((v) => Math.max(-0.8, Math.min(0.8, v))) as Float32Array,
+    );
+    const masteringRepairDecrackle = vi.fn(
+      (samples: Float32Array) => samples.map((v) => v * 0.75) as Float32Array,
+    );
+    const masteringRepairDehum = vi.fn(
+      (samples: Float32Array) => samples.map((v) => v - 0.1) as Float32Array,
+    );
+    const masteringRepairDereverbClassical = vi.fn(
+      (samples: Float32Array) => samples.map((v) => v * 0.25) as Float32Array,
+    );
+    const masteringRepairTrimSilence = vi.fn((samples: Float32Array) => samples.slice(1, 3));
+
+    expect(plain(declipRange({ masteringRepairDeclip }, ch([1, -1]), 44100))).toEqual([
+      [0.800000011920929, -0.800000011920929],
+    ]);
+    expect(plain(decrackleRange({ masteringRepairDecrackle }, ch([4, 8]), 44100))).toEqual([
+      [3, 6],
+    ]);
+    expect(plain(dehumRange({ masteringRepairDehum }, ch([0.2, 0.3]), 44100))).toEqual([
+      [0.10000000149011612, 0.20000001788139343],
+    ]);
+    expect(plain(dereverbRange({ masteringRepairDereverbClassical }, ch([4, 8]), 44100))).toEqual([
+      [1, 2],
+    ]);
+    expect(
+      plain(
+        trimSilenceRange({ masteringRepairTrimSilence }, ch([9, 1, 2, 9], [8, 3, 4, 8]), 44100, {
+          startFrame: 1,
+          endFrame: 4,
+        }),
+      ),
+    ).toEqual([
+      [9, 2, 9],
+      [8, 4, 8],
+    ]);
+    expect(masteringRepairDeclip).toHaveBeenCalledWith(expect.any(Float32Array), 44100);
+    expect(masteringRepairTrimSilence).toHaveBeenCalledTimes(2);
+  });
+
+  it('all throw when the processor is unavailable', () => {
     expect(() => declickRange({}, ch([1]), 48000)).toThrow(/unavailable/);
     expect(() => denoiseRange({}, ch([1]), 48000)).toThrow(/unavailable/);
+    expect(() => declipRange({}, ch([1]), 48000)).toThrow(/unavailable/);
+    expect(() => decrackleRange({}, ch([1]), 48000)).toThrow(/unavailable/);
+    expect(() => dehumRange({}, ch([1]), 48000)).toThrow(/unavailable/);
+    expect(() => dereverbRange({}, ch([1]), 48000)).toThrow(/unavailable/);
+    expect(() => trimSilenceRange({}, ch([1]), 48000)).toThrow(/unavailable/);
   });
 });
 
@@ -739,5 +1036,210 @@ describe('roomMorphChannels', () => {
     const mod: SampleEditorWasmOps = { roomMorph: (samples) => samples };
     expect(() => roomMorphChannels(mod, ch([1]), 0, preset, 0.5)).toThrow(RangeError);
     expect(() => roomMorphChannels(mod, [], 48000, preset, 0.5)).toThrow(RangeError);
+  });
+});
+
+describe('synthesizeRirChannels', () => {
+  const preset = { lengthM: 6, widthM: 4, heightM: 3, materialPreset: 2 };
+
+  it('synthesizes a mono RIR from the selected room preset', () => {
+    const synthesizeRir = vi.fn((options?: Record<string, unknown>) => {
+      expect(options).toEqual({
+        sampleRate: 48000,
+        lengthM: 6,
+        widthM: 4,
+        heightM: 3,
+        materialPreset: 2,
+      });
+      return { rir: new Float32Array([1, 0.5, 0.25]), sampleRate: 48000, hasError: false };
+    });
+
+    expect(plain(synthesizeRirChannels({ synthesizeRir }, 48000, preset))).toEqual([
+      [1, 0.5, 0.25],
+    ]);
+  });
+
+  it('validates availability, sample rate and synth errors', () => {
+    expect(() => synthesizeRirChannels({}, 48000, preset)).toThrow(/unavailable/);
+    expect(() =>
+      synthesizeRirChannels(
+        {
+          synthesizeRir: () => ({ rir: new Float32Array([1]), sampleRate: 48000, hasError: false }),
+        },
+        0,
+        preset,
+      ),
+    ).toThrow(RangeError);
+    expect(() =>
+      synthesizeRirChannels(
+        { synthesizeRir: () => ({ rir: new Float32Array(), sampleRate: 48000, hasError: true }) },
+        48000,
+        preset,
+      ),
+    ).toThrow(/failed/);
+  });
+});
+
+describe('estimateRoomRange', () => {
+  it('downmixes the range and summarizes the room estimate', () => {
+    const estimateRoom = vi.fn((samples: Float32Array, sampleRate?: number, options?: unknown) => {
+      expect([...samples]).toEqual([4, 5]);
+      expect(sampleRate).toBe(48000);
+      expect(options).toEqual({ mode: 0, nOctaveBands: 6 });
+      return {
+        volume: 120,
+        length: 6,
+        width: 5,
+        height: 4,
+        drrDb: -8,
+        confidence: 0.75,
+        absorptionBands: new Float32Array([0.2, 0.3]),
+        rt60Bands: new Float32Array([0.4, 0.6, Number.NaN]),
+      };
+    });
+
+    const summary = estimateRoomRange({ estimateRoom }, ch([1, 2, 3, 4], [5, 6, 7, 8]), 48000, {
+      startFrame: 1,
+      endFrame: 3,
+    });
+
+    expect(summary).toMatchObject({
+      volume: 120,
+      length: 6,
+      width: 5,
+      height: 4,
+      drrDb: -8,
+      confidence: 0.75,
+    });
+    expect(summary.rt60Mid).toBeCloseTo(0.5, 6);
+    expect(summary.absorptionMean).toBeCloseTo(0.25, 6);
+  });
+
+  it('validates availability, sample rate and range', () => {
+    const mod: SampleEditorWasmOps = {
+      estimateRoom: () => ({
+        volume: 0,
+        length: 0,
+        width: 0,
+        height: 0,
+        drrDb: 0,
+        confidence: 0,
+        absorptionBands: new Float32Array(),
+        rt60Bands: new Float32Array(),
+      }),
+    };
+
+    expect(() => estimateRoomRange({}, ch([1]), 48000)).toThrow(/unavailable/);
+    expect(() => estimateRoomRange(mod, ch([1]), 0)).toThrow(RangeError);
+    expect(() => estimateRoomRange(mod, ch([1, 2]), 48000, { startFrame: 1, endFrame: 1 })).toThrow(
+      RangeError,
+    );
+    const summary = estimateRoomRange(mod, ch([1]), 48000);
+    expect(summary.rt60Mid).toBeNaN();
+    expect(summary.absorptionMean).toBeNaN();
+  });
+
+  it('converts room estimates into presets for roomMorph and RIR synthesis', () => {
+    const base = {
+      volume: 48,
+      length: 6,
+      width: 4,
+      height: 2,
+      drrDb: -8,
+      confidence: 0.75,
+      rt60Mid: 0.65,
+    };
+    expect(roomEstimateToPreset({ ...base, absorptionMean: 0.12 })).toEqual({
+      lengthM: 6,
+      widthM: 4,
+      heightM: 2,
+      materialPreset: 1,
+    });
+    expect(roomEstimateToPreset({ ...base, absorptionMean: 0.52 })).toEqual({
+      lengthM: 6,
+      widthM: 4,
+      heightM: 2,
+      materialPreset: 4,
+    });
+    expect(() => roomEstimateToPreset({ ...base, length: 0, absorptionMean: Number.NaN })).toThrow(
+      RangeError,
+    );
+  });
+});
+
+describe('acoustic analysis helpers', () => {
+  const result = {
+    rt60: 0.8,
+    edt: 0.5,
+    c50: 3,
+    c80: 4,
+    d50: 0.6,
+    rt60Bands: new Float32Array([0.7, 0.9, Number.NaN]),
+    edtBands: new Float32Array([0.4, 0.6]),
+    c50Bands: new Float32Array([2, 3]),
+    c80Bands: new Float32Array([4, 5]),
+    confidence: 0.8,
+    isBlind: false,
+  };
+
+  it('analyzes a selected impulse response after downmixing', () => {
+    const analyzeImpulseResponse = vi.fn(
+      (samples: Float32Array, sampleRate?: number, bands?: number) => {
+        expect([...samples]).toEqual([4, 5]);
+        expect(sampleRate).toBe(48000);
+        expect(bands).toBe(6);
+        return result;
+      },
+    );
+
+    const summary = analyzeImpulseResponseRange(
+      { analyzeImpulseResponse },
+      ch([1, 2, 3, 4], [5, 6, 7, 8]),
+      48000,
+      { startFrame: 1, endFrame: 3 },
+    );
+
+    expect(summary).toMatchObject({
+      kind: 'impulse',
+      rt60: 0.8,
+      edt: 0.5,
+      c50: 3,
+      c80: 4,
+      d50: 0.6,
+      confidence: 0.8,
+      isBlind: false,
+    });
+    expect(summary.rt60Mean).toBeCloseTo(0.8, 6);
+    expect(summary.edtMean).toBeCloseTo(0.5, 6);
+  });
+
+  it('runs blind acoustic detection with octave-band options', () => {
+    const detectAcoustic = vi.fn(
+      (samples: Float32Array, sampleRate?: number, options?: unknown) => {
+        expect([...samples]).toEqual([1]);
+        expect(sampleRate).toBe(44100);
+        expect(options).toEqual({ nOctaveBands: 6 });
+        return { ...result, isBlind: true };
+      },
+    );
+
+    expect(detectAcousticRange({ detectAcoustic }, ch([1]), 44100)).toMatchObject({
+      kind: 'blind',
+      isBlind: true,
+    });
+  });
+
+  it('validates availability, sample rate and range', () => {
+    const mod: SampleEditorWasmOps = {
+      analyzeImpulseResponse: () => result,
+      detectAcoustic: () => result,
+    };
+
+    expect(() => analyzeImpulseResponseRange({}, ch([1]), 48000)).toThrow(/unavailable/);
+    expect(() => detectAcousticRange({}, ch([1]), 48000)).toThrow(/unavailable/);
+    expect(() => analyzeImpulseResponseRange(mod, ch([1]), 0)).toThrow(RangeError);
+    expect(() =>
+      detectAcousticRange(mod, ch([1, 2]), 48000, { startFrame: 1, endFrame: 1 }),
+    ).toThrow(RangeError);
   });
 });

@@ -59,11 +59,13 @@ export function useSampleViewport(options: UseSampleViewportOptions) {
   let viewport: SampleViewport | null = null;
   let resizeObserver: ResizeObserver | null = null;
   let drawQueued = false;
+  let drawFrame: number | null = null;
 
   function scheduleDraw(): void {
     if (drawQueued) return;
     drawQueued = true;
-    requestAnimationFrame(() => {
+    drawFrame = requestAnimationFrame(() => {
+      drawFrame = null;
       drawQueued = false;
       draw();
     });
@@ -201,6 +203,11 @@ export function useSampleViewport(options: UseSampleViewportOptions) {
   });
 
   onBeforeUnmount(() => {
+    if (drawFrame !== null) {
+      cancelAnimationFrame(drawFrame);
+      drawFrame = null;
+      drawQueued = false;
+    }
     resizeObserver?.disconnect();
     resizeObserver = null;
   });

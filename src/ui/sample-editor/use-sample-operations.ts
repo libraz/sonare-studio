@@ -36,20 +36,36 @@ import {
 } from './ops';
 import { modeMaskFor, scaleName } from './scales';
 import {
+  type AcousticAnalysisSummary,
+  analyzeImpulseResponseRange,
   analyzeMatchEqToReference,
   declickRange,
+  declipRange,
+  decrackleRange,
+  dehumRange,
   denoiseRange,
+  dereverbRange,
+  detectAcousticRange,
+  estimateRoomRange,
   harmonicRange,
   matchEqToReference,
   noteStretchRange,
   percussiveRange,
   pitchCorrectRange,
+  pitchCorrectTimevaryingRange,
   pitchShiftRange,
+  type RoomEstimateSummary,
   type RoomMorphPreset,
+  roomEstimateToPreset,
   roomMorphChannels,
   type SampleEditorWasmOps,
+  type SpectralEditMode,
   scaleCorrectRange,
+  spectralDenoiseRange,
+  spectralEditRange,
+  synthesizeRirChannels,
   timeStretchRange,
+  trimSilenceRange,
   tuneToReferenceRange,
   voiceChangeRange,
 } from './wasm-ops';
@@ -64,6 +80,7 @@ const ROOM_PRESETS: ReadonlyArray<{ id: string; preset: RoomMorphPreset }> = [
   { id: 'largeRoom', preset: { lengthM: 9, widthM: 7, heightM: 3.5, materialPreset: 4 } },
   { id: 'concertHall', preset: { lengthM: 24, widthM: 16, heightM: 10, materialPreset: 1 } },
 ];
+const ESTIMATED_ROOM_PRESET_ID = 'estimatedRoom';
 
 /** Peak targets (in dB) offered by the normalize control. */
 export const NORMALIZE_TARGET_OPTIONS: { value: string; label: string }[] = [
@@ -77,6 +94,14 @@ export const MATCH_EQ_CURVE_WIDTH = 240;
 export const MATCH_EQ_CURVE_HEIGHT = 64;
 /** Half-range of the curve's symmetric dB axis (gains clamp to ±this). */
 const MATCH_EQ_CURVE_DB_RANGE = 12;
+
+export const SPECTRAL_EDIT_MODE_OPTIONS: { value: SpectralEditMode; labelKey: SpectralEditMode }[] =
+  [
+    { value: 'attenuate', labelKey: 'attenuate' },
+    { value: 'gain', labelKey: 'gain' },
+    { value: 'mute', labelKey: 'mute' },
+    { value: 'heal', labelKey: 'heal' },
+  ];
 
 /** Options for {@link useSampleOperations}. */
 export interface UseSampleOperationsOptions {
@@ -144,6 +169,11 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   const stretchInput = ref('1');
   /** Silence-split threshold in dB below the peak. */
   const silenceThresholdInput = ref('40');
+  /** Rectangular spectral edit controls: frequency band, gain and edit mode. */
+  const spectralLowHzInput = ref('4000');
+  const spectralHighHzInput = ref('0');
+  const spectralGainDbInput = ref('-18');
+  const spectralModeInput = ref<SpectralEditMode>('attenuate');
 
   /** Selected room shape id (see {@link ROOM_PRESETS}). */
   const roomPresetId = ref(ROOM_PRESETS[0].id);
@@ -160,6 +190,14 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   const matchEqAnalysis = ref<MatchEqAnalysis | null>(null);
   /** True while a Match EQ analysis is awaiting the engine. */
   const analyzingMatchEq = ref(false);
+  /** Latest room estimate for the selected range / whole file. */
+  const roomEstimate = ref<RoomEstimateSummary | null>(null);
+  /** True while room estimation is awaiting the engine. */
+  const estimatingRoom = ref(false);
+  /** Latest acoustic metrics from IR or blind acoustic analysis. */
+  const acousticAnalysis = ref<AcousticAnalysisSummary | null>(null);
+  /** True while acoustic analysis is awaiting the engine. */
+  const analyzingAcoustic = ref(false);
 
   const opsDisabled = computed(
     () => busy.value || loading.value || !asset.value || asset.value.meta.numFrames === 0,
@@ -174,13 +212,26 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   ]);
 
   /** Room-shape picker options labelled from the localized preset names. */
-  const roomPresetOptions = computed(() =>
-    ROOM_PRESETS.map((entry) => ({
-      value: entry.id,
-      label:
-        t.value.shell.sampleEditor.roomPresets[
-          entry.id as keyof typeof t.value.shell.sampleEditor.roomPresets
-        ],
+  const roomPresetOptions = computed(() => {
+    const estimated = roomEstimate.value
+      ? [{ value: ESTIMATED_ROOM_PRESET_ID, label: t.value.shell.sampleEditor.estimatedRoom }]
+      : [];
+    return [
+      ...estimated,
+      ...ROOM_PRESETS.map((entry) => ({
+        value: entry.id,
+        label:
+          t.value.shell.sampleEditor.roomPresets[
+            entry.id as keyof typeof t.value.shell.sampleEditor.roomPresets
+          ],
+      })),
+    ];
+  });
+
+  const spectralModeOptions = computed(() =>
+    SPECTRAL_EDIT_MODE_OPTIONS.map((entry) => ({
+      value: entry.value,
+      label: t.value.shell.sampleEditor.spectralModes[entry.labelKey],
     })),
   );
 
@@ -214,6 +265,35 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   watch(referenceAssetId, () => {
     matchEqAnalysis.value = null;
   });
+
+  watch(asset, () => {
+    roomEstimate.value = null;
+    if (roomPresetId.value === ESTIMATED_ROOM_PRESET_ID) {
+      roomPresetId.value = ROOM_PRESETS[0].id;
+    }
+  });
+
+  function selectedRoomPreset(): { id: string; label: string; preset: RoomMorphPreset } | null {
+    if (roomPresetId.value === ESTIMATED_ROOM_PRESET_ID) {
+      const estimate = roomEstimate.value;
+      if (!estimate) return null;
+      return {
+        id: ESTIMATED_ROOM_PRESET_ID,
+        label: t.value.shell.sampleEditor.estimatedRoom,
+        preset: roomEstimateToPreset(estimate),
+      };
+    }
+    const entry = ROOM_PRESETS.find((candidate) => candidate.id === roomPresetId.value);
+    if (!entry) return null;
+    return {
+      id: entry.id,
+      label:
+        t.value.shell.sampleEditor.roomPresets[
+          entry.id as keyof typeof t.value.shell.sampleEditor.roomPresets
+        ],
+      preset: entry.preset,
+    };
+  }
 
   /**
    * Runs one offline operation: produces new channel buffers, stores them as a
@@ -336,6 +416,23 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     );
   }
 
+  async function onPitchCorrectTimevarying(): Promise<void> {
+    const ops = wasmOps.value;
+    if (!ops) return;
+    const targetMidi = parseMidiNote(tuneNoteInput.value);
+    if (targetMidi === null) {
+      error.value = t.value.shell.sampleEditor.errors.tune;
+      return;
+    }
+    await runOp(
+      formatMessage(t.value.shell.sampleEditor.ops.tuneContour, {
+        note: formatMidiNote(targetMidi),
+      }),
+      (channels, range) =>
+        pitchCorrectTimevaryingRange(ops, channels, sampleRate(), targetMidi, range),
+    );
+  }
+
   async function onTuneReference(): Promise<void> {
     const ops = wasmOps.value;
     if (!ops) return;
@@ -420,6 +517,46 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     );
   }
 
+  async function onDeclip(): Promise<void> {
+    const ops = wasmOps.value;
+    if (!ops) return;
+    await runOp(t.value.shell.sampleEditor.ops.declip, (channels, range) =>
+      declipRange(ops, channels, sampleRate(), range),
+    );
+  }
+
+  async function onDecrackle(): Promise<void> {
+    const ops = wasmOps.value;
+    if (!ops) return;
+    await runOp(t.value.shell.sampleEditor.ops.decrackle, (channels, range) =>
+      decrackleRange(ops, channels, sampleRate(), range),
+    );
+  }
+
+  async function onDehum(): Promise<void> {
+    const ops = wasmOps.value;
+    if (!ops) return;
+    await runOp(t.value.shell.sampleEditor.ops.dehum, (channels, range) =>
+      dehumRange(ops, channels, sampleRate(), range),
+    );
+  }
+
+  async function onDereverb(): Promise<void> {
+    const ops = wasmOps.value;
+    if (!ops) return;
+    await runOp(t.value.shell.sampleEditor.ops.dereverb, (channels, range) =>
+      dereverbRange(ops, channels, sampleRate(), range),
+    );
+  }
+
+  async function onTrimSilenceRepair(): Promise<void> {
+    const ops = wasmOps.value;
+    if (!ops) return;
+    await runOp(t.value.shell.sampleEditor.ops.trimSilence, (channels, range) =>
+      trimSilenceRange(ops, channels, sampleRate(), range),
+    );
+  }
+
   async function onHarmonic(): Promise<void> {
     const ops = wasmOps.value;
     if (!ops) return;
@@ -436,6 +573,36 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     );
   }
 
+  async function onSpectralDenoise(): Promise<void> {
+    const ops = wasmOps.value;
+    if (!ops) return;
+    await runOp(t.value.shell.sampleEditor.ops.spectralDenoise, (channels, range) =>
+      spectralDenoiseRange(ops, channels, sampleRate(), range),
+    );
+  }
+
+  async function onSpectralEdit(): Promise<void> {
+    const ops = wasmOps.value;
+    if (!ops) return;
+    const lowHz = parseNumber(spectralLowHzInput.value);
+    const highHz = parseNumber(spectralHighHzInput.value);
+    const gainDb = parseNumber(spectralGainDbInput.value);
+    const mode = spectralModeInput.value;
+    if (lowHz === null || highHz === null || gainDb === null) {
+      error.value = t.value.shell.sampleEditor.errors.spectralEdit;
+      return;
+    }
+    await runOp(
+      formatMessage(t.value.shell.sampleEditor.ops.spectralEdit, {
+        mode: t.value.shell.sampleEditor.spectralModes[mode],
+        lowHz,
+        highHz: highHz === 0 ? t.value.shell.sampleEditor.nyquist : highHz,
+      }),
+      (channels, range) =>
+        spectralEditRange(ops, channels, sampleRate(), range, { lowHz, highHz, gainDb, mode }),
+    );
+  }
+
   /**
    * Places the whole file in a synthesized room, extending it with the reverb
    * tail (room reverb is a whole-signal effect, so it ignores any selection).
@@ -443,18 +610,25 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   async function onPlaceInRoom(): Promise<void> {
     const ops = wasmOps.value;
     if (!ops) return;
-    const entry = ROOM_PRESETS.find((candidate) => candidate.id === roomPresetId.value);
+    const entry = selectedRoomPreset();
     if (!entry) return;
     // Clamp the user's percentage to [0, 100] before mapping to a [0, 1] wet mix.
     const wetPercent = parseNumber(roomWetInput.value) ?? 35;
     const wet = Math.min(Math.max(wetPercent, 0), 100) / 100;
-    const roomName =
-      t.value.shell.sampleEditor.roomPresets[
-        entry.id as keyof typeof t.value.shell.sampleEditor.roomPresets
-      ];
     await runOp(
-      formatMessage(t.value.shell.sampleEditor.ops.placeInRoom, { room: roomName }),
+      formatMessage(t.value.shell.sampleEditor.ops.placeInRoom, { room: entry.label }),
       (channels) => roomMorphChannels(ops, channels, sampleRate(), entry.preset, wet),
+    );
+  }
+
+  async function onSynthesizeRir(): Promise<void> {
+    const ops = wasmOps.value;
+    if (!ops) return;
+    const entry = selectedRoomPreset();
+    if (!entry) return;
+    await runOp(
+      formatMessage(t.value.shell.sampleEditor.ops.synthesizeRir, { room: entry.label }),
+      () => synthesizeRirChannels(ops, sampleRate(), entry.preset),
     );
   }
 
@@ -527,6 +701,70 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     }
   }
 
+  /** Estimates room size/decay from the selection (or whole file). */
+  async function onEstimateRoom(): Promise<void> {
+    const ops = wasmOps.value;
+    const loaded = asset.value;
+    if (!ops || !loaded || opsDisabled.value || estimatingRoom.value) return;
+    error.value = null;
+    estimatingRoom.value = true;
+    try {
+      roomEstimate.value = estimateRoomRange(
+        ops,
+        loaded.channels,
+        loaded.meta.sampleRate,
+        selRange(),
+      );
+      roomPresetId.value = ESTIMATED_ROOM_PRESET_ID;
+    } catch (err) {
+      error.value = errorMessage(err);
+    } finally {
+      estimatingRoom.value = false;
+    }
+  }
+
+  /** Analyzes the selection as an impulse response and shows decay/clarity metrics. */
+  async function onAnalyzeImpulseResponse(): Promise<void> {
+    const ops = wasmOps.value;
+    const loaded = asset.value;
+    if (!ops || !loaded || opsDisabled.value || analyzingAcoustic.value) return;
+    error.value = null;
+    analyzingAcoustic.value = true;
+    try {
+      acousticAnalysis.value = analyzeImpulseResponseRange(
+        ops,
+        loaded.channels,
+        loaded.meta.sampleRate,
+        selRange(),
+      );
+    } catch (err) {
+      error.value = errorMessage(err);
+    } finally {
+      analyzingAcoustic.value = false;
+    }
+  }
+
+  /** Runs blind acoustic detection over the selection or whole file. */
+  async function onDetectAcoustic(): Promise<void> {
+    const ops = wasmOps.value;
+    const loaded = asset.value;
+    if (!ops || !loaded || opsDisabled.value || analyzingAcoustic.value) return;
+    error.value = null;
+    analyzingAcoustic.value = true;
+    try {
+      acousticAnalysis.value = detectAcousticRange(
+        ops,
+        loaded.channels,
+        loaded.meta.sampleRate,
+        selRange(),
+      );
+    } catch (err) {
+      error.value = errorMessage(err);
+    } finally {
+      analyzingAcoustic.value = false;
+    }
+  }
+
   return {
     gainDbInput,
     normalizeTargetInput,
@@ -538,6 +776,10 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     voiceFormantInput,
     stretchInput,
     silenceThresholdInput,
+    spectralLowHzInput,
+    spectralHighHzInput,
+    spectralGainDbInput,
+    spectralModeInput,
     roomPresetId,
     roomWetInput,
     referenceAssets,
@@ -545,9 +787,14 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     matchEqAmountInput,
     matchEqAnalysis,
     analyzingMatchEq,
+    roomEstimate,
+    estimatingRoom,
+    acousticAnalysis,
+    analyzingAcoustic,
     opsDisabled,
     referenceOptions,
     roomPresetOptions,
+    spectralModeOptions,
     matchEqCurvePoints,
     refreshReferenceAssets,
     onGain,
@@ -559,6 +806,7 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     onTrim,
     onPitchShift,
     onPitchCorrect,
+    onPitchCorrectTimevarying,
     onTuneReference,
     onScaleCorrect,
     onVoiceChange,
@@ -566,9 +814,20 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     onNoteStretch,
     onDeclick,
     onDenoise,
+    onDeclip,
+    onDecrackle,
+    onDehum,
+    onDereverb,
+    onTrimSilenceRepair,
     onHarmonic,
     onPercussive,
+    onSpectralDenoise,
+    onSpectralEdit,
     onPlaceInRoom,
+    onSynthesizeRir,
+    onEstimateRoom,
+    onAnalyzeImpulseResponse,
+    onDetectAcoustic,
     onMatchEq,
     onAnalyzeMatchEq,
   };

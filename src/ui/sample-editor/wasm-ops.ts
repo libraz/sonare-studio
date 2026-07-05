@@ -1,6 +1,6 @@
 /**
  * Wasm-delegated offline operations for the sample editor: pitch shift,
- * time stretch and the repair processors (declick, denoise). The libsonare
+ * time stretch and the repair processors. The libsonare
  * functions are one-shot mono Float32Array transforms, so each operation maps
  * them per channel over the selected range and splices the result back.
  *
@@ -33,8 +33,38 @@ export interface SampleEditorWasmOps {
     currentMidi?: number,
     targetMidi?: number,
   ) => Float32Array;
-  /** Monophonic pitch tracker; only `medianF0` (Hz, 0 when unvoiced) is used. */
-  pitchYin?: (samples: Float32Array, sampleRate?: number) => { medianF0: number };
+  /** Monophonic pitch tracker. */
+  pitchYin?: (
+    samples: Float32Array,
+    sampleRate?: number,
+    frameLength?: number,
+    hopLength?: number,
+    fmin?: number,
+    fmax?: number,
+    threshold?: number,
+    fillNa?: boolean,
+  ) => { f0?: Float32Array; voicedProb?: Float32Array; voicedFlag?: boolean[]; medianF0: number };
+  /** Probabilistic pitch tracker. */
+  pitchPyin?: (
+    samples: Float32Array,
+    sampleRate?: number,
+    frameLength?: number,
+    hopLength?: number,
+    fmin?: number,
+    fmax?: number,
+    threshold?: number,
+    fillNa?: boolean,
+  ) => { f0?: Float32Array; voicedProb?: Float32Array; voicedFlag?: boolean[]; medianF0: number };
+  /** Contour-following pitch correction to a target MIDI note. */
+  pitchCorrectToMidiTimevarying?: (
+    samples: Float32Array,
+    f0Hz: Float32Array,
+    targetMidi: number,
+    sampleRate?: number,
+    hopLength?: number,
+    voiced?: Int32Array,
+    voicedProb?: Float32Array,
+  ) => Float32Array;
   /**
    * Global tuning estimate: the deviation from A440 as a
    * fraction of a semitone in (-0.5, 0.5] (positive = sharp).
@@ -80,6 +110,16 @@ export interface SampleEditorWasmOps {
   masteringRepairDeclick?: (samples: Float32Array, sampleRate: number) => Float32Array;
   /** Classical (non-ML) broadband denoise. */
   masteringRepairDenoiseClassical?: (samples: Float32Array, sampleRate: number) => Float32Array;
+  /** Clipped-peak reconstruction. */
+  masteringRepairDeclip?: (samples: Float32Array, sampleRate: number) => Float32Array;
+  /** Fine crackle suppression. */
+  masteringRepairDecrackle?: (samples: Float32Array, sampleRate: number) => Float32Array;
+  /** Mains hum removal. */
+  masteringRepairDehum?: (samples: Float32Array, sampleRate: number) => Float32Array;
+  /** Classical dereverberation. */
+  masteringRepairDereverbClassical?: (samples: Float32Array, sampleRate: number) => Float32Array;
+  /** Silence trimming; may shorten the processed range. */
+  masteringRepairTrimSilence?: (samples: Float32Array, sampleRate: number) => Float32Array;
   /** Transient onset detection; returns onset times in seconds. */
   detectOnsets?: (samples: Float32Array, sampleRate: number) => Float32Array;
   /**
@@ -98,6 +138,79 @@ export interface SampleEditorWasmOps {
     samples: Float32Array,
     sampleRate: number,
     options?: Record<string, number | boolean>,
+  ) => Float32Array;
+  /** Synthesizes a mono room impulse response from room geometry. */
+  synthesizeRir?: (options?: {
+    sampleRate?: number;
+    lengthM?: number;
+    widthM?: number;
+    heightM?: number;
+    materialPreset?: number;
+    maxSeconds?: number;
+  }) => { rir: Float32Array; sampleRate: number; hasError: boolean };
+  /** Blind/IR room estimation over mono audio. */
+  estimateRoom?: (
+    samples: Float32Array,
+    sampleRate?: number,
+    options?: {
+      aspectHintLw?: number;
+      aspectHintLh?: number;
+      referenceAbsorption?: number;
+      preferEyring?: boolean;
+      nOctaveBands?: number;
+      mode?: number;
+      minDecayDb?: number;
+      noiseFloorMarginDb?: number;
+    },
+  ) => {
+    volume: number;
+    length: number;
+    width: number;
+    height: number;
+    drrDb: number;
+    confidence: number;
+    absorptionBands: Float32Array;
+    rt60Bands: Float32Array;
+  };
+  /** Acoustic metrics from an impulse response. */
+  analyzeImpulseResponse?: (
+    samples: Float32Array,
+    sampleRate?: number,
+    nOctaveBands?: number,
+  ) => AcousticAnalysisResult;
+  /** Blind acoustic metrics from program material or a room response. */
+  detectAcoustic?: (
+    samples: Float32Array,
+    sampleRate?: number,
+    options?: {
+      nOctaveBands?: number;
+      nThirdOctaveSubbands?: number;
+      minDecayDb?: number;
+      noiseFloorMarginDb?: number;
+    },
+  ) => AcousticAnalysisResult;
+  /**
+   * STFT-domain rectangular edits. The sample editor uses it for selection-
+   * scoped spectral cleanup presets until a full spectrogram selection UI is
+   * introduced.
+   */
+  spectralEdit?: (
+    samples: Float32Array,
+    sampleRate: number,
+    ops?: Array<{
+      startSample?: number;
+      endSample?: number;
+      lowHz?: number;
+      highHz?: number;
+      gainDb?: number;
+      mode?: 'gain' | 'attenuate' | 'mute' | 'heal';
+    }>,
+    options?: {
+      nFft?: number;
+      hopLength?: number;
+      window?: 'hann' | 'hamming' | 'blackman' | 'rectangular';
+      healRadiusFrames?: number;
+    },
   ) => Float32Array;
   /**
    * Reference-pair processor. For 'match.applyMatchEq' it EQ-matches `source`
@@ -128,6 +241,7 @@ export interface SampleEditorWasmOps {
 export interface WasmOpAvailability {
   pitchShift: boolean;
   pitchCorrect: boolean;
+  pitchCorrectTimevarying: boolean;
   tuneReference: boolean;
   scaleCorrect: boolean;
   voiceChange: boolean;
@@ -137,11 +251,30 @@ export interface WasmOpAvailability {
   noteStretch: boolean;
   declick: boolean;
   denoise: boolean;
+  declip: boolean;
+  decrackle: boolean;
+  dehum: boolean;
+  dereverb: boolean;
+  trimSilence: boolean;
   detectOnsets: boolean;
   splitSilence: boolean;
   matchEq: boolean;
   matchEqAnalyze: boolean;
   roomMorph: boolean;
+  synthesizeRir: boolean;
+  estimateRoom: boolean;
+  analyzeImpulseResponse: boolean;
+  detectAcoustic: boolean;
+  spectralEdit: boolean;
+}
+
+export type SpectralEditMode = 'gain' | 'attenuate' | 'mute' | 'heal';
+
+export interface SpectralEditRangeOptions {
+  lowHz: number;
+  highHz: number;
+  gainDb: number;
+  mode: SpectralEditMode;
 }
 
 /** Reports availability of the wasm-delegated operations (all false on null). */
@@ -151,6 +284,9 @@ export function wasmOpAvailability(
   return {
     pitchShift: typeof ops?.pitchShift === 'function',
     pitchCorrect: typeof ops?.pitchCorrectToMidi === 'function',
+    pitchCorrectTimevarying:
+      typeof ops?.pitchCorrectToMidiTimevarying === 'function' &&
+      (typeof ops?.pitchPyin === 'function' || typeof ops?.pitchYin === 'function'),
     tuneReference:
       typeof ops?.estimateTuning === 'function' && typeof ops?.pitchShift === 'function',
     scaleCorrect:
@@ -164,11 +300,21 @@ export function wasmOpAvailability(
     noteStretch: typeof ops?.noteStretch === 'function',
     declick: typeof ops?.masteringRepairDeclick === 'function',
     denoise: typeof ops?.masteringRepairDenoiseClassical === 'function',
+    declip: typeof ops?.masteringRepairDeclip === 'function',
+    decrackle: typeof ops?.masteringRepairDecrackle === 'function',
+    dehum: typeof ops?.masteringRepairDehum === 'function',
+    dereverb: typeof ops?.masteringRepairDereverbClassical === 'function',
+    trimSilence: typeof ops?.masteringRepairTrimSilence === 'function',
     detectOnsets: typeof ops?.detectOnsets === 'function',
     splitSilence: typeof ops?.splitSilence === 'function',
     matchEq: typeof ops?.masteringPairProcess === 'function',
     matchEqAnalyze: typeof ops?.masteringPairAnalyze === 'function',
     roomMorph: typeof ops?.roomMorph === 'function',
+    synthesizeRir: typeof ops?.synthesizeRir === 'function',
+    estimateRoom: typeof ops?.estimateRoom === 'function',
+    analyzeImpulseResponse: typeof ops?.analyzeImpulseResponse === 'function',
+    detectAcoustic: typeof ops?.detectAcoustic === 'function',
+    spectralEdit: typeof ops?.spectralEdit === 'function',
   };
 }
 
@@ -256,6 +402,64 @@ export function pitchCorrectRange(
     throw new RangeError(`targetMidi must be an integer in [0, 127], got ${targetMidi}`);
   }
   return applyToRange(channels, range, (segment) => fn(segment, sampleRate, undefined, targetMidi));
+}
+
+/**
+ * Contour-following pitch correction to a target MIDI note. The F0 contour is
+ * measured once on the mono downmix (pYIN when present, YIN fallback), then the
+ * same contour drives every channel so stereo phase relationships remain
+ * coherent.
+ *
+ * @throws Error when the required contour or correction functions are missing.
+ * @throws RangeError when targetMidi/range are invalid.
+ */
+export function pitchCorrectTimevaryingRange(
+  ops: SampleEditorWasmOps,
+  channels: ReadonlyArray<Float32Array>,
+  sampleRate: number,
+  targetMidi: number,
+  range?: SampleRange | null,
+): Float32Array[] {
+  const correct = ops.pitchCorrectToMidiTimevarying;
+  const detect = ops.pitchPyin ?? ops.pitchYin;
+  if (typeof correct !== 'function' || typeof detect !== 'function') {
+    throw new Error('Time-varying pitch correction is unavailable in this libsonare build');
+  }
+  if (!Number.isInteger(targetMidi) || targetMidi < 0 || targetMidi > 127) {
+    throw new RangeError(`targetMidi must be an integer in [0, 127], got ${targetMidi}`);
+  }
+  const resolved = resolveRange(channels, range);
+  if (resolved.endFrame <= resolved.startFrame) {
+    throw new RangeError('Cannot process an empty range');
+  }
+  const segments = channels.map((channel) => channel.slice(resolved.startFrame, resolved.endFrame));
+  const hopLength = 512;
+  const contour = detect(
+    downmixToMono(segments),
+    sampleRate,
+    2048,
+    hopLength,
+    undefined,
+    undefined,
+    undefined,
+    true,
+  );
+  const f0 = contour.f0;
+  if (!f0 || f0.length === 0 || !Array.from(f0).some((hz) => hz > 0 && Number.isFinite(hz))) {
+    throw new Error('Could not detect a pitch contour in the selection');
+  }
+  const voiced =
+    contour.voicedFlag && contour.voicedFlag.length === f0.length
+      ? Int32Array.from(contour.voicedFlag, (flag) => (flag ? 1 : 0))
+      : undefined;
+  const corrected = segments.map((segment) =>
+    correct(segment, f0, targetMidi, sampleRate, hopLength, voiced, contour.voicedProb),
+  );
+  const minFrames = Math.min(...corrected.map((segment) => segment.length));
+  const planar = corrected.map((segment) =>
+    segment.length === minFrames ? segment : segment.slice(0, minFrames),
+  );
+  return spliceRange(channels, resolved, planar);
 }
 
 /**
@@ -428,6 +632,90 @@ export function percussiveRange(
 }
 
 /**
+ * Applies a practical spectral cleanup preset to the range: attenuate high
+ * frequencies above `lowHz` in the selected time window. The operation uses
+ * libsonare's rectangular spectralEdit op over the whole channel so the STFT
+ * context can span the edit boundaries while the edit rectangle stays
+ * selection-scoped.
+ *
+ * @throws Error when the module does not provide spectralEdit.
+ * @throws RangeError when the range or frequency/gain parameters are invalid.
+ */
+export function spectralDenoiseRange(
+  ops: SampleEditorWasmOps,
+  channels: ReadonlyArray<Float32Array>,
+  sampleRate: number,
+  range?: SampleRange | null,
+  lowHz = 4000,
+  gainDb = -18,
+): Float32Array[] {
+  return spectralEditRange(ops, channels, sampleRate, range, {
+    lowHz,
+    highHz: 0,
+    gainDb,
+    mode: 'attenuate',
+  });
+}
+
+/**
+ * Applies one rectangular spectral edit over the selected time range and
+ * frequency band. `highHz` may be 0 to mean "up to Nyquist", matching the
+ * libsonare spectralEdit convention used by the preset cleanup operation.
+ *
+ * @throws Error when the module does not provide spectralEdit.
+ * @throws RangeError when the range or frequency/gain parameters are invalid.
+ */
+export function spectralEditRange(
+  ops: SampleEditorWasmOps,
+  channels: ReadonlyArray<Float32Array>,
+  sampleRate: number,
+  range: SampleRange | null | undefined,
+  options: SpectralEditRangeOptions,
+): Float32Array[] {
+  const fn = ops.spectralEdit;
+  if (typeof fn !== 'function') {
+    throw new Error('Spectral edit is unavailable in this libsonare build');
+  }
+  if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
+    throw new RangeError(`sampleRate must be > 0, got ${sampleRate}`);
+  }
+  if (!Number.isFinite(options.lowHz) || options.lowHz < 0) {
+    throw new RangeError(`lowHz must be finite and >= 0, got ${options.lowHz}`);
+  }
+  if (!Number.isFinite(options.highHz) || options.highHz < 0) {
+    throw new RangeError(`highHz must be finite and >= 0, got ${options.highHz}`);
+  }
+  if (options.highHz > 0 && options.highHz <= options.lowHz) {
+    throw new RangeError(`highHz must be greater than lowHz or 0, got ${options.highHz}`);
+  }
+  if (!Number.isFinite(options.gainDb)) {
+    throw new RangeError(`gainDb must be finite, got ${options.gainDb}`);
+  }
+  if (!['gain', 'attenuate', 'mute', 'heal'].includes(options.mode)) {
+    throw new RangeError(`Unsupported spectral edit mode: ${options.mode}`);
+  }
+  const resolved = resolveRange(channels, range);
+  if (resolved.endFrame <= resolved.startFrame) {
+    throw new RangeError('Cannot process an empty range');
+  }
+  const edit = {
+    startSample: resolved.startFrame,
+    endSample: resolved.endFrame,
+    lowHz: options.lowHz,
+    highHz: options.highHz,
+    gainDb: options.gainDb,
+    mode: options.mode,
+  };
+  const processed = channels.map((channel) =>
+    fn(channel, sampleRate, [edit], { nFft: 2048, hopLength: 512, window: 'hann' }),
+  );
+  const minFrames = Math.min(...processed.map((segment) => segment.length));
+  return processed.map((segment) =>
+    segment.length === minFrames ? segment : segment.slice(0, minFrames),
+  );
+}
+
+/**
  * Time stretches the range by a rate (0.5 = double duration, 2.0 = half),
  * changing the total length accordingly.
  *
@@ -527,6 +815,71 @@ export function denoiseRange(
   const fn = ops.masteringRepairDenoiseClassical;
   if (typeof fn !== 'function') {
     throw new Error('Denoise is unavailable in this libsonare build');
+  }
+  return applyToRange(channels, range, (segment) => fn(segment, sampleRate));
+}
+
+export function declipRange(
+  ops: SampleEditorWasmOps,
+  channels: ReadonlyArray<Float32Array>,
+  sampleRate: number,
+  range?: SampleRange | null,
+): Float32Array[] {
+  const fn = ops.masteringRepairDeclip;
+  if (typeof fn !== 'function') {
+    throw new Error('Declip is unavailable in this libsonare build');
+  }
+  return applyToRange(channels, range, (segment) => fn(segment, sampleRate));
+}
+
+export function decrackleRange(
+  ops: SampleEditorWasmOps,
+  channels: ReadonlyArray<Float32Array>,
+  sampleRate: number,
+  range?: SampleRange | null,
+): Float32Array[] {
+  const fn = ops.masteringRepairDecrackle;
+  if (typeof fn !== 'function') {
+    throw new Error('Decrackle is unavailable in this libsonare build');
+  }
+  return applyToRange(channels, range, (segment) => fn(segment, sampleRate));
+}
+
+export function dehumRange(
+  ops: SampleEditorWasmOps,
+  channels: ReadonlyArray<Float32Array>,
+  sampleRate: number,
+  range?: SampleRange | null,
+): Float32Array[] {
+  const fn = ops.masteringRepairDehum;
+  if (typeof fn !== 'function') {
+    throw new Error('Dehum is unavailable in this libsonare build');
+  }
+  return applyToRange(channels, range, (segment) => fn(segment, sampleRate));
+}
+
+export function dereverbRange(
+  ops: SampleEditorWasmOps,
+  channels: ReadonlyArray<Float32Array>,
+  sampleRate: number,
+  range?: SampleRange | null,
+): Float32Array[] {
+  const fn = ops.masteringRepairDereverbClassical;
+  if (typeof fn !== 'function') {
+    throw new Error('Dereverb is unavailable in this libsonare build');
+  }
+  return applyToRange(channels, range, (segment) => fn(segment, sampleRate));
+}
+
+export function trimSilenceRange(
+  ops: SampleEditorWasmOps,
+  channels: ReadonlyArray<Float32Array>,
+  sampleRate: number,
+  range?: SampleRange | null,
+): Float32Array[] {
+  const fn = ops.masteringRepairTrimSilence;
+  if (typeof fn !== 'function') {
+    throw new Error('Trim silence is unavailable in this libsonare build');
   }
   return applyToRange(channels, range, (segment) => fn(segment, sampleRate));
 }
@@ -749,4 +1102,213 @@ export function roomMorphChannels(
   return processed.map((segment) =>
     segment.length === minFrames ? segment : segment.slice(0, minFrames),
   );
+}
+
+/**
+ * Synthesizes a mono room impulse response from a room preset. The result is
+ * returned as planar audio so it can be stored as a normal sample-editor
+ * version and used elsewhere in the project.
+ *
+ * @throws Error when the module does not provide synthesizeRir or reports an
+ *   invalid geometry.
+ * @throws RangeError on a non-positive sample rate.
+ */
+export function synthesizeRirChannels(
+  ops: SampleEditorWasmOps,
+  sampleRate: number,
+  preset: RoomMorphPreset,
+): Float32Array[] {
+  const fn = ops.synthesizeRir;
+  if (typeof fn !== 'function') {
+    throw new Error('RIR synthesis is unavailable in this libsonare build');
+  }
+  if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
+    throw new RangeError(`sampleRate must be > 0, got ${sampleRate}`);
+  }
+  const result = fn({
+    sampleRate,
+    lengthM: preset.lengthM,
+    widthM: preset.widthM,
+    heightM: preset.heightM,
+    materialPreset: preset.materialPreset,
+  });
+  if (result.hasError || result.rir.length === 0) {
+    throw new Error('RIR synthesis failed for the selected room');
+  }
+  return [result.rir];
+}
+
+/** Display-oriented subset of libsonare's room estimation result. */
+export interface RoomEstimateSummary {
+  volume: number;
+  length: number;
+  width: number;
+  height: number;
+  drrDb: number;
+  confidence: number;
+  rt60Mid: number;
+  absorptionMean: number;
+}
+
+interface AcousticAnalysisResult {
+  rt60: number;
+  edt: number;
+  c50: number;
+  c80: number;
+  d50: number;
+  rt60Bands: Float32Array;
+  edtBands: Float32Array;
+  c50Bands: Float32Array;
+  c80Bands: Float32Array;
+  confidence: number;
+  isBlind: boolean;
+}
+
+/** Display-oriented subset of libsonare's acoustic analysis result. */
+export interface AcousticAnalysisSummary {
+  kind: 'impulse' | 'blind';
+  rt60: number;
+  edt: number;
+  c50: number;
+  c80: number;
+  d50: number;
+  confidence: number;
+  rt60Mean: number;
+  edtMean: number;
+  isBlind: boolean;
+}
+
+function averageFinite(values: ArrayLike<number> | undefined, min = -Infinity): number {
+  const finite = Array.from(values ?? []).filter((value) => Number.isFinite(value) && value >= min);
+  return finite.length > 0
+    ? finite.reduce((sum, value) => sum + value, 0) / finite.length
+    : Number.NaN;
+}
+
+function finitePositive(value: number): boolean {
+  return Number.isFinite(value) && value > 0;
+}
+
+function monoSelection(
+  channels: ReadonlyArray<Float32Array>,
+  sampleRate: number,
+  range?: SampleRange | null,
+): Float32Array {
+  if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
+    throw new RangeError(`sampleRate must be > 0, got ${sampleRate}`);
+  }
+  const resolved = resolveRange(channels, range);
+  if (resolved.endFrame <= resolved.startFrame) {
+    throw new RangeError('Cannot analyze an empty range');
+  }
+  return downmixToMono(
+    channels.map((channel) => channel.slice(resolved.startFrame, resolved.endFrame)),
+  );
+}
+
+function acousticSummary(
+  result: AcousticAnalysisResult,
+  kind: AcousticAnalysisSummary['kind'],
+): AcousticAnalysisSummary {
+  return {
+    kind,
+    rt60: result.rt60,
+    edt: result.edt,
+    c50: result.c50,
+    c80: result.c80,
+    d50: result.d50,
+    confidence: result.confidence,
+    rt60Mean: averageFinite(result.rt60Bands, 0),
+    edtMean: averageFinite(result.edtBands, 0),
+    isBlind: result.isBlind,
+  };
+}
+
+/** Converts blind room-estimation output into a preset usable by RIR and roomMorph. */
+export function roomEstimateToPreset(estimate: RoomEstimateSummary): RoomMorphPreset {
+  const { length, width, height } = estimate;
+  if (!finitePositive(length) || !finitePositive(width) || !finitePositive(height)) {
+    throw new RangeError('Room estimate has invalid dimensions');
+  }
+  const absorption = estimate.absorptionMean;
+  let materialPreset = 2;
+  if (Number.isFinite(absorption)) {
+    if (absorption < 0.18) materialPreset = 1;
+    else if (absorption >= 0.5) materialPreset = 4;
+    else if (absorption >= 0.35) materialPreset = 3;
+  }
+  return { lengthM: length, widthM: width, heightM: height, materialPreset };
+}
+
+/**
+ * Estimates an equivalent room from the selection (or whole file). The source
+ * is downmixed to mono and passed to libsonare's blind/IR room estimator.
+ *
+ * @throws Error when the module does not provide estimateRoom.
+ * @throws RangeError on a non-positive sample rate or empty range.
+ */
+export function estimateRoomRange(
+  ops: SampleEditorWasmOps,
+  channels: ReadonlyArray<Float32Array>,
+  sampleRate: number,
+  range?: SampleRange | null,
+): RoomEstimateSummary {
+  const fn = ops.estimateRoom;
+  if (typeof fn !== 'function') {
+    throw new Error('Room estimation is unavailable in this libsonare build');
+  }
+  const mono = monoSelection(channels, sampleRate, range);
+  const estimate = fn(mono, sampleRate, { mode: 0, nOctaveBands: 6 });
+  const rt60Mid = averageFinite(estimate.rt60Bands, 0);
+  return {
+    volume: estimate.volume,
+    length: estimate.length,
+    width: estimate.width,
+    height: estimate.height,
+    drrDb: estimate.drrDb,
+    confidence: estimate.confidence,
+    rt60Mid,
+    absorptionMean: averageFinite(estimate.absorptionBands, 0),
+  };
+}
+
+/**
+ * Analyzes a selected impulse response and returns acoustic clarity/decay
+ * metrics. Intended for generated/imported RIR assets in the sample editor.
+ *
+ * @throws Error when the module does not provide analyzeImpulseResponse.
+ * @throws RangeError on a non-positive sample rate or empty range.
+ */
+export function analyzeImpulseResponseRange(
+  ops: SampleEditorWasmOps,
+  channels: ReadonlyArray<Float32Array>,
+  sampleRate: number,
+  range?: SampleRange | null,
+): AcousticAnalysisSummary {
+  const fn = ops.analyzeImpulseResponse;
+  if (typeof fn !== 'function') {
+    throw new Error('Impulse response analysis is unavailable in this libsonare build');
+  }
+  const mono = monoSelection(channels, sampleRate, range);
+  return acousticSummary(fn(mono, sampleRate, 6), 'impulse');
+}
+
+/**
+ * Runs libsonare's blind acoustic detector over the selection (or whole file).
+ *
+ * @throws Error when the module does not provide detectAcoustic.
+ * @throws RangeError on a non-positive sample rate or empty range.
+ */
+export function detectAcousticRange(
+  ops: SampleEditorWasmOps,
+  channels: ReadonlyArray<Float32Array>,
+  sampleRate: number,
+  range?: SampleRange | null,
+): AcousticAnalysisSummary {
+  const fn = ops.detectAcoustic;
+  if (typeof fn !== 'function') {
+    throw new Error('Acoustic detection is unavailable in this libsonare build');
+  }
+  const mono = monoSelection(channels, sampleRate, range);
+  return acousticSummary(fn(mono, sampleRate, { nOctaveBands: 6 }), 'blind');
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, shallowRef, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
@@ -27,6 +27,7 @@ import { useSampleWarp } from '@/ui/sample-editor/use-sample-warp';
 import {
   loadSampleEditorWasm,
   type SampleEditorWasmOps,
+  type SpectralEditMode,
   wasmOpAvailability,
 } from '@/ui/sample-editor/wasm-ops';
 
@@ -68,6 +69,8 @@ const historyState = ref<VersionHistoryState>(
 const loading = ref(false);
 const busy = ref(false);
 const error = ref<string | null>(null);
+let disposed = false;
+let loadGeneration = 0;
 
 const wasmOps = shallowRef<SampleEditorWasmOps | null>(null);
 const wasmAvail = computed(() => wasmOpAvailability(wasmOps.value));
@@ -130,15 +133,24 @@ const {
   voiceFormantInput,
   stretchInput,
   silenceThresholdInput,
+  spectralLowHzInput,
+  spectralHighHzInput,
+  spectralGainDbInput,
+  spectralModeInput,
   roomPresetId,
   roomWetInput,
   referenceAssetId,
   matchEqAmountInput,
   matchEqAnalysis,
   analyzingMatchEq,
+  roomEstimate,
+  estimatingRoom,
+  acousticAnalysis,
+  analyzingAcoustic,
   opsDisabled,
   referenceOptions,
   roomPresetOptions,
+  spectralModeOptions,
   matchEqCurvePoints,
   onGain,
   onNormalize,
@@ -149,6 +161,7 @@ const {
   onTrim,
   onPitchShift,
   onPitchCorrect,
+  onPitchCorrectTimevarying,
   onTuneReference,
   onScaleCorrect,
   onVoiceChange,
@@ -156,9 +169,20 @@ const {
   onNoteStretch,
   onDeclick,
   onDenoise,
+  onDeclip,
+  onDecrackle,
+  onDehum,
+  onDereverb,
+  onTrimSilenceRepair,
   onHarmonic,
   onPercussive,
+  onSpectralDenoise,
+  onSpectralEdit,
   onPlaceInRoom,
+  onSynthesizeRir,
+  onEstimateRoom,
+  onAnalyzeImpulseResponse,
+  onDetectAcoustic,
   onMatchEq,
   onAnalyzeMatchEq,
 } = operations;
@@ -183,21 +207,26 @@ function errorMessage(err: unknown): string {
 }
 
 async function loadCurrent(assetId: string): Promise<void> {
+  const generation = ++loadGeneration;
   loading.value = true;
   error.value = null;
   try {
     const loaded = await loadAsset(assetId);
+    if (disposed || generation !== loadGeneration) return;
     asset.value = loaded;
     // Markers belong to the previous buffer; a new version invalidates them.
     onsetFrames.value = [];
     viewportControls.syncViewportToFrames(loaded.meta.numFrames);
     selectionControls.clampSelectionTo(loaded.meta.numFrames);
   } catch (err) {
+    if (disposed || generation !== loadGeneration) return;
     asset.value = null;
     error.value = errorMessage(err);
   } finally {
-    loading.value = false;
-    scheduleDraw();
+    if (!disposed && generation === loadGeneration) {
+      loading.value = false;
+      scheduleDraw();
+    }
   }
 }
 
@@ -237,6 +266,10 @@ function onApply(): void {
   if (asset.value) emit('apply-asset', currentAssetId.value);
 }
 
+function setSpectralMode(value: string): void {
+  spectralModeInput.value = value as SpectralEditMode;
+}
+
 function versionTitle(version: AssetVersion): string {
   return `${version.label} — ${version.assetId}`;
 }
@@ -263,6 +296,7 @@ const {
   onAnchorEdit,
   onRemoveAnchor,
   onAddAnchor,
+  onAutoWarp,
 } = warp;
 
 // --- Lifecycle -----------------------------------------------------------------
@@ -271,8 +305,14 @@ onMounted(() => {
   void loadCurrent(props.assetId);
   void operations.refreshReferenceAssets();
   void loadSampleEditorWasm().then((ops) => {
+    if (disposed) return;
     wasmOps.value = ops;
   });
+});
+
+onBeforeUnmount(() => {
+  disposed = true;
+  loadGeneration++;
 });
 </script>
 
@@ -414,6 +454,18 @@ onMounted(() => {
       </button>
       <button
         type="button"
+        :disabled="opsDisabled || !wasmAvail.pitchCorrectTimevarying"
+        v-tooltip="
+          wasmAvail.pitchCorrectTimevarying
+            ? t.shell.sampleEditor.tuneContourTitle
+            : t.shell.sampleEditor.unavailable
+        "
+        @click="onPitchCorrectTimevarying"
+      >
+        {{ t.shell.sampleEditor.tuneContour }}
+      </button>
+      <button
+        type="button"
         :disabled="opsDisabled || !wasmAvail.tuneReference"
         v-tooltip="
           wasmAvail.tuneReference
@@ -518,6 +570,60 @@ onMounted(() => {
       >
         {{ t.shell.sampleEditor.denoise }}
       </button>
+      <button
+        type="button"
+        :disabled="opsDisabled || !wasmAvail.declip"
+        v-tooltip="
+          wasmAvail.declip ? t.shell.sampleEditor.declipTitle : t.shell.sampleEditor.unavailable
+        "
+        @click="onDeclip"
+      >
+        {{ t.shell.sampleEditor.declip }}
+      </button>
+      <button
+        type="button"
+        :disabled="opsDisabled || !wasmAvail.decrackle"
+        v-tooltip="
+          wasmAvail.decrackle
+            ? t.shell.sampleEditor.decrackleTitle
+            : t.shell.sampleEditor.unavailable
+        "
+        @click="onDecrackle"
+      >
+        {{ t.shell.sampleEditor.decrackle }}
+      </button>
+      <button
+        type="button"
+        :disabled="opsDisabled || !wasmAvail.dehum"
+        v-tooltip="
+          wasmAvail.dehum ? t.shell.sampleEditor.dehumTitle : t.shell.sampleEditor.unavailable
+        "
+        @click="onDehum"
+      >
+        {{ t.shell.sampleEditor.dehum }}
+      </button>
+      <button
+        type="button"
+        :disabled="opsDisabled || !wasmAvail.dereverb"
+        v-tooltip="
+          wasmAvail.dereverb ? t.shell.sampleEditor.dereverbTitle : t.shell.sampleEditor.unavailable
+        "
+        @click="onDereverb"
+      >
+        {{ t.shell.sampleEditor.dereverb }}
+      </button>
+      <button
+        type="button"
+        :disabled="opsDisabled || !wasmAvail.trimSilence"
+        v-tooltip="
+          wasmAvail.trimSilence
+            ? t.shell.sampleEditor.trimSilenceTitle
+            : t.shell.sampleEditor.unavailable
+        "
+        @click="onTrimSilenceRepair"
+      >
+        {{ t.shell.sampleEditor.trimSilence }}
+      </button>
       <span class="sep" />
       <button
         type="button"
@@ -540,6 +646,69 @@ onMounted(() => {
         @click="onPercussive"
       >
         {{ t.shell.sampleEditor.percussive }}
+      </button>
+      <button
+        type="button"
+        :disabled="opsDisabled || !wasmAvail.spectralEdit"
+        v-tooltip="
+          wasmAvail.spectralEdit
+            ? t.shell.sampleEditor.spectralDenoiseTitle
+            : t.shell.sampleEditor.unavailable
+        "
+        @click="onSpectralDenoise"
+      >
+        {{ t.shell.sampleEditor.spectralDenoise }}
+      </button>
+      <SelectMenu
+        :model-value="spectralModeInput"
+        size="sm"
+        :options="spectralModeOptions"
+        :disabled="opsDisabled || !wasmAvail.spectralEdit"
+        :aria-label="t.shell.sampleEditor.spectralMode"
+        @change="setSpectralMode"
+      />
+      <label v-tooltip="t.shell.sampleEditor.spectralLowTitle">
+        {{ t.shell.sampleEditor.spectralLow }}
+        <input
+          v-model="spectralLowHzInput"
+          class="num freq"
+          type="number"
+          step="100"
+          min="0"
+          :disabled="opsDisabled || !wasmAvail.spectralEdit"
+        />
+      </label>
+      <label v-tooltip="t.shell.sampleEditor.spectralHighTitle">
+        {{ t.shell.sampleEditor.spectralHigh }}
+        <input
+          v-model="spectralHighHzInput"
+          class="num freq"
+          type="number"
+          step="100"
+          min="0"
+          :disabled="opsDisabled || !wasmAvail.spectralEdit"
+        />
+      </label>
+      <label v-tooltip="t.shell.sampleEditor.spectralGainTitle">
+        {{ t.shell.sampleEditor.spectralGain }}
+        <input
+          v-model="spectralGainDbInput"
+          class="num"
+          type="number"
+          step="1"
+          :disabled="opsDisabled || !wasmAvail.spectralEdit"
+        />
+        dB
+      </label>
+      <button
+        type="button"
+        :disabled="opsDisabled || !wasmAvail.spectralEdit"
+        v-tooltip="
+          wasmAvail.spectralEdit ? t.shell.sampleEditor.spectralEditTitle : t.shell.sampleEditor.unavailable
+        "
+        @click="onSpectralEdit"
+      >
+        {{ t.shell.sampleEditor.spectralEdit }}
       </button>
       <span class="sep" />
       <SelectMenu
@@ -658,6 +827,54 @@ onMounted(() => {
       >
         {{ t.shell.sampleEditor.placeInRoom }}
       </button>
+      <button
+        type="button"
+        :disabled="opsDisabled || !wasmAvail.synthesizeRir"
+        v-tooltip="
+          wasmAvail.synthesizeRir
+            ? t.shell.sampleEditor.synthesizeRirTitle
+            : t.shell.sampleEditor.unavailable
+        "
+        @click="onSynthesizeRir"
+      >
+        {{ t.shell.sampleEditor.synthesizeRir }}
+      </button>
+      <button
+        type="button"
+        :disabled="opsDisabled || !wasmAvail.estimateRoom || estimatingRoom"
+        v-tooltip="
+          wasmAvail.estimateRoom
+            ? t.shell.sampleEditor.estimateRoomTitle
+            : t.shell.sampleEditor.unavailable
+        "
+        @click="onEstimateRoom"
+      >
+        {{ t.shell.sampleEditor.estimateRoom }}
+      </button>
+      <button
+        type="button"
+        :disabled="opsDisabled || !wasmAvail.analyzeImpulseResponse || analyzingAcoustic"
+        v-tooltip="
+          wasmAvail.analyzeImpulseResponse
+            ? t.shell.sampleEditor.analyzeImpulseTitle
+            : t.shell.sampleEditor.unavailable
+        "
+        @click="onAnalyzeImpulseResponse"
+      >
+        {{ t.shell.sampleEditor.analyzeImpulse }}
+      </button>
+      <button
+        type="button"
+        :disabled="opsDisabled || !wasmAvail.detectAcoustic || analyzingAcoustic"
+        v-tooltip="
+          wasmAvail.detectAcoustic
+            ? t.shell.sampleEditor.detectAcousticTitle
+            : t.shell.sampleEditor.unavailable
+        "
+        @click="onDetectAcoustic"
+      >
+        {{ t.shell.sampleEditor.detectAcoustic }}
+      </button>
     </div>
     <p v-if="error" class="error">{{ error }}</p>
     <div v-if="matchEqAnalysis" class="match-eq-analysis">
@@ -700,6 +917,65 @@ onMounted(() => {
           </span>
         </li>
       </ul>
+    </div>
+    <div v-if="roomEstimate" class="match-eq-analysis room-estimate" role="status">
+      <div class="match-eq-head">
+        <span class="match-eq-title">{{ t.shell.sampleEditor.roomEstimateTitle }}</span>
+        <span class="match-eq-loudness">
+          {{ t.shell.sampleEditor.roomEstimateConfidence }}:
+          {{ Math.round(roomEstimate.confidence * 100) }}%
+        </span>
+      </div>
+      <dl class="room-estimate-grid">
+        <dt>{{ t.shell.sampleEditor.roomEstimateSize }}</dt>
+        <dd>
+          {{ roomEstimate.length.toFixed(1) }} × {{ roomEstimate.width.toFixed(1) }} ×
+          {{ roomEstimate.height.toFixed(1) }} m
+        </dd>
+        <dt>{{ t.shell.sampleEditor.roomEstimateVolume }}</dt>
+        <dd>{{ roomEstimate.volume.toFixed(0) }} m³</dd>
+        <dt>{{ t.shell.sampleEditor.roomEstimateRt60 }}</dt>
+        <dd>
+          {{ Number.isFinite(roomEstimate.rt60Mid) ? roomEstimate.rt60Mid.toFixed(2) : '—' }} s
+        </dd>
+        <dt>{{ t.shell.sampleEditor.roomEstimateDrr }}</dt>
+        <dd>{{ roomEstimate.drrDb.toFixed(1) }} dB</dd>
+      </dl>
+    </div>
+    <div v-if="acousticAnalysis" class="match-eq-analysis room-estimate" role="status">
+      <div class="match-eq-head">
+        <span class="match-eq-title">
+          {{
+            acousticAnalysis.kind === 'impulse'
+              ? t.shell.sampleEditor.impulseAnalysisTitle
+              : t.shell.sampleEditor.acousticAnalysisTitle
+          }}
+        </span>
+        <span class="match-eq-loudness">
+          {{ t.shell.sampleEditor.roomEstimateConfidence }}:
+          {{ Math.round(acousticAnalysis.confidence * 100) }}%
+        </span>
+      </div>
+      <dl class="room-estimate-grid">
+        <dt>{{ t.shell.sampleEditor.roomEstimateRt60 }}</dt>
+        <dd>
+          {{ Number.isFinite(acousticAnalysis.rt60) ? acousticAnalysis.rt60.toFixed(2) : '—' }} s
+        </dd>
+        <dt>{{ t.shell.sampleEditor.acousticEdt }}</dt>
+        <dd>
+          {{ Number.isFinite(acousticAnalysis.edt) ? acousticAnalysis.edt.toFixed(2) : '—' }} s
+        </dd>
+        <dt>{{ t.shell.sampleEditor.acousticClarity }}</dt>
+        <dd>
+          C50 {{ Number.isFinite(acousticAnalysis.c50) ? acousticAnalysis.c50.toFixed(1) : '—' }}
+          dB / C80
+          {{ Number.isFinite(acousticAnalysis.c80) ? acousticAnalysis.c80.toFixed(1) : '—' }} dB
+        </dd>
+        <dt>{{ t.shell.sampleEditor.acousticDefinition }}</dt>
+        <dd>
+          {{ Number.isFinite(acousticAnalysis.d50) ? Math.round(acousticAnalysis.d50 * 100) : '—' }}%
+        </dd>
+      </dl>
     </div>
     <div
       ref="wrapRef"
@@ -756,6 +1032,9 @@ onMounted(() => {
         </label>
         <button type="button" class="warp-anchor-add" @click="onAddAnchor">
           {{ t.shell.sampleEditor.addAnchor }}
+        </button>
+        <button type="button" class="warp-auto" @click="onAutoWarp">
+          {{ t.shell.sampleEditor.autoWarp }}
         </button>
         <span
           v-if="warpRatioHint"
@@ -831,6 +1110,10 @@ onMounted(() => {
   width: 56px;
   /* Steady digit width so scrubbed numeric values don't jitter. */
   font-variant-numeric: tabular-nums;
+}
+
+.toolbar .num.freq {
+  width: 72px;
 }
 
 /* Dense pro-tool controls on the shared raised-face recipe (no drawn border). */

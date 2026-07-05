@@ -14,7 +14,6 @@ describe('parseMidiNote', () => {
     expect(parseMidiNote('Db4')).toBe(61);
     expect(parseMidiNote('C♯4')).toBe(61);
     expect(parseMidiNote('D♭4')).toBe(61);
-    expect(parseMidiNote('Cbb4')).toBe(58);
   });
 
   it('is case-insensitive on the letter and tolerates whitespace', () => {
@@ -35,6 +34,7 @@ describe('parseMidiNote', () => {
     expect(parseMidiNote('128')).toBeNull();
     expect(parseMidiNote('C12')).toBeNull();
     expect(parseMidiNote('C')).toBeNull();
+    expect(parseMidiNote('Cbb4')).toBeNull();
   });
 });
 

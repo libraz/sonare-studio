@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { EditorClip } from '@/project/types';
 import {
+  autoWarpFromBeatTimes,
   defaultWarpAnchor,
   findWarpClip,
   isWarpableClip,
@@ -103,6 +104,25 @@ describe('defaultWarpAnchor', () => {
   });
 });
 
+describe('autoWarpFromBeatTimes', () => {
+  it('turns detected beats and downbeats into a source BPM and warp anchors', () => {
+    const warp = autoWarpFromBeatTimes([0, 0.5, 1.1, 1.7, 2.2], [1.1], 8);
+
+    expect(warp?.sourceBpm).toBeCloseTo(109.0909, 4);
+    expect(warp?.anchors).toEqual([
+      { ppq: 1, sourceSeconds: 0.5 },
+      { ppq: 2, sourceSeconds: 1.1 },
+      { ppq: 3, sourceSeconds: 1.7 },
+      { ppq: 4, sourceSeconds: 2.2 },
+    ]);
+  });
+
+  it('returns null when there are not enough valid beats', () => {
+    expect(autoWarpFromBeatTimes([0], [], 8)).toBeNull();
+    expect(autoWarpFromBeatTimes([0, 0.5], [], 0)).toBeNull();
+  });
+});
+
 describe('segmentStretchRatios', () => {
   it('reports the source-over-played ratio per segment', () => {
     const clip = audioClip({
@@ -114,6 +134,23 @@ describe('segmentStretchRatios', () => {
     expect(ratios).toHaveLength(2);
     expect(ratios[0]).toBeCloseTo(1.5 / 1, 6);
     expect(ratios[1]).toBeCloseTo(0.9 / 1, 6);
+  });
+
+  it('uses the clip timeline position and tempo map for played segment durations', () => {
+    const clip = audioClip({
+      startPpq: 4,
+      lengthPpq: 4,
+      warp: { enabled: true, sourceBpm: 100, anchors: [{ ppq: 2, sourceSeconds: 1.5 }] },
+    });
+
+    const ratios = segmentStretchRatios(clip, 120, [
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 4, bpm: 60 },
+    ]);
+
+    expect(ratios).toHaveLength(2);
+    expect(ratios[0]).toBeCloseTo(1.5 / 2, 6);
+    expect(ratios[1]).toBeCloseTo(0.9 / 2, 6);
   });
 
   it('is empty when warp is disabled or the tempo is invalid', () => {

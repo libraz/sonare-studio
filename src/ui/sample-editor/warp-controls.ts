@@ -1,3 +1,4 @@
+import { normalizeTempoMap, ppqToSeconds } from '@/project/tempo-map';
 import type { ClipWarp, EditorClip, WarpAnchor } from '@/project/types';
 import { isAudioClip } from '@/project/types';
 import { sanitizeWarpAnchors, type WarpableClipFields, warpSegments } from '@/project/warp';
@@ -107,19 +108,77 @@ export function defaultWarpAnchor(
   return best;
 }
 
+function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
+/**
+ * Converts detected beat/downbeat source times into a clip warp map. Beat
+ * positions become target quarter-note PPQ values; irregular source spacing
+ * is captured as anchors while the median beat interval becomes sourceBpm.
+ */
+export function autoWarpFromBeatTimes(
+  beatTimes: ReadonlyArray<number>,
+  downbeatTimes: ReadonlyArray<number> = [],
+  lengthPpq: number,
+): Pick<ClipWarp, 'sourceBpm' | 'anchors'> | null {
+  const beats = [...new Set(beatTimes.filter((time) => Number.isFinite(time) && time >= 0))].sort(
+    (a, b) => a - b,
+  );
+  if (beats.length < 2 || !(lengthPpq > 0)) return null;
+  const intervals = beats
+    .slice(1)
+    .map((time, index) => time - beats[index])
+    .filter((interval) => interval > 0);
+  const medianInterval = median(intervals);
+  if (medianInterval === null || !(medianInterval > 0)) return null;
+  const sourceBpm = 60 / medianInterval;
+  const firstBeat = beats[0];
+  const anchors = beats
+    .map((sourceSeconds) => ({
+      ppq: Math.round((sourceSeconds - firstBeat) / medianInterval),
+      sourceSeconds,
+    }))
+    .filter((anchor) => anchor.ppq > 0 && anchor.ppq < lengthPpq);
+
+  const downbeatAnchors = downbeatTimes
+    .filter((time) => Number.isFinite(time) && time >= 0)
+    .map((sourceSeconds) => ({
+      ppq: Math.round((sourceSeconds - firstBeat) / medianInterval),
+      sourceSeconds,
+    }))
+    .filter((anchor) => anchor.ppq > 0 && anchor.ppq < lengthPpq);
+  return {
+    sourceBpm,
+    anchors: sanitizeWarpAnchors([...anchors, ...downbeatAnchors], lengthPpq),
+  };
+}
+
 /**
  * Computes the stretch ratio of each warp segment at the given project
  * tempo: source seconds over played seconds, so 1 plays at the recorded
  * rate, above 1 speeds the segment up and below 1 slows it down.
  *
  * @param clip Clip window and warp state.
- * @param projectBpm Project tempo in BPM (> 0).
+ * @param projectBpm Project tempo in BPM (> 0), used as the fallback map.
+ * @param tempoSegments Optional project tempo map for variable-tempo projects.
  * @returns One ratio per segment; empty when the clip does not warp.
  */
-export function segmentStretchRatios(clip: WarpableClipFields, projectBpm: number): number[] {
+export function segmentStretchRatios(
+  clip: WarpableClipFields,
+  projectBpm: number,
+  tempoSegments: Parameters<typeof normalizeTempoMap>[0] = [],
+): number[] {
   if (!(projectBpm > 0)) return [];
-  const secondsPerPpq = 60 / projectBpm;
+  const tempoMap = normalizeTempoMap(tempoSegments, projectBpm);
+  const clipStartPpq = clip.startPpq ?? 0;
   return warpSegments(clip).map(
-    (segment) => segment.sourceLengthSeconds / (segment.lengthPpq * secondsPerPpq),
+    (segment) =>
+      segment.sourceLengthSeconds /
+      (ppqToSeconds(tempoMap, clipStartPpq + segment.ppq + segment.lengthPpq) -
+        ppqToSeconds(tempoMap, clipStartPpq + segment.ppq)),
   );
 }

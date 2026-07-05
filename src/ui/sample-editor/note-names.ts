@@ -5,32 +5,9 @@
  * MIDI 60, so A4 is MIDI 69 (440 Hz) — matching libsonare's `hzToMidi`.
  */
 
-/** Pitch-class names (sharps), index = pitch class with C = 0. */
-export const PITCH_CLASS_NAMES = [
-  'C',
-  'C#',
-  'D',
-  'D#',
-  'E',
-  'F',
-  'F#',
-  'G',
-  'G#',
-  'A',
-  'A#',
-  'B',
-] as const;
+import { formatPitch, PITCH_CLASS_NAMES, parsePitch } from '@/lib/pitch';
 
-/** Semitone offset of each note letter from C within an octave. */
-const LETTER_SEMITONES: Record<string, number> = {
-  C: 0,
-  D: 2,
-  E: 4,
-  F: 5,
-  G: 7,
-  A: 9,
-  B: 11,
-};
+export { PITCH_CLASS_NAMES };
 
 /**
  * Parses a target note into a MIDI number in [0, 127].
@@ -43,23 +20,7 @@ const LETTER_SEMITONES: Record<string, number> = {
  * @returns The MIDI note number, or null when no valid note was given.
  */
 export function parseMidiNote(text: string): number | null {
-  const trimmed = text.trim();
-  if (trimmed.length === 0) return null;
-  // A bare integer is treated as a MIDI number.
-  if (/^\d+$/.test(trimmed)) {
-    const midi = Number(trimmed);
-    return midi >= 0 && midi <= 127 ? midi : null;
-  }
-  const match = /^([A-Ga-g])([#♯bB♭]*)(-?\d+)$/.exec(trimmed);
-  if (!match) return null;
-  const [, letter, accidentals, octaveText] = match;
-  let semitone = LETTER_SEMITONES[letter.toUpperCase()];
-  for (const accidental of accidentals) {
-    if (accidental === '#' || accidental === '♯') semitone += 1;
-    else semitone -= 1; // 'b', 'B' or '♭'
-  }
-  const midi = (Number(octaveText) + 1) * 12 + semitone;
-  return midi >= 0 && midi <= 127 ? midi : null;
+  return parsePitch(text);
 }
 
 /**
@@ -71,6 +32,7 @@ export function parseMidiNote(text: string): number | null {
  */
 export function formatMidiNote(midi: number): string {
   const rounded = Math.round(midi);
+  if (rounded >= 0 && rounded <= 127) return formatPitch(rounded);
   const pitchClass = ((rounded % 12) + 12) % 12;
   const octave = Math.floor(rounded / 12) - 1;
   return `${PITCH_CLASS_NAMES[pitchClass]}${octave}`;

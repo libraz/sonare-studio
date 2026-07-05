@@ -31,6 +31,7 @@ function setup(overrides: Record<string, unknown> = {}) {
     clips: [audioClip()],
     clipId: 7,
     tempoBpm: 120,
+    tempoSegments: [],
     ...overrides,
   });
   const errors: string[] = [];
@@ -44,6 +45,34 @@ function setup(overrides: Record<string, unknown> = {}) {
   );
   if (!warp) throw new Error('effect scope did not run');
   return { project, scope, warp, errors };
+}
+
+function loadedAsset() {
+  return {
+    meta: {
+      id: 'asset-1',
+      name: 'clip.wav',
+      sampleRate: 48_000,
+      numChannels: 1,
+      numFrames: 96_000,
+    },
+    channels: [new Float32Array(96_000).fill(0.5)],
+  };
+}
+
+/** Creates a manually-settled promise for async race tests. */
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (error: unknown) => void;
+} {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 describe('useSampleWarp', () => {
@@ -105,5 +134,143 @@ describe('useSampleWarp', () => {
 
     expect(errors).toEqual(['bad warp']);
     scope.stop();
+  });
+
+  it('auto-warps the clip from detected beat times', async () => {
+    setClipWarp.mockClear();
+    const project = reactive({
+      clips: [audioClip({ lengthPpq: 8 })],
+      clipId: 7,
+      tempoBpm: 120,
+      tempoSegments: [],
+    });
+    const errors: string[] = [];
+    const scope = effectScope();
+    const warp = scope.run(() =>
+      useSampleWarp({
+        project: project as never,
+        assetId: () => 'asset-1',
+        setError: (message) => errors.push(message),
+        autoWarp: {
+          loadAudioAsset: async () => loadedAsset() as never,
+          detectBeats: () => [0, 0.5, 1.1, 1.7],
+          detectDownbeats: () => [0],
+        },
+      }),
+    );
+    if (!warp) throw new Error('effect scope did not run');
+
+    await warp.onAutoWarp();
+
+    expect(errors).toEqual([]);
+    expect(setClipWarp).toHaveBeenCalledWith(7, {
+      enabled: true,
+      sourceBpm: expect.closeTo(100, 4),
+      anchors: [
+        { ppq: 1, sourceSeconds: 0.5 },
+        { ppq: 2, sourceSeconds: 1.1 },
+        { ppq: 3, sourceSeconds: 1.7 },
+      ],
+    });
+    scope.stop();
+  });
+
+  it('surfaces auto-warp detector failures', async () => {
+    setClipWarp.mockClear();
+    const project = reactive({
+      clips: [audioClip()],
+      clipId: 7,
+      tempoBpm: 120,
+      tempoSegments: [],
+    });
+    const errors: string[] = [];
+    const scope = effectScope();
+    const warp = scope.run(() =>
+      useSampleWarp({
+        project: project as never,
+        assetId: () => 'asset-1',
+        setError: (message) => errors.push(message),
+        autoWarp: {
+          loadAudioAsset: async () => loadedAsset() as never,
+          detectBeats: () => [],
+        },
+      }),
+    );
+    if (!warp) throw new Error('effect scope did not run');
+
+    await warp.onAutoWarp();
+
+    expect(setClipWarp).not.toHaveBeenCalled();
+    expect(errors).toEqual(['Auto-Warp could not detect enough beats']);
+    scope.stop();
+  });
+
+  it('ignores auto-warp results when the clip asset changes while loading', async () => {
+    setClipWarp.mockClear();
+    const pending = deferred<ReturnType<typeof loadedAsset>>();
+    const project = reactive({
+      clips: [audioClip()],
+      clipId: 7,
+      tempoBpm: 120,
+      tempoSegments: [],
+    });
+    const errors: string[] = [];
+    const scope = effectScope();
+    const warp = scope.run(() =>
+      useSampleWarp({
+        project: project as never,
+        assetId: () => 'asset-1',
+        setError: (message) => errors.push(message),
+        autoWarp: {
+          loadAudioAsset: () => pending.promise as never,
+          detectBeats: () => [0, 0.5, 1.1, 1.7],
+          detectDownbeats: () => [0],
+        },
+      }),
+    );
+    if (!warp) throw new Error('effect scope did not run');
+
+    const run = warp.onAutoWarp();
+    project.clips = [audioClip({ assetId: 'asset-2' })];
+    pending.resolve(loadedAsset());
+    await run;
+
+    expect(setClipWarp).not.toHaveBeenCalled();
+    expect(errors).toEqual([]);
+    scope.stop();
+  });
+
+  it('ignores late auto-warp failures after scope dispose', async () => {
+    setClipWarp.mockClear();
+    const pending = deferred<ReturnType<typeof loadedAsset>>();
+    const project = reactive({
+      clips: [audioClip()],
+      clipId: 7,
+      tempoBpm: 120,
+      tempoSegments: [],
+    });
+    const errors: string[] = [];
+    const scope = effectScope();
+    const warp = scope.run(() =>
+      useSampleWarp({
+        project: project as never,
+        assetId: () => 'asset-1',
+        setError: (message) => errors.push(message),
+        autoWarp: {
+          loadAudioAsset: () => pending.promise as never,
+          detectBeats: () => [0, 0.5, 1.1, 1.7],
+        },
+      }),
+    );
+    if (!warp) throw new Error('effect scope did not run');
+
+    const run = warp.onAutoWarp();
+    await Promise.resolve();
+    scope.stop();
+    pending.reject(new Error('late load failed'));
+    await run;
+
+    expect(setClipWarp).not.toHaveBeenCalled();
+    expect(errors).toEqual([]);
   });
 });

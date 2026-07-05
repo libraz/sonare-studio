@@ -4,6 +4,8 @@
  * match what the wasm Project.gmDrumName helper reports so labels stay
  * consistent across the app without loading the wasm module here.
  */
+import { formatPitch } from '@/lib/pitch';
+
 const GM_DRUM_NAMES: Readonly<Record<number, string>> = {
   35: 'Acoustic Bass Drum',
   36: 'Bass Drum 1',
@@ -85,8 +87,6 @@ export const DEFAULT_DRUM_KIT: ReadonlyArray<{ pitch: number; name: string }> = 
   { pitch: 36, name: GM_DRUM_NAMES[36] },
 ];
 
-const PITCH_CLASS_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-
 /**
  * Scientific pitch name for a MIDI note (middle C / 60 = C4, matching the
  * piano-roll keyboard labels).
@@ -94,7 +94,5 @@ const PITCH_CLASS_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A',
  * @param pitch MIDI note number (integer, 0-127).
  */
 export function pitchName(pitch: number): string {
-  const pc = ((pitch % 12) + 12) % 12;
-  const octave = Math.floor(pitch / 12) - 1;
-  return `${PITCH_CLASS_NAMES[pc]}${octave}`;
+  return formatPitch(pitch);
 }
