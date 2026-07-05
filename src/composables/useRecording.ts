@@ -59,6 +59,7 @@ export interface UseRecordingOptions {
       streamingRetuneSemitones?: number;
       captureSource?: RecordingCaptureSource;
       inputDeviceId?: string;
+      inputDeviceIds?: ReadonlyArray<string>;
     },
   ) => Recorder;
   /**
@@ -195,8 +196,27 @@ export function useRecording(
   let recordingCaptureSource: RecordingCaptureSource = 'input';
   let recordingCounter = 0;
   let recordingLoop: { startPpq: number; endPpq: number } | null = null;
+  /** Per-track device signature the current recorder was built with. */
+  let recorderDeviceSignature = '';
 
   const resolveHandle = (): EngineHandle | null => toValue(handleSource) ?? null;
+
+  /**
+   * Distinct per-track record input device ids across the armed audio tracks,
+   * in armed order (device order = merged capture channel). Tracks without an
+   * explicit device record from the global input and contribute nothing here;
+   * the recorder falls back to the single-device path unless two or more
+   * distinct devices are present.
+   */
+  const armedInputDeviceIds = (): string[] => {
+    const ids: string[] = [];
+    for (const id of armedTrackIds.value) {
+      const track = store.tracks.find((t) => t.id === id);
+      const device = track?.kind === 'audio' ? track.recordInputDeviceId?.trim() : undefined;
+      if (device) ids.push(device);
+    }
+    return ids;
+  };
 
   /** Formats an unknown thrown value into a user-facing message. */
   const messageOf = describeError;
@@ -205,7 +225,11 @@ export function useRecording(
   const ensureRecorder = (): Recorder | null => {
     const handle = resolveHandle();
     if (!handle) return null;
-    if (recorder && recorderHandle === handle) return recorder;
+    const deviceIds = armedInputDeviceIds();
+    const deviceSignature = deviceIds.join('|');
+    if (recorder && recorderHandle === handle && deviceSignature === recorderDeviceSignature) {
+      return recorder;
+    }
     unsubscribeLevel?.();
     unsubscribeMicLost?.();
     recorder?.dispose();
@@ -219,7 +243,9 @@ export function useRecording(
       streamingRetuneSemitones: streamingRetuneSemitones.value,
       captureSource: captureSource.value,
       inputDeviceId: inputDeviceId.value,
+      inputDeviceIds: deviceIds,
     });
+    recorderDeviceSignature = deviceSignature;
     recorderHandle = handle;
     unsubscribeLevel = recorder.onLevel((peak) => {
       inputLevel.value = peak;

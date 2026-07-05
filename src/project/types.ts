@@ -146,6 +146,14 @@ export interface EditorTrack {
    */
   recordInputChannel?: number;
   /**
+   * Preferred browser audioinput device id captured for this track when several
+   * armed tracks record from distinct physical devices at once. Absent = the
+   * global recording input device. The host acquires one stream per distinct
+   * device and merges them, so each armed track's device maps to one capture
+   * channel (see src/engine/recorder.ts).
+   */
+  recordInputDeviceId?: string;
+  /**
    * Instrument rendering the track's MIDI clips (app-level metadata); absent
    * = the default synth preset (see src/project/instrument.ts).
    */

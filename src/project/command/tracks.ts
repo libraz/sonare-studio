@@ -312,6 +312,34 @@ export function setTrackRecordInputChannel(trackId: number, channel: number | nu
 }
 
 /**
+ * Sets the browser audioinput device recorded onto an audio track when several
+ * armed tracks capture distinct physical devices at once. An empty string or
+ * null clears the override so the track records from the global input device.
+ *
+ * @param trackId Id of the audio track.
+ * @param deviceId Audioinput device id, or null/empty for the global input.
+ */
+export function setTrackRecordInputDeviceId(trackId: number, deviceId: string | null): void {
+  const store = useProjectStore();
+  const track = requireTrack(store, trackId);
+  if (track.kind !== 'audio') {
+    throw new RangeError('Recording input device can only be set on audio tracks');
+  }
+  const next = deviceId?.trim() ? deviceId.trim() : null;
+  if ((track.recordInputDeviceId ?? null) === next) return;
+  execute(0, () => {
+    store.tracks = store.tracks.map((t) => {
+      if (t.id !== trackId) return t;
+      const entry: EditorTrack = { ...t };
+      if (next === null) delete entry.recordInputDeviceId;
+      else entry.recordInputDeviceId = next;
+      return entry;
+    });
+    store.refresh();
+  });
+}
+
+/**
  * Reorders tracks as one undoable edit. Order is app-level display state
  * (the Project has no track-order API).
  *

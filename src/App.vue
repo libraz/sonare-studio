@@ -705,6 +705,7 @@ useAppLifecycle({
           :loop-start-ppq="loopStartPpq"
           :loop-end-ppq="loopEndPpq"
           :armed-track-ids="armedTrackIds"
+          :record-input-devices="recordingInputDeviceOptions"
           @seek="onSeek"
           @arm="onArmTrack"
           @change-instrument="openTrackInstrumentPicker"

@@ -869,3 +869,116 @@ describe('inputLatencySamples', () => {
     expect(inputLatencySamples(streamWithLatencies(), 48000)).toBe(0);
   });
 });
+
+describe('createRecorder multi-device merge', () => {
+  /** Builds a fresh media stream fake tagged with a device id. */
+  function makeStream(deviceId: string): MediaStream {
+    const track = {
+      stop: vi.fn(),
+      getSettings: () => ({ deviceId }),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    } as unknown as MediaStreamTrack;
+    return {
+      getAudioTracks: () => [track],
+      getTracks: () => [track],
+    } as unknown as MediaStream;
+  }
+
+  /** EngineHandle stub whose ctx exposes the merge Web Audio factories. */
+  function makeMergeHandle() {
+    const { handle, configureCapture } = makeHandle(48_000);
+    const merger = { connect: vi.fn(), disconnect: vi.fn() };
+    const sources: Array<{
+      connect: ReturnType<typeof vi.fn>;
+      disconnect: ReturnType<typeof vi.fn>;
+    }> = [];
+    const createChannelMerger = vi.fn(() => merger);
+    const createMediaStreamSource = vi.fn(() => {
+      const source = { connect: vi.fn(), disconnect: vi.fn() };
+      sources.push(source);
+      return source;
+    });
+    Object.assign(handle.ctx, { createChannelMerger, createMediaStreamSource });
+    return {
+      handle,
+      configureCapture,
+      merger,
+      sources,
+      createChannelMerger,
+      createMediaStreamSource,
+    };
+  }
+
+  it('opens one stream per distinct device and merges them into the engine node', async () => {
+    const {
+      handle,
+      configureCapture,
+      merger,
+      sources,
+      createChannelMerger,
+      createMediaStreamSource,
+    } = makeMergeHandle();
+    const streams = new Map([
+      ['mic-a', makeStream('mic-a')],
+      ['mic-b', makeStream('mic-b')],
+    ]);
+    const getUserMedia = vi.fn(async (constraints: MediaStreamConstraints) => {
+      const deviceId = ((constraints.audio as MediaTrackConstraints).deviceId as { exact?: string })
+        ?.exact;
+      return streams.get(deviceId ?? '') as MediaStream;
+    });
+    const recorder = createRecorder(handle, {
+      getUserMedia,
+      inputDeviceIds: ['mic-a', 'mic-b'],
+    });
+
+    await recorder.requestMicrophone();
+
+    expect(getUserMedia).toHaveBeenCalledTimes(2);
+    expect(createChannelMerger).toHaveBeenCalledWith(2);
+    expect(createMediaStreamSource).toHaveBeenCalledTimes(2);
+    // Device i feeds merger input i, and the merger drives the engine node.
+    expect(sources[0].connect).toHaveBeenCalledWith(merger, 0, 0);
+    expect(sources[1].connect).toHaveBeenCalledWith(merger, 0, 1);
+    expect(merger.connect).toHaveBeenCalledWith(handle.engine.node);
+    // The capture width follows the merged channel count, not a hardcoded 2.
+    expect(configureCapture).toHaveBeenCalledWith(
+      expect.objectContaining({ channels: 2, source: 'input' }),
+    );
+  });
+
+  it('caps the merge at the capture channel limit and drops extra devices', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { handle, createChannelMerger } = makeMergeHandle();
+    const getUserMedia = vi.fn(async (constraints: MediaStreamConstraints) => {
+      const deviceId = ((constraints.audio as MediaTrackConstraints).deviceId as { exact?: string })
+        ?.exact;
+      return makeStream(deviceId ?? '');
+    });
+    const recorder = createRecorder(handle, {
+      getUserMedia,
+      inputDeviceIds: ['mic-a', 'mic-b', 'mic-c'],
+      captureChannelLimit: 2,
+    });
+
+    await recorder.requestMicrophone();
+
+    // Only the first two devices are opened; the third is dropped with a warning.
+    expect(getUserMedia).toHaveBeenCalledTimes(2);
+    expect(createChannelMerger).toHaveBeenCalledWith(2);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('capped at 2'));
+  });
+
+  it('keeps the single-device path when fewer than two distinct devices are requested', async () => {
+    const { handle, createChannelMerger } = makeMergeHandle();
+    const { deps, getUserMedia } = makeDeps();
+    const recorder = createRecorder(handle, { ...deps, inputDeviceIds: ['mic-a'] });
+
+    await recorder.requestMicrophone();
+
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+    expect(getUserMedia).toHaveBeenCalledWith(microphoneConstraints('mic-a'));
+    expect(createChannelMerger).not.toHaveBeenCalled();
+  });
+});

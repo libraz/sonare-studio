@@ -557,6 +557,13 @@ export const useProjectStore = defineStore('project', () => {
         ) {
           mirrorEntry.recordInputChannel = track.recordInputChannel as number;
         }
+        if (
+          track.kind === 'audio' &&
+          typeof track.recordInputDeviceId === 'string' &&
+          track.recordInputDeviceId.length > 0
+        ) {
+          mirrorEntry.recordInputDeviceId = track.recordInputDeviceId;
+        }
         if (track.mixer !== undefined) {
           mirrorEntry.mixer = cloneStrip(track.mixer);
           // Insert sidechain sources are stored positionally; rebind them to

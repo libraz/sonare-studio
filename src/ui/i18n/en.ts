@@ -1435,6 +1435,8 @@ export const en = {
         recordInputAuto: 'Auto',
         recordInputChannel: 'Ch {channel}',
         recordInputOf: 'Recording input channel of {name}',
+        recordInputDeviceDefault: 'Default input',
+        recordInputDeviceOf: 'Recording input device of {name}',
         muteNamed: 'Mute {name}',
         soloNamed: 'Solo {name}',
         automationLane: 'Automation lane',

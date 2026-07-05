@@ -110,6 +110,15 @@ const DEFAULT_MAX_DURATION_SECONDS = 300;
 /** Default minimum interval between input-level callbacks. */
 const DEFAULT_LEVEL_INTERVAL_MS = 50;
 
+/**
+ * Default upper bound on how many channels the input capture can carry. The
+ * realtime engine node is created two channels wide, and its worklet copies at
+ * most that many input channels into the capture path, so a wider device merge
+ * would only add silent channels. Callers may override this to match a wider
+ * engine node.
+ */
+const DEFAULT_CAPTURE_CHANNEL_LIMIT = 2;
+
 /** A finished take handed back by {@link Recorder.stop}. */
 export interface RecordingResult {
   /** Planar capture buffers (one per channel) at `sampleRate`. */
@@ -187,6 +196,20 @@ export interface RecorderOptions {
   captureSource?: RecordingCaptureSource;
   /** Preferred audioinput device id. Empty/omitted uses the browser/OS default input. */
   inputDeviceId?: string;
+  /**
+   * Distinct audioinput device ids to capture at once, one per armed track that
+   * requested its own device. When two or more distinct ids are present the
+   * host opens one stream per device and merges them into a single multi-channel
+   * capture (device order = channel index). One or zero entries falls back to
+   * the single-device path using {@link RecorderOptions.inputDeviceId}.
+   */
+  inputDeviceIds?: ReadonlyArray<string>;
+  /**
+   * Maximum number of channels the input capture can carry (default 2). The
+   * device merge is clamped to this width; extra devices are dropped with a
+   * warning rather than failing (see {@link DEFAULT_CAPTURE_CHANNEL_LIMIT}).
+   */
+  captureChannelLimit?: number;
   /** Minimum interval between input-level callbacks in ms (default 50). */
   levelIntervalMs?: number;
 }
@@ -361,6 +384,24 @@ function attachTrackEndedListeners(stream: MediaStream, onLost: () => void): () 
   };
 }
 
+/**
+ * Attaches device `ended` listeners across every stream of a merged capture,
+ * so a take is aborted when any of the merged devices disappears.
+ *
+ * @param streams The captured media streams.
+ * @param onLost Invoked once when any track of any stream ends.
+ * @returns A cleanup function that removes every listener.
+ */
+function attachAllTrackEndedListeners(
+  streams: ReadonlyArray<MediaStream>,
+  onLost: () => void,
+): () => void {
+  const cleanups = streams.map((stream) => attachTrackEndedListeners(stream, onLost));
+  return () => {
+    for (const cleanup of cleanups) cleanup();
+  };
+}
+
 /** Immutable state of one in-flight take. */
 interface ActiveTake {
   trackId: number;
@@ -384,10 +425,24 @@ interface ActiveTake {
 export function createRecorder(handle: EngineHandle, options: RecorderOptions = {}): Recorder {
   const levelIntervalMs = options.levelIntervalMs ?? DEFAULT_LEVEL_INTERVAL_MS;
   const captureSource: RecordingCaptureSource = options.captureSource ?? 'input';
+  const captureChannelLimit = Math.max(
+    1,
+    Math.floor(options.captureChannelLimit ?? DEFAULT_CAPTURE_CHANNEL_LIMIT),
+  );
   /** Idle capture buffer size keeping the input path configured between takes. */
   const idleBufferFrames = Math.max(1, Math.ceil(MONITOR_BUFFER_SECONDS * handle.ctx.sampleRate));
   let disposed = false;
   let binding: MicrophoneBinding | null = null;
+  /**
+   * Every capture stream backing the current binding (one for a single device,
+   * one per merged device). Drives per-stream latency and device-loss handling.
+   */
+  let bindingStreams: MediaStream[] = [];
+  /**
+   * Channel count sent to configureCapture. Stays at the engine width (2) for a
+   * single device; a device merge raises it to the merged channel count.
+   */
+  let captureChannelCount = DEFAULT_CAPTURE_CHANNEL_LIMIT;
   let micPromise: Promise<void> | null = null;
   let monitorOn = false;
   let monitorGainValue = 1;
@@ -433,7 +488,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     captureBufferFrames = bufferFrames;
     handle.engine.configureCapture({
       bufferFrames,
-      channels: 2,
+      channels: captureChannelCount,
       source: captureSource,
       recordOffsetSamples,
       inputMonitor: {
@@ -443,10 +498,18 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     });
   };
 
+  /** Largest reported input latency across every active capture stream. */
+  const maxInputLatencySamples = (): number => {
+    let max = 0;
+    for (const stream of bindingStreams) {
+      max = Math.max(max, inputLatencySamples(stream, handle.ctx.sampleRate));
+    }
+    return max;
+  };
+
   const currentInputOffsetSamples = (): number =>
     captureSource === 'input' && binding
-      ? defaultRecordOffsetSamples(handle.ctx) +
-        inputLatencySamples(binding.stream, handle.ctx.sampleRate)
+      ? defaultRecordOffsetSamples(handle.ctx) + maxInputLatencySamples()
       : 0;
 
   /**
@@ -468,9 +531,100 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     }
     binding.close();
     binding = null;
+    bindingStreams = [];
+    captureChannelCount = DEFAULT_CAPTURE_CHANNEL_LIMIT;
     micPromise = null;
     resetLevel();
     for (const listener of [...micLostListeners]) listener();
+  };
+
+  /**
+   * Distinct, non-empty capture device ids the caller requested, in supplied
+   * order (device order = merged channel index). Empty when none is requested.
+   */
+  const distinctDeviceIds = (): string[] => {
+    const distinct: string[] = [];
+    for (const id of options.inputDeviceIds ?? []) {
+      const trimmed = id?.trim();
+      if (trimmed && !distinct.includes(trimmed)) distinct.push(trimmed);
+    }
+    return distinct;
+  };
+
+  /** Stops every track of a media stream (used on the merge teardown path). */
+  const stopStreamTracks = (stream: MediaStream): void => {
+    for (const track of stream.getTracks()) track.stop();
+  };
+
+  /**
+   * Acquires one stream per distinct device and merges them into a single
+   * multi-channel input feeding the engine node.
+   *
+   * Independent browser input devices run on independent hardware clocks with
+   * no sample-accurate cross-device synchronization, so a long merged take can
+   * drift channel-to-channel. The robust route for tightly synchronized
+   * multi-input recording is an OS-level aggregate device, which presents as
+   * one multi-channel input the existing per-track recordInputChannel demux
+   * already splits. The merge is clamped to captureChannelLimit because the
+   * engine ingests only that many input channels; extra devices are dropped.
+   */
+  const openMergedMicrophones = async (
+    getUserMedia: (constraints: MediaStreamConstraints) => Promise<MediaStream>,
+    deviceIds: string[],
+  ): Promise<void> => {
+    const used = deviceIds.slice(0, captureChannelLimit);
+    if (deviceIds.length > used.length) {
+      console.warn(
+        `Recording input merge is capped at ${captureChannelLimit} channel(s); ` +
+          `${deviceIds.length - used.length} device(s) were dropped.`,
+      );
+    }
+    const streams: MediaStream[] = [];
+    try {
+      for (const id of used) streams.push(await getUserMedia(microphoneConstraints(id)));
+    } catch (err) {
+      for (const stream of streams) stopStreamTracks(stream);
+      throw new NoMicrophoneError(
+        `Microphone access failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    const ctx = handle.ctx;
+    const merger = ctx.createChannelMerger(used.length);
+    const sources = streams.map((stream) => ctx.createMediaStreamSource(stream));
+    // Each device's first channel feeds one merger input, so merged channel i
+    // carries device i (the order recordingChannelRoutes demuxes onto tracks).
+    sources.forEach((source, index) => {
+      source.connect(merger, 0, index);
+    });
+    merger.connect(handle.engine.node);
+    const bound: MicrophoneBinding = {
+      stream: streams[0],
+      source: merger,
+      close: () => {
+        try {
+          merger.disconnect();
+        } catch {
+          // Already disconnected during teardown; harmless.
+        }
+        for (const source of sources) {
+          try {
+            source.disconnect();
+          } catch {
+            // Already disconnected; harmless.
+          }
+        }
+        for (const stream of streams) stopStreamTracks(stream);
+      },
+    };
+    if (disposed) {
+      bound.close();
+      throw new RecorderStateError('Recorder has been disposed');
+    }
+    binding = bound;
+    bindingStreams = streams;
+    captureChannelCount = used.length;
+    detachTrackListeners = attachAllTrackEndedListeners(streams, handleMicrophoneLost);
+    sendCaptureConfig(idleBufferFrames, currentInputOffsetSamples());
   };
 
   /** One-shot microphone acquisition shared by concurrent callers. */
@@ -481,9 +635,17 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
         'Microphone capture requires navigator.mediaDevices.getUserMedia',
       );
     }
+    const deviceIds = distinctDeviceIds();
+    if (deviceIds.length >= 2) {
+      await openMergedMicrophones(getUserMedia, deviceIds);
+      return;
+    }
+    // A single requested device (one armed device-track) overrides the global
+    // input; with none requested this is exactly the default input constraint.
+    const singleDeviceId = deviceIds[0] ?? options.inputDeviceId;
     let stream: MediaStream;
     try {
-      stream = await getUserMedia(microphoneConstraints(options.inputDeviceId));
+      stream = await getUserMedia(microphoneConstraints(singleDeviceId));
     } catch (err) {
       throw new NoMicrophoneError(
         `Microphone access failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -525,6 +687,8 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
       throw new RecorderStateError('Recorder has been disposed');
     }
     binding = bound;
+    bindingStreams = [bound.stream];
+    captureChannelCount = DEFAULT_CAPTURE_CHANNEL_LIMIT;
     // Learn when the device disappears so a take never silently fills with zeros.
     detachTrackListeners = attachTrackEndedListeners(bound.stream, handleMicrophoneLost);
     // The idle config makes the input source and the monitor state live on
@@ -612,8 +776,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     const offsetSamples =
       startOptions.recordOffsetSamples ??
       (captureSource === 'input' && binding
-        ? defaultRecordOffsetSamples(handle.ctx) +
-          inputLatencySamples(binding.stream, handle.ctx.sampleRate)
+        ? defaultRecordOffsetSamples(handle.ctx) + maxInputLatencySamples()
         : 0);
     if (!Number.isFinite(offsetSamples) || offsetSamples < 0) {
       throw new RangeError(
@@ -686,6 +849,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     }
     binding?.close();
     binding = null;
+    bindingStreams = [];
     micPromise = null;
     levelListeners.clear();
     micLostListeners.clear();

@@ -1432,6 +1432,8 @@ export const ja = {
         recordInputAuto: '自動',
         recordInputChannel: 'Ch {channel}',
         recordInputOf: '{name} の録音入力チャンネル',
+        recordInputDeviceDefault: '既定の入力',
+        recordInputDeviceOf: '{name} の録音入力デバイス',
         muteNamed: '{name} をミュート',
         soloNamed: '{name} をソロ',
         automationLane: 'オートメーションレーン',

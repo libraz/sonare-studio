@@ -25,6 +25,7 @@ import {
   setTrackMute,
   setTrackPan,
   setTrackRecordInputChannel,
+  setTrackRecordInputDeviceId,
   setTrackSolo,
   setTrackVca,
   setTrackVolume,
@@ -80,6 +81,11 @@ const props = defineProps<{
   rulerOffset: number;
   /** Ids of record-armed tracks (recording state is owned by the shell). */
   armedTrackIds?: readonly number[];
+  /**
+   * Available audioinput devices for the per-track record-device picker
+   * ({ value: deviceId, label }); empty hides the picker. Owned by the shell.
+   */
+  recordInputDevices?: readonly { value: string; label: string }[];
   /** Ids of tracks whose automation sublane is expanded. */
   automationExpandedIds?: readonly number[];
   /** Selected automation parameter per track id (absent = 'faderDb'). */
@@ -278,6 +284,34 @@ function recordInputChannelValue(track: EditorTrack): number {
 function onRecordInputChannelChange(track: EditorTrack, value: number): void {
   try {
     setTrackRecordInputChannel(track.id, value === RECORD_INPUT_AUTO ? null : value);
+    error.value = '';
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
+}
+
+// --- Recording input device --------------------------------------------------
+
+/** SelectMenu value for the global (non-overridden) input device. */
+const RECORD_DEVICE_DEFAULT = '';
+
+const recordInputDeviceOptions = computed<{ value: string; label: string }[]>(() => [
+  {
+    value: RECORD_DEVICE_DEFAULT,
+    label: t.value.shell.arrangement.trackHeader.recordInputDeviceDefault,
+  },
+  ...(props.recordInputDevices ?? [])
+    .filter((device) => device.value !== RECORD_DEVICE_DEFAULT)
+    .map((device) => ({ value: device.value, label: device.label })),
+]);
+
+function recordInputDeviceValue(track: EditorTrack): string {
+  return track.recordInputDeviceId ?? RECORD_DEVICE_DEFAULT;
+}
+
+function onRecordInputDeviceChange(track: EditorTrack, value: string): void {
+  try {
+    setTrackRecordInputDeviceId(track.id, value === RECORD_DEVICE_DEFAULT ? null : value);
     error.value = '';
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
@@ -892,6 +926,19 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                     })
                   "
                   @change="onRecordInputChannelChange(track, Number($event))"
+                />
+                <SelectMenu
+                  v-if="track.kind === 'audio' && (props.recordInputDevices?.length ?? 0) > 0"
+                  class="track-record-device-select"
+                  size="sm"
+                  :model-value="recordInputDeviceValue(track)"
+                  :options="recordInputDeviceOptions"
+                  :aria-label="
+                    formatMessage(t.shell.arrangement.trackHeader.recordInputDeviceOf, {
+                      name: track.name,
+                    })
+                  "
+                  @change="onRecordInputDeviceChange(track, String($event))"
                 />
                 <SelectMenu
                   v-if="track.kind !== 'group' && groupTracks.length > 0"

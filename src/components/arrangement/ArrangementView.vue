@@ -89,6 +89,8 @@ const props = defineProps<{
   loopEndPpq?: number;
   /** Ids of record-armed tracks (recording state is owned by the shell). */
   armedTrackIds?: readonly number[];
+  /** Available audioinput devices for the per-track record-device picker. */
+  recordInputDevices?: readonly { value: string; label: string }[];
 }>();
 
 const emit = defineEmits<{
@@ -734,6 +736,7 @@ onBeforeUnmount(() => {
         :scroll-y="scrollY"
         :ruler-offset="RULER_HEIGHT_PX"
         :armed-track-ids="props.armedTrackIds ?? []"
+        :record-input-devices="props.recordInputDevices ?? []"
         :automation-expanded-ids="automationExpandedIds"
         :automation-params="automationParams"
         :takes-expanded-ids="takesExpandedIds"

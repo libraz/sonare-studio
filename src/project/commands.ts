@@ -182,6 +182,7 @@ export {
   setTrackMute,
   setTrackPan,
   setTrackRecordInputChannel,
+  setTrackRecordInputDeviceId,
   setTrackSolo,
   setTrackVolume,
 } from './command/tracks';

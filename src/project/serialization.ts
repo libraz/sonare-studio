@@ -91,7 +91,9 @@ import type { ClipKind, EditorClip, EditorNote, TrackKind } from './types';
  *   track.
  *   Additionally (still version 3, additive): audio tracks may carry optional
  *   `recordInputChannel`, a zero-based microphone input channel used when
- *   splitting a multi-channel input recording across armed tracks.
+ *   splitting a multi-channel input recording across armed tracks, and optional
+ *   `recordInputDeviceId`, the preferred audioinput device recorded onto the
+ *   track when several armed tracks capture distinct devices at once.
  *   strip; older loaders drop the lane as an unknown param, so this stays
  *   additive within version 3.
  *   Additionally (still version 3, additive): MIDI clips may carry optional
@@ -268,6 +270,8 @@ export interface DocumentTrack {
   frozen?: { assetId: string };
   /** Zero-based microphone input channel for multi-track audio recording. */
   recordInputChannel?: number;
+  /** Preferred audioinput device id for multi-device audio recording. */
+  recordInputDeviceId?: string;
 }
 
 /** One timeline marker of the document. */
@@ -694,6 +698,13 @@ export function serializeProject(): ProjectDocument {
         track.recordInputChannel >= 0
       ) {
         out.recordInputChannel = track.recordInputChannel;
+      }
+      if (
+        track.kind === 'audio' &&
+        typeof track.recordInputDeviceId === 'string' &&
+        track.recordInputDeviceId.length > 0
+      ) {
+        out.recordInputDeviceId = track.recordInputDeviceId;
       }
       // Track automation rides the track entry (track ids are session-scoped,
       // so a document never stores lane targets); omitted when there is none.
