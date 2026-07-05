@@ -7,9 +7,56 @@
  * For each platform the preview returns the measured integrated LUFS and true
  * peak, the normalization gain the platform would apply (target − measured;
  * positive = turned up, negative = turned down) and whether that gain would
- * push the true peak past the platform ceiling. With no platforms passed the
- * wasm side uses its own defaults (Spotify, Apple Music, YouTube).
+ * push the true peak past the platform ceiling. The panel passes explicit
+ * platform configs so users are not limited to the wasm build's default list.
  */
+
+import type { MixdownReport } from '@/export/mixdown';
+import type { StreamingPlatform } from '@/wasm/index.js';
+
+/** App-level streaming target config, matching libsonare's preview ABI. */
+export type StreamingPlatformConfig = StreamingPlatform;
+
+/** Editable default target set shown by the mastering panel. */
+export const DEFAULT_STREAMING_PLATFORMS: readonly StreamingPlatformConfig[] = [
+  { name: 'Spotify', targetLufs: -14, ceilingDb: -1 },
+  { name: 'Apple Music', targetLufs: -16, ceilingDb: -1 },
+  { name: 'YouTube', targetLufs: -14, ceilingDb: -1 },
+  { name: 'Tidal', targetLufs: -14, ceilingDb: -1 },
+  { name: 'Broadcast', targetLufs: -23, ceilingDb: -1 },
+];
+
+/** Creates a mutable copy of the editable default streaming targets. */
+export function createDefaultStreamingPlatforms(): StreamingPlatformConfig[] {
+  return DEFAULT_STREAMING_PLATFORMS.map((platform) => ({ ...platform }));
+}
+
+/**
+ * Drops malformed platform configs before calling wasm. At least one valid
+ * row is required because an empty array would ask libsonare to use its own
+ * fixed defaults.
+ */
+export function normalizeStreamingPlatforms(
+  platforms: ReadonlyArray<StreamingPlatformConfig>,
+): StreamingPlatformConfig[] {
+  return platforms.flatMap((platform) => {
+    const name = platform.name.trim();
+    const targetLufs = Number(platform.targetLufs);
+    const ceilingDb = Number(platform.ceilingDb);
+    if (
+      name.length === 0 ||
+      !Number.isFinite(targetLufs) ||
+      !Number.isFinite(ceilingDb) ||
+      targetLufs > 0 ||
+      targetLufs < -80 ||
+      ceilingDb > 6 ||
+      ceilingDb < -24
+    ) {
+      return [];
+    }
+    return [{ name, targetLufs, ceilingDb }];
+  });
+}
 
 /** One platform's loudness verdict for the analyzed master. */
 export interface StreamingTarget {
@@ -23,6 +70,38 @@ export interface StreamingTarget {
   normalizationGainDb: number;
   /** True when the normalized true peak would exceed the platform ceiling. */
   ceilingRisk: boolean;
+}
+
+/**
+ * Computes streaming loudness verdicts from the panel's processed mixdown
+ * report. This keeps the table aligned with the same stereo deliverable LUFS
+ * and true-peak values shown in the preview pane. Returns null when the report
+ * lacks the required metering fields, in which case callers may fall back to
+ * libsonare's mono preview seam.
+ */
+export function streamingTargetsFromReport(
+  report: MixdownReport,
+  platforms: ReadonlyArray<StreamingPlatformConfig>,
+): StreamingTarget[] | null {
+  const integratedLufs = report.lufs;
+  const truePeakDb = report.truePeakDb ?? report.peakDb;
+  if (
+    typeof integratedLufs !== 'number' ||
+    !Number.isFinite(integratedLufs) ||
+    !Number.isFinite(truePeakDb)
+  ) {
+    return null;
+  }
+  return platforms.map((platform) => {
+    const normalizationGainDb = platform.targetLufs - integratedLufs;
+    return {
+      name: platform.name,
+      integratedLufs,
+      truePeakDb,
+      normalizationGainDb,
+      ceilingRisk: truePeakDb + normalizationGainDb > platform.ceilingDb,
+    };
+  });
 }
 
 /** Reads a finite number from an unknown record field (0 when absent/invalid). */

@@ -1,10 +1,13 @@
 <script setup lang="ts">
+import { inject } from 'vue';
 import MixerKnob from '@/components/mixer/MixerKnob.vue';
 import CloseIcon from '@/components/shell/CloseIcon.vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
+import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
 import type { InsertSlot } from '@/project/mixer';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import type { MasteringControl } from '@/ui/mastering/chain-controls';
+import { midiLearnMasteringTargetId } from '@/ui/midi/midi-learn';
 import { categoryLabel, humanizeInsertName } from '@/ui/mixer/insert-catalog';
 
 /**
@@ -48,6 +51,7 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const midiLearn = inject(MIDI_LEARN_KEY, null);
 
 function processorCategory(processor: string): string {
   return processor.includes('.') ? processor.slice(0, processor.indexOf('.')) : 'other';
@@ -58,6 +62,28 @@ function controlDisplay(control: MasteringControl): string {
   const value =
     Math.abs(control.value) >= 100 ? Math.round(control.value) : control.value.toFixed(1);
   return control.unit ? `${value} ${control.unit}` : `${value}`;
+}
+
+function learnMasteringId(index: number, control: MasteringControl): string {
+  return midiLearnMasteringTargetId(index, control.id);
+}
+
+function learnMasteringState(
+  index: number,
+  control: MasteringControl,
+): 'armed' | 'bound' | 'unbound' | undefined {
+  if (!midiLearn) return undefined;
+  const id = learnMasteringId(index, control);
+  if (midiLearn.isArmedId(id)) return 'armed';
+  return midiLearn.bindingForId(id) ? 'bound' : 'unbound';
+}
+
+function onMidiLearnMastering(index: number, control: MasteringControl): void {
+  midiLearn?.armId(learnMasteringId(index, control));
+}
+
+function onMidiForgetMastering(index: number, control: MasteringControl): void {
+  midiLearn?.clearId(learnMasteringId(index, control));
 }
 </script>
 
@@ -128,17 +154,43 @@ function controlDisplay(control: MasteringControl): string {
       variant="inline"
       :message="t.shell.mastering.noParameters"
     />
-    <MixerKnob
-      v-for="control in controls"
-      :key="control.id"
-      :value="control.value"
-      :min="control.min"
-      :max="control.max"
-      :label="control.name"
-      :display="controlDisplay(control)"
-      :size="22"
-      @change="(value, commit) => emit('param-change', index, control, value, commit)"
-    />
+    <div v-for="control in controls" :key="control.id" class="chain-param-control">
+      <MixerKnob
+        :value="control.value"
+        :min="control.min"
+        :max="control.max"
+        :label="control.name"
+        :display="controlDisplay(control)"
+        :size="22"
+        @change="(value, commit) => emit('param-change', index, control, value, commit)"
+      />
+      <div v-if="learnMasteringState(index, control)" class="chain-param-midi">
+        <button
+          type="button"
+          class="chain-param-midi-learn"
+          :class="learnMasteringState(index, control)"
+          v-tooltip="
+            learnMasteringState(index, control) === 'armed'
+              ? t.shell.mixer.controls.midiLearnListening
+              : t.shell.mixer.controls.midiLearn
+          "
+          :aria-label="t.shell.mixer.controls.midiLearn"
+          @click="onMidiLearnMastering(index, control)"
+        >
+          MIDI
+        </button>
+        <button
+          v-if="learnMasteringState(index, control) === 'bound'"
+          type="button"
+          class="chain-param-midi-forget"
+          v-tooltip="t.shell.mixer.controls.midiForget"
+          :aria-label="t.shell.mixer.controls.midiForget"
+          @click="onMidiForgetMastering(index, control)"
+        >
+          ×
+        </button>
+      </div>
+    </div>
   </div>
 </template>
 

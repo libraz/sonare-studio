@@ -1,13 +1,14 @@
 /**
  * Parameter-control descriptors for mastering chain processors.
  *
- * Mirrors the insert quick-control conventions: the wasm catalog exposes
- * parameter names only (masteringInsertParamNames), so display ranges are
- * inferred from the camelCase naming conventions of the processor params.
+ * Mirrors the insert quick-control conventions: processor-specific domains
+ * are resolved from the shared insert-param catalog first, with camelCase
+ * name heuristics reserved for unknown custom processors.
  * Mastering chain slots are not strip inserts, so they cannot reuse the
  * strip-addressed quick-control targets directly.
  */
 
+import { INSERT_PARAM_DOMAIN_FALLBACK, insertParamDomain } from '@/project/insert-param-domains';
 import type { InsertSlot } from '@/project/mixer';
 import { getWasmModule } from '@/project/store';
 
@@ -42,22 +43,30 @@ interface ParamRangeRule {
   fallback: number;
 }
 
-/** Range heuristics keyed by camelCase parameter naming conventions. */
+/** Fallback range heuristics keyed by camelCase parameter naming conventions. */
 const PARAM_RANGE_RULES: ReadonlyArray<ParamRangeRule> = [
   { test: /thresholdDb$/i, min: -60, max: 0, unit: 'dB', fallback: -24 },
   { test: /Db$/, min: -24, max: 24, unit: 'dB', fallback: 0 },
   { test: /ratio$/i, min: 1, max: 20, fallback: 4 },
   { test: /Ms$/, min: 0, max: 5000, unit: 'ms', fallback: 10 },
   { test: /Hz$/, min: 20, max: 20000, unit: 'Hz', fallback: 1000 },
-  { test: /(^q|Q)$/, min: 0.1, max: 18, fallback: Math.SQRT1_2 },
+  { test: /^q$|Q$/, min: 0.1, max: 18, fallback: Math.SQRT1_2 },
 ];
 
 /** Fallback range for parameters no rule matches (normalized amounts). */
 const DEFAULT_PARAM_RULE: Omit<ParamRangeRule, 'test'> = { min: 0, max: 1, fallback: 0 };
 
-/** Returns the range rule for a parameter name. */
-function paramRule(name: string): Omit<ParamRangeRule, 'test'> {
-  return PARAM_RANGE_RULES.find((rule) => rule.test.test(name)) ?? DEFAULT_PARAM_RULE;
+/** Returns the range rule for a processor parameter. */
+function paramRule(processor: string, name: string): Omit<ParamRangeRule, 'test'> {
+  const heuristic = PARAM_RANGE_RULES.find((rule) => rule.test.test(name)) ?? DEFAULT_PARAM_RULE;
+  const domain = insertParamDomain(processor, name);
+  if (domain === INSERT_PARAM_DOMAIN_FALLBACK) return heuristic;
+  return {
+    min: domain.min,
+    max: domain.max,
+    ...(domain.unit ? { unit: domain.unit } : {}),
+    fallback: Math.min(domain.max, Math.max(domain.min, heuristic.fallback)),
+  };
 }
 
 /** Splits a camelCase parameter name into a capitalized display name. */
@@ -95,7 +104,7 @@ export function masteringProcessorControls(
   const setNames = Object.keys(slot.params).filter((name) => typeof slot.params[name] === 'number');
   const names = [...new Set([...catalogNames, ...setNames])].slice(0, MAX_CHAIN_CONTROLS);
   return names.map((name) => {
-    const rule = paramRule(name);
+    const rule = paramRule(slot.processor, name);
     const raw = slot.params[name];
     const control: MasteringControl = {
       id: name,

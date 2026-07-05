@@ -15,6 +15,7 @@ import {
   setMasteringEnabled,
   setMasteringParam,
   setMasteringPreset,
+  setMasteringPresetOverride,
 } from '@/project/commands';
 import { createDefaultMasteringChain, type MasteringChainState } from '@/project/mixer';
 import { serializeProject } from '@/project/serialization';
@@ -42,7 +43,18 @@ import {
   type PreviewRenderFn,
 } from '@/ui/mastering/preview';
 import { DEFAULT_PREVIEW_BARS, derivePreviewRange } from '@/ui/mastering/preview-range';
-import { parseStreamingPreview, type StreamingTarget } from '@/ui/mastering/streaming';
+import {
+  type MonoCompatibilityReport,
+  parseMonoCompatibility,
+} from '@/ui/mastering/stereo-analysis';
+import {
+  createDefaultStreamingPlatforms,
+  normalizeStreamingPlatforms,
+  parseStreamingPreview,
+  type StreamingPlatformConfig,
+  type StreamingTarget,
+  streamingTargetsFromReport,
+} from '@/ui/mastering/streaming';
 import { createAudioPreview } from '@/ui/media/preview';
 import {
   groupInsertCatalogEntries,
@@ -134,6 +146,43 @@ function onSelectPreset(preset: string | null): void {
   runCommand(() => setMasteringPreset(preset));
 }
 
+// --- Preset overrides ---------------------------------------------------------
+
+const presetOverrideKey = ref('');
+const presetOverrideValue = ref('');
+
+const presetOverrideEntries = computed(() =>
+  Object.entries(chain.value.presetOverrides ?? {}).sort(([a], [b]) => a.localeCompare(b)),
+);
+
+function parsePresetOverrideValue(input: string): number | boolean {
+  const value = input.trim();
+  if (value.toLowerCase() === 'true') return true;
+  if (value.toLowerCase() === 'false') return false;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    throw new RangeError(t.value.shell.mastering.presetOverrides.invalidValue);
+  }
+  return numeric;
+}
+
+function onAddPresetOverride(): void {
+  try {
+    const key = presetOverrideKey.value.trim();
+    const value = parsePresetOverrideValue(presetOverrideValue.value);
+    setMasteringPresetOverride(key, value);
+    presetOverrideKey.value = '';
+    presetOverrideValue.value = '';
+    error.value = '';
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
+}
+
+function onClearPresetOverride(key: string): void {
+  runCommand(() => setMasteringPresetOverride(key, null));
+}
+
 // --- Mastering assistant --------------------------------------------------------
 
 const suggestion = ref<MasteringSuggestion | null>(null);
@@ -194,13 +243,14 @@ async function onAutoSuggest(): Promise<void> {
 // --- Streaming targets ----------------------------------------------------------
 
 const streamingTargets = ref<StreamingTarget[] | null>(null);
+const streamingPlatforms = ref<StreamingPlatformConfig[]>(createDefaultStreamingPlatforms());
 const checkingTargets = ref(false);
 
 /**
- * Measures the chain-applied (processed) render against the streaming-platform
- * loudness targets (Spotify / Apple Music / YouTube, from the wasm side) and
- * shows, per platform, the normalization gain each would apply and whether that
- * gain risks clipping the ceiling. Renders a preview first when none is ready.
+ * Measures the chain-applied (processed) render against the editable
+ * streaming-platform loudness targets and shows, per platform, the
+ * normalization gain each would apply and whether that gain risks clipping the
+ * ceiling. Renders a preview first when none is ready.
  */
 async function onCheckTargets(): Promise<void> {
   if (checkingTargets.value) return;
@@ -213,6 +263,16 @@ async function onCheckTargets(): Promise<void> {
       if (!error.value) error.value = t.value.shell.mastering.assistant.needsPreview;
       return;
     }
+    const platforms = normalizeStreamingPlatforms(streamingPlatforms.value);
+    if (platforms.length === 0) {
+      error.value = t.value.shell.mastering.streaming.noTargets;
+      return;
+    }
+    const reportTargets = streamingTargetsFromReport(source.report, platforms);
+    if (reportTargets) {
+      streamingTargets.value = reportTargets;
+      return;
+    }
     const wasm = await ensureWasm();
     const preview = wasm.masteringStreamingPreview;
     if (typeof preview !== 'function') {
@@ -220,13 +280,43 @@ async function onCheckTargets(): Promise<void> {
       return;
     }
     streamingTargets.value = parseStreamingPreview(
-      preview(downmixMono(source.channels), source.sampleRate),
+      preview(downmixMono(source.channels), source.sampleRate, platforms),
     );
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   } finally {
     checkingTargets.value = false;
   }
+}
+
+function onAddStreamingPlatform(): void {
+  streamingPlatforms.value = [
+    ...streamingPlatforms.value,
+    { name: t.value.shell.mastering.streaming.customTarget, targetLufs: -14, ceilingDb: -1 },
+  ];
+  streamingTargets.value = null;
+}
+
+function onRemoveStreamingPlatform(index: number): void {
+  if (streamingPlatforms.value.length <= 1) return;
+  streamingPlatforms.value = streamingPlatforms.value.filter((_, i) => i !== index);
+  streamingTargets.value = null;
+}
+
+function onUpdateStreamingPlatform(
+  index: number,
+  field: keyof StreamingPlatformConfig,
+  value: string,
+): void {
+  const current = streamingPlatforms.value[index];
+  if (!current) return;
+  const next: StreamingPlatformConfig = { ...current };
+  if (field === 'name') next.name = value;
+  else next[field] = Number(value);
+  streamingPlatforms.value = streamingPlatforms.value.map((entry, i) =>
+    i === index ? next : entry,
+  );
+  streamingTargets.value = null;
 }
 
 // --- Processor rack ------------------------------------------------------------
@@ -368,6 +458,7 @@ watch(anyMenuOpen, (open) => {
 // --- Preview ---------------------------------------------------------------------
 
 const previewState = shallowRef<MasteringPreviewState>();
+const monoCompatibility = ref<MonoCompatibilityReport | null>(null);
 
 const controller = createMasteringPreviewController({
   render: (doc, options, onProgress) =>
@@ -430,8 +521,12 @@ async function onPreview(): Promise<void> {
   );
   const revision = projectRevision.value;
   audioPreview.stop();
+  monoCompatibility.value = null;
   const applied = await controller.request(doc, range);
-  if (applied) previewRevision.value = revision;
+  if (applied) {
+    previewRevision.value = revision;
+    await analyzeMonoCompatibility();
+  }
 }
 
 function onCancelPreview(): void {
@@ -495,12 +590,51 @@ const loudnessRows = computed<LoudnessRow[]>(() => {
       b: b?.truePeakDb,
     },
     { label: t.value.shell.mastering.loudness.loudness, unit: 'LUFS', a: a?.lufs, b: b?.lufs },
+    {
+      label: t.value.shell.mastering.loudness.momentary,
+      unit: 'LUFS',
+      a: a?.momentaryLufs,
+      b: b?.momentaryLufs,
+    },
+    {
+      label: t.value.shell.mastering.loudness.shortTerm,
+      unit: 'LUFS',
+      a: a?.shortTermLufs,
+      b: b?.shortTermLufs,
+    },
+    {
+      label: t.value.shell.mastering.loudness.lra,
+      unit: 'LU',
+      a: a?.loudnessRange,
+      b: b?.loudnessRange,
+    },
+    {
+      label: t.value.shell.mastering.loudness.dynamicRange,
+      unit: 'dB',
+      a: a?.dynamicRangeDb,
+      b: b?.dynamicRangeDb,
+    },
   ];
 });
 
 const clipWarning = computed(() =>
   isClippingRisk(previewState.value?.processed?.report.truePeakDb),
 );
+
+async function analyzeMonoCompatibility(): Promise<void> {
+  const source = previewState.value?.processed;
+  if (!source || source.channels.length < 2) return;
+  try {
+    const wasm = await ensureWasm();
+    const analyze = wasm.masteringStereoAnalyze;
+    if (typeof analyze !== 'function') return;
+    monoCompatibility.value = parseMonoCompatibility(
+      analyze('stereo.monoCompatCheck', source.channels[0], source.channels[1], source.sampleRate),
+    );
+  } catch {
+    monoCompatibility.value = null;
+  }
+}
 
 /** Render failure message, surfaced only while the controller is in error. */
 const renderError = computed(() =>
@@ -569,6 +703,63 @@ onBeforeUnmount(() => {
           :preset="chain.preset"
           @select="onSelectPreset"
         />
+        <section class="preset-overrides" :class="{ disabled: !chain.preset }">
+          <div class="preset-overrides-head">
+            <span class="preset-overrides-title">
+              {{ t.shell.mastering.presetOverrides.title }}
+            </span>
+            <span class="preset-overrides-note">
+              {{
+                chain.preset
+                  ? t.shell.mastering.presetOverrides.note
+                  : t.shell.mastering.presetOverrides.needsPreset
+              }}
+            </span>
+          </div>
+          <div class="preset-override-form">
+            <input
+              v-model="presetOverrideKey"
+              class="preset-override-key"
+              type="text"
+              :disabled="!chain.preset"
+              :placeholder="t.shell.mastering.presetOverrides.keyPlaceholder"
+              :aria-label="t.shell.mastering.presetOverrides.key"
+              @keydown.enter.prevent="onAddPresetOverride"
+            />
+            <input
+              v-model="presetOverrideValue"
+              class="preset-override-value"
+              type="text"
+              :disabled="!chain.preset"
+              :placeholder="t.shell.mastering.presetOverrides.valuePlaceholder"
+              :aria-label="t.shell.mastering.presetOverrides.value"
+              @keydown.enter.prevent="onAddPresetOverride"
+            />
+            <button
+              type="button"
+              class="preset-override-add"
+              :disabled="!chain.preset"
+              @click="onAddPresetOverride"
+            >
+              {{ t.shell.mastering.presetOverrides.add }}
+            </button>
+          </div>
+          <ul v-if="presetOverrideEntries.length > 0" class="preset-override-list">
+            <li v-for="[key, value] in presetOverrideEntries" :key="key">
+              <span class="preset-override-param">{{ key }}</span>
+              <span class="preset-override-equals">=</span>
+              <span class="preset-override-current">{{ String(value) }}</span>
+              <button
+                type="button"
+                class="preset-override-remove"
+                :aria-label="t.shell.mastering.presetOverrides.remove"
+                @click="onClearPresetOverride(key)"
+              >
+                x
+              </button>
+            </li>
+          </ul>
+        </section>
         <PreviewPane
           :rendering="previewState?.status === 'rendering'"
           :progress="previewState?.progress ?? 0"
@@ -581,14 +772,19 @@ onBeforeUnmount(() => {
           :is-playing="isPlaying"
           :stale="previewStale"
           :checking-targets="checkingTargets"
+          :streaming-platforms="streamingPlatforms"
           :loudness-rows="loudnessRows"
           :clip-warning="clipWarning"
+          :mono-compatibility="monoCompatibility"
           :streaming-targets="streamingTargets"
           @preview="onPreview"
           @cancel="onCancelPreview"
           @select-variant="onSelectVariant"
           @toggle-play="onTogglePlay"
           @check-targets="onCheckTargets"
+          @add-streaming-platform="onAddStreamingPlatform"
+          @remove-streaming-platform="onRemoveStreamingPlatform"
+          @update-streaming-platform="onUpdateStreamingPlatform"
         />
       </div>
     </div>

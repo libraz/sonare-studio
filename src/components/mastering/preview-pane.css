@@ -81,6 +81,61 @@
   letter-spacing: 0.06em;
 }
 
+.targets-editor {
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.targets-editor-head,
+.targets-editor-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) 64px 64px 22px;
+  align-items: center;
+  gap: 4px;
+}
+
+.targets-editor-head {
+  font: 700 var(--fs-2xs) var(--font-sans);
+  color: var(--text-2);
+}
+
+.targets-add,
+.targets-remove {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  background: var(--surface-3);
+  cursor: pointer;
+}
+
+.targets-remove:disabled {
+  color: var(--text-4);
+  cursor: default;
+}
+
+.targets-name-input,
+.targets-number-input {
+  min-width: 0;
+  height: 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
+  background: var(--surface-1);
+  font: 600 var(--fs-2xs) var(--font-sans);
+  padding: 0 6px;
+}
+
+.targets-number-input {
+  text-align: right;
+}
+
 .preview-progress {
   display: flex;
   align-items: center;
@@ -116,4 +171,58 @@
   color: var(--danger-text);
   font: var(--fs-2xs)/1.4 var(--font-sans);
   flex: none;
+}
+
+.mono-compat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.mono-compat.risk {
+  border-color: color-mix(in srgb, var(--warning) 50%, var(--border));
+}
+
+.mono-head {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+.mono-title,
+.mono-status {
+  font: var(--fw-bold) 9px var(--font-sans);
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.mono-compat.risk .mono-status {
+  color: var(--warning);
+}
+
+.mono-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sp-2);
+  margin: 0;
+}
+
+.mono-grid div {
+  min-width: 0;
+}
+
+.mono-grid dt {
+  font: 9px var(--font-sans);
+  color: var(--text-4);
+}
+
+.mono-grid dd {
+  margin: 0;
+  font: var(--fs-2xs) var(--font-mono);
+  color: var(--text-2);
 }

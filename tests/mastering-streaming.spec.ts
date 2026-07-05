@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { parseStreamingPreview } from '@/ui/mastering/streaming';
+import {
+  normalizeStreamingPlatforms,
+  parseStreamingPreview,
+  streamingTargetsFromReport,
+} from '@/ui/mastering/streaming';
 
 /** A representative streaming-preview payload. */
 const SAMPLE = JSON.stringify({
@@ -75,5 +79,57 @@ describe('parseStreamingPreview', () => {
       JSON.stringify({ platforms: [{ name: 'Tidal', ceilingRisk: 'yes' }] }),
     );
     expect(result[0].ceilingRisk).toBe(false);
+  });
+});
+
+describe('streaming target helpers', () => {
+  it('normalizes editable platform configs before calling wasm', () => {
+    expect(
+      normalizeStreamingPlatforms([
+        { name: '  Bandcamp  ', targetLufs: -18, ceilingDb: -2 },
+        { name: '', targetLufs: -14, ceilingDb: -1 },
+        { name: 'Too Loud', targetLufs: 3, ceilingDb: -1 },
+        { name: 'Bad Ceiling', targetLufs: -14, ceilingDb: -99 },
+      ]),
+    ).toEqual([{ name: 'Bandcamp', targetLufs: -18, ceilingDb: -2 }]);
+  });
+
+  it('computes platform verdicts from the panel mixdown report', () => {
+    expect(
+      streamingTargetsFromReport(
+        {
+          peakDb: -1,
+          truePeakDb: -0.5,
+          lufs: -14,
+        },
+        [
+          { name: 'Spotify', targetLufs: -14, ceilingDb: -1 },
+          { name: 'Bandcamp', targetLufs: -18, ceilingDb: -2 },
+        ],
+      ),
+    ).toEqual([
+      {
+        name: 'Spotify',
+        integratedLufs: -14,
+        truePeakDb: -0.5,
+        normalizationGainDb: 0,
+        ceilingRisk: true,
+      },
+      {
+        name: 'Bandcamp',
+        integratedLufs: -14,
+        truePeakDb: -0.5,
+        normalizationGainDb: -4,
+        ceilingRisk: false,
+      },
+    ]);
+  });
+
+  it('returns null when the mixdown report has no loudness', () => {
+    expect(
+      streamingTargetsFromReport({ peakDb: -1 }, [
+        { name: 'Spotify', targetLufs: -14, ceilingDb: -1 },
+      ]),
+    ).toBeNull();
   });
 });

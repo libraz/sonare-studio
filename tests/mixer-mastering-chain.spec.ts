@@ -9,6 +9,7 @@ import {
   setMasteringEnabled,
   setMasteringParam,
   setMasteringPreset,
+  setMasteringPresetOverride,
   setStripGain,
   undo,
 } from '@/project/commands';
@@ -120,6 +121,37 @@ describe('mastering chain commands', () => {
     });
   });
 
+  it('sets, clears and undoes mastering preset overrides', () => {
+    expect(() => setMasteringPresetOverride('loudness.targetLufs', -14)).toThrow(RangeError);
+    setMasteringPreset('streaming');
+    setMasteringPresetOverride('loudness.targetLufs', -16, { commit: false });
+    setMasteringPresetOverride('loudness.targetLufs', -14);
+    setMasteringPresetOverride('limiter.truePeak', true);
+    expect(store.mixer.masteringChain).toEqual({
+      preset: 'streaming',
+      presetOverrides: { 'loudness.targetLufs': -14, 'limiter.truePeak': true },
+      processors: [],
+    });
+
+    undo();
+    expect(store.mixer.masteringChain?.presetOverrides).toEqual({ 'loudness.targetLufs': -14 });
+    undo();
+    expect(store.mixer.masteringChain?.presetOverrides).toBeUndefined();
+  });
+
+  it('clears preset overrides when clearing the preset', () => {
+    setMasteringPreset('pop');
+    setMasteringPresetOverride('loudness.targetLufs', -14);
+    setMasteringPreset(null);
+    expect(store.mixer.masteringChain).toBeUndefined();
+    undo();
+    expect(store.mixer.masteringChain).toEqual({
+      preset: 'pop',
+      presetOverrides: { 'loudness.targetLufs': -14 },
+      processors: [],
+    });
+  });
+
   it('coalesces a param drag into a single history entry', () => {
     addMasteringProcessor('dynamics.compressor', { thresholdDb: -12 });
     setMasteringParam(0, 'thresholdDb', -14, { commit: false });
@@ -182,6 +214,8 @@ describe('mastering chain commands', () => {
     expect(() => setMasteringParam(0, '', 1)).toThrow(RangeError);
     expect(() => setMasteringParam(0, 'tiltDb', Number.POSITIVE_INFINITY)).toThrow(RangeError);
     expect(() => setMasteringParam(1, 'tiltDb', 1)).toThrow(RangeError);
+    expect(() => setMasteringPresetOverride('', -14)).toThrow(RangeError);
+    expect(() => setMasteringPresetOverride('loudness.targetLufs', Number.NaN)).toThrow(RangeError);
   });
 });
 
@@ -203,6 +237,7 @@ describe('mastering chain serialization', () => {
 
   it('round-trips the mastering chain through the document', async () => {
     setMasteringPreset('streaming');
+    setMasteringPresetOverride('loudness.targetLufs', -14);
     addMasteringProcessor('maximizer.truePeakLimiter', { ceilingDb: -1, oversampleFactor: 4 });
     setMasteringEnabled(0, false);
     setStripGain('master', -2);
@@ -210,6 +245,7 @@ describe('mastering chain serialization', () => {
     const doc = serializeProject();
     expect(doc.mixer?.masteringChain).toEqual({
       preset: 'streaming',
+      presetOverrides: { 'loudness.targetLufs': -14 },
       processors: [
         {
           processor: 'maximizer.truePeakLimiter',

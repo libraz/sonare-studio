@@ -43,7 +43,7 @@ function requireMasteringProcessor(chain: MasteringChainState, index: number): I
 /**
  * Sets (or clears) the mastering preset as one undoable edit. The preset is a
  * wasm mastering preset name applied as a whole chain by the offline mixdown
- * renderer; live playback is unaffected.
+ * renderer; live playback mirrors only explicit realtime-safe processor slots.
  *
  * @param preset Preset name (non-empty), or null to clear.
  * @param options Gesture coalescing for preset-browsing UIs.
@@ -59,8 +59,51 @@ export function setMasteringPreset(preset: string | null, options?: CommandGestu
   if (current === preset && !hasPendingGesture(key)) return;
   executeApp(
     () => {
-      if (preset === null) delete chain.preset;
-      else chain.preset = preset;
+      if (preset === null) {
+        delete chain.preset;
+        delete chain.presetOverrides;
+      } else {
+        chain.preset = preset;
+      }
+      writeMasteringChain(store, chain);
+      store.refresh();
+    },
+    { key, commit: options?.commit ?? true },
+  );
+}
+
+/**
+ * Sets or clears a flat override for the selected mastering preset. Overrides
+ * are applied by masterAudioStereo on top of the named preset during export.
+ *
+ * @param param Dot-notation override key (for example 'loudness.targetLufs').
+ * @param value Finite number/boolean to set, or null to clear.
+ * @param options Gesture coalescing for slider drags.
+ */
+export function setMasteringPresetOverride(
+  param: string,
+  value: number | boolean | null,
+  options?: CommandGestureOptions,
+): void {
+  const store = useProjectStore();
+  if (param.length === 0) throw new RangeError('Mastering preset override name must not be empty');
+  if (typeof value === 'number' && !Number.isFinite(value)) {
+    throw new RangeError(`Mastering preset override "${param}" must be finite, got ${value}`);
+  }
+  const chain = currentMasteringChain(store);
+  if (chain.preset === undefined) {
+    throw new RangeError('Mastering preset overrides require a selected preset');
+  }
+  const overrides = chain.presetOverrides ?? {};
+  const key = `mastering-preset-override:${param}`;
+  if ((overrides[param] ?? null) === value && !hasPendingGesture(key)) return;
+  executeApp(
+    () => {
+      const nextOverrides = { ...overrides };
+      if (value === null) delete nextOverrides[param];
+      else nextOverrides[param] = value;
+      if (Object.keys(nextOverrides).length === 0) delete chain.presetOverrides;
+      else chain.presetOverrides = nextOverrides;
       writeMasteringChain(store, chain);
       store.refresh();
     },
@@ -71,8 +114,9 @@ export function setMasteringPreset(preset: string | null, options?: CommandGestu
 /**
  * Appends a processor slot to the mastering chain as one undoable edit. The
  * processor is a wasm catalog name (masteringProcessorNames /
- * masteringInsertNames); it runs only in offline mixdown renders, after the
- * master strip (and after the preset, when one is set).
+ * masteringInsertNames); export runs the full slot after the master strip
+ * (and after the preset, when one is set), while live playback mirrors the
+ * slot only when it is valid as a realtime strip insert.
  *
  * @param processor Processor catalog name (non-empty).
  * @param params Initial parameter overrides (camelCase keys).

@@ -107,3 +107,46 @@
   box-shadow: var(--inset-well);
   padding: 4px 2px;
 }
+
+.chain-param-control {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.chain-param-midi {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: center;
+}
+
+.chain-param-midi-learn,
+.chain-param-midi-forget {
+  flex: none;
+  height: 14px;
+  font: var(--fw-bold) 7px var(--font-sans);
+  line-height: 1;
+  color: var(--text-3);
+  background: var(--surface-3);
+  border: none;
+  border-radius: 3px;
+  padding: 0 4px;
+  cursor: pointer;
+  box-shadow: var(--control-lift);
+}
+
+.chain-param-midi-learn.armed {
+  color: var(--surface-0);
+  background: var(--accent);
+}
+
+.chain-param-midi-learn.bound {
+  color: var(--accent);
+}
+
+.chain-param-midi-forget {
+  width: 14px;
+  padding: 0;
+  color: var(--text-4);
+}

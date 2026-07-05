@@ -3,11 +3,19 @@ import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 import MasteringPanel from '@/components/mastering/MasteringPanel.vue';
+import { MIDI_LEARN_KEY, useMidiLearn } from '@/composables/useMidiLearn';
 import type { ExportRenderOptions } from '@/export/client';
 import type { MixdownProgressFn, MixdownResult } from '@/export/mixdown';
-import { addMasteringProcessor, clearHistory, setMasteringEnabled, undo } from '@/project/commands';
+import {
+  addMasteringProcessor,
+  clearHistory,
+  setMasteringEnabled,
+  setMasteringPreset,
+  undo,
+} from '@/project/commands';
 import type { ProjectDocument } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
+import { midiLearnMasteringTargetId } from '@/ui/midi/midi-learn';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -20,7 +28,15 @@ function makeResult(value: number): MixdownResult {
     channels: [new Float32Array([value]), new Float32Array([value])],
     sampleRate: 48000,
     totalFrames: 1,
-    report: { peakDb: -6, truePeakDb: -0.1, lufs: -14 },
+    report: {
+      peakDb: -6,
+      truePeakDb: -0.1,
+      lufs: -14,
+      momentaryLufs: -12.5,
+      shortTermLufs: -13.2,
+      loudnessRange: 4.5,
+      dynamicRangeDb: 9.1,
+    },
   };
 }
 
@@ -103,6 +119,55 @@ describe('MasteringPanel.vue', () => {
     expect(wrapper.find('.preset-button').text()).toContain('No preset');
   });
 
+  it('removes preset menu outside-click listeners on unmount', async () => {
+    const add = vi.spyOn(document, 'addEventListener');
+    const remove = vi.spyOn(document, 'removeEventListener');
+    const wrapper = mount(MasteringPanel);
+
+    await wrapper.find('.preset-button').trigger('click');
+
+    expect(add).toHaveBeenCalledWith('pointerdown', expect.any(Function), true);
+    wrapper.unmount();
+    expect(remove).toHaveBeenCalledWith('pointerdown', expect.any(Function), true);
+  });
+
+  it('edits flat mastering preset overrides from the panel', async () => {
+    setMasteringPreset('streaming');
+    const wrapper = mount(MasteringPanel);
+
+    await wrapper.find('.preset-override-key').setValue('loudness.targetLufs');
+    await wrapper.find('.preset-override-value').setValue('-14');
+    await wrapper.find('.preset-override-add').trigger('click');
+
+    expect(store.mixer.masteringChain?.presetOverrides).toEqual({ 'loudness.targetLufs': -14 });
+    expect((wrapper.find('.preset-override-key').element as HTMLInputElement).value).toBe('');
+    expect((wrapper.find('.preset-override-value').element as HTMLInputElement).value).toBe('');
+
+    await wrapper.find('.preset-override-key').setValue('limiter.truePeak');
+    await wrapper.find('.preset-override-value').setValue('true');
+    await wrapper.find('.preset-override-add').trigger('click');
+
+    expect(store.mixer.masteringChain?.presetOverrides).toEqual({
+      'limiter.truePeak': true,
+      'loudness.targetLufs': -14,
+    });
+    expect(wrapper.findAll('.preset-override-list li').map((item) => item.text())).toEqual([
+      'limiter.truePeak=true x',
+      'loudness.targetLufs=-14 x',
+    ]);
+
+    await wrapper.findAll('.preset-override-remove')[0].trigger('click');
+    expect(store.mixer.masteringChain?.presetOverrides).toEqual({ 'loudness.targetLufs': -14 });
+  });
+
+  it('keeps preset override controls disabled until a preset is selected', async () => {
+    const wrapper = mount(MasteringPanel);
+
+    expect(wrapper.find<HTMLInputElement>('.preset-override-key').element.disabled).toBe(true);
+    expect(wrapper.find<HTMLInputElement>('.preset-override-value').element.disabled).toBe(true);
+    expect(wrapper.find<HTMLButtonElement>('.preset-override-add').element.disabled).toBe(true);
+  });
+
   it('clears the preset via the "No preset" item', async () => {
     const wrapper = mount(MasteringPanel);
     await wrapper.find('.preset-button').trigger('click');
@@ -120,6 +185,7 @@ describe('MasteringPanel.vue', () => {
     expect(wrapper.findAll('.catalog-category').map((c) => c.text())).toEqual([
       'Dynamics',
       'EQ',
+      'Modulation',
       'Saturation',
       'Stereo',
     ]);
@@ -152,6 +218,29 @@ describe('MasteringPanel.vue', () => {
     // The whole drag coalesced into one history entry.
     undo();
     expect(store.mixer.masteringChain?.processors[0]?.params.tiltDb).toBeUndefined();
+  });
+
+  it('arms and clears mastering processor MIDI learn targets', async () => {
+    addMasteringProcessor('eq.tilt');
+    const learn = useMidiLearn();
+    const wrapper = mount(MasteringPanel, {
+      global: { provide: { [MIDI_LEARN_KEY as symbol]: learn } },
+    });
+    await wrapper.find('.chain-name').trigger('click');
+    const targetId = midiLearnMasteringTargetId(0, 'tiltDb');
+
+    const learnButtons = wrapper.findAll('.chain-param-midi-learn');
+    expect(learnButtons.length).toBeGreaterThan(0);
+    await learnButtons[0].trigger('click');
+    expect(learn.isArmedId(targetId)).toBe(true);
+
+    learn.handleCc({ channel: 0, controller: 41, value: 127 });
+    await nextTick();
+    expect(learn.bindingForId(targetId)).toEqual({ channel: 0, controller: 41 });
+    expect(store.mixer.masteringChain?.processors[0].params.tiltDb).toBe(12);
+
+    await wrapper.find('.chain-param-midi-forget').trigger('click');
+    expect(learn.bindingForId(targetId)).toBeUndefined();
   });
 
   it('bypasses and removes processors', async () => {
@@ -210,10 +299,22 @@ describe('MasteringPanel.vue', () => {
     await flush();
 
     expect(wrapper.find('.preview-progress').exists()).toBe(false);
-    expect(wrapper.findAll('.loudness-row')).toHaveLength(3);
-    expect(wrapper.find('.loudness-value').text()).toContain('-6.0');
+    expect(wrapper.findAll('.loudness-row')).toHaveLength(7);
+    const loudnessText = wrapper.find('.loudness-readout').text();
+    expect(loudnessText).toContain('-6.0');
+    expect(loudnessText).toContain('Momentary');
+    expect(loudnessText).toContain('-12.5 LUFS');
+    expect(loudnessText).toContain('Short-term');
+    expect(loudnessText).toContain('-13.2 LUFS');
+    expect(loudnessText).toContain('LRA');
+    expect(loudnessText).toContain('4.5 LU');
+    expect(loudnessText).toContain('DR');
+    expect(loudnessText).toContain('9.1 dB');
     // truePeakDb -0.1 exceeds the -0.3 dBTP warning threshold.
     expect(wrapper.find('.clip-warning').exists()).toBe(true);
+    expect(wrapper.find('.mono-compat').text()).toContain('Mono compatibility');
+    expect(wrapper.find('.mono-compat').text()).toContain('0.42');
+    expect(wrapper.find('.mono-compat').text()).toContain('-3.2 dBFS');
     const abButtons = wrapper.findAll('.ab-button');
     expect(abButtons[0].attributes('disabled')).toBeUndefined();
     expect(abButtons[1].attributes('disabled')).toBeUndefined();
@@ -248,6 +349,29 @@ describe('MasteringPanel.vue', () => {
     expect(wrapper.find('.preview-stale').exists()).toBe(true);
   });
 
+  it('checks editable streaming targets instead of the wasm default list', async () => {
+    addMasteringProcessor('eq.tilt');
+    const fake = makeFakeRender();
+    const wrapper = mount(MasteringPanel, { props: { renderMixdown: fake.render } });
+    await wrapper.find('.preview-button').trigger('click');
+    fake.calls[0].resolve(makeResult(0.5));
+    await flush();
+    fake.calls[1].resolve(makeResult(0.25));
+    await flush();
+
+    const firstTarget = wrapper.find('.targets-editor-row');
+    const inputs = firstTarget.findAll('input');
+    await inputs[0].setValue('Bandcamp');
+    await inputs[1].setValue('-18');
+    await inputs[2].setValue('-2');
+    await wrapper.find('.targets-button').trigger('click');
+    await flush();
+
+    const tableText = wrapper.find('.targets-table').text();
+    expect(tableText).toContain('Bandcamp');
+    expect(tableText).toContain('-4.0');
+  });
+
   it('surfaces render failures and recovers on the next preview', async () => {
     const fake = makeFakeRender();
     const wrapper = mount(MasteringPanel, { props: { renderMixdown: fake.render } });
@@ -261,7 +385,7 @@ describe('MasteringPanel.vue', () => {
     fake.calls[1].resolve(makeResult(0.5));
     await flush();
     expect(wrapper.find('.preview-pane .mastering-error').exists()).toBe(false);
-    expect(wrapper.findAll('.loudness-row')).toHaveLength(3);
+    expect(wrapper.findAll('.loudness-row')).toHaveLength(7);
   });
 
   it('cancels an in-flight preview render', async () => {

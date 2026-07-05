@@ -3,7 +3,9 @@ import MasteringLoudnessReadout from '@/components/mastering/MasteringLoudnessRe
 import StreamingTargetsTable from '@/components/mastering/StreamingTargetsTable.vue';
 import TransportIcon from '@/components/shell/TransportIcon.vue';
 import { useI18n } from '@/ui/i18n';
-import type { StreamingTarget } from '@/ui/mastering/streaming';
+import { formatLevel } from '@/ui/mastering/loudness';
+import type { MonoCompatibilityReport } from '@/ui/mastering/stereo-analysis';
+import type { StreamingPlatformConfig, StreamingTarget } from '@/ui/mastering/streaming';
 
 /**
  * Preview pane: the render controls (render / cancel), the A/B comparison
@@ -44,10 +46,14 @@ defineProps<{
   stale: boolean;
   /** True while a streaming-target check is in flight. */
   checkingTargets: boolean;
+  /** Editable platform target configs passed to libsonare. */
+  streamingPlatforms: ReadonlyArray<StreamingPlatformConfig>;
   /** Loudness readout rows (A/B per metric). */
   loudnessRows: ReadonlyArray<LoudnessRow>;
   /** True when the processed render risks clipping the ceiling. */
   clipWarning: boolean;
+  /** Processed-render mono compatibility analysis, or null until unavailable/not measured. */
+  monoCompatibility: MonoCompatibilityReport | null;
   /** Per-platform streaming targets, or null until checked. */
   streamingTargets: ReadonlyArray<StreamingTarget> | null;
 }>();
@@ -58,6 +64,14 @@ const emit = defineEmits<{
   (event: 'select-variant', variant: 'processed' | 'bypassed'): void;
   (event: 'toggle-play'): void;
   (event: 'check-targets'): void;
+  (event: 'add-streaming-platform'): void;
+  (event: 'remove-streaming-platform', index: number): void;
+  (
+    event: 'update-streaming-platform',
+    index: number,
+    field: keyof StreamingPlatformConfig,
+    value: string,
+  ): void;
 }>();
 
 const { t } = useI18n();
@@ -115,6 +129,79 @@ const { t } = useI18n();
         {{ checkingTargets ? t.shell.mastering.streaming.checking : t.shell.mastering.streaming.check }}
       </button>
     </div>
+    <div class="targets-editor" :aria-label="t.shell.mastering.streaming.targets">
+      <div class="targets-editor-head">
+        <span>{{ t.shell.mastering.streaming.targets }}</span>
+        <button
+          type="button"
+          class="targets-add"
+          v-tooltip="t.shell.mastering.streaming.add"
+          :aria-label="t.shell.mastering.streaming.add"
+          @click="emit('add-streaming-platform')"
+        >
+          +
+        </button>
+      </div>
+      <div
+        v-for="(platform, index) in streamingPlatforms"
+        :key="`${platform.name}:${index}`"
+        class="targets-editor-row"
+      >
+        <input
+          class="targets-name-input"
+          :aria-label="t.shell.mastering.streaming.platform"
+          :value="platform.name"
+          @input="
+            emit(
+              'update-streaming-platform',
+              index,
+              'name',
+              ($event.target as HTMLInputElement).value,
+            )
+          "
+        />
+        <input
+          class="targets-number-input"
+          type="number"
+          step="0.1"
+          :aria-label="t.shell.mastering.streaming.targetLufs"
+          :value="platform.targetLufs"
+          @input="
+            emit(
+              'update-streaming-platform',
+              index,
+              'targetLufs',
+              ($event.target as HTMLInputElement).value,
+            )
+          "
+        />
+        <input
+          class="targets-number-input"
+          type="number"
+          step="0.1"
+          :aria-label="t.shell.mastering.streaming.ceiling"
+          :value="platform.ceilingDb"
+          @input="
+            emit(
+              'update-streaming-platform',
+              index,
+              'ceilingDb',
+              ($event.target as HTMLInputElement).value,
+            )
+          "
+        />
+        <button
+          type="button"
+          class="targets-remove"
+          v-tooltip="t.shell.mastering.streaming.remove"
+          :aria-label="t.shell.mastering.streaming.remove"
+          :disabled="streamingPlatforms.length <= 1"
+          @click="emit('remove-streaming-platform', index)"
+        >
+          ×
+        </button>
+      </div>
+    </div>
     <div v-if="rendering" class="preview-progress">
       <div class="progress-track">
         <div class="progress-fill" :style="{ width: `${Math.round(progress * 100)}%` }" />
@@ -125,6 +212,37 @@ const { t } = useI18n();
       {{ renderError }}
     </p>
     <MasteringLoudnessReadout :rows="loudnessRows" :clip-warning="clipWarning" />
+    <section
+      v-if="monoCompatibility"
+      class="mono-compat"
+      :class="{ risk: !monoCompatibility.compatible }"
+      :aria-label="t.shell.mastering.monoCompatibility.title"
+    >
+      <div class="mono-head">
+        <span class="mono-title">{{ t.shell.mastering.monoCompatibility.title }}</span>
+        <span class="mono-status">
+          {{
+            monoCompatibility.compatible
+              ? t.shell.mastering.monoCompatibility.pass
+              : t.shell.mastering.monoCompatibility.warn
+          }}
+        </span>
+      </div>
+      <dl class="mono-grid">
+        <div>
+          <dt>{{ t.shell.mastering.monoCompatibility.correlation }}</dt>
+          <dd>{{ monoCompatibility.correlation.toFixed(2) }}</dd>
+        </div>
+        <div>
+          <dt>{{ t.shell.mastering.monoCompatibility.width }}</dt>
+          <dd>{{ monoCompatibility.width.toFixed(2) }}</dd>
+        </div>
+        <div>
+          <dt>{{ t.shell.mastering.monoCompatibility.monoPeak }}</dt>
+          <dd>{{ formatLevel(monoCompatibility.monoPeakDb) }} dBFS</dd>
+        </div>
+      </dl>
+    </section>
     <StreamingTargetsTable
       v-if="streamingTargets && streamingTargets.length"
       :targets="streamingTargets"
