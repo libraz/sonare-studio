@@ -555,6 +555,55 @@ describe('buildMidiClipSchedules', () => {
       const preludes = schedule.events.filter((event) => event.renderFrame === 2 * SPP - 1);
       expect(preludes.map((event) => event.word0)).toEqual([pcWord(0, 5), pcWord(2, 5)]);
     });
+
+    describe('multi-timbral channel map', () => {
+      // Bank 15361 = GM2 drum-set bank (MSB 120) + kit LSB 1 for channel 9.
+      const drumBank = (120 << 7) | 1;
+      const multiTrack = makeTrack(1, {
+        instrument: {
+          kind: 'sf2',
+          fontId: 'font-a',
+          bank: 0,
+          program: 5,
+          channelMap: [
+            { channel: 0, program: 40 },
+            { channel: 9, bank: drumBank, program: 0 },
+          ],
+        },
+      });
+
+      it('emits each mapped channel its own bank/program prelude', () => {
+        const clip = makeClip(1, 1, {
+          startPpq: 2,
+          notes: [makeNote({ channel: 0 }), makeNote({ id: 2, pitch: 38, channel: 9 })],
+        });
+        const [schedule] = buildMidiClipSchedules([multiTrack], [clip], TEMPO_120, SAMPLE_RATE);
+        const preludes = schedule.events
+          .filter((event) => event.renderFrame === 2 * SPP - 1)
+          .map((event) => event.word0);
+        // Channel 0: program 40 (map entry has no bank -> program change only).
+        // Channel 9: bank-select MSB 120 + LSB 1, then program 0.
+        expect(preludes).toEqual([
+          pcWord(0, 40),
+          ccWord(9, 0, 120),
+          ccWord(9, 32, 1),
+          pcWord(9, 0),
+        ]);
+      });
+
+      it('falls back to the track-level bank/program for an unmapped channel', () => {
+        const clip = makeClip(1, 1, {
+          startPpq: 2,
+          notes: [makeNote({ id: 3, pitch: 64, channel: 3 })],
+        });
+        const [schedule] = buildMidiClipSchedules([multiTrack], [clip], TEMPO_120, SAMPLE_RATE);
+        const preludes = schedule.events
+          .filter((event) => event.renderFrame === 2 * SPP - 1)
+          .map((event) => event.word0);
+        // Channel 3 is absent from the map -> track-level bank 0 + program 5.
+        expect(preludes).toEqual([ccWord(3, 0, 0), ccWord(3, 32, 0), pcWord(3, 5)]);
+      });
+    });
   });
 });
 

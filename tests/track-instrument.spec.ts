@@ -11,6 +11,7 @@ import {
   instrumentCacheSegment,
   instrumentEquals,
   isDefaultInstrument,
+  sf2ChannelProgram,
   sf2PlaybackConfig,
   type TrackInstrument,
   trackInstrument,
@@ -244,6 +245,71 @@ describe('instrument helpers', () => {
     expect(() =>
       validateTrackInstrument({ kind: 'sf2', fontId: 'gm', gain: 1.5, polyphony: 32 }),
     ).not.toThrow();
+  });
+
+  it('validateTrackInstrument checks the SF2 channel map', () => {
+    expect(() =>
+      validateTrackInstrument({
+        kind: 'sf2',
+        fontId: 'gm',
+        channelMap: [{ channel: 16, program: 0 }],
+      }),
+    ).toThrow(RangeError);
+    expect(() =>
+      validateTrackInstrument({
+        kind: 'sf2',
+        fontId: 'gm',
+        channelMap: [{ channel: 0, bank: 16384 }],
+      }),
+    ).toThrow(RangeError);
+    expect(() =>
+      validateTrackInstrument({
+        kind: 'sf2',
+        fontId: 'gm',
+        channelMap: [{ channel: 0, program: 128 }],
+      }),
+    ).toThrow(RangeError);
+    expect(() =>
+      validateTrackInstrument({
+        kind: 'sf2',
+        fontId: 'gm',
+        channelMap: [
+          { channel: 9, program: 0 },
+          { channel: 9, program: 1 },
+        ],
+      }),
+    ).toThrow(RangeError);
+    expect(() =>
+      validateTrackInstrument({
+        kind: 'sf2',
+        fontId: 'gm',
+        channelMap: [
+          { channel: 0, program: 40 },
+          { channel: 9, bank: (120 << 7) | 1, program: 0 },
+        ],
+      }),
+    ).not.toThrow();
+  });
+
+  it('sf2ChannelProgram resolves the map entry then the track default', () => {
+    const instrument = {
+      kind: 'sf2',
+      fontId: 'gm',
+      bank: 0,
+      program: 5,
+      channelMap: [
+        { channel: 0, program: 40 },
+        { channel: 9, bank: (120 << 7) | 1, program: 0 },
+      ],
+    } as const;
+    // A mapped channel with only a program keeps its bank undefined.
+    expect(sf2ChannelProgram(instrument, 0)).toEqual({ bank: undefined, program: 40 });
+    // The drum channel carries the GM2 drum bank.
+    expect(sf2ChannelProgram(instrument, 9)).toEqual({ bank: (120 << 7) | 1, program: 0 });
+    // An unmapped channel falls back to the track-level bank/program.
+    expect(sf2ChannelProgram(instrument, 3)).toEqual({ bank: 0, program: 5 });
+    // With no map and no track program, no prelude is needed.
+    expect(sf2ChannelProgram({ kind: 'sf2', fontId: 'gm' }, 0)).toBeNull();
   });
 
   it('validateTrackInstrument checks external-midi fields', () => {

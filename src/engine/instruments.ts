@@ -13,6 +13,7 @@ import { loadFont as loadStoredFont } from '@/project/fonts';
 import {
   DEFAULT_SYNTH_PRESET,
   instrumentCacheSegment,
+  sf2ChannelProgram,
   sf2PlaybackConfig,
   type TrackInstrument,
 } from '@/project/instrument';
@@ -299,21 +300,23 @@ export function resolvePresetName(wasm: WasmModule, preset: string): string {
 
 /**
  * Builds the MIDI bank-select/program-change events injected at PPQ 0 for an
- * SF2 instrument with an explicit bank or program, one set per channel the
- * phrase uses.
+ * SF2 instrument, one set per channel the phrase uses. Each channel resolves
+ * to its {@link Sf2Instrument.channelMap} entry when present (multi-timbral
+ * GM/GS module), otherwise the track-level bank/program.
  */
 function sf2ProgramEvents(
   wasm: WasmModule,
   instrument: Extract<TrackInstrument, { kind: 'sf2' }>,
   channels: ReadonlyArray<number>,
 ): ProjectMidiEvent[] {
-  if (instrument.bank === undefined && instrument.program === undefined) return [];
-  const program = instrument.program ?? 0;
   const events: ProjectMidiEvent[] = [];
   for (const channel of channels) {
-    if (instrument.bank !== undefined && typeof wasm.Project.midiBankProgram === 'function') {
-      const bankMsb = (instrument.bank >> 7) & 0x7f;
-      const bankLsb = instrument.bank & 0x7f;
+    const resolved = sf2ChannelProgram(instrument, channel);
+    if (resolved === null) continue;
+    const program = resolved.program ?? 0;
+    if (resolved.bank !== undefined && typeof wasm.Project.midiBankProgram === 'function') {
+      const bankMsb = (resolved.bank >> 7) & 0x7f;
+      const bankLsb = resolved.bank & 0x7f;
       events.push(...wasm.Project.midiBankProgram(0, 0, channel, bankMsb, bankLsb, program));
     } else {
       events.push(wasm.Project.midiProgram(0, 0, channel, program));

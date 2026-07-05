@@ -36,6 +36,7 @@ import {
   DEFAULT_SYNTH_PRESET,
   type ExternalMidiInstrument,
   effectiveTrackInstrument,
+  sf2ChannelProgram,
   sf2PlaybackConfig,
   type TrackInstrument,
 } from '@/project/instrument';
@@ -200,9 +201,10 @@ export function buildMidiClipSchedules(
 
     const instrument = effectiveTrackInstrument(track, projectExternalMidi);
     const sf2 = instrument?.kind === 'sf2' ? instrument : undefined;
-    const hasPrelude = sf2 !== undefined && (sf2.bank !== undefined || sf2.program !== undefined);
-    if (sf2 && hasPrelude) {
-      const { bank, program } = sf2;
+    // A prelude is needed when the track sets a bank/program or carries a
+    // per-channel program map (multi-timbral GM/GS module).
+    let hasPrelude = false;
+    if (sf2) {
       const preludeFrame = Math.max(0, startSample - 1);
       const channels = new Set([
         ...notes.map((note) => clamp(note.channel ?? 0, 0, 15)),
@@ -213,9 +215,18 @@ export function buildMidiClipSchedules(
         ...polyPressureLanes.map((lane) => clamp(lane.channel, 0, 15)),
       ]);
       for (const channel of channels) {
-        if (bank !== undefined) {
+        const resolved = sf2ChannelProgram(sf2, channel);
+        if (resolved === null) continue;
+        hasPrelude = true;
+        if (resolved.bank !== undefined) {
           events.push(
-            voiceEvent(preludeFrame, STATUS_CONTROL_CHANGE, channel, CC_BANK_SELECT_MSB, bank >> 7),
+            voiceEvent(
+              preludeFrame,
+              STATUS_CONTROL_CHANGE,
+              channel,
+              CC_BANK_SELECT_MSB,
+              resolved.bank >> 7,
+            ),
           );
           events.push(
             voiceEvent(
@@ -223,11 +234,13 @@ export function buildMidiClipSchedules(
               STATUS_CONTROL_CHANGE,
               channel,
               CC_BANK_SELECT_LSB,
-              bank & 0x7f,
+              resolved.bank & 0x7f,
             ),
           );
         }
-        events.push(voiceEvent(preludeFrame, STATUS_PROGRAM_CHANGE, channel, program ?? 0, 0));
+        events.push(
+          voiceEvent(preludeFrame, STATUS_PROGRAM_CHANGE, channel, resolved.program ?? 0, 0),
+        );
       }
     }
     // A frame-0 prelude has no earlier sample to occupy, so the clip's own
@@ -404,10 +417,18 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
         return `synth-preset:${instrument.preset}`;
       case 'synth-patch':
         return `synth-patch:${JSON.stringify(instrument.patch)}`;
-      case 'sf2':
+      case 'sf2': {
+        const channelMap =
+          instrument.channelMap && instrument.channelMap.length > 0
+            ? `:cm=${instrument.channelMap
+                .map((c) => `${c.channel}/${c.bank ?? -1}/${c.program ?? -1}`)
+                .sort()
+                .join(',')}`
+            : '';
         return `sf2:${instrument.fontId}:${instrument.bank ?? 'bank-default'}:${
           instrument.program ?? 'program-default'
-        }`;
+        }${channelMap}`;
+      }
       case 'external-midi':
         return `external-midi:${instrument.outputPortId}:ch${instrument.channel + 1}`;
       default: {

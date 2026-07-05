@@ -35,6 +35,16 @@ export interface SynthPatchInstrument {
   patch: SynthPatch;
 }
 
+/** One channel's program in a multi-timbral SF2 (GM/GS module) map. */
+export interface Sf2ChannelProgram {
+  /** MIDI channel (0-15; 9 = GM percussion). */
+  channel: number;
+  /** MIDI bank number (0-16383, MSB*128+LSB); omitted = bank 0. */
+  bank?: number;
+  /** MIDI program number (0-127); omitted = program 0. */
+  program?: number;
+}
+
 /** Instrument variant: a stored SoundFont (SF2) with optional program select. */
 export interface Sf2Instrument {
   kind: 'sf2';
@@ -48,6 +58,14 @@ export interface Sf2Instrument {
   gain?: number;
   /** Max simultaneous voices (integer in [1, 64]); omitted = engine default (48). */
   polyphony?: number;
+  /**
+   * Per-channel program map for multi-timbral (GM/GS module) rendering. When
+   * present, each listed channel receives its own bank-select + program-change
+   * prelude; channels absent from the map fall back to the track-level
+   * bank/program. Channel 9 (GM percussion) selects a drum/SFX kit via its bank
+   * (GM2 uses bank MSB 120 with the kit in the LSB).
+   */
+  channelMap?: Sf2ChannelProgram[];
 }
 
 /**
@@ -164,6 +182,41 @@ export function validateTrackInstrument(instrument: TrackInstrument): void {
       if (program !== undefined && (!Number.isInteger(program) || program < 0 || program > 127)) {
         throw new RangeError(`SF2 program must be an integer in [0, 127], got ${program}`);
       }
+      if (instrument.channelMap !== undefined) {
+        if (!Array.isArray(instrument.channelMap)) {
+          throw new RangeError('SF2 channelMap must be an array when present');
+        }
+        const seenChannels = new Set<number>();
+        for (const entry of instrument.channelMap) {
+          if (!Number.isInteger(entry.channel) || entry.channel < 0 || entry.channel > 15) {
+            throw new RangeError(
+              `SF2 channelMap channel must be an integer in [0, 15], got ${entry.channel}`,
+            );
+          }
+          if (seenChannels.has(entry.channel)) {
+            throw new RangeError(
+              `SF2 channelMap has a duplicate entry for channel ${entry.channel}`,
+            );
+          }
+          seenChannels.add(entry.channel);
+          if (
+            entry.bank !== undefined &&
+            (!Number.isInteger(entry.bank) || entry.bank < 0 || entry.bank > 16383)
+          ) {
+            throw new RangeError(
+              `SF2 channelMap bank must be an integer in [0, 16383], got ${entry.bank}`,
+            );
+          }
+          if (
+            entry.program !== undefined &&
+            (!Number.isInteger(entry.program) || entry.program < 0 || entry.program > 127)
+          ) {
+            throw new RangeError(
+              `SF2 channelMap program must be an integer in [0, 127], got ${entry.program}`,
+            );
+          }
+        }
+      }
       const { gain, polyphony } = instrument;
       if (gain !== undefined && (!Number.isFinite(gain) || gain <= 0)) {
         throw new RangeError(`SF2 gain must be a positive number, got ${gain}`);
@@ -233,16 +286,49 @@ export function sf2PlaybackConfig(instrument: Sf2Instrument): {
   return config;
 }
 
+/**
+ * Resolves the effective bank/program an SF2 instrument plays on a MIDI
+ * channel: the {@link Sf2Instrument.channelMap} entry for that channel when it
+ * sets anything, otherwise the track-level bank/program. Returns null when
+ * neither the map nor the track selects a program for the channel, so the
+ * caller emits no bank-select/program-change prelude and the engine keeps its
+ * default (program 0, bank 0).
+ *
+ * @param instrument SF2 instrument to read.
+ * @param channel MIDI channel (0-15).
+ */
+export function sf2ChannelProgram(
+  instrument: Sf2Instrument,
+  channel: number,
+): { bank?: number; program?: number } | null {
+  const mapped = instrument.channelMap?.find((entry) => entry.channel === channel);
+  if (mapped && (mapped.bank !== undefined || mapped.program !== undefined)) {
+    return { bank: mapped.bank, program: mapped.program };
+  }
+  if (instrument.bank !== undefined || instrument.program !== undefined) {
+    return { bank: instrument.bank, program: instrument.program };
+  }
+  return null;
+}
+
 export function instrumentCacheSegment(instrument: TrackInstrument): string {
   switch (instrument.kind) {
     case 'synth-preset':
       return `preset=${encodeURIComponent(instrument.preset)}`;
     case 'synth-patch':
       return `patch=${fnv1a32Hex(canonicalJson(instrument.patch))}`;
-    case 'sf2':
+    case 'sf2': {
+      const channelMap =
+        instrument.channelMap && instrument.channelMap.length > 0
+          ? `:cm=${instrument.channelMap
+              .map((c) => `${c.channel}/${c.bank ?? -1}/${c.program ?? -1}`)
+              .sort()
+              .join(',')}`
+          : '';
       return `sf2=${encodeURIComponent(instrument.fontId)}:${instrument.bank ?? -1}:${
         instrument.program ?? -1
-      }:${instrument.gain ?? -1}:${instrument.polyphony ?? -1}`;
+      }:${instrument.gain ?? -1}:${instrument.polyphony ?? -1}${channelMap}`;
+    }
     case 'external-midi':
       // External-MIDI tracks are not bounced; this segment exists only to keep
       // the cache key exhaustive over the instrument union.
