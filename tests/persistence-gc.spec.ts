@@ -5,7 +5,7 @@ import { saveProject } from '@/persistence/opfs';
 import { encodeSzd } from '@/persistence/szd';
 import { clearFontCache, listFonts, saveFont } from '@/project/fonts';
 import { PROJECT_DOCUMENT_SCHEMA_VERSION, type ProjectDocument } from '@/project/serialization';
-import { installMockOpfs, uninstallMockOpfs } from './opfs-mock';
+import { installMockOpfs, type MemoryDirectoryHandle, uninstallMockOpfs } from './opfs-mock';
 
 /** A document referencing one clip asset and one SoundFont. */
 function makeDocument(name: string, assetId: string, fontId: string): ProjectDocument {
@@ -48,8 +48,10 @@ function mono(): Float32Array[] {
 }
 
 describe('media garbage collection', () => {
+  let root: MemoryDirectoryHandle;
+
   beforeEach(() => {
-    installMockOpfs();
+    root = installMockOpfs();
     clearAudioAssetCache();
     clearFontCache();
   });
@@ -129,6 +131,20 @@ describe('media garbage collection', () => {
     expect(result.removedAssetIds).toEqual(['orphan']);
     expect(result.reclaimedBytes).toBe(16);
     expect((await listAssets()).map((a) => a.id)).toEqual(['orphan']);
+  });
+
+  it('removes orphan PCM payloads that have no metadata sidecar', async () => {
+    const assetsDir = await root.getDirectoryHandle('assets', { create: true });
+    assetsDir.files.set('crash-leftover.pcm', {
+      data: new Uint8Array([1, 2, 3, 4, 5, 6]),
+      lastModified: 1,
+    });
+
+    const result = await garbageCollectMedia();
+
+    expect(result.removedAssetIds).toEqual(['crash-leftover']);
+    expect(result.reclaimedBytes).toBe(6);
+    expect(assetsDir.files.has('crash-leftover.pcm')).toBe(false);
   });
 
   it('deletes nothing when a stored project cannot be decoded', async () => {

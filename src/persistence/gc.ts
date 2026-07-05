@@ -23,7 +23,7 @@
 
 import { deleteFont, listFonts } from '@/project/fonts';
 import type { ProjectDocument } from '@/project/serialization';
-import { type AudioAssetMeta, deleteAsset, listAssets } from './assets';
+import { type AudioAssetMeta, deleteAsset, listAssetPayloads, listAssets } from './assets';
 import { collectReferencedAssetIds, collectReferencedFontIds } from './bundle';
 import { isOpfsAvailable, listProjects, loadProject } from './opfs';
 import { decodeSzd } from './szd';
@@ -132,21 +132,34 @@ export async function garbageCollectMedia(options: MediaGcOptions = {}): Promise
   });
   if (!complete) return { ...empty, incompleteReferences: true };
 
-  const [assets, fonts] = await Promise.all([listAssets(), listFonts()]);
+  const [assets, assetPayloads, fonts] = await Promise.all([
+    listAssets(),
+    listAssetPayloads(),
+    listFonts(),
+  ]);
+  const assetMetaIds = new Set(assets.map((meta) => meta.id));
   const orphanAssets = assets.filter((meta) => !assetIds.has(meta.id));
+  const orphanPayloads = assetPayloads.filter(
+    (payload) => !assetMetaIds.has(payload.id) && !assetIds.has(payload.id),
+  );
   const orphanFonts = fonts.filter((meta) => !fontIds.has(meta.id));
 
   let reclaimedBytes = 0;
   for (const meta of orphanAssets) reclaimedBytes += assetBytes(meta);
+  for (const payload of orphanPayloads) reclaimedBytes += payload.byteLength;
   for (const meta of orphanFonts) reclaimedBytes += meta.byteLength;
 
   if (!options.dryRun) {
     for (const meta of orphanAssets) await deleteAsset(meta.id);
+    for (const payload of orphanPayloads) await deleteAsset(payload.id);
     for (const meta of orphanFonts) await deleteFont(meta.id);
   }
 
   return {
-    removedAssetIds: orphanAssets.map((meta) => meta.id).sort(),
+    removedAssetIds: [
+      ...orphanAssets.map((meta) => meta.id),
+      ...orphanPayloads.map((p) => p.id),
+    ].sort(),
     removedFontIds: orphanFonts.map((meta) => meta.id).sort(),
     reclaimedBytes,
     incompleteReferences: false,

@@ -57,6 +57,127 @@ describe('ingestAudioBuffer', () => {
     expect(lufs).toHaveBeenCalledWith(mixdownToMono(stereo()), 44100);
   });
 
+  it('uses detailed analyzeBpm, key candidates and rhythm tags when available', async () => {
+    const analyzeBpm = vi.fn(() => ({ bpm: 128, confidence: 0.82 }));
+    const detectBpm = vi.fn(() => 95);
+    const detectKeyCandidates = vi.fn(() => [
+      { key: { name: 'D minor', shortName: 'Dm', confidence: 0.74 } },
+    ]);
+    const analyzeRhythm = vi.fn(() => ({
+      bpm: 127,
+      timeSignature: { numerator: 7, denominator: 8, confidence: 0.66 },
+      grooveType: 'breakbeat',
+    }));
+    const meta = await ingestAudioBuffer(stereo(), 44100, 'Detailed loop', {
+      analysis: { analyzeBpm, detectBpm, detectKeyCandidates, analyzeRhythm },
+    });
+
+    expect(meta.tags).toEqual({
+      bpm: 128,
+      bpmConfidence: 0.82,
+      key: 'Dm',
+      keyConfidence: 0.74,
+      timeSignature: '7/8',
+      timeSignatureConfidence: 0.66,
+      grooveType: 'breakbeat',
+    });
+    expect(detectBpm).not.toHaveBeenCalled();
+    clearAudioAssetCache();
+    expect((await loadAsset(meta.id)).meta.tags).toEqual(meta.tags);
+  });
+
+  it('stores unified analyze dynamics and timbre tags for the asset inspector', async () => {
+    const analyze = vi.fn(() => ({
+      bpm: 118,
+      bpmConfidence: 0.91,
+      key: { name: 'C major', shortName: 'C', confidence: 0.8 },
+      timeSignature: { numerator: 4, denominator: 4, confidence: 0.7 },
+      rhythm: {
+        syncopation: 0.42,
+        grooveType: 'straight',
+        patternRegularity: 0.86,
+        tempoStability: 0.93,
+      },
+      dynamics: {
+        dynamicRangeDb: 9.5,
+        peakDb: -1.2,
+        rmsDb: -15.4,
+        crestFactor: 14.2,
+        loudnessRangeDb: 5.1,
+        isCompressed: false,
+      },
+      timbre: {
+        brightness: 0.61,
+        warmth: 0.33,
+        density: 0.74,
+        roughness: 0.12,
+        complexity: 0.47,
+      },
+      form: 'verse-chorus',
+    }));
+
+    const meta = await ingestAudioBuffer(stereo(), 44100, 'Unified analysis', {
+      analysis: { analyze },
+    });
+
+    expect(meta.tags).toEqual({
+      bpm: 118,
+      bpmConfidence: 0.91,
+      key: 'C',
+      keyConfidence: 0.8,
+      timeSignature: '4/4',
+      timeSignatureConfidence: 0.7,
+      syncopation: 0.42,
+      grooveType: 'straight',
+      patternRegularity: 0.86,
+      tempoStability: 0.93,
+      dynamicRangeDb: 9.5,
+      peakDb: -1.2,
+      rmsDb: -15.4,
+      crestFactor: 14.2,
+      loudnessRangeDb: 5.1,
+      isCompressed: false,
+      brightness: 0.61,
+      warmth: 0.33,
+      density: 0.74,
+      roughness: 0.12,
+      complexity: 0.47,
+      form: 'verse-chorus',
+    });
+    expect(analyze).toHaveBeenCalledWith(mixdownToMono(stereo()), 44100);
+    clearAudioAssetCache();
+    expect((await loadAsset(meta.id)).meta.tags).toEqual(meta.tags);
+  });
+
+  it('lets dedicated dynamics and timbre analyzers refine unified analysis tags', () => {
+    expect(
+      analyzeAudioTags(stereo(), 44100, {
+        analyze: () => ({
+          dynamics: { dynamicRangeDb: 6 },
+          timbre: { brightness: 0.2 },
+        }),
+        analyzeDynamics: () => ({ dynamicRangeDb: 10, isCompressed: true }),
+        analyzeTimbre: () => ({ brightness: 0.8, warmth: 0.4 }),
+      }),
+    ).toEqual({
+      dynamicRangeDb: 10,
+      isCompressed: true,
+      brightness: 0.8,
+      warmth: 0.4,
+    });
+  });
+
+  it('falls back to rhythm bpm when no tempo detector succeeds', () => {
+    expect(
+      analyzeAudioTags(stereo(), 44100, {
+        analyzeBpm: () => {
+          throw new Error('boom');
+        },
+        analyzeRhythm: () => ({ bpm: 110 }),
+      }),
+    ).toEqual({ bpm: 110 });
+  });
+
   it('persists a loudness-only measurement (no bpm/key detected)', async () => {
     const meta = await ingestAudioBuffer(stereo(), 44100, 'Loud loop', {
       analysis: { lufs: () => ({ integratedLufs: -11.7 }) },

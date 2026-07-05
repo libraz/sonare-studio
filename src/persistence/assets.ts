@@ -51,8 +51,48 @@ export class InvalidAssetError extends Error {
 export interface AudioAssetTags {
   /** Detected tempo in BPM. */
   bpm?: number;
+  /** Confidence of the detected tempo in [0, 1], when reported. */
+  bpmConfidence?: number;
   /** Detected musical key (display string, e.g. "Am"). */
   key?: string;
+  /** Confidence of the detected key in [0, 1], when reported. */
+  keyConfidence?: number;
+  /** Detected time signature, e.g. "4/4". */
+  timeSignature?: string;
+  /** Confidence of the detected time signature in [0, 1], when reported. */
+  timeSignatureConfidence?: number;
+  /** Coarse groove label from rhythm analysis, when reported. */
+  grooveType?: string;
+  /** Rhythmic syncopation estimate in [0, 1], when reported. */
+  syncopation?: number;
+  /** Pattern regularity estimate in [0, 1], when reported. */
+  patternRegularity?: number;
+  /** Tempo stability estimate in [0, 1], when reported. */
+  tempoStability?: number;
+  /** Dynamics dynamic range in dB, when reported. */
+  dynamicRangeDb?: number;
+  /** Peak level in dBFS, when reported. */
+  peakDb?: number;
+  /** RMS level in dBFS, when reported. */
+  rmsDb?: number;
+  /** Crest factor, when reported. */
+  crestFactor?: number;
+  /** Loudness range in dB, when reported. */
+  loudnessRangeDb?: number;
+  /** Compression classifier from dynamics analysis, when reported. */
+  isCompressed?: boolean;
+  /** Timbre brightness estimate, when reported. */
+  brightness?: number;
+  /** Timbre warmth estimate, when reported. */
+  warmth?: number;
+  /** Timbre density estimate, when reported. */
+  density?: number;
+  /** Timbre roughness estimate, when reported. */
+  roughness?: number;
+  /** Timbre complexity estimate, when reported. */
+  complexity?: number;
+  /** Coarse form label from unified analysis, when reported. */
+  form?: string;
   /** Integrated loudness in LUFS (EBU R128). */
   lufs?: number;
 }
@@ -105,6 +145,51 @@ export function audioAssetUri(assetId: string): string {
 
 /** In-memory cache of loaded assets (playback re-schedules often). */
 const audioCache = new Map<string, LoadedAudioAsset>();
+
+const NUMERIC_TAG_KEYS = [
+  'bpm',
+  'bpmConfidence',
+  'keyConfidence',
+  'timeSignatureConfidence',
+  'syncopation',
+  'patternRegularity',
+  'tempoStability',
+  'dynamicRangeDb',
+  'peakDb',
+  'rmsDb',
+  'crestFactor',
+  'loudnessRangeDb',
+  'brightness',
+  'warmth',
+  'density',
+  'roughness',
+  'complexity',
+  'lufs',
+] as const satisfies ReadonlyArray<keyof AudioAssetTags>;
+
+const STRING_TAG_KEYS = [
+  'key',
+  'timeSignature',
+  'grooveType',
+  'form',
+] as const satisfies ReadonlyArray<keyof AudioAssetTags>;
+
+function sanitizeAudioAssetTags(raw: AudioAssetTags | undefined): AudioAssetTags | undefined {
+  if (!raw) return undefined;
+  const tags: AudioAssetTags = {};
+  for (const key of NUMERIC_TAG_KEYS) {
+    const value = raw[key];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      if (key !== 'bpm' || value > 0) tags[key] = value;
+    }
+  }
+  for (const key of STRING_TAG_KEYS) {
+    const value = raw[key];
+    if (typeof value === 'string' && value.length > 0) tags[key] = value;
+  }
+  if (typeof raw.isCompressed === 'boolean') tags.isCompressed = raw.isCompressed;
+  return Object.keys(tags).length > 0 ? tags : undefined;
+}
 
 /** Drops all cached asset audio (tests, memory pressure handling). */
 export function clearAudioAssetCache(): void {
@@ -270,13 +355,8 @@ function validateMeta(value: unknown, id: string): AudioAssetMeta {
     numFrames: meta.numFrames as number,
   };
   if (typeof meta.tags === 'object' && meta.tags !== null) {
-    const tags: AudioAssetTags = {};
-    const raw = meta.tags as AudioAssetTags;
-    if (typeof raw.bpm === 'number' && Number.isFinite(raw.bpm) && raw.bpm > 0) tags.bpm = raw.bpm;
-    if (typeof raw.key === 'string' && raw.key.length > 0) tags.key = raw.key;
-    if (typeof raw.lufs === 'number' && Number.isFinite(raw.lufs)) tags.lufs = raw.lufs;
-    if (tags.bpm !== undefined || tags.key !== undefined || tags.lufs !== undefined)
-      out.tags = tags;
+    const tags = sanitizeAudioAssetTags(meta.tags as AudioAssetTags);
+    if (tags) out.tags = tags;
   }
   return out;
 }
@@ -334,12 +414,8 @@ export async function saveAsset(
     numChannels,
     numFrames,
   };
-  if (
-    input.tags &&
-    (input.tags.bpm !== undefined || input.tags.key !== undefined || input.tags.lufs !== undefined)
-  ) {
-    meta.tags = { ...input.tags };
-  }
+  const tags = sanitizeAudioAssetTags(input.tags);
+  if (tags) meta.tags = tags;
 
   const dir = await assetsDirectory();
   const pcmBytes = new Uint8Array(
@@ -439,6 +515,35 @@ export async function listAssets(): Promise<AudioAssetMeta[]> {
   }
   out.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   return out;
+}
+
+/** One raw PCM payload file stored under assets/. */
+export interface AudioAssetPayloadInfo {
+  /** Asset id derived from `<id>.pcm`. */
+  id: string;
+  /** Payload byte length. */
+  byteLength: number;
+}
+
+/**
+ * Lists stored raw PCM payloads, including files whose metadata sidecar is
+ * missing. Malformed filenames are skipped.
+ */
+export async function listAssetPayloads(): Promise<AudioAssetPayloadInfo[]> {
+  const dir = await assetsDirectory();
+  const out: AudioAssetPayloadInfo[] = [];
+  for await (const [entryName, handle] of dir.entries()) {
+    if (handle.kind !== 'file' || !entryName.endsWith(PCM_EXTENSION)) continue;
+    const id = entryName.slice(0, -PCM_EXTENSION.length);
+    try {
+      validateAssetId(id);
+      const file = await handle.getFile();
+      out.push({ id, byteLength: file.size });
+    } catch {
+      // Skip invalid ids or unreadable files; GC/listing should remain usable.
+    }
+  }
+  return out.sort((a, b) => a.id.localeCompare(b.id));
 }
 
 /**

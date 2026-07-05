@@ -1,10 +1,19 @@
 import { computed, nextTick, type Ref, ref, watch } from 'vue';
 import type { useAutosave } from '@/composables/useAutosave';
 import { promptDialog } from '@/composables/useDialogs';
+import { importDawprojectWithMedia } from '@/export/dawproject';
 import { describeError } from '@/lib/errors';
+import { createBrowserBackup, restoreBrowserBackup } from '@/persistence/backup';
 import { gatherProjectBundle, restoreProjectBundle } from '@/persistence/bundle';
 import { garbageCollectMedia } from '@/persistence/gc';
-import { downloadSzd, pickAndReadSzd } from '@/persistence/local-file';
+import {
+  downloadBrowserBackup,
+  downloadSzd,
+  pickAndReadBrowserBackup,
+  pickAndReadDawproject,
+  pickAndReadExternalAudioFiles,
+  pickAndReadSzd,
+} from '@/persistence/local-file';
 import {
   deleteProject,
   isOpfsAvailable,
@@ -18,6 +27,7 @@ import { decodeSzd, decodeSzdBundle, encodeSzd, SZD_FILE_EXTENSION } from '@/per
 import { collectHistoryReferencedMediaIds } from '@/project/commands';
 import { makeBwv565Document } from '@/project/demo/bwv565';
 import { exportProjectClipFile, exportProjectSmf } from '@/project/export';
+import { persistedProjectStateKey } from '@/project/persisted-state';
 import {
   loadProjectDocument,
   type ProjectDocument,
@@ -27,7 +37,6 @@ import { smfToProjectDocument } from '@/project/smf';
 import { useProjectStore } from '@/project/store';
 import { createTemplate, type TemplateName } from '@/project/templates';
 import { formatMessage, useI18n } from '@/ui/i18n';
-import { midiCcBindingsKey } from '@/ui/midi/midi-learn';
 import {
   loadRecentProjects,
   saveRecentProjects,
@@ -71,23 +80,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   const recentProjects = ref<string[]>(loadRecentProjects());
 
   watch(
-    () =>
-      [
-        store.projectName,
-        store.tracks,
-        store.clips,
-        store.markers,
-        store.sections,
-        store.tempoSegments,
-        store.timeSignatures,
-        store.mixer,
-        store.scoreAnnotations,
-        store.displayTransposeSemitones,
-        store.automationLanes,
-        store.chords,
-        // The binding map is mutated in place, so observe its contents.
-        midiCcBindingsKey(store.midiCcBindings),
-      ] as const,
+    () => persistedProjectStateKey(store),
     () => {
       if (store.initialized) dirty.value = true;
     },
@@ -314,6 +307,64 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     midiImportInput.value?.click();
   }
 
+  function normalizeMediaPath(path: string): string {
+    return path.replaceAll('\\', '/').toLowerCase();
+  }
+
+  function mediaFileName(path: string): string {
+    const normalized = normalizeMediaPath(path);
+    const slash = normalized.lastIndexOf('/');
+    return slash >= 0 ? normalized.slice(slash + 1) : normalized;
+  }
+
+  function createExternalAudioResolver(): (path: string) => Promise<Uint8Array | null> {
+    let pickedFiles: Promise<Map<string, Uint8Array> | null> | null = null;
+    async function pickFiles(): Promise<Map<string, Uint8Array> | null> {
+      const files = await pickAndReadExternalAudioFiles();
+      if (!files || files.length === 0) return null;
+      const byPath = new Map<string, Uint8Array>();
+      for (const file of files) {
+        byPath.set(normalizeMediaPath(file.name), file.bytes);
+        byPath.set(mediaFileName(file.name), file.bytes);
+        if (file.relativePath) {
+          byPath.set(normalizeMediaPath(file.relativePath), file.bytes);
+          byPath.set(mediaFileName(file.relativePath), file.bytes);
+        }
+      }
+      return byPath;
+    }
+    return async (path: string) => {
+      pickedFiles ??= pickFiles();
+      const byPath = await pickedFiles;
+      if (!byPath) return null;
+      return byPath.get(normalizeMediaPath(path)) ?? byPath.get(mediaFileName(path)) ?? null;
+    };
+  }
+
+  function importDawprojectAction(): void {
+    closeProjectMenu();
+    void runAction(async () => {
+      if (!(await confirmDiscard())) return;
+      const picked = await pickAndReadDawproject();
+      if (!picked) return;
+      if (!picked.name.toLowerCase().endsWith('.dawproject')) {
+        errorMessage.value = formatMessage(t.value.shell.project.importDawprojectInvalidType, {
+          name: picked.name,
+        });
+        return;
+      }
+      await loadProjectDocument(
+        await importDawprojectWithMedia(picked.bytes, {
+          resolveExternalAudio: createExternalAudioResolver(),
+        }),
+      );
+      await saveLoadedProjectToAutosave();
+      await markClean();
+      openDialogOpen.value = false;
+      startScreenOpen.value = false;
+    });
+  }
+
   function onMidiImportChange(event: Event): void {
     const input = event.target as HTMLInputElement | null;
     const file = input?.files?.[0] ?? null;
@@ -330,18 +381,27 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     });
   }
 
-  async function saveToOpfs(name: string): Promise<void> {
+  async function writeProjectToOpfs(name: string, documentName: string): Promise<void> {
     if (isReservedProjectName(name)) {
-      throw new Error('Project name "autosave" is reserved for internal recovery data.');
+      throw new Error(t.value.dialogs.prompts.projectNameReserved);
     }
     const doc = serializeProject();
+    doc.name = documentName;
     const bytes = encodeSzd(doc, { savedAt: new Date().toISOString() });
     await saveProject(name, bytes);
     rememberRecentProject(name);
+  }
+
+  async function finishSuccessfulSave(): Promise<void> {
     await autosave.saveNow();
     await markClean();
     // Edits since the last save may have stranded imported media.
     await reclaimUnusedMedia();
+  }
+
+  async function saveToOpfs(name: string): Promise<void> {
+    await writeProjectToOpfs(name, store.projectName);
+    await finishSuccessfulSave();
   }
 
   function saveProjectAction(): void {
@@ -363,8 +423,9 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       });
       if (!name) return;
       void runAction(async () => {
+        await writeProjectToOpfs(name, name);
         store.projectName = name;
-        await saveToOpfs(name);
+        await finishSuccessfulSave();
       });
     })();
   }
@@ -378,6 +439,32 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       const bundle = opfsAvailable ? await gatherProjectBundle(doc) : undefined;
       const bytes = encodeSzd(doc, { savedAt: new Date().toISOString() }, bundle);
       downloadSzd(store.projectName, bytes);
+    });
+  }
+
+  function exportBrowserBackupAction(): void {
+    closeProjectMenu();
+    void runAction(async () => {
+      const bytes = await createBrowserBackup();
+      downloadBrowserBackup('sonare-studio', bytes);
+    });
+  }
+
+  function importBrowserBackupAction(): void {
+    closeProjectMenu();
+    void runAction(async () => {
+      if (
+        !(await confirmAction(t.value.dialogs.prompts.restoreBackupMessage, {
+          title: t.value.dialogs.prompts.restoreBackupTitle,
+          confirmLabel: t.value.dialogs.prompts.restore,
+        }))
+      )
+        return;
+      const picked = await pickAndReadBrowserBackup();
+      if (!picked) return;
+      await restoreBrowserBackup(picked.bytes);
+      await refreshStoredProjects();
+      await reclaimUnusedMedia();
     });
   }
 
@@ -433,11 +520,14 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     openRecentProject,
     deleteStoredProject,
     importSzdFile,
+    importDawprojectAction,
     importMidiAction,
     onMidiImportChange,
     saveProjectAction,
     saveProjectAsAction,
     exportSzdAction,
+    exportBrowserBackupAction,
+    importBrowserBackupAction,
     exportSmfAction,
     exportMidi2Action,
     disposeProjectPersistence,

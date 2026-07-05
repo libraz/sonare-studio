@@ -182,6 +182,21 @@ describe('requestPersistentStorage', () => {
     expect(await requestPersistentStorage()).toBe(true);
   });
 
+  it('still requests a grant when persisted state probing throws', async () => {
+    let persistCalls = 0;
+    stubStorage({
+      persisted: async () => {
+        throw new Error('restricted');
+      },
+      persist: async () => {
+        persistCalls += 1;
+        return true;
+      },
+    });
+    expect(await requestPersistentStorage()).toBe(true);
+    expect(persistCalls).toBe(1);
+  });
+
   it('returns false when persist throws', async () => {
     stubStorage({
       persisted: async () => false,

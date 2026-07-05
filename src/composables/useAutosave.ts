@@ -7,9 +7,9 @@ import {
   saveProject,
 } from '@/persistence/opfs';
 import { decodeSzd, encodeSzd } from '@/persistence/szd';
+import { persistedProjectStateKey } from '@/project/persisted-state';
 import { loadProjectDocument, serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
-import { midiCcBindingsKey } from '@/ui/midi/midi-learn';
 
 /** Default debounce delay between the last edit and the autosave write. */
 const DEFAULT_INTERVAL_MS = 30000;
@@ -131,28 +131,8 @@ export function useAutosave(options: UseAutosaveOptions = {}): UseAutosaveReturn
     }, resolveIntervalMs());
   };
 
-  // The persisted state surface of the store mirror. Every mutating command
-  // replaces these refs wholesale (refresh() rebuilds them from the Project),
-  // so identity changes cover all undoable edits; editor-only state
-  // (selection, snap, scale highlight) is deliberately excluded.
   const stopWatch = watch(
-    () =>
-      [
-        store.projectName,
-        store.tracks,
-        store.clips,
-        store.markers,
-        store.sections,
-        store.tempoSegments,
-        store.timeSignatures,
-        store.mixer,
-        store.scoreAnnotations,
-        store.displayTransposeSemitones,
-        store.automationLanes,
-        store.chords,
-        // The binding map is mutated in place, so observe its contents.
-        midiCcBindingsKey(store.midiCcBindings),
-      ] as const,
+    () => persistedProjectStateKey(store),
     () => {
       if (store.initialized) scheduleSave();
     },

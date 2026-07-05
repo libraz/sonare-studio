@@ -75,7 +75,15 @@ export async function requestPersistentStorage(): Promise<boolean> {
   const storage = typeof navigator !== 'undefined' ? navigator.storage : undefined;
   if (typeof storage?.persist !== 'function') return false;
   try {
-    if (typeof storage.persisted === 'function' && (await storage.persisted())) return true;
+    if (typeof storage.persisted === 'function') {
+      try {
+        if (await storage.persisted()) return true;
+      } catch {
+        // Some browsers expose persisted() but reject it in private or
+        // restricted contexts. Still try persist(); it may be the only usable
+        // signal for this origin.
+      }
+    }
     return await storage.persist();
   } catch {
     return false;

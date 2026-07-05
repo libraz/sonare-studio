@@ -166,6 +166,38 @@ describe('useAutosave', () => {
     expect(opfsMocks.saveProject).toHaveBeenCalledTimes(1);
   });
 
+  it('serializes overlapping saveNow calls and writes the latest project state last', async () => {
+    const autosave = createAutosave();
+    const releases: Array<() => void> = [];
+    opfsMocks.saveProject.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releases.push(resolve);
+        }),
+    );
+
+    addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+    await flushWatchers();
+    const firstSave = autosave.saveNow();
+    await vi.waitFor(() => expect(opfsMocks.saveProject).toHaveBeenCalledTimes(1));
+
+    addNote({ pitch: 64, startPpq: 1, durationPpq: 1 });
+    await flushWatchers();
+    const secondSave = autosave.saveNow();
+    expect(opfsMocks.saveProject).toHaveBeenCalledTimes(1);
+
+    releases[0]();
+    await expect(firstSave).resolves.toBe(true);
+    await vi.waitFor(() => expect(opfsMocks.saveProject).toHaveBeenCalledTimes(2));
+    releases[1]();
+    await expect(secondSave).resolves.toBe(true);
+
+    const firstDoc = decodeSzd(opfsMocks.saveProject.mock.calls[0][1]);
+    const secondDoc = decodeSzd(opfsMocks.saveProject.mock.calls[1][1]);
+    expect(firstDoc.tracks[0].clips[0].notes.map((note) => note.pitch)).toEqual([60]);
+    expect(secondDoc.tracks[0].clips[0].notes.map((note) => note.pitch)).toEqual([60, 64]);
+  });
+
   it('exposes saving while a write is in flight', async () => {
     const autosave = createAutosave();
     let release: () => void = () => {};

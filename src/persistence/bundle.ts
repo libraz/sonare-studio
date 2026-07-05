@@ -9,6 +9,7 @@
  * written back into the stores on import.
  */
 
+import { collectReferencedAudioAssetIds } from '@/project/asset-references';
 import { loadFont, loadFontMeta, type SoundFontMeta, saveFont } from '@/project/fonts';
 import type { ProjectDocument } from '@/project/serialization';
 import { type AudioAssetMeta, interleaveChannels, loadAsset, saveAsset } from './assets';
@@ -19,17 +20,10 @@ const textDecoder = new TextDecoder();
 
 /** Collects every audio-asset id the document references (clips, takes, freezes). */
 export function collectReferencedAssetIds(doc: ProjectDocument): Set<string> {
-  const ids = new Set<string>();
-  for (const track of doc.tracks) {
-    if (track.frozen?.assetId) ids.add(track.frozen.assetId);
-    for (const clip of track.clips) {
-      if (clip.assetId) ids.add(clip.assetId);
-      for (const take of clip.takes ?? []) {
-        if (take.assetId) ids.add(take.assetId);
-      }
-    }
-  }
-  return ids;
+  return collectReferencedAudioAssetIds(
+    doc.tracks.flatMap((track) => track.clips),
+    doc.tracks,
+  );
 }
 
 /** Collects every SoundFont id the document references (SF2 instruments). */

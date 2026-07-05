@@ -9,7 +9,9 @@ import {
   setActiveClip,
   setClipWarp,
 } from '@/project/commands';
+import { sliceAudioClipWindow } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
+import { normalizeTempoMap, ppqToSeconds, secondsToPpq } from '@/project/tempo-map';
 import { isAudioClip } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
 
@@ -31,7 +33,10 @@ export function useProjectAudioAssets(options: ProjectAudioAssetsOptions) {
   async function placeAssetAtPlayhead(assetId: string): Promise<number> {
     const meta = await loadAssetMeta(assetId);
     const startPpq = Math.max(0, positionPpq.value);
-    const lengthPpq = (meta.numFrames / meta.sampleRate) * (store.tempoBpm / 60);
+    const tempoMap = normalizeTempoMap(store.tempoSegments, store.tempoBpm);
+    const startSeconds = ppqToSeconds(tempoMap, startPpq);
+    const durationSeconds = meta.numFrames / meta.sampleRate;
+    const lengthPpq = secondsToPpq(tempoMap, startSeconds + durationSeconds) - startPpq;
     const overlaps = (trackId: number): boolean =>
       store.clips.some(
         (clip) =>
@@ -144,16 +149,33 @@ export function useProjectAudioAssets(options: ProjectAudioAssetsOptions) {
     await runAction(async () => {
       const asset = await loadAsset(assetId);
       const analysis = await resolveAudioAnalysis();
-      const tags = analyzeAudioTags(asset.channels, asset.meta.sampleRate, analysis);
+      const channels = sliceAudioClipWindow(
+        asset.channels,
+        asset.meta.sampleRate,
+        clip.sourceOffsetPpq,
+        clip.lengthPpq,
+        clip.warp?.sourceBpm ?? store.tempoBpm,
+      );
+      const tags = analyzeAudioTags(channels, asset.meta.sampleRate, analysis);
       if (tags.bpm === undefined) {
         renderInfo.value = t.value.dialogs.prompts.tempoDetectionFailed;
         return;
       }
+      const current = store.clips.find((c) => c.id === clipId);
+      if (
+        !current ||
+        !isAudioClip(current) ||
+        current.assetId !== assetId ||
+        current.sourceOffsetPpq !== clip.sourceOffsetPpq ||
+        current.lengthPpq !== clip.lengthPpq
+      ) {
+        return;
+      }
       const bpm = Math.round(tags.bpm * 10) / 10;
       setClipWarp(clipId, {
-        enabled: clip.warp?.enabled ?? false,
+        enabled: current.warp?.enabled ?? false,
         sourceBpm: bpm,
-        ...(clip.warp?.anchors ? { anchors: clip.warp.anchors } : {}),
+        ...(current.warp?.anchors ? { anchors: current.warp.anchors } : {}),
       });
       renderInfo.value = formatMessage(t.value.dialogs.prompts.tempoDetected, {
         bpm: bpm.toFixed(1),
