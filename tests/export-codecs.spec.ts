@@ -14,6 +14,7 @@ describe('audio encoder registry', () => {
     expect(encoder.id).toBe('wav');
     expect(encoder.extension).toBe('.wav');
     expect(encoder.mime).toBe('audio/wav');
+    expect(encoder.deterministic).toBe(true);
     expect(encoder.label).toContain('WAV');
     expect(listEncoders().some((e) => e.id === WAV_ENCODER_ID)).toBe(true);
   });

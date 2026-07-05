@@ -14,13 +14,18 @@
  *   normalization),
  * - the full tempo map applies (renderMixdown assumed the first segment's
  *   tempo throughout).
- * The project mastering chain remains an export-only stage applied to the
- * bounced stereo, exactly as before (it is not audible live).
+ * The opaque mastering preset remains an export-only stage applied to the
+ * bounced stereo; realtime-safe mastering processor slots are mirrored by
+ * live strip sync and are applied here through the same one-shot mastering
+ * processor seam after the engine bounce.
  *
  * Stems render through the same path: one extra engine pass per audible
  * track with every other lane muted, master strip/levels and the mastering
- * chain skipped (post-strip, pre-master). A stem therefore includes the
- * track's bus/send contributions.
+ * chain skipped (post-strip, pre-master). A track stem therefore includes the
+ * track's bus/send contributions. When requested, bus/return stems render
+ * extra passes that keep source lanes feeding only the selected return while
+ * discarding their other direct outputs; the optional master stem is a copy of
+ * the final stereo export after the master chain.
  *
  * Setup builders (bus routing, SoundFont preload, MIDI program, audio clips,
  * render window) live in engine-render-context.ts / engine-render-clips.ts;
@@ -29,7 +34,13 @@
  * configures and drives the engine passes and re-exports the public surface.
  */
 
-import { engineAutomationPoints, engineBusStrip, engineEqBands } from '@/engine/engine-declaration';
+import {
+  engineAutomationPoints,
+  engineAutomationPointsWithValueOffset,
+  engineBusStrip,
+  engineBusStripHasDsp,
+  engineEqBands,
+} from '@/engine/engine-declaration';
 import { resolvePresetName } from '@/engine/instruments';
 import { busSceneJson, stripSceneJson } from '@/engine/strip-sync';
 import {
@@ -41,22 +52,38 @@ import {
 import { peakDb } from '@/lib/db';
 import { ensureWasm } from '@/lib/wasm';
 import { loadAsset } from '@/persistence/assets';
-import { parseInsertAutomationParam } from '@/project/automation';
+import {
+  evaluateAutomationValue,
+  parseInsertAutomationParam,
+  parseInstrumentAutomationParam,
+  parseMasteringAutomationParam,
+  sanitizeAutomationPoints,
+} from '@/project/automation';
 import { enabledInsertAutomationIndex } from '@/project/automation-insert';
 import { loadFont } from '@/project/fonts';
+import {
+  type InsertLatencyCatalogEntry,
+  type InsertLatencyResolver,
+  insertLatencyResolverFromCatalog,
+  maxTrackInsertLatencySamples,
+  trackPdcDelaySamples,
+} from '@/project/insert-latency';
 import { DEFAULT_SYNTH_PRESET, sf2PlaybackConfig } from '@/project/instrument';
 import { midiFxConfigJson } from '@/project/midi-fx';
 import {
   clampPan,
   DEFAULT_PAN_LAW,
   DEFAULT_PAN_MODE,
+  effectiveTrackMute,
   laneGainDb,
   masteringChainIsActive,
+  normalizeMixerSoloMode,
   stripHasDsp,
+  tracksWithVcaSolo,
   vcaOffsetDb,
 } from '@/project/mixer';
-import { isTrackAudible } from '@/project/scheduling';
-import type { ProjectDocument } from '@/project/serialization';
+import { expandedSoloStates, isTrackAudible } from '@/project/scheduling';
+import type { DocumentAutomationLane, ProjectDocument } from '@/project/serialization';
 import { normalizeTempoMap } from '@/project/tempo-map';
 import { buildAudioClips } from './engine-render-clips';
 import {
@@ -84,6 +111,75 @@ import {
 
 export type { EngineRenderOptions, OfflineRenderEngine } from './engine-render-types';
 
+function masteringParamsAtRenderStart(
+  chain: NonNullable<ProjectDocument['mixer']>['masteringChain'],
+  lanes: NonNullable<ProjectDocument['masterAutomation']>,
+  ppq: number,
+): Map<number, Record<string, number>> {
+  const automated = new Map<number, Record<string, number>>();
+  if (!chain) return automated;
+  for (const lane of lanes) {
+    if (!lane.enabled || lane.points.length === 0) continue;
+    const ref = parseMasteringAutomationParam(lane.param);
+    if (!ref || !chain.processors[ref.processorIndex]) continue;
+    const points = sanitizeAutomationPoints(lane.param, lane.points);
+    if (points.length === 0) continue;
+    const params = automated.get(ref.processorIndex) ?? {};
+    params[ref.paramName] = evaluateAutomationValue(points, ppq);
+    automated.set(ref.processorIndex, params);
+  }
+  return automated;
+}
+
+function instrumentPatchAtRenderStart(
+  track: ProjectDocument['tracks'][number],
+  ppq: number,
+): Record<string, unknown> | null {
+  if (track.instrument?.kind !== 'synth-patch') return null;
+  const patch: Record<string, unknown> = { ...track.instrument.patch };
+  for (const lane of track.automation ?? []) {
+    if (!lane.enabled || lane.points.length === 0) continue;
+    const ref = parseInstrumentAutomationParam(lane.param);
+    if (!ref) continue;
+    const points = sanitizeAutomationPoints(lane.param, lane.points);
+    if (points.length === 0) continue;
+    patch[ref.paramName] = evaluateAutomationValue(points, ppq);
+  }
+  return patch;
+}
+
+function hasTimeVaryingPoints(points: DocumentAutomationLane['points']): boolean {
+  if (points.length < 2) return false;
+  const first = points[0];
+  return points.some((point) => point.ppq !== first.ppq && point.value !== first.value);
+}
+
+function staticAutomationLimitations(doc: ProjectDocument): string[] {
+  const limitations: string[] = [];
+  const hasMasteringTimeVarying = (doc.masterAutomation ?? []).some((lane) => {
+    if (!lane.enabled || !parseMasteringAutomationParam(lane.param)) return false;
+    return hasTimeVaryingPoints(sanitizeAutomationPoints(lane.param, lane.points));
+  });
+  if (hasMasteringTimeVarying) {
+    limitations.push('mastering automation was evaluated at render start');
+  }
+  const instrumentTrackNames = doc.tracks
+    .filter((track) => track.instrument?.kind === 'synth-patch')
+    .filter((track) =>
+      (track.automation ?? []).some((lane) => {
+        if (!lane.enabled || !parseInstrumentAutomationParam(lane.param)) return false;
+        return hasTimeVaryingPoints(sanitizeAutomationPoints(lane.param, lane.points));
+      }),
+    )
+    .map((track) => track.name);
+  if (instrumentTrackNames.length > 0) {
+    limitations.push(
+      `instrument automation was evaluated at render start for: ${instrumentTrackNames.join(', ')}`,
+    );
+  }
+  return limitations;
+}
+
 /**
  * Renders a project document to a stereo mixdown (and optional per-track
  * stems) through offline engine instances. See the module doc comment for
@@ -106,6 +202,7 @@ export async function renderProjectWithEngine(
   const loadAudio = options.loadAudioAsset ?? loadAsset;
   const loadFontBytes = options.loadFont ?? loadFont;
   let resolvePreset = options.resolvePreset ?? ((preset: string) => preset);
+  let resolveInsertLatency: InsertLatencyResolver = options.insertLatency ?? (() => 0);
   const checkCancel = () => {
     if (options.shouldCancel?.()) throw new MixdownCancelledError();
   };
@@ -122,6 +219,14 @@ export async function renderProjectWithEngine(
     const wasm = await ensureWasm();
     if (!options.resolvePreset) {
       resolvePreset = (preset: string) => resolvePresetName(wasm, preset);
+    }
+    if (!options.insertLatency) {
+      const catalog = (
+        wasm as unknown as {
+          masteringProcessorCatalog?: () => InsertLatencyCatalogEntry[];
+        }
+      ).masteringProcessorCatalog?.();
+      resolveInsertLatency = insertLatencyResolverFromCatalog(catalog, { sampleRate });
     }
     if (!createEngine) {
       createEngine = (rate, blockSize) =>
@@ -140,8 +245,17 @@ export async function renderProjectWithEngine(
 
   // Bus/send routing, VCA offsets, solo state and lane specs (live strip-sync
   // ordering: send buses first, then one bus per group track).
-  const { vcaGainDbById, anySolo, busNumberById, buses, groupBusByTrackIndex, lanes } =
+  const { vcaGainDbById, vcaControlsById, busNumberById, buses, groupBusByTrackIndex, lanes } =
     buildBusRouting(doc, trackIds);
+  const tracksForSolo = tracksWithVcaSolo(doc.tracks, vcaControlsById);
+  const tracksForAudibility = tracksForSolo.map((track) =>
+    effectiveTrackMute(track.mute, track.vcaId, vcaControlsById) ? { ...track, mute: true } : track,
+  );
+  const documentSoloExpansion = {
+    isGroup: (track: ProjectDocument['tracks'][number]) => track.kind === 'group',
+    groupKey: (_track: ProjectDocument['tracks'][number], index: number) => index,
+    memberGroupKey: (track: ProjectDocument['tracks'][number]) => track.groupIndex,
+  };
 
   // Pre-load instrument fonts once; engine passes then configure synchronously.
   const fontBytesById = await preloadSoundFonts(doc, loadFontBytes);
@@ -168,38 +282,69 @@ export async function renderProjectWithEngine(
     range,
     sampleRate,
     options.releaseTailSeconds,
+    audioClips,
   );
+  const maxInsertLatency = maxTrackInsertLatencySamples(doc.tracks, resolveInsertLatency);
 
   /** Replays the pre-built program onto a fresh engine (synchronous). */
   const configureEngine = (engine: OfflineRenderEngine, pass: RenderPass): void => {
+    const supportsBusEq = typeof engine.setBusStripEqBandJson === 'function';
     // The engine validates sends against already-declared buses, so the bus
-    // set must be installed before any lane that carries sends. A freeze
-    // pass strips the frozen lane's sends (they stay live on the track).
-    if (buses.length > 0) engine.setTrackBuses(buses);
-    engine.setTrackLanes(
-      pass.freezeIndex === null
-        ? lanes
-        : lanes.map((lane, index) =>
+    // set must be installed before any lane that carries sends. A freeze pass
+    // strips the frozen lane's sends (they stay live on the track). A bus stem
+    // pass adds a silent discard bus so non-selected direct outputs can be
+    // removed while selected sends/outputs still feed the return.
+    const silentBusId =
+      pass.busStemId === null ? null : buses.reduce((max, bus) => Math.max(max, bus.busId), 0) + 1;
+    const passBuses =
+      silentBusId === null ? buses : [...buses, { busId: silentBusId, gainDb: -120 }];
+    if (passBuses.length > 0) engine.setTrackBuses(passBuses);
+    const passLanes =
+      pass.freezeIndex !== null
+        ? lanes.map((lane, index) =>
             index === pass.freezeIndex ? { trackId: lane.trackId } : lane,
-          ),
-    );
+          )
+        : pass.busStemId !== null && silentBusId !== null
+          ? lanes.map((lane) => {
+              const sends = lane.sends?.filter((send) => send.busId === pass.busStemId) ?? [];
+              const outputBusId =
+                lane.outputBusId === pass.busStemId ? pass.busStemId : silentBusId;
+              return {
+                trackId: lane.trackId,
+                ...(sends.length > 0 ? { sends } : {}),
+                outputBusId,
+              };
+            })
+          : lanes;
+    engine.setTrackLanes(passLanes);
 
     for (const bus of doc.mixer?.buses ?? []) {
       const busId = busNumberById.get(bus.id);
       if (busId === undefined) continue;
-      if (!stripHasDsp(bus.strip)) continue;
-      engine.setBusStripJson(busId, busSceneJson(busId, engineBusStrip(bus.strip)));
+      if (!engineBusStripHasDsp(bus.strip, supportsBusEq)) continue;
+      engine.setBusStripJson(
+        busId,
+        busSceneJson(busId, engineBusStrip(bus.strip), undefined, { includeEq: supportsBusEq }),
+      );
+      if (supportsBusEq) {
+        engineEqBands(bus.strip).forEach((band, bandIndex) => {
+          engine.setBusStripEqBandJson?.(busId, bandIndex, JSON.stringify(band));
+        });
+      }
     }
 
     // Per-track strips (inserts + EQ + bypass flags), lane base fader/pan and
     // solo/mute — the same state the live mixer/strip syncs install. A stem
     // pass instead isolates one lane by muting every other one (solo would
     // also keep the document's own soloed tracks audible).
-    const soloedGroupTrackIndices = new Set(
-      doc.tracks
-        .map((track, index) => (track.kind === 'group' && track.solo ? index : -1))
-        .filter((index) => index >= 0),
-    );
+    const soloStates = expandedSoloStates(tracksForSolo, documentSoloExpansion);
+    const auditionSoloStates =
+      normalizeMixerSoloMode(doc.mixer?.soloMode) === 'pfl'
+        ? expandedSoloStates(
+            tracksForSolo.map((track) => ({ ...track, soloSafe: false })),
+            documentSoloExpansion,
+          )
+        : [];
     doc.tracks.forEach((track, index) => {
       const strip = track.mixer;
       const trackId = trackIds[index];
@@ -207,8 +352,16 @@ export async function renderProjectWithEngine(
         // Group inserts ride the group's bus strip (the lane stays silent);
         // the audible group level was already baked into the bus gain.
         const busId = groupBusByTrackIndex.get(index);
-        if (busId !== undefined && stripHasDsp(strip)) {
-          engine.setBusStripJson(busId, busSceneJson(busId, engineBusStrip(strip)));
+        if (busId !== undefined && engineBusStripHasDsp(strip, supportsBusEq)) {
+          engine.setBusStripJson(
+            busId,
+            busSceneJson(busId, engineBusStrip(strip), undefined, { includeEq: supportsBusEq }),
+          );
+          if (supportsBusEq) {
+            engineEqBands(strip).forEach((band, bandIndex) => {
+              engine.setBusStripEqBandJson?.(busId, bandIndex, JSON.stringify(band));
+            });
+          }
         }
         return;
       }
@@ -223,12 +376,13 @@ export async function renderProjectWithEngine(
         });
       }
       if (pass.stemIndices === null) {
-        // Solo-safe lanes stay in the solo group while any solo is active.
-        const solo =
-          track.solo ||
-          (track.groupIndex !== undefined && soloedGroupTrackIndices.has(track.groupIndex)) ||
-          (anySolo && track.soloSafe === true);
-        engine.setSoloMute(index, solo, track.mute);
+        // Solo-safe lanes and routed group members stay in the effective solo
+        // group while any solo is active.
+        engine.setSoloMute(
+          index,
+          soloStates[index] ?? false,
+          effectiveTrackMute(track.mute, track.vcaId, vcaControlsById),
+        );
       } else {
         engine.setSoloMute(index, false, !pass.stemIndices.has(index));
       }
@@ -238,13 +392,16 @@ export async function renderProjectWithEngine(
         engine.setParameter(laneParamId(index, ENGINE_MIXER_PARAM_FADER_DB), 0);
         engine.setParameter(laneParamId(index, ENGINE_MIXER_PARAM_PAN), 0);
       } else {
+        const pflAudition = pass.stemIndices === null && auditionSoloStates[index] === true;
         // Lane fader includes the strip trim and the track's VCA group offset,
         // so a VCA-attenuated track exports at the level it plays back at.
         engine.setParameter(
           laneParamId(index, ENGINE_MIXER_PARAM_FADER_DB),
-          laneGainDb(track.volume, strip?.gainDb, vcaOffsetDb(track.vcaId, vcaGainDbById)),
+          pflAudition
+            ? 0
+            : laneGainDb(track.volume, strip?.gainDb, vcaOffsetDb(track.vcaId, vcaGainDbById)),
         );
-        const pan = clampPan(strip?.pan ?? 0);
+        const pan = pflAudition ? 0 : clampPan(strip?.pan ?? 0);
         engine.setParameter(laneParamId(index, ENGINE_MIXER_PARAM_PAN), pan);
         // Pan law / mode / dual-pan / channel-delay shape the lane exactly as
         // live mixer-sync does; emit only the non-defaults to keep the command
@@ -253,14 +410,16 @@ export async function renderProjectWithEngine(
         if (panLaw !== DEFAULT_PAN_LAW) engine.setTrackStripPanLaw(trackId, panLaw);
         const panMode = strip?.panMode ?? DEFAULT_PAN_MODE;
         if (panMode !== DEFAULT_PAN_MODE) engine.setTrackStripPanMode(trackId, panMode);
-        if (strip?.dualPan) {
+        if (pflAudition) {
+          engine.setTrackStripDualPan(trackId, 0, 0);
+        } else if (strip?.dualPan) {
           engine.setTrackStripDualPan(
             trackId,
             clampPan(strip.dualPan.left),
             clampPan(strip.dualPan.right),
           );
         }
-        const channelDelay = Math.max(0, Math.round(strip?.channelDelaySamples ?? 0));
+        const channelDelay = trackPdcDelaySamples(track, maxInsertLatency, resolveInsertLatency);
         if (channelDelay > 0) engine.setTrackStripChannelDelaySamples(trackId, channelDelay);
       }
     });
@@ -307,7 +466,13 @@ export async function renderProjectWithEngine(
         if (pass.freezeIndex === index && (lane.param === 'faderDb' || lane.param === 'pan')) {
           continue;
         }
-        const points = engineAutomationPoints(lane.points);
+        const points =
+          lane.param === 'faderDb'
+            ? engineAutomationPointsWithValueOffset(
+                lane.points,
+                vcaOffsetDb(track.vcaId, vcaGainDbById),
+              )
+            : engineAutomationPoints(lane.points);
         if (points.length === 0) continue;
         // Insert-parameter lanes resolve to the engine's reserved insert id
         // (and strip selector) from the strip state already installed above; a
@@ -334,6 +499,8 @@ export async function renderProjectWithEngine(
           if (id >= 0) engine.setAutomationLane(id, points);
           continue;
         }
+        if (parseInstrumentAutomationParam(lane.param)) continue;
+        if (lane.param !== 'faderDb' && lane.param !== 'pan') continue;
         const groupBusId = track.kind === 'group' ? groupBusByTrackIndex.get(index) : undefined;
         if (groupBusId !== undefined) {
           if (lane.param === 'faderDb') engine.setAutomationLane(busParamId(groupBusId), points);
@@ -357,6 +524,8 @@ export async function renderProjectWithEngine(
           if (id >= 0) engine.setAutomationLane(id, points);
           continue;
         }
+        if (parseMasteringAutomationParam(lane.param)) continue;
+        if (lane.param !== 'faderDb' && lane.param !== 'pan') continue;
         const kind = lane.param === 'pan' ? ENGINE_MIXER_PARAM_PAN : ENGINE_MIXER_PARAM_FADER_DB;
         engine.setAutomationLane(masterParamId(kind), points);
       }
@@ -399,7 +568,10 @@ export async function renderProjectWithEngine(
       } else if (instrument.kind === 'synth-preset') {
         engine.setSynthInstrument(resolvePreset(instrument.preset), destinationId);
       } else if (instrument.kind === 'synth-patch') {
-        engine.setSynthInstrument(instrument.patch as Record<string, unknown>, destinationId);
+        engine.setSynthInstrument(
+          instrumentPatchAtRenderStart(track, range.startPpq) ?? instrument.patch,
+          destinationId,
+        );
       } else if (instrument.kind === 'sf2') {
         const bytes = fontBytesById.get(instrument.fontId);
         if (bytes && instrument.fontId !== loadedFontId) {
@@ -511,6 +683,7 @@ export async function renderProjectWithEngine(
         masterStrip: false,
         masterLevels: false,
         stemIndices: new Set([freezeIndex]),
+        busStemId: null,
         freezeIndex,
       },
       'engine.freeze',
@@ -535,16 +708,39 @@ export async function renderProjectWithEngine(
     };
   }
 
-  // Pass schedule: the mix, then one isolated pass per audible track.
+  // Pass schedule: the mix, then isolated passes per audible track and,
+  // optionally, per declared mixer bus/return.
   const stemTracks = options.stems
     ? doc.tracks
         .map((track, trackIndex) => ({ track, trackIndex }))
-        .filter(({ track }) => isTrackAudible(track, doc.tracks))
+        .filter(({ trackIndex }) =>
+          isTrackAudible(
+            tracksForAudibility[trackIndex],
+            tracksForAudibility,
+            documentSoloExpansion,
+          ),
+        )
     : [];
-  const passSpan = 0.9 / (1 + stemTracks.length);
+  const stemBuses =
+    options.stems && options.busStems === true
+      ? (doc.mixer?.buses ?? [])
+          .map((bus, busIndex) => ({ bus, busIndex }))
+          .flatMap(({ bus, busIndex }) => {
+            const busNumber = busNumberById.get(bus.id);
+            return busNumber === undefined ? [] : [{ bus, busIndex, busNumber }];
+          })
+      : [];
+  const stemPassCount = stemTracks.length + stemBuses.length;
+  const passSpan = 0.9 / (1 + stemPassCount);
 
   let [mixL, mixR] = await runPass(
-    { masterStrip: includeMasterChain, masterLevels: true, stemIndices: null, freezeIndex: null },
+    {
+      masterStrip: includeMasterChain,
+      masterLevels: true,
+      stemIndices: null,
+      busStemId: null,
+      freezeIndex: null,
+    },
     'engine.render',
     0,
     passSpan,
@@ -563,30 +759,92 @@ export async function renderProjectWithEngine(
       });
     }
     const channels = await runPass(
-      { masterStrip: false, masterLevels: false, stemIndices, freezeIndex: null },
+      {
+        masterStrip: false,
+        masterLevels: false,
+        stemIndices,
+        busStemId: null,
+        freezeIndex: null,
+      },
       `engine.stem:${trackIndex}`,
       passSpan * (1 + i),
       passSpan,
     );
-    stems.push({ trackIndex, name: track.name, channels });
+    stems.push({
+      source: 'track',
+      trackIndex,
+      name: track.name,
+      channels,
+      report: buildReport(
+        channels[0],
+        channels[1],
+        sampleRate,
+        totalFrames,
+        deps?.metering ?? null,
+      ),
+    });
+  }
+  for (let i = 0; i < stemBuses.length; i++) {
+    const { bus, busIndex, busNumber } = stemBuses[i];
+    checkCancel();
+    const channels = await runPass(
+      {
+        masterStrip: false,
+        masterLevels: false,
+        stemIndices: null,
+        busStemId: busNumber,
+        freezeIndex: null,
+      },
+      `engine.busStem:${busIndex}`,
+      passSpan * (1 + stemTracks.length + i),
+      passSpan,
+    );
+    stems.push({
+      source: 'bus',
+      trackIndex: -1 - busIndex,
+      busId: bus.id,
+      busIndex,
+      name: `${bus.name} Return`,
+      channels,
+      report: buildReport(
+        channels[0],
+        channels[1],
+        sampleRate,
+        totalFrames,
+        deps?.metering ?? null,
+      ),
+    });
   }
 
   // Mastering chain: export-only stage on the bounced stereo, as before.
   const chain = doc.mixer?.masteringChain;
   const mastering = deps?.mastering ?? null;
   if (includeMasterChain && chain && masteringChainIsActive(chain) && mastering) {
+    const automatedParams = masteringParamsAtRenderStart(
+      chain,
+      doc.masterAutomation ?? [],
+      range.startPpq,
+    );
     if (chain.preset !== undefined && mastering.applyPreset) {
       checkCancel();
       options.onProgress?.(0.92, `mastering.preset:${chain.preset}`);
-      const out = mastering.applyPreset(chain.preset, mixL, mixR, sampleRate);
+      const out = mastering.applyPreset(
+        chain.preset,
+        mixL,
+        mixR,
+        sampleRate,
+        chain.presetOverrides,
+      );
       mixL = out.left;
       mixR = out.right;
     }
-    for (const slot of chain.processors) {
+    for (let processorIndex = 0; processorIndex < chain.processors.length; processorIndex += 1) {
+      const slot = chain.processors[processorIndex];
       if (!slot.enabled) continue;
       checkCancel();
       options.onProgress?.(0.94, `mastering.${slot.processor}`);
-      const out = mastering.processStereo(slot.processor, mixL, mixR, sampleRate, slot.params);
+      const params = { ...slot.params, ...(automatedParams.get(processorIndex) ?? {}) };
+      const out = mastering.processStereo(slot.processor, mixL, mixR, sampleRate, params);
       mixL = out.left;
       mixR = out.right;
     }
@@ -602,6 +860,18 @@ export async function renderProjectWithEngine(
     totalFrames,
     deps?.metering ?? null,
   );
+  const limitations = staticAutomationLimitations(doc);
+  if (limitations.length > 0) report.limitations = limitations;
+
+  if (options.stems && options.masterStem === true) {
+    stems.push({
+      source: 'master',
+      trackIndex: Number.MIN_SAFE_INTEGER,
+      name: 'Master',
+      channels: [new Float32Array(mixL), new Float32Array(mixR)],
+      report: { ...report },
+    });
+  }
   options.onProgress?.(1, 'done');
 
   const result: MixdownResult = { channels: [mixL, mixR], sampleRate, totalFrames, report };

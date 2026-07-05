@@ -19,6 +19,10 @@ class FakeWorker {
     this.listeners.get(type)?.delete(listener);
   }
 
+  listenerCount(type: string): number {
+    return this.listeners.get(type)?.size ?? 0;
+  }
+
   postMessage(message: ExportRequest): void {
     this.posted.push(message);
   }
@@ -85,6 +89,25 @@ describe('ExportClient', () => {
             name: 'Drums',
             left: new Float32Array([0.3]),
             right: new Float32Array([0.4]),
+            report: { peakDb: -10, lufs: -18 },
+          },
+          {
+            source: 'bus',
+            trackIndex: -1,
+            busId: 'bus-a',
+            busIndex: 0,
+            name: 'A Return',
+            left: new Float32Array([0.5]),
+            right: new Float32Array([0.6]),
+            report: { peakDb: -8, lufs: -16 },
+          },
+          {
+            source: 'master',
+            trackIndex: Number.MIN_SAFE_INTEGER,
+            name: 'Master',
+            left: new Float32Array([0.7]),
+            right: new Float32Array([0.8]),
+            report: { peakDb: -6, lufs: -14 },
           },
         ],
       },
@@ -95,9 +118,25 @@ describe('ExportClient', () => {
     expect(result.report.peakDb).toBe(-6);
     expect(result.channels[0][0]).toBeCloseTo(0.1, 6);
     expect(result.channels[1][0]).toBeCloseTo(0.2, 6);
-    expect(result.stems).toHaveLength(1);
+    expect(result.stems).toHaveLength(3);
     expect(result.stems?.[0].name).toBe('Drums');
+    expect(result.stems?.[0].report).toEqual({ peakDb: -10, lufs: -18 });
     expect(result.stems?.[0].channels[0][0]).toBeCloseTo(0.3, 6);
+    expect(result.stems?.[1]).toMatchObject({
+      source: 'bus',
+      trackIndex: -1,
+      busId: 'bus-a',
+      busIndex: 0,
+      name: 'A Return',
+    });
+    expect(result.stems?.[1].channels[0][0]).toBeCloseTo(0.5, 6);
+    expect(result.stems?.[2]).toMatchObject({
+      source: 'master',
+      trackIndex: Number.MIN_SAFE_INTEGER,
+      name: 'Master',
+      report: { peakDb: -6, lufs: -14 },
+    });
+    expect(result.stems?.[2].channels[0][0]).toBeCloseTo(0.7, 6);
   });
 
   it('routes progress responses to the callback without settling the promise', async () => {
@@ -124,6 +163,18 @@ describe('ExportClient', () => {
   it('rejects a cancelled render with MixdownCancelledError', async () => {
     const handle = client.renderMixdown(makeDoc());
     handle.cancel();
+    expect(worker.posted[1]).toMatchObject({ type: 'cancel', targetId: 1 });
+    worker.emit({ id: 1, type: 'cancelled' });
+    await expect(handle.result).rejects.toBeInstanceOf(MixdownCancelledError);
+  });
+
+  it('posts at most one cancel request per in-flight render', async () => {
+    const handle = client.renderMixdown(makeDoc());
+    handle.cancel();
+    handle.cancel();
+    handle.cancel();
+
+    expect(worker.posted.filter((message) => message.type === 'cancel')).toHaveLength(1);
     expect(worker.posted[1]).toMatchObject({ type: 'cancel', targetId: 1 });
     worker.emit({ id: 1, type: 'cancelled' });
     await expect(handle.result).rejects.toBeInstanceOf(MixdownCancelledError);
@@ -189,6 +240,10 @@ describe('ExportClient', () => {
     worker.emitError('worker crashed');
     await expect(first.result).rejects.toThrow('worker crashed');
     await expect(second.result).rejects.toThrow('worker crashed');
+    expect(worker.terminate).toHaveBeenCalledTimes(1);
+    expect(worker.listenerCount('message')).toBe(0);
+    expect(worker.listenerCount('error')).toBe(0);
+    await expect(client.renderMixdown(makeDoc()).result).rejects.toThrow('disposed');
   });
 
   it('dispose terminates the worker and rejects pending and future renders', async () => {
@@ -196,6 +251,8 @@ describe('ExportClient', () => {
     client.dispose();
     await expect(pending.result).rejects.toThrow('disposed');
     expect(worker.terminate).toHaveBeenCalledTimes(1);
+    expect(worker.listenerCount('message')).toBe(0);
+    expect(worker.listenerCount('error')).toBe(0);
     expect(worker.posted.some((m) => m.type === 'destroy')).toBe(true);
     await expect(client.renderMixdown(makeDoc()).result).rejects.toThrow('disposed');
   });

@@ -7,6 +7,43 @@
 import type { MixdownDeps, MixdownReport } from '@/export/mixdown';
 import { peakDb } from '@/lib/db';
 
+type LoudnessMeasurement =
+  | number
+  | {
+      integratedLufs: number;
+      momentaryLufs?: number;
+      shortTermLufs?: number;
+      loudnessRange?: number;
+    };
+
+function applyLoudness(report: MixdownReport, measurement: LoudnessMeasurement): void {
+  if (typeof measurement === 'number') {
+    if (Number.isFinite(measurement) || measurement === Number.NEGATIVE_INFINITY) {
+      report.lufs = measurement;
+    }
+    return;
+  }
+  if (
+    Number.isFinite(measurement.integratedLufs) ||
+    measurement.integratedLufs === Number.NEGATIVE_INFINITY
+  ) {
+    report.lufs = measurement.integratedLufs;
+  }
+  if (Number.isFinite(measurement.momentaryLufs)) report.momentaryLufs = measurement.momentaryLufs;
+  if (Number.isFinite(measurement.shortTermLufs)) report.shortTermLufs = measurement.shortTermLufs;
+  if (Number.isFinite(measurement.loudnessRange)) report.loudnessRange = measurement.loudnessRange;
+}
+
+function stereoMonoDownmix(
+  mixL: Float32Array,
+  mixR: Float32Array,
+  totalFrames: number,
+): Float32Array {
+  const mono = new Float32Array(totalFrames);
+  for (let i = 0; i < totalFrames; i++) mono[i] = 0.5 * (mixL[i] + mixR[i]);
+  return mono;
+}
+
 /**
  * Builds the loudness/peak report for a stereo deliverable. True-peak and
  * loudness stay absent when their metering calls are unavailable or throw.
@@ -55,14 +92,26 @@ export function buildReport(
           interleaved[2 * i] = mixL[i];
           interleaved[2 * i + 1] = mixR[i];
         }
-        report.lufs = metering.interleavedLufs(interleaved, 2, sampleRate);
+        applyLoudness(report, metering.interleavedLufs(interleaved, 2, sampleRate));
       } else if (metering.integratedLufs) {
-        const mono = new Float32Array(totalFrames);
-        for (let i = 0; i < totalFrames; i++) mono[i] = 0.5 * (mixL[i] + mixR[i]);
-        report.lufs = metering.integratedLufs(mono, sampleRate);
+        applyLoudness(
+          report,
+          metering.integratedLufs(stereoMonoDownmix(mixL, mixR, totalFrames), sampleRate),
+        );
       }
     } catch {
       // Loudness stays absent when the metering call fails.
+    }
+  }
+  if (totalFrames > 0 && metering?.dynamicRangeDb) {
+    try {
+      const dynamicRange = metering.dynamicRangeDb(
+        stereoMonoDownmix(mixL, mixR, totalFrames),
+        sampleRate,
+      );
+      if (Number.isFinite(dynamicRange)) report.dynamicRangeDb = dynamicRange;
+    } catch {
+      // Dynamic range stays absent when the metering call fails.
     }
   }
   return report;

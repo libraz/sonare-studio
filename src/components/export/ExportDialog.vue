@@ -3,8 +3,11 @@ import { computed, ref, watch } from 'vue';
 import AppModal from '@/components/shell/AppModal.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
+import { useAppSettings } from '@/composables/useAppSettings';
+import { isBrowserMediaEncoderId, registerBrowserMediaEncoders } from '@/export/browser-media';
 import { type ExportRenderHandle, renderMixdownInWorker } from '@/export/client';
 import { type AudioEncoder, listEncoders, WAV_ENCODER_ID } from '@/export/codecs';
+import { FLAC_ENCODER_ID, type FlacBitDepth, registerFlacEncoder } from '@/export/flac';
 import {
   MixdownCancelledError,
   type MixdownProgressFn,
@@ -14,11 +17,13 @@ import {
 import { MP3_BITRATES, MP3_ENCODER_ID, registerMp3Encoder } from '@/export/mp3';
 import {
   buildStemsZip,
+  COMPRESSED_EXPORT_BITRATES,
   createDefaultExportOptions,
   EXPORT_SAMPLE_RATES,
   type ExportOptionsModel,
   encodeOptionsForModel,
   exportFileName,
+  normalizeMixdownLoudness,
   type StemsZipEntry,
   stemEntryNames,
   stemsZipFileName,
@@ -82,10 +87,13 @@ const emit = defineEmits<{
   exported: [payload: { filename: string; report: MixdownReport }];
 }>();
 
-// Make MP3 available in the registry; idempotent across mounts.
+// Make optional built-in encoders available in the registry; idempotent across mounts.
+registerFlacEncoder();
 registerMp3Encoder();
+registerBrowserMediaEncoders();
 
 const { t } = useI18n();
+const appSettings = useAppSettings();
 const model = ref<ExportOptionsModel>(createDefaultExportOptions(props.projectName));
 const encoderList = ref<AudioEncoder[]>(resolveEncoders());
 const busy = ref(false);
@@ -94,12 +102,23 @@ const stage = ref('');
 const errorMessage = ref('');
 const cancelled = ref(false);
 const report = ref<MixdownReport | null>(null);
+const reportLimitations = computed(() =>
+  (report.value?.limitations ?? []).filter((limitation) => limitation.trim().length > 0),
+);
 let cancelRender: (() => void) | null = null;
 
 /** Encoder list: the injected override or the live codec registry. */
 function resolveEncoders(): AudioEncoder[] {
   return props.encoders ? [...props.encoders] : listEncoders();
 }
+
+function normalizeSelectedEncoder(): void {
+  if (encoderList.value.some((encoder) => encoder.id === model.value.encoderId)) return;
+  const fallback = encoderList.value[0];
+  if (fallback) model.value.encoderId = fallback.id;
+}
+
+normalizeSelectedEncoder();
 
 watch(
   () => props.open,
@@ -109,6 +128,7 @@ watch(
     // Focus, the trap and restoration are owned by AppModal.
     model.value = createDefaultExportOptions(props.projectName);
     encoderList.value = resolveEncoders();
+    normalizeSelectedEncoder();
     errorMessage.value = '';
     cancelled.value = false;
     report.value = null;
@@ -121,10 +141,23 @@ const selectedEncoder = computed<AudioEncoder | null>(
   () => encoderList.value.find((encoder) => encoder.id === model.value.encoderId) ?? null,
 );
 
+const compressedEncoderIds = computed(() =>
+  encoderList.value
+    .filter((encoder) => encoder.deterministic === false)
+    .map((encoder) => encoder.id),
+);
+
+const selectedEncoderUsesCompressedBitrate = computed(
+  () =>
+    isBrowserMediaEncoderId(model.value.encoderId) ||
+    compressedEncoderIds.value.includes(model.value.encoderId),
+);
+
 const errors = computed<string[]>(() =>
   validateExportOptions(model.value, {
     hasLoop: props.hasLoop,
     encoderIds: encoderList.value.map((encoder) => encoder.id),
+    compressedEncoderIds: compressedEncoderIds.value,
   }),
 );
 
@@ -156,8 +189,20 @@ const WAV_BIT_DEPTH_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
   { value: '32f', label: '32-bit float' },
 ];
 
+/** FLAC bit-depth options. FLAC encoder stores integer PCM only. */
+const FLAC_BIT_DEPTH_OPTIONS: ReadonlyArray<{ value: FlacBitDepth; label: string }> = [
+  { value: 16, label: '16-bit PCM' },
+  { value: 24, label: '24-bit PCM' },
+];
+
 /** MP3 bitrate options. */
 const mp3BitrateOptions = MP3_BITRATES.map((bitrate) => ({
+  value: bitrate,
+  label: `${bitrate} kbps`,
+}));
+
+/** Browser compressed encoder bitrate options. */
+const compressedBitrateOptions = COMPRESSED_EXPORT_BITRATES.map((bitrate) => ({
   value: bitrate,
   label: `${bitrate} kbps`,
 }));
@@ -173,6 +218,13 @@ const progressStageLabel = computed(() => {
   if (stage.value === 'encode') return t.value.dialogs.exportAudio.stage.encode;
   return stage.value;
 });
+
+const normalizeLoudnessLabel = computed(() =>
+  t.value.dialogs.exportAudio.normalizeLoudness.replace(
+    '{target}',
+    appSettings.settings.loudnessTargetLufs.toFixed(0),
+  ),
+);
 
 /** Formats a dB / LUFS value for the report ('-inf' for silence). */
 function formatLevel(value: number): string {
@@ -214,7 +266,14 @@ async function onExport(): Promise<void> {
     cancelRender = null;
     progress.value = 1;
     stage.value = 'encode';
-    const encodeOptions = encodeOptionsForModel(model.value);
+    const encodeOptions = encodeOptionsForModel(model.value, {
+      compressedEncoderIds: compressedEncoderIds.value,
+    });
+    const targetLufs = appSettings.settings.loudnessTargetLufs;
+    const normalizedReport =
+      model.value.mode === 'mixdown' && model.value.normalizeLoudness
+        ? normalizeMixdownLoudness(result.channels, result.report, targetLufs)
+        : result.report;
     let filename: string;
     if (model.value.mode === 'stems') {
       const stems = result.stems ?? [];
@@ -227,9 +286,13 @@ async function onExport(): Promise<void> {
       );
       const entries: StemsZipEntry[] = [];
       for (let i = 0; i < stems.length; i++) {
+        const stem = stems[i];
+        if (model.value.normalizeLoudness && stem.report) {
+          stem.report = normalizeMixdownLoudness(stem.channels, stem.report, targetLufs);
+        }
         entries.push({
           name: names[i],
-          bytes: await encoder.encode(stems[i].channels, result.sampleRate, encodeOptions),
+          bytes: await encoder.encode(stem.channels, result.sampleRate, encodeOptions),
         });
       }
       const zip = buildStemsZip(entries);
@@ -241,8 +304,8 @@ async function onExport(): Promise<void> {
       filename = exportFileName(model.value.baseName, encoder.extension);
       downloadFn(new Blob([new Uint8Array(bytes)], { type: encoder.mime }), filename);
     }
-    report.value = result.report;
-    emit('exported', { filename, report: result.report });
+    report.value = normalizedReport;
+    emit('exported', { filename, report: normalizedReport });
   } catch (error) {
     if (error instanceof MixdownCancelledError) {
       cancelled.value = true;
@@ -315,6 +378,16 @@ function onKeydown(event: KeyboardEvent): void {
               :disabled="busy || model.wavBitDepth !== 16"
             />
           </div>
+          <div v-if="model.encoderId === FLAC_ENCODER_ID" class="format-options flac-options">
+            <SelectMenu
+              v-model="model.flacBitDepth"
+              class="flac-bit-depth"
+              size="sm"
+              :options="FLAC_BIT_DEPTH_OPTIONS"
+              :disabled="busy"
+              :aria-label="t.dialogs.exportAudio.bitDepth"
+            />
+          </div>
           <div v-if="model.encoderId === MP3_ENCODER_ID" class="format-options mp3-options">
             <SelectMenu
               v-model="model.mp3Bitrate"
@@ -325,6 +398,26 @@ function onKeydown(event: KeyboardEvent): void {
               :aria-label="t.dialogs.exportAudio.bitrate"
             />
           </div>
+          <div
+            v-if="selectedEncoderUsesCompressedBitrate"
+            class="format-options browser-media-options"
+          >
+            <SelectMenu
+              v-model="model.compressedBitrateKbps"
+              class="compressed-bitrate"
+              size="sm"
+              :options="compressedBitrateOptions"
+              :disabled="busy"
+              :aria-label="t.dialogs.exportAudio.bitrate"
+            />
+          </div>
+          <p
+            v-if="selectedEncoder?.deterministic === false"
+            class="encoder-notice"
+            role="note"
+          >
+            {{ t.dialogs.exportAudio.browserEncoderNotice }}
+          </p>
         </div>
 
         <label class="field-label" for="export-sample-rate">
@@ -377,6 +470,35 @@ function onKeydown(event: KeyboardEvent): void {
             class="include-master-chain"
             size="sm"
             :label="t.dialogs.exportAudio.includeMasterChain"
+            :disabled="busy"
+          />
+        </div>
+
+        <span class="field-label">{{ t.dialogs.exportAudio.stemOptions }}</span>
+        <div class="field stem-option-row">
+          <ToggleButton
+            v-model="model.includeMasterStem"
+            class="include-master-stem"
+            size="sm"
+            :label="t.dialogs.exportAudio.includeMasterStem"
+            :disabled="busy || model.mode !== 'stems'"
+          />
+          <ToggleButton
+            v-model="model.includeBusStems"
+            class="include-bus-stems"
+            size="sm"
+            :label="t.dialogs.exportAudio.includeBusStems"
+            :disabled="busy || model.mode !== 'stems'"
+          />
+        </div>
+
+        <span class="field-label">{{ t.dialogs.exportAudio.normalization }}</span>
+        <div class="field">
+          <ToggleButton
+            v-model="model.normalizeLoudness"
+            class="normalize-loudness"
+            size="sm"
+            :label="normalizeLoudnessLabel"
             :disabled="busy"
           />
         </div>
@@ -436,6 +558,14 @@ function onKeydown(event: KeyboardEvent): void {
             <dd class="report-lufs">{{ formatLevel(report.lufs) }} LUFS</dd>
           </template>
         </dl>
+        <div v-if="reportLimitations.length > 0" class="report-limitations">
+          <h4>{{ t.dialogs.exportAudio.limitations }}</h4>
+          <ul>
+            <li v-for="limitation in reportLimitations" :key="limitation">
+              {{ limitation }}
+            </li>
+          </ul>
+        </div>
       </div>
 
       <p v-if="errorMessage" class="dialog-error" role="alert">{{ errorMessage }}</p>
@@ -486,6 +616,13 @@ function onKeydown(event: KeyboardEvent): void {
   display: flex;
   align-items: center;
   gap: var(--sp-3);
+}
+
+.encoder-notice {
+  flex-basis: 100%;
+  margin: var(--sp-1) 0 0;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
 }
 
 .radio-row {
@@ -592,6 +729,25 @@ function onKeydown(event: KeyboardEvent): void {
 .report-grid dd {
   margin: 0;
   font-variant-numeric: tabular-nums;
+}
+
+.report-limitations {
+  margin-top: var(--sp-3);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border);
+}
+
+.report-limitations h4 {
+  margin: 0 0 var(--sp-1);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--warning);
+}
+
+.report-limitations ul {
+  margin: 0;
+  padding-left: var(--sp-4);
+  color: var(--text-2);
 }
 
 .dialog-error {

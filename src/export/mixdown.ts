@@ -56,6 +56,7 @@ export interface MasteringDeps {
     left: Float32Array,
     right: Float32Array,
     sampleRate: number,
+    overrides?: Record<string, number | boolean>,
   ): { left: Float32Array; right: Float32Array };
 }
 
@@ -64,14 +65,37 @@ export interface MeteringDeps {
   /** Inter-sample (true) peak of one channel in dBFS. */
   truePeakDb?(samples: Float32Array, sampleRate: number): number;
   /** Integrated loudness of a mono downmix in LUFS. */
-  integratedLufs?(samples: Float32Array, sampleRate: number): number;
+  integratedLufs?(
+    samples: Float32Array,
+    sampleRate: number,
+  ):
+    | number
+    | {
+        integratedLufs: number;
+        momentaryLufs?: number;
+        shortTermLufs?: number;
+        loudnessRange?: number;
+      };
   /**
    * Channel-weighted integrated loudness (ITU-R BS.1770 / EBU R128) measured
    * directly from an interleaved buffer of `frames * channels` samples. This is
    * the standards-correct measurement of a stereo deliverable; the mono
    * `integratedLufs` is only a fallback for builds without this seam.
    */
-  interleavedLufs?(samples: Float32Array, channels: number, sampleRate: number): number;
+  interleavedLufs?(
+    samples: Float32Array,
+    channels: number,
+    sampleRate: number,
+  ):
+    | number
+    | {
+        integratedLufs: number;
+        momentaryLufs?: number;
+        shortTermLufs?: number;
+        loudnessRange?: number;
+      };
+  /** Dynamic range of a mono downmix in dB. */
+  dynamicRangeDb?(samples: Float32Array, sampleRate: number): number;
 }
 
 /** All injectable wasm seams of an offline render. */
@@ -82,14 +106,22 @@ export interface MixdownDeps {
   metering: MeteringDeps | null;
 }
 
-/** One per-track stem of an offline render (post-strip, pre-master). */
+/** One stem of an offline render. */
 export interface MixdownStem {
-  /** Index of the track in the document's track list. */
+  /** Source kind. Omitted on older per-track callers; treat as 'track'. */
+  source?: 'track' | 'bus' | 'master';
+  /** Index of the track in the document's track list, or a negative non-track sentinel. */
   trackIndex: number;
-  /** Track display name. */
+  /** Mixer bus id for bus/return stems. */
+  busId?: string;
+  /** Index of the mixer bus in the document bus list. */
+  busIndex?: number;
+  /** Display name. */
   name: string;
   /** Planar stereo buffers covering the full render window. */
   channels: [Float32Array, Float32Array];
+  /** Loudness/peak measurements for this stem, when metering was available. */
+  report?: MixdownReport;
 }
 
 /** Loudness/peak measurements of the rendered mix. */
@@ -100,6 +132,16 @@ export interface MixdownReport {
   truePeakDb?: number;
   /** Integrated loudness of the mono downmix in LUFS; absent without a metering seam. */
   lufs?: number;
+  /** Momentary loudness in LUFS; absent when the metering seam does not provide it. */
+  momentaryLufs?: number;
+  /** Short-term loudness in LUFS; absent when the metering seam does not provide it. */
+  shortTermLufs?: number;
+  /** Loudness range in LU; absent when the metering seam does not provide it. */
+  loudnessRange?: number;
+  /** Dynamic range in dB; absent without a dynamic-range metering seam. */
+  dynamicRangeDb?: number;
+  /** Non-fatal renderer limitations that affected this bounce. */
+  limitations?: string[];
 }
 
 /** Result of an offline render. */
@@ -112,7 +154,7 @@ export interface MixdownResult {
   totalFrames: number;
   /** Loudness/peak report of the mixdown. */
   report: MixdownReport;
-  /** Per-track stems; present only when the stems option is true. */
+  /** Track and optional bus/return stems; present only when the stems option is true. */
   stems?: MixdownStem[];
 }
 
@@ -139,6 +181,7 @@ interface MixdownWasmSurface {
     channels: number,
     sampleRate?: number,
   ) => { integratedLufs: number };
+  meteringDynamicRange?: (samples: Float32Array, sampleRate?: number) => { dynamicRangeDb: number };
 }
 
 /**
@@ -159,8 +202,8 @@ export async function createWasmMixdownDeps(): Promise<MixdownDeps> {
     };
     const masterAudioStereo = wasm.masterAudioStereo;
     if (typeof masterAudioStereo === 'function') {
-      mastering.applyPreset = (preset, left, right, sampleRate) => {
-        const out = masterAudioStereo(left, right, sampleRate, preset as never);
+      mastering.applyPreset = (preset, left, right, sampleRate, overrides) => {
+        const out = masterAudioStereo(left, right, sampleRate, preset as never, overrides);
         return { left: out.left, right: out.right };
       };
     }
@@ -172,16 +215,26 @@ export async function createWasmMixdownDeps(): Promise<MixdownDeps> {
   }
   const lufs = wasm.lufs;
   if (typeof lufs === 'function') {
-    metering.integratedLufs = (samples, sampleRate) => lufs(samples, sampleRate).integratedLufs;
+    metering.integratedLufs = (samples, sampleRate) => lufs(samples, sampleRate);
   }
   const lufsInterleaved = wasm.lufsInterleaved;
   if (typeof lufsInterleaved === 'function') {
     metering.interleavedLufs = (samples, channels, sampleRate) =>
-      lufsInterleaved(samples, channels, sampleRate).integratedLufs;
+      lufsInterleaved(samples, channels, sampleRate);
+  }
+  const dynamicRange = wasm.meteringDynamicRange;
+  if (typeof dynamicRange === 'function') {
+    metering.dynamicRangeDb = (samples, sampleRate) =>
+      dynamicRange(samples, sampleRate).dynamicRangeDb;
   }
   return {
     mastering,
     metering:
-      metering.truePeakDb || metering.integratedLufs || metering.interleavedLufs ? metering : null,
+      metering.truePeakDb ||
+      metering.integratedLufs ||
+      metering.interleavedLufs ||
+      metering.dynamicRangeDb
+        ? metering
+        : null,
   };
 }

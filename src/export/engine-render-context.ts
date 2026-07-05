@@ -7,12 +7,21 @@
 
 import { buildMidiClipSchedules } from '@/engine/midi-sync';
 import { groupBusGainDb } from '@/engine/strip-sync';
-import { vcaOffsetDb } from '@/project/mixer';
+import {
+  effectiveTrackMute,
+  tracksWithVcaSolo,
+  type VcaControlState,
+  vcaOffsetDb,
+} from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
+import {
+  collectActiveSoundFontUsage,
+  hasSoundFontSlotConflict,
+} from '@/project/soundfont-conflicts';
 import { type NormalizedTempoMap, ppqToSamples } from '@/project/tempo-map';
 import type { EditorClip, EditorTrack, TempoSegment } from '@/project/types';
 import type { EngineMidiClipSchedule } from '@/wasm/index.js';
-import { RELEASE_TAIL_SECONDS, type SendSpec } from './engine-render-types';
+import { type EngineClipSpec, RELEASE_TAIL_SECONDS, type SendSpec } from './engine-render-types';
 
 /** One engine track lane spec (numeric ids, optional sends/output bus). */
 export interface LaneSpec {
@@ -25,6 +34,8 @@ export interface LaneSpec {
 export interface BusRouting {
   /** VCA group fader offsets in dB, keyed by group id. */
   vcaGainDbById: Map<string, number>;
+  /** VCA group mute/solo state, keyed by group id. */
+  vcaControlsById: Map<string, VcaControlState>;
   /** Whether any track is soloed (drives solo-safe handling). */
   anySolo: boolean;
   /** Engine bus number keyed by document send-bus id. */
@@ -53,11 +64,15 @@ export function buildBusRouting(doc: ProjectDocument, trackIds: number[]): BusRo
   // audio of their own.
   const vcaGainDbById = new Map<string, number>();
   for (const group of doc.mixer?.vcaGroups ?? []) vcaGainDbById.set(group.id, group.gainDb);
+  const vcaControlsById: Map<string, VcaControlState> = new Map(
+    (doc.mixer?.vcaGroups ?? []).map((group) => [group.id, group]),
+  );
+  const tracksForSolo = tracksWithVcaSolo(doc.tracks, vcaControlsById);
 
   // Solo-safe tracks join the solo group whenever any track is soloed, so the
   // mix keeps them audible (master FX returns, cue lanes) instead of ducking
   // them with the rest — matching live mixer-sync.
-  const anySolo = doc.tracks.some((track) => track.solo);
+  const anySolo = tracksForSolo.some((track) => track.solo);
 
   // Buses first (sends must reference declared buses): the document's send
   // buses in order, then one bus per group track (matching live strip-sync).
@@ -76,7 +91,7 @@ export function buildBusRouting(doc: ProjectDocument, trackIds: number[]): BusRo
       gainDb: groupBusGainDb(
         {
           volume: track.volume,
-          mute: track.mute,
+          mute: effectiveTrackMute(track.mute, track.vcaId, vcaControlsById),
           ...(track.mixer !== undefined ? { mixer: track.mixer } : {}),
         } as Parameters<typeof groupBusGainDb>[0],
         vcaOffsetDb(track.vcaId, vcaGainDbById),
@@ -112,7 +127,15 @@ export function buildBusRouting(doc: ProjectDocument, trackIds: number[]): BusRo
     };
   });
 
-  return { vcaGainDbById, anySolo, busNumberById, buses, groupBusByTrackIndex, lanes };
+  return {
+    vcaGainDbById,
+    vcaControlsById,
+    anySolo,
+    busNumberById,
+    buses,
+    groupBusByTrackIndex,
+    lanes,
+  };
 }
 
 /**
@@ -130,17 +153,15 @@ export async function preloadSoundFonts(
   loadFontBytes: (fontId: string) => Promise<Uint8Array>,
 ): Promise<Map<string, Uint8Array>> {
   const fontBytesById = new Map<string, Uint8Array>();
-  for (const track of doc.tracks) {
-    if (track.frozen !== undefined) continue;
-    if (track.kind === 'midi' && track.instrument?.kind === 'sf2') {
-      if (!fontBytesById.has(track.instrument.fontId)) {
-        fontBytesById.set(track.instrument.fontId, await loadFontBytes(track.instrument.fontId));
-      }
+  const soundFontUsage = collectActiveSoundFontUsage(doc.tracks);
+  for (const fontId of soundFontUsage.fontIds) {
+    if (!fontBytesById.has(fontId)) {
+      fontBytesById.set(fontId, await loadFontBytes(fontId));
     }
   }
-  if (fontBytesById.size > 1) {
+  if (hasSoundFontSlotConflict(soundFontUsage)) {
     console.warn(
-      `Engine render: ${fontBytesById.size} distinct SoundFonts requested, but the engine holds a single global SoundFont — the last loaded font wins.`,
+      `Engine render: ${soundFontUsage.fontIds.length} distinct SoundFonts requested, but the engine holds a single global SoundFont — the last loaded font wins.`,
     );
   }
   return fontBytesById;
@@ -195,6 +216,9 @@ export function buildMidiSchedules(
         notes: clip.notes.map((note, noteIndex) => ({ id: noteIndex + 1, ...note })),
         ...(clip.ccLanes !== undefined ? { ccLanes: clip.ccLanes } : {}),
         ...(clip.pitchBendLanes !== undefined ? { pitchBendLanes: clip.pitchBendLanes } : {}),
+        ...(clip.programChangeLanes !== undefined
+          ? { programChangeLanes: clip.programChangeLanes }
+          : {}),
         ...(clip.channelPressureLanes !== undefined
           ? { channelPressureLanes: clip.channelPressureLanes }
           : {}),
@@ -233,6 +257,7 @@ export function resolveRenderWindow(
   range: { startPpq: number; endPpq: number | null },
   sampleRate: number,
   releaseTailSeconds = RELEASE_TAIL_SECONDS,
+  audioClips: ReadonlyArray<Pick<EngineClipSpec, 'startPpq' | 'lengthSamples'>> = [],
 ): RenderWindow {
   const startSample = ppqToSamples(tempoMap, range.startPpq, sampleRate);
   let endSample: number;
@@ -245,9 +270,12 @@ export function resolveRenderWindow(
         contentEndPpq = Math.max(contentEndPpq, clip.startPpq + clip.lengthPpq);
       }
     }
-    endSample =
-      ppqToSamples(tempoMap, contentEndPpq, sampleRate) +
-      Math.round(Math.max(0, releaseTailSeconds) * sampleRate);
+    let contentEndSample = ppqToSamples(tempoMap, contentEndPpq, sampleRate);
+    for (const clip of audioClips) {
+      const clipStartSample = ppqToSamples(tempoMap, clip.startPpq, sampleRate);
+      contentEndSample = Math.max(contentEndSample, clipStartSample + clip.lengthSamples);
+    }
+    endSample = contentEndSample + Math.round(Math.max(0, releaseTailSeconds) * sampleRate);
   }
   const totalFrames = Math.max(0, endSample - startSample);
   return { startSample, endSample, totalFrames };

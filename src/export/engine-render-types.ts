@@ -6,6 +6,7 @@
 
 import type { MixdownDeps, MixdownRange, MixdownRangePpq } from '@/export/mixdown';
 import type { LoadedAudioAsset } from '@/persistence/assets';
+import type { InsertLatencyResolver } from '@/project/insert-latency';
 import type { EngineClip, EngineTrackSend, RealtimeEngine } from '@/wasm/index.js';
 
 /** Reserved engine mixer parameter namespace (mirrors the facade encoding). */
@@ -74,7 +75,10 @@ export type OfflineRenderEngine = Pick<
   | 'stop'
   | 'process'
   | 'destroy'
->;
+> & {
+  /** Future ABI: per-bus EQ band setter. Current engines may omit it. */
+  setBusStripEqBandJson?: (busId: number, bandIndex: number, json: string) => void;
+};
 
 /** One engine track send (numeric engine bus id). */
 export type SendSpec = EngineTrackSend;
@@ -106,6 +110,10 @@ export interface EngineRenderOptions {
   includeMasterChain?: boolean;
   /** True also returns one stereo stem per track (post-strip, pre-master). */
   stems?: boolean;
+  /** When stems are enabled, also render one pre-master stem per mixer bus/return. */
+  busStems?: boolean;
+  /** When stems are enabled, also include the final stereo master as a stem. */
+  masterStem?: boolean;
   /**
    * Renders ONE track's pre-fader signal in isolation (freeze/bounce-in-
    * place): every other lane is muted, the track's sends, fader/pan and
@@ -121,6 +129,8 @@ export interface EngineRenderOptions {
   loadFont?: (fontId: string) => Promise<Uint8Array>;
   /** Synth preset name resolver (defaults to identity). */
   resolvePreset?: (preset: string) => string;
+  /** Optional processor-latency resolver used for automatic track PDC. */
+  insertLatency?: InsertLatencyResolver;
   /** Progress callback: fraction in [0, 1] plus the stage being entered. */
   onProgress?: (progress: number, stage: string) => void;
   /** Cancellation flag, checked between render checkpoints. */
@@ -143,6 +153,12 @@ export interface RenderPass {
    * its member indices so the submix renders through the group bus.
    */
   stemIndices: ReadonlySet<number> | null;
+  /**
+   * Non-null renders only this engine bus/return: source lanes keep their
+   * document mute/solo state, sends/output routing to the selected bus stay
+   * live, and all other direct outputs are discarded before master.
+   */
+  busStemId: number | null;
   /**
    * Non-null renders this track pre-fader (freeze): its sends are stripped,
    * its base fader/pan stay neutral and its fader/pan automation is skipped.

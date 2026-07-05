@@ -36,14 +36,22 @@ export interface ExportRenderOptions {
   includeMasterChain?: boolean;
   /** Also return one stereo stem per track (post-strip, pre-master). */
   stems?: boolean;
+  /** When stems are enabled, also return one stereo stem per mixer bus/return. */
+  busStems?: boolean;
+  /** When stems are enabled, also return the final stereo master as a stem. */
+  masterStem?: boolean;
 }
 
 /** One transferred stem of a worker render. */
 export interface ExportWorkerStem {
+  source?: 'track' | 'bus' | 'master';
   trackIndex: number;
+  busId?: string;
+  busIndex?: number;
   name: string;
   left: Float32Array;
   right: Float32Array;
+  report?: MixdownReport;
 }
 
 /** Transferred result of a worker render. */
@@ -94,6 +102,11 @@ async function handleRender(
   doc: ProjectDocument,
   options: ExportRenderOptions = {},
 ): Promise<void> {
+  if (cancelled.has(id)) {
+    cancelled.delete(id);
+    post({ id, type: 'cancelled' });
+    return;
+  }
   try {
     // Every render goes through the offline engine (live-playback parity:
     // buses/sends, strips, realtime instruments, automation, tempo map);
@@ -114,10 +127,14 @@ async function handleRender(
     const transfer: Transferable[] = [payload.left.buffer, payload.right.buffer];
     if (result.stems) {
       payload.stems = result.stems.map((stem) => ({
+        source: stem.source,
         trackIndex: stem.trackIndex,
+        busId: stem.busId,
+        busIndex: stem.busIndex,
         name: stem.name,
         left: stem.channels[0],
         right: stem.channels[1],
+        report: stem.report,
       }));
       for (const stem of payload.stems) {
         transfer.push(stem.left.buffer, stem.right.buffer);

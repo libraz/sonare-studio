@@ -106,6 +106,12 @@ export async function exportClipSmf(clipId: number, baseName?: string): Promise<
       points: lane.points.map((point) => ({ ...point })),
     }));
   }
+  if (clip.programChangeLanes !== undefined && clip.programChangeLanes.length > 0) {
+    documentClip.programChangeLanes = clip.programChangeLanes.map((lane) => ({
+      channel: lane.channel,
+      points: lane.points.map((point) => ({ ...point })),
+    }));
+  }
   if (clip.channelPressureLanes !== undefined && clip.channelPressureLanes.length > 0) {
     documentClip.channelPressureLanes = clip.channelPressureLanes.map((lane) => ({
       channel: lane.channel,

@@ -6,9 +6,12 @@
  */
 
 import { zipSync } from 'fflate';
-import type { MixdownRangePpq } from '@/export/mixdown';
+import type { MixdownRangePpq, MixdownReport } from '@/export/mixdown';
+import { dbToLinear } from '@/lib/db';
 import type { ExportRenderOptions } from '@/workers/export.worker';
+import { isBrowserMediaEncoderId } from './browser-media';
 import { WAV_ENCODER_ID } from './codecs';
+import { FLAC_ENCODER_ID, type FlacBitDepth } from './flac';
 import {
   DEFAULT_MP3_BITRATE,
   isMp3Bitrate,
@@ -27,8 +30,19 @@ export type ExportSampleRate = (typeof EXPORT_SAMPLE_RATES)[number];
 /** Render range choice: the whole project or the transport loop region. */
 export type ExportRangeChoice = 'project' | 'loop';
 
-/** Export mode: one stereo mixdown file, or one file per track zipped. */
+/** Export mode: one stereo mixdown file, or stems zipped. */
 export type ExportMode = 'mixdown' | 'stems';
+
+/** Selectable compressed browser-encoder bitrates in kbps. */
+export const COMPRESSED_EXPORT_BITRATES = [128, 192, 256, 320] as const;
+
+/** One of the selectable compressed browser-encoder bitrates. */
+export type CompressedExportBitrate = (typeof COMPRESSED_EXPORT_BITRATES)[number];
+
+/** Returns whether a value is one of the selectable compressed export bitrates. */
+export function isCompressedExportBitrate(value: number): value is CompressedExportBitrate {
+  return (COMPRESSED_EXPORT_BITRATES as ReadonlyArray<number>).includes(value);
+}
 
 /** Everything the export dialog edits. */
 export interface ExportOptionsModel {
@@ -40,16 +54,26 @@ export interface ExportOptionsModel {
   range: ExportRangeChoice;
   /** Mixdown vs stems mode. */
   mode: ExportMode;
+  /** In stems mode, include one extra stem for each mixer bus/return. */
+  includeBusStems: boolean;
+  /** In stems mode, include the final stereo master in the stems archive. */
+  includeMasterStem: boolean;
   /** Apply master inserts/EQ and the project mastering chain. */
   includeMasterChain: boolean;
+  /** Apply a final gain trim so the mixdown reaches the app loudness target. */
+  normalizeLoudness: boolean;
   /** Output file base name (extension is derived from the format). */
   baseName: string;
   /** WAV: output sample format. */
   wavBitDepth: WavBitDepth;
   /** WAV: apply TPDF dither before 16-bit quantization. */
   wavDither: boolean;
+  /** FLAC: output integer PCM sample depth. */
+  flacBitDepth: FlacBitDepth;
   /** MP3: constant bitrate in kbps. */
   mp3Bitrate: Mp3Bitrate;
+  /** Browser AAC/Opus: requested MediaRecorder audio bitrate in kbps. */
+  compressedBitrateKbps: CompressedExportBitrate;
 }
 
 /** Fallback base name when the project name sanitizes to nothing. */
@@ -65,11 +89,39 @@ export function createDefaultExportOptions(projectName = FALLBACK_BASE_NAME): Ex
     sampleRate: 48000,
     range: 'project',
     mode: 'mixdown',
+    includeBusStems: true,
+    includeMasterStem: true,
     includeMasterChain: true,
+    normalizeLoudness: false,
     baseName: projectName,
     wavBitDepth: 16,
     wavDither: false,
+    flacBitDepth: 24,
     mp3Bitrate: DEFAULT_MP3_BITRATE,
+    compressedBitrateKbps: 256,
+  };
+}
+
+/**
+ * Applies final stereo gain to reach a LUFS target and returns the adjusted report.
+ * Mutates the channel buffers in place so callers can encode the normalized audio.
+ */
+export function normalizeMixdownLoudness(
+  channels: readonly [Float32Array, Float32Array],
+  report: MixdownReport,
+  targetLufs: number,
+): MixdownReport {
+  if (!Number.isFinite(report.lufs) || !Number.isFinite(targetLufs)) return { ...report };
+  const gainDb = targetLufs - (report.lufs as number);
+  const gain = dbToLinear(gainDb);
+  for (const channel of channels) {
+    for (let i = 0; i < channel.length; i += 1) channel[i] *= gain;
+  }
+  return {
+    ...report,
+    peakDb: report.peakDb + gainDb,
+    ...(report.truePeakDb !== undefined ? { truePeakDb: report.truePeakDb + gainDb } : {}),
+    lufs: targetLufs,
   };
 }
 
@@ -79,6 +131,20 @@ export interface ExportValidationContext {
   hasLoop: boolean;
   /** Registry ids of the available encoders. */
   encoderIds: ReadonlyArray<string>;
+  /** Encoder ids backed by browser/runtime codecs that accept a bitrate hint. */
+  compressedEncoderIds?: ReadonlyArray<string>;
+}
+
+/** Context used when deriving encoder option bags. */
+export interface ExportEncodeOptionsContext {
+  /** Encoder ids backed by browser/runtime codecs that accept a bitrate hint. */
+  compressedEncoderIds?: ReadonlyArray<string>;
+}
+
+function isCompressedEncoderId(encoderId: string, context?: ExportEncodeOptionsContext): boolean {
+  return (
+    isBrowserMediaEncoderId(encoderId) || (context?.compressedEncoderIds ?? []).includes(encoderId)
+  );
 }
 
 /**
@@ -112,16 +178,36 @@ export function validateExportOptions(
       errors.push(`Unsupported MP3 bitrate: ${String(model.mp3Bitrate)} kbps`);
     }
   }
+  if (model.encoderId === FLAC_ENCODER_ID) {
+    if (model.flacBitDepth !== 16 && model.flacBitDepth !== 24) {
+      errors.push(`Unsupported FLAC bit depth: ${String(model.flacBitDepth)}`);
+    }
+  }
+  if (
+    isCompressedEncoderId(model.encoderId, context) &&
+    !isCompressedExportBitrate(model.compressedBitrateKbps)
+  ) {
+    errors.push(`Unsupported compressed bitrate: ${String(model.compressedBitrateKbps)} kbps`);
+  }
   return errors;
 }
 
 /** Maps the model to the encoder-specific option bag for `encoder.encode`. */
-export function encodeOptionsForModel(model: ExportOptionsModel): Record<string, unknown> {
+export function encodeOptionsForModel(
+  model: ExportOptionsModel,
+  context?: ExportEncodeOptionsContext,
+): Record<string, unknown> {
   if (model.encoderId === WAV_ENCODER_ID) {
     return { bitDepth: model.wavBitDepth, dither: model.wavDither };
   }
   if (model.encoderId === MP3_ENCODER_ID) {
     return { bitrate: model.mp3Bitrate };
+  }
+  if (model.encoderId === FLAC_ENCODER_ID) {
+    return { bitDepth: model.flacBitDepth };
+  }
+  if (isCompressedEncoderId(model.encoderId, context)) {
+    return { bitrate: model.compressedBitrateKbps };
   }
   return {};
 }
@@ -141,6 +227,8 @@ export function toRenderOptions(
     range: 'project',
     includeMasterChain: model.includeMasterChain,
     stems: model.mode === 'stems',
+    busStems: model.mode === 'stems' && model.includeBusStems,
+    masterStem: model.mode === 'stems' && model.includeMasterStem,
   };
   if (model.range === 'loop') {
     if (!loopRegion) {

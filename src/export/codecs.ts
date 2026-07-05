@@ -22,6 +22,12 @@ export interface AudioEncoder {
   /** MIME type of the produced file. */
   readonly mime: string;
   /**
+   * True when identical PCM/options should produce byte-identical output.
+   * Browser/platform codecs may set false because the implementation is
+   * runtime-dependent.
+   */
+  readonly deterministic?: boolean;
+  /**
    * Encodes planar audio buffers into a complete file. May be async (worker
    * or wasm-backed encoders).
    */
@@ -87,5 +93,6 @@ registerEncoder({
   label: 'WAV (PCM)',
   extension: '.wav',
   mime: 'audio/wav',
+  deterministic: true,
   encode: (channels, sampleRate, options) => encodeWav(channels, sampleRate, toWavOptions(options)),
 });

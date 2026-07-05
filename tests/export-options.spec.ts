@@ -1,6 +1,7 @@
 import { strFromU8, unzipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 import { WAV_ENCODER_ID } from '@/export/codecs';
+import { FLAC_ENCODER_ID } from '@/export/flac';
 import { MP3_ENCODER_ID } from '@/export/mp3';
 import {
   buildStemsZip,
@@ -9,6 +10,7 @@ import {
   type ExportOptionsModel,
   encodeOptionsForModel,
   exportFileName,
+  normalizeMixdownLoudness,
   sanitizeFileBaseName,
   stemEntryNames,
   stemsZipFileName,
@@ -30,11 +32,16 @@ describe('createDefaultExportOptions', () => {
       sampleRate: 48000,
       range: 'project',
       mode: 'mixdown',
+      includeBusStems: true,
+      includeMasterStem: true,
       includeMasterChain: true,
+      normalizeLoudness: false,
       baseName: 'My Song',
       wavBitDepth: 16,
       wavDither: false,
+      flacBitDepth: 24,
       mp3Bitrate: 320,
+      compressedBitrateKbps: 256,
     });
     expect(createDefaultExportOptions().baseName).toBe('project');
   });
@@ -84,6 +91,34 @@ describe('validateExportOptions', () => {
     // WAV at 96 kHz stays valid.
     expect(validateExportOptions(model({ sampleRate: 96000 }), CONTEXT)).toEqual([]);
   });
+
+  it('rejects off-list browser compressed bitrates', () => {
+    const errors = validateExportOptions(
+      model({ encoderId: 'opus-webm', compressedBitrateKbps: 64 as never }),
+      { ...CONTEXT, encoderIds: [...CONTEXT.encoderIds, 'opus-webm'] },
+    );
+    expect(errors).toEqual(['Unsupported compressed bitrate: 64 kbps']);
+  });
+
+  it('rejects off-list bitrates for runtime compressed encoders', () => {
+    const errors = validateExportOptions(
+      model({ encoderId: 'runtime-aac', compressedBitrateKbps: 64 as never }),
+      {
+        ...CONTEXT,
+        encoderIds: [...CONTEXT.encoderIds, 'runtime-aac'],
+        compressedEncoderIds: ['runtime-aac'],
+      },
+    );
+    expect(errors).toEqual(['Unsupported compressed bitrate: 64 kbps']);
+  });
+
+  it('rejects off-list FLAC bit depths', () => {
+    const errors = validateExportOptions(
+      model({ encoderId: FLAC_ENCODER_ID, flacBitDepth: 32 as never }),
+      { ...CONTEXT, encoderIds: [...CONTEXT.encoderIds, FLAC_ENCODER_ID] },
+    );
+    expect(errors).toEqual(['Unsupported FLAC bit depth: 32']);
+  });
 });
 
 describe('encodeOptionsForModel', () => {
@@ -100,8 +135,60 @@ describe('encodeOptionsForModel', () => {
     });
   });
 
+  it('maps FLAC options', () => {
+    expect(encodeOptionsForModel(model({ encoderId: FLAC_ENCODER_ID, flacBitDepth: 16 }))).toEqual({
+      bitDepth: 16,
+    });
+  });
+
+  it('maps browser compressed encoder bitrate options', () => {
+    expect(
+      encodeOptionsForModel(model({ encoderId: 'opus-webm', compressedBitrateKbps: 192 })),
+    ).toEqual({ bitrate: 192 });
+  });
+
+  it('maps runtime compressed encoder bitrate options from context', () => {
+    expect(
+      encodeOptionsForModel(model({ encoderId: 'runtime-aac', compressedBitrateKbps: 128 }), {
+        compressedEncoderIds: ['runtime-aac'],
+      }),
+    ).toEqual({ bitrate: 128 });
+  });
+
   it('passes nothing for unknown encoders', () => {
-    expect(encodeOptionsForModel(model({ encoderId: 'flac' }))).toEqual({});
+    expect(encodeOptionsForModel(model({ encoderId: 'no-such-encoder' }))).toEqual({});
+  });
+});
+
+describe('normalizeMixdownLoudness', () => {
+  it('applies final gain and updates the report to the target LUFS', () => {
+    const left = new Float32Array([0.25]);
+    const right = new Float32Array([-0.5]);
+
+    const report = normalizeMixdownLoudness(
+      [left, right],
+      { peakDb: -6, truePeakDb: -5.5, lufs: -20 },
+      -14,
+    );
+
+    expect(left[0]).toBeCloseTo(0.25 * 10 ** (6 / 20), 6);
+    expect(right[0]).toBeCloseTo(-0.5 * 10 ** (6 / 20), 6);
+    expect(report).toEqual({
+      peakDb: 0,
+      truePeakDb: 0.5,
+      lufs: -14,
+    });
+  });
+
+  it('leaves audio unchanged when loudness is unavailable', () => {
+    const left = new Float32Array([0.25]);
+    const right = new Float32Array([-0.5]);
+
+    const report = normalizeMixdownLoudness([left, right], { peakDb: -6 }, -14);
+
+    expect(Array.from(left)).toEqual([0.25]);
+    expect(Array.from(right)).toEqual([-0.5]);
+    expect(report).toEqual({ peakDb: -6 });
   });
 });
 
@@ -112,11 +199,24 @@ describe('toRenderOptions', () => {
       range: 'project',
       includeMasterChain: false,
       stems: false,
+      busStems: false,
+      masterStem: false,
     });
   });
 
   it('maps stems mode', () => {
-    expect(toRenderOptions(model({ mode: 'stems' })).stems).toBe(true);
+    expect(toRenderOptions(model({ mode: 'stems' }))).toMatchObject({
+      stems: true,
+      busStems: true,
+      masterStem: true,
+    });
+    expect(
+      toRenderOptions(model({ mode: 'stems', includeBusStems: false, includeMasterStem: false })),
+    ).toMatchObject({
+      stems: true,
+      busStems: false,
+      masterStem: false,
+    });
   });
 
   it('maps the loop range with the given window', () => {

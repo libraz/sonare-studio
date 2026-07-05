@@ -6,7 +6,7 @@ import {
   dawprojectFilename,
   exportDawproject,
 } from '@/export/dawproject';
-import { dbToLinear } from '@/project/mixer';
+import { dbToLinear, type InsertSlot } from '@/project/mixer';
 import type { DocumentClip, DocumentTrack, ProjectDocument } from '@/project/serialization';
 
 const SAMPLE_RATE = 48000;
@@ -123,6 +123,15 @@ describe('exportDawproject structure', () => {
   it('writes project.xml and metadata.xml into the archive', async () => {
     const entries = await exportAndUnzip(makeDoc([]), { includeAudio: false });
     expect(Object.keys(entries).sort()).toEqual(['metadata.xml', 'project.xml']);
+  });
+
+  it('rejects the reserved renderMidiTracks option instead of ignoring it', async () => {
+    await expect(
+      exportDawproject(makeDoc([makeTrack([makeMidiClip()])]), {
+        includeAudio: false,
+        renderMidiTracks: true,
+      } as unknown as DawprojectExportOptions),
+    ).rejects.toThrow(/rendering MIDI tracks to audio/);
   });
 
   it('writes the root Project, Application and metadata title', async () => {
@@ -244,6 +253,12 @@ describe('exportDawproject structure', () => {
     const nonMemberVolume = tracks[1].querySelector('Channel > Volume');
     expect(floatAttr(memberVolume, 'value')).toBeCloseTo(dbToLinear(-6), 5);
     expect(floatAttr(nonMemberVolume, 'value')).toBeCloseTo(0.5, 5);
+    expect(attr(tracks[0], 'sonareVcaId')).toBe('vca-1');
+    expect(floatAttr(tracks[0], 'sonareVolume')).toBe(1);
+    const vca = project.querySelector('Structure > SonareVcaGroups > SonareVcaGroup');
+    expect(attr(vca, 'id')).toBe('vca-1');
+    expect(attr(vca, 'name')).toBe('Group');
+    expect(floatAttr(vca, 'gainDb')).toBe(-6);
   });
 
   it('maps aux tracks to effect channels', async () => {
@@ -251,6 +266,189 @@ describe('exportDawproject structure', () => {
     const channel = project.querySelector('Structure > Track > Channel');
     expect(attr(channel, 'role')).toBe('effect');
     expect(attr(project.querySelector('Structure > Track'), 'contentType')).toBe('audio');
+  });
+
+  it('exports mixer buses as effect channels with output and send routing', async () => {
+    const project = await exportProjectXml(
+      makeDoc(
+        [
+          makeTrack([], {
+            name: 'Dry',
+            kind: 'audio',
+            mixer: {
+              gainDb: 0,
+              pan: 0,
+              inserts: [],
+              sends: [{ busId: 'bus-1', levelDb: -12, enabled: true, timing: 'preFader' }],
+              outputBusId: 'bus-1',
+            },
+          }),
+        ],
+        {
+          mixer: {
+            master: { gainDb: 0, pan: 0, inserts: [], sends: [] },
+            buses: [
+              {
+                id: 'bus-1',
+                name: 'FX Return',
+                gainDb: -6,
+                strip: { gainDb: 0, pan: 0.25, inserts: [], sends: [] },
+              },
+            ],
+          },
+        },
+      ),
+    );
+    const tracks = [...project.querySelectorAll('Structure > Track')];
+    expect(tracks).toHaveLength(3);
+    const dryChannel = tracks[0].querySelector('Channel');
+    const busChannel = tracks[1].querySelector('Channel');
+
+    expect(attr(tracks[1], 'name')).toBe('FX Return');
+    expect(attr(busChannel, 'role')).toBe('effect');
+    expect(floatAttr(busChannel?.querySelector('Volume'), 'value')).toBeCloseTo(dbToLinear(-6), 5);
+    expect(floatAttr(busChannel?.querySelector('Pan'), 'value')).toBeCloseTo(0.625, 6);
+    expect(attr(dryChannel, 'destination')).toBe(attr(busChannel, 'id'));
+
+    const send = dryChannel?.querySelector('Sends > Send');
+    expect(attr(send, 'destination')).toBe(attr(busChannel, 'id'));
+    expect(attr(send, 'type')).toBe('pre');
+    expect(attr(send?.querySelector('Mute'), 'value')).toBe('false');
+    expect(floatAttr(send?.querySelector('Volume'), 'value')).toBeCloseTo(dbToLinear(-12), 5);
+  });
+
+  it('exports sonare insert slots as generic BuiltinDevice entries', async () => {
+    const project = await exportProjectXml(
+      makeDoc([
+        makeTrack([], {
+          mixer: {
+            gainDb: 0,
+            pan: 0,
+            inserts: [
+              {
+                processor: 'dynamics.compressor',
+                params: { thresholdDb: -18, autoMakeup: true },
+                enabled: false,
+                sidechainSourceIndex: 1,
+              } as InsertSlot & { sidechainSourceIndex: number },
+            ],
+            sends: [],
+          },
+        }),
+        makeTrack([], { name: 'Key Source' }),
+      ]),
+    );
+    const device = project.querySelector('Structure > Track > Channel > Devices > BuiltinDevice');
+
+    expect(attr(device, 'deviceVendor')).toBe('sonare-studio');
+    expect(attr(device, 'deviceName')).toBe('dynamics.compressor');
+    expect(attr(device, 'deviceRole')).toBe('audioFX');
+    expect(attr(device?.querySelector('Enabled'), 'value')).toBe('false');
+    expect(floatAttr(device?.querySelector('RealParameter[name="thresholdDb"]'), 'value')).toBe(
+      -18,
+    );
+    expect(attr(device?.querySelector('BoolParameter[name="autoMakeup"]'), 'value')).toBe('true');
+    expect(attr(device, 'sonareSidechainSourceIndex')).toBe('1');
+  });
+
+  it('exports bus and master insert sidechain source indexes as sonare metadata', async () => {
+    const project = await exportProjectXml(
+      makeDoc([makeTrack([], { name: 'Key Source' })], {
+        mixer: {
+          master: {
+            gainDb: 0,
+            pan: 0,
+            inserts: [
+              {
+                processor: 'dynamics.compressor',
+                params: { thresholdDb: -10 },
+                enabled: true,
+                sidechainSourceIndex: 0,
+              } as InsertSlot & { sidechainSourceIndex: number },
+            ],
+            sends: [],
+          },
+          buses: [
+            {
+              id: 'bus-1',
+              name: 'Return',
+              gainDb: 0,
+              strip: {
+                gainDb: 0,
+                pan: 0,
+                inserts: [
+                  {
+                    processor: 'saturation.tape',
+                    params: { drive: 0.5 },
+                    enabled: true,
+                    sidechainSourceIndex: 0,
+                  } as InsertSlot & { sidechainSourceIndex: number },
+                ],
+                sends: [],
+              },
+            },
+          ],
+        },
+      }),
+    );
+
+    const busDevice = project.querySelector('Channel[role="effect"] BuiltinDevice');
+    const masterDevice = project.querySelector('Channel[role="master"] BuiltinDevice');
+
+    expect(attr(busDevice, 'sonareSidechainSourceIndex')).toBe('0');
+    expect(attr(masterDevice, 'sonareSidechainSourceIndex')).toBe('0');
+  });
+
+  it('exports grouped tracks as nested Structure tracks', async () => {
+    const project = await exportProjectXml(
+      makeDoc([
+        makeTrack([], { name: 'Drum Bus', kind: 'group' }),
+        makeTrack([], { name: 'Kick', kind: 'audio', groupIndex: 0 }),
+      ]),
+    );
+    const topLevelTracks = [...(project.querySelector('Structure')?.children ?? [])].filter(
+      (element) => element.tagName === 'Track',
+    );
+    const group = topLevelTracks[0];
+    const nestedTracks = [...group.children].filter((element) => element.tagName === 'Track');
+
+    expect(topLevelTracks).toHaveLength(2);
+    expect(attr(group, 'name')).toBe('Drum Bus');
+    expect(attr(group, 'contentType')).toBe('tracks');
+    expect(nestedTracks).toHaveLength(1);
+    expect(attr(nestedTracks[0], 'name')).toBe('Kick');
+    expect(attr(nestedTracks[0], 'id')).toBe('track-1');
+  });
+
+  it('does not export group track target insert sidechain metadata', async () => {
+    const project = await exportProjectXml(
+      makeDoc([
+        makeTrack([], {
+          name: 'Drum Bus',
+          kind: 'group',
+          mixer: {
+            gainDb: 0,
+            pan: 0,
+            inserts: [
+              {
+                processor: 'dynamics.compressor',
+                params: { thresholdDb: -18 },
+                enabled: true,
+                sidechainSourceIndex: 1,
+              } as InsertSlot & { sidechainSourceIndex: number },
+            ],
+            sends: [],
+          },
+        }),
+        makeTrack([], { name: 'Key Source', kind: 'audio' }),
+      ]),
+    );
+    const device = project.querySelector(
+      'Structure > Track[contentType="tracks"] > Channel > Devices > BuiltinDevice',
+    );
+
+    expect(attr(device, 'deviceName')).toBe('dynamics.compressor');
+    expect(attr(device, 'sonareSidechainSourceIndex')).toBeNull();
   });
 });
 
@@ -295,6 +493,65 @@ describe('exportDawproject arrangement', () => {
       makeDoc([makeTrack([makeMidiClip({ loopEnabled: true, loopLengthPpq: 0 })])]),
     );
     expect(floatAttr(fullWindow.querySelector('Arrangement Clip'), 'loopEnd')).toBe(10);
+  });
+
+  it('exports MIDI expression lanes as clip-local Points', async () => {
+    const project = await exportProjectXml(
+      makeDoc([
+        makeTrack([
+          makeMidiClip({
+            ccLanes: [
+              {
+                channel: 1,
+                controller: 11,
+                points: [
+                  { ppq: 0, value: 32 },
+                  { ppq: 2, value: 96 },
+                ],
+              },
+            ],
+            pitchBendLanes: [{ channel: 2, points: [{ ppq: 1, value: 8192 }] }],
+            programChangeLanes: [{ channel: 3, points: [{ ppq: 1.5, program: 24 }] }],
+            channelPressureLanes: [{ channel: 4, points: [{ ppq: 2.5, value: 80 }] }],
+            polyPressureLanes: [{ channel: 5, pitch: 64, points: [{ ppq: 3.5, value: 70 }] }],
+          }),
+        ]),
+      ]),
+    );
+
+    const clip = project.querySelector('Arrangement Clip');
+    const cc = clip?.querySelector('Points[id="midi-expression-0-0-cc-1-11"]');
+    expect(attr(cc, 'unit')).toBe('midi-7bit');
+    expect(attr(cc?.querySelector('Target'), 'parameter')).toBe('midi.cc.1.11');
+    const ccPoints = [...(cc?.querySelectorAll('RealPoint') ?? [])];
+    expect(ccPoints).toHaveLength(2);
+    expect(floatAttr(ccPoints[0], 'time')).toBe(0);
+    expect(floatAttr(ccPoints[0], 'value')).toBe(32);
+    expect(attr(ccPoints[0], 'interpolation')).toBe('hold');
+    expect(floatAttr(ccPoints[1], 'time')).toBe(2);
+    expect(floatAttr(ccPoints[1], 'value')).toBe(96);
+
+    const pitchBend = clip?.querySelector('Points[id="midi-expression-0-0-pitchBend-2"]');
+    expect(attr(pitchBend, 'unit')).toBe('midi-14bit');
+    expect(attr(pitchBend?.querySelector('Target'), 'parameter')).toBe('midi.pitchBend.2');
+    expect(floatAttr(pitchBend?.querySelector('RealPoint'), 'value')).toBe(8192);
+
+    const program = clip?.querySelector('Points[id="midi-expression-0-0-program-3"]');
+    expect(attr(program, 'unit')).toBe('midi-program');
+    expect(attr(program?.querySelector('Target'), 'parameter')).toBe('midi.program.3');
+    expect(floatAttr(program?.querySelector('RealPoint'), 'value')).toBe(24);
+
+    const channelPressure = clip?.querySelector(
+      'Points[id="midi-expression-0-0-channelPressure-4"]',
+    );
+    expect(attr(channelPressure?.querySelector('Target'), 'parameter')).toBe(
+      'midi.channelPressure.4',
+    );
+    expect(floatAttr(channelPressure?.querySelector('RealPoint'), 'value')).toBe(80);
+
+    const polyPressure = clip?.querySelector('Points[id="midi-expression-0-0-polyPressure-5-64"]');
+    expect(attr(polyPressure?.querySelector('Target'), 'parameter')).toBe('midi.polyPressure.5.64');
+    expect(floatAttr(polyPressure?.querySelector('RealPoint'), 'value')).toBe(70);
   });
 
   it('exports markers and sections as cue markers ordered by time', async () => {
@@ -491,6 +748,234 @@ describe('exportDawproject audio', () => {
     expect(floatAttr(clip, 'time')).toBe(0);
     expect(clip?.querySelector('Audio')).toBeNull();
     expect(clip?.querySelector('Notes')).toBeNull();
+  });
+
+  it('exports track fader and pan automation as DAWproject Points lanes', async () => {
+    const project = await exportProjectXml(
+      makeDoc([
+        makeTrack([], {
+          automation: [
+            {
+              param: 'faderDb',
+              enabled: true,
+              points: [
+                { ppq: 0, value: -6, curve: 'hold' },
+                { ppq: 4, value: 0 },
+              ],
+            },
+            {
+              param: 'pan',
+              enabled: true,
+              points: [{ ppq: 2, value: 0.5 }],
+            },
+            {
+              param: 'insert:0:gainDb',
+              enabled: true,
+              points: [{ ppq: 1, value: -12 }],
+            },
+            {
+              param: 'faderDb',
+              enabled: false,
+              points: [{ ppq: 8, value: -24 }],
+            },
+          ],
+        }),
+      ]),
+    );
+    const points = [...project.querySelectorAll('Arrangement > Lanes > Lanes > Points')];
+
+    expect(points).toHaveLength(2);
+    const volume = points[0];
+    expect(attr(volume, 'unit')).toBe('linear');
+    expect(attr(volume.querySelector('Target'), 'parameter')).toBe('channel-0-volume');
+    const volumePoints = [...volume.querySelectorAll('RealPoint')];
+    expect(floatAttr(volumePoints[0], 'time')).toBe(0);
+    expect(floatAttr(volumePoints[0], 'value')).toBeCloseTo(dbToLinear(-6), 5);
+    expect(attr(volumePoints[0], 'interpolation')).toBe('hold');
+    expect(floatAttr(volumePoints[1], 'time')).toBe(4);
+    expect(floatAttr(volumePoints[1], 'value')).toBe(1);
+    expect(attr(volumePoints[1], 'interpolation')).toBe('linear');
+
+    const pan = points[1];
+    expect(attr(pan, 'unit')).toBe('normalized');
+    expect(attr(pan.querySelector('Target'), 'parameter')).toBe('channel-0-pan');
+    expect(floatAttr(pan.querySelector('RealPoint'), 'value')).toBe(0.75);
+  });
+
+  it('exports track insert automation to the matching device parameter', async () => {
+    const project = await exportProjectXml(
+      makeDoc([
+        makeTrack([], {
+          mixer: {
+            gainDb: 0,
+            pan: 0,
+            inserts: [
+              {
+                processor: 'dynamics.compressor',
+                params: { thresholdDb: -18, autoMakeup: true },
+                enabled: true,
+              },
+            ],
+            sends: [],
+          },
+          automation: [
+            {
+              param: 'insert:0:thresholdDb',
+              enabled: true,
+              points: [
+                { ppq: 0, value: -24, curve: 'hold' },
+                { ppq: 4, value: -12 },
+              ],
+            },
+            {
+              param: 'insert:0:autoMakeup',
+              enabled: true,
+              points: [{ ppq: 2, value: 1 }],
+            },
+            {
+              param: 'insert:1:thresholdDb',
+              enabled: true,
+              points: [{ ppq: 2, value: -6 }],
+            },
+          ],
+        }),
+      ]),
+    );
+    const points = [...project.querySelectorAll('Arrangement > Lanes > Lanes > Points')];
+
+    expect(points).toHaveLength(2);
+    expect(attr(points[0], 'id')).toBe('automation-0-insert_0_thresholdDb');
+    expect(attr(points[0], 'unit')).toBe('normalized');
+    expect(attr(points[0].querySelector('Target'), 'parameter')).toBe(
+      'channel-0-insert-0-param-thresholdDb',
+    );
+    const realPoints = [...points[0].querySelectorAll('RealPoint')];
+    expect(floatAttr(realPoints[0], 'value')).toBe(-24);
+    expect(attr(realPoints[0], 'interpolation')).toBe('hold');
+    expect(floatAttr(realPoints[1], 'value')).toBe(-12);
+
+    expect(attr(points[1], 'id')).toBe('automation-0-insert_0_autoMakeup');
+    expect(attr(points[1], 'unit')).toBe('bool');
+    expect(attr(points[1].querySelector('Target'), 'parameter')).toBe(
+      'channel-0-insert-0-param-autoMakeup',
+    );
+    const boolPoints = [...points[1].querySelectorAll('RealPoint')];
+    expect(floatAttr(boolPoints[0], 'value')).toBe(1);
+  });
+
+  it('exports bus and master automation on synthetic arrangement lanes', async () => {
+    const project = await exportProjectXml(
+      makeDoc([], {
+        mixer: {
+          master: {
+            gainDb: 0,
+            pan: 0,
+            inserts: [
+              { processor: 'eq.tilt', params: { tiltDb: 1.5, oversample: true }, enabled: true },
+            ],
+            sends: [],
+          },
+          buses: [
+            {
+              id: 'bus-1',
+              name: 'Return',
+              gainDb: -3,
+              strip: {
+                gainDb: 0,
+                pan: 0,
+                inserts: [
+                  {
+                    processor: 'saturation.tape',
+                    params: { drive: 0.7, bypassTone: false },
+                    enabled: true,
+                  },
+                ],
+                sends: [],
+              },
+              automation: [
+                {
+                  param: 'faderDb',
+                  enabled: true,
+                  points: [{ ppq: 1, value: -6 }],
+                },
+                {
+                  param: 'insert:0:drive',
+                  enabled: true,
+                  points: [{ ppq: 2, value: 0.3 }],
+                },
+                {
+                  param: 'insert:0:bypassTone',
+                  enabled: true,
+                  points: [{ ppq: 2, value: 1 }],
+                },
+                {
+                  param: 'insert:1:drive',
+                  enabled: true,
+                  points: [{ ppq: 2, value: 0.9 }],
+                },
+              ],
+            },
+          ],
+        },
+        masterAutomation: [
+          {
+            param: 'pan',
+            enabled: true,
+            points: [{ ppq: 3, value: -0.5 }],
+          },
+          {
+            param: 'insert:0:tiltDb',
+            enabled: true,
+            points: [{ ppq: 4, value: -1 }],
+          },
+          {
+            param: 'insert:0:oversample',
+            enabled: true,
+            points: [{ ppq: 4, value: 1 }],
+          },
+          {
+            param: 'insert:1:tiltDb',
+            enabled: true,
+            points: [{ ppq: 4, value: 3 }],
+          },
+        ],
+      }),
+    );
+    const busLane = project.querySelector('Arrangement > Lanes > Lanes[track="bus-track-0"]');
+    const masterLane = project.querySelector('Arrangement > Lanes > Lanes[track="master-track"]');
+
+    expect(
+      attr(busLane?.querySelector('Points[id="automation-bus-0-faderDb"] Target'), 'parameter'),
+    ).toBe('bus-channel-0-volume');
+    expect(
+      attr(
+        busLane?.querySelector('Points[id="automation-bus-0-insert_0_drive"] Target'),
+        'parameter',
+      ),
+    ).toBe('bus-channel-0-insert-0-param-drive');
+    expect(
+      attr(masterLane?.querySelector('Points[id="automation-master-pan"] Target'), 'parameter'),
+    ).toBe('master-channel-pan');
+    expect(
+      attr(
+        masterLane?.querySelector('Points[id="automation-master-insert_0_tiltDb"] Target'),
+        'parameter',
+      ),
+    ).toBe('master-channel-insert-0-param-tiltDb');
+    expect(
+      attr(
+        busLane?.querySelector('Points[id="automation-bus-0-insert_0_bypassTone"] Target'),
+        'parameter',
+      ),
+    ).toBe('bus-channel-0-insert-0-param-bypassTone');
+    expect(busLane?.querySelector('Points[id="automation-bus-0-insert_1_drive"]')).toBeNull();
+    expect(
+      attr(
+        masterLane?.querySelector('Points[id="automation-master-insert_0_oversample"] Target'),
+        'parameter',
+      ),
+    ).toBe('master-channel-insert-0-param-oversample');
+    expect(masterLane?.querySelector('Points[id="automation-master-insert_1_tiltDb"]')).toBeNull();
   });
 });
 

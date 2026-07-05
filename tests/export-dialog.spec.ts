@@ -115,6 +115,7 @@ interface MountOptions {
     label: string;
     extension: string;
     mime: string;
+    deterministic?: boolean;
     encode: (
       channels: ReadonlyArray<Float32Array>,
       sampleRate: number,
@@ -186,10 +187,11 @@ describe('ExportDialog', () => {
     expect(q('[role="dialog"]')).toBeNull();
   });
 
-  it('lists the registered encoders (WAV and MP3)', async () => {
+  it('lists the registered encoders (WAV, FLAC and MP3)', async () => {
     mountDialog(makeRender());
     const labels = await readOptionLabels('.format-select');
     expect(labels.some((l) => l.includes('WAV'))).toBe(true);
+    expect(labels.some((l) => l.includes('FLAC'))).toBe(true);
     expect(labels.some((l) => l.includes('MP3'))).toBe(true);
   });
 
@@ -209,13 +211,84 @@ describe('ExportDialog', () => {
     expect(labels).toEqual(['WAV (PCM)']);
   });
 
-  it('shows WAV options by default and MP3 options after switching formats', async () => {
+  it('shows format-specific options for WAV, FLAC and MP3', async () => {
     mountDialog(makeRender());
     expect(q('.wav-bit-depth')).not.toBeNull();
+    expect(q('.flac-bit-depth')).toBeNull();
     expect(q('.mp3-bitrate')).toBeNull();
+    expect(q('.compressed-bitrate')).toBeNull();
+    await selectOption('.format-select', 'FLAC (lossless)');
+    expect(q('.wav-bit-depth')).toBeNull();
+    expect(q('.flac-bit-depth')).not.toBeNull();
+    expect(await readOptionLabels('.flac-bit-depth')).toEqual(['16-bit PCM', '24-bit PCM']);
+    expect(q('.mp3-bitrate')).toBeNull();
+    expect(q('.compressed-bitrate')).toBeNull();
     await selectOption('.format-select', 'MP3 (CBR)');
     expect(q('.wav-bit-depth')).toBeNull();
+    expect(q('.flac-bit-depth')).toBeNull();
     expect(q('.mp3-bitrate')).not.toBeNull();
+    expect(q('.compressed-bitrate')).toBeNull();
+  });
+
+  it('shows browser compressed bitrate options for Opus/AAC encoders', async () => {
+    mountDialog(makeRender(), {
+      encoders: [
+        {
+          id: 'opus-webm',
+          label: 'Opus (WebM)',
+          extension: '.webm',
+          mime: 'audio/webm;codecs=opus',
+          deterministic: false,
+          encode: () => new Uint8Array(0),
+        },
+      ],
+    });
+
+    expect(q('.wav-bit-depth')).toBeNull();
+    expect(q('.mp3-bitrate')).toBeNull();
+    expect(q('.compressed-bitrate')).not.toBeNull();
+    expect(await readOptionLabels('.compressed-bitrate')).toEqual([
+      '128 kbps',
+      '192 kbps',
+      '256 kbps',
+      '320 kbps',
+    ]);
+    expect(q('.encoder-notice')?.textContent).toContain('MediaRecorder');
+  });
+
+  it('shows bitrate options for runtime compressed encoders from registry metadata', async () => {
+    const encode = vi.fn(() => new Uint8Array([7]));
+    const control = makeRender();
+    mountDialog(control, {
+      encoders: [
+        {
+          id: 'runtime-aac',
+          label: 'Runtime AAC',
+          extension: '.m4a',
+          mime: 'audio/mp4',
+          deterministic: false,
+          encode,
+        },
+      ],
+    });
+
+    expect(q('.compressed-bitrate')).not.toBeNull();
+    expect(q('.encoder-notice')?.textContent).toContain('MediaRecorder');
+    await selectOption('.compressed-bitrate', '128 kbps');
+    await clickExport();
+
+    const result = makeResult({
+      report: {
+        peakDb: -6.0,
+        truePeakDb: -5.8,
+        lufs: -14.2,
+        limitations: ['instrument automation was evaluated at render start for: Keys'],
+      },
+    });
+    control.resolve(result);
+    await flushPromises();
+
+    expect(encode).toHaveBeenCalledWith(result.channels, 48000, { bitrate: 128 });
   });
 
   it('disables the loop range without a loop region', () => {
@@ -249,6 +322,8 @@ describe('ExportDialog', () => {
       range: 'project',
       includeMasterChain: true,
       stems: false,
+      busStems: false,
+      masterStem: false,
     });
 
     control.progress()?.(0.5, 'clip:0:0');
@@ -256,7 +331,14 @@ describe('ExportDialog', () => {
     expect(q('.progress-stage')?.textContent).toBe('clip:0:0');
     expect(q('.progress-fill')?.getAttribute('style')).toContain('width: 50%');
 
-    const result = makeResult();
+    const result = makeResult({
+      report: {
+        peakDb: -6.0,
+        truePeakDb: -5.8,
+        lufs: -14.2,
+        limitations: ['instrument automation was evaluated at render start for: Keys'],
+      },
+    });
     control.resolve(result);
     await flushPromises();
 
@@ -269,10 +351,19 @@ describe('ExportDialog', () => {
     expect(q('.report-peak')?.textContent).toBe('-6.0 dBFS');
     expect(q('.report-true-peak')?.textContent).toBe('-5.8 dBTP');
     expect(q('.report-lufs')?.textContent).toBe('-14.2 LUFS');
+    expect(q('.report-limitations')?.textContent).toContain('Limitations');
+    expect(q('.report-limitations')?.textContent).toContain(
+      'instrument automation was evaluated at render start for: Keys',
+    );
 
-    const emitted = wrapper.emitted('exported') as Array<[{ filename: string }]>;
+    const emitted = wrapper.emitted('exported') as Array<
+      [{ filename: string; report: { limitations?: string[] } }]
+    >;
     expect(emitted).toHaveLength(1);
     expect(emitted[0][0].filename).toBe('My Song.wav');
+    expect(emitted[0][0].report.limitations).toEqual([
+      'instrument automation was evaluated at render start for: Keys',
+    ]);
   });
 
   it('passes WAV dither to the encoder when the dither toggle is enabled', async () => {
@@ -303,6 +394,62 @@ describe('ExportDialog', () => {
 
     expect(encode).toHaveBeenCalledWith(result.channels, 48000, { bitDepth: 16, dither: true });
     expect(download).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes FLAC bit depth to the encoder', async () => {
+    const control = makeRender();
+    const encode = vi.fn(() => new Uint8Array([4, 5, 6]));
+    const { download } = mountDialog(control, {
+      encoders: [
+        {
+          id: 'flac',
+          label: 'FLAC (lossless)',
+          extension: '.flac',
+          mime: 'audio/flac',
+          encode,
+        },
+      ],
+    });
+
+    await selectOption('.flac-bit-depth', '16-bit PCM');
+    await clickExport();
+
+    const result = makeResult();
+    control.resolve(result);
+    await flushPromises();
+
+    expect(encode).toHaveBeenCalledWith(result.channels, 48000, { bitDepth: 16 });
+    expect(download.mock.calls[0][1]).toBe('My Song.flac');
+  });
+
+  it('normalizes mixdown loudness to the app target before encoding', async () => {
+    const control = makeRender();
+    const encode = vi.fn(() => new Uint8Array([1]));
+    const { wrapper } = mountDialog(control, {
+      encoders: [
+        {
+          id: 'wav',
+          label: 'WAV (PCM)',
+          extension: '.wav',
+          mime: 'audio/wav',
+          encode,
+        },
+      ],
+    });
+
+    q('.normalize-loudness')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await nextTick();
+    await clickExport();
+
+    control.resolve(makeResult({ report: { peakDb: -6, truePeakDb: -5.8, lufs: -20 } }));
+    await flushPromises();
+
+    const channels = encode.mock.calls[0][0] as ReadonlyArray<Float32Array>;
+    expect(channels[0][0]).toBeCloseTo(0.25 * 10 ** (6 / 20), 6);
+    expect(channels[1][0]).toBeCloseTo(0.5 * 10 ** (6 / 20), 6);
+    expect(q('.report-lufs')?.textContent).toBe('-14.0 LUFS');
+    const emitted = wrapper.emitted('exported') as Array<[{ report: { lufs?: number } }]>;
+    expect(emitted[0][0].report.lufs).toBe(-14);
   });
 
   it('disables dither outside 16-bit WAV and leaves the encoder option false', async () => {
@@ -349,6 +496,8 @@ describe('ExportDialog', () => {
       range: 'project',
       includeMasterChain: false,
       stems: false,
+      busStems: false,
+      masterStem: false,
     });
   });
 
@@ -370,6 +519,8 @@ describe('ExportDialog', () => {
     await checkRadio('.mode-stems');
     await clickExport();
     expect(control.options().stems).toBe(true);
+    expect(control.options().busStems).toBe(true);
+    expect(control.options().masterStem).toBe(true);
 
     const stems = [
       {
@@ -397,6 +548,104 @@ describe('ExportDialog', () => {
     expect(Object.keys(entries).sort()).toEqual(['01 Drums.wav', '02 Bass.wav']);
     expect(entries['01 Drums.wav']).toEqual(encodeWav(stems[0].channels, 48000, { bitDepth: 16 }));
     expect(entries['02 Bass.wav']).toEqual(encodeWav(stems[1].channels, 48000, { bitDepth: 16 }));
+  });
+
+  it('normalizes each stem with LUFS metadata before encoding', async () => {
+    const control = makeRender();
+    const encode = vi.fn(() => new Uint8Array([1]));
+    mountDialog(control, {
+      encoders: [
+        {
+          id: 'wav',
+          label: 'WAV (PCM)',
+          extension: '.wav',
+          mime: 'audio/wav',
+          encode,
+        },
+      ],
+    });
+    await checkRadio('.mode-stems');
+    q('.normalize-loudness')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await nextTick();
+    await clickExport();
+
+    control.resolve(
+      makeResult({
+        stems: [
+          {
+            trackIndex: 0,
+            name: 'Drums',
+            channels: [new Float32Array([0.25]), new Float32Array([0.5])] as [
+              Float32Array,
+              Float32Array,
+            ],
+            report: { peakDb: -6, truePeakDb: -5.5, lufs: -20 },
+          },
+          {
+            trackIndex: 1,
+            name: 'Bass',
+            channels: [new Float32Array([0.5]), new Float32Array([0.25])] as [
+              Float32Array,
+              Float32Array,
+            ],
+            report: { peakDb: -6, lufs: -10 },
+          },
+          {
+            trackIndex: 2,
+            name: 'No Meter',
+            channels: [new Float32Array([0.125]), new Float32Array([0.125])] as [
+              Float32Array,
+              Float32Array,
+            ],
+            report: { peakDb: -18 },
+          },
+        ],
+      }),
+    );
+    await flushPromises();
+
+    const first = encode.mock.calls[0][0] as readonly [Float32Array, Float32Array];
+    const second = encode.mock.calls[1][0] as readonly [Float32Array, Float32Array];
+    const third = encode.mock.calls[2][0] as readonly [Float32Array, Float32Array];
+    expect(first[0][0]).toBeCloseTo(0.25 * 10 ** (6 / 20), 6);
+    expect(first[1][0]).toBeCloseTo(0.5 * 10 ** (6 / 20), 6);
+    expect(second[0][0]).toBeCloseTo(0.5 * 10 ** (-4 / 20), 6);
+    expect(second[1][0]).toBeCloseTo(0.25 * 10 ** (-4 / 20), 6);
+    expect(third[0][0]).toBeCloseTo(0.125, 6);
+  });
+
+  it('can disable bus return stems in stems mode', async () => {
+    const control = makeRender();
+    mountDialog(control);
+    await checkRadio('.mode-stems');
+    const includeBusStems = q('.include-bus-stems');
+    expect(includeBusStems?.getAttribute('aria-pressed')).toBe('true');
+    includeBusStems?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await nextTick();
+    expect(includeBusStems?.getAttribute('aria-pressed')).toBe('false');
+    await clickExport();
+
+    expect(control.options()).toMatchObject({
+      stems: true,
+      busStems: false,
+    });
+  });
+
+  it('can disable the final master stem in stems mode', async () => {
+    const control = makeRender();
+    mountDialog(control);
+    await checkRadio('.mode-stems');
+    const includeMasterStem = q('.include-master-stem');
+    expect(includeMasterStem?.getAttribute('aria-pressed')).toBe('true');
+    includeMasterStem?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await nextTick();
+    expect(includeMasterStem?.getAttribute('aria-pressed')).toBe('false');
+    await clickExport();
+
+    expect(control.options()).toMatchObject({
+      stems: true,
+      masterStem: false,
+    });
   });
 
   it('surfaces an error when stems mode returns no stems', async () => {

@@ -14,15 +14,22 @@
  *   cue marker named "Section: <name>".
  * - Audio warps/stretching are not exported (clips reference plain files).
  * - Per-clip gain has no DAWproject attribute and is dropped.
- * - Per-clip MIDI expression lanes (CC, pitch bend, channel/poly pressure)
- *   have no portable representation here yet and are dropped.
+ * - Per-clip MIDI expression lanes are exported as sonare-scoped Points inside
+ *   the clip so sonare-to-sonare round-trips preserve performance data. Other
+ *   DAWs may ignore these clip-local Points.
  * - A VCA group's own fader is not a DAWproject concept; its dB offset is
- *   folded into each member track's channel volume instead.
- * - Send/group/aux routing is flattened: every track addresses the master
- *   channel directly (sends and submix buses are not reconstructed).
- * - Instruments, insert effects and the mastering chain are vendor-specific
- *   device state with no portable representation; only channel volume, pan,
- *   mute and solo travel.
+ *   folded into each member track's channel volume for portable playback, and
+ *   sonare-scoped metadata preserves VCA groups/membership for round-trips.
+ * - Send buses are exported as DAWproject effect channels; track output bus
+ *   routing and pre/post sends are preserved when they address those buses.
+ * - Sonare insert effects are exported as generic BuiltinDevice entries so
+ *   sonare-to-sonare DAWproject round-trips preserve the chain. Insert
+ *   sidechain key sources are preserved as sonare-scoped track indexes on
+ *   track, bus and master strips. Other DAWs may ignore these vendor-specific
+ *   devices.
+ * - Instruments and the mastering chain are vendor-specific device state with
+ *   no portable representation; channel volume/pan, mute/solo and fader/pan
+ *   automation travel.
  * - Audio-clip content times use seconds (per the format's convention for
  *   media), converted through the project tempo map.
  */
@@ -31,10 +38,31 @@ import { strToU8, zipSync } from 'fflate';
 import { encodeWav } from '@/export/wav';
 import { projectFilename } from '@/lib/filename';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
-import { clampPan, dbToLinear, type MixerStrip } from '@/project/mixer';
-import type { DocumentClip, DocumentTempoSegment, ProjectDocument } from '@/project/serialization';
+import { parseInsertAutomationParam } from '@/project/automation';
+import {
+  clampPan,
+  dbToLinear,
+  type InsertSlot,
+  type MixerStrip,
+  type StripSend,
+  type VcaGroup,
+} from '@/project/mixer';
+import type {
+  DocumentAutomationLane,
+  DocumentClip,
+  DocumentTempoSegment,
+  ProjectDocument,
+} from '@/project/serialization';
 import { type NormalizedTempoMap, normalizeTempoMap, ppqToSeconds } from '@/project/tempo-map';
 import { serializeXml, type XmlElement } from './xml';
+
+export {
+  type DawprojectAudioMedia,
+  DawprojectImportError,
+  type DawprojectImportOptions,
+  importDawproject,
+  importDawprojectWithMedia,
+} from './import';
 
 /** File extension of DAWproject archives. */
 export const DAWPROJECT_FILE_EXTENSION = '.dawproject';
@@ -62,6 +90,9 @@ const TIME_SIGNATURE_PARAMETER_ID = 'time-signature';
 
 /** Id of the master channel (regular channels name it as their destination). */
 const MASTER_CHANNEL_ID = 'master-channel';
+
+/** Vendor marker used for generic BuiltinDevice insert round-trips. */
+const SONARE_DEVICE_VENDOR = 'sonare-studio';
 
 /** Options for {@link exportDawproject}. */
 export interface DawprojectExportOptions {
@@ -98,7 +129,7 @@ interface AudioAssetEntry {
 }
 
 /** Neutral strip values used when a track carries no mixer strip. */
-const NEUTRAL_STRIP: Pick<MixerStrip, 'gainDb' | 'pan'> = { gainDb: 0, pan: 0 };
+const NEUTRAL_STRIP: MixerStrip = { gainDb: 0, pan: 0, inserts: [], sends: [] };
 
 /** Conventional upper bound of a DAWproject linear Volume parameter (+6 dB). */
 const DEFAULT_VOLUME_MAX = 2;
@@ -111,6 +142,12 @@ function panToNormalized(pan: number): number {
 /** Clamps a value to [0, 1]. */
 function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value));
+}
+
+/** Sanitizes a dynamic segment used inside DAWproject XML ids. */
+function xmlIdSegment(value: string): string {
+  const clean = value.replace(/[^A-Za-z0-9._-]/g, '_');
+  return clean.length > 0 ? clean : 'param';
 }
 
 /** Returns a CSS color when it is hex-formatted (the format DAWproject uses). */
@@ -197,6 +234,124 @@ function realParameter(
   return { name, attributes: { id, unit, min, max, value } };
 }
 
+/** Builds one generic DAWproject device for a sonare insert slot. */
+function insertDeviceElement(
+  slot: InsertSlot,
+  id: string,
+  sidechainSourceIndex?: number,
+): XmlElement {
+  const parameters = Object.entries(slot.params).flatMap(([name, value]): XmlElement[] => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return [
+        {
+          name: 'RealParameter',
+          attributes: { id: `${id}-param-${xmlIdSegment(name)}`, name, unit: 'normalized', value },
+        },
+      ];
+    }
+    if (typeof value === 'boolean') {
+      return [
+        {
+          name: 'BoolParameter',
+          attributes: { id: `${id}-param-${xmlIdSegment(name)}`, name, value },
+        },
+      ];
+    }
+    return [];
+  });
+  return {
+    name: 'BuiltinDevice',
+    attributes: {
+      id,
+      deviceName: slot.processor,
+      deviceRole: 'audioFX',
+      deviceVendor: SONARE_DEVICE_VENDOR,
+      loaded: true,
+      sonareSidechainSourceIndex: sidechainSourceIndex,
+    },
+    children: [
+      ...(parameters.length > 0 ? [{ name: 'Parameters', children: parameters }] : []),
+      { name: 'Enabled', attributes: { id: `${id}-enabled`, value: slot.enabled } },
+    ],
+  };
+}
+
+/** Builds the Channel/Devices element for one sonare insert chain. */
+function devicesElement(
+  inserts: ReadonlyArray<InsertSlot>,
+  idPrefix: string,
+  trackCount?: number,
+  allowSidechain = true,
+): XmlElement | null {
+  if (inserts.length === 0) return null;
+  const sidechainSourceIndex = (slot: InsertSlot): number | undefined => {
+    if (!allowSidechain) return undefined;
+    if (trackCount === undefined) return undefined;
+    const index = (slot as { sidechainSourceIndex?: unknown }).sidechainSourceIndex;
+    return typeof index === 'number' && Number.isInteger(index) && index >= 0 && index < trackCount
+      ? index
+      : undefined;
+  };
+  return {
+    name: 'Devices',
+    children: inserts.map((slot, index) =>
+      insertDeviceElement(slot, `${idPrefix}-insert-${index}`, sidechainSourceIndex(slot)),
+    ),
+  };
+}
+
+function sonareVcaGroupsElement(groups: ReadonlyArray<VcaGroup> | undefined): XmlElement | null {
+  if (!groups || groups.length === 0) return null;
+  return {
+    name: 'SonareVcaGroups',
+    children: groups.map((group) => ({
+      name: 'SonareVcaGroup',
+      attributes: {
+        id: group.id,
+        name: group.name,
+        gainDb: group.gainDb,
+        mute: group.mute,
+        solo: group.solo,
+      },
+    })),
+  };
+}
+
+/** Builds DAWproject Send elements for a track strip. */
+function sendsElement(
+  sends: ReadonlyArray<StripSend>,
+  busChannelIdByBusId: ReadonlyMap<string, string>,
+  channelId: string,
+): XmlElement | null {
+  const children = sends.flatMap((send, index): XmlElement[] => {
+    const destination = busChannelIdByBusId.get(send.busId);
+    if (!destination) return [];
+    const sendId = `${channelId}-send-${index}`;
+    return [
+      {
+        name: 'Send',
+        attributes: {
+          id: sendId,
+          destination,
+          type: send.timing === 'preFader' ? 'pre' : 'post',
+        },
+        children: [
+          { name: 'Mute', attributes: { id: `${sendId}-mute`, value: !send.enabled } },
+          realParameter(
+            'Volume',
+            `${sendId}-volume`,
+            'linear',
+            Math.max(0, dbToLinear(send.levelDb)),
+            0,
+            DEFAULT_VOLUME_MAX,
+          ),
+        ],
+      },
+    ];
+  });
+  return children.length > 0 ? { name: 'Sends', children } : null;
+}
+
 /** Builds one Channel element from track-level and strip-level state. */
 function channelElement(
   id: string,
@@ -206,6 +361,8 @@ function channelElement(
   mute: boolean,
   solo: boolean,
   destination?: string,
+  sends?: XmlElement | null,
+  devices?: XmlElement | null,
 ): XmlElement {
   // Preserve loud gains instead of clamping at +6 dB: widen the parameter's
   // max to fit any value above the conventional bound (a member track folding
@@ -215,6 +372,10 @@ function channelElement(
     name: 'Channel',
     attributes: { id, role, audioChannels: 2, solo, destination },
     children: [
+      ...(devices ? [devices] : []),
+      { name: 'Mute', attributes: { id: `${id}-mute`, value: mute } },
+      realParameter('Pan', `${id}-pan`, 'normalized', panToNormalized(pan), 0, 1),
+      ...(sends ? [sends] : []),
       realParameter(
         'Volume',
         `${id}-volume`,
@@ -223,8 +384,6 @@ function channelElement(
         0,
         Math.max(DEFAULT_VOLUME_MAX, value),
       ),
-      realParameter('Pan', `${id}-pan`, 'normalized', panToNormalized(pan), 0, 1),
-      { name: 'Mute', attributes: { id: `${id}-mute`, value: mute } },
     ],
   };
 }
@@ -237,47 +396,109 @@ function structureElement(doc: ProjectDocument): XmlElement {
   const vcaGainDbById = new Map(
     (doc.mixer?.vcaGroups ?? []).map((group) => [group.id, group.gainDb]),
   );
-  const tracks: XmlElement[] = doc.tracks.map((track, index) => {
+  const busChannelIdByBusId = new Map(
+    (doc.mixer?.buses ?? []).map((bus, index) => [bus.id, `bus-channel-${index}`]),
+  );
+  const trackElements: XmlElement[] = doc.tracks.map((track, index): XmlElement => {
     const strip = track.mixer ?? NEUTRAL_STRIP;
     const vcaOffsetDb = track.vcaId !== undefined ? (vcaGainDbById.get(track.vcaId) ?? 0) : 0;
+    const channelId = `channel-${index}`;
+    const destination =
+      strip.outputBusId !== undefined
+        ? (busChannelIdByBusId.get(strip.outputBusId) ?? MASTER_CHANNEL_ID)
+        : MASTER_CHANNEL_ID;
     return {
       name: 'Track',
       attributes: {
         id: `track-${index}`,
-        contentType: track.kind === 'midi' ? 'notes' : 'audio',
+        contentType: track.kind === 'group' ? 'tracks' : track.kind === 'midi' ? 'notes' : 'audio',
         loaded: true,
         name: track.name,
         color: hexColor(track.color),
+        sonareVcaId: track.vcaId,
+        sonareVolume: track.vcaId !== undefined ? track.volume : undefined,
       },
       children: [
         channelElement(
-          `channel-${index}`,
+          channelId,
           track.kind === 'aux' ? 'effect' : 'regular',
           track.volume * dbToLinear(strip.gainDb) * dbToLinear(vcaOffsetDb),
           strip.pan,
           track.mute,
           track.solo,
+          destination,
+          sendsElement(strip.sends ?? [], busChannelIdByBusId, channelId),
+          devicesElement(strip.inserts, channelId, doc.tracks.length, track.kind !== 'group'),
+        ),
+      ],
+    };
+  });
+  const topLevelTracks: XmlElement[] = [];
+  trackElements.forEach((trackElement, index) => {
+    const groupIndex = doc.tracks[index].groupIndex;
+    const parent =
+      groupIndex !== undefined && doc.tracks[groupIndex]?.kind === 'group'
+        ? trackElements[groupIndex]
+        : undefined;
+    if (parent && parent !== trackElement) {
+      parent.children = [...(parent.children ?? []), trackElement];
+    } else {
+      topLevelTracks.push(trackElement);
+    }
+  });
+  const busTracks = (doc.mixer?.buses ?? []).map((bus, index): XmlElement => {
+    const strip = bus.strip ?? NEUTRAL_STRIP;
+    const channelId = busChannelIdByBusId.get(bus.id) ?? `bus-channel-${index}`;
+    return {
+      name: 'Track',
+      attributes: {
+        id: `bus-track-${index}`,
+        contentType: 'audio',
+        loaded: true,
+        name: bus.name,
+      },
+      children: [
+        channelElement(
+          channelId,
+          'effect',
+          dbToLinear(bus.gainDb),
+          strip.pan,
+          false,
+          false,
           MASTER_CHANNEL_ID,
+          null,
+          devicesElement(strip.inserts, channelId, doc.tracks.length),
         ),
       ],
     };
   });
   const master = doc.mixer?.master ?? NEUTRAL_STRIP;
-  tracks.push({
-    name: 'Track',
-    attributes: { id: 'master-track', contentType: 'tracks', loaded: true, name: 'Master' },
+  const vcaGroups = sonareVcaGroupsElement(doc.mixer?.vcaGroups);
+  return {
+    name: 'Structure',
     children: [
-      channelElement(
-        MASTER_CHANNEL_ID,
-        'master',
-        dbToLinear(master.gainDb),
-        master.pan,
-        false,
-        false,
-      ),
+      ...(vcaGroups ? [vcaGroups] : []),
+      ...topLevelTracks,
+      ...busTracks,
+      {
+        name: 'Track',
+        attributes: { id: 'master-track', contentType: 'tracks', loaded: true, name: 'Master' },
+        children: [
+          channelElement(
+            MASTER_CHANNEL_ID,
+            'master',
+            dbToLinear(master.gainDb),
+            master.pan,
+            false,
+            false,
+            undefined,
+            null,
+            devicesElement(master.inserts, MASTER_CHANNEL_ID, doc.tracks.length),
+          ),
+        ],
+      },
     ],
-  });
-  return { name: 'Structure', children: tracks };
+  };
 }
 
 /** Builds the Transport element (first tempo segment + first time signature). */
@@ -368,6 +589,62 @@ function timeSignatureAutomationElement(doc: ProjectDocument): XmlElement {
   };
 }
 
+function automationInterpolation(curve: DocumentAutomationLane['points'][number]['curve']): string {
+  return curve === 'hold' ? 'hold' : 'linear';
+}
+
+function channelAutomationPointsElement(
+  lane: DocumentAutomationLane,
+  idPrefix: string,
+  channelId: string,
+  strip: MixerStrip | undefined,
+): XmlElement | null {
+  if (!lane.enabled || lane.points.length === 0) return null;
+  let parameter: string;
+  let unit: string;
+  let pointValue: (value: number) => number;
+  if (lane.param === 'faderDb') {
+    parameter = `${channelId}-volume`;
+    unit = 'linear';
+    pointValue = dbToLinear;
+  } else if (lane.param === 'pan') {
+    parameter = `${channelId}-pan`;
+    unit = 'normalized';
+    pointValue = panToNormalized;
+  } else {
+    const insertRef = parseInsertAutomationParam(lane.param);
+    if (!insertRef) return null;
+    const slot = strip?.inserts[insertRef.insertIndex];
+    const param = slot?.params[insertRef.paramName];
+    if (typeof param !== 'number' && typeof param !== 'boolean') return null;
+    parameter = `${channelId}-insert-${insertRef.insertIndex}-param-${xmlIdSegment(
+      insertRef.paramName,
+    )}`;
+    unit = typeof param === 'boolean' ? 'bool' : 'normalized';
+    pointValue = typeof param === 'boolean' ? (value) => (value >= 0.5 ? 1 : 0) : (value) => value;
+  }
+  return {
+    name: 'Points',
+    attributes: {
+      id: `automation-${idPrefix}-${xmlIdSegment(lane.param)}`,
+      unit,
+    },
+    children: [
+      { name: 'Target', attributes: { parameter } },
+      ...lane.points.map(
+        (point): XmlElement => ({
+          name: 'RealPoint',
+          attributes: {
+            time: point.ppq,
+            value: pointValue(point.value),
+            interpolation: automationInterpolation(point.curve),
+          },
+        }),
+      ),
+    ],
+  };
+}
+
 /**
  * Builds the cue marker list: document markers plus one marker per section
  * start (sections have no DAWproject element), ordered by time.
@@ -406,6 +683,105 @@ function noteElement(note: DocumentClip['notes'][number]): XmlElement {
   };
 }
 
+function midiExpressionPoint(point: {
+  ppq: number;
+  value?: number;
+  program?: number;
+  curve?: string;
+}): XmlElement {
+  return {
+    name: 'RealPoint',
+    attributes: {
+      time: point.ppq,
+      value: point.value ?? point.program ?? 0,
+      interpolation: point.curve === 'linear' || point.curve === 's-curve' ? 'linear' : 'hold',
+    },
+  };
+}
+
+function midiExpressionPointsElements(
+  clip: DocumentClip,
+  trackIndex: number,
+  clipIndex: number,
+): XmlElement[] {
+  const prefix = `midi-expression-${trackIndex}-${clipIndex}`;
+  const elements: XmlElement[] = [];
+  for (const lane of clip.ccLanes ?? []) {
+    if (lane.points.length === 0) continue;
+    elements.push({
+      name: 'Points',
+      attributes: {
+        id: `${prefix}-cc-${lane.channel}-${lane.controller}`,
+        unit: 'midi-7bit',
+      },
+      children: [
+        { name: 'Target', attributes: { parameter: `midi.cc.${lane.channel}.${lane.controller}` } },
+        ...lane.points.map(midiExpressionPoint),
+      ],
+    });
+  }
+  for (const lane of clip.pitchBendLanes ?? []) {
+    if (lane.points.length === 0) continue;
+    elements.push({
+      name: 'Points',
+      attributes: {
+        id: `${prefix}-pitchBend-${lane.channel}`,
+        unit: 'midi-14bit',
+      },
+      children: [
+        { name: 'Target', attributes: { parameter: `midi.pitchBend.${lane.channel}` } },
+        ...lane.points.map(midiExpressionPoint),
+      ],
+    });
+  }
+  for (const lane of clip.programChangeLanes ?? []) {
+    if (lane.points.length === 0) continue;
+    elements.push({
+      name: 'Points',
+      attributes: {
+        id: `${prefix}-program-${lane.channel}`,
+        unit: 'midi-program',
+      },
+      children: [
+        { name: 'Target', attributes: { parameter: `midi.program.${lane.channel}` } },
+        ...lane.points.map(midiExpressionPoint),
+      ],
+    });
+  }
+  for (const lane of clip.channelPressureLanes ?? []) {
+    if (lane.points.length === 0) continue;
+    elements.push({
+      name: 'Points',
+      attributes: {
+        id: `${prefix}-channelPressure-${lane.channel}`,
+        unit: 'midi-7bit',
+      },
+      children: [
+        { name: 'Target', attributes: { parameter: `midi.channelPressure.${lane.channel}` } },
+        ...lane.points.map(midiExpressionPoint),
+      ],
+    });
+  }
+  for (const lane of clip.polyPressureLanes ?? []) {
+    if (lane.points.length === 0) continue;
+    elements.push({
+      name: 'Points',
+      attributes: {
+        id: `${prefix}-polyPressure-${lane.channel}-${lane.pitch}`,
+        unit: 'midi-7bit',
+      },
+      children: [
+        {
+          name: 'Target',
+          attributes: { parameter: `midi.polyPressure.${lane.channel}.${lane.pitch}` },
+        },
+        ...lane.points.map(midiExpressionPoint),
+      ],
+    });
+  }
+  return elements;
+}
+
 /** Builds one MIDI clip element wrapping its Notes lane (all in beats). */
 function midiClipElement(clip: DocumentClip, trackIndex: number, clipIndex: number): XmlElement {
   const attributes: Record<string, string | number | boolean | undefined> = {
@@ -429,6 +805,7 @@ function midiClipElement(clip: DocumentClip, trackIndex: number, clipIndex: numb
         attributes: { id: `notes-${trackIndex}-${clipIndex}` },
         children: clip.notes.map(noteElement),
       },
+      ...midiExpressionPointsElements(clip, trackIndex, clipIndex),
     ],
   };
 }
@@ -507,13 +884,24 @@ function arrangementElement(
   if (markers) children.push(markers);
 
   const trackLanes = doc.tracks.map((track, trackIndex): XmlElement => {
+    const automation = (track.automation ?? [])
+      .map((lane) =>
+        channelAutomationPointsElement(
+          lane,
+          String(trackIndex),
+          `channel-${trackIndex}`,
+          track.mixer,
+        ),
+      )
+      .filter((element): element is XmlElement => element !== null);
     const lane: XmlElement = {
       name: 'Lanes',
       attributes: { id: `lanes-${trackIndex}`, track: `track-${trackIndex}` },
-      children: [],
+      children: automation,
     };
     if (track.clips.length > 0) {
       lane.children = [
+        ...(lane.children ?? []),
         {
           name: 'Clips',
           attributes: { id: `clips-${trackIndex}` },
@@ -534,10 +922,42 @@ function arrangementElement(
     }
     return lane;
   });
+  const busLanes = (doc.mixer?.buses ?? []).flatMap((bus, busIndex): XmlElement[] => {
+    const strip = bus.strip ?? NEUTRAL_STRIP;
+    const automation = (bus.automation ?? [])
+      .map((lane) =>
+        channelAutomationPointsElement(lane, `bus-${busIndex}`, `bus-channel-${busIndex}`, strip),
+      )
+      .filter((element): element is XmlElement => element !== null);
+    return automation.length > 0
+      ? [
+          {
+            name: 'Lanes',
+            attributes: { id: `bus-lanes-${busIndex}`, track: `bus-track-${busIndex}` },
+            children: automation,
+          },
+        ]
+      : [];
+  });
+  const masterAutomation = (doc.masterAutomation ?? [])
+    .map((lane) =>
+      channelAutomationPointsElement(lane, 'master', MASTER_CHANNEL_ID, doc.mixer?.master),
+    )
+    .filter((element): element is XmlElement => element !== null);
+  const masterLanes: XmlElement[] =
+    masterAutomation.length > 0
+      ? [
+          {
+            name: 'Lanes',
+            attributes: { id: 'master-lanes', track: 'master-track' },
+            children: masterAutomation,
+          },
+        ]
+      : [];
   children.push({
     name: 'Lanes',
     attributes: { id: 'arrangement-lanes', timeUnit: 'beats' },
-    children: trackLanes,
+    children: [...trackLanes, ...busLanes, ...masterLanes],
   });
   return { name: 'Arrangement', attributes: { id: 'arrangement' }, children };
 }
@@ -580,6 +1000,9 @@ export async function exportDawproject(
   doc: ProjectDocument,
   options: DawprojectExportOptions,
 ): Promise<Uint8Array> {
+  if ((options as { renderMidiTracks?: unknown }).renderMidiTracks === true) {
+    throw new RangeError('DAWproject export does not support rendering MIDI tracks to audio');
+  }
   const tempoMap = normalizeTempoMap(doc.tempoSegments, DEFAULT_TEMPO_BPM);
   const loadAudio = options.loadAudioAsset ?? loadAsset;
   const assets = await collectAudioAssets(doc, tempoMap, options.includeAudio, loadAudio);

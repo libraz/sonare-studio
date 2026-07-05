@@ -137,6 +137,7 @@ export function createMp3Encoder(): AudioEncoder {
     label: 'MP3 (CBR)',
     extension: '.mp3',
     mime: 'audio/mpeg',
+    deterministic: true,
     encode: (channels, sampleRate, options) =>
       encodeMp3(channels, sampleRate, toMp3Options(options)),
   };

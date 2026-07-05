@@ -38,6 +38,7 @@ interface PendingRequest {
   resolve: (response: ExportResponse) => void;
   reject: (error: Error) => void;
   onProgress?: MixdownProgressFn;
+  cancelRequested: boolean;
 }
 
 /** Converts the transferred worker payload back into a MixdownResult. */
@@ -51,9 +52,13 @@ function toMixdownResult(result: ExportWorkerResult): MixdownResult {
   if (result.stems) {
     out.stems = result.stems.map(
       (stem): MixdownStem => ({
+        source: stem.source,
         trackIndex: stem.trackIndex,
+        busId: stem.busId,
+        busIndex: stem.busIndex,
         name: stem.name,
         channels: [stem.left, stem.right],
+        report: stem.report,
       }),
     );
   }
@@ -120,6 +125,7 @@ export class ExportClient {
           }
         },
         reject,
+        cancelRequested: false,
       };
       if (onProgress) entry.onProgress = onProgress;
       this.pending.set(id, entry);
@@ -129,7 +135,10 @@ export class ExportClient {
     return {
       result,
       cancel: () => {
-        if (this.disposed || !this.pending.has(id)) return;
+        if (this.disposed) return;
+        const entry = this.pending.get(id);
+        if (!entry || entry.cancelRequested) return;
+        entry.cancelRequested = true;
         const cancelRequest: ExportRequest = { id: this.nextId++, type: 'cancel', targetId: id };
         this.worker.postMessage(cancelRequest);
       },
@@ -148,7 +157,7 @@ export class ExportClient {
     // Best-effort native teardown; terminate() reclaims the memory regardless.
     const destroy: ExportRequestBody & { id: number } = { id: this.nextId++, type: 'destroy' };
     this.worker.postMessage(destroy);
-    this.worker.terminate();
+    this.teardownWorker();
     this.rejectAll(new Error('ExportClient is disposed'));
   }
 
@@ -172,8 +181,16 @@ export class ExportClient {
 
   private readonly handleWorkerError = (event: ErrorEvent): void => {
     // A worker-level script error is fatal for all in-flight renders.
+    this.disposed = true;
+    this.teardownWorker();
     this.rejectAll(new Error(event.message || 'Export worker error'));
   };
+
+  private teardownWorker(): void {
+    this.worker.removeEventListener('message', this.handleMessage as EventListener);
+    this.worker.removeEventListener('error', this.handleWorkerError as EventListener);
+    this.worker.terminate();
+  }
 
   private rejectAll(error: Error): void {
     for (const entry of this.pending.values()) {

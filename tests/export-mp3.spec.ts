@@ -44,6 +44,7 @@ describe('mp3 encoder registration', () => {
     expect(encoder.id).toBe('mp3');
     expect(encoder.extension).toBe('.mp3');
     expect(encoder.mime).toBe('audio/mpeg');
+    expect(encoder.deterministic).toBe(true);
     expect(encoder.label).toContain('MP3');
   });
 });
