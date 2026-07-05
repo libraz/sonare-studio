@@ -1,5 +1,5 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick, ref } from 'vue';
 import SettingsDialog from '@/components/settings/SettingsDialog.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
@@ -129,6 +129,12 @@ describe('SettingsDialog', () => {
     expect(useAppSettings().settings.theme).toBe('dark');
   });
 
+  it('writes the default recording source through the settings store', async () => {
+    open();
+    await selectOption('.row:nth-child(7) .row-select', 'Master output');
+    expect(useAppSettings().settings.recordingCaptureSource).toBe('output');
+  });
+
   it('rebinds a shortcut by capturing a key press', async () => {
     open();
     await clickTab(1);
@@ -149,6 +155,21 @@ describe('SettingsDialog', () => {
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     expect(useShortcuts().keysFor('edit.quantizeSelection')).toEqual(['q']);
     expect(w.emitted('close')).toBeUndefined();
+  });
+
+  it('removes the shortcut capture keydown listener when unmounted mid-capture', async () => {
+    const add = vi.spyOn(window, 'addEventListener');
+    const remove = vi.spyOn(window, 'removeEventListener');
+    const w = open();
+    await clickTab(1);
+    const row = q('[data-action-id="edit.quantizeSelection"]');
+    row?.querySelector('button')?.click();
+    await nextTick();
+
+    expect(add).toHaveBeenCalledWith('keydown', expect.any(Function), true);
+    w.unmount();
+    wrapper = null;
+    expect(remove).toHaveBeenCalledWith('keydown', expect.any(Function), true);
   });
 
   it('highlights conflicting rows and shows the banner', async () => {

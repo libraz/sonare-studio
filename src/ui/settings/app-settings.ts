@@ -31,6 +31,19 @@ export type PianoRollGhostMode = 'all' | 'active-track' | 'none';
 /** Piano-roll note color mapping. */
 export type PianoRollNoteColorMode = 'track' | 'velocity' | 'channel';
 
+/** Realtime voice changer preset for microphone recording/monitoring. */
+export type RecordingVoiceChangerPreset =
+  | 'off'
+  | 'neutral-monitor'
+  | 'bright-idol'
+  | 'soft-whisper'
+  | 'deep-narrator'
+  | 'robot-mascot'
+  | 'dark-villain';
+
+/** Audio source captured by the recording workflow. */
+export type RecordingCaptureSource = 'input' | 'output';
+
 /** User-level application preferences. */
 export interface AppSettings {
   /** Color theme; 'system' follows the OS preference. */
@@ -43,8 +56,18 @@ export interface AppSettings {
   snapDefault: boolean;
   /** Recording count-in length in bars (0 disables the count-in). */
   countInBars: number;
+  /** MIDI input-quantize denominator for recorded notes; 0 disables quantize. */
+  midiInputQuantizeDenominator: number;
   /** Whether input monitoring starts enabled when arming a track. */
   monitorDefault: boolean;
+  /** Realtime voice changer preset inserted into the microphone input path. */
+  recordingVoiceChangerPreset: RecordingVoiceChangerPreset;
+  /** StreamingRetune semitone shift inserted into the microphone input path. */
+  recordingRetuneSemitones: number;
+  /** Audio source captured by the recording workflow. */
+  recordingCaptureSource: RecordingCaptureSource;
+  /** Browser audioinput device id used for microphone recording; empty = default input. */
+  recordingInputDeviceId: string;
   /** Quiet period between the last edit and an autosave write. */
   autosaveIntervalMs: number;
   /** Whether the arrangement/piano-roll views follow the playhead. */
@@ -74,6 +97,9 @@ export interface AppSettings {
 export const COUNT_IN_BARS_MIN = 0;
 export const COUNT_IN_BARS_MAX = 4;
 
+/** MIDI input quantize choices: off, quarter, eighth, sixteenth, thirty-second. */
+export const MIDI_INPUT_QUANTIZE_DENOMINATORS = [0, 4, 8, 16, 32] as const;
+
 /** Autosave interval bounds in milliseconds. */
 export const AUTOSAVE_INTERVAL_MIN_MS = 5000;
 export const AUTOSAVE_INTERVAL_MAX_MS = 600000;
@@ -89,7 +115,12 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   editorDensity: 'comfortable',
   snapDefault: true,
   countInBars: 0,
+  midiInputQuantizeDenominator: 0,
   monitorDefault: false,
+  recordingVoiceChangerPreset: 'off',
+  recordingRetuneSemitones: 0,
+  recordingCaptureSource: 'input',
+  recordingInputDeviceId: '',
   autosaveIntervalMs: 30000,
   scrollFollowPlayhead: true,
   pianoRollLaneVisible: true,
@@ -116,6 +147,15 @@ function asIntInRange(value: unknown, lo: number, hi: number, fallback: number):
   return clamp(Math.round(value), lo, hi);
 }
 
+function asMidiInputQuantizeDenominator(value: unknown, fallback: number): number {
+  return typeof value === 'number' &&
+    MIDI_INPUT_QUANTIZE_DENOMINATORS.includes(
+      value as (typeof MIDI_INPUT_QUANTIZE_DENOMINATORS)[number],
+    )
+    ? value
+    : fallback;
+}
+
 function asTheme(value: unknown, fallback: AppTheme): AppTheme {
   return value === 'system' || value === 'light' || value === 'dark' ? value : fallback;
 }
@@ -133,6 +173,32 @@ function asPianoRollNoteColorMode(
   fallback: PianoRollNoteColorMode,
 ): PianoRollNoteColorMode {
   return value === 'track' || value === 'velocity' || value === 'channel' ? value : fallback;
+}
+
+function asRecordingVoiceChangerPreset(
+  value: unknown,
+  fallback: RecordingVoiceChangerPreset,
+): RecordingVoiceChangerPreset {
+  return value === 'off' ||
+    value === 'neutral-monitor' ||
+    value === 'bright-idol' ||
+    value === 'soft-whisper' ||
+    value === 'deep-narrator' ||
+    value === 'robot-mascot' ||
+    value === 'dark-villain'
+    ? value
+    : fallback;
+}
+
+function asRecordingCaptureSource(
+  value: unknown,
+  fallback: RecordingCaptureSource,
+): RecordingCaptureSource {
+  return value === 'input' || value === 'output' ? value : fallback;
+}
+
+function asString(value: unknown, fallback: string): string {
+  return typeof value === 'string' ? value : fallback;
 }
 
 /**
@@ -159,7 +225,29 @@ export function sanitizeAppSettings(raw: unknown): AppSettings {
       COUNT_IN_BARS_MAX,
       defaults.countInBars,
     ),
+    midiInputQuantizeDenominator: asMidiInputQuantizeDenominator(
+      source.midiInputQuantizeDenominator,
+      defaults.midiInputQuantizeDenominator,
+    ),
     monitorDefault: asBoolean(source.monitorDefault, defaults.monitorDefault),
+    recordingVoiceChangerPreset: asRecordingVoiceChangerPreset(
+      source.recordingVoiceChangerPreset,
+      defaults.recordingVoiceChangerPreset,
+    ),
+    recordingRetuneSemitones: asIntInRange(
+      source.recordingRetuneSemitones,
+      -24,
+      24,
+      defaults.recordingRetuneSemitones,
+    ),
+    recordingCaptureSource: asRecordingCaptureSource(
+      source.recordingCaptureSource,
+      defaults.recordingCaptureSource,
+    ),
+    recordingInputDeviceId: asString(
+      source.recordingInputDeviceId,
+      defaults.recordingInputDeviceId,
+    ),
     autosaveIntervalMs: asIntInRange(
       source.autosaveIntervalMs,
       AUTOSAVE_INTERVAL_MIN_MS,

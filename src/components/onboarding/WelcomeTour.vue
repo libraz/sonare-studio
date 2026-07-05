@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useI18n } from '@/ui/i18n';
+import { useShortcutBlockingOverlay } from '@/ui/overlay-registry';
+import { wrapTabFocus } from '@/ui/settings/focus-trap';
 import {
   type AnchorRect,
   placeTooltip,
@@ -45,6 +47,7 @@ const isLast = ref(false);
 const anchorRect = ref<AnchorRect | null>(null);
 const placement = ref<TooltipPlacement>({ left: 0, top: 0, side: 'bottom' });
 const tooltipRef = ref<HTMLElement | null>(null);
+useShortcutBlockingOverlay(visible);
 
 /**
  * Highlight box clamped to the viewport. A full-bleed anchor (e.g. a panel
@@ -193,6 +196,7 @@ function reposition(): void {
 }
 
 function onKeydown(event: KeyboardEvent): void {
+  if (tooltipRef.value !== null && wrapTabFocus(event, tooltipRef.value)) return;
   switch (event.key) {
     case 'Escape':
       event.preventDefault();

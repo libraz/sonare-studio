@@ -89,13 +89,17 @@ function applyDocumentPreferences(): void {
 }
 
 const media = window.matchMedia?.('(prefers-color-scheme: dark)') ?? null;
-media?.addEventListener('change', () => {
-  prefersDark.value = readPrefersDark();
-});
 
-window.addEventListener('languagechange', () => {
+function refreshSystemThemePreference(): void {
+  prefersDark.value = readPrefersDark();
+}
+
+function refreshBrowserLanguagePreference(): void {
   browserLanguages.value = readBrowserLanguages();
-});
+}
+
+media?.addEventListener('change', refreshSystemThemePreference);
+window.addEventListener('languagechange', refreshBrowserLanguagePreference);
 
 watch(
   [resolvedTheme, resolvedLanguage, () => state.theme, () => state.editorDensity],

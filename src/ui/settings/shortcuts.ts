@@ -301,6 +301,14 @@ export const SHORTCUT_ACTIONS: ReadonlyArray<ShortcutActionDef> = [
   },
   // App
   {
+    id: 'app.commandPalette',
+    label: 'Open command palette',
+    defaultKeys: ['mod+k'],
+    when: 'global',
+    group: 'Application',
+    customizable: true,
+  },
+  {
     id: 'app.settings',
     label: 'Open settings',
     defaultKeys: ['mod+,'],

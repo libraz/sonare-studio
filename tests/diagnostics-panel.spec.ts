@@ -1,5 +1,5 @@
 import { mount, type VueWrapper } from '@vue/test-utils';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import DiagnosticsPanel from '@/components/shell/DiagnosticsPanel.vue';
 
 /**
@@ -15,6 +15,7 @@ afterEach(() => {
   wrapper?.unmount();
   wrapper = null;
   document.body.textContent = '';
+  vi.unstubAllGlobals();
 });
 
 /** Minimal EngineHandle-shaped stub exposing only the fields the panel reads. */
@@ -53,8 +54,9 @@ describe('DiagnosticsPanel', () => {
 
     expect(document.body.querySelector('.diag-status-off')).not.toBeNull();
     expect(document.body.querySelector('.diag-status-on')).toBeNull();
-    // No engine → no fact tables, only the status + actions sections remain.
-    expect(document.body.querySelector('.diag-facts')).toBeNull();
+    // No engine → no engine-output/runtime facts; browser performance facts still render.
+    expect(document.body.textContent).not.toContain('Sample rate');
+    expect(document.body.textContent).toContain('Performance');
     for (const button of document.body.querySelectorAll('.diag-actions button')) {
       expect(button.hasAttribute('disabled')).toBe(true);
     }
@@ -79,6 +81,34 @@ describe('DiagnosticsPanel', () => {
     expect(text).toContain('5.3');
     // ABI compatible badge.
     expect(document.body.querySelector('.diag-ok')).not.toBeNull();
+  });
+
+  it('reports browser performance facts when available', async () => {
+    vi.stubGlobal('navigator', {
+      hardwareConcurrency: 8,
+      deviceMemory: 16,
+      storage: { estimate: vi.fn(async () => ({ usage: 1024, quota: 4096 })) },
+    });
+    wrapper = mount(DiagnosticsPanel, {
+      props: {
+        open: true,
+        busy: false,
+        ctxState: 'running',
+        handle: fakeHandle(),
+        renderInfo: '',
+      },
+      attachTo: document.body,
+    });
+    await wrapper.vm.$nextTick();
+    await Promise.resolve();
+
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('Performance');
+    expect(text).toContain('CPU threads');
+    expect(text).toContain('8');
+    expect(text).toContain('16');
+    expect(text).toContain('1.0 KB');
+    expect(text).toContain('4.0 KB');
   });
 
   it('emits close from the footer button', async () => {

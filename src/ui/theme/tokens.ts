@@ -3,7 +3,7 @@
  *
  * Canvas and SVG renderers cannot read CSS variables cheaply inside their draw
  * loops, so the base palette is duplicated here as plain literals. The two
- * files are kept in sync by hand; tokens.sync.test.ts asserts they agree.
+ * files are kept in sync by hand; tests/theme-tokens.spec.ts asserts they agree.
  */
 
 /** Base color palette — mirrors the surface / border / text / accent vars. */

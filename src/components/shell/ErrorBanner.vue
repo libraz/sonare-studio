@@ -1,16 +1,39 @@
 <script setup lang="ts">
+import { onBeforeUnmount, watch } from 'vue';
 import { useI18n } from '@/ui/i18n';
 
 /**
  * App-level error/notice banner. Renders nothing while `message` is empty and
- * shows a dismissible alert otherwise. Dismissing is the user's only way to
- * clear notices that have no natural lifetime (e.g. a failed background
- * autosave), so the close button must always be reachable.
+ * shows a dismissible alert otherwise. Long-lived notices also auto-dismiss so
+ * transient failures do not permanently occupy the shell.
  */
-defineProps<{ message: string }>();
+const props = withDefaults(defineProps<{ autoDismissMs?: number; message: string }>(), {
+  autoDismissMs: 8000,
+});
 const emit = defineEmits<{ dismiss: [] }>();
 
 const { t } = useI18n();
+
+let dismissTimer: ReturnType<typeof window.setTimeout> | undefined;
+
+function clearDismissTimer(): void {
+  if (dismissTimer === undefined) return;
+  window.clearTimeout(dismissTimer);
+  dismissTimer = undefined;
+}
+
+function scheduleDismiss(): void {
+  clearDismissTimer();
+  if (!props.message || props.autoDismissMs <= 0) return;
+  dismissTimer = window.setTimeout(() => {
+    dismissTimer = undefined;
+    emit('dismiss');
+  }, props.autoDismissMs);
+}
+
+watch(() => [props.message, props.autoDismissMs] as const, scheduleDismiss, { immediate: true });
+
+onBeforeUnmount(clearDismissTimer);
 </script>
 
 <template>

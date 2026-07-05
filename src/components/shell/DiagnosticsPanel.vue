@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import AppModal from '@/components/shell/AppModal.vue';
 import type { EngineHandle } from '@/engine/engine';
 import { useI18n } from '@/ui/i18n';
+import { formatSize } from '@/ui/shell/format';
 
 /**
  * Diagnostics dialog — a human-readable audio-engine health report opened from
@@ -38,6 +39,20 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 
+type PerformanceWithMemory = Performance & {
+  memory?: {
+    usedJSHeapSize?: number;
+    totalJSHeapSize?: number;
+    jsHeapSizeLimit?: number;
+  };
+};
+
+type NavigatorWithDeviceMemory = Navigator & {
+  deviceMemory?: number;
+};
+
+const storageEstimate = ref<StorageEstimate | null>(null);
+
 /** Output latency in milliseconds, or null when the context exposes none. */
 const latencyMs = computed<number | null>(() => {
   const ctx = props.handle?.ctx;
@@ -48,6 +63,43 @@ const latencyMs = computed<number | null>(() => {
 
 /** Whether the engine reports a usable ABI (defaults to true when unspecified). */
 const abiOk = computed(() => props.handle?.capabilities.abiCompatible ?? true);
+
+const memory = computed(() => (globalThis.performance as PerformanceWithMemory).memory ?? null);
+
+const usedHeap = computed(() =>
+  memory.value?.usedJSHeapSize !== undefined ? formatSize(memory.value.usedJSHeapSize) : null,
+);
+
+const heapLimit = computed(() =>
+  memory.value?.jsHeapSizeLimit !== undefined ? formatSize(memory.value.jsHeapSizeLimit) : null,
+);
+
+const storageUsage = computed(() =>
+  storageEstimate.value?.usage !== undefined ? formatSize(storageEstimate.value.usage) : null,
+);
+
+const storageQuota = computed(() =>
+  storageEstimate.value?.quota !== undefined ? formatSize(storageEstimate.value.quota) : null,
+);
+
+const hardwareConcurrency = computed(() => navigator.hardwareConcurrency || null);
+
+const deviceMemory = computed(() => (navigator as NavigatorWithDeviceMemory).deviceMemory ?? null);
+
+const isolated = computed(() => globalThis.crossOriginIsolated === true);
+
+watch(
+  () => props.open,
+  async (open) => {
+    if (!open || typeof navigator.storage?.estimate !== 'function') return;
+    try {
+      storageEstimate.value = await navigator.storage.estimate();
+    } catch {
+      storageEstimate.value = null;
+    }
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
@@ -126,6 +178,45 @@ const abiOk = computed(() => props.handle?.capabilities.abiCompatible ?? true);
           </dl>
         </section>
       </template>
+
+      <section class="diag-section">
+        <h3 class="diag-heading">{{ t.shell.diagnostics.performanceHeading }}</h3>
+        <dl class="diag-facts">
+          <div class="diag-row">
+            <dt>{{ t.shell.diagnostics.cpuCores }}</dt>
+            <dd>
+              <strong>{{ hardwareConcurrency ?? t.shell.diagnostics.unknown }}</strong>
+            </dd>
+          </div>
+          <div class="diag-row">
+            <dt>{{ t.shell.diagnostics.deviceMemory }}</dt>
+            <dd>
+              <strong>{{ deviceMemory ?? t.shell.diagnostics.unknown }}</strong>
+              <template v-if="deviceMemory"> GB</template>
+            </dd>
+          </div>
+          <div class="diag-row">
+            <dt>{{ t.shell.diagnostics.jsHeap }}</dt>
+            <dd>
+              <strong>{{ usedHeap ?? t.shell.diagnostics.unknown }}</strong>
+              <template v-if="heapLimit"> / {{ heapLimit }}</template>
+            </dd>
+          </div>
+          <div class="diag-row">
+            <dt>{{ t.shell.diagnostics.storageEstimate }}</dt>
+            <dd>
+              <strong>{{ storageUsage ?? t.shell.diagnostics.unknown }}</strong>
+              <template v-if="storageQuota"> / {{ storageQuota }}</template>
+            </dd>
+          </div>
+          <div class="diag-row">
+            <dt>{{ t.shell.diagnostics.crossOriginIsolated }}</dt>
+            <dd>
+              <strong>{{ isolated ? t.shell.diagnostics.available : t.shell.diagnostics.unavailable }}</strong>
+            </dd>
+          </div>
+        </dl>
+      </section>
 
       <section class="diag-section">
         <h3 class="diag-heading">{{ t.shell.diagnostics.actionsHeading }}</h3>

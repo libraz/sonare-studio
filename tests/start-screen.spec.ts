@@ -48,4 +48,18 @@ describe('StartScreen', () => {
     expect(w.emitted('close')).toBeUndefined();
     expect(q('[role="dialog"]')).not.toBeNull();
   });
+
+  it('exposes bulk backup actions when OPFS is available', async () => {
+    const w = open();
+
+    await q('[data-testid="start-import-backup"]')?.dispatchEvent(
+      new MouseEvent('click', { bubbles: true }),
+    );
+    await q('[data-testid="start-export-backup"]')?.dispatchEvent(
+      new MouseEvent('click', { bubbles: true }),
+    );
+
+    expect(w.emitted('importBackup')).toHaveLength(1);
+    expect(w.emitted('exportBackup')).toHaveLength(1);
+  });
 });

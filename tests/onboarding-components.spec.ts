@@ -1,9 +1,13 @@
 import { mount } from '@vue/test-utils';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 import HintCard from '@/components/onboarding/HintCard.vue';
 import type { TourStep } from '@/components/onboarding/tour-steps';
 import WelcomeTour from '@/components/onboarding/WelcomeTour.vue';
+import {
+  resetShortcutBlockingOverlaysForTest,
+  shortcutBlockingOverlayOpen,
+} from '@/ui/overlay-registry';
 
 const STORAGE_KEY = 'sonare-studio.test.tourSeen';
 
@@ -23,6 +27,7 @@ function mountTour(props: Partial<InstanceType<typeof WelcomeTour>['$props']> = 
 
 describe('WelcomeTour', () => {
   beforeEach(() => {
+    resetShortcutBlockingOverlaysForTest();
     localStorage.removeItem(STORAGE_KEY);
     for (const id of ['anchor-one', 'anchor-two']) {
       const el = document.createElement('div');
@@ -32,6 +37,7 @@ describe('WelcomeTour', () => {
   });
 
   afterEach(() => {
+    resetShortcutBlockingOverlaysForTest();
     document.body.replaceChildren();
     localStorage.removeItem(STORAGE_KEY);
   });
@@ -122,6 +128,25 @@ describe('WelcomeTour', () => {
     wrapper.unmount();
   });
 
+  it('registers as a shortcut blocker and traps Tab focus while open', async () => {
+    const wrapper = mountTour();
+    await nextTick();
+    await nextTick();
+    expect(shortcutBlockingOverlayOpen.value).toBe(true);
+
+    const buttons = wrapper.findAll('button');
+    const first = buttons[0].element as HTMLButtonElement;
+    const last = buttons[buttons.length - 1].element as HTMLButtonElement;
+    last.focus();
+    await buttons[buttons.length - 1].trigger('keydown', { key: 'Tab' });
+    expect(document.activeElement).toBe(first);
+
+    const skip = wrapper.findAll('button').find((button) => button.text() === 'Skip tour');
+    await skip?.trigger('click');
+    expect(shortcutBlockingOverlayOpen.value).toBe(false);
+    wrapper.unmount();
+  });
+
   it('stays hidden when no step target exists', async () => {
     document.body.replaceChildren();
     const wrapper = mountTour();
@@ -130,6 +155,20 @@ describe('WelcomeTour', () => {
     expect(wrapper.find('.tour-tooltip').exists()).toBe(false);
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
     wrapper.unmount();
+  });
+
+  it('removes viewport listeners on unmount', () => {
+    const add = vi.spyOn(window, 'addEventListener');
+    const remove = vi.spyOn(window, 'removeEventListener');
+    const wrapper = mountTour({ autoStart: false });
+
+    expect(add).toHaveBeenCalledWith('resize', expect.any(Function));
+    expect(add).toHaveBeenCalledWith('scroll', expect.any(Function), true);
+
+    wrapper.unmount();
+
+    expect(remove).toHaveBeenCalledWith('resize', expect.any(Function));
+    expect(remove).toHaveBeenCalledWith('scroll', expect.any(Function), true);
   });
 });
 

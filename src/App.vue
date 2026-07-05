@@ -21,6 +21,7 @@ import SettingsDialog from '@/components/settings/SettingsDialog.vue';
 import ShortcutsHelp from '@/components/settings/ShortcutsHelp.vue';
 import AboutDialog from '@/components/shell/AboutDialog.vue';
 import AppHeader from '@/components/shell/AppHeader.vue';
+import CommandPalette from '@/components/shell/CommandPalette.vue';
 import ContextMenu from '@/components/shell/ContextMenu.vue';
 import DiagnosticsPanel from '@/components/shell/DiagnosticsPanel.vue';
 import DialogHost from '@/components/shell/DialogHost.vue';
@@ -35,7 +36,7 @@ import StepSequencer from '@/components/step-sequencer/StepSequencer.vue';
 import { useActionGuards } from '@/composables/useActionGuards';
 import { useAppLifecycle } from '@/composables/useAppLifecycle';
 import { useAppSettings } from '@/composables/useAppSettings';
-import { useAppShellLayout } from '@/composables/useAppShellLayout';
+import { type DockTab, useAppShellLayout } from '@/composables/useAppShellLayout';
 import { useAppShortcutsMenu } from '@/composables/useAppShortcutsMenu';
 import { useAutosave } from '@/composables/useAutosave';
 import { useEditorTool } from '@/composables/useEditorTool';
@@ -62,12 +63,20 @@ import type { EngineHandle } from '@/engine/engine';
 import type { MeterBridge } from '@/engine/meters';
 import type { ScopeBridge } from '@/engine/scope';
 import { ensureWasm } from '@/lib/wasm';
-import { quantizeSelection, setActiveTrack } from '@/project/commands';
+import {
+  canRedo,
+  canUndo,
+  quantizeSelection,
+  redo,
+  setActiveTrack,
+  undo,
+} from '@/project/commands';
 import { serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { isAudioClip } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { disengageAutomationWriteModes } from '@/ui/mixer/automation-mode';
+import { shortcutBlockingOverlayOpen } from '@/ui/overlay-registry';
 import { COUNT_IN_CHOICES, SNAP_CHOICES, TOUR_STEPS } from '@/ui/shell/app-shell-options';
 import { installSonareDevDebug } from '@/ui/shell/dev-debug';
 
@@ -107,6 +116,30 @@ const ctxState = ref('');
 /** Genuine audio-engine status once running: sample rate and transport mode. */
 const store = useProjectStore();
 const stepInput = useStepInput();
+const historyCanUndo = computed(() => {
+  store.tracks.length;
+  store.clips.length;
+  store.notes.length;
+  store.markers.length;
+  store.sections.length;
+  store.automationLanes.length;
+  store.midiCcBindings.size;
+  store.projectName;
+  store.displayTransposeSemitones;
+  return canUndo();
+});
+const historyCanRedo = computed(() => {
+  store.tracks.length;
+  store.clips.length;
+  store.notes.length;
+  store.markers.length;
+  store.sections.length;
+  store.automationLanes.length;
+  store.midiCcBindings.size;
+  store.projectName;
+  store.displayTransposeSemitones;
+  return canRedo();
+});
 
 // --- User preferences ----------------------------------------------------------
 
@@ -151,13 +184,24 @@ watch(autosave.lastError, (error) => {
 const { downloadBlobFile, lastDownload } = useFileDownloads();
 
 const { confirmAction, runAction } = useActionGuards({ appSettings, busy, errorMessage });
+const commandPaletteOpen = ref(false);
 
 // --- Recording -----------------------------------------------------------------
 
 const recording = useRecording(() => handle.value, transport);
 const midiRecording = useMidiRecording(transport);
-const { armedTrackIds, recordMenuOpen, recordMenuRoot, onArmTrack, onCountInChange, toggleRecord } =
-  useRecordingControls({ appSettings, errorMessage, recording, midiRecording, transport });
+const {
+  armedTrackIds,
+  recordMenuOpen,
+  recordMenuRoot,
+  recordingInputDeviceOptions,
+  onArmTrack,
+  onCountInChange,
+  onMidiInputQuantizeChange,
+  onRecordInputDeviceChange,
+  onRecordSourceChange,
+  toggleRecord,
+} = useRecordingControls({ appSettings, errorMessage, recording, midiRecording, transport });
 
 let bootPromise: Promise<void> | null = null;
 
@@ -186,11 +230,14 @@ const {
   openRecentProject,
   deleteStoredProject,
   importSzdFile,
+  importDawprojectAction,
   importMidiAction,
   onMidiImportChange,
   saveProjectAction,
   saveProjectAsAction,
   exportSzdAction,
+  exportBrowserBackupAction,
+  importBrowserBackupAction,
   exportSmfAction,
   exportMidi2Action,
   disposeProjectPersistence,
@@ -204,15 +251,20 @@ const {
 
 // --- Audio export / DAWproject ---------------------------------------------------
 
-const { exportDialogOpen, exportLoopRegion, exportDawprojectAction, openExportDialog } =
-  useProjectExport({
-    closeProjectMenu,
-    downloadBlobFile,
-    loopEnabled,
-    loopEndPpq,
-    loopStartPpq,
-    runAction,
-  });
+const {
+  exportDialogOpen,
+  exportLoopRegion,
+  exportDawprojectAction,
+  exportMusicXmlAction,
+  openExportDialog,
+} = useProjectExport({
+  closeProjectMenu,
+  downloadBlobFile,
+  loopEnabled,
+  loopEndPpq,
+  loopStartPpq,
+  runAction,
+});
 
 // --- Audio assets in the project ------------------------------------------------
 
@@ -260,24 +312,25 @@ const {
   mixerLaneTrackIds,
 } = useEngineProjectSync({ bridge, scope, errorMessage, handle, transport });
 
-const { ensureEngineStarted, playTestTone, renderOffline, startEngine } = useEngineLifecycle({
-  bridge,
-  analyser,
-  scope,
-  ctxState,
-  errorMessage,
-  handle,
-  renderInfo,
-  transport,
-  applyToEngine,
-  bootPromise: () => bootPromise,
-  runAction,
-  setEngineSyncHandles,
-  syncAutomationState,
-  syncMidiState,
-  syncMixerState,
-  syncTransportState,
-});
+const { disposeEngineLifecycle, ensureEngineStarted, playTestTone, renderOffline, startEngine } =
+  useEngineLifecycle({
+    bridge,
+    analyser,
+    scope,
+    ctxState,
+    errorMessage,
+    handle,
+    renderInfo,
+    transport,
+    applyToEngine,
+    bootPromise: () => bootPromise,
+    runAction,
+    setEngineSyncHandles,
+    syncAutomationState,
+    syncMidiState,
+    syncMixerState,
+    syncTransportState,
+  });
 
 // --- Live note preview -------------------------------------------------------
 
@@ -310,8 +363,21 @@ const {
   previewNoteOff,
   onRecordNoteOn: midiRecording.captureNoteOn,
   onRecordNoteOff: midiRecording.captureNoteOff,
+  onRecordControlChange: midiRecording.captureControlChange,
+  onRecordPitchBend: midiRecording.capturePitchBend,
+  onRecordProgramChange: midiRecording.captureProgramChange,
+  onRecordChannelPressure: midiRecording.captureChannelPressure,
+  onRecordPolyPressure: midiRecording.capturePolyPressure,
   runAction,
 });
+
+function stepInputBack(): void {
+  stepInput.back();
+}
+
+function stepInputCursorToPlayhead(): void {
+  stepInput.setCursor(positionPpq.value);
+}
 
 // Share the single learn handle so insert-knob menus can bind CC too.
 provide(MIDI_LEARN_KEY, midiLearn);
@@ -388,6 +454,57 @@ const {
   toggleScorePanel,
 } = useAppShellLayout();
 
+const EDITOR_DOCK_TABS: readonly DockTab[] = [
+  'roll',
+  'mixer',
+  'mastering',
+  'steps',
+  'lists',
+  'media',
+  'sample',
+];
+
+function dockTabId(tab: DockTab): string {
+  return `editor-dock-tab-${tab}`;
+}
+
+function dockPanelId(tab: DockTab): string {
+  return `editor-dock-panel-${tab}`;
+}
+
+async function focusDockTab(tab: DockTab): Promise<void> {
+  await nextTick();
+  document.getElementById(dockTabId(tab))?.focus();
+}
+
+function selectDockTabByKey(tab: DockTab): void {
+  selectDockTab(tab);
+  void focusDockTab(tab);
+}
+
+function moveDockTab(delta: number): void {
+  const index = EDITOR_DOCK_TABS.indexOf(dockTab.value);
+  const current = index === -1 ? 0 : index;
+  const next = (current + delta + EDITOR_DOCK_TABS.length) % EDITOR_DOCK_TABS.length;
+  selectDockTabByKey(EDITOR_DOCK_TABS[next]);
+}
+
+function onDockTabKeydown(event: KeyboardEvent): void {
+  if (event.key === 'ArrowRight') {
+    event.preventDefault();
+    moveDockTab(1);
+  } else if (event.key === 'ArrowLeft') {
+    event.preventDefault();
+    moveDockTab(-1);
+  } else if (event.key === 'Home') {
+    event.preventDefault();
+    selectDockTabByKey(EDITOR_DOCK_TABS[0]);
+  } else if (event.key === 'End') {
+    event.preventDefault();
+    selectDockTabByKey(EDITOR_DOCK_TABS[EDITOR_DOCK_TABS.length - 1]);
+  }
+}
+
 const instrumentPickerRequest = ref(0);
 
 async function openTrackInstrumentPicker(trackId: number): Promise<void> {
@@ -437,17 +554,7 @@ watch(startScreenOpen, (open, wasOpen) => {
   if (!seen) tourRef.value?.open();
 });
 
-const globalShortcutsBlocked = computed(
-  () =>
-    startScreenOpen.value ||
-    newDialogOpen.value ||
-    openDialogOpen.value ||
-    exportDialogOpen.value ||
-    settingsOpen.value ||
-    helpOpen.value ||
-    aboutOpen.value ||
-    diagnosticsOpen.value,
-);
+const globalShortcutsBlocked = computed(() => shortcutBlockingOverlayOpen.value);
 
 const { onWindowPointerDown } = useOutsidePopovers([
   { open: recordMenuOpen, root: recordMenuRoot, close: () => (recordMenuOpen.value = false) },
@@ -455,54 +562,66 @@ const { onWindowPointerDown } = useOutsidePopovers([
 
 // --- App-level keyboard shortcuts ---------------------------------------------
 
-const { arrangementRef, focusZone, layoutMenu, menuBarModel, onGlobalKeyDown, shortcutTitle } =
-  useAppShortcutsMenu({
-    deviceRackOpen,
-    editorTool,
-    handle,
-    helpOpen,
-    isGlobalShortcutBlocked: () => globalShortcutsBlocked.value,
-    isPlaying,
-    layouts: namedLayouts.layouts,
-    loopEnabled,
-    opfsAvailable,
-    recentNames: recentMenuNames,
-    recording,
-    scoreVisible,
-    settingsOpen,
-    shortcuts,
-    applyNamedLayout,
-    exportDawproject: exportDawprojectAction,
-    exportMidi2: exportMidi2Action,
-    exportSmf: exportSmfAction,
-    exportSzd: exportSzdAction,
-    importAudio: importAudioAction,
-    importMidi: importMidiAction,
-    nudgeByBar,
-    openAbout,
-    openDiagnostics,
-    openExportDialog,
-    openNewDialog,
-    openOpenDialog,
-    openRecentProject,
-    openStartScreen,
-    openDemo,
-    openShortcutsHelp,
-    openWelcomeTour,
-    saveCurrentLayout: saveCurrentLayoutAction,
-    saveProjectAction,
-    saveProjectAsAction,
-    seekToEnd,
-    seekToStart,
-    setEditorTool,
-    setLeftLocator,
-    setRightLocator,
-    toggleDeviceRack,
-    toggleLoop,
-    togglePlayback,
-    toggleRecord,
-    toggleScorePanel,
-  });
+const {
+  arrangementRef,
+  commandPaletteItems,
+  focusZone,
+  layoutMenu,
+  menuBarModel,
+  onGlobalKeyDown,
+  shortcutTitle,
+} = useAppShortcutsMenu({
+  commandPaletteOpen,
+  deviceRackOpen,
+  editorTool,
+  handle,
+  helpOpen,
+  isGlobalShortcutBlocked: () => globalShortcutsBlocked.value,
+  isPlaying,
+  layouts: namedLayouts.layouts,
+  loopEnabled,
+  opfsAvailable,
+  recentNames: recentMenuNames,
+  recording,
+  scoreVisible,
+  settingsOpen,
+  shortcuts,
+  applyNamedLayout,
+  exportDawproject: exportDawprojectAction,
+  exportBrowserBackup: exportBrowserBackupAction,
+  exportMidi2: exportMidi2Action,
+  exportMusicXml: exportMusicXmlAction,
+  exportSmf: exportSmfAction,
+  exportSzd: exportSzdAction,
+  importAudio: importAudioAction,
+  importBrowserBackup: importBrowserBackupAction,
+  importDawproject: importDawprojectAction,
+  importMidi: importMidiAction,
+  nudgeByBar,
+  openAbout,
+  openDiagnostics,
+  openExportDialog,
+  openNewDialog,
+  openOpenDialog,
+  openRecentProject,
+  openStartScreen,
+  openDemo,
+  openShortcutsHelp,
+  openWelcomeTour,
+  saveCurrentLayout: saveCurrentLayoutAction,
+  saveProjectAction,
+  saveProjectAsAction,
+  seekToEnd,
+  seekToStart,
+  setEditorTool,
+  setLeftLocator,
+  setRightLocator,
+  toggleDeviceRack,
+  toggleLoop,
+  togglePlayback,
+  toggleRecord,
+  toggleScorePanel,
+});
 
 // --- Lifecycle ----------------------------------------------------------------
 
@@ -532,6 +651,7 @@ useAppLifecycle({
   handle,
   version,
   bootProject,
+  disposeEngineLifecycle,
   disposeEngineProjectSync,
   disposeLayout,
   disposeProjectPersistence,
@@ -540,6 +660,7 @@ useAppLifecycle({
   setBootPromise: (promise) => {
     bootPromise = promise;
   },
+  shouldBlockUnload: () => dirty.value || autosave.saving.value,
 });
 </script>
 
@@ -547,6 +668,8 @@ useAppLifecycle({
   <div class="app-shell">
     <AppHeader
       :autosave-last-saved-at="autosave.lastSavedAt.value"
+      :can-redo="historyCanRedo"
+      :can-undo="historyCanUndo"
       :device-rack-open="deviceRackOpen"
       :dirty="dirty"
       :menus="menuBarModel"
@@ -556,8 +679,10 @@ useAppLifecycle({
       @audio-import-input-ref="(el) => (audioImportInput = el)"
       @midi-import-change="onMidiImportChange"
       @midi-import-input-ref="(el) => (midiImportInput = el)"
+      @redo="redo"
       @toggle-theme="toggleTheme"
       @toggle-device-rack="toggleDeviceRack"
+      @undo="undo"
     />
 
     <ErrorBanner :message="errorMessage" @dismiss="errorMessage = ''" />
@@ -608,77 +733,105 @@ useAppLifecycle({
         :class="{ collapsed: dockCollapsed }"
         @pointerdown.capture="focusZone = 'editor'"
       >
-        <div class="dock-tabs" role="tablist" :aria-label="t.shell.editor.panels">
-          <button
-            type="button"
-            class="dock-tab dock-tab-toggle"
-            :class="{ active: dockTab === 'roll' }"
-            role="tab"
-            :aria-selected="dockTab === 'roll'"
-            @click="selectDockTab('roll')"
+        <div class="dock-tabs">
+          <div
+            class="dock-tab-scroll"
+            role="tablist"
+            :aria-label="t.shell.editor.panels"
+            @keydown="onDockTabKeydown"
           >
-            {{ t.shell.editor.tabs.pianoRoll }}
-          </button>
-          <button
-            type="button"
-            class="dock-tab dock-tab-toggle"
-            :class="{ active: dockTab === 'mixer' }"
-            role="tab"
-            :aria-selected="dockTab === 'mixer'"
-            @click="selectDockTab('mixer')"
-          >
-            {{ t.shell.editor.tabs.mixer }}
-          </button>
-          <button
-            type="button"
-            class="dock-tab dock-tab-toggle"
-            :class="{ active: dockTab === 'mastering' }"
-            role="tab"
-            :aria-selected="dockTab === 'mastering'"
-            @click="selectDockTab('mastering')"
-          >
-            {{ t.shell.editor.tabs.mastering }}
-          </button>
-          <button
-            type="button"
-            class="dock-tab dock-tab-toggle"
-            :class="{ active: dockTab === 'steps' }"
-            role="tab"
-            :aria-selected="dockTab === 'steps'"
-            @click="selectDockTab('steps')"
-          >
-            {{ t.shell.editor.tabs.steps }}
-          </button>
-          <button
-            type="button"
-            class="dock-tab dock-tab-toggle"
-            :class="{ active: dockTab === 'lists' }"
-            role="tab"
-            :aria-selected="dockTab === 'lists'"
-            @click="selectDockTab('lists')"
-          >
-            {{ t.shell.editor.tabs.lists }}
-          </button>
-          <button
-            type="button"
-            class="dock-tab dock-tab-toggle"
-            :class="{ active: dockTab === 'media' }"
-            role="tab"
-            :aria-selected="dockTab === 'media'"
-            @click="selectDockTab('media')"
-          >
-            {{ t.shell.editor.tabs.media }}
-          </button>
-          <button
-            type="button"
-            class="dock-tab dock-tab-toggle"
-            :class="{ active: dockTab === 'sample' }"
-            role="tab"
-            :aria-selected="dockTab === 'sample'"
-            @click="selectDockTab('sample')"
-          >
-            {{ t.shell.editor.tabs.sample }}
-          </button>
+            <button
+              :id="dockTabId('roll')"
+              type="button"
+              class="dock-tab dock-tab-toggle"
+              :class="{ active: dockTab === 'roll' }"
+              role="tab"
+              :aria-selected="dockTab === 'roll'"
+              :aria-controls="dockPanelId('roll')"
+              :tabindex="dockTab === 'roll' ? 0 : -1"
+              @click="selectDockTab('roll')"
+            >
+              {{ t.shell.editor.tabs.pianoRoll }}
+            </button>
+            <button
+              :id="dockTabId('mixer')"
+              type="button"
+              class="dock-tab dock-tab-toggle"
+              :class="{ active: dockTab === 'mixer' }"
+              role="tab"
+              :aria-selected="dockTab === 'mixer'"
+              :aria-controls="dockPanelId('mixer')"
+              :tabindex="dockTab === 'mixer' ? 0 : -1"
+              @click="selectDockTab('mixer')"
+            >
+              {{ t.shell.editor.tabs.mixer }}
+            </button>
+            <button
+              :id="dockTabId('mastering')"
+              type="button"
+              class="dock-tab dock-tab-toggle"
+              :class="{ active: dockTab === 'mastering' }"
+              role="tab"
+              :aria-selected="dockTab === 'mastering'"
+              :aria-controls="dockPanelId('mastering')"
+              :tabindex="dockTab === 'mastering' ? 0 : -1"
+              @click="selectDockTab('mastering')"
+            >
+              {{ t.shell.editor.tabs.mastering }}
+            </button>
+            <button
+              :id="dockTabId('steps')"
+              type="button"
+              class="dock-tab dock-tab-toggle"
+              :class="{ active: dockTab === 'steps' }"
+              role="tab"
+              :aria-selected="dockTab === 'steps'"
+              :aria-controls="dockPanelId('steps')"
+              :tabindex="dockTab === 'steps' ? 0 : -1"
+              @click="selectDockTab('steps')"
+            >
+              {{ t.shell.editor.tabs.steps }}
+            </button>
+            <button
+              :id="dockTabId('lists')"
+              type="button"
+              class="dock-tab dock-tab-toggle"
+              :class="{ active: dockTab === 'lists' }"
+              role="tab"
+              :aria-selected="dockTab === 'lists'"
+              :aria-controls="dockPanelId('lists')"
+              :tabindex="dockTab === 'lists' ? 0 : -1"
+              @click="selectDockTab('lists')"
+            >
+              {{ t.shell.editor.tabs.lists }}
+            </button>
+            <button
+              :id="dockTabId('media')"
+              type="button"
+              class="dock-tab dock-tab-toggle"
+              :class="{ active: dockTab === 'media' }"
+              role="tab"
+              :aria-selected="dockTab === 'media'"
+              :aria-controls="dockPanelId('media')"
+              :tabindex="dockTab === 'media' ? 0 : -1"
+              @click="selectDockTab('media')"
+            >
+              {{ t.shell.editor.tabs.media }}
+            </button>
+            <button
+              :id="dockTabId('sample')"
+              type="button"
+              class="dock-tab dock-tab-toggle"
+              :class="{ active: dockTab === 'sample' }"
+              role="tab"
+              :aria-selected="dockTab === 'sample'"
+              :aria-controls="dockPanelId('sample')"
+              :tabindex="dockTab === 'sample' ? 0 : -1"
+              @click="selectDockTab('sample')"
+            >
+              {{ t.shell.editor.tabs.sample }}
+            </button>
+          </div>
           <button
             type="button"
             class="dock-tab dock-tab-toggle dock-tab-score"
@@ -689,7 +842,6 @@ useAppLifecycle({
           >
             {{ t.shell.editor.tabs.score }}
           </button>
-          <span class="dock-tabs-spacer" />
           <ToolPalette />
           <button
             type="button"
@@ -702,7 +854,13 @@ useAppLifecycle({
             {{ dockCollapsed ? '▴' : '▾' }}
           </button>
         </div>
-        <section v-show="dockTab === 'roll'" class="dock-body">
+        <section
+          v-show="dockTab === 'roll'"
+          :id="dockPanelId('roll')"
+          class="dock-body"
+          role="tabpanel"
+          :aria-labelledby="dockTabId('roll')"
+        >
           <div class="editor-toolbar">
             <div class="editor-toolbar-scroll">
               <label class="bar-field">
@@ -750,6 +908,22 @@ useAppLifecycle({
             <span v-if="stepInput.armed.value" class="step-cursor">
               @ {{ formatBarBeatTick(stepInput.cursorPpq.value, store.timeSignatures) }}
             </span>
+            <button
+              v-if="stepInput.armed.value"
+              type="button"
+              v-tooltip="t.shell.editor.stepBackTitle"
+              @click="stepInputBack"
+            >
+              {{ t.shell.editor.stepBack }}
+            </button>
+            <button
+              v-if="stepInput.armed.value"
+              type="button"
+              v-tooltip="t.shell.editor.stepCursorToPlayheadTitle"
+              @click="stepInputCursorToPlayhead"
+            >
+              {{ t.shell.editor.stepCursorToPlayhead }}
+            </button>
             <label class="bar-field">
               {{ t.shell.editor.midiIn }}
               <SelectMenu
@@ -845,7 +1019,13 @@ useAppLifecycle({
             @seek="onSeek"
           />
         </section>
-        <section v-show="dockTab === 'mixer'" class="dock-body">
+        <section
+          v-show="dockTab === 'mixer'"
+          :id="dockPanelId('mixer')"
+          class="dock-body"
+          role="tabpanel"
+          :aria-labelledby="dockTabId('mixer')"
+        >
           <MixerPanel
             class="mixer-host"
             :bridge="bridge"
@@ -859,7 +1039,13 @@ useAppLifecycle({
             :is-playing="isPlaying"
           />
         </section>
-        <section v-show="dockTab === 'mastering'" class="dock-body">
+        <section
+          v-show="dockTab === 'mastering'"
+          :id="dockPanelId('mastering')"
+          class="dock-body"
+          role="tabpanel"
+          :aria-labelledby="dockTabId('mastering')"
+        >
           <!-- Kept alive via v-show: the A/B preview renders and playback are
                session-local panel state and must survive tab switches. -->
           <MasteringPanel
@@ -869,28 +1055,53 @@ useAppLifecycle({
             :loop-end-ppq="loopEndPpq"
           />
         </section>
-        <section v-show="dockTab === 'steps'" class="dock-body dock-body-scroll">
+        <section
+          v-show="dockTab === 'steps'"
+          :id="dockPanelId('steps')"
+          class="dock-body dock-body-scroll"
+          role="tabpanel"
+          :aria-labelledby="dockTabId('steps')"
+        >
           <!-- Kept alive via v-show: the step pattern is session-local
                component state and must survive tab switches. -->
           <StepSequencer />
         </section>
-        <section v-show="dockTab === 'lists'" class="dock-body">
+        <section
+          v-show="dockTab === 'lists'"
+          :id="dockPanelId('lists')"
+          class="dock-body"
+          role="tabpanel"
+          :aria-labelledby="dockTabId('lists')"
+        >
           <ProjectListsPanel
             class="lists-host"
             :position-ppq="() => positionPpq"
             @seek="onSeek"
           />
         </section>
-        <section v-show="dockTab === 'media'" class="dock-body">
+        <section
+          v-show="dockTab === 'media'"
+          :id="dockPanelId('media')"
+          class="dock-body"
+          role="tabpanel"
+          :aria-labelledby="dockTabId('media')"
+        >
           <!-- Remounted per open so the asset list picks up recordings and
                menu imports made while the tab was hidden. -->
           <MediaBrowser
             v-if="dockTab === 'media'"
             class="media-host"
+            :visible="dockTab === 'media'"
             @add-to-project="onAddAssetToProject"
           />
         </section>
-        <section v-show="dockTab === 'sample'" class="dock-body">
+        <section
+          v-show="dockTab === 'sample'"
+          :id="dockPanelId('sample')"
+          class="dock-body"
+          role="tabpanel"
+          :aria-labelledby="dockTabId('sample')"
+        >
           <SampleEditor
             v-if="sampleAssetId"
             :key="sampleAssetId"
@@ -931,6 +1142,8 @@ useAppLifecycle({
       :metronome-enabled="metronomeEnabled"
       :position-seconds="positionSeconds"
       :recording="recording"
+      :recording-input-device-options="recordingInputDeviceOptions"
+      :midi-recording="midiRecording"
       :record-menu-open="recordMenuOpen"
       :shortcut-title="shortcutTitle"
       :store-initialized="store.initialized"
@@ -939,7 +1152,10 @@ useAppLifecycle({
       @bbt-blur="onBbtCommit"
       @bbt-focus="onBbtFocus"
       @count-in-change="onCountInChange"
+      @midi-input-quantize-change="onMidiInputQuantizeChange"
       @nudge-by-bar="nudgeByBar"
+      @record-input-device-change="onRecordInputDeviceChange"
+      @record-source-change="onRecordSourceChange"
       @record-menu-ref="(el) => (recordMenuRoot = el)"
       @seek-to-end="seekToEnd"
       @seek-to-start="seekToStart"
@@ -990,6 +1206,12 @@ useAppLifecycle({
 
     <ShortcutsHelp :open="helpOpen" @close="helpOpen = false" />
 
+    <CommandPalette
+      :open="commandPaletteOpen"
+      :commands="commandPaletteItems"
+      @close="commandPaletteOpen = false"
+    />
+
     <AboutDialog
       :open="aboutOpen"
       :version="version"
@@ -1020,6 +1242,8 @@ useAppLifecycle({
       @demo="openDemo"
       @open-project="openStoredProject"
       @import-project="importSzdFile"
+      @import-backup="importBrowserBackupAction"
+      @export-backup="exportBrowserBackupAction"
       @import-midi="importMidiAction"
     />
 

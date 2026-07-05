@@ -15,18 +15,27 @@ export interface AppLifecycleOptions {
   handle: ShallowRef<EngineHandle | null>;
   version: Ref<string>;
   bootProject: () => Promise<void>;
+  disposeEngineLifecycle?: () => void;
   disposeEngineProjectSync: () => void;
   disposeLayout: () => void;
   disposeProjectPersistence: () => void;
   onGlobalKeyDown: (event: KeyboardEvent) => void;
   onWindowPointerDown: (event: PointerEvent) => void;
   setBootPromise: (promise: Promise<void> | null) => void;
+  shouldBlockUnload?: () => boolean;
 }
 
 export function useAppLifecycle(options: AppLifecycleOptions) {
+  const onBeforeUnload = (event: BeforeUnloadEvent): void => {
+    if (!options.shouldBlockUnload?.()) return;
+    event.preventDefault();
+    event.returnValue = '';
+  };
+
   onMounted(async () => {
     window.addEventListener('keydown', options.onGlobalKeyDown);
     window.addEventListener('pointerdown', options.onWindowPointerDown);
+    window.addEventListener('beforeunload', onBeforeUnload);
     // Best-effort: keep the browser from evicting the project store. Never
     // blocks boot — a denied or unsupported grant just leaves storage default.
     void requestPersistentStorage();
@@ -44,8 +53,10 @@ export function useAppLifecycle(options: AppLifecycleOptions) {
   onBeforeUnmount(async () => {
     window.removeEventListener('keydown', options.onGlobalKeyDown);
     window.removeEventListener('pointerdown', options.onWindowPointerDown);
+    window.removeEventListener('beforeunload', onBeforeUnload);
     options.disposeProjectPersistence();
     options.disposeLayout();
+    options.disposeEngineLifecycle?.();
     options.disposeEngineProjectSync();
     options.bridge.value?.dispose();
     options.bridge.value = null;

@@ -28,7 +28,12 @@ describe('sanitizeAppSettings', () => {
       editorDensity: 'compact',
       snapDefault: false,
       countInBars: 2,
+      midiInputQuantizeDenominator: 16,
       monitorDefault: 'yes',
+      recordingVoiceChangerPreset: 'bright-idol',
+      recordingRetuneSemitones: 7,
+      recordingCaptureSource: 'output',
+      recordingInputDeviceId: 'mic-2',
       autosaveIntervalMs: 60000,
       scrollFollowPlayhead: 0,
       confirmDestructive: false,
@@ -42,7 +47,12 @@ describe('sanitizeAppSettings', () => {
       editorDensity: 'compact',
       snapDefault: false,
       countInBars: 2,
+      midiInputQuantizeDenominator: 16,
       monitorDefault: DEFAULT_APP_SETTINGS.monitorDefault,
+      recordingVoiceChangerPreset: 'bright-idol',
+      recordingRetuneSemitones: 7,
+      recordingCaptureSource: 'output',
+      recordingInputDeviceId: 'mic-2',
       autosaveIntervalMs: 60000,
       scrollFollowPlayhead: DEFAULT_APP_SETTINGS.scrollFollowPlayhead,
       pianoRollLaneVisible: DEFAULT_APP_SETTINGS.pianoRollLaneVisible,
@@ -81,10 +91,47 @@ describe('sanitizeAppSettings', () => {
     );
   });
 
+  it('keeps only supported MIDI input quantize denominators', () => {
+    expect(
+      sanitizeAppSettings({ midiInputQuantizeDenominator: 32 }).midiInputQuantizeDenominator,
+    ).toBe(32);
+    expect(
+      sanitizeAppSettings({ midiInputQuantizeDenominator: 12 }).midiInputQuantizeDenominator,
+    ).toBe(DEFAULT_APP_SETTINGS.midiInputQuantizeDenominator);
+  });
+
   it('defaults invalid theme and language values', () => {
     const out = sanitizeAppSettings({ theme: 'sepia', language: 'fr' });
     expect(out.theme).toBe(DEFAULT_APP_SETTINGS.theme);
     expect(out.language).toBe(DEFAULT_APP_SETTINGS.language);
+  });
+
+  it('defaults invalid realtime voice changer presets', () => {
+    expect(
+      sanitizeAppSettings({ recordingVoiceChangerPreset: 'dark-villain' })
+        .recordingVoiceChangerPreset,
+    ).toBe('dark-villain');
+    expect(
+      sanitizeAppSettings({ recordingVoiceChangerPreset: 'chipmunk' }).recordingVoiceChangerPreset,
+    ).toBe(DEFAULT_APP_SETTINGS.recordingVoiceChangerPreset);
+  });
+
+  it('defaults invalid recording capture sources', () => {
+    expect(sanitizeAppSettings({ recordingCaptureSource: 'output' }).recordingCaptureSource).toBe(
+      'output',
+    );
+    expect(sanitizeAppSettings({ recordingCaptureSource: 'bus' }).recordingCaptureSource).toBe(
+      DEFAULT_APP_SETTINGS.recordingCaptureSource,
+    );
+  });
+
+  it('keeps recording input device ids as user-level strings', () => {
+    expect(sanitizeAppSettings({ recordingInputDeviceId: 'usb-mic' }).recordingInputDeviceId).toBe(
+      'usb-mic',
+    );
+    expect(sanitizeAppSettings({ recordingInputDeviceId: 42 }).recordingInputDeviceId).toBe(
+      DEFAULT_APP_SETTINGS.recordingInputDeviceId,
+    );
   });
 });
 

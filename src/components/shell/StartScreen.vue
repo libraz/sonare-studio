@@ -44,6 +44,10 @@ const emit = defineEmits<{
   openProject: [name: string];
   /** Import a .szd project from a local file. */
   importProject: [];
+  /** Restore all browser-backed projects/media from a backup archive. */
+  importBackup: [];
+  /** Export all browser-backed projects/media as a backup archive. */
+  exportBackup: [];
   /** Import a MIDI file as a new project. */
   importMidi: [];
 }>();
@@ -152,6 +156,14 @@ function projectMeta(info: StoredProjectInfo): string {
             <button v-if="props.opfsAvailable" type="button" class="ss-import"
               data-testid="start-import" @click="emit('importProject')">
               {{ t.shell.startScreen.importFromFile }}
+            </button>
+            <button v-if="props.opfsAvailable" type="button" class="ss-import"
+              data-testid="start-import-backup" @click="emit('importBackup')">
+              {{ t.shell.startScreen.restoreBackup }}
+            </button>
+            <button v-if="props.opfsAvailable" type="button" class="ss-import"
+              data-testid="start-export-backup" @click="emit('exportBackup')">
+              {{ t.shell.startScreen.exportBackup }}
             </button>
             <button type="button" class="ss-import" data-testid="start-import-midi"
               @click="emit('importMidi')">

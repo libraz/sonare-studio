@@ -1,9 +1,13 @@
 import { mount } from '@vue/test-utils';
-import { describe, expect, it } from 'vitest';
-import { nextTick } from 'vue';
+import { describe, expect, it, vi } from 'vitest';
+import { nextTick, ref } from 'vue';
+import ArrangementCanvas from '@/components/arrangement/ArrangementCanvas.vue';
 import MixerFader from '@/components/mixer/MixerFader.vue';
 import MixerKnob from '@/components/mixer/MixerKnob.vue';
+import NoteGridCanvas from '@/components/piano-roll/NoteGridCanvas.vue';
 import NewProjectDialog from '@/components/project/NewProjectDialog.vue';
+import type { Painter } from '@/ui/canvas/painter';
+import { TimelineRange } from '@/ui/canvas/timeline-range';
 import { FADER_MAX_DB, FADER_MIN_DB } from '@/ui/mixer/db-scale';
 
 /**
@@ -51,6 +55,25 @@ describe('MixerKnob accessibility', () => {
     expect(slider.attributes('aria-valuemax')).toBe('100');
     expect(slider.attributes('aria-valuenow')).toBe('25');
     expect(slider.attributes('tabindex')).toBe('0');
+  });
+
+  it('removes the control menu outside-click listener on unmount', async () => {
+    const add = vi.spyOn(window, 'addEventListener');
+    const remove = vi.spyOn(window, 'removeEventListener');
+    const wrapper = mount(MixerKnob, {
+      props: { value: 25, min: 0, max: 100, label: 'Pan' },
+      global: {
+        directives: {
+          tooltip: () => undefined,
+        },
+      },
+    });
+
+    await wrapper.find('.knob').trigger('contextmenu', { clientX: 5, clientY: 5 });
+
+    expect(add).toHaveBeenCalledWith('pointerdown', expect.any(Function), true);
+    wrapper.unmount();
+    expect(remove).toHaveBeenCalledWith('pointerdown', expect.any(Function), true);
   });
 });
 
@@ -105,5 +128,94 @@ describe('NewProjectDialog modal accessibility', () => {
     wrapper.unmount();
     trigger.remove();
     document.body.innerHTML = '';
+  });
+});
+
+const painter: Painter = {
+  schedule: () => {},
+  dispose: () => {},
+};
+
+function stubCanvasEnvironment(): void {
+  class ResizeObserverStub {
+    observe() {}
+    disconnect() {}
+  }
+  vi.stubGlobal('ResizeObserver', ResizeObserverStub);
+  vi.stubGlobal('requestAnimationFrame', () => 1);
+  vi.stubGlobal('cancelAnimationFrame', () => {});
+}
+
+describe('Canvas editor live regions', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    document.body.innerHTML = '';
+  });
+
+  it('announces piano-roll note selection through a polite status region', () => {
+    stubCanvasEnvironment();
+    const wrapper = mount(NoteGridCanvas, {
+      props: {
+        range: new TimelineRange({ widthPx: 800, heightPx: 480, pxPerPpq: 100, rowHeight: 10 }),
+        revision: 0,
+        painter,
+        notes: [{ id: 1, pitch: 60, velocity: 96, startPpq: 1, durationPpq: 2, channel: 0 }],
+        selection: new Set([1]),
+        highlightedPitchClasses: Array.from({ length: 12 }, () => false),
+        gridPpq: 0.25,
+        clipLengthPpq: 16,
+        timeSignatures: [{ startPpq: 0, numerator: 4, denominator: 4 }],
+        interactions: {
+          marquee: ref(null),
+          previewNotes: ref(null),
+          cursor: ref('default'),
+          onPointerDown: () => {},
+          onPointerMove: () => {},
+          onPointerUp: () => {},
+          onDoubleClick: () => {},
+          hitNoteAt: () => null,
+          onKeyDown: () => false,
+          cancel: () => {},
+        },
+      },
+    });
+
+    const live = wrapper.get('[role="status"][aria-live="polite"]');
+    expect(live.attributes('aria-atomic')).toBe('true');
+    expect(live.text()).toContain('C4 selected');
+  });
+
+  it('announces arrangement track and clip selection through a polite status region', () => {
+    stubCanvasEnvironment();
+    const wrapper = mount(ArrangementCanvas, {
+      props: {
+        range: new TimelineRange({ widthPx: 800, heightPx: 480, pxPerPpq: 100, rowHeight: 10 }),
+        revision: 0,
+        painter,
+        tracks: [{ id: 1, name: 'Piano', color: '#60a5fa' }],
+        clips: [{ id: 2, trackId: 1, name: 'Intro', startPpq: 0, lengthPpq: 4 }],
+        markers: [],
+        activeTrackId: 1,
+        activeClipId: 2,
+        timeSignatures: [{ startPpq: 0, numerator: 4, denominator: 4 }],
+        scrollY: 0,
+        laneHeight: 80,
+        loopEnabled: false,
+        loopStartPpq: 0,
+        loopEndPpq: 4,
+        interactions: { previewClip: ref(null), previewFades: ref(null), cursor: ref('default') },
+        automationExpandedIds: [],
+        automationParams: {},
+        automationLanes: [],
+        automation: { preview: ref(null), hover: ref(null), cursor: ref(null) },
+        takesExpandedIds: [],
+        takes: { preview: ref(null), cursor: ref(null) },
+      },
+    });
+
+    const live = wrapper.get('[role="status"][aria-live="polite"]');
+    expect(live.attributes('aria-atomic')).toBe('true');
+    expect(live.text()).toContain('Track Piano selected');
+    expect(live.text()).toContain('Clip Intro selected');
   });
 });

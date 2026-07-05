@@ -13,6 +13,7 @@ import {
   COUNT_IN_BARS_MIN,
   LOUDNESS_TARGET_MAX_LUFS,
   LOUDNESS_TARGET_MIN_LUFS,
+  type RecordingCaptureSource,
 } from '@/ui/settings/app-settings';
 
 /**
@@ -48,6 +49,13 @@ const LANGUAGE_OPTIONS = computed<ReadonlyArray<{ value: AppLanguage; label: str
   { value: 'ja', label: t.value.settings.general.languageJapanese },
 ]);
 
+const RECORDING_SOURCE_OPTIONS = computed<
+  ReadonlyArray<{ value: RecordingCaptureSource; label: string }>
+>(() => [
+  { value: 'input', label: t.value.settings.general.recordingSourceInput },
+  { value: 'output', label: t.value.settings.general.recordingSourceOutput },
+]);
+
 function onEditorDensityChange(value: 'comfortable' | 'compact'): void {
   appSettings.set('editorDensity', value);
 }
@@ -58,6 +66,10 @@ function onThemeChange(value: AppTheme): void {
 
 function onLanguageChange(value: AppLanguage): void {
   appSettings.set('language', value);
+}
+
+function onRecordingSourceChange(value: RecordingCaptureSource): void {
+  appSettings.set('recordingCaptureSource', value);
 }
 
 const autosaveSeconds = computed<number>(() =>
@@ -159,6 +171,17 @@ function onLoudnessTargetInput(event: Event): void {
         :aria-label="t.settings.general.monitorDefault"
         size="sm"
         @update:model-value="appSettings.set('monitorDefault', $event)"
+      />
+    </div>
+    <div class="row">
+      <span class="row-label">{{ t.settings.general.recordingSource }}</span>
+      <SelectMenu
+        class="row-select"
+        :model-value="appSettings.settings.recordingCaptureSource"
+        :options="RECORDING_SOURCE_OPTIONS"
+        :aria-label="t.settings.general.recordingSource"
+        size="sm"
+        @change="onRecordingSourceChange"
       />
     </div>
     <label class="row">
