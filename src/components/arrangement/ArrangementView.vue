@@ -37,7 +37,11 @@ import {
   buildRowLayout,
   trackTakeRowCount,
 } from '@/ui/arrangement/automation-rows';
-import { nextPlayheadFollowStart } from '@/ui/arrangement/playhead-follow';
+import {
+  anchoredPlayheadFollowStart,
+  PLAYHEAD_FOLLOW_ANCHOR_X,
+  revealPlayheadStart,
+} from '@/ui/arrangement/playhead-follow';
 import { barRangeAt } from '@/ui/arrangement/ruler';
 import { useAutomationInteractions } from '@/ui/arrangement/use-automation-interactions';
 import {
@@ -204,6 +208,8 @@ const PLAYHEAD_FOLLOW_EPSILON_PPQ = 0.0005;
 const PLAYHEAD_FOLLOW_INTERVAL_MS = 33;
 /** Ignore sub-pixel follow movement; the overlay playhead still updates every frame. */
 const PLAYHEAD_FOLLOW_MIN_PX = 1;
+/** Local column the playhead is pinned to while following (past the header). */
+const PLAYHEAD_ANCHOR_LOCAL_X = Math.max(0, PLAYHEAD_FOLLOW_ANCHOR_X - TRACK_HEADER_WIDTH_PX);
 
 // The TimelineRange and painter are plain (non-reactive) objects; views are
 // invalidated through the `revision` counter after every range mutation.
@@ -433,7 +439,7 @@ function followPlayheadTick(now = performance.now()): void {
   lastFollowFrameMs = now;
   const ppq = props.positionPpq?.();
   if (ppq !== undefined) {
-    const nextStart = nextPlayheadFollowStart(range, ppq);
+    const nextStart = anchoredPlayheadFollowStart(range, ppq, PLAYHEAD_ANCHOR_LOCAL_X);
     if (nextStart !== null) {
       const delta = nextStart - range.startPpq;
       if (Math.abs(delta * range.pxPerPpq) >= PLAYHEAD_FOLLOW_MIN_PX) {
@@ -453,6 +459,13 @@ function startPlayheadFollow(): void {
   if (followRaf !== null || typeof requestAnimationFrame !== 'function') return;
   lastFollowFrameMs = 0;
   followRaf = requestAnimationFrame(followPlayheadTick);
+}
+
+/** Local column the overlay pins the playhead to while following, else null. */
+function followAnchorLocalX(): number | null {
+  return props.isPlaying && appSettings.settings.scrollFollowPlayhead
+    ? PLAYHEAD_ANCHOR_LOCAL_X
+    : null;
 }
 
 function onSeek(ppq: number): void {
@@ -674,6 +687,21 @@ watch(
   },
 );
 
+// A seek while stopped nudges nothing else horizontally, so scroll the sought
+// position back into view when it lands outside the viewport. During playback
+// the follow loop owns scrolling, so skip it there.
+watch(
+  () => props.positionPpq?.(),
+  (ppq) => {
+    if (props.isPlaying || ppq === undefined) return;
+    const nextStart = revealPlayheadStart(range, ppq, PLAYHEAD_ANCHOR_LOCAL_X);
+    if (nextStart !== null) {
+      range.setStartPpq(nextStart);
+      bump();
+    }
+  },
+);
+
 onMounted(async () => {
   if (props.isPlaying && appSettings.settings.scrollFollowPlayhead) startPlayheadFollow();
   try {
@@ -774,6 +802,7 @@ onBeforeUnmount(() => {
           :takes-expanded-ids="takesExpandedIds"
           :takes="takes"
           :position-ppq="props.positionPpq"
+          :anchored-local-x="followAnchorLocalX"
           @view-resize="onCanvasResize"
           @ruler-seek="onSeek"
           @clip-context="onClipContext"

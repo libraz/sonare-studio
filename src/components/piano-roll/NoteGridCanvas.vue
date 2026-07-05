@@ -56,6 +56,8 @@ const props = defineProps<{
   interactions: NoteInteractions;
   /** Playhead position getter in PPQ; omit to hide the playhead. */
   positionPpq?: () => number;
+  /** Fixed local column to pin the playhead to while following, else null. */
+  anchoredLocalX?: () => number | null;
   /** Per-note color resolver (single track color by default). */
   noteColor?: NoteColorFn;
   /** Read-only ghost notes from non-active clips, drawn under the notes. */
@@ -80,6 +82,8 @@ const backgroundCanvas = ref<HTMLCanvasElement | null>(null);
 const notesCanvas = ref<HTMLCanvasElement | null>(null);
 const overlayCanvas = ref<HTMLCanvasElement | null>(null);
 const hoveredGhost = ref<GhostNote | null>(null);
+/** Editable note under the pointer during a passive hover (no drag in flight). */
+const hoveredNote = ref<EditorNote | null>(null);
 const localTimeSignatures = computed(() =>
   localizeMeter(props.timeSignatures, props.timeSignatureOriginPpq ?? 0),
 );
@@ -379,6 +383,25 @@ function drawOverlay(): void {
     ctx.fillText(text, labelX + 7, labelY + boxH / 2);
   }
 
+  // Hover HUD for the active layer, matching the ghost note's. Suppressed while
+  // a ghost is hovered (its own HUD wins) or a gesture readout is showing.
+  const hoverNote = hoveredNote.value;
+  if (!ghost && !readout && hoverNote) {
+    const x = props.range.ppqToX(hoverNote.startPpq);
+    const y = props.range.pitchToY(hoverNote.pitch);
+    const text = `${formatPitch(hoverNote.pitch)} · vel ${hoverNote.velocity}`;
+    ctx.font = '11px system-ui, sans-serif';
+    const boxW = ctx.measureText(text).width + 14;
+    const boxH = 20;
+    const labelX = Math.min(Math.max(4, x + 8), w - boxW - 4);
+    const labelY = Math.min(Math.max(4, y - 22), h - boxH - 4);
+    ctx.fillStyle = COLORS.hudBackground;
+    fillRoundRect(ctx, labelX, labelY, boxW, boxH, 4);
+    ctx.fillStyle = COLORS.hudText;
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, labelX + 7, labelY + boxH / 2);
+  }
+
   const guide = hoverPoint.value;
   if (guide) {
     ctx.strokeStyle = COLORS.rulerBeat;
@@ -392,7 +415,12 @@ function drawOverlay(): void {
   }
 
   if (props.positionPpq) {
-    const x = props.range.ppqToX(props.positionPpq());
+    // While following, the line moves normally until it reaches the anchor, then
+    // the cap pins it there and the notes scroll under it, keeping it aligned
+    // with the arrangement's playhead.
+    const raw = props.range.ppqToX(props.positionPpq());
+    const anchor = props.anchoredLocalX?.() ?? null;
+    const x = anchor === null ? raw : Math.min(raw, anchor);
     if (x >= 0 && x <= w) {
       ctx.fillStyle = COLORS.playhead;
       ctx.fillRect(Math.round(x), 0, 1.5, h);
@@ -407,7 +435,9 @@ let lastPlayheadX = Number.NaN;
 function playheadTick(): void {
   const getter = props.positionPpq;
   if (getter) {
-    const x = props.range.ppqToX(getter());
+    const raw = props.range.ppqToX(getter());
+    const anchor = props.anchoredLocalX?.() ?? null;
+    const x = anchor === null ? raw : Math.min(raw, anchor);
     if (x !== lastPlayheadX) {
       lastPlayheadX = x;
       scheduleOverlay();
@@ -481,6 +511,7 @@ watch(
       props.interactions.marquee.value,
       props.interactions.gestureReadout?.value ?? null,
       hoveredGhost.value,
+      hoveredNote.value,
       hoverPoint.value,
     ] as const,
   () => scheduleOverlay(),
@@ -518,6 +549,16 @@ function onPointerMove(event: PointerEvent): void {
   hoveredGhost.value = mods.alt
     ? null
     : hitTestGhost(props.notes, props.ghostNotes ?? [], point, props.range);
+  // Mirror the ghost-note hover HUD for the active layer: surface the editable
+  // note under the pointer so hovering an active note reads it out too. The
+  // overlay suppresses it while a ghost is hovered or a gesture is in flight.
+  if (hoveredGhost.value) {
+    hoveredNote.value = null;
+  } else {
+    const hitId = props.interactions.hitNoteAt(point);
+    hoveredNote.value =
+      hitId === null ? null : (props.notes.find((note) => note.id === hitId) ?? null);
+  }
   hoverPoint.value = point;
   emit('hover-status', {
     ppq: Math.max(0, props.range.xToPpq(point.x)),
@@ -533,6 +574,7 @@ function onPointerUp(event: PointerEvent): void {
 
 function onPointerCancel(): void {
   hoveredGhost.value = null;
+  hoveredNote.value = null;
   hoverPoint.value = null;
   emit('hover-status', null);
   props.interactions.cancel();
@@ -540,6 +582,7 @@ function onPointerCancel(): void {
 
 function onPointerLeave(): void {
   hoveredGhost.value = null;
+  hoveredNote.value = null;
   hoverPoint.value = null;
   emit('hover-status', null);
   scheduleOverlay();

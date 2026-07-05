@@ -84,6 +84,8 @@ const props = defineProps<{
   takes: TakeInteractions;
   /** Playhead position getter in PPQ; omit to hide the playhead. */
   positionPpq?: () => number;
+  /** Fixed local column to pin the playhead to while following, else null. */
+  anchoredLocalX?: () => number | null;
   /** Constant tempo in BPM used to map audio asset time onto PPQ (default 120). */
   tempoBpm?: number;
 }>();
@@ -242,6 +244,7 @@ const { scheduleOverlay } = usePlayheadOverlay({
   layerId,
   range: () => props.range,
   positionPpq: () => props.positionPpq,
+  anchoredLocalX: () => props.anchoredLocalX?.() ?? null,
   colors: COLORS,
 });
 

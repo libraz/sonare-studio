@@ -41,7 +41,11 @@ import {
   PIANO_ROLL_CC_LANES,
 } from '@/project/midi-cc';
 import { useProjectStore } from '@/project/store';
-import { nextPlayheadFollowStart } from '@/ui/arrangement/playhead-follow';
+import {
+  anchoredPlayheadFollowStart,
+  PLAYHEAD_FOLLOW_ANCHOR_X,
+  revealPlayheadStart,
+} from '@/ui/arrangement/playhead-follow';
 import { beatLengthPpq, localizeMeter, rulerTicks } from '@/ui/arrangement/ruler';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
@@ -53,7 +57,7 @@ import { buildGhostNotes, type GhostNote } from './overlay';
 import PianoRollMinimap from './PianoRollMinimap.vue';
 import PianoRollRuler from './PianoRollRuler.vue';
 import PianoRollToolbar from './PianoRollToolbar.vue';
-import { DEFAULT_NOTE_COLOR, type NoteColorFn } from './theme';
+import { DEFAULT_NOTE_COLOR, KEYBOARD_COLUMN_WIDTH_PX, type NoteColorFn } from './theme';
 import { useNoteInteractions } from './use-note-interactions';
 import { usePianoRollCcLanes } from './use-piano-roll-cc-lanes';
 import { usePianoRollLanes } from './use-piano-roll-lanes';
@@ -92,6 +96,11 @@ const props = defineProps<{
   audition?: (pitch: number, velocity: number) => void;
 }>();
 
+const emit = defineEmits<{
+  /** Request to move the transport playhead to an absolute PPQ position. */
+  seek: [ppq: number];
+}>();
+
 const store = useProjectStore();
 const { t } = useI18n();
 const appSettings = useAppSettings();
@@ -107,6 +116,8 @@ const PLAYHEAD_FOLLOW_EPSILON_PPQ = 0.0005;
 const PLAYHEAD_FOLLOW_INTERVAL_MS = 33;
 /** Ignore sub-pixel follow movement; the overlay playhead still updates every frame. */
 const PLAYHEAD_FOLLOW_MIN_PX = 1;
+/** Local column the playhead is pinned to while following (past the keyboard). */
+const PLAYHEAD_ANCHOR_LOCAL_X = Math.max(0, PLAYHEAD_FOLLOW_ANCHOR_X - KEYBOARD_COLUMN_WIDTH_PX);
 
 const viewport = usePianoRollViewport({
   // A transform targets a specific clip; close the popover on clip change.
@@ -651,6 +662,11 @@ const timeSignatureOriginPpq = computed(() => {
   return clip ? clip.startPpq - clip.sourceOffsetPpq : 0;
 });
 
+/** Maps a clip-source ruler seek back to an absolute transport PPQ. */
+function onRulerSeek(localPpq: number): void {
+  emit('seek', Math.max(0, localPpq + timeSignatureOriginPpq.value));
+}
+
 const localTimeSignatures = computed(() =>
   localizeMeter(store.timeSignatures, timeSignatureOriginPpq.value),
 );
@@ -804,7 +820,7 @@ function followPlayheadTick(now = performance.now()): void {
   lastFollowFrameMs = now;
   if (props.positionPpq) {
     const ppq = localPositionPpq();
-    const nextStart = nextPlayheadFollowStart(range, ppq);
+    const nextStart = anchoredPlayheadFollowStart(range, ppq, PLAYHEAD_ANCHOR_LOCAL_X);
     if (nextStart !== null) {
       const delta = nextStart - range.startPpq;
       if (Math.abs(delta * range.pxPerPpq) >= PLAYHEAD_FOLLOW_MIN_PX) {
@@ -826,11 +842,33 @@ function startPlayheadFollow(): void {
   followRaf = requestAnimationFrame(followPlayheadTick);
 }
 
+/** Local column the overlay pins the playhead to while following, else null. */
+function followAnchorLocalX(): number | null {
+  return props.isPlaying && appSettings.settings.scrollFollowPlayhead
+    ? PLAYHEAD_ANCHOR_LOCAL_X
+    : null;
+}
+
 watch(
   () => [props.isPlaying, appSettings.settings.scrollFollowPlayhead],
   ([playing, follow]) => {
     if (playing && follow) startPlayheadFollow();
     else stopPlayheadFollow();
+  },
+);
+
+// A seek while stopped nudges nothing else horizontally, so scroll the sought
+// position back into view when it lands outside the viewport. During playback
+// the follow loop owns scrolling, so skip it there.
+watch(
+  () => (props.positionPpq ? localPositionPpq() : undefined),
+  (ppq) => {
+    if (props.isPlaying || ppq === undefined) return;
+    const nextStart = revealPlayheadStart(range, ppq, PLAYHEAD_ANCHOR_LOCAL_X);
+    if (nextStart !== null) {
+      range.setStartPpq(nextStart);
+      bump();
+    }
   },
 );
 
@@ -874,7 +912,11 @@ onBeforeUnmount(() => {
       @fit-notes="fitNotes"
       @fit-selection="fitSelection"
     />
-    <div class="piano-roll-layout" :class="{ 'lane-hidden': !laneVisible }">
+    <div
+      class="piano-roll-layout"
+      :class="{ 'lane-hidden': !laneVisible }"
+      :style="{ gridTemplateColumns: `${KEYBOARD_COLUMN_WIDTH_PX}px 1fr 12px` }"
+    >
       <PianoRollMinimap
         class="cell-minimap"
         :range="range"
@@ -893,6 +935,7 @@ onBeforeUnmount(() => {
         :clip-length-ppq="store.clipLengthPpq"
         :time-signatures="store.timeSignatures"
         :time-signature-origin-ppq="timeSignatureOriginPpq"
+        @seek="onRulerSeek"
       />
       <KeyboardColumn class="cell-keyboard" :range="range" :revision="revision" :painter="painter" />
       <div ref="gridCell" class="cell-grid">
@@ -909,6 +952,7 @@ onBeforeUnmount(() => {
           :time-signature-origin-ppq="timeSignatureOriginPpq"
           :interactions="interactions"
           :position-ppq="props.positionPpq ? localPositionPpq : undefined"
+          :anchored-local-x="followAnchorLocalX"
           :note-color="noteColor"
           :ghost-notes="ghostNotes"
           @view-resize="viewport.onGridResize"
@@ -1083,7 +1127,8 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 72px 1fr 12px;
+  /* Columns are set inline from KEYBOARD_COLUMN_WIDTH_PX so the keyboard width
+     and the playhead follow anchor stay derived from one source. */
   grid-template-rows: 18px 24px 1fr 132px 12px 22px;
 }
 

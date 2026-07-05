@@ -22,6 +22,56 @@ export const DEFAULT_PLAYHEAD_FOLLOW_MARGINS: PlayheadFollowMargins = {
 };
 
 /**
+ * Fixed screen column, in px from the shared timeline area's left edge (i.e.
+ * including each view's left gutter), where the playhead is pinned while
+ * following playback. Anchoring both the arrangement and the piano-roll
+ * playhead to the same absolute column — the arrangement to
+ * `ANCHOR - trackHeaderWidth`, the piano roll to `ANCHOR - keyboardWidth` —
+ * keeps their red playhead lines vertically aligned even though the two views
+ * differ in gutter width, zoom and scroll. Kept just right of the wider gutter
+ * so the line sits near the left edge of both timelines.
+ */
+export const PLAYHEAD_FOLLOW_ANCHOR_X = 360;
+
+/**
+ * Returns the viewport start that pins the playhead at a fixed local column
+ * (`anchorLocalPx`, measured from the canvas left edge), or null when the
+ * viewport is already there. Clamped so the view never scrolls before 0, which
+ * lets the playhead drift left of the anchor near the song start.
+ */
+export function anchoredPlayheadFollowStart(
+  range: Pick<TimelineRange, 'startPpq' | 'widthPx' | 'pxPerPpq'>,
+  playheadPpq: number,
+  anchorLocalPx: number,
+): number | null {
+  if (!Number.isFinite(playheadPpq) || range.widthPx <= 0 || range.pxPerPpq <= 0) {
+    return null;
+  }
+  const start = Math.max(0, playheadPpq - anchorLocalPx / range.pxPerPpq);
+  return start === range.startPpq ? null : start;
+}
+
+/**
+ * Returns a viewport start that scrolls an off-screen playhead back to the
+ * follow anchor column, or null when the playhead is already visible (so a seek
+ * that lands inside the current viewport never yanks it). Used on manual seeks
+ * while stopped, where nothing else scrolls the view, so the playhead can never
+ * stay hidden after the transport jumps outside the visible range.
+ */
+export function revealPlayheadStart(
+  range: Pick<TimelineRange, 'startPpq' | 'widthPx' | 'pxPerPpq' | 'ppqToX'>,
+  playheadPpq: number,
+  anchorLocalPx: number,
+): number | null {
+  if (!Number.isFinite(playheadPpq) || range.widthPx <= 0 || range.pxPerPpq <= 0) {
+    return null;
+  }
+  const x = range.ppqToX(playheadPpq);
+  if (x >= 0 && x <= range.widthPx) return null;
+  return anchoredPlayheadFollowStart(range, playheadPpq, anchorLocalPx);
+}
+
+/**
  * Returns the viewport start that would keep the playhead inside the follow
  * window, or null when no scroll is needed.
  */

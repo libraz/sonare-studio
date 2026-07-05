@@ -993,6 +993,7 @@ useAppLifecycle({
             :is-playing="isPlaying"
             :force-lane-hidden="scoreVisible"
             :audition="auditionNote"
+            @seek="onSeek"
           />
           <div
             v-if="scoreVisible"

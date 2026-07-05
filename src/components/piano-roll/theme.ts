@@ -81,6 +81,9 @@ export const PIANO_ROLL_COLORS = {
 /** Default track color applied to notes until per-track colors exist. */
 export const DEFAULT_NOTE_COLOR = '#4fa8e8';
 
+/** Width of the fixed keyboard column left of the note grid. */
+export const KEYBOARD_COLUMN_WIDTH_PX = 72;
+
 /** Per-note color resolver; single-track for now, multi-track overlays later. */
 export type NoteColorFn = (note: EditorNote) => string;
 

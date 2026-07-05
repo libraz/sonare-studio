@@ -28,6 +28,13 @@ export interface PlayheadOverlayOptions {
   range: () => TimelineRange;
   /** Returns the playhead position getter in PPQ, or undefined to hide it. */
   positionPpq: () => (() => number) | undefined;
+  /**
+   * While following playback the playhead is pinned to this fixed local column
+   * (px from the canvas left edge) instead of tracking its live PPQ position,
+   * so the content scrolls under a stationary line. Returns null when not
+   * following, i.e. the line should track the playhead normally.
+   */
+  anchoredLocalX?: () => number | null;
   /** Color tokens. */
   colors: ArrangementColors;
 }
@@ -47,7 +54,19 @@ export interface PlayheadOverlay {
  * @returns The overlay draw callback and its repaint scheduler.
  */
 export function usePlayheadOverlay(options: PlayheadOverlayOptions): PlayheadOverlay {
-  const { canvas, painter, layerId, range, positionPpq, colors } = options;
+  const { canvas, painter, layerId, range, positionPpq, anchoredLocalX, colors } = options;
+
+  /**
+   * Line column: the live PPQ column, capped at the follow anchor while
+   * following. Before the playhead reaches the anchor (e.g. right after playback
+   * starts left of it) the line moves normally from its real position; once it
+   * reaches the anchor the cap pins it there while the content scrolls under it.
+   */
+  function playheadX(view: TimelineRange, getter: () => number): number {
+    const raw = view.ppqToX(getter());
+    const anchor = anchoredLocalX?.() ?? null;
+    return anchor === null ? raw : Math.min(raw, anchor);
+  }
 
   function drawOverlay(): void {
     const el = canvas.value;
@@ -60,7 +79,7 @@ export function usePlayheadOverlay(options: PlayheadOverlayOptions): PlayheadOve
     ctx.clearRect(0, 0, w, h);
     const getter = positionPpq();
     if (getter) {
-      const x = view.ppqToX(getter());
+      const x = playheadX(view, getter);
       if (x >= 0 && x <= w) {
         ctx.fillStyle = colors.playhead;
         ctx.fillRect(Math.round(x), 0, 1.5, h);
@@ -79,7 +98,9 @@ export function usePlayheadOverlay(options: PlayheadOverlayOptions): PlayheadOve
   function playheadTick(): void {
     const getter = positionPpq();
     if (getter) {
-      const x = range().ppqToX(getter());
+      // Redraw only when the line's column actually moved; once pinned at the
+      // anchor this stays put until the position or anchor state changes.
+      const x = playheadX(range(), getter);
       if (x !== lastPlayheadX) {
         lastPlayheadX = x;
         scheduleOverlay();

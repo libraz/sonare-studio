@@ -19,7 +19,9 @@ describe('playhead follow preference wiring', () => {
   it('wires the arrangement view to the scroll-follow setting', () => {
     expect(arrangementView).toContain('appSettings.settings.scrollFollowPlayhead');
     expect(arrangementView).toContain('function followPlayheadTick');
-    expect(arrangementView).toContain('nextPlayheadFollowStart(range, ppq)');
+    expect(arrangementView).toContain(
+      'anchoredPlayheadFollowStart(range, ppq, PLAYHEAD_ANCHOR_LOCAL_X)',
+    );
     expect(arrangementView).toContain(
       '() => [props.isPlaying, appSettings.settings.scrollFollowPlayhead]',
     );
@@ -28,7 +30,9 @@ describe('playhead follow preference wiring', () => {
   it('wires the piano roll to the scroll-follow setting', () => {
     expect(pianoRollEditor).toContain('appSettings.settings.scrollFollowPlayhead');
     expect(pianoRollEditor).toContain('function followPlayheadTick');
-    expect(pianoRollEditor).toContain('nextPlayheadFollowStart(range, ppq)');
+    expect(pianoRollEditor).toContain(
+      'anchoredPlayheadFollowStart(range, ppq, PLAYHEAD_ANCHOR_LOCAL_X)',
+    );
     expect(pianoRollEditor).toContain(
       '() => [props.isPlaying, appSettings.settings.scrollFollowPlayhead]',
     );

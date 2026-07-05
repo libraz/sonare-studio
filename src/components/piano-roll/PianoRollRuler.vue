@@ -15,8 +15,41 @@ const props = defineProps<{
   timeSignatureOriginPpq?: number;
 }>();
 
+const emit = defineEmits<{
+  /** Seek the transport to a clip-source PPQ position (press or scrub). */
+  seek: [localPpq: number];
+}>();
+
 const wrapper = ref<HTMLDivElement | null>(null);
 const canvas = ref<HTMLCanvasElement | null>(null);
+
+let scrubbing = false;
+
+/** Clip-source PPQ under a pointer event, clamped to the timeline origin. */
+function ppqFromEvent(event: PointerEvent): number {
+  const el = wrapper.value;
+  if (!el) return 0;
+  const x = event.clientX - el.getBoundingClientRect().left;
+  return Math.max(0, props.range.xToPpq(x));
+}
+
+function onPointerDown(event: PointerEvent): void {
+  if (event.button !== 0) return;
+  scrubbing = true;
+  wrapper.value?.setPointerCapture(event.pointerId);
+  emit('seek', ppqFromEvent(event));
+}
+
+function onPointerMove(event: PointerEvent): void {
+  if (!scrubbing) return;
+  emit('seek', ppqFromEvent(event));
+}
+
+function onPointerUp(event: PointerEvent): void {
+  if (!scrubbing) return;
+  scrubbing = false;
+  wrapper.value?.releasePointerCapture(event.pointerId);
+}
 
 const layerId = Math.random().toString(36).slice(2, 8);
 const COLORS = PIANO_ROLL_COLORS;
@@ -101,7 +134,14 @@ watch(
 </script>
 
 <template>
-  <div ref="wrapper" class="piano-roll-ruler">
+  <div
+    ref="wrapper"
+    class="piano-roll-ruler"
+    @pointerdown="onPointerDown"
+    @pointermove="onPointerMove"
+    @pointerup="onPointerUp"
+    @pointercancel="onPointerUp"
+  >
     <canvas ref="canvas" class="piano-roll-ruler__canvas" aria-hidden="true" />
   </div>
 </template>
@@ -114,6 +154,8 @@ watch(
   overflow: hidden;
   background: var(--surface-2);
   border-bottom: 1px solid var(--border-strong);
+  cursor: pointer;
+  touch-action: none;
 }
 
 .piano-roll-ruler__canvas {
