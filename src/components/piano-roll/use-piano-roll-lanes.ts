@@ -9,6 +9,7 @@
  */
 
 import { type ComputedRef, computed, type Ref, ref } from 'vue';
+import type { ClipExpressionCurve } from '@/project/types';
 import type { LaneParamId } from './lane-params';
 
 /** Reactive lane-mode state and selectors returned by {@link usePianoRollLanes}. */
@@ -21,6 +22,8 @@ export interface PianoRollLanes {
    * own channel); this selects which channel's curve the bottom lane edits.
    */
   laneChannel: Ref<number>;
+  /** Curve mode assigned to newly drawn expression-lane breakpoints. */
+  laneCurve: Ref<ClipExpressionCurve>;
   /**
    * Active CC controller in the bottom lane, or null when a note-parameter lane
    * is shown. When set, the bottom lane edits the active clip's CC breakpoints
@@ -57,6 +60,7 @@ export interface PianoRollLanes {
 export function usePianoRollLanes(): PianoRollLanes {
   const laneParam = ref<LaneParamId>('velocity');
   const laneChannel = ref(0);
+  const laneCurve = ref<ClipExpressionCurve>('hold');
   const laneCc = ref<number | null>(null);
   const lanePitchBend = ref(false);
   const laneChannelPressure = ref(false);
@@ -105,6 +109,7 @@ export function usePianoRollLanes(): PianoRollLanes {
   return {
     laneParam,
     laneChannel,
+    laneCurve,
     laneCc,
     lanePitchBend,
     laneChannelPressure,

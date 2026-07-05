@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { shallowRef } from 'vue';
+import { effectScope, shallowRef } from 'vue';
 import { useNotePreview } from '@/composables/useNotePreview';
 import type { EngineHandle } from '@/engine/engine';
 import { addTrack, clearHistory, setActiveTrack } from '@/project/commands';
@@ -105,6 +105,55 @@ describe('useNotePreview live MIDI sustain', () => {
       expect(pushMidiNoteOff).not.toHaveBeenCalled();
       vi.advanceTimersByTime(10000);
       expect(pushMidiNoteOff).toHaveBeenCalledWith(midiTrackId, 0, 0, 64);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('releaseAll clears pending fixed-duration MIDI auditions without duplicate note-off', async () => {
+    vi.useFakeTimers();
+    try {
+      const { preview, pushMidiNoteOff } = setup();
+      await preview.previewNote(64, 100);
+      expect(pushMidiNoteOff).not.toHaveBeenCalled();
+
+      preview.releaseAll();
+      expect(pushMidiNoteOff).toHaveBeenCalledTimes(1);
+      expect(pushMidiNoteOff).toHaveBeenCalledWith(midiTrackId, 0, 0, 64);
+
+      vi.advanceTimersByTime(250);
+      expect(pushMidiNoteOff).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('scope disposal releases held notes and pending fixed-duration auditions', async () => {
+    vi.useFakeTimers();
+    try {
+      const { handle, pushMidiNoteOff } = makeHandle();
+      const errorMessage = shallowRef('');
+      const scope = effectScope();
+      const preview = scope.run(() =>
+        useNotePreview({
+          errorMessage,
+          handle,
+          hasMidiSync: () => true,
+          ensureEngineStarted: async () => handle.value,
+        }),
+      );
+      if (!preview) throw new Error('effect scope did not run');
+
+      await preview.previewNoteOn(60, 100);
+      await preview.previewNote(64, 100);
+      scope.stop();
+
+      expect(pushMidiNoteOff).toHaveBeenCalledTimes(2);
+      expect(pushMidiNoteOff.mock.calls.map((call) => call[3]).sort((a, b) => a - b)).toEqual([
+        60, 64,
+      ]);
+      vi.advanceTimersByTime(10000);
+      expect(pushMidiNoteOff).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }

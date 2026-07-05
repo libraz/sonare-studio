@@ -1,4 +1,4 @@
-import type { Ref, ShallowRef } from 'vue';
+import { getCurrentScope, onScopeDispose, type Ref, type ShallowRef } from 'vue';
 import type { EngineHandle } from '@/engine/engine';
 import {
   type MidiNote,
@@ -30,6 +30,11 @@ export function useNotePreview(options: NotePreviewOptions) {
 
   /** Sustained live notes keyed by pitch: the track they sound on + a safety timer. */
   const heldNotes = new Map<number, { trackId: number; timer: ReturnType<typeof setTimeout> }>();
+  const auditionTimers = new Set<{
+    pitch: number;
+    timer: ReturnType<typeof setTimeout>;
+    trackId: number;
+  }>();
 
   /** True when the active track can sustain live MIDI through the engine. */
   function activeMidiTrackId(): number | null {
@@ -51,6 +56,24 @@ export function useNotePreview(options: NotePreviewOptions) {
     } catch {
       // The engine may be disposed; releasing a gone note is harmless.
     }
+  }
+
+  function pushNoteOff(trackId: number, pitch: number): void {
+    try {
+      options.handle.value?.engine.pushMidiNoteOff(trackId, 0, 0, pitch);
+    } catch {
+      // The engine may be disposed before the note-off path runs.
+    }
+  }
+
+  function releaseAudition(entry: {
+    pitch: number;
+    timer: ReturnType<typeof setTimeout>;
+    trackId: number;
+  }): void {
+    if (!auditionTimers.delete(entry)) return;
+    clearTimeout(entry.timer);
+    pushNoteOff(entry.trackId, entry.pitch);
   }
 
   /**
@@ -86,6 +109,7 @@ export function useNotePreview(options: NotePreviewOptions) {
   /** Releases every sustained note (engine teardown / scope dispose). */
   function releaseAll(): void {
     for (const pitch of [...heldNotes.keys()]) releaseHeld(pitch);
+    for (const entry of [...auditionTimers]) releaseAudition(entry);
   }
 
   async function previewNote(pitch: number, velocity: number): Promise<void> {
@@ -96,13 +120,15 @@ export function useNotePreview(options: NotePreviewOptions) {
       const durationMs = (PREVIEW_DURATION_PPQ * 60000) / Math.max(1, store.tempoBpm);
       try {
         h.engine.pushMidiNoteOn(activeTrack.id, 0, 0, pitch, velocity);
-        setTimeout(() => {
-          try {
-            h.engine.pushMidiNoteOff(activeTrack.id, 0, 0, pitch);
-          } catch {
-            // The engine may be disposed before the note-off timer fires.
-          }
-        }, durationMs);
+        const entry = {
+          pitch,
+          trackId: activeTrack.id,
+          timer: setTimeout(() => {
+            if (!auditionTimers.delete(entry)) return;
+            pushNoteOff(activeTrack.id, pitch);
+          }, durationMs),
+        };
+        auditionTimers.add(entry);
       } catch (err) {
         options.errorMessage.value = describeError(err);
       }
@@ -136,6 +162,10 @@ export function useNotePreview(options: NotePreviewOptions) {
 
   function auditionNote(pitch: number, velocity: number): void {
     void previewNote(pitch, velocity);
+  }
+
+  if (getCurrentScope()) {
+    onScopeDispose(releaseAll);
   }
 
   return {

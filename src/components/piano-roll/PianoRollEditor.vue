@@ -35,14 +35,15 @@ import {
   updateNotes,
 } from '@/project/commands';
 import {
+  CLIP_EXPRESSION_CURVES,
   MIDI_PITCH_BEND_CENTER,
   MIDI_PITCH_BEND_MAX,
   PIANO_ROLL_CC_LANES,
 } from '@/project/midi-cc';
 import { useProjectStore } from '@/project/store';
 import { nextPlayheadFollowStart } from '@/ui/arrangement/playhead-follow';
-import { beatLengthPpq, rulerTicks } from '@/ui/arrangement/ruler';
-import { useI18n } from '@/ui/i18n';
+import { beatLengthPpq, localizeMeter, rulerTicks } from '@/ui/arrangement/ruler';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 import BreakpointLane from './BreakpointLane.vue';
 import KeyboardColumn from './KeyboardColumn.vue';
@@ -172,6 +173,7 @@ const lanes = usePianoRollLanes();
 const {
   laneParam,
   laneChannel,
+  laneCurve,
   laneCc,
   lanePitchBend,
   laneChannelPressure,
@@ -207,6 +209,13 @@ const laneChannelOptions = computed(() =>
   Array.from({ length: 16 }, (_, i) => ({
     value: i,
     label: `${t.value.shell.pianoRoll.laneChannelPrefix}${i + 1}`,
+  })),
+);
+
+const laneCurveOptions = computed(() =>
+  CLIP_EXPRESSION_CURVES.map((curve) => ({
+    value: curve,
+    label: t.value.shell.pianoRoll.expressionCurve[curve],
   })),
 );
 
@@ -281,6 +290,7 @@ const laneMode = computed({
 const ccLanes = usePianoRollCcLanes({ lanes, gridPpq });
 const {
   polyPressurePitch,
+  polyPressurePitches,
   activeCcPoints,
   activePitchBendPoints,
   activeChannelPressurePoints,
@@ -291,6 +301,16 @@ const {
   commitPolyPressurePoints,
   ccSnap,
 } = ccLanes;
+
+const polyPressureReadoutLabel = computed(() => {
+  if (polyPressurePitches.value.length === 0) return t.value.shell.pianoRoll.polyPressureLaneTab;
+  if (polyPressurePitches.value.length === 1 && polyPressurePitch.value !== null) {
+    return formatPitch(polyPressurePitch.value);
+  }
+  return formatMessage(t.value.shell.pianoRoll.polyPressureSelectedKeys, {
+    count: polyPressurePitches.value.length,
+  });
+});
 
 const { onWheel, zoomHorizontal, zoomVertical } = usePianoRollZoom({ range, gridCell, bump });
 
@@ -626,7 +646,16 @@ function localPositionPpq(): number {
   return position - clip.startPpq + clip.sourceOffsetPpq;
 }
 
-function resolveCreatedPitch(pitch: number): number {
+const timeSignatureOriginPpq = computed(() => {
+  const clip = store.activeClip;
+  return clip ? clip.startPpq - clip.sourceOffsetPpq : 0;
+});
+
+const localTimeSignatures = computed(() =>
+  localizeMeter(store.timeSignatures, timeSignatureOriginPpq.value),
+);
+
+function resolveScalePitch(pitch: number): number {
   if (!snapToScaleEnabled.value) return pitch;
   const mask = store.highlightedPitchClasses;
   if (!mask.some(Boolean) || mask[((pitch % 12) + 12) % 12]) return pitch;
@@ -648,7 +677,8 @@ const interactions = useNoteInteractions({
   getGridPpq: () => (store.snapEnabled ? gridPpq.value : 0),
   getTool: () => tool.value,
   getMaxPpq: () => store.clipLengthPpq,
-  resolveCreatedPitch,
+  resolveCreatedPitch: resolveScalePitch,
+  resolveEditedPitch: resolveScalePitch,
   commands: { addNote, updateNotes, deleteNotes, setSelection, splitNote },
   auditionDuringDrag: () => auditionDrag.value,
   ...(props.audition ? { onAudition: props.audition } : {}),
@@ -737,10 +767,10 @@ const statusText = computed(() => {
   if (!hover) {
     return `${selection} selected · Snap ${snap}`;
   }
-  const ticks = rulerTicks(store.timeSignatures, 0, hover.ppq + 0.001, 100);
+  const ticks = rulerTicks(localTimeSignatures.value, 0, hover.ppq + 0.001, 100);
   const bar = [...ticks].reverse().find((tick) => tick.kind === 'bar');
   const beatLength = beatLengthPpq(
-    [...store.timeSignatures].reverse().find((segment) => segment.startPpq <= hover.ppq) ?? {
+    [...localTimeSignatures.value].reverse().find((segment) => segment.startPpq <= hover.ppq) ?? {
       startPpq: 0,
       numerator: 4,
       denominator: 4,
@@ -862,6 +892,7 @@ onBeforeUnmount(() => {
         :painter="painter"
         :clip-length-ppq="store.clipLengthPpq"
         :time-signatures="store.timeSignatures"
+        :time-signature-origin-ppq="timeSignatureOriginPpq"
       />
       <KeyboardColumn class="cell-keyboard" :range="range" :revision="revision" :painter="painter" />
       <div ref="gridCell" class="cell-grid">
@@ -875,6 +906,7 @@ onBeforeUnmount(() => {
           :grid-ppq="gridPpq"
           :clip-length-ppq="store.clipLengthPpq"
           :time-signatures="store.timeSignatures"
+          :time-signature-origin-ppq="timeSignatureOriginPpq"
           :interactions="interactions"
           :position-ppq="props.positionPpq ? localPositionPpq : undefined"
           :note-color="noteColor"
@@ -918,6 +950,15 @@ onBeforeUnmount(() => {
           :aria-label="t.shell.pianoRoll.laneChannelTitle"
           :title="t.shell.pianoRoll.laneChannelTitle"
         />
+        <SelectMenu
+          v-if="!noteLaneActive"
+          v-model="laneCurve"
+          class="lane-curve"
+          size="sm"
+          :options="laneCurveOptions"
+          :aria-label="t.shell.pianoRoll.expressionCurveTitle"
+          :title="t.shell.pianoRoll.expressionCurveTitle"
+        />
       </div>
       <VelocityLane
         v-if="noteLaneActive"
@@ -942,6 +983,7 @@ onBeforeUnmount(() => {
         :readout-label="`CC${laneCc}`"
         :color="trackColor"
         :snap-ppq="ccSnap"
+        :curve-mode="laneCurve"
       />
       <BreakpointLane
         v-else-if="lanePitchBend"
@@ -959,6 +1001,7 @@ onBeforeUnmount(() => {
         :aria-label="t.shell.pianoRoll.bendLaneTitle"
         :color="trackColor"
         :snap-ppq="ccSnap"
+        :curve-mode="laneCurve"
       />
       <BreakpointLane
         v-else-if="laneChannelPressure"
@@ -974,6 +1017,7 @@ onBeforeUnmount(() => {
         :aria-label="t.shell.pianoRoll.pressureLaneTitle"
         :color="trackColor"
         :snap-ppq="ccSnap"
+        :curve-mode="laneCurve"
       />
       <BreakpointLane
         v-else
@@ -981,18 +1025,15 @@ onBeforeUnmount(() => {
         :range="range"
         :revision="revision"
         :painter="painter"
-        :clip-id="polyPressurePitch === null ? -1 : store.clipId"
+        :clip-id="polyPressurePitches.length === 0 ? -1 : store.clipId"
         :clip-length-ppq="store.clipLengthPpq"
         :points="activePolyPressurePoints"
         :commit="commitPolyPressurePoints"
-        :readout-label="
-          polyPressurePitch === null
-            ? t.shell.pianoRoll.polyPressureLaneTab
-            : formatPitch(polyPressurePitch)
-        "
+        :readout-label="polyPressureReadoutLabel"
         :aria-label="t.shell.pianoRoll.polyPressureLaneTitle"
         :color="trackColor"
         :snap-ppq="ccSnap"
+        :curve-mode="laneCurve"
       />
       <div class="cell-corner" />
       <div class="cell-hscroll-spacer" />
@@ -1155,7 +1196,8 @@ onBeforeUnmount(() => {
 
 /* Keep the channel picker from stretching as a flex item in the lane column;
  * the frosted trigger carries its own surface, padding and typography. */
-.lane-channel {
+.lane-channel,
+.lane-curve {
   flex: none;
   min-height: 0;
 }

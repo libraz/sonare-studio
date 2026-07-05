@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { TimeSignatureSegment } from '@/project/types';
-import { rulerTicks } from '@/ui/arrangement/ruler';
+import { localizeMeter, rulerTicks } from '@/ui/arrangement/ruler';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 import { getCanvasContext, PIANO_ROLL_COLORS, setupCanvas } from './theme';
@@ -12,6 +12,7 @@ const props = defineProps<{
   painter: Painter;
   clipLengthPpq: number;
   timeSignatures: TimeSignatureSegment[];
+  timeSignatureOriginPpq?: number;
 }>();
 
 const wrapper = ref<HTMLDivElement | null>(null);
@@ -19,6 +20,9 @@ const canvas = ref<HTMLCanvasElement | null>(null);
 
 const layerId = Math.random().toString(36).slice(2, 8);
 const COLORS = PIANO_ROLL_COLORS;
+const localTimeSignatures = computed(() =>
+  localizeMeter(props.timeSignatures, props.timeSignatureOriginPpq ?? 0),
+);
 
 let widthPx = 0;
 let heightPx = 0;
@@ -41,7 +45,7 @@ function draw(): void {
   ctx.textBaseline = 'middle';
 
   for (const tick of rulerTicks(
-    props.timeSignatures,
+    localTimeSignatures.value,
     props.range.startPpq,
     props.range.endPpq,
     props.range.pxPerPpq,
@@ -85,7 +89,13 @@ onBeforeUnmount(() => {
 });
 
 watch(
-  () => [props.revision, props.clipLengthPpq, props.timeSignatures] as const,
+  () =>
+    [
+      props.revision,
+      props.clipLengthPpq,
+      props.timeSignatures,
+      props.timeSignatureOriginPpq,
+    ] as const,
   () => schedule(),
 );
 </script>

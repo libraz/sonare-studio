@@ -27,7 +27,12 @@ function makeNote(partial: Partial<EditorNote> & { id: number }): EditorNote {
  * View geometry: 100 px per PPQ, 10 px rows, no scroll. A pitch-60 note at
  * PPQ [1, 2) therefore covers x [100, 200) and y [670, 680).
  */
-function makeHarness(notes: EditorNote[], initialSelection: number[] = [], maxPpq?: number) {
+function makeHarness(
+  notes: EditorNote[],
+  initialSelection: number[] = [],
+  maxPpq?: number,
+  resolvePitch?: (pitch: number) => number,
+) {
   const view = new TimelineRange({ widthPx: 800, heightPx: 1280, pxPerPpq: 100, rowHeight: 10 });
   let selection = new Set<number>(initialSelection);
   let nextId = 100;
@@ -49,6 +54,9 @@ function makeHarness(notes: EditorNote[], initialSelection: number[] = [], maxPp
     getGridPpq: () => 0.25,
     getTool: () => tool,
     ...(maxPpq === undefined ? {} : { getMaxPpq: () => maxPpq }),
+    ...(resolvePitch === undefined
+      ? {}
+      : { resolveCreatedPitch: resolvePitch, resolveEditedPitch: resolvePitch }),
     commands,
     onAudition,
   });
@@ -94,6 +102,19 @@ describe('useNoteInteractions', () => {
       interactions.onDoubleClick({ x: 150, y: 675 });
       expect(commands.addNote).not.toHaveBeenCalled();
     });
+
+    it('snaps created pitches through the supplied scale resolver', () => {
+      const { commands, interactions } = makeHarness([], [], undefined, (pitch) =>
+        pitch === 61 ? 62 : pitch,
+      );
+      // y 665 = C#4 / pitch 61, resolver moves it to D4 / pitch 62.
+      interactions.onDoubleClick({ x: 337, y: 665 });
+      expect(commands.addNote).toHaveBeenCalledWith({
+        pitch: 62,
+        startPpq: 3.25,
+        durationPpq: 0.25,
+      });
+    });
   });
 
   describe('audition feedback', () => {
@@ -118,6 +139,13 @@ describe('useNoteInteractions', () => {
       const { interactions, onAudition } = makeHarness([]);
       interactions.onDoubleClick({ x: 337, y: 675 });
       expect(onAudition).toHaveBeenCalledWith(60, 96);
+    });
+
+    it('auditions drawn notes with the inherited draw velocity', () => {
+      const harness = makeHarness([makeNote({ id: 1, velocity: 72 })], [1]);
+      harness.setTool('draw');
+      harness.interactions.onPointerDown({ x: 337, y: 675 });
+      expect(harness.onAudition).toHaveBeenCalledWith(60, 72);
     });
 
     it('stays silent when clicking empty grid space', () => {
@@ -147,6 +175,20 @@ describe('useNoteInteractions', () => {
       const update = mocked(commands.updateNotes).mock.calls[0][0][0];
       expect(update.startPpq).toBeCloseTo(1.38, 9);
       expect(update.pitch).toBe(60);
+    });
+
+    it('snaps moved pitches through the supplied scale resolver', () => {
+      const { commands, interactions } = makeHarness(
+        [makeNote({ id: 1, pitch: 60 })],
+        [],
+        undefined,
+        (pitch) => (pitch === 61 ? 62 : pitch),
+      );
+      interactions.onPointerDown({ x: 150, y: 675 });
+      // -10 px = +1 semitone raw move to C#; resolver snaps it to D.
+      interactions.onPointerMove({ x: 150, y: 665 });
+      interactions.onPointerUp({ x: 150, y: 665 });
+      expect(commands.updateNotes).toHaveBeenCalledWith([{ id: 1, startPpq: 1, pitch: 62 }]);
     });
 
     it('moves the whole selection by the delta of the grabbed note', () => {
@@ -381,6 +423,36 @@ describe('useNoteInteractions', () => {
         durationPpq: 0.25,
       });
       expect(commands.setSelection).toHaveBeenLastCalledWith([100]);
+    });
+
+    it('inherits selected-note velocity for newly drawn notes', () => {
+      const { commands, interactions, setTool } = makeHarness(
+        [makeNote({ id: 1, velocity: 72 })],
+        [1],
+      );
+      setTool('draw');
+      interactions.onPointerDown({ x: 337, y: 675 });
+      interactions.onPointerUp({ x: 337, y: 675 });
+      expect(commands.addNote).toHaveBeenCalledWith({
+        pitch: 60,
+        startPpq: 3.25,
+        durationPpq: 0.25,
+        velocity: 72,
+      });
+    });
+
+    it('inherits the latest note velocity when no note is selected', () => {
+      const { commands, interactions } = makeHarness([
+        makeNote({ id: 1, velocity: 64 }),
+        makeNote({ id: 2, startPpq: 4, velocity: 81 }),
+      ]);
+      interactions.onDoubleClick({ x: 337, y: 675 });
+      expect(commands.addNote).toHaveBeenCalledWith({
+        pitch: 60,
+        startPpq: 3.25,
+        durationPpq: 0.25,
+        velocity: 81,
+      });
     });
 
     it('extends the drawn note length by dragging, snapping the end', () => {

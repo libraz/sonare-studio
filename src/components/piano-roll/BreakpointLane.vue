@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
-import type { ClipCcPoint } from '@/project/types';
+import { isClipExpressionCurve } from '@/project/midi-cc';
+import type { ClipCcPoint, ClipExpressionCurve } from '@/project/types';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 import { useI18n } from '@/ui/i18n';
 import { DEFAULT_NOTE_COLOR, getCanvasContext, PIANO_ROLL_COLORS, setupCanvas } from './theme';
 
 /**
- * Generic breakpoint-automation lane below the note grid: a stepped curve of a
+ * Generic breakpoint-automation lane below the note grid: a curve of a
  * clip's {ppq, value} breakpoints sharing the grid's horizontal TimelineRange.
  * The value axis runs 0..`valueMax` (bottom to top). Drag a breakpoint to move
  * it, click empty space to add one, drag across empty space to draw a freehand
@@ -47,6 +48,8 @@ const props = defineProps<{
   color?: string;
   /** Optional horizontal snap applied to added/moved points. */
   snapPpq?: (ppq: number) => number;
+  /** Curve assigned to newly drawn breakpoints; existing moved points preserve theirs. */
+  curveMode?: ClipExpressionCurve;
 }>();
 
 const { t } = useI18n();
@@ -101,6 +104,22 @@ function yFromValue(value: number): number {
   return (1 - value / maxValue()) * heightPx;
 }
 
+function effectiveCurve(point: ClipCcPoint): ClipExpressionCurve {
+  return isClipExpressionCurve(point.curve) ? point.curve : 'hold';
+}
+
+function pointWithCurve(ppq: number, value: number, curve = props.curveMode): ClipCcPoint {
+  return curve && curve !== 'hold' ? { ppq, value, curve } : { ppq, value };
+}
+
+function segmentValue(start: number, end: number, t: number, curve: ClipExpressionCurve): number {
+  if (curve === 's-curve') {
+    const eased = t * t * (3 - 2 * t);
+    return start + (end - start) * eased;
+  }
+  return start + (end - start) * t;
+}
+
 function ppqFromX(x: number): number {
   const raw = Math.min(props.clipLengthPpq, Math.max(0, props.range.xToPpq(x)));
   return props.snapPpq ? Math.min(props.clipLengthPpq, Math.max(0, props.snapPpq(raw))) : raw;
@@ -149,21 +168,41 @@ function draw(): void {
   const color = props.color ?? DEFAULT_NOTE_COLOR;
   const pts = [...currentPoints()].sort((a, b) => a.ppq - b.ppq);
   if (pts.length > 0) {
-    // Stepped curve: the value holds until the next breakpoint, matching the
-    // discrete CC events the engine receives. Trailing segment runs to the edge.
+    // Each breakpoint owns the curve to the next point. Hold preserves old
+    // projects; ramp modes are sampled visually to match playback/export.
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    let prevY = yFromValue(pts[0].value);
-    ctx.moveTo(0, prevY);
-    for (const point of pts) {
-      const x = props.range.ppqToX(point.ppq);
-      const y = yFromValue(point.value);
-      ctx.lineTo(x, prevY);
-      ctx.lineTo(x, y);
-      prevY = y;
+    const firstY = yFromValue(pts[0].value);
+    ctx.moveTo(0, firstY);
+    ctx.lineTo(props.range.ppqToX(pts[0].ppq), firstY);
+    for (let i = 0; i < pts.length - 1; i++) {
+      const point = pts[i];
+      const next = pts[i + 1];
+      const curve = effectiveCurve(point);
+      const startX = props.range.ppqToX(point.ppq);
+      const endX = props.range.ppqToX(next.ppq);
+      const startY = yFromValue(point.value);
+      const endY = yFromValue(next.value);
+      if (curve === 'hold') {
+        ctx.lineTo(endX, startY);
+        ctx.lineTo(endX, endY);
+      } else if (curve === 'linear') {
+        ctx.lineTo(startX, startY);
+        ctx.lineTo(endX, endY);
+      } else {
+        const samples = Math.max(4, Math.min(48, Math.ceil(Math.abs(endX - startX) / 8)));
+        for (let step = 1; step <= samples; step++) {
+          const t = step / samples;
+          ctx.lineTo(
+            startX + (endX - startX) * t,
+            yFromValue(segmentValue(point.value, next.value, t, curve)),
+          );
+        }
+      }
     }
-    ctx.lineTo(widthPx, prevY);
+    const last = pts[pts.length - 1];
+    ctx.lineTo(widthPx, yFromValue(last.value));
     ctx.stroke();
 
     ctx.fillStyle = color;
@@ -194,7 +233,7 @@ function draw(): void {
 function applyDraw(ppq: number, value: number): void {
   const windowPpq = DRAW_MIN_PX / Math.max(1e-6, props.range.pxPerPpq);
   const next = (preview.value ?? props.points).filter((p) => Math.abs(p.ppq - ppq) >= windowPpq);
-  next.push({ ppq, value });
+  next.push(pointWithCurve(ppq, value));
   preview.value = next;
 }
 
@@ -219,7 +258,7 @@ function onPointerDown(event: PointerEvent): void {
   if (hit >= 0) {
     const ppq = ppqFromX(point.x);
     const working = props.points.map((p) => ({ ...p }));
-    working[hit] = { ppq, value };
+    working[hit] = pointWithCurve(ppq, value, working[hit].curve);
     preview.value = working;
     drag = { mode: 'move', index: hit };
   } else {
@@ -237,7 +276,7 @@ function onPointerMove(event: PointerEvent): void {
   const ppq = ppqFromX(point.x);
   if (drag.mode === 'move') {
     const working = (preview.value ?? props.points).map((p) => ({ ...p }));
-    working[drag.index] = { ppq, value };
+    working[drag.index] = pointWithCurve(ppq, value, working[drag.index].curve);
     preview.value = working;
   } else {
     applyDraw(ppq, value);
@@ -251,7 +290,10 @@ function pointsEqual(a: ReadonlyArray<ClipCcPoint>, b: ReadonlyArray<ClipCcPoint
   if (a.length !== b.length) return false;
   const sa = [...a].sort((p, q) => p.ppq - q.ppq);
   const sb = [...b].sort((p, q) => p.ppq - q.ppq);
-  return sa.every((p, i) => p.ppq === sb[i].ppq && p.value === sb[i].value);
+  return sa.every(
+    (p, i) =>
+      p.ppq === sb[i].ppq && p.value === sb[i].value && effectiveCurve(p) === effectiveCurve(sb[i]),
+  );
 }
 
 function onPointerUp(): void {
@@ -295,7 +337,7 @@ onBeforeUnmount(() => {
 });
 
 watch(
-  () => [props.revision, props.points, props.clipId, props.valueMax] as const,
+  () => [props.revision, props.points, props.clipId, props.valueMax, props.curveMode] as const,
   () => schedule(),
 );
 </script>

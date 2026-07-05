@@ -15,6 +15,7 @@ import {
   setClipChannelPressure,
   setClipPitchBend,
   setClipPolyPressure,
+  setClipPolyPressureForPitches,
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import type { ClipCcPoint, ClipPitchBendPoint, ClipPressurePoint } from '@/project/types';
@@ -27,6 +28,8 @@ export interface PianoRollCcLanes {
    * null when zero or several notes are selected (per-key pressure needs one).
    */
   polyPressurePitch: ComputedRef<number | null>;
+  /** Unique pitches targeted by the poly-pressure lane, derived from selected notes. */
+  polyPressurePitches: ComputedRef<number[]>;
   /** Breakpoints of the active clip's selected CC lane on the lane channel (empty when none). */
   activeCcPoints: ComputedRef<ClipCcPoint[]>;
   /** Breakpoints of the active clip's pitch-bend lane on the lane channel (empty when none). */
@@ -65,11 +68,14 @@ export function usePianoRollCcLanes(options: UsePianoRollCcLanesOptions): PianoR
   const { lanes, gridPpq } = options;
   const store = useProjectStore();
 
-  const polyPressurePitch = computed<number | null>(() => {
-    if (store.selection.size !== 1) return null;
-    const [id] = store.selection;
-    return store.notes.find((n) => n.id === id)?.pitch ?? null;
+  const polyPressurePitches = computed<number[]>(() => {
+    const pitches = [...store.selection]
+      .map((id) => store.notes.find((n) => n.id === id)?.pitch)
+      .filter((pitch): pitch is number => pitch !== undefined);
+    return [...new Set(pitches)].sort((a, b) => a - b);
   });
+
+  const polyPressurePitch = computed<number | null>(() => polyPressurePitches.value[0] ?? null);
 
   const activeCcPoints = computed<ClipCcPoint[]>(() => {
     if (lanes.laneCc.value === null) return [];
@@ -96,10 +102,11 @@ export function usePianoRollCcLanes(options: UsePianoRollCcLanesOptions): PianoR
   });
 
   const activePolyPressurePoints = computed<ClipPressurePoint[]>(() => {
-    const pitch = polyPressurePitch.value;
-    if (!lanes.lanePolyPressure.value || pitch === null) return [];
+    const pitches = polyPressurePitches.value;
+    if (!lanes.lanePolyPressure.value || pitches.length === 0) return [];
+    const pitchSet = new Set(pitches);
     const lane = store.activeClip?.polyPressureLanes?.find(
-      (l) => l.channel === lanes.laneChannel.value && l.pitch === pitch,
+      (l) => l.channel === lanes.laneChannel.value && pitchSet.has(l.pitch),
     );
     return lane?.points ?? [];
   });
@@ -118,9 +125,13 @@ export function usePianoRollCcLanes(options: UsePianoRollCcLanesOptions): PianoR
   }
 
   function commitPolyPressurePoints(points: ClipPressurePoint[]): void {
-    const pitch = polyPressurePitch.value;
-    if (pitch === null) return;
-    setClipPolyPressure(store.clipId, lanes.laneChannel.value, pitch, points);
+    const pitches = polyPressurePitches.value;
+    if (pitches.length === 0) return;
+    if (pitches.length === 1) {
+      setClipPolyPressure(store.clipId, lanes.laneChannel.value, pitches[0], points);
+      return;
+    }
+    setClipPolyPressureForPitches(store.clipId, lanes.laneChannel.value, pitches, points);
   }
 
   function ccSnap(ppq: number): number {
@@ -131,6 +142,7 @@ export function usePianoRollCcLanes(options: UsePianoRollCcLanesOptions): PianoR
 
   return {
     polyPressurePitch,
+    polyPressurePitches,
     activeCcPoints,
     activePitchBendPoints,
     activeChannelPressurePoints,

@@ -119,4 +119,23 @@ describe('NoteGridCanvas', () => {
     const layers = vi.mocked(painter.schedule).mock.calls.map(([layer]) => layer);
     expect(layers.some((layer) => layer.startsWith('note-grid-background-'))).toBe(true);
   });
+
+  it('repaints the background when the time-signature origin changes', async () => {
+    wrapper = mountGrid(1);
+    vi.mocked(painter.schedule).mockClear();
+
+    await wrapper.setProps({ timeSignatureOriginPpq: 8 });
+
+    const layers = vi.mocked(painter.schedule).mock.calls.map(([layer]) => layer);
+    expect(layers.some((layer) => layer.startsWith('note-grid-background-'))).toBe(true);
+  });
+
+  it('cancels the playhead polling frame on unmount', () => {
+    wrapper = mountGrid(1);
+
+    wrapper.unmount();
+    wrapper = null;
+
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(1);
+  });
 });

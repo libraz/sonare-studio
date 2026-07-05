@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { formatPitch } from '@/lib/pitch';
 import type { EditorNote, TimeSignatureSegment } from '@/project/types';
-import { rulerTicks } from '@/ui/arrangement/ruler';
+import { localizeMeter, rulerTicks } from '@/ui/arrangement/ruler';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 import { useI18n } from '@/ui/i18n';
@@ -50,6 +50,8 @@ const props = defineProps<{
   clipLengthPpq: number;
   /** Project time signatures for bar/beat gridlines. */
   timeSignatures: TimeSignatureSegment[];
+  /** Arrangement PPQ corresponding to local clip-source PPQ 0. */
+  timeSignatureOriginPpq?: number;
   /** Gesture state machine shared with the container. */
   interactions: NoteInteractions;
   /** Playhead position getter in PPQ; omit to hide the playhead. */
@@ -78,6 +80,9 @@ const backgroundCanvas = ref<HTMLCanvasElement | null>(null);
 const notesCanvas = ref<HTMLCanvasElement | null>(null);
 const overlayCanvas = ref<HTMLCanvasElement | null>(null);
 const hoveredGhost = ref<GhostNote | null>(null);
+const localTimeSignatures = computed(() =>
+  localizeMeter(props.timeSignatures, props.timeSignatureOriginPpq ?? 0),
+);
 const hoverPoint = ref<InteractionPoint | null>(null);
 
 /** Unique painter layer suffix so several editors can share one painter. */
@@ -90,6 +95,34 @@ const MIN_GRID_SPACING_PX = 6;
 const LABEL_MIN_ROW_HEIGHT = 13;
 const LABEL_MIN_NOTE_WIDTH = 26;
 const SHORT_NOTE_WARNING_PPQ = 0.0625;
+
+const selectedNotes = computed(() => props.notes.filter((note) => props.selection.has(note.id)));
+
+const liveStatus = computed(() => {
+  const selected = selectedNotes.value;
+  const parts: string[] = [];
+  if (selected.length === 0) {
+    parts.push('No notes selected');
+  } else if (selected.length === 1) {
+    const note = selected[0];
+    parts.push(
+      `${formatPitch(note.pitch)} selected at ${note.startPpq.toFixed(2)} PPQ for ${note.durationPpq.toFixed(2)} PPQ`,
+    );
+  } else {
+    const low = Math.min(...selected.map((note) => note.pitch));
+    const high = Math.max(...selected.map((note) => note.pitch));
+    parts.push(
+      `${selected.length} notes selected from ${formatPitch(low)} to ${formatPitch(high)}`,
+    );
+  }
+  const hover = hoverPoint.value;
+  if (hover) {
+    parts.push(
+      `Pointer at ${props.range.xToPpq(hover.x).toFixed(2)} PPQ, ${formatPitch(props.range.yToPitch(hover.y))}`,
+    );
+  }
+  return parts.join('. ');
+});
 
 function scheduleBackground(): void {
   props.painter.schedule(`note-grid-background-${layerId}`, drawBackground);
@@ -127,7 +160,7 @@ function drawVerticalLines(
 /** Draws meter-aware beat/bar lines from the same tick model as the ruler. */
 function drawMeterLines(ctx: CanvasRenderingContext2D, height: number): void {
   for (const tick of rulerTicks(
-    props.timeSignatures,
+    localTimeSignatures.value,
     props.range.startPpq,
     props.range.endPpq,
     props.range.pxPerPpq,
@@ -417,6 +450,7 @@ watch(
     props.gridPpq,
     props.clipLengthPpq,
     props.timeSignatures,
+    props.timeSignatureOriginPpq,
   ],
   () => {
     lastPlayheadX = Number.NaN;
@@ -548,6 +582,9 @@ function onContextMenu(event: MouseEvent): void {
     />
     <canvas ref="notesCanvas" class="note-grid-layer" aria-hidden="true" />
     <canvas ref="overlayCanvas" class="note-grid-layer" aria-hidden="true" />
+    <div class="note-grid-live" role="status" aria-live="polite" aria-atomic="true">
+      {{ liveStatus }}
+    </div>
   </div>
 </template>
 
@@ -566,5 +603,14 @@ function onContextMenu(event: MouseEvent): void {
   width: 100%;
   height: 100%;
   display: block;
+}
+
+.note-grid-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 </style>

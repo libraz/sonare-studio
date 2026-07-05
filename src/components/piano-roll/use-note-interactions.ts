@@ -86,6 +86,14 @@ export interface UseNoteInteractionsOptions {
   getMaxPpq?(): number;
   /** Optionally maps a raw pointer pitch to the pitch that should be created. */
   resolveCreatedPitch?(pitch: number): number;
+  /** Optionally maps a moved note pitch to the pitch that should be committed. */
+  resolveEditedPitch?(pitch: number): number;
+  /**
+   * Optional velocity resolver for newly drawn notes. When omitted, drawing
+   * inherits the selected note velocity, then the latest note velocity, and
+   * finally falls back to {@link DEFAULT_DRAW_VELOCITY}.
+   */
+  getDrawVelocity?(): number;
   /** Mutation commands invoked when gestures commit. */
   commands: InteractionCommands;
   /** Drag start threshold in px. Default {@link DEFAULT_DRAG_THRESHOLD_PX}. */
@@ -294,6 +302,10 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     );
   }
 
+  function editedPitch(pitch: number): number {
+    return clampPitch(options.resolveEditedPitch?.(pitch) ?? pitch);
+  }
+
   function clampPpq(ppq: number): number {
     const max = options.getMaxPpq?.();
     return max !== undefined && Number.isFinite(max)
@@ -320,6 +332,23 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     return typeof options.auditionDuringDrag === 'function'
       ? options.auditionDuringDrag()
       : options.auditionDuringDrag === true;
+  }
+
+  function clampVelocity(value: number): number {
+    if (!Number.isFinite(value)) return DEFAULT_DRAW_VELOCITY;
+    return Math.max(1, Math.min(127, Math.round(value)));
+  }
+
+  /** Velocity assigned to a newly drawn note. */
+  function drawVelocity(): number {
+    if (options.getDrawVelocity) return clampVelocity(options.getDrawVelocity());
+    const notes = options.getNotes();
+    const selection = options.getSelection();
+    for (let i = notes.length - 1; i >= 0; i--) {
+      if (selection.has(notes[i].id)) return clampVelocity(notes[i].velocity);
+    }
+    const latest = notes[notes.length - 1];
+    return latest ? clampVelocity(latest.velocity) : DEFAULT_DRAW_VELOCITY;
   }
 
   /** Resolves the grid-snapped start cell of a draw at the pointer x. */
@@ -353,7 +382,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     const draft: EditorNote = {
       id: -1,
       pitch: g.pitch,
-      velocity: DEFAULT_DRAW_VELOCITY,
+      velocity: drawVelocity(),
       startPpq: g.startPpq,
       durationPpq: drawLength(g, point, modifiers),
       channel: 0,
@@ -500,7 +529,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
         ...origin,
         id: placeholder--,
         startPpq: origin.startPpq + deltas.deltaPpq,
-        pitch: origin.pitch + deltas.deltaPitch,
+        pitch: editedPitch(origin.pitch + deltas.deltaPitch),
       }));
       return [...all, ...copies];
     }
@@ -510,7 +539,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
         ? {
             ...note,
             startPpq: origin.startPpq + deltas.deltaPpq,
-            pitch: origin.pitch + deltas.deltaPitch,
+            pitch: editedPitch(origin.pitch + deltas.deltaPitch),
           }
         : note;
     });
@@ -549,7 +578,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
       };
       previewNotes.value = buildDrawPreview(gesture, point, modifiers);
       setReadout(point, `Draw ${formatPpq(drawLength(gesture, point, modifiers))} ppq`);
-      options.onAudition?.(pitch, DEFAULT_DRAW_VELOCITY);
+      options.onAudition?.(pitch, drawVelocity());
       lastDragAuditionPitch = pitch;
       return;
     }
@@ -675,7 +704,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
       setReadout(point, `${gesture.duplicate ? 'Copy' : 'Move'} ${time}, ${pitch}`);
       if (shouldAuditionDuringDrag()) {
         const grabbed = gesture.origins.get(gesture.grabbedId);
-        const nextPitch = grabbed ? grabbed.pitch + deltas.deltaPitch : null;
+        const nextPitch = grabbed ? editedPitch(grabbed.pitch + deltas.deltaPitch) : null;
         if (nextPitch !== null && nextPitch !== lastDragAuditionPitch) {
           lastDragAuditionPitch = nextPitch;
           options.onAudition?.(nextPitch, grabbed?.velocity ?? DEFAULT_DRAW_VELOCITY);
@@ -707,10 +736,12 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     cursor.value = 'default';
     lastDragAuditionPitch = null;
     if (g.kind === 'draw-note') {
+      const velocity = drawVelocity();
       const id = commands.addNote({
         pitch: g.pitch,
         startPpq: g.startPpq,
         durationPpq: drawLength(g, point, modifiers),
+        ...(velocity === DEFAULT_DRAW_VELOCITY ? {} : { velocity }),
       });
       commands.setSelection([id]);
       return;
@@ -739,7 +770,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
       if (g.duplicate) {
         const newIds = [...g.origins.values()].map((origin) => {
           const input: NewEditorNote = {
-            pitch: origin.pitch + deltas.deltaPitch,
+            pitch: editedPitch(origin.pitch + deltas.deltaPitch),
             startPpq: origin.startPpq + deltas.deltaPpq,
             durationPpq: origin.durationPpq,
             velocity: origin.velocity,
@@ -755,7 +786,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
         [...g.origins.values()].map((origin) => ({
           id: origin.id,
           startPpq: origin.startPpq + deltas.deltaPpq,
-          pitch: origin.pitch + deltas.deltaPitch,
+          pitch: editedPitch(origin.pitch + deltas.deltaPitch),
         })),
       );
       return;
@@ -797,9 +828,15 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
           ? step
           : DEFAULT_MIN_DURATION_PPQ;
     const pitch = createdPitch(point);
-    const id = commands.addNote({ pitch, startPpq, durationPpq });
+    const velocity = drawVelocity();
+    const id = commands.addNote({
+      pitch,
+      startPpq,
+      durationPpq,
+      ...(velocity === DEFAULT_DRAW_VELOCITY ? {} : { velocity }),
+    });
     commands.setSelection([id]);
-    options.onAudition?.(pitch, DEFAULT_DRAW_VELOCITY);
+    options.onAudition?.(pitch, velocity);
   }
 
   /** Returns the topmost note id under a point, or null when none is hit. */

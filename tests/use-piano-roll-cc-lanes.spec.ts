@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ref } from 'vue';
 import { usePianoRollCcLanes } from '@/components/piano-roll/use-piano-roll-cc-lanes';
 import type { PianoRollLanes } from '@/components/piano-roll/use-piano-roll-lanes';
-import { clearHistory } from '@/project/commands';
+import { addNote, clearHistory } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 
 vi.mock('@/lib/wasm', async () => {
@@ -17,6 +17,7 @@ function makeLanes(over: Record<string, unknown> = {}): PianoRollLanes {
   return {
     laneParam: ref('velocity'),
     laneChannel: ref(0),
+    laneCurve: ref('hold'),
     laneCc: ref(null),
     lanePitchBend: ref(false),
     laneChannelPressure: ref(false),
@@ -78,5 +79,42 @@ describe('usePianoRollCcLanes channel routing', () => {
 
     laneChannel.value = 0;
     expect(cc.activeChannelPressurePoints.value).toEqual([]);
+  });
+
+  it('keeps poly-pressure lanes scoped by selected channel and pitch', () => {
+    const noteId = addNote({ pitch: 62, startPpq: 0, durationPpq: 1 });
+    store.selection = new Set([noteId]);
+    const laneChannel = ref(4);
+    const lanes = makeLanes({ lanePolyPressure: ref(true), laneChannel });
+    const cc = usePianoRollCcLanes({ lanes, gridPpq: ref(1) });
+
+    cc.commitPolyPressurePoints([{ ppq: 0.25, value: 88 }]);
+    expect(cc.activePolyPressurePoints.value).toEqual([{ ppq: 0.25, value: 88 }]);
+
+    laneChannel.value = 0;
+    expect(cc.activePolyPressurePoints.value).toEqual([]);
+    cc.commitPolyPressurePoints([{ ppq: 0.5, value: 40 }]);
+    expect(cc.activePolyPressurePoints.value).toEqual([{ ppq: 0.5, value: 40 }]);
+
+    laneChannel.value = 4;
+    expect(cc.activePolyPressurePoints.value).toEqual([{ ppq: 0.25, value: 88 }]);
+  });
+
+  it('targets every selected pitch when editing poly-pressure', () => {
+    const low = addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+    const high = addNote({ pitch: 64, startPpq: 1, durationPpq: 1 });
+    const doubled = addNote({ pitch: 64, startPpq: 2, durationPpq: 1 });
+    store.selection = new Set([high, low, doubled]);
+    const lanes = makeLanes({ lanePolyPressure: ref(true), laneChannel: ref(1) });
+    const cc = usePianoRollCcLanes({ lanes, gridPpq: ref(1) });
+
+    expect(cc.polyPressurePitches.value).toEqual([60, 64]);
+    cc.commitPolyPressurePoints([{ ppq: 0.25, value: 70 }]);
+
+    expect(store.activeClip?.polyPressureLanes).toEqual([
+      { channel: 1, pitch: 60, points: [{ ppq: 0.25, value: 70 }] },
+      { channel: 1, pitch: 64, points: [{ ppq: 0.25, value: 70 }] },
+    ]);
+    expect(cc.activePolyPressurePoints.value).toEqual([{ ppq: 0.25, value: 70 }]);
   });
 });
