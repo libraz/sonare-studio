@@ -320,7 +320,13 @@ function onLegendClick(trackId: number): void {
 
 .toolbar-select {
   flex: 0 0 auto;
+  /* SelectMenu's root is width:100%, meant to fill a constraining parent. As a
+   * non-shrinking flex item here that would resolve to the full toolbar width,
+   * blowing the bar out and pushing the zoom cluster off-screen. Size it to its
+   * own content instead, bounded so a long label cannot dominate the bar. */
+  width: auto;
   min-width: 6.4rem;
+  max-width: 12rem;
 }
 
 .zoom-pair {

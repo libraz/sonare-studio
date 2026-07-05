@@ -474,6 +474,7 @@ function onRetuneInput(event: Event): void {
           type="text"
           inputmode="numeric"
           spellcheck="false"
+          size="12"
           :value="bbtDisplay"
           :aria-label="t.shell.transport.playheadPosition"
           v-tooltip="t.shell.transport.playheadPositionTitle"

@@ -365,6 +365,14 @@ onBeforeUnmount(() => {
   position: relative;
 }
 
+/* The solo-mode select defaults to width:100% (SelectMenu baseline); in the
+   flex toolbar that stretches it across the row and squeezes the trailing
+   buttons. Size it to its content instead so the buttons keep their width. */
+.mixer-toolbar .solo-mode-select {
+  width: auto;
+  flex: none;
+}
+
 .toolbar-button {
   font: var(--fw-semibold) 10px var(--font-sans);
   color: var(--text-2);
@@ -374,6 +382,9 @@ onBeforeUnmount(() => {
   cursor: pointer;
   box-shadow: var(--control-lift);
   transition: background var(--dur-1) var(--ease-out);
+  /* Toolbar labels (incl. CJK) must never wrap or shrink to a narrower box. */
+  white-space: nowrap;
+  flex: none;
 }
 
 .toolbar-button:hover {

@@ -400,7 +400,13 @@
 }
 
 .position-bbt {
-  width: 7rem;
+  /* Size to the value so large bar numbers (100+, even 1000+) are never
+     clipped. `field-sizing` grows the field to its content between the bounds;
+     where it is unsupported the `size` attribute gives a comparable base width. */
+  width: auto;
+  min-width: 9ch;
+  max-width: 20ch;
+  field-sizing: content;
   padding: 0;
   border: none;
   background: none;

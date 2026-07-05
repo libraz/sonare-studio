@@ -242,6 +242,18 @@
   flex: none;
 }
 
+/* Plain action buttons in the bar (quantize, step navigation, MIDI connect,
+ * MIDI Learn) match the compact pill sizing of the adjacent size="sm" toggle
+ * pills and selects, so the control strip reads as one consistent dense row
+ * instead of mixing full-height buttons with dense toggles. The toggle pills
+ * keep their own sizing via higher-specificity scoped rules. */
+.editor-toolbar-scroll > button,
+.editor-toolbar > .midi-learn-anchor > button {
+  font-size: var(--fs-xs);
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--radius-full);
+}
+
 .step-cursor {
   font-size: var(--fs-xs);
   color: var(--text-3);

@@ -10,6 +10,24 @@
   box-shadow: var(--raise-hi);
 }
 
+/* One control height across the toolbar so plain buttons, toggle pills, the DQ
+   select and the zoom controls read as a single uniform size regardless of the
+   component that renders them. `line-height: 1` drops inherited leading so the
+   shared `min-height` alone drives the height. */
+.score-toolbar button,
+.score-toolbar :deep(.toggle-pill),
+.score-toolbar :deep(.select-trigger) {
+  min-height: 26px;
+  box-sizing: border-box;
+  line-height: 1;
+}
+
+.score-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .bar-field {
   display: inline-flex;
   align-items: center;
