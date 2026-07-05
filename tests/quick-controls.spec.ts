@@ -64,6 +64,18 @@ describe('quick controls', () => {
       expect(controls.find((c) => c.id === 'drive')?.value).toBe(0.9);
     });
 
+    it('displays the encoded zero sustain override as zero', () => {
+      setTrackInstrument(trackId, {
+        kind: 'synth-patch',
+        patch: { preset: 'saw-lead', ampSustain: 0.0001 },
+      });
+      const controls = listQuickControls(
+        { type: 'instrument', trackId },
+        { resolvePresetPatch: () => ({ ampSustain: 0.7 }) },
+      );
+      expect(controls.find((c) => c.id === 'ampSustain')?.value).toBe(0);
+    });
+
     it('prioritizes amp and body controls for guitar and bass presets', () => {
       setTrackInstrument(trackId, { kind: 'synth-preset', preset: 'electric-guitar' });
       const controls = listQuickControls(
@@ -88,6 +100,26 @@ describe('quick controls', () => {
         name: 'Amp Drive',
         value: 0.25,
       });
+    });
+
+    it('does not classify bassoon as a plucked bass preset', () => {
+      setTrackInstrument(trackId, { kind: 'synth-preset', preset: 'Bassoon' });
+      const controls = listQuickControls(
+        { type: 'instrument', trackId },
+        { resolvePresetPatch: () => ({ bodyMix: 0.45, busDrive: 0.25, gain: 0.7 }) },
+      );
+      expect(controls.map((c) => c.id)).toEqual([
+        'cutoffHz',
+        'resonanceQ',
+        'drive',
+        'ampAttackMs',
+        'ampDecayMs',
+        'ampSustain',
+        'ampReleaseMs',
+        'gain',
+      ]);
+      expect(controls.find((c) => c.id === 'bodyMix')).toBeUndefined();
+      expect(controls.find((c) => c.id === 'busDrive')).toBeUndefined();
     });
 
     it('uses the wasm preset catalog by default (fake module)', () => {
@@ -201,6 +233,14 @@ describe('quick controls', () => {
       expect(store.tracks[0].instrument).toEqual({
         kind: 'synth-patch',
         patch: { drive: 0.2, cutoffHz: 20000 },
+      });
+    });
+
+    it('sets zero sustain as an explicit near-silent patch override', () => {
+      setQuickControl({ type: 'instrument', trackId }, 'ampSustain', 0);
+      expect(store.tracks[0].instrument).toEqual({
+        kind: 'synth-patch',
+        patch: { preset: 'e-piano', ampSustain: 0.0001 },
       });
     });
 

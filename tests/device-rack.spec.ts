@@ -34,6 +34,15 @@ const fontsMock = vi.hoisted(() => ({
 
 vi.mock('@/project/fonts', () => fontsMock);
 
+/** Creates a manually-resolved promise for async race tests. */
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
 describe('DeviceRack.vue', () => {
   let store: ReturnType<typeof useProjectStore>;
   let trackId: number;
@@ -96,6 +105,34 @@ describe('DeviceRack.vue', () => {
     expect(wrapper.find('.instrument-name').text()).toBe('saw-lead');
   });
 
+  it('removes the instrument picker outside-click listener on unmount', async () => {
+    const add = vi.spyOn(document, 'addEventListener');
+    const remove = vi.spyOn(document, 'removeEventListener');
+    const wrapper = mount(DeviceRack);
+
+    await wrapper.find('.instrument-button').trigger('click');
+
+    expect(add).toHaveBeenCalledWith('pointerdown', expect.any(Function), true);
+    wrapper.unmount();
+    expect(remove).toHaveBeenCalledWith('pointerdown', expect.any(Function), true);
+  });
+
+  it('lists physical-model synth presets from the runtime catalog', async () => {
+    const wrapper = mount(DeviceRack);
+    await wrapper.find('.instrument-button').trigger('click');
+
+    await wrapper.find('.preset-search input').setValue('pipe');
+    let options = wrapper.findAll('.preset-option');
+    expect(options.map((o) => o.find('.preset-name').text())).toEqual(['pipe-organ']);
+
+    await wrapper.find('.preset-search input').setValue('bowed');
+    options = wrapper.findAll('.preset-option');
+    expect(options.map((o) => o.find('.preset-name').text())).toEqual(['bowed-string']);
+
+    await options[0].trigger('click');
+    expect(store.tracks[0].instrument).toEqual({ kind: 'synth-preset', preset: 'bowed-string' });
+  });
+
   it('opens the instrument picker from a shell request', async () => {
     const wrapper = mount(DeviceRack, { props: { instrumentPickerRequest: 1 } });
     expect(wrapper.find('.instrument-picker').exists()).toBe(false);
@@ -121,6 +158,70 @@ describe('DeviceRack.vue', () => {
     expect(store.tracks[0].instrument).toEqual({
       kind: 'sf2',
       fontId: 'fontbbbb00000002',
+      program: 42,
+    });
+  });
+
+  it('warns before applying an SF2 selection that would collide with another active font', async () => {
+    const secondTrackId = addTrack({ name: 'Pad' });
+    setTrackInstrument(secondTrackId, { kind: 'sf2', fontId: 'fontaaaa00000001' });
+    setActiveTrack(trackId);
+    const wrapper = mount(DeviceRack);
+
+    await wrapper.find('.instrument-button').trigger('click');
+    const sf2Tab = wrapper.findAll('.picker-tab').find((tab) => tab.text() === 'SF2');
+    await sf2Tab?.trigger('click');
+    await flushPromises();
+
+    await wrapper.findAll('.font-option')[1].trigger('click');
+
+    expect(wrapper.find('.sf2-slot-warning').text()).toBe(
+      'This project uses 2 SoundFonts, but playback and export share one global SF2 slot. The last SF2 track wins: GM Bank.sf2.',
+    );
+    expect(store.tracks[0].instrument).not.toEqual({ kind: 'sf2', fontId: 'fontbbbb00000002' });
+  });
+
+  it('checks the selected SF2 program against the SoundFont manifest', async () => {
+    const wrapper = mount(DeviceRack);
+    await wrapper.find('.instrument-button').trigger('click');
+    const sf2Tab = wrapper.findAll('.picker-tab').find((tab) => tab.text() === 'SF2');
+    await sf2Tab?.trigger('click');
+    await flushPromises();
+
+    await wrapper.findAll('.font-option')[0].trigger('click');
+    await wrapper.find('.sf2-bank').setValue('1');
+    await wrapper.find('.sf2-program').setValue('24');
+    await flushPromises();
+    await flushPromises();
+
+    expect(fontsMock.loadFont).toHaveBeenCalledWith('fontaaaa00000001');
+    expect(wrapper.find('.sf2-manifest-status').text()).toBe('SF2 preset: SF2 1:24 (1:24)');
+  });
+
+  it('lists SoundFont manifest presets and commits the selected bank/program', async () => {
+    const wrapper = mount(DeviceRack);
+    await wrapper.find('.instrument-button').trigger('click');
+    const sf2Tab = wrapper.findAll('.picker-tab').find((tab) => tab.text() === 'SF2');
+    await sf2Tab?.trigger('click');
+    await flushPromises();
+
+    await wrapper.findAll('.font-option')[0].trigger('click');
+    await wrapper.find('.sf2-bank').setValue('1');
+    await flushPromises();
+    await flushPromises();
+
+    const manifestOptions = wrapper.findAll('.sf2-manifest-option');
+    expect(manifestOptions).toHaveLength(128);
+    const preset = manifestOptions.find((option) => option.text().includes('SF2 1:42'));
+    expect(preset).toBeTruthy();
+
+    await preset?.trigger('click');
+    await wrapper.find('.use-sf2').trigger('click');
+
+    expect(store.tracks[0].instrument).toEqual({
+      kind: 'sf2',
+      fontId: 'fontaaaa00000001',
+      bank: 1,
       program: 42,
     });
   });
@@ -238,11 +339,34 @@ describe('DeviceRack.vue', () => {
     expect(store.tracks[0].mixer?.inserts[0].processor).toBe('eq.tilt');
   });
 
+  it('can add modulation processors when the runtime insert catalog exposes them', async () => {
+    const wrapper = mount(DeviceRack);
+
+    await selectOption(wrapper, '.add-insert', 'Rotary (modulation)');
+
+    expect(store.tracks[0].mixer?.inserts[0].processor).toBe('modulation.rotary');
+    expect(wrapper.find('[data-control="speed"]').exists()).toBe(true);
+  });
+
   it('resolves the stored font name for the sf2 caption', async () => {
     setTrackInstrument(trackId, { kind: 'sf2', fontId: 'fontaaaa00000001', program: 5 });
     const wrapper = mount(DeviceRack);
     await flushPromises();
     expect(fontsMock.loadFontMeta).toHaveBeenCalledWith('fontaaaa00000001');
     expect(wrapper.find('.instrument-name').text()).toBe('GM Bank.sf2 · 0:5');
+  });
+
+  it('does not apply a stored font name after unmount', async () => {
+    const pending = deferred<{ id: string; name: string; byteLength: number }>();
+    fontsMock.loadFontMeta.mockReturnValueOnce(pending.promise);
+    setTrackInstrument(trackId, { kind: 'sf2', fontId: 'fontaaaa00000001', program: 5 });
+    const wrapper = mount(DeviceRack);
+
+    wrapper.unmount();
+    pending.resolve({ id: 'fontaaaa00000001', name: 'Late Bank.sf2', byteLength: 1024 });
+    await flushPromises();
+
+    expect(fontsMock.loadFontMeta).toHaveBeenCalledWith('fontaaaa00000001');
+    expect(wrapper.text()).not.toContain('Late Bank.sf2');
   });
 });

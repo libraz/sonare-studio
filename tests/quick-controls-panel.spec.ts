@@ -2,6 +2,7 @@ import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import QuickControls from '@/components/devices/QuickControls.vue';
+import { MIDI_LEARN_KEY, useMidiLearn } from '@/composables/useMidiLearn';
 import { addInsert, clearHistory, undo } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { resetAutomationStripModes, setAutomationStripMode } from '@/ui/mixer/automation-mode';
@@ -120,11 +121,14 @@ describe('QuickControls.vue', () => {
     addInsert(trackId, 'dynamics.compressor');
     // The strip is armed for touch recording; the playhead getter is supplied.
     setAutomationStripMode(trackId, 'touch');
+    const scheduled: unknown[] = [];
     const wrapper = mount(QuickControls, {
       props: {
         target: { type: 'insert', trackId, index: 0 },
         positionPpq: () => 0,
-        isPlaying: false,
+        positionSample: () => 256,
+        isPlaying: true,
+        scheduleAutomationWrite: (...args: unknown[]) => scheduled.push(args),
       },
     });
     const knob = wrapper.find('[data-control="thresholdDb"]');
@@ -140,6 +144,11 @@ describe('QuickControls.vue', () => {
     );
     expect(lane).toBeDefined();
     expect(lane?.points.length).toBeGreaterThan(0);
+    expect(scheduled[0]).toEqual([
+      trackId,
+      'insert:0:thresholdDb',
+      expect.objectContaining({ ppq: 0, samplePos: 256 }),
+    ]);
   });
 
   it('still drives the insert parameter manually when no write mode is armed', async () => {
@@ -184,6 +193,60 @@ describe('QuickControls.vue', () => {
     await wrapper.find('.qc-menu button').trigger('click');
     await wrapper.vm.$nextTick();
     expect(store.automationLanes.find((l) => l.param === 'insert:0:thresholdDb')).toBeUndefined();
+  });
+
+  it('closes the MIDI learn context menu on outside pointerdown', async () => {
+    const learn = useMidiLearn();
+    const wrapper = mount(QuickControls, {
+      props: { target: { type: 'instrument', trackId } },
+      global: { provide: { [MIDI_LEARN_KEY as symbol]: learn } },
+    });
+
+    await wrapper
+      .find('[data-control="cutoffHz"]')
+      .trigger('contextmenu', { clientX: 5, clientY: 5 });
+    expect(wrapper.find('.qc-menu').exists()).toBe(true);
+
+    document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.find('.qc-menu').exists()).toBe(false);
+    expect(learn.isArmedId(`instrument:${trackId}:cutoffHz`)).toBe(false);
+  });
+
+  it('removes the context-menu outside-click listener on unmount', async () => {
+    const learn = useMidiLearn();
+    const add = vi.spyOn(window, 'addEventListener');
+    const remove = vi.spyOn(window, 'removeEventListener');
+    const wrapper = mount(QuickControls, {
+      props: { target: { type: 'instrument', trackId } },
+      global: { provide: { [MIDI_LEARN_KEY as symbol]: learn } },
+    });
+
+    await wrapper
+      .find('[data-control="cutoffHz"]')
+      .trigger('contextmenu', { clientX: 5, clientY: 5 });
+
+    expect(add).toHaveBeenCalledWith('pointerdown', expect.any(Function), true);
+    wrapper.unmount();
+    expect(remove).toHaveBeenCalledWith('pointerdown', expect.any(Function), true);
+  });
+
+  it('arms MIDI learn from the context menu and closes the menu', async () => {
+    const learn = useMidiLearn();
+    const wrapper = mount(QuickControls, {
+      props: { target: { type: 'instrument', trackId } },
+      global: { provide: { [MIDI_LEARN_KEY as symbol]: learn } },
+    });
+
+    await wrapper
+      .find('[data-control="cutoffHz"]')
+      .trigger('contextmenu', { clientX: 5, clientY: 5 });
+    await wrapper.find('.qc-menu button').trigger('click');
+    await wrapper.vm.$nextTick();
+
+    expect(learn.isArmedId(`instrument:${trackId}:cutoffHz`)).toBe(true);
+    expect(wrapper.find('.qc-menu').exists()).toBe(false);
   });
 
   it('adjusts values from the keyboard as committed steps', async () => {

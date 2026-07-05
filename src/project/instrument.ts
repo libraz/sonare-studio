@@ -22,6 +22,10 @@ export interface SynthPresetInstrument {
   kind: 'synth-preset';
   /** Preset name from the NativeSynth catalog (synthPresetNames()). */
   preset: string;
+  /** Original GM bank imported from SMF; export uses it before preset reverse-mapping. */
+  gmBank?: number;
+  /** Original GM program imported from SMF; export uses it before preset reverse-mapping. */
+  gmProgram?: number;
 }
 
 /** Instrument variant: an editable NativeSynth patch (possibly preset-based). */
@@ -124,6 +128,20 @@ export function validateTrackInstrument(instrument: TrackInstrument): void {
     case 'synth-preset':
       if (typeof instrument.preset !== 'string' || instrument.preset.length === 0) {
         throw new RangeError('Synth preset instrument requires a non-empty preset name');
+      }
+      if (
+        instrument.gmBank !== undefined &&
+        (!Number.isInteger(instrument.gmBank) || instrument.gmBank < 0 || instrument.gmBank > 16383)
+      ) {
+        throw new RangeError('Synth preset gmBank must be an integer in [0, 16383]');
+      }
+      if (
+        instrument.gmProgram !== undefined &&
+        (!Number.isInteger(instrument.gmProgram) ||
+          instrument.gmProgram < 0 ||
+          instrument.gmProgram > 127)
+      ) {
+        throw new RangeError('Synth preset gmProgram must be an integer in [0, 127]');
       }
       return;
     case 'synth-patch':

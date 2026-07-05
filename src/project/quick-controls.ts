@@ -10,6 +10,11 @@
  * call).
  */
 
+import {
+  decodePatchFieldValue,
+  encodePatchFieldValue,
+  type NumericPatchField,
+} from '@/ui/devices/patch-draft';
 import type { SynthPatch } from '@/wasm/index.js';
 import {
   type CommandGestureOptions,
@@ -96,11 +101,25 @@ const PLUCKED_STRING_QUICK_CONTROLS: ReadonlyArray<SynthControlSpec> = [
   { id: 'ampReleaseMs', name: 'Damp', min: 0, max: 5000, unit: 'ms', fallback: 120 },
 ];
 
+const WIND_OR_BRASS_PRESET_TOKENS = [
+  'bassoon',
+  'clarinet',
+  'flute',
+  'horn',
+  'oboe',
+  'reed',
+  'sax',
+  'trumpet',
+  'trombone',
+  'tuba',
+];
+
 function isPluckedStringPreset(
   presetName: string | undefined,
   basePatch: SynthPatch | null,
 ): boolean {
   const lower = presetName?.toLowerCase() ?? '';
+  if (WIND_OR_BRASS_PRESET_TOKENS.some((token) => lower.includes(token))) return false;
   if (
     lower.includes('guitar') ||
     lower.includes('bass') ||
@@ -167,7 +186,8 @@ function humanizeParamName(name: string): string {
 function patchValue(patch: SynthPatch | null, id: string): number | null {
   if (!patch) return null;
   const value = (patch as Record<string, unknown>)[id];
-  return typeof value === 'number' && value !== 0 ? value : null;
+  if (typeof value !== 'number' || value === 0) return null;
+  return decodePatchFieldValue(id as NumericPatchField, value);
 }
 
 /** Default preset resolver: the wasm catalog, when the module is loaded. */
@@ -231,7 +251,8 @@ function requireInsertSlot(target: { trackId: MixerStripTarget; index: number })
  *
  * Insert targets expose up to eight parameters: the names come from the
  * resolver (wasm masteringInsertParamNames by default) merged with any
- * explicitly set params; ranges are inferred from naming conventions.
+ * explicitly set params; ranges prefer the shared processor-param domain
+ * catalog and fall back to naming conventions for unknown custom processors.
  *
  * @param target What the rack addresses.
  * @param resolvers Optional catalog resolvers (tests, custom catalogs).
@@ -327,9 +348,10 @@ export function setQuickControl(
       throw new RangeError('External MIDI instruments expose no quick controls');
     }
     const clamped = Math.min(spec.max, Math.max(spec.min, value));
+    const encoded = encodePatchFieldValue(spec.id as NumericPatchField, clamped);
     const basePatch: SynthPatch =
       instrument.kind === 'synth-patch' ? { ...instrument.patch } : { preset: instrument.preset };
-    const patch = { ...basePatch, [id]: clamped } as SynthPatch;
+    const patch = { ...basePatch, [id]: encoded } as SynthPatch;
     setTrackInstrument(target.trackId, { kind: 'synth-patch', patch }, options);
     return;
   }

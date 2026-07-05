@@ -306,25 +306,33 @@ function onApply(): void {
 }
 
 let audition: PatchAudition | null = null;
+let disposed = false;
+let auditionGeneration = 0;
 
 function onAudition(): void {
   if (!audition) audition = createPatchAudition();
+  const generation = ++auditionGeneration;
   audition
     .play({ kind: 'synth-patch', patch: buildPatch() })
     .then(() => {
+      if (disposed || generation !== auditionGeneration) return;
       error.value = '';
     })
     .catch((err: unknown) => {
+      if (disposed || generation !== auditionGeneration) return;
       error.value = err instanceof Error ? err.message : String(err);
     });
 }
 
 onBeforeUnmount(() => {
+  disposed = true;
+  auditionGeneration++;
   audition?.dispose();
   audition = null;
 });
 
 function onClose(): void {
+  auditionGeneration++;
   audition?.stop();
   emit('close');
 }

@@ -27,6 +27,7 @@ import { midiLearnInsertTargetId, midiLearnInstrumentTargetId } from '@/ui/midi/
 import {
   type AutomationWriteGesture,
   type AutomationWriteMode,
+  type AutomationWriteScheduleEvent,
   automationStripMode,
   createAutomationWriteGesture,
   isAutomationWriteMode,
@@ -49,8 +50,16 @@ const props = defineProps<{
    * knob into automation when its strip is in a write (touch/latch) mode.
    */
   positionPpq?: () => number;
+  /** Current playhead sample position, used by future sample-accurate scheduling. */
+  positionSample?: () => number;
   /** True while the transport runs (continuous touch recording). */
   isPlaying?: boolean;
+  /** Optional realtime automation scheduler for write-mode insert knob drags. */
+  scheduleAutomationWrite?: (
+    target: AutomationTarget,
+    param: ReturnType<typeof insertAutomationParam>,
+    event: AutomationWriteScheduleEvent,
+  ) => void;
 }>();
 
 const { t } = useI18n();
@@ -135,7 +144,9 @@ function recordWrite(controlId: string, value: number): void {
       mode: ctx.mode,
       existingPoints: lane?.points ?? [],
       positionPpq: () => Math.max(0, props.positionPpq?.() ?? 0),
+      positionSample: props.positionSample,
       isPlaying: () => props.isPlaying === true,
+      schedule: (event) => props.scheduleAutomationWrite?.(ctx.target, ctx.param, event),
       commit: (points) => setAutomationLanePoints(ctx.target, ctx.param, points),
     });
   }

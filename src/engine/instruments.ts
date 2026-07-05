@@ -104,6 +104,8 @@ export interface NoteEvent {
 
 const DEFAULT_TEMPO_BPM = 120;
 const CACHE_KEY_VERSION = 'v1';
+/** Maximum distinct offline MIDI prerenders retained in memory. */
+export const MAX_PRERENDER_CACHE_ENTRIES = 64;
 
 /**
  * Resolves the effective instrument of a render: the full descriptor when
@@ -132,6 +134,25 @@ const renderCache = new Map<string, Float32Array[]>();
 /** Clears the prerender cache (mainly for tests and memory pressure handling). */
 export function clearPrerenderCache(): void {
   renderCache.clear();
+}
+
+function cachePrerender(key: string, channels: Float32Array[]): Float32Array[] {
+  if (renderCache.has(key)) renderCache.delete(key);
+  renderCache.set(key, channels);
+  while (renderCache.size > MAX_PRERENDER_CACHE_ENTRIES) {
+    const oldest = renderCache.keys().next().value;
+    if (oldest === undefined) break;
+    renderCache.delete(oldest);
+  }
+  return channels;
+}
+
+function cachedPrerender(key: string): Float32Array[] | undefined {
+  const cached = renderCache.get(key);
+  if (!cached) return undefined;
+  renderCache.delete(key);
+  renderCache.set(key, cached);
+  return cached;
 }
 
 /** 32-bit FNV-1a hash of a string. */
@@ -318,13 +339,12 @@ export async function prerenderMidiClip(
   options: PrerenderMidiClipOptions,
 ): Promise<Float32Array[]> {
   const key = midiClipCacheKey(notes, options);
-  const cached = renderCache.get(key);
+  const cached = cachedPrerender(key);
   if (cached) return cached;
 
   if (notes.length === 0) {
     const empty = [new Float32Array(0), new Float32Array(0)];
-    renderCache.set(key, empty);
-    return empty;
+    return cachePrerender(key, empty);
   }
 
   const wasm = await ensureWasm();
@@ -369,8 +389,7 @@ export async function prerenderMidiClip(
       interleaved = project.bounceWithSynthInstrument(patch, { numChannels: 2 });
     }
     const channels = deinterleave(interleaved, 2);
-    renderCache.set(key, channels);
-    return channels;
+    return cachePrerender(key, channels);
   } finally {
     project.delete();
   }

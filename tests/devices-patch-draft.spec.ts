@@ -31,6 +31,21 @@ describe('patchFieldsForSection', () => {
       'ampReleaseMs',
     ]);
   });
+
+  it('exposes LFO2 and shared deep wrapper parameters', () => {
+    expect(patchFieldsForSection('lfo').map((spec) => spec.id)).toEqual([
+      'lfoRateHz',
+      'lfoToPitchCents',
+      'lfo2RateHz',
+    ]);
+    expect(patchFieldsForSection('global').map((spec) => spec.id)).toEqual([
+      'glideMs',
+      'bodyMix',
+      'gain',
+      'polyphony',
+      'busDrive',
+    ]);
+  });
 });
 
 describe('clampPatchField', () => {
@@ -44,6 +59,11 @@ describe('clampPatchField', () => {
     // cutoffHz min is 20, but 0 means "keep the preset value" in the ABI.
     expect(clampPatchField('cutoffHz', 0)).toBe(0);
     expect(clampPatchField('unison', 0)).toBe(0);
+  });
+
+  it('encodes sustain zero as an explicit near-silent override', () => {
+    expect(clampPatchField('ampSustain', 0)).toBe(0.0001);
+    expect(clampPatchField('filterSustain', 0)).toBe(0.0001);
   });
 
   it('rounds integer fields and degrades non-finite input to the sentinel', () => {
@@ -139,6 +159,9 @@ describe('sanitizePatchDraft', () => {
       preset: 'saw-lead',
       cutoffHz: 99999,
       drive: 0,
+      lfo2RateHz: 99,
+      bodyMix: 0.4,
+      busDrive: 0.7,
       waveform: 'square',
       filterModel: 'default',
       gain: 0.5,
@@ -146,9 +169,21 @@ describe('sanitizePatchDraft', () => {
     expect(patch).toEqual({
       preset: 'saw-lead',
       cutoffHz: 20000,
+      lfo2RateHz: 20,
+      bodyMix: 0.4,
+      busDrive: 0.7,
       waveform: 'square',
       gain: 0.5,
     });
+  });
+
+  it('keeps explicit zero sustain instead of dropping it as a sentinel', () => {
+    const patch = sanitizePatchDraft({
+      ampSustain: 0,
+      filterSustain: 0,
+      drive: 0,
+    });
+    expect(patch).toEqual({ ampSustain: 0.0001, filterSustain: 0.0001 });
   });
 
   it('filters and clamps mod routings', () => {

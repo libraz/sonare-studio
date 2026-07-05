@@ -22,6 +22,21 @@ vi.mock('@/ui/devices/audition', () => ({
   createPatchAudition: vi.fn(() => auditionMock),
 }));
 
+/** Creates a manually-settled promise for async race tests. */
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (error: unknown) => void;
+} {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe('PatchEditor.vue', () => {
   let store: ReturnType<typeof useProjectStore>;
   let trackId: number;
@@ -60,17 +75,19 @@ describe('PatchEditor.vue', () => {
   it('applies edits as one undoable synth-patch instrument', async () => {
     const wrapper = mountOpen();
     await wrapper.find('[data-field="cutoffHz"]').setValue('800');
+    await wrapper.find('[data-field="lfo2RateHz"]').setValue('4.5');
     const apply = wrapper.findAll('button').find((b) => b.text() === 'Apply');
     await apply?.trigger('click');
 
     expect(wrapper.emitted('applied')).toHaveLength(1);
     const instrument = store.tracks[0].instrument as {
       kind: string;
-      patch: { preset?: string; cutoffHz?: number; ampSustain?: number };
+      patch: { preset?: string; cutoffHz?: number; ampSustain?: number; lfo2RateHz?: number };
     };
     expect(instrument.kind).toBe('synth-patch');
     expect(instrument.patch.preset).toBe('e-piano');
     expect(instrument.patch.cutoffHz).toBe(800);
+    expect(instrument.patch.lfo2RateHz).toBe(4.5);
     // Untouched base values travel explicitly with the draft.
     expect(instrument.patch.ampSustain).toBe(0.6);
 
@@ -101,6 +118,20 @@ describe('PatchEditor.vue', () => {
     ]);
   });
 
+  it('applies zero sustain as an explicit near-silent patch override', async () => {
+    const wrapper = mountOpen();
+    await wrapper.find('[data-field="ampSustain"]').setValue('0');
+    const apply = wrapper.findAll('button').find((b) => b.text() === 'Apply');
+    await apply?.trigger('click');
+
+    const instrument = store.tracks[0].instrument as {
+      kind: string;
+      patch: { ampSustain?: number };
+    };
+    expect(instrument.kind).toBe('synth-patch');
+    expect(instrument.patch.ampSustain).toBe(0.0001);
+  });
+
   it('removes mod rows', async () => {
     const wrapper = mountOpen();
     await wrapper.find('.mod-add').trigger('click');
@@ -123,6 +154,39 @@ describe('PatchEditor.vue', () => {
     expect(instrument.patch.cutoffHz).toBe(440);
     // Nothing was committed to the track.
     expect(store.tracks[0].instrument).toBeUndefined();
+  });
+
+  it('ignores a stale audition failure after a newer audition succeeds', async () => {
+    const first = deferred<void>();
+    const second = deferred<void>();
+    auditionMock.play.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const wrapper = mountOpen();
+    const audition = wrapper.findAll('button').find((b) => b.text() === 'Audition');
+
+    await audition?.trigger('click');
+    await audition?.trigger('click');
+    second.resolve();
+    await Promise.resolve();
+    first.reject(new Error('stale render failed'));
+    await Promise.resolve();
+
+    expect(auditionMock.play).toHaveBeenCalledTimes(2);
+    expect(wrapper.find('.patch-error').exists()).toBe(false);
+  });
+
+  it('does not show audition errors after unmount', async () => {
+    const pending = deferred<void>();
+    auditionMock.play.mockReturnValueOnce(pending.promise);
+    const wrapper = mountOpen();
+    const audition = wrapper.findAll('button').find((b) => b.text() === 'Audition');
+
+    await audition?.trigger('click');
+    wrapper.unmount();
+    pending.reject(new Error('late render failed'));
+    await Promise.resolve();
+
+    expect(auditionMock.dispose).toHaveBeenCalledOnce();
+    expect(wrapper.text()).not.toContain('late render failed');
   });
 
   it('emits close from Escape, the overlay and the Close button', async () => {

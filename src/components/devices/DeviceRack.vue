@@ -5,6 +5,7 @@ import EmptyState from '@/components/shell/EmptyState.vue';
 import SearchField from '@/components/shell/SearchField.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useWebMidiOutputs } from '@/composables/useWebMidiOutputs';
+import type { AutomationParam, AutomationTarget } from '@/project/automation';
 import {
   addInsert,
   removeInsert,
@@ -15,9 +16,13 @@ import {
   setTrackExternalMidiMode,
   setTrackInstrument,
 } from '@/project/commands';
-import { listFonts, loadFontMeta, type SoundFontMeta, saveFont } from '@/project/fonts';
+import { listFonts, loadFont, loadFontMeta, type SoundFontMeta, saveFont } from '@/project/fonts';
 import { type ExternalMidiInstrument, effectiveTrackInstrument } from '@/project/instrument';
 import type { QuickControlTarget } from '@/project/quick-controls';
+import {
+  collectActiveSoundFontUsage,
+  hasSoundFontSlotConflict,
+} from '@/project/soundfont-conflicts';
 import { getWasmModule, useProjectStore } from '@/project/store';
 import { instrumentLabel, patchBaseLabel } from '@/ui/devices/device-labels';
 import { patchEditCount } from '@/ui/devices/patch-draft';
@@ -34,7 +39,9 @@ import {
   MIN_SF2_POLYPHONY,
 } from '@/ui/devices/sf2-model';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import type { AutomationWriteScheduleEvent } from '@/ui/mixer/automation-mode';
 import { type InsertProcessorEntry, loadInsertCatalogEntries } from '@/ui/mixer/insert-catalog';
+import type { Sf2ProgramStatus } from '@/wasm/index.js';
 import PatchEditor from './PatchEditor.vue';
 import QuickControls from './QuickControls.vue';
 
@@ -60,13 +67,21 @@ const props = withDefaults(
      * mode. Omitted (tests, no transport) disables knob touch recording.
      */
     positionPpq?: () => number;
+    /** Current playhead sample position, forwarded for sample-accurate automation scheduling. */
+    positionSample?: () => number;
+    /** Optional realtime automation scheduler for Quick Controls write drags. */
+    scheduleAutomationWrite?: (
+      target: AutomationTarget,
+      param: AutomationParam,
+      event: AutomationWriteScheduleEvent,
+    ) => void;
     /**
      * Monotonic request counter from the shell. Incrementing it opens the
      * active MIDI track's instrument picker from outside the rack.
      */
     instrumentPickerRequest?: number;
   }>(),
-  { transportPlaying: false, instrumentPickerRequest: 0 },
+  { transportPlaying: false, positionSample: undefined, instrumentPickerRequest: 0 },
 );
 
 const store = useProjectStore();
@@ -106,6 +121,7 @@ function run(action: () => void): void {
 
 /** Cached display names of stored fonts, by font id. */
 const fontNames = ref<Record<string, string>>({});
+let disposed = false;
 
 watch(
   instrument,
@@ -115,6 +131,7 @@ watch(
     if (fontNames.value[fontId] !== undefined) return;
     loadFontMeta(fontId)
       .then((meta) => {
+        if (disposed) return;
         fontNames.value = { ...fontNames.value, [fontId]: meta.name };
       })
       .catch(() => {
@@ -242,6 +259,7 @@ watch(pickerOpen, (open) => {
 });
 
 onBeforeUnmount(() => {
+  disposed = true;
   document.removeEventListener('pointerdown', onDocumentPointerDown, true);
 });
 
@@ -258,6 +276,21 @@ const fonts = ref<SoundFontMeta[]>([]);
 const fontsLoading = ref(false);
 const sf2Selection = ref(createSf2Selection(null));
 const sf2FileInput = ref<HTMLInputElement | null>(null);
+
+type Sf2ManifestProbe =
+  | { state: 'idle'; text: '' }
+  | { state: 'loading'; text: string }
+  | { state: 'sf2' | 'synth' | 'empty' | 'error'; text: string };
+
+interface Sf2ManifestPreset {
+  bank: number;
+  program: number;
+  name: string;
+}
+
+const sf2ManifestProbe = ref<Sf2ManifestProbe>({ state: 'idle', text: '' });
+const sf2ManifestPresets = ref<Sf2ManifestPreset[]>([]);
+let sf2ManifestRequest = 0;
 
 async function refreshFonts(): Promise<void> {
   fontsLoading.value = true;
@@ -307,6 +340,122 @@ function useSf2(): void {
   run(() => setTrackInstrument(track.id, next));
   pickerOpen.value = false;
 }
+
+function soundFontDisplayName(fontId: string): string {
+  return fonts.value.find((font) => font.id === fontId)?.name ?? fontNames.value[fontId] ?? fontId;
+}
+
+const soundFontSlotWarning = computed(() => {
+  const track = activeTrack.value;
+  if (!track || pickerTab.value !== 'sf2') return '';
+  const selected = buildSf2Instrument(sf2Selection.value);
+  const tracks = selected
+    ? store.tracks.map((candidate) =>
+        candidate.id === track.id ? { ...candidate, instrument: selected } : candidate,
+      )
+    : store.tracks;
+  const usage = collectActiveSoundFontUsage(tracks, (candidate) =>
+    effectiveTrackInstrument(candidate, store.projectExternalMidi),
+  );
+  if (!hasSoundFontSlotConflict(usage) || usage.winningFontId === undefined) return '';
+  return formatMessage(t.value.shell.devicesPanel.soundFontSlotWarning, {
+    count: String(usage.fontIds.length),
+    font: soundFontDisplayName(usage.winningFontId),
+  });
+});
+
+function sf2StatusText(status: Sf2ProgramStatus | null): Sf2ManifestProbe {
+  if (!status) return { state: 'empty', text: t.value.shell.devicesPanel.soundFontProgramEmpty };
+  const template =
+    status.backend === 'sf2'
+      ? t.value.shell.devicesPanel.soundFontProgramResolved
+      : t.value.shell.devicesPanel.soundFontProgramFallback;
+  return {
+    state: status.backend,
+    text: formatMessage(template, {
+      name: status.presetName,
+      bank: String(status.bank),
+      program: String(status.program),
+    }),
+  };
+}
+
+async function refreshSf2ManifestProbe(): Promise<void> {
+  const request = ++sf2ManifestRequest;
+  const fontId = sf2Selection.value.fontId;
+  if (!pickerOpen.value || pickerTab.value !== 'sf2' || fontId === null) {
+    sf2ManifestProbe.value = { state: 'idle', text: '' };
+    sf2ManifestPresets.value = [];
+    return;
+  }
+  const bank = sf2Selection.value.bank;
+  const program = sf2Selection.value.program;
+  sf2ManifestProbe.value = {
+    state: 'loading',
+    text: t.value.shell.devicesPanel.soundFontProgramChecking,
+  };
+  try {
+    const data = await loadFont(fontId);
+    const wasm = getWasmModule();
+    const project = new wasm.Project();
+    try {
+      const created = project.addMidiClip(0, 1);
+      const events = Array.from({ length: 128 }, (_, candidateProgram) => {
+        const tick = candidateProgram * 2;
+        return [
+          ...wasm.Project.midiBankProgram(
+            tick,
+            0,
+            0,
+            (bank >> 7) & 0x7f,
+            bank & 0x7f,
+            candidateProgram,
+          ),
+          wasm.Project.midiNoteOn(tick, 0, 0, 60, 96),
+          wasm.Project.midiNoteOff(tick + 1, 0, 0, 60, 0),
+        ];
+      }).flat();
+      project.setMidiEvents(created.clipId, events);
+      project.loadSoundFont(data);
+      const manifest = project.soundFontManifest();
+      if (request !== sf2ManifestRequest) return;
+      sf2ManifestPresets.value = manifest
+        .filter((entry) => entry.channel === 0 && entry.bank === bank && entry.backend === 'sf2')
+        .map((entry) => ({ bank: entry.bank, program: entry.program, name: entry.presetName }))
+        .sort((a, b) => a.bank - b.bank || a.program - b.program);
+      sf2ManifestProbe.value = sf2StatusText(
+        manifest.find(
+          (entry) => entry.channel === 0 && entry.bank === bank && entry.program === program,
+        ) ??
+          manifest[0] ??
+          null,
+      );
+    } finally {
+      project.delete();
+    }
+  } catch (err) {
+    if (request !== sf2ManifestRequest) return;
+    sf2ManifestPresets.value = [];
+    const detail = err instanceof Error ? err.message : String(err);
+    sf2ManifestProbe.value = {
+      state: 'error',
+      text: formatMessage(t.value.shell.devicesPanel.soundFontProgramError, { detail }),
+    };
+  }
+}
+
+watch(
+  () => [
+    pickerOpen.value,
+    pickerTab.value,
+    sf2Selection.value.fontId,
+    sf2Selection.value.bank,
+    sf2Selection.value.program,
+  ],
+  () => {
+    void refreshSf2ManifestProbe();
+  },
+);
 
 // --- SF2 GM / GM2 program browser ---------------------------------------------
 
@@ -396,6 +545,14 @@ const sf2ProgramOptions = computed(() => {
     };
   });
 });
+
+function selectSf2ManifestPreset(preset: Sf2ManifestPreset): void {
+  sf2Selection.value = {
+    ...sf2Selection.value,
+    bank: preset.bank,
+    program: preset.program,
+  };
+}
 
 async function onSf2FileChange(event: Event): Promise<void> {
   const input = event.target as HTMLInputElement;
@@ -841,9 +998,46 @@ const instrumentSourceCaption = computed(() => {
               </label>
             </div>
             <div class="sf2-program-browser">
+              <p v-if="soundFontSlotWarning" class="sf2-slot-warning" role="alert">
+                {{ soundFontSlotWarning }}
+              </p>
               <div class="sf2-current-program">
                 <span class="sf2-current-label">{{ t.shell.devicesPanel.selectedProgram }}</span>
                 <strong>{{ sf2Selection.program }} · {{ sf2ProgramName }}</strong>
+              </div>
+              <p
+                v-if="sf2ManifestProbe.text"
+                class="sf2-manifest-status"
+                :class="sf2ManifestProbe.state"
+              >
+                {{ sf2ManifestProbe.text }}
+              </p>
+              <div v-if="sf2ManifestPresets.length > 0" class="sf2-manifest-browser">
+                <span class="sf2-current-label">{{ t.shell.devicesPanel.soundFontPresets }}</span>
+                <div
+                  class="sf2-manifest-grid"
+                  role="listbox"
+                  :aria-label="t.shell.devicesPanel.soundFontPresets"
+                >
+                  <button
+                    v-for="preset in sf2ManifestPresets"
+                    :key="`${preset.bank}:${preset.program}`"
+                    type="button"
+                    class="sf2-manifest-option"
+                    :class="{
+                      selected:
+                        sf2Selection.bank === preset.bank && sf2Selection.program === preset.program,
+                    }"
+                    role="option"
+                    :aria-selected="
+                      sf2Selection.bank === preset.bank && sf2Selection.program === preset.program
+                    "
+                    @click="selectSf2ManifestPreset(preset)"
+                  >
+                    <span class="sf2-program-name">{{ preset.name }}</span>
+                    <span class="sf2-program-number">{{ preset.bank }}:{{ preset.program }}</span>
+                  </button>
+                </div>
               </div>
               <label v-if="gmFamilyOptions.length > 0" class="sf2-family">
                 <span>{{ t.shell.devicesPanel.programFamily }}</span>
@@ -1010,7 +1204,9 @@ const instrumentSourceCaption = computed(() => {
           :key="quickControlKey"
           :target="quickControlTarget"
           :position-ppq="positionPpq"
+          :position-sample="positionSample"
           :is-playing="transportPlaying"
+          :schedule-automation-write="scheduleAutomationWrite"
         />
         <p v-else class="chain-empty">{{ t.shell.devicesPanel.noDeviceSelected }}</p>
       </div>

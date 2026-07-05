@@ -46,14 +46,19 @@ describe('filterPresets', () => {
     expect(presetCategory('Harpsichord')).toBe('keys');
     expect(presetCategory('bass-picked')).toBe('basses');
     expect(presetCategory('Bassoon')).toBe('winds');
+    expect(presetCategory('english-horn')).toBe('winds');
+    expect(presetCategory('french-horn')).toBe('orchestral');
     expect(presetCategory('church-organ')).toBe('organs');
     expect(
-      groupPresets(['electric-guitar', 'Harpsichord', 'bass-picked', 'Bassoon', 'saw-lead'], ''),
+      groupPresets(
+        ['electric-guitar', 'Harpsichord', 'bass-picked', 'Bassoon', 'english-horn', 'saw-lead'],
+        '',
+      ),
     ).toEqual([
       { category: 'keys', presets: ['Harpsichord'] },
       { category: 'guitars', presets: ['electric-guitar'] },
       { category: 'basses', presets: ['bass-picked'] },
-      { category: 'winds', presets: ['Bassoon'] },
+      { category: 'winds', presets: ['Bassoon', 'english-horn'] },
       { category: 'synths', presets: ['saw-lead'] },
     ]);
   });

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearPrerenderCache,
   deinterleave,
+  MAX_PRERENDER_CACHE_ENTRIES,
   type MidiNote,
   makeDemoNotes,
   midiClipCacheKey,
@@ -200,6 +201,31 @@ describe('prerenderMidiClip', () => {
     await prerenderMidiClip(NOTES, OPTS);
     await prerenderMidiClip(NOTES, { ...OPTS, tempoBpm: 90 });
     expect(wasmMock.bounceWithSynthInstrument).toHaveBeenCalledTimes(2);
+  });
+
+  it('bounds the prerender cache and evicts the least-recently used render', async () => {
+    const retained = await prerenderMidiClip(NOTES, { ...OPTS, tempoBpm: 60 });
+    for (let i = 0; i < MAX_PRERENDER_CACHE_ENTRIES - 1; i++) {
+      await prerenderMidiClip(NOTES, { ...OPTS, tempoBpm: 61 + i });
+    }
+    expect(wasmMock.bounceWithSynthInstrument).toHaveBeenCalledTimes(MAX_PRERENDER_CACHE_ENTRIES);
+
+    // Touch the oldest render so the next insert evicts the next-oldest key.
+    expect(await prerenderMidiClip(NOTES, { ...OPTS, tempoBpm: 60 })).toBe(retained);
+    await prerenderMidiClip(NOTES, { ...OPTS, tempoBpm: 200 });
+    expect(wasmMock.bounceWithSynthInstrument).toHaveBeenCalledTimes(
+      MAX_PRERENDER_CACHE_ENTRIES + 1,
+    );
+
+    expect(await prerenderMidiClip(NOTES, { ...OPTS, tempoBpm: 60 })).toBe(retained);
+    expect(wasmMock.bounceWithSynthInstrument).toHaveBeenCalledTimes(
+      MAX_PRERENDER_CACHE_ENTRIES + 1,
+    );
+
+    await prerenderMidiClip(NOTES, { ...OPTS, tempoBpm: 61 });
+    expect(wasmMock.bounceWithSynthInstrument).toHaveBeenCalledTimes(
+      MAX_PRERENDER_CACHE_ENTRIES + 2,
+    );
   });
 
   it('returns empty stereo buffers for an empty phrase without bouncing', async () => {

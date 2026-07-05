@@ -74,16 +74,21 @@ export function createPatchAudition(options: PatchAuditionOptions = {}): PatchAu
     gain: 1,
     ...(options.contextFactory ? { contextFactory: options.contextFactory } : {}),
   });
+  let generation = 0;
+  let disposed = false;
 
   async function play(
     instrument: TrackInstrument,
     note = DEFAULT_AUDITION_NOTE,
     velocity = DEFAULT_AUDITION_VELOCITY,
   ): Promise<void> {
+    if (disposed) return;
+    const myGeneration = ++generation;
     const phrase: MidiNote[] = [
       { note, velocity, startPpq: 0, durationPpq: DEFAULT_AUDITION_DURATION_PPQ },
     ];
     const channels = await render(phrase, { sampleRate, instrument });
+    if (disposed || myGeneration !== generation) return;
     if (channels.length === 0 || channels[0].length === 0) return;
     const gain = normalizeGain(peakAmplitude(channels), targetPeak);
     // Scale a copy: the renderer's buffers are shared via the prerender cache.
@@ -97,7 +102,15 @@ export function createPatchAudition(options: PatchAuditionOptions = {}): PatchAu
 
   return {
     play,
-    stop: () => preview.stop(),
-    dispose: () => preview.dispose(),
+    stop: () => {
+      generation++;
+      preview.stop();
+    },
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      generation++;
+      preview.dispose();
+    },
   };
 }

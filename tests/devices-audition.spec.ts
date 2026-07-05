@@ -75,4 +75,53 @@ describe('createPatchAudition', () => {
     audition.dispose();
     expect(context.closed).toBe(true);
   });
+
+  it('ignores a stale render that resolves after a newer audition', async () => {
+    const context = createFakeAudioContext();
+    const renders: Array<(channels: Float32Array[]) => void> = [];
+    const render = vi.fn(
+      () =>
+        new Promise<Float32Array[]>((resolve) => {
+          renders.push(resolve);
+        }),
+    );
+    const audition = createPatchAudition({
+      contextFactory: () => asAudioContext(context),
+      render,
+      sampleRate: 44100,
+    });
+
+    const first = audition.play(INSTRUMENT, 60);
+    const second = audition.play(INSTRUMENT, 72);
+    renders[1]([new Float32Array([0.5])]);
+    await second;
+    renders[0]([new Float32Array([0.25])]);
+    await first;
+
+    expect(context.sources).toHaveLength(1);
+    expect(render.mock.calls.map(([notes]) => notes[0].note)).toEqual([60, 72]);
+  });
+
+  it('does not play a render that resolves after dispose', async () => {
+    const context = createFakeAudioContext();
+    let resolveRender!: (channels: Float32Array[]) => void;
+    const render = vi.fn(
+      () =>
+        new Promise<Float32Array[]>((resolve) => {
+          resolveRender = resolve;
+        }),
+    );
+    const audition = createPatchAudition({
+      contextFactory: () => asAudioContext(context),
+      render,
+      sampleRate: 44100,
+    });
+
+    const pending = audition.play(INSTRUMENT);
+    audition.dispose();
+    resolveRender([new Float32Array([0.5])]);
+    await pending;
+
+    expect(context.sources).toHaveLength(0);
+  });
 });

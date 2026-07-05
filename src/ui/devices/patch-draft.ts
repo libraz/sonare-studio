@@ -4,8 +4,10 @@
  * The editor keeps a local draft the user mutates freely; Apply sanitizes it
  * back into a SynthPatch and commits a single undoable setTrackInstrument.
  * The frozen patch ABI treats numeric 0 / omitted fields as "keep the base
- * preset value", so the sanitizer never clamps a zero up into a field's range
- * and drops zeros entirely (the two encodings are equivalent).
+ * preset value", so the sanitizer normally drops zeros. Sustain is the
+ * exception: users need a real silent sustain, so editor zero is encoded as a
+ * tiny positive value that avoids the ABI sentinel while remaining effectively
+ * silent.
  */
 
 import type { TrackInstrument } from '@/project/instrument';
@@ -154,6 +156,26 @@ export const PATCH_FIELD_SPECS: ReadonlyArray<PatchFieldSpec> = [
   { id: 'busDrive', label: 'Bus Drive', section: 'global', min: 0, max: 1, step: 0.01 },
 ];
 
+/** Smallest positive sustain override the native patch ABI can distinguish from the 0 sentinel. */
+export const EXPLICIT_ZERO_SUSTAIN = 0.0001;
+
+export function isSustainField(id: string): id is 'ampSustain' | 'filterSustain' {
+  return id === 'ampSustain' || id === 'filterSustain';
+}
+
+/** Encodes a UI sustain value for the ABI, where literal 0 means "keep base". */
+export function encodePatchFieldValue(id: NumericPatchField, value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  if (isSustainField(id) && value === 0) return EXPLICIT_ZERO_SUSTAIN;
+  return value;
+}
+
+/** Decodes stored ABI sustain epsilon back to the user's requested zero. */
+export function decodePatchFieldValue(id: NumericPatchField, value: number): number {
+  if (isSustainField(id) && value > 0 && value <= EXPLICIT_ZERO_SUSTAIN) return 0;
+  return value;
+}
+
 /** Returns the numeric field specs of one editor section, in display order. */
 export function patchFieldsForSection(section: PatchSection): PatchFieldSpec[] {
   return PATCH_FIELD_SPECS.filter((spec) => spec.section === section);
@@ -174,10 +196,11 @@ export function patchFieldSpec(id: string): PatchFieldSpec | null {
  * @returns The clamped value (integer fields rounded).
  */
 export function clampPatchField(id: NumericPatchField, value: number): number {
-  if (!Number.isFinite(value) || value === 0) return 0;
+  const encoded = encodePatchFieldValue(id, value);
+  if (!Number.isFinite(encoded) || encoded === 0) return 0;
   const spec = patchFieldSpec(id);
-  if (!spec) return value;
-  const clamped = Math.min(spec.max, Math.max(spec.min, value));
+  if (!spec) return encoded;
+  const clamped = Math.min(spec.max, Math.max(spec.min, encoded));
   return spec.integer ? Math.round(clamped) : clamped;
 }
 
@@ -268,7 +291,7 @@ function copyPatchFields(target: SynthPatch, source: SynthPatch): void {
   for (const spec of PATCH_FIELD_SPECS) {
     const value = record[spec.id];
     if (typeof value === 'number' && Number.isFinite(value) && value !== 0) {
-      (target as Record<string, unknown>)[spec.id] = value;
+      (target as Record<string, unknown>)[spec.id] = decodePatchFieldValue(spec.id, value);
     }
   }
   for (const field of ENUM_PATCH_FIELDS) {
@@ -319,9 +342,10 @@ export function createPatchDraft(
 /**
  * Sanitizes a draft into a SynthPatch ready to commit: numeric fields are
  * clamped to their spec ranges (zeros and non-finite values dropped — both
- * mean "keep the base value" in the ABI), enum fields are kept as strings,
- * mod routings are filtered/clamped/capped, and binding-internal fields
- * (destinationId) are never emitted.
+ * mean "keep the base value" in the ABI — except sustain zero, encoded as a
+ * tiny positive override), enum fields are kept as strings, mod routings are
+ * filtered/clamped/capped, and binding-internal fields (destinationId) are
+ * never emitted.
  *
  * @param draft Editor draft (not mutated).
  * @returns A clean patch.
