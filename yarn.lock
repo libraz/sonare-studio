@@ -331,6 +331,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@libraz/libcantus@npm:0.9.2":
+  version: 0.9.2
+  resolution: "@libraz/libcantus@npm:0.9.2"
+  checksum: 10c0/4f2950817e986048d5c3d5c2b32deec538856a3f080526fc61e03e18033dcbac3d48ad56b554bbe5ca01568f3cd299aa371879559f7d672bc6432f546ce47a6c
+  languageName: node
+  linkType: hard
+
 "@napi-rs/wasm-runtime@npm:^1.1.4":
   version: 1.1.4
   resolution: "@napi-rs/wasm-runtime@npm:1.1.4"
@@ -1970,6 +1977,7 @@ __metadata:
     "@biomejs/biome": "npm:^2.5"
     "@breezystack/lamejs": "npm:^1.2.7"
     "@fontsource-variable/bricolage-grotesque": "npm:^5.2.10"
+    "@libraz/libcantus": "npm:0.9.2"
     "@vitejs/plugin-vue": "npm:^6"
     "@vue/test-utils": "npm:^2.4"
     fflate: "npm:^0.8"

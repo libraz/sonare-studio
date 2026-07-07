@@ -21,6 +21,7 @@
   "dependencies": {
     "@breezystack/lamejs": "^1.2.7",
     "@fontsource-variable/bricolage-grotesque": "^5.2.10",
+    "@libraz/libcantus": "0.9.2",
     "fflate": "^0.8",
     "jspdf": "^4.2.1",
     "pinia": "^3",
