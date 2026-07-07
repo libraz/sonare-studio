@@ -5,6 +5,7 @@ import { buildGuidance, type GuidanceInput } from '@/compose/guidance';
 import type { EditorChordSymbol } from '@/project/chords';
 import type { EditorNote, EditorTrack, TimeSignatureSegment } from '@/project/types';
 import { MAJOR_MODE_MASK, type ScaleHighlightConfig } from '@/project/types';
+import { MESSAGES } from '@/ui/i18n';
 
 function note(partial: Partial<EditorNote>): EditorNote {
   return {
@@ -147,17 +148,38 @@ describe('buildTheoryCard', () => {
     const analysis = result.byNoteId.get(60);
     expect(analysis).toBeDefined();
     if (analysis === undefined) return;
-    const card = buildTheoryCard(analysis, {
-      pitch: 64,
-      keySet: true,
-      chordRoman: 'I',
-      chordFunction: 'tonic',
-    });
+    const card = buildTheoryCard(
+      analysis,
+      { pitch: 64, keySet: true, chordRoman: 'I', chordFunction: 'tonic' },
+      MESSAGES.en.theory,
+    );
     expect(card.title).toBe('E4 — 3rd');
     const scaleLine = card.lines.find((line) => line.label === 'Scale');
     expect(scaleLine?.text).toBe('Scale degree 3');
     const chordLine = card.lines.find((line) => line.label === 'Chord');
     expect(chordLine?.text).toBe('I — Tonic');
     expect(card.lines.length).toBeGreaterThan(0);
+  });
+
+  it('localizes the card from the Japanese message bundle', () => {
+    const result = buildGuidance(
+      guidanceInput({
+        notes: [note({ id: 60, pitch: 64, startPpq: 0, durationPpq: 1 })],
+        chordSymbols: [chordSymbol({ startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 })],
+      }),
+    );
+    const analysis = result.byNoteId.get(60);
+    expect(analysis).toBeDefined();
+    if (analysis === undefined) return;
+    const card = buildTheoryCard(
+      analysis,
+      { pitch: 64, keySet: true, chordRoman: 'I', chordFunction: 'tonic' },
+      MESSAGES.ja.theory,
+    );
+    expect(card.title).toBe('E4 — 第3音');
+    const scaleLine = card.lines.find((line) => line.label === 'スケール');
+    expect(scaleLine?.text).toBe('スケール度数 3');
+    const chordLine = card.lines.find((line) => line.label === 'コード');
+    expect(chordLine?.text).toBe('I — トニック');
   });
 });

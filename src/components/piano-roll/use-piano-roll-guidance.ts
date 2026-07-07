@@ -16,6 +16,7 @@ import { buildGuidance, type GuidanceResult, type GuidanceSegment } from '@/comp
 import { effectiveKeyScale } from '@/compose/key';
 import type { TrackWithNotes } from '@/compose/tracks';
 import { useProjectStore } from '@/project/store';
+import { useI18n } from '@/ui/i18n';
 
 export interface PianoRollGuidance {
   /** Background tint segments for the note grid; undefined without an active clip. */
@@ -27,6 +28,7 @@ export interface PianoRollGuidance {
 /** Builds the reactive composition-guidance surface for the active clip. */
 export function usePianoRollGuidance(): PianoRollGuidance {
   const store = useProjectStore();
+  const { t } = useI18n();
 
   const guidance = computed<GuidanceResult | null>(() => {
     const clip = store.activeClip;
@@ -79,7 +81,7 @@ export function usePianoRollGuidance(): PianoRollGuidance {
         // Unmappable chord: the card simply omits the chord line.
       }
     }
-    return buildTheoryCard(analysis, ctx);
+    return buildTheoryCard(analysis, ctx, t.value.theory);
   }
 
   const guidanceSegments = computed(() => guidance.value?.segments);

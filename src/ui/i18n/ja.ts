@@ -1758,4 +1758,47 @@ export const ja = {
       locators: 'ロケーター',
     },
   },
+  theory: {
+    roles: {
+      root: 'ルート',
+      third: '第3音',
+      fifth: '第5音',
+      sixth: '第6音',
+      seventh: '第7音',
+      tension: 'テンション',
+      doubling: '重複音',
+    },
+    lock: {
+      identity: 'コードのルートを決める音',
+      quality: '長短を決める音（動かすと響きが変わる）',
+      voicing: '自由に動かせる声部の音',
+    },
+    functions: {
+      tonic: 'トニック',
+      subdominant: 'サブドミナント',
+      dominant: 'ドミナント',
+    },
+    safety: {
+      safe: 'この場所に合う音',
+      warning: '使い方に注意',
+      dissonant: 'コードとぶつかる音',
+    },
+    labels: {
+      suspension: '掛留音: 次で下行して解決',
+      passing: '経過音',
+      neighbor: '刺繍音',
+      avoid: 'ここでは回避音',
+      tension: 'テンション {degree} として使える',
+    },
+    lines: {
+      role: '役割',
+      chord: 'コード',
+      scale: 'スケール',
+      note: '音',
+      safety: '安全度',
+    },
+    scaleDegree: 'スケール度数 {degree}',
+    nonScaleSuffix: '（スケール外）',
+    nonScaleTone: 'スケール外の音',
+  },
 } as const;

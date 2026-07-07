@@ -1762,4 +1762,47 @@ export const en = {
       locators: 'Locators',
     },
   },
+  theory: {
+    roles: {
+      root: 'root',
+      third: '3rd',
+      fifth: '5th',
+      sixth: '6th',
+      seventh: '7th',
+      tension: 'tension',
+      doubling: 'doubling',
+    },
+    lock: {
+      identity: "Sets the chord's root",
+      quality: 'Defines major/minor — moving it changes the quality',
+      voicing: 'Free voicing tone',
+    },
+    functions: {
+      tonic: 'Tonic',
+      subdominant: 'Subdominant',
+      dominant: 'Dominant',
+    },
+    safety: {
+      safe: 'Fits here',
+      warning: 'Use with care',
+      dissonant: 'Clashes with the chord',
+    },
+    labels: {
+      suspension: 'Suspension: resolve down by step',
+      passing: 'Passing tone',
+      neighbor: 'Neighbor tone',
+      avoid: 'Avoid note here',
+      tension: 'Usable {degree}th tension',
+    },
+    lines: {
+      role: 'Role',
+      chord: 'Chord',
+      scale: 'Scale',
+      note: 'Note',
+      safety: 'Safety',
+    },
+    scaleDegree: 'Scale degree {degree}',
+    nonScaleSuffix: ' (non-scale)',
+    nonScaleTone: 'Non-scale tone',
+  },
 } as const;

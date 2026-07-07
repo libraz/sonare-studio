@@ -1,9 +1,11 @@
 /**
  * Beginner-friendly hover-card text for a note's theory analysis.
  *
- * A small centralized label table turns a {@link NoteAnalysis} into a
- * {@link TheoryCard}; lines whose data is absent are skipped. All text is
- * English — the UI layer localizes later.
+ * This module owns the assembly logic (which lines a card carries and how they
+ * are composed from a {@link NoteAnalysis}); the display strings live in the
+ * app's i18n message trees and are passed in as a {@link TheoryLabels} bundle,
+ * so the same card renders in every locale from one place. Lines whose data is
+ * absent are skipped.
  *
  * Pure module.
  */
@@ -24,6 +26,32 @@ export interface TheoryCard {
   lines: TheoryCardLine[];
 }
 
+/**
+ * Localized string bundle the card is built from. The app supplies this from
+ * its i18n `theory` message block (see src/ui/i18n); `{degree}` placeholders in
+ * `scaleDegree` and `labels.tension` are substituted at build time.
+ */
+export interface TheoryLabels {
+  /** Short role name appended to the title, per harmonic role. */
+  roles: Readonly<Record<HarmonyRole, string>>;
+  /** What each lock level means for the composer. */
+  lock: Readonly<Record<LockLevel, string>>;
+  /** Display names for harmonic functions. */
+  functions: Readonly<Record<'tonic' | 'subdominant' | 'dominant', string>>;
+  /** Fallback safety text when the analysis carries no rationale. */
+  safety: Readonly<Record<'safe' | 'warning' | 'dissonant', string>>;
+  /** Beginner text per non-chord-tone label kind. */
+  labels: Readonly<Record<'suspension' | 'passing' | 'neighbor' | 'avoid' | 'tension', string>>;
+  /** Line labels (left column). */
+  lines: Readonly<Record<'role' | 'chord' | 'scale' | 'note' | 'safety', string>>;
+  /** Scale-degree line template, with a `{degree}` placeholder. */
+  scaleDegree: string;
+  /** Suffix appended to the scale line for a non-scale tone. */
+  nonScaleSuffix: string;
+  /** Scale line shown when the degree is unknown. */
+  nonScaleTone: string;
+}
+
 /** Pitch-class names, sharp spelling (index = pitch class). */
 const PITCH_CLASS_NAMES = [
   'C',
@@ -40,64 +68,43 @@ const PITCH_CLASS_NAMES = [
   'B',
 ] as const;
 
-/** Short display name per harmonic role, appended to the card title. */
-const ROLE_NAMES: Readonly<Record<HarmonyRole, string>> = {
-  root: 'root',
-  third: '3rd',
-  fifth: '5th',
-  sixth: '6th',
-  seventh: '7th',
-  tension: 'tension',
-  doubling: 'doubling',
-};
-
-/** What each lock level means for the composer. */
-const LOCK_TEXT: Readonly<Record<LockLevel, string>> = {
-  identity: "Sets the chord's root",
-  quality: 'Defines major/minor — moving it changes the quality',
-  voicing: 'Free voicing tone',
-};
-
-/** Display names for harmonic functions. */
-const FUNCTION_NAMES: Readonly<Record<string, string>> = {
-  tonic: 'Tonic',
-  subdominant: 'Subdominant',
-  dominant: 'Dominant',
-};
-
-/** Fallback safety text when the analysis carries no rationale. */
-const SAFETY_TEXT: Readonly<Record<NoteSafety, string>> = {
-  [NoteSafety.Safe]: 'Fits here',
-  [NoteSafety.Warning]: 'Use with care',
-  [NoteSafety.Dissonant]: 'Clashes with the chord',
+/** Maps a safety verdict to its label key. */
+const SAFETY_KEY: Readonly<Record<NoteSafety, 'safe' | 'warning' | 'dissonant'>> = {
+  [NoteSafety.Safe]: 'safe',
+  [NoteSafety.Warning]: 'warning',
+  [NoteSafety.Dissonant]: 'dissonant',
 };
 
 /** Beginner text for one non-chord-tone label, or undefined when unmapped. */
-function labelText(label: TheoryLabel): string | undefined {
+function labelText(label: TheoryLabel, labels: TheoryLabels): string | undefined {
   switch (label.kind) {
     case 'suspension':
-      return 'Suspension: resolve down by step';
+      return labels.labels.suspension;
     case 'passing':
-      return 'Passing tone';
+      return labels.labels.passing;
     case 'neighbor':
-      return 'Neighbor tone';
+      return labels.labels.neighbor;
     case 'avoid':
-      return 'Avoid note here';
+      return labels.labels.avoid;
     case 'tension':
-      return `Usable ${label.degree}th tension`;
+      return labels.labels.tension.replace('{degree}', String(label.degree));
     default:
       return undefined;
   }
 }
 
-/** The NCT/resolution line: the analyzer's rationale, else a label mapping. */
-function nctText(analysis: NoteAnalysis): string | undefined {
-  const rationale = analysis.analyzed?.rationale;
-  if (rationale !== undefined && rationale !== '') return rationale;
+/**
+ * The NCT/resolution line, from the localized label table. The analyzer's raw
+ * rationale (English) is used only as a last resort when no label maps, so a
+ * localized card never shows an untranslated string for a known label.
+ */
+function nctText(analysis: NoteAnalysis, labels: TheoryLabels): string | undefined {
   for (const label of analysis.analyzed?.labels ?? []) {
-    const text = labelText(label);
+    const text = labelText(label, labels);
     if (text !== undefined) return text;
   }
+  const rationale = analysis.analyzed?.rationale;
+  if (rationale !== undefined && rationale !== '') return rationale;
   return undefined;
 }
 
@@ -107,42 +114,48 @@ function nctText(analysis: NoteAnalysis): string | undefined {
  * @param analysis The note's theory analysis.
  * @param ctx Display context: the note's MIDI pitch, whether a key is set,
  *   and the sounding chord's Roman numeral / harmonic function when known.
+ * @param labels Localized string bundle (the app's i18n `theory` block).
  */
 export function buildTheoryCard(
   analysis: NoteAnalysis,
   ctx: { pitch: number; keySet: boolean; chordRoman?: string; chordFunction?: string },
+  labels: TheoryLabels,
 ): TheoryCard {
   const pc = ((ctx.pitch % 12) + 12) % 12;
   const octave = Math.floor(ctx.pitch / 12) - 1;
   let title = `${PITCH_CLASS_NAMES[pc]}${octave}`;
-  if (analysis.role !== undefined) title += ` — ${ROLE_NAMES[analysis.role.role]}`;
+  if (analysis.role !== undefined) title += ` — ${labels.roles[analysis.role.role]}`;
 
   const lines: TheoryCardLine[] = [];
   if (analysis.role !== undefined) {
-    lines.push({ label: 'Role', text: LOCK_TEXT[analysis.role.lock] });
+    lines.push({ label: labels.lines.role, text: labels.lock[analysis.role.lock] });
   }
   if (ctx.chordRoman !== undefined || ctx.chordFunction !== undefined) {
     const parts: string[] = [];
     if (ctx.chordRoman !== undefined) parts.push(ctx.chordRoman);
     if (ctx.chordFunction !== undefined) {
-      parts.push(FUNCTION_NAMES[ctx.chordFunction] ?? ctx.chordFunction);
+      const key = ctx.chordFunction as 'tonic' | 'subdominant' | 'dominant';
+      parts.push(labels.functions[key] ?? ctx.chordFunction);
     }
-    lines.push({ label: 'Chord', text: parts.join(' — ') });
+    lines.push({ label: labels.lines.chord, text: parts.join(' — ') });
   }
   if (ctx.keySet) {
     const text =
       analysis.degree >= 0
-        ? `Scale degree ${analysis.degree + 1}${analysis.isScaleTone ? '' : ' (non-scale)'}`
-        : 'Non-scale tone';
-    lines.push({ label: 'Scale', text });
+        ? labels.scaleDegree.replace('{degree}', String(analysis.degree + 1)) +
+          (analysis.isScaleTone ? '' : labels.nonScaleSuffix)
+        : labels.nonScaleTone;
+    lines.push({ label: labels.lines.scale, text });
   }
-  const nct = nctText(analysis);
-  if (nct !== undefined) lines.push({ label: 'Note', text: nct });
+  const nct = nctText(analysis, labels);
+  if (nct !== undefined) lines.push({ label: labels.lines.note, text: nct });
   if (analysis.safety !== undefined) {
-    const rationale = analysis.safety.rationale;
-    const text =
-      rationale !== undefined && rationale !== '' ? rationale : SAFETY_TEXT[analysis.safety.safety];
-    lines.push({ label: 'Safety', text });
+    // The localized verdict text is primary; the analyzer's raw rationale is
+    // English-only, so it is not shown in the card.
+    lines.push({
+      label: labels.lines.safety,
+      text: labels.safety[SAFETY_KEY[analysis.safety.safety]],
+    });
   }
   return { title, lines };
 }
