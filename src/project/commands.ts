@@ -41,6 +41,8 @@ export {
   splitClip,
   trimClip,
 } from './command/clips';
+export type { GenerateProgressionParams } from './command/generate-progression';
+export { generateProgressionCommand } from './command/generate-progression';
 export type { CommandGestureOptions, HistoryReferencedMediaIds } from './command/history';
 export {
   canRedo,
@@ -60,8 +62,6 @@ export {
   setMasteringPresetOverride,
 } from './command/mastering';
 export { extractMelodyFromAudioClip } from './command/melody';
-export type { GenerateProgressionParams } from './command/generate-progression';
-export { generateProgressionCommand } from './command/generate-progression';
 export {
   clearAllMidiCcBindings,
   clearMidiCcBinding,
