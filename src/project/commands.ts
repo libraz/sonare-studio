@@ -60,6 +60,8 @@ export {
   setMasteringPresetOverride,
 } from './command/mastering';
 export { extractMelodyFromAudioClip } from './command/melody';
+export type { GenerateProgressionParams } from './command/generate-progression';
+export { generateProgressionCommand } from './command/generate-progression';
 export {
   clearAllMidiCcBindings,
   clearMidiCcBinding,
