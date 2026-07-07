@@ -1374,6 +1374,17 @@ export const ja = {
       guideColorTones: '使えるカラートーン（ノートカードに表示）',
       guideLevel: '解説レベル',
       guideClose: 'ガイドを閉じる',
+      reharmonize: {
+        toggle: '自動コード',
+        toggleTitle: '編集に合わせて旋律に沿うコード変更を提案',
+        suggestionLabel: '旋律に合わせますか？',
+        apply: '適用',
+        applyTitle: 'コードを旋律に合わせて更新',
+        dismiss: '閉じる',
+        lock: '{name} をリハーモナイズから保護',
+        unlock: '{name} のロックを解除',
+        lockStrip: 'コードロック',
+      },
       midiFxTitle: 'MIDI変換（移調、クオンタイズ、ベロシティ、ヒューマナイズ、ハーモナイズ）',
       midiFx: 'MIDI FX',
       laneToggle: 'レーン',
@@ -1890,6 +1901,22 @@ export const ja = {
       note: '音',
       safety: '安全度',
       chordScale: 'カラー',
+      counterpoint: '対位法',
+    },
+    intervalNames: {
+      '0': '完全1度',
+      '1': '短2度',
+      '2': '長2度',
+      '3': '短3度',
+      '4': '長3度',
+      '5': '完全4度',
+      '6': '増4度',
+      '7': '完全5度',
+      '8': '短6度',
+      '9': '長6度',
+      '10': '短7度',
+      '11': '長7度',
+      '12': 'オクターブ',
     },
     levelName: {
       beginner: '初心者',
@@ -1926,6 +1953,18 @@ export const ja = {
           tensions: '重ねられる彩りの音:',
           avoid: '扱いに注意する音:',
         },
+        counterpoint: {
+          toBass: '下の音と {interval}（{consonance}）',
+          consonance: {
+            perfect: '安定した響き',
+            imperfect: 'やわらかい響き',
+            dissonant: 'ぶつかる響き',
+          },
+          suspension: '前の音を保ってぶつかり、{target} へ下がって収まります',
+          parallelPerfect: '下の音と平行に動き、同じ完全な響きが続いています',
+          hiddenParallel: '同じ向きに動いて完全な響きへ入っています',
+          voiceCrossing: '下の音と上下が入れ替わっています',
+        },
       },
       normal: {
         lock: {
@@ -1956,6 +1995,18 @@ export const ja = {
           tensions: 'テンション',
           avoid: '回避',
         },
+        counterpoint: {
+          toBass: '対バス {interval}（{consonance}）',
+          consonance: {
+            perfect: '完全協和',
+            imperfect: '不完全協和',
+            dissonant: '不協和',
+          },
+          suspension: '掛留 — {target} へ順次解決',
+          parallelPerfect: '並行完全音程',
+          hiddenParallel: '隠伏完全音程',
+          voiceCrossing: '声部交差',
+        },
       },
       theory: {
         lock: {
@@ -1985,6 +2036,18 @@ export const ja = {
         chordScale: {
           tensions: '使用可能テンション',
           avoid: 'アヴォイド音',
+        },
+        counterpoint: {
+          toBass: '対バス {interval}（{consonance}）',
+          consonance: {
+            perfect: '完全協和',
+            imperfect: '不完全協和',
+            dissonant: '不協和',
+          },
+          suspension: '掛留（サスペンション）— {target} へ順次下行',
+          parallelPerfect: '並行完全5度／8度',
+          hiddenParallel: '隠伏（直行）完全音程',
+          voiceCrossing: '声部交差',
         },
       },
     },
@@ -2024,6 +2087,20 @@ export const ja = {
       leadingTone: {
         term: '導音',
         definition: 'スケールの第7音。主音の半音下にあり、主音へ強く上行しようとする。',
+      },
+      parallelPerfect: {
+        term: '並行完全音程',
+        definition:
+          '2つの声部が完全5度または完全8度を保ったまま同じ方向へ動くこと。声部の独立性が失われるため、古典的な書法では避ける。',
+      },
+      hiddenParallel: {
+        term: '隠伏完全音程',
+        definition:
+          '2つの声部が同じ方向へ動いて完全5度・完全8度に達すること（直行）。とくに外声で嫌われる。',
+      },
+      voiceCrossing: {
+        term: '声部交差',
+        definition: '本来上にあるべき声部が下の声部より低くなること。声部の聞き分けが難しくなる。',
       },
       tonic: {
         term: 'トニック',

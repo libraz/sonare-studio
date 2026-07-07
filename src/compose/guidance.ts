@@ -17,7 +17,9 @@ import {
   analyzeVoice,
   type ChordData,
   chordScaleReport,
+  classifyInterval,
   evaluateSafety,
+  IntervalQuality,
   isScaleTone,
   isStrongBeat,
   NoteSafety,
@@ -82,6 +84,20 @@ export interface ChordScaleInfo {
   avoid: number[];
 }
 
+/**
+ * The vertical (voice-relative) reading of a note against the sounding
+ * counterpoint: its interval to the lowest concurrent voice and that interval's
+ * consonance class. Chord-independent, so it describes polyphony that carries no
+ * chord progression (e.g. Baroque counterpoint). Absent when the note is the
+ * lowest sounding voice or sounds alone.
+ */
+export interface VerticalInfo {
+  /** Semitone interval up from the lowest concurrent voice (the bass). */
+  toBass: number;
+  /** Consonance class of that interval. */
+  consonance: 'perfect' | 'imperfect' | 'dissonant';
+}
+
 /** Per-note theory analysis (keyed by EditorNote.id in the result map). */
 export interface NoteAnalysis {
   safety?: SafetyResult;
@@ -92,6 +108,14 @@ export interface NoteAnalysis {
   isScaleTone: boolean;
   /** Best-fit scale and its color/avoid tones for the sounding chord, if any. */
   chordScale?: ChordScaleInfo;
+  /**
+   * Interval and consonance against the concurrent voices' bass. Drives the
+   * card's contrapuntal line; the voice-relative counterpoint verdicts
+   * (suspension, parallels, voice crossing) ride the {@link safety} reasons
+   * bitfield, which {@link buildGuidance} now feeds voice motion so they fire
+   * without any chord present.
+   */
+  vertical?: VerticalInfo;
 }
 
 export interface GuidanceResult {
@@ -108,13 +132,16 @@ export interface GuidanceResult {
 /**
  * The pitch a note is expected to resolve to, from its analyzer labels
  * (suspension, needs-resolution, leading-tone all carry a `resolveTo` target),
- * or undefined when the note carries no resolution obligation.
+ * or undefined when the note carries no resolution obligation. When no chord-
+ * based label applies, the voice-relative safety verdict's `resolveTo` is used
+ * so a suspension detected purely from the surrounding voices still draws its
+ * resolution arrow.
  */
 export function resolutionTargetOf(analysis: NoteAnalysis): number | undefined {
   for (const label of analysis.analyzed?.labels ?? []) {
     if ('resolveTo' in label && typeof label.resolveTo === 'number') return label.resolveTo;
   }
-  return undefined;
+  return analysis.safety?.resolveTo;
 }
 
 /** Runs a libcantus call that may throw; undefined signals "no result". */
@@ -184,26 +211,62 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
   const windowStart = input.clipStartPpq;
   const windowEnd = windowStart + (clipSpan > 0 ? clipSpan : DEFAULT_WINDOW_BEATS);
 
-  // Voice context from other tracks: drop percussion entirely, then drop any
-  // note that belongs to the active clip itself (matched by note id).
+  // Voice context: one line per non-percussion other track, kept separate (not
+  // pooled) so each voice's motion can be tracked across time. That per-voice
+  // motion is what the counterpoint verdicts (parallels, hidden parallels,
+  // voice crossing, suspension) read — none of which need a chord. Each track
+  // is reduced to its highest sounding pitch at a beat as that voice's
+  // representative, so a residually polyphonic track still contributes an outer
+  // voice rather than an ambiguous cluster.
   const activeIds = new Set(input.notes.map((note) => note.id));
-  const otherNotes: EditorNote[] = [];
+  const otherVoiceLines: EditorNote[][] = [];
   if (input.otherTracks !== undefined) {
     const { harmonic } = harmonicTracksOnly(input.otherTracks);
     for (const item of harmonic) {
-      for (const note of item.notes) {
-        if (!activeIds.has(note.id)) otherNotes.push(note);
-      }
+      const line = item.notes.filter((note) => !activeIds.has(note.id));
+      if (line.length > 0) otherVoiceLines.push(line);
     }
   }
-  const othersAt = (absBeat: number): VoiceSnapshot[] => {
-    const out: VoiceSnapshot[] = [];
-    for (const note of otherNotes) {
+  /** Highest pitch a voice line sounds at an absolute beat, if any. */
+  const voicePitchAt = (line: EditorNote[], absBeat: number): number | undefined => {
+    let top: number | undefined;
+    for (const note of line) {
       if (absBeat >= note.startPpq && absBeat < note.startPpq + note.durationPpq) {
-        out.push({ pitch: note.pitch });
+        if (top === undefined || note.pitch > top) top = note.pitch;
       }
     }
+    return top;
+  };
+  /**
+   * Snapshot of every voice sounding at `absBeat`, each carrying its pitch at
+   * `prevBeat` when given so evaluateSafety can measure motion between the two
+   * events. Voices silent at `absBeat` are omitted.
+   */
+  const othersAt = (absBeat: number, prevBeat?: number): VoiceSnapshot[] => {
+    const out: VoiceSnapshot[] = [];
+    for (const line of otherVoiceLines) {
+      const pitch = voicePitchAt(line, absBeat);
+      if (pitch === undefined) continue;
+      const prevPitch = prevBeat !== undefined ? voicePitchAt(line, prevBeat) : undefined;
+      out.push(prevPitch !== undefined ? { pitch, prevPitch } : { pitch });
+    }
     return out;
+  };
+  /** Interval to the bass (lowest concurrent voice) for the card, if audible. */
+  const verticalAt = (pitch: number, others: VoiceSnapshot[]): VerticalInfo | undefined => {
+    let bass: number | undefined;
+    for (const voice of others)
+      bass = bass === undefined ? voice.pitch : Math.min(bass, voice.pitch);
+    if (bass === undefined || bass >= pitch) return undefined;
+    const semitones = pitch - bass;
+    const quality = tryEval(() => classifyInterval(semitones, others.length === 1));
+    const consonance =
+      quality === IntervalQuality.PerfectConsonance
+        ? 'perfect'
+        : quality === IntervalQuality.ImperfectConsonance
+          ? 'imperfect'
+          : 'dissonant';
+    return { toBass: semitones, consonance };
   };
 
   // Background tint segments: one per chord segment overlapping the clip
@@ -256,14 +319,20 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
     return info;
   };
   let prevGroupPitch: number | undefined;
+  let prevGroupOnset: number | undefined;
   let lastPitch: number | undefined;
   let groupOnset = Number.NaN;
   for (const note of sorted) {
     if (note.startPpq !== groupOnset) {
+      if (!Number.isNaN(groupOnset)) prevGroupOnset = groupOnset;
       prevGroupPitch = lastPitch ?? prevGroupPitch;
       groupOnset = note.startPpq;
     }
     const absBeat = input.clipStartPpq + note.startPpq;
+    // Absolute beat of this voice's previous onset group, so other voices are
+    // sampled at the same two instants the candidate moves between (a parallel
+    // is motion measured across one step of the reference voice).
+    const prevAbs = prevGroupOnset !== undefined ? input.clipStartPpq + prevGroupOnset : undefined;
     const chord = timeline.at(absBeat);
     const analysis: NoteAnalysis = {
       degree: pitchToScaleDegree(note.pitch, key),
@@ -275,6 +344,9 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
       const chordScale = chordScaleFor(chord);
       if (chordScale !== undefined) analysis.chordScale = chordScale;
     }
+    const others = othersAt(absBeat, prevAbs);
+    const vertical = verticalAt(note.pitch, others);
+    if (vertical !== undefined) analysis.vertical = vertical;
     const prevPitch = prevGroupPitch;
     const safety = tryEval(() =>
       evaluateSafety({
@@ -283,7 +355,7 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
         prevPitch,
         chord,
         key,
-        otherVoices: othersAt(absBeat),
+        otherVoices: others,
         strongBeat: strongBeatAt(input.timeSignatures, absBeat),
       }),
     );

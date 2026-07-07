@@ -29,6 +29,7 @@ const noteColorMode = defineModel<'track' | 'velocity' | 'channel'>('noteColorMo
   required: true,
 });
 const auditionDrag = defineModel<boolean>('auditionDrag', { required: true });
+const autoReharmonize = defineModel<boolean>('autoReharmonize', { required: true });
 
 const props = defineProps<{
   /** True when a MIDI clip is active and can receive a transform. */
@@ -125,6 +126,12 @@ function onLegendClick(trackId: number): void {
       v-model="auditionDrag"
       :label="t.shell.pianoRoll.auditionDrag"
       :title="t.shell.pianoRoll.auditionDragTitle"
+      size="sm"
+    />
+    <ToggleButton
+      v-model="autoReharmonize"
+      :label="t.shell.pianoRoll.reharmonize.toggle"
+      :title="t.shell.pianoRoll.reharmonize.toggleTitle"
       size="sm"
     />
     <div class="track-legend">

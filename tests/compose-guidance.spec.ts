@@ -1,4 +1,4 @@
-import { NoteSafety } from '@libraz/libcantus';
+import { NoteSafety, ReasonFlag } from '@libraz/libcantus';
 import { describe, expect, it } from 'vitest';
 import { buildTheoryCard, theoryLabelsFor } from '@/compose/explain';
 import { buildGuidance, type GuidanceInput, resolutionTargetOf } from '@/compose/guidance';
@@ -134,6 +134,90 @@ describe('buildGuidance', () => {
     expect(result.segments).toHaveLength(1);
     expect(result.segments[0].startBeat).toBe(0);
     expect(result.segments[0].endBeat).toBe(4);
+  });
+});
+
+describe('counterpoint (voice-relative, no chord progression)', () => {
+  it('reports the interval and consonance against the bass without any chord', () => {
+    // A single other voice a perfect fifth below the active note; no progression.
+    const lower = { track: track({ id: 2, name: 'Bass' }), notes: [note({ id: 200, pitch: 55 })] };
+    const result = buildGuidance(
+      guidanceInput({
+        notes: [note({ id: 80, pitch: 62, startPpq: 0, durationPpq: 1 })],
+        otherTracks: [lower],
+      }),
+    );
+    expect(result.chordPresent).toBe(false);
+    const analysis = result.byNoteId.get(80);
+    expect(analysis?.vertical).toEqual({ toBass: 7, consonance: 'perfect' });
+  });
+
+  it('flags parallel perfect fifths between two voices with no chord', () => {
+    // Active voice C4->D4 over a voice a fifth below (F3->G3): parallel fifths.
+    const lower = {
+      track: track({ id: 2, name: 'Bass' }),
+      notes: [
+        note({ id: 210, pitch: 53, startPpq: 0, durationPpq: 1 }),
+        note({ id: 211, pitch: 55, startPpq: 1, durationPpq: 1 }),
+      ],
+    };
+    const result = buildGuidance(
+      guidanceInput({
+        notes: [
+          note({ id: 90, pitch: 60, startPpq: 0, durationPpq: 1 }),
+          note({ id: 91, pitch: 62, startPpq: 1, durationPpq: 1 }),
+        ],
+        otherTracks: [lower],
+      }),
+    );
+    const analysis = result.byNoteId.get(91);
+    expect(analysis?.safety).toBeDefined();
+    expect((analysis?.safety?.reasons ?? 0) & ReasonFlag.ParallelPerfect).toBeTruthy();
+  });
+
+  it('flags a suspension held over a moving bass with no chord', () => {
+    // The upper voice holds C5 while the bass steps C4->D4, turning a consonant
+    // octave into a dissonant seventh on the downbeat: a textbook suspension,
+    // chord-free. The dissonance must land on a strong beat (beat 2 here), where
+    // suspensions resolve.
+    const lower = {
+      track: track({ id: 2, name: 'Bass' }),
+      notes: [
+        note({ id: 220, pitch: 60, startPpq: 1, durationPpq: 1 }),
+        note({ id: 221, pitch: 62, startPpq: 2, durationPpq: 1 }),
+      ],
+    };
+    const result = buildGuidance(
+      guidanceInput({
+        notes: [
+          note({ id: 92, pitch: 72, startPpq: 1, durationPpq: 1 }),
+          note({ id: 93, pitch: 72, startPpq: 2, durationPpq: 1 }),
+        ],
+        otherTracks: [lower],
+      }),
+    );
+    const held = result.byNoteId.get(93);
+    expect((held?.safety?.reasons ?? 0) & ReasonFlag.Suspension).toBeTruthy();
+  });
+
+  it('renders a counterpoint card line from the voice context', () => {
+    const lower = { track: track({ id: 2, name: 'Bass' }), notes: [note({ id: 230, pitch: 55 })] };
+    const result = buildGuidance(
+      guidanceInput({
+        notes: [note({ id: 94, pitch: 62, startPpq: 0, durationPpq: 1 })],
+        otherTracks: [lower],
+      }),
+    );
+    const analysis = result.byNoteId.get(94);
+    expect(analysis).toBeDefined();
+    if (analysis === undefined) return;
+    const card = buildTheoryCard(
+      analysis,
+      { pitch: 62, keySet: true },
+      theoryLabelsFor(MESSAGES.en.theory, 'normal'),
+    );
+    const cpLine = card.lines.find((line) => line.label === 'Counterpoint');
+    expect(cpLine?.text).toBe('perfect 5th above the bass (perfect consonance)');
   });
 });
 

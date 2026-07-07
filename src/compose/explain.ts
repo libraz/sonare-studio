@@ -11,8 +11,8 @@
  */
 
 import type { HarmonyRole, LockLevel, TheoryLabel } from '@libraz/libcantus';
-import { NoteSafety } from '@libraz/libcantus';
-import type { NoteAnalysis } from './guidance';
+import { NoteSafety, ReasonFlag } from '@libraz/libcantus';
+import type { NoteAnalysis, VerticalInfo } from './guidance';
 
 /** A glossary term: a short display name and its plain-language definition. */
 export interface GlossaryEntry {
@@ -67,7 +67,11 @@ export interface TheoryLabels {
     >
   >;
   /** Line labels (left column). */
-  lines: Readonly<Record<'role' | 'chord' | 'scale' | 'note' | 'safety' | 'chordScale', string>>;
+  lines: Readonly<
+    Record<'role' | 'chord' | 'scale' | 'note' | 'safety' | 'chordScale' | 'counterpoint', string>
+  >;
+  /** Simple interval names keyed by semitone distance "0".."12" (unison..octave). */
+  intervalNames: Readonly<Record<string, string>>;
   /** Scale-degree line template, with a `{degree}` placeholder. */
   scaleDegree: string;
   /** Suffix appended to the scale line for a non-scale tone. */
@@ -76,8 +80,26 @@ export interface TheoryLabels {
   nonScaleTone: string;
   /** Prefixes for the color-tone line's available tensions and avoid notes. */
   chordScale: Readonly<Record<'tensions' | 'avoid', string>>;
+  /** Voice-relative (counterpoint) wording. */
+  counterpoint: CounterpointLabels;
   /** Glossary of jargon terms, keyed by term id (see {@link GLOSSARY_KEY_FOR_KIND}). */
   glossary: Readonly<Record<string, GlossaryEntry>>;
+}
+
+/** Wording for the voice-relative (counterpoint) card line. */
+export interface CounterpointLabels {
+  /** Interval-to-bass template, with `{interval}` and `{consonance}` placeholders. */
+  toBass: string;
+  /** Consonance class names. */
+  consonance: Readonly<Record<'perfect' | 'imperfect' | 'dissonant', string>>;
+  /** Suspension verdict, with a `{target}` pitch placeholder. */
+  suspension: string;
+  /** Parallel perfect (fifths/octaves) verdict. */
+  parallelPerfect: string;
+  /** Hidden/direct parallel verdict. */
+  hiddenParallel: string;
+  /** Voice-crossing verdict. */
+  voiceCrossing: string;
 }
 
 /**
@@ -93,6 +115,7 @@ export interface TheoryLevelLabels {
   nonScaleSuffix: string;
   nonScaleTone: string;
   chordScale: TheoryLabels['chordScale'];
+  counterpoint: CounterpointLabels;
 }
 
 /**
@@ -104,6 +127,7 @@ export interface LocalizedTheory {
   roles: TheoryLabels['roles'];
   functions: TheoryLabels['functions'];
   lines: TheoryLabels['lines'];
+  intervalNames: TheoryLabels['intervalNames'];
   levels: Readonly<Record<string, TheoryLevelLabels>>;
   glossary: TheoryLabels['glossary'];
 }
@@ -122,6 +146,7 @@ export function theoryLabelsFor(theory: LocalizedTheory, level: string): TheoryL
     roles: theory.roles,
     functions: theory.functions,
     lines: theory.lines,
+    intervalNames: theory.intervalNames,
     lock: levelLabels.lock,
     safety: levelLabels.safety,
     labels: levelLabels.labels,
@@ -129,6 +154,7 @@ export function theoryLabelsFor(theory: LocalizedTheory, level: string): TheoryL
     nonScaleSuffix: levelLabels.nonScaleSuffix,
     nonScaleTone: levelLabels.nonScaleTone,
     chordScale: levelLabels.chordScale,
+    counterpoint: levelLabels.counterpoint,
     glossary: theory.glossary,
   };
 }
@@ -245,22 +271,86 @@ function nctLine(
   return undefined;
 }
 
+/** Sharp-spelled pitch name with octave, e.g. 63 -> "D#4". */
+function pitchName(midi: number): string {
+  const pc = ((midi % 12) + 12) % 12;
+  return `${PITCH_CLASS_NAMES[pc]}${Math.floor(midi / 12) - 1}`;
+}
+
+/**
+ * The voice-relative (counterpoint) lines for a note: its interval to the bass
+ * and its consonance, plus the single most salient counterpoint verdict carried
+ * on the safety reasons bitfield (suspension, then parallel/hidden perfects,
+ * then voice crossing). These are chord-independent, so they describe polyphony
+ * that has no chord progression. Vertical dissonance is deliberately not
+ * surfaced as its own verdict — the interval line already says "dissonant".
+ * Returns an empty array when the note sounds alone or against no other voice.
+ */
+function counterpointLines(analysis: NoteAnalysis, labels: TheoryLabels): TheoryCardLine[] {
+  const out: TheoryCardLine[] = [];
+  const vertical: VerticalInfo | undefined = analysis.vertical;
+  if (vertical !== undefined) {
+    // Compound intervals fold to their simple form for naming (a 10th reads as a
+    // 3rd), with any exact multiple of an octave named as the octave.
+    const simple = vertical.toBass <= 12 ? vertical.toBass : vertical.toBass % 12 || 12;
+    const name = labels.intervalNames[String(simple)] ?? '';
+    out.push({
+      label: labels.lines.counterpoint,
+      text: labels.counterpoint.toBass
+        .replace('{interval}', name)
+        .replace('{consonance}', labels.counterpoint.consonance[vertical.consonance]),
+    });
+  }
+  const reasons = analysis.safety?.reasons ?? 0;
+  const cp = labels.counterpoint;
+  let verdict: { text: string; term?: GlossaryEntry } | undefined;
+  if (reasons & ReasonFlag.Suspension) {
+    const target = analysis.safety?.resolveTo;
+    verdict = {
+      text: cp.suspension.replace('{target}', target !== undefined ? pitchName(target) : ''),
+      term: labels.glossary.suspension,
+    };
+  } else if (reasons & ReasonFlag.ParallelPerfect) {
+    verdict = { text: cp.parallelPerfect, term: labels.glossary.parallelPerfect };
+  } else if (reasons & ReasonFlag.HiddenParallel) {
+    verdict = { text: cp.hiddenParallel, term: labels.glossary.hiddenParallel };
+  } else if (reasons & ReasonFlag.VoiceCrossing) {
+    verdict = { text: cp.voiceCrossing, term: labels.glossary.voiceCrossing };
+  }
+  if (verdict !== undefined) {
+    out.push({
+      label: labels.lines.counterpoint,
+      text: verdict.text,
+      ...(verdict.term !== undefined ? { term: verdict.term } : {}),
+    });
+  }
+  return out;
+}
+
 /**
  * Builds the hover card for one analyzed note.
  *
  * @param analysis The note's theory analysis.
- * @param ctx Display context: the note's MIDI pitch, whether a key is set,
+ * @param ctx Display context: the note's MIDI pitch, its velocity (folded into
+ *   the title so the card subsumes the canvas hover HUD), whether a key is set,
  *   and the sounding chord's Roman numeral / harmonic function when known.
  * @param labels Localized string bundle (the app's i18n `theory` block).
  */
 export function buildTheoryCard(
   analysis: NoteAnalysis,
-  ctx: { pitch: number; keySet: boolean; chordRoman?: string; chordFunction?: string },
+  ctx: {
+    pitch: number;
+    velocity?: number;
+    keySet: boolean;
+    chordRoman?: string;
+    chordFunction?: string;
+  },
   labels: TheoryLabels,
 ): TheoryCard {
   const pc = ((ctx.pitch % 12) + 12) % 12;
   const octave = Math.floor(ctx.pitch / 12) - 1;
   let title = `${PITCH_CLASS_NAMES[pc]}${octave}`;
+  if (ctx.velocity !== undefined) title += ` · vel ${ctx.velocity}`;
   if (analysis.role !== undefined) title += ` — ${labels.roles[analysis.role.role]}`;
 
   const lines: TheoryCardLine[] = [];
@@ -292,6 +382,7 @@ export function buildTheoryCard(
   }
   const colorTones = chordScaleText(analysis, labels);
   if (colorTones !== undefined) lines.push({ label: labels.lines.chordScale, text: colorTones });
+  lines.push(...counterpointLines(analysis, labels));
   const nct = nctLine(analysis, labels);
   if (nct !== undefined) {
     lines.push({

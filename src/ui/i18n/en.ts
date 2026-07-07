@@ -1377,6 +1377,17 @@ export const en = {
       guideColorTones: 'Available colour tones (shown on the note card)',
       guideLevel: 'Explanation level',
       guideClose: 'Close the guide',
+      reharmonize: {
+        toggle: 'Auto-chords',
+        toggleTitle: 'Suggest chord changes that follow the melody as you edit',
+        suggestionLabel: 'Follow the melody?',
+        apply: 'Apply',
+        applyTitle: 'Update the chords to follow the melody',
+        dismiss: 'Dismiss',
+        lock: 'Lock {name} against reharmonization',
+        unlock: 'Unlock {name}',
+        lockStrip: 'Chord locks',
+      },
       midiFxTitle: 'MIDI transform (transpose, quantize, velocity, humanize, harmonize)',
       midiFx: 'MIDI FX',
       laneToggle: 'Lane',
@@ -1894,6 +1905,22 @@ export const en = {
       note: 'Note',
       safety: 'Safety',
       chordScale: 'Color',
+      counterpoint: 'Counterpoint',
+    },
+    intervalNames: {
+      '0': 'unison',
+      '1': 'minor 2nd',
+      '2': 'major 2nd',
+      '3': 'minor 3rd',
+      '4': 'major 3rd',
+      '5': 'perfect 4th',
+      '6': 'tritone',
+      '7': 'perfect 5th',
+      '8': 'minor 6th',
+      '9': 'major 6th',
+      '10': 'minor 7th',
+      '11': 'major 7th',
+      '12': 'octave',
     },
     levelName: {
       beginner: 'Beginner',
@@ -1930,6 +1957,18 @@ export const en = {
           tensions: 'Colour notes you can add:',
           avoid: 'Notes to handle with care:',
         },
+        counterpoint: {
+          toBass: 'A {interval} above the lower note ({consonance})',
+          consonance: {
+            perfect: 'stable',
+            imperfect: 'mellow',
+            dissonant: 'clashing',
+          },
+          suspension: 'Holds over and clashes, then steps down to {target} to settle',
+          parallelPerfect: 'Runs parallel with the lower voice in the same open interval',
+          hiddenParallel: 'Moves the same way into an open, perfect sound',
+          voiceCrossing: 'Dips below the voice beneath it',
+        },
       },
       normal: {
         lock: {
@@ -1960,6 +1999,18 @@ export const en = {
           tensions: 'tensions',
           avoid: 'avoid',
         },
+        counterpoint: {
+          toBass: '{interval} above the bass ({consonance})',
+          consonance: {
+            perfect: 'perfect consonance',
+            imperfect: 'imperfect consonance',
+            dissonant: 'dissonant',
+          },
+          suspension: 'Suspension — resolves by step to {target}',
+          parallelPerfect: 'Parallel perfect interval',
+          hiddenParallel: 'Hidden perfect interval',
+          voiceCrossing: 'Voice crossing',
+        },
       },
       theory: {
         lock: {
@@ -1989,6 +2040,18 @@ export const en = {
         chordScale: {
           tensions: 'available tensions',
           avoid: 'avoid notes',
+        },
+        counterpoint: {
+          toBass: '{interval} above the bass ({consonance})',
+          consonance: {
+            perfect: 'perfect consonance',
+            imperfect: 'imperfect consonance',
+            dissonant: 'dissonant',
+          },
+          suspension: 'Suspension — resolves stepwise down to {target}',
+          parallelPerfect: 'Parallel perfect 5th/8ve',
+          hiddenParallel: 'Hidden (direct) perfect interval',
+          voiceCrossing: 'Voice crossing',
         },
       },
     },
@@ -2035,6 +2098,21 @@ export const en = {
         term: 'Leading tone',
         definition:
           'The seventh scale degree, a half-step below the tonic, which pulls strongly up to it.',
+      },
+      parallelPerfect: {
+        term: 'Parallel perfect interval',
+        definition:
+          'Two voices moving in the same direction while holding a perfect 5th or octave. It erases their independence, so classical style avoids it.',
+      },
+      hiddenParallel: {
+        term: 'Hidden perfect interval',
+        definition:
+          'Two voices moving in the same direction into a perfect 5th or octave (a direct fifth/octave); disliked especially between the outer voices.',
+      },
+      voiceCrossing: {
+        term: 'Voice crossing',
+        definition:
+          'When a voice dips below the one beneath it (or rises above the one atop it), making the parts harder to follow.',
       },
       tonic: {
         term: 'Tonic',

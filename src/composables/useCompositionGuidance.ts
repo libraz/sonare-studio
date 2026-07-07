@@ -106,6 +106,7 @@ export function useCompositionGuidance(): CompositionGuidance {
     if (note === undefined) return null;
     const ctx: Parameters<typeof buildTheoryCard>[1] = {
       pitch: note.pitch,
+      velocity: note.velocity,
       keySet: result.keySet,
     };
     const chord = chordTimeline.value.at(clip.startPpq + note.startPpq);

@@ -61,6 +61,7 @@ describe('sanitizeAppSettings', () => {
       pianoRollGhostHideMuted: DEFAULT_APP_SETTINGS.pianoRollGhostHideMuted,
       pianoRollNoteColorMode: DEFAULT_APP_SETTINGS.pianoRollNoteColorMode,
       pianoRollAuditionDrag: DEFAULT_APP_SETTINGS.pianoRollAuditionDrag,
+      pianoRollAutoReharmonize: DEFAULT_APP_SETTINGS.pianoRollAutoReharmonize,
       confirmDestructive: false,
       explainLevel: DEFAULT_APP_SETTINGS.explainLevel,
       loudnessTargetLufs: DEFAULT_APP_SETTINGS.loudnessTargetLufs,
@@ -73,7 +74,7 @@ describe('sanitizeAppSettings', () => {
     expect(sanitizeAppSettings({ explainLevel: 'wizard' }).explainLevel).toBe(
       DEFAULT_APP_SETTINGS.explainLevel,
     );
-    expect(DEFAULT_APP_SETTINGS.explainLevel).toBe('beginner');
+    expect(DEFAULT_APP_SETTINGS.explainLevel).toBe('theory');
   });
 
   it('keeps a valid loudness target and clamps out-of-range ones', () => {

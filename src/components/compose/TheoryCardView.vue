@@ -33,7 +33,7 @@ watch(
 <template>
   <div class="theory-card">
     <div class="theory-card-title">{{ card.title }}</div>
-    <template v-for="(line, index) in card.lines" :key="line.label">
+    <template v-for="(line, index) in card.lines" :key="index">
       <div class="theory-card-line">
         <span class="theory-card-label">{{ line.label }}</span>
         <span class="theory-card-text">{{ line.text }}</span>

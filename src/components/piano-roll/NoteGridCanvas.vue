@@ -101,9 +101,9 @@ const hoverPoint = ref<InteractionPoint | null>(null);
 
 /** Offset of the hover theory card from the pointer, in px. */
 const CARD_POINTER_OFFSET_PX = 14;
-/** Assumed card extent used to keep it inside the grid bounds. */
+/** Assumed card extent used to keep it inside the viewport (and to flip near edges). */
 const CARD_ESTIMATED_WIDTH_PX = 230;
-const CARD_ESTIMATED_HEIGHT_PX = 110;
+const CARD_ESTIMATED_HEIGHT_PX = 150;
 
 /**
  * Theory card for the hovered note, resolved through the `noteCard` prop.
@@ -118,15 +118,36 @@ const hoveredCard = computed<TheoryCard | null>(() => {
   return resolve(note.id);
 });
 
-/** Inline position and palette for the hover theory card overlay. */
+/**
+ * Fixed-viewport position and palette for the hover theory card. The card is
+ * teleported to the document body (so a lower-stacking bottom panel can never
+ * cover it and the grid's `overflow: hidden` can never clip it), so its
+ * coordinates are the grid rect plus the local pointer point. It flips to the
+ * opposite side of the pointer near the right/bottom viewport edges and is
+ * clamped fully on screen.
+ */
 const theoryCardStyle = computed<Record<string, string> | null>(() => {
   const point = hoverPoint.value;
-  if (!point) return null;
-  const maxX = Math.max(4, props.range.widthPx - CARD_ESTIMATED_WIDTH_PX - 4);
-  const maxY = Math.max(4, props.range.heightPx - CARD_ESTIMATED_HEIGHT_PX - 4);
+  const el = wrapper.value;
+  if (!point || !el) return null;
+  const rect = el.getBoundingClientRect();
+  const px = rect.left + point.x;
+  const py = rect.top + point.y;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  let left = px + CARD_POINTER_OFFSET_PX;
+  if (left + CARD_ESTIMATED_WIDTH_PX + 4 > vw) {
+    left = px - CARD_POINTER_OFFSET_PX - CARD_ESTIMATED_WIDTH_PX;
+  }
+  left = Math.max(4, Math.min(left, vw - CARD_ESTIMATED_WIDTH_PX - 4));
+  let top = py + CARD_POINTER_OFFSET_PX;
+  if (top + CARD_ESTIMATED_HEIGHT_PX + 4 > vh) {
+    top = py - CARD_POINTER_OFFSET_PX - CARD_ESTIMATED_HEIGHT_PX;
+  }
+  top = Math.max(4, Math.min(top, vh - CARD_ESTIMATED_HEIGHT_PX - 4));
   return {
-    left: `${Math.min(point.x + CARD_POINTER_OFFSET_PX, maxX)}px`,
-    top: `${Math.min(point.y + CARD_POINTER_OFFSET_PX, maxY)}px`,
+    left: `${left}px`,
+    top: `${top}px`,
     background: COLORS.hudBackground,
     color: COLORS.hudText,
   };
@@ -491,9 +512,11 @@ function drawOverlay(): void {
   }
 
   // Hover HUD for the active layer, matching the ghost note's. Suppressed while
-  // a ghost is hovered (its own HUD wins) or a gesture readout is showing.
+  // a ghost is hovered (its own HUD wins) or a gesture readout is showing, and
+  // while the theory card is up — the card's title already carries the pitch and
+  // velocity, so the two would otherwise duplicate.
   const hoverNote = hoveredNote.value;
-  if (!ghost && !readout && hoverNote) {
+  if (!ghost && !readout && hoverNote && !hoveredCard.value) {
     const x = props.range.ppqToX(hoverNote.startPpq);
     const y = props.range.pitchToY(hoverNote.pitch);
     const text = `${formatPitch(hoverNote.pitch)} · vel ${hoverNote.velocity}`;
@@ -738,18 +761,20 @@ function onContextMenu(event: MouseEvent): void {
     />
     <canvas ref="notesCanvas" class="note-grid-layer" aria-hidden="true" />
     <canvas ref="overlayCanvas" class="note-grid-layer" aria-hidden="true" />
-    <div
-      v-if="hoveredCard && theoryCardStyle"
-      class="note-grid-theory-card"
-      :style="theoryCardStyle"
-      aria-hidden="true"
-    >
-      <div class="theory-card-title">{{ hoveredCard.title }}</div>
-      <div v-for="line in hoveredCard.lines" :key="line.label" class="theory-card-line">
-        <span class="theory-card-label">{{ line.label }}</span>
-        <span>{{ line.text }}</span>
+    <Teleport to="body">
+      <div
+        v-if="hoveredCard && theoryCardStyle"
+        class="note-grid-theory-card"
+        :style="theoryCardStyle"
+        aria-hidden="true"
+      >
+        <div class="theory-card-title">{{ hoveredCard.title }}</div>
+        <div v-for="(line, index) in hoveredCard.lines" :key="index" class="theory-card-line">
+          <span class="theory-card-label">{{ line.label }}</span>
+          <span>{{ line.text }}</span>
+        </div>
       </div>
-    </div>
+    </Teleport>
     <div class="note-grid-live" role="status" aria-live="polite" aria-atomic="true">
       {{ liveStatus }}
     </div>
@@ -773,12 +798,13 @@ function onContextMenu(event: MouseEvent): void {
   display: block;
 }
 
-/* Read-only theory card floated near the pointer over a hovered note. It is an
- * absolutely-positioned overlay (never in layout flow) and ignores the pointer
- * so it can never block a gesture. */
+/* Read-only theory card floated near the pointer over a hovered note. Teleported
+ * to the body and fixed-positioned at the tooltip layer so no panel can cover it
+ * and the grid's overflow clip cannot cut it; ignores the pointer so it can
+ * never block a gesture. */
 .note-grid-theory-card {
-  position: absolute;
-  z-index: 1;
+  position: fixed;
+  z-index: 200;
   max-width: 230px;
   padding: 6px 9px;
   border-radius: 5px;

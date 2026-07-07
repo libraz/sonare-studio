@@ -4,6 +4,7 @@ import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { useCompositionGuidance } from '@/composables/useCompositionGuidance';
 import { useEditorTool } from '@/composables/useEditorTool';
+import { useReactiveReharmonization } from '@/composables/useReactiveReharmonization';
 import { formatPitch } from '@/lib/pitch';
 import {
   addNote,
@@ -58,6 +59,8 @@ import { buildGhostNotes, type GhostNote } from './overlay';
 import PianoRollMinimap from './PianoRollMinimap.vue';
 import PianoRollRuler from './PianoRollRuler.vue';
 import PianoRollToolbar from './PianoRollToolbar.vue';
+import ReharmonizeLockStrip from './ReharmonizeLockStrip.vue';
+import ReharmonizeSuggestion from './ReharmonizeSuggestion.vue';
 import { DEFAULT_NOTE_COLOR, KEYBOARD_COLUMN_WIDTH_PX, type NoteColorFn } from './theme';
 import { useNoteInteractions } from './use-note-interactions';
 import { usePianoRollCcLanes } from './use-piano-roll-cc-lanes';
@@ -341,6 +344,21 @@ const trackColor = computed(() => store.activeTrack?.color ?? DEFAULT_NOTE_COLOR
 
 /** Composition-guidance tint segments and hover theory-card resolver. */
 const { guidanceSegments, noteCard, resolutionArrows } = useCompositionGuidance();
+
+/**
+ * Reactive melody-first reharmonization: an opt-in auto-suggest that proposes
+ * chord changes following the edited melody, plus session-only chord locks.
+ */
+const {
+  autoReharmonize,
+  reharmonizeActive,
+  pendingProposal,
+  pendingChanges,
+  applyPendingProposal,
+  dismissPendingProposal,
+  lockedRegions,
+  toggleLock,
+} = useReactiveReharmonization();
 
 /** True when a MIDI clip is active and can receive a transform. */
 const canTransform = computed(
@@ -906,6 +924,7 @@ onBeforeUnmount(() => {
       v-model:ghost-hide-muted="ghostHideMuted"
       v-model:note-color-mode="noteColorMode"
       v-model:audition-drag="auditionDrag"
+      v-model:auto-reharmonize="autoReharmonize"
       :can-transform="canTransform"
       :clip-id="store.clipId"
       :note-count="store.notes.length"
@@ -966,6 +985,21 @@ onBeforeUnmount(() => {
           @ghost-activate="onGhostActivate"
           @note-context="onNoteContext"
           @hover-status="hoverStatus = $event"
+        />
+        <ReharmonizeLockStrip
+          v-if="reharmonizeActive"
+          :range="range"
+          :revision="revision"
+          :chords="store.chords"
+          :origin-ppq="timeSignatureOriginPpq"
+          :locks="lockedRegions"
+          @toggle="toggleLock"
+        />
+        <ReharmonizeSuggestion
+          v-if="pendingProposal"
+          :changes="pendingChanges"
+          @apply="applyPendingProposal"
+          @dismiss="dismissPendingProposal"
         />
       </div>
       <div

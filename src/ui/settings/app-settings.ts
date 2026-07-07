@@ -91,6 +91,8 @@ export interface AppSettings {
   pianoRollNoteColorMode: PianoRollNoteColorMode;
   /** Whether pitch-changing piano-roll drags audition the destination pitch. */
   pianoRollAuditionDrag: boolean;
+  /** Whether settled melody edits suggest chord-track updates in the piano roll. */
+  pianoRollAutoReharmonize: boolean;
   /** Ask for confirmation before destructive actions (delete project, discard edits). */
   confirmDestructive: boolean;
   /** How much wording the composition-guidance theory card shows. */
@@ -138,10 +140,12 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   pianoRollGhostHideMuted: true,
   pianoRollNoteColorMode: 'track',
   pianoRollAuditionDrag: true,
+  // Reactive chord suggestions can surprise a first-time composer; opt in.
+  pianoRollAutoReharmonize: false,
   confirmDestructive: true,
-  // Onboarding-friendly: the first session shows plain-language guidance; the
-  // choice is then remembered as a user preference.
-  explainLevel: 'beginner',
+  // Full theory wording by default; the choice is then remembered as a user
+  // preference (beginner/normal soften the same card lines).
+  explainLevel: 'theory',
   loudnessTargetLufs: -14,
 };
 
@@ -286,6 +290,10 @@ export function sanitizeAppSettings(raw: unknown): AppSettings {
       defaults.pianoRollNoteColorMode,
     ),
     pianoRollAuditionDrag: asBoolean(source.pianoRollAuditionDrag, defaults.pianoRollAuditionDrag),
+    pianoRollAutoReharmonize: asBoolean(
+      source.pianoRollAutoReharmonize,
+      defaults.pianoRollAutoReharmonize,
+    ),
     confirmDestructive: asBoolean(source.confirmDestructive, defaults.confirmDestructive),
     explainLevel: asExplainLevel(source.explainLevel, defaults.explainLevel),
     loudnessTargetLufs: asIntInRange(
