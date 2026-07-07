@@ -33,6 +33,7 @@ export const en = {
       recordingSourceOutput: 'Master output',
       autosaveInterval: 'Autosave interval (seconds)',
       scrollFollowPlayhead: 'Scroll view to follow playhead',
+      explainLevel: 'Guidance explanation level',
       confirmDestructive: 'Confirm destructive actions',
       loudnessTarget: 'Loudness target (LUFS)',
       toggleOn: 'On',
@@ -1374,6 +1375,7 @@ export const en = {
       guideDissonant: 'Clashes with the chord',
       guideResolution: 'Expected resolution',
       guideColorTones: 'Available colour tones (shown on the note card)',
+      guideLevel: 'Explanation level',
       guideClose: 'Close the guide',
       midiFxTitle: 'MIDI transform (transpose, quantize, velocity, humanize, harmonize)',
       midiFx: 'MIDI FX',
@@ -1880,31 +1882,10 @@ export const en = {
       tension: 'tension',
       doubling: 'doubling',
     },
-    lock: {
-      identity: "Sets the chord's root",
-      quality: 'Defines major/minor — moving it changes the quality',
-      voicing: 'Free voicing tone',
-    },
     functions: {
       tonic: 'Tonic',
       subdominant: 'Subdominant',
       dominant: 'Dominant',
-    },
-    safety: {
-      safe: 'Fits here',
-      warning: 'Use with care',
-      dissonant: 'Clashes with the chord',
-    },
-    labels: {
-      suspension: 'Suspension: resolve down by step',
-      passing: 'Passing tone',
-      neighbor: 'Neighbor tone',
-      avoid: 'Avoid note here',
-      tension: 'Usable {degree}th tension',
-      anticipation: 'Anticipation: anticipates the next chord',
-      escape: 'Escape tone',
-      needsResolution: 'Needs resolution: resolve on the next note',
-      leadingTone: 'Leading tone: resolves up to the tonic',
     },
     lines: {
       role: 'Role',
@@ -1914,12 +1895,161 @@ export const en = {
       safety: 'Safety',
       chordScale: 'Color',
     },
-    scaleDegree: 'Scale degree {degree}',
-    nonScaleSuffix: ' (non-scale)',
-    nonScaleTone: 'Non-scale tone',
-    chordScale: {
-      tensions: 'tensions',
-      avoid: 'avoid',
+    levelName: {
+      beginner: 'Beginner',
+      normal: 'Normal',
+      theory: 'Theory',
+    },
+    levels: {
+      beginner: {
+        lock: {
+          identity: 'This note anchors the chord — best left where it is',
+          quality: 'This note sets the chord’s bright or dark feel; moving it changes that',
+          voicing: 'A flexible note — you can move it freely',
+        },
+        safety: {
+          safe: 'Fits the chord — use it freely',
+          warning: 'Works, but adds tension — use with care',
+          dissonant: 'Clashes with the chord — it may sound off',
+        },
+        labels: {
+          suspension: 'Leans on the chord, then steps down to settle',
+          passing: 'Fills the gap between two chord notes as you pass through',
+          neighbor: 'Steps away and comes right back — a little decoration',
+          avoid: 'Tends to clash here — use it only in passing',
+          tension: 'A colour note ({degree}) you can add on top of the chord',
+          anticipation: 'Arrives early on the next chord’s note',
+          escape: 'Steps away without settling — a light touch',
+          needsResolution: 'Feels unfinished — let the next note settle it',
+          leadingTone: 'Pulls strongly up to the home note',
+        },
+        scaleDegree: 'Note {degree} of the scale',
+        nonScaleSuffix: ' — outside the scale',
+        nonScaleTone: 'Outside the current scale',
+        chordScale: {
+          tensions: 'Colour notes you can add:',
+          avoid: 'Notes to handle with care:',
+        },
+      },
+      normal: {
+        lock: {
+          identity: "Sets the chord's root",
+          quality: 'Defines major/minor — moving it changes the quality',
+          voicing: 'Free voicing tone',
+        },
+        safety: {
+          safe: 'Fits here',
+          warning: 'Use with care',
+          dissonant: 'Clashes with the chord',
+        },
+        labels: {
+          suspension: 'Suspension: resolve down by step',
+          passing: 'Passing tone',
+          neighbor: 'Neighbor tone',
+          avoid: 'Avoid note here',
+          tension: 'Usable {degree}th tension',
+          anticipation: 'Anticipation: anticipates the next chord',
+          escape: 'Escape tone',
+          needsResolution: 'Needs resolution: resolve on the next note',
+          leadingTone: 'Leading tone: resolves up to the tonic',
+        },
+        scaleDegree: 'Scale degree {degree}',
+        nonScaleSuffix: ' (non-scale)',
+        nonScaleTone: 'Non-scale tone',
+        chordScale: {
+          tensions: 'tensions',
+          avoid: 'avoid',
+        },
+      },
+      theory: {
+        lock: {
+          identity: 'Chord root (identity)',
+          quality: 'Quality-defining tone (3rd)',
+          voicing: 'Voicing tone (free)',
+        },
+        safety: {
+          safe: 'Consonant / chord-scale tone',
+          warning: 'Tension — conditional',
+          dissonant: 'Dissonant against the chord',
+        },
+        labels: {
+          suspension: 'Suspension — resolves stepwise down',
+          passing: 'Passing tone (stepwise, unaccented)',
+          neighbor: 'Neighbor tone (upper/lower)',
+          avoid: 'Avoid tone (half-step above a chord tone)',
+          tension: 'Available tension: {degree}',
+          anticipation: 'Anticipation of the next chord tone',
+          escape: 'Escape tone (échappée)',
+          needsResolution: 'Unresolved dissonance — resolve stepwise',
+          leadingTone: 'Leading tone — resolves ↑ to tonic',
+        },
+        scaleDegree: 'Scale degree {degree}',
+        nonScaleSuffix: ' (non-diatonic)',
+        nonScaleTone: 'Non-diatonic tone',
+        chordScale: {
+          tensions: 'available tensions',
+          avoid: 'avoid notes',
+        },
+      },
+    },
+    glossary: {
+      suspension: {
+        term: 'Suspension',
+        definition:
+          'A note held over from the previous chord that clashes, then resolves down by step to a chord tone.',
+      },
+      passing: {
+        term: 'Passing tone',
+        definition:
+          'A note that fills the gap between two chord tones by stepping through, off the beat.',
+      },
+      neighbor: {
+        term: 'Neighbor tone',
+        definition: 'A note a step above or below a chord tone that steps away and returns to it.',
+      },
+      avoid: {
+        term: 'Avoid note',
+        definition:
+          'A scale note a half-step above a chord tone; it clashes if held, so it is used only in passing.',
+      },
+      tension: {
+        term: 'Tension',
+        definition:
+          'A colour note added above the basic chord (the 9th, 11th or 13th) that enriches its sound.',
+      },
+      anticipation: {
+        term: 'Anticipation',
+        definition: 'A note of the next chord sounded early, before that chord actually arrives.',
+      },
+      escape: {
+        term: 'Escape tone',
+        definition:
+          'A note approached by step and left by a leap in the opposite direction, without resolving.',
+      },
+      needsResolution: {
+        term: 'Unresolved tone',
+        definition:
+          'A dissonant note that sounds unfinished until the next note settles it by step.',
+      },
+      leadingTone: {
+        term: 'Leading tone',
+        definition:
+          'The seventh scale degree, a half-step below the tonic, which pulls strongly up to it.',
+      },
+      tonic: {
+        term: 'Tonic',
+        definition:
+          'The home chord built on the first scale degree; it sounds settled and at rest.',
+      },
+      subdominant: {
+        term: 'Subdominant',
+        definition:
+          'A chord (often on the fourth degree) that moves away from home and sets up the dominant.',
+      },
+      dominant: {
+        term: 'Dominant',
+        definition: 'The chord on the fifth degree; its tension pulls strongly back to the tonic.',
+      },
     },
   },
 } as const;

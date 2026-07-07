@@ -1,6 +1,6 @@
 import { NoteSafety } from '@libraz/libcantus';
 import { describe, expect, it } from 'vitest';
-import { buildTheoryCard } from '@/compose/explain';
+import { buildTheoryCard, theoryLabelsFor } from '@/compose/explain';
 import { buildGuidance, type GuidanceInput, resolutionTargetOf } from '@/compose/guidance';
 import type { EditorChordSymbol } from '@/project/chords';
 import type { EditorNote, EditorTrack, TimeSignatureSegment } from '@/project/types';
@@ -187,7 +187,7 @@ describe('buildTheoryCard', () => {
     const card = buildTheoryCard(
       analysis,
       { pitch: 64, keySet: true, chordRoman: 'I', chordFunction: 'tonic' },
-      MESSAGES.en.theory,
+      theoryLabelsFor(MESSAGES.en.theory, 'normal'),
     );
     expect(card.title).toBe('E4 — 3rd');
     const scaleLine = card.lines.find((line) => line.label === 'Scale');
@@ -208,7 +208,11 @@ describe('buildTheoryCard', () => {
     const analysis = result.byNoteId.get(61);
     expect(analysis?.chordScale).toBeDefined();
     if (analysis === undefined) return;
-    const card = buildTheoryCard(analysis, { pitch: 60, keySet: true }, MESSAGES.en.theory);
+    const card = buildTheoryCard(
+      analysis,
+      { pitch: 60, keySet: true },
+      theoryLabelsFor(MESSAGES.en.theory, 'normal'),
+    );
     const colorLine = card.lines.find((line) => line.label === 'Color');
     expect(colorLine).toBeDefined();
     expect(colorLine?.text).toContain('tensions');
@@ -229,12 +233,63 @@ describe('buildTheoryCard', () => {
     const card = buildTheoryCard(
       analysis,
       { pitch: 64, keySet: true, chordRoman: 'I', chordFunction: 'tonic' },
-      MESSAGES.ja.theory,
+      theoryLabelsFor(MESSAGES.ja.theory, 'normal'),
     );
     expect(card.title).toBe('E4 — 第3音');
     const scaleLine = card.lines.find((line) => line.label === 'スケール');
     expect(scaleLine?.text).toBe('スケール度数 3');
     const chordLine = card.lines.find((line) => line.label === 'コード');
     expect(chordLine?.text).toBe('I — トニック');
+  });
+
+  it('attaches a glossary term to the chord-function line', () => {
+    const analysis = { degree: 2, isScaleTone: true } as NoteAnalysis;
+    const card = buildTheoryCard(
+      analysis,
+      { pitch: 64, keySet: true, chordFunction: 'tonic' },
+      theoryLabelsFor(MESSAGES.en.theory, 'beginner'),
+    );
+    const chordLine = card.lines.find((line) => line.label === 'Chord');
+    expect(chordLine?.term?.term).toBe('Tonic');
+    expect(chordLine?.term?.definition.length).toBeGreaterThan(0);
+  });
+
+  it('attaches a glossary term to a non-chord-tone line', () => {
+    const analysis = {
+      degree: 6,
+      isScaleTone: true,
+      analyzed: { noteId: 1, labels: [{ kind: 'leadingTone', resolveTo: 60 }] },
+    } as NoteAnalysis;
+    const card = buildTheoryCard(
+      analysis,
+      { pitch: 71, keySet: true },
+      theoryLabelsFor(MESSAGES.en.theory, 'theory'),
+    );
+    const noteLine = card.lines.find((line) => line.label === 'Note');
+    expect(noteLine?.term?.term).toBe('Leading tone');
+    expect(noteLine?.term?.definition.length).toBeGreaterThan(0);
+  });
+
+  it('switches wording between explanation levels for the same note', () => {
+    const analysis = {
+      degree: 6,
+      isScaleTone: true,
+      analyzed: { noteId: 1, labels: [{ kind: 'leadingTone', resolveTo: 60 }] },
+    } as NoteAnalysis;
+    const beginner = buildTheoryCard(
+      analysis,
+      { pitch: 71, keySet: true },
+      theoryLabelsFor(MESSAGES.en.theory, 'beginner'),
+    );
+    const theory = buildTheoryCard(
+      analysis,
+      { pitch: 71, keySet: true },
+      theoryLabelsFor(MESSAGES.en.theory, 'theory'),
+    );
+    const beginnerNote = beginner.lines.find((line) => line.label === 'Note')?.text;
+    const theoryNote = theory.lines.find((line) => line.label === 'Note')?.text;
+    expect(beginnerNote).toBeDefined();
+    expect(theoryNote).toBeDefined();
+    expect(beginnerNote).not.toBe(theoryNote);
   });
 });

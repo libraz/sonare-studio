@@ -33,6 +33,7 @@ export const ja = {
       recordingSourceOutput: 'マスター出力',
       autosaveInterval: '自動保存間隔（秒）',
       scrollFollowPlayhead: '再生ヘッドを追従して表示',
+      explainLevel: 'ガイドの解説レベル',
       confirmDestructive: '破壊的な操作を確認',
       loudnessTarget: 'ラウドネス目標（LUFS）',
       toggleOn: 'オン',
@@ -1371,6 +1372,7 @@ export const ja = {
       guideDissonant: 'コードとぶつかる音',
       guideResolution: '解決先',
       guideColorTones: '使えるカラートーン（ノートカードに表示）',
+      guideLevel: '解説レベル',
       guideClose: 'ガイドを閉じる',
       midiFxTitle: 'MIDI変換（移調、クオンタイズ、ベロシティ、ヒューマナイズ、ハーモナイズ）',
       midiFx: 'MIDI FX',
@@ -1876,31 +1878,10 @@ export const ja = {
       tension: 'テンション',
       doubling: '重複音',
     },
-    lock: {
-      identity: 'コードのルートを決める音',
-      quality: '長短を決める音（動かすと響きが変わる）',
-      voicing: '自由に動かせる声部の音',
-    },
     functions: {
       tonic: 'トニック',
       subdominant: 'サブドミナント',
       dominant: 'ドミナント',
-    },
-    safety: {
-      safe: 'この場所に合う音',
-      warning: '使い方に注意',
-      dissonant: 'コードとぶつかる音',
-    },
-    labels: {
-      suspension: '掛留音: 次で下行して解決',
-      passing: '経過音',
-      neighbor: '刺繍音',
-      avoid: 'ここでは回避音',
-      tension: 'テンション {degree} として使える',
-      anticipation: '先取音: 次のコードの音を先取り',
-      escape: '逸音: 跳んで抜ける非和声音',
-      needsResolution: '要解決音: 次の音で解決',
-      leadingTone: '導音: 主音へ上行して解決',
     },
     lines: {
       role: '役割',
@@ -1910,12 +1891,152 @@ export const ja = {
       safety: '安全度',
       chordScale: 'カラー',
     },
-    scaleDegree: 'スケール度数 {degree}',
-    nonScaleSuffix: '（スケール外）',
-    nonScaleTone: 'スケール外の音',
-    chordScale: {
-      tensions: 'テンション',
-      avoid: '回避',
+    levelName: {
+      beginner: '初心者',
+      normal: '通常',
+      theory: '理論',
+    },
+    levels: {
+      beginner: {
+        lock: {
+          identity: 'コードの土台になる音。動かさないのが安全です',
+          quality: 'コードの明るさ・暗さを決める音。動かすと響きが変わります',
+          voicing: '自由に動かせる音です',
+        },
+        safety: {
+          safe: 'コードに合う音。安心して使えます',
+          warning: '使えますが緊張感が出ます。扱いに注意',
+          dissonant: 'コードとぶつかる音。外れて聞こえることがあります',
+        },
+        labels: {
+          suspension: 'コードに寄りかかってから、一歩下がって収まります',
+          passing: 'コードの音と音の間を通り抜けてつなぐ音です',
+          neighbor: '隣へ動いてすぐ戻る、ちょっとした飾りです',
+          avoid: 'ここではぶつかりやすい音。通り過ぎる程度に',
+          tension: 'コードに重ねられる彩りの音（{degree}）です',
+          anticipation: '次のコードの音を少し早めに出しています',
+          escape: '収まらずに軽く外へ動く音です',
+          needsResolution: 'まだ途中の響きです。次の音で収めましょう',
+          leadingTone: 'ホームの音へ強く引き上がる音です',
+        },
+        scaleDegree: 'スケールの{degree}番目の音',
+        nonScaleSuffix: '（スケール外）',
+        nonScaleTone: 'スケールの外の音',
+        chordScale: {
+          tensions: '重ねられる彩りの音:',
+          avoid: '扱いに注意する音:',
+        },
+      },
+      normal: {
+        lock: {
+          identity: 'コードのルートを決める音',
+          quality: '長短を決める音（動かすと響きが変わる）',
+          voicing: '自由に動かせる声部の音',
+        },
+        safety: {
+          safe: 'この場所に合う音',
+          warning: '使い方に注意',
+          dissonant: 'コードとぶつかる音',
+        },
+        labels: {
+          suspension: '掛留音: 次で下行して解決',
+          passing: '経過音',
+          neighbor: '刺繍音',
+          avoid: 'ここでは回避音',
+          tension: 'テンション {degree} として使える',
+          anticipation: '先取音: 次のコードの音を先取り',
+          escape: '逸音: 跳んで抜ける非和声音',
+          needsResolution: '要解決音: 次の音で解決',
+          leadingTone: '導音: 主音へ上行して解決',
+        },
+        scaleDegree: 'スケール度数 {degree}',
+        nonScaleSuffix: '（スケール外）',
+        nonScaleTone: 'スケール外の音',
+        chordScale: {
+          tensions: 'テンション',
+          avoid: '回避',
+        },
+      },
+      theory: {
+        lock: {
+          identity: '根音（identity）',
+          quality: '性質を決める音（第3音）',
+          voicing: 'ボイシング音（自由）',
+        },
+        safety: {
+          safe: '協和／コードスケール音',
+          warning: 'テンション — 条件付き',
+          dissonant: 'コードに対し不協和',
+        },
+        labels: {
+          suspension: '掛留 — 順次下行で解決',
+          passing: '経過音（順次・弱拍）',
+          neighbor: '刺繍音（上／下）',
+          avoid: 'アヴォイド（コード音の半音上）',
+          tension: '使用可能テンション: {degree}',
+          anticipation: '次のコード音の先取',
+          escape: '逸音（échappée）',
+          needsResolution: '未解決の不協和 — 順次解決',
+          leadingTone: '導音 — 主音へ上行解決',
+        },
+        scaleDegree: 'スケール度数 {degree}',
+        nonScaleSuffix: '（ノンダイアトニック）',
+        nonScaleTone: 'ノンダイアトニック音',
+        chordScale: {
+          tensions: '使用可能テンション',
+          avoid: 'アヴォイド音',
+        },
+      },
+    },
+    glossary: {
+      suspension: {
+        term: '掛留（サスペンション）',
+        definition: '前のコードから引き伸ばされてぶつかり、順次下行してコード音へ解決する音。',
+      },
+      passing: {
+        term: '経過音',
+        definition: '2つのコード音の間を弱拍で順次に通り抜けてつなぐ音。',
+      },
+      neighbor: {
+        term: '刺繍音',
+        definition: 'コード音の上下に一歩動いて、すぐ元へ戻る音。',
+      },
+      avoid: {
+        term: 'アヴォイドノート',
+        definition: 'コード音の半音上にあるスケール音。伸ばすとぶつかるため、通過的にのみ使う。',
+      },
+      tension: {
+        term: 'テンション',
+        definition: 'コードの基本構成音の上に重ねる彩りの音（9th・11th・13th）。',
+      },
+      anticipation: {
+        term: '先取音（アンティシペーション）',
+        definition: '次のコードの音を、そのコードが実際に鳴る前に先取りして出す音。',
+      },
+      escape: {
+        term: '逸音（エシャペ）',
+        definition: '順次で近づき、反対方向へ跳躍して解決せずに離れる音。',
+      },
+      needsResolution: {
+        term: '未解決音',
+        definition: '不協和で、次の音が順次に収めるまで途中に聞こえる音。',
+      },
+      leadingTone: {
+        term: '導音',
+        definition: 'スケールの第7音。主音の半音下にあり、主音へ強く上行しようとする。',
+      },
+      tonic: {
+        term: 'トニック',
+        definition: '第1音の上に作られるホームのコード。安定して落ち着いて聞こえる。',
+      },
+      subdominant: {
+        term: 'サブドミナント',
+        definition: '多くは第4音上のコード。ホームから離れ、ドミナントへつなぐ。',
+      },
+      dominant: {
+        term: 'ドミナント',
+        definition: '第5音上のコード。緊張がトニックへ強く戻ろうとする。',
+      },
     },
   },
 } as const;

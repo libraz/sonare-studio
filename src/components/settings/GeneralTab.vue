@@ -11,6 +11,7 @@ import {
   AUTOSAVE_INTERVAL_MIN_MS,
   COUNT_IN_BARS_MAX,
   COUNT_IN_BARS_MIN,
+  type ExplainLevel,
   LOUDNESS_TARGET_MAX_LUFS,
   LOUDNESS_TARGET_MIN_LUFS,
   type RecordingCaptureSource,
@@ -56,6 +57,14 @@ const RECORDING_SOURCE_OPTIONS = computed<
   { value: 'output', label: t.value.settings.general.recordingSourceOutput },
 ]);
 
+const EXPLAIN_LEVEL_OPTIONS = computed<ReadonlyArray<{ value: ExplainLevel; label: string }>>(
+  () => [
+    { value: 'beginner', label: t.value.theory.levelName.beginner },
+    { value: 'normal', label: t.value.theory.levelName.normal },
+    { value: 'theory', label: t.value.theory.levelName.theory },
+  ],
+);
+
 function onEditorDensityChange(value: 'comfortable' | 'compact'): void {
   appSettings.set('editorDensity', value);
 }
@@ -70,6 +79,10 @@ function onLanguageChange(value: AppLanguage): void {
 
 function onRecordingSourceChange(value: RecordingCaptureSource): void {
   appSettings.set('recordingCaptureSource', value);
+}
+
+function onExplainLevelChange(value: ExplainLevel): void {
+  appSettings.set('explainLevel', value);
 }
 
 const autosaveSeconds = computed<number>(() =>
@@ -191,6 +204,19 @@ function onLoudnessTargetInput(event: Event): void {
               :aria-label="t.settings.general.scrollFollowPlayhead"
               size="sm"
               @update:model-value="appSettings.set('scrollFollowPlayhead', $event)"
+            />
+          </div>
+        </div>
+        <div class="settings-row">
+          <span class="settings-row__label">{{ t.settings.general.explainLevel }}</span>
+          <div class="settings-row__control">
+            <SelectMenu
+              class="row-select"
+              :model-value="appSettings.settings.explainLevel"
+              :options="EXPLAIN_LEVEL_OPTIONS"
+              :aria-label="t.settings.general.explainLevel"
+              size="sm"
+              @change="onExplainLevelChange"
             />
           </div>
         </div>

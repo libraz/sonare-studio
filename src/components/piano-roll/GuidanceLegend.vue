@@ -1,12 +1,16 @@
 <script setup lang="ts">
+import { computed } from 'vue';
+import { useAppSettings } from '@/composables/useAppSettings';
 import { useI18n } from '@/ui/i18n';
+import type { ExplainLevel } from '@/ui/settings/app-settings';
 import { PIANO_ROLL_COLORS } from './theme';
 
 /**
- * Popover legend explaining the piano-roll composition guidance: the row-tint
- * safety colours, the resolution arrow, and the note card's colour-tone line.
- * Purely descriptive — it reads its swatch colours from the same theme the
- * canvas draws with so the legend never drifts from what is rendered.
+ * Popover legend explaining the piano-roll composition guidance: an explanation
+ * level selector plus the row-tint safety colours, the resolution arrow, and
+ * the note card's colour-tone line. Descriptive — it reads its swatch colours
+ * from the same theme the canvas draws with so the legend never drifts from
+ * what is rendered.
  */
 
 defineEmits<{
@@ -15,7 +19,17 @@ defineEmits<{
 }>();
 
 const { t } = useI18n();
+const appSettings = useAppSettings();
 const COLORS = PIANO_ROLL_COLORS;
+
+/** The three explanation levels, in increasing depth, for the selector. */
+const LEVELS: ReadonlyArray<ExplainLevel> = ['beginner', 'normal', 'theory'];
+
+const explainLevel = computed<ExplainLevel>(() => appSettings.settings.explainLevel);
+
+function setLevel(level: ExplainLevel): void {
+  appSettings.set('explainLevel', level);
+}
 </script>
 
 <template>
@@ -31,6 +45,23 @@ const COLORS = PIANO_ROLL_COLORS;
         ✕
       </button>
     </header>
+    <div class="legend-level">
+      <span class="legend-level-label">{{ t.shell.pianoRoll.guideLevel }}</span>
+      <div class="segmented" role="radiogroup" :aria-label="t.shell.pianoRoll.guideLevel">
+        <button
+          v-for="level in LEVELS"
+          :key="level"
+          type="button"
+          class="segment"
+          :class="{ active: explainLevel === level }"
+          role="radio"
+          :aria-checked="explainLevel === level"
+          @click="setLevel(level)"
+        >
+          {{ t.theory.levelName[level] }}
+        </button>
+      </div>
+    </div>
     <ul class="legend-items">
       <li>
         <span class="swatch" :style="{ background: COLORS.guidanceWarning }" />
@@ -103,6 +134,61 @@ const COLORS = PIANO_ROLL_COLORS;
 
 .legend-close:hover {
   color: var(--text-1);
+}
+
+.legend-level {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.legend-level-label {
+  color: var(--text-2);
+}
+
+/* Equal-width three-way level picker, matching the generate-dialog segmented
+   control so the app's segmented affordances read the same everywhere. */
+.segmented {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--surface-inset);
+  border-radius: var(--radius-md);
+  box-shadow: var(--control-edge), var(--inset-well);
+}
+
+.segment {
+  flex: 1 1 0;
+  padding: var(--sp-1) var(--sp-2);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  transition:
+    background var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-1) var(--ease-out);
+}
+
+.segment:hover:not(.active) {
+  color: var(--text-1);
+}
+
+.segment.active {
+  background: var(--surface-2);
+  color: var(--text-1);
+  box-shadow: var(--control-edge), var(--shadow-1);
+}
+
+.segment:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
 }
 
 .legend-items {

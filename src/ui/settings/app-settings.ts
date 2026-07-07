@@ -44,6 +44,13 @@ export type RecordingVoiceChangerPreset =
 /** Audio source captured by the recording workflow. */
 export type RecordingCaptureSource = 'input' | 'output';
 
+/**
+ * How much wording the composition-guidance theory card shows. Every level
+ * renders the same set of card lines; only the phrasing changes — beginner
+ * uses plain, jargon-free sentences, theory uses terse technical terms.
+ */
+export type ExplainLevel = 'beginner' | 'normal' | 'theory';
+
 /** User-level application preferences. */
 export interface AppSettings {
   /** Color theme; 'system' follows the OS preference. */
@@ -86,6 +93,8 @@ export interface AppSettings {
   pianoRollAuditionDrag: boolean;
   /** Ask for confirmation before destructive actions (delete project, discard edits). */
   confirmDestructive: boolean;
+  /** How much wording the composition-guidance theory card shows. */
+  explainLevel: ExplainLevel;
   /**
    * Integrated-loudness target in LUFS the master meter compares against
    * (e.g. -14 for most streaming services, -23 for EBU R128 broadcast).
@@ -130,6 +139,9 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   pianoRollNoteColorMode: 'track',
   pianoRollAuditionDrag: true,
   confirmDestructive: true,
+  // Onboarding-friendly: the first session shows plain-language guidance; the
+  // choice is then remembered as a user preference.
+  explainLevel: 'beginner',
   loudnessTargetLufs: -14,
 };
 
@@ -195,6 +207,10 @@ function asRecordingCaptureSource(
   fallback: RecordingCaptureSource,
 ): RecordingCaptureSource {
   return value === 'input' || value === 'output' ? value : fallback;
+}
+
+function asExplainLevel(value: unknown, fallback: ExplainLevel): ExplainLevel {
+  return value === 'beginner' || value === 'normal' || value === 'theory' ? value : fallback;
 }
 
 function asString(value: unknown, fallback: string): string {
@@ -271,6 +287,7 @@ export function sanitizeAppSettings(raw: unknown): AppSettings {
     ),
     pianoRollAuditionDrag: asBoolean(source.pianoRollAuditionDrag, defaults.pianoRollAuditionDrag),
     confirmDestructive: asBoolean(source.confirmDestructive, defaults.confirmDestructive),
+    explainLevel: asExplainLevel(source.explainLevel, defaults.explainLevel),
     loudnessTargetLufs: asIntInRange(
       source.loudnessTargetLufs,
       LOUDNESS_TARGET_MIN_LUFS,

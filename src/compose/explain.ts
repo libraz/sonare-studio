@@ -14,10 +14,21 @@ import type { HarmonyRole, LockLevel, TheoryLabel } from '@libraz/libcantus';
 import { NoteSafety } from '@libraz/libcantus';
 import type { NoteAnalysis } from './guidance';
 
+/** A glossary term: a short display name and its plain-language definition. */
+export interface GlossaryEntry {
+  term: string;
+  definition: string;
+}
+
 /** One labelled line of the hover card. */
 export interface TheoryCardLine {
   label: string;
   text: string;
+  /**
+   * The jargon term this line refers to, when one applies. Surfaces the ⓘ
+   * glossary affordance so a reader can expand its definition in place.
+   */
+  term?: GlossaryEntry;
 }
 
 /** The hover card: a title plus zero or more explanation lines. */
@@ -65,6 +76,61 @@ export interface TheoryLabels {
   nonScaleTone: string;
   /** Prefixes for the color-tone line's available tensions and avoid notes. */
   chordScale: Readonly<Record<'tensions' | 'avoid', string>>;
+  /** Glossary of jargon terms, keyed by term id (see {@link GLOSSARY_KEY_FOR_KIND}). */
+  glossary: Readonly<Record<string, GlossaryEntry>>;
+}
+
+/**
+ * The per-level wording of the localized theory block: the explanatory strings
+ * that change with the explanation level (the line labels, role and function
+ * names are shared across levels and live alongside these).
+ */
+export interface TheoryLevelLabels {
+  lock: TheoryLabels['lock'];
+  safety: TheoryLabels['safety'];
+  labels: TheoryLabels['labels'];
+  scaleDegree: string;
+  nonScaleSuffix: string;
+  nonScaleTone: string;
+  chordScale: TheoryLabels['chordScale'];
+}
+
+/**
+ * The localized `theory` message block the card labels are resolved from: the
+ * shared labels, the per-level wording, and the glossary. Structurally matches
+ * the app's i18n `theory` tree without depending on it.
+ */
+export interface LocalizedTheory {
+  roles: TheoryLabels['roles'];
+  functions: TheoryLabels['functions'];
+  lines: TheoryLabels['lines'];
+  levels: Readonly<Record<string, TheoryLevelLabels>>;
+  glossary: TheoryLabels['glossary'];
+}
+
+/**
+ * Resolves the card's string bundle for one explanation level: the shared role
+ * / function / line labels merged with the selected level's wording and the
+ * glossary. Pure — the same {@link LocalizedTheory} yields the same bundle.
+ *
+ * @param theory The localized theory message block.
+ * @param level The explanation level whose wording to use.
+ */
+export function theoryLabelsFor(theory: LocalizedTheory, level: string): TheoryLabels {
+  const levelLabels = theory.levels[level] ?? theory.levels.normal;
+  return {
+    roles: theory.roles,
+    functions: theory.functions,
+    lines: theory.lines,
+    lock: levelLabels.lock,
+    safety: levelLabels.safety,
+    labels: levelLabels.labels,
+    scaleDegree: levelLabels.scaleDegree,
+    nonScaleSuffix: levelLabels.nonScaleSuffix,
+    nonScaleTone: levelLabels.nonScaleTone,
+    chordScale: levelLabels.chordScale,
+    glossary: theory.glossary,
+  };
 }
 
 /** Pitch-class names, sharp spelling (index = pitch class). */
@@ -140,17 +206,41 @@ function labelText(label: TheoryLabel, labels: TheoryLabels): string | undefined
 }
 
 /**
- * The NCT/resolution line, from the localized label table. Returns the first
- * label that maps to localized text; chord tones and notes the analyzer left
+ * Glossary key for each theory-label kind that names a jargon term. Chord tones
+ * carry no glossary term (they need no definition); every other kind maps to a
+ * key of the same name in {@link TheoryLabels.glossary}.
+ */
+export const GLOSSARY_KEY_FOR_KIND: Readonly<Record<TheoryLabel['kind'], string | undefined>> = {
+  chordTone: undefined,
+  suspension: 'suspension',
+  passing: 'passing',
+  neighbor: 'neighbor',
+  avoid: 'avoid',
+  tension: 'tension',
+  anticipation: 'anticipation',
+  escape: 'escape',
+  needsResolution: 'needsResolution',
+  leadingTone: 'leadingTone',
+};
+
+/**
+ * The NCT/resolution line, from the localized label table, paired with the
+ * glossary term it refers to (for the ⓘ affordance). Returns the first label
+ * that maps to localized text; chord tones and notes the analyzer left
  * unlabelled (e.g. no chord covers them) carry no NCT line — the role and scale
  * lines already convey those. The analyzer's raw `rationale` is deliberately
  * not used, since it is English-only and reads "Unclassified note" for every
  * unlabelled note.
  */
-function nctText(analysis: NoteAnalysis, labels: TheoryLabels): string | undefined {
+function nctLine(
+  analysis: NoteAnalysis,
+  labels: TheoryLabels,
+): { text: string; term?: GlossaryEntry } | undefined {
   for (const label of analysis.analyzed?.labels ?? []) {
     const text = labelText(label, labels);
-    if (text !== undefined) return text;
+    if (text === undefined) continue;
+    const key = GLOSSARY_KEY_FOR_KIND[label.kind];
+    return { text, term: key !== undefined ? labels.glossary[key] : undefined };
   }
   return undefined;
 }
@@ -180,11 +270,17 @@ export function buildTheoryCard(
   if (ctx.chordRoman !== undefined || ctx.chordFunction !== undefined) {
     const parts: string[] = [];
     if (ctx.chordRoman !== undefined) parts.push(ctx.chordRoman);
+    let functionTerm: GlossaryEntry | undefined;
     if (ctx.chordFunction !== undefined) {
       const key = ctx.chordFunction as 'tonic' | 'subdominant' | 'dominant';
       parts.push(labels.functions[key] ?? ctx.chordFunction);
+      functionTerm = labels.glossary[key];
     }
-    lines.push({ label: labels.lines.chord, text: parts.join(' — ') });
+    lines.push({
+      label: labels.lines.chord,
+      text: parts.join(' — '),
+      ...(functionTerm !== undefined ? { term: functionTerm } : {}),
+    });
   }
   if (ctx.keySet) {
     const text =
@@ -196,8 +292,14 @@ export function buildTheoryCard(
   }
   const colorTones = chordScaleText(analysis, labels);
   if (colorTones !== undefined) lines.push({ label: labels.lines.chordScale, text: colorTones });
-  const nct = nctText(analysis, labels);
-  if (nct !== undefined) lines.push({ label: labels.lines.note, text: nct });
+  const nct = nctLine(analysis, labels);
+  if (nct !== undefined) {
+    lines.push({
+      label: labels.lines.note,
+      text: nct.text,
+      ...(nct.term !== undefined ? { term: nct.term } : {}),
+    });
+  }
   if (analysis.safety !== undefined) {
     // The localized verdict text is primary; the analyzer's raw rationale is
     // English-only, so it is not shown in the card.

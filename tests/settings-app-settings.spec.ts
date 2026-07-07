@@ -62,8 +62,18 @@ describe('sanitizeAppSettings', () => {
       pianoRollNoteColorMode: DEFAULT_APP_SETTINGS.pianoRollNoteColorMode,
       pianoRollAuditionDrag: DEFAULT_APP_SETTINGS.pianoRollAuditionDrag,
       confirmDestructive: false,
+      explainLevel: DEFAULT_APP_SETTINGS.explainLevel,
       loudnessTargetLufs: DEFAULT_APP_SETTINGS.loudnessTargetLufs,
     });
+  });
+
+  it('keeps a valid explanation level and defaults an invalid one', () => {
+    expect(sanitizeAppSettings({ explainLevel: 'theory' }).explainLevel).toBe('theory');
+    expect(sanitizeAppSettings({ explainLevel: 'normal' }).explainLevel).toBe('normal');
+    expect(sanitizeAppSettings({ explainLevel: 'wizard' }).explainLevel).toBe(
+      DEFAULT_APP_SETTINGS.explainLevel,
+    );
+    expect(DEFAULT_APP_SETTINGS.explainLevel).toBe('beginner');
   });
 
   it('keeps a valid loudness target and clamps out-of-range ones', () => {

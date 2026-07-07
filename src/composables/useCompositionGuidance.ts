@@ -12,8 +12,14 @@
 
 import { chordToRoman, functionOf } from '@libraz/libcantus';
 import { type ComputedRef, computed } from 'vue';
+import { useAppSettings } from '@/composables/useAppSettings';
 import { buildChordTimeline } from '@/compose/chord-at-tick';
-import { buildTheoryCard, type TheoryCard } from '@/compose/explain';
+import {
+  buildTheoryCard,
+  type TheoryCard,
+  type TheoryLabels,
+  theoryLabelsFor,
+} from '@/compose/explain';
 import {
   buildGuidance,
   type GuidanceResult,
@@ -50,6 +56,16 @@ export interface CompositionGuidance {
 export function useCompositionGuidance(): CompositionGuidance {
   const store = useProjectStore();
   const { t } = useI18n();
+  const appSettings = useAppSettings();
+
+  /**
+   * Card string bundle for the active explanation level: the shared role /
+   * function / line labels plus the selected level's wording and the glossary.
+   * Recomputes when the language or the level preference changes.
+   */
+  const cardLabels = computed<TheoryLabels>(() =>
+    theoryLabelsFor(t.value.theory, appSettings.settings.explainLevel),
+  );
 
   const guidance = computed<GuidanceResult | null>(() => {
     const clip = store.activeClip;
@@ -102,11 +118,15 @@ export function useCompositionGuidance(): CompositionGuidance {
         // Unmappable chord: the card simply omits the chord line.
       }
     }
-    return buildTheoryCard(analysis, ctx, t.value.theory);
+    return buildTheoryCard(analysis, ctx, cardLabels.value);
   }
 
   const guidanceSegments = computed(() => guidance.value?.segments);
-  const noteCard = computed(() => (guidance.value !== null ? theoryCardFor : undefined));
+  // Re-emit the resolver identity when the level changes too, so consumers that
+  // key off `noteCard` re-render the currently shown card at the new level.
+  const noteCard = computed(() =>
+    guidance.value !== null && cardLabels.value ? theoryCardFor : undefined,
+  );
 
   /** Resolution arrows for notes carrying a resolution obligation. */
   const resolutionArrows = computed<ResolutionArrow[] | undefined>(() => {
