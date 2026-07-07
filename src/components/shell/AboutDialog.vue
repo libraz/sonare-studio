@@ -74,13 +74,14 @@ const { t } = useI18n();
   color: var(--text-3);
 }
 
+/* Facts read as a grouped inset card, matching the settings-group idiom. */
 .about-facts {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-2);
-  margin: 0;
-  padding-top: var(--sp-3);
-  border-top: 1px solid var(--border-subtle);
+  margin: var(--sp-1) 0 0;
+  background: var(--surface-2);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--control-edge), var(--shadow-1);
 }
 
 .about-row {
@@ -88,6 +89,12 @@ const { t } = useI18n();
   align-items: baseline;
   justify-content: space-between;
   gap: var(--sp-4);
+  min-height: 2.1rem;
+  padding: var(--sp-3) var(--sp-5);
+}
+
+.about-row + .about-row {
+  border-top: 1px solid var(--border-subtle);
 }
 
 .about-row dt {

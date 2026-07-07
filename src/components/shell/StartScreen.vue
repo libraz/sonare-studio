@@ -12,10 +12,11 @@ import { formatSize } from '@/ui/shell/format';
  * silently landing in a demo: continue the autosaved session, create a new
  * project, open the bundled demo song, or open / import a saved project.
  *
- * The layout mirrors the formetra welcome modal — a compact centred dialog with
- * a brand header, primary-bordered action buttons carrying a round icon and a
- * title/subtitle, an "open saved" divider, a list of saved projects, and a
- * dashed import button — re-skinned onto the sonare design tokens.
+ * The layout is a compact centred dialog: a brand header, raised action-card
+ * buttons carrying a round icon and a title/subtitle (the headline action gets
+ * an accent-tinted face), an "open saved" divider, a list of saved projects,
+ * and a row of secondary import/backup chips — all in the shared control-face
+ * language (a hairline ring plus a soft lift, never a drawn border).
  *
  * The overlay sits below the modal layer (z-index 90 < 100) so the New and Open
  * dialogs it triggers render on top of it; it stays mounted until a project is
@@ -99,15 +100,19 @@ function projectMeta(info: StoredProjectInfo): string {
             <span class="ss-action-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
                 stroke-linecap="round" stroke-linejoin="round">
-                <path d="M3.5 12a8.5 8.5 0 1 1 2.5 6" />
-                <path d="M5 18.5V14H9.5" />
-                <path d="M12 8v4.2l2.8 1.7" />
+                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                <path d="M3 3v5h5" />
+                <path d="M12 7.5v4.7l3.6 2.1" />
               </svg>
             </span>
             <span class="ss-action-text">
               <strong>{{ t.shell.startScreen.continueTitle }}</strong>
               <span>{{ t.shell.startScreen.continueDesc }}</span>
             </span>
+            <svg class="ss-action-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M9 6l6 6-6 6" />
+            </svg>
           </button>
 
           <button type="button" class="ss-action" :class="{ primary: primaryAction === 'new' }"
@@ -115,30 +120,38 @@ function projectMeta(info: StoredProjectInfo): string {
             <span class="ss-action-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
                 stroke-linecap="round" stroke-linejoin="round">
-                <path d="M6 3.5h7l5 5V20.5H6Z" />
-                <path d="M13 3.5V9h5" />
-                <path d="M12 12.5v5M9.5 15h5" />
+                <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" />
+                <path d="M14 3v5h5" />
+                <path d="M12 12v6M9 15h6" />
               </svg>
             </span>
             <span class="ss-action-text">
               <strong>{{ t.shell.startScreen.newTitle }}</strong>
               <span>{{ t.shell.startScreen.newDesc }}</span>
             </span>
+            <svg class="ss-action-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M9 6l6 6-6 6" />
+            </svg>
           </button>
 
           <button type="button" class="ss-action" data-testid="start-demo" @click="emit('demo')">
             <span class="ss-action-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
                 stroke-linecap="round" stroke-linejoin="round">
-                <path d="M9 17V5.5l9-2v10" />
+                <path d="M9 17V5.2l10-2.1V15" />
                 <circle cx="6.5" cy="17" r="2.5" />
-                <circle cx="15.5" cy="13.5" r="2.5" />
+                <circle cx="16.5" cy="15" r="2.5" />
               </svg>
             </span>
             <span class="ss-action-text">
               <strong>{{ t.shell.startScreen.demoTitle }}</strong>
               <span>{{ t.shell.startScreen.demoDesc }}</span>
             </span>
+            <svg class="ss-action-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M9 6l6 6-6 6" />
+            </svg>
           </button>
 
           <template v-if="props.storedProjects.length > 0">
@@ -155,19 +168,43 @@ function projectMeta(info: StoredProjectInfo): string {
           <div class="ss-imports">
             <button v-if="props.opfsAvailable" type="button" class="ss-import"
               data-testid="start-import" @click="emit('importProject')">
-              {{ t.shell.startScreen.importFromFile }}
+              <svg class="ss-import-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 3v11" />
+                <path d="M8 10l4 4 4-4" />
+                <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+              </svg>
+              <span class="ss-import-label">{{ t.shell.startScreen.importFromFile }}</span>
             </button>
             <button v-if="props.opfsAvailable" type="button" class="ss-import"
               data-testid="start-import-backup" @click="emit('importBackup')">
-              {{ t.shell.startScreen.restoreBackup }}
+              <svg class="ss-import-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 8.5h16V19a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 19Z" />
+                <path d="M3 4h18v4.5H3Z" />
+                <path d="M12 17v-5M9.5 14.5 12 12l2.5 2.5" />
+              </svg>
+              <span class="ss-import-label">{{ t.shell.startScreen.restoreBackup }}</span>
             </button>
             <button v-if="props.opfsAvailable" type="button" class="ss-import"
               data-testid="start-export-backup" @click="emit('exportBackup')">
-              {{ t.shell.startScreen.exportBackup }}
+              <svg class="ss-import-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 8.5h16V19a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 19Z" />
+                <path d="M3 4h18v4.5H3Z" />
+                <path d="M12 12v5M9.5 14.5 12 17l2.5-2.5" />
+              </svg>
+              <span class="ss-import-label">{{ t.shell.startScreen.exportBackup }}</span>
             </button>
             <button type="button" class="ss-import" data-testid="start-import-midi"
               @click="emit('importMidi')">
-              {{ t.shell.startScreen.importMidiFile }}
+              <svg class="ss-import-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M8 16V6.5l9-1.6V14" />
+                <circle cx="5.75" cy="16" r="2.25" />
+                <circle cx="14.75" cy="14" r="2.25" />
+              </svg>
+              <span class="ss-import-label">{{ t.shell.startScreen.importMidiFile }}</span>
             </button>
           </div>
         </div>
@@ -220,45 +257,76 @@ function projectMeta(info: StoredProjectInfo): string {
   width: 100%;
   padding: var(--sp-5) var(--sp-6);
   text-align: left;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-3);
+  border: none;
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  box-shadow: var(--control-edge), var(--shadow-1);
   color: var(--text-1);
   cursor: pointer;
   transition:
     background var(--dur-1) var(--ease-out),
-    border-color var(--dur-1) var(--ease-out);
+    box-shadow var(--dur-1) var(--ease-out),
+    transform var(--dur-1) var(--ease-out);
 }
 
 .ss-action:hover {
-  background: var(--surface-4);
-  border-color: var(--border-strong);
+  box-shadow: var(--control-edge-hover), var(--shadow-2);
+  transform: translateY(-1px);
+}
+
+.ss-action:active {
+  transform: translateY(0);
+  box-shadow: var(--control-edge), var(--inset-well);
 }
 
 .ss-action:focus-visible {
   outline: none;
-  box-shadow: var(--ring);
+  box-shadow: var(--control-edge), var(--ring);
 }
 
+/* Headline action: an accent-tinted face with an accent hairline ring and a
+ * soft accent glow — no drawn border, so it never reads as a heavy embossed box
+ * and stays the same size as the neutral actions. */
 .ss-action.primary {
-  border: 2px solid var(--accent);
   background: var(--accent-soft);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent),
+    0 1px 3px color-mix(in srgb, var(--accent) 20%, transparent),
+    var(--shadow-1);
 }
 
 .ss-action.primary:hover {
   background: color-mix(in srgb, var(--accent), transparent 84%);
+  box-shadow:
+    inset 0 0 0 1px var(--accent),
+    0 3px 10px color-mix(in srgb, var(--accent) 26%, transparent),
+    var(--shadow-2);
+  transform: translateY(-1px);
 }
 
+.ss-action.primary:active {
+  transform: translateY(0);
+  box-shadow: inset 0 0 0 1px var(--accent), var(--inset-well);
+}
+
+.ss-action.primary:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--accent), var(--ring);
+}
+
+/* iOS "app-icon" rounded square rather than a bare circle, so the glyph sits on
+ * a deliberate tile. A hairline ring gives the tile an edge without a drawn
+ * border. */
 .ss-action-icon {
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
-  border-radius: var(--radius-full);
+  width: 42px;
+  height: 42px;
+  border-radius: var(--radius-md);
   background: var(--surface-inset);
-  color: var(--text-3);
+  box-shadow: var(--control-edge);
+  color: var(--text-2);
 }
 
 .ss-action-icon svg {
@@ -267,20 +335,23 @@ function projectMeta(info: StoredProjectInfo): string {
 }
 
 .ss-action.primary .ss-action-icon {
-  background: var(--accent-soft);
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface-2));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
   color: var(--accent);
 }
 
 .ss-action-text {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
 }
 
 .ss-action-text strong {
   font-size: var(--fs-lg);
   font-weight: var(--fw-semibold);
+  letter-spacing: -0.01em;
   color: var(--text-1);
 }
 
@@ -289,7 +360,28 @@ function projectMeta(info: StoredProjectInfo): string {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--fs-sm);
+  line-height: 1.35;
   color: var(--text-3);
+}
+
+/* Trailing affordance: a muted chevron that nudges toward the label on hover. */
+.ss-action-arrow {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  color: var(--text-4);
+  transition:
+    transform var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+
+.ss-action:hover .ss-action-arrow {
+  color: var(--text-3);
+  transform: translateX(2px);
+}
+
+.ss-action.primary .ss-action-arrow {
+  color: var(--accent);
 }
 
 /* --- Divider ---------------------------------------------------------- */
@@ -326,18 +418,19 @@ function projectMeta(info: StoredProjectInfo): string {
   width: 100%;
   padding: var(--sp-4) var(--sp-5);
   text-align: left;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  box-shadow: var(--control-edge);
   cursor: pointer;
   transition:
     background var(--dur-1) var(--ease-out),
-    border-color var(--dur-1) var(--ease-out);
+    box-shadow var(--dur-1) var(--ease-out);
 }
 
 .ss-project:hover {
-  background: var(--surface-3);
-  border-color: var(--border);
+  background: var(--surface-4);
+  box-shadow: var(--control-edge-hover), var(--shadow-1);
 }
 
 .ss-project:focus-visible {
@@ -359,36 +452,70 @@ function projectMeta(info: StoredProjectInfo): string {
   color: var(--text-4);
 }
 
-/* --- Import (dashed) -------------------------------------------------- */
+/* --- Secondary import / backup chips ---------------------------------- */
+/* Two columns so each chip has room for its label on a single line — the
+ * four-across grid forced ugly mid-word wraps in Japanese. */
 .ss-imports {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  grid-template-columns: 1fr 1fr;
   gap: var(--sp-3);
 }
 
 .ss-import {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
   width: 100%;
-  padding: var(--sp-4) var(--sp-3);
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: none;
-  color: var(--text-3);
+  padding: var(--sp-3) var(--sp-4);
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  box-shadow: var(--control-edge), var(--shadow-1);
+  color: var(--text-2);
   font: inherit;
   font-size: var(--fs-sm);
+  text-align: left;
   cursor: pointer;
   transition:
     color var(--dur-1) var(--ease-out),
-    border-color var(--dur-1) var(--ease-out);
+    background var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-1) var(--ease-out),
+    transform var(--dur-1) var(--ease-out);
+}
+
+.ss-import-icon {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  color: var(--text-3);
+  transition: color var(--dur-1) var(--ease-out);
+}
+
+.ss-import-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ss-import:hover {
-  color: var(--text-2);
-  border-color: var(--text-4);
+  color: var(--text-1);
+  background: var(--surface-4);
+  box-shadow: var(--control-edge-hover), var(--shadow-2);
+}
+
+.ss-import:hover .ss-import-icon {
+  color: var(--accent);
+}
+
+.ss-import:active {
+  transform: translateY(0.5px);
+  box-shadow: var(--control-edge), var(--inset-well);
 }
 
 .ss-import:focus-visible {
   outline: none;
-  box-shadow: var(--ring);
+  box-shadow: var(--control-edge), var(--ring);
 }
 
 /* --- Disclaimer footer ------------------------------------------------ */

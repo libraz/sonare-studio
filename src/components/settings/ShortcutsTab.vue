@@ -101,6 +101,7 @@ onBeforeUnmount(stopCapture);
         size="sm"
       />
     </div>
+    <div class="settings-group shortcut-card">
     <table class="shortcut-table">
       <thead>
         <tr>
@@ -168,6 +169,7 @@ onBeforeUnmount(stopCapture);
         </tr>
       </tbody>
     </table>
+    </div>
     <div class="panel-actions">
       <button type="button" @click="shortcuts.resetAll()">
         {{ t.settings.shortcuts.resetAll }}
@@ -204,6 +206,13 @@ onBeforeUnmount(stopCapture);
   font-size: var(--fs-xs);
 }
 
+/* Table sits inside a rounded group card; clip its corners and let the header /
+ * rows read as an inset grouped list rather than a bordered spreadsheet. */
+.shortcut-card {
+  overflow: hidden;
+  padding: 0 var(--sp-4);
+}
+
 .shortcut-table {
   width: 100%;
   border-collapse: collapse;
@@ -212,17 +221,21 @@ onBeforeUnmount(stopCapture);
 .shortcut-table th {
   text-align: left;
   color: var(--text-3);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-2xs);
   font-weight: var(--fw-semibold);
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  padding: 0.2rem 0.4rem;
-  border-bottom: 1px solid var(--border);
+  padding: var(--sp-3) var(--sp-2);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .shortcut-table td {
-  padding: 0.25rem 0.4rem;
-  border-bottom: 1px solid var(--surface-2);
+  padding: var(--sp-2) var(--sp-2);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.shortcut-table tbody tr:first-child td {
+  border-top: none;
 }
 
 .shortcut-table tr.conflict td {

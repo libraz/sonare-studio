@@ -78,53 +78,63 @@ function renameLayout(name: string): void {
     role="tabpanel"
     :aria-label="t.settings.tabs.layouts"
   >
-    <h3 class="panel-heading">{{ t.settings.layouts.presets }}</h3>
-    <ul class="layout-list">
-      <li v-for="layout in namedLayouts.presets" :key="layout.name" class="layout-item">
-        <span class="layout-name">{{ layout.name }}</span>
-        <span class="layout-actions">
-          <button
-            type="button"
-            class="small"
-            :disabled="props.layoutBindings === null"
-            @click="applyLayout(layout.name)"
-          >
-            {{ t.settings.layouts.apply }}
-          </button>
-        </span>
-      </li>
-    </ul>
-    <h3 class="panel-heading">{{ t.settings.layouts.myLayouts }}</h3>
-    <EmptyState
-      v-if="namedLayouts.userLayouts.value.length === 0"
-      variant="inline"
-      :message="t.settings.layouts.noSaved"
-    />
-    <ul v-else class="layout-list">
-      <li
-        v-for="layout in namedLayouts.userLayouts.value"
-        :key="layout.name"
-        class="layout-item"
-      >
-        <span class="layout-name">{{ layout.name }}</span>
-        <span class="layout-actions">
-          <button
-            type="button"
-            class="small"
-            :disabled="props.layoutBindings === null"
-            @click="applyLayout(layout.name)"
-          >
-            {{ t.settings.layouts.apply }}
-          </button>
-          <button type="button" class="small" @click="renameLayout(layout.name)">
-            {{ t.settings.layouts.rename }}
-          </button>
-          <button type="button" class="small" @click="deleteLayout(layout.name)">
-            {{ t.settings.layouts.delete }}
-          </button>
-        </span>
-      </li>
-    </ul>
+    <section class="settings-section">
+      <h3 class="settings-section__title">{{ t.settings.layouts.presets }}</h3>
+      <div class="settings-group">
+        <div
+          v-for="layout in namedLayouts.presets"
+          :key="layout.name"
+          class="settings-row"
+        >
+          <span class="settings-row__label layout-name">{{ layout.name }}</span>
+          <span class="settings-row__control">
+            <button
+              type="button"
+              class="small"
+              :disabled="props.layoutBindings === null"
+              @click="applyLayout(layout.name)"
+            >
+              {{ t.settings.layouts.apply }}
+            </button>
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h3 class="settings-section__title">{{ t.settings.layouts.myLayouts }}</h3>
+      <EmptyState
+        v-if="namedLayouts.userLayouts.value.length === 0"
+        variant="inline"
+        :message="t.settings.layouts.noSaved"
+      />
+      <div v-else class="settings-group">
+        <div
+          v-for="layout in namedLayouts.userLayouts.value"
+          :key="layout.name"
+          class="settings-row"
+        >
+          <span class="settings-row__label layout-name">{{ layout.name }}</span>
+          <span class="settings-row__control">
+            <button
+              type="button"
+              class="small"
+              :disabled="props.layoutBindings === null"
+              @click="applyLayout(layout.name)"
+            >
+              {{ t.settings.layouts.apply }}
+            </button>
+            <button type="button" class="small" @click="renameLayout(layout.name)">
+              {{ t.settings.layouts.rename }}
+            </button>
+            <button type="button" class="small" @click="deleteLayout(layout.name)">
+              {{ t.settings.layouts.delete }}
+            </button>
+          </span>
+        </div>
+      </div>
+    </section>
+
     <div class="layout-save">
       <input
         v-model="newLayoutName"
@@ -146,15 +156,6 @@ function renameLayout(name: string): void {
 </template>
 
 <style scoped>
-.panel-heading {
-  margin: 0.2rem 0 0;
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-semibold);
-  color: var(--text-3);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
 button.small {
   background: var(--surface-3);
   border-radius: var(--radius-sm);
@@ -181,31 +182,18 @@ button.small:disabled {
   cursor: default;
 }
 
-.layout-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-}
-
-.layout-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0.25rem 0.2rem;
-  border-bottom: 1px solid var(--surface-2);
-}
-
 .layout-name {
   font-weight: var(--fw-semibold);
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .layout-save {
   display: flex;
   gap: 0.5rem;
-  margin-top: 0.3rem;
+  margin-top: 0.1rem;
 }
 
 .layout-save input {

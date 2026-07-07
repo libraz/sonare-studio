@@ -1,0 +1,94 @@
+/*
+ * iOS-style grouped inset list — the shared layout for settings panels and
+ * form-style dialog bodies.
+ *
+ * A panel is a vertical stack of sections; each section is an optional eyebrow
+ * label above a rounded "group" card whose rows are separated by inset
+ * hairlines. This is the material that makes a preference screen read as a
+ * modern grouped list rather than a bare stack of label/control rows. Cards get
+ * their definition from a hairline ring plus a soft lift (never a drawn border),
+ * so they sit on the frosted modal without a hard seam. Every value is a token,
+ * so the pattern re-tints for the dark theme automatically.
+ */
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+/* Eyebrow heading above a group — the tracked, muted, all-caps idiom, inset to
+ * align with the group's rounded edge. */
+.settings-section__title {
+  margin: 0 var(--sp-3);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.settings-group {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-2);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--control-edge), var(--shadow-1);
+}
+
+/* A single row: label on the left, control on the right. */
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-5);
+  min-height: 2.1rem;
+  padding: var(--sp-3) var(--sp-5);
+}
+
+/* Inset hairline between adjacent rows only — never above the first row nor
+ * below the last, so the card's rounded corners stay clean. */
+.settings-row + .settings-row {
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* When the whole row is itself the affordance (a label wrapping a control). */
+.settings-row.interactive {
+  cursor: pointer;
+  transition: background-color var(--dur-1) var(--ease-out);
+}
+
+.settings-row.interactive:hover {
+  background: var(--surface-4);
+}
+
+/* Round the hover/active fill into the card's corners on the end rows. */
+.settings-row:first-child {
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-lg);
+}
+
+.settings-row:last-child {
+  border-bottom-left-radius: var(--radius-lg);
+  border-bottom-right-radius: var(--radius-lg);
+}
+
+.settings-row__label {
+  min-width: 0;
+  color: var(--text-2);
+}
+
+/* Optional secondary line under a row label (units, hints). */
+.settings-row__label small {
+  display: block;
+  margin-top: 1px;
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+}
+
+.settings-row__control {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+}

@@ -15,6 +15,7 @@ import '@fontsource-variable/bricolage-grotesque/standard.css';
 import '@/ui/theme/tokens.css';
 import '@/ui/theme/base.css';
 import '@/ui/theme/controls.css';
+import '@/ui/theme/settings-group.css';
 import '@/ui/theme/focus-visible.css';
 import '@/ui/theme/motion.css';
 import '@/ui/theme/tooltip.css';

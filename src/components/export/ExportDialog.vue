@@ -700,9 +700,10 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 .export-report {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: var(--sp-3) var(--sp-3);
+  background: var(--surface-2);
+  box-shadow: var(--control-edge), var(--shadow-1);
+  border-radius: var(--radius-md);
+  padding: var(--sp-4) var(--sp-5);
 }
 
 .report-title {
@@ -734,7 +735,7 @@ function onKeydown(event: KeyboardEvent): void {
 .report-limitations {
   margin-top: var(--sp-3);
   padding-top: var(--sp-3);
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-subtle);
 }
 
 .report-limitations h4 {

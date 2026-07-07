@@ -102,136 +102,176 @@ function onLoudnessTargetInput(event: Event): void {
     role="tabpanel"
     :aria-label="t.settings.tabs.general"
   >
-    <div class="row">
-      <span class="row-label">{{ t.settings.general.language }}</span>
-      <SelectMenu
-        class="row-select"
-        :model-value="appSettings.settings.language"
-        :options="LANGUAGE_OPTIONS"
-        :aria-label="t.settings.general.language"
-        size="sm"
-        @change="onLanguageChange"
-      />
-    </div>
-    <div class="row">
-      <span class="row-label">{{ t.settings.general.theme }}</span>
-      <SelectMenu
-        class="row-select"
-        :model-value="appSettings.settings.theme"
-        :options="THEME_OPTIONS"
-        :aria-label="t.settings.general.theme"
-        size="sm"
-        @change="onThemeChange"
-      />
-    </div>
-    <div class="row">
-      <span class="row-label">{{ t.settings.general.editorDensity }}</span>
-      <SelectMenu
-        class="row-select"
-        :model-value="appSettings.settings.editorDensity"
-        :options="EDITOR_DENSITY_OPTIONS"
-        :aria-label="t.settings.general.editorDensity"
-        size="sm"
-        @change="onEditorDensityChange"
-      />
-    </div>
-    <div class="row">
-      <span class="row-label">{{ t.settings.general.snapDefault }}</span>
-      <ToggleButton
-        :model-value="appSettings.settings.snapDefault"
-        :label="
-          appSettings.settings.snapDefault
-            ? t.settings.general.toggleOn
-            : t.settings.general.toggleOff
-        "
-        :aria-label="t.settings.general.snapDefault"
-        size="sm"
-        @update:model-value="appSettings.set('snapDefault', $event)"
-      />
-    </div>
-    <label class="row">
-      <span class="row-label">{{ t.settings.general.countInBars }}</span>
-      <input
-        type="number"
-        :min="COUNT_IN_BARS_MIN"
-        :max="COUNT_IN_BARS_MAX"
-        :value="appSettings.settings.countInBars"
-        @change="onCountInInput"
-      />
-    </label>
-    <div class="row">
-      <span class="row-label">{{ t.settings.general.monitorDefault }}</span>
-      <ToggleButton
-        :model-value="appSettings.settings.monitorDefault"
-        :label="
-          appSettings.settings.monitorDefault
-            ? t.settings.general.toggleOn
-            : t.settings.general.toggleOff
-        "
-        :aria-label="t.settings.general.monitorDefault"
-        size="sm"
-        @update:model-value="appSettings.set('monitorDefault', $event)"
-      />
-    </div>
-    <div class="row">
-      <span class="row-label">{{ t.settings.general.recordingSource }}</span>
-      <SelectMenu
-        class="row-select"
-        :model-value="appSettings.settings.recordingCaptureSource"
-        :options="RECORDING_SOURCE_OPTIONS"
-        :aria-label="t.settings.general.recordingSource"
-        size="sm"
-        @change="onRecordingSourceChange"
-      />
-    </div>
-    <label class="row">
-      <span class="row-label">{{ t.settings.general.autosaveInterval }}</span>
-      <input
-        type="number"
-        :min="AUTOSAVE_INTERVAL_MIN_MS / 1000"
-        :max="AUTOSAVE_INTERVAL_MAX_MS / 1000"
-        :value="autosaveSeconds"
-        @change="onAutosaveSecondsInput"
-      />
-    </label>
-    <label class="row">
-      <span class="row-label">{{ t.settings.general.loudnessTarget }}</span>
-      <input
-        type="number"
-        :min="LOUDNESS_TARGET_MIN_LUFS"
-        :max="LOUDNESS_TARGET_MAX_LUFS"
-        :value="appSettings.settings.loudnessTargetLufs"
-        @change="onLoudnessTargetInput"
-      />
-    </label>
-    <div class="row">
-      <span class="row-label">{{ t.settings.general.scrollFollowPlayhead }}</span>
-      <ToggleButton
-        :model-value="appSettings.settings.scrollFollowPlayhead"
-        :label="
-          appSettings.settings.scrollFollowPlayhead
-            ? t.settings.general.toggleOn
-            : t.settings.general.toggleOff
-        "
-        :aria-label="t.settings.general.scrollFollowPlayhead"
-        size="sm"
-        @update:model-value="appSettings.set('scrollFollowPlayhead', $event)"
-      />
-    </div>
-    <div class="row">
-      <span class="row-label">{{ t.settings.general.confirmDestructive }}</span>
-      <ToggleButton
-        :model-value="appSettings.settings.confirmDestructive"
-        :label="
-          appSettings.settings.confirmDestructive
-            ? t.settings.general.toggleOn
-            : t.settings.general.toggleOff
-        "
-        :aria-label="t.settings.general.confirmDestructive"
-        size="sm"
-        @update:model-value="appSettings.set('confirmDestructive', $event)"
-      />
-    </div>
+    <section class="settings-section">
+      <h3 class="settings-section__title">{{ t.settings.general.sectionAppearance }}</h3>
+      <div class="settings-group">
+        <div class="settings-row">
+          <span class="settings-row__label">{{ t.settings.general.language }}</span>
+          <div class="settings-row__control">
+            <SelectMenu
+              class="row-select"
+              :model-value="appSettings.settings.language"
+              :options="LANGUAGE_OPTIONS"
+              :aria-label="t.settings.general.language"
+              size="sm"
+              @change="onLanguageChange"
+            />
+          </div>
+        </div>
+        <div class="settings-row">
+          <span class="settings-row__label">{{ t.settings.general.theme }}</span>
+          <div class="settings-row__control">
+            <SelectMenu
+              class="row-select"
+              :model-value="appSettings.settings.theme"
+              :options="THEME_OPTIONS"
+              :aria-label="t.settings.general.theme"
+              size="sm"
+              @change="onThemeChange"
+            />
+          </div>
+        </div>
+        <div class="settings-row">
+          <span class="settings-row__label">{{ t.settings.general.editorDensity }}</span>
+          <div class="settings-row__control">
+            <SelectMenu
+              class="row-select"
+              :model-value="appSettings.settings.editorDensity"
+              :options="EDITOR_DENSITY_OPTIONS"
+              :aria-label="t.settings.general.editorDensity"
+              size="sm"
+              @change="onEditorDensityChange"
+            />
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h3 class="settings-section__title">{{ t.settings.general.sectionEditing }}</h3>
+      <div class="settings-group">
+        <div class="settings-row">
+          <span class="settings-row__label">{{ t.settings.general.snapDefault }}</span>
+          <div class="settings-row__control">
+            <ToggleButton
+              :model-value="appSettings.settings.snapDefault"
+              :label="
+                appSettings.settings.snapDefault
+                  ? t.settings.general.toggleOn
+                  : t.settings.general.toggleOff
+              "
+              :aria-label="t.settings.general.snapDefault"
+              size="sm"
+              @update:model-value="appSettings.set('snapDefault', $event)"
+            />
+          </div>
+        </div>
+        <label class="settings-row">
+          <span class="settings-row__label">{{ t.settings.general.countInBars }}</span>
+          <div class="settings-row__control">
+            <input
+              type="number"
+              :min="COUNT_IN_BARS_MIN"
+              :max="COUNT_IN_BARS_MAX"
+              :value="appSettings.settings.countInBars"
+              @change="onCountInInput"
+            />
+          </div>
+        </label>
+        <div class="settings-row">
+          <span class="settings-row__label">{{ t.settings.general.scrollFollowPlayhead }}</span>
+          <div class="settings-row__control">
+            <ToggleButton
+              :model-value="appSettings.settings.scrollFollowPlayhead"
+              :label="
+                appSettings.settings.scrollFollowPlayhead
+                  ? t.settings.general.toggleOn
+                  : t.settings.general.toggleOff
+              "
+              :aria-label="t.settings.general.scrollFollowPlayhead"
+              size="sm"
+              @update:model-value="appSettings.set('scrollFollowPlayhead', $event)"
+            />
+          </div>
+        </div>
+        <div class="settings-row">
+          <span class="settings-row__label">{{ t.settings.general.confirmDestructive }}</span>
+          <div class="settings-row__control">
+            <ToggleButton
+              :model-value="appSettings.settings.confirmDestructive"
+              :label="
+                appSettings.settings.confirmDestructive
+                  ? t.settings.general.toggleOn
+                  : t.settings.general.toggleOff
+              "
+              :aria-label="t.settings.general.confirmDestructive"
+              size="sm"
+              @update:model-value="appSettings.set('confirmDestructive', $event)"
+            />
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h3 class="settings-section__title">{{ t.settings.general.sectionRecording }}</h3>
+      <div class="settings-group">
+        <div class="settings-row">
+          <span class="settings-row__label">{{ t.settings.general.monitorDefault }}</span>
+          <div class="settings-row__control">
+            <ToggleButton
+              :model-value="appSettings.settings.monitorDefault"
+              :label="
+                appSettings.settings.monitorDefault
+                  ? t.settings.general.toggleOn
+                  : t.settings.general.toggleOff
+              "
+              :aria-label="t.settings.general.monitorDefault"
+              size="sm"
+              @update:model-value="appSettings.set('monitorDefault', $event)"
+            />
+          </div>
+        </div>
+        <div class="settings-row">
+          <span class="settings-row__label">{{ t.settings.general.recordingSource }}</span>
+          <div class="settings-row__control">
+            <SelectMenu
+              class="row-select"
+              :model-value="appSettings.settings.recordingCaptureSource"
+              :options="RECORDING_SOURCE_OPTIONS"
+              :aria-label="t.settings.general.recordingSource"
+              size="sm"
+              @change="onRecordingSourceChange"
+            />
+          </div>
+        </div>
+        <label class="settings-row">
+          <span class="settings-row__label">{{ t.settings.general.autosaveInterval }}</span>
+          <div class="settings-row__control">
+            <input
+              type="number"
+              :min="AUTOSAVE_INTERVAL_MIN_MS / 1000"
+              :max="AUTOSAVE_INTERVAL_MAX_MS / 1000"
+              :value="autosaveSeconds"
+              @change="onAutosaveSecondsInput"
+            />
+          </div>
+        </label>
+        <label class="settings-row">
+          <span class="settings-row__label">{{ t.settings.general.loudnessTarget }}</span>
+          <div class="settings-row__control">
+            <input
+              type="number"
+              :min="LOUDNESS_TARGET_MIN_LUFS"
+              :max="LOUDNESS_TARGET_MAX_LUFS"
+              :value="appSettings.settings.loudnessTargetLufs"
+              @change="onLoudnessTargetInput"
+            />
+          </div>
+        </label>
+      </div>
+    </section>
+
     <div class="panel-actions">
       <button type="button" @click="appSettings.reset()">
         {{ t.settings.general.resetDefaults }}
@@ -241,23 +281,14 @@ function onLoudnessTargetInput(event: Event): void {
 </template>
 
 <style scoped>
-.row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-5);
-}
-
-.row-label {
-  color: var(--text-2);
-}
-
-.row input[type='number'] {
+/* Layout comes from the shared grouped-list pattern in settings-group.css; only
+ * the control metrics are tuned here. */
+.settings-row input[type='number'] {
   width: 4.5rem;
 }
 
 /* Tighter radius than the controls.css input baseline; face/focus inherited. */
-.row input {
+.settings-row input {
   border-radius: var(--radius-sm);
   padding: 0.15rem 0.3rem;
 }
@@ -269,6 +300,6 @@ function onLoudnessTargetInput(event: Event): void {
 .panel-actions {
   display: flex;
   justify-content: flex-end;
-  margin-top: 0.3rem;
+  margin-top: var(--sp-2);
 }
 </style>

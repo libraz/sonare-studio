@@ -15,12 +15,12 @@
   transition: box-shadow var(--dur-1) var(--ease-out);
 }
 
-.stored-row.selected {
-  box-shadow: inset 2px 0 0 var(--accent);
-}
-
+/* Selection reads as an accent ring + tint on the row's load button — no
+ * one-sided stripe clashing with the rounded corner. */
 .stored-row.selected .stored-load {
   background: var(--accent-muted);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  color: var(--text-1);
 }
 
 .stored-load {

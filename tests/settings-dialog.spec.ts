@@ -28,6 +28,17 @@ async function selectOption(selector: string, label: string): Promise<void> {
   await chooseOption(label);
 }
 
+/**
+ * Opens the SelectMenu whose trigger carries `aria-label` and picks `label`.
+ * The grouped settings list no longer exposes a stable positional selector, so
+ * rows are addressed by their accessible label instead of DOM order.
+ */
+async function selectByAria(ariaLabel: string, label: string): Promise<void> {
+  q(`.select-trigger[aria-label="${ariaLabel}"]`)?.click();
+  await flushPromises();
+  await chooseOption(label);
+}
+
 /** Dispatches a bubbling keydown on the given element. */
 async function keydownOn(
   el: Element | null,
@@ -123,15 +134,15 @@ describe('SettingsDialog', () => {
 
   it('writes language and theme changes through the settings store', async () => {
     open();
-    await selectOption('.row:nth-child(2) .row-select', 'Dark');
-    await selectOption('.row:nth-child(1) .row-select', 'Japanese');
+    await selectByAria('Theme', 'Dark');
+    await selectByAria('Language', 'Japanese');
     expect(useAppSettings().settings.language).toBe('ja');
     expect(useAppSettings().settings.theme).toBe('dark');
   });
 
   it('writes the default recording source through the settings store', async () => {
     open();
-    await selectOption('.row:nth-child(7) .row-select', 'Master output');
+    await selectByAria('Recording source', 'Master output');
     expect(useAppSettings().settings.recordingCaptureSource).toBe('output');
   });
 
@@ -238,7 +249,7 @@ describe('SettingsDialog', () => {
     const bindings = makeBindings();
     open(bindings);
     await clickTab(2);
-    const mixRow = qa('.layout-item').find(
+    const mixRow = qa('.settings-row').find(
       (item) => item.querySelector('.layout-name')?.textContent?.trim() === 'Mix',
     );
     expect(mixRow).toBeDefined();
@@ -261,7 +272,7 @@ describe('SettingsDialog', () => {
     q('.layout-save button')?.click();
     await nextTick();
     expect(useLayouts().userLayouts.value.map((layout) => layout.name)).toEqual(['My groove']);
-    const row = qa('.layout-item').find(
+    const row = qa('.settings-row').find(
       (item) => item.querySelector('.layout-name')?.textContent?.trim() === 'My groove',
     );
     const del = Array.from(row?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
@@ -288,7 +299,7 @@ describe('SettingsDialog', () => {
   it('disables layout actions without bindings', async () => {
     open(null);
     await clickTab(2);
-    const apply = q('.layout-item button');
+    const apply = q('.settings-row button');
     expect(apply?.getAttribute('disabled')).not.toBeNull();
   });
 

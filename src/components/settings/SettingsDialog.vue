@@ -168,7 +168,7 @@ onBeforeUnmount(() => {
 .panel {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-3);
+  gap: var(--sp-5);
   overflow: auto;
   min-height: 12rem;
   animation: view-enter var(--dur-2) var(--ease-out);

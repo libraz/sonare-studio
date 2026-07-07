@@ -186,27 +186,35 @@ function templateDescription(name: TemplateName): string {
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
-  padding: var(--sp-3) var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
   cursor: pointer;
-  border-bottom: 1px solid var(--surface-2);
-  transition: background var(--dur-1) var(--ease-out);
+  border-bottom: 1px solid var(--border-subtle);
+  transition:
+    background var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
 }
 
 .template-item:last-child {
   border-bottom: none;
 }
 
-.template-item:hover {
-  background: var(--surface-3);
+.template-item:hover:not(.selected) {
+  background: var(--surface-4);
 }
 
+/* Selection reads as a full accent-tinted row (no one-sided stripe): tinted
+ * fill plus an accent label. */
 .template-item.selected {
-  background: var(--accent-muted);
-  box-shadow: inset 2px 0 0 var(--accent);
+  background: var(--surface-selected);
+}
+
+.template-item.selected .template-label {
+  color: var(--accent);
 }
 
 .template-label {
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
 }
 
 .template-description {
