@@ -60,6 +60,7 @@ import PianoRollToolbar from './PianoRollToolbar.vue';
 import { DEFAULT_NOTE_COLOR, KEYBOARD_COLUMN_WIDTH_PX, type NoteColorFn } from './theme';
 import { useNoteInteractions } from './use-note-interactions';
 import { usePianoRollCcLanes } from './use-piano-roll-cc-lanes';
+import { usePianoRollGuidance } from './use-piano-roll-guidance';
 import { usePianoRollLanes } from './use-piano-roll-lanes';
 import { usePianoRollScrollbar } from './use-piano-roll-scrollbar';
 import { usePianoRollViewport } from './use-piano-roll-viewport';
@@ -337,6 +338,9 @@ const { vThumbStyle, hThumbStyle, onVScrollDown, onHScrollDown, onScrollMove, on
 
 /** Active clip color for the CC curve. */
 const trackColor = computed(() => store.activeTrack?.color ?? DEFAULT_NOTE_COLOR);
+
+/** Composition-guidance tint segments and hover theory-card resolver. */
+const { guidanceSegments, noteCard } = usePianoRollGuidance();
 
 /** True when a MIDI clip is active and can receive a transform. */
 const canTransform = computed(
@@ -955,6 +959,8 @@ onBeforeUnmount(() => {
           :anchored-local-x="followAnchorLocalX"
           :note-color="noteColor"
           :ghost-notes="ghostNotes"
+          :guidance-segments="guidanceSegments"
+          :note-card="noteCard"
           @view-resize="viewport.onGridResize"
           @ghost-activate="onGhostActivate"
           @note-context="onNoteContext"

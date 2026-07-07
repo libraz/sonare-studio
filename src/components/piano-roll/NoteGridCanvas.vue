@@ -1,5 +1,8 @@
 <script setup lang="ts">
+import { NoteSafety } from '@libraz/libcantus';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import type { TheoryCard } from '@/compose/explain';
+import type { GuidanceSegment } from '@/compose/guidance';
 import { formatPitch } from '@/lib/pitch';
 import type { EditorNote, TimeSignatureSegment } from '@/project/types';
 import { localizeMeter, rulerTicks } from '@/ui/arrangement/ruler';
@@ -62,6 +65,10 @@ const props = defineProps<{
   noteColor?: NoteColorFn;
   /** Read-only ghost notes from non-active clips, drawn under the notes. */
   ghostNotes?: GhostNote[];
+  /** Guidance tint segments in clip-relative beats; omit to draw no tint. */
+  guidanceSegments?: GuidanceSegment[];
+  /** Hover theory-card resolver per note id; omit to disable the card. */
+  noteCard?: (noteId: number) => TheoryCard | null;
 }>();
 
 const { t } = useI18n();
@@ -88,6 +95,39 @@ const localTimeSignatures = computed(() =>
   localizeMeter(props.timeSignatures, props.timeSignatureOriginPpq ?? 0),
 );
 const hoverPoint = ref<InteractionPoint | null>(null);
+
+/** Offset of the hover theory card from the pointer, in px. */
+const CARD_POINTER_OFFSET_PX = 14;
+/** Assumed card extent used to keep it inside the grid bounds. */
+const CARD_ESTIMATED_WIDTH_PX = 230;
+const CARD_ESTIMATED_HEIGHT_PX = 110;
+
+/**
+ * Theory card for the hovered note, resolved through the `noteCard` prop.
+ * Suppressed while a ghost is hovered or a gesture readout is showing, matching
+ * the canvas hover HUD.
+ */
+const hoveredCard = computed<TheoryCard | null>(() => {
+  const resolve = props.noteCard;
+  const note = hoveredNote.value;
+  if (!resolve || !note) return null;
+  if (hoveredGhost.value || (props.interactions.gestureReadout?.value ?? null)) return null;
+  return resolve(note.id);
+});
+
+/** Inline position and palette for the hover theory card overlay. */
+const theoryCardStyle = computed<Record<string, string> | null>(() => {
+  const point = hoverPoint.value;
+  if (!point) return null;
+  const maxX = Math.max(4, props.range.widthPx - CARD_ESTIMATED_WIDTH_PX - 4);
+  const maxY = Math.max(4, props.range.heightPx - CARD_ESTIMATED_HEIGHT_PX - 4);
+  return {
+    left: `${Math.min(point.x + CARD_POINTER_OFFSET_PX, maxX)}px`,
+    top: `${Math.min(point.y + CARD_POINTER_OFFSET_PX, maxY)}px`,
+    background: COLORS.hudBackground,
+    color: COLORS.hudText,
+  };
+});
 
 /** Unique painter layer suffix so several editors can share one painter. */
 const layerId = Math.random().toString(36).slice(2, 8);
@@ -239,6 +279,21 @@ function drawBackground(): void {
     if (range.rowHeight >= 5) {
       ctx.fillStyle = COLORS.rowLine;
       ctx.fillRect(0, y + range.rowHeight - 1, w, 1);
+    }
+  }
+
+  // Guidance tint over the scale rows: only warning/dissonant pitch classes
+  // are filled (safe rows draw nothing) so the base palette stays dominant.
+  for (const segment of props.guidanceSegments ?? []) {
+    const x0 = Math.max(0, range.ppqToX(segment.startBeat));
+    const x1 = Math.min(w, range.ppqToX(segment.endBeat));
+    if (x1 <= x0) continue;
+    for (let pitch = lowPitch; pitch <= highPitch; pitch++) {
+      const safety = segment.safetyByPc[((pitch % 12) + 12) % 12];
+      if (safety === NoteSafety.Safe) continue;
+      ctx.fillStyle =
+        safety === NoteSafety.Dissonant ? COLORS.guidanceDissonant : COLORS.guidanceWarning;
+      ctx.fillRect(x0, range.pitchToY(pitch), x1 - x0, range.rowHeight);
     }
   }
 
@@ -481,6 +536,7 @@ watch(
     props.clipLengthPpq,
     props.timeSignatures,
     props.timeSignatureOriginPpq,
+    props.guidanceSegments,
   ],
   () => {
     lastPlayheadX = Number.NaN;
@@ -625,6 +681,18 @@ function onContextMenu(event: MouseEvent): void {
     />
     <canvas ref="notesCanvas" class="note-grid-layer" aria-hidden="true" />
     <canvas ref="overlayCanvas" class="note-grid-layer" aria-hidden="true" />
+    <div
+      v-if="hoveredCard && theoryCardStyle"
+      class="note-grid-theory-card"
+      :style="theoryCardStyle"
+      aria-hidden="true"
+    >
+      <div class="theory-card-title">{{ hoveredCard.title }}</div>
+      <div v-for="line in hoveredCard.lines" :key="line.label" class="theory-card-line">
+        <span class="theory-card-label">{{ line.label }}</span>
+        <span>{{ line.text }}</span>
+      </div>
+    </div>
     <div class="note-grid-live" role="status" aria-live="polite" aria-atomic="true">
       {{ liveStatus }}
     </div>
@@ -646,6 +714,34 @@ function onContextMenu(event: MouseEvent): void {
   width: 100%;
   height: 100%;
   display: block;
+}
+
+/* Read-only theory card floated near the pointer over a hovered note. It is an
+ * absolutely-positioned overlay (never in layout flow) and ignores the pointer
+ * so it can never block a gesture. */
+.note-grid-theory-card {
+  position: absolute;
+  z-index: 1;
+  max-width: 230px;
+  padding: 6px 9px;
+  border-radius: 5px;
+  font: 11px / 1.45 system-ui, sans-serif;
+  pointer-events: none;
+}
+
+.theory-card-title {
+  margin-bottom: 2px;
+  font-weight: 600;
+}
+
+.theory-card-line {
+  display: flex;
+  gap: 6px;
+}
+
+.theory-card-label {
+  flex: none;
+  opacity: 0.62;
 }
 
 .note-grid-live {

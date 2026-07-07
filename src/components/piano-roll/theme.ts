@@ -68,6 +68,12 @@ export const PIANO_ROLL_COLORS = {
   hudBackground: 'rgba(8, 10, 14, 0.84)',
   /** Floating gesture readout text. */
   hudText: '#f3f5f9',
+  /** Guidance row tint for safe pitch classes (near-invisible; drawing skips it). */
+  guidanceSafe: 'rgba(74, 222, 128, 0.05)',
+  /** Guidance row tint for warning pitch classes (aligned with noteWarning). */
+  guidanceWarning: 'rgba(245, 158, 11, 0.09)',
+  /** Guidance row tint for dissonant pitch classes (aligned with noteError). */
+  guidanceDissonant: 'rgba(239, 68, 68, 0.12)',
   /** Piano-roll minimap background. */
   minimapBackground: '#111318',
   /** Piano-roll minimap note marks. */
