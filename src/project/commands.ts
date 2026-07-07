@@ -175,6 +175,11 @@ export {
   updateNotes,
 } from './command/notes';
 export { reharmonizeChord } from './command/reharm';
+export type { ReactiveReharmonizeParams } from './command/reharmonize-reactive';
+export {
+  applyReharmonizationProposal,
+  proposeReharmonizationForActiveClip,
+} from './command/reharmonize-reactive';
 export type { NoteAnnotationUpdate } from './command/score-annotations';
 export {
   clearNoteAnnotation,
