@@ -1,3 +1,7 @@
+import { estimateChordsFromTracks } from '@/compose/estimate-chords';
+import { effectiveKeyScale } from '@/compose/key';
+import { timeSignatureAtPpq } from '@/compose/meter';
+import type { TrackWithNotes } from '@/compose/tracks';
 import { ensureWasm } from '@/lib/wasm';
 import { estimateChordSymbols } from '@/notation/chords';
 import { loadAsset } from '@/persistence/assets';
@@ -51,6 +55,55 @@ export function clearProjectChords(): void {
     project.annotateChords([]);
     store.refresh();
   });
+}
+
+/** The outcome of an arrangement-wide chord estimation. */
+export interface EstimatedChordSummary {
+  /** Number of chord symbols written to the chord track. */
+  count: number;
+  /** One confidence value in [0, 1] per written symbol, in order. */
+  confidence: number[];
+  /** Names of percussion tracks excluded from the estimate. */
+  excludedTrackNames: string[];
+}
+
+/** Every track paired with its notes flattened across clips to absolute PPQ. */
+function harmonicTrackNotes(store: ReturnType<typeof useProjectStore>): TrackWithNotes[] {
+  return store.tracks.map((track) => {
+    const clips = store.clipsByTrack.get(track.id) ?? [];
+    const notes = clips.flatMap((clip) =>
+      clip.notes.map((note) => ({ ...note, startPpq: note.startPpq + clip.startPpq })),
+    );
+    return { track, notes };
+  });
+}
+
+/**
+ * Infers a chord progression from the whole arrangement's note content and
+ * writes it to the chord track (one undoable entry), replacing any existing
+ * symbols. Intended for projects with no chord track (e.g. classical scores or
+ * imported MIDI): percussion tracks are excluded and the remaining notes are
+ * pooled into a per-bar harmonic estimate (see {@link estimateChordsFromTracks}).
+ *
+ * The estimate is only committed when at least one chord is inferred, so calling
+ * it on an empty project is a harmless no-op that leaves the chord track intact.
+ *
+ * @returns The written chord count, per-chord confidence, and excluded tracks.
+ */
+export function estimateChordsFromArrangement(): EstimatedChordSummary {
+  const store = useProjectStore();
+  const tracks = harmonicTrackNotes(store);
+  const key = store.scaleHighlight.enabled ? effectiveKeyScale(store.scaleHighlight) : undefined;
+  const estimate = estimateChordsFromTracks(tracks, {
+    ...(key !== undefined ? { key } : {}),
+    ts: timeSignatureAtPpq(store.timeSignatures, 0),
+  });
+  if (estimate.symbols.length > 0) setProjectChords(estimate.symbols);
+  return {
+    count: estimate.symbols.length,
+    confidence: estimate.confidence,
+    excludedTrackNames: estimate.excludedTrackNames,
+  };
 }
 
 /**

@@ -470,7 +470,7 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
     const g = t.value.shell.generate;
     const noProject = !store.initialized;
     return [
-      commandItem('generate.progression', g.progression, options.openGenerateDialog, {
+      commandItem('generate.progression', g.open, options.openGenerateDialog, {
         disabled: noProject,
       }),
     ];

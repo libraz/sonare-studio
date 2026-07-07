@@ -27,6 +27,17 @@ function confirm(): HTMLButtonElement | null {
   return document.body.querySelector<HTMLButtonElement>('.generate-confirm');
 }
 
+function modeSegments(): HTMLButtonElement[] {
+  return [...document.body.querySelectorAll<HTMLButtonElement>('.mode-select .mode-segment')];
+}
+
+async function selectMode(label: string): Promise<void> {
+  const segment = modeSegments().find((el) => el.textContent?.trim() === label);
+  expect(segment).toBeDefined();
+  segment?.click();
+  await nextTick();
+}
+
 beforeEach(async () => {
   setActivePinia(createPinia());
   store = useProjectStore();
@@ -54,10 +65,50 @@ describe('GenerateDialog', () => {
 
   it('offers style segments as an equal-width segmented control', async () => {
     await open();
-    const segments = document.body.querySelectorAll('.segment[role="radio"]');
+    const segments = document.body.querySelectorAll('.style-select .segment[role="radio"]');
     // Four style options are always present (append mode row appears only with
     // an existing chord track).
     expect(segments.length).toBe(4);
-    expect(document.body.querySelector('.segment.active')).not.toBeNull();
+    expect(document.body.querySelector('.style-select .segment.active')).not.toBeNull();
+  });
+
+  it('offers every generator and defaults to the progression form', async () => {
+    await open();
+    expect(modeSegments().length).toBe(8);
+    expect(document.body.querySelector('.style-select')).not.toBeNull();
+  });
+
+  it('shows the arrangement part toggles after switching the generator', async () => {
+    await open();
+    await selectMode('Arrangement');
+    const toggles = document.body.querySelectorAll('.check-group .check-label');
+    expect(toggles.length).toBe(4);
+    expect(confirm()?.disabled).toBe(false);
+  });
+
+  it('blocks the backing generator until a chord track exists', async () => {
+    await open();
+    await selectMode('Backing');
+    const hint = document.body.querySelector('.mode-hint');
+    expect(hint?.textContent).toContain('Generate a chord progression first.');
+    expect(confirm()?.disabled).toBe(true);
+  });
+
+  it('shows the drum options after switching the generator', async () => {
+    await open();
+    await selectMode('Drums');
+    expect(document.body.querySelector('.groove-select')).not.toBeNull();
+    expect(document.body.querySelector('.section-select')).not.toBeNull();
+    expect(document.body.querySelector('.density-input')).not.toBeNull();
+    expect(document.body.querySelector('.style-select')).toBeNull();
+  });
+
+  it('blocks the bass generator until a chord track exists', async () => {
+    await open();
+    expect(store.chords).toHaveLength(0);
+    await selectMode('Bass');
+    const hint = document.body.querySelector('.mode-hint');
+    expect(hint?.textContent).toContain('Generate a chord progression first.');
+    expect(confirm()?.disabled).toBe(true);
   });
 });

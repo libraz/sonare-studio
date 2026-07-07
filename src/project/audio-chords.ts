@@ -20,6 +20,70 @@ import { sliceAudioClipWindow } from './scheduling';
 import { normalizeTempoMap, ppqToSeconds, secondsToPpq } from './tempo-map';
 import type { EditorClip, TempoSegment } from './types';
 
+/** Identity of a chord for adjacency comparison (root/quality/bass). */
+function chordIdentity(symbol: EditorChordSymbol): string {
+  return `${symbol.rootPc}:${symbol.quality}:${symbol.bassPc ?? -1}`;
+}
+
+/** Onset tolerance (in PPQ) for treating two regions as contiguous. */
+const CONTIGUOUS_EPSILON = 1e-6;
+
+/**
+ * Smooths a detected chord progression: absorbs short outlier chords that sit
+ * between two identical neighbors and merges adjacent identical regions.
+ *
+ * The audio detector slices its input into fixed windows, so a single window can
+ * mis-read the harmony and produce a lone spurious chord (e.g. `C G C` where the
+ * `G` is one short window inside a held `C`). Such an outlier — shorter than
+ * `minStableBeats` and flanked by the same chord on both sides — is absorbed into
+ * the surrounding chord, and any adjacent identical regions are then merged into
+ * one span. Pure and order-independent (the input is sorted by onset first).
+ *
+ * @param symbols Detected chord symbols (absolute PPQ; PPQ == beats).
+ * @param minStableBeats Outliers shorter than this (in beats) may be absorbed.
+ * @returns The smoothed, merged symbols in onset order.
+ */
+export function smoothDetectedChordSymbols(
+  symbols: ReadonlyArray<EditorChordSymbol>,
+  minStableBeats = 1,
+): EditorChordSymbol[] {
+  const sorted = symbols.map((symbol) => ({ ...symbol })).sort((a, b) => a.startPpq - b.startPpq);
+  const kept: EditorChordSymbol[] = [];
+  for (let i = 0; i < sorted.length; i++) {
+    const current = sorted[i];
+    const previous = kept[kept.length - 1];
+    const next = sorted[i + 1];
+    const duration = current.endPpq - current.startPpq;
+    if (
+      previous !== undefined &&
+      next !== undefined &&
+      duration < minStableBeats &&
+      chordIdentity(previous) === chordIdentity(next) &&
+      chordIdentity(current) !== chordIdentity(previous)
+    ) {
+      // Absorb the outlier into the preceding chord; the identical `next` then
+      // merges with it below, closing the gap the outlier left behind.
+      previous.endPpq = Math.max(previous.endPpq, current.endPpq);
+      continue;
+    }
+    kept.push(current);
+  }
+  const merged: EditorChordSymbol[] = [];
+  for (const symbol of kept) {
+    const last = merged[merged.length - 1];
+    if (
+      last !== undefined &&
+      chordIdentity(last) === chordIdentity(symbol) &&
+      symbol.startPpq <= last.endPpq + CONTIGUOUS_EPSILON
+    ) {
+      last.endPpq = Math.max(last.endPpq, symbol.endPpq);
+    } else {
+      merged.push(symbol);
+    }
+  }
+  return merged;
+}
+
 /** A chord returned by the engine's audio detector (the fields we consume). */
 export interface DetectedAudioChord {
   /** Root pitch class 0..11 (C = 0). */
@@ -60,7 +124,8 @@ export interface AudioChordDeps {
  * @param tempoSegments Project tempo map; detection times are placed on the
  *   timeline through it, so chords land correctly when the tempo varies under
  *   the clip. Empty (the default) reduces to the constant `tempoBpm` mapping.
- * @returns Detected chord symbols (unsorted; the caller sanitizes).
+ * @returns Detected chord symbols in onset order, smoothed to absorb single-
+ *   window detector outliers (see {@link smoothDetectedChordSymbols}).
  */
 export async function analyzeAudioClipChords(
   clip: EditorClip,
@@ -103,5 +168,5 @@ export async function analyzeAudioClipChords(
     if (chord.bass !== chord.root) symbol.bassPc = chord.bass;
     symbols.push(symbol);
   }
-  return symbols;
+  return smoothDetectedChordSymbols(symbols);
 }

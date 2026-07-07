@@ -54,6 +54,7 @@ import { createPainter } from '@/ui/canvas/painter';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
 import { useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
+import ArrangementAnalysisPanel from './ArrangementAnalysisPanel.vue';
 import ArrangementCanvas from './ArrangementCanvas.vue';
 import SectionLane from './SectionLane.vue';
 import TrackHeaderList from './TrackHeaderList.vue';
@@ -810,6 +811,7 @@ onBeforeUnmount(() => {
         />
       </div>
     </div>
+    <ArrangementAnalysisPanel :is-playing="props.isPlaying" @jump="onSeek" />
   </div>
 </template>
 

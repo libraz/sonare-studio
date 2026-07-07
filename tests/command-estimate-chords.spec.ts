@@ -1,0 +1,65 @@
+import { createPinia, setActivePinia } from 'pinia';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { estimateChordsFromArrangement } from '@/project/command/chords';
+import { addMidiClip, setActiveClip } from '@/project/command/clips';
+import { clearHistory, undo } from '@/project/command/history';
+import { addNote } from '@/project/command/notes';
+import { addTrack } from '@/project/command/tracks';
+import { useProjectStore } from '@/project/store';
+import { MAJOR_MODE_MASK } from '@/project/types';
+
+vi.mock('@/lib/wasm', async () => {
+  const { createFakeWasmModule } = await import('./fake-wasm');
+  const fakeModule = createFakeWasmModule();
+  return { ensureWasm: async () => fakeModule };
+});
+
+describe('estimateChordsFromArrangement', () => {
+  let store: ReturnType<typeof useProjectStore>;
+
+  beforeEach(async () => {
+    setActivePinia(createPinia());
+    store = useProjectStore();
+    store.dispose();
+    clearHistory();
+    await store.init();
+    store.scaleHighlight = { enabled: true, rootPc: 0, modeMask: MAJOR_MODE_MASK };
+  });
+
+  it('writes an inferred progression to the chord track in one undoable edit', () => {
+    // A C-major triad held for a bar on the default clip.
+    for (const pitch of [60, 64, 67]) {
+      addNote({ pitch, startPpq: 0, durationPpq: 4 });
+    }
+    expect(store.chords).toEqual([]);
+
+    const summary = estimateChordsFromArrangement();
+    expect(summary.count).toBeGreaterThan(0);
+    expect(store.chords.length).toBe(summary.count);
+    expect(summary.confidence.length).toBe(summary.count);
+    expect(store.chords[0].rootPc).toBe(0);
+
+    undo();
+    expect(store.chords).toEqual([]);
+  });
+
+  it('excludes percussion tracks and reports them', () => {
+    for (const pitch of [60, 64, 67]) {
+      addNote({ pitch, startPpq: 0, durationPpq: 4 });
+    }
+    const drumTrack = addTrack({ name: 'Drums' });
+    const drumClip = addMidiClip({ trackId: drumTrack, lengthPpq: 4 });
+    setActiveClip(drumClip);
+    addNote({ pitch: 36, startPpq: 0, durationPpq: 1, channel: 9 });
+
+    const summary = estimateChordsFromArrangement();
+    expect(summary.excludedTrackNames).toContain('Drums');
+    expect(store.chords[0].rootPc).toBe(0);
+  });
+
+  it('is a no-op when there are no harmonic notes', () => {
+    const summary = estimateChordsFromArrangement();
+    expect(summary.count).toBe(0);
+    expect(store.chords).toEqual([]);
+  });
+});

@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { LoadedAudioAsset } from '@/persistence/assets';
-import { analyzeAudioClipChords, type DetectedAudioChord } from '@/project/audio-chords';
+import {
+  analyzeAudioClipChords,
+  type DetectedAudioChord,
+  smoothDetectedChordSymbols,
+} from '@/project/audio-chords';
+import type { EditorChordSymbol } from '@/project/chords';
 import type { EditorClip } from '@/project/types';
 
 /** A minimal audio clip; fields not relevant to detection use neutral values. */
@@ -148,5 +153,59 @@ describe('analyzeAudioClipChords', () => {
     expect(
       await analyzeAudioClipChords(audioClip(), 120, { ...deps, loadAudioAsset: empty }),
     ).toEqual([]);
+  });
+
+  it('absorbs a short single-window outlier between identical neighbours', async () => {
+    // C held over four beats, but one short window mis-reads as G in the middle.
+    const det = detector([
+      { root: 0, bass: 0, quality: 0, start: 0, end: 1 }, // C  -> [0, 2)
+      { root: 7, bass: 7, quality: 4, start: 1, end: 1.25 }, // G7 -> [2, 2.5), outlier
+      { root: 0, bass: 0, quality: 0, start: 1.25, end: 2 }, // C  -> [2.5, 4)
+    ]);
+    const symbols = await analyzeAudioClipChords(audioClip({ startPpq: 0 }), 120, {
+      loadAudioAsset: async () => asset(48000),
+      detectChords: det.fn,
+    });
+    // The outlier is absorbed and the flanking C regions merge into one span.
+    expect(symbols).toEqual([{ startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 }]);
+  });
+});
+
+describe('smoothDetectedChordSymbols', () => {
+  function chord(startPpq: number, endPpq: number, rootPc: number, quality = 0): EditorChordSymbol {
+    return { startPpq, endPpq, rootPc, quality };
+  }
+
+  it('merges adjacent identical contiguous regions', () => {
+    const smoothed = smoothDetectedChordSymbols([
+      chord(0, 2, 0),
+      chord(2, 4, 0),
+      chord(4, 6, 7, 4),
+    ]);
+    expect(smoothed).toEqual([chord(0, 4, 0), chord(4, 6, 7, 4)]);
+  });
+
+  it('absorbs a short outlier flanked by identical neighbours', () => {
+    const smoothed = smoothDetectedChordSymbols([
+      chord(0, 4, 0),
+      chord(4, 4.5, 5, 1), // short outlier
+      chord(4.5, 8, 0),
+    ]);
+    expect(smoothed).toEqual([chord(0, 8, 0)]);
+  });
+
+  it('keeps a long chord between identical neighbours (not an outlier)', () => {
+    const input = [chord(0, 4, 0), chord(4, 8, 7, 4), chord(8, 12, 0)];
+    expect(smoothDetectedChordSymbols(input)).toEqual(input);
+  });
+
+  it('keeps a short chord whose neighbours differ from each other', () => {
+    const input = [chord(0, 4, 0), chord(4, 4.5, 5, 1), chord(4.5, 8, 7, 4)];
+    expect(smoothDetectedChordSymbols(input)).toEqual(input);
+  });
+
+  it('sorts by onset before smoothing', () => {
+    const smoothed = smoothDetectedChordSymbols([chord(2, 4, 0), chord(0, 2, 0)]);
+    expect(smoothed).toEqual([chord(0, 4, 0)]);
   });
 });

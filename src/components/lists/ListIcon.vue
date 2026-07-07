@@ -5,7 +5,7 @@
  * icon inherits `currentColor`, so it tracks the host row button's state
  * colours (hover, disabled) for free and stays crisp at small sizes.
  */
-export type ListIconName = 'seek' | 'delete';
+export type ListIconName = 'seek' | 'delete' | 'reharm';
 
 defineProps<{ name: ListIconName }>();
 </script>
@@ -28,6 +28,17 @@ defineProps<{ name: ListIconName }>();
       stroke="currentColor"
       stroke-width="1.6"
       stroke-linecap="round"
+    />
+
+    <!-- Reharmonize: two arrows swapping direction. -->
+    <path
+      v-else-if="name === 'reharm'"
+      d="M3 5.5 H11 M9 3.5 11 5.5 9 7.5 M13 10.5 H5 M7 8.5 5 10.5 7 12.5"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
     />
   </svg>
 </template>

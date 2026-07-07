@@ -5,10 +5,12 @@ export {
   setAutomationLaneEnabled,
   setAutomationLanePoints,
 } from './command/automation';
+export type { EstimatedChordSummary } from './command/chords';
 export {
   clearProjectChords,
   detectChordsForClip,
   detectChordsFromAudioClip,
+  estimateChordsFromArrangement,
   setProjectChords,
 } from './command/chords';
 export type { AddAudioClipInput, AddBouncedClipInput, AddMidiClipInput } from './command/clips';
@@ -41,6 +43,23 @@ export {
   splitClip,
   trimClip,
 } from './command/clips';
+export type { GenerateArrangementParams } from './command/generate-arrangement';
+export { generateArrangementCommand } from './command/generate-arrangement';
+export type { BackingStyle, GenerateBackingParams } from './command/generate-backing';
+export { generateBackingCommand } from './command/generate-backing';
+export type { GenerateBassParams } from './command/generate-bass';
+export { generateBassLineCommand } from './command/generate-bass';
+export type { GenerateCounterMelodyParams } from './command/generate-counter-melody';
+export { generateCounterMelodyCommand } from './command/generate-counter-melody';
+export type { GenerateDrumsParams } from './command/generate-drums';
+export { generateDrumsCommand } from './command/generate-drums';
+export type {
+  HarmonizeFromMelodyParams,
+  ReharmonizeStrength,
+} from './command/generate-harmonize';
+export { harmonizeFromMelodyCommand } from './command/generate-harmonize';
+export type { GenerateMotifParams } from './command/generate-motif';
+export { generateMotifCommand } from './command/generate-motif';
 export type { GenerateProgressionParams } from './command/generate-progression';
 export { generateProgressionCommand } from './command/generate-progression';
 export type { CommandGestureOptions, HistoryReferencedMediaIds } from './command/history';
@@ -155,6 +174,7 @@ export {
   transposeSelectionDiatonic,
   updateNotes,
 } from './command/notes';
+export { reharmonizeChord } from './command/reharm';
 export type { NoteAnnotationUpdate } from './command/score-annotations';
 export {
   clearNoteAnnotation,

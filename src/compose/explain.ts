@@ -41,7 +41,20 @@ export interface TheoryLabels {
   /** Fallback safety text when the analysis carries no rationale. */
   safety: Readonly<Record<'safe' | 'warning' | 'dissonant', string>>;
   /** Beginner text per non-chord-tone label kind. */
-  labels: Readonly<Record<'suspension' | 'passing' | 'neighbor' | 'avoid' | 'tension', string>>;
+  labels: Readonly<
+    Record<
+      | 'suspension'
+      | 'passing'
+      | 'neighbor'
+      | 'avoid'
+      | 'tension'
+      | 'anticipation'
+      | 'escape'
+      | 'needsResolution'
+      | 'leadingTone',
+      string
+    >
+  >;
   /** Line labels (left column). */
   lines: Readonly<Record<'role' | 'chord' | 'scale' | 'note' | 'safety', string>>;
   /** Scale-degree line template, with a `{degree}` placeholder. */
@@ -88,23 +101,32 @@ function labelText(label: TheoryLabel, labels: TheoryLabels): string | undefined
       return labels.labels.avoid;
     case 'tension':
       return labels.labels.tension.replace('{degree}', String(label.degree));
+    case 'anticipation':
+      return labels.labels.anticipation;
+    case 'escape':
+      return labels.labels.escape;
+    case 'needsResolution':
+      return labels.labels.needsResolution;
+    case 'leadingTone':
+      return labels.labels.leadingTone;
     default:
       return undefined;
   }
 }
 
 /**
- * The NCT/resolution line, from the localized label table. The analyzer's raw
- * rationale (English) is used only as a last resort when no label maps, so a
- * localized card never shows an untranslated string for a known label.
+ * The NCT/resolution line, from the localized label table. Returns the first
+ * label that maps to localized text; chord tones and notes the analyzer left
+ * unlabelled (e.g. no chord covers them) carry no NCT line — the role and scale
+ * lines already convey those. The analyzer's raw `rationale` is deliberately
+ * not used, since it is English-only and reads "Unclassified note" for every
+ * unlabelled note.
  */
 function nctText(analysis: NoteAnalysis, labels: TheoryLabels): string | undefined {
   for (const label of analysis.analyzed?.labels ?? []) {
     const text = labelText(label, labels);
     if (text !== undefined) return text;
   }
-  const rationale = analysis.analyzed?.rationale;
-  if (rationale !== undefined && rationale !== '') return rationale;
   return undefined;
 }
 
