@@ -1,32 +1,53 @@
 /**
- * Composition guidance for the piano-roll editor: derives the note grid's
- * background safety tint and the per-note hover theory card from the project
- * store's active clip, chord track, key and meter.
+ * Composition guidance shared by the note-editing surfaces (piano roll and
+ * score): derives the note grid's background safety tint, the per-note hover
+ * theory card, and voice-leading resolution arrows from the project store's
+ * active clip, chord track, key and meter.
  *
  * Everything hangs off one `computed` guidance pass, so the (comparatively
  * expensive) theory analysis reruns only when its store inputs change — never
- * per animation frame.
+ * per animation frame. The surface is DOM-free, so any editor showing the
+ * active clip's notes can consume it (the score reuses the card resolver).
  */
 
 import { chordToRoman, functionOf } from '@libraz/libcantus';
 import { type ComputedRef, computed } from 'vue';
 import { buildChordTimeline } from '@/compose/chord-at-tick';
 import { buildTheoryCard, type TheoryCard } from '@/compose/explain';
-import { buildGuidance, type GuidanceResult, type GuidanceSegment } from '@/compose/guidance';
+import {
+  buildGuidance,
+  type GuidanceResult,
+  type GuidanceSegment,
+  resolutionTargetOf,
+} from '@/compose/guidance';
 import { effectiveKeyScale } from '@/compose/key';
 import type { TrackWithNotes } from '@/compose/tracks';
 import { useProjectStore } from '@/project/store';
 import { useI18n } from '@/ui/i18n';
 
-export interface PianoRollGuidance {
+/** A voice-leading resolution to draw as an arrow on the note grid. */
+export interface ResolutionArrow {
+  /** Editor id of the note that must resolve. */
+  noteId: number;
+  /** Clip-relative beat of the note's right edge (arrow origin). */
+  endBeat: number;
+  /** MIDI pitch of the resolving note (arrow origin row). */
+  fromPitch: number;
+  /** MIDI pitch the note resolves to (arrow target row). */
+  toPitch: number;
+}
+
+export interface CompositionGuidance {
   /** Background tint segments for the note grid; undefined without an active clip. */
   guidanceSegments: ComputedRef<GuidanceSegment[] | undefined>;
   /** Hover theory-card resolver for the note grid; undefined without an active clip. */
   noteCard: ComputedRef<((noteId: number) => TheoryCard | null) | undefined>;
+  /** Resolution arrows for the active clip's notes; undefined without an active clip. */
+  resolutionArrows: ComputedRef<ResolutionArrow[] | undefined>;
 }
 
 /** Builds the reactive composition-guidance surface for the active clip. */
-export function usePianoRollGuidance(): PianoRollGuidance {
+export function useCompositionGuidance(): CompositionGuidance {
   const store = useProjectStore();
   const { t } = useI18n();
 
@@ -87,5 +108,26 @@ export function usePianoRollGuidance(): PianoRollGuidance {
   const guidanceSegments = computed(() => guidance.value?.segments);
   const noteCard = computed(() => (guidance.value !== null ? theoryCardFor : undefined));
 
-  return { guidanceSegments, noteCard };
+  /** Resolution arrows for notes carrying a resolution obligation. */
+  const resolutionArrows = computed<ResolutionArrow[] | undefined>(() => {
+    const result = guidance.value;
+    const clip = store.activeClip;
+    if (result === null || clip === null) return undefined;
+    const arrows: ResolutionArrow[] = [];
+    for (const note of clip.notes) {
+      const analysis = result.byNoteId.get(note.id);
+      if (analysis === undefined) continue;
+      const toPitch = resolutionTargetOf(analysis);
+      if (toPitch === undefined) continue;
+      arrows.push({
+        noteId: note.id,
+        endBeat: note.startPpq + note.durationPpq,
+        fromPitch: note.pitch,
+        toPitch,
+      });
+    }
+    return arrows;
+  });
+
+  return { guidanceSegments, noteCard, resolutionArrows };
 }

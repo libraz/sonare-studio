@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
+import { useCompositionGuidance } from '@/composables/useCompositionGuidance';
 import { useEditorTool } from '@/composables/useEditorTool';
 import { formatPitch } from '@/lib/pitch';
 import {
@@ -60,7 +61,6 @@ import PianoRollToolbar from './PianoRollToolbar.vue';
 import { DEFAULT_NOTE_COLOR, KEYBOARD_COLUMN_WIDTH_PX, type NoteColorFn } from './theme';
 import { useNoteInteractions } from './use-note-interactions';
 import { usePianoRollCcLanes } from './use-piano-roll-cc-lanes';
-import { usePianoRollGuidance } from './use-piano-roll-guidance';
 import { usePianoRollLanes } from './use-piano-roll-lanes';
 import { usePianoRollScrollbar } from './use-piano-roll-scrollbar';
 import { usePianoRollViewport } from './use-piano-roll-viewport';
@@ -340,7 +340,7 @@ const { vThumbStyle, hThumbStyle, onVScrollDown, onHScrollDown, onScrollMove, on
 const trackColor = computed(() => store.activeTrack?.color ?? DEFAULT_NOTE_COLOR);
 
 /** Composition-guidance tint segments and hover theory-card resolver. */
-const { guidanceSegments, noteCard } = usePianoRollGuidance();
+const { guidanceSegments, noteCard, resolutionArrows } = useCompositionGuidance();
 
 /** True when a MIDI clip is active and can receive a transform. */
 const canTransform = computed(
@@ -961,6 +961,7 @@ onBeforeUnmount(() => {
           :ghost-notes="ghostNotes"
           :guidance-segments="guidanceSegments"
           :note-card="noteCard"
+          :resolution-arrows="resolutionArrows"
           @view-resize="viewport.onGridResize"
           @ghost-activate="onGhostActivate"
           @note-context="onNoteContext"

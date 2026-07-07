@@ -56,13 +56,15 @@ export interface TheoryLabels {
     >
   >;
   /** Line labels (left column). */
-  lines: Readonly<Record<'role' | 'chord' | 'scale' | 'note' | 'safety', string>>;
+  lines: Readonly<Record<'role' | 'chord' | 'scale' | 'note' | 'safety' | 'chordScale', string>>;
   /** Scale-degree line template, with a `{degree}` placeholder. */
   scaleDegree: string;
   /** Suffix appended to the scale line for a non-scale tone. */
   nonScaleSuffix: string;
   /** Scale line shown when the degree is unknown. */
   nonScaleTone: string;
+  /** Prefixes for the color-tone line's available tensions and avoid notes. */
+  chordScale: Readonly<Record<'tensions' | 'avoid', string>>;
 }
 
 /** Pitch-class names, sharp spelling (index = pitch class). */
@@ -87,6 +89,29 @@ const SAFETY_KEY: Readonly<Record<NoteSafety, 'safe' | 'warning' | 'dissonant'>>
   [NoteSafety.Warning]: 'warning',
   [NoteSafety.Dissonant]: 'dissonant',
 };
+
+/** Joins pitch classes into a sharp-spelled name list (e.g. "D, A"). */
+function pitchClassList(pitchClasses: ReadonlyArray<number>): string {
+  return pitchClasses.map((pc) => PITCH_CLASS_NAMES[((pc % 12) + 12) % 12]).join(', ');
+}
+
+/**
+ * The color-tone line for the sounding chord's best-fit scale: its available
+ * tensions and avoid notes. Returns undefined when neither is present (a plain
+ * triad in its own scale has nothing extra to say).
+ */
+function chordScaleText(analysis: NoteAnalysis, labels: TheoryLabels): string | undefined {
+  const chordScale = analysis.chordScale;
+  if (chordScale === undefined) return undefined;
+  const parts: string[] = [];
+  if (chordScale.tensions.length > 0) {
+    parts.push(`${labels.chordScale.tensions} ${pitchClassList(chordScale.tensions)}`);
+  }
+  if (chordScale.avoid.length > 0) {
+    parts.push(`${labels.chordScale.avoid} ${pitchClassList(chordScale.avoid)}`);
+  }
+  return parts.length > 0 ? parts.join(' · ') : undefined;
+}
 
 /** Beginner text for one non-chord-tone label, or undefined when unmapped. */
 function labelText(label: TheoryLabel, labels: TheoryLabels): string | undefined {
@@ -169,6 +194,8 @@ export function buildTheoryCard(
         : labels.nonScaleTone;
     lines.push({ label: labels.lines.scale, text });
   }
+  const colorTones = chordScaleText(analysis, labels);
+  if (colorTones !== undefined) lines.push({ label: labels.lines.chordScale, text: colorTones });
   const nct = nctText(analysis, labels);
   if (nct !== undefined) lines.push({ label: labels.lines.note, text: nct });
   if (analysis.safety !== undefined) {

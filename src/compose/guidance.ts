@@ -16,6 +16,7 @@ import {
   type AnalyzedNote,
   analyzeVoice,
   type ChordData,
+  chordScaleReport,
   evaluateSafety,
   isScaleTone,
   isStrongBeat,
@@ -71,6 +72,16 @@ export interface GuidanceSegment {
   safetyByPc: Uint8Array;
 }
 
+/** The best-fitting scale over the sounding chord, with its color/avoid tones. */
+export interface ChordScaleInfo {
+  /** Scale name (a key of libcantus NAMED_SCALES, e.g. 'ionian'). */
+  scaleName: string;
+  /** Available-tension pitch classes (usable color tones) over the chord. */
+  tensions: number[];
+  /** Avoid-note pitch classes over the chord. */
+  avoid: number[];
+}
+
 /** Per-note theory analysis (keyed by EditorNote.id in the result map). */
 export interface NoteAnalysis {
   safety?: SafetyResult;
@@ -79,6 +90,8 @@ export interface NoteAnalysis {
   /** 0-based scale degree of the note in the key (-1 for non-scale tones). */
   degree: number;
   isScaleTone: boolean;
+  /** Best-fit scale and its color/avoid tones for the sounding chord, if any. */
+  chordScale?: ChordScaleInfo;
 }
 
 export interface GuidanceResult {
@@ -90,6 +103,18 @@ export interface GuidanceResult {
   keySet: boolean;
   /** Whether any chord covered the clip (progression present or inferable). */
   chordPresent: boolean;
+}
+
+/**
+ * The pitch a note is expected to resolve to, from its analyzer labels
+ * (suspension, needs-resolution, leading-tone all carry a `resolveTo` target),
+ * or undefined when the note carries no resolution obligation.
+ */
+export function resolutionTargetOf(analysis: NoteAnalysis): number | undefined {
+  for (const label of analysis.analyzed?.labels ?? []) {
+    if ('resolveTo' in label && typeof label.resolveTo === 'number') return label.resolveTo;
+  }
+  return undefined;
 }
 
 /** Runs a libcantus call that may throw; undefined signals "no result". */
@@ -214,6 +239,22 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
   // onset group (cluster members never count each other as "previous").
   const sorted = [...input.notes].sort((a, b) => a.startPpq - b.startPpq || a.pitch - b.pitch);
   const byNoteId = new Map<number, NoteAnalysis>();
+  // Chord-scale reports are chord-only, so memoize by chord identity to avoid
+  // recomputing the scale fit for every note under the same chord.
+  const chordScaleCache = new Map<string, ChordScaleInfo | undefined>();
+  const chordScaleFor = (chord: ChordData): ChordScaleInfo | undefined => {
+    const identity = `${chord.rootPc}:${chord.quality}:${chord.bassPc ?? -1}`;
+    const cached = chordScaleCache.get(identity);
+    if (cached !== undefined || chordScaleCache.has(identity)) return cached;
+    const report = tryEval(() => chordScaleReport(chord, 1));
+    const best = report?.[0];
+    const info: ChordScaleInfo | undefined =
+      best !== undefined
+        ? { scaleName: best.name, tensions: best.tensions, avoid: best.avoid }
+        : undefined;
+    chordScaleCache.set(identity, info);
+    return info;
+  };
   let prevGroupPitch: number | undefined;
   let lastPitch: number | undefined;
   let groupOnset = Number.NaN;
@@ -231,6 +272,8 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
     if (chord !== null) {
       const role = tryEval(() => roleOf(note.pitch, chord));
       if (role !== undefined) analysis.role = role;
+      const chordScale = chordScaleFor(chord);
+      if (chordScale !== undefined) analysis.chordScale = chordScale;
     }
     const prevPitch = prevGroupPitch;
     const safety = tryEval(() =>

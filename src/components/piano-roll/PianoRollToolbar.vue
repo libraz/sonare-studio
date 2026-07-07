@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { useEditorTool } from '@/composables/useEditorTool';
@@ -7,6 +7,7 @@ import { setActiveTrack } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { EDITOR_TOOL_DEFS } from '@/ui/editor/tools';
 import { useI18n } from '@/ui/i18n';
+import GuidanceLegend from './GuidanceLegend.vue';
 import MidiFxPanel from './MidiFxPanel.vue';
 import { ZOOM_BUTTON_STEP } from './use-piano-roll-zoom';
 
@@ -69,6 +70,9 @@ const noteColorModeOptions = computed(() => [
   { value: 'velocity' as const, label: t.value.shell.pianoRoll.colorVelocity },
   { value: 'channel' as const, label: t.value.shell.pianoRoll.colorChannel },
 ]);
+
+/** Whether the composition-guidance legend popover is open. */
+const legendOpen = ref(false);
 
 /** Toggles the transform popover (closing it when no MIDI clip is active). */
 function toggleFxPanel(): void {
@@ -271,6 +275,17 @@ function onLegendClick(trackId: number): void {
     >
       {{ t.shell.pianoRoll.midiFx }}
     </button>
+    <button
+      type="button"
+      class="fx-toggle"
+      :class="{ 'fx-toggle-active': legendOpen }"
+      :aria-expanded="legendOpen"
+      v-tooltip="t.shell.pianoRoll.guideTitle"
+      @click="legendOpen = !legendOpen"
+    >
+      {{ t.shell.pianoRoll.guide }}
+    </button>
+    <GuidanceLegend v-if="legendOpen" @close="legendOpen = false" />
     <MidiFxPanel
       v-if="fxPanelOpen && canTransform"
       :clip-id="clipId"

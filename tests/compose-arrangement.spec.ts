@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  analyzeArrangementTracks,
-  arrangementTensionCurve,
-} from '@/compose/arrangement';
+import { analyzeArrangementTracks, arrangementTensionCurve } from '@/compose/arrangement';
 import type { TrackWithNotes } from '@/compose/tracks';
 import type { EditorNote, EditorTrack } from '@/project/types';
 import { MAJOR_MODE_MASK } from '@/project/types';

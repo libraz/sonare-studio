@@ -74,6 +74,8 @@ export const PIANO_ROLL_COLORS = {
   guidanceWarning: 'rgba(245, 158, 11, 0.09)',
   /** Guidance row tint for dissonant pitch classes (aligned with noteError). */
   guidanceDissonant: 'rgba(239, 68, 68, 0.12)',
+  /** Resolution-arrow stroke: a note's expected voice-leading target. */
+  resolutionArrow: 'rgba(129, 140, 248, 0.85)',
   /** Piano-roll minimap background. */
   minimapBackground: '#111318',
   /** Piano-roll minimap note marks. */

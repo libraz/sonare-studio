@@ -55,6 +55,8 @@ export interface ScoreInteractions {
   onSvgPointerCancel: (event: PointerEvent) => void;
   /** Resolves the editor note ids standing at a quarter-note PPQ position. */
   noteIdsAt: (ppq: number) => number[];
+  /** Resolves the editor note ids under an event's engraved-note target. */
+  noteIdsAtEvent: (event: Event) => number[];
 }
 
 /** Wires click-to-seek / select (and annotate routing) for the score body. */
@@ -183,5 +185,6 @@ export function useScoreInteractions(options: ScoreInteractionsOptions): ScoreIn
     onSvgPointerUp,
     onSvgPointerCancel,
     noteIdsAt,
+    noteIdsAtEvent: (event: Event) => noteIdsFromEventTarget(event.target),
   };
 }

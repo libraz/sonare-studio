@@ -125,4 +125,16 @@ describe('useScoreInteractions', () => {
 
     expect(onAnnotateStaffDrag).not.toHaveBeenCalled();
   });
+
+  it('resolves the note ids under an engraved note from an event target', () => {
+    const { path } = fixtureDom();
+    const score = interactions();
+    expect(score.noteIdsAtEvent(clickEvent(path))).toEqual([11]);
+  });
+
+  it('returns no note ids for an event off any engraved note', () => {
+    const { host } = fixtureDom();
+    const score = interactions();
+    expect(score.noteIdsAtEvent(clickEvent(host))).toEqual([]);
+  });
 });

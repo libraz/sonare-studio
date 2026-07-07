@@ -1,7 +1,7 @@
 import { NoteSafety } from '@libraz/libcantus';
 import { describe, expect, it } from 'vitest';
 import { buildTheoryCard } from '@/compose/explain';
-import { buildGuidance, type GuidanceInput } from '@/compose/guidance';
+import { buildGuidance, type GuidanceInput, resolutionTargetOf } from '@/compose/guidance';
 import type { EditorChordSymbol } from '@/project/chords';
 import type { EditorNote, EditorTrack, TimeSignatureSegment } from '@/project/types';
 import { MAJOR_MODE_MASK, type ScaleHighlightConfig } from '@/project/types';
@@ -137,6 +137,42 @@ describe('buildGuidance', () => {
   });
 });
 
+describe('resolutionTargetOf', () => {
+  it('returns the resolution pitch for a leading tone stepping up to the tonic', () => {
+    // B (71) resolving up to C (72) over a G7 -> C: the analyzer marks B as a
+    // leading tone whose resolveTo target is the following tonic.
+    const result = buildGuidance(
+      guidanceInput({
+        notes: [
+          note({ id: 70, pitch: 71, startPpq: 0, durationPpq: 1 }),
+          note({ id: 71, pitch: 72, startPpq: 1, durationPpq: 1 }),
+        ],
+        chordSymbols: [
+          chordSymbol({ startPpq: 0, endPpq: 1, rootPc: 7, quality: 4 }),
+          chordSymbol({ startPpq: 1, endPpq: 4, rootPc: 0, quality: 0 }),
+        ],
+      }),
+    );
+    const analysis = result.byNoteId.get(70);
+    expect(analysis).toBeDefined();
+    if (analysis === undefined) return;
+    expect(resolutionTargetOf(analysis)).toBe(72);
+  });
+
+  it('returns undefined for a plain chord tone with no resolution obligation', () => {
+    const result = buildGuidance(
+      guidanceInput({
+        notes: [note({ id: 72, pitch: 60, startPpq: 0, durationPpq: 4 })],
+        chordSymbols: [chordSymbol({ startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 })],
+      }),
+    );
+    const analysis = result.byNoteId.get(72);
+    expect(analysis).toBeDefined();
+    if (analysis === undefined) return;
+    expect(resolutionTargetOf(analysis)).toBeUndefined();
+  });
+});
+
 describe('buildTheoryCard', () => {
   it('builds a titled card with a scale-degree line', () => {
     const result = buildGuidance(
@@ -159,6 +195,25 @@ describe('buildTheoryCard', () => {
     const chordLine = card.lines.find((line) => line.label === 'Chord');
     expect(chordLine?.text).toBe('I — Tonic');
     expect(card.lines.length).toBeGreaterThan(0);
+  });
+
+  it('adds a color-tone line with the chord scale available tensions', () => {
+    const result = buildGuidance(
+      guidanceInput({
+        // A note over a Cmaj7 chord: ionian offers D and A as color tones.
+        notes: [note({ id: 61, pitch: 60, startPpq: 0, durationPpq: 1 })],
+        chordSymbols: [chordSymbol({ startPpq: 0, endPpq: 4, rootPc: 0, quality: 5 })],
+      }),
+    );
+    const analysis = result.byNoteId.get(61);
+    expect(analysis?.chordScale).toBeDefined();
+    if (analysis === undefined) return;
+    const card = buildTheoryCard(analysis, { pitch: 60, keySet: true }, MESSAGES.en.theory);
+    const colorLine = card.lines.find((line) => line.label === 'Color');
+    expect(colorLine).toBeDefined();
+    expect(colorLine?.text).toContain('tensions');
+    expect(colorLine?.text).toContain('D');
+    expect(colorLine?.text).toContain('A');
   });
 
   it('localizes the card from the Japanese message bundle', () => {

@@ -101,6 +101,12 @@
   min-height: 0;
 }
 
+.score-theory-card {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+}
+
 .score-body {
   position: relative;
   height: 100%;

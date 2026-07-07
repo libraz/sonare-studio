@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
+import TheoryCardView from '@/components/compose/TheoryCardView.vue';
 import { matchModeChoiceId, modeOrdinalForChoice } from '@/components/lists/key-modes';
 import ScoreAnnotationPalette from '@/components/score/ScoreAnnotationPalette.vue';
 import ScoreToolbar from '@/components/score/ScoreToolbar.vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
+import { useCompositionGuidance } from '@/composables/useCompositionGuidance';
+import type { TheoryCard } from '@/compose/explain';
 import { timeSigLengthPpq } from '@/notation/model';
 import { keyToKeyFifths } from '@/notation/pitch-spelling';
 import { VerovioClient } from '@/notation/verovio';
@@ -286,6 +289,42 @@ const interactions = useScoreInteractions({
   onAnnotateClick,
   onAnnotateStaffDrag,
 });
+
+// --- Theory hover card -------------------------------------------------------------
+
+const guidance = useCompositionGuidance();
+/** Theory card for the note under the pointer, or null when none is hovered. */
+const hoverCard = ref<TheoryCard | null>(null);
+/** Position of the hover card within the score body wrap, in px. */
+const hoverCardPos = ref({ x: 0, y: 0 });
+
+/**
+ * Combined score-body pointer move: forwards to the annotate staff-drag tracker
+ * and, outside annotate mode, resolves the theory card for the hovered note.
+ */
+function onScorePointerMove(event: PointerEvent): void {
+  interactions.onSvgPointerMove(event);
+  if (annotateEnabled.value) {
+    hoverCard.value = null;
+    return;
+  }
+  const resolve = guidance.noteCard.value;
+  const ids = resolve ? interactions.noteIdsAtEvent(event) : [];
+  const card = resolve && ids.length > 0 ? resolve(ids[0]) : null;
+  hoverCard.value = card;
+  if (card !== null) {
+    const rect = svgHost.value?.parentElement?.getBoundingClientRect();
+    hoverCardPos.value = {
+      x: event.clientX - (rect?.left ?? 0) + 12,
+      y: event.clientY - (rect?.top ?? 0) + 12,
+    };
+  }
+}
+
+/** Clears the theory hover card when the pointer leaves the score body. */
+function onScorePointerLeave(): void {
+  hoverCard.value = null;
+}
 
 // --- Annotation palette ------------------------------------------------------------
 
@@ -644,11 +683,18 @@ onBeforeUnmount(() => {
         :aria-label="t.shell.score.engravedScore"
         :style="{ '--score-svg-height': `${scoreSvgHeightPx * viewZoom}px` }"
         @pointerdown="interactions.onSvgPointerDown"
-        @pointermove="interactions.onSvgPointerMove"
+        @pointermove="onScorePointerMove"
         @pointerup="interactions.onSvgPointerUp"
         @pointercancel="interactions.onSvgPointerCancel"
+        @pointerleave="onScorePointerLeave"
         @click="interactions.onSvgClick"
         v-html="notation.svg.value"
+      />
+      <TheoryCardView
+        v-if="hoverCard"
+        class="score-theory-card"
+        :card="hoverCard"
+        :style="{ left: `${hoverCardPos.x}px`, top: `${hoverCardPos.y}px` }"
       />
       <div v-if="notation.loading.value" class="score-loading">
         <span class="score-state-text">{{ t.shell.score.engraving }}</span>

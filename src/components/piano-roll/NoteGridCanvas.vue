@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { NoteSafety } from '@libraz/libcantus';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import type { ResolutionArrow } from '@/composables/useCompositionGuidance';
 import type { TheoryCard } from '@/compose/explain';
 import type { GuidanceSegment } from '@/compose/guidance';
 import { formatPitch } from '@/lib/pitch';
@@ -69,6 +70,8 @@ const props = defineProps<{
   guidanceSegments?: GuidanceSegment[];
   /** Hover theory-card resolver per note id; omit to disable the card. */
   noteCard?: (noteId: number) => TheoryCard | null;
+  /** Voice-leading resolution arrows for the active clip; omit to draw none. */
+  resolutionArrows?: ResolutionArrow[];
 }>();
 
 const { t } = useI18n();
@@ -376,6 +379,53 @@ function drawNotes(): void {
   }
 }
 
+/** Horizontal length of a resolution arrow in px (from the note's right edge). */
+const RESOLUTION_ARROW_LENGTH_PX = 16;
+/** Size of the resolution arrowhead in px. */
+const RESOLUTION_ARROWHEAD_PX = 4;
+
+/**
+ * Draws thin arrows from each resolving note's right edge to the row of its
+ * expected resolution pitch, so voice-leading obligations (suspensions, leading
+ * tones, needs-resolution notes) read at a glance. Arrows whose origin is off
+ * screen or whose both endpoints sit outside the visible pitch band are culled.
+ */
+function drawResolutionArrows(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  const arrows = props.resolutionArrows;
+  if (arrows === undefined || arrows.length === 0) return;
+  const range = props.range;
+  const rowMid = range.rowHeight / 2;
+  ctx.strokeStyle = COLORS.resolutionArrow;
+  ctx.fillStyle = COLORS.resolutionArrow;
+  ctx.lineWidth = 1.5;
+  for (const arrow of arrows) {
+    const x0 = range.ppqToX(arrow.endBeat);
+    if (x0 < -RESOLUTION_ARROW_LENGTH_PX || x0 > w) continue;
+    const y0 = range.pitchToY(arrow.fromPitch) + rowMid;
+    const y1 = range.pitchToY(arrow.toPitch) + rowMid;
+    if ((y0 < 0 && y1 < 0) || (y0 > h && y1 > h)) continue;
+    const x1 = x0 + RESOLUTION_ARROW_LENGTH_PX;
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
+    // Arrowhead: a small filled triangle pointing along the arrow direction.
+    const angle = Math.atan2(y1 - y0, x1 - x0);
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(
+      x1 - RESOLUTION_ARROWHEAD_PX * Math.cos(angle - Math.PI / 6),
+      y1 - RESOLUTION_ARROWHEAD_PX * Math.sin(angle - Math.PI / 6),
+    );
+    ctx.lineTo(
+      x1 - RESOLUTION_ARROWHEAD_PX * Math.cos(angle + Math.PI / 6),
+      y1 - RESOLUTION_ARROWHEAD_PX * Math.sin(angle + Math.PI / 6),
+    );
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
 /** Draws the marquee rectangle and the playhead line. */
 function drawOverlay(): void {
   const canvas = overlayCanvas.value;
@@ -385,6 +435,8 @@ function drawOverlay(): void {
   const w = props.range.widthPx;
   const h = props.range.heightPx;
   ctx.clearRect(0, 0, w, h);
+
+  drawResolutionArrows(ctx, w, h);
 
   const m = props.interactions.marquee.value;
   if (m) {
@@ -552,6 +604,11 @@ watch(
     scheduleNotes();
     scheduleOverlay();
   },
+);
+
+watch(
+  () => props.resolutionArrows,
+  () => scheduleOverlay(),
 );
 
 watch(
