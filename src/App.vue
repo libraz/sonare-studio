@@ -2,6 +2,7 @@
 import { computed, nextTick, provide, ref, shallowRef, watch } from 'vue';
 import ArrangementView from '@/components/arrangement/ArrangementView.vue';
 import ClipInspector from '@/components/arrangement/ClipInspector.vue';
+import GenerateDialog from '@/components/compose/GenerateDialog.vue';
 import DeviceRack from '@/components/devices/DeviceRack.vue';
 import ExportDialog from '@/components/export/ExportDialog.vue';
 import { formatBarBeatTick } from '@/components/lists/bar-beat';
@@ -185,6 +186,7 @@ const { downloadBlobFile, lastDownload } = useFileDownloads();
 
 const { confirmAction, runAction } = useActionGuards({ appSettings, busy, errorMessage });
 const commandPaletteOpen = ref(false);
+const generateDialogOpen = ref(false);
 
 // --- Recording -----------------------------------------------------------------
 
@@ -603,6 +605,9 @@ const {
   openAbout,
   openDiagnostics,
   openExportDialog,
+  openGenerateDialog: () => {
+    generateDialogOpen.value = true;
+  },
   openNewDialog,
   openOpenDialog,
   openRecentProject,
@@ -1182,6 +1187,8 @@ useAppLifecycle({
       @create="onCreateProject"
       @cancel="newDialogOpen = false"
     />
+
+    <GenerateDialog :open="generateDialogOpen" @close="generateDialogOpen = false" />
 
     <ExportDialog
       :open="exportDialogOpen"

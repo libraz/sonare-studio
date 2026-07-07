@@ -67,6 +67,7 @@ export interface AppShortcutsMenuOptions {
   openAbout: () => void;
   openDiagnostics: () => void;
   openExportDialog: () => void;
+  openGenerateDialog: () => void;
   openNewDialog: () => void;
   openOpenDialog: () => void;
   openRecentProject: (name: string) => void;
@@ -465,7 +466,17 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
     ];
   }
 
-  /** The left command bar: File / Edit / View / Transport / Help. */
+  function generateItems(): MenuBarItem[] {
+    const g = t.value.shell.generate;
+    const noProject = !store.initialized;
+    return [
+      commandItem('generate.progression', g.progression, options.openGenerateDialog, {
+        disabled: noProject,
+      }),
+    ];
+  }
+
+  /** The left command bar: File / Edit / View / Transport / Generate / Help. */
   const menuBarModel: ComputedRef<MenuBarMenu[]> = computed(() => {
     const m = t.value.shell.menus;
     return [
@@ -473,6 +484,7 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
       { id: 'edit', label: m.edit, items: editItems() },
       { id: 'view', label: m.view, items: viewItems() },
       { id: 'transport', label: m.transport, items: transportItems() },
+      { id: 'generate', label: m.generate, items: generateItems() },
       { id: 'window', label: m.window, items: windowItems() },
       { id: 'options', label: m.options, items: optionsItems() },
       {
