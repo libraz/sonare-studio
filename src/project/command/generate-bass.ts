@@ -15,8 +15,16 @@ import { editorChordToChord } from '@/compose/chord-io';
 import { effectiveKeyScale } from '@/compose/key';
 import { noteEventsToNewEditorNotes } from '@/compose/notes-io';
 import { useProjectStore } from '../store';
-import { addGeneratedTrack, EDITS_PER_TRACK, materializeNote } from './generate-track';
+import {
+  addGeneratedTrack,
+  EDITS_PER_TRACK,
+  materializeNote,
+  type TrackPlan,
+} from './generate-track';
 import { execute } from './history';
+
+/** NativeSynth preset for generated bass tracks. */
+const BASS_PRESET = 'sub-bass';
 
 /** Options for {@link generateBassLineCommand}. */
 export interface GenerateBassParams {
@@ -29,14 +37,15 @@ export interface GenerateBassParams {
 }
 
 /**
- * Generates a bass line following the project chord track.
+ * Builds the bass-track plan for a new track without writing to the Project.
  *
- * @param params Generation options (see {@link GenerateBassParams}).
- * @returns The number of bass notes written (0 when there is no chord track).
+ * @returns The plan, or null when there is no chord track / no notes.
  */
-export function generateBassLineCommand(params: GenerateBassParams = {}): number {
-  const store = useProjectStore();
-  if (store.chords.length === 0) return 0;
+export function buildBassPlan(
+  store: ReturnType<typeof useProjectStore>,
+  params: GenerateBassParams = {},
+): TrackPlan | null {
+  if (store.chords.length === 0) return null;
 
   const key = effectiveKeyScale(store.scaleHighlight);
   const segments: BassSegment[] = store.chords.map((symbol) => ({
@@ -55,10 +64,29 @@ export function generateBassLineCommand(params: GenerateBassParams = {}): number
   });
 
   const notes = noteEventsToNewEditorNotes(events, { channel: 0 }).map(materializeNote);
-  if (notes.length === 0) return 0;
+  if (notes.length === 0) return null;
+  return { name: 'Bass', notes, lengthPpq, preset: BASS_PRESET };
+}
+
+/**
+ * Generates a bass line following the project chord track.
+ *
+ * @param params Generation options (see {@link GenerateBassParams}).
+ * @returns The number of bass notes written (0 when there is no chord track).
+ */
+export function generateBassLineCommand(params: GenerateBassParams = {}): number {
+  const store = useProjectStore();
+  const plan = buildBassPlan(store, params);
+  if (plan === null) return 0;
 
   execute(EDITS_PER_TRACK, () =>
-    addGeneratedTrack(store, { name: 'Bass', notes, startPpq: 0, lengthPpq }),
+    addGeneratedTrack(store, {
+      name: plan.name,
+      notes: plan.notes,
+      startPpq: 0,
+      lengthPpq: plan.lengthPpq,
+      preset: plan.preset,
+    }),
   );
-  return notes.length;
+  return plan.notes.length;
 }

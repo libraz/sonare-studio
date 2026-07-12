@@ -15,6 +15,7 @@ import {
   addGroupTrack,
   addTrack,
   addVcaGroup,
+  partForTrackName,
   removeTrack,
   renameTrack,
   reorderTracks,
@@ -29,6 +30,7 @@ import {
   setTrackSolo,
   setTrackVca,
   setTrackVolume,
+  type TrackPart,
 } from '@/project/commands';
 import { flattenClipComp } from '@/project/comp-flatten';
 import { bounceTrackRange, freezeTrack, unfreezeTrack } from '@/project/freeze';
@@ -111,6 +113,8 @@ const emit = defineEmits<{
   automationParam: [trackId: number, param: AutomationParam];
   /** Request to expand/collapse a track's take sub-rows. */
   toggleTakes: [trackId: number, expanded: boolean];
+  /** Request to regenerate this generated track (replacing it). */
+  regenerateTrack: [trackId: number, part: TrackPart];
 }>();
 
 const store = useProjectStore();
@@ -661,6 +665,17 @@ function onContextMenu(track: EditorTrack, event: MouseEvent): void {
         run: () => setTrackVca(track.id, addVcaGroup()),
       });
     }
+  }
+  const generatedPart = partForTrackName(track.name);
+  if (generatedPart !== null) {
+    items.push(
+      { id: 'sep-regenerate', separator: true },
+      {
+        id: 'regenerate',
+        label: t.value.shell.arrangement.trackHeader.regenerate,
+        run: () => emit('regenerateTrack', track.id, generatedPart),
+      },
+    );
   }
   items.push(
     { id: 'sep-3', separator: true },

@@ -16,8 +16,16 @@ import { effectiveKeyScale } from '@/compose/key';
 import { editorNotesToNoteEvents, noteEventsToNewEditorNotes } from '@/compose/notes-io';
 import { topVoiceOnly } from '@/compose/tracks';
 import { useProjectStore } from '../store';
-import { addGeneratedTrack, EDITS_PER_TRACK, materializeNote } from './generate-track';
+import {
+  addGeneratedTrack,
+  EDITS_PER_TRACK,
+  materializeNote,
+  type TrackPlan,
+} from './generate-track';
 import { execute } from './history';
+
+/** NativeSynth preset for generated counter-melody tracks. */
+const COUNTER_PRESET = 'pluck';
 
 /** Options for {@link generateCounterMelodyCommand}. */
 export interface GenerateCounterMelodyParams {
@@ -32,20 +40,22 @@ export interface GenerateCounterMelodyParams {
 }
 
 /**
- * Generates a counter melody against the active clip's melody.
+ * Builds the counter-melody plan for a new track without writing to the
+ * Project.
  *
- * @param params Generation options (see {@link GenerateCounterMelodyParams}).
- * @returns The number of counter notes written (0 when there is no melody).
+ * @returns The plan, or null when the active clip has no melody.
  * @throws Error when there is no active clip.
  */
-export function generateCounterMelodyCommand(params: GenerateCounterMelodyParams = {}): number {
-  const store = useProjectStore();
+export function buildCounterPlan(
+  store: ReturnType<typeof useProjectStore>,
+  params: GenerateCounterMelodyParams = {},
+): TrackPlan | null {
   const clip = store.activeClip;
   if (clip === null) throw new Error('No active clip for a counter melody');
-  if (clip.notes.length === 0) return 0;
+  if (clip.notes.length === 0) return null;
 
   const melody = topVoiceOnly(editorNotesToNoteEvents(clip.notes, clip.startPpq));
-  if (melody.length === 0) return 0;
+  if (melody.length === 0) return null;
   const melodyEndBeat = melody.reduce(
     (max, note) => Math.max(max, note.startBeat + note.durationBeat),
     0,
@@ -65,15 +75,30 @@ export function generateCounterMelodyCommand(params: GenerateCounterMelodyParams
   });
 
   const notes = noteEventsToNewEditorNotes(events, { channel: 0 }).map(materializeNote);
-  if (notes.length === 0) return 0;
+  if (notes.length === 0) return null;
+  return { name: 'Counter melody', notes, lengthPpq: melodyEndBeat, preset: COUNTER_PRESET };
+}
+
+/**
+ * Generates a counter melody against the active clip's melody.
+ *
+ * @param params Generation options (see {@link GenerateCounterMelodyParams}).
+ * @returns The number of counter notes written (0 when there is no melody).
+ * @throws Error when there is no active clip.
+ */
+export function generateCounterMelodyCommand(params: GenerateCounterMelodyParams = {}): number {
+  const store = useProjectStore();
+  const plan = buildCounterPlan(store, params);
+  if (plan === null) return 0;
 
   execute(EDITS_PER_TRACK, () =>
     addGeneratedTrack(store, {
-      name: 'Counter melody',
-      notes,
+      name: plan.name,
+      notes: plan.notes,
       startPpq: 0,
-      lengthPpq: melodyEndBeat,
+      lengthPpq: plan.lengthPpq,
+      preset: plan.preset,
     }),
   );
-  return notes.length;
+  return plan.notes.length;
 }

@@ -25,11 +25,20 @@ import { effectiveKeyScale } from '@/compose/key';
 import { noteEventsToNewEditorNotes } from '@/compose/notes-io';
 import type { RawNote } from '../midi-events';
 import { getProject, notesToProjectEvents, useProjectStore } from '../store';
-import { addGeneratedTrack, EDITS_PER_TRACK, materializeNote } from './generate-track';
+import type { EditorClip } from '../types';
+import {
+  addGeneratedTrack,
+  EDITS_PER_TRACK,
+  materializeNote,
+  type TrackPlan,
+} from './generate-track';
 import { execute } from './history';
 
 /** Beats per bar the motif generator assumes (4/4). */
 const BEATS_PER_BAR = 4;
+
+/** NativeSynth preset for a motif landing on a fresh track. */
+const MOTIF_PRESET = 'saw-lead';
 
 /** Options for {@link generateMotifCommand}. */
 export interface GenerateMotifParams {
@@ -59,26 +68,33 @@ export interface GenerateMotifParams {
 }
 
 /** Clip-relative offset in beats to append after the given notes. */
-function appendOffset(notes: ReadonlyArray<{ startPpq: number; durationPpq: number }>): number {
+export function appendOffset(
+  notes: ReadonlyArray<{ startPpq: number; durationPpq: number }>,
+): number {
   return notes.reduce((max, note) => Math.max(max, note.startPpq + note.durationPpq), 0);
 }
 
-/**
- * Generates a motif into the active MIDI clip, or a new track when none is
- * active.
- *
- * @param params Generation options (see {@link GenerateMotifParams}).
- * @returns The number of notes written (0 when the motif is empty).
- * @throws RangeError when `bars` is not a positive integer.
- */
-export function generateMotifCommand(params: GenerateMotifParams = {}): number {
-  const store = useProjectStore();
+/** Bar count the motif command generates for (validated). */
+function motifBars(params: GenerateMotifParams): number {
   const bars = params.bars ?? 2;
   if (!Number.isInteger(bars) || bars <= 0) {
     throw new RangeError(`Motif bars must be a positive integer, got ${bars}`);
   }
-  const key = effectiveKeyScale(store.scaleHighlight);
+  return bars;
+}
 
+/**
+ * Runs the libcantus motif pipeline (generate, optional transform, develop
+ * against the chord timeline) into a single cell, without writing anything.
+ *
+ * @throws RangeError when `bars` is not a positive integer.
+ */
+export function buildMotifCell(
+  store: ReturnType<typeof useProjectStore>,
+  params: GenerateMotifParams = {},
+): MotifCell {
+  const bars = motifBars(params);
+  const key = effectiveKeyScale(store.scaleHighlight);
   let cell: MotifCell = generateMotif({
     key,
     bars,
@@ -93,37 +109,84 @@ export function generateMotifCommand(params: GenerateMotifParams = {}): number {
   if (develop && store.chords.length > 0) {
     cell = developMotif(cell, buildChordTimeline(store.chords), key, bars);
   }
+  return cell;
+}
 
+/**
+ * Builds the motif plan for a fresh track (the no-active-clip / explicit
+ * new-track case) without writing to the Project.
+ *
+ * @returns The plan, or null when the motif is empty.
+ * @throws RangeError when `bars` is not a positive integer.
+ */
+export function buildMotifPlan(
+  store: ReturnType<typeof useProjectStore>,
+  params: GenerateMotifParams = {},
+): TrackPlan | null {
+  const cell = buildMotifCell(store, params);
+  const fresh = noteEventsToNewEditorNotes(cell.notes, { channel: 0 });
+  if (fresh.length === 0) return null;
+  return {
+    name: 'Motif',
+    notes: fresh.map(materializeNote),
+    lengthPpq: motifBars(params) * BEATS_PER_BAR,
+    preset: MOTIF_PRESET,
+  };
+}
+
+/**
+ * Builds the merged note list for writing a motif into an existing clip
+ * (append after its notes, or replace them). Returns null when appending an
+ * empty motif (a no-op).
+ */
+export function buildMotifClipMerge(
+  store: ReturnType<typeof useProjectStore>,
+  clip: EditorClip,
+  params: GenerateMotifParams,
+  mode: 'append' | 'replace',
+): RawNote[] | null {
+  const cell = buildMotifCell(store, params);
+  const existing = mode === 'replace' ? [] : clip.notes;
+  const offset = mode === 'replace' ? 0 : appendOffset(existing);
+  const fresh = noteEventsToNewEditorNotes(cell.notes, { channel: 0, beatOffset: -offset });
+  if (fresh.length === 0 && mode === 'append') return null;
+  return [...existing.map(({ id: _id, ...note }) => note), ...fresh.map(materializeNote)];
+}
+
+/**
+ * Generates a motif into the active MIDI clip, or a new track when none is
+ * active.
+ *
+ * @param params Generation options (see {@link GenerateMotifParams}).
+ * @returns The number of notes written (0 when the motif is empty).
+ * @throws RangeError when `bars` is not a positive integer.
+ */
+export function generateMotifCommand(params: GenerateMotifParams = {}): number {
+  const store = useProjectStore();
   const clip = store.activeClip;
   const project = getProject();
 
   if (clip !== null) {
     const mode = params.mode ?? 'append';
-    const existing = mode === 'replace' ? [] : clip.notes;
-    const offset = mode === 'replace' ? 0 : appendOffset(existing);
-    const fresh = noteEventsToNewEditorNotes(cell.notes, { channel: 0, beatOffset: -offset });
-    if (fresh.length === 0 && mode === 'append') return 0;
-    const merged: RawNote[] = [
-      ...existing.map(({ id: _id, ...note }) => note),
-      ...fresh.map(materializeNote),
-    ];
+    const merged = buildMotifClipMerge(store, clip, params, mode);
+    if (merged === null) return 0;
     execute(1, () => {
       project.setMidiEvents(clip.id, notesToProjectEvents(merged));
       store.refresh();
     });
-    return fresh.length;
+    return merged.length - (mode === 'replace' ? 0 : clip.notes.length);
   }
 
-  const fresh = noteEventsToNewEditorNotes(cell.notes, { channel: 0 });
-  if (fresh.length === 0) return 0;
-  const lengthPpq = bars * BEATS_PER_BAR;
+  const plan = buildMotifPlan(store, params);
+  if (plan === null) return 0;
   execute(EDITS_PER_TRACK, () =>
     addGeneratedTrack(store, {
-      name: 'Motif',
-      notes: fresh.map(materializeNote),
+      name: plan.name,
+      notes: plan.notes,
       startPpq: 0,
-      lengthPpq,
+      lengthPpq: plan.lengthPpq,
+      preset: plan.preset,
     }),
   );
-  return fresh.length;
+  return plan.notes.length;
 }

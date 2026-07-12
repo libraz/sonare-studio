@@ -43,11 +43,13 @@ export interface GenerateProgressionParams {
   /**
    * How to combine with any existing chord track:
    *  - 'replace' (default): overwrite the whole chord track;
-   *  - 'append': keep existing chords and place the new run after the last one.
+   *  - 'append': keep existing chords and place the new run after the last one;
+   *  - 'range': keep chords outside [startPpq, startPpq + bars * 4 PPQ) and
+   *    replace whatever overlaps it with the generated run.
    */
-  mode?: 'replace' | 'append';
+  mode?: 'replace' | 'append' | 'range';
   /** Absolute PPQ to place the first chord at (default: project start, or the
-   *  end of the existing track in 'append' mode). */
+   *  end of the existing track in 'append' mode; required in 'range' mode). */
   startPpq?: number;
 }
 
@@ -67,9 +69,22 @@ export function generateProgressionCommand(params: GenerateProgressionParams = {
   }
   const key = effectiveKeyScale(store.scaleHighlight);
   const mode = params.mode ?? 'replace';
-  const existing = mode === 'append' ? [...store.chords] : [];
-  const lastEnd = existing.reduce((max, chord) => Math.max(max, chord.endPpq), 0);
-  const startPpq = params.startPpq ?? (mode === 'append' ? lastEnd : 0);
+  let existing: EditorChordSymbol[];
+  let startPpq: number;
+  if (mode === 'append') {
+    existing = [...store.chords];
+    const lastEnd = existing.reduce((max, chord) => Math.max(max, chord.endPpq), 0);
+    startPpq = params.startPpq ?? lastEnd;
+  } else if (mode === 'range') {
+    startPpq = params.startPpq ?? 0;
+    const rangeEnd = startPpq + bars * BEATS_PER_BAR;
+    existing = store.chords.filter(
+      (chord) => chord.endPpq <= startPpq || chord.startPpq >= rangeEnd,
+    );
+  } else {
+    existing = [];
+    startPpq = params.startPpq ?? 0;
+  }
 
   const spans = generateProgressionSpans({
     key,

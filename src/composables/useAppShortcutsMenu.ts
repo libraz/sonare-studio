@@ -67,7 +67,8 @@ export interface AppShortcutsMenuOptions {
   openAbout: () => void;
   openDiagnostics: () => void;
   openExportDialog: () => void;
-  openGenerateDialog: () => void;
+  openChordGenerateDialog: () => void;
+  openTrackGenerateDialog: () => void;
   openNewDialog: () => void;
   openOpenDialog: () => void;
   openRecentProject: (name: string) => void;
@@ -470,7 +471,10 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
     const g = t.value.shell.generate;
     const noProject = !store.initialized;
     return [
-      commandItem('generate.progression', g.open, options.openGenerateDialog, {
+      commandItem('generate.progression', g.progression, options.openChordGenerateDialog, {
+        disabled: noProject,
+      }),
+      commandItem('generate.tracks', g.tracks, options.openTrackGenerateDialog, {
         disabled: noProject,
       }),
     ];

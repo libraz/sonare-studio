@@ -2,8 +2,10 @@ import { mount, type VueWrapper } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
-import GenerateDialog from '@/components/compose/GenerateDialog.vue';
-import { clearHistory } from '@/project/command/history';
+import ChordGenerateDialog from '@/components/compose/ChordGenerateDialog.vue';
+import TrackGenerateDialog from '@/components/compose/TrackGenerateDialog.vue';
+import { setProjectChords } from '@/project/command/chords';
+import { clearHistory, undo } from '@/project/command/history';
 import { useProjectStore } from '@/project/store';
 import { MAJOR_MODE_MASK } from '@/project/types';
 
@@ -13,29 +15,32 @@ vi.mock('@/lib/wasm', async () => {
   return { ensureWasm: async () => fakeModule };
 });
 
+const FOUR_CHORDS = [
+  { startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 },
+  { startPpq: 4, endPpq: 8, rootPc: 7, quality: 0 },
+  { startPpq: 8, endPpq: 12, rootPc: 9, quality: 0 },
+  { startPpq: 12, endPpq: 16, rootPc: 5, quality: 0 },
+];
+
 // AppModal teleports its content to <body>; query through the document.
 let wrapper: VueWrapper | null = null;
 let store: ReturnType<typeof useProjectStore>;
-
-async function open(): Promise<VueWrapper> {
-  wrapper = mount(GenerateDialog, { props: { open: true }, attachTo: document.body });
-  await nextTick();
-  return wrapper;
-}
 
 function confirm(): HTMLButtonElement | null {
   return document.body.querySelector<HTMLButtonElement>('.generate-confirm');
 }
 
-function modeSegments(): HTMLButtonElement[] {
-  return [...document.body.querySelectorAll<HTMLButtonElement>('.mode-select .mode-segment')];
+function partCheckboxes(): HTMLInputElement[] {
+  return [
+    ...document.body.querySelectorAll<HTMLInputElement>('.part-check input[type="checkbox"]'),
+  ];
 }
 
-async function selectMode(label: string): Promise<void> {
-  const segment = modeSegments().find((el) => el.textContent?.trim() === label);
-  expect(segment).toBeDefined();
-  segment?.click();
-  await nextTick();
+/** Checks a part checkbox by its row index (motif, drums, bass, counter, backing). */
+function checkPart(index: number): void {
+  const box = partCheckboxes()[index];
+  box.checked = true;
+  box.dispatchEvent(new Event('change'));
 }
 
 beforeEach(async () => {
@@ -50,65 +55,126 @@ beforeEach(async () => {
 afterEach(() => {
   wrapper?.unmount();
   wrapper = null;
-  document.body.innerHTML = '';
+  document.body.replaceChildren();
 });
 
-describe('GenerateDialog', () => {
-  it('generates a progression into the chord track and closes', async () => {
+describe('ChordGenerateDialog', () => {
+  async function open(): Promise<VueWrapper> {
+    wrapper = mount(ChordGenerateDialog, { props: { open: true }, attachTo: document.body });
+    await nextTick();
+    return wrapper;
+  }
+
+  it('writes a progression and shows the success state', async () => {
     await open();
     expect(store.chords).toHaveLength(0);
     confirm()?.click();
     await nextTick();
     expect(store.chords.length).toBeGreaterThan(0);
-    expect(wrapper?.emitted('close')).toBeTruthy();
+    // The dialog stays open on a done screen, not dismissed.
+    expect(wrapper?.emitted('close')).toBeFalsy();
+    expect(document.body.querySelector('.done-title')).not.toBeNull();
   });
 
-  it('offers style segments as an equal-width segmented control', async () => {
+  it('offers to continue into track generation after writing', async () => {
     await open();
-    const segments = document.body.querySelectorAll('.style-select .segment[role="radio"]');
-    // Four style options are always present (append mode row appears only with
-    // an existing chord track).
-    expect(segments.length).toBe(4);
-    expect(document.body.querySelector('.style-select .segment.active')).not.toBeNull();
+    confirm()?.click();
+    await nextTick();
+    const continueBtn = document.body.querySelector<HTMLButtonElement>('.continue-tracks');
+    expect(continueBtn).not.toBeNull();
+    continueBtn?.click();
+    await nextTick();
+    expect(wrapper?.emitted('generateTracks')).toBeTruthy();
   });
 
-  it('offers every generator and defaults to the progression form', async () => {
+  it('renders progression and harmonize as an equal-width segmented control', async () => {
     await open();
-    expect(modeSegments().length).toBe(8);
-    expect(document.body.querySelector('.style-select')).not.toBeNull();
+    const segments = document.body.querySelectorAll('.mode-select .segment[role="radio"]');
+    expect(segments.length).toBe(2);
+    expect(document.body.querySelector('.mode-select .segment.active')).not.toBeNull();
+  });
+});
+
+describe('TrackGenerateDialog', () => {
+  async function open(openWith: unknown = null): Promise<VueWrapper> {
+    wrapper = mount(TrackGenerateDialog, {
+      props: { open: true, openWith },
+      attachTo: document.body,
+    });
+    await nextTick();
+    return wrapper;
+  }
+
+  it('shows the gate when there is no chord progression', async () => {
+    await open();
+    expect(document.body.querySelector('.gate')).not.toBeNull();
+    expect(document.body.querySelector('.part-list')).toBeNull();
+    const create = document.body.querySelector<HTMLButtonElement>('.gate-create');
+    expect(create).not.toBeNull();
+    create?.click();
+    await nextTick();
+    expect(wrapper?.emitted('openChords')).toBeTruthy();
   });
 
-  it('shows the arrangement part toggles after switching the generator', async () => {
+  it('clears the gate once a chord progression exists', async () => {
+    setProjectChords(FOUR_CHORDS);
     await open();
-    await selectMode('Arrangement');
-    const toggles = document.body.querySelectorAll('.check-group .check-label');
-    expect(toggles.length).toBe(4);
+    expect(document.body.querySelector('.gate')).toBeNull();
+    expect(document.body.querySelector('.part-list')).not.toBeNull();
+    // Five part rows are always present.
+    expect(document.body.querySelectorAll('.part-row').length).toBe(5);
+  });
+
+  it('defaults drums length to the chord-progression bar count', async () => {
+    setProjectChords(FOUR_CHORDS); // 16 beats = 4 bars
+    await open();
+    const drumsRow = [...document.body.querySelectorAll<HTMLElement>('.part-row')][1];
+    drumsRow?.querySelector<HTMLButtonElement>('.part-expand')?.click();
+    await nextTick();
+    const barsInput = drumsRow?.querySelector<HTMLInputElement>('input[type="number"]');
+    expect(barsInput?.value).toBe('4');
+    expect(drumsRow?.querySelector('.bars-caption')?.textContent).toContain('4');
+  });
+
+  it('generates the checked parts in one undoable batch', async () => {
+    setProjectChords(FOUR_CHORDS);
+    await open();
+    const trackCount = store.tracks.length;
+    // Check drums (index 1) and bass (index 2).
+    checkPart(1);
+    checkPart(2);
+    await nextTick();
     expect(confirm()?.disabled).toBe(false);
+    confirm()?.click();
+    await nextTick();
+    expect(store.tracks.length).toBe(trackCount + 2);
+    expect(wrapper?.emitted('close')).toBeTruthy();
+    // One undo removes both generated tracks.
+    expect(undo()).toBe(true);
+    expect(store.tracks.length).toBe(trackCount);
   });
 
-  it('blocks the backing generator until a chord track exists', async () => {
+  it('disables generate with nothing selected', async () => {
+    setProjectChords(FOUR_CHORDS);
     await open();
-    await selectMode('Backing');
-    const hint = document.body.querySelector('.mode-hint');
-    expect(hint?.textContent).toContain('Generate a chord progression first.');
     expect(confirm()?.disabled).toBe(true);
   });
 
-  it('shows the drum options after switching the generator', async () => {
-    await open();
-    await selectMode('Drums');
-    expect(document.body.querySelector('.groove-select')).not.toBeNull();
-    expect(document.body.querySelector('.section-select')).not.toBeNull();
-    expect(document.body.querySelector('.density-input')).not.toBeNull();
-    expect(document.body.querySelector('.style-select')).toBeNull();
-  });
-
-  it('blocks the bass generator until a chord track exists', async () => {
-    await open();
-    expect(store.chords).toHaveLength(0);
-    await selectMode('Bass');
-    const hint = document.body.querySelector('.mode-hint');
-    expect(hint?.textContent).toContain('Generate a chord progression first.');
-    expect(confirm()?.disabled).toBe(true);
+  it('pre-selects the part when opened for a track replacement', async () => {
+    setProjectChords(FOUR_CHORDS);
+    const { generateTracksBatchCommand } = await import('@/project/command/generate-batch');
+    generateTracksBatchCommand([{ part: 'drums', params: { bars: 4 }, target: { kind: 'new' } }]);
+    const drums = store.tracks.find((track) => track.name === 'Drums');
+    await open({ part: 'drums', target: { kind: 'replaceTrack', trackId: drums?.id } });
+    const boxes = partCheckboxes();
+    // Drums (index 1) is pre-checked; others are not.
+    expect(boxes[1].checked).toBe(true);
+    expect(boxes[0].checked).toBe(false);
+    const trackCount = store.tracks.length;
+    confirm()?.click();
+    await nextTick();
+    // Replacement nets zero tracks and keeps a single Drums track.
+    expect(store.tracks.length).toBe(trackCount);
+    expect(store.tracks.filter((track) => track.name === 'Drums')).toHaveLength(1);
   });
 });

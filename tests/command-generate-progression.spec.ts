@@ -75,4 +75,43 @@ describe('generateProgressionCommand', () => {
   it('rejects a non-positive bar count', () => {
     expect(() => generateProgressionCommand({ bars: 0 })).toThrow(RangeError);
   });
+
+  describe('range mode', () => {
+    it('keeps chords entirely outside the range and replaces the rest', () => {
+      setProjectChords([
+        { startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 }, // before the range: kept
+        { startPpq: 4, endPpq: 8, rootPc: 2, quality: 0 }, // inside the range: replaced
+        { startPpq: 8, endPpq: 12, rootPc: 4, quality: 0 }, // after the range: kept
+      ]);
+
+      generateProgressionCommand({ bars: 1, seed: 0, mode: 'range', startPpq: 4 });
+
+      expect(store.chords).toHaveLength(3);
+      expect(store.chords[0]).toMatchObject({ startPpq: 0, endPpq: 4, rootPc: 0 });
+      expect(store.chords[1].startPpq).toBe(4);
+      expect(store.chords[1].endPpq).toBe(8);
+      expect(store.chords[2]).toMatchObject({ startPpq: 8, endPpq: 12, rootPc: 4 });
+    });
+
+    it('drops a chord that only partially overlaps the range', () => {
+      setProjectChords([
+        { startPpq: 0, endPpq: 6, rootPc: 0, quality: 0 }, // overlaps [4, 8): dropped
+        { startPpq: 8, endPpq: 12, rootPc: 4, quality: 0 }, // outside: kept
+      ]);
+
+      generateProgressionCommand({ bars: 1, seed: 0, mode: 'range', startPpq: 4 });
+
+      expect(store.chords).toHaveLength(2);
+      expect(store.chords[0].startPpq).toBe(4);
+      expect(store.chords[1]).toMatchObject({ startPpq: 8, endPpq: 12, rootPc: 4 });
+    });
+
+    it('is a single undoable edit', () => {
+      setProjectChords([{ startPpq: 4, endPpq: 8, rootPc: 2, quality: 0 }]);
+      generateProgressionCommand({ bars: 1, seed: 0, mode: 'range', startPpq: 4 });
+      expect(store.chords).toHaveLength(1);
+      expect(undo()).toBe(true);
+      expect(store.chords).toEqual([{ startPpq: 4, endPpq: 8, rootPc: 2, quality: 0 }]);
+    });
+  });
 });

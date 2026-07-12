@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import ChordLane from '@/components/arrangement/ChordLane.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { useCompositionGuidance } from '@/composables/useCompositionGuidance';
@@ -103,6 +104,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   /** Request to move the transport playhead to an absolute PPQ position. */
   seek: [ppq: number];
+  /** Request to reveal the chord list editor (chord-lane double-click). */
+  openChords: [];
 }>();
 
 const store = useProjectStore();
@@ -960,6 +963,20 @@ onBeforeUnmount(() => {
         :time-signature-origin-ppq="timeSignatureOriginPpq"
         @seek="onRulerSeek"
       />
+      <div class="cell-chord-corner">
+        <span>{{ t.shell.pianoRoll.chordLane }}</span>
+      </div>
+      <ChordLane
+        class="cell-chords"
+        :range="range"
+        :revision="revision"
+        :chords="store.chords"
+        :time-signatures="localTimeSignatures"
+        :origin-ppq="timeSignatureOriginPpq"
+        @seek="(ppq) => emit('seek', Math.max(0, ppq))"
+        @open-chords="emit('openChords')"
+      />
+      <div class="cell-chord-spacer" />
       <KeyboardColumn class="cell-keyboard" :range="range" :revision="revision" :painter="painter" />
       <div ref="gridCell" class="cell-grid">
         <NoteGridCanvas
@@ -1170,14 +1187,14 @@ onBeforeUnmount(() => {
   display: grid;
   /* Columns are set inline from KEYBOARD_COLUMN_WIDTH_PX so the keyboard width
      and the playhead follow anchor stay derived from one source. */
-  grid-template-rows: 18px 24px 1fr 132px 12px 22px;
+  grid-template-rows: 18px 24px 18px 1fr 132px 12px 22px;
 }
 
 /* Collapse the parameter-lane row when the user hides the block; the grid and
  * scrollbars keep the full remaining height. The lane cells are removed from
  * layout so their canvases stop sizing/painting while hidden. */
 .piano-roll-layout.lane-hidden {
-  grid-template-rows: 18px 24px 1fr 0 12px 22px;
+  grid-template-rows: 18px 24px 18px 1fr 0 12px 22px;
 }
 
 .piano-roll-layout.lane-hidden .cell-velocity-label,
@@ -1200,23 +1217,46 @@ onBeforeUnmount(() => {
   grid-area: 2 / 2;
 }
 
-.cell-keyboard {
+.cell-chord-corner {
   grid-area: 3 / 1;
+  display: flex;
+  align-items: center;
+  padding: 0 var(--sp-2);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-strong);
+  font: var(--fw-semibold) 8px var(--font-sans);
+  letter-spacing: 0.06em;
+  color: var(--text-4);
+  overflow: hidden;
+}
+
+.cell-chords {
+  grid-area: 3 / 2;
+  min-width: 0;
+}
+
+.cell-chord-spacer {
+  grid-area: 3 / 3;
+  background: var(--surface-2);
+}
+
+.cell-keyboard {
+  grid-area: 4 / 1;
 }
 
 .cell-grid {
-  grid-area: 3 / 2;
+  grid-area: 4 / 2;
   position: relative;
   min-width: 0;
   min-height: 0;
 }
 
 .cell-vscroll {
-  grid-area: 3 / 3;
+  grid-area: 4 / 3;
 }
 
 .cell-velocity-label {
-  grid-area: 4 / 1;
+  grid-area: 5 / 1;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -1294,31 +1334,31 @@ onBeforeUnmount(() => {
 }
 
 .cell-velocity {
-  grid-area: 4 / 2;
+  grid-area: 5 / 2;
   border-top: 1px solid var(--border-strong);
 }
 
 .cell-corner {
-  grid-area: 4 / 3;
-  background: var(--surface-2);
-}
-
-.cell-hscroll-spacer {
-  grid-area: 5 / 1;
-  background: var(--surface-2);
-}
-
-.cell-hscroll {
-  grid-area: 5 / 2;
-}
-
-.cell-corner-br {
   grid-area: 5 / 3;
   background: var(--surface-2);
 }
 
+.cell-hscroll-spacer {
+  grid-area: 6 / 1;
+  background: var(--surface-2);
+}
+
+.cell-hscroll {
+  grid-area: 6 / 2;
+}
+
+.cell-corner-br {
+  grid-area: 6 / 3;
+  background: var(--surface-2);
+}
+
 .cell-status {
-  grid-area: 6 / 1 / 7 / 4;
+  grid-area: 7 / 1 / 8 / 4;
   display: flex;
   align-items: center;
   padding: 0 0.5rem;

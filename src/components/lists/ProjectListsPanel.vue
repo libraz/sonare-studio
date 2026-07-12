@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import { useI18n } from '@/ui/i18n';
 import ChordListEditor from './ChordListEditor.vue';
 import KeyListEditor from './KeyListEditor.vue';
@@ -14,17 +14,24 @@ import TimeSignatureEditor from './TimeSignatureEditor.vue';
  * chord and marker lists.
  */
 
+export type ListTab = 'tempo' | 'meter' | 'key' | 'chords' | 'markers';
+
 const props = defineProps<{
   /** Playhead position getter in PPQ, forwarded to the marker list. */
   positionPpq?: () => number;
+  /**
+   * One-shot deep-link: switches to this tab whenever the value changes
+   * (e.g. the chord lane's "open the chord list" action). The user's own tab
+   * clicks afterward are unaffected — this only seeds/redirects, it does not
+   * hold the tab open.
+   */
+  initialTab?: ListTab;
 }>();
 
 const emit = defineEmits<{
   /** Request to move the transport playhead to an absolute PPQ position. */
   seek: [ppq: number];
 }>();
-
-type ListTab = 'tempo' | 'meter' | 'key' | 'chords' | 'markers';
 
 const { t } = useI18n();
 
@@ -36,7 +43,14 @@ const TABS: ReadonlyArray<{ id: ListTab }> = [
   { id: 'markers' },
 ];
 
-const activeTab = ref<ListTab>('tempo');
+const activeTab = ref<ListTab>(props.initialTab ?? 'tempo');
+
+watch(
+  () => props.initialTab,
+  (tab) => {
+    if (tab !== undefined) activeTab.value = tab;
+  },
+);
 </script>
 
 <template>

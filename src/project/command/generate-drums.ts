@@ -14,7 +14,12 @@
 import { type DrumsOptions, generateDrums } from '@libraz/libcantus';
 import { noteEventsToNewEditorNotes } from '@/compose/notes-io';
 import { useProjectStore } from '../store';
-import { addGeneratedTrack, EDITS_PER_TRACK, materializeNote } from './generate-track';
+import {
+  addGeneratedTrack,
+  EDITS_PER_TRACK,
+  materializeNote,
+  type TrackPlan,
+} from './generate-track';
 import { execute } from './history';
 
 /** GM percussion channel (MIDI channel 10, zero-based). */
@@ -22,6 +27,9 @@ const GM_PERCUSSION_CHANNEL = 9;
 
 /** Beats per bar the drum generator assumes (4/4). */
 const BEATS_PER_BAR = 4;
+
+/** NativeSynth preset for generated drum tracks. */
+const DRUMS_PRESET = 'drum-kit';
 
 /** Options for {@link generateDrumsCommand}. */
 export interface GenerateDrumsParams {
@@ -48,14 +56,16 @@ export interface GenerateDrumsParams {
 }
 
 /**
- * Generates a drum track for the project tempo.
+ * Builds the drum-track plan for a new track without writing to the Project, so
+ * both the single-shot command and the batch command can consume it.
  *
- * @param params Generation options (see {@link GenerateDrumsParams}).
- * @returns The number of drum hits written (0 when none were generated).
+ * @returns The plan, or null when no hits were generated.
  * @throws RangeError when `bars` is not a positive integer.
  */
-export function generateDrumsCommand(params: GenerateDrumsParams = {}): number {
-  const store = useProjectStore();
+export function buildDrumsPlan(
+  store: ReturnType<typeof useProjectStore>,
+  params: GenerateDrumsParams = {},
+): TrackPlan | null {
   const bars = params.bars ?? 4;
   if (!Number.isInteger(bars) || bars <= 0) {
     throw new RangeError(`Drum bars must be a positive integer, got ${bars}`);
@@ -79,15 +89,30 @@ export function generateDrumsCommand(params: GenerateDrumsParams = {}): number {
   const notes = noteEventsToNewEditorNotes(hits, { channel: GM_PERCUSSION_CHANNEL }).map(
     materializeNote,
   );
-  if (notes.length === 0) return 0;
+  if (notes.length === 0) return null;
+  return { name: 'Drums', notes, lengthPpq: bars * BEATS_PER_BAR, preset: DRUMS_PRESET };
+}
+
+/**
+ * Generates a drum track for the project tempo.
+ *
+ * @param params Generation options (see {@link GenerateDrumsParams}).
+ * @returns The number of drum hits written (0 when none were generated).
+ * @throws RangeError when `bars` is not a positive integer.
+ */
+export function generateDrumsCommand(params: GenerateDrumsParams = {}): number {
+  const store = useProjectStore();
+  const plan = buildDrumsPlan(store, params);
+  if (plan === null) return 0;
 
   execute(EDITS_PER_TRACK, () =>
     addGeneratedTrack(store, {
-      name: 'Drums',
-      notes,
+      name: plan.name,
+      notes: plan.notes,
       startPpq: 0,
-      lengthPpq: bars * BEATS_PER_BAR,
+      lengthPpq: plan.lengthPpq,
+      preset: plan.preset,
     }),
   );
-  return notes.length;
+  return plan.notes.length;
 }

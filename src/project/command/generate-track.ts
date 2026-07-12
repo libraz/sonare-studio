@@ -38,6 +38,23 @@ export function materializeNote(note: NewEditorNote): RawNote {
 /** wasm-Project history edits one {@link addGeneratedTrack} call performs. */
 export const EDITS_PER_TRACK = 4;
 
+/**
+ * A generated part's notes destined for one new track. Part generators build
+ * this without touching the Project, so the single-shot command and the batch
+ * command can both consume it (each wrapping the write in exactly one
+ * `execute`).
+ */
+export interface TrackPlan {
+  /** Display name for the new track and its clip. */
+  name: string;
+  /** Notes to place, clip-relative (startPpq measured from clip start). */
+  notes: RawNote[];
+  /** Clip length in PPQ. */
+  lengthPpq: number;
+  /** NativeSynth preset name for the new track; omitted = the default preset. */
+  preset?: string;
+}
+
 /** Inputs for {@link addGeneratedTrack}. */
 export interface GeneratedTrack {
   /** Display name for the new track and its clip. */
@@ -48,6 +65,8 @@ export interface GeneratedTrack {
   startPpq: number;
   /** Clip length in PPQ. */
   lengthPpq: number;
+  /** NativeSynth preset name for the new track; omitted = the default preset. */
+  preset?: string;
 }
 
 /**
@@ -75,6 +94,9 @@ export function addGeneratedTrack(store: ProjectStore, track: GeneratedTrack): n
       volume: 1,
       pan: 0,
       order: store.tracks.length,
+      ...(track.preset !== undefined
+        ? { instrument: { kind: 'synth-preset' as const, preset: track.preset } }
+        : {}),
     },
   ];
   const clipId = project.addClip({

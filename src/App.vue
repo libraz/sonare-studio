@@ -2,11 +2,14 @@
 import { computed, nextTick, provide, ref, shallowRef, watch } from 'vue';
 import ArrangementView from '@/components/arrangement/ArrangementView.vue';
 import ClipInspector from '@/components/arrangement/ClipInspector.vue';
-import GenerateDialog from '@/components/compose/GenerateDialog.vue';
+import ChordGenerateDialog from '@/components/compose/ChordGenerateDialog.vue';
+import TrackGenerateDialog, {
+  type TrackGenerateOpenWith,
+} from '@/components/compose/TrackGenerateDialog.vue';
 import DeviceRack from '@/components/devices/DeviceRack.vue';
 import ExportDialog from '@/components/export/ExportDialog.vue';
 import { formatBarBeatTick } from '@/components/lists/bar-beat';
-import ProjectListsPanel from '@/components/lists/ProjectListsPanel.vue';
+import ProjectListsPanel, { type ListTab } from '@/components/lists/ProjectListsPanel.vue';
 import MasteringPanel from '@/components/mastering/MasteringPanel.vue';
 import MediaBrowser from '@/components/media/MediaBrowser.vue';
 import MixerPanel from '@/components/mixer/MixerPanel.vue';
@@ -70,6 +73,7 @@ import {
   quantizeSelection,
   redo,
   setActiveTrack,
+  type TrackPart,
   undo,
 } from '@/project/commands';
 import { serializeProject } from '@/project/serialization';
@@ -186,7 +190,30 @@ const { downloadBlobFile, lastDownload } = useFileDownloads();
 
 const { confirmAction, runAction } = useActionGuards({ appSettings, busy, errorMessage });
 const commandPaletteOpen = ref(false);
-const generateDialogOpen = ref(false);
+const chordGenerateDialogOpen = ref(false);
+const trackGenerateDialogOpen = ref(false);
+const trackGenerateOpenWith = ref<TrackGenerateOpenWith | null>(null);
+
+/** Opens Flow B (track generation), optionally pre-focused on one part. */
+function openTrackGenerateDialog(openWith: TrackGenerateOpenWith | null = null): void {
+  trackGenerateOpenWith.value = openWith;
+  chordGenerateDialogOpen.value = false;
+  trackGenerateDialogOpen.value = true;
+}
+
+/** Opens Flow A (chord progression). */
+function openChordGenerateDialog(): void {
+  trackGenerateDialogOpen.value = false;
+  chordGenerateDialogOpen.value = true;
+}
+
+/** Track-header "regenerate": opens Flow B pre-focused on replacing this track. */
+function onRegenerateTrack(trackId: number, part: TrackPart): void {
+  openTrackGenerateDialog({ part, target: { kind: 'replaceTrack', trackId } });
+}
+
+/** One-shot deep-link target for the lists dock panel (chord-lane "open list" action). */
+const listsInitialTab = ref<ListTab | undefined>(undefined);
 
 // --- Recording -----------------------------------------------------------------
 
@@ -457,6 +484,19 @@ const {
   toggleScorePanel,
 } = useAppShellLayout();
 
+/** Reveals the chord list editor: selects (and un-collapses) the lists dock tab and its chords sub-tab. */
+function onOpenChordList(): void {
+  selectDockTab('lists');
+  listsInitialTab.value = 'chords';
+}
+
+/** Reveals the key editor from the Generate dialog's "change key" link: closes the modal dock, then deep-links. */
+function onOpenGenerateKey(): void {
+  chordGenerateDialogOpen.value = false;
+  selectDockTab('lists');
+  listsInitialTab.value = 'key';
+}
+
 const EDITOR_DOCK_TABS: readonly DockTab[] = [
   'roll',
   'mixer',
@@ -605,9 +645,8 @@ const {
   openAbout,
   openDiagnostics,
   openExportDialog,
-  openGenerateDialog: () => {
-    generateDialogOpen.value = true;
-  },
+  openChordGenerateDialog,
+  openTrackGenerateDialog: () => openTrackGenerateDialog(),
   openNewDialog,
   openOpenDialog,
   openRecentProject,
@@ -714,6 +753,9 @@ useAppLifecycle({
           @seek="onSeek"
           @arm="onArmTrack"
           @change-instrument="openTrackInstrumentPicker"
+          @generate="openChordGenerateDialog"
+          @regenerate-track="onRegenerateTrack"
+          @open-chords="onOpenChordList"
         />
         <ClipInspector :clip="store.activeClip" @redetect-tempo="onRedetectClipTempo" />
       </section>
@@ -999,6 +1041,7 @@ useAppLifecycle({
             :force-lane-hidden="scoreVisible"
             :audition="auditionNote"
             @seek="onSeek"
+            @open-chords="onOpenChordList"
           />
           <div
             v-if="scoreVisible"
@@ -1085,6 +1128,7 @@ useAppLifecycle({
           <ProjectListsPanel
             class="lists-host"
             :position-ppq="() => positionPpq"
+            :initial-tab="listsInitialTab"
             @seek="onSeek"
           />
         </section>
@@ -1188,7 +1232,19 @@ useAppLifecycle({
       @cancel="newDialogOpen = false"
     />
 
-    <GenerateDialog :open="generateDialogOpen" @close="generateDialogOpen = false" />
+    <ChordGenerateDialog
+      :open="chordGenerateDialogOpen"
+      @close="chordGenerateDialogOpen = false"
+      @open-key="onOpenGenerateKey"
+      @generate-tracks="openTrackGenerateDialog()"
+    />
+
+    <TrackGenerateDialog
+      :open="trackGenerateDialogOpen"
+      :open-with="trackGenerateOpenWith"
+      @close="trackGenerateDialogOpen = false"
+      @open-chords="openChordGenerateDialog"
+    />
 
     <ExportDialog
       :open="exportDialogOpen"

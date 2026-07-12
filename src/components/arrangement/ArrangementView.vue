@@ -24,6 +24,7 @@ import {
   setMarker,
   splitAudioClipToStems,
   splitClip,
+  type TrackPart,
   trimClip,
 } from '@/project/commands';
 import { exportClipSmf } from '@/project/export';
@@ -56,9 +57,11 @@ import { useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 import ArrangementAnalysisPanel from './ArrangementAnalysisPanel.vue';
 import ArrangementCanvas from './ArrangementCanvas.vue';
+import ChordLane from './ChordLane.vue';
 import SectionLane from './SectionLane.vue';
 import TrackHeaderList from './TrackHeaderList.vue';
 import {
+  CHORD_LANE_HEIGHT_PX,
   LANE_HEIGHT_PX,
   RULER_HEIGHT_PX,
   SECTION_LANE_HEIGHT_PX,
@@ -105,6 +108,12 @@ const emit = defineEmits<{
   arm: [trackId: number, armed: boolean];
   /** Request to open a MIDI track's instrument picker. */
   changeInstrument: [trackId: number];
+  /** Request to regenerate a track by replacing it (track-header context menu). */
+  regenerateTrack: [trackId: number, part: TrackPart];
+  /** Request to open the music-generation dialog (chord-lane corner button). */
+  generate: [];
+  /** Request to reveal the chord list editor (chord-lane double-click). */
+  openChords: [];
 }>();
 
 const appSettings = useAppSettings();
@@ -129,6 +138,11 @@ const detectableAudioClip = computed(() => {
   const clip = store.activeClip;
   return clip && isAudioClip(clip) && clip.assetId !== undefined ? clip : null;
 });
+
+/** Whether any track carries audible content (notes or audio) yet. */
+const hasContent = computed(() =>
+  store.clips.some((clip) => clip.notes.length > 0 || isAudioClip(clip)),
+);
 
 /**
  * Detects song sections from the active audio clip and merges them into the
@@ -725,7 +739,7 @@ onBeforeUnmount(() => {
       class="arrangement-grid"
       :style="{
         gridTemplateColumns: `${TRACK_HEADER_WIDTH_PX}px 1fr`,
-        gridTemplateRows: `${SECTION_LANE_HEIGHT_PX}px 1fr`,
+        gridTemplateRows: `${SECTION_LANE_HEIGHT_PX}px ${CHORD_LANE_HEIGHT_PX}px 1fr`,
       }"
     >
       <div class="cell-corner">
@@ -759,6 +773,28 @@ onBeforeUnmount(() => {
         </button>
       </div>
       <SectionLane class="cell-sections" :range="range" :revision="revision" @seek="onSeek" />
+      <div class="cell-corner">
+        <span class="cell-corner-label">{{ t.shell.arrangement.chords }}</span>
+        <button
+          type="button"
+          class="section-detect"
+          v-tooltip="t.shell.arrangement.generateChordsTitle"
+          @click="emit('generate')"
+        >
+          {{ t.shell.arrangement.generateChords }}
+        </button>
+      </div>
+      <ChordLane
+        class="cell-chords"
+        :range="range"
+        :revision="revision"
+        :chords="store.chords"
+        :time-signatures="store.timeSignatures"
+        :has-content="hasContent"
+        show-hints
+        @seek="onSeek"
+        @open-chords="emit('openChords')"
+      />
       <TrackHeaderList
         class="cell-headers"
         :lane-height="LANE_HEIGHT_PX"
@@ -774,6 +810,7 @@ onBeforeUnmount(() => {
         :loop-end-ppq="props.loopEndPpq ?? 0"
         @arm="(trackId, armed) => emit('arm', trackId, armed)"
         @change-instrument="(trackId) => emit('changeInstrument', trackId)"
+        @regenerate-track="(trackId, part) => emit('regenerateTrack', trackId, part)"
         @toggle-automation="onToggleAutomation"
         @automation-param="onAutomationParamChange"
         @toggle-takes="onToggleTakes"
@@ -892,6 +929,10 @@ onBeforeUnmount(() => {
 }
 
 .cell-sections {
+  min-width: 0;
+}
+
+.cell-chords {
   min-width: 0;
 }
 

@@ -64,6 +64,75 @@ export function addAudioTrack(input: Omit<AddTrackInput, 'kind'> = {}): number {
 }
 
 /**
+ * Removes a track and its clips, dropping its automation lanes and clearing any
+ * group memberships / sidechain keys sourced from it, then refreshes the mirror.
+ * Performs exactly one wasm-Project edit (`removeTrack`) and must run inside an
+ * `execute` boundary that accounts for it — {@link removeTrack} wraps a single
+ * call, while the batch generator composes it with a fresh track's creation.
+ *
+ * @param store The project store to mutate.
+ * @param trackId Id of the track to remove.
+ */
+export function applyTrackRemoval(
+  store: ReturnType<typeof useProjectStore>,
+  trackId: number,
+): void {
+  const project = getProject();
+  project.removeTrack(trackId);
+  store.automationLanes = store.automationLanes.filter((lane) => lane.target !== trackId);
+  applyTrackRemovalMirror(store, trackId);
+  store.refresh();
+}
+
+/** Mirror-only cleanup shared by {@link applyTrackRemoval} (no wasm edits). */
+function applyTrackRemovalMirror(store: ReturnType<typeof useProjectStore>, trackId: number): void {
+  // Drop group memberships pointing at a removed group and sidechain keys
+  // sourced from the removed track.
+  store.tracks = store.tracks.map((track) => {
+    let next = track;
+    if (track.groupId === trackId) {
+      next = { ...next };
+      delete next.groupId;
+    }
+    if (track.mixer?.inserts.some((slot) => slot.sidechainSourceTrackId === trackId)) {
+      next = next === track ? { ...next } : next;
+      next.mixer = {
+        ...cloneStrip(track.mixer as MixerStrip),
+        inserts: (track.mixer?.inserts ?? []).map((slot) => {
+          if (slot.sidechainSourceTrackId !== trackId) return { ...slot };
+          const cleared = { ...slot };
+          delete cleared.sidechainSourceTrackId;
+          return cleared;
+        }),
+      };
+    }
+    return next;
+  });
+  let mixerChanged = false;
+  const buses = store.mixer.buses.map((bus) => {
+    if (!bus.strip?.inserts.some((slot) => slot.sidechainSourceTrackId === trackId)) return bus;
+    mixerChanged = true;
+    return {
+      ...bus,
+      strip: {
+        ...cloneStrip(bus.strip),
+        inserts: bus.strip.inserts.map((slot) => {
+          if (slot.sidechainSourceTrackId !== trackId) return { ...slot };
+          const cleared = { ...slot };
+          delete cleared.sidechainSourceTrackId;
+          return cleared;
+        }),
+      },
+    };
+  });
+  if (mixerChanged) store.mixer = { ...store.mixer, buses };
+  if (store.activeTrackId === trackId) {
+    store.activeTrackId = -1;
+    store.clipId = -1;
+  }
+}
+
+/**
  * Removes a track and its clips as one undoable edit. The track's automation
  * lanes are dropped in the same step. When the active track is removed, the
  * first remaining track (and its first clip) becomes active.
@@ -72,57 +141,8 @@ export function addAudioTrack(input: Omit<AddTrackInput, 'kind'> = {}): number {
  */
 export function removeTrack(trackId: number): void {
   const store = useProjectStore();
-  const project = getProject();
   requireTrack(store, trackId);
-  execute(1, () => {
-    project.removeTrack(trackId);
-    store.automationLanes = store.automationLanes.filter((lane) => lane.target !== trackId);
-    // Drop group memberships pointing at a removed group and sidechain keys
-    // sourced from the removed track.
-    store.tracks = store.tracks.map((track) => {
-      let next = track;
-      if (track.groupId === trackId) {
-        next = { ...next };
-        delete next.groupId;
-      }
-      if (track.mixer?.inserts.some((slot) => slot.sidechainSourceTrackId === trackId)) {
-        next = next === track ? { ...next } : next;
-        next.mixer = {
-          ...cloneStrip(track.mixer as MixerStrip),
-          inserts: (track.mixer?.inserts ?? []).map((slot) => {
-            if (slot.sidechainSourceTrackId !== trackId) return { ...slot };
-            const cleared = { ...slot };
-            delete cleared.sidechainSourceTrackId;
-            return cleared;
-          }),
-        };
-      }
-      return next;
-    });
-    let mixerChanged = false;
-    const buses = store.mixer.buses.map((bus) => {
-      if (!bus.strip?.inserts.some((slot) => slot.sidechainSourceTrackId === trackId)) return bus;
-      mixerChanged = true;
-      return {
-        ...bus,
-        strip: {
-          ...cloneStrip(bus.strip),
-          inserts: bus.strip.inserts.map((slot) => {
-            if (slot.sidechainSourceTrackId !== trackId) return { ...slot };
-            const cleared = { ...slot };
-            delete cleared.sidechainSourceTrackId;
-            return cleared;
-          }),
-        },
-      };
-    });
-    if (mixerChanged) store.mixer = { ...store.mixer, buses };
-    if (store.activeTrackId === trackId) {
-      store.activeTrackId = -1;
-      store.clipId = -1;
-    }
-    store.refresh();
-  });
+  execute(1, () => applyTrackRemoval(store, trackId));
 }
 
 /**

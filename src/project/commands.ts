@@ -49,6 +49,11 @@ export type { BackingStyle, GenerateBackingParams } from './command/generate-bac
 export { generateBackingCommand } from './command/generate-backing';
 export type { GenerateBassParams } from './command/generate-bass';
 export { generateBassLineCommand } from './command/generate-bass';
+export type { BatchPartSpec, BatchTarget, TrackPart } from './command/generate-batch';
+export {
+  generateTracksBatchCommand,
+  partForTrackName,
+} from './command/generate-batch';
 export type { GenerateCounterMelodyParams } from './command/generate-counter-melody';
 export { generateCounterMelodyCommand } from './command/generate-counter-melody';
 export type { GenerateDrumsParams } from './command/generate-drums';
@@ -71,6 +76,7 @@ export {
   redo,
   undo,
 } from './command/history';
+export { insertSecondaryDominantBefore } from './command/insert-secondary-dominant';
 export {
   addMasteringProcessor,
   removeMasteringProcessor,

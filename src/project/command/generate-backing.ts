@@ -21,7 +21,7 @@ import {
 import { editorChordToChord } from '@/compose/chord-io';
 import type { RawNote } from '../midi-events';
 import { useProjectStore } from '../store';
-import { addGeneratedTrack, EDITS_PER_TRACK } from './generate-track';
+import { addGeneratedTrack, EDITS_PER_TRACK, type TrackPlan } from './generate-track';
 import { execute } from './history';
 
 /** Backing voicing mode: smooth SATB leading, or a fixed tertian style. */
@@ -29,6 +29,9 @@ export type BackingStyle = 'smooth' | VoicingStyle;
 
 /** Default note-on velocity for backing voicings (softer than a lead). */
 const BACKING_VELOCITY = 72;
+
+/** NativeSynth preset for generated backing tracks (sustained chord voicings). */
+const BACKING_PRESET = 'warm-pad';
 
 /** Options for {@link generateBackingCommand}. */
 export interface GenerateBackingParams {
@@ -61,15 +64,16 @@ function voicingsFor(chords: ChordData[], params: GenerateBackingParams): number
 }
 
 /**
- * Generates a backing track from the project chord track.
+ * Builds the backing-track plan for a new track without writing to the Project.
  *
- * @param params Voicing options (see {@link GenerateBackingParams}).
- * @returns The number of notes written (0 when there is no chord track).
+ * @returns The plan, or null when there is no chord track / no notes.
  * @throws When a chord cannot be voiced in the requested ranges.
  */
-export function generateBackingCommand(params: GenerateBackingParams = {}): number {
-  const store = useProjectStore();
-  if (store.chords.length === 0) return 0;
+export function buildBackingPlan(
+  store: ReturnType<typeof useProjectStore>,
+  params: GenerateBackingParams = {},
+): TrackPlan | null {
+  if (store.chords.length === 0) return null;
 
   const regions = [...store.chords].sort((a, b) => a.startPpq - b.startPpq);
   const chords = regions.map(editorChordToChord);
@@ -89,11 +93,32 @@ export function generateBackingCommand(params: GenerateBackingParams = {}): numb
       });
     }
   });
-  if (notes.length === 0) return 0;
+  if (notes.length === 0) return null;
 
   const lengthPpq = regions.reduce((max, region) => Math.max(max, region.endPpq), 0);
+  return { name: 'Backing', notes, lengthPpq, preset: BACKING_PRESET };
+}
+
+/**
+ * Generates a backing track from the project chord track.
+ *
+ * @param params Voicing options (see {@link GenerateBackingParams}).
+ * @returns The number of notes written (0 when there is no chord track).
+ * @throws When a chord cannot be voiced in the requested ranges.
+ */
+export function generateBackingCommand(params: GenerateBackingParams = {}): number {
+  const store = useProjectStore();
+  const plan = buildBackingPlan(store, params);
+  if (plan === null) return 0;
+
   execute(EDITS_PER_TRACK, () =>
-    addGeneratedTrack(store, { name: 'Backing', notes, startPpq: 0, lengthPpq }),
+    addGeneratedTrack(store, {
+      name: plan.name,
+      notes: plan.notes,
+      startPpq: 0,
+      lengthPpq: plan.lengthPpq,
+      preset: plan.preset,
+    }),
   );
-  return notes.length;
+  return plan.notes.length;
 }

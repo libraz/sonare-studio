@@ -49,7 +49,7 @@ describe('ArrangementAnalysisPanel', () => {
 
   it('starts collapsed and shows the run prompt before the first analysis', async () => {
     wrapper = mount(ArrangementAnalysisPanel);
-    expect(wrapper.find('.ap-body').exists()).toBe(false);
+    expect(wrapper.find('.ap-popover').exists()).toBe(false);
 
     await wrapper.find('.ap-toggle').trigger('click');
     expect(wrapper.find('.ap-prompt').exists()).toBe(true);

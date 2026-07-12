@@ -1,10 +1,15 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { chordToRoman, type ProgStyle } from '@libraz/libcantus';
+import { computed, ref, watch } from 'vue';
+import ProgressionPresetPicker from '@/components/compose/ProgressionPresetPicker.vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { confirmDialog } from '@/composables/useDialogs';
+import { editorChordToChord } from '@/compose/chord-io';
 import { effectiveKeyScale } from '@/compose/key';
+import { detectProgressionGroups, type PatternGroup } from '@/compose/progression-groups';
 import { reharmCandidatesFor } from '@/compose/reharm';
+import { secondaryDominantLabel } from '@/compose/secondary-dominant';
 import {
   CHORD_PITCH_CLASS_NAMES,
   CHORD_QUALITY_CHOICES,
@@ -16,6 +21,8 @@ import {
   detectChordsForClip,
   detectChordsFromAudioClip,
   estimateChordsFromArrangement,
+  generateProgressionCommand,
+  insertSecondaryDominantBefore,
   reharmonizeChord,
   setProjectChords,
 } from '@/project/commands';
@@ -162,6 +169,189 @@ function onDelete(index: number): void {
   commitAt(index, null);
 }
 
+/** Tooltip naming the secondary dominant that would be inserted before a chord. */
+function insertDominantTooltip(chord: EditorChordSymbol): string {
+  const label = secondaryDominantLabel(chord, effectiveKeyScale(store.scaleHighlight));
+  return formatMessage(t.value.shell.lists.chords.insertDominantTitle, { label });
+}
+
+/** Inserts the secondary dominant of a chord before it (see {@link insertSecondaryDominantBefore}). */
+function onInsertDominant(index: number): void {
+  estimateConfidence.value = new Map();
+  reharmIndex.value = null;
+  const inserted = insertSecondaryDominantBefore(index);
+  errorMessage.value = inserted ? '' : t.value.shell.lists.chords.insertDominantTooShort;
+}
+
+/** Roman-numeral degree label for a chord in the prevailing key. */
+function romanFor(chord: EditorChordSymbol): string {
+  return chordToRoman(editorChordToChord(chord), effectiveKeyScale(store.scaleHighlight));
+}
+
+/** Repeating-pattern groups detected in the current chord track (see {@link detectProgressionGroups}). */
+const patternGroups = computed(() => detectProgressionGroups(store.chords));
+
+/** Group start indices collapsed to their first repeat. */
+const collapsedGroups = ref(new Set<number>());
+
+function toggleGroupCollapse(startIndex: number): void {
+  const next = new Set(collapsedGroups.value);
+  if (next.has(startIndex)) next.delete(startIndex);
+  else next.add(startIndex);
+  collapsedGroups.value = next;
+}
+
+/** A chord row, optionally tagged with the group it belongs to and its repeat position. */
+interface ChordRowItem {
+  kind: 'chord';
+  index: number;
+  chord: EditorChordSymbol;
+  groupStartIndex: number | null;
+  repeatLabel: string | null;
+}
+
+/** A collapsible header row introducing a detected repeating pattern. */
+interface GroupHeaderRowItem {
+  kind: 'group-header';
+  group: PatternGroup;
+}
+
+type RowItem = ChordRowItem | GroupHeaderRowItem;
+
+/**
+ * The list's row sequence: chord rows interleaved with collapsible group
+ * headers for detected repeating patterns. Collapsing a group hides every
+ * repeat after the first.
+ */
+const rowItems = computed<RowItem[]>(() => {
+  const groupByStart = new Map(patternGroups.value.map((group) => [group.startIndex, group]));
+  const items: RowItem[] = [];
+  let i = 0;
+  while (i < store.chords.length) {
+    const group = groupByStart.get(i);
+    if (!group) {
+      items.push({
+        kind: 'chord',
+        index: i,
+        chord: store.chords[i],
+        groupStartIndex: null,
+        repeatLabel: null,
+      });
+      i += 1;
+      continue;
+    }
+    items.push({ kind: 'group-header', group });
+    const collapsed = collapsedGroups.value.has(group.startIndex);
+    const visible = collapsed ? group.period : group.length;
+    for (let k = 0; k < visible; k++) {
+      const isFullRepeat = k < group.repeatCount * group.period;
+      const repeatLabel =
+        isFullRepeat && k % group.period === 0
+          ? formatMessage(t.value.shell.lists.chords.repeatOf, {
+              n: Math.floor(k / group.period) + 1,
+              count: group.repeatCount,
+            })
+          : null;
+      items.push({
+        kind: 'chord',
+        index: i + k,
+        chord: store.chords[i + k],
+        groupStartIndex: group.startIndex,
+        repeatLabel,
+      });
+    }
+    i += group.length;
+  }
+  return items;
+});
+
+/**
+ * Range selection for progression-level replacement: chord indices the user
+ * has picked, either by clicking checkboxes (shift-click extends from the
+ * last-clicked index) or via a group header's "select this pattern" action.
+ */
+const selectedIndices = ref<Set<number>>(new Set());
+const selectionAnchor = ref<number | null>(null);
+
+/** Toggles or range-extends the selection from a row checkbox click. */
+function onSelectClick(index: number, event: MouseEvent): void {
+  const next = new Set(selectedIndices.value);
+  if (event.shiftKey && selectionAnchor.value !== null) {
+    const [lo, hi] =
+      selectionAnchor.value <= index
+        ? [selectionAnchor.value, index]
+        : [index, selectionAnchor.value];
+    for (let i = lo; i <= hi; i++) next.add(i);
+  } else {
+    if (next.has(index)) next.delete(index);
+    else next.add(index);
+    selectionAnchor.value = index;
+  }
+  selectedIndices.value = next;
+}
+
+/** Selects every chord in a detected group, including any collapsed repeats. */
+function selectGroup(group: PatternGroup): void {
+  const next = new Set<number>();
+  for (let i = group.startIndex; i < group.startIndex + group.length; i++) next.add(i);
+  selectedIndices.value = next;
+  selectionAnchor.value = group.startIndex;
+}
+
+function clearSelection(): void {
+  selectedIndices.value = new Set();
+  selectionAnchor.value = null;
+}
+
+/** The selected chords in track order. */
+const selectedChords = computed(() =>
+  [...selectedIndices.value]
+    .sort((a, b) => a - b)
+    .map((i) => store.chords[i])
+    .filter((chord): chord is EditorChordSymbol => chord !== undefined),
+);
+
+/** PPQ span covering every selected chord (regeneration replaces this whole span). */
+const selectionRangePpq = computed(() => {
+  if (selectedChords.value.length === 0) return null;
+  const startPpq = Math.min(...selectedChords.value.map((c) => c.startPpq));
+  const endPpq = Math.max(...selectedChords.value.map((c) => c.endPpq));
+  return { startPpq, endPpq };
+});
+
+const PROGRESSION_BEATS_PER_BAR = 4;
+
+const rangeStyle = ref<ProgStyle>('idol');
+const rangePreset = ref('');
+const rangeBars = ref(4);
+
+// Re-seed the bar count from the selection's own width whenever it changes,
+// so the field starts at a sensible value but stays user-editable afterward.
+watch(selectionRangePpq, (range) => {
+  if (range) {
+    rangeBars.value = Math.max(
+      1,
+      Math.round((range.endPpq - range.startPpq) / PROGRESSION_BEATS_PER_BAR),
+    );
+  }
+});
+
+/** Regenerates the selected range with the chosen style/preset, then clears the selection. */
+function applyToSelection(): void {
+  const range = selectionRangePpq.value;
+  if (!range) return;
+  estimateConfidence.value = new Map();
+  generateProgressionCommand({
+    style: rangeStyle.value,
+    presetId: rangePreset.value || undefined,
+    bars: Math.max(1, Math.round(rangeBars.value)),
+    seed: 0,
+    mode: 'range',
+    startPpq: range.startPpq,
+  });
+  clearSelection();
+}
+
 /** Index of the chord whose reharmonization palette is open, or null. */
 const reharmIndex = ref<number | null>(null);
 
@@ -272,88 +462,155 @@ function clearAll(): void {
     <table class="list-table">
       <thead>
         <tr>
+          <th scope="col"><span class="visually-hidden">{{ t.shell.lists.chords.selectColumn }}</span></th>
           <th scope="col"><span class="visually-hidden">{{ t.shell.lists.columns.seek }}</span></th>
           <th scope="col">{{ t.shell.lists.columns.position }}</th>
           <th scope="col">{{ t.shell.lists.columns.root }}</th>
           <th scope="col">{{ t.shell.lists.columns.quality }}</th>
           <th scope="col">{{ t.shell.lists.columns.bass }}</th>
           <th scope="col">{{ t.shell.lists.columns.chord }}</th>
+          <th scope="col">{{ t.shell.lists.columns.degree }}</th>
           <th scope="col"><span class="visually-hidden">{{ t.shell.lists.columns.actions }}</span></th>
         </tr>
       </thead>
       <tbody>
-        <template v-for="(chord, index) in store.chords" :key="index">
+        <template v-for="item in rowItems" :key="item.kind === 'group-header' ? `group-${item.group.startIndex}` : `chord-${item.index}`">
+        <tr v-if="item.kind === 'group-header'" class="group-header-row">
+          <td colspan="9">
+            <button
+              type="button"
+              class="group-toggle"
+              :aria-expanded="!collapsedGroups.has(item.group.startIndex)"
+              :aria-label="
+                collapsedGroups.has(item.group.startIndex)
+                  ? t.shell.lists.chords.expandPattern
+                  : t.shell.lists.chords.collapsePattern
+              "
+              @click="toggleGroupCollapse(item.group.startIndex)"
+            >
+              <svg
+                class="group-chevron"
+                :class="{ 'is-open': !collapsedGroups.has(item.group.startIndex) }"
+                viewBox="0 0 8 8"
+                width="8"
+                height="8"
+                aria-hidden="true"
+              >
+                <path d="M2 1l4 3-4 3z" fill="currentColor" />
+              </svg>
+              <span class="group-label">
+                {{ formatMessage(t.shell.lists.chords.patternGroup, { count: item.group.repeatCount }) }}
+              </span>
+              <span v-if="item.group.partialTrailingRepeat" class="group-partial">
+                {{ t.shell.lists.chords.patternGroupPartial }}
+              </span>
+            </button>
+            <button type="button" class="group-select" @click="selectGroup(item.group)">
+              {{ t.shell.lists.chords.selectGroup }}
+            </button>
+          </td>
+        </tr>
+        <template v-else>
         <tr
           class="chord-row"
-          :class="{ tentative: isTentative(chord) }"
-          v-tooltip="isTentative(chord) ? t.shell.lists.chords.tentativeTitle : undefined"
+          :class="{
+            tentative: isTentative(item.chord),
+            'in-group': item.groupStartIndex !== null,
+            selected: selectedIndices.has(item.index),
+          }"
+          v-tooltip="isTentative(item.chord) ? t.shell.lists.chords.tentativeTitle : undefined"
         >
+          <td class="cell-checkbox">
+            <input
+              type="checkbox"
+              :checked="selectedIndices.has(item.index)"
+              :aria-label="
+                formatMessage(t.shell.lists.chords.selectRow, { name: formatChordName(item.chord) })
+              "
+              @click="onSelectClick(item.index, $event)"
+            />
+          </td>
           <td class="cell-seek">
             <button
               type="button"
               class="row-button"
               :aria-label="
-                formatMessage(t.shell.lists.chords.seekTo, { name: formatChordName(chord) })
+                formatMessage(t.shell.lists.chords.seekTo, { name: formatChordName(item.chord) })
               "
-              @click="onSeek(chord)"
+              @click="onSeek(item.chord)"
             >
               <ListIcon name="seek" />
             </button>
           </td>
           <td>
-            <input
-              :value="positionText(chord)"
-              class="cell-input cell-position"
-              type="text"
-              inputmode="decimal"
-              :aria-label="
-                formatMessage(t.shell.lists.chords.positionOf, { name: formatChordName(chord) })
-              "
-              @change="onPositionChange(index, chord, $event)"
-            />
+            <div class="cell-position-wrap">
+              <span v-if="item.repeatLabel" class="repeat-badge">{{ item.repeatLabel }}</span>
+              <input
+                :value="positionText(item.chord)"
+                class="cell-input cell-position"
+                type="text"
+                inputmode="decimal"
+                :aria-label="
+                  formatMessage(t.shell.lists.chords.positionOf, { name: formatChordName(item.chord) })
+                "
+                @change="onPositionChange(item.index, item.chord, $event)"
+              />
+            </div>
           </td>
           <td>
             <SelectMenu
-              :model-value="chord.rootPc"
+              :model-value="item.chord.rootPc"
               class="cell-input cell-select"
               size="sm"
               :options="PITCH_CLASS_OPTIONS"
-              :aria-label="formatMessage(t.shell.lists.chords.rootOf, { row: index + 1 })"
-              @change="onRootChange(index, chord, $event)"
+              :aria-label="formatMessage(t.shell.lists.chords.rootOf, { row: item.index + 1 })"
+              @change="onRootChange(item.index, item.chord, $event)"
             />
           </td>
           <td>
             <SelectMenu
-              :model-value="chord.quality"
+              :model-value="item.chord.quality"
               class="cell-input cell-select"
               size="sm"
               :options="QUALITY_OPTIONS"
-              :aria-label="formatMessage(t.shell.lists.chords.qualityOf, { row: index + 1 })"
-              @change="onQualityChange(index, chord, $event)"
+              :aria-label="formatMessage(t.shell.lists.chords.qualityOf, { row: item.index + 1 })"
+              @change="onQualityChange(item.index, item.chord, $event)"
             />
           </td>
           <td>
             <SelectMenu
-              :model-value="chord.bassPc ?? -1"
+              :model-value="item.chord.bassPc ?? -1"
               class="cell-input cell-select"
               size="sm"
               :options="BASS_OPTIONS"
-              :aria-label="formatMessage(t.shell.lists.chords.bassOf, { row: index + 1 })"
-              @change="onBassChange(index, chord, $event)"
+              :aria-label="formatMessage(t.shell.lists.chords.bassOf, { row: item.index + 1 })"
+              @change="onBassChange(item.index, item.chord, $event)"
             />
           </td>
-          <td class="cell-name">{{ formatChordName(chord) }}</td>
+          <td class="cell-name">{{ formatChordName(item.chord) }}</td>
+          <td class="cell-roman">{{ romanFor(item.chord) }}</td>
           <td class="cell-actions">
             <button
               type="button"
               class="row-button"
-              :class="{ active: reharmIndex === index }"
-              :aria-expanded="reharmIndex === index"
+              v-tooltip="insertDominantTooltip(item.chord)"
+              :aria-label="
+                formatMessage(t.shell.lists.chords.insertDominant, { name: formatChordName(item.chord) })
+              "
+              @click="onInsertDominant(item.index)"
+            >
+              <ListIcon name="insertDominant" />
+            </button>
+            <button
+              type="button"
+              class="row-button"
+              :class="{ active: reharmIndex === item.index }"
+              :aria-expanded="reharmIndex === item.index"
               v-tooltip="t.shell.lists.chords.reharmonizeTitle"
               :aria-label="
-                formatMessage(t.shell.lists.chords.reharmonize, { name: formatChordName(chord) })
+                formatMessage(t.shell.lists.chords.reharmonize, { name: formatChordName(item.chord) })
               "
-              @click="toggleReharm(index)"
+              @click="toggleReharm(item.index)"
             >
               <ListIcon name="reharm" />
             </button>
@@ -361,16 +618,16 @@ function clearAll(): void {
               type="button"
               class="row-button"
               :aria-label="
-                formatMessage(t.shell.lists.chords.delete, { name: formatChordName(chord) })
+                formatMessage(t.shell.lists.chords.delete, { name: formatChordName(item.chord) })
               "
-              @click="onDelete(index)"
+              @click="onDelete(item.index)"
             >
               <ListIcon name="delete" />
             </button>
           </td>
         </tr>
-        <tr v-if="reharmIndex === index" class="reharm-row">
-          <td :colspan="7">
+        <tr v-if="reharmIndex === item.index" class="reharm-row">
+          <td colspan="9">
             <div v-if="reharmCandidates.length > 0" class="reharm-palette">
               <button
                 v-for="candidate in reharmCandidates"
@@ -393,8 +650,29 @@ function clearAll(): void {
           </td>
         </tr>
         </template>
+        </template>
       </tbody>
     </table>
+    <div v-if="selectedChords.length > 0" class="selection-toolbar">
+      <p class="selection-summary">
+        {{ formatMessage(t.shell.lists.chords.selectionSummary, { count: selectedChords.length }) }}
+      </p>
+      <ProgressionPresetPicker
+        v-model:style="rangeStyle"
+        v-model:preset-id="rangePreset"
+        :key-scale="effectiveKeyScale(store.scaleHighlight)"
+      />
+      <label class="number-field">
+        <span class="field-label">{{ t.shell.lists.chords.selectionBars }}</span>
+        <input v-model.number="rangeBars" type="number" min="1" max="64" step="1" />
+      </label>
+      <div class="selection-actions">
+        <button type="button" @click="clearSelection">{{ t.shell.lists.chords.clearSelection }}</button>
+        <button type="button" class="primary" @click="applyToSelection">
+          {{ t.shell.lists.chords.applySelection }}
+        </button>
+      </div>
+    </div>
     <EmptyState v-if="store.chords.length === 0" variant="inline" :message="t.shell.lists.chords.empty" />
     <p v-if="errorMessage" class="list-error" role="alert">{{ errorMessage }}</p>
     <div class="list-actions">
@@ -450,6 +728,67 @@ function clearAll(): void {
   color: var(--text-1);
   font-weight: var(--fw-semibold);
   white-space: nowrap;
+}
+
+.cell-roman {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cell-position-wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+.repeat-badge {
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.chord-row.in-group {
+  border-left: 2px solid var(--border-strong);
+}
+
+.group-header-row > td {
+  padding: var(--sp-1) var(--sp-3);
+  border-top: 1px solid var(--border);
+}
+
+.group-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+}
+
+.group-toggle:hover {
+  color: var(--text-1);
+}
+
+.group-chevron {
+  transition: transform var(--dur-1) var(--ease-out);
+}
+
+.group-chevron.is-open {
+  transform: rotate(90deg);
+}
+
+.group-partial {
+  color: var(--text-3);
+  font-weight: var(--fw-normal);
 }
 
 .list-actions {
@@ -514,5 +853,68 @@ function clearAll(): void {
   margin: 0;
   color: var(--text-2);
   font-size: var(--fs-sm);
+}
+
+.cell-checkbox {
+  width: 1.4rem;
+}
+
+.chord-row.selected {
+  background: var(--accent-soft);
+}
+
+.group-select {
+  margin-left: var(--sp-3);
+  padding: 0;
+  background: none;
+  border: none;
+  box-shadow: none;
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.group-select:hover {
+  text-decoration: underline;
+}
+
+.selection-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--sp-5);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--surface-2);
+  border-radius: var(--radius-md);
+}
+
+.selection-summary {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+}
+
+.field-label {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--text-3);
+}
+
+.number-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.number-field input {
+  width: 6rem;
+  box-sizing: border-box;
+}
+
+.selection-actions {
+  display: flex;
+  gap: var(--sp-3);
 }
 </style>

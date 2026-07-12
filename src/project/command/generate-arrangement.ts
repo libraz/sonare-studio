@@ -35,6 +35,13 @@ const BEATS_PER_BAR = 4;
 /** Note-on velocity for backing voicings. */
 const BACKING_VELOCITY = 72;
 
+/** NativeSynth presets per generated part, matching the single-shot generators. */
+const PART_PRESET = {
+  drums: 'drum-kit',
+  bass: 'sub-bass',
+  backing: 'warm-pad',
+} as const;
+
 /** Options for {@link generateArrangementCommand}. */
 export interface GenerateArrangementParams {
   /** Number of four-beat bars (default 4). */
@@ -58,6 +65,7 @@ interface TrackPlan {
   name: string;
   notes: RawNote[];
   lengthPpq: number;
+  preset: string;
 }
 
 function clampPitch(pitch: number): number {
@@ -120,7 +128,9 @@ export function generateArrangementCommand(params: GenerateArrangementParams = {
     const notes = noteEventsToNewEditorNotes(hits, { channel: GM_PERCUSSION_CHANNEL }).map(
       materializeNote,
     );
-    if (notes.length > 0) plans.push({ name: 'Drums', notes, lengthPpq: barsLength });
+    if (notes.length > 0) {
+      plans.push({ name: 'Drums', notes, lengthPpq: barsLength, preset: PART_PRESET.drums });
+    }
   }
 
   if (params.bass !== false && regions.length > 0) {
@@ -136,7 +146,7 @@ export function generateArrangementCommand(params: GenerateArrangementParams = {
     });
     const notes = noteEventsToNewEditorNotes(events, { channel: 0 }).map(materializeNote);
     const lengthPpq = regions.reduce((max, region) => Math.max(max, region.endPpq), 0);
-    if (notes.length > 0) plans.push({ name: 'Bass', notes, lengthPpq });
+    if (notes.length > 0) plans.push({ name: 'Bass', notes, lengthPpq, preset: PART_PRESET.bass });
   }
 
   if (params.backing !== false && regions.length > 0) {
@@ -156,7 +166,9 @@ export function generateArrangementCommand(params: GenerateArrangementParams = {
       }
     });
     const lengthPpq = regions.reduce((max, region) => Math.max(max, region.endPpq), 0);
-    if (notes.length > 0) plans.push({ name: 'Backing', notes, lengthPpq });
+    if (notes.length > 0) {
+      plans.push({ name: 'Backing', notes, lengthPpq, preset: PART_PRESET.backing });
+    }
   }
 
   const chordEdits = generated !== null ? 1 : 0;
@@ -175,6 +187,7 @@ export function generateArrangementCommand(params: GenerateArrangementParams = {
         notes: plan.notes,
         startPpq: 0,
         lengthPpq: plan.lengthPpq,
+        preset: plan.preset,
       });
     }
     if (plans.length === 0) store.refresh();

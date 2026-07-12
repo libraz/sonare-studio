@@ -82,3 +82,6 @@ export const TRACK_HEADER_WIDTH_PX = 192;
 
 /** Height of the section lane above the ruler. */
 export const SECTION_LANE_HEIGHT_PX = 22;
+
+/** Height of the chord lane below the section lane. */
+export const CHORD_LANE_HEIGHT_PX = 22;

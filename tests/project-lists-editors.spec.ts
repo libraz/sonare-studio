@@ -306,7 +306,7 @@ describe('project list editors', () => {
       await buttonByText(wrapper, 'Add at playhead').trigger('click');
       expect(store.chords).toEqual([{ startPpq: 4, endPpq: 8, rootPc: 0, quality: 0 }]);
       // Position shows bars.beats (PPQ 4 = bar 2) and the formatted name.
-      expect((wrapper.find('tbody input').element as HTMLInputElement).value).toBe('2.1');
+      expect((wrapper.find('.cell-position').element as HTMLInputElement).value).toBe('2.1');
       expect(wrapper.find('.cell-name').text()).toBe('C');
       wrapper.unmount();
     });
@@ -362,6 +362,60 @@ describe('project list editors', () => {
       const wrapper = mount(ChordListEditor);
       await wrapper.find('.cell-seek .row-button').trigger('click');
       expect(wrapper.emitted('seek')).toEqual([[8]]);
+      wrapper.unmount();
+    });
+
+    it('selects a contiguous range via checkbox shift-click', async () => {
+      setProjectChords([
+        { startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 },
+        { startPpq: 4, endPpq: 8, rootPc: 5, quality: 0 },
+        { startPpq: 8, endPpq: 12, rootPc: 7, quality: 0 },
+      ]);
+      const wrapper = mount(ChordListEditor);
+      const checkboxes = () => wrapper.findAll('.cell-checkbox input');
+      await checkboxes()[0].trigger('click');
+      await checkboxes()[2].trigger('click', { shiftKey: true });
+      expect(wrapper.find('.selection-summary').text()).toContain('3 selected');
+      expect(checkboxes()[1].element.checked).toBe(true);
+      wrapper.unmount();
+    });
+
+    it('selects a whole detected pattern from the group header', async () => {
+      setProjectChords([
+        { startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 },
+        { startPpq: 4, endPpq: 8, rootPc: 5, quality: 0 },
+        { startPpq: 8, endPpq: 12, rootPc: 0, quality: 0 },
+        { startPpq: 12, endPpq: 16, rootPc: 5, quality: 0 },
+      ]);
+      const wrapper = mount(ChordListEditor);
+      await buttonByText(wrapper, 'Select this pattern').trigger('click');
+      expect(wrapper.find('.selection-summary').text()).toContain('4 selected');
+      wrapper.unmount();
+    });
+
+    it('regenerates the selected range and clears the selection afterward', async () => {
+      setProjectChords([
+        { startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 },
+        { startPpq: 4, endPpq: 8, rootPc: 5, quality: 0 },
+        { startPpq: 8, endPpq: 12, rootPc: 7, quality: 0 },
+      ]);
+      const wrapper = mount(ChordListEditor);
+      const checkboxes = () => wrapper.findAll('.cell-checkbox input');
+      // Select only the middle chord (bar 2, PPQ 4-8).
+      await checkboxes()[1].trigger('click');
+      expect(wrapper.find('.selection-toolbar').exists()).toBe(true);
+
+      await buttonByText(wrapper, 'Apply to selection').trigger('click');
+
+      // Chords outside the selected range survive unchanged.
+      expect(store.chords[0]).toMatchObject({ startPpq: 0, endPpq: 4, rootPc: 0 });
+      expect(store.chords[store.chords.length - 1]).toMatchObject({
+        startPpq: 8,
+        endPpq: 12,
+        rootPc: 7,
+      });
+      // The selection clears after applying.
+      expect(wrapper.find('.selection-toolbar').exists()).toBe(false);
       wrapper.unmount();
     });
   });

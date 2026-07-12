@@ -5,7 +5,7 @@
  * icon inherits `currentColor`, so it tracks the host row button's state
  * colours (hover, disabled) for free and stays crisp at small sizes.
  */
-export type ListIconName = 'seek' | 'delete' | 'reharm';
+export type ListIconName = 'seek' | 'delete' | 'reharm' | 'insertDominant';
 
 defineProps<{ name: ListIconName }>();
 </script>
@@ -39,6 +39,16 @@ defineProps<{ name: ListIconName }>();
       stroke-width="1.5"
       stroke-linecap="round"
       stroke-linejoin="round"
+    />
+
+    <!-- Insert dominant: a cursor bar with a plus, marking an insertion point. -->
+    <path
+      v-else-if="name === 'insertDominant'"
+      d="M3 3 V13 M7.5 8 H13 M10.25 5.25 V10.75"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
     />
   </svg>
 </template>

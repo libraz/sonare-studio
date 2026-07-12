@@ -12,6 +12,8 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 interface Option {
   value: T;
   label: string;
+  /** Secondary line rendered under the label, e.g. a notation or hint. */
+  detail?: string;
   disabled?: boolean;
 }
 
@@ -258,6 +260,7 @@ onBeforeUnmount(() => {
             'is-active': index === activeIndex,
             'is-selected': option.value === props.modelValue,
             'is-disabled': option.disabled,
+            'has-detail': option.detail,
           }"
           role="option"
           :aria-selected="option.value === props.modelValue"
@@ -265,7 +268,10 @@ onBeforeUnmount(() => {
           @click="choose(option)"
           @mousemove="activeIndex = index"
         >
-          <span class="select-option-label">{{ option.label }}</span>
+          <span class="select-option-text">
+            <span class="select-option-label">{{ option.label }}</span>
+            <span v-if="option.detail" class="select-option-detail">{{ option.detail }}</span>
+          </span>
           <svg
             v-if="option.value === props.modelValue"
             class="select-check"
@@ -387,6 +393,37 @@ onBeforeUnmount(() => {
   font-size: inherit;
 }
 
+.select-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.select-option-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.select-option.has-detail .select-option-label {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--text-1);
+}
+
+.select-option-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.select-option.is-active .select-option-detail {
+  color: var(--text-2);
+}
+
 .select-list.is-sm {
   font-size: var(--fs-xs);
 }
@@ -402,6 +439,10 @@ onBeforeUnmount(() => {
 
 .select-option.is-selected {
   color: var(--text-1);
+  font-weight: var(--fw-semibold);
+}
+
+.select-option.is-selected.has-detail .select-option-label {
   font-weight: var(--fw-semibold);
 }
 

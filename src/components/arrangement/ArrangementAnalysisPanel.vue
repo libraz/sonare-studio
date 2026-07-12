@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { formatNote, midiToNote, NoteSafety } from '@libraz/libcantus';
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, ref } from 'vue';
 import { formatBarBeat } from '@/components/lists/bar-beat';
 import { useArrangementAnalysis } from '@/composables/useArrangementAnalysis';
 import type { ArrangementConflict } from '@/compose/arrangement';
@@ -9,14 +9,18 @@ import { useProjectStore } from '@/project/store';
 import { useI18n } from '@/ui/i18n';
 
 /**
- * Collapsible cross-track analysis panel for the arrangement view: an
- * on-demand conflict list (notes clashing with the sounding harmony), the
- * percussion tracks excluded from analysis, and a compact tension sparkline.
+ * Cross-track analysis header for the arrangement view: a slim, always-visible
+ * bar with an on-demand Analyze action. Results (a conflict list of notes
+ * clashing with the sounding harmony, the percussion tracks excluded from
+ * analysis, and a compact tension sparkline) open in a floating popover below
+ * the bar, so the header never grows and never pushes the arrangement's track
+ * lanes out of view.
  *
  * The analysis sweeps every track, so it is expensive; it runs only from the
  * Analyze button — never as a live watcher — and the button is disabled while
  * the transport is playing. Clicking a conflict row activates the clip under
- * the conflict (best effort) and asks the host to move the playhead there.
+ * the conflict (best effort) and asks the host to move the playhead there;
+ * the popover stays open so multiple conflicts can be visited in sequence.
  */
 
 const props = defineProps<{
@@ -33,13 +37,43 @@ const store = useProjectStore();
 const { t } = useI18n();
 const { conflicts, tension, excludedTrackNames, analyzed, analyze } = useArrangementAnalysis();
 
-/** Disclosure state; the panel starts collapsed. */
-const expanded = ref(false);
+/** Popover open state; the header bar itself never resizes. */
+const open = ref(false);
+/** Popover position, computed from the header bar when it opens. */
+const popoverStyle = ref<{ left: string; top: string }>({ left: '0px', top: '0px' });
+const headerEl = ref<HTMLElement | null>(null);
+
+/** Closes the popover on any press outside of it or the header bar. */
+function onOutsidePointerDown(event: PointerEvent): void {
+  const target = event.target as HTMLElement | null;
+  if (!target?.closest('.ap-popover') && !target?.closest('.ap-head')) closePopover();
+}
+
+function openPopover(): void {
+  const rect = headerEl.value?.getBoundingClientRect();
+  if (rect) popoverStyle.value = { left: `${rect.left}px`, top: `${rect.bottom + 4}px` };
+  open.value = true;
+  window.addEventListener('pointerdown', onOutsidePointerDown, true);
+}
+
+function closePopover(): void {
+  if (!open.value) return;
+  open.value = false;
+  window.removeEventListener('pointerdown', onOutsidePointerDown, true);
+}
+
+function toggleResults(): void {
+  if (open.value) closePopover();
+  else openPopover();
+}
 
 function runAnalysis(): void {
   if (props.isPlaying) return;
+  openPopover();
   analyze();
 }
+
+onBeforeUnmount(closePopover);
 
 /** Sparkline viewBox width in local units. */
 const SPARK_WIDTH = 120;
@@ -100,20 +134,19 @@ function jumpTo(conflict: ArrangementConflict): void {
 
 <template>
   <section class="analysis-panel">
-    <header class="ap-head">
+    <header ref="headerEl" class="ap-head">
       <button
         type="button"
         class="ap-toggle"
-        :aria-expanded="expanded"
-        @click="expanded = !expanded"
+        :aria-expanded="open"
+        @click="toggleResults"
       >
-        <svg class="ap-chevron" :class="{ 'is-open': expanded }" viewBox="0 0 8 8" width="8" height="8" aria-hidden="true">
+        <svg class="ap-chevron" :class="{ 'is-open': open }" viewBox="0 0 8 8" width="8" height="8" aria-hidden="true">
           <path d="M2 1l4 3-4 3z" fill="currentColor" />
         </svg>
         {{ t.shell.arrangementAnalysis.title }}
       </button>
       <button
-        v-if="expanded"
         type="button"
         class="ap-analyze"
         :disabled="props.isPlaying"
@@ -123,46 +156,48 @@ function jumpTo(conflict: ArrangementConflict): void {
       </button>
     </header>
 
-    <div v-if="expanded" class="ap-body">
-      <p v-if="!analyzed" class="ap-prompt">{{ t.shell.arrangementAnalysis.runPrompt }}</p>
-      <template v-else>
-        <p v-if="excludedTrackNames.length > 0" class="ap-excluded">
-          {{ t.shell.arrangementAnalysis.excluded }}: {{ excludedTrackNames.join(', ') }}
-        </p>
+    <Transition name="pop">
+      <div v-if="open" class="ap-popover" :style="popoverStyle" role="dialog" :aria-label="t.shell.arrangementAnalysis.title">
+        <p v-if="!analyzed" class="ap-prompt">{{ t.shell.arrangementAnalysis.runPrompt }}</p>
+        <template v-else>
+          <p v-if="excludedTrackNames.length > 0" class="ap-excluded">
+            {{ t.shell.arrangementAnalysis.excluded }}: {{ excludedTrackNames.join(', ') }}
+          </p>
 
-        <div v-if="sparklinePoints !== ''" class="ap-tension">
-          <span class="ap-tension-label">{{ t.shell.arrangementAnalysis.tension }}</span>
-          <svg
-            class="ap-spark"
-            :viewBox="`0 0 ${SPARK_WIDTH} ${SPARK_HEIGHT}`"
-            preserveAspectRatio="none"
-            aria-hidden="true"
-          >
-            <polyline :points="sparklinePoints" fill="none" stroke="currentColor" stroke-width="1" />
-          </svg>
-        </div>
+          <div v-if="sparklinePoints !== ''" class="ap-tension">
+            <span class="ap-tension-label">{{ t.shell.arrangementAnalysis.tension }}</span>
+            <svg
+              class="ap-spark"
+              :viewBox="`0 0 ${SPARK_WIDTH} ${SPARK_HEIGHT}`"
+              preserveAspectRatio="none"
+              aria-hidden="true"
+            >
+              <polyline :points="sparklinePoints" fill="none" stroke="currentColor" stroke-width="1" />
+            </svg>
+          </div>
 
-        <p v-if="conflicts.length === 0" class="ap-clear">
-          {{ t.shell.arrangementAnalysis.noConflicts }}
-        </p>
-        <ul v-else class="ap-conflicts">
-          <li v-for="(conflict, index) in conflicts" :key="index">
-            <button type="button" class="ap-row" @click="jumpTo(conflict)">
-              <span
-                class="ap-dot"
-                :class="conflict.safety === NoteSafety.Dissonant ? 'is-dissonant' : 'is-warning'"
-                :title="severityLabel(conflict)"
-                :aria-label="severityLabel(conflict)"
-              />
-              <span class="ap-pos">{{ positionLabel(conflict.ppq) }}</span>
-              <span class="ap-track">{{ conflict.trackName }}</span>
-              <span class="ap-pitch">{{ pitchLabel(conflict.pitch) }}</span>
-              <span v-if="conflict.rationale" class="ap-rationale">{{ conflict.rationale }}</span>
-            </button>
-          </li>
-        </ul>
-      </template>
-    </div>
+          <p v-if="conflicts.length === 0" class="ap-clear">
+            {{ t.shell.arrangementAnalysis.noConflicts }}
+          </p>
+          <ul v-else class="ap-conflicts">
+            <li v-for="(conflict, index) in conflicts" :key="index">
+              <button type="button" class="ap-row" @click="jumpTo(conflict)">
+                <span
+                  class="ap-dot"
+                  :class="conflict.safety === NoteSafety.Dissonant ? 'is-dissonant' : 'is-warning'"
+                  :title="severityLabel(conflict)"
+                  :aria-label="severityLabel(conflict)"
+                />
+                <span class="ap-pos">{{ positionLabel(conflict.ppq) }}</span>
+                <span class="ap-track">{{ conflict.trackName }}</span>
+                <span class="ap-pitch">{{ pitchLabel(conflict.pitch) }}</span>
+                <span v-if="conflict.rationale" class="ap-rationale">{{ conflict.rationale }}</span>
+              </button>
+            </li>
+          </ul>
+        </template>
+      </div>
+    </Transition>
   </section>
 </template>
 
@@ -187,7 +222,7 @@ function jumpTo(conflict: ArrangementConflict): void {
   align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-1) 0;
-  font: var(--fw-semibold) 9px var(--font-sans);
+  font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-4);
@@ -209,10 +244,9 @@ function jumpTo(conflict: ArrangementConflict): void {
 }
 
 .ap-analyze {
-  margin-left: auto;
-  padding: 1px var(--sp-2);
-  font: var(--fw-semibold) 9px var(--font-sans);
-  letter-spacing: 0.04em;
+  padding: var(--sp-1) var(--sp-3);
+  font: var(--fw-semibold) var(--fs-xs) var(--font-sans);
+  letter-spacing: 0.02em;
   color: var(--text-2);
   background: var(--surface-3);
   border-radius: var(--radius-sm);
@@ -236,13 +270,23 @@ function jumpTo(conflict: ArrangementConflict): void {
   cursor: default;
 }
 
-.ap-body {
+.ap-popover {
+  position: fixed;
+  z-index: 80;
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
-  max-height: 10rem;
+  width: 26rem;
+  max-width: calc(100vw - 2 * var(--sp-4));
+  max-height: min(20rem, calc(100vh - 2 * var(--sp-4)));
   overflow-y: auto;
-  padding: 0 var(--sp-4) var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--glass-3);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--glass-hairline), var(--shadow-pop);
 }
 
 .ap-prompt,
@@ -283,7 +327,8 @@ function jumpTo(conflict: ArrangementConflict): void {
 }
 
 .ap-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 6px 2.75rem 7rem 3rem 1fr;
   align-items: center;
   gap: var(--sp-3);
   width: 100%;
@@ -302,7 +347,6 @@ function jumpTo(conflict: ArrangementConflict): void {
 }
 
 .ap-dot {
-  flex: none;
   width: 6px;
   height: 6px;
   border-radius: 50%;
@@ -310,31 +354,24 @@ function jumpTo(conflict: ArrangementConflict): void {
 
 .ap-dot.is-warning {
   background: var(--warning);
-  opacity: 0.5;
 }
 
 .ap-dot.is-dissonant {
   background: var(--danger);
-  opacity: 0.5;
 }
 
 .ap-pos {
-  flex: none;
-  min-width: 2.5rem;
   font-variant-numeric: tabular-nums;
   color: var(--text-3);
 }
 
 .ap-track {
-  flex: none;
-  max-width: 9rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .ap-pitch {
-  flex: none;
   font-variant-numeric: tabular-nums;
 }
 
