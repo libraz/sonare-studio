@@ -41,6 +41,7 @@ defineProps<{
 const dqKey = defineModel<string>('dqKey', { required: true });
 const chordsEnabled = defineModel<boolean>('chordsEnabled', { required: true });
 const fullScoreEnabled = defineModel<boolean>('fullScoreEnabled', { required: true });
+const estimateFingering = defineModel<boolean>('estimateFingering', { required: true });
 const annotateEnabled = defineModel<boolean>('annotateEnabled', { required: true });
 const pageFormat = defineModel<ScorePageFormatKey>('pageFormat', { required: true });
 const landscape = defineModel<boolean>('landscape', { required: true });
@@ -115,6 +116,12 @@ const layoutOpen = ref(false);
       v-model="fullScoreEnabled"
       :label="t.shell.score.fullScore"
       :title="t.shell.score.fullScoreTitle"
+      size="sm"
+    />
+    <ToggleButton
+      v-model="estimateFingering"
+      :label="t.shell.score.fingering"
+      :title="t.shell.score.fingeringTitle"
       size="sm"
     />
     <ToggleButton

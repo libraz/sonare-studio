@@ -260,6 +260,8 @@ export interface DocumentNoteRef {
   startPpq: number;
   /** MIDI channel (integer, 0-15). */
   channel: number;
+  /** Zero-based ordinal among otherwise identical pitch/start/channel notes. */
+  ordinal?: number;
 }
 
 /** One persisted note annotation inside a document clip. */
@@ -306,10 +308,121 @@ export interface DocumentLineSpanAnnotation {
   glissandoText?: string;
 }
 
-/** Persisted score display settings (omitted from documents when default). */
+/** Display-quantize choices supported by the score toolbar. */
+export type ScoreDisplayQuantizeKey = '4' | '8' | '16' | '32' | '8t' | '16t';
+
+/** Project-owned score display/layout settings. */
+export interface ScoreDisplaySettings {
+  displayQuantizeKey: ScoreDisplayQuantizeKey;
+  chordsEnabled: boolean;
+  fullScoreEnabled: boolean;
+  estimateFingering: boolean;
+  pageFormat: 'a4' | 'letter';
+  landscape: boolean;
+  pageMarginMm: number;
+  scalePercent: number;
+  spacingStaff: number;
+  barsPerSystem: number;
+  barsPerPage: number;
+  grandStaffSplitPitch: number;
+  viewZoom: number;
+}
+
+/** Builds a fresh default score-settings object for a project lifecycle. */
+export function createDefaultScoreDisplaySettings(): ScoreDisplaySettings {
+  return {
+    displayQuantizeKey: '16',
+    chordsEnabled: false,
+    fullScoreEnabled: false,
+    estimateFingering: false,
+    pageFormat: 'a4',
+    landscape: false,
+    pageMarginMm: 10,
+    scalePercent: 50,
+    spacingStaff: 12,
+    barsPerSystem: 4,
+    barsPerPage: 16,
+    grandStaffSplitPitch: 60,
+    viewZoom: 1,
+  };
+}
+
+/** Persisted score display settings (individual default fields are omitted). */
 export interface DocumentScoreSettings {
   /** Display transpose in semitones (engraving only, never applied to MIDI). */
-  displayTransposeSemitones: number;
+  displayTransposeSemitones?: number;
+  displayQuantizeKey?: ScoreDisplayQuantizeKey;
+  chordsEnabled?: boolean;
+  fullScoreEnabled?: boolean;
+  estimateFingering?: boolean;
+  pageFormat?: 'a4' | 'letter';
+  landscape?: boolean;
+  pageMarginMm?: number;
+  scalePercent?: number;
+  spacingStaff?: number;
+  barsPerSystem?: number;
+  barsPerPage?: number;
+  grandStaffSplitPitch?: number;
+  viewZoom?: number;
+}
+
+function boundedNumber(
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number,
+  integer = false,
+): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  const bounded = Math.min(max, Math.max(min, value));
+  return integer ? Math.round(bounded) : bounded;
+}
+
+/** Validates a loaded document's optional score settings and supplies defaults. */
+export function scoreDisplaySettingsFromDocument(
+  source: Readonly<DocumentScoreSettings> | undefined,
+): ScoreDisplaySettings {
+  const defaults = createDefaultScoreDisplaySettings();
+  const quantize = source?.displayQuantizeKey;
+  return {
+    displayQuantizeKey:
+      quantize === '4' ||
+      quantize === '8' ||
+      quantize === '16' ||
+      quantize === '32' ||
+      quantize === '8t' ||
+      quantize === '16t'
+        ? quantize
+        : defaults.displayQuantizeKey,
+    chordsEnabled:
+      typeof source?.chordsEnabled === 'boolean' ? source.chordsEnabled : defaults.chordsEnabled,
+    fullScoreEnabled:
+      typeof source?.fullScoreEnabled === 'boolean'
+        ? source.fullScoreEnabled
+        : defaults.fullScoreEnabled,
+    estimateFingering:
+      typeof source?.estimateFingering === 'boolean'
+        ? source.estimateFingering
+        : defaults.estimateFingering,
+    pageFormat:
+      source?.pageFormat === 'a4' || source?.pageFormat === 'letter'
+        ? source.pageFormat
+        : defaults.pageFormat,
+    landscape: typeof source?.landscape === 'boolean' ? source.landscape : defaults.landscape,
+    pageMarginMm: boundedNumber(source?.pageMarginMm, defaults.pageMarginMm, 0, 40),
+    scalePercent: boundedNumber(source?.scalePercent, defaults.scalePercent, 20, 100, true),
+    spacingStaff: boundedNumber(source?.spacingStaff, defaults.spacingStaff, 0, 48, true),
+    barsPerSystem: boundedNumber(source?.barsPerSystem, defaults.barsPerSystem, 0, 12, true),
+    barsPerPage: boundedNumber(source?.barsPerPage, defaults.barsPerPage, 0, 48, true),
+    grandStaffSplitPitch: boundedNumber(
+      source?.grandStaffSplitPitch,
+      defaults.grandStaffSplitPitch,
+      0,
+      127,
+      true,
+    ),
+    viewZoom: boundedNumber(source?.viewZoom, defaults.viewZoom, 0.25, 4),
+  };
 }
 
 /** PPQ values are keyed at micro-PPQ resolution to absorb float round-trip noise. */
@@ -317,12 +430,30 @@ const KEY_PPQ_SCALE = 1e6;
 
 /** Content key shared by document refs and editor notes. */
 function refKey(ref: Readonly<DocumentNoteRef>): string {
-  return `${ref.pitch}|${Math.round(ref.startPpq * KEY_PPQ_SCALE)}|${ref.channel}`;
+  return `${ref.pitch}|${Math.round(ref.startPpq * KEY_PPQ_SCALE)}|${ref.channel}|${ref.ordinal ?? 0}`;
 }
 
 /** Copies the content-reference fields of a note. */
-function toNoteRef(note: Readonly<EditorNote>): DocumentNoteRef {
-  return { pitch: note.pitch, startPpq: note.startPpq, channel: note.channel };
+function toNoteRef(note: Readonly<EditorNote>, ordinal = 0): DocumentNoteRef {
+  return {
+    pitch: note.pitch,
+    startPpq: note.startPpq,
+    channel: note.channel,
+    ...(ordinal > 0 ? { ordinal } : {}),
+  };
+}
+
+/** Assigns deterministic ordinals to content-identical notes in mirror order. */
+function noteRefsById(notes: ReadonlyArray<EditorNote>): Map<number, DocumentNoteRef> {
+  const counts = new Map<string, number>();
+  const refs = new Map<number, DocumentNoteRef>();
+  for (const note of notes) {
+    const base = refKey(toNoteRef(note));
+    const ordinal = counts.get(base) ?? 0;
+    counts.set(base, ordinal + 1);
+    refs.set(note.id, toNoteRef(note, ordinal));
+  }
+  return refs;
 }
 
 /**
@@ -341,31 +472,32 @@ export function annotationsToDocument(
   notes: ReadonlyArray<EditorNote>,
 ): DocumentNoteAnnotation[] {
   const byId = new Map(notes.map((note) => [note.id, note]));
+  const refs = noteRefsById(notes);
   const out: DocumentNoteAnnotation[] = [];
   for (const [noteKey, annotation] of Object.entries(annotations)) {
     const note = byId.get(Number(noteKey));
     if (!note) continue; // Orphaned annotation: the note was deleted.
-    const entry: DocumentNoteAnnotation = toNoteRef(note);
+    const entry: DocumentNoteAnnotation = { ...(refs.get(note.id) ?? toNoteRef(note)) };
     if (annotation.dynamics !== undefined) entry.dynamics = annotation.dynamics;
     if (annotation.articulation !== undefined) entry.articulation = annotation.articulation;
     if (annotation.ornament !== undefined) entry.ornament = annotation.ornament;
     if (annotation.staffOverride !== undefined) entry.staffOverride = annotation.staffOverride;
     if (annotation.slurToNoteId !== undefined) {
       const target = byId.get(annotation.slurToNoteId);
-      if (target) entry.slurTo = toNoteRef(target);
+      if (target) entry.slurTo = refs.get(target.id) ?? toNoteRef(target);
     }
     if (annotation.hairpin !== undefined && annotation.hairpinToNoteId !== undefined) {
       const target = byId.get(annotation.hairpinToNoteId);
       if (target) {
         entry.hairpin = annotation.hairpin;
-        entry.hairpinTo = toNoteRef(target);
+        entry.hairpinTo = refs.get(target.id) ?? toNoteRef(target);
       }
     }
     if (annotation.lineSpan !== undefined && annotation.lineSpanToNoteId !== undefined) {
       const target = byId.get(annotation.lineSpanToNoteId);
       if (target) {
         entry.lineSpan = annotation.lineSpan;
-        entry.lineSpanTo = toNoteRef(target);
+        entry.lineSpanTo = refs.get(target.id) ?? toNoteRef(target);
         if (annotation.pedalStyle !== undefined) entry.pedalStyle = annotation.pedalStyle;
         if (annotation.glissandoLineType !== undefined) {
           entry.glissandoLineType = annotation.glissandoLineType;
@@ -385,7 +517,7 @@ export function annotationsToDocument(
       }
       additionalLineSpans.push({
         lineSpan: span.lineSpan,
-        lineSpanTo: toNoteRef(target),
+        lineSpanTo: refs.get(target.id) ?? toNoteRef(target),
         ...(span.pedalStyle !== undefined ? { pedalStyle: span.pedalStyle } : {}),
         ...(span.glissandoLineType !== undefined
           ? { glissandoLineType: span.glissandoLineType }
@@ -408,7 +540,13 @@ export function annotationsToDocument(
     }
     out.push(entry);
   }
-  out.sort((a, b) => a.startPpq - b.startPpq || a.pitch - b.pitch || a.channel - b.channel);
+  out.sort(
+    (a, b) =>
+      a.startPpq - b.startPpq ||
+      a.pitch - b.pitch ||
+      a.channel - b.channel ||
+      (a.ordinal ?? 0) - (b.ordinal ?? 0),
+  );
   return out;
 }
 
@@ -426,9 +564,8 @@ export function annotationsFromDocument(
   notes: ReadonlyArray<EditorNote>,
 ): ClipScoreAnnotations {
   const idByKey = new Map<string, number>();
-  for (const note of notes) {
-    const key = refKey(note);
-    if (!idByKey.has(key)) idByKey.set(key, note.id);
+  for (const [id, ref] of noteRefsById(notes)) {
+    idByKey.set(refKey(ref), id);
   }
   const out: ClipScoreAnnotations = {};
   for (const entry of entries) {

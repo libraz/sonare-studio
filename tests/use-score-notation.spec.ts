@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { NotatedMeasure, NotatedScore } from '@/notation/model';
+import { serializeMusicXml } from '@/notation/musicxml';
 import type { EditorClip, EditorSection, EditorTrack } from '@/project/types';
 import { scoreKeyMarkerName, scoreLyricMarkerName } from '@/ui/score/marker-editors';
 import {
@@ -12,6 +13,7 @@ import {
   applySectionMarks,
   applyTempoMarks,
   buildFullScore,
+  buildFullScoreProjection,
 } from '@/ui/score/use-score-notation';
 
 function measure(index: number): NotatedMeasure {
@@ -130,6 +132,39 @@ function variableMeterScore(): NotatedScore {
 }
 
 describe('buildFullScore', () => {
+  it('uses one all-part audible projection for Full Score engraving and harmony', () => {
+    const projection = buildFullScoreProjection(
+      {
+        clips: [
+          midiClip({
+            id: 1,
+            trackId: 1,
+            startPpq: 0,
+            sourceOffsetPpq: 0,
+            notes: [{ id: 1, pitch: 60, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 }],
+          }),
+          midiClip({
+            id: 2,
+            trackId: 2,
+            startPpq: 0,
+            sourceOffsetPpq: 0,
+            notes: [
+              { id: 2, pitch: 64, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 },
+              { id: 3, pitch: 67, velocity: 96, startPpq: 8, durationPpq: 1, channel: 0 },
+            ],
+          }),
+        ],
+        scoreAnnotations: {},
+      } as never,
+      0,
+      4,
+    );
+
+    expect(projection.notes.map((note) => note.pitch)).toEqual([60, 64]);
+    expect(projection.notesByTrack.get(1)?.map((note) => note.pitch)).toEqual([60]);
+    expect(projection.notesByTrack.get(2)?.map((note) => note.pitch)).toEqual([64]);
+  });
+
   it('builds one named part per overlapping MIDI track with automatic clefs', () => {
     const out = buildFullScore(
       {
@@ -172,6 +207,45 @@ describe('buildFullScore', () => {
     ]);
   });
 
+  it('applies the production full-score fingering option to every part', () => {
+    const out = buildFullScore(
+      {
+        tracks: [track(1)],
+        clips: [
+          midiClip({
+            startPpq: 0,
+            lengthPpq: 8,
+            sourceOffsetPpq: 0,
+            notes: [60, 62, 64, 65, 67, 69, 71, 72].map((pitch, index) => ({
+              id: index + 1,
+              pitch,
+              velocity: 96,
+              startPpq: index,
+              durationPpq: 0.75,
+              channel: 0,
+            })),
+          }),
+        ],
+      } as never,
+      {
+        divisionPpq: 0.25,
+        timeSig: { beats: 4, beatUnit: 4 },
+        keyFifths: 0,
+        clipStartPpq: 0,
+        clipLengthPpq: 8,
+        displayTransposeSemitones: 0,
+        estimateFingering: true,
+      },
+    );
+
+    const fingers = out.parts[0].measures
+      .flatMap((measure) => measure.voices)
+      .flatMap((voice) => voice.events)
+      .filter((event) => event.kind === 'note')
+      .map((event) => event.fingering?.[0]);
+    expect(fingers).toEqual([1, 2, 3, 1, 2, 3, 4, 5]);
+  });
+
   it('uses playback note windows so trimmed MIDI clips do not show hidden notes', () => {
     const out = buildFullScore(
       {
@@ -197,6 +271,57 @@ describe('buildFullScore', () => {
       [8, [62]],
       [9, [64]],
     ]);
+  });
+
+  it('keeps identical note ids in different clips distinct through MusicXML', () => {
+    const out = buildFullScore(
+      {
+        tracks: [track(1), track(2)],
+        clips: [
+          midiClip({
+            id: 10,
+            trackId: 1,
+            startPpq: 0,
+            sourceOffsetPpq: 0,
+            notes: [{ id: 1, pitch: 60, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 }],
+          }),
+          midiClip({
+            id: 20,
+            trackId: 2,
+            startPpq: 0,
+            sourceOffsetPpq: 0,
+            notes: [{ id: 1, pitch: 60, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 }],
+          }),
+        ],
+        scoreAnnotations: {
+          10: { 1: { dynamics: 'f' } },
+          20: { 1: { articulation: 'staccato' } },
+        },
+      } as never,
+      {
+        divisionPpq: 1,
+        timeSig: { beats: 4, beatUnit: 4 },
+        keyFifths: 0,
+        clipStartPpq: 0,
+        clipLengthPpq: 4,
+        displayTransposeSemitones: 0,
+      },
+    );
+
+    const identities = out.parts.map(
+      (part) =>
+        part.measures[0].voices[0].events.find((event) => event.kind === 'note')
+          ?.sourceIdentities?.[0],
+    );
+    expect(identities).toEqual([
+      { clipId: 10, noteId: 1, occurrence: 0 },
+      { clipId: 20, noteId: 1, occurrence: 0 },
+    ]);
+    const xml = serializeMusicXml(out);
+    expect(xml).toContain('xml:id="sonare-note-c10n1o0-s0-p0"');
+    expect(xml).toContain('xml:id="sonare-note-c20n1o0-s0-p0"');
+    expect(xml).toContain('<f/>');
+    expect(xml).toContain('<staccato placement="above"/>');
   });
 });
 
@@ -279,7 +404,13 @@ describe('applyTempoMarks', () => {
       12,
       4,
     );
-    expect(out.measureTempos).toEqual({ 0: 120, 1: 96 });
+    expect(out.measureTempoMarks).toEqual({
+      0: [{ bpm: 120, offsetPpq: 0 }],
+      1: [
+        { bpm: 96, offsetPpq: 0 },
+        { bpm: 88, offsetPpq: 2 },
+      ],
+    });
   });
 
   it('uses the instantaneous tempo at the clip start', () => {
@@ -295,7 +426,10 @@ describe('applyTempoMarks', () => {
       12,
       4,
     );
-    expect(out.measureTempos).toEqual({ 0: 120, 1: 90 });
+    expect(out.measureTempoMarks).toEqual({
+      0: [{ bpm: 120, offsetPpq: 0 }],
+      1: [{ bpm: 90, offsetPpq: 0 }],
+    });
   });
 
   it('adds ritardando, accelerando and a tempo text for ramped segments', () => {
@@ -314,9 +448,9 @@ describe('applyTempoMarks', () => {
       4,
     );
     expect(out.measureTempoTexts).toEqual({
-      0: { text: 'rit.', bpm: 120 },
-      1: { text: 'a tempo', bpm: 90 },
-      2: { text: 'accel.', bpm: 90 },
+      0: [{ text: 'rit.', bpm: 120, offsetPpq: 0 }],
+      1: [{ text: 'a tempo', bpm: 90, offsetPpq: 0 }],
+      2: [{ text: 'accel.', bpm: 90, offsetPpq: 0 }],
     });
   });
 
@@ -333,7 +467,29 @@ describe('applyTempoMarks', () => {
       10,
       4,
     );
-    expect(out.measureTempos).toEqual({ 0: 120, 2: 96 });
+    expect(out.measureTempoMarks).toEqual({
+      0: [{ bpm: 120, offsetPpq: 0 }],
+      2: [{ bpm: 96, offsetPpq: 0 }],
+    });
+  });
+
+  it('keeps a mid-measure tempo offset on a variable-meter grid', () => {
+    const out = variableMeterScore();
+    applyTempoMarks(
+      out,
+      [
+        { startPpq: 0, bpm: 120 },
+        { startPpq: 5, bpm: 84 },
+      ],
+      120,
+      0,
+      10,
+      4,
+    );
+    expect(out.measureTempoMarks).toEqual({
+      0: [{ bpm: 120, offsetPpq: 0 }],
+      1: [{ bpm: 84, offsetPpq: 1 }],
+    });
   });
 });
 

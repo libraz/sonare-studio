@@ -49,10 +49,11 @@ export type VerovioRequestBody =
   | { type: 'renderPage'; page: number }
   | { type: 'timemap' }
   | { type: 'options'; options: VerovioOptions }
+  | { type: 'cancel' }
   | { type: 'destroy' };
 
-/** A request message: payload plus caller-generated correlation id. */
-export type VerovioRequest = VerovioRequestBody & { id: number };
+/** A request message: payload plus correlation and replaceable-session ids. */
+export type VerovioRequest = VerovioRequestBody & { id: number; sessionId: number };
 
 /** Response messages; `id` echoes the originating request. */
 export type VerovioResponse =
@@ -60,6 +61,7 @@ export type VerovioResponse =
   | { id: number; type: 'renderPage'; svg: string }
   | { id: number; type: 'timemap'; entries: VerovioTimemapEntry[] }
   | { id: number; type: 'options'; pageCount: number }
+  | { id: number; type: 'cancel' }
   | { id: number; type: 'destroy' }
   | { id: number; type: 'error'; error: string };
 
@@ -93,6 +95,10 @@ function post(message: VerovioResponse): void {
 }
 
 async function handle(request: VerovioRequest): Promise<void> {
+  if (request.type === 'cancel') {
+    post({ id: request.id, type: 'cancel' });
+    return;
+  }
   const toolkit = await toolkitPromise;
   switch (request.type) {
     case 'load': {
@@ -147,11 +153,17 @@ function assertLoaded(): void {
 
 /** Serializes request handling so responses follow request order. */
 let queue: Promise<void> = Promise.resolve();
+/** Highest session observed, updated before queued work is allowed to start. */
+let newestSessionId = 0;
 
 scope.onmessage = (event: MessageEvent<VerovioRequest>) => {
   const request = event.data;
+  newestSessionId = Math.max(newestSessionId, request.sessionId);
   queue = queue.then(async () => {
     try {
+      if (request.sessionId < newestSessionId && request.type !== 'destroy') {
+        throw new DOMException('Verovio request superseded.', 'AbortError');
+      }
       await handle(request);
     } catch (error) {
       post({

@@ -65,6 +65,7 @@ export function layoutToVerovioOptions(layout: LayoutOptions = {}): VerovioOptio
 }
 
 interface PendingRequest {
+  sessionId: number;
   resolve: (response: VerovioResponse) => void;
   reject: (error: Error) => void;
 }
@@ -98,6 +99,7 @@ export class VerovioClient {
   private readonly worker: Worker;
   private readonly pending = new Map<number, PendingRequest>();
   private nextId = 1;
+  private sessionId = 0;
   private disposed = false;
   /** Set when the worker dies; later sends reject with this instead of hanging. */
   private fatalError: Error | null = null;
@@ -119,11 +121,15 @@ export class VerovioClient {
    * @returns The resulting page count.
    */
   async load(musicXml: string, layout?: LayoutOptions): Promise<number> {
-    const response = await this.send({
-      type: 'load',
-      musicXml,
-      options: layoutToVerovioOptions(layout),
-    });
+    const sessionId = this.beginSession();
+    const response = await this.send(
+      {
+        type: 'load',
+        musicXml,
+        options: layoutToVerovioOptions(layout),
+      },
+      sessionId,
+    );
     return expectResponse(response, 'load').pageCount;
   }
 
@@ -156,6 +162,25 @@ export class VerovioClient {
   }
 
   /**
+   * Invalidates this client's current worker session and rejects every queued
+   * request. The worker observes the new session before running older queued
+   * work, while the client remains reusable for the replacement operation.
+   */
+  cancelPending(
+    reason: Error = new DOMException('Verovio operation cancelled.', 'AbortError'),
+  ): void {
+    if (this.disposed || this.fatalError) return;
+    const sessionId = ++this.sessionId;
+    this.rejectBeforeSession(sessionId, reason);
+    const request: VerovioRequest = {
+      id: this.nextId++,
+      sessionId,
+      type: 'cancel',
+    };
+    this.worker.postMessage(request);
+  }
+
+  /**
    * Terminates the worker and rejects all in-flight requests. The client is
    * unusable afterwards; further calls reject.
    */
@@ -164,14 +189,15 @@ export class VerovioClient {
       return;
     }
     this.disposed = true;
+    const sessionId = ++this.sessionId;
     // Best-effort native teardown; terminate() reclaims the memory regardless.
-    const destroy: VerovioRequest = { id: this.nextId++, type: 'destroy' };
+    const destroy: VerovioRequest = { id: this.nextId++, sessionId, type: 'destroy' };
     this.worker.postMessage(destroy);
     this.teardownWorker();
     this.rejectAll(new Error('VerovioClient is disposed'));
   }
 
-  private send(body: VerovioRequestBody): Promise<VerovioResponse> {
+  private send(body: VerovioRequestBody, sessionId = this.sessionId): Promise<VerovioResponse> {
     if (this.fatalError) {
       return Promise.reject(this.fatalError);
     }
@@ -180,10 +206,27 @@ export class VerovioClient {
     }
     const id = this.nextId++;
     return new Promise<VerovioResponse>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      const request: VerovioRequest = { ...body, id };
+      this.pending.set(id, { sessionId, resolve, reject });
+      const request: VerovioRequest = { ...body, id, sessionId };
       this.worker.postMessage(request);
     });
+  }
+
+  private beginSession(): number {
+    const sessionId = ++this.sessionId;
+    this.rejectBeforeSession(
+      sessionId,
+      new DOMException('Verovio operation superseded.', 'AbortError'),
+    );
+    return sessionId;
+  }
+
+  private rejectBeforeSession(sessionId: number, error: Error): void {
+    for (const [id, entry] of this.pending) {
+      if (entry.sessionId >= sessionId) continue;
+      this.pending.delete(id);
+      entry.reject(error);
+    }
   }
 
   private readonly handleMessage = (event: MessageEvent<VerovioResponse>): void => {

@@ -11,8 +11,10 @@
  * the injected `onAnnotateClick` before the seek/select still runs.
  */
 
+import { scoreSourceIdentitiesFromXmlId } from '@/notation/source-identity';
 import type { VerovioTimemapEntry } from '@/notation/verovio';
-import { setSelection } from '@/project/commands';
+import { setActiveClip, setSelection } from '@/project/commands';
+import { projectMidiNoteOccurrences } from '@/project/midi-projection';
 import type { useProjectStore } from '@/project/store';
 
 /** Selection matching tolerance on the quantized onset grid, in PPQ. */
@@ -68,6 +70,7 @@ export function useScoreInteractions(options: ScoreInteractionsOptions): ScoreIn
         startY: number;
         currentY: number;
         ids: number[];
+        clipId?: number;
         dragging: boolean;
       }
     | undefined;
@@ -95,7 +98,8 @@ export function useScoreInteractions(options: ScoreInteractionsOptions): ScoreIn
   function noteIdsAt(ppq: number): number[] {
     const exact: number[] = [];
     const sounding: number[] = [];
-    for (const note of store.notes) {
+    const notes = store.activeClip ? projectMidiNoteOccurrences(store.activeClip) : store.notes;
+    for (const note of notes) {
       const onset = quantizedOnsetPpq(note);
       if (onset !== null && Math.abs(onset - ppq) < ONSET_MATCH_EPSILON_PPQ) exact.push(note.id);
       if (note.startPpq <= ppq && ppq < note.startPpq + note.durationPpq) sounding.push(note.id);
@@ -103,13 +107,27 @@ export function useScoreInteractions(options: ScoreInteractionsOptions): ScoreIn
     return exact.length > 0 ? exact : sounding;
   }
 
-  function noteIdsFromEventTarget(target: EventTarget | null): number[] {
-    if (!(target instanceof Element)) return [];
+  function noteSourceFromEventTarget(
+    target: EventTarget | null,
+  ): { clipId?: number; ids: number[]; ppq: number } | null {
+    if (!(target instanceof Element)) return null;
     const group = target.closest('g.note');
-    if (!group?.id) return [];
+    if (!group?.id) return null;
     const entry = options.getTimemap().find((e) => e.on?.includes(group.id));
-    if (!entry) return [];
-    return noteIdsAt(store.clipStartPpq + entry.qstamp);
+    if (!entry) return null;
+    const ppq = store.clipStartPpq + entry.qstamp;
+    const identities = scoreSourceIdentitiesFromXmlId(group.id);
+    const first = identities[0];
+    if (first) {
+      return {
+        clipId: first.clipId,
+        ids: identities
+          .filter((identity) => identity.clipId === first.clipId)
+          .map((identity) => identity.noteId),
+        ppq,
+      };
+    }
+    return { ids: noteIdsAt(ppq), ppq };
   }
 
   /** Click on an engraved note: seek the transport and select the source notes. */
@@ -120,28 +138,26 @@ export function useScoreInteractions(options: ScoreInteractionsOptions): ScoreIn
       event.stopPropagation();
       return;
     }
-    const target = event.target;
-    if (!(target instanceof Element)) return;
-    const group = target.closest('g.note');
-    if (!group?.id) return;
-    const entry = options.getTimemap().find((e) => e.on?.includes(group.id));
-    if (!entry) return;
-    const ppq = store.clipStartPpq + entry.qstamp;
-    const ids = noteIdsAt(ppq);
-    if (options.isAnnotateEnabled()) options.onAnnotateClick?.(event, ids);
-    options.seek(ppq);
-    setSelection(ids);
+    const source = noteSourceFromEventTarget(event.target);
+    if (!source) return;
+    if (source.clipId !== undefined && source.clipId !== store.clipId) {
+      setActiveClip(source.clipId);
+    }
+    if (options.isAnnotateEnabled()) options.onAnnotateClick?.(event, source.ids);
+    options.seek(source.ppq);
+    setSelection(source.ids);
   }
 
   function onSvgPointerDown(event: PointerEvent): void {
     if (!options.isAnnotateEnabled() || event.button !== 0) return;
-    const ids = noteIdsFromEventTarget(event.target);
-    if (ids.length === 0) return;
+    const source = noteSourceFromEventTarget(event.target);
+    if (!source || source.ids.length === 0) return;
     staffDrag = {
       pointerId: event.pointerId,
       startY: event.clientY,
       currentY: event.clientY,
-      ids,
+      ids: source.ids,
+      clipId: source.clipId,
       dragging: false,
     };
     if (event.currentTarget instanceof Element) {
@@ -167,6 +183,7 @@ export function useScoreInteractions(options: ScoreInteractionsOptions): ScoreIn
     }
     const deltaY = event.clientY - drag.startY;
     if (!drag.dragging || Math.abs(deltaY) < STAFF_DRAG_THRESHOLD_PX) return;
+    if (drag.clipId !== undefined && drag.clipId !== store.clipId) setActiveClip(drag.clipId);
     options.onAnnotateStaffDrag?.(drag.ids, deltaY < 0 ? 1 : 2);
     suppressNextClick = true;
     event.preventDefault();
@@ -185,6 +202,6 @@ export function useScoreInteractions(options: ScoreInteractionsOptions): ScoreIn
     onSvgPointerUp,
     onSvgPointerCancel,
     noteIdsAt,
-    noteIdsAtEvent: (event: Event) => noteIdsFromEventTarget(event.target),
+    noteIdsAtEvent: (event: Event) => noteSourceFromEventTarget(event.target)?.ids ?? [],
   };
 }

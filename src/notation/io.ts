@@ -7,10 +7,14 @@
  */
 
 import type { ProjectDocument } from '@/project/serialization';
-import { importMusicXml } from './musicxml-import';
+import { importMusicXmlInWorker } from './musicxml-import-client';
 import { downloadBlob } from './print';
 
-export { importMusicXml, MusicXmlImportError } from './musicxml-import';
+export {
+  importMusicXml,
+  importMusicXmlWithReport,
+  MusicXmlImportError,
+} from './musicxml-import';
 
 /** MIME type for MusicXML downloads. */
 const MUSICXML_MIME = 'application/vnd.recordare.musicxml+xml';
@@ -48,5 +52,5 @@ export function exportMusicXml(xml: string, filename: string): void {
  * @throws MusicXmlImportError When the file is not well-formed or supported.
  */
 export async function importMusicXmlFile(file: Blob & { name?: string }): Promise<ProjectDocument> {
-  return importMusicXml(await file.text(), file.name);
+  return (await importMusicXmlInWorker(await file.text(), file.name)).document;
 }

@@ -7,6 +7,9 @@
  * either the print pipeline or the generated PDF.
  */
 
+import { DEFAULT_SCORE_EXPORT_MEMORY_BUDGET_BYTES } from '@/export/memory-budget';
+import { PayloadMemoryMeter, type PayloadMemorySample, utf8ByteLength } from '@/lib/payload-memory';
+
 /** Physical page size in millimetres. */
 export interface PageLayout {
   pageWidthMm: number;
@@ -22,6 +25,12 @@ export interface PdfMetadata {
   headerTitle?: string;
   /** Whether to draw "Page X / N" at the bottom of each PDF page. Defaults to true. */
   pageNumbers?: boolean;
+  /** Cancels lazy PDF conversion between page imports/renders. */
+  signal?: AbortSignal;
+  /** Source-equivalent retained page budget for the PDF consumer. */
+  memoryBudgetBytes?: number;
+  /** Receives deterministic payload and optional browser-heap samples. */
+  onMemorySample?: (sample: PayloadMemorySample) => void;
 }
 
 /** Points per millimetre (72 pt per inch / 25.4 mm per inch). */
@@ -29,6 +38,21 @@ const PT_PER_MM = 72 / 25.4;
 
 /** Conservative margin used for PDF-only headers and footers. */
 const PDF_OVERLAY_MARGIN_MM = 7;
+export const MAX_SCORE_PAGE_SVG_BYTES = 32 * 1024 * 1024;
+
+export interface PdfPageWriter {
+  /** Consumes one rendered SVG page; the caller may release the string after await. */
+  addPage(svg: string, page: number): Promise<void>;
+  /** Atomically materializes the finished PDF after every page was consumed. */
+  close(): Blob;
+}
+
+export interface PrintPageWriter {
+  /** Parses and consumes one rendered SVG page in order. */
+  addPage(svg: string, page: number): void;
+  /** Opens the browser print dialog after every declared page was consumed. */
+  print(): void;
+}
 
 /**
  * Converts millimetres to PostScript points.
@@ -101,6 +125,9 @@ export function buildPrintPageCss(layout: PageLayout): string {
  * @throws Error when the markup is not well-formed SVG.
  */
 function parseSvgPage(svg: string): Element {
+  if (utf8ByteLength(svg) > MAX_SCORE_PAGE_SVG_BYTES) {
+    throw new Error(`SVG page exceeds the ${MAX_SCORE_PAGE_SVG_BYTES}-byte limit`);
+  }
   const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml');
   if (parsed.getElementsByTagName('parsererror').length > 0) {
     throw new Error('Invalid SVG page markup');
@@ -123,6 +150,26 @@ function parseSvgPage(svg: string): Element {
  * @param layout Physical page size matching the rendered pages.
  */
 export function printScore(svgPages: string[], layout: PageLayout): void {
+  const writer = createPrintPageWriter(svgPages.length, layout);
+  for (let index = 0; index < svgPages.length; index++) {
+    writer.addPage(svgPages[index], index + 1);
+  }
+  writer.print();
+}
+
+/** Creates a print sink that releases each SVG string after parsing it into detached DOM. */
+export function createPrintPageWriter(
+  pageCount: number,
+  layout: PageLayout,
+  memory: {
+    budgetBytes?: number;
+    onSample?: (sample: PayloadMemorySample) => void;
+  } = {},
+): PrintPageWriter {
+  if (!Number.isInteger(pageCount) || pageCount <= 0) {
+    throw new TypeError('Print page writer requires at least one page');
+  }
+  if (pageCount > 500) throw new RangeError('Score print page count exceeds limit 500');
   const style = document.createElement('style');
   style.textContent = buildPrintPageCss(layout);
 
@@ -130,32 +177,63 @@ export function printScore(svgPages: string[], layout: PageLayout): void {
   root.className = PRINT_ROOT_CLASS;
   // Hidden on screen; the print stylesheet overrides this with !important.
   root.style.display = 'none';
-  for (const svg of svgPages) {
-    const page = document.createElement('div');
-    page.className = PRINT_PAGE_CLASS;
-    page.append(document.importNode(parseSvgPage(svg), true));
-    root.append(page);
-  }
-
-  document.head.append(style);
-  document.body.append(root);
-  let cleanupTimer: ReturnType<typeof setTimeout> | null = null;
-  const cleanup = () => {
-    if (cleanupTimer !== null) {
-      clearTimeout(cleanupTimer);
-      cleanupTimer = null;
-    }
-    window.removeEventListener('afterprint', cleanup);
-    root.remove();
-    style.remove();
+  const meter = new PayloadMemoryMeter({
+    label: 'Score print',
+    budgetBytes: memory.budgetBytes ?? DEFAULT_SCORE_EXPORT_MEMORY_BUDGET_BYTES,
+    onSample: memory.onSample,
+  });
+  const releases: Array<() => void> = [];
+  const releaseAll = () => {
+    while (releases.length > 0) releases.pop()?.();
   };
-  try {
-    window.addEventListener('afterprint', cleanup, { once: true });
-    window.print();
-    cleanupTimer = setTimeout(cleanup, PRINT_CLEANUP_FALLBACK_MS);
-  } finally {
-    if (cleanupTimer === null) cleanup();
-  }
+  let consumed = 0;
+  return {
+    addPage(svg, page): void {
+      if (page !== consumed + 1 || page > pageCount) {
+        throw new RangeError(`Print pages must be consumed in order (received ${page})`);
+      }
+      const release = meter.retain(utf8ByteLength(svg), `page ${page}/${pageCount}`);
+      try {
+        const wrapper = document.createElement('div');
+        wrapper.className = PRINT_PAGE_CLASS;
+        wrapper.append(document.importNode(parseSvgPage(svg), true));
+        root.append(wrapper);
+        releases.push(release);
+        consumed = page;
+      } catch (error) {
+        release();
+        releaseAll();
+        root.replaceChildren();
+        throw error;
+      }
+    },
+    print(): void {
+      if (consumed !== pageCount) {
+        throw new Error(`Print page writer opened after ${consumed} of ${pageCount} pages`);
+      }
+      document.head.append(style);
+      document.body.append(root);
+      let cleanupTimer: ReturnType<typeof setTimeout> | null = null;
+      const cleanup = () => {
+        if (cleanupTimer !== null) {
+          clearTimeout(cleanupTimer);
+          cleanupTimer = null;
+        }
+        window.removeEventListener('afterprint', cleanup);
+        root.remove();
+        style.remove();
+        root.replaceChildren();
+        releaseAll();
+      };
+      try {
+        window.addEventListener('afterprint', cleanup, { once: true });
+        window.print();
+        cleanupTimer = setTimeout(cleanup, PRINT_CLEANUP_FALLBACK_MS);
+      } finally {
+        if (cleanupTimer === null) cleanup();
+      }
+    },
+  };
 }
 
 /**
@@ -176,7 +254,26 @@ export async function exportPdf(
   metadata: PdfMetadata = {},
 ): Promise<Blob> {
   if (svgPages.length === 0) throw new TypeError('exportPdf requires at least one SVG page');
+  const writer = await createPdfPageWriter(svgPages.length, layout, metadata);
+  for (let i = 0; i < svgPages.length; i++) {
+    await writer.addPage(svgPages[i], i + 1);
+  }
+  return writer.close();
+}
+
+/** Creates a PDF sink that renders and releases one SVG string at a time. */
+export async function createPdfPageWriter(
+  pageCount: number,
+  layout: PageLayout,
+  metadata: PdfMetadata = {},
+): Promise<PdfPageWriter> {
+  if (!Number.isInteger(pageCount) || pageCount <= 0) {
+    throw new TypeError('PDF page writer requires at least one page');
+  }
+  if (pageCount > 500) throw new RangeError('Score PDF page count exceeds limit 500');
+  metadata.signal?.throwIfAborted();
   const [{ jsPDF }] = await Promise.all([import('jspdf'), import('svg2pdf.js')]);
+  metadata.signal?.throwIfAborted();
   const format: [number, number] = [layout.pageWidthMm, layout.pageHeightMm];
   const orientation = layout.pageWidthMm > layout.pageHeightMm ? 'landscape' : 'portrait';
   const doc = new jsPDF({ unit: 'mm', format, orientation });
@@ -188,17 +285,51 @@ export async function exportPdf(
   });
   const headerTitle = metadata.headerTitle?.trim() || metadata.title?.trim() || '';
   const pageNumbers = metadata.pageNumbers !== false;
-  for (let i = 0; i < svgPages.length; i++) {
-    if (i > 0) doc.addPage(format, orientation);
-    await doc.svg(parseSvgPage(svgPages[i]), {
-      x: 0,
-      y: 0,
-      width: layout.pageWidthMm,
-      height: layout.pageHeightMm,
-    });
-    appendPdfPageOverlay(doc, layout, i + 1, svgPages.length, headerTitle, pageNumbers);
-  }
-  return doc.output('blob');
+  const meter = new PayloadMemoryMeter({
+    label: 'Score PDF',
+    budgetBytes: metadata.memoryBudgetBytes ?? DEFAULT_SCORE_EXPORT_MEMORY_BUDGET_BYTES,
+    onSample: metadata.onMemorySample,
+  });
+  const releases: Array<() => void> = [];
+  const releaseAll = () => {
+    while (releases.length > 0) releases.pop()?.();
+  };
+  let consumed = 0;
+  return {
+    async addPage(svg, page): Promise<void> {
+      metadata.signal?.throwIfAborted();
+      if (page !== consumed + 1 || page > pageCount) {
+        throw new RangeError(`PDF pages must be consumed in order (received ${page})`);
+      }
+      const release = meter.retain(utf8ByteLength(svg), `page ${page}/${pageCount}`);
+      try {
+        if (page > 1) doc.addPage(format, orientation);
+        await doc.svg(parseSvgPage(svg), {
+          x: 0,
+          y: 0,
+          width: layout.pageWidthMm,
+          height: layout.pageHeightMm,
+        });
+        metadata.signal?.throwIfAborted();
+        appendPdfPageOverlay(doc, layout, page, pageCount, headerTitle, pageNumbers);
+        releases.push(release);
+        consumed = page;
+      } catch (error) {
+        release();
+        releaseAll();
+        throw error;
+      }
+    },
+    close(): Blob {
+      metadata.signal?.throwIfAborted();
+      if (consumed !== pageCount) {
+        throw new Error(`PDF page writer closed after ${consumed} of ${pageCount} pages`);
+      }
+      const blob = doc.output('blob');
+      releaseAll();
+      return blob;
+    },
+  };
 }
 
 function appendPdfPageOverlay(

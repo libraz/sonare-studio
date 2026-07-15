@@ -12,6 +12,7 @@
  */
 
 import type { ScoreNoteAnnotation } from '@/project/annotations';
+import type { MidiSourceIdentity } from '@/project/midi-projection';
 
 /** Base (undotted) note duration, from whole note down to 64th note. */
 export type NoteValueBase = 'whole' | 'half' | 'quarter' | 'eighth' | '16th' | '32nd' | '64th';
@@ -210,6 +211,8 @@ export interface NotatedEvent {
    * pipeline never writes through these ids back to MIDI data.
    */
   sourceIds?: number[];
+  /** Stable clip/note/loop identities represented by this engraved event. */
+  sourceIdentities?: MidiSourceIdentity[];
   /**
    * MIDI channels whose source notes produced this event (0-based, ascending,
    * absent for rests or hand-authored fixtures). Used by serializers for
@@ -221,6 +224,8 @@ export interface NotatedEvent {
    * from editor notes. Serializers may use this for display-only accents.
    */
   velocity?: number;
+  /** Stable group id separating adjacent tuplets with the same ratio. */
+  tupletGroupId?: string;
 }
 
 /** All events of one voice within one measure, in onset order. */
@@ -302,6 +307,16 @@ export interface NotatedTempoText {
   text: string;
   /** Optional playback tempo at the same measure, in BPM. */
   bpm?: number;
+  /** Offset from the containing measure start in PPQ. */
+  offsetPpq?: number;
+}
+
+/** One exact metronome/playback tempo location inside a measure. */
+export interface NotatedTempoMark {
+  /** Quarter-note BPM used by playback and converted for the display beat unit. */
+  bpm: number;
+  /** Offset from the containing measure start in PPQ. */
+  offsetPpq: number;
 }
 
 /** General text direction displayed above the staff. */
@@ -372,10 +387,12 @@ export interface NotatedScore {
   measureRehearsals?: Readonly<Record<number, string>>;
   /** Optional metronome tempo marks in BPM, keyed by zero-based measure index. */
   measureTempos?: Readonly<Record<number, number>>;
+  /** Exact tempo marks (including mid-measure changes), keyed by measure index. */
+  measureTempoMarks?: Readonly<Record<number, ReadonlyArray<NotatedTempoMark>>>;
   /** Optional key signature changes in fifths, keyed by zero-based measure index. */
   measureKeyFifths?: Readonly<Record<number, number>>;
   /** Optional textual tempo/change directives, keyed by zero-based measure index. */
-  measureTempoTexts?: Readonly<Record<number, NotatedTempoText>>;
+  measureTempoTexts?: Readonly<Record<number, NotatedTempoText | ReadonlyArray<NotatedTempoText>>>;
   /** Optional general text directions, keyed by zero-based measure index. */
   measureTexts?: Readonly<Record<number, ReadonlyArray<NotatedMeasureText>>>;
   /** Optional lyric syllables resolved to note attacks by PPQ. */

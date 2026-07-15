@@ -3,7 +3,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick, ref } from 'vue';
 import ScorePanel from '@/components/score/ScorePanel.vue';
-import { clearHistory } from '@/project/commands';
+import { addNote, clearHistory } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 
 vi.mock('@/lib/wasm', async () => {
@@ -117,6 +117,31 @@ describe('ScorePanel marker tools', () => {
     expect((field(wrapper, 'Lyric').element as HTMLInputElement).value).toBe('');
   });
 
+  it('exposes score notes for keyboard selection, seeking, and annotation', async () => {
+    const noteId = addNote({ pitch: 60, velocity: 96, startPpq: 1, durationPpq: 1 });
+    const wrapper = mount(ScorePanel, {
+      global: {
+        stubs: {
+          EmptyState: true,
+          ScoreAnnotationPalette: true,
+          ScoreToolbar: true,
+        },
+      },
+    });
+    await nextTick();
+
+    const navigator = wrapper.get('[role="listbox"]');
+    expect(navigator.attributes('aria-label')).toBe('Score note navigator');
+    expect(wrapper.get('[role="option"]').text()).toContain('C4');
+
+    await navigator.trigger('keydown', { key: ' ' });
+    expect(store.selection.has(noteId)).toBe(true);
+    expect(wrapper.emitted('seek')).toEqual([[1]]);
+
+    await navigator.trigger('keydown', { key: 'F10', shiftKey: true });
+    expect(wrapper.find('score-annotation-palette-stub').exists()).toBe(true);
+  });
+
   it('adds key markers snapped to the containing score measure', async () => {
     const wrapper = mount(ScorePanel, {
       props: {
@@ -174,5 +199,40 @@ describe('ScorePanel marker tools', () => {
     vi.runOnlyPendingTimers();
 
     expect(notationMocks.transcribe).not.toHaveBeenCalled();
+  });
+
+  it('retranscribes after marker, tempo and meter revisions', async () => {
+    vi.useFakeTimers();
+    const wrapper = mount(ScorePanel, {
+      global: {
+        stubs: {
+          EmptyState: true,
+          ScoreAnnotationPalette: true,
+          ScoreToolbar: true,
+        },
+      },
+    });
+    await nextTick();
+    notationMocks.transcribe.mockClear();
+
+    store.markers = [{ id: 1, ppq: 0, name: 'Intro' }];
+    await nextTick();
+    vi.advanceTimersByTime(600);
+    await nextTick();
+    expect(notationMocks.transcribe).toHaveBeenCalledTimes(1);
+
+    store.tempoSegments = [{ startPpq: 0, bpm: 96 }];
+    await nextTick();
+    vi.advanceTimersByTime(600);
+    await nextTick();
+    expect(notationMocks.transcribe).toHaveBeenCalledTimes(2);
+
+    store.timeSignatures = [{ startPpq: 0, numerator: 3, denominator: 4 }];
+    await nextTick();
+    vi.advanceTimersByTime(600);
+    await nextTick();
+    expect(notationMocks.transcribe).toHaveBeenCalledTimes(3);
+
+    wrapper.unmount();
   });
 });

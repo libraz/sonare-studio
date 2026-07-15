@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { setSelection } from '@/project/commands';
+import { scoreNoteXmlId } from '@/notation/source-identity';
+import { setActiveClip, setSelection } from '@/project/commands';
 import { useScoreInteractions } from '@/ui/score/use-score-interactions';
 
 vi.mock('@/project/commands', () => ({
+  setActiveClip: vi.fn(),
   setSelection: vi.fn(),
 }));
 
@@ -136,5 +138,34 @@ describe('useScoreInteractions', () => {
     const { host } = fixtureDom();
     const score = interactions();
     expect(score.noteIdsAtEvent(clickEvent(host))).toEqual([]);
+  });
+
+  it('resolves a full-score click to its clip-scoped identity before selection', () => {
+    const xmlId = scoreNoteXmlId([{ clipId: 22, noteId: 7, occurrence: 1 }], 10, 0);
+    if (!xmlId) throw new Error('missing score note id');
+    const host = document.createElement('div');
+    host.innerHTML = `<svg><g class="note" id="${xmlId}"><path/></g></svg>`;
+    document.body.append(host);
+    const path = host.querySelector('path') as SVGPathElement;
+    const seek = vi.fn();
+    const onAnnotateClick = vi.fn();
+    const score = interactions({
+      store: {
+        clipId: 1,
+        clipStartPpq: 8,
+        clipLengthPpq: 8,
+        notes: [],
+      } as never,
+      getTimemap: () => [{ qstamp: 2, on: [xmlId] }],
+      seek,
+      onAnnotateClick,
+    });
+
+    score.onSvgClick(clickEvent(path));
+
+    expect(setActiveClip).toHaveBeenCalledWith(22);
+    expect(onAnnotateClick).toHaveBeenCalledWith(expect.any(MouseEvent), [7]);
+    expect(setSelection).toHaveBeenCalledWith([7]);
+    expect(seek).toHaveBeenCalledWith(10);
   });
 });

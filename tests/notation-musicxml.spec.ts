@@ -72,6 +72,14 @@ function qa(root: ParentNode, selector: string): Element[] {
   return Array.from(root.querySelectorAll(selector));
 }
 
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
 const NOTE_CHILD_ORDER = new Map(
   [
     'grace',
@@ -337,6 +345,31 @@ describe('serializeMusicXml structure', () => {
     expect(q(first, 'direction sound').getAttribute('tempo')).toBe('120');
     expect(q(second, 'metronome > per-minute').textContent).toBe('96.5');
     expect(q(second, 'direction sound').getAttribute('tempo')).toBe('96.5');
+  });
+
+  it('emits mid-measure tempo and text directions with division offsets', () => {
+    const score = grandStaffFixture();
+    score.measureTempoMarks = {
+      0: [
+        { bpm: 120, offsetPpq: 0 },
+        { bpm: 84, offsetPpq: 1.5 },
+      ],
+    };
+    score.measureTempoTexts = {
+      0: [{ text: 'rit.', bpm: 84, offsetPpq: 1.5 }],
+    };
+    const first = qa(parse(serializeMusicXml(score)), 'part[id="P1"] > measure')[0];
+    const directions = qa(first, 'direction').filter((direction) =>
+      direction.querySelector('sound'),
+    );
+    expect(
+      directions.map((direction) => direction.querySelector('offset')?.textContent ?? null),
+    ).toEqual([null, '1440', '1440']);
+    expect(directions.map((direction) => q(direction, 'sound').getAttribute('tempo'))).toEqual([
+      '120',
+      '84',
+      '84',
+    ]);
   });
 
   it('uses dotted-quarter metronome marks for compound meter', () => {
@@ -859,6 +892,31 @@ describe('serializeMusicXml attribute changes and clefs', () => {
     expect(q(doc, 'harmony > kind').getAttribute('text')).toBe('C<&>7');
   });
 
+  it('sanitizes XML 1.0 forbidden control characters in every escaped field', () => {
+    const score = grandStaffFixture();
+    score.metadata = { title: 'Bad\u0000Title\u000bEnd' };
+    score.parts[0].name = 'Lead\u0001Name';
+    const xml = serializeMusicXml(score);
+    expect([0, 1, 11].some((code) => xml.includes(String.fromCharCode(code)))).toBe(false);
+    expect(xml).toContain('\ufffd');
+    expect(q(parse(xml), 'work-title').textContent).toBe('Bad\ufffdTitle\ufffdEnd');
+  });
+
+  it('is a read-only serializer even when annotations override grand-staff placement', () => {
+    const score = grandStaffFixture();
+    const event = score.parts[0].measures[0].voices
+      .flatMap((voice) => voice.events)
+      .find((candidate) => candidate.kind === 'note');
+    expect(event).toBeDefined();
+    (event as NotatedEvent).sourceIds = [99];
+    score.noteAnnotations = { 99: { staffOverride: 2 } };
+    const before = structuredClone(score);
+    deepFreeze(score);
+
+    expect(() => serializeMusicXml(score)).not.toThrow();
+    expect(score).toEqual(before);
+  });
+
   it('skips chord symbols without a usable root or outside the measure grid', () => {
     const score: NotatedScore = {
       parts: [
@@ -974,6 +1032,35 @@ describe('serializeMusicXml beams', () => {
       '2',
     ]);
     expect(qa(doc, 'tuplet').map((el) => el.getAttribute('type'))).toEqual(['start', 'stop']);
+  });
+
+  it('keeps adjacent triplets as distinct bracket groups', () => {
+    const score = quantizeToScore(
+      Array.from({ length: 6 }, (_, index) => ({
+        id: index + 1,
+        pitch: 60 + index,
+        velocity: 96,
+        startPpq: index / 3,
+        durationPpq: 1 / 3,
+        channel: 0,
+      })),
+      {
+        divisionPpq: 1 / 3,
+        timeSig: { beats: 2, beatUnit: 4 },
+        keyFifths: 0,
+        clipStartPpq: 0,
+        clipLengthPpq: 2,
+      },
+    );
+    const events = score.parts[0].measures[0].voices[0].events.filter(
+      (event) => event.kind === 'note',
+    );
+    expect(new Set(events.slice(0, 3).map((event) => event.tupletGroupId)).size).toBe(1);
+    expect(new Set(events.slice(3).map((event) => event.tupletGroupId)).size).toBe(1);
+    expect(events[0].tupletGroupId).not.toBe(events[3].tupletGroupId);
+    expect(
+      qa(parse(serializeMusicXml(score)), 'tuplet').map((element) => element.getAttribute('type')),
+    ).toEqual(['start', 'stop', 'start', 'stop']);
   });
 
   it('emits balanced triplet bracket notations when rests start or end the group', () => {
@@ -1199,6 +1286,35 @@ describe('serializeMusicXml beams', () => {
 });
 
 describe('serializeMusicXml percussion', () => {
+  it('splits pitched and channel-10 material into separate score parts', () => {
+    const score = quantizeToScore(
+      [
+        { id: 1, pitch: 60, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 },
+        { id: 2, pitch: 36, velocity: 110, startPpq: 1, durationPpq: 1, channel: 9 },
+      ],
+      {
+        divisionPpq: 0.5,
+        timeSig: { beats: 2, beatUnit: 4 },
+        keyFifths: 0,
+        clipStartPpq: 0,
+        clipLengthPpq: 2,
+        partId: 'P1',
+        partName: 'Hybrid',
+        clef: 'treble',
+      },
+    );
+    expect(score.parts.map((part) => [part.id, part.name])).toEqual([
+      ['P1', 'Hybrid'],
+      ['P1-percussion', 'Hybrid Percussion'],
+    ]);
+
+    const parts = qa(parse(serializeMusicXml(score)), 'score-partwise > part');
+    expect(q(parts[0], 'clef > sign').textContent).toBe('G');
+    expect(qa(parts[0], 'pitch')).toHaveLength(1);
+    expect(q(parts[1], 'clef > sign').textContent).toBe('percussion');
+    expect(qa(parts[1], 'unpitched')).toHaveLength(1);
+  });
+
   it('uses MIDI channel 10 to emit unpitched noteheads with a percussion clef', () => {
     const eighth: NoteValue = { base: 'eighth', dots: 0 };
     const score: NotatedScore = {

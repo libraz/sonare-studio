@@ -15,7 +15,14 @@
  */
 
 import { type Ref, ref, type ShallowRef } from 'vue';
+import { DEFAULT_SCORE_EXPORT_MEMORY_BUDGET_BYTES } from '@/export/memory-budget';
 import { projectFilename } from '@/lib/filename';
+import {
+  OperationGeneration,
+  type OperationIdentity,
+  type OperationToken,
+} from '@/lib/operation-generation';
+import { PayloadMemoryMeter, type PayloadMemorySample, utf8ByteLength } from '@/lib/payload-memory';
 import {
   canonicalizeChordSymbols,
   type EstimatedChordSymbol,
@@ -28,19 +35,27 @@ import {
   type NotatedLyricSyllabic,
   type NotatedMeasure,
   type NotatedScore,
+  type NotatedTempoMark,
+  type NotatedTempoText,
 } from '@/notation/model';
 import { extractPartScore, serializeMusicXml } from '@/notation/musicxml';
-import { downloadBlob, exportPdf, printScore } from '@/notation/print';
+import { createPdfPageWriter, createPrintPageWriter, downloadBlob } from '@/notation/print';
+import type { ScoreInputNote } from '@/notation/quantize';
 import { quantizeToScore } from '@/notation/quantize';
 import { VerovioClient, type VerovioTimemapEntry } from '@/notation/verovio';
-import { clipPlaybackNotes } from '@/project/scheduling';
+import type { ScoreAnnotations, ScoreNoteAnnotation } from '@/project/annotations';
+import { canonicalJson, fnv1a32Hex } from '@/project/hash';
+import {
+  type MidiSourceIdentity,
+  midiSourceIdentityKey,
+  projectMidiNoteOccurrences,
+} from '@/project/midi-projection';
 import type { useProjectStore } from '@/project/store';
 import { normalizeTempoMap, tempoAtPpq } from '@/project/tempo-map';
 import {
   clipKind,
   type EditorClip,
   type EditorMarker,
-  type EditorNote,
   type EditorSection,
   type TempoSegment,
   type TimeSignatureSegment,
@@ -73,12 +88,16 @@ export interface ScoreNotationOptions {
   getScreenClipLengthPpq: () => number;
   /** Project time-signature map used for measure-by-measure notation. */
   getTimeSignatures?: () => ReadonlyArray<TimeSignatureSegment>;
+  /** Optional short opening measure imported from an anacrusis. */
+  getPickupLengthPpq?: () => number;
   /** Key signature fifths derived from the scale highlight configuration. */
   getKeyFifths: () => number;
   /** True when chord symbols should be estimated and engraved. */
   getChordsEnabled: () => boolean;
   /** True when all overlapping MIDI tracks should be engraved as parts. */
   getFullScoreEnabled?: () => boolean;
+  /** True when piano fingering should be estimated for engraved notes. */
+  getEstimateFingering?: () => boolean;
   /** Grand-staff split pitch as MIDI note number (defaulted by quantizeToScore). */
   getGrandStaffSplitPitch?: () => number;
   /** Active transport loop range in project PPQ, or null when disabled/unusable. */
@@ -87,6 +106,8 @@ export interface ScoreNotationOptions {
   getLayoutSettings: () => ScoreLayoutSettings;
   /** Resets the playhead highlight scan after every render / layout change. */
   resetPlayheadScan: () => void;
+  /** Creates an isolated client for print/PDF rendering (injectable in tests). */
+  createExportClient?: () => VerovioClient;
 }
 
 /** The notation surface bound by the score panel. */
@@ -129,6 +150,87 @@ export interface ScoreNotation {
   onExportPartMusicXml: () => void;
 }
 
+interface ScorePageRenderer {
+  load(musicXml: string, layout?: ReturnType<typeof scorePrintLayoutOptions>): Promise<number>;
+  renderPage(page?: number): Promise<string>;
+}
+
+export const MAX_SCORE_EXPORT_PAGES = 500;
+
+function throwIfSnapshotInvalid(signal?: AbortSignal, isCurrent?: () => boolean): void {
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : new DOMException('Score export cancelled.', 'AbortError');
+  }
+  if (isCurrent && !isCurrent()) {
+    throw new DOMException('Score export superseded.', 'AbortError');
+  }
+}
+
+/** Renders a frozen MusicXML/layout snapshot without mutating the screen toolkit. */
+export async function renderScorePagesSnapshot(
+  client: ScorePageRenderer,
+  musicXml: string,
+  layout: ReturnType<typeof scorePrintLayoutOptions>,
+  signal?: AbortSignal,
+  isCurrent?: () => boolean,
+): Promise<string[]> {
+  const pages: string[] = [];
+  await consumeScorePagesSnapshot(
+    client,
+    musicXml,
+    layout,
+    async (svg) => {
+      pages.push(svg);
+    },
+    signal,
+    isCurrent,
+  );
+  return pages;
+}
+
+/** Renders and hands off one snapshot page at a time without retaining prior SVG strings. */
+export async function consumeScorePagesSnapshot(
+  client: ScorePageRenderer,
+  musicXml: string,
+  layout: ReturnType<typeof scorePrintLayoutOptions>,
+  consume: (svg: string, page: number, pageCount: number) => Promise<void> | void,
+  signal?: AbortSignal,
+  isCurrent?: () => boolean,
+  memory: {
+    budgetBytes?: number;
+    onSample?: (sample: PayloadMemorySample) => void;
+  } = {},
+): Promise<number> {
+  const xmlSnapshot = String(musicXml);
+  const layoutSnapshot = structuredClone(layout);
+  const count = await client.load(xmlSnapshot, layoutSnapshot);
+  throwIfSnapshotInvalid(signal, isCurrent);
+  if (!Number.isInteger(count) || count < 0 || count > MAX_SCORE_EXPORT_PAGES) {
+    throw new RangeError(
+      `Score export page count ${count} exceeds limit ${MAX_SCORE_EXPORT_PAGES}`,
+    );
+  }
+  const meter = new PayloadMemoryMeter({
+    label: 'Score SVG export',
+    budgetBytes: memory.budgetBytes ?? DEFAULT_SCORE_EXPORT_MEMORY_BUDGET_BYTES,
+    onSample: memory.onSample,
+  });
+  for (let page = 1; page <= count; page++) {
+    const svg = await client.renderPage(page);
+    throwIfSnapshotInvalid(signal, isCurrent);
+    const releaseSvg = meter.retain(utf8ByteLength(svg), `page ${page}/${count}`);
+    try {
+      await consume(svg, page, count);
+      throwIfSnapshotInvalid(signal, isCurrent);
+    } finally {
+      releaseSvg();
+    }
+  }
+  return count;
+}
+
 /** Wires the non-destructive notation pipeline for the score panel. */
 export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
   const { store, client } = options;
@@ -145,19 +247,63 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
   let currentScore: NotatedScore | null = null;
   /** Timemap of the last successful load (paired with the same load's SVG ids). */
   let timemap: ReadonlyArray<VerovioTimemapEntry> = [];
+  const screenOperations = new OperationGeneration();
+  const exportOperations = new OperationGeneration();
+  let activeExportClient: VerovioClient | null = null;
+  let activeExportSignal: AbortSignal | undefined;
 
-  let generation = 0;
+  function screenIdentity(): OperationIdentity {
+    return {
+      projectId: store.documentGeneration,
+      targetId: store.clipId,
+      revision: fnv1a32Hex(
+        canonicalJson({
+          initialized: store.initialized,
+          clips: store.clips,
+          annotations: store.scoreAnnotations,
+          sections: store.sections,
+          markers: store.markers,
+          tempoSegments: store.tempoSegments,
+          tempoBpm: store.tempoBpm,
+          timeSignatures: options.getTimeSignatures?.(),
+          pickupLengthPpq: options.getPickupLengthPpq?.(),
+          clipStartPpq: store.clipStartPpq,
+          clipLengthPpq: store.clipLengthPpq,
+          screenClipLengthPpq: options.getScreenClipLengthPpq(),
+          divisionPpq: options.getDivisionPpq(),
+          timeSig: options.getTimeSig(),
+          measureLenPpq: options.getMeasureLenPpq(),
+          keyFifths: options.getKeyFifths(),
+          chordsEnabled: options.getChordsEnabled(),
+          fullScoreEnabled: options.getFullScoreEnabled?.(),
+          estimateFingering: options.getEstimateFingering?.(),
+          grandStaffSplitPitch: options.getGrandStaffSplitPitch?.(),
+          loopRegion: options.getLoopRegion?.(),
+          displayTransposeSemitones: store.displayTransposeSemitones,
+          projectName: store.projectName,
+          layout: options.getLayoutSettings(),
+        }),
+      ),
+    };
+  }
 
-  /** Verovio layout options for the current settings (page units are 1/10 mm). */
-  function layoutOptions() {
-    return scorePrintLayoutOptions(options.getLayoutSettings());
+  function screenOperationIsCurrent(token: OperationToken, verovio: VerovioClient): boolean {
+    return client.value === verovio && screenOperations.isCurrent(token, screenIdentity());
+  }
+
+  function exportIdentity(musicXml: string, settings: ScoreLayoutSettings): OperationIdentity {
+    const screen = screenIdentity();
+    return {
+      ...screen,
+      revision: fnv1a32Hex(canonicalJson({ screenRevision: screen.revision, musicXml, settings })),
+    };
   }
 
   /**
    * On-screen layout: one continuous system with NO line/system breaks, cropped
    * to the content on both axes. The engraved strip then scrolls horizontally
    * instead of wrapping to multiple lines. Print/PDF use the paginated
-   * `layoutOptions()` above instead.
+   * `scorePrintLayoutOptions()` instead.
    */
   function screenLayoutOptions() {
     return scoreScreenLayoutOptions(options.getLayoutSettings());
@@ -176,36 +322,53 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
     }
     const verovio = client.value;
     if (!verovio || !store.initialized || store.clipLengthPpq <= 0) return;
-    const gen = ++generation;
+    const token = screenOperations.begin(screenIdentity());
     loading.value = true;
     error.value = '';
     try {
       const fifths = options.getKeyFifths();
-      const score =
-        options.getFullScoreEnabled?.() === true
-          ? buildFullScore(store, {
+      const fullScore = options.getFullScoreEnabled?.() === true;
+      const scoreProjection = fullScore
+        ? buildFullScoreProjection(store, store.clipStartPpq, options.getScreenClipLengthPpq())
+        : buildScoreProjection(
+            store.activeClip && clipKind(store.activeClip) === 'midi' ? [store.activeClip] : [],
+            store.scoreAnnotations,
+          );
+      const score = fullScore
+        ? buildFullScore(
+            store,
+            {
               divisionPpq: options.getDivisionPpq(),
               timeSig: { ...options.getTimeSig() },
               keyFifths: fifths,
               clipStartPpq: store.clipStartPpq,
               clipLengthPpq: options.getScreenClipLengthPpq(),
               timeSignatures: options.getTimeSignatures?.(),
+              pickupLengthPpq: options.getPickupLengthPpq?.(),
               displayTransposeSemitones: store.displayTransposeSemitones,
               grandStaffSplitPitch: options.getGrandStaffSplitPitch?.(),
-            })
-          : quantizeToScore(store.notes, {
-              divisionPpq: options.getDivisionPpq(),
-              timeSig: { ...options.getTimeSig() },
-              keyFifths: fifths,
-              clipStartPpq: store.clipStartPpq,
-              clipLengthPpq: options.getScreenClipLengthPpq(),
-              timeSignatures: options.getTimeSignatures?.(),
-              clef: 'grand',
-              partName: 'Piano',
-              grandStaffSplitPitch: options.getGrandStaffSplitPitch?.(),
-              // Engraving-only transpose; the underlying MIDI notes never change.
-              displayTransposeSemitones: store.displayTransposeSemitones,
-            });
+              estimateFingering: options.getEstimateFingering?.(),
+            },
+            scoreProjection,
+          )
+        : quantizeToScore(scoreProjection.notes, {
+            divisionPpq: options.getDivisionPpq(),
+            timeSig: { ...options.getTimeSig() },
+            keyFifths: fifths,
+            clipStartPpq: store.clipStartPpq,
+            clipLengthPpq: options.getScreenClipLengthPpq(),
+            timeSignatures: options.getTimeSignatures?.(),
+            pickupLengthPpq: options.getPickupLengthPpq?.(),
+            clef: 'grand',
+            partName: 'Piano',
+            grandStaffSplitPitch: options.getGrandStaffSplitPitch?.(),
+            estimateFingering: options.getEstimateFingering?.(),
+            // Engraving-only transpose; the underlying MIDI notes never change.
+            displayTransposeSemitones: store.displayTransposeSemitones,
+          });
+      if (!fullScore && Object.keys(scoreProjection.annotations).length > 0) {
+        score.noteAnnotations = scoreProjection.annotations;
+      }
       const title = store.projectName.trim();
       if (title) score.metadata = { title };
       applySectionMarks(
@@ -257,47 +420,46 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
           options.getMeasureLenPpq(),
         );
       }
-      const annotations = store.scoreAnnotations[store.clipId];
-      if (annotations && Object.keys(annotations).length > 0) {
-        score.noteAnnotations = { ...annotations };
-      }
       if (options.getChordsEnabled()) {
         // Chord symbols are best-effort: any wasm failure degrades silently to
         // a score without harmony instead of failing the whole render.
         try {
-          const estimated: EstimatedChordSymbol[] = estimateChordSymbols(store.notes, {
+          const estimated: EstimatedChordSymbol[] = estimateChordSymbols(scoreProjection.notes, {
             clipStartPpq: store.clipStartPpq,
-            clipLengthPpq: store.clipLengthPpq,
+            clipLengthPpq: options.getScreenClipLengthPpq(),
             measureLengthPpq: options.getMeasureLenPpq(),
             measures: score.parts[0]?.measures,
             keyFifths: fifths,
           });
           const symbols = await canonicalizeChordSymbols(estimated);
+          if (!screenOperationIsCurrent(token, verovio)) return;
           if (symbols.length > 0) score.chordSymbols = symbols;
         } catch {
           // Degrade silently: render the score without chord symbols.
         }
       }
+      if (!screenOperationIsCurrent(token, verovio)) return;
       const xml = serializeMusicXml(score);
       const count = await verovio.load(xml, screenLayoutOptions());
-      if (gen !== generation) return;
+      if (!screenOperationIsCurrent(token, verovio)) return;
+      const nextPage = Math.min(Math.max(page.value, 1), Math.max(count, 1));
+      const [pageSvg, entries] = await Promise.all([
+        verovio.renderPage(nextPage),
+        verovio.getTimemap(),
+      ]);
+      if (!screenOperationIsCurrent(token, verovio)) return;
       currentScore = score;
       currentXml = xml;
       pageCount.value = count;
-      page.value = Math.min(Math.max(page.value, 1), Math.max(count, 1));
-      const [pageSvg, entries] = await Promise.all([
-        verovio.renderPage(page.value),
-        verovio.getTimemap(),
-      ]);
-      if (gen !== generation) return;
+      page.value = nextPage;
       svg.value = pageSvg;
       timemap = entries;
       options.resetPlayheadScan();
     } catch (err) {
-      if (gen !== generation) return;
+      if (!screenOperationIsCurrent(token, verovio)) return;
       error.value = err instanceof Error ? err.message : String(err);
     } finally {
-      if (gen === generation) loading.value = false;
+      if (screenOperationIsCurrent(token, verovio)) loading.value = false;
     }
   }
 
@@ -305,19 +467,20 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
   async function refresh(): Promise<void> {
     const verovio = client.value;
     if (!verovio || pageCount.value === 0) return;
-    const gen = ++generation;
+    const token = screenOperations.begin(screenIdentity());
+    verovio.cancelPending(new DOMException('Score refresh superseded.', 'AbortError'));
     loading.value = true;
     error.value = '';
     try {
       const pageSvg = await verovio.renderPage(page.value);
-      if (gen !== generation) return;
+      if (!screenOperationIsCurrent(token, verovio)) return;
       svg.value = pageSvg;
       options.resetPlayheadScan();
     } catch (err) {
-      if (gen !== generation) return;
+      if (!screenOperationIsCurrent(token, verovio)) return;
       error.value = err instanceof Error ? err.message : String(err);
     } finally {
-      if (gen === generation) loading.value = false;
+      if (screenOperationIsCurrent(token, verovio)) loading.value = false;
     }
   }
 
@@ -328,24 +491,26 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
       void transcribe();
       return;
     }
-    const gen = ++generation;
+    const token = screenOperations.begin(screenIdentity());
+    verovio.cancelPending(new DOMException('Score layout superseded.', 'AbortError'));
     loading.value = true;
     error.value = '';
     try {
       const count = await verovio.setLayout(screenLayoutOptions());
-      if (gen !== generation) return;
-      pageCount.value = count;
-      page.value = Math.min(Math.max(page.value, 1), Math.max(count, 1));
+      if (!screenOperationIsCurrent(token, verovio)) return;
+      const nextPage = Math.min(Math.max(page.value, 1), Math.max(count, 1));
       // Note ids survive redoLayout, so the existing timemap stays valid.
-      const pageSvg = await verovio.renderPage(page.value);
-      if (gen !== generation) return;
+      const pageSvg = await verovio.renderPage(nextPage);
+      if (!screenOperationIsCurrent(token, verovio)) return;
+      pageCount.value = count;
+      page.value = nextPage;
       svg.value = pageSvg;
       options.resetPlayheadScan();
     } catch (err) {
-      if (gen !== generation) return;
+      if (!screenOperationIsCurrent(token, verovio)) return;
       error.value = err instanceof Error ? err.message : String(err);
     } finally {
-      if (gen === generation) loading.value = false;
+      if (screenOperationIsCurrent(token, verovio)) loading.value = false;
     }
   }
 
@@ -357,28 +522,31 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
     void refresh();
   }
 
-  /**
-   * Renders every page for print/export using the PAGINATED A4 layout (the
-   * on-screen view is a single continuous system, which would print as one
-   * oversized strip), then restores the continuous screen layout.
-   */
-  async function renderAllPages(): Promise<string[]> {
-    const verovio = client.value;
-    if (!verovio || pageCount.value === 0) return [];
+  /** Renders every page in an isolated client from immutable XML/layout snapshots. */
+  async function consumeAllPages(
+    settings: ScoreLayoutSettings,
+    consume: (svg: string, page: number, pageCount: number) => Promise<void> | void,
+  ): Promise<number> {
+    if (!currentXml) return 0;
+    const xmlSnapshot = String(currentXml);
+    const settingsSnapshot = structuredClone(settings);
+    const identity = exportIdentity(xmlSnapshot, settingsSnapshot);
+    const token = exportOperations.begin(identity);
+    activeExportSignal = token.signal;
+    const verovio = options.createExportClient?.() ?? new VerovioClient();
+    activeExportClient = verovio;
     try {
-      const count = await verovio.setLayout(layoutOptions());
-      const pages: string[] = [];
-      for (let p = 1; p <= count; p++) {
-        pages.push(await verovio.renderPage(p));
-      }
-      return pages;
+      return await consumeScorePagesSnapshot(
+        verovio,
+        xmlSnapshot,
+        scorePrintLayoutOptions(settingsSnapshot),
+        consume,
+        token.signal,
+        () => exportOperations.isCurrent(token, exportIdentity(xmlSnapshot, settingsSnapshot)),
+      );
     } finally {
-      // Restore the on-screen continuous layout and re-render the current page.
-      const screenCount = await verovio.setLayout(screenLayoutOptions());
-      pageCount.value = screenCount;
-      page.value = Math.min(Math.max(page.value, 1), Math.max(screenCount, 1));
-      svg.value = await verovio.renderPage(page.value);
-      options.resetPlayheadScan();
+      if (activeExportClient === verovio) activeExportClient = null;
+      verovio.dispose();
     }
   }
 
@@ -390,31 +558,48 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
     try {
       await action();
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
       error.value = err instanceof Error ? err.message : String(err);
     } finally {
+      exportOperations.invalidate();
+      activeExportSignal = undefined;
       exporting.value = false;
     }
   }
 
   function onPrint(): void {
     void runExport(async () => {
-      const pages = await renderAllPages();
-      if (pages.length > 0) printScore(pages, scorePageDimsMm(options.getLayoutSettings()));
+      const settings = structuredClone(options.getLayoutSettings());
+      const output: { writer: ReturnType<typeof createPrintPageWriter> | null } = { writer: null };
+      await consumeAllPages(settings, (svg, page, pageCount) => {
+        output.writer ??= createPrintPageWriter(pageCount, scorePageDimsMm(settings));
+        output.writer.addPage(svg, page);
+      });
+      output.writer?.print();
     });
   }
 
   function onExportPdf(): void {
     void runExport(async () => {
-      const pages = await renderAllPages();
-      if (pages.length === 0) return;
+      const settings = structuredClone(options.getLayoutSettings());
       const title = store.projectName.trim() || 'score';
-      const blob = await exportPdf(pages, scorePageDimsMm(options.getLayoutSettings()), {
-        title,
-        author: 'sonare studio',
-        subject: 'Engraved score',
-        headerTitle: title,
-        pageNumbers: true,
+      const layout = scorePageDimsMm(settings);
+      const pdf: { writer: Awaited<ReturnType<typeof createPdfPageWriter>> | null } = {
+        writer: null,
+      };
+      await consumeAllPages(settings, async (svg, page, pageCount) => {
+        pdf.writer ??= await createPdfPageWriter(pageCount, layout, {
+          title,
+          author: 'sonare studio',
+          subject: 'Engraved score',
+          headerTitle: title,
+          pageNumbers: true,
+          signal: activeExportSignal,
+        });
+        await pdf.writer.addPage(svg, page);
       });
+      if (!pdf.writer) return;
+      const blob = pdf.writer.close();
       downloadBlob(blob, projectFilename(store.projectName, '.pdf', 'score'));
     });
   }
@@ -446,7 +631,11 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
     getTimemap: () => timemap,
     getCurrentXml: () => currentXml,
     bumpGeneration: () => {
-      generation++;
+      screenOperations.invalidate();
+      exportOperations.invalidate();
+      client.value?.cancelPending();
+      activeExportClient?.dispose();
+      activeExportClient = null;
     },
     transcribe,
     refresh,
@@ -469,24 +658,106 @@ interface FullScoreBuildOptions {
   clipStartPpq: number;
   clipLengthPpq: number;
   timeSignatures?: ReadonlyArray<TimeSignatureSegment>;
+  pickupLengthPpq?: number;
   displayTransposeSemitones: number;
   grandStaffSplitPitch?: number;
+  estimateFingering?: boolean;
 }
 
-export function buildFullScore(store: ProjectStore, options: FullScoreBuildOptions): NotatedScore {
-  const windowEnd = options.clipStartPpq + options.clipLengthPpq;
+export interface ScoreProjection {
+  annotations: Record<number, ScoreNoteAnnotation>;
+  notes: ScoreInputNote[];
+  notesByTrack: Map<number, ScoreInputNote[]>;
+}
+
+function remapAnnotationTargets(
+  annotation: ScoreNoteAnnotation,
+  identity: MidiSourceIdentity,
+  displayIdBySource: ReadonlyMap<string, number>,
+): ScoreNoteAnnotation {
+  const targetId = (noteId: number | undefined): number | undefined =>
+    noteId === undefined
+      ? undefined
+      : displayIdBySource.get(midiSourceIdentityKey({ ...identity, noteId }));
+  const slurToNoteId = targetId(annotation.slurToNoteId);
+  const hairpinToNoteId = targetId(annotation.hairpinToNoteId);
+  const lineSpanToNoteId = targetId(annotation.lineSpanToNoteId);
+  const lineSpans = annotation.lineSpans
+    ?.map((span) => {
+      const mapped = targetId(span.lineSpanToNoteId);
+      return mapped === undefined ? null : { ...span, lineSpanToNoteId: mapped };
+    })
+    .filter((span): span is NonNullable<typeof span> => span !== null);
+  return {
+    ...annotation,
+    slurToNoteId,
+    hairpinToNoteId,
+    lineSpanToNoteId,
+    ...(lineSpans ? { lineSpans } : {}),
+  };
+}
+
+/** Builds one identity-preserving projected input shared by active/full score. */
+export function buildScoreProjection(
+  clips: ReadonlyArray<EditorClip>,
+  sourceAnnotations: Readonly<ScoreAnnotations> = {},
+): ScoreProjection {
+  const notes: ScoreInputNote[] = [];
+  const notesByTrack = new Map<number, ScoreInputNote[]>();
+  const displayIdBySource = new Map<string, number>();
+  const sourceByDisplayId = new Map<number, MidiSourceIdentity>();
+  for (const clip of clips) {
+    if (clipKind(clip) !== 'midi') continue;
+    for (const projected of projectMidiNoteOccurrences(clip)) {
+      const id = notes.length + 1;
+      const { sourceIdentity, ...projectedNote } = projected;
+      const scoreNote: ScoreInputNote = {
+        ...projectedNote,
+        id,
+        scoreSourceIdentity: { ...sourceIdentity },
+      };
+      notes.push(scoreNote);
+      const trackNotes = notesByTrack.get(clip.trackId) ?? [];
+      trackNotes.push(scoreNote);
+      notesByTrack.set(clip.trackId, trackNotes);
+      displayIdBySource.set(midiSourceIdentityKey(sourceIdentity), id);
+      sourceByDisplayId.set(id, sourceIdentity);
+    }
+  }
+  const annotations: Record<number, ScoreNoteAnnotation> = {};
+  for (const [displayId, identity] of sourceByDisplayId) {
+    const annotation = sourceAnnotations[identity.clipId]?.[identity.noteId];
+    if (!annotation) continue;
+    annotations[displayId] = remapAnnotationTargets(annotation, identity, displayIdBySource);
+  }
+  return { annotations, notes, notesByTrack };
+}
+
+/** Builds the same audible, windowed MIDI input used by every Full Score part. */
+export function buildFullScoreProjection(
+  store: Pick<ProjectStore, 'clips' | 'scoreAnnotations'>,
+  clipStartPpq: number,
+  clipLengthPpq: number,
+): ScoreProjection {
+  const windowEnd = clipStartPpq + clipLengthPpq;
+  const relevantClips = store.clips.filter(
+    (clip) =>
+      clipKind(clip) === 'midi' &&
+      clip.startPpq < windowEnd &&
+      clip.startPpq + clip.lengthPpq > clipStartPpq,
+  );
+  return buildScoreProjection(relevantClips, store.scoreAnnotations ?? {});
+}
+
+export function buildFullScore(
+  store: ProjectStore,
+  options: FullScoreBuildOptions,
+  projection = buildFullScoreProjection(store, options.clipStartPpq, options.clipLengthPpq),
+): NotatedScore {
   const parts = store.tracks
     .filter((track) => track.kind === 'midi')
-    .map((track, index) => {
-      const notes = store.clips
-        .filter(
-          (clip) =>
-            clip.trackId === track.id &&
-            clipKind(clip) === 'midi' &&
-            clip.startPpq < windowEnd &&
-            clip.startPpq + clip.lengthPpq > options.clipStartPpq,
-        )
-        .flatMap((clip) => timelinePlaybackNotesForClip(clip));
+    .flatMap((track, index) => {
+      const notes = projection.notesByTrack.get(track.id) ?? [];
       const score = quantizeToScore(notes, {
         divisionPpq: options.divisionPpq,
         timeSig: options.timeSig,
@@ -494,13 +765,15 @@ export function buildFullScore(store: ProjectStore, options: FullScoreBuildOptio
         clipStartPpq: options.clipStartPpq,
         clipLengthPpq: options.clipLengthPpq,
         timeSignatures: options.timeSignatures,
+        pickupLengthPpq: options.pickupLengthPpq,
         partId: `P${index + 1}`,
         partName: track.name || `Track ${index + 1}`,
         displayTransposeSemitones: options.displayTransposeSemitones,
+        grandStaffSplitPitch: options.grandStaffSplitPitch,
+        estimateFingering: options.estimateFingering,
       });
-      return score.parts[0];
-    })
-    .filter((part) => part !== undefined);
+      return score.parts;
+    });
   if (parts.length === 0) {
     return quantizeToScore([], {
       divisionPpq: options.divisionPpq,
@@ -509,31 +782,21 @@ export function buildFullScore(store: ProjectStore, options: FullScoreBuildOptio
       clipStartPpq: options.clipStartPpq,
       clipLengthPpq: options.clipLengthPpq,
       timeSignatures: options.timeSignatures,
+      pickupLengthPpq: options.pickupLengthPpq,
       partName: 'Score',
       displayTransposeSemitones: options.displayTransposeSemitones,
+      estimateFingering: options.estimateFingering,
     });
   }
-  return {
+  const score: NotatedScore = {
     parts,
     keyFifths: options.keyFifths,
     divisions: DEFAULT_DIVISIONS,
   };
-}
-
-function timelinePlaybackNotesForClip(
-  clip: Pick<EditorClip, 'notes' | 'startPpq' | 'lengthPpq' | 'sourceOffsetPpq'>,
-): EditorNote[] {
-  return clipPlaybackNotes(clip).map(
-    (note, index): EditorNote => ({
-      id: index,
-      pitch: note.note,
-      velocity: note.velocity,
-      ...(note.offVelocity !== undefined ? { offVelocity: note.offVelocity } : {}),
-      startPpq: clip.startPpq + note.startPpq,
-      durationPpq: note.durationPpq,
-      channel: note.channel ?? 0,
-    }),
-  );
+  if (Object.keys(projection.annotations).length > 0) {
+    score.noteAnnotations = projection.annotations;
+  }
+  return score;
 }
 
 /** Adds section labels and double bars for section starts aligned to score measures. */
@@ -598,7 +861,7 @@ export function applyLoopMarks(
   score.measureRepeats = repeats;
 }
 
-/** Adds metronome marks at the score start and measure-aligned tempo changes. */
+/** Adds exact metronome marks and textual ramp directions across the score grid. */
 export function applyTempoMarks(
   score: NotatedScore,
   tempoSegments: ReadonlyArray<TempoSegment>,
@@ -610,9 +873,30 @@ export function applyTempoMarks(
   if (measureLenPpq <= 0 || score.parts.length === 0) return;
   const clipEndPpq = clipStartPpq + clipLengthPpq;
   const tempoMap = normalizeTempoMap(tempoSegments, fallbackBpm);
-  const tempos: Record<number, number> = { 0: tempoAtPpq(tempoMap, clipStartPpq) };
-  const tempoTexts: Record<number, { text: string; bpm?: number }> = {};
-  let hasTempoText = false;
+  const tempoMarks: Record<number, NotatedTempoMark[]> = {};
+  const tempoTexts: Record<number, NotatedTempoText[]> = {};
+  const addTempo = (ppq: number, bpm: number): void => {
+    const position = measurePositionForPpq(score, ppq, clipStartPpq, measureLenPpq);
+    if (position === undefined) return;
+    const marks = tempoMarks[position.measureIndex] ?? [];
+    const existing = marks.findIndex(
+      (mark) => Math.abs(mark.offsetPpq - position.offsetPpq) <= PPQ_EPSILON,
+    );
+    const mark = { bpm, offsetPpq: position.offsetPpq };
+    if (existing >= 0) marks[existing] = mark;
+    else marks.push(mark);
+    marks.sort((a, b) => a.offsetPpq - b.offsetPpq);
+    tempoMarks[position.measureIndex] = marks;
+  };
+  const addText = (ppq: number, text: string, bpm?: number): void => {
+    const position = measurePositionForPpq(score, ppq, clipStartPpq, measureLenPpq);
+    if (position === undefined) return;
+    const marks = tempoTexts[position.measureIndex] ?? [];
+    marks.push({ text, ...(bpm !== undefined ? { bpm } : {}), offsetPpq: position.offsetPpq });
+    marks.sort((a, b) => (a.offsetPpq ?? 0) - (b.offsetPpq ?? 0));
+    tempoTexts[position.measureIndex] = marks;
+  };
+  addTempo(clipStartPpq, tempoAtPpq(tempoMap, clipStartPpq));
   for (const segment of tempoSegments) {
     if (
       segment.startPpq <= clipStartPpq + PPQ_EPSILON ||
@@ -620,9 +904,7 @@ export function applyTempoMarks(
     ) {
       continue;
     }
-    const measureIndex = measureIndexForPpq(score, segment.startPpq, clipStartPpq, measureLenPpq);
-    if (measureIndex === undefined) continue;
-    tempos[measureIndex] = tempoAtPpq(tempoMap, segment.startPpq);
+    addTempo(segment.startPpq, tempoAtPpq(tempoMap, segment.startPpq));
   }
   const sortedSegments = [...tempoSegments]
     .filter((segment) => Number.isFinite(segment.startPpq))
@@ -638,26 +920,16 @@ export function applyTempoMarks(
     ) {
       continue;
     }
-    const startIndex = measureIndexForPpq(score, segment.startPpq, clipStartPpq, measureLenPpq);
-    if (startIndex !== undefined) {
-      tempoTexts[startIndex] = {
-        text: segment.endBpm < segment.bpm ? 'rit.' : 'accel.',
-        bpm: tempoAtPpq(tempoMap, segment.startPpq),
-      };
-      hasTempoText = true;
-    }
-    const endIndex = measureIndexForPpq(score, next.startPpq, clipStartPpq, measureLenPpq);
-    if (endIndex !== undefined) {
-      tempoTexts[endIndex] = {
-        text: 'a tempo',
-        bpm: tempoAtPpq(tempoMap, next.startPpq),
-      };
-      tempos[endIndex] = tempoAtPpq(tempoMap, next.startPpq);
-      hasTempoText = true;
-    }
+    addText(
+      segment.startPpq,
+      segment.endBpm < segment.bpm ? 'rit.' : 'accel.',
+      tempoAtPpq(tempoMap, segment.startPpq),
+    );
+    addText(next.startPpq, 'a tempo', tempoAtPpq(tempoMap, next.startPpq));
+    addTempo(next.startPpq, tempoAtPpq(tempoMap, next.startPpq));
   }
-  score.measureTempos = tempos;
-  if (hasTempoText) score.measureTempoTexts = tempoTexts;
+  score.measureTempoMarks = tempoMarks;
+  if (Object.keys(tempoTexts).length > 0) score.measureTempoTexts = tempoTexts;
 }
 
 /** Adds conservative system/page breaks for printable performance scores. */
@@ -834,6 +1106,37 @@ function measureIndexForPpq(
     if (Math.abs(ppq - measures[index].startPpq) <= PPQ_EPSILON) return index;
   }
   return undefined;
+}
+
+/** Resolves any in-measure PPQ to the model's variable-meter measure grid. */
+function measurePositionForPpq(
+  score: NotatedScore,
+  ppq: number,
+  clipStartPpq: number,
+  measureLenPpq: number,
+): { measureIndex: number; offsetPpq: number } | undefined {
+  const measures = scoreMeasures(score);
+  if (measuresUseClipOrigin(measures, clipStartPpq)) {
+    for (let index = 0; index < measures.length; index += 1) {
+      const measure = measures[index];
+      const end = measure.startPpq + measure.lengthPpq;
+      if (Math.abs(ppq - measure.startPpq) <= PPQ_EPSILON) {
+        return { measureIndex: index, offsetPpq: 0 };
+      }
+      if (ppq > measure.startPpq && ppq < end - PPQ_EPSILON) {
+        return { measureIndex: index, offsetPpq: ppq - measure.startPpq };
+      }
+    }
+    return undefined;
+  }
+  const relative = ppq - clipStartPpq;
+  if (relative < -PPQ_EPSILON) return undefined;
+  const measureIndex = Math.floor(relative / measureLenPpq + PPQ_EPSILON);
+  if (measureIndex < 0 || measureIndex >= measures.length) return undefined;
+  return {
+    measureIndex,
+    offsetPpq: Math.max(0, relative - measureIndex * measureLenPpq),
+  };
 }
 
 function measureBoundaryIndexForPpq(

@@ -7,7 +7,12 @@ import type {
   NoteValue,
 } from '@/notation/model';
 import { serializeMusicXml } from '@/notation/musicxml';
-import { importMusicXml, MusicXmlImportError } from '@/notation/musicxml-import';
+import {
+  importMusicXml,
+  importMusicXmlWithReport,
+  MusicXmlImportError,
+} from '@/notation/musicxml-import';
+import { quantizeToScore } from '@/notation/quantize';
 import type { DocumentNote } from '@/project/serialization';
 
 const QUARTER: NoteValue = { base: 'quarter', dots: 0 };
@@ -89,6 +94,19 @@ describe('importMusicXml error handling', () => {
     const doc = importMusicXml(xml);
     expect(doc.tracks).toHaveLength(1);
     expect(trackNotes(doc, 0)).toEqual([]);
+  });
+
+  it('enforces byte, element-depth, semantic-count and numeric limits before traversal', () => {
+    const empty = '<score-partwise version="4.0"><part-list/></score-partwise>';
+    expect(() => importMusicXmlWithReport(empty, undefined, { maxBytes: 10 })).toThrow(/byte/);
+    expect(() => importMusicXmlWithReport(empty, undefined, { maxDepth: 1 })).toThrow(/depth/);
+    const noteXml =
+      '<score-partwise><part-list/><part id="P1"><measure><note><rest/><duration>1</duration></note></measure></part></score-partwise>';
+    expect(() => importMusicXmlWithReport(noteXml, undefined, { maxNotes: 0 })).toThrow(
+      /note limit/,
+    );
+    const huge = noteXml.replace('<duration>1</duration>', '<duration>999999999999</duration>');
+    expect(() => importMusicXml(huge)).toThrow(/numeric value/);
   });
 });
 
@@ -172,6 +190,46 @@ describe('importMusicXml note timing', () => {
 });
 
 describe('importMusicXml global maps', () => {
+  it('applies chromatic transpose to recover concert pitch for a B-flat clarinet', () => {
+    const xml =
+      '<score-partwise><part-list><score-part id="P1"><part-name>Clarinet in Bb</part-name></score-part></part-list>' +
+      '<part id="P1"><measure><attributes><divisions>1</divisions>' +
+      '<transpose><diatonic>-1</diatonic><chromatic>-2</chromatic></transpose></attributes>' +
+      '<note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration></note>' +
+      '</measure></part></score-partwise>';
+    expect(trackNotes(importMusicXml(xml), 0)[0].pitch).toBe(58);
+  });
+
+  it('preserves an implicit opening pickup length and following measure origin', () => {
+    const xml =
+      '<score-partwise><part-list><score-part id="P1"/></part-list><part id="P1">' +
+      '<measure number="0" implicit="yes"><attributes><divisions>1</divisions>' +
+      '<time><beats>4</beats><beat-type>4</beat-type></time></attributes>' +
+      '<note><pitch><step>G</step><octave>4</octave></pitch><duration>1</duration></note></measure>' +
+      '<measure number="1"><note><pitch><step>C</step><octave>4</octave></pitch>' +
+      '<duration>4</duration></note></measure></part></score-partwise>';
+    const doc = importMusicXml(xml);
+    expect(doc.pickupLengthPpq).toBe(1);
+    expect(trackNotes(doc, 0).map((note) => note.startPpq)).toEqual([0, 1]);
+  });
+
+  it('reads pitched MIDI channel mappings and note/direction dynamics', () => {
+    const xml =
+      '<score-partwise><part-list><score-part id="P1"><part-name>Lead</part-name>' +
+      '<score-instrument id="P1-C3"><instrument-name>Lead</instrument-name></score-instrument>' +
+      '<midi-instrument id="P1-C3"><midi-channel>3</midi-channel></midi-instrument>' +
+      '</score-part></part-list><part id="P1"><measure><attributes><divisions>1</divisions></attributes>' +
+      '<direction><sound dynamics="50"/></direction>' +
+      '<note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration>' +
+      '<instrument id="P1-C3"/></note>' +
+      '<note dynamics="100"><pitch><step>D</step><octave>4</octave></pitch><duration>1</duration>' +
+      '<instrument id="P1-C3"/></note></measure></part></score-partwise>';
+    expect(trackNotes(importMusicXml(xml), 0)).toEqual([
+      { pitch: 60, velocity: 45, startPpq: 0, durationPpq: 1, channel: 2 },
+      { pitch: 62, velocity: 90, startPpq: 1, durationPpq: 1, channel: 2 },
+    ]);
+  });
+
   it('reads tempo from a sound direction and time signature from attributes', () => {
     const xml =
       '<score-partwise version="4.0"><part-list><score-part id="P1"/></part-list>' +
@@ -242,6 +300,46 @@ describe('importMusicXml multi-part', () => {
 });
 
 describe('importMusicXml round-trip with the serializer', () => {
+  it('round-trips Sonare pitched channel and velocity metadata', () => {
+    const score = quantizeToScore(
+      [
+        { id: 1, pitch: 60, velocity: 45, startPpq: 0, durationPpq: 1, channel: 2 },
+        { id: 2, pitch: 67, velocity: 108, startPpq: 1, durationPpq: 1, channel: 5 },
+      ],
+      {
+        divisionPpq: 0.25,
+        timeSig: { beats: 2, beatUnit: 4 },
+        keyFifths: 0,
+        clipStartPpq: 0,
+        clipLengthPpq: 2,
+        partName: 'Lead',
+      },
+    );
+    expect(trackNotes(importMusicXml(serializeMusicXml(score)), 0)).toEqual([
+      { pitch: 60, velocity: 45, startPpq: 0, durationPpq: 1, channel: 2 },
+      { pitch: 67, velocity: 108, startPpq: 1, durationPpq: 1, channel: 5 },
+    ]);
+  });
+
+  it('returns structured loss counts for unsupported notation', () => {
+    const xml =
+      '<score-partwise><part-list><score-part id="P1"/></part-list><part id="P1"><measure>' +
+      '<attributes><divisions>1</divisions></attributes>' +
+      '<harmony><root><root-step>C</root-step></root><kind>major</kind></harmony>' +
+      '<note><grace/><pitch><step>D</step><octave>4</octave></pitch>' +
+      '<notations><articulations><accent/></articulations><technical><fingering>2</fingering></technical></notations>' +
+      '<lyric><text>la</text></lyric></note>' +
+      '<barline><repeat direction="backward"/></barline></measure></part></score-partwise>';
+    expect(importMusicXmlWithReport(xml).report.issues).toEqual([
+      { feature: 'harmony', count: 1 },
+      { feature: 'lyrics', count: 1 },
+      { feature: 'repeats', count: 1 },
+      { feature: 'fingering', count: 1 },
+      { feature: 'annotations', count: 1 },
+      { feature: 'grace-notes', count: 1 },
+    ]);
+  });
+
   it('recovers pitches, onsets and durations from serialized output', () => {
     const measures: NotatedMeasure[] = [
       {

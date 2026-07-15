@@ -42,9 +42,13 @@ import {
   type NotatedVoiceNumber,
   type NoteValue,
   noteValueToPpq,
-  timeSigLengthPpq,
 } from '@/notation/model';
+import type { MidiSourceIdentity } from '@/project/midi-projection';
+import { measureGrid, timeSignatureAt } from '@/project/time-signature';
 import type { EditorNote, TimeSignatureSegment } from '@/project/types';
+
+/** Editor note accepted by score quantization with optional composite identity. */
+export type ScoreInputNote = EditorNote & { scoreSourceIdentity?: MidiSourceIdentity };
 
 /** Comparison tolerance for PPQ arithmetic on IEEE doubles. */
 const EPSILON = 1e-6;
@@ -119,6 +123,8 @@ export interface QuantizeOptions {
    * window end.
    */
   clipLengthPpq: number;
+  /** Optional short first measure length for an opening anacrusis. */
+  pickupLengthPpq?: number;
   /** Maximum simultaneous voices per staff (1-4). Defaults to 2. */
   maxVoices?: number;
   /** MusicXML part id. Defaults to "P1". */
@@ -163,6 +169,7 @@ interface GridNote {
   velocity: number;
   /** Editor note id, used only as a deterministic sort tiebreaker. */
   id: number;
+  sourceIdentity?: MidiSourceIdentity;
 }
 
 /** A chord-clustered unit before measure/duration splitting. */
@@ -177,6 +184,8 @@ export interface VoiceUnit {
   velocity: number;
   /** Editor note ids merged into this unit (ascending, deduplicated). */
   ids: number[];
+  /** Composite source identities merged into this unit. */
+  sourceIdentities?: MidiSourceIdentity[];
   /**
    * Estimated per-pitch fingering (1-5), index-aligned with {@link pitches}.
    * Set only when fingering estimation runs; otherwise absent.
@@ -216,6 +225,7 @@ interface ResolvedOptions {
   grandStaffSplitPitch: number;
   displayTransposeSemitones: number;
   estimateFingering: boolean;
+  pickupLengthPpq: number;
   timeSignatures: ReadonlyArray<TimeSignatureSegment>;
 }
 
@@ -344,6 +354,10 @@ function resolveOptions(options: QuantizeOptions): ResolvedOptions {
     grandStaffSplitPitch,
     displayTransposeSemitones,
     estimateFingering: options.estimateFingering ?? false,
+    pickupLengthPpq:
+      Number.isFinite(options.pickupLengthPpq) && (options.pickupLengthPpq ?? 0) > 0
+        ? Math.min(length, snapToStep(options.pickupLengthPpq ?? 0, SIXTY_FOURTH_PPQ))
+        : 0,
     timeSignatures: options.timeSignatures ?? [],
   };
 }
@@ -356,7 +370,7 @@ function resolveOptions(options: QuantizeOptions): ResolvedOptions {
  * than dropped, so very short notes stay visible in the score. Notes wholly
  * outside the clip are dropped. The input is never mutated.
  */
-function quantizeToGrid(notes: readonly EditorNote[], opts: ResolvedOptions): GridNote[] {
+function quantizeToGrid(notes: readonly ScoreInputNote[], opts: ResolvedOptions): GridNote[] {
   const { grid, clipStartPpq: cs, clipEndPpq: ce, displayTransposeSemitones: shift } = opts;
   const out: GridNote[] = [];
   for (const note of notes) {
@@ -381,6 +395,7 @@ function quantizeToGrid(notes: readonly EditorNote[], opts: ResolvedOptions): Gr
       channel: note.channel,
       velocity: note.velocity,
       id: note.id,
+      ...(note.scoreSourceIdentity ? { sourceIdentity: { ...note.scoreSourceIdentity } } : {}),
     });
   }
   // Deterministic order: onset, then higher pitch first, then editor id.
@@ -398,20 +413,7 @@ function quantizeToGrid(notes: readonly EditorNote[], opts: ResolvedOptions): Gr
  * deduplicate. Units keep onset order; simultaneous units stay ordered by
  * descending top pitch (consumed by voice assignment).
  */
-function grandStaffChannelBiasForGridNotes(
-  notes: GridNote[],
-  splitPitch: number,
-): ReadonlyMap<number, 1 | 2> {
-  return channelStaffBiasFromSamples(
-    notes.map((note) => ({ channel: note.channel, pitch: note.pitch })),
-    splitPitch,
-  );
-}
-
-function clusterChords(
-  notes: GridNote[],
-  channelStaffBias: ReadonlyMap<number, 1 | 2>,
-): VoiceUnit[] {
+function clusterChords(notes: GridNote[]): VoiceUnit[] {
   const units: VoiceUnit[] = [];
   let i = 0;
   while (i < notes.length) {
@@ -425,6 +427,9 @@ function clusterChords(
       const pitches = new Set<number>([top.pitch]);
       const channels = new Set<number>([top.channel]);
       const ids = new Set<number>([top.id]);
+      const sourceIdentities: MidiSourceIdentity[] = top.sourceIdentity
+        ? [{ ...top.sourceIdentity }]
+        : [];
       let velocity = top.velocity;
       used[a] = true;
       for (let b = a + 1; b < group.length; b++) {
@@ -432,11 +437,13 @@ function clusterChords(
         if (
           Math.abs(group[b].endPpq - top.endPpq) <= EPSILON &&
           top.pitch - group[b].pitch <= CHORD_PITCH_SPAN &&
-          canClusterTogether(top, group[b], channelStaffBias)
+          canClusterTogether(top, group[b])
         ) {
           pitches.add(group[b].pitch);
           channels.add(group[b].channel);
           ids.add(group[b].id);
+          const sourceIdentity = group[b].sourceIdentity;
+          if (sourceIdentity) sourceIdentities.push({ ...sourceIdentity });
           velocity = Math.max(velocity, group[b].velocity);
           used[b] = true;
         }
@@ -448,6 +455,7 @@ function clusterChords(
         channels: [...channels].sort((x, y) => x - y),
         velocity,
         ids: [...ids].sort((x, y) => x - y),
+        sourceIdentities,
       });
     }
     i = j;
@@ -456,15 +464,11 @@ function clusterChords(
 }
 
 /** Returns true when simultaneous notes should share one chord event. */
-function canClusterTogether(
-  a: GridNote,
-  b: GridNote,
-  channelStaffBias: ReadonlyMap<number, 1 | 2>,
-): boolean {
+function canClusterTogether(a: GridNote, b: GridNote): boolean {
   if (a.channel !== b.channel) {
-    const aStaff = channelStaffBias.get(a.channel);
-    const bStaff = channelStaffBias.get(b.channel);
-    if (aStaff !== undefined && bStaff !== undefined && aStaff !== bStaff) return false;
+    // MusicXML instrument/channel metadata is event-scoped. Keeping channels
+    // in separate units prevents a chord merge from erasing that identity.
+    return false;
   }
   if (a.channel !== GM_PERCUSSION_CHANNEL && b.channel !== GM_PERCUSSION_CHANNEL) return true;
   if (a.channel !== b.channel) return false;
@@ -936,50 +940,60 @@ function nextGroupBoundary(ppq: number, measureStartPpq: number, groupLen: numbe
 function buildMeasureGrid(
   opts: ResolvedOptions,
 ): Array<{ index: number; startPpq: number; lengthPpq: number; timeSig: NotatedTimeSig }> {
-  const changes = opts.timeSignatures
-    .filter((segment) => Number.isFinite(segment.startPpq))
-    .sort((a, b) => a.startPpq - b.startPpq);
-  const measures: Array<{
-    index: number;
-    startPpq: number;
-    lengthPpq: number;
-    timeSig: NotatedTimeSig;
-  }> = [];
-  let cursor = opts.clipStartPpq;
-  while (cursor < opts.clipEndPpq - EPSILON || measures.length === 0) {
-    const timeSig = timeSigAt(changes, cursor, opts.timeSig);
-    const measureLen = timeSigLengthPpq(timeSig);
-    const nextChange = changes.find((segment) => segment.startPpq > cursor + EPSILON);
-    const naturalEnd = cursor + measureLen;
-    const endPpq = Math.min(
-      opts.clipEndPpq,
-      nextChange !== undefined && nextChange.startPpq < naturalEnd - EPSILON
-        ? nextChange.startPpq
-        : naturalEnd,
-    );
-    measures.push({
-      index: measures.length,
-      startPpq: cursor,
-      lengthPpq: Math.max(SIXTY_FOURTH_PPQ, endPpq - cursor),
-      timeSig,
-    });
-    cursor = endPpq;
+  const changes: TimeSignatureSegment[] = [
+    { startPpq: 0, numerator: opts.timeSig.beats, denominator: opts.timeSig.beatUnit },
+    ...opts.timeSignatures,
+  ];
+  if (opts.pickupLengthPpq > 0 && Math.abs(opts.clipStartPpq) <= EPSILON) {
+    const pickupEnd = Math.min(opts.clipEndPpq, opts.clipStartPpq + opts.pickupLengthPpq);
+    const firstMeter = timeSignatureAt(changes, opts.clipStartPpq);
+    const ranges = [
+      {
+        index: 0,
+        startPpq: opts.clipStartPpq,
+        lengthPpq: pickupEnd - opts.clipStartPpq,
+        timeSig: { beats: firstMeter.numerator, beatUnit: firstMeter.denominator },
+      },
+    ];
+    let cursor = pickupEnd;
+    while (cursor < opts.clipEndPpq - EPSILON) {
+      const meter = timeSignatureAt(changes, cursor);
+      const barLength = meter.numerator * (4 / meter.denominator);
+      const nextChange = changes
+        .filter((change) => change.startPpq > cursor + EPSILON)
+        .sort((a, b) => a.startPpq - b.startPpq)[0]?.startPpq;
+      const end = Math.min(
+        opts.clipEndPpq,
+        cursor + barLength,
+        nextChange ?? Number.POSITIVE_INFINITY,
+      );
+      ranges.push({
+        index: ranges.length,
+        startPpq: cursor,
+        lengthPpq: end - cursor,
+        timeSig: { beats: meter.numerator, beatUnit: meter.denominator },
+      });
+      cursor = end;
+    }
+    return ranges;
   }
-  return measures;
-}
-
-function timeSigAt(
-  changes: ReadonlyArray<TimeSignatureSegment>,
-  ppq: number,
-  fallback: NotatedTimeSig,
-): NotatedTimeSig {
-  let current = fallback;
-  for (const change of changes) {
-    if (change.startPpq <= ppq + EPSILON) {
-      current = { beats: change.numerator, beatUnit: change.denominator };
-    } else break;
+  const ranges = measureGrid(changes, opts.clipStartPpq, opts.clipEndPpq);
+  if (ranges.length === 0) {
+    return [
+      {
+        index: 0,
+        startPpq: opts.clipStartPpq,
+        lengthPpq: SIXTY_FOURTH_PPQ,
+        timeSig: opts.timeSig,
+      },
+    ];
   }
-  return current;
+  return ranges.map((range, index) => ({
+    index,
+    startPpq: range.startPpq,
+    lengthPpq: Math.max(SIXTY_FOURTH_PPQ, range.lengthPpq),
+    timeSig: { beats: range.numerator, beatUnit: range.denominator },
+  }));
 }
 
 /**
@@ -1115,6 +1129,9 @@ function splitUnitsIntoMeasures(
         ...(unit.fingering !== undefined ? { fingering: [...unit.fingering] } : {}),
         ...(unit.handCross ? { handCross: true } : {}),
         sourceIds: [...unit.ids],
+        ...((unit.sourceIdentities?.length ?? 0) > 0
+          ? { sourceIdentities: unit.sourceIdentities?.map((identity) => ({ ...identity })) }
+          : {}),
         midiChannels: [...unit.channels],
         velocity: unit.velocity,
       });
@@ -1158,7 +1175,45 @@ function fillVoiceMeasure(
     cursor = event.startPpq + event.durationPpq;
   }
   if (measureEnd - cursor > EPSILON) pushRests(cursor, measureEnd);
+  assignTupletGroupIds(out, measure.startPpq, voice);
   return { voice, events: out };
+}
+
+/** Separates adjacent same-ratio tuplets into explicit, stable event groups. */
+function assignTupletGroupIds(
+  events: NotatedEvent[],
+  measureStartPpq: number,
+  voice: NotatedVoiceNumber,
+): void {
+  let previous: NotatedEvent | undefined;
+  let activeId: string | undefined;
+  let activeCount = 0;
+  let groupOrdinal = 0;
+  for (const event of events) {
+    const tuplet = event.value.tuplet;
+    const contiguous =
+      previous !== undefined &&
+      Math.abs(previous.startPpq + previous.durationPpq - event.startPpq) <= EPSILON;
+    const sameRatio =
+      previous?.value.tuplet !== undefined &&
+      tuplet !== undefined &&
+      previous.value.tuplet.actual === tuplet.actual &&
+      previous.value.tuplet.normal === tuplet.normal &&
+      previous.value.base === event.value.base;
+    if (tuplet === undefined) {
+      activeId = undefined;
+      activeCount = 0;
+    } else {
+      if (!contiguous || !sameRatio || activeId === undefined || activeCount >= tuplet.actual) {
+        activeId = `m${Math.round(measureStartPpq * DEFAULT_DIVISIONS)}-v${voice}-t${groupOrdinal}`;
+        groupOrdinal += 1;
+        activeCount = 0;
+      }
+      event.tupletGroupId = activeId;
+      activeCount += 1;
+    }
+    previous = event;
+  }
 }
 
 /** Chooses a clef from the quantized pitch range (see {@link QuantizeOptions.clef}). */
@@ -1189,18 +1244,31 @@ function chooseClef(notes: GridNote[]): NotatedClef {
  * @throws RangeError When options are out of range (see {@link QuantizeOptions}).
  */
 export function quantizeToScore(
-  notes: readonly EditorNote[],
+  notes: readonly ScoreInputNote[],
   options: QuantizeOptions,
 ): NotatedScore {
+  const pitchedNotes = notes.filter((note) => note.channel !== GM_PERCUSSION_CHANNEL);
+  const percussionNotes = notes.filter((note) => note.channel === GM_PERCUSSION_CHANNEL);
+  if (pitchedNotes.length > 0 && percussionNotes.length > 0) {
+    const pitched = quantizeToScore(pitchedNotes, options);
+    const basePartId = options.partId ?? 'P1';
+    const basePartName = options.partName?.trim() ?? '';
+    const percussion = quantizeToScore(percussionNotes, {
+      ...options,
+      partId: `${basePartId}-percussion`,
+      partName: basePartName === '' ? 'Percussion' : `${basePartName} Percussion`,
+      clef: 'treble',
+    });
+    return { ...pitched, parts: [...pitched.parts, ...percussion.parts] };
+  }
   const opts = resolveOptions(options);
   const gridNotes = quantizeToGrid(notes, opts);
-  const channelStaffBias =
-    opts.clef === 'grand'
-      ? grandStaffChannelBiasForGridNotes(gridNotes, opts.grandStaffSplitPitch)
-      : new Map<number, 1 | 2>();
-  const units = clusterChords(gridNotes, channelStaffBias);
+  const units = clusterChords(gridNotes);
   const voiceUnits = assignVoiceUnits(units, opts.clef, opts.maxVoices, opts.grandStaffSplitPitch);
-  const clef = opts.clef ?? chooseClef(gridNotes);
+  const clef =
+    percussionNotes.length > 0 && pitchedNotes.length === 0
+      ? 'treble'
+      : (opts.clef ?? chooseClef(gridNotes));
   if (opts.estimateFingering) {
     estimateFingeringForUnits(voiceUnits, clef, opts.grandStaffSplitPitch);
   }

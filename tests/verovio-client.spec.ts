@@ -87,12 +87,43 @@ describe('VerovioClient', () => {
     const request = worker.posted[0];
     expect(request).toMatchObject({
       type: 'load',
+      sessionId: 1,
       musicXml: '<score-partwise/>',
       options: { pageWidth: 1800, scale: 40 },
     });
 
     worker.respond({ id: request.id, type: 'load', pageCount: 3 });
     await expect(promise).resolves.toBe(3);
+  });
+
+  it('supersedes the prior session on rapid load and rejects its queued work', async () => {
+    const { client, worker } = createClient();
+    const first = client.load('<score-partwise id="old"/>');
+    const firstRequest = worker.posted[0];
+    const oldRender = client.renderPage(1);
+    const second = client.load('<score-partwise id="new"/>');
+    const secondRequest = worker.posted.at(-1)!;
+
+    expect(secondRequest.sessionId).toBeGreaterThan(firstRequest.sessionId);
+    await expect(first).rejects.toThrow(/superseded/);
+    await expect(oldRender).rejects.toThrow(/superseded/);
+
+    worker.respond({ id: secondRequest.id, type: 'load', pageCount: 2 });
+    await expect(second).resolves.toBe(2);
+  });
+
+  it('cancels queued requests without disposing the reusable client', async () => {
+    const { client, worker } = createClient();
+    const pending = client.renderPage(1);
+    client.cancelPending();
+
+    await expect(pending).rejects.toThrow(/cancelled/);
+    expect(worker.posted.at(-1)).toMatchObject({ type: 'cancel', sessionId: 1 });
+
+    const replacement = client.renderPage(2);
+    const request = worker.posted.at(-1)!;
+    worker.respond({ id: request.id, type: 'renderPage', svg: '<svg>new</svg>' });
+    await expect(replacement).resolves.toBe('<svg>new</svg>');
   });
 
   it('correlates out-of-order responses by request id', async () => {

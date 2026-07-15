@@ -33,6 +33,7 @@ import {
   type NotatedPart,
   type NotatedRepeatMark,
   type NotatedScore,
+  type NotatedTempoMark,
   type NotatedTempoText,
   type NotatedTimeSig,
   type NotatedVoice,
@@ -44,6 +45,7 @@ import {
 } from './model';
 import { type SpelledPitch, type Step, spellPitch } from './pitch-spelling';
 import { staffForMeanPitch } from './quantize';
+import { scoreNoteXmlId } from './source-identity';
 
 /** Staff number within a grand staff (1 = treble, 2 = bass). */
 type StaffNumber = 1 | 2;
@@ -127,6 +129,8 @@ const GM_PERCUSSION_CHANNEL = 9;
  * (deleted notes, notes outside the notated window) are silently ignored.
  */
 interface AnnotationIndex {
+  /** Engraving-only staff overrides without mutating the source event model. */
+  staffOverrides: Map<NotatedEvent, StaffNumber>;
   /** Dynamics marking to emit as a `<direction>` right before the event. */
   dynamics: Map<NotatedEvent, NoteDynamics>;
   /** Articulation to emit inside the event's `<notations>`. */
@@ -190,6 +194,7 @@ function pushMapped<K>(map: Map<K, number[]>, key: K, value: number): void {
  */
 function buildAnnotationIndex(score: NotatedScore): AnnotationIndex {
   const index: AnnotationIndex = {
+    staffOverrides: new Map(),
     dynamics: new Map(),
     articulations: new Map(),
     ornaments: new Map(),
@@ -230,7 +235,7 @@ function buildAnnotationIndex(score: NotatedScore): AnnotationIndex {
     if (event === undefined) continue; // Orphaned annotation: ignore.
     if (annotation.staffOverride === 1 || annotation.staffOverride === 2) {
       for (const sourceEvent of eventsByNoteId.get(Number(idKey)) ?? []) {
-        sourceEvent.staff = annotation.staffOverride;
+        index.staffOverrides.set(sourceEvent, annotation.staffOverride);
       }
     }
     if (annotation.dynamics !== undefined) index.dynamics.set(event, annotation.dynamics);
@@ -393,7 +398,24 @@ const XML_ESCAPES: Readonly<Record<string, string>> = {
  * @returns Escaped text safe for element and attribute content.
  */
 export function escapeXml(text: string): string {
-  return text.replace(/[&<>"']/g, (ch) => XML_ESCAPES[ch]);
+  return sanitizeXml10(text).replace(/[&<>"']/g, (ch) => XML_ESCAPES[ch]);
+}
+
+/** Replaces code points forbidden by XML 1.0 with the replacement character. */
+export function sanitizeXml10(text: string): string {
+  let out = '';
+  for (const character of text) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    const valid =
+      codePoint === 0x9 ||
+      codePoint === 0xa ||
+      codePoint === 0xd ||
+      (codePoint >= 0x20 && codePoint <= 0xd7ff) ||
+      (codePoint >= 0xe000 && codePoint <= 0xfffd) ||
+      (codePoint >= 0x10000 && codePoint <= 0x10ffff);
+    out += valid ? character : '\ufffd';
+  }
+  return out;
 }
 
 /** Software credit written into the MusicXML `<encoding>` block. */
@@ -595,8 +617,45 @@ export function extractPartScore(
 function scorePartXml(part: NotatedPart): string {
   const name = escapeXml(part.name);
   const abbreviation = escapeXml(partAbbreviation(part.name));
-  const instruments = partUsesPercussionMap(part) ? percussionScoreInstrumentsXml(part) : '';
+  const instruments = scorePartInstrumentsXml(part);
   return `<score-part id="${escapeXml(part.id)}"><part-name>${name}</part-name><part-abbreviation>${abbreviation}</part-abbreviation>${instruments}</score-part>`;
+}
+
+interface ScoreInstrumentDefinition {
+  id: string;
+  name: string;
+  channel: number;
+  unpitched?: number;
+}
+
+/** Pitched MIDI channels explicitly carried by this part's note events. */
+function pitchedChannels(part: NotatedPart): number[] {
+  const channels = new Set<number>();
+  for (const measure of part.measures) {
+    for (const voice of measure.voices) {
+      for (const event of voice.events) {
+        if (event.kind !== 'note') continue;
+        for (const channel of event.midiChannels ?? []) {
+          if (channel !== GM_PERCUSSION_CHANNEL && channel >= 0 && channel <= 15) {
+            channels.add(channel);
+          }
+        }
+      }
+    }
+  }
+  return [...channels].sort((a, b) => a - b);
+}
+
+function pitchedInstrumentId(partId: string, channel: number): string {
+  return `${escapeXml(partId)}-C${channel + 1}`;
+}
+
+function pitchedInstrumentDefinitions(part: NotatedPart): ScoreInstrumentDefinition[] {
+  return pitchedChannels(part).map((channel) => ({
+    id: pitchedInstrumentId(part.id, channel),
+    name: `${part.name || 'Part'} channel ${channel + 1}`,
+    channel: channel + 1,
+  }));
 }
 
 /** Conservatively infers drum/percussion parts from their display name. */
@@ -646,17 +705,39 @@ function percussionPitches(part: NotatedPart): number[] {
 }
 
 /** Builds part-list instrument metadata for drum maps. */
-function percussionScoreInstrumentsXml(part: NotatedPart): string {
-  return percussionPitches(part)
-    .map((pitch) => {
-      const id = percussionInstrumentId(part.id, pitch);
-      const display = percussionDisplay(pitch);
-      return (
-        `<score-instrument id="${id}"><instrument-name>${escapeXml(display.name)}</instrument-name></score-instrument>` +
-        `<midi-instrument id="${id}"><midi-channel>10</midi-channel><midi-unpitched>${pitch + 1}</midi-unpitched></midi-instrument>`
-      );
+function percussionInstrumentDefinitions(part: NotatedPart): ScoreInstrumentDefinition[] {
+  return percussionPitches(part).map((pitch) => ({
+    id: percussionInstrumentId(part.id, pitch),
+    name: percussionDisplay(pitch).name,
+    channel: GM_PERCUSSION_CHANNEL + 1,
+    unpitched: pitch + 1,
+  }));
+}
+
+/**
+ * MusicXML requires all `<score-instrument>` entries to precede every
+ * `<midi-instrument>` entry inside a score-part. Keep that content-model order
+ * even when a part carries several pitched channels or a drum map.
+ */
+function scorePartInstrumentsXml(part: NotatedPart): string {
+  const definitions = [
+    ...pitchedInstrumentDefinitions(part),
+    ...(partUsesPercussionMap(part) ? percussionInstrumentDefinitions(part) : []),
+  ];
+  const scoreInstruments = definitions
+    .map(
+      ({ id, name }) =>
+        `<score-instrument id="${id}"><instrument-name>${escapeXml(name)}</instrument-name></score-instrument>`,
+    )
+    .join('');
+  const midiInstruments = definitions
+    .map(({ id, channel, unpitched }) => {
+      const midiUnpitched =
+        unpitched === undefined ? '' : `<midi-unpitched>${unpitched}</midi-unpitched>`;
+      return `<midi-instrument id="${id}"><midi-channel>${channel}</midi-channel>${midiUnpitched}</midi-instrument>`;
     })
     .join('');
+  return scoreInstruments + midiInstruments;
 }
 
 /** Stable MusicXML score-instrument id for one GM percussion pitch. */
@@ -688,7 +769,8 @@ function serializePart(
   annotations: AnnotationIndex,
   lyrics: LyricIndex,
 ): void {
-  const staffMap = part.clef === 'grand' ? buildStaffMap(part) : undefined;
+  const staffMap =
+    part.clef === 'grand' ? buildStaffMap(part, annotations.staffOverrides) : undefined;
   const percussion = partUsesPercussionMap(part);
   const symbolsByMeasure = groupChordSymbolsByMeasure(chordSymbols, part.measures);
   lines.push(`<part id="${escapeXml(part.id)}">`);
@@ -701,6 +783,17 @@ function serializePart(
     if (keyFifths !== undefined) activeKeyFifths = keyFifths;
     const percussionLegend =
       percussion && measureIndex === 0 ? percussionLegendDirectionXml(part) : '';
+    const legacyTempo = score.measureTempos?.[measure.index];
+    const tempoMarks =
+      score.measureTempoMarks?.[measure.index] ??
+      (legacyTempo === undefined ? [] : [{ bpm: legacyTempo, offsetPpq: 0 }]);
+    const tempoTextValue = score.measureTempoTexts?.[measure.index];
+    const tempoTexts =
+      tempoTextValue === undefined
+        ? []
+        : Array.isArray(tempoTextValue)
+          ? tempoTextValue
+          : [tempoTextValue];
     serializeMeasure(
       lines,
       measure,
@@ -721,8 +814,8 @@ function serializePart(
       score.measureRepeats?.[measure.index],
       score.measureBreaks?.[measure.index],
       score.measureRehearsals?.[measure.index],
-      score.measureTempos?.[measure.index],
-      score.measureTempoTexts?.[measure.index],
+      tempoMarks,
+      tempoTexts,
       score.measureTexts?.[measure.index],
       score.multiMeasureRests?.[measure.index],
     );
@@ -755,8 +848,8 @@ function serializeMeasure(
   repeat: NotatedRepeatMark | undefined,
   measureBreak: NotatedMeasureBreak | undefined,
   rehearsal: string | undefined,
-  tempoBpm: number | undefined,
-  tempoText: NotatedTempoText | undefined,
+  tempoMarks: ReadonlyArray<NotatedTempoMark>,
+  tempoTexts: ReadonlyArray<NotatedTempoText>,
   measureTexts: ReadonlyArray<NotatedMeasureText> | undefined,
   multiMeasureRest: NotatedMultiMeasureRest | undefined,
 ): void {
@@ -784,13 +877,13 @@ function serializeMeasure(
   if (rehearsalXml !== '') {
     lines.push(rehearsalXml);
   }
-  const tempoXml = tempoDirectionXml(tempoBpm, measure.timeSig);
-  if (tempoXml !== '') {
-    lines.push(tempoXml);
+  for (const mark of tempoMarks) {
+    const tempoXml = tempoDirectionXml(mark, measure.timeSig, score.divisions);
+    if (tempoXml !== '') lines.push(tempoXml);
   }
-  const tempoTextXml = tempoTextDirectionXml(tempoText);
-  if (tempoTextXml !== '') {
-    lines.push(tempoTextXml);
+  for (const mark of tempoTexts) {
+    const tempoTextXml = tempoTextDirectionXml(mark, score.divisions);
+    if (tempoTextXml !== '') lines.push(tempoTextXml);
   }
   for (const text of measureTexts ?? []) {
     const textXml = measureTextDirectionXml(text);
@@ -862,12 +955,18 @@ function rehearsalDirectionXml(label: string | undefined): string {
 }
 
 /** Builds a metronome tempo direction plus playback tempo. */
-function tempoDirectionXml(bpm: number | undefined, timeSig: NotatedTimeSig): string {
-  if (bpm === undefined || !Number.isFinite(bpm) || bpm <= 0) return '';
+function tempoDirectionXml(
+  mark: NotatedTempoMark,
+  timeSig: NotatedTimeSig,
+  divisions: number,
+): string {
+  const { bpm } = mark;
+  if (!Number.isFinite(bpm) || bpm <= 0) return '';
   const beatGroup = beatGroupPpq(timeSig);
   const perMinute = tempoText(bpm / beatGroup);
   const playbackTempo = tempoText(bpm);
-  return `<direction placement="above"><direction-type><metronome>${metronomeBeatUnitXml(beatGroup)}<per-minute>${perMinute}</per-minute></metronome></direction-type><sound tempo="${playbackTempo}"/></direction>`;
+  const offset = directionOffsetXml(mark.offsetPpq, divisions);
+  return `<direction placement="above"><direction-type><metronome>${metronomeBeatUnitXml(beatGroup)}<per-minute>${perMinute}</per-minute></metronome></direction-type>${offset}<sound tempo="${playbackTempo}"/></direction>`;
 }
 
 /** Builds the metronome beat unit for a PPQ beat group. */
@@ -877,15 +976,21 @@ function metronomeBeatUnitXml(ppq: number): string {
 }
 
 /** Builds a textual tempo directive such as rit., accel. or a tempo. */
-function tempoTextDirectionXml(mark: NotatedTempoText | undefined): string {
-  if (mark === undefined) return '';
+function tempoTextDirectionXml(mark: NotatedTempoText, divisions: number): string {
   const text = mark.text.trim();
   if (!text) return '';
   const sound =
     mark.bpm !== undefined && Number.isFinite(mark.bpm) && mark.bpm > 0
       ? `<sound tempo="${tempoText(mark.bpm)}"/>`
       : '';
-  return `<direction placement="above"><direction-type><words default-y="30" font-style="italic">${escapeXml(text)}</words></direction-type>${sound}</direction>`;
+  const offset = directionOffsetXml(mark.offsetPpq ?? 0, divisions);
+  return `<direction placement="above"><direction-type><words default-y="30" font-style="italic">${escapeXml(text)}</words></direction-type>${offset}${sound}</direction>`;
+}
+
+/** MusicXML direction offset, omitted at the containing measure start. */
+function directionOffsetXml(offsetPpq: number, divisions: number): string {
+  if (!Number.isFinite(offsetPpq) || offsetPpq <= PPQ_EPSILON) return '';
+  return `<offset>${ppqToDivisions(offsetPpq, divisions)}</offset>`;
 }
 
 /** Builds a general text direction. */
@@ -1394,12 +1499,20 @@ function pushNoteEvent(
   const staffXml = staff === undefined ? '' : `<staff>${staff}</staff>`;
   const beamMarks = beamXml(beams.get(event) ?? []);
   const eventPercussion = eventUsesPercussionMap(event, percussion);
+  const pitchedChannel =
+    !eventPercussion && event.midiChannels?.length === 1 ? event.midiChannels[0] : undefined;
+  const dynamicsAttribute =
+    event.velocity !== undefined
+      ? ` dynamics="${tempoText((clampMidiVelocity(event.velocity) * 100) / 90)}"`
+      : '';
   event.pitches.forEach((midi, pitchIndex) => {
     const chord = pitchIndex > 0 ? '<chord/>' : '';
     const display = eventPercussion ? percussionDisplay(midi) : undefined;
     const instrument = eventPercussion
       ? `<instrument id="${percussionInstrumentId(scorePartIdForEvent(score, event), midi)}"/>`
-      : '';
+      : pitchedChannel !== undefined
+        ? `<instrument id="${pitchedInstrumentId(scorePartIdForEvent(score, event), pitchedChannel)}"/>`
+        : '';
     const pitch = eventPercussion
       ? unpitchedXml(display ?? percussionDisplay(midi))
       : pitchXml(spellPitch(midi, keyFifths));
@@ -1419,10 +1532,16 @@ function pushNoteEvent(
     const lyricXml = pitchIndex === 0 ? lyricsXml(lyrics.get(event) ?? []) : '';
     const beam = pitchIndex === 0 ? beamMarks : '';
     const stemMark = pitchIndex === 0 ? stemXml(event, measure, eventPercussion) : '';
+    const xmlId = scoreNoteXmlId(event.sourceIdentities ?? [], event.startPpq, pitchIndex);
+    const idAttribute = xmlId ? ` xml:id="${xmlId}"` : '';
     lines.push(
-      `<note>${chord}${pitch}<duration>${duration}</duration>${ties}${instrument}<voice>${event.voice}</voice><type>${event.value.base}</type>${dots}${accidental}${timeModification}${stemMark}${notehead}${staffXml}${beam}${notations}${lyricXml}</note>`,
+      `<note${idAttribute}${dynamicsAttribute}>${chord}${pitch}<duration>${duration}</duration>${ties}${instrument}<voice>${event.voice}</voice><type>${event.value.base}</type>${dots}${accidental}${timeModification}${stemMark}${notehead}${staffXml}${beam}${notations}${lyricXml}</note>`,
     );
   });
+}
+
+function clampMidiVelocity(value: number): number {
+  return Math.min(127, Math.max(1, Math.round(value)));
 }
 
 /** Builds MusicXML lyric elements for one note event. */
@@ -1670,14 +1789,15 @@ function tupletBracketXml(event: NotatedEvent, measure: NotatedMeasure | undefin
   if (index < 0) return '';
   const prev = voice.events[index - 1];
   const next = voice.events[index + 1];
+  const sameGroup = (candidate: NotatedEvent | undefined): boolean =>
+    candidate !== undefined &&
+    (event.tupletGroupId !== undefined
+      ? candidate.tupletGroupId === event.tupletGroupId
+      : candidate.tupletGroupId === undefined && sameTuplet(candidate, event));
   const hasPrev =
-    prev !== undefined &&
-    sameTuplet(prev, event) &&
-    Math.abs(prev.startPpq + prev.durationPpq - event.startPpq) < PPQ_EPSILON;
+    sameGroup(prev) && Math.abs(prev.startPpq + prev.durationPpq - event.startPpq) < PPQ_EPSILON;
   const hasNext =
-    next !== undefined &&
-    sameTuplet(next, event) &&
-    Math.abs(event.startPpq + event.durationPpq - next.startPpq) < PPQ_EPSILON;
+    sameGroup(next) && Math.abs(event.startPpq + event.durationPpq - next.startPpq) < PPQ_EPSILON;
   let xml = '';
   if (!hasPrev) xml += '<tuplet type="start"/>';
   if (!hasNext) xml += '<tuplet type="stop"/>';
@@ -1860,7 +1980,12 @@ function groupChordSymbolsByMeasure(
  * just below the split, which matches how a player reads a right-hand voicing.
  * A single note reduces to comparing that pitch against the split point.
  */
-function noteStaff(event: NotatedEvent): StaffNumber {
+function noteStaff(
+  event: NotatedEvent,
+  overrides: ReadonlyMap<NotatedEvent, StaffNumber>,
+): StaffNumber {
+  const override = overrides.get(event);
+  if (override !== undefined) return override;
   if (event.staff === 1 || event.staff === 2) return event.staff;
   if (event.pitches.length === 0) return 1;
   const mean = event.pitches.reduce((sum, pitch) => sum + pitch, 0) / event.pitches.length;
@@ -1873,7 +1998,10 @@ function noteStaff(event: NotatedEvent): StaffNumber {
  * note in the same voice (chained across measures), leading rests adopt the
  * first note's staff, and all-rest voices default to staff 1.
  */
-function buildStaffMap(part: NotatedPart): Map<NotatedEvent, StaffNumber> {
+function buildStaffMap(
+  part: NotatedPart,
+  overrides: ReadonlyMap<NotatedEvent, StaffNumber> = new Map(),
+): Map<NotatedEvent, StaffNumber> {
   const staffMap = new Map<NotatedEvent, StaffNumber>();
   const eventsByVoice = new Map<NotatedVoiceNumber, NotatedEvent[]>();
   for (const measure of part.measures) {
@@ -1891,7 +2019,7 @@ function buildStaffMap(part: NotatedPart): Map<NotatedEvent, StaffNumber> {
     const leadingRests: NotatedEvent[] = [];
     for (const event of events) {
       if (event.kind === 'note') {
-        const staff = noteStaff(event);
+        const staff = noteStaff(event, overrides);
         for (const rest of leadingRests) {
           staffMap.set(rest, staff);
         }

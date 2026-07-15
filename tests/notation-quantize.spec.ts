@@ -183,6 +183,19 @@ describe('quantizeToScore: score shell', () => {
     ]);
   });
 
+  it('keeps an opening pickup as a short first measure before full bars', () => {
+    const score = quantize(
+      [makeNote(60, 0, 1), makeNote(62, 1, 4)],
+      baseOptions({ clipLengthPpq: 5, pickupLengthPpq: 1 }),
+    );
+    expect(score.parts[0].measures.map((measure) => [measure.startPpq, measure.lengthPpq])).toEqual(
+      [
+        [0, 1],
+        [1, 4],
+      ],
+    );
+  });
+
   it('lays out measures from a project time-signature map', () => {
     const score = quantize(
       [],

@@ -325,6 +325,45 @@ describe('score annotation serialization', () => {
     expect(doc.score).toBeUndefined();
   });
 
+  it('round-trips score toolbar, page layout and display settings', async () => {
+    store.scoreDisplaySettings = {
+      displayQuantizeKey: '8t',
+      chordsEnabled: true,
+      fullScoreEnabled: true,
+      estimateFingering: true,
+      pageFormat: 'letter',
+      landscape: true,
+      pageMarginMm: 18,
+      scalePercent: 70,
+      spacingStaff: 20,
+      barsPerSystem: 3,
+      barsPerPage: 12,
+      grandStaffSplitPitch: 55,
+      viewZoom: 1.44,
+    };
+
+    const doc = serializeProject();
+    expect(doc.score).toEqual(store.scoreDisplaySettings);
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    expect(store.scoreDisplaySettings).toEqual({
+      displayQuantizeKey: '8t',
+      chordsEnabled: true,
+      fullScoreEnabled: true,
+      estimateFingering: true,
+      pageFormat: 'letter',
+      landscape: true,
+      pageMarginMm: 18,
+      scalePercent: 70,
+      spacingStaff: 20,
+      barsPerSystem: 3,
+      barsPerPage: 12,
+      grandStaffSplitPitch: 55,
+      viewZoom: 1.44,
+    });
+    expect(serializeProject()).toEqual(doc);
+  });
+
   it('drops orphaned annotations (deleted notes) from the document', () => {
     const a = addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
     const b = addNote({ pitch: 64, startPpq: 1, durationPpq: 1 });
@@ -391,5 +430,33 @@ describe('annotation document converters', () => {
       notes,
     );
     expect(restored).toEqual({ 10: { dynamics: 'f' } });
+  });
+
+  it('uses a persisted ordinal to keep identical unison annotations distinct', () => {
+    const unison = [
+      { id: 10, pitch: 60, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 },
+      { id: 11, pitch: 60, velocity: 72, startPpq: 0, durationPpq: 2, channel: 0 },
+    ];
+    const document = annotationsToDocument(
+      {
+        10: { dynamics: 'p' },
+        11: { articulation: 'accent' },
+      },
+      unison,
+    );
+    expect(document).toEqual([
+      { pitch: 60, startPpq: 0, channel: 0, dynamics: 'p' },
+      { pitch: 60, startPpq: 0, channel: 0, ordinal: 1, articulation: 'accent' },
+    ]);
+
+    expect(
+      annotationsFromDocument(document, [
+        { ...unison[0], id: 101 },
+        { ...unison[1], id: 102 },
+      ]),
+    ).toEqual({
+      101: { dynamics: 'p' },
+      102: { articulation: 'accent' },
+    });
   });
 });

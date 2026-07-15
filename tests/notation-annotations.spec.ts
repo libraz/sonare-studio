@@ -183,7 +183,7 @@ describe('serializeMusicXml dynamics', () => {
     parse(xml);
     const tiedNotes = xml
       .split('\n')
-      .filter((line) => line.startsWith('<note>') && line.includes('<tie type='));
+      .filter((line) => line.startsWith('<note') && line.includes('<tie type='));
     expect(tiedNotes).toHaveLength(2);
     expect(tiedNotes.every((line) => line.includes('<staff>1</staff>'))).toBe(true);
   });
@@ -213,7 +213,7 @@ describe('serializeMusicXml articulations', () => {
     parse(xml);
     const noteLines = xml
       .split('\n')
-      .filter((line) => line.startsWith('<note>') && line.includes('<pitch>'));
+      .filter((line) => line.startsWith('<note') && line.includes('<pitch>'));
     expect(noteLines).toHaveLength(2);
     expect(noteLines[0]).toContain('<articulations><staccato placement="above"/></articulations>');
     expect(noteLines[0]).not.toContain('<chord/>');
@@ -224,7 +224,7 @@ describe('serializeMusicXml articulations', () => {
   it('attaches the articulation to the attack of a tie chain only', () => {
     const xml = engrave([makeNote(1, 60, 3, 2)], { 1: { articulation: 'accent' } });
     parse(xml);
-    const noteLines = xml.split('\n').filter((line) => line.startsWith('<note>'));
+    const noteLines = xml.split('\n').filter((line) => line.startsWith('<note'));
     const attack = noteLines.find((line) => line.includes('<tie type="start"/>'));
     const tail = noteLines.find((line) => line.includes('<tie type="stop"/>'));
     expect(attack).toContain('<articulations><accent placement="above"/></articulations>');
@@ -266,7 +266,9 @@ describe('serializeMusicXml slurs', () => {
       1: { slurToNoteId: 2 },
     });
     parse(xml);
-    const noteLines = xml.split('\n').filter((line) => line.startsWith('<note>'));
+    const noteLines = xml
+      .split('\n')
+      .filter((line) => line.startsWith('<note') && line.includes('<pitch>'));
     expect(noteLines[0]).toContain(
       '<notations><slur type="start" number="1" placement="above"/></notations>',
     );

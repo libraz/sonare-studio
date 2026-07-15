@@ -15,6 +15,8 @@
  * parts yields an empty-but-valid project rather than throwing.
  */
 
+import { SaxesParser } from 'saxes';
+import { preflightXmlBytes, XmlPreflightError } from '@/lib/xml-preflight';
 import {
   type DocumentClip,
   type DocumentMarker,
@@ -50,6 +52,33 @@ const MIN_CLIP_LENGTH_PPQ = 1;
 
 /** Rounding tolerance for treating a PPQ length as integral. */
 const PPQ_INTEGER_EPSILON = 1 / 256;
+
+export interface MusicXmlImportLimits {
+  maxBytes: number;
+  maxElements: number;
+  maxDepth: number;
+  maxParts: number;
+  maxMeasures: number;
+  maxNotes: number;
+  maxNumericAbs: number;
+}
+
+export const DEFAULT_MUSICXML_IMPORT_LIMITS: Readonly<MusicXmlImportLimits> = Object.freeze({
+  maxBytes: 32 * 1024 * 1024,
+  maxElements: 250_000,
+  maxDepth: 128,
+  maxParts: 1_024,
+  maxMeasures: 100_000,
+  maxNotes: 1_000_000,
+  maxNumericAbs: 1_000_000_000,
+});
+
+interface XmlElement {
+  tagName: string;
+  attributes: Record<string, string>;
+  children: XmlElement[];
+  text: string;
+}
 
 /** Semitone offset above C for each diatonic step. */
 const STEP_SEMITONES: Readonly<Record<string, number>> = {
@@ -120,6 +149,29 @@ export class MusicXmlImportError extends Error {
   }
 }
 
+export type MusicXmlLossFeature =
+  | 'harmony'
+  | 'lyrics'
+  | 'repeats'
+  | 'fingering'
+  | 'annotations'
+  | 'grace-notes'
+  | 'figured-bass';
+
+export interface MusicXmlLossIssue {
+  feature: MusicXmlLossFeature;
+  count: number;
+}
+
+export interface MusicXmlImportReport {
+  issues: MusicXmlLossIssue[];
+}
+
+export interface MusicXmlImportResult {
+  document: ProjectDocument;
+  report: MusicXmlImportReport;
+}
+
 /** Percussion instrument mapping declared in the `<part-list>`. */
 interface InstrumentMapping {
   /** 0-based MIDI channel, when declared. */
@@ -139,27 +191,47 @@ function clampInt(value: number, min: number, max: number): number {
 }
 
 /** Returns direct child elements of `parent`, optionally filtered by tag name. */
-function childElements(parent: Element, tag?: string): Element[] {
-  const out: Element[] = [];
-  for (const child of Array.from(parent.children)) {
+function childElements(parent: XmlElement, tag?: string): XmlElement[] {
+  const out: XmlElement[] = [];
+  for (const child of parent.children) {
     if (tag === undefined || child.tagName === tag) out.push(child);
   }
   return out;
 }
 
 /** Returns the trimmed text of the first `tag` child, or null when absent. */
-function childText(parent: Element, tag: string): string | null {
+function elementText(element: XmlElement): string {
+  return element.text + element.children.map(elementText).join('');
+}
+
+function childText(parent: XmlElement, tag: string): string | null {
   const child = childElements(parent, tag)[0];
-  const text = child?.textContent?.trim();
+  const text = child === undefined ? undefined : elementText(child).trim();
   return text === undefined || text === '' ? null : text;
 }
 
 /** Parses the first `tag` child as an integer, or null when absent/invalid. */
-function childInt(parent: Element, tag: string): number | null {
+function childInt(parent: XmlElement, tag: string): number | null {
   const text = childText(parent, tag);
   if (text === null) return null;
-  const value = Number.parseInt(text, 10);
-  return Number.isFinite(value) ? value : null;
+  if (!/^[+-]?\d+$/.test(text)) return null;
+  const value = Number(text);
+  if (
+    !Number.isSafeInteger(value) ||
+    Math.abs(value) > DEFAULT_MUSICXML_IMPORT_LIMITS.maxNumericAbs
+  ) {
+    throw new MusicXmlImportError(`MusicXML numeric value exceeds the safe limit: ${text}`);
+  }
+  return value;
+}
+
+function descendants(parent: XmlElement, tag: string): XmlElement[] {
+  const out: XmlElement[] = [];
+  for (const child of parent.children) {
+    if (child.tagName === tag) out.push(child);
+    out.push(...descendants(child, tag));
+  }
+  return out;
 }
 
 /**
@@ -170,31 +242,88 @@ function childInt(parent: Element, tag: string): number | null {
  * @throws MusicXmlImportError When the input is not well-formed XML or is not
  *   a `score-partwise` document.
  */
-function parseScoreRoot(xml: string): Element {
-  let doc: Document;
+function parseScoreRoot(xml: string, limits: Partial<MusicXmlImportLimits> = {}): XmlElement {
+  const resolved = { ...DEFAULT_MUSICXML_IMPORT_LIMITS, ...limits };
   try {
-    doc = new DOMParser().parseFromString(xml, 'application/xml');
-  } catch {
+    preflightXmlBytes(new TextEncoder().encode(xml).byteLength, 'MusicXML', {
+      maxBytes: resolved.maxBytes,
+    });
+  } catch (error) {
+    if (error instanceof XmlPreflightError) {
+      throw new MusicXmlImportError(error.message);
+    }
     throw new MusicXmlImportError('MusicXML could not be parsed as XML');
   }
-  if (doc.getElementsByTagName('parsererror').length > 0) {
+  let root: XmlElement | null = null;
+  const stack: XmlElement[] = [];
+  let elements = 0;
+  let parts = 0;
+  let measures = 0;
+  let notes = 0;
+  const parser = new SaxesParser({ xmlns: false });
+  parser.on('opentag', (tag) => {
+    elements += 1;
+    if (tag.name === 'part') parts += 1;
+    if (tag.name === 'measure') measures += 1;
+    if (tag.name === 'note') notes += 1;
+    if (elements > resolved.maxElements) {
+      throw new MusicXmlImportError(
+        `MusicXML exceeds the ${resolved.maxElements}-element XML limit`,
+      );
+    }
+    if (stack.length + 1 > resolved.maxDepth) {
+      throw new MusicXmlImportError(`MusicXML exceeds the ${resolved.maxDepth}-level depth limit`);
+    }
+    if (parts > resolved.maxParts) {
+      throw new MusicXmlImportError(`MusicXML exceeds the ${resolved.maxParts}-part limit`);
+    }
+    if (measures > resolved.maxMeasures) {
+      throw new MusicXmlImportError(`MusicXML exceeds the ${resolved.maxMeasures}-measure limit`);
+    }
+    if (notes > resolved.maxNotes) {
+      throw new MusicXmlImportError(`MusicXML exceeds the ${resolved.maxNotes}-note limit`);
+    }
+    const attributes: Record<string, string> = {};
+    for (const [name, raw] of Object.entries(tag.attributes)) {
+      attributes[name] = raw;
+    }
+    const element: XmlElement = { tagName: tag.name, attributes, children: [], text: '' };
+    const parent = stack[stack.length - 1];
+    if (parent) parent.children.push(element);
+    else if (root === null) root = element;
+    else throw new MusicXmlImportError('MusicXML contains multiple root elements');
+    stack.push(element);
+  });
+  parser.on('text', (text) => {
+    const current = stack[stack.length - 1];
+    if (current) current.text += text;
+  });
+  parser.on('cdata', (text) => {
+    const current = stack[stack.length - 1];
+    if (current) current.text += text;
+  });
+  parser.on('closetag', () => {
+    stack.pop();
+  });
+  try {
+    parser.write(xml).close();
+  } catch (error) {
+    if (error instanceof MusicXmlImportError) throw error;
     throw new MusicXmlImportError('MusicXML is not well-formed XML');
   }
-  const root = doc.documentElement;
-  if (root === null || root.tagName === 'parsererror') {
-    throw new MusicXmlImportError('MusicXML is not well-formed XML');
-  }
-  if (root.tagName === 'score-timewise') {
+  const parsedRoot = root as XmlElement | null;
+  if (parsedRoot === null) throw new MusicXmlImportError('MusicXML is not well-formed XML');
+  if (parsedRoot.tagName === 'score-timewise') {
     throw new MusicXmlImportError('score-timewise MusicXML is not supported; convert to partwise');
   }
-  if (root.tagName !== 'score-partwise') {
-    throw new MusicXmlImportError(`Unexpected MusicXML root element <${root.tagName}>`);
+  if (parsedRoot.tagName !== 'score-partwise') {
+    throw new MusicXmlImportError(`Unexpected MusicXML root element <${parsedRoot.tagName}>`);
   }
-  return root;
+  return parsedRoot;
 }
 
 /** MIDI note number for a `<pitch>` element, or null when it is incomplete. */
-function pitchToMidi(pitch: Element): number | null {
+function pitchToMidi(pitch: XmlElement): number | null {
   const step = childText(pitch, 'step');
   const octave = childInt(pitch, 'octave');
   if (step === null || octave === null) return null;
@@ -205,7 +334,7 @@ function pitchToMidi(pitch: Element): number | null {
 }
 
 /** MIDI note number for an `<unpitched>` display position, or null. */
-function unpitchedToMidi(unpitched: Element): number | null {
+function unpitchedToMidi(unpitched: XmlElement): number | null {
   const step = childText(unpitched, 'display-step');
   const octave = childInt(unpitched, 'display-octave');
   if (step === null || octave === null) return null;
@@ -215,16 +344,16 @@ function unpitchedToMidi(unpitched: Element): number | null {
 }
 
 /** Reads the `<part-list>` into per-part names and instrument mappings. */
-function readPartList(root: Element): Map<string, PartInfo> {
+function readPartList(root: XmlElement): Map<string, PartInfo> {
   const parts = new Map<string, PartInfo>();
   const partList = childElements(root, 'part-list')[0];
   if (partList === undefined) return parts;
   for (const scorePart of childElements(partList, 'score-part')) {
-    const id = scorePart.getAttribute('id');
+    const id = scorePart.attributes.id;
     if (id === null) continue;
     const instruments = new Map<string, InstrumentMapping>();
     for (const midiInstrument of childElements(scorePart, 'midi-instrument')) {
-      const instrumentId = midiInstrument.getAttribute('id');
+      const instrumentId = midiInstrument.attributes.id;
       if (instrumentId === null) continue;
       const midiChannel = childInt(midiInstrument, 'midi-channel');
       const midiUnpitched = childInt(midiInstrument, 'midi-unpitched');
@@ -242,7 +371,7 @@ function readPartList(root: Element): Map<string, PartInfo> {
 }
 
 /** Quarter-note BPM from a `<metronome>` element, or null when incomputable. */
-function tempoFromMetronome(metronome: Element): number | null {
+function tempoFromMetronome(metronome: XmlElement): number | null {
   const perMinute = childText(metronome, 'per-minute');
   const beatUnit = childText(metronome, 'beat-unit');
   if (perMinute === null || beatUnit === null) return null;
@@ -255,17 +384,62 @@ function tempoFromMetronome(metronome: Element): number | null {
 }
 
 /** Quarter-note BPM from a measure-level `<sound>` or `<direction>`, or null. */
-function tempoFromDirection(element: Element): number | null {
-  const sound =
-    element.tagName === 'sound' ? element : (element.getElementsByTagName('sound')[0] ?? null);
-  const soundTempo = sound?.getAttribute('tempo');
+function tempoFromDirection(element: XmlElement): number | null {
+  const sound = element.tagName === 'sound' ? element : (descendants(element, 'sound')[0] ?? null);
+  const soundTempo = sound?.attributes.tempo;
   if (soundTempo !== null && soundTempo !== undefined) {
     const value = Number.parseFloat(soundTempo);
     if (Number.isFinite(value) && value > 0) return value;
   }
-  const metronome = element.getElementsByTagName('metronome')[0];
+  const metronome = descendants(element, 'metronome')[0];
   if (metronome !== undefined) return tempoFromMetronome(metronome);
   return null;
+}
+
+function dynamicsPercentToVelocity(value: string | undefined): number | null {
+  if (value === undefined || value.trim() === '') return null;
+  const percent = Number(value);
+  if (
+    !Number.isFinite(percent) ||
+    percent < 0 ||
+    Math.abs(percent) > DEFAULT_MUSICXML_IMPORT_LIMITS.maxNumericAbs
+  ) {
+    throw new MusicXmlImportError(`Invalid MusicXML dynamics value: ${value}`);
+  }
+  return clampInt((percent * 90) / 100, 1, 127);
+}
+
+function noteVelocity(value: string | undefined, current: number): number {
+  return dynamicsPercentToVelocity(value) ?? current;
+}
+
+function dynamicsFromDirection(element: XmlElement): number | null {
+  const sound =
+    element.tagName === 'sound' ? element : (descendants(element, 'sound')[0] ?? undefined);
+  return dynamicsPercentToVelocity(sound?.attributes.dynamics);
+}
+
+function collectLossReport(root: XmlElement): MusicXmlImportReport {
+  const definitions: ReadonlyArray<{
+    feature: MusicXmlLossFeature;
+    tags: ReadonlyArray<string>;
+  }> = [
+    { feature: 'harmony', tags: ['harmony'] },
+    { feature: 'lyrics', tags: ['lyric'] },
+    { feature: 'repeats', tags: ['repeat', 'ending'] },
+    { feature: 'fingering', tags: ['fingering'] },
+    {
+      feature: 'annotations',
+      tags: ['articulations', 'ornaments', 'slur', 'wedge', 'octave-shift', 'pedal', 'glissando'],
+    },
+    { feature: 'grace-notes', tags: ['grace'] },
+    { feature: 'figured-bass', tags: ['figured-bass'] },
+  ];
+  const issues = definitions.flatMap(({ feature, tags }) => {
+    const count = tags.reduce((total, tag) => total + descendants(root, tag).length, 0);
+    return count > 0 ? [{ feature, count }] : [];
+  });
+  return { issues };
 }
 
 /** Key-signature marker name (e.g. "Key: C major") for the SMF marker model. */
@@ -280,6 +454,7 @@ interface GlobalMaps {
   tempos: Map<number, number>;
   timeSignatures: Array<{ ppq: number; numerator: number; denominator: number }>;
   keys: DocumentMarker[];
+  pickupLengthPpq?: number;
 }
 
 /** Mutable per-part cursor state while walking measures. */
@@ -287,6 +462,8 @@ interface PartState {
   divisions: number;
   measureStartPpq: number;
   timeSigLengthPpq: number;
+  chromaticTranspose: number;
+  velocity: number;
 }
 
 /**
@@ -314,7 +491,7 @@ class TieTracker {
 
 /** Reads `<attributes>` into the part cursor and the shared global maps. */
 function applyAttributes(
-  attributes: Element,
+  attributes: XmlElement,
   state: PartState,
   global: GlobalMaps,
   captureGlobal: boolean,
@@ -342,6 +519,11 @@ function applyAttributes(
       }
     }
   }
+  const transpose = childElements(attributes, 'transpose')[0];
+  if (transpose !== undefined) {
+    const chromatic = childInt(transpose, 'chromatic');
+    if (chromatic !== null) state.chromaticTranspose = clampInt(chromatic, -127, 127);
+  }
 }
 
 /**
@@ -349,7 +531,7 @@ function applyAttributes(
  * returning the PPQ length by which the voice cursor advances.
  */
 function importNote(
-  noteEl: Element,
+  noteEl: XmlElement,
   onsetPpq: number,
   isChord: boolean,
   state: PartState,
@@ -375,15 +557,19 @@ function importNote(
     const unpitchedEl = childElements(noteEl, 'unpitched')[0];
     if (unpitchedEl !== undefined) {
       channel = GM_PERCUSSION_CHANNEL;
-      const instrumentId = childElements(noteEl, 'instrument')[0]?.getAttribute('id') ?? undefined;
+      const instrumentId = childElements(noteEl, 'instrument')[0]?.attributes.id;
       const mapped = instrumentId !== undefined ? part.instruments.get(instrumentId) : undefined;
       pitch = mapped?.unpitched ?? unpitchedToMidi(unpitchedEl);
       if (mapped?.channel !== undefined) channel = mapped.channel;
     }
   }
+  const instrumentId = childElements(noteEl, 'instrument')[0]?.attributes.id;
+  const instrument = instrumentId === undefined ? undefined : part.instruments.get(instrumentId);
+  if (pitchEl !== undefined && pitch !== null) pitch += state.chromaticTranspose;
+  if (instrument?.channel !== undefined) channel = clampInt(instrument.channel, 0, 15);
   if (pitch === null || durationPpq <= 0) return advance;
 
-  const tieTypes = childElements(noteEl, 'tie').map((tie) => tie.getAttribute('type'));
+  const tieTypes = childElements(noteEl, 'tie').map((tie) => tie.attributes.type);
   const tieStop = tieTypes.includes('stop');
   const tieStart = tieTypes.includes('start');
   const key = TieTracker.key(voice, staff, clampInt(pitch, 0, 127));
@@ -398,7 +584,7 @@ function importNote(
   }
   const note: DocumentNote = {
     pitch: clampInt(pitch, 0, 127),
-    velocity: DEFAULT_VELOCITY,
+    velocity: noteVelocity(noteEl.attributes.dynamics, state.velocity),
     startPpq: onsetPpq,
     durationPpq,
     channel,
@@ -410,7 +596,7 @@ function importNote(
 
 /** Imports every `<measure>` of one `<part>` into a flat note list. */
 function importPartNotes(
-  partEl: Element,
+  partEl: XmlElement,
   part: PartInfo,
   global: GlobalMaps,
   captureGlobal: boolean,
@@ -421,8 +607,10 @@ function importPartNotes(
     divisions: FALLBACK_DIVISIONS,
     measureStartPpq: 0,
     timeSigLengthPpq: 4,
+    chromaticTranspose: 0,
+    velocity: DEFAULT_VELOCITY,
   };
-  for (const measure of childElements(partEl, 'measure')) {
+  for (const [measureIndex, measure] of childElements(partEl, 'measure').entries()) {
     let cursorPpq = state.measureStartPpq;
     let measureMaxPpq = state.measureStartPpq;
     let chordHeadPpq = state.measureStartPpq;
@@ -458,11 +646,22 @@ function importPartNotes(
             const offset = childInt(element, 'offset') ?? 0;
             global.tempos.set(cursorPpq + offset / state.divisions, bpm);
           }
+          const dynamics = dynamicsFromDirection(element);
+          if (dynamics !== null) state.velocity = dynamics;
           break;
         }
       }
     }
     const measureLength = measureMaxPpq - state.measureStartPpq;
+    if (
+      captureGlobal &&
+      measureIndex === 0 &&
+      measureLength > 0 &&
+      measureLength < state.timeSigLengthPpq - PPQ_INTEGER_EPSILON &&
+      (measure.attributes.implicit === 'yes' || measure.attributes.number === '0')
+    ) {
+      global.pickupLengthPpq = measureLength;
+    }
     state.measureStartPpq += measureLength > 0 ? measureLength : state.timeSigLengthPpq;
   }
   return notes;
@@ -535,7 +734,7 @@ function timeSignatureSegments(entries: GlobalMaps['timeSignatures']): DocumentT
 }
 
 /** Derives the project name from the score header or the source file name. */
-function projectName(root: Element, fileName?: string): string {
+function projectName(root: XmlElement, fileName?: string): string {
   const work = childElements(root, 'work')[0];
   const title = work !== undefined ? childText(work, 'work-title') : null;
   if (title !== null) return title;
@@ -558,14 +757,18 @@ function projectName(root: Element, fileName?: string): string {
  * @returns A project document with one MIDI track per part.
  * @throws MusicXmlImportError When the input is not well-formed or supported.
  */
-export function importMusicXml(xml: string, fileName?: string): ProjectDocument {
-  const root = parseScoreRoot(xml);
+export function importMusicXmlWithReport(
+  xml: string,
+  fileName?: string,
+  limits: Partial<MusicXmlImportLimits> = {},
+): MusicXmlImportResult {
+  const root = parseScoreRoot(xml, limits);
   const partInfos = readPartList(root);
   const global: GlobalMaps = { tempos: new Map(), timeSignatures: [], keys: [] };
   const tracks: ProjectDocument['tracks'] = [];
   const partElements = childElements(root, 'part');
   partElements.forEach((partEl, index) => {
-    const id = partEl.getAttribute('id') ?? `P${index + 1}`;
+    const id = partEl.attributes.id ?? `P${index + 1}`;
     const info = partInfos.get(id) ?? { name: id, instruments: new Map() };
     const notes = importPartNotes(partEl, info, global, index === 0);
     const name = info.name || `Part ${index + 1}`;
@@ -583,7 +786,7 @@ export function importMusicXml(xml: string, fileName?: string): ProjectDocument 
 
   const markers = global.keys.slice().sort((a, b) => a.ppq - b.ppq || a.name.localeCompare(b.name));
 
-  return {
+  const document: ProjectDocument = {
     schemaVersion: PROJECT_DOCUMENT_SCHEMA_VERSION,
     name: projectName(root, fileName),
     sampleRate: DEFAULT_SAMPLE_RATE,
@@ -592,5 +795,12 @@ export function importMusicXml(xml: string, fileName?: string): ProjectDocument 
     tracks,
     markers,
     sections: [],
+    ...(global.pickupLengthPpq !== undefined ? { pickupLengthPpq: global.pickupLengthPpq } : {}),
   };
+  return { document, report: collectLossReport(root) };
+}
+
+/** Compatibility API for callers that do not need the structured loss report. */
+export function importMusicXml(xml: string, fileName?: string): ProjectDocument {
+  return importMusicXmlWithReport(xml, fileName).document;
 }
