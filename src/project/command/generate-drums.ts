@@ -14,6 +14,7 @@
 import { type DrumsOptions, generateDrums } from '@libraz/libcantus';
 import { noteEventsToNewEditorNotes } from '@/compose/notes-io';
 import { useProjectStore } from '../store';
+import { isFourFourBarRange } from '../time-signature';
 import {
   addGeneratedTrack,
   EDITS_PER_TRACK,
@@ -69,6 +70,9 @@ export function buildDrumsPlan(
   const bars = params.bars ?? 4;
   if (!Number.isInteger(bars) || bars <= 0) {
     throw new RangeError(`Drum bars must be a positive integer, got ${bars}`);
+  }
+  if (!isFourFourBarRange(store.timeSignatures, 0, bars)) {
+    throw new RangeError('Drum generation currently supports 4/4 bars only.');
   }
   const section = params.section ?? 'verse';
 

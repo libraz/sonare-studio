@@ -38,9 +38,6 @@ import { effectiveKeyScale } from './key';
 import { segmentAtPpq, segmentToTimeSignature } from './meter';
 import { harmonicTracksOnly, type TrackWithNotes } from './tracks';
 
-/** Fallback clip window span in beats when the clip carries no notes yet. */
-const DEFAULT_WINDOW_BEATS = 4;
-
 /** Representative octave anchor: pitch class pc is evaluated as MIDI 60 + pc. */
 const CENTER_C = 60;
 
@@ -49,6 +46,8 @@ export interface GuidanceInput {
   notes: ReadonlyArray<EditorNote>;
   /** Active clip timeline start in PPQ (to reach absolute beats). */
   clipStartPpq: number;
+  /** Full active clip window length in PPQ, including empty space. */
+  clipLengthPpq: number;
   /** Project chord track (absolute PPQ regions); empty = no progression. */
   chordSymbols: ReadonlyArray<EditorChordSymbol>;
   /** Store scale-highlight config (key context). */
@@ -202,14 +201,10 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
   const keySet = input.key.enabled;
   const timeline = buildChordTimeline(input.chordSymbols);
 
-  // Clip window in absolute beats; an empty clip keeps a minimal span so the
-  // background still tints.
-  const clipSpan = input.notes.reduce(
-    (max, note) => Math.max(max, note.startPpq + note.durationPpq),
-    0,
-  );
+  // Tint the explicit clip window, not merely the span occupied by notes.
+  // This keeps long empty tails and entirely empty clips analyzable.
   const windowStart = input.clipStartPpq;
-  const windowEnd = windowStart + (clipSpan > 0 ? clipSpan : DEFAULT_WINDOW_BEATS);
+  const windowEnd = windowStart + Math.max(0, input.clipLengthPpq);
 
   // Voice context: one line per non-percussion other track, kept separate (not
   // pooled) so each voice's motion can be tracked across time. That per-voice
@@ -281,7 +276,7 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
       const absStart = Math.max(segment.startBeat, windowStart);
       segments.push({
         startBeat: absStart - input.clipStartPpq,
-        endBeat: segment.endBeat - input.clipStartPpq,
+        endBeat: Math.min(segment.endBeat, windowEnd) - input.clipStartPpq,
         safetyByPc: safetyRow(
           segment.chord,
           key,

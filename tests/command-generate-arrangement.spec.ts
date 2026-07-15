@@ -94,6 +94,26 @@ describe('generateArrangementCommand', () => {
     expect(store.tracks.some((t) => t.name === 'Bass')).toBe(false);
   });
 
+  it('clips existing chords and generated parts to the requested bars', () => {
+    setProjectChords([...TWO_CHORDS, { startPpq: 8, endPpq: 16, rootPc: 5, quality: 0 }]);
+
+    const parts = generateArrangementCommand({
+      bars: 2,
+      progression: false,
+      drums: false,
+      bass: false,
+      backing: true,
+    });
+
+    expect(parts).toBe(1);
+    const track = store.tracks.find((candidate) => candidate.name === 'Backing');
+    const clip = store.clips.find((candidate) => candidate.trackId === track?.id);
+    expect(clip?.lengthPpq).toBe(8);
+    expect(clip?.notes.every((note) => note.startPpq + note.durationPpq <= 8)).toBe(true);
+    // Existing project harmony is a source, not an output of this command.
+    expect(store.chords.at(-1)?.endPpq).toBe(16);
+  });
+
   it('is deterministic in its seed', () => {
     generateArrangementCommand({ bars: 4, seed: 9 });
     const first = JSON.stringify(store.chords);
@@ -104,5 +124,10 @@ describe('generateArrangementCommand', () => {
 
   it('rejects a non-positive bar count', () => {
     expect(() => generateArrangementCommand({ bars: 0 })).toThrow(RangeError);
+  });
+
+  it('blocks fixed-grid arrangement generation outside 4/4', () => {
+    store.timeSignatures = [{ startPpq: 0, numerator: 5, denominator: 8 }];
+    expect(() => generateArrangementCommand({ bars: 1 })).toThrow(/supports 4\/4 bars only/);
   });
 });

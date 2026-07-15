@@ -45,6 +45,7 @@ function guidanceInput(partial: Partial<GuidanceInput>): GuidanceInput {
   return {
     notes: [],
     clipStartPpq: 0,
+    clipLengthPpq: 4,
     chordSymbols: [],
     key: C_MAJOR_KEY,
     timeSignatures: FOUR_FOUR,
@@ -134,6 +135,29 @@ describe('buildGuidance', () => {
     expect(result.segments).toHaveLength(1);
     expect(result.segments[0].startBeat).toBe(0);
     expect(result.segments[0].endBeat).toBe(4);
+  });
+
+  it('tints the full explicit window of a long empty clip', () => {
+    const result = buildGuidance(
+      guidanceInput({
+        notes: [],
+        clipStartPpq: 8,
+        clipLengthPpq: 16,
+        chordSymbols: [chordSymbol({ startPpq: 8, endPpq: 32 })],
+      }),
+    );
+    expect(result.segments).toHaveLength(1);
+    expect(result.segments[0]).toMatchObject({ startBeat: 0, endBeat: 16 });
+  });
+
+  it('clamps a chord tint at the clip end', () => {
+    const result = buildGuidance(
+      guidanceInput({
+        clipLengthPpq: 3,
+        chordSymbols: [chordSymbol({ startPpq: 0, endPpq: 8 })],
+      }),
+    );
+    expect(result.segments[0].endBeat).toBe(3);
   });
 });
 

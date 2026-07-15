@@ -20,6 +20,7 @@ import {
 } from '@/compose/arrangement';
 import { effectiveKeyScale } from '@/compose/key';
 import type { TrackWithNotes } from '@/compose/tracks';
+import { projectMidiNoteOccurrences } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
 
 /** One tension sample positioned in absolute PPQ. */
@@ -54,9 +55,7 @@ function collectTracks(store: ReturnType<typeof useProjectStore>): TrackWithNote
   const out: TrackWithNotes[] = [];
   for (const track of store.tracks) {
     const clips = store.clipsByTrack.get(track.id) ?? [];
-    const notes = clips.flatMap((clip) =>
-      clip.notes.map((note) => ({ ...note, startPpq: note.startPpq + clip.startPpq })),
-    );
+    const notes = clips.flatMap(projectMidiNoteOccurrences);
     out.push({ track, notes });
   }
   return out;

@@ -6,7 +6,9 @@ import { keyLabel, matchModeChoiceId } from '@/components/lists/key-modes';
 import AppModal from '@/components/shell/AppModal.vue';
 import { effectiveKeyScale } from '@/compose/key';
 import { generateProgressionCommand, harmonizeFromMelodyCommand } from '@/project/commands';
+import { projectMidiClipNoteOccurrences } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
+import { normalizeTempoMap, ppqDurationSeconds } from '@/project/tempo-map';
 import { formatMessage, useI18n } from '@/ui/i18n';
 
 /**
@@ -62,7 +64,10 @@ const keyReadout = computed(() =>
 );
 
 /** Whether the active clip carries a melody the harmonizer can read. */
-const hasMelody = computed(() => store.activeClip !== null && store.activeClip.notes.length > 0);
+const hasMelody = computed(() => {
+  const clip = store.activeClip;
+  return clip !== null && projectMidiClipNoteOccurrences(clip).length > 0;
+});
 
 /** Append/replace is only meaningful when a chord track already exists. */
 const hasChords = computed(() => store.chords.length > 0);
@@ -104,7 +109,15 @@ function setRepeatCount(multiplier: number): void {
 const progDurationLabel = computed(() => {
   const bars = Math.round(progBars.value);
   if (!Number.isFinite(bars) || bars <= 0) return '';
-  const totalSeconds = (bars * PROGRESSION_BEATS_PER_BAR * 60) / store.tempoBpm;
+  const startPpq =
+    progMode.value === 'append'
+      ? store.chords.reduce((max, chord) => Math.max(max, chord.endPpq), 0)
+      : 0;
+  const totalSeconds = ppqDurationSeconds(
+    normalizeTempoMap(store.tempoSegments, store.tempoBpm),
+    startPpq,
+    bars * PROGRESSION_BEATS_PER_BAR,
+  );
   const duration =
     totalSeconds >= 60
       ? `${Math.floor(totalSeconds / 60)}:${String(Math.round(totalSeconds % 60)).padStart(2, '0')}`
@@ -158,11 +171,11 @@ function seedOf(value: number): number {
   return Math.round(value) || 0;
 }
 
-function runGenerator(): boolean {
+function runGenerator(): number | null {
   if (mode.value === 'progression') {
     const barCount = validBars(progBars.value);
-    if (barCount === null) return false;
-    generateProgressionCommand({
+    if (barCount === null) return null;
+    return generateProgressionCommand({
       style: progStyle.value,
       bars: barCount,
       presetId: progPreset.value || undefined,
@@ -170,21 +183,22 @@ function runGenerator(): boolean {
       reharmonize: progReharmonize.value,
       mode: hasChords.value ? progMode.value : 'replace',
     });
-    return true;
   }
-  harmonizeFromMelodyCommand({
+  return harmonizeFromMelodyCommand({
     reharmonize: harmStrength.value,
     transpose: harmTranspose.value,
     seed: seedOf(harmSeed.value),
   });
-  return true;
 }
 
 function onGenerate(): void {
   if (harmonizeBlocked.value) return;
   error.value = null;
   try {
-    if (runGenerator()) phase.value = 'done';
+    const written = runGenerator();
+    if (written === null) return;
+    if (written > 0) phase.value = 'done';
+    else error.value = g.value.noChanges;
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
   }

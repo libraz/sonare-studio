@@ -8,6 +8,7 @@ import {
   partForTrackName,
   type TrackPart,
 } from '@/project/commands';
+import { projectMidiNoteOccurrences } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
 import { clipKind } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
@@ -102,9 +103,11 @@ const chordProgressionBars = computed(() => {
 /** Active MIDI clip's melody length in bars, or null when none is active. */
 const counterBars = computed(() => {
   const clip = store.activeClip;
-  if (clip === null || clip.notes.length === 0) return null;
-  const end = clip.notes.reduce((max, note) => Math.max(max, note.startPpq + note.durationPpq), 0);
-  return Math.max(1, Math.round((clip.startPpq + end) / BEATS_PER_BAR));
+  if (clip === null) return null;
+  const notes = projectMidiNoteOccurrences(clip);
+  if (notes.length === 0) return null;
+  const end = notes.reduce((max, note) => Math.max(max, note.startPpq + note.durationPpq), 0);
+  return Math.max(1, Math.round(end / BEATS_PER_BAR));
 });
 
 const hasChords = computed(() => store.chords.length > 0);
@@ -426,8 +429,9 @@ function onGenerate(): void {
   error.value = null;
   generating.value = true;
   try {
-    generateTracksBatchCommand(buildSpecs());
-    emit('close');
+    const written = generateTracksBatchCommand(buildSpecs());
+    if (written > 0) emit('close');
+    else error.value = g.value.error;
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {

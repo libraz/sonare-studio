@@ -76,6 +76,12 @@ describe('generateProgressionCommand', () => {
     expect(() => generateProgressionCommand({ bars: 0 })).toThrow(RangeError);
   });
 
+  it('blocks the 4/4-only generator when the requested bars cross another meter', () => {
+    store.timeSignatures = [{ startPpq: 0, numerator: 3, denominator: 4 }];
+    expect(() => generateProgressionCommand({ bars: 1 })).toThrow(/supports 4\/4 bars only/);
+    expect(store.chords).toEqual([]);
+  });
+
   describe('range mode', () => {
     it('keeps chords entirely outside the range and replaces the rest', () => {
       setProjectChords([

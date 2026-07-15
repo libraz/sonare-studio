@@ -21,6 +21,7 @@ import { chordSpanToEditorChord } from '@/compose/chord-io';
 import { effectiveKeyScale } from '@/compose/key';
 import type { EditorChordSymbol } from '../chords';
 import { useProjectStore } from '../store';
+import { isFourFourBarRange } from '../time-signature';
 import { setProjectChords } from './chords';
 
 /** Beats per bar libcantus's progression generator assumes (4/4). */
@@ -84,6 +85,9 @@ export function generateProgressionCommand(params: GenerateProgressionParams = {
   } else {
     existing = [];
     startPpq = params.startPpq ?? 0;
+  }
+  if (!isFourFourBarRange(store.timeSignatures, startPpq, bars)) {
+    throw new RangeError('Progression generation currently supports 4/4 bars only.');
   }
 
   const spans = generateProgressionSpans({

@@ -76,6 +76,19 @@ describe('ChordGenerateDialog', () => {
     expect(document.body.querySelector('.done-title')).not.toBeNull();
   });
 
+  it('does not turn Enter on Cancel into Generate', async () => {
+    await open();
+    const cancel = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent?.trim() === 'Cancel',
+    );
+    cancel?.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    await nextTick();
+
+    expect(store.chords).toHaveLength(0);
+  });
+
   it('offers to continue into track generation after writing', async () => {
     await open();
     confirm()?.click();
@@ -158,6 +171,18 @@ describe('TrackGenerateDialog', () => {
     setProjectChords(FOUR_CHORDS);
     await open();
     expect(confirm()?.disabled).toBe(true);
+  });
+
+  it('keeps the dialog open and reports a zero-write generation', async () => {
+    setProjectChords(FOUR_CHORDS);
+    await open();
+    // Counter melody has no prerequisite melody in the empty active clip.
+    checkPart(3);
+    await nextTick();
+    confirm()?.click();
+    await nextTick();
+    expect(wrapper?.emitted('close')).toBeFalsy();
+    expect(document.body.querySelector('.dialog-error')?.textContent).toContain('no changes');
   });
 
   it('pre-selects the part when opened for a track replacement', async () => {

@@ -23,6 +23,7 @@ import { noteEventsToNewEditorNotes } from '@/compose/notes-io';
 import { type EditorChordSymbol, sanitizeChordSymbols, toProjectChordSymbols } from '../chords';
 import type { RawNote } from '../midi-events';
 import { getProject, useProjectStore } from '../store';
+import { isFourFourBarRange } from '../time-signature';
 import { addGeneratedTrack, EDITS_PER_TRACK, materializeNote } from './generate-track';
 import { execute } from './history';
 
@@ -79,7 +80,17 @@ function resolveChords(
   bars: number,
 ): { regions: EditorChordSymbol[]; generated: EditorChordSymbol[] | null } {
   if (params.progression === false) {
-    return { regions: [...store.chords].sort((a, b) => a.startPpq - b.startPpq), generated: null };
+    const endPpq = bars * BEATS_PER_BAR;
+    const regions = store.chords
+      .filter((chord) => chord.startPpq < endPpq && chord.endPpq > 0)
+      .map((chord) => ({
+        ...chord,
+        startPpq: Math.max(0, chord.startPpq),
+        endPpq: Math.min(endPpq, chord.endPpq),
+      }))
+      .filter((chord) => chord.endPpq > chord.startPpq)
+      .sort((a, b) => a.startPpq - b.startPpq);
+    return { regions, generated: null };
   }
   const key = effectiveKeyScale(store.scaleHighlight);
   const spans = generateProgression({
@@ -109,6 +120,9 @@ export function generateArrangementCommand(params: GenerateArrangementParams = {
   const bars = params.bars ?? 4;
   if (!Number.isInteger(bars) || bars <= 0) {
     throw new RangeError(`Arrangement bars must be a positive integer, got ${bars}`);
+  }
+  if (!isFourFourBarRange(store.timeSignatures, 0, bars)) {
+    throw new RangeError('Arrangement generation currently supports 4/4 bars only.');
   }
   const seed = params.seed ?? 0;
   const { regions, generated } = resolveChords(store, params, bars);

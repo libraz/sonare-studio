@@ -13,6 +13,7 @@
  */
 
 import {
+  type ChordTimeline,
   developMotif,
   generateMotif,
   type MotifCell,
@@ -20,11 +21,16 @@ import {
   type MotifTransform,
   transformMotif,
 } from '@libraz/libcantus';
-import { buildChordTimeline } from '@/compose/chord-at-tick';
+import {
+  createGenerationTargetFrame,
+  type GenerationTargetFrame,
+} from '@/compose/generation-target';
 import { effectiveKeyScale } from '@/compose/key';
 import { noteEventsToNewEditorNotes } from '@/compose/notes-io';
 import type { RawNote } from '../midi-events';
+import { audibleMidiProjector, audibleMidiSourceWindow } from '../midi-projection';
 import { getProject, notesToProjectEvents, useProjectStore } from '../store';
+import { isFourFourBarRange } from '../time-signature';
 import type { EditorClip } from '../types';
 import {
   addGeneratedTrack,
@@ -91,9 +97,13 @@ function motifBars(params: GenerateMotifParams): number {
  */
 export function buildMotifCell(
   store: ReturnType<typeof useProjectStore>,
-  params: GenerateMotifParams = {},
+  params: GenerateMotifParams,
+  target: GenerationTargetFrame,
 ): MotifCell {
   const bars = motifBars(params);
+  if (!isFourFourBarRange(target.timeSignatures, target.startPpq, bars)) {
+    throw new RangeError('Motif generation currently supports 4/4 bars only.');
+  }
   const key = effectiveKeyScale(store.scaleHighlight);
   let cell: MotifCell = generateMotif({
     key,
@@ -107,7 +117,13 @@ export function buildMotifCell(
   }
   const develop = params.develop ?? store.chords.length > 0;
   if (develop && store.chords.length > 0) {
-    cell = developMotif(cell, buildChordTimeline(store.chords), key, bars);
+    // developMotif works in target-local beats. Its chord query must therefore
+    // add the absolute target start instead of querying song-start harmony.
+    const targetTimeline: ChordTimeline = {
+      at: (beat) => target.chordAt(target.startPpq + beat),
+      segments: [],
+    };
+    cell = developMotif(cell, targetTimeline, key, bars);
   }
   return cell;
 }
@@ -123,13 +139,20 @@ export function buildMotifPlan(
   store: ReturnType<typeof useProjectStore>,
   params: GenerateMotifParams = {},
 ): TrackPlan | null {
-  const cell = buildMotifCell(store, params);
+  const lengthPpq = motifBars(params) * BEATS_PER_BAR;
+  const target = createGenerationTargetFrame({
+    startPpq: 0,
+    endPpq: lengthPpq,
+    chords: store.chords,
+    timeSignatures: store.timeSignatures,
+  });
+  const cell = buildMotifCell(store, params, target);
   const fresh = noteEventsToNewEditorNotes(cell.notes, { channel: 0 });
   if (fresh.length === 0) return null;
   return {
     name: 'Motif',
     notes: fresh.map(materializeNote),
-    lengthPpq: motifBars(params) * BEATS_PER_BAR,
+    lengthPpq,
     preset: MOTIF_PRESET,
   };
 }
@@ -145,10 +168,37 @@ export function buildMotifClipMerge(
   params: GenerateMotifParams,
   mode: 'append' | 'replace',
 ): RawNote[] | null {
-  const cell = buildMotifCell(store, params);
+  const audible = audibleMidiProjector(clip, { expandLoops: false });
+  const sourceWindow = audibleMidiSourceWindow(clip);
+  const offset =
+    mode === 'replace'
+      ? 0
+      : audible.reduce(
+          (max, occurrence) => Math.max(max, occurrence.clipStartPpq + occurrence.durationPpq),
+          0,
+        );
+  const availablePpq = sourceWindow.lengthPpq - offset;
+  if (!(availablePpq > 0)) return null;
+  const target = createGenerationTargetFrame({
+    startPpq: clip.startPpq + offset,
+    endPpq: clip.startPpq + offset + availablePpq,
+    chords: store.chords,
+    timeSignatures: store.timeSignatures,
+  });
+  const cell = buildMotifCell(store, params, target);
   const existing = mode === 'replace' ? [] : clip.notes;
-  const offset = mode === 'replace' ? 0 : appendOffset(existing);
-  const fresh = noteEventsToNewEditorNotes(cell.notes, { channel: 0, beatOffset: -offset });
+  const sourceOffset = clip.sourceOffsetPpq + offset;
+  const bounded = cell.notes
+    .filter((note) => note.startBeat < availablePpq)
+    .map((note) => ({
+      ...note,
+      durationBeat: Math.min(note.durationBeat, availablePpq - note.startBeat),
+    }))
+    .filter((note) => note.durationBeat > 0);
+  const fresh = noteEventsToNewEditorNotes(bounded, {
+    channel: 0,
+    beatOffset: -sourceOffset,
+  });
   if (fresh.length === 0 && mode === 'append') return null;
   return [...existing.map(({ id: _id, ...note }) => note), ...fresh.map(materializeNote)];
 }

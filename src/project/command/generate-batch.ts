@@ -14,9 +14,7 @@
  * whole batch (never nesting the single-shot commands' own boundaries).
  */
 
-import { cloneStrip } from '../mixer';
 import { getProject, notesToProjectEvents, useProjectStore } from '../store';
-import type { EditorTrack } from '../types';
 import { buildBackingPlan, type GenerateBackingParams } from './generate-backing';
 import { buildBassPlan, type GenerateBassParams } from './generate-bass';
 import { buildCounterPlan, type GenerateCounterMelodyParams } from './generate-counter-melody';
@@ -24,7 +22,6 @@ import { buildDrumsPlan, type GenerateDrumsParams } from './generate-drums';
 import { buildMotifClipMerge, buildMotifPlan, type GenerateMotifParams } from './generate-motif';
 import { addGeneratedTrack, EDITS_PER_TRACK, type TrackPlan } from './generate-track';
 import { execute } from './history';
-import { applyTrackRemoval } from './tracks';
 
 /** The five instrumental parts the batch command can generate. */
 export type TrackPart = 'motif' | 'drums' | 'bass' | 'counter' | 'backing';
@@ -91,65 +88,35 @@ function planFor(store: ReturnType<typeof useProjectStore>, spec: BatchPartSpec)
   }
 }
 
-/** App-level fields a replacement track inherits from the track it supersedes. */
-type InheritedTrackFields = Pick<
-  EditorTrack,
-  'name' | 'color' | 'volume' | 'pan' | 'mute' | 'solo' | 'mixer'
->;
-
-function inheritedFieldsOf(track: EditorTrack): InheritedTrackFields {
-  return {
-    name: track.name,
-    color: track.color,
-    volume: track.volume,
-    pan: track.pan,
-    mute: track.mute,
-    solo: track.solo,
-    ...(track.mixer !== undefined ? { mixer: cloneStrip(track.mixer) } : {}),
-  };
-}
-
 /**
- * Adds a fresh track for the plan, then removes the superseded track in the
- * same transaction, moving the new track into the old one's slot and copying
- * across its position/name/mixer (best-effort — exact insert-chain fidelity is
- * out of scope). Performs {@link EDITS_PER_TRACK} + 1 wasm-Project edits.
+ * Replaces generated content in place on an existing MIDI track. The track id
+ * and every track-scoped property/reference therefore survive: automation,
+ * group/VCA membership, solo-safe/freeze/record routing, instruments, MIDI
+ * learn and sidechain references. Performs one remove per old clip followed
+ * by addClip (source registration + clip insertion) + setMidiEvents.
  */
 function replaceTrack(
   store: ReturnType<typeof useProjectStore>,
-  oldTrackId: number,
+  trackId: number,
   plan: TrackPlan,
 ): void {
-  const oldTrack = store.tracks.find((track) => track.id === oldTrackId);
-  const inherited = oldTrack ? inheritedFieldsOf(oldTrack) : null;
-  const oldIndex = store.tracks.findIndex((track) => track.id === oldTrackId);
-  const beforeIds = new Set(store.tracks.map((track) => track.id));
-
-  addGeneratedTrack(store, {
-    name: inherited?.name ?? plan.name,
-    notes: plan.notes,
+  const track = store.tracks.find((entry) => entry.id === trackId);
+  if (track?.kind !== 'midi') {
+    throw new RangeError(`Generated content can only replace an existing MIDI track: ${trackId}`);
+  }
+  const oldClips = store.clips.filter((clip) => clip.trackId === trackId);
+  for (const clip of oldClips) getProject().removeClip(clip.id);
+  const clipId = getProject().addClip({
+    trackId,
+    isMidi: true,
     startPpq: 0,
     lengthPpq: plan.lengthPpq,
-    preset: plan.preset,
   });
-  const newTrack = store.tracks.find((track) => !beforeIds.has(track.id));
-
-  applyTrackRemoval(store, oldTrackId);
-
-  if (!newTrack || inherited === null) return;
-  const rebuilt = store.tracks.filter((track) => track.id !== newTrack.id);
-  const merged: EditorTrack = {
-    ...newTrack,
-    color: inherited.color,
-    volume: inherited.volume,
-    pan: inherited.pan,
-    mute: inherited.mute,
-    solo: inherited.solo,
-    ...(inherited.mixer !== undefined ? { mixer: cloneStrip(inherited.mixer) } : {}),
-  };
-  const insertAt = oldIndex < 0 ? rebuilt.length : Math.min(oldIndex, rebuilt.length);
-  rebuilt.splice(insertAt, 0, merged);
-  store.tracks = rebuilt.map((track, index) => ({ ...track, order: index }));
+  getProject().setMidiEvents(clipId, notesToProjectEvents(plan.notes));
+  store.refresh();
+  store.clips = store.clips.map((clip) =>
+    clip.id === clipId ? { ...clip, name: track.name } : clip,
+  );
 }
 
 /**
@@ -186,11 +153,17 @@ export function generateTracksBatchCommand(specs: ReadonlyArray<BatchPartSpec>):
 
     if (spec.target.kind === 'replaceTrack') {
       const trackId = spec.target.trackId;
-      const exists = store.tracks.some((track) => track.id === trackId);
+      const existing = store.tracks.find((track) => track.id === trackId);
+      if (existing && existing.kind !== 'midi') {
+        throw new RangeError(
+          `Generated content can only replace an existing MIDI track: ${trackId}`,
+        );
+      }
+      const oldClipCount = store.clips.filter((clip) => clip.trackId === trackId).length;
       ops.push({
-        edits: exists ? EDITS_PER_TRACK + 1 : EDITS_PER_TRACK,
+        edits: existing ? oldClipCount + 3 : EDITS_PER_TRACK,
         apply: () => {
-          if (exists) replaceTrack(store, trackId, plan);
+          if (existing) replaceTrack(store, trackId, plan);
           else
             addGeneratedTrack(store, {
               name: plan.name,

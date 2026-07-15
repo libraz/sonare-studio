@@ -1,6 +1,8 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { setProjectChords } from '@/project/command/chords';
+import { moveClip, trimClip } from '@/project/command/clips-editing';
+import { setClipLoop } from '@/project/command/clips-state';
 import { generateBassLineCommand } from '@/project/command/generate-bass';
 import { generateCounterMelodyCommand } from '@/project/command/generate-counter-melody';
 import { generateDrumsCommand } from '@/project/command/generate-drums';
@@ -62,9 +64,44 @@ describe('generation command suite', () => {
       expect(after).toEqual(before);
     });
 
+    it('harmonizes a moved/trimmed clip locally and merges into its timeline range', () => {
+      setProjectChords([{ startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 }]);
+      addCMajorMelody();
+      const clipId = store.clipId;
+      moveClip(clipId, 32);
+      trimClip(clipId, 34, 6); // sourceOffsetPpq = 2; audible notes are source 2..8.
+      clearHistory();
+
+      const count = harmonizeFromMelodyCommand({ harmonicRhythm: 2, seed: 0 });
+
+      expect(count).toBeGreaterThan(0);
+      expect(store.chords[0]).toEqual({ startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 });
+      const generated = store.chords.slice(1);
+      expect(generated).toHaveLength(count);
+      expect(generated.every((chord) => chord.startPpq >= 34 && chord.endPpq <= 40)).toBe(true);
+      expect(store.chords.some((chord) => chord.startPpq > 0 && chord.startPpq < 34)).toBe(false);
+
+      expect(undo()).toBe(true);
+      expect(store.chords).toEqual([{ startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 }]);
+    });
+
     it('returns 0 with an empty clip', () => {
       expect(harmonizeFromMelodyCommand()).toBe(0);
       expect(store.chords).toEqual([]);
+    });
+
+    it('expands looped audible melody and derives the default rhythm from 3/4', () => {
+      [60, 64, 67].forEach((pitch, index) => {
+        addNote({ pitch, startPpq: index, durationPpq: 1 });
+      });
+      setClipLoop(store.clipId, true, 3);
+      store.timeSignatures = [{ startPpq: 0, numerator: 3, denominator: 4 }];
+
+      const count = harmonizeFromMelodyCommand({ seed: 0 });
+
+      expect(count).toBeGreaterThan(1);
+      expect(store.chords[0]).toMatchObject({ startPpq: 0, endPpq: 3 });
+      expect(store.chords.at(-1)?.endPpq).toBe(store.activeClip?.lengthPpq);
     });
   });
 
@@ -85,6 +122,33 @@ describe('generation command suite', () => {
       const second = (store.activeClip?.notes ?? []).map((n) => [n.pitch, n.startPpq]);
       expect(second).toEqual(first);
     });
+
+    it('develops against the absolute bar-9 chord context', () => {
+      setProjectChords([
+        { startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 },
+        { startPpq: 32, endPpq: 36, rootPc: 6, quality: 0 },
+      ]);
+      moveClip(store.clipId, 32);
+
+      const count = generateMotifCommand({ bars: 1, seed: 2, mode: 'replace', develop: true });
+
+      expect(count).toBeGreaterThan(0);
+      const fSharpMajorPitchClasses = new Set([6, 10, 1]);
+      expect(
+        store.activeClip?.notes.every((note) => fSharpMajorPitchClasses.has(note.pitch % 12)),
+      ).toBe(true);
+    });
+
+    it('does not append hidden notes beyond a full loop source window', () => {
+      [60, 64, 67, 72].forEach((pitch, index) => {
+        addNote({ pitch, startPpq: index, durationPpq: 1 });
+      });
+      setClipLoop(store.clipId, true, 4);
+      const before = store.activeClip?.notes.length;
+
+      expect(generateMotifCommand({ bars: 1, mode: 'append', develop: false })).toBe(0);
+      expect(store.activeClip?.notes.length).toBe(before);
+    });
   });
 
   describe('generateDrumsCommand', () => {
@@ -100,6 +164,11 @@ describe('generation command suite', () => {
       // addTrack + addClip + setMidiEvents collapse to a single undo.
       expect(undo()).toBe(true);
       expect(store.tracks.length).toBe(trackCount);
+    });
+
+    it('reports the unsupported meter instead of writing a 4/4 drum grid', () => {
+      store.timeSignatures = [{ startPpq: 0, numerator: 3, denominator: 4 }];
+      expect(() => generateDrumsCommand({ bars: 2 })).toThrow(/supports 4\/4 bars only/);
     });
   });
 

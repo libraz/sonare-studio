@@ -14,7 +14,7 @@
 
 import { type ComputedRef, computed, onScopeDispose, type Ref, ref, watch } from 'vue';
 import { useAppSettings } from '@/composables/useAppSettings';
-import type { LockedRegion, ReharmonizationProposal } from '@/compose/reharmonize-reactive';
+import type { LockedRegion } from '@/compose/reharmonize-reactive';
 import {
   changedNotesSpan,
   type HarmonicNoteSnapshot,
@@ -25,8 +25,10 @@ import {
 import { formatChordName } from '@/project/chords';
 import {
   applyReharmonizationProposal,
+  type ProjectReharmonizationProposal,
   proposeReharmonizationForActiveClip,
 } from '@/project/commands';
+import { midiSourcePpqToTimeline } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
 
 /** Quiet period after the last note edit before a proposal is computed. */
@@ -51,7 +53,7 @@ export interface ReactiveReharmonization {
   /** True when suggestions can run: preference on, MIDI clip active, chords present. */
   reharmonizeActive: ComputedRef<boolean>;
   /** The pending proposal awaiting approval, or null. */
-  pendingProposal: Ref<ReharmonizationProposal | null>;
+  pendingProposal: Ref<ProjectReharmonizationProposal | null>;
   /** Display list of the chords the pending proposal changes. */
   pendingChanges: ComputedRef<PendingChordChange[]>;
   /** Commits the pending proposal as one undoable edit and clears it. */
@@ -89,7 +91,7 @@ export function useReactiveReharmonization(): ReactiveReharmonization {
       store.chords.length > 0,
   );
 
-  const pendingProposal = ref<ReharmonizationProposal | null>(null);
+  const pendingProposal = ref<ProjectReharmonizationProposal | null>(null);
   const lockedRegions = ref<LockedRegion[]>([]);
 
   // Settled-state snapshot of the active clip's notes; spans are diffed
@@ -127,12 +129,16 @@ export function useReactiveReharmonization(): ReactiveReharmonization {
     const span = changedNotesSpan(snapshot, store.notes);
     resyncSnapshot();
     if (span === null || !reharmonizeActive.value) return;
-    const clipStartPpq = store.activeClip?.startPpq ?? 0;
+    const clip = store.activeClip;
+    if (clip === null) return;
+    const startPpq = Math.max(clip.startPpq, midiSourcePpqToTimeline(clip, span.startPpq));
+    const endPpq = Math.min(
+      clip.startPpq + clip.lengthPpq,
+      midiSourcePpqToTimeline(clip, span.endPpq),
+    );
+    if (!(endPpq > startPpq)) return;
     const proposal = proposeReharmonizationForActiveClip({
-      editedSpan: {
-        startPpq: span.startPpq + clipStartPpq,
-        endPpq: span.endPpq + clipStartPpq,
-      },
+      editedSpan: { startPpq, endPpq },
       locked: [...lockedRegions.value],
     });
     if (proposal === null || !proposal.changed) return;
@@ -177,6 +183,11 @@ export function useReactiveReharmonization(): ReactiveReharmonization {
     () => dismissPendingProposal(),
   );
 
+  // Key/meter changes alter candidate ranking and strong-beat weighting.
+  watch([() => store.scaleHighlight, () => store.timeSignatures], () => dismissPendingProposal(), {
+    deep: true,
+  });
+
   // Turning the preference off drops any in-flight suggestion.
   watch(autoReharmonize, (enabled) => {
     if (!enabled) {
@@ -204,10 +215,11 @@ export function useReactiveReharmonization(): ReactiveReharmonization {
     const proposal = pendingProposal.value;
     if (proposal === null) return;
     dismissPendingProposal();
-    applyReharmonizationProposal(proposal);
+    applyReharmonizationProposal(proposal, lockedRegions.value);
   }
 
   function toggleLock(region: LockedRegion): void {
+    dismissPendingProposal();
     lockedRegions.value = toggleLockRegion(lockedRegions.value, region);
   }
 

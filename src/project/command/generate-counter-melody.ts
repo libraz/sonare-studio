@@ -11,10 +11,11 @@
  */
 
 import { type CounterMelodyOptions, generateCounterMelody } from '@libraz/libcantus';
-import { buildChordTimeline } from '@/compose/chord-at-tick';
+import { createGenerationTargetFrame } from '@/compose/generation-target';
 import { effectiveKeyScale } from '@/compose/key';
 import { editorNotesToNoteEvents, noteEventsToNewEditorNotes } from '@/compose/notes-io';
 import { topVoiceOnly } from '@/compose/tracks';
+import { projectMidiNoteOccurrences } from '../midi-projection';
 import { useProjectStore } from '../store';
 import {
   addGeneratedTrack,
@@ -52,9 +53,10 @@ export function buildCounterPlan(
 ): TrackPlan | null {
   const clip = store.activeClip;
   if (clip === null) throw new Error('No active clip for a counter melody');
-  if (clip.notes.length === 0) return null;
+  const projected = projectMidiNoteOccurrences(clip);
+  if (projected.length === 0) return null;
 
-  const melody = topVoiceOnly(editorNotesToNoteEvents(clip.notes, clip.startPpq));
+  const melody = topVoiceOnly(editorNotesToNoteEvents(projected));
   if (melody.length === 0) return null;
   const melodyEndBeat = melody.reduce(
     (max, note) => Math.max(max, note.startBeat + note.durationBeat),
@@ -62,11 +64,16 @@ export function buildCounterPlan(
   );
 
   const key = effectiveKeyScale(store.scaleHighlight);
-  const timeline = buildChordTimeline(store.chords);
+  const target = createGenerationTargetFrame({
+    startPpq: clip.startPpq,
+    endPpq: clip.startPpq + clip.lengthPpq,
+    chords: store.chords,
+    timeSignatures: store.timeSignatures,
+  });
 
   const events = generateCounterMelody({
     melody,
-    chordAt: (beat) => timeline.at(beat),
+    chordAt: (beat) => target.chordAt(beat),
     key,
     ...(params.register !== undefined ? { register: params.register } : {}),
     ...(params.rhythm !== undefined ? { rhythm: params.rhythm } : {}),

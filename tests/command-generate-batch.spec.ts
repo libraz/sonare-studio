@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { setProjectChords } from '@/project/command/chords';
 import { generateTracksBatchCommand, partForTrackName } from '@/project/command/generate-batch';
 import { clearHistory, redo, undo } from '@/project/command/history';
+import { createDefaultStrip } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import { MAJOR_MODE_MASK } from '@/project/types';
 
@@ -77,15 +78,108 @@ describe('generateTracksBatchCommand', () => {
       },
     ]);
     expect(written).toBe(1);
-    // Replace nets zero: the old Drums track is gone, one new Drums took its slot.
+    // Replace nets zero and preserves the existing track identity.
     expect(store.tracks.length).toBe(trackCount);
     const drumTracks = store.tracks.filter((track) => track.name === 'Drums');
     expect(drumTracks).toHaveLength(1);
-    expect(drumTracks[0]?.id).not.toBe(drums?.id);
+    expect(drumTracks[0]?.id).toBe(drums?.id);
 
-    // The replacement reverts in one undo, restoring the original track id.
+    // The replacement reverts in one undo, restoring its original content.
     expect(undo()).toBe(true);
     expect(store.tracks.filter((track) => track.name === 'Drums')[0]?.id).toBe(drums?.id);
+  });
+
+  it('preserves all track-scoped state and references while replacing content', () => {
+    setProjectChords(FOUR_CHORDS);
+    generateTracksBatchCommand([{ part: 'drums', params: { bars: 4 }, target: { kind: 'new' } }]);
+    const drums = store.tracks.find((track) => track.name === 'Drums');
+    expect(drums).toBeDefined();
+    const trackId = drums?.id as number;
+    const oldClipIds = store.clips
+      .filter((clip) => clip.trackId === trackId)
+      .map((clip) => clip.id);
+    const strip = {
+      ...createDefaultStrip(),
+      inserts: [
+        {
+          processor: 'dynamics.compressor',
+          params: { thresholdDb: -18 },
+          enabled: true,
+        },
+      ],
+    };
+    store.tracks = store.tracks.map((track) =>
+      track.id === trackId
+        ? {
+            ...track,
+            color: '#abcdef',
+            mute: true,
+            solo: true,
+            soloSafe: true,
+            volume: 0.7,
+            pan: -0.2,
+            groupId: 777,
+            vcaId: 'vca-drums',
+            frozen: { assetId: 'frozen-drums' },
+            recordInputChannel: 3,
+            recordInputDeviceId: 'device-a',
+            externalMidiMode: 'project',
+            instrument: { kind: 'synth-preset', preset: 'warm-pad' },
+            mixer: strip,
+          }
+        : track.id === store.tracks[0].id
+          ? {
+              ...track,
+              mixer: {
+                ...createDefaultStrip(),
+                inserts: [
+                  {
+                    processor: 'dynamics.compressor',
+                    params: {},
+                    enabled: true,
+                    sidechainSourceTrackId: trackId,
+                  },
+                ],
+              },
+            }
+          : track,
+    );
+    store.mixer = {
+      ...store.mixer,
+      vcaGroups: [{ id: 'vca-drums', name: 'Drums VCA', gainDb: -4 }],
+    };
+    store.automationLanes = [
+      { target: trackId, param: 'faderDb', enabled: true, points: [{ ppq: 0, value: -6 }] },
+    ];
+    store.midiCcBindings.set(`gain:${trackId}`, { channel: 0, controller: 7 });
+    const beforeTrack = store.tracks.find((track) => track.id === trackId);
+    clearHistory();
+
+    const written = generateTracksBatchCommand([
+      {
+        part: 'drums',
+        params: { bars: 2, style: 'funk' },
+        target: { kind: 'replaceTrack', trackId },
+      },
+    ]);
+
+    expect(written).toBe(1);
+    expect(store.tracks.find((track) => track.id === trackId)).toEqual(beforeTrack);
+    expect(store.automationLanes).toEqual([
+      { target: trackId, param: 'faderDb', enabled: true, points: [{ ppq: 0, value: -6 }] },
+    ]);
+    expect(store.midiCcBindings.get(`gain:${trackId}`)).toEqual({ channel: 0, controller: 7 });
+    expect(store.tracks[0].mixer?.inserts[0].sidechainSourceTrackId).toBe(trackId);
+    const replacement = store.clips.filter((clip) => clip.trackId === trackId);
+    expect(replacement).toHaveLength(1);
+    expect(replacement[0].id).not.toBe(oldClipIds[0]);
+    expect(replacement[0].lengthPpq).toBe(8);
+
+    expect(undo()).toBe(true);
+    expect(store.tracks.find((track) => track.id === trackId)).toEqual(beforeTrack);
+    expect(store.clips.filter((clip) => clip.trackId === trackId).map((clip) => clip.id)).toEqual(
+      oldClipIds,
+    );
   });
 
   it('classifies generated track names', () => {

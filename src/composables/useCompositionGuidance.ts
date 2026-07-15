@@ -28,6 +28,11 @@ import {
 } from '@/compose/guidance';
 import { effectiveKeyScale } from '@/compose/key';
 import type { TrackWithNotes } from '@/compose/tracks';
+import {
+  audibleMidiProjector,
+  projectMidiClipNoteOccurrences,
+  projectMidiNoteOccurrences,
+} from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
 import { useI18n } from '@/ui/i18n';
 
@@ -70,6 +75,7 @@ export function useCompositionGuidance(): CompositionGuidance {
   const guidance = computed<GuidanceResult | null>(() => {
     const clip = store.activeClip;
     if (!clip) return null;
+    const activeNotes = projectMidiClipNoteOccurrences(clip, { expandLoops: false });
     // Voice context: every non-active track, its notes flattened across the
     // track's clips and shifted to absolute timeline PPQ (guidance drops
     // percussion tracks itself).
@@ -77,14 +83,16 @@ export function useCompositionGuidance(): CompositionGuidance {
     for (const track of store.tracks) {
       if (track.id === clip.trackId) continue;
       const clips = store.clipsByTrack.get(track.id) ?? [];
+      let syntheticId = -1;
       const notes = clips.flatMap((other) =>
-        other.notes.map((note) => ({ ...note, startPpq: note.startPpq + other.startPpq })),
+        projectMidiNoteOccurrences(other).map((note) => ({ ...note, id: syntheticId-- })),
       );
       otherTracks.push({ track, notes });
     }
     return buildGuidance({
-      notes: clip.notes,
+      notes: activeNotes,
       clipStartPpq: clip.startPpq,
+      clipLengthPpq: clip.lengthPpq,
       chordSymbols: store.chords,
       key: store.scaleHighlight,
       timeSignatures: store.timeSignatures,
@@ -104,12 +112,16 @@ export function useCompositionGuidance(): CompositionGuidance {
     if (analysis === undefined) return null;
     const note = clip.notes.find((candidate) => candidate.id === noteId);
     if (note === undefined) return null;
+    const occurrence = audibleMidiProjector(clip, { expandLoops: false }).find(
+      (entry) => entry.sourceIdentity.noteId === noteId,
+    );
+    if (!occurrence) return null;
     const ctx: Parameters<typeof buildTheoryCard>[1] = {
       pitch: note.pitch,
       velocity: note.velocity,
       keySet: result.keySet,
     };
-    const chord = chordTimeline.value.at(clip.startPpq + note.startPpq);
+    const chord = chordTimeline.value.at(occurrence.timelineStartPpq);
     if (chord !== null) {
       const key = effectiveKeyScale(store.scaleHighlight);
       try {
@@ -135,14 +147,15 @@ export function useCompositionGuidance(): CompositionGuidance {
     const clip = store.activeClip;
     if (result === null || clip === null) return undefined;
     const arrows: ResolutionArrow[] = [];
-    for (const note of clip.notes) {
+    for (const occurrence of audibleMidiProjector(clip, { expandLoops: false })) {
+      const note = occurrence.note;
       const analysis = result.byNoteId.get(note.id);
       if (analysis === undefined) continue;
       const toPitch = resolutionTargetOf(analysis);
       if (toPitch === undefined) continue;
       arrows.push({
         noteId: note.id,
-        endBeat: note.startPpq + note.durationPpq,
+        endBeat: occurrence.clipStartPpq + occurrence.durationPpq,
         fromPitch: note.pitch,
         toPitch,
       });

@@ -17,6 +17,8 @@ import {
   type ReharmonizationProposal,
 } from '@/compose/reharmonize-reactive';
 import { topVoiceOnly } from '@/compose/tracks';
+import { canonicalJson, fnv1a32Hex } from '../hash';
+import { projectMidiNoteOccurrences } from '../midi-projection';
 import { useProjectStore } from '../store';
 import { setProjectChords } from './chords';
 import type { ReharmonizeStrength } from './generate-harmonize';
@@ -31,6 +33,37 @@ export interface ReactiveReharmonizeParams {
   reharmonize?: ReharmonizeStrength;
 }
 
+/** Store-bound proposal carrying the exact context it was computed against. */
+export interface ProjectReharmonizationProposal extends ReharmonizationProposal {
+  contextHash: string;
+}
+
+/** Hashes every mutable input that can invalidate a pending proposal. */
+export function reharmonizationContextHash(locked: ReadonlyArray<LockedRegion> = []): string {
+  const store = useProjectStore();
+  const clip = store.activeClip;
+  return fnv1a32Hex(
+    canonicalJson({
+      clipId: store.clipId,
+      clip:
+        clip === null
+          ? null
+          : {
+              startPpq: clip.startPpq,
+              lengthPpq: clip.lengthPpq,
+              sourceOffsetPpq: clip.sourceOffsetPpq,
+              loopEnabled: clip.loopEnabled,
+              loopLengthPpq: clip.loopLengthPpq,
+              notes: clip.notes,
+            },
+      chords: store.chords,
+      key: store.scaleHighlight,
+      timeSignatures: store.timeSignatures,
+      locked: [...locked].sort((a, b) => a.startPpq - b.startPpq || a.endPpq - b.endPpq),
+    }),
+  );
+}
+
 /**
  * Computes a reactive reharmonization proposal for the active clip's melody,
  * without mutating anything.
@@ -40,25 +73,26 @@ export interface ReactiveReharmonizeParams {
  */
 export function proposeReharmonizationForActiveClip(
   params: ReactiveReharmonizeParams,
-): ReharmonizationProposal | null {
+): ProjectReharmonizationProposal | null {
   const store = useProjectStore();
   const clip = store.activeClip;
   if (clip === null) return null;
 
   // Reduce the clip to its top voice, then shift onto the absolute timeline so
   // the melody lines up with the (absolute-PPQ) chord track.
-  const events = clip.notes.map((note) => ({
+  const events = projectMidiNoteOccurrences(clip).map((note) => ({
     pitch: note.pitch,
     startBeat: note.startPpq,
     durationBeat: note.durationPpq,
   }));
   const melody = topVoiceOnly(events).map((event) => ({
     pitch: event.pitch,
-    startPpq: event.startBeat + clip.startPpq,
+    startPpq: event.startBeat,
     durationPpq: event.durationBeat,
   }));
 
-  return proposeReactiveReharmonization({
+  const locked = params.locked ?? [];
+  const proposal = proposeReactiveReharmonization({
     current: store.chords,
     melody,
     editedSpan: params.editedSpan,
@@ -67,6 +101,7 @@ export function proposeReharmonizationForActiveClip(
     timeSignatures: store.timeSignatures,
     ...(params.reharmonize !== undefined ? { reharmonize: params.reharmonize } : {}),
   });
+  return { ...proposal, contextHash: reharmonizationContextHash(locked) };
 }
 
 /**
@@ -75,7 +110,12 @@ export function proposeReharmonizationForActiveClip(
  *
  * @param proposal The proposal returned by {@link proposeReharmonizationForActiveClip}.
  */
-export function applyReharmonizationProposal(proposal: ReharmonizationProposal): void {
-  if (!proposal.changed) return;
+export function applyReharmonizationProposal(
+  proposal: ProjectReharmonizationProposal,
+  locked: ReadonlyArray<LockedRegion> = [],
+): boolean {
+  if (!proposal.changed || proposal.contextHash !== reharmonizationContextHash(locked))
+    return false;
   setProjectChords(proposal.proposal);
+  return true;
 }

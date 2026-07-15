@@ -98,4 +98,33 @@ describe('reactive reharmonization commands', () => {
     });
     expect(proposal).toBeNull();
   });
+
+  it('rejects a proposal after its key, meter, clip or lock context changes', () => {
+    addCMajorArpeggio();
+    setProjectChords([{ startPpq: 0, endPpq: 4, rootPc: 11, quality: 0 }]);
+    const makeProposal = () =>
+      proposeReharmonizationForActiveClip({ editedSpan: { startPpq: 0, endPpq: 4 } });
+
+    const keyProposal = makeProposal();
+    expect(keyProposal?.changed).toBe(true);
+    store.scaleHighlight = { ...store.scaleHighlight, rootPc: 2 };
+    if (keyProposal) expect(applyReharmonizationProposal(keyProposal)).toBe(false);
+
+    store.scaleHighlight = { ...store.scaleHighlight, rootPc: 0 };
+    const meterProposal = makeProposal();
+    store.timeSignatures = [{ startPpq: 0, numerator: 3, denominator: 4 }];
+    if (meterProposal) expect(applyReharmonizationProposal(meterProposal)).toBe(false);
+
+    store.timeSignatures = [{ startPpq: 0, numerator: 4, denominator: 4 }];
+    const clipProposal = makeProposal();
+    if (store.activeClip) store.activeClip.lengthPpq -= 1;
+    if (clipProposal) expect(applyReharmonizationProposal(clipProposal)).toBe(false);
+
+    if (store.activeClip) store.activeClip.lengthPpq += 1;
+    const lockProposal = makeProposal();
+    if (lockProposal) {
+      expect(applyReharmonizationProposal(lockProposal, [{ startPpq: 0, endPpq: 4 }])).toBe(false);
+    }
+    expect(store.chords[0].rootPc).toBe(11);
+  });
 });

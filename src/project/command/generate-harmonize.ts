@@ -21,12 +21,14 @@
 
 import { type HarmonizeResult, harmonizeMelody, type KeyScale } from '@libraz/libcantus';
 import { chordSpanToEditorChord } from '@/compose/chord-io';
+import { createGenerationTargetFrame } from '@/compose/generation-target';
 import { scaleHighlightToKeyScale } from '@/compose/key';
-import { editorNotesToNoteEvents } from '@/compose/notes-io';
 import { topVoiceOnly } from '@/compose/tracks';
 import { type EditorChordSymbol, sanitizeChordSymbols, toProjectChordSymbols } from '../chords';
 import type { RawNote } from '../midi-events';
+import { audibleMidiProjector, projectMidiClipNoteOccurrences } from '../midi-projection';
 import { getProject, notesToProjectEvents, useProjectStore } from '../store';
+import { meterBarLengthPpq, timeSignatureAt } from '../time-signature';
 import { execute } from './history';
 
 /** Reharmonization strength passed through to libcantus. */
@@ -63,11 +65,16 @@ function clampPitch(pitch: number): number {
  * PPQ regions. Each span runs to the next span's start; the last runs to the
  * melody's end.
  */
-function spansToChordSymbols(result: HarmonizeResult, melodyEndBeat: number): EditorChordSymbol[] {
+function spansToChordSymbols(
+  result: HarmonizeResult,
+  melodyEndBeat: number,
+  timelineOffsetPpq: number,
+): EditorChordSymbol[] {
   const spans = [...result.chords].sort((a, b) => a.startBeat - b.startBeat);
   return spans.map((span, index) => {
-    const startPpq = span.startBeat;
-    const endPpq = index + 1 < spans.length ? spans[index + 1].startBeat : melodyEndBeat;
+    const startPpq = timelineOffsetPpq + span.startBeat;
+    const endPpq =
+      timelineOffsetPpq + (index + 1 < spans.length ? spans[index + 1].startBeat : melodyEndBeat);
     return chordSpanToEditorChord(span, startPpq, endPpq);
   });
 }
@@ -83,9 +90,20 @@ export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {
   const store = useProjectStore();
   const clip = store.activeClip;
   if (clip === null) throw new Error('No active clip to harmonize');
-  if (clip.notes.length === 0) return 0;
-
-  const melody = topVoiceOnly(editorNotesToNoteEvents(clip.notes, clip.startPpq));
+  const target = createGenerationTargetFrame({
+    startPpq: clip.startPpq,
+    endPpq: clip.startPpq + clip.lengthPpq,
+    chords: store.chords,
+    timeSignatures: store.timeSignatures,
+  });
+  const melody = topVoiceOnly(
+    projectMidiClipNoteOccurrences(clip).map((note) => ({
+      pitch: note.pitch,
+      startBeat: note.startPpq,
+      durationBeat: note.durationPpq,
+      velocity: note.velocity,
+    })),
+  );
   if (melody.length === 0) return 0;
   const melodyEndBeat = melody.reduce(
     (max, note) => Math.max(max, note.startBeat + note.durationBeat),
@@ -96,18 +114,31 @@ export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {
     params.key ??
     (store.scaleHighlight.enabled ? scaleHighlightToKeyScale(store.scaleHighlight) : 'infer');
   const transpose = params.transpose ?? false;
+  const harmonicRhythm =
+    params.harmonicRhythm ??
+    meterBarLengthPpq(timeSignatureAt(target.timeSignatures, target.startPpq));
 
   const result = harmonizeMelody({
     melody,
     key,
-    harmonicRhythm: params.harmonicRhythm ?? 4,
+    harmonicRhythm,
     reharmonize: params.reharmonize ?? 'diatonic',
     placement: { transposeSearch: transpose, octaveSearch: transpose },
     seed: params.seed ?? 0,
   });
 
-  const chords = spansToChordSymbols(result, melodyEndBeat);
-  const sanitized = sanitizeChordSymbols(chords);
+  const generated = sanitizeChordSymbols(
+    spansToChordSymbols(result, melodyEndBeat, target.startPpq).map((chord) => ({
+      ...chord,
+      startPpq: Math.max(target.startPpq, chord.startPpq),
+      endPpq: Math.min(target.endPpq, chord.endPpq),
+    })),
+  );
+  const clipEndPpq = target.endPpq;
+  const keptChords = store.chords.filter(
+    (chord) => chord.endPpq <= clip.startPpq || chord.startPpq >= clipEndPpq,
+  );
+  const sanitized = sanitizeChordSymbols([...keptChords, ...generated]);
   const shift = transpose ? result.transposeSemitones : 0;
   const project = getProject();
 
@@ -116,19 +147,22 @@ export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {
       project.annotateChords(toProjectChordSymbols(sanitized));
       store.refresh();
     });
-    return sanitized.length;
+    return generated.length;
   }
 
   // Transpose the clip to match the harmonization, and write both the shifted
   // notes and the chords in one undoable edit (setMidiEvents + annotateChords).
-  const shifted: RawNote[] = clip.notes.map(({ id: _id, ...note }) => ({
+  const audibleNoteIds = new Set(
+    audibleMidiProjector(clip, { expandLoops: false }).map((entry) => entry.sourceIdentity.noteId),
+  );
+  const shifted: RawNote[] = clip.notes.map(({ id, ...note }) => ({
     ...note,
-    pitch: clampPitch(note.pitch + shift),
+    pitch: audibleNoteIds.has(id) ? clampPitch(note.pitch + shift) : note.pitch,
   }));
   execute(2, () => {
     project.setMidiEvents(clip.id, notesToProjectEvents(shifted));
     project.annotateChords(toProjectChordSymbols(sanitized));
     store.refresh();
   });
-  return sanitized.length;
+  return generated.length;
 }

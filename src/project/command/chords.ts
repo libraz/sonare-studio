@@ -7,6 +7,7 @@ import { estimateChordSymbols } from '@/notation/chords';
 import { loadAsset } from '@/persistence/assets';
 import { type AudioChordDetector, analyzeAudioClipChords } from '../audio-chords';
 import { type EditorChordSymbol, sanitizeChordSymbols, toProjectChordSymbols } from '../chords';
+import { projectMidiClipNoteOccurrences, projectMidiNoteOccurrences } from '../midi-projection';
 import { getProject, useProjectStore } from '../store';
 import { clipKind } from '../types';
 import { execute } from './history';
@@ -71,9 +72,7 @@ export interface EstimatedChordSummary {
 function harmonicTrackNotes(store: ReturnType<typeof useProjectStore>): TrackWithNotes[] {
   return store.tracks.map((track) => {
     const clips = store.clipsByTrack.get(track.id) ?? [];
-    const notes = clips.flatMap((clip) =>
-      clip.notes.map((note) => ({ ...note, startPpq: note.startPpq + clip.startPpq })),
-    );
+    const notes = clips.flatMap(projectMidiNoteOccurrences);
     return { track, notes };
   });
 }
@@ -124,7 +123,8 @@ export function detectChordsForClip(clipId: number): number {
   if ((clip.kind ?? 'midi') !== 'midi') {
     throw new RangeError(`Clip ${clipId} is not a MIDI clip`);
   }
-  const detected = estimateChordSymbols(clip.notes, {
+  const notes = projectMidiClipNoteOccurrences(clip);
+  const detected = estimateChordSymbols(notes, {
     clipStartPpq: clip.startPpq,
     clipLengthPpq: clip.lengthPpq,
     measureLengthPpq: measureLengthAtPpq(store, clip.startPpq),
