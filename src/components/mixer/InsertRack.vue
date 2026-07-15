@@ -126,7 +126,8 @@ const midiLearn = inject(MIDI_LEARN_KEY, null);
 /** Learn target id for a control on the currently expanded insert slot. */
 function learnTargetId(control: QuickControl): string {
   if (isMixerBusStripTarget(props.target)) return '';
-  return midiLearnInsertTargetId(props.target, expandedIndex.value ?? -1, control.id);
+  const index = expandedIndex.value ?? -1;
+  return midiLearnInsertTargetId(props.target, strip.value.inserts[index]?.id ?? index, control.id);
 }
 
 /** MIDI-learn state for a control's knob menu, or undefined when unavailable. */

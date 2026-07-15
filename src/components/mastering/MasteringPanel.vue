@@ -216,7 +216,8 @@ async function onAutoSuggest(): Promise<void> {
   try {
     if (!previewState.value?.bypassed || previewStale.value) await onPreview();
     const source = previewState.value?.bypassed;
-    if (!source) {
+    const analyzedRevision = previewRevision.value;
+    if (!source || previewStale.value || analyzedRevision === null) {
       if (!error.value) error.value = t.value.shell.mastering.assistant.needsPreview;
       return;
     }
@@ -229,6 +230,14 @@ async function onAutoSuggest(): Promise<void> {
     const parsed = parseMasteringSuggestion(
       suggest(downmixMono(source.channels), source.sampleRate),
     );
+    if (
+      previewState.value?.bypassed !== source ||
+      previewRevision.value !== analyzedRevision ||
+      projectRevision.value !== analyzedRevision
+    ) {
+      error.value = t.value.shell.mastering.assistant.needsPreview;
+      return;
+    }
     suggestion.value = parsed;
     if (presetCatalog.value.length === 0) presetCatalog.value = loadMasteringPresetCatalog();
     const preset = suggestedPreset(parsed, presetCatalog.value);

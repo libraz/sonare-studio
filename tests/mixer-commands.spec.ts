@@ -1,9 +1,15 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  busAutomationTarget,
+  insertAutomationParam,
+  masteringAutomationParam,
+} from '@/project/automation';
+import {
   addAudioTrack,
   addGroupTrack,
   addInsert,
+  addMasteringProcessor,
   addMixerBus,
   addNote,
   addTrack,
@@ -11,6 +17,7 @@ import {
   applyMixerSceneJson,
   canUndo,
   clearHistory,
+  exportMixerSnapshotSlots,
   mixerBusStripTarget,
   redo,
   removeInsert,
@@ -19,6 +26,7 @@ import {
   removeVcaGroup,
   renameMixerBus,
   renameVcaGroup,
+  saveMixerSnapshot,
   setInsertEnabled,
   setInsertParam,
   setInsertSidechain,
@@ -50,6 +58,11 @@ import {
 import type { TrackInstrument } from '@/project/instrument';
 import { MAX_MIXER_BUSES, MAX_VCA_GROUPS } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
+import {
+  midiLearnInsertTargetId,
+  midiLearnMasteringTargetId,
+  midiLearnTargetId,
+} from '@/ui/midi/midi-learn';
 import { fakeMixingScenePresetJson } from './fake-wasm';
 
 vi.mock('@/lib/wasm', async () => {
@@ -257,7 +270,7 @@ describe('mixer commands', () => {
     it('adds, edits, bypasses and removes inserts undoably', () => {
       const index = addInsert(trackId, 'dynamics.compressor', { thresholdDb: -18 });
       expect(index).toBe(0);
-      expect(store.tracks[0].mixer?.inserts[0]).toEqual({
+      expect(store.tracks[0].mixer?.inserts[0]).toMatchObject({
         processor: 'dynamics.compressor',
         params: { thresholdDb: -18 },
         enabled: true,
@@ -409,7 +422,7 @@ describe('mixer commands', () => {
       const index = addInsert(target, 'dynamics.compressor', { thresholdDb: -20 });
       setInsertParam(target, index, 'ratio', 4);
 
-      expect(store.mixer.buses[0].strip?.inserts).toEqual([
+      expect(store.mixer.buses[0].strip?.inserts).toMatchObject([
         {
           processor: 'dynamics.compressor',
           params: { thresholdDb: -20, ratio: 4 },
@@ -701,6 +714,31 @@ describe('mixer commands', () => {
       undo();
       expect(store.mixer.buses[0].strip?.inserts[0].sidechainSourceTrackId).toBe(sourceId);
     });
+
+    it('prunes master/snapshot sidechains and MIDI targets, then restores all on undo', () => {
+      addInsert('master', 'dynamics.compressor');
+      const sourceId = addAudioTrack({ name: 'Kick' });
+      store.mixer.master.inserts[0].sidechainSourceTrackId = sourceId;
+      const bindingTarget = midiLearnTargetId('gain', sourceId);
+      store.midiCcBindings.set(bindingTarget, { channel: 0, controller: 7 });
+      saveMixerSnapshot('A');
+      clearHistory();
+
+      removeTrack(sourceId);
+
+      expect(store.mixer.master.inserts[0].sidechainSourceTrackId).toBeUndefined();
+      expect(store.midiCcBindings.has(bindingTarget)).toBe(false);
+      const prunedSnapshot = exportMixerSnapshotSlots().snapshots.A;
+      expect(prunedSnapshot?.tracks.some((track) => track.id === sourceId)).toBe(false);
+      expect(prunedSnapshot?.mixer.master.inserts[0].sidechainSourceTrackId).toBeUndefined();
+
+      expect(undo()).toBe(true);
+      expect(store.mixer.master.inserts[0].sidechainSourceTrackId).toBe(sourceId);
+      expect(store.midiCcBindings.get(bindingTarget)).toEqual({ channel: 0, controller: 7 });
+      const restoredSnapshot = exportMixerSnapshotSlots().snapshots.A;
+      expect(restoredSnapshot?.tracks.some((track) => track.id === sourceId)).toBe(true);
+      expect(restoredSnapshot?.mixer.master.inserts[0].sidechainSourceTrackId).toBe(sourceId);
+    });
   });
 
   describe('solo-safe', () => {
@@ -732,7 +770,7 @@ describe('mixer commands', () => {
         gainDb: -10,
       });
       expect(store.mixer.buses[0].strip?.width).toBe(1.25);
-      expect(store.mixer.buses[0].strip?.inserts).toEqual([
+      expect(store.mixer.buses[0].strip?.inserts).toMatchObject([
         {
           processor: 'stereo.imager',
           params: { width: 1.35 },
@@ -743,6 +781,71 @@ describe('mixer commands', () => {
       expect(undo()).toBe(true);
       expect(store.mixer.buses).toEqual([]);
       expect(store.tracks[0].mixer).toBeUndefined();
+    });
+
+    it('prunes processor lanes for replaced scene strips and restores them on undo', () => {
+      addInsert(trackId, 'saturation.tape', { drive: 0.4 });
+      addInsert('master', 'eq.tilt', { tiltDb: 1 });
+      addMasteringProcessor('maximizer.truePeakLimiter', { ceilingDb: -1 });
+      const oldBusId = addMixerBus('Old return');
+      addInsert(mixerBusStripTarget(oldBusId), 'dynamics.compressor', { thresholdDb: -18 });
+      const trackProcessorId = store.tracks[0].mixer?.inserts[0].id as string;
+      const masterProcessorId = store.mixer.master.inserts[0].id as string;
+      const masteringProcessorId = store.mixer.masteringChain?.processors[0].id as string;
+      const busProcessorId = store.mixer.buses[0].strip?.inserts[0].id as string;
+      const processorMidiTargets = [
+        midiLearnInsertTargetId(trackId, trackProcessorId, 'drive'),
+        midiLearnInsertTargetId('master', masterProcessorId, 'tiltDb'),
+        midiLearnMasteringTargetId(masteringProcessorId, 'ceilingDb'),
+      ];
+      for (const [index, target] of processorMidiTargets.entries()) {
+        store.midiCcBindings.set(target, { channel: index, controller: 40 + index });
+      }
+      store.automationLanes = [
+        {
+          target: trackId,
+          param: insertAutomationParam(trackProcessorId, 'drive'),
+          points: [{ ppq: 0, value: 0.7 }],
+          enabled: true,
+        },
+        {
+          target: trackId,
+          param: 'faderDb',
+          points: [{ ppq: 0, value: -3 }],
+          enabled: true,
+        },
+        {
+          target: 'master',
+          param: insertAutomationParam(masterProcessorId, 'tiltDb'),
+          points: [{ ppq: 0, value: 2 }],
+          enabled: true,
+        },
+        {
+          target: 'master',
+          param: masteringAutomationParam(masteringProcessorId, 'ceilingDb'),
+          points: [{ ppq: 0, value: -2 }],
+          enabled: true,
+        },
+        {
+          target: busAutomationTarget(oldBusId),
+          param: insertAutomationParam(busProcessorId, 'thresholdDb'),
+          points: [{ ppq: 0, value: -24 }],
+          enabled: true,
+        },
+      ];
+      const before = store.automationLanes.map((lane) => ({
+        ...lane,
+        points: lane.points.map((point) => ({ ...point })),
+      }));
+      clearHistory();
+
+      applyMixerSceneJson(fakeMixingScenePresetJson('vocalReverbSend'));
+      expect(store.automationLanes).toEqual([before[1]]);
+      expect(processorMidiTargets.every((target) => !store.midiCcBindings.has(target))).toBe(true);
+
+      expect(undo()).toBe(true);
+      expect(store.automationLanes).toEqual(before);
+      expect(processorMidiTargets.every((target) => store.midiCcBindings.has(target))).toBe(true);
     });
 
     it('maps mixer scene VCA groups and sidechain keys onto current tracks', () => {
@@ -757,7 +860,7 @@ describe('mixer commands', () => {
       expect(store.tracks.find((track) => track.id === guestId)?.vcaId).toBe('voices');
       const music = store.tracks.find((track) => track.id === musicId);
       expect(music?.mixer?.gainDb).toBe(-18);
-      expect(music?.mixer?.inserts[0]).toEqual({
+      expect(music?.mixer?.inserts[0]).toMatchObject({
         processor: 'dynamics.sidechainRouter',
         params: { rangeDb: 18 },
         enabled: true,
@@ -792,7 +895,7 @@ describe('mixer commands', () => {
       const group = store.tracks.find((track) => track.id === groupId);
       expect(result.trackCount).toBe(2);
       expect(group?.kind).toBe('group');
-      expect(group?.mixer?.inserts[0]).toEqual({
+      expect(group?.mixer?.inserts[0]).toMatchObject({
         processor: 'dynamics.sidechainRouter',
         params: { rangeDb: 12 },
         enabled: true,
@@ -862,13 +965,13 @@ describe('mixer commands', () => {
       );
 
       expect(result).toEqual({ trackCount: 1, busCount: 1, vcaCount: 0 });
-      expect(store.mixer.master.inserts).toEqual([
+      expect(store.mixer.master.inserts).toMatchObject([
         { processor: 'dynamics.compressor', params: { thresholdDb: -18 }, enabled: true },
       ]);
-      expect(store.tracks[0].mixer?.inserts).toEqual([
+      expect(store.tracks[0].mixer?.inserts).toMatchObject([
         { processor: 'stereo.imager', params: { width: 1.2 }, enabled: true },
       ]);
-      expect(store.mixer.buses[0].strip?.inserts).toEqual([
+      expect(store.mixer.buses[0].strip?.inserts).toMatchObject([
         { processor: 'saturation.tape', params: { driveDb: 2 }, enabled: true },
       ]);
     });

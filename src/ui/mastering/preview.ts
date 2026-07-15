@@ -17,6 +17,7 @@ import {
   type MixdownRangePpq,
   type MixdownResult,
 } from '@/export/mixdown';
+import { OperationGeneration } from '@/lib/operation-generation';
 import { canonicalJson, fnv1a32Hex } from '@/project/hash';
 import type { ProjectDocument } from '@/project/serialization';
 
@@ -128,15 +129,13 @@ export function createMasteringPreviewController(
     processed: null,
     bypassed: null,
   };
-  /** Generation token: bumped by every request/cancel to invalidate results. */
-  let generation = 0;
+  const operations = new OperationGeneration();
   /** Handles of the renders belonging to the current generation. */
   let activeHandles: PreviewRenderHandle[] = [];
-  let disposed = false;
 
   function update(patch: Partial<MasteringPreviewState>): void {
     state = { ...state, ...patch };
-    if (!disposed) options.onChange?.(state);
+    if (!operations.disposed) options.onChange?.(state);
   }
 
   /** Cancels in-flight renders without touching the state. */
@@ -151,17 +150,23 @@ export function createMasteringPreviewController(
     range: MixdownRangePpq,
     sampleRate?: number,
   ): Promise<boolean> {
-    if (disposed) return false;
-    const key = previewCacheKey(doc, range, sampleRate);
+    if (operations.disposed) return false;
+    const snapshot = structuredClone(doc) as ProjectDocument;
+    const rangeSnapshot = { ...range };
+    const key = previewCacheKey(snapshot, rangeSnapshot, sampleRate);
     if (state.status === 'ready' && state.key === key) return true;
-    const myGeneration = ++generation;
+    const token = operations.begin({
+      projectId: snapshot.name,
+      targetId: 'mastering-preview',
+      revision: key,
+    });
     cancelHandles();
     update({ status: 'rendering', progress: 0, stage: '', error: null });
 
-    const stripped = stripMasteringChain(doc);
-    const strippedKey = previewCacheKey(stripped, range, sampleRate);
+    const stripped = stripMasteringChain(snapshot);
+    const strippedKey = previewCacheKey(stripped, rangeSnapshot, sampleRate);
     const needsBypassRender = strippedKey !== key;
-    const renderOptions: ExportRenderOptions = { range };
+    const renderOptions: ExportRenderOptions = { range: rangeSnapshot };
     if (sampleRate !== undefined) renderOptions.sampleRate = sampleRate;
 
     /** Runs one variant render mapped onto a progress sub-window. */
@@ -171,7 +176,7 @@ export function createMasteringPreviewController(
       to: number,
     ): Promise<MixdownResult> {
       const handle = options.render(variantDoc, renderOptions, (progress, stage) => {
-        if (myGeneration !== generation) return;
+        if (!operations.isCurrent(token)) return;
         update({ progress: from + progress * (to - from), stage });
       });
       activeHandles.push(handle);
@@ -179,15 +184,15 @@ export function createMasteringPreviewController(
     }
 
     try {
-      const processed = await renderVariant(doc, 0, needsBypassRender ? 0.5 : 1);
-      if (myGeneration !== generation) return false;
+      const processed = await renderVariant(snapshot, 0, needsBypassRender ? 0.5 : 1);
+      if (!operations.isCurrent(token)) return false;
       const bypassed = needsBypassRender ? await renderVariant(stripped, 0.5, 1) : processed;
-      if (myGeneration !== generation) return false;
+      if (!operations.isCurrent(token)) return false;
       activeHandles = [];
       update({ status: 'ready', progress: 1, stage: '', key, processed, bypassed });
       return true;
     } catch (error) {
-      if (myGeneration !== generation) return false;
+      if (!operations.isCurrent(token)) return false;
       activeHandles = [];
       if (error instanceof MixdownCancelledError) {
         update({ status: state.key !== null ? 'ready' : 'idle', progress: 0, stage: '' });
@@ -204,7 +209,7 @@ export function createMasteringPreviewController(
   }
 
   function cancel(): void {
-    generation++;
+    operations.invalidate(new DOMException('Mastering preview cancelled.', 'AbortError'));
     cancelHandles();
     if (state.status === 'rendering') {
       update({ status: state.key !== null ? 'ready' : 'idle', progress: 0, stage: '' });
@@ -212,9 +217,9 @@ export function createMasteringPreviewController(
   }
 
   function dispose(): void {
-    if (disposed) return;
+    if (operations.disposed) return;
     cancel();
-    disposed = true;
+    operations.dispose();
   }
 
   return { state: () => state, request, cancel, dispose };

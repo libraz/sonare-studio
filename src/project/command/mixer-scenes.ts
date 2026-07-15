@@ -1,7 +1,12 @@
-import { isBusAutomationTarget } from '../automation';
+import {
+  isBusAutomationTarget,
+  parseInsertAutomationParam,
+  parseMasteringAutomationParam,
+} from '../automation';
 import {
   cloneStrip,
   createDefaultStrip,
+  createProcessorId,
   type InsertSlot,
   MAX_MIXER_BUSES,
   MAX_STRIP_GAIN_DB,
@@ -15,6 +20,7 @@ import {
   type StripSend,
 } from '../mixer';
 import { getWasmModule, useProjectStore } from '../store';
+import { reconcileProcessorTargetReferences } from '../target-reference-registry';
 import type { EditorTrack } from '../types';
 import { executeApp } from './history';
 
@@ -167,6 +173,7 @@ function sceneInserts(
     if (!record || typeof record.processor !== 'string' || record.processor.length === 0) return [];
     if (validProcessors && !validProcessors.has(record.processor)) return [];
     const slot: InsertSlot = {
+      id: createProcessorId(),
       processor: record.processor,
       params: readParams(record.params),
       enabled: true,
@@ -401,12 +408,30 @@ export function applyMixerSceneJson(sceneJson: string): ApplyMixerSceneResult {
   const scene = parseSceneJson(sceneJson);
   const store = useProjectStore();
   const plan = buildScenePlan(scene, store.tracks, loadRealtimeInsertCatalog());
+  const replacedTrackIds = new Set(
+    store.tracks.slice(0, plan.result.trackCount).map((track) => track.id),
+  );
   return executeApp(() => {
     store.mixer = plan.mixer;
     store.tracks = plan.tracks;
-    store.automationLanes = store.automationLanes.filter(
-      (lane) => !isBusAutomationTarget(lane.target),
-    );
+    store.automationLanes = store.automationLanes.filter((lane) => {
+      // A scene replaces every bus and the master strip/chain. It also
+      // replaces the mapped track strips. Processor lanes from the previous
+      // structures must not survive merely because a new slot has the same
+      // numeric index; executeApp keeps them in the undo snapshot.
+      if (isBusAutomationTarget(lane.target)) return false;
+      if (lane.target === 'master') {
+        return (
+          parseInsertAutomationParam(lane.param) === undefined &&
+          parseMasteringAutomationParam(lane.param) === undefined
+        );
+      }
+      if (replacedTrackIds.has(lane.target)) {
+        return parseInsertAutomationParam(lane.param) === undefined;
+      }
+      return true;
+    });
+    reconcileProcessorTargetReferences(store);
     store.refresh();
     return plan.result;
   });

@@ -17,6 +17,7 @@ import {
   cloneAutomationLane,
   isBusAutomationTarget,
 } from '../automation';
+import { canonicalJson } from '../hash';
 import {
   cloneMixerState,
   cloneStrip,
@@ -25,8 +26,12 @@ import {
   type ProjectMixerState,
 } from '../mixer';
 import { useProjectStore } from '../store';
+import {
+  pruneStripTrackReferences,
+  registerTargetReferenceContributor,
+} from '../target-reference-registry';
 import type { EditorTrack } from '../types';
-import { executeApp } from './history';
+import { executeApp, registerHistoryStateContributor } from './history';
 
 // ---------------------------------------------------------------------------
 // Mixer snapshots (capture/restore of the audible mix)
@@ -285,6 +290,11 @@ export function exportMixerSnapshotSlots(): MixerSnapshotSlotState {
   return { snapshots, active: slots.active };
 }
 
+/** Deterministic reactive signature used by dirty/autosave state tracking. */
+export function mixerSnapshotSlotsKey(): string {
+  return canonicalJson(exportMixerSnapshotSlots());
+}
+
 /** Replaces the current slot registry from persisted snapshot state. */
 export function importMixerSnapshotSlots(state: MixerSnapshotSlotState | null): void {
   clearMixerSnapshots();
@@ -295,3 +305,32 @@ export function importMixerSnapshotSlots(state: MixerSnapshotSlotState | null): 
   }
   slots.active = state.active && slots.snapshots[state.active] ? state.active : null;
 }
+
+/** Drops a removed track and every sidechain reference to it from all slots. */
+export function pruneMixerSnapshotTrackReferences(trackId: number): void {
+  for (const slot of MIXER_SNAPSHOT_SLOTS) {
+    const snapshot = slots.snapshots[slot];
+    if (!snapshot) continue;
+    const mixer = cloneMixerState(snapshot.mixer);
+    mixer.master = pruneStripTrackReferences(mixer.master, trackId);
+    mixer.buses = mixer.buses.map((bus) =>
+      bus.strip ? { ...bus, strip: pruneStripTrackReferences(bus.strip, trackId) } : bus,
+    );
+    slots.snapshots[slot] = markRaw({
+      ...snapshot,
+      mixer,
+      tracks: snapshot.tracks
+        .filter((track) => track.id !== trackId)
+        .map((track) => ({
+          ...track,
+          mixer: pruneStripTrackReferences(track.mixer, trackId),
+        })),
+    });
+  }
+}
+
+registerHistoryStateContributor<MixerSnapshotSlotState>('mixer-snapshot-slots', {
+  capture: exportMixerSnapshotSlots,
+  restore: importMixerSnapshotSlots,
+});
+registerTargetReferenceContributor({ pruneTrack: pruneMixerSnapshotTrackReferences });

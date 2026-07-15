@@ -1,12 +1,17 @@
 import {
   cloneMasteringChain,
   createDefaultMasteringChain,
+  createProcessorId,
   type InsertSlot,
   isDefaultMasteringChain,
   type MasteringChainState,
   type ProjectMixerState,
 } from '../mixer';
 import { useProjectStore } from '../store';
+import {
+  pruneMasteringProcessorReferences,
+  reorderMasteringProcessorReferences,
+} from '../target-reference-registry';
 import { type CommandGestureOptions, executeApp, hasPendingGesture } from './history';
 import { validateInsertParams } from './insert-params';
 
@@ -133,7 +138,10 @@ export function addMasteringProcessor(
   validateInsertParams(params);
   const chain = currentMasteringChain(store);
   return executeApp(() => {
-    chain.processors = [...chain.processors, { processor, params: { ...params }, enabled: true }];
+    chain.processors = [
+      ...chain.processors,
+      { id: createProcessorId(), processor, params: { ...params }, enabled: true },
+    ];
     writeMasteringChain(store, chain);
     store.refresh();
     return chain.processors.length - 1;
@@ -148,10 +156,11 @@ export function addMasteringProcessor(
 export function removeMasteringProcessor(index: number): void {
   const store = useProjectStore();
   const chain = currentMasteringChain(store);
-  requireMasteringProcessor(chain, index);
+  const removed = requireMasteringProcessor(chain, index);
   executeApp(() => {
     chain.processors = chain.processors.filter((_, i) => i !== index);
     writeMasteringChain(store, chain);
+    pruneMasteringProcessorReferences(store, index, removed.id);
     store.refresh();
   });
 }
@@ -178,6 +187,7 @@ export function reorderMasteringProcessor(from: number, to: number): void {
     processors.splice(to, 0, moved);
     chain.processors = processors;
     writeMasteringChain(store, chain);
+    reorderMasteringProcessorReferences(store, from, to);
     store.refresh();
   });
 }

@@ -66,7 +66,7 @@ defineExpose({ addMenuEl });
   <div class="chain-rack">
     <ProcessorSlot
       v-for="(slot, index) in processors"
-      :key="`${index}:${slot.processor}`"
+      :key="slot.id ?? `${index}:${slot.processor}`"
       :slot="slot"
       :index="index"
       :expanded="expandedIndex === index"

@@ -1,5 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { masteringAutomationParam } from '@/project/automation';
 import {
   addMasteringProcessor,
   clearHistory,
@@ -21,6 +22,7 @@ import {
 } from '@/project/mixer';
 import { loadProjectDocument, serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
+import { midiLearnMasteringTargetId } from '@/ui/midi/midi-learn';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -71,7 +73,7 @@ describe('mastering chain commands', () => {
   it('adds, undoes and redoes a processor as one edit', () => {
     const index = addMasteringProcessor('maximizer.truePeakLimiter', { ceilingDb: -1 });
     expect(index).toBe(0);
-    expect(store.mixer.masteringChain?.processors).toEqual([
+    expect(store.mixer.masteringChain?.processors).toMatchObject([
       { processor: 'maximizer.truePeakLimiter', params: { ceilingDb: -1 }, enabled: true },
     ]);
     expect(undo()).toBe(true);
@@ -111,12 +113,12 @@ describe('mastering chain commands', () => {
   it('keeps the preset alongside processors', () => {
     setMasteringPreset('jpop');
     addMasteringProcessor('eq.tilt', { tiltDb: 1 });
-    expect(store.mixer.masteringChain).toEqual({
+    expect(store.mixer.masteringChain).toMatchObject({
       preset: 'jpop',
       processors: [{ processor: 'eq.tilt', params: { tiltDb: 1 }, enabled: true }],
     });
     setMasteringPreset(null);
-    expect(store.mixer.masteringChain).toEqual({
+    expect(store.mixer.masteringChain).toMatchObject({
       processors: [{ processor: 'eq.tilt', params: { tiltDb: 1 }, enabled: true }],
     });
   });
@@ -180,7 +182,7 @@ describe('mastering chain commands', () => {
     clearHistory();
 
     reorderMasteringProcessor(2, 0);
-    expect(store.mixer.masteringChain?.processors).toEqual([
+    expect(store.mixer.masteringChain?.processors).toMatchObject([
       { processor: 'saturation.tape', params: {}, enabled: false },
       { processor: 'eq.tilt', params: { tiltDb: 1 }, enabled: true },
       { processor: 'dynamics.compressor', params: { thresholdDb: -12 }, enabled: true },
@@ -193,6 +195,76 @@ describe('mastering chain commands', () => {
       'saturation.tape',
     ]);
     expect(undo()).toBe(false);
+  });
+
+  it('remaps processor automation on reorder/removal and restores it on undo', () => {
+    addMasteringProcessor('eq.tilt');
+    addMasteringProcessor('dynamics.compressor');
+    addMasteringProcessor('saturation.tape');
+    const [tiltId, compressorId, tapeId] =
+      store.mixer.masteringChain?.processors.map((slot) => slot.id as string) ?? [];
+    const originalParams = [
+      masteringAutomationParam(tiltId, 'tiltDb'),
+      masteringAutomationParam(compressorId, 'thresholdDb'),
+      masteringAutomationParam(tapeId, 'drive'),
+    ];
+    store.automationLanes = [
+      {
+        target: 'master',
+        param: originalParams[0],
+        points: [{ ppq: 0, value: 1 }],
+        enabled: true,
+      },
+      {
+        target: 'master',
+        param: originalParams[1],
+        points: [{ ppq: 0, value: -18 }],
+        enabled: true,
+      },
+      {
+        target: 'master',
+        param: originalParams[2],
+        points: [{ ppq: 0, value: 0.5 }],
+        enabled: true,
+      },
+    ];
+    clearHistory();
+
+    reorderMasteringProcessor(2, 0);
+    expect(store.automationLanes.map((lane) => lane.param)).toEqual(originalParams);
+    expect(undo()).toBe(true);
+    expect(store.automationLanes.map((lane) => lane.param)).toEqual(originalParams);
+
+    removeMasteringProcessor(1);
+    expect(store.automationLanes.map((lane) => lane.param)).toEqual([
+      originalParams[0],
+      originalParams[2],
+    ]);
+    expect(undo()).toBe(true);
+    expect(store.automationLanes.map((lane) => lane.param)).toEqual(originalParams);
+  });
+
+  it('keeps stable MIDI targets on reorder and prunes/restores them on removal', () => {
+    addMasteringProcessor('eq.tilt');
+    addMasteringProcessor('dynamics.compressor');
+    const [tiltId, compressorId] =
+      store.mixer.masteringChain?.processors.map((slot) => slot.id as string) ?? [];
+    const tiltTarget = midiLearnMasteringTargetId(tiltId, 'tiltDb');
+    const compressorTarget = midiLearnMasteringTargetId(compressorId, 'thresholdDb');
+    store.midiCcBindings.set(tiltTarget, { channel: 1, controller: 30 });
+    store.midiCcBindings.set(compressorTarget, { channel: 1, controller: 31 });
+    clearHistory();
+
+    reorderMasteringProcessor(1, 0);
+    expect(store.midiCcBindings.get(compressorTarget)).toEqual({ channel: 1, controller: 31 });
+    expect(store.midiCcBindings.get(tiltTarget)).toEqual({ channel: 1, controller: 30 });
+
+    removeMasteringProcessor(0);
+    expect(store.midiCcBindings.has(compressorTarget)).toBe(false);
+    expect(store.midiCcBindings.get(tiltTarget)).toEqual({ channel: 1, controller: 30 });
+
+    expect(undo()).toBe(true);
+    expect(store.midiCcBindings.get(compressorTarget)).toEqual({ channel: 1, controller: 31 });
   });
 
   it('treats an in-place reorder as a no-op and validates indices', () => {
@@ -243,7 +315,7 @@ describe('mastering chain serialization', () => {
     setStripGain('master', -2);
 
     const doc = serializeProject();
-    expect(doc.mixer?.masteringChain).toEqual({
+    expect(doc.mixer?.masteringChain).toMatchObject({
       preset: 'streaming',
       presetOverrides: { 'loudness.targetLufs': -14 },
       processors: [

@@ -1,5 +1,4 @@
 import type { SendTiming } from '@/wasm/index.js';
-import { remapInsertLanesAfterRemoval, remapInsertLanesAfterReorder } from '../automation-insert';
 import {
   cloneInstrument,
   type ExternalMidiInstrument,
@@ -10,6 +9,7 @@ import {
 import {
   cloneStrip,
   createDefaultStrip,
+  createProcessorId,
   DEFAULT_PAN_LAW,
   DEFAULT_PAN_MODE,
   DEFAULT_STRIP_WIDTH,
@@ -30,6 +30,10 @@ import {
   type StripSend,
 } from '../mixer';
 import { useProjectStore } from '../store';
+import {
+  pruneInsertProcessorReferences,
+  reorderInsertProcessorReferences,
+} from '../target-reference-registry';
 import { type CommandGestureOptions, execute, executeApp, hasPendingGesture } from './history';
 import { validateInsertParams } from './insert-params';
 import {
@@ -432,7 +436,10 @@ export function addInsert(
   validateInsertParams(params);
   return executeApp(() => {
     const next = cloneStrip(strip);
-    next.inserts = [...next.inserts, { processor, params: { ...params }, enabled: true }];
+    next.inserts = [
+      ...next.inserts,
+      { id: createProcessorId(), processor, params: { ...params }, enabled: true },
+    ];
     writeStrip(store, target, next);
     store.refresh();
     return next.inserts.length - 1;
@@ -451,12 +458,12 @@ export function addInsert(
 export function removeInsert(target: MixerStripTarget, index: number): void {
   const store = useProjectStore();
   const strip = currentStrip(store, target);
-  requireInsert(strip, index);
+  const removed = requireInsert(strip, index);
   executeApp(() => {
     const next = cloneStrip(strip);
     next.inserts = next.inserts.filter((_, i) => i !== index);
     writeStrip(store, target, next);
-    store.automationLanes = remapInsertLanesAfterRemoval(store.automationLanes, target, index);
+    pruneInsertProcessorReferences(store, target, index, removed.id);
     store.refresh();
   });
 }
@@ -485,12 +492,7 @@ export function reorderInsert(target: MixerStripTarget, fromIndex: number, toInd
     inserts.splice(clamped, 0, moved);
     next.inserts = inserts;
     writeStrip(store, target, next);
-    store.automationLanes = remapInsertLanesAfterReorder(
-      store.automationLanes,
-      target,
-      fromIndex,
-      clamped,
-    );
+    reorderInsertProcessorReferences(store, target, fromIndex, clamped);
     store.refresh();
   });
 }

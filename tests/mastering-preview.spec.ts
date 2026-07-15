@@ -149,6 +149,27 @@ describe('createMasteringPreviewController', () => {
     expect(states.some((entry) => entry.status === 'rendering')).toBe(true);
   });
 
+  it('renders from a detached document/range snapshot', async () => {
+    const fake = makeFakeRender();
+    const controller = createMasteringPreviewController({ render: fake.render });
+    const doc = makeDoc();
+    const mutableRange = { startPpq: 0, endPpq: 32 };
+    void controller.request(doc, mutableRange);
+
+    doc.name = 'Mutated after request';
+    doc.mixer?.masteringChain?.processors.push({
+      processor: 'limiter.peak',
+      params: {},
+      enabled: true,
+    });
+    mutableRange.endPpq = 4;
+
+    expect(fake.calls[0].doc).not.toBe(doc);
+    expect(fake.calls[0].doc.name).toBe('Preview test');
+    expect(fake.calls[0].doc.mixer?.masteringChain?.processors).toHaveLength(1);
+    expect(fake.calls[0].options.range).toEqual({ startPpq: 0, endPpq: 32 });
+  });
+
   it('renders only once when the document has no mastering chain', async () => {
     const fake = makeFakeRender();
     const controller = createMasteringPreviewController({ render: fake.render });

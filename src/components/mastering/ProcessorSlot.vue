@@ -18,7 +18,7 @@ import { categoryLabel, humanizeInsertName } from '@/ui/mixer/insert-catalog';
  * emitted intents.
  */
 
-defineProps<{
+const props = defineProps<{
   /** The processor slot state. */
   slot: InsertSlot;
   /** Slot position in the chain. */
@@ -65,7 +65,7 @@ function controlDisplay(control: MasteringControl): string {
 }
 
 function learnMasteringId(index: number, control: MasteringControl): string {
-  return midiLearnMasteringTargetId(index, control.id);
+  return midiLearnMasteringTargetId(props.slot.id ?? index, control.id);
 }
 
 function learnMasteringState(

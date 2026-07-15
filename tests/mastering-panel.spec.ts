@@ -20,6 +20,8 @@ import { midiLearnMasteringTargetId } from '@/ui/midi/midi-learn';
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
   const fakeModule = createFakeWasmModule();
+  (fakeModule as unknown as { masteringAssistantSuggest: () => string }).masteringAssistantSuggest =
+    () => JSON.stringify({ genreCandidates: [{ name: 'pop', score: 1 }] });
   return { ensureWasm: async () => fakeModule };
 });
 
@@ -191,7 +193,7 @@ describe('MasteringPanel.vue', () => {
     ]);
 
     await wrapper.find('.catalog-item').trigger('click');
-    expect(store.mixer.masteringChain?.processors).toEqual([
+    expect(store.mixer.masteringChain?.processors).toMatchObject([
       { processor: 'dynamics.compressor', params: {}, enabled: true },
     ]);
     const slot = wrapper.find('.chain-slot');
@@ -227,7 +229,8 @@ describe('MasteringPanel.vue', () => {
       global: { provide: { [MIDI_LEARN_KEY as symbol]: learn } },
     });
     await wrapper.find('.chain-name').trigger('click');
-    const targetId = midiLearnMasteringTargetId(0, 'tiltDb');
+    const processorId = store.mixer.masteringChain?.processors[0].id as string;
+    const targetId = midiLearnMasteringTargetId(processorId, 'tiltDb');
 
     const learnButtons = wrapper.findAll('.chain-param-midi-learn');
     expect(learnButtons.length).toBeGreaterThan(0);
@@ -266,7 +269,7 @@ describe('MasteringPanel.vue', () => {
     await rows[0].trigger('dragstart');
     await rows[1].trigger('drop');
 
-    expect(store.mixer.masteringChain?.processors).toEqual([
+    expect(store.mixer.masteringChain?.processors).toMatchObject([
       { processor: 'saturation.tape', params: {}, enabled: true },
       { processor: 'eq.tilt', params: { tiltDb: 2 }, enabled: false },
     ]);
@@ -386,6 +389,27 @@ describe('MasteringPanel.vue', () => {
     await flush();
     expect(wrapper.find('.preview-pane .mastering-error').exists()).toBe(false);
     expect(wrapper.findAll('.loudness-row')).toHaveLength(7);
+  });
+
+  it('does not apply an assistant preset from an old preview after refresh fails', async () => {
+    addMasteringProcessor('eq.tilt');
+    const fake = makeFakeRender();
+    const wrapper = mount(MasteringPanel, { props: { renderMixdown: fake.render } });
+    await wrapper.find('.preview-button').trigger('click');
+    fake.calls[0].resolve(makeResult(0.5));
+    await flush();
+    fake.calls[1].resolve(makeResult(0.25));
+    await flush();
+
+    addMasteringProcessor('saturation.tape');
+    await flush();
+    expect(wrapper.find('.preview-stale').exists()).toBe(true);
+    await wrapper.find('.assist-button').trigger('click');
+    expect(fake.calls).toHaveLength(3);
+    fake.calls[2].reject(new Error('refresh failed'));
+    await flush();
+
+    expect(store.mixer.masteringChain?.preset).toBeUndefined();
   });
 
   it('cancels an in-flight preview render', async () => {
