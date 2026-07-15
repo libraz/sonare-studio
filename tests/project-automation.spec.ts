@@ -328,6 +328,16 @@ describe('automation model', () => {
       });
     });
 
+    it('encodes and round-trips a stable processor identity', () => {
+      const param = insertAutomationParam('processor/a', 'band:1:gain');
+      expect(param).toBe('insert-id:processor%2Fa:band:1:gain');
+      expect(parseInsertAutomationParam(param)).toEqual({
+        processorId: 'processor/a',
+        paramName: 'band:1:gain',
+      });
+      expect(isAutomationParam(param)).toBe(true);
+    });
+
     it('rejects malformed tokens', () => {
       expect(isInsertAutomationParam('faderDb')).toBe(false);
       expect(parseInsertAutomationParam('faderDb')).toBeUndefined();
@@ -416,6 +426,16 @@ describe('automation model', () => {
         processorIndex: 0,
         paramName: 'band:1:gain',
       });
+    });
+
+    it('encodes and round-trips a stable mastering processor identity', () => {
+      const param = masteringAutomationParam('master/processor', 'ceilingDb');
+      expect(param).toBe('mastering-id:master%2Fprocessor:ceilingDb');
+      expect(parseMasteringAutomationParam(param)).toEqual({
+        processorId: 'master/processor',
+        paramName: 'ceilingDb',
+      });
+      expect(isAutomationParam(param)).toBe(true);
     });
 
     it('rejects malformed tokens', () => {

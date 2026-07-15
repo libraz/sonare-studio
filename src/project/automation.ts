@@ -12,20 +12,20 @@ export type BusAutomationTarget = `bus:${string}`;
 export type AutomationTarget = number | 'master' | BusAutomationTarget;
 
 /**
- * An insert-parameter automation target encoded as a structured string token
- * "insert:<index>:<paramName>". The strip the insert lives on is named by the
- * lane's {@link AutomationTarget} (track id / 'master' / bus), so the token
- * only carries the slot index and the processor's JSON-key parameter name.
+ * An insert-parameter automation target. Current tokens encode the stable
+ * processor identity as "insert-id:<id>:<paramName>"; positional
+ * "insert:<index>:<paramName>" tokens remain readable for old documents.
  */
-export type InsertAutomationParam = `insert:${number}:${string}`;
+export type InsertAutomationParam = `insert:${number}:${string}` | `insert-id:${string}:${string}`;
 
 /**
- * A mastering-chain processor parameter automation target encoded as
- * "mastering:<index>:<paramName>". Unlike strip insert tokens, the slot index
- * refers to mixer.masteringChain.processors and is mapped to the live master
- * strip only when the processor is realtime-safe and enabled.
+ * A mastering-chain processor parameter automation target. Current tokens use
+ * "mastering-id:<id>:<paramName>"; positional "mastering:<index>:<paramName>"
+ * tokens remain readable and are migrated during project load.
  */
-export type MasteringAutomationParam = `mastering:${number}:${string}`;
+export type MasteringAutomationParam =
+  | `mastering:${number}:${string}`
+  | `mastering-id:${string}:${string}`;
 
 /**
  * A synth-patch instrument parameter automation target encoded as
@@ -44,16 +44,20 @@ export type AutomationParam =
 
 /** The slot index and parameter name decoded from an {@link InsertAutomationParam}. */
 export interface InsertParamRef {
-  /** Insert slot index on the targeted strip (integer >= 0). */
-  insertIndex: number;
+  /** Legacy positional slot index, present only for old lane tokens. */
+  insertIndex?: number;
+  /** Stable processor identity, present for current lane tokens. */
+  processorId?: string;
   /** Processor JSON-key parameter name (may itself contain ':'). */
   paramName: string;
 }
 
 /** The mastering-chain slot index and parameter name decoded from a token. */
 export interface MasteringParamRef {
-  /** Processor slot index in mixer.masteringChain.processors (integer >= 0). */
-  processorIndex: number;
+  /** Legacy positional slot index, present only for old lane tokens. */
+  processorIndex?: number;
+  /** Stable processor identity, present for current lane tokens. */
+  processorId?: string;
   /** Processor JSON-key parameter name (may itself contain ':'). */
   paramName: string;
 }
@@ -173,34 +177,37 @@ export function busIdFromAutomationTarget(target: BusAutomationTarget): string {
 }
 
 /**
- * Encodes an insert slot index and parameter name into an automation param
- * token. The strip is carried by the lane's target, so only the slot index and
- * the processor's JSON-key parameter name are embedded.
+ * Encodes an insert processor identity and parameter name. String identities
+ * produce the stable current format; numbers produce the legacy format for
+ * backward-compatible import and tests.
  *
- * @param insertIndex Insert slot index on the targeted strip.
+ * @param insertIdentity Stable processor id, or a legacy slot index.
  * @param paramName Processor JSON-key parameter name (may contain ':').
  * @returns The "insert:<index>:<paramName>" token.
  */
 export function insertAutomationParam(
-  insertIndex: number,
+  insertIdentity: number | string,
   paramName: string,
 ): InsertAutomationParam {
-  return `insert:${insertIndex}:${paramName}`;
+  return typeof insertIdentity === 'number'
+    ? `insert:${insertIdentity}:${paramName}`
+    : `insert-id:${encodeURIComponent(insertIdentity)}:${paramName}`;
 }
 
 /**
- * Encodes a mastering-chain processor index and parameter name into an
- * automation param token.
+ * Encodes a stable mastering processor id (or legacy index) and parameter.
  *
- * @param processorIndex Processor slot index in mixer.masteringChain.processors.
+ * @param processorIdentity Stable processor id, or a legacy slot index.
  * @param paramName Processor JSON-key parameter name (may contain ':').
  * @returns The "mastering:<index>:<paramName>" token.
  */
 export function masteringAutomationParam(
-  processorIndex: number,
+  processorIdentity: number | string,
   paramName: string,
 ): MasteringAutomationParam {
-  return `mastering:${processorIndex}:${paramName}`;
+  return typeof processorIdentity === 'number'
+    ? `mastering:${processorIdentity}:${paramName}`
+    : `mastering-id:${encodeURIComponent(processorIdentity)}:${paramName}`;
 }
 
 /**
@@ -215,12 +222,12 @@ export function instrumentAutomationParam(paramName: string): InstrumentAutomati
 
 /** True when an automation param token addresses an insert parameter. */
 export function isInsertAutomationParam(param: string): param is InsertAutomationParam {
-  return param.startsWith('insert:');
+  return param.startsWith('insert:') || param.startsWith('insert-id:');
 }
 
 /** True when an automation param token addresses a mastering-chain parameter. */
 export function isMasteringAutomationParam(param: string): param is MasteringAutomationParam {
-  return param.startsWith('mastering:');
+  return param.startsWith('mastering:') || param.startsWith('mastering-id:');
 }
 
 /** True when an automation param token addresses a synth-patch instrument parameter. */
@@ -229,9 +236,8 @@ export function isInstrumentAutomationParam(param: string): param is InstrumentA
 }
 
 /**
- * Decodes an insert automation param token into its slot index and parameter
- * name. The token is "insert:<index>:<paramName>"; only the first two ':'
- * separators are structural, so a parameter name containing ':' survives.
+ * Decodes either stable or legacy insert automation tokens. Only the identity
+ * separator is structural, so parameter names containing ':' survive.
  *
  * @param param Candidate token.
  * @returns The decoded reference, or undefined when the token is malformed
@@ -239,34 +245,50 @@ export function isInstrumentAutomationParam(param: string): param is InstrumentA
  */
 export function parseInsertAutomationParam(param: string): InsertParamRef | undefined {
   if (!isInsertAutomationParam(param)) return undefined;
-  const rest = param.slice('insert:'.length);
+  const stable = param.startsWith('insert-id:');
+  const rest = param.slice(stable ? 'insert-id:'.length : 'insert:'.length);
   const separator = rest.indexOf(':');
   if (separator < 0) return undefined;
-  const indexText = rest.slice(0, separator);
+  const identityText = rest.slice(0, separator);
   const paramName = rest.slice(separator + 1);
   if (paramName.length === 0) return undefined;
-  const insertIndex = Number(indexText);
+  if (stable) {
+    try {
+      const processorId = decodeURIComponent(identityText);
+      return processorId.length > 0 ? { processorId, paramName } : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  const insertIndex = Number(identityText);
   if (!Number.isInteger(insertIndex) || insertIndex < 0) return undefined;
   return { insertIndex, paramName };
 }
 
 /**
- * Decodes a mastering automation param token into its slot index and parameter
- * name. The token is "mastering:<index>:<paramName>"; only the first two ':'
- * separators are structural, so a parameter name containing ':' survives.
+ * Decodes either stable or legacy mastering automation tokens.
  *
  * @param param Candidate token.
  * @returns The decoded reference, or undefined when malformed.
  */
 export function parseMasteringAutomationParam(param: string): MasteringParamRef | undefined {
   if (!isMasteringAutomationParam(param)) return undefined;
-  const rest = param.slice('mastering:'.length);
+  const stable = param.startsWith('mastering-id:');
+  const rest = param.slice(stable ? 'mastering-id:'.length : 'mastering:'.length);
   const separator = rest.indexOf(':');
   if (separator < 0) return undefined;
-  const indexText = rest.slice(0, separator);
+  const identityText = rest.slice(0, separator);
   const paramName = rest.slice(separator + 1);
   if (paramName.length === 0) return undefined;
-  const processorIndex = Number(indexText);
+  if (stable) {
+    try {
+      const processorId = decodeURIComponent(identityText);
+      return processorId.length > 0 ? { processorId, paramName } : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  const processorIndex = Number(identityText);
   if (!Number.isInteger(processorIndex) || processorIndex < 0) return undefined;
   return { processorIndex, paramName };
 }

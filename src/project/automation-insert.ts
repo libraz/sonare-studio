@@ -14,9 +14,11 @@ import {
   busIdFromAutomationTarget,
   insertAutomationParam,
   isBusAutomationTarget,
+  masteringAutomationParam,
   parseInsertAutomationParam,
+  parseMasteringAutomationParam,
 } from './automation';
-import type { MixerStrip } from './mixer';
+import type { InsertSlot, MasteringChainState, MixerStrip } from './mixer';
 
 /** Context for resolving an automation target to its mixer strip. */
 export interface InsertLaneStripContext {
@@ -63,6 +65,63 @@ export function enabledInsertAutomationIndex(
   return engineIndex;
 }
 
+/** Resolves a stable/current or legacy positional insert reference. */
+export function insertIndexForAutomationRef(
+  slots: ReadonlyArray<Pick<InsertSlot, 'id'>>,
+  ref: { insertIndex?: number; processorId?: string },
+): number | undefined {
+  if (ref.processorId !== undefined) {
+    const index = slots.findIndex((slot) => slot.id === ref.processorId);
+    return index >= 0 ? index : undefined;
+  }
+  return ref.insertIndex;
+}
+
+/** Resolves a stable/current or legacy positional mastering reference. */
+export function masteringIndexForAutomationRef(
+  chain: MasteringChainState | undefined,
+  ref: { processorIndex?: number; processorId?: string },
+): number | undefined {
+  if (!chain) return undefined;
+  if (ref.processorId !== undefined) {
+    const index = chain.processors.findIndex((slot) => slot.id === ref.processorId);
+    return index >= 0 ? index : undefined;
+  }
+  return ref.processorIndex !== undefined && chain.processors[ref.processorIndex]
+    ? ref.processorIndex
+    : undefined;
+}
+
+/** Migrates legacy positional lane tokens to stable processor identities. */
+export function migrateAutomationLanesToProcessorIds(
+  lanes: ReadonlyArray<AutomationLaneState>,
+  ctx: InsertLaneStripContext,
+  masteringChain?: MasteringChainState,
+): AutomationLaneState[] {
+  return lanes.flatMap((lane): AutomationLaneState[] => {
+    const masteringRef = parseMasteringAutomationParam(lane.param);
+    if (masteringRef) {
+      if (lane.target !== 'master') return [];
+      const index = masteringIndexForAutomationRef(masteringChain, masteringRef);
+      if (index === undefined) return [];
+      const slot = masteringChain?.processors[index];
+      if (!slot?.id) return [];
+      const param = masteringAutomationParam(slot.id, masteringRef.paramName);
+      return [param === lane.param ? lane : { ...lane, param }];
+    }
+    const insertRef = parseInsertAutomationParam(lane.param);
+    if (!insertRef) return [lane];
+    const strip = stripForAutomationTarget(lane.target, ctx);
+    if (!strip) return [];
+    const index = insertIndexForAutomationRef(strip.inserts, insertRef);
+    if (index === undefined) return [];
+    const slot = strip.inserts[index];
+    if (!slot?.id) return [];
+    const param = insertAutomationParam(slot.id, insertRef.paramName);
+    return [param === lane.param ? lane : { ...lane, param }];
+  });
+}
+
 /**
  * Rebuilds the lane list after an insert slot was removed from a strip,
  * remapping or dropping the insert lanes that target that strip:
@@ -82,6 +141,7 @@ export function remapInsertLanesAfterRemoval(
   lanes: ReadonlyArray<AutomationLaneState>,
   target: AutomationTarget,
   removedIndex: number,
+  removedProcessorId?: string,
 ): AutomationLaneState[] {
   const out: AutomationLaneState[] = [];
   for (const lane of lanes) {
@@ -90,12 +150,17 @@ export function remapInsertLanesAfterRemoval(
       out.push(lane);
       continue;
     }
-    if (ref.insertIndex === removedIndex) continue;
-    if (ref.insertIndex < removedIndex) {
+    if (ref.processorId !== undefined) {
+      if (ref.processorId !== removedProcessorId) out.push(lane);
+      continue;
+    }
+    const insertIndex = ref.insertIndex as number;
+    if (insertIndex === removedIndex) continue;
+    if (insertIndex < removedIndex) {
       out.push(lane);
       continue;
     }
-    out.push({ ...lane, param: insertAutomationParam(ref.insertIndex - 1, ref.paramName) });
+    out.push({ ...lane, param: insertAutomationParam(insertIndex - 1, ref.paramName) });
   }
   return out;
 }
@@ -131,7 +196,11 @@ export function remapInsertLanesAfterReorder(
       out.push(lane);
       continue;
     }
-    const i = ref.insertIndex;
+    if (ref.processorId !== undefined) {
+      out.push(lane);
+      continue;
+    }
+    const i = ref.insertIndex as number;
     let next = i;
     if (i === fromIndex) next = toIndex;
     else if (fromIndex < toIndex && i > fromIndex && i <= toIndex) next = i - 1;
@@ -141,11 +210,70 @@ export function remapInsertLanesAfterReorder(
   return out;
 }
 
+/** Drops a removed mastering processor's lanes and shifts later slots down. */
+export function remapMasteringLanesAfterRemoval(
+  lanes: ReadonlyArray<AutomationLaneState>,
+  removedIndex: number,
+  removedProcessorId?: string,
+): AutomationLaneState[] {
+  const out: AutomationLaneState[] = [];
+  for (const lane of lanes) {
+    const ref = lane.target === 'master' ? parseMasteringAutomationParam(lane.param) : undefined;
+    if (ref === undefined) {
+      out.push(lane);
+      continue;
+    }
+    if (ref.processorId !== undefined) {
+      if (ref.processorId !== removedProcessorId) out.push(lane);
+      continue;
+    }
+    const processorIndex = ref.processorIndex as number;
+    if (processorIndex === removedIndex) continue;
+    if (processorIndex < removedIndex) {
+      out.push(lane);
+      continue;
+    }
+    out.push({
+      ...lane,
+      param: masteringAutomationParam(processorIndex - 1, ref.paramName),
+    });
+  }
+  return out;
+}
+
+/** Remaps mastering lanes so they follow a processor moved within the chain. */
+export function remapMasteringLanesAfterReorder(
+  lanes: ReadonlyArray<AutomationLaneState>,
+  fromIndex: number,
+  toIndex: number,
+): AutomationLaneState[] {
+  const out: AutomationLaneState[] = [];
+  for (const lane of lanes) {
+    const ref = lane.target === 'master' ? parseMasteringAutomationParam(lane.param) : undefined;
+    if (ref === undefined) {
+      out.push(lane);
+      continue;
+    }
+    if (ref.processorId !== undefined) {
+      out.push(lane);
+      continue;
+    }
+    const index = ref.processorIndex as number;
+    let next = index;
+    if (index === fromIndex) next = toIndex;
+    else if (fromIndex < toIndex && index > fromIndex && index <= toIndex) next = index - 1;
+    else if (fromIndex > toIndex && index >= toIndex && index < fromIndex) next = index + 1;
+    out.push(
+      next === index ? lane : { ...lane, param: masteringAutomationParam(next, ref.paramName) },
+    );
+  }
+  return out;
+}
+
 /**
- * Drops insert lanes whose slot index no longer exists on the target strip
- * (e.g. a loaded document referencing more inserts than the strip carries).
- * Only the slot index is validated here; processor/parameter compatibility is
- * enforced defensively by the sync/export layers.
+ * Drops insert lanes whose stable processor id or legacy slot index no longer
+ * exists on the target strip. Parameter compatibility is enforced
+ * defensively by the sync/export layers.
  *
  * @param lanes Current automation lanes (not mutated).
  * @param ctx Strip lookup context.
@@ -159,6 +287,10 @@ export function pruneInsertLanesAgainstStrips(
     const ref = parseInsertAutomationParam(lane.param);
     if (ref === undefined) return true;
     const strip = stripForAutomationTarget(lane.target, ctx);
-    return strip !== undefined && ref.insertIndex < strip.inserts.length;
+    if (!strip) return false;
+    if (ref.processorId !== undefined) {
+      return insertIndexForAutomationRef(strip.inserts, ref) !== undefined;
+    }
+    return ref.insertIndex !== undefined && ref.insertIndex < strip.inserts.length;
   });
 }

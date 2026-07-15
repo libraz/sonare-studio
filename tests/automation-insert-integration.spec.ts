@@ -148,14 +148,22 @@ describe('insert automation serialization', () => {
 
     const reTrackId = store.tracks[0].id;
     const reBusId = store.mixer.buses[0].id;
+    const trackProcessorId = store.tracks[0].mixer?.inserts[0].id;
+    const masterProcessorId = store.mixer.master.inserts[0].id;
+    const busProcessorId = store.mixer.buses[0].strip?.inserts[0].id;
+    const masteringProcessorId = store.mixer.masteringChain?.processors[0].id;
+    expect(trackProcessorId).toBeTruthy();
+    expect(masterProcessorId).toBeTruthy();
+    expect(busProcessorId).toBeTruthy();
+    expect(masteringProcessorId).toBeTruthy();
     const keyed = store.automationLanes.map((lane) => `${lane.target}:${lane.param}`).sort();
     expect(keyed).toEqual(
       [
-        `${reTrackId}:${insertAutomationParam(0, 'gainDb')}`,
+        `${reTrackId}:${insertAutomationParam(trackProcessorId as string, 'gainDb')}`,
         `${reTrackId}:${instrumentAutomationParam('cutoffHz')}`,
-        `master:${insertAutomationParam(0, 'gainDb')}`,
-        `master:${masteringAutomationParam(0, 'ceilingDb')}`,
-        `${busAutomationTarget(reBusId)}:${insertAutomationParam(0, 'gainDb')}`,
+        `master:${insertAutomationParam(masterProcessorId as string, 'gainDb')}`,
+        `master:${masteringAutomationParam(masteringProcessorId as string, 'ceilingDb')}`,
+        `${busAutomationTarget(reBusId)}:${insertAutomationParam(busProcessorId as string, 'gainDb')}`,
       ].sort(),
     );
   });
@@ -175,7 +183,9 @@ describe('insert automation serialization', () => {
     await loadProjectDocument(doc);
 
     const params = store.automationLanes.map((lane) => lane.param);
-    expect(params).toContain(insertAutomationParam(0, 'gainDb'));
+    expect(params).toContain(
+      insertAutomationParam(store.tracks[0].mixer?.inserts[0].id as string, 'gainDb'),
+    );
     expect(params).not.toContain(insertAutomationParam(3, 'gainDb'));
   });
 

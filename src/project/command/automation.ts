@@ -11,6 +11,7 @@ import {
   parseMasteringAutomationParam,
   sanitizeAutomationPoints,
 } from '../automation';
+import { insertIndexForAutomationRef, masteringIndexForAutomationRef } from '../automation-insert';
 import type { MixerStrip } from '../mixer';
 import { useProjectStore } from '../store';
 import { execute } from './history';
@@ -30,9 +31,10 @@ function requireInsertOnStrip(
   ref: InsertParamRef,
   target: AutomationTarget,
 ): void {
-  if (!strip.inserts[ref.insertIndex]) {
+  const index = insertIndexForAutomationRef(strip.inserts, ref);
+  if (index === undefined || !strip.inserts[index]) {
     throw new RangeError(
-      `Strip ${String(target)} has no insert at index ${ref.insertIndex} to automate`,
+      `Strip ${String(target)} has no insert ${ref.processorId ?? `at index ${String(ref.insertIndex)}`} to automate`,
     );
   }
 }
@@ -53,8 +55,10 @@ function validateAutomationTarget(
     if (target !== 'master') {
       throw new RangeError('Mastering automation must target the master lane');
     }
-    if (!store.mixer.masteringChain?.processors[masteringRef.processorIndex]) {
-      throw new RangeError(`Unknown mastering processor index: ${masteringRef.processorIndex}`);
+    if (masteringIndexForAutomationRef(store.mixer.masteringChain, masteringRef) === undefined) {
+      throw new RangeError(
+        `Unknown mastering processor: ${masteringRef.processorId ?? String(masteringRef.processorIndex)}`,
+      );
     }
     return;
   }

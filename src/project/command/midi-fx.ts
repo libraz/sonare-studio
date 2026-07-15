@@ -7,7 +7,7 @@ import {
 import { getProject, useProjectStore } from '../store';
 import type { EditorTrack } from '../types';
 import { execute } from './history';
-import { requireClip, requireTrack } from './utils';
+import { requireEditableClip, requireTrack } from './utils';
 
 /**
  * Bakes a MIDI-FX transform into a clip's stored notes as one undoable edit.
@@ -23,7 +23,7 @@ import { requireClip, requireTrack } from './utils';
  */
 export function bakeClipMidiFx(clipId: number, config: MidiFxConfig): boolean {
   const store = useProjectStore();
-  const clip = requireClip(store, clipId);
+  const clip = requireEditableClip(store, clipId);
   if ((clip.kind ?? 'midi') !== 'midi') {
     throw new RangeError(`Clip ${clipId} is not a MIDI clip`);
   }

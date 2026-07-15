@@ -18,6 +18,7 @@ import {
 } from '@/project/commands';
 import { createDefaultStrip, type MixerStrip } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
+import { midiLearnInsertTargetId } from '@/ui/midi/midi-learn';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -195,6 +196,40 @@ describe('removeInsert lane remapping', () => {
       insertAutomationParam(2, 'gainDb'),
     ]);
   });
+
+  it('drops only the stable lane owned by the removed processor', () => {
+    const ids = store.tracks[0].mixer?.inserts.map((slot) => slot.id as string) ?? [];
+    store.automationLanes = [];
+    setAutomationLanePoints(trackId, insertAutomationParam(ids[1], 'gainDb'), [
+      { ppq: 0, value: 3 },
+    ]);
+    setAutomationLanePoints(trackId, insertAutomationParam(ids[2], 'gainDb'), [
+      { ppq: 0, value: 6 },
+    ]);
+
+    removeInsert(trackId, 1);
+
+    expect(store.automationLanes.map((lane) => lane.param)).toEqual([
+      insertAutomationParam(ids[2], 'gainDb'),
+    ]);
+  });
+
+  it('drops only the removed stable MIDI target and restores it on undo', () => {
+    const ids = store.tracks[0].mixer?.inserts.map((slot) => slot.id as string) ?? [];
+    const removedTarget = midiLearnInsertTargetId(trackId, ids[1], 'gainDb');
+    const keptTarget = midiLearnInsertTargetId(trackId, ids[2], 'gainDb');
+    store.midiCcBindings.set(removedTarget, { channel: 0, controller: 20 });
+    store.midiCcBindings.set(keptTarget, { channel: 0, controller: 21 });
+    clearHistory();
+
+    removeInsert(trackId, 1);
+    expect(store.midiCcBindings.has(removedTarget)).toBe(false);
+    expect(store.midiCcBindings.get(keptTarget)).toEqual({ channel: 0, controller: 21 });
+
+    expect(undo()).toBe(true);
+    expect(store.midiCcBindings.get(removedTarget)).toEqual({ channel: 0, controller: 20 });
+    expect(store.midiCcBindings.get(keptTarget)).toEqual({ channel: 0, controller: 21 });
+  });
 });
 
 describe('reorderInsert lane remapping', () => {
@@ -232,6 +267,37 @@ describe('reorderInsert lane remapping', () => {
     expect(laneValue(0)).toBe(6);
     expect(laneValue(2)).toBe(3);
     expect(laneValue(1)).toBeUndefined();
+  });
+
+  it('keeps stable lane tokens unchanged while processor order changes', () => {
+    const ids = store.tracks[0].mixer?.inserts.map((slot) => slot.id as string) ?? [];
+    store.automationLanes = [];
+    const params = [
+      insertAutomationParam(ids[1], 'gainDb'),
+      insertAutomationParam(ids[2], 'gainDb'),
+    ];
+    setAutomationLanePoints(trackId, params[0], [{ ppq: 0, value: 3 }]);
+    setAutomationLanePoints(trackId, params[1], [{ ppq: 0, value: 6 }]);
+
+    reorderInsert(trackId, 2, 0);
+
+    expect(store.automationLanes.map((lane) => lane.param)).toEqual(params);
+    expect(store.tracks[0].mixer?.inserts.map((slot) => slot.id)).toEqual([ids[2], ids[0], ids[1]]);
+  });
+
+  it('keeps stable MIDI targets unchanged while processor order changes', () => {
+    const ids = store.tracks[0].mixer?.inserts.map((slot) => slot.id as string) ?? [];
+    const target = midiLearnInsertTargetId(trackId, ids[2], 'gainDb');
+    store.midiCcBindings.set(target, { channel: 2, controller: 24 });
+    clearHistory();
+
+    reorderInsert(trackId, 2, 0);
+    expect(store.tracks[0].mixer?.inserts[0].id).toBe(ids[2]);
+    expect(store.midiCcBindings.get(target)).toEqual({ channel: 2, controller: 24 });
+
+    expect(undo()).toBe(true);
+    expect(store.tracks[0].mixer?.inserts[2].id).toBe(ids[2]);
+    expect(store.midiCcBindings.get(target)).toEqual({ channel: 2, controller: 24 });
   });
 
   it('clamps an out-of-range destination to the last slot', () => {
