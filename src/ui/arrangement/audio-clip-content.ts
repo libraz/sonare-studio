@@ -4,9 +4,17 @@
  * clip's source window onto peak buckets, and source bounds for trim
  * clamping. Pure logic: no DOM, no store access, no IO.
  *
- * PPQ <-> seconds conversions assume a constant tempo, matching the playback
- * scheduling layer's limitation.
+ * PPQ <-> seconds conversions accept the shared absolute tempo map used by
+ * playback, so source windows stay aligned across ramps and tempo changes.
  */
+
+import {
+  type NormalizedTempoMap,
+  ppqDurationSeconds,
+  ppqToSeconds,
+  secondsToPpq,
+} from '@/project/tempo-map';
+import { type WarpableClipFields, warpSourceSecondsAt } from '@/project/warp';
 
 /** Per-bucket min/max envelope as produced by the waveform peaks module. */
 export interface PeakEnvelope {
@@ -65,9 +73,16 @@ export function peaksBucketCount(
  * @param tempoBpm - Constant tempo in BPM (> 0).
  * @returns Asset duration in quarter-note PPQ (0 for degenerate inputs).
  */
-export function assetLengthPpq(numFrames: number, sampleRate: number, tempoBpm: number): number {
-  if (!(numFrames > 0) || !(sampleRate > 0) || !(tempoBpm > 0)) return 0;
-  return (numFrames / sampleRate) * (tempoBpm / 60);
+export function assetLengthPpq(
+  numFrames: number,
+  sampleRate: number,
+  tempo: number | NormalizedTempoMap,
+  timelineStartPpq = 0,
+): number {
+  if (!(numFrames > 0) || !(sampleRate > 0)) return 0;
+  const seconds = numFrames / sampleRate;
+  if (typeof tempo === 'number') return tempo > 0 ? seconds * (tempo / 60) : 0;
+  return secondsToPpq(tempo, ppqToSeconds(tempo, timelineStartPpq) + seconds) - timelineStartPpq;
 }
 
 /** A clip's source window as fractions of the backing asset duration. */
@@ -93,15 +108,26 @@ export interface AudioWindowFractions {
 export function audioWindowFractions(
   sourceOffsetPpq: number,
   lengthPpq: number,
-  tempoBpm: number,
+  tempo: number | NormalizedTempoMap,
   numFrames: number,
   sampleRate: number,
+  timelineOriginPpq = 0,
 ): AudioWindowFractions {
-  const durationPpq = assetLengthPpq(numFrames, sampleRate, tempoBpm);
-  if (!(durationPpq > 0) || !(lengthPpq > 0)) return { startFrac: 0, endFrac: 0 };
+  if (!(numFrames > 0) || !(sampleRate > 0)) return { startFrac: 0, endFrac: 0 };
+  const durationSeconds = numFrames / sampleRate;
+  if (!(durationSeconds > 0) || !(lengthPpq > 0)) return { startFrac: 0, endFrac: 0 };
+  if (typeof tempo === 'number') {
+    const durationPpq = assetLengthPpq(numFrames, sampleRate, tempo);
+    if (!(durationPpq > 0)) return { startFrac: 0, endFrac: 0 };
+    return {
+      startFrac: sourceOffsetPpq / durationPpq,
+      endFrac: (sourceOffsetPpq + lengthPpq) / durationPpq,
+    };
+  }
   return {
-    startFrac: sourceOffsetPpq / durationPpq,
-    endFrac: (sourceOffsetPpq + lengthPpq) / durationPpq,
+    startFrac: ppqDurationSeconds(tempo, timelineOriginPpq, sourceOffsetPpq) / durationSeconds,
+    endFrac:
+      ppqDurationSeconds(tempo, timelineOriginPpq, sourceOffsetPpq + lengthPpq) / durationSeconds,
   };
 }
 
@@ -158,6 +184,42 @@ export function waveformColumns(
     columns[j] = { min: lo, max: hi };
   }
   return columns;
+}
+
+/** Maps pixel columns through clip warp anchors instead of a linear PPQ/source ratio. */
+export function warpedWaveformColumns(
+  peaks: PeakEnvelope,
+  clip: WarpableClipFields,
+  startLocalPpq: number,
+  endLocalPpq: number,
+  columnCount: number,
+  numFrames: number,
+  sampleRate: number,
+): WaveformColumn[] {
+  if (
+    !(columnCount >= 1) ||
+    !(endLocalPpq > startLocalPpq) ||
+    !(numFrames > 0) ||
+    !(sampleRate > 0)
+  ) {
+    return [];
+  }
+  const durationSeconds = numFrames / sampleRate;
+  const result: WaveformColumn[] = [];
+  for (let column = 0; column < columnCount; column += 1) {
+    const ppq0 = startLocalPpq + ((endLocalPpq - startLocalPpq) * column) / columnCount;
+    const ppq1 = startLocalPpq + ((endLocalPpq - startLocalPpq) * (column + 1)) / columnCount;
+    const seconds0 = warpSourceSecondsAt(clip, ppq0);
+    const seconds1 = warpSourceSecondsAt(clip, ppq1);
+    if (seconds0 === null || seconds1 === null) return [];
+    result.push(
+      waveformColumns(peaks, seconds0 / durationSeconds, seconds1 / durationSeconds, 1)[0] ?? {
+        min: 0,
+        max: 0,
+      },
+    );
+  }
+  return result;
 }
 
 /** Timeline bounds a non-looping audio clip's trims must stay inside. */

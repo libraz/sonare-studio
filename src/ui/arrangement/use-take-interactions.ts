@@ -61,6 +61,8 @@ export interface UseTakeInteractionsOptions {
   view: TakeInteractionsView;
   /** Returns the current clip list (clips without takes are ignored). */
   getClips(): ReadonlyArray<TakeLaneClip>;
+  /** Returns false when comp editing is disabled for the owning track. */
+  canEditTrack?(trackId: number): boolean;
   /** Mutation commands invoked when gestures commit. */
   commands: TakeInteractionCommands;
 }
@@ -138,6 +140,7 @@ export function useTakeInteractions(options: UseTakeInteractionsOptions): TakeIn
     const hit = view.takeRowAt(point);
     if (!hit) return false;
     pressed = true;
+    if (options.canEditTrack?.(hit.trackId) === false) return true;
     const clip = clipAt(hit.trackId, hit.takeIndex, view.xToPpq(point.x));
     if (clip) {
       drag = {
@@ -167,9 +170,12 @@ export function useTakeInteractions(options: UseTakeInteractionsOptions): TakeIn
       cursor.value = null;
       return false;
     }
-    cursor.value = clipAt(hit.trackId, hit.takeIndex, view.xToPpq(point.x))
-      ? 'crosshair'
-      : 'default';
+    cursor.value =
+      options.canEditTrack?.(hit.trackId) === false
+        ? 'default'
+        : clipAt(hit.trackId, hit.takeIndex, view.xToPpq(point.x))
+          ? 'crosshair'
+          : 'default';
     return true;
   }
 

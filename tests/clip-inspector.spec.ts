@@ -73,8 +73,8 @@ describe('ClipInspector', () => {
   it('clamps fade lengths to the clip length and keeps the other fade', async () => {
     wrapper = mount(ClipInspector, { props: { clip: audioClip({ fadeOutPpq: 2 }) } });
     await wrapper.find('input[aria-label="Fade-in length in beats"]').setValue('99');
-    // fade-in clamped to lengthPpq (16); fade-out preserved at 2.
-    expect(setClipFades).toHaveBeenCalledWith(7, 16, 2);
+    // Fade-in stops before the preserved fade-out, so the pair fits the clip.
+    expect(setClipFades).toHaveBeenCalledWith(7, 14, 2);
   });
 
   it('hides fade fields and re-detect for MIDI clips', () => {

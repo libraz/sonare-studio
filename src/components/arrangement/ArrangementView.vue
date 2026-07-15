@@ -7,6 +7,7 @@ import { useFileDownloads } from '@/composables/useFileDownloads';
 import type { AutomationParam } from '@/project/automation';
 import {
   addMidiClip,
+  clearActiveClipSelection,
   consolidateAudioClips,
   deleteClip,
   detectSectionsFromAudioClip,
@@ -28,9 +29,12 @@ import {
   trimClip,
 } from '@/project/commands';
 import { exportClipSmf } from '@/project/export';
+import { unfreezeTrack } from '@/project/freeze';
 import { insertParamDomainForStrip } from '@/project/insert-param-domains';
 import { useProjectStore } from '@/project/store';
-import { isAudioClip } from '@/project/types';
+import { normalizeTempoMap } from '@/project/tempo-map';
+import { canTrackContainClip, clipKind, isAudioClip } from '@/project/types';
+import type { AccessibleObjectAdjustment } from '@/ui/accessibility/object-navigation';
 import { assetLengthPpq, audioClipSourceBounds } from '@/ui/arrangement/audio-clip-content';
 import { getLoadedAudioAsset } from '@/ui/arrangement/audio-clip-data';
 import {
@@ -329,7 +333,12 @@ function sourceBoundsFor(clipId: number) {
   if (!clip || !isAudioClip(clip) || !clip.assetId || clip.loopEnabled) return null;
   const asset = getLoadedAudioAsset(clip.assetId);
   if (!asset) return null;
-  const assetPpq = assetLengthPpq(asset.meta.numFrames, asset.meta.sampleRate, store.tempoBpm);
+  const assetPpq = assetLengthPpq(
+    asset.meta.numFrames,
+    asset.meta.sampleRate,
+    normalizeTempoMap(store.tempoSegments, store.tempoBpm),
+    clip.startPpq - clip.sourceOffsetPpq,
+  );
   return audioClipSourceBounds(clip, assetPpq);
 }
 
@@ -339,12 +348,24 @@ const interactions = useClipInteractions({
   view: laneView,
   getClips: () => store.clips,
   getTrackIds: () => store.tracks.map((track) => track.id),
+  canMoveClipToTrack: (clipId, trackId) => {
+    const clip = store.clips.find((entry) => entry.id === clipId);
+    const track = store.tracks.find((entry) => entry.id === trackId);
+    return Boolean(clip && track && canTrackContainClip(track.kind, clipKind(clip)));
+  },
+  canEditClip: (clipId) => {
+    const clip = store.clips.find((entry) => entry.id === clipId);
+    return store.tracks.find((track) => track.id === clip?.trackId)?.frozen === undefined;
+  },
+  canEditTrack: (trackId) =>
+    store.tracks.find((track) => track.id === trackId)?.frozen === undefined,
   getGridPpq: () => gridPpq.value,
   getBarRange: (ppq) => barRangeAt(store.timeSignatures, ppq),
   getSourceBounds: sourceBoundsFor,
   getTool: () => tool.value,
   commands: {
     selectClip: (clipId) => setActiveClip(clipId),
+    clearClipSelection: (trackId) => clearActiveClipSelection(trackId),
     moveClip,
     trimClip,
     duplicateClip,
@@ -402,6 +423,8 @@ const takes = useTakeInteractions({
     },
   },
   getClips: () => store.clips,
+  canEditTrack: (trackId) =>
+    store.tracks.find((track) => track.id === trackId)?.frozen === undefined,
   commands: {
     setActiveTake: setClipActiveTake,
     setCompSegments: setClipCompSegments,
@@ -487,6 +510,64 @@ function onSeek(ppq: number): void {
   emit('seek', ppq);
 }
 
+type ClipKeyboardAction =
+  | { clipId: number; kind: 'select' }
+  | { clipId: number; kind: 'adjust'; adjustment: AccessibleObjectAdjustment }
+  | { clipId: number; kind: 'set'; controlId: string; value: number };
+
+/** Applies virtual-list clip actions through the same undoable project commands as pointer edits. */
+function onClipKeyboardAction(payload: ClipKeyboardAction): void {
+  const clip = store.clips.find((item) => item.id === payload.clipId);
+  if (!clip) return;
+  setActiveClip(clip.id);
+  if (payload.kind === 'select') return;
+  const track = store.tracks.find((item) => item.id === clip.trackId);
+  if (track?.frozen !== undefined) return;
+  try {
+    if (payload.kind === 'set') {
+      if (payload.controlId === 'start') {
+        moveClip(clip.id, Math.max(0, payload.value));
+      } else if (payload.controlId === 'length') {
+        const bounds = sourceBoundsFor(clip.id);
+        const maximum = bounds ? bounds.maxEndPpq - clip.startPpq : Number.POSITIVE_INFINITY;
+        trimClip(clip.id, clip.startPpq, Math.max(0.25, Math.min(maximum, payload.value)));
+      }
+      return;
+    }
+    const { direction, resize, coarse } = payload.adjustment;
+    const step = Math.max(0.0625, gridPpq.value) * (coarse ? 4 : 1);
+    if (direction === 'left' || direction === 'right') {
+      const delta = direction === 'left' ? -step : step;
+      if (resize) {
+        const bounds = sourceBoundsFor(clip.id);
+        const maximum = bounds ? bounds.maxEndPpq - clip.startPpq : Number.POSITIVE_INFINITY;
+        trimClip(clip.id, clip.startPpq, Math.max(0.25, Math.min(maximum, clip.lengthPpq + delta)));
+      } else {
+        moveClip(clip.id, Math.max(0, clip.startPpq + delta));
+      }
+      return;
+    }
+    const currentTrackIndex = store.tracks.findIndex((item) => item.id === clip.trackId);
+    const trackDelta = direction === 'up' ? -1 : 1;
+    for (
+      let index = currentTrackIndex + trackDelta;
+      index >= 0 && index < store.tracks.length;
+      index += trackDelta
+    ) {
+      const destination = store.tracks[index];
+      if (
+        destination.frozen === undefined &&
+        canTrackContainClip(destination.kind, clipKind(clip))
+      ) {
+        moveClip(clip.id, clip.startPpq, destination.id);
+        break;
+      }
+    }
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : String(cause);
+  }
+}
+
 function glueClusterClipIds(clipId: number): number[] {
   const source = store.clips.find((clip) => clip.id === clipId);
   if (!source || isAudioClip(source)) return [];
@@ -562,31 +643,48 @@ function onClipContext(payload: {
   const canSplit = splitPpq > clip.startPpq && splitPpq < end;
   const glueIds = glueClusterClipIds(clip.id);
   const consolidateIds = audioConsolidateClipIds(clip.id);
+  const frozen = store.tracks.find((track) => track.id === clip.trackId)?.frozen !== undefined;
   const items: ContextMenuItem[] = [
+    ...(frozen
+      ? [
+          {
+            id: 'unfreeze',
+            label: t.value.shell.arrangement.trackHeader.unfreeze,
+            run: () => unfreezeTrack(clip.trackId),
+          },
+          { id: 'sep-frozen', separator: true },
+        ]
+      : []),
     {
       id: 'split',
       label: 'Split here',
       hint: '3',
-      disabled: !canSplit,
+      disabled: frozen || !canSplit,
       run: () => setActiveClip(splitClip(clip.id, splitPpq)),
     },
-    { id: 'duplicate', label: 'Duplicate', run: () => setActiveClip(duplicateClip(clip.id, end)) },
+    {
+      id: 'duplicate',
+      label: 'Duplicate',
+      disabled: frozen,
+      run: () => setActiveClip(duplicateClip(clip.id, end)),
+    },
     {
       id: 'glue',
       label: 'Glue joined clips',
-      disabled: glueIds.length < 2,
+      disabled: frozen || glueIds.length < 2,
       run: () => setActiveClip(glueMidiClips(glueIds)),
     },
     {
       id: 'consolidate-audio',
       label: 'Consolidate audio clips',
-      disabled: consolidateIds.length < 2,
+      disabled: frozen || consolidateIds.length < 2,
       run: () => void consolidateAudioCluster(consolidateIds),
     },
     { id: 'rename', label: 'Rename…', run: () => renameClipFromPrompt(clip.id, clip.name) },
     {
       id: 'loop',
       label: clip.loopEnabled ? 'Disable loop' : 'Enable loop',
+      disabled: frozen,
       run: () => setClipLoop(clip.id, !clip.loopEnabled),
     },
   ];
@@ -595,7 +693,13 @@ function onClipContext(payload: {
   }
   items.push(
     { id: 'sep-1', separator: true },
-    { id: 'delete', label: 'Delete', danger: true, run: () => deleteClip(clip.id) },
+    {
+      id: 'delete',
+      label: 'Delete',
+      danger: true,
+      disabled: frozen,
+      run: () => deleteClip(clip.id),
+    },
   );
   openContextMenu(payload.x, payload.y, items);
 }
@@ -832,6 +936,8 @@ onBeforeUnmount(() => {
           :loop-start-ppq="props.loopStartPpq ?? 0"
           :loop-end-ppq="props.loopEndPpq ?? 0"
           :tempo-bpm="store.tempoBpm"
+          :tempo-segments="store.tempoSegments"
+          :grid-ppq="gridPpq"
           :interactions="interactions"
           :automation-expanded-ids="automationExpandedIds"
           :automation-params="automationParams"
@@ -844,6 +950,7 @@ onBeforeUnmount(() => {
           @view-resize="onCanvasResize"
           @ruler-seek="onSeek"
           @clip-context="onClipContext"
+          @clip-keyboard-action="onClipKeyboardAction"
           @ruler-context="onRulerContext"
         />
       </div>

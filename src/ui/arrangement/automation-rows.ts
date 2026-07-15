@@ -153,6 +153,25 @@ export function buildRowLayout(
   };
 }
 
+/**
+ * Resolves a drag-reorder destination using the shared variable-height row
+ * geometry. The dragged row's center follows the pointer delta, so expanded
+ * take/automation lanes no longer count as several phantom track rows.
+ */
+export function reorderRowIndexForDelta(
+  layout: ArrangementRowLayout,
+  fromIndex: number,
+  deltaY: number,
+): number {
+  if (layout.totalHeight <= 0) return 0;
+  const center =
+    layout.rowTop(fromIndex) +
+    layout.rowHeight(fromIndex) / 2 +
+    (Number.isFinite(deltaY) ? deltaY : 0);
+  const y = Math.min(layout.totalHeight - Number.EPSILON, Math.max(0, center));
+  return layout.hitTest(y)?.index ?? fromIndex;
+}
+
 /** Drawing/editing value domain of an automated parameter. */
 export interface AutomationValueDomain {
   /** Value mapped to the sublane bottom. */

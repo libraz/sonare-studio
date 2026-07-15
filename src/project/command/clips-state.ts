@@ -1,9 +1,10 @@
+import { validateClipFadePair } from '../clip-fades';
 import { getProject, useProjectStore } from '../store';
 import { normalizeTempoMap } from '../tempo-map';
 import type { ClipWarp } from '../types';
 import { projectWarpMapDesc, sanitizeWarpAnchors } from '../warp';
 import { execute } from './history';
-import { requireClip, requireTrack } from './utils';
+import { requireClip, requireEditableClip, requireTrack } from './utils';
 
 // ---------------------------------------------------------------------------
 // Clip/track state commands
@@ -52,9 +53,8 @@ export function setTrackFrozen(trackId: number, frozen: { assetId: string } | nu
 export function setClipWarp(clipId: number, warp: ClipWarp | null): void {
   const store = useProjectStore();
   const project = getProject();
-  const index = store.clips.findIndex((clip) => clip.id === clipId);
-  if (index < 0) throw new RangeError(`Unknown clip id ${clipId}`);
-  const clip = store.clips[index];
+  const clip = requireEditableClip(store, clipId);
+  const index = store.clips.findIndex((entry) => entry.id === clipId);
   if ((clip.kind ?? 'midi') !== 'audio') {
     throw new RangeError(`Clip ${clipId} is not an audio clip`);
   }
@@ -108,7 +108,7 @@ export function setClipWarp(clipId: number, warp: ClipWarp | null): void {
 export function setClipLoop(clipId: number, loopEnabled: boolean, loopLengthPpq?: number): void {
   const store = useProjectStore();
   const project = getProject();
-  const clip = requireClip(store, clipId);
+  const clip = requireEditableClip(store, clipId);
   if (loopLengthPpq !== undefined && (!Number.isFinite(loopLengthPpq) || loopLengthPpq <= 0)) {
     throw new RangeError(`Loop length must be finite and > 0, got ${loopLengthPpq}`);
   }
@@ -129,7 +129,7 @@ export function setClipLoop(clipId: number, loopEnabled: boolean, loopLengthPpq?
 export function setClipGain(clipId: number, gain: number): void {
   const store = useProjectStore();
   const project = getProject();
-  requireClip(store, clipId);
+  requireEditableClip(store, clipId);
   if (!Number.isFinite(gain) || gain < 0) {
     throw new RangeError(`Clip gain must be finite and >= 0, got ${gain}`);
   }
@@ -152,7 +152,7 @@ export function setClipGain(clipId: number, gain: number): void {
 export function setClipFades(clipId: number, fadeInPpq?: number, fadeOutPpq?: number): void {
   const store = useProjectStore();
   const project = getProject();
-  requireClip(store, clipId);
+  const clip = requireEditableClip(store, clipId);
   for (const [value, label] of [
     [fadeInPpq, 'Clip fadeInPpq'],
     [fadeOutPpq, 'Clip fadeOutPpq'],
@@ -163,6 +163,7 @@ export function setClipFades(clipId: number, fadeInPpq?: number, fadeOutPpq?: nu
   }
   const fadeIn = fadeInPpq ?? 0;
   const fadeOut = fadeOutPpq ?? 0;
+  validateClipFadePair(fadeIn, fadeOut, clip.lengthPpq);
   execute(1, () => {
     project.setClipFade(clipId, { lengthPpq: fadeIn }, { lengthPpq: fadeOut });
     store.refresh();
@@ -194,6 +195,27 @@ export function setActiveClip(clipId: number): void {
   store.activeTrackId = clip.trackId;
   store.selection = new Set();
   store.refresh();
+}
+
+/**
+ * Clears the active clip without changing project content. Empty arrangement
+ * clicks use this editor-only state transition so the visible selection and
+ * subsequent Delete target cannot disagree. The clicked lane may optionally
+ * become the active track while the piano roll/score remain clip-less.
+ *
+ * @param trackId Optional track id under the empty click.
+ */
+export function clearActiveClipSelection(trackId?: number): void {
+  const store = useProjectStore();
+  if (trackId !== undefined) {
+    requireTrack(store, trackId);
+    store.activeTrackId = trackId;
+  }
+  store.clipId = -1;
+  store.clipStartPpq = 0;
+  store.clipLengthPpq = 0;
+  store.notes = [];
+  store.selection = new Set();
 }
 
 /**

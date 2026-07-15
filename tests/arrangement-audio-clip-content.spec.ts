@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { normalizeTempoMap } from '@/project/tempo-map';
 import {
   assetLengthPpq,
   audioClipSourceBounds,
@@ -6,6 +7,7 @@ import {
   PEAK_BUCKETS_PER_SECOND_LEVELS,
   peaksBucketCount,
   peaksBucketsPerSecond,
+  warpedWaveformColumns,
   waveformColumns,
 } from '@/ui/arrangement/audio-clip-content';
 
@@ -63,6 +65,14 @@ describe('assetLengthPpq', () => {
     expect(assetLengthPpq(48000, 0, 120)).toBe(0);
     expect(assetLengthPpq(48000, 48000, 0)).toBe(0);
   });
+
+  it('maps fixed asset seconds through an absolute variable-tempo origin', () => {
+    const map = normalizeTempoMap([
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 4, bpm: 60 },
+    ]);
+    expect(assetLengthPpq(48_000, 48_000, map, 3)).toBeCloseTo(1.5);
+  });
 });
 
 describe('audioWindowFractions', () => {
@@ -77,6 +87,16 @@ describe('audioWindowFractions', () => {
     const window = audioWindowFractions(1, 3, 120, 48000, 48000);
     expect(window.startFrac).toBeCloseTo(0.5);
     expect(window.endFrac).toBeCloseTo(2);
+  });
+
+  it('uses tempo-map seconds for a source window crossing a tempo change', () => {
+    const map = normalizeTempoMap([
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 4, bpm: 60 },
+    ]);
+    const window = audioWindowFractions(1, 1, map, 48_000, 48_000, 3);
+    expect(window.startFrac).toBeCloseTo(0.5);
+    expect(window.endFrac).toBeCloseTo(1.5);
   });
 
   it('returns a zero window for degenerate inputs', () => {
@@ -127,6 +147,30 @@ describe('waveformColumns', () => {
     expect(waveformColumns(peaks([-1], [1]), 0, 1, 0)).toEqual([]);
     expect(waveformColumns(peaks([-1], [1]), 1, 1, 4)).toEqual([]);
     expect(waveformColumns(peaks([], []), 0, 1, 4)).toEqual([]);
+  });
+});
+
+describe('warpedWaveformColumns', () => {
+  it('maps each pixel interval through the same nonlinear warp anchors as playback', () => {
+    const columns = warpedWaveformColumns(
+      peaks([-1, -0.75, -0.5, -0.25], [1, 0.75, 0.5, 0.25]),
+      {
+        lengthPpq: 4,
+        sourceOffsetPpq: 0,
+        warp: { enabled: true, sourceBpm: 60, anchors: [{ ppq: 2, sourceSeconds: 1 }] },
+      },
+      0,
+      4,
+      4,
+      4,
+      1,
+    );
+    expect(columns).toEqual([
+      { min: -1, max: 1 },
+      { min: -1, max: 1 },
+      { min: -0.75, max: 0.75 },
+      { min: -0.5, max: 0.5 },
+    ]);
   });
 });
 

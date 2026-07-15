@@ -68,6 +68,8 @@ export interface ClipBarRange {
 export interface ClipInteractionCommands {
   /** Makes a clip the active (selected) clip. */
   selectClip(clipId: number): void;
+  /** Clears the active clip after a select-tool click on an empty lane. */
+  clearClipSelection?(trackId?: number): void;
   moveClip(clipId: number, newStartPpq: number, newTrackId?: number): void;
   trimClip(clipId: number, newStartPpq: number, newLengthPpq: number): void;
   duplicateClip(clipId: number, newStartPpq: number): number;
@@ -97,6 +99,12 @@ export interface UseClipInteractionsOptions {
   getClips(): ReadonlyArray<ArrangeClip>;
   /** Returns track ids in lane order (index = lane index). */
   getTrackIds(): ReadonlyArray<number>;
+  /** Returns true when this clip may be moved to the target track. */
+  canMoveClipToTrack?(clipId: number, trackId: number): boolean;
+  /** Returns false when a clip is read-only (for example on a frozen track). */
+  canEditClip?(clipId: number): boolean;
+  /** Returns false when new clips may not be created on a track. */
+  canEditTrack?(trackId: number): boolean;
   /** Returns the current snap grid step in PPQ (<= 0 disables snapping). */
   getGridPpq(): number;
   /** Returns the bar containing a PPQ position (for double-click creation). */
@@ -283,7 +291,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
   function eraseAt(point: ClipPoint): void {
     if (!commands.deleteClip) return;
     const hit = hitTestClip(toRects(), point, view, hitOptions());
-    if (hit) commands.deleteClip(hit.id);
+    if (hit && options.canEditClip?.(hit.id) !== false) commands.deleteClip(hit.id);
   }
 
   /** Splits the clip under the pointer at the snapped pointer position. */
@@ -292,7 +300,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     const hit = hitTestClip(toRects(), point, view, hitOptions());
     if (!hit) return;
     const clip = options.getClips().find((c) => c.id === hit.id);
-    if (!clip) return;
+    if (!clip || options.canEditClip?.(clip.id) === false) return;
     const step = options.getGridPpq();
     const raw = view.xToPpq(point.x);
     const splitPpq = modifiers.meta === true ? raw : snapToStep(raw, step);
@@ -335,6 +343,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     for (let i = clips.length - 1; i >= 0; i--) {
       const clip = clips[i];
       if (clip.kind !== 'audio') continue;
+      if (options.canEditClip?.(clip.id) === false) continue;
       const laneIndex = laneByTrack.get(clip.trackId);
       if (laneIndex === undefined) continue;
       const left = view.ppqToX(clip.startPpq);
@@ -397,7 +406,13 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     if (g.duplicate) return { startPpq, trackId: g.origin.trackId };
     const trackIds = options.getTrackIds();
     const lane = Math.min(Math.max(0, view.laneIndexAtY(point.y)), Math.max(0, view.laneCount - 1));
-    return { startPpq, trackId: trackIds[lane] ?? g.origin.trackId };
+    const candidateTrackId = trackIds[lane] ?? g.origin.trackId;
+    const trackId =
+      candidateTrackId === g.origin.trackId ||
+      options.canMoveClipToTrack?.(g.origin.id, candidateTrackId) !== false
+        ? candidateTrackId
+        : g.origin.trackId;
+    return { startPpq, trackId };
   }
 
   /** Resolves the snapped, clamped trim extent for the dragged edge. */
@@ -439,7 +454,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     }
     if (tool === 'draw') {
       const { trackId } = laneAt(point);
-      if (trackId === null) {
+      if (trackId === null || options.canEditTrack?.(trackId) === false) {
         gesture = { kind: 'none' };
         return;
       }
@@ -471,12 +486,18 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     }
     const hit = hitTestClip(toRects(), point, view, hitOptions());
     if (!hit) {
+      const { trackId } = laneAt(point);
+      commands.clearClipSelection?.(trackId ?? undefined);
       gesture = { kind: 'none' };
       return;
     }
     const clip = options.getClips().find((c) => c.id === hit.id);
     if (!clip) return;
     commands.selectClip(clip.id);
+    if (options.canEditClip?.(clip.id) === false) {
+      gesture = { kind: 'none' };
+      return;
+    }
     gesture = {
       kind: 'pending',
       start: point,
@@ -588,7 +609,10 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
       const moved = target.startPpq !== g.origin.startPpq;
       const trackChanged = target.trackId !== g.origin.trackId;
       if (g.duplicate) {
-        if (moved) commands.duplicateClip(g.origin.id, target.startPpq);
+        if (moved) {
+          const duplicateId = commands.duplicateClip(g.origin.id, target.startPpq);
+          commands.selectClip(duplicateId);
+        }
         return;
       }
       if (!moved && !trackChanged) return;
@@ -608,6 +632,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     const lane = view.laneIndexAtY(point.y);
     const trackIds = options.getTrackIds();
     if (lane < 0 || lane >= trackIds.length) return;
+    if (options.canEditTrack?.(trackIds[lane]) === false) return;
     const ppq = Math.max(0, view.xToPpq(point.x));
     const bar = options.getBarRange(ppq);
     const id = commands.createClip(trackIds[lane], bar.startPpq, bar.lengthPpq);

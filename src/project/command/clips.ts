@@ -2,8 +2,11 @@
 // Clip commands (re-export barrel)
 // ---------------------------------------------------------------------------
 
+export { replaceAudioClipAsset } from './clips-asset';
+export type { DropClipTakesInput } from './clips-comp';
 export {
   dropClipTakes,
+  dropClipTakesBatch,
   setClipActiveTake,
   setClipCompSegments,
   setClipTakes,
@@ -30,8 +33,10 @@ export {
   setClipPitchBend,
   setClipPolyPressure,
   setClipPolyPressureForPitches,
+  setClipPolyPressureForPitchPoints,
 } from './clips-expression';
 export {
+  clearActiveClipSelection,
   setActiveClip,
   setActiveTrack,
   setClipFades,

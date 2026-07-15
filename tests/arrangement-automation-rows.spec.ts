@@ -6,6 +6,7 @@ import {
   automationValueToY,
   automationYToValue,
   buildRowLayout,
+  reorderRowIndexForDelta,
   TAKE_LANE_HEIGHT_PX,
   trackActiveTakeIndex,
   trackTakeRowCount,
@@ -101,6 +102,17 @@ describe('arrangement automation rows', () => {
     it('defaults the take sub-row height to TAKE_LANE_HEIGHT_PX', () => {
       const layout = buildRowLayout([false], 40, 56, [3]);
       expect(layout.totalHeight).toBe(40 + 3 * TAKE_LANE_HEIGHT_PX);
+    });
+  });
+
+  describe('reorderRowIndexForDelta', () => {
+    it('uses expanded row prefix sums instead of fixed lane-height steps', () => {
+      const layout = buildRowLayout([true, false, false], 40, 56, [2, 0, 0], 40);
+      // Row 0 is 176 px tall. A 50 px drag remains within it rather than
+      // jumping one fixed 40 px lane as the old calculation did.
+      expect(reorderRowIndexForDelta(layout, 0, 50)).toBe(0);
+      expect(reorderRowIndexForDelta(layout, 0, 100)).toBe(1);
+      expect(reorderRowIndexForDelta(layout, 2, -200)).toBe(0);
     });
   });
 

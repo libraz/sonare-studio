@@ -17,7 +17,7 @@ import {
   setAudioSourceId,
   useProjectStore,
 } from '../store';
-import { normalizeTempoMap } from '../tempo-map';
+import { normalizeTempoMap, ppqRangeSamples } from '../tempo-map';
 import type {
   ClipCcLane,
   ClipChannelPressureLane,
@@ -27,10 +27,10 @@ import type {
   EditorClip,
   TempoSegment,
 } from '../types';
-import { isAudioClip } from '../types';
+import { canTrackContainClip, clipKind, isAudioClip } from '../types';
 import { bakeWarpedClip, type StretchFn } from '../warp';
 import { execute } from './history';
-import { requireClip, requireTrack, validatePpq, withDerivedClipMetadata } from './utils';
+import { requireEditableClip, requireTrack, validatePpq, withDerivedClipMetadata } from './utils';
 
 // ---------------------------------------------------------------------------
 // Clip structural-editing commands
@@ -45,7 +45,7 @@ import { requireClip, requireTrack, validatePpq, withDerivedClipMetadata } from 
 export function deleteClip(clipId: number): void {
   const store = useProjectStore();
   const project = getProject();
-  requireClip(store, clipId);
+  requireEditableClip(store, clipId);
   execute(1, () => {
     project.removeClip(clipId);
     if (store.clipId === clipId) store.clipId = -1;
@@ -62,7 +62,7 @@ export function deleteClip(clipId: number): void {
  */
 export function renameClip(clipId: number, name: string): void {
   const store = useProjectStore();
-  const clip = requireClip(store, clipId);
+  const clip = requireEditableClip(store, clipId);
   if (name.length === 0) throw new RangeError('Clip name must not be empty');
   if (clip.name === name) return;
   execute(0, () => {
@@ -82,9 +82,16 @@ export function renameClip(clipId: number, name: string): void {
 export function moveClip(clipId: number, newStartPpq: number, newTrackId?: number): void {
   const store = useProjectStore();
   const project = getProject();
-  requireClip(store, clipId);
+  const clip = requireEditableClip(store, clipId);
   validatePpq(newStartPpq, 'Clip startPpq');
-  if (newTrackId !== undefined) requireTrack(store, newTrackId);
+  if (newTrackId !== undefined) {
+    const destination = requireTrack(store, newTrackId);
+    if (!canTrackContainClip(destination.kind, clipKind(clip))) {
+      throw new RangeError(
+        `Cannot move ${clipKind(clip)} clip ${clipId} to ${destination.kind} track ${newTrackId}`,
+      );
+    }
+  }
   execute(1, () => {
     if (newTrackId === undefined) project.moveClip(clipId, newStartPpq);
     else project.moveClip(clipId, newStartPpq, newTrackId);
@@ -104,7 +111,7 @@ export function moveClip(clipId: number, newStartPpq: number, newTrackId?: numbe
 export function duplicateClip(clipId: number, newStartPpq: number): number {
   const store = useProjectStore();
   const project = getProject();
-  const source = requireClip(store, clipId);
+  const source = requireEditableClip(store, clipId);
   validatePpq(newStartPpq, 'Clip startPpq');
   const name = source.name;
   const sourceMeta = { ...source };
@@ -114,6 +121,9 @@ export function duplicateClip(clipId: number, newStartPpq: number): number {
     store.clips = store.clips.map((c) =>
       c.id === copyId ? withDerivedClipMetadata({ ...c, name }, sourceMeta) : c,
     );
+    store.clipId = copyId;
+    store.activeTrackId = source.trackId;
+    store.selection = new Set();
     return copyId;
   });
 }
@@ -278,16 +288,7 @@ function joinedNotes(clips: readonly EditorClip[], startPpq: number, lengthPpq: 
     .flatMap((clip) =>
       clipRepeatOffsets(clip).flatMap((repeatOffset) => {
         const windowPpq = clipLoopWindowPpq(clip);
-        const audibleNotes = clip.loopEnabled
-          ? clipPlaybackNotes({ ...clip, lengthPpq: windowPpq })
-          : clip.notes.map((note) => ({
-              note: note.pitch,
-              velocity: note.velocity,
-              ...(note.offVelocity !== undefined ? { offVelocity: note.offVelocity } : {}),
-              startPpq: note.startPpq,
-              durationPpq: note.durationPpq,
-              channel: note.channel,
-            }));
+        const audibleNotes = clipPlaybackNotes({ ...clip, lengthPpq: windowPpq });
         return audibleNotes.map((note) => {
           const start = clip.startPpq - startPpq + repeatOffset + note.startPpq;
           const repeatDuration = clip.loopEnabled
@@ -323,7 +324,7 @@ export function glueMidiClips(clipIds: ReadonlyArray<number>): number {
   const project = getProject();
   const uniqueIds = [...new Set(clipIds)];
   if (uniqueIds.length < 2) throw new RangeError('At least two clips are required to glue');
-  const clips = uniqueIds.map((id) => requireClip(store, id));
+  const clips = uniqueIds.map((id) => requireEditableClip(store, id));
   const trackId = clips[0].trackId;
   if (clips.some((clip) => clip.trackId !== trackId)) {
     throw new RangeError('Can only glue clips on the same track');
@@ -420,10 +421,6 @@ function areConsolidateSourcesCurrent(
   return true;
 }
 
-function ppqToFrames(ppq: number, tempoBpm: number, sampleRate: number): number {
-  return Math.round(((ppq * 60) / tempoBpm) * sampleRate);
-}
-
 function applyLinearGain(channels: Float32Array[], gain: number): Float32Array[] {
   if (gain === 1) return channels;
   for (const channel of channels) {
@@ -452,7 +449,7 @@ export async function consolidateAudioClips(
   const project = getProject();
   const uniqueIds = [...new Set(clipIds)];
   if (uniqueIds.length < 2) throw new RangeError('At least two clips are required to consolidate');
-  const clips = uniqueIds.map((id) => requireClip(store, id));
+  const clips = uniqueIds.map((id) => requireEditableClip(store, id));
   const trackId = clips[0].trackId;
   if (clips.some((clip) => clip.trackId !== trackId)) {
     throw new RangeError('Can only consolidate clips on the same track');
@@ -467,7 +464,11 @@ export async function consolidateAudioClips(
   if (!Number.isFinite(tempoBpm) || tempoBpm <= 0) {
     throw new RangeError(`Tempo must be finite and > 0, got ${tempoBpm}`);
   }
-  const tempoMap = normalizeTempoMap(options.tempoSegments ?? store.tempoSegments, tempoBpm);
+  const tempoMap = normalizeTempoMap(
+    options.tempoSegments ??
+      (options.tempoBpm !== undefined ? [{ startPpq: 0, bpm: tempoBpm }] : store.tempoSegments),
+    tempoBpm,
+  );
   const ordered = [...clips].sort((a, b) => a.startPpq - b.startPpq || a.id - b.id);
   const sourceTokens = consolidateSourceTokens(ordered);
   const startPpq = ordered[0].startPpq;
@@ -489,29 +490,29 @@ export async function consolidateAudioClips(
     if ((clip.takes?.length ?? 0) > 0) {
       for (const segment of audioClipSegments(clip)) {
         const asset = await loadAudio(segment.assetId);
+        const timelineStartPpq = clip.startPpq + segment.offsetPpq;
         if (sampleRate === 0) sampleRate = asset.meta.sampleRate;
         let channels = sliceAudioClipWindow(
           asset.channels,
           asset.meta.sampleRate,
           segment.sourceOffsetPpq,
           segment.lengthPpq,
-          tempoBpm,
+          tempoMap,
+          timelineStartPpq - segment.sourceOffsetPpq,
         );
         channels = resampleChannelsLinear(channels, asset.meta.sampleRate, sampleRate);
         channels = applyAudioClipFades(
           channels,
           sampleRate,
-          tempoBpm,
+          tempoMap,
           segment.fadeInPpq,
           segment.fadeOutPpq,
+          timelineStartPpq,
+          segment.lengthPpq,
         );
         channels = applyLinearGain(channels, clip.gain);
         rendered.push({
-          offsetFrames: ppqToFrames(
-            clip.startPpq + segment.offsetPpq - startPpq,
-            tempoBpm,
-            sampleRate,
-          ),
+          offsetFrames: ppqRangeSamples(tempoMap, startPpq, timelineStartPpq, sampleRate),
           channels,
         });
         channelCount = Math.max(channelCount, channels.length);
@@ -524,7 +525,12 @@ export async function consolidateAudioClips(
       clip.loopEnabled && Number.isFinite(clip.loopLengthPpq) && clip.loopLengthPpq > 0
         ? clip.loopLengthPpq
         : clip.lengthPpq;
-    const clipFrames = ppqToFrames(clip.lengthPpq, tempoBpm, sampleRate);
+    const clipFrames = ppqRangeSamples(
+      tempoMap,
+      clip.startPpq,
+      clip.startPpq + clip.lengthPpq,
+      sampleRate,
+    );
     let channels: Float32Array[];
     if (clip.warp?.enabled) {
       channels = await bakeWarpedClip(asset.channels, asset.meta.sampleRate, clip, tempoMap, {
@@ -544,10 +550,16 @@ export async function consolidateAudioClips(
           asset.meta.sampleRate,
           clip.sourceOffsetPpq,
           segmentLengthPpq,
-          tempoBpm,
+          tempoMap,
+          clip.startPpq + offsetPpq - clip.sourceOffsetPpq,
         );
         slice = resampleChannelsLinear(slice, asset.meta.sampleRate, sampleRate);
-        const offsetFrames = ppqToFrames(offsetPpq, tempoBpm, sampleRate);
+        const offsetFrames = ppqRangeSamples(
+          tempoMap,
+          clip.startPpq,
+          clip.startPpq + offsetPpq,
+          sampleRate,
+        );
         const writable = Math.max(0, Math.min(slice[0]?.length ?? 0, clipFrames - offsetFrames));
         for (let c = 0; c < channels.length; c++) {
           const source = slice[c] ?? slice[0];
@@ -560,25 +572,28 @@ export async function consolidateAudioClips(
         asset.meta.sampleRate,
         clip.sourceOffsetPpq,
         clip.lengthPpq,
-        tempoBpm,
+        tempoMap,
+        clip.startPpq - clip.sourceOffsetPpq,
       );
       channels = resampleChannelsLinear(channels, asset.meta.sampleRate, sampleRate);
     }
     channels = applyAudioClipFades(
       channels,
       sampleRate,
-      tempoBpm,
+      tempoMap,
       clip.fadeInPpq ?? 0,
       clip.fadeOutPpq ?? 0,
+      clip.startPpq,
+      clip.lengthPpq,
     );
     channels = applyLinearGain(channels, clip.gain);
     rendered.push({
-      offsetFrames: ppqToFrames(clip.startPpq - startPpq, tempoBpm, sampleRate),
+      offsetFrames: ppqRangeSamples(tempoMap, startPpq, clip.startPpq, sampleRate),
       channels,
     });
     channelCount = Math.max(channelCount, channels.length);
   }
-  const totalFrames = ppqToFrames(lengthPpq, tempoBpm, sampleRate);
+  const totalFrames = ppqRangeSamples(tempoMap, startPpq, endPpq, sampleRate);
   const stitched: Float32Array[] = Array.from(
     { length: Math.max(1, channelCount) },
     () => new Float32Array(totalFrames),
@@ -650,7 +665,7 @@ export async function consolidateAudioClips(
 export function splitClip(clipId: number, splitPpq: number): number {
   const store = useProjectStore();
   const project = getProject();
-  const source = requireClip(store, clipId);
+  const source = requireEditableClip(store, clipId);
   if (
     !Number.isFinite(splitPpq) ||
     splitPpq <= source.startPpq ||
@@ -697,7 +712,7 @@ export function splitClip(clipId: number, splitPpq: number): number {
 export function trimClip(clipId: number, newStartPpq: number, newLengthPpq: number): void {
   const store = useProjectStore();
   const project = getProject();
-  const source = requireClip(store, clipId);
+  const source = requireEditableClip(store, clipId);
   validatePpq(newStartPpq, 'Clip startPpq');
   if (!Number.isFinite(newLengthPpq) || newLengthPpq <= 0) {
     throw new RangeError(`Clip lengthPpq must be finite and > 0, got ${newLengthPpq}`);

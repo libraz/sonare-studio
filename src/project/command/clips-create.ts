@@ -1,4 +1,5 @@
 import { audioAssetUri, loadAssetMeta } from '@/persistence/assets';
+import { validateClipFadePair } from '../clip-fades';
 import {
   getAudioSourceId,
   getProject,
@@ -7,8 +8,8 @@ import {
   useProjectStore,
 } from '../store';
 import { type ClipCompSegment, type ClipTake, type ClipWarp, TRACK_COLOR_PALETTE } from '../types';
-import { execute } from './history';
-import { requireTrack, validatePpq } from './utils';
+import { execute, executeAtomic } from './history';
+import { requireEditableTrack, validatePpq } from './utils';
 
 // ---------------------------------------------------------------------------
 // Clip creation commands
@@ -38,7 +39,7 @@ export interface AddMidiClipInput {
 export function addMidiClip(input: AddMidiClipInput): number {
   const store = useProjectStore();
   const project = getProject();
-  requireTrack(store, input.trackId);
+  requireEditableTrack(store, input.trackId);
   const startPpq = input.startPpq ?? 0;
   validatePpq(startPpq, 'Clip startPpq');
   if (!Number.isFinite(input.lengthPpq) || input.lengthPpq <= 0) {
@@ -134,7 +135,7 @@ export interface AddAudioClipInput {
 export async function addAudioClip(input: AddAudioClipInput): Promise<number> {
   const store = useProjectStore();
   const project = getProject();
-  requireTrack(store, input.trackId);
+  requireEditableTrack(store, input.trackId);
   if (typeof input.assetId !== 'string' || input.assetId.length === 0) {
     throw new RangeError('Audio clip assetId must not be empty');
   }
@@ -191,6 +192,7 @@ export async function addAudioClip(input: AddAudioClipInput): Promise<number> {
     known !== undefined && known >= 1 && known <= project.sourceCount() ? known : undefined;
   const fadeIn = input.fadeInPpq ?? 0;
   const fadeOut = input.fadeOutPpq ?? 0;
+  validateClipFadePair(fadeIn, fadeOut, finalLengthPpq);
   const projectSteps =
     (sourceId === undefined ? 2 : 3) +
     (fadeIn > 0 || fadeOut > 0 ? 1 : 0) +
@@ -292,21 +294,23 @@ export function addBouncedClip(input: AddBouncedClipInput): number {
   const known = getAudioSourceId(input.assetId);
   const sourceId =
     known !== undefined && known >= 1 && known <= project.sourceCount() ? known : undefined;
-  return execute(sourceId === undefined ? 3 : 4, () => {
-    const trackId = project.addTrack({ kind: 'audio', name: input.name });
-    const newClipId = project.addClip({
-      trackId,
-      isMidi: false,
-      startPpq: input.startPpq,
-      lengthPpq: input.lengthPpq,
-      gain: 1,
-      ...placeholderSourceAudio(),
-      ...(sourceId === undefined ? { sourceUri: audioAssetUri(input.assetId) } : {}),
-    });
+  return executeAtomic((edit) => {
+    const trackId = edit(1, () => project.addTrack({ kind: 'audio', name: input.name }));
+    const newClipId = edit(2, () =>
+      project.addClip({
+        trackId,
+        isMidi: false,
+        startPpq: input.startPpq,
+        lengthPpq: input.lengthPpq,
+        gain: 1,
+        ...placeholderSourceAudio(),
+        ...(sourceId === undefined ? { sourceUri: audioAssetUri(input.assetId) } : {}),
+      }),
+    );
     if (sourceId === undefined) {
       setAudioSourceId(input.assetId, project.sourceCount());
     } else {
-      project.setClipSource(newClipId, sourceId);
+      edit(1, () => project.setClipSource(newClipId, sourceId));
     }
     store.tracks = [
       ...store.tracks,

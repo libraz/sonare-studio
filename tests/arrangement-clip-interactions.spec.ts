@@ -24,12 +24,13 @@ interface Setup {
   setTool: (tool: EditorToolId) => void;
 }
 
-function makeSetup(): Setup {
+function makeSetup(options: { readOnly?: boolean } = {}): Setup {
   // Clip 1: x [40, 120) on lane 0 (track 10).
   const clips: ArrangeClip[] = [{ id: 1, trackId: 10, startPpq: 4, lengthPpq: 8 }];
   let tool: EditorToolId = 'select';
   const commands = {
     selectClip: vi.fn(),
+    clearClipSelection: vi.fn(),
     moveClip: vi.fn(),
     trimClip: vi.fn(),
     duplicateClip: vi.fn(() => 99),
@@ -42,6 +43,8 @@ function makeSetup(): Setup {
     view,
     getClips: () => clips,
     getTrackIds: () => [10, 20],
+    canEditClip: () => options.readOnly !== true,
+    canEditTrack: () => options.readOnly !== true,
     getGridPpq: () => 1,
     getBarRange: (ppq) => ({ startPpq: Math.floor(ppq / 4) * 4, lengthPpq: 4 }),
     getTool: () => tool,
@@ -68,11 +71,27 @@ describe('useClipInteractions selection', () => {
     expect(commands.duplicateClip).not.toHaveBeenCalled();
   });
 
-  it('does nothing on pointerdown over empty space', () => {
+  it('clears clip selection on pointerdown over an empty lane', () => {
     const { interactions, commands } = makeSetup();
     interactions.onPointerDown({ x: 200, y: 25 });
     interactions.onPointerUp({ x: 200, y: 25 });
     expect(commands.selectClip).not.toHaveBeenCalled();
+    expect(commands.clearClipSelection).toHaveBeenCalledWith(10);
+  });
+
+  it('selects read-only clips without committing edit-tool gestures', () => {
+    const { interactions, commands, setTool } = makeSetup({ readOnly: true });
+    interactions.onPointerDown({ x: 80, y: 25 });
+    interactions.onPointerMove({ x: 160, y: 25 });
+    interactions.onPointerUp({ x: 160, y: 25 });
+    expect(commands.selectClip).toHaveBeenCalledWith(1);
+    expect(commands.moveClip).not.toHaveBeenCalled();
+
+    setTool('erase');
+    interactions.onPointerDown({ x: 80, y: 25 });
+    expect(commands.deleteClip).not.toHaveBeenCalled();
+    interactions.onDoubleClick({ x: 200, y: 25 });
+    expect(commands.createClip).not.toHaveBeenCalled();
   });
 });
 
@@ -109,6 +128,29 @@ describe('useClipInteractions move', () => {
     expect(commands.moveClip).toHaveBeenCalledWith(1, 4, 20);
   });
 
+  it('keeps the clip on its source lane when the destination is incompatible', () => {
+    const { interactions, commands } = makeSetup();
+    const canMoveClipToTrack = vi.fn((_clipId: number, trackId: number) => trackId !== 20);
+    const guarded = useClipInteractions({
+      view,
+      getClips: () => [{ id: 1, trackId: 10, startPpq: 4, lengthPpq: 8 }],
+      getTrackIds: () => [10, 20],
+      canMoveClipToTrack,
+      getGridPpq: () => 1,
+      getBarRange: (ppq) => ({ startPpq: ppq, lengthPpq: 4 }),
+      commands,
+    });
+
+    guarded.onPointerDown({ x: 80, y: 25 });
+    guarded.onPointerMove({ x: 100, y: 75 });
+    expect(guarded.previewClip.value).toMatchObject({ trackId: 10, startPpq: 6 });
+    guarded.onPointerUp({ x: 100, y: 75 });
+
+    expect(canMoveClipToTrack).toHaveBeenCalledWith(1, 20);
+    expect(commands.moveClip).toHaveBeenCalledWith(1, 6, undefined);
+    expect(interactions.previewClip.value).toBeNull();
+  });
+
   it('clamps the target lane to the lane extent', () => {
     const { interactions, commands } = makeSetup();
     interactions.onPointerDown({ x: 80, y: 25 });
@@ -139,6 +181,7 @@ describe('useClipInteractions duplicate', () => {
     expect(preview?.trackId).toBe(10);
     interactions.onPointerUp({ x: 160, y: 75 }, { alt: true });
     expect(commands.duplicateClip).toHaveBeenCalledWith(1, 12);
+    expect(commands.selectClip).toHaveBeenLastCalledWith(99);
     expect(commands.moveClip).not.toHaveBeenCalled();
   });
 

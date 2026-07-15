@@ -15,7 +15,7 @@ import {
   trimClip,
   undo,
 } from '@/project/commands';
-import { flattenClipComp } from '@/project/comp-flatten';
+import { flattenClipComp, flattenTrackComps } from '@/project/comp-flatten';
 import {
   audioClipSegments,
   type CompableClipFields,
@@ -782,6 +782,85 @@ describe('flattenClipComp', () => {
     const clip = store.clips.find((c) => c.id === clipId);
     expect(clip?.takes).toBeUndefined();
     expect(clip?.assetId).toBe('take-b');
+  });
+
+  it('flattens every comped clip on a track with one undo/redo entry', async () => {
+    const trackId = addAudioTrack({ name: 'Stacked Vox' });
+    const addComp = async (name: string, startPpq: number): Promise<number> => {
+      const clipId = await addAudioClip({
+        trackId,
+        assetId: 'take-b',
+        startPpq,
+        lengthPpq: 4,
+        name,
+        takes: [{ assetId: 'take-a' }, { assetId: 'take-b' }],
+      });
+      setClipCompSegments(clipId, [
+        { startPpq: 0, takeIndex: 0 },
+        { startPpq: 2, takeIndex: 1 },
+      ]);
+      return clipId;
+    };
+    const firstId = await addComp('Verse', 0);
+    const secondId = await addComp('Chorus', 8);
+    const loadAudioAsset = makeLoader({
+      'take-a': makeLoadedAsset('take-a', [[1, 2, 3, 4, 5, 6, 7, 8]]),
+      'take-b': makeLoadedAsset('take-b', [[101, 102, 103, 104, 105, 106, 107, 108]]),
+    });
+    let nextAsset = 0;
+    const ingest = vi.fn(async () => ({ id: `flattened-${++nextAsset}` }));
+    clearHistory();
+
+    await expect(
+      flattenTrackComps(trackId, { tempoBpm: 120, loadAudioAsset, ingest }),
+    ).resolves.toEqual(['flattened-1', 'flattened-2']);
+    expect(store.clips.find((clip) => clip.id === firstId)?.takes).toBeUndefined();
+    expect(store.clips.find((clip) => clip.id === secondId)?.takes).toBeUndefined();
+
+    expect(undo()).toBe(true);
+    expect(store.clips.find((clip) => clip.id === firstId)?.takes).toHaveLength(2);
+    expect(store.clips.find((clip) => clip.id === secondId)?.takes).toHaveLength(2);
+    expect(undo()).toBe(false);
+    expect(redo()).toBe(true);
+    expect(store.clips.find((clip) => clip.id === firstId)?.assetId).toBe('flattened-1');
+    expect(store.clips.find((clip) => clip.id === secondId)?.assetId).toBe('flattened-2');
+  });
+
+  it('leaves every clip untouched when a later track flatten render fails', async () => {
+    const trackId = addAudioTrack({ name: 'Stacked Vox' });
+    const clipIds: number[] = [];
+    for (const [index, name] of ['Verse', 'Chorus'].entries()) {
+      const clipId = await addAudioClip({
+        trackId,
+        assetId: 'take-b',
+        startPpq: index * 8,
+        lengthPpq: 4,
+        name,
+        takes: [{ assetId: 'take-a' }, { assetId: 'take-b' }],
+      });
+      setClipCompSegments(clipId, [
+        { startPpq: 0, takeIndex: 0 },
+        { startPpq: 2, takeIndex: 1 },
+      ]);
+      clipIds.push(clipId);
+    }
+    const loadAudioAsset = makeLoader({
+      'take-a': makeLoadedAsset('take-a', [[1, 2, 3, 4, 5, 6, 7, 8]]),
+      'take-b': makeLoadedAsset('take-b', [[101, 102, 103, 104, 105, 106, 107, 108]]),
+    });
+    const ingest = vi
+      .fn<(channels: Float32Array[], sampleRate: number, name: string) => Promise<{ id: string }>>()
+      .mockResolvedValueOnce({ id: 'first-bake' })
+      .mockRejectedValueOnce(new Error('second bake failed'));
+    clearHistory();
+
+    await expect(
+      flattenTrackComps(trackId, { tempoBpm: 120, loadAudioAsset, ingest }),
+    ).rejects.toThrow('second bake failed');
+    for (const clipId of clipIds) {
+      expect(store.clips.find((clip) => clip.id === clipId)?.takes).toHaveLength(2);
+    }
+    expect(undo()).toBe(false);
   });
 
   it('rejects unknown clips and clips without takes', async () => {

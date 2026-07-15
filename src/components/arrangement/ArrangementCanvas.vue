@@ -1,8 +1,20 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import AccessibleObjectNavigator from '@/components/accessibility/AccessibleObjectNavigator.vue';
 import { getCanvasContext, setupCanvas } from '@/components/piano-roll/theme';
 import type { AutomationLaneState, AutomationParam } from '@/project/automation';
-import type { EditorClip, EditorMarker, EditorTrack, TimeSignatureSegment } from '@/project/types';
+import { normalizeTempoMap } from '@/project/tempo-map';
+import type {
+  EditorClip,
+  EditorMarker,
+  EditorTrack,
+  TempoSegment,
+  TimeSignatureSegment,
+} from '@/project/types';
+import type {
+  AccessibleObjectAdjustment,
+  AccessibleObjectItem,
+} from '@/ui/accessibility/object-navigation';
 import {
   AUTOMATION_LANE_HEIGHT_PX,
   buildRowLayout,
@@ -18,9 +30,10 @@ import { usePointerRouting } from '@/ui/arrangement/use-pointer-routing';
 import { drawGrid, drawLanes, drawRuler } from '@/ui/arrangement/use-ruler-rendering';
 import type { TakeInteractions } from '@/ui/arrangement/use-take-interactions';
 import { drawTakeLanes } from '@/ui/arrangement/use-take-lanes';
+import { observeDevicePixelRatio } from '@/ui/canvas/device-pixel-ratio';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
-import { useI18n } from '@/ui/i18n';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import { ARRANGEMENT_COLORS, RULER_HEIGHT_PX } from './theme';
 
 /**
@@ -70,6 +83,8 @@ const props = defineProps<{
   loopEndPpq: number;
   /** Gesture state machine shared with the container. */
   interactions: ClipInteractions;
+  /** Keyboard/slider movement increment in PPQ. */
+  gridPpq?: number;
   /** Ids of tracks whose automation sublane is expanded. */
   automationExpandedIds: readonly number[];
   /** Selected automation parameter per track id (absent = 'faderDb'). */
@@ -88,6 +103,8 @@ const props = defineProps<{
   anchoredLocalX?: () => number | null;
   /** Constant tempo in BPM used to map audio asset time onto PPQ (default 120). */
   tempoBpm?: number;
+  /** Full tempo map used for variable-tempo waveform/source mapping. */
+  tempoSegments?: TempoSegment[];
 }>();
 
 const { t } = useI18n();
@@ -101,6 +118,13 @@ const emit = defineEmits<{
   'clip-context': [payload: { x: number; y: number; clipId: number | null; ppq: number }];
   /** Right-click on the bar/beat ruler. */
   'ruler-context': [payload: { x: number; y: number; ppq: number }];
+  /** Accessible virtual-object edit routed to the owning command surface. */
+  'clip-keyboard-action': [
+    payload:
+      | { clipId: number; kind: 'select' }
+      | { clipId: number; kind: 'adjust'; adjustment: AccessibleObjectAdjustment }
+      | { clipId: number; kind: 'set'; controlId: string; value: number },
+  ];
 }>();
 
 const wrapper = ref<HTMLDivElement | null>(null);
@@ -156,6 +180,88 @@ const liveStatus = computed(() => {
   return parts.join('. ');
 });
 
+const accessibleClips = computed<AccessibleObjectItem[]>(() => {
+  const maximumEnd = Math.max(
+    props.range.endPpq,
+    ...props.clips.map((clip) => clip.startPpq + clip.lengthPpq),
+  );
+  const step = Math.max(0.0625, props.gridPpq ?? 0.25);
+  return [...props.clips]
+    .sort((a, b) => a.startPpq - b.startPpq || a.trackId - b.trackId || a.id - b.id)
+    .map((clip) => {
+      const track = props.tracks.find((item) => item.id === clip.trackId);
+      const values = {
+        name: clip.name,
+        track: track?.name ?? String(clip.trackId),
+        start: clip.startPpq.toFixed(2),
+        length: clip.lengthPpq.toFixed(2),
+      };
+      return {
+        id: `clip-${clip.id}`,
+        label: formatMessage(t.value.shell.arrangement.accessibility.clip, values),
+        selected: clip.id === props.activeClipId,
+        controls: [
+          {
+            id: 'start',
+            label: t.value.shell.arrangement.accessibility.start,
+            min: 0,
+            max: Math.max(maximumEnd, clip.startPpq),
+            step,
+            value: clip.startPpq,
+            valueText: formatMessage(t.value.shell.arrangement.accessibility.ppqValue, {
+              value: clip.startPpq.toFixed(2),
+            }),
+          },
+          {
+            id: 'length',
+            label: t.value.shell.arrangement.accessibility.length,
+            min: 0.25,
+            max: Math.max(maximumEnd, clip.lengthPpq),
+            step,
+            value: clip.lengthPpq,
+            valueText: formatMessage(t.value.shell.arrangement.accessibility.ppqValue, {
+              value: clip.lengthPpq.toFixed(2),
+            }),
+          },
+        ],
+      };
+    });
+});
+
+function clipForAccessibleId(id: string): EditorClip | undefined {
+  const clipId = Number(id.replace(/^clip-/, ''));
+  return props.clips.find((clip) => clip.id === clipId);
+}
+
+function onAccessibleClipActivate(id: string): void {
+  const clip = clipForAccessibleId(id);
+  if (!clip) return;
+  props.interactions.cancel();
+  emit('clip-keyboard-action', { clipId: clip.id, kind: 'select' });
+}
+
+function onAccessibleClipContext(id: string): void {
+  const clip = clipForAccessibleId(id);
+  if (!clip) return;
+  const rect = wrapper.value?.getBoundingClientRect();
+  emit('clip-context', {
+    x: (rect?.left ?? 0) + 24,
+    y: (rect?.top ?? 0) + 48,
+    clipId: clip.id,
+    ppq: clip.startPpq + clip.lengthPpq / 2,
+  });
+}
+
+function onAccessibleClipAdjust(adjustment: AccessibleObjectAdjustment): void {
+  const clip = clipForAccessibleId(adjustment.id);
+  if (clip) emit('clip-keyboard-action', { clipId: clip.id, kind: 'adjust', adjustment });
+}
+
+function onAccessibleClipValue(payload: { id: string; controlId: string; value: number }): void {
+  const clip = clipForAccessibleId(payload.id);
+  if (clip) emit('clip-keyboard-action', { clipId: clip.id, kind: 'set', ...payload });
+}
+
 function laneTopFor(index: number): number {
   return RULER_HEIGHT_PX + rowLayout.value.rowTop(index) - props.scrollY;
 }
@@ -173,7 +279,7 @@ function clipRenderContext(): ClipRenderContext {
     laneHeight: props.laneHeight,
     laneTop: laneTopFor,
     barPpq: barPpq.value,
-    tempoBpm: props.tempoBpm ?? 120,
+    tempoMap: normalizeTempoMap(props.tempoSegments ?? [], props.tempoBpm ?? 120),
     interactions: props.interactions,
     scheduleBase,
     colors: COLORS,
@@ -254,6 +360,18 @@ function scheduleAll(): void {
 }
 
 let resizeObserver: ResizeObserver | null = null;
+let stopDprObserver: (() => void) | null = null;
+let canvasWidth = 0;
+let canvasHeight = 0;
+
+/** Rebuilds both backing stores when the window crosses a DPR boundary. */
+function onDevicePixelRatioChange(): void {
+  if (canvasWidth > 0 && canvasHeight > 0) {
+    if (baseCanvas.value) setupCanvas(baseCanvas.value, canvasWidth, canvasHeight);
+    if (overlayCanvas.value) setupCanvas(overlayCanvas.value, canvasWidth, canvasHeight);
+    scheduleAll();
+  }
+}
 
 onMounted(() => {
   const el = wrapper.value;
@@ -263,6 +381,8 @@ onMounted(() => {
     const w = entry.contentRect.width;
     const h = entry.contentRect.height;
     if (w <= 0 || h <= 0) return;
+    canvasWidth = w;
+    canvasHeight = h;
     props.range.resize(w, h);
     if (baseCanvas.value) setupCanvas(baseCanvas.value, w, h);
     if (overlayCanvas.value) setupCanvas(overlayCanvas.value, w, h);
@@ -270,11 +390,14 @@ onMounted(() => {
     scheduleAll();
   });
   resizeObserver.observe(el);
+  stopDprObserver = observeDevicePixelRatio(onDevicePixelRatioChange);
 });
 
 onBeforeUnmount(() => {
   resizeObserver?.disconnect();
   resizeObserver = null;
+  stopDprObserver?.();
+  stopDprObserver = null;
 });
 
 watch(
@@ -344,6 +467,18 @@ const {
       :aria-label="t.shell.arrangement.timeline"
     />
     <canvas ref="overlayCanvas" class="arrangement-layer" aria-hidden="true" />
+    <AccessibleObjectNavigator
+      :label="t.shell.arrangement.accessibility.navigator"
+      :empty-label="t.shell.arrangement.accessibility.empty"
+      :instructions="t.shell.arrangement.accessibility.instructions"
+      :edit-label="t.shell.arrangement.accessibility.edit"
+      :context-label="t.shell.arrangement.accessibility.context"
+      :items="accessibleClips"
+      @activate="onAccessibleClipActivate"
+      @context="onAccessibleClipContext"
+      @adjust="onAccessibleClipAdjust"
+      @set-value="onAccessibleClipValue"
+    />
     <div class="arrangement-live" role="status" aria-live="polite" aria-atomic="true">
       {{ liveStatus }}
     </div>

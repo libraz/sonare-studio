@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { dbToLinear, peakDb } from '@/lib/db';
+import { clampClipFadePpq } from '@/project/clip-fades';
 import { setClipFades, setClipGain, setClipLoop } from '@/project/commands';
 import { type EditorClip, isAudioClip } from '@/project/types';
 import { useI18n } from '@/ui/i18n';
@@ -20,11 +21,15 @@ import { useI18n } from '@/ui/i18n';
 const props = defineProps<{
   /** The active clip, or null when nothing is selected. */
   clip: EditorClip | null;
+  /** True when the owning track plays a frozen render and content is read-only. */
+  frozen?: boolean;
 }>();
 
 const emit = defineEmits<{
   /** Request a tempo re-analysis of the clip's audio asset. */
   redetectTempo: [clipId: number];
+  /** Requests that the owning track return to editable live content. */
+  unfreeze: [trackId: number];
 }>();
 
 const { t } = useI18n();
@@ -61,10 +66,12 @@ function onFadeInput(which: 'in' | 'out', event: Event): void {
   if (!props.clip) return;
   const beats = Math.max(0, Number((event.target as HTMLInputElement).value));
   if (!Number.isFinite(beats)) return;
-  const limit = Math.max(0, props.clip.lengthPpq);
-  const length = Math.min(beats, limit);
-  const fadeIn = which === 'in' ? length : props.clip.fadeInPpq;
-  const fadeOut = which === 'out' ? length : props.clip.fadeOutPpq;
+  const currentIn = props.clip.fadeInPpq ?? 0;
+  const currentOut = props.clip.fadeOutPpq ?? 0;
+  const fadeIn =
+    which === 'in' ? clampClipFadePpq(beats, props.clip.lengthPpq, currentOut) : currentIn;
+  const fadeOut =
+    which === 'out' ? clampClipFadePpq(beats, props.clip.lengthPpq, currentIn) : currentOut;
   setClipFades(props.clip.id, fadeIn, fadeOut);
 }
 
@@ -79,6 +86,15 @@ function onLoopToggle(): void {
   <div v-if="props.clip" class="clip-inspector" :aria-label="t.shell.arrangement.clipInspector.label">
     <span class="ci-name" v-tooltip="props.clip.name">{{ props.clip.name }}</span>
 
+    <button
+      v-if="props.frozen"
+      type="button"
+      class="ci-unfreeze"
+      @click="emit('unfreeze', props.clip.trackId)"
+    >
+      {{ t.shell.arrangement.trackHeader.unfreeze }}
+    </button>
+
     <label class="ci-field">
       {{ t.shell.arrangement.clipInspector.gain }}
       <input
@@ -86,6 +102,7 @@ function onLoopToggle(): void {
         type="number"
         step="0.5"
         :value="gainDb === '-inf' ? GAIN_FLOOR_DB : gainDb"
+        :disabled="props.frozen"
         :aria-label="t.shell.arrangement.clipInspector.gainAria"
         @change="onGainInput"
       />
@@ -101,6 +118,7 @@ function onLoopToggle(): void {
           min="0"
           step="0.25"
           :value="fadeBeats(props.clip.fadeInPpq)"
+          :disabled="props.frozen"
           :aria-label="t.shell.arrangement.clipInspector.fadeInAria"
           @change="onFadeInput('in', $event)"
         />
@@ -114,6 +132,7 @@ function onLoopToggle(): void {
           min="0"
           step="0.25"
           :value="fadeBeats(props.clip.fadeOutPpq)"
+          :disabled="props.frozen"
           :aria-label="t.shell.arrangement.clipInspector.fadeOutAria"
           @change="onFadeInput('out', $event)"
         />
@@ -127,6 +146,7 @@ function onLoopToggle(): void {
       :model-value="props.clip.loopEnabled"
       :label="t.shell.arrangement.clipInspector.loop"
       :aria-label="t.shell.arrangement.clipInspector.loopAria"
+      :disabled="props.frozen"
       @update:model-value="onLoopToggle"
     />
 

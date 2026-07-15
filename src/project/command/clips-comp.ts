@@ -2,6 +2,7 @@ import { sanitizeCompSegments } from '../comping';
 import { useProjectStore } from '../store';
 import type { ClipCompSegment, ClipTake, EditorClip } from '../types';
 import { execute } from './history';
+import { requireEditableClip } from './utils';
 
 // ---------------------------------------------------------------------------
 // Clip comp / take commands
@@ -11,7 +12,7 @@ import { execute } from './history';
 function requireClipWithTakes(store: ReturnType<typeof useProjectStore>, clipId: number): number {
   const index = store.clips.findIndex((clip) => clip.id === clipId);
   if (index < 0) throw new RangeError(`Unknown clip id ${clipId}`);
-  const clip = store.clips[index];
+  const clip = requireEditableClip(store, clipId);
   if ((clip.takes?.length ?? 0) === 0) {
     throw new RangeError(`Clip ${clipId} has no takes`);
   }
@@ -82,7 +83,7 @@ export function setClipTakes(
   const store = useProjectStore();
   const index = store.clips.findIndex((clip) => clip.id === clipId);
   if (index < 0) throw new RangeError(`Unknown clip id ${clipId}`);
-  const clip = store.clips[index];
+  const clip = requireEditableClip(store, clipId);
   if ((clip.kind ?? 'midi') !== 'audio') {
     throw new RangeError(`Clip ${clipId} is not an audio clip`);
   }
@@ -126,23 +127,51 @@ export function setClipTakes(
  * @param bakedAssetId Asset holding the stitched comp at the clip's source window.
  */
 export function dropClipTakes(clipId: number, bakedAssetId?: string): void {
+  dropClipTakesBatch([{ clipId, ...(bakedAssetId !== undefined ? { bakedAssetId } : {}) }]);
+}
+
+/** One clip in a track-level flatten commit. */
+export interface DropClipTakesInput {
+  clipId: number;
+  /** Stitched asset for a multi-segment comp; omitted for a single selected take. */
+  bakedAssetId?: string;
+}
+
+/**
+ * Drops several clips' take lanes in one prevalidated undo transaction.
+ * No mirror field is changed until every clip and baked-asset requirement is
+ * valid, which is the synchronous commit half of track-level comp flattening.
+ */
+export function dropClipTakesBatch(inputs: ReadonlyArray<DropClipTakesInput>): void {
+  if (inputs.length === 0) return;
   const store = useProjectStore();
-  const index = requireClipWithTakes(store, clipId);
-  const clip = store.clips[index];
-  const selection = sanitizeCompSegments(
-    clip.compSegments ?? [{ startPpq: 0, takeIndex: 0 }],
-    (clip.takes as ClipTake[]).length,
-    clip.lengthPpq,
-  );
-  if (bakedAssetId === undefined && selection.length > 1) {
-    throw new RangeError(
-      `Clip ${clipId} has a multi-segment comp; bake it before dropping its takes`,
+  const seen = new Set<number>();
+  const replacements = new Map<number, string | undefined>();
+  for (const input of inputs) {
+    if (seen.has(input.clipId)) throw new RangeError(`Duplicate clip id ${input.clipId}`);
+    seen.add(input.clipId);
+    const index = requireClipWithTakes(store, input.clipId);
+    const clip = store.clips[index];
+    const selection = sanitizeCompSegments(
+      clip.compSegments ?? [{ startPpq: 0, takeIndex: 0 }],
+      (clip.takes as ClipTake[]).length,
+      clip.lengthPpq,
     );
+    if (input.bakedAssetId === undefined && selection.length > 1) {
+      throw new RangeError(
+        `Clip ${input.clipId} has a multi-segment comp; bake it before dropping its takes`,
+      );
+    }
+    if (input.bakedAssetId !== undefined && input.bakedAssetId.length === 0) {
+      throw new RangeError(`Clip ${input.clipId} baked asset id must not be empty`);
+    }
+    replacements.set(input.clipId, input.bakedAssetId);
   }
   execute(0, () => {
-    store.clips = store.clips.map((entry, i) => {
-      if (i !== index) return entry;
+    store.clips = store.clips.map((entry) => {
+      if (!replacements.has(entry.id)) return entry;
       const next: EditorClip = { ...entry };
+      const bakedAssetId = replacements.get(entry.id);
       if (bakedAssetId !== undefined) {
         next.assetId = bakedAssetId;
       }

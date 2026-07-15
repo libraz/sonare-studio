@@ -5,6 +5,13 @@
  * Time is expressed in PPQ where one quarter note equals 1.0.
  */
 
+import {
+  measureRangeAt,
+  meterBarLengthPpq,
+  meterBeatLengthPpq,
+  normalizeTimeSignatureMap,
+} from '@/project/time-signature';
+
 /** One time-signature segment (structurally compatible with the store mirror). */
 export interface MeterSegment {
   /** Segment start in PPQ. */
@@ -46,12 +53,12 @@ const PPQ_EPSILON = 1e-9;
 
 /** Length of one bar of a meter segment in PPQ. */
 export function barLengthPpq(segment: MeterSegment): number {
-  return (segment.numerator * 4) / segment.denominator;
+  return meterBarLengthPpq(segment);
 }
 
 /** Length of one beat of a meter segment in PPQ. */
 export function beatLengthPpq(segment: MeterSegment): number {
-  return 4 / segment.denominator;
+  return meterBeatLengthPpq(segment);
 }
 
 /**
@@ -60,23 +67,7 @@ export function beatLengthPpq(segment: MeterSegment): number {
  * prepending a 4/4 segment when needed.
  */
 function normalizeMeter(meter: ReadonlyArray<MeterSegment>): MeterSegment[] {
-  const valid = meter
-    .filter(
-      (s) =>
-        Number.isFinite(s.startPpq) &&
-        s.startPpq >= 0 &&
-        Number.isInteger(s.numerator) &&
-        s.numerator >= 1 &&
-        Number.isInteger(s.denominator) &&
-        s.denominator >= 1,
-    )
-    .slice()
-    .sort((a, b) => a.startPpq - b.startPpq)
-    .filter((s, i, arr) => i === arr.length - 1 || arr[i + 1].startPpq !== s.startPpq);
-  if (valid.length === 0 || valid[0].startPpq > 0) {
-    valid.unshift({ startPpq: 0, numerator: 4, denominator: 4 });
-  }
-  return valid;
+  return normalizeTimeSignatureMap(meter);
 }
 
 /**
@@ -126,16 +117,8 @@ export interface BarRange {
  * @returns The containing bar's start and length in PPQ.
  */
 export function barRangeAt(meter: ReadonlyArray<MeterSegment>, ppq: number): BarRange {
-  const segments = normalizeMeter(meter);
-  const position = Math.max(0, ppq);
-  let index = 0;
-  while (index + 1 < segments.length && segments[index + 1].startPpq <= position) index++;
-  const segment = segments[index];
-  const segmentEnd = segments[index + 1]?.startPpq ?? Number.POSITIVE_INFINITY;
-  const bar = barLengthPpq(segment);
-  const barIndex = Math.floor((position - segment.startPpq) / bar + PPQ_EPSILON);
-  const startPpq = segment.startPpq + barIndex * bar;
-  return { startPpq, lengthPpq: Math.min(bar, segmentEnd - startPpq) };
+  const range = measureRangeAt(meter, ppq);
+  return { startPpq: range.startPpq, lengthPpq: range.lengthPpq };
 }
 
 /**

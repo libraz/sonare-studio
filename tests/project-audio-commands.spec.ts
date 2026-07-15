@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { clearAudioAssetCache, loadAsset, saveAsset } from '@/persistence/assets';
+import { clearAudioAssetCache, listAssets, loadAsset, saveAsset } from '@/persistence/assets';
 import {
   addAudioClip,
   addAudioTrack,
@@ -11,6 +11,7 @@ import {
   extractMelodyFromAudioClip,
   moveClip,
   redo,
+  replaceAudioClipAsset,
   setClipCompSegments,
   setClipFades,
   setClipWarp,
@@ -22,7 +23,7 @@ import {
 } from '@/project/commands';
 import { getProject, useProjectStore } from '@/project/store';
 import { MAJOR_MODE_MASK } from '@/project/types';
-import { installMockOpfs, uninstallMockOpfs } from './opfs-mock';
+import { installMockOpfs, MemoryFileHandle, uninstallMockOpfs } from './opfs-mock';
 
 const wasmModule = vi.hoisted(() => ({
   current: undefined as undefined | Record<string, unknown>,
@@ -566,6 +567,203 @@ describe('audio track and clip commands', () => {
     expect(store.clips.find((clip) => clip.id === clipId)?.assetId).toBe('stem-replaced');
   });
 
+  it('skips stem placement when the audible tempo context changes during separation', async () => {
+    installMockOpfs();
+    await saveAsset({ id: 'stem-source', name: 'Stem Source', sampleRate: 4 }, [
+      new Float32Array([1, 2, 3, 4]),
+    ]);
+    const trackId = addAudioTrack({ name: 'Audio' });
+    const clipId = await addAudioClip({
+      trackId,
+      assetId: 'stem-source',
+      startPpq: 0,
+      lengthPpq: 1,
+      name: 'Tempo source',
+    });
+    const initialTrackCount = store.tracks.length;
+    Object.assign(wasmModule.current ?? {}, {
+      hpssWithResidual: (samples: Float32Array, sampleRate?: number) => {
+        store.tempoBpm = 90;
+        return {
+          harmonic: samples.slice(),
+          percussive: new Float32Array(samples.length),
+          residual: new Float32Array(samples.length),
+          sampleRate: sampleRate ?? 4,
+        };
+      },
+    });
+
+    await expect(splitAudioClipToStems(clipId)).resolves.toEqual([]);
+
+    expect(store.tracks).toHaveLength(initialTrackCount);
+    expect(store.clips.filter((clip) => clip.id !== clipId)).toHaveLength(1);
+  });
+
+  it('rolls back earlier stem assets when the second asset sidecar fails', async () => {
+    installMockOpfs();
+    await saveAsset({ id: 'stem-source', name: 'Stem Source', sampleRate: 4 }, [
+      new Float32Array([1, 2, 3, 4]),
+    ]);
+    const trackId = addAudioTrack({ name: 'Audio' });
+    const clipId = await addAudioClip({
+      trackId,
+      assetId: 'stem-source',
+      startPpq: 0,
+      lengthPpq: 1,
+      name: 'Loop',
+    });
+    Object.assign(wasmModule.current ?? {}, {
+      hpssWithResidual: (samples: Float32Array, sampleRate?: number) => ({
+        harmonic: samples.map((value) => value * 2),
+        percussive: samples.map((value) => value * 3),
+        residual: samples.map((value) => value * 4),
+        sampleRate: sampleRate ?? 4,
+      }),
+    });
+    clearHistory();
+    const original = MemoryFileHandle.prototype.createWritable;
+    let stemSidecars = 0;
+    const spy = vi
+      .spyOn(MemoryFileHandle.prototype, 'createWritable')
+      .mockImplementation(async function () {
+        if (this.name.endsWith('.json') && this.name !== 'stem-source.json') {
+          stemSidecars += 1;
+          if (stemSidecars === 2) {
+            return {
+              write: async () => {
+                throw new Error('second stem sidecar failed');
+              },
+              close: async () => undefined,
+              abort: async () => undefined,
+            } as unknown as FileSystemWritableFileStream;
+          }
+        }
+        return original.call(this);
+      });
+
+    await expect(splitAudioClipToStems(clipId)).rejects.toThrow('second stem sidecar failed');
+    spy.mockRestore();
+
+    expect((await listAssets()).map((asset) => asset.id)).toEqual(['stem-source']);
+    expect(store.tracks).toHaveLength(2);
+    expect(store.clips).toHaveLength(2);
+    expect(undo()).toBe(false);
+  });
+
+  it('atomically rolls back stem tracks, clips, and new assets on placement failure', async () => {
+    installMockOpfs();
+    await saveAsset({ id: 'stem-source', name: 'Stem Source', sampleRate: 4 }, [
+      new Float32Array([1, 2, 3, 4]),
+    ]);
+    const trackId = addAudioTrack({ name: 'Audio' });
+    const clipId = await addAudioClip({
+      trackId,
+      assetId: 'stem-source',
+      startPpq: 0,
+      lengthPpq: 1,
+      name: 'Loop',
+    });
+    Object.assign(wasmModule.current ?? {}, {
+      hpssWithResidual: (samples: Float32Array, sampleRate?: number) => ({
+        harmonic: samples.map((value) => value * 2),
+        percussive: samples.map((value) => value * 3),
+        residual: samples.map((value) => value * 4),
+        sampleRate: sampleRate ?? 4,
+      }),
+    });
+    clearHistory();
+    const project = getProject();
+    const originalAddTrack = project.addTrack.bind(project);
+    let stemTrackCalls = 0;
+    const spy = vi.spyOn(project, 'addTrack').mockImplementation((descriptor) => {
+      stemTrackCalls += 1;
+      if (stemTrackCalls === 2) throw new Error('second stem placement failed');
+      return originalAddTrack(descriptor);
+    });
+
+    await expect(splitAudioClipToStems(clipId)).rejects.toThrow('second stem placement failed');
+    spy.mockRestore();
+
+    expect((await listAssets()).map((asset) => asset.id)).toEqual(['stem-source']);
+    expect(store.tracks).toHaveLength(2);
+    expect(store.clips).toHaveLength(2);
+    expect(readDoc().tracks).toHaveLength(2);
+    expect(readDoc().clips).toHaveLength(2);
+    expect(undo()).toBe(false);
+  });
+
+  it('swaps a clip asset as one undoable command while preserving clip metadata', async () => {
+    installMockOpfs();
+    await saveAsset({ id: 'swap-a', name: 'A', sampleRate: 4 }, [new Float32Array([1, 2, 3, 4])]);
+    await saveAsset({ id: 'swap-b', name: 'B', sampleRate: 4 }, [new Float32Array([5, 6, 7, 8])]);
+    const trackId = addAudioTrack({ name: 'Audio' });
+    const oldClipId = await addAudioClip({
+      trackId,
+      assetId: 'swap-a',
+      startPpq: 3,
+      lengthPpq: 4,
+      sourceOffsetPpq: 1,
+      gain: 0.75,
+      name: 'Keep me',
+      fadeInPpq: 0.5,
+      fadeOutPpq: 1,
+      loopEnabled: true,
+      loopLengthPpq: 2,
+    });
+    clearHistory();
+
+    const newClipId = replaceAudioClipAsset(oldClipId, 'swap-b');
+    expect(newClipId).not.toBe(oldClipId);
+    expect(store.clips.find((clip) => clip.id === newClipId)).toMatchObject({
+      assetId: 'swap-b',
+      name: 'Keep me',
+      startPpq: 3,
+      lengthPpq: 4,
+      sourceOffsetPpq: 1,
+      gain: 0.75,
+      fadeInPpq: 0.5,
+      fadeOutPpq: 1,
+      loopEnabled: true,
+      loopLengthPpq: 2,
+    });
+    expect(store.clips.some((clip) => clip.id === oldClipId)).toBe(false);
+
+    expect(undo()).toBe(true);
+    expect(store.clips.find((clip) => clip.id === oldClipId)?.assetId).toBe('swap-a');
+    expect(store.clips.some((clip) => clip.id === newClipId)).toBe(false);
+    expect(undo()).toBe(false);
+    expect(redo()).toBe(true);
+    expect(store.clips.find((clip) => clip.id === newClipId)?.assetId).toBe('swap-b');
+  });
+
+  it('keeps the original clip when the final asset-swap removal fails', async () => {
+    installMockOpfs();
+    await saveAsset({ id: 'swap-a', name: 'A', sampleRate: 4 }, [new Float32Array([1, 2])]);
+    await saveAsset({ id: 'swap-b', name: 'B', sampleRate: 4 }, [new Float32Array([3, 4])]);
+    const trackId = addAudioTrack({ name: 'Audio' });
+    const clipId = await addAudioClip({
+      trackId,
+      assetId: 'swap-a',
+      startPpq: 2,
+      lengthPpq: 1,
+      name: 'Original',
+    });
+    clearHistory();
+    const project = getProject();
+    const spy = vi.spyOn(project, 'removeClip').mockImplementation(() => {
+      throw new Error('remove failed');
+    });
+
+    expect(() => replaceAudioClipAsset(clipId, 'swap-b')).toThrow('remove failed');
+    spy.mockRestore();
+
+    expect(store.clips.filter((clip) => clip.trackId === trackId)).toEqual([
+      expect.objectContaining({ id: clipId, assetId: 'swap-a', name: 'Original' }),
+    ]);
+    expect(readDoc().clips.filter((clip) => clip.track_id === trackId)).toHaveLength(1);
+    expect(undo()).toBe(false);
+  });
+
   it('validates its inputs', async () => {
     const trackId = addAudioTrack();
     await expect(addAudioClip({ trackId: 9999, assetId: 'a', lengthPpq: 1 })).rejects.toThrow(
@@ -579,6 +777,9 @@ describe('audio track and clip commands', () => {
     await expect(addAudioClip({ trackId, assetId: 'a', lengthPpq: 1, gain: -1 })).rejects.toThrow(
       RangeError,
     );
+    await expect(
+      addAudioClip({ trackId, assetId: 'a', lengthPpq: 1, fadeInPpq: 0.75, fadeOutPpq: 0.5 }),
+    ).rejects.toThrow(/must not exceed clip length/);
   });
 
   it('setClipFades writes the Project and mirrors the values, undoably', async () => {
@@ -613,6 +814,7 @@ describe('audio track and clip commands', () => {
     expect(cleared?.fadeOutPpq).toBeUndefined();
 
     expect(() => setClipFades(clipId, -1)).toThrow(RangeError);
+    expect(() => setClipFades(clipId, 7, 2)).toThrow(/must not exceed clip length/);
     expect(() => setClipFades(9999, 1)).toThrow(RangeError);
   });
 
@@ -779,6 +981,23 @@ describe('audio track and clip commands', () => {
       lengthPpq: 8,
       kind: 'audio',
       assetId: 'asset-x',
+    });
+  });
+
+  it('moveClip rejects an audio clip on MIDI and routing tracks', async () => {
+    const audioTrackId = addAudioTrack();
+    const clipId = await addAudioClip({ trackId: audioTrackId, assetId: 'asset-x', lengthPpq: 8 });
+    const midiTrackId = store.tracks.find((track) => track.kind === 'midi')?.id as number;
+    const auxTrackId = addTrack({ name: 'Return', kind: 'aux' });
+    const groupTrackId = addTrack({ name: 'Group', kind: 'group' });
+    clearHistory();
+
+    expect(() => moveClip(clipId, 4, midiTrackId)).toThrow(/Cannot move audio clip/);
+    expect(() => moveClip(clipId, 4, auxTrackId)).toThrow(/Cannot move audio clip/);
+    expect(() => moveClip(clipId, 4, groupTrackId)).toThrow(/Cannot move audio clip/);
+    expect(store.clips.find((clip) => clip.id === clipId)).toMatchObject({
+      trackId: audioTrackId,
+      startPpq: 0,
     });
   });
 

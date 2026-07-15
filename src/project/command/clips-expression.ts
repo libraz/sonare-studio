@@ -16,6 +16,7 @@ import type {
   ClipPressurePoint,
 } from '../types';
 import { execute } from './history';
+import { requireEditableClip } from './utils';
 
 // ---------------------------------------------------------------------------
 // Clip expression-lane commands
@@ -41,9 +42,8 @@ export function setClipCcLane(
   points: ReadonlyArray<ClipCcPoint>,
 ): void {
   const store = useProjectStore();
+  const clip = requireEditableClip(store, clipId);
   const index = store.clips.findIndex((clip) => clip.id === clipId);
-  if (index < 0) throw new RangeError(`Unknown clip id ${clipId}`);
-  const clip = store.clips[index];
   if ((clip.kind ?? 'midi') !== 'midi') {
     throw new RangeError(`Clip ${clipId} is not a MIDI clip`);
   }
@@ -90,9 +90,8 @@ export function setClipPitchBend(
   points: ReadonlyArray<ClipPitchBendPoint>,
 ): void {
   const store = useProjectStore();
+  const clip = requireEditableClip(store, clipId);
   const index = store.clips.findIndex((clip) => clip.id === clipId);
-  if (index < 0) throw new RangeError(`Unknown clip id ${clipId}`);
-  const clip = store.clips[index];
   if ((clip.kind ?? 'midi') !== 'midi') {
     throw new RangeError(`Clip ${clipId} is not a MIDI clip`);
   }
@@ -134,9 +133,8 @@ export function setClipChannelPressure(
   points: ReadonlyArray<ClipPressurePoint>,
 ): void {
   const store = useProjectStore();
+  const clip = requireEditableClip(store, clipId);
   const index = store.clips.findIndex((clip) => clip.id === clipId);
-  if (index < 0) throw new RangeError(`Unknown clip id ${clipId}`);
-  const clip = store.clips[index];
   if ((clip.kind ?? 'midi') !== 'midi') {
     throw new RangeError(`Clip ${clipId} is not a MIDI clip`);
   }
@@ -199,38 +197,44 @@ export function setClipPolyPressureForPitches(
   pitches: ReadonlyArray<number>,
   points: ReadonlyArray<ClipPressurePoint>,
 ): void {
+  setClipPolyPressureForPitchPoints(
+    clipId,
+    channel,
+    new Map(pitches.map((pitch) => [pitch, points])),
+  );
+}
+
+/** Replaces per-pitch pressure curves as one undoable multi-lane edit. */
+export function setClipPolyPressureForPitchPoints(
+  clipId: number,
+  channel: number,
+  pointsByPitch: ReadonlyMap<number, ReadonlyArray<ClipPressurePoint>>,
+): void {
   const store = useProjectStore();
+  const clip = requireEditableClip(store, clipId);
   const index = store.clips.findIndex((clip) => clip.id === clipId);
-  if (index < 0) throw new RangeError(`Unknown clip id ${clipId}`);
-  const clip = store.clips[index];
   if ((clip.kind ?? 'midi') !== 'midi') {
     throw new RangeError(`Clip ${clipId} is not a MIDI clip`);
   }
   if (!isValidChannel(channel)) {
     throw new RangeError(`Poly-pressure channel must be an integer in [0, 15], got ${channel}`);
   }
-  const targetPitches = [...new Set(pitches)];
+  const targetPitches = [...pointsByPitch.keys()];
   for (const pitch of targetPitches) {
     if (!Number.isInteger(pitch) || pitch < 0 || pitch > 127) {
       throw new RangeError(`Poly-pressure pitch must be an integer in [0, 127], got ${pitch}`);
     }
   }
   if (targetPitches.length === 0) return;
-  const sanitized = sanitizePressurePoints(points, clip.lengthPpq);
   const others = (clip.polyPressureLanes ?? []).filter(
     (lane) => lane.channel !== channel || !targetPitches.includes(lane.pitch),
   );
-  const nextLanes: ClipPolyPressureLane[] =
-    sanitized.length > 0
-      ? [
-          ...others,
-          ...targetPitches.map((pitch) => ({
-            channel,
-            pitch,
-            points: sanitized.map((point) => ({ ...point })),
-          })),
-        ]
-      : others;
+  const replacements: ClipPolyPressureLane[] = [];
+  for (const pitch of targetPitches) {
+    const sanitized = sanitizePressurePoints(pointsByPitch.get(pitch) ?? [], clip.lengthPpq);
+    if (sanitized.length > 0) replacements.push({ channel, pitch, points: sanitized });
+  }
+  const nextLanes: ClipPolyPressureLane[] = [...others, ...replacements];
   nextLanes.sort((a, b) => a.channel - b.channel || a.pitch - b.pitch);
   execute(0, () => {
     store.clips = store.clips.map((entry, i) => {

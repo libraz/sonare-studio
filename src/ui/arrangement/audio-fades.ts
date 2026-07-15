@@ -1,3 +1,5 @@
+import { clampClipFadePpq } from '@/project/clip-fades';
+
 /**
  * Fade handle geometry for audio clips on the arrangement canvas: handle
  * positions at the clip's top corners, hit-testing against a pointer, and
@@ -115,6 +117,5 @@ export function clampFadePpq(
   clipLengthPpq: number,
   otherFadePpq: number,
 ): number {
-  const limit = Math.max(0, clipLengthPpq - Math.max(0, otherFadePpq));
-  return Math.max(0, Math.min(targetPpq, limit));
+  return clampClipFadePpq(targetPpq, clipLengthPpq, otherFadePpq);
 }

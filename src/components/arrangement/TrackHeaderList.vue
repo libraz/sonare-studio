@@ -32,13 +32,15 @@ import {
   setTrackVolume,
   type TrackPart,
 } from '@/project/commands';
-import { flattenClipComp } from '@/project/comp-flatten';
+import { flattenTrackComps } from '@/project/comp-flatten';
 import { bounceTrackRange, freezeTrack, unfreezeTrack } from '@/project/freeze';
 import { MAX_VCA_GROUPS } from '@/project/mixer';
 import { getWasmModule, useProjectStore } from '@/project/store';
 import { type EditorTrack, TRACK_COLOR_PALETTE, type TrackKind } from '@/project/types';
 import {
   AUTOMATION_LANE_HEIGHT_PX,
+  buildRowLayout,
+  reorderRowIndexForDelta,
   TAKE_LANE_HEIGHT_PX,
   trackActiveTakeIndex,
   trackTakeRowCount,
@@ -386,17 +388,12 @@ function onToggleTakes(track: EditorTrack): void {
   emit('toggleTakes', track.id, !isTakesExpanded(track));
 }
 
-/** Bakes the comp of every comped audio clip on the track, one clip at a time. */
+/** Bakes every comped clip first, then commits the whole track as one undo step. */
 async function onFlattenTakes(track: EditorTrack): Promise<void> {
-  const comped = store.clips.filter(
-    (clip) => clip.trackId === track.id && (clip.takes?.length ?? 0) > 0,
-  );
-  for (const clip of comped) {
-    try {
-      await flattenClipComp(clip.id);
-    } catch (err) {
-      console.warn(`Flattening clip ${clip.id} failed`, err);
-    }
+  try {
+    await flattenTrackComps(track.id);
+  } catch (err) {
+    console.warn(`Flattening track ${track.id} failed`, err);
   }
 }
 
@@ -507,7 +504,7 @@ function automationParamOptions(
     for (const param of insertParamInfo(slot.processor)) {
       if (!param.rtSafe) continue;
       options.push({
-        value: insertAutomationParam(index, param.name),
+        value: insertAutomationParam(slot.id ?? index, param.name),
         label: `${slot.processor} · ${param.name}`,
       });
     }
@@ -554,8 +551,18 @@ function onGripPointerDown(track: EditorTrack, index: number, event: PointerEven
 function onGripPointerMove(event: PointerEvent): void {
   const drag = reorderDrag.value;
   if (!drag) return;
-  const deltaRows = Math.round((event.clientY - drag.startClientY) / props.laneHeight);
-  const toIndex = Math.min(store.tracks.length - 1, Math.max(0, drag.fromIndex + deltaRows));
+  const layout = buildRowLayout(
+    store.tracks.map((track) => isAutomationExpanded(track)),
+    props.laneHeight,
+    AUTOMATION_LANE_HEIGHT_PX,
+    store.tracks.map((track) => (isTakesExpanded(track) ? takeRowCount(track) : 0)),
+    TAKE_LANE_HEIGHT_PX,
+  );
+  const toIndex = reorderRowIndexForDelta(
+    layout,
+    drag.fromIndex,
+    event.clientY - drag.startClientY,
+  );
   if (toIndex !== drag.toIndex) reorderDrag.value = { ...drag, toIndex };
 }
 

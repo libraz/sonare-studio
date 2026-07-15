@@ -15,12 +15,14 @@ import {
   RULER_HEIGHT_PX,
 } from '@/components/arrangement/theme';
 import { fillRoundRect, strokeRoundRect } from '@/components/piano-roll/theme';
+import { type NormalizedTempoMap, tempoAtPpq } from '@/project/tempo-map';
 import type { EditorClip, EditorTrack } from '@/project/types';
 import { isAudioClip } from '@/project/types';
 import {
   audioWindowFractions,
   peaksBucketCount,
   peaksBucketsPerSecond,
+  warpedWaveformColumns,
   waveformColumns,
 } from '@/ui/arrangement/audio-clip-content';
 import { audioAssetMergedPeaks, requestAudioAsset } from '@/ui/arrangement/audio-clip-data';
@@ -123,8 +125,8 @@ export interface ClipRenderContext {
   laneTop: (index: number) => number;
   /** Bar length in PPQ (density bucket size). */
   barPpq: number;
-  /** Constant tempo in BPM mapping audio asset time onto PPQ. */
-  tempoBpm: number;
+  /** Shared tempo map mapping audio asset time onto absolute PPQ. */
+  tempoMap: NormalizedTempoMap;
   /** Clip gesture state (fade preview source). */
   interactions: ClipInteractions;
   /** Schedules a base-layer repaint when an audio asset settles. */
@@ -252,7 +254,7 @@ export function drawAudioWaveform(
   contentH: number,
   context: ClipRenderContext,
 ): void {
-  const { range, tempoBpm, scheduleBase } = context;
+  const { range, tempoMap, scheduleBase } = context;
   const centerY = contentTop + contentH / 2;
   const asset = source.assetId ? requestAudioAsset(source.assetId, scheduleBase) : null;
   if (!asset || !source.assetId) {
@@ -264,7 +266,7 @@ export function drawAudioWaveform(
   const visibleRight = Math.min(x + wPx, range.widthPx);
   if (visibleRight <= visibleLeft || !(wPx > 0)) return;
   const meta = asset.meta;
-  const pxPerSecond = range.pxPerPpq * (tempoBpm / 60);
+  const pxPerSecond = range.pxPerPpq * (tempoAtPpq(tempoMap, source.startPpq) / 60);
   const bucketCount = peaksBucketCount(
     meta.numFrames,
     meta.sampleRate,
@@ -274,19 +276,30 @@ export function drawAudioWaveform(
   const window = audioWindowFractions(
     source.sourceOffsetPpq,
     source.lengthPpq,
-    tempoBpm,
+    tempoMap,
     meta.numFrames,
     meta.sampleRate,
+    source.startPpq - source.sourceOffsetPpq,
   );
   // Map only the on-screen slice of the clip window to pixel columns.
   const span = window.endFrac - window.startFrac;
   const columnCount = Math.max(1, Math.round(visibleRight - visibleLeft));
-  const columns = waveformColumns(
-    peaks,
-    window.startFrac + ((visibleLeft - x) / wPx) * span,
-    window.startFrac + ((visibleRight - x) / wPx) * span,
-    columnCount,
-  );
+  const columns = source.warp?.enabled
+    ? warpedWaveformColumns(
+        peaks,
+        source,
+        ((visibleLeft - x) / wPx) * source.lengthPpq,
+        ((visibleRight - x) / wPx) * source.lengthPpq,
+        columnCount,
+        meta.numFrames,
+        meta.sampleRate,
+      )
+    : waveformColumns(
+        peaks,
+        window.startFrac + ((visibleLeft - x) / wPx) * span,
+        window.startFrac + ((visibleRight - x) / wPx) * span,
+        columnCount,
+      );
   ctx.fillStyle = colorWithAlpha(color, 0.9);
   const half = contentH / 2;
   for (let j = 0; j < columns.length; j++) {
