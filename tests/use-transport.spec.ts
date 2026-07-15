@@ -92,20 +92,40 @@ describe('useTransport', () => {
     expect(transport.isPlaying.value).toBe(true);
   });
 
-  it('play(sampleTime) forwards the sample time', () => {
+  it('play(sampleTime) commits only when process telemetry reaches the future frame', () => {
     const mock = createMockHandle();
     const { transport } = setup(mock.handle);
     transport.play(96000);
     expect(mock.transport.play).toHaveBeenCalledWith(96000);
+    expect(transport.isPlaying.value).toBe(false);
+    mock.emitTelemetry({ renderFrame: 95999 });
+    expect(transport.isPlaying.value).toBe(false);
+    mock.emitTelemetry({ renderFrame: 96000 });
+    expect(transport.isPlaying.value).toBe(true);
   });
 
   it('stop() delegates to engine.transport.stop and clears isPlaying', () => {
     const mock = createMockHandle();
     const { transport } = setup(mock.handle);
     transport.play();
+    expect(transport.stop()).toBe(true);
+    expect(mock.transport.stop).toHaveBeenCalledWith(undefined);
+    expect(mock.pushMidiPanic).toHaveBeenCalledTimes(1);
+    expect(mock.pushMidiPanic).toHaveBeenCalledWith();
+    expect(transport.isPlaying.value).toBe(false);
+  });
+
+  it('schedules future stop panic and UI state at the same render frame', () => {
+    const mock = createMockHandle();
+    const { transport } = setup(mock.handle);
+    transport.play();
     expect(transport.stop(12345)).toBe(true);
     expect(mock.transport.stop).toHaveBeenCalledWith(12345);
-    expect(mock.pushMidiPanic).toHaveBeenCalledTimes(1);
+    expect(mock.pushMidiPanic).toHaveBeenCalledWith(12345);
+    expect(transport.isPlaying.value).toBe(true);
+    mock.emitTelemetry({ renderFrame: 12344 });
+    expect(transport.isPlaying.value).toBe(true);
+    mock.emitTelemetry({ renderFrame: 12345 });
     expect(transport.isPlaying.value).toBe(false);
   });
 
@@ -131,11 +151,23 @@ describe('useTransport', () => {
     expect(mock.transport.play).toHaveBeenCalledTimes(1);
   });
 
-  it('seek() delegates to seekSeconds and updates positionSeconds optimistically', () => {
+  it('seek() delegates to seekSeconds and updates an immediate position optimistically', () => {
+    const mock = createMockHandle();
+    const { transport } = setup(mock.handle);
+    expect(transport.seek(2.5)).toBe(true);
+    expect(mock.transport.seekSeconds).toHaveBeenCalledWith(2.5, undefined);
+    expect(transport.positionSeconds.value).toBe(2.5);
+  });
+
+  it('commits a future seek only after its render frame is acknowledged', () => {
     const mock = createMockHandle();
     const { transport } = setup(mock.handle);
     expect(transport.seek(2.5, 1000)).toBe(true);
     expect(mock.transport.seekSeconds).toHaveBeenCalledWith(2.5, 1000);
+    expect(transport.positionSeconds.value).toBe(0);
+    mock.emitTelemetry({ renderFrame: 999, timelineSample: 0 });
+    expect(transport.positionSeconds.value).toBe(0);
+    mock.emitTelemetry({ renderFrame: 1000, timelineSample: 0 });
     expect(transport.positionSeconds.value).toBe(2.5);
   });
 

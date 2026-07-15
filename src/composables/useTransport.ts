@@ -18,14 +18,16 @@ export interface UseTransportReturn {
   /**
    * Playhead position in seconds, derived from engine telemetry
    * (`timelineSample / ctx.sampleRate`). Updated via requestAnimationFrame
-   * polling while playing; also set optimistically by `seek()` / `seekPpq()`.
+   * polling while playing; immediate seeks update it optimistically, while
+   * future seeks commit only after process telemetry reaches their sampleTime.
    */
   positionSeconds: Ref<number>;
   /**
    * Playhead position in PPQ (quarter-note pulses), converted from the engine's
    * `timelineSample` through the project tempo map (which replicates the
    * engine's tempo math), so it is exact under tempo segments and ramps. Also
-   * set optimistically by `seek()` / `seekPpq()`.
+   * Immediate seeks update it optimistically; future seeks commit only after
+   * process telemetry reaches their sampleTime.
    */
   positionPpq: Ref<number>;
   /** Last tempo set through this composable, in BPM. The engine exposes no tempo getter. */
@@ -153,16 +155,38 @@ export function useTransport(
   let subscribedEngine: SonareEngine | null = null;
   let unsubscribeTelemetry: (() => void) | null = null;
   let rafId: number | null = null;
+  let lastRenderFrame = 0;
+  let scheduledSequence = 0;
+  let scheduledActions: Array<{
+    engine: SonareEngine;
+    sampleTime: number;
+    sequence: number;
+    commit: () => void;
+  }> = [];
 
   const telemetryPositionSample = (telemetry: SonareEngineTelemetryRecord): number => {
     if (Number.isFinite(telemetry.timelineSample)) return telemetry.timelineSample;
     return telemetry.audibleTimelineSample;
   };
 
+  const commitScheduledActions = (engine: SonareEngine, renderFrame: number): void => {
+    if (!Number.isFinite(renderFrame)) return;
+    lastRenderFrame = Math.max(lastRenderFrame, renderFrame);
+    const due = scheduledActions
+      .filter((action) => action.engine === engine && action.sampleTime <= renderFrame)
+      .sort((a, b) => a.sampleTime - b.sampleTime || a.sequence - b.sequence);
+    if (due.length === 0) return;
+    const dueSet = new Set(due);
+    scheduledActions = scheduledActions.filter((action) => !dueSet.has(action));
+    for (const action of due) action.commit();
+  };
+
   /** Subscribes the position listener to the handle's engine (resubscribes when the engine changes). */
   const ensureTelemetrySubscription = (handle: EngineHandle): void => {
     if (subscribedEngine === handle.engine) return;
     unsubscribeTelemetry?.();
+    scheduledActions = scheduledActions.filter((action) => action.engine === handle.engine);
+    lastRenderFrame = 0;
     const sampleRate = handle.ctx.sampleRate;
     unsubscribeTelemetry = handle.engine.onTelemetry(
       (telemetry: SonareEngineTelemetryRecord): void => {
@@ -170,6 +194,7 @@ export function useTransport(
         const sample = telemetryPositionSample(telemetry);
         positionSeconds.value = sample / sampleRate;
         positionPpq.value = samplesToPpq(tempoMap, sample, sampleRate);
+        commitScheduledActions(handle.engine, telemetry.renderFrame);
       },
     );
     subscribedEngine = handle.engine;
@@ -187,15 +212,36 @@ export function useTransport(
     if (rafId !== null || typeof globalThis.requestAnimationFrame !== 'function') return;
     const tick = (): void => {
       rafId = null;
-      if (!isPlaying.value) return;
+      const hasScheduledAction = scheduledActions.length > 0;
+      if (!isPlaying.value && !hasScheduledAction) return;
       const handle = resolveHandle();
       if (handle) {
         ensureTelemetrySubscription(handle);
         handle.engine.pollTelemetry();
       }
-      rafId = globalThis.requestAnimationFrame(tick);
+      if (isPlaying.value || scheduledActions.length > 0) {
+        rafId = globalThis.requestAnimationFrame(tick);
+      }
     };
     rafId = globalThis.requestAnimationFrame(tick);
+  };
+
+  const commitAtSampleTime = (
+    handle: EngineHandle,
+    sampleTime: number | undefined,
+    commit: () => void,
+  ): void => {
+    if (sampleTime !== undefined && Number.isFinite(sampleTime) && sampleTime > lastRenderFrame) {
+      scheduledActions.push({
+        engine: handle.engine,
+        sampleTime,
+        sequence: scheduledSequence++,
+        commit,
+      });
+      startPolling();
+      return;
+    }
+    commit();
   };
 
   const play = (sampleTime?: number): boolean => {
@@ -204,8 +250,10 @@ export function useTransport(
     ensureTelemetrySubscription(handle);
     const ok = handle.engine.transport.play(sampleTime);
     if (ok) {
-      isPlaying.value = true;
-      startPolling();
+      commitAtSampleTime(handle, sampleTime, () => {
+        isPlaying.value = true;
+        startPolling();
+      });
     }
     return ok;
   };
@@ -215,9 +263,12 @@ export function useTransport(
     if (!handle) return false;
     const ok = handle.engine.transport.stop(sampleTime);
     if (ok) {
-      handle.engine.pushMidiPanic();
-      isPlaying.value = false;
-      stopPolling();
+      if (sampleTime === undefined) handle.engine.pushMidiPanic();
+      else handle.engine.pushMidiPanic(sampleTime);
+      commitAtSampleTime(handle, sampleTime, () => {
+        isPlaying.value = false;
+        stopPolling();
+      });
     }
     return ok;
   };
@@ -228,8 +279,10 @@ export function useTransport(
     ensureTelemetrySubscription(handle);
     const ok = handle.engine.transport.seekSeconds(seconds, sampleTime);
     if (ok) {
-      positionSeconds.value = seconds;
-      positionPpq.value = secondsToPpq(tempoMap, seconds);
+      commitAtSampleTime(handle, sampleTime, () => {
+        positionSeconds.value = seconds;
+        positionPpq.value = secondsToPpq(tempoMap, seconds);
+      });
     }
     return ok;
   };
@@ -240,8 +293,10 @@ export function useTransport(
     ensureTelemetrySubscription(handle);
     const ok = handle.engine.transport.seekPpq(ppq, sampleTime);
     if (ok) {
-      positionPpq.value = ppq;
-      positionSeconds.value = ppqToSeconds(tempoMap, ppq);
+      commitAtSampleTime(handle, sampleTime, () => {
+        positionPpq.value = ppq;
+        positionSeconds.value = ppqToSeconds(tempoMap, ppq);
+      });
     }
     return ok;
   };
@@ -279,6 +334,7 @@ export function useTransport(
 
   const dispose = (): void => {
     stopPolling();
+    scheduledActions = [];
     unsubscribeTelemetry?.();
     unsubscribeTelemetry = null;
     subscribedEngine = null;

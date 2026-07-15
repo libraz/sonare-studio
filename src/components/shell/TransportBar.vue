@@ -62,6 +62,9 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const recordingOperationState = computed(
+  () => props.recording.state?.value ?? (props.recording.isRecording.value ? 'recording' : 'idle'),
+);
 
 const countInOptions = computed(() =>
   props.countInChoices.map((choice) => ({
@@ -246,7 +249,11 @@ function onRetuneInput(event: Event): void {
           }"
           :aria-label="t.shell.transport.record"
           :aria-pressed="recording.isRecording.value"
-          :disabled="!handle || (!recording.isRecording.value && recording.armedTrackId.value === null)"
+          :disabled="
+            !handle ||
+            (recordingOperationState !== 'idle' && recordingOperationState !== 'recording') ||
+            (recordingOperationState === 'idle' && recording.armedTrackId.value === null)
+          "
           v-tooltip="
             recording.isRecording.value
               ? t.shell.transport.recordStopTitle
