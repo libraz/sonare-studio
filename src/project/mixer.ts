@@ -27,6 +27,8 @@ import { canonicalJson, fnv1a32Hex } from './hash';
 
 /** One insert effect slot referencing the wasm processor catalog by name. */
 export interface InsertSlot {
+  /** Stable identity used by automation lanes across reorder/serialization. */
+  id?: string;
   /** Processor catalog name (e.g. 'dynamics.compressor', 'saturation.tape'). */
   processor: string;
   /** Parameter overrides passed to the processor (camelCase keys). */
@@ -38,6 +40,40 @@ export interface InsertSlot {
    * processors on track strips only); absent = the insert's internal key.
    */
   sidechainSourceTrackId?: number;
+}
+
+let nextProcessorId = 1;
+
+/** Creates a collision-resistant, document-persisted processor identity. */
+export function createProcessorId(): string {
+  const randomUuid = globalThis.crypto?.randomUUID?.();
+  if (randomUuid) return `processor-${randomUuid}`;
+  return `processor-${Date.now().toString(36)}-${(nextProcessorId++).toString(36)}`;
+}
+
+/** Ensures every processor in one strip/chain has a unique stable identity. */
+export function ensureProcessorIds(slots: InsertSlot[]): void {
+  const used = new Set<string>();
+  for (const slot of slots) {
+    const id = typeof slot.id === 'string' && slot.id.length > 0 ? slot.id : undefined;
+    if (id !== undefined && !used.has(id)) {
+      used.add(id);
+      continue;
+    }
+    let next = createProcessorId();
+    while (used.has(next)) next = createProcessorId();
+    slot.id = next;
+    used.add(next);
+  }
+}
+
+/** Ensures stable processor identities throughout a project mixer state. */
+export function ensureMixerProcessorIds(state: ProjectMixerState): void {
+  ensureProcessorIds(state.master.inserts);
+  for (const bus of state.buses) {
+    if (bus.strip) ensureProcessorIds(bus.strip.inserts);
+  }
+  if (state.masteringChain) ensureProcessorIds(state.masteringChain.processors);
 }
 
 /** One send from a strip to a mixer bus. */

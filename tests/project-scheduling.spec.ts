@@ -143,13 +143,15 @@ describe('clipPlaybackNotes', () => {
           durationPpq: 1,
           channel: 1,
         }, // window start
+        { id: 5, pitch: 61, velocity: 85, startPpq: 1.5, durationPpq: 1, channel: 0 }, // overlaps start
         { id: 3, pitch: 64, velocity: 80, startPpq: 5.5, durationPpq: 1, channel: 0 }, // inside
         { id: 4, pitch: 65, velocity: 70, startPpq: 6, durationPpq: 1, channel: 0 }, // at window end
       ],
     });
     expect(clipPlaybackNotes(clip)).toEqual([
       { note: 62, velocity: 90, offVelocity: 30, startPpq: 0, durationPpq: 1, channel: 1 },
-      { note: 64, velocity: 80, startPpq: 3.5, durationPpq: 1, channel: 0 },
+      { note: 61, velocity: 85, startPpq: 0, durationPpq: 0.5, channel: 0 },
+      { note: 64, velocity: 80, startPpq: 3.5, durationPpq: 0.5, channel: 0 },
     ]);
   });
 

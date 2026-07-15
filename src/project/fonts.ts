@@ -53,6 +53,22 @@ export interface SoundFontMeta {
   byteLength: number;
 }
 
+/** User-facing name preserved independently from immutable SF2 content. */
+export interface SoundFontAlias {
+  name: string;
+}
+
+interface StoredSoundFontRecord {
+  schemaVersion: 2;
+  content: { id: string; byteLength: number };
+  aliases: SoundFontAlias[];
+}
+
+export interface SavedSoundFont {
+  meta: SoundFontMeta;
+  created: boolean;
+}
+
 /** Input accepted by {@link saveFont}. */
 export interface SaveFontInput {
   /** Font id override; defaults to the deterministic content hash. */
@@ -127,26 +143,107 @@ async function writeFile(
   try {
     // Copy so wasm-backed or shared buffers are never handed to the stream.
     await writable.write(new Uint8Array(bytes));
-  } finally {
     await writable.close();
+  } catch (error) {
+    try {
+      await writable.abort?.();
+    } catch {
+      // Preserve the original write/close failure.
+    }
+    throw error;
   }
+}
+
+function decodeStoredRecord(
+  value: unknown,
+  id: string,
+): { meta: SoundFontMeta; aliases: SoundFontAlias[]; record: StoredSoundFontRecord } {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new InvalidFontError(`Font "${id}": metadata sidecar is not a JSON object`);
+  }
+  const raw = value as Partial<StoredSoundFontRecord> & Partial<SoundFontMeta>;
+  if (raw.schemaVersion === 2) {
+    if (
+      typeof raw.content !== 'object' ||
+      raw.content === null ||
+      raw.content.id !== id ||
+      !Number.isInteger(raw.content.byteLength) ||
+      raw.content.byteLength < 0 ||
+      !Array.isArray(raw.aliases) ||
+      raw.aliases.length === 0 ||
+      raw.aliases.some(
+        (alias) =>
+          typeof alias !== 'object' ||
+          alias === null ||
+          typeof (alias as SoundFontAlias).name !== 'string' ||
+          (alias as SoundFontAlias).name.length === 0,
+      )
+    ) {
+      throw new InvalidFontError(`Font "${id}": malformed metadata sidecar`);
+    }
+    const aliases = raw.aliases.map((alias) => ({ name: alias.name }));
+    const meta = {
+      id,
+      name: aliases[aliases.length - 1].name,
+      byteLength: raw.content.byteLength,
+    };
+    return {
+      meta,
+      aliases,
+      record: {
+        schemaVersion: 2,
+        content: { id, byteLength: meta.byteLength },
+        aliases,
+      },
+    };
+  }
+  if (
+    raw.id !== id ||
+    typeof raw.name !== 'string' ||
+    raw.name.length === 0 ||
+    !Number.isInteger(raw.byteLength) ||
+    (raw.byteLength as number) < 0
+  ) {
+    throw new InvalidFontError(`Font "${id}": malformed metadata sidecar`);
+  }
+  const meta = { id, name: raw.name, byteLength: raw.byteLength as number };
+  const aliases = [{ name: meta.name }];
+  return {
+    meta,
+    aliases,
+    record: {
+      schemaVersion: 2,
+      content: { id, byteLength: meta.byteLength },
+      aliases,
+    },
+  };
 }
 
 /** Validates a parsed sidecar object into a {@link SoundFontMeta}. */
 function validateMeta(value: unknown, id: string): SoundFontMeta {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new InvalidFontError(`Font "${id}": metadata sidecar is not a JSON object`);
+  return decodeStoredRecord(value, id).meta;
+}
+
+async function readOptionalFile(
+  dir: FileSystemDirectoryHandle,
+  fileName: string,
+): Promise<Uint8Array | null> {
+  try {
+    const handle = await dir.getFileHandle(fileName);
+    const file = await handle.getFile();
+    return new Uint8Array(await file.arrayBuffer());
+  } catch (error) {
+    if (isNotFoundError(error)) return null;
+    throw error;
   }
-  const meta = value as Partial<SoundFontMeta>;
-  if (
-    meta.id !== id ||
-    typeof meta.name !== 'string' ||
-    !Number.isInteger(meta.byteLength) ||
-    (meta.byteLength as number) < 0
-  ) {
-    throw new InvalidFontError(`Font "${id}": malformed metadata sidecar`);
+}
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.byteLength !== b.byteLength) return false;
+  for (let index = 0; index < a.byteLength; index++) {
+    if (a[index] !== b[index]) return false;
   }
-  return { id, name: meta.name, byteLength: meta.byteLength as number };
+  return true;
 }
 
 /**
@@ -158,7 +255,10 @@ function validateMeta(value: unknown, id: string): SoundFontMeta {
  * @param data Raw SF2 bytes (non-empty).
  * @returns The full metadata that was written.
  */
-export async function saveFont(input: SaveFontInput, data: Uint8Array): Promise<SoundFontMeta> {
+export async function saveFontWithStatus(
+  input: SaveFontInput,
+  data: Uint8Array,
+): Promise<SavedSoundFont> {
   if (typeof input.name !== 'string' || input.name.length === 0) {
     throw new InvalidFontError('Font name must not be empty');
   }
@@ -166,12 +266,64 @@ export async function saveFont(input: SaveFontInput, data: Uint8Array): Promise<
     throw new InvalidFontError('Font data must not be empty');
   }
   const id = validateFontId(input.id ?? computeFontId(data));
-  const meta: SoundFontMeta = { id, name: input.name, byteLength: data.length };
+  const requestedMeta: SoundFontMeta = { id, name: input.name, byteLength: data.length };
   const dir = await fontsDirectory();
-  await writeFile(dir, id + SF2_EXTENSION, data);
-  await writeFile(dir, id + META_EXTENSION, new TextEncoder().encode(JSON.stringify(meta)));
+  const existingPayload = await readOptionalFile(dir, id + SF2_EXTENSION);
+  const existingSidecar = await readOptionalFile(dir, id + META_EXTENSION);
+  if (existingPayload !== null && !bytesEqual(existingPayload, data)) {
+    throw new InvalidFontError(`Font "${id}": immutable SF2 content collision`);
+  }
+  if (existingPayload === null && existingSidecar !== null) {
+    throw new InvalidFontError(`Font "${id}": metadata exists without its SF2 payload`);
+  }
+  let aliases: SoundFontAlias[] = [{ name: input.name }];
+  if (existingSidecar !== null) {
+    let stored: ReturnType<typeof decodeStoredRecord>;
+    try {
+      stored = decodeStoredRecord(JSON.parse(new TextDecoder().decode(existingSidecar)), id);
+    } catch (error) {
+      if (error instanceof InvalidFontError) throw error;
+      throw new InvalidFontError(`Font "${id}": metadata sidecar is not valid JSON`);
+    }
+    if (stored.meta.byteLength !== data.byteLength) {
+      throw new InvalidFontError(`Font "${id}": immutable content metadata collision`);
+    }
+    aliases = [...stored.aliases];
+    if (!aliases.some((alias) => alias.name === input.name)) aliases.push({ name: input.name });
+  }
+  const meta: SoundFontMeta = {
+    ...requestedMeta,
+    name: aliases[aliases.length - 1].name,
+  };
+  const record: StoredSoundFontRecord = {
+    schemaVersion: 2,
+    content: { id, byteLength: data.length },
+    aliases,
+  };
+  const created = existingPayload === null;
+  if (created) await writeFile(dir, id + SF2_EXTENSION, data);
+  try {
+    await writeFile(dir, id + META_EXTENSION, new TextEncoder().encode(JSON.stringify(record)));
+  } catch (error) {
+    if (created) {
+      for (const fileName of [id + SF2_EXTENSION, id + META_EXTENSION]) {
+        try {
+          await dir.removeEntry(fileName);
+        } catch (cleanupError) {
+          if (!isNotFoundError(cleanupError)) {
+            // An orphan payload remains invisible without the sidecar commit marker.
+          }
+        }
+      }
+    }
+    throw error;
+  }
   fontCache.set(id, { meta, data: new Uint8Array(data) });
-  return { ...meta };
+  return { meta: { ...meta }, created };
+}
+
+export async function saveFont(input: SaveFontInput, data: Uint8Array): Promise<SoundFontMeta> {
+  return (await saveFontWithStatus(input, data)).meta;
 }
 
 /**
@@ -201,6 +353,22 @@ export async function loadFontMeta(id: string): Promise<SoundFontMeta> {
     throw new InvalidFontError(`Font "${id}": metadata sidecar is not valid JSON`);
   }
   return validateMeta(parsed, id);
+}
+
+/** Lists every preserved display alias for one immutable SoundFont payload. */
+export async function listFontAliases(id: string): Promise<SoundFontAlias[]> {
+  validateFontId(id);
+  const dir = await fontsDirectory();
+  const bytes = await readOptionalFile(dir, id + META_EXTENSION);
+  if (bytes === null) throw new FontNotFoundError(id);
+  try {
+    return decodeStoredRecord(JSON.parse(new TextDecoder().decode(bytes)), id).aliases.map(
+      (alias) => ({ ...alias }),
+    );
+  } catch (error) {
+    if (error instanceof InvalidFontError) throw error;
+    throw new InvalidFontError(`Font "${id}": metadata sidecar is not valid JSON`);
+  }
 }
 
 /**

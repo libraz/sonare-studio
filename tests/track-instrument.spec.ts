@@ -365,6 +365,9 @@ describe('instrument helpers', () => {
     expect(sf2PlaybackConfig({ kind: 'sf2', fontId: 'gm' })).toEqual({});
     expect(sf2PlaybackConfig({ kind: 'sf2', fontId: 'gm', bank: 1, program: 4 })).toEqual({});
     expect(sf2PlaybackConfig({ kind: 'sf2', fontId: 'gm', gain: 1.25 })).toEqual({ gain: 1.25 });
+    expect(sf2PlaybackConfig({ kind: 'sf2', fontId: 'gm', gain: 0 })).toEqual({
+      gain: Number.MIN_VALUE,
+    });
     expect(sf2PlaybackConfig({ kind: 'sf2', fontId: 'gm', polyphony: 24 })).toEqual({
       polyphony: 24,
     });

@@ -157,6 +157,20 @@ export function ppqToSeconds(map: NormalizedTempoMap, ppq: number): number {
   return segment.startSeconds + elapsedSeconds(segment.bpm, segment.slope, ppq - segment.startPpq);
 }
 
+/** Elapsed seconds across an absolute PPQ range, including every tempo change/ramp. */
+export function ppqRangeSeconds(map: NormalizedTempoMap, startPpq: number, endPpq: number): number {
+  return ppqToSeconds(map, endPpq) - ppqToSeconds(map, startPpq);
+}
+
+/** Duration in seconds of a PPQ length anchored at an absolute timeline position. */
+export function ppqDurationSeconds(
+  map: NormalizedTempoMap,
+  startPpq: number,
+  lengthPpq: number,
+): number {
+  return ppqRangeSeconds(map, startPpq, startPpq + lengthPpq);
+}
+
 /**
  * Converts elapsed seconds to a PPQ position (full inverse of
  * {@link ppqToSeconds}).
@@ -187,6 +201,26 @@ export function secondsToPpq(map: NormalizedTempoMap, seconds: number): number {
  */
 export function ppqToSamples(map: NormalizedTempoMap, ppq: number, sampleRate: number): number {
   return Math.round(ppqToSeconds(map, ppq) * sampleRate);
+}
+
+/** Rounded sample length across an absolute PPQ range on the tempo map. */
+export function ppqRangeSamples(
+  map: NormalizedTempoMap,
+  startPpq: number,
+  endPpq: number,
+  sampleRate: number,
+): number {
+  return ppqToSamples(map, endPpq, sampleRate) - ppqToSamples(map, startPpq, sampleRate);
+}
+
+/** Rounded sample length of a PPQ duration anchored at an absolute position. */
+export function ppqDurationSamples(
+  map: NormalizedTempoMap,
+  startPpq: number,
+  lengthPpq: number,
+  sampleRate: number,
+): number {
+  return ppqRangeSamples(map, startPpq, startPpq + lengthPpq, sampleRate);
 }
 
 /**

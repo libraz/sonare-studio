@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   normalizeTempoMap,
+  ppqDurationSamples,
+  ppqDurationSeconds,
+  ppqRangeSamples,
+  ppqRangeSeconds,
   ppqToSamples,
   ppqToSeconds,
   samplesToPpq,
@@ -55,6 +59,14 @@ describe('tempo map conversions', () => {
       // 4 ppq at 120 BPM (2 s) + 2 ppq at 60 BPM (2 s).
       expect(ppqToSeconds(map, 4)).toBe(2);
       expect(ppqToSeconds(map, 6)).toBe(4);
+    });
+
+    it('computes anchored duration deltas across a tempo change', () => {
+      const map = normalizeTempoMap(STEP_120_60);
+      expect(ppqRangeSeconds(map, 3, 5)).toBe(1.5);
+      expect(ppqDurationSeconds(map, 3, 2)).toBe(1.5);
+      expect(ppqRangeSamples(map, 3, 5, SAMPLE_RATE)).toBe(72_000);
+      expect(ppqDurationSamples(map, 3, 2, SAMPLE_RATE)).toBe(72_000);
     });
 
     it('round-trips PPQ through samples', () => {

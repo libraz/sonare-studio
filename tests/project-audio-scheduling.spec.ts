@@ -84,13 +84,15 @@ function makeAsset(frames: number, sampleRate = 10): LoadedAudioAsset {
 function makeHandle(sampleRate = 10): {
   handle: EngineHandle;
   addClip: ReturnType<typeof vi.fn>;
+  removeClip: ReturnType<typeof vi.fn>;
 } {
   const addClip = vi.fn(() => 500);
+  const removeClip = vi.fn();
   const handle = {
     ctx: { sampleRate },
-    engine: { addClip },
+    engine: { addClip, removeClip },
   } as unknown as EngineHandle;
-  return { handle, addClip };
+  return { handle, addClip, removeClip };
 }
 
 describe('audio scheduling helpers', () => {
@@ -125,6 +127,16 @@ describe('audio scheduling helpers', () => {
     expect(sliceAudioClipWindow(channels, 4, 10, 2, 120)).toEqual([new Float32Array(0)]);
   });
 
+  it('anchors source-frame differences at the clip timeline across a tempo change', () => {
+    const channels = [Float32Array.from({ length: 30 }, (_, index) => index + 1)];
+    const tempoMap = normalizeTempoMap([
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 4, bpm: 60 },
+    ]);
+    const sliced = sliceAudioClipWindow(channels, 10, 1, 1, tempoMap, 3);
+    expect(sliced).toEqual([new Float32Array([6, 7, 8, 9, 10, 11, 12, 13, 14, 15])]);
+  });
+
   it('applyAudioClipFades ramps the buffer edges linearly in place', () => {
     const channels = [new Float32Array([1, 1, 1, 1, 1, 1, 1, 1])];
     // At 120 BPM and 8 Hz: 1 PPQ = 0.5 s = 4 frames per fade.
@@ -136,6 +148,18 @@ describe('audio scheduling helpers', () => {
     const channels = [new Float32Array([1, 2, 3])];
     applyAudioClipFades(channels, 8, 120, 0, 0);
     expect(channels).toEqual([new Float32Array([1, 2, 3])]);
+  });
+
+  it('converts each fade from its absolute tempo-map range', () => {
+    const channels = [new Float32Array(12).fill(1)];
+    const tempoMap = normalizeTempoMap([
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 4, bpm: 60 },
+    ]);
+    applyAudioClipFades(channels, 8, tempoMap, 1, 1, 3, 2);
+    expect(Array.from(channels[0])).toEqual([
+      0, 0.25, 0.5, 0.75, 0.875, 0.75, 0.625, 0.5, 0.375, 0.25, 0.125, 0,
+    ]);
   });
 
   it('resampleChannelsLinear interpolates endpoint-preserving', () => {
@@ -179,6 +203,47 @@ describe('scheduleProjectClips with audio clips', () => {
     expect((channels as Float32Array[])[0]).toEqual(makeAsset(20).channels[0]);
   });
 
+  it('finishes all asset preparation before the first engine mutation', async () => {
+    store.tracks = [makeTrack(1)];
+    store.clips = [
+      makeAudioClip(10, 1, { assetId: 'asset-a' }),
+      makeAudioClip(20, 1, { assetId: 'asset-b', startPpq: 4 }),
+    ];
+    const events: string[] = [];
+    const { handle, addClip } = makeHandle(10);
+    addClip.mockImplementation((_trackId, _channels, startPpq) => {
+      events.push(`add:${String(startPpq)}`);
+      return 500 + addClip.mock.calls.length;
+    });
+
+    await scheduleProjectClips(handle, {
+      loadAudioAsset: async (assetId) => {
+        events.push(`load:${assetId}`);
+        return makeAsset(20);
+      },
+    });
+
+    expect(events).toEqual(['load:asset-a', 'load:asset-b', 'add:0', 'add:4']);
+  });
+
+  it('rolls back every clip added before an engine commit failure', async () => {
+    store.tracks = [makeTrack(1)];
+    store.clips = [makeAudioClip(10, 1), makeAudioClip(20, 1, { startPpq: 4 })];
+    const { handle, addClip, removeClip } = makeHandle(10);
+    addClip
+      .mockImplementationOnce(() => 501)
+      .mockImplementationOnce(() => {
+        throw new Error('add failed');
+      });
+
+    await expect(
+      scheduleProjectClips(handle, { loadAudioAsset: async () => makeAsset(20) }),
+    ).rejects.toThrow('add failed');
+
+    expect(removeClip).toHaveBeenCalledTimes(1);
+    expect(removeClip).toHaveBeenCalledWith(501);
+  });
+
   it('slices the source window from sourceOffsetPpq and lengthPpq', async () => {
     store.tracks = [makeTrack(1)];
     // Offset 2 PPQ = 1 s = 10 frames; length 1 PPQ = 0.5 s = 5 frames.
@@ -190,7 +255,7 @@ describe('scheduleProjectClips with audio clips', () => {
     expect(channels[0]).toEqual(new Float32Array([11, 12, 13, 14, 15]));
   });
 
-  it('slices scheduled clips with the project tempo map', async () => {
+  it('anchors scheduled source windows at the clip timeline on the project tempo map', async () => {
     store.tracks = [makeTrack(1)];
     store.tempoSegments = [
       { startPpq: 0, bpm: 120 },
@@ -201,9 +266,7 @@ describe('scheduleProjectClips with audio clips', () => {
 
     await scheduleProjectClips(handle, { loadAudioAsset: async () => makeAsset(30) });
     const channels = addClip.mock.calls[0][1] as Float32Array[];
-    expect(channels[0]).toEqual(
-      new Float32Array([6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]),
-    );
+    expect(channels[0]).toEqual(new Float32Array([6, 7, 8, 9, 10, 11, 12, 13, 14, 15]));
   });
 
   it('expands looping audio clips into repeated scheduled source windows', async () => {
@@ -397,6 +460,41 @@ describe('scheduleProjectClips with audio clips', () => {
     expect(channels[0].length).toBe(15);
     expect(timeStretch).toHaveBeenCalledTimes(1);
     expect(timeStretch.mock.calls[0][2]).toBeCloseTo(20 / 15, 10);
+  });
+
+  it('bakes looped warp occurrences as separate tempo-mapped windows', async () => {
+    store.tracks = [makeTrack(1)];
+    store.tempoSegments = [
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 2, bpm: 60 },
+    ];
+    store.clips = [
+      makeAudioClip(10, 1, {
+        startPpq: 0,
+        lengthPpq: 5,
+        sourceOffsetPpq: 0,
+        loopEnabled: true,
+        loopLengthPpq: 2,
+        fadeInPpq: 0.2,
+        fadeOutPpq: 0.2,
+        warp: { enabled: true, sourceBpm: 60 },
+      }),
+    ];
+    const { handle, addClip } = makeHandle(10);
+
+    await scheduleProjectClips(handle, { loadAudioAsset: async () => makeAsset(20) });
+
+    expect(addClip).toHaveBeenCalledTimes(3);
+    expect(addClip.mock.calls.map((call) => call[2])).toEqual([0, 2, 4]);
+    const rendered = addClip.mock.calls.map((call) => (call[1] as Float32Array[])[0]);
+    // 0..2 PPQ at 120 BPM, 2..4 at 60 BPM, then a partial 1-PPQ repeat.
+    expect(rendered.map((channel) => channel.length)).toEqual([10, 20, 10]);
+    expect(Array.from(rendered[0])).toEqual([0, 3, 5, 7, 9, 11, 13, 15, 17, 19]);
+    expect(Array.from(rendered[1])).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
+    expect(Array.from(rendered[2])).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 4.5, 0]);
+    // The clip-edge fades apply only to the first/last occurrences.
+    expect(rendered[1][0]).toBe(1);
+    expect(rendered[1].at(-1)).toBe(20);
   });
 
   it('keeps the unwarped comp path for a clip with takes and warp', async () => {

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_TIME_SIGNATURE, timeSignatureAt } from '@/project/time-signature';
+import {
+  advanceBarsPpq,
+  countInStartPpq,
+  DEFAULT_TIME_SIGNATURE,
+  isFourFourBarRange,
+  measureGrid,
+  timeSignatureAt,
+} from '@/project/time-signature';
 import type { TimeSignatureSegment } from '@/project/types';
 
 describe('timeSignatureAt', () => {
@@ -30,5 +37,29 @@ describe('timeSignatureAt', () => {
     const a = timeSignatureAt([], 0);
     a.numerator = 9;
     expect(timeSignatureAt([], 0)).toEqual({ numerator: 4, denominator: 4 });
+  });
+});
+
+describe('variable-meter measure grid', () => {
+  const meter: TimeSignatureSegment[] = [
+    { startPpq: 0, numerator: 3, denominator: 4 },
+    { startPpq: 6, numerator: 5, denominator: 8 },
+  ];
+
+  it('shares exact 3/4 to 5/8 measure boundaries', () => {
+    expect(measureGrid(meter, 0, 11)).toEqual([
+      { startPpq: 0, lengthPpq: 3, numerator: 3, denominator: 4, index: 0 },
+      { startPpq: 3, lengthPpq: 3, numerator: 3, denominator: 4, index: 1 },
+      { startPpq: 6, lengthPpq: 2.5, numerator: 5, denominator: 8, index: 2 },
+      { startPpq: 8.5, lengthPpq: 2.5, numerator: 5, denominator: 8, index: 3 },
+    ]);
+  });
+
+  it('walks count-in and generation bars over the real grid', () => {
+    expect(countInStartPpq(meter, 8.5, 1)).toBe(6);
+    expect(countInStartPpq(meter, 8.5, 2)).toBe(3);
+    expect(advanceBarsPpq(meter, 3, 3)).toBe(11);
+    expect(isFourFourBarRange(meter, 0, 1)).toBe(false);
+    expect(isFourFourBarRange([], 0, 4)).toBe(true);
   });
 });

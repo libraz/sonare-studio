@@ -13,6 +13,7 @@ import { midiLearnTargetScope, withMidiLearnTargetScope } from '@/ui/midi/midi-l
 import {
   annotationsToDocument,
   type ClipScoreAnnotations,
+  createDefaultScoreDisplaySettings,
   type DocumentNoteAnnotation,
   type DocumentScoreSettings,
 } from './annotations';
@@ -52,7 +53,8 @@ import {
   type ProjectMixerState,
 } from './mixer';
 import { getProject, useProjectStore } from './store';
-import type { ClipKind, EditorClip, EditorNote, TrackKind } from './types';
+import { normalizeProcessorMidiLearnTarget } from './target-reference-registry';
+import type { ClipExpressionCurve, ClipKind, EditorClip, EditorNote, TrackKind } from './types';
 
 /**
  * Current schema version written by {@link serializeProject}.
@@ -86,9 +88,9 @@ import type { ClipKind, EditorClip, EditorNote, TrackKind } from './types';
  *   assigns fresh ones. Both fields are omitted when empty, so every existing
  *   version-3 document remains valid and loaders that predate them simply
  *   ignore them. A lane's `param` may, besides 'faderDb'/'pan', be an
- *   insert-parameter token "insert:<index>:<paramName>" (see
- *   src/project/automation.ts) automating an insert slot of the targeted
- *   track.
+ *   stable insert-parameter token "insert-id:<processorId>:<paramName>" (see
+ *   src/project/automation.ts) automating a processor of the targeted track;
+ *   legacy positional "insert:<index>:..." tokens migrate on load.
  *   Additionally (still version 3, additive): audio tracks may carry optional
  *   `recordInputChannel`, a zero-based microphone input channel used when
  *   splitting a multi-channel input recording across armed tracks, and optional
@@ -170,7 +172,7 @@ export interface DocumentClip {
   ccLanes?: Array<{
     controller: number;
     channel: number;
-    points: Array<{ ppq: number; value: number }>;
+    points: Array<{ ppq: number; value: number; curve?: ClipExpressionCurve }>;
   }>;
   /**
    * Pitch-bend lanes (MIDI clips); omitted when the clip carries none.
@@ -178,7 +180,7 @@ export interface DocumentClip {
    */
   pitchBendLanes?: Array<{
     channel: number;
-    points: Array<{ ppq: number; value: number }>;
+    points: Array<{ ppq: number; value: number; curve?: ClipExpressionCurve }>;
   }>;
   /** Program-change lanes (MIDI clips), scoped to channel. */
   programChangeLanes?: Array<{
@@ -188,13 +190,13 @@ export interface DocumentClip {
   /** Channel pressure / monophonic aftertouch lanes (MIDI clips). */
   channelPressureLanes?: Array<{
     channel: number;
-    points: Array<{ ppq: number; value: number }>;
+    points: Array<{ ppq: number; value: number; curve?: ClipExpressionCurve }>;
   }>;
   /** Polyphonic key pressure lanes (MIDI clips), scoped to channel + pitch. */
   polyPressureLanes?: Array<{
     channel: number;
     pitch: number;
-    points: Array<{ ppq: number; value: number }>;
+    points: Array<{ ppq: number; value: number; curve?: ClipExpressionCurve }>;
   }>;
   /**
    * Display-only score annotations of this clip's notes, content-addressed
@@ -366,6 +368,8 @@ export interface ProjectDocument {
   tempoSegments: DocumentTempoSegment[];
   /** Time-signature map (may be empty = project default). */
   timeSignatures: DocumentTimeSignature[];
+  /** Length of an opening anacrusis/pickup measure in PPQ; absent = full first bar. */
+  pickupLengthPpq?: number;
   /** Tracks in display order, each with its clips and notes. */
   tracks: DocumentTrack[];
   /** Timeline markers ordered by position. */
@@ -720,6 +724,7 @@ export function serializeProject(): ProjectDocument {
       endPpq: section.endPpq,
     })),
   };
+  if (store.pickupLengthPpq > 0) doc.pickupLengthPpq = store.pickupLengthPpq;
   // Master automation lanes are omitted while there are none, so documents
   // from automation-less sessions look exactly like older ones. Numeric-target
   // lanes were captured on their track entries above (lanes whose track no
@@ -749,10 +754,54 @@ export function serializeProject(): ProjectDocument {
   if (store.projectExternalMidi !== null) {
     doc.externalMidiDefault = cloneInstrument(store.projectExternalMidi) as ExternalMidiInstrument;
   }
-  // Score display settings are likewise omitted while default.
+  // Score display/layout settings are project state. Keep the document compact
+  // by emitting only fields that differ from the defaults.
+  const scoreDefaults = createDefaultScoreDisplaySettings();
+  const scoreSettings = store.scoreDisplaySettings;
+  const scoreDocument: DocumentScoreSettings = {};
   if (store.displayTransposeSemitones !== 0) {
-    doc.score = { displayTransposeSemitones: store.displayTransposeSemitones };
+    scoreDocument.displayTransposeSemitones = store.displayTransposeSemitones;
   }
+  if (scoreSettings.displayQuantizeKey !== scoreDefaults.displayQuantizeKey) {
+    scoreDocument.displayQuantizeKey = scoreSettings.displayQuantizeKey;
+  }
+  if (scoreSettings.chordsEnabled !== scoreDefaults.chordsEnabled) {
+    scoreDocument.chordsEnabled = scoreSettings.chordsEnabled;
+  }
+  if (scoreSettings.fullScoreEnabled !== scoreDefaults.fullScoreEnabled) {
+    scoreDocument.fullScoreEnabled = scoreSettings.fullScoreEnabled;
+  }
+  if (scoreSettings.estimateFingering !== scoreDefaults.estimateFingering) {
+    scoreDocument.estimateFingering = scoreSettings.estimateFingering;
+  }
+  if (scoreSettings.pageFormat !== scoreDefaults.pageFormat) {
+    scoreDocument.pageFormat = scoreSettings.pageFormat;
+  }
+  if (scoreSettings.landscape !== scoreDefaults.landscape) {
+    scoreDocument.landscape = scoreSettings.landscape;
+  }
+  if (scoreSettings.pageMarginMm !== scoreDefaults.pageMarginMm) {
+    scoreDocument.pageMarginMm = scoreSettings.pageMarginMm;
+  }
+  if (scoreSettings.scalePercent !== scoreDefaults.scalePercent) {
+    scoreDocument.scalePercent = scoreSettings.scalePercent;
+  }
+  if (scoreSettings.spacingStaff !== scoreDefaults.spacingStaff) {
+    scoreDocument.spacingStaff = scoreSettings.spacingStaff;
+  }
+  if (scoreSettings.barsPerSystem !== scoreDefaults.barsPerSystem) {
+    scoreDocument.barsPerSystem = scoreSettings.barsPerSystem;
+  }
+  if (scoreSettings.barsPerPage !== scoreDefaults.barsPerPage) {
+    scoreDocument.barsPerPage = scoreSettings.barsPerPage;
+  }
+  if (scoreSettings.grandStaffSplitPitch !== scoreDefaults.grandStaffSplitPitch) {
+    scoreDocument.grandStaffSplitPitch = scoreSettings.grandStaffSplitPitch;
+  }
+  if (scoreSettings.viewZoom !== scoreDefaults.viewZoom) {
+    scoreDocument.viewZoom = scoreSettings.viewZoom;
+  }
+  if (Object.keys(scoreDocument).length > 0) doc.score = scoreDocument;
   // MIDI-learn CC bindings are app-level metadata; omitted while there are none.
   // Track-scoped targets embed a session track id, so they are stored with the
   // track's positional index (rebound on load); 'master' and other global
@@ -761,10 +810,12 @@ export function serializeProject(): ProjectDocument {
   if (store.midiCcBindings.size > 0) {
     const entries: DocumentMidiCcBinding[] = [];
     for (const [target, binding] of store.midiCcBindings.entries()) {
-      const scope = midiLearnTargetScope(target);
+      const normalizedTarget = normalizeProcessorMidiLearnTarget(store, target);
+      if (normalizedTarget === null) continue;
+      const scope = midiLearnTargetScope(normalizedTarget);
       if (scope === null) continue;
       const out: DocumentMidiCcBinding = {
-        target,
+        target: normalizedTarget,
         channel: binding.channel,
         controller: binding.controller,
       };
@@ -775,7 +826,7 @@ export function serializeProject(): ProjectDocument {
       if (scope !== 'master' && scope !== 'global') {
         const index = store.tracks.findIndex((track) => track.id === scope);
         if (index < 0) continue;
-        const portable = withMidiLearnTargetScope(target, index);
+        const portable = withMidiLearnTargetScope(normalizedTarget, index);
         if (portable === null) continue;
         out.target = portable;
         out.trackScoped = true;

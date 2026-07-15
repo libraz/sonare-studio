@@ -54,7 +54,7 @@ export interface Sf2Instrument {
   bank?: number;
   /** MIDI program number (0-127); omitted = program 0. */
   program?: number;
-  /** Linear master output gain (> 0); omitted = engine default (0.5). */
+  /** Linear master output gain (>= 0); omitted = engine default (0.5). */
   gain?: number;
   /** Max simultaneous voices (integer in [1, 64]); omitted = engine default (48). */
   polyphony?: number;
@@ -281,7 +281,11 @@ export function sf2PlaybackConfig(instrument: Sf2Instrument): {
   polyphony?: number;
 } {
   const config: { gain?: number; polyphony?: number } = {};
-  if (instrument.gain !== undefined) config.gain = instrument.gain;
+  // The native player reserves exact 0 as “use default 0.5”. Preserve the
+  // model/UI meaning of zero (mute) with the smallest positive JS value.
+  if (instrument.gain !== undefined) {
+    config.gain = instrument.gain === 0 ? Number.MIN_VALUE : instrument.gain;
+  }
   if (instrument.polyphony !== undefined) config.polyphony = instrument.polyphony;
   return config;
 }

@@ -7,6 +7,7 @@ import {
 } from '../store';
 import type { EditorNote, EditorNoteUpdate, NewEditorNote } from '../types';
 import { cloneNotes, execute } from './history';
+import { requireEditableClip } from './utils';
 
 /** Default note-on velocity for newly created notes. */
 const DEFAULT_VELOCITY = 96;
@@ -40,17 +41,41 @@ function validateNote(note: Omit<EditorNote, 'id'>): void {
 }
 
 /**
- * Applies a new note list to the active clip as one undoable edit: validates,
- * replaces the clip's events in the Project (setMidiEvents = one entry on the
- * project history), then refreshes the mirror using `nextNotes` as id hints.
+ * Applies a new note list and optional clip-window change as one undoable edit.
  */
-function commit(nextNotes: EditorNote[]): void {
+function commit(
+  nextNotes: EditorNote[],
+  options: {
+    writeNotes: boolean;
+    resizeLengthPpq?: number;
+    loop?: { enabled: boolean; lengthPpq?: number };
+  },
+): void {
   const store = useProjectStore();
   const project = getProject();
   if (store.clipId < 0) throw new Error('No active clip to edit');
+  const clip = requireEditableClip(store, store.clipId);
   for (const note of nextNotes) validateNote(note);
-  execute(1, () => {
-    project.setMidiEvents(store.clipId, notesToProjectEvents(nextNotes));
+  const resize =
+    options.resizeLengthPpq !== undefined &&
+    Math.abs(options.resizeLengthPpq - clip.lengthPpq) > 1e-9;
+  const loopChange =
+    options.loop !== undefined &&
+    (clip.loopEnabled !== options.loop.enabled ||
+      (options.loop.enabled &&
+        Math.abs((clip.loopLengthPpq || clip.lengthPpq) - (options.loop.lengthPpq ?? 0)) > 1e-9));
+  const projectEdits = Number(options.writeNotes) + Number(resize) + Number(loopChange);
+  if (projectEdits === 0) return;
+  execute(projectEdits, () => {
+    if (resize) project.trimClip(store.clipId, clip.startPpq, options.resizeLengthPpq as number);
+    if (loopChange) {
+      if (options.loop?.enabled) {
+        project.setClipLoop(store.clipId, 'loop', options.loop.lengthPpq);
+      } else {
+        project.setClipLoop(store.clipId, 'off');
+      }
+    }
+    if (options.writeNotes) project.setMidiEvents(store.clipId, notesToProjectEvents(nextNotes));
     store.refresh(nextNotes);
   });
 }
@@ -60,16 +85,9 @@ function selectedNotes(): EditorNote[] {
   return store.notes.filter((note) => store.selection.has(note.id));
 }
 
-/**
- * Adds a note to the active clip.
- *
- * @param input Note fields; velocity defaults to 96 and channel to 0.
- * @returns The editor id assigned to the new note.
- */
-export function addNote(input: NewEditorNote): number {
-  const store = useProjectStore();
-  const note: EditorNote = {
-    id: allocateNoteId(),
+/** Builds and validates a detached new-note payload before allocating its editor id. */
+function newNoteDraft(input: NewEditorNote): Omit<EditorNote, 'id'> {
+  const note: Omit<EditorNote, 'id'> = {
     pitch: input.pitch,
     velocity: input.velocity ?? DEFAULT_VELOCITY,
     startPpq: input.startPpq,
@@ -77,8 +95,110 @@ export function addNote(input: NewEditorNote): number {
     channel: input.channel ?? 0,
   };
   if (input.offVelocity !== undefined) note.offVelocity = input.offVelocity;
-  commit([...cloneNotes(store.notes), note]);
-  return note.id;
+  validateNote(note);
+  return note;
+}
+
+/** A mixed update/delete/add plan committed through one Project history entry. */
+export interface NoteEditPlan {
+  updates?: ReadonlyArray<EditorNoteUpdate>;
+  deleteIds?: Iterable<number>;
+  additions?: ReadonlyArray<NewEditorNote>;
+  /** Optional clip-window mutation committed in the same history entry. */
+  clipWindow?: {
+    /** New timeline length; omitted to preserve it. */
+    lengthPpq?: number;
+    /** Loop state after the edit; omitted to preserve it. */
+    loopEnabled?: boolean;
+    /** Required positive loop length when enabling loop. */
+    loopLengthPpq?: number;
+  };
+}
+
+/**
+ * Applies a complete note edit plan as one failure-atomic undo command.
+ * Validation and diff construction finish before the Project is touched, so a
+ * bad 16th addition cannot leave the first 15 notes or any update/delete live.
+ *
+ * @returns Editor ids allocated for additions, in input order.
+ */
+export function applyNoteEdits(plan: NoteEditPlan): number[] {
+  const store = useProjectStore();
+  if (store.clipId < 0) throw new Error('No active clip to edit');
+  const clip = requireEditableClip(store, store.clipId);
+  const lengthPpq = plan.clipWindow?.lengthPpq;
+  if (lengthPpq !== undefined && (!Number.isFinite(lengthPpq) || lengthPpq <= 0)) {
+    throw new RangeError(`Clip length must be finite and > 0, got ${lengthPpq}`);
+  }
+  const loopEnabled = plan.clipWindow?.loopEnabled;
+  const loopLengthPpq = plan.clipWindow?.loopLengthPpq;
+  if (
+    loopEnabled === true &&
+    (loopLengthPpq === undefined || !Number.isFinite(loopLengthPpq) || loopLengthPpq <= 0)
+  ) {
+    throw new RangeError(`Loop length must be finite and > 0, got ${loopLengthPpq}`);
+  }
+  const updates = new Map((plan.updates ?? []).map((update) => [update.id, update]));
+  const drop = new Set(plan.deleteIds ?? []);
+  const additionDrafts = (plan.additions ?? []).map(newNoteDraft);
+  let notesChanged = additionDrafts.length > 0;
+  const next = store.notes.flatMap((note): EditorNote[] => {
+    if (drop.has(note.id)) {
+      notesChanged = true;
+      return [];
+    }
+    const update = updates.get(note.id);
+    if (!update) return [{ ...note }];
+    notesChanged = true;
+    const merged: EditorNote = {
+      ...note,
+      pitch: update.pitch ?? note.pitch,
+      velocity: update.velocity ?? note.velocity,
+      startPpq: update.startPpq ?? note.startPpq,
+      durationPpq: update.durationPpq ?? note.durationPpq,
+      channel: update.channel ?? note.channel,
+    };
+    if (update.offVelocity !== undefined) merged.offVelocity = update.offVelocity;
+    validateNote(merged);
+    return [merged];
+  });
+  const windowChanged =
+    (lengthPpq !== undefined && Math.abs(lengthPpq - clip.lengthPpq) > 1e-9) ||
+    (loopEnabled !== undefined &&
+      (loopEnabled !== clip.loopEnabled ||
+        (loopEnabled &&
+          Math.abs((clip.loopLengthPpq || clip.lengthPpq) - (loopLengthPpq ?? 0)) > 1e-9)));
+  if (!notesChanged && !windowChanged) return [];
+  const additions = additionDrafts.map((draft) => ({ ...draft, id: allocateNoteId() }));
+  commit([...next, ...additions], {
+    writeNotes: notesChanged,
+    ...(lengthPpq === undefined ? {} : { resizeLengthPpq: lengthPpq }),
+    ...(loopEnabled === undefined
+      ? {}
+      : {
+          loop: {
+            enabled: loopEnabled,
+            ...(loopLengthPpq === undefined ? {} : { lengthPpq: loopLengthPpq }),
+          },
+        }),
+  });
+  return additions.map((note) => note.id);
+}
+
+/** Adds several notes in one validation/commit/undo transaction. */
+export function addNotes(inputs: ReadonlyArray<NewEditorNote>): number[] {
+  return applyNoteEdits({ additions: inputs });
+}
+
+/**
+ * Adds a note to the active clip.
+ *
+ * @param input Note fields; velocity defaults to 96 and channel to 0.
+ * @returns The editor id assigned to the new note.
+ */
+export function addNote(input: NewEditorNote): number {
+  const [id] = addNotes([input]);
+  return id;
 }
 
 /**
@@ -108,7 +228,7 @@ export function updateNotes(updates: ReadonlyArray<EditorNoteUpdate>): void {
     return merged;
   });
   if (!changed) return;
-  commit(next);
+  commit(next, { writeNotes: true });
 }
 
 /**
@@ -122,7 +242,7 @@ export function deleteNotes(ids: Iterable<number>): void {
   const drop = new Set(ids);
   const next = store.notes.filter((note) => !drop.has(note.id)).map((note) => ({ ...note }));
   if (next.length === store.notes.length) return;
-  commit(next);
+  commit(next, { writeNotes: true });
 }
 
 /** Duplicates the selected notes by a PPQ offset as one undoable edit. */
@@ -135,7 +255,7 @@ export function duplicateSelection(deltaPpq: number): number[] {
     id: allocateNoteId(),
     startPpq: Math.max(0, note.startPpq + deltaPpq),
   }));
-  commit([...cloneNotes(store.notes), ...copies]);
+  commit([...cloneNotes(store.notes), ...copies], { writeNotes: true });
   setSelection(copies.map((note) => note.id));
   return copies.map((note) => note.id);
 }
@@ -151,7 +271,7 @@ export function repeatSelection(count: number, stepPpq: number): number[] {
       copies.push({ ...note, id: allocateNoteId(), startPpq: note.startPpq + stepPpq * i });
     }
   }
-  commit([...cloneNotes(store.notes), ...copies]);
+  commit([...cloneNotes(store.notes), ...copies], { writeNotes: true });
   setSelection(copies.map((note) => note.id));
   return copies.map((note) => note.id);
 }
@@ -210,7 +330,7 @@ export function mergeSelection(): void {
   const next = store.notes
     .filter((note) => !drop.has(note.id))
     .map((note) => (selectedIds.has(note.id) ? (merged.get(note.id) ?? { ...note }) : { ...note }));
-  commit(next);
+  commit(next, { writeNotes: true });
   setSelection([...keep].filter((id) => !drop.has(id)));
 }
 
@@ -237,7 +357,7 @@ export function cleanupOverlaps(): void {
   const next = store.notes
     .filter((note) => !drop.has(note.id))
     .map((note) => updates.get(note.id) ?? { ...note });
-  commit(next);
+  commit(next, { writeNotes: true });
   setSelection([...store.selection].filter((id) => !drop.has(id)));
 }
 
@@ -275,7 +395,7 @@ export function splitNote(noteId: number, splitPpq: number): number {
     note.id === noteId ? { ...note, durationPpq: splitPpq - note.startPpq } : note,
   );
   next.push(right);
-  commit(next);
+  commit(next, { writeNotes: true });
   return rightId;
 }
 
@@ -328,7 +448,7 @@ export function quantizeSelection(strength = 1): void {
     changed = true;
     return { ...note, startPpq: Math.max(0, snapped) };
   });
-  if (changed) commit(next);
+  if (changed) commit(next, { writeNotes: true });
 }
 
 /** Clamps a value to an inclusive integer range. */
@@ -363,7 +483,7 @@ export function transposeSelection(semitones: number): void {
   const next = store.notes.map((note) =>
     store.selection.has(note.id) ? { ...note, pitch: note.pitch + applied } : { ...note },
   );
-  commit(next);
+  commit(next, { writeNotes: true });
 }
 
 /**
@@ -388,7 +508,7 @@ export function snapSelectionToScale(): void {
     changed = true;
     return { ...note, pitch: snapped };
   });
-  if (changed) commit(next);
+  if (changed) commit(next, { writeNotes: true });
 }
 
 /** Selects notes matching any pitch in the current selection. */
@@ -467,14 +587,14 @@ export function quantizeSelectionLengths(strength = 1): void {
   let changed = false;
   const next = store.notes.map((note) => {
     if (!store.selection.has(note.id)) return { ...note };
-    const target = Math.max(gridPpq, Math.round(note.durationPpq / gridPpq) * gridPpq);
+    const target = Math.max(MIN_DURATION_PPQ, Math.round(note.durationPpq / gridPpq) * gridPpq);
     const snapped = note.durationPpq + (target - note.durationPpq) * strength;
-    const rounded = Math.max(1, Math.round(snapped));
-    if (rounded === note.durationPpq) return { ...note };
+    const durationPpq = Math.max(MIN_DURATION_PPQ, snapped);
+    if (durationPpq === note.durationPpq) return { ...note };
     changed = true;
-    return { ...note, durationPpq: rounded };
+    return { ...note, durationPpq };
   });
-  if (changed) commit(next);
+  if (changed) commit(next, { writeNotes: true });
 }
 
 /** Quantizes selected note ends to the snap grid as one undoable edit. */
@@ -576,7 +696,7 @@ export function nudgeSelectionVelocity(delta: number): void {
     changed = true;
     return { ...note, velocity };
   });
-  if (changed) commit(next);
+  if (changed) commit(next, { writeNotes: true });
 }
 
 /**
@@ -604,5 +724,5 @@ export function humanizeSelectionVelocity(
     changed = true;
     return { ...note, velocity };
   });
-  if (changed) commit(next);
+  if (changed) commit(next, { writeNotes: true });
 }

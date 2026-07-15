@@ -38,6 +38,28 @@ export function requireClip(store: ReturnType<typeof useProjectStore>, clipId: n
   return clip;
 }
 
+/** Throws when a track's baked render currently owns playback of its content. */
+export function requireEditableTrack(
+  store: ReturnType<typeof useProjectStore>,
+  trackId: number,
+): EditorTrack {
+  const track = requireTrack(store, trackId);
+  if (track.frozen !== undefined) {
+    throw new Error(`Track ${trackId} is frozen; unfreeze it before editing its clips or notes`);
+  }
+  return track;
+}
+
+/** Returns a clip only when its owning track is not frozen. */
+export function requireEditableClip(
+  store: ReturnType<typeof useProjectStore>,
+  clipId: number,
+): EditorClip {
+  const clip = requireClip(store, clipId);
+  requireEditableTrack(store, clip.trackId);
+  return clip;
+}
+
 /**
  * Copies app-level audio metadata (kind, asset reference) from a source clip
  * onto a derived clip mirror entry (duplicate/split results). Fades are not

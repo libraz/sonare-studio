@@ -1,6 +1,12 @@
 import { annotationsFromDocument, type ScoreAnnotations } from './annotations';
 import { sanitizeCompSegments } from './comping';
-import { isValidChannel, isValidController, sanitizeCcPoints } from './midi-cc';
+import {
+  isValidChannel,
+  isValidController,
+  sanitizeCcPoints,
+  sanitizePitchBendPoints,
+  sanitizePressurePoints,
+} from './midi-cc';
 import type { DocumentClip } from './serialization';
 import type {
   ClipCcLane,
@@ -104,21 +110,10 @@ export function applyDocumentClipMetadata(
       const lanes: ClipPitchBendLane[] = [];
       for (const lane of meta.pitchBendLanes) {
         if (!isValidChannel(lane.channel)) continue;
-        const points = (Array.isArray(lane.points) ? lane.points : [])
-          .map((point) => ({
-            ppq: Number(point.ppq),
-            value: Math.round(Number(point.value)),
-          }))
-          .filter(
-            (point) =>
-              Number.isFinite(point.ppq) &&
-              point.ppq >= 0 &&
-              point.ppq <= clip.lengthPpq &&
-              Number.isInteger(point.value) &&
-              point.value >= 0 &&
-              point.value <= 16383,
-          )
-          .sort((a, b) => a.ppq - b.ppq);
+        const points = sanitizePitchBendPoints(
+          Array.isArray(lane.points) ? lane.points : [],
+          clip.lengthPpq,
+        );
         if (points.length > 0) lanes.push({ channel: lane.channel, points });
       }
       if (lanes.length > 0) {
@@ -164,21 +159,10 @@ export function applyDocumentClipMetadata(
       const lanes: ClipChannelPressureLane[] = [];
       for (const lane of meta.channelPressureLanes) {
         if (!isValidChannel(lane.channel)) continue;
-        const points = (Array.isArray(lane.points) ? lane.points : [])
-          .map((point) => ({
-            ppq: Number(point.ppq),
-            value: Math.round(Number(point.value)),
-          }))
-          .filter(
-            (point) =>
-              Number.isFinite(point.ppq) &&
-              point.ppq >= 0 &&
-              point.ppq <= clip.lengthPpq &&
-              Number.isInteger(point.value) &&
-              point.value >= 0 &&
-              point.value <= 127,
-          )
-          .sort((a, b) => a.ppq - b.ppq);
+        const points = sanitizePressurePoints(
+          Array.isArray(lane.points) ? lane.points : [],
+          clip.lengthPpq,
+        );
         if (points.length > 0) lanes.push({ channel: lane.channel, points });
       }
       if (lanes.length > 0) {
@@ -196,21 +180,10 @@ export function applyDocumentClipMetadata(
         if (!isValidChannel(lane.channel)) continue;
         const pitch = Math.round(Number(lane.pitch));
         if (!Number.isInteger(pitch) || pitch < 0 || pitch > 127) continue;
-        const points = (Array.isArray(lane.points) ? lane.points : [])
-          .map((point) => ({
-            ppq: Number(point.ppq),
-            value: Math.round(Number(point.value)),
-          }))
-          .filter(
-            (point) =>
-              Number.isFinite(point.ppq) &&
-              point.ppq >= 0 &&
-              point.ppq <= clip.lengthPpq &&
-              Number.isInteger(point.value) &&
-              point.value >= 0 &&
-              point.value <= 127,
-          )
-          .sort((a, b) => a.ppq - b.ppq);
+        const points = sanitizePressurePoints(
+          Array.isArray(lane.points) ? lane.points : [],
+          clip.lengthPpq,
+        );
         if (points.length > 0) lanes.push({ channel: lane.channel, pitch, points });
       }
       if (lanes.length > 0) {

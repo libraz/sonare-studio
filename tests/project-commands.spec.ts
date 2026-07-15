@@ -6,7 +6,9 @@ import {
   addMidiClip,
   addMixerBus,
   addNote,
+  addNotes,
   addTrack,
+  applyNoteEdits,
   bakeClipMidiFx,
   canRedo,
   canUndo,
@@ -15,12 +17,14 @@ import {
   clearProjectChords,
   clearTrackMidiFx,
   collectHistoryReferencedMediaIds,
+  configureHistoryByteBudget,
   deleteClip,
   detectChordsForClip,
   duplicateClip,
   duplicateSelection,
   fadeSelectionVelocity,
   glueMidiClips,
+  historyBudgetStats,
   humanizeSelectionVelocity,
   legatoSelection,
   mergeSelection,
@@ -457,6 +461,23 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(() => moveClip(clipId, 0, 9999)).toThrow(RangeError);
     });
 
+    it('moveClip rejects MIDI clips on non-MIDI tracks without mutating history', () => {
+      const clipId = store.clipId;
+      const audioTrackId = addTrack({ name: 'Audio', kind: 'audio' });
+      const auxTrackId = addTrack({ name: 'Return', kind: 'aux' });
+      const groupTrackId = addTrack({ name: 'Group', kind: 'group' });
+      clearHistory();
+
+      expect(() => moveClip(clipId, 4, audioTrackId)).toThrow(/Cannot move midi clip/);
+      expect(() => moveClip(clipId, 4, auxTrackId)).toThrow(/Cannot move midi clip/);
+      expect(() => moveClip(clipId, 4, groupTrackId)).toThrow(/Cannot move midi clip/);
+      expect(store.clips.find((clip) => clip.id === clipId)).toMatchObject({
+        trackId: store.tracks[0].id,
+        startPpq: 0,
+      });
+      expect(canUndo()).toBe(false);
+    });
+
     it('duplicateClip copies notes and the display name; undo removes the copy', () => {
       const clipId = store.clipId;
       addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
@@ -474,6 +495,7 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       );
       const copyId = duplicateClip(clipId, 32);
       const copy = store.clips.find((c) => c.id === copyId);
+      expect(store.clipId).toBe(copyId);
       expect(copy).toMatchObject({ name: 'Riff', startPpq: 32 });
       expect(copy?.notes).toHaveLength(1);
       expect(copy?.notes[0]).toMatchObject({ pitch: 60 });
@@ -492,6 +514,24 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
 
       expect(undo()).toBe(true);
       expect(store.clips.some((c) => c.id === copyId)).toBe(false);
+      expect(store.clipId).toBe(clipId);
+    });
+
+    it('keeps frozen track content read-only until it is unfrozen', () => {
+      const trackId = store.tracks[0].id;
+      const clipId = store.clipId;
+      setTrackFrozen(trackId, { assetId: 'frozen-render' });
+      clearHistory();
+
+      expect(() => addNote({ pitch: 60, startPpq: 0, durationPpq: 1 })).toThrow(/unfreeze/i);
+      expect(() => moveClip(clipId, 4)).toThrow(/unfreeze/i);
+      expect(() => duplicateClip(clipId, 8)).toThrow(/unfreeze/i);
+      expect(() => deleteClip(clipId)).toThrow(/unfreeze/i);
+      expect(() => addMidiClip({ trackId, startPpq: 8, lengthPpq: 4 })).toThrow(/unfreeze/i);
+      expect(canUndo()).toBe(false);
+
+      setTrackFrozen(trackId, null);
+      expect(() => moveClip(clipId, 4)).not.toThrow();
     });
 
     it('splitClip partitions notes between the halves and is undoable', () => {
@@ -608,6 +648,28 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(store.clips.some((clip) => clip.id === firstId)).toBe(true);
       expect(store.clips.some((clip) => clip.id === secondId)).toBe(true);
       expect(store.clips.some((clip) => clip.id === joinedId)).toBe(false);
+    });
+
+    it('glueMidiClips projects trimmed source notes into the audible clip window', () => {
+      const trackId = store.tracks[0].id;
+      const firstId = store.clipId;
+      addNote({ pitch: 48, startPpq: 0.5, durationPpq: 0.25 });
+      addNote({ pitch: 60, startPpq: 2.5, durationPpq: 0.5 });
+      trimClip(firstId, 2, 2);
+
+      const secondId = addMidiClip({ trackId, startPpq: 4, lengthPpq: 2 });
+      setActiveClip(secondId);
+      addNote({ pitch: 64, startPpq: 0.5, durationPpq: 0.5 });
+
+      const joinedId = glueMidiClips([firstId, secondId]);
+      expect(
+        store.clips
+          .find((clip) => clip.id === joinedId)
+          ?.notes.map((note) => ({ pitch: note.pitch, startPpq: note.startPpq })),
+      ).toEqual([
+        { pitch: 60, startPpq: 0.5 },
+        { pitch: 64, startPpq: 2.5 },
+      ]);
     });
 
     it('glueMidiClips flattens looping MIDI clips into explicit repeats', () => {
@@ -1052,6 +1114,53 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       return store.notes.find((n) => n.id === id);
     }
 
+    it('commits update + delete + 16 additions as one validated undo entry', () => {
+      const [updateId, deleteId] = addNotes([
+        { pitch: 60, startPpq: 0, durationPpq: 1 },
+        { pitch: 62, startPpq: 1, durationPpq: 1 },
+      ]);
+      clearHistory();
+      const additions = Array.from({ length: 16 }, (_, index) => ({
+        pitch: 64 + (index % 12),
+        startPpq: 2 + index * 0.25,
+        durationPpq: 0.25,
+      }));
+
+      const addedIds = applyNoteEdits({
+        updates: [{ id: updateId, velocity: 48 }],
+        deleteIds: [deleteId],
+        additions,
+      });
+
+      expect(addedIds).toHaveLength(16);
+      expect(store.notes).toHaveLength(17);
+      expect(noteById(updateId)?.velocity).toBe(48);
+      expect(undo()).toBe(true);
+      expect(store.notes).toHaveLength(2);
+      expect(noteById(updateId)?.velocity).toBe(96);
+      expect(noteById(deleteId)).toBeDefined();
+      expect(canUndo()).toBe(false);
+      expect(redo()).toBe(true);
+      expect(store.notes).toHaveLength(17);
+    });
+
+    it('validates every bulk note before changing the clip', () => {
+      const [id] = addNotes([{ pitch: 60, startPpq: 0, durationPpq: 1 }]);
+      clearHistory();
+      const before = store.notes.map((note) => ({ ...note }));
+      const additions = Array.from({ length: 16 }, (_, index) => ({
+        pitch: index === 15 ? 128 : 64,
+        startPpq: index,
+        durationPpq: 0.25,
+      }));
+
+      expect(() =>
+        applyNoteEdits({ updates: [{ id, velocity: 40 }], deleteIds: [id], additions }),
+      ).toThrow(/pitch/);
+      expect(store.notes).toEqual(before);
+      expect(undo()).toBe(false);
+    });
+
     it('transposes the selection and leaves unselected notes alone', () => {
       const [a, b, c] = threeNotesSelectFirstTwo();
       transposeSelection(12);
@@ -1078,6 +1187,14 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       quantizeSelectionLengths();
       // duration 2 -> nearest multiple of 4, min one grid step = 4.
       expect(noteById(a)?.durationPpq).toBe(4);
+    });
+
+    it('quantizes sub-PPQ note lengths without rounding them up to one PPQ', () => {
+      const id = addNote({ pitch: 60, startPpq: 0, durationPpq: 0.3 });
+      setSelection([id]);
+      store.snapDivision = 16; // grid = 0.25 PPQ
+      quantizeSelectionLengths();
+      expect(noteById(id)?.durationPpq).toBe(0.25);
     });
 
     it('quantizes note ends to the snap grid', () => {
@@ -1596,6 +1713,34 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
   });
 
   describe('mixed undo across project-backed and app-only commands', () => {
+    it('structurally shares large unchanged note mirrors and enforces the byte budget', () => {
+      addNotes(
+        Array.from({ length: 10_000 }, (_, index) => ({
+          pitch: 48 + (index % 24),
+          velocity: 96,
+          startPpq: index * 0.25,
+          durationPpq: 0.2,
+          channel: 0,
+        })),
+      );
+      clearHistory();
+      setTrackColor(store.tracks[0].id, '#112233');
+      const oneEntry = historyBudgetStats();
+      expect(oneEntry.undoEntries).toBe(1);
+      // The unchanged 10k-note list is retained once across before/after.
+      expect(oneEntry.bytes).toBeLessThan(4 * 1024 * 1024);
+
+      clearHistory();
+      configureHistoryByteBudget(oneEntry.bytes * 2);
+      for (let index = 0; index < 10; index++) {
+        setTrackColor(store.tracks[0].id, `#${(index + 1).toString(16).padStart(6, '0')}`);
+      }
+      const bounded = historyBudgetStats();
+      expect(bounded.bytes).toBeLessThanOrEqual(bounded.budgetBytes);
+      expect(bounded.undoEntries).toBeLessThan(10);
+      clearHistory();
+    });
+
     it('replays each command kind in reverse order', () => {
       const trackId = store.tracks[0].id;
       const noteId = addNote({ pitch: 60, startPpq: 0, durationPpq: 1 }); // project edit

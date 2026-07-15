@@ -9,9 +9,9 @@
  * usable component activations; it never replaces HPSS with a reconstructed
  * waveform.
  *
- * Like {@link analyzeAudioClipChords} and {@link analyzeAudioClipMelody} the
- * window is cut with the same fixed-tempo slice as playback, so the stems line
- * up exactly under the source clip. Stereo clips are separated as linked
+ * The separator input is rendered through the same audible clip pipeline as
+ * live playback and export, so take/comp, loop, warp, fades and tempo-map
+ * changes are already baked into the clip-local window. Stereo clips are separated as linked
  * mid/side channels before being reconstructed to left/right, avoiding the
  * phase instability that comes from running unrelated L/R mono separations.
  * Other channel layouts fall back to independent mono channels.
@@ -20,7 +20,12 @@
  */
 
 import type { LoadedAudioAsset } from '@/persistence/assets';
-import { sliceAudioClipWindow } from './scheduling';
+import {
+  type AudibleAudioClipFields,
+  type AudioClipSliceTempo,
+  renderAudibleAudioClipWindow,
+} from './scheduling';
+import type { StretchFn } from './warp';
 
 /** The three bands `hpssWithResidual` separates a signal into. */
 export type StemKind = 'harmonic' | 'percussive' | 'residual';
@@ -102,6 +107,8 @@ export interface AudioStemsDeps {
   separateStems: AudioStemSeparator;
   /** Optional enhancement/repair functions. */
   enhancers?: AudioStemEnhancers;
+  /** Warp stretch seam override (tests); production shares the playback wasm seam. */
+  stretch?: StretchFn;
 }
 
 /** One separated stem ready to be stored as an asset and laid down as a clip. */
@@ -307,26 +314,24 @@ function leftRightFromMidSide(mid: Float32Array, side: Float32Array): [Float32Ar
  * non-positive, or the source window is empty.
  *
  * @param clip Audio clip to split (needs `assetId`).
- * @param tempoBpm Constant tempo (> 0) used for the playback-matching slice.
+ * @param tempo Project tempo/map used by the playback-matching renderer.
  * @param deps Injected asset loader and stem separator.
  * @returns One {@link SeparatedStem} per band (always three when non-empty), in
  *   {@link STEM_KINDS} order.
  */
 export async function separateAudioClipStems(
-  clip: { assetId?: string; lengthPpq: number; sourceOffsetPpq: number },
-  tempoBpm: number,
+  clip: Omit<AudibleAudioClipFields, 'startPpq'> & { startPpq?: number },
+  tempo: AudioClipSliceTempo,
   deps: AudioStemsDeps,
 ): Promise<SeparatedStem[]> {
-  if (clip.assetId === undefined || !(tempoBpm > 0)) return [];
-  const asset = await deps.loadAudioAsset(clip.assetId);
-  const sampleRate = asset.meta.sampleRate;
-  const window = sliceAudioClipWindow(
-    asset.channels,
-    sampleRate,
-    clip.sourceOffsetPpq,
-    clip.lengthPpq,
-    tempoBpm,
+  const rendered = await renderAudibleAudioClipWindow(
+    { ...clip, startPpq: clip.startPpq ?? 0 },
+    tempo,
+    deps.loadAudioAsset,
+    { stretch: deps.stretch },
   );
+  if (!rendered) return [];
+  const { channels: window, sampleRate } = rendered;
   if (window.length === 0 || (window[0]?.length ?? 0) === 0) return [];
 
   const harmonic: Float32Array[] = [];

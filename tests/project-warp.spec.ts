@@ -4,9 +4,13 @@ import type { WarpAnchor } from '@/project/types';
 import {
   bakeWarpedClip,
   clearWarpBakeCache,
+  configureWarpBakeCacheByteBudget,
+  DEFAULT_WARP_CACHE_BYTE_BUDGET,
+  projectWarpMapDesc,
   type StretchFn,
   sanitizeWarpAnchors,
   type WarpableClipFields,
+  warpBakeCacheStats,
   warpSegments,
 } from '@/project/warp';
 
@@ -209,9 +213,39 @@ describe('warpSegments', () => {
   });
 });
 
+describe('projectWarpMapDesc', () => {
+  it('adds the trimmed source offset to clip-relative user anchors', () => {
+    const clip = {
+      id: 7,
+      startPpq: 0,
+      lengthPpq: 4,
+      sourceOffsetPpq: 2,
+      warp: {
+        enabled: true,
+        sourceBpm: 120,
+        anchors: [{ ppq: 2, sourceSeconds: 0.5 }],
+      },
+    };
+    const desc = projectWarpMapDesc(clip, normalizeTempoMap([{ startPpq: 0, bpm: 120 }]), 10);
+    const segments = warpSegments(clip);
+
+    expect(desc?.anchors).toEqual([
+      { warpSample: 0, sourceSample: 10 },
+      { warpSample: 10, sourceSample: 15 },
+      { warpSample: 20, sourceSample: 30 },
+    ]);
+    expect(desc?.anchors.map((anchor) => anchor.sourceSample)).toEqual([
+      Math.round(segments[0].sourceStartSeconds * 10),
+      Math.round((segments[0].sourceStartSeconds + segments[0].sourceLengthSeconds) * 10),
+      Math.round((segments[1].sourceStartSeconds + segments[1].sourceLengthSeconds) * 10),
+    ]);
+  });
+});
+
 describe('bakeWarpedClip', () => {
   beforeEach(() => {
     clearWarpBakeCache();
+    configureWarpBakeCacheByteBudget(DEFAULT_WARP_CACHE_BYTE_BUDGET);
     wasmStretchFns.noteStretch.mockClear();
     wasmStretchFns.timeStretch.mockClear();
   });
@@ -418,5 +452,42 @@ describe('bakeWarpedClip', () => {
     expect(second).not.toBe(first);
     expect(second).toEqual(first);
     expect(stretch).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retain bakes that exceed the byte budget', async () => {
+    configureWarpBakeCacheByteBudget(0);
+    const stretch = makeFakeStretch();
+    const channels = [ramp(40)];
+
+    await bakeWarpedClip(channels, 10, makeWarpClip(), 120, {
+      cacheKey: 'uncached',
+      stretch,
+    });
+    await bakeWarpedClip(channels, 10, makeWarpClip(), 120, {
+      cacheKey: 'uncached',
+      stretch,
+    });
+
+    expect(stretch).toHaveBeenCalledTimes(2);
+    expect(warpBakeCacheStats()).toMatchObject({ entries: 0, bytes: 0 });
+  });
+
+  it('evicts warp bakes in least-recently-used order within the byte budget', async () => {
+    // One mono bake is 20 float samples = 80 bytes.
+    configureWarpBakeCacheByteBudget(160);
+    const stretch = makeFakeStretch();
+    const channels = [ramp(40)];
+    const bake = (cacheKey: string) =>
+      bakeWarpedClip(channels, 10, makeWarpClip(), 120, { cacheKey, stretch });
+
+    await bake('asset-a');
+    await bake('asset-b');
+    await bake('asset-a');
+    await bake('asset-c');
+
+    const keys = warpBakeCacheStats().keys;
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toContain('asset-a');
+    expect(keys[1]).toContain('asset-c');
   });
 });

@@ -1,5 +1,6 @@
-import { assertCanAddEngineBus, cloneStrip, type MixerStrip } from '../mixer';
+import { assertCanAddEngineBus } from '../mixer';
 import { getProject, useProjectStore } from '../store';
+import { pruneTrackTargetReferences } from '../target-reference-registry';
 import { type EditorTrack, TRACK_COLOR_PALETTE, type TrackKind } from '../types';
 import { execute } from './history';
 import { requireTrack } from './utils';
@@ -79,53 +80,13 @@ export function applyTrackRemoval(
 ): void {
   const project = getProject();
   project.removeTrack(trackId);
-  store.automationLanes = store.automationLanes.filter((lane) => lane.target !== trackId);
+  pruneTrackTargetReferences(store, trackId);
   applyTrackRemovalMirror(store, trackId);
   store.refresh();
 }
 
 /** Mirror-only cleanup shared by {@link applyTrackRemoval} (no wasm edits). */
 function applyTrackRemovalMirror(store: ReturnType<typeof useProjectStore>, trackId: number): void {
-  // Drop group memberships pointing at a removed group and sidechain keys
-  // sourced from the removed track.
-  store.tracks = store.tracks.map((track) => {
-    let next = track;
-    if (track.groupId === trackId) {
-      next = { ...next };
-      delete next.groupId;
-    }
-    if (track.mixer?.inserts.some((slot) => slot.sidechainSourceTrackId === trackId)) {
-      next = next === track ? { ...next } : next;
-      next.mixer = {
-        ...cloneStrip(track.mixer as MixerStrip),
-        inserts: (track.mixer?.inserts ?? []).map((slot) => {
-          if (slot.sidechainSourceTrackId !== trackId) return { ...slot };
-          const cleared = { ...slot };
-          delete cleared.sidechainSourceTrackId;
-          return cleared;
-        }),
-      };
-    }
-    return next;
-  });
-  let mixerChanged = false;
-  const buses = store.mixer.buses.map((bus) => {
-    if (!bus.strip?.inserts.some((slot) => slot.sidechainSourceTrackId === trackId)) return bus;
-    mixerChanged = true;
-    return {
-      ...bus,
-      strip: {
-        ...cloneStrip(bus.strip),
-        inserts: bus.strip.inserts.map((slot) => {
-          if (slot.sidechainSourceTrackId !== trackId) return { ...slot };
-          const cleared = { ...slot };
-          delete cleared.sidechainSourceTrackId;
-          return cleared;
-        }),
-      },
-    };
-  });
-  if (mixerChanged) store.mixer = { ...store.mixer, buses };
   if (store.activeTrackId === trackId) {
     store.activeTrackId = -1;
     store.clipId = -1;

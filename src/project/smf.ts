@@ -6,6 +6,7 @@ import {
   pairEventsIntoNotes,
   type SerializedMidiEvent,
 } from './midi-events';
+import { audibleMidiProjector } from './midi-projection';
 import {
   type DocumentClip,
   type DocumentMarker,
@@ -655,40 +656,59 @@ function clipEvents(clip: DocumentClip, wasm: WasmModule): ProjectMidiEvent[] {
     DEFAULT_CLIP_LENGTH_PPQ,
     finiteNonNegative(clip.lengthPpq, DEFAULT_CLIP_LENGTH_PPQ),
   );
-  const sourceOffsetPpq = finiteNonNegative(clip.sourceOffsetPpq);
-  const windowEndPpq = sourceOffsetPpq + lengthPpq;
-  const notes = clip.notes
-    .filter((note) => note.startPpq >= sourceOffsetPpq && note.startPpq < windowEndPpq)
-    .map((note) => {
-      const startPpq = finiteNonNegative(note.startPpq - sourceOffsetPpq);
-      const maxDurationPpq = Math.max(0, lengthPpq - startPpq);
-      return {
-        pitch: clampInt(note.pitch, 0, 127),
-        velocity: clampInt(note.velocity, 0, 127),
-        startPpq,
-        durationPpq: Math.min(
-          maxDurationPpq,
-          finitePositive(note.durationPpq, DEFAULT_CLIP_LENGTH_PPQ),
-        ),
-        channel: clampInt(note.channel, 0, 15),
-        ...(note.offVelocity !== undefined
-          ? { offVelocity: clampInt(note.offVelocity, 0, 127) }
-          : {}),
-      };
-    })
-    .filter((note) => note.durationPpq > 0);
+  const exportClip = {
+    ...clip,
+    lengthPpq,
+    sourceOffsetPpq: finiteNonNegative(clip.sourceOffsetPpq),
+    notes: clip.notes.map((note) => ({
+      ...note,
+      startPpq: finiteNonNegative(note.startPpq),
+      durationPpq: finitePositive(note.durationPpq, DEFAULT_CLIP_LENGTH_PPQ),
+    })),
+  };
+  // SMF has no clip-loop construct. Materialize every audible occurrence,
+  // including left-trimmed sustains and a clipped final partial repeat.
+  const notes = audibleMidiProjector(exportClip).map((occurrence) => ({
+    pitch: clampInt(occurrence.note.pitch, 0, 127),
+    velocity: clampInt(occurrence.note.velocity, 0, 127),
+    startPpq: occurrence.clipStartPpq,
+    durationPpq: occurrence.durationPpq,
+    channel: clampInt(occurrence.note.channel, 0, 15),
+    ...(occurrence.note.offVelocity !== undefined
+      ? { offVelocity: clampInt(occurrence.note.offVelocity, 0, 127) }
+      : {}),
+  }));
   const events: ProjectMidiEvent[] = [...notesToProjectMidiEvents(notes, wasm)];
+  const loopLength = finiteNonNegative(clip.loopLengthPpq);
+  const looping = clip.loopEnabled === true && loopLength > 0 && loopLength < lengthPpq;
+  const expressionLength = looping ? loopLength : lengthPpq;
+  const repeatExpression = <T extends { ppq: number }>(points: ReadonlyArray<T>): T[] => {
+    if (!looping) return [...points];
+    const base = points.filter((point) => point.ppq >= 0 && point.ppq < expressionLength);
+    const repeated: T[] = [];
+    for (let offset = 0; offset < lengthPpq; offset += expressionLength) {
+      for (const point of base) {
+        const ppq = offset + point.ppq;
+        if (ppq <= lengthPpq) repeated.push({ ...point, ppq });
+      }
+    }
+    return repeated;
+  };
   for (const lane of clip.ccLanes ?? []) {
     const channel = clampInt(lane.channel, 0, 15);
     const controller = clampInt(lane.controller, 0, 127);
-    for (const point of expandExpressionPoints(lane.points, lengthPpq, 127)) {
+    for (const point of repeatExpression(
+      expandExpressionPoints(lane.points, expressionLength, 127),
+    )) {
       const ppq = finiteNonNegative(point.ppq, -1);
       events.push(wasm.Project.midiCc(ppq, 0, channel, controller, clampInt(point.value, 0, 127)));
     }
   }
   for (const lane of clip.pitchBendLanes ?? []) {
     const channel = clampInt(lane.channel, 0, 15);
-    for (const point of expandExpressionPoints(lane.points, lengthPpq, MIDI_PITCH_BEND_MAX)) {
+    for (const point of repeatExpression(
+      expandExpressionPoints(lane.points, expressionLength, MIDI_PITCH_BEND_MAX),
+    )) {
       const ppq = finiteNonNegative(point.ppq, -1);
       events.push(
         wasm.Project.midiPitchBend(ppq, 0, channel, clampInt(point.value, 0, MIDI_PITCH_BEND_MAX)),
@@ -697,14 +717,16 @@ function clipEvents(clip: DocumentClip, wasm: WasmModule): ProjectMidiEvent[] {
   }
   for (const lane of clip.programChangeLanes ?? []) {
     const channel = clampInt(lane.channel, 0, 15);
-    for (const point of lane.points) {
+    for (const point of repeatExpression(lane.points)) {
       const ppq = finiteNonNegative(point.ppq, -1);
       events.push(wasm.Project.midiProgram(ppq, 0, channel, clampInt(point.program, 0, 127)));
     }
   }
   for (const lane of clip.channelPressureLanes ?? []) {
     const channel = clampInt(lane.channel, 0, 15);
-    for (const point of expandExpressionPoints(lane.points, lengthPpq, 127)) {
+    for (const point of repeatExpression(
+      expandExpressionPoints(lane.points, expressionLength, 127),
+    )) {
       const ppq = finiteNonNegative(point.ppq, -1);
       events.push(wasm.Project.midiChannelPressure(ppq, 0, channel, clampInt(point.value, 0, 127)));
     }
@@ -712,7 +734,9 @@ function clipEvents(clip: DocumentClip, wasm: WasmModule): ProjectMidiEvent[] {
   for (const lane of clip.polyPressureLanes ?? []) {
     const channel = clampInt(lane.channel, 0, 15);
     const pitch = clampInt(lane.pitch, 0, 127);
-    for (const point of expandExpressionPoints(lane.points, lengthPpq, 127)) {
+    for (const point of repeatExpression(
+      expandExpressionPoints(lane.points, expressionLength, 127),
+    )) {
       const ppq = finiteNonNegative(point.ppq, -1);
       events.push(
         wasm.Project.midiPolyPressure(ppq, 0, channel, pitch, clampInt(point.value, 0, 127)),
@@ -730,6 +754,7 @@ function scratchClipLength(clip: DocumentClip): number {
   );
   const sourceOffsetPpq = finiteNonNegative(clip.sourceOffsetPpq);
   const hasEndpointEvent =
+    (clip.loopEnabled === true && clip.loopLengthPpq > 0) ||
     clip.notes.some((note) => note.startPpq + note.durationPpq - sourceOffsetPpq >= lengthPpq) ||
     (clip.ccLanes ?? []).some((lane) => lane.points.some((point) => point.ppq >= lengthPpq)) ||
     (clip.pitchBendLanes ?? []).some((lane) =>

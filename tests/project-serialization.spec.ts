@@ -2,6 +2,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { decodeSzd, encodeSzd } from '@/persistence/szd';
 import {
+  addMasteringProcessor,
   addMidiClip,
   addNote,
   addTrack,
@@ -13,8 +14,11 @@ import {
   setAutomationLaneEnabled,
   setAutomationLanePoints,
   setClipCcLane,
+  setClipChannelPressure,
   setClipGain,
   setClipLoop,
+  setClipPitchBend,
+  setClipPolyPressure,
   setMarker,
   setProjectChords,
   setProjectExternalMidiDefaultForTracks,
@@ -39,6 +43,7 @@ import {
 } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { createTemplate } from '@/project/templates';
+import { midiLearnMasteringTargetId } from '@/ui/midi/midi-learn';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -148,6 +153,16 @@ describe('project serialization', () => {
       { name: 'Verse', color: '#334455', startPpq: 0, endPpq: 16 },
       { name: 'Chorus', color: expect.any(String), startPpq: 16, endPpq: 32 },
     ]);
+  });
+
+  it('round-trips an imported pickup measure length', async () => {
+    store.pickupLengthPpq = 1;
+    const doc = serializeProject();
+    expect(doc.pickupLengthPpq).toBe(1);
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    expect(store.pickupLengthPpq).toBe(1);
+    expect(serializeProject()).toEqual(doc);
   });
 
   it('round-trips clip CC lanes through the document', async () => {
@@ -316,6 +331,34 @@ describe('project serialization', () => {
     expect(serializeProject()).toEqual(doc);
   });
 
+  it('round-trips curves on every MIDI expression lane', async () => {
+    const clipId = store.clipId;
+    setClipCcLane(clipId, 1, 2, [
+      { ppq: 0, value: 0, curve: 'linear' },
+      { ppq: 1, value: 127 },
+    ]);
+    setClipPitchBend(clipId, 3, [
+      { ppq: 0, value: 8192, curve: 's-curve' },
+      { ppq: 1, value: 12000 },
+    ]);
+    setClipChannelPressure(clipId, 4, [
+      { ppq: 0, value: 20, curve: 'linear' },
+      { ppq: 1, value: 80 },
+    ]);
+    setClipPolyPressure(clipId, 5, 60, [
+      { ppq: 0, value: 30, curve: 's-curve' },
+      { ppq: 1, value: 90 },
+    ]);
+    const doc = serializeProject();
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+
+    expect(serializeProject()).toEqual(doc);
+    expect(store.activeClip?.pitchBendLanes?.[0].points[0].curve).toBe('s-curve');
+    expect(store.activeClip?.channelPressureLanes?.[0].points[0].curve).toBe('linear');
+    expect(store.activeClip?.polyPressureLanes?.[0].points[0].curve).toBe('s-curve');
+  });
+
   it('loading replaces the current project content entirely', async () => {
     buildSampleProject(store);
     await loadProjectDocument(createTemplate('band'));
@@ -416,7 +459,10 @@ describe('project serialization', () => {
       channel: 7,
       controller: 38,
     });
-    store.midiCcBindings.set('mastering:0:tiltDb', {
+    addMasteringProcessor('eq.tilt');
+    const masteringProcessorId = store.mixer.masteringChain?.processors[0].id as string;
+    const masteringTargetId = midiLearnMasteringTargetId(masteringProcessorId, 'tiltDb');
+    store.midiCcBindings.set(masteringTargetId, {
       channel: 8,
       controller: 41,
     });
@@ -428,7 +474,7 @@ describe('project serialization', () => {
       { target: 'eq:0:0:frequencyHz', channel: 7, controller: 38, trackScoped: true },
       { target: 'gain:0', channel: 0, controller: 7, trackScoped: true },
       { target: 'gain:master', channel: 1, controller: 10 },
-      { target: 'mastering:0:tiltDb', channel: 8, controller: 41 },
+      { target: masteringTargetId, channel: 8, controller: 41 },
       { target: 'pan:0', channel: 2, controller: 6, kind: 'rpn', parameter: 2, trackScoped: true },
       { target: 'send:0:bus-1:enabled', channel: 4, controller: 31, trackScoped: true },
       { target: 'strip:0:inputTrimDb', channel: 3, controller: 24, trackScoped: true },
@@ -472,7 +518,7 @@ describe('project serialization', () => {
       channel: 7,
       controller: 38,
     });
-    expect(store.midiCcBindings.get('mastering:0:tiltDb')).toEqual({
+    expect(store.midiCcBindings.get(masteringTargetId)).toEqual({
       channel: 8,
       controller: 41,
     });
@@ -532,17 +578,16 @@ describe('project serialization', () => {
     expect(serializeProject()).toEqual(doc);
   });
 
-  it('resets the store when a malformed document fails after project commit', async () => {
+  it('keeps the open project when a malformed document fails during mirror hydration', async () => {
     buildSampleProject(store);
+    const before = serializeProject();
     const bad = JSON.parse(JSON.stringify(serializeProject())) as ProjectDocument;
     (bad as unknown as { mixer: unknown }).mixer = { master: {}, buses: {} };
 
     await expect(loadProjectDocument(bad)).rejects.toThrow();
 
-    expect(store.initialized).toBe(false);
-    expect(store.projectName).toBe('Untitled');
-    expect(store.tracks).toEqual([]);
-    expect(store.clips).toEqual([]);
+    expect(store.initialized).toBe(true);
+    expect(serializeProject()).toEqual(before);
   });
 });
 

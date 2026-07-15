@@ -18,6 +18,9 @@ import type { ClipWarp, WarpAnchor } from './types';
 /** Maximum cached bakes (whole-clip buffers; ~few MB each). */
 const WARP_CACHE_LIMIT = 16;
 
+/** Default retained PCM budget for warped clip bakes (64 MiB). */
+export const DEFAULT_WARP_CACHE_BYTE_BUDGET = 64 * 1024 * 1024;
+
 /** One stretch segment of a warped clip. */
 export interface WarpSegment {
   /** Segment start relative to the clip window, in PPQ. */
@@ -84,7 +87,8 @@ export function sanitizeWarpAnchors(
 /**
  * Converts the editor's clip warp metadata into libsonare's first-class
  * sample-domain warp-map descriptor. The editor keeps explicit anchors as
- * clip-relative PPQ -> absolute source seconds; Project stores them as
+ * clip-relative PPQ -> seconds relative to the clip's trimmed source start;
+ * Project stores them as
  * warped-output samples -> source samples.
  */
 export function projectWarpMapDesc(
@@ -95,11 +99,15 @@ export function projectWarpMapDesc(
   const warp = clip.warp;
   if (!warp || !(warp.sourceBpm > 0) || !(clip.lengthPpq > 0) || !(sampleRate > 0)) return null;
   const secondsPerSourcePpq = 60 / warp.sourceBpm;
+  const sourceStartSeconds = clip.sourceOffsetPpq * secondsPerSourcePpq;
   const clipStartPpq = clip.startPpq ?? 0;
   const clipStartSample = ppqToSamples(tempo, clipStartPpq, sampleRate);
   const points: WarpAnchor[] = [
-    { ppq: 0, sourceSeconds: clip.sourceOffsetPpq * secondsPerSourcePpq },
-    ...sanitizeWarpAnchors(warp.anchors ?? [], clip.lengthPpq),
+    { ppq: 0, sourceSeconds: sourceStartSeconds },
+    ...sanitizeWarpAnchors(warp.anchors ?? [], clip.lengthPpq).map((anchor) => ({
+      ppq: anchor.ppq,
+      sourceSeconds: sourceStartSeconds + anchor.sourceSeconds,
+    })),
     {
       ppq: clip.lengthPpq,
       sourceSeconds: (clip.sourceOffsetPpq + clip.lengthPpq) * secondsPerSourcePpq,
@@ -149,15 +157,71 @@ export function warpSegments(clip: WarpableClipFields): WarpSegment[] {
   return segments;
 }
 
+/** Maps one clip-local PPQ position to its source-media time through the warp anchors. */
+export function warpSourceSecondsAt(clip: WarpableClipFields, clipLocalPpq: number): number | null {
+  const segments = warpSegments(clip);
+  if (segments.length === 0) return null;
+  const ppq = Math.max(0, Math.min(clip.lengthPpq, clipLocalPpq));
+  const segment =
+    segments.find(
+      (candidate) => ppq >= candidate.ppq && ppq <= candidate.ppq + candidate.lengthPpq + 1e-9,
+    ) ?? segments[segments.length - 1];
+  const progress = Math.max(0, Math.min(1, (ppq - segment.ppq) / segment.lengthPpq));
+  return segment.sourceStartSeconds + segment.sourceLengthSeconds * progress;
+}
+
 /** Mono one-shot time stretch: output length = input length / rate. */
 export type StretchFn = (samples: Float32Array, sampleRate: number, rate: number) => Float32Array;
 
 /** Cache of baked warp renders, keyed by content. */
 const bakeCache = new Map<string, Float32Array[]>();
+let bakeCacheByteBudget = DEFAULT_WARP_CACHE_BYTE_BUDGET;
+let bakeCacheBytes = 0;
+
+function bakedBytes(channels: ReadonlyArray<Float32Array>): number {
+  return channels.reduce((sum, channel) => sum + channel.byteLength, 0);
+}
+
+function removeBake(key: string): void {
+  const cached = bakeCache.get(key);
+  if (!cached) return;
+  bakeCache.delete(key);
+  bakeCacheBytes -= bakedBytes(cached);
+}
+
+/** Current warp-bake LRU usage for diagnostics and memory tests. */
+export function warpBakeCacheStats(): {
+  entries: number;
+  bytes: number;
+  budgetBytes: number;
+  /** Least-recently-used to most-recently-used content keys. */
+  keys: string[];
+} {
+  return {
+    entries: bakeCache.size,
+    bytes: bakeCacheBytes,
+    budgetBytes: bakeCacheByteBudget,
+    keys: [...bakeCache.keys()],
+  };
+}
+
+/** Sets the warp-bake byte budget and evicts least-recently-used entries. */
+export function configureWarpBakeCacheByteBudget(bytes: number): void {
+  if (!Number.isFinite(bytes) || bytes < 0) {
+    throw new RangeError(`Warp cache byte budget must be finite and >= 0, got ${bytes}`);
+  }
+  bakeCacheByteBudget = Math.floor(bytes);
+  while (bakeCacheBytes > bakeCacheByteBudget && bakeCache.size > 0) {
+    const oldest = bakeCache.keys().next().value;
+    if (oldest === undefined) break;
+    removeBake(oldest);
+  }
+}
 
 /** Clears the bake cache (tests). */
 export function clearWarpBakeCache(): void {
   bakeCache.clear();
+  bakeCacheBytes = 0;
 }
 
 /** Default stretch seam: prefer transient-preserving noteStretch, then timeStretch. */
@@ -229,7 +293,11 @@ export async function bakeWarpedClip(
     const cached = bakeCache.get(key);
     // Callers bake fades into the returned buffers in place, so a cache hit
     // must hand out copies or the fade ramps would compound across passes.
-    if (cached) return cached.map((channel) => channel.slice());
+    if (cached) {
+      bakeCache.delete(key);
+      bakeCache.set(key, cached);
+      return cached.map((channel) => channel.slice());
+    }
   }
   const stretch = options.stretch ?? (await wasmStretch());
   const baked = channels.map(() => new Float32Array(totalFrames));
@@ -259,11 +327,19 @@ export async function bakeWarpedClip(
     }
   }
   if (key) {
-    if (bakeCache.size >= WARP_CACHE_LIMIT) {
+    const bytes = bakedBytes(baked);
+    while (
+      bakeCache.size > 0 &&
+      (bakeCache.size >= WARP_CACHE_LIMIT || bakeCacheBytes + bytes > bakeCacheByteBudget)
+    ) {
       const oldest = bakeCache.keys().next().value;
-      if (oldest !== undefined) bakeCache.delete(oldest);
+      if (oldest === undefined) break;
+      removeBake(oldest);
     }
-    bakeCache.set(key, baked);
+    if (bytes <= bakeCacheByteBudget) {
+      bakeCache.set(key, baked);
+      bakeCacheBytes += bytes;
+    }
     return baked.map((channel) => channel.slice());
   }
   return baked;

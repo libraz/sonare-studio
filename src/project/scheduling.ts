@@ -17,12 +17,18 @@
 import type { EngineHandle } from '@/engine/engine';
 import type { MidiNote } from '@/engine/instruments';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
-import { audioClipSegments } from './comping';
+import { type AudioClipSegment, audioClipSegments, type CompableClipFields } from './comping';
+import { audibleMidiProjector } from './midi-projection';
 import { useProjectStore } from './store';
-import { type NormalizedTempoMap, normalizeTempoMap, ppqToSamples } from './tempo-map';
-import type { EditorNote, EditorTrack } from './types';
+import {
+  type NormalizedTempoMap,
+  normalizeTempoMap,
+  ppqDurationSamples,
+  ppqToSamples,
+} from './tempo-map';
+import type { ClipTake, ClipWarp, EditorNote, EditorTrack } from './types';
 import { clipKind } from './types';
-import { bakeWarpedClip } from './warp';
+import { bakeWarpedClip, type StretchFn } from './warp';
 
 /** The mute/solo subset of a track relevant to audibility. */
 export type TrackAudibilityState = Pick<EditorTrack, 'mute' | 'solo' | 'soloSafe'>;
@@ -114,17 +120,17 @@ export interface ClipNoteWindow {
  * @returns Engine-facing notes relative to the clip start.
  */
 export function clipPlaybackNotes(clip: ClipNoteWindow): MidiNote[] {
-  const windowEnd = clip.sourceOffsetPpq + clip.lengthPpq;
-  return clip.notes
-    .filter((note) => note.startPpq >= clip.sourceOffsetPpq && note.startPpq < windowEnd)
-    .map((note) => ({
-      note: note.pitch,
-      velocity: note.velocity,
-      ...(note.offVelocity !== undefined ? { offVelocity: note.offVelocity } : {}),
-      startPpq: note.startPpq - clip.sourceOffsetPpq,
-      durationPpq: note.durationPpq,
-      channel: note.channel,
-    }));
+  return audibleMidiProjector(
+    { ...clip, startPpq: 0, loopEnabled: false, loopLengthPpq: 0 },
+    { expandLoops: false },
+  ).map((entry) => ({
+    note: entry.note.pitch,
+    velocity: entry.note.velocity,
+    ...(entry.note.offVelocity !== undefined ? { offVelocity: entry.note.offVelocity } : {}),
+    startPpq: entry.clipStartPpq,
+    durationPpq: entry.durationPpq,
+    channel: entry.note.channel,
+  }));
 }
 
 /**
@@ -161,16 +167,19 @@ export function sliceAudioClipWindow(
   sourceOffsetPpq: number,
   lengthPpq: number,
   tempo: AudioClipSliceTempo,
+  timelineOriginPpq = 0,
 ): Float32Array[] {
   const frames = channels[0]?.length ?? 0;
   const startFrame =
     typeof tempo === 'number'
       ? Math.round(ppqToSeconds(sourceOffsetPpq, tempo) * sampleRate)
-      : ppqToSamples(tempo, sourceOffsetPpq, sampleRate);
+      : ppqToSamples(tempo, timelineOriginPpq + sourceOffsetPpq, sampleRate) -
+        ppqToSamples(tempo, timelineOriginPpq, sampleRate);
   const endFrame =
     typeof tempo === 'number'
       ? startFrame + Math.round(ppqToSeconds(lengthPpq, tempo) * sampleRate)
-      : ppqToSamples(tempo, sourceOffsetPpq + lengthPpq, sampleRate);
+      : ppqToSamples(tempo, timelineOriginPpq + sourceOffsetPpq + lengthPpq, sampleRate) -
+        ppqToSamples(tempo, timelineOriginPpq, sampleRate);
   const start = Math.min(frames, Math.max(0, startFrame));
   const end = Math.min(frames, Math.max(start, endFrame));
   return channels.map((channel) => channel.slice(start, end));
@@ -195,19 +204,36 @@ export function sliceAudioClipWindow(
 export function applyAudioClipFades(
   channels: Float32Array[],
   sampleRate: number,
-  tempoBpm: number,
+  tempo: AudioClipSliceTempo,
   fadeInPpq: number,
   fadeOutPpq: number,
+  timelineStartPpq = 0,
+  timelineLengthPpq?: number,
 ): Float32Array[] {
   const frames = channels[0]?.length ?? 0;
   if (frames === 0) return channels;
   const inFrames = Math.min(
     frames,
-    Math.max(0, Math.round(ppqToSeconds(fadeInPpq, tempoBpm) * sampleRate)),
+    Math.max(
+      0,
+      typeof tempo === 'number'
+        ? Math.round(ppqToSeconds(fadeInPpq, tempo) * sampleRate)
+        : ppqDurationSamples(tempo, timelineStartPpq, fadeInPpq, sampleRate),
+    ),
   );
   const outFrames = Math.min(
     frames,
-    Math.max(0, Math.round(ppqToSeconds(fadeOutPpq, tempoBpm) * sampleRate)),
+    Math.max(
+      0,
+      typeof tempo === 'number'
+        ? Math.round(ppqToSeconds(fadeOutPpq, tempo) * sampleRate)
+        : ppqDurationSamples(
+            tempo,
+            timelineStartPpq + Math.max(0, (timelineLengthPpq ?? fadeOutPpq) - fadeOutPpq),
+            fadeOutPpq,
+            sampleRate,
+          ),
+    ),
   );
   for (const channel of channels) {
     for (let i = 0; i < inFrames; i++) {
@@ -265,6 +291,143 @@ export function resampleChannelsLinear(
   });
 }
 
+/** Clip fields needed to render one segment for live playback or export. */
+export interface SegmentRenderableAudioClip {
+  id?: number;
+  startPpq: number;
+  lengthPpq: number;
+  sourceOffsetPpq: number;
+  warp?: ClipWarp;
+  takes?: ReadonlyArray<ClipTake>;
+}
+
+/**
+ * Renders one segment from {@link audioClipSegments}. Warp-enabled segments
+ * receive a derived clip window whose source and target coordinates describe
+ * that occurrence only; this prevents a loop repeat from baking the original
+ * full clip and lets every occurrence follow the tempo map at its own
+ * timeline position. Whole-clip fades remain attached only to the first/last
+ * segment by `audioClipSegments`.
+ */
+export async function renderAudioClipSegment(
+  asset: LoadedAudioAsset,
+  clip: SegmentRenderableAudioClip,
+  segment: AudioClipSegment,
+  tempo: AudioClipSliceTempo,
+  fadeTempo: AudioClipSliceTempo = tempo,
+  options: { stretch?: StretchFn } = {},
+): Promise<Float32Array[]> {
+  const timelineStartPpq = clip.startPpq + segment.offsetPpq;
+  const sourceTimelineOriginPpq = timelineStartPpq - segment.sourceOffsetPpq;
+  let channels =
+    clip.warp?.enabled && (clip.takes?.length ?? 0) === 0
+      ? await bakeWarpedClip(
+          asset.channels,
+          asset.meta.sampleRate,
+          {
+            ...(clip.id !== undefined ? { id: clip.id } : {}),
+            startPpq: clip.startPpq + segment.offsetPpq,
+            lengthPpq: segment.lengthPpq,
+            sourceOffsetPpq: segment.sourceOffsetPpq,
+            warp: clip.warp,
+          },
+          tempo,
+          { cacheKey: segment.assetId, stretch: options.stretch },
+        )
+      : sliceAudioClipWindow(
+          asset.channels,
+          asset.meta.sampleRate,
+          segment.sourceOffsetPpq,
+          segment.lengthPpq,
+          tempo,
+          sourceTimelineOriginPpq,
+        );
+  channels = applyAudioClipFades(
+    channels,
+    asset.meta.sampleRate,
+    fadeTempo,
+    segment.fadeInPpq,
+    segment.fadeOutPpq,
+    timelineStartPpq,
+    segment.lengthPpq,
+  );
+  return channels;
+}
+
+/** Clip fields needed to render the complete audible clip-local window. */
+export type AudibleAudioClipFields = SegmentRenderableAudioClip & CompableClipFields;
+
+/** Complete, transform-baked clip content ready for clip-level offline DSP. */
+export interface RenderedAudibleAudioClip {
+  channels: Float32Array[];
+  sampleRate: number;
+}
+
+function audioSpanSamples(
+  tempo: AudioClipSliceTempo,
+  startPpq: number,
+  lengthPpq: number,
+  sampleRate: number,
+): number {
+  return typeof tempo === 'number'
+    ? Math.max(0, Math.round(ppqToSeconds(lengthPpq, tempo) * sampleRate))
+    : Math.max(0, ppqDurationSamples(tempo, startPpq, lengthPpq, sampleRate));
+}
+
+/**
+ * Renders the complete audible content of one audio clip into a contiguous
+ * clip-local buffer. This is the clip-DSP seam shared with live/export:
+ * take/comp selection, loop occurrences, warp, source windows, fades and the
+ * project tempo map all flow through `audioClipSegments` and
+ * `renderAudioClipSegment` before the segments are summed.
+ */
+export async function renderAudibleAudioClipWindow(
+  clip: AudibleAudioClipFields,
+  tempo: AudioClipSliceTempo,
+  loadAudioAsset: (assetId: string) => Promise<LoadedAudioAsset>,
+  options: { stretch?: StretchFn } = {},
+): Promise<RenderedAudibleAudioClip | null> {
+  if (!(clip.lengthPpq > 0) || (typeof tempo === 'number' && !(tempo > 0))) return null;
+  const segments = audioClipSegments(clip);
+  if (segments.length === 0) return null;
+  const renderedAssets = await Promise.all(
+    segments.map(async (segment) => ({ segment, asset: await loadAudioAsset(segment.assetId) })),
+  );
+  const sampleRate = renderedAssets[0]?.asset.meta.sampleRate ?? 0;
+  if (!(sampleRate > 0)) return null;
+  const frames = audioSpanSamples(tempo, clip.startPpq, clip.lengthPpq, sampleRate);
+  const channelCount = renderedAssets.reduce(
+    (count, entry) => Math.max(count, entry.asset.channels.length),
+    0,
+  );
+  if (frames === 0 || channelCount === 0) return null;
+  const channels = Array.from({ length: channelCount }, () => new Float32Array(frames));
+  let renderedAnyFrames = false;
+
+  for (const { segment, asset } of renderedAssets) {
+    let segmentChannels = await renderAudioClipSegment(asset, clip, segment, tempo, tempo, options);
+    segmentChannels = resampleChannelsLinear(segmentChannels, asset.meta.sampleRate, sampleRate);
+    const destinationStart = audioSpanSamples(tempo, clip.startPpq, segment.offsetPpq, sampleRate);
+    const available = Math.max(
+      0,
+      Math.min(segmentChannels[0]?.length ?? 0, frames - destinationStart),
+    );
+    if (available === 0) continue;
+    renderedAnyFrames = true;
+    for (let channelIndex = 0; channelIndex < channels.length; channelIndex += 1) {
+      const source =
+        segmentChannels[channelIndex] ??
+        (segmentChannels.length === 1 ? segmentChannels[0] : undefined);
+      if (!source) continue;
+      const destination = channels[channelIndex];
+      for (let frame = 0; frame < available; frame += 1) {
+        destination[destinationStart + frame] += source[frame] ?? 0;
+      }
+    }
+  }
+  return renderedAnyFrames ? { channels, sampleRate } : null;
+}
+
 /** One clip scheduled by {@link scheduleProjectClips}. */
 export interface ScheduledProjectClip {
   /** Engine clip id (pass to engine.removeClip to unschedule). */
@@ -290,6 +453,14 @@ export interface ScheduleProjectClipsOptions {
   loadAudioAsset?: (assetId: string) => Promise<LoadedAudioAsset>;
 }
 
+interface PreparedProjectClip {
+  channels: Float32Array[];
+  clipId: number;
+  gain: number;
+  startPpq: number;
+  trackId: number;
+}
+
 /**
  * Schedules every audio clip of every track into the engine.
  *
@@ -307,7 +478,8 @@ export interface ScheduleProjectClipsOptions {
  * with gain = clip gain — never loudness-normalized. Clips whose asset is
  * missing or unreadable are skipped silently.
  *
- * The legacy track.pan field and clip looping are not applied.
+ * The legacy track.pan field is not applied. Clip looping is expanded by
+ * `audioClipSegments`; warp repeats are rendered as segment-scoped windows.
  *
  * The caller owns unscheduling: keep the returned list and call
  * engine.removeClip(engineClipId) for each entry before re-scheduling.
@@ -324,25 +496,29 @@ export async function scheduleProjectClips(
   const tempoBpm = options.tempoBpm ?? store.tempoBpm;
   const tempoMap = normalizeTempoMap(options.tempoSegments ?? store.tempoSegments, tempoBpm);
   const loadAudio = options.loadAudioAsset ?? loadAsset;
-  const scheduled: ScheduledProjectClip[] = [];
+  const targetRate = options.sampleRate ?? handle.ctx.sampleRate;
+  const prepared: PreparedProjectClip[] = [];
+
+  // Preparation performs every fallible asynchronous asset conversion before
+  // mutating the live engine, keeping the following commit phase short.
   for (const track of store.tracks) {
     // Frozen tracks play their baked pre-fader render from the timeline
     // start instead of their own clips (which stay silent until unfreeze).
     if (track.frozen !== undefined) {
+      let asset: LoadedAudioAsset;
       try {
-        const asset = await loadAudio(track.frozen.assetId);
-        const targetRate = options.sampleRate ?? handle.ctx.sampleRate;
-        const channels = resampleChannelsLinear(
-          asset.channels.map((channel) => channel.slice()),
-          asset.meta.sampleRate,
-          targetRate,
-        );
-        if (channels.length > 0 && channels[0].length > 0) {
-          const engineClipId = handle.engine.addClip(track.id, channels, 0, { gain: 1 });
-          scheduled.push({ engineClipId, clipId: -track.id, trackId: track.id });
-        }
+        asset = await loadAudio(track.frozen.assetId);
       } catch {
         // Missing or unreadable frozen asset: the track stays silent.
+        continue;
+      }
+      const channels = resampleChannelsLinear(
+        asset.channels.map((channel) => channel.slice()),
+        asset.meta.sampleRate,
+        targetRate,
+      );
+      if (channels.length > 0 && channels[0].length > 0) {
+        prepared.push({ channels, clipId: -track.id, gain: 1, startPpq: 0, trackId: track.id });
       }
       continue;
     }
@@ -361,39 +537,38 @@ export async function scheduleProjectClips(
           // Missing or unreadable asset: leave the slice silent.
           continue;
         }
-        // Tempo-following clips bake their window through the offline
-        // stretch instead of the fixed-rate slice (takes-free clips only).
-        let channels =
-          clip.warp?.enabled && (clip.takes?.length ?? 0) === 0
-            ? await bakeWarpedClip(asset.channels, asset.meta.sampleRate, clip, tempoMap, {
-                cacheKey: segment.assetId,
-              })
-            : sliceAudioClipWindow(
-                asset.channels,
-                asset.meta.sampleRate,
-                segment.sourceOffsetPpq,
-                segment.lengthPpq,
-                tempoMap,
-              );
-        channels = applyAudioClipFades(
-          channels,
-          asset.meta.sampleRate,
-          tempoBpm,
-          segment.fadeInPpq,
-          segment.fadeOutPpq,
-        );
-        const targetRate = options.sampleRate ?? handle.ctx.sampleRate;
+        let channels = await renderAudioClipSegment(asset, clip, segment, tempoMap);
         channels = resampleChannelsLinear(channels, asset.meta.sampleRate, targetRate);
         if (channels.length === 0 || channels[0].length === 0) continue;
-        const engineClipId = handle.engine.addClip(
-          track.id,
+        prepared.push({
           channels,
-          clip.startPpq + segment.offsetPpq,
-          { gain },
-        );
-        scheduled.push({ engineClipId, clipId: clip.id, trackId: track.id });
+          clipId: clip.id,
+          gain,
+          startPpq: clip.startPpq + segment.offsetPpq,
+          trackId: track.id,
+        });
       }
     }
   }
-  return scheduled;
+
+  const scheduled: ScheduledProjectClip[] = [];
+  try {
+    for (const clip of prepared) {
+      const engineClipId = handle.engine.addClip(clip.trackId, clip.channels, clip.startPpq, {
+        gain: clip.gain,
+      });
+      scheduled.push({ engineClipId, clipId: clip.clipId, trackId: clip.trackId });
+    }
+    return scheduled;
+  } catch (error) {
+    for (let index = scheduled.length - 1; index >= 0; index -= 1) {
+      try {
+        handle.engine.removeClip(scheduled[index].engineClipId);
+      } catch {
+        // Continue rolling back the remaining additions before surfacing the
+        // original commit failure.
+      }
+    }
+    throw error;
+  }
 }

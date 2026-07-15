@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OpfsUnavailableError } from '@/persistence/opfs';
 import {
   clearFontCache,
@@ -6,12 +6,18 @@ import {
   deleteFont,
   FontNotFoundError,
   InvalidFontError,
+  listFontAliases,
   listFonts,
   loadFont,
   loadFontMeta,
   saveFont,
 } from '@/project/fonts';
-import { installMockOpfs, type MemoryDirectoryHandle, uninstallMockOpfs } from './opfs-mock';
+import {
+  installMockOpfs,
+  type MemoryDirectoryHandle,
+  MemoryFileHandle,
+  uninstallMockOpfs,
+} from './opfs-mock';
 
 const BYTES = new Uint8Array([0x52, 0x49, 0x46, 0x46, 1, 2, 3, 4]);
 
@@ -46,6 +52,41 @@ describe('SoundFont store', () => {
     const b = await saveFont({ name: 'B' }, BYTES);
     expect(b.id).toBe(a.id);
     expect(await listFonts()).toHaveLength(1);
+    expect(await listFontAliases(a.id)).toEqual([{ name: 'A' }, { name: 'B' }]);
+    expect(await loadFontMeta(a.id)).toMatchObject({ name: 'B' });
+  });
+
+  it('rejects an explicit-id content collision without replacing the font', async () => {
+    await saveFont({ id: 'shared', name: 'Original' }, BYTES);
+    await expect(
+      saveFont({ id: 'shared', name: 'Collision' }, new Uint8Array([9, 9, 9])),
+    ).rejects.toThrow(/immutable SF2 content collision/);
+    clearFontCache();
+    expect(Array.from(await loadFont('shared'))).toEqual(Array.from(BYTES));
+    expect((await loadFontMeta('shared')).name).toBe('Original');
+  });
+
+  it('removes a new SF2 payload when sidecar publication fails', async () => {
+    const original = MemoryFileHandle.prototype.createWritable;
+    const spy = vi
+      .spyOn(MemoryFileHandle.prototype, 'createWritable')
+      .mockImplementation(async function () {
+        if (this.name.endsWith('.json')) {
+          return {
+            write: async () => {
+              throw new Error('font sidecar failed');
+            },
+            close: async () => undefined,
+            abort: async () => undefined,
+          } as unknown as FileSystemWritableFileStream;
+        }
+        return original.call(this);
+      });
+    await expect(saveFont({ name: 'Broken' }, BYTES)).rejects.toThrow('font sidecar failed');
+    spy.mockRestore();
+
+    const dir = await root.getDirectoryHandle('fonts');
+    expect([...dir.files.keys()]).toEqual([]);
   });
 
   it('accepts an explicit id and lists fonts sorted by name', async () => {

@@ -1,4 +1,6 @@
 import { midiCcBindingsKey } from '@/ui/midi/midi-learn';
+import { mixerSnapshotSlotsKey } from './command/mixer-snapshots';
+import { canonicalJson, fnv1a32Hex } from './hash';
 import type { useProjectStore } from './store';
 
 type ProjectStore = ReturnType<typeof useProjectStore>;
@@ -10,20 +12,25 @@ type ProjectStore = ReturnType<typeof useProjectStore>;
  * persisted field cannot make one indicator update without the other.
  */
 export function persistedProjectStateKey(store: ProjectStore) {
-  return [
-    store.projectName,
-    store.tracks,
-    store.clips,
-    store.markers,
-    store.sections,
-    store.tempoSegments,
-    store.timeSignatures,
-    store.mixer,
-    store.scoreAnnotations,
-    store.displayTransposeSemitones,
-    store.automationLanes,
-    store.chords,
-    // The binding map is mutated in place, so observe its contents.
-    midiCcBindingsKey(store.midiCcBindings),
-  ] as const;
+  return fnv1a32Hex(
+    canonicalJson({
+      name: store.projectName,
+      tracks: store.tracks,
+      clips: store.clips,
+      markers: store.markers,
+      sections: store.sections,
+      tempoSegments: store.tempoSegments,
+      timeSignatures: store.timeSignatures,
+      mixer: store.mixer,
+      externalMidiDefault: store.projectExternalMidi,
+      scoreAnnotations: store.scoreAnnotations,
+      displayTransposeSemitones: store.displayTransposeSemitones,
+      automationLanes: store.automationLanes,
+      chords: store.chords,
+      // Both registries mutate in place/outside the Pinia mirror, so fold
+      // their deterministic content signatures into the same revision.
+      midiCcBindings: midiCcBindingsKey(store.midiCcBindings),
+      mixerSnapshots: mixerSnapshotSlotsKey(),
+    }),
+  );
 }

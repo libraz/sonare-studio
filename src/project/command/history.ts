@@ -14,6 +14,12 @@ import type { EditorClip, EditorMarker, EditorNote, EditorSection, EditorTrack }
  */
 const MAX_HISTORY = 100;
 
+/** Default memory budget for detached mirror snapshots (64 MiB). */
+export const DEFAULT_HISTORY_BYTE_BUDGET = 64 * 1024 * 1024;
+
+let historyByteBudget = DEFAULT_HISTORY_BYTE_BUDGET;
+let historyBytes = 0;
+
 /**
  * Snapshot of the reactive mirror taken around every command.
  *
@@ -37,6 +43,23 @@ interface MirrorSnapshot {
   displayTransposeSemitones: number;
   activeTrackId: number;
   activeClipId: number;
+  /** State owned outside Pinia but participating in command undo/redo. */
+  contributedState: Map<string, unknown>;
+}
+
+interface HistoryStateContributor<T> {
+  capture(): T;
+  restore(state: T): void;
+}
+
+const historyStateContributors = new Map<string, HistoryStateContributor<unknown>>();
+
+/** Registers non-store persisted state that must follow command undo/redo. */
+export function registerHistoryStateContributor<T>(
+  id: string,
+  contributor: HistoryStateContributor<T>,
+): void {
+  historyStateContributors.set(id, contributor as HistoryStateContributor<unknown>);
 }
 
 /** Deep-copies the MIDI-learn binding map into a detached plain map. */
@@ -57,6 +80,8 @@ interface HistoryEntry {
   projectEdits: number;
   before: MirrorSnapshot;
   after: MirrorSnapshot;
+  /** Conservative retained-size estimate, counting shared objects once per entry. */
+  byteSize: number;
 }
 
 export interface HistoryReferencedMediaIds {
@@ -66,6 +91,160 @@ export interface HistoryReferencedMediaIds {
 
 const undoStack: HistoryEntry[] = [];
 const redoStack: HistoryEntry[] = [];
+let lastSnapshot: MirrorSnapshot | null = null;
+
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== typeof b || a === null || b === null) return false;
+  if (typeof a !== 'object') return false;
+  if (ArrayBuffer.isView(a) || ArrayBuffer.isView(b)) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((value, index) => deepEqual(value, b[index]));
+  }
+  if (a instanceof Map || b instanceof Map) {
+    if (!(a instanceof Map) || !(b instanceof Map) || a.size !== b.size) return false;
+    for (const [key, value] of a) {
+      if (!b.has(key) || !deepEqual(value, b.get(key))) return false;
+    }
+    return true;
+  }
+  const aRecord = a as Record<string, unknown>;
+  const bRecord = b as Record<string, unknown>;
+  const keys = Object.keys(aRecord);
+  if (keys.length !== Object.keys(bRecord).length) return false;
+  return keys.every((key) => Object.hasOwn(bRecord, key) && deepEqual(aRecord[key], bRecord[key]));
+}
+
+function shareArrayByKey<T>(
+  previous: ReadonlyArray<T> | undefined,
+  next: T[],
+  keyOf: (value: T) => string | number,
+): T[] {
+  if (!previous || previous.length === 0 || next.length === 0) return next;
+  const previousByKey = new Map(previous.map((value) => [keyOf(value), value]));
+  let allShared = previous.length === next.length;
+  const shared = next.map((value, index) => {
+    const candidate = previousByKey.get(keyOf(value));
+    const resolved = candidate !== undefined && deepEqual(candidate, value) ? candidate : value;
+    if (resolved !== previous[index]) allShared = false;
+    return resolved;
+  });
+  return allShared ? (previous as T[]) : shared;
+}
+
+function shareClip(previous: EditorClip | undefined, next: EditorClip): EditorClip {
+  if (!previous) return next;
+  if (deepEqual(previous, next)) return previous;
+  next.notes = shareArrayByKey(previous.notes, next.notes, (note) => note.id);
+  if (previous.takes && next.takes && deepEqual(previous.takes, next.takes)) {
+    next.takes = previous.takes;
+  }
+  if (
+    previous.compSegments &&
+    next.compSegments &&
+    deepEqual(previous.compSegments, next.compSegments)
+  ) {
+    next.compSegments = previous.compSegments;
+  }
+  if (previous.warp && next.warp && deepEqual(previous.warp, next.warp)) next.warp = previous.warp;
+  for (const key of [
+    'ccLanes',
+    'pitchBendLanes',
+    'programChangeLanes',
+    'channelPressureLanes',
+    'polyPressureLanes',
+  ] as const) {
+    if (deepEqual(previous[key], next[key])) next[key] = previous[key] as never;
+  }
+  return next;
+}
+
+function shareSnapshot(previous: MirrorSnapshot | null, next: MirrorSnapshot): MirrorSnapshot {
+  if (!previous) return next;
+  next.tracks = shareArrayByKey(previous.tracks, next.tracks, (track) => track.id);
+  const previousClips = new Map(previous.clips.map((clip) => [clip.id, clip]));
+  next.clips = next.clips.map((clip) => shareClip(previousClips.get(clip.id), clip));
+  if (
+    previous.clips.length === next.clips.length &&
+    next.clips.every((clip, index) => clip === previous.clips[index])
+  ) {
+    next.clips = previous.clips;
+  }
+  next.markers = shareArrayByKey(previous.markers, next.markers, (marker) => marker.id);
+  next.sections = shareArrayByKey(previous.sections, next.sections, (section) => section.id);
+  next.automationLanes = shareArrayByKey(
+    previous.automationLanes,
+    next.automationLanes,
+    (lane) => `${lane.target}|${lane.param}`,
+  );
+  for (const key of [
+    'midiCcBindings',
+    'projectExternalMidi',
+    'mixer',
+    'scoreAnnotations',
+    'contributedState',
+  ] as const) {
+    if (deepEqual(previous[key], next[key])) next[key] = previous[key] as never;
+  }
+  return next;
+}
+
+function estimateRetainedBytes(value: unknown, seen: WeakSet<object>): number {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === 'string') return 16 + value.length * 2;
+  if (typeof value === 'number') return 8;
+  if (typeof value === 'boolean') return 4;
+  if (typeof value !== 'object') return 16;
+  if (seen.has(value)) return 0;
+  seen.add(value);
+  if (ArrayBuffer.isView(value)) return 32 + value.byteLength;
+  if (value instanceof ArrayBuffer) return 32 + value.byteLength;
+  if (Array.isArray(value)) {
+    return (
+      24 +
+      value.length * 8 +
+      value.reduce((sum, item) => sum + estimateRetainedBytes(item, seen), 0)
+    );
+  }
+  if (value instanceof Map) {
+    let bytes = 48 + value.size * 24;
+    for (const [key, item] of value) {
+      bytes += estimateRetainedBytes(key, seen) + estimateRetainedBytes(item, seen);
+    }
+    return bytes;
+  }
+  let bytes = 48;
+  for (const [key, item] of Object.entries(value)) {
+    bytes += 16 + key.length * 2 + estimateRetainedBytes(item, seen);
+  }
+  return bytes;
+}
+
+function historyEntry(
+  before: MirrorSnapshot,
+  after: MirrorSnapshot,
+  projectEdits: number,
+): HistoryEntry {
+  const seen = new WeakSet<object>();
+  return {
+    projectEdits,
+    before,
+    after,
+    byteSize: estimateRetainedBytes(before, seen) + estimateRetainedBytes(after, seen),
+  };
+}
+
+function dropUnreachableSnapshotMemo(): void {
+  if (
+    lastSnapshot !== null &&
+    ![...undoStack, ...redoStack].some(
+      (entry) => entry.before === lastSnapshot || entry.after === lastSnapshot,
+    )
+  ) {
+    lastSnapshot = null;
+  }
+}
 
 /** Deep-copies a note list into plain objects (detached from reactivity). */
 export function cloneNotes(notes: ReadonlyArray<EditorNote>): EditorNote[] {
@@ -135,8 +314,15 @@ function cloneClip(clip: EditorClip): EditorClip {
 }
 
 /** Captures the current mirror state for undo/redo restoration. */
-function captureSnapshot(store: ReturnType<typeof useProjectStore>): MirrorSnapshot {
-  return {
+function captureSnapshot(
+  store: ReturnType<typeof useProjectStore>,
+  previous: MirrorSnapshot | null = lastSnapshot,
+): MirrorSnapshot {
+  const contributedState = new Map<string, unknown>();
+  for (const [id, contributor] of historyStateContributors) {
+    contributedState.set(id, contributor.capture());
+  }
+  return shareSnapshot(previous, {
     tracks: store.tracks.map(cloneTrack),
     clips: store.clips.map(cloneClip),
     markers: store.markers.map((marker) => ({ ...marker })),
@@ -152,7 +338,8 @@ function captureSnapshot(store: ReturnType<typeof useProjectStore>): MirrorSnaps
     displayTransposeSemitones: store.displayTransposeSemitones,
     activeTrackId: store.activeTrackId,
     activeClipId: store.clipId,
-  };
+    contributedState,
+  });
 }
 
 /**
@@ -217,6 +404,9 @@ function restoreSnapshot(
   store.mixer = cloneMixerState(snapshot.mixer);
   store.scoreAnnotations = cloneScoreAnnotations(snapshot.scoreAnnotations);
   store.displayTransposeSemitones = snapshot.displayTransposeSemitones;
+  for (const [id, state] of snapshot.contributedState) {
+    historyStateContributors.get(id)?.restore(state);
+  }
   // Keep the requested view when it still exists; otherwise fall back to the
   // snapshot's own (always-consistent) active ids.
   const trackExists = store.tracks.some((track) => track.id === view.activeTrackId);
@@ -259,9 +449,51 @@ export function collectHistoryReferencedMediaIds(): HistoryReferencedMediaIds {
 
 /** Pushes a finished history entry, trimming overflow and dropping redo. */
 function pushHistory(entry: HistoryEntry): void {
-  undoStack.push(entry);
-  if (undoStack.length > MAX_HISTORY) undoStack.shift();
+  for (const redo of redoStack) historyBytes -= redo.byteSize;
   redoStack.length = 0;
+  undoStack.push(entry);
+  historyBytes += entry.byteSize;
+  lastSnapshot = entry.after;
+  while (undoStack.length > MAX_HISTORY || historyBytes > historyByteBudget) {
+    const removed = undoStack.shift();
+    if (!removed) break;
+    historyBytes -= removed.byteSize;
+  }
+  historyBytes = Math.max(0, historyBytes);
+  dropUnreachableSnapshotMemo();
+}
+
+/** Runtime statistics for diagnostics and memory-pressure tests. */
+export function historyBudgetStats(): {
+  undoEntries: number;
+  redoEntries: number;
+  bytes: number;
+  budgetBytes: number;
+} {
+  return {
+    undoEntries: undoStack.length,
+    redoEntries: redoStack.length,
+    bytes: historyBytes,
+    budgetBytes: historyByteBudget,
+  };
+}
+
+/**
+ * Changes the snapshot byte budget and immediately evicts oldest entries.
+ * The newest reachable undo entries are retained preferentially.
+ */
+export function configureHistoryByteBudget(bytes: number): void {
+  if (!Number.isFinite(bytes) || bytes < 0) {
+    throw new RangeError(`History byte budget must be finite and >= 0, got ${bytes}`);
+  }
+  historyByteBudget = Math.floor(bytes);
+  while (historyBytes > historyByteBudget) {
+    const removed = undoStack.shift() ?? redoStack.shift();
+    if (!removed) break;
+    historyBytes -= removed.byteSize;
+  }
+  historyBytes = Math.max(0, historyBytes);
+  dropUnreachableSnapshotMemo();
 }
 
 /**
@@ -291,7 +523,7 @@ function flushPendingGesture(): void {
   const store = useProjectStore();
   const before = pendingGesture.before;
   pendingGesture = null;
-  pushHistory({ projectEdits: 0, before, after: captureSnapshot(store) });
+  pushHistory(historyEntry(before, captureSnapshot(store, before), 0));
 }
 
 /**
@@ -306,9 +538,45 @@ export function execute<T>(projectEdits: number, action: () => T): T {
   const store = useProjectStore();
   const before = captureSnapshot(store);
   const result = action();
-  const after = captureSnapshot(store);
-  pushHistory({ projectEdits, before, after });
+  const after = captureSnapshot(store, before);
+  pushHistory(historyEntry(before, after, projectEdits));
   return result;
+}
+
+export type AtomicProjectEdit = <T>(projectEdits: number, mutation: () => T) => T;
+
+/**
+ * Runs a multi-call Project command with failure rollback. Each successful
+ * native mutation is reported through `edit`; if a later mutation or mirror
+ * update throws, exactly those entries are undone and the pre-command mirror
+ * is restored. On success all calls become one local undo entry.
+ */
+export function executeAtomic<T>(action: (edit: AtomicProjectEdit) => T): T {
+  flushPendingGesture();
+  const store = useProjectStore();
+  const project = getProject();
+  const before = captureSnapshot(store);
+  let completedProjectEdits = 0;
+  const edit: AtomicProjectEdit = (projectEdits, mutation) => {
+    if (!Number.isInteger(projectEdits) || projectEdits < 0) {
+      throw new RangeError(`Atomic project edit count must be a non-negative integer`);
+    }
+    const result = mutation();
+    completedProjectEdits += projectEdits;
+    return result;
+  };
+  try {
+    const result = action(edit);
+    pushHistory(historyEntry(before, captureSnapshot(store, before), completedProjectEdits));
+    return result;
+  } catch (error) {
+    for (let index = 0; index < completedProjectEdits; index++) project.undo();
+    restoreSnapshot(store, before, {
+      activeTrackId: before.activeTrackId,
+      activeClipId: before.activeClipId,
+    });
+    throw error;
+  }
 }
 
 /** Options shared by commands that support continuous-drag coalescing. */
@@ -341,7 +609,7 @@ export function executeApp<T>(action: () => T, gesture?: { key: string; commit: 
     const before = pendingGesture.before;
     pendingGesture = null;
     const result = action();
-    pushHistory({ projectEdits: 0, before, after: captureSnapshot(store) });
+    pushHistory(historyEntry(before, captureSnapshot(store, before), 0));
     return result;
   }
   return execute(0, action);
@@ -362,6 +630,7 @@ export function undo(): boolean {
   const store = useProjectStore();
   const project = getProject();
   redoStack.push(entry);
+  lastSnapshot = entry.before;
   const view = resolveView(store, entry.before, entry.after, entry.before);
   for (let i = 0; i < entry.projectEdits; i++) project.undo();
   restoreSnapshot(store, entry.before, view);
@@ -381,6 +650,7 @@ export function redo(): boolean {
   const store = useProjectStore();
   const project = getProject();
   undoStack.push(entry);
+  lastSnapshot = entry.after;
   const view = resolveView(store, entry.before, entry.after, entry.after);
   for (let i = 0; i < entry.projectEdits; i++) project.redo();
   restoreSnapshot(store, entry.after, view);
@@ -402,6 +672,9 @@ export function clearHistory(): void {
   undoStack.length = 0;
   redoStack.length = 0;
   pendingGesture = null;
+  historyBytes = 0;
+  lastSnapshot = null;
+  historyByteBudget = DEFAULT_HISTORY_BYTE_BUDGET;
 }
 
 // Let the store drop history as part of dispose() so the two never drift.

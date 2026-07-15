@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { type AudioStemSeparator, separateAudioClipStems } from '@/project/audio-stems';
+import { normalizeTempoMap } from '@/project/tempo-map';
 
 /** A minimal audio-clip window with neutral defaults. */
 function clipWindow(
@@ -45,6 +46,31 @@ function separator(): {
     };
   };
   return { fn, seen };
+}
+
+function sumPreservingSeparator(capture: (samples: Float32Array) => void): AudioStemSeparator {
+  return (samples, sampleRate) => {
+    capture(samples.slice());
+    return {
+      harmonic: samples.map((value) => value * 0.5),
+      percussive: samples.map((value) => value * 0.3),
+      residual: samples.map((value) => value * 0.2),
+      sampleRate: sampleRate ?? 0,
+    };
+  };
+}
+
+function sampleAsset(id: string, values: number[], sampleRate: number): LoadedAudioAsset {
+  return {
+    meta: {
+      id,
+      name: id,
+      sampleRate,
+      numChannels: 1,
+      numFrames: values.length,
+    },
+    channels: [new Float32Array(values)],
+  } as LoadedAudioAsset;
 }
 
 describe('separateAudioClipStems', () => {
@@ -146,6 +172,122 @@ describe('separateAudioClipStems', () => {
       separateStems: fn,
     });
     expect(seen).toEqual([{ length: 48000, sampleRate: 48000, first: 0.5 }]);
+  });
+
+  it('renders comp take selection before separation', async () => {
+    let input = new Float32Array();
+    const stems = await separateAudioClipStems(
+      {
+        assetId: 'take-a',
+        lengthPpq: 2,
+        sourceOffsetPpq: 0,
+        takes: [
+          { assetId: 'take-a', name: 'A' },
+          { assetId: 'take-b', name: 'B' },
+        ],
+        compSegments: [
+          { startPpq: 0, takeIndex: 0 },
+          { startPpq: 1, takeIndex: 1, crossfadePpq: 0 },
+        ],
+      },
+      60,
+      {
+        loadAudioAsset: async (id) =>
+          id === 'take-a' ? sampleAsset(id, [1, 2, 3, 4], 2) : sampleAsset(id, [10, 11, 12, 13], 2),
+        separateStems: sumPreservingSeparator((samples) => {
+          input = samples;
+        }),
+      },
+    );
+
+    expect([...input]).toEqual([1, 2, 12, 13]);
+    for (let frame = 0; frame < input.length; frame += 1) {
+      expect(stems.reduce((sum, stem) => sum + stem.channels[0][frame], 0)).toBeCloseTo(
+        input[frame],
+        6,
+      );
+    }
+  });
+
+  it('renders loop, fades and tempo changes before separation', async () => {
+    let input = new Float32Array();
+    const tempoMap = normalizeTempoMap([
+      { startPpq: 0, bpm: 60 },
+      { startPpq: 1, bpm: 120 },
+    ]);
+    const stems = await separateAudioClipStems(
+      {
+        assetId: 'loop',
+        startPpq: 0,
+        lengthPpq: 2,
+        sourceOffsetPpq: 0,
+        loopEnabled: true,
+        loopLengthPpq: 1,
+        fadeInPpq: 0.25,
+        fadeOutPpq: 0.5,
+      },
+      tempoMap,
+      {
+        loadAudioAsset: async (id) => sampleAsset(id, [1, 2, 3, 4, 5, 6, 7, 8], 4),
+        separateStems: sumPreservingSeparator((samples) => {
+          input = samples;
+        }),
+      },
+    );
+
+    expect([...input]).toEqual([0, 2, 3, 4, 1, 0]);
+    for (let frame = 0; frame < input.length; frame += 1) {
+      expect(stems.reduce((sum, stem) => sum + stem.channels[0][frame], 0)).toBeCloseTo(
+        input[frame],
+        6,
+      );
+    }
+  });
+
+  it('renders trimmed warp, fades and a tempo change before separation', async () => {
+    let input = new Float32Array();
+    const tempoMap = normalizeTempoMap([
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 1, bpm: 60 },
+    ]);
+    const stems = await separateAudioClipStems(
+      {
+        assetId: 'warp',
+        startPpq: 0,
+        lengthPpq: 2,
+        sourceOffsetPpq: 1,
+        fadeInPpq: 0.5,
+        fadeOutPpq: 0.5,
+        warp: { enabled: true, sourceBpm: 60 },
+      },
+      tempoMap,
+      {
+        loadAudioAsset: async (id) =>
+          sampleAsset(
+            id,
+            Array.from({ length: 16 }, (_, index) => index),
+            4,
+          ),
+        stretch: (samples, _sampleRate, rate) => {
+          const output = new Float32Array(Math.round(samples.length / rate));
+          for (let index = 0; index < output.length; index += 1) {
+            output[index] = samples[Math.min(samples.length - 1, Math.round(index * rate))];
+          }
+          return output;
+        },
+        separateStems: sumPreservingSeparator((samples) => {
+          input = samples;
+        }),
+      },
+    );
+
+    expect([...input]).toEqual([0, 5, 7, 8, 4.5, 0]);
+    for (let frame = 0; frame < input.length; frame += 1) {
+      expect(stems.reduce((sum, stem) => sum + stem.channels[0][frame], 0)).toBeCloseTo(
+        input[frame],
+        6,
+      );
+    }
   });
 
   it('repairs separator output length drift with phaseVocoder when available', async () => {

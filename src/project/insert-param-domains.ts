@@ -13,6 +13,7 @@
  */
 
 import { type AutomationParam, parseInsertAutomationParam } from './automation';
+import { insertIndexForAutomationRef } from './automation-insert';
 import type { MixerStrip } from './mixer';
 
 /** Drawing/editing value range and unit of one insert parameter. */
@@ -127,7 +128,8 @@ export function insertParamDomainForStrip(
 ): InsertParamDomain | undefined {
   const ref = parseInsertAutomationParam(param);
   if (!ref) return undefined;
-  const slot = strip?.inserts[ref.insertIndex];
+  const index = strip ? insertIndexForAutomationRef(strip.inserts, ref) : undefined;
+  const slot = index === undefined ? undefined : strip?.inserts[index];
   if (!slot) return undefined;
   return insertParamDomain(slot.processor, ref.paramName);
 }

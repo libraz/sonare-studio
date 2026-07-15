@@ -87,6 +87,17 @@ export function isAudioClip(clip: Pick<EditorClip, 'kind'>): boolean {
 }
 
 /**
+ * Returns whether a track can own a clip of the given content kind.
+ *
+ * Content tracks are intentionally strict: MIDI clips only belong to MIDI
+ * tracks and audio clips only belong to audio tracks. Aux/group tracks are
+ * routing buses and never own arrangement clips.
+ */
+export function canTrackContainClip(trackKind: TrackKind, kind: ClipKind): boolean {
+  return trackKind === kind;
+}
+
+/**
  * One track in the arrangement mirror.
  *
  * `id`, `name` and `kind` are owned by the wasm Project (write through the

@@ -365,6 +365,62 @@ describe('smfToProjectDocument', () => {
     ]);
   });
 
+  it('materializes MIDI clip loops, expression and the final partial repeat in SMF', async () => {
+    const source: ProjectDocument = {
+      schemaVersion: 3,
+      name: 'Loop export',
+      sampleRate: 48000,
+      tempoSegments: [{ startPpq: 0, bpm: 120 }],
+      timeSignatures: [{ startPpq: 0, numerator: 4, denominator: 4 }],
+      tracks: [
+        {
+          name: 'Loop',
+          color: '#000',
+          kind: 'midi',
+          mute: false,
+          solo: false,
+          volume: 1,
+          pan: 0,
+          clips: [
+            {
+              name: 'Five beats',
+              startPpq: 0,
+              lengthPpq: 5,
+              sourceOffsetPpq: 0,
+              gain: 1,
+              loopEnabled: true,
+              loopLengthPpq: 2,
+              kind: 'midi',
+              notes: [{ pitch: 60, velocity: 100, startPpq: 0, durationPpq: 1, channel: 0 }],
+              ccLanes: [{ controller: 1, channel: 0, points: [{ ppq: 0.5, value: 64 }] }],
+            },
+          ],
+        },
+      ],
+      markers: [],
+      sections: [],
+    };
+
+    const roundTrip = await smfToProjectDocument(await projectDocumentToSmf(source), 'loop.mid');
+
+    expect(roundTrip.tracks[0].clips[0].notes).toEqual([
+      { pitch: 60, velocity: 100, startPpq: 0, durationPpq: 1, channel: 0 },
+      { pitch: 60, velocity: 100, startPpq: 2, durationPpq: 1, channel: 0 },
+      { pitch: 60, velocity: 100, startPpq: 4, durationPpq: 1, channel: 0 },
+    ]);
+    expect(roundTrip.tracks[0].clips[0].ccLanes).toEqual([
+      {
+        controller: 1,
+        channel: 0,
+        points: [
+          { ppq: 0.5, value: 64 },
+          { ppq: 2.5, value: 64 },
+          { ppq: 4.5, value: 64 },
+        ],
+      },
+    ]);
+  });
+
   it('round-trips clip program-change lanes through SMF events', async () => {
     const source: ProjectDocument = {
       schemaVersion: 3,

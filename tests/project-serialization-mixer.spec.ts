@@ -93,7 +93,7 @@ describe('project serialization with instruments and mixer (schema v3)', () => {
       bank: 128,
       program: 25,
     });
-    expect(doc.tracks[0].mixer).toEqual({
+    expect(doc.tracks[0].mixer).toMatchObject({
       gainDb: -4.5,
       pan: 0.3,
       panLaw: 'const6dB',
@@ -186,7 +186,7 @@ describe('project serialization with instruments and mixer (schema v3)', () => {
     await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
 
     expect(serializeProject()).toEqual(doc);
-    expect(store.mixer.buses[0].strip?.inserts).toEqual([
+    expect(store.mixer.buses[0].strip?.inserts).toMatchObject([
       { processor: 'dynamics.compressor', params: { thresholdDb: -18 }, enabled: true },
     ]);
   });
