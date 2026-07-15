@@ -6,6 +6,7 @@ import { projectFilename } from '@/lib/filename';
 import { serializeMusicXml } from '@/notation/musicxml';
 import { quantizeToScore } from '@/notation/quantize';
 import { parseInsertAutomationParam } from '@/project/automation';
+import { insertIndexForAutomationRef } from '@/project/automation-insert';
 import {
   DEFAULT_PAN_LAW,
   DEFAULT_PAN_MODE,
@@ -68,13 +69,16 @@ export function useProjectExport(options: ProjectExportOptions) {
       /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(color);
     const isAutomationLaneExported = (
       lane: { enabled: boolean; points: readonly unknown[]; param: string },
-      strip: { inserts: ReadonlyArray<{ params: Record<string, unknown> }> } | undefined,
+      strip:
+        | { inserts: ReadonlyArray<{ id?: string; params: Record<string, unknown> }> }
+        | undefined,
     ): boolean => {
       if (!lane.enabled || lane.points.length === 0) return false;
       if (lane.param === 'faderDb' || lane.param === 'pan') return true;
       const insertRef = parseInsertAutomationParam(lane.param);
       if (!insertRef) return false;
-      const slot = strip?.inserts[insertRef.insertIndex];
+      const insertIndex = strip ? insertIndexForAutomationRef(strip.inserts, insertRef) : undefined;
+      const slot = insertIndex === undefined ? undefined : strip?.inserts[insertIndex];
       const param = slot?.params[insertRef.paramName];
       return typeof param === 'number' || typeof param === 'boolean';
     };

@@ -139,6 +139,74 @@ describe('ExportClient', () => {
     expect(result.stems?.[2].channels[0][0]).toBeCloseTo(0.7, 6);
   });
 
+  it('acknowledges each streamed stem only after its async consumer completes', async () => {
+    let releaseConsumer!: () => void;
+    const consumerGate = new Promise<void>((resolve) => {
+      releaseConsumer = resolve;
+    });
+    const onStem = vi.fn(async () => consumerGate);
+    const handle = client.renderMixdown(makeDoc(), { stems: true }, undefined, onStem);
+    expect(worker.posted[0]).toMatchObject({ type: 'render', streamStems: true });
+
+    worker.emit({
+      id: 1,
+      type: 'stem',
+      index: 0,
+      total: 1,
+      stem: {
+        trackIndex: 0,
+        name: 'Drums',
+        left: new Float32Array([0.25]),
+        right: new Float32Array([0.5]),
+      },
+    });
+    await Promise.resolve();
+    expect(worker.posted).toHaveLength(1);
+    releaseConsumer();
+    await vi.waitFor(() => {
+      expect(worker.posted[1]).toMatchObject({
+        type: 'stem-consumed',
+        targetId: 1,
+        index: 0,
+      });
+    });
+    expect(onStem).toHaveBeenCalledWith(expect.objectContaining({ name: 'Drums' }), 0, 1);
+
+    worker.emit({
+      id: 1,
+      type: 'render',
+      result: {
+        left: new Float32Array([0]),
+        right: new Float32Array([0]),
+        sampleRate: 48000,
+        totalFrames: 1,
+        report: { peakDb: Number.NEGATIVE_INFINITY },
+      },
+    });
+    const result = await handle.result;
+    expect(result.stems).toBeUndefined();
+  });
+
+  it('cancels the worker when a streamed stem consumer fails', async () => {
+    const handle = client.renderMixdown(makeDoc(), { stems: true }, undefined, async () => {
+      throw new Error('encoder out of memory');
+    });
+    worker.emit({
+      id: 1,
+      type: 'stem',
+      index: 0,
+      total: 2,
+      stem: {
+        trackIndex: 0,
+        name: 'Drums',
+        left: new Float32Array(1),
+        right: new Float32Array(1),
+      },
+    });
+    await expect(handle.result).rejects.toThrow('encoder out of memory');
+    expect(worker.posted[1]).toMatchObject({ type: 'cancel', targetId: 1 });
+  });
+
   it('routes progress responses to the callback without settling the promise', async () => {
     const onProgress = vi.fn();
     const handle = client.renderMixdown(makeDoc(), {}, onProgress);

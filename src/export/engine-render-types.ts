@@ -4,7 +4,7 @@
  * parameter namespace mirrors the facade encoding the live sync layers use.
  */
 
-import type { MixdownDeps, MixdownRange, MixdownRangePpq } from '@/export/mixdown';
+import type { MixdownDeps, MixdownRange, MixdownRangePpq, MixdownStem } from '@/export/mixdown';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import type { InsertLatencyResolver } from '@/project/insert-latency';
 import type { EngineClip, EngineTrackSend, RealtimeEngine } from '@/wasm/index.js';
@@ -76,6 +76,13 @@ export type OfflineRenderEngine = Pick<
   | 'process'
   | 'destroy'
 > & {
+  /** Future ABI: per-bus insert bypass matching track/master strips. */
+  setBusStripInsertBypassed?: (
+    busId: number,
+    insertIndex: number,
+    bypassed: boolean,
+    resetOnBypass?: boolean,
+  ) => void;
   /** Future ABI: per-bus EQ band setter. Current engines may omit it. */
   setBusStripEqBandJson?: (busId: number, bandIndex: number, json: string) => void;
 };
@@ -114,6 +121,14 @@ export interface EngineRenderOptions {
   busStems?: boolean;
   /** When stems are enabled, also include the final stereo master as a stem. */
   masterStem?: boolean;
+  /**
+   * Optional sequential stem consumer. Each callback is awaited before the
+   * next full-length stem is rendered, and consumed stems are not retained in
+   * the returned result.
+   */
+  onStem?: (stem: MixdownStem, index: number, total: number) => Promise<void> | void;
+  /** Maximum retained full-length audio payload before allocation. */
+  memoryBudgetBytes?: number;
   /**
    * Renders ONE track's pre-fader signal in isolation (freeze/bounce-in-
    * place): every other lane is muted, the track's sends, fader/pan and
@@ -164,6 +179,15 @@ export interface RenderPass {
    * its base fader/pan stay neutral and its fader/pan automation is skipped.
    */
   freezeIndex: number | null;
+  /**
+   * Null binds every active SF2 track (valid when they share one font). A set
+   * binds only those track indices, keeping the engine's global font slot
+   * fixed for an isolated pre-fader bounce; an empty set binds none because
+   * the SF2 tracks are supplied by pre-rendered audio clips in this pass.
+   */
+  sf2TrackIndices: ReadonlySet<number> | null;
+  /** Use pre-rendered SF2 audio clips and bypass their already-baked strip DSP. */
+  usePreRenderedSf2: boolean;
 }
 
 /** Resolves the render window in PPQ; endPpq null = up to the content end. */

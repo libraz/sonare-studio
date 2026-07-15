@@ -32,17 +32,23 @@
  * shared types/constants in engine-render-types.ts and the loudness/peak
  * report in engine-render-report.ts. This module is the orchestrator: it
  * configures and drives the engine passes and re-exports the public surface.
+ * When a document uses several SoundFonts, their MIDI tracks are first
+ * bounced in isolated font-fixed pre-fader passes and then returned to their
+ * original lanes as PCM. This avoids the engine's global SF2 slot contention
+ * while keeping bus, master and mastering processing in the one final pass.
  */
 
 import {
   engineAutomationPoints,
-  engineAutomationPointsWithValueOffset,
+  engineBusInsertAutomationIndex,
   engineBusStrip,
   engineBusStripHasDsp,
   engineEqBands,
+  engineFaderAutomationPoints,
 } from '@/engine/engine-declaration';
 import { resolvePresetName } from '@/engine/instruments';
 import { busSceneJson, stripSceneJson } from '@/engine/strip-sync';
+import { assertRenderPayloadMemory, estimateRenderPayloadMemory } from '@/export/memory-budget';
 import {
   MixdownCancelledError,
   type MixdownReport,
@@ -59,7 +65,10 @@ import {
   parseMasteringAutomationParam,
   sanitizeAutomationPoints,
 } from '@/project/automation';
-import { enabledInsertAutomationIndex } from '@/project/automation-insert';
+import {
+  insertIndexForAutomationRef,
+  masteringIndexForAutomationRef,
+} from '@/project/automation-insert';
 import { loadFont } from '@/project/fonts';
 import {
   type InsertLatencyCatalogEntry,
@@ -84,7 +93,11 @@ import {
 } from '@/project/mixer';
 import { expandedSoloStates, isTrackAudible } from '@/project/scheduling';
 import type { DocumentAutomationLane, ProjectDocument } from '@/project/serialization';
-import { normalizeTempoMap } from '@/project/tempo-map';
+import {
+  collectActiveSoundFontUsage,
+  hasSoundFontSlotConflict,
+} from '@/project/soundfont-conflicts';
+import { normalizeTempoMap, samplesToPpq } from '@/project/tempo-map';
 import { buildAudioClips } from './engine-render-clips';
 import {
   buildBusRouting,
@@ -99,6 +112,7 @@ import {
   DEFAULT_TEMPO_BPM,
   ENGINE_MIXER_PARAM_FADER_DB,
   ENGINE_MIXER_PARAM_PAN,
+  type EngineClipSpec,
   type EngineRenderOptions,
   laneParamId,
   masterParamId,
@@ -121,12 +135,14 @@ function masteringParamsAtRenderStart(
   for (const lane of lanes) {
     if (!lane.enabled || lane.points.length === 0) continue;
     const ref = parseMasteringAutomationParam(lane.param);
-    if (!ref || !chain.processors[ref.processorIndex]) continue;
+    if (!ref) continue;
+    const processorIndex = masteringIndexForAutomationRef(chain, ref);
+    if (processorIndex === undefined) continue;
     const points = sanitizeAutomationPoints(lane.param, lane.points);
     if (points.length === 0) continue;
-    const params = automated.get(ref.processorIndex) ?? {};
+    const params = automated.get(processorIndex) ?? {};
     params[ref.paramName] = evaluateAutomationValue(points, ppq);
-    automated.set(ref.processorIndex, params);
+    automated.set(processorIndex, params);
   }
   return automated;
 }
@@ -154,7 +170,7 @@ function hasTimeVaryingPoints(points: DocumentAutomationLane['points']): boolean
   return points.some((point) => point.ppq !== first.ppq && point.value !== first.value);
 }
 
-function staticAutomationLimitations(doc: ProjectDocument): string[] {
+export function offlineAutomationLimitations(doc: ProjectDocument): string[] {
   const limitations: string[] = [];
   const hasMasteringTimeVarying = (doc.masterAutomation ?? []).some((lane) => {
     if (!lane.enabled || !parseMasteringAutomationParam(lane.param)) return false;
@@ -210,7 +226,6 @@ export async function renderProjectWithEngine(
   const tempoSegments =
     doc.tempoSegments.length > 0 ? doc.tempoSegments : [{ startPpq: 0, bpm: DEFAULT_TEMPO_BPM }];
   const tempoMap = normalizeTempoMap(tempoSegments);
-  const sliceTempoBpm = tempoSegments[0]?.bpm ?? DEFAULT_TEMPO_BPM;
   const range = resolveRange(options);
 
   let createEngine = options.createEngine;
@@ -259,6 +274,16 @@ export async function renderProjectWithEngine(
 
   // Pre-load instrument fonts once; engine passes then configure synchronously.
   const fontBytesById = await preloadSoundFonts(doc, loadFontBytes);
+  const soundFontUsage = collectActiveSoundFontUsage(doc.tracks);
+  const conflictingSf2TrackIndices = hasSoundFontSlotConflict(soundFontUsage)
+    ? new Set(
+        doc.tracks.flatMap((track, index) =>
+          track.kind === 'midi' && track.frozen === undefined && track.instrument?.kind === 'sf2'
+            ? [index]
+            : [],
+        ),
+      )
+    : new Set<number>();
 
   // MIDI clip schedules via the live builder (velocity-folded clip gain,
   // SF2 preludes, tempo-map-exact sample positions).
@@ -266,13 +291,14 @@ export async function renderProjectWithEngine(
 
   // Audio clips: the live scheduling transforms (slice window, baked fades,
   // linear resample to the render rate), placed at their timeline PPQ.
-  const audioClips = await buildAudioClips(doc, {
+  const mediaIssues: NonNullable<MixdownReport['mediaIssues']> = [];
+  const sourceAudioClips = await buildAudioClips(doc, {
     trackIds,
-    sliceTempoBpm,
     tempoMap,
     sampleRate,
     loadAudio,
     checkCancel,
+    mediaIssues,
   });
 
   // Resolve the render window in frames.
@@ -282,13 +308,48 @@ export async function renderProjectWithEngine(
     range,
     sampleRate,
     options.releaseTailSeconds,
-    audioClips,
+    sourceAudioClips,
   );
+  const stemTracks = options.stems
+    ? doc.tracks
+        .map((track, trackIndex) => ({ track, trackIndex }))
+        .filter(({ trackIndex }) =>
+          isTrackAudible(
+            tracksForAudibility[trackIndex],
+            tracksForAudibility,
+            documentSoloExpansion,
+          ),
+        )
+    : [];
+  const stemBuses =
+    options.stems && options.busStems === true
+      ? (doc.mixer?.buses ?? [])
+          .map((bus, busIndex) => ({ bus, busIndex }))
+          .flatMap(({ bus, busIndex }) => {
+            const busNumber = busNumberById.get(bus.id);
+            return busNumber === undefined ? [] : [{ bus, busIndex, busNumber }];
+          })
+      : [];
+  const stemCount =
+    stemTracks.length + stemBuses.length + (options.stems && options.masterStem === true ? 1 : 0);
+  if (options.memoryBudgetBytes !== undefined) {
+    assertRenderPayloadMemory(
+      estimateRenderPayloadMemory({
+        totalFrames,
+        stemCount,
+        streamingStems: options.onStem !== undefined,
+        retainedAuxiliaryStereoBuffers: conflictingSf2TrackIndices.size,
+      }),
+      options.memoryBudgetBytes,
+    );
+  }
   const maxInsertLatency = maxTrackInsertLatencySamples(doc.tracks, resolveInsertLatency);
+  let renderAudioClips: EngineClipSpec[] = sourceAudioClips;
 
   /** Replays the pre-built program onto a fresh engine (synchronous). */
   const configureEngine = (engine: OfflineRenderEngine, pass: RenderPass): void => {
     const supportsBusEq = typeof engine.setBusStripEqBandJson === 'function';
+    const supportsBusInsertBypass = typeof engine.setBusStripInsertBypassed === 'function';
     // The engine validates sends against already-declared buses, so the bus
     // set must be installed before any lane that carries sends. A freeze pass
     // strips the frozen lane's sends (they stay live on the track). A bus stem
@@ -322,10 +383,16 @@ export async function renderProjectWithEngine(
       const busId = busNumberById.get(bus.id);
       if (busId === undefined) continue;
       if (!engineBusStripHasDsp(bus.strip, supportsBusEq)) continue;
+      const engineStrip = supportsBusInsertBypass ? bus.strip : engineBusStrip(bus.strip);
       engine.setBusStripJson(
         busId,
-        busSceneJson(busId, engineBusStrip(bus.strip), undefined, { includeEq: supportsBusEq }),
+        busSceneJson(busId, engineStrip, undefined, { includeEq: supportsBusEq }),
       );
+      if (supportsBusInsertBypass) {
+        bus.strip?.inserts.forEach((slot, insertIndex) => {
+          if (!slot.enabled) engine.setBusStripInsertBypassed?.(busId, insertIndex, true);
+        });
+      }
       if (supportsBusEq) {
         engineEqBands(bus.strip).forEach((band, bandIndex) => {
           engine.setBusStripEqBandJson?.(busId, bandIndex, JSON.stringify(band));
@@ -348,15 +415,22 @@ export async function renderProjectWithEngine(
     doc.tracks.forEach((track, index) => {
       const strip = track.mixer;
       const trackId = trackIds[index];
+      const usesPreRenderedSf2 = pass.usePreRenderedSf2 && conflictingSf2TrackIndices.has(index);
       if (track.kind === 'group') {
         // Group inserts ride the group's bus strip (the lane stays silent);
         // the audible group level was already baked into the bus gain.
         const busId = groupBusByTrackIndex.get(index);
         if (busId !== undefined && engineBusStripHasDsp(strip, supportsBusEq)) {
+          const engineStrip = supportsBusInsertBypass ? strip : engineBusStrip(strip);
           engine.setBusStripJson(
             busId,
-            busSceneJson(busId, engineBusStrip(strip), undefined, { includeEq: supportsBusEq }),
+            busSceneJson(busId, engineStrip, undefined, { includeEq: supportsBusEq }),
           );
+          if (supportsBusInsertBypass) {
+            strip?.inserts.forEach((slot, insertIndex) => {
+              if (!slot.enabled) engine.setBusStripInsertBypassed?.(busId, insertIndex, true);
+            });
+          }
           if (supportsBusEq) {
             engineEqBands(strip).forEach((band, bandIndex) => {
               engine.setBusStripEqBandJson?.(busId, bandIndex, JSON.stringify(band));
@@ -365,7 +439,7 @@ export async function renderProjectWithEngine(
         }
         return;
       }
-      if (track.frozen === undefined && strip && stripHasDsp(strip)) {
+      if (track.frozen === undefined && !usesPreRenderedSf2 && strip && stripHasDsp(strip)) {
         // Frozen tracks bypass their strip DSP (baked into the render).
         engine.setTrackStripJson(trackId, stripSceneJson(trackId, strip));
         strip.inserts.forEach((slot, insertIndex) => {
@@ -419,6 +493,9 @@ export async function renderProjectWithEngine(
             clampPan(strip.dualPan.right),
           );
         }
+        // The pre-rendered SF2 PCM contains the insert processor's own
+        // latency, but not the live PDC channel delay (freeze passes keep it
+        // outside the bake), so the final lane still receives normal PDC.
         const channelDelay = trackPdcDelaySamples(track, maxInsertLatency, resolveInsertLatency);
         if (channelDelay > 0) engine.setTrackStripChannelDelaySamples(trackId, channelDelay);
       }
@@ -426,7 +503,8 @@ export async function renderProjectWithEngine(
 
     // Insert sidechain keys (document inserts carry positional sources).
     doc.tracks.forEach((track, index) => {
-      if (track.kind === 'group') return;
+      const usesPreRenderedSf2 = pass.usePreRenderedSf2 && conflictingSf2TrackIndices.has(index);
+      if (track.kind === 'group' || usesPreRenderedSf2) return;
       (track.mixer?.inserts ?? []).forEach((slot, insertIndex) => {
         const sourceIndex = (slot as { sidechainSourceIndex?: number }).sidechainSourceIndex;
         if (
@@ -461,6 +539,7 @@ export async function renderProjectWithEngine(
 
     // Automation lanes (track entries + master), enabled lanes only.
     doc.tracks.forEach((track, index) => {
+      const usesPreRenderedSf2 = pass.usePreRenderedSf2 && conflictingSf2TrackIndices.has(index);
       for (const lane of track.automation ?? []) {
         if (!lane.enabled || lane.points.length === 0) continue;
         if (pass.freezeIndex === index && (lane.param === 'faderDb' || lane.param === 'pan')) {
@@ -468,9 +547,10 @@ export async function renderProjectWithEngine(
         }
         const points =
           lane.param === 'faderDb'
-            ? engineAutomationPointsWithValueOffset(
+            ? engineFaderAutomationPoints(
                 lane.points,
                 vcaOffsetDb(track.vcaId, vcaGainDbById),
+                effectiveTrackMute(track.mute, track.vcaId, vcaControlsById),
               )
             : engineAutomationPoints(lane.points);
         if (points.length === 0) continue;
@@ -479,9 +559,19 @@ export async function renderProjectWithEngine(
         // negative id means the insert or key is unknown and is skipped.
         const insertRef = parseInsertAutomationParam(lane.param);
         if (insertRef) {
+          if (usesPreRenderedSf2) continue;
+          const storeInsertIndex = insertIndexForAutomationRef(
+            track.mixer?.inserts ?? [],
+            insertRef,
+          );
+          if (storeInsertIndex === undefined) continue;
           const groupBusId = track.kind === 'group' ? groupBusByTrackIndex.get(index) : undefined;
           if (groupBusId !== undefined) {
-            const insertIndex = enabledInsertAutomationIndex(track.mixer, insertRef.insertIndex);
+            const insertIndex = engineBusInsertAutomationIndex(
+              track.mixer,
+              storeInsertIndex,
+              supportsBusInsertBypass,
+            );
             if (insertIndex === undefined) continue;
             const id = engine.resolveBusInsertAutomationId(
               groupBusId,
@@ -493,7 +583,7 @@ export async function renderProjectWithEngine(
           }
           const id = engine.resolveTrackInsertAutomationId(
             trackIds[index],
-            insertRef.insertIndex,
+            storeInsertIndex,
             insertRef.paramName,
           );
           if (id >= 0) engine.setAutomationLane(id, points);
@@ -517,10 +607,12 @@ export async function renderProjectWithEngine(
         if (points.length === 0) continue;
         const insertRef = parseInsertAutomationParam(lane.param);
         if (insertRef) {
-          const id = engine.resolveMasterInsertAutomationId(
-            insertRef.insertIndex,
-            insertRef.paramName,
+          const storeInsertIndex = insertIndexForAutomationRef(
+            doc.mixer?.master.inserts ?? [],
+            insertRef,
           );
+          if (storeInsertIndex === undefined) continue;
+          const id = engine.resolveMasterInsertAutomationId(storeInsertIndex, insertRef.paramName);
           if (id >= 0) engine.setAutomationLane(id, points);
           continue;
         }
@@ -539,7 +631,13 @@ export async function renderProjectWithEngine(
         if (points.length === 0) continue;
         const insertRef = parseInsertAutomationParam(lane.param);
         if (insertRef) {
-          const insertIndex = enabledInsertAutomationIndex(bus?.strip, insertRef.insertIndex);
+          const storeInsertIndex = insertIndexForAutomationRef(bus.strip?.inserts ?? [], insertRef);
+          if (storeInsertIndex === undefined) continue;
+          const insertIndex = engineBusInsertAutomationIndex(
+            bus?.strip,
+            storeInsertIndex,
+            supportsBusInsertBypass,
+          );
           if (insertIndex === undefined) continue;
           const id = engine.resolveBusInsertAutomationId(busId, insertIndex, insertRef.paramName);
           if (id >= 0) engine.setAutomationLane(id, points);
@@ -554,8 +652,11 @@ export async function renderProjectWithEngine(
       tempoSegments.map((s) => ({ startPpq: s.startPpq, bpm: s.bpm, endBpm: s.endBpm ?? 0 })),
     );
 
-    // Instruments for MIDI tracks: same resolution as the live midi-sync
-    // (default preset when absent; one global SoundFont, last font wins).
+    // Instruments for MIDI tracks use the same resolution as live playback.
+    // A regular pass can bind all SF2 destinations only when they share one
+    // font. Conflicting projects first run isolated, font-fixed pre-fader
+    // bounces; their final pass binds no SF2 player and schedules those
+    // bounces as audio on the original lanes instead.
     let loadedFontId: string | undefined;
     for (let index = 0; index < doc.tracks.length; index++) {
       const track = doc.tracks[index];
@@ -573,6 +674,7 @@ export async function renderProjectWithEngine(
           destinationId,
         );
       } else if (instrument.kind === 'sf2') {
+        if (pass.sf2TrackIndices !== null && !pass.sf2TrackIndices.has(index)) continue;
         const bytes = fontBytesById.get(instrument.fontId);
         if (bytes && instrument.fontId !== loadedFontId) {
           engine.loadSoundFont(bytes);
@@ -585,14 +687,26 @@ export async function renderProjectWithEngine(
       // Apply the track's live, non-destructive MIDI-FX insert so the export
       // matches live playback (the same engine transform, applied here rather
       // than baked into the notes).
-      if (track.midiFx !== undefined) {
+      if (
+        track.midiFx !== undefined &&
+        (instrument?.kind !== 'sf2' ||
+          pass.sf2TrackIndices === null ||
+          pass.sf2TrackIndices.has(index))
+      ) {
         const json = midiFxConfigJson(track.midiFx);
         if (json !== null) engine.setMidiFx(destinationId, json);
       }
     }
 
-    if (midiSchedules.length > 0) engine.setMidiClips(midiSchedules);
-    if (audioClips.length > 0) engine.setClips(audioClips);
+    const passMidiSchedules = pass.usePreRenderedSf2
+      ? midiSchedules.filter(
+          (schedule) =>
+            schedule.destinationId === undefined ||
+            !conflictingSf2TrackIndices.has(schedule.destinationId - 1),
+        )
+      : midiSchedules;
+    if (passMidiSchedules.length > 0) engine.setMidiClips(passMidiSchedules);
+    if (renderAudioClips.length > 0) engine.setClips(renderAudioClips);
   };
 
   /**
@@ -609,14 +723,16 @@ export async function renderProjectWithEngine(
     stage: string,
     progressStart: number,
     progressSpan: number,
+    capturePreroll = false,
   ): Promise<[Float32Array, Float32Array]> => {
-    const left = new Float32Array(totalFrames);
-    const right = new Float32Array(totalFrames);
     // Roll (and discard) a pre-roll up to the window start so stateful DSP
     // and the content before the window (sustained clips, sidechain keys)
     // are already in motion when capture begins. Renders from the timeline
     // start have nothing before them and start cold by definition.
     const prerollFrames = Math.min(startSample, Math.round(PREROLL_SECONDS * sampleRate));
+    const captureOffset = capturePreroll ? prerollFrames : 0;
+    const left = new Float32Array(totalFrames + captureOffset);
+    const right = new Float32Array(totalFrames + captureOffset);
     engine.seekSample(startSample - prerollFrames);
     engine.process([new Float32Array(RENDER_BLOCK_FRAMES), new Float32Array(RENDER_BLOCK_FRAMES)]);
     engine.settleParameters();
@@ -624,7 +740,11 @@ export async function renderProjectWithEngine(
     let prerollDone = 0;
     while (prerollDone < prerollFrames) {
       const blockFrames = Math.min(RENDER_BLOCK_FRAMES, prerollFrames - prerollDone);
-      engine.process([new Float32Array(blockFrames), new Float32Array(blockFrames)]);
+      const out = engine.process([new Float32Array(blockFrames), new Float32Array(blockFrames)]);
+      if (capturePreroll) {
+        left.set(out[0].subarray(0, blockFrames), prerollDone);
+        right.set((out[1] ?? out[0]).subarray(0, blockFrames), prerollDone);
+      }
       prerollDone += blockFrames;
     }
     let framesDone = 0;
@@ -632,8 +752,8 @@ export async function renderProjectWithEngine(
     while (framesDone < totalFrames) {
       const blockFrames = Math.min(RENDER_BLOCK_FRAMES, totalFrames - framesDone);
       const out = engine.process([new Float32Array(blockFrames), new Float32Array(blockFrames)]);
-      left.set(out[0].subarray(0, blockFrames), framesDone);
-      right.set((out[1] ?? out[0]).subarray(0, blockFrames), framesDone);
+      left.set(out[0].subarray(0, blockFrames), captureOffset + framesDone);
+      right.set((out[1] ?? out[0]).subarray(0, blockFrames), captureOffset + framesDone);
       framesDone += blockFrames;
       if (++blocksSinceCheckpoint >= BLOCKS_PER_CHECKPOINT) {
         blocksSinceCheckpoint = 0;
@@ -655,6 +775,7 @@ export async function renderProjectWithEngine(
     stage: string,
     progressStart: number,
     progressSpan: number,
+    capturePreroll = false,
   ): Promise<[Float32Array, Float32Array]> => {
     const engine = (createEngine as NonNullable<typeof createEngine>)(
       sampleRate,
@@ -662,7 +783,7 @@ export async function renderProjectWithEngine(
     );
     try {
       configureEngine(engine, pass);
-      return await renderWindow(engine, stage, progressStart, progressSpan);
+      return await renderWindow(engine, stage, progressStart, progressSpan, capturePreroll);
     } finally {
       engine.destroy();
     }
@@ -685,6 +806,9 @@ export async function renderProjectWithEngine(
         stemIndices: new Set([freezeIndex]),
         busStemId: null,
         freezeIndex,
+        sf2TrackIndices:
+          doc.tracks[freezeIndex].instrument?.kind === 'sf2' ? new Set([freezeIndex]) : new Set(),
+        usePreRenderedSf2: false,
       },
       'engine.freeze',
       0,
@@ -710,28 +834,43 @@ export async function renderProjectWithEngine(
 
   // Pass schedule: the mix, then isolated passes per audible track and,
   // optionally, per declared mixer bus/return.
-  const stemTracks = options.stems
-    ? doc.tracks
-        .map((track, trackIndex) => ({ track, trackIndex }))
-        .filter(({ trackIndex }) =>
-          isTrackAudible(
-            tracksForAudibility[trackIndex],
-            tracksForAudibility,
-            documentSoloExpansion,
-          ),
-        )
-    : [];
-  const stemBuses =
-    options.stems && options.busStems === true
-      ? (doc.mixer?.buses ?? [])
-          .map((bus, busIndex) => ({ bus, busIndex }))
-          .flatMap(({ bus, busIndex }) => {
-            const busNumber = busNumberById.get(bus.id);
-            return busNumber === undefined ? [] : [{ bus, busIndex, busNumber }];
-          })
-      : [];
   const stemPassCount = stemTracks.length + stemBuses.length;
-  const passSpan = 0.9 / (1 + stemPassCount);
+  const sf2PreRenderCount = conflictingSf2TrackIndices.size;
+  const passSpan = 0.9 / (1 + stemPassCount + sf2PreRenderCount);
+  let passIndex = 0;
+
+  if (sf2PreRenderCount > 0) {
+    const prerollFrames = Math.min(startSample, Math.round(PREROLL_SECONDS * sampleRate));
+    const clipStartPpq = samplesToPpq(tempoMap, startSample - prerollFrames, sampleRate);
+    const sf2Clips: EngineClipSpec[] = [];
+    for (const trackIndex of conflictingSf2TrackIndices) {
+      checkCancel();
+      const channels = await runPass(
+        {
+          masterStrip: false,
+          masterLevels: false,
+          stemIndices: new Set([trackIndex]),
+          busStemId: null,
+          freezeIndex: trackIndex,
+          sf2TrackIndices: new Set([trackIndex]),
+          usePreRenderedSf2: false,
+        },
+        `engine.sf2:${trackIndex}`,
+        passSpan * passIndex,
+        passSpan,
+        true,
+      );
+      passIndex += 1;
+      sf2Clips.push({
+        trackId: trackIds[trackIndex],
+        channels,
+        startPpq: clipStartPpq,
+        lengthSamples: channels[0].length,
+        gain: 1,
+      });
+    }
+    renderAudioClips = [...sourceAudioClips, ...sf2Clips];
+  }
 
   let [mixL, mixR] = await runPass(
     {
@@ -740,13 +879,26 @@ export async function renderProjectWithEngine(
       stemIndices: null,
       busStemId: null,
       freezeIndex: null,
+      sf2TrackIndices: sf2PreRenderCount > 0 ? new Set() : null,
+      usePreRenderedSf2: sf2PreRenderCount > 0,
     },
     'engine.render',
-    0,
+    passSpan * passIndex,
     passSpan,
   );
+  passIndex += 1;
 
   const stems: MixdownStem[] = [];
+  let emittedStemCount = 0;
+  const consumeStem = async (stem: MixdownStem): Promise<void> => {
+    if (options.onStem) {
+      await options.onStem(stem, emittedStemCount, stemCount);
+    } else {
+      stems.push(stem);
+    }
+    emittedStemCount += 1;
+    checkCancel();
+  };
   for (let i = 0; i < stemTracks.length; i++) {
     const { track, trackIndex } = stemTracks[i];
     checkCancel();
@@ -765,12 +917,15 @@ export async function renderProjectWithEngine(
         stemIndices,
         busStemId: null,
         freezeIndex: null,
+        sf2TrackIndices: sf2PreRenderCount > 0 ? new Set() : null,
+        usePreRenderedSf2: sf2PreRenderCount > 0,
       },
       `engine.stem:${trackIndex}`,
-      passSpan * (1 + i),
+      passSpan * passIndex,
       passSpan,
     );
-    stems.push({
+    passIndex += 1;
+    await consumeStem({
       source: 'track',
       trackIndex,
       name: track.name,
@@ -794,12 +949,15 @@ export async function renderProjectWithEngine(
         stemIndices: null,
         busStemId: busNumber,
         freezeIndex: null,
+        sf2TrackIndices: sf2PreRenderCount > 0 ? new Set() : null,
+        usePreRenderedSf2: sf2PreRenderCount > 0,
       },
       `engine.busStem:${busIndex}`,
-      passSpan * (1 + stemTracks.length + i),
+      passSpan * passIndex,
       passSpan,
     );
-    stems.push({
+    passIndex += 1;
+    await consumeStem({
       source: 'bus',
       trackIndex: -1 - busIndex,
       busId: bus.id,
@@ -860,11 +1018,12 @@ export async function renderProjectWithEngine(
     totalFrames,
     deps?.metering ?? null,
   );
-  const limitations = staticAutomationLimitations(doc);
+  const limitations = offlineAutomationLimitations(doc);
   if (limitations.length > 0) report.limitations = limitations;
+  if (mediaIssues.length > 0) report.mediaIssues = mediaIssues;
 
   if (options.stems && options.masterStem === true) {
-    stems.push({
+    await consumeStem({
       source: 'master',
       trackIndex: Number.MIN_SAFE_INTEGER,
       name: 'Master',
@@ -875,6 +1034,6 @@ export async function renderProjectWithEngine(
   options.onProgress?.(1, 'done');
 
   const result: MixdownResult = { channels: [mixL, mixR], sampleRate, totalFrames, report };
-  if (options.stems) result.stems = stems;
+  if (options.stems && !options.onStem) result.stems = stems;
   return result;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { encodeWav } from '@/export/wav';
+import { encodeWav, wavFileSize } from '@/export/wav';
 
 /** Reads an ASCII four-character tag at an offset. */
 function tag(bytes: Uint8Array, offset: number): string {
@@ -175,6 +175,12 @@ describe('encodeWav', () => {
   });
 
   describe('validation', () => {
+    it('accepts the largest stereo 16-bit layout that fits RIFF and rejects the next frame', () => {
+      const maxFrames = 1_073_741_814;
+      expect(wavFileSize(maxFrames, 2, 16)).toBe(4_294_967_300);
+      expect(() => wavFileSize(maxFrames + 1, 2, 16)).toThrow(/RIFF 4 GiB limit/);
+    });
+
     it('rejects empty channel lists', () => {
       expect(() => encodeWav([], 48000)).toThrow(RangeError);
     });

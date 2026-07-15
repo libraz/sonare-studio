@@ -27,6 +27,44 @@ function bytesPerSample(bitDepth: WavBitDepth): number {
   return bitDepth === '32f' ? 4 : bitDepth / 8;
 }
 
+/** Largest value representable by a classic RIFF/WAVE 32-bit chunk-size field. */
+export const WAV_RIFF_SIZE_MAX = 0xffff_ffff;
+
+/**
+ * Returns the complete classic RIFF/WAVE file size, rejecting layouts whose
+ * data or RIFF chunks would wrap their 32-bit size fields. This pure helper is
+ * intentionally usable for >4 GiB boundary tests without allocating audio.
+ */
+export function wavFileSize(frames: number, numChannels: number, bitDepth: WavBitDepth): number {
+  if (!Number.isSafeInteger(frames) || frames < 0) {
+    throw new RangeError(`WAV frame count must be a non-negative safe integer, got ${frames}`);
+  }
+  if (!Number.isSafeInteger(numChannels) || numChannels <= 0) {
+    throw new RangeError(`WAV channel count must be a positive safe integer, got ${numChannels}`);
+  }
+  const sampleBytes = bytesPerSample(bitDepth);
+  const blockAlign = numChannels * sampleBytes;
+  if (blockAlign > 0xffff) {
+    throw new RangeError(`WAV block alignment exceeds 16-bit RIFF field: ${blockAlign}`);
+  }
+  const dataSize = frames * blockAlign;
+  const dataPad = dataSize % 2;
+  const fmtSize = bitDepth === '32f' ? 18 : 16;
+  const factBytes = bitDepth === '32f' ? 12 : 0;
+  const riffSize = 4 + (8 + fmtSize) + factBytes + (8 + dataSize + dataPad);
+  if (
+    !Number.isSafeInteger(dataSize) ||
+    dataSize > WAV_RIFF_SIZE_MAX ||
+    !Number.isSafeInteger(riffSize) ||
+    riffSize > WAV_RIFF_SIZE_MAX
+  ) {
+    throw new RangeError(
+      'WAV exceeds the classic RIFF 4 GiB limit; shorten the range, lower the sample rate, or export stems.',
+    );
+  }
+  return 8 + riffSize;
+}
+
 /** Writes an ASCII four-character chunk tag. */
 function writeTag(view: DataView, offset: number, tag: string): void {
   for (let i = 0; i < 4; i++) {
@@ -83,7 +121,7 @@ export function encodeWav(
   const fmtSize = isFloat ? 18 : 16;
   const factBytes = isFloat ? 8 + 4 : 0;
   const riffSize = 4 + (8 + fmtSize) + factBytes + (8 + dataSize + dataPad);
-  const out = new Uint8Array(8 + riffSize);
+  const out = new Uint8Array(wavFileSize(frames, numChannels, bitDepth));
   const view = new DataView(out.buffer);
 
   let offset = 0;

@@ -4,7 +4,11 @@ import type { OfflineRenderEngine } from '@/export/engine-render';
 import { renderProjectWithEngine } from '@/export/engine-render';
 import { MixdownCancelledError } from '@/export/mixdown';
 import type { LoadedAudioAsset } from '@/persistence/assets';
-import { instrumentAutomationParam, masteringAutomationParam } from '@/project/automation';
+import {
+  insertAutomationParam,
+  instrumentAutomationParam,
+  masteringAutomationParam,
+} from '@/project/automation';
 import type { ProjectDocument } from '@/project/serialization';
 import { clearWarpBakeCache } from '@/project/warp';
 
@@ -144,6 +148,13 @@ class FakeEngine implements OfflineRenderEngine {
   }
   destroy(): void {
     this.destroyed = true;
+  }
+}
+
+/** Fake engine exposing the newer bus-insert bypass ABI. */
+class BusBypassFakeEngine extends FakeEngine {
+  setBusStripInsertBypassed(busId: number, index: number, bypassed: boolean): void {
+    this.calls.push(['setBusStripInsertBypassed', busId, index, bypassed]);
   }
 }
 
@@ -367,6 +378,10 @@ class AudibilityEngine extends FakeEngine {
     this.playing = false;
   }
 
+  protected midiSample(_trackId: number, velocity: number): number {
+    return velocity / 127;
+  }
+
   process(channels: Float32Array[]): Float32Array[] {
     if (!this.playing) return channels;
     const anySolo = [...this.laneSoloMute.values()].some((state) => state.solo);
@@ -404,7 +419,8 @@ class AudibilityEngine extends FakeEngine {
       for (const note of this.midiNotes) {
         if (!audibleTrackIds.has(note.trackId)) continue;
         if (frame >= note.startFrame && frame < note.endFrame) {
-          const value = (note.velocity / 127) * laneGainForTrack(note.trackId, frame);
+          const value =
+            this.midiSample(note.trackId, note.velocity) * laneGainForTrack(note.trackId, frame);
           leftSample += value;
           rightSample += value;
         }
@@ -414,6 +430,28 @@ class AudibilityEngine extends FakeEngine {
     }
     this.cursor += channels[0].length;
     return channels;
+  }
+}
+
+/** Audible fake whose loaded SF2 byte selects a deterministic timbre gain. */
+class SoundFontAudibilityEngine extends AudibilityEngine {
+  private loadedSoundFontGain = 1;
+  private readonly soundFontGainByTrack = new Map<number, number>();
+
+  loadSoundFont(data: Uint8Array): void {
+    super.loadSoundFont(data);
+    this.loadedSoundFontGain = (data[0] ?? 100) / 100;
+  }
+
+  setSf2Instrument(config?: object, destinationId?: number): void {
+    super.setSf2Instrument(config, destinationId);
+    if (destinationId !== undefined) {
+      this.soundFontGainByTrack.set(destinationId, this.loadedSoundFontGain);
+    }
+  }
+
+  protected midiSample(trackId: number, velocity: number): number {
+    return (velocity / 127) * (this.soundFontGainByTrack.get(trackId) ?? 1);
   }
 }
 
@@ -1044,12 +1082,32 @@ describe('renderProjectWithEngine', () => {
   it('routes an insert-parameter lane to its resolved insert id, not the fader id', async () => {
     const doc = makeDoc();
     // Track 0 and master each carry only an insert-parameter automation lane.
-    doc.tracks[0].mixer = { gainDb: 0, pan: 0, inserts: [], sends: [] };
+    doc.tracks[0].mixer = {
+      gainDb: 0,
+      pan: 0,
+      inserts: [{ id: 'track-gain', processor: 'gain.gain', params: { gainDb: 0 }, enabled: true }],
+      sends: [],
+    };
+    doc.mixer = doc.mixer ?? {
+      master: { gainDb: 0, pan: 0, inserts: [], sends: [] },
+      buses: [],
+    };
+    doc.mixer.master.inserts = [
+      { id: 'master-gain', processor: 'gain.gain', params: { gainDb: 0 }, enabled: true },
+    ];
     doc.tracks[0].automation = [
-      { param: 'insert:0:gainDb', enabled: true, points: [{ ppq: 0, value: 3 }] },
+      {
+        param: insertAutomationParam('track-gain', 'gainDb'),
+        enabled: true,
+        points: [{ ppq: 0, value: 3 }],
+      },
     ];
     doc.masterAutomation = [
-      { param: 'insert:0:gainDb', enabled: true, points: [{ ppq: 0, value: 3 }] },
+      {
+        param: insertAutomationParam('master-gain', 'gainDb'),
+        enabled: true,
+        points: [{ ppq: 0, value: 3 }],
+      },
     ];
 
     const engine = new FakeEngine();
@@ -1652,12 +1710,15 @@ describe('renderProjectWithEngine', () => {
     expect(result.channels[0][1]).toBeCloseTo(defaultMidiLevel(96), 5);
   });
 
-  it('warns and binds multiple SF2 tracks in track order for offline playback', async () => {
+  it('renders conflicting SF2 tracks in font-fixed pre-fader passes', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
       const doc = makeDoc();
       doc.tracks[1].mute = true;
       doc.tracks[0].instrument = { kind: 'sf2', fontId: 'font-a' };
+      (doc.mixer as NonNullable<ProjectDocument['mixer']>).master.inserts = [
+        { processor: 'dynamics.limiter', params: {}, enabled: true },
+      ];
       doc.tracks.push({
         name: 'Brass',
         color: '#fc0',
@@ -1698,23 +1759,95 @@ describe('renderProjectWithEngine', () => {
         ['font-c', new Uint8Array([3])],
       ]);
       const loadFont = vi.fn(async (fontId: string) => bytesById.get(fontId) ?? new Uint8Array());
-      const engine = new FakeEngine();
+      const engines: FakeEngine[] = [];
 
-      await renderProjectWithEngine(doc, { ...renderOptions(engine), loadFont });
+      await renderProjectWithEngine(doc, {
+        deps: null,
+        createEngine: () => {
+          const engine = new FakeEngine();
+          engines.push(engine);
+          return engine;
+        },
+        loadAudioAsset: async () => fakeAsset(),
+        loadFont,
+      });
 
-      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).not.toHaveBeenCalled();
       expect(loadFont.mock.calls.map(([fontId]) => fontId)).toEqual(['font-a', 'font-b']);
-      expect(engine.named('loadSoundFont')).toEqual([
+      expect(engines).toHaveLength(3);
+      expect(engines[0].named('loadSoundFont')).toEqual([
         ['loadSoundFont', bytesById.get('font-a')],
+      ]);
+      expect(engines[0].named('setSf2Instrument')).toEqual([['setSf2Instrument', {}, 1]]);
+      expect(engines[1].named('loadSoundFont')).toEqual([
         ['loadSoundFont', bytesById.get('font-b')],
       ]);
-      expect(engine.named('setSf2Instrument')).toEqual([
-        ['setSf2Instrument', {}, 1],
-        ['setSf2Instrument', {}, 3],
-      ]);
+      expect(engines[1].named('setSf2Instrument')).toEqual([['setSf2Instrument', {}, 3]]);
+      expect(engines[2].named('loadSoundFont')).toEqual([]);
+      expect(engines[2].named('setSf2Instrument')).toEqual([]);
+      expect(engines[2].named('setMidiClips')).toEqual([]);
+      expect(engines[0].named('setMasterStripJson')).toEqual([]);
+      expect(engines[1].named('setMasterStripJson')).toEqual([]);
+      expect(engines[2].named('setMasterStripJson')).toHaveLength(1);
+      const finalClips = engines[2].named('setClips')[0][1] as Array<{ trackId: number }>;
+      expect(finalClips.slice(-2).map((clip) => clip.trackId)).toEqual([1, 3]);
     } finally {
       warn.mockRestore();
     }
+  });
+
+  it('mixes each conflicting SF2 track with its own font before the master pass', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].mute = true;
+    doc.tracks[0].instrument = { kind: 'sf2', fontId: 'font-a' };
+    doc.tracks.push({
+      name: 'Brass',
+      color: '#fc0',
+      kind: 'midi',
+      mute: false,
+      solo: false,
+      volume: 1,
+      pan: 0,
+      instrument: { kind: 'sf2', fontId: 'font-b' },
+      clips: [
+        {
+          name: 'brass',
+          startPpq: 0,
+          lengthPpq: 1,
+          sourceOffsetPpq: 0,
+          gain: 1,
+          loopEnabled: false,
+          loopLengthPpq: 0,
+          notes: [{ pitch: 67, velocity: 80, startPpq: 0, durationPpq: 1, channel: 0 }],
+        },
+      ],
+    } as (typeof doc.tracks)[number]);
+    const bytesById = new Map([
+      ['font-a', new Uint8Array([20])],
+      ['font-b', new Uint8Array([70])],
+    ]);
+    const engines: SoundFontAudibilityEngine[] = [];
+
+    const result = await renderProjectWithEngine(doc, {
+      deps: null,
+      createEngine: () => {
+        const engine = new SoundFontAudibilityEngine();
+        engines.push(engine);
+        return engine;
+      },
+      loadAudioAsset: async () => fakeAsset(),
+      loadFont: async (fontId) => bytesById.get(fontId) ?? new Uint8Array(),
+    });
+
+    const expectedKeys = midiAmplitude(96) * 0.2 * defaultMidiLaneGain();
+    const expectedBrass = midiAmplitude(80) * 0.7;
+    expect(result.channels[0][1]).toBeCloseTo(
+      (expectedKeys + expectedBrass) * defaultMasterGain(),
+      5,
+    );
+    expect(engines).toHaveLength(3);
+    expect(engines[2].named('loadSoundFont')).toEqual([]);
+    expect(engines[2].named('setSf2Instrument')).toEqual([]);
   });
 
   it('renders multiple MIDI instruments on separate destinations and stems', async () => {
@@ -1911,6 +2044,39 @@ describe('renderProjectWithEngine', () => {
     ]);
     const mixParams = new Map(mixPass.named('setParameter').map(([, id, value]) => [id, value]));
     expect(mixParams.get(0x4d58ff01)).toBeCloseTo(-3, 5);
+  });
+
+  it('awaits and releases streamed stems instead of retaining them in the result', async () => {
+    const consumed: Array<{ index: number; total: number; name: string }> = [];
+    const result = await renderProjectWithEngine(makeDoc(), {
+      deps: null,
+      loadAudioAsset: async () => fakeAsset(),
+      createEngine: () => new FakeEngine(),
+      stems: true,
+      onStem: async (stem, index, total) => {
+        consumed.push({ index, total, name: stem.name });
+      },
+    });
+
+    expect(consumed).toEqual([
+      { index: 0, total: 2, name: 'Keys' },
+      { index: 1, total: 2, name: 'Drums' },
+    ]);
+    expect(result.stems).toBeUndefined();
+  });
+
+  it('rejects an over-budget render before creating full-length engine passes', async () => {
+    const createEngine = vi.fn(() => new FakeEngine());
+    await expect(
+      renderProjectWithEngine(makeDoc(), {
+        deps: null,
+        loadAudioAsset: async () => fakeAsset(),
+        createEngine,
+        stems: true,
+        memoryBudgetBytes: 1,
+      }),
+    ).rejects.toThrow(/working memory/);
+    expect(createEngine).not.toHaveBeenCalled();
   });
 
   it('renders requested mixer buses as return stems', async () => {
@@ -2294,9 +2460,9 @@ describe('renderProjectWithEngine', () => {
       lengthSamples: number;
     }>;
     expect(clips).toHaveLength(1);
-    // Source 0..2 PPQ spans 0.5 s at 120 BPM and 1 s at 60 BPM.
-    expect(clips[0].lengthSamples).toBe(72000);
-    expect(clips[0].channels[0].length).toBe(72000);
+    // The source window is anchored at clip timeline 2..4 PPQ, entirely at 60 BPM.
+    expect(clips[0].lengthSamples).toBe(96000);
+    expect(clips[0].channels[0].length).toBe(96000);
   });
 
   it('renders warped audio clips audibly from the stretched sample positions', async () => {
@@ -2363,6 +2529,14 @@ describe('renderProjectWithEngine', () => {
     expect(engine.named('setClips')).toEqual([]);
     expect(result.channels[0][0]).toBeCloseTo(defaultMidiLevel(96), 5);
     expect(result.channels[0][2 * SAMPLES_PER_PPQ]).toBeCloseTo(0, 5);
+    expect(result.report.mediaIssues).toEqual([
+      {
+        kind: 'audio-asset',
+        id: 'asset-1',
+        reason: 'missing-or-unreadable',
+        message: 'missing asset',
+      },
+    ]);
   });
 
   it('keeps the unwarped comp path for a clip with takes and warp', async () => {
@@ -2458,6 +2632,50 @@ describe('renderProjectWithEngine', () => {
       expect(clip.channels[0][0]).toBe(SAMPLES_PER_PPQ);
       expect(clip.channels[0][SAMPLES_PER_PPQ - 1]).toBe(2 * SAMPLES_PER_PPQ - 1);
     }
+  });
+
+  it('exports looped warp occurrences with tempo-mapped and partial lengths', async () => {
+    const doc = makeDoc();
+    doc.tempoSegments = [
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 2, bpm: 60 },
+    ];
+    const clip = doc.tracks[1].clips[0];
+    clip.startPpq = 0;
+    clip.lengthPpq = 5;
+    clip.sourceOffsetPpq = 0;
+    clip.loopEnabled = true;
+    clip.loopLengthPpq = 2;
+    clip.warp = { enabled: true, sourceBpm: 60 };
+
+    const source = new Float32Array(96_000);
+    for (let i = 0; i < source.length; i++) source[i] = i;
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, {
+      deps: null,
+      createEngine: () => engine,
+      loadAudioAsset: async () => ({
+        meta: {
+          id: 'asset-1',
+          name: 'loop-warp.wav',
+          sampleRate: 48_000,
+          numChannels: 1,
+          numFrames: source.length,
+        },
+        channels: [source],
+      }),
+    });
+
+    const clips = engine.named('setClips')[0][1] as Array<{
+      channels: Float32Array[];
+      startPpq: number;
+      lengthSamples: number;
+    }>;
+    expect(clips).toHaveLength(3);
+    expect(clips.map((entry) => entry.startPpq)).toEqual([0, 2, 4]);
+    expect(clips.map((entry) => entry.lengthSamples)).toEqual([48_000, 96_000, 48_000]);
+    expect(timeStretch).toHaveBeenCalledTimes(1);
+    expect(timeStretch.mock.calls[0][2]).toBeCloseTo(2, 10);
   });
 
   it('expands a comped audio clip into one engine clip per segment', async () => {
@@ -3104,6 +3322,53 @@ describe('renderProjectWithEngine with group tracks and sidechains', () => {
     ]);
   });
 
+  it('keeps muted group automation at the silence floor in export', async () => {
+    const doc = makeGroupDoc();
+    doc.tracks[2].mute = true;
+    doc.tracks[2].automation = [
+      {
+        param: 'faderDb',
+        enabled: true,
+        points: [
+          { ppq: 0, value: -10 },
+          { ppq: 4, value: 0, curve: 'hold' },
+        ],
+      },
+    ];
+
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    expect(engine.named('setAutomationLane')).toContainEqual([
+      'setAutomationLane',
+      0x4d58fc01,
+      [
+        { ppq: 0, value: -120, curveToNext: 0 },
+        { ppq: 4, value: -120, curveToNext: 2 },
+      ],
+    ]);
+  });
+
+  it('keeps VCA-muted group automation at the silence floor in export', async () => {
+    const doc = makeGroupDoc();
+    doc.tracks[2].vcaId = 'vca-muted';
+    if (doc.mixer) {
+      doc.mixer.vcaGroups = [{ id: 'vca-muted', name: 'Muted', gainDb: 6, mute: true }];
+    }
+    doc.tracks[2].automation = [
+      { param: 'faderDb', enabled: true, points: [{ ppq: 0, value: 12 }] },
+    ];
+
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    expect(engine.named('setAutomationLane')).toContainEqual([
+      'setAutomationLane',
+      0x4d58fc01,
+      [{ ppq: 0, value: -120, curveToNext: 0 }],
+    ]);
+  });
+
   it('keeps muted routed members silent in the audible group stem', async () => {
     const doc = makeGroupDoc();
     doc.tracks[1].mute = true;
@@ -3509,6 +3774,39 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
 
     expect(engine.named('resolveBusInsertAutomationId')).toEqual([
       ['resolveBusInsertAutomationId', 1, 0, 'thresholdDb'],
+    ]);
+  });
+
+  it('keeps store indexes for bus automation when the bypass ABI declares every slot', async () => {
+    const doc = makeDoc();
+    if (doc.mixer) {
+      doc.mixer.buses[0].strip = {
+        inserts: [
+          { processor: 'saturation.tape', params: {}, enabled: false },
+          { processor: 'dynamics.compressor', params: { thresholdDb: -20 }, enabled: true },
+        ],
+        sends: [],
+      };
+      doc.mixer.buses[0].automation = [
+        {
+          param: 'insert:1:thresholdDb',
+          enabled: true,
+          points: [{ ppq: 0, value: -24 }],
+        },
+      ];
+    }
+
+    const engine = new BusBypassFakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    expect(engine.named('setBusStripInsertBypassed')).toContainEqual([
+      'setBusStripInsertBypassed',
+      1,
+      0,
+      true,
+    ]);
+    expect(engine.named('resolveBusInsertAutomationId')).toEqual([
+      ['resolveBusInsertAutomationId', 1, 1, 'thresholdDb'],
     ]);
   });
 

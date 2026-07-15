@@ -142,6 +142,15 @@ export interface MixdownReport {
   dynamicRangeDb?: number;
   /** Non-fatal renderer limitations that affected this bounce. */
   limitations?: string[];
+  /** Non-fatal media omissions that made the rendered deliverable incomplete. */
+  mediaIssues?: ExportMediaIssue[];
+}
+
+export interface ExportMediaIssue {
+  kind: 'audio-asset' | 'soundfont';
+  id: string;
+  reason: 'missing-or-unreadable';
+  message?: string;
 }
 
 /** Result of an offline render. */

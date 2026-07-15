@@ -5,6 +5,7 @@ import {
   type DawprojectExportOptions,
   dawprojectFilename,
   exportDawproject,
+  exportDawprojectWithReport,
 } from '@/export/dawproject';
 import { dbToLinear, type InsertSlot } from '@/project/mixer';
 import type { DocumentClip, DocumentTrack, ProjectDocument } from '@/project/serialization';
@@ -631,7 +632,7 @@ describe('exportDawproject arrangement', () => {
 });
 
 describe('exportDawproject audio', () => {
-  it('embeds referenced assets as 16-bit WAV entries when includeAudio is true', async () => {
+  it('embeds referenced assets as 24-bit WAV entries when includeAudio is true', async () => {
     const doc = makeDoc([makeTrack([makeAudioClip()], { kind: 'audio' })]);
     const loader = makeAssetLoader();
     const entries = await exportAndUnzip(doc, { includeAudio: true, loadAudioAsset: loader });
@@ -640,6 +641,7 @@ describe('exportDawproject audio', () => {
     expect(wav).toBeDefined();
     expect(strFromU8(wav.slice(0, 4))).toBe('RIFF');
     expect(strFromU8(wav.slice(8, 12))).toBe('WAVE');
+    expect(new DataView(wav.buffer, wav.byteOffset, wav.byteLength).getUint16(34, true)).toBe(24);
 
     const project = parseEntry(entries, 'project.xml');
     const audio = project.querySelector('Arrangement Clip > Audio');
@@ -739,6 +741,19 @@ describe('exportDawproject audio', () => {
     expect(Object.keys(entries).some((name) => name.startsWith('audio/'))).toBe(false);
     const project = parseEntry(entries, 'project.xml');
     expect(attr(project.querySelector('Audio > File'), 'path')).toBe('audio/asset-1.wav');
+  });
+
+  it('reports assets that could not be embedded as structured media failures', async () => {
+    const doc = makeDoc([makeTrack([makeAudioClip()], { kind: 'audio' })]);
+    const result = await exportDawprojectWithReport(doc, {
+      includeAudio: true,
+      loadAudioAsset: async () => {
+        throw new Error('missing asset');
+      },
+    });
+
+    expect(result.bytes.byteLength).toBeGreaterThan(0);
+    expect(result.media).toEqual({ embeddedAssetIds: [], missingAssetIds: ['asset-1'] });
   });
 
   it('exports audio clips without an asset id as placement-only clips', async () => {

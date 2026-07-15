@@ -8,8 +8,14 @@
  * separate step because DAWproject archives may reference external paths.
  */
 
-import { strFromU8, unzipSync } from 'fflate';
+import { strFromU8 } from 'fflate';
 import { linearToDb } from '@/lib/db';
+import { preflightXmlBytes, preflightXmlDocument, XmlPreflightError } from '@/lib/xml-preflight';
+import {
+  ArchivePreflightError,
+  preflightAndUnzip,
+  preflightAndUnzipInWorker,
+} from '@/persistence/archive-preflight';
 import { decodeAndIngest } from '@/project/audio-import';
 import { type AutomationParam, insertAutomationParam } from '@/project/automation';
 import {
@@ -60,10 +66,37 @@ export interface DawprojectImportOptions {
   ingestAudio?: (media: DawprojectAudioMedia) => Promise<{ id: string }>;
   /** Resolves an external File path to raw bytes. Omitted paths stay placement-only. */
   resolveExternalAudio?: (path: string) => Promise<Uint8Array | null | undefined>;
+  /** Cancels archive/media processing between every asynchronous boundary. */
+  signal?: AbortSignal;
+}
+
+export interface DawprojectMediaIssue {
+  path: string;
+  external: boolean;
+  reason: 'missing' | 'resolve-failed' | 'ingest-failed';
+  message?: string;
+}
+
+export interface DawprojectImportResult {
+  document: ProjectDocument;
+  media: {
+    imported: string[];
+    issues: DawprojectMediaIssue[];
+  };
 }
 
 function parseXml(bytes: Uint8Array, entryName: string): Document {
-  const doc = new DOMParser().parseFromString(strFromU8(bytes), 'application/xml');
+  let doc: Document;
+  try {
+    preflightXmlBytes(bytes.byteLength, entryName);
+    doc = new DOMParser().parseFromString(strFromU8(bytes), 'application/xml');
+    preflightXmlDocument(doc, entryName);
+  } catch (error) {
+    if (error instanceof XmlPreflightError) {
+      throw new DawprojectImportError(`Invalid DAWproject archive: ${error.message}`);
+    }
+    throw error;
+  }
   if (doc.querySelector('parsererror')) {
     throw new DawprojectImportError(`Invalid DAWproject archive: ${entryName} is not valid XML`);
   }
@@ -745,15 +778,30 @@ export function importDawproject(bytes: Uint8Array): ProjectDocument {
   return importDawprojectParsed(bytes, new Map());
 }
 
-function parseArchive(bytes: Uint8Array): {
+function parseArchive(
+  bytes: Uint8Array,
+  signal?: AbortSignal,
+): {
   entries: Record<string, Uint8Array>;
   project: Document;
   metadata: Document | null;
 } {
   let entries: Record<string, Uint8Array>;
   try {
-    entries = unzipSync(bytes);
-  } catch {
+    entries = preflightAndUnzip(
+      bytes,
+      {
+        maxEntries: 10_000,
+        maxEntryBytes: 512 * 1024 * 1024,
+        maxUncompressedBytes: 1024 * 1024 * 1024,
+      },
+      signal,
+    ).entries;
+  } catch (error) {
+    if (signal?.aborted) signal.throwIfAborted();
+    if (error instanceof ArchivePreflightError) {
+      throw new DawprojectImportError(`Invalid DAWproject archive: ${error.message}`);
+    }
     throw new DawprojectImportError('Invalid DAWproject archive: not a readable zip');
   }
   const projectBytes = entries['project.xml'];
@@ -768,11 +816,58 @@ function parseArchive(bytes: Uint8Array): {
   return { entries, project, metadata };
 }
 
+async function parseArchiveInWorker(
+  bytes: Uint8Array,
+  signal?: AbortSignal,
+): Promise<{
+  entries: Record<string, Uint8Array>;
+  project: Document;
+  metadata: Document | null;
+}> {
+  let entries: Record<string, Uint8Array>;
+  try {
+    entries = (
+      await preflightAndUnzipInWorker(
+        bytes,
+        {
+          maxEntries: 10_000,
+          maxEntryBytes: 512 * 1024 * 1024,
+          maxUncompressedBytes: 1024 * 1024 * 1024,
+        },
+        signal,
+      )
+    ).entries;
+  } catch (error) {
+    if (signal?.aborted) signal.throwIfAborted();
+    if (error instanceof ArchivePreflightError) {
+      throw new DawprojectImportError(`Invalid DAWproject archive: ${error.message}`);
+    }
+    throw new DawprojectImportError('Invalid DAWproject archive: not a readable zip');
+  }
+  const projectBytes = entries['project.xml'];
+  if (!projectBytes) {
+    throw new DawprojectImportError('Invalid DAWproject archive: missing project.xml');
+  }
+  const project = parseXml(projectBytes, 'project.xml');
+  const metadata = entries['metadata.xml']
+    ? parseXml(entries['metadata.xml'], 'metadata.xml')
+    : null;
+  return { entries, project, metadata };
+}
+
 function importDawprojectParsed(
   bytes: Uint8Array,
   mediaAssets: ReadonlyMap<string, string>,
 ): ProjectDocument {
   const { project, metadata } = parseArchive(bytes);
+  return importDawprojectDocuments(project, metadata, mediaAssets);
+}
+
+function importDawprojectDocuments(
+  project: Document,
+  metadata: Document | null,
+  mediaAssets: ReadonlyMap<string, string>,
+): ProjectDocument {
   const vcaGroups = readSonareVcaGroups(project);
   const tracks = readTracks(project, new Set(vcaGroups.map((group) => group.id)));
   const master = readMaster(project);
@@ -815,34 +910,60 @@ async function ingestEmbeddedAudio(
   entries: Record<string, Uint8Array>,
   ingestAudio: (media: DawprojectAudioMedia) => Promise<{ id: string }>,
   resolveExternalAudio?: (path: string) => Promise<Uint8Array | null | undefined>,
-): Promise<Map<string, string>> {
+  signal?: AbortSignal,
+): Promise<{
+  assets: Map<string, string>;
+  imported: string[];
+  issues: DawprojectMediaIssue[];
+}> {
   const assets = new Map<string, string>();
-  const pending = new Map<string, Promise<string | null>>();
+  const imported: string[] = [];
+  const issues: DawprojectMediaIssue[] = [];
+  const seen = new Set<string>();
   for (const clip of Array.from(project.querySelectorAll('Arrangement Clip'))) {
+    signal?.throwIfAborted();
     if (clip.querySelector('Notes')) continue;
     const file = audioFileRef(clip);
-    if (!file || pending.has(file.path)) continue;
-    const bytes = file.external
-      ? await resolveExternalAudio?.(file.path).catch(() => null)
-      : entries[file.path];
-    if (!bytes) continue;
-    pending.set(
-      file.path,
-      ingestAudio({
+    if (!file || seen.has(file.path)) continue;
+    seen.add(file.path);
+    let bytes: Uint8Array | null | undefined;
+    try {
+      bytes = file.external ? await resolveExternalAudio?.(file.path) : entries[file.path];
+    } catch (error) {
+      issues.push({
+        path: file.path,
+        external: file.external,
+        reason: 'resolve-failed',
+        message: error instanceof Error ? error.message : String(error),
+      });
+      continue;
+    }
+    signal?.throwIfAborted();
+    if (!bytes) {
+      issues.push({ path: file.path, external: file.external, reason: 'missing' });
+      continue;
+    }
+    try {
+      const meta = await ingestAudio({
         path: file.path,
         external: file.external,
         name: fileNameFromPath(file.path),
         bytes,
-      })
-        .then((meta) => meta.id)
-        .catch(() => null),
-    );
+      });
+      signal?.throwIfAborted();
+      assets.set(file.path, meta.id);
+      imported.push(file.path);
+    } catch (error) {
+      if (signal?.aborted) signal.throwIfAborted();
+      issues.push({
+        path: file.path,
+        external: file.external,
+        reason: 'ingest-failed',
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
-  for (const [path, promise] of pending) {
-    const id = await promise;
-    if (id) assets.set(path, id);
-  }
-  return assets;
+  return { assets, imported, issues };
 }
 
 /**
@@ -852,16 +973,30 @@ export async function importDawprojectWithMedia(
   bytes: Uint8Array,
   options: DawprojectImportOptions = {},
 ): Promise<ProjectDocument> {
-  const { entries, project } = parseArchive(bytes);
+  return (await importDawprojectWithMediaResult(bytes, options)).document;
+}
+
+/** Imports media with a structured report for missing/resolution/ingest failures. */
+export async function importDawprojectWithMediaResult(
+  bytes: Uint8Array,
+  options: DawprojectImportOptions = {},
+): Promise<DawprojectImportResult> {
+  options.signal?.throwIfAborted();
+  const { entries, project, metadata } = await parseArchiveInWorker(bytes, options.signal);
   const ingestAudio =
     options.ingestAudio ??
     (async (media: DawprojectAudioMedia) =>
       decodeAndIngest(new Uint8Array(media.bytes).buffer, { name: media.name, analysis: null }));
-  const mediaAssets = await ingestEmbeddedAudio(
+  const media = await ingestEmbeddedAudio(
     project,
     entries,
     ingestAudio,
     options.resolveExternalAudio,
+    options.signal,
   );
-  return importDawprojectParsed(bytes, mediaAssets);
+  options.signal?.throwIfAborted();
+  return {
+    document: importDawprojectDocuments(project, metadata, media.assets),
+    media: { imported: media.imported, issues: media.issues },
+  };
 }

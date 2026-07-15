@@ -16,6 +16,7 @@ import type {
   ExportRequestBody,
   ExportResponse,
   ExportWorkerResult,
+  ExportWorkerStem,
 } from '@/workers/export.worker';
 import {
   MixdownCancelledError,
@@ -38,7 +39,20 @@ interface PendingRequest {
   resolve: (response: ExportResponse) => void;
   reject: (error: Error) => void;
   onProgress?: MixdownProgressFn;
+  onStem?: (stem: MixdownStem, index: number, total: number) => Promise<void> | void;
   cancelRequested: boolean;
+}
+
+function toMixdownStem(stem: ExportWorkerStem): MixdownStem {
+  return {
+    source: stem.source,
+    trackIndex: stem.trackIndex,
+    busId: stem.busId,
+    busIndex: stem.busIndex,
+    name: stem.name,
+    channels: [stem.left, stem.right],
+    report: stem.report,
+  };
 }
 
 /** Converts the transferred worker payload back into a MixdownResult. */
@@ -50,17 +64,7 @@ function toMixdownResult(result: ExportWorkerResult): MixdownResult {
     report: result.report,
   };
   if (result.stems) {
-    out.stems = result.stems.map(
-      (stem): MixdownStem => ({
-        source: stem.source,
-        trackIndex: stem.trackIndex,
-        busId: stem.busId,
-        busIndex: stem.busIndex,
-        name: stem.name,
-        channels: [stem.left, stem.right],
-        report: stem.report,
-      }),
-    );
+    out.stems = result.stems.map(toMixdownStem);
   }
   return out;
 }
@@ -105,6 +109,7 @@ export class ExportClient {
     doc: ProjectDocument,
     options: ExportRenderOptions = {},
     onProgress?: MixdownProgressFn,
+    onStem?: (stem: MixdownStem, index: number, total: number) => Promise<void> | void,
   ): ExportRenderHandle {
     if (this.disposed) {
       return {
@@ -128,8 +133,15 @@ export class ExportClient {
         cancelRequested: false,
       };
       if (onProgress) entry.onProgress = onProgress;
+      if (onStem) entry.onStem = onStem;
       this.pending.set(id, entry);
-      const request: ExportRequest = { id, type: 'render', doc, options };
+      const request: ExportRequest = {
+        id,
+        type: 'render',
+        doc,
+        options,
+        ...(onStem ? { streamStems: true } : {}),
+      };
       this.worker.postMessage(request);
     });
     return {
@@ -169,6 +181,38 @@ export class ExportClient {
     }
     if (response.type === 'progress') {
       entry.onProgress?.(response.progress, response.stage);
+      return;
+    }
+    if (response.type === 'stem') {
+      if (!entry.onStem) {
+        this.pending.delete(response.id);
+        entry.reject(new Error('Export worker streamed a stem without a consumer'));
+        return;
+      }
+      void Promise.resolve(
+        entry.onStem(toMixdownStem(response.stem), response.index, response.total),
+      )
+        .then(() => {
+          if (this.disposed) return;
+          const acknowledgement: ExportRequest = {
+            id: this.nextId++,
+            type: 'stem-consumed',
+            targetId: response.id,
+            index: response.index,
+          };
+          this.worker.postMessage(acknowledgement);
+        })
+        .catch((error: unknown) => {
+          if (this.pending.get(response.id) !== entry) return;
+          this.pending.delete(response.id);
+          entry.reject(error instanceof Error ? error : new Error(String(error)));
+          const cancelRequest: ExportRequest = {
+            id: this.nextId++,
+            type: 'cancel',
+            targetId: response.id,
+          };
+          this.worker.postMessage(cancelRequest);
+        });
       return;
     }
     this.pending.delete(response.id);
@@ -227,6 +271,7 @@ export function renderMixdownInWorker(
   doc: ProjectDocument,
   options: ExportRenderOptions = {},
   onProgress?: MixdownProgressFn,
+  onStem?: (stem: MixdownStem, index: number, total: number) => Promise<void> | void,
 ): ExportRenderHandle {
-  return getExportClient().renderMixdown(doc, options, onProgress);
+  return getExportClient().renderMixdown(doc, options, onProgress, onStem);
 }

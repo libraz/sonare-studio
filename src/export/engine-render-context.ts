@@ -14,10 +14,7 @@ import {
   vcaOffsetDb,
 } from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
-import {
-  collectActiveSoundFontUsage,
-  hasSoundFontSlotConflict,
-} from '@/project/soundfont-conflicts';
+import { collectActiveSoundFontUsage } from '@/project/soundfont-conflicts';
 import { type NormalizedTempoMap, ppqToSamples } from '@/project/tempo-map';
 import type { EditorClip, EditorTrack, TempoSegment } from '@/project/types';
 import type { EngineMidiClipSchedule } from '@/wasm/index.js';
@@ -140,9 +137,9 @@ export function buildBusRouting(doc: ProjectDocument, trackIds: number[]): BusRo
 
 /**
  * Pre-loads each distinct SoundFont referenced by an active MIDI track so the
- * engine passes can configure instruments synchronously. The engine holds a
- * single global SoundFont; when more than one is requested the last loaded
- * font wins (warns, matching live behavior).
+ * engine passes can configure instruments synchronously. The renderer keeps
+ * the engine's single global SoundFont slot stable by bouncing conflicting
+ * SF2 tracks in font-fixed pre-fader passes before the final mixer pass.
  *
  * @param doc Plain project document.
  * @param loadFontBytes Resolves a font id to its raw bytes.
@@ -158,11 +155,6 @@ export async function preloadSoundFonts(
     if (!fontBytesById.has(fontId)) {
       fontBytesById.set(fontId, await loadFontBytes(fontId));
     }
-  }
-  if (hasSoundFontSlotConflict(soundFontUsage)) {
-    console.warn(
-      `Engine render: ${soundFontUsage.fontIds.length} distinct SoundFonts requested, but the engine holds a single global SoundFont — the last loaded font wins.`,
-    );
   }
   return fontBytesById;
 }

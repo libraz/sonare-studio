@@ -8,23 +8,17 @@
 
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { audioClipSegments } from '@/project/comping';
-import {
-  applyAudioClipFades,
-  resampleChannelsLinear,
-  sliceAudioClipWindow,
-} from '@/project/scheduling';
+import { renderAudioClipSegment, resampleChannelsLinear } from '@/project/scheduling';
 import type { DocumentClip, ProjectDocument } from '@/project/serialization';
 import type { NormalizedTempoMap } from '@/project/tempo-map';
-import { bakeWarpedClip } from '@/project/warp';
 import type { EngineClipSpec } from './engine-render-types';
+import type { ExportMediaIssue } from './mixdown';
 
 /** Inputs the audio clip builder needs beyond the document. */
 export interface AudioClipBuildContext {
   /** Synthetic engine track ids, one per document track. */
   trackIds: number[];
-  /** Tempo (BPM) used by the fixed-rate slice transforms. */
-  sliceTempoBpm: number;
-  /** Tempo map used by source-window slicing. */
+  /** Tempo map used by source-window and fade transforms. */
   tempoMap: NormalizedTempoMap;
   /** Render sample rate in Hz. */
   sampleRate: number;
@@ -32,6 +26,8 @@ export interface AudioClipBuildContext {
   loadAudio: (assetId: string) => Promise<LoadedAudioAsset>;
   /** Throws MixdownCancelledError when the render was cancelled. */
   checkCancel: () => void;
+  /** Structured non-fatal omissions returned in the final render report. */
+  mediaIssues?: ExportMediaIssue[];
 }
 
 /**
@@ -40,14 +36,14 @@ export interface AudioClipBuildContext {
  * the slice silent, tempo-following clips bake through the offline stretch.
  *
  * @param doc Plain project document.
- * @param context Track ids, slice tempo, sample rate and injectable seams.
+ * @param context Track ids, tempo map, sample rate and injectable seams.
  * @returns The engine clip specs consumed by setClips.
  */
 export async function buildAudioClips(
   doc: ProjectDocument,
   context: AudioClipBuildContext,
 ): Promise<EngineClipSpec[]> {
-  const { trackIds, sliceTempoBpm, tempoMap, sampleRate, loadAudio, checkCancel } = context;
+  const { trackIds, tempoMap, sampleRate, loadAudio, checkCancel } = context;
   const audioClips: EngineClipSpec[] = [];
   const renderAudioClip = async (clip: DocumentClip, trackId: number): Promise<void> => {
     if (clip.gain <= 0) return;
@@ -57,31 +53,19 @@ export async function buildAudioClips(
       let asset: LoadedAudioAsset;
       try {
         asset = await loadAudio(segment.assetId);
-      } catch {
+      } catch (error) {
+        if (!context.mediaIssues?.some((issue) => issue.id === segment.assetId)) {
+          context.mediaIssues?.push({
+            kind: 'audio-asset',
+            id: segment.assetId,
+            reason: 'missing-or-unreadable',
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
         // Missing or unreadable asset: leave the slice silent, like live playback.
         continue;
       }
-      // Tempo-following clips bake their window through the offline stretch
-      // instead of the fixed-rate slice (takes-free clips only).
-      let channels =
-        clip.warp?.enabled && (clip.takes?.length ?? 0) === 0
-          ? await bakeWarpedClip(asset.channels, asset.meta.sampleRate, clip, tempoMap, {
-              cacheKey: segment.assetId,
-            })
-          : sliceAudioClipWindow(
-              asset.channels,
-              asset.meta.sampleRate,
-              segment.sourceOffsetPpq,
-              segment.lengthPpq,
-              tempoMap,
-            );
-      channels = applyAudioClipFades(
-        channels,
-        asset.meta.sampleRate,
-        sliceTempoBpm,
-        segment.fadeInPpq,
-        segment.fadeOutPpq,
-      );
+      let channels = await renderAudioClipSegment(asset, clip, segment, tempoMap);
       channels = resampleChannelsLinear(channels, asset.meta.sampleRate, sampleRate);
       if (channels.length === 0 || channels[0].length === 0) continue;
       audioClips.push({
@@ -114,7 +98,15 @@ export async function buildAudioClips(
             gain: 1,
           });
         }
-      } catch {
+      } catch (error) {
+        if (!context.mediaIssues?.some((issue) => issue.id === track.frozen?.assetId)) {
+          context.mediaIssues?.push({
+            kind: 'audio-asset',
+            id: track.frozen.assetId,
+            reason: 'missing-or-unreadable',
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
         // Missing or unreadable frozen asset: the track stays silent.
       }
       continue;

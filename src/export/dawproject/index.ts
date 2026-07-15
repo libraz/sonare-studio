@@ -5,7 +5,7 @@
  *
  * The archive is a zip holding project.xml (structure, transport, arrangement),
  * metadata.xml (title) and, optionally, the referenced audio assets embedded
- * as 16-bit WAV files under audio/. The XML is built with a small pure
+ * as 24-bit WAV files under audio/. The XML is built with a small pure
  * serializer (./xml.ts), so the exporter runs unchanged inside module workers
  * and jsdom tests.
  *
@@ -34,11 +34,12 @@
  *   media), converted through the project tempo map.
  */
 
-import { strToU8, zipSync } from 'fflate';
+import { AsyncZipDeflate, strToU8, Zip } from 'fflate';
 import { encodeWav } from '@/export/wav';
 import { projectFilename } from '@/lib/filename';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import { parseInsertAutomationParam } from '@/project/automation';
+import { insertIndexForAutomationRef } from '@/project/automation-insert';
 import {
   clampPan,
   dbToLinear,
@@ -60,8 +61,11 @@ export {
   type DawprojectAudioMedia,
   DawprojectImportError,
   type DawprojectImportOptions,
+  type DawprojectImportResult,
+  type DawprojectMediaIssue,
   importDawproject,
   importDawprojectWithMedia,
+  importDawprojectWithMediaResult,
 } from './import';
 
 /** File extension of DAWproject archives. */
@@ -97,7 +101,7 @@ const SONARE_DEVICE_VENDOR = 'sonare-studio';
 /** Options for {@link exportDawproject}. */
 export interface DawprojectExportOptions {
   /**
-   * True embeds every referenced audio asset as a 16-bit WAV zip entry under
+   * True embeds every referenced audio asset as a 24-bit WAV zip entry under
    * audio/ (deduplicated by asset id). False keeps the clip/file structure
    * but writes no audio payloads; file durations are then estimated from the
    * clip windows.
@@ -112,6 +116,16 @@ export interface DawprojectExportOptions {
   loadAudioAsset?: (assetId: string) => Promise<LoadedAudioAsset>;
   /** Application version written to the <Application> element. */
   applicationVersion?: string;
+  /** Cancels asset loading/encoding/ZIP construction between entries. */
+  signal?: AbortSignal;
+}
+
+export interface DawprojectExportResult {
+  bytes: Uint8Array;
+  media: {
+    embeddedAssetIds: string[];
+    missingAssetIds: string[];
+  };
 }
 
 /** One referenced audio asset, resolved to its zip path and media facts. */
@@ -173,7 +187,7 @@ function audioEntryPath(assetId: string, usedPaths: Set<string>): string {
 
 /**
  * Resolves every audio asset referenced by the document. When embedding is on,
- * assets are loaded and encoded as 16-bit WAV; assets that fail to load (or
+ * assets are loaded and encoded as 24-bit WAV; assets that fail to load (or
  * everything, when embedding is off) keep their structural entry with media
  * facts estimated from the document (stereo at the project sample rate, long
  * enough to cover every referencing clip window).
@@ -183,8 +197,10 @@ async function collectAudioAssets(
   tempoMap: NormalizedTempoMap,
   includeAudio: boolean,
   loadAudio: (assetId: string) => Promise<LoadedAudioAsset>,
-): Promise<Map<string, AudioAssetEntry>> {
+  signal?: AbortSignal,
+): Promise<{ assets: Map<string, AudioAssetEntry>; missingAssetIds: string[] }> {
   const assets = new Map<string, AudioAssetEntry>();
+  const missingAssetIds: string[] = [];
   const usedPaths = new Set<string>();
   for (const track of doc.tracks) {
     for (const clip of track.clips) {
@@ -207,19 +223,76 @@ async function collectAudioAssets(
       };
       if (includeAudio) {
         try {
+          signal?.throwIfAborted();
           const asset = await loadAudio(clip.assetId);
+          signal?.throwIfAborted();
           entry.numChannels = asset.meta.numChannels;
           entry.sampleRate = asset.meta.sampleRate;
           entry.durationSec = asset.meta.numFrames / asset.meta.sampleRate;
-          entry.bytes = encodeWav(asset.channels, asset.meta.sampleRate, { bitDepth: 16 });
+          // DAW interchange should not silently quantize the app's float32
+          // source store to CD resolution. 24-bit PCM is broadly portable and
+          // preserves substantially more source fidelity.
+          entry.bytes = encodeWav(asset.channels, asset.meta.sampleRate, { bitDepth: 24 });
         } catch {
+          if (signal?.aborted) signal.throwIfAborted();
+          missingAssetIds.push(clip.assetId);
           // Missing or unreadable asset: keep the structural reference only.
         }
       }
       assets.set(clip.assetId, entry);
     }
   }
-  return assets;
+  return { assets, missingAssetIds };
+}
+
+function concatChunks(chunks: readonly Uint8Array[], totalBytes: number): Uint8Array {
+  const output = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return output;
+}
+
+/** Compresses entries incrementally so encoded media can be released immediately. */
+async function buildDawprojectZip(
+  entries: Iterable<readonly [string, Uint8Array]>,
+  signal?: AbortSignal,
+): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  let resolveResult!: (bytes: Uint8Array) => void;
+  let rejectResult!: (error: Error) => void;
+  const result = new Promise<Uint8Array>((resolve, reject) => {
+    resolveResult = resolve;
+    rejectResult = reject;
+  });
+  const zip = new Zip((error, chunk, final) => {
+    if (error) {
+      rejectResult(error);
+      return;
+    }
+    const copy = new Uint8Array(chunk);
+    chunks.push(copy);
+    totalBytes += copy.byteLength;
+    if (final) resolveResult(concatChunks(chunks, totalBytes));
+  });
+  try {
+    for (const [name, bytes] of entries) {
+      signal?.throwIfAborted();
+      const file = new AsyncZipDeflate(name, { level: 6 });
+      file.mtime = new Date(ZIP_MTIME);
+      zip.add(file);
+      file.push(bytes, true);
+    }
+    signal?.throwIfAborted();
+    zip.end();
+    return await result;
+  } catch (error) {
+    zip.terminate();
+    throw error;
+  }
 }
 
 /** Builds a RealParameter element (Volume/Pan style). */
@@ -614,12 +687,11 @@ function channelAutomationPointsElement(
   } else {
     const insertRef = parseInsertAutomationParam(lane.param);
     if (!insertRef) return null;
-    const slot = strip?.inserts[insertRef.insertIndex];
+    const insertIndex = strip ? insertIndexForAutomationRef(strip.inserts, insertRef) : undefined;
+    const slot = insertIndex === undefined ? undefined : strip?.inserts[insertIndex];
     const param = slot?.params[insertRef.paramName];
     if (typeof param !== 'number' && typeof param !== 'boolean') return null;
-    parameter = `${channelId}-insert-${insertRef.insertIndex}-param-${xmlIdSegment(
-      insertRef.paramName,
-    )}`;
+    parameter = `${channelId}-insert-${insertIndex}-param-${xmlIdSegment(insertRef.paramName)}`;
     unit = typeof param === 'boolean' ? 'bool' : 'normalized';
     pointValue = typeof param === 'boolean' ? (value) => (value >= 0.5 ? 1 : 0) : (value) => value;
   }
@@ -1000,21 +1072,51 @@ export async function exportDawproject(
   doc: ProjectDocument,
   options: DawprojectExportOptions,
 ): Promise<Uint8Array> {
+  return (await exportDawprojectWithReport(doc, options)).bytes;
+}
+
+/** Exports with a structured report for audio that could not be embedded. */
+export async function exportDawprojectWithReport(
+  doc: ProjectDocument,
+  options: DawprojectExportOptions,
+): Promise<DawprojectExportResult> {
   if ((options as { renderMidiTracks?: unknown }).renderMidiTracks === true) {
     throw new RangeError('DAWproject export does not support rendering MIDI tracks to audio');
   }
   const tempoMap = normalizeTempoMap(doc.tempoSegments, DEFAULT_TEMPO_BPM);
   const loadAudio = options.loadAudioAsset ?? loadAsset;
-  const assets = await collectAudioAssets(doc, tempoMap, options.includeAudio, loadAudio);
+  options.signal?.throwIfAborted();
+  const collected = await collectAudioAssets(
+    doc,
+    tempoMap,
+    options.includeAudio,
+    loadAudio,
+    options.signal,
+  );
+  const { assets } = collected;
   const applicationVersion = options.applicationVersion ?? DEFAULT_APPLICATION_VERSION;
-  const entries: Record<string, Uint8Array> = {
-    'project.xml': strToU8(serializeXml(projectElement(doc, assets, applicationVersion, tempoMap))),
-    'metadata.xml': strToU8(serializeXml(metadataElement(doc))),
-  };
-  for (const asset of assets.values()) {
-    if (asset.bytes !== null) entries[asset.path] = asset.bytes;
+  const projectXml = strToU8(
+    serializeXml(projectElement(doc, assets, applicationVersion, tempoMap)),
+  );
+  const metadataXml = strToU8(serializeXml(metadataElement(doc)));
+  const embeddedAssetIds: string[] = [];
+  function* zipEntries(): Generator<readonly [string, Uint8Array]> {
+    yield ['project.xml', projectXml];
+    yield ['metadata.xml', metadataXml];
+    for (const [id, asset] of assets) {
+      const payload = asset.bytes;
+      if (payload !== null) {
+        embeddedAssetIds.push(id);
+        yield [asset.path, payload];
+        asset.bytes = null;
+      }
+    }
   }
-  return zipSync(entries, { mtime: ZIP_MTIME });
+  const bytes = await buildDawprojectZip(zipEntries(), options.signal);
+  return {
+    bytes,
+    media: { embeddedAssetIds, missingAssetIds: collected.missingAssetIds },
+  };
 }
 
 /**

@@ -83,6 +83,8 @@ export async function encodeBrowserMedia(
   sampleRate: number,
   options: AudioEncodeOptions = {},
 ): Promise<Uint8Array> {
+  const signal = options['signal'] as AbortSignal | undefined;
+  signal?.throwIfAborted();
   const frames = assertPlanar(channels);
   const AudioContextCtor = globalThis.AudioContext;
   const RecorderCtor = globalThis.MediaRecorder;
@@ -104,7 +106,7 @@ export async function encodeBrowserMedia(
     const destination = context.createMediaStreamDestination();
     const buffer = context.createBuffer(channels.length, frames, sampleRate);
     for (let index = 0; index < channels.length; index += 1) {
-      buffer.copyToChannel(new Float32Array(channels[index]), index);
+      buffer.copyToChannel(channels[index] as Float32Array<ArrayBuffer>, index);
     }
     const source = context.createBufferSource();
     source.buffer = buffer;
@@ -119,18 +121,41 @@ export async function encodeBrowserMedia(
     const recorder = new RecorderCtor(destination.stream, recorderOptions);
     let cleanupRecorderListeners = (): void => {};
     const done = new Promise<Uint8Array>((resolve, reject) => {
+      let settled = false;
+      const settle = (action: () => void): void => {
+        if (settled) return;
+        settled = true;
+        action();
+      };
       const onDataAvailable = (event: BlobEvent): void => {
         if (event.data.size > 0) chunks.push(event.data);
       };
       const onError = (event: Event): void => {
-        reject(
-          event instanceof ErrorEvent ? event.error : new Error('Browser media encoding failed'),
+        settle(() =>
+          reject(
+            event instanceof ErrorEvent ? event.error : new Error('Browser media encoding failed'),
+          ),
         );
       };
       const onStop = (): void => {
-        resolve(toBlobBytes(new Blob(chunks, { type: mimeType })));
+        settle(() => resolve(toBlobBytes(new Blob(chunks, { type: mimeType }))));
       };
       const onEnded = (): void => {
+        if (recorder.state === 'recording') recorder.stop();
+      };
+      const onAbort = (): void => {
+        settle(() =>
+          reject(
+            signal?.reason instanceof Error
+              ? signal.reason
+              : new DOMException('Browser media encoding cancelled.', 'AbortError'),
+          ),
+        );
+        try {
+          source.stop();
+        } catch {
+          // The source may already have ended.
+        }
         if (recorder.state === 'recording') recorder.stop();
       };
       cleanupRecorderListeners = () => {
@@ -138,14 +163,23 @@ export async function encodeBrowserMedia(
         recorder.removeEventListener('error', onError);
         recorder.removeEventListener('stop', onStop);
         source.removeEventListener('ended', onEnded);
+        signal?.removeEventListener('abort', onAbort);
       };
       recorder.addEventListener('dataavailable', onDataAvailable);
       recorder.addEventListener('error', onError);
       recorder.addEventListener('stop', onStop);
       source.addEventListener('ended', onEnded);
+      signal?.addEventListener('abort', onAbort, { once: true });
     });
     recorder.start();
     source.start();
+    if (signal?.aborted) {
+      try {
+        source.stop();
+      } catch {
+        // Source already stopped.
+      }
+    }
     try {
       return await done;
     } finally {

@@ -6,6 +6,7 @@ import { MP3_ENCODER_ID } from '@/export/mp3';
 import {
   buildStemsZip,
   createDefaultExportOptions,
+  createStemsZipWriter,
   type EXPORT_SAMPLE_RATES,
   type ExportOptionsModel,
   encodeOptionsForModel,
@@ -36,6 +37,7 @@ describe('createDefaultExportOptions', () => {
       includeMasterStem: true,
       includeMasterChain: true,
       normalizeLoudness: false,
+      releaseTailSeconds: 2,
       baseName: 'My Song',
       wavBitDepth: 16,
       wavDither: false,
@@ -161,7 +163,7 @@ describe('encodeOptionsForModel', () => {
 });
 
 describe('normalizeMixdownLoudness', () => {
-  it('applies final gain and updates the report to the target LUFS', () => {
+  it('caps loudness gain at the true-peak ceiling', () => {
     const left = new Float32Array([0.25]);
     const right = new Float32Array([-0.5]);
 
@@ -171,13 +173,27 @@ describe('normalizeMixdownLoudness', () => {
       -14,
     );
 
-    expect(left[0]).toBeCloseTo(0.25 * 10 ** (6 / 20), 6);
-    expect(right[0]).toBeCloseTo(-0.5 * 10 ** (6 / 20), 6);
+    expect(left[0]).toBeCloseTo(0.25 * 10 ** (4.5 / 20), 6);
+    expect(right[0]).toBeCloseTo(-0.5 * 10 ** (4.5 / 20), 6);
     expect(report).toEqual({
-      peakDb: 0,
-      truePeakDb: 0.5,
-      lufs: -14,
+      peakDb: -1.5,
+      truePeakDb: -1,
+      lufs: -15.5,
     });
+  });
+
+  it('reaches the loudness target when there is enough true-peak headroom', () => {
+    const channels: [Float32Array, Float32Array] = [
+      new Float32Array([0.1]),
+      new Float32Array([-0.1]),
+    ];
+    const report = normalizeMixdownLoudness(
+      channels,
+      { peakDb: -20, truePeakDb: -19.5, lufs: -20 },
+      -14,
+    );
+    expect(report.lufs).toBe(-14);
+    expect(report.truePeakDb).toBe(-13.5);
   });
 
   it('leaves audio unchanged when loudness is unavailable', () => {
@@ -201,6 +217,7 @@ describe('toRenderOptions', () => {
       stems: false,
       busStems: false,
       masterStem: false,
+      releaseTailSeconds: 2,
     });
   });
 
@@ -284,6 +301,38 @@ describe('buildStemsZip', () => {
 
   it('rejects an empty entry list', () => {
     expect(() => buildStemsZip([])).toThrow(RangeError);
+  });
+});
+
+describe('createStemsZipWriter', () => {
+  it('consumes entries incrementally into a valid archive', async () => {
+    const writer = createStemsZipWriter();
+    writer.add({ name: '01 A.wav', bytes: new Uint8Array([1, 2]) });
+    writer.add({ name: '02 B.wav', bytes: new Uint8Array([3, 4]) });
+    const entries = unzipSync(new Uint8Array(await (await writer.close()).arrayBuffer()));
+    expect(entries['01 A.wav']).toEqual(new Uint8Array([1, 2]));
+    expect(entries['02 B.wav']).toEqual(new Uint8Array([3, 4]));
+  });
+
+  it('handles a 100-stem archive without retaining an input entry table', async () => {
+    const writer = createStemsZipWriter();
+    for (let index = 0; index < 100; index++) {
+      writer.add({
+        name: `${String(index).padStart(3, '0')} Stem.wav`,
+        bytes: new Uint8Array([index]),
+      });
+    }
+    const entries = unzipSync(new Uint8Array(await (await writer.close()).arrayBuffer()));
+    expect(Object.keys(entries)).toHaveLength(100);
+    expect(entries['099 Stem.wav']).toEqual(new Uint8Array([99]));
+  });
+
+  it('rejects work after its abort signal is cancelled', async () => {
+    const controller = new AbortController();
+    const writer = createStemsZipWriter(controller.signal);
+    controller.abort(new DOMException('cancelled', 'AbortError'));
+    expect(() => writer.add({ name: '01 A.wav', bytes: new Uint8Array([1]) })).toThrow();
+    await expect(writer.close()).rejects.toMatchObject({ name: 'AbortError' });
   });
 });
 

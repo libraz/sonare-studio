@@ -4,33 +4,39 @@ import AppModal from '@/components/shell/AppModal.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
+import { confirmDialog } from '@/composables/useDialogs';
+import { audioExportPreflight } from '@/export/audio-preflight';
 import { isBrowserMediaEncoderId, registerBrowserMediaEncoders } from '@/export/browser-media';
 import { type ExportRenderHandle, renderMixdownInWorker } from '@/export/client';
 import { type AudioEncoder, listEncoders, WAV_ENCODER_ID } from '@/export/codecs';
+import { encodeAudioInWorker, isWorkerAudioEncoderId } from '@/export/encode-client';
+import { offlineAutomationLimitations } from '@/export/engine-render';
 import { FLAC_ENCODER_ID, type FlacBitDepth, registerFlacEncoder } from '@/export/flac';
+import { DEFAULT_EXPORT_MEMORY_BUDGET_BYTES } from '@/export/memory-budget';
 import {
   MixdownCancelledError,
   type MixdownProgressFn,
   type MixdownRangePpq,
   type MixdownReport,
+  type MixdownStem,
 } from '@/export/mixdown';
 import { MP3_BITRATES, MP3_ENCODER_ID, registerMp3Encoder } from '@/export/mp3';
 import {
-  buildStemsZip,
   COMPRESSED_EXPORT_BITRATES,
   createDefaultExportOptions,
+  createStemsZipWriter,
   EXPORT_SAMPLE_RATES,
   type ExportOptionsModel,
   encodeOptionsForModel,
   exportFileName,
   normalizeMixdownLoudness,
-  type StemsZipEntry,
-  stemEntryNames,
+  stemEntryName,
   stemsZipFileName,
   toRenderOptions,
   validateExportOptions,
 } from '@/export/options';
 import type { WavBitDepth } from '@/export/wav';
+import { PayloadMemoryMeter } from '@/lib/payload-memory';
 import type { ProjectDocument } from '@/project/serialization';
 import { useI18n } from '@/ui/i18n';
 import type { ExportRenderOptions } from '@/workers/export.worker';
@@ -49,6 +55,7 @@ type RenderFn = (
   doc: ProjectDocument,
   options: ExportRenderOptions,
   onProgress?: MixdownProgressFn,
+  onStem?: (stem: MixdownStem, index: number, total: number) => Promise<void> | void,
 ) => ExportRenderHandle;
 
 const props = withDefaults(
@@ -102,9 +109,12 @@ const stage = ref('');
 const errorMessage = ref('');
 const cancelled = ref(false);
 const report = ref<MixdownReport | null>(null);
-const reportLimitations = computed(() =>
-  (report.value?.limitations ?? []).filter((limitation) => limitation.trim().length > 0),
-);
+const reportLimitations = computed(() => [
+  ...(report.value?.limitations ?? []).filter((limitation) => limitation.trim().length > 0),
+  ...(report.value?.mediaIssues ?? []).map(
+    (issue) => `Missing or unreadable ${issue.kind}: ${issue.id}`,
+  ),
+]);
 let cancelRender: (() => void) | null = null;
 
 /** Encoder list: the injected override or the live codec registry. */
@@ -216,6 +226,7 @@ const sampleRateOptions = EXPORT_SAMPLE_RATES.map((rate) => ({
 const progressStageLabel = computed(() => {
   if (stage.value === 'render') return t.value.dialogs.exportAudio.stage.render;
   if (stage.value === 'encode') return t.value.dialogs.exportAudio.stage.encode;
+  if (stage.value === 'preflight') return t.value.dialogs.exportAudio.stage.preflight;
   return stage.value;
 });
 
@@ -243,6 +254,23 @@ function downloadViaAnchor(blob: Blob, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
+async function encodeAudio(
+  encoder: AudioEncoder,
+  channels: ReadonlyArray<Float32Array>,
+  sampleRate: number,
+  options: Record<string, unknown>,
+  signal: AbortSignal,
+): Promise<Uint8Array> {
+  if (
+    props.encoders === null &&
+    typeof Worker === 'function' &&
+    isWorkerAudioEncoderId(encoder.id)
+  ) {
+    return encodeAudioInWorker(encoder.id, channels, sampleRate, options, signal);
+  }
+  return await encoder.encode(channels, sampleRate, options);
+}
+
 async function onExport(): Promise<void> {
   if (!canExport.value) return;
   const encoder = selectedEncoder.value;
@@ -255,59 +283,146 @@ async function onExport(): Promise<void> {
   stage.value = 'render';
   const renderFn = props.render ?? renderMixdownInWorker;
   const downloadFn = props.download ?? downloadViaAnchor;
+  const controller = new AbortController();
+  let handle: ExportRenderHandle | null = null;
+  cancelRender = () => {
+    controller.abort(new MixdownCancelledError());
+    handle?.cancel();
+  };
   try {
-    const doc = props.getDocument();
-    const handle = renderFn(doc, toRenderOptions(model.value, props.loopRegion), (p, s) => {
-      progress.value = p;
-      stage.value = s;
+    const doc = structuredClone(props.getDocument()) as ProjectDocument;
+    const exportModel: ExportOptionsModel = { ...model.value };
+    stage.value = 'preflight';
+    const preflight = await audioExportPreflight(doc, {
+      range: exportModel.range,
+      releaseTailSeconds: exportModel.releaseTailSeconds,
+      signal: controller.signal,
     });
-    cancelRender = handle.cancel;
-    const result = await handle.result;
-    cancelRender = null;
-    progress.value = 1;
-    stage.value = 'encode';
-    const encodeOptions = encodeOptionsForModel(model.value, {
+    if (preflight.blockers.length > 0) {
+      throw new Error(
+        `${t.value.dialogs.exportAudio.preflightBlocked}\n${preflight.blockers.join('\n')}`,
+      );
+    }
+    const automationLimitations = offlineAutomationLimitations(doc);
+    const acceptedLimitations = [...automationLimitations, ...preflight.warnings];
+    if (acceptedLimitations.length > 0) {
+      const proceed = await confirmDialog({
+        title: t.value.dialogs.exportAudio.preflightWarningTitle,
+        message: `${t.value.dialogs.exportAudio.preflightWarningMessage}\n\n${acceptedLimitations.join('\n')}`,
+        confirmLabel: t.value.dialogs.exportAudio.automationWarningContinue,
+      });
+      if (!proceed) return;
+      controller.signal.throwIfAborted();
+    }
+    const encodeOptions = encodeOptionsForModel(exportModel, {
       compressedEncoderIds: compressedEncoderIds.value,
     });
+    Object.defineProperty(encodeOptions, 'signal', {
+      value: controller.signal,
+      enumerable: false,
+    });
     const targetLufs = appSettings.settings.loudnessTargetLufs;
+    const stemsWriter =
+      exportModel.mode === 'stems' ? createStemsZipWriter(controller.signal) : null;
+    const stemMemory = new PayloadMemoryMeter({
+      label: 'Stem export',
+      budgetBytes: DEFAULT_EXPORT_MEMORY_BUDGET_BYTES,
+    });
+    let consumedStemCount = 0;
+    const consumeStem = async (stem: MixdownStem, index: number, total: number): Promise<void> => {
+      controller.signal.throwIfAborted();
+      if (!stemsWriter) throw new Error('Stem consumer is unavailable');
+      const releaseRaw = stemMemory.retain(
+        stem.channels[0].byteLength + stem.channels[1].byteLength,
+        `raw stem ${index + 1}/${total}`,
+      );
+      try {
+        stage.value = `encode:stem:${index + 1}/${total}`;
+        if (exportModel.normalizeLoudness && stem.report) {
+          stem.report = normalizeMixdownLoudness(stem.channels, stem.report, targetLufs);
+        }
+        const bytes = await encodeAudio(
+          encoder,
+          stem.channels,
+          exportModel.sampleRate,
+          encodeOptions,
+          controller.signal,
+        );
+        controller.signal.throwIfAborted();
+        const releaseEncoded = stemMemory.retain(
+          bytes.byteLength,
+          `encoded stem ${index + 1}/${total}`,
+        );
+        try {
+          stemsWriter.add({
+            name: stemEntryName(stem.name, index, total, encoder.extension),
+            bytes,
+          });
+        } finally {
+          releaseEncoded();
+        }
+        consumedStemCount += 1;
+      } finally {
+        releaseRaw();
+      }
+    };
+    stage.value = 'render';
+    handle = renderFn(
+      doc,
+      toRenderOptions(exportModel, props.loopRegion),
+      (p, s) => {
+        if (controller.signal.aborted) return;
+        progress.value = p;
+        stage.value = s;
+      },
+      exportModel.mode === 'stems' ? consumeStem : undefined,
+    );
+    const result = await handle.result;
+    controller.signal.throwIfAborted();
+    progress.value = 1;
+    stage.value = 'encode';
     const normalizedReport =
-      model.value.mode === 'mixdown' && model.value.normalizeLoudness
+      exportModel.mode === 'mixdown' && exportModel.normalizeLoudness
         ? normalizeMixdownLoudness(result.channels, result.report, targetLufs)
         : result.report;
     let filename: string;
-    if (model.value.mode === 'stems') {
-      const stems = result.stems ?? [];
-      if (stems.length === 0) {
+    if (exportModel.mode === 'stems') {
+      const stems: Array<MixdownStem | null> = result.stems ? [...result.stems] : [];
+      result.stems = undefined;
+      for (let i = 0; i < stems.length; i++) {
+        controller.signal.throwIfAborted();
+        const stem = stems[i];
+        if (!stem) continue;
+        await consumeStem(stem, i, stems.length);
+        stems[i] = null;
+      }
+      if (consumedStemCount === 0 || !stemsWriter) {
         throw new Error(t.value.dialogs.exportAudio.noStems);
       }
-      const names = stemEntryNames(
-        stems.map((stem) => stem.name),
-        encoder.extension,
-      );
-      const entries: StemsZipEntry[] = [];
-      for (let i = 0; i < stems.length; i++) {
-        const stem = stems[i];
-        if (model.value.normalizeLoudness && stem.report) {
-          stem.report = normalizeMixdownLoudness(stem.channels, stem.report, targetLufs);
-        }
-        entries.push({
-          name: names[i],
-          bytes: await encoder.encode(stem.channels, result.sampleRate, encodeOptions),
-        });
-      }
-      const zip = buildStemsZip(entries);
-      filename = stemsZipFileName(model.value.baseName);
-      // Copy into a fresh Uint8Array so the BlobPart sees a plain ArrayBuffer.
-      downloadFn(new Blob([new Uint8Array(zip)], { type: 'application/zip' }), filename);
+      const zip = await stemsWriter.close();
+      controller.signal.throwIfAborted();
+      filename = stemsZipFileName(exportModel.baseName);
+      downloadFn(zip, filename);
     } else {
-      const bytes = await encoder.encode(result.channels, result.sampleRate, encodeOptions);
-      filename = exportFileName(model.value.baseName, encoder.extension);
+      const bytes = await encodeAudio(
+        encoder,
+        result.channels,
+        result.sampleRate,
+        encodeOptions,
+        controller.signal,
+      );
+      controller.signal.throwIfAborted();
+      filename = exportFileName(exportModel.baseName, encoder.extension);
       downloadFn(new Blob([new Uint8Array(bytes)], { type: encoder.mime }), filename);
     }
     report.value = normalizedReport;
     emit('exported', { filename, report: normalizedReport });
   } catch (error) {
-    if (error instanceof MixdownCancelledError) {
+    if (!controller.signal.aborted) controller.abort(error);
+    if (
+      error instanceof MixdownCancelledError ||
+      (error instanceof DOMException && error.name === 'AbortError')
+    ) {
       cancelled.value = true;
     } else {
       errorMessage.value = error instanceof Error ? error.message : String(error);
@@ -501,6 +616,23 @@ function onKeydown(event: KeyboardEvent): void {
             :label="normalizeLoudnessLabel"
             :disabled="busy"
           />
+        </div>
+
+        <label class="field-label" for="export-release-tail">
+          {{ t.dialogs.exportAudio.releaseTail }}
+        </label>
+        <div class="field tail-field">
+          <input
+            id="export-release-tail"
+            v-model.number="model.releaseTailSeconds"
+            class="release-tail-input"
+            type="number"
+            min="0"
+            max="120"
+            step="0.5"
+            :disabled="busy || model.range !== 'project'"
+          />
+          <span>{{ t.dialogs.exportAudio.seconds }}</span>
         </div>
 
         <label class="field-label" for="export-filename">

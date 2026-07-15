@@ -3,6 +3,7 @@ import { unzipSync } from 'fflate';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 import ExportDialog from '@/components/export/ExportDialog.vue';
+import { dialogQueue, resolveDialog } from '@/composables/useDialogs';
 import type { ExportRenderHandle } from '@/export/client';
 import {
   MixdownCancelledError,
@@ -77,6 +78,11 @@ interface RenderControl {
   cancel: ReturnType<typeof vi.fn>;
   progress: () => MixdownProgressFn | undefined;
   options: () => ExportRenderOptions;
+  emitStem: (
+    stem: NonNullable<MixdownResult['stems']>[number],
+    index: number,
+    total: number,
+  ) => Promise<void>;
 }
 
 /** A controllable render seam: one deferred handle shared by all calls. */
@@ -84,12 +90,25 @@ function makeRender(): RenderControl {
   let resolveFn: (result: MixdownResult) => void = () => {};
   let rejectFn: (error: Error) => void = () => {};
   const cancel = vi.fn();
+  let onStemFn:
+    | ((
+        stem: NonNullable<MixdownResult['stems']>[number],
+        index: number,
+        total: number,
+      ) => Promise<void> | void)
+    | undefined;
   const render = vi.fn(
     (
       _doc: ProjectDocument,
       _options: ExportRenderOptions,
       _onProgress?: MixdownProgressFn,
+      onStem?: (
+        stem: NonNullable<MixdownResult['stems']>[number],
+        index: number,
+        total: number,
+      ) => Promise<void> | void,
     ): ExportRenderHandle => {
+      onStemFn = onStem;
       const result = new Promise<MixdownResult>((resolve, reject) => {
         resolveFn = resolve;
         rejectFn = reject;
@@ -104,10 +123,15 @@ function makeRender(): RenderControl {
     cancel,
     progress: () => render.mock.calls[0]?.[2] as MixdownProgressFn | undefined,
     options: () => render.mock.calls[0]?.[1] as ExportRenderOptions,
+    emitStem: async (stem, index, total) => {
+      if (!onStemFn) throw new Error('Stem consumer was not registered');
+      await onStemFn(stem, index, total);
+    },
   };
 }
 
 interface MountOptions {
+  getDocument?: () => ProjectDocument;
   hasLoop?: boolean;
   loopRegion?: { startPpq: number; endPpq: number } | null;
   encoders?: Array<{
@@ -137,7 +161,7 @@ function mountDialog(control: RenderControl, options: MountOptions = {}) {
     mount(ExportDialog, {
       props: {
         open: true,
-        getDocument: makeDocument,
+        getDocument: options.getDocument ?? makeDocument,
         projectName: 'My Song',
         hasLoop: options.hasLoop ?? false,
         loopRegion: options.loopRegion ?? null,
@@ -174,9 +198,50 @@ afterEach(() => {
   for (const wrapper of mounted) wrapper.unmount();
   mounted = [];
   document.body.innerHTML = '';
+  dialogQueue.splice(0);
 });
 
 describe('ExportDialog', () => {
+  it('requires confirmation before rendering time-varying unsupported automation', async () => {
+    const control = makeRender();
+    const doc = makeDocument();
+    doc.tracks.push({
+      name: 'Keys',
+      color: '#fff',
+      kind: 'midi',
+      mute: false,
+      solo: false,
+      volume: 1,
+      pan: 0,
+      instrument: { kind: 'synth-patch', patch: { preset: 'lead', cutoffHz: 800 } },
+      automation: [
+        {
+          param: 'instrument:cutoffHz',
+          enabled: true,
+          points: [
+            { ppq: 0, value: 800 },
+            { ppq: 4, value: 2400 },
+          ],
+        },
+      ],
+      clips: [],
+    });
+    mountDialog(control, { getDocument: () => doc });
+
+    await clickExport();
+    await flushPromises();
+    expect(control.render).not.toHaveBeenCalled();
+    expect(dialogQueue[0]?.message).toContain(
+      'instrument automation was evaluated at render start',
+    );
+
+    resolveDialog(dialogQueue[0].id, true);
+    await flushPromises();
+    expect(control.render).toHaveBeenCalledTimes(1);
+    control.resolve(makeResult());
+    await flushPromises();
+  });
+
   it('renders nothing while closed', () => {
     track(
       mount(ExportDialog, {
@@ -324,6 +389,7 @@ describe('ExportDialog', () => {
       stems: false,
       busStems: false,
       masterStem: false,
+      releaseTailSeconds: 2,
     });
 
     control.progress()?.(0.5, 'clip:0:0');
@@ -445,11 +511,11 @@ describe('ExportDialog', () => {
     await flushPromises();
 
     const channels = encode.mock.calls[0][0] as ReadonlyArray<Float32Array>;
-    expect(channels[0][0]).toBeCloseTo(0.25 * 10 ** (6 / 20), 6);
-    expect(channels[1][0]).toBeCloseTo(0.5 * 10 ** (6 / 20), 6);
-    expect(q('.report-lufs')?.textContent).toBe('-14.0 LUFS');
+    expect(channels[0][0]).toBeCloseTo(0.25 * 10 ** (4.8 / 20), 6);
+    expect(channels[1][0]).toBeCloseTo(0.5 * 10 ** (4.8 / 20), 6);
+    expect(q('.report-lufs')?.textContent).toBe('-15.2 LUFS');
     const emitted = wrapper.emitted('exported') as Array<[{ report: { lufs?: number } }]>;
-    expect(emitted[0][0].report.lufs).toBe(-14);
+    expect(emitted[0][0].report.lufs).toBeCloseTo(-15.2, 6);
   });
 
   it('disables dither outside 16-bit WAV and leaves the encoder option false', async () => {
@@ -498,6 +564,7 @@ describe('ExportDialog', () => {
       stems: false,
       busStems: false,
       masterStem: false,
+      releaseTailSeconds: 2,
     });
   });
 
@@ -543,11 +610,52 @@ describe('ExportDialog', () => {
     control.resolve(makeResult({ stems }));
     await flushPromises();
 
+    await vi.waitFor(() => expect(download).toHaveBeenCalledTimes(1));
+
     expect(download.mock.calls[0][1]).toBe('My Song stems.zip');
     const entries = unzipSync(await downloadedBytes(download));
     expect(Object.keys(entries).sort()).toEqual(['01 Drums.wav', '02 Bass.wav']);
     expect(entries['01 Drums.wav']).toEqual(encodeWav(stems[0].channels, 48000, { bitDepth: 16 }));
     expect(entries['02 Bass.wav']).toEqual(encodeWav(stems[1].channels, 48000, { bitDepth: 16 }));
+  });
+
+  it('encodes streamed stems before the render result settles', async () => {
+    const control = makeRender();
+    const encode = vi.fn((channels: ReadonlyArray<Float32Array>) =>
+      Promise.resolve(new Uint8Array([channels[0][0] * 100])),
+    );
+    const { download } = mountDialog(control, {
+      encoders: [{ id: 'wav', label: 'WAV', extension: '.wav', mime: 'audio/wav', encode }],
+    });
+    await checkRadio('.mode-stems');
+    await clickExport();
+
+    await control.emitStem(
+      {
+        trackIndex: 0,
+        name: 'Drums',
+        channels: [new Float32Array([0.1]), new Float32Array([0.2])],
+      },
+      0,
+      2,
+    );
+    expect(encode).toHaveBeenCalledTimes(1);
+    expect(download).not.toHaveBeenCalled();
+    await control.emitStem(
+      {
+        trackIndex: 1,
+        name: 'Bass',
+        channels: [new Float32Array([0.3]), new Float32Array([0.4])],
+      },
+      1,
+      2,
+    );
+    control.resolve(makeResult());
+    await vi.waitFor(() => expect(download).toHaveBeenCalledTimes(1));
+
+    const entries = unzipSync(await downloadedBytes(download));
+    expect(entries['01 Drums.wav']).toEqual(new Uint8Array([10]));
+    expect(entries['02 Bass.wav']).toEqual(new Uint8Array([30]));
   });
 
   it('normalizes each stem with LUFS metadata before encoding', async () => {
@@ -607,8 +715,8 @@ describe('ExportDialog', () => {
     const first = encode.mock.calls[0][0] as readonly [Float32Array, Float32Array];
     const second = encode.mock.calls[1][0] as readonly [Float32Array, Float32Array];
     const third = encode.mock.calls[2][0] as readonly [Float32Array, Float32Array];
-    expect(first[0][0]).toBeCloseTo(0.25 * 10 ** (6 / 20), 6);
-    expect(first[1][0]).toBeCloseTo(0.5 * 10 ** (6 / 20), 6);
+    expect(first[0][0]).toBeCloseTo(0.25 * 10 ** (4.5 / 20), 6);
+    expect(first[1][0]).toBeCloseTo(0.5 * 10 ** (4.5 / 20), 6);
     expect(second[0][0]).toBeCloseTo(0.5 * 10 ** (-4 / 20), 6);
     expect(second[1][0]).toBeCloseTo(0.25 * 10 ** (-4 / 20), 6);
     expect(third[0][0]).toBeCloseTo(0.125, 6);
@@ -675,6 +783,29 @@ describe('ExportDialog', () => {
     expect(download).not.toHaveBeenCalled();
     // The dialog is usable again.
     expect(q<HTMLButtonElement>('.export-button')?.disabled).toBe(false);
+  });
+
+  it('cancels an in-flight encoder after rendering has completed', async () => {
+    const control = makeRender();
+    const encode = vi.fn(
+      (_channels, _sampleRate, options?: Record<string, unknown>) =>
+        new Promise<Uint8Array>((_resolve, reject) => {
+          const signal = options?.['signal'] as AbortSignal;
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        }),
+    );
+    const { download } = mountDialog(control, {
+      encoders: [{ id: 'wav', label: 'WAV', extension: '.wav', mime: 'audio/wav', encode }],
+    });
+    await clickExport();
+    control.resolve(makeResult());
+    await vi.waitFor(() => expect(encode).toHaveBeenCalledOnce());
+
+    q('.cancel-render')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushPromises();
+
+    expect(q('.export-cancelled')).not.toBeNull();
+    expect(download).not.toHaveBeenCalled();
   });
 
   it('shows render errors inline and re-enables the form', async () => {

@@ -117,6 +117,7 @@ describe('useProjectExport', () => {
 
     projectExport.exportDawprojectAction();
     await flushPromises();
+    await vi.waitFor(() => expect(downloadBlobFile).toHaveBeenCalledTimes(1));
 
     expect(confirmDialog).not.toHaveBeenCalled();
     expect(downloadBlobFile).toHaveBeenCalledTimes(1);
@@ -156,6 +157,7 @@ describe('useProjectExport', () => {
 
     projectExport.exportDawprojectAction();
     await flushPromises();
+    await vi.waitFor(() => expect(downloadBlobFile).toHaveBeenCalledTimes(1));
 
     expect(confirmDialog).not.toHaveBeenCalled();
     expect(downloadBlobFile).toHaveBeenCalledTimes(1);
@@ -199,6 +201,7 @@ describe('useProjectExport', () => {
 
     projectExport.exportDawprojectAction();
     await flushPromises();
+    await vi.waitFor(() => expect(downloadBlobFile).toHaveBeenCalledTimes(1));
 
     expect(confirmDialog).not.toHaveBeenCalled();
     expect(downloadBlobFile).toHaveBeenCalledTimes(1);
@@ -334,6 +337,7 @@ describe('useProjectExport', () => {
 
     projectExport.exportDawprojectAction();
     await flushPromises();
+    await vi.waitFor(() => expect(downloadBlobFile).toHaveBeenCalledTimes(1));
 
     expect(confirmDialog).toHaveBeenCalledTimes(1);
     expect(downloadBlobFile).toHaveBeenCalledTimes(1);

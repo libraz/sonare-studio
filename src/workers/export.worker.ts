@@ -16,6 +16,7 @@
  */
 
 import { renderProjectWithEngine } from '@/export/engine-render';
+import { DEFAULT_EXPORT_MEMORY_BUDGET_BYTES } from '@/export/memory-budget';
 import {
   MixdownCancelledError,
   type MixdownRange,
@@ -30,6 +31,8 @@ export interface ExportRenderOptions {
   sampleRate?: number;
   /** Render range (default 'project'). */
   range?: MixdownRange;
+  /** Release tail appended after the final clip for project-range renders. */
+  releaseTailSeconds?: number;
   /** Loop window used when range is 'loop'. */
   loopRegion?: MixdownRangePpq;
   /** Apply master inserts/EQ and the mastering chain (default true). */
@@ -40,6 +43,8 @@ export interface ExportRenderOptions {
   busStems?: boolean;
   /** When stems are enabled, also return the final stereo master as a stem. */
   masterStem?: boolean;
+  /** Retained full-length audio payload budget; defaults to 1 GiB. */
+  memoryBudgetBytes?: number;
 }
 
 /** One transferred stem of a worker render. */
@@ -66,8 +71,15 @@ export interface ExportWorkerResult {
 
 /** Request payloads, without the correlation id. */
 export type ExportRequestBody =
-  | { type: 'render'; doc: ProjectDocument; options?: ExportRenderOptions }
+  | {
+      type: 'render';
+      doc: ProjectDocument;
+      options?: ExportRenderOptions;
+      /** Transfer one stem at a time and wait for a consumer acknowledgement. */
+      streamStems?: boolean;
+    }
   | { type: 'cancel'; targetId: number }
+  | { type: 'stem-consumed'; targetId: number; index: number }
   | { type: 'destroy' };
 
 /** A request message: payload plus caller-generated correlation id. */
@@ -76,6 +88,7 @@ export type ExportRequest = ExportRequestBody & { id: number };
 /** Response messages; `id` echoes the originating request. */
 export type ExportResponse =
   | { id: number; type: 'progress'; progress: number; stage: string }
+  | { id: number; type: 'stem'; stem: ExportWorkerStem; index: number; total: number }
   | { id: number; type: 'render'; result: ExportWorkerResult }
   | { id: number; type: 'cancelled' }
   | { id: number; type: 'destroy' }
@@ -85,6 +98,7 @@ const scope = self as unknown as DedicatedWorkerGlobalScope;
 
 /** Render ids flagged for cancellation ('cancel' bypasses the queue). */
 const cancelled = new Set<number>();
+const stemWaiters = new Map<number, { index: number; resolve: (consumed: boolean) => void }>();
 
 function post(message: ExportResponse, transfer: Transferable[] = []): void {
   scope.postMessage(message, transfer);
@@ -101,6 +115,7 @@ async function handleRender(
   id: number,
   doc: ProjectDocument,
   options: ExportRenderOptions = {},
+  streamStems = false,
 ): Promise<void> {
   if (cancelled.has(id)) {
     cancelled.delete(id);
@@ -113,9 +128,42 @@ async function handleRender(
     // stems are extra isolated engine passes.
     const result = await renderProjectWithEngine(doc, {
       ...options,
+      memoryBudgetBytes: options.memoryBudgetBytes ?? DEFAULT_EXPORT_MEMORY_BUDGET_BYTES,
       onProgress: (progress, stage) => post({ id, type: 'progress', progress, stage }),
       shouldCancel: () => cancelled.has(id),
       yieldBetweenBlocks: yieldToMessages,
+      ...(streamStems && options.stems
+        ? {
+            onStem: async (stem, index, total): Promise<void> => {
+              if (cancelled.has(id)) throw new MixdownCancelledError();
+              const consumed = new Promise<boolean>((resolve) => {
+                stemWaiters.set(id, { index, resolve });
+              });
+              post(
+                {
+                  id,
+                  type: 'stem',
+                  index,
+                  total,
+                  stem: {
+                    source: stem.source,
+                    trackIndex: stem.trackIndex,
+                    busId: stem.busId,
+                    busIndex: stem.busIndex,
+                    name: stem.name,
+                    left: stem.channels[0],
+                    right: stem.channels[1],
+                    report: stem.report,
+                  },
+                },
+                [stem.channels[0].buffer, stem.channels[1].buffer],
+              );
+              const wasConsumed = await consumed;
+              stemWaiters.delete(id);
+              if (!wasConsumed || cancelled.has(id)) throw new MixdownCancelledError();
+            },
+          }
+        : {}),
     });
     const payload: ExportWorkerResult = {
       left: result.channels[0],
@@ -148,6 +196,8 @@ async function handleRender(
     }
     throw error;
   } finally {
+    stemWaiters.get(id)?.resolve(false);
+    stemWaiters.delete(id);
     cancelled.delete(id);
   }
 }
@@ -155,12 +205,16 @@ async function handleRender(
 async function handle(request: ExportRequest): Promise<void> {
   switch (request.type) {
     case 'render': {
-      await handleRender(request.id, request.doc, request.options);
+      await handleRender(request.id, request.doc, request.options, request.streamStems);
       return;
     }
     case 'cancel': {
       // Handled out of band in onmessage; reaching here means the render it
       // targeted already finished, which is a harmless no-op.
+      return;
+    }
+    case 'stem-consumed': {
+      // Handled out of band below so the running render can resume.
       return;
     }
     case 'destroy': {
@@ -179,6 +233,12 @@ scope.onmessage = (event: MessageEvent<ExportRequest>) => {
   if (request.type === 'cancel') {
     // Bypass the queue: the flag must be visible to the render in flight.
     cancelled.add(request.targetId);
+    stemWaiters.get(request.targetId)?.resolve(false);
+    return;
+  }
+  if (request.type === 'stem-consumed') {
+    const waiter = stemWaiters.get(request.targetId);
+    if (waiter?.index === request.index) waiter.resolve(true);
     return;
   }
   queue = queue.then(async () => {

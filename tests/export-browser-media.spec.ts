@@ -41,6 +41,8 @@ class FakeSource extends EventTarget {
   start(): void {
     queueMicrotask(() => this.dispatchEvent(new Event('ended')));
   }
+
+  stop(): void {}
 }
 
 class FakeAudioContext {
@@ -187,6 +189,41 @@ describe('browser MediaRecorder export encoders', () => {
     expect(FakeMediaRecorder.last?.state).toBe('inactive');
     expect(FakeMediaRecorder.last?.listenerCounts.get('dataavailable')).toBe(0);
     expect(FakeMediaRecorder.last?.listenerCounts.get('error')).toBe(0);
+    expect(FakeMediaRecorder.last?.listenerCounts.get('stop')).toBe(0);
+    expect(FakeSource.last?.listenerCounts.get('ended')).toBe(0);
+    expect(FakeAudioContext.last?.closed).toBe(true);
+  });
+
+  it('aborts a hanging browser encode and releases recorder/context listeners', async () => {
+    class NoCopyBuffer extends FakeBuffer {
+      override copyToChannel(): void {}
+    }
+    class HangingSource extends FakeSource {
+      override start(): void {}
+    }
+    class HangingAudioContext extends FakeAudioContext {
+      override createBuffer(): FakeBuffer {
+        return new NoCopyBuffer();
+      }
+      override createBufferSource(): FakeSource {
+        return new HangingSource();
+      }
+    }
+    vi.stubGlobal('AudioContext', HangingAudioContext);
+    vi.stubGlobal('MediaRecorder', FakeMediaRecorder);
+    FakeMediaRecorder.supported = new Set(['audio/webm;codecs=opus']);
+    const controller = new AbortController();
+
+    const encoding = encodeBrowserMedia(
+      'audio/webm;codecs=opus',
+      [{ length: 48_000 * 60 * 60 * 2 } as Float32Array],
+      48_000,
+      { signal: controller.signal },
+    );
+    controller.abort(new DOMException('user cancelled', 'AbortError'));
+
+    await expect(encoding).rejects.toMatchObject({ name: 'AbortError' });
+    expect(FakeMediaRecorder.last?.state).toBe('inactive');
     expect(FakeMediaRecorder.last?.listenerCounts.get('stop')).toBe(0);
     expect(FakeSource.last?.listenerCounts.get('ended')).toBe(0);
     expect(FakeAudioContext.last?.closed).toBe(true);

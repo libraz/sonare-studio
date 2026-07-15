@@ -1,6 +1,11 @@
 import { strToU8, zipSync } from 'fflate';
 import { describe, expect, it, vi } from 'vitest';
-import { exportDawproject, importDawproject, importDawprojectWithMedia } from '@/export/dawproject';
+import {
+  exportDawproject,
+  importDawproject,
+  importDawprojectWithMedia,
+  importDawprojectWithMediaResult,
+} from '@/export/dawproject';
 import type { InsertSlot } from '@/project/mixer';
 import type { DocumentClip, DocumentTrack, ProjectDocument } from '@/project/serialization';
 
@@ -481,6 +486,19 @@ describe('importDawproject', () => {
       kind: 'audio',
       startPpq: 0,
       lengthPpq: 4,
+    });
+  });
+
+  it('returns structured media failures instead of silently reporting full success', async () => {
+    const result = await importDawprojectWithMediaResult(
+      makeExternalAudioDawproject('/Missing/Vox.wav'),
+      { resolveExternalAudio: async () => null },
+    );
+
+    expect(result.document.tracks[0].clips[0].assetId).toBeUndefined();
+    expect(result.media).toEqual({
+      imported: [],
+      issues: [{ path: '/Missing/Vox.wav', external: true, reason: 'missing' }],
     });
   });
 
