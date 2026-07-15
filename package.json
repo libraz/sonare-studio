@@ -12,11 +12,12 @@
     "preview": "vite preview",
     "copy:wasm": "./scripts/copy-wasm.sh",
     "test": "vitest run",
+    "test:external-formats": "EXTERNAL_VALIDATORS=1 vitest run tests/external-format-validators.spec.ts tests/external-format-fuzz.spec.ts tests/archive-preflight.spec.ts tests/persistence-szd.spec.ts tests/persistence-backup.spec.ts tests/export-dawproject.spec.ts tests/import-dawproject.spec.ts tests/project-smf.spec.ts tests/notation-musicxml.spec.ts tests/notation-musicxml-import.spec.ts tests/export-wav.spec.ts",
     "test:watch": "vitest",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "typecheck": "vue-tsc --noEmit",
-    "verify": "yarn lint && yarn test && yarn build"
+    "verify": "yarn lint && yarn test && yarn test:external-formats && yarn build"
   },
   "dependencies": {
     "@breezystack/lamejs": "^1.2.7",
@@ -25,6 +26,7 @@
     "fflate": "^0.8",
     "jspdf": "^4.2.1",
     "pinia": "^3",
+    "saxes": "^6.0.0",
     "svg2pdf.js": "^2.7.0",
     "verovio": "^6",
     "vue": "^3.5"

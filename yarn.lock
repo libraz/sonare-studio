@@ -1984,6 +1984,7 @@ __metadata:
     jsdom: "npm:^29"
     jspdf: "npm:^4.2.1"
     pinia: "npm:^3"
+    saxes: "npm:^6.0.0"
     svg2pdf.js: "npm:^2.7.0"
     typescript: "npm:^6"
     verovio: "npm:^6"
