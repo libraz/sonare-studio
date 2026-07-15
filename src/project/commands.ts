@@ -13,18 +13,26 @@ export {
   estimateChordsFromArrangement,
   setProjectChords,
 } from './command/chords';
-export type { AddAudioClipInput, AddBouncedClipInput, AddMidiClipInput } from './command/clips';
+export type {
+  AddAudioClipInput,
+  AddBouncedClipInput,
+  AddMidiClipInput,
+  DropClipTakesInput,
+} from './command/clips';
 export {
   addAudioClip,
   addBouncedClip,
   addMidiClip,
+  clearActiveClipSelection,
   consolidateAudioClips,
   deleteClip,
   dropClipTakes,
+  dropClipTakesBatch,
   duplicateClip,
   glueMidiClips,
   moveClip,
   renameClip,
+  replaceAudioClipAsset,
   setActiveClip,
   setActiveTrack,
   setClipActiveTake,
@@ -37,6 +45,7 @@ export {
   setClipPitchBend,
   setClipPolyPressure,
   setClipPolyPressureForPitches,
+  setClipPolyPressureForPitchPoints,
   setClipTakes,
   setClipWarp,
   setTrackFrozen,
@@ -73,6 +82,9 @@ export {
   canUndo,
   clearHistory,
   collectHistoryReferencedMediaIds,
+  configureHistoryByteBudget,
+  executeAtomic,
+  historyBudgetStats,
   redo,
   undo,
 } from './command/history';
@@ -152,8 +164,11 @@ export {
   recallMixerSnapshot,
   saveMixerSnapshot,
 } from './command/mixer-snapshots';
+export type { NoteEditPlan } from './command/notes';
 export {
   addNote,
+  addNotes,
+  applyNoteEdits,
   cleanupOverlaps,
   deleteNotes,
   duplicateSelection,
@@ -181,7 +196,10 @@ export {
   updateNotes,
 } from './command/notes';
 export { reharmonizeChord } from './command/reharm';
-export type { ReactiveReharmonizeParams } from './command/reharmonize-reactive';
+export type {
+  ProjectReharmonizationProposal,
+  ReactiveReharmonizeParams,
+} from './command/reharmonize-reactive';
 export {
   applyReharmonizationProposal,
   proposeReharmonizationForActiveClip,

@@ -129,6 +129,19 @@ describe('findConflicts', () => {
     const conflicts = findConflicts(bindings);
     expect(conflicts.find((c) => c.keys === 'backspace')).toBeUndefined();
   });
+
+  it('reports shifted punctuation that collides under runtime matching', () => {
+    const bindings = resolveBindings({
+      'help.shortcuts': [],
+      'project.open': ['?'],
+      'project.save': ['shift+?'],
+    });
+
+    const conflicts = findConflicts(bindings);
+
+    expect(conflicts).toHaveLength(1);
+    expect([...conflicts[0].actionIds].sort()).toEqual(['project.open', 'project.save']);
+  });
 });
 
 describe('matchShortcut', () => {

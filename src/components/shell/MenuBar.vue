@@ -14,7 +14,7 @@
  * are. The same component drives both the left command bar and the right-hand
  * Layout menu (via `align="end"`).
  */
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
 import TransportIcon from '@/components/shell/TransportIcon.vue';
 import { cleanMenuItems, isNavigable, type MenuBarMenu } from '@/ui/menu/menu-bar';
 
@@ -35,6 +35,7 @@ const openId = ref<string | null>(null);
 const activeRowId = ref<string | null>(null);
 
 const triggerEls = new Map<string, HTMLButtonElement>();
+const panelEls = new Map<string, HTMLElement>();
 const rootEl = ref<HTMLElement | null>(null);
 
 /** Rows of the open menu, cleaned of stray separators / dangling headings. */
@@ -49,9 +50,22 @@ function rowDomId(menuId: string, itemId: string): string {
   return `menubar-${menuId}-${itemId}`;
 }
 
+function triggerDomId(menuId: string): string {
+  return `menubar-trigger-${menuId}`;
+}
+
+function panelDomId(menuId: string): string {
+  return `menubar-panel-${menuId}`;
+}
+
 function setTriggerEl(id: string, el: HTMLButtonElement | null): void {
   if (el) triggerEls.set(id, el);
   else triggerEls.delete(id);
+}
+
+function setPanelEl(id: string, el: HTMLElement | null): void {
+  if (el) panelEls.set(id, el);
+  else panelEls.delete(id);
 }
 
 function attach(): void {
@@ -62,10 +76,11 @@ function detach(): void {
   window.removeEventListener('pointerdown', onPointerDown, true);
 }
 
-function openMenu(id: string): void {
+function openMenu(id: string, focusPanel = false): void {
   openId.value = id;
   activeRowId.value = null;
   attach();
+  if (focusPanel) void nextTick(() => panelEls.get(id)?.focus());
 }
 
 function close(focusTrigger = false): void {
@@ -118,8 +133,8 @@ function hopMenu(delta: 1 | -1): void {
   const start = from === -1 ? (delta === 1 ? -1 : 0) : from;
   const next = (start + delta + props.menus.length) % props.menus.length;
   const target = props.menus[next];
-  if (openId.value) openMenu(target.id);
-  triggerEls.get(target.id)?.focus();
+  if (openId.value) openMenu(target.id, true);
+  else triggerEls.get(target.id)?.focus();
 }
 
 function focusedTriggerId(): string | null {
@@ -153,7 +168,7 @@ function onKeydown(event: KeyboardEvent): void {
     const focused = focusedTriggerId();
     if (focused && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
       event.preventDefault();
-      openMenu(focused);
+      openMenu(focused, true);
       moveActive(event.key === 'ArrowDown' ? 1 : -1);
     }
     return;
@@ -199,17 +214,21 @@ onBeforeUnmount(detach);
     ref="rootEl"
     class="app-menubar"
     :class="{ 'app-menubar--end': align === 'end' }"
+    role="menubar"
     :aria-label="ariaLabel"
     @keydown="onKeydown"
   >
-    <div v-for="menu in menus" :key="menu.id" class="app-menubar__slot">
+    <div v-for="menu in menus" :key="menu.id" class="app-menubar__slot" role="none">
       <button
         :ref="(el) => setTriggerEl(menu.id, el as HTMLButtonElement | null)"
         type="button"
+        :id="triggerDomId(menu.id)"
         class="app-menubar__trigger"
         :class="{ open: openId === menu.id }"
         aria-haspopup="menu"
+        role="menuitem"
         :aria-expanded="openId === menu.id"
+        :aria-controls="openId === menu.id ? panelDomId(menu.id) : undefined"
         @click="toggle(menu.id)"
         @pointerenter="onTriggerHover(menu.id)"
       >
@@ -219,10 +238,14 @@ onBeforeUnmount(detach);
       <Transition name="pop">
         <div
           v-if="openId === menu.id"
+          :id="panelDomId(menu.id)"
+          :ref="(el) => setPanelEl(menu.id, el as HTMLElement | null)"
           class="menu-panel"
           :class="{ 'menu-panel--end': align === 'end' }"
           role="menu"
-          :aria-label="menu.ariaLabel ?? menu.label"
+          tabindex="-1"
+          :aria-label="menu.ariaLabel"
+          :aria-labelledby="menu.ariaLabel ? undefined : triggerDomId(menu.id)"
           :aria-activedescendant="
             activeRowId ? rowDomId(menu.id, activeRowId) : undefined
           "
@@ -244,6 +267,7 @@ onBeforeUnmount(detach);
               v-else
               :id="rowDomId(menu.id, item.id)"
               type="button"
+              tabindex="-1"
               class="menu-panel__item"
               :class="{
                 danger: item.danger,

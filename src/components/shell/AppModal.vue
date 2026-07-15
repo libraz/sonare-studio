@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
+import { hasNativeEnterBehavior } from '@/ui/accessibility/keyboard';
 import { useI18n } from '@/ui/i18n';
 import { useShortcutBlockingOverlay } from '@/ui/overlay-registry';
 import { wrapTabFocus } from '@/ui/settings/focus-trap';
@@ -62,6 +63,7 @@ watch(
       previousFocus = null;
     }
   },
+  { immediate: true },
 );
 
 function onOverlayClick(): void {
@@ -75,6 +77,9 @@ function onKeydown(event: KeyboardEvent): void {
     emit('close');
     return;
   }
+  // A dialog-level default action must not replace Enter on Cancel, Delete,
+  // option and other controls that already own native keyboard activation.
+  if (event.key === 'Enter' && hasNativeEnterBehavior(event)) return;
   emit('keydown', event);
 }
 </script>

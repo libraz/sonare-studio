@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { hasNativeEnterBehavior } from '@/ui/accessibility/keyboard';
 import { useI18n } from '@/ui/i18n';
 import { useShortcutBlockingOverlay } from '@/ui/overlay-registry';
 import { wrapTabFocus } from '@/ui/settings/focus-trap';
@@ -83,6 +84,19 @@ const highlightStyle = computed(() => {
 });
 
 let sequence: TourSequence | null = null;
+let previousFocus: HTMLElement | null = null;
+
+/** Returns focus to the control that opened the tour when it still exists. */
+function restorePreviousFocus(afterRender = true): void {
+  const target = previousFocus;
+  previousFocus = null;
+  if (!target) return;
+  const restore = () => {
+    if (target.isConnected) target.focus();
+  };
+  if (afterRender) void nextTick(restore);
+  else restore();
+}
 
 /** A selector is available when it matches a visible-ish element. */
 function targetAvailable(selector: string): boolean {
@@ -118,6 +132,9 @@ function wasSeen(): boolean {
 function open(): void {
   sequence = new TourSequence(props.steps, targetAvailable);
   if (!sequence.start()) return;
+  if (!visible.value) {
+    previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  }
   visible.value = true;
   syncStep();
 }
@@ -130,6 +147,7 @@ function close(completed: boolean): void {
   step.value = null;
   anchorRect.value = null;
   emit('close', completed);
+  restorePreviousFocus();
 }
 
 function onNext(): void {
@@ -197,6 +215,7 @@ function reposition(): void {
 
 function onKeydown(event: KeyboardEvent): void {
   if (tooltipRef.value !== null && wrapTabFocus(event, tooltipRef.value)) return;
+  if (event.key === 'Enter' && hasNativeEnterBehavior(event)) return;
   switch (event.key) {
     case 'Escape':
       event.preventDefault();
@@ -232,6 +251,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onViewportChange);
   window.removeEventListener('scroll', onViewportChange, true);
+  restorePreviousFocus(false);
 });
 </script>
 

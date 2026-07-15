@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed } from 'vue';
+import AppModal from '@/components/shell/AppModal.vue';
 import { useShortcuts } from '@/composables/useShortcuts';
 import { useI18n } from '@/ui/i18n';
-import { createFocusTrap, type FocusTrap } from '@/ui/settings/focus-trap';
 import { detectPlatform, formatKeyCombo } from '@/ui/settings/key-combo';
 import type { ShortcutActionDef, ShortcutScope } from '@/ui/settings/shortcuts';
 
@@ -67,116 +67,39 @@ const sections = computed<HelpSection[]>(() =>
   })).filter((section) => section.rows.length > 0),
 );
 
-const dialogRef = ref<HTMLElement | null>(null);
-let trap: FocusTrap | null = null;
-
-watch(
-  () => props.open,
-  (open) => {
-    if (open) {
-      void nextTick(() => {
-        if (dialogRef.value === null) return;
-        trap = createFocusTrap(dialogRef.value);
-        trap.activate();
-      });
-    } else {
-      trap?.deactivate();
-      trap = null;
-    }
-  },
-  { immediate: true },
-);
-
-onBeforeUnmount(() => {
-  trap?.deactivate();
-  trap = null;
-});
-
 function close(): void {
   emit('close');
-}
-
-function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape') {
-    event.preventDefault();
-    close();
-  }
 }
 </script>
 
 <template>
-  <div v-if="props.open" class="dialog-overlay" @click.self="close">
-    <div
-      ref="dialogRef"
-      class="dialog"
-      role="dialog"
-      aria-modal="true"
-      :aria-label="t.dialogs.shortcutsHelp.title"
-      tabindex="-1"
-      @keydown="onKeydown"
-    >
-      <h2 class="dialog-title">{{ t.dialogs.shortcutsHelp.title }}</h2>
-      <div class="sections">
-        <section v-for="section in sections" :key="section.scope" class="scope-section">
-          <h3 class="scope-title">{{ section.label }}</h3>
-          <dl class="shortcut-list">
-            <template v-for="row in section.rows" :key="row.id">
-              <dt class="shortcut-label">{{ row.label }}</dt>
-              <dd class="shortcut-keys"><span class="keys-chip">{{ row.keys }}</span></dd>
-            </template>
-          </dl>
-        </section>
-      </div>
-      <div class="dialog-actions">
-        <button type="button" class="primary" @click="close">
-          {{ t.dialogs.shortcutsHelp.close }}
-        </button>
-      </div>
+  <AppModal
+    :open="props.open"
+    size="lg"
+    :aria-label="t.dialogs.shortcutsHelp.title"
+    @close="close"
+  >
+    <template #title>{{ t.dialogs.shortcutsHelp.title }}</template>
+    <div class="sections">
+      <section v-for="section in sections" :key="section.scope" class="scope-section">
+        <h3 class="scope-title">{{ section.label }}</h3>
+        <dl class="shortcut-list">
+          <template v-for="row in section.rows" :key="row.id">
+            <dt class="shortcut-label">{{ row.label }}</dt>
+            <dd class="shortcut-keys"><span class="keys-chip">{{ row.keys }}</span></dd>
+          </template>
+        </dl>
+      </section>
     </div>
-  </div>
+    <template #actions>
+      <button type="button" class="primary" @click="close">
+        {{ t.dialogs.shortcutsHelp.close }}
+      </button>
+    </template>
+  </AppModal>
 </template>
 
 <style scoped>
-.dialog-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--scrim);
-  -webkit-backdrop-filter: var(--scrim-blur);
-  backdrop-filter: var(--scrim-blur);
-}
-
-.dialog {
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-  width: min(46rem, calc(100vw - 2rem));
-  max-height: calc(100vh - 4rem);
-  padding: 1.25rem 1.4rem;
-  background: var(--glass-3);
-  -webkit-backdrop-filter: var(--glass-blur-strong);
-  backdrop-filter: var(--glass-blur-strong);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--glass-hairline), var(--shadow-modal);
-  color: var(--text-1);
-  font-size: var(--fs-sm);
-}
-
-.dialog:focus {
-  outline: none;
-}
-
-.dialog-title {
-  margin: 0;
-  font-size: var(--fs-lg);
-  font-weight: var(--fw-bold);
-  letter-spacing: 0.04em;
-}
-
 .sections {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
@@ -229,12 +152,7 @@ function onKeydown(event: KeyboardEvent): void {
   padding: 0 var(--sp-2);
 }
 
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.dialog-actions .primary {
+.primary {
   background: var(--accent-strong);
   border: 1px solid var(--accent);
   color: var(--text-1);
@@ -245,7 +163,7 @@ function onKeydown(event: KeyboardEvent): void {
   transition: background var(--dur-1) var(--ease-out);
 }
 
-.dialog-actions .primary:hover {
+.primary:hover {
   background: var(--accent-hover);
 }
 </style>

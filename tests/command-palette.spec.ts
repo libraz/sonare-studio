@@ -24,6 +24,29 @@ afterEach(() => {
 });
 
 describe('CommandPalette', () => {
+  it('keeps combobox focus while exposing the active option', async () => {
+    mountPalette([
+      { id: 'save', label: 'Save project', run: vi.fn() },
+      { id: 'open', label: 'Open project', run: vi.fn() },
+    ]);
+    await nextTick();
+    await nextTick();
+
+    const input = q<HTMLInputElement>('[role="combobox"]')!;
+    const list = q<HTMLElement>('[role="listbox"]')!;
+    expect(input.getAttribute('aria-controls')).toBe(list.id);
+    expect(input.getAttribute('aria-activedescendant')).toBe(q<HTMLElement>('[role="option"]')?.id);
+    expect(document.activeElement).toBe(input);
+
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }),
+    );
+    await nextTick();
+    const options = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')];
+    expect(input.getAttribute('aria-activedescendant')).toBe(options[1].id);
+    expect(document.activeElement).toBe(input);
+  });
+
   it('filters commands and runs the selected command with Enter', async () => {
     const save = vi.fn();
     const open = vi.fn();
@@ -48,5 +71,16 @@ describe('CommandPalette', () => {
     expect(open).toHaveBeenCalledTimes(1);
     expect(save).not.toHaveBeenCalled();
     expect(wrapper?.emitted('close')).toHaveLength(1);
+  });
+
+  it('does not double-run when Enter originates from an option button', async () => {
+    const run = vi.fn();
+    mountPalette([{ id: 'save', label: 'Save project', run }]);
+    q('[role="option"]')?.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    await nextTick();
+
+    expect(run).not.toHaveBeenCalled();
   });
 });

@@ -98,6 +98,16 @@ describe('OpenProjectDialog', () => {
     expect(emitted[0][0]).toBe('Beta');
   });
 
+  it('does not turn Enter on Delete into opening the highlighted project', async () => {
+    open(projects);
+    q<HTMLButtonElement>('.stored-delete')?.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    await nextTick();
+
+    expect(wrapper?.emitted('openProject')).toBeUndefined();
+  });
+
   it('emits close on Escape (AppModal owns dismissal)', async () => {
     open(projects);
     await keydown('Escape');

@@ -7,7 +7,13 @@
  * an action's default keys wholesale (an empty list unbinds the action).
  */
 
-import { comboMatchesEvent, normalizeComboString } from './key-combo';
+import {
+  comboMatchesEvent,
+  combosMatch,
+  type KeyCombo,
+  normalizeComboString,
+  parseKeyCombo,
+} from './key-combo';
 
 /**
  * Where a shortcut is active. 'global' fires regardless of focus; the other
@@ -415,17 +421,26 @@ function scopesOverlap(a: ShortcutScope, b: ShortcutScope): boolean {
  * @returns One entry per colliding combo, with every involved action id.
  */
 export function findConflicts(bindings: ShortcutBindings): ShortcutConflict[] {
-  const byCombo = new Map<string, { id: string; when: ShortcutScope }[]>();
+  const groups: {
+    keys: string;
+    combo: KeyCombo;
+    owners: { id: string; when: ShortcutScope }[];
+  }[] = [];
   for (const action of SHORTCUT_ACTIONS) {
     if (!action.customizable) continue;
     for (const keys of bindings.get(action.id) ?? []) {
-      const list = byCombo.get(keys) ?? [];
-      list.push({ id: action.id, when: action.when });
-      byCombo.set(keys, list);
+      const combo = parseKeyCombo(keys);
+      if (combo === null) continue;
+      // Use the same equality as event matching. In particular, '?' and
+      // 'shift+?' are one runtime binding on keyboard layouts where Shift is
+      // required to produce punctuation.
+      const group = groups.find((candidate) => combosMatch(candidate.combo, combo));
+      if (group) group.owners.push({ id: action.id, when: action.when });
+      else groups.push({ keys, combo, owners: [{ id: action.id, when: action.when }] });
     }
   }
   const conflicts: ShortcutConflict[] = [];
-  for (const [keys, owners] of byCombo) {
+  for (const { keys, owners } of groups) {
     if (owners.length < 2) continue;
     const ids = new Set<string>();
     for (let i = 0; i < owners.length; i++) {

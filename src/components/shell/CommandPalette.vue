@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, ref, useId, watch } from 'vue';
 import AppModal from '@/components/shell/AppModal.vue';
 import SearchField from '@/components/shell/SearchField.vue';
 import { useI18n } from '@/ui/i18n';
@@ -24,6 +24,8 @@ const { t } = useI18n();
 const query = ref('');
 const activeIndex = ref(0);
 const inputRoot = ref<HTMLElement | null>(null);
+const instanceId = useId().replace(/[^A-Za-z0-9_-]/g, '-');
+const listId = `command-palette-list-${instanceId}`;
 
 const filtered = computed(() => {
   const terms = query.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -34,14 +36,26 @@ const filtered = computed(() => {
   });
 });
 
+function optionDomId(commandId: string): string {
+  return `command-palette-option-${instanceId}-${commandId.replace(/[^A-Za-z0-9_-]/g, '-')}`;
+}
+
+const activeOptionId = computed(() => {
+  const command = filtered.value[activeIndex.value];
+  return command ? optionDomId(command.id) : undefined;
+});
+
 watch(
   () => props.open,
   (open) => {
     if (!open) return;
     query.value = '';
     activeIndex.value = 0;
-    void nextTick(() => inputRoot.value?.querySelector('input')?.focus());
+    // AppModal focuses its dialog on the first tick; claim focus for the
+    // combobox on the following tick so aria-activedescendant has one owner.
+    void nextTick(() => nextTick(() => inputRoot.value?.querySelector('input')?.focus()));
   },
+  { immediate: true },
 );
 
 watch(filtered, () => {
@@ -95,17 +109,29 @@ function onKeydown(event: KeyboardEvent): void {
           class="command-search"
           :placeholder="t.shell.commandPalette.placeholder"
           :aria-label="t.shell.commandPalette.searchLabel"
+          input-role="combobox"
+          :aria-controls="listId"
+          :aria-active-descendant="activeOptionId"
+          :aria-expanded="true"
+          aria-autocomplete="list"
           size="md"
         />
       </div>
-      <div class="command-list" role="listbox" :aria-label="t.shell.commandPalette.resultsLabel">
+      <div
+        :id="listId"
+        class="command-list"
+        role="listbox"
+        :aria-label="t.shell.commandPalette.resultsLabel"
+      >
         <button
           v-for="(command, index) in filtered"
           :key="command.id"
           type="button"
+          :id="optionDomId(command.id)"
           class="command-row"
           :class="{ active: index === activeIndex }"
           role="option"
+          tabindex="-1"
           :aria-selected="index === activeIndex"
           @mouseenter="activeIndex = index"
           @click="run(command)"

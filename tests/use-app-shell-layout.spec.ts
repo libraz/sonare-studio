@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useAppShellLayout } from '@/composables/useAppShellLayout';
+import {
+  clampArrangementHeight,
+  maximumArrangementHeight,
+  useAppShellLayout,
+} from '@/composables/useAppShellLayout';
 
 describe('useAppShellLayout', () => {
   let rafCallbacks: Map<number, FrameRequestCallback>;
@@ -28,6 +32,45 @@ describe('useAppShellLayout', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it('computes a viewport-aware arrangement bound', () => {
+    expect(maximumArrangementHeight(1000)).toBe(760);
+    expect(maximumArrangementHeight(300)).toBe(120);
+    expect(maximumArrangementHeight(5000)).toBe(2000);
+    expect(clampArrangementHeight(1200, 600)).toBe(360);
+  });
+
+  it('clamps a stored arrangement height on load', () => {
+    window.localStorage.setItem('sonare-studio.arrangeHeightPx', '1600');
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 600 });
+
+    const layout = useAppShellLayout();
+
+    expect(layout.arrangeHeight.value).toBe(360);
+    layout.disposeLayout();
+  });
+
+  it('clamps a named layout when applied', () => {
+    const layout = useAppShellLayout();
+
+    layout.layoutBindings.arrangeHeightPx.value = 1800;
+
+    expect(layout.arrangeHeight.value).toBe(760);
+    expect(window.localStorage.getItem('sonare-studio.arrangeHeightPx')).toBe('760');
+    layout.disposeLayout();
+  });
+
+  it('reclamps the active layout after a viewport resize', () => {
+    const layout = useAppShellLayout();
+    layout.arrangeHeight.value = 700;
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 520 });
+
+    window.dispatchEvent(new Event('resize'));
+
+    expect(layout.arrangeHeight.value).toBe(280);
+    expect(window.localStorage.getItem('sonare-studio.arrangeHeightPx')).toBe('280');
+    layout.disposeLayout();
   });
 
   it('cancels a pending arrange divider frame on dispose', () => {

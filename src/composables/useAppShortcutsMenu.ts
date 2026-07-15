@@ -108,6 +108,10 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
     deleteNotes([...store.selection]);
   }
 
+  function activeContentReadOnly(): boolean {
+    return store.activeTrack?.frozen !== undefined;
+  }
+
   function runShortcutAction(actionId: string): boolean {
     switch (actionId) {
       case 'transport.togglePlayback':
@@ -159,38 +163,41 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
         selectAllNotes();
         return true;
       case 'edit.quantizeSelection':
+        if (activeContentReadOnly()) return false;
         quantizeSelection();
         return true;
       case 'edit.deleteSelectedNotes':
-        if (store.selection.size === 0) return false;
+        if (activeContentReadOnly() || store.selection.size === 0) return false;
         deleteSelectedNotes();
         return true;
       case 'edit.transposeUp':
-        if (store.selection.size === 0) return false;
+        if (activeContentReadOnly() || store.selection.size === 0) return false;
         transposeSelection(1);
         return true;
       case 'edit.transposeDown':
-        if (store.selection.size === 0) return false;
+        if (activeContentReadOnly() || store.selection.size === 0) return false;
         transposeSelection(-1);
         return true;
       case 'edit.transposeOctaveUp':
-        if (store.selection.size === 0) return false;
+        if (activeContentReadOnly() || store.selection.size === 0) return false;
         transposeSelection(12);
         return true;
       case 'edit.transposeOctaveDown':
-        if (store.selection.size === 0) return false;
+        if (activeContentReadOnly() || store.selection.size === 0) return false;
         transposeSelection(-12);
         return true;
       case 'arrange.duplicateClip': {
         const clip = store.activeClip;
-        if (!clip) return false;
+        if (!clip || activeContentReadOnly()) return false;
         duplicateClip(clip.id, clip.startPpq + clip.lengthPpq);
         return true;
       }
       case 'arrange.splitClipAtPlayhead':
+        if (activeContentReadOnly()) return false;
         arrangementRef.value?.cutAtPlayhead();
         return true;
       case 'arrange.deleteClip':
+        if (activeContentReadOnly()) return false;
         if (store.clipId === -1) {
           if (store.selection.size === 0) return false;
           deleteSelectedNotes();
@@ -340,28 +347,37 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
     const a = t.value.shortcuts.actions;
     const noSelection = store.selection.size === 0;
     const noClip = !store.activeClip;
+    const readOnly = activeContentReadOnly();
     return [
       actionItem('edit.undo', a['edit.undo'], { disabled: !canUndo() }),
       actionItem('edit.redo', a['edit.redo'], { disabled: !canRedo() }),
       sep('edit.sep-select'),
       actionItem('edit.selectAllNotes', a['edit.selectAllNotes']),
-      actionItem('edit.quantizeSelection', a['edit.quantizeSelection'], { disabled: noSelection }),
+      actionItem('edit.quantizeSelection', a['edit.quantizeSelection'], {
+        disabled: readOnly || noSelection,
+      }),
       actionItem('edit.deleteSelectedNotes', t.value.shortcuts.menu.deleteSelection, {
-        disabled: noSelection,
+        disabled: readOnly || noSelection,
       }),
       heading('edit.transpose', t.value.shortcuts.menu.transpose),
-      actionItem('edit.transposeUp', a['edit.transposeUp'], { disabled: noSelection }),
-      actionItem('edit.transposeDown', a['edit.transposeDown'], { disabled: noSelection }),
-      actionItem('edit.transposeOctaveUp', a['edit.transposeOctaveUp'], { disabled: noSelection }),
+      actionItem('edit.transposeUp', a['edit.transposeUp'], { disabled: readOnly || noSelection }),
+      actionItem('edit.transposeDown', a['edit.transposeDown'], {
+        disabled: readOnly || noSelection,
+      }),
+      actionItem('edit.transposeOctaveUp', a['edit.transposeOctaveUp'], {
+        disabled: readOnly || noSelection,
+      }),
       actionItem('edit.transposeOctaveDown', a['edit.transposeOctaveDown'], {
-        disabled: noSelection,
+        disabled: readOnly || noSelection,
       }),
       heading('edit.clip', t.value.shortcuts.menu.clip),
-      actionItem('arrange.duplicateClip', a['arrange.duplicateClip'], { disabled: noClip }),
-      actionItem('arrange.splitClipAtPlayhead', a['arrange.splitClipAtPlayhead'], {
-        disabled: noClip,
+      actionItem('arrange.duplicateClip', a['arrange.duplicateClip'], {
+        disabled: readOnly || noClip,
       }),
-      actionItem('arrange.deleteClip', a['arrange.deleteClip'], { disabled: noClip }),
+      actionItem('arrange.splitClipAtPlayhead', a['arrange.splitClipAtPlayhead'], {
+        disabled: readOnly || noClip,
+      }),
+      actionItem('arrange.deleteClip', a['arrange.deleteClip'], { disabled: readOnly || noClip }),
     ];
   }
 

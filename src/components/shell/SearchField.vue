@@ -25,6 +25,12 @@ withDefaults(
     disabled?: boolean;
     /** Compact height for dense pickers / popovers. */
     size?: 'sm' | 'md';
+    /** Explicit input role for composite widgets such as a command combobox. */
+    inputRole?: 'searchbox' | 'combobox';
+    ariaControls?: string;
+    ariaActiveDescendant?: string;
+    ariaExpanded?: boolean;
+    ariaAutocomplete?: 'none' | 'inline' | 'list' | 'both';
   }>(),
   { clearLabel: 'Clear', disabled: false, size: 'md' },
 );
@@ -55,6 +61,11 @@ function clear(): void {
       autocomplete="off"
       :placeholder="placeholder"
       :aria-label="ariaLabel"
+      :role="inputRole"
+      :aria-controls="ariaControls"
+      :aria-activedescendant="ariaActiveDescendant"
+      :aria-expanded="ariaExpanded"
+      :aria-autocomplete="ariaAutocomplete"
       :disabled="disabled"
     />
     <Transition name="fade">

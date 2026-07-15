@@ -1,4 +1,4 @@
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import {
   ARRANGE_HEIGHT_MAX_PX,
   ARRANGE_HEIGHT_MIN_PX,
@@ -13,8 +13,24 @@ const SCORE_HEIGHT_KEY = 'sonare-studio.scoreHeightPx';
 /** The score is a single continuous line, so it needs only a modest height. */
 const SCORE_HEIGHT_MIN_PX = 120;
 const SCORE_DEFAULT_HEIGHT = 240;
+const ARRANGE_VIEWPORT_RESERVE_PX = 240;
+const SCORE_VIEWPORT_RESERVE_PX = 360;
 
 export type DockTab = 'roll' | 'mixer' | 'mastering' | 'steps' | 'lists' | 'media' | 'sample';
+
+/** Viewport-aware upper bound that always leaves the editor dock reachable. */
+export function maximumArrangementHeight(viewportHeight: number): number {
+  const height = Number.isFinite(viewportHeight) ? viewportHeight : ARRANGE_DEFAULT_HEIGHT;
+  return Math.max(
+    ARRANGE_HEIGHT_MIN_PX,
+    Math.min(ARRANGE_HEIGHT_MAX_PX, height - ARRANGE_VIEWPORT_RESERVE_PX),
+  );
+}
+
+/** Clamps a stored, dragged or layout-applied arrangement height to the viewport. */
+export function clampArrangementHeight(next: number, viewportHeight: number): number {
+  return Math.min(maximumArrangementHeight(viewportHeight), Math.max(ARRANGE_HEIGHT_MIN_PX, next));
+}
 
 function readStoredNumber(key: string, min: number, fallback: number): number {
   try {
@@ -58,7 +74,10 @@ function writeStoredFlag(key: string, value: boolean): void {
 
 export function useAppShellLayout() {
   const arrangeHeight = ref(
-    readStoredNumber(ARRANGE_HEIGHT_KEY, ARRANGE_HEIGHT_MIN_PX, ARRANGE_DEFAULT_HEIGHT),
+    clampArrangementHeight(
+      readStoredNumber(ARRANGE_HEIGHT_KEY, ARRANGE_HEIGHT_MIN_PX, ARRANGE_DEFAULT_HEIGHT),
+      window.innerHeight,
+    ),
   );
   const deviceRackOpen = ref(readStoredFlag(DEVICE_RACK_OPEN_KEY, false));
   const dockTab = ref<DockTab>('roll');
@@ -69,7 +88,12 @@ export function useAppShellLayout() {
   // to pixel sizing (persisted), so "40%" holds across window sizes.
   const storedScoreHeight = readStoredNumberOrNull(SCORE_HEIGHT_KEY, SCORE_HEIGHT_MIN_PX);
   const scoreResized = ref(storedScoreHeight !== null);
-  const scoreHeight = ref(storedScoreHeight ?? SCORE_DEFAULT_HEIGHT);
+  const scoreHeight = ref(
+    Math.min(
+      Math.max(SCORE_HEIGHT_MIN_PX, window.innerHeight - SCORE_VIEWPORT_RESERVE_PX),
+      storedScoreHeight ?? SCORE_DEFAULT_HEIGHT,
+    ),
+  );
 
   let dividerDrag: { startY: number; startHeight: number } | null = null;
   let dividerRaf = 0;
@@ -79,12 +103,8 @@ export function useAppShellLayout() {
   let scoreRaf = 0;
   let scorePendingY = 0;
 
-  function maxArrangeHeight(): number {
-    return Math.max(ARRANGE_HEIGHT_MIN_PX, window.innerHeight - 240);
-  }
-
   function clampArrangeHeight(next: number): number {
-    return Math.min(maxArrangeHeight(), Math.max(ARRANGE_HEIGHT_MIN_PX, next));
+    return clampArrangementHeight(next, window.innerHeight);
   }
 
   function persistArrangeHeight(): void {
@@ -137,7 +157,7 @@ export function useAppShellLayout() {
 
   /** Upper bound: keep at least ~240px of editor above the score panel. */
   function maxScoreHeight(): number {
-    return Math.max(SCORE_HEIGHT_MIN_PX, window.innerHeight - 360);
+    return Math.max(SCORE_HEIGHT_MIN_PX, window.innerHeight - SCORE_VIEWPORT_RESERVE_PX);
   }
 
   function clampScoreHeight(next: number): number {
@@ -242,7 +262,26 @@ export function useAppShellLayout() {
     writeStoredFlag(DEVICE_RACK_OPEN_KEY, deviceRackOpen.value);
   }
 
+  /** Keeps persisted and currently applied split positions reachable after resize. */
+  function clampLayoutToViewport(): void {
+    const nextArrangeHeight = clampArrangeHeight(arrangeHeight.value);
+    if (nextArrangeHeight !== arrangeHeight.value) {
+      arrangeHeight.value = nextArrangeHeight;
+      persistArrangeHeight();
+    }
+    if (scoreResized.value) {
+      const nextScoreHeight = clampScoreHeight(scoreHeight.value);
+      if (nextScoreHeight !== scoreHeight.value) {
+        scoreHeight.value = nextScoreHeight;
+        persistScoreHeight();
+      }
+    }
+  }
+
+  window.addEventListener('resize', clampLayoutToViewport);
+
   function disposeLayout(): void {
+    window.removeEventListener('resize', clampLayoutToViewport);
     if (dividerRaf !== 0) {
       cancelAnimationFrame(dividerRaf);
       dividerRaf = 0;
@@ -253,8 +292,16 @@ export function useAppShellLayout() {
     }
   }
 
+  const layoutArrangeHeight = computed({
+    get: () => arrangeHeight.value,
+    set: (next: number) => {
+      arrangeHeight.value = clampArrangeHeight(next);
+      persistArrangeHeight();
+    },
+  });
+
   const layoutBindings: LayoutBindings = {
-    arrangeHeightPx: arrangeHeight,
+    arrangeHeightPx: layoutArrangeHeight,
     dockTab,
     deviceRackOpen,
     scoreOpen: scoreVisible,

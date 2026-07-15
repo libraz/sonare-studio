@@ -31,6 +31,7 @@ import DiagnosticsPanel from '@/components/shell/DiagnosticsPanel.vue';
 import DialogHost from '@/components/shell/DialogHost.vue';
 import ErrorBanner from '@/components/shell/ErrorBanner.vue';
 import MidiLearnPanel from '@/components/shell/MidiLearnPanel.vue';
+import PwaUpdateBanner from '@/components/shell/PwaUpdateBanner.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import StartScreen from '@/components/shell/StartScreen.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
@@ -76,6 +77,7 @@ import {
   type TrackPart,
   undo,
 } from '@/project/commands';
+import { unfreezeTrack } from '@/project/freeze';
 import { serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { isAudioClip } from '@/project/types';
@@ -326,6 +328,7 @@ const {
   effectiveTempoSegments,
   hasMidiSync,
   scheduleApply,
+  sendLiveExternalMidi,
   scheduledClips,
   setEngineSyncHandles,
   syncAutomationState,
@@ -355,6 +358,7 @@ const { disposeEngineLifecycle, ensureEngineStarted, playTestTone, renderOffline
     applyToEngine,
     bootPromise: () => bootPromise,
     runAction,
+    resetEngineProjectSync: disposeEngineProjectSync,
     setEngineSyncHandles,
     syncAutomationState,
     syncMidiState,
@@ -364,12 +368,14 @@ const { disposeEngineLifecycle, ensureEngineStarted, playTestTone, renderOffline
 
 // --- Live note preview -------------------------------------------------------
 
-const { auditionNote, previewNote, previewNoteOn, previewNoteOff } = useNotePreview({
-  errorMessage,
-  handle,
-  hasMidiSync,
-  ensureEngineStarted,
-});
+const { auditionNote, previewNote, previewNoteOn, previewNoteOff, previewChannelVoice } =
+  useNotePreview({
+    errorMessage,
+    handle,
+    hasMidiSync,
+    ensureEngineStarted,
+    sendLiveExternalMidi,
+  });
 
 // --- Music typing / step input / Web MIDI ------------------------------------
 
@@ -391,6 +397,7 @@ const {
   previewNote,
   previewNoteOn,
   previewNoteOff,
+  previewChannelVoice,
   onRecordNoteOn: midiRecording.captureNoteOn,
   onRecordNoteOff: midiRecording.captureNoteOff,
   onRecordControlChange: midiRecording.captureControlChange,
@@ -732,6 +739,7 @@ useAppLifecycle({
     />
 
     <ErrorBanner :message="errorMessage" @dismiss="errorMessage = ''" />
+    <PwaUpdateBanner />
 
     <main class="main-row">
       <div class="workspace">
@@ -740,6 +748,7 @@ useAppLifecycle({
         :class="{ 'arrange-grow': dockCollapsed }"
         :style="dockCollapsed ? undefined : { flexBasis: `${arrangeHeight}px` }"
         @pointerdown.capture="focusZone = 'arrange'"
+        @focusin="focusZone = 'arrange'"
       >
         <ArrangementView
           ref="arrangementRef"
@@ -757,7 +766,12 @@ useAppLifecycle({
           @regenerate-track="onRegenerateTrack"
           @open-chords="onOpenChordList"
         />
-        <ClipInspector :clip="store.activeClip" @redetect-tempo="onRedetectClipTempo" />
+        <ClipInspector
+          :clip="store.activeClip"
+          :frozen="store.activeTrack?.frozen !== undefined"
+          @redetect-tempo="onRedetectClipTempo"
+          @unfreeze="unfreezeTrack"
+        />
       </section>
 
       <div
@@ -782,6 +796,7 @@ useAppLifecycle({
         class="editor-dock"
         :class="{ collapsed: dockCollapsed }"
         @pointerdown.capture="focusZone = 'editor'"
+        @focusin="focusZone = 'editor'"
       >
         <div class="dock-tabs">
           <div

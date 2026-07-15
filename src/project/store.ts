@@ -5,17 +5,28 @@ import { audioAssetUri } from '@/persistence/assets';
 import {
   type MidiCcBinding,
   midiLearnTargetScope,
+  migrateMidiLearnTargetToProcessorId,
   sanitizeMidiCcBindings,
   withMidiLearnTargetScope,
 } from '@/ui/midi/midi-learn';
 import type { Project, ProjectMidiEvent } from '@/wasm/index.js';
-import { DISPLAY_TRANSPOSE_MAX, DISPLAY_TRANSPOSE_MIN, type ScoreAnnotations } from './annotations';
+import {
+  createDefaultScoreDisplaySettings,
+  DISPLAY_TRANSPOSE_MAX,
+  DISPLAY_TRANSPOSE_MIN,
+  type ScoreAnnotations,
+  type ScoreDisplaySettings,
+  scoreDisplaySettingsFromDocument,
+} from './annotations';
 import {
   type AutomationLaneState,
   busAutomationTarget,
   sanitizeAutomationEntries,
 } from './automation';
-import { pruneInsertLanesAgainstStrips } from './automation-insert';
+import {
+  migrateAutomationLanesToProcessorIds,
+  pruneInsertLanesAgainstStrips,
+} from './automation-insert';
 import {
   chordsFromAnnotation,
   type EditorChordSymbol,
@@ -30,6 +41,8 @@ import {
   cloneStrip,
   createDefaultMixerState,
   engineBusCount,
+  ensureMixerProcessorIds,
+  ensureProcessorIds,
   MAX_MIXER_BUSES,
   normalizeMixerSoloMode,
   type ProjectMixerState,
@@ -264,6 +277,8 @@ export const useProjectStore = defineStore('project', () => {
   const tempoSegments = ref<TempoSegment[]>([]);
   /** Time-signature map mirror. */
   const timeSignatures = ref<TimeSignatureSegment[]>([]);
+  /** Opening pickup/anacrusis length in PPQ (0 = no pickup). */
+  const pickupLengthPpq = ref(0);
   /** Snap grid divisions per whole note (16 = sixteenth-note grid). */
   const snapDivision = ref(DEFAULT_SNAP_DIVISION);
   /** Whether grid snapping is applied to note edits (editor-only, not undoable). */
@@ -282,8 +297,15 @@ export const useProjectStore = defineStore('project', () => {
   const scoreAnnotations = ref<ScoreAnnotations>({});
   /** Score display transpose in semitones (engraving only; MIDI is never changed). */
   const displayTransposeSemitones = ref(0);
+  /** Project-owned score toolbar, page-layout and display settings. */
+  const scoreDisplaySettings = ref<ScoreDisplaySettings>(createDefaultScoreDisplaySettings());
   /** True once init() has created the Project and the default track/clip. */
   const initialized = ref(false);
+  /**
+   * Monotonic identity of the live project document. Async operations capture
+   * this value and must not commit after a successful load/init or disposal.
+   */
+  const documentGeneration = ref(0);
 
   /**
    * Highlight flags per pitch class (index 0 = C, ... 11 = B), delegated to
@@ -460,12 +482,15 @@ export const useProjectStore = defineStore('project', () => {
     clipStartPpq.value = 0;
     clipLengthPpq.value = DEFAULT_CLIP_LENGTH_PPQ;
     tempoBpm.value = DEFAULT_TEMPO_BPM;
+    pickupLengthPpq.value = 0;
     notes.value = [];
     selection.value = new Set();
     scoreAnnotations.value = {};
     displayTransposeSemitones.value = 0;
+    scoreDisplaySettings.value = createDefaultScoreDisplaySettings();
     initialized.value = true;
     refresh();
+    documentGeneration.value += 1;
   }
 
   /**
@@ -487,7 +512,9 @@ export const useProjectStore = defineStore('project', () => {
     if (engineBusTotal > MAX_MIXER_BUSES) {
       throw new RangeError(`Mixer bus limit exceeded (${engineBusTotal}/${MAX_MIXER_BUSES})`);
     }
+    const previousWasmModuleAtEntry = wasmModule;
     const mod = await ensureWasm();
+    let restorePreviousState: (() => void) | null = null;
     wasmModule = mod;
     const created = new mod.Project();
     try {
@@ -684,7 +711,82 @@ export const useProjectStore = defineStore('project', () => {
         created.annotateChords(toProjectChordSymbols(documentChords));
       }
 
-      if (project) project.delete();
+      // Keep the previous Project and complete mirror snapshot alive until the
+      // new Project plus every app-only field has hydrated successfully.
+      // refresh() reads the module-scope Project, so a temporary publish is
+      // necessary; the rollback closure makes that publish transactional.
+      const previousProject = project;
+      const previousAudioSourceIds = audioSourceIds;
+      const previousMidiCcBindings = new Map(midiCcBindings.value);
+      const previousState = {
+        projectName: projectName.value,
+        tracks: tracks.value,
+        clips: clips.value,
+        markers: markers.value,
+        chords: chords.value,
+        sections: sections.value,
+        automationLanes: automationLanes.value,
+        mixer: mixer.value,
+        projectExternalMidi: projectExternalMidi.value,
+        activeTrackId: activeTrackId.value,
+        clipId: clipId.value,
+        clipStartPpq: clipStartPpq.value,
+        clipLengthPpq: clipLengthPpq.value,
+        notes: notes.value,
+        selection: selection.value,
+        tempoBpm: tempoBpm.value,
+        tempoSegments: tempoSegments.value,
+        timeSignatures: timeSignatures.value,
+        pickupLengthPpq: pickupLengthPpq.value,
+        snapDivision: snapDivision.value,
+        snapEnabled: snapEnabled.value,
+        scaleHighlight: scaleHighlight.value,
+        scoreAnnotations: scoreAnnotations.value,
+        displayTransposeSemitones: displayTransposeSemitones.value,
+        scoreDisplaySettings: scoreDisplaySettings.value,
+        initialized: initialized.value,
+        nextNoteId,
+        nextMarkerId,
+        nextSectionId,
+      };
+      restorePreviousState = () => {
+        project = previousProject;
+        wasmModule = previousWasmModuleAtEntry;
+        audioSourceIds = previousAudioSourceIds;
+        projectName.value = previousState.projectName;
+        tracks.value = previousState.tracks;
+        clips.value = previousState.clips;
+        markers.value = previousState.markers;
+        chords.value = previousState.chords;
+        sections.value = previousState.sections;
+        automationLanes.value = previousState.automationLanes;
+        mixer.value = previousState.mixer;
+        projectExternalMidi.value = previousState.projectExternalMidi;
+        activeTrackId.value = previousState.activeTrackId;
+        clipId.value = previousState.clipId;
+        clipStartPpq.value = previousState.clipStartPpq;
+        clipLengthPpq.value = previousState.clipLengthPpq;
+        notes.value = previousState.notes;
+        selection.value = previousState.selection;
+        tempoBpm.value = previousState.tempoBpm;
+        tempoSegments.value = previousState.tempoSegments;
+        timeSignatures.value = previousState.timeSignatures;
+        pickupLengthPpq.value = previousState.pickupLengthPpq;
+        snapDivision.value = previousState.snapDivision;
+        snapEnabled.value = previousState.snapEnabled;
+        scaleHighlight.value = previousState.scaleHighlight;
+        scoreAnnotations.value = previousState.scoreAnnotations;
+        displayTransposeSemitones.value = previousState.displayTransposeSemitones;
+        scoreDisplaySettings.value = previousState.scoreDisplaySettings;
+        initialized.value = previousState.initialized;
+        nextNoteId = previousState.nextNoteId;
+        nextMarkerId = previousState.nextMarkerId;
+        nextSectionId = previousState.nextSectionId;
+        midiCcBindings.value.clear();
+        for (const [target, binding] of previousMidiCcBindings) {
+          midiCcBindings.value.set(target, binding);
+        }
+      };
       project = created;
       audioSourceIds = loadedSourceIds;
       projectName.value = doc.name || DEFAULT_PROJECT_NAME;
@@ -708,6 +810,10 @@ export const useProjectStore = defineStore('project', () => {
           trackMirror,
         );
       }
+      ensureMixerProcessorIds(mixer.value);
+      for (const track of trackMirror) {
+        if (track.mixer) ensureProcessorIds(track.mixer.inserts);
+      }
       projectExternalMidi.value = doc.externalMidiDefault
         ? (cloneInstrument(doc.externalMidiDefault) as ExternalMidiInstrument)
         : null;
@@ -730,19 +836,24 @@ export const useProjectStore = defineStore('project', () => {
       // Older documents have no automation; malformed entries are dropped.
       // Insert lanes are then pruned against the restored strips so a slot
       // index past the strip's insert count never lingers.
+      const insertLaneContext = {
+        trackStrips: new Map(trackMirror.map((track) => [track.id, track.mixer])),
+        master: mixer.value.master,
+        busStrips: new Map(mixer.value.buses.map((bus) => [bus.id, bus.strip])),
+      };
       automationLanes.value = pruneInsertLanesAgainstStrips(
-        [
-          ...laneMirror,
-          ...sanitizeAutomationEntries(doc.masterAutomation, 'master'),
-          ...(doc.mixer?.buses.flatMap((bus) =>
-            sanitizeAutomationEntries(bus.automation, busAutomationTarget(bus.id)),
-          ) ?? []),
-        ],
-        {
-          trackStrips: new Map(trackMirror.map((track) => [track.id, track.mixer])),
-          master: mixer.value.master,
-          busStrips: new Map(mixer.value.buses.map((bus) => [bus.id, bus.strip])),
-        },
+        migrateAutomationLanesToProcessorIds(
+          [
+            ...laneMirror,
+            ...sanitizeAutomationEntries(doc.masterAutomation, 'master'),
+            ...(doc.mixer?.buses.flatMap((bus) =>
+              sanitizeAutomationEntries(bus.automation, busAutomationTarget(bus.id)),
+            ) ?? []),
+          ],
+          insertLaneContext,
+          mixer.value.masteringChain,
+        ),
+        insertLaneContext,
       );
       // CC bindings are mutated in place to keep the map identity stable for
       // any long-lived MIDI-learn handle; malformed entries are dropped.
@@ -755,6 +866,18 @@ export const useProjectStore = defineStore('project', () => {
           const index = midiLearnTargetScope(binding.target);
           const mapped = typeof index === 'number' ? trackMirror[index] : undefined;
           target = mapped ? withMidiLearnTargetScope(binding.target, mapped.id) : null;
+        }
+        if (target !== null) {
+          target = migrateMidiLearnTargetToProcessorId(target, {
+            insert: (scope, index) => {
+              const strip =
+                scope === 'master'
+                  ? mixer.value.master
+                  : trackMirror.find((track) => track.id === scope)?.mixer;
+              return strip?.inserts[index]?.id;
+            },
+            mastering: (index) => mixer.value.masteringChain?.processors[index]?.id,
+          });
         }
         if (target === null) continue;
         midiCcBindings.value.set(target, {
@@ -782,12 +905,24 @@ export const useProjectStore = defineStore('project', () => {
         transpose <= DISPLAY_TRANSPOSE_MAX
           ? transpose
           : 0;
+      scoreDisplaySettings.value = scoreDisplaySettingsFromDocument(doc.score);
+      pickupLengthPpq.value =
+        typeof doc.pickupLengthPpq === 'number' &&
+        Number.isFinite(doc.pickupLengthPpq) &&
+        doc.pickupLengthPpq > 0
+          ? doc.pickupLengthPpq
+          : 0;
+      documentGeneration.value += 1;
+      restorePreviousState = null;
+      try {
+        previousProject?.delete();
+      } catch {
+        // The new state is already complete; a destructor failure must not
+        // roll it back to an object that may have been partially released.
+      }
     } catch (error) {
-      // Keep the previous Project alive when replay fails before commit. If a
-      // failure happens after project = created, the old Project is already
-      // gone, so reset the mirror instead of leaving a partial load.
-      if (project !== created) created.delete();
-      else dispose();
+      if (restorePreviousState) restorePreviousState();
+      created.delete();
       throw error;
     }
   }
@@ -798,6 +933,7 @@ export const useProjectStore = defineStore('project', () => {
    * snapshots cannot dangle against the deleted Project.
    */
   function dispose(): void {
+    documentGeneration.value += 1;
     historyResetHook?.();
     if (project) {
       project.delete();
@@ -827,11 +963,13 @@ export const useProjectStore = defineStore('project', () => {
     tempoBpm.value = DEFAULT_TEMPO_BPM;
     tempoSegments.value = [];
     timeSignatures.value = [];
+    pickupLengthPpq.value = 0;
     snapDivision.value = DEFAULT_SNAP_DIVISION;
     snapEnabled.value = true;
     scaleHighlight.value = { enabled: true, rootPc: 0, modeMask: MAJOR_MODE_MASK };
     scoreAnnotations.value = {};
     displayTransposeSemitones.value = 0;
+    scoreDisplaySettings.value = createDefaultScoreDisplaySettings();
   }
 
   return {
@@ -854,12 +992,15 @@ export const useProjectStore = defineStore('project', () => {
     tempoBpm,
     tempoSegments,
     timeSignatures,
+    pickupLengthPpq,
     snapDivision,
     snapEnabled,
     scaleHighlight,
     scoreAnnotations,
     displayTransposeSemitones,
+    scoreDisplaySettings,
     initialized,
+    documentGeneration,
     highlightedPitchClasses,
     selectedNotes,
     activeTrack,

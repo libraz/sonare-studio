@@ -119,6 +119,16 @@ describe('NewProjectDialog', () => {
     expect(emitted[0][0].template).toBe('band');
   });
 
+  it('does not turn Enter on Cancel into the dialog default action', async () => {
+    open();
+    button('Cancel')?.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    await nextTick();
+
+    expect(wrapper?.emitted('create')).toBeUndefined();
+  });
+
   it('shows the unsaved-changes warning only when requested', () => {
     open();
     expect(q('.dialog-warning')).toBeNull();

@@ -118,6 +118,24 @@ describe('WelcomeTour', () => {
     wrapper.unmount();
   });
 
+  it('restores focus to the control that opened the tour', async () => {
+    const opener = document.createElement('button');
+    opener.textContent = 'Open tour';
+    document.body.appendChild(opener);
+    opener.focus();
+    const wrapper = mountTour({ autoStart: false });
+
+    wrapper.vm.open();
+    await nextTick();
+    expect(document.activeElement).toBe(wrapper.find('.tour-tooltip').element);
+
+    const skip = wrapper.findAll('button').find((button) => button.text() === 'Skip tour');
+    await skip?.trigger('click');
+    await nextTick();
+    expect(document.activeElement).toBe(opener);
+    wrapper.unmount();
+  });
+
   it('closes on Escape as a skip', async () => {
     const wrapper = mountTour();
     await nextTick();
@@ -125,6 +143,18 @@ describe('WelcomeTour', () => {
     await wrapper.find('.tour-tooltip').trigger('keydown', { key: 'Escape' });
     expect(wrapper.find('.tour-tooltip').exists()).toBe(false);
     expect(wrapper.emitted('close')).toEqual([[false]]);
+    wrapper.unmount();
+  });
+
+  it('does not turn Enter on Skip into Next', async () => {
+    const wrapper = mountTour();
+    await nextTick();
+    await nextTick();
+    const skip = wrapper.findAll('button').find((button) => button.text() === 'Skip tour');
+    await skip?.trigger('keydown', { key: 'Enter' });
+
+    expect(wrapper.find('.tour-title').text()).toBe('Step one');
+    expect(wrapper.emitted('close')).toBeUndefined();
     wrapper.unmount();
   });
 
