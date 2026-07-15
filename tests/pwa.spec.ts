@@ -1,7 +1,19 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
-import { canRegisterServiceWorker, registerServiceWorker, SERVICE_WORKER_URL } from '@/pwa';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  applyPwaUpdateAndReload,
+  canRegisterServiceWorker,
+  dismissPwaUpdateNotice,
+  pwaUpdateNotice,
+  registerServiceWorker,
+  requestPwaEngineRecovery,
+  SERVICE_WORKER_URL,
+} from '@/pwa';
+
+beforeEach(() => {
+  dismissPwaUpdateNotice();
+});
 
 describe('PWA registration', () => {
   it('registers the service worker only for production browser sessions', async () => {
@@ -57,6 +69,75 @@ describe('PWA registration', () => {
     ).resolves.toBeNull();
     expect(register).not.toHaveBeenCalled();
   });
+
+  it('announces an installed update and reloads after activating the waiting worker', async () => {
+    const installing = Object.assign(new EventTarget(), { state: 'installing' });
+    const waiting = { postMessage: vi.fn() };
+    const registration = Object.assign(new EventTarget(), {
+      scope: '/',
+      installing,
+      waiting: null as typeof waiting | null,
+      update: vi.fn(async () => undefined),
+    });
+    const container = Object.assign(new EventTarget(), {
+      controller: {},
+      register: vi.fn(async () => registration),
+      getRegistration: vi.fn(async () => registration),
+    });
+    const reload = vi.fn();
+    await registerServiceWorker({
+      environment: { PROD: true },
+      location: { protocol: 'https:' },
+      navigator: { serviceWorker: container } as unknown as Navigator,
+      reload,
+    });
+
+    registration.dispatchEvent(new Event('updatefound'));
+    registration.waiting = waiting;
+    installing.state = 'installed';
+    installing.dispatchEvent(new Event('statechange'));
+    expect(pwaUpdateNotice.value).toBe('update');
+
+    await applyPwaUpdateAndReload();
+    expect(waiting.postMessage).toHaveBeenCalledWith({ type: 'SKIP_WAITING' });
+    expect(reload).not.toHaveBeenCalled();
+    container.dispatchEvent(new Event('controllerchange'));
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears app caches before an ABI recovery reload when no worker is waiting', async () => {
+    const registration = Object.assign(new EventTarget(), {
+      scope: '/',
+      installing: null,
+      waiting: null,
+      update: vi.fn(async () => undefined),
+    });
+    const container = Object.assign(new EventTarget(), {
+      controller: {},
+      register: vi.fn(async () => registration),
+      getRegistration: vi.fn(async () => registration),
+    });
+    const cacheStorage = {
+      keys: vi.fn(async () => ['sonare-studio-v1', 'unrelated-cache']),
+      delete: vi.fn(async () => true),
+    } as unknown as CacheStorage;
+    const reload = vi.fn();
+    await registerServiceWorker({
+      environment: { PROD: true },
+      location: { protocol: 'https:' },
+      navigator: { serviceWorker: container } as unknown as Navigator,
+      reload,
+      cacheStorage,
+    });
+
+    requestPwaEngineRecovery();
+    expect(pwaUpdateNotice.value).toBe('engine-version');
+    await applyPwaUpdateAndReload();
+
+    expect(cacheStorage.delete).toHaveBeenCalledWith('sonare-studio-v1');
+    expect(cacheStorage.delete).not.toHaveBeenCalledWith('unrelated-cache');
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('PWA assets', () => {
@@ -83,11 +164,26 @@ describe('PWA assets', () => {
   it('pre-caches the app shell and handles navigation fallbacks', async () => {
     const serviceWorker = await readFile(resolve(process.cwd(), 'public/sw.js'), 'utf8');
 
+    expect(serviceWorker).toContain("'/worklet-manifest.json'");
     expect(serviceWorker).toContain(
-      "const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg']",
+      "workletManifest.moduleUrl.startsWith('/assets/sonare-engine-worklet-')",
     );
+    expect(serviceWorker).toContain("event.data?.type === 'SKIP_WAITING'");
     expect(serviceWorker).toContain("request.mode === 'navigate'");
     expect(serviceWorker).toContain("caches.match('/index.html')");
     expect(serviceWorker).toContain('caches.delete(key)');
+  });
+
+  it('builds a content-addressed AudioWorklet and injects its URL into the app bundle', async () => {
+    const workletConfig = await readFile(resolve(process.cwd(), 'vite.worklet.config.ts'), 'utf8');
+    const appConfig = await readFile(resolve(process.cwd(), 'vite.config.ts'), 'utf8');
+    const engine = await readFile(resolve(process.cwd(), 'src/engine/engine.ts'), 'utf8');
+
+    expect(workletConfig).toContain("WORKLET_ASSET_PREFIX = 'sonare-engine-worklet-'");
+    expect(workletConfig).toContain('[hash].js');
+    expect(workletConfig).toContain('worklet-manifest.json');
+    expect(appConfig).toContain('__SONARE_WORKLET_MODULE_URL__');
+    expect(engine).toContain("typeof __SONARE_WORKLET_MODULE_URL__ === 'string'");
+    expect(engine).not.toContain("WORKLET_MODULE_URL = '/sonare-engine-worklet.js'");
   });
 });
