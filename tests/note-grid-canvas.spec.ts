@@ -82,6 +82,25 @@ function mountGrid(noteId: number | null) {
 }
 
 describe('NoteGridCanvas', () => {
+  it('exposes notes as virtual options with selection, edit, and context actions', async () => {
+    wrapper = mountGrid(1);
+    const navigator = wrapper.get('[role="listbox"]');
+    expect(navigator.attributes('aria-label')).toBe('Piano-roll note navigator');
+    expect(wrapper.get('[role="option"]').text()).toContain('C4');
+    expect(wrapper.findAll('input[type="range"]')).toHaveLength(4);
+
+    await navigator.trigger('keydown', { key: ' ' });
+    expect(wrapper.emitted('note-keyboard-action')?.[0]).toEqual([{ noteId: 1, kind: 'select' }]);
+    await navigator.trigger('keydown', { key: 'ArrowRight', ctrlKey: true });
+    expect(wrapper.emitted('note-keyboard-action')?.[1]?.[0]).toMatchObject({
+      noteId: 1,
+      kind: 'adjust',
+      adjustment: { direction: 'right' },
+    });
+    await navigator.trigger('keydown', { key: 'F10', shiftKey: true });
+    expect(wrapper.emitted('note-context')?.[0]?.[0]).toMatchObject({ noteId: 1, ppq: 1.5 });
+  });
+
   it('emits note-context and suppresses the native menu on right-click', async () => {
     wrapper = mountGrid(1);
     const event = new MouseEvent('contextmenu', {

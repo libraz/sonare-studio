@@ -8,6 +8,7 @@
  * is unit-testable in isolation.
  */
 
+import { projectMidiNoteOccurrences } from '@/project/midi-projection';
 import type { EditorClip, EditorNote, EditorTrack } from '@/project/types';
 import {
   type HitTestOptions,
@@ -135,17 +136,14 @@ export function buildGhostNotes(options: BuildGhostNotesOptions): GhostNote[] {
     if (clip.id === activeClipId) continue;
     const color = colorByTrack.get(clip.trackId) ?? fallbackColor;
     const trackName = nameByTrack.get(clip.trackId) ?? 'Track';
-    const offset = clipFrameOffsetPpq(clip, active);
-    const windowStart = clip.sourceOffsetPpq;
-    const windowEnd = clip.sourceOffsetPpq + clip.lengthPpq;
-    for (const note of clip.notes) {
-      if (note.startPpq + note.durationPpq <= windowStart || note.startPpq >= windowEnd) continue;
+    const targetOrigin = active ? active.startPpq - active.sourceOffsetPpq : 0;
+    for (const note of projectMidiNoteOccurrences(clip)) {
       out.push({
-        noteId: note.id,
+        noteId: note.sourceIdentity.noteId,
         clipId: clip.id,
         trackId: clip.trackId,
         pitch: note.pitch,
-        startPpq: note.startPpq + offset,
+        startPpq: note.startPpq - targetOrigin,
         durationPpq: note.durationPpq,
         color,
         trackName,

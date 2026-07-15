@@ -1,15 +1,20 @@
 <script setup lang="ts">
 import { NoteSafety } from '@libraz/libcantus';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import AccessibleObjectNavigator from '@/components/accessibility/AccessibleObjectNavigator.vue';
 import type { ResolutionArrow } from '@/composables/useCompositionGuidance';
 import type { TheoryCard } from '@/compose/explain';
 import type { GuidanceSegment } from '@/compose/guidance';
 import { formatPitch } from '@/lib/pitch';
 import type { EditorNote, TimeSignatureSegment } from '@/project/types';
+import type {
+  AccessibleObjectAdjustment,
+  AccessibleObjectItem,
+} from '@/ui/accessibility/object-navigation';
 import { localizeMeter, rulerTicks } from '@/ui/arrangement/ruler';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
-import { useI18n } from '@/ui/i18n';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import { type GhostNote, hitTestGhost } from './overlay';
 import {
   DEFAULT_NOTE_COLOR,
@@ -52,6 +57,8 @@ const props = defineProps<{
   gridPpq: number;
   /** Length of the edited clip in PPQ; the region past it is shaded. */
   clipLengthPpq: number;
+  /** Left boundary of the editable source window in PPQ. */
+  minPpq?: number;
   /** Project time signatures for bar/beat gridlines. */
   timeSignatures: TimeSignatureSegment[];
   /** Arrangement PPQ corresponding to local clip-source PPQ 0. */
@@ -85,6 +92,13 @@ const emit = defineEmits<{
   'note-context': [payload: { x: number; y: number; noteId: number | null; ppq: number }];
   /** Hovered musical position for status readouts. */
   'hover-status': [payload: { ppq: number; pitch: number } | null];
+  /** Accessible virtual-object edit routed to the owning command surface. */
+  'note-keyboard-action': [
+    payload:
+      | { noteId: number; kind: 'select' }
+      | { noteId: number; kind: 'adjust'; adjustment: AccessibleObjectAdjustment }
+      | { noteId: number; kind: 'set'; controlId: string; value: number },
+  ];
 }>();
 
 const wrapper = ref<HTMLDivElement | null>(null);
@@ -191,6 +205,98 @@ const liveStatus = computed(() => {
   }
   return parts.join('. ');
 });
+
+const accessibleNotes = computed<AccessibleObjectItem[]>(() => {
+  const minimumPpq = props.minPpq ?? 0;
+  const step = Math.max(0.0625, props.gridPpq);
+  return [...props.notes]
+    .sort((a, b) => a.startPpq - b.startPpq || b.pitch - a.pitch || a.id - b.id)
+    .map((note) => ({
+      id: `note-${note.id}`,
+      label: formatMessage(t.value.shell.pianoRoll.accessibility.note, {
+        pitch: formatPitch(note.pitch),
+        start: note.startPpq.toFixed(2),
+        length: note.durationPpq.toFixed(2),
+        velocity: note.velocity,
+      }),
+      selected: props.selection.has(note.id),
+      controls: [
+        {
+          id: 'pitch',
+          label: t.value.shell.pianoRoll.accessibility.pitch,
+          min: 0,
+          max: 127,
+          step: 1,
+          value: note.pitch,
+          valueText: formatPitch(note.pitch),
+        },
+        {
+          id: 'start',
+          label: t.value.shell.pianoRoll.accessibility.start,
+          min: minimumPpq,
+          max: Math.max(minimumPpq, props.clipLengthPpq - note.durationPpq),
+          step,
+          value: note.startPpq,
+          valueText: formatMessage(t.value.shell.pianoRoll.accessibility.ppqValue, {
+            value: note.startPpq.toFixed(2),
+          }),
+        },
+        {
+          id: 'duration',
+          label: t.value.shell.pianoRoll.accessibility.duration,
+          min: 0.0625,
+          max: Math.max(0.0625, props.clipLengthPpq - note.startPpq),
+          step,
+          value: note.durationPpq,
+          valueText: formatMessage(t.value.shell.pianoRoll.accessibility.ppqValue, {
+            value: note.durationPpq.toFixed(2),
+          }),
+        },
+        {
+          id: 'velocity',
+          label: t.value.shell.pianoRoll.accessibility.velocity,
+          min: 1,
+          max: 127,
+          step: 1,
+          value: note.velocity,
+        },
+      ],
+    }));
+});
+
+function noteForAccessibleId(id: string): EditorNote | undefined {
+  const noteId = Number(id.replace(/^note-/, ''));
+  return props.notes.find((note) => note.id === noteId);
+}
+
+function onAccessibleNoteActivate(id: string): void {
+  const note = noteForAccessibleId(id);
+  if (!note) return;
+  props.interactions.cancel();
+  emit('note-keyboard-action', { noteId: note.id, kind: 'select' });
+}
+
+function onAccessibleNoteContext(id: string): void {
+  const note = noteForAccessibleId(id);
+  if (!note) return;
+  const rect = wrapper.value?.getBoundingClientRect();
+  emit('note-context', {
+    x: (rect?.left ?? 0) + 24,
+    y: (rect?.top ?? 0) + 48,
+    noteId: note.id,
+    ppq: note.startPpq + note.durationPpq / 2,
+  });
+}
+
+function onAccessibleNoteAdjust(adjustment: AccessibleObjectAdjustment): void {
+  const note = noteForAccessibleId(adjustment.id);
+  if (note) emit('note-keyboard-action', { noteId: note.id, kind: 'adjust', adjustment });
+}
+
+function onAccessibleNoteValue(payload: { id: string; controlId: string; value: number }): void {
+  const note = noteForAccessibleId(payload.id);
+  if (note) emit('note-keyboard-action', { noteId: note.id, kind: 'set', ...payload });
+}
 
 function scheduleBackground(): void {
   props.painter.schedule(`note-grid-background-${layerId}`, drawBackground);
@@ -761,6 +867,18 @@ function onContextMenu(event: MouseEvent): void {
     />
     <canvas ref="notesCanvas" class="note-grid-layer" aria-hidden="true" />
     <canvas ref="overlayCanvas" class="note-grid-layer" aria-hidden="true" />
+    <AccessibleObjectNavigator
+      :label="t.shell.pianoRoll.accessibility.navigator"
+      :empty-label="t.shell.pianoRoll.accessibility.empty"
+      :instructions="t.shell.pianoRoll.accessibility.instructions"
+      :edit-label="t.shell.pianoRoll.accessibility.edit"
+      :context-label="t.shell.pianoRoll.accessibility.context"
+      :items="accessibleNotes"
+      @activate="onAccessibleNoteActivate"
+      @context="onAccessibleNoteContext"
+      @adjust="onAccessibleNoteAdjust"
+      @set-value="onAccessibleNoteValue"
+    />
     <Teleport to="body">
       <div
         v-if="hoveredCard && theoryCardStyle"

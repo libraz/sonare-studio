@@ -60,6 +60,8 @@ export interface InteractionView {
 /** Command surface the gestures call into (src/project/commands.ts in the app). */
 export interface InteractionCommands {
   addNote(input: NewEditorNote): number;
+  /** Bulk insertion seam used by multi-note duplicate gestures. */
+  addNotes?(inputs: ReadonlyArray<NewEditorNote>): number[];
   updateNotes(updates: ReadonlyArray<EditorNoteUpdate>): void;
   deleteNotes(ids: Iterable<number>): void;
   setSelection(ids: Iterable<number>): void;
@@ -82,8 +84,12 @@ export interface UseNoteInteractionsOptions {
   getGridPpq(): number;
   /** Returns the active editor tool (absent = always the select tool). */
   getTool?(): EditorToolId;
+  /** True when note selection/audition is allowed but content mutation is blocked. */
+  isReadOnly?(): boolean;
   /** Returns the editable clip length in PPQ; absent means no right-edge clamp. */
   getMaxPpq?(): number;
+  /** Returns the editable source-window left edge; absent means zero. */
+  getMinPpq?(): number;
   /** Optionally maps a raw pointer pitch to the pitch that should be created. */
   resolveCreatedPitch?(pitch: number): number;
   /** Optionally maps a moved note pitch to the pitch that should be committed. */
@@ -307,17 +313,21 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
   }
 
   function clampPpq(ppq: number): number {
+    const rawMin = options.getMinPpq?.();
+    const min = rawMin !== undefined && Number.isFinite(rawMin) ? rawMin : 0;
     const max = options.getMaxPpq?.();
     return max !== undefined && Number.isFinite(max)
-      ? Math.min(max, Math.max(0, ppq))
-      : Math.max(0, ppq);
+      ? Math.min(Math.max(min, max), Math.max(min, ppq))
+      : Math.max(min, ppq);
   }
 
   function clampStartPpq(ppq: number): number {
+    const rawMin = options.getMinPpq?.();
+    const min = rawMin !== undefined && Number.isFinite(rawMin) ? rawMin : 0;
     const max = options.getMaxPpq?.();
     const end =
       max !== undefined && Number.isFinite(max) ? max - minDuration : Number.POSITIVE_INFINITY;
-    return Math.min(end, clampPpq(ppq));
+    return Math.max(min, Math.min(end, clampPpq(ppq)));
   }
 
   function formatPpq(value: number): string {
@@ -436,8 +446,8 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     const step = options.getGridPpq();
     const rawDelta = view.xToPpq(point.x) - view.xToPpq(g.start.x);
     const targetStart = bypass
-      ? Math.max(0, grabbed.startPpq + rawDelta)
-      : snapToStep(grabbed.startPpq + rawDelta, step);
+      ? clampStartPpq(grabbed.startPpq + rawDelta)
+      : clampStartPpq(snapToStep(grabbed.startPpq + rawDelta, step));
     let deltaPpq = targetStart - grabbed.startPpq;
     let minStart = Number.POSITIVE_INFINITY;
     let minPitch = Number.POSITIVE_INFINITY;
@@ -447,7 +457,9 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
       minPitch = Math.min(minPitch, origin.pitch);
       maxPitch = Math.max(maxPitch, origin.pitch);
     }
-    if (minStart + deltaPpq < 0) deltaPpq = -minStart;
+    const rawMinPpq = options.getMinPpq?.();
+    const minPpq = rawMinPpq !== undefined && Number.isFinite(rawMinPpq) ? rawMinPpq : 0;
+    if (minStart + deltaPpq < minPpq) deltaPpq = minPpq - minStart;
     const max = options.getMaxPpq?.();
     if (max !== undefined && Number.isFinite(max)) {
       let maxEnd = Number.NEGATIVE_INFINITY;
@@ -493,11 +505,13 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
       return delta;
     }
     const targetStart = bypass
-      ? Math.max(0, grabbed.startPpq + rawDelta)
-      : snapToStep(grabbed.startPpq + rawDelta, step);
+      ? clampPpq(grabbed.startPpq + rawDelta)
+      : clampPpq(snapToStep(grabbed.startPpq + rawDelta, step));
     let delta = targetStart - grabbed.startPpq;
+    const rawMinPpq = options.getMinPpq?.();
+    const minPpq = rawMinPpq !== undefined && Number.isFinite(rawMinPpq) ? rawMinPpq : 0;
     for (const origin of g.origins.values()) {
-      delta = Math.max(delta, -origin.startPpq);
+      delta = Math.max(delta, minPpq - origin.startPpq);
       delta = Math.min(delta, origin.durationPpq - minDuration);
     }
     return delta;
@@ -567,6 +581,12 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
   }
 
   function onPointerDown(point: InteractionPoint, modifiers: InteractionModifiers = {}): void {
+    if (options.isReadOnly?.() === true) {
+      const hit = hitTestNote(toRects(options.getNotes()), point, view, hitOptions());
+      if (hit) commands.setSelection([Number(hit.id)]);
+      gesture = { kind: 'none' };
+      return;
+    }
     const tool = currentTool();
     if (tool === 'draw') {
       const pitch = createdPitch(point);
@@ -664,6 +684,12 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
 
   function onPointerMove(point: InteractionPoint, modifiers: InteractionModifiers = {}): void {
     if (gesture.kind === 'none') {
+      if (options.isReadOnly?.() === true) {
+        cursor.value = hitTestNote(toRects(options.getNotes()), point, view, hitOptions())
+          ? 'pointer'
+          : 'default';
+        return;
+      }
       const tool = currentTool();
       if (tool !== 'select') {
         cursor.value = toolCursor(tool);
@@ -768,7 +794,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
       const deltas = moveDeltas(g, point, modifiers);
       if (deltas.deltaPpq === 0 && deltas.deltaPitch === 0) return;
       if (g.duplicate) {
-        const newIds = [...g.origins.values()].map((origin) => {
+        const inputs = [...g.origins.values()].map((origin): NewEditorNote => {
           const input: NewEditorNote = {
             pitch: editedPitch(origin.pitch + deltas.deltaPitch),
             startPpq: origin.startPpq + deltas.deltaPpq,
@@ -777,8 +803,11 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
             channel: origin.channel,
           };
           if (origin.offVelocity !== undefined) input.offVelocity = origin.offVelocity;
-          return commands.addNote(input);
+          return input;
         });
+        const newIds = commands.addNotes
+          ? commands.addNotes(inputs)
+          : inputs.map((input) => commands.addNote(input));
         commands.setSelection(newIds);
         return;
       }
@@ -807,16 +836,13 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
   }
 
   function onDoubleClick(point: InteractionPoint, modifiers: InteractionModifiers = {}): void {
+    if (options.isReadOnly?.() === true) return;
     const notes = options.getNotes();
     if (hitTestNote(toRects(notes), point, view, hitOptions())) return;
     const step = options.getGridPpq();
-    const ppq = view.xToPpq(point.x);
     // Snap to the grid cell containing the click (floor), so the note starts
     // where the user clicked rather than rounding to the next line.
-    const startPpq =
-      modifiers.meta === true || !(step > 0)
-        ? Math.max(0, ppq)
-        : Math.max(0, Math.floor(ppq / step) * step);
+    const startPpq = drawStartPpq(point, modifiers);
     const max = options.getMaxPpq?.();
     const durationPpq =
       max !== undefined && Number.isFinite(max)
@@ -861,6 +887,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
       return true;
     }
     if (key === 'Backspace' || key === 'Delete') {
+      if (options.isReadOnly?.() === true) return false;
       const selection = options.getSelection();
       if (selection.size === 0) return false;
       commands.deleteNotes([...selection]);

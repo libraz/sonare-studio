@@ -9,6 +9,7 @@ import { useReactiveReharmonization } from '@/composables/useReactiveReharmoniza
 import { formatPitch } from '@/lib/pitch';
 import {
   addNote,
+  addNotes,
   cleanupOverlaps,
   deleteNotes,
   duplicateSelection,
@@ -37,13 +38,16 @@ import {
   undo,
   updateNotes,
 } from '@/project/commands';
+import { unfreezeTrack } from '@/project/freeze';
 import {
   CLIP_EXPRESSION_CURVES,
   MIDI_PITCH_BEND_CENTER,
   MIDI_PITCH_BEND_MAX,
   PIANO_ROLL_CC_LANES,
 } from '@/project/midi-cc';
+import { audibleMidiSourceNotes, audibleMidiSourceWindow } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
+import type { AccessibleObjectAdjustment } from '@/ui/accessibility/object-navigation';
 import {
   anchoredPlayheadFollowStart,
   PLAYHEAD_FOLLOW_ANCHOR_X,
@@ -344,6 +348,7 @@ const { vThumbStyle, hThumbStyle, onVScrollDown, onHScrollDown, onScrollMove, on
 
 /** Active clip color for the CC curve. */
 const trackColor = computed(() => store.activeTrack?.color ?? DEFAULT_NOTE_COLOR);
+const contentReadOnly = computed(() => store.activeTrack?.frozen !== undefined);
 
 /** Composition-guidance tint segments and hover theory-card resolver. */
 const { guidanceSegments, noteCard, resolutionArrows } = useCompositionGuidance();
@@ -386,6 +391,29 @@ const ghostNotes = computed<GhostNote[]>(() =>
       })()
     : [],
 );
+
+/**
+ * Editable source notes inside the active clip's audible first window. Loop
+ * repeats are rendered as playback/score occurrences, while the piano roll
+ * edits their shared source note exactly once.
+ */
+const audibleSourceNotes = computed(() => {
+  const clip = store.activeClip;
+  if (!clip) return [];
+  return audibleMidiSourceNotes(clip);
+});
+
+/** Right edge in source coordinates; commits remain the only inverse mapping. */
+const sourceWindowEndPpq = computed(() => {
+  const clip = store.activeClip;
+  return clip ? audibleMidiSourceWindow(clip).endPpq : store.clipLengthPpq;
+});
+
+/** Left edge in the same source-coordinate frame as editable notes/curves. */
+const sourceWindowStartPpq = computed(() => {
+  const clip = store.activeClip;
+  return clip ? audibleMidiSourceWindow(clip).startPpq : 0;
+});
 
 /**
  * Color resolver for the editable notes: the active track's color at full
@@ -433,23 +461,27 @@ function fitPitchToNotes(notes: ReadonlyArray<{ pitch: number }>): void {
 }
 
 function fitClip(): void {
-  fitTimeToSpan(0, store.clipLengthPpq);
+  const clip = store.activeClip;
+  const window = clip ? audibleMidiSourceWindow(clip) : null;
+  fitTimeToSpan(window?.startPpq ?? 0, window?.endPpq ?? store.clipLengthPpq);
 }
 
 function fitNotes(): void {
-  if (store.notes.length === 0) {
+  if (audibleSourceNotes.value.length === 0) {
     fitClip();
     return;
   }
-  const endPpq = Math.max(...store.notes.map((note) => note.startPpq + note.durationPpq));
-  const startPpq = Math.min(...store.notes.map((note) => note.startPpq));
+  const endPpq = Math.max(
+    ...audibleSourceNotes.value.map((note) => note.startPpq + note.durationPpq),
+  );
+  const startPpq = Math.min(...audibleSourceNotes.value.map((note) => note.startPpq));
   fitTimeToSpan(startPpq, endPpq);
-  fitPitchToNotes(store.notes);
+  fitPitchToNotes(audibleSourceNotes.value);
   bump();
 }
 
 function fitSelection(): void {
-  const selected = store.selectedNotes;
+  const selected = audibleSourceNotes.value.filter((note) => store.selection.has(note.id));
   if (selected.length === 0) {
     fitNotes();
     return;
@@ -666,6 +698,68 @@ function onNoteContext(payload: {
   openContextMenu(payload.x, payload.y, items);
 }
 
+type NoteKeyboardAction =
+  | { noteId: number; kind: 'select' }
+  | { noteId: number; kind: 'adjust'; adjustment: AccessibleObjectAdjustment }
+  | { noteId: number; kind: 'set'; controlId: string; value: number };
+
+/** Applies virtual-list note actions through the same selection and undo commands as pointer edits. */
+function onNoteKeyboardAction(payload: NoteKeyboardAction): void {
+  const note = audibleSourceNotes.value.find((item) => item.id === payload.noteId);
+  if (!note) return;
+  setSelection([note.id]);
+  if (payload.kind === 'select' || contentReadOnly.value) return;
+  const minimum = sourceWindowStartPpq.value;
+  const maximum = sourceWindowEndPpq.value;
+  if (payload.kind === 'set') {
+    if (payload.controlId === 'pitch') {
+      updateNotes([{ id: note.id, pitch: Math.min(127, Math.max(0, Math.round(payload.value))) }]);
+    } else if (payload.controlId === 'start') {
+      updateNotes([
+        {
+          id: note.id,
+          startPpq: Math.min(maximum - note.durationPpq, Math.max(minimum, payload.value)),
+        },
+      ]);
+    } else if (payload.controlId === 'duration') {
+      updateNotes([
+        {
+          id: note.id,
+          durationPpq: Math.min(maximum - note.startPpq, Math.max(0.0625, payload.value)),
+        },
+      ]);
+    } else if (payload.controlId === 'velocity') {
+      updateNotes([
+        { id: note.id, velocity: Math.min(127, Math.max(1, Math.round(payload.value))) },
+      ]);
+    }
+    return;
+  }
+  const { direction, resize, coarse } = payload.adjustment;
+  const step = Math.max(0.0625, store.snapEnabled ? gridPpq.value : 0.0625) * (coarse ? 4 : 1);
+  if (direction === 'up' || direction === 'down') {
+    const delta = direction === 'up' ? (coarse ? 12 : 1) : coarse ? -12 : -1;
+    updateNotes([{ id: note.id, pitch: Math.min(127, Math.max(0, note.pitch + delta)) }]);
+    return;
+  }
+  const delta = direction === 'left' ? -step : step;
+  if (resize) {
+    updateNotes([
+      {
+        id: note.id,
+        durationPpq: Math.min(maximum - note.startPpq, Math.max(0.0625, note.durationPpq + delta)),
+      },
+    ]);
+  } else {
+    updateNotes([
+      {
+        id: note.id,
+        startPpq: Math.min(maximum - note.durationPpq, Math.max(minimum, note.startPpq + delta)),
+      },
+    ]);
+  }
+}
+
 /** Activates a ghost note's track + clip and selects that note. */
 function onGhostActivate(ghost: GhostNote): void {
   setActiveClip(ghost.clipId);
@@ -711,16 +805,18 @@ function resolveScalePitch(pitch: number): number {
 
 const interactions = useNoteInteractions({
   view: range,
-  getNotes: () => store.notes,
+  getNotes: () => audibleSourceNotes.value,
   getSelection: () => store.selection,
   // A non-positive step disables snapping in the gesture state machine while
   // the drawn gridlines keep following the configured division.
   getGridPpq: () => (store.snapEnabled ? gridPpq.value : 0),
   getTool: () => tool.value,
-  getMaxPpq: () => store.clipLengthPpq,
+  isReadOnly: () => contentReadOnly.value,
+  getMinPpq: () => sourceWindowStartPpq.value,
+  getMaxPpq: () => sourceWindowEndPpq.value,
   resolveCreatedPitch: resolveScalePitch,
   resolveEditedPitch: resolveScalePitch,
-  commands: { addNote, updateNotes, deleteNotes, setSelection, splitNote },
+  commands: { addNote, addNotes, updateNotes, deleteNotes, setSelection, splitNote },
   auditionDuringDrag: () => auditionDrag.value,
   ...(props.audition ? { onAudition: props.audition } : {}),
 });
@@ -732,6 +828,7 @@ function onKeyDown(event: KeyboardEvent): void {
     else undo();
     return;
   }
+  if (contentReadOnly.value) return;
   if (handleKeyboardEdit(event)) return;
   if (interactions.onKeyDown(event.key)) event.preventDefault();
 }
@@ -742,38 +839,44 @@ function handleKeyboardEdit(event: KeyboardEvent): boolean {
   const step = store.snapEnabled ? gridPpq.value : 0.0625;
   let updates: Parameters<typeof updateNotes>[0] = [];
   if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-    const delta = event.key === 'ArrowLeft' ? -step : step;
+    const requestedDelta = event.key === 'ArrowLeft' ? -step : step;
+    const minStart = Math.min(...selected.map((note) => note.startPpq));
+    const maxEnd = Math.max(...selected.map((note) => note.startPpq + note.durationPpq));
+    const delta = Math.min(
+      sourceWindowEndPpq.value - maxEnd,
+      Math.max(sourceWindowStartPpq.value - minStart, requestedDelta),
+    );
     if (event.altKey) {
-      const ids = selected.map((note) =>
-        addNote({
+      const ids = addNotes(
+        selected.map((note) => ({
           pitch: note.pitch,
-          startPpq: Math.max(0, note.startPpq + delta),
+          startPpq: Math.max(sourceWindowStartPpq.value, note.startPpq + delta),
           durationPpq: note.durationPpq,
           velocity: note.velocity,
           channel: note.channel,
           ...(note.offVelocity !== undefined ? { offVelocity: note.offVelocity } : {}),
-        }),
+        })),
       );
       setSelection(ids);
     } else {
       updates = selected.map((note) => ({
         id: note.id,
-        startPpq: Math.max(0, note.startPpq + delta),
+        startPpq: Math.max(sourceWindowStartPpq.value, note.startPpq + delta),
       }));
     }
   } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
     const semitones = event.shiftKey ? 12 : 1;
     const delta = event.key === 'ArrowUp' ? semitones : -semitones;
     if (event.altKey) {
-      const ids = selected.map((note) =>
-        addNote({
+      const ids = addNotes(
+        selected.map((note) => ({
           pitch: Math.min(127, Math.max(0, note.pitch + delta)),
           startPpq: note.startPpq,
           durationPpq: note.durationPpq,
           velocity: note.velocity,
           channel: note.channel,
           ...(note.offVelocity !== undefined ? { offVelocity: note.offVelocity } : {}),
-        }),
+        })),
       );
       setSelection(ids);
     } else {
@@ -786,7 +889,10 @@ function handleKeyboardEdit(event: KeyboardEvent): boolean {
     const delta = event.key === '[' ? -step : step;
     updates = selected.map((note) => ({
       id: note.id,
-      durationPpq: Math.max(0.0625, note.durationPpq + delta),
+      durationPpq: Math.min(
+        sourceWindowEndPpq.value - note.startPpq,
+        Math.max(0.0625, note.durationPpq + delta),
+      ),
     }));
   } else {
     return false;
@@ -918,6 +1024,12 @@ onBeforeUnmount(() => {
     @pointerdown="onRootPointerDown"
   >
     <p v-if="error" class="piano-roll-error" role="alert">{{ error }}</p>
+    <div v-if="contentReadOnly" class="piano-roll-readonly" role="status">
+      <span>{{ t.shell.arrangement.trackHeader.unfreezeTitle }}</span>
+      <button type="button" @click="unfreezeTrack(store.activeTrackId)">
+        {{ t.shell.arrangement.trackHeader.unfreeze }}
+      </button>
+    </div>
     <PianoRollToolbar
       v-model:overlay-enabled="overlayEnabled"
       v-model:fx-panel-open="fxPanelOpen"
@@ -930,7 +1042,7 @@ onBeforeUnmount(() => {
       v-model:auto-reharmonize="autoReharmonize"
       :can-transform="canTransform"
       :clip-id="store.clipId"
-      :note-count="store.notes.length"
+      :note-count="audibleSourceNotes.length"
       :lane-toggle-disabled="props.forceLaneHidden === true"
       @zoom-horizontal="zoomHorizontal"
       @zoom-vertical="zoomVertical"
@@ -948,8 +1060,8 @@ onBeforeUnmount(() => {
         :range="range"
         :revision="revision"
         :painter="painter"
-        :notes="store.notes"
-        :clip-length-ppq="store.clipLengthPpq"
+        :notes="audibleSourceNotes"
+        :clip-length-ppq="sourceWindowEndPpq"
         @scroll-to="scrollMinimapTo"
       />
       <div class="cell-ruler-corner" />
@@ -958,7 +1070,7 @@ onBeforeUnmount(() => {
         :range="range"
         :revision="revision"
         :painter="painter"
-        :clip-length-ppq="store.clipLengthPpq"
+        :clip-length-ppq="sourceWindowEndPpq"
         :time-signatures="store.timeSignatures"
         :time-signature-origin-ppq="timeSignatureOriginPpq"
         @seek="onRulerSeek"
@@ -983,11 +1095,12 @@ onBeforeUnmount(() => {
           :range="range"
           :revision="revision"
           :painter="painter"
-          :notes="store.notes"
+          :notes="audibleSourceNotes"
           :selection="store.selection"
           :highlighted-pitch-classes="store.highlightedPitchClasses"
           :grid-ppq="gridPpq"
-          :clip-length-ppq="store.clipLengthPpq"
+          :clip-length-ppq="sourceWindowEndPpq"
+          :min-ppq="sourceWindowStartPpq"
           :time-signatures="store.timeSignatures"
           :time-signature-origin-ppq="timeSignatureOriginPpq"
           :interactions="interactions"
@@ -1001,6 +1114,7 @@ onBeforeUnmount(() => {
           @view-resize="viewport.onGridResize"
           @ghost-activate="onGhostActivate"
           @note-context="onNoteContext"
+          @note-keyboard-action="onNoteKeyboardAction"
           @hover-status="hoverStatus = $event"
         />
         <ReharmonizeLockStrip
@@ -1068,7 +1182,7 @@ onBeforeUnmount(() => {
         :range="range"
         :revision="revision"
         :painter="painter"
-        :notes="store.notes"
+        :notes="audibleSourceNotes"
         :selection="store.selection"
         :param="laneParam"
       />
@@ -1079,13 +1193,15 @@ onBeforeUnmount(() => {
         :revision="revision"
         :painter="painter"
         :clip-id="store.clipId"
-        :clip-length-ppq="store.clipLengthPpq"
+        :clip-start-ppq="sourceWindowStartPpq"
+        :clip-length-ppq="sourceWindowEndPpq"
         :points="activeCcPoints"
         :commit="commitCcPoints"
         :readout-label="`CC${laneCc}`"
         :color="trackColor"
         :snap-ppq="ccSnap"
         :curve-mode="laneCurve"
+        :read-only="contentReadOnly"
       />
       <BreakpointLane
         v-else-if="lanePitchBend"
@@ -1094,7 +1210,8 @@ onBeforeUnmount(() => {
         :revision="revision"
         :painter="painter"
         :clip-id="store.clipId"
-        :clip-length-ppq="store.clipLengthPpq"
+        :clip-start-ppq="sourceWindowStartPpq"
+        :clip-length-ppq="sourceWindowEndPpq"
         :points="activePitchBendPoints"
         :commit="commitPitchBendPoints"
         :value-max="MIDI_PITCH_BEND_MAX"
@@ -1104,6 +1221,7 @@ onBeforeUnmount(() => {
         :color="trackColor"
         :snap-ppq="ccSnap"
         :curve-mode="laneCurve"
+        :read-only="contentReadOnly"
       />
       <BreakpointLane
         v-else-if="laneChannelPressure"
@@ -1112,7 +1230,8 @@ onBeforeUnmount(() => {
         :revision="revision"
         :painter="painter"
         :clip-id="store.clipId"
-        :clip-length-ppq="store.clipLengthPpq"
+        :clip-start-ppq="sourceWindowStartPpq"
+        :clip-length-ppq="sourceWindowEndPpq"
         :points="activeChannelPressurePoints"
         :commit="commitChannelPressurePoints"
         :readout-label="t.shell.pianoRoll.pressureLaneTab"
@@ -1120,6 +1239,7 @@ onBeforeUnmount(() => {
         :color="trackColor"
         :snap-ppq="ccSnap"
         :curve-mode="laneCurve"
+        :read-only="contentReadOnly"
       />
       <BreakpointLane
         v-else
@@ -1128,7 +1248,8 @@ onBeforeUnmount(() => {
         :revision="revision"
         :painter="painter"
         :clip-id="polyPressurePitches.length === 0 ? -1 : store.clipId"
-        :clip-length-ppq="store.clipLengthPpq"
+        :clip-start-ppq="sourceWindowStartPpq"
+        :clip-length-ppq="sourceWindowEndPpq"
         :points="activePolyPressurePoints"
         :commit="commitPolyPressurePoints"
         :readout-label="polyPressureReadoutLabel"
@@ -1136,6 +1257,7 @@ onBeforeUnmount(() => {
         :color="trackColor"
         :snap-ppq="ccSnap"
         :curve-mode="laneCurve"
+        :read-only="contentReadOnly"
       />
       <div class="cell-corner" />
       <div class="cell-hscroll-spacer" />

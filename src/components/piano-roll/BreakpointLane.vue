@@ -32,6 +32,8 @@ const props = defineProps<{
   clipId: number;
   /** Clip window length in PPQ (positions clamp to it). */
   clipLengthPpq: number;
+  /** Left edge of the editable source window (defaults to zero). */
+  clipStartPpq?: number;
   /** Breakpoints of the active lane, sorted by ppq. */
   points: ClipCcPoint[];
   /** Commits an edited point list as one undoable step. */
@@ -50,6 +52,8 @@ const props = defineProps<{
   snapPpq?: (ppq: number) => number;
   /** Curve assigned to newly drawn breakpoints; existing moved points preserve theirs. */
   curveMode?: ClipExpressionCurve;
+  /** Shows the curve while blocking mutation gestures. */
+  readOnly?: boolean;
 }>();
 
 const { t } = useI18n();
@@ -121,8 +125,9 @@ function segmentValue(start: number, end: number, t: number, curve: ClipExpressi
 }
 
 function ppqFromX(x: number): number {
-  const raw = Math.min(props.clipLengthPpq, Math.max(0, props.range.xToPpq(x)));
-  return props.snapPpq ? Math.min(props.clipLengthPpq, Math.max(0, props.snapPpq(raw))) : raw;
+  const min = props.clipStartPpq ?? 0;
+  const raw = Math.min(props.clipLengthPpq, Math.max(min, props.range.xToPpq(x)));
+  return props.snapPpq ? Math.min(props.clipLengthPpq, Math.max(min, props.snapPpq(raw))) : raw;
 }
 
 function localPoint(event: PointerEvent): { x: number; y: number } {
@@ -238,7 +243,7 @@ function applyDraw(ppq: number, value: number): void {
 }
 
 function onPointerDown(event: PointerEvent): void {
-  if (props.clipId < 0) return;
+  if (props.clipId < 0 || props.readOnly) return;
   const point = localPoint(event);
   const value = valueFromY(point.y);
   const hit = hitPoint(point.x, point.y);

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ref } from 'vue';
 import { usePianoRollCcLanes } from '@/components/piano-roll/use-piano-roll-cc-lanes';
 import type { PianoRollLanes } from '@/components/piano-roll/use-piano-roll-lanes';
-import { addNote, clearHistory } from '@/project/commands';
+import { addNote, clearHistory, setClipLoop, trimClip } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 
 vi.mock('@/lib/wasm', async () => {
@@ -116,5 +116,46 @@ describe('usePianoRollCcLanes channel routing', () => {
       { channel: 1, pitch: 64, points: [{ ppq: 0.25, value: 70 }] },
     ]);
     expect(cc.activePolyPressurePoints.value).toEqual([{ ppq: 0.25, value: 70 }]);
+  });
+
+  it('edits expression in source coordinates while preserving points outside the loop window', () => {
+    const clipId = store.clipId;
+    const timelineStart = store.activeClip?.startPpq ?? 0;
+    trimClip(clipId, timelineStart + 2, 5);
+    setClipLoop(clipId, true, 2);
+    store.clips = store.clips.map((clip) =>
+      clip.id === clipId
+        ? {
+            ...clip,
+            ccLanes: [
+              {
+                controller: 1,
+                channel: 0,
+                points: [
+                  { ppq: 0, value: 10 },
+                  { ppq: 1, value: 20 },
+                  { ppq: 3, value: 30 },
+                ],
+              },
+            ],
+          }
+        : clip,
+    );
+    const lanes = makeLanes({ laneCc: ref(1), laneChannel: ref(0) });
+    const cc = usePianoRollCcLanes({ lanes, gridPpq: ref(1) });
+
+    expect(cc.activeCcPoints.value).toEqual([
+      { ppq: 2, value: 10 },
+      { ppq: 3, value: 20 },
+    ]);
+    cc.commitCcPoints([{ ppq: 2.5, value: 99 }]);
+
+    expect(store.activeClip?.ccLanes?.[0].points).toEqual([
+      { ppq: 0.5, value: 99 },
+      { ppq: 3, value: 30 },
+    ]);
+    expect(cc.activeCcPoints.value).toEqual([{ ppq: 2.5, value: 99 }]);
+    expect(cc.ccSnap(0)).toBe(2);
+    expect(cc.ccSnap(9)).toBe(4);
   });
 });

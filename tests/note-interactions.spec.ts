@@ -32,6 +32,8 @@ function makeHarness(
   initialSelection: number[] = [],
   maxPpq?: number,
   resolvePitch?: (pitch: number) => number,
+  readOnly = false,
+  minPpq?: number,
 ) {
   const view = new TimelineRange({ widthPx: 800, heightPx: 1280, pxPerPpq: 100, rowHeight: 10 });
   let selection = new Set<number>(initialSelection);
@@ -39,6 +41,7 @@ function makeHarness(
   let tool: EditorToolId = 'select';
   const commands: InteractionCommands = {
     addNote: vi.fn(() => nextId++),
+    addNotes: vi.fn((inputs: ReadonlyArray<unknown>) => inputs.map(() => nextId++)),
     updateNotes: vi.fn(),
     deleteNotes: vi.fn(),
     setSelection: vi.fn((ids: Iterable<number>) => {
@@ -53,6 +56,8 @@ function makeHarness(
     getSelection: () => selection,
     getGridPpq: () => 0.25,
     getTool: () => tool,
+    isReadOnly: () => readOnly,
+    ...(minPpq === undefined ? {} : { getMinPpq: () => minPpq }),
     ...(maxPpq === undefined ? {} : { getMaxPpq: () => maxPpq }),
     ...(resolvePitch === undefined
       ? {}
@@ -75,7 +80,36 @@ function makeHarness(
 const mocked = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
 
 describe('useNoteInteractions', () => {
+  it('allows selection but blocks note mutation in read-only mode', () => {
+    const { commands, interactions } = makeHarness(
+      [makeNote({ id: 1 })],
+      [],
+      undefined,
+      undefined,
+      true,
+    );
+    interactions.onPointerDown({ x: 150, y: 675 });
+    interactions.onPointerMove({ x: 350, y: 675 });
+    interactions.onPointerUp({ x: 350, y: 675 });
+    interactions.onDoubleClick({ x: 350, y: 675 });
+    expect(commands.setSelection).toHaveBeenCalledWith([1]);
+    expect(commands.updateNotes).not.toHaveBeenCalled();
+    expect(commands.addNote).not.toHaveBeenCalled();
+    expect(interactions.onKeyDown('Delete')).toBe(false);
+    expect(commands.deleteNotes).not.toHaveBeenCalled();
+  });
+
   describe('double-click create', () => {
+    it('clamps creation to a trimmed source-window left edge', () => {
+      const { commands, interactions } = makeHarness([], [], 6, undefined, false, 2);
+      interactions.onDoubleClick({ x: 100, y: 675 });
+      expect(commands.addNote).toHaveBeenCalledWith({
+        pitch: 60,
+        startPpq: 2,
+        durationPpq: 0.25,
+      });
+    });
+
     it('creates a note snapped to the grid cell with grid-step length and selects it', () => {
       const { commands, interactions } = makeHarness([makeNote({ id: 1 })]);
       // Empty area: x 337 = PPQ 3.37 (floor-snaps to 3.25), y 675 = pitch 60.
@@ -348,15 +382,32 @@ describe('useNoteInteractions', () => {
       interactions.onPointerMove({ x: 200, y: 675 }, { alt: true });
       interactions.onPointerUp({ x: 200, y: 675 }, { alt: true });
       expect(commands.updateNotes).not.toHaveBeenCalled();
-      expect(commands.addNote).toHaveBeenCalledTimes(1);
-      expect(commands.addNote).toHaveBeenCalledWith({
-        pitch: 60,
-        startPpq: 1.5,
-        durationPpq: 1,
-        velocity: 96,
-        channel: 0,
-      });
+      expect(commands.addNote).not.toHaveBeenCalled();
+      expect(commands.addNotes).toHaveBeenCalledWith([
+        {
+          pitch: 60,
+          startPpq: 1.5,
+          durationPpq: 1,
+          velocity: 96,
+          channel: 0,
+        },
+      ]);
       expect(commands.setSelection).toHaveBeenLastCalledWith([100]);
+    });
+
+    it('commits a multi-note duplicate through one bulk command', () => {
+      const { commands, interactions } = makeHarness(
+        [makeNote({ id: 1 }), makeNote({ id: 2, pitch: 64, startPpq: 2 })],
+        [1, 2],
+      );
+      interactions.onPointerDown({ x: 150, y: 675 }, { alt: true });
+      interactions.onPointerMove({ x: 200, y: 675 }, { alt: true });
+      interactions.onPointerUp({ x: 200, y: 675 }, { alt: true });
+
+      expect(commands.addNotes).toHaveBeenCalledTimes(1);
+      expect(mocked(commands.addNotes).mock.calls[0][0]).toHaveLength(2);
+      expect(commands.addNote).not.toHaveBeenCalled();
+      expect(commands.setSelection).toHaveBeenLastCalledWith([100, 101]);
     });
 
     it('marks the in-flight copies with negative preview ids', () => {

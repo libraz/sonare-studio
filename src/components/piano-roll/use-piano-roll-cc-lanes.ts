@@ -15,8 +15,13 @@ import {
   setClipChannelPressure,
   setClipPitchBend,
   setClipPolyPressure,
-  setClipPolyPressureForPitches,
+  setClipPolyPressureForPitchPoints,
 } from '@/project/commands';
+import {
+  audibleMidiSourcePoints,
+  audibleMidiSourceWindow,
+  mergeAudibleMidiSourcePoints,
+} from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
 import type { ClipCcPoint, ClipPitchBendPoint, ClipPressurePoint } from '@/project/types';
 import type { PianoRollLanes } from './use-piano-roll-lanes';
@@ -77,12 +82,25 @@ export function usePianoRollCcLanes(options: UsePianoRollCcLanesOptions): PianoR
 
   const polyPressurePitch = computed<number | null>(() => polyPressurePitches.value[0] ?? null);
 
+  function visiblePoints<T extends { ppq: number }>(points: ReadonlyArray<T> | undefined): T[] {
+    const clip = store.activeClip;
+    return clip ? audibleMidiSourcePoints(clip, points ?? []) : [];
+  }
+
+  function mergedPoints<T extends { ppq: number }>(
+    current: ReadonlyArray<T> | undefined,
+    edited: ReadonlyArray<T>,
+  ): T[] {
+    const clip = store.activeClip;
+    return clip ? mergeAudibleMidiSourcePoints(clip, current ?? [], edited) : [];
+  }
+
   const activeCcPoints = computed<ClipCcPoint[]>(() => {
     if (lanes.laneCc.value === null) return [];
     const lane = store.activeClip?.ccLanes?.find(
       (l) => l.controller === lanes.laneCc.value && l.channel === lanes.laneChannel.value,
     );
-    return lane?.points ?? [];
+    return visiblePoints(lane?.points);
   });
 
   const activePitchBendPoints = computed<ClipPitchBendPoint[]>(() => {
@@ -90,7 +108,7 @@ export function usePianoRollCcLanes(options: UsePianoRollCcLanesOptions): PianoR
     const lane = store.activeClip?.pitchBendLanes?.find(
       (l) => l.channel === lanes.laneChannel.value,
     );
-    return lane?.points ?? [];
+    return visiblePoints(lane?.points);
   });
 
   const activeChannelPressurePoints = computed<ClipPressurePoint[]>(() => {
@@ -98,7 +116,7 @@ export function usePianoRollCcLanes(options: UsePianoRollCcLanesOptions): PianoR
     const lane = store.activeClip?.channelPressureLanes?.find(
       (l) => l.channel === lanes.laneChannel.value,
     );
-    return lane?.points ?? [];
+    return visiblePoints(lane?.points);
   });
 
   const activePolyPressurePoints = computed<ClipPressurePoint[]>(() => {
@@ -108,36 +126,70 @@ export function usePianoRollCcLanes(options: UsePianoRollCcLanesOptions): PianoR
     const lane = store.activeClip?.polyPressureLanes?.find(
       (l) => l.channel === lanes.laneChannel.value && pitchSet.has(l.pitch),
     );
-    return lane?.points ?? [];
+    return visiblePoints(lane?.points);
   });
 
   function commitCcPoints(points: ClipCcPoint[]): void {
     if (lanes.laneCc.value === null) return;
-    setClipCcLane(store.clipId, lanes.laneCc.value, lanes.laneChannel.value, points);
+    const current = store.activeClip?.ccLanes?.find(
+      (lane) => lane.controller === lanes.laneCc.value && lane.channel === lanes.laneChannel.value,
+    )?.points;
+    setClipCcLane(
+      store.clipId,
+      lanes.laneCc.value,
+      lanes.laneChannel.value,
+      mergedPoints(current, points),
+    );
   }
 
   function commitPitchBendPoints(points: ClipPitchBendPoint[]): void {
-    setClipPitchBend(store.clipId, lanes.laneChannel.value, points);
+    const current = store.activeClip?.pitchBendLanes?.find(
+      (lane) => lane.channel === lanes.laneChannel.value,
+    )?.points;
+    setClipPitchBend(store.clipId, lanes.laneChannel.value, mergedPoints(current, points));
   }
 
   function commitChannelPressurePoints(points: ClipPressurePoint[]): void {
-    setClipChannelPressure(store.clipId, lanes.laneChannel.value, points);
+    const current = store.activeClip?.channelPressureLanes?.find(
+      (lane) => lane.channel === lanes.laneChannel.value,
+    )?.points;
+    setClipChannelPressure(store.clipId, lanes.laneChannel.value, mergedPoints(current, points));
   }
 
   function commitPolyPressurePoints(points: ClipPressurePoint[]): void {
     const pitches = polyPressurePitches.value;
     if (pitches.length === 0) return;
     if (pitches.length === 1) {
-      setClipPolyPressure(store.clipId, lanes.laneChannel.value, pitches[0], points);
+      const current = store.activeClip?.polyPressureLanes?.find(
+        (lane) => lane.channel === lanes.laneChannel.value && lane.pitch === pitches[0],
+      )?.points;
+      setClipPolyPressure(
+        store.clipId,
+        lanes.laneChannel.value,
+        pitches[0],
+        mergedPoints(current, points),
+      );
       return;
     }
-    setClipPolyPressureForPitches(store.clipId, lanes.laneChannel.value, pitches, points);
+    const pointsByPitch = new Map(
+      pitches.map((pitch) => {
+        const current = store.activeClip?.polyPressureLanes?.find(
+          (lane) => lane.channel === lanes.laneChannel.value && lane.pitch === pitch,
+        )?.points;
+        return [pitch, mergedPoints(current, points)] as const;
+      }),
+    );
+    setClipPolyPressureForPitchPoints(store.clipId, lanes.laneChannel.value, pointsByPitch);
   }
 
   function ccSnap(ppq: number): number {
-    if (!store.snapEnabled) return ppq;
+    const clip = store.activeClip;
+    const window = clip ? audibleMidiSourceWindow(clip) : null;
+    const clamped = window ? Math.min(window.endPpq, Math.max(window.startPpq, ppq)) : ppq;
+    if (!store.snapEnabled) return clamped;
     const step = gridPpq.value;
-    return step > 0 ? Math.round(ppq / step) * step : ppq;
+    const snapped = step > 0 ? Math.round(clamped / step) * step : clamped;
+    return window ? Math.min(window.endPpq, Math.max(window.startPpq, snapped)) : snapped;
   }
 
   return {
