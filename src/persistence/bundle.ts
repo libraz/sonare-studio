@@ -10,9 +10,25 @@
  */
 
 import { collectReferencedAudioAssetIds } from '@/project/asset-references';
-import { loadFont, loadFontMeta, type SoundFontMeta, saveFont } from '@/project/fonts';
+import {
+  computeFontId,
+  deleteFont,
+  FontNotFoundError,
+  loadFont,
+  loadFontMeta,
+  type SoundFontMeta,
+  saveFont,
+} from '@/project/fonts';
 import type { ProjectDocument } from '@/project/serialization';
-import { type AudioAssetMeta, interleaveChannels, loadAsset, saveAsset } from './assets';
+import {
+  AssetNotFoundError,
+  type AudioAssetMeta,
+  computeAssetId,
+  deleteAsset,
+  interleaveChannels,
+  loadAsset,
+  saveAsset,
+} from './assets';
 import type { SzdMediaBundle } from './szd';
 
 const textEncoder = new TextEncoder();
@@ -83,37 +99,205 @@ function floatsFromPcm(bytes: Uint8Array): Float32Array {
   return new Float32Array(copy.buffer, copy.byteOffset, Math.floor(copy.byteLength / 4));
 }
 
+const CONTENT_ID_PATTERN = /^[0-9a-f]{16}$/i;
+
+/** A referenced archive entry conflicts with an existing shared media id. */
+export class MediaRestoreConflictError extends Error {
+  constructor(kind: 'asset' | 'font', id: string) {
+    super(`Bundled ${kind} "${id}" conflicts with existing stored content`);
+    this.name = 'MediaRestoreConflictError';
+  }
+}
+
+/** Validated audio entry ready for conflict preflight and commit. */
+export interface PreparedAssetRestore {
+  id: string;
+  meta: AudioAssetMeta;
+  audio: Float32Array;
+}
+
+/** Validated SoundFont entry ready for conflict preflight and commit. */
+export interface PreparedFontRestore {
+  id: string;
+  meta: SoundFontMeta;
+  data: Uint8Array;
+}
+
+function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.byteLength !== right.byteLength) return false;
+  for (let i = 0; i < left.byteLength; i += 1) {
+    if (left[i] !== right[i]) return false;
+  }
+  return true;
+}
+
+/** Parses and validates one bundled audio pair without touching storage. */
+export function prepareAssetRestore(entry: SzdMediaBundle['assets'][number]): PreparedAssetRestore {
+  if (entry.pcm.byteLength % 4 !== 0) {
+    throw new Error(`Bundled asset "${entry.id}" has a misaligned PCM payload`);
+  }
+  const parsed = JSON.parse(textDecoder.decode(entry.meta)) as Partial<AudioAssetMeta>;
+  if (
+    parsed.id !== entry.id ||
+    typeof parsed.name !== 'string' ||
+    parsed.name.length === 0 ||
+    !Number.isFinite(parsed.sampleRate) ||
+    (parsed.sampleRate as number) <= 0 ||
+    !Number.isInteger(parsed.numChannels) ||
+    (parsed.numChannels as number) < 1
+  ) {
+    throw new Error(`Bundled asset "${entry.id}" has malformed metadata`);
+  }
+  const audio = floatsFromPcm(entry.pcm);
+  if (audio.length % (parsed.numChannels as number) !== 0) {
+    throw new Error(`Bundled asset "${entry.id}" PCM does not match its channel count`);
+  }
+  const numFrames = audio.length / (parsed.numChannels as number);
+  if (parsed.numFrames !== undefined && parsed.numFrames !== numFrames) {
+    throw new Error(`Bundled asset "${entry.id}" PCM does not match its frame count`);
+  }
+  const computedId = computeAssetId(
+    audio,
+    parsed.sampleRate as number,
+    parsed.numChannels as number,
+  );
+  if (CONTENT_ID_PATTERN.test(entry.id) && computedId.toLowerCase() !== entry.id.toLowerCase()) {
+    throw new Error(`Bundled asset "${entry.id}" does not match its content id`);
+  }
+  return {
+    id: entry.id,
+    meta: {
+      id: entry.id,
+      name: parsed.name,
+      sampleRate: parsed.sampleRate as number,
+      numChannels: parsed.numChannels as number,
+      numFrames,
+      ...(parsed.tags ? { tags: parsed.tags } : {}),
+    },
+    audio,
+  };
+}
+
+/** Parses and validates one bundled SoundFont pair without touching storage. */
+export function prepareFontRestore(entry: SzdMediaBundle['fonts'][number]): PreparedFontRestore {
+  const parsed = JSON.parse(textDecoder.decode(entry.meta)) as Partial<SoundFontMeta>;
+  if (
+    parsed.id !== entry.id ||
+    typeof parsed.name !== 'string' ||
+    parsed.name.length === 0 ||
+    (parsed.byteLength !== undefined && parsed.byteLength !== entry.sf2.byteLength) ||
+    entry.sf2.byteLength === 0
+  ) {
+    throw new Error(`Bundled font "${entry.id}" has malformed metadata`);
+  }
+  const computedId = computeFontId(entry.sf2);
+  if (CONTENT_ID_PATTERN.test(entry.id) && computedId.toLowerCase() !== entry.id.toLowerCase()) {
+    throw new Error(`Bundled font "${entry.id}" does not match its content id`);
+  }
+  return {
+    id: entry.id,
+    meta: { id: entry.id, name: parsed.name, byteLength: entry.sf2.byteLength },
+    data: new Uint8Array(entry.sf2),
+  };
+}
+
+/** Returns true for an identical existing asset, false when the id is unused. */
+export async function preflightAssetRestore(entry: PreparedAssetRestore): Promise<boolean> {
+  try {
+    const existing = await loadAsset(entry.id);
+    const existingBytes = pcmBytes(existing.channels);
+    const incomingBytes = new Uint8Array(
+      entry.audio.buffer,
+      entry.audio.byteOffset,
+      entry.audio.byteLength,
+    );
+    if (
+      existing.meta.sampleRate !== entry.meta.sampleRate ||
+      existing.meta.numChannels !== entry.meta.numChannels ||
+      !equalBytes(existingBytes, incomingBytes)
+    ) {
+      throw new MediaRestoreConflictError('asset', entry.id);
+    }
+    return true;
+  } catch (error) {
+    if (error instanceof AssetNotFoundError) return false;
+    throw error;
+  }
+}
+
+/** Returns true for an identical existing font, false when the id is unused. */
+export async function preflightFontRestore(entry: PreparedFontRestore): Promise<boolean> {
+  try {
+    const existing = await loadFont(entry.id);
+    if (!equalBytes(existing, entry.data)) {
+      throw new MediaRestoreConflictError('font', entry.id);
+    }
+    return true;
+  } catch (error) {
+    if (error instanceof FontNotFoundError) return false;
+    throw error;
+  }
+}
+
 /**
- * Writes a bundle's media back into the OPFS stores so the document's ids
- * resolve after a disk import. Best-effort per entry: a single malformed entry
- * is skipped rather than aborting the whole import.
+ * Writes the document-referenced media back into the OPFS stores after a full
+ * validation/conflict preflight. Existing ids are never overwritten with
+ * different bytes; a failed commit removes every pair created by this call.
  *
+ * @param doc The imported document whose references authorize bundle entries.
  * @param bundle The media extracted by {@link decodeSzdBundle}.
  */
-export async function restoreProjectBundle(bundle: SzdMediaBundle): Promise<void> {
-  for (const entry of bundle.assets) {
-    try {
-      const meta = JSON.parse(textDecoder.decode(entry.meta)) as AudioAssetMeta;
+export async function restoreProjectBundle(
+  doc: ProjectDocument,
+  bundle: SzdMediaBundle,
+): Promise<void> {
+  const referencedAssets = collectReferencedAssetIds(doc);
+  const referencedFonts = collectReferencedFontIds(doc);
+  const assets = bundle.assets
+    .filter((entry) => referencedAssets.has(entry.id))
+    .map(prepareAssetRestore);
+  const fonts = bundle.fonts
+    .filter((entry) => referencedFonts.has(entry.id))
+    .map(prepareFontRestore);
+  if (new Set(assets.map((entry) => entry.id)).size !== assets.length) {
+    throw new Error('Bundled project contains duplicate referenced asset ids');
+  }
+  if (new Set(fonts.map((entry) => entry.id)).size !== fonts.length) {
+    throw new Error('Bundled project contains duplicate referenced font ids');
+  }
+
+  const existingAssets = new Set<string>();
+  const existingFonts = new Set<string>();
+  for (const entry of assets) if (await preflightAssetRestore(entry)) existingAssets.add(entry.id);
+  for (const entry of fonts) if (await preflightFontRestore(entry)) existingFonts.add(entry.id);
+
+  const createdAssets: string[] = [];
+  const createdFonts: string[] = [];
+  try {
+    for (const entry of assets) {
+      if (existingAssets.has(entry.id)) continue;
+      createdAssets.push(entry.id);
       await saveAsset(
         {
           id: entry.id,
-          name: meta.name,
-          sampleRate: meta.sampleRate,
-          numChannels: meta.numChannels,
-          ...(meta.tags ? { tags: meta.tags } : {}),
+          name: entry.meta.name,
+          sampleRate: entry.meta.sampleRate,
+          numChannels: entry.meta.numChannels,
+          ...(entry.meta.tags ? { tags: entry.meta.tags } : {}),
         },
-        floatsFromPcm(entry.pcm),
+        entry.audio,
       );
-    } catch {
-      // Skip an entry we cannot decode/store; the rest of the import proceeds.
     }
-  }
-  for (const entry of bundle.fonts) {
-    try {
-      const meta = JSON.parse(textDecoder.decode(entry.meta)) as SoundFontMeta;
-      await saveFont({ id: entry.id, name: meta.name }, entry.sf2);
-    } catch {
-      // Skip an entry we cannot decode/store.
+    for (const entry of fonts) {
+      if (existingFonts.has(entry.id)) continue;
+      createdFonts.push(entry.id);
+      await saveFont({ id: entry.id, name: entry.meta.name }, entry.data);
     }
+  } catch (error) {
+    await Promise.allSettled([
+      ...createdAssets.map((id) => deleteAsset(id)),
+      ...createdFonts.map((id) => deleteFont(id)),
+    ]);
+    throw error;
   }
 }

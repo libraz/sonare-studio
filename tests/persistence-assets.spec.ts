@@ -1,20 +1,29 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AssetNotFoundError,
+  audioAssetCacheStats,
   audioAssetUri,
   clearAudioAssetCache,
   computeAssetId,
+  configureAudioAssetCacheByteBudget,
+  DEFAULT_AUDIO_ASSET_CACHE_BYTE_BUDGET,
   deinterleaveChannels,
   deleteAsset,
   InvalidAssetError,
   interleaveChannels,
+  listAssetAliases,
   listAssets,
   loadAsset,
   loadAssetMeta,
   saveAsset,
 } from '@/persistence/assets';
 import { OpfsUnavailableError } from '@/persistence/opfs';
-import { installMockOpfs, type MemoryDirectoryHandle, uninstallMockOpfs } from './opfs-mock';
+import {
+  installMockOpfs,
+  type MemoryDirectoryHandle,
+  MemoryFileHandle,
+  uninstallMockOpfs,
+} from './opfs-mock';
 
 /** Reads the assets/ directory of the mock root (creating it on demand). */
 async function assetsDir(root: MemoryDirectoryHandle): Promise<MemoryDirectoryHandle> {
@@ -37,6 +46,7 @@ describe('audio asset store', () => {
   afterEach(() => {
     uninstallMockOpfs();
     clearAudioAssetCache();
+    configureAudioAssetCacheByteBudget(DEFAULT_AUDIO_ASSET_CACHE_BYTE_BUDGET);
   });
 
   it('saves planar channels and loads them back losslessly', async () => {
@@ -53,6 +63,61 @@ describe('audio asset store', () => {
     expect(loaded.channels).toEqual(stereo());
   });
 
+  it('evicts decoded PCM by byte-budgeted least-recently-used order', async () => {
+    configureAudioAssetCacheByteBudget(64); // two 32-byte stereo assets
+    await saveAsset({ id: 'asset-a', name: 'A', sampleRate: 48000 }, stereo());
+    await saveAsset({ id: 'asset-b', name: 'B', sampleRate: 48000 }, stereo());
+    expect(audioAssetCacheStats()).toMatchObject({
+      entries: 2,
+      bytes: 64,
+      ids: ['asset-a', 'asset-b'],
+    });
+
+    await loadAsset('asset-a'); // refresh A, making B the eviction candidate
+    await saveAsset({ id: 'asset-c', name: 'C', sampleRate: 48000 }, stereo());
+    expect(audioAssetCacheStats()).toMatchObject({
+      entries: 2,
+      bytes: 64,
+      ids: ['asset-a', 'asset-c'],
+    });
+  });
+
+  it('does not retain a decoded asset larger than the cache budget', async () => {
+    configureAudioAssetCacheByteBudget(0);
+    const meta = await saveAsset({ name: 'Uncached', sampleRate: 48000 }, stereo());
+    expect(audioAssetCacheStats()).toMatchObject({ entries: 0, bytes: 0 });
+    const first = await loadAsset(meta.id);
+    const second = await loadAsset(meta.id);
+    expect(second).not.toBe(first);
+    expect(audioAssetCacheStats()).toMatchObject({ entries: 0, bytes: 0 });
+  });
+
+  it('writes large PCM payloads in bounded chunks', async () => {
+    configureAudioAssetCacheByteBudget(0);
+    const original = MemoryFileHandle.prototype.createWritable;
+    const pcmWriteSizes: number[] = [];
+    const spy = vi
+      .spyOn(MemoryFileHandle.prototype, 'createWritable')
+      .mockImplementation(async function () {
+        const writable = await original.call(this);
+        if (!this.name.endsWith('.pcm')) return writable;
+        const write = writable.write.bind(writable);
+        writable.write = (async (chunk: Uint8Array) => {
+          pcmWriteSizes.push(chunk.byteLength);
+          return write(chunk);
+        }) as typeof writable.write;
+        return writable;
+      });
+    const samples = new Float32Array(1024 * 1024 + 16);
+
+    await saveAsset({ id: 'large-pcm', name: 'Large', sampleRate: 48000 }, samples);
+    spy.mockRestore();
+
+    expect(pcmWriteSizes).toHaveLength(2);
+    expect(Math.max(...pcmWriteSizes)).toBeLessThanOrEqual(4 * 1024 * 1024);
+    expect(pcmWriteSizes.reduce((sum, size) => sum + size, 0)).toBe(samples.byteLength);
+  });
+
   it('stores a .pcm payload plus a .json sidecar under assets/', async () => {
     const meta = await saveAsset({ name: 'Take', sampleRate: 44100 }, stereo());
     const dir = await assetsDir(root);
@@ -61,7 +126,16 @@ describe('audio asset store', () => {
     // Payload is interleaved float32: 4 frames x 2 channels x 4 bytes.
     expect(dir.files.get(`${meta.id}.pcm`)?.data.length).toBe(32);
     const sidecar = JSON.parse(new TextDecoder().decode(dir.files.get(`${meta.id}.json`)?.data));
-    expect(sidecar).toEqual(meta);
+    expect(sidecar).toEqual({
+      schemaVersion: 2,
+      content: {
+        id: meta.id,
+        sampleRate: 44100,
+        numChannels: 2,
+        numFrames: 4,
+      },
+      aliases: [{ name: 'Take' }],
+    });
   });
 
   it('accepts an interleaved buffer with an explicit channel count', async () => {
@@ -87,6 +161,67 @@ describe('audio asset store', () => {
       stereo(),
     );
     expect(other.id).not.toBe(a.id);
+  });
+
+  it('preserves distinct names and tags as aliases without rewriting shared PCM', async () => {
+    const first = await saveAsset(
+      { name: 'Dry take', sampleRate: 48000, tags: { key: 'Am' } },
+      stereo(),
+    );
+    const dir = await assetsDir(root);
+    const pcmBefore = dir.files.get(`${first.id}.pcm`)?.data.slice();
+    const second = await saveAsset(
+      { name: 'Verse edit', sampleRate: 48000, tags: { bpm: 128 } },
+      stereo(),
+    );
+
+    expect(second.id).toBe(first.id);
+    expect(dir.files.get(`${first.id}.pcm`)?.data).toEqual(pcmBefore);
+    expect(await listAssetAliases(first.id)).toEqual([
+      { name: 'Dry take', tags: { key: 'Am' } },
+      { name: 'Verse edit', tags: { bpm: 128 } },
+    ]);
+    expect(await loadAssetMeta(first.id)).toMatchObject({
+      name: 'Verse edit',
+      tags: { bpm: 128 },
+    });
+  });
+
+  it('rejects an immutable explicit-id content collision and preserves the original', async () => {
+    await saveAsset({ id: 'shared', name: 'Original', sampleRate: 48000 }, stereo());
+    await expect(
+      saveAsset({ id: 'shared', name: 'Collision', sampleRate: 48000 }, [
+        new Float32Array([9, 9, 9, 9]),
+      ]),
+    ).rejects.toThrow(/immutable PCM content collision/);
+    clearAudioAssetCache();
+    expect((await loadAsset('shared')).channels).toEqual(stereo());
+    expect((await loadAssetMeta('shared')).name).toBe('Original');
+  });
+
+  it('removes a newly written payload when sidecar publication fails', async () => {
+    const original = MemoryFileHandle.prototype.createWritable;
+    const spy = vi
+      .spyOn(MemoryFileHandle.prototype, 'createWritable')
+      .mockImplementation(async function () {
+        if (this.name.endsWith('.json')) {
+          return {
+            write: async () => {
+              throw new Error('sidecar write failed');
+            },
+            close: async () => undefined,
+            abort: async () => undefined,
+          } as unknown as FileSystemWritableFileStream;
+        }
+        return original.call(this);
+      });
+    await expect(saveAsset({ name: 'Broken', sampleRate: 48000 }, stereo())).rejects.toThrow(
+      'sidecar write failed',
+    );
+    spy.mockRestore();
+
+    expect((await assetsDir(root)).files.size).toBe(0);
+    expect(await listAssets()).toEqual([]);
   });
 
   it('computeAssetId is pure and stable', () => {

@@ -8,7 +8,10 @@ import {
   addNote,
   clearAllMidiCcBindings,
   clearHistory,
+  clearMixerSnapshots,
+  saveMixerSnapshot,
   setMidiCcBinding,
+  setProjectExternalMidiDefault,
   setSelection,
 } from '@/project/commands';
 import { serializeProject } from '@/project/serialization';
@@ -39,6 +42,12 @@ async function flushWatchers(): Promise<void> {
   await nextTick();
 }
 
+function makeStoredDocument(name: string) {
+  const doc = serializeProject();
+  doc.name = name;
+  return doc;
+}
+
 describe('useAutosave', () => {
   let store: ReturnType<typeof useProjectStore>;
   let scope: ReturnType<typeof effectScope>;
@@ -57,6 +66,7 @@ describe('useAutosave', () => {
     store = useProjectStore();
     store.dispose();
     clearHistory();
+    clearMixerSnapshots();
     await store.init();
     opfsMocks.saveProject.mockReset();
     opfsMocks.saveProject.mockResolvedValue(undefined);
@@ -151,6 +161,41 @@ describe('useAutosave', () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(opfsMocks.saveProject).toHaveBeenCalledTimes(1);
     expect(decodeSzd(opfsMocks.saveProject.mock.calls[0][1]).midiCcBindings).toBeUndefined();
+  });
+
+  it('autosaves an external-MIDI-default-only change', async () => {
+    createAutosave();
+    setProjectExternalMidiDefault({
+      kind: 'external-midi',
+      outputPortId: 'midi-out-1',
+      channel: 4,
+    });
+    await flushWatchers();
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(opfsMocks.saveProject).toHaveBeenCalledTimes(1);
+    expect(decodeSzd(opfsMocks.saveProject.mock.calls[0][1]).externalMidiDefault).toEqual({
+      kind: 'external-midi',
+      outputPortId: 'midi-out-1',
+      channel: 4,
+    });
+  });
+
+  it('autosaves mixer snapshot save and clear operations', async () => {
+    createAutosave();
+    saveMixerSnapshot('A');
+    await flushWatchers();
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(opfsMocks.saveProject).toHaveBeenCalledTimes(1);
+    expect(decodeSzd(opfsMocks.saveProject.mock.calls[0][1]).mixerSnapshots?.active).toBe('A');
+
+    opfsMocks.saveProject.mockClear();
+    clearMixerSnapshots();
+    await flushWatchers();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(opfsMocks.saveProject).toHaveBeenCalledTimes(1);
+    expect(decodeSzd(opfsMocks.saveProject.mock.calls[0][1]).mixerSnapshots).toBeUndefined();
   });
 
   it('saveNow flushes the pending debounce and saves immediately', async () => {
@@ -258,6 +303,52 @@ describe('useAutosave', () => {
     opfsMocks.loadProject.mockResolvedValue(new Uint8Array([1, 2, 3]));
     await expect(autosave.restoreAutosave()).rejects.toThrow(/zip/);
     expect(autosave.lastError.value).not.toBeNull();
+
+    // A rejected restore must not poison the shared queue.
+    await expect(autosave.saveNow()).resolves.toBe(true);
+    expect(opfsMocks.saveProject).toHaveBeenCalledTimes(1);
+  });
+
+  it('serializes restore behind an in-flight save on the same queue', async () => {
+    const autosave = createAutosave();
+    let releaseSave: () => void = () => {};
+    opfsMocks.saveProject.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseSave = resolve;
+        }),
+    );
+    opfsMocks.loadProject.mockResolvedValue(encodeSzd(makeStoredDocument('Restored')));
+
+    const saving = autosave.saveNow();
+    await vi.waitFor(() => expect(opfsMocks.saveProject).toHaveBeenCalledTimes(1));
+    const restoring = autosave.restoreAutosave();
+    expect(opfsMocks.loadProject).not.toHaveBeenCalled();
+
+    releaseSave();
+    await expect(saving).resolves.toBe(true);
+    await expect(restoring).resolves.toBe(true);
+    expect(opfsMocks.loadProject).toHaveBeenCalledTimes(1);
+    expect(store.projectName).toBe('Restored');
+  });
+
+  it('does not commit a restore whose composable was disposed while reading', async () => {
+    const autosave = createAutosave();
+    let releaseLoad: (bytes: Uint8Array) => void = () => {};
+    opfsMocks.loadProject.mockImplementation(
+      () =>
+        new Promise<Uint8Array>((resolve) => {
+          releaseLoad = resolve;
+        }),
+    );
+
+    const restoring = autosave.restoreAutosave();
+    await vi.waitFor(() => expect(opfsMocks.loadProject).toHaveBeenCalledTimes(1));
+    autosave.dispose();
+    releaseLoad(encodeSzd(makeStoredDocument('Stale restore')));
+
+    await expect(restoring).resolves.toBe(false);
+    expect(store.projectName).toBe('Untitled');
   });
 
   it('stops autosaving after dispose', async () => {

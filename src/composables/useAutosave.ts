@@ -86,8 +86,19 @@ export function useAutosave(options: UseAutosaveOptions = {}): UseAutosaveReturn
   const lastError = ref<Error | null>(null);
 
   let timer: ReturnType<typeof setTimeout> | null = null;
-  // Pending-write chain: keeps at most one OPFS write in flight at a time.
+  // Save and restore share one recovery-safe chain: a failed restore must not
+  // poison later autosaves, and a restore never races an in-flight write.
   let chain: Promise<unknown> = Promise.resolve();
+  let disposed = false;
+
+  const enqueue = <T>(operation: () => Promise<T>): Promise<T> => {
+    const run = chain.then(operation);
+    chain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  };
 
   const cancelPending = (): void => {
     if (timer !== null) {
@@ -101,8 +112,8 @@ export function useAutosave(options: UseAutosaveOptions = {}): UseAutosaveReturn
 
   /** Serializes, encodes and writes the current project to the slot. */
   const runSave = (): Promise<boolean> => {
-    const run = chain.then(async (): Promise<boolean> => {
-      if (!store.initialized) return false;
+    return enqueue(async (): Promise<boolean> => {
+      if (disposed || !store.initialized) return false;
       saving.value = true;
       try {
         const doc = serializeProject();
@@ -118,8 +129,6 @@ export function useAutosave(options: UseAutosaveOptions = {}): UseAutosaveReturn
         saving.value = false;
       }
     });
-    chain = run;
-    return run;
   };
 
   /** Trailing debounce: (re)starts the quiet-period timer. */
@@ -143,29 +152,36 @@ export function useAutosave(options: UseAutosaveOptions = {}): UseAutosaveReturn
     return runSave();
   };
 
-  const restoreAutosave = async (): Promise<boolean> => {
-    let bytes: Uint8Array;
-    try {
-      bytes = await loadProject(slotName);
-    } catch (error) {
-      if (error instanceof ProjectNotFoundError) return false;
-      if (error instanceof OpfsUnavailableError) {
-        lastError.value = error;
-        return false;
+  const restoreAutosave = (): Promise<boolean> => {
+    cancelPending();
+    return enqueue(async (): Promise<boolean> => {
+      if (disposed) return false;
+      let bytes: Uint8Array;
+      try {
+        bytes = await loadProject(slotName);
+      } catch (error) {
+        if (error instanceof ProjectNotFoundError) return false;
+        if (error instanceof OpfsUnavailableError) {
+          lastError.value = error;
+          return false;
+        }
+        lastError.value = toError(error);
+        throw error;
       }
-      lastError.value = toError(error);
-      throw error;
-    }
-    try {
-      await loadProjectDocument(decodeSzd(bytes));
-      return true;
-    } catch (error) {
-      lastError.value = toError(error);
-      throw error;
-    }
+      if (disposed) return false;
+      try {
+        await loadProjectDocument(decodeSzd(bytes));
+        lastError.value = null;
+        return true;
+      } catch (error) {
+        lastError.value = toError(error);
+        throw error;
+      }
+    });
   };
 
   const dispose = (): void => {
+    disposed = true;
     cancelPending();
     stopWatch();
   };

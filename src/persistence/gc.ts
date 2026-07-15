@@ -23,7 +23,8 @@
 
 import { deleteFont, listFonts } from '@/project/fonts';
 import type { ProjectDocument } from '@/project/serialization';
-import { type AudioAssetMeta, deleteAsset, listAssetPayloads, listAssets } from './assets';
+import { deleteAudioAssetGuarded, leasedAudioAssetIds } from './asset-leases';
+import { type AudioAssetMeta, listAssetPayloads, listAssets } from './assets';
 import { collectReferencedAssetIds, collectReferencedFontIds } from './bundle';
 import { isOpfsAvailable, listProjects, loadProject } from './opfs';
 import { decodeSzd } from './szd';
@@ -126,9 +127,13 @@ export async function garbageCollectMedia(options: MediaGcOptions = {}): Promise
   };
   if (!isOpfsAvailable()) return empty;
 
+  const extraAssetIds = new Set(options.referencedAssetIds ?? []);
+  const extraFontIds = new Set(options.referencedFontIds ?? []);
+  const protectedAssetIds = (): Set<string> =>
+    new Set([...extraAssetIds, ...leasedAudioAssetIds()]);
   const { assetIds, fontIds, complete } = await collectReferencedMediaIds(options.liveDocument, {
-    assetIds: options.referencedAssetIds,
-    fontIds: options.referencedFontIds,
+    assetIds: protectedAssetIds(),
+    fontIds: extraFontIds,
   });
   if (!complete) return { ...empty, incompleteReferences: true };
 
@@ -144,24 +149,62 @@ export async function garbageCollectMedia(options: MediaGcOptions = {}): Promise
   );
   const orphanFonts = fonts.filter((meta) => !fontIds.has(meta.id));
 
-  let reclaimedBytes = 0;
-  for (const meta of orphanAssets) reclaimedBytes += assetBytes(meta);
-  for (const payload of orphanPayloads) reclaimedBytes += payload.byteLength;
-  for (const meta of orphanFonts) reclaimedBytes += meta.byteLength;
-
-  if (!options.dryRun) {
-    for (const meta of orphanAssets) await deleteAsset(meta.id);
-    for (const payload of orphanPayloads) await deleteAsset(payload.id);
-    for (const meta of orphanFonts) await deleteFont(meta.id);
+  if (options.dryRun) {
+    return {
+      removedAssetIds: [
+        ...orphanAssets.map((meta) => meta.id),
+        ...orphanPayloads.map((payload) => payload.id),
+      ].sort(),
+      removedFontIds: orphanFonts.map((meta) => meta.id).sort(),
+      reclaimedBytes:
+        orphanAssets.reduce((total, meta) => total + assetBytes(meta), 0) +
+        orphanPayloads.reduce((total, payload) => total + payload.byteLength, 0) +
+        orphanFonts.reduce((total, meta) => total + meta.byteLength, 0),
+      incompleteReferences: false,
+    };
   }
 
+  const removedAssetIds: string[] = [];
+  const removedFontIds: string[] = [];
+  let reclaimedBytes = 0;
+  let incompleteReferences = false;
+  const deleteCandidate = async (assetId: string, byteLength: number): Promise<void> => {
+    const deleted = await deleteAudioAssetGuarded(assetId, async () => {
+      const current = await collectReferencedMediaIds(options.liveDocument, {
+        assetIds: protectedAssetIds(),
+        fontIds: extraFontIds,
+      });
+      if (!current.complete) {
+        incompleteReferences = true;
+        return true;
+      }
+      return current.assetIds.has(assetId);
+    });
+    if (deleted) {
+      removedAssetIds.push(assetId);
+      reclaimedBytes += byteLength;
+    }
+  };
+  for (const meta of orphanAssets) await deleteCandidate(meta.id, assetBytes(meta));
+  for (const payload of orphanPayloads) await deleteCandidate(payload.id, payload.byteLength);
+  for (const meta of orphanFonts) {
+    const current = await collectReferencedMediaIds(options.liveDocument, {
+      assetIds: protectedAssetIds(),
+      fontIds: extraFontIds,
+    });
+    if (!current.complete) {
+      incompleteReferences = true;
+      break;
+    }
+    if (current.fontIds.has(meta.id)) continue;
+    await deleteFont(meta.id);
+    removedFontIds.push(meta.id);
+    reclaimedBytes += meta.byteLength;
+  }
   return {
-    removedAssetIds: [
-      ...orphanAssets.map((meta) => meta.id),
-      ...orphanPayloads.map((p) => p.id),
-    ].sort(),
-    removedFontIds: orphanFonts.map((meta) => meta.id).sort(),
+    removedAssetIds: removedAssetIds.sort(),
+    removedFontIds: removedFontIds.sort(),
     reclaimedBytes,
-    incompleteReferences: false,
+    incompleteReferences,
   };
 }

@@ -6,7 +6,12 @@
  * (src/persistence/opfs.ts, src/persistence/local-file.ts).
  */
 
-import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
+import { strFromU8, strToU8, zipSync } from 'fflate';
+import {
+  ArchivePreflightError,
+  preflightAndUnzip,
+  preflightAndUnzipInWorker,
+} from '@/persistence/archive-preflight';
 import { PROJECT_DOCUMENT_SCHEMA_VERSION, type ProjectDocument } from '@/project/serialization';
 
 /** File extension used by project archives. */
@@ -90,6 +95,46 @@ export class SzdFormatError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'SzdFormatError';
+  }
+}
+
+function unzipSzd(bytes: Uint8Array): Record<string, Uint8Array> {
+  try {
+    return preflightAndUnzip(bytes, {
+      maxEntries: 4096,
+      maxEntryBytes: 512 * 1024 * 1024,
+      maxUncompressedBytes: 1024 * 1024 * 1024,
+    }).entries;
+  } catch (error) {
+    if (error instanceof ArchivePreflightError) {
+      throw new SzdFormatError(`Invalid project file: ${error.message}`);
+    }
+    throw error;
+  }
+}
+
+async function unzipSzdInWorker(
+  bytes: Uint8Array,
+  signal?: AbortSignal,
+): Promise<Record<string, Uint8Array>> {
+  try {
+    return (
+      await preflightAndUnzipInWorker(
+        bytes,
+        {
+          maxEntries: 4096,
+          maxEntryBytes: 512 * 1024 * 1024,
+          maxUncompressedBytes: 1024 * 1024 * 1024,
+        },
+        signal,
+      )
+    ).entries;
+  } catch (error) {
+    if (signal?.aborted) signal.throwIfAborted();
+    if (error instanceof ArchivePreflightError) {
+      throw new SzdFormatError(`Invalid project file: ${error.message}`);
+    }
+    throw error;
   }
 }
 
@@ -204,14 +249,7 @@ function validateDocument(value: unknown): ProjectDocument {
  *   entry is missing or malformed, the schema version is unsupported, or the
  *   archive was written by a different application.
  */
-export function decodeSzd(bytes: Uint8Array): ProjectDocument {
-  let entries: Record<string, Uint8Array>;
-  try {
-    entries = unzipSync(bytes);
-  } catch {
-    throw new SzdFormatError('Invalid project file: not a readable .szd (zip) archive');
-  }
-
+function decodeSzdEntries(entries: Record<string, Uint8Array>): ProjectDocument {
   // Reject archives written by other apps when their metadata says so; absent
   // or unreadable metadata is tolerated (project.json alone is sufficient).
   const metaBytes = entries[META_ENTRY];
@@ -237,6 +275,10 @@ export function decodeSzd(bytes: Uint8Array): ProjectDocument {
   return validateDocument(parseEntryJson(projectBytes, PROJECT_ENTRY));
 }
 
+export function decodeSzd(bytes: Uint8Array): ProjectDocument {
+  return decodeSzdEntries(unzipSzd(bytes));
+}
+
 /**
  * Extracts the bundled media (audio assets + SoundFonts) from a .szd archive.
  *
@@ -248,13 +290,7 @@ export function decodeSzd(bytes: Uint8Array): ProjectDocument {
  * @returns The bundled assets and fonts (empty when none are present).
  * @throws SzdFormatError when the bytes are not a readable zip archive.
  */
-export function decodeSzdBundle(bytes: Uint8Array): SzdMediaBundle {
-  let entries: Record<string, Uint8Array>;
-  try {
-    entries = unzipSync(bytes);
-  } catch {
-    throw new SzdFormatError('Invalid project file: not a readable .szd (zip) archive');
-  }
+function decodeSzdBundleEntries(entries: Record<string, Uint8Array>): SzdMediaBundle {
   const assets: SzdAssetEntry[] = [];
   const fonts: SzdFontEntry[] = [];
   for (const [name, data] of Object.entries(entries)) {
@@ -271,6 +307,35 @@ export function decodeSzdBundle(bytes: Uint8Array): SzdMediaBundle {
   return { assets, fonts };
 }
 
+export function decodeSzdBundle(bytes: Uint8Array): SzdMediaBundle {
+  return decodeSzdBundleEntries(unzipSzd(bytes));
+}
+
+/** Parses a project document and its media bundle from one ZIP expansion. */
+export function decodeSzdWithBundle(bytes: Uint8Array): {
+  document: ProjectDocument;
+  bundle: SzdMediaBundle;
+} {
+  const entries = unzipSzd(bytes);
+  return {
+    document: decodeSzdEntries(entries),
+    bundle: decodeSzdBundleEntries(entries),
+  };
+}
+
+/** Parses an imported project and bundle once on fflate's worker path. */
+export async function decodeSzdWithBundleInWorker(
+  bytes: Uint8Array,
+  signal?: AbortSignal,
+): Promise<{ document: ProjectDocument; bundle: SzdMediaBundle }> {
+  const entries = await unzipSzdInWorker(bytes, signal);
+  signal?.throwIfAborted();
+  return {
+    document: decodeSzdEntries(entries),
+    bundle: decodeSzdBundleEntries(entries),
+  };
+}
+
 /**
  * Reads the metadata entry of a .szd archive without validating the document
  * (useful for listings that show save timestamps).
@@ -281,7 +346,7 @@ export function decodeSzdBundle(bytes: Uint8Array): SzdMediaBundle {
 export function readSzdMeta(bytes: Uint8Array): SzdMetaDocument | null {
   let entries: Record<string, Uint8Array>;
   try {
-    entries = unzipSync(bytes);
+    entries = unzipSzd(bytes);
   } catch {
     return null;
   }

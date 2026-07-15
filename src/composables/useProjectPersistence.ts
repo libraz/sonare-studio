@@ -1,9 +1,9 @@
 import { computed, nextTick, type Ref, ref, watch } from 'vue';
 import type { useAutosave } from '@/composables/useAutosave';
 import { promptDialog } from '@/composables/useDialogs';
-import { importDawprojectWithMedia } from '@/export/dawproject';
+import { importDawprojectWithMediaResult } from '@/export/dawproject';
 import { describeError } from '@/lib/errors';
-import { importMusicXml } from '@/notation/io';
+import { importMusicXmlInWorker } from '@/notation/musicxml-import-client';
 import { createBrowserBackup, restoreBrowserBackup } from '@/persistence/backup';
 import { gatherProjectBundle, restoreProjectBundle } from '@/persistence/bundle';
 import { garbageCollectMedia } from '@/persistence/gc';
@@ -23,9 +23,15 @@ import {
   listProjects,
   loadProject,
   type StoredProjectInfo,
+  sanitizeProjectName,
   saveProject,
 } from '@/persistence/opfs';
-import { decodeSzd, decodeSzdBundle, encodeSzd, SZD_FILE_EXTENSION } from '@/persistence/szd';
+import {
+  decodeSzd,
+  decodeSzdWithBundleInWorker,
+  encodeSzd,
+  SZD_FILE_EXTENSION,
+} from '@/persistence/szd';
 import { collectHistoryReferencedMediaIds } from '@/project/commands';
 import { makeBwv565Document } from '@/project/demo/bwv565';
 import { exportProjectClipFile, exportProjectSmf } from '@/project/export';
@@ -70,6 +76,9 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   const { t } = useI18n();
 
   const dirty = ref(false);
+  // Document title and OPFS slot identity are intentionally distinct. A new
+  // or imported document has no named slot until Save/Save As succeeds.
+  const savedProjectSlot = ref<string | null>(null);
   const opfsAvailable = isOpfsAvailable();
   const projectMenuOpen = ref(false);
   const projectMenuRoot = ref<HTMLElement | null>(null);
@@ -113,17 +122,25 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     }
   }
 
-  async function markClean(): Promise<void> {
+  async function markClean(expectedDocumentKey?: string): Promise<boolean> {
     await nextTick();
+    if (
+      expectedDocumentKey !== undefined &&
+      JSON.stringify(serializeProject()) !== expectedDocumentKey
+    ) {
+      return false;
+    }
     // Reaching a clean state (after a load/save) means the change watcher may
     // have scheduled a save for content that is already persisted; drop it so
     // boot and open do not write a redundant autosave.
     autosave.cancelPending();
     dirty.value = false;
+    return true;
   }
 
   async function saveLoadedProjectToAutosave(): Promise<void> {
-    await autosave.saveNow();
+    if (await autosave.saveNow()) return;
+    throw autosave.lastError.value ?? new Error('Autosave failed');
   }
 
   /**
@@ -135,6 +152,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
    */
   async function bootProject(): Promise<void> {
     await loadProjectDocument(createTemplate('empty'));
+    savedProjectSlot.value = null;
     await markClean();
     let autosavePresent = false;
     if (isOpfsAvailable()) {
@@ -171,6 +189,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       if (!(await confirmDiscard())) return;
       const restored = await autosave.restoreAutosave();
       if (restored) {
+        savedProjectSlot.value = null;
         await markClean();
         startScreenOpen.value = false;
       }
@@ -183,6 +202,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     void runAction(async () => {
       if (!(await confirmDiscard())) return;
       await loadProjectDocument(await makeBwv565Document());
+      savedProjectSlot.value = null;
       await saveLoadedProjectToAutosave();
       await markClean();
       startScreenOpen.value = false;
@@ -207,6 +227,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     newDialogOpen.value = false;
     void runAction(async () => {
       await loadProjectDocument(payload.document);
+      savedProjectSlot.value = null;
       await saveLoadedProjectToAutosave();
       await markClean();
       startScreenOpen.value = false;
@@ -241,6 +262,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       const bytes = await loadProject(name);
       await loadProjectDocument(decodeSzd(bytes));
       store.projectName = name;
+      savedProjectSlot.value = sanitizeProjectName(name);
       rememberRecentProject(name);
       await saveLoadedProjectToAutosave();
       await markClean();
@@ -285,18 +307,16 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
         });
         return;
       }
-      const doc = decodeSzd(picked.bytes);
-      // Restore any bundled audio/SoundFonts into OPFS so the document's ids
-      // resolve; without a store there is nowhere to put them (clips stay
-      // silent), and a restore hiccup must not block opening the project.
+      const decoded = await decodeSzdWithBundleInWorker(picked.bytes);
+      const doc = decoded.document;
+      // Restore only document-referenced media after a full conflict preflight.
+      // A conflicting/malformed bundle must block the import before the active
+      // project changes, otherwise its ids could alias unrelated shared media.
       if (opfsAvailable) {
-        try {
-          await restoreProjectBundle(decodeSzdBundle(picked.bytes));
-        } catch (err) {
-          errorMessage.value = describeError(err);
-        }
+        await restoreProjectBundle(doc, decoded.bundle);
       }
       await loadProjectDocument(doc);
+      savedProjectSlot.value = null;
       await saveLoadedProjectToAutosave();
       await markClean();
       openDialogOpen.value = false;
@@ -322,7 +342,27 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
         },
       });
       if (!picked) return;
-      await loadProjectDocument(importMusicXml(picked.text, picked.name));
+      const imported = await importMusicXmlInWorker(picked.text, picked.name);
+      if (imported.report.issues.length > 0) {
+        const items = imported.report.issues
+          .map((issue) =>
+            formatMessage(t.value.shell.project.musicXmlLoss.items[issue.feature], {
+              count: issue.count,
+            }),
+          )
+          .map((item) => `• ${item}`)
+          .join('\n');
+        const confirmed = await confirmAction(
+          formatMessage(t.value.shell.project.musicXmlLoss.message, { items }),
+          {
+            title: t.value.shell.project.musicXmlLoss.title,
+            confirmLabel: t.value.shell.project.musicXmlLoss.confirm,
+          },
+        );
+        if (!confirmed) return;
+      }
+      await loadProjectDocument(imported.document);
+      savedProjectSlot.value = null;
       await saveLoadedProjectToAutosave();
       await markClean();
       openDialogOpen.value = false;
@@ -376,15 +416,19 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
         });
         return;
       }
-      await loadProjectDocument(
-        await importDawprojectWithMedia(picked.bytes, {
-          resolveExternalAudio: createExternalAudioResolver(),
-        }),
-      );
+      const imported = await importDawprojectWithMediaResult(picked.bytes, {
+        resolveExternalAudio: createExternalAudioResolver(),
+      });
+      await loadProjectDocument(imported.document);
+      savedProjectSlot.value = null;
       await saveLoadedProjectToAutosave();
       await markClean();
       openDialogOpen.value = false;
       startScreenOpen.value = false;
+      if (imported.media.issues.length > 0) {
+        const paths = imported.media.issues.slice(0, 3).map((issue) => issue.path);
+        errorMessage.value = `DAWproject imported with ${imported.media.issues.length} missing or failed audio file(s): ${paths.join(', ')}`;
+      }
     });
   }
 
@@ -397,6 +441,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       if (!(await confirmDiscard())) return;
       const doc = await smfToProjectDocument(await file.arrayBuffer(), file.name);
       await loadProjectDocument(doc);
+      savedProjectSlot.value = null;
       await saveLoadedProjectToAutosave();
       await markClean();
       openDialogOpen.value = false;
@@ -404,33 +449,40 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     });
   }
 
-  async function writeProjectToOpfs(name: string, documentName: string): Promise<void> {
+  async function writeProjectToOpfs(
+    name: string,
+    documentName: string,
+  ): Promise<{ documentKey: string; slot: string }> {
     if (isReservedProjectName(name)) {
       throw new Error(t.value.dialogs.prompts.projectNameReserved);
     }
     const doc = serializeProject();
     doc.name = documentName;
+    const documentKey = JSON.stringify(doc);
     const bytes = encodeSzd(doc, { savedAt: new Date().toISOString() });
     await saveProject(name, bytes);
-    rememberRecentProject(name);
+    const slot = sanitizeProjectName(name);
+    rememberRecentProject(slot);
+    return { documentKey, slot };
   }
 
-  async function finishSuccessfulSave(): Promise<void> {
+  async function finishSuccessfulSave(documentKey: string): Promise<void> {
     await autosave.saveNow();
-    await markClean();
+    await markClean(documentKey);
     // Edits since the last save may have stranded imported media.
     await reclaimUnusedMedia();
   }
 
   async function saveToOpfs(name: string): Promise<void> {
-    await writeProjectToOpfs(name, store.projectName);
-    await finishSuccessfulSave();
+    const saved = await writeProjectToOpfs(name, store.projectName);
+    savedProjectSlot.value = saved.slot;
+    await finishSuccessfulSave(saved.documentKey);
   }
 
   function saveProjectAction(): void {
     closeProjectMenu();
     void runAction(async () => {
-      await saveToOpfs(store.projectName);
+      await saveToOpfs(savedProjectSlot.value ?? store.projectName);
     });
   }
 
@@ -446,9 +498,22 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       });
       if (!name) return;
       void runAction(async () => {
-        await writeProjectToOpfs(name, name);
+        const slot = sanitizeProjectName(name);
+        const exists = (await listProjects()).some((project) => project.name === slot);
+        if (exists && slot !== savedProjectSlot.value) {
+          const confirmed = await confirmAction(
+            formatMessage(t.value.dialogs.prompts.saveProjectOverwriteMessage, { name: slot }),
+            {
+              title: t.value.dialogs.prompts.saveProjectOverwriteTitle,
+              confirmLabel: t.value.dialogs.prompts.save,
+            },
+          );
+          if (!confirmed) return;
+        }
+        const saved = await writeProjectToOpfs(slot, name);
         store.projectName = name;
-        await finishSuccessfulSave();
+        savedProjectSlot.value = saved.slot;
+        await finishSuccessfulSave(saved.documentKey);
       });
     })();
   }

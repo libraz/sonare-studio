@@ -7,10 +7,33 @@
  * recover after clearing site data or moving to a new browser profile.
  */
 
-import { strToU8, unzipSync, zipSync } from 'fflate';
-import { interleaveChannels, listAssets, loadAsset, saveAsset } from '@/persistence/assets';
-import { listProjects, loadProject, saveProject } from '@/persistence/opfs';
-import { listFonts, loadFont, saveFont } from '@/project/fonts';
+import { AsyncZipDeflate, strToU8, Zip } from 'fflate';
+import { preflightAndUnzipInWorker } from '@/persistence/archive-preflight';
+import {
+  deleteAsset,
+  interleaveChannels,
+  listAssets,
+  loadAsset,
+  saveAsset,
+} from '@/persistence/assets';
+import {
+  collectReferencedAssetIds,
+  collectReferencedFontIds,
+  preflightAssetRestore,
+  preflightFontRestore,
+  prepareAssetRestore,
+  prepareFontRestore,
+} from '@/persistence/bundle';
+import {
+  deleteProject,
+  listProjects,
+  loadProject,
+  ProjectNotFoundError,
+  sanitizeProjectName,
+  saveProject,
+} from '@/persistence/opfs';
+import { decodeSzd } from '@/persistence/szd';
+import { deleteFont, listFonts, loadFont, saveFont } from '@/project/fonts';
 
 export const BROWSER_BACKUP_FILE_EXTENSION = '.sonare-backup.zip';
 
@@ -45,12 +68,6 @@ function pcmBytes(channels: ReadonlyArray<Float32Array>): Uint8Array {
   return new Uint8Array(interleaved.buffer, interleaved.byteOffset, interleaved.byteLength).slice();
 }
 
-/** Reconstructs a Float32Array from interleaved-PCM bytes (alignment-safe). */
-function floatsFromPcm(bytes: Uint8Array): Float32Array {
-  const copy = bytes.slice();
-  return new Float32Array(copy.buffer, copy.byteOffset, Math.floor(copy.byteLength / 4));
-}
-
 function projectEntryName(name: string): string {
   return `${PROJECTS_PREFIX}${encodeURIComponent(name)}.szd`;
 }
@@ -73,65 +90,101 @@ function parseJson<T>(bytes: Uint8Array): T | null {
   }
 }
 
-function isRestorableAssetMeta(meta: unknown): meta is {
-  name: string;
-  sampleRate: number;
-  numChannels: number;
-  tags?: Record<string, unknown>;
-} {
-  if (typeof meta !== 'object' || meta === null || Array.isArray(meta)) return false;
-  const value = meta as { name?: unknown; sampleRate?: unknown; numChannels?: unknown };
-  return (
-    typeof value.name === 'string' &&
-    value.name.length > 0 &&
-    typeof value.sampleRate === 'number' &&
-    Number.isFinite(value.sampleRate) &&
-    value.sampleRate > 0 &&
-    typeof value.numChannels === 'number' &&
-    Number.isInteger(value.numChannels) &&
-    value.numChannels > 0
-  );
+function concatZipChunks(chunks: readonly Uint8Array[], totalBytes: number): Uint8Array {
+  const output = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return output;
 }
 
-function isRestorableFontMeta(meta: unknown): meta is { name: string } {
-  if (typeof meta !== 'object' || meta === null || Array.isArray(meta)) return false;
-  return (
-    typeof (meta as { name?: unknown }).name === 'string' &&
-    (meta as { name: string }).name.length > 0
-  );
+function createBackupZipWriter(
+  savedAt: string,
+  signal?: AbortSignal,
+): {
+  add(name: string, bytes: Uint8Array): void;
+  close(): Promise<Uint8Array>;
+} {
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  let resolveResult!: (bytes: Uint8Array) => void;
+  let rejectResult!: (error: Error) => void;
+  const result = new Promise<Uint8Array>((resolve, reject) => {
+    resolveResult = resolve;
+    rejectResult = reject;
+  });
+  const zip = new Zip((error, chunk, final) => {
+    if (error) {
+      rejectResult(error);
+      return;
+    }
+    const copy = new Uint8Array(chunk);
+    chunks.push(copy);
+    totalBytes += copy.byteLength;
+    if (final) resolveResult(concatZipChunks(chunks, totalBytes));
+  });
+  return {
+    add(name, bytes): void {
+      signal?.throwIfAborted();
+      const file = new AsyncZipDeflate(name, { level: 6 });
+      file.mtime = new Date(savedAt);
+      zip.add(file);
+      file.push(bytes, true);
+    },
+    async close(): Promise<Uint8Array> {
+      try {
+        signal?.throwIfAborted();
+        zip.end();
+        return await result;
+      } catch (error) {
+        zip.terminate();
+        throw error;
+      }
+    },
+  };
 }
 
 /**
  * Creates one zip containing all saved projects plus shared OPFS media stores.
  */
-export async function createBrowserBackup(savedAt = new Date().toISOString()): Promise<Uint8Array> {
-  const entries: Record<string, Uint8Array> = {};
+export async function createBrowserBackup(
+  savedAt = new Date().toISOString(),
+  signal?: AbortSignal,
+): Promise<Uint8Array> {
+  const zip = createBackupZipWriter(savedAt, signal);
   let projectCount = 0;
   let assetCount = 0;
   let fontCount = 0;
 
   for (const project of await listProjects()) {
-    entries[projectEntryName(project.name)] = await loadProject(project.name);
+    signal?.throwIfAborted();
+    zip.add(projectEntryName(project.name), await loadProject(project.name));
     projectCount++;
   }
 
   for (const asset of await listAssets()) {
     try {
       const loaded = await loadAsset(asset.id);
-      entries[`${ASSETS_PREFIX}${asset.id}.json`] = strToU8(JSON.stringify(loaded.meta));
-      entries[`${ASSETS_PREFIX}${asset.id}.pcm`] = pcmBytes(loaded.channels);
+      signal?.throwIfAborted();
+      zip.add(`${ASSETS_PREFIX}${asset.id}.json`, strToU8(JSON.stringify(loaded.meta)));
+      zip.add(`${ASSETS_PREFIX}${asset.id}.pcm`, pcmBytes(loaded.channels));
       assetCount++;
     } catch {
+      if (signal?.aborted) signal.throwIfAborted();
       // Keep the archive usable if one shared asset sidecar/payload is broken.
     }
   }
 
   for (const font of await listFonts()) {
     try {
-      entries[`${FONTS_PREFIX}${font.id}.json`] = strToU8(JSON.stringify(font));
-      entries[`${FONTS_PREFIX}${font.id}.sf2`] = new Uint8Array(await loadFont(font.id));
+      zip.add(`${FONTS_PREFIX}${font.id}.json`, strToU8(JSON.stringify(font)));
+      zip.add(`${FONTS_PREFIX}${font.id}.sf2`, new Uint8Array(await loadFont(font.id)));
+      signal?.throwIfAborted();
       fontCount++;
     } catch {
+      if (signal?.aborted) signal.throwIfAborted();
       // Keep the archive usable if one shared font sidecar/payload is broken.
     }
   }
@@ -145,15 +198,26 @@ export async function createBrowserBackup(savedAt = new Date().toISOString()): P
     assets: assetCount,
     fonts: fontCount,
   };
-  entries[META_ENTRY] = strToU8(JSON.stringify(meta));
-  return zipSync(entries, { mtime: savedAt });
+  zip.add(META_ENTRY, strToU8(JSON.stringify(meta)));
+  return zip.close();
 }
 
-/**
- * Restores a browser backup into the OPFS stores, overwriting matching names/ids.
- */
-export async function restoreBrowserBackup(bytes: Uint8Array): Promise<BrowserBackupRestoreResult> {
-  const entries = unzipSync(bytes);
+/** Restores a browser backup as one preflighted, rollback-capable transaction. */
+export async function restoreBrowserBackup(
+  bytes: Uint8Array,
+  signal?: AbortSignal,
+): Promise<BrowserBackupRestoreResult> {
+  const entries = (
+    await preflightAndUnzipInWorker(
+      bytes,
+      {
+        maxEntries: 20_000,
+        maxEntryBytes: 512 * 1024 * 1024,
+        maxUncompressedBytes: 1024 * 1024 * 1024,
+      },
+      signal,
+    )
+  ).entries;
   const meta = entries[META_ENTRY]
     ? parseJson<Partial<BrowserBackupMeta>>(entries[META_ENTRY])
     : null;
@@ -161,56 +225,101 @@ export async function restoreBrowserBackup(bytes: Uint8Array): Promise<BrowserBa
     throw new Error('Invalid sonare browser backup.');
   }
 
-  const result: BrowserBackupRestoreResult = { projects: 0, assets: 0, fonts: 0 };
-
+  const projects: Array<{ name: string; bytes: Uint8Array }> = [];
+  const projectNames = new Set<string>();
+  const referencedAssets = new Set<string>();
+  const referencedFonts = new Set<string>();
   for (const [entryName, data] of Object.entries(entries)) {
-    const name = projectNameFromEntry(entryName);
-    if (!name) continue;
-    await saveProject(name, data);
-    result.projects++;
+    signal?.throwIfAborted();
+    const archiveName = projectNameFromEntry(entryName);
+    if (!archiveName) continue;
+    const name = sanitizeProjectName(archiveName);
+    if (projectNames.has(name)) {
+      throw new Error(`Browser backup contains colliding project name: "${name}"`);
+    }
+    projectNames.add(name);
+    const doc = decodeSzd(data);
+    for (const id of collectReferencedAssetIds(doc)) referencedAssets.add(id);
+    for (const id of collectReferencedFontIds(doc)) referencedFonts.add(id);
+    projects.push({ name, bytes: data });
   }
 
-  for (const [entryName, data] of Object.entries(entries)) {
-    if (!entryName.startsWith(ASSETS_PREFIX) || !entryName.endsWith('.pcm')) continue;
+  const assets = Object.entries(entries).flatMap(([entryName, data]) => {
+    if (!entryName.startsWith(ASSETS_PREFIX) || !entryName.endsWith('.pcm')) return [];
     const id = entryName.slice(ASSETS_PREFIX.length, -'.pcm'.length);
-    if (!MEDIA_ID_PATTERN.test(id)) continue;
+    if (!MEDIA_ID_PATTERN.test(id) || !referencedAssets.has(id)) return [];
     const metaBytes = entries[`${ASSETS_PREFIX}${id}.json`];
-    if (!metaBytes) continue;
-    if (data.byteLength % 4 !== 0) continue;
-    const meta = parseJson<unknown>(metaBytes);
-    if (!isRestorableAssetMeta(meta)) continue;
+    return metaBytes ? [prepareAssetRestore({ id, meta: metaBytes, pcm: data })] : [];
+  });
+  const fonts = Object.entries(entries).flatMap(([entryName, data]) => {
+    if (!entryName.startsWith(FONTS_PREFIX) || !entryName.endsWith('.sf2')) return [];
+    const id = entryName.slice(FONTS_PREFIX.length, -'.sf2'.length);
+    if (!MEDIA_ID_PATTERN.test(id) || !referencedFonts.has(id)) return [];
+    const metaBytes = entries[`${FONTS_PREFIX}${id}.json`];
+    return metaBytes ? [prepareFontRestore({ id, meta: metaBytes, sf2: data })] : [];
+  });
+
+  const existingAssets = new Set<string>();
+  const existingFonts = new Set<string>();
+  for (const entry of assets) {
+    if (await preflightAssetRestore(entry)) existingAssets.add(entry.id);
+    signal?.throwIfAborted();
+  }
+  for (const entry of fonts) {
+    if (await preflightFontRestore(entry)) existingFonts.add(entry.id);
+    signal?.throwIfAborted();
+  }
+  const previousProjects = new Map<string, Uint8Array | null>();
+  for (const project of projects) {
     try {
+      previousProjects.set(project.name, await loadProject(project.name));
+      signal?.throwIfAborted();
+    } catch (error) {
+      if (error instanceof ProjectNotFoundError) previousProjects.set(project.name, null);
+      else throw error;
+    }
+  }
+
+  const createdAssets: string[] = [];
+  const createdFonts: string[] = [];
+  try {
+    for (const entry of assets) {
+      if (existingAssets.has(entry.id)) continue;
+      createdAssets.push(entry.id);
       await saveAsset(
         {
-          id,
-          name: meta.name,
-          sampleRate: meta.sampleRate,
-          numChannels: meta.numChannels,
-          ...(meta.tags ? { tags: meta.tags } : {}),
+          id: entry.id,
+          name: entry.meta.name,
+          sampleRate: entry.meta.sampleRate,
+          numChannels: entry.meta.numChannels,
+          ...(entry.meta.tags ? { tags: entry.meta.tags } : {}),
         },
-        floatsFromPcm(data),
+        entry.audio,
       );
-      result.assets++;
-    } catch {
-      // Keep restoring the rest of the archive if one media entry is corrupt.
+      signal?.throwIfAborted();
     }
+    for (const entry of fonts) {
+      if (existingFonts.has(entry.id)) continue;
+      createdFonts.push(entry.id);
+      await saveFont({ id: entry.id, name: entry.meta.name }, entry.data);
+      signal?.throwIfAborted();
+    }
+    for (const project of projects) {
+      await saveProject(project.name, project.bytes);
+      signal?.throwIfAborted();
+    }
+  } catch (error) {
+    await Promise.allSettled([
+      ...projects.map(async (project) => {
+        const previous = previousProjects.get(project.name);
+        if (previous) await saveProject(project.name, previous);
+        else await deleteProject(project.name);
+      }),
+      ...createdAssets.map((id) => deleteAsset(id)),
+      ...createdFonts.map((id) => deleteFont(id)),
+    ]);
+    throw error;
   }
 
-  for (const [entryName, data] of Object.entries(entries)) {
-    if (!entryName.startsWith(FONTS_PREFIX) || !entryName.endsWith('.sf2')) continue;
-    const id = entryName.slice(FONTS_PREFIX.length, -'.sf2'.length);
-    if (!MEDIA_ID_PATTERN.test(id)) continue;
-    const metaBytes = entries[`${FONTS_PREFIX}${id}.json`];
-    if (!metaBytes) continue;
-    const meta = parseJson<unknown>(metaBytes);
-    if (!isRestorableFontMeta(meta)) continue;
-    try {
-      await saveFont({ id, name: meta.name }, data);
-      result.fonts++;
-    } catch {
-      // Keep restoring the rest of the archive if one font entry is corrupt.
-    }
-  }
-
-  return result;
+  return { projects: projects.length, assets: assets.length, fonts: fonts.length };
 }

@@ -9,8 +9,9 @@ import {
   clearHistory,
   deleteClip,
   setTempoSegments,
+  undo,
 } from '@/project/commands';
-import { useProjectStore } from '@/project/store';
+import { getProject, useProjectStore } from '@/project/store';
 
 const assetStore = vi.hoisted(() => ({
   audioAssetUri: (assetId: string) => `asset:${assetId}`,
@@ -76,6 +77,36 @@ describe('useProjectAudioAssets', () => {
     const clip = store.clips.find((entry) => entry.id === clipId);
     expect(clip?.startPpq).toBe(4);
     expect(clip?.lengthPpq).toBeCloseTo(2, 6);
+  });
+
+  it('does not strand an empty audio track when new-track placement fails', async () => {
+    assetStore.loadAssetMeta.mockResolvedValue({
+      id: 'asset-1',
+      name: 'Broken placement',
+      sampleRate: 48000,
+      numChannels: 1,
+      numFrames: 48000,
+    });
+    const assets = useProjectAudioAssets({
+      closeProjectMenu: vi.fn(),
+      renderInfo: ref(''),
+      positionPpq: ref(0),
+      runAction: async (action) => action(),
+    });
+    clearHistory();
+    const initialTrackIds = store.tracks.map((track) => track.id);
+    const initialClipIds = store.clips.map((clip) => clip.id);
+    const project = getProject();
+    const spy = vi.spyOn(project, 'addClip').mockImplementation(() => {
+      throw new Error('placement failed');
+    });
+
+    await expect(assets.placeAssetAtPlayhead('asset-1')).rejects.toThrow('placement failed');
+    spy.mockRestore();
+
+    expect(store.tracks.map((track) => track.id)).toEqual(initialTrackIds);
+    expect(store.clips.map((clip) => clip.id)).toEqual(initialClipIds);
+    expect(undo()).toBe(false);
   });
 
   it('redetects clip tempo from the clip source window, not the whole asset', async () => {

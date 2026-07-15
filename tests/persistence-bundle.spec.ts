@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { clearAudioAssetCache, loadAsset, loadAssetMeta, saveAsset } from '@/persistence/assets';
+import {
+  clearAudioAssetCache,
+  computeAssetId,
+  loadAsset,
+  loadAssetMeta,
+  saveAsset,
+} from '@/persistence/assets';
 import {
   collectReferencedAssetIds,
   collectReferencedFontIds,
@@ -106,7 +112,7 @@ describe('bundle gather/restore round-trip', () => {
     clearFontCache();
     await expect(loadAsset('clip1')).rejects.toThrow();
 
-    await restoreProjectBundle(bundle);
+    await restoreProjectBundle(doc, bundle);
 
     expect((await loadAsset('clip1')).channels).toEqual(stereo());
     expect((await loadAssetMeta('clip1')).tags).toEqual({ lufs: -12 });
@@ -122,5 +128,135 @@ describe('bundle gather/restore round-trip', () => {
     const bundle = await gatherProjectBundle(makeDocument());
     expect(bundle.assets.map((a) => a.id)).toEqual(['clip1']);
     expect(bundle.fonts).toEqual([]);
+  });
+
+  it('ignores unreferenced archive media without decoding or storing it', async () => {
+    const doc = makeDocument();
+    doc.tracks[0].clips = [];
+    doc.tracks[0].frozen = undefined;
+    doc.tracks[0].instrument = undefined;
+
+    await restoreProjectBundle(doc, {
+      assets: [
+        {
+          id: 'unreferenced',
+          meta: new TextEncoder().encode('{not json'),
+          pcm: new Uint8Array([1, 2, 3]),
+        },
+      ],
+      fonts: [],
+    });
+
+    await expect(loadAsset('unreferenced')).rejects.toThrow();
+  });
+
+  it('preflights every referenced id and never overwrites conflicting shared media', async () => {
+    await saveAsset({ id: 'clip1', name: 'Existing', sampleRate: 48000 }, stereo());
+    const conflicting = [new Float32Array([0.9]), new Float32Array([-0.9])];
+    const interleaved = new Float32Array([0.9, -0.9]);
+    const bundle = {
+      assets: [
+        {
+          id: 'clip1',
+          meta: new TextEncoder().encode(
+            JSON.stringify({
+              id: 'clip1',
+              name: 'Conflict',
+              sampleRate: 48000,
+              numChannels: 2,
+              numFrames: 1,
+            }),
+          ),
+          pcm: new Uint8Array(interleaved.buffer).slice(),
+        },
+      ],
+      fonts: [],
+    };
+    const doc = makeDocument();
+    doc.tracks[0].clips[0].takes = [];
+    doc.tracks[0].frozen = undefined;
+    doc.tracks[0].instrument = undefined;
+
+    await expect(restoreProjectBundle(doc, bundle)).rejects.toThrow('conflicts');
+    expect((await loadAsset('clip1')).channels).toEqual(stereo());
+    expect((await loadAsset('clip1')).channels).not.toEqual(conflicting);
+  });
+
+  it('rejects a hash-shaped asset id whose payload does not match', async () => {
+    const audio = new Float32Array([0.25]);
+    const actualId = computeAssetId(audio, 48000, 1);
+    const forgedId = actualId === '0000000000000000' ? '1111111111111111' : '0000000000000000';
+    const doc = makeDocument();
+    doc.tracks[0].clips = [
+      {
+        ...doc.tracks[0].clips[0],
+        assetId: forgedId,
+        takes: [],
+      },
+    ];
+    doc.tracks[0].frozen = undefined;
+    doc.tracks[0].instrument = undefined;
+
+    await expect(
+      restoreProjectBundle(doc, {
+        assets: [
+          {
+            id: forgedId,
+            meta: new TextEncoder().encode(
+              JSON.stringify({
+                id: forgedId,
+                name: 'Forged',
+                sampleRate: 48000,
+                numChannels: 1,
+                numFrames: 1,
+              }),
+            ),
+            pcm: new Uint8Array(audio.buffer).slice(),
+          },
+        ],
+        fonts: [],
+      }),
+    ).rejects.toThrow('does not match its content id');
+  });
+
+  it('preflights font conflicts before committing an otherwise new audio asset', async () => {
+    const existingFont = new Uint8Array([1, 2, 3]);
+    await saveFont({ id: 'fontA', name: 'Existing font' }, existingFont);
+    const audio = new Float32Array([0.25]);
+    const doc = makeDocument();
+    doc.tracks[0].clips[0].takes = [];
+    doc.tracks[0].frozen = undefined;
+
+    await expect(
+      restoreProjectBundle(doc, {
+        assets: [
+          {
+            id: 'clip1',
+            meta: new TextEncoder().encode(
+              JSON.stringify({
+                id: 'clip1',
+                name: 'New audio',
+                sampleRate: 48000,
+                numChannels: 1,
+                numFrames: 1,
+              }),
+            ),
+            pcm: new Uint8Array(audio.buffer).slice(),
+          },
+        ],
+        fonts: [
+          {
+            id: 'fontA',
+            meta: new TextEncoder().encode(
+              JSON.stringify({ id: 'fontA', name: 'Conflict', byteLength: 3 }),
+            ),
+            sf2: new Uint8Array([9, 9, 9]),
+          },
+        ],
+      }),
+    ).rejects.toThrow('conflicts');
+
+    await expect(loadAsset('clip1')).rejects.toThrow();
+    expect(await loadFont('fontA')).toEqual(existingFont);
   });
 });

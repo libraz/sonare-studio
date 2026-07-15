@@ -113,6 +113,30 @@ export interface AudioAssetMeta {
   tags?: AudioAssetTags;
 }
 
+/** User-facing metadata kept separately from immutable PCM content fields. */
+export interface AudioAssetAlias {
+  name: string;
+  tags?: AudioAssetTags;
+}
+
+interface StoredAudioAssetRecord {
+  schemaVersion: 2;
+  content: {
+    id: string;
+    sampleRate: number;
+    numChannels: number;
+    numFrames: number;
+  };
+  aliases: AudioAssetAlias[];
+}
+
+/** Result used by save→project transactions to roll back newly published content. */
+export interface SavedAudioAsset {
+  meta: AudioAssetMeta;
+  /** True only when this call published a new PCM payload. */
+  created: boolean;
+}
+
 /** Input accepted by {@link saveAsset}; numChannels/numFrames are derived. */
 export interface SaveAssetInput {
   /** Asset id override; defaults to the deterministic content hash. */
@@ -125,6 +149,8 @@ export interface SaveAssetInput {
   numChannels?: number;
   /** Optional analysis tags stored in the sidecar. */
   tags?: AudioAssetTags;
+  /** Called synchronously after content id resolution and before OPFS awaits. */
+  onIdResolved?: (id: string) => void;
 }
 
 /** A loaded asset: its metadata plus planar per-channel sample buffers. */
@@ -145,6 +171,75 @@ export function audioAssetUri(assetId: string): string {
 
 /** In-memory cache of loaded assets (playback re-schedules often). */
 const audioCache = new Map<string, LoadedAudioAsset>();
+
+/** Default retained PCM budget for the decoded-audio LRU (256 MiB). */
+export const DEFAULT_AUDIO_ASSET_CACHE_BYTE_BUDGET = 256 * 1024 * 1024;
+
+let audioCacheByteBudget = DEFAULT_AUDIO_ASSET_CACHE_BYTE_BUDGET;
+let audioCacheBytes = 0;
+
+function loadedAssetBytes(asset: LoadedAudioAsset): number {
+  return asset.channels.reduce((sum, channel) => sum + channel.byteLength, 0);
+}
+
+function removeCachedAsset(id: string): void {
+  const existing = audioCache.get(id);
+  if (!existing) return;
+  audioCache.delete(id);
+  audioCacheBytes -= loadedAssetBytes(existing);
+}
+
+function cachedAsset(id: string): LoadedAudioAsset | undefined {
+  const cached = audioCache.get(id);
+  if (!cached) return undefined;
+  // Map insertion order is the LRU order. Returned buffers remain alive for
+  // current consumers even if a later insertion evicts this cache reference.
+  audioCache.delete(id);
+  audioCache.set(id, cached);
+  return cached;
+}
+
+function cacheAsset(id: string, asset: LoadedAudioAsset): void {
+  removeCachedAsset(id);
+  const bytes = loadedAssetBytes(asset);
+  if (bytes > audioCacheByteBudget) return;
+  while (audioCache.size > 0 && audioCacheBytes + bytes > audioCacheByteBudget) {
+    const oldest = audioCache.keys().next().value;
+    if (oldest === undefined) break;
+    removeCachedAsset(oldest);
+  }
+  audioCache.set(id, asset);
+  audioCacheBytes += bytes;
+}
+
+/** Current decoded-audio LRU usage for diagnostics and memory tests. */
+export function audioAssetCacheStats(): {
+  entries: number;
+  bytes: number;
+  budgetBytes: number;
+  /** Least-recently-used to most-recently-used ids. */
+  ids: string[];
+} {
+  return {
+    entries: audioCache.size,
+    bytes: audioCacheBytes,
+    budgetBytes: audioCacheByteBudget,
+    ids: [...audioCache.keys()],
+  };
+}
+
+/** Sets the decoded-audio cache byte budget and evicts least-recently-used entries. */
+export function configureAudioAssetCacheByteBudget(bytes: number): void {
+  if (!Number.isFinite(bytes) || bytes < 0) {
+    throw new RangeError(`Audio cache byte budget must be finite and >= 0, got ${bytes}`);
+  }
+  audioCacheByteBudget = Math.floor(bytes);
+  while (audioCacheBytes > audioCacheByteBudget && audioCache.size > 0) {
+    const oldest = audioCache.keys().next().value;
+    if (oldest === undefined) break;
+    removeCachedAsset(oldest);
+  }
+}
 
 const NUMERIC_TAG_KEYS = [
   'bpm',
@@ -194,6 +289,7 @@ function sanitizeAudioAssetTags(raw: AudioAssetTags | undefined): AudioAssetTags
 /** Drops all cached asset audio (tests, memory pressure handling). */
 export function clearAudioAssetCache(): void {
   audioCache.clear();
+  audioCacheBytes = 0;
 }
 
 /** Throws {@link InvalidAssetError} unless the id is a safe file base name. */
@@ -321,44 +417,144 @@ async function writeFile(
   const handle = await dir.getFileHandle(fileName, { create: true });
   const writable = await handle.createWritable();
   try {
-    // Copy so wasm-backed or shared buffers are never handed to the stream.
-    await writable.write(new Uint8Array(bytes));
-  } finally {
+    // Bound transient copies: wasm-backed/shared input must not be retained by
+    // the stream, but duplicating a multi-gigabyte PCM payload at once can OOM.
+    const chunkBytes = 4 * 1024 * 1024;
+    for (let offset = 0; offset < bytes.byteLength; offset += chunkBytes) {
+      await writable.write(bytes.slice(offset, Math.min(bytes.byteLength, offset + chunkBytes)));
+    }
     await writable.close();
+  } catch (error) {
+    try {
+      await writable.abort?.();
+    } catch {
+      // Preserve the original write/close failure.
+    }
+    throw error;
   }
+}
+
+function validatedContentMeta(
+  value: Partial<AudioAssetMeta>,
+  id: string,
+  alias: AudioAssetAlias,
+): AudioAssetMeta {
+  if (
+    value.id !== id ||
+    typeof value.sampleRate !== 'number' ||
+    !Number.isFinite(value.sampleRate) ||
+    value.sampleRate <= 0 ||
+    !Number.isInteger(value.numChannels) ||
+    (value.numChannels as number) < 1 ||
+    !Number.isInteger(value.numFrames) ||
+    (value.numFrames as number) < 0
+  ) {
+    throw new InvalidAssetError(`Asset "${id}": malformed metadata sidecar`);
+  }
+  return {
+    id,
+    name: alias.name,
+    sampleRate: value.sampleRate,
+    numChannels: value.numChannels as number,
+    numFrames: value.numFrames as number,
+    ...(alias.tags ? { tags: { ...alias.tags } } : {}),
+  };
+}
+
+function validateAlias(value: unknown, id: string): AudioAssetAlias {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new InvalidAssetError(`Asset "${id}": malformed metadata alias`);
+  }
+  const raw = value as Partial<AudioAssetAlias>;
+  if (typeof raw.name !== 'string' || raw.name.length === 0) {
+    throw new InvalidAssetError(`Asset "${id}": malformed metadata alias`);
+  }
+  const tags =
+    typeof raw.tags === 'object' && raw.tags !== null
+      ? sanitizeAudioAssetTags(raw.tags as AudioAssetTags)
+      : undefined;
+  return { name: raw.name, ...(tags ? { tags } : {}) };
+}
+
+function recordFromMeta(meta: AudioAssetMeta, aliases: AudioAssetAlias[]): StoredAudioAssetRecord {
+  return {
+    schemaVersion: 2,
+    content: {
+      id: meta.id,
+      sampleRate: meta.sampleRate,
+      numChannels: meta.numChannels,
+      numFrames: meta.numFrames,
+    },
+    aliases: aliases.map((alias) => ({
+      name: alias.name,
+      ...(alias.tags ? { tags: { ...alias.tags } } : {}),
+    })),
+  };
+}
+
+function decodeStoredRecord(
+  value: unknown,
+  id: string,
+): { meta: AudioAssetMeta; aliases: AudioAssetAlias[]; record: StoredAudioAssetRecord } {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new InvalidAssetError(`Asset "${id}": metadata sidecar is not a JSON object`);
+  }
+  const raw = value as Partial<StoredAudioAssetRecord> & Partial<AudioAssetMeta>;
+  if (raw.schemaVersion === 2) {
+    if (
+      typeof raw.content !== 'object' ||
+      raw.content === null ||
+      !Array.isArray(raw.aliases) ||
+      raw.aliases.length === 0
+    ) {
+      throw new InvalidAssetError(`Asset "${id}": malformed metadata sidecar`);
+    }
+    const aliases = raw.aliases.map((alias) => validateAlias(alias, id));
+    const meta = validatedContentMeta(
+      raw.content as Partial<AudioAssetMeta>,
+      id,
+      aliases[aliases.length - 1],
+    );
+    return { meta, aliases, record: recordFromMeta(meta, aliases) };
+  }
+  // Legacy v1 sidecars stored the mutable display metadata beside content.
+  if (typeof raw.name !== 'string' || raw.name.length === 0) {
+    throw new InvalidAssetError(`Asset "${id}": malformed metadata sidecar`);
+  }
+  const alias = validateAlias({ name: raw.name, tags: raw.tags }, id);
+  const meta = validatedContentMeta(raw, id, alias);
+  return { meta, aliases: [alias], record: recordFromMeta(meta, [alias]) };
 }
 
 /** Validates a parsed sidecar object into an {@link AudioAssetMeta}. */
 function validateMeta(value: unknown, id: string): AudioAssetMeta {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new InvalidAssetError(`Asset "${id}": metadata sidecar is not a JSON object`);
+  return decodeStoredRecord(value, id).meta;
+}
+
+function aliasesEqual(a: AudioAssetAlias, b: AudioAssetAlias): boolean {
+  return a.name === b.name && JSON.stringify(a.tags ?? {}) === JSON.stringify(b.tags ?? {});
+}
+
+async function readOptionalFile(
+  dir: FileSystemDirectoryHandle,
+  fileName: string,
+): Promise<Uint8Array | null> {
+  try {
+    const handle = await dir.getFileHandle(fileName);
+    const file = await handle.getFile();
+    return new Uint8Array(await file.arrayBuffer());
+  } catch (error) {
+    if (isNotFoundError(error)) return null;
+    throw error;
   }
-  const meta = value as Partial<AudioAssetMeta>;
-  if (
-    meta.id !== id ||
-    typeof meta.name !== 'string' ||
-    typeof meta.sampleRate !== 'number' ||
-    !Number.isFinite(meta.sampleRate) ||
-    meta.sampleRate <= 0 ||
-    !Number.isInteger(meta.numChannels) ||
-    (meta.numChannels as number) < 1 ||
-    !Number.isInteger(meta.numFrames) ||
-    (meta.numFrames as number) < 0
-  ) {
-    throw new InvalidAssetError(`Asset "${id}": malformed metadata sidecar`);
+}
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.byteLength !== b.byteLength) return false;
+  for (let i = 0; i < a.byteLength; i++) {
+    if (a[i] !== b[i]) return false;
   }
-  const out: AudioAssetMeta = {
-    id,
-    name: meta.name,
-    sampleRate: meta.sampleRate,
-    numChannels: meta.numChannels as number,
-    numFrames: meta.numFrames as number,
-  };
-  if (typeof meta.tags === 'object' && meta.tags !== null) {
-    const tags = sanitizeAudioAssetTags(meta.tags as AudioAssetTags);
-    if (tags) out.tags = tags;
-  }
-  return out;
+  return true;
 }
 
 /**
@@ -371,10 +567,10 @@ function validateMeta(value: unknown, id: string): AudioAssetMeta {
  * @param audio Planar channel buffers, or one interleaved frame-major buffer.
  * @returns The full metadata that was written.
  */
-export async function saveAsset(
+export async function saveAssetWithStatus(
   input: SaveAssetInput,
   audio: Float32Array | ReadonlyArray<Float32Array>,
-): Promise<AudioAssetMeta> {
+): Promise<SavedAudioAsset> {
   if (typeof input.name !== 'string' || input.name.length === 0) {
     throw new InvalidAssetError('Asset name must not be empty');
   }
@@ -407,7 +603,8 @@ export async function saveAsset(
   const id = validateAssetId(
     input.id ?? computeAssetId(interleaved, input.sampleRate, numChannels),
   );
-  const meta: AudioAssetMeta = {
+  input.onIdResolved?.(id);
+  const requestedMeta: AudioAssetMeta = {
     id,
     name: input.name,
     sampleRate: input.sampleRate,
@@ -415,7 +612,11 @@ export async function saveAsset(
     numFrames,
   };
   const tags = sanitizeAudioAssetTags(input.tags);
-  if (tags) meta.tags = tags;
+  if (tags) requestedMeta.tags = tags;
+  const requestedAlias: AudioAssetAlias = {
+    name: input.name,
+    ...(tags ? { tags: { ...tags } } : {}),
+  };
 
   const dir = await assetsDirectory();
   const pcmBytes = new Uint8Array(
@@ -423,10 +624,67 @@ export async function saveAsset(
     interleaved.byteOffset,
     interleaved.byteLength,
   );
-  await writeFile(dir, id + PCM_EXTENSION, pcmBytes);
-  await writeFile(dir, id + META_EXTENSION, new TextEncoder().encode(JSON.stringify(meta)));
-  audioCache.set(id, { meta, channels: deinterleaveChannels(interleaved, numChannels) });
-  return { ...meta, ...(meta.tags ? { tags: { ...meta.tags } } : {}) };
+  const existingPcm = await readOptionalFile(dir, id + PCM_EXTENSION);
+  const existingSidecar = await readOptionalFile(dir, id + META_EXTENSION);
+  if (existingPcm !== null && !bytesEqual(existingPcm, pcmBytes)) {
+    throw new InvalidAssetError(`Asset "${id}": immutable PCM content collision`);
+  }
+  if (existingPcm === null && existingSidecar !== null) {
+    throw new InvalidAssetError(`Asset "${id}": metadata exists without its PCM payload`);
+  }
+
+  let aliases = [requestedAlias];
+  if (existingSidecar !== null) {
+    let stored: ReturnType<typeof decodeStoredRecord>;
+    try {
+      stored = decodeStoredRecord(JSON.parse(new TextDecoder().decode(existingSidecar)), id);
+    } catch (error) {
+      if (error instanceof InvalidAssetError) throw error;
+      throw new InvalidAssetError(`Asset "${id}": metadata sidecar is not valid JSON`);
+    }
+    if (
+      stored.meta.sampleRate !== requestedMeta.sampleRate ||
+      stored.meta.numChannels !== requestedMeta.numChannels ||
+      stored.meta.numFrames !== requestedMeta.numFrames
+    ) {
+      throw new InvalidAssetError(`Asset "${id}": immutable content metadata collision`);
+    }
+    aliases = [...stored.aliases];
+    if (!aliases.some((alias) => aliasesEqual(alias, requestedAlias))) aliases.push(requestedAlias);
+  }
+  const record = recordFromMeta(requestedMeta, aliases);
+  const latestMeta = validatedContentMeta(record.content, id, aliases[aliases.length - 1]);
+  const created = existingPcm === null;
+  if (created) await writeFile(dir, id + PCM_EXTENSION, pcmBytes);
+  try {
+    await writeFile(dir, id + META_EXTENSION, new TextEncoder().encode(JSON.stringify(record)));
+  } catch (error) {
+    if (created) {
+      for (const fileName of [id + PCM_EXTENSION, id + META_EXTENSION]) {
+        try {
+          await dir.removeEntry(fileName);
+        } catch (cleanupError) {
+          if (!isNotFoundError(cleanupError)) {
+            // Best effort: the sidecar is the publish marker, so an orphan PCM
+            // remains invisible and is later collected by asset GC.
+          }
+        }
+      }
+    }
+    throw error;
+  }
+  cacheAsset(id, {
+    meta: latestMeta,
+    channels: deinterleaveChannels(interleaved, numChannels),
+  });
+  return { meta: latestMeta, created };
+}
+
+export async function saveAsset(
+  input: SaveAssetInput,
+  audio: Float32Array | ReadonlyArray<Float32Array>,
+): Promise<AudioAssetMeta> {
+  return (await saveAssetWithStatus(input, audio)).meta;
 }
 
 /**
@@ -438,7 +696,7 @@ export async function saveAsset(
  */
 export async function loadAssetMeta(id: string): Promise<AudioAssetMeta> {
   validateAssetId(id);
-  const cached = audioCache.get(id);
+  const cached = cachedAsset(id);
   if (cached) return cached.meta;
   const dir = await assetsDirectory();
   let file: File;
@@ -458,6 +716,22 @@ export async function loadAssetMeta(id: string): Promise<AudioAssetMeta> {
   return validateMeta(parsed, id);
 }
 
+/** Lists every preserved user-facing alias for one immutable content id. */
+export async function listAssetAliases(id: string): Promise<AudioAssetAlias[]> {
+  validateAssetId(id);
+  const dir = await assetsDirectory();
+  const bytes = await readOptionalFile(dir, id + META_EXTENSION);
+  if (bytes === null) throw new AssetNotFoundError(id);
+  try {
+    return decodeStoredRecord(JSON.parse(new TextDecoder().decode(bytes)), id).aliases.map(
+      (alias) => ({ name: alias.name, ...(alias.tags ? { tags: { ...alias.tags } } : {}) }),
+    );
+  } catch (error) {
+    if (error instanceof InvalidAssetError) throw error;
+    throw new InvalidAssetError(`Asset "${id}": metadata sidecar is not valid JSON`);
+  }
+}
+
 /**
  * Reads an asset's metadata and PCM payload, deinterleaved to planar channel
  * buffers. Results are cached in memory; treat the returned buffers as
@@ -470,7 +744,7 @@ export async function loadAssetMeta(id: string): Promise<AudioAssetMeta> {
  */
 export async function loadAsset(id: string): Promise<LoadedAudioAsset> {
   validateAssetId(id);
-  const cached = audioCache.get(id);
+  const cached = cachedAsset(id);
   if (cached) return cached;
   const meta = await loadAssetMeta(id);
   const dir = await assetsDirectory();
@@ -491,7 +765,7 @@ export async function loadAsset(id: string): Promise<LoadedAudioAsset> {
   }
   const channels = deinterleaveChannels(new Float32Array(bytes), meta.numChannels);
   const loaded: LoadedAudioAsset = { meta, channels };
-  audioCache.set(id, loaded);
+  cacheAsset(id, loaded);
   return loaded;
 }
 
@@ -555,7 +829,7 @@ export async function listAssetPayloads(): Promise<AudioAssetPayloadInfo[]> {
 export async function deleteAsset(id: string): Promise<void> {
   validateAssetId(id);
   const dir = await assetsDirectory();
-  audioCache.delete(id);
+  removeCachedAsset(id);
   for (const fileName of [id + PCM_EXTENSION, id + META_EXTENSION]) {
     try {
       await dir.removeEntry(fileName);

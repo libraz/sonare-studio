@@ -1,11 +1,12 @@
 import { computed, type Ref, ref } from 'vue';
 import { confirmDialog } from '@/composables/useDialogs';
+import { leaseAudioAssets } from '@/persistence/asset-leases';
 import { loadAsset, loadAssetMeta } from '@/persistence/assets';
 import { analyzeAudioTags, decodeAndIngest, resolveAudioAnalysis } from '@/project/audio-import';
 import {
   addAudioClip,
-  addAudioTrack,
-  deleteClip,
+  addBouncedClip,
+  replaceAudioClipAsset,
   setActiveClip,
   setClipWarp,
 } from '@/project/commands';
@@ -31,30 +32,43 @@ export function useProjectAudioAssets(options: ProjectAudioAssetsOptions) {
   const audioImportInput = ref<HTMLInputElement | null>(null);
 
   async function placeAssetAtPlayhead(assetId: string): Promise<number> {
-    const meta = await loadAssetMeta(assetId);
-    const startPpq = Math.max(0, positionPpq.value);
-    const tempoMap = normalizeTempoMap(store.tempoSegments, store.tempoBpm);
-    const startSeconds = ppqToSeconds(tempoMap, startPpq);
-    const durationSeconds = meta.numFrames / meta.sampleRate;
-    const lengthPpq = secondsToPpq(tempoMap, startSeconds + durationSeconds) - startPpq;
-    const overlaps = (trackId: number): boolean =>
-      store.clips.some(
-        (clip) =>
-          clip.trackId === trackId &&
-          clip.startPpq < startPpq + lengthPpq &&
-          startPpq < clip.startPpq + clip.lengthPpq,
+    const lease = leaseAudioAssets([assetId]);
+    try {
+      const meta = await loadAssetMeta(assetId);
+      const startPpq = Math.max(0, positionPpq.value);
+      const tempoMap = normalizeTempoMap(store.tempoSegments, store.tempoBpm);
+      const startSeconds = ppqToSeconds(tempoMap, startPpq);
+      const durationSeconds = meta.numFrames / meta.sampleRate;
+      const lengthPpq = secondsToPpq(tempoMap, startSeconds + durationSeconds) - startPpq;
+      const overlaps = (trackId: number): boolean =>
+        store.clips.some(
+          (clip) =>
+            clip.trackId === trackId &&
+            clip.startPpq < startPpq + lengthPpq &&
+            startPpq < clip.startPpq + clip.lengthPpq,
+        );
+      const audioTrack = store.tracks.find(
+        (track) => track.kind === 'audio' && !overlaps(track.id),
       );
-    const audioTrack = store.tracks.find((track) => track.kind === 'audio' && !overlaps(track.id));
-    const trackId = audioTrack ? audioTrack.id : addAudioTrack();
-    const newClipId = await addAudioClip({
-      trackId,
-      assetId,
-      startPpq,
-      lengthPpq,
-      name: meta.name,
-    });
-    setActiveClip(newClipId);
-    return newClipId;
+      const newClipId = audioTrack
+        ? await addAudioClip({
+            trackId: audioTrack.id,
+            assetId,
+            startPpq,
+            lengthPpq,
+            name: meta.name,
+          })
+        : addBouncedClip({
+            name: meta.name,
+            assetId,
+            startPpq,
+            lengthPpq,
+          });
+      setActiveClip(newClipId);
+      return newClipId;
+    } finally {
+      lease.release();
+    }
   }
 
   function onAddAssetToProject(assetId: string): void {
@@ -87,37 +101,15 @@ export function useProjectAudioAssets(options: ProjectAudioAssetsOptions) {
   });
 
   async function swapClipAsset(clipId: number, assetId: string): Promise<void> {
-    const clip = store.clips.find((c) => c.id === clipId);
-    if (!clip) return;
-    const placement = {
-      trackId: clip.trackId,
-      startPpq: clip.startPpq,
-      lengthPpq: clip.lengthPpq,
-      sourceOffsetPpq: clip.sourceOffsetPpq,
-      gain: clip.gain,
-      name: clip.name,
-      loopEnabled: clip.loopEnabled,
-      loopLengthPpq: clip.loopLengthPpq,
-      fadeInPpq: clip.fadeInPpq,
-      fadeOutPpq: clip.fadeOutPpq,
-      warp: clip.warp ? structuredClone(clip.warp) : undefined,
-    };
-    const activeTakeIndex = clip.compSegments?.[0]?.takeIndex ?? 0;
-    const takes =
-      clip.takes && clip.takes.length > 0
-        ? clip.takes.map((take, index) => ({
-            ...take,
-            assetId: index === activeTakeIndex ? assetId : take.assetId,
-          }))
-        : undefined;
-    const compSegments = clip.compSegments?.map((segment) => ({ ...segment }));
-    deleteClip(clipId);
-    const newClipId = await addAudioClip({
-      assetId,
-      ...placement,
-      ...(takes ? { takes, activeTakeIndex, compSegments } : {}),
-    });
-    setActiveClip(newClipId);
+    const lease = leaseAudioAssets([assetId]);
+    try {
+      const clip = store.clips.find((c) => c.id === clipId);
+      if (!clip) return;
+      const newClipId = replaceAudioClipAsset(clipId, assetId);
+      setActiveClip(newClipId);
+    } finally {
+      lease.release();
+    }
   }
 
   function onAssetCreated(newAssetId: string, sourceAssetId: string): void {
@@ -125,13 +117,18 @@ export function useProjectAudioAssets(options: ProjectAudioAssetsOptions) {
     if (!clip || !isAudioClip(clip) || clip.assetId !== sourceAssetId) return;
     const clipId = clip.id;
     void (async () => {
-      const ok = await confirmDialog({
-        title: t.value.dialogs.prompts.applyEditedAudioTitle,
-        message: t.value.dialogs.prompts.applyEditedAudioMessage,
-        confirmLabel: t.value.dialogs.prompts.useEdit,
-      });
-      if (!ok) return;
-      void runAction(() => swapClipAsset(clipId, newAssetId));
+      const lease = leaseAudioAssets([newAssetId]);
+      try {
+        const ok = await confirmDialog({
+          title: t.value.dialogs.prompts.applyEditedAudioTitle,
+          message: t.value.dialogs.prompts.applyEditedAudioMessage,
+          confirmLabel: t.value.dialogs.prompts.useEdit,
+        });
+        if (!ok) return;
+        await runAction(() => swapClipAsset(clipId, newAssetId));
+      } finally {
+        lease.release();
+      }
     })();
   }
 

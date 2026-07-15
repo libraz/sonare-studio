@@ -1,4 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  clearAudioAssetLeases,
+  deleteAudioAssetGuarded,
+  isAudioAssetLeased,
+  leaseAudioAssets,
+} from '@/persistence/asset-leases';
 import { clearAudioAssetCache, listAssets, saveAsset } from '@/persistence/assets';
 import { collectReferencedMediaIds, garbageCollectMedia } from '@/persistence/gc';
 import { saveProject } from '@/persistence/opfs';
@@ -54,12 +60,14 @@ describe('media garbage collection', () => {
     root = installMockOpfs();
     clearAudioAssetCache();
     clearFontCache();
+    clearAudioAssetLeases();
   });
 
   afterEach(() => {
     uninstallMockOpfs();
     clearAudioAssetCache();
     clearFontCache();
+    clearAudioAssetLeases();
   });
 
   it('collects referenced ids across stored projects and the live document', async () => {
@@ -106,6 +114,55 @@ describe('media garbage collection', () => {
     expect(result.removedFontIds).toEqual(['orphanFont']);
     expect((await listAssets()).map((a) => a.id)).toEqual(['undoAsset']);
     expect((await listFonts()).map((f) => f.id)).toEqual(['undoFont']);
+  });
+
+  it('preserves every editor history version while its shared lease is open', async () => {
+    await saveAsset({ id: 'source', name: 'Source', sampleRate: 48000 }, mono());
+    await saveAsset({ id: 'undo-version', name: 'Undo', sampleRate: 48000 }, mono());
+    const historyLease = leaseAudioAssets(['source', 'undo-version']);
+
+    expect((await garbageCollectMedia()).removedAssetIds).toEqual([]);
+    expect((await listAssets()).map((a) => a.id).sort()).toEqual(['source', 'undo-version']);
+
+    historyLease.release();
+    expect((await garbageCollectMedia()).removedAssetIds).toEqual(['source', 'undo-version']);
+  });
+
+  it('keeps a just-saved output leased from id resolution through project commit', async () => {
+    let outputLease: ReturnType<typeof leaseAudioAssets> | undefined;
+    const meta = await saveAsset(
+      {
+        name: 'Edit',
+        sampleRate: 48000,
+        onIdResolved: (assetId) => {
+          outputLease = leaseAudioAssets([assetId]);
+        },
+      },
+      mono(),
+    );
+
+    expect(outputLease).toBeDefined();
+    expect(isAudioAssetLeased(meta.id)).toBe(true);
+    expect((await garbageCollectMedia()).removedAssetIds).toEqual([]);
+
+    outputLease?.release();
+    expect((await garbageCollectMedia()).removedAssetIds).toEqual([meta.id]);
+  });
+
+  it('rechecks a placement lease immediately before a confirmed deletion', async () => {
+    await saveAsset({ id: 'placed', name: 'Placed', sampleRate: 48000 }, mono());
+    let finishReferenceScan!: (referenced: boolean) => void;
+    const referenceScan = new Promise<boolean>((resolve) => {
+      finishReferenceScan = resolve;
+    });
+    const deleting = deleteAudioAssetGuarded('placed', () => referenceScan);
+
+    // The exclusive delete guard prevents a new placement from racing between
+    // reference validation and the OPFS mutation.
+    expect(() => leaseAudioAssets(['placed'])).toThrow(/being deleted/);
+    finishReferenceScan(false);
+    expect(await deleting).toBe(true);
+    expect((await listAssets()).map((a) => a.id)).toEqual([]);
   });
 
   it('preserves media held only by an unbundled autosave slot', async () => {
