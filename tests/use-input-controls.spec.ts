@@ -6,6 +6,9 @@ const webMidiConnect = vi.fn(async () => true);
 const webMidiDisconnect = vi.fn();
 let webMidiOptions: Parameters<typeof import('@/composables/useWebMidi').useWebMidi>[0] | null =
   null;
+let musicTypingOptions:
+  | Parameters<typeof import('@/composables/useMusicTyping').useMusicTyping>[0]
+  | null = null;
 
 vi.mock('@/composables/useMidiLearn', () => ({
   useMidiLearn: () => ({ handleCc }),
@@ -13,7 +16,12 @@ vi.mock('@/composables/useMidiLearn', () => ({
 }));
 
 vi.mock('@/composables/useMusicTyping', () => ({
-  useMusicTyping: () => ({ enabled: ref(false), enable: vi.fn(), disable: vi.fn() }),
+  useMusicTyping: (
+    options: Parameters<typeof import('@/composables/useMusicTyping').useMusicTyping>[0],
+  ) => {
+    musicTypingOptions = options;
+    return { enabled: ref(false), enable: vi.fn(), disable: vi.fn() };
+  },
 }));
 
 vi.mock('@/composables/useWebMidi', () => ({
@@ -59,6 +67,7 @@ function makeOptions() {
     previewNote: vi.fn(async () => {}),
     previewNoteOn: vi.fn(async () => {}),
     previewNoteOff: vi.fn(),
+    previewChannelVoice: vi.fn(async () => {}),
     runAction: (action: () => Promise<void>) => action(),
   };
 }
@@ -66,6 +75,7 @@ function makeOptions() {
 beforeEach(() => {
   FakeRealtimeEngine.instances = [];
   webMidiOptions = null;
+  musicTypingOptions = null;
   handleCc.mockClear();
   webMidiConnect.mockClear();
   webMidiDisconnect.mockClear();
@@ -112,10 +122,11 @@ describe('useInputControls MIDI routing engine lifecycle', () => {
     const onRecordProgramChange = vi.fn();
     const onRecordChannelPressure = vi.fn();
     const onRecordPolyPressure = vi.fn();
+    const options = makeOptions();
     const scope = effectScope();
     scope.run(() => {
       useInputControls({
-        ...makeOptions(),
+        ...options,
         onRecordControlChange,
         onRecordPitchBend,
         onRecordProgramChange,
@@ -164,6 +175,13 @@ describe('useInputControls MIDI routing engine lifecycle', () => {
       channel: 1,
       timeStampMs: 127,
     });
+    expect(options.previewChannelVoice.mock.calls.map((call) => call[0])).toEqual([
+      { kind: 'cc', controller: 64, value: 127, channel: 1, timeStampMs: 123 },
+      { kind: 'pitch-bend', value: 4096, channel: 1, timeStampMs: 124 },
+      { kind: 'program-change', program: 10, channel: 1, timeStampMs: 125 },
+      { kind: 'channel-pressure', value: 70, channel: 1, timeStampMs: 126 },
+      { kind: 'poly-pressure', pitch: 60, value: 80, channel: 1, timeStampMs: 127 },
+    ]);
     scope.stop();
   });
 
@@ -184,7 +202,7 @@ describe('useInputControls MIDI routing engine lifecycle', () => {
     webMidiOptions?.onNoteOff?.({ pitch: 60, velocity: 64, channel: 2, timeStampMs: 20 });
 
     expect(options.previewNote).not.toHaveBeenCalled();
-    expect(options.previewNoteOn).toHaveBeenCalledWith(60, 96);
+    expect(options.previewNoteOn).toHaveBeenCalledWith(60, 96, 2, 10);
     expect(options.stepInput.enterNote).toHaveBeenCalledWith(60, 96);
     expect(onRecordNoteOn).toHaveBeenCalledWith({
       pitch: 60,
@@ -192,13 +210,27 @@ describe('useInputControls MIDI routing engine lifecycle', () => {
       channel: 2,
       timeStampMs: 10,
     });
-    expect(options.previewNoteOff).toHaveBeenCalledWith(60);
+    expect(options.previewNoteOff).toHaveBeenCalledWith(60, 2, 64, 20);
     expect(onRecordNoteOff).toHaveBeenCalledWith({
       pitch: 60,
       velocity: 64,
       channel: 2,
       timeStampMs: 20,
     });
+    scope.stop();
+  });
+
+  it('uses sustained audible note-on/off for QWERTY music typing', () => {
+    const options = makeOptions();
+    const scope = effectScope();
+    scope.run(() => useInputControls(options));
+
+    musicTypingOptions?.onNoteOn?.({ pitch: 64, velocity: 88 });
+    musicTypingOptions?.onNoteOff?.({ pitch: 64 });
+
+    expect(options.previewNote).not.toHaveBeenCalled();
+    expect(options.previewNoteOn).toHaveBeenCalledWith(64, 88);
+    expect(options.previewNoteOff).toHaveBeenCalledWith(64);
     scope.stop();
   });
 });

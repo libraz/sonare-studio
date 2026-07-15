@@ -1,6 +1,7 @@
 import { computed, getCurrentScope, onScopeDispose, type Ref, ref } from 'vue';
 import { useMidiLearn } from '@/composables/useMidiLearn';
 import { useMusicTyping } from '@/composables/useMusicTyping';
+import type { LiveMidiChannelVoiceMessage } from '@/composables/useNotePreview';
 import type { useStepInput } from '@/composables/useStepInput';
 import { useWebMidi } from '@/composables/useWebMidi';
 import type { RealtimeEngine } from '@/wasm/index.js';
@@ -26,9 +27,21 @@ export interface InputControlsOptions {
   ensureWasm: () => Promise<{ RealtimeEngine: new () => RealtimeEngine }>;
   previewNote: (pitch: number, velocity: number) => Promise<void>;
   /** Starts a sustained live note (held MIDI key) on the audible engine. */
-  previewNoteOn: (pitch: number, velocity: number) => Promise<void>;
+  previewNoteOn: (
+    pitch: number,
+    velocity: number,
+    channel?: number,
+    timestampMs?: number,
+  ) => Promise<void>;
   /** Releases a sustained live note started by previewNoteOn. */
-  previewNoteOff: (pitch: number) => void;
+  previewNoteOff: (
+    pitch: number,
+    channel?: number,
+    velocity?: number,
+    timestampMs?: number,
+  ) => void;
+  /** Routes non-note channel voice to the active MIDI track. */
+  previewChannelVoice: (message: LiveMidiChannelVoiceMessage) => Promise<void>;
   /** Captures an incoming note-on for MIDI recording (when armed/rolling). */
   onRecordNoteOn?: (event: RecordNoteEvent) => void;
   /** Captures an incoming note-off for MIDI recording (when armed/rolling). */
@@ -52,16 +65,17 @@ export function useInputControls(options: InputControlsOptions) {
   const {
     errorMessage,
     positionPpq,
-    previewNote,
     previewNoteOn,
     previewNoteOff,
+    previewChannelVoice,
     runAction,
     stepInput,
   } = options;
   const musicTyping = useMusicTyping({
     onNoteOn: ({ pitch, velocity }) => {
-      void previewNote(pitch, velocity);
+      void previewNoteOn(pitch, velocity);
     },
+    onNoteOff: ({ pitch }) => previewNoteOff(pitch),
     stepInput,
   });
 
@@ -72,22 +86,41 @@ export function useInputControls(options: InputControlsOptions) {
     // matching key release, instead of a fixed-length blip.
     onNoteOn: (event) => {
       const { pitch, velocity } = event;
-      void previewNoteOn(pitch, velocity);
+      void previewNoteOn(pitch, velocity, event.channel, event.timeStampMs);
       stepInput.enterNote(pitch, velocity);
       options.onRecordNoteOn?.(event);
     },
     onNoteOff: (event) => {
-      previewNoteOff(event.pitch);
+      previewNoteOff(event.pitch, event.channel, event.velocity, event.timeStampMs);
       options.onRecordNoteOff?.(event);
     },
     onControlChange: (event) => {
+      void previewChannelVoice({
+        kind: 'cc',
+        controller: event.controller,
+        value: event.value,
+        channel: event.channel,
+        timeStampMs: event.timeStampMs,
+      });
       midiLearn.handleCc(event);
       options.onRecordControlChange?.(event);
     },
-    onPitchBend: (event) => options.onRecordPitchBend?.(event),
-    onProgramChange: (event) => options.onRecordProgramChange?.(event),
-    onChannelPressure: (event) => options.onRecordChannelPressure?.(event),
-    onPolyPressure: (event) => options.onRecordPolyPressure?.(event),
+    onPitchBend: (event) => {
+      void previewChannelVoice({ kind: 'pitch-bend', ...event });
+      options.onRecordPitchBend?.(event);
+    },
+    onProgramChange: (event) => {
+      void previewChannelVoice({ kind: 'program-change', ...event });
+      options.onRecordProgramChange?.(event);
+    },
+    onChannelPressure: (event) => {
+      void previewChannelVoice({ kind: 'channel-pressure', ...event });
+      options.onRecordChannelPressure?.(event);
+    },
+    onPolyPressure: (event) => {
+      void previewChannelVoice({ kind: 'poly-pressure', ...event });
+      options.onRecordPolyPressure?.(event);
+    },
   });
 
   const midiInputChoices = computed(() => [

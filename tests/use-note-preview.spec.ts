@@ -16,11 +16,12 @@ vi.mock('@/lib/wasm', async () => {
 function makeHandle() {
   const pushMidiNoteOn = vi.fn();
   const pushMidiNoteOff = vi.fn();
+  const pushMidiCc = vi.fn();
   const handle = shallowRef<EngineHandle | null>({
-    engine: { pushMidiNoteOn, pushMidiNoteOff },
+    engine: { pushMidiNoteOn, pushMidiNoteOff, pushMidiCc },
     ctx: { sampleRate: 48000 },
   } as unknown as EngineHandle);
-  return { handle, pushMidiNoteOn, pushMidiNoteOff };
+  return { handle, pushMidiNoteOn, pushMidiNoteOff, pushMidiCc };
 }
 
 describe('useNotePreview live MIDI sustain', () => {
@@ -38,7 +39,7 @@ describe('useNotePreview live MIDI sustain', () => {
   });
 
   function setup() {
-    const { handle, pushMidiNoteOn, pushMidiNoteOff } = makeHandle();
+    const { handle, pushMidiNoteOn, pushMidiNoteOff, pushMidiCc } = makeHandle();
     const errorMessage = shallowRef('');
     const preview = useNotePreview({
       errorMessage,
@@ -46,7 +47,7 @@ describe('useNotePreview live MIDI sustain', () => {
       hasMidiSync: () => true,
       ensureEngineStarted: async () => handle.value,
     });
-    return { preview, handle, pushMidiNoteOn, pushMidiNoteOff, errorMessage };
+    return { preview, handle, pushMidiNoteOn, pushMidiNoteOff, pushMidiCc, errorMessage };
   }
 
   it('sustains a held note: note-on rings without an auto-scheduled note-off', async () => {
@@ -95,6 +96,84 @@ describe('useNotePreview live MIDI sustain', () => {
 
     expect(pushMidiNoteOff).toHaveBeenCalledTimes(3);
     expect(pushMidiNoteOff.mock.calls.map((c) => c[3]).sort((a, b) => a - b)).toEqual([60, 64, 67]);
+  });
+
+  it('holds the same pitch independently on two MIDI channels', async () => {
+    const { preview, pushMidiNoteOn, pushMidiNoteOff } = setup();
+    await preview.previewNoteOn(60, 90, 2);
+    await preview.previewNoteOn(60, 100, 7);
+
+    expect(pushMidiNoteOn).toHaveBeenNthCalledWith(1, midiTrackId, 0, 2, 60, 90);
+    expect(pushMidiNoteOn).toHaveBeenNthCalledWith(2, midiTrackId, 0, 7, 60, 100);
+    preview.previewNoteOff(60, 2);
+    expect(pushMidiNoteOff).toHaveBeenCalledWith(midiTrackId, 0, 2, 60);
+    preview.previewNoteOff(60, 7);
+    expect(pushMidiNoteOff).toHaveBeenCalledWith(midiTrackId, 0, 7, 60);
+  });
+
+  it('routes every external channel-voice family with input timestamps', async () => {
+    const { handle, pushMidiNoteOn, pushMidiCc } = makeHandle();
+    const sendLiveExternalMidi = vi.fn(() => true);
+    const preview = useNotePreview({
+      errorMessage: shallowRef(''),
+      handle,
+      hasMidiSync: () => true,
+      ensureEngineStarted: async () => handle.value,
+      sendLiveExternalMidi,
+    });
+
+    await preview.previewNoteOn(60, 100, 3, 1000);
+    await preview.previewChannelVoice({
+      kind: 'cc',
+      controller: 64,
+      value: 127,
+      channel: 3,
+      timeStampMs: 1001,
+    });
+    await preview.previewChannelVoice({
+      kind: 'pitch-bend',
+      value: 12288,
+      channel: 3,
+      timeStampMs: 1002,
+    });
+    await preview.previewChannelVoice({
+      kind: 'program-change',
+      program: 41,
+      channel: 3,
+      timeStampMs: 1003,
+    });
+    await preview.previewChannelVoice({
+      kind: 'channel-pressure',
+      value: 70,
+      channel: 3,
+      timeStampMs: 1004,
+    });
+    await preview.previewChannelVoice({
+      kind: 'poly-pressure',
+      pitch: 60,
+      value: 80,
+      channel: 3,
+      timeStampMs: 1005,
+    });
+    preview.previewNoteOff(60, 3, 45, 1006);
+
+    expect(sendLiveExternalMidi.mock.calls).toEqual([
+      [midiTrackId, [0x93, 60, 100], 1000],
+      [midiTrackId, [0xb3, 64, 127], 1001],
+      [midiTrackId, [0xe3, 0, 96], 1002],
+      [midiTrackId, [0xc3, 41], 1003],
+      [midiTrackId, [0xd3, 70], 1004],
+      [midiTrackId, [0xa3, 60, 80], 1005],
+      [midiTrackId, [0x83, 60, 45], 1006],
+    ]);
+    expect(pushMidiNoteOn).not.toHaveBeenCalled();
+    expect(pushMidiCc).not.toHaveBeenCalled();
+  });
+
+  it('routes sustain CC through the internal realtime engine when no external route exists', async () => {
+    const { preview, pushMidiCc } = setup();
+    await preview.previewChannelVoice({ kind: 'cc', controller: 64, value: 127, channel: 4 });
+    expect(pushMidiCc).toHaveBeenCalledWith(midiTrackId, 0, 4, 64, 127);
   });
 
   it('auto-releases a held note after the safety timeout if the key-up is lost', async () => {

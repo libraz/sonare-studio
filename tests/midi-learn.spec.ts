@@ -112,6 +112,16 @@ describe('insert target ids', () => {
     expect(parseMidiLearnInsertTargetId(id)).toEqual({ scope: 3, index: 5, paramId: 'ratio' });
   });
 
+  it('round-trips stable processor ids independently of slot order', () => {
+    const id = midiLearnInsertTargetId(3, 'processor:lead/1', 'threshold:db');
+    expect(id).toBe('insert-id:3:processor%3Alead%2F1:threshold%3Adb');
+    expect(parseMidiLearnInsertTargetId(id)).toEqual({
+      scope: 3,
+      processorId: 'processor:lead/1',
+      paramId: 'threshold:db',
+    });
+  });
+
   it('rejects malformed insert ids and non-insert ids', () => {
     expect(parseMidiLearnInsertTargetId('gain:master')).toBeNull();
     expect(parseMidiLearnInsertTargetId('insert:7')).toBeNull();
@@ -272,6 +282,15 @@ describe('mastering target ids', () => {
     expect(parseMidiLearnMasteringTargetId('mastering:0:tiltDb')).toEqual({
       index: 0,
       paramId: 'tiltDb',
+    });
+  });
+
+  it('round-trips stable mastering processor ids', () => {
+    const id = midiLearnMasteringTargetId('master:limiter/1', 'ceiling:db');
+    expect(id).toBe('mastering-id:master%3Alimiter%2F1:ceiling%3Adb');
+    expect(parseMidiLearnMasteringTargetId(id)).toEqual({
+      processorId: 'master:limiter/1',
+      paramId: 'ceiling:db',
     });
   });
 

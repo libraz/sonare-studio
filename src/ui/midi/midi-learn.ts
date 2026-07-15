@@ -154,13 +154,16 @@ export function parseMidiLearnTargetId(id: string): MidiLearnTarget | null {
 
 /** Prefix marking an insert-parameter learn target id. */
 const INSERT_TARGET_PREFIX = 'insert:';
+const INSERT_ID_TARGET_PREFIX = 'insert-id:';
 
 /** A decoded insert-parameter learn target. */
 export interface MidiLearnInsertTarget {
   /** Strip the insert lives on (track id or 'master'). */
   scope: MidiLearnScope;
-  /** Insert slot index on the strip. */
-  index: number;
+  /** Legacy insert slot index, present only for old target ids. */
+  index?: number;
+  /** Stable processor identity, present for current target ids. */
+  processorId?: string;
   /** Processor parameter name (a quick-control id). */
   paramId: string;
 }
@@ -177,31 +180,44 @@ export interface MidiLearnInsertTarget {
  */
 export function midiLearnInsertTargetId(
   scope: MidiLearnScope,
-  index: number,
+  identity: number | string,
   paramId: string,
 ): string {
-  return `${INSERT_TARGET_PREFIX}${scope}:${index}:${paramId}`;
+  return typeof identity === 'number'
+    ? `${INSERT_TARGET_PREFIX}${scope}:${identity}:${paramId}`
+    : `${INSERT_ID_TARGET_PREFIX}${scope}:${encodeURIComponent(identity)}:${encodeURIComponent(paramId)}`;
 }
 
 /** Decodes an insert-parameter target id, or null when it is malformed. */
 export function parseMidiLearnInsertTargetId(id: string): MidiLearnInsertTarget | null {
-  if (!id.startsWith(INSERT_TARGET_PREFIX)) return null;
-  const rest = id.slice(INSERT_TARGET_PREFIX.length);
+  const stable = id.startsWith(INSERT_ID_TARGET_PREFIX);
+  if (!stable && !id.startsWith(INSERT_TARGET_PREFIX)) return null;
+  const rest = id.slice(stable ? INSERT_ID_TARGET_PREFIX.length : INSERT_TARGET_PREFIX.length);
   const firstSep = rest.indexOf(':');
   if (firstSep <= 0) return null;
   const scopeText = rest.slice(0, firstSep);
   const afterScope = rest.slice(firstSep + 1);
   const secondSep = afterScope.indexOf(':');
   if (secondSep < 0) return null;
-  const indexText = afterScope.slice(0, secondSep);
-  const paramId = afterScope.slice(secondSep + 1);
-  if (paramId.length === 0) return null;
-  const index = Number(indexText);
-  if (!Number.isInteger(index) || index < 0) return null;
-  if (scopeText === 'master') return { scope: 'master', index, paramId };
+  const identityText = afterScope.slice(0, secondSep);
+  const paramText = afterScope.slice(secondSep + 1);
+  if (paramText.length === 0) return null;
   const trackId = Number(scopeText);
-  if (!Number.isInteger(trackId)) return null;
-  return { scope: trackId, index, paramId };
+  const scope: MidiLearnScope =
+    scopeText === 'master' ? 'master' : Number.isInteger(trackId) ? trackId : Number.NaN;
+  if (scope !== 'master' && !Number.isInteger(scope)) return null;
+  if (stable) {
+    try {
+      const processorId = decodeURIComponent(identityText);
+      const paramId = decodeURIComponent(paramText);
+      return processorId.length > 0 && paramId.length > 0 ? { scope, processorId, paramId } : null;
+    } catch {
+      return null;
+    }
+  }
+  const index = Number(identityText);
+  if (!Number.isInteger(index) || index < 0) return null;
+  return { scope, index, paramId: paramText };
 }
 
 /** Prefix marking an instrument-parameter learn target id. */
@@ -430,11 +446,14 @@ export function parseMidiLearnEqTargetId(id: string): MidiLearnEqTarget | null {
 
 /** Prefix marking a mastering processor parameter learn target id. */
 const MASTERING_TARGET_PREFIX = 'mastering:';
+const MASTERING_ID_TARGET_PREFIX = 'mastering-id:';
 
 /** A decoded mastering processor parameter target. */
 export interface MidiLearnMasteringTarget {
-  /** Zero-based mastering processor index. */
-  index: number;
+  /** Legacy zero-based processor index. */
+  index?: number;
+  /** Stable processor identity used by current target ids. */
+  processorId?: string;
   /** Processor parameter id. */
   paramId: string;
 }
@@ -446,21 +465,30 @@ export interface MidiLearnMasteringTarget {
  * @param paramId Processor parameter id.
  * @returns The encoded target id.
  */
-export function midiLearnMasteringTargetId(index: number, paramId: string): string {
-  return `${MASTERING_TARGET_PREFIX}${index}:${encodeURIComponent(paramId)}`;
+export function midiLearnMasteringTargetId(identity: number | string, paramId: string): string {
+  return typeof identity === 'number'
+    ? `${MASTERING_TARGET_PREFIX}${identity}:${encodeURIComponent(paramId)}`
+    : `${MASTERING_ID_TARGET_PREFIX}${encodeURIComponent(identity)}:${encodeURIComponent(paramId)}`;
 }
 
 /** Decodes a mastering processor target id, or null when it is malformed. */
 export function parseMidiLearnMasteringTargetId(id: string): MidiLearnMasteringTarget | null {
-  if (!id.startsWith(MASTERING_TARGET_PREFIX)) return null;
-  const rest = id.slice(MASTERING_TARGET_PREFIX.length);
+  const stable = id.startsWith(MASTERING_ID_TARGET_PREFIX);
+  if (!stable && !id.startsWith(MASTERING_TARGET_PREFIX)) return null;
+  const rest = id.slice(
+    stable ? MASTERING_ID_TARGET_PREFIX.length : MASTERING_TARGET_PREFIX.length,
+  );
   const sep = rest.indexOf(':');
   if (sep <= 0) return null;
-  const index = Number(rest.slice(0, sep));
-  if (!Number.isInteger(index) || index < 0) return null;
   try {
     const paramId = decodeURIComponent(rest.slice(sep + 1));
-    return paramId.length > 0 ? { index, paramId } : null;
+    if (paramId.length === 0) return null;
+    if (stable) {
+      const processorId = decodeURIComponent(rest.slice(0, sep));
+      return processorId.length > 0 ? { processorId, paramId } : null;
+    }
+    const index = Number(rest.slice(0, sep));
+    return Number.isInteger(index) && index >= 0 ? { index, paramId } : null;
   } catch {
     return null;
   }
@@ -641,7 +669,10 @@ export function withMidiLearnTargetScope(id: string, scope: MidiLearnScope): str
   const strip = parseMidiLearnTargetId(id);
   if (strip) return midiLearnTargetId(strip.param, scope);
   const insert = parseMidiLearnInsertTargetId(id);
-  if (insert) return midiLearnInsertTargetId(scope, insert.index, insert.paramId);
+  if (insert) {
+    const identity = insert.processorId ?? insert.index;
+    return identity !== undefined ? midiLearnInsertTargetId(scope, identity, insert.paramId) : null;
+  }
   const instrument = parseMidiLearnInstrumentTargetId(id);
   if (instrument) {
     if (scope === 'master') return null;
@@ -674,6 +705,34 @@ export function withMidiLearnTargetScope(id: string, scope: MidiLearnScope): str
     return midiLearnStripControlTargetId(scope, stripControl.param);
   }
   return null;
+}
+
+/** Resolvers used to migrate legacy positional processor targets after load. */
+export interface MidiLearnProcessorIdResolvers {
+  insert(scope: MidiLearnScope, index: number): string | undefined;
+  mastering(index: number): string | undefined;
+}
+
+/** Migrates one legacy insert/mastering target to its document-stable processor id. */
+export function migrateMidiLearnTargetToProcessorId(
+  id: string,
+  resolvers: MidiLearnProcessorIdResolvers,
+): string | null {
+  const insert = parseMidiLearnInsertTargetId(id);
+  if (insert) {
+    if (insert.processorId !== undefined) return id;
+    if (insert.index === undefined) return null;
+    const processorId = resolvers.insert(insert.scope, insert.index);
+    return processorId ? midiLearnInsertTargetId(insert.scope, processorId, insert.paramId) : null;
+  }
+  const mastering = parseMidiLearnMasteringTargetId(id);
+  if (mastering) {
+    if (mastering.processorId !== undefined) return id;
+    if (mastering.index === undefined) return null;
+    const processorId = resolvers.mastering(mastering.index);
+    return processorId ? midiLearnMasteringTargetId(processorId, mastering.paramId) : null;
+  }
+  return id;
 }
 
 /** One persisted CC binding: the target id it drives plus the channel + controller. */

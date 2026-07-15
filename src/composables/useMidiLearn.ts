@@ -145,8 +145,18 @@ export function useMidiLearn(): MidiLearnHandle {
   function quickControlOf(id: string): { target: QuickControlTarget; paramId: string } | null {
     const insert = parseMidiLearnInsertTargetId(id);
     if (insert) {
+      const store = useProjectStore();
+      const strip =
+        insert.scope === 'master'
+          ? store.mixer.master
+          : store.tracks.find((track) => track.id === insert.scope)?.mixer;
+      const index =
+        insert.processorId !== undefined
+          ? (strip?.inserts.findIndex((slot) => slot.id === insert.processorId) ?? -1)
+          : (insert.index ?? -1);
+      if (index < 0) return null;
       return {
-        target: { type: 'insert', trackId: insert.scope, index: insert.index },
+        target: { type: 'insert', trackId: insert.scope, index },
         paramId: insert.paramId,
       };
     }
@@ -275,18 +285,20 @@ export function useMidiLearn(): MidiLearnHandle {
     const mastering = parseMidiLearnMasteringTargetId(id);
     if (mastering) {
       try {
-        const slot = useProjectStore().mixer.masteringChain?.processors[mastering.index];
-        if (!slot) return false;
+        const processors = useProjectStore().mixer.masteringChain?.processors ?? [];
+        const index =
+          mastering.processorId !== undefined
+            ? processors.findIndex((slot) => slot.id === mastering.processorId)
+            : (mastering.index ?? -1);
+        const slot = processors[index];
+        if (!slot || index < 0) return false;
         const control = masteringProcessorControls(slot).find(
           (entry) => entry.id === mastering.paramId,
         );
         if (!control) return false;
-        setMasteringParam(
-          mastering.index,
-          mastering.paramId,
-          ccToRange(value, control.min, control.max),
-          { commit },
-        );
+        setMasteringParam(index, mastering.paramId, ccToRange(value, control.min, control.max), {
+          commit,
+        });
         return true;
       } catch {
         return false;

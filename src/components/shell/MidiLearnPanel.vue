@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { MidiLearnHandle } from '@/composables/useMidiLearn';
+import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import {
   formatMidiCcBinding,
@@ -31,6 +32,7 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const store = useProjectStore();
 
 /** The two bindable parameters per strip, in column order. */
 const PARAMS: ReadonlyArray<{ param: MidiLearnParam; labelKey: 'volume' | 'pan' }> = [
@@ -78,8 +80,16 @@ const deviceBindings = computed<DeviceBindingRow[]>(() => {
   for (const [id, binding] of props.learn.bindings) {
     const insert = parseMidiLearnInsertTargetId(id);
     if (insert) {
+      const strip =
+        insert.scope === 'master'
+          ? store.mixer.master
+          : store.tracks.find((track) => track.id === insert.scope)?.mixer;
+      const index =
+        insert.processorId !== undefined
+          ? (strip?.inserts.findIndex((slot) => slot.id === insert.processorId) ?? -1)
+          : (insert.index ?? -1);
       const slot = formatMessage(t.value.shell.midiLearn.insertSlot, {
-        index: String(insert.index + 1),
+        index: index >= 0 ? String(index + 1) : '?',
       });
       rows.push({
         id,

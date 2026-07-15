@@ -23,13 +23,34 @@ export interface NotePreviewOptions {
   handle: ShallowRef<EngineHandle | null>;
   hasMidiSync: () => boolean;
   ensureEngineStarted: () => Promise<EngineHandle | null>;
+  /** Direct live route used by external-MIDI tracks for channel voice not exposed by the engine ABI. */
+  sendLiveExternalMidi?: (
+    destinationId: number,
+    bytes: ReadonlyArray<number>,
+    timestampMs?: number,
+  ) => boolean;
 }
+
+export type LiveMidiChannelVoiceMessage =
+  | { kind: 'cc'; channel: number; controller: number; value: number; timeStampMs?: number }
+  | { kind: 'pitch-bend'; channel: number; value: number; timeStampMs?: number }
+  | { kind: 'program-change'; channel: number; program: number; timeStampMs?: number }
+  | { kind: 'channel-pressure'; channel: number; value: number; timeStampMs?: number }
+  | { kind: 'poly-pressure'; channel: number; pitch: number; value: number; timeStampMs?: number };
 
 export function useNotePreview(options: NotePreviewOptions) {
   const store = useProjectStore();
 
-  /** Sustained live notes keyed by pitch: the track they sound on + a safety timer. */
-  const heldNotes = new Map<number, { trackId: number; timer: ReturnType<typeof setTimeout> }>();
+  /** Sustained live notes keyed by channel+pitch, including their output path. */
+  const heldNotes = new Map<
+    string,
+    {
+      trackId: number;
+      channel: number;
+      directExternal: boolean;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
   const auditionTimers = new Set<{
     pitch: number;
     timer: ReturnType<typeof setTimeout>;
@@ -46,21 +67,44 @@ export function useNotePreview(options: NotePreviewOptions) {
   }
 
   /** Releases one held note: clears its timer and pushes the engine note-off. */
-  function releaseHeld(pitch: number): void {
-    const held = heldNotes.get(pitch);
+  function heldKey(channel: number, pitch: number): string {
+    return `${channel & 0x0f}:${pitch & 0x7f}`;
+  }
+
+  function releaseHeld(pitch: number, channel: number, velocity = 0, timestampMs?: number): void {
+    const key = heldKey(channel, pitch);
+    const held = heldNotes.get(key);
     if (!held) return;
-    heldNotes.delete(pitch);
+    heldNotes.delete(key);
     clearTimeout(held.timer);
     try {
-      options.handle.value?.engine.pushMidiNoteOff(held.trackId, 0, 0, pitch);
+      if (held.directExternal) {
+        options.sendLiveExternalMidi?.(
+          held.trackId,
+          [0x80 | held.channel, pitch & 0x7f, velocity & 0x7f],
+          timestampMs,
+        );
+      } else {
+        if (velocity === 0) {
+          options.handle.value?.engine.pushMidiNoteOff(held.trackId, 0, held.channel, pitch);
+        } else {
+          options.handle.value?.engine.pushMidiNoteOff(
+            held.trackId,
+            0,
+            held.channel,
+            pitch,
+            velocity,
+          );
+        }
+      }
     } catch {
       // The engine may be disposed; releasing a gone note is harmless.
     }
   }
 
-  function pushNoteOff(trackId: number, pitch: number): void {
+  function pushNoteOff(trackId: number, pitch: number, channel = 0): void {
     try {
-      options.handle.value?.engine.pushMidiNoteOff(trackId, 0, 0, pitch);
+      options.handle.value?.engine.pushMidiNoteOff(trackId, 0, channel, pitch);
     } catch {
       // The engine may be disposed before the note-off path runs.
     }
@@ -81,7 +125,12 @@ export function useNotePreview(options: NotePreviewOptions) {
    * pushes a note-on that rings until {@link previewNoteOff}; on any other
    * active track it degrades to a short one-shot audition (no sustain concept).
    */
-  async function previewNoteOn(pitch: number, velocity: number): Promise<void> {
+  async function previewNoteOn(
+    pitch: number,
+    velocity: number,
+    channel = 0,
+    timestampMs?: number,
+  ): Promise<void> {
     const trackId = activeMidiTrackId();
     if (trackId === null) {
       await previewNote(pitch, velocity);
@@ -90,26 +139,73 @@ export function useNotePreview(options: NotePreviewOptions) {
     const h = await options.ensureEngineStarted();
     if (!h || activeMidiTrackId() !== trackId) return;
     // Retrigger: release a still-held instance of the same pitch first.
-    releaseHeld(pitch);
+    releaseHeld(pitch, channel);
+    const directExternal =
+      options.sendLiveExternalMidi?.(
+        trackId,
+        [0x90 | (channel & 0x0f), pitch & 0x7f, velocity & 0x7f],
+        timestampMs,
+      ) === true;
     try {
-      h.engine.pushMidiNoteOn(trackId, 0, 0, pitch, velocity);
+      if (!directExternal) h.engine.pushMidiNoteOn(trackId, 0, channel, pitch, velocity);
     } catch (err) {
       options.errorMessage.value = describeError(err);
       return;
     }
-    const timer = setTimeout(() => releaseHeld(pitch), SUSTAIN_SAFETY_MS);
-    heldNotes.set(pitch, { trackId, timer });
+    const timer = setTimeout(() => releaseHeld(pitch, channel), SUSTAIN_SAFETY_MS);
+    heldNotes.set(heldKey(channel, pitch), { trackId, channel, directExternal, timer });
   }
 
   /** Releases a sustained live note started by {@link previewNoteOn}. */
-  function previewNoteOff(pitch: number): void {
-    releaseHeld(pitch);
+  function previewNoteOff(pitch: number, channel = 0, velocity = 0, timestampMs?: number): void {
+    releaseHeld(pitch, channel, velocity, timestampMs);
   }
 
   /** Releases every sustained note (engine teardown / scope dispose). */
   function releaseAll(): void {
-    for (const pitch of [...heldNotes.keys()]) releaseHeld(pitch);
+    for (const key of [...heldNotes.keys()]) {
+      const [channel, pitch] = key.split(':').map(Number);
+      releaseHeld(pitch, channel);
+    }
     for (const entry of [...auditionTimers]) releaseAudition(entry);
+  }
+
+  function channelVoiceBytes(message: LiveMidiChannelVoiceMessage): number[] {
+    const channel = message.channel & 0x0f;
+    if (message.kind === 'cc') {
+      return [0xb0 | channel, message.controller & 0x7f, message.value & 0x7f];
+    }
+    if (message.kind === 'pitch-bend') {
+      const value = Math.max(0, Math.min(0x3fff, Math.round(message.value)));
+      return [0xe0 | channel, value & 0x7f, value >> 7];
+    }
+    if (message.kind === 'program-change') {
+      return [0xc0 | channel, message.program & 0x7f];
+    }
+    if (message.kind === 'channel-pressure') {
+      return [0xd0 | channel, message.value & 0x7f];
+    }
+    return [0xa0 | channel, message.pitch & 0x7f, message.value & 0x7f];
+  }
+
+  /** Routes incoming non-note channel voice to the active MIDI track. */
+  async function previewChannelVoice(message: LiveMidiChannelVoiceMessage): Promise<void> {
+    const trackId = activeMidiTrackId();
+    if (trackId === null) return;
+    const h = await options.ensureEngineStarted();
+    if (!h || activeMidiTrackId() !== trackId) return;
+    if (options.sendLiveExternalMidi?.(trackId, channelVoiceBytes(message), message.timeStampMs)) {
+      return;
+    }
+    // The current realtime ABI exposes immediate CC for internal instruments;
+    // all other channel voice is delivered through the external route above.
+    if (message.kind === 'cc') {
+      try {
+        h.engine.pushMidiCc(trackId, 0, message.channel, message.controller, message.value);
+      } catch (err) {
+        options.errorMessage.value = describeError(err);
+      }
+    }
   }
 
   async function previewNote(pitch: number, velocity: number): Promise<void> {
@@ -173,6 +269,7 @@ export function useNotePreview(options: NotePreviewOptions) {
     previewNote,
     previewNoteOn,
     previewNoteOff,
+    previewChannelVoice,
     releaseAll,
   };
 }
