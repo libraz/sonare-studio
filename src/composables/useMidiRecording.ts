@@ -20,15 +20,15 @@ import {
 } from '@/project/midi-cc';
 import type { NoteBoundaryEvent } from '@/project/midi-events';
 import { finalizeRecording, foldRecordedNotesIntoLoop } from '@/project/midi-recording';
-import { ppqToSeconds } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
 import {
   type NormalizedTempoMap,
   normalizeTempoMap,
+  ppqRangeSeconds,
   ppqToSeconds as ppqToSecondsMap,
   secondsToPpq as secondsToPpqMap,
 } from '@/project/tempo-map';
-import { timeSignatureAt } from '@/project/time-signature';
+import { countInStartPpq } from '@/project/time-signature';
 import type {
   ClipCcLane,
   ClipChannelPressureLane,
@@ -172,6 +172,10 @@ export function useMidiRecording(
   let channelPressureBuffer: Array<CapturedChannelPressureEvent & { ppq: number }> = [];
   let polyPressureBuffer: Array<CapturedPolyPressureEvent & { ppq: number }> = [];
   let held = new Map<string, CapturedNoteEvent>();
+  // Notes pressed during a count-in are tracked separately. They are not
+  // recorded unless the key is still held when the punch-in boundary is
+  // reached, in which case an explicit note-on is anchored at the boundary.
+  let preRollHeld = new Map<string, CapturedNoteEvent>();
   let recordingStartPpq = 0;
   let recordingCounter = 0;
   let countInTimer: ReturnType<typeof setTimeout> | null = null;
@@ -245,6 +249,36 @@ export function useMidiRecording(
     }
   }
 
+  function eventIsBeforePunch(timeStampMs: number | undefined): boolean {
+    if (
+      timeStampMs !== undefined &&
+      Number.isFinite(timeStampMs) &&
+      recordingStartTimestampMs !== null
+    ) {
+      return timeStampMs < recordingStartTimestampMs - 1e-6;
+    }
+    return transport.positionPpq.value < recordingStartPpq - 1e-9;
+  }
+
+  function activatePreRollHeld(key?: string): void {
+    const entries: Array<[string, CapturedNoteEvent]> = key
+      ? preRollHeld.has(key)
+        ? [[key, preRollHeld.get(key) as CapturedNoteEvent]]
+        : []
+      : [...preRollHeld.entries()];
+    for (const [noteKey, maybeEvent] of entries) {
+      buffer.push({
+        ppq: recordingStartPpq,
+        kind: 'on',
+        pitch: maybeEvent.pitch,
+        velocity: maybeEvent.velocity,
+        channel: maybeEvent.channel,
+      });
+      held.set(noteKey, maybeEvent);
+      preRollHeld.delete(noteKey);
+    }
+  }
+
   function expressionPointPpq(timeStampMs: number | undefined): number {
     const ppq = currentRecordingPpq(timeStampMs);
     markTimestamp(timeStampMs);
@@ -275,8 +309,25 @@ export function useMidiRecording(
 
   const captureNoteOn = (event: CapturedNoteEvent): void => {
     if (!isRecording.value) return;
+    const key = `${event.channel}:${event.pitch}`;
+    if (eventIsBeforePunch(event.timeStampMs)) {
+      preRollHeld.set(key, event);
+      return;
+    }
     const ppq = currentRecordingPpq(event.timeStampMs);
     markTimestamp(event.timeStampMs);
+    // A repeated note-on at/after punch-in closes a key that was already held
+    // through the boundary before starting the new articulation.
+    if (preRollHeld.has(key)) {
+      activatePreRollHeld(key);
+      buffer.push({
+        ppq,
+        kind: 'off',
+        pitch: event.pitch,
+        velocity: 0,
+        channel: event.channel,
+      });
+    }
     buffer.push({
       ppq,
       kind: 'on',
@@ -284,13 +335,19 @@ export function useMidiRecording(
       velocity: event.velocity,
       channel: event.channel,
     });
-    held.set(`${event.channel}:${event.pitch}`, event);
+    held.set(key, event);
   };
 
   const captureNoteOff = (event: CapturedNoteEvent): void => {
     if (!isRecording.value) return;
+    const key = `${event.channel}:${event.pitch}`;
+    if (eventIsBeforePunch(event.timeStampMs)) {
+      preRollHeld.delete(key);
+      return;
+    }
     const ppq = currentRecordingPpq(event.timeStampMs);
     markTimestamp(event.timeStampMs);
+    activatePreRollHeld(key);
     buffer.push({
       ppq,
       kind: 'off',
@@ -298,31 +355,31 @@ export function useMidiRecording(
       velocity: event.velocity,
       channel: event.channel,
     });
-    held.delete(`${event.channel}:${event.pitch}`);
+    held.delete(key);
   };
 
   const captureControlChange = (event: CapturedControlChangeEvent): void => {
-    if (!isRecording.value) return;
+    if (!isRecording.value || eventIsBeforePunch(event.timeStampMs)) return;
     ccBuffer.push({ ...event, ppq: expressionPointPpq(event.timeStampMs) });
   };
 
   const capturePitchBend = (event: CapturedPitchBendEvent): void => {
-    if (!isRecording.value) return;
+    if (!isRecording.value || eventIsBeforePunch(event.timeStampMs)) return;
     pitchBendBuffer.push({ ...event, ppq: expressionPointPpq(event.timeStampMs) });
   };
 
   const captureProgramChange = (event: CapturedProgramChangeEvent): void => {
-    if (!isRecording.value) return;
+    if (!isRecording.value || eventIsBeforePunch(event.timeStampMs)) return;
     programChangeBuffer.push({ ...event, ppq: expressionPointPpq(event.timeStampMs) });
   };
 
   const captureChannelPressure = (event: CapturedChannelPressureEvent): void => {
-    if (!isRecording.value) return;
+    if (!isRecording.value || eventIsBeforePunch(event.timeStampMs)) return;
     channelPressureBuffer.push({ ...event, ppq: expressionPointPpq(event.timeStampMs) });
   };
 
   const capturePolyPressure = (event: CapturedPolyPressureEvent): void => {
-    if (!isRecording.value) return;
+    if (!isRecording.value || eventIsBeforePunch(event.timeStampMs)) return;
     polyPressureBuffer.push({ ...event, ppq: expressionPointPpq(event.timeStampMs) });
   };
 
@@ -511,10 +568,9 @@ export function useMidiRecording(
     const wasRolling = transport.isPlaying.value;
     let countInPpq = 0;
     const tempoBpm = transport.tempo.value;
+    const tempoMap = normalizeTempoMap(store.tempoSegments, tempoBpm);
     if (!explicit && !wasRolling && countInBars.value > 0) {
-      const meter = timeSignatureAt(store.timeSignatures, startPpq);
-      const barPpq = meter.numerator * (4 / meter.denominator);
-      countInPpq = Math.min(startPpq, countInBars.value * barPpq);
+      countInPpq = startPpq - countInStartPpq(store.timeSignatures, startPpq, countInBars.value);
     }
     if (!wasRolling) {
       if (countInPpq > 0 && !transport.metronomeEnabled.value) {
@@ -538,8 +594,9 @@ export function useMidiRecording(
     channelPressureBuffer = [];
     polyPressureBuffer = [];
     held = new Map();
+    preRollHeld = new Map();
     recordingStartPpq = startPpq;
-    recordingTempoMap = normalizeTempoMap(store.tempoSegments, tempoBpm);
+    recordingTempoMap = tempoMap;
     recordingStartSeconds = ppqToSecondsMap(recordingTempoMap, startPpq);
     const recordStartTimestampMs = now();
     const rollingPrerollMs =
@@ -552,7 +609,7 @@ export function useMidiRecording(
         : 0;
     recordingStartTimestampMs =
       !wasRolling && countInPpq > 0
-        ? recordStartTimestampMs + ppqToSeconds(countInPpq, tempoBpm) * 1000
+        ? recordStartTimestampMs + ppqRangeSeconds(tempoMap, startPpq - countInPpq, startPpq) * 1000
         : recordStartTimestampMs + rollingPrerollMs;
     lastCaptureTimestampMs = null;
     recordingLoopLengthPpq =
@@ -570,16 +627,26 @@ export function useMidiRecording(
     isRecording.value = true;
     if (countInPpq > 0) {
       isCountingIn.value = true;
-      countInTimer = globalThis.setTimeout(() => {
-        countInTimer = null;
-        finishCountIn();
-      }, ppqToSeconds(countInPpq, tempoBpm) * 1000);
+      countInTimer = globalThis.setTimeout(
+        () => {
+          countInTimer = null;
+          activatePreRollHeld();
+          finishCountIn();
+        },
+        ppqRangeSeconds(tempoMap, startPpq - countInPpq, startPpq) * 1000,
+      );
     }
     return true;
   };
 
   const stopRecord = (): number | null => {
     if (!isRecording.value) return null;
+    const stopTimestampMs = now();
+    const effectiveStopTimestampMs = Math.max(
+      stopTimestampMs,
+      lastCaptureTimestampMs ?? stopTimestampMs,
+    );
+    if (!eventIsBeforePunch(effectiveStopTimestampMs)) activatePreRollHeld();
     finishCountIn();
     isRecording.value = false;
     const trackId = armedTrackId.value;
@@ -587,7 +654,9 @@ export function useMidiRecording(
     recordingLoop = null;
     const stopPpq = Math.max(
       recordingStartPpq,
-      lastCaptureTimestampMs === null ? currentRecordingPpq() : currentRecordingPpq(now()),
+      currentRecordingPpq(),
+      currentRecordingPpq(effectiveStopTimestampMs),
+      lastCapturePpq,
     );
     // Close any keys still held at the punch-out with an implicit release, so a
     // note sustained across the stop is recorded instead of dropped.
@@ -613,6 +682,7 @@ export function useMidiRecording(
     channelPressureBuffer = [];
     polyPressureBuffer = [];
     held = new Map();
+    preRollHeld = new Map();
     if (trackId === null) return null;
     const denominator = inputQuantizeDenominator.value;
     const gridPpq = denominator > 0 ? 4 / denominator : 0;
@@ -716,6 +786,7 @@ export function useMidiRecording(
     channelPressureBuffer = [];
     polyPressureBuffer = [];
     held = new Map();
+    preRollHeld = new Map();
     recordingLoop = null;
     lastCaptureTimestampMs = null;
   };

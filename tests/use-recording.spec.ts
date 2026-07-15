@@ -12,6 +12,7 @@ import {
   clearHistory,
   setTempoSegments,
   setTrackRecordInputChannel,
+  setTrackRecordInputDeviceId,
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 
@@ -148,6 +149,16 @@ const defaultIngest = async (
 });
 
 const ingestMock = vi.fn(defaultIngest);
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, reject, resolve };
+}
 
 describe('useRecording', () => {
   let store: ReturnType<typeof useProjectStore>;
@@ -374,6 +385,35 @@ describe('useRecording', () => {
     expect(transport.isPlaying.value).toBe(true);
   });
 
+  it('arms capture before transport play and rejects a double-click while starting', async () => {
+    const { recording, fake, play, transport } = setup();
+    const trackId = addAudioTrack({ name: 'Vox' });
+    recording.arm(trackId);
+    const startGate = deferred<void>();
+    const events: string[] = [];
+    vi.mocked(fake.rec.start).mockImplementation(async () => {
+      events.push('start:begin');
+      await startGate.promise;
+      events.push('start:ready');
+    });
+    play.mockImplementation(() => {
+      events.push('transport:play');
+      transport.isPlaying.value = true;
+      return true;
+    });
+
+    const first = recording.record();
+    await vi.waitFor(() => expect(recording.state.value).toBe('armed'));
+    await expect(recording.record()).resolves.toBe(false);
+    expect(fake.rec.start).toHaveBeenCalledTimes(1);
+    expect(play).not.toHaveBeenCalled();
+
+    startGate.resolve();
+    await expect(first).resolves.toBe(true);
+    expect(events).toEqual(['start:begin', 'start:ready', 'transport:play']);
+    expect(recording.state.value).toBe('recording');
+  });
+
   it('records the master output without requesting microphone access', async () => {
     const { recording, fake, factory } = setup();
     const trackId = addAudioTrack({ name: 'Bounce' });
@@ -404,6 +444,36 @@ describe('useRecording', () => {
       fakeHandle,
       expect.objectContaining({ inputDeviceId: 'usb-mic' }),
     );
+  });
+
+  it('keeps default and explicit armed-track devices as separate capture routes', async () => {
+    const { recording, factory, fake } = setup();
+    const defaultTrackId = addAudioTrack({ name: 'Default Mic' });
+    const usbTrackId = addAudioTrack({ name: 'USB Mic' });
+    setTrackRecordInputDeviceId(usbTrackId, 'usb-mic');
+    fake.setResult({
+      channels: [new Float32Array([1, 1]), new Float32Array([2, 2])],
+      sampleRate: 48_000,
+      startPpq: 0,
+    });
+    ingestMock.mockImplementation(async (channels, sampleRate, name) => ({
+      id: `${name}-${channels[0][0]}`,
+      name,
+      sampleRate,
+      numChannels: channels.length,
+      numFrames: channels[0]?.length ?? 0,
+    }));
+    recording.setTrackArmed(defaultTrackId, true);
+    recording.setTrackArmed(usbTrackId, true);
+
+    expect(await recording.record()).toBe(true);
+    await recording.stopRecord();
+
+    expect(factory).toHaveBeenCalledWith(
+      fakeHandle,
+      expect.objectContaining({ inputDeviceIds: ['', 'usb-mic'] }),
+    );
+    expect(ingestMock.mock.calls.map((call) => call[0][0][0])).toEqual([1, 2]);
   });
 
   it('surfaces capture overflow after storing the truncated recording', async () => {
@@ -459,6 +529,21 @@ describe('useRecording', () => {
     await recording.record();
     expect(seekPpq).toHaveBeenCalledWith(0);
     expect(fake.getLastStart()).toEqual({ startPpq: 2, tempoBpm: 120 });
+  });
+
+  it('walks audio count-in over the variable-meter measure grid', async () => {
+    const { recording, seekPpq, transport } = setup();
+    const trackId = addAudioTrack();
+    store.timeSignatures = [
+      { startPpq: 0, numerator: 3, denominator: 4 },
+      { startPpq: 6, numerator: 5, denominator: 8 },
+    ];
+    recording.arm(trackId);
+    recording.countInBars.value = 1;
+    transport.positionSeconds.value = 4.25; // 8.5 PPQ at 120 BPM
+
+    expect(await recording.record()).toBe(true);
+    expect(seekPpq).toHaveBeenCalledWith(6);
   });
 
   it('keeps a user-enabled metronome on after the count-in', async () => {
@@ -582,7 +667,8 @@ describe('useRecording', () => {
 
     expect(await recording.record()).toBe(false);
     expect(recording.error.value).toBe('The engine rejected the transport play command.');
-    expect(fake.rec.start).not.toHaveBeenCalled();
+    expect(fake.rec.start).toHaveBeenCalledOnce();
+    expect(fake.rec.stop).toHaveBeenCalledOnce();
   });
 
   it('stopping the transport ends the take and still lands the clip', async () => {
@@ -593,10 +679,86 @@ describe('useRecording', () => {
     expect(recording.isRecording.value).toBe(true);
 
     transport.stop();
-    expect(recording.isRecording.value).toBe(false);
     await vi.waitFor(() => {
+      expect(recording.isRecording.value).toBe(false);
       expect(store.clips.some((c) => c.assetId === 'rec-asset')).toBe(true);
     });
+  });
+
+  it('blocks a new take while stop is pending and keeps metadata for a retry on RPC failure', async () => {
+    const { recording, fake } = setup();
+    const trackId = addAudioTrack({ name: 'Vox' });
+    recording.arm(trackId);
+    await recording.record();
+    vi.mocked(fake.rec.stop).mockRejectedValueOnce(new Error('capture status failed'));
+
+    await expect(recording.stopRecord()).resolves.toBeNull();
+    expect(recording.state.value).toBe('recording');
+    expect(recording.isRecording.value).toBe(true);
+    await expect(recording.record()).resolves.toBe(false);
+
+    const clipId = await recording.stopRecord();
+    expect(clipId).not.toBeNull();
+    expect(store.clips.find((clip) => clip.id === clipId)?.trackId).toBe(trackId);
+    expect(recording.state.value).toBe('idle');
+  });
+
+  it('blocks stop-then-record re-entry until take ingestion completes', async () => {
+    const { recording } = setup();
+    const trackId = addAudioTrack({ name: 'Vox' });
+    recording.arm(trackId);
+    await recording.record();
+    const ingestGate = deferred<AudioAssetMeta>();
+    ingestMock.mockImplementationOnce(() => ingestGate.promise);
+
+    const stopping = recording.stopRecord();
+    await vi.waitFor(() => expect(recording.state.value).toBe('ingesting'));
+    await expect(recording.record()).resolves.toBe(false);
+
+    ingestGate.resolve(await defaultIngest([new Float32Array(1)], 48_000, 'Recording 1'));
+    await expect(stopping).resolves.not.toBeNull();
+    expect(recording.state.value).toBe('idle');
+  });
+
+  it('drops a delayed ingest when the project document changes', async () => {
+    const { recording } = setup();
+    const trackId = addAudioTrack({ name: 'Old project Vox' });
+    recording.arm(trackId);
+    await recording.record();
+    const ingestGate = deferred<AudioAssetMeta>();
+    ingestMock.mockImplementationOnce(() => ingestGate.promise);
+
+    const stopping = recording.stopRecord();
+    await vi.waitFor(() => expect(ingestMock).toHaveBeenCalledOnce());
+    store.dispose();
+    await store.init();
+    ingestGate.resolve(await defaultIngest([new Float32Array(1)], 48_000, 'Recording 1'));
+
+    await expect(stopping).resolves.toBeNull();
+    expect(store.clips.some((clip) => clip.kind === 'audio')).toBe(false);
+    expect(recording.state.value).toBe('idle');
+  });
+
+  it('does not ingest a stop result that resolves after disposal', async () => {
+    const { recording, fake } = setup();
+    const trackId = addAudioTrack({ name: 'Vox' });
+    recording.arm(trackId);
+    await recording.record();
+    const stopGate = deferred<RecordingResult | null>();
+    vi.mocked(fake.rec.stop).mockImplementationOnce(() => stopGate.promise);
+
+    const stopping = recording.stopRecord();
+    await vi.waitFor(() => expect(recording.state.value).toBe('stopping'));
+    recording.dispose();
+    stopGate.resolve({
+      channels: [new Float32Array(128)],
+      sampleRate: 48_000,
+      startPpq: 0,
+    });
+
+    await expect(stopping).resolves.toBeNull();
+    expect(ingestMock).not.toHaveBeenCalled();
+    expect(recording.state.value).toBe('idle');
   });
 
   it('stopRecord() returns null without a clip when nothing was captured', async () => {

@@ -22,18 +22,23 @@ import type { Recorder, RecordingResult } from '@/engine/recorder';
 import { createRecorder, type RecordingCaptureSource } from '@/engine/recorder';
 import { clampStreamingRetuneSemitones } from '@/engine/streaming-retune';
 import { describeError } from '@/lib/errors';
+import {
+  OperationGeneration,
+  type OperationIdentity,
+  type OperationToken,
+} from '@/lib/operation-generation';
 import type { AudioAssetMeta } from '@/persistence/assets';
 import { ingestAudioBuffer } from '@/project/audio-import';
 import { addAudioClip } from '@/project/commands';
 import { loopRecordingSplits, loopRecordingTakeSlices } from '@/project/loop-recording';
-import { ppqToSeconds } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
 import {
   normalizeTempoMap,
+  ppqRangeSeconds,
   ppqToSeconds as ppqToSecondsMap,
   secondsToPpq as secondsToPpqMap,
 } from '@/project/tempo-map';
-import { timeSignatureAt } from '@/project/time-signature';
+import { countInStartPpq } from '@/project/time-signature';
 import type { RealtimeVoiceChangerConfigInput } from '@/wasm/index.js';
 import type { UseTransportReturn } from './useTransport';
 
@@ -48,6 +53,13 @@ interface RecordingChannelRoute {
 }
 
 export type RecordingVoiceChangerPreset = 'off' | RealtimeVoiceChangerConfigInput;
+export type RecordingOperationState =
+  | 'idle'
+  | 'requesting'
+  | 'armed'
+  | 'recording'
+  | 'stopping'
+  | 'ingesting';
 
 /** Injectable dependencies for {@link useRecording} (tests / alternatives). */
 export interface UseRecordingOptions {
@@ -71,6 +83,8 @@ export interface UseRecordingOptions {
 
 /** Reactive recording state and actions returned by {@link useRecording}. */
 export interface UseRecordingReturn {
+  /** Exclusive recording operation state; non-idle transitional states reject re-entry. */
+  state: Ref<RecordingOperationState>;
   /** The armed (record-destination) audio track id, or null. */
   armedTrackId: Ref<number | null>;
   /** All armed audio track ids. Multiple tracks receive the same input take. */
@@ -173,6 +187,7 @@ export function useRecording(
 
   const armedTrackId = ref<number | null>(null);
   const armedTrackIds = ref<number[]>([]);
+  const state = ref<RecordingOperationState>('idle');
   const isRecording = ref(false);
   const isCountingIn = ref(false);
   const inputLevel = ref(0);
@@ -196,30 +211,91 @@ export function useRecording(
   let recordingCaptureSource: RecordingCaptureSource = 'input';
   let recordingCounter = 0;
   let recordingLoop: { startPpq: number; endPpq: number } | null = null;
+  const recordingOperations = new OperationGeneration();
+  const microphoneOperations = new OperationGeneration();
   /** Per-track device signature the current recorder was built with. */
   let recorderDeviceSignature = '';
+
+  interface RecordingOperation {
+    token: OperationToken;
+    recorder: Recorder;
+    targetTrackIds: readonly number[];
+    startAtPpq?: number;
+    endAtPpq?: number;
+  }
+
+  let activeOperation: RecordingOperation | null = null;
 
   const resolveHandle = (): EngineHandle | null => toValue(handleSource) ?? null;
 
   /**
    * Distinct per-track record input device ids across the armed audio tracks,
    * in armed order (device order = merged capture channel). Tracks without an
-   * explicit device record from the global input and contribute nothing here;
-   * the recorder falls back to the single-device path unless two or more
-   * distinct devices are present.
+   * explicit device contribute the global/default input sentinel so a default
+   * input can be merged alongside a separately selected device.
    */
   const armedInputDeviceIds = (): string[] => {
     const ids: string[] = [];
+    const fallback = inputDeviceId.value.trim();
     for (const id of armedTrackIds.value) {
       const track = store.tracks.find((t) => t.id === id);
       const device = track?.kind === 'audio' ? track.recordInputDeviceId?.trim() : undefined;
-      if (device) ids.push(device);
+      ids.push(device || fallback);
     }
     return ids;
   };
 
   /** Formats an unknown thrown value into a user-facing message. */
   const messageOf = describeError;
+
+  const recordingIdentity = (
+    targetTrackIds: readonly number[],
+    startAtPpq?: number,
+    endAtPpq?: number,
+  ): OperationIdentity => {
+    const routeRevision = targetTrackIds.map((id) => {
+      const track = store.tracks.find((entry) => entry.id === id);
+      return track?.kind === 'audio'
+        ? `${id}:${track.recordInputDeviceId ?? ''}:${track.recordInputChannel ?? ''}`
+        : `missing:${id}`;
+    });
+    return {
+      projectId: store.documentGeneration,
+      targetId: targetTrackIds.join(','),
+      revision: [
+        captureSource.value,
+        inputDeviceId.value,
+        recorderDeviceSignature,
+        startAtPpq ?? '',
+        endAtPpq ?? '',
+        ...routeRevision,
+      ].join('|'),
+    };
+  };
+
+  const operationIsCurrent = (operation: RecordingOperation): boolean =>
+    activeOperation === operation &&
+    recorder === operation.recorder &&
+    recorderHandle === resolveHandle() &&
+    recordingOperations.isCurrent(
+      operation.token,
+      recordingIdentity(operation.targetTrackIds, operation.startAtPpq, operation.endAtPpq),
+    );
+
+  const clearTakeState = (): void => {
+    recordingTrackIds = [];
+    recordingCaptureSource = captureSource.value;
+    recordingLoop = null;
+    isRecording.value = false;
+  };
+
+  const finishOperation = (operation: RecordingOperation): void => {
+    if (activeOperation !== operation) return;
+    activeOperation = null;
+    recordingOperations.invalidate();
+    clearTakeState();
+    state.value = 'idle';
+  };
 
   /** Lazily (re)creates the recorder for the current engine handle. */
   const ensureRecorder = (): Recorder | null => {
@@ -255,10 +331,10 @@ export function useRecording(
       // state and prompt the user to reconnect (the recorder already discarded
       // the partial take, so no silent all-zero clip lands).
       finishCountIn();
-      isRecording.value = false;
-      recordingTrackIds = [];
-      recordingCaptureSource = captureSource.value;
-      recordingLoop = null;
+      recordingOperations.invalidate(new DOMException('Microphone disconnected.', 'AbortError'));
+      activeOperation = null;
+      clearTakeState();
+      state.value = 'idle';
       micReady.value = false;
       inputLevel.value = 0;
       error.value = 'The microphone was disconnected. Reconnect a device and request it again.';
@@ -282,6 +358,7 @@ export function useRecording(
 
   const requestMic = async (): Promise<boolean> => {
     error.value = null;
+    if (microphoneOperations.disposed) return false;
     const rec = ensureRecorder();
     if (!rec) {
       error.value = ENGINE_NOT_STARTED_MESSAGE;
@@ -291,19 +368,26 @@ export function useRecording(
       micReady.value = true;
       return true;
     }
+    const identity = recordingIdentity([...armedTrackIds.value]);
+    const token = microphoneOperations.begin(identity);
+    const current = (): boolean =>
+      recorder === rec &&
+      recorderHandle === resolveHandle() &&
+      microphoneOperations.isCurrent(token, recordingIdentity([...armedTrackIds.value]));
     try {
       await rec.requestMicrophone();
     } catch (err) {
-      error.value = messageOf(err);
+      if (current()) error.value = messageOf(err);
       return false;
     }
+    if (!current()) return false;
     micReady.value = true;
     return true;
   };
 
   const arm = (trackId: number | null): void => {
     error.value = null;
-    if (isRecording.value) {
+    if (state.value !== 'idle') {
       error.value = 'Cannot change the armed track while recording.';
       return;
     }
@@ -327,7 +411,7 @@ export function useRecording(
 
   const setTrackArmed = (trackId: number, armed: boolean): void => {
     error.value = null;
-    if (isRecording.value) {
+    if (state.value !== 'idle') {
       error.value = 'Cannot change the armed track while recording.';
       return;
     }
@@ -367,11 +451,15 @@ export function useRecording(
 
   const setVoiceChangerPreset = (preset: RecordingVoiceChangerPreset): void => {
     error.value = null;
-    if (isRecording.value) {
+    if (state.value === 'recording') {
       voiceChangerPreset.value = preset;
       if (preset === 'off' || !recorder?.setVoiceChangerPreset(preset)) {
         error.value = 'Voice changer changes will apply to the next microphone binding.';
       }
+      return;
+    }
+    if (state.value !== 'idle') {
+      error.value = 'Cannot change the voice changer during a recording operation.';
       return;
     }
     voiceChangerPreset.value = preset;
@@ -380,11 +468,15 @@ export function useRecording(
 
   const setStreamingRetuneSemitones = (semitones: number): void => {
     error.value = null;
-    if (isRecording.value) {
+    if (state.value === 'recording') {
       streamingRetuneSemitones.value = clampStreamingRetuneSemitones(semitones);
       if (!recorder?.setStreamingRetuneSemitones(streamingRetuneSemitones.value)) {
         error.value = 'Retune changes will apply to the next microphone binding.';
       }
+      return;
+    }
+    if (state.value !== 'idle') {
+      error.value = 'Cannot change retune during a recording operation.';
       return;
     }
     streamingRetuneSemitones.value = clampStreamingRetuneSemitones(semitones);
@@ -397,7 +489,7 @@ export function useRecording(
       error.value = `Unknown recording source: ${source}`;
       return;
     }
-    if (isRecording.value) {
+    if (state.value !== 'idle') {
       error.value = 'Recording source changes will apply to the next take.';
       return;
     }
@@ -409,7 +501,7 @@ export function useRecording(
   const setInputDeviceId = (deviceId: string): void => {
     error.value = null;
     const next = deviceId.trim();
-    if (isRecording.value) {
+    if (state.value !== 'idle') {
       error.value = 'Input device changes will apply to the next take.';
       return;
     }
@@ -423,23 +515,51 @@ export function useRecording(
     source: RecordingCaptureSource,
     channelCount: number,
   ): RecordingChannelRoute[] => {
-    if (source !== 'input' || trackIds.length <= 1 || channelCount < trackIds.length) {
+    if (source !== 'input') {
+      return trackIds.map((trackId) => ({ trackId, channelIndex: null }));
+    }
+    const fallbackDevice = inputDeviceId.value.trim();
+    const deviceKeys = trackIds.map((trackId) => {
+      const track = store.tracks.find((entry) => entry.id === trackId);
+      return track?.kind === 'audio' ? track.recordInputDeviceId?.trim() || fallbackDevice : '';
+    });
+    const distinctDevices = [...new Set(deviceKeys)];
+    if (distinctDevices.length >= 2) {
+      return trackIds.map((trackId, trackIndex) => ({
+        trackId,
+        channelIndex: Math.min(
+          Math.max(0, channelCount - 1),
+          Math.max(0, distinctDevices.indexOf(deviceKeys[trackIndex])),
+        ),
+      }));
+    }
+    const requestedChannels = trackIds.map((trackId) => {
+      const track = store.tracks.find((entry) => entry.id === trackId);
+      return track?.kind === 'audio' ? track.recordInputChannel : undefined;
+    });
+    if (
+      requestedChannels.every((requested) => requested === undefined) &&
+      (trackIds.length <= 1 || channelCount < trackIds.length)
+    ) {
       return trackIds.map((trackId) => ({ trackId, channelIndex: null }));
     }
     return trackIds.map((trackId, trackIndex) => {
-      const track = store.tracks.find((entry) => entry.id === trackId);
-      const requested = track?.kind === 'audio' ? track.recordInputChannel : undefined;
+      const requested = requestedChannels[trackIndex];
       const channelIndex =
-        requested !== undefined && requested >= 0 && requested < channelCount
-          ? requested
-          : trackIndex;
+        requested !== undefined
+          ? requested >= 0 && requested < channelCount
+            ? requested
+            : 0
+          : trackIds.length > 1
+            ? Math.min(trackIndex, Math.max(0, channelCount - 1))
+            : null;
       return { trackId, channelIndex };
     });
   };
 
   const record = async (startAtPpq?: number, endAtPpq?: number): Promise<boolean> => {
     error.value = null;
-    if (isRecording.value) return false;
+    if (recordingOperations.disposed || state.value !== 'idle') return false;
     const explicitStart =
       startAtPpq !== undefined && Number.isFinite(startAtPpq) && startAtPpq >= 0;
     const explicitEnd = endAtPpq !== undefined && Number.isFinite(endAtPpq);
@@ -462,9 +582,35 @@ export function useRecording(
       error.value = 'Recording requires an audio track.';
       return false;
     }
-    if (captureSource.value === 'input' && !rec.hasMicrophone() && !(await requestMic())) {
+    const token = recordingOperations.begin(
+      recordingIdentity(targetTrackIds, startAtPpq, endAtPpq),
+    );
+    const operation: RecordingOperation = {
+      token,
+      recorder: rec,
+      targetTrackIds,
+      ...(startAtPpq !== undefined ? { startAtPpq } : {}),
+      ...(endAtPpq !== undefined ? { endAtPpq } : {}),
+    };
+    activeOperation = operation;
+    state.value = 'requesting';
+    const fail = (message?: string): false => {
+      if (activeOperation === operation) {
+        if (message && operationIsCurrent(operation)) error.value = message;
+        finishOperation(operation);
+      }
       return false;
+    };
+    if (captureSource.value === 'input' && !rec.hasMicrophone()) {
+      try {
+        await rec.requestMicrophone();
+      } catch (err) {
+        return fail(messageOf(err));
+      }
+      if (!operationIsCurrent(operation)) return fail();
+      micReady.value = true;
     }
+    if (!operationIsCurrent(operation)) return fail();
 
     const tempoBpm = transport.tempo.value;
     let startPpq = Math.max(0, transport.positionPpq.value);
@@ -486,17 +632,14 @@ export function useRecording(
     }
     const endPpq = explicitEnd ? (endAtPpq as number) : undefined;
     if (endPpq !== undefined && endPpq <= startPpq) {
-      error.value = 'The punch-out locator must be after the punch-in locator.';
-      return false;
+      return fail('The punch-out locator must be after the punch-in locator.');
     }
     // Count-in only applies when starting from stop; punching in on a
     // rolling transport records from the current position immediately.
+    const tempoMap = normalizeTempoMap(store.tempoSegments, tempoBpm);
     let countInPpq = 0;
     if (!explicitStart && !wasRolling && countInBars.value > 0) {
-      const meter = timeSignatureAt(store.timeSignatures, startPpq);
-      const barPpq = meter.numerator * (4 / meter.denominator);
-      // The pre-roll cannot reach before the timeline start.
-      countInPpq = Math.min(startPpq, countInBars.value * barPpq);
+      countInPpq = startPpq - countInStartPpq(store.timeSignatures, startPpq, countInBars.value);
     }
     if (!wasRolling) {
       if (countInPpq > 0 && !transport.metronomeEnabled.value) {
@@ -504,15 +647,9 @@ export function useRecording(
         restoreMetronomeOff = true;
       }
       transport.seekPpq(startPpq - countInPpq);
-      if (!transport.play()) {
-        finishCountIn();
-        error.value = 'The engine rejected the transport play command.';
-        return false;
-      }
     }
     const startOptions: Parameters<Recorder['start']>[0] = { startPpq, tempoBpm };
     if (endPpq !== undefined) {
-      const tempoMap = normalizeTempoMap(store.tempoSegments, tempoBpm);
       const startSeconds = ppqToSecondsMap(tempoMap, startPpq);
       const endSeconds = ppqToSecondsMap(tempoMap, endPpq);
       if (
@@ -520,21 +657,24 @@ export function useRecording(
         !Number.isFinite(endSeconds) ||
         endSeconds <= startSeconds
       ) {
-        error.value = 'The punch-out locator must be after the punch-in locator.';
-        return false;
+        return fail('The punch-out locator must be after the punch-in locator.');
       }
       startOptions.endPpq = endPpq;
       startOptions.maxDurationSeconds = endSeconds - startSeconds;
     }
     try {
       rec.arm(targetTrackIds[0]);
+      state.value = 'armed';
       // The punch window starts at startPpq, so the count-in pre-roll (the
       // transport was seeked earlier above) is never part of the capture.
       await rec.start(startOptions);
     } catch (err) {
       finishCountIn();
-      error.value = messageOf(err);
-      return false;
+      return fail(messageOf(err));
+    }
+    if (!operationIsCurrent(operation)) {
+      await rec.stop().catch(() => undefined);
+      return fail();
     }
     recordingTrackIds = targetTrackIds;
     recordingTempoBpm = tempoBpm;
@@ -551,38 +691,59 @@ export function useRecording(
         ? { startPpq: loopStart, endPpq: loopEnd }
         : null;
     isRecording.value = true;
+    state.value = 'recording';
+    // Capture reset/arm/punch is complete before the transport can expose the
+    // first timeline sample to the recorder.
+    if (!wasRolling && !transport.play()) {
+      await rec.stop().catch(() => undefined);
+      finishCountIn();
+      return fail('The engine rejected the transport play command.');
+    }
     if (countInPpq > 0) {
       isCountingIn.value = true;
-      countInTimer = globalThis.setTimeout(() => {
-        countInTimer = null;
-        finishCountIn();
-      }, ppqToSeconds(countInPpq, tempoBpm) * 1000);
+      countInTimer = globalThis.setTimeout(
+        () => {
+          countInTimer = null;
+          finishCountIn();
+        },
+        ppqRangeSeconds(tempoMap, startPpq - countInPpq, startPpq) * 1000,
+      );
     }
     return true;
   };
 
   const stopRecord = async (): Promise<number | null> => {
-    if (!isRecording.value || !recorder) return null;
+    const operation = activeOperation;
+    if (state.value !== 'recording' || !operation || recorder !== operation.recorder) return null;
+    const rec = operation.recorder;
+    const current = (): boolean => operationIsCurrent(operation);
+    const complete = (clipId: number | null): number | null => {
+      finishOperation(operation);
+      return clipId;
+    };
+    state.value = 'stopping';
     finishCountIn();
-    isRecording.value = false;
     const targetTrackIds =
       recordingTrackIds.length > 0 ? recordingTrackIds : [...armedTrackIds.value];
-    recordingTrackIds = [];
     const recordSource = recordingCaptureSource;
-    recordingCaptureSource = captureSource.value;
-    // Consume the loop state up front so an empty take or a failed stop cannot
-    // leave it set to bleed into the next recording.
     const loop = recordingLoop;
-    recordingLoop = null;
     let result: RecordingResult | null;
     try {
-      result = await recorder.stop();
+      result = await rec.stop();
     } catch (err) {
-      error.value = messageOf(err);
+      if (current()) {
+        state.value = 'recording';
+        error.value = messageOf(err);
+      }
       return null;
     }
-    if (!result || result.channels.length === 0 || result.channels[0].length === 0) return null;
-    if (targetTrackIds.length === 0) return null;
+    if (!current()) return complete(null);
+    isRecording.value = false;
+    state.value = 'ingesting';
+    if (!result || result.channels.length === 0 || result.channels[0].length === 0) {
+      return complete(null);
+    }
+    if (targetTrackIds.length === 0) return complete(null);
     const overflowed = (result.overflowCount ?? 0) > 0;
     // Convert captured wall-clock seconds back to grid PPQ through the full
     // tempo map (constant-tempo projects collapse to the old scalar math), so a
@@ -614,6 +775,7 @@ export function useRecording(
             for (const takeSlice of loopRecordingTakeSlices(sourceChannels, splits)) {
               const takeName = `${name} — Take ${takeSlice.index + 1}`;
               const takeMeta = await ingest(takeSlice.channels, result.sampleRate, takeName);
+              if (!current()) return complete(null);
               takes.push({ assetId: takeMeta.id, name: takeName });
             }
             if (takes.length < 2) continue;
@@ -625,10 +787,11 @@ export function useRecording(
               name,
               takes,
             });
+            if (!current()) return complete(null);
             firstClipId ??= clipId;
           }
           if (overflowed) error.value = RECORDING_OVERFLOW_MESSAGE;
-          return firstClipId;
+          return complete(firstClipId);
         }
       }
       const recordedSeconds = result.channels[0].length / result.sampleRate;
@@ -639,6 +802,7 @@ export function useRecording(
       const sharedMeta = routes.some((route) => route.channelIndex !== null)
         ? null
         : await ingest(result.channels, result.sampleRate, name);
+      if (!current()) return complete(null);
       for (const route of routes) {
         const meta =
           sharedMeta ??
@@ -647,6 +811,7 @@ export function useRecording(
             result.sampleRate,
             `${name} — Ch ${(route.channelIndex as number) + 1}`,
           ));
+        if (!current()) return complete(null);
         const clipId = await addAudioClip({
           trackId: route.trackId,
           assetId: meta.id,
@@ -654,13 +819,14 @@ export function useRecording(
           lengthPpq,
           name,
         });
+        if (!current()) return complete(null);
         firstClipId ??= clipId;
       }
       if (overflowed) error.value = RECORDING_OVERFLOW_MESSAGE;
-      return firstClipId;
+      return complete(firstClipId);
     } catch (err) {
-      error.value = `Failed to store the recording: ${messageOf(err)}`;
-      return null;
+      if (current()) error.value = `Failed to store the recording: ${messageOf(err)}`;
+      return complete(null);
     }
   };
 
@@ -668,12 +834,16 @@ export function useRecording(
   const stopWatching = watch(
     transport.isPlaying,
     (playing) => {
-      if (!playing && isRecording.value) void stopRecord();
+      if (!playing && state.value === 'recording') void stopRecord();
     },
     { flush: 'sync' },
   );
 
   const dispose = (): void => {
+    if (recordingOperations.disposed) return;
+    recordingOperations.dispose(new DOMException('Recording disposed.', 'AbortError'));
+    microphoneOperations.dispose(new DOMException('Recording disposed.', 'AbortError'));
+    activeOperation = null;
     finishCountIn();
     stopWatching();
     unsubscribeLevel?.();
@@ -683,8 +853,8 @@ export function useRecording(
     recorder?.dispose();
     recorder = null;
     recorderHandle = null;
-    recordingTrackIds = [];
-    isRecording.value = false;
+    clearTakeState();
+    state.value = 'idle';
     micReady.value = false;
   };
 
@@ -695,6 +865,7 @@ export function useRecording(
   return {
     armedTrackId,
     armedTrackIds,
+    state,
     isRecording,
     isCountingIn,
     inputLevel,

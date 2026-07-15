@@ -113,6 +113,84 @@ describe('useMidiRecording', () => {
     expect(recording.stopRecord()).toBeNull();
   });
 
+  it('discards note and expression events that end before count-in punch-in', () => {
+    let nowMs = 1000;
+    const { recording, positionPpq, calls } = setup({ now: () => nowMs });
+    recording.arm(store.tracks[0].id);
+    recording.countInBars.value = 1;
+    positionPpq.value = 8;
+    expect(recording.record()).toBe(true); // punch-in timestamp is 3000 ms
+
+    recording.captureNoteOn({ pitch: 60, velocity: 90, channel: 0, timeStampMs: 1500 });
+    recording.captureControlChange({ controller: 1, value: 64, channel: 0, timeStampMs: 1600 });
+    recording.capturePitchBend({ value: 4096, channel: 0, timeStampMs: 1700 });
+    recording.captureProgramChange({ program: 12, channel: 0, timeStampMs: 1800 });
+    recording.captureChannelPressure({ value: 70, channel: 0, timeStampMs: 1900 });
+    recording.capturePolyPressure({
+      pitch: 60,
+      value: 80,
+      channel: 0,
+      timeStampMs: 2000,
+    });
+    recording.captureNoteOff({ pitch: 60, velocity: 0, channel: 0, timeStampMs: 2500 });
+    nowMs = 4000;
+
+    expect(recording.stopRecord()).toBeNull();
+    expect(calls).toEqual([]);
+  });
+
+  it('anchors a note held across count-in punch-in at the boundary', () => {
+    let nowMs = 1000;
+    const { recording, positionPpq, calls } = setup({ now: () => nowMs });
+    recording.arm(store.tracks[0].id);
+    recording.countInBars.value = 1;
+    positionPpq.value = 8;
+    expect(recording.record()).toBe(true); // punch-in timestamp is 3000 ms
+
+    recording.captureNoteOn({ pitch: 67, velocity: 100, channel: 2, timeStampMs: 2000 });
+    recording.captureNoteOff({ pitch: 67, velocity: 45, channel: 2, timeStampMs: 3500 });
+    nowMs = 4000;
+
+    expect(recording.stopRecord()).toBe(1);
+    expect(calls[0]).toMatchObject({
+      startPpq: 8,
+      notes: [{ pitch: 67, velocity: 100, startPpq: 0, durationPpq: 1, channel: 2 }],
+    });
+  });
+
+  it('walks count-in bars across a 3/4 to 5/8 meter change', () => {
+    store.timeSignatures = [
+      { startPpq: 0, numerator: 3, denominator: 4 },
+      { startPpq: 6, numerator: 5, denominator: 8 },
+    ];
+    const { recording, positionPpq, seekPpq } = setup();
+    recording.arm(store.tracks[0].id);
+    recording.countInBars.value = 1;
+    positionPpq.value = 8.5;
+
+    expect(recording.record()).toBe(true);
+    expect(seekPpq).toHaveBeenCalledWith(6);
+  });
+
+  it('times count-in from the tempo map when a tempo change falls inside it', () => {
+    vi.useFakeTimers();
+    store.tempoSegments = [
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 6, bpm: 60 },
+    ];
+    const { recording, positionPpq } = setup();
+    recording.arm(store.tracks[0].id);
+    recording.countInBars.value = 1;
+    positionPpq.value = 8;
+
+    expect(recording.record()).toBe(true);
+    vi.advanceTimersByTime(2_000);
+    expect(recording.isCountingIn.value).toBe(true);
+    vi.advanceTimersByTime(1_000);
+    expect(recording.isCountingIn.value).toBe(false);
+    vi.useRealTimers();
+  });
+
   it('clears the count-in timer when its owning scope is stopped', () => {
     vi.useFakeTimers();
     const calls: AddRecordedMidiClipInput[] = [];

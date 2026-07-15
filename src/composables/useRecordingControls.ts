@@ -186,9 +186,12 @@ export function useRecordingControls(options: RecordingControlsOptions) {
   }
 
   function toggleRecord(): void {
-    if (recording.isRecording.value || midiRecording.isRecording.value) {
+    const audioState =
+      recording.state?.value ?? (recording.isRecording.value ? 'recording' : 'idle');
+    if (audioState !== 'idle' && audioState !== 'recording') return;
+    if (audioState === 'recording' || midiRecording.isRecording.value) {
       sharedRecordGeneration++;
-      if (recording.isRecording.value) void recording.stopRecord();
+      if (audioState === 'recording') void recording.stopRecord();
       if (midiRecording.isRecording.value) midiRecording.stopRecord();
       return;
     }

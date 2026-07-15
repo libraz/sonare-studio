@@ -183,7 +183,7 @@ export interface RecorderOptions {
   bindInput?: (
     ctx: AudioContext,
     engineNode: AudioWorkletNode,
-    options: { stream: MediaStream; stopTracksOnClose: boolean },
+    options: { stream: MediaStream; stopTracksOnClose: boolean; signal?: AbortSignal },
   ) => Promise<MicrophoneBinding>;
   /** Optional realtime voice changer preset inserted between microphone and engine input. */
   voiceChangerPreset?: RealtimeVoiceChangerConfigInput | null;
@@ -203,7 +203,7 @@ export interface RecorderOptions {
    * capture (device order = channel index). One or zero entries falls back to
    * the single-device path using {@link RecorderOptions.inputDeviceId}.
    */
-  inputDeviceIds?: ReadonlyArray<string>;
+  inputDeviceIds?: ReadonlyArray<string | null | undefined>;
   /**
    * Maximum number of channels the input capture can carry (default 2). The
    * device merge is clamped to this width; extra devices are dropped with a
@@ -350,10 +350,14 @@ function defaultGetUserMedia(): ((c: MediaStreamConstraints) => Promise<MediaStr
 async function defaultBindInput(
   ctx: AudioContext,
   engineNode: AudioWorkletNode,
-  options: { stream: MediaStream; stopTracksOnClose: boolean },
+  options: { stream: MediaStream; stopTracksOnClose: boolean; signal?: AbortSignal },
 ): Promise<MicrophoneBinding> {
   const wasm = await ensureWasm();
-  return wasm.bindMicrophoneInput(ctx, engineNode, options);
+  options.signal?.throwIfAborted();
+  return wasm.bindMicrophoneInput(ctx, engineNode, {
+    stream: options.stream,
+    stopTracksOnClose: options.stopTracksOnClose,
+  });
 }
 
 /** Converts a peak in dBFS to linear amplitude (non-finite values map to 0). */
@@ -440,14 +444,18 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
   let bindingStreams: MediaStream[] = [];
   /**
    * Channel count sent to configureCapture. Stays at the engine width (2) for a
-   * single device; a device merge raises it to the merged channel count.
+   * single device only when the device actually reports two channels; a device
+   * merge uses one channel per opened device.
    */
   let captureChannelCount = DEFAULT_CAPTURE_CHANNEL_LIMIT;
   let micPromise: Promise<void> | null = null;
+  let microphoneAbort: AbortController | null = null;
   let monitorOn = false;
   let monitorGainValue = 1;
   let armedTrack: number | null = null;
   let take: ActiveTake | null = null;
+  let operationGeneration = 0;
+  let phase: 'idle' | 'starting' | 'recording' | 'stopping' | 'disposed' = 'idle';
   let captureBufferFrames = idleBufferFrames;
   const levelListeners = new Set<(peak: number) => void>();
   let levelPeak = 0;
@@ -519,6 +527,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
    */
   const handleMicrophoneLost = (): void => {
     if (!binding) return;
+    operationGeneration += 1;
     detachTrackListeners?.();
     detachTrackListeners = null;
     if (take) {
@@ -529,6 +538,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
         // The device is gone; a failed reset is harmless.
       });
     }
+    if (phase !== 'disposed') phase = 'idle';
     binding.close();
     binding = null;
     bindingStreams = [];
@@ -542,11 +552,12 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
    * Distinct, non-empty capture device ids the caller requested, in supplied
    * order (device order = merged channel index). Empty when none is requested.
    */
-  const distinctDeviceIds = (): string[] => {
-    const distinct: string[] = [];
+  const distinctDeviceIds = (): Array<string | undefined> => {
+    const distinct: Array<string | undefined> = [];
     for (const id of options.inputDeviceIds ?? []) {
       const trimmed = id?.trim();
-      if (trimmed && !distinct.includes(trimmed)) distinct.push(trimmed);
+      const key = trimmed || undefined;
+      if (!distinct.includes(key)) distinct.push(key);
     }
     return distinct;
   };
@@ -570,7 +581,8 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
    */
   const openMergedMicrophones = async (
     getUserMedia: (constraints: MediaStreamConstraints) => Promise<MediaStream>,
-    deviceIds: string[],
+    deviceIds: Array<string | undefined>,
+    signal: AbortSignal,
   ): Promise<void> => {
     const used = deviceIds.slice(0, captureChannelLimit);
     if (deviceIds.length > used.length) {
@@ -581,54 +593,96 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     }
     const streams: MediaStream[] = [];
     try {
-      for (const id of used) streams.push(await getUserMedia(microphoneConstraints(id)));
+      for (const id of used) {
+        signal.throwIfAborted();
+        const stream = await getUserMedia(microphoneConstraints(id));
+        if (signal.aborted) {
+          stopStreamTracks(stream);
+          signal.throwIfAborted();
+        }
+        streams.push(stream);
+      }
     } catch (err) {
       for (const stream of streams) stopStreamTracks(stream);
+      if (signal.aborted) signal.throwIfAborted();
       throw new NoMicrophoneError(
         `Microphone access failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
-    const ctx = handle.ctx;
-    const merger = ctx.createChannelMerger(used.length);
-    const sources = streams.map((stream) => ctx.createMediaStreamSource(stream));
-    // Each device's first channel feeds one merger input, so merged channel i
-    // carries device i (the order recordingChannelRoutes demuxes onto tracks).
-    sources.forEach((source, index) => {
-      source.connect(merger, 0, index);
-    });
-    merger.connect(handle.engine.node);
-    const bound: MicrophoneBinding = {
-      stream: streams[0],
-      source: merger,
-      close: () => {
+    const sources: MediaStreamAudioSourceNode[] = [];
+    let merger: ChannelMergerNode | null = null;
+    let stagedBinding: MicrophoneBinding | null = null;
+    try {
+      const ctx = handle.ctx;
+      merger = ctx.createChannelMerger(used.length);
+      for (const stream of streams) sources.push(ctx.createMediaStreamSource(stream));
+      // Each device's first channel feeds one merger input, so merged channel i
+      // carries device i (the order recordingChannelRoutes demuxes onto tracks).
+      sources.forEach((source, index) => {
+        source.connect(merger as ChannelMergerNode, 0, index);
+      });
+      merger.connect(handle.engine.node);
+      const readyMerger = merger;
+      const bound: MicrophoneBinding = {
+        stream: streams[0],
+        source: readyMerger,
+        close: () => {
+          try {
+            readyMerger.disconnect();
+          } catch {
+            // Already disconnected during teardown; harmless.
+          }
+          for (const source of sources) {
+            try {
+              source.disconnect();
+            } catch {
+              // Already disconnected; harmless.
+            }
+          }
+          for (const stream of streams) stopStreamTracks(stream);
+        },
+      };
+      stagedBinding = bound;
+      if (disposed || signal.aborted) {
+        if (signal.aborted) signal.throwIfAborted();
+        throw new RecorderStateError('Recorder has been disposed');
+      }
+      binding = bound;
+      bindingStreams = streams;
+      captureChannelCount = used.length;
+      detachTrackListeners = attachAllTrackEndedListeners(streams, handleMicrophoneLost);
+      sendCaptureConfig(idleBufferFrames, currentInputOffsetSamples());
+    } catch (error) {
+      if (stagedBinding) {
+        detachTrackListeners?.();
+        detachTrackListeners = null;
+        stagedBinding.close();
+        if (binding === stagedBinding) {
+          binding = null;
+          bindingStreams = [];
+          captureChannelCount = DEFAULT_CAPTURE_CHANNEL_LIMIT;
+        }
+      } else {
         try {
-          merger.disconnect();
+          merger?.disconnect();
         } catch {
-          // Already disconnected during teardown; harmless.
+          // A partially connected merger may already be disconnected.
         }
         for (const source of sources) {
           try {
             source.disconnect();
           } catch {
-            // Already disconnected; harmless.
+            // A partially connected source may already be disconnected.
           }
         }
         for (const stream of streams) stopStreamTracks(stream);
-      },
-    };
-    if (disposed) {
-      bound.close();
-      throw new RecorderStateError('Recorder has been disposed');
+      }
+      throw error;
     }
-    binding = bound;
-    bindingStreams = streams;
-    captureChannelCount = used.length;
-    detachTrackListeners = attachAllTrackEndedListeners(streams, handleMicrophoneLost);
-    sendCaptureConfig(idleBufferFrames, currentInputOffsetSamples());
   };
 
   /** One-shot microphone acquisition shared by concurrent callers. */
-  const openMicrophone = async (): Promise<void> => {
+  const openMicrophone = async (signal: AbortSignal): Promise<void> => {
     const getUserMedia = options.getUserMedia ?? defaultGetUserMedia();
     if (!getUserMedia) {
       throw new NotSupportedError(
@@ -637,7 +691,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     }
     const deviceIds = distinctDeviceIds();
     if (deviceIds.length >= 2) {
-      await openMergedMicrophones(getUserMedia, deviceIds);
+      await openMergedMicrophones(getUserMedia, deviceIds, signal);
       return;
     }
     // A single requested device (one armed device-track) overrides the global
@@ -645,8 +699,14 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     const singleDeviceId = deviceIds[0] ?? options.inputDeviceId;
     let stream: MediaStream;
     try {
+      signal.throwIfAborted();
       stream = await getUserMedia(microphoneConstraints(singleDeviceId));
+      if (signal.aborted) {
+        stopStreamTracks(stream);
+        signal.throwIfAborted();
+      }
     } catch (err) {
+      if (signal.aborted) signal.throwIfAborted();
       throw new NoMicrophoneError(
         `Microphone access failed: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -678,22 +738,45 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
                   channelCount: 1,
                 })
             : defaultBindInput);
-    const bound = await bindInput(handle.ctx, handle.engine.node, {
-      stream,
-      stopTracksOnClose: true,
-    });
-    if (disposed) {
+    let bound: MicrophoneBinding;
+    try {
+      bound = await bindInput(handle.ctx, handle.engine.node, {
+        stream,
+        stopTracksOnClose: true,
+        signal,
+      });
+    } catch (error) {
+      stopStreamTracks(stream);
+      throw error;
+    }
+    if (disposed || signal.aborted) {
       bound.close();
+      if (signal.aborted) signal.throwIfAborted();
       throw new RecorderStateError('Recorder has been disposed');
     }
-    binding = bound;
-    bindingStreams = [bound.stream];
-    captureChannelCount = DEFAULT_CAPTURE_CHANNEL_LIMIT;
-    // Learn when the device disappears so a take never silently fills with zeros.
-    detachTrackListeners = attachTrackEndedListeners(bound.stream, handleMicrophoneLost);
-    // The idle config makes the input source and the monitor state live on
-    // the engine before any take starts.
-    sendCaptureConfig(idleBufferFrames, currentInputOffsetSamples());
+    try {
+      binding = bound;
+      bindingStreams = [bound.stream];
+      const actualChannels = bound.stream
+        .getAudioTracks()
+        .reduce((max, track) => Math.max(max, track.getSettings().channelCount ?? 1), 1);
+      captureChannelCount = Math.max(1, Math.min(captureChannelLimit, actualChannels));
+      // Learn when the device disappears so a take never silently fills with zeros.
+      detachTrackListeners = attachTrackEndedListeners(bound.stream, handleMicrophoneLost);
+      // The idle config makes the input source and the monitor state live on
+      // the engine before any take starts.
+      sendCaptureConfig(idleBufferFrames, currentInputOffsetSamples());
+    } catch (error) {
+      detachTrackListeners?.();
+      detachTrackListeners = null;
+      bound.close();
+      if (binding === bound) {
+        binding = null;
+        bindingStreams = [];
+        captureChannelCount = DEFAULT_CAPTURE_CHANNEL_LIMIT;
+      }
+      throw error;
+    }
   };
 
   const requestMicrophone = (): Promise<void> => {
@@ -703,10 +786,19 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     if (captureSource === 'output') return Promise.resolve();
     if (binding) return Promise.resolve();
     if (!micPromise) {
-      micPromise = openMicrophone().catch((err) => {
-        micPromise = null;
-        throw err;
-      });
+      const controller = new AbortController();
+      microphoneAbort = controller;
+      micPromise = openMicrophone(controller.signal)
+        .catch((err) => {
+          if (disposed && controller.signal.aborted) {
+            throw new RecorderStateError('Recorder has been disposed');
+          }
+          throw err;
+        })
+        .finally(() => {
+          if (microphoneAbort === controller) microphoneAbort = null;
+          micPromise = null;
+        });
     }
     return micPromise;
   };
@@ -741,7 +833,8 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
 
   const start = async (startOptions: StartRecordingOptions): Promise<void> => {
     if (disposed) throw new RecorderStateError('Recorder has been disposed');
-    if (take) throw new RecorderStateError('Recording is already in progress');
+    if (phase !== 'idle')
+      throw new RecorderStateError('Recording operation is already in progress');
     if (captureSource === 'input' && !binding) {
       throw new RecorderStateError('Request the microphone before recording');
     }
@@ -785,30 +878,66 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     }
     const sampleRate = handle.ctx.sampleRate;
     const trackId = armedTrack;
-    sendCaptureConfig(Math.max(1, Math.ceil(maxDurationSeconds * sampleRate)), offsetSamples);
-    await handle.engine.resetCapture();
-    handle.engine.armRecord(trackId, true);
-    // Punch-out = explicit endPpq or the max-duration bound; stop() disarms
-    // earlier as needed. The half-open window keeps any count-in pre-roll out
-    // of the buffer and lets auto-punch close sample-accurately at R.
-    handle.engine.punch(
-      startPpq,
-      hasEndPpq ? endPpq : startPpq + (maxDurationSeconds * tempoBpm) / 60,
-    );
-    take = { trackId, startPpq, offsetSamples, sampleRate };
+    const generation = ++operationGeneration;
+    let engineArmed = false;
+    phase = 'starting';
+    try {
+      sendCaptureConfig(Math.max(1, Math.ceil(maxDurationSeconds * sampleRate)), offsetSamples);
+      await handle.engine.resetCapture();
+      if (disposed || generation !== operationGeneration) {
+        throw new RecorderStateError('Recorder startup was cancelled');
+      }
+      handle.engine.armRecord(trackId, true);
+      engineArmed = true;
+      // Punch-out = explicit endPpq or the max-duration bound; stop() disarms
+      // earlier as needed. The half-open window keeps any count-in pre-roll out
+      // of the buffer and lets auto-punch close sample-accurately at R.
+      handle.engine.punch(
+        startPpq,
+        hasEndPpq ? endPpq : startPpq + (maxDurationSeconds * tempoBpm) / 60,
+      );
+      take = { trackId, startPpq, offsetSamples, sampleRate };
+      phase = 'recording';
+    } catch (error) {
+      if (engineArmed) handle.engine.armRecord(trackId, false);
+      await handle.engine.resetCapture().catch(() => undefined);
+      if (!disposed && generation === operationGeneration) phase = 'idle';
+      throw error;
+    }
   };
 
   const stop = async (): Promise<RecordingResult | null> => {
     const active = take;
-    if (!active) throw new RecorderStateError('No recording in progress');
-    take = null;
+    if (!active || phase !== 'recording') {
+      throw new RecorderStateError('No recording in progress');
+    }
+    const generation = operationGeneration;
+    phase = 'stopping';
     handle.engine.armRecord(active.trackId, false);
-    const status = await handle.engine.captureStatus();
-    const captured = await handle.engine.capturedAudio();
+    let status: Awaited<ReturnType<EngineHandle['engine']['captureStatus']>>;
+    let captured: Float32Array[];
+    try {
+      status = await handle.engine.captureStatus();
+      if (disposed || generation !== operationGeneration) {
+        throw new RecorderStateError('Recorder stop was cancelled');
+      }
+      captured = await handle.engine.capturedAudio();
+      if (disposed || generation !== operationGeneration) {
+        throw new RecorderStateError('Recorder stop was cancelled');
+      }
+      await handle.engine.resetCapture();
+      if (disposed || generation !== operationGeneration) {
+        throw new RecorderStateError('Recorder stop was cancelled');
+      }
+    } catch (error) {
+      if (!disposed && generation === operationGeneration) phase = 'recording';
+      throw error;
+    }
+    take = null;
+    phase = 'idle';
     if (status.overflowCount > 0) {
       console.warn(`Recording capture overflow: ${status.overflowCount} samples dropped`);
     }
-    await handle.engine.resetCapture();
     // Back to the idle config so the monitor state survives between takes.
     if (captureSource === 'output' || binding) {
       sendCaptureConfig(idleBufferFrames, currentInputOffsetSamples());
@@ -836,6 +965,8 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
   const dispose = (): void => {
     if (disposed) return;
     disposed = true;
+    operationGeneration += 1;
+    phase = 'disposed';
     unsubscribeMeter();
     detachTrackListeners?.();
     detachTrackListeners = null;
@@ -850,6 +981,8 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     binding?.close();
     binding = null;
     bindingStreams = [];
+    microphoneAbort?.abort(new DOMException('Recorder disposed.', 'AbortError'));
+    microphoneAbort = null;
     micPromise = null;
     levelListeners.clear();
     micLostListeners.clear();
@@ -859,15 +992,19 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     requestMicrophone,
     hasMicrophone: () => captureSource === 'output' || binding !== null,
     arm(trackId: number): void {
-      if (take) throw new RecorderStateError('Cannot change the armed track while recording');
+      if (phase !== 'idle') {
+        throw new RecorderStateError('Cannot change the armed track during a recording operation');
+      }
       armedTrack = trackId;
     },
     disarm(): void {
-      if (take) throw new RecorderStateError('Cannot disarm while recording');
+      if (phase !== 'idle') {
+        throw new RecorderStateError('Cannot disarm during a recording operation');
+      }
       armedTrack = null;
     },
     armedTrackId: () => armedTrack,
-    isRecording: () => take !== null,
+    isRecording: () => phase === 'recording' || phase === 'stopping',
     setMonitor,
     monitorEnabled: () => monitorOn,
     setVoiceChangerPreset,

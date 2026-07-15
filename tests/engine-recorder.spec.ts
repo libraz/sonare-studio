@@ -110,12 +110,12 @@ function makeHandle(sampleRate = 100, baseLatency = 0) {
 }
 
 /** Builds injectable mic/bind fakes. */
-function makeDeps(options: { trackLatencySeconds?: number } = {}) {
+function makeDeps(options: { channelCount?: number; trackLatencySeconds?: number } = {}) {
   const endedListeners = new Set<() => void>();
   const track = {
     stop: vi.fn(),
     getSettings: () => ({
-      channelCount: 2,
+      channelCount: options.channelCount ?? 2,
       ...(options.trackLatencySeconds !== undefined
         ? { latency: options.trackLatencySeconds }
         : {}),
@@ -155,9 +155,17 @@ class FakeAudioNode {
   readonly disconnect = vi.fn();
 }
 
+class FakePort extends EventTarget {
+  readonly postMessage = vi.fn();
+  readonly start = vi.fn();
+}
+
 class FakeAudioWorkletNode extends FakeAudioNode {
   static instances: FakeAudioWorkletNode[] = [];
-  readonly port = { postMessage: vi.fn() };
+  readonly port = new FakePort();
+  private readonly events = new EventTarget();
+  readonly addEventListener = this.events.addEventListener.bind(this.events);
+  readonly removeEventListener = this.events.removeEventListener.bind(this.events);
   constructor(
     readonly context: BaseAudioContext,
     readonly name: string,
@@ -165,6 +173,9 @@ class FakeAudioWorkletNode extends FakeAudioNode {
   ) {
     super();
     FakeAudioWorkletNode.instances.push(this);
+    queueMicrotask(() =>
+      this.port.dispatchEvent(new MessageEvent('message', { data: { type: 'ready' } })),
+    );
   }
 }
 
@@ -177,6 +188,14 @@ function rampChannels(channels: number, capacityFrames: number): Float32Array[] 
     result.push(channel);
   }
   return result;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
 }
 
 afterEach(() => {
@@ -214,6 +233,7 @@ describe('createRecorder microphone acquisition', () => {
     expect(bindInput).toHaveBeenCalledWith(handle.ctx, node, {
       stream,
       stopTracksOnClose: true,
+      signal: expect.any(AbortSignal),
     });
     // The idle config: a 1-second raw-input buffer with the monitor off.
     expect(configureCapture).toHaveBeenCalledTimes(1);
@@ -229,6 +249,18 @@ describe('createRecorder microphone acquisition', () => {
     await recorder.requestMicrophone();
     expect(getUserMedia).toHaveBeenCalledTimes(1);
     expect(configureCapture).toHaveBeenCalledTimes(1);
+  });
+
+  it('configures the capture with the channel count reported by a mono input', async () => {
+    const { handle, configureCapture } = makeHandle(48_000);
+    const { deps } = makeDeps({ channelCount: 1 });
+    const recorder = createRecorder(handle, deps);
+
+    await recorder.requestMicrophone();
+
+    expect(configureCapture).toHaveBeenCalledWith(
+      expect.objectContaining({ channels: 1, source: 'input' }),
+    );
   });
 
   it('requests the selected input device when one is configured', async () => {
@@ -333,6 +365,46 @@ describe('createRecorder state machine', () => {
     await recorder.stop();
     recorder.disarm();
     expect(recorder.armedTrackId()).toBe(null);
+  });
+
+  it('locks start while reset is pending and never arms after disposal', async () => {
+    const { handle, resetCapture, armRecord } = makeHandle();
+    const { deps } = makeDeps();
+    const recorder = createRecorder(handle, { ...deps, captureSource: 'output' });
+    recorder.arm(1);
+    const resetGate = deferred<void>();
+    resetCapture.mockImplementationOnce(() => resetGate.promise);
+
+    const starting = recorder.start({ startPpq: 0, tempoBpm: 120 });
+    await expect(recorder.start({ startPpq: 0, tempoBpm: 120 })).rejects.toBeInstanceOf(
+      RecorderStateError,
+    );
+    expect(() => recorder.arm(2)).toThrow(RecorderStateError);
+    recorder.dispose();
+    resetGate.resolve();
+
+    await expect(starting).rejects.toBeInstanceOf(RecorderStateError);
+    expect(armRecord).not.toHaveBeenCalledWith(1, true);
+    expect(recorder.isRecording()).toBe(false);
+  });
+
+  it('retains the active take when stop RPC fails so stop can be retried', async () => {
+    const { handle, captureStatus, setStatus, setAudio } = makeHandle();
+    const recorder = createRecorder(handle, { ...makeDeps().deps, captureSource: 'output' });
+    recorder.arm(1);
+    await recorder.start({ startPpq: 3, tempoBpm: 120, recordOffsetSamples: 0 });
+    captureStatus.mockRejectedValueOnce(new Error('status failed'));
+
+    await expect(recorder.stop()).rejects.toThrow('status failed');
+    expect(recorder.isRecording()).toBe(true);
+    await expect(recorder.start({ startPpq: 4, tempoBpm: 120 })).rejects.toBeInstanceOf(
+      RecorderStateError,
+    );
+
+    setStatus({ capturedFrames: 2 });
+    setAudio([new Float32Array([1, 2])]);
+    await expect(recorder.stop()).resolves.toMatchObject({ startPpq: 3 });
+    expect(recorder.isRecording()).toBe(false);
   });
 
   it('validates start options', async () => {
@@ -745,7 +817,7 @@ describe('createRecorder teardown', () => {
 
   it('rejects a microphone that finishes binding after dispose', async () => {
     const { handle, configureCapture } = makeHandle();
-    const { deps, bindingClose } = makeDeps();
+    const { deps, bindingClose, track } = makeDeps();
     let release: () => void = () => {};
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -760,7 +832,8 @@ describe('createRecorder teardown', () => {
     release();
     await expect(pending).rejects.toBeInstanceOf(RecorderStateError);
     expect(recorder.hasMicrophone()).toBe(false);
-    expect(bindingClose).toHaveBeenCalled();
+    expect(bindingClose).not.toHaveBeenCalled();
+    expect(track.stop).toHaveBeenCalledTimes(1);
     expect(configureCapture).not.toHaveBeenCalled();
   });
 });
@@ -946,6 +1019,27 @@ describe('createRecorder multi-device merge', () => {
     expect(configureCapture).toHaveBeenCalledWith(
       expect.objectContaining({ channels: 2, source: 'input' }),
     );
+  });
+
+  it('preserves the default input as a route beside an explicitly selected device', async () => {
+    const { handle, createChannelMerger } = makeMergeHandle();
+    const defaultStream = makeStream('default');
+    const usbStream = makeStream('mic-b');
+    const getUserMedia = vi.fn(async (constraints: MediaStreamConstraints) => {
+      const deviceId = ((constraints.audio as MediaTrackConstraints).deviceId as { exact?: string })
+        ?.exact;
+      return deviceId === 'mic-b' ? usbStream : defaultStream;
+    });
+    const recorder = createRecorder(handle, {
+      getUserMedia,
+      inputDeviceIds: [undefined, 'mic-b'],
+    });
+
+    await recorder.requestMicrophone();
+
+    expect(getUserMedia).toHaveBeenNthCalledWith(1, MICROPHONE_CONSTRAINTS);
+    expect(getUserMedia).toHaveBeenNthCalledWith(2, microphoneConstraints('mic-b'));
+    expect(createChannelMerger).toHaveBeenCalledWith(2);
   });
 
   it('caps the merge at the capture channel limit and drops extra devices', async () => {
