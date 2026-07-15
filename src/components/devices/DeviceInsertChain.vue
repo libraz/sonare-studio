@@ -61,7 +61,7 @@ function onDragEnd(): void {
     <ul v-else class="insert-list">
       <li
         v-for="(insertSlot, index) in inserts"
-        :key="`${insertSlot.processor}-${index}`"
+        :key="insertSlot.id ?? `${insertSlot.processor}-${index}`"
         class="insert-row"
         :class="{
           selected: selectedDevice === index,

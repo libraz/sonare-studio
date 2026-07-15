@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import QuickControls from '@/components/devices/QuickControls.vue';
 import { MIDI_LEARN_KEY, useMidiLearn } from '@/composables/useMidiLearn';
+import { insertAutomationParam } from '@/project/automation';
 import { addInsert, clearHistory, undo } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { resetAutomationStripModes, setAutomationStripMode } from '@/ui/mixer/automation-mode';
@@ -139,14 +140,16 @@ describe('QuickControls.vue', () => {
 
     // The drag wrote a lane, not the manual parameter (which stays unset).
     expect(store.tracks[0].mixer?.inserts[0].params.thresholdDb).toBeUndefined();
-    const lane = store.automationLanes.find(
-      (l) => l.target === trackId && l.param === 'insert:0:thresholdDb',
+    const param = insertAutomationParam(
+      store.tracks[0].mixer?.inserts[0].id as string,
+      'thresholdDb',
     );
+    const lane = store.automationLanes.find((l) => l.target === trackId && l.param === param);
     expect(lane).toBeDefined();
     expect(lane?.points.length).toBeGreaterThan(0);
     expect(scheduled[0]).toEqual([
       trackId,
-      'insert:0:thresholdDb',
+      param,
       expect.objectContaining({ ppq: 0, samplePos: 256 }),
     ]);
   });
@@ -182,9 +185,11 @@ describe('QuickControls.vue', () => {
     expect(menuButton.exists()).toBe(true);
     await menuButton.trigger('click');
     await wrapper.vm.$nextTick();
-    const lane = store.automationLanes.find(
-      (l) => l.target === trackId && l.param === 'insert:0:thresholdDb',
+    const param = insertAutomationParam(
+      store.tracks[0].mixer?.inserts[0].id as string,
+      'thresholdDb',
     );
+    const lane = store.automationLanes.find((l) => l.target === trackId && l.param === param);
     expect(lane).toBeDefined();
     expect(lane?.points).toHaveLength(1);
 
@@ -192,7 +197,7 @@ describe('QuickControls.vue', () => {
     await knob.trigger('contextmenu', { clientX: 5, clientY: 5 });
     await wrapper.find('.qc-menu button').trigger('click');
     await wrapper.vm.$nextTick();
-    expect(store.automationLanes.find((l) => l.param === 'insert:0:thresholdDb')).toBeUndefined();
+    expect(store.automationLanes.find((l) => l.param === param)).toBeUndefined();
   });
 
   it('closes the MIDI learn context menu on outside pointerdown', async () => {

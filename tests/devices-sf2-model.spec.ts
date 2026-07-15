@@ -133,7 +133,7 @@ describe('buildSf2Instrument', () => {
     });
   });
 
-  it('carries explicit gain and polyphony, clamped, and drops zero gain', () => {
+  it('carries explicit gain and polyphony, including zero gain', () => {
     expect(buildSf2Instrument({ ...EMPTY, fontId: 'abc', gain: 1.25, polyphony: 16 })).toEqual({
       kind: 'sf2',
       fontId: 'abc',
@@ -146,10 +146,10 @@ describe('buildSf2Instrument', () => {
       gain: MAX_SF2_GAIN,
       polyphony: MAX_SF2_POLYPHONY,
     });
-    // Gain 0 maps to the engine default too, so it is not persisted.
     expect(buildSf2Instrument({ ...EMPTY, fontId: 'abc', gain: 0 })).toEqual({
       kind: 'sf2',
       fontId: 'abc',
+      gain: 0,
     });
   });
 

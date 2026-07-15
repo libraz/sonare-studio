@@ -100,7 +100,15 @@ const insertAutomationTarget = computed<AutomationTarget | null>(() => {
 /** Insert param token for a control on this device, or null (instrument). */
 function insertParamToken(controlId: string): ReturnType<typeof insertAutomationParam> | null {
   if (props.target.type !== 'insert') return null;
-  return insertAutomationParam(props.target.index, controlId);
+  const stripTarget = props.target.trackId;
+  const strip =
+    stripTarget === 'master'
+      ? store.mixer.master
+      : typeof stripTarget === 'number'
+        ? store.tracks.find((track) => track.id === stripTarget)?.mixer
+        : store.mixer.buses.find((bus) => bus.id === mixerBusIdFromTarget(stripTarget))?.strip;
+  const slot = strip?.inserts[props.target.index];
+  return insertAutomationParam(slot?.id ?? props.target.index, controlId);
 }
 
 /** Write context decided when a write-mode insert-knob drag begins. */
@@ -268,7 +276,15 @@ function learnTargetId(controlId: string): string {
     return midiLearnInstrumentTargetId(props.target.trackId, controlId);
   }
   if (isMixerBusStripTarget(props.target.trackId)) return '';
-  return midiLearnInsertTargetId(props.target.trackId, props.target.index, controlId);
+  const strip =
+    props.target.trackId === 'master'
+      ? store.mixer.master
+      : store.tracks.find((track) => track.id === props.target.trackId)?.mixer;
+  return midiLearnInsertTargetId(
+    props.target.trackId,
+    strip?.inserts[props.target.index]?.id ?? props.target.index,
+    controlId,
+  );
 }
 
 /** MIDI-learn state for a control, or undefined when the handle is absent. */

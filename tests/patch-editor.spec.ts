@@ -4,6 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import PatchEditor from '@/components/devices/PatchEditor.vue';
 import { clearHistory, setTrackInstrument, undo } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
+import {
+  resetShortcutBlockingOverlaysForTest,
+  shortcutBlockingOverlayOpen,
+} from '@/ui/overlay-registry';
 import { selectOption } from './helpers/select-menu';
 
 vi.mock('@/lib/wasm', async () => {
@@ -42,6 +46,7 @@ describe('PatchEditor.vue', () => {
   let trackId: number;
 
   beforeEach(async () => {
+    resetShortcutBlockingOverlaysForTest();
     setActivePinia(createPinia());
     store = useProjectStore();
     store.dispose();
@@ -58,6 +63,14 @@ describe('PatchEditor.vue', () => {
   it('renders nothing while closed', () => {
     const wrapper = mount(PatchEditor, { props: { open: false, trackId } });
     expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
+    expect(shortcutBlockingOverlayOpen.value).toBe(false);
+  });
+
+  it('blocks app shortcuts while the modal is open', () => {
+    const wrapper = mountOpen();
+    expect(shortcutBlockingOverlayOpen.value).toBe(true);
+    wrapper.unmount();
+    expect(shortcutBlockingOverlayOpen.value).toBe(false);
   });
 
   it('seeds the draft from the preset base values of the track instrument', () => {

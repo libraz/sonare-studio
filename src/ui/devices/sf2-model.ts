@@ -145,9 +145,9 @@ export function buildSf2Instrument(selection: Sf2Selection): Sf2Instrument | nul
   const polyphony = clampPolyphony(selection.polyphony);
   if (bank !== 0) instrument.bank = bank;
   if (program !== 0) instrument.program = program;
-  // gain 0 maps to the engine default too, so only a distinct positive gain is
-  // worth persisting.
-  if (gain > 0 && gain !== SF2_DEFAULT_GAIN) instrument.gain = gain;
+  // Persist zero explicitly; sf2PlaybackConfig adapts the engine's reserved
+  // zero/default sentinel so UI/model/live/export all retain mute semantics.
+  if (gain !== SF2_DEFAULT_GAIN) instrument.gain = gain;
   if (polyphony !== SF2_DEFAULT_POLYPHONY) instrument.polyphony = polyphony;
   const channelMap = normalizeChannelMap(selection.channelMap);
   if (channelMap.length > 0) instrument.channelMap = channelMap;

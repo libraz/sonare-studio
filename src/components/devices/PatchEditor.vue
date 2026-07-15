@@ -24,6 +24,7 @@ import {
 } from '@/ui/devices/patch-draft';
 import { resolveSynthEnums } from '@/ui/devices/synth-enums';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { useShortcutBlockingOverlay } from '@/ui/overlay-registry';
 import { wrapTabFocus } from '@/ui/settings/focus-trap';
 import { TOKENS } from '@/ui/theme/tokens';
 import type { SynthEnumTables, SynthPatch } from '@/wasm/index.js';
@@ -59,6 +60,7 @@ const enums = ref<SynthEnumTables>(resolveSynthEnums(null));
 const error = ref('');
 const dialogRef = ref<HTMLElement | null>(null);
 const envelopeCanvas = ref<HTMLCanvasElement | null>(null);
+useShortcutBlockingOverlay(computed(() => props.open));
 
 /** Preset resolver backed by the loaded wasm catalog (null before init). */
 function resolvePresetPatch(): PresetPatchResolver {
