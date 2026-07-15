@@ -203,7 +203,12 @@ describe('Canvas editor live regions', () => {
         loopEnabled: false,
         loopStartPpq: 0,
         loopEndPpq: 4,
-        interactions: { previewClip: ref(null), previewFades: ref(null), cursor: ref('default') },
+        interactions: {
+          previewClip: ref(null),
+          previewFades: ref(null),
+          cursor: ref('default'),
+          cancel: vi.fn(),
+        },
         automationExpandedIds: [],
         automationParams: {},
         automationLanes: [],
@@ -217,5 +222,52 @@ describe('Canvas editor live regions', () => {
     expect(live.attributes('aria-atomic')).toBe('true');
     expect(live.text()).toContain('Track Piano selected');
     expect(live.text()).toContain('Clip Intro selected');
+  });
+
+  it('exposes arrangement clips through keyboard and slider actions', async () => {
+    stubCanvasEnvironment();
+    const wrapper = mount(ArrangementCanvas, {
+      props: {
+        range: new TimelineRange({ widthPx: 800, heightPx: 480, pxPerPpq: 100, rowHeight: 10 }),
+        revision: 0,
+        painter,
+        tracks: [{ id: 1, name: 'Piano', color: '#60a5fa' }],
+        clips: [{ id: 2, trackId: 1, name: 'Intro', startPpq: 0, lengthPpq: 4 }],
+        markers: [],
+        activeTrackId: 1,
+        activeClipId: 2,
+        timeSignatures: [{ startPpq: 0, numerator: 4, denominator: 4 }],
+        scrollY: 0,
+        laneHeight: 80,
+        loopEnabled: false,
+        loopStartPpq: 0,
+        loopEndPpq: 4,
+        gridPpq: 0.25,
+        interactions: {
+          previewClip: ref(null),
+          previewFades: ref(null),
+          cursor: ref('default'),
+          cancel: vi.fn(),
+        },
+        automationExpandedIds: [],
+        automationParams: {},
+        automationLanes: [],
+        automation: { preview: ref(null), hover: ref(null), cursor: ref(null) },
+        takesExpandedIds: [],
+        takes: { preview: ref(null), cursor: ref(null) },
+      },
+    });
+    const navigator = wrapper.get('[role="listbox"]');
+    expect(wrapper.get('[role="option"]').text()).toContain('Intro');
+    expect(wrapper.findAll('input[type="range"]')).toHaveLength(2);
+
+    await navigator.trigger('keydown', { key: ' ' });
+    expect(wrapper.emitted('clip-keyboard-action')?.[0]).toEqual([{ clipId: 2, kind: 'select' }]);
+    await navigator.trigger('keydown', { key: 'ArrowRight', shiftKey: true });
+    expect(wrapper.emitted('clip-keyboard-action')?.[1]?.[0]).toMatchObject({
+      clipId: 2,
+      kind: 'adjust',
+      adjustment: { direction: 'right', resize: true },
+    });
   });
 });
