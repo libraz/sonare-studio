@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vu
 import EmptyState from '@/components/shell/EmptyState.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
+import { leaseAudioAssets } from '@/persistence/asset-leases';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
@@ -60,11 +61,15 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const project = useProjectStore();
 
 const asset = shallowRef<LoadedAudioAsset | null>(null);
 const currentAssetId = ref(props.assetId);
 const historyState = ref<VersionHistoryState>(
   createHistory({ assetId: props.assetId, label: t.value.shell.sampleEditor.ops.original }),
+);
+const historyLease = leaseAudioAssets(
+  historyState.value.versions.map((version) => version.assetId),
 );
 const loading = ref(false);
 const busy = ref(false);
@@ -121,6 +126,8 @@ const operations = useSampleOperations({
   clearSelection: () => {
     selection.value = null;
   },
+  isDisposed: () => disposed,
+  getProjectGeneration: () => project.documentGeneration,
 });
 const {
   gainDbInput,
@@ -245,6 +252,12 @@ watch(
   },
 );
 
+watch(
+  historyState,
+  (history) => historyLease.update(history.versions.map((version) => version.assetId)),
+  { flush: 'sync' },
+);
+
 // The current asset cannot be its own reference; keep the picker list fresh
 // (new edited versions become selectable references too).
 watch(currentAssetId, (id) => {
@@ -275,8 +288,6 @@ function versionTitle(version: AssetVersion): string {
 }
 
 // --- Clip warp (tempo follow) ---------------------------------------------------
-
-const project = useProjectStore();
 
 const warp = useSampleWarp({
   project,
@@ -313,6 +324,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   disposed = true;
   loadGeneration++;
+  operations.dispose();
+  historyLease.release();
 });
 </script>
 

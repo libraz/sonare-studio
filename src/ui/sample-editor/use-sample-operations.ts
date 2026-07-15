@@ -12,12 +12,19 @@
 
 import { computed, type Ref, ref, watch } from 'vue';
 import {
+  type OperationToken as GenerationToken,
+  OperationGeneration,
+  type OperationIdentity,
+} from '@/lib/operation-generation';
+import { leaseAudioAssets } from '@/persistence/asset-leases';
+import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
+import {
   type AudioAssetMeta,
   type LoadedAudioAsset,
   listAssets,
   loadAsset,
-  saveAsset,
 } from '@/persistence/assets';
+import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { editedAssetName, pushVersion, type VersionHistoryState } from './history';
 import type { MatchEqAnalysis } from './match-eq-analysis';
@@ -127,6 +134,10 @@ export interface UseSampleOperationsOptions {
   emitAssetCreated: (newAssetId: string, sourceAssetId: string) => void;
   /** Clears the active selection (called after a trim consumes it). */
   clearSelection: () => void;
+  /** True after the owning editor has unmounted. */
+  isDisposed?: () => boolean;
+  /** Current project document identity for delayed-commit rejection. */
+  getProjectGeneration?: () => number;
 }
 
 function errorMessage(err: unknown): string {
@@ -155,6 +166,87 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   } = options;
 
   const { t } = useI18n();
+  const project = useProjectStore();
+  const operations = new OperationGeneration();
+
+  interface SampleOperationToken {
+    operation: GenerationToken;
+    targetAsset: LoadedAudioAsset;
+    targetAssetId: string;
+    history: VersionHistoryState;
+    projectGeneration: number;
+    range: SampleRange | null;
+    referenceAssetId?: string;
+  }
+
+  const getProjectGeneration = options.getProjectGeneration ?? (() => project.documentGeneration);
+  const isDisposed = (): boolean => operations.disposed || options.isDisposed?.() === true;
+
+  function operationIdentity(
+    targetAssetId: string,
+    projectGeneration: number,
+    history: VersionHistoryState,
+    range: SampleRange | null,
+    referenceId?: string,
+  ): OperationIdentity {
+    return {
+      projectId: projectGeneration,
+      targetId: targetAssetId,
+      revision: [
+        history.currentIndex,
+        history.versions.length,
+        range?.startFrame ?? '',
+        range?.endFrame ?? '',
+        referenceId ?? '',
+      ].join(':'),
+    };
+  }
+
+  function beginOperation(
+    targetAsset: LoadedAudioAsset,
+    referenceId?: string,
+  ): SampleOperationToken {
+    const range = selRange();
+    const targetAssetId = currentAssetId.value;
+    const history = historyState.value;
+    const projectGeneration = getProjectGeneration();
+    return {
+      operation: operations.begin(
+        operationIdentity(targetAssetId, projectGeneration, history, range, referenceId),
+      ),
+      targetAsset,
+      targetAssetId,
+      history,
+      projectGeneration,
+      range: range ? { ...range } : null,
+      ...(referenceId !== undefined ? { referenceAssetId: referenceId } : {}),
+    };
+  }
+
+  function operationIsCurrent(token: SampleOperationToken): boolean {
+    const range = selRange();
+    const referenceId = token.referenceAssetId === undefined ? undefined : referenceAssetId.value;
+    return (
+      !isDisposed() &&
+      operations.isCurrent(
+        token.operation,
+        operationIdentity(
+          currentAssetId.value,
+          getProjectGeneration(),
+          historyState.value,
+          range,
+          referenceId,
+        ),
+      ) &&
+      token.targetAsset === asset.value &&
+      token.targetAssetId === currentAssetId.value &&
+      token.history === historyState.value &&
+      token.projectGeneration === getProjectGeneration() &&
+      token.referenceAssetId === referenceId &&
+      token.range?.startFrame === range?.startFrame &&
+      token.range?.endFrame === range?.endFrame
+    );
+  }
 
   const gainDbInput = ref('3');
   const normalizeTargetInput = ref('-1');
@@ -263,10 +355,12 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
 
   // A new reference (or none) invalidates the displayed analysis.
   watch(referenceAssetId, () => {
+    operations.invalidate();
     matchEqAnalysis.value = null;
   });
 
   watch(asset, () => {
+    operations.invalidate();
     roomEstimate.value = null;
     if (roomPresetId.value === ESTIMATED_ROOM_PRESET_ID) {
       roomPresetId.value = ROOM_PRESETS[0].id;
@@ -304,29 +398,45 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   async function runOp(
     label: string,
     produce: (channels: Float32Array[], range: SampleRange) => Float32Array[],
-  ): Promise<void> {
+  ): Promise<boolean> {
     const loaded = asset.value;
-    if (!loaded || busy.value) return;
+    if (!loaded || busy.value || isDisposed()) return false;
+    const token = beginOperation(loaded);
+    const assets = createAudioAssetTransaction();
+    let committed = false;
     busy.value = true;
     error.value = null;
     try {
-      const range = resolveRange(loaded.channels, selRange());
+      const range = resolveRange(loaded.channels, token.range);
       // Asset channels are cached and shared: operations copy, never mutate.
       const channels = produce(loaded.channels, range);
-      const meta = await saveAsset(
-        { name: editedAssetName(loaded.meta.name), sampleRate: loaded.meta.sampleRate },
+      const meta = await assets.save(
+        {
+          name: editedAssetName(loaded.meta.name),
+          sampleRate: loaded.meta.sampleRate,
+        },
         channels,
       );
-      if (meta.id !== currentAssetId.value) {
-        const sourceAssetId = currentAssetId.value;
+      if (!operationIsCurrent(token)) return false;
+      if (meta.id !== token.targetAssetId) {
+        const sourceAssetId = token.targetAssetId;
         historyState.value = pushVersion(historyState.value, { assetId: meta.id, label });
         currentAssetId.value = meta.id;
         emitAssetCreated(meta.id, sourceAssetId);
         await loadCurrent(meta.id);
       }
+      assets.commit();
+      committed = true;
+      return true;
     } catch (err) {
-      error.value = errorMessage(err);
+      if (operationIsCurrent(token)) error.value = errorMessage(err);
+      return false;
     } finally {
+      if (!committed) {
+        await assets.rollback((assetId) =>
+          historyState.value.versions.some((version) => version.assetId === assetId),
+        );
+      }
       busy.value = false;
     }
   }
@@ -381,8 +491,11 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   async function onTrim(): Promise<void> {
     const range = selRange();
     if (!range) return;
-    await runOp(t.value.shell.sampleEditor.ops.trim, (channels) => trimToRange(channels, range));
-    clearSelection();
+    if (
+      await runOp(t.value.shell.sampleEditor.ops.trim, (channels) => trimToRange(channels, range))
+    ) {
+      clearSelection();
+    }
   }
 
   async function onPitchShift(): Promise<void> {
@@ -650,14 +763,29 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     const ops = wasmOps.value;
     const refId = referenceAssetId.value;
     if (!ops || refId === '' || opsDisabled.value) return;
+    const loaded = asset.value;
+    if (!loaded) return;
+    const token = beginOperation(loaded, refId);
     error.value = null;
+    busy.value = true;
     let referenceMono: Float32Array;
+    let referenceSampleRate: number;
     try {
-      const reference = await loadAsset(refId);
+      const referenceLease = leaseAudioAssets([refId]);
+      let reference: LoadedAudioAsset;
+      try {
+        reference = await loadAsset(refId);
+      } finally {
+        referenceLease.release();
+      }
+      if (!operationIsCurrent(token)) return;
       referenceMono = downmixToMono(reference.channels);
+      referenceSampleRate = reference.meta.sampleRate;
     } catch (err) {
-      error.value = errorMessage(err);
+      if (operationIsCurrent(token)) error.value = errorMessage(err);
       return;
+    } finally {
+      busy.value = false;
     }
     const referenceName = referenceAssets.value.find((meta) => meta.id === refId)?.name ?? '';
     // Clamp the user's percentage to [0, 100] before mapping to a [0, 1] mix.
@@ -666,7 +794,15 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     await runOp(
       formatMessage(t.value.shell.sampleEditor.ops.matchEq, { reference: referenceName }),
       (channels, range) =>
-        matchEqToReference(ops, channels, sampleRate(), referenceMono, range, amount),
+        matchEqToReference(
+          ops,
+          channels,
+          sampleRate(),
+          referenceMono,
+          range,
+          amount,
+          referenceSampleRate,
+        ),
     );
     // The applied match changes the source, so the previous analysis is stale.
     matchEqAnalysis.value = null;
@@ -682,10 +818,18 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     const loaded = asset.value;
     const refId = referenceAssetId.value;
     if (!ops || !loaded || refId === '' || opsDisabled.value || analyzingMatchEq.value) return;
+    const token = beginOperation(loaded, refId);
     error.value = null;
     analyzingMatchEq.value = true;
     try {
-      const reference = await loadAsset(refId);
+      const referenceLease = leaseAudioAssets([refId]);
+      let reference: LoadedAudioAsset;
+      try {
+        reference = await loadAsset(refId);
+      } finally {
+        referenceLease.release();
+      }
+      if (!operationIsCurrent(token)) return;
       const referenceMono = downmixToMono(reference.channels);
       matchEqAnalysis.value = analyzeMatchEqToReference(
         ops,
@@ -693,9 +837,10 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
         loaded.meta.sampleRate,
         referenceMono,
         selRange(),
+        reference.meta.sampleRate,
       );
     } catch (err) {
-      error.value = errorMessage(err);
+      if (operationIsCurrent(token)) error.value = errorMessage(err);
     } finally {
       analyzingMatchEq.value = false;
     }
@@ -766,6 +911,9 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   }
 
   return {
+    dispose: () => {
+      operations.dispose();
+    },
     gainDbInput,
     normalizeTargetInput,
     pitchInput,

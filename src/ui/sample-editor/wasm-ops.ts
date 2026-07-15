@@ -940,6 +940,39 @@ const MATCH_EQ_PROCESSOR = 'match.applyMatchEq';
 /** Pair processor id that linearly crossfades two equal-length signals. */
 const MATCH_EQ_CROSSFADE_PROCESSOR = 'match.abCrossfade';
 
+/** Resamples a mono reference so pair DSP sees one shared frequency axis. */
+export function resampleMatchEqReference(
+  reference: Float32Array,
+  referenceSampleRate: number,
+  targetSampleRate: number,
+): Float32Array {
+  if (!Number.isFinite(referenceSampleRate) || referenceSampleRate <= 0) {
+    throw new RangeError(`referenceSampleRate must be > 0, got ${referenceSampleRate}`);
+  }
+  if (!Number.isFinite(targetSampleRate) || targetSampleRate <= 0) {
+    throw new RangeError(`targetSampleRate must be > 0, got ${targetSampleRate}`);
+  }
+  if (referenceSampleRate === targetSampleRate || reference.length <= 1) return reference;
+  const outputFrames = Math.max(
+    1,
+    Math.round((reference.length * targetSampleRate) / referenceSampleRate),
+  );
+  const output = new Float32Array(outputFrames);
+  if (outputFrames === 1) {
+    output[0] = reference[0];
+    return output;
+  }
+  const step = (reference.length - 1) / (outputFrames - 1);
+  for (let index = 0; index < outputFrames; index += 1) {
+    const position = index * step;
+    const before = Math.floor(position);
+    const after = Math.min(reference.length - 1, before + 1);
+    const amount = position - before;
+    output[index] = reference[before] + (reference[after] - reference[before]) * amount;
+  }
+  return output;
+}
+
 /**
  * EQ-matches the range to a reference signal's tonal balance: each source
  * channel is matched against the same (mono) reference and spliced back. The
@@ -959,6 +992,7 @@ const MATCH_EQ_CROSSFADE_PROCESSOR = 'match.abCrossfade';
  * @param range Range to match (whole file when omitted).
  * @param amount Match strength in [0, 1] (defaults to 1 = fully matched);
  *   non-finite values are treated as 1.
+ * @param referenceSampleRate Reference rate; resampled to `sampleRate` before DSP.
  * @throws Error when the module does not provide masteringPairProcess.
  * @throws RangeError on a non-positive sample rate or an empty reference.
  */
@@ -969,6 +1003,7 @@ export function matchEqToReference(
   reference: Float32Array,
   range?: SampleRange | null,
   amount = 1,
+  referenceSampleRate = sampleRate,
 ): Float32Array[] {
   const fn = ops.masteringPairProcess;
   if (typeof fn !== 'function') {
@@ -980,10 +1015,11 @@ export function matchEqToReference(
   if (reference.length === 0) {
     throw new RangeError('Reference audio is empty');
   }
+  const rateMatchedReference = resampleMatchEqReference(reference, referenceSampleRate, sampleRate);
   const mix = Number.isFinite(amount) ? Math.min(Math.max(amount, 0), 1) : 1;
   return applyToRange(channels, range, (segment) => {
     if (mix <= 0) return segment;
-    const matched = fn(MATCH_EQ_PROCESSOR, segment, reference, sampleRate).samples;
+    const matched = fn(MATCH_EQ_PROCESSOR, segment, rateMatchedReference, sampleRate).samples;
     if (mix >= 1) return matched;
     // Parallel match: blend the dry segment (mix=0) with the matched version
     // (mix=1). abCrossfade requires equal-length operands, which holds because
@@ -1009,6 +1045,7 @@ const MATCH_REFERENCE_LOUDNESS = 'match.referenceLoudness';
  * @param sampleRate Source sample rate in Hz (> 0).
  * @param reference Mono reference samples (non-empty).
  * @param range Range to analyze (whole file when omitted).
+ * @param referenceSampleRate Reference rate; resampled to `sampleRate` before analysis.
  * @throws Error when the module does not provide masteringPairAnalyze.
  * @throws RangeError on a non-positive sample rate, an empty reference or an
  *   empty range.
@@ -1019,6 +1056,7 @@ export function analyzeMatchEqToReference(
   sampleRate: number,
   reference: Float32Array,
   range?: SampleRange | null,
+  referenceSampleRate = sampleRate,
 ): MatchEqAnalysis {
   const fn = ops.masteringPairAnalyze;
   if (typeof fn !== 'function') {
@@ -1030,6 +1068,7 @@ export function analyzeMatchEqToReference(
   if (reference.length === 0) {
     throw new RangeError('Reference audio is empty');
   }
+  const rateMatchedReference = resampleMatchEqReference(reference, referenceSampleRate, sampleRate);
   const resolved = resolveRange(channels, range);
   if (resolved.endFrame <= resolved.startFrame) {
     throw new RangeError('Cannot analyze an empty range');
@@ -1038,9 +1077,13 @@ export function analyzeMatchEqToReference(
     channels.map((channel) => channel.slice(resolved.startFrame, resolved.endFrame)),
   );
   return {
-    curve: parseMatchEqCurve(fn(MATCH_EQ_CURVE, source, reference, sampleRate)),
-    tonalBalance: parseTonalBalance(fn(MATCH_TONAL_BALANCE, source, reference, sampleRate)),
-    loudness: parseReferenceLoudness(fn(MATCH_REFERENCE_LOUDNESS, source, reference, sampleRate)),
+    curve: parseMatchEqCurve(fn(MATCH_EQ_CURVE, source, rateMatchedReference, sampleRate)),
+    tonalBalance: parseTonalBalance(
+      fn(MATCH_TONAL_BALANCE, source, rateMatchedReference, sampleRate),
+    ),
+    loudness: parseReferenceLoudness(
+      fn(MATCH_REFERENCE_LOUDNESS, source, rateMatchedReference, sampleRate),
+    ),
   };
 }
 

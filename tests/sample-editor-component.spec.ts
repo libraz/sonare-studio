@@ -6,9 +6,14 @@ import type { AudioAssetMeta, LoadedAudioAsset } from '@/persistence/assets';
 import { useProjectStore } from '@/project/store';
 
 const assetStore = vi.hoisted(() => ({
+  deleteAsset: vi.fn(async () => undefined),
   listAssets: vi.fn<() => Promise<AudioAssetMeta[]>>(),
   loadAsset: vi.fn<(id: string) => Promise<LoadedAudioAsset>>(),
   saveAsset: vi.fn(),
+  saveAssetWithStatus: vi.fn(async (...args: Parameters<typeof assetStore.saveAsset>) => ({
+    meta: await assetStore.saveAsset(...args),
+    created: true,
+  })),
 }));
 vi.mock('@/persistence/assets', () => assetStore);
 

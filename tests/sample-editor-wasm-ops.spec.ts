@@ -275,6 +275,29 @@ describe('matchEqToReference', () => {
     expect(masteringPairProcess).not.toHaveBeenCalled();
   });
 
+  it('resamples a different-rate reference before matching', () => {
+    const masteringPairProcess = vi.fn(
+      (_name: string, source: Float32Array, reference: Float32Array) => {
+        expect(reference).toHaveLength(480);
+        expect(reference[0]).toBe(0);
+        expect(reference[reference.length - 1]).toBe(440);
+        return { samples: source.slice(), sampleRate: 48000 };
+      },
+    );
+
+    matchEqToReference(
+      { masteringPairProcess },
+      ch([1, 2]),
+      48000,
+      Float32Array.from({ length: 441 }, (_, index) => index),
+      null,
+      1,
+      44100,
+    );
+
+    expect(masteringPairProcess).toHaveBeenCalledOnce();
+  });
+
   it('throws when unavailable, the sample rate is invalid, or the reference is empty', () => {
     expect(() => matchEqToReference({}, ch([1]), 48000, new Float32Array([1]))).toThrow(
       /unavailable/,
@@ -315,6 +338,30 @@ describe('analyzeMatchEqToReference', () => {
       { lowHz: 20, highHz: 200, sourceDb: -10, referenceDb: -12, deviationDb: 2 },
     ]);
     expect(analysis.loudness).toEqual({ sourceLufs: -14, referenceLufs: -9, gainToMatchDb: 5 });
+    expect(masteringPairAnalyze).toHaveBeenCalledTimes(3);
+  });
+
+  it('resamples a different-rate reference before every pair analysis', () => {
+    const masteringPairAnalyze = vi.fn(
+      (name: string, _source: Float32Array, reference: Float32Array) => {
+        expect(reference).toHaveLength(441);
+        expect(reference[0]).toBe(0);
+        expect(reference[reference.length - 1]).toBe(479);
+        if (name === 'match.matchEqCurve') return '{"frequencies":[],"gainDb":[]}';
+        if (name === 'match.tonalBalance') return '{"bands":[]}';
+        return '{"sourceLufs":-12,"referenceLufs":-12,"gainToMatchDb":0}';
+      },
+    );
+
+    analyzeMatchEqToReference(
+      { masteringPairAnalyze },
+      ch([1, 2]),
+      44100,
+      Float32Array.from({ length: 480 }, (_, index) => index),
+      null,
+      48000,
+    );
+
     expect(masteringPairAnalyze).toHaveBeenCalledTimes(3);
   });
 

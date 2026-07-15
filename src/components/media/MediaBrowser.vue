@@ -5,7 +5,10 @@ import SearchField from '@/components/shell/SearchField.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { ensureWasm } from '@/lib/wasm';
-import { type AudioAssetMeta, deleteAsset, listAssets, loadAsset } from '@/persistence/assets';
+import { deleteAudioAssetGuarded } from '@/persistence/asset-leases';
+import { type AudioAssetMeta, listAssets, loadAsset } from '@/persistence/assets';
+import { collectReferencedMediaIds } from '@/persistence/gc';
+import { isOpfsAvailable } from '@/persistence/opfs';
 import { decodeAndIngest } from '@/project/audio-import';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
@@ -256,7 +259,20 @@ async function confirmDelete(assetId: string): Promise<void> {
   if (referencedIds.value.has(assetId)) return;
   if (playingId.value === assetId) preview.stop();
   try {
-    await deleteAsset(assetId);
+    await deleteAudioAssetGuarded(assetId, async () => {
+      if (referencedIds.value.has(assetId)) return true;
+      // The media store is shared by every project. Re-scan saved documents at
+      // the mutation boundary so a project saved after confirmation cannot
+      // lose its source asset. The live document's refs are folded in through
+      // the current strip snapshot.
+      if (!isOpfsAvailable()) return false;
+      const references = await collectReferencedMediaIds(undefined, {
+        assetIds: referencedIds.value,
+      });
+      return (
+        !references.complete || references.assetIds.has(assetId) || referencedIds.value.has(assetId)
+      );
+    });
   } catch (error) {
     deleteError.value = errorMessage(error);
   }
