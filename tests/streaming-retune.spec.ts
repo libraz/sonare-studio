@@ -12,9 +12,18 @@ class FakeNode {
   readonly disconnect = vi.fn();
 }
 
+class FakePort extends EventTarget {
+  readonly postMessage = vi.fn();
+  readonly start = vi.fn();
+}
+
 class FakeAudioWorkletNode extends FakeNode {
   static instances: FakeAudioWorkletNode[] = [];
-  readonly port = { postMessage: vi.fn() };
+  static autoReady = true;
+  readonly port = new FakePort();
+  private readonly events = new EventTarget();
+  readonly addEventListener = this.events.addEventListener.bind(this.events);
+  readonly removeEventListener = this.events.removeEventListener.bind(this.events);
   constructor(
     readonly context: BaseAudioContext,
     readonly name: string,
@@ -22,6 +31,11 @@ class FakeAudioWorkletNode extends FakeNode {
   ) {
     super();
     FakeAudioWorkletNode.instances.push(this);
+    if (FakeAudioWorkletNode.autoReady) {
+      queueMicrotask(() =>
+        this.port.dispatchEvent(new MessageEvent('message', { data: { type: 'ready' } })),
+      );
+    }
   }
 }
 
@@ -36,6 +50,8 @@ function makeStream() {
 
 afterEach(() => {
   FakeAudioWorkletNode.instances = [];
+  FakeAudioWorkletNode.autoReady = true;
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -119,5 +135,32 @@ describe('bindStreamingRetuneInput', () => {
     expect(FakeAudioWorkletNode.instances[0].options.processorOptions).toMatchObject({
       semitones: 24,
     });
+  });
+
+  it('times out without publishing the binding and stops the acquired stream', async () => {
+    vi.useFakeTimers();
+    FakeAudioWorkletNode.autoReady = false;
+    vi.stubGlobal('AudioWorkletNode', FakeAudioWorkletNode);
+    const source = new FakeNode();
+    const engineNode = new FakeNode() as unknown as AudioWorkletNode;
+    const ctx = {
+      sampleRate: 48_000,
+      createMediaStreamSource: vi.fn(() => source),
+    } as unknown as AudioContext;
+    const stream = makeStream();
+
+    const pending = bindStreamingRetuneInput(ctx, engineNode, {
+      stream,
+      stopTracksOnClose: true,
+      readyTimeoutMs: 25,
+    });
+    const rejection = expect(pending).rejects.toThrow('Timed out waiting for Streaming retune');
+    expect(source.connect).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(25);
+    await rejection;
+    expect(source.disconnect).toHaveBeenCalledTimes(1);
+    expect(FakeAudioWorkletNode.instances[0].disconnect).toHaveBeenCalledTimes(1);
+    expect(stream.tracks[0].stop).toHaveBeenCalledTimes(1);
   });
 });

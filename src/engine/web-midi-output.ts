@@ -11,10 +11,9 @@
  * Transport / clock bytes (tagged with the transport destination) are broadcast
  * to every port whose track opted into clock sync.
  *
- * Timing: events carry an in-block renderFrame, but this bridge sends them
- * immediately (no MIDIOutput timestamp). Sample-accurate scheduling against the
- * AudioContext clock is a future refinement; for now delivery rides the
- * per-block postMessage cadence.
+ * Engine render frames are translated through the AudioContext output clock
+ * and passed to MIDIOutput.send, preserving ordering even when the main thread
+ * receives a dense batch late.
  */
 
 import { type ExternalMidiInstrument, effectiveTrackInstrument } from '@/project/instrument';
@@ -55,6 +54,8 @@ export interface WebMidiOutputBridge {
     tracks: ReadonlyArray<EditorTrack>,
     projectExternalMidi?: ExternalMidiInstrument | null,
   ): void;
+  /** Sends one immediate live channel-voice message through a destination route. */
+  sendLive(destinationId: number, bytes: ReadonlyArray<number>, timestampMs?: number): boolean;
   /**
    * Requests MIDI access and begins delivering engine MIDI to ports. Degrades
    * gracefully: resolves false (with available updated) when Web MIDI is
@@ -124,6 +125,25 @@ function outputChannelKey(route: ExternalMidiRoute): string {
   return `${route.outputPortId}:${route.channel & 0x0f}`;
 }
 
+/** Maps an absolute engine render frame onto the Web MIDI performance clock. */
+export function renderFramePerformanceTimestamp(
+  context: Pick<BaseAudioContext, 'currentTime' | 'sampleRate'> & {
+    getOutputTimestamp?: () => { contextTime?: number; performanceTime?: number };
+  },
+  renderFrame: number,
+  performanceNow = () => performance.now(),
+): number | undefined {
+  if (!Number.isFinite(renderFrame) || renderFrame < 0 || !(context.sampleRate > 0))
+    return undefined;
+  const output = context.getOutputTimestamp?.();
+  const anchorContextTime = output?.contextTime ?? context.currentTime;
+  const anchorPerformanceTime = output?.performanceTime ?? performanceNow();
+  if (!Number.isFinite(anchorContextTime) || !Number.isFinite(anchorPerformanceTime)) {
+    return undefined;
+  }
+  return anchorPerformanceTime + (renderFrame / context.sampleRate - anchorContextTime) * 1000;
+}
+
 /**
  * Creates a Web MIDI output bridge bound to one engine handle. Create a fresh
  * instance per engine start; dispose detaches the engine subscription.
@@ -184,17 +204,41 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
     }
   };
 
-  const deliver = (events: ReadonlyArray<{ destinationId: number; bytes: number[] }>): void => {
+  const sendRouted = (
+    destinationId: number,
+    bytes: ReadonlyArray<number>,
+    timestampMs?: number,
+  ): boolean => {
+    const route = routeByDestination.get(destinationId);
+    if (!route || bytes.length === 0) return false;
+    const port = access?.outputs.get(route.outputPortId);
+    if (!port) return false;
+    const routed = withChannel([...bytes], route.channel);
+    try {
+      if (timestampMs === undefined) port.send(routed);
+      else port.send(routed, timestampMs);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const deliver = (
+    events: ReadonlyArray<{ destinationId: number; renderFrame: number; bytes: number[] }>,
+  ): void => {
     if (disposed || !access) return;
     for (const event of events) {
       if (event.bytes.length === 0) continue;
+      const timestampMs = renderFramePerformanceTimestamp(handle.ctx, event.renderFrame);
       if (event.destinationId === TRANSPORT_DESTINATION) {
-        for (const portId of clockPortIds) access.outputs.get(portId)?.send(event.bytes);
+        for (const portId of clockPortIds) {
+          const port = access.outputs.get(portId);
+          if (timestampMs === undefined) port?.send(event.bytes);
+          else port?.send(event.bytes, timestampMs);
+        }
         continue;
       }
-      const route = routeByDestination.get(event.destinationId);
-      if (!route) continue;
-      access.outputs.get(route.outputPortId)?.send(withChannel(event.bytes, route.channel));
+      sendRouted(event.destinationId, event.bytes, timestampMs);
     }
   };
 
@@ -216,6 +260,10 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
       panicChangedRoutes(next);
       routes = next;
       rebuildRouteIndex();
+    },
+    sendLive(destinationId: number, bytes: ReadonlyArray<number>, timestampMs?: number): boolean {
+      if (disposed || !access) return false;
+      return sendRouted(destinationId, bytes, timestampMs);
     },
     async start(): Promise<boolean> {
       if (access) return true;

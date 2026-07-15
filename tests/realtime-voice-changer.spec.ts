@@ -11,9 +11,18 @@ class FakeNode {
   readonly disconnect = vi.fn();
 }
 
+class FakePort extends EventTarget {
+  readonly postMessage = vi.fn();
+  readonly start = vi.fn();
+}
+
 class FakeAudioWorkletNode extends FakeNode {
   static instances: FakeAudioWorkletNode[] = [];
-  readonly port = { postMessage: vi.fn() };
+  static autoReady = true;
+  readonly port = new FakePort();
+  private readonly events = new EventTarget();
+  readonly addEventListener = this.events.addEventListener.bind(this.events);
+  readonly removeEventListener = this.events.removeEventListener.bind(this.events);
   constructor(
     readonly context: BaseAudioContext,
     readonly name: string,
@@ -21,6 +30,11 @@ class FakeAudioWorkletNode extends FakeNode {
   ) {
     super();
     FakeAudioWorkletNode.instances.push(this);
+    if (FakeAudioWorkletNode.autoReady) {
+      queueMicrotask(() =>
+        this.port.dispatchEvent(new MessageEvent('message', { data: { type: 'ready' } })),
+      );
+    }
   }
 }
 
@@ -35,6 +49,7 @@ function makeStream() {
 
 afterEach(() => {
   FakeAudioWorkletNode.instances = [];
+  FakeAudioWorkletNode.autoReady = true;
   vi.unstubAllGlobals();
 });
 
@@ -107,6 +122,36 @@ describe('bindRealtimeVoiceChangerInput', () => {
     binding.close();
 
     expect(stream.tracks.map((track) => track.stop.mock.calls.length)).toEqual([0, 0]);
+  });
+
+  it('publishes no graph before ready and releases the full staged graph on init error', async () => {
+    FakeAudioWorkletNode.autoReady = false;
+    vi.stubGlobal('AudioWorkletNode', FakeAudioWorkletNode);
+    const source = new FakeNode();
+    const engineNode = new FakeNode() as unknown as AudioWorkletNode;
+    const ctx = {
+      sampleRate: 48_000,
+      createMediaStreamSource: vi.fn(() => source),
+    } as unknown as AudioContext;
+    const stream = makeStream();
+
+    const pending = bindRealtimeVoiceChangerInput(ctx, engineNode, {
+      stream,
+      stopTracksOnClose: true,
+    });
+    const voiceNode = FakeAudioWorkletNode.instances[0];
+    expect(source.connect).not.toHaveBeenCalled();
+    expect(voiceNode.connect).not.toHaveBeenCalled();
+
+    voiceNode.port.dispatchEvent(
+      new MessageEvent('message', { data: { type: 'error', message: 'WASM init failed' } }),
+    );
+
+    await expect(pending).rejects.toThrow('WASM init failed');
+    expect(source.disconnect).toHaveBeenCalledTimes(1);
+    expect(voiceNode.disconnect).toHaveBeenCalledTimes(1);
+    expect(engineNode.connect).not.toHaveBeenCalled();
+    expect(stream.tracks.map((track) => track.stop.mock.calls.length)).toEqual([1, 1]);
   });
 
   it('chains realtime voice changer into StreamingRetune when both are requested', async () => {

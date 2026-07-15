@@ -163,6 +163,31 @@ describe('createAutomationSync', () => {
     expect(sync.installedParamIds()).toStrictEqual([6000]);
   });
 
+  it('resolves stable processor identities after insert and mastering reorders', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createAutomationSync(handle, {
+      knownTrackIds: () => [1],
+      insertStoreIndexFor: (target, processorId) =>
+        target === 1 && processorId === 'track-compressor' ? 2 : undefined,
+      masteringProcessorIndexFor: (processorId) =>
+        processorId === 'master-limiter' ? 1 : undefined,
+      masteringInsertIndexFor: (processorIndex) => (processorIndex === 1 ? 4 : undefined),
+      restoreParam: vi.fn(),
+    });
+
+    sync.sync([
+      makeLane(1, [{ ppq: 0, value: -18 }], {
+        param: insertAutomationParam('track-compressor', 'thresholdDb'),
+      }),
+      makeLane('master', [{ ppq: 0, value: -1 }], {
+        param: masteringAutomationParam('master-limiter', 'ceilingDb'),
+      }),
+    ]);
+
+    expect(engine.resolveTrackInsertAutomationId).toHaveBeenCalledWith(1, 2, 'thresholdDb');
+    expect(engine.resolveMasterInsertAutomationId).toHaveBeenCalledWith(4, 'ceilingDb');
+  });
+
   it('installs an effective lane with curve codes on its points', () => {
     const { handle, engine } = makeHandle();
     const restoreParam = vi.fn();
@@ -197,6 +222,45 @@ describe('createAutomationSync', () => {
     expect(engine.setAutomationLane).toHaveBeenCalledWith(stubParamId(1, 'faderDb'), [
       { ppq: 0, value: -18, curveToNext: 0 },
     ]);
+  });
+
+  it('pins group fader automation to silence across track and VCA mute changes', () => {
+    const { handle, engine } = makeHandle();
+    let muted = false;
+    const sync = createAutomationSync(handle, {
+      knownTrackIds: () => [10],
+      groupBusIdFor: (trackId) => (trackId === 10 ? 4 : undefined),
+      vcaOffsetFor: () => -6,
+      effectiveMuteFor: () => muted,
+      restoreParam: vi.fn(),
+    });
+    const lanes = [
+      makeLane(10, [
+        { ppq: 0, value: -12 },
+        { ppq: 4, value: 0, curve: 'hold' },
+      ]),
+    ];
+
+    sync.sync(lanes);
+    expect(engine.setAutomationLane).toHaveBeenLastCalledWith(3004, [
+      { ppq: 0, value: -18, curveToNext: 0 },
+      { ppq: 4, value: -6, curveToNext: 2 },
+    ]);
+
+    muted = true;
+    sync.sync(lanes);
+    expect(engine.setAutomationLane).toHaveBeenLastCalledWith(3004, [
+      { ppq: 0, value: -120, curveToNext: 0 },
+      { ppq: 4, value: -120, curveToNext: 2 },
+    ]);
+
+    muted = false;
+    sync.sync(lanes);
+    expect(engine.setAutomationLane).toHaveBeenLastCalledWith(3004, [
+      { ppq: 0, value: -18, curveToNext: 0 },
+      { ppq: 4, value: -6, curveToNext: 2 },
+    ]);
+    expect(engine.setAutomationLane).toHaveBeenCalledTimes(3);
   });
 
   it('sends nothing on an identical second sync', () => {

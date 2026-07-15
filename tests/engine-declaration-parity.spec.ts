@@ -15,7 +15,6 @@ import {
   busAutomationTarget,
   insertAutomationParam,
 } from '@/project/automation';
-import { enabledInsertAutomationIndex } from '@/project/automation-insert';
 import { createDefaultMixerState, createDefaultStrip, type MixerStrip } from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
 import type { EditorTrack } from '@/project/types';
@@ -372,10 +371,8 @@ describe('engine declaration parity', () => {
         tracks.filter((track) => track.kind !== 'group').map((track) => track.id),
       busIdFor: (busId) => stripSync.busIdFor(busId),
       groupBusIdFor: (trackId) => stripSync.groupBusIdFor(trackId),
-      busInsertIndexFor: (busId, index) =>
-        enabledInsertAutomationIndex(mixer.buses.find((bus) => bus.id === busId)?.strip, index),
-      groupInsertIndexFor: (trackId, index) =>
-        enabledInsertAutomationIndex(tracks.find((track) => track.id === trackId)?.mixer, index),
+      busInsertIndexFor: (busId, index) => stripSync.busInsertIndexFor(busId, index),
+      groupInsertIndexFor: (trackId, index) => stripSync.groupInsertIndexFor(trackId, index),
       restoreParam: () => {},
     }).sync(lanes);
 

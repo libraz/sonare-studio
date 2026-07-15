@@ -336,9 +336,11 @@ class SonareStreamingRetuneWorklet extends AudioWorkletProcessor {
     const channels = Math.min(output.length, this.retunes.length);
     for (let ch = 0; ch < channels; ch++) {
       const dst = output[ch];
-      const src = input[ch] ?? this.zero.subarray(0, dst.length);
+      const src = input[ch] ?? this.zero;
       const processed = this.retunes[ch].processMono(src);
-      dst.set(processed.subarray(0, dst.length));
+      const frames = Math.min(dst.length, processed.length);
+      for (let frame = 0; frame < frames; frame++) dst[frame] = processed[frame];
+      for (let frame = frames; frame < dst.length; frame++) dst[frame] = 0;
     }
     return true;
   }

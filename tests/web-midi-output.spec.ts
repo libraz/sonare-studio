@@ -8,12 +8,15 @@ const TRANSPORT_DESTINATION = 0xffffffff;
 /** A fake Web MIDI output port recording everything written to it. */
 function fakePort(id: string) {
   const sent: number[][] = [];
+  const timestamps: Array<number | undefined> = [];
   return {
     id,
     name: `Port ${id}`,
     sent,
-    send(data: number[] | Uint8Array): void {
+    timestamps,
+    send(data: number[] | Uint8Array, timestamp?: number): void {
       sent.push([...data]);
+      timestamps.push(timestamp);
     },
   };
 }
@@ -33,6 +36,11 @@ function setup(ports: ReturnType<typeof fakePort>[]) {
 
   let captured: ((events: { destinationId: number; bytes: number[] }[]) => void) | null = null;
   const handle = {
+    ctx: {
+      currentTime: 1,
+      sampleRate: 48000,
+      getOutputTimestamp: () => ({ contextTime: 1, performanceTime: 5000 }),
+    },
     engine: {
       onMidiOut: (cb: (events: { destinationId: number; bytes: number[] }[]) => void) => {
         captured = cb;
@@ -136,6 +144,27 @@ describe('createWebMidiOutput', () => {
     bridge.dispose();
   });
 
+  it('converts dense render frames to Web MIDI timestamps without collapsing timing', async () => {
+    const port = fakePort('p1');
+    const { handle, emit } = setup([port]);
+    const bridge = createWebMidiOutput(handle);
+    await bridge.start();
+    bridge.setRoutes([{ destinationId: 2, outputPortId: 'p1', channel: 5 }]);
+
+    emit([
+      { destinationId: 2, renderFrame: 48000, bytes: [0x90, 60, 100] },
+      { destinationId: 2, renderFrame: 48120, bytes: [0x80, 60, 0] },
+    ] as never);
+
+    expect(port.sent).toEqual([
+      [0x95, 60, 100],
+      [0x85, 60, 0],
+    ]);
+    expect(port.timestamps[0]).toBe(5000);
+    expect(port.timestamps[1]).toBe(5002.5);
+    bridge.dispose();
+  });
+
   it('drops events for an unrouted destination', async () => {
     const port = fakePort('p1');
     const { handle, emit } = setup([port]);
@@ -216,6 +245,20 @@ describe('createWebMidiOutput', () => {
     emit([{ destinationId: TRANSPORT_DESTINATION, bytes: [0xf8] }]);
     expect(clockPort.sent).toEqual([[0xf8]]);
     expect(plainPort.sent).toEqual([]);
+    bridge.dispose();
+  });
+
+  it('routes live channel voice with its input timestamp', async () => {
+    const port = fakePort('p1');
+    const { handle } = setup([port]);
+    const bridge = createWebMidiOutput(handle);
+    await bridge.start();
+    bridge.setRoutes([{ destinationId: 2, outputPortId: 'p1', channel: 7 }]);
+
+    expect(bridge.sendLive(2, [0xe2, 0, 96], 6123)).toBe(true);
+    expect(port.sent).toEqual([[0xe7, 0, 96]]);
+    expect(port.timestamps).toEqual([6123]);
+    expect(bridge.sendLive(99, [0xb0, 64, 127], 6124)).toBe(false);
     bridge.dispose();
   });
 

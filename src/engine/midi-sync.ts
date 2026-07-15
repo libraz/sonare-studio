@@ -42,7 +42,7 @@ import {
 } from '@/project/instrument';
 import { expandExpressionPoints, MIDI_PITCH_BEND_MAX } from '@/project/midi-cc';
 import { midiFxConfigJson } from '@/project/midi-fx';
-import { clipPlaybackNotes } from '@/project/scheduling';
+import { audibleMidiProjector } from '@/project/midi-projection';
 import {
   collectActiveSoundFontUsage,
   hasSoundFontSlotConflict,
@@ -151,20 +151,27 @@ export function buildMidiClipSchedules(
     if (track?.kind !== 'midi' || clipKind(clip) !== 'midi') continue;
     // Frozen tracks play their baked render; their MIDI stays silent.
     if (track.frozen !== undefined) continue;
-    // Looping clips repeat a loop region to fill the clip span: events are
-    // generated for the region only and the engine repeats them. A zero/absent
-    // loop length means the whole clip (then looping is a no-op until the clip
-    // is drawn longer than the region). The event window is the loop region.
+    // Looping clips repeat a loop region to fill the clip span. Events are
+    // expanded in PPQ before conversion to absolute frames instead of using
+    // the engine's fixed sample-length loop: every occurrence therefore
+    // follows tempo changes/ramp segments without accumulating drift.
     const looping = clip.loopEnabled === true;
     const loopRegionPpq =
       looping && clip.loopLengthPpq > 0
         ? Math.min(clip.loopLengthPpq, clip.lengthPpq)
         : clip.lengthPpq;
     const windowPpq = looping ? loopRegionPpq : clip.lengthPpq;
+    const repeatOffsets: number[] = [];
+    if (looping && windowPpq > 0) {
+      for (let offset = 0; offset < clip.lengthPpq - 1e-9; offset += windowPpq) {
+        repeatOffsets.push(offset);
+      }
+    } else {
+      repeatOffsets.push(0);
+    }
     // A muted clip (gain <= 0) plays no notes, but its CC lanes still send:
     // controllers are not gain-scaled, and a CC-only clip is legitimate.
-    const notes =
-      clip.gain > 0 ? clipPlaybackNotes(looping ? { ...clip, lengthPpq: windowPpq } : clip) : [];
+    const notes = clip.gain > 0 ? audibleMidiProjector(clip) : [];
     const ccLanes = (clip.ccLanes ?? []).filter((lane) => lane.points.length > 0);
     const pitchBendLanes = (clip.pitchBendLanes ?? []).filter((lane) => lane.points.length > 0);
     const programChangeLanes = (clip.programChangeLanes ?? []).filter(
@@ -191,12 +198,6 @@ export function buildMidiClipSchedules(
     // inside the clip stay exact.
     const lengthSamples =
       ppqToSamples(tempoMap, clip.startPpq + clip.lengthPpq, sampleRate) - startSample;
-    // Loop region length in samples (engine repeats [0, loopLengthSamples)
-    // across [0, lengthSamples)); at least one sample so the engine never
-    // divides by zero.
-    const loopLengthSamples = looping
-      ? Math.max(1, ppqToSamples(tempoMap, clip.startPpq + windowPpq, sampleRate) - startSample)
-      : 0;
     const events: EngineMidiEvent[] = [];
 
     const instrument = effectiveTrackInstrument(track, projectExternalMidi);
@@ -207,14 +208,14 @@ export function buildMidiClipSchedules(
     if (sf2) {
       const preludeFrame = Math.max(0, startSample - 1);
       const channels = new Set([
-        ...notes.map((note) => clamp(note.channel ?? 0, 0, 15)),
+        ...notes.map((entry) => clamp(entry.note.channel ?? 0, 0, 15)),
         ...ccLanes.map((lane) => clamp(lane.channel, 0, 15)),
         ...pitchBendLanes.map((lane) => clamp(lane.channel, 0, 15)),
         ...programChangeLanes.map((lane) => clamp(lane.channel, 0, 15)),
         ...channelPressureLanes.map((lane) => clamp(lane.channel, 0, 15)),
         ...polyPressureLanes.map((lane) => clamp(lane.channel, 0, 15)),
       ]);
-      for (const channel of channels) {
+      for (const channel of [...channels].sort((a, b) => a - b)) {
         const resolved = sf2ChannelProgram(sf2, channel);
         if (resolved === null) continue;
         hasPrelude = true;
@@ -248,26 +249,26 @@ export function buildMidiClipSchedules(
     // under the engine's unstable same-frame sort.
     const shiftFrameZero = hasPrelude && startSample === 0;
 
-    for (const note of notes) {
+    for (const entry of notes) {
+      const note = entry.note;
       const channel = clamp(note.channel ?? 0, 0, 15);
       const velocity = clamp(Math.round(note.velocity * clip.gain), 1, 127);
-      let onFrame = ppqToSamples(tempoMap, clip.startPpq + note.startPpq, sampleRate);
+      let onFrame = ppqToSamples(tempoMap, entry.timelineStartPpq, sampleRate);
       if (shiftFrameZero && onFrame === 0) onFrame = 1;
       // One sample before the nominal end keeps this note-off strictly before
       // a same-pitch note-on of the next note (legato) despite the engine's
       // unstable same-frame sort; the floor keeps the note at least 1 sample.
-      const endPpq = Math.min(note.startPpq + note.durationPpq, windowPpq);
       const offFrame = Math.max(
         onFrame + 1,
-        ppqToSamples(tempoMap, clip.startPpq + endPpq, sampleRate) - 1,
+        ppqToSamples(tempoMap, entry.timelineStartPpq + entry.durationPpq, sampleRate) - 1,
       );
-      events.push(voiceEvent(onFrame, STATUS_NOTE_ON, channel, note.note, velocity));
+      events.push(voiceEvent(onFrame, STATUS_NOTE_ON, channel, note.pitch, velocity));
       events.push(
         voiceEvent(
           offFrame,
           STATUS_NOTE_OFF,
           channel,
-          note.note,
+          note.pitch,
           clamp(note.offVelocity ?? 0, 0, 127),
         ),
       );
@@ -279,41 +280,62 @@ export function buildMidiClipSchedules(
     for (const lane of ccLanes) {
       const channel = clamp(lane.channel, 0, 15);
       const controller = clamp(lane.controller, 0, 127);
-      for (const point of expandExpressionPoints(lane.points, windowPpq, 127)) {
-        let frame = ppqToSamples(tempoMap, clip.startPpq + point.ppq, sampleRate);
-        if (shiftFrameZero && frame === 0) frame = 1;
-        events.push(
-          voiceEvent(frame, STATUS_CONTROL_CHANGE, channel, controller, clamp(point.value, 0, 127)),
-        );
+      for (const repeatOffset of repeatOffsets) {
+        for (const point of expandExpressionPoints(lane.points, windowPpq, 127)) {
+          if (looping && point.ppq >= windowPpq) continue;
+          const localPpq = repeatOffset + point.ppq;
+          if (localPpq > clip.lengthPpq) continue;
+          let frame = ppqToSamples(tempoMap, clip.startPpq + localPpq, sampleRate);
+          if (shiftFrameZero && frame === 0) frame = 1;
+          events.push(
+            voiceEvent(
+              frame,
+              STATUS_CONTROL_CHANGE,
+              channel,
+              controller,
+              clamp(point.value, 0, 127),
+            ),
+          );
+        }
       }
     }
 
     // Pitch bend is a 14-bit value encoded LSB first in MIDI 1.0.
     for (const lane of pitchBendLanes) {
       const channel = clamp(lane.channel, 0, 15);
-      for (const point of expandExpressionPoints(lane.points, windowPpq, MIDI_PITCH_BEND_MAX)) {
-        let frame = ppqToSamples(tempoMap, clip.startPpq + point.ppq, sampleRate);
-        if (shiftFrameZero && frame === 0) frame = 1;
-        const value = clamp(Math.round(point.value), 0, 16383);
-        events.push(voiceEvent(frame, STATUS_PITCH_BEND, channel, value & 0x7f, value >> 7));
+      for (const repeatOffset of repeatOffsets) {
+        for (const point of expandExpressionPoints(lane.points, windowPpq, MIDI_PITCH_BEND_MAX)) {
+          if (looping && point.ppq >= windowPpq) continue;
+          const localPpq = repeatOffset + point.ppq;
+          if (localPpq > clip.lengthPpq) continue;
+          let frame = ppqToSamples(tempoMap, clip.startPpq + localPpq, sampleRate);
+          if (shiftFrameZero && frame === 0) frame = 1;
+          const value = clamp(Math.round(point.value), 0, 16383);
+          events.push(voiceEvent(frame, STATUS_PITCH_BEND, channel, value & 0x7f, value >> 7));
+        }
       }
     }
 
     for (const lane of programChangeLanes) {
       const channel = clamp(lane.channel, 0, 15);
-      for (const point of lane.points) {
-        if (!Number.isFinite(point.ppq) || point.ppq < 0 || point.ppq > windowPpq) continue;
-        let frame = ppqToSamples(tempoMap, clip.startPpq + point.ppq, sampleRate);
-        if (shiftFrameZero && frame === 0) frame = 1;
-        events.push(
-          voiceEvent(
-            frame,
-            STATUS_PROGRAM_CHANGE,
-            channel,
-            clamp(Math.round(point.program), 0, 127),
-            0,
-          ),
-        );
+      for (const repeatOffset of repeatOffsets) {
+        for (const point of lane.points) {
+          if (!Number.isFinite(point.ppq) || point.ppq < 0 || point.ppq > windowPpq) continue;
+          if (looping && point.ppq >= windowPpq) continue;
+          const localPpq = repeatOffset + point.ppq;
+          if (localPpq > clip.lengthPpq) continue;
+          let frame = ppqToSamples(tempoMap, clip.startPpq + localPpq, sampleRate);
+          if (shiftFrameZero && frame === 0) frame = 1;
+          events.push(
+            voiceEvent(
+              frame,
+              STATUS_PROGRAM_CHANGE,
+              channel,
+              clamp(Math.round(point.program), 0, 127),
+              0,
+            ),
+          );
+        }
       }
     }
 
@@ -321,23 +343,33 @@ export function buildMidiClipSchedules(
     // pressure has one 7-bit data byte; poly pressure carries note + pressure.
     for (const lane of channelPressureLanes) {
       const channel = clamp(lane.channel, 0, 15);
-      for (const point of expandExpressionPoints(lane.points, windowPpq, 127)) {
-        let frame = ppqToSamples(tempoMap, clip.startPpq + point.ppq, sampleRate);
-        if (shiftFrameZero && frame === 0) frame = 1;
-        events.push(
-          voiceEvent(frame, STATUS_CHANNEL_PRESSURE, channel, clamp(point.value, 0, 127), 0),
-        );
+      for (const repeatOffset of repeatOffsets) {
+        for (const point of expandExpressionPoints(lane.points, windowPpq, 127)) {
+          if (looping && point.ppq >= windowPpq) continue;
+          const localPpq = repeatOffset + point.ppq;
+          if (localPpq > clip.lengthPpq) continue;
+          let frame = ppqToSamples(tempoMap, clip.startPpq + localPpq, sampleRate);
+          if (shiftFrameZero && frame === 0) frame = 1;
+          events.push(
+            voiceEvent(frame, STATUS_CHANNEL_PRESSURE, channel, clamp(point.value, 0, 127), 0),
+          );
+        }
       }
     }
     for (const lane of polyPressureLanes) {
       const channel = clamp(lane.channel, 0, 15);
       const pitch = clamp(lane.pitch, 0, 127);
-      for (const point of expandExpressionPoints(lane.points, windowPpq, 127)) {
-        let frame = ppqToSamples(tempoMap, clip.startPpq + point.ppq, sampleRate);
-        if (shiftFrameZero && frame === 0) frame = 1;
-        events.push(
-          voiceEvent(frame, STATUS_POLY_PRESSURE, channel, pitch, clamp(point.value, 0, 127)),
-        );
+      for (const repeatOffset of repeatOffsets) {
+        for (const point of expandExpressionPoints(lane.points, windowPpq, 127)) {
+          if (looping && point.ppq >= windowPpq) continue;
+          const localPpq = repeatOffset + point.ppq;
+          if (localPpq > clip.lengthPpq) continue;
+          let frame = ppqToSamples(tempoMap, clip.startPpq + localPpq, sampleRate);
+          if (shiftFrameZero && frame === 0) frame = 1;
+          events.push(
+            voiceEvent(frame, STATUS_POLY_PRESSURE, channel, pitch, clamp(point.value, 0, 127)),
+          );
+        }
       }
     }
 
@@ -349,7 +381,6 @@ export function buildMidiClipSchedules(
       startSample,
       startPpq: clip.startPpq,
       lengthSamples,
-      ...(looping ? { loop: true, loopLengthSamples } : {}),
       events,
     });
   }

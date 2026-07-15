@@ -1,4 +1,5 @@
 import type { StreamingRetuneConfig } from '@/wasm/index.js';
+import { waitForWorkletReady } from './engine';
 import type { MicrophoneBinding } from './recorder';
 
 export const STREAMING_RETUNE_PROCESSOR = 'sonare-streaming-retune-processor';
@@ -61,6 +62,8 @@ export interface StreamingRetuneInputOptions extends StreamingRetuneConfig {
   stopTracksOnClose: boolean;
   channelCount?: number;
   blockSize?: number;
+  signal?: AbortSignal;
+  readyTimeoutMs?: number;
 }
 
 /** Connects microphone input through libsonare's StreamingRetune before the engine input. */
@@ -71,32 +74,58 @@ export async function bindStreamingRetuneInput(
 ): Promise<MicrophoneBinding> {
   const source = ctx.createMediaStreamSource(options.stream);
   const channelCount = Math.max(1, Math.floor(options.channelCount ?? 1));
-  const node = new AudioWorkletNode(ctx, STREAMING_RETUNE_PROCESSOR, {
-    numberOfInputs: 1,
-    numberOfOutputs: 1,
-    channelCount,
-    outputChannelCount: [channelCount],
-    processorOptions: {
-      semitones: clampStreamingRetuneSemitones(options.semitones ?? 0),
-      mix: options.mix ?? 1,
-      grainSize: options.grainSize ?? 0,
-      sampleRate: ctx.sampleRate,
-      blockSize: Math.max(1, Math.floor(options.blockSize ?? 128)),
+  let node: AudioWorkletNode | null = null;
+  try {
+    node = new AudioWorkletNode(ctx, STREAMING_RETUNE_PROCESSOR, {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
       channelCount,
-    },
-  });
-  source.connect(node);
-  node.connect(engineNode);
+      outputChannelCount: [channelCount],
+      processorOptions: {
+        semitones: clampStreamingRetuneSemitones(options.semitones ?? 0),
+        mix: options.mix ?? 1,
+        grainSize: options.grainSize ?? 0,
+        sampleRate: ctx.sampleRate,
+        blockSize: Math.max(1, Math.floor(options.blockSize ?? 128)),
+        channelCount,
+      },
+    });
+    await waitForWorkletReady(node.port, {
+      processor: node,
+      signal: options.signal,
+      timeoutMs: options.readyTimeoutMs,
+      label: 'Streaming retune',
+    });
+    options.signal?.throwIfAborted();
+    source.connect(node);
+    node.connect(engineNode);
+  } catch (error) {
+    try {
+      source.disconnect();
+    } catch {
+      // The source may not have been connected yet.
+    }
+    try {
+      node?.disconnect();
+    } catch {
+      // Construction may have failed before the node was connected.
+    }
+    if (options.stopTracksOnClose) {
+      for (const track of options.stream.getTracks()) track.stop();
+    }
+    throw error;
+  }
+  const readyNode = node;
   return {
     stream: options.stream,
     source,
     setStreamingRetuneConfig(config: StreamingRetuneConfig): void {
-      node.port.postMessage({ type: 'setConfig', config });
+      readyNode.port.postMessage({ type: 'setConfig', config });
     },
     close(): void {
-      node.port.postMessage({ type: 'destroy' });
+      readyNode.port.postMessage({ type: 'destroy' });
       source.disconnect();
-      node.disconnect();
+      readyNode.disconnect();
       if (options.stopTracksOnClose) {
         for (const track of options.stream.getTracks()) track.stop();
       }

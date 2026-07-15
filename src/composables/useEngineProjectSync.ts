@@ -43,6 +43,18 @@ export interface EngineSyncHandles {
   webMidiOutput: WebMidiOutputBridge | null;
 }
 
+export interface ApplyToEngineOptions {
+  /** Staged handle used during startup before the public handle is committed. */
+  handle?: EngineHandle;
+  /** Re-throws after recording the UI error, so startup can roll back. */
+  throwOnError?: boolean;
+}
+
+export interface InitialEngineSyncOptions {
+  /** Re-throws after recording the UI error, so startup can roll back. */
+  throwOnError?: boolean;
+}
+
 function trackScheduleKey(track: EditorTrack): string {
   return `${track.id}|${track.kind}|${track.frozen?.assetId ?? ''}`;
 }
@@ -97,14 +109,15 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
   const scheduledCount = ref(0);
   const applyPending = ref(false);
 
-  async function applyToEngine(): Promise<void> {
-    const h = handle.value;
+  async function applyToEngine(applyOptions: ApplyToEngineOptions = {}): Promise<void> {
+    const h = applyOptions.handle ?? handle.value;
     if (!h || !store.initialized) return;
+    const stagedHandle = applyOptions.handle !== undefined;
     const generation = ++applyGeneration;
     applyPending.value = false;
     try {
       const next = await scheduleProjectClips(h);
-      if (generation !== applyGeneration || handle.value !== h) {
+      if (generation !== applyGeneration || (!stagedHandle && handle.value !== h)) {
         for (const clip of next) h.engine.removeClip(clip.engineClipId);
         return;
       }
@@ -113,6 +126,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
       scheduledCount.value = next.length;
     } catch (err) {
       errorMessage.value = describeError(err);
+      if (applyOptions.throwOnError) throw err;
     }
   }
 
@@ -126,7 +140,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     }, APPLY_DEBOUNCE_MS);
   }
 
-  function syncMixerState(): void {
+  function syncMixerState(syncOptions: InitialEngineSyncOptions = {}): void {
     try {
       if (!mixerSync || !stripSync || !store.initialized) return;
       const vcaGroups = store.mixer.vcaGroups ?? [];
@@ -146,10 +160,11 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
       stripSync.sync(store.tracks, store.mixer);
     } catch (err) {
       errorMessage.value = describeError(err);
+      if (syncOptions.throwOnError) throw err;
     }
   }
 
-  function syncAutomationState(): void {
+  function syncAutomationState(syncOptions: InitialEngineSyncOptions = {}): void {
     try {
       if (!automationSync || !store.initialized) return;
       automationSync.sync(
@@ -157,6 +172,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
       );
     } catch (err) {
       errorMessage.value = describeError(err);
+      if (syncOptions.throwOnError) throw err;
     }
   }
 
@@ -211,17 +227,18 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
       : [{ startPpq: 0, bpm: store.tempoBpm }];
   }
 
-  function syncTransportState(): void {
+  function syncTransportState(syncOptions: InitialEngineSyncOptions = {}): void {
     try {
       if (!transportSync || !store.initialized) return;
       transportSync.sync(store.tempoSegments, store.timeSignatures, store.markers);
       transport.setTempoMap(effectiveTempoSegments());
     } catch (err) {
       errorMessage.value = describeError(err);
+      if (syncOptions.throwOnError) throw err;
     }
   }
 
-  function syncMidiState(): Promise<void> {
+  function syncMidiState(syncOptions: InitialEngineSyncOptions = {}): Promise<void> {
     const m = midiSync;
     if (!m || !store.initialized) return midiSyncQueue;
     // Instrument binding targets engine lanes by track id. When a MIDI file is
@@ -232,21 +249,20 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     // Keep the external-MIDI routing table in step with the tracks' instruments
     // so drained events reach the right port/channel.
     webMidiOutput?.syncRoutes(store.tracks, store.projectExternalMidi);
-    midiSyncQueue = midiSyncQueue
-      .then(() =>
-        m.sync(
-          store.tracks,
-          store.clips,
-          effectiveTempoSegments(),
-          store.projectExternalMidi,
-          store.automationLanes,
-          transport.positionPpq?.value ?? 0,
-        ),
-      )
-      .catch((err) => {
-        errorMessage.value = describeError(err);
-      });
-    return midiSyncQueue;
+    const operation = midiSyncQueue.then(() =>
+      m.sync(
+        store.tracks,
+        store.clips,
+        effectiveTempoSegments(),
+        store.projectExternalMidi,
+        store.automationLanes,
+        transport.positionPpq?.value ?? 0,
+      ),
+    );
+    midiSyncQueue = operation.catch((err) => {
+      errorMessage.value = describeError(err);
+    });
+    return syncOptions.throwOnError ? operation : midiSyncQueue;
   }
 
   function applyNow(): void {
@@ -255,6 +271,15 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
       applyTimer = null;
     }
     void applyToEngine();
+  }
+
+  /** Routes a live channel-voice message directly to an external MIDI track. */
+  function sendLiveExternalMidi(
+    destinationId: number,
+    bytes: ReadonlyArray<number>,
+    timestampMs?: number,
+  ): boolean {
+    return webMidiOutput?.sendLive(destinationId, bytes, timestampMs) ?? false;
   }
 
   function setEngineSyncHandles(handles: EngineSyncHandles): void {
@@ -376,6 +401,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     effectiveTempoSegments,
     hasMidiSync: () => midiSync !== null,
     scheduleApply,
+    sendLiveExternalMidi,
     scheduledClips: () => scheduledClips,
     setEngineSyncHandles,
     syncAutomationState,

@@ -211,7 +211,7 @@ describe('buildMidiClipSchedules', () => {
     ]);
   });
 
-  it('loops a clip: windows events to the loop region and carries the loop length', () => {
+  it('loops a clip by expanding the audible window into absolute events', () => {
     const clip = makeClip(1, 1, {
       startPpq: 0,
       lengthPpq: 8,
@@ -223,22 +223,51 @@ describe('buildMidiClipSchedules', () => {
       ],
     });
     const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], TEMPO_120, SAMPLE_RATE);
-    expect(schedule.loop).toBe(true);
+    expect(schedule.loop).toBeUndefined();
     expect(schedule.lengthSamples).toBe(8 * SPP);
-    expect(schedule.loopLengthSamples).toBe(2 * SPP);
-    // Only the note inside the 2-PPQ loop region is scheduled; the engine repeats it.
+    expect(schedule.loopLengthSamples).toBeUndefined();
+    // Only the note inside the 2-PPQ loop region is repeated; the hidden note is absent.
     expect(schedule.events).toEqual([
       { renderFrame: 0, word0: noteOnWord(0, 60, 100), wordCount: 1 },
       { renderFrame: SPP - 1, word0: noteOffWord(0, 60), wordCount: 1 },
+      { renderFrame: 2 * SPP, word0: noteOnWord(0, 60, 100), wordCount: 1 },
+      { renderFrame: 3 * SPP - 1, word0: noteOffWord(0, 60), wordCount: 1 },
+      { renderFrame: 4 * SPP, word0: noteOnWord(0, 60, 100), wordCount: 1 },
+      { renderFrame: 5 * SPP - 1, word0: noteOffWord(0, 60), wordCount: 1 },
+      { renderFrame: 6 * SPP, word0: noteOnWord(0, 60, 100), wordCount: 1 },
+      { renderFrame: 7 * SPP - 1, word0: noteOffWord(0, 60), wordCount: 1 },
     ]);
   });
 
-  it('treats loopEnabled with no loop length as looping the whole clip', () => {
+  it('treats loopEnabled with no loop length as one whole-clip occurrence', () => {
     const clip = makeClip(1, 1, { lengthPpq: 4, loopEnabled: true, loopLengthPpq: 0 });
     const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], TEMPO_120, SAMPLE_RATE);
-    expect(schedule.loop).toBe(true);
-    expect(schedule.loopLengthSamples).toBe(4 * SPP);
+    expect(schedule.loop).toBeUndefined();
+    expect(schedule.loopLengthSamples).toBeUndefined();
     expect(schedule.lengthSamples).toBe(4 * SPP);
+  });
+
+  it('maps every loop occurrence through a variable tempo map without sample drift', () => {
+    const clip = makeClip(1, 1, {
+      lengthPpq: 6,
+      loopEnabled: true,
+      loopLengthPpq: 2,
+      notes: [makeNote({ startPpq: 0, durationPpq: 1 })],
+    });
+    const tempo: TempoSegment[] = [
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 2, bpm: 60 },
+    ];
+    const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], tempo, SAMPLE_RATE);
+
+    expect(schedule.events.map((event) => event.renderFrame)).toEqual([
+      0,
+      24_000 - 1,
+      48_000,
+      96_000 - 1,
+      144_000,
+      192_000 - 1,
+    ]);
   });
 
   it('omits loop fields for non-looping clips', () => {

@@ -891,6 +891,24 @@ describe('createStripSync group routing', () => {
     expect(engine.setBusStripInsertBypassed).toHaveBeenCalledWith(1, 1, false);
   });
 
+  it('provides ABI-correct automation indexes for return-bus inserts', () => {
+    const inserts = [
+      { processor: 'gate.expander', params: {}, enabled: false },
+      { processor: 'dynamics.compressor', params: {}, enabled: true },
+    ];
+    const bus = { ...makeBus('FX'), strip: makeStrip({ inserts }) };
+
+    const legacy = createStripSync(makeHandle().handle);
+    legacy.sync([], makeMixer({ buses: [bus] }));
+    expect(legacy.busInsertIndexFor('FX', 0)).toBeUndefined();
+    expect(legacy.busInsertIndexFor('FX', 1)).toBe(0);
+
+    const modern = createStripSync(makeHandleWithBusBypass().handle);
+    modern.sync([], makeMixer({ buses: [bus] }));
+    expect(modern.busInsertIndexFor('FX', 0)).toBe(0);
+    expect(modern.busInsertIndexFor('FX', 1)).toBe(1);
+  });
+
   it('routes a member back to the master mix when its membership clears', () => {
     const { handle, engine } = makeHandle();
     const sync = createStripSync(handle);
@@ -969,6 +987,24 @@ describe('createStripSync group routing', () => {
     expect(engine.setBusStripJson).not.toHaveBeenCalled();
     expect(engine.setBusStripInsertBypassed).toHaveBeenCalledTimes(1);
     expect(engine.setBusStripInsertBypassed).toHaveBeenCalledWith(1, 1, false);
+  });
+
+  it('provides ABI-correct automation indexes for group inserts', () => {
+    const inserts = [
+      { processor: 'gate.expander', params: {}, enabled: false },
+      { processor: 'dynamics.compressor', params: {}, enabled: true },
+    ];
+    const group = makeGroupTrack(10, makeStrip({ inserts }));
+
+    const legacy = createStripSync(makeHandle().handle);
+    legacy.sync([group], makeMixer());
+    expect(legacy.groupInsertIndexFor(10, 0)).toBeUndefined();
+    expect(legacy.groupInsertIndexFor(10, 1)).toBe(0);
+
+    const modern = createStripSync(makeHandleWithBusBypass().handle);
+    modern.sync([group], makeMixer());
+    expect(modern.groupInsertIndexFor(10, 0)).toBe(0);
+    expect(modern.groupInsertIndexFor(10, 1)).toBe(1);
   });
 
   it('patches enabled group insert numeric params without replacing the group bus strip', () => {

@@ -40,7 +40,12 @@ import {
 import type { EditorTrack } from '@/project/types';
 import type { EngineTrackSend, EqBand } from '@/wasm/index.js';
 import type { EngineHandle } from './engine';
-import { engineBusStrip, engineEqBands, stripSceneFieldsHaveDsp } from './engine-declaration';
+import {
+  engineBusInsertAutomationIndex,
+  engineBusStrip,
+  engineEqBands,
+  stripSceneFieldsHaveDsp,
+} from './engine-declaration';
 import { linearToDb } from './mixer-sync';
 
 /** Maximum number of mixer buses the realtime engine supports. */
@@ -255,6 +260,10 @@ export interface StripSync {
   busIdFor(storeBusId: string): number | undefined;
   /** Engine bus id assigned to a group track id (undefined when never seen). */
   groupBusIdFor(trackId: number): number | undefined;
+  /** ABI-correct engine insert index for a return-bus strip slot. */
+  busInsertIndexFor(storeBusId: string, storeInsertIndex: number): number | undefined;
+  /** ABI-correct engine insert index for a group-track strip slot. */
+  groupInsertIndexFor(trackId: number, storeInsertIndex: number): number | undefined;
 }
 
 /**
@@ -285,6 +294,8 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
   const lastBusStrip = new Map<number, StripMemory>();
   const lastSidechains = new Map<string, { trackId: number; index: number; source: number }>();
   let masterStripMemory: StripMemory | undefined;
+  let busStripsByStoreId = new Map<string, MixerStrip | undefined>();
+  let groupStripsByTrackId = new Map<number, MixerStrip | undefined>();
 
   /**
    * Syncs one strip target, returning the new memory (undefined when the
@@ -436,6 +447,8 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
           `${groupTracks.length} group tracks > ${MAX_ENGINE_BUSES}`,
       );
     }
+    busStripsByStoreId = new Map(mixer.buses.map((bus) => [bus.id, bus.strip]));
+    groupStripsByTrackId = new Map(groupTracks.map((track) => [track.id, track.mixer]));
 
     const busKeys = [
       ...mixer.buses.map((bus) => bus.id),
@@ -623,5 +636,17 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     sync,
     busIdFor: (storeBusId) => busNumberByStoreId.get(storeBusId),
     groupBusIdFor: (trackId) => busNumberByStoreId.get(`group:${trackId}`),
+    busInsertIndexFor: (storeBusId, storeInsertIndex) =>
+      engineBusInsertAutomationIndex(
+        busStripsByStoreId.get(storeBusId),
+        storeInsertIndex,
+        typeof busInsertBypass === 'function',
+      ),
+    groupInsertIndexFor: (trackId, storeInsertIndex) =>
+      engineBusInsertAutomationIndex(
+        groupStripsByTrackId.get(trackId),
+        storeInsertIndex,
+        typeof busInsertBypass === 'function',
+      ),
   };
 }

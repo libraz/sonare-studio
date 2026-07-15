@@ -3,6 +3,7 @@ import {
   engineAutomationPoints,
   engineBusStrip,
   engineEqBands,
+  engineFaderAutomationPoints,
   stripSceneFieldsHaveDsp,
 } from '@/engine/engine-declaration';
 import { createDefaultStrip } from '@/project/mixer';
@@ -19,6 +20,22 @@ describe('engine declaration helpers', () => {
     ).toEqual([
       { ppq: 0, value: 1, curveToNext: 0 },
       { ppq: 2, value: 3, curveToNext: 2 },
+    ]);
+  });
+
+  it('keeps fader automation pinned to the silence floor while muted', () => {
+    expect(
+      engineFaderAutomationPoints(
+        [
+          { ppq: 0, value: -12 },
+          { ppq: 4, value: 0, curve: 'hold' },
+        ],
+        -6,
+        true,
+      ),
+    ).toEqual([
+      { ppq: 0, value: -120, curveToNext: 0 },
+      { ppq: 4, value: -120, curveToNext: 2 },
     ]);
   });
 

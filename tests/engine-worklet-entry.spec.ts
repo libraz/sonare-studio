@@ -156,6 +156,29 @@ describe('worklet-entry dispatch', () => {
     expect(retuneDelete).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps 16k realtime retune quanta free of transient TypedArray views', async () => {
+    const instance = await createReadyProcessor('sonare-streaming-retune-processor');
+    const input = new Float32Array(128).fill(0.25);
+    const output = new Float32Array(128);
+    const subarray = vi.spyOn(Float32Array.prototype, 'subarray');
+    const slice = vi.spyOn(Float32Array.prototype, 'slice');
+
+    try {
+      for (let block = 0; block < 16_384; block += 1) {
+        expect(instance.process([[input]], [[output]])).toBe(true);
+      }
+    } finally {
+      subarray.mockRestore();
+      slice.mockRestore();
+    }
+
+    expect(subarray).not.toHaveBeenCalled();
+    expect(slice).not.toHaveBeenCalled();
+    expect(retuneProcessMono).toHaveBeenCalledTimes(16_384);
+    expect(retuneProcessMono.mock.calls.every(([samples]) => samples === input)).toBe(true);
+    expect(output[0]).toBe(0.25);
+  });
+
   it('registers realtime voice changer and forwards control messages', async () => {
     const instance = await createReadyProcessor('sonare-realtime-voice-changer-processor');
     expect(instance.port.postMessage).toHaveBeenCalledWith({

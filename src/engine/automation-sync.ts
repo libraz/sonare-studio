@@ -25,10 +25,7 @@ import {
   parseMasteringAutomationParam,
 } from '@/project/automation';
 import type { EngineHandle } from './engine';
-import {
-  engineAutomationPoints,
-  engineAutomationPointsWithValueOffset,
-} from './engine-declaration';
+import { engineAutomationPoints, engineFaderAutomationPoints } from './engine-declaration';
 
 type MixerAutomationParam = 'faderDb' | 'pan';
 
@@ -50,8 +47,14 @@ export interface AutomationSyncOptions {
   groupInsertIndexFor?: (trackId: number, storeInsertIndex: number) => number | undefined;
   /** Engine master-strip insert index for a mastering-chain processor slot. */
   masteringInsertIndexFor?: (processorIndex: number) => number | undefined;
+  /** Current mastering-chain index for a stable processor identity. */
+  masteringProcessorIndexFor?: (processorId: string) => number | undefined;
+  /** Current store insert index for a stable processor identity on a lane target. */
+  insertStoreIndexFor?: (target: AutomationTarget, processorId: string) => number | undefined;
   /** Current VCA gain offset for a track/group target, in dB. */
   vcaOffsetFor?: (trackId: number) => number;
+  /** Effective track/VCA mute for a numeric fader target. */
+  effectiveMuteFor?: (trackId: number) => boolean;
   /** Re-pushes the manual strip value after a lane has been cleared. */
   restoreParam: (target: AutomationTarget, param: AutomationParam) => void;
 }
@@ -96,7 +99,13 @@ export function createAutomationSync(
       const masteringRef = parseMasteringAutomationParam(lane.param);
       if (masteringRef) {
         if (lane.target !== 'master') continue;
-        const insertIndex = options.masteringInsertIndexFor?.(masteringRef.processorIndex);
+        const processorIndex =
+          masteringRef.processorIndex ??
+          (masteringRef.processorId
+            ? options.masteringProcessorIndexFor?.(masteringRef.processorId)
+            : undefined);
+        if (processorIndex === undefined) continue;
+        const insertIndex = options.masteringInsertIndexFor?.(processorIndex);
         if (insertIndex === undefined) continue;
         const insertId = handle.engine.resolveMasterInsertAutomationId(
           insertIndex,
@@ -111,10 +120,16 @@ export function createAutomationSync(
         // reserved insert-automation id (and the strip selector) from its own
         // strip state. A negative result means the strip, insert, or key is not
         // (yet) known to the engine, so the lane is skipped this pass.
+        const storeInsertIndex =
+          insertRef.insertIndex ??
+          (insertRef.processorId
+            ? options.insertStoreIndexFor?.(lane.target, insertRef.processorId)
+            : undefined);
+        if (storeInsertIndex === undefined) continue;
         let insertId: number;
         if (lane.target === 'master') {
           insertId = handle.engine.resolveMasterInsertAutomationId(
-            insertRef.insertIndex,
+            storeInsertIndex,
             insertRef.paramName,
           );
         } else if (isBusAutomationTarget(lane.target)) {
@@ -122,8 +137,8 @@ export function createAutomationSync(
           const busId = options.busIdFor?.(storeBusId);
           if (busId === undefined) continue;
           const insertIndex =
-            options.busInsertIndexFor?.(storeBusId, insertRef.insertIndex) ??
-            (options.busInsertIndexFor ? undefined : insertRef.insertIndex);
+            options.busInsertIndexFor?.(storeBusId, storeInsertIndex) ??
+            (options.busInsertIndexFor ? undefined : storeInsertIndex);
           if (insertIndex === undefined) continue;
           insertId = handle.engine.resolveBusInsertAutomationId(
             busId,
@@ -135,8 +150,8 @@ export function createAutomationSync(
             typeof lane.target === 'number' ? options.groupBusIdFor?.(lane.target) : undefined;
           if (groupBusId !== undefined) {
             const insertIndex =
-              options.groupInsertIndexFor?.(lane.target as number, insertRef.insertIndex) ??
-              (options.groupInsertIndexFor ? undefined : insertRef.insertIndex);
+              options.groupInsertIndexFor?.(lane.target as number, storeInsertIndex) ??
+              (options.groupInsertIndexFor ? undefined : storeInsertIndex);
             if (insertIndex === undefined) continue;
             insertId = handle.engine.resolveBusInsertAutomationId(
               groupBusId,
@@ -157,7 +172,7 @@ export function createAutomationSync(
           if (!knownTracks.has(lane.target)) continue;
           insertId = handle.engine.resolveTrackInsertAutomationId(
             lane.target,
-            insertRef.insertIndex,
+            storeInsertIndex,
             insertRef.paramName,
           );
         }
@@ -184,9 +199,10 @@ export function createAutomationSync(
       }
       const points =
         typeof lane.target === 'number' && lane.param === 'faderDb'
-          ? engineAutomationPointsWithValueOffset(
+          ? engineFaderAutomationPoints(
               lane.points,
               options.vcaOffsetFor?.(lane.target) ?? 0,
+              options.effectiveMuteFor?.(lane.target) ?? false,
             )
           : engineAutomationPoints(lane.points);
       if (points.length === 0) continue;
