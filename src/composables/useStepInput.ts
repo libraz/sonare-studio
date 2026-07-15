@@ -79,13 +79,22 @@ export function useStepInput(): StepInputHandle {
 
   function enterNote(pitch: number, velocity?: number): number | null {
     if (!armed.value) return null;
+    const clip = store.activeClip;
+    const durationPpq = clip ? Math.min(stepPpq.value, clip.lengthPpq) : stepPpq.value;
+    const timelineStart = clip
+      ? Math.min(
+          Math.max(cursorPpq.value, clip.startPpq),
+          clip.startPpq + Math.max(0, clip.lengthPpq - durationPpq),
+        )
+      : cursorPpq.value;
+    const sourceStart = clip ? timelineStart - clip.startPpq + clip.sourceOffsetPpq : timelineStart;
     const id = addNote({
       pitch,
-      startPpq: cursorPpq.value,
-      durationPpq: stepPpq.value,
+      startPpq: sourceStart,
+      durationPpq,
       ...(velocity !== undefined ? { velocity } : {}),
     });
-    cursorPpq.value += stepPpq.value;
+    cursorPpq.value = timelineStart + durationPpq;
     return id;
   }
 

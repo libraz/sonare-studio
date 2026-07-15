@@ -49,6 +49,31 @@ describe('bakePattern', () => {
     ]);
   });
 
+  it('preserves a pulled single-channel clip when baking it again', () => {
+    const notes: EditorNote[] = [
+      { id: 1, pitch: 60, velocity: 88, startPpq: 0, durationPpq: 0.125, channel: 4 },
+    ];
+    const { pattern } = patternFromNotes(notes, createPitchPattern(48));
+    expect(pattern.channel).toBe(4);
+    expect(bakePattern(pattern)).toContainEqual({
+      pitch: 60,
+      velocity: 88,
+      startPpq: 0,
+      durationPpq: 0.125,
+      channel: 4,
+    });
+  });
+
+  it('explicitly rejects multichannel clips that the pattern cannot represent', () => {
+    const notes: EditorNote[] = [
+      { id: 1, pitch: 60, velocity: 88, startPpq: 0, durationPpq: 0.125, channel: 1 },
+      { id: 2, pitch: 64, velocity: 88, startPpq: 1, durationPpq: 0.125, channel: 2 },
+    ];
+    expect(() => patternFromNotes(notes, createPitchPattern(48))).toThrow(
+      /supports one MIDI channel.*channels 2, 3/,
+    );
+  });
+
   it('honors gate, offset, swing and the base PPQ', () => {
     let pattern = createDrumPattern();
     pattern = withSwing(pattern, 100);

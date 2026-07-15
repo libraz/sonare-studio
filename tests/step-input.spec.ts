@@ -68,6 +68,75 @@ describe('useStepInput', () => {
     expect(step.cursorPpq.value).toBe(0.5);
   });
 
+  it('converts the timeline cursor to the active clip source window', () => {
+    const store = useProjectStore();
+    store.clips = [
+      {
+        id: 7,
+        trackId: 3,
+        name: 'Trimmed',
+        startPpq: 8,
+        lengthPpq: 2,
+        sourceOffsetPpq: 4,
+        gain: 1,
+        loopEnabled: false,
+        loopLengthPpq: 0,
+        notes: [],
+      },
+    ];
+    store.clipId = 7;
+    const step = useStepInput();
+    step.arm(8.5);
+
+    step.enterNote(60);
+
+    expect(addNoteMock).toHaveBeenCalledWith({
+      pitch: 60,
+      startPpq: 4.5,
+      durationPpq: 0.25,
+    });
+    expect(step.cursorPpq.value).toBe(8.75);
+  });
+
+  it('clamps step notes to both ends of the active clip window', () => {
+    const store = useProjectStore();
+    store.snapDivision = 4;
+    store.clips = [
+      {
+        id: 7,
+        trackId: 3,
+        name: 'Trimmed',
+        startPpq: 8,
+        lengthPpq: 2,
+        sourceOffsetPpq: 4,
+        gain: 1,
+        loopEnabled: false,
+        loopLengthPpq: 0,
+        notes: [],
+      },
+    ];
+    store.clipId = 7;
+    const step = useStepInput();
+
+    step.arm(2);
+    step.enterNote(60);
+    expect(addNoteMock).toHaveBeenLastCalledWith({
+      pitch: 60,
+      startPpq: 4,
+      durationPpq: 1,
+    });
+    expect(step.cursorPpq.value).toBe(9);
+
+    step.setCursor(20);
+    step.enterNote(62);
+    expect(addNoteMock).toHaveBeenLastCalledWith({
+      pitch: 62,
+      startPpq: 5,
+      durationPpq: 1,
+    });
+    expect(step.cursorPpq.value).toBe(10);
+  });
+
   it('does not write and returns null while disarmed', () => {
     const step = useStepInput();
     expect(step.enterNote(60)).toBeNull();

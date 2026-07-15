@@ -66,6 +66,8 @@ export interface PatternRow {
 export interface StepPattern {
   /** Drum rows (GM kit pitches) or chromatic pitch rows. */
   mode: SequencerMode;
+  /** MIDI channel emitted by every row (the current pattern is single-channel). */
+  channel: number;
   /** Number of steps per row. */
   stepCount: StepCount;
   /** Step rate. */
@@ -125,6 +127,7 @@ export function createDrumPattern(
 ): StepPattern {
   return {
     mode: 'drum',
+    channel: 9,
     stepCount,
     resolution,
     swing: 0,
@@ -151,7 +154,7 @@ export function createPitchPattern(
     const pitch = root + PITCH_MODE_ROW_COUNT - 1 - i;
     return createRow(pitch, pitchName(pitch), stepCount);
   });
-  return { mode: 'pitch', stepCount, resolution, swing: 0, seed: 1, rows };
+  return { mode: 'pitch', channel: 0, stepCount, resolution, swing: 0, seed: 1, rows };
 }
 
 /** Deep-copies a pattern. */

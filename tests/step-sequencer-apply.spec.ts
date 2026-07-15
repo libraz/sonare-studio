@@ -2,10 +2,11 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import StepSequencer from '@/components/step-sequencer/StepSequencer.vue';
+import { dialogQueue, resolveDialog } from '@/composables/useDialogs';
 import * as commands from '@/project/commands';
-import { addNote, canUndo, clearHistory, undo } from '@/project/commands';
+import { addNote, canUndo, clearHistory, trimClip, undo } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
-import { type StepPattern, withStep, withSwing } from '@/ui/step-sequencer/pattern';
+import { type StepPattern, withStep, withStepCount, withSwing } from '@/ui/step-sequencer/pattern';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -17,7 +18,8 @@ vi.mock('@/lib/wasm', async () => {
 interface SequencerVm {
   pattern: StepPattern;
   selectedRow: number;
-  applyToClip: () => void;
+  overflowPolicy: 'resize' | 'loop' | 'trim';
+  applyToClip: () => Promise<void>;
   pullFromClip: () => void;
 }
 
@@ -29,6 +31,7 @@ describe('StepSequencer (apply / pull integration)', () => {
     store = useProjectStore();
     store.dispose();
     clearHistory();
+    dialogQueue.splice(0);
     await store.init();
   });
 
@@ -97,6 +100,64 @@ describe('StepSequencer (apply / pull integration)', () => {
     expect(canUndo()).toBe(false);
   });
 
+  async function applyOverflowPolicy(policy: SequencerVm['overflowPolicy']) {
+    const clip = store.activeClip;
+    if (!clip) throw new Error('fixture has no active clip');
+    trimClip(clip.id, clip.startPpq, 4);
+    clearHistory();
+    const wrapper = await mountSequencer();
+    const vm = wrapper.vm as unknown as SequencerVm;
+    const kickRow = vm.pattern.rows.length - 1;
+    vm.pattern = withStepCount(vm.pattern, 32);
+    vm.pattern = withStep(vm.pattern, kickRow, 0, { active: true });
+    vm.pattern = withStep(vm.pattern, kickRow, 31, { active: true });
+    vm.overflowPolicy = policy;
+
+    const applying = vm.applyToClip();
+    await flushPromises();
+    expect(dialogQueue).toHaveLength(1);
+    resolveDialog(dialogQueue[0].id, true);
+    await applying;
+    await flushPromises();
+    return wrapper;
+  }
+
+  it('resizes a short clip for a 32-step pattern as one undo entry', async () => {
+    await applyOverflowPolicy('resize');
+
+    expect(store.activeClip).toMatchObject({ lengthPpq: 8, loopEnabled: false });
+    expect(store.notes.map((note) => note.startPpq)).toEqual([0, 7.75]);
+    expect(undo()).toBe(true);
+    expect(store.activeClip).toMatchObject({ lengthPpq: 4, loopEnabled: false });
+    expect(store.notes).toEqual([]);
+    expect(canUndo()).toBe(false);
+  });
+
+  it('extends and loops the original short window as one undo entry', async () => {
+    await applyOverflowPolicy('loop');
+
+    expect(store.activeClip).toMatchObject({
+      lengthPpq: 8,
+      loopEnabled: true,
+      loopLengthPpq: 4,
+    });
+    expect(store.notes.map((note) => note.startPpq)).toEqual([0]);
+    expect(undo()).toBe(true);
+    expect(store.activeClip).toMatchObject({ lengthPpq: 4, loopEnabled: false });
+    expect(store.notes).toEqual([]);
+    expect(canUndo()).toBe(false);
+  });
+
+  it('trims a 32-step pattern to the short clip after confirmation', async () => {
+    await applyOverflowPolicy('trim');
+
+    expect(store.activeClip).toMatchObject({ lengthPpq: 4, loopEnabled: false });
+    expect(store.notes.map((note) => note.startPpq)).toEqual([0]);
+    expect(undo()).toBe(true);
+    expect(store.notes).toEqual([]);
+    expect(canUndo()).toBe(false);
+  });
+
   it('removing steps deletes the surplus notes in one entry', async () => {
     const wrapper = await mountSequencer();
     const vm = wrapper.vm as unknown as SequencerVm;
@@ -147,6 +208,22 @@ describe('StepSequencer (apply / pull integration)', () => {
     expect(wrapper.emitted('pulled')).toEqual([[2]]);
   });
 
+  it('reports multichannel Pull as an error and leaves the pattern unchanged', async () => {
+    addNote({ pitch: 60, startPpq: 0, durationPpq: 0.125, channel: 1 });
+    addNote({ pitch: 64, startPpq: 1, durationPpq: 0.125, channel: 2 });
+    const wrapper = await mountSequencer();
+    const before = (wrapper.vm as unknown as SequencerVm).pattern;
+
+    await wrapper.find('[data-test="pull"]').trigger('click');
+
+    expect(wrapper.find('[data-test="status"]').text()).toContain(
+      'supports one MIDI channel at a time',
+    );
+    expect(wrapper.find('[data-test="status"]').classes()).toContain('seq-status-error');
+    expect((wrapper.vm as unknown as SequencerVm).pattern).toBe(before);
+    expect(wrapper.emitted('pulled')).toBeUndefined();
+  });
+
   it('applies a euclidean fill to the selected row through the popover', async () => {
     const wrapper = await mountSequencer();
     await wrapper.find('[data-test="euclid-toggle"]').trigger('click');
@@ -179,7 +256,7 @@ describe('StepSequencer (apply / pull integration)', () => {
     const kickRow = vm.pattern.rows.length - 1;
     vm.pattern = withStep(vm.pattern, kickRow, 0, { active: true });
 
-    const spy = vi.spyOn(commands, 'addNote').mockImplementation(() => {
+    const spy = vi.spyOn(commands, 'applyNoteEdits').mockImplementation(() => {
       throw new Error('boom');
     });
     try {

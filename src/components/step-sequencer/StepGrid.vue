@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import type { StepPattern } from '@/ui/step-sequencer/pattern';
 import { isTripletResolution } from '@/ui/step-sequencer/timing';
 
@@ -22,10 +23,33 @@ const emit = defineEmits<{
   'set-step': [rowIndex: number, stepIndex: number, active: boolean];
   /** Selects a row for parameter editing / row operations. */
   'select-row': [rowIndex: number];
+  /** Sets the velocity of one step from the accessible slider/keyboard path. */
+  'set-velocity': [rowIndex: number, stepIndex: number, velocity: number];
 }>();
+
+const { t } = useI18n();
 
 /** Steps per accent group (beat shading): 3 on triplet grids, else 4. */
 const groupSize = computed(() => (isTripletResolution(props.pattern.resolution) ? 3 : 4));
+const activeRow = ref(Math.max(0, props.selectedRow));
+const activeStep = ref(0);
+const liveStatus = ref('');
+const gridRoot = ref<HTMLElement | null>(null);
+
+const activeCell = computed(() => props.pattern.rows[activeRow.value]?.steps[activeStep.value]);
+const activeCellLabel = computed(() => {
+  const row = props.pattern.rows[activeRow.value];
+  const step = row?.steps[activeStep.value];
+  if (!row || !step) return t.value.shell.stepSequencer.accessibility.empty;
+  return formatMessage(t.value.shell.stepSequencer.accessibility.step, {
+    row: row.name,
+    step: activeStep.value + 1,
+    state: step.active
+      ? t.value.shell.stepSequencer.accessibility.active
+      : t.value.shell.stepSequencer.accessibility.inactive,
+    velocity: step.velocity,
+  });
+});
 
 /** Active paint drag: the value applied to every cell entered. */
 let paint: { value: boolean } | null = null;
@@ -84,59 +108,189 @@ function onPointerUp(): void {
 function fillHeight(velocity: number): string {
   return `${Math.round((velocity / 127) * 100)}%`;
 }
+
+function setActiveCell(row: number, step: number, focus = false): void {
+  activeRow.value = Math.min(props.pattern.rows.length - 1, Math.max(0, row));
+  activeStep.value = Math.min(props.pattern.stepCount - 1, Math.max(0, step));
+  emit('select-row', activeRow.value);
+  liveStatus.value = activeCellLabel.value;
+  if (focus) {
+    void nextTick(() => {
+      gridRoot.value
+        ?.querySelector<HTMLElement>(
+          `[data-step-grid-active="true"][data-row="${activeRow.value}"][data-step="${activeStep.value}"]`,
+        )
+        ?.focus();
+    });
+  }
+}
+
+function onCellFocus(row: number, step: number): void {
+  if (row === activeRow.value && step === activeStep.value) return;
+  setActiveCell(row, step);
+}
+
+function onCellKeyDown(event: KeyboardEvent, row: number, step: number): void {
+  if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') && event.shiftKey) {
+    const current = props.pattern.rows[row]?.steps[step];
+    if (!current) return;
+    event.preventDefault();
+    const delta = event.key === 'ArrowUp' ? 1 : -1;
+    const velocity = Math.min(127, Math.max(1, current.velocity + delta * (event.altKey ? 8 : 1)));
+    emit('set-velocity', row, step, velocity);
+    liveStatus.value = formatMessage(t.value.shell.stepSequencer.accessibility.velocityChanged, {
+      velocity,
+    });
+    return;
+  }
+  if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+    event.preventDefault();
+    setActiveCell(row, step + (event.key === 'ArrowLeft' ? -1 : 1), true);
+    return;
+  }
+  if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+    event.preventDefault();
+    setActiveCell(row + (event.key === 'ArrowUp' ? -1 : 1), step, true);
+    return;
+  }
+  if (event.key === 'Home' || event.key === 'End') {
+    event.preventDefault();
+    setActiveCell(row, event.key === 'Home' ? 0 : props.pattern.stepCount - 1, true);
+    return;
+  }
+  if (event.key === ' ' || event.key === 'Enter') {
+    const current = props.pattern.rows[row]?.steps[step];
+    if (!current) return;
+    event.preventDefault();
+    emit('select-row', row);
+    emit('set-step', row, step, !current.active);
+    liveStatus.value = formatMessage(t.value.shell.stepSequencer.accessibility.toggled, {
+      state: current.active
+        ? t.value.shell.stepSequencer.accessibility.inactive
+        : t.value.shell.stepSequencer.accessibility.active,
+    });
+    return;
+  }
+  if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+    event.preventDefault();
+    emit('select-row', row);
+    liveStatus.value = t.value.shell.stepSequencer.accessibility.rowControls;
+  }
+}
+
+function onVelocityInput(event: Event): void {
+  const velocity = Math.min(
+    127,
+    Math.max(1, Math.round(Number((event.target as HTMLInputElement).value))),
+  );
+  emit('set-velocity', activeRow.value, activeStep.value, velocity);
+  liveStatus.value = formatMessage(t.value.shell.stepSequencer.accessibility.velocityChanged, {
+    velocity,
+  });
+}
+
+watch(
+  () => props.selectedRow,
+  (row) => {
+    activeRow.value = Math.min(props.pattern.rows.length - 1, Math.max(0, row));
+  },
+);
 </script>
 
 <template>
-  <div
-    class="step-grid"
-    @pointerdown="onPointerDown"
-    @pointermove="onPointerMove"
-    @pointerup="onPointerUp"
-    @pointercancel="onPointerUp"
-    @contextmenu.prevent
-  >
+  <div class="step-grid-wrap">
     <div
-      v-for="(row, rowIndex) in props.pattern.rows"
-      :key="`${row.pitch}-${rowIndex}`"
-      class="grid-row"
-      :class="{ 'row-selected': rowIndex === props.selectedRow, 'row-muted': row.muted }"
+      ref="gridRoot"
+      class="step-grid"
+      role="grid"
+      :aria-label="t.shell.stepSequencer.accessibility.grid"
+      @pointerdown="onPointerDown"
+      @pointermove="onPointerMove"
+      @pointerup="onPointerUp"
+      @pointercancel="onPointerUp"
+      @contextmenu.prevent
     >
-      <button
-        type="button"
-        class="row-label"
-        v-tooltip="`${row.name} (${row.pitch})`"
-        @click="emit('select-row', rowIndex)"
+      <div
+        v-for="(row, rowIndex) in props.pattern.rows"
+        :key="`${row.pitch}-${rowIndex}`"
+        class="grid-row"
+        role="row"
+        :class="{ 'row-selected': rowIndex === props.selectedRow, 'row-muted': row.muted }"
       >
-        <span class="row-name">{{ row.name }}</span>
-        <svg v-if="row.muted" class="row-mute-flag" viewBox="0 0 16 16" aria-hidden="true">
-          <path d="M2 6h2.5L8 3v10L4.5 10H2z" />
-          <path class="row-mute-slash" d="M11 5l4 6m0-6l-4 6" />
-        </svg>
-      </button>
-      <div class="row-cells">
-        <div
-          v-for="(step, stepIndex) in row.steps"
-          :key="stepIndex"
-          class="grid-cell"
-          :class="{
-            'cell-active': step.active,
-            'cell-accent': stepIndex % groupSize === 0,
-          }"
-          :data-row="rowIndex"
-          :data-step="stepIndex"
+        <button
+          type="button"
+          role="rowheader"
+          class="row-label"
+          v-tooltip="`${row.name} (${row.pitch})`"
+          @click="emit('select-row', rowIndex)"
         >
-          <div
-            v-if="step.active"
-            class="cell-fill"
-            :style="{ height: fillHeight(step.velocity) }"
-          />
+          <span class="row-name">{{ row.name }}</span>
+          <svg v-if="row.muted" class="row-mute-flag" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M2 6h2.5L8 3v10L4.5 10H2z" />
+            <path class="row-mute-slash" d="M11 5l4 6m0-6l-4 6" />
+          </svg>
+        </button>
+        <div class="row-cells" role="presentation">
+          <button
+            v-for="(step, stepIndex) in row.steps"
+            :key="stepIndex"
+            type="button"
+            role="gridcell"
+            class="grid-cell"
+            :class="{
+              'cell-active': step.active,
+              'cell-accent': stepIndex % groupSize === 0,
+            }"
+            :data-row="rowIndex"
+            :data-step="stepIndex"
+            :data-step-grid-active="rowIndex === activeRow && stepIndex === activeStep"
+            :tabindex="rowIndex === activeRow && stepIndex === activeStep ? 0 : -1"
+            :aria-selected="rowIndex === activeRow && stepIndex === activeStep"
+            :aria-label="
+              formatMessage(t.shell.stepSequencer.accessibility.step, {
+                row: row.name,
+                step: stepIndex + 1,
+                state: step.active
+                  ? t.shell.stepSequencer.accessibility.active
+                  : t.shell.stepSequencer.accessibility.inactive,
+                velocity: step.velocity,
+              })
+            "
+            @focus="onCellFocus(rowIndex, stepIndex)"
+            @keydown="onCellKeyDown($event, rowIndex, stepIndex)"
+          >
+            <span
+              v-if="step.active"
+              class="cell-fill"
+              :style="{ height: fillHeight(step.velocity) }"
+            />
+          </button>
         </div>
       </div>
+    </div>
+    <label v-if="activeCell" class="step-velocity-accessible">
+      <span>{{ t.shell.stepSequencer.accessibility.velocity }}</span>
+      <input
+        type="range"
+        min="1"
+        max="127"
+        step="1"
+        :value="activeCell.velocity"
+        :aria-valuetext="String(activeCell.velocity)"
+        @input="onVelocityInput"
+      />
+    </label>
+    <div class="step-grid-live" role="status" aria-live="polite" aria-atomic="true">
+      {{ liveStatus }}
     </div>
   </div>
 </template>
 
 <style scoped>
+.step-grid-wrap {
+  position: relative;
+}
+
 .step-grid {
   display: flex;
   flex-direction: column;
@@ -221,6 +375,13 @@ function fillHeight(velocity: number): string {
   overflow: hidden;
   cursor: pointer;
   box-shadow: var(--inset-well);
+  border: 0;
+  padding: 0;
+}
+
+.grid-cell:focus-visible {
+  outline: 2px solid var(--focus-ring, var(--accent));
+  outline-offset: 1px;
 }
 
 .cell-accent {
@@ -243,5 +404,35 @@ function fillHeight(velocity: number): string {
 
 .cell-active {
   box-shadow: inset 0 0 0 1px var(--accent-muted);
+}
+
+.step-velocity-accessible,
+.step-grid-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.step-velocity-accessible:focus-within {
+  z-index: 10;
+  top: 4px;
+  left: calc(var(--seq-row-label-w) + var(--sp-4));
+  display: flex;
+  width: min(320px, calc(100% - var(--seq-row-label-w) - var(--sp-6)));
+  height: auto;
+  gap: var(--sp-3);
+  align-items: center;
+  padding: var(--sp-2);
+  overflow: visible;
+  clip-path: none;
+  background: var(--surface-1);
+  color: var(--text-1);
+}
+
+.step-velocity-accessible input {
+  flex: 1;
 }
 </style>

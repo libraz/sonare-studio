@@ -4,7 +4,10 @@ import StepGrid from '@/components/step-sequencer/StepGrid.vue';
 import { createDrumPattern, type StepPattern, withStep } from '@/ui/step-sequencer/pattern';
 
 function mountGrid(pattern: StepPattern, selectedRow = 0) {
-  return mount(StepGrid, { props: { pattern, selectedRow } });
+  return mount(StepGrid, {
+    props: { pattern, selectedRow },
+    global: { directives: { tooltip: () => undefined } },
+  });
 }
 
 function cell(wrapper: ReturnType<typeof mountGrid>, row: number, step: number) {
@@ -88,5 +91,26 @@ describe('StepGrid', () => {
     expect(rows[1].classes()).toContain('row-selected');
     expect(rows[1].classes()).toContain('row-muted');
     expect(rows[0].classes()).not.toContain('row-selected');
+  });
+
+  it('provides a roving ARIA grid with keyboard toggle and velocity editing', async () => {
+    const wrapper = mountGrid(createDrumPattern(8));
+    const grid = wrapper.get('[role="grid"]');
+    expect(grid.attributes('aria-label')).toBe('Step pattern grid');
+    expect(wrapper.findAll('[role="gridcell"]')).toHaveLength(8 * createDrumPattern(8).rows.length);
+    expect(cell(wrapper, 0, 0).attributes('tabindex')).toBe('0');
+
+    await cell(wrapper, 0, 0).trigger('keydown', { key: 'ArrowRight' });
+    expect(cell(wrapper, 0, 0).attributes('tabindex')).toBe('-1');
+    expect(cell(wrapper, 0, 1).attributes('tabindex')).toBe('0');
+
+    await cell(wrapper, 0, 1).trigger('keydown', { key: ' ' });
+    expect(wrapper.emitted('set-step')?.at(-1)).toEqual([0, 1, true]);
+
+    await cell(wrapper, 0, 1).trigger('keydown', { key: 'ArrowUp', shiftKey: true });
+    expect(wrapper.emitted('set-velocity')?.at(-1)).toEqual([0, 1, 97]);
+    const velocity = wrapper.get('.step-velocity-accessible input[type="range"]');
+    expect(velocity.attributes('min')).toBe('1');
+    expect(velocity.attributes('max')).toBe('127');
   });
 });

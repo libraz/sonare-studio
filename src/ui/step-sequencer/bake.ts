@@ -52,7 +52,7 @@ export interface BakeOptions {
  */
 export function bakePattern(pattern: StepPattern, options: BakeOptions = {}): BakedNote[] {
   const basePpq = options.basePpq ?? 0;
-  const channel = pattern.mode === 'drum' ? DRUM_CHANNEL : 0;
+  const channel = Math.min(15, Math.max(0, Math.round(pattern.channel)));
   const duration = stepDurationPpq(pattern.resolution);
   const notes: BakedNote[] = [];
   for (const row of pattern.rows) {
@@ -70,6 +70,22 @@ export function bakePattern(pattern: StepPattern, options: BakeOptions = {}): Ba
   }
   notes.sort((a, b) => a.startPpq - b.startPpq || a.pitch - b.pitch);
   return notes;
+}
+
+/** Keeps baked notes inside a source window and trims tails at its right edge. */
+export function trimBakedNotesToWindow(
+  notes: ReadonlyArray<BakedNote>,
+  startPpq: number,
+  lengthPpq: number,
+): BakedNote[] {
+  const endPpq = startPpq + Math.max(0, lengthPpq);
+  return notes
+    .filter((note) => note.startPpq >= startPpq && note.startPpq < endPpq)
+    .map((note) => ({
+      ...note,
+      durationPpq: Math.min(note.durationPpq, endPpq - note.startPpq),
+    }))
+    .filter((note) => note.durationPpq > 0);
 }
 
 /**
@@ -179,7 +195,16 @@ export function patternFromNotes(
   template: StepPattern,
   basePpq = 0,
 ): UnbakeResult {
+  const channels = [...new Set(notes.map((note) => note.channel))].sort((a, b) => a - b);
+  if (channels.length > 1) {
+    throw new RangeError(
+      `Step Sequencer supports one MIDI channel at a time; clip uses channels ${channels
+        .map((channel) => channel + 1)
+        .join(', ')}`,
+    );
+  }
   const pattern = clonePattern(template);
+  if (channels.length === 1) pattern.channel = channels[0];
   for (const row of pattern.rows) {
     row.muted = false;
     row.steps = row.steps.map(() => createStep());

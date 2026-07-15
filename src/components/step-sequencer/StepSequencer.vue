@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
-import { addNote, deleteNotes, updateNotes } from '@/project/commands';
+import { confirmDialog } from '@/composables/useDialogs';
+import { applyNoteEdits } from '@/project/commands';
+import { audibleMidiSourceWindow } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
 import { clipKind } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
@@ -10,6 +12,7 @@ import {
   isEmptyPlan,
   patternFromNotes,
   planNoteReplacement,
+  trimBakedNotesToWindow,
 } from '@/ui/step-sequencer/bake';
 import { euclideanRhythm } from '@/ui/step-sequencer/euclid';
 import { STEP_PARAM_KINDS, type StepParamKind } from '@/ui/step-sequencer/param-lane';
@@ -31,6 +34,7 @@ import {
   withSwing,
 } from '@/ui/step-sequencer/pattern';
 import { jitterVelocities, sparseFill } from '@/ui/step-sequencer/randomize';
+import { patternLengthPpq } from '@/ui/step-sequencer/timing';
 import StepGrid from './StepGrid.vue';
 import StepParamLane from './StepParamLane.vue';
 
@@ -80,6 +84,10 @@ const status = ref('');
 /** Severity of the current status message, driving its tokenised color. */
 const statusType = ref<'info' | 'warning' | 'error'>('info');
 
+/** How Apply resolves a pattern whose span exceeds the audible clip window. */
+type OverflowPolicy = 'resize' | 'loop' | 'trim';
+const overflowPolicy = ref<OverflowPolicy>('trim');
+
 const activeClip = computed(() => store.clips.find((clip) => clip.id === store.clipId) ?? null);
 
 /** True when the active clip exists and holds MIDI content. */
@@ -105,6 +113,14 @@ const stepCountOptions = computed(() =>
 /** Step-resolution choices. */
 const resolutionOptions = computed(() =>
   STEP_RESOLUTIONS.map((resolution) => ({ value: resolution, label: resolution })),
+);
+
+const overflowPolicyOptions = computed<ReadonlyArray<{ value: OverflowPolicy; label: string }>>(
+  () => [
+    { value: 'resize', label: t.value.shell.stepSequencer.overflow.resize },
+    { value: 'loop', label: t.value.shell.stepSequencer.overflow.loop },
+    { value: 'trim', label: t.value.shell.stepSequencer.overflow.trim },
+  ],
 );
 
 // Keep the selected row valid when rows are rebuilt (mode switch / pull).
@@ -179,6 +195,15 @@ function onSetStep(rowIndex: number, stepIndex: number, active: boolean): void {
   pattern.value = withStep(pattern.value, rowIndex, stepIndex, { active });
 }
 
+function onSetStepVelocity(rowIndex: number, stepIndex: number, velocity: number): void {
+  const current = pattern.value.rows[rowIndex]?.steps[stepIndex];
+  if (!current) return;
+  const next = Math.min(127, Math.max(1, Math.round(velocity)));
+  if (current.velocity !== next) {
+    pattern.value = withStep(pattern.value, rowIndex, stepIndex, { velocity: next });
+  }
+}
+
 function onSetParamValue(stepIndex: number, value: number): void {
   const patch =
     paramTab.value === 'velocity'
@@ -229,24 +254,63 @@ function applyFill(): void {
 
 // --- Bake / unbake -----------------------------------------------------------
 
-function applyToClip(): void {
+async function applyToClip(): Promise<void> {
   const clip = activeClip.value;
   if (!clip || !canTargetClip.value) {
     status.value = t.value.shell.stepSequencer.status.noActiveApply;
     statusType.value = 'warning';
     return;
   }
-  const baked = bakePattern(pattern.value, { basePpq: clip.sourceOffsetPpq });
-  const plan = planNoteReplacement(store.notes, baked);
-  if (isEmptyPlan(plan)) {
+  const spanPpq = patternLengthPpq(pattern.value.stepCount, pattern.value.resolution);
+  const sourceWindow = audibleMidiSourceWindow(clip);
+  const overflows = spanPpq > sourceWindow.lengthPpq + 1e-9;
+  let baked = bakePattern(pattern.value, { basePpq: clip.sourceOffsetPpq });
+  let clipWindow: Parameters<typeof applyNoteEdits>[0]['clipWindow'];
+  if (overflows) {
+    const policyLabel = overflowPolicyOptions.value.find(
+      (option) => option.value === overflowPolicy.value,
+    )?.label;
+    const proceed = await confirmDialog({
+      title: t.value.shell.stepSequencer.overflow.confirmTitle,
+      message: formatMessage(t.value.shell.stepSequencer.overflow.confirmMessage, {
+        pattern: spanPpq,
+        clip: sourceWindow.lengthPpq,
+        policy: policyLabel ?? overflowPolicy.value,
+      }),
+      confirmLabel: t.value.shell.stepSequencer.overflow.confirmApply,
+    });
+    if (!proceed) {
+      status.value = t.value.shell.stepSequencer.overflow.cancelled;
+      statusType.value = 'warning';
+      return;
+    }
+    if (overflowPolicy.value === 'resize') {
+      clipWindow = {
+        lengthPpq: Math.max(clip.lengthPpq, spanPpq),
+        loopEnabled: false,
+      };
+    } else {
+      baked = trimBakedNotesToWindow(baked, sourceWindow.startPpq, sourceWindow.lengthPpq);
+      if (overflowPolicy.value === 'loop') {
+        clipWindow = {
+          lengthPpq: Math.max(clip.lengthPpq, spanPpq),
+          loopEnabled: true,
+          loopLengthPpq: sourceWindow.lengthPpq,
+        };
+      }
+    }
+  }
+  const plan = {
+    ...planNoteReplacement(store.notes, baked),
+    ...(clipWindow ? { clipWindow } : {}),
+  };
+  if (isEmptyPlan(plan) && !clipWindow) {
     status.value = t.value.shell.stepSequencer.status.alreadyMatches;
     statusType.value = 'info';
     return;
   }
   try {
-    if (plan.updates.length > 0) updateNotes(plan.updates);
-    if (plan.deleteIds.length > 0) deleteNotes(plan.deleteIds);
-    for (const note of plan.additions) addNote(note);
+    applyNoteEdits(plan);
   } catch (err) {
     status.value = err instanceof Error ? err.message : String(err);
     statusType.value = 'error';
@@ -267,7 +331,14 @@ function pullFromClip(): void {
     statusType.value = 'warning';
     return;
   }
-  const result = patternFromNotes(store.notes, pattern.value, clip.sourceOffsetPpq);
+  let result: ReturnType<typeof patternFromNotes>;
+  try {
+    result = patternFromNotes(store.notes, pattern.value, clip.sourceOffsetPpq);
+  } catch (err) {
+    status.value = err instanceof Error ? err.message : String(err);
+    statusType.value = 'error';
+    return;
+  }
   pattern.value = result.pattern;
   const captured = store.notes.length - result.droppedNotes;
   if (result.droppedNotes > 0) {
@@ -286,7 +357,7 @@ function pullFromClip(): void {
   emit('pulled', captured);
 }
 
-defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
+defineExpose({ pattern, selectedRow, overflowPolicy, applyToClip, pullFromClip });
 </script>
 
 <template>
@@ -441,6 +512,13 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
         </button>
       </div>
       <div class="tool-group tool-group-apply">
+        <SelectMenu
+          v-model="overflowPolicy"
+          class="tool-select"
+          :options="overflowPolicyOptions"
+          :aria-label="t.shell.stepSequencer.overflow.policy"
+          size="sm"
+        />
         <button
           type="button"
           class="tool-button primary"
@@ -473,6 +551,7 @@ defineExpose({ pattern, selectedRow, applyToClip, pullFromClip });
       :pattern="pattern"
       :selected-row="selectedRow"
       @set-step="onSetStep"
+      @set-velocity="onSetStepVelocity"
       @select-row="selectedRow = $event"
     />
     <div class="param-tabs" role="tablist">
