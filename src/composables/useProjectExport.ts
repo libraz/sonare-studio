@@ -1,12 +1,13 @@
 import { computed, type Ref, ref } from 'vue';
 import { confirmDialog } from '@/composables/useDialogs';
-import { dawprojectFilename, exportDawproject } from '@/export/dawproject';
+import { dawprojectFilename, exportDawprojectWithReport } from '@/export/dawproject';
 import type { MixdownRangePpq } from '@/export/mixdown';
 import { projectFilename } from '@/lib/filename';
 import { serializeMusicXml } from '@/notation/musicxml';
 import { quantizeToScore } from '@/notation/quantize';
 import { parseInsertAutomationParam } from '@/project/automation';
 import { insertIndexForAutomationRef } from '@/project/automation-insert';
+import { formatMediaCompletenessReport } from '@/project/media-completeness';
 import {
   DEFAULT_PAN_LAW,
   DEFAULT_PAN_MODE,
@@ -102,7 +103,6 @@ export function useProjectExport(options: ProjectExportOptions) {
     let instrumentTracks = 0;
     let midiFxTracks = 0;
     let trackColors = 0;
-    let legacyTrackPans = 0;
     let externalMidiRoutes = doc.externalMidiDefault !== undefined ? 1 : 0;
     const arrangementSections = doc.sections.length;
     const chordSymbols = doc.chords?.length ?? 0;
@@ -133,7 +133,6 @@ export function useProjectExport(options: ProjectExportOptions) {
       if (track.instrument !== undefined) instrumentTracks += 1;
       if (track.midiFx !== undefined) midiFxTracks += 1;
       if (!isDawprojectColor(track.color)) trackColors += 1;
-      if (track.pan !== 0) legacyTrackPans += 1;
       if (track.externalMidiMode === 'project') externalMidiRoutes += 1;
       if (track.frozen !== undefined) frozenTracks += 1;
       if (track.recordInputChannel !== undefined) recordInputChannels += 1;
@@ -189,9 +188,6 @@ export function useProjectExport(options: ProjectExportOptions) {
         : []),
       ...(midiFxTracks > 0 ? [formatMessage(messages.midiFxTracks, { count: midiFxTracks })] : []),
       ...(trackColors > 0 ? [formatMessage(messages.trackColors, { count: trackColors })] : []),
-      ...(legacyTrackPans > 0
-        ? [formatMessage(messages.legacyTrackPans, { count: legacyTrackPans })]
-        : []),
       ...(externalMidiRoutes > 0
         ? [formatMessage(messages.externalMidiRoutes, { count: externalMidiRoutes })]
         : []),
@@ -254,9 +250,19 @@ export function useProjectExport(options: ProjectExportOptions) {
         });
         if (!ok) return;
       }
-      const bytes = await exportDawproject(doc, { includeAudio: true });
+      const exported = await exportDawprojectWithReport(doc, { includeAudio: true });
+      if (!exported.completeness.complete) {
+        const ok = await confirmDialog({
+          title: t.value.shell.project.mediaCompleteness.title,
+          message: formatMessage(t.value.shell.project.mediaCompleteness.message, {
+            items: formatMediaCompletenessReport(exported.completeness),
+          }),
+          confirmLabel: t.value.shell.project.mediaCompleteness.confirm,
+        });
+        if (!ok) return;
+      }
       options.downloadBlobFile(
-        new Blob([new Uint8Array(bytes)], { type: 'application/zip' }),
+        new Blob([new Uint8Array(exported.bytes)], { type: 'application/zip' }),
         dawprojectFilename(store.projectName),
       );
     });

@@ -5,6 +5,12 @@ import { audioClipSegments } from '@/project/comping';
 import { effectiveTrackInstrument } from '@/project/instrument';
 import type { InsertSlot } from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
+import {
+  documentAudibleTrackIndices,
+  ppqSpanIntersectsRange,
+  type RenderPpqRange,
+} from './engine-render-context';
+import type { MixdownRangePpq } from './mixdown';
 
 export interface AudioExportPreflightResult {
   /** Conditions that must be fixed before starting the expensive render. */
@@ -18,6 +24,8 @@ export interface AudioExportPreflightOptions {
   releaseTailSeconds: number;
   /** Explicit loop ranges do not append a release tail. */
   range: 'project' | 'loop';
+  /** Required PPQ window when range is `loop`. */
+  loopRegion?: MixdownRangePpq | null;
   /** Injectable full asset validation seam; defaults to the cached OPFS loader. */
   loadAudioAsset?: (assetId: string) => Promise<LoadedAudioAsset>;
   signal?: AbortSignal;
@@ -32,13 +40,57 @@ function isMidiClip(clip: ProjectDocument['tracks'][number]['clips'][number]): b
   return (clip.kind ?? 'midi') === 'midi';
 }
 
-function activeTimeEffectSlots(doc: ProjectDocument): InsertSlot[] {
+function activeTimeEffectSlots(
+  doc: ProjectDocument,
+  audibleTrackIndices: ReadonlySet<number>,
+): InsertSlot[] {
   const slots: InsertSlot[] = [];
-  for (const track of doc.tracks) slots.push(...(track.mixer?.inserts ?? []));
+  const activeBusIds = new Set<string>();
+  doc.tracks.forEach((track, index) => {
+    const carriesAudibleMember =
+      track.kind === 'group' &&
+      doc.tracks.some(
+        (member, memberIndex) =>
+          member.groupIndex === index && audibleTrackIndices.has(memberIndex),
+      );
+    if (!audibleTrackIndices.has(index) && !carriesAudibleMember) return;
+    slots.push(...(track.mixer?.inserts ?? []));
+    if (track.mixer?.outputBusId) activeBusIds.add(track.mixer.outputBusId);
+    for (const send of track.mixer?.sends ?? []) {
+      if (send.enabled) activeBusIds.add(send.busId);
+    }
+  });
   slots.push(...(doc.mixer?.master.inserts ?? []));
-  for (const bus of doc.mixer?.buses ?? []) slots.push(...(bus.strip?.inserts ?? []));
+  for (const bus of doc.mixer?.buses ?? []) {
+    if (activeBusIds.has(bus.id)) slots.push(...(bus.strip?.inserts ?? []));
+  }
   slots.push(...(doc.mixer?.masteringChain?.processors ?? []));
   return slots.filter((slot) => slot.enabled && /(?:reverb|delay|echo)/i.test(slot.processor));
+}
+
+function resolvePreflightRange(options: AudioExportPreflightOptions): RenderPpqRange {
+  if (options.range === 'project') return { startPpq: 0, endPpq: null };
+  const loop = options.loopRegion;
+  if (
+    !loop ||
+    !Number.isFinite(loop.startPpq) ||
+    loop.startPpq < 0 ||
+    !Number.isFinite(loop.endPpq) ||
+    loop.endPpq <= loop.startPpq
+  ) {
+    throw new RangeError("Audio export preflight range 'loop' requires a valid loopRegion");
+  }
+  return { startPpq: loop.startPpq, endPpq: loop.endPpq };
+}
+
+function trackTimelineIntersectsRange(
+  track: ProjectDocument['tracks'][number],
+  range: RenderPpqRange,
+): boolean {
+  return (
+    track.clips.length === 0 ||
+    track.clips.some((clip) => ppqSpanIntersectsRange(clip.startPpq, clip.lengthPpq, range))
+  );
 }
 
 function suggestedTailSeconds(slots: ReadonlyArray<InsertSlot>): number {
@@ -67,6 +119,8 @@ export async function audioExportPreflight(
 ): Promise<AudioExportPreflightResult> {
   const blockers: string[] = [];
   const warnings: string[] = [];
+  const range = resolvePreflightRange(options);
+  const audibleTrackIndices = documentAudibleTrackIndices(doc);
   const uses = new Map<string, AssetUse>();
   const addUse = (id: string, label: string): void => {
     const use = uses.get(id) ?? { id, labels: new Set<string>() };
@@ -74,10 +128,14 @@ export async function audioExportPreflight(
     uses.set(id, use);
   };
 
-  for (const track of doc.tracks) {
+  for (let trackIndex = 0; trackIndex < doc.tracks.length; trackIndex += 1) {
     options.signal?.throwIfAborted();
+    if (!audibleTrackIndices.has(trackIndex)) continue;
+    const track = doc.tracks[trackIndex];
     if (track.frozen !== undefined) {
-      addUse(track.frozen.assetId, `frozen track "${track.name}"`);
+      if (trackTimelineIntersectsRange(track, range)) {
+        addUse(track.frozen.assetId, `frozen track "${track.name}"`);
+      }
       continue;
     }
 
@@ -85,19 +143,30 @@ export async function audioExportPreflight(
     if (
       track.kind === 'midi' &&
       instrument.kind === 'external-midi' &&
-      track.clips.some((clip) => isMidiClip(clip) && clip.lengthPpq > 0)
+      track.clips.some(
+        (clip) =>
+          isMidiClip(clip) &&
+          clip.gain > 0 &&
+          clip.notes.length > 0 &&
+          ppqSpanIntersectsRange(clip.startPpq, clip.lengthPpq, range),
+      )
     ) {
       warnings.push(`external MIDI track "${track.name}" is silent in audio export`);
     }
 
     for (const clip of track.clips) {
       if ((clip.kind ?? 'midi') !== 'audio' || clip.gain <= 0 || clip.lengthPpq <= 0) continue;
+      if (!ppqSpanIntersectsRange(clip.startPpq, clip.lengthPpq, range)) continue;
       const segments = audioClipSegments(clip);
       if (segments.length === 0) {
         blockers.push(`audio clip "${clip.name}" on "${track.name}" has no media reference`);
         continue;
       }
-      for (const segment of segments) addUse(segment.assetId, `audio clip "${clip.name}"`);
+      for (const segment of segments) {
+        const segmentStartPpq = clip.startPpq + segment.offsetPpq;
+        if (!ppqSpanIntersectsRange(segmentStartPpq, segment.lengthPpq, range)) continue;
+        addUse(segment.assetId, `audio clip "${clip.name}"`);
+      }
     }
   }
 
@@ -116,7 +185,7 @@ export async function audioExportPreflight(
   }
 
   if (options.range === 'project') {
-    const tail = suggestedTailSeconds(activeTimeEffectSlots(doc));
+    const tail = suggestedTailSeconds(activeTimeEffectSlots(doc, audibleTrackIndices));
     if (tail > options.releaseTailSeconds) {
       warnings.push(
         `release tail is ${options.releaseTailSeconds}s, but active reverb/delay settings suggest at least ${tail}s`,

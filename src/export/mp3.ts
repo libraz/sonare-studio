@@ -51,12 +51,12 @@ export interface EncodeMp3Options {
   bitrate?: Mp3Bitrate;
 }
 
-/** Converts float samples in [-1, 1] to signed 16-bit PCM with hard clipping. */
-function floatTo16(samples: Float32Array): Int16Array {
-  const out = new Int16Array(samples.length);
-  for (let i = 0; i < samples.length; i++) {
+/** Converts one bounded float block to signed 16-bit PCM with hard clipping. */
+function floatBlockTo16(samples: Float32Array, start: number, end: number): Int16Array {
+  const out = new Int16Array(end - start);
+  for (let i = start; i < end; i++) {
     const value = Math.min(1, Math.max(-1, samples[i]));
-    out[i] = Math.round(value < 0 ? value * 0x8000 : value * 0x7fff);
+    out[i - start] = Math.round(value < 0 ? value * 0x8000 : value * 0x7fff);
   }
   return out;
 }
@@ -96,15 +96,13 @@ export async function encodeMp3(
   // Lazy-load the encoder library only when an encode actually happens.
   const { Mp3Encoder } = await import('@breezystack/lamejs');
   const encoder = new Mp3Encoder(channels.length, sampleRate, bitrate);
-  const left = floatTo16(channels[0]);
-  const right = channels.length === 2 ? floatTo16(channels[1]) : undefined;
 
   const chunks: Uint8Array[] = [];
   for (let offset = 0; offset < frames; offset += ENCODE_BLOCK_FRAMES) {
     const end = Math.min(frames, offset + ENCODE_BLOCK_FRAMES);
-    const chunk = right
-      ? encoder.encodeBuffer(left.subarray(offset, end), right.subarray(offset, end))
-      : encoder.encodeBuffer(left.subarray(offset, end));
+    const left = floatBlockTo16(channels[0], offset, end);
+    const right = channels.length === 2 ? floatBlockTo16(channels[1], offset, end) : undefined;
+    const chunk = right ? encoder.encodeBuffer(left, right) : encoder.encodeBuffer(left);
     if (chunk.length > 0) chunks.push(chunk);
   }
   const tail = encoder.flush();

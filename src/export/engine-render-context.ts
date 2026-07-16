@@ -7,12 +7,14 @@
 
 import { buildMidiClipSchedules } from '@/engine/midi-sync';
 import { groupBusGainDb } from '@/engine/strip-sync';
+import { effectiveTrackInstrument } from '@/project/instrument';
 import {
   effectiveTrackMute,
   tracksWithVcaSolo,
   type VcaControlState,
   vcaOffsetDb,
 } from '@/project/mixer';
+import { isTrackAudible } from '@/project/scheduling';
 import type { ProjectDocument } from '@/project/serialization';
 import { collectActiveSoundFontUsage } from '@/project/soundfont-conflicts';
 import { type NormalizedTempoMap, ppqToSamples } from '@/project/tempo-map';
@@ -43,6 +45,117 @@ export interface BusRouting {
   groupBusByTrackIndex: Map<number, number>;
   /** Engine lane specs, one per document track. */
   lanes: LaneSpec[];
+}
+
+/** PPQ window used by contribution planning; null end means project end. */
+export interface RenderPpqRange {
+  startPpq: number;
+  endPpq: number | null;
+}
+
+/** True when a positive-length timeline span contributes inside a render window. */
+export function ppqSpanIntersectsRange(
+  startPpq: number,
+  lengthPpq: number,
+  range: RenderPpqRange,
+): boolean {
+  if (!(lengthPpq > 0)) return false;
+  return (
+    startPpq + lengthPpq > range.startPpq && (range.endPpq === null || startPpq < range.endPpq)
+  );
+}
+
+/**
+ * Computes the shared effective audible track set (mute/solo/solo-safe,
+ * groups and VCA controls). Preflight and rendering use this same projection
+ * so media that cannot reach the requested mix never blocks export.
+ */
+export function documentAudibleTrackIndices(doc: ProjectDocument): Set<number> {
+  const vcaControlsById: Map<string, VcaControlState> = new Map(
+    (doc.mixer?.vcaGroups ?? []).map((group) => [group.id, group]),
+  );
+  const tracksForSolo = tracksWithVcaSolo(doc.tracks, vcaControlsById);
+  const tracksForAudibility = tracksForSolo.map((track) =>
+    effectiveTrackMute(track.mute, track.vcaId, vcaControlsById) ? { ...track, mute: true } : track,
+  );
+  const groupExpansion = {
+    isGroup: (track: ProjectDocument['tracks'][number]) => track.kind === 'group',
+    groupKey: (_track: ProjectDocument['tracks'][number], index: number) => index,
+    memberGroupKey: (track: ProjectDocument['tracks'][number]) => track.groupIndex,
+  };
+  const audible = new Set(
+    doc.tracks.flatMap((_, index) =>
+      isTrackAudible(tracksForAudibility[index], tracksForAudibility, groupExpansion)
+        ? [index]
+        : [],
+    ),
+  );
+  // A member routed into a muted/VCA-muted group bus cannot reach the master
+  // even when its own lane is otherwise audible.
+  doc.tracks.forEach((track, index) => {
+    if (track.groupIndex === undefined) return;
+    const group = doc.tracks[track.groupIndex];
+    if (group?.kind === 'group' && effectiveTrackMute(group.mute, group.vcaId, vcaControlsById)) {
+      audible.delete(index);
+    }
+  });
+  return audible;
+}
+
+function midiStatus(word0: number): number {
+  return (word0 >>> 20) & 0xf;
+}
+
+/** True when one compiled MIDI schedule has a sounding note in a sample window. */
+function midiScheduleHasNoteInRange(
+  schedule: EngineMidiClipSchedule,
+  startSample: number,
+  endSample: number,
+): boolean {
+  const active = new Map<number, number[]>();
+  const events = [...schedule.events].sort((a, b) => a.renderFrame - b.renderFrame);
+  for (const event of events) {
+    const word0 = event.word0;
+    if (word0 === undefined) continue;
+    const status = midiStatus(word0);
+    const velocity = word0 & 0x7f;
+    const key = (((word0 >>> 16) & 0xf) << 8) | ((word0 >>> 8) & 0x7f);
+    if (status === 0x9 && velocity > 0) {
+      const starts = active.get(key) ?? [];
+      starts.push(event.renderFrame);
+      active.set(key, starts);
+      continue;
+    }
+    if (status !== 0x8 && !(status === 0x9 && velocity === 0)) continue;
+    const starts = active.get(key);
+    const noteStart = starts?.shift();
+    if (noteStart !== undefined && noteStart < endSample && event.renderFrame > startSample) {
+      return true;
+    }
+  }
+  const scheduleEnd =
+    (schedule.startSample ?? 0) + (schedule.lengthSamples ?? Number.POSITIVE_INFINITY);
+  return [...active.values()].some((starts) =>
+    starts.some((noteStart) => noteStart < endSample && scheduleEnd > startSample),
+  );
+}
+
+/** Track indices with an audible compiled MIDI note inside the render window. */
+export function activeMidiTrackIndicesForRange(
+  schedules: ReadonlyArray<EngineMidiClipSchedule>,
+  trackIds: ReadonlyArray<number>,
+  audibleTrackIndices: ReadonlySet<number>,
+  startSample: number,
+  endSample: number,
+): Set<number> {
+  const trackIndexById = new Map(trackIds.map((trackId, index) => [trackId, index]));
+  const active = new Set<number>();
+  for (const schedule of schedules) {
+    const trackIndex = trackIndexById.get(schedule.destinationId ?? schedule.trackId ?? -1);
+    if (trackIndex === undefined || !audibleTrackIndices.has(trackIndex)) continue;
+    if (midiScheduleHasNoteInRange(schedule, startSample, endSample)) active.add(trackIndex);
+  }
+  return active;
 }
 
 /**
@@ -148,9 +261,15 @@ export function buildBusRouting(doc: ProjectDocument, trackIds: number[]): BusRo
 export async function preloadSoundFonts(
   doc: ProjectDocument,
   loadFontBytes: (fontId: string) => Promise<Uint8Array>,
+  activeTrackIndices?: ReadonlySet<number>,
 ): Promise<Map<string, Uint8Array>> {
   const fontBytesById = new Map<string, Uint8Array>();
-  const soundFontUsage = collectActiveSoundFontUsage(doc.tracks);
+  const activeTracks = doc.tracks.filter(
+    (_track, index) => activeTrackIndices === undefined || activeTrackIndices.has(index),
+  );
+  const soundFontUsage = collectActiveSoundFontUsage(activeTracks, (track) =>
+    effectiveTrackInstrument(track, doc.externalMidiDefault),
+  );
   for (const fontId of soundFontUsage.fontIds) {
     if (!fontBytesById.has(fontId)) {
       fontBytesById.set(fontId, await loadFontBytes(fontId));
@@ -250,6 +369,7 @@ export function resolveRenderWindow(
   sampleRate: number,
   releaseTailSeconds = RELEASE_TAIL_SECONDS,
   audioClips: ReadonlyArray<Pick<EngineClipSpec, 'startPpq' | 'lengthSamples'>> = [],
+  audibleTrackIndices?: ReadonlySet<number>,
 ): RenderWindow {
   const startSample = ppqToSamples(tempoMap, range.startPpq, sampleRate);
   let endSample: number;
@@ -257,7 +377,9 @@ export function resolveRenderWindow(
     endSample = ppqToSamples(tempoMap, range.endPpq, sampleRate);
   } else {
     let contentEndPpq = 0;
-    for (const track of doc.tracks) {
+    for (let trackIndex = 0; trackIndex < doc.tracks.length; trackIndex += 1) {
+      if (audibleTrackIndices && !audibleTrackIndices.has(trackIndex)) continue;
+      const track = doc.tracks[trackIndex];
       for (const clip of track.clips) {
         contentEndPpq = Math.max(contentEndPpq, clip.startPpq + clip.lengthPpq);
       }

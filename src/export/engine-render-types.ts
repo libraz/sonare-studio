@@ -5,7 +5,7 @@
  */
 
 import type { MixdownDeps, MixdownRange, MixdownRangePpq, MixdownStem } from '@/export/mixdown';
-import type { LoadedAudioAsset } from '@/persistence/assets';
+import type { AudioAssetMeta, LoadedAudioAsset } from '@/persistence/assets';
 import type { InsertLatencyResolver } from '@/project/insert-latency';
 import type { EngineClip, EngineTrackSend, RealtimeEngine } from '@/wasm/index.js';
 
@@ -140,6 +140,8 @@ export interface EngineRenderOptions {
   deps?: Pick<MixdownDeps, 'mastering' | 'metering'> | null;
   /** Audio asset loader (defaults to the OPFS asset store's loadAsset). */
   loadAudioAsset?: (assetId: string) => Promise<LoadedAudioAsset>;
+  /** Metadata-only loader used for allocation-free memory preflight. */
+  loadAudioAssetMeta?: (assetId: string) => Promise<AudioAssetMeta>;
   /** SoundFont loader for 'sf2' instruments (defaults to the OPFS font store). */
   loadFont?: (fontId: string) => Promise<Uint8Array>;
   /** Synth preset name resolver (defaults to identity). */

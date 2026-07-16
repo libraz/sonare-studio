@@ -6,11 +6,11 @@
  * their baked pre-fader render from the timeline start instead of their clips.
  */
 
-import type { LoadedAudioAsset } from '@/persistence/assets';
+import type { AudioAssetMeta, LoadedAudioAsset } from '@/persistence/assets';
 import { audioClipSegments } from '@/project/comping';
 import { renderAudioClipSegment, resampleChannelsLinear } from '@/project/scheduling';
 import type { DocumentClip, ProjectDocument } from '@/project/serialization';
-import type { NormalizedTempoMap } from '@/project/tempo-map';
+import { type NormalizedTempoMap, ppqDurationSamples } from '@/project/tempo-map';
 import type { EngineClipSpec } from './engine-render-types';
 import type { ExportMediaIssue } from './mixdown';
 
@@ -28,6 +28,109 @@ export interface AudioClipBuildContext {
   checkCancel: () => void;
   /** Structured non-fatal omissions returned in the final render report. */
   mediaIssues?: ExportMediaIssue[];
+  /** Resolved render range, used to avoid loading clips wholly outside it. */
+  range?: { startPpq: number; endPpq: number | null };
+  /** Track indices that can contribute to this render. Omit to include all. */
+  audibleTrackIndices?: ReadonlySet<number>;
+}
+
+export interface AudioClipMemoryPreflight {
+  sourceAudioBytes: number;
+  preparedClipBytes: number;
+  /** Minimal clip facts used to include frozen audio in an open-ended window. */
+  audioWindowClips: Array<{ startPpq: number; lengthSamples: number }>;
+}
+
+function segmentIntersectsRange(
+  startPpq: number,
+  lengthPpq: number,
+  range: AudioClipBuildContext['range'],
+): boolean {
+  if (!range) return true;
+  const endPpq = startPpq + lengthPpq;
+  return endPpq > range.startPpq && (range.endPpq === null || startPpq < range.endPpq);
+}
+
+function safeAddBytes(total: number, bytes: number): number {
+  const next = total + bytes;
+  if (!Number.isSafeInteger(next) || next < 0) {
+    throw new RangeError('Audio render payload byte estimate exceeds the safe integer range');
+  }
+  return next;
+}
+
+/**
+ * Reads sidecar metadata only and rejects oversized renders before source PCM
+ * or transformed clip buffers are allocated.
+ */
+export async function preflightAudioClipMemory(
+  doc: ProjectDocument,
+  context: Pick<
+    AudioClipBuildContext,
+    'sampleRate' | 'tempoMap' | 'checkCancel' | 'range' | 'audibleTrackIndices'
+  > & { loadAudioMeta: (assetId: string) => Promise<AudioAssetMeta> },
+): Promise<AudioClipMemoryPreflight> {
+  const metas = new Map<string, AudioAssetMeta | null>();
+  let sourceAudioBytes = 0;
+  let preparedClipBytes = 0;
+  const audioWindowClips: AudioClipMemoryPreflight['audioWindowClips'] = [];
+  const getMeta = async (assetId: string): Promise<AudioAssetMeta | null> => {
+    if (metas.has(assetId)) return metas.get(assetId) ?? null;
+    context.checkCancel();
+    try {
+      const meta = await context.loadAudioMeta(assetId);
+      context.checkCancel();
+      metas.set(assetId, meta);
+      sourceAudioBytes = safeAddBytes(
+        sourceAudioBytes,
+        meta.numFrames * meta.numChannels * Float32Array.BYTES_PER_ELEMENT,
+      );
+      return meta;
+    } catch {
+      context.checkCancel();
+      metas.set(assetId, null);
+      return null;
+    }
+  };
+
+  for (let trackIndex = 0; trackIndex < doc.tracks.length; trackIndex += 1) {
+    if (context.audibleTrackIndices && !context.audibleTrackIndices.has(trackIndex)) {
+      continue;
+    }
+    const track = doc.tracks[trackIndex];
+    if (track.frozen) {
+      const meta = await getMeta(track.frozen.assetId);
+      if (!meta) continue;
+      const lengthSamples = Math.round((meta.numFrames / meta.sampleRate) * context.sampleRate);
+      preparedClipBytes = safeAddBytes(
+        preparedClipBytes,
+        lengthSamples * meta.numChannels * Float32Array.BYTES_PER_ELEMENT,
+      );
+      audioWindowClips.push({ startPpq: 0, lengthSamples });
+      continue;
+    }
+    for (const clip of track.clips) {
+      if ((clip.kind ?? 'midi') !== 'audio' || clip.gain <= 0) continue;
+      for (const segment of audioClipSegments(clip)) {
+        const startPpq = clip.startPpq + segment.offsetPpq;
+        if (!segmentIntersectsRange(startPpq, segment.lengthPpq, context.range)) continue;
+        const meta = await getMeta(segment.assetId);
+        if (!meta) continue;
+        const lengthSamples = ppqDurationSamples(
+          context.tempoMap,
+          startPpq,
+          segment.lengthPpq,
+          context.sampleRate,
+        );
+        preparedClipBytes = safeAddBytes(
+          preparedClipBytes,
+          lengthSamples * meta.numChannels * Float32Array.BYTES_PER_ELEMENT,
+        );
+        audioWindowClips.push({ startPpq, lengthSamples });
+      }
+    }
+  }
+  return { sourceAudioBytes, preparedClipBytes, audioWindowClips };
 }
 
 /**
@@ -50,6 +153,9 @@ export async function buildAudioClips(
     // A clip expands to one engine clip per comp segment (one segment for
     // clips without takes), matching live scheduling exactly.
     for (const segment of audioClipSegments(clip)) {
+      const segmentStartPpq = clip.startPpq + segment.offsetPpq;
+      if (!segmentIntersectsRange(segmentStartPpq, segment.lengthPpq, context.range)) continue;
+      checkCancel();
       let asset: LoadedAudioAsset;
       try {
         asset = await loadAudio(segment.assetId);
@@ -65,8 +171,11 @@ export async function buildAudioClips(
         // Missing or unreadable asset: leave the slice silent, like live playback.
         continue;
       }
+      checkCancel();
       let channels = await renderAudioClipSegment(asset, clip, segment, tempoMap);
+      checkCancel();
       channels = resampleChannelsLinear(channels, asset.meta.sampleRate, sampleRate);
+      checkCancel();
       if (channels.length === 0 || channels[0].length === 0) continue;
       audioClips.push({
         trackId,
@@ -78,17 +187,21 @@ export async function buildAudioClips(
     }
   };
   for (let index = 0; index < doc.tracks.length; index++) {
+    if (context.audibleTrackIndices && !context.audibleTrackIndices.has(index)) continue;
     const track = doc.tracks[index];
     // Frozen tracks play their baked pre-fader render from the timeline
     // start instead of their own clips.
     if (track.frozen !== undefined) {
       try {
+        checkCancel();
         const asset = await loadAudio(track.frozen.assetId);
+        checkCancel();
         const channels = resampleChannelsLinear(
           asset.channels.map((channel) => channel.slice()),
           asset.meta.sampleRate,
           sampleRate,
         );
+        checkCancel();
         if (channels.length > 0 && channels[0].length > 0) {
           audioClips.push({
             trackId: trackIds[index],

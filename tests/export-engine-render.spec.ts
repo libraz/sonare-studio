@@ -1485,6 +1485,18 @@ describe('renderProjectWithEngine', () => {
     expect(engine.destroyed).toBe(true);
   });
 
+  it('applies a legacy non-center document pan to the exported lane', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].pan = 0.75;
+    delete doc.tracks[0].mixer;
+    const engine = new FakeEngine();
+
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    const params = new Map(engine.named('setParameter').map(([, id, value]) => [id, value]));
+    expect(params.get(0x4d580002)).toBe(0.75);
+  });
+
   it('allows project renders to override the release tail length', async () => {
     const engine = new FakeEngine();
     const result = await renderProjectWithEngine(makeDoc(), {
@@ -1643,6 +1655,73 @@ describe('renderProjectWithEngine', () => {
       word0: noteOnWord(0, 60, 96),
       wordCount: 1,
     });
+  });
+
+  it('does not load or bind an SF2 for empty, muted, or range-excluded MIDI', async () => {
+    for (const scenario of ['empty', 'muted', 'outside'] as const) {
+      const doc = makeDoc();
+      doc.tracks[1].mute = true;
+      doc.tracks[0].instrument = { kind: 'sf2', fontId: `font-${scenario}` };
+      if (scenario === 'empty') doc.tracks[0].clips[0].notes = [];
+      if (scenario === 'muted') doc.tracks[0].mute = true;
+      const loadFont = vi.fn(async () => new Uint8Array([1]));
+      const engine = new FakeEngine();
+
+      await renderProjectWithEngine(doc, {
+        ...renderOptions(engine),
+        ...(scenario === 'outside' ? { range: { startPpq: 2, endPpq: 3 } as const } : {}),
+        loadFont,
+      });
+
+      expect(loadFont, scenario).not.toHaveBeenCalled();
+      expect(engine.named('loadSoundFont'), scenario).toEqual([]);
+      expect(engine.named('setSf2Instrument'), scenario).toEqual([]);
+    }
+  });
+
+  it('does not create false SF2 conflict passes from a muted font', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].mute = true;
+    doc.tracks[0].instrument = { kind: 'sf2', fontId: 'font-a' };
+    doc.tracks.push({
+      name: 'Muted brass',
+      color: '#fc0',
+      kind: 'midi',
+      mute: true,
+      solo: false,
+      volume: 1,
+      pan: 0,
+      instrument: { kind: 'sf2', fontId: 'font-b' },
+      clips: [
+        {
+          name: 'brass',
+          startPpq: 0,
+          lengthPpq: 1,
+          sourceOffsetPpq: 0,
+          gain: 1,
+          loopEnabled: false,
+          loopLengthPpq: 0,
+          notes: [{ pitch: 67, velocity: 80, startPpq: 0, durationPpq: 1, channel: 0 }],
+        },
+      ],
+    } as (typeof doc.tracks)[number]);
+    const loadFont = vi.fn(async (fontId: string) =>
+      fontId === 'font-a' ? new Uint8Array([1]) : new Uint8Array([2]),
+    );
+    const engines: FakeEngine[] = [];
+
+    await renderProjectWithEngine(doc, {
+      ...renderOptions(new FakeEngine()),
+      createEngine: () => {
+        const engine = new FakeEngine();
+        engines.push(engine);
+        return engine;
+      },
+      loadFont,
+    });
+
+    expect(loadFont.mock.calls.map(([fontId]) => fontId)).toEqual(['font-a']);
+    expect(engines).toHaveLength(1);
   });
 
   it('binds synth patch instruments before audible MIDI playback', async () => {
@@ -2079,6 +2158,71 @@ describe('renderProjectWithEngine', () => {
     expect(createEngine).not.toHaveBeenCalled();
   });
 
+  it('rejects oversized source PCM from sidecars before loading samples', async () => {
+    const loadAudioAsset = vi.fn(async () => fakeAsset());
+    const createEngine = vi.fn(() => new FakeEngine());
+
+    await expect(
+      renderProjectWithEngine(makeDoc(), {
+        deps: null,
+        createEngine,
+        loadAudioAsset,
+        loadAudioAssetMeta: async (assetId) => ({
+          id: assetId,
+          name: assetId,
+          sampleRate: 48_000,
+          numChannels: 2,
+          numFrames: 30_000_000,
+        }),
+        memoryBudgetBytes: 64 * 1024 * 1024,
+      }),
+    ).rejects.toThrow(/Audio export needs about/);
+
+    expect(loadAudioAsset).not.toHaveBeenCalled();
+    expect(createEngine).not.toHaveBeenCalled();
+  });
+
+  it('prunes audio clips outside an explicit range before metadata and PCM reads', async () => {
+    const loadAudioAsset = vi.fn(async () => fakeAsset());
+    const loadAudioAssetMeta = vi.fn(async () => fakeAsset().meta);
+
+    await renderProjectWithEngine(makeDoc(), {
+      deps: null,
+      createEngine: () => new FakeEngine(),
+      loadAudioAsset,
+      loadAudioAssetMeta,
+      range: { startPpq: 0, endPpq: 1 },
+    });
+
+    expect(loadAudioAssetMeta).not.toHaveBeenCalled();
+    expect(loadAudioAsset).not.toHaveBeenCalled();
+  });
+
+  it('prunes muted audio before metadata/PCM reads and project-end calculation', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].clips[0].lengthPpq = 1;
+    doc.tracks[1].mute = true;
+    doc.tracks[1].clips[0].startPpq = 100;
+    const loadAudioAsset = vi.fn(async () => {
+      throw new Error('missing muted media');
+    });
+    const loadAudioAssetMeta = vi.fn(async () => {
+      throw new Error('missing muted metadata');
+    });
+
+    const result = await renderProjectWithEngine(doc, {
+      deps: null,
+      createEngine: () => new FakeEngine(),
+      loadAudioAsset,
+      loadAudioAssetMeta,
+      releaseTailSeconds: 0,
+    });
+
+    expect(loadAudioAssetMeta).not.toHaveBeenCalled();
+    expect(loadAudioAsset).not.toHaveBeenCalled();
+    expect(result.totalFrames).toBe(SAMPLES_PER_PPQ);
+  });
+
   it('renders requested mixer buses as return stems', async () => {
     const engines: FakeEngine[] = [];
     const result = await renderProjectWithEngine(makeDoc(), {
@@ -2335,7 +2479,7 @@ describe('renderProjectWithEngine', () => {
     expect(result.report.peakDb).toBeCloseTo(20 * Math.log10(0.8), 5);
   });
 
-  it('cancels between checkpoints and still destroys the engine', async () => {
+  it('cancels at preparation checkpoints before allocating an engine pass', async () => {
     const engine = new FakeEngine();
     let blocks = 0;
     const promise = renderProjectWithEngine(makeDoc(), {
@@ -2343,7 +2487,7 @@ describe('renderProjectWithEngine', () => {
       shouldCancel: () => ++blocks > 1,
     });
     await expect(promise).rejects.toBeInstanceOf(MixdownCancelledError);
-    expect(engine.destroyed).toBe(true);
+    expect(engine.destroyed).toBe(false);
   });
 
   it('bakes a warp-enabled clip (no takes) into one tempo-length engine clip', async () => {
@@ -3239,6 +3383,35 @@ describe('renderProjectWithEngine with group tracks and sidechains', () => {
     ]);
   });
 
+  it('does not force VCA-muted members into a group stem, even with fader automation', async () => {
+    const doc = makeGroupDoc();
+    doc.tracks[1].vcaId = 'muted-members';
+    doc.tracks[1].automation = [
+      {
+        param: 'faderDb',
+        enabled: true,
+        points: [
+          { ppq: 0, value: 12 },
+          { ppq: 4, value: 12, curve: 'hold' },
+        ],
+      },
+    ];
+    if (doc.mixer) {
+      doc.mixer.vcaGroups = [{ id: 'muted-members', name: 'Muted members', gainDb: 6, mute: true }];
+    }
+
+    const result = await renderProjectWithEngine(doc, {
+      deps: null,
+      loadAudioAsset: async () => fakeAsset(),
+      createEngine: () => new AudibilityEngine(),
+      stems: true,
+    });
+
+    const groupStem = result.stems?.find((stem) => stem.trackIndex === 2);
+    expect(groupStem?.channels[0][2 * SAMPLES_PER_PPQ]).toBeCloseTo(0, 5);
+    expect(groupStem?.channels[1][2 * SAMPLES_PER_PPQ]).toBeCloseTo(0, 5);
+  });
+
   it('renders routed group members into a group stem audibly', async () => {
     const result = await renderProjectWithEngine(makeGroupDoc(), {
       deps: null,
@@ -3291,6 +3464,42 @@ describe('renderProjectWithEngine with group tracks and sidechains', () => {
     expect(result.stems?.map((stem) => stem.trackIndex)).toEqual([1, 2]);
     expect(result.stems?.map((stem) => stem.name)).toEqual(['Drums', 'Drum Bus']);
     expect(engines).toHaveLength(3);
+  });
+
+  it('includes the routed group stem when a child track is soloed', async () => {
+    const doc = makeGroupDoc();
+    doc.tracks[1].solo = true;
+
+    const result = await renderProjectWithEngine(doc, {
+      deps: null,
+      loadAudioAsset: async () => fakeAsset(),
+      createEngine: () => new AudibilityEngine(),
+      stems: true,
+    });
+
+    expect(result.stems?.map((stem) => stem.trackIndex)).toEqual([1, 2]);
+    const groupStem = result.stems?.find((stem) => stem.trackIndex === 2);
+    expect(groupStem?.channels[0][2 * SAMPLES_PER_PPQ]).toBeCloseTo(
+      0.5 * 0.8 * defaultAudioLaneGain(),
+      5,
+    );
+  });
+
+  it('includes a group stem when its routed member is solo-safe', async () => {
+    const doc = makeGroupDoc();
+    doc.tracks[0].solo = true;
+    doc.tracks[1].soloSafe = true;
+
+    const result = await renderProjectWithEngine(doc, {
+      deps: null,
+      loadAudioAsset: async () => fakeAsset(),
+      createEngine: () => new AudibilityEngine(),
+      stems: true,
+    });
+
+    expect(result.stems?.map((stem) => stem.trackIndex)).toEqual([0, 1, 2]);
+    const groupStem = result.stems?.find((stem) => stem.trackIndex === 2);
+    expect(groupStem?.channels[0][2 * SAMPLES_PER_PPQ]).toBeGreaterThan(0);
   });
 
   it('maps group-track automation to the group bus in export', async () => {

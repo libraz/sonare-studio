@@ -57,7 +57,7 @@ import {
 } from '@/export/mixdown';
 import { peakDb } from '@/lib/db';
 import { ensureWasm } from '@/lib/wasm';
-import { loadAsset } from '@/persistence/assets';
+import { loadAsset, loadAssetMeta } from '@/persistence/assets';
 import {
   evaluateAutomationValue,
   parseInsertAutomationParam,
@@ -91,17 +91,19 @@ import {
   tracksWithVcaSolo,
   vcaOffsetDb,
 } from '@/project/mixer';
-import { expandedSoloStates, isTrackAudible } from '@/project/scheduling';
+import { expandedSoloStates } from '@/project/scheduling';
 import type { DocumentAutomationLane, ProjectDocument } from '@/project/serialization';
 import {
   collectActiveSoundFontUsage,
   hasSoundFontSlotConflict,
 } from '@/project/soundfont-conflicts';
-import { normalizeTempoMap, samplesToPpq } from '@/project/tempo-map';
-import { buildAudioClips } from './engine-render-clips';
+import { normalizeTempoMap, ppqToSamples, samplesToPpq } from '@/project/tempo-map';
+import { buildAudioClips, preflightAudioClipMemory } from './engine-render-clips';
 import {
+  activeMidiTrackIndicesForRange,
   buildBusRouting,
   buildMidiSchedules,
+  documentAudibleTrackIndices,
   preloadSoundFonts,
   resolveRenderWindow,
 } from './engine-render-context';
@@ -216,6 +218,8 @@ export async function renderProjectWithEngine(
   }
   const includeMasterChain = options.includeMasterChain ?? true;
   const loadAudio = options.loadAudioAsset ?? loadAsset;
+  const loadAudioMeta =
+    options.loadAudioAssetMeta ?? (options.loadAudioAsset === undefined ? loadAssetMeta : null);
   const loadFontBytes = options.loadFont ?? loadFont;
   let resolvePreset = options.resolvePreset ?? ((preset: string) => preset);
   let resolveInsertLatency: InsertLatencyResolver = options.insertLatency ?? (() => 0);
@@ -263,63 +267,68 @@ export async function renderProjectWithEngine(
   const { vcaGainDbById, vcaControlsById, busNumberById, buses, groupBusByTrackIndex, lanes } =
     buildBusRouting(doc, trackIds);
   const tracksForSolo = tracksWithVcaSolo(doc.tracks, vcaControlsById);
-  const tracksForAudibility = tracksForSolo.map((track) =>
-    effectiveTrackMute(track.mute, track.vcaId, vcaControlsById) ? { ...track, mute: true } : track,
-  );
   const documentSoloExpansion = {
     isGroup: (track: ProjectDocument['tracks'][number]) => track.kind === 'group',
     groupKey: (_track: ProjectDocument['tracks'][number], index: number) => index,
     memberGroupKey: (track: ProjectDocument['tracks'][number]) => track.groupIndex,
   };
+  const audibleTrackIndices = documentAudibleTrackIndices(doc);
+  if (options.freezeTrackIndex !== undefined) audibleTrackIndices.add(options.freezeTrackIndex);
 
-  // Pre-load instrument fonts once; engine passes then configure synchronously.
-  const fontBytesById = await preloadSoundFonts(doc, loadFontBytes);
-  const soundFontUsage = collectActiveSoundFontUsage(doc.tracks);
+  // Build the MIDI program before loading any SoundFont. Exact compiled note
+  // intervals plus the shared audible/range plan determine which fonts can
+  // actually contribute to this render.
+  const midiSchedules = buildMidiSchedules(doc, trackIds, tempoSegments, sampleRate);
+  const midiRangeStartSample = ppqToSamples(tempoMap, range.startPpq, sampleRate);
+  const midiRangeEndSample =
+    range.endPpq === null
+      ? Number.POSITIVE_INFINITY
+      : ppqToSamples(tempoMap, range.endPpq, sampleRate);
+  const activeMidiTrackIndices = activeMidiTrackIndicesForRange(
+    midiSchedules,
+    trackIds,
+    audibleTrackIndices,
+    midiRangeStartSample,
+    midiRangeEndSample,
+  );
+  const soundFontUsage = collectActiveSoundFontUsage(
+    doc.tracks.filter((_track, index) => activeMidiTrackIndices.has(index)),
+  );
+  const activeSf2TrackIndices = new Set(
+    doc.tracks.flatMap((track, index) =>
+      activeMidiTrackIndices.has(index) &&
+      track.kind === 'midi' &&
+      track.frozen === undefined &&
+      track.instrument?.kind === 'sf2'
+        ? [index]
+        : [],
+    ),
+  );
   const conflictingSf2TrackIndices = hasSoundFontSlotConflict(soundFontUsage)
-    ? new Set(
-        doc.tracks.flatMap((track, index) =>
-          track.kind === 'midi' && track.frozen === undefined && track.instrument?.kind === 'sf2'
-            ? [index]
-            : [],
-        ),
-      )
+    ? new Set(activeSf2TrackIndices)
     : new Set<number>();
 
-  // MIDI clip schedules via the live builder (velocity-folded clip gain,
-  // SF2 preludes, tempo-map-exact sample positions).
-  const midiSchedules = buildMidiSchedules(doc, trackIds, tempoSegments, sampleRate);
-
-  // Audio clips: the live scheduling transforms (slice window, baked fades,
-  // linear resample to the render rate), placed at their timeline PPQ.
-  const mediaIssues: NonNullable<MixdownReport['mediaIssues']> = [];
-  const sourceAudioClips = await buildAudioClips(doc, {
-    trackIds,
-    tempoMap,
-    sampleRate,
-    loadAudio,
-    checkCancel,
-    mediaIssues,
+  // A group return is audible when either the group itself passes the shared
+  // mute/solo projection or one of its routed members does. The latter matters
+  // when a child is soloed: its audio still flows through the non-muted group
+  // bus even though the group's silent control lane is not itself soloed.
+  const audibleStemTrackIndices = new Set(audibleTrackIndices);
+  doc.tracks.forEach((track, trackIndex) => {
+    if (track.kind !== 'group') return;
+    if (effectiveTrackMute(track.mute, track.vcaId, vcaControlsById)) return;
+    if (
+      doc.tracks.some(
+        (member, memberIndex) =>
+          member.groupIndex === trackIndex && audibleTrackIndices.has(memberIndex),
+      )
+    ) {
+      audibleStemTrackIndices.add(trackIndex);
+    }
   });
-
-  // Resolve the render window in frames.
-  const { startSample, totalFrames } = resolveRenderWindow(
-    doc,
-    tempoMap,
-    range,
-    sampleRate,
-    options.releaseTailSeconds,
-    sourceAudioClips,
-  );
   const stemTracks = options.stems
     ? doc.tracks
         .map((track, trackIndex) => ({ track, trackIndex }))
-        .filter(({ trackIndex }) =>
-          isTrackAudible(
-            tracksForAudibility[trackIndex],
-            tracksForAudibility,
-            documentSoloExpansion,
-          ),
-        )
+        .filter(({ trackIndex }) => audibleStemTrackIndices.has(trackIndex))
     : [];
   const stemBuses =
     options.stems && options.busStems === true
@@ -332,13 +341,100 @@ export async function renderProjectWithEngine(
       : [];
   const stemCount =
     stemTracks.length + stemBuses.length + (options.stems && options.masterStem === true ? 1 : 0);
+
+  const audioMemory = loadAudioMeta
+    ? await preflightAudioClipMemory(doc, {
+        sampleRate,
+        tempoMap,
+        loadAudioMeta,
+        checkCancel,
+        range,
+        audibleTrackIndices,
+      })
+    : { sourceAudioBytes: 0, preparedClipBytes: 0, audioWindowClips: [] };
+  const preflightWindow = resolveRenderWindow(
+    doc,
+    tempoMap,
+    range,
+    sampleRate,
+    options.releaseTailSeconds,
+    audioMemory.audioWindowClips,
+    audibleTrackIndices,
+  );
   if (options.memoryBudgetBytes !== undefined) {
+    assertRenderPayloadMemory(
+      estimateRenderPayloadMemory({
+        totalFrames: preflightWindow.totalFrames,
+        stemCount,
+        streamingStems: options.onStem !== undefined,
+        retainedAuxiliaryStereoBuffers: conflictingSf2TrackIndices.size,
+        sourceAudioBytes: audioMemory.sourceAudioBytes,
+        preparedClipBytes: audioMemory.preparedClipBytes,
+      }),
+      options.memoryBudgetBytes,
+    );
+  }
+
+  // Pre-load instrument fonts only after the metadata-only audio preflight.
+  const fontBytesById = await preloadSoundFonts(doc, loadFontBytes, activeMidiTrackIndices);
+  const soundFontBytes = [...fontBytesById.values()].reduce(
+    (sum, bytes) => sum + bytes.byteLength,
+    0,
+  );
+  if (options.memoryBudgetBytes !== undefined) {
+    assertRenderPayloadMemory(
+      estimateRenderPayloadMemory({
+        totalFrames: preflightWindow.totalFrames,
+        stemCount,
+        streamingStems: options.onStem !== undefined,
+        retainedAuxiliaryStereoBuffers: conflictingSf2TrackIndices.size,
+        sourceAudioBytes: audioMemory.sourceAudioBytes,
+        preparedClipBytes: audioMemory.preparedClipBytes,
+        soundFontBytes,
+      }),
+      options.memoryBudgetBytes,
+    );
+  }
+
+  // Audio clips: the live scheduling transforms (slice window, baked fades,
+  // linear resample to the render rate), placed at their timeline PPQ.
+  const mediaIssues: NonNullable<MixdownReport['mediaIssues']> = [];
+  const sourceAudioClips = await buildAudioClips(doc, {
+    trackIds,
+    tempoMap,
+    sampleRate,
+    loadAudio,
+    checkCancel,
+    mediaIssues,
+    range,
+    audibleTrackIndices,
+  });
+
+  // Resolve the render window in frames.
+  const { startSample, totalFrames } = resolveRenderWindow(
+    doc,
+    tempoMap,
+    range,
+    sampleRate,
+    options.releaseTailSeconds,
+    sourceAudioClips,
+    audibleTrackIndices,
+  );
+  if (options.memoryBudgetBytes !== undefined) {
+    const preparedClipBytes = sourceAudioClips.reduce(
+      (sum, clip) =>
+        sum + clip.channels.reduce((channelSum, channel) => channelSum + channel.byteLength, 0),
+      0,
+    );
     assertRenderPayloadMemory(
       estimateRenderPayloadMemory({
         totalFrames,
         stemCount,
         streamingStems: options.onStem !== undefined,
         retainedAuxiliaryStereoBuffers: conflictingSf2TrackIndices.size,
+        sourceAudioBytes: audioMemory.sourceAudioBytes,
+        preparedClipBytes,
+        soundFontBytes,
       }),
       options.memoryBudgetBytes,
     );
@@ -475,7 +571,10 @@ export async function renderProjectWithEngine(
             ? 0
             : laneGainDb(track.volume, strip?.gainDb, vcaOffsetDb(track.vcaId, vcaGainDbById)),
         );
-        const pan = pflAudition ? 0 : clampPan(strip?.pan ?? 0);
+        // MixerStrip.pan is canonical. Fall back to DocumentTrack.pan so
+        // pre-migration projects and freshly imported foreign documents pan
+        // identically before and after a save/load cycle.
+        const pan = pflAudition ? 0 : clampPan(strip?.pan ?? track.pan ?? 0);
         engine.setParameter(laneParamId(index, ENGINE_MIXER_PARAM_PAN), pan);
         // Pan law / mode / dual-pan / channel-delay shape the lane exactly as
         // live mixer-sync does; emit only the non-defaults to keep the command
@@ -806,8 +905,9 @@ export async function renderProjectWithEngine(
         stemIndices: new Set([freezeIndex]),
         busStemId: null,
         freezeIndex,
-        sf2TrackIndices:
-          doc.tracks[freezeIndex].instrument?.kind === 'sf2' ? new Set([freezeIndex]) : new Set(),
+        sf2TrackIndices: activeSf2TrackIndices.has(freezeIndex)
+          ? new Set([freezeIndex])
+          : new Set(),
         usePreRenderedSf2: false,
       },
       'engine.freeze',
@@ -879,7 +979,7 @@ export async function renderProjectWithEngine(
       stemIndices: null,
       busStemId: null,
       freezeIndex: null,
-      sf2TrackIndices: sf2PreRenderCount > 0 ? new Set() : null,
+      sf2TrackIndices: sf2PreRenderCount > 0 ? new Set() : activeSf2TrackIndices,
       usePreRenderedSf2: sf2PreRenderCount > 0,
     },
     'engine.render',
@@ -907,7 +1007,9 @@ export async function renderProjectWithEngine(
     const stemIndices = new Set<number>([trackIndex]);
     if (track.kind === 'group') {
       doc.tracks.forEach((member, memberIndex) => {
-        if (member.groupIndex === trackIndex && !member.mute) stemIndices.add(memberIndex);
+        if (member.groupIndex === trackIndex && audibleTrackIndices.has(memberIndex)) {
+          stemIndices.add(memberIndex);
+        }
       });
     }
     const channels = await runPass(
@@ -917,7 +1019,7 @@ export async function renderProjectWithEngine(
         stemIndices,
         busStemId: null,
         freezeIndex: null,
-        sf2TrackIndices: sf2PreRenderCount > 0 ? new Set() : null,
+        sf2TrackIndices: sf2PreRenderCount > 0 ? new Set() : activeSf2TrackIndices,
         usePreRenderedSf2: sf2PreRenderCount > 0,
       },
       `engine.stem:${trackIndex}`,
@@ -949,7 +1051,7 @@ export async function renderProjectWithEngine(
         stemIndices: null,
         busStemId: busNumber,
         freezeIndex: null,
-        sf2TrackIndices: sf2PreRenderCount > 0 ? new Set() : null,
+        sf2TrackIndices: sf2PreRenderCount > 0 ? new Set() : activeSf2TrackIndices,
         usePreRenderedSf2: sf2PreRenderCount > 0,
       },
       `engine.busStem:${busIndex}`,

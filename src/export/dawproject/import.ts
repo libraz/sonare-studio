@@ -3,9 +3,10 @@
  *
  * This intentionally starts with the portable subset that sonare already
  * exports well: project title, transport tempo/meter, track/channel basics,
- * arrangement markers and MIDI note clips. Audio clips are imported as
- * placement-only clips for now; ingesting referenced media files into OPFS is a
- * separate step because DAWproject archives may reference external paths.
+ * arrangement markers, MIDI and audio clips. Nested event timelines are
+ * flattened into Sonare clips, standard beats-to-seconds Warps become Sonare
+ * warp metadata, and referenced media is ingested separately because archives
+ * may point at external paths.
  */
 
 import { strFromU8 } from 'fflate';
@@ -16,6 +17,11 @@ import {
   preflightAndUnzip,
   preflightAndUnzipInWorker,
 } from '@/persistence/archive-preflight';
+import {
+  MAX_DAWPROJECT_ARCHIVE_BYTES,
+  MAX_PROJECT_ARCHIVE_ENTRY_BYTES,
+  MAX_PROJECT_ARCHIVE_EXPANDED_BYTES,
+} from '@/persistence/resource-limits';
 import { decodeAndIngest } from '@/project/audio-import';
 import { type AutomationParam, insertAutomationParam } from '@/project/automation';
 import {
@@ -33,8 +39,14 @@ import {
   PROJECT_DOCUMENT_SCHEMA_VERSION,
   type ProjectDocument,
 } from '@/project/serialization';
-import { type NormalizedTempoMap, normalizeTempoMap, secondsToPpq } from '@/project/tempo-map';
+import { type NormalizedTempoMap, normalizeTempoMap } from '@/project/tempo-map';
 import { TRACK_COLOR_PALETTE, type TrackKind } from '@/project/types';
+import {
+  audioContentOriginFromPlayStartSeconds,
+  audioContentOriginPpq,
+  audioContentSecondsToPpq,
+  audioFadeSecondsToPpq,
+} from './audio-time';
 
 const DEFAULT_SAMPLE_RATE = 48000;
 const DEFAULT_TEMPO = 120;
@@ -83,7 +95,29 @@ export interface DawprojectImportResult {
     imported: string[];
     issues: DawprojectMediaIssue[];
   };
+  losses: DawprojectImportLoss[];
 }
+
+/** A DAWproject value that could not be interpreted without a lossy fallback. */
+export type DawprojectImportLoss =
+  | {
+      kind: 'unsupported-time-unit';
+      clipName: string;
+      attribute: 'contentTimeUnit' | 'fadeTimeUnit';
+      unit: string;
+    }
+  | {
+      kind: 'unsupported-warp';
+      clipName: string;
+      reason: 'time-units' | 'insufficient-points' | 'non-monotonic';
+      timeUnit?: string;
+      contentTimeUnit?: string;
+    }
+  | {
+      kind: 'unsupported-nested-clip';
+      clipName: string;
+      reason: 'mixed-time-units' | 'loop-with-multiple-events' | 'missing-content';
+    };
 
 function parseXml(bytes: Uint8Array, entryName: string): Document {
   let doc: Document;
@@ -150,6 +184,8 @@ interface ImportedTrack {
   name: string;
   kind: TrackKind;
   role: string;
+  /** Foreign effect channels canonicalized as mixer buses, not project tracks. */
+  isEffectBus: boolean;
   color: string;
   mute: boolean;
   solo: boolean;
@@ -308,6 +344,7 @@ function readTracks(
     const channel = children(track, 'Channel')[0];
     const contentType = track.getAttribute('contentType');
     const role = channel?.getAttribute('role');
+    const sonareTrackKind = track.getAttribute('sonareTrackKind');
     if (role === 'master') return;
     const pan = numberAttr(channel?.querySelector('Pan'), 'value');
     const kind: TrackKind =
@@ -331,6 +368,7 @@ function readTracks(
       name: track.getAttribute('name') || `Track ${tracks.length + 1}`,
       kind,
       role: role ?? 'regular',
+      isEffectBus: role === 'effect' && sonareTrackKind !== 'aux',
       color:
         track.getAttribute('color') ||
         TRACK_COLOR_PALETTE[tracks.length % TRACK_COLOR_PALETTE.length],
@@ -339,7 +377,10 @@ function readTracks(
       volume:
         vcaId !== undefined && sonareVolume !== null ? Math.max(0, sonareVolume) : channelVolume,
       ...(sonareVolume !== null ? { sonareVolume } : {}),
-      pan: pan === null ? 0 : Math.min(1, Math.max(-1, pan * 2 - 1)),
+      // Group-channel pan cannot be represented by Sonare's current group-bus
+      // DSP. Center it at the import boundary instead of persisting a silent
+      // control. Regular track pan is promoted into MixerStrip.pan on load.
+      pan: kind === 'group' || pan === null ? 0 : Math.min(1, Math.max(-1, pan * 2 - 1)),
       clips: [],
       sendRefs: readSendRefs(channel),
       inserts: readInsertDevices(channel, kind !== 'group'),
@@ -404,7 +445,7 @@ function applyMixerRouting(
   const buses: MixerBus[] = [];
   const busByChannelId = new Map<string, string>();
   for (const track of tracks) {
-    if (track.role !== 'effect') continue;
+    if (!track.isEffectBus) continue;
     const busId = `daw-bus-${buses.length + 1}`;
     track.mixerBusId = busId;
     busByChannelId.set(track.channelId, busId);
@@ -421,7 +462,7 @@ function applyMixerRouting(
   const hasMasterState = master.inserts.length > 0;
   if (buses.length === 0 && !hasMasterState && vcaGroups.length === 0) return undefined;
   for (const track of tracks) {
-    if (track.role === 'effect') continue;
+    if (track.isEffectBus) continue;
     if (track.destination !== null) {
       const busId = busByChannelId.get(track.destination);
       if (busId) track.mixerOutputBusId = busId;
@@ -448,7 +489,7 @@ function importedTrackMixer(track: ImportedTrack): {
   mixer?: ReturnType<typeof createDefaultStrip>;
 } {
   if (
-    track.role === 'effect' ||
+    track.isEffectBus ||
     (track.mixerOutputBusId === undefined &&
       track.mixerSends === undefined &&
       track.inserts.length === 0)
@@ -524,18 +565,137 @@ function readTimeSignatures(project: Document): DocumentTimeSignature[] {
   ];
 }
 
-function readMidiClip(clip: Element): DocumentClip {
-  const playStart = numberAttr(clip, 'playStart') ?? 0;
+interface FlattenedClipPlacement {
+  startPpq: number;
+  lengthPpq: number;
+  /** Visible start in this clip's content coordinate. */
+  contentWindowStart: number;
+  contentTimeUnit: string;
+  name: string;
+  loopEnabled?: boolean;
+  loopLengthPpq?: number;
+  fadeElement: Element;
+}
+
+interface FlattenedClipLeaf {
+  element: Element;
+  placement: FlattenedClipPlacement;
+}
+
+function clipLoopState(
+  clip: Element,
+  inherited?: Pick<FlattenedClipPlacement, 'loopEnabled' | 'loopLengthPpq'>,
+): Pick<FlattenedClipPlacement, 'loopEnabled' | 'loopLengthPpq'> {
+  const contentTimeUnit = clip.getAttribute('contentTimeUnit')?.trim() || 'beats';
+  const loopStart = numberAttr(clip, 'loopStart');
+  const loopEnd = numberAttr(clip, 'loopEnd');
+  if (
+    contentTimeUnit === 'beats' &&
+    loopStart !== null &&
+    loopEnd !== null &&
+    loopEnd > loopStart
+  ) {
+    return { loopEnabled: true, loopLengthPpq: loopEnd - loopStart };
+  }
+  return inherited
+    ? {
+        ...(inherited.loopEnabled !== undefined ? { loopEnabled: inherited.loopEnabled } : {}),
+        ...(inherited.loopLengthPpq !== undefined
+          ? { loopLengthPpq: inherited.loopLengthPpq }
+          : {}),
+      }
+    : {};
+}
+
+/**
+ * Flattens nested DAWproject clip timelines by recursively composing each
+ * parent's visible content window with its child event placement. DAWproject
+ * permits this structure (DAWs commonly emit an outer arrangement clip
+ * containing one inner audio event); Sonare stores the resulting audible
+ * events as ordinary flat clips.
+ */
+function flattenClipLeaves(root: Element, losses: DawprojectImportLoss[]): FlattenedClipLeaf[] {
+  const rootStart = numberAttr(root, 'time') ?? 0;
+  const rootLength = Math.max(0.0001, numberAttr(root, 'duration') ?? 4);
+  const rootName = root.getAttribute('name') || 'Audio clip';
+  const rootUnit = root.getAttribute('contentTimeUnit')?.trim() || 'beats';
+  const rootLoop = clipLoopState(root);
+  const initial: FlattenedClipPlacement = {
+    startPpq: rootStart,
+    lengthPpq: rootLength,
+    contentWindowStart: numberAttr(root, 'playStart') ?? 0,
+    contentTimeUnit: rootUnit,
+    name: rootName,
+    ...rootLoop,
+    fadeElement: root,
+  };
+
+  const walk = (clip: Element, placement: FlattenedClipPlacement): FlattenedClipLeaf[] => {
+    const nested = children(children(clip, 'Clips')[0], 'Clip');
+    if (nested.length === 0) {
+      // A content-less audio Clip is still a valid placement placeholder when
+      // its external media is unavailable, so it must survive for relinking.
+      return [{ element: clip, placement }];
+    }
+    if (placement.contentTimeUnit !== 'beats') {
+      losses.push({
+        kind: 'unsupported-nested-clip',
+        clipName: placement.name,
+        reason: 'mixed-time-units',
+      });
+      return [];
+    }
+    if (placement.loopEnabled && nested.length > 1) {
+      losses.push({
+        kind: 'unsupported-nested-clip',
+        clipName: placement.name,
+        reason: 'loop-with-multiple-events',
+      });
+    }
+
+    const windowStart = placement.contentWindowStart;
+    const windowEnd = windowStart + placement.lengthPpq;
+    return nested.flatMap((child): FlattenedClipLeaf[] => {
+      const childTime = numberAttr(child, 'time') ?? 0;
+      const childLength = Math.max(0.0001, numberAttr(child, 'duration') ?? placement.lengthPpq);
+      const visibleStart = Math.max(windowStart, childTime);
+      const visibleEnd = Math.min(windowEnd, childTime + childLength);
+      if (!(visibleEnd > visibleStart)) return [];
+      const childUnit = child.getAttribute('contentTimeUnit')?.trim() || 'beats';
+      const childLoop = clipLoopState(child, placement);
+      return walk(child, {
+        startPpq: placement.startPpq + visibleStart - windowStart,
+        lengthPpq: visibleEnd - visibleStart,
+        contentWindowStart: (numberAttr(child, 'playStart') ?? 0) + (visibleStart - childTime),
+        contentTimeUnit: childUnit,
+        name: child.getAttribute('name') || placement.name,
+        ...childLoop,
+        fadeElement:
+          child.hasAttribute('fadeInTime') || child.hasAttribute('fadeOutTime')
+            ? child
+            : placement.fadeElement,
+      });
+    });
+  };
+
+  return walk(root, initial);
+}
+
+function readMidiClip(clip: Element, placement?: FlattenedClipPlacement): DocumentClip {
+  const playStart = placement?.contentWindowStart ?? numberAttr(clip, 'playStart') ?? 0;
   const loopStart = numberAttr(clip, 'loopStart');
   const loopEnd = numberAttr(clip, 'loopEnd');
   const out: DocumentClip = {
-    name: clip.getAttribute('name') || 'MIDI clip',
-    startPpq: numberAttr(clip, 'time') ?? 0,
-    lengthPpq: Math.max(0.0001, numberAttr(clip, 'duration') ?? 4),
+    name: placement?.name ?? clip.getAttribute('name') ?? 'MIDI clip',
+    startPpq: placement?.startPpq ?? numberAttr(clip, 'time') ?? 0,
+    lengthPpq: placement?.lengthPpq ?? Math.max(0.0001, numberAttr(clip, 'duration') ?? 4),
     sourceOffsetPpq: playStart,
     gain: 1,
-    loopEnabled: loopStart !== null && loopEnd !== null && loopEnd > loopStart,
-    loopLengthPpq: loopStart !== null && loopEnd !== null ? Math.max(0, loopEnd - loopStart) : 0,
+    loopEnabled:
+      placement?.loopEnabled ?? (loopStart !== null && loopEnd !== null && loopEnd > loopStart),
+    loopLengthPpq:
+      placement?.loopLengthPpq ??
+      (loopStart !== null && loopEnd !== null ? Math.max(0, loopEnd - loopStart) : 0),
     kind: 'midi',
     notes: Array.from(clip.querySelectorAll('Notes > Note')).map((note) => ({
       pitch: clampInt(numberAttr(note, 'key') ?? 60, 0, 127),
@@ -630,7 +790,9 @@ interface DawprojectAudioFileRef {
 }
 
 function audioFileRef(clip: Element): DawprojectAudioFileRef | null {
-  const file = clip.querySelector('Audio > File');
+  const warps = children(clip, 'Warps')[0];
+  const audio = children(clip, 'Audio')[0] ?? children(warps, 'Audio')[0];
+  const file = children(audio, 'File')[0];
   if (!file) return null;
   const path = file.getAttribute('path')?.trim();
   const external = file.getAttribute('external') === 'true';
@@ -639,40 +801,211 @@ function audioFileRef(clip: Element): DawprojectAudioFileRef | null {
   return { path, external };
 }
 
-function clipContentPpq(clip: Element, attr: string, tempoMap: NormalizedTempoMap): number | null {
+function reportUnknownTimeUnit(
+  clip: Element,
+  attribute: Extract<DawprojectImportLoss, { kind: 'unsupported-time-unit' }>['attribute'],
+  supported: readonly string[],
+  losses: DawprojectImportLoss[],
+): string | null {
+  const unit = clip.getAttribute(attribute)?.trim() || null;
+  if (unit !== null && !supported.includes(unit)) {
+    losses.push({
+      kind: 'unsupported-time-unit',
+      clipName: clip.getAttribute('name') || 'Audio clip',
+      attribute,
+      unit,
+    });
+  }
+  return unit;
+}
+
+function clipContentPpq(
+  clip: Element,
+  attr: string,
+  tempoMap: NormalizedTempoMap,
+  contentOriginPpq: number,
+  contentTimeUnit: string | null,
+): number | null {
   const value = numberAttr(clip, attr);
   if (value === null) return null;
-  return clip.getAttribute('contentTimeUnit') === 'seconds' ? secondsToPpq(tempoMap, value) : value;
+  return contentTimeUnit === 'seconds'
+    ? audioContentSecondsToPpq(tempoMap, contentOriginPpq, value)
+    : value;
+}
+
+function clipFadePpq(
+  clip: Element,
+  attr: 'fadeInTime' | 'fadeOutTime',
+  tempoMap: NormalizedTempoMap,
+  startPpq: number,
+  lengthPpq: number,
+  fadeTimeUnit: string | null,
+): number | null {
+  const value = numberAttr(clip, attr);
+  if (value === null || value <= 0) return null;
+  return fadeTimeUnit === 'seconds'
+    ? audioFadeSecondsToPpq(
+        tempoMap,
+        startPpq,
+        lengthPpq,
+        value,
+        attr === 'fadeInTime' ? 'in' : 'out',
+      )
+    : value;
 }
 
 function readAudioClip(
   clip: Element,
   tempoMap: NormalizedTempoMap,
   mediaAssets: ReadonlyMap<string, string> = new Map(),
+  losses: DawprojectImportLoss[] = [],
+  placement?: FlattenedClipPlacement,
 ): DocumentClip {
   const file = audioFileRef(clip);
-  const playStart = clipContentPpq(clip, 'playStart', tempoMap);
-  const loopStart = clipContentPpq(clip, 'loopStart', tempoMap);
-  const loopEnd = clipContentPpq(clip, 'loopEnd', tempoMap);
+  const startPpq = placement?.startPpq ?? numberAttr(clip, 'time') ?? 0;
+  const lengthPpq = placement?.lengthPpq ?? Math.max(0.0001, numberAttr(clip, 'duration') ?? 4);
+  const contentTimeUnit = reportUnknownTimeUnit(
+    clip,
+    'contentTimeUnit',
+    ['beats', 'seconds'],
+    losses,
+  );
+  const playStartValue = placement?.contentWindowStart ?? numberAttr(clip, 'playStart') ?? 0;
+  const contentOriginPpq =
+    contentTimeUnit === 'seconds'
+      ? audioContentOriginFromPlayStartSeconds(tempoMap, startPpq, playStartValue)
+      : audioContentOriginPpq(startPpq, Math.max(0, playStartValue));
+  const playStart = clipContentPpq(clip, 'playStart', tempoMap, contentOriginPpq, contentTimeUnit);
+  const loopStart = clipContentPpq(clip, 'loopStart', tempoMap, contentOriginPpq, contentTimeUnit);
+  const loopEnd = clipContentPpq(clip, 'loopEnd', tempoMap, contentOriginPpq, contentTimeUnit);
+  const fadeElement = placement?.fadeElement ?? clip;
+  const fadeTimeUnit = reportUnknownTimeUnit(
+    fadeElement,
+    'fadeTimeUnit',
+    ['beats', 'seconds'],
+    losses,
+  );
+  const fadeInPpq = clipFadePpq(
+    fadeElement,
+    'fadeInTime',
+    tempoMap,
+    startPpq,
+    lengthPpq,
+    fadeTimeUnit,
+  );
+  const fadeOutPpq = clipFadePpq(
+    fadeElement,
+    'fadeOutTime',
+    tempoMap,
+    startPpq,
+    lengthPpq,
+    fadeTimeUnit,
+  );
+  const warp = readAudioWarp(clip, placement, lengthPpq, losses);
   return {
-    name: clip.getAttribute('name') || 'Audio clip',
-    startPpq: numberAttr(clip, 'time') ?? 0,
-    lengthPpq: Math.max(0.0001, numberAttr(clip, 'duration') ?? 4),
-    sourceOffsetPpq: Math.max(0, playStart ?? 0),
+    name: placement?.name ?? clip.getAttribute('name') ?? 'Audio clip',
+    startPpq,
+    lengthPpq,
+    sourceOffsetPpq: Math.max(0, warp?.sourceOffsetPpq ?? playStart ?? 0),
     gain: 1,
-    loopEnabled: loopStart !== null && loopEnd !== null && loopEnd > loopStart,
-    loopLengthPpq: loopStart !== null && loopEnd !== null ? Math.max(0, loopEnd - loopStart) : 0,
+    loopEnabled:
+      placement?.loopEnabled ?? (loopStart !== null && loopEnd !== null && loopEnd > loopStart),
+    loopLengthPpq:
+      placement?.loopLengthPpq ??
+      (loopStart !== null && loopEnd !== null ? Math.max(0, loopEnd - loopStart) : 0),
     kind: 'audio',
     notes: [],
     ...(file && mediaAssets.has(file.path)
       ? { assetId: mediaAssets.get(file.path) as string }
       : {}),
-    ...(numberAttr(clip, 'fadeInTime')
-      ? { fadeInPpq: numberAttr(clip, 'fadeInTime') as number }
-      : {}),
-    ...(numberAttr(clip, 'fadeOutTime')
-      ? { fadeOutPpq: numberAttr(clip, 'fadeOutTime') as number }
-      : {}),
+    ...(fadeInPpq !== null ? { fadeInPpq } : {}),
+    ...(fadeOutPpq !== null ? { fadeOutPpq } : {}),
+    ...(warp ? { warp: warp.warp } : {}),
+  };
+}
+
+function readAudioWarp(
+  clip: Element,
+  placement: FlattenedClipPlacement | undefined,
+  lengthPpq: number,
+  losses: DawprojectImportLoss[],
+): { sourceOffsetPpq: number; warp: NonNullable<DocumentClip['warp']> } | null {
+  const warps = children(clip, 'Warps')[0];
+  if (!warps) return null;
+  const timeUnit = warps.getAttribute('timeUnit')?.trim() || 'beats';
+  const contentTimeUnit = warps.getAttribute('contentTimeUnit')?.trim() || 'seconds';
+  const clipName = placement?.name ?? clip.getAttribute('name') ?? 'Audio clip';
+  if (timeUnit !== 'beats' || contentTimeUnit !== 'seconds') {
+    losses.push({
+      kind: 'unsupported-warp',
+      clipName,
+      reason: 'time-units',
+      timeUnit,
+      contentTimeUnit,
+    });
+    return null;
+  }
+  const points = children(warps, 'Warp')
+    .map((point) => ({
+      time: numberAttr(point, 'time'),
+      contentTime: numberAttr(point, 'contentTime'),
+    }))
+    .filter(
+      (point): point is { time: number; contentTime: number } =>
+        point.time !== null && point.contentTime !== null,
+    )
+    .sort((a, b) => a.time - b.time);
+  if (points.length < 2) {
+    losses.push({ kind: 'unsupported-warp', clipName, reason: 'insufficient-points' });
+    return null;
+  }
+  if (
+    points.some(
+      (point, index) =>
+        index > 0 &&
+        (point.time <= points[index - 1].time ||
+          point.contentTime <= points[index - 1].contentTime),
+    )
+  ) {
+    losses.push({ kind: 'unsupported-warp', clipName, reason: 'non-monotonic' });
+    return null;
+  }
+  const interpolate = (time: number): number | null => {
+    for (let index = 0; index < points.length - 1; index += 1) {
+      const left = points[index];
+      const right = points[index + 1];
+      if (time < left.time || time > right.time) continue;
+      const ratio = (time - left.time) / (right.time - left.time);
+      return left.contentTime + (right.contentTime - left.contentTime) * ratio;
+    }
+    return null;
+  };
+  const windowStart = placement?.contentWindowStart ?? numberAttr(clip, 'playStart') ?? 0;
+  const windowEnd = windowStart + lengthPpq;
+  const sourceStartSeconds = interpolate(windowStart);
+  const sourceEndSeconds = interpolate(windowEnd);
+  if (
+    sourceStartSeconds === null ||
+    sourceEndSeconds === null ||
+    !(sourceEndSeconds > sourceStartSeconds)
+  ) {
+    losses.push({ kind: 'unsupported-warp', clipName, reason: 'insufficient-points' });
+    return null;
+  }
+  const sourceBpm = (60 * lengthPpq) / (sourceEndSeconds - sourceStartSeconds);
+  const anchors = points
+    .filter((point) => point.time > windowStart && point.time < windowEnd)
+    .map((point) => ({
+      ppq: point.time - windowStart,
+      sourceSeconds: point.contentTime - sourceStartSeconds,
+    }));
+  return {
+    sourceOffsetPpq: (sourceStartSeconds * sourceBpm) / 60,
+    warp: {
+      enabled: true,
+      sourceBpm,
+      ...(anchors.length > 0 ? { anchors } : {}),
+    },
   };
 }
 
@@ -681,6 +1014,7 @@ function attachArrangementClips(
   tracks: ImportedTrack[],
   tempoMap: NormalizedTempoMap,
   mediaAssets: ReadonlyMap<string, string> = new Map(),
+  losses: DawprojectImportLoss[] = [],
 ): void {
   const byId = new Map(tracks.map((track) => [track.id, track]));
   const arrangementLanes = project.querySelector('Arrangement > Lanes');
@@ -689,11 +1023,13 @@ function attachArrangementClips(
     if (!track) continue;
     const clips = children(children(lane, 'Clips')[0], 'Clip');
     for (const clip of clips) {
-      track.clips.push(
-        clip.querySelector('Notes')
-          ? readMidiClip(clip)
-          : readAudioClip(clip, tempoMap, mediaAssets),
-      );
+      for (const leaf of flattenClipLeaves(clip, losses)) {
+        track.clips.push(
+          children(leaf.element, 'Notes').length > 0
+            ? readMidiClip(leaf.element, leaf.placement)
+            : readAudioClip(leaf.element, tempoMap, mediaAssets, losses, leaf.placement),
+        );
+      }
     }
   }
 }
@@ -741,7 +1077,10 @@ function attachArrangementAutomation(
     if (track) {
       const lanes = points
         .map((entry) => readAutomationLane(entry, track.automationRefs))
-        .filter((entry): entry is DocumentAutomationLane => entry !== null);
+        .filter(
+          (entry): entry is DocumentAutomationLane =>
+            entry !== null && !(track.kind === 'group' && entry.param === 'pan'),
+        );
       if (lanes.length === 0) continue;
       if (track.mixerBusId) {
         const bus = mixer?.buses.find((entry) => entry.id === track.mixerBusId);
@@ -791,9 +1130,10 @@ function parseArchive(
     entries = preflightAndUnzip(
       bytes,
       {
+        maxCompressedBytes: MAX_DAWPROJECT_ARCHIVE_BYTES,
         maxEntries: 10_000,
-        maxEntryBytes: 512 * 1024 * 1024,
-        maxUncompressedBytes: 1024 * 1024 * 1024,
+        maxEntryBytes: MAX_PROJECT_ARCHIVE_ENTRY_BYTES,
+        maxUncompressedBytes: MAX_PROJECT_ARCHIVE_EXPANDED_BYTES,
       },
       signal,
     ).entries;
@@ -830,9 +1170,10 @@ async function parseArchiveInWorker(
       await preflightAndUnzipInWorker(
         bytes,
         {
+          maxCompressedBytes: MAX_DAWPROJECT_ARCHIVE_BYTES,
           maxEntries: 10_000,
-          maxEntryBytes: 512 * 1024 * 1024,
-          maxUncompressedBytes: 1024 * 1024 * 1024,
+          maxEntryBytes: MAX_PROJECT_ARCHIVE_ENTRY_BYTES,
+          maxUncompressedBytes: MAX_PROJECT_ARCHIVE_EXPANDED_BYTES,
         },
         signal,
       )
@@ -860,22 +1201,29 @@ function importDawprojectParsed(
   mediaAssets: ReadonlyMap<string, string>,
 ): ProjectDocument {
   const { project, metadata } = parseArchive(bytes);
-  return importDawprojectDocuments(project, metadata, mediaAssets);
+  return importDawprojectDocuments(project, metadata, mediaAssets).document;
 }
 
 function importDawprojectDocuments(
   project: Document,
   metadata: Document | null,
   mediaAssets: ReadonlyMap<string, string>,
-): ProjectDocument {
+): { document: ProjectDocument; losses: DawprojectImportLoss[] } {
+  const losses: DawprojectImportLoss[] = [];
   const vcaGroups = readSonareVcaGroups(project);
   const tracks = readTracks(project, new Set(vcaGroups.map((group) => group.id)));
   const master = readMaster(project);
   scrubImportedSidechainSourceIndexes(tracks, master.strip);
   const mixer = applyMixerRouting(tracks, master.strip, vcaGroups);
   const tempoSegments = readTempo(project);
-  attachArrangementClips(project, tracks, normalizeTempoMap(tempoSegments), mediaAssets);
+  attachArrangementClips(project, tracks, normalizeTempoMap(tempoSegments), mediaAssets, losses);
   const masterAutomation = attachArrangementAutomation(project, tracks, mixer, master);
+  const documentTracks = tracks.filter((track) => !track.isEffectBus);
+  const documentIndexByImportedIndex = new Map<number, number>();
+  tracks.forEach((track, importedIndex) => {
+    if (track.isEffectBus) return;
+    documentIndexByImportedIndex.set(importedIndex, documentIndexByImportedIndex.size);
+  });
 
   const doc: ProjectDocument = {
     schemaVersion: PROJECT_DOCUMENT_SCHEMA_VERSION,
@@ -883,7 +1231,7 @@ function importDawprojectDocuments(
     sampleRate: DEFAULT_SAMPLE_RATE,
     tempoSegments,
     timeSignatures: readTimeSignatures(project),
-    tracks: tracks.map((track) => ({
+    tracks: documentTracks.map((track) => ({
       name: track.name,
       color: track.color,
       kind: track.kind,
@@ -892,7 +1240,9 @@ function importDawprojectDocuments(
       volume: track.volume,
       pan: track.pan,
       clips: track.clips,
-      ...(track.groupIndex !== undefined ? { groupIndex: track.groupIndex } : {}),
+      ...(track.groupIndex !== undefined && documentIndexByImportedIndex.has(track.groupIndex)
+        ? { groupIndex: documentIndexByImportedIndex.get(track.groupIndex) as number }
+        : {}),
       ...(track.vcaId !== undefined ? { vcaId: track.vcaId } : {}),
       ...(track.automation.length > 0 ? { automation: track.automation } : {}),
       ...importedTrackMixer(track),
@@ -902,7 +1252,7 @@ function importDawprojectDocuments(
   };
   if (mixer) doc.mixer = mixer;
   if (masterAutomation.length > 0) doc.masterAutomation = masterAutomation;
-  return doc;
+  return { document: doc, losses };
 }
 
 async function ingestEmbeddedAudio(
@@ -995,8 +1345,10 @@ export async function importDawprojectWithMediaResult(
     options.signal,
   );
   options.signal?.throwIfAborted();
+  const parsed = importDawprojectDocuments(project, metadata, media.assets);
   return {
-    document: importDawprojectDocuments(project, metadata, media.assets),
+    document: parsed.document,
     media: { imported: media.imported, issues: media.issues },
+    losses: parsed.losses,
   };
 }

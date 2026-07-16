@@ -12,7 +12,11 @@ import { type AudioEncoder, listEncoders, WAV_ENCODER_ID } from '@/export/codecs
 import { encodeAudioInWorker, isWorkerAudioEncoderId } from '@/export/encode-client';
 import { offlineAutomationLimitations } from '@/export/engine-render';
 import { FLAC_ENCODER_ID, type FlacBitDepth, registerFlacEncoder } from '@/export/flac';
-import { DEFAULT_EXPORT_MEMORY_BUDGET_BYTES } from '@/export/memory-budget';
+import {
+  assertCodecPayloadMemory,
+  DEFAULT_EXPORT_MEMORY_BUDGET_BYTES,
+  estimateCodecPayloadMemory,
+} from '@/export/memory-budget';
 import {
   MixdownCancelledError,
   type MixdownProgressFn,
@@ -295,6 +299,7 @@ async function onExport(): Promise<void> {
     stage.value = 'preflight';
     const preflight = await audioExportPreflight(doc, {
       range: exportModel.range,
+      loopRegion: props.loopRegion,
       releaseTailSeconds: exportModel.releaseTailSeconds,
       signal: controller.signal,
     });
@@ -322,20 +327,28 @@ async function onExport(): Promise<void> {
       enumerable: false,
     });
     const targetLufs = appSettings.settings.loudnessTargetLufs;
-    const stemsWriter =
-      exportModel.mode === 'stems' ? createStemsZipWriter(controller.signal) : null;
     const stemMemory = new PayloadMemoryMeter({
       label: 'Stem export',
       budgetBytes: DEFAULT_EXPORT_MEMORY_BUDGET_BYTES,
     });
+    const stemsWriter =
+      exportModel.mode === 'stems'
+        ? createStemsZipWriter(controller.signal, { meter: stemMemory })
+        : null;
     let consumedStemCount = 0;
     const consumeStem = async (stem: MixdownStem, index: number, total: number): Promise<void> => {
       controller.signal.throwIfAborted();
       if (!stemsWriter) throw new Error('Stem consumer is unavailable');
-      const releaseRaw = stemMemory.retain(
-        stem.channels[0].byteLength + stem.channels[1].byteLength,
-        `raw stem ${index + 1}/${total}`,
+      const rawBytes = stem.channels[0].byteLength + stem.channels[1].byteLength;
+      assertCodecPayloadMemory(
+        estimateCodecPayloadMemory({
+          encoderId: encoder.id,
+          inputBytes: rawBytes,
+          retainedBytes: stemMemory.snapshot().activeBytes,
+        }),
+        DEFAULT_EXPORT_MEMORY_BUDGET_BYTES,
       );
+      const releaseRaw = stemMemory.retain(rawBytes, `raw stem ${index + 1}/${total}`);
       try {
         stage.value = `encode:stem:${index + 1}/${total}`;
         if (exportModel.normalizeLoudness && stem.report) {
@@ -354,7 +367,7 @@ async function onExport(): Promise<void> {
           `encoded stem ${index + 1}/${total}`,
         );
         try {
-          stemsWriter.add({
+          await stemsWriter.add({
             name: stemEntryName(stem.name, index, total, encoder.extension),
             bytes,
           });
@@ -404,6 +417,13 @@ async function onExport(): Promise<void> {
       filename = stemsZipFileName(exportModel.baseName);
       downloadFn(zip, filename);
     } else {
+      assertCodecPayloadMemory(
+        estimateCodecPayloadMemory({
+          encoderId: encoder.id,
+          inputBytes: result.channels[0].byteLength + result.channels[1].byteLength,
+        }),
+        DEFAULT_EXPORT_MEMORY_BUDGET_BYTES,
+      );
       const bytes = await encodeAudio(
         encoder,
         result.channels,

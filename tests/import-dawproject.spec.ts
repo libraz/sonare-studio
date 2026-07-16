@@ -1,4 +1,4 @@
-import { strToU8, zipSync } from 'fflate';
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { describe, expect, it, vi } from 'vitest';
 import {
   exportDawproject,
@@ -8,6 +8,8 @@ import {
 } from '@/export/dawproject';
 import type { InsertSlot } from '@/project/mixer';
 import type { DocumentClip, DocumentTrack, ProjectDocument } from '@/project/serialization';
+import { normalizeTempoMap, ppqRangeSeconds } from '@/project/tempo-map';
+import { bakeWarpedClip, warpSegments } from '@/project/warp';
 
 function makeMidiClip(overrides: Partial<DocumentClip> = {}): DocumentClip {
   return {
@@ -90,6 +92,17 @@ function makeExternalAudioDawproject(path: string): Uint8Array {
   });
 }
 
+function rewriteProjectXml(bytes: Uint8Array, mutate: (project: Document) => void): Uint8Array {
+  const entries = unzipSync(bytes);
+  const project = new DOMParser().parseFromString(
+    strFromU8(entries['project.xml']),
+    'application/xml',
+  );
+  mutate(project);
+  entries['project.xml'] = strToU8(new XMLSerializer().serializeToString(project));
+  return zipSync(entries);
+}
+
 function makeRoutedDawproject(): Uint8Array {
   return zipSync({
     'project.xml': strToU8(`<?xml version="1.0" encoding="UTF-8"?>
@@ -144,7 +157,7 @@ function makeGroupedDawproject(): Uint8Array {
     <Track id="group-0" name="Drum Bus" contentType="tracks" color="#f97316">
       <Channel id="channel-group" role="regular" audioChannels="2" solo="false">
         <Volume id="volume-group" unit="linear" min="0" max="2" value="1"/>
-        <Pan id="pan-group" unit="normalized" min="0" max="1" value="0.5"/>
+        <Pan id="pan-group" unit="normalized" min="0" max="1" value="0.9"/>
         <Mute id="mute-group" value="false"/>
       </Channel>
       <Track id="track-kick" name="Kick" contentType="audio" color="#60a5fa">
@@ -221,6 +234,44 @@ function makeUnsupportedInsertAutomationDawproject(): Uint8Array {
   });
 }
 
+function makeNestedWarpDawproject(
+  warpUnits: { timeUnit: string; contentTimeUnit: string } = {
+    timeUnit: 'beats',
+    contentTimeUnit: 'seconds',
+  },
+): Uint8Array {
+  return zipSync({
+    'audio/nested.wav': new Uint8Array([1, 2, 3, 4]),
+    'project.xml': strToU8(`<?xml version="1.0" encoding="UTF-8"?>
+<Project version="1.0">
+  <Application name="Reference DAW" version="5.0"/>
+  <Transport><Tempo value="120"/><TimeSignature numerator="4" denominator="4"/></Transport>
+  <Structure>
+    <Track id="audio-track" name="Nested Audio" contentType="audio">
+      <Channel id="audio-channel" role="regular" audioChannels="2" solo="false">
+        <Volume value="1"/><Pan value="0.5"/><Mute value="false"/>
+      </Channel>
+    </Track>
+  </Structure>
+  <Arrangement><Lanes timeUnit="beats"><Lanes track="audio-track"><Clips>
+    <Clip time="4" duration="8" playStart="2" loopStart="2" loopEnd="10" name="Outer event">
+      <Clips><Clip time="1" duration="12" contentTimeUnit="beats" playStart="3">
+        <Warps timeUnit="${warpUnits.timeUnit}" contentTimeUnit="${warpUnits.contentTimeUnit}">
+          <Audio timeUnit="seconds" channels="2" sampleRate="48000" duration="5">
+            <File path="audio/nested.wav" external="false"/>
+          </Audio>
+          <Warp time="0" contentTime="0"/>
+          <Warp time="4" contentTime="1"/>
+          <Warp time="8" contentTime="2.5"/>
+          <Warp time="12" contentTime="5"/>
+        </Warps>
+      </Clip></Clips>
+    </Clip>
+  </Clips></Lanes></Lanes></Arrangement>
+</Project>`),
+  });
+}
+
 describe('importDawproject', () => {
   it('imports the portable subset from a sonare-exported DAWproject archive', async () => {
     const exported = await exportDawproject(makeDoc(), { includeAudio: false });
@@ -238,7 +289,7 @@ describe('importDawproject', () => {
       mute: false,
       solo: false,
       volume: 0.75,
-      pan: 0,
+      pan: -0.25,
     });
     expect(imported.tracks[0].clips[0]).toMatchObject({
       name: 'Phrase',
@@ -365,6 +416,268 @@ describe('importDawproject', () => {
       fadeInPpq: 0.25,
     });
     expect(clip.assetId).toBeUndefined();
+  });
+
+  it('round-trips trimmed loops across a tempo ramp using one content origin', async () => {
+    const clip: DocumentClip = {
+      name: 'Ramp trim',
+      startPpq: 6,
+      lengthPpq: 4,
+      sourceOffsetPpq: 3,
+      gain: 1,
+      loopEnabled: true,
+      loopLengthPpq: 2,
+      kind: 'audio',
+      assetId: 'ramp-trim',
+      notes: [],
+      fadeInPpq: 0.75,
+      fadeOutPpq: 1.25,
+    };
+    const exported = await exportDawproject(
+      makeDoc({
+        tempoSegments: [
+          { startPpq: 0, bpm: 120, endBpm: 72 },
+          { startPpq: 8, bpm: 90 },
+        ],
+        tracks: [makeTrack([clip], { kind: 'audio' })],
+      }),
+      { includeAudio: false },
+    );
+
+    const imported = importDawproject(exported).tracks[0].clips[0];
+    expect(imported.sourceOffsetPpq).toBeCloseTo(3, 9);
+    expect(imported.loopEnabled).toBe(true);
+    expect(imported.loopLengthPpq).toBeCloseTo(2, 9);
+    expect(imported.fadeInPpq).toBeCloseTo(0.75, 9);
+    expect(imported.fadeOutPpq).toBeCloseTo(1.25, 9);
+  });
+
+  it('converts seconds fades at their respective clip edges', async () => {
+    const tempoSegments = [
+      { startPpq: 0, bpm: 120, endBpm: 72 },
+      { startPpq: 8, bpm: 90 },
+    ];
+    const clip: DocumentClip = {
+      name: 'Seconds fades',
+      startPpq: 6,
+      lengthPpq: 4,
+      sourceOffsetPpq: 3,
+      gain: 1,
+      loopEnabled: true,
+      loopLengthPpq: 2,
+      kind: 'audio',
+      assetId: 'seconds-fades',
+      notes: [],
+      fadeInPpq: 0.75,
+      fadeOutPpq: 1.25,
+    };
+    const exported = await exportDawproject(
+      makeDoc({ tempoSegments, tracks: [makeTrack([clip], { kind: 'audio' })] }),
+      { includeAudio: false },
+    );
+    const tempoMap = normalizeTempoMap(tempoSegments);
+    const rewritten = rewriteProjectXml(exported, (project) => {
+      const element = project.querySelector('Arrangement Clip');
+      if (!element) throw new Error('missing test clip');
+      element.setAttribute('fadeTimeUnit', 'seconds');
+      element.setAttribute(
+        'fadeInTime',
+        String(ppqRangeSeconds(tempoMap, clip.startPpq, clip.startPpq + 0.75)),
+      );
+      element.setAttribute(
+        'fadeOutTime',
+        String(
+          ppqRangeSeconds(
+            tempoMap,
+            clip.startPpq + clip.lengthPpq - 1.25,
+            clip.startPpq + clip.lengthPpq,
+          ),
+        ),
+      );
+    });
+
+    const imported = importDawproject(rewritten).tracks[0].clips[0];
+    expect(imported.sourceOffsetPpq).toBeCloseTo(3, 9);
+    expect(imported.loopLengthPpq).toBeCloseTo(2, 9);
+    expect(imported.fadeInPpq).toBeCloseTo(0.75, 9);
+    expect(imported.fadeOutPpq).toBeCloseTo(1.25, 9);
+  });
+
+  it('reports unsupported audio content and fade time units as import losses', async () => {
+    const exported = await exportDawproject(
+      makeDoc({
+        tracks: [
+          makeTrack(
+            [
+              {
+                name: 'Odd units',
+                startPpq: 2,
+                lengthPpq: 4,
+                sourceOffsetPpq: 1,
+                gain: 1,
+                loopEnabled: false,
+                loopLengthPpq: 0,
+                kind: 'audio',
+                assetId: 'odd-units',
+                notes: [],
+                fadeInPpq: 0.5,
+              },
+            ],
+            { kind: 'audio' },
+          ),
+        ],
+      }),
+      { includeAudio: false },
+    );
+    const rewritten = rewriteProjectXml(exported, (project) => {
+      const element = project.querySelector('Arrangement Clip');
+      if (!element) throw new Error('missing test clip');
+      element.setAttribute('contentTimeUnit', 'samples');
+      element.setAttribute('fadeTimeUnit', 'ticks');
+    });
+
+    const result = await importDawprojectWithMediaResult(rewritten, {
+      ingestAudio: async () => ({ id: 'unused' }),
+    });
+    expect(result.losses).toEqual([
+      {
+        kind: 'unsupported-time-unit',
+        clipName: 'Odd units',
+        attribute: 'contentTimeUnit',
+        unit: 'samples',
+      },
+      {
+        kind: 'unsupported-time-unit',
+        clipName: 'Odd units',
+        attribute: 'fadeTimeUnit',
+        unit: 'ticks',
+      },
+    ]);
+  });
+
+  it('recursively composes nested clip placement and imports Warps', async () => {
+    const result = await importDawprojectWithMediaResult(makeNestedWarpDawproject(), {
+      ingestAudio: async () => ({ id: 'nested-asset' }),
+    });
+
+    expect(result.losses).toEqual([]);
+    expect(result.media.imported).toEqual(['audio/nested.wav']);
+    expect(result.document.tracks[0].clips).toEqual([
+      {
+        name: 'Outer event',
+        startPpq: 4,
+        lengthPpq: 8,
+        sourceOffsetPpq: 2,
+        gain: 1,
+        loopEnabled: true,
+        loopLengthPpq: 8,
+        kind: 'audio',
+        notes: [],
+        assetId: 'nested-asset',
+        warp: {
+          enabled: true,
+          sourceBpm: 120,
+          anchors: [{ ppq: 4, sourceSeconds: 1.5 }],
+        },
+      },
+    ]);
+    const importedClip = result.document.tracks[0].clips[0];
+    expect(warpSegments(importedClip)).toEqual([
+      {
+        ppq: 0,
+        lengthPpq: 4,
+        sourceStartSeconds: 1,
+        sourceLengthSeconds: 1.5,
+      },
+      {
+        ppq: 4,
+        lengthPpq: 4,
+        sourceStartSeconds: 2.5,
+        sourceLengthSeconds: 2.5,
+      },
+    ]);
+
+    const source = Float32Array.from({ length: 50 }, (_, index) => index);
+    const stretch = vi.fn((samples: Float32Array, _sampleRate: number, rate: number) =>
+      new Float32Array(Math.round(samples.length / rate)).fill(samples[0] ?? 0),
+    );
+    const [baked] = await bakeWarpedClip([source], 10, importedClip, 120, { stretch });
+    expect(stretch.mock.calls.map(([samples, , rate]) => [samples.length, rate])).toEqual([
+      [15, 0.75],
+      [25, 1.25],
+    ]);
+    expect([...baked.slice(0, 20)]).toEqual(new Array(20).fill(10));
+    expect([...baked.slice(20, 40)]).toEqual(new Array(20).fill(25));
+  });
+
+  it('reports unsupported nested Warp units before the document is loaded', async () => {
+    const result = await importDawprojectWithMediaResult(
+      makeNestedWarpDawproject({ timeUnit: 'seconds', contentTimeUnit: 'beats' }),
+      { ingestAudio: async () => ({ id: 'nested-asset' }) },
+    );
+
+    expect(result.losses).toEqual([
+      {
+        kind: 'unsupported-warp',
+        clipName: 'Outer event',
+        reason: 'time-units',
+        timeUnit: 'seconds',
+        contentTimeUnit: 'beats',
+      },
+    ]);
+    expect(result.document.tracks[0].clips[0].warp).toBeUndefined();
+  });
+
+  it('round-trips Sonare audio Warp points without changing their mapping', async () => {
+    const clip: DocumentClip = {
+      name: 'Warped loop',
+      startPpq: 3,
+      lengthPpq: 6,
+      sourceOffsetPpq: 2,
+      gain: 1,
+      loopEnabled: true,
+      loopLengthPpq: 3,
+      kind: 'audio',
+      assetId: 'warped-audio',
+      notes: [],
+      warp: {
+        enabled: true,
+        sourceBpm: 100,
+        anchors: [{ ppq: 2, sourceSeconds: 1.5 }],
+      },
+    };
+    const exported = await exportDawproject(
+      makeDoc({ tracks: [makeTrack([clip], { kind: 'audio' })] }),
+      { includeAudio: false },
+    );
+    const xml = new DOMParser().parseFromString(
+      strFromU8(unzipSync(exported)['project.xml']),
+      'application/xml',
+    );
+    expect(xml.querySelector('Arrangement Warps')).not.toBeNull();
+    expect(
+      [...xml.querySelectorAll('Arrangement Warps > Warp')].map((point) => ({
+        time: Number(point.getAttribute('time')),
+        contentTime: Number(point.getAttribute('contentTime')),
+      })),
+    ).toEqual([
+      { time: 0, contentTime: 1.2 },
+      { time: 2, contentTime: 2.7 },
+      { time: 6, contentTime: 4.8 },
+    ]);
+
+    const imported = importDawproject(exported).tracks[0].clips[0];
+    expect(imported).toMatchObject({
+      startPpq: 3,
+      lengthPpq: 6,
+      loopEnabled: true,
+      loopLengthPpq: 3,
+      warp: { enabled: true },
+    });
+    expect(imported.sourceOffsetPpq).toBeCloseTo(2, 9);
+    expect(imported.warp?.sourceBpm).toBeCloseTo(100, 9);
+    expect(imported.warp?.anchors?.[0].ppq).toBeCloseTo(2, 9);
+    expect(imported.warp?.anchors?.[0].sourceSeconds).toBeCloseTo(1.5, 9);
   });
 
   it('ingests embedded internal audio files and assigns clip asset ids', async () => {
@@ -500,6 +813,7 @@ describe('importDawproject', () => {
       imported: [],
       issues: [{ path: '/Missing/Vox.wav', external: true, reason: 'missing' }],
     });
+    expect(result.losses).toEqual([]);
   });
 
   it('resolves external audio files through an injected resolver', async () => {
@@ -538,7 +852,7 @@ describe('importDawproject', () => {
         strip: { gainDb: 0, pan: 0.5, inserts: [], sends: [] },
       },
     ]);
-    expect(imported.tracks).toHaveLength(2);
+    expect(imported.tracks).toHaveLength(1);
     expect(imported.tracks[0]).toMatchObject({
       name: 'Dry',
       mixer: {
@@ -556,10 +870,28 @@ describe('importDawproject', () => {
         outputBusId: 'daw-bus-1',
       },
     });
-    expect(imported.tracks[1]).toMatchObject({
-      name: 'FX Return',
-      kind: 'aux',
-    });
+  });
+
+  it('keeps foreign effect returns canonical across repeated round-trips', async () => {
+    const first = importDawproject(makeRoutedDawproject());
+    expect(first.tracks).toHaveLength(1);
+    expect(first.mixer?.buses).toHaveLength(1);
+
+    const second = importDawproject(await exportDawproject(first, { includeAudio: false }));
+    const third = importDawproject(await exportDawproject(second, { includeAudio: false }));
+    for (const document of [second, third]) {
+      expect(document.tracks).toHaveLength(1);
+      expect(document.mixer?.buses).toHaveLength(1);
+      expect(document.mixer?.buses[0].name).toBe('FX Return');
+    }
+  });
+
+  it('preserves Sonare aux-track identity without converting it into a mixer bus', async () => {
+    const source = makeDoc({ tracks: [makeTrack([], { name: 'Aux track', kind: 'aux' })] });
+    const imported = importDawproject(await exportDawproject(source, { includeAudio: false }));
+    expect(imported.tracks).toHaveLength(1);
+    expect(imported.tracks[0]).toMatchObject({ name: 'Aux track', kind: 'aux' });
+    expect(imported.mixer?.buses ?? []).toEqual([]);
   });
 
   it('imports nested tracks under contentType=tracks as group membership', () => {
@@ -569,6 +901,7 @@ describe('importDawproject', () => {
     expect(imported.tracks[0]).toMatchObject({
       name: 'Drum Bus',
       kind: 'group',
+      pan: 0,
     });
     expect(imported.tracks[1]).toMatchObject({
       name: 'Kick',

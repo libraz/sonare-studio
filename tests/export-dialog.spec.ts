@@ -710,7 +710,7 @@ describe('ExportDialog', () => {
         ],
       }),
     );
-    await flushPromises();
+    await vi.waitFor(() => expect(encode).toHaveBeenCalledTimes(3));
 
     const first = encode.mock.calls[0][0] as readonly [Float32Array, Float32Array];
     const second = encode.mock.calls[1][0] as readonly [Float32Array, Float32Array];

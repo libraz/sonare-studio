@@ -125,6 +125,30 @@ describe('useProjectExport', () => {
     expect(filename).toBe('Score Export.dawproject');
   });
 
+  it('blocks a DAWproject download when referenced audio cannot be embedded and loss is declined', async () => {
+    await loadProjectDocument(makeDoc('audio'));
+    vi.mocked(confirmDialog).mockResolvedValue(false);
+    const { downloadBlobFile, projectExport } = setup();
+
+    projectExport.exportDawprojectAction();
+    await vi.waitFor(() => expect(confirmDialog).toHaveBeenCalledTimes(1));
+
+    expect(vi.mocked(confirmDialog).mock.calls[0][0].message).toContain('asset-1');
+    expect(downloadBlobFile).not.toHaveBeenCalled();
+  });
+
+  it('downloads the explicitly accepted incomplete DAWproject', async () => {
+    await loadProjectDocument(makeDoc('audio'));
+    vi.mocked(confirmDialog).mockResolvedValue(true);
+    const { downloadBlobFile, projectExport } = setup();
+
+    projectExport.exportDawprojectAction();
+    await vi.waitFor(() => expect(downloadBlobFile).toHaveBeenCalledTimes(1));
+
+    expect(confirmDialog).toHaveBeenCalledTimes(1);
+    expect(downloadBlobFile).toHaveBeenCalledTimes(1);
+  });
+
   it('exports DAWproject without prompting for supported boolean insert automation', async () => {
     await loadProjectDocument(makeDoc('midi'));
     const store = useProjectStore();
@@ -308,7 +332,7 @@ describe('useProjectExport', () => {
     expect(prompt.message).toContain('track instrument');
     expect(prompt.message).toContain('MIDI FX');
     expect(prompt.message).toContain('non-hex track color');
-    expect(prompt.message).toContain('legacy track pan');
+    expect(prompt.message).not.toContain('legacy track pan');
     expect(prompt.message).toContain('external MIDI route');
     expect(prompt.message).toContain('arrangement section');
     expect(prompt.message).toContain('chord track symbol');

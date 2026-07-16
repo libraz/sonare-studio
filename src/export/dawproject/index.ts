@@ -12,7 +12,8 @@
  * Mapping notes (deliberate deviations, all lossy-by-design):
  * - Sections have no DAWproject element; each section start is exported as a
  *   cue marker named "Section: <name>".
- * - Audio warps/stretching are not exported (clips reference plain files).
+ * - Enabled audio warps are exported as standard beats-to-seconds Warps;
+ *   disabled warp metadata remains a plain file reference.
  * - Per-clip gain has no DAWproject attribute and is dropped.
  * - Per-clip MIDI expression lanes are exported as sonare-scoped Points inside
  *   the clip so sonare-to-sonare round-trips preserve performance data. Other
@@ -41,6 +42,12 @@ import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import { parseInsertAutomationParam } from '@/project/automation';
 import { insertIndexForAutomationRef } from '@/project/automation-insert';
 import {
+  createMediaCompletenessReport,
+  type MediaCompletenessIssue,
+  type MediaCompletenessReport,
+  mediaFailureIssues,
+} from '@/project/media-completeness';
+import {
   clampPan,
   dbToLinear,
   type InsertSlot,
@@ -54,12 +61,14 @@ import type {
   DocumentTempoSegment,
   ProjectDocument,
 } from '@/project/serialization';
-import { type NormalizedTempoMap, normalizeTempoMap, ppqToSeconds } from '@/project/tempo-map';
+import { type NormalizedTempoMap, normalizeTempoMap } from '@/project/tempo-map';
+import { audioContentOriginPpq, audioContentPpqToSeconds } from './audio-time';
 import { serializeXml, type XmlElement } from './xml';
 
 export {
   type DawprojectAudioMedia,
   DawprojectImportError,
+  type DawprojectImportLoss,
   type DawprojectImportOptions,
   type DawprojectImportResult,
   type DawprojectMediaIssue,
@@ -122,6 +131,7 @@ export interface DawprojectExportOptions {
 
 export interface DawprojectExportResult {
   bytes: Uint8Array;
+  completeness: MediaCompletenessReport;
   media: {
     embeddedAssetIds: string[];
     missingAssetIds: string[];
@@ -205,7 +215,12 @@ async function collectAudioAssets(
   for (const track of doc.tracks) {
     for (const clip of track.clips) {
       if (!isAudioClip(clip) || !clip.assetId) continue;
-      const windowSec = ppqToSeconds(tempoMap, clip.sourceOffsetPpq + clip.lengthPpq);
+      const contentOriginPpq = audioContentOriginPpq(clip.startPpq, clip.sourceOffsetPpq);
+      const windowSec = audioContentPpqToSeconds(
+        tempoMap,
+        contentOriginPpq,
+        clip.sourceOffsetPpq + clip.lengthPpq,
+      );
       const existing = assets.get(clip.assetId);
       if (existing) {
         // Grow the estimated duration so every clip window stays in range.
@@ -474,6 +489,7 @@ function structureElement(doc: ProjectDocument): XmlElement {
   );
   const trackElements: XmlElement[] = doc.tracks.map((track, index): XmlElement => {
     const strip = track.mixer ?? NEUTRAL_STRIP;
+    const audiblePan = track.kind === 'group' ? 0 : (track.mixer?.pan ?? track.pan);
     const vcaOffsetDb = track.vcaId !== undefined ? (vcaGainDbById.get(track.vcaId) ?? 0) : 0;
     const channelId = `channel-${index}`;
     const destination =
@@ -488,6 +504,7 @@ function structureElement(doc: ProjectDocument): XmlElement {
         loaded: true,
         name: track.name,
         color: hexColor(track.color),
+        sonareTrackKind: track.kind === 'aux' ? 'aux' : undefined,
         sonareVcaId: track.vcaId,
         sonareVolume: track.vcaId !== undefined ? track.volume : undefined,
       },
@@ -496,7 +513,7 @@ function structureElement(doc: ProjectDocument): XmlElement {
           channelId,
           track.kind === 'aux' ? 'effect' : 'regular',
           track.volume * dbToLinear(strip.gainDb) * dbToLinear(vcaOffsetDb),
-          strip.pan,
+          audiblePan,
           track.mute,
           track.solo,
           destination,
@@ -885,7 +902,8 @@ function midiClipElement(clip: DocumentClip, trackIndex: number, clipIndex: numb
 /**
  * Builds one audio clip element referencing its media file. Clip placement is
  * in beats (the surrounding lanes' time unit); the content offset uses
- * seconds, converted through the project tempo map. Warps are not exported.
+ * seconds, converted through the project tempo map. Enabled Sonare warps are
+ * emitted as the standard beats-to-source-seconds Warps mapping.
  */
 function audioClipElement(
   clip: DocumentClip,
@@ -894,18 +912,35 @@ function audioClipElement(
   trackIndex: number,
   clipIndex: number,
 ): XmlElement {
+  const enabledWarp = clip.warp?.enabled === true && clip.warp.sourceBpm > 0 ? clip.warp : null;
+  const contentOriginPpq = audioContentOriginPpq(clip.startPpq, clip.sourceOffsetPpq);
   const attributes: Record<string, string | number | boolean | undefined> = {
     time: clip.startPpq,
     duration: clip.lengthPpq,
-    contentTimeUnit: 'seconds',
-    playStart: ppqToSeconds(tempoMap, clip.sourceOffsetPpq),
+    contentTimeUnit: enabledWarp ? 'beats' : 'seconds',
+    playStart: enabledWarp
+      ? 0
+      : audioContentPpqToSeconds(tempoMap, contentOriginPpq, clip.sourceOffsetPpq),
     name: clip.name,
   };
   if (clip.loopEnabled) {
-    // Loop bounds follow the clip's content time unit (seconds for audio).
+    // Loop bounds follow the clip's content time unit.
     const loopLengthPpq = clip.loopLengthPpq > 0 ? clip.loopLengthPpq : clip.lengthPpq;
-    attributes['loopStart'] = ppqToSeconds(tempoMap, clip.sourceOffsetPpq);
-    attributes['loopEnd'] = ppqToSeconds(tempoMap, clip.sourceOffsetPpq + loopLengthPpq);
+    if (enabledWarp) {
+      attributes['loopStart'] = 0;
+      attributes['loopEnd'] = loopLengthPpq;
+    } else {
+      attributes['loopStart'] = audioContentPpqToSeconds(
+        tempoMap,
+        contentOriginPpq,
+        clip.sourceOffsetPpq,
+      );
+      attributes['loopEnd'] = audioContentPpqToSeconds(
+        tempoMap,
+        contentOriginPpq,
+        clip.sourceOffsetPpq + loopLengthPpq,
+      );
+    }
   }
   const fadeIn = clip.fadeInPpq ?? 0;
   const fadeOut = clip.fadeOutPpq ?? 0;
@@ -914,21 +949,51 @@ function audioClipElement(
     if (fadeIn > 0) attributes['fadeInTime'] = fadeIn;
     if (fadeOut > 0) attributes['fadeOutTime'] = fadeOut;
   }
+  const audio: XmlElement = {
+    name: 'Audio',
+    attributes: {
+      id: `audio-${trackIndex}-${clipIndex}`,
+      // MediaFile recommends an explicit time unit for its duration.
+      timeUnit: 'seconds',
+      channels: asset.numChannels,
+      sampleRate: asset.sampleRate,
+      duration: asset.durationSec,
+    },
+    children: [{ name: 'File', attributes: { path: asset.path, external: false } }],
+  };
+  if (!enabledWarp) return { name: 'Clip', attributes, children: [audio] };
+
+  const secondsPerSourcePpq = 60 / enabledWarp.sourceBpm;
+  const sourceStartSeconds = clip.sourceOffsetPpq * secondsPerSourcePpq;
+  const warpPoints = [
+    { ppq: 0, sourceSeconds: sourceStartSeconds },
+    ...(enabledWarp.anchors ?? []).map((anchor) => ({
+      ppq: anchor.ppq,
+      sourceSeconds: sourceStartSeconds + anchor.sourceSeconds,
+    })),
+    {
+      ppq: clip.lengthPpq,
+      sourceSeconds: sourceStartSeconds + clip.lengthPpq * secondsPerSourcePpq,
+    },
+  ];
   return {
     name: 'Clip',
     attributes,
     children: [
       {
-        name: 'Audio',
+        name: 'Warps',
         attributes: {
-          id: `audio-${trackIndex}-${clipIndex}`,
-          // MediaFile recommends an explicit time unit for its duration.
-          timeUnit: 'seconds',
-          channels: asset.numChannels,
-          sampleRate: asset.sampleRate,
-          duration: asset.durationSec,
+          id: `warps-${trackIndex}-${clipIndex}`,
+          timeUnit: 'beats',
+          contentTimeUnit: 'seconds',
         },
-        children: [{ name: 'File', attributes: { path: asset.path, external: false } }],
+        children: [
+          audio,
+          ...warpPoints.map((point) => ({
+            name: 'Warp',
+            attributes: { time: point.ppq, contentTime: point.sourceSeconds },
+          })),
+        ],
       },
     ],
   };
@@ -957,6 +1022,7 @@ function arrangementElement(
 
   const trackLanes = doc.tracks.map((track, trackIndex): XmlElement => {
     const automation = (track.automation ?? [])
+      .filter((lane) => !(track.kind === 'group' && lane.param === 'pan'))
       .map((lane) =>
         channelAutomationPointsElement(
           lane,
@@ -1113,8 +1179,13 @@ export async function exportDawprojectWithReport(
     }
   }
   const bytes = await buildDawprojectZip(zipEntries(), options.signal);
+  const issues: MediaCompletenessIssue[] = [];
+  for (const id of collected.missingAssetIds) {
+    issues.push(...mediaFailureIssues(doc, 'audio-asset', id, 'encode-failed'));
+  }
   return {
     bytes,
+    completeness: createMediaCompletenessReport(issues),
     media: { embeddedAssetIds, missingAssetIds: collected.missingAssetIds },
   };
 }

@@ -9,6 +9,7 @@ import {
 } from '@/export/dawproject';
 import { dbToLinear, type InsertSlot } from '@/project/mixer';
 import type { DocumentClip, DocumentTrack, ProjectDocument } from '@/project/serialization';
+import { normalizeTempoMap, ppqRangeSamples } from '@/project/tempo-map';
 
 const SAMPLE_RATE = 48000;
 
@@ -267,6 +268,7 @@ describe('exportDawproject structure', () => {
     const channel = project.querySelector('Structure > Track > Channel');
     expect(attr(channel, 'role')).toBe('effect');
     expect(attr(project.querySelector('Structure > Track'), 'contentType')).toBe('audio');
+    expect(attr(project.querySelector('Structure > Track'), 'sonareTrackKind')).toBe('aux');
   });
 
   it('exports mixer buses as effect channels with output and send routing', async () => {
@@ -703,9 +705,65 @@ describe('exportDawproject audio', () => {
 
     const clip = project.querySelector('Arrangement Clip');
     expect(attr(clip, 'contentTimeUnit')).toBe('seconds');
-    // sourceOffsetPpq 1 => 0.5 s; source window end 5 PPQ => 4.0 s.
+    // The source timeline starts at -1 PPQ. Both values are measured from
+    // that origin, matching the source window used by live/offline playback.
     expect(floatAttr(clip, 'playStart')).toBeCloseTo(0.5, 6);
-    expect(floatAttr(clip?.querySelector('Audio'), 'duration')).toBeCloseTo(4, 6);
+    expect(floatAttr(clip?.querySelector('Audio'), 'duration')).toBeCloseTo(3.5, 6);
+  });
+
+  it('anchors trimmed and looped content seconds at the source timeline origin', async () => {
+    const tempoSegments = [
+      { startPpq: 0, bpm: 120, endBpm: 72 },
+      { startPpq: 8, bpm: 90 },
+    ];
+    const audioClip = makeAudioClip({
+      startPpq: 6,
+      lengthPpq: 4,
+      sourceOffsetPpq: 3,
+      loopEnabled: true,
+      loopLengthPpq: 2,
+    });
+    const project = await exportProjectXml(
+      makeDoc([makeTrack([audioClip], { kind: 'audio' })], { tempoSegments }),
+      { includeAudio: false },
+    );
+    const clip = project.querySelector('Arrangement Clip');
+    const tempoMap = normalizeTempoMap(tempoSegments);
+    const originPpq = audioClip.startPpq - audioClip.sourceOffsetPpq;
+    const playStartSeconds = floatAttr(clip, 'playStart');
+    const loopEndSeconds = floatAttr(clip, 'loopEnd');
+    const mediaDurationSeconds = floatAttr(clip?.querySelector('Audio'), 'duration');
+
+    expect(playStartSeconds).toBeCloseTo(
+      ppqRangeSamples(tempoMap, originPpq, audioClip.startPpq, SAMPLE_RATE) / SAMPLE_RATE,
+      4,
+    );
+    expect(
+      Math.abs(
+        Math.round(playStartSeconds * SAMPLE_RATE) -
+          ppqRangeSamples(tempoMap, originPpq, audioClip.startPpq, SAMPLE_RATE),
+      ),
+    ).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(
+        Math.round(loopEndSeconds * SAMPLE_RATE) -
+          ppqRangeSamples(tempoMap, originPpq, audioClip.startPpq + 2, SAMPLE_RATE),
+      ),
+    ).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(
+        Math.round(mediaDurationSeconds * SAMPLE_RATE) -
+          ppqRangeSamples(
+            tempoMap,
+            originPpq,
+            audioClip.startPpq + audioClip.lengthPpq,
+            SAMPLE_RATE,
+          ),
+      ),
+    ).toBeLessThanOrEqual(1);
+    expect(attr(clip, 'fadeTimeUnit')).toBe('beats');
+    expect(floatAttr(clip, 'fadeInTime')).toBe(0.5);
+    expect(floatAttr(clip, 'fadeOutTime')).toBe(1);
   });
 
   it('exports loop windows on looping audio clips in seconds', async () => {

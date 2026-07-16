@@ -333,7 +333,8 @@ export function buildStemsZip(entries: ReadonlyArray<StemsZipEntry>): Uint8Array
 
 /** Incremental ZIP sink: each encoded stem is compressed and released before the next. */
 export interface StemsZipWriter {
-  add(entry: StemsZipEntry): void;
+  /** Resolves only after this entry has been compressed and emitted. */
+  add(entry: StemsZipEntry): Promise<void>;
   close(): Promise<Blob>;
 }
 
@@ -342,21 +343,26 @@ export function createStemsZipWriter(
   memory: {
     budgetBytes?: number;
     onSample?: (sample: PayloadMemorySample) => void;
+    meter?: PayloadMemoryMeter;
   } = {},
 ): StemsZipWriter {
   const chunks: Uint8Array<ArrayBuffer>[] = [];
   const chunkReleases: Array<() => void> = [];
-  const meter = new PayloadMemoryMeter({
-    label: 'Stems ZIP',
-    budgetBytes: memory.budgetBytes ?? DEFAULT_EXPORT_MEMORY_BUDGET_BYTES,
-    onSample: memory.onSample,
-  });
+  const meter =
+    memory.meter ??
+    new PayloadMemoryMeter({
+      label: 'Stems ZIP',
+      budgetBytes: memory.budgetBytes ?? DEFAULT_EXPORT_MEMORY_BUDGET_BYTES,
+      onSample: memory.onSample,
+    });
   const releaseChunks = () => {
     chunks.length = 0;
     while (chunkReleases.length > 0) chunkReleases.pop()?.();
   };
   const names = new Set<string>();
+  const pendingEntries = new Set<Promise<void>>();
   let entryCount = 0;
+  let chunkBytes = 0;
   let closed = false;
   let resolveResult!: (blob: Blob) => void;
   let rejectResult!: (error: unknown) => void;
@@ -378,10 +384,16 @@ export function createStemsZipWriter(
       return;
     }
     try {
-      const release = meter.retain(chunk.byteLength, `compressed chunk ${chunks.length + 1}`);
+      const releaseCopyPeak = meter.retain(
+        chunk.byteLength * 2,
+        `compressed chunk copy ${chunks.length + 1}`,
+      );
       const copy = new Uint8Array(chunk.byteLength);
       copy.set(chunk);
+      releaseCopyPeak();
+      const release = meter.retain(copy.byteLength, `compressed chunk ${chunks.length + 1}`);
       chunks.push(copy);
+      chunkBytes += copy.byteLength;
       chunkReleases.push(release);
     } catch (memoryError) {
       settled = true;
@@ -393,7 +405,9 @@ export function createStemsZipWriter(
     if (final) {
       settled = true;
       signal?.removeEventListener('abort', onAbort);
+      const releasePublishPeak = meter.retain(chunkBytes, 'ZIP Blob publish');
       const blob = new Blob(chunks, { type: 'application/zip' });
+      releasePublishPeak();
       releaseChunks();
       resolveResult(blob);
     }
@@ -410,7 +424,7 @@ export function createStemsZipWriter(
   signal?.addEventListener('abort', onAbort, { once: true });
   if (signal?.aborted) onAbort();
   return {
-    add(entry): void {
+    add(entry): Promise<void> {
       signal?.throwIfAborted();
       if (closed) throw new Error('Stems zip writer is closed');
       if (names.has(entry.name)) throw new Error(`Duplicate stems zip entry: ${entry.name}`);
@@ -419,9 +433,27 @@ export function createStemsZipWriter(
       const file = new AsyncZipDeflate(entry.name, { level: 6 });
       file.mtime = new Date(STEMS_ZIP_MTIME);
       zip.add(file);
-      file.push(entry.bytes, true);
+      const downstream = file.ondata;
+      const completion = new Promise<void>((resolve, reject) => {
+        file.ondata = (error, chunk, final) => {
+          downstream(error, chunk, final);
+          if (error) reject(error);
+          else if (final) resolve();
+        };
+        try {
+          file.push(entry.bytes, true);
+        } catch (error) {
+          reject(error);
+        }
+      });
+      pendingEntries.add(completion);
+      void completion.then(
+        () => pendingEntries.delete(completion),
+        () => pendingEntries.delete(completion),
+      );
+      return completion;
     },
-    close(): Promise<Blob> {
+    async close(): Promise<Blob> {
       if (signal?.aborted) return Promise.reject(abortError());
       if (closed) return result;
       if (entryCount === 0) {
@@ -432,6 +464,8 @@ export function createStemsZipWriter(
         return result;
       }
       closed = true;
+      await Promise.all(pendingEntries);
+      signal?.throwIfAborted();
       zip.end();
       return result;
     },

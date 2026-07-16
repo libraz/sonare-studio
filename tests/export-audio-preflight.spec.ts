@@ -101,7 +101,7 @@ describe('audioExportPreflight', () => {
           loopEnabled: false,
           loopLengthPpq: 0,
           kind: 'midi',
-          notes: [],
+          notes: [{ pitch: 60, velocity: 100, startPpq: 0, durationPpq: 1, channel: 0 }],
         },
       ],
     });
@@ -150,5 +150,107 @@ describe('audioExportPreflight', () => {
       }),
     ).resolves.toEqual({ blockers: [], warnings: [] });
     expect(load).toHaveBeenCalledWith('ok');
+  });
+
+  it('ignores missing media on muted, solo-excluded and loop-excluded tracks', async () => {
+    const source = doc();
+    const audioTrack = (
+      name: string,
+      assetId: string | undefined,
+      startPpq: number,
+      state: { mute?: boolean; solo?: boolean } = {},
+    ): ProjectDocument['tracks'][number] => ({
+      name,
+      color: '#000',
+      kind: 'audio',
+      mute: state.mute ?? false,
+      solo: state.solo ?? false,
+      volume: 1,
+      pan: 0,
+      clips: [
+        {
+          name: `${name} clip`,
+          startPpq,
+          lengthPpq: 2,
+          sourceOffsetPpq: 0,
+          gain: 1,
+          loopEnabled: false,
+          loopLengthPpq: 0,
+          kind: 'audio',
+          ...(assetId ? { assetId } : {}),
+          notes: [],
+        },
+      ],
+    });
+    source.tracks = [
+      audioTrack('Muted missing', 'muted-missing', 0, { mute: true }),
+      audioTrack('Solo excluded', 'solo-excluded', 0),
+      audioTrack('Outside loop', undefined, 12),
+      audioTrack('Audible solo', 'inside', 1, { solo: true }),
+    ];
+    const load = vi.fn(async (id: string) => loaded(id));
+
+    const result = await audioExportPreflight(source, {
+      range: 'loop',
+      loopRegion: { startPpq: 0, endPpq: 4 },
+      releaseTailSeconds: 0,
+      loadAudioAsset: load,
+    });
+
+    expect(result).toEqual({ blockers: [], warnings: [] });
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(load).toHaveBeenCalledWith('inside');
+  });
+
+  it('does not warn for empty or range-excluded external MIDI and ignores muted effect tails', async () => {
+    const source = doc();
+    source.tracks = [
+      {
+        name: 'External',
+        color: '#000',
+        kind: 'midi',
+        mute: false,
+        solo: false,
+        volume: 1,
+        pan: 0,
+        instrument: { kind: 'external-midi', outputPortId: 'port', channel: 0 },
+        clips: [
+          {
+            name: 'Outside',
+            startPpq: 8,
+            lengthPpq: 2,
+            sourceOffsetPpq: 0,
+            gain: 1,
+            loopEnabled: false,
+            loopLengthPpq: 0,
+            notes: [{ pitch: 60, velocity: 100, startPpq: 0, durationPpq: 1, channel: 0 }],
+          },
+        ],
+      },
+      {
+        name: 'Muted reverb',
+        color: '#000',
+        kind: 'audio',
+        mute: true,
+        solo: false,
+        volume: 1,
+        pan: 0,
+        mixer: {
+          gainDb: 0,
+          pan: 0,
+          sends: [],
+          inserts: [{ processor: 'effects.reverb.plate', enabled: true, params: { decaySec: 20 } }],
+        },
+        clips: [],
+      },
+    ];
+
+    await expect(
+      audioExportPreflight(source, {
+        range: 'loop',
+        loopRegion: { startPpq: 0, endPpq: 4 },
+        releaseTailSeconds: 0,
+      }),
+    ).resolves.toEqual({ blockers: [], warnings: [] });
   });
 });
