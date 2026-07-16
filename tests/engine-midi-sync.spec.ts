@@ -937,6 +937,39 @@ describe('createMidiSync', () => {
     expect(engine.setSf2Instrument).toHaveBeenCalledTimes(2);
   });
 
+  it('reports an unreadable SoundFont, falls back to synth, and recovers on retry', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const { handle, engine } = makeHandle();
+      const loadFont = vi
+        .fn<(fontId: string) => Promise<Uint8Array>>()
+        .mockRejectedValueOnce(new Error('font missing'))
+        .mockResolvedValueOnce(new Uint8Array([1, 2, 3]));
+      const sync = createMidiSync(handle, { loadFont });
+      const tracks = [makeTrack(7, { instrument: { kind: 'sf2', fontId: 'missing-font' } })];
+
+      await expect(sync.sync(tracks, [], TEMPO_120)).resolves.toBeUndefined();
+      expect(engine.setSynthInstrument).toHaveBeenCalledWith(7, DEFAULT_SYNTH_PRESET);
+      expect(engine.setSf2Instrument).not.toHaveBeenCalled();
+      expect(sync.mediaIssues?.()).toEqual([
+        expect.objectContaining({
+          kind: 'soundfont',
+          mediaId: 'missing-font',
+          role: 'instrument',
+          trackId: 7,
+          reason: 'unreadable',
+        }),
+      ]);
+
+      await sync.sync(tracks, [], TEMPO_120);
+      expect(engine.loadSoundFont).toHaveBeenCalledWith(new Uint8Array([1, 2, 3]));
+      expect(engine.setSf2Instrument).toHaveBeenCalledWith(7, {});
+      expect(sync.mediaIssues?.()).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('forwards the SF2 master gain and voice cap when binding the track', async () => {
     const { handle, engine } = makeHandle();
     const loadFont = vi.fn(async () => new Uint8Array([1, 2, 3]));

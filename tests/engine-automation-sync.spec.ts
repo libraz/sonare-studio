@@ -75,6 +75,43 @@ describe('createAutomationSync', () => {
     ]);
   });
 
+  it('clears old logical bus lanes before reinstalling after bus-number reassignment', () => {
+    const { handle, engine } = makeHandle();
+    const restoreParam = vi.fn();
+    let generation = 1;
+    let busIds = new Map([
+      ['a', 1],
+      ['b', 2],
+    ]);
+    const points = [{ ppq: 0, value: -9 }];
+    const laneA = makeLane(busAutomationTarget('a'), points);
+    const laneB = makeLane(busAutomationTarget('b'), points);
+    const sync = createAutomationSync(handle, {
+      knownTrackIds: () => [],
+      busIdFor: (busId) => busIds.get(busId),
+      busMappingGeneration: () => generation,
+      restoreParam,
+    });
+    sync.sync([laneA, laneB]);
+    engine.setAutomationLane.mockClear();
+    restoreParam.mockClear();
+
+    busIds = new Map([['b', 1]]);
+    generation += 1;
+    sync.sync([laneB]);
+
+    expect(engine.setAutomationLane.mock.calls).toEqual([
+      [3001, []],
+      [3002, []],
+      [3001, [{ ppq: 0, value: -9, curveToNext: 0 }]],
+    ]);
+    expect(restoreParam.mock.calls).toEqual([
+      [busAutomationTarget('a'), 'faderDb'],
+      [busAutomationTarget('b'), 'faderDb'],
+    ]);
+    expect(sync.installedParamIds()).toEqual([3001]);
+  });
+
   it('maps group-track fader automation to the group bus parameter id', () => {
     const { handle, engine } = makeHandle();
     const sync = createAutomationSync(handle, {

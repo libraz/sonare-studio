@@ -488,6 +488,10 @@ export class FakeProject {
   }
 
   splitClip(clipId: number, splitPpq: number): number {
+    const source = this.requireClip(clipId);
+    if (source.loop_mode !== 0) {
+      throw new Error('Turn Loop off before splitting this clip.');
+    }
     return this.edit(() => {
       const clip = this.requireClip(clipId);
       const id = this.nextClipId++;
@@ -583,6 +587,9 @@ export class FakeProject {
   }
 
   removeWarpMap(warpRefId: number): void {
+    if (!this.state.warpMaps.has(warpRefId)) {
+      throw new RangeError(`Unknown warp map id: ${warpRefId}`);
+    }
     this.edit(() => {
       this.state.warpMaps.delete(warpRefId);
     });

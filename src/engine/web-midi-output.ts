@@ -159,6 +159,8 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
   let outputsList: WebMidiOutputInfo[] = [];
   let onStateChange: ((event: unknown) => void) | null = null;
   let previousOnStateChange: ((event: unknown) => void) | null = null;
+  let startGeneration = 0;
+  let startPromise: Promise<boolean> | null = null;
   const routeByDestination = new Map<number, ExternalMidiRoute>();
   let clockPortIds: string[] = [];
 
@@ -178,10 +180,27 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
       : [];
   };
 
+  const sendToPort = (
+    port: MidiOutputLike | undefined,
+    bytes: number[] | Uint8Array,
+    timestampMs?: number,
+  ): boolean => {
+    if (!port) return false;
+    try {
+      if (timestampMs === undefined) port.send(bytes);
+      else port.send(bytes, timestampMs);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const sendAllNotesOff = (route: ExternalMidiRoute): void => {
-    access?.outputs
-      .get(route.outputPortId)
-      ?.send([0xb0 | (route.channel & 0x0f), MIDI_CC_ALL_NOTES_OFF, 0]);
+    sendToPort(access?.outputs.get(route.outputPortId), [
+      0xb0 | (route.channel & 0x0f),
+      MIDI_CC_ALL_NOTES_OFF,
+      0,
+    ]);
   };
 
   const panicChangedRoutes = (next: readonly ExternalMidiRoute[]): void => {
@@ -214,13 +233,7 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
     const port = access?.outputs.get(route.outputPortId);
     if (!port) return false;
     const routed = withChannel([...bytes], route.channel);
-    try {
-      if (timestampMs === undefined) port.send(routed);
-      else port.send(routed, timestampMs);
-      return true;
-    } catch {
-      return false;
-    }
+    return sendToPort(port, routed, timestampMs);
   };
 
   const deliver = (
@@ -233,8 +246,7 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
       if (event.destinationId === TRANSPORT_DESTINATION) {
         for (const portId of clockPortIds) {
           const port = access.outputs.get(portId);
-          if (timestampMs === undefined) port?.send(event.bytes);
-          else port?.send(event.bytes, timestampMs);
+          sendToPort(port, event.bytes, timestampMs);
         }
         continue;
       }
@@ -266,43 +278,76 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
       return sendRouted(destinationId, bytes, timestampMs);
     },
     async start(): Promise<boolean> {
+      if (disposed) return false;
       if (access) return true;
+      if (startPromise) return startPromise;
       const nav = navigator as unknown as NavigatorWithMidi;
       if (typeof nav.requestMIDIAccess !== 'function') {
         available = false;
         return false;
       }
-      try {
-        access = await nav.requestMIDIAccess({ sysex: false });
-        available = true;
-        refreshOutputs();
-        onStateChange = () => refreshOutputs();
-        if (access.addEventListener) access.addEventListener('statechange', onStateChange);
-        else {
-          previousOnStateChange = access.onstatechange;
-          access.onstatechange = (event: unknown) => {
-            previousOnStateChange?.(event);
-            onStateChange?.(event);
+      const generation = ++startGeneration;
+      const operation = (async (): Promise<boolean> => {
+        try {
+          const granted = await nav.requestMIDIAccess?.({ sysex: false });
+          if (!granted || disposed || generation !== startGeneration) return false;
+          access = granted;
+          available = true;
+          refreshOutputs();
+          onStateChange = () => {
+            if (disposed || access !== granted || generation !== startGeneration) return;
+            refreshOutputs();
           };
+          if (granted.addEventListener) granted.addEventListener('statechange', onStateChange);
+          else {
+            previousOnStateChange = granted.onstatechange;
+            granted.onstatechange = (event: unknown) => {
+              previousOnStateChange?.(event);
+              onStateChange?.(event);
+            };
+          }
+          return true;
+        } catch {
+          if (!disposed && generation === startGeneration) available = false;
+          return false;
         }
-        return true;
-      } catch {
-        available = false;
-        return false;
-      }
+      })();
+      startPromise = operation;
+      return operation.finally(() => {
+        if (startPromise === operation) startPromise = null;
+      });
     },
     dispose(): void {
       if (disposed) return;
       disposed = true;
-      panicChangedRoutes([]);
-      unsubscribe();
-      if (access && onStateChange) {
-        if (access.removeEventListener) access.removeEventListener('statechange', onStateChange);
-        else access.onstatechange = previousOnStateChange;
+      startGeneration += 1;
+      try {
+        panicChangedRoutes([]);
+      } catch {
+        // Continue releasing the subscription and statechange listener.
       }
-      access = null;
-      onStateChange = null;
-      previousOnStateChange = null;
+      try {
+        unsubscribe();
+      } catch {
+        // A broken engine subscription must not retain Web MIDI listeners.
+      }
+      const previousAccess = access;
+      const previousListener = onStateChange;
+      try {
+        if (previousAccess && previousListener) {
+          if (previousAccess.removeEventListener) {
+            previousAccess.removeEventListener('statechange', previousListener);
+          } else {
+            previousAccess.onstatechange = previousOnStateChange;
+          }
+        }
+      } catch {
+        // Local state is still cleared below.
+      } finally {
+        access = null;
+        onStateChange = null;
+        previousOnStateChange = null;
+      }
       routes = [];
       routeByDestination.clear();
       clockPortIds = [];

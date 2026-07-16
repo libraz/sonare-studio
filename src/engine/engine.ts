@@ -47,6 +47,84 @@ export interface EngineHandle {
   capabilities: SonareRealtimeEngineNodeCapabilities;
   /** Destroys the engine and closes the AudioContext. Safe to call once. */
   dispose(): Promise<void>;
+  /** Latest best-effort cleanup stage status, exposed for recovery diagnostics. */
+  cleanupState?(): EngineCleanupState;
+}
+
+export interface EngineCleanupState {
+  nodeDetached: boolean;
+  engineDestroyed: boolean;
+  contextClosed: boolean;
+}
+
+export interface EngineCleanupFailure {
+  stage: keyof EngineCleanupState;
+  error: unknown;
+}
+
+export class EngineDisposalError extends Error {
+  constructor(readonly failures: readonly EngineCleanupFailure[]) {
+    super(`Engine cleanup failed at ${failures.map((failure) => failure.stage).join(', ')}`, {
+      cause: failures[0]?.error,
+    });
+    this.name = 'EngineDisposalError';
+  }
+}
+
+interface DisposableEngineResources {
+  destroy(): void;
+  node: { disconnect(): void };
+}
+
+interface ClosableAudioContext {
+  readonly state: string;
+  close(): Promise<void>;
+}
+
+/** Independent, retryable teardown stages for one engine/context ownership pair. */
+export function createEngineResourceDisposer(
+  engine: DisposableEngineResources,
+  ctx: ClosableAudioContext,
+): { dispose(): Promise<void>; state(): EngineCleanupState } {
+  const state: EngineCleanupState = {
+    nodeDetached: false,
+    engineDestroyed: false,
+    contextClosed: ctx.state === 'closed',
+  };
+  return {
+    async dispose(): Promise<void> {
+      const failures: EngineCleanupFailure[] = [];
+      if (!state.nodeDetached) {
+        try {
+          (engine.node as { onprocessorerror?: unknown }).onprocessorerror = null;
+          engine.node.disconnect();
+          state.nodeDetached = true;
+        } catch (error) {
+          failures.push({ stage: 'nodeDetached', error });
+        }
+      }
+      if (!state.engineDestroyed) {
+        try {
+          engine.destroy();
+          state.engineDestroyed = true;
+        } catch (error) {
+          failures.push({ stage: 'engineDestroyed', error });
+        }
+      }
+      if (!state.contextClosed) {
+        try {
+          if (ctx.state !== 'closed') await ctx.close();
+          state.contextClosed = true;
+        } catch (error) {
+          failures.push({ stage: 'contextClosed', error });
+        }
+      }
+      if (failures.length > 0) throw new EngineDisposalError(failures);
+    },
+    state(): EngineCleanupState {
+      return { ...state };
+    },
+  };
 }
 
 interface WorkletReadyPort {
@@ -222,15 +300,13 @@ export async function createEngine(options: CreateEngineOptions = {}): Promise<E
     throw err;
   }
 
-  let disposed = false;
-  const dispose = async (): Promise<void> => {
-    if (disposed) return;
-    disposed = true;
-    engine.destroy();
-    if (ctx.state !== 'closed') {
-      await ctx.close().catch(() => undefined);
-    }
-  };
+  const resourceDisposer = createEngineResourceDisposer(engine, ctx);
 
-  return { engine, ctx, capabilities: engine.capabilities, dispose };
+  return {
+    engine,
+    ctx,
+    capabilities: engine.capabilities,
+    dispose: resourceDisposer.dispose,
+    cleanupState: resourceDisposer.state,
+  };
 }

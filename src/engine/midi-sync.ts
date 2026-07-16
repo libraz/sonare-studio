@@ -40,6 +40,7 @@ import {
   sf2PlaybackConfig,
   type TrackInstrument,
 } from '@/project/instrument';
+import type { MediaCompletenessIssue } from '@/project/media-completeness';
 import { expandExpressionPoints, MIDI_PITCH_BEND_MAX } from '@/project/midi-cc';
 import { midiFxConfigJson } from '@/project/midi-fx';
 import { audibleMidiProjector } from '@/project/midi-projection';
@@ -419,6 +420,8 @@ export interface MidiSync {
   ): Promise<void>;
   /** Number of MIDI clip schedules in the last setMidiClips call (0 before any). */
   scheduledClipCount(): number;
+  /** Missing/unreadable SoundFonts encountered during the latest sync. */
+  mediaIssues?(): readonly MediaCompletenessIssue[];
 }
 
 /**
@@ -441,6 +444,7 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
   let lastClipsKey: string | undefined;
   let lastClockEnabled: boolean | undefined;
   let clipCount = 0;
+  let currentMediaIssues: MediaCompletenessIssue[] = [];
 
   function instrumentLabel(instrument: TrackInstrument): string {
     switch (instrument.kind) {
@@ -505,6 +509,7 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
     track: EditorTrack,
     destinationId: number,
     instrument: TrackInstrument,
+    soundFontReady = true,
   ): void {
     try {
       handle.engine.setMidiDestinationExternal(destinationId, instrument.kind === 'external-midi');
@@ -515,8 +520,10 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
           destinationId,
           instrument.patch as Record<string, unknown>,
         );
-      } else if (instrument.kind === 'sf2') {
+      } else if (instrument.kind === 'sf2' && soundFontReady) {
         handle.engine.setSf2Instrument(destinationId, sf2PlaybackConfig(instrument));
+      } else if (instrument.kind === 'sf2') {
+        handle.engine.setSynthInstrument(destinationId, resolvePreset(DEFAULT_SYNTH_PRESET));
       }
     } catch (err) {
       if (instrument.kind === 'external-midi') {
@@ -577,6 +584,7 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
     automationPpq?: number,
   ): Promise<void> => {
     const sampleRate = handle.ctx.sampleRate;
+    currentMediaIssues = [];
     const destinationByTrack = midiDestinationAssignments(tracks, projectExternalMidi);
 
     // The engine holds a single global SoundFont: with several distinct
@@ -594,13 +602,36 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
     // Load the global SoundFont once, deterministically (the last SF2 track in
     // track order), so live playback matches the offline render regardless of
     // which track's instrument was edited most recently.
+    let soundFontReady = true;
     if (
       soundFontUsage.winningFontId !== undefined &&
       soundFontUsage.winningFontId !== loadedFontId
     ) {
-      const bytes = await loadFontBytes(soundFontUsage.winningFontId);
-      handle.engine.loadSoundFont(bytes);
-      loadedFontId = soundFontUsage.winningFontId;
+      try {
+        const bytes = await loadFontBytes(soundFontUsage.winningFontId);
+        handle.engine.loadSoundFont(bytes);
+        loadedFontId = soundFontUsage.winningFontId;
+      } catch (error) {
+        soundFontReady = false;
+        const fontId = soundFontUsage.winningFontId;
+        for (const track of tracks) {
+          if (track.kind !== 'midi' || track.frozen !== undefined) continue;
+          const instrument = effectiveTrackInstrument(track, projectExternalMidi);
+          if (instrument.kind !== 'sf2' || instrument.fontId !== fontId) continue;
+          currentMediaIssues.push({
+            kind: 'soundfont',
+            mediaId: fontId,
+            role: 'instrument',
+            reason: 'unreadable',
+            trackId: track.id,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+        console.warn(
+          `MIDI sync: SoundFont ${fontId} could not be loaded; affected tracks use ${DEFAULT_SYNTH_PRESET}.`,
+          error,
+        );
+      }
     }
 
     for (const track of tracks) {
@@ -617,13 +648,14 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
       const instrumentKey = JSON.stringify({
         mode: track.externalMidiMode ?? 'track',
         instrument,
+        ...(instrument.kind === 'sf2' ? { soundFontReady } : {}),
       });
       const destinationId = destinationByTrack.get(track.id) ?? track.id;
       // When several imported tracks share a destination, bind that destination
       // only once to the first track's instrument.
       if (lastInstrumentKeyByDestination.get(destinationId) === instrumentKey) continue;
       if (lastInstrumentKeyByDestination.has(destinationId) && destinationId !== track.id) continue;
-      bindInstrument(track, destinationId, instrument);
+      bindInstrument(track, destinationId, instrument, soundFontReady);
       // external-midi: no internal instrument is bound; the engine routes the
       // track's MIDI to the external output queue (drained by useWebMidiOutput).
       lastInstrumentKeyByDestination.set(destinationId, instrumentKey);
@@ -675,5 +707,9 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
     }
   };
 
-  return { sync, scheduledClipCount: () => clipCount };
+  return {
+    sync,
+    scheduledClipCount: () => clipCount,
+    mediaIssues: () => currentMediaIssues.map((issue) => ({ ...issue })),
+  };
 }

@@ -21,6 +21,14 @@ function fakePort(id: string) {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
+}
+
 /**
  * Installs a fake navigator.requestMIDIAccess exposing `ports` and returns a
  * cleanup function. Also returns an engine handle whose onMidiOut callback is
@@ -272,6 +280,78 @@ describe('createWebMidiOutput', () => {
     expect(port.sent).toEqual([[0xb0, 123, 0]]);
     emit([{ destinationId: 2, bytes: [0x90, 60, 100] }]);
     expect(port.sent).toEqual([[0xb0, 123, 0]]);
+  });
+
+  it('does not publish MIDI access that resolves after disposal', async () => {
+    const port = fakePort('p1');
+    const { handle, requestMIDIAccess } = setup([port]);
+    const pending = deferred<{
+      outputs: Map<string, typeof port>;
+      onstatechange: ((event: unknown) => void) | null;
+    }>();
+    requestMIDIAccess.mockReturnValue(pending.promise);
+    const bridge = createWebMidiOutput(handle);
+
+    const starting = bridge.start();
+    bridge.dispose();
+    pending.resolve({ outputs: new Map([[port.id, port]]), onstatechange: null });
+
+    await expect(starting).resolves.toBe(false);
+    expect(bridge.available()).toBeNull();
+    expect(bridge.outputs()).toEqual([]);
+    await expect(bridge.start()).resolves.toBe(false);
+    expect(requestMIDIAccess).toHaveBeenCalledTimes(1);
+  });
+
+  it('shares concurrent permission requests for the same output bridge', async () => {
+    const port = fakePort('p1');
+    const { handle, requestMIDIAccess } = setup([port]);
+    const bridge = createWebMidiOutput(handle);
+
+    const first = bridge.start();
+    const second = bridge.start();
+
+    await expect(Promise.all([first, second])).resolves.toEqual([true, true]);
+    expect(requestMIDIAccess).toHaveBeenCalledTimes(1);
+    bridge.dispose();
+  });
+
+  it('isolates a throwing clock port so later ports still receive the event', async () => {
+    const broken = fakePort('broken');
+    broken.send = vi.fn(() => {
+      throw new Error('hot unplug');
+    });
+    const healthy = fakePort('healthy');
+    const { handle, emit } = setup([broken, healthy]);
+    const bridge = createWebMidiOutput(handle);
+    await bridge.start();
+    bridge.setRoutes([
+      { destinationId: 1, outputPortId: 'broken', channel: 0, sendClock: true },
+      { destinationId: 2, outputPortId: 'healthy', channel: 0, sendClock: true },
+    ]);
+
+    emit([{ destinationId: TRANSPORT_DESTINATION, bytes: [0xf8] }]);
+
+    expect(broken.send).toHaveBeenCalledTimes(1);
+    expect(healthy.sent).toEqual([[0xf8]]);
+    bridge.dispose();
+  });
+
+  it('continues unsubscribe and listener cleanup when panic send throws', async () => {
+    const broken = fakePort('broken');
+    broken.send = vi.fn(() => {
+      throw new Error('port vanished');
+    });
+    const { access, handle, emit } = setupEventTargetStateChange([broken]);
+    const bridge = createWebMidiOutput(handle);
+    await bridge.start();
+    bridge.setRoutes([{ destinationId: 1, outputPortId: 'broken', channel: 0 }]);
+
+    expect(() => bridge.dispose()).not.toThrow();
+    expect(broken.send).toHaveBeenCalledTimes(1);
+    expect(access.removeEventListener).toHaveBeenCalledTimes(1);
+    emit([{ destinationId: 1, bytes: [0x90, 60, 100] }]);
+    expect(broken.send).toHaveBeenCalledTimes(1);
   });
 
   it('reports unavailability when Web MIDI is missing', async () => {

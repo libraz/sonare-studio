@@ -47,6 +47,8 @@ export function useWebMidiOutputs(): WebMidiOutputsHandle {
   let access: MidiAccessLike | null = null;
   let onChange: (() => void) | null = null;
   let previousOnStateChange: ((event: unknown) => void) | null = null;
+  let generation = 0;
+  let disposed = false;
 
   const collect = (): void => {
     outputs.value = access
@@ -55,38 +57,54 @@ export function useWebMidiOutputs(): WebMidiOutputsHandle {
   };
 
   const detach = (): void => {
-    if (access && onChange) {
-      if (access.removeEventListener) access.removeEventListener('statechange', onChange);
-      else access.onstatechange = previousOnStateChange;
+    try {
+      if (access && onChange) {
+        if (access.removeEventListener) access.removeEventListener('statechange', onChange);
+        else access.onstatechange = previousOnStateChange;
+      }
+    } catch {
+      // Clear local ownership even when a browser/driver listener removal fails.
+    } finally {
+      onChange = null;
+      previousOnStateChange = null;
     }
-    onChange = null;
-    previousOnStateChange = null;
   };
 
   async function refresh(): Promise<boolean> {
+    if (disposed) return false;
     error.value = null;
     const nav = navigator as unknown as NavigatorWithMidi;
     if (typeof nav.requestMIDIAccess !== 'function') {
       available.value = false;
       return false;
     }
+    if (access) {
+      available.value = true;
+      collect();
+      return true;
+    }
+    const refreshGeneration = ++generation;
     try {
-      if (!access) {
-        access = await nav.requestMIDIAccess({ sysex: false });
-        onChange = collect;
-        if (access.addEventListener) access.addEventListener('statechange', onChange);
-        else {
-          previousOnStateChange = access.onstatechange;
-          access.onstatechange = (event: unknown) => {
-            previousOnStateChange?.(event);
-            onChange?.();
-          };
-        }
+      const granted = await nav.requestMIDIAccess({ sysex: false });
+      if (disposed || generation !== refreshGeneration) return false;
+      access = granted;
+      onChange = () => {
+        if (disposed || access !== granted || generation !== refreshGeneration) return;
+        collect();
+      };
+      if (granted.addEventListener) granted.addEventListener('statechange', onChange);
+      else {
+        previousOnStateChange = granted.onstatechange;
+        granted.onstatechange = (event: unknown) => {
+          previousOnStateChange?.(event);
+          onChange?.();
+        };
       }
       available.value = true;
       collect();
       return true;
     } catch (err) {
+      if (disposed || generation !== refreshGeneration) return false;
       available.value = false;
       error.value = err instanceof Error ? err.message : String(err);
       return false;
@@ -94,7 +112,13 @@ export function useWebMidiOutputs(): WebMidiOutputsHandle {
   }
 
   if (getCurrentScope()) {
-    onScopeDispose(detach);
+    onScopeDispose(() => {
+      disposed = true;
+      generation += 1;
+      detach();
+      access = null;
+      outputs.value = [];
+    });
   }
 
   return { available, outputs, error, refresh };

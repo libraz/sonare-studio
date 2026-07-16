@@ -260,6 +260,8 @@ export interface StripSync {
   busIdFor(storeBusId: string): number | undefined;
   /** Engine bus id assigned to a group track id (undefined when never seen). */
   groupBusIdFor(trackId: number): number | undefined;
+  /** Monotonic generation of logical-to-engine bus number assignments. */
+  busMappingGeneration(): number;
   /** ABI-correct engine insert index for a return-bus strip slot. */
   busInsertIndexFor(storeBusId: string, storeInsertIndex: number): number | undefined;
   /** ABI-correct engine insert index for a group-track strip slot. */
@@ -286,6 +288,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
   // When a number is reassigned, bus-related diff caches are reset and sends /
   // output routing are replayed so stale engine state cannot alias the new bus.
   const busNumberByStoreId = new Map<string, number>();
+  let busMappingGeneration = 0;
   let lastBusList: number[] = [];
   const lastBusGain = new Map<number, number>();
   const lastSendsByTrack = new Map<number, string>();
@@ -458,6 +461,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       busNumberByStoreId.size !== busKeys.length ||
       busKeys.some((key, index) => busNumberByStoreId.get(key) !== index + 1);
     if (busMappingChanged) {
+      busMappingGeneration += 1;
       busNumberByStoreId.clear();
       busKeys.forEach((key, index) => {
         busNumberByStoreId.set(key, index + 1);
@@ -636,6 +640,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     sync,
     busIdFor: (storeBusId) => busNumberByStoreId.get(storeBusId),
     groupBusIdFor: (trackId) => busNumberByStoreId.get(`group:${trackId}`),
+    busMappingGeneration: () => busMappingGeneration,
     busInsertIndexFor: (storeBusId, storeInsertIndex) =>
       engineBusInsertAutomationIndex(
         busStripsByStoreId.get(storeBusId),

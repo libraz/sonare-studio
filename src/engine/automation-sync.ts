@@ -41,6 +41,8 @@ export interface AutomationSyncOptions {
   busIdFor?: (storeBusId: string) => number | undefined;
   /** Engine bus number for a group track id, or undefined when not declared/not a group. */
   groupBusIdFor?: (trackId: number) => number | undefined;
+  /** Increments whenever logical bus ids are reassigned to engine bus numbers. */
+  busMappingGeneration?: () => number;
   /** Engine insert index for a store bus insert slot, after disabled slots are omitted. */
   busInsertIndexFor?: (storeBusId: string, storeInsertIndex: number) => number | undefined;
   /** Engine insert index for a group-track insert slot, after disabled slots are omitted. */
@@ -72,6 +74,8 @@ interface InstalledLane {
   target: AutomationTarget;
   param: AutomationParam;
   json: string;
+  mappingSensitive: boolean;
+  mappingGeneration: number;
 }
 
 /**
@@ -89,13 +93,58 @@ export function createAutomationSync(
   options: AutomationSyncOptions,
 ): AutomationSync {
   const installed = new Map<number, InstalledLane>();
+  let lastBusMappingGeneration = options.busMappingGeneration?.() ?? 0;
 
   const sync = (lanes: ReadonlyArray<AutomationLaneState>): void => {
+    const busMappingGeneration = options.busMappingGeneration?.() ?? 0;
+    if (busMappingGeneration !== lastBusMappingGeneration) {
+      // Bus numbers are positional. Clear old mappings before installing any
+      // lane at a reassigned number, then restore each logical target's base
+      // value through the new mapping.
+      for (const [paramId, lane] of installed) {
+        if (!lane.mappingSensitive) continue;
+        handle.engine.setAutomationLane(paramId, []);
+        options.restoreParam(lane.target, lane.param);
+        installed.delete(paramId);
+      }
+      lastBusMappingGeneration = busMappingGeneration;
+    }
     const knownTracks = new Set(options.knownTrackIds());
     const effectiveParamIds = new Set<number>();
+    const publishLane = (
+      paramId: number,
+      lane: AutomationLaneState,
+      points: ReturnType<typeof engineAutomationPoints>,
+      mappingSensitive: boolean,
+    ): void => {
+      effectiveParamIds.add(paramId);
+      const json = JSON.stringify(points);
+      const previous = installed.get(paramId);
+      if (
+        previous &&
+        (previous.target !== lane.target ||
+          previous.param !== lane.param ||
+          previous.mappingGeneration !== busMappingGeneration)
+      ) {
+        handle.engine.setAutomationLane(paramId, []);
+        options.restoreParam(previous.target, previous.param);
+        installed.delete(paramId);
+      } else if (previous?.json === json) {
+        return;
+      }
+      handle.engine.setAutomationLane(paramId, points);
+      installed.set(paramId, {
+        target: lane.target,
+        param: lane.param,
+        json,
+        mappingSensitive,
+        mappingGeneration: busMappingGeneration,
+      });
+    };
     for (const lane of lanes) {
       if (!lane.enabled) continue;
       let paramId: number | undefined;
+      let mappingSensitive = false;
       const masteringRef = parseMasteringAutomationParam(lane.param);
       if (masteringRef) {
         if (lane.target !== 'master') continue;
@@ -136,6 +185,7 @@ export function createAutomationSync(
           const storeBusId = busIdFromAutomationTarget(lane.target);
           const busId = options.busIdFor?.(storeBusId);
           if (busId === undefined) continue;
+          mappingSensitive = true;
           const insertIndex =
             options.busInsertIndexFor?.(storeBusId, storeInsertIndex) ??
             (options.busInsertIndexFor ? undefined : storeInsertIndex);
@@ -149,6 +199,7 @@ export function createAutomationSync(
           const groupBusId =
             typeof lane.target === 'number' ? options.groupBusIdFor?.(lane.target) : undefined;
           if (groupBusId !== undefined) {
+            mappingSensitive = true;
             const insertIndex =
               options.groupInsertIndexFor?.(lane.target as number, storeInsertIndex) ??
               (options.groupInsertIndexFor ? undefined : storeInsertIndex);
@@ -162,11 +213,7 @@ export function createAutomationSync(
             paramId = insertId;
             const points = engineAutomationPoints(lane.points);
             if (points.length === 0) continue;
-            effectiveParamIds.add(paramId);
-            const json = JSON.stringify(points);
-            if (installed.get(paramId)?.json === json) continue;
-            handle.engine.setAutomationLane(paramId, points);
-            installed.set(paramId, { target: lane.target, param: lane.param, json });
+            publishLane(paramId, lane, points, mappingSensitive);
             continue;
           }
           if (!knownTracks.has(lane.target)) continue;
@@ -182,6 +229,7 @@ export function createAutomationSync(
         if (lane.param !== 'faderDb') continue;
         const busId = options.busIdFor?.(busIdFromAutomationTarget(lane.target));
         if (busId === undefined) continue;
+        mappingSensitive = true;
         paramId = handle.engine.busAutomationParamId(busId);
       } else if (paramId === undefined) {
         if (!isMixerAutomationParam(lane.param)) continue;
@@ -189,6 +237,7 @@ export function createAutomationSync(
           typeof lane.target === 'number' ? options.groupBusIdFor?.(lane.target) : undefined;
         if (groupBusId !== undefined) {
           if (lane.param !== 'faderDb') continue;
+          mappingSensitive = true;
           paramId = handle.engine.busAutomationParamId(groupBusId);
         } else {
           const mixerTarget = lane.target;
@@ -206,11 +255,7 @@ export function createAutomationSync(
             )
           : engineAutomationPoints(lane.points);
       if (points.length === 0) continue;
-      effectiveParamIds.add(paramId);
-      const json = JSON.stringify(points);
-      if (installed.get(paramId)?.json === json) continue;
-      handle.engine.setAutomationLane(paramId, points);
-      installed.set(paramId, { target: lane.target, param: lane.param, json });
+      publishLane(paramId, lane, points, mappingSensitive);
     }
     for (const [paramId, lane] of installed) {
       if (effectiveParamIds.has(paramId)) continue;

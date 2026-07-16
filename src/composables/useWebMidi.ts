@@ -159,6 +159,8 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
   let binding: WebMidiBinding | null = null;
   let boundEngine: RealtimeEngine | null = null;
   let detachListeners: Array<() => void> = [];
+  let generation = 0;
+  let disposed = false;
   const ccTracker = new MidiCc14BitTracker();
 
   function handleMessage(event: MidiMessageEventLike): void {
@@ -193,15 +195,21 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
   }
 
   function removeNoteListeners(): void {
-    for (const detach of detachListeners) detach();
+    for (const detach of detachListeners) {
+      try {
+        detach();
+      } catch {
+        // One broken input must not retain listeners on the remaining ports.
+      }
+    }
     detachListeners = [];
   }
 
   /** (Re-)attaches midimessage listeners to the inputs matching the selection. */
-  function attachNoteListeners(): void {
+  function attachNoteListeners(target = binding): void {
     removeNoteListeners();
-    if (!binding) return;
-    for (const [id, input] of binding.access.inputs) {
+    if (!target || disposed) return;
+    for (const [id, input] of target.access.inputs) {
       if (selectedInputId.value !== null && id !== selectedInputId.value) continue;
       if (input.addEventListener && input.removeEventListener) {
         input.addEventListener('midimessage', handleMessage);
@@ -222,37 +230,63 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
   }
 
   function disconnect(): void {
+    generation += 1;
     removeNoteListeners();
-    if (binding) {
-      binding.close();
-      binding = null;
+    const previous = binding;
+    binding = null;
+    try {
+      previous?.close();
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : String(err);
+    } finally {
+      boundEngine = null;
+      connected.value = false;
     }
-    boundEngine = null;
-    connected.value = false;
   }
 
   async function connect(engine: RealtimeEngine): Promise<boolean> {
+    if (disposed) return false;
     error.value = null;
     disconnect();
+    const connectGeneration = generation;
+    const selectedId = selectedInputId.value;
+    const active = (): boolean =>
+      !disposed &&
+      generation === connectGeneration &&
+      selectedInputId.value === selectedId &&
+      (boundEngine === null || boundEngine === engine);
     try {
       const wasm = await ensureWasm();
+      if (!active()) return false;
       available.value = wasm.isWebMidiAvailable();
       if (!available.value) return false;
+      let createdBinding: WebMidiBinding | null = null;
       const created = await wasm.bindWebMidi(engine, {
         destinationId: options.destinationId,
-        ...(selectedInputId.value !== null ? { inputIds: [selectedInputId.value] } : {}),
+        ...(selectedId !== null ? { inputIds: [selectedId] } : {}),
         onInputsChanged: (list) => {
+          if (!active() || !createdBinding || binding !== createdBinding) return;
           inputs.value = list;
-          attachNoteListeners();
+          attachNoteListeners(createdBinding);
         },
       });
+      createdBinding = created;
+      if (!active()) {
+        try {
+          created.close();
+        } catch {
+          // The stale binding is never published; continue invalidation.
+        }
+        return false;
+      }
       binding = created;
       boundEngine = engine;
       inputs.value = created.inputs();
-      attachNoteListeners();
+      attachNoteListeners(created);
       connected.value = true;
       return true;
     } catch (err) {
+      if (!active()) return false;
       error.value = err instanceof Error ? err.message : String(err);
       disconnect();
       return false;
@@ -268,7 +302,10 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
   });
 
   if (getCurrentScope()) {
-    onScopeDispose(disconnect);
+    onScopeDispose(() => {
+      disposed = true;
+      disconnect();
+    });
   }
 
   return { available, inputs, selectedInputId, connected, error, connect, disconnect };

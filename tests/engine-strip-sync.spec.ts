@@ -565,6 +565,20 @@ describe('createStripSync', () => {
     ]);
   });
 
+  it('increments the bus mapping generation only when logical numbering changes', () => {
+    const { handle } = makeHandle();
+    const sync = createStripSync(handle);
+
+    expect(sync.busMappingGeneration()).toBe(0);
+    sync.sync([], makeMixer({ buses: [makeBus('A'), makeBus('B')] }));
+    expect(sync.busMappingGeneration()).toBe(1);
+    sync.sync([], makeMixer({ buses: [makeBus('A'), makeBus('B')] }));
+    expect(sync.busMappingGeneration()).toBe(1);
+    sync.sync([], makeMixer({ buses: [makeBus('B')] }));
+    expect(sync.busMappingGeneration()).toBe(2);
+    expect(sync.busIdFor('B')).toBe(1);
+  });
+
   it('rejects more buses than the engine supports', () => {
     const { handle } = makeHandle();
     const sync = createStripSync(handle);

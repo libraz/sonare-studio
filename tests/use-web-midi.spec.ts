@@ -57,6 +57,14 @@ function makeBinding(input: FakeMidiInput | FakeLegacyMidiInput) {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
+}
+
 beforeEach(() => {
   wasmMock.input = new FakeMidiInput();
   wasmMock.close.mockClear();
@@ -177,5 +185,89 @@ describe('useWebMidi', () => {
     expect(webMidi.available.value).toBe(false);
     expect(webMidi.connected.value).toBe(false);
     expect(wasmMock.bindWebMidi).not.toHaveBeenCalled();
+  });
+
+  it('closes a binding that resolves after disconnect without publishing stale listeners', async () => {
+    const pending = deferred<ReturnType<typeof makeBinding>>();
+    wasmMock.bindWebMidi.mockReturnValue(pending.promise);
+    const input = wasmMock.input as FakeMidiInput;
+    const webMidi = useWebMidi();
+
+    const connecting = webMidi.connect({} as never);
+    await vi.waitFor(() => expect(wasmMock.bindWebMidi).toHaveBeenCalledTimes(1));
+    webMidi.disconnect();
+    pending.resolve(makeBinding(input));
+
+    await expect(connecting).resolves.toBe(false);
+    expect(wasmMock.close).toHaveBeenCalledTimes(1);
+    expect(input.listeners.size).toBe(0);
+    expect(webMidi.connected.value).toBe(false);
+  });
+
+  it('keeps only the newest binding when rapid connects resolve out of order', async () => {
+    const first = deferred<ReturnType<typeof makeBinding>>();
+    const second = deferred<ReturnType<typeof makeBinding>>();
+    const firstInput = new FakeMidiInput();
+    const secondInput = new FakeMidiInput();
+    const firstClose = vi.fn();
+    const secondClose = vi.fn();
+    const engineA = {} as never;
+    const engineB = {} as never;
+    wasmMock.bindWebMidi.mockImplementation((engine) =>
+      engine === engineA ? first.promise : second.promise,
+    );
+    const webMidi = useWebMidi();
+
+    const connectingA = webMidi.connect(engineA);
+    await vi.waitFor(() => expect(wasmMock.bindWebMidi).toHaveBeenCalledTimes(1));
+    const connectingB = webMidi.connect(engineB);
+    second.resolve({ ...makeBinding(secondInput), close: secondClose });
+    await expect(connectingB).resolves.toBe(true);
+    first.resolve({ ...makeBinding(firstInput), close: firstClose });
+    await expect(connectingA).resolves.toBe(false);
+
+    expect(firstClose).toHaveBeenCalledTimes(1);
+    expect(secondClose).not.toHaveBeenCalled();
+    expect(firstInput.listeners.size).toBe(0);
+    expect(secondInput.listeners.size).toBe(1);
+    expect(webMidi.connected.value).toBe(true);
+    webMidi.disconnect();
+  });
+
+  it('finishes listener cleanup even when the MIDI binding close throws', async () => {
+    const input = wasmMock.input as FakeMidiInput;
+    wasmMock.bindWebMidi.mockResolvedValue({
+      ...makeBinding(input),
+      close: () => {
+        throw new Error('close failed');
+      },
+    });
+    const webMidi = useWebMidi();
+    await webMidi.connect({} as never);
+
+    expect(() => webMidi.disconnect()).not.toThrow();
+    expect(input.listeners.size).toBe(0);
+    expect(webMidi.connected.value).toBe(false);
+    expect(webMidi.error.value).toBe('close failed');
+  });
+
+  it('never publishes a permission result that resolves after scope disposal', async () => {
+    const pending = deferred<ReturnType<typeof makeBinding>>();
+    wasmMock.bindWebMidi.mockReturnValue(pending.promise);
+    const scope = effectScope();
+    let webMidi!: ReturnType<typeof useWebMidi>;
+    scope.run(() => {
+      webMidi = useWebMidi();
+    });
+    const connecting = webMidi.connect({} as never);
+    await vi.waitFor(() => expect(wasmMock.bindWebMidi).toHaveBeenCalledTimes(1));
+
+    scope.stop();
+    pending.resolve(makeBinding(wasmMock.input as FakeMidiInput));
+
+    await expect(connecting).resolves.toBe(false);
+    expect(wasmMock.close).toHaveBeenCalledTimes(1);
+    expect(webMidi.connected.value).toBe(false);
+    await expect(webMidi.connect({} as never)).resolves.toBe(false);
   });
 });

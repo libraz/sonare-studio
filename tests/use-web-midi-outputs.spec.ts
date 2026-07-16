@@ -9,6 +9,14 @@ interface FakeMidiAccess {
   removeEventListener?: (type: 'statechange', listener: (event: unknown) => void) => void;
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -89,5 +97,32 @@ describe('useWebMidiOutputs', () => {
     scope.stop();
     expect(access.removeEventListener).toHaveBeenCalledWith('statechange', expect.any(Function));
     expect(listener).toBeNull();
+  });
+
+  it('ignores MIDI access that resolves after the owning scope is disposed', async () => {
+    const pending = deferred<FakeMidiAccess>();
+    const requestMIDIAccess = vi.fn(() => pending.promise);
+    vi.stubGlobal('navigator', { requestMIDIAccess });
+    const scope = effectScope();
+    let outputs!: ReturnType<typeof useWebMidiOutputs>;
+    scope.run(() => {
+      outputs = useWebMidiOutputs();
+    });
+    const refreshing = outputs.refresh();
+    scope.stop();
+    const access: FakeMidiAccess = {
+      outputs: new Map([['out-1', { id: 'out-1', name: 'Late' }]]),
+      onstatechange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    };
+    pending.resolve(access);
+
+    await expect(refreshing).resolves.toBe(false);
+    expect(outputs.outputs.value).toEqual([]);
+    expect(outputs.available.value).toBeNull();
+    expect(access.addEventListener).not.toHaveBeenCalled();
+    await expect(outputs.refresh()).resolves.toBe(false);
+    expect(requestMIDIAccess).toHaveBeenCalledTimes(1);
   });
 });
