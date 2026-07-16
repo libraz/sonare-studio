@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import StepSequencer from '@/components/step-sequencer/StepSequencer.vue';
 import { dialogQueue, resolveDialog } from '@/composables/useDialogs';
 import * as commands from '@/project/commands';
-import { addNote, canUndo, clearHistory, trimClip, undo } from '@/project/commands';
+import { addNote, canUndo, clearHistory, setTrackFrozen, trimClip, undo } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { type StepPattern, withStep, withStepCount, withSwing } from '@/ui/step-sequencer/pattern';
 
@@ -76,6 +76,25 @@ describe('StepSequencer (apply / pull integration)', () => {
     expect(store.notes[1].startPpq).toBe(2);
     expect(wrapper.emitted('applied')).toEqual([[2]]);
     expect(wrapper.find('[data-test="status"]').text()).toContain('Applied 2 notes');
+  });
+
+  it('keeps Apply disabled on a frozen track and exposes the unfreeze reason', async () => {
+    setTrackFrozen(store.activeTrackId, { assetId: 'frozen-step-target' });
+    clearHistory();
+    const before = JSON.stringify(store.clips);
+    const wrapper = await mountSequencer();
+    const vm = wrapper.vm as unknown as SequencerVm;
+    const kickRow = vm.pattern.rows.length - 1;
+    vm.pattern = withStep(vm.pattern, kickRow, 0, { active: true });
+
+    expect(wrapper.find('[data-test="apply"]').attributes('disabled')).toBeDefined();
+    expect(wrapper.find('[data-test="readonly"]').text()).toContain('Unfreeze');
+    await vm.applyToClip();
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="status"]').text()).toContain('Unfreeze');
+    expect(JSON.stringify(store.clips)).toBe(before);
+    expect(canUndo()).toBe(false);
   });
 
   it('re-applies count-stable edits as a single undo entry', async () => {

@@ -6,7 +6,7 @@ import {
   paramValueForRatio,
   type StepParamKind,
 } from '@/ui/step-sequencer/param-lane';
-import type { PatternStep } from '@/ui/step-sequencer/pattern';
+import { MAX_GATE, MAX_OFFSET, MIN_GATE, type PatternStep } from '@/ui/step-sequencer/pattern';
 
 /**
  * Per-step parameter lane for the selected row: one draggable mini-bar per
@@ -20,6 +20,10 @@ const props = defineProps<{
   steps: PatternStep[];
   /** Parameter being edited. */
   param: StepParamKind;
+  /** Localized full parameter name for slider semantics. */
+  paramLabel: string;
+  /** Localized word used before the one-based step number. */
+  stepLabel: string;
 }>();
 
 const emit = defineEmits<{
@@ -28,6 +32,8 @@ const emit = defineEmits<{
 }>();
 
 const lane = ref<HTMLDivElement | null>(null);
+const stepControls = ref<HTMLElement[]>([]);
+const activeStep = ref(0);
 
 const bipolar = computed(() => isBipolarParam(props.param));
 
@@ -42,6 +48,85 @@ const bars = computed<CSSProperties[]>(() =>
 );
 
 let dragging = false;
+
+function parameterBounds(): { min: number; max: number; step: number; page: number } {
+  switch (props.param) {
+    case 'velocity':
+      return { min: 1, max: 127, step: 1, page: 10 };
+    case 'gate':
+      return { min: MIN_GATE, max: MAX_GATE, step: 0.05, page: 0.25 };
+    case 'offset':
+      return { min: -MAX_OFFSET, max: MAX_OFFSET, step: 0.01, page: 0.1 };
+  }
+}
+
+function parameterValue(step: PatternStep): number {
+  switch (props.param) {
+    case 'velocity':
+      return step.velocity;
+    case 'gate':
+      return step.gate;
+    case 'offset':
+      return step.offset;
+  }
+}
+
+function parameterValueText(step: PatternStep): string {
+  const value = parameterValue(step);
+  if (props.param === 'velocity') return String(Math.round(value));
+  if (props.param === 'gate') return `${Math.round(value * 100)}%`;
+  return `${value >= 0 ? '+' : ''}${value.toFixed(2)}`;
+}
+
+function setKeyboardValue(stepIndex: number, value: number): void {
+  const { min, max } = parameterBounds();
+  emit('set-value', stepIndex, Math.min(max, Math.max(min, value)));
+}
+
+function focusStep(stepIndex: number): void {
+  activeStep.value = stepIndex;
+  stepControls.value[stepIndex]?.focus();
+}
+
+function onStepKeyDown(stepIndex: number, event: KeyboardEvent): void {
+  const step = props.steps[stepIndex];
+  if (!step) return;
+  const { min, max, step: increment, page } = parameterBounds();
+  switch (event.key) {
+    case 'ArrowLeft':
+      event.preventDefault();
+      focusStep(Math.max(0, stepIndex - 1));
+      return;
+    case 'ArrowRight':
+      event.preventDefault();
+      focusStep(Math.min(props.steps.length - 1, stepIndex + 1));
+      return;
+    case 'ArrowDown':
+      event.preventDefault();
+      setKeyboardValue(stepIndex, parameterValue(step) - increment);
+      return;
+    case 'ArrowUp':
+      event.preventDefault();
+      setKeyboardValue(stepIndex, parameterValue(step) + increment);
+      return;
+    case 'PageDown':
+      event.preventDefault();
+      setKeyboardValue(stepIndex, parameterValue(step) - page);
+      return;
+    case 'PageUp':
+      event.preventDefault();
+      setKeyboardValue(stepIndex, parameterValue(step) + page);
+      return;
+    case 'Home':
+      event.preventDefault();
+      setKeyboardValue(stepIndex, min);
+      return;
+    case 'End':
+      event.preventDefault();
+      setKeyboardValue(stepIndex, max);
+      return;
+  }
+}
 
 /** Emits the value under a pointer position; bails without layout (jsdom). */
 function applyPointer(event: PointerEvent): void {
@@ -80,7 +165,8 @@ function onPointerUp(): void {
   <div
     ref="lane"
     class="param-lane"
-    tabindex="0"
+    role="group"
+    :aria-label="paramLabel"
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
@@ -91,8 +177,19 @@ function onPointerUp(): void {
       <div
         v-for="(step, index) in props.steps"
         :key="index"
+        ref="stepControls"
         class="bar-slot"
         :class="{ 'bar-inactive': !step.active }"
+        role="slider"
+        aria-orientation="vertical"
+        :tabindex="index === activeStep ? 0 : -1"
+        :aria-label="`${paramLabel}, ${stepLabel} ${index + 1}`"
+        :aria-valuemin="parameterBounds().min"
+        :aria-valuemax="parameterBounds().max"
+        :aria-valuenow="parameterValue(step)"
+        :aria-valuetext="parameterValueText(step)"
+        @focus="activeStep = index"
+        @keydown="onStepKeyDown(index, $event)"
       >
         <div class="bar" :style="bars[index]" />
       </div>

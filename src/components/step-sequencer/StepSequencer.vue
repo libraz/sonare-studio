@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { confirmDialog } from '@/composables/useDialogs';
 import { applyNoteEdits } from '@/project/commands';
+import { unfreezeTrack } from '@/project/freeze';
 import { audibleMidiSourceWindow } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
 import { clipKind } from '@/project/types';
@@ -95,6 +96,15 @@ const canTargetClip = computed(() => {
   const clip = activeClip.value;
   return clip !== null && clipKind(clip) === 'midi';
 });
+
+/** Frozen content remains available to Pull, but Apply cannot mutate it. */
+const contentReadOnly = computed(() => {
+  const clip = activeClip.value;
+  return (
+    clip !== null && store.tracks.find((track) => track.id === clip.trackId)?.frozen !== undefined
+  );
+});
+const canApplyToClip = computed(() => canTargetClip.value && !contentReadOnly.value);
 
 const selectedRowSteps = computed(() => pattern.value.rows[selectedRow.value]?.steps ?? []);
 const selectedRowMuted = computed(() => pattern.value.rows[selectedRow.value]?.muted === true);
@@ -258,6 +268,11 @@ async function applyToClip(): Promise<void> {
   const clip = activeClip.value;
   if (!clip || !canTargetClip.value) {
     status.value = t.value.shell.stepSequencer.status.noActiveApply;
+    statusType.value = 'warning';
+    return;
+  }
+  if (contentReadOnly.value) {
+    status.value = t.value.shell.arrangement.trackHeader.unfreezeTitle;
     statusType.value = 'warning';
     return;
   }
@@ -523,7 +538,7 @@ defineExpose({ pattern, selectedRow, overflowPolicy, applyToClip, pullFromClip }
           type="button"
           class="tool-button primary"
           data-test="apply"
-          :disabled="!canTargetClip"
+          :disabled="!canApplyToClip"
           @click="applyToClip"
         >
           {{ t.shell.stepSequencer.applyToClip }}
@@ -538,6 +553,12 @@ defineExpose({ pattern, selectedRow, overflowPolicy, applyToClip, pullFromClip }
           {{ t.shell.stepSequencer.pullFromClip }}
         </button>
       </div>
+    </div>
+    <div v-if="contentReadOnly" class="seq-readonly" role="status" data-test="readonly">
+      <span>{{ t.shell.arrangement.trackHeader.unfreezeTitle }}</span>
+      <button type="button" @click="unfreezeTrack(store.activeTrackId)">
+        {{ t.shell.arrangement.trackHeader.unfreeze }}
+      </button>
     </div>
     <p
       v-if="status"
@@ -576,6 +597,8 @@ defineExpose({ pattern, selectedRow, overflowPolicy, applyToClip, pullFromClip }
         class="param-lane-cell"
         :steps="selectedRowSteps"
         :param="paramTab"
+        :param-label="t.shell.stepSequencer.accessibility.paramNames[paramTab]"
+        :step-label="t.shell.stepSequencer.accessibility.stepNumber"
         @set-value="onSetParamValue"
       />
     </div>
