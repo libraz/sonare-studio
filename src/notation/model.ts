@@ -406,3 +406,53 @@ export interface NotatedScore {
    */
   noteAnnotations?: Readonly<Record<number, ScoreNoteAnnotation>>;
 }
+
+function hasMeasureEntry<T>(
+  entries: Readonly<Record<number, T>> | undefined,
+  index: number,
+): boolean {
+  return entries !== undefined && Object.hasOwn(entries, index);
+}
+
+/**
+ * True when engraving metadata requires a measure to remain structurally
+ * visible instead of being folded into a multi-measure rest.
+ */
+export function measureHasMultiRestStructure(
+  score: NotatedScore,
+  measures: ReadonlyArray<NotatedMeasure>,
+  index: number,
+): boolean {
+  const measure = measures[index];
+  if (!measure) return true;
+  const previous = measures[index - 1];
+  if (
+    previous &&
+    (previous.timeSig.beats !== measure.timeSig.beats ||
+      previous.timeSig.beatUnit !== measure.timeSig.beatUnit)
+  ) {
+    return true;
+  }
+  if (
+    hasMeasureEntry(score.measureKeyFifths, index) ||
+    hasMeasureEntry(score.measureTempos, index) ||
+    hasMeasureEntry(score.measureTempoMarks, index) ||
+    hasMeasureEntry(score.measureTempoTexts, index) ||
+    hasMeasureEntry(score.measureRehearsals, index) ||
+    hasMeasureEntry(score.measureTexts, index) ||
+    hasMeasureEntry(score.measureRepeats, index) ||
+    hasMeasureEntry(score.measureBarlines, index) ||
+    hasMeasureEntry(score.measureBreaks, index)
+  ) {
+    return true;
+  }
+  const endPpq = measure.startPpq + measure.lengthPpq;
+  return (
+    score.chordSymbols?.some(
+      (symbol) => symbol.ppq >= measure.startPpq - 1e-9 && symbol.ppq < endPpq - 1e-9,
+    ) === true ||
+    score.lyrics?.some(
+      (lyric) => lyric.ppq >= measure.startPpq - 1e-9 && lyric.ppq < endPpq - 1e-9,
+    ) === true
+  );
+}

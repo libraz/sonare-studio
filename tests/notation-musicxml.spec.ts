@@ -502,12 +502,57 @@ describe('serializeMusicXml structure', () => {
   });
 
   it('emits multi-measure rest measure-style on the start measure', () => {
-    const score = grandStaffFixture();
-    const empty = rest(1, 4, 4, { base: 'whole', dots: 0 });
-    score.parts[0].measures[1].voices = [{ voice: 1, events: [empty] }];
+    const whole: NoteValue = { base: 'whole', dots: 0 };
+    const score: NotatedScore = {
+      parts: [
+        {
+          id: 'P1',
+          name: 'Lead',
+          clef: 'treble',
+          measures: [
+            {
+              index: 0,
+              startPpq: 0,
+              lengthPpq: 4,
+              timeSig: { beats: 4, beatUnit: 4 },
+              voices: [{ voice: 1, events: [note([60], 1, 0, 4, whole)] }],
+            },
+            ...[1, 2].map((index) => ({
+              index,
+              startPpq: index * 4,
+              lengthPpq: 4,
+              timeSig: { beats: 4, beatUnit: 4 },
+              voices: [{ voice: 1 as const, events: [rest(1, index * 4, 4, whole)] }],
+            })),
+          ],
+        },
+      ],
+      keyFifths: 0,
+      divisions: 960,
+    };
     score.multiMeasureRests = { 1: { count: 2 } };
     const second = qa(parse(serializeMusicXml(score)), 'part[id="P1"] > measure')[1];
     expect(q(second, 'measure-style > multiple-rest').textContent).toBe('2');
+  });
+
+  it('rejects a stale multi-measure rest span that crosses score structure', () => {
+    const whole: NoteValue = { base: 'whole', dots: 0 };
+    const measures: NotatedMeasure[] = [0, 1, 2].map((index) => ({
+      index,
+      startPpq: index * 4,
+      lengthPpq: 4,
+      timeSig: { beats: 4, beatUnit: 4 },
+      voices: [{ voice: 1, events: [rest(1, index * 4, 4, whole)] }],
+    }));
+    const score: NotatedScore = {
+      parts: [{ id: 'P1', name: 'Lead', clef: 'treble', measures }],
+      keyFifths: 0,
+      divisions: 960,
+      measureBreaks: { 2: 'system' },
+      multiMeasureRests: { 1: { count: 2 } },
+    };
+
+    expect(qa(parse(serializeMusicXml(score)), 'measure-style > multiple-rest')).toEqual([]);
   });
 
   it('extracts a single part score while preserving shared notation metadata', () => {
@@ -726,6 +771,18 @@ describe('serializeMusicXml structure', () => {
     expect(q(lyrics[0], 'syllabic').textContent).toBe('single');
     expect(q(lyrics[0], 'text').textContent).toBe('Hel<&>lo');
     expect(q(lyrics[1], 'text').textContent).toBe('world');
+  });
+
+  it('normalizes an arbitrary lyric PPQ to the nearest note attack', () => {
+    const score: NotatedScore = {
+      ...grandStaffFixture(),
+      lyrics: [{ ppq: 1.6, text: 'nearest' }],
+    };
+    const lyric = q(parse(serializeMusicXml(score)), 'lyric');
+    expect(q(lyric, 'text').textContent).toBe('nearest');
+    const note = lyric.closest('note');
+    expect(note).not.toBeNull();
+    expect(q(note as Element, 'pitch > step').textContent).toBe('B');
   });
 
   it('emits lyric verse numbers, syllabic values and melisma extends', () => {

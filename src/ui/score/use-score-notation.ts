@@ -31,6 +31,7 @@ import {
 import { exportMusicXml } from '@/notation/io';
 import {
   DEFAULT_DIVISIONS,
+  measureHasMultiRestStructure,
   type NotatedLyric,
   type NotatedLyricSyllabic,
   type NotatedMeasure,
@@ -128,8 +129,10 @@ export interface ScoreNotation {
   getTimemap: () => ReadonlyArray<VerovioTimemapEntry>;
   /** Reads the MusicXML of the last successful transcription (export source). */
   getCurrentXml: () => string;
-  /** Bumps the render generation, abandoning any in-flight render's results. */
-  bumpGeneration: () => void;
+  /** Active track's part name when that part belongs to the current artifact. */
+  getCurrentPartName: () => string;
+  /** Bumps the render generation, optionally clearing every rendered artifact. */
+  bumpGeneration: (clearArtifacts?: boolean) => void;
   /** Runs the full non-destructive transcription pipeline. */
   transcribe: () => Promise<void>;
   /** Re-renders the current page from the already loaded score. */
@@ -153,6 +156,19 @@ export interface ScoreNotation {
 interface ScorePageRenderer {
   load(musicXml: string, layout?: ReturnType<typeof scorePrintLayoutOptions>): Promise<number>;
   renderPage(page?: number): Promise<string>;
+}
+
+interface ScoreArtifact {
+  identity: OperationIdentity;
+  xml: string;
+  score: NotatedScore;
+  svg: string;
+  partTrackIds: number[];
+  projectName: string;
+}
+
+function sameOperationIdentity(a: OperationIdentity, b: OperationIdentity): boolean {
+  return a.projectId === b.projectId && a.targetId === b.targetId && a.revision === b.revision;
 }
 
 export const MAX_SCORE_EXPORT_PAGES = 500;
@@ -242,9 +258,8 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
   const page = ref(1);
   const pageCount = ref(0);
 
-  /** MusicXML of the last successful transcription (export source). */
-  let currentXml = '';
-  let currentScore: NotatedScore | null = null;
+  /** Last atomically published score/XML/SVG and the source revision that produced it. */
+  let currentArtifact: ScoreArtifact | null = null;
   /** Timemap of the last successful load (paired with the same load's SVG ids). */
   let timemap: ReadonlyArray<VerovioTimemapEntry> = [];
   const screenOperations = new OperationGeneration();
@@ -252,13 +267,14 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
   let activeExportClient: VerovioClient | null = null;
   let activeExportSignal: AbortSignal | undefined;
 
-  function screenIdentity(): OperationIdentity {
+  function transcriptionIdentity(): OperationIdentity {
     return {
       projectId: store.documentGeneration,
       targetId: store.clipId,
       revision: fnv1a32Hex(
         canonicalJson({
           initialized: store.initialized,
+          activeTrackId: store.activeTrackId,
           clips: store.clips,
           annotations: store.scoreAnnotations,
           sections: store.sections,
@@ -281,10 +297,42 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
           loopRegion: options.getLoopRegion?.(),
           displayTransposeSemitones: store.displayTransposeSemitones,
           projectName: store.projectName,
+          layoutBreaks: {
+            barsPerSystem: options.getLayoutSettings().barsPerSystem,
+            barsPerPage: options.getLayoutSettings().barsPerPage,
+          },
+        }),
+      ),
+    };
+  }
+
+  function screenIdentity(): OperationIdentity {
+    const transcription = transcriptionIdentity();
+    return {
+      ...transcription,
+      revision: fnv1a32Hex(
+        canonicalJson({
+          transcriptionRevision: transcription.revision,
           layout: options.getLayoutSettings(),
         }),
       ),
     };
+  }
+
+  function artifactForCurrentState(): ScoreArtifact | null {
+    const artifact = currentArtifact;
+    return artifact && sameOperationIdentity(artifact.identity, transcriptionIdentity())
+      ? artifact
+      : null;
+  }
+
+  function clearArtifacts(): void {
+    currentArtifact = null;
+    svg.value = '';
+    page.value = 1;
+    pageCount.value = 0;
+    timemap = [];
+    options.resetPlayheadScan();
   }
 
   function screenOperationIsCurrent(token: OperationToken, verovio: VerovioClient): boolean {
@@ -321,13 +369,32 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
       client.value = new VerovioClient();
     }
     const verovio = client.value;
-    if (!verovio || !store.initialized || store.clipLengthPpq <= 0) return;
+    const fullScoreRequested = options.getFullScoreEnabled?.() === true;
+    if (
+      !verovio ||
+      !store.initialized ||
+      store.clipLengthPpq <= 0 ||
+      !store.activeClip ||
+      (!fullScoreRequested && clipKind(store.activeClip) !== 'midi')
+    ) {
+      screenOperations.invalidate();
+      exportOperations.invalidate();
+      activeExportClient?.dispose();
+      activeExportClient = null;
+      loading.value = false;
+      clearArtifacts();
+      return;
+    }
+    if (!artifactForCurrentState()) clearArtifacts();
     const token = screenOperations.begin(screenIdentity());
     loading.value = true;
     error.value = '';
     try {
       const fifths = options.getKeyFifths();
-      const fullScore = options.getFullScoreEnabled?.() === true;
+      const fullScore = fullScoreRequested;
+      const partTrackIds = fullScore
+        ? store.tracks.filter((track) => track.kind === 'midi').map((track) => track.id)
+        : [store.activeClip.trackId];
       const scoreProjection = fullScore
         ? buildFullScoreProjection(store, store.clipStartPpq, options.getScreenClipLengthPpq())
         : buildScoreProjection(
@@ -408,7 +475,6 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
         store.clipLengthPpq,
         options.getMeasureLenPpq(),
       );
-      applyMultiMeasureRests(score);
       const loopRegion = options.getLoopRegion?.() ?? null;
       if (loopRegion) {
         applyLoopMarks(
@@ -420,6 +486,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
           options.getMeasureLenPpq(),
         );
       }
+      applyMultiMeasureRests(score);
       if (options.getChordsEnabled()) {
         // Chord symbols are best-effort: any wasm failure degrades silently to
         // a score without harmony instead of failing the whole render.
@@ -448,8 +515,14 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
         verovio.getTimemap(),
       ]);
       if (!screenOperationIsCurrent(token, verovio)) return;
-      currentScore = score;
-      currentXml = xml;
+      currentArtifact = {
+        identity: transcriptionIdentity(),
+        xml,
+        score,
+        svg: pageSvg,
+        partTrackIds,
+        projectName: store.projectName,
+      };
       pageCount.value = count;
       page.value = nextPage;
       svg.value = pageSvg;
@@ -467,6 +540,12 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
   async function refresh(): Promise<void> {
     const verovio = client.value;
     if (!verovio || pageCount.value === 0) return;
+    const artifact = artifactForCurrentState();
+    if (!artifact) {
+      clearArtifacts();
+      void transcribe();
+      return;
+    }
     const token = screenOperations.begin(screenIdentity());
     verovio.cancelPending(new DOMException('Score refresh superseded.', 'AbortError'));
     loading.value = true;
@@ -475,6 +554,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
       const pageSvg = await verovio.renderPage(page.value);
       if (!screenOperationIsCurrent(token, verovio)) return;
       svg.value = pageSvg;
+      currentArtifact = { ...artifact, svg: pageSvg };
       options.resetPlayheadScan();
     } catch (err) {
       if (!screenOperationIsCurrent(token, verovio)) return;
@@ -487,7 +567,9 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
   /** Applies the layout settings to the loaded score and re-renders. */
   async function applyLayout(): Promise<void> {
     const verovio = client.value;
-    if (!verovio || pageCount.value === 0) {
+    const artifact = artifactForCurrentState();
+    if (!verovio || pageCount.value === 0 || !artifact) {
+      if (!artifact) clearArtifacts();
       void transcribe();
       return;
     }
@@ -505,6 +587,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
       pageCount.value = count;
       page.value = nextPage;
       svg.value = pageSvg;
+      currentArtifact = { ...artifact, svg: pageSvg };
       options.resetPlayheadScan();
     } catch (err) {
       if (!screenOperationIsCurrent(token, verovio)) return;
@@ -527,8 +610,9 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
     settings: ScoreLayoutSettings,
     consume: (svg: string, page: number, pageCount: number) => Promise<void> | void,
   ): Promise<number> {
-    if (!currentXml) return 0;
-    const xmlSnapshot = String(currentXml);
+    const artifact = artifactForCurrentState();
+    if (!artifact) return 0;
+    const xmlSnapshot = String(artifact.xml);
     const settingsSnapshot = structuredClone(settings);
     const identity = exportIdentity(xmlSnapshot, settingsSnapshot);
     const token = exportOperations.begin(identity);
@@ -542,7 +626,9 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
         scorePrintLayoutOptions(settingsSnapshot),
         consume,
         token.signal,
-        () => exportOperations.isCurrent(token, exportIdentity(xmlSnapshot, settingsSnapshot)),
+        () =>
+          artifactForCurrentState() === artifact &&
+          exportOperations.isCurrent(token, exportIdentity(xmlSnapshot, settingsSnapshot)),
       );
     } finally {
       if (activeExportClient === verovio) activeExportClient = null;
@@ -568,6 +654,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
   }
 
   function onPrint(): void {
+    if (loading.value || !artifactForCurrentState()) return;
     void runExport(async () => {
       const settings = structuredClone(options.getLayoutSettings());
       const output: { writer: ReturnType<typeof createPrintPageWriter> | null } = { writer: null };
@@ -580,6 +667,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
   }
 
   function onExportPdf(): void {
+    if (loading.value || !artifactForCurrentState()) return;
     void runExport(async () => {
       const settings = structuredClone(options.getLayoutSettings());
       const title = store.projectName.trim() || 'score';
@@ -605,19 +693,30 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
   }
 
   function onExportMusicXml(): void {
-    if (!currentXml) return;
+    if (loading.value) return;
+    const artifact = artifactForCurrentState();
+    if (!artifact) return;
     void runExport(async () => {
-      exportMusicXml(currentXml, projectFilename(store.projectName, '.musicxml', 'score'));
+      exportMusicXml(artifact.xml, projectFilename(artifact.projectName, '.musicxml', 'score'));
     });
   }
 
   function onExportPartMusicXml(): void {
-    if (!currentScore || currentScore.parts.length === 0) return;
-    const score = currentScore;
+    if (loading.value) return;
+    const artifact = artifactForCurrentState();
+    if (!artifact || artifact.score.parts.length === 0) return;
+    const partIndex = artifact.partTrackIds.indexOf(store.activeTrackId);
+    if (partIndex < 0 || partIndex >= artifact.score.parts.length) return;
+    const part = artifact.score.parts[partIndex];
     void runExport(async () => {
-      const partScore = extractPartScore(score, 0);
+      if (artifactForCurrentState() !== artifact) return;
+      const partScore = extractPartScore(artifact.score, partIndex);
       const xml = serializeMusicXml(partScore);
-      exportMusicXml(xml, projectFilename(store.projectName, '.part.musicxml', 'score-part'));
+      const projectName = artifact.projectName.trim() || 'score';
+      exportMusicXml(
+        xml,
+        projectFilename(`${projectName} - ${part.name}`, '.part.musicxml', 'score-part'),
+      );
     });
   }
 
@@ -629,13 +728,21 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
     page,
     pageCount,
     getTimemap: () => timemap,
-    getCurrentXml: () => currentXml,
-    bumpGeneration: () => {
+    getCurrentXml: () => artifactForCurrentState()?.xml ?? '',
+    getCurrentPartName: () => {
+      const artifact = artifactForCurrentState();
+      if (!artifact) return '';
+      const index = artifact.partTrackIds.indexOf(store.activeTrackId);
+      return index >= 0 ? (artifact.score.parts[index]?.name ?? '') : '';
+    },
+    bumpGeneration: (clear = false) => {
       screenOperations.invalidate();
       exportOperations.invalidate();
       client.value?.cancelPending();
       activeExportClient?.dispose();
       activeExportClient = null;
+      loading.value = false;
+      if (clear) clearArtifacts();
     },
     transcribe,
     refresh,
@@ -1002,13 +1109,34 @@ export function applyLyricMarks(
 ): void {
   if (markers.length === 0 || score.parts.length === 0) return;
   const clipEndPpq = clipStartPpq + clipLengthPpq;
+  const attacks = score.parts
+    .flatMap((part, partIndex) =>
+      part.measures.flatMap((measure) =>
+        measure.voices.flatMap((voice) =>
+          voice.events.flatMap((event) =>
+            event.kind === 'note' && !event.tieStop
+              ? [{ ppq: event.startPpq, partId: part.id, partIndex }]
+              : [],
+          ),
+        ),
+      ),
+    )
+    .sort((a, b) => a.ppq - b.ppq || a.partIndex - b.partIndex);
+  if (attacks.length === 0) return;
   const lyrics = markers
     .filter((marker) => marker.ppq >= clipStartPpq - PPQ_EPSILON && marker.ppq < clipEndPpq)
-    .sort((a, b) => a.ppq - b.ppq || a.id - b.id)
     .flatMap((marker) => {
       const lyric = lyricPayload(marker.name);
-      return lyric === null ? [] : [{ ppq: marker.ppq, ...lyric }];
-    });
+      if (lyric === null) return [];
+      const attack = attacks.reduce((nearest, candidate) =>
+        Math.abs(candidate.ppq - marker.ppq) < Math.abs(nearest.ppq - marker.ppq)
+          ? candidate
+          : nearest,
+      );
+      return [{ ppq: attack.ppq, markerId: marker.id, ...lyric }];
+    })
+    .sort((a, b) => a.ppq - b.ppq || a.markerId - b.markerId)
+    .map(({ markerId: _markerId, ...lyric }) => lyric);
   if (lyrics.length > 0) score.lyrics = lyrics;
 }
 
@@ -1057,7 +1185,10 @@ export function applyMultiMeasureRests(score: NotatedScore): void {
   const rests: Record<number, { count: number }> = {};
   let start = -1;
   for (let index = 0; index <= measures.length; index += 1) {
-    const empty = index < measures.length && isEmptyMeasure(measures[index]);
+    const empty =
+      index < measures.length &&
+      isEmptyMeasure(measures[index]) &&
+      !measureHasMultiRestStructure(score, measures, index);
     if (empty && start < 0) start = index;
     if ((!empty || index === measures.length) && start >= 0) {
       const count = index - start;

@@ -156,7 +156,8 @@ export type MusicXmlLossFeature =
   | 'fingering'
   | 'annotations'
   | 'grace-notes'
-  | 'figured-bass';
+  | 'figured-bass'
+  | 'tempo-conflicts';
 
 export interface MusicXmlLossIssue {
   feature: MusicXmlLossFeature;
@@ -419,7 +420,7 @@ function dynamicsFromDirection(element: XmlElement): number | null {
   return dynamicsPercentToVelocity(sound?.attributes.dynamics);
 }
 
-function collectLossReport(root: XmlElement): MusicXmlImportReport {
+function collectLossReport(root: XmlElement, tempoConflictCount = 0): MusicXmlImportReport {
   const definitions: ReadonlyArray<{
     feature: MusicXmlLossFeature;
     tags: ReadonlyArray<string>;
@@ -439,6 +440,9 @@ function collectLossReport(root: XmlElement): MusicXmlImportReport {
     const count = tags.reduce((total, tag) => total + descendants(root, tag).length, 0);
     return count > 0 ? [{ feature, count }] : [];
   });
+  if (tempoConflictCount > 0) {
+    issues.push({ feature: 'tempo-conflicts', count: tempoConflictCount });
+  }
   return { issues };
 }
 
@@ -600,6 +604,9 @@ function importPartNotes(
   part: PartInfo,
   global: GlobalMaps,
   captureGlobal: boolean,
+  canonicalTempos: ReadonlyArray<DocumentTempoSegment> | null,
+  tempoConflicts: Set<string>,
+  partId: string,
 ): DocumentNote[] {
   const notes: DocumentNote[] = [];
   const ties = new TieTracker();
@@ -644,7 +651,15 @@ function importPartNotes(
           const bpm = tempoFromDirection(element);
           if (bpm !== null && bpm > 0) {
             const offset = childInt(element, 'offset') ?? 0;
-            global.tempos.set(cursorPpq + offset / state.divisions, bpm);
+            const ppq = Math.max(0, cursorPpq + offset / state.divisions);
+            if (captureGlobal) {
+              global.tempos.set(ppq, bpm);
+            } else if (
+              canonicalTempos !== null &&
+              Math.abs(tempoAtPpq(canonicalTempos, ppq) - bpm) > Number.EPSILON
+            ) {
+              tempoConflicts.add(`${partId}:${ppq}:${bpm}`);
+            }
           }
           const dynamics = dynamicsFromDirection(element);
           if (dynamics !== null) state.velocity = dynamics;
@@ -709,6 +724,24 @@ function tempoSegments(tempos: Map<number, number>): DocumentTempoSegment[] {
   return segments;
 }
 
+/** Effective canonical tempo at a PPQ position (segments are ordered). */
+function tempoAtPpq(segments: ReadonlyArray<DocumentTempoSegment>, ppq: number): number {
+  let low = 0;
+  let high = segments.length - 1;
+  let match = segments[0]?.bpm ?? DEFAULT_BPM;
+  while (low <= high) {
+    const middle = (low + high) >>> 1;
+    const segment = segments[middle];
+    if (segment.startPpq <= ppq) {
+      match = segment.bpm;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return match;
+}
+
 /** Collapses raw global time-signature events into an ordered list. */
 function timeSignatureSegments(entries: GlobalMaps['timeSignatures']): DocumentTimeSignature[] {
   const sorted = entries
@@ -767,10 +800,21 @@ export function importMusicXmlWithReport(
   const global: GlobalMaps = { tempos: new Map(), timeSignatures: [], keys: [] };
   const tracks: ProjectDocument['tracks'] = [];
   const partElements = childElements(root, 'part');
+  const tempoConflicts = new Set<string>();
+  let canonicalTempos: DocumentTempoSegment[] | null = null;
   partElements.forEach((partEl, index) => {
     const id = partEl.attributes.id ?? `P${index + 1}`;
     const info = partInfos.get(id) ?? { name: id, instruments: new Map() };
-    const notes = importPartNotes(partEl, info, global, index === 0);
+    const notes = importPartNotes(
+      partEl,
+      info,
+      global,
+      index === 0,
+      canonicalTempos,
+      tempoConflicts,
+      id,
+    );
+    if (index === 0) canonicalTempos = tempoSegments(global.tempos);
     const name = info.name || `Part ${index + 1}`;
     tracks.push({
       name,
@@ -797,7 +841,7 @@ export function importMusicXmlWithReport(
     sections: [],
     ...(global.pickupLengthPpq !== undefined ? { pickupLengthPpq: global.pickupLengthPpq } : {}),
   };
-  return { document, report: collectLossReport(root) };
+  return { document, report: collectLossReport(root, tempoConflicts.size) };
 }
 
 /** Compatibility API for callers that do not need the structured loss report. */

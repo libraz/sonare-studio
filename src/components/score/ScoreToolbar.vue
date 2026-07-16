@@ -24,6 +24,8 @@ defineProps<{
   pageCount: number;
   /** Whether a MusicXML export source is available. */
   hasXml: boolean;
+  /** Active track's exported part name, or empty when it has no score part. */
+  partName: string;
   /** On-screen zoom as a rounded percentage for the readout. */
   zoomPercent: number;
   /** Lower zoom bound; the zoom-out button disables at it. */
@@ -228,17 +230,33 @@ const layoutOpen = ref(false);
       </svg>
     </button>
     <span class="bar-spacer" />
-    <button type="button" :disabled="exporting || pageCount === 0" @click="emit('print')">
+    <button
+      type="button"
+      :disabled="loading || exporting || pageCount === 0 || !hasXml"
+      @click="emit('print')"
+    >
       {{ t.shell.score.print }}
     </button>
-    <button type="button" :disabled="exporting || pageCount === 0" @click="emit('exportPdf')">
+    <button
+      type="button"
+      :disabled="loading || exporting || pageCount === 0 || !hasXml"
+      @click="emit('exportPdf')"
+    >
       PDF
     </button>
-    <button type="button" :disabled="exporting || !hasXml" @click="emit('exportMusicXml')">
+    <button
+      type="button"
+      :disabled="loading || exporting || !hasXml"
+      @click="emit('exportMusicXml')"
+    >
       MusicXML
     </button>
-    <button type="button" :disabled="exporting || !hasXml" @click="emit('exportPartMusicXml')">
-      Part XML
+    <button
+      type="button"
+      :disabled="loading || exporting || !hasXml || !partName"
+      @click="emit('exportPartMusicXml')"
+    >
+      {{ partName ? `Part XML (${partName})` : 'Part XML' }}
     </button>
   </div>
 </template>

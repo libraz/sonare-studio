@@ -569,6 +569,14 @@ function markerEditPpq(): number {
   return scoreEditPpq(props.positionPpq?.(), store.clipStartPpq, store.clipLengthPpq);
 }
 
+function nearestLyricOnset(ppq: number): number {
+  const sources = accessibleScoreSources.value;
+  if (sources.length === 0) throw new RangeError(t.value.shell.score.lyricNoNote);
+  return sources.reduce((nearest, source) =>
+    Math.abs(source.startPpq - ppq) < Math.abs(nearest.startPpq - ppq) ? source : nearest,
+  ).startPpq;
+}
+
 function addLyricMarker(): void {
   try {
     const name = scoreLyricMarkerName(lyricInput.value, {
@@ -576,7 +584,7 @@ function addLyricMarker(): void {
       syllabic: lyricSyllabicInput.value,
       extend: lyricExtendInput.value,
     });
-    setMarker(null, markerEditPpq(), name);
+    setMarker(null, nearestLyricOnset(markerEditPpq()), name);
     lyricInput.value = '';
     notation.setError('');
     void notation.transcribe();
@@ -608,19 +616,17 @@ function scheduleRetranscribe(): void {
 
 // The active clip is navigation, not a note edit: switch the score immediately
 // so playhead following does not keep scanning the previous clip's timemap.
-watch(
-  () => store.clipId,
-  () => {
-    if (retranscribeTimer !== null) {
-      clearTimeout(retranscribeTimer);
-      retranscribeTimer = null;
-    }
-    closePalette();
-    playhead?.resetScan();
-    notesHandledForClipId = store.clipId;
-    void notation.transcribe();
-  },
-);
+watch([() => store.documentGeneration, () => store.clipId], () => {
+  if (retranscribeTimer !== null) {
+    clearTimeout(retranscribeTimer);
+    retranscribeTimer = null;
+  }
+  closePalette();
+  playhead?.resetScan();
+  notesHandledForClipId = store.clipId;
+  notation.bumpGeneration(true);
+  void notation.transcribe();
+});
 // The note mirror is replaced wholesale on every command, so identity
 // tracking fires once per edit. Debounce only when the clip itself did not
 // change; clip changes are handled immediately above.
@@ -647,6 +653,7 @@ watch(
     () => store.tempoBpm,
     () => store.timeSignatures,
     () => store.pickupLengthPpq,
+    () => store.projectName,
     () => props.loopEnabled,
     () => props.loopStartPpq,
     () => props.loopEndPpq,
@@ -711,7 +718,7 @@ onBeforeUnmount(() => {
   }
   resizeObserver?.disconnect();
   resizeObserver = null;
-  notation.bumpGeneration();
+  notation.bumpGeneration(true);
   client.value?.dispose();
   client.value = null;
 });
@@ -739,6 +746,7 @@ onBeforeUnmount(() => {
       :exporting="notation.exporting.value"
       :page-count="notation.pageCount.value"
       :has-xml="!!notation.getCurrentXml()"
+      :part-name="notation.getCurrentPartName()"
       :zoom-percent="zoomPercent"
       :zoom-min="VIEW_ZOOM_MIN"
       :zoom-max="VIEW_ZOOM_MAX"

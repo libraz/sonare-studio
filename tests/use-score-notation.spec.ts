@@ -77,6 +77,30 @@ function score(): NotatedScore {
   };
 }
 
+function lyricScore(): NotatedScore {
+  const out = score();
+  for (const measure of out.parts[0].measures) {
+    measure.voices = [
+      {
+        voice: 1,
+        events: [
+          {
+            kind: 'note',
+            pitches: [60],
+            voice: 1,
+            startPpq: measure.startPpq,
+            durationPpq: 1,
+            value: { base: 'quarter', dots: 0 },
+            tieStart: false,
+            tieStop: false,
+          },
+        ],
+      },
+    ];
+  }
+  return out;
+}
+
 function track(id: number): EditorTrack {
   return {
     id,
@@ -560,7 +584,7 @@ describe('applyMarkerTexts', () => {
 
 describe('applyLyricMarks', () => {
   it('adds lyric markers as score lyrics in timeline order', () => {
-    const out = score();
+    const out = lyricScore();
     applyLyricMarks(
       out,
       [
@@ -579,7 +603,7 @@ describe('applyLyricMarks', () => {
   });
 
   it('parses structured lyric markers for verse, syllabic and melisma extend', () => {
-    const out = score();
+    const out = lyricScore();
     applyLyricMarks(
       out,
       [
@@ -599,7 +623,7 @@ describe('applyLyricMarks', () => {
   });
 
   it('consumes lyric marker names produced by the score marker editor helpers', () => {
-    const out = score();
+    const out = lyricScore();
     applyLyricMarks(
       out,
       [
@@ -621,7 +645,7 @@ describe('applyLyricMarks', () => {
   });
 
   it('ignores lyric markers outside the score window', () => {
-    const out = score();
+    const out = lyricScore();
     applyLyricMarks(
       out,
       [
@@ -634,6 +658,12 @@ describe('applyLyricMarks', () => {
     );
 
     expect(out.lyrics).toEqual([{ ppq: 8, text: 'in' }]);
+  });
+
+  it('snaps arbitrary marker positions to the nearest note attack', () => {
+    const out = lyricScore();
+    applyLyricMarks(out, [{ id: 1, ppq: 6.25, name: 'Lyric: snap' }], 0, 12);
+    expect(out.lyrics).toEqual([{ ppq: 8, text: 'snap' }]);
   });
 });
 
@@ -713,5 +743,72 @@ describe('applyMultiMeasureRests', () => {
     applyMultiMeasureRests(out);
 
     expect(out.multiMeasureRests).toEqual({ 1: { count: 3 } });
+  });
+
+  it.each([
+    ['key change', (out: NotatedScore) => (out.measureKeyFifths = { 3: -2 })],
+    [
+      'tempo mark',
+      (out: NotatedScore) => (out.measureTempoMarks = { 3: [{ bpm: 90, offsetPpq: 0 }] }),
+    ],
+    ['rehearsal', (out: NotatedScore) => (out.measureRehearsals = { 3: 'B' })],
+    ['repeat', (out: NotatedScore) => (out.measureRepeats = { 3: 'start' })],
+    ['barline', (out: NotatedScore) => (out.measureBarlines = { 3: 'double' })],
+    ['layout break', (out: NotatedScore) => (out.measureBreaks = { 3: 'system' })],
+    ['text direction', (out: NotatedScore) => (out.measureTexts = { 3: [{ text: 'Cue' }] })],
+    ['chord symbol', (out: NotatedScore) => (out.chordSymbols = [{ ppq: 12, text: 'C' }])],
+  ])('splits empty runs at a %s', (_label, addStructure) => {
+    const out: NotatedScore = {
+      ...score(),
+      parts: [
+        {
+          id: 'P1',
+          name: 'Lead',
+          clef: 'treble',
+          measures: [measure(0), ...[1, 2, 3, 4, 5].map(restMeasure)],
+        },
+      ],
+    };
+    addStructure(out);
+
+    applyMultiMeasureRests(out);
+
+    expect(out.multiMeasureRests).toEqual({ 1: { count: 2 }, 4: { count: 2 } });
+  });
+
+  it('splits an empty run at a time-signature change', () => {
+    const changed = restMeasure(3);
+    changed.startPpq = 12;
+    changed.lengthPpq = 3;
+    changed.timeSig = { beats: 3, beatUnit: 4 };
+    changed.voices[0].events[0].startPpq = 12;
+    changed.voices[0].events[0].durationPpq = 3;
+    const continued = [
+      { index: 4, startPpq: 15 },
+      { index: 5, startPpq: 18 },
+    ].map(({ index, startPpq }) => {
+      const rest = restMeasure(index);
+      rest.startPpq = startPpq;
+      rest.lengthPpq = 3;
+      rest.timeSig = { beats: 3, beatUnit: 4 };
+      rest.voices[0].events[0].startPpq = startPpq;
+      rest.voices[0].events[0].durationPpq = 3;
+      return rest;
+    });
+    const out: NotatedScore = {
+      ...score(),
+      parts: [
+        {
+          id: 'P1',
+          name: 'Lead',
+          clef: 'treble',
+          measures: [measure(0), restMeasure(1), restMeasure(2), changed, ...continued],
+        },
+      ],
+    };
+
+    applyMultiMeasureRests(out);
+
+    expect(out.multiMeasureRests).toEqual({ 1: { count: 2 }, 4: { count: 2 } });
   });
 });

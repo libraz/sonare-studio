@@ -621,3 +621,90 @@ export function annotationsFromDocument(
   }
   return out;
 }
+
+/**
+ * Re-associates one clip's annotations after a structural edit by using the
+ * same content address (pitch, onset, channel, and duplicate ordinal) as the
+ * document serializer. This deliberately does not rely on editor note ids,
+ * which are regenerated when the Project duplicates or partitions MIDI.
+ */
+export function remapClipScoreAnnotations(
+  annotations: Readonly<ClipScoreAnnotations> | undefined,
+  beforeNotes: ReadonlyArray<EditorNote>,
+  afterNotes: ReadonlyArray<EditorNote>,
+): ClipScoreAnnotations {
+  if (annotations === undefined || Object.keys(annotations).length === 0) return {};
+  return annotationsFromDocument(annotationsToDocument(annotations, beforeNotes), afterNotes);
+}
+
+/**
+ * Copies annotations through an explicit note-id projection. Structural edits
+ * such as loop-flattening can create several audible occurrences from one
+ * source note; callers invoke this once per occurrence, then use
+ * {@link remapClipScoreAnnotations} to associate the projected content with
+ * the freshly created Project notes.
+ *
+ * Span endpoints use the exact same id projection as their start notes.
+ * Endpoints outside the projected note set are removed without discarding
+ * independent fields (for example, a dynamic on a split-boundary note).
+ */
+export function projectClipScoreAnnotations(
+  annotations: Readonly<ClipScoreAnnotations> | undefined,
+  noteIds: ReadonlyMap<number, number>,
+): ClipScoreAnnotations {
+  if (annotations === undefined || noteIds.size === 0) return {};
+  const out: ClipScoreAnnotations = {};
+  for (const [noteKey, source] of Object.entries(annotations)) {
+    const id = noteIds.get(Number(noteKey));
+    if (id === undefined) continue;
+    const annotation: ScoreNoteAnnotation = {
+      ...source,
+      ...(source.lineSpans ? { lineSpans: source.lineSpans.map((span) => ({ ...span })) } : {}),
+    };
+
+    if (source.slurToNoteId !== undefined) {
+      const targetId = noteIds.get(source.slurToNoteId);
+      if (targetId !== undefined && targetId !== id) annotation.slurToNoteId = targetId;
+      else delete annotation.slurToNoteId;
+    }
+
+    if (source.hairpin !== undefined || source.hairpinToNoteId !== undefined) {
+      const targetId =
+        source.hairpinToNoteId === undefined ? undefined : noteIds.get(source.hairpinToNoteId);
+      if (source.hairpin !== undefined && targetId !== undefined && targetId !== id) {
+        annotation.hairpin = source.hairpin;
+        annotation.hairpinToNoteId = targetId;
+      } else {
+        delete annotation.hairpin;
+        delete annotation.hairpinToNoteId;
+      }
+    }
+
+    if (source.lineSpan !== undefined || source.lineSpanToNoteId !== undefined) {
+      const targetId =
+        source.lineSpanToNoteId === undefined ? undefined : noteIds.get(source.lineSpanToNoteId);
+      if (source.lineSpan !== undefined && targetId !== undefined && targetId !== id) {
+        annotation.lineSpan = source.lineSpan;
+        annotation.lineSpanToNoteId = targetId;
+      } else {
+        delete annotation.lineSpan;
+        delete annotation.lineSpanToNoteId;
+        delete annotation.pedalStyle;
+        delete annotation.glissandoLineType;
+        delete annotation.glissandoText;
+      }
+    }
+
+    const lineSpans = (source.lineSpans ?? []).flatMap((span) => {
+      const targetId = noteIds.get(span.lineSpanToNoteId);
+      return targetId !== undefined && targetId !== id
+        ? [{ ...span, lineSpanToNoteId: targetId }]
+        : [];
+    });
+    if (lineSpans.length > 0) annotation.lineSpans = lineSpans;
+    else delete annotation.lineSpans;
+
+    if (!isEmptyScoreAnnotation(annotation)) out[id] = annotation;
+  }
+  return out;
+}

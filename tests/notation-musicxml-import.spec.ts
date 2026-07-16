@@ -64,6 +64,31 @@ function trackNotes(doc: ReturnType<typeof importMusicXml>, trackIndex: number):
   return doc.tracks[trackIndex].clips[0].notes;
 }
 
+/** Minimal two-PPQ part carrying start and optional offset tempo directions. */
+function tempoPart(id: string, startBpm: number, midBpm?: number): string {
+  return (
+    `<part id="${id}"><measure number="1">` +
+    '<attributes><divisions>2</divisions></attributes>' +
+    `<direction><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>${startBpm + 30}</per-minute></metronome></direction-type>` +
+    `<sound tempo="${startBpm}"/></direction>` +
+    '<forward><duration>2</duration></forward>' +
+    (midBpm === undefined
+      ? ''
+      : `<direction><offset>1</offset><sound tempo="${midBpm}"/></direction>`) +
+    '<note><pitch><step>C</step><octave>4</octave></pitch><duration>2</duration></note>' +
+    '</measure></part>'
+  );
+}
+
+function tempoScore(parts: string): string {
+  return (
+    '<score-partwise version="4.0"><part-list>' +
+    '<score-part id="P1"><part-name>One</part-name></score-part>' +
+    '<score-part id="P2"><part-name>Two</part-name></score-part>' +
+    `</part-list>${parts}</score-partwise>`
+  );
+}
+
 describe('importMusicXml error handling', () => {
   it('rejects malformed XML', () => {
     expect(() => importMusicXml('<score-partwise><part')).toThrow(MusicXmlImportError);
@@ -253,6 +278,42 @@ describe('importMusicXml global maps', () => {
       '<note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration></note>' +
       '</measure></part></score-partwise>';
     expect(importMusicXml(xml).tempoSegments).toEqual([{ startPpq: 0, bpm: 120 }]);
+  });
+
+  it('uses only the first part as the global tempo source and reports later conflicts', () => {
+    const p1First = importMusicXmlWithReport(
+      tempoScore(tempoPart('P1', 90) + tempoPart('P2', 140)),
+    );
+    expect(p1First.document.tempoSegments).toEqual([{ startPpq: 0, bpm: 90 }]);
+    expect(p1First.report.issues).toEqual([{ feature: 'tempo-conflicts', count: 1 }]);
+
+    const p2First = importMusicXmlWithReport(
+      tempoScore(tempoPart('P2', 140) + tempoPart('P1', 90)),
+    );
+    expect(p2First.document.tempoSegments).toEqual([{ startPpq: 0, bpm: 140 }]);
+    expect(p2First.report.issues).toEqual([{ feature: 'tempo-conflicts', count: 1 }]);
+  });
+
+  it('deduplicates equal later-part tempo and preserves offset timing', () => {
+    const imported = importMusicXmlWithReport(
+      tempoScore(tempoPart('P1', 90, 100) + tempoPart('P2', 90, 100)),
+    );
+    expect(imported.document.tempoSegments).toEqual([
+      { startPpq: 0, bpm: 90 },
+      { startPpq: 1.5, bpm: 100 },
+    ]);
+    expect(imported.report.issues).toEqual([]);
+  });
+
+  it('reports but does not apply a later-part mid-measure tempo conflict', () => {
+    const imported = importMusicXmlWithReport(
+      tempoScore(tempoPart('P1', 90, 100) + tempoPart('P2', 90, 110)),
+    );
+    expect(imported.document.tempoSegments).toEqual([
+      { startPpq: 0, bpm: 90 },
+      { startPpq: 1.5, bpm: 100 },
+    ]);
+    expect(imported.report.issues).toEqual([{ feature: 'tempo-conflicts', count: 1 }]);
   });
 
   it('records the key signature as a marker', () => {

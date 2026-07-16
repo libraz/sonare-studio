@@ -2,13 +2,20 @@ import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { annotationsFromDocument, annotationsToDocument } from '@/project/annotations';
 import {
+  addMidiClip,
   addNote,
   clearHistory,
   clearNoteAnnotation,
   deleteNotes,
+  duplicateClip,
+  glueMidiClips,
   redo,
+  setActiveClip,
+  setClipLoop,
   setDisplayTranspose,
   setNoteAnnotation,
+  splitClip,
+  trimClip,
   undo,
 } from '@/project/commands';
 import {
@@ -390,6 +397,178 @@ describe('score annotation serialization', () => {
     await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
     const entries = Object.values(store.scoreAnnotations[store.clipId] ?? {});
     expect(entries).toEqual([{ dynamics: 'f' }]);
+  });
+
+  it('duplicateClip transfers duplicate-note ordinals and every span endpoint through save/load', async () => {
+    const sourceId = store.clipId;
+    const first = addNote({ pitch: 60, startPpq: 0, durationPpq: 1, velocity: 80 });
+    const second = addNote({ pitch: 60, startPpq: 0, durationPpq: 2, velocity: 100 });
+    const target = addNote({ pitch: 67, startPpq: 2, durationPpq: 1 });
+    setNoteAnnotation(sourceId, first, { dynamics: 'p' });
+    setNoteAnnotation(sourceId, second, {
+      dynamics: 'f',
+      slurToNoteId: target,
+      hairpin: 'crescendo',
+      hairpinToNoteId: target,
+      lineSpan: 'glissando',
+      lineSpanToNoteId: target,
+      glissandoText: 'port.',
+      addLineSpan: { lineSpan: 'ottava-up', lineSpanToNoteId: target },
+    });
+
+    const copyId = duplicateClip(sourceId, 8);
+    const copy = store.clips.find((clip) => clip.id === copyId);
+    expect(copy).toBeDefined();
+    const [copyFirst, copySecond, copyTarget] = copy?.notes ?? [];
+    expect(store.scoreAnnotations[copyId]).toEqual({
+      [copyFirst.id]: { dynamics: 'p' },
+      [copySecond.id]: {
+        dynamics: 'f',
+        slurToNoteId: copyTarget.id,
+        hairpin: 'crescendo',
+        hairpinToNoteId: copyTarget.id,
+        lineSpan: 'glissando',
+        lineSpanToNoteId: copyTarget.id,
+        glissandoText: 'port.',
+        lineSpans: [{ lineSpan: 'ottava-up', lineSpanToNoteId: copyTarget.id }],
+      },
+    });
+
+    expect(undo()).toBe(true);
+    expect(store.scoreAnnotations[copyId]).toBeUndefined();
+    expect(redo()).toBe(true);
+    const redone = store.clips.find((clip) => clip.id === copyId);
+    expect(Object.keys(store.scoreAnnotations[copyId] ?? {})).toHaveLength(2);
+    expect(redone?.notes).toHaveLength(3);
+
+    const document = serializeProject();
+    await loadProjectDocument(JSON.parse(JSON.stringify(document)) as ProjectDocument);
+    const loadedCopy = store.clips.find((clip) => clip.startPpq === 8);
+    expect(loadedCopy).toBeDefined();
+    const [loadedFirst, loadedSecond, loadedTarget] = loadedCopy?.notes ?? [];
+    expect(store.scoreAnnotations[loadedCopy.id]).toEqual({
+      [loadedFirst.id]: { dynamics: 'p' },
+      [loadedSecond.id]: {
+        dynamics: 'f',
+        slurToNoteId: loadedTarget.id,
+        hairpin: 'crescendo',
+        hairpinToNoteId: loadedTarget.id,
+        lineSpan: 'glissando',
+        lineSpanToNoteId: loadedTarget.id,
+        glissandoText: 'port.',
+        lineSpans: [{ lineSpan: 'ottava-up', lineSpanToNoteId: loadedTarget.id }],
+      },
+    });
+  });
+
+  it('splitClip partitions annotations, preserves ordinals, and removes cross-boundary spans', () => {
+    const sourceId = store.clipId;
+    const leftFirst = addNote({ pitch: 60, startPpq: 0, durationPpq: 1, velocity: 80 });
+    const leftSecond = addNote({ pitch: 60, startPpq: 0, durationPpq: 1.5, velocity: 100 });
+    const rightFirst = addNote({ pitch: 64, startPpq: 3, durationPpq: 1 });
+    const rightTarget = addNote({ pitch: 67, startPpq: 4, durationPpq: 1 });
+    setNoteAnnotation(sourceId, leftFirst, { dynamics: 'p' });
+    setNoteAnnotation(sourceId, leftSecond, {
+      dynamics: 'mf',
+      slurToNoteId: rightFirst,
+      hairpin: 'crescendo',
+      hairpinToNoteId: rightFirst,
+      lineSpan: 'glissando',
+      lineSpanToNoteId: rightFirst,
+    });
+    setNoteAnnotation(sourceId, rightFirst, {
+      dynamics: 'f',
+      slurToNoteId: rightTarget,
+      lineSpan: 'glissando',
+      lineSpanToNoteId: rightTarget,
+      addLineSpan: { lineSpan: 'pedal', lineSpanToNoteId: rightTarget },
+    });
+
+    const rightId = splitClip(sourceId, 2);
+    const left = store.clips.find((clip) => clip.id === sourceId);
+    const right = store.clips.find((clip) => clip.id === rightId);
+    const [newLeftFirst, newLeftSecond] = left?.notes ?? [];
+    const [newRightFirst, newRightTarget] = right?.notes ?? [];
+    expect(store.scoreAnnotations[sourceId]).toEqual({
+      [newLeftFirst.id]: { dynamics: 'p' },
+      [newLeftSecond.id]: { dynamics: 'mf' },
+    });
+    expect(store.scoreAnnotations[rightId]).toEqual({
+      [newRightFirst.id]: {
+        dynamics: 'f',
+        slurToNoteId: newRightTarget.id,
+        lineSpan: 'glissando',
+        lineSpanToNoteId: newRightTarget.id,
+        lineSpans: [{ lineSpan: 'pedal', lineSpanToNoteId: newRightTarget.id }],
+      },
+    });
+
+    expect(undo()).toBe(true);
+    expect(store.scoreAnnotations[rightId]).toBeUndefined();
+    expect(store.scoreAnnotations[sourceId]?.[leftSecond]).toMatchObject({
+      dynamics: 'mf',
+      slurToNoteId: rightFirst,
+      hairpinToNoteId: rightFirst,
+      lineSpanToNoteId: rightFirst,
+    });
+    expect(redo()).toBe(true);
+    expect(Object.keys(store.scoreAnnotations[sourceId] ?? {})).toHaveLength(2);
+    expect(Object.keys(store.scoreAnnotations[rightId] ?? {})).toHaveLength(1);
+  });
+
+  it('glueMidiClips transfers annotations to every audible loop occurrence and removes old keys', () => {
+    const trackId = store.tracks[0].id;
+    const loopId = store.clipId;
+    trimClip(loopId, 0, 5);
+    const start = addNote({ pitch: 60, startPpq: 0, durationPpq: 0.5 });
+    const end = addNote({ pitch: 62, startPpq: 1, durationPpq: 0.5 });
+    setNoteAnnotation(loopId, start, {
+      dynamics: 'mp',
+      slurToNoteId: end,
+      hairpin: 'crescendo',
+      hairpinToNoteId: end,
+      lineSpan: 'glissando',
+      lineSpanToNoteId: end,
+    });
+    setNoteAnnotation(loopId, end, { articulation: 'accent' });
+    setClipLoop(loopId, true, 2);
+
+    const tailId = addMidiClip({ trackId, startPpq: 5, lengthPpq: 1 });
+    setActiveClip(tailId);
+    const tail = addNote({ pitch: 67, startPpq: 0.25, durationPpq: 0.5 });
+    setNoteAnnotation(tailId, tail, { dynamics: 'ff' });
+
+    const joinedId = glueMidiClips([tailId, loopId]);
+    const joined = store.clips.find((clip) => clip.id === joinedId);
+    expect(store.scoreAnnotations[loopId]).toBeUndefined();
+    expect(store.scoreAnnotations[tailId]).toBeUndefined();
+    const annotationAt = (startPpq: number) => {
+      const note = joined?.notes.find((entry) => entry.startPpq === startPpq);
+      return note ? store.scoreAnnotations[joinedId]?.[note.id] : undefined;
+    };
+    for (const offset of [0, 2]) {
+      const targetNote = joined?.notes.find((note) => note.startPpq === offset + 1);
+      expect(annotationAt(offset)).toEqual({
+        dynamics: 'mp',
+        slurToNoteId: targetNote?.id,
+        hairpin: 'crescendo',
+        hairpinToNoteId: targetNote?.id,
+        lineSpan: 'glissando',
+        lineSpanToNoteId: targetNote?.id,
+      });
+      expect(annotationAt(offset + 1)).toEqual({ articulation: 'accent' });
+    }
+    // The final partial loop contains the start note but not its endpoint.
+    expect(annotationAt(4)).toEqual({ dynamics: 'mp' });
+    expect(annotationAt(5.25)).toEqual({ dynamics: 'ff' });
+
+    expect(undo()).toBe(true);
+    expect(store.scoreAnnotations[joinedId]).toBeUndefined();
+    expect(store.scoreAnnotations[loopId]?.[start]).toMatchObject({ slurToNoteId: end });
+    expect(store.scoreAnnotations[tailId]?.[tail]).toEqual({ dynamics: 'ff' });
+    expect(redo()).toBe(true);
+    expect(store.scoreAnnotations[loopId]).toBeUndefined();
+    expect(Object.keys(store.scoreAnnotations[joinedId] ?? {})).toHaveLength(6);
   });
 });
 

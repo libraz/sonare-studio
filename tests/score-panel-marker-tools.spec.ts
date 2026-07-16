@@ -39,6 +39,7 @@ vi.mock('@/ui/score/use-score-notation', () => ({
     pageCount: ref(1),
     getTimemap: () => [],
     getCurrentXml: () => '<score-partwise />',
+    getCurrentPartName: () => 'Track 1',
     bumpGeneration: vi.fn(),
     transcribe: notationMocks.transcribe,
     refresh: vi.fn(async () => undefined),
@@ -88,6 +89,7 @@ describe('ScorePanel marker tools', () => {
   });
 
   it('adds structured lyric markers at the current score edit position', async () => {
+    addNote({ pitch: 60, velocity: 96, startPpq: 5.5, durationPpq: 1 });
     const wrapper = mount(ScorePanel, {
       props: {
         positionPpq: () => 5.25,
@@ -111,10 +113,32 @@ describe('ScorePanel marker tools', () => {
       ?.trigger('click');
     await nextTick();
 
-    expect(commandMocks.setMarker).toHaveBeenCalledWith(null, 5.25, 'Lyric 2: begin: glo~');
+    expect(commandMocks.setMarker).toHaveBeenCalledWith(null, 5.5, 'Lyric 2: begin: glo~');
     expect(notationMocks.setError).toHaveBeenCalledWith('');
     expect(notationMocks.transcribe).toHaveBeenCalled();
     expect((field(wrapper, 'Lyric').element as HTMLInputElement).value).toBe('');
+  });
+
+  it('rejects lyric placement when the score has no note attack', async () => {
+    const wrapper = mount(ScorePanel, {
+      props: { positionPpq: () => 5.25 },
+      global: {
+        stubs: {
+          EmptyState: true,
+          ScoreAnnotationPalette: true,
+          ScoreToolbar: true,
+        },
+      },
+    });
+
+    await field(wrapper, 'Lyric').setValue('missing');
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === 'Add lyric')
+      ?.trigger('click');
+
+    expect(commandMocks.setMarker).not.toHaveBeenCalled();
+    expect(notationMocks.setError).toHaveBeenCalledWith('Add a note before placing a lyric.');
   });
 
   it('exposes score notes for keyboard selection, seeking, and annotation', async () => {

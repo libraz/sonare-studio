@@ -21,6 +21,7 @@ import type {
 } from '@/project/annotations';
 import { scoreAnnotationLineSpans } from '@/project/annotations';
 import {
+  measureHasMultiRestStructure,
   type NotatedBarlineStyle,
   type NotatedChordSymbol,
   type NotatedClef,
@@ -342,7 +343,7 @@ function buildAnnotationIndex(score: NotatedScore): AnnotationIndex {
   return index;
 }
 
-/** Resolves score-level lyric entries onto the first matching note attack. */
+/** Resolves score-level lyric entries onto the nearest matching note attack. */
 function buildLyricIndex(score: NotatedScore): LyricIndex {
   const lyrics = score.lyrics;
   if (lyrics === undefined || lyrics.length === 0) return new Map();
@@ -360,10 +361,18 @@ function buildLyricIndex(score: NotatedScore): LyricIndex {
   for (const lyric of [...lyrics].sort(compareLyrics)) {
     const text = lyric.text.trim();
     if (text === '') continue;
-    const match = events.find(
-      ({ partId, event }) =>
-        (lyric.partId === undefined || lyric.partId === partId) &&
-        Math.abs(event.startPpq - lyric.ppq) <= PPQ_EPSILON,
+    const candidates = events.filter(
+      ({ partId }) => lyric.partId === undefined || lyric.partId === partId,
+    );
+    const match = candidates.reduce<(typeof candidates)[number] | undefined>(
+      (nearest, candidate) => {
+        if (nearest === undefined) return candidate;
+        return Math.abs(candidate.event.startPpq - lyric.ppq) <
+          Math.abs(nearest.event.startPpq - lyric.ppq)
+          ? candidate
+          : nearest;
+      },
+      undefined,
     );
     if (match === undefined) continue;
     const list = index.get(match.event) ?? [];
@@ -902,7 +911,10 @@ function serializeMeasure(
     }
   }
   const measureDivisions = ppqToDivisions(measure.lengthPpq, score.divisions);
-  if (multiMeasureRest !== undefined && isSerializableMultiMeasureRest(measure, multiMeasureRest)) {
+  if (
+    multiMeasureRest !== undefined &&
+    isSerializableMultiMeasureRest(measure, multiMeasureRest, score)
+  ) {
     lines.push(multiMeasureRestXml(measure, score, multiMeasureRest));
   } else {
     measure.voices.forEach((voice, voiceIndex) => {
@@ -1024,10 +1036,23 @@ function tempoText(bpm: number): string {
 function isSerializableMultiMeasureRest(
   measure: NotatedMeasure,
   rest: NotatedMultiMeasureRest,
+  score: NotatedScore,
 ): boolean {
-  return (
-    rest.count >= 2 && measure.voices.length === 1 && isWholeMeasureRest(measure.voices[0], measure)
-  );
+  if (rest.count < 2) return false;
+  const part = score.parts.find((entry) => entry.measures.includes(measure));
+  const start = part?.measures.indexOf(measure) ?? -1;
+  if (!part || start < 0 || start + rest.count > part.measures.length) return false;
+  for (let index = start; index < start + rest.count; index += 1) {
+    const candidate = part.measures[index];
+    if (
+      candidate.voices.length !== 1 ||
+      !isWholeMeasureRest(candidate.voices[0], candidate) ||
+      measureHasMultiRestStructure(score, part.measures, index)
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /** Builds a MusicXML multi-measure rest start measure. */
