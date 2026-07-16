@@ -2,6 +2,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import MediaBrowser from '@/components/media/MediaBrowser.vue';
+import { clearAudioAssetLeases } from '@/persistence/asset-leases';
 import type { AudioAssetMeta, LoadedAudioAsset } from '@/persistence/assets';
 import { useProjectStore } from '@/project/store';
 import type { EditorClip, EditorTrack } from '@/project/types';
@@ -9,11 +10,15 @@ import { ASSET_DRAG_MIME } from '@/ui/media/asset-drag';
 import { asAudioContext, createFakeAudioContext } from './fake-audio-context';
 import { readOptionLabels, selectOption } from './helpers/select-menu';
 
-const assetStore = vi.hoisted(() => ({
-  listAssets: vi.fn<() => Promise<AudioAssetMeta[]>>(),
-  loadAsset: vi.fn<(id: string) => Promise<LoadedAudioAsset>>(),
-  deleteAsset: vi.fn<(id: string) => Promise<void>>(),
-}));
+const assetStore = vi.hoisted(() => {
+  const deleteAsset = vi.fn<(id: string) => Promise<void>>();
+  return {
+    listAssets: vi.fn<() => Promise<AudioAssetMeta[]>>(),
+    loadAsset: vi.fn<(id: string) => Promise<LoadedAudioAsset>>(),
+    deleteAsset,
+    deleteAssetUnlocked: deleteAsset,
+  };
+});
 vi.mock('@/persistence/assets', () => assetStore);
 
 const decodeAndIngestMock = vi.hoisted(() => vi.fn());
@@ -107,6 +112,7 @@ describe('MediaBrowser', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
+    clearAudioAssetLeases();
     wasmModule.current = {};
     assetStore.listAssets.mockResolvedValue([]);
     assetStore.deleteAsset.mockResolvedValue();
@@ -281,8 +287,7 @@ describe('MediaBrowser', () => {
     expect(assetStore.deleteAsset).not.toHaveBeenCalled();
     assetStore.listAssets.mockResolvedValue([]);
     await rowButton(wrapper, 'Loop', '.danger').trigger('click');
-    await flushPromises();
-    expect(assetStore.deleteAsset).toHaveBeenCalledWith('a1');
+    await vi.waitFor(() => expect(assetStore.deleteAsset).toHaveBeenCalledWith('a1'));
     expect(wrapper.find('.empty-state').exists()).toBe(true);
   });
 

@@ -89,8 +89,10 @@ export class MemoryDirectoryHandle {
     return new MemoryFileHandle(name, this.files);
   }
 
-  async removeEntry(name: string): Promise<void> {
-    if (!this.files.delete(name)) throw notFoundError();
+  async removeEntry(name: string, options?: { recursive?: boolean }): Promise<void> {
+    if (this.files.delete(name)) return;
+    if (options?.recursive && this.directories.delete(name)) return;
+    throw notFoundError();
   }
 
   async *entries(): AsyncIterableIterator<[string, MemoryFileHandle]> {

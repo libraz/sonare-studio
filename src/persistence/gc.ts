@@ -21,11 +21,12 @@
  * collector deletes nothing and reports {@link MediaGcResult.incompleteReferences}.
  */
 
-import { deleteFont, listFonts } from '@/project/fonts';
+import { deleteFontUnlocked, listFonts } from '@/project/fonts';
 import type { ProjectDocument } from '@/project/serialization';
 import { deleteAudioAssetGuarded, leasedAudioAssetIds } from './asset-leases';
 import { type AudioAssetMeta, listAssetPayloads, listAssets } from './assets';
 import { collectReferencedAssetIds, collectReferencedFontIds } from './bundle';
+import { withPersistenceMutationLock } from './mutation-lock';
 import { isOpfsAvailable, listProjects, loadProject } from './opfs';
 import { decodeSzd } from './szd';
 
@@ -118,7 +119,7 @@ export async function collectReferencedMediaIds(
  * @param options Live document to preserve and an optional dry-run flag.
  * @returns What was removed (or would be), and the reclaimed byte count.
  */
-export async function garbageCollectMedia(options: MediaGcOptions = {}): Promise<MediaGcResult> {
+async function garbageCollectMediaUnlocked(options: MediaGcOptions = {}): Promise<MediaGcResult> {
   const empty: MediaGcResult = {
     removedAssetIds: [],
     removedFontIds: [],
@@ -169,17 +170,21 @@ export async function garbageCollectMedia(options: MediaGcOptions = {}): Promise
   let reclaimedBytes = 0;
   let incompleteReferences = false;
   const deleteCandidate = async (assetId: string, byteLength: number): Promise<void> => {
-    const deleted = await deleteAudioAssetGuarded(assetId, async () => {
-      const current = await collectReferencedMediaIds(options.liveDocument, {
-        assetIds: protectedAssetIds(),
-        fontIds: extraFontIds,
-      });
-      if (!current.complete) {
-        incompleteReferences = true;
-        return true;
-      }
-      return current.assetIds.has(assetId);
-    });
+    const deleted = await deleteAudioAssetGuarded(
+      assetId,
+      async () => {
+        const current = await collectReferencedMediaIds(options.liveDocument, {
+          assetIds: protectedAssetIds(),
+          fontIds: extraFontIds,
+        });
+        if (!current.complete) {
+          incompleteReferences = true;
+          return true;
+        }
+        return current.assetIds.has(assetId);
+      },
+      true,
+    );
     if (deleted) {
       removedAssetIds.push(assetId);
       reclaimedBytes += byteLength;
@@ -197,7 +202,7 @@ export async function garbageCollectMedia(options: MediaGcOptions = {}): Promise
       break;
     }
     if (current.fontIds.has(meta.id)) continue;
-    await deleteFont(meta.id);
+    await deleteFontUnlocked(meta.id);
     removedFontIds.push(meta.id);
     reclaimedBytes += meta.byteLength;
   }
@@ -207,4 +212,8 @@ export async function garbageCollectMedia(options: MediaGcOptions = {}): Promise
     reclaimedBytes,
     incompleteReferences,
   };
+}
+
+export function garbageCollectMedia(options: MediaGcOptions = {}): Promise<MediaGcResult> {
+  return withPersistenceMutationLock(() => garbageCollectMediaUnlocked(options));
 }

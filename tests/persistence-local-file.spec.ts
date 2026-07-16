@@ -1,5 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { pickViaInputElement } from '@/persistence/local-file';
+import type { PickedExternalAudioFile } from '@/persistence/local-file';
+import {
+  LocalFileSizeError,
+  matchPickedExternalAudioFile,
+  pickViaInputElement,
+  readFileBytesBounded,
+} from '@/persistence/local-file';
+
+function audioFile(name: string, marker: number, relativePath?: string): PickedExternalAudioFile {
+  return {
+    name,
+    bytes: new Uint8Array([marker]),
+    ...(relativePath ? { relativePath } : {}),
+  };
+}
 
 function currentInput(): HTMLInputElement {
   const input = document.querySelector('input[type="file"]');
@@ -65,5 +79,81 @@ describe('pickViaInputElement', () => {
 
     await expect(picked).rejects.toThrow('read failed');
     expect(document.querySelector('input[type="file"]')).toBeNull();
+  });
+});
+
+describe('bounded local-file reads', () => {
+  it('rejects from File.size before reading an oversized payload', async () => {
+    const arrayBuffer = vi.fn(async () => new ArrayBuffer(0));
+    const file = {
+      name: 'huge.szd',
+      size: 1025,
+      arrayBuffer,
+    } as unknown as File;
+
+    await expect(readFileBytesBounded(file, 1024)).rejects.toThrow(LocalFileSizeError);
+    expect(arrayBuffer).not.toHaveBeenCalled();
+  });
+
+  it('streams into one bounded owned buffer when File.stream is available', async () => {
+    const arrayBuffer = vi.fn(async () => {
+      throw new Error('arrayBuffer should not be used');
+    });
+    const file = {
+      name: 'streamed.szd',
+      size: 4,
+      arrayBuffer,
+      stream: () =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new Uint8Array([1, 2]));
+            controller.enqueue(new Uint8Array([3, 4]));
+            controller.close();
+          },
+        }),
+    } as unknown as File;
+
+    await expect(readFileBytesBounded(file, 4)).resolves.toEqual(new Uint8Array([1, 2, 3, 4]));
+    expect(arrayBuffer).not.toHaveBeenCalled();
+  });
+});
+
+describe('DAWproject external audio matching', () => {
+  it('uses relative paths before basenames regardless of selection order and case', () => {
+    const drums = audioFile('Vox.wav', 1, 'Picked Root/Drums/Vox.wav');
+    const vocals = audioFile('VOX.WAV', 2, 'Picked Root/Vocals/VOX.WAV');
+
+    for (const files of [
+      [drums, vocals],
+      [vocals, drums],
+    ]) {
+      expect(matchPickedExternalAudioFile('/DRUMS/vox.WAV', files)).toEqual({
+        status: 'exact-path',
+        file: drums,
+      });
+      expect(matchPickedExternalAudioFile('vocals/vox.wav', files)).toEqual({
+        status: 'exact-path',
+        file: vocals,
+      });
+    }
+  });
+
+  it('separates unique, ambiguous and unresolved basename states', () => {
+    const drums = audioFile('Vox.wav', 1, 'Drums/Vox.wav');
+    const vocals = audioFile('Vox.wav', 2, 'Vocals/Vox.wav');
+    const fx = audioFile('Vox.wav', 3, 'FX/Vox.wav');
+    const bass = audioFile('Bass.wav', 4);
+
+    expect(matchPickedExternalAudioFile('/Unknown/Bass.wav', [drums, bass])).toEqual({
+      status: 'unique-basename',
+      file: bass,
+    });
+    expect(matchPickedExternalAudioFile('/Unknown/Vox.wav', [fx, drums, vocals])).toEqual({
+      status: 'ambiguous-basename',
+      files: [fx, drums, vocals],
+    });
+    expect(matchPickedExternalAudioFile('/Unknown/Guitar.wav', [drums, bass])).toEqual({
+      status: 'unresolved',
+    });
   });
 });

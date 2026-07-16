@@ -12,23 +12,36 @@
 import { collectReferencedAudioAssetIds } from '@/project/asset-references';
 import {
   computeFontId,
-  deleteFont,
+  deleteFontUnlocked,
   FontNotFoundError,
   loadFont,
   loadFontMeta,
   type SoundFontMeta,
-  saveFont,
+  saveFontWithStatusUnlocked,
 } from '@/project/fonts';
+import {
+  createMediaCompletenessReport,
+  type MediaCompletenessIssue,
+  type MediaCompletenessReport,
+  mediaFailureIssues,
+} from '@/project/media-completeness';
 import type { ProjectDocument } from '@/project/serialization';
 import {
   AssetNotFoundError,
   type AudioAssetMeta,
   computeAssetId,
-  deleteAsset,
+  deleteAssetUnlocked,
   interleaveChannels,
   loadAsset,
-  saveAsset,
+  saveAssetWithStatusUnlocked,
 } from './assets';
+import { withPersistenceMutationLock } from './mutation-lock';
+import {
+  MAX_AUDIO_CHANNELS,
+  MAX_AUDIO_SAMPLE_BYTES,
+  MAX_AUDIO_SAMPLE_RATE,
+  MAX_AUDIO_SAMPLES,
+} from './resource-limits';
 import type { SzdMediaBundle } from './szd';
 
 const textEncoder = new TextEncoder();
@@ -67,7 +80,10 @@ function pcmBytes(channels: ReadonlyArray<Float32Array>): Uint8Array {
  * @param doc The document being exported.
  * @returns The referenced assets and fonts that could be read.
  */
-export async function gatherProjectBundle(doc: ProjectDocument): Promise<SzdMediaBundle> {
+export async function gatherProjectBundleWithReport(
+  doc: ProjectDocument,
+): Promise<{ bundle: SzdMediaBundle; report: MediaCompletenessReport }> {
+  const issues: MediaCompletenessIssue[] = [];
   const assets = [];
   for (const id of collectReferencedAssetIds(doc)) {
     try {
@@ -77,8 +93,8 @@ export async function gatherProjectBundle(doc: ProjectDocument): Promise<SzdMedi
         meta: textEncoder.encode(JSON.stringify(loaded.meta)),
         pcm: pcmBytes(loaded.channels),
       });
-    } catch {
-      // Missing/unreadable asset: skip it (the clip stays silent on import).
+    } catch (error) {
+      issues.push(...mediaFailureIssues(doc, 'audio-asset', id, 'unreadable', error));
     }
   }
   const fonts = [];
@@ -86,11 +102,16 @@ export async function gatherProjectBundle(doc: ProjectDocument): Promise<SzdMedi
     try {
       const [data, meta] = await Promise.all([loadFont(id), loadFontMeta(id)]);
       fonts.push({ id, meta: textEncoder.encode(JSON.stringify(meta)), sf2: data });
-    } catch {
-      // Missing/unreadable font: skip it.
+    } catch (error) {
+      issues.push(...mediaFailureIssues(doc, 'soundfont', id, 'unreadable', error));
     }
   }
-  return { assets, fonts };
+  return { bundle: { assets, fonts }, report: createMediaCompletenessReport(issues) };
+}
+
+/** Backward-compatible bundle-only view; portable UI paths use the report variant. */
+export async function gatherProjectBundle(doc: ProjectDocument): Promise<SzdMediaBundle> {
+  return (await gatherProjectBundleWithReport(doc)).bundle;
 }
 
 /** Reconstructs a Float32Array from interleaved-PCM bytes (alignment-safe). */
@@ -133,8 +154,12 @@ function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
 
 /** Parses and validates one bundled audio pair without touching storage. */
 export function prepareAssetRestore(entry: SzdMediaBundle['assets'][number]): PreparedAssetRestore {
-  if (entry.pcm.byteLength % 4 !== 0) {
-    throw new Error(`Bundled asset "${entry.id}" has a misaligned PCM payload`);
+  if (
+    entry.pcm.byteLength === 0 ||
+    entry.pcm.byteLength > MAX_AUDIO_SAMPLE_BYTES ||
+    entry.pcm.byteLength % Float32Array.BYTES_PER_ELEMENT !== 0
+  ) {
+    throw new Error(`Bundled asset "${entry.id}" has an invalid PCM payload size`);
   }
   const parsed = JSON.parse(textDecoder.decode(entry.meta)) as Partial<AudioAssetMeta>;
   if (
@@ -143,19 +168,25 @@ export function prepareAssetRestore(entry: SzdMediaBundle['assets'][number]): Pr
     parsed.name.length === 0 ||
     !Number.isFinite(parsed.sampleRate) ||
     (parsed.sampleRate as number) <= 0 ||
+    (parsed.sampleRate as number) > MAX_AUDIO_SAMPLE_RATE ||
     !Number.isInteger(parsed.numChannels) ||
-    (parsed.numChannels as number) < 1
+    (parsed.numChannels as number) < 1 ||
+    (parsed.numChannels as number) > MAX_AUDIO_CHANNELS
   ) {
     throw new Error(`Bundled asset "${entry.id}" has malformed metadata`);
   }
-  const audio = floatsFromPcm(entry.pcm);
-  if (audio.length % (parsed.numChannels as number) !== 0) {
+  const sampleCount = entry.pcm.byteLength / Float32Array.BYTES_PER_ELEMENT;
+  if (sampleCount > MAX_AUDIO_SAMPLES || sampleCount % (parsed.numChannels as number) !== 0) {
     throw new Error(`Bundled asset "${entry.id}" PCM does not match its channel count`);
   }
-  const numFrames = audio.length / (parsed.numChannels as number);
+  const numFrames = sampleCount / (parsed.numChannels as number);
+  if (numFrames < 1) {
+    throw new Error(`Bundled asset "${entry.id}" must contain at least one audio frame`);
+  }
   if (parsed.numFrames !== undefined && parsed.numFrames !== numFrames) {
     throw new Error(`Bundled asset "${entry.id}" PCM does not match its frame count`);
   }
+  const audio = floatsFromPcm(entry.pcm);
   const computedId = computeAssetId(
     audio,
     parsed.sampleRate as number,
@@ -247,7 +278,7 @@ export async function preflightFontRestore(entry: PreparedFontRestore): Promise<
  * @param doc The imported document whose references authorize bundle entries.
  * @param bundle The media extracted by {@link decodeSzdBundle}.
  */
-export async function restoreProjectBundle(
+async function restoreProjectBundleUnlocked(
   doc: ProjectDocument,
   bundle: SzdMediaBundle,
 ): Promise<void> {
@@ -277,7 +308,7 @@ export async function restoreProjectBundle(
     for (const entry of assets) {
       if (existingAssets.has(entry.id)) continue;
       createdAssets.push(entry.id);
-      await saveAsset(
+      await saveAssetWithStatusUnlocked(
         {
           id: entry.id,
           name: entry.meta.name,
@@ -291,13 +322,17 @@ export async function restoreProjectBundle(
     for (const entry of fonts) {
       if (existingFonts.has(entry.id)) continue;
       createdFonts.push(entry.id);
-      await saveFont({ id: entry.id, name: entry.meta.name }, entry.data);
+      await saveFontWithStatusUnlocked({ id: entry.id, name: entry.meta.name }, entry.data);
     }
   } catch (error) {
     await Promise.allSettled([
-      ...createdAssets.map((id) => deleteAsset(id)),
-      ...createdFonts.map((id) => deleteFont(id)),
+      ...createdAssets.map((id) => deleteAssetUnlocked(id)),
+      ...createdFonts.map((id) => deleteFontUnlocked(id)),
     ]);
     throw error;
   }
+}
+
+export function restoreProjectBundle(doc: ProjectDocument, bundle: SzdMediaBundle): Promise<void> {
+  return withPersistenceMutationLock(() => restoreProjectBundleUnlocked(doc, bundle));
 }

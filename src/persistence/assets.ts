@@ -14,7 +14,14 @@
  * project archive (see src/project/serialization.ts).
  */
 
+import { withPersistenceMutationLock } from './mutation-lock';
 import { isOpfsAvailable, OpfsUnavailableError } from './opfs';
+import {
+  MAX_AUDIO_CHANNELS,
+  MAX_AUDIO_SAMPLE_BYTES,
+  MAX_AUDIO_SAMPLE_RATE,
+  MAX_AUDIO_SAMPLES,
+} from './resource-limits';
 
 /** Directory under the OPFS root that holds the audio assets. */
 const ASSETS_DIR = 'assets';
@@ -372,8 +379,13 @@ export function deinterleaveChannels(
   interleaved: Float32Array,
   numChannels: number,
 ): Float32Array[] {
-  if (!Number.isInteger(numChannels) || numChannels < 1) {
+  if (!Number.isInteger(numChannels) || numChannels < 1 || numChannels > MAX_AUDIO_CHANNELS) {
     throw new InvalidAssetError(`numChannels must be a positive integer, got ${numChannels}`);
+  }
+  if (interleaved.length === 0 || interleaved.length > MAX_AUDIO_SAMPLES) {
+    throw new InvalidAssetError(
+      `Audio sample count must be between 1 and ${MAX_AUDIO_SAMPLES}, got ${interleaved.length}`,
+    );
   }
   if (interleaved.length % numChannels !== 0) {
     throw new InvalidAssetError(
@@ -444,10 +456,14 @@ function validatedContentMeta(
     typeof value.sampleRate !== 'number' ||
     !Number.isFinite(value.sampleRate) ||
     value.sampleRate <= 0 ||
+    value.sampleRate > MAX_AUDIO_SAMPLE_RATE ||
     !Number.isInteger(value.numChannels) ||
     (value.numChannels as number) < 1 ||
+    (value.numChannels as number) > MAX_AUDIO_CHANNELS ||
     !Number.isInteger(value.numFrames) ||
-    (value.numFrames as number) < 0
+    (value.numFrames as number) < 1 ||
+    !Number.isSafeInteger((value.numFrames as number) * (value.numChannels as number)) ||
+    (value.numFrames as number) * (value.numChannels as number) > MAX_AUDIO_SAMPLES
   ) {
     throw new InvalidAssetError(`Asset "${id}": malformed metadata sidecar`);
   }
@@ -567,7 +583,7 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
  * @param audio Planar channel buffers, or one interleaved frame-major buffer.
  * @returns The full metadata that was written.
  */
-export async function saveAssetWithStatus(
+export async function saveAssetWithStatusUnlocked(
   input: SaveAssetInput,
   audio: Float32Array | ReadonlyArray<Float32Array>,
 ): Promise<SavedAudioAsset> {
@@ -577,11 +593,16 @@ export async function saveAssetWithStatus(
   if (!Number.isFinite(input.sampleRate) || input.sampleRate <= 0) {
     throw new InvalidAssetError(`Asset sampleRate must be finite and > 0, got ${input.sampleRate}`);
   }
+  if (input.sampleRate > MAX_AUDIO_SAMPLE_RATE) {
+    throw new InvalidAssetError(
+      `Asset sampleRate must not exceed ${MAX_AUDIO_SAMPLE_RATE}, got ${input.sampleRate}`,
+    );
+  }
   let interleaved: Float32Array;
   let numChannels: number;
   if (audio instanceof Float32Array) {
     numChannels = input.numChannels ?? 1;
-    if (!Number.isInteger(numChannels) || numChannels < 1) {
+    if (!Number.isInteger(numChannels) || numChannels < 1 || numChannels > MAX_AUDIO_CHANNELS) {
       throw new InvalidAssetError(`numChannels must be a positive integer, got ${numChannels}`);
     }
     if (audio.length % numChannels !== 0) {
@@ -589,8 +610,23 @@ export async function saveAssetWithStatus(
         `Interleaved length ${audio.length} is not divisible by ${numChannels} channels`,
       );
     }
+    if (audio.length === 0 || audio.length > MAX_AUDIO_SAMPLES) {
+      throw new InvalidAssetError(
+        `Audio sample count must be between 1 and ${MAX_AUDIO_SAMPLES}, got ${audio.length}`,
+      );
+    }
     interleaved = audio;
   } else {
+    if (audio.length > MAX_AUDIO_CHANNELS) {
+      throw new InvalidAssetError(`Audio must not exceed ${MAX_AUDIO_CHANNELS} channels`);
+    }
+    const frames = audio[0]?.length ?? 0;
+    const totalSamples = frames * audio.length;
+    if (frames < 1 || !Number.isSafeInteger(totalSamples) || totalSamples > MAX_AUDIO_SAMPLES) {
+      throw new InvalidAssetError(
+        `Audio sample count must be between 1 and ${MAX_AUDIO_SAMPLES}, got ${totalSamples}`,
+      );
+    }
     interleaved = interleaveChannels(audio);
     numChannels = audio.length;
     if (input.numChannels !== undefined && input.numChannels !== numChannels) {
@@ -680,6 +716,13 @@ export async function saveAssetWithStatus(
   return { meta: latestMeta, created };
 }
 
+export function saveAssetWithStatus(
+  input: SaveAssetInput,
+  audio: Float32Array | ReadonlyArray<Float32Array>,
+): Promise<SavedAudioAsset> {
+  return withPersistenceMutationLock(() => saveAssetWithStatusUnlocked(input, audio));
+}
+
 export async function saveAsset(
   input: SaveAssetInput,
   audio: Float32Array | ReadonlyArray<Float32Array>,
@@ -756,8 +799,11 @@ export async function loadAsset(id: string): Promise<LoadedAudioAsset> {
     if (isNotFoundError(error)) throw new AssetNotFoundError(id);
     throw error;
   }
-  const bytes = await file.arrayBuffer();
   const expectedBytes = meta.numFrames * meta.numChannels * BYTES_PER_SAMPLE;
+  if (expectedBytes > MAX_AUDIO_SAMPLE_BYTES || file.size > MAX_AUDIO_SAMPLE_BYTES) {
+    throw new InvalidAssetError(`Asset "${id}": PCM payload exceeds the audio resource limit`);
+  }
+  const bytes = await file.arrayBuffer();
   if (bytes.byteLength !== expectedBytes) {
     throw new InvalidAssetError(
       `Asset "${id}": PCM payload is ${bytes.byteLength} bytes, expected ${expectedBytes}`,
@@ -826,7 +872,7 @@ export async function listAssetPayloads(): Promise<AudioAssetPayloadInfo[]> {
  *
  * @param id Asset id.
  */
-export async function deleteAsset(id: string): Promise<void> {
+export async function deleteAssetUnlocked(id: string): Promise<void> {
   validateAssetId(id);
   const dir = await assetsDirectory();
   removeCachedAsset(id);
@@ -837,4 +883,8 @@ export async function deleteAsset(id: string): Promise<void> {
       if (!isNotFoundError(error)) throw error;
     }
   }
+}
+
+export function deleteAsset(id: string): Promise<void> {
+  return withPersistenceMutationLock(() => deleteAssetUnlocked(id));
 }

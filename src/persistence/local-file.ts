@@ -7,6 +7,13 @@
  * the PDF toolchain that the notation download helpers pull in.
  */
 
+import {
+  MAX_BACKUP_ARCHIVE_COMPRESSED_BYTES,
+  MAX_DAWPROJECT_ARCHIVE_BYTES,
+  MAX_EXTERNAL_AUDIO_FILE_BYTES,
+  MAX_EXTERNAL_AUDIO_TOTAL_BYTES,
+  MAX_PROJECT_ARCHIVE_COMPRESSED_BYTES,
+} from './resource-limits';
 import { SZD_FILE_EXTENSION } from './szd';
 
 /** MIME type used for .szd downloads (the format is a zip archive). */
@@ -48,6 +55,59 @@ export interface PickedExternalAudioFile {
   bytes: Uint8Array;
 }
 
+export type ExternalAudioRelinkMatch =
+  | { status: 'exact-path'; file: PickedExternalAudioFile }
+  | { status: 'unique-basename'; file: PickedExternalAudioFile }
+  | { status: 'ambiguous-basename'; files: PickedExternalAudioFile[] }
+  | { status: 'unresolved' };
+
+function normalizeExternalMediaPath(path: string): string {
+  return path
+    .replaceAll('\\', '/')
+    .replace(/^\.\//, '')
+    .replace(/^\/+/, '')
+    .replace(/\/{2,}/g, '/')
+    .toLowerCase();
+}
+
+function externalMediaBasename(path: string): string {
+  const normalized = normalizeExternalMediaPath(path);
+  const slash = normalized.lastIndexOf('/');
+  return slash >= 0 ? normalized.slice(slash + 1) : normalized;
+}
+
+/**
+ * Matches a DAWproject external path without allowing selection order to
+ * decide basename collisions. Directory-picker paths may carry one extra
+ * selected-root prefix, so an unambiguous relative-path suffix is exact.
+ */
+export function matchPickedExternalAudioFile(
+  referencePath: string,
+  files: readonly PickedExternalAudioFile[],
+): ExternalAudioRelinkMatch {
+  const reference = normalizeExternalMediaPath(referencePath);
+  const referenceHasDirectory = reference.includes('/');
+  const exact = files.filter((file) => {
+    const candidate = normalizeExternalMediaPath(file.relativePath ?? file.name);
+    if (candidate === reference) return true;
+    return referenceHasDirectory && candidate.endsWith(`/${reference}`);
+  });
+  if (exact.length === 1) return { status: 'exact-path', file: exact[0] };
+  if (exact.length > 1) return { status: 'ambiguous-basename', files: exact };
+
+  const basename = externalMediaBasename(reference);
+  const basenameMatches = files.filter(
+    (file) => externalMediaBasename(file.relativePath ?? file.name) === basename,
+  );
+  if (basenameMatches.length === 1) {
+    return { status: 'unique-basename', file: basenameMatches[0] };
+  }
+  if (basenameMatches.length > 1) {
+    return { status: 'ambiguous-basename', files: basenameMatches };
+  }
+  return { status: 'unresolved' };
+}
+
 /** Minimal typing for window.showOpenFilePicker (not yet in lib.dom). */
 interface OpenFilePickerAcceptType {
   description?: string;
@@ -59,6 +119,17 @@ interface OpenFilePickerOptions {
   types?: OpenFilePickerAcceptType[];
 }
 type ShowOpenFilePicker = (options?: OpenFilePickerOptions) => Promise<FileSystemFileHandle[]>;
+
+export class LocalFileSizeError extends Error {
+  constructor(
+    readonly fileName: string,
+    readonly size: number,
+    readonly limit: number,
+  ) {
+    super(`File "${fileName}" is too large (${size} bytes; limit ${limit})`);
+    this.name = 'LocalFileSizeError';
+  }
+}
 
 /** Appends the extension unless the filename already ends with it. */
 function withExtension(filename: string, extension: string): string {
@@ -99,9 +170,36 @@ export function downloadBrowserBackup(filename: string, bytes: Uint8Array): void
   URL.revokeObjectURL(url);
 }
 
+/** Reads one size-bounded file into a single owned allocation. */
+export async function readFileBytesBounded(file: File, maxBytes: number): Promise<Uint8Array> {
+  if (!Number.isSafeInteger(file.size) || file.size < 0 || file.size > maxBytes) {
+    throw new LocalFileSizeError(file.name, file.size, maxBytes);
+  }
+  if (typeof file.stream !== 'function') {
+    return new Uint8Array(await file.arrayBuffer());
+  }
+  const output = new Uint8Array(file.size);
+  const reader = file.stream().getReader();
+  let offset = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (offset + value.byteLength > file.size || offset + value.byteLength > maxBytes) {
+        throw new LocalFileSizeError(file.name, offset + value.byteLength, maxBytes);
+      }
+      output.set(value, offset);
+      offset += value.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return offset === output.byteLength ? output : output.slice(0, offset);
+}
+
 /** Reads a picked File into a {@link PickedSzdFile}. */
-async function readPickedFile(file: File): Promise<PickedSzdFile> {
-  return { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) };
+async function readPickedFile(file: File, maxBytes: number): Promise<PickedSzdFile> {
+  return { name: file.name, bytes: await readFileBytesBounded(file, maxBytes) };
 }
 
 async function readPickedExternalAudioFile(file: File): Promise<PickedExternalAudioFile> {
@@ -109,8 +207,15 @@ async function readPickedExternalAudioFile(file: File): Promise<PickedExternalAu
   return {
     name: file.name,
     ...(relativePath ? { relativePath } : {}),
-    bytes: new Uint8Array(await file.arrayBuffer()),
+    bytes: await readFileBytesBounded(file, MAX_EXTERNAL_AUDIO_FILE_BYTES),
   };
+}
+
+function validateExternalAudioTotal(files: readonly File[]): void {
+  const total = files.reduce((sum, file) => sum + file.size, 0);
+  if (!Number.isSafeInteger(total) || total > MAX_EXTERNAL_AUDIO_TOTAL_BYTES) {
+    throw new LocalFileSizeError('selected audio files', total, MAX_EXTERNAL_AUDIO_TOTAL_BYTES);
+  }
 }
 
 interface InputPickerOptions<T> {
@@ -165,7 +270,7 @@ function pickSzdViaInputElement(): Promise<PickedSzdFile | null> {
     read: async (files) => {
       const file = files[0];
       if (!file) return null;
-      return readPickedFile(file);
+      return readPickedFile(file, MAX_PROJECT_ARCHIVE_COMPRESSED_BYTES);
     },
   });
 }
@@ -195,7 +300,7 @@ export async function pickAndReadSzd(): Promise<PickedSzdFile | null> {
         ],
       });
       if (!handle) return null;
-      return await readPickedFile(await handle.getFile());
+      return await readPickedFile(await handle.getFile(), MAX_PROJECT_ARCHIVE_COMPRESSED_BYTES);
     } catch (error) {
       // The picker rejects with AbortError when the user cancels.
       if (error instanceof Error && error.name === 'AbortError') return null;
@@ -212,7 +317,7 @@ function pickBackupViaInputElement(): Promise<PickedBackupFile | null> {
     read: async (files) => {
       const file = files[0];
       if (!file) return null;
-      return readPickedFile(file);
+      return readPickedFile(file, MAX_BACKUP_ARCHIVE_COMPRESSED_BYTES);
     },
   });
 }
@@ -235,7 +340,7 @@ export async function pickAndReadBrowserBackup(): Promise<PickedBackupFile | nul
         ],
       });
       if (!handle) return null;
-      return await readPickedFile(await handle.getFile());
+      return await readPickedFile(await handle.getFile(), MAX_BACKUP_ARCHIVE_COMPRESSED_BYTES);
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') return null;
       throw error;
@@ -251,7 +356,7 @@ function pickDawprojectViaInputElement(): Promise<PickedDawprojectFile | null> {
     read: async (files) => {
       const file = files[0];
       if (!file) return null;
-      return readPickedFile(file);
+      return readPickedFile(file, MAX_DAWPROJECT_ARCHIVE_BYTES);
     },
   });
 }
@@ -272,7 +377,7 @@ export async function pickAndReadDawproject(): Promise<PickedDawprojectFile | nu
         ],
       });
       if (!handle) return null;
-      return await readPickedFile(await handle.getFile());
+      return await readPickedFile(await handle.getFile(), MAX_DAWPROJECT_ARCHIVE_BYTES);
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') return null;
       throw error;
@@ -288,6 +393,7 @@ function pickExternalAudioViaInputElement(): Promise<PickedExternalAudioFile[] |
     multiple: true,
     read: async (files) => {
       if (files.length === 0) return null;
+      validateExternalAudioTotal(files);
       return Promise.all(files.map(readPickedExternalAudioFile));
     },
   });
@@ -322,9 +428,9 @@ export async function pickAndReadExternalAudioFiles(): Promise<PickedExternalAud
         ],
       });
       if (handles.length === 0) return null;
-      return await Promise.all(
-        handles.map(async (handle) => readPickedExternalAudioFile(await handle.getFile())),
-      );
+      const files = await Promise.all(handles.map((handle) => handle.getFile()));
+      validateExternalAudioTotal(files);
+      return await Promise.all(files.map(readPickedExternalAudioFile));
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') return null;
       throw error;

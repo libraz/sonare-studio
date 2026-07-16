@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   decodeSzd,
   decodeSzdBundle,
+  decodeSzdWithResourceReport,
   encodeSzd,
   readSzdMeta,
   SZD_APP_ID,
@@ -172,6 +173,16 @@ describe('szd encode/decode', () => {
     expect(() => decodeSzd(bytes.subarray(0, Math.floor(bytes.length / 2)))).toThrow(
       SzdFormatError,
     );
+  });
+
+  it('honors a caller-provided cumulative nested expansion budget', () => {
+    const bytes = encodeSzd(makeDocument());
+    expect(() =>
+      decodeSzdWithResourceReport(bytes, {
+        maxEntryBytes: 32,
+        maxUncompressedBytes: 64,
+      }),
+    ).toThrow(/too large|expands beyond/);
   });
 
   it('rejects an archive without project.json', () => {

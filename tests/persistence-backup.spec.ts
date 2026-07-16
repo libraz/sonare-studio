@@ -1,10 +1,21 @@
-import { strToU8, zipSync } from 'fflate';
+import { strToU8, unzipSync, zipSync } from 'fflate';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearAudioAssetCache, loadAsset, loadAssetMeta, saveAsset } from '@/persistence/assets';
-import { createBrowserBackup, restoreBrowserBackup } from '@/persistence/backup';
+import {
+  BrowserBackupSizeError,
+  createBrowserBackup,
+  createBrowserBackupWithReport,
+  restoreBrowserBackup,
+} from '@/persistence/backup';
 import { loadProject, saveProject } from '@/persistence/opfs';
 import { encodeSzd } from '@/persistence/szd';
-import { clearFontCache, loadFont, loadFontMeta, saveFont } from '@/project/fonts';
+import {
+  clearFontCache,
+  getFontCacheStats,
+  loadFont,
+  loadFontMeta,
+  saveFont,
+} from '@/project/fonts';
 import { PROJECT_DOCUMENT_SCHEMA_VERSION, type ProjectDocument } from '@/project/serialization';
 import { installMockOpfs, uninstallMockOpfs } from './opfs-mock';
 
@@ -76,8 +87,29 @@ describe('browser backup archives', () => {
       stereo(),
     );
     await saveFont({ id: 'fontA', name: 'Shared font' }, new Uint8Array([1, 2, 3, 4]));
+    await saveAsset({ id: 'libraryOnly', name: 'Library only audio', sampleRate: 48000 }, stereo());
+    await saveFont({ id: 'libraryOnlyFont', name: 'Library only font' }, new Uint8Array([9, 8, 7]));
 
     const backup = await createBrowserBackup('2026-07-04T00:00:00.000Z');
+    const entries = unzipSync(backup);
+    const manifest = JSON.parse(new TextDecoder().decode(entries['meta.json'])) as {
+      version: number;
+      inventory: {
+        complete: boolean;
+        totalBytes: number;
+        projects: unknown[];
+        assets: unknown[];
+        fonts: unknown[];
+      };
+    };
+    expect(manifest).toMatchObject({
+      version: 2,
+      inventory: { complete: true },
+    });
+    expect(manifest.inventory.projects).toHaveLength(1);
+    expect(manifest.inventory.assets).toHaveLength(2);
+    expect(manifest.inventory.fonts).toHaveLength(2);
+    expect(manifest.inventory.totalBytes).toBeGreaterThan(0);
 
     uninstallMockOpfs();
     installMockOpfs();
@@ -86,12 +118,108 @@ describe('browser backup archives', () => {
 
     const restored = await restoreBrowserBackup(backup);
 
-    expect(restored).toEqual({ projects: 1, assets: 1, fonts: 1 });
+    expect(restored).toEqual({ projects: 1, assets: 2, fonts: 2 });
     expect(await loadProject('Song A')).toEqual(projectBytes);
     expect((await loadAsset('assetA')).channels).toEqual(stereo());
     expect((await loadAssetMeta('assetA')).tags).toEqual({ bpm: 124 });
     expect(await loadFont('fontA')).toEqual(new Uint8Array([1, 2, 3, 4]));
     expect((await loadFontMeta('fontA')).name).toBe('Shared font');
+    expect((await loadAssetMeta('libraryOnly')).name).toBe('Library only audio');
+    expect(await loadFont('libraryOnlyFont')).toEqual(new Uint8Array([9, 8, 7]));
+  });
+
+  it('does not retain every SoundFont in the playback cache while backing up', async () => {
+    await saveFont({ id: 'fontOne', name: 'One' }, new Uint8Array(64).fill(1));
+    await saveFont({ id: 'fontTwo', name: 'Two' }, new Uint8Array(64).fill(2));
+    clearFontCache();
+
+    await createBrowserBackup('2026-07-04T00:00:00.000Z');
+
+    expect(getFontCacheStats()).toMatchObject({ entries: 0, byteLength: 0 });
+  });
+
+  it('reports every missing project media role before creating a lossy backup', async () => {
+    const document = makeDocument('Missing', { assetId: 'missingClip', fontId: 'missingFont' });
+    document.tracks[0].frozen = { assetId: 'missingFrozen' };
+    document.tracks[0].clips[0].takes = [{ assetId: 'missingTake', name: 'Take' }];
+    await saveProject('Missing', encodeSzd(document));
+
+    const backup = await createBrowserBackupWithReport('2026-07-04T00:00:00.000Z');
+
+    expect(backup.completeness.complete).toBe(false);
+    expect(
+      backup.completeness.issues.map((issue) => [
+        issue.mediaId,
+        issue.role,
+        issue.trackId,
+        issue.clipId,
+      ]),
+    ).toEqual(
+      expect.arrayContaining([
+        ['missingClip', 'clip', 1, 1],
+        ['missingTake', 'take', 1, 1],
+        ['missingFrozen', 'frozen', 1, undefined],
+        ['missingFont', 'instrument', 1, undefined],
+      ]),
+    );
+    const manifest = JSON.parse(new TextDecoder().decode(unzipSync(backup.bytes)['meta.json'])) as {
+      inventory: { complete: boolean };
+    };
+    expect(manifest.inventory.complete).toBe(false);
+  });
+
+  it('rejects backup output that would exceed the matching restore ceiling', async () => {
+    await saveProject('A', encodeSzd(makeDocument('A')));
+
+    await expect(
+      createBrowserBackupWithReport('2026-07-04T00:00:00.000Z', undefined, {
+        maxCompressedBytes: 1024,
+        maxEntries: 100,
+        maxEntryBytes: 1,
+        maxOuterExpandedBytes: 1024,
+        maxTotalExpandedBytes: 2048,
+      }),
+    ).rejects.toBeInstanceOf(BrowserBackupSizeError);
+  });
+
+  it('rejects a v2 backup whose inventory checksum no longer matches its payload', async () => {
+    await saveProject('Song A', encodeSzd(makeDocument('Song A', { assetId: 'assetA' })));
+    await saveAsset({ id: 'assetA', name: 'Audio', sampleRate: 48000 }, stereo());
+    const entries = unzipSync(await createBrowserBackup('2026-07-04T00:00:00.000Z'));
+    entries['assets/assetA.pcm'] = entries['assets/assetA.pcm'].slice();
+    entries['assets/assetA.pcm'][0] ^= 0xff;
+
+    await expect(restoreBrowserBackup(zipSync(entries))).rejects.toThrow(
+      'Invalid sonare browser backup.',
+    );
+  });
+
+  it('leaves the active browser autosave and session recovery slots local', async () => {
+    const named = encodeSzd(makeDocument('Named'));
+    await saveProject('Named', named);
+    await saveProject('autosave', encodeSzd(makeDocument('Backup autosave')));
+    await saveProject(
+      'autosave-session-backup-tab',
+      encodeSzd(makeDocument('Backup session autosave')),
+    );
+    const backup = await createBrowserBackup('2026-07-04T00:00:00.000Z');
+
+    uninstallMockOpfs();
+    installMockOpfs();
+    const currentAutosave = encodeSzd(makeDocument('Current autosave'));
+    const currentSession = encodeSzd(makeDocument('Current session autosave'));
+    await saveProject('autosave', currentAutosave);
+    await saveProject('autosave-session-current-tab', currentSession);
+
+    await expect(restoreBrowserBackup(backup)).resolves.toEqual({
+      projects: 1,
+      assets: 0,
+      fonts: 0,
+    });
+    expect(await loadProject('Named')).toEqual(named);
+    expect(await loadProject('autosave')).toEqual(currentAutosave);
+    expect(await loadProject('autosave-session-current-tab')).toEqual(currentSession);
+    await expect(loadProject('autosave-session-backup-tab')).rejects.toThrow();
   });
 
   it('rejects archives without sonare browser-backup metadata', async () => {

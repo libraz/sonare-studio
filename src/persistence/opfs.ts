@@ -8,6 +8,8 @@
  * {@link OpfsUnavailableError} the UI can present.
  */
 
+import { withPersistenceMutationLock } from './mutation-lock';
+
 /** Directory under the OPFS root that holds the project files. */
 const PROJECTS_DIR = 'projects';
 
@@ -38,6 +40,14 @@ export class ProjectAlreadyExistsError extends Error {
   }
 }
 
+/** Thrown when another tab changed a named project after the caller loaded it. */
+export class ProjectRevisionConflictError extends Error {
+  constructor(readonly projectName: string) {
+    super(`Stored project "${projectName}" changed in another window; reopen it before saving`);
+    this.name = 'ProjectRevisionConflictError';
+  }
+}
+
 /** Thrown when a project name is empty (or empties out) after sanitization. */
 export class InvalidProjectNameError extends Error {
   constructor(name: string) {
@@ -54,6 +64,24 @@ export interface StoredProjectInfo {
   size: number;
   /** Last-modified time in epoch milliseconds, when the platform reports one. */
   lastModified?: number;
+}
+
+export interface StoredProjectSnapshot {
+  bytes: Uint8Array;
+  revision: string;
+}
+
+/** Content revision used for compare-and-swap named saves. */
+export function projectBytesRevision(bytes: Uint8Array): string {
+  let first = 0x811c9dc5;
+  let second = 0x9e3779b9;
+  for (const byte of bytes) {
+    first = Math.imul(first ^ byte, 0x01000193) >>> 0;
+    second = Math.imul(second ^ byte, 0x85ebca6b) >>> 0;
+  }
+  return `${bytes.byteLength.toString(36)}-${first.toString(16).padStart(8, '0')}${second
+    .toString(16)
+    .padStart(8, '0')}`;
 }
 
 /** True when this environment exposes the origin-private file system. */
@@ -114,7 +142,8 @@ export function sanitizeProjectName(name: string): string {
 
 /** True when a sanitized project name is reserved for internal storage slots. */
 export function isReservedProjectName(name: string): boolean {
-  return sanitizeProjectName(name).toLowerCase() === 'autosave';
+  const sanitized = sanitizeProjectName(name).toLowerCase();
+  return sanitized === 'autosave' || sanitized.startsWith('autosave-session-');
 }
 
 /** True when an error is a DOMException-style NotFoundError. */
@@ -139,7 +168,7 @@ async function projectsDirectory(): Promise<FileSystemDirectoryHandle> {
  * @param name Project name; sanitized, ".szd" is appended.
  * @param bytes Archive bytes (from encodeSzd); copied before writing.
  */
-export async function saveProject(name: string, bytes: Uint8Array): Promise<void> {
+export async function saveProjectUnlocked(name: string, bytes: Uint8Array): Promise<void> {
   const fileName = sanitizeProjectName(name) + FILE_EXTENSION;
   const dir = await projectsDirectory();
   const handle = await dir.getFileHandle(fileName, { create: true });
@@ -150,6 +179,10 @@ export async function saveProject(name: string, bytes: Uint8Array): Promise<void
   } finally {
     await writable.close();
   }
+}
+
+export function saveProject(name: string, bytes: Uint8Array): Promise<void> {
+  return withPersistenceMutationLock(() => saveProjectUnlocked(name, bytes));
 }
 
 /**
@@ -171,6 +204,38 @@ export async function loadProject(name: string): Promise<Uint8Array> {
     throw error;
   }
   return new Uint8Array(await file.arrayBuffer());
+}
+
+export async function loadProjectWithRevision(name: string): Promise<StoredProjectSnapshot> {
+  const bytes = await loadProject(name);
+  return { bytes, revision: projectBytesRevision(bytes) };
+}
+
+/**
+ * Writes only when the stored revision still matches the caller's baseline.
+ * `null` requires a new slot; `undefined` preserves unconditional legacy saves.
+ */
+export function saveProjectChecked(
+  name: string,
+  bytes: Uint8Array,
+  expectedRevision: string | null | undefined,
+): Promise<string> {
+  const safeName = sanitizeProjectName(name);
+  return withPersistenceMutationLock(async () => {
+    if (expectedRevision !== undefined) {
+      let currentRevision: string | null = null;
+      try {
+        currentRevision = projectBytesRevision(await loadProject(safeName));
+      } catch (error) {
+        if (!(error instanceof ProjectNotFoundError)) throw error;
+      }
+      if (currentRevision !== expectedRevision) {
+        throw new ProjectRevisionConflictError(safeName);
+      }
+    }
+    await saveProjectUnlocked(safeName, bytes);
+    return projectBytesRevision(bytes);
+  });
 }
 
 /**
@@ -201,7 +266,7 @@ export async function listProjects(): Promise<StoredProjectInfo[]> {
  *
  * @param name Project name (sanitized the same way as on save).
  */
-export async function deleteProject(name: string): Promise<void> {
+export async function deleteProjectUnlocked(name: string): Promise<void> {
   const safeName = sanitizeProjectName(name);
   const dir = await projectsDirectory();
   try {
@@ -209,6 +274,10 @@ export async function deleteProject(name: string): Promise<void> {
   } catch (error) {
     if (!isNotFoundError(error)) throw error;
   }
+}
+
+export function deleteProject(name: string): Promise<void> {
+  return withPersistenceMutationLock(() => deleteProjectUnlocked(name));
 }
 
 /**
@@ -221,6 +290,10 @@ export async function deleteProject(name: string): Promise<void> {
  *   new name.
  */
 export async function renameProject(oldName: string, newName: string): Promise<void> {
+  return withPersistenceMutationLock(() => renameProjectUnlocked(oldName, newName));
+}
+
+async function renameProjectUnlocked(oldName: string, newName: string): Promise<void> {
   const from = sanitizeProjectName(oldName);
   const to = sanitizeProjectName(newName);
   if (from === to) return;
@@ -232,6 +305,6 @@ export async function renameProject(oldName: string, newName: string): Promise<v
     if (!isNotFoundError(error)) throw error;
   }
   const bytes = await loadProject(from);
-  await saveProject(to, bytes);
-  await deleteProject(from);
+  await saveProjectUnlocked(to, bytes);
+  await deleteProjectUnlocked(from);
 }

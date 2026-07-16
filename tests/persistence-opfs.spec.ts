@@ -6,13 +6,16 @@ import {
   isReservedProjectName,
   listProjects,
   loadProject,
+  loadProjectWithRevision,
   OpfsUnavailableError,
   ProjectAlreadyExistsError,
   ProjectNotFoundError,
+  ProjectRevisionConflictError,
   renameProject,
   requestPersistentStorage,
   sanitizeProjectName,
   saveProject,
+  saveProjectChecked,
 } from '@/persistence/opfs';
 
 import { installMockOpfs, type MemoryDirectoryHandle, uninstallMockOpfs } from './opfs-mock';
@@ -44,6 +47,25 @@ describe('opfs project storage', () => {
     await saveProject('slot', new Uint8Array([1, 2, 3]));
     await saveProject('slot', new Uint8Array([9]));
     expect(await loadProject('slot')).toEqual(new Uint8Array([9]));
+  });
+
+  it('rejects a named save when another window changed the loaded revision', async () => {
+    await saveProject('slot', new Uint8Array([1]));
+    const loaded = await loadProjectWithRevision('slot');
+    await saveProject('slot', new Uint8Array([2]));
+
+    await expect(saveProjectChecked('slot', new Uint8Array([3]), loaded.revision)).rejects.toThrow(
+      ProjectRevisionConflictError,
+    );
+    expect(await loadProject('slot')).toEqual(new Uint8Array([2]));
+  });
+
+  it('uses a null revision to create a named slot without racing an overwrite', async () => {
+    const revision = await saveProjectChecked('new-slot', new Uint8Array([4]), null);
+    expect((await loadProjectWithRevision('new-slot')).revision).toBe(revision);
+    await expect(saveProjectChecked('new-slot', new Uint8Array([5]), null)).rejects.toThrow(
+      ProjectRevisionConflictError,
+    );
   });
 
   it('sanitizes names consistently across save, load and list', async () => {

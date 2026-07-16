@@ -276,6 +276,18 @@ describe('audio asset store', () => {
     await expect(
       saveAsset({ name: 'T', sampleRate: 48000, numChannels: 2 }, new Float32Array(5)),
     ).rejects.toThrow(InvalidAssetError);
+    await expect(
+      saveAsset({ name: 'T', sampleRate: 384001 }, [new Float32Array([0])]),
+    ).rejects.toThrow(InvalidAssetError);
+    await expect(
+      saveAsset(
+        { name: 'T', sampleRate: 48000 },
+        Array.from({ length: 33 }, () => new Float32Array([0])),
+      ),
+    ).rejects.toThrow(InvalidAssetError);
+    await expect(
+      saveAsset({ name: 'T', sampleRate: 48000 }, [new Float32Array(0)]),
+    ).rejects.toThrow(InvalidAssetError);
   });
 
   it('lists assets sorted by name, skipping malformed sidecars', async () => {

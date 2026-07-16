@@ -10,6 +10,8 @@ import {
   collectReferencedAssetIds,
   collectReferencedFontIds,
   gatherProjectBundle,
+  gatherProjectBundleWithReport,
+  prepareAssetRestore,
   restoreProjectBundle,
 } from '@/persistence/bundle';
 import { clearFontCache, loadFont, loadFontMeta, saveFont } from '@/project/fonts';
@@ -75,6 +77,44 @@ describe('bundle id collection', () => {
   });
 });
 
+describe('bundled audio resource limits', () => {
+  it('rejects zero-frame payloads before channel allocation', () => {
+    expect(() =>
+      prepareAssetRestore({
+        id: 'empty',
+        meta: new TextEncoder().encode(
+          JSON.stringify({
+            id: 'empty',
+            name: 'Empty',
+            sampleRate: 48000,
+            numChannels: 1_000_000_000,
+            numFrames: 0,
+          }),
+        ),
+        pcm: new Uint8Array(0),
+      }),
+    ).toThrow(/PCM payload size/);
+  });
+
+  it('rejects impractical sample rates and channel counts', () => {
+    const pcm = new Uint8Array(new Float32Array([0]).buffer);
+    for (const meta of [
+      { sampleRate: 384001, numChannels: 1 },
+      { sampleRate: 48000, numChannels: 33 },
+    ]) {
+      expect(() =>
+        prepareAssetRestore({
+          id: 'bounded',
+          meta: new TextEncoder().encode(
+            JSON.stringify({ id: 'bounded', name: 'Bounded', numFrames: 1, ...meta }),
+          ),
+          pcm,
+        }),
+      ).toThrow(/malformed metadata/);
+    }
+  });
+});
+
 describe('bundle gather/restore round-trip', () => {
   beforeEach(() => {
     installMockOpfs();
@@ -125,9 +165,17 @@ describe('bundle gather/restore round-trip', () => {
   it('skips media that is not stored rather than failing the export', async () => {
     await saveAsset({ id: 'clip1', name: 'Clip', sampleRate: 48000 }, stereo());
     // take1, frozen1 and fontA are intentionally absent.
-    const bundle = await gatherProjectBundle(makeDocument());
-    expect(bundle.assets.map((a) => a.id)).toEqual(['clip1']);
-    expect(bundle.fonts).toEqual([]);
+    const gathered = await gatherProjectBundleWithReport(makeDocument());
+    expect(gathered.bundle.assets.map((a) => a.id)).toEqual(['clip1']);
+    expect(gathered.bundle.fonts).toEqual([]);
+    expect(gathered.report.complete).toBe(false);
+    expect(gathered.report.issues.map((issue) => [issue.mediaId, issue.role])).toEqual(
+      expect.arrayContaining([
+        ['take1', 'take'],
+        ['frozen1', 'frozen'],
+        ['fontA', 'instrument'],
+      ]),
+    );
   });
 
   it('ignores unreferenced archive media without decoding or storing it', async () => {

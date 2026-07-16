@@ -8,10 +8,18 @@
 
 import { strFromU8, strToU8, zipSync } from 'fflate';
 import {
+  type ArchiveLimits,
   ArchivePreflightError,
+  type ArchivePreflightReport,
   preflightAndUnzip,
   preflightAndUnzipInWorker,
 } from '@/persistence/archive-preflight';
+import {
+  MAX_PROJECT_ARCHIVE_COMPRESSED_BYTES,
+  MAX_PROJECT_ARCHIVE_ENTRIES,
+  MAX_PROJECT_ARCHIVE_ENTRY_BYTES,
+  MAX_PROJECT_ARCHIVE_EXPANDED_BYTES,
+} from '@/persistence/resource-limits';
 import { PROJECT_DOCUMENT_SCHEMA_VERSION, type ProjectDocument } from '@/project/serialization';
 
 /** File extension used by project archives. */
@@ -98,13 +106,22 @@ export class SzdFormatError extends Error {
   }
 }
 
-function unzipSzd(bytes: Uint8Array): Record<string, Uint8Array> {
+function szdLimits(overrides: Partial<ArchiveLimits> = {}): Partial<ArchiveLimits> {
+  return {
+    maxCompressedBytes: MAX_PROJECT_ARCHIVE_COMPRESSED_BYTES,
+    maxEntries: MAX_PROJECT_ARCHIVE_ENTRIES,
+    maxEntryBytes: MAX_PROJECT_ARCHIVE_ENTRY_BYTES,
+    maxUncompressedBytes: MAX_PROJECT_ARCHIVE_EXPANDED_BYTES,
+    ...overrides,
+  };
+}
+
+function unzipSzdWithReport(
+  bytes: Uint8Array,
+  limits: Partial<ArchiveLimits> = {},
+): { entries: Record<string, Uint8Array>; report: ArchivePreflightReport } {
   try {
-    return preflightAndUnzip(bytes, {
-      maxEntries: 4096,
-      maxEntryBytes: 512 * 1024 * 1024,
-      maxUncompressedBytes: 1024 * 1024 * 1024,
-    }).entries;
+    return preflightAndUnzip(bytes, szdLimits(limits));
   } catch (error) {
     if (error instanceof ArchivePreflightError) {
       throw new SzdFormatError(`Invalid project file: ${error.message}`);
@@ -113,22 +130,16 @@ function unzipSzd(bytes: Uint8Array): Record<string, Uint8Array> {
   }
 }
 
+function unzipSzd(bytes: Uint8Array): Record<string, Uint8Array> {
+  return unzipSzdWithReport(bytes).entries;
+}
+
 async function unzipSzdInWorker(
   bytes: Uint8Array,
   signal?: AbortSignal,
 ): Promise<Record<string, Uint8Array>> {
   try {
-    return (
-      await preflightAndUnzipInWorker(
-        bytes,
-        {
-          maxEntries: 4096,
-          maxEntryBytes: 512 * 1024 * 1024,
-          maxUncompressedBytes: 1024 * 1024 * 1024,
-        },
-        signal,
-      )
-    ).entries;
+    return (await preflightAndUnzipInWorker(bytes, szdLimits(), signal)).entries;
   } catch (error) {
     if (signal?.aborted) signal.throwIfAborted();
     if (error instanceof ArchivePreflightError) {
@@ -277,6 +288,15 @@ function decodeSzdEntries(entries: Record<string, Uint8Array>): ProjectDocument 
 
 export function decodeSzd(bytes: Uint8Array): ProjectDocument {
   return decodeSzdEntries(unzipSzd(bytes));
+}
+
+/** Decodes with a caller-provided cumulative budget and reports retained expansion. */
+export function decodeSzdWithResourceReport(
+  bytes: Uint8Array,
+  limits: Partial<ArchiveLimits>,
+): { document: ProjectDocument; report: ArchivePreflightReport } {
+  const decoded = unzipSzdWithReport(bytes, limits);
+  return { document: decodeSzdEntries(decoded.entries), report: decoded.report };
 }
 
 /**
