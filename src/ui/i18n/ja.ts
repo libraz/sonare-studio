@@ -122,6 +122,18 @@ export const ja = {
       unsavedChanges: '未保存の変更',
       importInvalidType: '「{name}」は .szd プロジェクトファイルではありません。',
       importDawprojectInvalidType: '「{name}」は .dawproject ファイルではありません。',
+      mediaCompleteness: {
+        title: 'プロジェクトメディアが見つかりません',
+        message:
+          '次のメディアを読み込めないため、ポータブルファイルは不完全になります:\n{items}\n\n欠損を許可して書き出しますか?',
+        confirm: '欠損ありで書き出す',
+      },
+      externalMediaRelink: {
+        title: '外部オーディオを選択',
+        message:
+          '「{path}」に一致する可能性がある同名ファイルが複数あります:\n{candidates}\n\nこの参照に使用するファイルを明示的に選択してください。',
+        confirm: 'ファイルを選択',
+      },
       musicXmlLoss: {
         title: 'MusicXML読み込みの制限',
         message: '次の譜面情報は読み込まれません:\n{items}\n\n読み込みを続けますか?',
@@ -134,6 +146,7 @@ export const ja = {
           annotations: '{count}件のアーティキュレーション・装飾・スパン注釈',
           'grace-notes': '{count}件の装飾音',
           'figured-bass': '{count}件の数字付き低音',
+          'tempo-conflicts': '{count}件の後続パートと競合するテンポ指定',
         },
       },
       dawprojectLoss: {
@@ -150,7 +163,6 @@ export const ja = {
           instrumentTracks: '{count}件のトラック音源割り当て',
           midiFxTracks: '{count}件のMIDI FX変換',
           trackColors: '{count}件の非HEXトラックカラー設定',
-          legacyTrackPans: '{count}件の旧トラックパン設定',
           externalMidiRoutes: '{count}件の外部MIDIルーティング設定',
           arrangementSections: '{count}件のアレンジセクション範囲/色設定',
           chordSymbols: '{count}件のコードトラック記号',
@@ -406,6 +418,14 @@ export const ja = {
       loading: '読み込み中...',
       processing: '処理中...',
       fit: '全体表示',
+      selectionRange: '選択範囲',
+      selectionStart: '開始フレーム',
+      selectionEnd: '終了フレーム',
+      selectionStatus: '選択範囲の状態',
+      selectAll: 'すべて選択',
+      clearSelection: '選択を解除',
+      selectionKeyboardHelp:
+        '矢印キーで終端を1フレーム、Shift+矢印キーとPageキーで1秒調整します。Home/Endで移動し、Ctrl+Aですべて選択します。',
       useInProjectTitle: 'このバージョンをプロジェクトで使うようシェルに依頼',
       useInProject: 'プロジェクトで使用',
       gain: 'ゲイン',
@@ -626,6 +646,9 @@ export const ja = {
       resizeScoreTitle: 'ドラッグまたは矢印キーでスコアの高さを変更',
     },
     media: {
+      openMedia: 'メディアを開く',
+      missingWarning:
+        'プロジェクト内の一部メディアを再生できません。メディアを開いて再リンクまたは置換してください。',
       label: 'メディアブラウザー',
       filterByName: '名前で絞り込み',
       filterAssetsByName: 'アセット名で絞り込み',
@@ -1038,6 +1061,7 @@ export const ja = {
       markerTools: '譜面の歌詞と調号ツール',
       lyricText: '歌詞',
       lyricPlaceholder: '単語または音節',
+      lyricNoNote: '歌詞を配置する前にノートを追加してください。',
       lyricVerse: '番',
       lyricSyllabic: '音節',
       lyricSyllabics: {
@@ -1402,6 +1426,12 @@ export const ja = {
         velocityChanged: 'ベロシティを{velocity}に変更しました',
         toggled: 'ステップを{state}にしました',
         rowControls: '行コントロールを選択しました',
+        stepNumber: 'ステップ',
+        paramNames: {
+          velocity: 'ベロシティ',
+          gate: 'ゲート',
+          offset: 'マイクロタイミングオフセット',
+        },
       },
       rowMode: '行モード',
       rootPitch: 'ルートピッチ',
@@ -1457,6 +1487,10 @@ export const ja = {
       accessibility: {
         navigator: 'ピアノロールノートナビゲーター',
         empty: 'クリップ範囲にノートはありません',
+        noNotesSelected: 'ノートは選択されていません',
+        noteSelected: '{pitch} を選択。位置 {start} PPQ、長さ {duration} PPQ',
+        notesSelected: '{low} から {high} まで {count} 個のノートを選択',
+        pointerPosition: 'ポインター位置 {ppq} PPQ、{pitch}',
         instructions:
           '矢印でノートを探索、Spaceで選択、Ctrl+矢印で移動、Shift+左右で長さ変更、Shift+F10で操作、Tabでスライダー編集を行います。',
         edit: '選択ノートのプロパティ',
@@ -1634,10 +1668,16 @@ export const ja = {
       splitStemsTitle:
         'アクティブなオーディオクリップをハーモニック/パーカッシブ/残差ステムに分離し新規トラックへ配置',
       noStemsSeparated: 'アクティブクリップのステム分離は利用できません。',
+      splitHere: 'ここで分割',
+      loopSplitUnavailable: 'このクリップを分割する前にループをオフにしてください。',
       timeline: 'アレンジメントタイムライン',
       accessibility: {
         navigator: 'アレンジメントクリップナビゲーター',
         empty: 'タイムラインにクリップはありません',
+        trackSelected: 'トラック {name} を選択',
+        clipSelected: 'クリップ {name} を選択',
+        noClipSelected: 'クリップは選択されていません',
+        timelineClipCount: 'タイムライン上のクリップ数 {count}',
         instructions:
           '矢印でクリップを探索、Spaceで選択、Ctrl+左右で移動、Ctrl+上下でトラック変更、Shift+左右でトリム、Shift+F10で操作、Tabでスライダー編集を行います。',
         edit: '選択クリップのプロパティ',
@@ -1646,6 +1686,26 @@ export const ja = {
         start: '開始',
         length: '長さ',
         ppqValue: '{value} PPQ',
+      },
+      clipActions: {
+        duplicate: '複製',
+        glue: '連結したクリップを結合',
+        consolidateAudio: 'オーディオクリップを統合',
+        rename: '名前を変更…',
+        disableLoop: 'ループを解除',
+        enableLoop: 'ループを有効化',
+        exportMidi: 'MIDIを書き出し…',
+        delete: '削除',
+        addMarker: 'ここにマーカーを追加…',
+        renameTitle: 'クリップ名を変更',
+        renameMessage: 'このクリップの名前を入力してください。',
+        clipName: 'クリップ名',
+        renameConfirm: '名前を変更',
+        addMarkerTitle: 'マーカーを追加',
+        addMarkerMessage: 'この位置に配置するマーカーの名前を入力してください。',
+        markerDefaultName: 'マーカー',
+        markerName: 'マーカー名',
+        addMarkerConfirm: '追加',
       },
       sectionName: 'セクション名',
       chords: 'コード',
@@ -1851,7 +1911,7 @@ export const ja = {
       delete: '削除',
       restoreBackupTitle: 'ブラウザバックアップを復元',
       restoreBackupMessage:
-        'バックアップからすべてのプロジェクト、オーディオアセット、SoundFontを復元しますか？同名プロジェクトは置き換えられ、内容が異なるmedia IDがある場合は保存済みデータを変更せず復元を中止します。',
+        'バックアップから名前付きプロジェクト、オーディオアセット、SoundFontを復元しますか？同名プロジェクトは置き換えられますが、現在開いているプロジェクトとローカルの自動保存リカバリーは変更しません。内容が異なるmedia IDがある場合は保存済みデータを変更せず復元を中止します。',
       saveProjectAsTitle: '別名で保存',
       saveProjectAsMessage: '保存するプロジェクト名を入力してください。',
       saveProjectOverwriteTitle: '保存済みプロジェクトを置き換えますか？',

@@ -122,6 +122,18 @@ export const en = {
       unsavedChanges: 'Unsaved changes',
       importInvalidType: '"{name}" is not a .szd project file.',
       importDawprojectInvalidType: '"{name}" is not a .dawproject file.',
+      mediaCompleteness: {
+        title: 'Missing project media',
+        message:
+          'The portable file will be incomplete because this media could not be read:\n{items}\n\nExport a lossy file anyway?',
+        confirm: 'Export anyway',
+      },
+      externalMediaRelink: {
+        title: 'Choose external audio',
+        message:
+          'Several selected files could match “{path}”:\n{candidates}\n\nChoose the file for this exact reference.',
+        confirm: 'Choose file',
+      },
       musicXmlLoss: {
         title: 'MusicXML import limitations',
         message: 'The following notation will not be imported:\n{items}\n\nContinue import?',
@@ -134,6 +146,7 @@ export const en = {
           annotations: '{count} articulation, ornament, or span annotation(s)',
           'grace-notes': '{count} grace note(s)',
           'figured-bass': '{count} figured-bass element(s)',
+          'tempo-conflicts': '{count} conflicting tempo event(s) from later part(s)',
         },
       },
       dawprojectLoss: {
@@ -149,7 +162,6 @@ export const en = {
           instrumentTracks: '{count} track instrument assignment(s)',
           midiFxTracks: '{count} MIDI FX transform(s)',
           trackColors: '{count} non-hex track color setting(s)',
-          legacyTrackPans: '{count} legacy track pan setting(s)',
           externalMidiRoutes: '{count} external MIDI route setting(s)',
           arrangementSections: '{count} arrangement section range/color setting(s)',
           chordSymbols: '{count} chord track symbol(s)',
@@ -405,6 +417,14 @@ export const en = {
       loading: 'Loading...',
       processing: 'Processing...',
       fit: 'Fit',
+      selectionRange: 'Selection range',
+      selectionStart: 'Start frame',
+      selectionEnd: 'End frame',
+      selectionStatus: 'Selection status',
+      selectAll: 'Select all',
+      clearSelection: 'Clear selection',
+      selectionKeyboardHelp:
+        'Arrow keys adjust the end by one frame; Shift+Arrow and Page keys move one second; Home and End jump; Ctrl+A selects all.',
       useInProjectTitle: 'Ask the shell to use this version in the project',
       useInProject: 'Use in project',
       gain: 'Gain',
@@ -629,6 +649,8 @@ export const en = {
       resizeScoreTitle: 'Drag or use the arrow keys to resize the score',
     },
     media: {
+      openMedia: 'Open Media',
+      missingWarning: 'Some project media could not be played. Open Media to relink or replace it.',
       label: 'Media browser',
       filterByName: 'Filter by name',
       filterAssetsByName: 'Filter assets by name',
@@ -1041,6 +1063,7 @@ export const en = {
       markerTools: 'Score lyrics and key tools',
       lyricText: 'Lyric',
       lyricPlaceholder: 'word or syllable',
+      lyricNoNote: 'Add a note before placing a lyric.',
       lyricVerse: 'Verse',
       lyricSyllabic: 'Syllabic',
       lyricSyllabics: {
@@ -1405,6 +1428,12 @@ export const en = {
         velocityChanged: 'Velocity changed to {velocity}',
         toggled: 'Step is now {state}',
         rowControls: 'Row controls selected',
+        stepNumber: 'Step',
+        paramNames: {
+          velocity: 'Velocity',
+          gate: 'Gate',
+          offset: 'Micro-timing offset',
+        },
       },
       rowMode: 'Row mode',
       rootPitch: 'Root pitch',
@@ -1460,6 +1489,10 @@ export const en = {
       accessibility: {
         navigator: 'Piano-roll note navigator',
         empty: 'No notes in the clip window',
+        noNotesSelected: 'No notes selected',
+        noteSelected: '{pitch} selected at {start} PPQ for {duration} PPQ',
+        notesSelected: '{count} notes selected from {low} to {high}',
+        pointerPosition: 'Pointer at {ppq} PPQ, {pitch}',
         instructions:
           'Use arrows to explore notes, Space to select, Ctrl+Arrows to move, Shift+Left or Right to resize, Shift+F10 for actions, or Tab to edit sliders.',
         edit: 'Selected note properties',
@@ -1637,10 +1670,16 @@ export const en = {
       splitStemsTitle:
         'Split the active audio clip into harmonic, percussive and residual stems on new tracks',
       noStemsSeparated: 'Stem separation is unavailable for the active clip.',
+      splitHere: 'Split here',
+      loopSplitUnavailable: 'Turn Loop off before splitting this clip.',
       timeline: 'Arrangement timeline',
       accessibility: {
         navigator: 'Arrangement clip navigator',
         empty: 'No clips on the timeline',
+        trackSelected: 'Track {name} selected',
+        clipSelected: 'Clip {name} selected',
+        noClipSelected: 'No clip selected',
+        timelineClipCount: '{count} clips on timeline',
         instructions:
           'Use arrows to explore clips, Space to select, Ctrl+Left or Right to move, Ctrl+Up or Down to change tracks, Shift+Left or Right to trim, Shift+F10 for actions, or Tab to edit sliders.',
         edit: 'Selected clip properties',
@@ -1649,6 +1688,26 @@ export const en = {
         start: 'Start',
         length: 'Length',
         ppqValue: '{value} PPQ',
+      },
+      clipActions: {
+        duplicate: 'Duplicate',
+        glue: 'Glue joined clips',
+        consolidateAudio: 'Consolidate audio clips',
+        rename: 'Rename…',
+        disableLoop: 'Disable loop',
+        enableLoop: 'Enable loop',
+        exportMidi: 'Export MIDI…',
+        delete: 'Delete',
+        addMarker: 'Add marker here…',
+        renameTitle: 'Rename clip',
+        renameMessage: 'Enter a name for this clip.',
+        clipName: 'Clip name',
+        renameConfirm: 'Rename',
+        addMarkerTitle: 'Add marker',
+        addMarkerMessage: 'Name the marker placed at this position.',
+        markerDefaultName: 'Marker',
+        markerName: 'Marker name',
+        addMarkerConfirm: 'Add',
       },
       sectionName: 'Section name',
       chords: 'CHORDS',
@@ -1856,7 +1915,7 @@ export const en = {
       delete: 'Delete',
       restoreBackupTitle: 'Restore browser backup',
       restoreBackupMessage:
-        'Restore all projects, audio assets and SoundFonts from a browser backup? Existing project names are replaced; a conflicting media id cancels the restore without changing stored data.',
+        'Restore all named projects, audio assets and SoundFonts from a browser backup? Existing project names are replaced; the open project and local autosave recovery remain unchanged. A conflicting media id cancels the restore without changing stored data.',
       saveProjectAsTitle: 'Save project as',
       saveProjectAsMessage: 'Enter a name for the saved project.',
       saveProjectOverwriteTitle: 'Replace saved project?',
