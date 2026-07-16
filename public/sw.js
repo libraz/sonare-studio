@@ -1,12 +1,6 @@
-const CACHE_VERSION = 'sonare-studio-v2';
+const CACHE_VERSION = '__SONARE_CACHE_VERSION__';
 const CACHE_PREFIX = 'sonare-studio-';
-const APP_SHELL = [
-  '/',
-  '/index.html',
-  '/manifest.webmanifest',
-  '/icon.svg',
-  '/worklet-manifest.json',
-];
+const PRECACHE_MANIFEST_URL = '/precache-manifest.json';
 const CACHEABLE_PATH_PATTERNS = [
   /^\/assets\//,
   /\.(?:css|js|mjs|wasm|woff2?|svg|png|jpg|jpeg|webp)$/i,
@@ -28,24 +22,42 @@ const putIfCacheable = async (cache, request, response) => {
   return response;
 };
 
-const precacheAppShell = async () => {
-  const workletManifestResponse = await fetch('/worklet-manifest.json', { cache: 'no-store' });
-  if (!workletManifestResponse.ok) {
-    throw new Error(`Worklet manifest fetch failed: ${workletManifestResponse.status}`);
+const loadPrecacheManifest = async () => {
+  const response = await fetch(PRECACHE_MANIFEST_URL, { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error(`Precache manifest fetch failed: ${response.status}`);
   }
-  const workletManifest = await workletManifestResponse.clone().json();
+  const manifest = await response.json();
+  if (manifest?.cacheVersion !== CACHE_VERSION || !Array.isArray(manifest.assets)) {
+    throw new Error('Precache manifest does not match this Service Worker release');
+  }
+  const assets = [...new Set(manifest.assets)];
   if (
-    typeof workletManifest.moduleUrl !== 'string' ||
-    !workletManifest.moduleUrl.startsWith('/assets/sonare-engine-worklet-')
+    !assets.includes('/index.html') ||
+    !assets.includes('/worklet-manifest.json') ||
+    !assets.some((asset) => /^\/assets\/.+\.js$/i.test(asset)) ||
+    assets.some((asset) => {
+      if (typeof asset !== 'string' || !asset.startsWith('/')) return true;
+      const url = new URL(asset, self.location.origin);
+      return url.origin !== self.location.origin || `${url.pathname}${url.search}` !== asset;
+    })
   ) {
-    throw new Error('Worklet manifest has an invalid module URL');
+    throw new Error('Precache manifest contains an invalid or incomplete asset list');
   }
-  const cache = await caches.open(CACHE_VERSION);
-  await cache.addAll([
-    ...APP_SHELL.filter((url) => url !== '/worklet-manifest.json'),
-    workletManifest.moduleUrl,
-  ]);
-  await cache.put('/worklet-manifest.json', workletManifestResponse);
+  return assets;
+};
+
+const precacheAppShell = async () => {
+  try {
+    const assets = await loadPrecacheManifest();
+    const cache = await caches.open(CACHE_VERSION);
+    await cache.addAll(assets.map((asset) => new Request(asset, { cache: 'reload' })));
+  } catch (error) {
+    // A failed update must not leave a partially populated release cache that
+    // a retry could mistake for a complete install.
+    await caches.delete(CACHE_VERSION);
+    throw error;
+  }
 };
 
 self.addEventListener('install', (event) => {
@@ -81,36 +93,35 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request)
-        .then(async (response) => {
-          const cache = await caches.open(CACHE_VERSION);
-          await putIfCacheable(cache, '/index.html', response);
-          return response;
-        })
-        .catch(() => caches.match('/index.html')),
+      caches.open(CACHE_VERSION).then(async (cache) => {
+        // Keep the active release internally consistent while an updated
+        // worker waits. The new index becomes visible only after activation.
+        const cached = await cache.match('/index.html');
+        if (cached) return cached;
+        return putIfCacheable(cache, '/index.html', await fetch(request));
+      }),
     );
     return;
   }
 
   if (CACHEABLE_PATH_PATTERNS.some((pattern) => pattern.test(url.pathname))) {
     event.respondWith(
-      caches.match(request).then((cached) => {
+      caches.open(CACHE_VERSION).then(async (cache) => {
+        const cached = await cache.match(request);
         if (cached) return cached;
-        return fetch(request).then(async (response) => {
-          const cache = await caches.open(CACHE_VERSION);
-          return putIfCacheable(cache, request, response);
-        });
+        return putIfCacheable(cache, request, await fetch(request));
       }),
     );
     return;
   }
 
   event.respondWith(
-    fetch(request)
-      .then(async (response) => {
-        const cache = await caches.open(CACHE_VERSION);
-        return putIfCacheable(cache, request, response);
-      })
-      .catch(() => caches.match(request)),
+    caches.open(CACHE_VERSION).then(async (cache) => {
+      try {
+        return await putIfCacheable(cache, request, await fetch(request));
+      } catch {
+        return cache.match(request);
+      }
+    }),
   );
 });

@@ -82,6 +82,7 @@ import { serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { isAudioClip } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { useContextMenuState } from '@/ui/menu/context-menu';
 import { disengageAutomationWriteModes } from '@/ui/mixer/automation-mode';
 import { shortcutBlockingOverlayOpen } from '@/ui/overlay-registry';
 import { COUNT_IN_CHOICES, SNAP_CHOICES, TOUR_STEPS } from '@/ui/shell/app-shell-options';
@@ -97,7 +98,18 @@ import { installSonareDevDebug } from '@/ui/shell/dev-debug';
 const version = ref('…');
 const isolated = ref(globalThis.crossOriginIsolated === true);
 const errorMessage = ref('');
+const mediaWarning = ref('');
 const busy = ref(false);
+const contextMenuState = useContextMenuState();
+
+watch(
+  () => contextMenuState.error,
+  (error) => {
+    if (!error) return;
+    errorMessage.value = error;
+    contextMenuState.error = '';
+  },
+);
 
 /** Plain (non-reactive) engine objects; the meter bridge must not be wrapped in reactive(). */
 const handle = shallowRef<EngineHandle | null>(null);
@@ -152,6 +164,7 @@ const historyCanRedo = computed(() => {
 
 const appSettings = useAppSettings();
 const { t } = useI18n();
+const mediaWarningIntro = computed(() => t.value.shell.media.missingWarning);
 const shortcuts = useShortcuts();
 const { tool: editorTool, setTool: setEditorTool } = useEditorTool();
 function toggleTheme(): void {
@@ -211,6 +224,10 @@ function openChordGenerateDialog(): void {
 
 /** Track-header "regenerate": opens Flow B pre-focused on replacing this track. */
 function onRegenerateTrack(trackId: number, part: TrackPart): void {
+  if (store.tracks.find((track) => track.id === trackId)?.frozen !== undefined) {
+    errorMessage.value = t.value.shell.arrangement.trackHeader.unfreezeTitle;
+    return;
+  }
   openTrackGenerateDialog({ part, target: { kind: 'replaceTrack', trackId } });
 }
 
@@ -330,6 +347,7 @@ const {
   scheduleApply,
   sendLiveExternalMidi,
   scheduledClips,
+  setEngineRebuildHandler,
   setEngineSyncHandles,
   syncAutomationState,
   syncMidiState,
@@ -343,28 +361,44 @@ const {
   automationSync,
   midiSync,
   mixerLaneTrackIds,
-} = useEngineProjectSync({ bridge, scope, errorMessage, handle, transport });
+} = useEngineProjectSync({
+  bridge,
+  scope,
+  errorMessage,
+  mediaWarning,
+  mediaWarningIntro,
+  handle,
+  transport,
+});
 
-const { disposeEngineLifecycle, ensureEngineStarted, playTestTone, renderOffline, startEngine } =
-  useEngineLifecycle({
-    bridge,
-    analyser,
-    scope,
-    ctxState,
-    errorMessage,
-    handle,
-    renderInfo,
-    transport,
-    applyToEngine,
-    bootPromise: () => bootPromise,
-    runAction,
-    resetEngineProjectSync: disposeEngineProjectSync,
-    setEngineSyncHandles,
-    syncAutomationState,
-    syncMidiState,
-    syncMixerState,
-    syncTransportState,
-  });
+const {
+  disposeEngineLifecycle,
+  ensureEngineStarted,
+  playTestTone,
+  renderOffline,
+  restartEngine,
+  startEngine,
+} = useEngineLifecycle({
+  bridge,
+  analyser,
+  scope,
+  ctxState,
+  errorMessage,
+  handle,
+  renderInfo,
+  transport,
+  applyToEngine,
+  bootPromise: () => bootPromise,
+  runAction,
+  resetEngineProjectSync: disposeEngineProjectSync,
+  setEngineSyncHandles,
+  syncAutomationState,
+  syncMidiState,
+  syncMixerState,
+  syncTransportState,
+});
+
+setEngineRebuildHandler(restartEngine);
 
 // --- Live note preview -------------------------------------------------------
 
@@ -739,6 +773,13 @@ useAppLifecycle({
     />
 
     <ErrorBanner :message="errorMessage" @dismiss="errorMessage = ''" />
+    <ErrorBanner
+      :message="mediaWarning"
+      :auto-dismiss-ms="0"
+      :action-label="t.shell.media.openMedia"
+      @action="selectDockTab('media')"
+      @dismiss="mediaWarning = ''"
+    />
     <PwaUpdateBanner />
 
     <main class="main-row">
@@ -945,7 +986,7 @@ useAppLifecycle({
             />
             <button
               type="button"
-              :disabled="store.selection.size === 0"
+              :disabled="store.selection.size === 0 || store.activeTrack?.frozen !== undefined"
               v-tooltip="t.shell.editor.quantizeTitle"
               @click="quantizeSelection()"
             >

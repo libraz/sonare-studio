@@ -9,6 +9,7 @@ import { nextTick, reactive, ref, watch } from 'vue';
 import {
   type ContextMenuItem,
   closeContextMenu,
+  reportContextMenuError,
   useContextMenuState,
 } from '@/ui/menu/context-menu';
 
@@ -81,7 +82,11 @@ function run(item: ContextMenuItem): void {
   if (item.disabled || item.separator || !item.run) return;
   const action = item.run;
   closeContextMenu();
-  action();
+  try {
+    void Promise.resolve(action()).catch(reportContextMenuError);
+  } catch (error) {
+    reportContextMenuError(error);
+  }
 }
 
 function hasSubmenu(item: ContextMenuItem): boolean {

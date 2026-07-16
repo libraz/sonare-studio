@@ -6,6 +6,7 @@ import MixerFader from '@/components/mixer/MixerFader.vue';
 import MixerKnob from '@/components/mixer/MixerKnob.vue';
 import NoteGridCanvas from '@/components/piano-roll/NoteGridCanvas.vue';
 import NewProjectDialog from '@/components/project/NewProjectDialog.vue';
+import { useAppSettings } from '@/composables/useAppSettings';
 import type { Painter } from '@/ui/canvas/painter';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
 import { FADER_MAX_DB, FADER_MIN_DB } from '@/ui/mixer/db-scale';
@@ -183,6 +184,40 @@ describe('Canvas editor live regions', () => {
     const live = wrapper.get('[role="status"][aria-live="polite"]');
     expect(live.attributes('aria-atomic')).toBe('true');
     expect(live.text()).toContain('C4 selected');
+  });
+
+  it('localizes canvas live-region status when Japanese is selected', () => {
+    stubCanvasEnvironment();
+    useAppSettings().set('language', 'ja');
+    const wrapper = mount(NoteGridCanvas, {
+      props: {
+        range: new TimelineRange({ widthPx: 800, heightPx: 480, pxPerPpq: 100, rowHeight: 10 }),
+        revision: 0,
+        painter,
+        notes: [{ id: 1, pitch: 60, velocity: 96, startPpq: 1, durationPpq: 2, channel: 0 }],
+        selection: new Set([1]),
+        highlightedPitchClasses: Array.from({ length: 12 }, () => false),
+        gridPpq: 0.25,
+        clipLengthPpq: 16,
+        timeSignatures: [{ startPpq: 0, numerator: 4, denominator: 4 }],
+        interactions: {
+          marquee: ref(null),
+          previewNotes: ref(null),
+          cursor: ref('default'),
+          onPointerDown: () => {},
+          onPointerMove: () => {},
+          onPointerUp: () => {},
+          onDoubleClick: () => {},
+          hitNoteAt: () => null,
+          onKeyDown: () => false,
+          cancel: () => {},
+        },
+      },
+    });
+
+    expect(wrapper.get('[role="status"]').text()).toContain('を選択');
+    wrapper.unmount();
+    useAppSettings().set('language', 'en');
   });
 
   it('announces arrangement track and clip selection through a polite status region', () => {

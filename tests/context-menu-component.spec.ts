@@ -1,8 +1,8 @@
-import { mount, type VueWrapper } from '@vue/test-utils';
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 import ContextMenu from '@/components/shell/ContextMenu.vue';
-import { closeContextMenu, openContextMenu } from '@/ui/menu/context-menu';
+import { closeContextMenu, openContextMenu, useContextMenuState } from '@/ui/menu/context-menu';
 
 let wrapper: VueWrapper | null = null;
 
@@ -16,6 +16,7 @@ async function mountOpenMenu(items: Parameters<typeof openContextMenu>[2]): Prom
 
 afterEach(() => {
   closeContextMenu();
+  useContextMenuState().error = '';
   wrapper?.unmount();
   wrapper = null;
   document.body.textContent = '';
@@ -65,5 +66,35 @@ describe('ContextMenu keyboard navigation', () => {
 
     await w.get('.context-submenu').trigger('keydown', { key: 'ArrowLeft' });
     expect(document.activeElement).toBe(document.querySelector('[data-menu-item-id="parent"]'));
+  });
+
+  it('publishes synchronous and asynchronous action failures for the app banner', async () => {
+    let w = await mountOpenMenu([
+      {
+        id: 'sync-failure',
+        label: 'Sync failure',
+        run: () => {
+          throw new Error('sync menu failure');
+        },
+      },
+    ]);
+    await w.get('[data-menu-item-id="sync-failure"]').trigger('click');
+    expect(useContextMenuState().error).toBe('sync menu failure');
+
+    useContextMenuState().error = '';
+    openContextMenu(8, 12, [
+      {
+        id: 'async-failure',
+        label: 'Async failure',
+        run: async () => {
+          throw new Error('async menu failure');
+        },
+      },
+    ]);
+    await nextTick();
+    w = wrapper as VueWrapper;
+    await w.get('[data-menu-item-id="async-failure"]').trigger('click');
+    await flushPromises();
+    expect(useContextMenuState().error).toBe('async menu failure');
   });
 });

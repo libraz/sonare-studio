@@ -7,10 +7,14 @@ import { useI18n } from '@/ui/i18n';
  * shows a dismissible alert otherwise. Long-lived notices also auto-dismiss so
  * transient failures do not permanently occupy the shell.
  */
-const props = withDefaults(defineProps<{ autoDismissMs?: number; message: string }>(), {
-  autoDismissMs: 8000,
-});
-const emit = defineEmits<{ dismiss: [] }>();
+const props = withDefaults(
+  defineProps<{ actionLabel?: string; autoDismissMs?: number; message: string }>(),
+  {
+    actionLabel: '',
+    autoDismissMs: 8000,
+  },
+);
+const emit = defineEmits<{ action: []; dismiss: [] }>();
 
 const { t } = useI18n();
 
@@ -40,6 +44,14 @@ onBeforeUnmount(clearDismissTimer);
   <Transition name="slide-down">
     <p v-if="message" class="error-box" role="alert">
       <span class="error-text">{{ message }}</span>
+      <button
+        v-if="actionLabel"
+        type="button"
+        class="error-action"
+        @click="emit('action')"
+      >
+        {{ actionLabel }}
+      </button>
       <button
         type="button"
         class="error-dismiss"
@@ -85,6 +97,12 @@ onBeforeUnmount(clearDismissTimer);
   line-height: 1.4;
   cursor: pointer;
   opacity: 0.75;
+}
+
+.error-action {
+  flex: none;
+  color: inherit;
+  font-weight: var(--fw-semibold);
 }
 
 .error-dismiss:hover {

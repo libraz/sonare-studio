@@ -24,7 +24,7 @@ export interface ContextMenuItem {
   /** Shows a leading check mark, e.g. for the active option or an on toggle. */
   checked?: boolean;
   /** Action run on click; the menu closes first, then the action runs. */
-  run?: () => void;
+  run?: () => unknown | Promise<unknown>;
   /** Nested actions shown as a submenu. */
   children?: ContextMenuItem[];
   /** Greys the item out and ignores clicks. */
@@ -45,9 +45,16 @@ export interface ContextMenuState {
   y: number;
   /** Items currently shown (cleaned of stray separators). */
   items: ContextMenuItem[];
+  /** Most recent action failure, consumed by the app-level error banner. */
+  error: string;
 }
 
-const state = reactive<ContextMenuState>({ open: false, x: 0, y: 0, items: [] });
+const state = reactive<ContextMenuState>({ open: false, x: 0, y: 0, items: [], error: '' });
+
+/** Publishes a menu action failure without leaving a rejected promise unhandled. */
+export function reportContextMenuError(error: unknown): void {
+  state.error = error instanceof Error ? error.message : String(error);
+}
 
 let outsideHandler: ((event: PointerEvent) => void) | null = null;
 let keyHandler: ((event: KeyboardEvent) => void) | null = null;
