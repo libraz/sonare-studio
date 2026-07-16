@@ -16,8 +16,15 @@
 
 import type { EngineHandle } from '@/engine/engine';
 import type { MidiNote } from '@/engine/instruments';
-import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
+import { PayloadMemoryLimitError } from '@/lib/payload-memory';
+import {
+  type AudioAssetMeta,
+  type LoadedAudioAsset,
+  loadAsset,
+  loadAssetMeta,
+} from '@/persistence/assets';
 import { type AudioClipSegment, audioClipSegments, type CompableClipFields } from './comping';
+import type { MediaCompletenessIssue } from './media-completeness';
 import { audibleMidiProjector } from './midi-projection';
 import { useProjectStore } from './store';
 import {
@@ -436,7 +443,12 @@ export interface ScheduledProjectClip {
   clipId: number;
   /** Project track id the clip belongs to. */
   trackId: number;
+  /** JS/WASM PCM payload represented by this scheduled clip. */
+  payloadBytes?: number;
 }
+
+/** Peak budget for decoded source + next schedule + retained old schedule. */
+export const DEFAULT_LIVE_SCHEDULE_MEMORY_BUDGET_BYTES = 512 * 1024 * 1024;
 
 /** Options for {@link scheduleProjectClips}. */
 export interface ScheduleProjectClipsOptions {
@@ -451,6 +463,74 @@ export interface ScheduleProjectClipsOptions {
    * Injectable for tests and alternative storage backends.
    */
   loadAudioAsset?: (assetId: string) => Promise<LoadedAudioAsset>;
+  /** Metadata-only loader used for allocation-free memory preflight. */
+  loadAudioAssetMeta?: (assetId: string) => Promise<AudioAssetMeta>;
+  /** Maximum source/next/old schedule payload retained during replacement. */
+  memoryBudgetBytes?: number;
+  /** PCM bytes already owned by the schedule being replaced. */
+  retainedScheduleBytes?: number;
+  /** Cancels preparation before any further load/render/live-engine mutation. */
+  signal?: AbortSignal;
+  /** Receives every skipped unreadable source with its track/clip identity. */
+  onMediaIssue?: (issue: MediaCompletenessIssue) => void;
+}
+
+export interface AudioScheduleCleanupFailure {
+  phase: 'previous' | 'rollback';
+  clip: ScheduledProjectClip;
+  error: unknown;
+}
+
+/** A failed replace retains exact ownership of every clip whose removal threw. */
+export class AudioScheduleReplaceError extends Error {
+  constructor(
+    readonly ownedClips: ScheduledProjectClip[],
+    readonly failures: AudioScheduleCleanupFailure[],
+    readonly operationError?: unknown,
+  ) {
+    super(`Audio schedule replace failed to remove ${failures.length} engine clip(s)`, {
+      ...(operationError !== undefined ? { cause: operationError } : {}),
+    });
+    this.name = 'AudioScheduleReplaceError';
+  }
+}
+
+/** Best-effort cleanup that returns only clips still owned after a failed removal. */
+export function cleanupScheduledProjectClips(
+  handle: EngineHandle,
+  clips: ReadonlyArray<ScheduledProjectClip>,
+  phase: AudioScheduleCleanupFailure['phase'] = 'rollback',
+): { remaining: ScheduledProjectClip[]; failures: AudioScheduleCleanupFailure[] } {
+  const remaining: ScheduledProjectClip[] = [];
+  const failures: AudioScheduleCleanupFailure[] = [];
+  for (let index = clips.length - 1; index >= 0; index -= 1) {
+    const clip = clips[index];
+    try {
+      handle.engine.removeClip(clip.engineClipId);
+    } catch (error) {
+      remaining.unshift(clip);
+      failures.push({ phase, clip, error });
+    }
+  }
+  return { remaining, failures };
+}
+
+/**
+ * Replaces an already-added next schedule. On old-removal failure it rolls
+ * every next clip back and throws with the exact residual ownership set.
+ */
+export function replaceScheduledProjectClips(
+  handle: EngineHandle,
+  previous: ReadonlyArray<ScheduledProjectClip>,
+  next: ReadonlyArray<ScheduledProjectClip>,
+): ScheduledProjectClip[] {
+  const removedPrevious = cleanupScheduledProjectClips(handle, previous, 'previous');
+  if (removedPrevious.failures.length === 0) return [...next];
+  const rolledBackNext = cleanupScheduledProjectClips(handle, next, 'rollback');
+  throw new AudioScheduleReplaceError(
+    [...removedPrevious.remaining, ...rolledBackNext.remaining],
+    [...removedPrevious.failures, ...rolledBackNext.failures],
+  );
 }
 
 interface PreparedProjectClip {
@@ -459,6 +539,83 @@ interface PreparedProjectClip {
   gain: number;
   startPpq: number;
   trackId: number;
+}
+
+function preparedClipBytes(channels: ReadonlyArray<Float32Array>): number {
+  return channels.reduce((sum, channel) => sum + channel.byteLength, 0);
+}
+
+function assertLiveScheduleMemory(bytes: number, budgetBytes: number): void {
+  if (!Number.isFinite(budgetBytes) || budgetBytes <= 0) {
+    throw new RangeError('Live audio schedule memory budget must be finite and greater than zero');
+  }
+  if (!Number.isSafeInteger(bytes) || bytes > budgetBytes) {
+    throw new PayloadMemoryLimitError(
+      'Live audio schedule',
+      Number.isSafeInteger(bytes) ? bytes : Number.MAX_SAFE_INTEGER,
+      budgetBytes,
+    );
+  }
+}
+
+async function preflightLiveScheduleMemory(
+  store: ReturnType<typeof useProjectStore>,
+  tempoMap: NormalizedTempoMap,
+  targetRate: number,
+  loadMeta: (assetId: string) => Promise<AudioAssetMeta>,
+  signal?: AbortSignal,
+): Promise<{ sourceBytes: number; preparedBytes: number }> {
+  const metas = new Map<string, AudioAssetMeta | null>();
+  let sourceBytes = 0;
+  let preparedBytes = 0;
+  const metaFor = async (assetId: string): Promise<AudioAssetMeta | null> => {
+    if (metas.has(assetId)) return metas.get(assetId) ?? null;
+    signal?.throwIfAborted();
+    try {
+      const meta = await loadMeta(assetId);
+      signal?.throwIfAborted();
+      metas.set(assetId, meta);
+      sourceBytes += meta.numFrames * meta.numChannels * Float32Array.BYTES_PER_ELEMENT;
+      return meta;
+    } catch {
+      if (signal?.aborted) signal.throwIfAborted();
+      metas.set(assetId, null);
+      return null;
+    }
+  };
+  for (const track of store.tracks) {
+    signal?.throwIfAborted();
+    if (track.frozen) {
+      const meta = await metaFor(track.frozen.assetId);
+      if (meta) {
+        preparedBytes +=
+          Math.round((meta.numFrames / meta.sampleRate) * targetRate) *
+          meta.numChannels *
+          Float32Array.BYTES_PER_ELEMENT;
+      }
+      continue;
+    }
+    for (const clip of store.clips) {
+      if (clip.trackId !== track.id || clipKind(clip) !== 'audio' || clip.gain <= 0) continue;
+      for (const segment of audioClipSegments(clip)) {
+        const meta = await metaFor(segment.assetId);
+        if (!meta) continue;
+        preparedBytes +=
+          ppqDurationSamples(
+            tempoMap,
+            clip.startPpq + segment.offsetPpq,
+            segment.lengthPpq,
+            targetRate,
+          ) *
+          meta.numChannels *
+          Float32Array.BYTES_PER_ELEMENT;
+      }
+    }
+  }
+  if (!Number.isSafeInteger(sourceBytes + preparedBytes)) {
+    throw new PayloadMemoryLimitError('Live audio schedule', Number.MAX_SAFE_INTEGER, 1);
+  }
+  return { sourceBytes, preparedBytes };
 }
 
 /**
@@ -476,7 +633,7 @@ interface PreparedProjectClip {
  * (sourceOffsetPpq/lengthPpq at the schedule tempo), bake fades into the
  * buffer edges, resample to the engine rate when needed, and are scheduled
  * with gain = clip gain — never loudness-normalized. Clips whose asset is
- * missing or unreadable are skipped silently.
+ * missing or unreadable are skipped and reported through `onMediaIssue`.
  *
  * The legacy track.pan field is not applied. Clip looping is expanded by
  * `audioClipSegments`; warp repeats are rendered as segment-scoped windows.
@@ -496,34 +653,93 @@ export async function scheduleProjectClips(
   const tempoBpm = options.tempoBpm ?? store.tempoBpm;
   const tempoMap = normalizeTempoMap(options.tempoSegments ?? store.tempoSegments, tempoBpm);
   const loadAudio = options.loadAudioAsset ?? loadAsset;
+  const loadMeta =
+    options.loadAudioAssetMeta ?? (options.loadAudioAsset === undefined ? loadAssetMeta : null);
   const targetRate = options.sampleRate ?? handle.ctx.sampleRate;
+  const signal = options.signal;
+  const budgetBytes = options.memoryBudgetBytes ?? DEFAULT_LIVE_SCHEDULE_MEMORY_BUDGET_BYTES;
+  const retainedScheduleBytes = options.retainedScheduleBytes ?? 0;
+  if (!Number.isSafeInteger(retainedScheduleBytes) || retainedScheduleBytes < 0) {
+    throw new RangeError('Retained schedule bytes must be a non-negative safe integer');
+  }
   const prepared: PreparedProjectClip[] = [];
+  const preflight = loadMeta
+    ? await preflightLiveScheduleMemory(store, tempoMap, targetRate, loadMeta, signal)
+    : null;
+  if (preflight) {
+    assertLiveScheduleMemory(
+      retainedScheduleBytes + preflight.sourceBytes + preflight.preparedBytes,
+      budgetBytes,
+    );
+  }
+  const actualSourceIds = new Set<string>();
+  let actualSourceBytes = 0;
+  let actualPreparedBytes = 0;
+  const accountAsset = (assetId: string, asset: LoadedAudioAsset): void => {
+    if (!actualSourceIds.has(assetId)) {
+      actualSourceIds.add(assetId);
+      actualSourceBytes += preparedClipBytes(asset.channels);
+    }
+    if (!preflight) {
+      assertLiveScheduleMemory(
+        retainedScheduleBytes + actualSourceBytes + actualPreparedBytes,
+        budgetBytes,
+      );
+    }
+  };
+  const appendPrepared = (clip: PreparedProjectClip): void => {
+    actualPreparedBytes += preparedClipBytes(clip.channels);
+    assertLiveScheduleMemory(
+      retainedScheduleBytes + (preflight?.sourceBytes ?? actualSourceBytes) + actualPreparedBytes,
+      budgetBytes,
+    );
+    prepared.push(clip);
+  };
+  signal?.throwIfAborted();
 
   // Preparation performs every fallible asynchronous asset conversion before
   // mutating the live engine, keeping the following commit phase short.
   for (const track of store.tracks) {
+    signal?.throwIfAborted();
     // Frozen tracks play their baked pre-fader render from the timeline
     // start instead of their own clips (which stay silent until unfreeze).
     if (track.frozen !== undefined) {
       let asset: LoadedAudioAsset;
       try {
         asset = await loadAudio(track.frozen.assetId);
-      } catch {
-        // Missing or unreadable frozen asset: the track stays silent.
+      } catch (error) {
+        if (signal?.aborted) signal.throwIfAborted();
+        options.onMediaIssue?.({
+          kind: 'audio-asset',
+          mediaId: track.frozen.assetId,
+          role: 'frozen',
+          reason: 'unreadable',
+          trackId: track.id,
+          message: error instanceof Error ? error.message : String(error),
+        });
         continue;
       }
+      signal?.throwIfAborted();
+      accountAsset(track.frozen.assetId, asset);
       const channels = resampleChannelsLinear(
         asset.channels.map((channel) => channel.slice()),
         asset.meta.sampleRate,
         targetRate,
       );
       if (channels.length > 0 && channels[0].length > 0) {
-        prepared.push({ channels, clipId: -track.id, gain: 1, startPpq: 0, trackId: track.id });
+        appendPrepared({
+          channels,
+          clipId: -track.id,
+          gain: 1,
+          startPpq: 0,
+          trackId: track.id,
+        });
       }
       continue;
     }
     const clips = store.clips.filter((clip) => clip.trackId === track.id);
     for (const clip of clips) {
+      signal?.throwIfAborted();
       if (clipKind(clip) !== 'audio') continue;
       const gain = clip.gain;
       if (gain <= 0) continue;
@@ -533,14 +749,26 @@ export async function scheduleProjectClips(
         let asset: LoadedAudioAsset;
         try {
           asset = await loadAudio(segment.assetId);
-        } catch {
-          // Missing or unreadable asset: leave the slice silent.
+        } catch (error) {
+          if (signal?.aborted) signal.throwIfAborted();
+          options.onMediaIssue?.({
+            kind: 'audio-asset',
+            mediaId: segment.assetId,
+            role: clip.takes?.some((take) => take.assetId === segment.assetId) ? 'take' : 'clip',
+            reason: 'unreadable',
+            trackId: track.id,
+            clipId: clip.id,
+            message: error instanceof Error ? error.message : String(error),
+          });
           continue;
         }
+        signal?.throwIfAborted();
+        accountAsset(segment.assetId, asset);
         let channels = await renderAudioClipSegment(asset, clip, segment, tempoMap);
+        signal?.throwIfAborted();
         channels = resampleChannelsLinear(channels, asset.meta.sampleRate, targetRate);
         if (channels.length === 0 || channels[0].length === 0) continue;
-        prepared.push({
+        appendPrepared({
           channels,
           clipId: clip.id,
           gain,
@@ -554,20 +782,26 @@ export async function scheduleProjectClips(
   const scheduled: ScheduledProjectClip[] = [];
   try {
     for (const clip of prepared) {
+      signal?.throwIfAborted();
       const engineClipId = handle.engine.addClip(clip.trackId, clip.channels, clip.startPpq, {
         gain: clip.gain,
       });
-      scheduled.push({ engineClipId, clipId: clip.clipId, trackId: clip.trackId });
+      const scheduledClip: ScheduledProjectClip = {
+        engineClipId,
+        clipId: clip.clipId,
+        trackId: clip.trackId,
+      };
+      Object.defineProperty(scheduledClip, 'payloadBytes', {
+        value: preparedClipBytes(clip.channels),
+        enumerable: false,
+      });
+      scheduled.push(scheduledClip);
     }
     return scheduled;
   } catch (error) {
-    for (let index = scheduled.length - 1; index >= 0; index -= 1) {
-      try {
-        handle.engine.removeClip(scheduled[index].engineClipId);
-      } catch {
-        // Continue rolling back the remaining additions before surfacing the
-        // original commit failure.
-      }
+    const cleanup = cleanupScheduledProjectClips(handle, scheduled);
+    if (cleanup.failures.length > 0) {
+      throw new AudioScheduleReplaceError(cleanup.remaining, cleanup.failures, error);
     }
     throw error;
   }

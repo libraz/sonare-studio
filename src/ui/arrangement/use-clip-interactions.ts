@@ -10,6 +10,7 @@
  */
 
 import { type Ref, ref } from 'vue';
+import { type ClipSplitBlockReason, clipSplitBlockReason } from '@/project/clip-split';
 import type { EditorToolId } from '@/ui/editor/tools';
 import { clampFadePpq, type FadeEdge, hitTestFadeHandles } from './audio-fades';
 import {
@@ -46,6 +47,8 @@ export interface ArrangeClip {
   lengthPpq: number;
   /** Clip content kind; absent = 'midi'. Fade handles exist on audio clips. */
   kind?: 'midi' | 'audio';
+  /** True when native split is unavailable until the clip loop is disabled. */
+  loopEnabled?: boolean;
   /** Fade-in length in PPQ (audio clips; absent = 0). */
   fadeInPpq?: number;
   /** Fade-out length in PPQ (audio clips; absent = 0). */
@@ -111,6 +114,8 @@ export interface UseClipInteractionsOptions {
   getBarRange(ppq: number): ClipBarRange;
   /** Returns the active editor tool (absent = always the select tool). */
   getTool?(): EditorToolId;
+  /** Reports why the split tool could not edit the hit clip. */
+  onSplitBlocked?(clipId: number, reason: ClipSplitBlockReason): void;
   /** Mutation commands invoked when gestures commit. */
   commands: ClipInteractionCommands;
   /**
@@ -304,7 +309,11 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     const step = options.getGridPpq();
     const raw = view.xToPpq(point.x);
     const splitPpq = modifiers.meta === true ? raw : snapToStep(raw, step);
-    if (splitPpq <= clip.startPpq || splitPpq >= clip.startPpq + clip.lengthPpq) return;
+    const blocked = clipSplitBlockReason(clip, splitPpq);
+    if (blocked !== null) {
+      options.onSplitBlocked?.(clip.id, blocked);
+      return;
+    }
     const rightId = commands.splitClip(clip.id, splitPpq);
     commands.selectClip(rightId);
   }
@@ -590,12 +599,14 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     previewDraft.value = null;
     cursor.value = 'default';
     if (g.kind === 'draw-clip') {
+      if (options.canEditTrack?.(g.trackId) === false) return;
       const lengthPpq = drawClipLength(g, point, modifiers);
       const id = commands.createClip(g.trackId, g.startPpq, lengthPpq);
       if (id !== null) commands.selectClip(id);
       return;
     }
     if (g.kind === 'fade') {
+      if (options.canEditClip?.(g.origin.id) === false) return;
       const fades = fadeTarget(g, point, modifiers);
       const originIn = g.origin.fadeInPpq ?? 0;
       const originOut = g.origin.fadeOutPpq ?? 0;
@@ -605,7 +616,13 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
       return;
     }
     if (g.kind === 'move') {
+      if (options.canEditClip?.(g.origin.id) === false) return;
       const target = moveTarget(g, point, modifiers);
+      if (
+        target.trackId !== g.origin.trackId &&
+        options.canMoveClipToTrack?.(g.origin.id, target.trackId) === false
+      )
+        return;
       const moved = target.startPpq !== g.origin.startPpq;
       const trackChanged = target.trackId !== g.origin.trackId;
       if (g.duplicate) {
@@ -620,6 +637,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
       return;
     }
     if (g.kind === 'trim') {
+      if (options.canEditClip?.(g.origin.id) === false) return;
       const extent = trimTarget(g, point, modifiers);
       if (extent.startPpq === g.origin.startPpq && extent.lengthPpq === g.origin.lengthPpq) return;
       commands.trimClip(g.origin.id, extent.startPpq, extent.lengthPpq);

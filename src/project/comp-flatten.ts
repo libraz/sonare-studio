@@ -5,19 +5,30 @@
  * is not part of undo history).
  */
 
+import { OperationGeneration } from '@/lib/operation-generation';
 import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import { collectReferencedAudioAssetIds } from './asset-references';
 import { dropClipTakesBatch } from './commands';
 import { audioClipSegments } from './comping';
-import { resampleChannelsLinear, sliceAudioClipWindow } from './scheduling';
+import {
+  assertProjectOperationCurrent,
+  beginProjectOperation,
+  StaleProjectOperationError,
+} from './operation';
+import { type AudioClipSliceTempo, renderAudibleAudioClipWindow } from './scheduling';
 import { useProjectStore } from './store';
+import { normalizeTempoMap, ppqDurationSamples } from './tempo-map';
 import type { EditorClip } from './types';
+
+const flattenOperations = new OperationGeneration();
 
 /** Options for {@link flattenClipComp}. */
 export interface FlattenClipCompOptions {
   /** Tempo used to convert PPQ to samples; defaults to the project tempo. */
   tempoBpm?: number;
+  /** Full tempo map override; takes precedence over tempoBpm. */
+  tempoSegments?: ReadonlyArray<{ startPpq: number; bpm: number; endBpm?: number }>;
   /** Audio asset loader (defaults to the OPFS asset store's loadAsset). */
   loadAudioAsset?: (assetId: string) => Promise<LoadedAudioAsset>;
   /** Asset ingester (defaults to ingestAudioBuffer without analysis). */
@@ -35,6 +46,11 @@ function flattenClipToken(clip: EditorClip): string {
     lengthPpq: clip.lengthPpq,
     sourceOffsetPpq: clip.sourceOffsetPpq,
     assetId: clip.assetId,
+    loopEnabled: clip.loopEnabled,
+    loopLengthPpq: clip.loopLengthPpq,
+    fadeInPpq: clip.fadeInPpq,
+    fadeOutPpq: clip.fadeOutPpq,
+    warp: clip.warp,
     takes: clip.takes,
     compSegments: clip.compSegments,
   });
@@ -58,50 +74,34 @@ interface RenderedComp {
 /** Renders one already-validated multi-segment comp without publishing state. */
 async function renderClipComp(
   clip: EditorClip,
-  tempoBpm: number,
+  tempo: AudioClipSliceTempo,
   loadAudio: (assetId: string) => Promise<LoadedAudioAsset>,
 ): Promise<RenderedComp> {
-  const segments = audioClipSegments(clip);
-  // Slice each segment from its take (fades stay clip fields, so they are
-  // NOT baked here) and concatenate at a common sample rate / channel count.
-  // The clip's source offset is owned by the wasm Project and survives the
-  // flatten, so the baked asset gets that much leading silence: the clip
-  // window then reads the stitched content at its unchanged offset.
-  const slices: Float32Array[][] = [];
-  let sampleRate = 0;
-  let channelCount = 0;
-  for (const segment of segments) {
-    const asset = await loadAudio(segment.assetId);
-    if (sampleRate === 0) sampleRate = asset.meta.sampleRate;
-    let channels = sliceAudioClipWindow(
-      asset.channels,
-      asset.meta.sampleRate,
-      segment.sourceOffsetPpq,
-      segment.lengthPpq,
-      tempoBpm,
-    );
-    channels = resampleChannelsLinear(channels, asset.meta.sampleRate, sampleRate);
-    slices.push(channels);
-    channelCount = Math.max(channelCount, channels.length);
-  }
-  if (!(sampleRate > 0)) throw new Error(`Clip ${clip.id} comp rendered no audio`);
-  const padFrames = Math.max(0, Math.round(((clip.sourceOffsetPpq * 60) / tempoBpm) * sampleRate));
-  const totalFrames = padFrames + slices.reduce((sum, slice) => sum + (slice[0]?.length ?? 0), 0);
-  const stitched: Float32Array[] = Array.from(
-    { length: Math.max(1, channelCount) },
-    () => new Float32Array(totalFrames),
+  // Internal comp-boundary fades are baked by the canonical renderer. The
+  // outer clip fades stay as clip metadata and are zeroed only for this bake,
+  // preventing a second fade application after the clip is rebased.
+  const rendered = await renderAudibleAudioClipWindow(
+    { ...clip, fadeInPpq: 0, fadeOutPpq: 0 },
+    tempo,
+    loadAudio,
   );
-  let offset = padFrames;
-  for (const slice of slices) {
-    const frames = slice[0]?.length ?? 0;
-    for (let c = 0; c < stitched.length; c++) {
-      // Mono slices feed every output channel.
-      const source = slice[c] ?? slice[0];
-      if (source) stitched[c].set(source, offset);
-    }
-    offset += frames;
-  }
-  return { channels: stitched, sampleRate, name: `${clip.name} (comp)` };
+  if (!rendered) throw new Error(`Clip ${clip.id} comp rendered no audio`);
+  const sourceOriginPpq = clip.startPpq - clip.sourceOffsetPpq;
+  const leadingFrames = Math.max(
+    0,
+    typeof tempo === 'number'
+      ? Math.round(((clip.sourceOffsetPpq * 60) / tempo) * rendered.sampleRate)
+      : ppqDurationSamples(tempo, sourceOriginPpq, clip.sourceOffsetPpq, rendered.sampleRate),
+  );
+  const channels =
+    leadingFrames === 0
+      ? rendered.channels
+      : rendered.channels.map((channel) => {
+          const padded = new Float32Array(leadingFrames + channel.length);
+          padded.set(channel, leadingFrames);
+          return padded;
+        });
+  return { channels, sampleRate: rendered.sampleRate, name: `${clip.name} (comp)` };
 }
 
 /** Renders/saves all inputs, then drops every take lane in one command. */
@@ -111,12 +111,31 @@ async function flattenCompClips(
 ): Promise<string[]> {
   if (clips.length === 0) return [];
   const store = useProjectStore();
-  const tempoBpm = options.tempoBpm ?? store.tempoBpm;
+  const resolveTempo = (): AudioClipSliceTempo => {
+    if (options.tempoSegments) {
+      return normalizeTempoMap(options.tempoSegments, options.tempoBpm ?? store.tempoBpm);
+    }
+    if (options.tempoBpm !== undefined) return options.tempoBpm;
+    return normalizeTempoMap(store.tempoSegments, store.tempoBpm);
+  };
   const loadAudio = options.loadAudioAsset ?? loadAsset;
   const assets = createAudioAssetTransaction();
   const isReferenced = (assetId: string): boolean =>
     collectReferencedAudioAssetIds(store.clips, store.tracks).has(assetId);
   const inputs = clips.map((clip) => ({ clip, token: flattenClipToken(clip) }));
+  const clipIds = inputs.map(({ clip }) => clip.id);
+  const targetId = `comp:${clipIds.join(',')}`;
+  const revision = (): string =>
+    JSON.stringify({
+      tempo: resolveTempo(),
+      clips: clipIds.map((clipId) => {
+        const current = store.clips.find((clip) => clip.id === clipId);
+        return current ? flattenClipToken(current) : null;
+      }),
+    });
+  const operation = beginProjectOperation(flattenOperations, store, targetId, revision());
+  const assertCurrent = (): void =>
+    assertProjectOperationCurrent(flattenOperations, operation, store, targetId, revision());
   try {
     const plans: Array<{ clipId: number; assetId: string; bakedAssetId?: string }> = [];
     for (const { clip } of inputs) {
@@ -127,19 +146,21 @@ async function flattenCompClips(
         plans.push({ clipId: clip.id, assetId });
         continue;
       }
-      const rendered = await renderClipComp(clip, tempoBpm, loadAudio);
+      const rendered = await renderClipComp(clip, resolveTempo(), loadAudio);
+      assertCurrent();
       const meta = options.ingest
         ? await options.ingest(rendered.channels, rendered.sampleRate, rendered.name)
         : await assets.save(
             { name: rendered.name, sampleRate: rendered.sampleRate },
             rendered.channels,
           );
+      assertCurrent();
       if (!meta.id) throw new Error(`Clip ${clip.id} comp ingest returned an empty asset id`);
       plans.push({ clipId: clip.id, assetId: meta.id, bakedAssetId: meta.id });
     }
+    assertCurrent();
     if (inputs.some(({ clip, token }) => !isFlattenSourceCurrent(store, clip.id, token))) {
-      await assets.rollback(isReferenced);
-      return [];
+      throw new StaleProjectOperationError();
     }
     dropClipTakesBatch(
       plans.map(({ clipId, bakedAssetId }) => ({
@@ -151,7 +172,10 @@ async function flattenCompClips(
     return plans.map((plan) => plan.assetId);
   } catch (error) {
     await assets.rollback(isReferenced);
+    if (error instanceof StaleProjectOperationError) return [];
     throw error;
+  } finally {
+    if (flattenOperations.isCurrent(operation.token)) flattenOperations.invalidate();
   }
 }
 

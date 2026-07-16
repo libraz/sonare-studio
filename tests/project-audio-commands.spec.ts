@@ -7,6 +7,7 @@ import {
   addTrack,
   clearHistory,
   consolidateAudioClips,
+  deleteClip,
   duplicateClip,
   extractMelodyFromAudioClip,
   moveClip,
@@ -14,7 +15,9 @@ import {
   replaceAudioClipAsset,
   setClipCompSegments,
   setClipFades,
+  setClipLoop,
   setClipWarp,
+  setTempoSegments,
   setTrackRecordInputChannel,
   splitAudioClipToStems,
   splitClip,
@@ -207,7 +210,10 @@ describe('audio track and clip commands', () => {
       source_offset_ppq: 1.5,
       fade_in_ppq: 0.25,
       fade_out_ppq: 0.5,
+      warp_ref_id: clipId,
+      warp_mode: 2,
     });
+    expect(readDoc().warp_maps?.map((map) => map.id)).toEqual([clipId]);
   });
 
   it('addAudioClip undo/redo reverts the whole command at once', async () => {
@@ -359,13 +365,58 @@ describe('audio track and clip commands', () => {
     moveClip(first, 0.5);
     pendingIngest.resolve({ id: 'stale-consolidated' });
 
-    await expect(result).resolves.toBe(-1);
+    await expect(result).resolves.toBeNull();
     expect(store.clips.find((clip) => clip.id === first)).toMatchObject({
       assetId: 'stale-a',
       startPpq: 0.5,
     });
     expect(store.clips.find((clip) => clip.id === second)?.assetId).toBe('stale-b');
     expect(store.clips.some((clip) => clip.assetId === 'stale-consolidated')).toBe(false);
+  });
+
+  it('does not consolidate into a replacement project with colliding ids and clips', async () => {
+    installMockOpfs();
+    await saveAsset({ id: 'switch-a', name: 'A', sampleRate: 4 }, [new Float32Array([1, 1])]);
+    await saveAsset({ id: 'switch-b', name: 'B', sampleRate: 4 }, [new Float32Array([2, 2])]);
+    const trackId = addAudioTrack({ name: 'Audio' });
+    const first = await addAudioClip({ trackId, assetId: 'switch-a', startPpq: 0, lengthPpq: 1 });
+    const second = await addAudioClip({ trackId, assetId: 'switch-b', startPpq: 1, lengthPpq: 1 });
+    const pendingIngest = deferred<{ id: string }>();
+    const ingest = vi.fn(() => pendingIngest.promise);
+
+    const result = consolidateAudioClips([first, second], { tempoBpm: 60, ingest });
+    await flushPromises();
+    expect(ingest).toHaveBeenCalledTimes(1);
+
+    store.dispose();
+    await store.init();
+    const replacementTrackId = addAudioTrack({ name: 'Audio' });
+    const replacementFirst = await addAudioClip({
+      trackId: replacementTrackId,
+      assetId: 'switch-a',
+      startPpq: 0,
+      lengthPpq: 1,
+    });
+    const replacementSecond = await addAudioClip({
+      trackId: replacementTrackId,
+      assetId: 'switch-b',
+      startPpq: 1,
+      lengthPpq: 1,
+    });
+    expect([replacementTrackId, replacementFirst, replacementSecond]).toEqual([
+      trackId,
+      first,
+      second,
+    ]);
+    const replacementNative = readDoc();
+
+    pendingIngest.resolve({ id: 'old-project-render' });
+    await expect(result).resolves.toBeNull();
+
+    expect(readDoc()).toEqual(replacementNative);
+    expect(store.clips.map((clip) => clip.assetId)).toContain('switch-a');
+    expect(store.clips.map((clip) => clip.assetId)).toContain('switch-b');
+    expect(store.clips.some((clip) => clip.assetId === 'old-project-render')).toBe(false);
   });
 
   it('consolidates looped audio clips by flattening repeats into the baked asset', async () => {
@@ -486,6 +537,7 @@ describe('audio track and clip commands', () => {
     expect(stretch).toHaveBeenCalledTimes(1);
     expect(consolidated).toMatchObject({ startPpq: 0, lengthPpq: 5, sourceOffsetPpq: 0 });
     expect(consolidated?.warp).toBeUndefined();
+    expect(readDoc().warp_maps?.some((map) => map.id === warped)).toBe(false);
     expect(Array.from(baked.channels[0])).toEqual([
       ...Array.from({ length: 20 }, (_, i) => i * 2),
       9,
@@ -709,6 +761,7 @@ describe('audio track and clip commands', () => {
       fadeOutPpq: 1,
       loopEnabled: true,
       loopLengthPpq: 2,
+      warp: { enabled: true, sourceBpm: 100, anchors: [{ ppq: 2, sourceSeconds: 1 }] },
     });
     clearHistory();
 
@@ -725,15 +778,19 @@ describe('audio track and clip commands', () => {
       fadeOutPpq: 1,
       loopEnabled: true,
       loopLengthPpq: 2,
+      warp: { enabled: true, sourceBpm: 100, anchors: [{ ppq: 2, sourceSeconds: 1 }] },
     });
     expect(store.clips.some((clip) => clip.id === oldClipId)).toBe(false);
+    expect(readDoc().warp_maps?.map((map) => map.id)).toEqual([newClipId]);
 
     expect(undo()).toBe(true);
     expect(store.clips.find((clip) => clip.id === oldClipId)?.assetId).toBe('swap-a');
     expect(store.clips.some((clip) => clip.id === newClipId)).toBe(false);
+    expect(readDoc().warp_maps?.map((map) => map.id)).toEqual([oldClipId]);
     expect(undo()).toBe(false);
     expect(redo()).toBe(true);
     expect(store.clips.find((clip) => clip.id === newClipId)?.assetId).toBe('swap-b');
+    expect(readDoc().warp_maps?.map((map) => map.id)).toEqual([newClipId]);
   });
 
   it('keeps the original clip when the final asset-swap removal fails', async () => {
@@ -907,6 +964,15 @@ describe('audio track and clip commands', () => {
         { ppq: 6, sourceSeconds: 3 },
       ],
     });
+    expect(readDoc().clips.find((clip) => clip.id === copyId)).toMatchObject({
+      warp_ref_id: copyId,
+      warp_mode: 2,
+    });
+    expect(
+      readDoc()
+        .warp_maps?.map((map) => map.id)
+        .sort((a, b) => a - b),
+    ).toEqual([clipId, copyId].sort((a, b) => a - b));
 
     const rightId = splitClip(clipId, 4);
     expect(store.clips.find((c) => c.id === clipId)?.warp).toEqual({
@@ -919,6 +985,11 @@ describe('audio track and clip commands', () => {
       sourceBpm: 120,
       anchors: [{ ppq: 2, sourceSeconds: 1 }],
     });
+    expect(readDoc().clips.find((clip) => clip.id === rightId)).toMatchObject({
+      warp_ref_id: rightId,
+      warp_mode: 2,
+    });
+    expect(readDoc().warp_maps?.some((map) => map.id === rightId)).toBe(true);
 
     trimClip(copyId, 17, 5);
     expect(store.clips.find((c) => c.id === copyId)?.warp).toEqual({
@@ -926,6 +997,95 @@ describe('audio track and clip commands', () => {
       sourceBpm: 120,
       anchors: [{ ppq: 1, sourceSeconds: 0.5 }],
     });
+    expect(readDoc().clips.find((clip) => clip.id === copyId)?.warp_ref_id).toBe(copyId);
+    expect(readDoc().warp_maps?.find((map) => map.id === copyId)?.anchors).toHaveLength(3);
+  });
+
+  it('clears warp failure-atomically and skips a missing map', async () => {
+    const trackId = addAudioTrack();
+    const plainClipId = await addAudioClip({ trackId, assetId: 'asset-x', lengthPpq: 8 });
+    clearHistory();
+    const plainProject = getProject();
+    const missingRemove = vi.spyOn(plainProject, 'removeWarpMap');
+    setClipWarp(plainClipId, null);
+    expect(missingRemove).not.toHaveBeenCalled();
+    expect(undo()).toBe(false);
+    missingRemove.mockRestore();
+
+    setClipWarp(plainClipId, { enabled: true, sourceBpm: 100 });
+    clearHistory();
+    const nativeBefore = plainProject.toJson();
+    const mirrorBefore = JSON.stringify(store.clips);
+    const remove = vi.spyOn(plainProject, 'removeWarpMap').mockImplementationOnce(() => {
+      throw new Error('injected remove failure');
+    });
+
+    expect(() => setClipWarp(plainClipId, null)).toThrow('injected remove failure');
+    expect(plainProject.toJson()).toBe(nativeBefore);
+    expect(JSON.stringify(store.clips)).toBe(mirrorBefore);
+    expect(undo()).toBe(false);
+    remove.mockRestore();
+  });
+
+  it('rolls back a warped clip creation when native warp binding fails', async () => {
+    const trackId = addAudioTrack();
+    clearHistory();
+    const project = getProject();
+    const nativeBefore = project.toJson();
+    const mirrorBefore = JSON.stringify(store.clips);
+    const bind = vi.spyOn(project, 'setClipWarpRef').mockImplementationOnce(() => {
+      throw new Error('injected warp bind failure');
+    });
+
+    await expect(
+      addAudioClip({
+        trackId,
+        assetId: 'asset-warp-failure',
+        lengthPpq: 8,
+        warp: { enabled: true, sourceBpm: 100 },
+      }),
+    ).rejects.toThrow('injected warp bind failure');
+    expect(project.toJson()).toBe(nativeBefore);
+    expect(JSON.stringify(store.clips)).toBe(mirrorBefore);
+    expect(undo()).toBe(false);
+    bind.mockRestore();
+  });
+
+  it('deletes and restores a clip-owned native warp map with its clip', async () => {
+    const trackId = addAudioTrack();
+    const clipId = await addAudioClip({
+      trackId,
+      assetId: 'asset-warp-delete',
+      lengthPpq: 8,
+      warp: { enabled: true, sourceBpm: 100 },
+    });
+    clearHistory();
+
+    deleteClip(clipId);
+    expect(readDoc().warp_maps?.some((map) => map.id === clipId)).toBe(false);
+    expect(undo()).toBe(true);
+    expect(readDoc().clips.find((clip) => clip.id === clipId)?.warp_ref_id).toBe(clipId);
+    expect(readDoc().warp_maps?.some((map) => map.id === clipId)).toBe(true);
+    expect(redo()).toBe(true);
+    expect(readDoc().warp_maps?.some((map) => map.id === clipId)).toBe(false);
+  });
+
+  it('rehydrates native warp sample anchors when the tempo map changes', async () => {
+    const trackId = addAudioTrack();
+    const clipId = await addAudioClip({
+      trackId,
+      assetId: 'asset-warp-tempo',
+      lengthPpq: 8,
+      warp: { enabled: true, sourceBpm: 100 },
+    });
+    const before = readDoc().warp_maps?.find((map) => map.id === clipId)?.anchors;
+    clearHistory();
+
+    setTempoSegments([{ startPpq: 0, bpm: 60 }]);
+    const after = readDoc().warp_maps?.find((map) => map.id === clipId)?.anchors;
+    expect(after?.at(-1)?.warpSample).toBe((before?.at(-1)?.warpSample ?? 0) * 2);
+    expect(undo()).toBe(true);
+    expect(readDoc().warp_maps?.find((map) => map.id === clipId)?.anchors).toEqual(before);
   });
 
   it('setClipWarp omits the anchors field when none survive sanitizing', async () => {
@@ -1051,5 +1211,18 @@ describe('audio track and clip commands', () => {
       fadeOutPpq: 1,
     });
     expect(store.clips.some((c) => c.id === rightId)).toBe(false);
+  });
+
+  it('rejects partial-repeat loop audio clips without changing native or mirror state', async () => {
+    const trackId = addAudioTrack();
+    const clipId = await addAudioClip({ trackId, assetId: 'asset-x', lengthPpq: 8 });
+    setClipLoop(clipId, true, 3);
+    clearHistory();
+    const nativeBefore = getProject().toJson();
+    const mirrorBefore = JSON.stringify(store.clips);
+
+    expect(() => splitClip(clipId, 4)).toThrow(/Turn Loop off/);
+    expect(getProject().toJson()).toBe(nativeBefore);
+    expect(JSON.stringify(store.clips)).toBe(mirrorBefore);
   });
 });

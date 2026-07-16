@@ -8,7 +8,7 @@ import {
 } from '../store';
 import { normalizeTempoMap } from '../tempo-map';
 import { isAudioClip } from '../types';
-import { projectWarpMapDesc } from '../warp';
+import { clearProjectClipWarp, installProjectClipWarp } from '../warp';
 import { executeAtomic } from './history';
 import { requireEditableClip } from './utils';
 
@@ -66,21 +66,16 @@ export function replaceAudioClipAsset(clipId: number, assetId: string): number {
       edit(1, () => project.setClipLoop(newClipId, 'loop', clip.loopLengthPpq || clip.lengthPpq));
     }
     if (clip.warp !== undefined) {
-      const nativeMap = projectWarpMapDesc(
+      installProjectClipWarp(
+        project,
         { ...clip, id: newClipId },
         normalizeTempoMap(store.tempoSegments, store.tempoBpm),
-        project.getSampleRate(),
+        (mutation) => edit(1, mutation),
       );
-      if (nativeMap !== null) {
-        edit(1, () => project.setWarpMap(nativeMap));
-        edit(1, () => project.setClipWarpRef(newClipId, nativeMap.id));
-        edit(1, () =>
-          project.setClipWarpMode(newClipId, clip.warp?.enabled ? 'tempo-sync' : 'off'),
-        );
-      }
     }
 
     // Destructive step last: all replacement state is valid at this point.
+    clearProjectClipWarp(project, clipId, (mutation) => edit(1, mutation));
     edit(1, () => project.removeClip(clipId));
     store.clips = store.clips.map((entry) =>
       entry.id === clipId

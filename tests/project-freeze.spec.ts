@@ -30,6 +30,14 @@ function makeRenderResult(frames = 8, fill = 0.5): MixdownResult {
   };
 }
 
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 describe('track freeze and bounce-in-place', () => {
   let store: ReturnType<typeof useProjectStore>;
   let renderResult: MixdownResult;
@@ -116,6 +124,23 @@ describe('track freeze and bounce-in-place', () => {
       expect(ingest).not.toHaveBeenCalled();
       expect(store.tracks.every((track) => track.frozen === undefined)).toBe(true);
     });
+
+    it('does not publish a render after the open project is replaced', async () => {
+      const pending = deferred<MixdownResult>();
+      render.mockImplementationOnce(async () => pending.promise);
+      const oldTrackId = store.tracks[0].id;
+
+      const freezing = freezeTrack(oldTrackId, { render, ingest });
+      await vi.waitFor(() => expect(render).toHaveBeenCalledTimes(1));
+      store.dispose();
+      await store.init();
+      expect(store.tracks[0].id).toBe(oldTrackId);
+      pending.resolve(renderResult);
+
+      await expect(freezing).rejects.toMatchObject({ name: 'AbortError' });
+      expect(ingest).not.toHaveBeenCalled();
+      expect(store.tracks[0].frozen).toBeUndefined();
+    });
   });
 
   describe('bounceTrackRange', () => {
@@ -188,6 +213,24 @@ describe('track freeze and bounce-in-place', () => {
         /cannot be frozen or bounced/,
       );
       expect(render).not.toHaveBeenCalled();
+    });
+
+    it('does not add a bounced clip after the open project is replaced', async () => {
+      const sourceId = addAudioTrack({ name: 'Gtr' });
+      const pending = deferred<MixdownResult>();
+      render.mockImplementationOnce(async () => pending.promise);
+
+      const bouncing = bounceTrackRange(sourceId, 0, 4, { render, ingest });
+      await vi.waitFor(() => expect(render).toHaveBeenCalledTimes(1));
+      store.dispose();
+      await store.init();
+      const replacementId = addAudioTrack({ name: 'Gtr' });
+      expect(replacementId).toBe(sourceId);
+      pending.resolve(renderResult);
+
+      await expect(bouncing).rejects.toMatchObject({ name: 'AbortError' });
+      expect(ingest).not.toHaveBeenCalled();
+      expect(store.clips.some((clip) => clip.kind === 'audio')).toBe(false);
     });
   });
 });

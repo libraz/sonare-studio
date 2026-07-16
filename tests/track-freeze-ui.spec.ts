@@ -10,6 +10,8 @@ import {
   addTrack,
   addVcaGroup,
   clearHistory,
+  renameTrack,
+  setStripPan,
   setTrackFrozen,
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
@@ -75,6 +77,48 @@ describe('track freeze / bounce UI', () => {
 
     wrapper.unmount();
     expect(cancelAnimationFrame).toHaveBeenCalledWith(24);
+  });
+
+  describe('audible track pan wiring', () => {
+    it('shares one pan value between the arrangement and mixer strip', async () => {
+      const headers = mountHeaders();
+      const pan = headers.find<HTMLInputElement>('.mini-slider--pan');
+
+      await pan.setValue('0.65');
+
+      expect(store.tracks[0]).toMatchObject({ pan: 0.65, mixer: { pan: 0.65 } });
+      const channel = mount(ChannelStrip, { props: { target: trackId }, shallow: true });
+      expect(channel.findComponent({ name: 'MixerKnob' }).props('value')).toBe(0.65);
+
+      setStripPan(trackId, -0.4);
+      await headers.vm.$nextTick();
+      expect(Number(pan.element.value)).toBe(-0.4);
+    });
+
+    it('does not expose a save-only pan control for group buses', () => {
+      const groupId = addGroupTrack({ name: 'Group' });
+      const headers = mount(TrackHeaderList, {
+        props: {
+          laneHeight: 48,
+          scrollY: 0,
+          rulerOffset: 24,
+          automationExpandedIds: [groupId],
+          automationParams: { [groupId]: 'pan' },
+        },
+      });
+      expect(headers.findAll('.mini-slider--pan')).toHaveLength(1);
+      const groupAutomation = headers
+        .findAllComponents({ name: 'TrackAutomationStrip' })
+        .find((strip) => strip.props('track').id === groupId);
+      expect(groupAutomation?.props('param')).toBe('faderDb');
+      expect(groupAutomation?.props('options')).not.toContainEqual(
+        expect.objectContaining({ value: 'pan' }),
+      );
+
+      const groupStrip = mount(ChannelStrip, { props: { target: groupId }, shallow: true });
+      expect(groupStrip.find('.strip-pan').exists()).toBe(false);
+      expect(groupStrip.findComponent({ name: 'MixerKnob' }).exists()).toBe(false);
+    });
   });
 
   describe('TrackHeaderList VCA picker', () => {
@@ -260,6 +304,24 @@ describe('track freeze / bounce UI', () => {
     it('shows no tag on unfrozen tracks', () => {
       const wrapper = mount(ChannelStrip, { props: { target: trackId }, shallow: true });
       expect(wrapper.find('.strip-frozen-tag').exists()).toBe(false);
+    });
+
+    it('disables frozen track rename from both header and mixer menus', async () => {
+      renameTrack(trackId, 'Drums');
+      setTrackFrozen(trackId, { assetId: 'frozen-asset' });
+      const headers = mountHeaders();
+      await headers.find('.track-name').trigger('dblclick');
+      expect(headers.find('.track-name-input').exists()).toBe(false);
+      await headers.find('.track-header').trigger('contextmenu', { clientX: 10, clientY: 10 });
+      expect(useContextMenuState().items.find((item) => item.id === 'rename')?.disabled).toBe(true);
+      expect(useContextMenuState().items.find((item) => item.id === 'regenerate')?.disabled).toBe(
+        true,
+      );
+
+      closeContextMenu();
+      const strip = mount(ChannelStrip, { props: { target: trackId }, shallow: true });
+      await strip.find('.channel-strip').trigger('contextmenu', { clientX: 10, clientY: 10 });
+      expect(useContextMenuState().items.find((item) => item.id === 'rename')?.disabled).toBe(true);
     });
   });
 });

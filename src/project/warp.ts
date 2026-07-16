@@ -11,7 +11,7 @@
  */
 
 import { ensureWasm } from '@/lib/wasm';
-import type { ProjectWarpMapDesc } from '@/wasm/index.js';
+import type { Project, ProjectWarpMapDesc } from '@/wasm/index.js';
 import { type NormalizedTempoMap, ppqToSamples } from './tempo-map';
 import type { ClipWarp, WarpAnchor } from './types';
 
@@ -84,6 +84,22 @@ export function sanitizeWarpAnchors(
   return result;
 }
 
+/** Validates and canonicalizes one clip's persisted warp metadata. */
+export function sanitizeClipWarp(warp: ClipWarp, lengthPpq: number): ClipWarp {
+  if (typeof warp.enabled !== 'boolean') {
+    throw new TypeError('Warp enabled must be a boolean');
+  }
+  if (!Number.isFinite(warp.sourceBpm) || warp.sourceBpm <= 0) {
+    throw new RangeError(`Warp sourceBpm must be finite and > 0, got ${warp.sourceBpm}`);
+  }
+  const anchors = sanitizeWarpAnchors(warp.anchors ?? [], lengthPpq);
+  return {
+    enabled: warp.enabled,
+    sourceBpm: warp.sourceBpm,
+    ...(anchors.length > 0 ? { anchors } : {}),
+  };
+}
+
 /**
  * Converts the editor's clip warp metadata into libsonare's first-class
  * sample-domain warp-map descriptor. The editor keeps explicit anchors as
@@ -121,6 +137,87 @@ export function projectWarpMapDesc(
     sourceSample: Math.max(0, Math.round(anchor.sourceSeconds * sampleRate)),
   }));
   return { id: clip.id, name: `clip-${clip.id}-warp`, anchors };
+}
+
+/** Mutation seam used by failure-atomic commands to count each native edit. */
+export type ProjectWarpEdit = (mutation: () => void) => void;
+
+const directProjectWarpEdit: ProjectWarpEdit = (mutation) => mutation();
+
+/** Installs/replaces a clip-owned native warp map and binds it to that clip. */
+export function installProjectClipWarp(
+  project: Project,
+  clip: ProjectWarpMapClipFields,
+  tempo: NormalizedTempoMap,
+  edit: ProjectWarpEdit = directProjectWarpEdit,
+): boolean {
+  const nativeMap = projectWarpMapDesc(clip, tempo, project.getSampleRate());
+  if (nativeMap === null) return false;
+  edit(() => project.setWarpMap(nativeMap));
+  edit(() => project.setClipWarpRef(clip.id, nativeMap.id));
+  edit(() => project.setClipWarpMode(clip.id, clip.warp?.enabled ? 'tempo-sync' : 'off'));
+  return true;
+}
+
+interface SerializedNativeWarpState {
+  clips?: Array<{ id?: number; warp_ref_id?: number; warp_mode?: number }>;
+  warp_maps?: Array<{ id?: number }>;
+}
+
+function readProjectClipWarpState(
+  project: Project,
+  clipId: number,
+): {
+  hasMode: boolean;
+  refId: number;
+  hasMap: boolean;
+} {
+  const state = JSON.parse(project.toJson()) as SerializedNativeWarpState;
+  const clip = state.clips?.find((entry) => entry.id === clipId);
+  return {
+    hasMode: (clip?.warp_mode ?? 0) !== 0,
+    refId: clip?.warp_ref_id ?? 0,
+    hasMap: state.warp_maps?.some((map) => map.id === clipId) === true,
+  };
+}
+
+/** True when any native clip warp field/map still needs clearing. */
+export function hasProjectClipWarpState(project: Project, clipId: number): boolean {
+  const state = readProjectClipWarpState(project, clipId);
+  return state.hasMode || state.refId > 0 || state.hasMap;
+}
+
+/** True when the clip owns and references its expected native warp map. */
+export function hasInstalledProjectClipWarp(project: Project, clipId: number): boolean {
+  const state = readProjectClipWarpState(project, clipId);
+  return state.refId === clipId && state.hasMap;
+}
+
+/**
+ * Clears only the native warp fields that actually exist. This avoids calling
+ * libsonare's rejecting removeWarpMap API for a missing map and lets atomic
+ * callers roll back the exact number of successful edits.
+ */
+export function clearProjectClipWarp(
+  project: Project,
+  clipId: number,
+  edit: ProjectWarpEdit = directProjectWarpEdit,
+): number {
+  const state = readProjectClipWarpState(project, clipId);
+  let edits = 0;
+  if (state.hasMode) {
+    edit(() => project.setClipWarpMode(clipId, 'off'));
+    edits++;
+  }
+  if (state.refId > 0) {
+    edit(() => project.setClipWarpRef(clipId, 0));
+    edits++;
+  }
+  if (state.hasMap) {
+    edit(() => project.removeWarpMap(clipId));
+    edits++;
+  }
+  return edits;
 }
 
 /**

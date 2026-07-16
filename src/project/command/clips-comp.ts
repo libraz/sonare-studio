@@ -1,7 +1,8 @@
 import { sanitizeCompSegments } from '../comping';
-import { useProjectStore } from '../store';
+import { getProject, useProjectStore } from '../store';
 import type { ClipCompSegment, ClipTake, EditorClip } from '../types';
-import { execute } from './history';
+import { clearProjectClipWarp } from '../warp';
+import { execute, executeAtomic } from './history';
 import { requireEditableClip } from './utils';
 
 // ---------------------------------------------------------------------------
@@ -119,9 +120,10 @@ export function setClipTakes(
  * be a single segment (the clip keeps that take's asset); with one — see
  * flattenClipComp (src/project/comp-flatten.ts), which stitches the comp
  * into a new asset first — the clip is rebased onto the baked asset. The
- * clip's source offset is owned by the wasm Project and stays unchanged, so
- * the baked asset must cover the clip's source window (flattenClipComp pads
- * it with leading silence up to the source offset).
+ * The baked asset contains the complete audible clip-local window plus leading
+ * silence for the native source offset (which has no setter). Looping and warp
+ * are reset when rebasing; outer clip fades remain metadata because
+ * flattenClipComp deliberately does not bake them.
  *
  * @param clipId Id of the clip to flatten.
  * @param bakedAssetId Asset holding the stitched comp at the clip's source window.
@@ -145,6 +147,7 @@ export interface DropClipTakesInput {
 export function dropClipTakesBatch(inputs: ReadonlyArray<DropClipTakesInput>): void {
   if (inputs.length === 0) return;
   const store = useProjectStore();
+  const project = getProject();
   const seen = new Set<number>();
   const replacements = new Map<number, string | undefined>();
   for (const input of inputs) {
@@ -167,13 +170,26 @@ export function dropClipTakesBatch(inputs: ReadonlyArray<DropClipTakesInput>): v
     }
     replacements.set(input.clipId, input.bakedAssetId);
   }
-  execute(0, () => {
+  executeAtomic((edit) => {
+    for (const input of inputs) {
+      if (input.bakedAssetId === undefined) continue;
+      const clip = store.clips.find((entry) => entry.id === input.clipId);
+      if (!clip) continue;
+      if (clip.loopEnabled) edit(1, () => project.setClipLoop(input.clipId, 'off'));
+      if (clip.warp !== undefined) {
+        clearProjectClipWarp(project, input.clipId, (mutation) => edit(1, mutation));
+      }
+    }
+    store.refresh();
     store.clips = store.clips.map((entry) => {
       if (!replacements.has(entry.id)) return entry;
       const next: EditorClip = { ...entry };
       const bakedAssetId = replacements.get(entry.id);
       if (bakedAssetId !== undefined) {
         next.assetId = bakedAssetId;
+        next.loopEnabled = false;
+        next.loopLengthPpq = 0;
+        delete next.warp;
       }
       delete next.takes;
       delete next.compSegments;

@@ -5,6 +5,7 @@ import { promptDialog } from '@/composables/useDialogs';
 import { useEditorTool } from '@/composables/useEditorTool';
 import { useFileDownloads } from '@/composables/useFileDownloads';
 import type { AutomationParam } from '@/project/automation';
+import { clipSplitBlockReason } from '@/project/clip-split';
 import {
   addMidiClip,
   clearActiveClipSelection,
@@ -351,7 +352,12 @@ const interactions = useClipInteractions({
   canMoveClipToTrack: (clipId, trackId) => {
     const clip = store.clips.find((entry) => entry.id === clipId);
     const track = store.tracks.find((entry) => entry.id === trackId);
-    return Boolean(clip && track && canTrackContainClip(track.kind, clipKind(clip)));
+    return Boolean(
+      clip &&
+        track &&
+        track.frozen === undefined &&
+        canTrackContainClip(track.kind, clipKind(clip)),
+    );
   },
   canEditClip: (clipId) => {
     const clip = store.clips.find((entry) => entry.id === clipId);
@@ -363,6 +369,9 @@ const interactions = useClipInteractions({
   getBarRange: (ppq) => barRangeAt(store.timeSignatures, ppq),
   getSourceBounds: sourceBoundsFor,
   getTool: () => tool.value,
+  onSplitBlocked: (_clipId, reason) => {
+    if (reason === 'loop') error.value = t.value.shell.arrangement.loopSplitUnavailable;
+  },
   commands: {
     selectClip: (clipId) => setActiveClip(clipId),
     clearClipSelection: (trackId) => clearActiveClipSelection(trackId),
@@ -625,7 +634,7 @@ function audioConsolidateClipIds(clipId: number): number[] {
 
 async function consolidateAudioCluster(clipIds: number[]): Promise<void> {
   const id = await consolidateAudioClips(clipIds);
-  setActiveClip(id);
+  if (id !== null) setActiveClip(id);
 }
 
 /** Builds and opens the right-click menu for a clip (or an empty lane). */
@@ -640,7 +649,7 @@ function onClipContext(payload: {
   setActiveClip(clip.id);
   const end = clip.startPpq + clip.lengthPpq;
   const splitPpq = snapToStep(payload.ppq, gridPpq.value);
-  const canSplit = splitPpq > clip.startPpq && splitPpq < end;
+  const splitBlocked = clipSplitBlockReason(clip, splitPpq);
   const glueIds = glueClusterClipIds(clip.id);
   const consolidateIds = audioConsolidateClipIds(clip.id);
   const frozen = store.tracks.find((track) => track.id === clip.trackId)?.frozen !== undefined;
@@ -657,45 +666,59 @@ function onClipContext(payload: {
       : []),
     {
       id: 'split',
-      label: 'Split here',
+      label:
+        splitBlocked === 'loop'
+          ? `${t.value.shell.arrangement.splitHere} — ${t.value.shell.arrangement.loopSplitUnavailable}`
+          : t.value.shell.arrangement.splitHere,
       hint: '3',
-      disabled: frozen || !canSplit,
+      disabled: frozen || splitBlocked !== null,
       run: () => setActiveClip(splitClip(clip.id, splitPpq)),
     },
     {
       id: 'duplicate',
-      label: 'Duplicate',
+      label: t.value.shell.arrangement.clipActions.duplicate,
       disabled: frozen,
       run: () => setActiveClip(duplicateClip(clip.id, end)),
     },
     {
       id: 'glue',
-      label: 'Glue joined clips',
+      label: t.value.shell.arrangement.clipActions.glue,
       disabled: frozen || glueIds.length < 2,
       run: () => setActiveClip(glueMidiClips(glueIds)),
     },
     {
       id: 'consolidate-audio',
-      label: 'Consolidate audio clips',
+      label: t.value.shell.arrangement.clipActions.consolidateAudio,
       disabled: frozen || consolidateIds.length < 2,
-      run: () => void consolidateAudioCluster(consolidateIds),
+      run: () => consolidateAudioCluster(consolidateIds),
     },
-    { id: 'rename', label: 'Rename…', run: () => renameClipFromPrompt(clip.id, clip.name) },
+    {
+      id: 'rename',
+      label: t.value.shell.arrangement.clipActions.rename,
+      disabled: frozen,
+      run: () => renameClipFromPrompt(clip.id, clip.name),
+    },
     {
       id: 'loop',
-      label: clip.loopEnabled ? 'Disable loop' : 'Enable loop',
+      label: clip.loopEnabled
+        ? t.value.shell.arrangement.clipActions.disableLoop
+        : t.value.shell.arrangement.clipActions.enableLoop,
       disabled: frozen,
       run: () => setClipLoop(clip.id, !clip.loopEnabled),
     },
   ];
   if (!isAudioClip(clip)) {
-    items.push({ id: 'export-midi', label: 'Export MIDI…', run: () => exportClipToSmf(clip.id) });
+    items.push({
+      id: 'export-midi',
+      label: t.value.shell.arrangement.clipActions.exportMidi,
+      run: () => exportClipToSmf(clip.id),
+    });
   }
   items.push(
     { id: 'sep-1', separator: true },
     {
       id: 'delete',
-      label: 'Delete',
+      label: t.value.shell.arrangement.clipActions.delete,
       danger: true,
       disabled: frozen,
       run: () => deleteClip(clip.id),
@@ -709,7 +732,7 @@ function onRulerContext(payload: { x: number; y: number; ppq: number }): void {
   const items: ContextMenuItem[] = [
     {
       id: 'marker',
-      label: 'Add marker here…',
+      label: t.value.shell.arrangement.clipActions.addMarker,
       run: () => addMarkerFromPrompt(payload.ppq),
     },
   ];
@@ -733,28 +756,26 @@ function exportClipToSmf(clipId: number): void {
 }
 
 /** Renames a clip via a prompt, ignoring an empty or unchanged name. */
-function renameClipFromPrompt(clipId: number, current: string): void {
-  void (async () => {
-    const next = await promptDialog({
-      title: 'Rename clip',
-      message: 'Enter a name for this clip.',
-      defaultValue: current,
-      placeholder: 'Clip name',
-      confirmLabel: 'Rename',
-    });
-    if (next && next !== current) renameClip(clipId, next);
-  })();
+async function renameClipFromPrompt(clipId: number, current: string): Promise<void> {
+  const next = await promptDialog({
+    title: t.value.shell.arrangement.clipActions.renameTitle,
+    message: t.value.shell.arrangement.clipActions.renameMessage,
+    defaultValue: current,
+    placeholder: t.value.shell.arrangement.clipActions.clipName,
+    confirmLabel: t.value.shell.arrangement.clipActions.renameConfirm,
+  });
+  if (next && next !== current) renameClip(clipId, next);
 }
 
 /** Adds a marker at a position via a prompt for its name. */
 function addMarkerFromPrompt(ppq: number): void {
   void (async () => {
     const name = await promptDialog({
-      title: 'Add marker',
-      message: 'Name the marker placed at this position.',
-      defaultValue: 'Marker',
-      placeholder: 'Marker name',
-      confirmLabel: 'Add',
+      title: t.value.shell.arrangement.clipActions.addMarkerTitle,
+      message: t.value.shell.arrangement.clipActions.addMarkerMessage,
+      defaultValue: t.value.shell.arrangement.clipActions.markerDefaultName,
+      placeholder: t.value.shell.arrangement.clipActions.markerName,
+      confirmLabel: t.value.shell.arrangement.clipActions.addMarkerConfirm,
     });
     if (name) setMarker(null, ppq, name);
   })();
@@ -778,6 +799,10 @@ function cutAtPlayhead(): void {
       ? active
       : (store.clips.find((clip) => clip.trackId === store.activeTrackId && inside(clip)) ?? null);
   if (!target) return;
+  if (clipSplitBlockReason(target, ppq) === 'loop') {
+    error.value = t.value.shell.arrangement.loopSplitUnavailable;
+    return;
+  }
   try {
     splitClip(target.id, ppq);
     error.value = '';

@@ -173,10 +173,23 @@ const activeClip = computed(() => props.clips.find((clip) => clip.id === props.a
 const liveStatus = computed(() => {
   const track = props.tracks.find((item) => item.id === props.activeTrackId);
   const parts: string[] = [];
-  if (track) parts.push(`Track ${track.name} selected`);
-  if (activeClip.value) parts.push(`Clip ${activeClip.value.name} selected`);
-  else parts.push('No clip selected');
-  parts.push(`${props.clips.length} clips on timeline`);
+  if (track) {
+    parts.push(
+      formatMessage(t.value.shell.arrangement.accessibility.trackSelected, { name: track.name }),
+    );
+  }
+  if (activeClip.value) {
+    parts.push(
+      formatMessage(t.value.shell.arrangement.accessibility.clipSelected, {
+        name: activeClip.value.name,
+      }),
+    );
+  } else parts.push(t.value.shell.arrangement.accessibility.noClipSelected);
+  parts.push(
+    formatMessage(t.value.shell.arrangement.accessibility.timelineClipCount, {
+      count: props.clips.length,
+    }),
+  );
   return parts.join('. ');
 });
 

@@ -7,7 +7,9 @@ import {
   setAudioSourceId,
   useProjectStore,
 } from '../store';
+import { normalizeTempoMap } from '../tempo-map';
 import { type ClipCompSegment, type ClipTake, type ClipWarp, TRACK_COLOR_PALETTE } from '../types';
+import { installProjectClipWarp, sanitizeClipWarp } from '../warp';
 import { execute, executeAtomic } from './history';
 import { requireEditableTrack, validatePpq } from './utils';
 
@@ -154,6 +156,8 @@ export async function addAudioClip(input: AddAudioClipInput): Promise<number> {
     throw new RangeError(`Clip lengthPpq must be finite and > 0, got ${lengthPpq}`);
   }
   const finalLengthPpq = lengthPpq;
+  const preparedWarp =
+    input.warp === undefined ? undefined : sanitizeClipWarp(input.warp, finalLengthPpq);
   const gain = input.gain ?? 1;
   const sourceOffsetPpq = input.sourceOffsetPpq ?? 0;
   validatePpq(sourceOffsetPpq, 'Clip sourceOffsetPpq');
@@ -197,30 +201,47 @@ export async function addAudioClip(input: AddAudioClipInput): Promise<number> {
     (sourceId === undefined ? 2 : 3) +
     (fadeIn > 0 || fadeOut > 0 ? 1 : 0) +
     (input.loopEnabled ? 1 : 0);
-  return execute(projectSteps, () => {
-    const newClipId = project.addClip({
-      trackId: input.trackId,
-      isMidi: false,
-      startPpq,
-      lengthPpq: finalLengthPpq,
-      sourceOffsetPpq,
-      gain,
-      // The binding requires non-empty inline audio on every clip-source
-      // registration; the real PCM stays in the asset store (the source is
-      // by-reference via its "asset:<id>" URI).
-      ...placeholderSourceAudio(),
-      ...(sourceId === undefined ? { sourceUri: audioAssetUri(input.assetId) } : {}),
+  return executeAtomic((edit) => {
+    const newClipId = edit(projectSteps, () => {
+      const id = project.addClip({
+        trackId: input.trackId,
+        isMidi: false,
+        startPpq,
+        lengthPpq: finalLengthPpq,
+        sourceOffsetPpq,
+        gain,
+        // The binding requires non-empty inline audio on every clip-source
+        // registration; the real PCM stays in the asset store (the source is
+        // by-reference via its "asset:<id>" URI).
+        ...placeholderSourceAudio(),
+        ...(sourceId === undefined ? { sourceUri: audioAssetUri(input.assetId) } : {}),
+      });
+      if (sourceId === undefined) {
+        setAudioSourceId(input.assetId, project.sourceCount());
+      } else {
+        project.setClipSource(id, sourceId);
+      }
+      if (fadeIn > 0 || fadeOut > 0) {
+        project.setClipFade(id, { lengthPpq: fadeIn }, { lengthPpq: fadeOut });
+      }
+      if (input.loopEnabled) {
+        project.setClipLoop(id, 'loop', loopLengthPpq || finalLengthPpq);
+      }
+      return id;
     });
-    if (sourceId === undefined) {
-      setAudioSourceId(input.assetId, project.sourceCount());
-    } else {
-      project.setClipSource(newClipId, sourceId);
-    }
-    if (fadeIn > 0 || fadeOut > 0) {
-      project.setClipFade(newClipId, { lengthPpq: fadeIn }, { lengthPpq: fadeOut });
-    }
-    if (input.loopEnabled) {
-      project.setClipLoop(newClipId, 'loop', loopLengthPpq || finalLengthPpq);
+    if (preparedWarp !== undefined) {
+      installProjectClipWarp(
+        project,
+        {
+          id: newClipId,
+          startPpq,
+          lengthPpq: finalLengthPpq,
+          sourceOffsetPpq,
+          warp: preparedWarp,
+        },
+        normalizeTempoMap(store.tempoSegments, store.tempoBpm),
+        (mutation) => edit(1, mutation),
+      );
     }
     // Seed the mirror entry so refresh keeps the kind/asset metadata.
     store.clips = [
@@ -244,7 +265,7 @@ export async function addAudioClip(input: AddAudioClipInput): Promise<number> {
         ...(input.fadeOutPpq !== undefined && input.fadeOutPpq > 0
           ? { fadeOutPpq: input.fadeOutPpq }
           : {}),
-        ...(input.warp !== undefined ? { warp: structuredClone(input.warp) as ClipWarp } : {}),
+        ...(preparedWarp !== undefined ? { warp: structuredClone(preparedWarp) as ClipWarp } : {}),
         ...(takes !== undefined
           ? {
               takes,

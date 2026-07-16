@@ -21,13 +21,23 @@ interface Setup {
   interactions: ReturnType<typeof useClipInteractions>;
   commands: { [K in keyof ClipInteractionCommands]-?: ReturnType<typeof vi.fn> };
   clips: ArrangeClip[];
+  onSplitBlocked: ReturnType<typeof vi.fn>;
   setTool: (tool: EditorToolId) => void;
 }
 
-function makeSetup(options: { readOnly?: boolean } = {}): Setup {
+function makeSetup(options: { readOnly?: boolean; loopEnabled?: boolean } = {}): Setup {
   // Clip 1: x [40, 120) on lane 0 (track 10).
-  const clips: ArrangeClip[] = [{ id: 1, trackId: 10, startPpq: 4, lengthPpq: 8 }];
+  const clips: ArrangeClip[] = [
+    {
+      id: 1,
+      trackId: 10,
+      startPpq: 4,
+      lengthPpq: 8,
+      loopEnabled: options.loopEnabled,
+    },
+  ];
   let tool: EditorToolId = 'select';
+  const onSplitBlocked = vi.fn();
   const commands = {
     selectClip: vi.fn(),
     clearClipSelection: vi.fn(),
@@ -48,12 +58,14 @@ function makeSetup(options: { readOnly?: boolean } = {}): Setup {
     getGridPpq: () => 1,
     getBarRange: (ppq) => ({ startPpq: Math.floor(ppq / 4) * 4, lengthPpq: 4 }),
     getTool: () => tool,
+    onSplitBlocked,
     commands,
   });
   return {
     interactions,
     commands,
     clips,
+    onSplitBlocked,
     setTool: (next: EditorToolId) => {
       tool = next;
     },
@@ -126,6 +138,39 @@ describe('useClipInteractions move', () => {
     expect(interactions.previewClip.value?.trackId).toBe(20);
     interactions.onPointerUp({ x: 80, y: 75 });
     expect(commands.moveClip).toHaveBeenCalledWith(1, 4, 20);
+  });
+
+  it('does not commit when the source freezes during a drag', () => {
+    const state = { readOnly: false };
+    const { interactions, commands } = makeSetup(state);
+    interactions.onPointerDown({ x: 80, y: 25 });
+    interactions.onPointerMove({ x: 104, y: 25 });
+    state.readOnly = true;
+    interactions.onPointerUp({ x: 104, y: 25 });
+
+    expect(commands.moveClip).not.toHaveBeenCalled();
+    expect(interactions.previewClip.value).toBeNull();
+  });
+
+  it('does not enter a destination lane that freezes during a drag', () => {
+    const { commands } = makeSetup();
+    let destinationFrozen = false;
+    const guarded = useClipInteractions({
+      view,
+      getClips: () => [{ id: 1, trackId: 10, startPpq: 4, lengthPpq: 8 }],
+      getTrackIds: () => [10, 20],
+      canMoveClipToTrack: (_clipId, trackId) => trackId !== 20 || !destinationFrozen,
+      getGridPpq: () => 1,
+      getBarRange: (ppq) => ({ startPpq: ppq, lengthPpq: 4 }),
+      commands,
+    });
+    guarded.onPointerDown({ x: 80, y: 25 });
+    guarded.onPointerMove({ x: 80, y: 75 });
+    expect(guarded.previewClip.value?.trackId).toBe(20);
+    destinationFrozen = true;
+    guarded.onPointerUp({ x: 80, y: 75 });
+
+    expect(commands.moveClip).not.toHaveBeenCalled();
   });
 
   it('keeps the clip on its source lane when the destination is incompatible', () => {
@@ -424,6 +469,17 @@ describe('useClipInteractions tools', () => {
       setTool('split');
       interactions.onPointerDown({ x: 40, y: 25 }); // PPQ 4 = clip start
       expect(commands.splitClip).not.toHaveBeenCalled();
+    });
+
+    it('rejects loop clips with an explicit reason before calling the command', () => {
+      const { interactions, commands, onSplitBlocked, setTool } = makeSetup({
+        loopEnabled: true,
+      });
+      setTool('split');
+      interactions.onPointerDown({ x: 84, y: 25 });
+      expect(commands.splitClip).not.toHaveBeenCalled();
+      expect(commands.selectClip).not.toHaveBeenCalledWith(88);
+      expect(onSplitBlocked).toHaveBeenCalledWith(1, 'loop');
     });
   });
 

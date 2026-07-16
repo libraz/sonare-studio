@@ -11,6 +11,8 @@ import {
   redo,
   setClipActiveTake,
   setClipCompSegments,
+  setClipFades,
+  setTempoSegments,
   splitClip,
   trimClip,
   undo,
@@ -38,10 +40,6 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
     resolve = res;
   });
   return { promise, resolve };
-}
-
-async function flushPromises(times = 5): Promise<void> {
-  for (let i = 0; i < times; i++) await Promise.resolve();
 }
 
 describe('sanitizeCompSegments', () => {
@@ -633,12 +631,12 @@ describe('flattenClipComp', () => {
   });
 
   /** Builds a loaded asset at 4 Hz (1 PPQ = 2 frames at 120 BPM). */
-  function makeLoadedAsset(id: string, channels: number[][]): LoadedAudioAsset {
+  function makeLoadedAsset(id: string, channels: number[][], sampleRate = 4): LoadedAudioAsset {
     return {
       meta: {
         id,
         name: id,
-        sampleRate: 4,
+        sampleRate,
         numChannels: channels.length,
         numFrames: channels[0]?.length ?? 0,
       },
@@ -688,7 +686,8 @@ describe('flattenClipComp', () => {
     expect(loadAudioAsset.mock.calls.map(([id]) => id)).toEqual(['take-a', 'take-b']);
 
     // Segment 1: take-a frames 0..4; segment 2: take-b frames 4..8 (source
-    // offset 2 PPQ). Fades are clip fields and must not be baked.
+    // offset 2 PPQ). The default boundary fade rounds to zero at this tiny
+    // test sample rate.
     expect(ingest).toHaveBeenCalledTimes(1);
     const [channels, sampleRate, name] = ingest.mock.calls[0] as unknown as [
       Float32Array[],
@@ -715,6 +714,125 @@ describe('flattenClipComp', () => {
       { startPpq: 0, takeIndex: 0 },
       { startPpq: 2, takeIndex: 1 },
     ]);
+  });
+
+  it('bakes a smooth comp crossfade across 48/96 kHz takes', async () => {
+    const clipId = await addMultiSegmentClip();
+    setClipCompSegments(clipId, [
+      { startPpq: 0, takeIndex: 0 },
+      { startPpq: 2, takeIndex: 1, crossfadePpq: 0.02 },
+    ]);
+    const loadAudioAsset = makeLoader({
+      'take-a': makeLoadedAsset('take-a', [Array(96_000).fill(1)], 48_000),
+      'take-b': makeLoadedAsset('take-b', [Array(192_000).fill(3)], 96_000),
+    });
+    const ingest = vi.fn(async () => ({ id: 'crossfaded' }));
+
+    await flattenClipComp(clipId, { tempoBpm: 120, loadAudioAsset, ingest });
+    const [channels, sampleRate] = ingest.mock.calls[0] as unknown as [Float32Array[], number];
+    const output = channels[0];
+    expect(sampleRate).toBe(48_000);
+    expect(output).toHaveLength(96_000);
+    expect(output[47_500]).toBeCloseTo(1, 5);
+    expect(output[48_000]).toBeGreaterThan(1.9);
+    expect(output[48_500]).toBeCloseTo(3, 5);
+    let largestStep = 0;
+    for (let frame = 47_500; frame <= 48_500; frame += 1) {
+      largestStep = Math.max(largestStep, Math.abs(output[frame] - output[frame - 1]));
+    }
+    expect(largestStep).toBeLessThan(0.01);
+  });
+
+  it('uses the full tempo map for segment placement and output length', async () => {
+    const clipId = await addMultiSegmentClip();
+    setClipCompSegments(clipId, [
+      { startPpq: 0, takeIndex: 0 },
+      { startPpq: 2, takeIndex: 1, crossfadePpq: 0 },
+    ]);
+    const loadAudioAsset = makeLoader({
+      'take-a': makeLoadedAsset('take-a', [Array(32).fill(1)], 8),
+      'take-b': makeLoadedAsset('take-b', [Array(32).fill(3)], 8),
+    });
+    const ingest = vi.fn(async () => ({ id: 'tempo-bake' }));
+
+    await flattenClipComp(clipId, {
+      tempoSegments: [
+        { startPpq: 0, bpm: 120 },
+        { startPpq: 2, bpm: 60 },
+      ],
+      loadAudioAsset,
+      ingest,
+    });
+    const [channels] = ingest.mock.calls[0] as unknown as [Float32Array[]];
+    expect(Array.from(channels[0])).toEqual([...Array(8).fill(1), ...Array(16).fill(3)]);
+  });
+
+  it('keeps outer clip fades as metadata instead of baking them twice', async () => {
+    const clipId = await addMultiSegmentClip();
+    setClipCompSegments(clipId, [
+      { startPpq: 0, takeIndex: 0 },
+      { startPpq: 2, takeIndex: 1, crossfadePpq: 0 },
+    ]);
+    setClipFades(clipId, 0.5, 0.5);
+    const loadAudioAsset = makeLoader({
+      'take-a': makeLoadedAsset('take-a', [Array(16).fill(1)], 8),
+      'take-b': makeLoadedAsset('take-b', [Array(16).fill(1)], 8),
+    });
+    const ingest = vi.fn(async () => ({ id: 'unfaded-bake' }));
+
+    await flattenClipComp(clipId, { tempoBpm: 120, loadAudioAsset, ingest });
+    const [channels] = ingest.mock.calls[0] as unknown as [Float32Array[]];
+    expect(channels[0][0]).toBe(1);
+    expect(channels[0].at(-1)).toBe(1);
+    expect(store.clips.find((clip) => clip.id === clipId)).toMatchObject({
+      fadeInPpq: 0.5,
+      fadeOutPpq: 0.5,
+    });
+  });
+
+  it('rebases baked source-offset and loop transforms onto the clip-local asset', async () => {
+    const trackId = addAudioTrack();
+    const clipId = await addAudioClip({
+      trackId,
+      assetId: 'take-a',
+      lengthPpq: 4,
+      sourceOffsetPpq: 1,
+      loopEnabled: true,
+      loopLengthPpq: 2,
+      takes: [{ assetId: 'take-a' }, { assetId: 'take-b' }],
+      activeTakeIndex: 0,
+    });
+    setClipCompSegments(clipId, [
+      { startPpq: 0, takeIndex: 0 },
+      { startPpq: 1, takeIndex: 1, crossfadePpq: 0 },
+    ]);
+    const loadAudioAsset = makeLoader({
+      'take-a': makeLoadedAsset('take-a', [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]]),
+      'take-b': makeLoadedAsset('take-b', [
+        [101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112],
+      ]),
+    });
+    const ingest = vi.fn(async () => ({ id: 'transforms-baked' }));
+
+    await flattenClipComp(clipId, { tempoBpm: 120, loadAudioAsset, ingest });
+    const [channels] = ingest.mock.calls[0] as unknown as [Float32Array[]];
+    expect(Array.from(channels[0].slice(0, 2))).toEqual([0, 0]);
+    expect(channels[0]).toHaveLength(10);
+    expect(store.clips.find((clip) => clip.id === clipId)).toMatchObject({
+      assetId: 'transforms-baked',
+      sourceOffsetPpq: 1,
+      loopEnabled: false,
+      loopLengthPpq: 0,
+    });
+    expect(undo()).toBe(true);
+    expect(store.clips.find((clip) => clip.id === clipId)).toMatchObject({
+      sourceOffsetPpq: 1,
+      loopEnabled: true,
+      loopLengthPpq: 2,
+    });
+    expect(store.clips.find((clip) => clip.id === clipId)?.takes).toHaveLength(2);
+    expect(redo()).toBe(true);
+    expect(store.clips.find((clip) => clip.id === clipId)?.loopEnabled).toBe(false);
   });
 
   it('feeds mono slices into every channel when takes mix channel counts', async () => {
@@ -745,8 +863,7 @@ describe('flattenClipComp', () => {
     const ingest = vi.fn(() => pendingIngest.promise);
 
     const result = flattenClipComp(clipId, { tempoBpm: 120, loadAudioAsset, ingest });
-    await flushPromises();
-    expect(ingest).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(ingest).toHaveBeenCalledTimes(1));
 
     moveClip(clipId, 1);
     pendingIngest.resolve({ id: 'late-bake' });
@@ -759,6 +876,52 @@ describe('flattenClipComp', () => {
       { startPpq: 0, takeIndex: 0 },
       { startPpq: 2, takeIndex: 1 },
     ]);
+  });
+
+  it('cancels when the project tempo map changes while source loading is pending', async () => {
+    const clipId = await addMultiSegmentClip();
+    const pending = deferred<LoadedAudioAsset>();
+    const fixed = makeLoadedAsset('take-a', [[1, 2, 3, 4, 5, 6, 7, 8]]);
+    const loadAudioAsset = vi.fn((assetId: string) =>
+      assetId === 'take-a' ? Promise.resolve(fixed) : pending.promise,
+    );
+    const ingest = vi.fn(async () => ({ id: 'stale-tempo-bake' }));
+
+    const flattening = flattenClipComp(clipId, { loadAudioAsset, ingest });
+    await vi.waitFor(() => expect(loadAudioAsset).toHaveBeenCalledTimes(2));
+    setTempoSegments([
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 2, bpm: 60 },
+    ]);
+    pending.resolve(makeLoadedAsset('take-b', [[101, 102, 103, 104, 105, 106, 107, 108]]));
+
+    await expect(flattening).resolves.toBe('');
+    expect(ingest).not.toHaveBeenCalled();
+    expect(store.clips.find((clip) => clip.id === clipId)?.takes).toHaveLength(2);
+  });
+
+  it('does not publish into a replacement project with colliding ids', async () => {
+    const oldClipId = await addMultiSegmentClip();
+    const pending = deferred<LoadedAudioAsset>();
+    const loadAudioAsset = vi.fn((assetId: string) =>
+      assetId === 'take-a'
+        ? Promise.resolve(makeLoadedAsset('take-a', [[1, 2, 3, 4, 5, 6, 7, 8]]))
+        : pending.promise,
+    );
+    const ingest = vi.fn(async () => ({ id: 'old-project-bake' }));
+    const flattening = flattenClipComp(oldClipId, { tempoBpm: 120, loadAudioAsset, ingest });
+    await vi.waitFor(() => expect(loadAudioAsset).toHaveBeenCalledTimes(2));
+
+    store.dispose();
+    clearHistory();
+    await store.init();
+    const replacementClipId = await addMultiSegmentClip();
+    expect(replacementClipId).toBe(oldClipId);
+    pending.resolve(makeLoadedAsset('take-b', [[101, 102, 103, 104, 105, 106, 107, 108]]));
+
+    await expect(flattening).resolves.toBe('');
+    expect(ingest).not.toHaveBeenCalled();
+    expect(store.clips.find((clip) => clip.id === replacementClipId)?.takes).toHaveLength(2);
   });
 
   it('skips the bake for single-segment comps and just drops the takes', async () => {

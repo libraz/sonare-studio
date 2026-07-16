@@ -1,15 +1,50 @@
+import { OperationGeneration } from '@/lib/operation-generation';
 import { ensureWasm } from '@/lib/wasm';
 import { loadAsset } from '@/persistence/assets';
 import { type AudioSectionAnalyzer, analyzeAudioClipSections } from '../audio-sections';
+import {
+  assertProjectOperationCurrent,
+  beginProjectOperation,
+  StaleProjectOperationError,
+} from '../operation';
 import { allocateMarkerId, allocateSectionId, getProject, useProjectStore } from '../store';
+import { normalizeTempoMap } from '../tempo-map';
 import {
   clipKind,
   DEFAULT_SECTION_COLOR,
   type TempoSegment,
   type TimeSignatureSegment,
 } from '../types';
-import { execute } from './history';
+import { installProjectClipWarp } from '../warp';
+import { execute, executeAtomic } from './history';
 import { requireClip, validatePpq } from './utils';
+
+const sectionAnalysisOperations = new OperationGeneration();
+
+function sectionSourceRevision(
+  store: ReturnType<typeof useProjectStore>,
+  clipId: number,
+): string | null {
+  const clip = store.clips.find((entry) => entry.id === clipId);
+  if (!clip || clipKind(clip) !== 'audio') return null;
+  return JSON.stringify({
+    clip: {
+      id: clip.id,
+      trackId: clip.trackId,
+      assetId: clip.assetId,
+      startPpq: clip.startPpq,
+      lengthPpq: clip.lengthPpq,
+      sourceOffsetPpq: clip.sourceOffsetPpq,
+      loopEnabled: clip.loopEnabled,
+      loopLengthPpq: clip.loopLengthPpq,
+      takes: clip.takes,
+      compSegments: clip.compSegments,
+      warp: clip.warp,
+    },
+    tempoBpm: store.tempoBpm,
+    tempoSegments: store.tempoSegments,
+  });
+}
 
 function tempoSegmentChanged(
   current: ReadonlyArray<TempoSegment>,
@@ -138,34 +173,49 @@ export async function detectSectionsFromAudioClip(clipId: number): Promise<numbe
   if (clipKind(clip) !== 'audio') {
     throw new RangeError(`Clip ${clipId} is not an audio clip`);
   }
-  const wasm = (await ensureWasm()) as unknown as { analyzeSections?: AudioSectionAnalyzer };
-  if (typeof wasm.analyzeSections !== 'function') return 0;
-  const detected = await analyzeAudioClipSections(
-    clip,
-    store.tempoBpm,
-    {
-      loadAudioAsset: loadAsset,
-      analyzeSections: wasm.analyzeSections,
-    },
-    store.tempoSegments,
+  const targetId = `sections:${clipId}`;
+  const operation = beginProjectOperation(
+    sectionAnalysisOperations,
+    store,
+    targetId,
+    sectionSourceRevision(store, clipId),
   );
-  const current = store.clips.find((entry) => entry.id === clipId);
-  if (
-    !current ||
-    clipKind(current) !== 'audio' ||
-    current.assetId !== clip.assetId ||
-    current.startPpq !== clip.startPpq ||
-    current.lengthPpq !== clip.lengthPpq ||
-    current.sourceOffsetPpq !== clip.sourceOffsetPpq
-  ) {
-    return 0;
+  const assertCurrent = (): void =>
+    assertProjectOperationCurrent(
+      sectionAnalysisOperations,
+      operation,
+      store,
+      targetId,
+      sectionSourceRevision(store, clipId),
+    );
+  try {
+    const wasm = (await ensureWasm()) as unknown as { analyzeSections?: AudioSectionAnalyzer };
+    assertCurrent();
+    if (typeof wasm.analyzeSections !== 'function') return 0;
+    const detected = await analyzeAudioClipSections(
+      clip,
+      store.tempoBpm,
+      {
+        loadAudioAsset: loadAsset,
+        analyzeSections: wasm.analyzeSections,
+      },
+      store.tempoSegments,
+    );
+    assertCurrent();
+    const clipEnd = clip.startPpq + clip.lengthPpq;
+    const kept = store.sections.filter(
+      (section) => section.startPpq < clip.startPpq || section.startPpq >= clipEnd,
+    );
+    setSections([...kept, ...detected]);
+    return detected.length;
+  } catch (error) {
+    if (error instanceof StaleProjectOperationError) return 0;
+    throw error;
+  } finally {
+    if (sectionAnalysisOperations.isCurrent(operation.token)) {
+      sectionAnalysisOperations.invalidate();
+    }
   }
-  const clipEnd = clip.startPpq + clip.lengthPpq;
-  const kept = store.sections.filter(
-    (section) => section.startPpq < clip.startPpq || section.startPpq >= clipEnd,
-  );
-  setSections([...kept, ...detected]);
-  return detected.length;
 }
 
 /**
@@ -188,10 +238,17 @@ export function setTempoSegments(segments: ReadonlyArray<TempoSegment>): void {
     }
   });
   const invalidatesFrozenTracks = tempoSegmentChanged(store.tempoSegments, segments);
-  execute(1, () => {
-    project.setTempoSegments(
-      segments.map((s) => ({ startPpq: s.startPpq, bpm: s.bpm, endBpm: s.endBpm ?? 0 })),
+  executeAtomic((edit) => {
+    edit(1, () =>
+      project.setTempoSegments(
+        segments.map((s) => ({ startPpq: s.startPpq, bpm: s.bpm, endBpm: s.endBpm ?? 0 })),
+      ),
     );
+    const tempo = normalizeTempoMap(segments);
+    for (const clip of store.clips) {
+      if (clip.warp === undefined) continue;
+      installProjectClipWarp(project, clip, tempo, (mutation) => edit(1, mutation));
+    }
     store.refresh();
     if (invalidatesFrozenTracks) {
       store.tracks = store.tracks.map((track) => {

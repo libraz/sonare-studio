@@ -2,8 +2,14 @@ import { validateClipFadePair } from '../clip-fades';
 import { getProject, useProjectStore } from '../store';
 import { normalizeTempoMap } from '../tempo-map';
 import type { ClipWarp } from '../types';
-import { projectWarpMapDesc, sanitizeWarpAnchors } from '../warp';
-import { execute } from './history';
+import {
+  clearProjectClipWarp,
+  hasInstalledProjectClipWarp,
+  hasProjectClipWarpState,
+  installProjectClipWarp,
+  sanitizeClipWarp,
+} from '../warp';
+import { execute, executeAtomic } from './history';
 import { requireClip, requireEditableClip, requireTrack } from './utils';
 
 // ---------------------------------------------------------------------------
@@ -44,8 +50,9 @@ export function setTrackFrozen(trackId: number, frozen: { assetId: string } | nu
 /**
  * Sets (or clears with null) the tempo-follow (warp) state of an audio clip
  * as one undoable edit. Anchors are sanitized (sorted, strictly inside the
- * clip window, strictly increasing source times). App-metadata only; the
- * audio re-bounces through the schedule watcher.
+ * clip window, strictly increasing source times). The same canonical state is
+ * mirrored into libsonare's clip-owned warp map while the audible renderer
+ * continues to re-bake through the schedule watcher.
  *
  * @param clipId Id of the audio clip.
  * @param warp New warp state, or null to play at the recorded rate.
@@ -60,31 +67,20 @@ export function setClipWarp(clipId: number, warp: ClipWarp | null): void {
   }
   let next: ClipWarp | undefined;
   if (warp !== null) {
-    if (!Number.isFinite(warp.sourceBpm) || warp.sourceBpm <= 0) {
-      throw new RangeError(`Warp sourceBpm must be finite and > 0, got ${warp.sourceBpm}`);
-    }
-    const anchors = sanitizeWarpAnchors(warp.anchors ?? [], clip.lengthPpq);
-    next = {
-      enabled: warp.enabled,
-      sourceBpm: warp.sourceBpm,
-      ...(anchors.length > 0 ? { anchors } : {}),
-    };
+    next = sanitizeClipWarp(warp, clip.lengthPpq);
+  }
+  if (JSON.stringify(clip.warp) === JSON.stringify(next)) {
+    if (next === undefined && !hasProjectClipWarpState(project, clipId)) return;
+    if (next !== undefined && hasInstalledProjectClipWarp(project, clipId)) return;
   }
   const tempo = normalizeTempoMap(store.tempoSegments, store.tempoBpm);
-  const sampleRate = project.getSampleRate();
-  const nativeMap =
-    next === undefined
-      ? null
-      : projectWarpMapDesc({ ...clip, warp: next, id: clipId }, tempo, sampleRate);
-  execute(3, () => {
-    if (nativeMap === null) {
-      project.setClipWarpMode(clipId, 'off');
-      project.setClipWarpRef(clipId, 0);
-      project.removeWarpMap(clipId);
+  executeAtomic((edit) => {
+    if (next === undefined) {
+      clearProjectClipWarp(project, clipId, (mutation) => edit(1, mutation));
     } else {
-      project.setWarpMap(nativeMap);
-      project.setClipWarpRef(clipId, nativeMap.id);
-      project.setClipWarpMode(clipId, next?.enabled ? 'tempo-sync' : 'off');
+      installProjectClipWarp(project, { ...clip, warp: next, id: clipId }, tempo, (mutation) =>
+        edit(1, mutation),
+      );
     }
     store.clips = store.clips.map((entry, i) => {
       if (i !== index) return entry;

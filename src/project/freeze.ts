@@ -8,9 +8,16 @@
 
 import { resolvePresetName } from '@/engine/instruments';
 import { renderProjectWithEngine } from '@/export/engine-render';
+import { OperationGeneration } from '@/lib/operation-generation';
 import { ensureWasm } from '@/lib/wasm';
-import { ingestAudioBuffer } from './audio-import';
+import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
+import { collectReferencedAudioAssetIds } from './asset-references';
 import { addBouncedClip, setTrackFrozen } from './commands';
+import {
+  assertProjectOperationCurrent,
+  beginProjectOperation,
+  isProjectOperationCurrent,
+} from './operation';
 import { serializeProject } from './serialization';
 import { useProjectStore } from './store';
 
@@ -18,39 +25,42 @@ import { useProjectStore } from './store';
 export interface FreezeRenderOptions {
   /** Render seam (tests); defaults to renderProjectWithEngine. */
   render?: typeof renderProjectWithEngine;
-  /** Asset ingester (tests); defaults to ingestAudioBuffer without analysis. */
+  /** Asset ingester override for tests; production uses a leased asset transaction. */
   ingest?: (channels: Float32Array[], sampleRate: number, name: string) => Promise<{ id: string }>;
+}
+
+const freezeOperations = new OperationGeneration();
+
+function currentDocumentRevision(): string | null {
+  try {
+    return JSON.stringify(serializeProject());
+  } catch {
+    return null;
+  }
 }
 
 function resolveSeams(options: FreezeRenderOptions) {
   return {
     render: options.render ?? renderProjectWithEngine,
-    ingest:
-      options.ingest ??
-      ((channels: Float32Array[], sampleRate: number, name: string) =>
-        ingestAudioBuffer(channels, sampleRate, name, { analysis: null })),
   };
 }
 
 /** Renders one track's isolated pre-fader signal over the given range. */
 async function renderFrozen(
-  trackId: number,
+  doc: ReturnType<typeof serializeProject>,
+  trackIndex: number,
   range: { startPpq: number; endPpq: number } | null,
   options: FreezeRenderOptions,
+  shouldCancel: () => boolean,
 ) {
-  const store = useProjectStore();
-  const trackIndex = store.tracks.findIndex((track) => track.id === trackId);
-  if (trackIndex < 0) throw new RangeError(`Unknown track id ${trackId}`);
-  if (store.tracks[trackIndex].kind === 'group') {
-    throw new RangeError('Group tracks cannot be frozen or bounced (no own content)');
-  }
   const { render } = resolveSeams(options);
-  const doc = serializeProject();
   const wasm = await ensureWasm();
+  if (shouldCancel()) throw new DOMException('Freeze render was superseded.', 'AbortError');
   return render(doc, {
     freezeTrackIndex: trackIndex,
     deps: null,
     resolvePreset: (preset) => resolvePresetName(wasm, preset),
+    shouldCancel,
     ...(range !== null ? { range } : {}),
   });
 }
@@ -72,15 +82,64 @@ export async function freezeTrack(
   const store = useProjectStore();
   const track = store.tracks.find((entry) => entry.id === trackId);
   if (!track) throw new RangeError(`Unknown track id ${trackId}`);
-  const { ingest } = resolveSeams(options);
-  const result = await renderFrozen(trackId, null, options);
-  const meta = await ingest(
-    [result.channels[0], result.channels[1]],
-    result.sampleRate,
-    `${track.name} (frozen)`,
-  );
-  setTrackFrozen(trackId, { assetId: meta.id });
-  return meta.id;
+  if (track.kind === 'group') {
+    throw new RangeError('Group tracks cannot be frozen or bounced (no own content)');
+  }
+  const trackIndex = store.tracks.findIndex((entry) => entry.id === trackId);
+  const doc = serializeProject();
+  const revision = JSON.stringify(doc);
+  const operation = beginProjectOperation(freezeOperations, store, `freeze:${trackId}`, revision);
+  const assets = options.ingest ? null : createAudioAssetTransaction();
+  const isReferenced = (assetId: string): boolean =>
+    collectReferencedAudioAssetIds(store.clips, store.tracks).has(assetId);
+  try {
+    const result = await renderFrozen(
+      doc,
+      trackIndex,
+      null,
+      options,
+      () =>
+        !isProjectOperationCurrent(
+          freezeOperations,
+          operation,
+          store,
+          `freeze:${trackId}`,
+          currentDocumentRevision(),
+        ),
+    );
+    assertProjectOperationCurrent(
+      freezeOperations,
+      operation,
+      store,
+      `freeze:${trackId}`,
+      currentDocumentRevision(),
+    );
+    const meta = options.ingest
+      ? await options.ingest(
+          [result.channels[0], result.channels[1]],
+          result.sampleRate,
+          `${track.name} (frozen)`,
+        )
+      : await assets!.save({ name: `${track.name} (frozen)`, sampleRate: result.sampleRate }, [
+          result.channels[0],
+          result.channels[1],
+        ]);
+    assertProjectOperationCurrent(
+      freezeOperations,
+      operation,
+      store,
+      `freeze:${trackId}`,
+      currentDocumentRevision(),
+    );
+    setTrackFrozen(trackId, { assetId: meta.id });
+    assets?.commit();
+    return meta.id;
+  } catch (error) {
+    await assets?.rollback(isReferenced);
+    throw error;
+  } finally {
+    if (freezeOperations.isCurrent(operation.token)) freezeOperations.invalidate();
+  }
 }
 
 /**
@@ -112,24 +171,74 @@ export async function bounceTrackRange(
   const store = useProjectStore();
   const track = store.tracks.find((entry) => entry.id === trackId);
   if (!track) throw new RangeError(`Unknown track id ${trackId}`);
+  if (track.kind === 'group') {
+    throw new RangeError('Group tracks cannot be frozen or bounced (no own content)');
+  }
   if (!(Number.isFinite(startPpq) && startPpq >= 0 && Number.isFinite(endPpq))) {
     throw new RangeError('Bounce range PPQ values must be finite and >= 0');
   }
   if (endPpq <= startPpq) {
     throw new RangeError(`Bounce range end (${endPpq}) must be after its start (${startPpq})`);
   }
-  const { ingest } = resolveSeams(options);
-  const result = await renderFrozen(trackId, { startPpq, endPpq }, options);
-  const meta = await ingest(
-    [result.channels[0], result.channels[1]],
-    result.sampleRate,
-    `${track.name} (bounce)`,
-  );
-  // One undoable edit: a single undo removes the clip AND its new track.
-  return addBouncedClip({
-    name: `${track.name} (bounce)`,
-    assetId: meta.id,
-    startPpq,
-    lengthPpq: endPpq - startPpq,
-  });
+  const trackIndex = store.tracks.findIndex((entry) => entry.id === trackId);
+  const doc = serializeProject();
+  const revision = JSON.stringify(doc);
+  const operation = beginProjectOperation(freezeOperations, store, `bounce:${trackId}`, revision);
+  const assets = options.ingest ? null : createAudioAssetTransaction();
+  const isReferenced = (assetId: string): boolean =>
+    collectReferencedAudioAssetIds(store.clips, store.tracks).has(assetId);
+  try {
+    const result = await renderFrozen(
+      doc,
+      trackIndex,
+      { startPpq, endPpq },
+      options,
+      () =>
+        !isProjectOperationCurrent(
+          freezeOperations,
+          operation,
+          store,
+          `bounce:${trackId}`,
+          currentDocumentRevision(),
+        ),
+    );
+    assertProjectOperationCurrent(
+      freezeOperations,
+      operation,
+      store,
+      `bounce:${trackId}`,
+      currentDocumentRevision(),
+    );
+    const meta = options.ingest
+      ? await options.ingest(
+          [result.channels[0], result.channels[1]],
+          result.sampleRate,
+          `${track.name} (bounce)`,
+        )
+      : await assets!.save({ name: `${track.name} (bounce)`, sampleRate: result.sampleRate }, [
+          result.channels[0],
+          result.channels[1],
+        ]);
+    assertProjectOperationCurrent(
+      freezeOperations,
+      operation,
+      store,
+      `bounce:${trackId}`,
+      currentDocumentRevision(),
+    );
+    // One undoable edit: a single undo removes the clip AND its new track.
+    const clipId = addBouncedClip({
+      name: `${track.name} (bounce)`,
+      assetId: meta.id,
+      startPpq,
+      lengthPpq: endPpq - startPpq,
+    });
+    assets?.commit();
+    return clipId;
+  } catch (error) {
+    await assets?.rollback(isReferenced);
+    throw error;
+  } finally {
+    if (freezeOperations.isCurrent(operation.token)) freezeOperations.invalidate();
+  }
 }

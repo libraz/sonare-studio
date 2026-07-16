@@ -3,8 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import {
+  AudioScheduleReplaceError,
   applyAudioClipFades,
   ppqToSeconds,
+  replaceScheduledProjectClips,
   resampleChannelsLinear,
   scheduleProjectClips,
   sliceAudioClipWindow,
@@ -226,6 +228,55 @@ describe('scheduleProjectClips with audio clips', () => {
     expect(events).toEqual(['load:asset-a', 'load:asset-b', 'add:0', 'add:4']);
   });
 
+  it('rejects oversized source PCM from metadata before loading or engine mutation', async () => {
+    store.tracks = [makeTrack(1)];
+    store.clips = [makeAudioClip(10, 1, { lengthPpq: 1 })];
+    const { handle, addClip } = makeHandle(48_000);
+    const loadAudioAsset = vi.fn(async () => makeAsset(48_000));
+
+    await expect(
+      scheduleProjectClips(handle, {
+        loadAudioAsset,
+        loadAudioAssetMeta: async (assetId) => ({
+          id: assetId,
+          name: assetId,
+          sampleRate: 48_000,
+          numChannels: 2,
+          numFrames: 20_000_000,
+        }),
+        memoryBudgetBytes: 32 * 1024 * 1024,
+      }),
+    ).rejects.toThrow(/Live audio schedule needs about/);
+
+    expect(loadAudioAsset).not.toHaveBeenCalled();
+    expect(addClip).not.toHaveBeenCalled();
+  });
+
+  it('includes the old schedule retained during atomic replacement', async () => {
+    store.tracks = [makeTrack(1)];
+    store.clips = [makeAudioClip(10, 1, { lengthPpq: 1 })];
+    const { handle, addClip } = makeHandle(48_000);
+    const loadAudioAsset = vi.fn(async () => makeAsset(48_000));
+
+    await expect(
+      scheduleProjectClips(handle, {
+        loadAudioAsset,
+        loadAudioAssetMeta: async (assetId) => ({
+          id: assetId,
+          name: assetId,
+          sampleRate: 48_000,
+          numChannels: 1,
+          numFrames: 48_000,
+        }),
+        retainedScheduleBytes: 32 * 1024 * 1024 - 64 * 1024,
+        memoryBudgetBytes: 32 * 1024 * 1024,
+      }),
+    ).rejects.toThrow(/Live audio schedule needs about/);
+
+    expect(loadAudioAsset).not.toHaveBeenCalled();
+    expect(addClip).not.toHaveBeenCalled();
+  });
+
   it('rolls back every clip added before an engine commit failure', async () => {
     store.tracks = [makeTrack(1)];
     store.clips = [makeAudioClip(10, 1), makeAudioClip(20, 1, { startPpq: 4 })];
@@ -242,6 +293,69 @@ describe('scheduleProjectClips with audio clips', () => {
 
     expect(removeClip).toHaveBeenCalledTimes(1);
     expect(removeClip).toHaveBeenCalledWith(501);
+  });
+
+  it('reports exact residual ownership when add-failure rollback also fails', async () => {
+    store.tracks = [makeTrack(1)];
+    store.clips = [makeAudioClip(10, 1), makeAudioClip(20, 1, { startPpq: 4 })];
+    const { handle, addClip, removeClip } = makeHandle(10);
+    addClip
+      .mockImplementationOnce(() => 501)
+      .mockImplementationOnce(() => {
+        throw new Error('add failed');
+      });
+    removeClip.mockImplementation(() => {
+      throw new Error('rollback failed');
+    });
+
+    const error = await scheduleProjectClips(handle, {
+      loadAudioAsset: async () => makeAsset(20),
+    }).catch((caught) => caught);
+    expect(error).toBeInstanceOf(AudioScheduleReplaceError);
+    expect((error as AudioScheduleReplaceError).ownedClips).toEqual([
+      { engineClipId: 501, clipId: 10, trackId: 1 },
+    ]);
+  });
+
+  it('rolls back a prepared next set and retains only failed old removals', () => {
+    const { handle, removeClip } = makeHandle(10);
+    const previous = [
+      { engineClipId: 1, clipId: 1, trackId: 1 },
+      { engineClipId: 2, clipId: 2, trackId: 1 },
+    ];
+    const next = [{ engineClipId: 3, clipId: 3, trackId: 1 }];
+    removeClip.mockImplementation((id) => {
+      if (id === 2) throw new Error('remove failed');
+    });
+
+    expect(() => replaceScheduledProjectClips(handle, previous, next)).toThrow(
+      AudioScheduleReplaceError,
+    );
+    try {
+      replaceScheduledProjectClips(handle, previous, next);
+    } catch (error) {
+      expect((error as AudioScheduleReplaceError).ownedClips).toEqual([previous[1]]);
+    }
+  });
+
+  it('cancels preparation after an asset await and performs no engine mutation', async () => {
+    store.tracks = [makeTrack(1)];
+    store.clips = [makeAudioClip(10, 1)];
+    const { handle, addClip } = makeHandle(10);
+    const controller = new AbortController();
+    let resolveAsset!: (asset: LoadedAudioAsset) => void;
+    const scheduling = scheduleProjectClips(handle, {
+      signal: controller.signal,
+      loadAudioAsset: () =>
+        new Promise((resolve) => {
+          resolveAsset = resolve;
+        }),
+    });
+    controller.abort(new DOMException('tempo changed', 'AbortError'));
+    resolveAsset(makeAsset(20));
+
+    await expect(scheduling).rejects.toMatchObject({ name: 'AbortError' });
+    expect(addClip).not.toHaveBeenCalled();
   });
 
   it('slices the source window from sourceOffsetPpq and lengthPpq', async () => {
@@ -350,8 +464,9 @@ describe('scheduleProjectClips with audio clips', () => {
       if (assetId === 'gone') throw new Error('missing');
       return makeAsset(20);
     });
+    const onMediaIssue = vi.fn();
 
-    const scheduled = await scheduleProjectClips(handle, { loadAudioAsset });
+    const scheduled = await scheduleProjectClips(handle, { loadAudioAsset, onMediaIssue });
     // Track volume is engine lane state: the volume-0 track still schedules.
     expect(scheduled).toEqual([{ engineClipId: 500, clipId: 20, trackId: 2 }]);
     expect(addClip).toHaveBeenCalledTimes(1);
@@ -359,6 +474,16 @@ describe('scheduleProjectClips with audio clips', () => {
     expect(loadAudioAsset).toHaveBeenCalledTimes(2);
     expect(loadAudioAsset).toHaveBeenNthCalledWith(1, 'gone');
     expect(loadAudioAsset).toHaveBeenNthCalledWith(2, 'asset-x');
+    expect(onMediaIssue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'audio-asset',
+        mediaId: 'gone',
+        role: 'clip',
+        trackId: 1,
+        clipId: 12,
+        reason: 'unreadable',
+      }),
+    );
   });
 
   it('skips audio clips whose sliced source window is empty', async () => {
@@ -561,13 +686,22 @@ describe('scheduleProjectClips with audio clips', () => {
       if (assetId === 'gone') throw new Error('missing');
       return makeAsset(20);
     });
+    const onMediaIssue = vi.fn();
 
-    const scheduled = await scheduleProjectClips(handle, { loadAudioAsset });
+    const scheduled = await scheduleProjectClips(handle, { loadAudioAsset, onMediaIssue });
     // No engine clip for the frozen track (its own clips stay skipped too);
     // the other track schedules normally.
     expect(scheduled).toEqual([{ engineClipId: 500, clipId: 20, trackId: 2 }]);
     expect(addClip).toHaveBeenCalledTimes(1);
     expect(loadAudioAsset.mock.calls.map(([assetId]) => assetId)).toEqual(['gone', 'asset-x']);
+    expect(onMediaIssue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mediaId: 'gone',
+        role: 'frozen',
+        trackId: 1,
+        reason: 'unreadable',
+      }),
+    );
   });
 
   it('schedules nothing for a frozen track whose baked asset is empty', async () => {
@@ -631,6 +765,46 @@ describe('scheduleProjectClips with audio clips', () => {
     // The second slice reads asset-b from source offset 2 PPQ = 10 frames.
     expect((secondChannels as Float32Array[])[0]).toEqual(
       new Float32Array([111, 112, 113, 114, 115, 116, 117, 118, 119, 120]),
+    );
+  });
+
+  it('reports a missing comp take while scheduling the readable segment', async () => {
+    store.tracks = [makeTrack(1)];
+    store.clips = [
+      makeAudioClip(10, 1, {
+        lengthPpq: 4,
+        assetId: 'take-a',
+        takes: [
+          { assetId: 'take-a', name: 'Take A' },
+          { assetId: 'take-b', name: 'Take B' },
+        ],
+        compSegments: [
+          { startPpq: 0, takeIndex: 0, crossfadePpq: 0 },
+          { startPpq: 2, takeIndex: 1, crossfadePpq: 0 },
+        ],
+      }),
+    ];
+    const { handle, addClip } = makeHandle(10);
+    const onMediaIssue = vi.fn();
+
+    const scheduled = await scheduleProjectClips(handle, {
+      loadAudioAsset: async (assetId) => {
+        if (assetId === 'take-b') throw new Error('missing take');
+        return makeAsset(20);
+      },
+      onMediaIssue,
+    });
+
+    expect(scheduled).toHaveLength(1);
+    expect(addClip).toHaveBeenCalledTimes(1);
+    expect(onMediaIssue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mediaId: 'take-b',
+        role: 'take',
+        trackId: 1,
+        clipId: 10,
+        reason: 'unreadable',
+      }),
     );
   });
 

@@ -21,10 +21,10 @@ import {
   reorderTracks,
   setActiveTrack,
   setAutomationLaneEnabled,
+  setStripPan,
   setTrackColor,
   setTrackGroup,
   setTrackMute,
-  setTrackPan,
   setTrackRecordInputChannel,
   setTrackRecordInputDeviceId,
   setTrackSolo,
@@ -148,6 +148,10 @@ const nameInput = ref<HTMLInputElement[] | HTMLInputElement | null>(null);
 let renameFocusFrame: number | null = null;
 
 function startRename(track: EditorTrack): void {
+  if (track.frozen !== undefined) {
+    error.value = t.value.shell.arrangement.trackHeader.unfreezeTitle;
+    return;
+  }
   editingTrackId.value = track.id;
   editName.value = track.name;
   if (renameFocusFrame !== null) cancelAnimationFrame(renameFocusFrame);
@@ -209,9 +213,15 @@ function onVolumeChange(track: EditorTrack, event: Event): void {
 
 function onPanChange(track: EditorTrack, event: Event): void {
   const value = Number((event.target as HTMLInputElement).value);
-  if (Number.isFinite(value) && value >= -1 && value <= 1 && value !== track.pan) {
-    setTrackPan(track.id, value);
+  const current = track.mixer?.pan ?? track.pan;
+  if (Number.isFinite(value) && value >= -1 && value <= 1 && value !== current) {
+    setStripPan(track.id, value);
   }
+}
+
+/** Audible strip pan, with the legacy document field as an old-project fallback. */
+function trackPan(track: EditorTrack): number {
+  return track.mixer?.pan ?? track.pan;
 }
 
 function onDelete(track: EditorTrack): void {
@@ -342,7 +352,8 @@ function isAutomationExpanded(track: EditorTrack): boolean {
 
 /** Parameter the track's automation sublane currently edits. */
 function automationParamFor(track: EditorTrack): AutomationParam {
-  return props.automationParams?.[track.id] ?? 'faderDb';
+  const param = props.automationParams?.[track.id] ?? 'faderDb';
+  return track.kind === 'group' && param === 'pan' ? 'faderDb' : param;
 }
 
 /** Store lane behind the track's sublane, or null when none exists yet. */
@@ -498,8 +509,10 @@ function automationParamOptions(
 ): ReadonlyArray<{ value: AutomationParam; label: string }> {
   const options: { value: AutomationParam; label: string }[] = [
     { value: 'faderDb', label: t.value.shell.arrangement.trackHeader.volumeDb },
-    { value: 'pan', label: t.value.shell.arrangement.trackHeader.pan },
   ];
+  if (track.kind !== 'group') {
+    options.push({ value: 'pan', label: t.value.shell.arrangement.trackHeader.pan });
+  }
   (track.mixer?.inserts ?? []).forEach((slot, index) => {
     for (const param of insertParamInfo(slot.processor)) {
       if (!param.rtSafe) continue;
@@ -589,6 +602,7 @@ function onContextMenu(track: EditorTrack, event: MouseEvent): void {
     {
       id: 'rename',
       label: t.value.shell.arrangement.trackHeader.rename,
+      disabled: track.frozen !== undefined,
       run: () => startRename(track),
     },
     { id: 'sep-1', separator: true },
@@ -680,6 +694,7 @@ function onContextMenu(track: EditorTrack, event: MouseEvent): void {
       {
         id: 'regenerate',
         label: t.value.shell.arrangement.trackHeader.regenerate,
+        disabled: track.frozen !== undefined,
         run: () => emit('regenerateTrack', track.id, generatedPart),
       },
     );
@@ -920,15 +935,16 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   @change="onVolumeChange(track, $event)"
                 />
                 <input
+                  v-if="track.kind !== 'group'"
                   class="mini-slider mini-slider--pan"
                   type="range"
                   min="-1"
                   max="1"
                   step="0.01"
-                  :value="track.pan"
+                  :value="trackPan(track)"
                   v-tooltip="
                     formatMessage(t.shell.arrangement.trackHeader.panTitle, {
-                      value: track.pan.toFixed(2),
+                      value: trackPan(track).toFixed(2),
                     })
                   "
                   :aria-label="
