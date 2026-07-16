@@ -6,6 +6,7 @@ import {
   masteringAutomationParam,
 } from '@/project/automation';
 import {
+  activeMixerSnapshotSlot,
   addAudioTrack,
   addGroupTrack,
   addInsert,
@@ -19,8 +20,10 @@ import {
   clearHistory,
   exportMixerSnapshotSlots,
   mixerBusStripTarget,
+  recallMixerSnapshot,
   redo,
   removeInsert,
+  removeMasteringProcessor,
   removeMixerBus,
   removeTrack,
   removeVcaGroup,
@@ -168,8 +171,10 @@ describe('mixer commands', () => {
       setStripGain(trackId, -6);
       setStripPan(trackId, 0.5);
       expect(store.tracks[0].mixer).toMatchObject({ gainDb: -6, pan: 0.5 });
+      expect(store.tracks[0].pan).toBe(0.5);
       undo();
       expect(store.tracks[0].mixer).toMatchObject({ gainDb: -6, pan: 0 });
+      expect(store.tracks[0].pan).toBe(0);
       undo();
       expect(store.tracks[0].mixer).toBeUndefined();
     });
@@ -187,6 +192,14 @@ describe('mixer commands', () => {
       expect(() => setStripGain(trackId, 100)).toThrow(RangeError);
       expect(() => setStripGain(trackId, Number.NaN)).toThrow(RangeError);
       expect(() => setStripPan(trackId, 2)).toThrow(RangeError);
+    });
+
+    it('rejects group pan instead of storing an inaudible control', () => {
+      const groupId = addGroupTrack({ name: 'Drum Bus' });
+      expect(() => setStripPan(groupId, 0.5)).toThrow(/Group bus pan is not supported/);
+      const group = store.tracks.find((track) => track.id === groupId);
+      expect(group?.pan).toBe(0);
+      expect(group?.mixer).toBeUndefined();
     });
 
     it('coalesces a fader drag into one history entry', () => {
@@ -741,6 +754,63 @@ describe('mixer commands', () => {
     });
   });
 
+  describe('mixer snapshots', () => {
+    it('recalls processor automation atomically, prunes new-chain targets, and restores them on undo', () => {
+      addInsert(trackId, 'saturation.tape', { drive: 0.4 });
+      addInsert('master', 'eq.tilt', { tiltDb: 1 });
+      addMasteringProcessor('maximizer.truePeakLimiter', { ceilingDb: -1 });
+      const capturedTrackId = store.tracks[0].mixer?.inserts[0].id as string;
+      const capturedMasterId = store.mixer.master.inserts[0].id as string;
+      const capturedMasteringId = store.mixer.masteringChain?.processors[0].id as string;
+      const capturedParams = [
+        insertAutomationParam(capturedTrackId, 'drive'),
+        insertAutomationParam(capturedMasterId, 'tiltDb'),
+        masteringAutomationParam(capturedMasteringId, 'ceilingDb'),
+      ];
+      store.automationLanes = capturedParams.map((param, index) => ({
+        target: index === 0 ? trackId : 'master',
+        param,
+        points: [{ ppq: 0, value: index + 1 }],
+        enabled: true,
+      }));
+      saveMixerSnapshot('A');
+
+      removeInsert(trackId, 0);
+      removeInsert('master', 0);
+      removeMasteringProcessor(0);
+      addInsert(trackId, 'dynamics.compressor', { thresholdDb: -12 });
+      addInsert('master', 'saturation.tape', { drive: 0.7 });
+      addMasteringProcessor('eq.tilt', { tiltDb: -2 });
+      const currentTrackId = store.tracks[0].mixer?.inserts[0].id as string;
+      const currentMasterId = store.mixer.master.inserts[0].id as string;
+      const currentMasteringId = store.mixer.masteringChain?.processors[0].id as string;
+      const currentParams = [
+        insertAutomationParam(currentTrackId, 'thresholdDb'),
+        insertAutomationParam(currentMasterId, 'drive'),
+        masteringAutomationParam(currentMasteringId, 'tiltDb'),
+      ];
+      store.automationLanes = currentParams.map((param, index) => ({
+        target: index === 0 ? trackId : 'master',
+        param,
+        points: [{ ppq: 0, value: -(index + 1) }],
+        enabled: true,
+      }));
+      const currentMidiTarget = midiLearnInsertTargetId(trackId, currentTrackId, 'thresholdDb');
+      store.midiCcBindings.set(currentMidiTarget, { channel: 2, controller: 42 });
+      clearHistory();
+
+      expect(recallMixerSnapshot('A')).toBe(true);
+      expect(store.automationLanes.map((lane) => lane.param)).toEqual(capturedParams);
+      expect(store.midiCcBindings.has(currentMidiTarget)).toBe(false);
+
+      expect(undo()).toBe(true);
+      expect(store.automationLanes.map((lane) => lane.param)).toEqual(currentParams);
+      expect(store.midiCcBindings.get(currentMidiTarget)).toEqual({ channel: 2, controller: 42 });
+      expect(store.tracks[0].mixer?.inserts[0].id).toBe(currentTrackId);
+      expect(store.mixer.masteringChain?.processors[0].id).toBe(currentMasteringId);
+    });
+  });
+
   describe('solo-safe', () => {
     it('sets, dedupes and undoes the flag', () => {
       setTrackSoloSafe(trackId, true);
@@ -756,6 +826,46 @@ describe('mixer commands', () => {
   });
 
   describe('VCA groups', () => {
+    it('rejects a scene whose send and group buses exceed the final engine limit', () => {
+      addGroupTrack({ name: 'Group 1' });
+      addGroupTrack({ name: 'Group 2' });
+      clearHistory();
+      const beforeMixer = JSON.parse(JSON.stringify(store.mixer));
+      const beforeTracks = JSON.parse(JSON.stringify(store.tracks));
+      const scene = JSON.stringify({
+        version: 1,
+        strips: [],
+        buses: Array.from({ length: 7 }, (_, index) => ({
+          id: `bus-${index + 1}`,
+          role: 'aux',
+        })),
+        connections: [],
+      });
+
+      expect(() => applyMixerSceneJson(scene)).toThrow(/Mixer bus limit exceeded \(9\/8\)/);
+      expect(store.mixer).toEqual(beforeMixer);
+      expect(store.tracks).toEqual(beforeTracks);
+      expect(undo()).toBe(false);
+    });
+
+    it('rejects an oversized snapshot recall without changing state or active slot', () => {
+      for (let index = 0; index < MAX_MIXER_BUSES; index += 1) addMixerBus();
+      saveMixerSnapshot('A');
+      for (const bus of [...store.mixer.buses]) removeMixerBus(bus.id);
+      addGroupTrack({ name: 'Group 1' });
+      addGroupTrack({ name: 'Group 2' });
+      saveMixerSnapshot('B');
+      clearHistory();
+      const beforeMixer = JSON.parse(JSON.stringify(store.mixer));
+      const beforeTracks = JSON.parse(JSON.stringify(store.tracks));
+
+      expect(() => recallMixerSnapshot('A')).toThrow(/Mixer bus limit exceeded \(10\/8\)/);
+      expect(activeMixerSnapshotSlot()).toBe('B');
+      expect(store.mixer).toEqual(beforeMixer);
+      expect(store.tracks).toEqual(beforeTracks);
+      expect(undo()).toBe(false);
+    });
+
     it('applies a mixer scene preset as one undoable template', () => {
       const result = applyMixerSceneJson(fakeMixingScenePresetJson('vocalReverbSend'));
 
@@ -899,6 +1009,23 @@ describe('mixer commands', () => {
         processor: 'dynamics.sidechainRouter',
         params: { rangeDb: 12 },
         enabled: true,
+      });
+    });
+
+    it('centers group pan imported from a mixer scene', () => {
+      const groupId = addGroupTrack({ name: 'Group' });
+      applyMixerSceneJson(
+        JSON.stringify({
+          version: 1,
+          strips: [{ id: 'host' }, { id: 'group', pan: 0.75 }],
+          buses: [],
+          connections: [],
+        }),
+      );
+
+      expect(store.tracks.find((track) => track.id === groupId)).toMatchObject({
+        pan: 0,
+        mixer: { pan: 0 },
       });
     });
 

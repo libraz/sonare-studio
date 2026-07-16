@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { type AutomationLaneState, busAutomationTarget } from '@/project/automation';
+import {
+  type AutomationLaneState,
+  busAutomationTarget,
+  insertAutomationParam,
+  masteringAutomationParam,
+} from '@/project/automation';
 import { buildMixerSnapshot, mergeMixerSnapshot } from '@/project/command/mixer';
 import { createDefaultStrip, type MixerStrip, type ProjectMixerState } from '@/project/mixer';
 import type { EditorTrack } from '@/project/types';
@@ -211,6 +216,93 @@ describe('mergeMixerSnapshot', () => {
       { target: 1, param: 'pan', enabled: true, points: [{ ppq: 0, value: 0.5 }] },
       { target: 'master', param: 'faderDb', enabled: true, points: [{ ppq: 0, value: -3 }] },
       { target, param: 'faderDb', enabled: true, points: [{ ppq: 0, value: -8 }] },
+    ]);
+  });
+
+  it('restores captured processor lanes, migrates legacy indices, and prunes replaced-chain lanes', () => {
+    const snapshotMixer = mixer({
+      master: strip({
+        inserts: [
+          {
+            id: 'snapshot-master-insert',
+            processor: 'eq.tilt',
+            params: { tiltDb: 1 },
+            enabled: true,
+          },
+        ],
+      }),
+      masteringChain: {
+        processors: [
+          {
+            id: 'snapshot-mastering',
+            processor: 'maximizer.truePeakLimiter',
+            params: { ceilingDb: -1 },
+            enabled: true,
+          },
+        ],
+      },
+    });
+    const snapshotTracks = [
+      track(1, {
+        mixer: strip({
+          inserts: [
+            {
+              id: 'snapshot-track-insert',
+              processor: 'saturation.tape',
+              params: { drive: 0.4 },
+              enabled: true,
+            },
+          ],
+        }),
+      }),
+    ];
+    const snap = buildMixerSnapshot(snapshotMixer, snapshotTracks, [
+      automationLane({ target: 1, param: insertAutomationParam(0, 'drive') }),
+      automationLane({ target: 'master', param: insertAutomationParam(0, 'tiltDb') }),
+      automationLane({ target: 'master', param: masteringAutomationParam(0, 'ceilingDb') }),
+    ]);
+    expect(snap.automationLanes?.map((lane) => lane.param)).toEqual([
+      insertAutomationParam('snapshot-track-insert', 'drive'),
+      insertAutomationParam('snapshot-master-insert', 'tiltDb'),
+      masteringAutomationParam('snapshot-mastering', 'ceilingDb'),
+    ]);
+
+    const currentTracks = [
+      track(1, {
+        mixer: strip({
+          inserts: [
+            {
+              id: 'current-track-insert',
+              processor: 'dynamics.compressor',
+              params: { thresholdDb: -12 },
+              enabled: true,
+            },
+          ],
+        }),
+      }),
+    ];
+    const currentLanes = [
+      automationLane({
+        target: 1,
+        param: insertAutomationParam('current-track-insert', 'thresholdDb'),
+      }),
+      automationLane({
+        target: 'master',
+        param: insertAutomationParam('current-master-insert', 'drive'),
+      }),
+      automationLane({
+        target: 'master',
+        param: masteringAutomationParam('current-mastering', 'ceilingDb'),
+      }),
+      automationLane({ target: 1, param: 'faderDb' }),
+    ];
+
+    const { automationLanes } = mergeMixerSnapshot(snap, currentTracks, currentLanes);
+    expect(automationLanes.map((lane) => lane.param)).toEqual([
+      'faderDb',
+      insertAutomationParam('snapshot-track-insert', 'drive'),
+      insertAutomationParam('snapshot-master-insert', 'tiltDb'),
+      masteringAutomationParam('snapshot-mastering', 'ceilingDb'),
     ]);
   });
 });

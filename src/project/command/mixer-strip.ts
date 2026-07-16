@@ -298,15 +298,28 @@ export function setStripPan(
   options?: CommandGestureOptions,
 ): void {
   const store = useProjectStore();
-  const strip = currentStrip(store, target);
   if (!Number.isFinite(pan) || pan < -1 || pan > 1) {
     throw new RangeError(`Strip pan must be in [-1, 1], got ${pan}`);
   }
+  const track = typeof target === 'number' ? requireTrack(store, target) : undefined;
+  if (track?.kind === 'group') {
+    throw new RangeError('Group bus pan is not supported by the audio engine');
+  }
+  const strip = currentStrip(store, target);
   const key = `strip-pan:${String(target)}`;
-  if (strip.pan === pan && !hasPendingGesture(key)) return;
+  // EditorTrack.pan remains as a document-compatibility mirror for older
+  // project readers. MixerStrip.pan is the single audible source of truth.
+  if (strip.pan === pan && (track === undefined || track.pan === pan) && !hasPendingGesture(key)) {
+    return;
+  }
   executeApp(
     () => {
       writeStrip(store, target, { ...cloneStrip(strip), pan });
+      if (track !== undefined) {
+        store.tracks = store.tracks.map((entry) =>
+          entry.id === track.id ? { ...entry, pan } : entry,
+        );
+      }
       store.refresh();
     },
     { key, commit: options?.commit ?? true },

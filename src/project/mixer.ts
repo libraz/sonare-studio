@@ -376,6 +376,17 @@ export function engineBusCount(
   return sendBusCount + tracks.filter((track) => track.kind === 'group').length;
 }
 
+/** Validates a complete mixer/track plan against the realtime bus limit. */
+export function assertEngineBusCapacity(
+  sendBusCount: number,
+  tracks: ReadonlyArray<{ kind: string }>,
+): void {
+  const count = engineBusCount(sendBusCount, tracks);
+  if (count > MAX_MIXER_BUSES) {
+    throw new RangeError(`Mixer bus limit exceeded (${count}/${MAX_MIXER_BUSES})`);
+  }
+}
+
 /** Throws when adding more engine bus lanes would exceed the realtime limit. */
 export function assertCanAddEngineBus(
   sendBusCount: number,

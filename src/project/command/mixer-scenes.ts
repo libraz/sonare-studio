@@ -4,6 +4,7 @@ import {
   parseMasteringAutomationParam,
 } from '../automation';
 import {
+  assertEngineBusCapacity,
   cloneStrip,
   createDefaultStrip,
   createProcessorId,
@@ -361,18 +362,21 @@ function buildScenePlan(
     if (!sceneStrip) return track;
     const id = sceneId(sceneStrip);
     const outputBusId = id && track.kind !== 'group' ? outputBusByStrip.get(id) : undefined;
+    const mixer = sceneStripToMixerStrip(
+      sceneStrip,
+      busIds,
+      validProcessors,
+      outputBusId,
+      track.kind === 'group' ? undefined : sidechainBySceneId,
+    );
+    if (track.kind === 'group') mixer.pan = 0;
     const next: EditorTrack = {
       ...track,
-      mixer: sceneStripToMixerStrip(
-        sceneStrip,
-        busIds,
-        validProcessors,
-        outputBusId,
-        track.kind === 'group' ? undefined : sidechainBySceneId,
-      ),
+      mixer,
       mute: booleanValue(sceneStrip.muted) ?? track.mute,
       solo: booleanValue(sceneStrip.soloed) ?? track.solo,
     };
+    next.pan = track.kind === 'group' ? 0 : mixer.pan;
     if (sceneStrip.soloSafe === true) next.soloSafe = true;
     else delete next.soloSafe;
     if (id && vcaByMember.has(id)) next.vcaId = vcaByMember.get(id);
@@ -383,6 +387,8 @@ function buildScenePlan(
   const masterBus = scene.buses.find((bus) => bus.id === 'master');
   const master = cloneStrip(createDefaultStrip());
   master.inserts = sceneInserts(masterBus?.inserts, validProcessors);
+
+  assertEngineBusCapacity(mixerBuses.length, nextTracks);
 
   return {
     mixer: {

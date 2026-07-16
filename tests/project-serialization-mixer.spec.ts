@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { busAutomationTarget } from '@/project/automation';
+import { busAutomationTarget, insertAutomationParam } from '@/project/automation';
 import {
   activeMixerSnapshotSlot,
   addAudioTrack,
@@ -10,6 +10,7 @@ import {
   addVcaGroup,
   clearHistory,
   clearMixerSnapshots,
+  exportMixerSnapshotSlots,
   mixerBusStripTarget,
   mixerSnapshotFilled,
   recallMixerSnapshot,
@@ -109,6 +110,7 @@ describe('project serialization with instruments and mixer (schema v3)', () => {
       sends: [{ busId, levelDb: -12, enabled: true }],
       eq: { enabled: true, bands: [{ type: 'Peak', frequencyHz: 900, gainDb: 2 }] },
     });
+    expect(doc.tracks[0].pan).toBe(0.3);
     expect(doc.mixer?.master.gainDb).toBe(-1.5);
     expect(doc.mixer?.buses).toEqual([{ id: busId, name: 'FX', gainDb: 0 }]);
 
@@ -119,6 +121,41 @@ describe('project serialization with instruments and mixer (schema v3)', () => {
     expect(store.tracks[0].mixer?.panLaw).toBe('const6dB');
     expect(store.tracks[0].mixer?.panMode).toBe('dualPan');
     expect(store.tracks[0].mixer?.dualPan).toEqual({ left: -0.25, right: 0.5 });
+    expect(store.tracks[0].pan).toBe(0.3);
+  });
+
+  it('promotes legacy track pan into the audible strip and centers group pan on load', async () => {
+    const legacy = serializeProject();
+    legacy.tracks[0].pan = -0.6;
+    delete legacy.tracks[0].mixer;
+    legacy.tracks.push({
+      name: 'Group',
+      color: '#888888',
+      kind: 'group',
+      mute: false,
+      solo: false,
+      volume: 1,
+      pan: 0.8,
+      mixer: { gainDb: -3, pan: 0.8, inserts: [], sends: [] },
+      automation: [{ param: 'pan', enabled: true, points: [{ ppq: 0, value: 0.5 }] }],
+      clips: [],
+    });
+
+    await loadProjectDocument(legacy);
+
+    expect(store.tracks[0]).toMatchObject({ pan: -0.6, mixer: { pan: -0.6 } });
+    expect(store.tracks[1]).toMatchObject({ pan: 0, mixer: { gainDb: -3, pan: 0 } });
+    expect(store.automationLanes.some((lane) => lane.target === store.tracks[1].id)).toBe(false);
+    const saved = serializeProject();
+    expect(saved.tracks[0]).toMatchObject({ pan: -0.6, mixer: { pan: -0.6 } });
+    expect(saved.tracks[1]).toMatchObject({ pan: 0, mixer: { gainDb: -3, pan: 0 } });
+  });
+
+  it('rejects group pan automation commands', () => {
+    const groupId = addGroupTrack({ name: 'Group' });
+    expect(() => setAutomationLanePoints(groupId, 'pan', [{ ppq: 0, value: 0.5 }])).toThrow(
+      /Group bus pan automation is not supported/,
+    );
   });
 
   it('drops legacy master sends on save and load because they are not audible', async () => {
@@ -322,6 +359,16 @@ describe('project serialization with instruments and mixer (schema v3)', () => {
 
   it('persists mixer snapshot slots with document-track-index bindings', async () => {
     const trackId = store.tracks[0].id;
+    addInsert(trackId, 'saturation.tape', { drive: 0.4 });
+    const processorId = store.tracks[0].mixer?.inserts[0].id as string;
+    store.automationLanes = [
+      {
+        target: trackId,
+        param: insertAutomationParam(processorId, 'drive'),
+        points: [{ ppq: 0, value: 0.7 }],
+        enabled: true,
+      },
+    ];
     setStripGain(trackId, -5);
     saveMixerSnapshot('D');
     setStripGain(trackId, 3);
@@ -334,6 +381,10 @@ describe('project serialization with instruments and mixer (schema v3)', () => {
       solo: false,
     });
     expect((doc.mixerSnapshots?.slots.D?.tracks[0] as { id?: unknown }).id).toBeUndefined();
+    expect(doc.mixerSnapshots?.slots.D?.automationLanes?.[0]).toMatchObject({
+      target: 0,
+      param: insertAutomationParam(processorId, 'drive'),
+    });
 
     clearMixerSnapshots();
     await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
@@ -341,9 +392,21 @@ describe('project serialization with instruments and mixer (schema v3)', () => {
     expect(activeMixerSnapshotSlot()).toBe('D');
 
     const loadedTrackId = store.tracks[0].id;
+    expect(exportMixerSnapshotSlots().snapshots.D?.automationLanes?.[0]?.target).toBe(
+      loadedTrackId,
+    );
     setStripGain(loadedTrackId, 12);
+    store.automationLanes = [];
     expect(recallMixerSnapshot('D')).toBe(true);
     expect(store.tracks[0].mixer?.gainDb).toBe(-5);
+    expect(store.automationLanes).toEqual([
+      {
+        target: loadedTrackId,
+        param: insertAutomationParam(processorId, 'drive'),
+        points: [{ ppq: 0, value: 0.7 }],
+        enabled: true,
+      },
+    ]);
   });
 
   it('drops group-track insert sidechain sources from mixer snapshot slots', async () => {

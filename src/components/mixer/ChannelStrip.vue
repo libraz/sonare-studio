@@ -176,32 +176,31 @@ function onContextMenu(event: MouseEvent): void {
     items.push({
       id: 'rename',
       label: t.value.shell.mixer.strip.rename,
-      run: () => {
-        void (async () => {
-          const next = await promptDialog({
-            title: t.value.shell.mixer.strip.renameTitle,
-            message: t.value.shell.mixer.strip.renameMessage,
-            defaultValue: currentTrack.name,
-            placeholder: t.value.shell.mixer.strip.trackNamePlaceholder,
-            confirmLabel: t.value.shell.mixer.strip.renameConfirm,
-          });
-          if (next && next !== currentTrack.name) renameTrack(currentTrack.id, next);
-        })();
+      disabled: currentTrack.frozen !== undefined,
+      run: async () => {
+        const next = await promptDialog({
+          title: t.value.shell.mixer.strip.renameTitle,
+          message: t.value.shell.mixer.strip.renameMessage,
+          defaultValue: currentTrack.name,
+          placeholder: t.value.shell.mixer.strip.trackNamePlaceholder,
+          confirmLabel: t.value.shell.mixer.strip.renameConfirm,
+        });
+        if (next && next !== currentTrack.name) renameTrack(currentTrack.id, next);
       },
     });
   }
-  items.push(
-    {
-      id: 'reset-gain',
-      label: t.value.shell.mixer.strip.resetFader,
-      run: () => setStripGain(props.target, 0),
-    },
-    {
+  items.push({
+    id: 'reset-gain',
+    label: t.value.shell.mixer.strip.resetFader,
+    run: () => setStripGain(props.target, 0),
+  });
+  if (!isGroup.value) {
+    items.push({
       id: 'reset-pan',
       label: t.value.shell.mixer.strip.centerPan,
       run: () => setStripPan(props.target, 0),
-    },
-  );
+    });
+  }
   if (currentTrack && !isGroup.value) {
     const safe = currentTrack.soloSafe === true;
     items.push(
@@ -362,7 +361,7 @@ onBeforeUnmount(() => {
 
     <div class="strip-spacer" />
 
-    <div class="strip-pan">
+    <div v-if="!isGroup" class="strip-pan">
       <div class="strip-pan-knob">
         <MixerKnob
           :value="displayedPan"

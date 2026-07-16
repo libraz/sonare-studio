@@ -16,9 +16,12 @@ import {
   busIdFromAutomationTarget,
   cloneAutomationLane,
   isBusAutomationTarget,
+  parseInsertAutomationParam,
+  parseMasteringAutomationParam,
 } from '../automation';
 import { canonicalJson } from '../hash';
 import {
+  assertEngineBusCapacity,
   cloneMixerState,
   cloneStrip,
   createDefaultStrip,
@@ -27,7 +30,9 @@ import {
 } from '../mixer';
 import { useProjectStore } from '../store';
 import {
+  normalizeProcessorAutomationLanes,
   pruneStripTrackReferences,
+  reconcileProcessorTargetReferences,
   registerTargetReferenceContributor,
 } from '../target-reference-registry';
 import type { EditorTrack } from '../types';
@@ -63,7 +68,7 @@ export interface MixerSnapshot {
   mixer: ProjectMixerState;
   /** Per-track captured strip and mix flags, in capture order. */
   tracks: MixerSnapshotTrack[];
-  /** Mixer-scoped automation lanes, currently bus fader automation. */
+  /** Bus and processor automation owned by the captured mixer structures. */
   automationLanes?: AutomationLaneState[];
 }
 
@@ -82,19 +87,29 @@ export function buildMixerSnapshot(
   automationLanes: ReadonlyArray<AutomationLaneState> = [],
 ): MixerSnapshot {
   const validBusIds = new Set(mixer.buses.map((bus) => bus.id));
-  const mixerAutomationLanes = automationLanes
-    .filter(
-      (lane) =>
-        isBusAutomationTarget(lane.target) &&
-        validBusIds.has(busIdFromAutomationTarget(lane.target)),
-    )
+  const trackIds = new Set(tracks.map((track) => track.id));
+  const mixerAutomationLanes = normalizeProcessorAutomationLanes(automationLanes, mixer, tracks)
+    .filter((lane) => {
+      if (isBusAutomationTarget(lane.target)) {
+        return validBusIds.has(busIdFromAutomationTarget(lane.target));
+      }
+      if (parseMasteringAutomationParam(lane.param) !== undefined) {
+        return lane.target === 'master';
+      }
+      if (parseInsertAutomationParam(lane.param) === undefined) return false;
+      return (
+        lane.target === 'master' || (typeof lane.target === 'number' && trackIds.has(lane.target))
+      );
+    })
     .map(cloneAutomationLane);
   const snapshot: MixerSnapshot = {
     mixer: cloneMixerState(mixer),
     tracks: tracks.map((track) => {
+      const mixerStrip = cloneStrip(track.mixer ?? createDefaultStrip());
+      if (track.kind === 'group') mixerStrip.pan = 0;
       const entry: MixerSnapshotTrack = {
         id: track.id,
-        mixer: cloneStrip(track.mixer ?? createDefaultStrip()),
+        mixer: mixerStrip,
         mute: track.mute,
         solo: track.solo,
       };
@@ -147,7 +162,9 @@ export function mergeMixerSnapshot(
     const entry = byId.get(track.id);
     const next: EditorTrack = { ...track };
     if (entry) {
-      next.mixer = entry.mixer;
+      next.mixer = cloneStrip(entry.mixer);
+      if (track.kind === 'group') next.mixer.pan = 0;
+      next.pan = track.kind === 'group' ? 0 : next.mixer.pan;
       next.mute = entry.mute;
       next.solo = entry.solo;
       if (entry.soloSafe !== undefined) next.soloSafe = entry.soloSafe;
@@ -160,13 +177,41 @@ export function mergeMixerSnapshot(
     return next;
   });
   const restoredBusTargets = new Set([...validBusIds].map(busAutomationTarget));
+  const restoredTrackIds = new Set(snapshot.tracks.map((entry) => entry.id));
   const automationLanes = currentAutomationLanes
-    .filter((lane) => !isBusAutomationTarget(lane.target))
+    .filter((lane) => {
+      if (isBusAutomationTarget(lane.target)) return false;
+      if (lane.target === 'master') {
+        return (
+          parseInsertAutomationParam(lane.param) === undefined &&
+          parseMasteringAutomationParam(lane.param) === undefined
+        );
+      }
+      if (typeof lane.target === 'number' && restoredTrackIds.has(lane.target)) {
+        return parseInsertAutomationParam(lane.param) === undefined;
+      }
+      return true;
+    })
     .map(cloneAutomationLane);
-  for (const lane of snapshot.automationLanes ?? []) {
-    if (!isBusAutomationTarget(lane.target) || !restoredBusTargets.has(lane.target)) continue;
+  const restoredAutomation = normalizeProcessorAutomationLanes(
+    snapshot.automationLanes ?? [],
+    mixer,
+    tracks,
+  );
+  for (const lane of restoredAutomation) {
+    const isRestoredBus = isBusAutomationTarget(lane.target) && restoredBusTargets.has(lane.target);
+    const isRestoredMasterProcessor =
+      lane.target === 'master' &&
+      (parseInsertAutomationParam(lane.param) !== undefined ||
+        parseMasteringAutomationParam(lane.param) !== undefined);
+    const isRestoredTrackProcessor =
+      typeof lane.target === 'number' &&
+      restoredTrackIds.has(lane.target) &&
+      parseInsertAutomationParam(lane.param) !== undefined;
+    if (!isRestoredBus && !isRestoredMasterProcessor && !isRestoredTrackProcessor) continue;
     automationLanes.push(cloneAutomationLane(lane));
   }
+  assertEngineBusCapacity(mixer.buses.length, tracks);
   return { mixer, tracks, automationLanes };
 }
 
@@ -190,15 +235,12 @@ export function captureMixerSnapshot(): MixerSnapshot {
  */
 export function applyMixerSnapshot(snapshot: MixerSnapshot): void {
   const store = useProjectStore();
+  const plan = mergeMixerSnapshot(snapshot, store.tracks, store.automationLanes);
   executeApp(() => {
-    const { mixer, tracks, automationLanes } = mergeMixerSnapshot(
-      snapshot,
-      store.tracks,
-      store.automationLanes,
-    );
-    store.mixer = mixer;
-    store.tracks = tracks;
-    store.automationLanes = automationLanes;
+    store.mixer = plan.mixer;
+    store.tracks = plan.tracks;
+    store.automationLanes = plan.automationLanes;
+    reconcileProcessorTargetReferences(store);
     store.refresh();
   });
 }
@@ -325,6 +367,13 @@ export function pruneMixerSnapshotTrackReferences(trackId: number): void {
           ...track,
           mixer: pruneStripTrackReferences(track.mixer, trackId),
         })),
+      ...(snapshot.automationLanes !== undefined
+        ? {
+            automationLanes: snapshot.automationLanes
+              .filter((lane) => lane.target !== trackId)
+              .map(cloneAutomationLane),
+          }
+        : {}),
     });
   }
 }
