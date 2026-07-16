@@ -1,5 +1,7 @@
 export type { AssistSidecar } from './command/assist';
 export { listAssistSidecars, setAssistSidecar } from './command/assist';
+export type { AddRecordedAudioClipInput } from './command/audio-recording';
+export { addRecordedAudioClips } from './command/audio-recording';
 export {
   removeAutomationLane,
   setAutomationLaneEnabled,

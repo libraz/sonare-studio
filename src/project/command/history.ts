@@ -448,9 +448,14 @@ export function collectHistoryReferencedMediaIds(): HistoryReferencedMediaIds {
 }
 
 /** Pushes a finished history entry, trimming overflow and dropping redo. */
-function pushHistory(entry: HistoryEntry): void {
+function clearRedoStack(): void {
   for (const redo of redoStack) historyBytes -= redo.byteSize;
   redoStack.length = 0;
+  historyBytes = Math.max(0, historyBytes);
+}
+
+function pushHistory(entry: HistoryEntry): void {
+  clearRedoStack();
   undoStack.push(entry);
   historyBytes += entry.byteSize;
   lastSnapshot = entry.after;
@@ -468,12 +473,17 @@ export function historyBudgetStats(): {
   undoEntries: number;
   redoEntries: number;
   bytes: number;
+  accountedBytes: number;
   budgetBytes: number;
 } {
   return {
     undoEntries: undoStack.length,
     redoEntries: redoStack.length,
     bytes: historyBytes,
+    accountedBytes: [...undoStack, ...redoStack].reduce(
+      (total, entry) => total + entry.byteSize,
+      0,
+    ),
     budgetBytes: historyByteBudget,
   };
 }
@@ -602,7 +612,7 @@ export function executeApp<T>(action: () => T, gesture?: { key: string; commit: 
     if (pendingGesture && pendingGesture.key !== gesture.key) flushPendingGesture();
     if (!pendingGesture) pendingGesture = { key: gesture.key, before: captureSnapshot(store) };
     // The mirror diverges from the last committed entry, so redo is stale.
-    redoStack.length = 0;
+    clearRedoStack();
     return action();
   }
   if (gesture && pendingGesture && pendingGesture.key === gesture.key) {

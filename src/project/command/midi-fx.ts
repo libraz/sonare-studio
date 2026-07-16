@@ -7,7 +7,7 @@ import {
 import { getProject, useProjectStore } from '../store';
 import type { EditorTrack } from '../types';
 import { execute } from './history';
-import { requireEditableClip, requireTrack } from './utils';
+import { requireEditableClip, requireEditableTrack } from './utils';
 
 /**
  * Bakes a MIDI-FX transform into a clip's stored notes as one undoable edit.
@@ -57,7 +57,7 @@ function withoutMidiFx(track: EditorTrack): EditorTrack {
  */
 export function setTrackMidiFx(trackId: number, config: MidiFxConfig): boolean {
   const store = useProjectStore();
-  const track = requireTrack(store, trackId);
+  const track = requireEditableTrack(store, trackId);
   const sanitized = sanitizeMidiFxConfig(config);
   // A no-op transform is equivalent to having none: clear instead of storing it.
   if (isMidiFxNoop(sanitized)) return clearTrackMidiFx(trackId);
@@ -84,7 +84,7 @@ export function setTrackMidiFx(trackId: number, config: MidiFxConfig): boolean {
  */
 export function clearTrackMidiFx(trackId: number): boolean {
   const store = useProjectStore();
-  const track = requireTrack(store, trackId);
+  const track = requireEditableTrack(store, trackId);
   if (track.midiFx === undefined) return false;
   execute(0, () => {
     store.tracks = store.tracks.map((t) => (t.id === trackId ? withoutMidiFx(t) : t));

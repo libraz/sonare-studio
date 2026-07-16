@@ -1,6 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { decodeSzd, encodeSzd } from '@/persistence/szd';
+import { formatChordName } from '@/project/chords';
 import {
   addMasteringProcessor,
   addMidiClip,
@@ -303,6 +304,21 @@ describe('project serialization', () => {
     expect(store.chords).toEqual(doc.chords);
   });
 
+  it('round-trips chord extensions without changing their display identity', async () => {
+    setProjectChords([
+      { startPpq: 0, endPpq: 4, rootPc: 0, quality: 11 },
+      { startPpq: 4, endPpq: 8, rootPc: 2, quality: 6, extensions: [14] },
+      { startPpq: 8, endPpq: 12, rootPc: 7, quality: 4, extensions: [13] },
+      { startPpq: 12, endPpq: 16, rootPc: 5, quality: 4, extensions: [21] },
+    ]);
+    const doc = serializeProject();
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+
+    expect(serializeProject()).toEqual(doc);
+    expect(store.chords.map(formatChordName)).toEqual(['Cm(add9)', 'Dm9', 'G7b9', 'F13']);
+  });
+
   it('omits the chord track from the document when empty', () => {
     const doc = serializeProject();
     expect(doc.chords).toBeUndefined();
@@ -583,6 +599,18 @@ describe('project serialization', () => {
     const before = serializeProject();
     const bad = JSON.parse(JSON.stringify(serializeProject())) as ProjectDocument;
     (bad as unknown as { mixer: unknown }).mixer = { master: {}, buses: {} };
+
+    await expect(loadProjectDocument(bad)).rejects.toThrow();
+
+    expect(store.initialized).toBe(true);
+    expect(serializeProject()).toEqual(before);
+  });
+
+  it('validates mixer snapshots before publishing the replacement project', async () => {
+    buildSampleProject(store);
+    const before = serializeProject();
+    const bad = JSON.parse(JSON.stringify(before)) as ProjectDocument;
+    (bad as unknown as { mixerSnapshots: unknown }).mixerSnapshots = {};
 
     await expect(loadProjectDocument(bad)).rejects.toThrow();
 

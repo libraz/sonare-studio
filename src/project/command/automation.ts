@@ -92,7 +92,10 @@ function validateAutomationTarget(
     }
     return;
   }
-  requireTrack(store, target);
+  const track = requireTrack(store, target);
+  if (track.kind === 'group' && param === 'pan') {
+    throw new RangeError('Group bus pan automation is not supported by the audio engine');
+  }
 }
 
 /** Returns the index of the lane addressing (target, param), or -1. */
@@ -159,6 +162,11 @@ export function setAutomationLaneEnabled(
   enabled: boolean,
 ): void {
   const store = useProjectStore();
+  const track =
+    typeof target === 'number' ? store.tracks.find((entry) => entry.id === target) : undefined;
+  if (track?.kind === 'group' && param === 'pan') {
+    throw new RangeError('Group bus pan automation is not supported by the audio engine');
+  }
   const index = findAutomationLane(store, target, param);
   if (index < 0 || store.automationLanes[index].enabled === enabled) return;
   execute(0, () => {

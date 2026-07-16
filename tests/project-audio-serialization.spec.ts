@@ -210,6 +210,15 @@ describe('project serialization with audio clips (schema v2)', () => {
         { ppq: 4, sourceSeconds: 2 },
       ],
     });
+    const native = JSON.parse(getProject().toJson()) as {
+      clips: Array<{ id: number; warp_ref_id?: number; warp_mode?: number }>;
+      warp_maps: Array<{ id: number }>;
+    };
+    expect(native.clips.find((clip) => clip.id === mirror?.id)).toMatchObject({
+      warp_ref_id: mirror?.id,
+      warp_mode: 2,
+    });
+    expect(native.warp_maps.some((map) => map.id === mirror?.id)).toBe(true);
     expect(serializeProject()).toEqual(doc);
   });
 

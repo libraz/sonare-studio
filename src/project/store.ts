@@ -40,6 +40,7 @@ import {
   cloneMixerState,
   cloneStrip,
   createDefaultMixerState,
+  createDefaultStrip,
   engineBusCount,
   ensureMixerProcessorIds,
   ensureProcessorIds,
@@ -56,6 +57,7 @@ import {
   refreshTempoMeter,
   type SerializedProjectDoc,
 } from './store-refresh';
+import { normalizeTempoMap } from './tempo-map';
 import {
   DEFAULT_SECTION_COLOR,
   type EditorClip,
@@ -69,6 +71,7 @@ import {
   type TimeSignatureSegment,
   TRACK_COLOR_PALETTE,
 } from './types';
+import { installProjectClipWarp, sanitizeClipWarp } from './warp';
 
 type WasmModule = typeof import('@/wasm/index.js');
 
@@ -523,6 +526,7 @@ export const useProjectStore = defineStore('project', () => {
         doc.tempoSegments.length > 0
           ? doc.tempoSegments
           : [{ startPpq: 0, bpm: DEFAULT_TEMPO_BPM }];
+      const normalizedTempo = normalizeTempoMap(tempo, DEFAULT_TEMPO_BPM);
       created.setTempoSegments(
         tempo.map((s) => ({ startPpq: s.startPpq, bpm: s.bpm, endBpm: s.endBpm ?? 0 })),
       );
@@ -539,6 +543,30 @@ export const useProjectStore = defineStore('project', () => {
         // as aux tracks.
         const projectKind = track.kind === 'group' ? 'aux' : track.kind;
         const trackId = created.addTrack({ kind: projectKind, name: track.name });
+        const documentPan =
+          Number.isFinite(track.pan) && track.pan >= -1 && track.pan <= 1 ? track.pan : 0;
+        const importedStrip = track.mixer !== undefined ? cloneStrip(track.mixer) : undefined;
+        // Schema-v3 files written before the audible-pan migration may only
+        // carry DocumentTrack.pan. Promote it into MixerStrip.pan on load.
+        // Group buses have no pan DSP, so reject their persisted no-op value
+        // by centering both the strip and compatibility mirror.
+        if (importedStrip !== undefined) {
+          importedStrip.pan =
+            track.kind !== 'group' &&
+            Number.isFinite(importedStrip.pan) &&
+            importedStrip.pan >= -1 &&
+            importedStrip.pan <= 1
+              ? importedStrip.pan
+              : track.kind === 'group'
+                ? 0
+                : documentPan;
+        }
+        const audiblePan = track.kind === 'group' ? 0 : (importedStrip?.pan ?? documentPan);
+        const migratedStrip =
+          importedStrip ??
+          (track.kind !== 'group' && audiblePan !== 0
+            ? { ...createDefaultStrip(), pan: audiblePan }
+            : undefined);
         const mirrorEntry: EditorTrack = {
           id: trackId,
           name: track.name,
@@ -547,7 +575,7 @@ export const useProjectStore = defineStore('project', () => {
           mute: track.mute,
           solo: track.solo,
           volume: track.volume,
-          pan: track.pan,
+          pan: audiblePan,
           order: index,
         };
         // Instrument and mixer strip are app metadata introduced by schema
@@ -591,15 +619,19 @@ export const useProjectStore = defineStore('project', () => {
         ) {
           mirrorEntry.recordInputDeviceId = track.recordInputDeviceId;
         }
-        if (track.mixer !== undefined) {
-          mirrorEntry.mixer = cloneStrip(track.mixer);
+        if (migratedStrip !== undefined) {
+          mirrorEntry.mixer = migratedStrip;
           // Insert sidechain sources are stored positionally; rebind them to
           // the freshly assigned track ids after every track exists (below).
         }
         // Track automation rides the track entry; rebind it to the freshly
         // assigned track id (malformed entries are dropped).
         if (track.automation !== undefined) {
-          laneMirror.push(...sanitizeAutomationEntries(track.automation, trackId));
+          laneMirror.push(
+            ...sanitizeAutomationEntries(track.automation, trackId).filter(
+              (lane) => !(track.kind === 'group' && lane.param === 'pan'),
+            ),
+          );
         }
         trackMirror.push(mirrorEntry);
         for (const clip of track.clips) {
@@ -660,6 +692,25 @@ export const useProjectStore = defineStore('project', () => {
           }
           if (clip.loopEnabled) {
             created.setClipLoop(newClipId, 'loop', clip.loopLengthPpq || clip.lengthPpq);
+          }
+          if (
+            isAudio &&
+            clip.warp !== undefined &&
+            typeof clip.warp.enabled === 'boolean' &&
+            Number.isFinite(clip.warp.sourceBpm) &&
+            clip.warp.sourceBpm > 0
+          ) {
+            installProjectClipWarp(
+              created,
+              {
+                id: newClipId,
+                startPpq: clip.startPpq,
+                lengthPpq: clip.lengthPpq,
+                sourceOffsetPpq: clip.sourceOffsetPpq,
+                warp: sanitizeClipWarp(clip.warp, clip.lengthPpq),
+              },
+              normalizedTempo,
+            );
           }
           clipMeta.set(newClipId, clip);
           if (firstClipId < 0) firstClipId = newClipId;

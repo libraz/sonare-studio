@@ -25,6 +25,8 @@ export function persistedProjectStateKey(store: ProjectStore) {
       externalMidiDefault: store.projectExternalMidi,
       scoreAnnotations: store.scoreAnnotations,
       displayTransposeSemitones: store.displayTransposeSemitones,
+      scoreDisplaySettings: store.scoreDisplaySettings,
+      pickupLengthPpq: store.pickupLengthPpq,
       automationLanes: store.automationLanes,
       chords: store.chords,
       // Both registries mutate in place/outside the Pinia mirror, so fold

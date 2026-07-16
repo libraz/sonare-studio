@@ -245,7 +245,7 @@ export interface DocumentTrack {
   solo: boolean;
   /** Linear track volume (>= 0, 1 = unity). */
   volume: number;
-  /** Stereo pan in [-1, 1]. */
+  /** Compatibility mirror of mixer.pan; group tracks are always centered. */
   pan: number;
   /** Clips on this track, ordered by timeline start. */
   clips: DocumentClip[];
@@ -492,7 +492,13 @@ function toDocumentMixerSnapshotSlots(
       mixer: mixerWithSidechainSourceIndices(snapshot.mixer, tracks),
       tracks: entries.map(({ id: _id, ...entry }) => entry),
       ...(snapshot.automationLanes !== undefined
-        ? { automationLanes: snapshot.automationLanes.map(cloneAutomationLane) }
+        ? {
+            automationLanes: snapshot.automationLanes.flatMap((lane) => {
+              if (typeof lane.target !== 'number') return [cloneAutomationLane(lane)];
+              const trackIndex = tracks.findIndex((track) => track.id === lane.target);
+              return trackIndex < 0 ? [] : [{ ...cloneAutomationLane(lane), target: trackIndex }];
+            }),
+          }
         : {}),
     };
   }
@@ -536,7 +542,13 @@ function fromDocumentMixerSnapshotSlots(
         ];
       }),
       ...(snapshot.automationLanes !== undefined
-        ? { automationLanes: snapshot.automationLanes.map(cloneAutomationLane) }
+        ? {
+            automationLanes: snapshot.automationLanes.flatMap((lane) => {
+              if (typeof lane.target !== 'number') return [cloneAutomationLane(lane)];
+              const track = tracks[lane.target];
+              return track ? [{ ...cloneAutomationLane(lane), target: track.id }] : [];
+            }),
+          }
         : {}),
     };
   }
@@ -655,6 +667,7 @@ export function serializeProject(): ProjectDocument {
     tempoSegments: store.tempoSegments.map((segment) => ({ ...segment })),
     timeSignatures: store.timeSignatures.map((segment) => ({ ...segment })),
     tracks: store.tracks.map((track) => {
+      const audiblePan = track.kind === 'group' ? 0 : (track.mixer?.pan ?? track.pan);
       const out: DocumentTrack = {
         name: track.name,
         color: track.color,
@@ -662,7 +675,9 @@ export function serializeProject(): ProjectDocument {
         mute: track.mute,
         solo: track.solo,
         volume: track.volume,
-        pan: track.pan,
+        // Compatibility mirror for older readers. MixerStrip.pan is the
+        // canonical audible value in current projects.
+        pan: audiblePan,
         clips: store.clips
           .filter((clip) => clip.trackId === track.id)
           .map((clip) => toDocumentClip(clip, store.scoreAnnotations[clip.id])),
@@ -678,13 +693,13 @@ export function serializeProject(): ProjectDocument {
         if (!isMidiFxNoop(midiFx)) out.midiFx = midiFx;
       }
       if (track.mixer !== undefined) {
+        const mixer =
+          track.kind === 'group' && track.mixer.pan !== 0
+            ? { ...cloneStrip(track.mixer), pan: 0 }
+            : track.mixer;
         // Insert sidechain sources are session track ids; store them as
         // positional indices (dangling references drop out).
-        out.mixer = stripWithSidechainSourceIndices(
-          track.mixer,
-          store.tracks,
-          track.kind !== 'group',
-        );
+        out.mixer = stripWithSidechainSourceIndices(mixer, store.tracks, track.kind !== 'group');
       }
       if (track.groupId !== undefined) {
         const groupIndex = store.tracks.findIndex((entry) => entry.id === track.groupId);
@@ -712,7 +727,9 @@ export function serializeProject(): ProjectDocument {
       }
       // Track automation rides the track entry (track ids are session-scoped,
       // so a document never stores lane targets); omitted when there is none.
-      const automation = store.automationLanes.filter((lane) => lane.target === track.id);
+      const automation = store.automationLanes.filter(
+        (lane) => lane.target === track.id && !(track.kind === 'group' && lane.param === 'pan'),
+      );
       if (automation.length > 0) out.automation = automation.map(toDocumentAutomationLane);
       return out;
     }),
@@ -859,6 +876,14 @@ export async function loadProjectDocument(doc: ProjectDocument): Promise<void> {
       throw new RangeError('Project externalMidiDefault must be an external-midi instrument');
     }
   }
+  // Parse post-load registries before publishing the staged native Project.
+  // Positional ids are sufficient for validation; the state is parsed again
+  // against the real session ids after the atomic document swap succeeds.
+  const validationTracks = doc.tracks.map((track, index) => ({
+    id: index + 1,
+    kind: track.kind,
+  }));
+  fromDocumentMixerSnapshotSlots(doc.mixerSnapshots, validationTracks);
   await store.loadDocument(doc);
   resolveMixerSidechainSourceIds(store.mixer, store.tracks);
   clearHistory();

@@ -17,6 +17,7 @@ import type {
   ClipProgramChangeLane,
   EditorClip,
 } from './types';
+import { sanitizeClipWarp } from './warp';
 
 /**
  * Applies document-only clip metadata onto the refreshed clip mirror.
@@ -73,18 +74,21 @@ export function applyDocumentClipMetadata(
         Number.isFinite(meta.warp.sourceBpm) &&
         meta.warp.sourceBpm > 0
       ) {
-        next.warp = {
-          enabled: meta.warp.enabled,
-          sourceBpm: meta.warp.sourceBpm,
-          ...(Array.isArray(meta.warp.anchors) && meta.warp.anchors.length > 0
-            ? {
-                anchors: meta.warp.anchors.map((anchor) => ({
-                  ppq: Number(anchor.ppq),
-                  sourceSeconds: Number(anchor.sourceSeconds),
-                })),
-              }
-            : {}),
-        };
+        next.warp = sanitizeClipWarp(
+          {
+            enabled: meta.warp.enabled,
+            sourceBpm: meta.warp.sourceBpm,
+            ...(Array.isArray(meta.warp.anchors)
+              ? {
+                  anchors: meta.warp.anchors.map((anchor) => ({
+                    ppq: Number(anchor.ppq),
+                    sourceSeconds: Number(anchor.sourceSeconds),
+                  })),
+                }
+              : {}),
+          },
+          clip.lengthPpq,
+        );
       }
     }
     // CC lanes are MIDI-clip metadata; hydrate and re-sanitize them against

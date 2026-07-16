@@ -1,6 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { busAutomationTarget } from '@/project/automation';
+import { executeApp } from '@/project/command/history';
 import {
   addAudioClip,
   addMidiClip,
@@ -84,7 +85,7 @@ import {
   undo,
 } from '@/project/commands';
 import { sanitizeMidiFxConfig } from '@/project/midi-fx';
-import { useProjectStore } from '@/project/store';
+import { getProject, useProjectStore } from '@/project/store';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -478,6 +479,22 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(canUndo()).toBe(false);
     });
 
+    it('moveClip rejects a frozen destination without mutating the source clip', () => {
+      const clipId = store.clipId;
+      const destinationId = addTrack({ name: 'Frozen destination' });
+      setTrackFrozen(destinationId, { assetId: 'frozen-destination' });
+      clearHistory();
+      const nativeBefore = getProject().toJson();
+
+      expect(() => moveClip(clipId, 4, destinationId)).toThrow(/unfreeze/i);
+      expect(getProject().toJson()).toBe(nativeBefore);
+      expect(store.clips.find((clip) => clip.id === clipId)).toMatchObject({
+        trackId: store.tracks[0].id,
+        startPpq: 0,
+      });
+      expect(canUndo()).toBe(false);
+    });
+
     it('duplicateClip copies notes and the display name; undo removes the copy', () => {
       const clipId = store.clipId;
       addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
@@ -520,14 +537,28 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
     it('keeps frozen track content read-only until it is unfrozen', () => {
       const trackId = store.tracks[0].id;
       const clipId = store.clipId;
+      addNote({ pitch: 59, startPpq: 0, durationPpq: 1 });
+      setTrackMidiFx(trackId, sanitizeMidiFxConfig({ transposeSemitones: 5 }));
       setTrackFrozen(trackId, { assetId: 'frozen-render' });
       clearHistory();
+      const nativeBefore = getProject().toJson();
+      const mirrorBefore = JSON.stringify({ tracks: store.tracks, clips: store.clips });
 
       expect(() => addNote({ pitch: 60, startPpq: 0, durationPpq: 1 })).toThrow(/unfreeze/i);
       expect(() => moveClip(clipId, 4)).toThrow(/unfreeze/i);
       expect(() => duplicateClip(clipId, 8)).toThrow(/unfreeze/i);
       expect(() => deleteClip(clipId)).toThrow(/unfreeze/i);
       expect(() => addMidiClip({ trackId, startPpq: 8, lengthPpq: 4 })).toThrow(/unfreeze/i);
+      expect(() => renameTrack(trackId, 'Frozen rename')).toThrow(/unfreeze/i);
+      expect(() =>
+        setTrackMidiFx(trackId, sanitizeMidiFxConfig({ transposeSemitones: 7 })),
+      ).toThrow(/unfreeze/i);
+      expect(() => clearTrackMidiFx(trackId)).toThrow(/unfreeze/i);
+      expect(() =>
+        bakeClipMidiFx(clipId, sanitizeMidiFxConfig({ transposeSemitones: 12 })),
+      ).toThrow(/unfreeze/i);
+      expect(getProject().toJson()).toBe(nativeBefore);
+      expect(JSON.stringify({ tracks: store.tracks, clips: store.clips })).toBe(mirrorBefore);
       expect(canUndo()).toBe(false);
 
       setTrackFrozen(trackId, null);
@@ -604,6 +635,23 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(() => splitClip(clipId, 0)).toThrow(RangeError);
       expect(() => splitClip(clipId, 32)).toThrow(RangeError);
       expect(() => splitClip(clipId, 100)).toThrow(RangeError);
+    });
+
+    it('rejects partial-repeat loop clips before native mutation and allows split after unlooping', () => {
+      const clipId = store.clipId;
+      setClipLoop(clipId, true, 3);
+      clearHistory();
+      const nativeBefore = getProject().toJson();
+      const mirrorBefore = JSON.stringify(store.clips);
+
+      expect(() => splitClip(clipId, 7)).toThrow(/Turn Loop off/);
+      expect(() => getProject().splitClip(clipId, 7)).toThrow(/Turn Loop off/);
+      expect(getProject().toJson()).toBe(nativeBefore);
+      expect(JSON.stringify(store.clips)).toBe(mirrorBefore);
+      expect(canUndo()).toBe(false);
+
+      setClipLoop(clipId, false);
+      expect(splitClip(clipId, 7)).toBeGreaterThan(clipId);
     });
 
     it('glueMidiClips consolidates MIDI clips, notes and expression lanes', () => {
@@ -1713,6 +1761,37 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
   });
 
   describe('mixed undo across project-backed and app-only commands', () => {
+    it('subtracts redo bytes when a non-commit gesture makes redo stale', () => {
+      const track = store.tracks[0];
+      executeApp(() => {
+        track.color = '#112233';
+      });
+      undo();
+      const withRedo = historyBudgetStats();
+      expect(withRedo).toMatchObject({ undoEntries: 0, redoEntries: 1 });
+      expect(withRedo.bytes).toBe(withRedo.accountedBytes);
+
+      executeApp(
+        () => {
+          track.color = '#445566';
+        },
+        { key: 'color-drag', commit: false },
+      );
+      const duringGesture = historyBudgetStats();
+      expect(duringGesture).toMatchObject({ undoEntries: 0, redoEntries: 0, bytes: 0 });
+      expect(duringGesture.bytes).toBe(duringGesture.accountedBytes);
+
+      executeApp(
+        () => {
+          track.color = '#778899';
+        },
+        { key: 'color-drag', commit: true },
+      );
+      const committed = historyBudgetStats();
+      expect(committed).toMatchObject({ undoEntries: 1, redoEntries: 0 });
+      expect(committed.bytes).toBe(committed.accountedBytes);
+    });
+
     it('structurally shares large unchanged note mirrors and enforces the byte budget', () => {
       addNotes(
         Array.from({ length: 10_000 }, (_, index) => ({

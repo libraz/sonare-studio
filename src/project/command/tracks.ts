@@ -2,8 +2,10 @@ import { assertCanAddEngineBus } from '../mixer';
 import { getProject, useProjectStore } from '../store';
 import { pruneTrackTargetReferences } from '../target-reference-registry';
 import { type EditorTrack, TRACK_COLOR_PALETTE, type TrackKind } from '../types';
-import { execute } from './history';
-import { requireTrack } from './utils';
+import { clearProjectClipWarp } from '../warp';
+import { execute, executeAtomic } from './history';
+import { setStripPan } from './mixer-strip';
+import { requireEditableTrack, requireTrack } from './utils';
 
 /** Optional fields for {@link addTrack}. */
 export interface AddTrackInput {
@@ -103,7 +105,13 @@ function applyTrackRemovalMirror(store: ReturnType<typeof useProjectStore>, trac
 export function removeTrack(trackId: number): void {
   const store = useProjectStore();
   requireTrack(store, trackId);
-  execute(1, () => applyTrackRemoval(store, trackId));
+  const project = getProject();
+  executeAtomic((edit) => {
+    for (const clip of store.clips.filter((entry) => entry.trackId === trackId)) {
+      clearProjectClipWarp(project, clip.id, (mutation) => edit(1, mutation));
+    }
+    edit(1, () => applyTrackRemoval(store, trackId));
+  });
 }
 
 /**
@@ -161,7 +169,7 @@ export function setTrackGroup(trackId: number, groupId: number | null): void {
 export function renameTrack(trackId: number, name: string): void {
   const store = useProjectStore();
   const project = getProject();
-  const track = requireTrack(store, trackId);
+  const track = requireEditableTrack(store, trackId);
   if (name.length === 0) throw new RangeError('Track name must not be empty');
   if (track.name === name) return;
   execute(1, () => {
@@ -243,23 +251,16 @@ export function setTrackVolume(trackId: number, volume: number): void {
 }
 
 /**
- * Sets a track's stereo pan as one undoable edit. Pan is app-level metadata
- * (not applied to playback yet).
+ * Compatibility alias for the audible mixer-strip pan command.
+ *
+ * New UI should call {@link setStripPan} directly. Keeping this name lets old
+ * integrations migrate without creating a second, save-only pan value.
  *
  * @param trackId Id of the track.
  * @param pan New pan in [-1, 1].
  */
 export function setTrackPan(trackId: number, pan: number): void {
-  const store = useProjectStore();
-  const track = requireTrack(store, trackId);
-  if (!Number.isFinite(pan) || pan < -1 || pan > 1) {
-    throw new RangeError(`Track pan must be in [-1, 1], got ${pan}`);
-  }
-  if (track.pan === pan) return;
-  execute(0, () => {
-    store.tracks = store.tracks.map((t) => (t.id === trackId ? { ...t, pan } : t));
-    store.refresh();
-  });
+  setStripPan(trackId, pan);
 }
 
 /**

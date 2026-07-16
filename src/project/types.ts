@@ -131,7 +131,10 @@ export interface EditorTrack {
   vcaId?: string;
   /** Linear track volume (>= 0, 1 = unity; mirrored to the engine lane fader). */
   volume: number;
-  /** Stereo pan in [-1, 1] (app-level legacy field; the mixer strip pan is the audible pan). */
+  /**
+   * Compatibility mirror of `mixer.pan` for older project readers. New code
+   * must use the mixer strip; group tracks are always centered.
+   */
   pan: number;
   /** Display order index; always equals the track's index in the mirror. */
   order: number;

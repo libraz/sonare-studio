@@ -7,14 +7,17 @@ import {
   parseMidiLearnInsertTargetId,
   parseMidiLearnMasteringTargetId,
 } from '@/ui/midi/midi-learn';
+import type { AutomationLaneState } from './automation';
 import {
+  migrateAutomationLanesToProcessorIds,
   remapInsertLanesAfterRemoval,
   remapInsertLanesAfterReorder,
   remapMasteringLanesAfterRemoval,
   remapMasteringLanesAfterReorder,
 } from './automation-insert';
-import { cloneStrip, type MixerStrip } from './mixer';
+import { cloneStrip, type MixerStrip, type ProjectMixerState } from './mixer';
 import type { useProjectStore } from './store';
+import type { EditorTrack } from './types';
 
 type ProjectStore = ReturnType<typeof useProjectStore>;
 export type ProcessorReferenceTarget = number | 'master' | `bus:${string}`;
@@ -131,7 +134,33 @@ export function normalizeProcessorMidiLearnTarget(store: ProjectStore, id: strin
 
 /** Drops invalid processor bindings and migrates surviving positional ids in place. */
 export function reconcileProcessorTargetReferences(store: ProjectStore): void {
+  store.automationLanes = normalizeProcessorAutomationLanes(
+    store.automationLanes,
+    store.mixer,
+    store.tracks,
+  );
   remapMidiTargets(store, (id) => normalizeProcessorMidiLearnTarget(store, id));
+}
+
+/**
+ * Validates processor automation against a detached final mixer plan and
+ * upgrades surviving legacy positional tokens to stable processor ids.
+ * Non-processor lanes pass through unchanged.
+ */
+export function normalizeProcessorAutomationLanes(
+  lanes: ReadonlyArray<AutomationLaneState>,
+  mixer: ProjectMixerState,
+  tracks: ReadonlyArray<EditorTrack>,
+): AutomationLaneState[] {
+  return migrateAutomationLanesToProcessorIds(
+    lanes,
+    {
+      trackStrips: new Map(tracks.map((track) => [track.id, track.mixer])),
+      master: mixer.master,
+      busStrips: new Map(mixer.buses.map((bus) => [bus.id, bus.strip])),
+    },
+    mixer.masteringChain,
+  );
 }
 
 /** Prunes/remaps automation and MIDI learn references after an insert removal. */
