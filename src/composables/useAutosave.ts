@@ -6,6 +6,10 @@ import {
   ProjectNotFoundError,
   saveProject,
 } from '@/persistence/opfs';
+import {
+  loadLatestAutosaveSessionRevision,
+  saveAutosaveSessionRevision,
+} from '@/persistence/recovery';
 import { decodeSzd, encodeSzd } from '@/persistence/szd';
 import { persistedProjectStateKey } from '@/project/persisted-state';
 import { loadProjectDocument, serializeProject } from '@/project/serialization';
@@ -32,6 +36,8 @@ export interface UseAutosaveOptions {
 export interface UseAutosaveReturn {
   /** Wall-clock time of the last successful autosave write, or null. */
   lastSavedAt: Ref<Date | null>;
+  /** Exact serialized document revision written by the last successful save. */
+  lastSavedDocumentKey: Ref<string | null>;
   /** True while an autosave write is in flight. */
   saving: Ref<boolean>;
   /** Last save/restore failure, cleared by the next successful save. */
@@ -82,6 +88,7 @@ export function useAutosave(options: UseAutosaveOptions = {}): UseAutosaveReturn
   const store = useProjectStore();
 
   const lastSavedAt = ref<Date | null>(null);
+  const lastSavedDocumentKey = ref<string | null>(null);
   const saving = ref(false);
   const lastError = ref<Error | null>(null);
 
@@ -117,9 +124,15 @@ export function useAutosave(options: UseAutosaveOptions = {}): UseAutosaveReturn
       saving.value = true;
       try {
         const doc = serializeProject();
-        const bytes = encodeSzd(doc, { savedAt: new Date().toISOString() });
+        const documentKey = JSON.stringify(doc);
+        const savedAt = new Date().toISOString();
+        const bytes = encodeSzd(doc, { savedAt });
         await saveProject(slotName, bytes);
+        if (slotName === DEFAULT_SLOT_NAME) {
+          await saveAutosaveSessionRevision(bytes, documentKey, savedAt);
+        }
         lastSavedAt.value = new Date();
+        lastSavedDocumentKey.value = documentKey;
         lastError.value = null;
         return true;
       } catch (error) {
@@ -158,7 +171,10 @@ export function useAutosave(options: UseAutosaveOptions = {}): UseAutosaveReturn
       if (disposed) return false;
       let bytes: Uint8Array;
       try {
-        bytes = await loadProject(slotName);
+        bytes =
+          slotName === DEFAULT_SLOT_NAME
+            ? ((await loadLatestAutosaveSessionRevision()) ?? (await loadProject(slotName)))
+            : await loadProject(slotName);
       } catch (error) {
         if (error instanceof ProjectNotFoundError) return false;
         if (error instanceof OpfsUnavailableError) {
@@ -190,5 +206,14 @@ export function useAutosave(options: UseAutosaveOptions = {}): UseAutosaveReturn
     onScopeDispose(dispose);
   }
 
-  return { lastSavedAt, saving, lastError, saveNow, restoreAutosave, cancelPending, dispose };
+  return {
+    lastSavedAt,
+    lastSavedDocumentKey,
+    saving,
+    lastError,
+    saveNow,
+    restoreAutosave,
+    cancelPending,
+    dispose,
+  };
 }

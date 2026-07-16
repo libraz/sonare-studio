@@ -4,12 +4,13 @@ import { promptDialog } from '@/composables/useDialogs';
 import { importDawprojectWithMediaResult } from '@/export/dawproject';
 import { describeError } from '@/lib/errors';
 import { importMusicXmlInWorker } from '@/notation/musicxml-import-client';
-import { createBrowserBackup, restoreBrowserBackup } from '@/persistence/backup';
-import { gatherProjectBundle, restoreProjectBundle } from '@/persistence/bundle';
+import { createBrowserBackupWithReport, restoreBrowserBackup } from '@/persistence/backup';
+import { gatherProjectBundleWithReport, restoreProjectBundle } from '@/persistence/bundle';
 import { garbageCollectMedia } from '@/persistence/gc';
 import {
   downloadBrowserBackup,
   downloadSzd,
+  matchPickedExternalAudioFile,
   pickAndReadBrowserBackup,
   pickAndReadDawproject,
   pickAndReadExternalAudioFiles,
@@ -21,10 +22,10 @@ import {
   isOpfsAvailable,
   isReservedProjectName,
   listProjects,
-  loadProject,
+  loadProjectWithRevision,
   type StoredProjectInfo,
   sanitizeProjectName,
-  saveProject,
+  saveProjectChecked,
 } from '@/persistence/opfs';
 import {
   decodeSzd,
@@ -35,6 +36,10 @@ import {
 import { collectHistoryReferencedMediaIds } from '@/project/commands';
 import { makeBwv565Document } from '@/project/demo/bwv565';
 import { exportProjectClipFile, exportProjectSmf } from '@/project/export';
+import {
+  formatMediaCompletenessReport,
+  type MediaCompletenessReport,
+} from '@/project/media-completeness';
 import { persistedProjectStateKey } from '@/project/persisted-state';
 import {
   loadProjectDocument,
@@ -51,8 +56,6 @@ import {
   withoutRecent,
   withRecent,
 } from '@/ui/shell/recent-projects';
-
-const AUTOSAVE_SLOT = 'autosave';
 
 type Autosave = ReturnType<typeof useAutosave>;
 type ConfirmAction = (
@@ -79,6 +82,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   // Document title and OPFS slot identity are intentionally distinct. A new
   // or imported document has no named slot until Save/Save As succeeds.
   const savedProjectSlot = ref<string | null>(null);
+  const savedProjectRevision = ref<string | null>(null);
   const opfsAvailable = isOpfsAvailable();
   const projectMenuOpen = ref(false);
   const projectMenuRoot = ref<HTMLElement | null>(null);
@@ -98,7 +102,9 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   );
 
   const recentMenuNames = computed(() =>
-    recentProjects.value.filter((name) => name !== store.projectName && name !== AUTOSAVE_SLOT),
+    recentProjects.value.filter(
+      (name) => name !== store.projectName && !isReservedProjectName(name),
+    ),
   );
 
   /**
@@ -122,12 +128,11 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     }
   }
 
-  async function markClean(expectedDocumentKey?: string): Promise<boolean> {
+  async function markClean(
+    expectedDocumentKey = JSON.stringify(serializeProject()),
+  ): Promise<boolean> {
     await nextTick();
-    if (
-      expectedDocumentKey !== undefined &&
-      JSON.stringify(serializeProject()) !== expectedDocumentKey
-    ) {
+    if (JSON.stringify(serializeProject()) !== expectedDocumentKey) {
       return false;
     }
     // Reaching a clean state (after a load/save) means the change watcher may
@@ -138,9 +143,28 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     return true;
   }
 
-  async function saveLoadedProjectToAutosave(): Promise<void> {
-    if (await autosave.saveNow()) return;
+  async function saveLoadedProjectToAutosave(): Promise<string> {
+    if (await autosave.saveNow()) {
+      const documentKey = autosave.lastSavedDocumentKey.value;
+      if (documentKey !== null) return documentKey;
+      throw new Error('Autosave completed without a persisted document revision');
+    }
     throw autosave.lastError.value ?? new Error('Autosave failed');
+  }
+
+  async function confirmIncompletePortableExport(
+    report: MediaCompletenessReport,
+  ): Promise<boolean> {
+    if (report.complete) return true;
+    return confirmAction(
+      formatMessage(t.value.shell.project.mediaCompleteness.message, {
+        items: formatMediaCompletenessReport(report),
+      }),
+      {
+        title: t.value.shell.project.mediaCompleteness.title,
+        confirmLabel: t.value.shell.project.mediaCompleteness.confirm,
+      },
+    );
   }
 
   /**
@@ -153,13 +177,14 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   async function bootProject(): Promise<void> {
     await loadProjectDocument(createTemplate('empty'));
     savedProjectSlot.value = null;
+    savedProjectRevision.value = null;
     await markClean();
     let autosavePresent = false;
     if (isOpfsAvailable()) {
       try {
         const stored = await listProjects();
-        autosavePresent = stored.some((info) => info.name === AUTOSAVE_SLOT);
-        storedProjects.value = stored.filter((info) => info.name !== AUTOSAVE_SLOT);
+        autosavePresent = stored.some((info) => isReservedProjectName(info.name));
+        storedProjects.value = stored.filter((info) => !isReservedProjectName(info.name));
       } catch (err) {
         errorMessage.value = describeError(err);
       }
@@ -174,8 +199,8 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     if (isOpfsAvailable()) {
       try {
         const stored = await listProjects();
-        hasAutosave.value = stored.some((info) => info.name === AUTOSAVE_SLOT);
-        storedProjects.value = stored.filter((info) => info.name !== AUTOSAVE_SLOT);
+        hasAutosave.value = stored.some((info) => isReservedProjectName(info.name));
+        storedProjects.value = stored.filter((info) => !isReservedProjectName(info.name));
       } catch (err) {
         errorMessage.value = describeError(err);
       }
@@ -190,6 +215,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       const restored = await autosave.restoreAutosave();
       if (restored) {
         savedProjectSlot.value = null;
+        savedProjectRevision.value = null;
         await markClean();
         startScreenOpen.value = false;
       }
@@ -203,8 +229,9 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       if (!(await confirmDiscard())) return;
       await loadProjectDocument(await makeBwv565Document());
       savedProjectSlot.value = null;
-      await saveLoadedProjectToAutosave();
-      await markClean();
+      savedProjectRevision.value = null;
+      const documentKey = await saveLoadedProjectToAutosave();
+      await markClean(documentKey);
       startScreenOpen.value = false;
     });
   }
@@ -228,8 +255,9 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     void runAction(async () => {
       await loadProjectDocument(payload.document);
       savedProjectSlot.value = null;
-      await saveLoadedProjectToAutosave();
-      await markClean();
+      savedProjectRevision.value = null;
+      const documentKey = await saveLoadedProjectToAutosave();
+      await markClean(documentKey);
       startScreenOpen.value = false;
     });
   }
@@ -239,7 +267,9 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       storedProjects.value = [];
       return;
     }
-    storedProjects.value = (await listProjects()).filter((info) => info.name !== AUTOSAVE_SLOT);
+    storedProjects.value = (await listProjects()).filter(
+      (info) => !isReservedProjectName(info.name),
+    );
   }
 
   function openOpenDialog(): void {
@@ -259,13 +289,14 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   async function openStoredProject(name: string): Promise<void> {
     if (!(await confirmDiscard())) return;
     void runAction(async () => {
-      const bytes = await loadProject(name);
-      await loadProjectDocument(decodeSzd(bytes));
+      const stored = await loadProjectWithRevision(name);
+      await loadProjectDocument(decodeSzd(stored.bytes));
       store.projectName = name;
       savedProjectSlot.value = sanitizeProjectName(name);
+      savedProjectRevision.value = stored.revision;
       rememberRecentProject(name);
-      await saveLoadedProjectToAutosave();
-      await markClean();
+      const documentKey = await saveLoadedProjectToAutosave();
+      await markClean(documentKey);
       openDialogOpen.value = false;
       startScreenOpen.value = false;
     });
@@ -317,8 +348,9 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       }
       await loadProjectDocument(doc);
       savedProjectSlot.value = null;
-      await saveLoadedProjectToAutosave();
-      await markClean();
+      savedProjectRevision.value = null;
+      const documentKey = await saveLoadedProjectToAutosave();
+      await markClean(documentKey);
       openDialogOpen.value = false;
       startScreenOpen.value = false;
     });
@@ -363,44 +395,56 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       }
       await loadProjectDocument(imported.document);
       savedProjectSlot.value = null;
-      await saveLoadedProjectToAutosave();
-      await markClean();
+      savedProjectRevision.value = null;
+      const documentKey = await saveLoadedProjectToAutosave();
+      await markClean(documentKey);
       openDialogOpen.value = false;
       startScreenOpen.value = false;
     });
   }
 
-  function normalizeMediaPath(path: string): string {
-    return path.replaceAll('\\', '/').toLowerCase();
-  }
-
-  function mediaFileName(path: string): string {
-    const normalized = normalizeMediaPath(path);
-    const slash = normalized.lastIndexOf('/');
-    return slash >= 0 ? normalized.slice(slash + 1) : normalized;
-  }
-
   function createExternalAudioResolver(): (path: string) => Promise<Uint8Array | null> {
-    let pickedFiles: Promise<Map<string, Uint8Array> | null> | null = null;
-    async function pickFiles(): Promise<Map<string, Uint8Array> | null> {
-      const files = await pickAndReadExternalAudioFiles();
-      if (!files || files.length === 0) return null;
-      const byPath = new Map<string, Uint8Array>();
-      for (const file of files) {
-        byPath.set(normalizeMediaPath(file.name), file.bytes);
-        byPath.set(mediaFileName(file.name), file.bytes);
-        if (file.relativePath) {
-          byPath.set(normalizeMediaPath(file.relativePath), file.bytes);
-          byPath.set(mediaFileName(file.relativePath), file.bytes);
-        }
-      }
-      return byPath;
-    }
+    let pickedFiles = null as ReturnType<typeof pickAndReadExternalAudioFiles> | null;
+    const explicitRelinks = new Map<string, Uint8Array | null>();
     return async (path: string) => {
-      pickedFiles ??= pickFiles();
-      const byPath = await pickedFiles;
-      if (!byPath) return null;
-      return byPath.get(normalizeMediaPath(path)) ?? byPath.get(mediaFileName(path)) ?? null;
+      if (explicitRelinks.has(path)) return explicitRelinks.get(path) ?? null;
+      pickedFiles ??= pickAndReadExternalAudioFiles();
+      const files = await pickedFiles;
+      if (!files || files.length === 0) return null;
+      const match = matchPickedExternalAudioFile(path, files);
+      if (match.status === 'exact-path' || match.status === 'unique-basename') {
+        return match.file.bytes;
+      }
+      if (match.status === 'unresolved') return null;
+
+      const candidates = match.files
+        .map((file) => file.relativePath ?? file.name)
+        .sort()
+        .join('\n');
+      const confirmed = await confirmAction(
+        formatMessage(t.value.shell.project.externalMediaRelink.message, {
+          path,
+          candidates,
+        }),
+        {
+          title: t.value.shell.project.externalMediaRelink.title,
+          confirmLabel: t.value.shell.project.externalMediaRelink.confirm,
+        },
+      );
+      if (!confirmed) {
+        explicitRelinks.set(path, null);
+        return null;
+      }
+      const selected = await pickAndReadExternalAudioFiles();
+      const selectedMatch = matchPickedExternalAudioFile(path, selected ?? []);
+      const resolved =
+        selectedMatch.status === 'exact-path' || selectedMatch.status === 'unique-basename'
+          ? selectedMatch.file.bytes
+          : selected?.length === 1
+            ? selected[0].bytes
+            : null;
+      explicitRelinks.set(path, resolved);
+      return resolved;
     };
   }
 
@@ -421,13 +465,26 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       });
       await loadProjectDocument(imported.document);
       savedProjectSlot.value = null;
-      await saveLoadedProjectToAutosave();
-      await markClean();
+      savedProjectRevision.value = null;
+      const documentKey = await saveLoadedProjectToAutosave();
+      await markClean(documentKey);
       openDialogOpen.value = false;
       startScreenOpen.value = false;
       if (imported.media.issues.length > 0) {
         const paths = imported.media.issues.slice(0, 3).map((issue) => issue.path);
         errorMessage.value = `DAWproject imported with ${imported.media.issues.length} missing or failed audio file(s): ${paths.join(', ')}`;
+      } else if (imported.losses.length > 0) {
+        const details = imported.losses.slice(0, 3).map((loss) => {
+          if (loss.kind === 'unsupported-time-unit') return `${loss.attribute}=${loss.unit}`;
+          if (loss.kind === 'unsupported-warp') return `${loss.clipName}: warp ${loss.reason}`;
+          return `${loss.clipName}: nested clip ${loss.reason}`;
+        });
+        const onlyTimeUnits = imported.losses.every(
+          (loss) => loss.kind === 'unsupported-time-unit',
+        );
+        errorMessage.value = onlyTimeUnits
+          ? `DAWproject imported with ${imported.losses.length} unsupported time unit(s): ${details.join(', ')}`
+          : `DAWproject imported with ${imported.losses.length} unsupported structure(s): ${details.join(', ')}`;
       }
     });
   }
@@ -442,8 +499,9 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       const doc = await smfToProjectDocument(await file.arrayBuffer(), file.name);
       await loadProjectDocument(doc);
       savedProjectSlot.value = null;
-      await saveLoadedProjectToAutosave();
-      await markClean();
+      savedProjectRevision.value = null;
+      const documentKey = await saveLoadedProjectToAutosave();
+      await markClean(documentKey);
       openDialogOpen.value = false;
       startScreenOpen.value = false;
     });
@@ -452,7 +510,8 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   async function writeProjectToOpfs(
     name: string,
     documentName: string,
-  ): Promise<{ documentKey: string; slot: string }> {
+    expectedRevision: string | null,
+  ): Promise<{ documentKey: string; revision: string; slot: string }> {
     if (isReservedProjectName(name)) {
       throw new Error(t.value.dialogs.prompts.projectNameReserved);
     }
@@ -460,10 +519,10 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     doc.name = documentName;
     const documentKey = JSON.stringify(doc);
     const bytes = encodeSzd(doc, { savedAt: new Date().toISOString() });
-    await saveProject(name, bytes);
+    const revision = await saveProjectChecked(name, bytes, expectedRevision);
     const slot = sanitizeProjectName(name);
     rememberRecentProject(slot);
-    return { documentKey, slot };
+    return { documentKey, revision, slot };
   }
 
   async function finishSuccessfulSave(documentKey: string): Promise<void> {
@@ -474,8 +533,11 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   }
 
   async function saveToOpfs(name: string): Promise<void> {
-    const saved = await writeProjectToOpfs(name, store.projectName);
+    const slot = sanitizeProjectName(name);
+    const expectedRevision = slot === savedProjectSlot.value ? savedProjectRevision.value : null;
+    const saved = await writeProjectToOpfs(name, store.projectName, expectedRevision);
     savedProjectSlot.value = saved.slot;
+    savedProjectRevision.value = saved.revision;
     await finishSuccessfulSave(saved.documentKey);
   }
 
@@ -500,7 +562,9 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       void runAction(async () => {
         const slot = sanitizeProjectName(name);
         const exists = (await listProjects()).some((project) => project.name === slot);
+        let expectedRevision: string | null = null;
         if (exists && slot !== savedProjectSlot.value) {
+          expectedRevision = (await loadProjectWithRevision(slot)).revision;
           const confirmed = await confirmAction(
             formatMessage(t.value.dialogs.prompts.saveProjectOverwriteMessage, { name: slot }),
             {
@@ -510,9 +574,11 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
           );
           if (!confirmed) return;
         }
-        const saved = await writeProjectToOpfs(slot, name);
+        if (slot === savedProjectSlot.value) expectedRevision = savedProjectRevision.value;
+        const saved = await writeProjectToOpfs(slot, name, expectedRevision);
         store.projectName = name;
         savedProjectSlot.value = saved.slot;
+        savedProjectRevision.value = saved.revision;
         await finishSuccessfulSave(saved.documentKey);
       });
     })();
@@ -524,7 +590,9 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       const doc = serializeProject();
       // Disk exports travel to other machines/browsers, so bundle the
       // referenced audio + SoundFonts the OPFS store would otherwise hold.
-      const bundle = opfsAvailable ? await gatherProjectBundle(doc) : undefined;
+      const gathered = opfsAvailable ? await gatherProjectBundleWithReport(doc) : undefined;
+      if (gathered && !(await confirmIncompletePortableExport(gathered.report))) return;
+      const bundle = gathered?.bundle;
       const bytes = encodeSzd(doc, { savedAt: new Date().toISOString() }, bundle);
       downloadSzd(store.projectName, bytes);
     });
@@ -533,8 +601,9 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   function exportBrowserBackupAction(): void {
     closeProjectMenu();
     void runAction(async () => {
-      const bytes = await createBrowserBackup();
-      downloadBrowserBackup('sonare-studio', bytes);
+      const backup = await createBrowserBackupWithReport();
+      if (!(await confirmIncompletePortableExport(backup.completeness))) return;
+      downloadBrowserBackup('sonare-studio', backup.bytes);
     });
   }
 

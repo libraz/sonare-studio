@@ -86,13 +86,14 @@ function setupLifecycle() {
   const syncMidiState = vi.fn(async () => undefined);
   const syncMixerState = vi.fn();
   const syncTransportState = vi.fn();
+  const errorMessage = ref('');
   const lifecycle = useEngineLifecycle({
     analyser,
     applyToEngine,
     bootPromise: () => null,
     bridge,
     ctxState: ref(''),
-    errorMessage: ref(''),
+    errorMessage,
     handle,
     renderInfo: ref(''),
     resetEngineProjectSync,
@@ -109,6 +110,7 @@ function setupLifecycle() {
     analyser,
     applyToEngine,
     bridge,
+    errorMessage,
     handle,
     lifecycle,
     resetEngineProjectSync,
@@ -197,5 +199,70 @@ describe('useEngineLifecycle startup transaction', () => {
     expect(startupSignal?.aborted).toBe(true);
     expect(late.dispose).toHaveBeenCalledTimes(1);
     expect(state.handle.value).toBeNull();
+  });
+
+  it('rebuilds a structurally uncertain live engine from a clean sync transaction', async () => {
+    const first = makeHandle();
+    const second = makeHandle();
+    mocks.createEngine.mockResolvedValueOnce(first.handle).mockResolvedValueOnce(second.handle);
+    const state = setupLifecycle();
+    await state.lifecycle.startEngine();
+    const firstBridge = state.bridge.value as unknown as ReturnType<typeof makeDisposable>;
+    const firstAnalyser = state.analyser.value as unknown as ReturnType<typeof makeDisposable>;
+    const firstScope = state.scope.value as unknown as ReturnType<typeof makeDisposable>;
+
+    await state.lifecycle.restartEngine();
+
+    expect(first.dispose).toHaveBeenCalledTimes(1);
+    expect(firstBridge.dispose).toHaveBeenCalledTimes(1);
+    expect(firstAnalyser.dispose).toHaveBeenCalledTimes(1);
+    expect(firstScope.dispose).toHaveBeenCalledTimes(1);
+    expect(state.resetEngineProjectSync).toHaveBeenCalledTimes(1);
+    expect(state.handle.value).toBe(second.handle);
+  });
+
+  it('tears down a crashed published worklet and starts a clean replacement', async () => {
+    const first = makeHandle();
+    const second = makeHandle();
+    mocks.createEngine.mockResolvedValueOnce(first.handle).mockResolvedValueOnce(second.handle);
+    const state = setupLifecycle();
+    await state.lifecycle.startEngine();
+    const firstBridge = state.bridge.value as unknown as ReturnType<typeof makeDisposable>;
+    const firstAnalyser = state.analyser.value as unknown as ReturnType<typeof makeDisposable>;
+    const firstScope = state.scope.value as unknown as ReturnType<typeof makeDisposable>;
+
+    first.handle.engine.node.onprocessorerror?.(new Event('processorerror'));
+
+    expect(state.handle.value).toBeNull();
+    expect(state.bridge.value).toBeNull();
+    expect(state.analyser.value).toBeNull();
+    expect(state.scope.value).toBeNull();
+    await vi.waitFor(() => expect(first.dispose).toHaveBeenCalledTimes(1));
+    expect(firstBridge.dispose).toHaveBeenCalledTimes(1);
+    expect(firstAnalyser.dispose).toHaveBeenCalledTimes(1);
+    expect(firstScope.dispose).toHaveBeenCalledTimes(1);
+    expect(state.resetEngineProjectSync).toHaveBeenCalledTimes(1);
+    expect(state.errorMessage.value).toContain('processor crashed');
+
+    await expect(state.lifecycle.ensureEngineStarted()).resolves.toBe(second.handle);
+    expect(state.handle.value).toBe(second.handle);
+  });
+
+  it('records a failed crash cleanup, retries it, and still permits engine recovery', async () => {
+    const first = makeHandle();
+    first.dispose.mockRejectedValueOnce(new Error('destroy failed'));
+    const second = makeHandle();
+    mocks.createEngine.mockResolvedValueOnce(first.handle).mockResolvedValueOnce(second.handle);
+    const state = setupLifecycle();
+    await state.lifecycle.startEngine();
+
+    first.handle.engine.node.onprocessorerror?.(new Event('processorerror'));
+    await vi.waitFor(() => expect(state.lifecycle.cleanupFailures.value).toHaveLength(1));
+    expect(state.lifecycle.cleanupFailures.value[0]).toMatchObject({ stage: 'engine' });
+    expect(state.errorMessage.value).toContain('destroy failed');
+
+    await expect(state.lifecycle.ensureEngineStarted()).resolves.toBe(second.handle);
+    expect(first.dispose).toHaveBeenCalledTimes(2);
+    expect(state.handle.value).toBe(second.handle);
   });
 });

@@ -6,13 +6,22 @@ import { promptDialog } from '@/composables/useDialogs';
 import { useProjectPersistence } from '@/composables/useProjectPersistence';
 import { importDawprojectWithMediaResult } from '@/export/dawproject';
 import { importMusicXmlInWorker } from '@/notation/musicxml-import-client';
+import { createBrowserBackupWithReport } from '@/persistence/backup';
+import { gatherProjectBundleWithReport } from '@/persistence/bundle';
 import {
+  downloadBrowserBackup,
+  downloadSzd,
   pickAndReadDawproject,
   pickAndReadExternalAudioFiles,
   pickAndReadSzd,
   pickViaInputElement,
 } from '@/persistence/local-file';
-import { isReservedProjectName, listProjects, loadProject, saveProject } from '@/persistence/opfs';
+import {
+  isReservedProjectName,
+  listProjects,
+  loadProjectWithRevision,
+  saveProjectChecked,
+} from '@/persistence/opfs';
 import { encodeSzd } from '@/persistence/szd';
 import {
   addNote,
@@ -20,7 +29,11 @@ import {
   saveMixerSnapshot,
   setProjectExternalMidiDefault,
 } from '@/project/commands';
-import { PROJECT_DOCUMENT_SCHEMA_VERSION, type ProjectDocument } from '@/project/serialization';
+import {
+  PROJECT_DOCUMENT_SCHEMA_VERSION,
+  type ProjectDocument,
+  serializeProject,
+} from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 
 vi.mock('@/lib/wasm', async () => {
@@ -34,21 +47,22 @@ vi.mock('@/persistence/opfs', () => ({
   isOpfsAvailable: () => true,
   isReservedProjectName: vi.fn(() => false),
   listProjects: vi.fn(async () => []),
-  loadProject: vi.fn(),
+  loadProjectWithRevision: vi.fn(),
   sanitizeProjectName: (name: string) =>
     name
       .trim()
       .replace(/\.szd$/i, '')
       .replace(/[\\/:*?"<>|]/g, '_')
       .trim(),
-  saveProject: vi.fn(),
+  saveProjectChecked: vi.fn(),
 }));
 
 vi.mock('@/composables/useDialogs', () => ({
   promptDialog: vi.fn(),
 }));
 
-vi.mock('@/persistence/local-file', () => ({
+vi.mock('@/persistence/local-file', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/persistence/local-file')>()),
   downloadBrowserBackup: vi.fn(),
   downloadSzd: vi.fn(),
   pickAndReadBrowserBackup: vi.fn(),
@@ -75,16 +89,23 @@ vi.mock('@/export/dawproject', () => ({
       sections: [],
     },
     media: { imported: [], issues: [] },
+    losses: [],
   })),
 }));
 
 vi.mock('@/persistence/backup', () => ({
-  createBrowserBackup: vi.fn(async () => new Uint8Array([1, 2, 3])),
+  createBrowserBackupWithReport: vi.fn(async () => ({
+    bytes: new Uint8Array([1, 2, 3]),
+    completeness: { complete: true, issues: [] },
+  })),
   restoreBrowserBackup: vi.fn(async () => ({ projects: 1, assets: 1, fonts: 1 })),
 }));
 
 vi.mock('@/persistence/bundle', () => ({
-  gatherProjectBundle: vi.fn(),
+  gatherProjectBundleWithReport: vi.fn(async () => ({
+    bundle: { assets: [], fonts: [] },
+    report: { complete: true, issues: [] },
+  })),
   restoreProjectBundle: vi.fn(async () => undefined),
 }));
 
@@ -106,11 +127,17 @@ function nextTask(): Promise<void> {
 }
 
 function setup(options: { autosaveResult?: boolean; autosaveError?: Error } = {}) {
-  const saveNow = vi.fn(async () => options.autosaveResult ?? true);
+  const lastSavedDocumentKey = ref<string | null>(null);
+  const saveNow = vi.fn(async () => {
+    const saved = options.autosaveResult ?? true;
+    if (saved) lastSavedDocumentKey.value = JSON.stringify(serializeProject());
+    return saved;
+  });
   const errorMessage = ref('');
   const confirmAction = vi.fn(async () => true);
   const autosave = {
     lastSavedAt: ref<Date | null>(null),
+    lastSavedDocumentKey,
     saving: ref(false),
     lastError: ref<Error | null>(options.autosaveError ?? null),
     saveNow,
@@ -140,8 +167,13 @@ describe('useProjectPersistence autosave refresh after load', () => {
     const store = useProjectStore();
     store.dispose();
     clearMixerSnapshots();
-    vi.mocked(loadProject).mockReset();
-    vi.mocked(saveProject).mockReset();
+    vi.mocked(loadProjectWithRevision).mockReset();
+    vi.mocked(loadProjectWithRevision).mockResolvedValue({
+      bytes: encodeSzd(makeDocument('Stored Project')),
+      revision: 'revision-1',
+    });
+    vi.mocked(saveProjectChecked).mockReset();
+    vi.mocked(saveProjectChecked).mockResolvedValue('revision-2');
     vi.mocked(isReservedProjectName).mockReset();
     vi.mocked(isReservedProjectName).mockReturnValue(false);
     vi.mocked(promptDialog).mockReset();
@@ -152,11 +184,58 @@ describe('useProjectPersistence autosave refresh after load', () => {
     vi.mocked(pickAndReadSzd).mockReset();
     vi.mocked(pickViaInputElement).mockReset();
     vi.mocked(importMusicXmlInWorker).mockReset();
+    vi.mocked(downloadBrowserBackup).mockReset();
+    vi.mocked(downloadSzd).mockReset();
+    vi.mocked(createBrowserBackupWithReport).mockReset();
+    vi.mocked(createBrowserBackupWithReport).mockResolvedValue({
+      bytes: new Uint8Array([1, 2, 3]),
+      completeness: { complete: true, issues: [] },
+    });
+    vi.mocked(gatherProjectBundleWithReport).mockReset();
+    vi.mocked(gatherProjectBundleWithReport).mockResolvedValue({
+      bundle: { assets: [], fonts: [] },
+      report: { complete: true, issues: [] },
+    });
     localStorage.clear();
   });
 
+  it('blocks incomplete portable exports until the user explicitly accepts the loss', async () => {
+    await useProjectStore().init();
+    const issue = {
+      kind: 'audio-asset' as const,
+      mediaId: 'missing-audio',
+      role: 'clip' as const,
+      reason: 'missing' as const,
+      trackId: 1,
+      clipId: 2,
+    };
+    vi.mocked(gatherProjectBundleWithReport).mockResolvedValue({
+      bundle: { assets: [], fonts: [] },
+      report: { complete: false, issues: [issue] },
+    });
+    vi.mocked(createBrowserBackupWithReport).mockResolvedValue({
+      bytes: new Uint8Array([1, 2, 3]),
+      completeness: { complete: false, issues: [issue] },
+    });
+    const { confirmAction, persistence } = setup();
+    confirmAction.mockResolvedValue(false);
+
+    persistence.exportSzdAction();
+    await flushPromises();
+    persistence.exportBrowserBackupAction();
+    await flushPromises();
+
+    expect(confirmAction).toHaveBeenCalledTimes(2);
+    expect(confirmAction.mock.calls[0][0]).toContain('missing-audio');
+    expect(downloadSzd).not.toHaveBeenCalled();
+    expect(downloadBrowserBackup).not.toHaveBeenCalled();
+  });
+
   it('refreshes the autosave slot after opening a stored project', async () => {
-    vi.mocked(loadProject).mockResolvedValue(encodeSzd(makeDocument('Stored Project')));
+    vi.mocked(loadProjectWithRevision).mockResolvedValue({
+      bytes: encodeSzd(makeDocument('Stored Project')),
+      revision: 'revision-1',
+    });
     const { autosave, persistence } = setup();
 
     await persistence.openStoredProject('Stored Project');
@@ -194,6 +273,61 @@ describe('useProjectPersistence autosave refresh after load', () => {
     expect(useProjectStore().projectName).toBe('DAWproject Import');
   });
 
+  it('surfaces unsupported DAWproject time units after a successful import', async () => {
+    vi.mocked(pickAndReadDawproject).mockResolvedValue({
+      name: 'odd-units.dawproject',
+      bytes: new Uint8Array([1, 2, 3]),
+    });
+    vi.mocked(importDawprojectWithMediaResult).mockResolvedValueOnce({
+      document: makeDocument('Odd Units'),
+      media: { imported: [], issues: [] },
+      losses: [
+        {
+          kind: 'unsupported-time-unit',
+          clipName: 'Vox',
+          attribute: 'contentTimeUnit',
+          unit: 'samples',
+        },
+      ],
+    });
+    const { errorMessage, persistence } = setup();
+
+    await persistence.importDawprojectAction();
+    await flushPromises();
+
+    expect(useProjectStore().projectName).toBe('Odd Units');
+    expect(errorMessage.value).toContain('1 unsupported time unit');
+    expect(errorMessage.value).toContain('contentTimeUnit=samples');
+  });
+
+  it('surfaces unsupported nested DAWproject structures after a successful import', async () => {
+    vi.mocked(pickAndReadDawproject).mockResolvedValue({
+      name: 'nested-warp.dawproject',
+      bytes: new Uint8Array([1, 2, 3]),
+    });
+    vi.mocked(importDawprojectWithMediaResult).mockResolvedValueOnce({
+      document: makeDocument('Nested Warp'),
+      media: { imported: [], issues: [] },
+      losses: [
+        {
+          kind: 'unsupported-warp',
+          clipName: 'Drum Loop',
+          reason: 'time-units',
+          timeUnit: 'seconds',
+          contentTimeUnit: 'beats',
+        },
+      ],
+    });
+    const { errorMessage, persistence } = setup();
+
+    await persistence.importDawprojectAction();
+    await flushPromises();
+
+    expect(useProjectStore().projectName).toBe('Nested Warp');
+    expect(errorMessage.value).toContain('1 unsupported structure');
+    expect(errorMessage.value).toContain('Drum Loop: warp time-units');
+  });
+
   it('shows a structured MusicXML loss report and keeps the project when declined', async () => {
     const store = useProjectStore();
     await store.init();
@@ -208,6 +342,7 @@ describe('useProjectPersistence autosave refresh after load', () => {
         issues: [
           { feature: 'lyrics', count: 2 },
           { feature: 'harmony', count: 1 },
+          { feature: 'tempo-conflicts', count: 1 },
         ],
       },
     });
@@ -223,7 +358,9 @@ describe('useProjectPersistence autosave refresh after load', () => {
       'imported.musicxml',
     );
     expect(confirmAction).toHaveBeenCalledWith(
-      expect.stringMatching(/2 lyric syllable.+1 harmony\/chord symbol/s),
+      expect.stringMatching(
+        /2 lyric syllable.+1 harmony\/chord symbol.+1 conflicting tempo event/s,
+      ),
       expect.objectContaining({ title: 'MusicXML import limitations' }),
     );
     expect(store.projectName).toBe('Current Project');
@@ -248,6 +385,57 @@ describe('useProjectPersistence autosave refresh after load', () => {
     expect(pickAndReadExternalAudioFiles).toHaveBeenCalledTimes(1);
   });
 
+  it('requires an explicit per-path selection for ambiguous external audio basenames', async () => {
+    const drums = { name: 'Vox.wav', relativePath: 'Drums/Vox.wav', bytes: new Uint8Array([1]) };
+    const vocals = {
+      name: 'Vox.wav',
+      relativePath: 'Vocals/Vox.wav',
+      bytes: new Uint8Array([2]),
+    };
+    vi.mocked(pickAndReadDawproject).mockResolvedValue({
+      name: 'imported.dawproject',
+      bytes: new Uint8Array([1, 2, 3]),
+    });
+    vi.mocked(pickAndReadExternalAudioFiles)
+      .mockResolvedValueOnce([vocals, drums])
+      .mockResolvedValueOnce([vocals]);
+    const { confirmAction, persistence } = setup();
+
+    await persistence.importDawprojectAction();
+    await flushPromises();
+    const resolver = vi.mocked(importDawprojectWithMediaResult).mock.calls[0]?.[1]
+      ?.resolveExternalAudio;
+
+    await expect(resolver?.('/Session/Vox.wav')).resolves.toBe(vocals.bytes);
+    expect(confirmAction).toHaveBeenCalledWith(
+      expect.stringContaining('/Session/Vox.wav'),
+      expect.objectContaining({ title: 'Choose external audio' }),
+    );
+    expect(pickAndReadExternalAudioFiles).toHaveBeenCalledTimes(2);
+  });
+
+  it('never auto-selects one of several same-name files when relink is declined', async () => {
+    vi.mocked(pickAndReadDawproject).mockResolvedValue({
+      name: 'imported.dawproject',
+      bytes: new Uint8Array([1, 2, 3]),
+    });
+    vi.mocked(pickAndReadExternalAudioFiles).mockResolvedValue([
+      { name: 'Vox.wav', relativePath: 'A/Vox.wav', bytes: new Uint8Array([1]) },
+      { name: 'VOX.WAV', relativePath: 'B/VOX.WAV', bytes: new Uint8Array([2]) },
+      { name: 'vox.wav', relativePath: 'C/vox.wav', bytes: new Uint8Array([3]) },
+    ]);
+    const { confirmAction, persistence } = setup();
+    confirmAction.mockResolvedValue(false);
+
+    await persistence.importDawprojectAction();
+    await flushPromises();
+    const resolver = vi.mocked(importDawprojectWithMediaResult).mock.calls[0]?.[1]
+      ?.resolveExternalAudio;
+
+    await expect(resolver?.('/Session/Vox.wav')).resolves.toBeNull();
+    expect(pickAndReadExternalAudioFiles).toHaveBeenCalledTimes(1);
+  });
+
   it('does not rename the live project when Save As rejects a reserved name', async () => {
     const store = useProjectStore();
     await store.init();
@@ -256,6 +444,7 @@ describe('useProjectPersistence autosave refresh after load', () => {
     const errorMessage = ref('');
     const autosave = {
       lastSavedAt: ref<Date | null>(null),
+      lastSavedDocumentKey: ref<string | null>(null),
       saving: ref(false),
       lastError: ref<Error | null>(null),
       saveNow: vi.fn(async () => true),
@@ -283,7 +472,7 @@ describe('useProjectPersistence autosave refresh after load', () => {
     await nextTask();
 
     expect(store.projectName).toBe('Current Song');
-    expect(saveProject).not.toHaveBeenCalled();
+    expect(saveProjectChecked).not.toHaveBeenCalled();
     expect(errorMessage.value).toContain('reserved');
 
     vi.mocked(promptDialog).mockResolvedValue('Recovered Song');
@@ -292,7 +481,7 @@ describe('useProjectPersistence autosave refresh after load', () => {
     await flushPromises();
     await nextTask();
     expect(errorMessage.value).toBe('');
-    expect(saveProject).toHaveBeenCalledWith('Recovered Song', expect.any(Uint8Array));
+    expect(saveProjectChecked).toHaveBeenCalledWith('Recovered Song', expect.any(Uint8Array), null);
     expect(store.projectName).toBe('Recovered Song');
   });
 
@@ -313,31 +502,42 @@ describe('useProjectPersistence autosave refresh after load', () => {
       expect.stringContaining('Taken_Song'),
       expect.any(Object),
     );
-    expect(saveProject).not.toHaveBeenCalled();
+    expect(saveProjectChecked).not.toHaveBeenCalled();
     expect(store.projectName).toBe('Current Song');
 
     confirmAction.mockResolvedValueOnce(true);
     persistence.saveProjectAsAction();
     await flushPromises();
     await nextTask();
-    expect(saveProject).toHaveBeenCalledWith('Taken_Song', expect.any(Uint8Array));
+    expect(saveProjectChecked).toHaveBeenCalledWith(
+      'Taken_Song',
+      expect.any(Uint8Array),
+      'revision-1',
+    );
     expect(store.projectName).toBe('Taken:Song');
   });
 
   it('keeps saving to the opened slot when the document title later changes', async () => {
     const store = useProjectStore();
-    vi.mocked(loadProject).mockResolvedValue(encodeSzd(makeDocument('Original title')));
+    vi.mocked(loadProjectWithRevision).mockResolvedValue({
+      bytes: encodeSzd(makeDocument('Original title')),
+      revision: 'revision-1',
+    });
     const { persistence } = setup();
     await persistence.openStoredProject('Stored Slot');
     await flushPromises();
-    vi.mocked(saveProject).mockClear();
+    vi.mocked(saveProjectChecked).mockClear();
 
     store.projectName = 'Edited title';
     persistence.saveProjectAction();
     await flushPromises();
     await nextTask();
 
-    expect(saveProject).toHaveBeenCalledWith('Stored Slot', expect.any(Uint8Array));
+    expect(saveProjectChecked).toHaveBeenCalledWith(
+      'Stored Slot',
+      expect.any(Uint8Array),
+      'revision-1',
+    );
   });
 
   it('does not clear dirty when edits land while a named save is in flight', async () => {
@@ -348,20 +548,69 @@ describe('useProjectPersistence autosave refresh after load', () => {
     addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
     await flushPromises();
     let releaseSave: () => void = () => {};
-    vi.mocked(saveProject).mockImplementationOnce(
+    vi.mocked(saveProjectChecked).mockImplementationOnce(
       () =>
-        new Promise<void>((resolve) => {
-          releaseSave = resolve;
+        new Promise<string>((resolve) => {
+          releaseSave = () => resolve('revision-2');
         }),
     );
 
     persistence.saveProjectAction();
-    await vi.waitFor(() => expect(saveProject).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(saveProjectChecked).toHaveBeenCalledTimes(1));
     addNote({ pitch: 64, startPpq: 1, durationPpq: 1 });
     releaseSave();
     await flushPromises();
     await nextTask();
 
+    expect(persistence.dirty.value).toBe(true);
+  });
+
+  it('does not clear an edit made while the post-load autosave is in flight', async () => {
+    const store = useProjectStore();
+    await store.init();
+    const loaded = serializeProject();
+    loaded.name = 'Loaded';
+    vi.mocked(loadProjectWithRevision).mockResolvedValue({
+      bytes: encodeSzd(loaded),
+      revision: 'revision-1',
+    });
+    const { autosave, persistence } = setup();
+    let releaseSave: () => void = () => {};
+    autosave.saveNow.mockImplementationOnce(async () => {
+      const savedRevision = JSON.stringify(serializeProject());
+      await new Promise<void>((resolve) => {
+        releaseSave = resolve;
+      });
+      autosave.lastSavedDocumentKey.value = savedRevision;
+      return true;
+    });
+
+    void persistence.openStoredProject('Loaded');
+    await vi.waitFor(() => expect(autosave.saveNow).toHaveBeenCalledTimes(1));
+    addNote({ pitch: 67, startPpq: 2, durationPpq: 1 });
+    await flushPromises();
+    releaseSave();
+    await flushPromises();
+    await nextTask();
+
+    expect(persistence.dirty.value).toBe(true);
+    expect(autosave.cancelPending).not.toHaveBeenCalled();
+    expect(store.notes.some((note) => note.pitch === 67)).toBe(true);
+  });
+
+  it('marks persisted score layout and pickup changes dirty', async () => {
+    const store = useProjectStore();
+    await store.init();
+    const { persistence } = setup();
+    await persistence.markClean();
+
+    store.scoreDisplaySettings = { ...store.scoreDisplaySettings, viewZoom: 1.25 };
+    await flushPromises();
+    expect(persistence.dirty.value).toBe(true);
+
+    await persistence.markClean();
+    store.pickupLengthPpq = 1;
+    await flushPromises();
     expect(persistence.dirty.value).toBe(true);
   });
 

@@ -1,5 +1,6 @@
-import { computed, type Ref, ref } from 'vue';
+import { computed, getCurrentScope, onScopeDispose, type Ref, ref } from 'vue';
 import { confirmDialog } from '@/composables/useDialogs';
+import { OperationGeneration, type OperationIdentity } from '@/lib/operation-generation';
 import { leaseAudioAssets } from '@/persistence/asset-leases';
 import { loadAsset, loadAssetMeta } from '@/persistence/assets';
 import { analyzeAudioTags, decodeAndIngest, resolveAudioAnalysis } from '@/project/audio-import';
@@ -30,6 +31,11 @@ export function useProjectAudioAssets(options: ProjectAudioAssetsOptions) {
   const store = useProjectStore();
   const { t } = useI18n();
   const audioImportInput = ref<HTMLInputElement | null>(null);
+  const tempoDetectionOperations = new OperationGeneration();
+
+  if (getCurrentScope()) {
+    onScopeDispose(() => tempoDetectionOperations.dispose());
+  }
 
   async function placeAssetAtPlayhead(assetId: string): Promise<number> {
     const lease = leaseAudioAssets([assetId]);
@@ -144,8 +150,30 @@ export function useProjectAudioAssets(options: ProjectAudioAssetsOptions) {
     if (!clip || clip.assetId === undefined) return;
     const assetId = clip.assetId;
     await runAction(async () => {
+      const identity = (): OperationIdentity => {
+        const current = store.clips.find((entry) => entry.id === clipId);
+        return {
+          projectId: store.documentGeneration,
+          targetId: current?.id ?? null,
+          revision:
+            current && isAudioClip(current)
+              ? JSON.stringify({
+                  assetId: current.assetId,
+                  sourceOffsetPpq: current.sourceOffsetPpq,
+                  lengthPpq: current.lengthPpq,
+                  warp: current.warp,
+                  tempoBpm: store.tempoBpm,
+                  tempoSegments: store.tempoSegments,
+                })
+              : null,
+        };
+      };
+      const token = tempoDetectionOperations.begin(identity());
+      const isCurrent = (): boolean => tempoDetectionOperations.isCurrent(token, identity());
       const asset = await loadAsset(assetId);
+      if (!isCurrent()) return;
       const analysis = await resolveAudioAnalysis();
+      if (!isCurrent()) return;
       const channels = sliceAudioClipWindow(
         asset.channels,
         asset.meta.sampleRate,
@@ -159,15 +187,7 @@ export function useProjectAudioAssets(options: ProjectAudioAssetsOptions) {
         return;
       }
       const current = store.clips.find((c) => c.id === clipId);
-      if (
-        !current ||
-        !isAudioClip(current) ||
-        current.assetId !== assetId ||
-        current.sourceOffsetPpq !== clip.sourceOffsetPpq ||
-        current.lengthPpq !== clip.lengthPpq
-      ) {
-        return;
-      }
+      if (!isCurrent() || !current || !isAudioClip(current)) return;
       const bpm = Math.round(tags.bpm * 10) / 10;
       setClipWarp(clipId, {
         enabled: current.warp?.enabled ?? false,
@@ -177,6 +197,7 @@ export function useProjectAudioAssets(options: ProjectAudioAssetsOptions) {
       renderInfo.value = formatMessage(t.value.dialogs.prompts.tempoDetected, {
         bpm: bpm.toFixed(1),
       });
+      if (tempoDetectionOperations.isCurrent(token)) tempoDetectionOperations.invalidate();
     });
   }
 

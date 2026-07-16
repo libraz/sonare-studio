@@ -16,8 +16,19 @@ import type { TransportSync } from '@/engine/transport-sync';
 import type { WebMidiOutputBridge } from '@/engine/web-midi-output';
 import { describeError } from '@/lib/errors';
 import { parseInstrumentAutomationParam } from '@/project/automation';
-import type { ScheduledProjectClip } from '@/project/scheduling';
-import { scheduleProjectClips } from '@/project/scheduling';
+import {
+  createMediaCompletenessReport,
+  formatMediaCompletenessReport,
+  type MediaCompletenessIssue,
+  type MediaCompletenessReport,
+} from '@/project/media-completeness';
+import {
+  AudioScheduleReplaceError,
+  cleanupScheduledProjectClips,
+  replaceScheduledProjectClips,
+  type ScheduledProjectClip,
+  scheduleProjectClips,
+} from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
 import { type EditorClip, type EditorTrack, isAudioClip } from '@/project/types';
 import { automationStripMode, automationStripModeRevision } from '@/ui/mixer/automation-mode';
@@ -30,6 +41,8 @@ export interface EngineProjectSyncOptions {
   bridge: ShallowRef<MeterBridge | null>;
   scope: ShallowRef<ScopeBridge | null>;
   errorMessage: { value: string };
+  mediaWarning?: { value: string };
+  mediaWarningIntro?: { value: string };
   handle: ShallowRef<EngineHandle | null>;
   transport: Transport;
 }
@@ -103,35 +116,99 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
   let transportSync: TransportSync | null = null;
   let webMidiOutput: WebMidiOutputBridge | null = null;
   let applyGeneration = 0;
+  let applyController: AbortController | null = null;
   let applyTimer: ReturnType<typeof setTimeout> | null = null;
+  let engineRebuildHandler: (() => void | Promise<void>) | null = null;
   let midiSyncQueue: Promise<void> = Promise.resolve();
+  let audioMediaIssues: MediaCompletenessIssue[] = [];
+  let midiMediaIssues: MediaCompletenessIssue[] = [];
 
   const scheduledCount = ref(0);
   const applyPending = ref(false);
+  const engineRebuildRequired = ref(false);
+  const mediaReport = ref<MediaCompletenessReport>(createMediaCompletenessReport());
+
+  function publishMediaReport(): void {
+    mediaReport.value = createMediaCompletenessReport([...audioMediaIssues, ...midiMediaIssues]);
+    if (options.mediaWarning) {
+      options.mediaWarning.value = mediaReport.value.complete
+        ? ''
+        : `${options.mediaWarningIntro?.value ?? 'Some project media could not be played. Open Media to relink or replace it.'}\n${formatMediaCompletenessReport(mediaReport.value)}`;
+    }
+  }
+
+  function mergeScheduledOwnership(clips: ReadonlyArray<ScheduledProjectClip>): void {
+    const byId = new Map(scheduledClips.map((clip) => [clip.engineClipId, clip]));
+    for (const clip of clips) byId.set(clip.engineClipId, clip);
+    scheduledClips = [...byId.values()];
+    scheduledCount.value = scheduledClips.length;
+  }
+
+  function requestEngineRebuild(): void {
+    engineRebuildRequired.value = true;
+    if (!engineRebuildHandler) return;
+    void Promise.resolve(engineRebuildHandler()).catch((error) => {
+      errorMessage.value = describeError(error);
+    });
+  }
 
   async function applyToEngine(applyOptions: ApplyToEngineOptions = {}): Promise<void> {
     const h = applyOptions.handle ?? handle.value;
     if (!h || !store.initialized) return;
     const stagedHandle = applyOptions.handle !== undefined;
+    applyController?.abort(new DOMException('Audio schedule apply superseded.', 'AbortError'));
+    const controller = new AbortController();
+    applyController = controller;
     const generation = ++applyGeneration;
     applyPending.value = false;
+    const mediaIssues: MediaCompletenessIssue[] = [];
     try {
-      const next = await scheduleProjectClips(h);
-      if (generation !== applyGeneration || (!stagedHandle && handle.value !== h)) {
-        for (const clip of next) h.engine.removeClip(clip.engineClipId);
+      const next = await scheduleProjectClips(h, {
+        signal: controller.signal,
+        retainedScheduleBytes: scheduledClips.reduce(
+          (sum, clip) => sum + (clip.payloadBytes ?? 0),
+          0,
+        ),
+        onMediaIssue: (issue) => mediaIssues.push(issue),
+      });
+      if (
+        controller.signal.aborted ||
+        generation !== applyGeneration ||
+        (!stagedHandle && handle.value !== h)
+      ) {
+        const cleanup = cleanupScheduledProjectClips(h, next);
+        if (!stagedHandle && cleanup.failures.length > 0) {
+          mergeScheduledOwnership(cleanup.remaining);
+          requestEngineRebuild();
+        }
         return;
       }
-      for (const clip of scheduledClips) h.engine.removeClip(clip.engineClipId);
-      scheduledClips = next;
+      scheduledClips = replaceScheduledProjectClips(h, scheduledClips, next);
       scheduledCount.value = next.length;
+      engineRebuildRequired.value = false;
+      audioMediaIssues = mediaIssues;
+      publishMediaReport();
     } catch (err) {
+      if (err instanceof AudioScheduleReplaceError) {
+        scheduledClips = err.ownedClips;
+        scheduledCount.value = scheduledClips.length;
+        if (!stagedHandle) requestEngineRebuild();
+      }
+      if (controller.signal.aborted || (err instanceof Error && err.name === 'AbortError')) {
+        if (applyOptions.throwOnError) throw err;
+        return;
+      }
       errorMessage.value = describeError(err);
       if (applyOptions.throwOnError) throw err;
+    } finally {
+      if (applyController === controller) applyController = null;
     }
   }
 
   function scheduleApply(): void {
     if (!handle.value) return;
+    applyGeneration += 1;
+    applyController?.abort(new DOMException('Audio schedule source changed.', 'AbortError'));
     applyPending.value = true;
     if (applyTimer !== null) clearTimeout(applyTimer);
     applyTimer = setTimeout(() => {
@@ -249,16 +326,21 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     // Keep the external-MIDI routing table in step with the tracks' instruments
     // so drained events reach the right port/channel.
     webMidiOutput?.syncRoutes(store.tracks, store.projectExternalMidi);
-    const operation = midiSyncQueue.then(() =>
-      m.sync(
+    const operation = midiSyncQueue.then(async () => {
+      await m.sync(
         store.tracks,
         store.clips,
         effectiveTempoSegments(),
         store.projectExternalMidi,
         store.automationLanes,
         transport.positionPpq?.value ?? 0,
-      ),
-    );
+      );
+      midiMediaIssues = (m.mediaIssues?.() ?? []).map((issue) => ({
+        ...issue,
+        projectName: store.projectName,
+      }));
+      publishMediaReport();
+    });
     midiSyncQueue = operation.catch((err) => {
       errorMessage.value = describeError(err);
     });
@@ -293,6 +375,8 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
 
   function disposeEngineProjectSync(): void {
     applyGeneration++;
+    applyController?.abort(new DOMException('Engine project sync disposed.', 'AbortError'));
+    applyController = null;
     if (applyTimer !== null) {
       clearTimeout(applyTimer);
       applyTimer = null;
@@ -309,7 +393,11 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
   }
 
   watch(
-    () => store.clips.filter(isAudioClip).map(clipScheduleKey).join('\n'),
+    () =>
+      [
+        store.clips.filter(isAudioClip).map(clipScheduleKey).join('\n'),
+        JSON.stringify(effectiveTempoSegments()),
+      ].join('\0'),
     (next, prev) => {
       if (next !== prev) scheduleApply();
     },
@@ -391,6 +479,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
   return {
     applyPending,
     scheduledCount,
+    mediaReport,
     applyNow,
     applyToEngine,
     busMeterSource,
@@ -399,10 +488,14 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     trackScopeSource,
     disposeEngineProjectSync,
     effectiveTempoSegments,
+    engineRebuildRequired,
     hasMidiSync: () => midiSync !== null,
     scheduleApply,
     sendLiveExternalMidi,
     scheduledClips: () => scheduledClips,
+    setEngineRebuildHandler: (handler: (() => void | Promise<void>) | null) => {
+      engineRebuildHandler = handler;
+    },
     setEngineSyncHandles,
     syncAutomationState,
     syncMidiState,

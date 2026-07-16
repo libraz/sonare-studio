@@ -15,7 +15,7 @@ export interface AppLifecycleOptions {
   handle: ShallowRef<EngineHandle | null>;
   version: Ref<string>;
   bootProject: () => Promise<void>;
-  disposeEngineLifecycle?: () => void;
+  disposeEngineLifecycle?: () => void | Promise<void>;
   disposeEngineProjectSync: () => void;
   disposeLayout: () => void;
   disposeProjectPersistence: () => void;
@@ -56,7 +56,7 @@ export function useAppLifecycle(options: AppLifecycleOptions) {
     window.removeEventListener('beforeunload', onBeforeUnload);
     options.disposeProjectPersistence();
     options.disposeLayout();
-    options.disposeEngineLifecycle?.();
+    await options.disposeEngineLifecycle?.();
     options.disposeEngineProjectSync();
     options.bridge.value?.dispose();
     options.bridge.value = null;

@@ -115,6 +115,66 @@ describe('useEngineProjectSync', () => {
     scope.stop();
   });
 
+  it('publishes the MIDI sync SoundFont report through the persistent media warning', async () => {
+    const store = useProjectStore();
+    store.dispose();
+    await store.init();
+    store.projectName = 'SF2 Project';
+    store.tracks = [
+      {
+        ...track(7),
+        instrument: { kind: 'sf2', fontId: 'missing-font' },
+      },
+    ];
+    const mixerSync: MixerSync = { sync: vi.fn(), laneTrackIds: () => [7] };
+    const stripSync = { sync: vi.fn() } as unknown as StripSync;
+    const midiSync: MidiSync = {
+      sync: vi.fn(async () => undefined),
+      scheduledClipCount: () => 0,
+      mediaIssues: () => [
+        {
+          kind: 'soundfont',
+          mediaId: 'missing-font',
+          role: 'instrument',
+          reason: 'unreadable',
+          trackId: 7,
+        },
+      ],
+    };
+    const mediaWarning = ref('');
+    const scope = effectScope();
+    const projectSync = scope.run(() =>
+      useEngineProjectSync({
+        bridge: shallowRef(null),
+        scope: shallowRef(null),
+        errorMessage: ref(''),
+        mediaWarning,
+        handle: shallowRef(null),
+        transport: { setTempoMap: vi.fn(), setTempo: vi.fn() } as never,
+      }),
+    );
+    if (!projectSync) throw new Error('effect scope did not run');
+    projectSync.setEngineSyncHandles({
+      mixerSync,
+      stripSync,
+      automationSync: null,
+      midiSync,
+      transportSync: null,
+      webMidiOutput: null,
+    });
+
+    await projectSync.syncMidiState();
+
+    expect(projectSync.mediaReport.value.issues[0]).toMatchObject({
+      projectName: 'SF2 Project',
+      mediaId: 'missing-font',
+      trackId: 7,
+    });
+    expect(mediaWarning.value).toContain('missing-font');
+    expect(mediaWarning.value).toContain('Open Media to relink');
+    scope.stop();
+  });
+
   it('resyncs MIDI routing when External MIDI mode, shared route, or MIDI-FX changes', async () => {
     const store = useProjectStore();
     store.dispose();
@@ -443,7 +503,11 @@ describe('useEngineProjectSync', () => {
     if (!projectSync) throw new Error('effect scope did not run');
 
     projectSync.applyNow();
-    expect(scheduleProjectClips).toHaveBeenCalledWith(handle.value);
+    expect(scheduleProjectClips).toHaveBeenCalledWith(handle.value, {
+      retainedScheduleBytes: 0,
+      signal: expect.any(AbortSignal),
+      onMediaIssue: expect.any(Function),
+    });
 
     projectSync.disposeEngineProjectSync();
     resolveSchedule([{ engineClipId: 99, clipId: 1, trackId: 1 }]);
@@ -451,6 +515,150 @@ describe('useEngineProjectSync', () => {
 
     expect(projectSync.scheduledClips()).toEqual([]);
     expect(projectSync.scheduledCount.value).toBe(0);
+    scope.stop();
+  });
+
+  it('publishes a persistent relink warning for skipped live audio media', async () => {
+    const store = useProjectStore();
+    store.dispose();
+    await store.init();
+    const handle = shallowRef({ engine: { removeClip: vi.fn() } });
+    vi.mocked(scheduleProjectClips).mockImplementation(async (_handle, options) => {
+      options.onMediaIssue?.({
+        kind: 'audio-asset',
+        mediaId: 'missing-live',
+        role: 'take',
+        reason: 'unreadable',
+        trackId: 4,
+        clipId: 9,
+      });
+      return [];
+    });
+    const mediaWarning = ref('');
+    const scope = effectScope();
+    const projectSync = scope.run(() =>
+      useEngineProjectSync({
+        bridge: shallowRef(null),
+        scope: shallowRef(null),
+        errorMessage: ref(''),
+        mediaWarning,
+        handle: handle as never,
+        transport: { setTempoMap: vi.fn(), setTempo: vi.fn() } as never,
+      }),
+    );
+    if (!projectSync) throw new Error('effect scope did not run');
+
+    await projectSync.applyToEngine();
+
+    expect(projectSync.mediaReport.value).toMatchObject({ complete: false });
+    expect(mediaWarning.value).toContain('Open Media to relink');
+    expect(mediaWarning.value).toContain('missing-live');
+    expect(mediaWarning.value).toContain('track 4');
+    expect(mediaWarning.value).toContain('clip 9');
+    scope.stop();
+  });
+
+  it('invalidates preparation and reschedules when a later tempo segment changes', async () => {
+    vi.useFakeTimers();
+    try {
+      const store = useProjectStore();
+      store.dispose();
+      await store.init();
+      store.tracks = [{ ...track(1), kind: 'audio', instrument: undefined }];
+      store.clips = [{ ...clip(1), kind: 'audio', notes: [], assetId: 'audio-1' }];
+      store.tempoSegments = [
+        { startPpq: 0, bpm: 120 },
+        { startPpq: 4, bpm: 90 },
+      ];
+      const handle = shallowRef({ engine: { removeClip: vi.fn() } });
+      let resolveSchedule!: (clips: ScheduledProjectClip[]) => void;
+      vi.mocked(scheduleProjectClips).mockImplementation(
+        (_handle, options) =>
+          new Promise((resolve) => {
+            expect(options?.signal).toBeInstanceOf(AbortSignal);
+            resolveSchedule = resolve;
+          }),
+      );
+      const scope = effectScope();
+      const projectSync = scope.run(() =>
+        useEngineProjectSync({
+          bridge: shallowRef(null),
+          scope: shallowRef(null),
+          errorMessage: ref(''),
+          handle: handle as never,
+          transport: { setTempoMap: vi.fn(), setTempo: vi.fn() } as never,
+        }),
+      );
+      if (!projectSync) throw new Error('effect scope did not run');
+
+      projectSync.applyNow();
+      const firstSignal = vi.mocked(scheduleProjectClips).mock.calls[0]?.[1]?.signal;
+      expect(firstSignal?.aborted).toBe(false);
+      store.tempoSegments = [
+        { startPpq: 0, bpm: 120 },
+        { startPpq: 4, bpm: 60 },
+      ];
+      await nextTick();
+      expect(firstSignal?.aborted).toBe(true);
+      expect(projectSync.applyPending.value).toBe(true);
+      resolveSchedule([]);
+      await Promise.resolve();
+
+      await vi.advanceTimersByTimeAsync(400);
+      expect(scheduleProjectClips).toHaveBeenCalledTimes(2);
+      projectSync.disposeEngineProjectSync();
+      scope.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retains exact residual ownership and requests rebuild after remove failure', async () => {
+    const store = useProjectStore();
+    store.dispose();
+    await store.init();
+    const removeClip = vi.fn<(id: number) => void>();
+    const handle = shallowRef({ engine: { removeClip } });
+    const oldClip = { engineClipId: 10, clipId: 1, trackId: 1 };
+    const rolledBackNext = { engineClipId: 20, clipId: 2, trackId: 1 };
+    const retryClip = { engineClipId: 30, clipId: 3, trackId: 1 };
+    vi.mocked(scheduleProjectClips)
+      .mockResolvedValueOnce([oldClip])
+      .mockResolvedValueOnce([rolledBackNext])
+      .mockResolvedValueOnce([retryClip]);
+    const errorMessage = ref('');
+    const scope = effectScope();
+    const projectSync = scope.run(() =>
+      useEngineProjectSync({
+        bridge: shallowRef(null),
+        scope: shallowRef(null),
+        errorMessage,
+        handle: handle as never,
+        transport: { setTempoMap: vi.fn(), setTempo: vi.fn() } as never,
+      }),
+    );
+    if (!projectSync) throw new Error('effect scope did not run');
+    const rebuild = vi.fn();
+    projectSync.setEngineRebuildHandler(rebuild);
+
+    await projectSync.applyToEngine();
+    removeClip.mockImplementation((id) => {
+      if (id === oldClip.engineClipId) throw new Error('old remove failed');
+    });
+    await projectSync.applyToEngine();
+
+    expect(removeClip).toHaveBeenCalledWith(oldClip.engineClipId);
+    expect(removeClip).toHaveBeenCalledWith(rolledBackNext.engineClipId);
+    expect(projectSync.scheduledClips()).toEqual([oldClip]);
+    expect(projectSync.scheduledCount.value).toBe(1);
+    expect(projectSync.engineRebuildRequired.value).toBe(true);
+    expect(rebuild).toHaveBeenCalledTimes(1);
+    expect(errorMessage.value).toContain('failed to remove 1 engine clip');
+
+    removeClip.mockImplementation(() => undefined);
+    await projectSync.applyToEngine();
+    expect(projectSync.scheduledClips()).toEqual([retryClip]);
+    expect(projectSync.engineRebuildRequired.value).toBe(false);
     scope.stop();
   });
 });

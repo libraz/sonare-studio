@@ -28,6 +28,11 @@ const opfsMocks = vi.hoisted(() => ({
   loadProject: vi.fn<(name: string) => Promise<Uint8Array>>(),
 }));
 
+const recoveryMocks = vi.hoisted(() => ({
+  saveAutosaveSessionRevision: vi.fn<() => Promise<void>>(),
+  loadLatestAutosaveSessionRevision: vi.fn<() => Promise<Uint8Array | null>>(),
+}));
+
 vi.mock('@/persistence/opfs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/persistence/opfs')>();
   return {
@@ -36,6 +41,8 @@ vi.mock('@/persistence/opfs', async (importOriginal) => {
     loadProject: opfsMocks.loadProject,
   };
 });
+
+vi.mock('@/persistence/recovery', () => recoveryMocks);
 
 /** Lets the watcher (microtask-flushed) observe the latest store change. */
 async function flushWatchers(): Promise<void> {
@@ -71,6 +78,10 @@ describe('useAutosave', () => {
     opfsMocks.saveProject.mockReset();
     opfsMocks.saveProject.mockResolvedValue(undefined);
     opfsMocks.loadProject.mockReset();
+    recoveryMocks.saveAutosaveSessionRevision.mockReset();
+    recoveryMocks.saveAutosaveSessionRevision.mockResolvedValue(undefined);
+    recoveryMocks.loadLatestAutosaveSessionRevision.mockReset();
+    recoveryMocks.loadLatestAutosaveSessionRevision.mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -96,6 +107,11 @@ describe('useAutosave', () => {
     ]);
     expect(autosave.lastSavedAt.value).toBeInstanceOf(Date);
     expect(autosave.lastError.value).toBeNull();
+    expect(recoveryMocks.saveAutosaveSessionRevision).toHaveBeenCalledWith(
+      bytes,
+      JSON.stringify(doc),
+      expect.any(String),
+    );
   });
 
   it('debounces: edits inside the quiet period collapse into one save', async () => {
@@ -196,6 +212,20 @@ describe('useAutosave', () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(opfsMocks.saveProject).toHaveBeenCalledTimes(1);
     expect(decodeSzd(opfsMocks.saveProject.mock.calls[0][1]).mixerSnapshots).toBeUndefined();
+  });
+
+  it('autosaves score layout and pickup-only changes and records the exact revision', async () => {
+    const autosave = createAutosave();
+    store.scoreDisplaySettings = { ...store.scoreDisplaySettings, viewZoom: 1.5 };
+    store.pickupLengthPpq = 0.5;
+    await flushWatchers();
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(opfsMocks.saveProject).toHaveBeenCalledTimes(1);
+    const doc = decodeSzd(opfsMocks.saveProject.mock.calls[0][1]);
+    expect(doc.score?.viewZoom).toBe(1.5);
+    expect(doc.pickupLengthPpq).toBe(0.5);
+    expect(autosave.lastSavedDocumentKey.value).toBe(JSON.stringify(doc));
   });
 
   it('saveNow flushes the pending debounce and saves immediately', async () => {

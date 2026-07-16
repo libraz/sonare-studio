@@ -1,4 +1,4 @@
-import type { Ref, ShallowRef } from 'vue';
+import { type Ref, ref, type ShallowRef } from 'vue';
 import type {
   ApplyToEngineOptions,
   EngineSyncHandles,
@@ -88,26 +88,96 @@ export interface EngineLifecycleOptions {
   syncTransportState: (options?: InitialEngineSyncOptions) => void;
 }
 
+export interface EngineLifecycleCleanupFailure {
+  stage: 'transport' | 'scope' | 'analyser' | 'meter' | 'project-sync' | 'engine';
+  error: unknown;
+}
+
 export function useEngineLifecycle(options: EngineLifecycleOptions) {
   const store = useProjectStore();
   let engineStartPromise: Promise<void> | null = null;
   let disposeCtxState: (() => void) | null = null;
   let lifecycleEpoch = 0;
   let startController: AbortController | null = null;
+  let engineTeardownPromise: Promise<void> | null = null;
+  const pendingEngineDisposals = new Set<EngineHandle>();
+  const cleanupFailures = ref<EngineLifecycleCleanupFailure[]>([]);
 
   function clearAudioContextStateBinding(): void {
     disposeCtxState?.();
     disposeCtxState = null;
   }
 
-  function disposeEngineLifecycle(): void {
+  async function retryPendingEngineDisposals(
+    failures: EngineLifecycleCleanupFailure[],
+  ): Promise<void> {
+    for (const pending of [...pendingEngineDisposals]) {
+      try {
+        await pending.dispose();
+        pendingEngineDisposals.delete(pending);
+      } catch (error) {
+        failures.push({ stage: 'engine', error });
+      }
+    }
+  }
+
+  async function teardownEngine(expected?: EngineHandle): Promise<void> {
+    if (expected && options.handle.value !== expected) return;
     lifecycleEpoch += 1;
     startController?.abort(new DOMException('Engine lifecycle disposed.', 'AbortError'));
     startController = null;
     clearAudioContextStateBinding();
+    const previousHandle = options.handle.value;
+    const previousBridge = options.bridge.value;
+    const previousAnalyser = options.analyser.value;
+    const previousScope = options.scope.value;
+    options.handle.value = null;
+    options.bridge.value = null;
+    options.analyser.value = null;
+    options.scope.value = null;
+    const failures: EngineLifecycleCleanupFailure[] = [];
+    const cleanup = (
+      stage: EngineLifecycleCleanupFailure['stage'],
+      operation: () => void,
+    ): void => {
+      try {
+        operation();
+      } catch (error) {
+        failures.push({ stage, error });
+      }
+    };
+    cleanup('transport', () => options.transport.dispose?.());
+    cleanup('scope', () => previousScope?.dispose());
+    cleanup('analyser', () => previousAnalyser?.dispose());
+    cleanup('meter', () => previousBridge?.dispose());
+    cleanup('project-sync', options.resetEngineProjectSync);
+    if (previousHandle) {
+      previousHandle.engine.node.onprocessorerror = null;
+      pendingEngineDisposals.add(previousHandle);
+    }
+    await retryPendingEngineDisposals(failures);
+    cleanupFailures.value = failures;
+    if (failures.length > 0) {
+      options.errorMessage.value = `Engine cleanup had ${failures.length} failure(s): ${failures
+        .map(
+          (failure) =>
+            `${failure.stage}: ${failure.error instanceof Error ? failure.error.message : String(failure.error)}`,
+        )
+        .join('; ')}`;
+    }
+  }
+
+  function disposeEngineLifecycle(expected?: EngineHandle): Promise<void> {
+    const task = teardownEngine(expected);
+    const tracked = task.finally(() => {
+      if (engineTeardownPromise === tracked) engineTeardownPromise = null;
+    });
+    engineTeardownPromise = tracked;
+    return tracked;
   }
 
   async function ensureEngineStarted(): Promise<EngineHandle | null> {
+    if (engineTeardownPromise) await engineTeardownPromise;
     if (options.handle.value) {
       if (options.handle.value.ctx.state === 'suspended') {
         await options.handle.value.ctx.resume().catch(() => undefined);
@@ -123,9 +193,19 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
     return options.handle.value;
   }
 
+  /** Disposes a structurally uncertain live engine and hydrates a clean replacement. */
+  async function restartEngine(): Promise<void> {
+    await disposeEngineLifecycle();
+    await startEngine();
+  }
+
   function startEngine(): Promise<void> {
     return options.runAction(async () => {
+      if (engineTeardownPromise) await engineTeardownPromise;
       if (options.handle.value) return;
+      const retryFailures: EngineLifecycleCleanupFailure[] = [];
+      await retryPendingEngineDisposals(retryFailures);
+      if (retryFailures.length > 0) cleanupFailures.value = retryFailures;
       const epoch = ++lifecycleEpoch;
       startController?.abort(new DOMException('Engine startup superseded.', 'AbortError'));
       const controller = new AbortController();
@@ -204,6 +284,7 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
           knownTrackIds: () => nextMixerSync.laneTrackIds(),
           busIdFor: (storeBusId) => nextStripSync.busIdFor(storeBusId),
           groupBusIdFor: (trackId) => nextStripSync.groupBusIdFor(trackId),
+          busMappingGeneration: () => nextStripSync.busMappingGeneration(),
           busInsertIndexFor: (storeBusId, index) =>
             nextStripSync.busInsertIndexFor(storeBusId, index),
           groupInsertIndexFor: (trackId, index) =>
@@ -400,8 +481,17 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
         nextAnalyser = createAnalyserBridge(stagedHandle);
         nextScope = createScopeBridge(stagedHandle);
         stagedHandle.engine.node.onprocessorerror = () => {
-          options.errorMessage.value =
-            'Engine worklet processor crashed during processing (onprocessorerror).';
+          const message = 'Engine worklet processor crashed during processing (onprocessorerror).';
+          if (options.handle.value !== stagedHandle) {
+            if (!published && epoch === lifecycleEpoch) {
+              controller.abort(new Error(message));
+            }
+            return;
+          }
+          options.errorMessage.value = message;
+          void disposeEngineLifecycle(stagedHandle).then(() => {
+            if (cleanupFailures.value.length === 0) options.errorMessage.value = message;
+          });
         };
         options.transport.setTempo(store.tempoBpm);
         options.syncMixerState({ throwOnError: true });
@@ -436,7 +526,10 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
         if (syncHandlesInstalled) options.resetEngineProjectSync();
         if (h) {
           h.engine.node.onprocessorerror = null;
-          await h.dispose();
+          pendingEngineDisposals.add(h);
+          const disposeFailures: EngineLifecycleCleanupFailure[] = [];
+          await retryPendingEngineDisposals(disposeFailures);
+          if (disposeFailures.length > 0) cleanupFailures.value = disposeFailures;
         }
         throw error;
       } finally {
@@ -477,10 +570,12 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
   }
 
   return {
+    cleanupFailures,
     disposeEngineLifecycle,
     ensureEngineStarted,
     playTestTone,
     renderOffline,
+    restartEngine,
     startEngine,
   };
 }
