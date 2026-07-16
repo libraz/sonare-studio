@@ -7,14 +7,18 @@ import type { EngineHandle } from '@/engine/engine';
 import type { Recorder, RecordingResult, StartRecordingOptions } from '@/engine/recorder';
 import { NoMicrophoneError } from '@/engine/recorder';
 import type { AudioAssetMeta } from '@/persistence/assets';
+import { clearAudioAssetCache, listAssets } from '@/persistence/assets';
 import {
   addAudioTrack,
   clearHistory,
+  redo,
   setTempoSegments,
   setTrackRecordInputChannel,
   setTrackRecordInputDeviceId,
+  undo,
 } from '@/project/commands';
-import { useProjectStore } from '@/project/store';
+import { getProject, useProjectStore } from '@/project/store';
+import { installMockOpfs, MemoryFileHandle, uninstallMockOpfs } from './opfs-mock';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -165,14 +169,14 @@ describe('useRecording', () => {
   const disposers: Array<() => void> = [];
 
   /** Wires the composable with a fake recorder, transport and ingest. */
-  function setup(handle: EngineHandle | null = fakeHandle) {
+  function setup(handle: EngineHandle | null = fakeHandle, useInjectedIngest = true) {
     const handleRef = ref<EngineHandle | null>(handle);
     const fake = makeFakeRecorder();
     const factory = vi.fn(() => fake.rec);
     const { transport, play, stop, seekPpq, toggleMetronome } = makeTransport();
     const recording = useRecording(() => handleRef.value, transport, {
       createRecorder: factory,
-      ingest: ingestMock,
+      ...(useInjectedIngest ? { ingest: ingestMock } : {}),
     });
     disposers.push(recording.dispose);
     return { recording, handleRef, fake, factory, transport, play, stop, seekPpq, toggleMetronome };
@@ -190,6 +194,8 @@ describe('useRecording', () => {
 
   afterEach(() => {
     for (const dispose of disposers.splice(0)) dispose();
+    uninstallMockOpfs();
+    clearAudioAssetCache();
     vi.useRealTimers();
   });
 
@@ -286,6 +292,113 @@ describe('useRecording', () => {
       [firstTrackId, 'mic-1-asset'],
       [secondTrackId, 'mic-2-asset'],
     ]);
+  });
+
+  it('leaves every route unchanged when the second route ingest fails', async () => {
+    const { recording, fake } = setup();
+    const firstTrackId = addAudioTrack({ name: 'Mic 1' });
+    const secondTrackId = addAudioTrack({ name: 'Mic 2' });
+    fake.setResult({
+      channels: [new Float32Array([1, 1]), new Float32Array([2, 2])],
+      sampleRate: 48_000,
+      startPpq: 0,
+    });
+    ingestMock
+      .mockImplementationOnce((channels, sampleRate, name) =>
+        defaultIngest(channels, sampleRate, name),
+      )
+      .mockRejectedValueOnce(new DOMException('storage quota exhausted', 'QuotaExceededError'));
+    recording.setTrackArmed(firstTrackId, true);
+    recording.setTrackArmed(secondTrackId, true);
+    clearHistory();
+    const beforeProject = getProject().toJson();
+    const beforeClips = JSON.parse(JSON.stringify(store.clips));
+
+    await recording.record();
+    await expect(recording.stopRecord()).resolves.toBeNull();
+
+    expect(recording.error.value).toContain('storage quota exhausted');
+    expect(store.clips).toEqual(beforeClips);
+    expect(getProject().toJson()).toBe(beforeProject);
+    expect(undo()).toBe(false);
+  });
+
+  it('rolls every route back when the final native clip placement fails', async () => {
+    const { recording, fake } = setup();
+    const firstTrackId = addAudioTrack({ name: 'Mic 1' });
+    const secondTrackId = addAudioTrack({ name: 'Mic 2' });
+    fake.setResult({
+      channels: [new Float32Array([1, 1]), new Float32Array([2, 2])],
+      sampleRate: 48_000,
+      startPpq: 0,
+    });
+    ingestMock.mockImplementation(async (channels, sampleRate, name) => ({
+      ...(await defaultIngest(channels, sampleRate, name)),
+      id: `${name}-${channels[0][0]}`,
+    }));
+    recording.setTrackArmed(firstTrackId, true);
+    recording.setTrackArmed(secondTrackId, true);
+    clearHistory();
+    const beforeProject = getProject().toJson();
+    const beforeClips = JSON.parse(JSON.stringify(store.clips));
+    const project = getProject();
+    const originalAddClip = project.addClip.bind(project);
+    let placements = 0;
+    const placementSpy = vi.spyOn(project, 'addClip').mockImplementation((descriptor) => {
+      placements += 1;
+      if (placements === 2) throw new Error('final route placement failed');
+      return originalAddClip(descriptor);
+    });
+
+    await recording.record();
+    await expect(recording.stopRecord()).resolves.toBeNull();
+    placementSpy.mockRestore();
+
+    expect(recording.error.value).toContain('final route placement failed');
+    expect(store.clips).toEqual(beforeClips);
+    expect(getProject().toJson()).toBe(beforeProject);
+    expect(undo()).toBe(false);
+  });
+
+  it('removes all newly staged production assets after a later quota failure', async () => {
+    installMockOpfs();
+    const { recording, fake } = setup(fakeHandle, false);
+    const firstTrackId = addAudioTrack({ name: 'Mic 1' });
+    const secondTrackId = addAudioTrack({ name: 'Mic 2' });
+    fake.setResult({
+      channels: [new Float32Array([1, 1]), new Float32Array([2, 2])],
+      sampleRate: 48_000,
+      startPpq: 0,
+    });
+    recording.setTrackArmed(firstTrackId, true);
+    recording.setTrackArmed(secondTrackId, true);
+    const originalCreateWritable = MemoryFileHandle.prototype.createWritable;
+    let sidecars = 0;
+    const writeSpy = vi
+      .spyOn(MemoryFileHandle.prototype, 'createWritable')
+      .mockImplementation(async function () {
+        if (this.name.endsWith('.json')) {
+          sidecars += 1;
+          if (sidecars === 2) {
+            return {
+              write: async () => {
+                throw new DOMException('storage quota exhausted', 'QuotaExceededError');
+              },
+              close: async () => undefined,
+              abort: async () => undefined,
+            } as unknown as FileSystemWritableFileStream;
+          }
+        }
+        return originalCreateWritable.call(this);
+      });
+
+    await recording.record();
+    await expect(recording.stopRecord()).resolves.toBeNull();
+    writeSpy.mockRestore();
+
+    expect(recording.error.value).toContain('storage quota exhausted');
+    expect(await listAssets()).toEqual([]);
+    expect(store.clips.some((clip) => clip.kind === 'audio')).toBe(false);
   });
 
   it('uses track record-input channel overrides when splitting input captures', async () => {
@@ -739,6 +852,42 @@ describe('useRecording', () => {
     expect(recording.state.value).toBe('idle');
   });
 
+  it('drops every staged route when the project changes during the final ingest', async () => {
+    const { recording, fake } = setup();
+    const firstTrackId = addAudioTrack({ name: 'Old Mic 1' });
+    const secondTrackId = addAudioTrack({ name: 'Old Mic 2' });
+    fake.setResult({
+      channels: [new Float32Array([1, 1]), new Float32Array([2, 2])],
+      sampleRate: 48_000,
+      startPpq: 0,
+    });
+    const finalIngest = deferred<AudioAssetMeta>();
+    ingestMock
+      .mockImplementationOnce((channels, sampleRate, name) =>
+        defaultIngest(channels, sampleRate, name),
+      )
+      .mockImplementationOnce(() => finalIngest.promise);
+    recording.setTrackArmed(firstTrackId, true);
+    recording.setTrackArmed(secondTrackId, true);
+    await recording.record();
+
+    const stopping = recording.stopRecord();
+    await vi.waitFor(() => expect(ingestMock).toHaveBeenCalledTimes(2));
+    store.dispose();
+    await store.init();
+    finalIngest.resolve({
+      id: 'late-final-route',
+      name: 'Late',
+      sampleRate: 48_000,
+      numChannels: 1,
+      numFrames: 2,
+    });
+
+    await expect(stopping).resolves.toBeNull();
+    expect(store.clips.some((clip) => clip.kind === 'audio')).toBe(false);
+    expect(recording.state.value).toBe('idle');
+  });
+
   it('does not ingest a stop result that resolves after disposal', async () => {
     const { recording, fake } = setup();
     const trackId = addAudioTrack({ name: 'Vox' });
@@ -1123,6 +1272,80 @@ describe('useRecording', () => {
         'Recording 1 — Take 1-11',
         'Recording 1 — Take 2-12',
       ]);
+    });
+
+    it('leaves no partial cycle clips when the final route take ingest fails', async () => {
+      const { recording, fake, transport } = setup();
+      const firstTrackId = addAudioTrack({ name: 'Mic 1' });
+      const secondTrackId = addAudioTrack({ name: 'Mic 2' });
+      recording.setTrackArmed(firstTrackId, true);
+      recording.setTrackArmed(secondTrackId, true);
+      setLoop(transport, 0, 4);
+      fake.setResult({
+        channels: [makeCapture(cycleFrames * 2), makeCapture(cycleFrames * 2)],
+        sampleRate: 48_000,
+        startPpq: 0,
+      });
+      ingestMock.mockImplementation(async (channels, sampleRate, name) => {
+        if (ingestMock.mock.calls.length === 4) throw new Error('final take ingest failed');
+        return {
+          id: `${name}-${ingestMock.mock.calls.length}`,
+          name,
+          sampleRate,
+          numChannels: channels.length,
+          numFrames: channels[0]?.length ?? 0,
+        };
+      });
+      clearHistory();
+      const beforeProject = getProject().toJson();
+      const beforeClips = JSON.parse(JSON.stringify(store.clips));
+
+      await recording.record();
+      await expect(recording.stopRecord()).resolves.toBeNull();
+
+      expect(recording.error.value).toContain('final take ingest failed');
+      expect(store.clips).toEqual(beforeClips);
+      expect(getProject().toJson()).toBe(beforeProject);
+      expect(undo()).toBe(false);
+    });
+
+    it('undoes and redoes every routed cycle clip as one history entry', async () => {
+      const { recording, fake, transport } = setup();
+      const firstTrackId = addAudioTrack({ name: 'Mic 1' });
+      const secondTrackId = addAudioTrack({ name: 'Mic 2' });
+      recording.setTrackArmed(firstTrackId, true);
+      recording.setTrackArmed(secondTrackId, true);
+      setLoop(transport, 0, 4);
+      fake.setResult({
+        channels: [
+          makeCapture(cycleFrames * 2),
+          makeCapture(cycleFrames * 2).map((value) => value + 10),
+        ],
+        sampleRate: 48_000,
+        startPpq: 0,
+      });
+      ingestMock.mockImplementation(async (channels, sampleRate, name) => ({
+        id: `${name}-${channels[0][0]}`,
+        name,
+        sampleRate,
+        numChannels: channels.length,
+        numFrames: channels[0]?.length ?? 0,
+      }));
+      clearHistory();
+
+      await recording.record();
+      await recording.stopRecord();
+      const committed = JSON.parse(
+        JSON.stringify(store.clips.filter((clip) => clip.kind === 'audio')),
+      );
+      expect(committed).toHaveLength(2);
+
+      expect(undo()).toBe(true);
+      expect(store.clips.some((clip) => clip.kind === 'audio')).toBe(false);
+      expect(undo()).toBe(false);
+      expect(redo()).toBe(true);
+      expect(store.clips.filter((clip) => clip.kind === 'audio')).toEqual(committed);
+      expect(redo()).toBe(false);
     });
 
     it('uses track record-input channel overrides for loop takes', async () => {

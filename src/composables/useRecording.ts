@@ -27,9 +27,11 @@ import {
   type OperationIdentity,
   type OperationToken,
 } from '@/lib/operation-generation';
+import { leaseAudioAssets } from '@/persistence/asset-leases';
+import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
 import type { AudioAssetMeta } from '@/persistence/assets';
-import { ingestAudioBuffer } from '@/project/audio-import';
-import { addAudioClip } from '@/project/commands';
+import { collectReferencedAudioAssetIds } from '@/project/asset-references';
+import { type AddRecordedAudioClipInput, addRecordedAudioClips } from '@/project/commands';
 import { loopRecordingSplits, loopRecordingTakeSlices } from '@/project/loop-recording';
 import { useProjectStore } from '@/project/store';
 import {
@@ -75,8 +77,8 @@ export interface UseRecordingOptions {
     },
   ) => Recorder;
   /**
-   * Take ingestion into the asset store; defaults to ingestAudioBuffer with
-   * tempo/key analysis disabled (recordings should land instantly).
+   * Test/alternate take ingestion. Production recording uses a lease-backed
+   * asset transaction; an injected ingester owns deletion of assets it creates.
    */
   ingest?: (channels: Float32Array[], sampleRate: number, name: string) => Promise<AudioAssetMeta>;
 }
@@ -180,10 +182,7 @@ export function useRecording(
 ): UseRecordingReturn {
   const store = useProjectStore();
   const recorderFactory = options.createRecorder ?? createRecorder;
-  const ingest =
-    options.ingest ??
-    ((channels: Float32Array[], sampleRate: number, name: string) =>
-      ingestAudioBuffer(channels, sampleRate, name, { analysis: null }));
+  const injectedIngest = options.ingest;
 
   const armedTrackId = ref<number | null>(null);
   const armedTrackIds = ref<number[]>([]);
@@ -750,9 +749,42 @@ export function useRecording(
     // take on a tempo ramp lands the right length and cycle splits hit the loop
     // boundaries instead of drifting.
     const tempoMap = normalizeTempoMap(store.tempoSegments, recordingTempoBpm);
+    const assets = injectedIngest ? null : createAudioAssetTransaction();
+    const externalLease = injectedIngest ? leaseAudioAssets([]) : null;
+    const externallyHeldIds = new Set<string>();
+    let assetLifetimeFinished = false;
+    const stageAsset = async (
+      channels: Float32Array[],
+      sampleRate: number,
+      name: string,
+    ): Promise<AudioAssetMeta> => {
+      if (assets) return assets.save({ name, sampleRate }, channels);
+      const meta = await injectedIngest!(channels, sampleRate, name);
+      externallyHeldIds.add(meta.id);
+      externalLease?.update(externallyHeldIds);
+      return meta;
+    };
+    const commitAssets = (): void => {
+      if (assetLifetimeFinished) return;
+      assetLifetimeFinished = true;
+      assets?.commit();
+      externalLease?.release();
+    };
+    const rollbackAssets = async (): Promise<void> => {
+      if (assetLifetimeFinished) return;
+      assetLifetimeFinished = true;
+      externalLease?.release();
+      await assets?.rollback((assetId) =>
+        collectReferencedAudioAssetIds(store.clips, store.tracks).has(assetId),
+      );
+    };
+    const cancelIngest = async (): Promise<number | null> => {
+      await rollbackAssets();
+      return complete(null);
+    };
     try {
-      recordingCounter += 1;
-      const name = `Recording ${recordingCounter}`;
+      const nextRecordingCounter = recordingCounter + 1;
+      const name = `Recording ${nextRecordingCounter}`;
       // Cycle recording: split the linear capture at the loop boundaries and
       // register every completed pass as one take of a single clip.
       if (loop) {
@@ -767,19 +799,19 @@ export function useRecording(
             recordSource,
             result.channels.length,
           );
-          let firstClipId: number | null = null;
+          const clipInputs: AddRecordedAudioClipInput[] = [];
           for (const route of routes) {
             const takes: { assetId: string; name: string }[] = [];
             const sourceChannels =
               route.channelIndex === null ? result.channels : [result.channels[route.channelIndex]];
             for (const takeSlice of loopRecordingTakeSlices(sourceChannels, splits)) {
               const takeName = `${name} — Take ${takeSlice.index + 1}`;
-              const takeMeta = await ingest(takeSlice.channels, result.sampleRate, takeName);
-              if (!current()) return complete(null);
+              const takeMeta = await stageAsset(takeSlice.channels, result.sampleRate, takeName);
+              if (!current()) return cancelIngest();
               takes.push({ assetId: takeMeta.id, name: takeName });
             }
             if (takes.length < 2) continue;
-            const clipId = await addAudioClip({
+            clipInputs.push({
               trackId: route.trackId,
               assetId: takes[takes.length - 1].assetId,
               startPpq: loop.startPpq,
@@ -787,44 +819,56 @@ export function useRecording(
               name,
               takes,
             });
-            if (!current()) return complete(null);
-            firstClipId ??= clipId;
           }
+          if (!current()) return cancelIngest();
+          const clipIds = addRecordedAudioClips(clipInputs);
+          commitAssets();
+          recordingCounter = nextRecordingCounter;
           if (overflowed) error.value = RECORDING_OVERFLOW_MESSAGE;
-          return complete(firstClipId);
+          return complete(clipIds[0] ?? null);
         }
       }
       const recordedSeconds = result.channels[0].length / result.sampleRate;
       const startSeconds = ppqToSecondsMap(tempoMap, result.startPpq);
       const lengthPpq = secondsToPpqMap(tempoMap, startSeconds + recordedSeconds) - result.startPpq;
-      let firstClipId: number | null = null;
       const routes = recordingChannelRoutes(targetTrackIds, recordSource, result.channels.length);
       const sharedMeta = routes.some((route) => route.channelIndex !== null)
         ? null
-        : await ingest(result.channels, result.sampleRate, name);
-      if (!current()) return complete(null);
+        : await stageAsset(result.channels, result.sampleRate, name);
+      if (!current()) return cancelIngest();
+      const clipInputs: AddRecordedAudioClipInput[] = [];
       for (const route of routes) {
         const meta =
           sharedMeta ??
-          (await ingest(
+          (await stageAsset(
             [result.channels[route.channelIndex as number]],
             result.sampleRate,
             `${name} — Ch ${(route.channelIndex as number) + 1}`,
           ));
-        if (!current()) return complete(null);
-        const clipId = await addAudioClip({
+        if (!current()) return cancelIngest();
+        clipInputs.push({
           trackId: route.trackId,
           assetId: meta.id,
           startPpq: result.startPpq,
           lengthPpq,
           name,
         });
-        if (!current()) return complete(null);
-        firstClipId ??= clipId;
       }
+      if (!current()) return cancelIngest();
+      const clipIds = addRecordedAudioClips(clipInputs);
+      commitAssets();
+      recordingCounter = nextRecordingCounter;
       if (overflowed) error.value = RECORDING_OVERFLOW_MESSAGE;
-      return complete(firstClipId);
+      return complete(clipIds[0] ?? null);
     } catch (err) {
+      try {
+        await rollbackAssets();
+      } catch (rollbackError) {
+        if (current()) {
+          error.value = `Failed to store the recording: ${messageOf(err)}; cleanup also failed: ${messageOf(rollbackError)}`;
+        }
+        return complete(null);
+      }
       if (current()) error.value = `Failed to store the recording: ${messageOf(err)}`;
       return complete(null);
     }
