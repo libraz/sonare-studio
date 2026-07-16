@@ -39,6 +39,7 @@ import {
   type TrackPlan,
 } from './generate-track';
 import { execute } from './history';
+import { requireEditableClip } from './utils';
 
 /** Beats per bar the motif generator assumes (4/4). */
 const BEATS_PER_BAR = 4;
@@ -217,6 +218,7 @@ export function generateMotifCommand(params: GenerateMotifParams = {}): number {
   const project = getProject();
 
   if (clip !== null) {
+    requireEditableClip(store, clip.id);
     const mode = params.mode ?? 'append';
     const merged = buildMotifClipMerge(store, clip, params, mode);
     if (merged === null) return 0;

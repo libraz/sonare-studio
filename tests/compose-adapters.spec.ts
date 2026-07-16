@@ -119,6 +119,25 @@ describe('chord-io adapter', () => {
     expect(chordPitchClasses(chord)).toEqual([0, 4, 7, 11]);
   });
 
+  it.each([
+    ['m(add9)', chordSymbol({ quality: 11 }), 'min', [0, 2, 3, 7]],
+    ['min9', chordSymbol({ quality: 6, extensions: [14] }), 'min9', [0, 2, 3, 7, 10]],
+    ['7b9', chordSymbol({ quality: 4, extensions: [13] }), '7b9', [0, 1, 4, 7, 10]],
+    ['13', chordSymbol({ quality: 4, extensions: [21] }), '13', [0, 2, 4, 7, 9, 10]],
+  ])('preserves %s in compose conversion', (_label, symbol, quality, pitchClasses) => {
+    const chord = editorChordToChord(symbol);
+    expect(chord.quality).toBe(quality);
+    expect(chordPitchClasses(chord)).toEqual(pitchClasses);
+  });
+
+  it.each([
+    [chordSymbol({ quality: 6, extensions: [2] }), 'min9'],
+    [chordSymbol({ quality: 4, extensions: [1] }), '7b9'],
+    [chordSymbol({ quality: 4, extensions: [9] }), '13'],
+  ])('promotes known extensions in ChordSpan conversion', (symbol, quality) => {
+    expect(editorChordToChordSpan(symbol, 0).quality).toBe(quality);
+  });
+
   it('preserves a slash bass when it differs from the root', () => {
     const span = editorChordToChordSpan(chordSymbol({ rootPc: 0, quality: 0, bassPc: 7 }), 0);
     expect(span.bassPc).toBe(7);
@@ -195,6 +214,16 @@ describe('chord-at-tick adapter', () => {
     expect(timeline.at(0)?.rootPc).toBe(0);
     expect(timeline.at(5)?.rootPc).toBe(7);
     expect(timeline.at(20)).toBeNull();
+  });
+
+  it('retains custom extension intervals and explicit gaps in the chord timeline', () => {
+    const timeline = buildChordTimeline([
+      chordSymbol({ startPpq: 0, endPpq: 2, quality: 1, extensions: [2] }),
+      chordSymbol({ startPpq: 3, endPpq: 4, rootPc: 7, quality: 4, extensions: [1] }),
+    ]);
+    expect(chordPitchClasses(timeline.at(1)!)).toEqual([0, 2, 3, 7]);
+    expect(timeline.at(2.5)).toBeNull();
+    expect(timeline.at(3)?.quality).toBe('7b9');
   });
 
   it('finds the editor symbol covering a position (half-open regions)', () => {

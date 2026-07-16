@@ -2,7 +2,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { setProjectChords } from '@/project/command/chords';
 import { generateArrangementCommand } from '@/project/command/generate-arrangement';
-import { generateBackingCommand } from '@/project/command/generate-backing';
+import { buildBackingPlan, generateBackingCommand } from '@/project/command/generate-backing';
 import { clearHistory, redo, undo } from '@/project/command/history';
 import { useProjectStore } from '@/project/store';
 import { MAJOR_MODE_MASK } from '@/project/types';
@@ -45,6 +45,31 @@ describe('generateBackingCommand', () => {
     setProjectChords(TWO_CHORDS);
     const count = generateBackingCommand({ style: 'shell' });
     expect(count).toBeGreaterThan(0);
+  });
+
+  it('voices m(add9), min9, 7b9, and 13 extension tones', () => {
+    setProjectChords([
+      { startPpq: 0, endPpq: 4, rootPc: 0, quality: 11 },
+      { startPpq: 4, endPpq: 8, rootPc: 0, quality: 6, extensions: [2] },
+      { startPpq: 8, endPpq: 12, rootPc: 0, quality: 4, extensions: [1] },
+      { startPpq: 12, endPpq: 16, rootPc: 0, quality: 4, extensions: [9] },
+    ]);
+
+    const plan = buildBackingPlan(store, { style: 'close', octave: 4 });
+    expect(plan).not.toBeNull();
+    for (const [startPpq, extensionPc] of [
+      [0, 2],
+      [4, 2],
+      [8, 1],
+      [12, 9],
+    ]) {
+      const pitchClasses = new Set(
+        plan?.notes
+          .filter((note) => note.startPpq === startPpq)
+          .map((note) => ((note.pitch % 12) + 12) % 12),
+      );
+      expect(pitchClasses.has(extensionPc)).toBe(true);
+    }
   });
 
   it('is a no-op without a chord track', () => {

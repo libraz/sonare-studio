@@ -1,3 +1,4 @@
+import { OperationGeneration } from '@/lib/operation-generation';
 import { ensureWasm } from '@/lib/wasm';
 import { loadAsset } from '@/persistence/assets';
 import {
@@ -5,10 +6,45 @@ import {
   type AudioMelodyDeps,
   analyzeAudioClipMelody,
 } from '../audio-melody';
+import {
+  assertProjectOperationCurrent,
+  beginProjectOperation,
+  StaleProjectOperationError,
+} from '../operation';
 import { getProject, notesToProjectEvents, useProjectStore } from '../store';
 import { clipKind, TRACK_COLOR_PALETTE } from '../types';
-import { execute } from './history';
+import { executeAtomic } from './history';
 import { requireClip } from './utils';
+
+const melodyAnalysisOperations = new OperationGeneration();
+
+function melodySourceRevision(
+  store: ReturnType<typeof useProjectStore>,
+  clipId: number,
+): string | null {
+  const clip = store.clips.find((entry) => entry.id === clipId);
+  if (!clip || clipKind(clip) !== 'audio') return null;
+  return JSON.stringify({
+    clip: {
+      id: clip.id,
+      trackId: clip.trackId,
+      name: clip.name,
+      assetId: clip.assetId,
+      startPpq: clip.startPpq,
+      lengthPpq: clip.lengthPpq,
+      sourceOffsetPpq: clip.sourceOffsetPpq,
+      loopEnabled: clip.loopEnabled,
+      loopLengthPpq: clip.loopLengthPpq,
+      takes: clip.takes,
+      compSegments: clip.compSegments,
+      warp: clip.warp,
+    },
+    tempoBpm: store.tempoBpm,
+    tempoSegments: store.tempoSegments,
+    snapEnabled: store.snapEnabled,
+    snapDivision: store.snapDivision,
+  });
+}
 
 /**
  * Extracts a monophonic melody from an audio clip and lays it down as a new
@@ -33,80 +69,97 @@ export async function extractMelodyFromAudioClip(clipId: number): Promise<number
   if (clipKind(clip) !== 'audio') {
     throw new RangeError(`Clip ${clipId} is not an audio clip`);
   }
-  const wasm = (await ensureWasm()) as unknown as {
-    analyzeMelody?: AudioMelodyAnalyzer;
-    detectKey?: AudioMelodyDeps['detectKey'];
-    scaleQuantizeMidi?: AudioMelodyDeps['scaleQuantizeMidi'];
-  };
-  if (typeof wasm.analyzeMelody !== 'function') return -1;
-  const rhythmQuantizePpq = store.snapEnabled ? 4 / store.snapDivision : undefined;
-  const notes = await analyzeAudioClipMelody(
-    clip,
-    store.tempoBpm,
-    {
-      loadAudioAsset: loadAsset,
-      analyzeMelody: wasm.analyzeMelody,
-      detectKey: wasm.detectKey,
-      scaleQuantizeMidi: wasm.scaleQuantizeMidi,
-    },
-    { rhythmQuantizePpq },
-    store.tempoSegments,
+  const targetId = `melody:${clipId}`;
+  const operation = beginProjectOperation(
+    melodyAnalysisOperations,
+    store,
+    targetId,
+    melodySourceRevision(store, clipId),
   );
-  if (notes.length === 0) return -1;
-  const current = store.clips.find((entry) => entry.id === clipId);
-  if (
-    !current ||
-    clipKind(current) !== 'audio' ||
-    current.assetId !== clip.assetId ||
-    current.startPpq !== clip.startPpq ||
-    current.lengthPpq !== clip.lengthPpq ||
-    current.sourceOffsetPpq !== clip.sourceOffsetPpq
-  ) {
-    return -1;
+  const assertCurrent = (): void =>
+    assertProjectOperationCurrent(
+      melodyAnalysisOperations,
+      operation,
+      store,
+      targetId,
+      melodySourceRevision(store, clipId),
+    );
+  try {
+    const wasm = (await ensureWasm()) as unknown as {
+      analyzeMelody?: AudioMelodyAnalyzer;
+      detectKey?: AudioMelodyDeps['detectKey'];
+      scaleQuantizeMidi?: AudioMelodyDeps['scaleQuantizeMidi'];
+    };
+    assertCurrent();
+    if (typeof wasm.analyzeMelody !== 'function') return -1;
+    const rhythmQuantizePpq = store.snapEnabled ? 4 / store.snapDivision : undefined;
+    const notes = await analyzeAudioClipMelody(
+      clip,
+      store.tempoBpm,
+      {
+        loadAudioAsset: loadAsset,
+        analyzeMelody: wasm.analyzeMelody,
+        detectKey: wasm.detectKey,
+        scaleQuantizeMidi: wasm.scaleQuantizeMidi,
+      },
+      { rhythmQuantizePpq },
+      store.tempoSegments,
+    );
+    assertCurrent();
+    if (notes.length === 0) return -1;
+
+    const project = getProject();
+    const trackName = `${clip.name} melody`;
+    const color = TRACK_COLOR_PALETTE[store.tracks.length % TRACK_COLOR_PALETTE.length];
+    const startPpq = clip.startPpq;
+    const lengthPpq = clip.lengthPpq;
+    const events = notesToProjectEvents(notes.map((note) => ({ ...note, channel: 0 })));
+
+    // addTrack (1) + addClip/midi (2) + setMidiEvents (1) = 4 Project history edits.
+    return executeAtomic((edit) => {
+      const trackId = edit(1, () => project.addTrack({ kind: 'midi', name: trackName }));
+      store.tracks = [
+        ...store.tracks,
+        {
+          id: trackId,
+          name: trackName,
+          color,
+          kind: 'midi',
+          mute: false,
+          solo: false,
+          volume: 1,
+          pan: 0,
+          order: store.tracks.length,
+        },
+      ];
+      const newClipId = edit(2, () =>
+        project.addClip({ trackId, isMidi: true, startPpq, lengthPpq }),
+      );
+      store.clips = [
+        ...store.clips,
+        {
+          id: newClipId,
+          trackId,
+          name: trackName,
+          startPpq,
+          lengthPpq,
+          sourceOffsetPpq: 0,
+          gain: 1,
+          loopEnabled: false,
+          loopLengthPpq: 0,
+          notes: [],
+        },
+      ];
+      edit(1, () => project.setMidiEvents(newClipId, events));
+      store.refresh();
+      return newClipId;
+    });
+  } catch (error) {
+    if (error instanceof StaleProjectOperationError) return -1;
+    throw error;
+  } finally {
+    if (melodyAnalysisOperations.isCurrent(operation.token)) {
+      melodyAnalysisOperations.invalidate();
+    }
   }
-
-  const project = getProject();
-  const trackName = `${clip.name} melody`;
-  const color = TRACK_COLOR_PALETTE[store.tracks.length % TRACK_COLOR_PALETTE.length];
-  const startPpq = clip.startPpq;
-  const lengthPpq = clip.lengthPpq;
-  const events = notesToProjectEvents(notes.map((note) => ({ ...note, channel: 0 })));
-
-  // addTrack (1) + addClip/midi (2) + setMidiEvents (1) = 4 Project history edits.
-  return execute(4, () => {
-    const trackId = project.addTrack({ kind: 'midi', name: trackName });
-    store.tracks = [
-      ...store.tracks,
-      {
-        id: trackId,
-        name: trackName,
-        color,
-        kind: 'midi',
-        mute: false,
-        solo: false,
-        volume: 1,
-        pan: 0,
-        order: store.tracks.length,
-      },
-    ];
-    const newClipId = project.addClip({ trackId, isMidi: true, startPpq, lengthPpq });
-    store.clips = [
-      ...store.clips,
-      {
-        id: newClipId,
-        trackId,
-        name: trackName,
-        startPpq,
-        lengthPpq,
-        sourceOffsetPpq: 0,
-        gain: 1,
-        loopEnabled: false,
-        loopLengthPpq: 0,
-        notes: [],
-      },
-    ];
-    project.setMidiEvents(newClipId, events);
-    store.refresh();
-    return newClipId;
-  });
 }

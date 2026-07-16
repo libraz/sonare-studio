@@ -16,12 +16,11 @@ import {
   type ChordTimeline,
   type ChordTimelineOptions,
   type ChordTimelineResult,
-  chordTimelineFromChords,
   chordTimelineFromNotes,
   type NoteEvent,
 } from '@libraz/libcantus';
 import type { EditorChordSymbol } from '@/project/chords';
-import { editorChordToChordSpan } from './chord-io';
+import { editorChordToChord } from './chord-io';
 
 /**
  * Builds a queryable chord timeline from the editor chord stream. Symbols are
@@ -31,11 +30,20 @@ import { editorChordToChordSpan } from './chord-io';
  * @returns A chord timeline, empty when there are no symbols.
  */
 export function buildChordTimeline(symbols: ReadonlyArray<EditorChordSymbol>): ChordTimeline {
-  if (symbols.length === 0) return chordTimelineFromChords([], 0);
   const sorted = [...symbols].sort((a, b) => a.startPpq - b.startPpq);
-  const spans = sorted.map((symbol) => editorChordToChordSpan(symbol, symbol.startPpq));
-  const totalBeats = sorted.reduce((max, symbol) => Math.max(max, symbol.endPpq), 0);
-  return chordTimelineFromChords(spans, totalBeats);
+  const segments = sorted
+    .filter((symbol) => symbol.endPpq > symbol.startPpq)
+    .map((symbol) => ({
+      startBeat: symbol.startPpq,
+      endBeat: symbol.endPpq,
+      chord: editorChordToChord(symbol),
+    }));
+  return {
+    segments,
+    at: (beat) =>
+      segments.find((segment) => beat >= segment.startBeat && beat < segment.endBeat)?.chord ??
+      null,
+  };
 }
 
 /**

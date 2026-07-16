@@ -16,7 +16,7 @@
  * Pure module; no cross-file state.
  */
 
-import type { EditorChordSymbol } from '@/project/chords';
+import { chordExtensionSignature, type EditorChordSymbol } from '@/project/chords';
 
 /** Smallest and largest repeating-unit length considered a "pattern". */
 const MIN_PERIOD = 2;
@@ -41,6 +41,7 @@ function sameSlot(a: EditorChordSymbol, b: EditorChordSymbol): boolean {
   return (
     a.rootPc === b.rootPc &&
     a.quality === b.quality &&
+    chordExtensionSignature(a) === chordExtensionSignature(b) &&
     (a.bassPc ?? -1) === (b.bassPc ?? -1) &&
     a.endPpq - a.startPpq === b.endPpq - b.startPpq
   );

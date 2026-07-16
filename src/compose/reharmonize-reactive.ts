@@ -30,7 +30,7 @@ import {
   NoteSafety,
   type SafetyProfile,
 } from '@libraz/libcantus';
-import type { EditorChordSymbol } from '@/project/chords';
+import { chordExtensionSignature, type EditorChordSymbol } from '@/project/chords';
 import type { ReharmonizeStrength } from '@/project/command/generate-harmonize';
 import type { ScaleHighlightConfig, TimeSignatureSegment } from '@/project/types';
 import { chordSpanToEditorChord, editorChordToChord } from './chord-io';
@@ -87,7 +87,12 @@ const FIT_PROFILE: SafetyProfile = 'pop';
 
 /** Whether two chord symbols denote the same chord (region ignored). */
 function sameChord(a: EditorChordSymbol, b: EditorChordSymbol): boolean {
-  return a.rootPc === b.rootPc && a.quality === b.quality && (a.bassPc ?? -1) === (b.bassPc ?? -1);
+  return (
+    a.rootPc === b.rootPc &&
+    a.quality === b.quality &&
+    chordExtensionSignature(a) === chordExtensionSignature(b) &&
+    (a.bassPc ?? -1) === (b.bassPc ?? -1)
+  );
 }
 
 /** Whether a chord region overlaps any locked span. */

@@ -15,14 +15,14 @@
 
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { mixdownToMono } from './audio-import';
-import type { EditorChordSymbol } from './chords';
+import { chordExtensionSignature, type EditorChordSymbol } from './chords';
 import { sliceAudioClipWindow } from './scheduling';
 import { normalizeTempoMap, ppqToSeconds, secondsToPpq } from './tempo-map';
 import type { EditorClip, TempoSegment } from './types';
 
 /** Identity of a chord for adjacency comparison (root/quality/bass). */
 function chordIdentity(symbol: EditorChordSymbol): string {
-  return `${symbol.rootPc}:${symbol.quality}:${symbol.bassPc ?? -1}`;
+  return `${symbol.rootPc}:${symbol.quality}:${chordExtensionSignature(symbol)}:${symbol.bassPc ?? -1}`;
 }
 
 /** Onset tolerance (in PPQ) for treating two regions as contiguous. */

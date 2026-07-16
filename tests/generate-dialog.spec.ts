@@ -5,6 +5,7 @@ import { nextTick } from 'vue';
 import ChordGenerateDialog from '@/components/compose/ChordGenerateDialog.vue';
 import TrackGenerateDialog from '@/components/compose/TrackGenerateDialog.vue';
 import { setProjectChords } from '@/project/command/chords';
+import { setTrackFrozen } from '@/project/command/clips-state';
 import { clearHistory, undo } from '@/project/command/history';
 import { useProjectStore } from '@/project/store';
 import { MAJOR_MODE_MASK } from '@/project/types';
@@ -201,5 +202,24 @@ describe('TrackGenerateDialog', () => {
     // Replacement nets zero tracks and keeps a single Drums track.
     expect(store.tracks.length).toBe(trackCount);
     expect(store.tracks.filter((track) => track.name === 'Drums')).toHaveLength(1);
+  });
+
+  it('does not offer a frozen track as a generation target', async () => {
+    setProjectChords(FOUR_CHORDS);
+    const { generateTracksBatchCommand } = await import('@/project/command/generate-batch');
+    generateTracksBatchCommand([{ part: 'drums', params: { bars: 4 }, target: { kind: 'new' } }]);
+    const drums = store.tracks.find((track) => track.name === 'Drums');
+    if (!drums) throw new Error('missing generated drums fixture');
+    setTrackFrozen(drums.id, { assetId: 'frozen-drums' });
+
+    await open({ part: 'drums', target: { kind: 'replaceTrack', trackId: drums.id } });
+    const drumsRow = [...document.body.querySelectorAll<HTMLElement>('.part-row')][1];
+    const target = drumsRow.querySelector<HTMLSelectElement>('.part-target');
+
+    expect(target?.value).toBe('new');
+    expect(
+      [...(target?.options ?? [])].some((option) => option.value === `replace:${drums.id}`),
+    ).toBe(false);
+    expect(document.body.querySelector('.dialog-error')?.textContent).toContain('Unfreeze');
   });
 });

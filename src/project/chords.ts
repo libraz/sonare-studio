@@ -57,6 +57,50 @@ export const CHORD_QUALITY_CHOICES: ReadonlyArray<ChordQualityChoice> = [
 
 const SUFFIX_BY_QUALITY = new Map(CHORD_QUALITY_CHOICES.map((c) => [c.quality, c.suffix]));
 
+/** Intrinsic pitch classes for each editor quality, used to discard redundant extensions. */
+const TONE_PCS_BY_QUALITY: Readonly<Record<number, ReadonlyArray<number>>> = {
+  0: [0, 4, 7],
+  1: [0, 3, 7],
+  2: [0, 3, 6],
+  3: [0, 4, 8],
+  4: [0, 4, 7, 10],
+  5: [0, 4, 7, 11],
+  6: [0, 3, 7, 10],
+  7: [0, 2, 7],
+  8: [0, 5, 7],
+  10: [0, 2, 4, 7],
+  11: [0, 2, 3, 7],
+  12: [0, 3, 6, 9],
+  13: [0, 3, 6, 10],
+  14: [0, 2, 4, 7, 11],
+  15: [0, 2, 4, 7, 10],
+};
+
+/** Conventional suffixes for base-quality plus extension combinations. */
+const SUFFIX_BY_QUALITY_EXTENSIONS: Readonly<Record<string, string>> = {
+  '0:5': 'add11',
+  '0:6': 'maj♭5',
+  '0:9': '6',
+  '0:2,9': '6/9',
+  '1:2': 'm(add9)',
+  '1:9': 'm6',
+  '1:11': 'm(maj7)',
+  '3:10': 'aug7',
+  '3:11': 'aug(maj7)',
+  '4:1': '7b9',
+  '4:3': '7#9',
+  '4:5': '11',
+  '4:6': '7#11',
+  '4:8': '7b13',
+  '4:9': '13',
+  '6:2': 'm9',
+};
+
+/** Reduces an integer semitone offset to pitch-class space. */
+function extensionPitchClass(value: number): number {
+  return ((value % 12) + 12) % 12;
+}
+
 /** A chord symbol on the project chord track (absolute PPQ region). */
 export interface EditorChordSymbol {
   /** Inclusive start of the chord region in absolute PPQ. */
@@ -73,6 +117,57 @@ export interface EditorChordSymbol {
   extensions?: number[];
   /** Optional roman-numeral label. */
   romanNumeral?: string;
+}
+
+/**
+ * Returns sorted, deduplicated extension pitch classes that are not already
+ * intrinsic to the selected editor quality.
+ */
+export function normalizedChordExtensions(symbol: EditorChordSymbol): number[] {
+  const intrinsic = new Set(TONE_PCS_BY_QUALITY[symbol.quality] ?? [0]);
+  const extensions = new Set<number>();
+  for (const value of symbol.extensions ?? []) {
+    if (!Number.isInteger(value)) continue;
+    const pc = extensionPitchClass(value);
+    if (pc !== 0 && !intrinsic.has(pc)) extensions.add(pc);
+  }
+  return [...extensions].sort((a, b) => a - b);
+}
+
+/** Stable semantic identity for a symbol's non-intrinsic extensions. */
+export function chordExtensionSignature(symbol: EditorChordSymbol): string {
+  return normalizedChordExtensions(symbol).join(',');
+}
+
+/** Generic readable label for an extension without a named quality mapping. */
+function extensionLabel(pc: number): string {
+  return (
+    (
+      {
+        1: 'b9',
+        2: 'add9',
+        3: '#9',
+        4: 'add3',
+        5: 'add11',
+        6: '#11',
+        7: 'add5',
+        8: 'b13',
+        9: 'add13',
+        10: 'addb7',
+        11: 'addmaj7',
+      } as Readonly<Record<number, string>>
+    )[pc] ?? `add${pc}`
+  );
+}
+
+/** Resolves the complete visible suffix, including normalized extensions. */
+function chordSuffix(symbol: EditorChordSymbol): string {
+  const extensions = normalizedChordExtensions(symbol);
+  if (extensions.length === 0) return SUFFIX_BY_QUALITY.get(symbol.quality) ?? '';
+  const known = SUFFIX_BY_QUALITY_EXTENSIONS[`${symbol.quality}:${extensions.join(',')}`];
+  if (known !== undefined) return known;
+  const base = SUFFIX_BY_QUALITY.get(symbol.quality) ?? '';
+  return `${base}(${extensions.map(extensionLabel).join(',')})`;
 }
 
 /** Chord-symbol payload accepted by `Project.annotateChords`. */
@@ -107,7 +202,7 @@ function clampPitchClass(value: number): number | null {
 /** Formats a chord symbol for display, e.g. "Cmaj7", "Am7/G". */
 export function formatChordName(symbol: EditorChordSymbol): string {
   const root = CHORD_PITCH_CLASS_NAMES[((symbol.rootPc % 12) + 12) % 12] ?? '?';
-  const suffix = SUFFIX_BY_QUALITY.get(symbol.quality) ?? '';
+  const suffix = chordSuffix(symbol);
   const name = `${root}${suffix}`;
   if (symbol.bassPc === undefined || symbol.bassPc === symbol.rootPc) return name;
   const bass = CHORD_PITCH_CLASS_NAMES[((symbol.bassPc % 12) + 12) % 12] ?? '?';
@@ -139,10 +234,8 @@ export function sanitizeChordSymbols(
     };
     const bassPc = symbol.bassPc === undefined ? null : clampPitchClass(symbol.bassPc);
     if (bassPc !== null && bassPc !== rootPc) next.bassPc = bassPc;
-    if (Array.isArray(symbol.extensions) && symbol.extensions.length > 0) {
-      const extensions = symbol.extensions.filter((e) => Number.isInteger(e));
-      if (extensions.length > 0) next.extensions = extensions;
-    }
+    const extensions = normalizedChordExtensions(symbol);
+    if (extensions.length > 0) next.extensions = extensions;
     if (typeof symbol.romanNumeral === 'string' && symbol.romanNumeral.length > 0) {
       next.romanNumeral = symbol.romanNumeral;
     }
@@ -166,9 +259,8 @@ export function toProjectChordSymbol(symbol: EditorChordSymbol): ProjectChordSym
     slashBassPc:
       symbol.bassPc === undefined || symbol.bassPc === symbol.rootPc ? PC_NONE : symbol.bassPc,
   };
-  if (symbol.extensions !== undefined && symbol.extensions.length > 0) {
-    input.extensions = [...symbol.extensions];
-  }
+  const extensions = normalizedChordExtensions(symbol);
+  if (extensions.length > 0) input.extensions = extensions;
   if (symbol.romanNumeral !== undefined && symbol.romanNumeral.length > 0) {
     input.romanNumeral = symbol.romanNumeral;
   }

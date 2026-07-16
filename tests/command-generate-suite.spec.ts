@@ -2,7 +2,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { setProjectChords } from '@/project/command/chords';
 import { moveClip, trimClip } from '@/project/command/clips-editing';
-import { setClipLoop } from '@/project/command/clips-state';
+import { setClipLoop, setTrackFrozen } from '@/project/command/clips-state';
 import { generateBassLineCommand } from '@/project/command/generate-bass';
 import { generateCounterMelodyCommand } from '@/project/command/generate-counter-melody';
 import { generateDrumsCommand } from '@/project/command/generate-drums';
@@ -10,7 +10,7 @@ import { harmonizeFromMelodyCommand } from '@/project/command/generate-harmonize
 import { generateMotifCommand } from '@/project/command/generate-motif';
 import { clearHistory, redo, undo } from '@/project/command/history';
 import { addNote } from '@/project/command/notes';
-import { useProjectStore } from '@/project/store';
+import { getProject, useProjectStore } from '@/project/store';
 import { MAJOR_MODE_MASK } from '@/project/types';
 
 vi.mock('@/lib/wasm', async () => {
@@ -37,6 +37,22 @@ describe('generation command suite', () => {
     clearHistory();
     await store.init();
     store.scaleHighlight = { enabled: true, rootPc: 0, modeMask: MAJOR_MODE_MASK };
+  });
+
+  it('rejects motif and harmonize writes on a frozen active track without partial changes', () => {
+    addCMajorMelody();
+    setProjectChords([{ startPpq: 0, endPpq: 8, rootPc: 0, quality: 0 }]);
+    setTrackFrozen(store.activeTrackId, { assetId: 'frozen-melody' });
+    clearHistory();
+    const nativeBefore = getProject().toJson();
+    const mirrorBefore = JSON.stringify({ clips: store.clips, chords: store.chords });
+
+    expect(() => generateMotifCommand({ bars: 1, mode: 'replace', develop: false })).toThrow(
+      /unfreeze/i,
+    );
+    expect(() => harmonizeFromMelodyCommand({ transpose: true, seed: 0 })).toThrow(/unfreeze/i);
+    expect(getProject().toJson()).toBe(nativeBefore);
+    expect(JSON.stringify({ clips: store.clips, chords: store.chords })).toBe(mirrorBefore);
   });
 
   describe('harmonizeFromMelodyCommand', () => {

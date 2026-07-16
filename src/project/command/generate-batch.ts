@@ -22,6 +22,7 @@ import { buildDrumsPlan, type GenerateDrumsParams } from './generate-drums';
 import { buildMotifClipMerge, buildMotifPlan, type GenerateMotifParams } from './generate-motif';
 import { addGeneratedTrack, EDITS_PER_TRACK, type TrackPlan } from './generate-track';
 import { execute } from './history';
+import { requireEditableClip, requireEditableTrack } from './utils';
 
 /** The five instrumental parts the batch command can generate. */
 export type TrackPart = 'motif' | 'drums' | 'bass' | 'counter' | 'backing';
@@ -100,8 +101,8 @@ function replaceTrack(
   trackId: number,
   plan: TrackPlan,
 ): void {
-  const track = store.tracks.find((entry) => entry.id === trackId);
-  if (track?.kind !== 'midi') {
+  const track = requireEditableTrack(store, trackId);
+  if (track.kind !== 'midi') {
     throw new RangeError(`Generated content can only replace an existing MIDI track: ${trackId}`);
   }
   const oldClips = store.clips.filter((clip) => clip.trackId === trackId);
@@ -136,6 +137,7 @@ export function generateTracksBatchCommand(specs: ReadonlyArray<BatchPartSpec>):
       if (spec.part !== 'motif') continue;
       const clip = store.activeClip;
       if (clip === null) continue;
+      requireEditableClip(store, clip.id);
       const mode = spec.target.mode;
       const merged = buildMotifClipMerge(store, clip, spec.params, mode);
       if (merged === null) continue;
@@ -154,7 +156,8 @@ export function generateTracksBatchCommand(specs: ReadonlyArray<BatchPartSpec>):
     if (spec.target.kind === 'replaceTrack') {
       const trackId = spec.target.trackId;
       const existing = store.tracks.find((track) => track.id === trackId);
-      if (existing && existing.kind !== 'midi') {
+      if (existing) requireEditableTrack(store, trackId);
+      if (existing?.kind !== undefined && existing.kind !== 'midi') {
         throw new RangeError(
           `Generated content can only replace an existing MIDI track: ${trackId}`,
         );

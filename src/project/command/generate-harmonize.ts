@@ -30,6 +30,7 @@ import { audibleMidiProjector, projectMidiClipNoteOccurrences } from '../midi-pr
 import { getProject, notesToProjectEvents, useProjectStore } from '../store';
 import { meterBarLengthPpq, timeSignatureAt } from '../time-signature';
 import { execute } from './history';
+import { requireEditableClip } from './utils';
 
 /** Reharmonization strength passed through to libcantus. */
 export type ReharmonizeStrength = 'diatonic' | 'secondaryDominant' | 'borrowed';
@@ -90,6 +91,7 @@ export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {
   const store = useProjectStore();
   const clip = store.activeClip;
   if (clip === null) throw new Error('No active clip to harmonize');
+  requireEditableClip(store, clip.id);
   const target = createGenerationTargetFrame({
     startPpq: clip.startPpq,
     endPpq: clip.startPpq + clip.lengthPpq,

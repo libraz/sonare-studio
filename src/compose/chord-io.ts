@@ -9,9 +9,9 @@
  * 30-member string union covering richer qualities (`7#9`, `min6`, `6/9`, ...).
  *
  * Mapping is therefore asymmetric:
- *   - editor -> libcantus picks the nearest exact quality string; qualities the
- *     editor expresses only as "triad + extensions" degrade to a base quality
- *     (see {@link AUDIO_QUALITY_TO_LIBCANTUS}).
+ *   - editor -> libcantus promotes known base-plus-extension combinations to
+ *     exact quality strings and otherwise carries the extensions in the
+ *     returned ChordData interval set.
  *   - libcantus -> editor keeps the exact ordinal when one exists, otherwise
  *     degrades to a base ordinal plus an `extensions` list capturing the color
  *     tones (see {@link LIBCANTUS_QUALITY_TO_EDITOR}). The reverse is
@@ -23,7 +23,7 @@
  */
 
 import { type ChordData, type ChordQuality, type ChordSpan, makeChord } from '@libraz/libcantus';
-import type { EditorChordSymbol } from '@/project/chords';
+import { type EditorChordSymbol, normalizedChordExtensions } from '@/project/chords';
 
 /**
  * Audio-domain quality ordinal -> libcantus quality. Ordinals map to an exact
@@ -47,6 +47,25 @@ const AUDIO_QUALITY_TO_LIBCANTUS: Readonly<Record<number, ChordQuality>> = {
   13: 'm7b5',
   14: 'maj9',
   15: 'dom9',
+};
+
+/** Known editor base-quality + normalized-extension combinations. */
+const EDITOR_EXTENSIONS_TO_LIBCANTUS: Readonly<Record<string, ChordQuality>> = {
+  '0:5': 'add11',
+  '0:6': 'majb5',
+  '0:9': '6',
+  '0:2,9': '6/9',
+  '1:9': 'min6',
+  '1:11': 'minMaj7',
+  '3:10': 'aug7',
+  '3:11': 'augMaj7',
+  '4:1': '7b9',
+  '4:3': '7#9',
+  '4:5': '11',
+  '4:6': '7#11',
+  '4:8': '7b13',
+  '4:9': '13',
+  '6:2': 'min9',
 };
 
 /** Editor-side ordinal plus optional color-tone extensions (semitone offsets). */
@@ -104,15 +123,53 @@ export function libcantusQualityToEditor(quality: ChordQuality): EditorQuality {
   return LIBCANTUS_QUALITY_TO_EDITOR[quality] ?? { quality: 0 };
 }
 
-/** Builds a libcantus chord from an editor symbol (extensions are not carried). */
+/** Exact libcantus quality for a known base-plus-extension combination. */
+function extensionQuality(symbol: EditorChordSymbol): ChordQuality | undefined {
+  const extensions = normalizedChordExtensions(symbol);
+  if (extensions.length === 0) return undefined;
+  return EDITOR_EXTENSIONS_TO_LIBCANTUS[`${symbol.quality}:${extensions.join(',')}`];
+}
+
+/** Conventional compound interval for a free extension pitch class. */
+function compoundExtensionInterval(pc: number): number {
+  return pc >= 1 && pc <= 9 ? pc + 12 : pc;
+}
+
+/** Appends free extensions without duplicating an intrinsic pitch class. */
+function appendExtensionIntervals(
+  intervals: number[],
+  extensions: ReadonlyArray<number>,
+): number[] {
+  const pitchClasses = new Set(intervals.map((interval) => ((interval % 12) + 12) % 12));
+  const out = [...intervals];
+  for (const extension of extensions) {
+    if (pitchClasses.has(extension)) continue;
+    pitchClasses.add(extension);
+    out.push(compoundExtensionInterval(extension));
+  }
+  return out;
+}
+
+/**
+ * Builds a libcantus chord from an editor symbol. Known extension combinations
+ * use their exact quality; free combinations retain an explicit interval set.
+ */
 export function editorChordToChord(symbol: EditorChordSymbol): ChordData {
   const rootPc = ((symbol.rootPc % 12) + 12) % 12;
-  const quality = audioQualityToLibcantus(symbol.quality);
+  const exactExtensionQuality = extensionQuality(symbol);
+  const quality = exactExtensionQuality ?? audioQualityToLibcantus(symbol.quality);
   const bassPc =
     symbol.bassPc === undefined || symbol.bassPc === rootPc
       ? undefined
       : ((symbol.bassPc % 12) + 12) % 12;
-  return makeChord(rootPc, quality, bassPc);
+  const chord = makeChord(rootPc, quality, bassPc);
+  if (exactExtensionQuality !== undefined) return chord;
+  const extensions = normalizedChordExtensions(symbol);
+  // Audio quality 11 is intrinsically m(add9), but libcantus has no exact
+  // quality for a minor triad with a ninth and no seventh.
+  if (symbol.quality === 11) extensions.push(2);
+  chord.intervals = appendExtensionIntervals(chord.intervals, extensions);
+  return chord;
 }
 
 /** Places an editor symbol on a beat as a libcantus {@link ChordSpan}. */
@@ -120,7 +177,7 @@ export function editorChordToChordSpan(symbol: EditorChordSymbol, startBeat: num
   const rootPc = ((symbol.rootPc % 12) + 12) % 12;
   const span: ChordSpan = {
     rootPc,
-    quality: audioQualityToLibcantus(symbol.quality),
+    quality: extensionQuality(symbol) ?? audioQualityToLibcantus(symbol.quality),
     startBeat,
   };
   if (symbol.bassPc !== undefined && symbol.bassPc !== rootPc) {

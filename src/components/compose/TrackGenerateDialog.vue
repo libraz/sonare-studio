@@ -115,7 +115,8 @@ const hasChords = computed(() => store.chords.length > 0);
 /** MIDI clip currently active (enables motif's clip targets). */
 const activeMidiClip = computed(() => {
   const clip = store.activeClip;
-  return clip !== null && clipKind(clip) === 'midi' ? clip : null;
+  const track = clip ? store.tracks.find((entry) => entry.id === clip.trackId) : null;
+  return clip !== null && clipKind(clip) === 'midi' && track?.frozen === undefined ? clip : null;
 });
 
 // --- Part parameters -----------------------------------------------------------
@@ -276,7 +277,13 @@ watch(
       const state = parts[openWith.part];
       state.checked = true;
       state.expanded = true;
-      state.target = encodeTarget(openWith.target);
+      const target = encodeTarget(openWith.target);
+      if (targetOptions(openWith.part).some((option) => option.value === target)) {
+        state.target = target;
+      } else {
+        state.target = 'new';
+        error.value = t.value.shell.arrangement.trackHeader.unfreezeTitle;
+      }
     }
   },
   { immediate: true },
@@ -302,7 +309,7 @@ function decodeTarget(value: string): BatchTarget {
 /** Replacement candidates for a part: existing tracks whose name matches it. */
 function replaceCandidates(part: TrackPart): { value: string; label: string }[] {
   return store.tracks
-    .filter((track) => partForTrackName(track.name) === part)
+    .filter((track) => track.frozen === undefined && partForTrackName(track.name) === part)
     .map((track) => ({
       value: `replace:${track.id}`,
       label: formatMessage(g.value.targetReplace, { name: track.name }),

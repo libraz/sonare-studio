@@ -135,4 +135,49 @@ describe('audio analysis command stale clip guards', () => {
 
     expect(store.sections).toEqual([]);
   });
+
+  it('does not create melody content in a replacement project with colliding ids', async () => {
+    const pending = deferred<LoadedAudioAsset>();
+    assetStore.loadAsset.mockReturnValueOnce(pending.promise);
+    Object.assign(wasmModule.current ?? {}, {
+      analyzeMelody: () => ({
+        points: [
+          { time: 0, frequency: 440, confidence: 1 },
+          { time: 0.5, frequency: 0, confidence: 0 },
+        ],
+      }),
+    });
+    const clipId = await addSourceClip();
+    const extraction = extractMelodyFromAudioClip(clipId);
+
+    store.dispose();
+    await store.init();
+    const replacementClipId = await addSourceClip();
+    expect(replacementClipId).toBe(clipId);
+    const trackCount = store.tracks.length;
+    pending.resolve(loadedAsset('asset-1'));
+
+    await expect(extraction).resolves.toBe(-1);
+    expect(store.tracks).toHaveLength(trackCount);
+    expect(store.clips).toHaveLength(2);
+  });
+
+  it('does not merge detected sections into a replacement project with colliding ids', async () => {
+    const pending = deferred<LoadedAudioAsset>();
+    assetStore.loadAsset.mockReturnValueOnce(pending.promise);
+    Object.assign(wasmModule.current ?? {}, {
+      analyzeSections: () => [{ type: 0, start: 0, end: 1 }],
+    });
+    const clipId = await addSourceClip();
+    const detection = detectSectionsFromAudioClip(clipId);
+
+    store.dispose();
+    await store.init();
+    const replacementClipId = await addSourceClip();
+    expect(replacementClipId).toBe(clipId);
+    pending.resolve(loadedAsset('asset-1'));
+
+    await expect(detection).resolves.toBe(0);
+    expect(store.sections).toEqual([]);
+  });
 });

@@ -28,6 +28,28 @@ describe('formatChordName', () => {
       'G7',
     );
   });
+
+  it('formats normalized extensions as their complete chord quality', () => {
+    expect(
+      formatChordName({ startPpq: 0, endPpq: 4, rootPc: 0, quality: 1, extensions: [14] }),
+    ).toBe('Cm(add9)');
+    expect(
+      formatChordName({ startPpq: 0, endPpq: 4, rootPc: 0, quality: 6, extensions: [2] }),
+    ).toBe('Cm9');
+    expect(
+      formatChordName({ startPpq: 0, endPpq: 4, rootPc: 7, quality: 4, extensions: [13] }),
+    ).toBe('G7b9');
+    expect(
+      formatChordName({
+        startPpq: 0,
+        endPpq: 4,
+        rootPc: 7,
+        quality: 4,
+        extensions: [21],
+        bassPc: 2,
+      }),
+    ).toBe('G13/D');
+  });
 });
 
 describe('sanitizeChordSymbols', () => {
@@ -48,6 +70,19 @@ describe('sanitizeChordSymbols', () => {
     ]);
     expect(a.bassPc).toBeUndefined();
     expect(b.bassPc).toBe(7);
+  });
+
+  it('normalizes, sorts, deduplicates, and removes intrinsic extensions', () => {
+    const [chord] = sanitizeChordSymbols([
+      {
+        startPpq: 0,
+        endPpq: 4,
+        rootPc: 0,
+        quality: 4,
+        extensions: [13, 1, -11, 22, 0, 7],
+      },
+    ]);
+    expect(chord.extensions).toEqual([1]);
   });
 });
 
@@ -70,7 +105,7 @@ describe('toProjectChordSymbol', () => {
       rootPc: 7,
       quality: 4,
       bassPc: 0,
-      extensions: [10],
+      extensions: [13, 1],
       romanNumeral: 'V',
     };
     expect(toProjectChordSymbol(symbol)).toEqual({
@@ -79,7 +114,7 @@ describe('toProjectChordSymbol', () => {
       rootPc: 7,
       quality: 5,
       slashBassPc: 0,
-      extensions: [10],
+      extensions: [1],
       romanNumeral: 'V',
     });
   });
@@ -102,7 +137,7 @@ describe('chordsFromAnnotation', () => {
           quality: 5,
           slash_bass_pc: 0,
           roman_numeral: 'V',
-          extensions: [10],
+          extensions: [13],
         },
         {
           start_ppq: 0,
@@ -122,7 +157,7 @@ describe('chordsFromAnnotation', () => {
         rootPc: 7,
         quality: 4,
         bassPc: 0,
-        extensions: [10],
+        extensions: [1],
         romanNumeral: 'V',
       },
     ]);

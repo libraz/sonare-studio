@@ -85,6 +85,21 @@ describe('buildGuidance', () => {
     expect(analysis?.safety?.safety).not.toBe(NoteSafety.Safe);
   });
 
+  it.each([
+    ['m(add9)', chordSymbol({ quality: 11 }), 62],
+    ['min9', chordSymbol({ quality: 6, extensions: [2] }), 62],
+    ['7b9', chordSymbol({ quality: 4, extensions: [1] }), 61],
+    ['13', chordSymbol({ quality: 4, extensions: [9] }), 69],
+  ])('treats the %s extension as a chord tone in guidance', (_label, chord, pitch) => {
+    const result = buildGuidance(
+      guidanceInput({
+        notes: [note({ id: 25, pitch })],
+        chordSymbols: [chord],
+      }),
+    );
+    expect(result.byNoteId.get(25)?.safety?.safety).toBe(NoteSafety.Safe);
+  });
+
   it('never lets a percussion track downgrade a consonant melody note', () => {
     // The drum hits sit a semitone off the melody note; if they leaked into
     // otherVoices they would register as vertical dissonance.

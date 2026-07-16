@@ -22,6 +22,7 @@ import { projectMidiNoteOccurrences } from '../midi-projection';
 import { useProjectStore } from '../store';
 import { setProjectChords } from './chords';
 import type { ReharmonizeStrength } from './generate-harmonize';
+import { requireEditableClip } from './utils';
 
 /** Options for {@link proposeReharmonizationForActiveClip}. */
 export interface ReactiveReharmonizeParams {
@@ -114,6 +115,8 @@ export function applyReharmonizationProposal(
   proposal: ProjectReharmonizationProposal,
   locked: ReadonlyArray<LockedRegion> = [],
 ): boolean {
+  const store = useProjectStore();
+  if (store.activeClip !== null) requireEditableClip(store, store.activeClip.id);
   if (!proposal.changed || proposal.contextHash !== reharmonizationContextHash(locked))
     return false;
   setProjectChords(proposal.proposal);

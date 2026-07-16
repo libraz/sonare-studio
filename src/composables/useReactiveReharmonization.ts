@@ -86,6 +86,7 @@ export function useReactiveReharmonization(): ReactiveReharmonization {
   const reharmonizeActive = computed(
     () =>
       autoReharmonize.value &&
+      store.activeTrack?.frozen === undefined &&
       store.clipId >= 0 &&
       (store.activeClip?.kind ?? 'midi') === 'midi' &&
       store.chords.length > 0,

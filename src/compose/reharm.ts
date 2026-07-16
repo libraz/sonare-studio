@@ -22,7 +22,7 @@ import {
   type SubstitutionType,
   substituteChord,
 } from '@libraz/libcantus';
-import type { EditorChordSymbol } from '@/project/chords';
+import { chordExtensionSignature, type EditorChordSymbol } from '@/project/chords';
 import { chordSpanToEditorChord, editorChordToChord } from './chord-io';
 
 /** Where a reharmonization candidate comes from. */
@@ -121,7 +121,12 @@ export function negativeHarmonyFor(symbol: EditorChordSymbol, key: KeyScale): Re
 
 /** Two candidates that replace a chord with the same root/quality/bass. */
 function sameChord(a: EditorChordSymbol, b: EditorChordSymbol): boolean {
-  return a.rootPc === b.rootPc && a.quality === b.quality && (a.bassPc ?? -1) === (b.bassPc ?? -1);
+  return (
+    a.rootPc === b.rootPc &&
+    a.quality === b.quality &&
+    chordExtensionSignature(a) === chordExtensionSignature(b) &&
+    (a.bassPc ?? -1) === (b.bassPc ?? -1)
+  );
 }
 
 /**

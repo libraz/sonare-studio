@@ -1,10 +1,11 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { setProjectChords } from '@/project/command/chords';
+import { setTrackFrozen } from '@/project/command/clips-state';
 import { generateTracksBatchCommand, partForTrackName } from '@/project/command/generate-batch';
 import { clearHistory, redo, undo } from '@/project/command/history';
 import { createDefaultStrip } from '@/project/mixer';
-import { useProjectStore } from '@/project/store';
+import { getProject, useProjectStore } from '@/project/store';
 import { MAJOR_MODE_MASK } from '@/project/types';
 
 vi.mock('@/lib/wasm', async () => {
@@ -120,7 +121,6 @@ describe('generateTracksBatchCommand', () => {
             pan: -0.2,
             groupId: 777,
             vcaId: 'vca-drums',
-            frozen: { assetId: 'frozen-drums' },
             recordInputChannel: 3,
             recordInputDeviceId: 'device-a',
             externalMidiMode: 'project',
@@ -180,6 +180,41 @@ describe('generateTracksBatchCommand', () => {
     expect(store.clips.filter((clip) => clip.trackId === trackId).map((clip) => clip.id)).toEqual(
       oldClipIds,
     );
+  });
+
+  it('rejects frozen clip and replacement targets before changing native or mirror state', () => {
+    setProjectChords(FOUR_CHORDS);
+    generateTracksBatchCommand([{ part: 'drums', params: { bars: 4 }, target: { kind: 'new' } }]);
+    const drums = store.tracks.find((track) => track.name === 'Drums');
+    if (!drums) throw new Error('missing generated drums fixture');
+    setTrackFrozen(drums.id, { assetId: 'frozen-drums' });
+    const activeTrackId = store.activeClip?.trackId;
+    if (activeTrackId === undefined) throw new Error('missing active clip fixture');
+    setTrackFrozen(activeTrackId, { assetId: 'frozen-active' });
+    clearHistory();
+    const nativeBefore = getProject().toJson();
+    const mirrorBefore = JSON.stringify({ tracks: store.tracks, clips: store.clips });
+
+    expect(() =>
+      generateTracksBatchCommand([
+        {
+          part: 'drums',
+          params: { bars: 2 },
+          target: { kind: 'replaceTrack', trackId: drums.id },
+        },
+      ]),
+    ).toThrow(/unfreeze/i);
+    expect(() =>
+      generateTracksBatchCommand([
+        {
+          part: 'motif',
+          params: { bars: 1, develop: false },
+          target: { kind: 'clip', mode: 'replace' },
+        },
+      ]),
+    ).toThrow(/unfreeze/i);
+    expect(getProject().toJson()).toBe(nativeBefore);
+    expect(JSON.stringify({ tracks: store.tracks, clips: store.clips })).toBe(mirrorBefore);
   });
 
   it('classifies generated track names', () => {

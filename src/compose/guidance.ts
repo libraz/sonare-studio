@@ -301,7 +301,7 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
   // recomputing the scale fit for every note under the same chord.
   const chordScaleCache = new Map<string, ChordScaleInfo | undefined>();
   const chordScaleFor = (chord: ChordData): ChordScaleInfo | undefined => {
-    const identity = `${chord.rootPc}:${chord.quality}:${chord.bassPc ?? -1}`;
+    const identity = `${chord.rootPc}:${chord.quality}:${chord.intervals.join(',')}:${chord.bassPc ?? -1}`;
     const cached = chordScaleCache.get(identity);
     if (cached !== undefined || chordScaleCache.has(identity)) return cached;
     const report = tryEval(() => chordScaleReport(chord, 1));
