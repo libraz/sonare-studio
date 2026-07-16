@@ -1,16 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OpfsUnavailableError } from '@/persistence/opfs';
 import {
+  cacheSoundFontManifest,
   clearFontCache,
   computeFontId,
+  DEFAULT_FONT_CACHE_BYTE_BUDGET,
+  DEFAULT_FONT_MANIFEST_CACHE_BYTE_BUDGET,
   deleteFont,
   FontNotFoundError,
+  getCachedSoundFontManifest,
+  getFontCacheStats,
   InvalidFontError,
   listFontAliases,
   listFonts,
   loadFont,
   loadFontMeta,
   saveFont,
+  setFontCacheByteBudgetsForTests,
 } from '@/project/fonts';
 import {
   installMockOpfs,
@@ -26,12 +32,20 @@ describe('SoundFont store', () => {
 
   beforeEach(() => {
     root = installMockOpfs();
+    setFontCacheByteBudgetsForTests(
+      DEFAULT_FONT_CACHE_BYTE_BUDGET,
+      DEFAULT_FONT_MANIFEST_CACHE_BYTE_BUDGET,
+    );
     clearFontCache();
   });
 
   afterEach(() => {
     uninstallMockOpfs();
     clearFontCache();
+    setFontCacheByteBudgetsForTests(
+      DEFAULT_FONT_CACHE_BYTE_BUDGET,
+      DEFAULT_FONT_MANIFEST_CACHE_BYTE_BUDGET,
+    );
   });
 
   it('saves a font and reads it back', async () => {
@@ -125,6 +139,40 @@ describe('SoundFont store', () => {
     const first = await loadFont(meta.id);
     const second = await loadFont(meta.id);
     expect(second).toBe(first);
+  });
+
+  it('evicts least-recently-used font bytes within the configured byte budget', async () => {
+    setFontCacheByteBudgetsForTests(8);
+    const first = await saveFont({ id: 'first', name: 'First' }, new Uint8Array(8).fill(1));
+    await saveFont({ id: 'second', name: 'Second' }, new Uint8Array(8).fill(2));
+
+    expect(getFontCacheStats()).toMatchObject({ entries: 1, byteLength: 8, budget: 8 });
+    const reloaded = await loadFont(first.id);
+    expect(reloaded).toEqual(new Uint8Array(8).fill(1));
+    expect(getFontCacheStats()).toMatchObject({ entries: 1, byteLength: 8 });
+  });
+
+  it('does not retain a font larger than the byte budget', async () => {
+    setFontCacheByteBudgetsForTests(4);
+    const meta = await saveFont({ name: 'Large' }, new Uint8Array(8).fill(3));
+    const first = await loadFont(meta.id);
+    const second = await loadFont(meta.id);
+
+    expect(second).not.toBe(first);
+    expect(getFontCacheStats()).toMatchObject({ entries: 0, byteLength: 0 });
+  });
+
+  it('keeps program manifests in their own bounded LRU', () => {
+    setFontCacheByteBudgetsForTests(1024, 1_000);
+    cacheSoundFontManifest('fontaaaa00000001', 0, [
+      { channel: 0, bank: 0, program: 1, backend: 'sf2', presetName: 'Piano' },
+    ]);
+    const manifest = getCachedSoundFontManifest('fontaaaa00000001', 0);
+
+    expect(manifest).toEqual([
+      { channel: 0, bank: 0, program: 1, backend: 'sf2', presetName: 'Piano' },
+    ]);
+    expect(getFontCacheStats()).toMatchObject({ entries: 0, manifestEntries: 1 });
   });
 
   it('fails with OpfsUnavailableError when OPFS is missing', async () => {

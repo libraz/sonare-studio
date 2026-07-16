@@ -13,6 +13,7 @@
  * (TrackInstrument 'sf2' variant); the bytes never enter the project archive.
  */
 
+import { withPersistenceMutationLock } from '@/persistence/mutation-lock';
 import { isOpfsAvailable, OpfsUnavailableError } from '@/persistence/opfs';
 
 /** Directory under the OPFS root that holds the SoundFont files. */
@@ -77,12 +78,161 @@ export interface SaveFontInput {
   name: string;
 }
 
-/** In-memory cache of loaded fonts (prerendering re-loads often). */
-const fontCache = new Map<string, { meta: SoundFontMeta; data: Uint8Array }>();
+/** Default upper bound for decoded SF2 bytes kept for playback reuse. */
+export const DEFAULT_FONT_CACHE_BYTE_BUDGET = 64 * 1024 * 1024;
 
-/** Drops all cached font bytes (tests, memory pressure handling). */
+/** Default upper bound for compact SoundFont program-manifest lookups. */
+export const DEFAULT_FONT_MANIFEST_CACHE_BYTE_BUDGET = 4 * 1024 * 1024;
+
+interface CachedFont {
+  meta: SoundFontMeta;
+  data: Uint8Array;
+}
+
+/** A serializable subset of the runtime's SoundFont program manifest. */
+export interface SoundFontManifestEntry {
+  channel: number;
+  bank: number;
+  program: number;
+  backend: 'sf2' | 'synth';
+  presetName: string;
+}
+
+/** In-memory LRU of loaded font bytes, keyed by immutable content id. */
+const fontCache = new Map<string, CachedFont>();
+let fontCacheBytes = 0;
+let fontCacheByteBudget = DEFAULT_FONT_CACHE_BYTE_BUDGET;
+
+/** Compact LRU used by the device picker to avoid reparsing a font per program. */
+const fontManifestCache = new Map<
+  string,
+  { entries: SoundFontManifestEntry[]; byteLength: number }
+>();
+let fontManifestCacheBytes = 0;
+let fontManifestCacheByteBudget = DEFAULT_FONT_MANIFEST_CACHE_BYTE_BUDGET;
+
+function removeCachedFont(id: string): void {
+  const existing = fontCache.get(id);
+  if (!existing) return;
+  fontCache.delete(id);
+  fontCacheBytes -= existing.data.byteLength;
+}
+
+function cacheFont(meta: SoundFontMeta, data: Uint8Array): void {
+  removeCachedFont(meta.id);
+  if (data.byteLength > fontCacheByteBudget) return;
+  while (fontCacheBytes + data.byteLength > fontCacheByteBudget && fontCache.size > 0) {
+    const oldest = fontCache.keys().next().value as string;
+    removeCachedFont(oldest);
+  }
+  fontCache.set(meta.id, { meta: { ...meta }, data });
+  fontCacheBytes += data.byteLength;
+}
+
+function cachedFont(id: string): CachedFont | undefined {
+  const entry = fontCache.get(id);
+  if (!entry) return undefined;
+  // Map insertion order is the LRU order. Reinsert on every hit.
+  fontCache.delete(id);
+  fontCache.set(id, entry);
+  return entry;
+}
+
+function manifestCacheKey(fontId: string, bank: number): string {
+  return `${fontId}:${bank}`;
+}
+
+function removeCachedManifest(key: string): void {
+  const existing = fontManifestCache.get(key);
+  if (!existing) return;
+  fontManifestCache.delete(key);
+  fontManifestCacheBytes -= existing.byteLength;
+}
+
+/** Returns a copy of a cached bank manifest, promoting it to most-recent use. */
+export function getCachedSoundFontManifest(
+  fontId: string,
+  bank: number,
+): SoundFontManifestEntry[] | null {
+  validateFontId(fontId);
+  const key = manifestCacheKey(fontId, bank);
+  const entry = fontManifestCache.get(key);
+  if (!entry) return null;
+  fontManifestCache.delete(key);
+  fontManifestCache.set(key, entry);
+  return entry.entries.map((candidate) => ({ ...candidate }));
+}
+
+/** Stores one font-bank program manifest under a small independent LRU budget. */
+export function cacheSoundFontManifest(
+  fontId: string,
+  bank: number,
+  entries: readonly SoundFontManifestEntry[],
+): void {
+  validateFontId(fontId);
+  const key = manifestCacheKey(fontId, bank);
+  const copied = entries.map((candidate) => ({ ...candidate }));
+  const byteLength = new TextEncoder().encode(JSON.stringify(copied)).byteLength;
+  removeCachedManifest(key);
+  if (byteLength > fontManifestCacheByteBudget) return;
+  while (
+    fontManifestCacheBytes + byteLength > fontManifestCacheByteBudget &&
+    fontManifestCache.size > 0
+  ) {
+    removeCachedManifest(fontManifestCache.keys().next().value as string);
+  }
+  fontManifestCache.set(key, { entries: copied, byteLength });
+  fontManifestCacheBytes += byteLength;
+}
+
+/** Test and diagnostics view of the independently budgeted in-memory caches. */
+export function getFontCacheStats(): {
+  entries: number;
+  byteLength: number;
+  budget: number;
+  manifestEntries: number;
+  manifestByteLength: number;
+  manifestBudget: number;
+} {
+  return {
+    entries: fontCache.size,
+    byteLength: fontCacheBytes,
+    budget: fontCacheByteBudget,
+    manifestEntries: fontManifestCache.size,
+    manifestByteLength: fontManifestCacheBytes,
+    manifestBudget: fontManifestCacheByteBudget,
+  };
+}
+
+/** Configures cache limits for controlled test and memory-pressure scenarios. */
+export function setFontCacheByteBudgetsForTests(
+  bytes: number,
+  manifestBytes = fontManifestCacheByteBudget,
+): void {
+  if (
+    !Number.isSafeInteger(bytes) ||
+    bytes < 0 ||
+    !Number.isSafeInteger(manifestBytes) ||
+    manifestBytes < 0
+  ) {
+    throw new InvalidFontError('Font cache budgets must be non-negative integers');
+  }
+  fontCacheByteBudget = bytes;
+  fontManifestCacheByteBudget = manifestBytes;
+  while (fontCacheBytes > bytes && fontCache.size > 0) {
+    removeCachedFont(fontCache.keys().next().value as string);
+  }
+  while (fontManifestCacheBytes > manifestBytes && fontManifestCache.size > 0) {
+    removeCachedManifest(fontManifestCache.keys().next().value as string);
+  }
+}
+
+/** Drops all cached font bytes and program manifests (tests, memory pressure handling). */
 export function clearFontCache(): void {
   fontCache.clear();
+  fontCacheBytes = 0;
+  fontManifestCache.clear();
+  fontManifestCacheBytes = 0;
 }
 
 /** Throws {@link InvalidFontError} unless the id is a safe file base name. */
@@ -255,7 +405,7 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
  * @param data Raw SF2 bytes (non-empty).
  * @returns The full metadata that was written.
  */
-export async function saveFontWithStatus(
+export async function saveFontWithStatusUnlocked(
   input: SaveFontInput,
   data: Uint8Array,
 ): Promise<SavedSoundFont> {
@@ -318,8 +468,15 @@ export async function saveFontWithStatus(
     }
     throw error;
   }
-  fontCache.set(id, { meta, data: new Uint8Array(data) });
+  cacheFont(meta, new Uint8Array(data));
   return { meta: { ...meta }, created };
+}
+
+export function saveFontWithStatus(
+  input: SaveFontInput,
+  data: Uint8Array,
+): Promise<SavedSoundFont> {
+  return withPersistenceMutationLock(() => saveFontWithStatusUnlocked(input, data));
 }
 
 export async function saveFont(input: SaveFontInput, data: Uint8Array): Promise<SoundFontMeta> {
@@ -335,7 +492,7 @@ export async function saveFont(input: SaveFontInput, data: Uint8Array): Promise<
  */
 export async function loadFontMeta(id: string): Promise<SoundFontMeta> {
   validateFontId(id);
-  const cached = fontCache.get(id);
+  const cached = cachedFont(id);
   if (cached) return { ...cached.meta };
   const dir = await fontsDirectory();
   let file: File;
@@ -380,10 +537,12 @@ export async function listFontAliases(id: string): Promise<SoundFontAlias[]> {
  * @throws FontNotFoundError when no such font is stored.
  * @throws InvalidFontError when the payload size disagrees with the sidecar.
  */
-export async function loadFont(id: string): Promise<Uint8Array> {
+export async function loadFont(id: string, options: { cache?: boolean } = {}): Promise<Uint8Array> {
   validateFontId(id);
-  const cached = fontCache.get(id);
-  if (cached) return cached.data;
+  if (options.cache !== false) {
+    const cached = cachedFont(id);
+    if (cached) return cached.data;
+  }
   const meta = await loadFontMeta(id);
   const dir = await fontsDirectory();
   let file: File;
@@ -400,7 +559,7 @@ export async function loadFont(id: string): Promise<Uint8Array> {
       `Font "${id}": payload is ${data.length} bytes, expected ${meta.byteLength}`,
     );
   }
-  fontCache.set(id, { meta, data });
+  if (options.cache !== false) cacheFont(meta, data);
   return data;
 }
 
@@ -432,10 +591,13 @@ export async function listFonts(): Promise<SoundFontMeta[]> {
  *
  * @param id Font id.
  */
-export async function deleteFont(id: string): Promise<void> {
+export async function deleteFontUnlocked(id: string): Promise<void> {
   validateFontId(id);
   const dir = await fontsDirectory();
-  fontCache.delete(id);
+  removeCachedFont(id);
+  for (const key of fontManifestCache.keys()) {
+    if (key.startsWith(`${id}:`)) removeCachedManifest(key);
+  }
   for (const fileName of [id + SF2_EXTENSION, id + META_EXTENSION]) {
     try {
       await dir.removeEntry(fileName);
@@ -443,4 +605,8 @@ export async function deleteFont(id: string): Promise<void> {
       if (!isNotFoundError(error)) throw error;
     }
   }
+}
+
+export function deleteFont(id: string): Promise<void> {
+  return withPersistenceMutationLock(() => deleteFontUnlocked(id));
 }

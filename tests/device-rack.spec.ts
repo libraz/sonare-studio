@@ -18,19 +18,32 @@ vi.mock('@/lib/wasm', async () => {
   return { ensureWasm: async () => fakeModule };
 });
 
-const fontsMock = vi.hoisted(() => ({
-  listFonts: vi.fn(async () => [
-    { id: 'fontaaaa00000001', name: 'GM Bank.sf2', byteLength: 1024 },
-    { id: 'fontbbbb00000002', name: 'Strings.sf2', byteLength: 2048 },
-  ]),
-  loadFontMeta: vi.fn(async (id: string) => ({ id, name: 'GM Bank.sf2', byteLength: 1024 })),
-  loadFont: vi.fn(async () => new Uint8Array([1, 2, 3])),
-  saveFont: vi.fn(async (input: { name: string }, data: Uint8Array) => ({
-    id: 'savedfont0000003',
-    name: input.name,
-    byteLength: data.length,
-  })),
-}));
+const fontsMock = vi.hoisted(() => {
+  const manifests = new Map<string, unknown[]>();
+  return {
+    manifests,
+    listFonts: vi.fn(async () => [
+      { id: 'fontaaaa00000001', name: 'GM Bank.sf2', byteLength: 1024 },
+      { id: 'fontbbbb00000002', name: 'Strings.sf2', byteLength: 2048 },
+    ]),
+    loadFontMeta: vi.fn(async (id: string) => ({ id, name: 'GM Bank.sf2', byteLength: 1024 })),
+    loadFont: vi.fn(async () => new Uint8Array([1, 2, 3])),
+    getCachedSoundFontManifest: vi.fn(
+      (id: string, bank: number) => manifests.get(`${id}:${bank}`) ?? null,
+    ),
+    cacheSoundFontManifest: vi.fn((id: string, bank: number, entries: unknown[]) => {
+      manifests.set(
+        `${id}:${bank}`,
+        entries.map((entry) => ({ ...(entry as object) })),
+      );
+    }),
+    saveFont: vi.fn(async (input: { name: string }, data: Uint8Array) => ({
+      id: 'savedfont0000003',
+      name: input.name,
+      byteLength: data.length,
+    })),
+  };
+});
 
 vi.mock('@/project/fonts', () => fontsMock);
 
@@ -53,6 +66,7 @@ describe('DeviceRack.vue', () => {
     store.dispose();
     clearHistory();
     vi.clearAllMocks();
+    fontsMock.manifests.clear();
     Object.defineProperty(globalThis.navigator, 'requestMIDIAccess', {
       configurable: true,
       value: vi.fn(async () => ({
@@ -223,6 +237,7 @@ describe('DeviceRack.vue', () => {
     await wrapper.findAll('.font-option')[0].trigger('click');
     await wrapper.find('.sf2-bank').setValue('1');
     await wrapper.find('.sf2-program').setValue('24');
+    await new Promise((resolve) => setTimeout(resolve, 80));
     await flushPromises();
     await flushPromises();
 
@@ -239,6 +254,7 @@ describe('DeviceRack.vue', () => {
 
     await wrapper.findAll('.font-option')[0].trigger('click');
     await wrapper.find('.sf2-bank').setValue('1');
+    await new Promise((resolve) => setTimeout(resolve, 80));
     await flushPromises();
     await flushPromises();
 
@@ -256,6 +272,31 @@ describe('DeviceRack.vue', () => {
       bank: 1,
       program: 42,
     });
+  });
+
+  it('debounces rapid program changes and reuses the resolved bank manifest', async () => {
+    vi.useFakeTimers();
+    try {
+      const wrapper = mount(DeviceRack);
+      await wrapper.find('.instrument-button').trigger('click');
+      const sf2Tab = wrapper.findAll('.picker-tab').find((tab) => tab.text() === 'SF2');
+      await sf2Tab?.trigger('click');
+      await flushPromises();
+      await wrapper.findAll('.font-option')[0].trigger('click');
+      await wrapper.find('.sf2-program').setValue('20');
+      await wrapper.find('.sf2-program').setValue('21');
+      await wrapper.find('.sf2-program').setValue('22');
+
+      await vi.advanceTimersByTimeAsync(80);
+      await flushPromises();
+      expect(fontsMock.loadFont).toHaveBeenCalledTimes(1);
+
+      await wrapper.find('.sf2-program').setValue('23');
+      await flushPromises();
+      expect(fontsMock.loadFont).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('commits the SF2 master gain and voice cap from the picker', async () => {

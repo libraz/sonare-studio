@@ -17,7 +17,16 @@ import {
   setTrackExternalMidiMode,
   setTrackInstrument,
 } from '@/project/commands';
-import { listFonts, loadFont, loadFontMeta, type SoundFontMeta, saveFont } from '@/project/fonts';
+import {
+  cacheSoundFontManifest,
+  getCachedSoundFontManifest,
+  listFonts,
+  loadFont,
+  loadFontMeta,
+  type SoundFontManifestEntry,
+  type SoundFontMeta,
+  saveFont,
+} from '@/project/fonts';
 import type { Sf2ChannelProgram } from '@/project/instrument';
 import { type ExternalMidiInstrument, effectiveTrackInstrument } from '@/project/instrument';
 import type { QuickControlTarget } from '@/project/quick-controls';
@@ -263,6 +272,8 @@ watch(pickerOpen, (open) => {
 
 onBeforeUnmount(() => {
   disposed = true;
+  sf2ManifestRequest += 1;
+  if (sf2ManifestTimer !== undefined) clearTimeout(sf2ManifestTimer);
   document.removeEventListener('pointerdown', onDocumentPointerDown, true);
 });
 
@@ -297,6 +308,9 @@ interface Sf2ManifestPreset {
 const sf2ManifestProbe = ref<Sf2ManifestProbe>({ state: 'idle', text: '' });
 const sf2ManifestPresets = ref<Sf2ManifestPreset[]>([]);
 let sf2ManifestRequest = 0;
+let sf2ManifestTimer: ReturnType<typeof setTimeout> | undefined;
+const sf2ManifestLoads = new Map<string, Promise<SoundFontManifestEntry[]>>();
+const SF2_MANIFEST_PROBE_DEBOUNCE_MS = 75;
 
 async function refreshFonts(): Promise<void> {
   fontsLoading.value = true;
@@ -399,8 +413,74 @@ function sf2StatusText(status: Sf2ProgramStatus | null): Sf2ManifestProbe {
   };
 }
 
-async function refreshSf2ManifestProbe(): Promise<void> {
+function applySf2Manifest(entries: SoundFontManifestEntry[], program: number): void {
+  sf2ManifestPresets.value = entries
+    .filter((entry) => entry.backend === 'sf2')
+    .map((entry) => ({ bank: entry.bank, program: entry.program, name: entry.presetName }))
+    .sort((a, b) => a.bank - b.bank || a.program - b.program);
+  sf2ManifestProbe.value = sf2StatusText(
+    (entries.find((entry) => entry.program === program) ??
+      entries[0] ??
+      null) as Sf2ProgramStatus | null,
+  );
+}
+
+function soundFontManifestKey(fontId: string, bank: number): string {
+  return `${fontId}:${bank}`;
+}
+
+async function loadSf2Manifest(fontId: string, bank: number): Promise<SoundFontManifestEntry[]> {
+  const cached = getCachedSoundFontManifest(fontId, bank);
+  if (cached !== null) return cached;
+  const key = soundFontManifestKey(fontId, bank);
+  const inFlight = sf2ManifestLoads.get(key);
+  if (inFlight) return inFlight;
+  const task = (async () => {
+    try {
+      const data = await loadFont(fontId);
+      const wasm = getWasmModule();
+      const project = new wasm.Project();
+      try {
+        const created = project.addMidiClip(0, 1);
+        const events = Array.from({ length: 128 }, (_, candidateProgram) => {
+          const tick = candidateProgram * 2;
+          return [
+            ...wasm.Project.midiBankProgram(
+              tick,
+              0,
+              0,
+              (bank >> 7) & 0x7f,
+              bank & 0x7f,
+              candidateProgram,
+            ),
+            wasm.Project.midiNoteOn(tick, 0, 0, 60, 96),
+            wasm.Project.midiNoteOff(tick + 1, 0, 0, 60, 0),
+          ];
+        }).flat();
+        project.setMidiEvents(created.clipId, events);
+        project.loadSoundFont(data);
+        const entries = (project.soundFontManifest() as SoundFontManifestEntry[]).filter(
+          (entry) => entry.channel === 0 && entry.bank === bank,
+        );
+        cacheSoundFontManifest(fontId, bank, entries);
+        return entries;
+      } finally {
+        project.delete();
+      }
+    } finally {
+      sf2ManifestLoads.delete(key);
+    }
+  })();
+  sf2ManifestLoads.set(key, task);
+  return task;
+}
+
+function refreshSf2ManifestProbe(): void {
   const request = ++sf2ManifestRequest;
+  if (sf2ManifestTimer !== undefined) {
+    clearTimeout(sf2ManifestTimer);
+    sf2ManifestTimer = undefined;
+  }
   const fontId = sf2Selection.value.fontId;
   if (!pickerOpen.value || pickerTab.value !== 'sf2' || fontId === null) {
     sf2ManifestProbe.value = { state: 'idle', text: '' };
@@ -409,58 +489,33 @@ async function refreshSf2ManifestProbe(): Promise<void> {
   }
   const bank = sf2Selection.value.bank;
   const program = sf2Selection.value.program;
+  const cached = getCachedSoundFontManifest(fontId, bank);
+  if (cached !== null) {
+    applySf2Manifest(cached, program);
+    return;
+  }
   sf2ManifestProbe.value = {
     state: 'loading',
     text: t.value.shell.devicesPanel.soundFontProgramChecking,
   };
-  try {
-    const data = await loadFont(fontId);
-    const wasm = getWasmModule();
-    const project = new wasm.Project();
-    try {
-      const created = project.addMidiClip(0, 1);
-      const events = Array.from({ length: 128 }, (_, candidateProgram) => {
-        const tick = candidateProgram * 2;
-        return [
-          ...wasm.Project.midiBankProgram(
-            tick,
-            0,
-            0,
-            (bank >> 7) & 0x7f,
-            bank & 0x7f,
-            candidateProgram,
-          ),
-          wasm.Project.midiNoteOn(tick, 0, 0, 60, 96),
-          wasm.Project.midiNoteOff(tick + 1, 0, 0, 60, 0),
-        ];
-      }).flat();
-      project.setMidiEvents(created.clipId, events);
-      project.loadSoundFont(data);
-      const manifest = project.soundFontManifest();
-      if (request !== sf2ManifestRequest) return;
-      sf2ManifestPresets.value = manifest
-        .filter((entry) => entry.channel === 0 && entry.bank === bank && entry.backend === 'sf2')
-        .map((entry) => ({ bank: entry.bank, program: entry.program, name: entry.presetName }))
-        .sort((a, b) => a.bank - b.bank || a.program - b.program);
-      sf2ManifestProbe.value = sf2StatusText(
-        manifest.find(
-          (entry) => entry.channel === 0 && entry.bank === bank && entry.program === program,
-        ) ??
-          manifest[0] ??
-          null,
-      );
-    } finally {
-      project.delete();
-    }
-  } catch (err) {
-    if (request !== sf2ManifestRequest) return;
-    sf2ManifestPresets.value = [];
-    const detail = err instanceof Error ? err.message : String(err);
-    sf2ManifestProbe.value = {
-      state: 'error',
-      text: formatMessage(t.value.shell.devicesPanel.soundFontProgramError, { detail }),
-    };
-  }
+  // A font or bank switch cancels the pending timer. In-flight parses are
+  // de-duplicated by content id + bank and stale requests never publish.
+  sf2ManifestTimer = setTimeout(() => {
+    sf2ManifestTimer = undefined;
+    void loadSf2Manifest(fontId, bank)
+      .then((entries) => {
+        if (request === sf2ManifestRequest) applySf2Manifest(entries, program);
+      })
+      .catch((err: unknown) => {
+        if (request !== sf2ManifestRequest) return;
+        sf2ManifestPresets.value = [];
+        const detail = err instanceof Error ? err.message : String(err);
+        sf2ManifestProbe.value = {
+          state: 'error',
+          text: formatMessage(t.value.shell.devicesPanel.soundFontProgramError, { detail }),
+        };
+      });
+  }, SF2_MANIFEST_PROBE_DEBOUNCE_MS);
 }
 
 watch(
