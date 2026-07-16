@@ -370,8 +370,13 @@ const {
 
 /** True when a MIDI clip is active and can receive a transform. */
 const canTransform = computed(
-  () => store.clipId >= 0 && (store.activeClip?.kind ?? 'midi') === 'midi',
+  () =>
+    !contentReadOnly.value && store.clipId >= 0 && (store.activeClip?.kind ?? 'midi') === 'midi',
 );
+
+watch(contentReadOnly, (readOnly) => {
+  if (readOnly) fxPanelOpen.value = false;
+});
 
 /** Read-only ghost notes from all non-active clips (empty when overlay off). */
 const ghostNotes = computed<GhostNote[]>(() =>
@@ -502,6 +507,7 @@ function selectionOpItems(): ContextMenuItem[] {
     {
       id: 'edit-submenu',
       label: t.value.shell.pianoRoll.context.edit,
+      disabled: contentReadOnly.value,
       children: [
         {
           id: 'duplicate-grid',
@@ -535,6 +541,7 @@ function selectionOpItems(): ContextMenuItem[] {
     {
       id: 'quantize-submenu',
       label: t.value.shell.pianoRoll.context.quantize,
+      disabled: contentReadOnly.value,
       children: [
         {
           id: 'quantize',
@@ -557,6 +564,7 @@ function selectionOpItems(): ContextMenuItem[] {
     {
       id: 'transpose-submenu',
       label: t.value.shell.pianoRoll.context.transpose,
+      disabled: contentReadOnly.value,
       children: [
         {
           id: 'transpose-up',
@@ -591,6 +599,7 @@ function selectionOpItems(): ContextMenuItem[] {
     {
       id: 'velocity-submenu',
       label: t.value.shell.pianoRoll.context.velocity,
+      disabled: contentReadOnly.value,
       children: [
         {
           id: 'humanize',
@@ -678,7 +687,7 @@ function onNoteContext(payload: {
           id: 'split',
           label: t.value.shell.pianoRoll.context.splitHere,
           hint: '3',
-          disabled: !canSplit,
+          disabled: contentReadOnly.value || !canSplit,
           run: () => setSelection([splitNote(note.id, splitPpq)]),
         },
         ...selectionOpItems(),
@@ -688,6 +697,7 @@ function onNoteContext(payload: {
           label: t.value.shell.pianoRoll.context.delete,
           danger: true,
           hint: 'Del',
+          disabled: contentReadOnly.value,
           run: () => deleteNotes([note.id]),
         },
       );
@@ -1040,6 +1050,7 @@ onBeforeUnmount(() => {
       v-model:note-color-mode="noteColorMode"
       v-model:audition-drag="auditionDrag"
       v-model:auto-reharmonize="autoReharmonize"
+      :read-only="contentReadOnly"
       :can-transform="canTransform"
       :clip-id="store.clipId"
       :note-count="audibleSourceNotes.length"
@@ -1127,7 +1138,7 @@ onBeforeUnmount(() => {
           @toggle="toggleLock"
         />
         <ReharmonizeSuggestion
-          v-if="pendingProposal"
+          v-if="pendingProposal && !contentReadOnly"
           :changes="pendingChanges"
           @apply="applyPendingProposal"
           @dismiss="dismissPendingProposal"

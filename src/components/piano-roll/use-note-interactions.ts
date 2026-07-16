@@ -761,6 +761,15 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     gestureReadout.value = null;
     cursor.value = 'default';
     lastDragAuditionPitch = null;
+    // Freeze can complete while a gesture is in flight. Keep selection-only
+    // releases working, but never commit a stale content edit afterward.
+    if (
+      options.isReadOnly?.() === true &&
+      g.kind !== 'pending-note' &&
+      g.kind !== 'pending-marquee' &&
+      g.kind !== 'marquee'
+    )
+      return;
     if (g.kind === 'draw-note') {
       const velocity = drawVelocity();
       const id = commands.addNote({

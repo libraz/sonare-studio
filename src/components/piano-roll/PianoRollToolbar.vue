@@ -32,6 +32,8 @@ const auditionDrag = defineModel<boolean>('auditionDrag', { required: true });
 const autoReharmonize = defineModel<boolean>('autoReharmonize', { required: true });
 
 const props = defineProps<{
+  /** True while the active track is frozen and content mutations are blocked. */
+  readOnly?: boolean;
   /** True when a MIDI clip is active and can receive a transform. */
   canTransform: boolean;
   /** Active clip id passed to the transform popover. */
@@ -132,6 +134,7 @@ function onLegendClick(trackId: number): void {
       v-model="autoReharmonize"
       :label="t.shell.pianoRoll.reharmonize.toggle"
       :title="t.shell.pianoRoll.reharmonize.toggleTitle"
+      :disabled="props.readOnly === true"
       size="sm"
     />
     <div class="track-legend">
@@ -157,7 +160,7 @@ function onLegendClick(trackId: number): void {
           :aria-label="t.shell.pianoRoll.fitClip"
           @click="emit('fitClip')"
         >
-          Clip
+          {{ t.shell.pianoRoll.fitClip }}
         </button>
         <button
           type="button"
@@ -166,7 +169,7 @@ function onLegendClick(trackId: number): void {
           :aria-label="t.shell.pianoRoll.fitNotes"
           @click="emit('fitNotes')"
         >
-          Notes
+          {{ t.shell.pianoRoll.fitNotes }}
         </button>
         <button
           type="button"
@@ -175,7 +178,7 @@ function onLegendClick(trackId: number): void {
           :aria-label="t.shell.pianoRoll.fitSelection"
           @click="emit('fitSelection')"
         >
-          Sel
+          {{ t.shell.pianoRoll.fitSelection }}
         </button>
       </span>
       <span class="zoom-pair">

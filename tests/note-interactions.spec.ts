@@ -32,7 +32,7 @@ function makeHarness(
   initialSelection: number[] = [],
   maxPpq?: number,
   resolvePitch?: (pitch: number) => number,
-  readOnly = false,
+  readOnly: boolean | (() => boolean) = false,
   minPpq?: number,
 ) {
   const view = new TimelineRange({ widthPx: 800, heightPx: 1280, pxPerPpq: 100, rowHeight: 10 });
@@ -56,7 +56,7 @@ function makeHarness(
     getSelection: () => selection,
     getGridPpq: () => 0.25,
     getTool: () => tool,
-    isReadOnly: () => readOnly,
+    isReadOnly: () => (typeof readOnly === 'function' ? readOnly() : readOnly),
     ...(minPpq === undefined ? {} : { getMinPpq: () => minPpq }),
     ...(maxPpq === undefined ? {} : { getMaxPpq: () => maxPpq }),
     ...(resolvePitch === undefined
@@ -97,6 +97,24 @@ describe('useNoteInteractions', () => {
     expect(commands.addNote).not.toHaveBeenCalled();
     expect(interactions.onKeyDown('Delete')).toBe(false);
     expect(commands.deleteNotes).not.toHaveBeenCalled();
+  });
+
+  it('does not commit a note drag when the track freezes before pointer-up', () => {
+    let readOnly = false;
+    const { commands, interactions } = makeHarness(
+      [makeNote({ id: 1 })],
+      [],
+      undefined,
+      undefined,
+      () => readOnly,
+    );
+    interactions.onPointerDown({ x: 150, y: 675 });
+    interactions.onPointerMove({ x: 200, y: 675 });
+    readOnly = true;
+    interactions.onPointerUp({ x: 200, y: 675 });
+
+    expect(commands.updateNotes).not.toHaveBeenCalled();
+    expect(interactions.previewNotes.value).toBeNull();
   });
 
   describe('double-click create', () => {

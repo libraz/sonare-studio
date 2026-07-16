@@ -184,23 +184,34 @@ const liveStatus = computed(() => {
   const selected = selectedNotes.value;
   const parts: string[] = [];
   if (selected.length === 0) {
-    parts.push('No notes selected');
+    parts.push(t.value.shell.pianoRoll.accessibility.noNotesSelected);
   } else if (selected.length === 1) {
     const note = selected[0];
     parts.push(
-      `${formatPitch(note.pitch)} selected at ${note.startPpq.toFixed(2)} PPQ for ${note.durationPpq.toFixed(2)} PPQ`,
+      formatMessage(t.value.shell.pianoRoll.accessibility.noteSelected, {
+        pitch: formatPitch(note.pitch),
+        start: note.startPpq.toFixed(2),
+        duration: note.durationPpq.toFixed(2),
+      }),
     );
   } else {
     const low = Math.min(...selected.map((note) => note.pitch));
     const high = Math.max(...selected.map((note) => note.pitch));
     parts.push(
-      `${selected.length} notes selected from ${formatPitch(low)} to ${formatPitch(high)}`,
+      formatMessage(t.value.shell.pianoRoll.accessibility.notesSelected, {
+        count: selected.length,
+        low: formatPitch(low),
+        high: formatPitch(high),
+      }),
     );
   }
   const hover = hoverPoint.value;
   if (hover) {
     parts.push(
-      `Pointer at ${props.range.xToPpq(hover.x).toFixed(2)} PPQ, ${formatPitch(props.range.yToPitch(hover.y))}`,
+      formatMessage(t.value.shell.pianoRoll.accessibility.pointerPosition, {
+        ppq: props.range.xToPpq(hover.x).toFixed(2),
+        pitch: formatPitch(props.range.yToPitch(hover.y)),
+      }),
     );
   }
   return parts.join('. ');
