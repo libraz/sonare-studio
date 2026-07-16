@@ -100,7 +100,16 @@ const selectionControls = useSampleSelection({
   localX: (event) => viewportControls.localX(event),
   frameAtPointer: (view, x) => viewportControls.frameAtPointer(view, x),
 });
-const { selection, selRange, onPointerDown, onPointerMove, onPointerUp } = selectionControls;
+const {
+  selection,
+  selRange,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+  onKeyDown: onSelectionKeyDown,
+  selectAll: selectAllSelection,
+  setSelectionRange,
+} = selectionControls;
 
 const viewportControls = useSampleViewport({
   asset,
@@ -199,6 +208,25 @@ const readout = computed(() => {
   if (!meta) return '';
   return selectionReadout(selRange.value, meta.numFrames, meta.sampleRate);
 });
+const selectionStartFrame = computed(() => selRange.value?.startFrame ?? 0);
+const selectionEndFrame = computed(
+  () => selRange.value?.endFrame ?? asset.value?.meta.numFrames ?? 0,
+);
+
+function onSelectionBoundaryInput(boundary: 'start' | 'end', event: Event): void {
+  const totalFrames = asset.value?.meta.numFrames;
+  if (totalFrames === undefined) return;
+  const frame = Number((event.target as HTMLInputElement).value);
+  const current = selRange.value ?? { startFrame: 0, endFrame: totalFrames };
+  setSelectionRange(
+    boundary === 'start' ? frame : current.startFrame,
+    boundary === 'end' ? frame : current.endFrame,
+  );
+}
+
+function clearSelection(): void {
+  selection.value = null;
+}
 const assetInfo = computed(() => {
   const meta = asset.value?.meta;
   if (!meta) return '';
@@ -336,7 +364,12 @@ onBeforeUnmount(() => {
         {{ asset?.meta.name ?? t.shell.sampleEditor.loading }}
       </span>
       <span v-if="assetInfo" class="asset-info">{{ assetInfo }}</span>
-      <span class="readout">{{ readout }}</span>
+      <span
+        class="readout"
+        aria-live="polite"
+        aria-atomic="true"
+        :aria-label="t.shell.sampleEditor.selectionStatus"
+      >{{ readout }}</span>
       <span class="spacer" />
       <button type="button" :disabled="!asset" @click="zoomToFit">
         <svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true">
@@ -359,6 +392,40 @@ onBeforeUnmount(() => {
       >
         {{ t.shell.sampleEditor.useInProject }}
       </button>
+    </div>
+    <div class="toolbar selection-toolbar" :aria-label="t.shell.sampleEditor.selectionRange">
+      <span class="selection-title">{{ t.shell.sampleEditor.selectionRange }}</span>
+      <label>
+        {{ t.shell.sampleEditor.selectionStart }}
+        <input
+          class="num selection-start"
+          type="number"
+          min="0"
+          :max="asset?.meta.numFrames ?? 0"
+          :disabled="!asset"
+          :value="selectionStartFrame"
+          @change="onSelectionBoundaryInput('start', $event)"
+        />
+      </label>
+      <label>
+        {{ t.shell.sampleEditor.selectionEnd }}
+        <input
+          class="num selection-end"
+          type="number"
+          min="0"
+          :max="asset?.meta.numFrames ?? 0"
+          :disabled="!asset"
+          :value="selectionEndFrame"
+          @change="onSelectionBoundaryInput('end', $event)"
+        />
+      </label>
+      <button type="button" :disabled="!asset" @click="selectAllSelection">
+        {{ t.shell.sampleEditor.selectAll }}
+      </button>
+      <button type="button" :disabled="!selRange" @click="clearSelection">
+        {{ t.shell.sampleEditor.clearSelection }}
+      </button>
+      <span class="selection-help">{{ t.shell.sampleEditor.selectionKeyboardHelp }}</span>
     </div>
     <div class="toolbar ops">
       <label>
@@ -999,6 +1066,7 @@ onBeforeUnmount(() => {
       @pointermove="onPointerMove"
       @pointerup="onPointerUp"
       @pointercancel="onPointerUp"
+      @keydown="onSelectionKeyDown"
       @wheel.prevent="onWheel"
     >
       <canvas ref="canvasRef" class="wave-canvas" role="img" :aria-label="t.shell.sampleEditor.waveform" />
@@ -1200,6 +1268,23 @@ onBeforeUnmount(() => {
 .readout {
   font-variant-numeric: tabular-nums;
   color: var(--text-3);
+}
+
+.selection-toolbar {
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-inset);
+}
+
+.selection-title {
+  color: var(--text-1);
+  font-weight: var(--fw-semibold);
+}
+
+.selection-help {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
 }
 
 .spacer {

@@ -240,6 +240,42 @@ describe('useSampleWarp', () => {
     scope.stop();
   });
 
+  it('ignores auto-warp results after the document generation changes', async () => {
+    setClipWarp.mockClear();
+    const pending = deferred<ReturnType<typeof loadedAsset>>();
+    const project = reactive({
+      clips: [audioClip()],
+      clipId: 7,
+      tempoBpm: 120,
+      tempoSegments: [],
+      documentGeneration: 1,
+    });
+    const errors: string[] = [];
+    const scope = effectScope();
+    const warp = scope.run(() =>
+      useSampleWarp({
+        project: project as never,
+        assetId: () => 'asset-1',
+        setError: (message) => errors.push(message),
+        autoWarp: {
+          loadAudioAsset: () => pending.promise as never,
+          detectBeats: () => [0, 0.5, 1.1, 1.7],
+          detectDownbeats: () => [0],
+        },
+      }),
+    );
+    if (!warp) throw new Error('effect scope did not run');
+
+    const run = warp.onAutoWarp();
+    project.documentGeneration += 1;
+    pending.resolve(loadedAsset());
+    await run;
+
+    expect(setClipWarp).not.toHaveBeenCalled();
+    expect(errors).toEqual([]);
+    scope.stop();
+  });
+
   it('ignores late auto-warp failures after scope dispose', async () => {
     setClipWarp.mockClear();
     const pending = deferred<ReturnType<typeof loadedAsset>>();

@@ -95,6 +95,68 @@ export function useSampleSelection(options: UseSampleSelectionOptions) {
     dragging = false;
   }
 
+  /** Sets an explicit range from accessible frame-bound controls. */
+  function setSelectionRange(startFrame: number, endFrame: number): void {
+    const totalFrames = asset.value?.meta.numFrames;
+    if (totalFrames === undefined) return;
+    const anchorFrame = clampFrameIndex(startFrame, totalFrames);
+    const headFrame = clampFrameIndex(endFrame, totalFrames);
+    selection.value = anchorFrame === headFrame ? null : { anchorFrame, headFrame };
+  }
+
+  /** Selects the entire loaded asset. */
+  function selectAll(): void {
+    const totalFrames = asset.value?.meta.numFrames;
+    if (totalFrames === undefined) return;
+    selection.value = totalFrames > 0 ? { anchorFrame: 0, headFrame: totalFrames } : null;
+  }
+
+  /** Keyboard control for the selection head. Arrow = one frame, Page = one second. */
+  function onKeyDown(event: KeyboardEvent): void {
+    const totalFrames = asset.value?.meta.numFrames;
+    if (totalFrames === undefined) return;
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') {
+      event.preventDefault();
+      selectAll();
+      return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      selection.value = null;
+      return;
+    }
+    const step = event.shiftKey ? Math.max(1, asset.value?.meta.sampleRate ?? 1) : 1;
+    const draft = selection.value;
+    const anchorFrame = draft?.anchorFrame ?? 0;
+    const headFrame = draft?.headFrame ?? 0;
+    let nextHead: number | null = null;
+    switch (event.key) {
+      case 'ArrowLeft':
+        nextHead = headFrame - step;
+        break;
+      case 'ArrowRight':
+        nextHead = headFrame + step;
+        break;
+      case 'PageUp':
+        nextHead = headFrame - Math.max(1, asset.value?.meta.sampleRate ?? 1);
+        break;
+      case 'PageDown':
+        nextHead = headFrame + Math.max(1, asset.value?.meta.sampleRate ?? 1);
+        break;
+      case 'Home':
+        nextHead = 0;
+        break;
+      case 'End':
+        nextHead = totalFrames;
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+    const clamped = clampFrameIndex(nextHead, totalFrames);
+    selection.value = anchorFrame === clamped ? null : { anchorFrame, headFrame: clamped };
+  }
+
   return {
     selection,
     selRange,
@@ -102,5 +164,8 @@ export function useSampleSelection(options: UseSampleSelectionOptions) {
     onPointerDown,
     onPointerMove,
     onPointerUp,
+    setSelectionRange,
+    selectAll,
+    onKeyDown,
   };
 }

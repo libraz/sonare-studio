@@ -8,21 +8,25 @@ import type { SampleRange } from '@/ui/sample-editor/ops';
 import { useSampleOperations } from '@/ui/sample-editor/use-sample-operations';
 import type { SampleEditorWasmOps } from '@/ui/sample-editor/wasm-ops';
 
-const assetStore = vi.hoisted(() => ({
-  deleteAsset: vi.fn<(id: string) => Promise<void>>(async () => undefined),
-  listAssets: vi.fn<() => Promise<AudioAssetMeta[]>>(),
-  loadAsset: vi.fn<(id: string) => Promise<LoadedAudioAsset>>(),
-  saveAsset:
-    vi.fn<
-      (input: SaveAssetInput, channels: ReadonlyArray<Float32Array>) => Promise<AudioAssetMeta>
-    >(),
-  saveAssetWithStatus: vi.fn(
-    async (input: SaveAssetInput, channels: ReadonlyArray<Float32Array>) => ({
-      meta: await assetStore.saveAsset(input, channels),
-      created: true,
-    }),
-  ),
-}));
+const assetStore = vi.hoisted(() => {
+  const deleteAsset = vi.fn<(id: string) => Promise<void>>(async () => undefined);
+  return {
+    deleteAsset,
+    deleteAssetUnlocked: deleteAsset,
+    listAssets: vi.fn<() => Promise<AudioAssetMeta[]>>(),
+    loadAsset: vi.fn<(id: string) => Promise<LoadedAudioAsset>>(),
+    saveAsset:
+      vi.fn<
+        (input: SaveAssetInput, channels: ReadonlyArray<Float32Array>) => Promise<AudioAssetMeta>
+      >(),
+    saveAssetWithStatus: vi.fn(
+      async (input: SaveAssetInput, channels: ReadonlyArray<Float32Array>) => ({
+        meta: await assetStore.saveAsset(input, channels),
+        created: true,
+      }),
+    ),
+  };
+});
 vi.mock('@/persistence/assets', () => assetStore);
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {

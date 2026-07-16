@@ -6,6 +6,7 @@
  */
 
 import { computed, onScopeDispose, ref, watch } from 'vue';
+import { OperationGeneration, type OperationIdentity } from '@/lib/operation-generation';
 import { ensureWasm } from '@/lib/wasm';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { loadAsset } from '@/persistence/assets';
@@ -54,7 +55,7 @@ function errorMessage(err: unknown): string {
 export function useSampleWarp(options: UseSampleWarpOptions) {
   const { project, assetId, setError } = options;
   let disposed = false;
-  let autoWarpGeneration = 0;
+  const autoWarpOperations = new OperationGeneration();
 
   const warpClip = computed(() => findWarpClip(project.clips, project.clipId, assetId()));
   const warpEnabled = computed(() => warpClip.value?.warp?.enabled ?? false);
@@ -148,22 +149,27 @@ export function useSampleWarp(options: UseSampleWarpOptions) {
   async function onAutoWarp(): Promise<void> {
     const clip = warpClip.value;
     if (!clip?.assetId) return;
-    const generation = ++autoWarpGeneration;
-    const source = {
-      id: clip.id,
-      assetId: clip.assetId,
-      sourceOffsetPpq: clip.sourceOffsetPpq,
-      lengthPpq: clip.lengthPpq,
-    };
-    const isCurrent = (): boolean => {
-      if (disposed || generation !== autoWarpGeneration) return false;
+    const identity = (): OperationIdentity => {
       const current = warpClip.value;
-      return (
-        current?.id === source.id &&
-        current.assetId === source.assetId &&
-        current.sourceOffsetPpq === source.sourceOffsetPpq &&
-        current.lengthPpq === source.lengthPpq
-      );
+      return {
+        projectId: project.documentGeneration,
+        targetId: current?.id ?? null,
+        revision: current
+          ? JSON.stringify({
+              assetId: current.assetId,
+              startPpq: current.startPpq,
+              sourceOffsetPpq: current.sourceOffsetPpq,
+              lengthPpq: current.lengthPpq,
+              warp: current.warp,
+              tempoBpm: project.tempoBpm,
+              tempoSegments: project.tempoSegments,
+            })
+          : null,
+      };
+    };
+    const token = autoWarpOperations.begin(identity());
+    const isCurrent = (): boolean => {
+      return !disposed && autoWarpOperations.isCurrent(token, identity());
     };
     try {
       const deps = await resolveAutoWarpDeps();
@@ -197,7 +203,7 @@ export function useSampleWarp(options: UseSampleWarpOptions) {
 
   onScopeDispose(() => {
     disposed = true;
-    autoWarpGeneration++;
+    autoWarpOperations.dispose();
   });
 
   return {
