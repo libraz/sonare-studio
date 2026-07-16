@@ -135,6 +135,8 @@ export function normalizeMixdownLoudness(
     peakDb: report.peakDb + gainDb,
     ...(report.truePeakDb !== undefined ? { truePeakDb: report.truePeakDb + gainDb } : {}),
     lufs: (report.lufs as number) + gainDb,
+    ...(report.momentaryLufs !== undefined ? { momentaryLufs: report.momentaryLufs + gainDb } : {}),
+    ...(report.shortTermLufs !== undefined ? { shortTermLufs: report.shortTermLufs + gainDb } : {}),
   };
 }
 

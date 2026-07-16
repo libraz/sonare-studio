@@ -213,6 +213,14 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
   // is reduced to its highest sounding pitch at a beat as that voice's
   // representative, so a residually polyphonic track still contributes an outer
   // voice rather than an ambiguous cluster.
+  // Per-note analysis is time ordered. Its unique onsets are also the only
+  // instants at which counterpoint context is queried, so index other voices
+  // against that small, relevant time domain instead of rescanning every
+  // project note for every active note.
+  const sorted = [...input.notes].sort((a, b) => a.startPpq - b.startPpq || a.pitch - b.pitch);
+  const voiceQueryBeats = [
+    ...new Set(sorted.map((note) => input.clipStartPpq + note.startPpq)),
+  ].sort((a, b) => a - b);
   const activeIds = new Set(input.notes.map((note) => note.id));
   const otherVoiceLines: EditorNote[][] = [];
   if (input.otherTracks !== undefined) {
@@ -222,16 +230,42 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
       if (line.length > 0) otherVoiceLines.push(line);
     }
   }
-  /** Highest pitch a voice line sounds at an absolute beat, if any. */
-  const voicePitchAt = (line: EditorNote[], absBeat: number): number | undefined => {
-    let top: number | undefined;
-    for (const note of line) {
-      if (absBeat >= note.startPpq && absBeat < note.startPpq + note.durationPpq) {
-        if (top === undefined || note.pitch > top) top = note.pitch;
+  /**
+   * Highest pitch per requested beat, built in one start/end sweep. MIDI pitch
+   * has a fixed 128-value domain, making the top-voice lookup bounded even
+   * when a project contains many overlapping sustained notes.
+   */
+  const voicePitchIndex = (line: EditorNote[]): Map<number, number> => {
+    const starts = [...line].sort((a, b) => a.startPpq - b.startPpq);
+    const ends = [...line].sort(
+      (a, b) => a.startPpq + a.durationPpq - (b.startPpq + b.durationPpq),
+    );
+    const counts = new Uint32Array(128);
+    const result = new Map<number, number>();
+    let startIndex = 0;
+    let endIndex = 0;
+    for (const beat of voiceQueryBeats) {
+      while (startIndex < starts.length && starts[startIndex].startPpq <= beat) {
+        const pitch = starts[startIndex++].pitch;
+        if (pitch >= 0 && pitch < 128) counts[pitch] += 1;
+      }
+      while (
+        endIndex < ends.length &&
+        ends[endIndex].startPpq + ends[endIndex].durationPpq <= beat
+      ) {
+        const pitch = ends[endIndex++].pitch;
+        if (pitch >= 0 && pitch < 128 && counts[pitch] > 0) counts[pitch] -= 1;
+      }
+      for (let pitch = 127; pitch >= 0; pitch--) {
+        if (counts[pitch] > 0) {
+          result.set(beat, pitch);
+          break;
+        }
       }
     }
-    return top;
+    return result;
   };
+  const otherVoicePitchIndexes = otherVoiceLines.map((line) => voicePitchIndex(line));
   /**
    * Snapshot of every voice sounding at `absBeat`, each carrying its pitch at
    * `prevBeat` when given so evaluateSafety can measure motion between the two
@@ -239,10 +273,10 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
    */
   const othersAt = (absBeat: number, prevBeat?: number): VoiceSnapshot[] => {
     const out: VoiceSnapshot[] = [];
-    for (const line of otherVoiceLines) {
-      const pitch = voicePitchAt(line, absBeat);
+    for (const pitchIndex of otherVoicePitchIndexes) {
+      const pitch = pitchIndex.get(absBeat);
       if (pitch === undefined) continue;
-      const prevPitch = prevBeat !== undefined ? voicePitchAt(line, prevBeat) : undefined;
+      const prevPitch = prevBeat !== undefined ? pitchIndex.get(prevBeat) : undefined;
       out.push(prevPitch !== undefined ? { pitch, prevPitch } : { pitch });
     }
     return out;
@@ -295,7 +329,6 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
 
   // Per-note analysis, in time order so prevPitch reflects the preceding
   // onset group (cluster members never count each other as "previous").
-  const sorted = [...input.notes].sort((a, b) => a.startPpq - b.startPpq || a.pitch - b.pitch);
   const byNoteId = new Map<number, NoteAnalysis>();
   // Chord-scale reports are chord-only, so memoize by chord identity to avoid
   // recomputing the scale fit for every note under the same chord.

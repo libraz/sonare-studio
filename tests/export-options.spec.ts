@@ -182,6 +182,30 @@ describe('normalizeMixdownLoudness', () => {
     });
   });
 
+  it('applies the same gain delta to every absolute loudness report field', () => {
+    const report = normalizeMixdownLoudness(
+      [new Float32Array([0.1]), new Float32Array([0.1])],
+      {
+        peakDb: -20,
+        truePeakDb: -19,
+        lufs: -20,
+        momentaryLufs: -18,
+        shortTermLufs: -19,
+        loudnessRange: 4,
+      },
+      -14,
+    );
+
+    expect(report).toMatchObject({
+      peakDb: -14,
+      truePeakDb: -13,
+      lufs: -14,
+      momentaryLufs: -12,
+      shortTermLufs: -13,
+      loudnessRange: 4,
+    });
+  });
+
   it('reaches the loudness target when there is enough true-peak headroom', () => {
     const channels: [Float32Array, Float32Array] = [
       new Float32Array([0.1]),
