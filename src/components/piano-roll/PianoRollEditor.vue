@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import ChordLane from '@/components/arrangement/ChordLane.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
@@ -175,22 +175,6 @@ function onLabelWheel(event: WheelEvent): void {
   event.stopPropagation();
 }
 
-/** Scrolls the active tab to the vertical center of the column when it changes. */
-function centerActiveLaneTab(): void {
-  void nextTick(() => {
-    const column = laneLabelColumn.value;
-    const active = column?.querySelector<HTMLElement>('.lane-tab-active');
-    if (!column || !active) return;
-    // Measure relative to the column viewport (offsetTop is unreliable here —
-    // it is relative to the offsetParent, not this scroll container).
-    const columnRect = column.getBoundingClientRect();
-    const activeRect = active.getBoundingClientRect();
-    const delta = activeRect.top - columnRect.top - (column.clientHeight - activeRect.height) / 2;
-    const max = column.scrollHeight - column.clientHeight;
-    column.scrollTop = Math.max(0, Math.min(max, column.scrollTop + delta));
-  });
-}
-
 const lanes = usePianoRollLanes();
 const {
   laneParam,
@@ -207,24 +191,6 @@ const {
   selectChannelPressureLane,
   selectPolyPressureLane,
 } = lanes;
-
-// Keep the selected parameter tab in view: re-center it whenever the active
-// lane changes or the block is revealed, so the choice is never hidden off
-// the bottom of the scrollable column.
-watch(
-  [
-    laneParam,
-    laneCc,
-    lanePitchBend,
-    laneChannelPressure,
-    lanePolyPressure,
-    noteLaneActive,
-    laneVisible,
-  ],
-  () => {
-    if (laneVisible.value) centerActiveLaneTab();
-  },
-);
 
 /** The 16 MIDI channel options for the CC-lane channel picker (0-based value). */
 const laneChannelOptions = computed(() =>
@@ -1015,7 +981,6 @@ watch(
 
 onMounted(() => {
   if (props.isPlaying && appSettings.settings.scrollFollowPlayhead) startPlayheadFollow();
-  centerActiveLaneTab();
 });
 
 onBeforeUnmount(() => {
@@ -1157,7 +1122,7 @@ onBeforeUnmount(() => {
       <div
         ref="laneLabelColumn"
         class="cell-velocity-label"
-        role="tablist"
+        role="group"
         :aria-label="t.shell.pianoRoll.noteLaneParameter"
         @wheel="onLabelWheel"
       >
@@ -1402,48 +1367,6 @@ onBeforeUnmount(() => {
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: thin;
-}
-
-.lane-tab {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 16px;
-  padding: 1px 2px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  box-shadow: none;
-  color: var(--text-4);
-  font: var(--fw-semibold) var(--fs-2xs)/1 var(--font-sans);
-  letter-spacing: 0.06em;
-  cursor: pointer;
-  transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
-}
-
-.lane-group-label {
-  flex: none;
-  padding: 3px 2px 1px;
-  color: var(--text-4);
-  font: var(--fw-semibold) 8px/1 var(--font-sans);
-  letter-spacing: 0.08em;
-  text-align: center;
-  text-transform: uppercase;
-}
-
-.lane-tab:hover {
-  background: var(--surface-3);
-  color: var(--text-2);
-}
-
-/* Accent fill so the selected parameter reads clearly in both themes (the grey
- * surface tint was too faint against the panel, especially in light mode). */
-.lane-tab-active,
-.lane-tab-active:hover {
-  background: var(--accent);
-  color: var(--accent-text);
-  box-shadow: var(--raise-hi), var(--shadow-1);
 }
 
 .lane-divider {

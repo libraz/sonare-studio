@@ -14,7 +14,10 @@ describe('useAppShortcutsMenu', () => {
     resetShortcutBlockingOverlaysForTest();
   });
 
-  function harness(blocked: { value: boolean }) {
+  function harness(
+    blocked: { value: boolean },
+    overrides: Partial<Parameters<typeof useAppShortcutsMenu>[0]> = {},
+  ) {
     const match = vi.fn(() => 'transport.togglePlayback');
     const togglePlayback = vi.fn();
     const menu = useAppShortcutsMenu({
@@ -71,6 +74,7 @@ describe('useAppShortcutsMenu', () => {
       togglePlayback,
       toggleRecord: vi.fn(),
       toggleScorePanel: vi.fn(),
+      ...overrides,
     });
     return { match, menu, togglePlayback };
   }
@@ -175,5 +179,60 @@ describe('useAppShortcutsMenu', () => {
 
     expect(commandPaletteOpen.value).toBe(true);
     expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('ignores the record shortcut when no track is armed, but fires it once armed', () => {
+    const armedTrackId = ref<number | null>(null);
+    const toggleRecord = vi.fn();
+    const { menu } = harness(
+      { value: false },
+      {
+        handle: shallowRef({} as never),
+        recording: { armedTrackId, isRecording: ref(false) } as never,
+        toggleRecord,
+        shortcuts: {
+          match: vi.fn(() => 'transport.toggleRecord'),
+          keysFor: vi.fn(() => ['r']),
+        } as never,
+      },
+    );
+
+    // With an engine present but no armed track, the shortcut must no-op — the
+    // menu entry is disabled in this state, so the key path must match it.
+    menu.onGlobalKeyDown(new KeyboardEvent('keydown', { key: 'r', cancelable: true }));
+    expect(toggleRecord).not.toHaveBeenCalled();
+
+    // Arming a track satisfies the guard; the shortcut now toggles recording.
+    armedTrackId.value = 3;
+    menu.onGlobalKeyDown(new KeyboardEvent('keydown', { key: 'r', cancelable: true }));
+    expect(toggleRecord).toHaveBeenCalledTimes(1);
+  });
+
+  it('lists saved layouts only once, in the dedicated Layout menu', () => {
+    const { menu } = harness(
+      { value: false },
+      {
+        layouts: ref([{ name: 'Mixing' }, { name: 'Editing' }]),
+        recording: {
+          armedTrackId: ref(null),
+          isRecording: ref(false),
+        } as never,
+      },
+    );
+
+    // The Window menu must no longer carry layout rows or a save-layout row.
+    const windowMenu = menu.menuBarModel.value.find((m) => m.id === 'window');
+    const windowIds = (windowMenu?.items ?? []).map((item) => item.id);
+    expect(windowIds.some((id) => id.startsWith('window.layout.'))).toBe(false);
+    expect(windowIds).not.toContain('window.saveLayout');
+
+    // The dedicated Layout menu is the single home for the saved layouts.
+    expect(menu.layoutMenu.value.items.map((item) => item.id)).toContain('layout.Mixing');
+
+    // Flattened into the command palette, each layout appears exactly once.
+    const layoutRows = menu.commandPaletteItems.value.filter((row) =>
+      row.label.endsWith(': Mixing'),
+    );
+    expect(layoutRows).toHaveLength(1);
   });
 });

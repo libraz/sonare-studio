@@ -206,7 +206,7 @@ function onMenuKeydown(event: KeyboardEvent, root: HTMLElement | null): void {
       <button
         v-else
         type="button"
-        role="menuitem"
+        :role="item.checked === undefined ? 'menuitem' : 'menuitemcheckbox'"
         class="context-menu-item"
         :data-menu-item-id="item.id"
         :class="{
@@ -243,7 +243,7 @@ function onMenuKeydown(event: KeyboardEvent, root: HTMLElement | null): void {
         <button
           v-else
           type="button"
-          role="menuitem"
+          :role="child.checked === undefined ? 'menuitem' : 'menuitemcheckbox'"
           class="context-menu-item"
           :data-menu-item-id="child.id"
           :class="{ danger: child.danger }"

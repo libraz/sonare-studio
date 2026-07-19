@@ -48,6 +48,31 @@ describe('SelectMenu', () => {
     expect(removeWindow).toHaveBeenCalledWith('scroll', expect.any(Function), true);
   });
 
+  it('announces the active option through aria-activedescendant on the combobox', async () => {
+    const wrapper = mountMenu();
+    const trigger = wrapper.find('button');
+    // Closed: combobox role is present, no active descendant, no controls.
+    expect(trigger.attributes('role')).toBe('combobox');
+    expect(trigger.attributes('aria-activedescendant')).toBeUndefined();
+    expect(trigger.attributes('aria-controls')).toBeUndefined();
+
+    await trigger.trigger('click');
+    const list = document.body.querySelector('.select-list') as HTMLElement;
+    const listId = list.id;
+    expect(listId).toBeTruthy();
+    // Open on the selected value ('a', index 0): activedescendant points at it.
+    expect(trigger.attributes('aria-controls')).toBe(listId);
+    const active = trigger.attributes('aria-activedescendant');
+    expect(active).toBe(`${listId}-option-0`);
+    expect(document.getElementById(active as string)?.textContent).toContain('Alpha');
+
+    // Arrowing down moves the active descendant to the next option's id.
+    await trigger.trigger('keydown', { key: 'ArrowDown' });
+    const next = trigger.attributes('aria-activedescendant');
+    expect(next).toBe(`${listId}-option-1`);
+    expect(document.getElementById(next as string)?.textContent).toContain('Beta');
+  });
+
   it('clears typeahead timer on unmount', async () => {
     const wrapper = mountMenu();
     await wrapper.find('button').trigger('click');

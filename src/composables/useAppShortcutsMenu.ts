@@ -139,7 +139,10 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
         options.setRightLocator();
         return true;
       case 'transport.toggleRecord':
-        if (!options.handle.value) return false;
+        // Mirror the menu item's guard: recording needs both an engine and an
+        // armed track. Without this the shortcut fired a no-op toggle with no
+        // track armed, diverging from the (disabled) menu entry.
+        if (!options.handle.value || options.recording.armedTrackId.value === null) return false;
         options.toggleRecord();
         return true;
       case 'project.save':
@@ -398,8 +401,10 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
   }
 
   function windowItems(): MenuBarItem[] {
-    const l = t.value.shell.layout;
-    const items: MenuBarItem[] = [
+    // Saved layouts and "save current" live only in the dedicated Layout menu
+    // (layoutMenu). Listing them here too duplicated every layout across the
+    // menu bar and, once flattened, the command palette.
+    return [
       commandItem(
         'window.deviceRack',
         t.value.shortcuts.menu.deviceRack,
@@ -412,21 +417,6 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
         checked: options.scoreVisible.value,
       }),
     ];
-    if (options.layouts.value.length > 0) {
-      items.push(sep('window.sep-layouts'), heading('window.layouts', l.trigger));
-      for (const layout of options.layouts.value) {
-        items.push(
-          commandItem(`window.layout.${layout.name}`, layout.name, () =>
-            options.applyNamedLayout(layout.name),
-          ),
-        );
-      }
-    }
-    items.push(
-      sep('window.sep-save-layout'),
-      commandItem('window.saveLayout', l.saveCurrent, options.saveCurrentLayout),
-    );
-    return items;
   }
 
   function transportItems(): MenuBarItem[] {

@@ -32,6 +32,39 @@ describe('MenuBar', () => {
     expect(remove).toHaveBeenCalledWith('pointerdown', expect.any(Function), true);
   });
 
+  it('exposes toggleable rows as menuitemcheckbox with aria-checked', async () => {
+    const toggleMenus: MenuBarMenu[] = [
+      {
+        id: 'view',
+        label: 'View',
+        items: [
+          { id: 'grid', label: 'Show grid', checked: true, run: vi.fn() },
+          { id: 'about', label: 'About', run: vi.fn() },
+        ],
+      },
+    ];
+    const wrapper = mount(MenuBar, {
+      attachTo: document.body,
+      props: { menus: toggleMenus },
+      global: { stubs: { TransportIcon: true } },
+    });
+    await wrapper.find('.app-menubar__trigger').trigger('click');
+    await nextTick();
+
+    const rows = wrapper.findAll('.menu-panel__item');
+    const grid = rows.find((row) => row.text().includes('Show grid'));
+    const about = rows.find((row) => row.text().includes('About'));
+    // A checkable row must announce its state through the checkbox role;
+    // aria-checked on a plain menuitem is not conveyed by assistive tech.
+    expect(grid?.attributes('role')).toBe('menuitemcheckbox');
+    expect(grid?.attributes('aria-checked')).toBe('true');
+    // A plain action row keeps the menuitem role with no checked state.
+    expect(about?.attributes('role')).toBe('menuitem');
+    expect(about?.attributes('aria-checked')).toBeUndefined();
+    wrapper.unmount();
+    document.body.replaceChildren();
+  });
+
   it('uses the focused menu as aria-activedescendant owner', async () => {
     const wrapper = mount(MenuBar, {
       attachTo: document.body,

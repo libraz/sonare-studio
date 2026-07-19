@@ -62,10 +62,18 @@ watch(filtered, () => {
   activeIndex.value = 0;
 });
 
+/** Keeps the active row visible when keyboard navigation moves off-screen. */
+function scrollActiveIntoView(): void {
+  const id = activeOptionId.value;
+  if (!id) return;
+  void nextTick(() => document.getElementById(id)?.scrollIntoView({ block: 'nearest' }));
+}
+
 function move(delta: 1 | -1): void {
   const count = filtered.value.length;
   if (count === 0) return;
   activeIndex.value = (activeIndex.value + delta + count) % count;
+  scrollActiveIntoView();
 }
 
 function run(command: CommandPaletteItem): void {

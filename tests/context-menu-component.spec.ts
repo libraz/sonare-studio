@@ -32,6 +32,26 @@ describe('ContextMenu keyboard navigation', () => {
     expect(document.activeElement).toBe(document.querySelector('[data-menu-item-id="first"]'));
   });
 
+  it('marks checkable items as menuitemcheckbox with aria-checked', async () => {
+    await mountOpenMenu([
+      { id: 'snap', label: 'Snap to grid', checked: true, run: vi.fn() },
+      { id: 'mono', label: 'Mono monitor', checked: false, run: vi.fn() },
+      { id: 'plain', label: 'Rename', run: vi.fn() },
+    ]);
+
+    const snap = document.querySelector('[data-menu-item-id="snap"]');
+    const mono = document.querySelector('[data-menu-item-id="mono"]');
+    const plain = document.querySelector('[data-menu-item-id="plain"]');
+    // aria-checked only conveys state on a menuitemcheckbox/menuitemradio role.
+    expect(snap?.getAttribute('role')).toBe('menuitemcheckbox');
+    expect(snap?.getAttribute('aria-checked')).toBe('true');
+    expect(mono?.getAttribute('role')).toBe('menuitemcheckbox');
+    expect(mono?.getAttribute('aria-checked')).toBe('false');
+    // A non-toggle item stays a plain menuitem with no checked state.
+    expect(plain?.getAttribute('role')).toBe('menuitem');
+    expect(plain?.getAttribute('aria-checked')).toBeNull();
+  });
+
   it('moves focus with arrows and runs the focused item with Enter', async () => {
     const first = vi.fn();
     const second = vi.fn();

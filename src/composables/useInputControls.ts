@@ -42,6 +42,12 @@ export interface InputControlsOptions {
   ) => void;
   /** Routes non-note channel voice to the active MIDI track. */
   previewChannelVoice: (message: LiveMidiChannelVoiceMessage) => Promise<void>;
+  /**
+   * True while a MIDI recording take is capturing. Live notes are then routed
+   * to the take; step input is suppressed so a played note is not entered twice
+   * (once recorded, once step-inserted) when both are armed at the same time.
+   */
+  recordingActive?: Ref<boolean>;
   /** Captures an incoming note-on for MIDI recording (when armed/rolling). */
   onRecordNoteOn?: (event: RecordNoteEvent) => void;
   /** Captures an incoming note-off for MIDI recording (when armed/rolling). */
@@ -87,7 +93,9 @@ export function useInputControls(options: InputControlsOptions) {
     onNoteOn: (event) => {
       const { pitch, velocity } = event;
       void previewNoteOn(pitch, velocity, event.channel, event.timeStampMs);
-      stepInput.enterNote(pitch, velocity);
+      // While a take is capturing, the note is recorded below; also step-entering
+      // it would write the same note twice. Recording takes precedence.
+      if (!options.recordingActive?.value) stepInput.enterNote(pitch, velocity);
       options.onRecordNoteOn?.(event);
     },
     onNoteOff: (event) => {

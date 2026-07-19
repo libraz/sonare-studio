@@ -47,6 +47,30 @@ describe('CommandPalette', () => {
     expect(document.activeElement).toBe(input);
   });
 
+  it('scrolls the active row into view when keyboard navigation moves it', async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    mountPalette([
+      { id: 'save', label: 'Save project', run: vi.fn() },
+      { id: 'open', label: 'Open project', run: vi.fn() },
+      { id: 'close', label: 'Close project', run: vi.fn() },
+    ]);
+    await nextTick();
+    await nextTick();
+
+    const input = q<HTMLInputElement>('[role="combobox"]')!;
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }),
+    );
+    await nextTick();
+    await nextTick();
+
+    const options = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')];
+    // The now-active second row must be scrolled into view.
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+    expect(scrollIntoView.mock.contexts.at(-1)).toBe(options[1]);
+  });
+
   it('filters commands and runs the selected command with Enter', async () => {
     const save = vi.fn();
     const open = vi.fn();

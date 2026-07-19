@@ -220,6 +220,27 @@ describe('useInputControls MIDI routing engine lifecycle', () => {
     scope.stop();
   });
 
+  it('suppresses step input for a live note while a recording take is capturing', () => {
+    const options = makeOptions();
+    const onRecordNoteOn = vi.fn();
+    const recordingActive = ref(true);
+    const scope = effectScope();
+    scope.run(() => {
+      useInputControls({ ...options, recordingActive, onRecordNoteOn });
+    });
+
+    // Capturing: the note is recorded, but NOT also step-entered (no double input).
+    webMidiOptions?.onNoteOn?.({ pitch: 60, velocity: 96, channel: 2, timeStampMs: 10 });
+    expect(onRecordNoteOn).toHaveBeenCalledTimes(1);
+    expect(options.stepInput.enterNote).not.toHaveBeenCalled();
+
+    // Not capturing: step input resumes for live notes.
+    recordingActive.value = false;
+    webMidiOptions?.onNoteOn?.({ pitch: 62, velocity: 80, channel: 2, timeStampMs: 20 });
+    expect(options.stepInput.enterNote).toHaveBeenCalledWith(62, 80);
+    scope.stop();
+  });
+
   it('uses sustained audible note-on/off for QWERTY music typing', () => {
     const options = makeOptions();
     const scope = effectScope();

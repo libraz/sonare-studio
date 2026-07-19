@@ -1,5 +1,5 @@
 <script setup lang="ts" generic="T extends string | number">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue';
 
 /**
  * Accessible, frosted-glass replacement for the native <select>. Drop-in: bind
@@ -48,6 +48,14 @@ const menuStyle = ref<Record<string, string>>({});
 
 const selected = computed(() => props.options.find((o) => o.value === props.modelValue));
 const label = computed(() => selected.value?.label ?? props.placeholder);
+
+// APG select-only combobox: focus stays on the trigger, so the active option is
+// announced through aria-activedescendant rather than by moving DOM focus.
+const listboxId = useId();
+const optionId = (index: number): string => `${listboxId}-option-${index}`;
+const activeDescendantId = computed(() =>
+  open.value && activeIndex.value >= 0 ? optionId(activeIndex.value) : undefined,
+);
 
 /** Positions the popover under (or above) the trigger using fixed coordinates. */
 function reposition(): void {
@@ -222,9 +230,12 @@ onBeforeUnmount(() => {
       class="select-trigger"
       :class="[`is-${props.size}`, { 'is-open': open }]"
       :disabled="props.disabled"
+      role="combobox"
       :aria-label="props.ariaLabel"
       aria-haspopup="listbox"
       :aria-expanded="open"
+      :aria-controls="open ? listboxId : undefined"
+      :aria-activedescendant="activeDescendantId"
       @click="toggle"
       @keydown="onKeydown"
     >
@@ -244,6 +255,7 @@ onBeforeUnmount(() => {
     <Transition name="select-pop">
       <ul
         v-if="open"
+        :id="listboxId"
         ref="listRef"
         class="select-list"
         :class="`is-${props.size}`"
@@ -254,6 +266,7 @@ onBeforeUnmount(() => {
       >
         <li
           v-for="(option, index) in props.options"
+          :id="optionId(index)"
           :key="String(option.value)"
           class="select-option"
           :class="{

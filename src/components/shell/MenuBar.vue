@@ -273,7 +273,7 @@ onBeforeUnmount(detach);
                 danger: item.danger,
                 active: activeRowId === item.id,
               }"
-              role="menuitem"
+              :role="item.checked === undefined ? 'menuitem' : 'menuitemcheckbox'"
               :disabled="item.disabled"
               :aria-checked="item.checked === undefined ? undefined : item.checked"
               @click="activate(item.id)"
