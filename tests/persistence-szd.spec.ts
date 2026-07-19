@@ -1,5 +1,6 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
+import { MAX_PROJECT_ARCHIVE_ENTRIES } from '@/persistence/resource-limits';
 import {
   decodeSzd,
   decodeSzdBundle,
@@ -9,6 +10,7 @@ import {
   SZD_APP_ID,
   SzdFormatError,
   type SzdMediaBundle,
+  SzdSizeError,
 } from '@/persistence/szd';
 import { PROJECT_DOCUMENT_SCHEMA_VERSION, type ProjectDocument } from '@/project/serialization';
 
@@ -278,6 +280,19 @@ describe('szd media bundle', () => {
   it('yields an empty bundle for archives written without media', () => {
     const decoded = decodeSzdBundle(encodeSzd(makeDocument()));
     expect(decoded).toEqual({ assets: [], fonts: [] });
+  });
+
+  it('rejects a bundle the decoder could never re-import', () => {
+    // Two entries per asset plus project.json/meta.json push the count past the
+    // decoder's import limit, so the export must fail loudly rather than write a
+    // .szd this app can never reopen.
+    const assetCount = Math.ceil(MAX_PROJECT_ARCHIVE_ENTRIES / 2) + 1;
+    const assets = Array.from({ length: assetCount }, (_, i) => ({
+      id: `asset${i}`,
+      meta: strToU8(`{"id":"asset${i}"}`),
+      pcm: new Uint8Array([0]),
+    }));
+    expect(() => encodeSzd(makeDocument(), {}, { assets, fonts: [] })).toThrow(SzdSizeError);
   });
 
   it('skips entries missing their sidecar or payload half', () => {

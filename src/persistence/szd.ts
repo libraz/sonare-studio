@@ -106,6 +106,56 @@ export class SzdFormatError extends Error {
   }
 }
 
+/**
+ * Error thrown by {@link encodeSzd} when the archive would exceed the same
+ * budget the decoder enforces, so a project is never written to a file it could
+ * not later re-import.
+ */
+export class SzdSizeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SzdSizeError';
+  }
+}
+
+/**
+ * Rejects an archive that the decoder's preflight would refuse. Encoding and
+ * decoding share one budget (resource-limits.ts): without this an oversized
+ * bundle produces a .szd this app can save but never open again.
+ */
+function assertSzdEncodeBudget(entries: Record<string, Uint8Array>, compressedBytes: number): void {
+  const names = Object.keys(entries);
+  if (names.length > MAX_PROJECT_ARCHIVE_ENTRIES) {
+    throw new SzdSizeError(
+      `Project has too many bundled files (${names.length}) to export; ` +
+        `the limit is ${MAX_PROJECT_ARCHIVE_ENTRIES}`,
+    );
+  }
+  let uncompressedBytes = 0;
+  for (const name of names) {
+    const size = entries[name].byteLength;
+    if (size > MAX_PROJECT_ARCHIVE_ENTRY_BYTES) {
+      throw new SzdSizeError(
+        `Bundled file "${name}" is too large to export ` +
+          `(${size} bytes; limit ${MAX_PROJECT_ARCHIVE_ENTRY_BYTES})`,
+      );
+    }
+    uncompressedBytes += size;
+  }
+  if (uncompressedBytes > MAX_PROJECT_ARCHIVE_EXPANDED_BYTES) {
+    throw new SzdSizeError(
+      `Project is too large to export (${uncompressedBytes} bytes of bundled media; ` +
+        `limit ${MAX_PROJECT_ARCHIVE_EXPANDED_BYTES})`,
+    );
+  }
+  if (compressedBytes > MAX_PROJECT_ARCHIVE_COMPRESSED_BYTES) {
+    throw new SzdSizeError(
+      `Exported project archive is too large (${compressedBytes} bytes; ` +
+        `limit ${MAX_PROJECT_ARCHIVE_COMPRESSED_BYTES})`,
+    );
+  }
+}
+
 function szdLimits(overrides: Partial<ArchiveLimits> = {}): Partial<ArchiveLimits> {
   return {
     maxCompressedBytes: MAX_PROJECT_ARCHIVE_COMPRESSED_BYTES,
@@ -159,6 +209,8 @@ async function unzipSzdInWorker(
  * @param doc Document from serializeProject() or a template.
  * @param meta Optional caller-provided metadata (e.g. the save timestamp).
  * @returns Zip archive bytes ready for OPFS or a file download.
+ * @throws SzdSizeError when the archive would exceed the decoder's import
+ *   budget, so the export never yields a file this app cannot reopen.
  */
 export function encodeSzd(
   doc: ProjectDocument,
@@ -184,7 +236,9 @@ export function encodeSzd(
     entries[`${FONTS_PREFIX}${font.id}.json`] = font.meta;
     entries[`${FONTS_PREFIX}${font.id}.sf2`] = font.sf2;
   }
-  return zipSync(entries, { mtime: meta.savedAt ?? DEFAULT_ZIP_MTIME });
+  const archive = zipSync(entries, { mtime: meta.savedAt ?? DEFAULT_ZIP_MTIME });
+  assertSzdEncodeBudget(entries, archive.byteLength);
+  return archive;
 }
 
 /** Parses a zip entry as JSON, mapping failures to {@link SzdFormatError}. */

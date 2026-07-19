@@ -82,6 +82,27 @@ describe('audio asset store', () => {
     });
   });
 
+  it('does not populate the cache when loaded with cache: false', async () => {
+    const meta = await saveAsset({ name: 'Backup walk', sampleRate: 48000 }, stereo());
+    clearAudioAssetCache();
+
+    const loaded = await loadAsset(meta.id, { cache: false });
+    expect(loaded.channels).toEqual(stereo());
+    expect(audioAssetCacheStats()).toMatchObject({ entries: 0, bytes: 0 });
+  });
+
+  it('does not bump LRU recency when loaded with cache: false', async () => {
+    configureAudioAssetCacheByteBudget(64); // two 32-byte stereo assets
+    await saveAsset({ id: 'lru-a', name: 'A', sampleRate: 48000 }, stereo());
+    await saveAsset({ id: 'lru-b', name: 'B', sampleRate: 48000 }, stereo());
+    expect(audioAssetCacheStats().ids).toEqual(['lru-a', 'lru-b']);
+    // A cache-bypassing load of A must not move A to most-recently-used, so A
+    // (not B) stays the eviction candidate when a third asset arrives.
+    await loadAsset('lru-a', { cache: false });
+    await saveAsset({ id: 'lru-c', name: 'C', sampleRate: 48000 }, stereo());
+    expect(audioAssetCacheStats().ids).toEqual(['lru-b', 'lru-c']);
+  });
+
   it('does not retain a decoded asset larger than the cache budget', async () => {
     configureAudioAssetCacheByteBudget(0);
     const meta = await saveAsset({ name: 'Uncached', sampleRate: 48000 }, stereo());
@@ -322,6 +343,24 @@ describe('audio asset store', () => {
     expect(dir.files.size).toBe(0);
     await expect(loadAsset(meta.id)).rejects.toThrow(AssetNotFoundError);
     await expect(deleteAsset(meta.id)).resolves.toBeUndefined();
+  });
+
+  it('removes the sidecar before its payload so an interrupted delete leaves no orphan', async () => {
+    const meta = await saveAsset({ name: 'T', sampleRate: 48000 }, stereo());
+    const dir = await assetsDir(root);
+    const original = dir.removeEntry.bind(dir);
+    // Fail on the payload removal: whatever order deletion uses, the payload
+    // removal is interrupted here.
+    vi.spyOn(dir, 'removeEntry').mockImplementation(async (name: string, options?) => {
+      if (name.endsWith('.pcm')) throw new Error('payload removal interrupted');
+      return original(name, options);
+    });
+
+    await expect(deleteAsset(meta.id)).rejects.toThrow('payload removal interrupted');
+    // The sidecar must already be gone (deleted first); the surviving payload
+    // keeps the asset visible to listing/GC for a later retry.
+    expect(dir.files.has(`${meta.id}.json`)).toBe(false);
+    expect(dir.files.has(`${meta.id}.pcm`)).toBe(true);
   });
 
   it('throws OpfsUnavailableError without navigator.storage', async () => {

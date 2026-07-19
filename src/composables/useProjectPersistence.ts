@@ -1,9 +1,10 @@
-import { computed, nextTick, type Ref, ref, watch } from 'vue';
+import { computed, nextTick, onScopeDispose, type Ref, ref, watch, watchEffect } from 'vue';
 import type { useAutosave } from '@/composables/useAutosave';
 import { promptDialog } from '@/composables/useDialogs';
 import { importDawprojectWithMediaResult } from '@/export/dawproject';
 import { describeError } from '@/lib/errors';
 import { importMusicXmlInWorker } from '@/notation/musicxml-import-client';
+import { leaseAudioAssets, leaseFonts } from '@/persistence/asset-leases';
 import { createBrowserBackupWithReport, restoreBrowserBackup } from '@/persistence/backup';
 import { gatherProjectBundleWithReport, restoreProjectBundle } from '@/persistence/bundle';
 import { garbageCollectMedia } from '@/persistence/gc';
@@ -33,6 +34,7 @@ import {
   encodeSzd,
   SZD_FILE_EXTENSION,
 } from '@/persistence/szd';
+import { collectReferencedAudioAssetIds } from '@/project/asset-references';
 import { collectHistoryReferencedMediaIds } from '@/project/commands';
 import { makeBwv565Document } from '@/project/demo/bwv565';
 import { exportProjectClipFile, exportProjectSmf } from '@/project/export';
@@ -106,6 +108,32 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       (name) => name !== store.projectName && !isReservedProjectName(name),
     ),
   );
+
+  // Hold a tab-lifetime lease over the live document's media so another tab's
+  // GC — which cannot see this tab's unsaved Pinia document, and whose autosave
+  // slot may be up to 30 s behind — never deletes an asset or SoundFont this
+  // tab still references. The lease is broadcast cross-tab (asset-leases.ts).
+  const liveAssetLease = leaseAudioAssets([]);
+  const liveFontLease = leaseFonts([]);
+  watchEffect(() => {
+    const fontIds = new Set<string>();
+    for (const track of store.tracks) {
+      if (track.instrument?.kind === 'sf2' && track.instrument.fontId) {
+        fontIds.add(track.instrument.fontId);
+      }
+    }
+    try {
+      liveAssetLease.update(collectReferencedAudioAssetIds(store.clips, store.tracks));
+      liveFontLease.update(fontIds);
+    } catch {
+      // A concurrent delete of a now-referenced id is a transient race; the
+      // next document change re-attempts the lease.
+    }
+  });
+  onScopeDispose(() => {
+    liveAssetLease.release();
+    liveFontLease.release();
+  });
 
   /**
    * Reclaims OPFS audio/SoundFont storage no project references any more, after
@@ -317,6 +345,13 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       return;
     void runAction(async () => {
       await deleteProject(name);
+      // Deleting the slot the open project was saved to strands its revision
+      // baseline, which would make the next save fail its optimistic-revision
+      // check against a slot that no longer exists. Fall back to a fresh save.
+      if (sanitizeProjectName(name) === savedProjectSlot.value) {
+        savedProjectSlot.value = null;
+        savedProjectRevision.value = null;
+      }
       recentProjects.value = withoutRecent(recentProjects.value, name);
       saveRecentProjects(recentProjects.value);
       await refreshStoredProjects();

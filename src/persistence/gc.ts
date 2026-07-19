@@ -21,9 +21,14 @@
  * collector deletes nothing and reports {@link MediaGcResult.incompleteReferences}.
  */
 
-import { deleteFontUnlocked, listFonts } from '@/project/fonts';
+import { listFonts } from '@/project/fonts';
 import type { ProjectDocument } from '@/project/serialization';
-import { deleteAudioAssetGuarded, leasedAudioAssetIds } from './asset-leases';
+import {
+  deleteAudioAssetGuarded,
+  deleteFontGuarded,
+  leasedAudioAssetIds,
+  leasedFontIds,
+} from './asset-leases';
 import { type AudioAssetMeta, listAssetPayloads, listAssets } from './assets';
 import { collectReferencedAssetIds, collectReferencedFontIds } from './bundle';
 import { withPersistenceMutationLock } from './mutation-lock';
@@ -132,9 +137,12 @@ async function garbageCollectMediaUnlocked(options: MediaGcOptions = {}): Promis
   const extraFontIds = new Set(options.referencedFontIds ?? []);
   const protectedAssetIds = (): Set<string> =>
     new Set([...extraAssetIds, ...leasedAudioAssetIds()]);
+  // Fold every live tab's leased fonts in, so another tab's unsaved SoundFont
+  // (autosave writes no media bundle, and may be up to 30s behind) is preserved.
+  const protectedFontIds = (): Set<string> => new Set([...extraFontIds, ...leasedFontIds()]);
   const { assetIds, fontIds, complete } = await collectReferencedMediaIds(options.liveDocument, {
     assetIds: protectedAssetIds(),
-    fontIds: extraFontIds,
+    fontIds: protectedFontIds(),
   });
   if (!complete) return { ...empty, incompleteReferences: true };
 
@@ -175,7 +183,7 @@ async function garbageCollectMediaUnlocked(options: MediaGcOptions = {}): Promis
       async () => {
         const current = await collectReferencedMediaIds(options.liveDocument, {
           assetIds: protectedAssetIds(),
-          fontIds: extraFontIds,
+          fontIds: protectedFontIds(),
         });
         if (!current.complete) {
           incompleteReferences = true;
@@ -193,18 +201,25 @@ async function garbageCollectMediaUnlocked(options: MediaGcOptions = {}): Promis
   for (const meta of orphanAssets) await deleteCandidate(meta.id, assetBytes(meta));
   for (const payload of orphanPayloads) await deleteCandidate(payload.id, payload.byteLength);
   for (const meta of orphanFonts) {
-    const current = await collectReferencedMediaIds(options.liveDocument, {
-      assetIds: protectedAssetIds(),
-      fontIds: extraFontIds,
-    });
-    if (!current.complete) {
-      incompleteReferences = true;
-      break;
+    const deleted = await deleteFontGuarded(
+      meta.id,
+      async () => {
+        const current = await collectReferencedMediaIds(options.liveDocument, {
+          assetIds: protectedAssetIds(),
+          fontIds: protectedFontIds(),
+        });
+        if (!current.complete) {
+          incompleteReferences = true;
+          return true;
+        }
+        return current.fontIds.has(meta.id);
+      },
+      true,
+    );
+    if (deleted) {
+      removedFontIds.push(meta.id);
+      reclaimedBytes += meta.byteLength;
     }
-    if (current.fontIds.has(meta.id)) continue;
-    await deleteFontUnlocked(meta.id);
-    removedFontIds.push(meta.id);
-    reclaimedBytes += meta.byteLength;
   }
   return {
     removedAssetIds: removedAssetIds.sort(),

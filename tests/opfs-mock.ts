@@ -95,9 +95,14 @@ export class MemoryDirectoryHandle {
     throw notFoundError();
   }
 
-  async *entries(): AsyncIterableIterator<[string, MemoryFileHandle]> {
+  async *entries(): AsyncIterableIterator<[string, MemoryFileHandle | MemoryDirectoryHandle]> {
     for (const name of this.files.keys()) {
       yield [name, new MemoryFileHandle(name, this.files)];
+    }
+    // Real OPFS yields subdirectories alongside files; mirror that so callers
+    // that filter on handle.kind (or sweep directories) behave faithfully.
+    for (const [name, dir] of this.directories) {
+      yield [name, dir];
     }
   }
 }

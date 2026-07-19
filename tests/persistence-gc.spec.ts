@@ -4,6 +4,7 @@ import {
   deleteAudioAssetGuarded,
   isAudioAssetLeased,
   leaseAudioAssets,
+  leaseFonts,
 } from '@/persistence/asset-leases';
 import { clearAudioAssetCache, listAssets, saveAsset } from '@/persistence/assets';
 import { collectReferencedMediaIds, garbageCollectMedia } from '@/persistence/gc';
@@ -126,6 +127,20 @@ describe('media garbage collection', () => {
 
     historyLease.release();
     expect((await garbageCollectMedia()).removedAssetIds).toEqual(['source', 'undo-version']);
+  });
+
+  it('preserves a leased SoundFont no stored project references', async () => {
+    // A font another tab's live document references (but that no .szd holds yet)
+    // must survive GC. The lease stands in for that live cross-tab reference.
+    await saveFont({ id: 'liveOnlyFont', name: 'Live' }, new Uint8Array([1, 2, 3]));
+    const fontLease = leaseFonts(['liveOnlyFont']);
+
+    expect((await garbageCollectMedia()).removedFontIds).toEqual([]);
+    expect((await listFonts()).map((f) => f.id)).toEqual(['liveOnlyFont']);
+
+    fontLease.release();
+    expect((await garbageCollectMedia()).removedFontIds).toEqual(['liveOnlyFont']);
+    expect(await listFonts()).toEqual([]);
   });
 
   it('keeps a just-saved output leased from id resolution through project commit', async () => {

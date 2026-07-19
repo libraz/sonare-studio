@@ -737,10 +737,15 @@ export async function saveAsset(
  * @returns The stored metadata.
  * @throws AssetNotFoundError when no such asset is stored.
  */
-export async function loadAssetMeta(id: string): Promise<AudioAssetMeta> {
+export async function loadAssetMeta(
+  id: string,
+  options: { cache?: boolean } = {},
+): Promise<AudioAssetMeta> {
   validateAssetId(id);
-  const cached = cachedAsset(id);
-  if (cached) return cached.meta;
+  if (options.cache !== false) {
+    const cached = cachedAsset(id);
+    if (cached) return cached.meta;
+  }
   const dir = await assetsDirectory();
   let file: File;
   try {
@@ -781,15 +786,23 @@ export async function listAssetAliases(id: string): Promise<AudioAssetAlias[]> {
  * immutable (copy before mutating).
  *
  * @param id Asset id.
+ * @param options `cache: false` bypasses the decoded-audio LRU entirely (no
+ *   read bump, no insert). Use it for bulk library walks (e.g. backup) so they
+ *   do not evict the assets active playback is using.
  * @returns Metadata plus planar channel buffers.
  * @throws AssetNotFoundError when no such asset is stored.
  * @throws InvalidAssetError when the PCM size disagrees with the sidecar.
  */
-export async function loadAsset(id: string): Promise<LoadedAudioAsset> {
+export async function loadAsset(
+  id: string,
+  options: { cache?: boolean } = {},
+): Promise<LoadedAudioAsset> {
   validateAssetId(id);
-  const cached = cachedAsset(id);
-  if (cached) return cached;
-  const meta = await loadAssetMeta(id);
+  if (options.cache !== false) {
+    const cached = cachedAsset(id);
+    if (cached) return cached;
+  }
+  const meta = await loadAssetMeta(id, options);
   const dir = await assetsDirectory();
   let file: File;
   try {
@@ -811,7 +824,7 @@ export async function loadAsset(id: string): Promise<LoadedAudioAsset> {
   }
   const channels = deinterleaveChannels(new Float32Array(bytes), meta.numChannels);
   const loaded: LoadedAudioAsset = { meta, channels };
-  cacheAsset(id, loaded);
+  if (options.cache !== false) cacheAsset(id, loaded);
   return loaded;
 }
 
@@ -876,7 +889,11 @@ export async function deleteAssetUnlocked(id: string): Promise<void> {
   validateAssetId(id);
   const dir = await assetsDirectory();
   removeCachedAsset(id);
-  for (const fileName of [id + PCM_EXTENSION, id + META_EXTENSION]) {
+  // Remove the metadata sidecar before its payload: listing and GC key off the
+  // PCM payload, so an interrupted deletion that leaves the payload behind stays
+  // visible and collectable, whereas an orphaned sidecar (payload gone first)
+  // would be invisible to both and linger forever.
+  for (const fileName of [id + META_EXTENSION, id + PCM_EXTENSION]) {
     try {
       await dir.removeEntry(fileName);
     } catch (error) {

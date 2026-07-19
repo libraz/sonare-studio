@@ -224,6 +224,44 @@ async function prepareBrowserRestoreStage(
   };
 }
 
+/**
+ * Removes restore-staging namespaces orphaned by a crashed restore. A restore
+ * that finishes — whether it publishes or cleanly rolls back — always removes
+ * its own staging directory, so anything left under {@link RESTORE_STAGING_DIR}
+ * belongs to a run whose process died mid-restore (tab closed, browser killed).
+ *
+ * Restore holds the persistence mutation lock, so no staging directory can be
+ * live when this runs under that lock: every one present is reclaimable. Called
+ * at the start of each restore, and exported so a startup maintenance pass can
+ * reclaim orphans without waiting for the next restore.
+ *
+ * @returns The number of orphaned staging namespaces removed.
+ */
+export async function reclaimOrphanedRestoreStages(): Promise<number> {
+  const root = await navigator.storage.getDirectory();
+  let stagingRoot: FileSystemDirectoryHandle;
+  try {
+    stagingRoot = await root.getDirectoryHandle(RESTORE_STAGING_DIR);
+  } catch {
+    // No staging root has ever been created; nothing to reclaim.
+    return 0;
+  }
+  const orphans: string[] = [];
+  for await (const [name, handle] of stagingRoot.entries()) {
+    if (handle.kind === 'directory') orphans.push(name);
+  }
+  let reclaimed = 0;
+  for (const name of orphans) {
+    try {
+      await stagingRoot.removeEntry(name, { recursive: true });
+      reclaimed += 1;
+    } catch {
+      // Leave it for a later pass rather than aborting the whole sweep.
+    }
+  }
+  return reclaimed;
+}
+
 /** Raw interleaved-PCM bytes view of planar channels (a fresh copy). */
 function pcmBytes(channels: ReadonlyArray<Float32Array>): Uint8Array {
   const interleaved = interleaveChannels(channels);
@@ -453,7 +491,9 @@ async function createBrowserBackupLocked(
     const assetFailures = new Map<string, unknown>();
     for (const asset of await listAssets()) {
       try {
-        const loaded = await loadAsset(asset.id);
+        // Backups own these bytes only for the duration of the zip stream. Do
+        // not populate the playback LRU while walking the whole asset library.
+        const loaded = await loadAsset(asset.id, { cache: false });
         signal?.throwIfAborted();
         const meta = strToU8(JSON.stringify(loaded.meta));
         const pcm = pcmBytes(loaded.channels);
@@ -670,6 +710,9 @@ async function restoreBrowserBackupUnlocked(
   bytes: Uint8Array,
   signal?: AbortSignal,
 ): Promise<BrowserBackupRestoreResult> {
+  // Reclaim any staging namespace a previously crashed restore left behind
+  // before this run stages its own, so orphans cannot accumulate unbounded.
+  await reclaimOrphanedRestoreStages();
   const outerArchive = await preflightAndUnzipInWorker(
     bytes,
     {

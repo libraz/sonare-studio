@@ -37,6 +37,15 @@ export class ArchivePreflightError extends Error {
   }
 }
 
+/**
+ * A genuinely empty entry deflates to at most a handful of header bytes. An
+ * archive that declares `originalSize === 0` while carrying a substantial
+ * compressed payload is lying about its expansion to slip past the ratio guard
+ * (which would otherwise treat a zero uncompressed size as a 1:1 ratio), so any
+ * zero-sized entry beyond this compressed ceiling is rejected outright.
+ */
+const EMPTY_ENTRY_COMPRESSED_CEILING = 64;
+
 function safeEntryName(name: string, maxPathLength: number): void {
   if (name.length === 0 || name.length > maxPathLength || name.includes('\0')) {
     throw new ArchivePreflightError('Archive contains an invalid or overlong entry path');
@@ -103,11 +112,19 @@ function archiveEntryValidator(
           `Archive expands beyond ${resolved.maxUncompressedBytes} bytes`,
         );
       }
-      const ratio = entry.originalSize === 0 ? 1 : entry.originalSize / Math.max(entry.size, 1);
-      if (ratio > resolved.maxCompressionRatio) {
-        throw new ArchivePreflightError(
-          `Archive entry compression ratio is unsafe: ${entry.name} (${ratio.toFixed(1)}:1)`,
-        );
+      if (entry.originalSize === 0) {
+        if (entry.size > EMPTY_ENTRY_COMPRESSED_CEILING) {
+          throw new ArchivePreflightError(
+            `Archive entry declares zero size but carries ${entry.size} compressed bytes: ${entry.name}`,
+          );
+        }
+      } else {
+        const ratio = entry.originalSize / Math.max(entry.size, 1);
+        if (ratio > resolved.maxCompressionRatio) {
+          throw new ArchivePreflightError(
+            `Archive entry compression ratio is unsafe: ${entry.name} (${ratio.toFixed(1)}:1)`,
+          );
+        }
       }
       return true;
     },

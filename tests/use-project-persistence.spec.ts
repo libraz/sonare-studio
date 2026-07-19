@@ -656,4 +656,32 @@ describe('useProjectPersistence autosave refresh after load', () => {
     expect(persistence.dirty.value).toBe(true);
     expect(errorMessage.value).toContain('autosave quota exceeded');
   });
+
+  it('saves freshly after deleting the open project instead of a stale revision', async () => {
+    await useProjectStore().init();
+    vi.mocked(loadProjectWithRevision).mockResolvedValue({
+      bytes: encodeSzd(makeDocument('Stored Project')),
+      revision: 'revision-1',
+    });
+    const { persistence } = setup();
+
+    await persistence.openStoredProject('Stored Project');
+    await flushPromises();
+    await nextTask();
+
+    await persistence.deleteStoredProject('Stored Project');
+    await flushPromises();
+    await nextTask();
+
+    vi.mocked(saveProjectChecked).mockClear();
+    persistence.saveProjectAction();
+    await flushPromises();
+    await nextTask();
+
+    // The deleted slot's revision baseline must not be reused: the next save is
+    // a fresh write (expectedRevision null), not an optimistic check against a
+    // slot that no longer exists.
+    expect(saveProjectChecked).toHaveBeenCalled();
+    expect(vi.mocked(saveProjectChecked).mock.calls.at(-1)?.[2]).toBeNull();
+  });
 });

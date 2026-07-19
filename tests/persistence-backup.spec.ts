@@ -5,6 +5,7 @@ import {
   BrowserBackupSizeError,
   createBrowserBackup,
   createBrowserBackupWithReport,
+  reclaimOrphanedRestoreStages,
   restoreBrowserBackup,
 } from '@/persistence/backup';
 import { loadProject, saveProject } from '@/persistence/opfs';
@@ -391,5 +392,46 @@ describe('browser backup archives', () => {
     await expect(restoreBrowserBackup(backup)).rejects.toThrow('quota');
     await expect(loadProject('Song A')).rejects.toThrow();
     await expect(loadAsset('newAsset')).rejects.toThrow();
+  });
+
+  /** Seeds an orphaned restore-staging namespace as a crashed restore would leave. */
+  async function seedOrphanStage(transactionId: string): Promise<void> {
+    const root = await navigator.storage.getDirectory();
+    const staging = await root.getDirectoryHandle('restore-staging', { create: true });
+    const stage = await staging.getDirectoryHandle(transactionId, { create: true });
+    const handle = await stage.getFileHandle('manifest.json', { create: true });
+    const writable = await handle.createWritable();
+    await writable.write(new TextEncoder().encode('{"state":"prepared"}'));
+    await writable.close();
+  }
+
+  it('reclaims staging namespaces orphaned by a crashed restore', async () => {
+    await seedOrphanStage('dead-txn-1');
+    await seedOrphanStage('dead-txn-2');
+
+    expect(await reclaimOrphanedRestoreStages()).toBe(2);
+
+    const root = await navigator.storage.getDirectory();
+    const staging = await root.getDirectoryHandle('restore-staging');
+    await expect(staging.getDirectoryHandle('dead-txn-1')).rejects.toThrow();
+    await expect(staging.getDirectoryHandle('dead-txn-2')).rejects.toThrow();
+
+    // A second sweep with nothing left is a no-op.
+    expect(await reclaimOrphanedRestoreStages()).toBe(0);
+  });
+
+  it('returns zero when no staging root was ever created', async () => {
+    expect(await reclaimOrphanedRestoreStages()).toBe(0);
+  });
+
+  it('sweeps a leaked staging namespace at the start of the next restore', async () => {
+    await seedOrphanStage('dead-txn');
+    const backup = await createBrowserBackup('2026-07-19T00:00:00.000Z');
+
+    await restoreBrowserBackup(backup);
+
+    const root = await navigator.storage.getDirectory();
+    const staging = await root.getDirectoryHandle('restore-staging');
+    await expect(staging.getDirectoryHandle('dead-txn')).rejects.toThrow();
   });
 });

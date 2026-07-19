@@ -6,6 +6,30 @@ import {
   preflightAndUnzipInWorker,
 } from '@/persistence/archive-preflight';
 
+/**
+ * Zeros the uncompressed-size field of the first central-directory record so the
+ * archive under-reports its expansion. fflate's unzip reads entry sizes from the
+ * central directory, so this is what the preflight filter observes.
+ */
+function zeroCentralDirUncompressedSize(zip: Uint8Array): Uint8Array {
+  const view = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
+  let eocd = -1;
+  for (let i = zip.length - 22; i >= 0; i -= 1) {
+    if (view.getUint32(i, true) === 0x06054b50) {
+      eocd = i;
+      break;
+    }
+  }
+  if (eocd < 0) throw new Error('no end-of-central-directory record found');
+  const cdOffset = view.getUint32(eocd + 16, true);
+  if (view.getUint32(cdOffset, true) !== 0x02014b50) {
+    throw new Error('central-directory header not found at declared offset');
+  }
+  const patched = zip.slice();
+  new DataView(patched.buffer).setUint32(cdOffset + 24, 0, true);
+  return patched;
+}
+
 describe('archive preflight', () => {
   it('returns entries and exact size/count metadata after one bounded expansion', () => {
     const zip = zipSync({
@@ -49,6 +73,23 @@ describe('archive preflight', () => {
     );
     const unsafe = zipSync({ '../escape': new Uint8Array(1) });
     expect(() => preflightAndUnzip(unsafe)).toThrow(/unsafe entry path/);
+  });
+
+  it('accepts a genuinely empty entry whose declared size is zero', () => {
+    const zip = zipSync({ 'empty.txt': new Uint8Array(0), 'note.txt': strToU8('hi') });
+    const parsed = preflightAndUnzip(zip);
+    expect(Object.keys(parsed.entries).sort()).toEqual(['empty.txt', 'note.txt']);
+    expect(parsed.report.entries).toBe(2);
+  });
+
+  it('rejects an entry that declares zero size while carrying a compressed payload', () => {
+    // A 1 MiB run of zeros compresses to a small but non-trivial DEFLATE stream.
+    // Patch its central-directory uncompressed-size field to zero so the archive
+    // lies about its expansion — the ratio guard used to wave zero-size entries
+    // through unconditionally, letting such headers slip past.
+    const zip = zipSync({ 'lie.bin': new Uint8Array(1024 * 1024) });
+    const patched = zeroCentralDirUncompressedSize(zip);
+    expect(() => preflightAndUnzip(patched)).toThrow(/declares zero size but carries/);
   });
 
   it('honors an already-aborted operation before parsing', () => {
