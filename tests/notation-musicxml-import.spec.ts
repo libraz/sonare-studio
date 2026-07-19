@@ -326,6 +326,29 @@ describe('importMusicXml global maps', () => {
     expect(importMusicXml(xml).markers).toEqual([{ ppq: 0, name: 'Key: Eb major' }]);
   });
 
+  it('advances a full bar for an underfilled non-pickup measure', () => {
+    const xml =
+      '<score-partwise version="4.0"><part-list><score-part id="P1"/></part-list>' +
+      '<part id="P1">' +
+      '<measure number="1">' +
+      '<attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes>' +
+      // Only a half note fills this 4/4 bar; trailing rests were omitted.
+      '<note><pitch><step>C</step><octave>4</octave></pitch><duration>2</duration></note>' +
+      '</measure>' +
+      '<measure number="2">' +
+      '<attributes><key><fifths>1</fifths></key></attributes>' +
+      '<note><pitch><step>D</step><octave>4</octave></pitch><duration>4</duration></note>' +
+      '</measure></part></score-partwise>';
+    const doc = importMusicXml(xml);
+    // Measure 2 starts one full bar in (PPQ 4), not at the content end (PPQ 2),
+    // so its key marker and note stay aligned to the barline.
+    expect(doc.markers).toEqual([{ ppq: 4, name: 'Key: G major' }]);
+    expect(trackNotes(doc, 0)).toEqual([
+      { pitch: 60, velocity: 96, startPpq: 0, durationPpq: 2, channel: 0 },
+      { pitch: 62, velocity: 96, startPpq: 4, durationPpq: 4, channel: 0 },
+    ]);
+  });
+
   it('maps an unpitched note onto the percussion channel', () => {
     const xml =
       '<score-partwise version="4.0"><part-list><score-part id="P1">' +

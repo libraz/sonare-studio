@@ -668,16 +668,28 @@ function importPartNotes(
       }
     }
     const measureLength = measureMaxPpq - state.measureStartPpq;
+    // A pickup/partial measure (implicit, or explicitly numbered 0) genuinely
+    // occupies less than a full bar, so it advances by its own content length.
+    const isPartialMeasure =
+      measure.attributes.implicit === 'yes' || measure.attributes.number === '0';
     if (
       captureGlobal &&
       measureIndex === 0 &&
       measureLength > 0 &&
       measureLength < state.timeSigLengthPpq - PPQ_INTEGER_EPSILON &&
-      (measure.attributes.implicit === 'yes' || measure.attributes.number === '0')
+      isPartialMeasure
     ) {
       global.pickupLengthPpq = measureLength;
     }
-    state.measureStartPpq += measureLength > 0 ? measureLength : state.timeSigLengthPpq;
+    // A normal measure always advances one full bar even when it underfills
+    // (e.g. trailing rests were omitted), so later barlines and the time-
+    // signature / key markers anchored to measure starts stay aligned. Only a
+    // genuine partial measure advances by its shorter content; overfilled
+    // measures still advance by their content.
+    state.measureStartPpq +=
+      isPartialMeasure && measureLength > 0
+        ? measureLength
+        : Math.max(measureLength, state.timeSigLengthPpq);
   }
   return notes;
 }
