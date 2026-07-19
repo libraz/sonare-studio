@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   bindStreamingRetuneInput,
   clampStreamingRetuneSemitones,
@@ -47,6 +47,16 @@ function makeStream() {
     tracks,
   } as unknown as MediaStream & { tracks: Array<{ stop: ReturnType<typeof vi.fn> }> };
 }
+
+const WASM_BYTES = new ArrayBuffer(8);
+
+beforeEach(() => {
+  // The worklet's WASM bytes are fetched same-origin; give the fetch a body.
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => ({ ok: true, arrayBuffer: async () => WASM_BYTES })),
+  );
+});
 
 afterEach(() => {
   FakeAudioWorkletNode.instances = [];
@@ -101,6 +111,8 @@ describe('bindStreamingRetuneInput', () => {
         channelCount: 1,
       },
     });
+    // The worklet cannot fetch its own WASM; the bytes must ride processorOptions.
+    expect(retuneNode.options.processorOptions?.wasmBinary).toBe(WASM_BYTES);
     expect(source.connect).toHaveBeenCalledWith(retuneNode);
     expect(retuneNode.connect).toHaveBeenCalledWith(engineNode);
 

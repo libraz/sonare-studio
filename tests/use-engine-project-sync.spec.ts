@@ -115,6 +115,43 @@ describe('useEngineProjectSync', () => {
     scope.stop();
   });
 
+  it('reports no meter/scope source for lanes past the meter target range', () => {
+    const laneTrackIds = Array.from({ length: 33 }, (_, i) => i + 1);
+    const mixerSync: MixerSync = { sync: vi.fn(), laneTrackIds: () => laneTrackIds };
+    const stripSync = { sync: vi.fn() } as unknown as StripSync;
+    const bridge = { forTarget: (id: number) => ({ id }) } as never;
+    const scopeBridge = { forTarget: (id: number) => ({ id }) } as never;
+
+    const scope = effectScope();
+    const projectSync = scope.run(() =>
+      useEngineProjectSync({
+        bridge: shallowRef(bridge),
+        scope: shallowRef(scopeBridge),
+        errorMessage: ref(''),
+        handle: shallowRef(null),
+        transport: { setTempoMap: vi.fn(), setTempo: vi.fn() } as never,
+      }),
+    );
+    if (!projectSync) throw new Error('effect scope did not run');
+    projectSync.setEngineSyncHandles({
+      mixerSync,
+      stripSync,
+      automationSync: null,
+      midiSync: { sync: vi.fn(async () => {}), scheduledClipCount: () => 0 },
+      transportSync: null,
+      webMidiOutput: null,
+    });
+
+    // Lane 0 (track id 1) resolves to meter target 1.
+    expect(projectSync.trackMeterSource(1)).toEqual({ id: 1 });
+    expect(projectSync.trackScopeSource(1)).toEqual({ id: 1 });
+    // Lane 32 (track id 33) would alias to target 33 — the first bus id — so it
+    // must resolve to no source instead.
+    expect(projectSync.trackMeterSource(33)).toBeNull();
+    expect(projectSync.trackScopeSource(33)).toBeNull();
+    scope.stop();
+  });
+
   it('publishes the MIDI sync SoundFont report through the persistent media warning', async () => {
     const store = useProjectStore();
     store.dispose();
@@ -326,6 +363,78 @@ describe('useEngineProjectSync', () => {
     ];
     await nextTick();
     await vi.waitFor(() => expect(midiSync.sync).toHaveBeenCalledTimes(1));
+    scope.stop();
+  });
+
+  it('does not resync instrument automation on playhead moves during playback', async () => {
+    const store = useProjectStore();
+    store.dispose();
+    await store.init();
+    store.tracks = [track(1)];
+    store.clips = [clip(1)];
+    store.automationLanes = [
+      {
+        target: 1,
+        param: instrumentAutomationParam('cutoffHz'),
+        enabled: true,
+        points: [{ ppq: 0, value: 900 }],
+      },
+    ];
+
+    const midiSync: MidiSync = {
+      sync: vi.fn(async () => undefined),
+      scheduledClipCount: () => 1,
+    };
+    // Rolling transport: the engine defers instrument syncs during playback, so
+    // re-evaluating per frame would only flood that deferred queue and stall the
+    // main thread. The playhead watcher must stay quiet while playing.
+    const transport = {
+      positionPpq: ref(3),
+      isPlaying: ref(true),
+      setTempoMap: vi.fn(),
+      setTempo: vi.fn(),
+    };
+    const scope = effectScope();
+    const projectSync = scope.run(() =>
+      useEngineProjectSync({
+        bridge: shallowRef(null),
+        scope: shallowRef(null),
+        errorMessage: ref(''),
+        handle: shallowRef(null),
+        transport: transport as never,
+      }),
+    );
+    if (!projectSync) throw new Error('effect scope did not run');
+
+    projectSync.setEngineSyncHandles({
+      mixerSync: null,
+      stripSync: null,
+      automationSync: null,
+      midiSync,
+      transportSync: null,
+      webMidiOutput: null,
+    });
+
+    await projectSync.syncMidiState();
+    vi.mocked(midiSync.sync).mockClear();
+
+    transport.positionPpq.value = 4;
+    await nextTick();
+    expect(midiSync.sync).not.toHaveBeenCalled();
+
+    // Once parked again, a seek re-bakes the start-position value.
+    transport.isPlaying.value = false;
+    transport.positionPpq.value = 5;
+    await nextTick();
+    await vi.waitFor(() => expect(midiSync.sync).toHaveBeenCalledTimes(1));
+    expect(midiSync.sync).toHaveBeenLastCalledWith(
+      store.tracks,
+      store.clips,
+      [{ startPpq: 0, bpm: store.tempoBpm }],
+      store.projectExternalMidi,
+      store.automationLanes,
+      5,
+    );
     scope.stop();
   });
 

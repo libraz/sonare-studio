@@ -1,5 +1,5 @@
 import type { RealtimeVoiceChangerConfigInput } from '@/wasm/index.js';
-import { waitForWorkletReady } from './engine';
+import { fetchWasmBinary, waitForWorkletReady } from './engine';
 import type { MicrophoneBinding } from './recorder';
 import { clampStreamingRetuneSemitones, STREAMING_RETUNE_PROCESSOR } from './streaming-retune';
 
@@ -30,6 +30,9 @@ export async function bindRealtimeVoiceChangerInput(
   const channelCount = Math.max(1, Math.floor(options.channelCount ?? 1));
   let node: AudioWorkletNode | null = null;
   try {
+    // The worklet scope cannot fetch its own WASM; hand it the shared bytes.
+    const wasmBinary = await fetchWasmBinary();
+    options.signal?.throwIfAborted();
     node = new AudioWorkletNode(ctx, REALTIME_VOICE_CHANGER_PROCESSOR, {
       numberOfInputs: 1,
       numberOfOutputs: 1,
@@ -40,6 +43,7 @@ export async function bindRealtimeVoiceChangerInput(
         sampleRate: ctx.sampleRate,
         blockSize: Math.max(1, Math.floor(options.blockSize ?? 128)),
         channelCount,
+        wasmBinary,
       },
     });
     await waitForWorkletReady(node.port, {
@@ -101,6 +105,9 @@ export async function bindRealtimeVoiceChangerRetuneInput(
   let voiceNode: AudioWorkletNode | null = null;
   let retuneNode: AudioWorkletNode | null = null;
   try {
+    // The worklet scope cannot fetch its own WASM; hand both processors the bytes.
+    const wasmBinary = await fetchWasmBinary();
+    startup.signal.throwIfAborted();
     voiceNode = new AudioWorkletNode(ctx, REALTIME_VOICE_CHANGER_PROCESSOR, {
       numberOfInputs: 1,
       numberOfOutputs: 1,
@@ -111,6 +118,7 @@ export async function bindRealtimeVoiceChangerRetuneInput(
         sampleRate: ctx.sampleRate,
         blockSize,
         channelCount,
+        wasmBinary,
       },
     });
     retuneNode = new AudioWorkletNode(ctx, STREAMING_RETUNE_PROCESSOR, {
@@ -125,6 +133,7 @@ export async function bindRealtimeVoiceChangerRetuneInput(
         sampleRate: ctx.sampleRate,
         blockSize,
         channelCount,
+        wasmBinary,
       },
     });
     await Promise.all([

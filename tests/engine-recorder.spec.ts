@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
 import { REALTIME_VOICE_CHANGER_PROCESSOR } from '@/engine/realtime-voice-changer';
 import type { RecorderOptions } from '@/engine/recorder';
@@ -197,6 +197,14 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
+
+beforeEach(() => {
+  // Retune/voice-changer bindings fetch the worklet's WASM bytes same-origin.
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) })),
+  );
+});
 
 afterEach(() => {
   FakeAudioWorkletNode.instances = [];
@@ -520,6 +528,30 @@ describe('createRecorder capture', () => {
       expect.objectContaining({ bufferFrames: 600 }),
     );
     expect(punch).toHaveBeenCalledWith(8, 20);
+  });
+
+  it('uses the tempo-map punch-out for an open-ended take instead of constant BPM', async () => {
+    const { handle, punch } = makeHandle(100);
+    const { deps } = makeDeps();
+    const recorder = createRecorder(handle, deps);
+    await recorder.requestMicrophone();
+    recorder.arm(1);
+
+    // A tempo ramp means the 300 s buffer spans more beats than 300 s at the
+    // start tempo; the explicit punchOutPpq must win over the constant-BPM math.
+    await recorder.start({ startPpq: 4, tempoBpm: 120, punchOutPpq: 900 });
+    expect(punch).toHaveBeenCalledWith(4, 900);
+  });
+
+  it('rejects a punch-out position at or before the start', async () => {
+    const { handle } = makeHandle(100);
+    const { deps } = makeDeps();
+    const recorder = createRecorder(handle, deps);
+    await recorder.requestMicrophone();
+    recorder.arm(1);
+    await expect(
+      recorder.start({ startPpq: 4, tempoBpm: 120, punchOutPpq: 4 }),
+    ).rejects.toBeInstanceOf(RangeError);
   });
 
   it('trims the latency offset from the head and returns the rest', async () => {

@@ -19,7 +19,11 @@ import type { MaybeRefOrGetter, Ref } from 'vue';
 import { getCurrentScope, onScopeDispose, ref, toValue, watch } from 'vue';
 import type { EngineHandle } from '@/engine/engine';
 import type { Recorder, RecordingResult } from '@/engine/recorder';
-import { createRecorder, type RecordingCaptureSource } from '@/engine/recorder';
+import {
+  createRecorder,
+  DEFAULT_MAX_DURATION_SECONDS,
+  type RecordingCaptureSource,
+} from '@/engine/recorder';
 import { clampStreamingRetuneSemitones } from '@/engine/streaming-retune';
 import { describeError } from '@/lib/errors';
 import {
@@ -660,6 +664,16 @@ export function useRecording(
       }
       startOptions.endPpq = endPpq;
       startOptions.maxDurationSeconds = endSeconds - startSeconds;
+    } else {
+      // Open-ended capture: resolve the safety punch-out through the tempo map
+      // so it lands exactly when the preallocated buffer fills. A constant-BPM
+      // estimate drifts on a tempo ramp, cutting the take short or overrunning.
+      const startSeconds = ppqToSecondsMap(tempoMap, startPpq);
+      startOptions.maxDurationSeconds = DEFAULT_MAX_DURATION_SECONDS;
+      startOptions.punchOutPpq = secondsToPpqMap(
+        tempoMap,
+        startSeconds + DEFAULT_MAX_DURATION_SECONDS,
+      );
     }
     try {
       rec.arm(targetTrackIds[0]);

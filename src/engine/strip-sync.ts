@@ -31,6 +31,7 @@
 import {
   effectiveTrackMute,
   type InsertSlot,
+  laneGainDb,
   type MasteringChainState,
   type MixerStrip,
   type ProjectMixerState,
@@ -46,7 +47,6 @@ import {
   engineEqBands,
   stripSceneFieldsHaveDsp,
 } from './engine-declaration';
-import { linearToDb } from './mixer-sync';
 
 /** Maximum number of mixer buses the realtime engine supports. */
 export const MAX_ENGINE_BUSES = 8;
@@ -109,7 +109,7 @@ export function busSceneJson(
  */
 export function groupBusGainDb(track: EditorTrack, vcaOffset = 0, muted = track.mute): number {
   if (muted) return -120;
-  const combined = linearToDb(track.volume) + (track.mixer?.gainDb ?? 0) + vcaOffset;
+  const combined = laneGainDb(track.volume, track.mixer?.gainDb, vcaOffset);
   return Math.min(24, Math.max(-120, combined));
 }
 
@@ -492,6 +492,25 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
         ),
       })),
     ];
+
+    // A deleted track keeps its (now muted) engine lane, but muting only
+    // silences the fader path: a pre-fader send would keep feeding its bus, and
+    // its lingering send could point at a bus this sync is about to remove
+    // (making setTrackBuses reject a send to an undeclared bus). Clear the sends
+    // of every track that vanished from the project, and drop the stale
+    // per-track memory so it cannot alias or leak.
+    const presentTrackIds = new Set(tracks.map((track) => track.id));
+    for (const trackId of [...lastSendsByTrack.keys()]) {
+      if (presentTrackIds.has(trackId)) continue;
+      if (lastSendsByTrack.get(trackId) !== '[]') handle.engine.setSends(trackId, []);
+      lastSendsByTrack.delete(trackId);
+    }
+    for (const trackId of [...trackStripMemory.keys()]) {
+      if (!presentTrackIds.has(trackId)) trackStripMemory.delete(trackId);
+    }
+    for (const trackId of [...lastOutputBus.keys()]) {
+      if (!presentTrackIds.has(trackId)) lastOutputBus.delete(trackId);
+    }
 
     // Prune stale sends before re-declaring the bus set.
     for (const track of tracks) {

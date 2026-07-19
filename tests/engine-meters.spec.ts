@@ -238,6 +238,30 @@ describe('createMeterBridge', () => {
     bridge.dispose();
   });
 
+  it('does not double-publish in SAB mode when onMeter push also fires', () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback): number => {
+      frames.push(cb);
+      return frames.length;
+    });
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+
+    const { handle, emit, pollMeters } = makeHandle('sab');
+    const bridge = createMeterBridge(handle);
+    const listener = vi.fn();
+    bridge.subscribe(listener);
+
+    // In SAB mode the poll loop is the sole source; an onMeter push (which the
+    // engine still emits) must not also publish, or every record fires twice.
+    emit(makeSnapshot({ targetId: 0, frame: 128, peakDbL: -6 }));
+    expect(listener).not.toHaveBeenCalled();
+
+    pollMeters.mockReturnValueOnce([makeSnapshot({ targetId: 0, frame: 128, peakDbL: -6 })]);
+    frames.at(-1)?.(performance.now());
+    expect(listener).toHaveBeenCalledTimes(1);
+    bridge.dispose();
+  });
+
   it('does not start the poll loop in postMessage mode', () => {
     let scheduled = 0;
     vi.stubGlobal('requestAnimationFrame', (): number => {

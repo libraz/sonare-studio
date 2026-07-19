@@ -78,8 +78,16 @@ describe('createScopeBridge', () => {
     expect(bridge.forTarget(1).sampleRate).toBe(48000);
   });
 
-  it('routes pushed frames by target id; the bridge itself is the master source', () => {
-    const { handle, emit } = makeHandle();
+  it('routes polled frames by target id; the bridge itself is the master source', () => {
+    // Scope is available only in SAB mode, where the poll loop is the sole
+    // delivery path (an onScope push would double every frame).
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback): number => {
+      frames.push(cb);
+      return frames.length;
+    });
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    const { handle, pollScope } = makeHandle();
     const bridge = createScopeBridge(handle);
     const lane = bridge.forTarget(1);
 
@@ -88,14 +96,37 @@ describe('createScopeBridge', () => {
     bridge.subscribe((frame) => masterFrames.push(frame.frame));
     lane.subscribe((frame) => laneFrames.push(frame.frame));
 
-    emit(makeSnapshot({ targetId: 0, frame: 10 }));
-    emit(makeSnapshot({ targetId: 1, frame: 20 }));
+    pollScope.mockReturnValueOnce([
+      makeSnapshot({ targetId: 0, frame: 10 }),
+      makeSnapshot({ targetId: 1, frame: 20 }),
+    ]);
+    frames.at(-1)?.(performance.now());
 
     expect(masterFrames).toEqual([10]);
     expect(laneFrames).toEqual([20]);
     expect(bridge.latest?.frame).toBe(10);
     expect(lane.latest?.frame).toBe(20);
     expect([...(bridge.latest?.bands ?? [])]).toEqual([-30, -20, -10]);
+  });
+
+  it('does not double-publish when an onScope push also fires in SAB mode', () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback): number => {
+      frames.push(cb);
+      return frames.length;
+    });
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    const { handle, emit, pollScope } = makeHandle();
+    const bridge = createScopeBridge(handle);
+    const seen: number[] = [];
+    bridge.subscribe((frame) => seen.push(frame.frame));
+
+    // A push must not publish; only the poll drain does.
+    emit(makeSnapshot({ targetId: 0, frame: 64 }));
+    expect(seen).toEqual([]);
+    pollScope.mockReturnValueOnce([makeSnapshot({ targetId: 0, frame: 64 })]);
+    frames.at(-1)?.(performance.now());
+    expect(seen).toEqual([64]);
   });
 
   it('drains pollScope on the animation frame loop in SAB mode', () => {
@@ -115,15 +146,25 @@ describe('createScopeBridge', () => {
     expect(bridge.latest?.frame).toBe(99);
   });
 
-  it('stops delivery and unsubscribes on dispose', () => {
-    const { handle, emit, unsubscribe } = makeHandle();
+  it('stops the poll loop and delivers nothing after dispose', () => {
+    const frames: FrameRequestCallback[] = [];
+    const cancel = vi.fn();
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback): number => {
+      frames.push(cb);
+      return frames.length;
+    });
+    vi.stubGlobal('cancelAnimationFrame', cancel);
+    const { handle, pollScope } = makeHandle();
     const bridge = createScopeBridge(handle);
     const seen: number[] = [];
     bridge.subscribe((frame) => seen.push(frame.frame));
 
     bridge.dispose();
-    expect(unsubscribe).toHaveBeenCalledTimes(1);
-    emit(makeSnapshot({ frame: 42 }));
+    expect(cancel).toHaveBeenCalledTimes(1);
+    // A frame that still fires after dispose must not drain or deliver.
+    pollScope.mockReturnValueOnce([makeSnapshot({ frame: 42 })]);
+    frames.at(-1)?.(performance.now());
+    expect(pollScope).not.toHaveBeenCalled();
     expect(seen).toEqual([]);
   });
 });

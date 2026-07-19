@@ -105,7 +105,7 @@ const MONITOR_BUFFER_SECONDS = 1;
  * seconds x sampleRate x 2 channels x 4 bytes), so this cap is a real
  * allocation rather than a grow-as-you-record limit.
  */
-const DEFAULT_MAX_DURATION_SECONDS = 300;
+export const DEFAULT_MAX_DURATION_SECONDS = 300;
 
 /** Default minimum interval between input-level callbacks. */
 const DEFAULT_LEVEL_INTERVAL_MS = 50;
@@ -156,6 +156,16 @@ export interface StartRecordingOptions {
    * capture buffer, so the whole span is allocated up front.
    */
   maxDurationSeconds?: number;
+  /**
+   * Timeline position in PPQ where an open-ended (no `endPpq`) capture auto
+   * punches out (> startPpq). It bounds the same real-time span as
+   * `maxDurationSeconds`, but resolved through the project tempo map so the
+   * punch-out lands exactly when the preallocated buffer fills. When omitted,
+   * the recorder derives the bound from `tempoBpm`, which only matches a
+   * constant-tempo project — under a tempo map that estimate drifts, closing
+   * the window early or overrunning the buffer.
+   */
+  punchOutPpq?: number;
 }
 
 /** The microphone routing produced by binding a stream to the engine node. */
@@ -853,6 +863,14 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
         `Recording endPpq must be finite and greater than startPpq, got ${endPpq}`,
       );
     }
+    if (
+      startOptions.punchOutPpq !== undefined &&
+      (!Number.isFinite(startOptions.punchOutPpq) || startOptions.punchOutPpq <= startPpq)
+    ) {
+      throw new RangeError(
+        `Recording punchOutPpq must be finite and greater than startPpq, got ${startOptions.punchOutPpq}`,
+      );
+    }
     const punchDurationSeconds = hasEndPpq
       ? ((endPpq - startPpq) * 60) / tempoBpm
       : DEFAULT_MAX_DURATION_SECONDS;
@@ -894,7 +912,9 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
       // of the buffer and lets auto-punch close sample-accurately at R.
       handle.engine.punch(
         startPpq,
-        hasEndPpq ? endPpq : startPpq + (maxDurationSeconds * tempoBpm) / 60,
+        hasEndPpq
+          ? endPpq
+          : (startOptions.punchOutPpq ?? startPpq + (maxDurationSeconds * tempoBpm) / 60),
       );
       take = { trackId, startPpq, offsetSamples, sampleRate };
       phase = 'recording';

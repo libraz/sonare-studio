@@ -155,8 +155,15 @@ const DEFAULT_WORKLET_READY_TIMEOUT_MS = 10_000;
 
 let wasmBinaryPromise: Promise<ArrayBuffer> | null = null;
 
-/** Fetches the sonare WASM bytes once (same-origin, as COEP require-corp demands). */
-function fetchWasmBinary(): Promise<ArrayBuffer> {
+/**
+ * Fetches the sonare WASM bytes once (same-origin, as COEP require-corp demands).
+ *
+ * The worklet build strips its embedded .wasm, so every AudioWorklet processor that
+ * initializes the module (the engine and the retune/voice-changer input processors)
+ * must receive these bytes through `processorOptions.wasmBinary`; the worklet scope
+ * has no fetch() to load them itself.
+ */
+export function fetchWasmBinary(): Promise<ArrayBuffer> {
   if (!wasmBinaryPromise) {
     wasmBinaryPromise = fetch(sonareWasmUrl)
       .then(async (res) => {

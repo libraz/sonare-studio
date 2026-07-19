@@ -538,6 +538,35 @@ describe('createStripSync', () => {
     ]);
   });
 
+  it('clears the sends of a deleted track before re-declaring the bus set', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const track = makeTrack(
+      1,
+      makeStrip({ sends: [{ busId: 'A', levelDb: -6, enabled: true, timing: 'preFader' }] }),
+    );
+
+    sync.sync([track], makeMixer({ buses: [makeBus('A')] }));
+    expect(engine.setSends).toHaveBeenCalledWith(1, [
+      { busId: 1, levelDb: -6, enabled: true, sendTiming: 'preFader' },
+    ]);
+    clearCalls(engine);
+
+    // Deleting the track (its lane is only muted) must clear its lingering
+    // pre-fader send before setTrackBuses runs, or it keeps feeding the bus.
+    sync.sync([], makeMixer({ buses: [makeBus('A')] }));
+    expect(engine.setSends).toHaveBeenCalledTimes(1);
+    expect(engine.setSends).toHaveBeenCalledWith(1, []);
+    expect(engine.setSends.mock.invocationCallOrder[0]).toBeLessThan(
+      engine.setTrackBuses.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+    clearCalls(engine);
+
+    // The stale send memory is dropped: a later sync does not re-clear it.
+    sync.sync([], makeMixer({ buses: [makeBus('A')] }));
+    expect(engine.setSends).not.toHaveBeenCalled();
+  });
+
   it('keeps replacement buses inside the engine bus telemetry range', () => {
     const { handle, engine } = makeHandle();
     const sync = createStripSync(handle);

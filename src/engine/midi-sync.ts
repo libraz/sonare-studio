@@ -36,6 +36,7 @@ import {
   DEFAULT_SYNTH_PRESET,
   type ExternalMidiInstrument,
   effectiveTrackInstrument,
+  instrumentDedupeKey,
   sf2ChannelProgram,
   sf2PlaybackConfig,
   type TrackInstrument,
@@ -43,7 +44,12 @@ import {
 import type { MediaCompletenessIssue } from '@/project/media-completeness';
 import { expandExpressionPoints, MIDI_PITCH_BEND_MAX } from '@/project/midi-cc';
 import { midiFxConfigJson } from '@/project/midi-fx';
-import { audibleMidiProjector } from '@/project/midi-projection';
+import {
+  audibleMidiProjector,
+  MAX_LOOP_OCCURRENCES,
+  MIN_LOOP_WINDOW_PPQ,
+} from '@/project/midi-projection';
+import { MAX_INTERNAL_MIDI_INSTRUMENTS } from '@/project/project-capacity';
 import {
   collectActiveSoundFontUsage,
   hasSoundFontSlotConflict,
@@ -61,7 +67,6 @@ const STATUS_CONTROL_CHANGE = 0xb;
 const STATUS_PROGRAM_CHANGE = 0xc;
 const STATUS_CHANNEL_PRESSURE = 0xd;
 const STATUS_PITCH_BEND = 0xe;
-const MAX_INTERNAL_MIDI_INSTRUMENTS = 16;
 
 /** Bank-select controller numbers (MSB / LSB). */
 const CC_BANK_SELECT_MSB = 0;
@@ -161,10 +166,16 @@ export function buildMidiClipSchedules(
       looping && clip.loopLengthPpq > 0
         ? Math.min(clip.loopLengthPpq, clip.lengthPpq)
         : clip.lengthPpq;
-    const windowPpq = looping ? loopRegionPpq : clip.lengthPpq;
+    // A sub-tick loop window would generate an unbounded number of occurrences
+    // (reachable tab hang), so clamp it to a musical floor and cap the count.
+    const windowPpq = looping ? Math.max(loopRegionPpq, MIN_LOOP_WINDOW_PPQ) : clip.lengthPpq;
     const repeatOffsets: number[] = [];
     if (looping && windowPpq > 0) {
-      for (let offset = 0; offset < clip.lengthPpq - 1e-9; offset += windowPpq) {
+      for (
+        let offset = 0;
+        offset < clip.lengthPpq - 1e-9 && repeatOffsets.length < MAX_LOOP_OCCURRENCES;
+        offset += windowPpq
+      ) {
         repeatOffsets.push(offset);
       }
     } else {
@@ -446,33 +457,6 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
   let clipCount = 0;
   let currentMediaIssues: MediaCompletenessIssue[] = [];
 
-  function instrumentLabel(instrument: TrackInstrument): string {
-    switch (instrument.kind) {
-      case 'synth-preset':
-        return `synth-preset:${instrument.preset}`;
-      case 'synth-patch':
-        return `synth-patch:${JSON.stringify(instrument.patch)}`;
-      case 'sf2': {
-        const channelMap =
-          instrument.channelMap && instrument.channelMap.length > 0
-            ? `:cm=${instrument.channelMap
-                .map((c) => `${c.channel}/${c.bank ?? -1}/${c.program ?? -1}`)
-                .sort()
-                .join(',')}`
-            : '';
-        return `sf2:${instrument.fontId}:${instrument.bank ?? 'bank-default'}:${
-          instrument.program ?? 'program-default'
-        }${channelMap}`;
-      }
-      case 'external-midi':
-        return `external-midi:${instrument.outputPortId}:ch${instrument.channel + 1}`;
-      default: {
-        const exhaustive: never = instrument;
-        return JSON.stringify(exhaustive);
-      }
-    }
-  }
-
   function midiDestinationAssignments(
     tracks: ReadonlyArray<EditorTrack>,
     projectExternalMidi?: ExternalMidiInstrument | null,
@@ -487,7 +471,7 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
         destinationByTrack.set(track.id, track.id);
         continue;
       }
-      const key = instrumentLabel(instrument);
+      const key = instrumentDedupeKey(instrument);
       if (internalDestinations.length < MAX_INTERNAL_MIDI_INSTRUMENTS) {
         destinationByTrack.set(track.id, track.id);
         if (!destinationByInstrument.has(key)) destinationByInstrument.set(key, track.id);
@@ -528,7 +512,7 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
     } catch (err) {
       if (instrument.kind === 'external-midi') {
         throw new Error(
-          `Failed to route external MIDI for track ${track.id} (${track.name}) destination ${destinationId}: ${instrumentLabel(
+          `Failed to route external MIDI for track ${track.id} (${track.name}) destination ${destinationId}: ${instrumentDedupeKey(
             instrument,
           )}`,
           { cause: err },
@@ -538,14 +522,14 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
         handle.engine.setMidiDestinationExternal(destinationId, false);
         handle.engine.setSynthInstrument(destinationId, resolvePreset(DEFAULT_SYNTH_PRESET));
         console.warn(
-          `MIDI sync: ${instrumentLabel(instrument)} failed to bind on track ${track.id} (${
+          `MIDI sync: ${instrumentDedupeKey(instrument)} failed to bind on track ${track.id} (${
             track.name
           }) destination ${destinationId}; fell back to ${DEFAULT_SYNTH_PRESET}.`,
           err,
         );
       } catch (fallbackErr) {
         throw new Error(
-          `Failed to bind MIDI instrument for track ${track.id} (${track.name}) destination ${destinationId}: ${instrumentLabel(
+          `Failed to bind MIDI instrument for track ${track.id} (${track.name}) destination ${destinationId}: ${instrumentDedupeKey(
             instrument,
           )}`,
           { cause: fallbackErr },

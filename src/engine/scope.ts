@@ -82,8 +82,10 @@ function toFrame(snapshot: SonareWorkletScopeSnapshot): ScopeFrame {
 /**
  * Creates a scope bridge for a running engine.
  *
- * Delivery mirrors the meter bridge: `engine.onScope` push callbacks plus a
- * requestAnimationFrame loop draining `engine.pollScope()` in SAB mode. Every
+ * Delivery mirrors the meter bridge and is single-source per mode: a
+ * requestAnimationFrame loop drains `engine.pollScope()` in SAB mode (the only
+ * mode scope is available in), while `engine.onScope` push callbacks are used
+ * otherwise. The two never run together, so no frame is delivered twice. Every
  * frame is routed by its target id; the bridge's own latest/subscribe track
  * the master output.
  *
@@ -111,7 +113,11 @@ export function createScopeBridge(handle: EngineHandle): ScopeBridge {
     }
   };
 
-  const unsubscribeOnScope = available ? handle.engine.onScope(publish) : () => undefined;
+  // SAB mode drains pollScope() below and also fires onScope push callbacks;
+  // subscribing to both would publish every frame twice. Push is the sole
+  // source in postMessage mode (where pollScope yields nothing).
+  const isSab = handle.capabilities.mode === 'sab';
+  const unsubscribeOnScope = available && !isSab ? handle.engine.onScope(publish) : () => undefined;
 
   const raf =
     typeof requestAnimationFrame === 'function'
@@ -129,7 +135,7 @@ export function createScopeBridge(handle: EngineHandle): ScopeBridge {
     }
     rafId = raf(poll);
   };
-  if (available && handle.capabilities.mode === 'sab') {
+  if (available && isSab) {
     rafId = raf(poll);
   }
 

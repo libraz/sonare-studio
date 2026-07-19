@@ -4,8 +4,10 @@ import type { AutomationSync } from '@/engine/automation-sync';
 import type { EngineHandle } from '@/engine/engine';
 import {
   busMeterTargetId,
+  laneMeterTargetId,
   MASTER_METER_TARGET_ID,
   MAX_BUS_METER_TARGETS,
+  MAX_LANE_METER_TARGETS,
 } from '@/engine/meter-targets';
 import type { MeterBridge, MeterSource } from '@/engine/meters';
 import type { MidiSync } from '@/engine/midi-sync';
@@ -258,7 +260,10 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     const sync = mixerSync;
     if (!b || !sync) return null;
     const laneIndex = sync.laneTrackIds().indexOf(trackId);
-    return laneIndex >= 0 ? b.forTarget(laneIndex + 1) : null;
+    // Lanes past the meter range would alias into the bus target ids (33+), so
+    // report no meter rather than another strip's levels.
+    if (laneIndex < 0 || laneIndex >= MAX_LANE_METER_TARGETS) return null;
+    return b.forTarget(laneMeterTargetId(laneIndex));
   }
 
   function busMeterSource(storeBusId: string): MeterSource | null {
@@ -283,7 +288,9 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     const sync = mixerSync;
     if (!s || !sync) return null;
     const laneIndex = sync.laneTrackIds().indexOf(trackId);
-    return laneIndex >= 0 ? s.forTarget(laneIndex + 1) : null;
+    // Same lane-range guard as trackMeterSource: no aliasing into bus targets.
+    if (laneIndex < 0 || laneIndex >= MAX_LANE_METER_TARGETS) return null;
+    return s.forTarget(laneMeterTargetId(laneIndex));
   }
 
   /** Per-bus scope source, addressed by the same bus id the meters use. */
@@ -427,7 +434,21 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
   watch(
     () => transport.positionPpq?.value ?? 0,
     (next, prev) => {
-      if (next !== prev && hasInstrumentAutomation(store.automationLanes)) syncMidiState();
+      // Synth-patch instrument automation resolves to a single start-position
+      // value: the engine defers instrument syncs during playback and bursts
+      // them on stop (the offline render likewise bakes the value at the range
+      // start). Re-evaluating on every playback frame therefore never sounds
+      // live and only floods that deferred queue while re-running a full MIDI
+      // sync + JSON.stringify each frame. Re-bake only while parked, when a seek
+      // moves the playhead, so the next playback starts from the correct value
+      // without per-frame churn.
+      if (
+        next !== prev &&
+        transport.isPlaying?.value !== true &&
+        hasInstrumentAutomation(store.automationLanes)
+      ) {
+        syncMidiState();
+      }
     },
     { flush: 'sync' },
   );

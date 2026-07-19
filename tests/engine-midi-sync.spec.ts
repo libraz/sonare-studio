@@ -239,6 +239,22 @@ describe('buildMidiClipSchedules', () => {
     ]);
   });
 
+  it('clamps a sub-tick loop window so expansion cannot run away', () => {
+    // A degenerate loop length would otherwise expand into lengthPpq/tiny
+    // occurrences and hang the tab. The window is floored at a 64th note, so an
+    // 8-PPQ clip yields 8 / (1/16) = 128 occurrences, not thousands.
+    const clip = makeClip(1, 1, {
+      startPpq: 0,
+      lengthPpq: 8,
+      loopEnabled: true,
+      loopLengthPpq: 0.0001,
+      notes: [makeNote({ id: 1, pitch: 60, startPpq: 0, durationPpq: 0.0001 })],
+    });
+    const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], TEMPO_120, SAMPLE_RATE);
+    // 128 occurrences, each a note-on + note-off.
+    expect(schedule.events).toHaveLength(256);
+  });
+
   it('treats loopEnabled with no loop length as one whole-clip occurrence', () => {
     const clip = makeClip(1, 1, { lengthPpq: 4, loopEnabled: true, loopLengthPpq: 0 });
     const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], TEMPO_120, SAMPLE_RATE);

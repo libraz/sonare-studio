@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   bindRealtimeVoiceChangerInput,
   bindRealtimeVoiceChangerRetuneInput,
@@ -46,6 +46,16 @@ function makeStream() {
     tracks,
   } as unknown as MediaStream & { tracks: Array<{ stop: ReturnType<typeof vi.fn> }> };
 }
+
+const WASM_BYTES = new ArrayBuffer(8);
+
+beforeEach(() => {
+  // The worklet's WASM bytes are fetched same-origin; give the fetch a body.
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => ({ ok: true, arrayBuffer: async () => WASM_BYTES })),
+  );
+});
 
 afterEach(() => {
   FakeAudioWorkletNode.instances = [];
@@ -139,6 +149,9 @@ describe('bindRealtimeVoiceChangerInput', () => {
       stream,
       stopTracksOnClose: true,
     });
+    // The node is built after the WASM bytes are fetched (a microtask), so wait
+    // for it before asserting the graph is still unpublished.
+    await vi.waitFor(() => expect(FakeAudioWorkletNode.instances[0]).toBeDefined());
     const voiceNode = FakeAudioWorkletNode.instances[0];
     expect(source.connect).not.toHaveBeenCalled();
     expect(voiceNode.connect).not.toHaveBeenCalled();
@@ -189,6 +202,9 @@ describe('bindRealtimeVoiceChangerInput', () => {
       blockSize: 256,
       channelCount: 1,
     });
+    // Both worklets need the WASM bytes handed in; neither can fetch its own.
+    expect(voiceNode.options.processorOptions?.wasmBinary).toBe(WASM_BYTES);
+    expect(retuneNode.options.processorOptions?.wasmBinary).toBe(WASM_BYTES);
     expect(source.connect).toHaveBeenCalledWith(voiceNode);
     expect(voiceNode.connect).toHaveBeenCalledWith(retuneNode);
     expect(retuneNode.connect).toHaveBeenCalledWith(engineNode);

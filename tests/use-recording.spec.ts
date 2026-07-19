@@ -473,7 +473,14 @@ describe('useRecording', () => {
     expect(seekPpq).toHaveBeenCalledWith(8);
     expect(play).toHaveBeenCalledTimes(1);
     expect(fake.rec.arm).toHaveBeenCalledWith(trackId);
-    expect(fake.getLastStart()).toEqual({ startPpq: 8, tempoBpm: 120 });
+    // Open-ended: the safety punch-out is the 300 s buffer resolved to PPQ
+    // (300 s = 600 PPQ at 120 BPM, added to startPpq).
+    expect(fake.getLastStart()).toEqual({
+      startPpq: 8,
+      tempoBpm: 120,
+      maxDurationSeconds: 300,
+      punchOutPpq: 608,
+    });
     expect(recording.isRecording.value).toBe(true);
 
     const clipId = await recording.stopRecord();
@@ -622,7 +629,12 @@ describe('useRecording', () => {
     expect(toggleMetronome).toHaveBeenCalledWith(true);
     expect(seekPpq).toHaveBeenCalledWith(4); // startPpq - countInPpq
     // The capture still starts at startPpq; the pre-roll is transport-only.
-    expect(fake.getLastStart()).toEqual({ startPpq: 8, tempoBpm: 120 });
+    expect(fake.getLastStart()).toEqual({
+      startPpq: 8,
+      tempoBpm: 120,
+      maxDurationSeconds: 300,
+      punchOutPpq: 608,
+    });
     expect(recording.isCountingIn.value).toBe(true);
 
     // 4 PPQ at 120 BPM = 2 s of count-in.
@@ -641,7 +653,12 @@ describe('useRecording', () => {
 
     await recording.record();
     expect(seekPpq).toHaveBeenCalledWith(0);
-    expect(fake.getLastStart()).toEqual({ startPpq: 2, tempoBpm: 120 });
+    expect(fake.getLastStart()).toEqual({
+      startPpq: 2,
+      tempoBpm: 120,
+      maxDurationSeconds: 300,
+      punchOutPpq: 602,
+    });
   });
 
   it('walks audio count-in over the variable-meter measure grid', async () => {
@@ -685,7 +702,12 @@ describe('useRecording', () => {
     expect(await recording.record()).toBe(true);
     expect(seekPpq).not.toHaveBeenCalled();
     expect(play).not.toHaveBeenCalled();
-    expect(fake.getLastStart()).toEqual({ startPpq: 16, tempoBpm: 120 });
+    expect(fake.getLastStart()).toEqual({
+      startPpq: 16,
+      tempoBpm: 120,
+      maxDurationSeconds: 300,
+      punchOutPpq: 616,
+    });
   });
 
   it('records from an explicit punch-in position, ignoring count-in and loop snap', async () => {
@@ -704,12 +726,40 @@ describe('useRecording', () => {
     expect(await recording.record(4)).toBe(true);
     expect(seekPpq).not.toHaveBeenCalled();
     expect(play).not.toHaveBeenCalled();
-    expect(fake.getLastStart()).toEqual({ startPpq: 4, tempoBpm: 120 });
+    expect(fake.getLastStart()).toEqual({
+      startPpq: 4,
+      tempoBpm: 120,
+      maxDurationSeconds: 300,
+      punchOutPpq: 604,
+    });
 
     const clipId = await recording.stopRecord();
     expect(clipId).not.toBeNull();
     const clip = store.clips.find((c) => c.id === clipId);
     expect(clip?.takes ?? []).toHaveLength(0); // single linear take, never cycle-split
+  });
+
+  it('resolves the open-ended safety punch-out through the project tempo map', async () => {
+    // A ramp from 120 to 60 BPM at 4 PPQ: 300 s from ppq 0 reaches 302 PPQ
+    // (2 s to ppq 4, then 1 s/quarter), not the 600 PPQ a constant 120 BPM
+    // would predict — otherwise the punch closes long before the buffer fills.
+    setTempoSegments([
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 4, bpm: 60 },
+    ]);
+    const { recording, fake, transport } = setup();
+    const trackId = addAudioTrack();
+    recording.arm(trackId);
+    transport.isPlaying.value = true;
+    transport.positionSeconds.value = 0;
+
+    expect(await recording.record()).toBe(true);
+    expect(fake.getLastStart()).toEqual({
+      startPpq: 0,
+      tempoBpm: 120,
+      maxDurationSeconds: 300,
+      punchOutPpq: 302,
+    });
   });
 
   it('passes an explicit punch-out position through to the recorder', async () => {
