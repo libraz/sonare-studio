@@ -9,10 +9,13 @@ import {
   createDefaultStrip,
   createProcessorId,
   type InsertSlot,
+  MAX_CHANNEL_DELAY_SAMPLES,
   MAX_MIXER_BUSES,
   MAX_STRIP_GAIN_DB,
+  MAX_STRIP_WIDTH,
   MAX_VCA_GROUPS,
   MIN_STRIP_GAIN_DB,
+  MIN_STRIP_WIDTH,
   type MixerBus,
   type MixerStrip,
   type PanLawId,
@@ -215,12 +218,14 @@ function sceneStripToMixerStrip(
   const inputTrimDb = finiteNumber(strip.inputTrimDb);
   if (inputTrimDb !== undefined && inputTrimDb !== 0) next.inputTrimDb = inputTrimDb;
   const width = finiteNumber(strip.width);
-  if (width !== undefined && width !== 1) next.width = width;
+  if (width !== undefined && width !== 1) {
+    next.width = clamp(width, MIN_STRIP_WIDTH, MAX_STRIP_WIDTH);
+  }
   if (strip.polarityInvertLeft === true) next.polarityInvertLeft = true;
   if (strip.polarityInvertRight === true) next.polarityInvertRight = true;
   const channelDelaySamples = finiteNumber(strip.channelDelaySamples);
   if (channelDelaySamples !== undefined && channelDelaySamples !== 0) {
-    next.channelDelaySamples = Math.max(0, Math.round(channelDelaySamples));
+    next.channelDelaySamples = clamp(Math.round(channelDelaySamples), 0, MAX_CHANNEL_DELAY_SAMPLES);
   }
   const panLaw = finiteNumber(strip.panLaw);
   if (panLaw !== undefined && PAN_LAW_FROM_SCENE[panLaw]) next.panLaw = PAN_LAW_FROM_SCENE[panLaw];

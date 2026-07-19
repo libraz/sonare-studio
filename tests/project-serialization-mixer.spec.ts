@@ -27,6 +27,7 @@ import {
   setStripPanLaw,
   setStripPanMode,
   setTrackInstrument,
+  setTrackPercussion,
   setTrackSoloSafe,
   setTrackVca,
   setVcaGroupMute,
@@ -355,6 +356,19 @@ describe('project serialization with instruments and mixer (schema v3)', () => {
     ]);
     expect(store.tracks[0].vcaId).toBe(groupId);
     expect(store.tracks[0].soloSafe).toBe(true);
+  });
+
+  it('round-trips the explicit percussion override in both states', async () => {
+    addAudioTrack({ name: 'Second' });
+    const [a, b] = store.tracks;
+    setTrackPercussion(a.id, true);
+    setTrackPercussion(b.id, false);
+    const doc = serializeProject();
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    expect(serializeProject()).toEqual(doc);
+    expect(store.tracks[0].percussion).toBe(true);
+    expect(store.tracks[1].percussion).toBe(false);
   });
 
   it('persists mixer snapshot slots with document-track-index bindings', async () => {

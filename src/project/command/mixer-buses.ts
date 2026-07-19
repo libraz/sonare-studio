@@ -83,7 +83,11 @@ export function removeMixerBus(busId: string): void {
     store.mixer = {
       ...store.mixer,
       master: detachBus(store.mixer.master),
-      buses: store.mixer.buses.filter((bus) => bus.id !== busId),
+      // Surviving bus return strips can themselves send to (or route into) the
+      // removed bus; detach those too so no strip references a dropped bus.
+      buses: store.mixer.buses
+        .filter((bus) => bus.id !== busId)
+        .map((bus) => (bus.strip ? { ...bus, strip: detachBus(bus.strip) } : bus)),
     };
     const target = busAutomationTarget(busId);
     store.automationLanes = store.automationLanes.filter((lane) => lane.target !== target);

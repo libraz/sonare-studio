@@ -532,6 +532,27 @@ describe('mixer commands', () => {
       expect(() => removeMixerBus('nope')).toThrow(RangeError);
     });
 
+    it('detaches sends on surviving bus return strips when a bus is removed', () => {
+      const busA = addMixerBus({ name: 'A' });
+      const busB = addMixerBus({ name: 'B' });
+      const busObjA = store.mixer.buses.find((bus) => bus.id === busA);
+      if (busObjA) {
+        busObjA.strip = {
+          gainDb: 0,
+          pan: 0,
+          inserts: [],
+          sends: [{ busId: busB, levelDb: -6, enabled: true }],
+        };
+      }
+      removeMixerBus(busB);
+      const remainingA = store.mixer.buses.find((bus) => bus.id === busA);
+      expect(remainingA?.strip?.sends).toEqual([]);
+      undo();
+      expect(store.mixer.buses.find((bus) => bus.id === busA)?.strip?.sends).toEqual([
+        { busId: busB, levelDb: -6, enabled: true },
+      ]);
+    });
+
     it('routes a track output to a bus and back undoably', () => {
       const busId = addMixerBus({ name: 'FX' });
       setStripOutputBus(trackId, busId);
@@ -891,6 +912,20 @@ describe('mixer commands', () => {
       expect(undo()).toBe(true);
       expect(store.mixer.buses).toEqual([]);
       expect(store.tracks[0].mixer).toBeUndefined();
+    });
+
+    it('clamps out-of-range width and channel delay from an imported scene', () => {
+      const scene = JSON.stringify({
+        version: 1,
+        strips: [{ id: 'track-1', width: 5, channelDelaySamples: 5_000_000 }],
+        buses: [],
+        connections: [],
+      });
+      applyMixerSceneJson(scene);
+      // Width is bounded to [0, 2] and the channel delay to its sample ceiling,
+      // never trusting the imported scene's raw numbers.
+      expect(store.tracks[0].mixer?.width).toBe(2);
+      expect(store.tracks[0].mixer?.channelDelaySamples).toBe(96000);
     });
 
     it('prunes processor lanes for replaced scene strips and restores them on undo', () => {
