@@ -252,6 +252,33 @@ describe('encodeFlac', () => {
     expect(second).toEqual(first);
   });
 
+  it('reports monotonic frame progress that ends at a full bar', () => {
+    // Five blocks worth of audio drives several ticks before completion.
+    const channels = [Float32Array.from({ length: 160 }, (_, index) => Math.sin(index / 4) * 0.5)];
+    const fractions: number[] = [];
+    encodeFlac(channels, 48000, { bitDepth: 16, blockSize: 32 }, (fraction) => {
+      fractions.push(fraction);
+    });
+
+    expect(fractions.length).toBeGreaterThan(1);
+    for (const fraction of fractions) {
+      expect(fraction).toBeGreaterThan(0);
+      expect(fraction).toBeLessThanOrEqual(1);
+    }
+    for (let i = 1; i < fractions.length; i += 1) {
+      expect(fractions[i]).toBeGreaterThanOrEqual(fractions[i - 1]);
+    }
+    expect(fractions.at(-1)).toBe(1);
+  });
+
+  it('resolves progress to a full bar even for an empty stream', () => {
+    const fractions: number[] = [];
+    encodeFlac([new Float32Array(0)], 44100, { blockSize: 16 }, (fraction) => {
+      fractions.push(fraction);
+    });
+    expect(fractions).toEqual([1]);
+  });
+
   it('allows an empty stream with STREAMINFO total samples set to zero', () => {
     const bytes = encodeFlac([new Float32Array(0)], 44100, { blockSize: 16 });
     const packed = streamInfoPacked(bytes);

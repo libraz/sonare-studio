@@ -16,6 +16,7 @@ import {
   listEncoders,
   registerEncoder,
 } from './codecs';
+import { quantizePcmSample } from './pcm-quantize';
 
 /** Registry id of the MP3 encoder. */
 export const MP3_ENCODER_ID = 'mp3';
@@ -55,8 +56,7 @@ export interface EncodeMp3Options {
 function floatBlockTo16(samples: Float32Array, start: number, end: number): Int16Array {
   const out = new Int16Array(end - start);
   for (let i = start; i < end; i++) {
-    const value = Math.min(1, Math.max(-1, samples[i]));
-    out[i - start] = Math.round(value < 0 ? value * 0x8000 : value * 0x7fff);
+    out[i - start] = quantizePcmSample(samples[i], 0x7fff, 0x8000);
   }
   return out;
 }

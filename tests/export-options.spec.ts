@@ -220,7 +220,7 @@ describe('normalizeMixdownLoudness', () => {
     expect(report.truePeakDb).toBe(-13.5);
   });
 
-  it('leaves audio unchanged when loudness is unavailable', () => {
+  it('leaves audio unchanged when loudness is unavailable and the peak is under the ceiling', () => {
     const left = new Float32Array([0.25]);
     const right = new Float32Array([-0.5]);
 
@@ -229,6 +229,34 @@ describe('normalizeMixdownLoudness', () => {
     expect(Array.from(left)).toEqual([0.25]);
     expect(Array.from(right)).toEqual([-0.5]);
     expect(report).toEqual({ peakDb: -6 });
+  });
+
+  it('enforces the peak ceiling even when loudness is unavailable', () => {
+    const left = new Float32Array([0.25]);
+    const right = new Float32Array([-0.5]);
+
+    // Sample peak is +3 dBFS, well over the default -1 dB ceiling; with no LUFS
+    // the mix must still be attenuated by 4 dB, not left to clip.
+    const report = normalizeMixdownLoudness([left, right], { peakDb: 3 }, -14);
+
+    const gain = 10 ** (-4 / 20);
+    expect(left[0]).toBeCloseTo(0.25 * gain, 6);
+    expect(right[0]).toBeCloseTo(-0.5 * gain, 6);
+    expect(report).toEqual({ peakDb: -1 });
+  });
+
+  it('falls back to the sample peak when the true peak is unmeasured', () => {
+    const left = new Float32Array([0.1]);
+    const right = new Float32Array([-0.1]);
+
+    // A large loudness deficit would boost far past the ceiling, but with no
+    // true-peak measurement the sample peak (-2 dBFS) caps the gain at +1 dB.
+    const report = normalizeMixdownLoudness([left, right], { peakDb: -2, lufs: -30 }, -14);
+
+    const gain = 10 ** (1 / 20);
+    expect(left[0]).toBeCloseTo(0.1 * gain, 6);
+    expect(right[0]).toBeCloseTo(-0.1 * gain, 6);
+    expect(report).toEqual({ peakDb: -1, lufs: -29 });
   });
 });
 

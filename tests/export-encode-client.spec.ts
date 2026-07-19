@@ -57,6 +57,30 @@ describe('encodeAudioInWorker', () => {
     expect(worker.terminate).toHaveBeenCalledOnce();
   });
 
+  it('forwards worker progress ticks without settling the encode', async () => {
+    const worker = new FakeWorker();
+    const fractions: number[] = [];
+    const result = encodeAudioInWorker(
+      'flac',
+      [new Float32Array(16)],
+      48000,
+      {},
+      undefined,
+      () => worker as unknown as Worker,
+      (fraction) => fractions.push(fraction),
+    );
+    worker.emit({ type: 'progress', fraction: 0.5 });
+    worker.emit({ type: 'progress', fraction: 1 });
+    expect(fractions).toEqual([0.5, 1]);
+    // Progress must not resolve or terminate the worker prematurely.
+    expect(worker.terminate).not.toHaveBeenCalled();
+    worker.emit({ type: 'encoded', bytes: new Uint8Array([9]) });
+    await expect(result).resolves.toEqual(new Uint8Array([9]));
+    // A late progress tick after settle is ignored (no throw).
+    worker.emit({ type: 'progress', fraction: 0.75 });
+    expect(fractions).toEqual([0.5, 1]);
+  });
+
   it('terminates synchronous codec work immediately when cancelled', async () => {
     const worker = new FakeWorker();
     const controller = new AbortController();

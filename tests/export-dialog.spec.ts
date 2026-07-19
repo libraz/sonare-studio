@@ -232,7 +232,7 @@ describe('ExportDialog', () => {
     await flushPromises();
     expect(control.render).not.toHaveBeenCalled();
     expect(dialogQueue[0]?.message).toContain(
-      'instrument automation was evaluated at render start',
+      'Instrument automation was evaluated at render start',
     );
 
     resolveDialog(dialogQueue[0].id, true);
@@ -319,6 +319,8 @@ describe('ExportDialog', () => {
       '320 kbps',
     ]);
     expect(q('.encoder-notice')?.textContent).toContain('MediaRecorder');
+    // The notice sets the expectation that MediaRecorder encodes in real time.
+    expect(q('.encoder-notice')?.textContent).toContain('real time');
   });
 
   it('shows bitrate options for runtime compressed encoders from registry metadata', async () => {
@@ -347,7 +349,7 @@ describe('ExportDialog', () => {
         peakDb: -6.0,
         truePeakDb: -5.8,
         lufs: -14.2,
-        limitations: ['instrument automation was evaluated at render start for: Keys'],
+        limitations: [{ kind: 'instrument-automation-at-render-start', tracks: ['Keys'] }],
       },
     });
     control.resolve(result);
@@ -402,7 +404,7 @@ describe('ExportDialog', () => {
         peakDb: -6.0,
         truePeakDb: -5.8,
         lufs: -14.2,
-        limitations: ['instrument automation was evaluated at render start for: Keys'],
+        limitations: [{ kind: 'instrument-automation-at-render-start', tracks: ['Keys'] }],
       },
     });
     control.resolve(result);
@@ -419,17 +421,43 @@ describe('ExportDialog', () => {
     expect(q('.report-lufs')?.textContent).toBe('-14.2 LUFS');
     expect(q('.report-limitations')?.textContent).toContain('Limitations');
     expect(q('.report-limitations')?.textContent).toContain(
-      'instrument automation was evaluated at render start for: Keys',
+      'Instrument automation was evaluated at render start for: Keys',
     );
 
     const emitted = wrapper.emitted('exported') as Array<
-      [{ filename: string; report: { limitations?: string[] } }]
+      [{ filename: string; report: { limitations?: unknown[] } }]
     >;
     expect(emitted).toHaveLength(1);
     expect(emitted[0][0].filename).toBe('My Song.wav');
     expect(emitted[0][0].report.limitations).toEqual([
-      'instrument automation was evaluated at render start for: Keys',
+      { kind: 'instrument-automation-at-render-start', tracks: ['Keys'] },
     ]);
+  });
+
+  it('formats media issues in the report through localized labels', async () => {
+    const control = makeRender();
+    const { wrapper } = mountDialog(control);
+    await clickExport();
+    control.resolve(
+      makeResult({
+        report: {
+          peakDb: -6,
+          lufs: -14,
+          mediaIssues: [
+            { kind: 'audio-asset', id: 'clip-7', reason: 'missing-or-unreadable' },
+            { kind: 'soundfont', id: 'piano.sf2', reason: 'missing-or-unreadable' },
+          ],
+        },
+      }),
+    );
+    await flushPromises();
+
+    const text = q('.report-limitations')?.textContent ?? '';
+    // The raw machine kind never leaks; it is replaced with a localized label.
+    expect(text).toContain('Missing or unreadable audio asset: clip-7');
+    expect(text).toContain('Missing or unreadable SoundFont: piano.sf2');
+    expect(text).not.toContain('audio-asset');
+    wrapper.unmount();
   });
 
   it('passes WAV dither to the encoder when the dither toggle is enabled', async () => {
@@ -658,7 +686,7 @@ describe('ExportDialog', () => {
     expect(entries['02 Bass.wav']).toEqual(new Uint8Array([30]));
   });
 
-  it('normalizes each stem with LUFS metadata before encoding', async () => {
+  it('exports stems at unity even when normalization is on, preserving mix balance', async () => {
     const control = makeRender();
     const encode = vi.fn(() => new Uint8Array([1]));
     mountDialog(control, {
@@ -712,14 +740,31 @@ describe('ExportDialog', () => {
     );
     await vi.waitFor(() => expect(encode).toHaveBeenCalledTimes(3));
 
+    // Every stem keeps its raw level: independent per-stem normalization would
+    // apply a different gain to each, breaking the balance so they no longer
+    // sum back to the mix.
     const first = encode.mock.calls[0][0] as readonly [Float32Array, Float32Array];
     const second = encode.mock.calls[1][0] as readonly [Float32Array, Float32Array];
     const third = encode.mock.calls[2][0] as readonly [Float32Array, Float32Array];
-    expect(first[0][0]).toBeCloseTo(0.25 * 10 ** (4.5 / 20), 6);
-    expect(first[1][0]).toBeCloseTo(0.5 * 10 ** (4.5 / 20), 6);
-    expect(second[0][0]).toBeCloseTo(0.5 * 10 ** (-4 / 20), 6);
-    expect(second[1][0]).toBeCloseTo(0.25 * 10 ** (-4 / 20), 6);
+    expect(first[0][0]).toBeCloseTo(0.25, 6);
+    expect(first[1][0]).toBeCloseTo(0.5, 6);
+    expect(second[0][0]).toBeCloseTo(0.5, 6);
+    expect(second[1][0]).toBeCloseTo(0.25, 6);
     expect(third[0][0]).toBeCloseTo(0.125, 6);
+  });
+
+  it('explains that stem exports skip loudness normalization', async () => {
+    const control = makeRender();
+    mountDialog(control);
+    expect(q('.stem-normalization-note')).toBeNull();
+    await checkRadio('.mode-stems');
+    q('.normalize-loudness')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await nextTick();
+    expect(q('.stem-normalization-note')).not.toBeNull();
+    // The note is specific to stems mode; mixdown normalization is unaffected.
+    await checkRadio('.mode-mixdown');
+    await nextTick();
+    expect(q('.stem-normalization-note')).toBeNull();
   });
 
   it('can disable bus return stems in stems mode', async () => {

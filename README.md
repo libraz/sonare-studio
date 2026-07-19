@@ -17,8 +17,8 @@ A digital audio workstation that runs entirely in the browser, built on the
 - Microphone recording with monitoring, count-in and metronome
 - Sample editor for audio clip content
 - Mastering chain (e.g. brickwall limiter, tape) on the master bus
-- Export: WAV / MP3 mixdown with loudness report, DAWproject, Standard MIDI
-  File, MusicXML
+- Export: WAV / FLAC / MP3 mixdown (plus AAC / Opus where the browser
+  provides them) with loudness report, DAWproject, Standard MIDI File, MusicXML
 - Projects persist as `.szd` files (zip-packed JSON + assets) in the browser's
   origin-private file system (OPFS), with autosave and local file
   import/export; Web MIDI input, and output to external devices via a shared

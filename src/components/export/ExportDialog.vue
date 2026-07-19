@@ -11,6 +11,12 @@ import { type ExportRenderHandle, renderMixdownInWorker } from '@/export/client'
 import { type AudioEncoder, listEncoders, WAV_ENCODER_ID } from '@/export/codecs';
 import { encodeAudioInWorker, isWorkerAudioEncoderId } from '@/export/encode-client';
 import { offlineAutomationLimitations } from '@/export/engine-render';
+import {
+  formatExportLimitation,
+  formatPreflightBlocker,
+  formatPreflightWarning,
+} from '@/export/export-issue-format';
+import { formatExportStage } from '@/export/export-stage';
 import { FLAC_ENCODER_ID, type FlacBitDepth, registerFlacEncoder } from '@/export/flac';
 import {
   assertCodecPayloadMemory,
@@ -113,12 +119,19 @@ const stage = ref('');
 const errorMessage = ref('');
 const cancelled = ref(false);
 const report = ref<MixdownReport | null>(null);
-const reportLimitations = computed(() => [
-  ...(report.value?.limitations ?? []).filter((limitation) => limitation.trim().length > 0),
-  ...(report.value?.mediaIssues ?? []).map(
-    (issue) => `Missing or unreadable ${issue.kind}: ${issue.id}`,
-  ),
-]);
+const reportLimitations = computed(() => {
+  const strings = t.value.dialogs.exportAudio;
+  return [
+    ...(report.value?.limitations ?? []).map((limitation) =>
+      formatExportLimitation(limitation, strings.issue),
+    ),
+    ...(report.value?.mediaIssues ?? []).map((issue) =>
+      strings.mediaIssue
+        .replace('{kind}', strings.mediaIssueKind[issue.kind] ?? issue.kind)
+        .replace('{id}', issue.id),
+    ),
+  ];
+});
 let cancelRender: (() => void) | null = null;
 
 /** Encoder list: the injected override or the live codec registry. */
@@ -227,12 +240,9 @@ const sampleRateOptions = EXPORT_SAMPLE_RATES.map((rate) => ({
   label: `${(rate / 1000).toLocaleString('en-US')} kHz`,
 }));
 
-const progressStageLabel = computed(() => {
-  if (stage.value === 'render') return t.value.dialogs.exportAudio.stage.render;
-  if (stage.value === 'encode') return t.value.dialogs.exportAudio.stage.encode;
-  if (stage.value === 'preflight') return t.value.dialogs.exportAudio.stage.preflight;
-  return stage.value;
-});
+const progressStageLabel = computed(() =>
+  formatExportStage(stage.value, t.value.dialogs.exportAudio.stage),
+);
 
 const normalizeLoudnessLabel = computed(() =>
   t.value.dialogs.exportAudio.normalizeLoudness.replace(
@@ -264,13 +274,22 @@ async function encodeAudio(
   sampleRate: number,
   options: Record<string, unknown>,
   signal: AbortSignal,
+  onProgress?: (fraction: number) => void,
 ): Promise<Uint8Array> {
   if (
     props.encoders === null &&
     typeof Worker === 'function' &&
     isWorkerAudioEncoderId(encoder.id)
   ) {
-    return encodeAudioInWorker(encoder.id, channels, sampleRate, options, signal);
+    return encodeAudioInWorker(
+      encoder.id,
+      channels,
+      sampleRate,
+      options,
+      signal,
+      undefined,
+      onProgress,
+    );
   }
   return await encoder.encode(channels, sampleRate, options);
 }
@@ -303,13 +322,19 @@ async function onExport(): Promise<void> {
       releaseTailSeconds: exportModel.releaseTailSeconds,
       signal: controller.signal,
     });
+    const issueStrings = t.value.dialogs.exportAudio.issue;
     if (preflight.blockers.length > 0) {
-      throw new Error(
-        `${t.value.dialogs.exportAudio.preflightBlocked}\n${preflight.blockers.join('\n')}`,
+      const lines = preflight.blockers.map((blocker) =>
+        formatPreflightBlocker(blocker, issueStrings),
       );
+      throw new Error(`${t.value.dialogs.exportAudio.preflightBlocked}\n${lines.join('\n')}`);
     }
-    const automationLimitations = offlineAutomationLimitations(doc);
-    const acceptedLimitations = [...automationLimitations, ...preflight.warnings];
+    const acceptedLimitations = [
+      ...offlineAutomationLimitations(doc).map((limitation) =>
+        formatExportLimitation(limitation, issueStrings),
+      ),
+      ...preflight.warnings.map((warning) => formatPreflightWarning(warning, issueStrings)),
+    ];
     if (acceptedLimitations.length > 0) {
       const proceed = await confirmDialog({
         title: t.value.dialogs.exportAudio.preflightWarningTitle,
@@ -351,9 +376,10 @@ async function onExport(): Promise<void> {
       const releaseRaw = stemMemory.retain(rawBytes, `raw stem ${index + 1}/${total}`);
       try {
         stage.value = `encode:stem:${index + 1}/${total}`;
-        if (exportModel.normalizeLoudness && stem.report) {
-          stem.report = normalizeMixdownLoudness(stem.channels, stem.report, targetLufs);
-        }
+        // Stems are deliberately NOT loudness-normalized: normalizing each stem
+        // to the same target applies a different gain per stem, which destroys
+        // the relative balance so they no longer sum back to the mix. Loudness
+        // normalization stays a mixdown-only operation; stems export at unity.
         const bytes = await encodeAudio(
           encoder,
           stem.channels,
@@ -430,6 +456,10 @@ async function onExport(): Promise<void> {
         result.sampleRate,
         encodeOptions,
         controller.signal,
+        (fraction) => {
+          if (controller.signal.aborted) return;
+          progress.value = fraction;
+        },
       );
       controller.signal.throwIfAborted();
       filename = exportFileName(exportModel.baseName, encoder.extension);
@@ -636,6 +666,12 @@ function onKeydown(event: KeyboardEvent): void {
             :label="normalizeLoudnessLabel"
             :disabled="busy"
           />
+          <p
+            v-if="model.mode === 'stems' && model.normalizeLoudness"
+            class="stem-normalization-note encoder-notice"
+          >
+            {{ t.dialogs.exportAudio.stemNormalizationNote }}
+          </p>
         </div>
 
         <label class="field-label" for="export-release-tail">

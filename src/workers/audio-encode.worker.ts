@@ -20,6 +20,7 @@ export interface AudioEncodeWorkerRequest {
 
 export type AudioEncodeWorkerResponse =
   | { type: 'encoded'; bytes: Uint8Array }
+  | { type: 'progress'; fraction: number }
   | { type: 'error'; error: string };
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
@@ -41,6 +42,10 @@ scope.addEventListener('message', (event: MessageEvent<AudioEncodeWorkerRequest>
           request.channels,
           request.sampleRate,
           request.options as EncodeFlacOptions,
+          (fraction) => {
+            const progress: AudioEncodeWorkerResponse = { type: 'progress', fraction };
+            scope.postMessage(progress);
+          },
         );
       } else if (request.encoderId === MP3_ENCODER_ID) {
         bytes = await encodeMp3(

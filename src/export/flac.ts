@@ -14,6 +14,7 @@ import {
   listEncoders,
   registerEncoder,
 } from './codecs';
+import { quantizePcmSample } from './pcm-quantize';
 
 export const FLAC_ENCODER_ID = 'flac';
 
@@ -247,10 +248,9 @@ function utf8Uint(value: number): number[] {
 }
 
 function quantizeSample(sample: number, bitDepth: FlacBitDepth): number {
-  const value = Math.min(1, Math.max(-1, sample));
   const positiveMax = bitDepth === 16 ? 0x7fff : 0x7fffff;
   const negativeMax = bitDepth === 16 ? 0x8000 : 0x800000;
-  return Math.round(value < 0 ? value * negativeMax : value * positiveMax);
+  return quantizePcmSample(sample, positiveMax, negativeMax);
 }
 
 function writeSigned(writer: BitWriter, value: number, bits: number): void {
@@ -684,10 +684,18 @@ function encodeFrame(
   return out;
 }
 
+/**
+ * Reports encode progress as a fraction in [0, 1]. Called on frame boundaries
+ * so a long lossless encode can drive a live progress bar instead of appearing
+ * frozen at the render stage; the last call reports 1.
+ */
+export type FlacProgress = (fraction: number) => void;
+
 export function encodeFlac(
   channels: ReadonlyArray<Float32Array>,
   sampleRate: number,
   options: EncodeFlacOptions = {},
+  onProgress?: FlacProgress,
 ): Uint8Array {
   const frames = assertPlanar(channels);
   if (!Number.isInteger(sampleRate) || sampleRate <= 0 || sampleRate > 0xfffff) {
@@ -716,6 +724,10 @@ export function encodeFlac(
   let minFrameSize = 0;
   let maxFrameSize = 0;
   let frameNumber = 0;
+  const totalBlocks = frames === 0 ? 0 : Math.ceil(frames / effectiveBlockSize);
+  // Throttle progress to ~100 updates so a many-thousand-block encode does not
+  // flood the caller (or the worker message channel) with per-frame ticks.
+  const progressStride = totalBlocks > 0 ? Math.max(1, Math.floor(totalBlocks / 100)) : 0;
   for (let offset = 0; offset < frames; offset += effectiveBlockSize) {
     const size = Math.min(effectiveBlockSize, frames - offset);
     const frame = encodeFrame(channels, offset, size, bitDepth, frameNumber);
@@ -723,7 +735,12 @@ export function encodeFlac(
     minFrameSize = minFrameSize === 0 ? frame.length : Math.min(minFrameSize, frame.length);
     maxFrameSize = Math.max(maxFrameSize, frame.length);
     frameNumber += 1;
+    if (onProgress && (frameNumber % progressStride === 0 || frameNumber === totalBlocks)) {
+      onProgress(frameNumber / totalBlocks);
+    }
   }
+  // Always resolve to a full bar, even for empty input where the loop never ran.
+  onProgress?.(1);
 
   const signature = new Uint8Array([0x66, 0x4c, 0x61, 0x43]); // fLaC
   const info = streamInfo(

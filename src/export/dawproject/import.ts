@@ -303,10 +303,13 @@ function readAutomationParameterRefs(
   channel: Element | null | undefined,
 ): Map<string, AutomationParameterRef> {
   const refs = new Map<string, AutomationParameterRef>();
-  const volumeId = channel?.querySelector('Volume')?.getAttribute('id')?.trim();
+  // Read only the channel's own direct Volume/Pan: querySelector would descend
+  // into the Sends emitted earlier in the channel and grab a send's nested
+  // Volume instead, mapping fader automation to the wrong parameter id.
+  const volumeId = children(channel, 'Volume')[0]?.getAttribute('id')?.trim();
   if (volumeId)
     refs.set(volumeId, { param: 'faderDb', fromDawValue: (value) => linearToDb(value) });
-  const panId = channel?.querySelector('Pan')?.getAttribute('id')?.trim();
+  const panId = children(channel, 'Pan')[0]?.getAttribute('id')?.trim();
   if (panId) refs.set(panId, { param: 'pan', fromDawValue: panFromNormalized });
 
   let insertIndex = 0;
@@ -346,7 +349,7 @@ function readTracks(
     const role = channel?.getAttribute('role');
     const sonareTrackKind = track.getAttribute('sonareTrackKind');
     if (role === 'master') return;
-    const pan = numberAttr(channel?.querySelector('Pan'), 'value');
+    const pan = numberAttr(children(channel, 'Pan')[0], 'value');
     const kind: TrackKind =
       contentType === 'tracks'
         ? 'group'
@@ -357,7 +360,9 @@ function readTracks(
             : 'audio';
     const index = fallbackIndex++;
     const groupIndex = kind === 'group' ? undefined : parentGroupIndex;
-    const channelVolume = Math.max(0, numberAttr(channel?.querySelector('Volume'), 'value') ?? 1);
+    // Direct child only: a Send nested inside <Sends> also carries a <Volume>,
+    // and querySelector would return that send level as the track's fader gain.
+    const channelVolume = Math.max(0, numberAttr(children(channel, 'Volume')[0], 'value') ?? 1);
     const sonareVcaId = track.getAttribute('sonareVcaId')?.trim();
     const vcaId = sonareVcaId && validVcaIds.has(sonareVcaId) ? sonareVcaId : undefined;
     const sonareVolume = numberAttr(track, 'sonareVolume');
@@ -372,7 +377,7 @@ function readTracks(
       color:
         track.getAttribute('color') ||
         TRACK_COLOR_PALETTE[tracks.length % TRACK_COLOR_PALETTE.length],
-      mute: boolAttr(channel?.querySelector('Mute'), 'value'),
+      mute: boolAttr(children(channel, 'Mute')[0], 'value'),
       solo: boolAttr(channel, 'solo'),
       volume:
         vcaId !== undefined && sonareVolume !== null ? Math.max(0, sonareVolume) : channelVolume,
@@ -697,14 +702,19 @@ function readMidiClip(clip: Element, placement?: FlattenedClipPlacement): Docume
       placement?.loopLengthPpq ??
       (loopStart !== null && loopEnd !== null ? Math.max(0, loopEnd - loopStart) : 0),
     kind: 'midi',
-    notes: Array.from(clip.querySelectorAll('Notes > Note')).map((note) => ({
-      pitch: clampInt(numberAttr(note, 'key') ?? 60, 0, 127),
-      velocity: normalizedVelocity(numberAttr(note, 'vel')),
-      startPpq: Math.max(0, numberAttr(note, 'time') ?? 0),
-      durationPpq: Math.max(0.0001, numberAttr(note, 'duration') ?? 1),
-      channel: clampInt(numberAttr(note, 'channel') ?? 0, 0, 15),
-      offVelocity: normalizedVelocity(numberAttr(note, 'rel')),
-    })),
+    notes: Array.from(clip.querySelectorAll('Notes > Note')).map((note) => {
+      const rel = numberAttr(note, 'rel');
+      return {
+        pitch: clampInt(numberAttr(note, 'key') ?? 60, 0, 127),
+        velocity: normalizedVelocity(numberAttr(note, 'vel')),
+        startPpq: Math.max(0, numberAttr(note, 'time') ?? 0),
+        durationPpq: Math.max(0.0001, numberAttr(note, 'duration') ?? 1),
+        channel: clampInt(numberAttr(note, 'channel') ?? 0, 0, 15),
+        // Only materialize a release velocity when the note declares one, so an
+        // absent 'rel' stays absent instead of defaulting to a fixed value.
+        ...(rel !== null ? { offVelocity: clampInt(rel * 127, 1, 127) } : {}),
+      };
+    }),
   };
   readMidiExpressionPoints(clip, out);
   return out;

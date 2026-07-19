@@ -110,6 +110,12 @@ export function createDefaultExportOptions(projectName = FALLBACK_BASE_NAME): Ex
 /**
  * Applies final stereo gain to reach a LUFS target and returns the adjusted report.
  * Mutates the channel buffers in place so callers can encode the normalized audio.
+ *
+ * When the integrated loudness is unmeasured the loudness term is skipped, but
+ * the true-peak ceiling is still enforced (attenuation only) so requesting
+ * normalization is never a silent no-op that leaves an over-ceiling crest for
+ * the integer encoders to clip. If the true peak is unmeasured the sample peak
+ * is used as the ceiling reference instead of leaving it uncapped.
  */
 export function normalizeMixdownLoudness(
   channels: readonly [Float32Array, Float32Array],
@@ -117,15 +123,27 @@ export function normalizeMixdownLoudness(
   targetLufs: number,
   truePeakCeilingDb = -1,
 ): MixdownReport {
-  if (!Number.isFinite(report.lufs) || !Number.isFinite(targetLufs)) return { ...report };
-  const loudnessGainDb = targetLufs - (report.lufs as number);
-  const truePeakGainDb =
+  // Loudness normalization needs both a measured loudness and a finite target;
+  // without them the loudness term contributes no gain (0 dB), leaving only the
+  // peak ceiling to act.
+  const loudnessGainDb =
+    Number.isFinite(report.lufs) && Number.isFinite(targetLufs)
+      ? targetLufs - (report.lufs as number)
+      : 0;
+  // Prefer the measured true peak; fall back to the always-present sample peak
+  // so an unmeasured true peak never leaves the ceiling uncapped.
+  const peakReferenceDb =
     report.truePeakDb !== undefined && Number.isFinite(report.truePeakDb)
-      ? truePeakCeilingDb - report.truePeakDb
-      : Number.POSITIVE_INFINITY;
-  // Normalization is a gain-only operation. Cap that gain at the measured
-  // true-peak ceiling so integer encoders never have to hard-clip a crest.
-  const gainDb = Math.min(loudnessGainDb, truePeakGainDb);
+      ? report.truePeakDb
+      : Number.isFinite(report.peakDb)
+        ? report.peakDb
+        : undefined;
+  const peakGainDb =
+    peakReferenceDb !== undefined ? truePeakCeilingDb - peakReferenceDb : Number.POSITIVE_INFINITY;
+  // Normalization is a gain-only operation. Cap the loudness gain at the peak
+  // ceiling so integer encoders never have to hard-clip a crest.
+  const gainDb = Math.min(loudnessGainDb, peakGainDb);
+  if (gainDb === 0) return { ...report };
   const gain = dbToLinear(gainDb);
   for (const channel of channels) {
     for (let i = 0; i < channel.length; i += 1) channel[i] *= gain;
@@ -134,7 +152,7 @@ export function normalizeMixdownLoudness(
     ...report,
     peakDb: report.peakDb + gainDb,
     ...(report.truePeakDb !== undefined ? { truePeakDb: report.truePeakDb + gainDb } : {}),
-    lufs: (report.lufs as number) + gainDb,
+    ...(Number.isFinite(report.lufs) ? { lufs: (report.lufs as number) + gainDb } : {}),
     ...(report.momentaryLufs !== undefined ? { momentaryLufs: report.momentaryLufs + gainDb } : {}),
     ...(report.shortTermLufs !== undefined ? { shortTermLufs: report.shortTermLufs + gainDb } : {}),
   };

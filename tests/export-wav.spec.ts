@@ -42,24 +42,25 @@ describe('encodeWav', () => {
       expect(bytes.length).toBe(44 + dataSize);
     });
 
-    it('quantizes interleaved samples symmetrically', () => {
+    it('quantizes with the asymmetric signed-PCM full scale', () => {
       const bytes = encodeWav([left, right], 48000);
       const v = view(bytes);
       // Frame-major interleaving: L0 R0 L1 R1 ...
       expect(v.getInt16(44, true)).toBe(0);
-      expect(v.getInt16(46, true)).toBe(Math.round(0.25 * 32767));
-      expect(v.getInt16(48, true)).toBe(Math.round(0.5 * 32767));
-      // Math.round rounds half-up, so -16383.5 quantizes to -16383.
-      expect(v.getInt16(50, true)).toBe(Math.round(-0.5 * 32767));
-      expect(v.getInt16(52, true)).toBe(32767);
-      expect(v.getInt16(56, true)).toBe(-32767);
+      // Positive samples scale by 0x7fff, negatives by 0x8000 to reach the full
+      // signed-PCM range, matching the FLAC and MP3 encoders.
+      expect(v.getInt16(46, true)).toBe(Math.round(0.25 * 0x7fff));
+      expect(v.getInt16(48, true)).toBe(Math.round(0.5 * 0x7fff));
+      expect(v.getInt16(50, true)).toBe(Math.round(-0.5 * 0x8000));
+      expect(v.getInt16(52, true)).toBe(0x7fff);
+      expect(v.getInt16(56, true)).toBe(-0x8000);
     });
 
     it('hard-clips over-range input to full scale', () => {
       const bytes = encodeWav([new Float32Array([2.5, -3])], 44100);
       const v = view(bytes);
-      expect(v.getInt16(44, true)).toBe(32767);
-      expect(v.getInt16(46, true)).toBe(-32767);
+      expect(v.getInt16(44, true)).toBe(0x7fff);
+      expect(v.getInt16(46, true)).toBe(-0x8000);
     });
 
     it('supports mono', () => {
@@ -124,7 +125,7 @@ describe('encodeWav', () => {
       expect(v.getUint16(34, true)).toBe(24);
       expect(v.getUint16(32, true)).toBe(3); // block align (mono)
       expect(readInt24(bytes, 44)).toBe(0x7fffff);
-      expect(readInt24(bytes, 47)).toBe(-0x7fffff);
+      expect(readInt24(bytes, 47)).toBe(-0x800000);
       expect(readInt24(bytes, 50)).toBe(Math.round(0.5 * 0x7fffff));
       expect(readInt24(bytes, 53)).toBe(0);
     });
@@ -141,7 +142,7 @@ describe('encodeWav', () => {
     it('clips over-range input', () => {
       const bytes = encodeWav([new Float32Array([5, -5])], 48000, { bitDepth: 24 });
       expect(readInt24(bytes, 44)).toBe(0x7fffff);
-      expect(readInt24(bytes, 47)).toBe(-0x7fffff);
+      expect(readInt24(bytes, 47)).toBe(-0x800000);
     });
   });
 

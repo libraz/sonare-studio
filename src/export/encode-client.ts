@@ -57,6 +57,7 @@ export function encodeAudioInWorker(
   options: Record<string, unknown> = {},
   signal?: AbortSignal,
   workerFactory: AudioEncodeWorkerFactory = createAudioEncodeWorker,
+  onProgress?: (fraction: number) => void,
 ): Promise<Uint8Array> {
   signal?.throwIfAborted();
   const worker = workerFactory();
@@ -81,6 +82,10 @@ export function encodeAudioInWorker(
     };
     const onMessage = (event: MessageEvent<AudioEncodeWorkerResponse>): void => {
       const response = event.data;
+      if (response.type === 'progress') {
+        if (!settled) onProgress?.(response.fraction);
+        return;
+      }
       if (response.type === 'encoded') settle(() => resolve(response.bytes));
       else settle(() => reject(new Error(response.error)));
     };

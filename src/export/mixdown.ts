@@ -141,7 +141,7 @@ export interface MixdownReport {
   /** Dynamic range in dB; absent without a dynamic-range metering seam. */
   dynamicRangeDb?: number;
   /** Non-fatal renderer limitations that affected this bounce. */
-  limitations?: string[];
+  limitations?: ExportLimitation[];
   /** Non-fatal media omissions that made the rendered deliverable incomplete. */
   mediaIssues?: ExportMediaIssue[];
 }
@@ -152,6 +152,14 @@ export interface ExportMediaIssue {
   reason: 'missing-or-unreadable';
   message?: string;
 }
+
+/**
+ * A non-fatal offline-render limitation, structured for localization at the UI
+ * (the strings are assembled by the export issue formatter, not stored here).
+ */
+export type ExportLimitation =
+  | { kind: 'mastering-automation-at-render-start' }
+  | { kind: 'instrument-automation-at-render-start'; tracks: string[] };
 
 /** Result of an offline render. */
 export interface MixdownResult {

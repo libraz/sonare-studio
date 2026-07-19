@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   DAWPROJECT_FILE_EXTENSION,
   type DawprojectExportOptions,
+  DawprojectSizeError,
   dawprojectFilename,
   exportDawproject,
   exportDawprojectWithReport,
@@ -476,7 +477,9 @@ describe('exportDawproject arrangement', () => {
     expect(attr(notes[0], 'key')).toBe('60');
     expect(attr(notes[0], 'channel')).toBe('0');
     expect(floatAttr(notes[0], 'vel')).toBe(1);
-    expect(floatAttr(notes[0], 'rel')).toBe(1);
+    // No source off-velocity: the optional 'rel' attribute is omitted rather
+    // than defaulted to the on-velocity.
+    expect(notes[0].hasAttribute('rel')).toBe(false);
     expect(floatAttr(notes[1], 'time')).toBe(3.5);
     expect(floatAttr(notes[1], 'duration')).toBe(0.25);
     expect(attr(notes[1], 'key')).toBe('64');
@@ -651,6 +654,20 @@ describe('exportDawproject audio', () => {
     expect(attr(audio, 'sampleRate')).toBe('22050');
     expect(floatAttr(audio, 'duration')).toBeCloseTo(0.5, 6);
     expect(attr(audio?.querySelector('File'), 'path')).toBe('audio/asset-1.wav');
+  });
+
+  it('fails loudly when embedded audio exceeds the import budget', async () => {
+    const doc = makeDoc([makeTrack([makeAudioClip()], { kind: 'audio' })]);
+    const loader = makeAssetLoader();
+    // The stub asset encodes to ~33 KB of 24-bit WAV; a tiny expanded budget
+    // must reject it rather than build an archive this app could not re-import.
+    await expect(
+      exportDawproject(doc, {
+        includeAudio: true,
+        loadAudioAsset: loader,
+        limits: { maxArchiveBytes: 1 << 30, maxExpandedBytes: 1024, maxEntryBytes: 1 << 30 },
+      }),
+    ).rejects.toBeInstanceOf(DawprojectSizeError);
   });
 
   it('embeds each asset once even when several clips reference it', async () => {

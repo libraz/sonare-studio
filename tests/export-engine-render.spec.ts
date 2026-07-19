@@ -1767,7 +1767,7 @@ describe('renderProjectWithEngine', () => {
       ['setSynthInstrument', { preset: 'saw-lead', cutoffHz: 1200, drive: 0.2 }, 1],
     ]);
     expect(result.report.limitations).toEqual([
-      'instrument automation was evaluated at render start for: Keys',
+      { kind: 'instrument-automation-at-render-start', tracks: ['Keys'] },
     ]);
   });
 
@@ -2377,9 +2377,7 @@ describe('renderProjectWithEngine', () => {
       48000,
       { ceilingDb: -6 },
     );
-    expect(result.report.limitations).toEqual([
-      'mastering automation was evaluated at render start',
-    ]);
+    expect(result.report.limitations).toEqual([{ kind: 'mastering-automation-at-render-start' }]);
     expect(engine.named('resolveMasterInsertAutomationId')).toEqual([]);
   });
 

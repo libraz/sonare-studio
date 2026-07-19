@@ -301,7 +301,8 @@ describe('importDawproject', () => {
       kind: 'midi',
     });
     expect(imported.tracks[0].clips[0].notes).toEqual([
-      { pitch: 60, velocity: 127, startPpq: 2, durationPpq: 1, channel: 0, offVelocity: 127 },
+      // The source note carries no off-velocity, so it must not gain one.
+      { pitch: 60, velocity: 127, startPpq: 2, durationPpq: 1, channel: 0 },
       { pitch: 64, velocity: 64, startPpq: 3, durationPpq: 0.5, channel: 1, offVelocity: 32 },
     ]);
   });
@@ -330,6 +331,32 @@ describe('importDawproject', () => {
       { startPpq: 0, numerator: 4, denominator: 4 },
       { startPpq: 16, numerator: 7, denominator: 8 },
     ]);
+  });
+
+  it('keeps a final open-ended tempo ramp idempotent across round-trips', async () => {
+    const readTempoPoints = (bytes: Uint8Array): Array<[number, number, string | null]> => {
+      const project = new DOMParser().parseFromString(
+        strFromU8(unzipSync(bytes)['project.xml']),
+        'application/xml',
+      );
+      return [...project.querySelectorAll('Arrangement > TempoAutomation > RealPoint')].map(
+        (point) => [
+          Number(point.getAttribute('time')),
+          Number(point.getAttribute('value')),
+          point.getAttribute('interpolation'),
+        ],
+      );
+    };
+    const doc = makeDoc({ tempoSegments: [{ startPpq: 0, bpm: 120, endBpm: 140 }] });
+    const exported1 = await exportDawproject(doc, { includeAudio: false });
+    const imported1 = importDawproject(exported1);
+    const exported2 = await exportDawproject(imported1, { includeAudio: false });
+
+    // The open-ended ramp emits a single linear start and one hold terminator.
+    expect(readTempoPoints(exported1)).toHaveLength(2);
+    // Re-exporting the imported ramp must not accrete a duplicate terminator
+    // point at the content end.
+    expect(readTempoPoints(exported2)).toEqual(readTempoPoints(exported1));
   });
 
   it('round-trips MIDI expression lanes from clip-local Points', async () => {
@@ -884,6 +911,29 @@ describe('importDawproject', () => {
       expect(document.mixer?.buses).toHaveLength(1);
       expect(document.mixer?.buses[0].name).toBe('FX Return');
     }
+  });
+
+  it('reads a track with sends from its own channel Volume, not the first send', async () => {
+    // The exporter emits a channel's <Sends> (each carrying a nested <Volume>)
+    // before the channel's own <Volume>. A descendant query would grab the
+    // send's Volume as the track fader, corrupting gain and dropping fader
+    // automation that targets the real channel Volume id.
+    const first = importDawproject(makeRoutedDawproject());
+    expect(first.tracks[0].mixer?.sends).toHaveLength(1);
+    // Give the Dry track a distinctive fader gain (0.5) and fader automation;
+    // the send level is a different 0.25, so a mix-up is unambiguous.
+    first.tracks[0].volume = 0.5;
+    first.tracks[0].automation = [
+      { param: 'faderDb', enabled: true, points: [{ ppq: 2, value: -6 }] },
+    ];
+
+    const second = importDawproject(await exportDawproject(first, { includeAudio: false }));
+
+    expect(second.tracks).toHaveLength(1);
+    expect(second.tracks[0].volume).toBeCloseTo(0.5, 4);
+    const faderLane = second.tracks[0].automation?.find((lane) => lane.param === 'faderDb');
+    expect(faderLane).toBeDefined();
+    expect(faderLane?.points[0]).toMatchObject({ ppq: 2, value: expect.closeTo(-6, 3) });
   });
 
   it('preserves Sonare aux-track identity without converting it into a mixer bus', async () => {

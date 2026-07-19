@@ -4,9 +4,14 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { exportDawproject, importDawproject } from '@/export/dawproject';
 import type { NotatedScore } from '@/notation/model';
 import { serializeMusicXml } from '@/notation/musicxml';
-import { importMusicXml } from '@/notation/musicxml-import';
+import { importMusicXml, MusicXmlImportError } from '@/notation/musicxml-import';
+import { ArchivePreflightError } from '@/persistence/archive-preflight';
 import { restoreBrowserBackup } from '@/persistence/backup';
-import { decodeSzd, encodeSzd } from '@/persistence/szd';
+import {
+  MAX_BACKUP_ARCHIVE_ENTRIES,
+  MAX_PROJECT_ARCHIVE_ENTRIES,
+} from '@/persistence/resource-limits';
+import { decodeSzd, encodeSzd, SzdFormatError } from '@/persistence/szd';
 import type { ProjectDocument } from '@/project/serialization';
 import { projectDocumentToSmf, smfToProjectDocument } from '@/project/smf';
 import { installMockOpfs, uninstallMockOpfs } from './opfs-mock';
@@ -166,7 +171,12 @@ async function exerciseCorpus(
     try {
       await parse(bytes);
     } catch (error) {
+      // A rejection must be a real, readable Error (never a bare string, an
+      // object, or an empty-message throw): garbage in yields a diagnosable
+      // failure, not an opaque one.
       expect(error).toBeInstanceOf(Error);
+      expect(typeof (error as Error).message).toBe('string');
+      expect((error as Error).message.length).toBeGreaterThan(0);
     }
   }
 }
@@ -207,5 +217,38 @@ describe('bounded external-format fuzz corpus', () => {
     await exerciseCorpus(seed, (bytes) =>
       importMusicXml(new TextDecoder().decode(bytes), 'fuzz.musicxml'),
     );
+  });
+});
+
+describe('adversarial structured inputs', () => {
+  beforeAll(() => installMockOpfs());
+  afterAll(() => uninstallMockOpfs());
+
+  /** A structurally valid ZIP carrying `count` empty entries. */
+  function manyEntryZip(count: number): Uint8Array {
+    const files: Record<string, Uint8Array> = {};
+    for (let index = 0; index < count; index += 1) files[`e${index}.bin`] = new Uint8Array(0);
+    return zipSync(files);
+  }
+
+  it('rejects an over-populated .szd by the entry-count guard, not a downstream miss', () => {
+    const bomb = manyEntryZip(MAX_PROJECT_ARCHIVE_ENTRIES + 1);
+    expect(() => decodeSzd(bomb)).toThrow(SzdFormatError);
+    expect(() => decodeSzd(bomb)).toThrow(/too many entries/);
+  });
+
+  it('rejects an over-populated browser backup at the archive preflight', async () => {
+    const bomb = manyEntryZip(MAX_BACKUP_ARCHIVE_ENTRIES + 1);
+    await expect(restoreBrowserBackup(bomb)).rejects.toBeInstanceOf(ArchivePreflightError);
+    await expect(restoreBrowserBackup(bomb)).rejects.toThrow(/too many entries/);
+  });
+
+  it('rejects a pathologically deep but well-formed MusicXML by the depth limit', () => {
+    // Valid XML nested past the 128-level cap: the SAX importer must stop at the
+    // limit rather than building an unbounded tree.
+    const depth = 200;
+    const deepXml = `${'<a>'.repeat(depth)}${'</a>'.repeat(depth)}`;
+    expect(() => importMusicXml(deepXml, 'deep.musicxml')).toThrow(MusicXmlImportError);
+    expect(() => importMusicXml(deepXml, 'deep.musicxml')).toThrow(/depth limit/);
   });
 });

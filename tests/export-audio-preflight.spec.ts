@@ -69,8 +69,13 @@ describe('audioExportPreflight', () => {
       }),
     });
     expect(result.blockers).toEqual([
-      'audio clip "No ref" on "Audio" has no media reference',
-      'frozen track "Frozen keys" references missing or unreadable media "gone": not found',
+      { kind: 'audio-clip-no-media', clip: 'No ref', track: 'Audio' },
+      {
+        kind: 'media-missing',
+        labels: [{ kind: 'frozen-track', name: 'Frozen keys' }],
+        assetId: 'gone',
+        reason: 'not found',
+      },
     ]);
   });
 
@@ -111,8 +116,8 @@ describe('audioExportPreflight', () => {
       loadAudioAsset: async (id) => loaded(id),
     });
     expect(result.warnings).toEqual([
-      'external MIDI track "Hardware" is silent in audio export',
-      'release tail is 2s, but active reverb/delay settings suggest at least 8s',
+      { kind: 'external-midi-silent', track: 'Hardware' },
+      { kind: 'release-tail-short', currentSeconds: 2, suggestedSeconds: 8 },
     ]);
   });
 

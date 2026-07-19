@@ -3,11 +3,14 @@
  *
  * Supports 16-bit and 24-bit integer PCM (format tag 1) and 32-bit IEEE
  * float (format tag 3, written with the spec-required fact chunk). Integer
- * formats hard-clip the input to [-1, 1] before quantization; the float
- * format passes samples through untouched (over-range values are preserved).
- * Optional TPDF dither (+-1 LSB triangular noise before rounding) is applied
- * to 16-bit output only.
+ * formats hard-clip the input to [-1, 1] and quantize with the asymmetric
+ * signed-PCM mapping shared across the codecs (see {@link scalePcmSample}); the
+ * float format passes samples through untouched (over-range values are
+ * preserved). Optional TPDF dither (+-1 LSB triangular noise before rounding)
+ * is applied to 16-bit output only.
  */
+
+import { scalePcmSample } from './pcm-quantize';
 
 /** Output sample format: integer bit depth, or '32f' for IEEE float. */
 export type WavBitDepth = 16 | 24 | '32f';
@@ -160,12 +163,12 @@ export function encodeWav(
       if (bitDepth === '32f') {
         view.setFloat32(offset, sample, true);
       } else if (bitDepth === 16) {
-        let scaled = clampSample(sample) * 0x7fff;
+        let scaled = scalePcmSample(clampSample(sample), 0x7fff, 0x8000);
         if (dither) scaled += random() - random();
         const v = Math.min(0x7fff, Math.max(-0x8000, Math.round(scaled)));
         view.setInt16(offset, v, true);
       } else {
-        const scaled = clampSample(sample) * 0x7fffff;
+        const scaled = scalePcmSample(clampSample(sample), 0x7fffff, 0x800000);
         const v = Math.min(0x7fffff, Math.max(-0x800000, Math.round(scaled)));
         view.setUint8(offset, v & 0xff);
         view.setUint8(offset + 1, (v >> 8) & 0xff);

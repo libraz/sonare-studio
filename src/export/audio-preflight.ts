@@ -12,11 +12,26 @@ import {
 } from './engine-render-context';
 import type { MixdownRangePpq } from './mixdown';
 
+/** Structured reference to what pulled an asset into the export (localized at the UI). */
+export type AudioAssetLabel =
+  | { kind: 'frozen-track'; name: string }
+  | { kind: 'audio-clip'; name: string };
+
+/** A condition that must be fixed before rendering (localized at the UI). */
+export type AudioExportBlocker =
+  | { kind: 'audio-clip-no-media'; clip: string; track: string }
+  | { kind: 'media-missing'; labels: AudioAssetLabel[]; assetId: string; reason: string };
+
+/** A fidelity limitation the user may explicitly accept (localized at the UI). */
+export type AudioExportWarning =
+  | { kind: 'external-midi-silent'; track: string }
+  | { kind: 'release-tail-short'; currentSeconds: number; suggestedSeconds: number };
+
 export interface AudioExportPreflightResult {
   /** Conditions that must be fixed before starting the expensive render. */
-  blockers: string[];
+  blockers: AudioExportBlocker[];
   /** Known fidelity limitations the user may explicitly accept. */
-  warnings: string[];
+  warnings: AudioExportWarning[];
 }
 
 export interface AudioExportPreflightOptions {
@@ -33,7 +48,8 @@ export interface AudioExportPreflightOptions {
 
 interface AssetUse {
   id: string;
-  labels: Set<string>;
+  /** Labels keyed by `${kind}:${name}` so repeated references stay de-duplicated. */
+  labels: Map<string, AudioAssetLabel>;
 }
 
 function isMidiClip(clip: ProjectDocument['tracks'][number]['clips'][number]): boolean {
@@ -117,14 +133,14 @@ export async function audioExportPreflight(
   doc: ProjectDocument,
   options: AudioExportPreflightOptions,
 ): Promise<AudioExportPreflightResult> {
-  const blockers: string[] = [];
-  const warnings: string[] = [];
+  const blockers: AudioExportBlocker[] = [];
+  const warnings: AudioExportWarning[] = [];
   const range = resolvePreflightRange(options);
   const audibleTrackIndices = documentAudibleTrackIndices(doc);
   const uses = new Map<string, AssetUse>();
-  const addUse = (id: string, label: string): void => {
-    const use = uses.get(id) ?? { id, labels: new Set<string>() };
-    use.labels.add(label);
+  const addUse = (id: string, label: AudioAssetLabel): void => {
+    const use = uses.get(id) ?? { id, labels: new Map<string, AudioAssetLabel>() };
+    use.labels.set(`${label.kind}:${label.name}`, label);
     uses.set(id, use);
   };
 
@@ -134,7 +150,7 @@ export async function audioExportPreflight(
     const track = doc.tracks[trackIndex];
     if (track.frozen !== undefined) {
       if (trackTimelineIntersectsRange(track, range)) {
-        addUse(track.frozen.assetId, `frozen track "${track.name}"`);
+        addUse(track.frozen.assetId, { kind: 'frozen-track', name: track.name });
       }
       continue;
     }
@@ -151,7 +167,7 @@ export async function audioExportPreflight(
           ppqSpanIntersectsRange(clip.startPpq, clip.lengthPpq, range),
       )
     ) {
-      warnings.push(`external MIDI track "${track.name}" is silent in audio export`);
+      warnings.push({ kind: 'external-midi-silent', track: track.name });
     }
 
     for (const clip of track.clips) {
@@ -159,13 +175,13 @@ export async function audioExportPreflight(
       if (!ppqSpanIntersectsRange(clip.startPpq, clip.lengthPpq, range)) continue;
       const segments = audioClipSegments(clip);
       if (segments.length === 0) {
-        blockers.push(`audio clip "${clip.name}" on "${track.name}" has no media reference`);
+        blockers.push({ kind: 'audio-clip-no-media', clip: clip.name, track: track.name });
         continue;
       }
       for (const segment of segments) {
         const segmentStartPpq = clip.startPpq + segment.offsetPpq;
         if (!ppqSpanIntersectsRange(segmentStartPpq, segment.lengthPpq, range)) continue;
-        addUse(segment.assetId, `audio clip "${clip.name}"`);
+        addUse(segment.assetId, { kind: 'audio-clip', name: clip.name });
       }
     }
   }
@@ -178,18 +194,23 @@ export async function audioExportPreflight(
     } catch (error) {
       options.signal?.throwIfAborted();
       const reason = error instanceof Error ? error.message : String(error);
-      blockers.push(
-        `${[...use.labels].join(', ')} references missing or unreadable media "${use.id}": ${reason}`,
-      );
+      blockers.push({
+        kind: 'media-missing',
+        labels: [...use.labels.values()],
+        assetId: use.id,
+        reason,
+      });
     }
   }
 
   if (options.range === 'project') {
     const tail = suggestedTailSeconds(activeTimeEffectSlots(doc, audibleTrackIndices));
     if (tail > options.releaseTailSeconds) {
-      warnings.push(
-        `release tail is ${options.releaseTailSeconds}s, but active reverb/delay settings suggest at least ${tail}s`,
-      );
+      warnings.push({
+        kind: 'release-tail-short',
+        currentSeconds: options.releaseTailSeconds,
+        suggestedSeconds: tail,
+      });
     }
   }
 

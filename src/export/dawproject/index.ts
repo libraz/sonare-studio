@@ -39,6 +39,11 @@ import { AsyncZipDeflate, strToU8, Zip } from 'fflate';
 import { encodeWav } from '@/export/wav';
 import { projectFilename } from '@/lib/filename';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
+import {
+  MAX_DAWPROJECT_ARCHIVE_BYTES,
+  MAX_PROJECT_ARCHIVE_ENTRY_BYTES,
+  MAX_PROJECT_ARCHIVE_EXPANDED_BYTES,
+} from '@/persistence/resource-limits';
 import { parseInsertAutomationParam } from '@/project/automation';
 import { insertIndexForAutomationRef } from '@/project/automation-insert';
 import {
@@ -127,7 +132,29 @@ export interface DawprojectExportOptions {
   applicationVersion?: string;
   /** Cancels asset loading/encoding/ZIP construction between entries. */
   signal?: AbortSignal;
+  /**
+   * Size budget the export must stay within, defaulting to the values the
+   * importer enforces (resource-limits.ts). Exceeding any of them throws a
+   * {@link DawprojectSizeError} so the export never yields an unopenable file.
+   */
+  limits?: DawprojectExportLimits;
 }
+
+/** Byte budgets applied while building a DAWproject archive. */
+export interface DawprojectExportLimits {
+  /** Maximum compressed archive size (default {@link MAX_DAWPROJECT_ARCHIVE_BYTES}). */
+  maxArchiveBytes: number;
+  /** Maximum total uncompressed embedded audio (default expanded-archive limit). */
+  maxExpandedBytes: number;
+  /** Maximum single embedded audio payload (default per-entry limit). */
+  maxEntryBytes: number;
+}
+
+const DEFAULT_DAWPROJECT_EXPORT_LIMITS: DawprojectExportLimits = {
+  maxArchiveBytes: MAX_DAWPROJECT_ARCHIVE_BYTES,
+  maxExpandedBytes: MAX_PROJECT_ARCHIVE_EXPANDED_BYTES,
+  maxEntryBytes: MAX_PROJECT_ARCHIVE_ENTRY_BYTES,
+};
 
 export interface DawprojectExportResult {
   bytes: Uint8Array;
@@ -196,6 +223,18 @@ function audioEntryPath(assetId: string, usedPaths: Set<string>): string {
 }
 
 /**
+ * Error thrown when a DAWproject export would exceed the same budget the
+ * importer enforces, so the export never yields an archive this app could not
+ * reopen (and never builds an unbounded in-memory buffer set).
+ */
+export class DawprojectSizeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'DawprojectSizeError';
+  }
+}
+
+/**
  * Resolves every audio asset referenced by the document. When embedding is on,
  * assets are loaded and encoded as 24-bit WAV; assets that fail to load (or
  * everything, when embedding is off) keep their structural entry with media
@@ -207,11 +246,16 @@ async function collectAudioAssets(
   tempoMap: NormalizedTempoMap,
   includeAudio: boolean,
   loadAudio: (assetId: string) => Promise<LoadedAudioAsset>,
+  limits: DawprojectExportLimits,
   signal?: AbortSignal,
 ): Promise<{ assets: Map<string, AudioAssetEntry>; missingAssetIds: string[] }> {
   const assets = new Map<string, AudioAssetEntry>();
   const missingAssetIds: string[] = [];
   const usedPaths = new Set<string>();
+  // Embedded WAV bytes accumulate in memory; bound them by the same expanded
+  // budget the importer enforces so a too-large project fails before encoding
+  // media it could never re-import (and never holds an unbounded buffer set).
+  let embeddedBytes = 0;
   for (const track of doc.tracks) {
     for (const clip of track.clips) {
       if (!isAudioClip(clip) || !clip.assetId) continue;
@@ -248,7 +292,21 @@ async function collectAudioAssets(
           // source store to CD resolution. 24-bit PCM is broadly portable and
           // preserves substantially more source fidelity.
           entry.bytes = encodeWav(asset.channels, asset.meta.sampleRate, { bitDepth: 24 });
-        } catch {
+          if (entry.bytes.byteLength > limits.maxEntryBytes) {
+            throw new DawprojectSizeError(
+              `Embedded audio "${clip.assetId}" is too large to export ` +
+                `(${entry.bytes.byteLength} bytes; limit ${limits.maxEntryBytes})`,
+            );
+          }
+          embeddedBytes += entry.bytes.byteLength;
+          if (embeddedBytes > limits.maxExpandedBytes) {
+            throw new DawprojectSizeError(
+              `Project has too much embedded audio to export ` +
+                `(${embeddedBytes} bytes; limit ${limits.maxExpandedBytes})`,
+            );
+          }
+        } catch (error) {
+          if (error instanceof DawprojectSizeError) throw error;
           if (signal?.aborted) signal.throwIfAborted();
           missingAssetIds.push(clip.assetId);
           // Missing or unreadable asset: keep the structural reference only.
@@ -630,24 +688,32 @@ function tempoAutomationElement(
   contentEndPpq: number,
 ): XmlElement {
   const points: XmlElement[] = [{ name: 'Target', attributes: { parameter: TEMPO_PARAMETER_ID } }];
+  const pushPoint = (time: number, value: number, interpolation: string): void => {
+    const last = points[points.length - 1];
+    // A final open-ended ramp emits a hold terminator at the content end, which
+    // re-imports as its own held segment whose start point then coincides
+    // exactly with that terminator. Collapsing an identical adjacent point keeps
+    // DAWproject round-trips idempotent instead of accreting a redundant tail
+    // point (points that merely share a time but differ in tempo — a ramp end
+    // meeting a jump — are preserved).
+    if (
+      last.name === 'RealPoint' &&
+      last.attributes?.time === time &&
+      last.attributes?.value === value &&
+      last.attributes?.interpolation === interpolation
+    ) {
+      return;
+    }
+    points.push({ name: 'RealPoint', attributes: { time, value, interpolation } });
+  };
   for (let i = 0; i < segments.length; i++) {
     const segment = segments[i];
     const ramp = isRampSegment(segment);
-    points.push({
-      name: 'RealPoint',
-      attributes: {
-        time: segment.startPpq,
-        value: segment.bpm,
-        interpolation: ramp ? 'linear' : 'hold',
-      },
-    });
+    pushPoint(segment.startPpq, segment.bpm, ramp ? 'linear' : 'hold');
     if (ramp) {
       const endPpq = i + 1 < segments.length ? segments[i + 1].startPpq : contentEndPpq;
       if (endPpq > segment.startPpq) {
-        points.push({
-          name: 'RealPoint',
-          attributes: { time: endPpq, value: segment.endBpm as number, interpolation: 'hold' },
-        });
+        pushPoint(endPpq, segment.endBpm as number, 'hold');
       }
     }
   }
@@ -767,7 +833,10 @@ function noteElement(note: DocumentClip['notes'][number]): XmlElement {
       channel: note.channel,
       key: note.pitch,
       vel,
-      rel: note.offVelocity !== undefined ? clamp01(note.offVelocity / 127) : vel,
+      // Release velocity is optional; only emit it when the note actually
+      // carries one, so a note without an off-velocity does not gain one (equal
+      // to its on-velocity) on the round-trip.
+      rel: note.offVelocity !== undefined ? clamp01(note.offVelocity / 127) : undefined,
     },
   };
 }
@@ -1151,12 +1220,14 @@ export async function exportDawprojectWithReport(
   }
   const tempoMap = normalizeTempoMap(doc.tempoSegments, DEFAULT_TEMPO_BPM);
   const loadAudio = options.loadAudioAsset ?? loadAsset;
+  const limits = options.limits ?? DEFAULT_DAWPROJECT_EXPORT_LIMITS;
   options.signal?.throwIfAborted();
   const collected = await collectAudioAssets(
     doc,
     tempoMap,
     options.includeAudio,
     loadAudio,
+    limits,
     options.signal,
   );
   const { assets } = collected;
@@ -1179,6 +1250,12 @@ export async function exportDawprojectWithReport(
     }
   }
   const bytes = await buildDawprojectZip(zipEntries(), options.signal);
+  if (bytes.byteLength > limits.maxArchiveBytes) {
+    throw new DawprojectSizeError(
+      `Exported DAWproject archive is too large (${bytes.byteLength} bytes; ` +
+        `limit ${limits.maxArchiveBytes})`,
+    );
+  }
   const issues: MediaCompletenessIssue[] = [];
   for (const id of collected.missingAssetIds) {
     issues.push(...mediaFailureIssues(doc, 'audio-asset', id, 'encode-failed'));

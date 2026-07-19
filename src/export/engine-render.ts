@@ -50,6 +50,7 @@ import { resolvePresetName } from '@/engine/instruments';
 import { busSceneJson, stripSceneJson } from '@/engine/strip-sync';
 import { assertRenderPayloadMemory, estimateRenderPayloadMemory } from '@/export/memory-budget';
 import {
+  type ExportLimitation,
   MixdownCancelledError,
   type MixdownReport,
   type MixdownResult,
@@ -172,14 +173,14 @@ function hasTimeVaryingPoints(points: DocumentAutomationLane['points']): boolean
   return points.some((point) => point.ppq !== first.ppq && point.value !== first.value);
 }
 
-export function offlineAutomationLimitations(doc: ProjectDocument): string[] {
-  const limitations: string[] = [];
+export function offlineAutomationLimitations(doc: ProjectDocument): ExportLimitation[] {
+  const limitations: ExportLimitation[] = [];
   const hasMasteringTimeVarying = (doc.masterAutomation ?? []).some((lane) => {
     if (!lane.enabled || !parseMasteringAutomationParam(lane.param)) return false;
     return hasTimeVaryingPoints(sanitizeAutomationPoints(lane.param, lane.points));
   });
   if (hasMasteringTimeVarying) {
-    limitations.push('mastering automation was evaluated at render start');
+    limitations.push({ kind: 'mastering-automation-at-render-start' });
   }
   const instrumentTrackNames = doc.tracks
     .filter((track) => track.instrument?.kind === 'synth-patch')
@@ -191,9 +192,10 @@ export function offlineAutomationLimitations(doc: ProjectDocument): string[] {
     )
     .map((track) => track.name);
   if (instrumentTrackNames.length > 0) {
-    limitations.push(
-      `instrument automation was evaluated at render start for: ${instrumentTrackNames.join(', ')}`,
-    );
+    limitations.push({
+      kind: 'instrument-automation-at-render-start',
+      tracks: instrumentTrackNames,
+    });
   }
   return limitations;
 }
