@@ -648,6 +648,16 @@ export const en = {
       resizeScore: 'Resize the score panel',
       resizeScoreTitle: 'Drag or use the arrow keys to resize the score',
     },
+    capacity: {
+      warningIntro:
+        'This project exceeds an engine capacity limit; some strips or tracks may not behave correctly:',
+      mixerLaneParamId:
+        'The project has {lanes} mixer strips. Fader and automation control for strips past {limit} can misroute to a bus or the master output.',
+      mixerLaneMeters:
+        'The project has {lanes} mixer strips. Strips past {limit} have no level meter or scope.',
+      internalMidiInstruments:
+        '{tracks} MIDI track(s) exceed the {limit}-instrument playback limit and play through another track’s instrument.',
+    },
     media: {
       openMedia: 'Open Media',
       missingWarning: 'Some project media could not be played. Open Media to relink or replace it.',
@@ -1232,6 +1242,17 @@ export const en = {
         revert: 'Revert',
         apply: 'Apply',
         clear: 'Clear',
+        validation: {
+          positionBeforeStart: 'Position must be at or after 1.1',
+          firstEntryNotAtStart: 'The first entry must start at 1.1',
+          positionsNotAscending: 'Positions must be strictly ascending',
+          tempoMapEmpty: 'The tempo map needs at least one entry',
+          bpmOutOfRange: 'BPM must be between {min} and {max}',
+          rampBpmOutOfRange: 'Ramp target BPM must be between {min} and {max}',
+          timeSignatureMapEmpty: 'The time-signature map needs at least one entry',
+          beatsPerBarOutOfRange: 'Beats per bar must be an integer between 1 and {max}',
+          beatUnitInvalid: 'Beat unit must be one of {allowed}',
+        },
       },
       tempo: {
         entryPosition: 'Tempo entry {row} position (bars.beats)',
@@ -1314,6 +1335,7 @@ export const en = {
         reharmonize: 'Reharmonize chord {name}',
         reharmonizeTitle: 'Show substitute chords for this position',
         reharmNone: 'No substitutes available for this chord.',
+        reharmKeyRequired: 'Set a key to see chord substitutes.',
         applyReharm: 'Replace with {name}',
         reharmKinds: {
           tritone: 'Tritone sub',
@@ -1804,6 +1826,10 @@ export const en = {
         groupOf: 'Group of {name}',
         vcaOf: 'VCA of {name}',
         newVcaGroup: 'New VCA group',
+        percussion: 'Percussion role',
+        percussionAuto: 'Auto (detect)',
+        percussionOn: 'Percussion',
+        percussionOff: 'Harmonic',
       },
     },
     arrangementAnalysis: {
@@ -1983,7 +2009,7 @@ export const en = {
       dither: 'Dither',
       bitrate: 'Bitrate',
       browserEncoderNotice:
-        'Uses the browser MediaRecorder codec. Output availability and exact bytes can vary by browser.',
+        'Uses the browser MediaRecorder codec, which encodes in real time: this export takes about as long as the audio plays. Output availability and exact bytes can vary by browser.',
       sampleRate: 'Sample rate',
       range: 'Range',
       wholeProject: 'Whole project',
@@ -1998,6 +2024,8 @@ export const en = {
       includeBusStems: 'Include bus / return stems',
       normalization: 'Normalization',
       normalizeLoudness: 'Normalize export to {target} LUFS',
+      stemNormalizationNote:
+        'Loudness normalization applies to the full mix only. Stems are exported at unity so they still sum back to the balanced mix.',
       releaseTail: 'Release tail',
       seconds: 'seconds',
       filename: 'Filename',
@@ -2015,12 +2043,45 @@ export const en = {
       truePeak: 'True peak',
       loudness: 'Loudness',
       limitations: 'Limitations',
+      mediaIssue: 'Missing or unreadable {kind}: {id}',
+      mediaIssueKind: {
+        'audio-asset': 'audio asset',
+        soundfont: 'SoundFont',
+      },
+      issue: {
+        blocker: {
+          audioClipNoMedia: 'Audio clip "{clip}" on "{track}" has no media reference',
+          mediaMissing: '{labels} references missing or unreadable media "{id}": {reason}',
+        },
+        warning: {
+          externalMidiSilent: 'External MIDI track "{track}" is silent in audio export',
+          releaseTailShort:
+            'Release tail is {current}s, but active reverb/delay settings suggest at least {suggested}s',
+        },
+        label: {
+          frozenTrack: 'frozen track "{name}"',
+          audioClip: 'audio clip "{name}"',
+        },
+        limitation: {
+          masteringAutomationAtStart: 'Mastering automation was evaluated at render start',
+          instrumentAutomationAtStart:
+            'Instrument automation was evaluated at render start for: {tracks}',
+        },
+      },
       close: 'Close',
       export: 'Export',
       stage: {
         preflight: 'preflight',
-        render: 'render',
-        encode: 'encode',
+        render: 'rendering',
+        encode: 'encoding',
+        prepare: 'preparing engine',
+        metering: 'analysing loudness',
+        finalizing: 'finalising',
+        mastering: 'mastering: {name}',
+        masteringPreset: 'mastering preset: {name}',
+        renderStem: 'rendering stem {index}',
+        renderBusStem: 'rendering bus stem {index}',
+        encodeStem: 'encoding stem {index}/{total}',
       },
       noStems: 'No stems were rendered (the project has no tracks)',
     },

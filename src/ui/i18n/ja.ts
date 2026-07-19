@@ -645,6 +645,16 @@ export const ja = {
       resizeScore: 'スコアパネルのサイズ変更',
       resizeScoreTitle: 'ドラッグまたは矢印キーでスコアの高さを変更',
     },
+    capacity: {
+      warningIntro:
+        'このプロジェクトはエンジンの容量上限を超えています。一部のストリップやトラックが正しく動作しない可能性があります:',
+      mixerLaneParamId:
+        'ミキサーストリップが {lanes} 本あります。{limit} 本を超えるストリップのフェーダー/オートメーション制御がバスまたはマスター出力へ誤ルートする場合があります。',
+      mixerLaneMeters:
+        'ミキサーストリップが {lanes} 本あります。{limit} 本を超えるストリップにはレベルメーター/スコープがありません。',
+      internalMidiInstruments:
+        'MIDIトラック {tracks} 本が内蔵音源 {limit} 個の再生上限を超えており、別トラックの音源で発音されます。',
+    },
     media: {
       openMedia: 'メディアを開く',
       missingWarning:
@@ -1230,6 +1240,17 @@ export const ja = {
         revert: '戻す',
         apply: '適用',
         clear: 'クリア',
+        validation: {
+          positionBeforeStart: '位置は 1.1 以降にしてください',
+          firstEntryNotAtStart: '最初の項目は 1.1 から始める必要があります',
+          positionsNotAscending: '位置は厳密に昇順である必要があります',
+          tempoMapEmpty: 'テンポマップには少なくとも1項目が必要です',
+          bpmOutOfRange: 'BPM は {min} から {max} の範囲にしてください',
+          rampBpmOutOfRange: 'ランプ目標 BPM は {min} から {max} の範囲にしてください',
+          timeSignatureMapEmpty: '拍子マップには少なくとも1項目が必要です',
+          beatsPerBarOutOfRange: '1小節の拍数は 1 から {max} の整数にしてください',
+          beatUnitInvalid: '拍の単位は {allowed} のいずれかにしてください',
+        },
       },
       tempo: {
         entryPosition: 'テンポ項目 {row} の位置（bars.beats）',
@@ -1311,6 +1332,7 @@ export const ja = {
         reharmonize: 'コード {name} をリハーモナイズ',
         reharmonizeTitle: 'この位置の代理コードを表示',
         reharmNone: 'このコードに使える代理コードはありません。',
+        reharmKeyRequired: 'キーを設定すると代理コードを表示します。',
         applyReharm: '{name} に置き換え',
         reharmKinds: {
           tritone: '裏コード',
@@ -1802,6 +1824,10 @@ export const ja = {
         groupOf: '{name} のグループ',
         vcaOf: '{name} のVCA',
         newVcaGroup: '新規VCAグループ',
+        percussion: 'パーカッション扱い',
+        percussionAuto: '自動判定',
+        percussionOn: 'パーカッション',
+        percussionOff: '和声楽器',
       },
     },
     arrangementAnalysis: {
@@ -1981,7 +2007,7 @@ export const ja = {
       dither: 'ディザー',
       bitrate: 'ビットレート',
       browserEncoderNotice:
-        'ブラウザの MediaRecorder codec を使います。対応状況と完全な出力バイト列はブラウザにより変わります。',
+        'ブラウザの MediaRecorder codec を使います。実時間でエンコードするため、書き出しには音声の再生時間とほぼ同じだけかかります。対応状況と完全な出力バイト列はブラウザにより変わります。',
       sampleRate: 'サンプルレート',
       range: '範囲',
       wholeProject: 'プロジェクト全体',
@@ -1996,6 +2022,8 @@ export const ja = {
       includeBusStems: 'バス / リターンのステムを含める',
       normalization: '正規化',
       normalizeLoudness: '{target} LUFS に書き出しを正規化',
+      stemNormalizationNote:
+        'ラウドネス正規化はミックス全体にのみ適用されます。各ステムはミックスのバランスを保ったまま再合算できるよう、素のレベルで書き出されます。',
       releaseTail: 'リリーステール',
       seconds: '秒',
       filename: 'ファイル名',
@@ -2013,12 +2041,48 @@ export const ja = {
       truePeak: 'トゥルーピーク',
       loudness: 'ラウドネス',
       limitations: '制限事項',
+      mediaIssue: '{kind} が見つからないか読み取れません: {id}',
+      mediaIssueKind: {
+        'audio-asset': 'オーディオアセット',
+        soundfont: 'SoundFont',
+      },
+      issue: {
+        blocker: {
+          audioClipNoMedia:
+            'トラック「{track}」のオーディオクリップ「{clip}」にメディア参照がありません',
+          mediaMissing:
+            '{labels} が参照するメディア「{id}」が見つからないか読み取れません: {reason}',
+        },
+        warning: {
+          externalMidiSilent: '外部 MIDI トラック「{track}」はオーディオ書き出しでは無音になります',
+          releaseTailShort:
+            'リリーステールが {current}s ですが、有効なリバーブ/ディレイ設定は少なくとも {suggested}s を推奨します',
+        },
+        label: {
+          frozenTrack: 'フリーズトラック「{name}」',
+          audioClip: 'オーディオクリップ「{name}」',
+        },
+        limitation: {
+          masteringAutomationAtStart:
+            'マスタリングオートメーションはレンダー開始時点で評価されました',
+          instrumentAutomationAtStart:
+            '次のトラックの音源オートメーションはレンダー開始時点で評価されました: {tracks}',
+        },
+      },
       close: '閉じる',
       export: '書き出し',
       stage: {
         preflight: '事前検証',
-        render: 'レンダー',
-        encode: 'エンコード',
+        render: 'レンダー中',
+        encode: 'エンコード中',
+        prepare: 'エンジン準備中',
+        metering: 'ラウドネス解析中',
+        finalizing: '仕上げ中',
+        mastering: 'マスタリング: {name}',
+        masteringPreset: 'マスタリングプリセット: {name}',
+        renderStem: 'ステム {index} をレンダー中',
+        renderBusStem: 'バスステム {index} をレンダー中',
+        encodeStem: 'ステム {index}/{total} をエンコード中',
       },
       noStems: 'ステムがレンダーされませんでした（プロジェクトにトラックがありません）',
     },
