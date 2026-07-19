@@ -227,9 +227,9 @@ describe('instrument helpers', () => {
     );
     expect(() => validateTrackInstrument({ kind: 'sf2', fontId: '' })).toThrow(RangeError);
     expect(() => validateTrackInstrument({ kind: 'sf2', fontId: 'gm', program: 5 })).not.toThrow();
-    expect(() => validateTrackInstrument({ kind: 'sf2', fontId: 'gm', gain: 0 })).toThrow(
-      RangeError,
-    );
+    // Zero gain is valid (mute): the UI allows it and sf2PlaybackConfig maps it
+    // to the engine's smallest gain. Only negatives are rejected.
+    expect(() => validateTrackInstrument({ kind: 'sf2', fontId: 'gm', gain: 0 })).not.toThrow();
     expect(() => validateTrackInstrument({ kind: 'sf2', fontId: 'gm', gain: -1 })).toThrow(
       RangeError,
     );

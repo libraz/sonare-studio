@@ -121,6 +121,39 @@ export function effectiveTrackInstrument(
   return trackInstrument(track);
 }
 
+/**
+ * A stable key identifying an instrument for destination de-duplication: two
+ * tracks whose instruments produce the same key can share one engine playback
+ * destination. Used by the MIDI sync (to pack tracks onto the limited internal
+ * instrument destinations) and by the project-capacity check that mirrors it.
+ */
+export function instrumentDedupeKey(instrument: TrackInstrument): string {
+  switch (instrument.kind) {
+    case 'synth-preset':
+      return `synth-preset:${instrument.preset}`;
+    case 'synth-patch':
+      return `synth-patch:${JSON.stringify(instrument.patch)}`;
+    case 'sf2': {
+      const channelMap =
+        instrument.channelMap && instrument.channelMap.length > 0
+          ? `:cm=${instrument.channelMap
+              .map((c) => `${c.channel}/${c.bank ?? -1}/${c.program ?? -1}`)
+              .sort()
+              .join(',')}`
+          : '';
+      return `sf2:${instrument.fontId}:${instrument.bank ?? 'bank-default'}:${
+        instrument.program ?? 'program-default'
+      }${channelMap}`;
+    }
+    case 'external-midi':
+      return `external-midi:${instrument.outputPortId}:ch${instrument.channel + 1}`;
+    default: {
+      const exhaustive: never = instrument;
+      return JSON.stringify(exhaustive);
+    }
+  }
+}
+
 /** Deep-copies an instrument (instruments are plain JSON data). */
 export function cloneInstrument(instrument: TrackInstrument): TrackInstrument {
   return JSON.parse(JSON.stringify(instrument)) as TrackInstrument;
@@ -218,8 +251,11 @@ export function validateTrackInstrument(instrument: TrackInstrument): void {
         }
       }
       const { gain, polyphony } = instrument;
-      if (gain !== undefined && (!Number.isFinite(gain) || gain <= 0)) {
-        throw new RangeError(`SF2 gain must be a positive number, got ${gain}`);
+      // Zero is a valid value meaning mute: the UI min is 0, the model accepts
+      // it, and sf2PlaybackConfig maps it to the engine's smallest gain. Only
+      // negative or non-finite values are rejected.
+      if (gain !== undefined && (!Number.isFinite(gain) || gain < 0)) {
+        throw new RangeError(`SF2 gain must be a non-negative number, got ${gain}`);
       }
       if (
         polyphony !== undefined &&

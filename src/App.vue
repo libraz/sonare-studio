@@ -78,6 +78,7 @@ import {
   undo,
 } from '@/project/commands';
 import { unfreezeTrack } from '@/project/freeze';
+import { evaluateProjectCapacity, formatProjectCapacityIssue } from '@/project/project-capacity';
 import { serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { isAudioClip } from '@/project/types';
@@ -165,6 +166,27 @@ const historyCanRedo = computed(() => {
 const appSettings = useAppSettings();
 const { t } = useI18n();
 const mediaWarningIntro = computed(() => t.value.shell.media.missingWarning);
+
+// Project-capacity warnings are derived purely from the project snapshot: the
+// engine addresses mixer strips and internal instruments through fixed-width id
+// spaces, so a project that outgrows them silently loses telemetry or misroutes
+// control. Dismiss hides the current set; a changed set re-surfaces.
+const capacityIssues = computed(() =>
+  evaluateProjectCapacity(store.tracks, store.projectExternalMidi),
+);
+const dismissedCapacityKey = ref('');
+const capacityWarning = computed(() => {
+  const issues = capacityIssues.value;
+  if (issues.length === 0) return '';
+  const key = JSON.stringify(issues);
+  if (key === dismissedCapacityKey.value) return '';
+  const strings = t.value.shell.capacity;
+  const lines = issues.map((issue) => formatProjectCapacityIssue(issue, strings));
+  return [strings.warningIntro, ...lines].join('\n');
+});
+function dismissCapacityWarning(): void {
+  dismissedCapacityKey.value = JSON.stringify(capacityIssues.value);
+}
 const shortcuts = useShortcuts();
 const { tool: editorTool, setTool: setEditorTool } = useEditorTool();
 function toggleTheme(): void {
@@ -432,6 +454,7 @@ const {
   previewNoteOn,
   previewNoteOff,
   previewChannelVoice,
+  recordingActive: midiRecording.isRecording,
   onRecordNoteOn: midiRecording.captureNoteOn,
   onRecordNoteOff: midiRecording.captureNoteOff,
   onRecordControlChange: midiRecording.captureControlChange,
@@ -779,6 +802,11 @@ useAppLifecycle({
       :action-label="t.shell.media.openMedia"
       @action="selectDockTab('media')"
       @dismiss="mediaWarning = ''"
+    />
+    <ErrorBanner
+      :message="capacityWarning"
+      :auto-dismiss-ms="0"
+      @dismiss="dismissCapacityWarning"
     />
     <PwaUpdateBanner />
 
