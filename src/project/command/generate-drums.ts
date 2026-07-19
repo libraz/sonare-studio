@@ -15,13 +15,8 @@ import { type DrumsOptions, generateDrums } from '@libraz/libcantus';
 import { noteEventsToNewEditorNotes } from '@/compose/notes-io';
 import { useProjectStore } from '../store';
 import { isFourFourBarRange } from '../time-signature';
-import {
-  addGeneratedTrack,
-  EDITS_PER_TRACK,
-  materializeNote,
-  type TrackPlan,
-} from './generate-track';
-import { execute } from './history';
+import { addGeneratedTrack, materializeNote, type TrackPlan } from './generate-track';
+import { executeAtomic } from './history';
 
 /** GM percussion channel (MIDI channel 10, zero-based). */
 const GM_PERCUSSION_CHANNEL = 9;
@@ -109,14 +104,18 @@ export function generateDrumsCommand(params: GenerateDrumsParams = {}): number {
   const plan = buildDrumsPlan(store, params);
   if (plan === null) return 0;
 
-  execute(EDITS_PER_TRACK, () =>
-    addGeneratedTrack(store, {
-      name: plan.name,
-      notes: plan.notes,
-      startPpq: 0,
-      lengthPpq: plan.lengthPpq,
-      preset: plan.preset,
-    }),
+  executeAtomic((edit) =>
+    addGeneratedTrack(
+      store,
+      {
+        name: plan.name,
+        notes: plan.notes,
+        startPpq: 0,
+        lengthPpq: plan.lengthPpq,
+        preset: plan.preset,
+      },
+      edit,
+    ),
   );
   return plan.notes.length;
 }

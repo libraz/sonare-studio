@@ -599,7 +599,8 @@ describe('take and comping commands', () => {
     expect(() => dropClipTakes(clipId)).toThrow(/multi-segment/);
 
     dropClipTakes(clipId, 'baked-asset');
-    const baked = findClip(clipId);
+    // Rebasing onto the baked asset recreates the clip (new id).
+    const baked = store.clips.find((clip) => clip.assetId === 'baked-asset');
     expect(baked?.assetId).toBe('baked-asset');
     expect(baked?.sourceOffsetPpq).toBe(0); // the baked asset covers the clip window
     expect(baked?.takes).toBeUndefined();
@@ -615,7 +616,7 @@ describe('take and comping commands', () => {
     expect(restored?.assetId).toBe('take-a');
 
     redo();
-    expect(findClip(clipId)?.assetId).toBe('baked-asset');
+    expect(store.clips.find((clip) => clip.assetId === 'baked-asset')?.assetId).toBe('baked-asset');
   });
 });
 
@@ -673,6 +674,40 @@ describe('flattenClipComp', () => {
     return clipId;
   }
 
+  it('bakes only the audible window for a deep source offset instead of leading silence', async () => {
+    // A clip placed far into a long take must not bake source-offset silence
+    // into the new asset; the buffer stays bounded by the clip length and the
+    // clip is rebased to offset 0 over the audible window.
+    const trackId = addAudioTrack({ name: 'Deep' });
+    const clipId = await addAudioClip({
+      trackId,
+      assetId: 'take-a',
+      lengthPpq: 2,
+      sourceOffsetPpq: 500,
+      takes: [{ assetId: 'take-a' }, { assetId: 'take-b' }],
+      activeTakeIndex: 0,
+    });
+    setClipCompSegments(clipId, [
+      { startPpq: 0, takeIndex: 0 },
+      { startPpq: 1, takeIndex: 1, crossfadePpq: 0 },
+    ]);
+    const longTake = (base: number) =>
+      makeLoadedAsset(`take-${base}`, [Array.from({ length: 1100 }, (_, i) => base + i)]);
+    const loadAudioAsset = makeLoader({
+      'take-a': longTake(1),
+      'take-b': longTake(10_000),
+    });
+    const ingest = vi.fn(async () => ({ id: 'deep-bake' }));
+
+    await flattenClipComp(clipId, { tempoBpm: 120, loadAudioAsset, ingest });
+    const [channels] = ingest.mock.calls[0] as unknown as [Float32Array[]];
+    // 2 PPQ window at 4 Hz / 120 BPM = 4 frames; nowhere near the 1000-frame
+    // source offset, so no silence was prepended.
+    expect(channels[0]).toHaveLength(4);
+    expect(Array.from(channels[0])).not.toContain(0);
+    expect(store.clips.find((clip) => clip.assetId === 'deep-bake')?.sourceOffsetPpq).toBe(0);
+  });
+
   it('stitches a multi-segment comp into one asset and rebases the clip', async () => {
     const clipId = await addMultiSegmentClip();
     const loadAudioAsset = makeLoader({
@@ -699,7 +734,9 @@ describe('flattenClipComp', () => {
     expect(channels).toHaveLength(1);
     expect(Array.from(channels[0])).toEqual([1, 2, 3, 4, 105, 106, 107, 108]);
 
-    const clip = store.clips.find((c) => c.id === clipId);
+    // Rebasing onto the baked asset recreates the clip (new id); track it by
+    // its baked asset id.
+    const clip = store.clips.find((c) => c.assetId === 'baked-asset');
     expect(clip?.assetId).toBe('baked-asset');
     expect(clip?.sourceOffsetPpq).toBe(0);
     expect(clip?.takes).toBeUndefined();
@@ -784,7 +821,7 @@ describe('flattenClipComp', () => {
     const [channels] = ingest.mock.calls[0] as unknown as [Float32Array[]];
     expect(channels[0][0]).toBe(1);
     expect(channels[0].at(-1)).toBe(1);
-    expect(store.clips.find((clip) => clip.id === clipId)).toMatchObject({
+    expect(store.clips.find((clip) => clip.assetId === 'unfaded-bake')).toMatchObject({
       fadeInPpq: 0.5,
       fadeOutPpq: 0.5,
     });
@@ -816,11 +853,14 @@ describe('flattenClipComp', () => {
 
     await flattenClipComp(clipId, { tempoBpm: 120, loadAudioAsset, ingest });
     const [channels] = ingest.mock.calls[0] as unknown as [Float32Array[]];
-    expect(Array.from(channels[0].slice(0, 2))).toEqual([0, 0]);
-    expect(channels[0]).toHaveLength(10);
-    expect(store.clips.find((clip) => clip.id === clipId)).toMatchObject({
+    // No leading silence is baked for the source offset: the asset is exactly
+    // the audible window and the clip is rebased to source offset 0.
+    expect(channels[0]).toHaveLength(8);
+    expect(Array.from(channels[0].slice(0, 2))).not.toEqual([0, 0]);
+    // Rebasing recreates the clip (new id); track it by its baked asset id.
+    expect(store.clips.find((clip) => clip.assetId === 'transforms-baked')).toMatchObject({
       assetId: 'transforms-baked',
-      sourceOffsetPpq: 1,
+      sourceOffsetPpq: 0,
       loopEnabled: false,
       loopLengthPpq: 0,
     });
@@ -832,7 +872,9 @@ describe('flattenClipComp', () => {
     });
     expect(store.clips.find((clip) => clip.id === clipId)?.takes).toHaveLength(2);
     expect(redo()).toBe(true);
-    expect(store.clips.find((clip) => clip.id === clipId)?.loopEnabled).toBe(false);
+    expect(store.clips.find((clip) => clip.assetId === 'transforms-baked')?.loopEnabled).toBe(
+      false,
+    );
   });
 
   it('feeds mono slices into every channel when takes mix channel counts', async () => {
@@ -974,19 +1016,23 @@ describe('flattenClipComp', () => {
     const ingest = vi.fn(async () => ({ id: `flattened-${++nextAsset}` }));
     clearHistory();
 
+    // Flattening rebases each clip onto its baked asset (a new clip id), so
+    // the clips are tracked by timeline position rather than the original id.
+    const atStart = (startPpq: number) =>
+      store.clips.find((clip) => clip.trackId === trackId && clip.startPpq === startPpq);
     await expect(
       flattenTrackComps(trackId, { tempoBpm: 120, loadAudioAsset, ingest }),
     ).resolves.toEqual(['flattened-1', 'flattened-2']);
-    expect(store.clips.find((clip) => clip.id === firstId)?.takes).toBeUndefined();
-    expect(store.clips.find((clip) => clip.id === secondId)?.takes).toBeUndefined();
+    expect(atStart(0)?.takes).toBeUndefined();
+    expect(atStart(8)?.takes).toBeUndefined();
 
     expect(undo()).toBe(true);
     expect(store.clips.find((clip) => clip.id === firstId)?.takes).toHaveLength(2);
     expect(store.clips.find((clip) => clip.id === secondId)?.takes).toHaveLength(2);
     expect(undo()).toBe(false);
     expect(redo()).toBe(true);
-    expect(store.clips.find((clip) => clip.id === firstId)?.assetId).toBe('flattened-1');
-    expect(store.clips.find((clip) => clip.id === secondId)?.assetId).toBe('flattened-2');
+    expect(atStart(0)?.assetId).toBe('flattened-1');
+    expect(atStart(8)?.assetId).toBe('flattened-2');
   });
 
   it('leaves every clip untouched when a later track flatten render fails', async () => {

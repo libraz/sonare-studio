@@ -24,8 +24,8 @@ import { type EditorChordSymbol, sanitizeChordSymbols, toProjectChordSymbols } f
 import type { RawNote } from '../midi-events';
 import { getProject, useProjectStore } from '../store';
 import { isFourFourBarRange } from '../time-signature';
-import { addGeneratedTrack, EDITS_PER_TRACK, materializeNote } from './generate-track';
-import { execute } from './history';
+import { addGeneratedTrack, materializeNote } from './generate-track';
+import { executeAtomic } from './history';
 
 /** GM percussion channel (MIDI channel 10, zero-based). */
 const GM_PERCUSSION_CHANNEL = 9;
@@ -185,24 +185,26 @@ export function generateArrangementCommand(params: GenerateArrangementParams = {
     }
   }
 
-  const chordEdits = generated !== null ? 1 : 0;
-  const totalEdits = chordEdits + EDITS_PER_TRACK * plans.length;
-  if (totalEdits === 0) return 0;
+  if (generated === null && plans.length === 0) return 0;
 
   const project = getProject();
   const sanitizedChords = generated !== null ? sanitizeChordSymbols(generated) : null;
-  execute(totalEdits, () => {
+  executeAtomic((edit) => {
     if (sanitizedChords !== null) {
-      project.annotateChords(toProjectChordSymbols(sanitizedChords));
+      edit(1, () => project.annotateChords(toProjectChordSymbols(sanitizedChords)));
     }
     for (const plan of plans) {
-      addGeneratedTrack(store, {
-        name: plan.name,
-        notes: plan.notes,
-        startPpq: 0,
-        lengthPpq: plan.lengthPpq,
-        preset: plan.preset,
-      });
+      addGeneratedTrack(
+        store,
+        {
+          name: plan.name,
+          notes: plan.notes,
+          startPpq: 0,
+          lengthPpq: plan.lengthPpq,
+          preset: plan.preset,
+        },
+        edit,
+      );
     }
     if (plans.length === 0) store.refresh();
   });

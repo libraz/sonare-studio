@@ -421,7 +421,9 @@ export function glueMidiClips(clipIds: ReadonlyArray<number>): number {
   const notes = joinedNotes(occurrences);
   const name = ordered[0].name;
   return executeAtomic((edit) => {
-    const newClipId = edit(1, () =>
+    // Project.addClip registers a backing source and the clip itself, which are
+    // two entries on the Project history (matching addMidiClip's execute(2)).
+    const newClipId = edit(2, () =>
       project.addClip({ trackId, isMidi: true, startPpq, lengthPpq }),
     );
     edit(1, () => project.setMidiEvents(newClipId, notesToProjectEvents(notes)));

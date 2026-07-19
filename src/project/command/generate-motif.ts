@@ -32,13 +32,8 @@ import { audibleMidiProjector, audibleMidiSourceWindow } from '../midi-projectio
 import { getProject, notesToProjectEvents, useProjectStore } from '../store';
 import { isFourFourBarRange } from '../time-signature';
 import type { EditorClip } from '../types';
-import {
-  addGeneratedTrack,
-  EDITS_PER_TRACK,
-  materializeNote,
-  type TrackPlan,
-} from './generate-track';
-import { execute } from './history';
+import { addGeneratedTrack, materializeNote, type TrackPlan } from './generate-track';
+import { executeAtomic } from './history';
 import { requireEditableClip } from './utils';
 
 /** Beats per bar the motif generator assumes (4/4). */
@@ -222,8 +217,8 @@ export function generateMotifCommand(params: GenerateMotifParams = {}): number {
     const mode = params.mode ?? 'append';
     const merged = buildMotifClipMerge(store, clip, params, mode);
     if (merged === null) return 0;
-    execute(1, () => {
-      project.setMidiEvents(clip.id, notesToProjectEvents(merged));
+    executeAtomic((edit) => {
+      edit(1, () => project.setMidiEvents(clip.id, notesToProjectEvents(merged)));
       store.refresh();
     });
     return merged.length - (mode === 'replace' ? 0 : clip.notes.length);
@@ -231,14 +226,18 @@ export function generateMotifCommand(params: GenerateMotifParams = {}): number {
 
   const plan = buildMotifPlan(store, params);
   if (plan === null) return 0;
-  execute(EDITS_PER_TRACK, () =>
-    addGeneratedTrack(store, {
-      name: plan.name,
-      notes: plan.notes,
-      startPpq: 0,
-      lengthPpq: plan.lengthPpq,
-      preset: plan.preset,
-    }),
+  executeAtomic((edit) =>
+    addGeneratedTrack(
+      store,
+      {
+        name: plan.name,
+        notes: plan.notes,
+        startPpq: 0,
+        lengthPpq: plan.lengthPpq,
+        preset: plan.preset,
+      },
+      edit,
+    ),
   );
   return plan.notes.length;
 }

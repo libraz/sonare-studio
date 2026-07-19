@@ -6,7 +6,7 @@ import {
   useProjectStore,
 } from '../store';
 import type { EditorNote, EditorNoteUpdate, NewEditorNote } from '../types';
-import { cloneNotes, execute } from './history';
+import { cloneNotes, executeAtomic } from './history';
 import { requireEditableClip } from './utils';
 
 /** Default note-on velocity for newly created notes. */
@@ -66,16 +66,24 @@ function commit(
         Math.abs((clip.loopLengthPpq || clip.lengthPpq) - (options.loop.lengthPpq ?? 0)) > 1e-9));
   const projectEdits = Number(options.writeNotes) + Number(resize) + Number(loopChange);
   if (projectEdits === 0) return;
-  execute(projectEdits, () => {
-    if (resize) project.trimClip(store.clipId, clip.startPpq, options.resizeLengthPpq as number);
-    if (loopChange) {
-      if (options.loop?.enabled) {
-        project.setClipLoop(store.clipId, 'loop', options.loop.lengthPpq);
-      } else {
-        project.setClipLoop(store.clipId, 'off');
-      }
+  executeAtomic((edit) => {
+    if (resize) {
+      edit(1, () =>
+        project.trimClip(store.clipId, clip.startPpq, options.resizeLengthPpq as number),
+      );
     }
-    if (options.writeNotes) project.setMidiEvents(store.clipId, notesToProjectEvents(nextNotes));
+    if (loopChange) {
+      edit(1, () => {
+        if (options.loop?.enabled) {
+          project.setClipLoop(store.clipId, 'loop', options.loop.lengthPpq);
+        } else {
+          project.setClipLoop(store.clipId, 'off');
+        }
+      });
+    }
+    if (options.writeNotes) {
+      edit(1, () => project.setMidiEvents(store.clipId, notesToProjectEvents(nextNotes)));
+    }
     store.refresh(nextNotes);
   });
 }

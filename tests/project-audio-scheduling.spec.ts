@@ -5,7 +5,7 @@ import type { LoadedAudioAsset } from '@/persistence/assets';
 import {
   AudioScheduleReplaceError,
   applyAudioClipFades,
-  ppqToSeconds,
+  ppqSpanToSeconds,
   replaceScheduledProjectClips,
   resampleChannelsLinear,
   scheduleProjectClips,
@@ -98,9 +98,9 @@ function makeHandle(sampleRate = 10): {
 }
 
 describe('audio scheduling helpers', () => {
-  it('ppqToSeconds converts at a constant tempo', () => {
-    expect(ppqToSeconds(2, 120)).toBe(1);
-    expect(ppqToSeconds(1, 60)).toBe(1);
+  it('ppqSpanToSeconds converts a span at a constant tempo', () => {
+    expect(ppqSpanToSeconds(2, 120)).toBe(1);
+    expect(ppqSpanToSeconds(1, 60)).toBe(1);
   });
 
   it('sliceAudioClipWindow cuts the source window in frames', () => {
@@ -842,7 +842,7 @@ describe('scheduleProjectClips with audio clips', () => {
     const rendered = new Float32Array(60);
     for (const [, channels, startPpq] of addClip.mock.calls) {
       const offset = Math.round(
-        ppqToSeconds((startPpq as number) - windowStartPpq, 120) * sampleRate,
+        ppqSpanToSeconds((startPpq as number) - windowStartPpq, 120) * sampleRate,
       );
       const channel = (channels as Float32Array[])[0];
       for (let i = 0; i < channel.length; i += 1) {

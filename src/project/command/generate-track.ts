@@ -3,16 +3,19 @@
  *
  * Drums, bass, and counter-melody all create one track carrying one MIDI clip
  * of generated notes. They share the same four wasm-Project edits — addTrack,
- * addClip, setMidiEvents — so the count lives here as {@link EDITS_PER_TRACK}
- * and the mutation lives in {@link addGeneratedTrack}. The helper is *not*
- * wrapped in `execute`: single-track commands wrap one call in
- * `execute(EDITS_PER_TRACK, …)`, while a future full-arrangement command can
- * compose several calls into one `execute(EDITS_PER_TRACK * n, …)` transaction.
+ * addClip (source registration + clip insertion), setMidiEvents — so the count
+ * lives here as {@link EDITS_PER_TRACK} and the mutation lives in
+ * {@link addGeneratedTrack}. The helper reports each native call through the
+ * caller's {@link AtomicProjectEdit}, so it must run inside an `executeAtomic`
+ * boundary: single-track commands wrap one call, while the batch and
+ * full-arrangement commands compose several calls into one transaction. A
+ * partial failure then rolls back exactly the calls that completed.
  */
 
 import type { RawNote } from '../midi-events';
 import { getProject, notesToProjectEvents, type useProjectStore } from '../store';
 import { type NewEditorNote, TRACK_COLOR_PALETTE } from '../types';
+import type { AtomicProjectEdit } from './history';
 
 /** The project store instance type (Pinia setup store). */
 type ProjectStore = ReturnType<typeof useProjectStore>;
@@ -71,17 +74,24 @@ export interface GeneratedTrack {
 
 /**
  * Creates a new MIDI track with one clip of generated notes and mirrors it into
- * the store. Performs exactly {@link EDITS_PER_TRACK} wasm-Project edits and
- * must run inside an `execute` boundary that accounts for them.
+ * the store. Performs exactly {@link EDITS_PER_TRACK} wasm-Project edits, each
+ * reported through `edit`, so a mid-sequence native failure rolls back the
+ * completed ones and leaves the Project history aligned with the local undo
+ * stack. Must run inside an `executeAtomic` boundary.
  *
  * @param store The project store (its `tracks`/`clips` mirror is updated).
  * @param track Track name, notes, and clip placement.
+ * @param edit The atomic edit reporter from the enclosing `executeAtomic`.
  * @returns The new clip's id.
  */
-export function addGeneratedTrack(store: ProjectStore, track: GeneratedTrack): number {
+export function addGeneratedTrack(
+  store: ProjectStore,
+  track: GeneratedTrack,
+  edit: AtomicProjectEdit,
+): number {
   const project = getProject();
   const color = TRACK_COLOR_PALETTE[store.tracks.length % TRACK_COLOR_PALETTE.length];
-  const trackId = project.addTrack({ kind: 'midi', name: track.name });
+  const trackId = edit(1, () => project.addTrack({ kind: 'midi', name: track.name }));
   store.tracks = [
     ...store.tracks,
     {
@@ -99,12 +109,14 @@ export function addGeneratedTrack(store: ProjectStore, track: GeneratedTrack): n
         : {}),
     },
   ];
-  const clipId = project.addClip({
-    trackId,
-    isMidi: true,
-    startPpq: track.startPpq,
-    lengthPpq: track.lengthPpq,
-  });
+  const clipId = edit(2, () =>
+    project.addClip({
+      trackId,
+      isMidi: true,
+      startPpq: track.startPpq,
+      lengthPpq: track.lengthPpq,
+    }),
+  );
   store.clips = [
     ...store.clips,
     {
@@ -120,7 +132,7 @@ export function addGeneratedTrack(store: ProjectStore, track: GeneratedTrack): n
       notes: [],
     },
   ];
-  project.setMidiEvents(clipId, notesToProjectEvents(track.notes));
+  edit(1, () => project.setMidiEvents(clipId, notesToProjectEvents(track.notes)));
   store.refresh();
   return clipId;
 }

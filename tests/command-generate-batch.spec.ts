@@ -217,6 +217,34 @@ describe('generateTracksBatchCommand', () => {
     expect(JSON.stringify({ tracks: store.tracks, clips: store.clips })).toBe(mirrorBefore);
   });
 
+  it('rolls back a partial generation when a native write throws mid-transaction', () => {
+    setProjectChords(FOUR_CHORDS);
+    const project = getProject();
+    const baseTracks = store.tracks.length;
+    const nativeBefore = project.toJson();
+    // The last of addTrack → addClip → setMidiEvents fails after the first two
+    // native edits already landed; the transaction must undo exactly those.
+    const spy = vi.spyOn(project, 'setMidiEvents').mockImplementationOnce(() => {
+      throw new Error('native write failed');
+    });
+    expect(() =>
+      generateTracksBatchCommand([{ part: 'drums', params: { bars: 4 }, target: { kind: 'new' } }]),
+    ).toThrow('native write failed');
+    spy.mockRestore();
+
+    // No orphaned track/clip survived and the Project matches its pre-state.
+    expect(store.tracks.length).toBe(baseTracks);
+    expect(project.trackCount()).toBe(baseTracks);
+    expect(project.toJson()).toBe(nativeBefore);
+
+    // The undo stack stayed aligned with the Project history: a subsequent
+    // generation still undoes cleanly in one step.
+    generateTracksBatchCommand([{ part: 'drums', params: { bars: 4 }, target: { kind: 'new' } }]);
+    expect(store.tracks.length).toBe(baseTracks + 1);
+    expect(undo()).toBe(true);
+    expect(store.tracks.length).toBe(baseTracks);
+  });
+
   it('classifies generated track names', () => {
     expect(partForTrackName('Drums')).toBe('drums');
     expect(partForTrackName('bass')).toBe('bass');

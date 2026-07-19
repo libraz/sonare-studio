@@ -18,7 +18,7 @@ import {
 } from './operation';
 import { type AudioClipSliceTempo, renderAudibleAudioClipWindow } from './scheduling';
 import { useProjectStore } from './store';
-import { normalizeTempoMap, ppqDurationSamples } from './tempo-map';
+import { normalizeTempoMap } from './tempo-map';
 import type { EditorClip } from './types';
 
 const flattenOperations = new OperationGeneration();
@@ -86,22 +86,15 @@ async function renderClipComp(
     loadAudio,
   );
   if (!rendered) throw new Error(`Clip ${clip.id} comp rendered no audio`);
-  const sourceOriginPpq = clip.startPpq - clip.sourceOffsetPpq;
-  const leadingFrames = Math.max(
-    0,
-    typeof tempo === 'number'
-      ? Math.round(((clip.sourceOffsetPpq * 60) / tempo) * rendered.sampleRate)
-      : ppqDurationSamples(tempo, sourceOriginPpq, clip.sourceOffsetPpq, rendered.sampleRate),
-  );
-  const channels =
-    leadingFrames === 0
-      ? rendered.channels
-      : rendered.channels.map((channel) => {
-          const padded = new Float32Array(leadingFrames + channel.length);
-          padded.set(channel, leadingFrames);
-          return padded;
-        });
-  return { channels, sampleRate: rendered.sampleRate, name: `${clip.name} (comp)` };
+  // The rendered buffer is exactly the audible clip window; the clip is rebased
+  // onto it at sourceOffsetPpq 0 (see dropClipTakesBatch), so no leading silence
+  // is prepended for the source offset — a large offset would otherwise bake
+  // megabytes of silence and blow the asset ingest budget.
+  return {
+    channels: rendered.channels,
+    sampleRate: rendered.sampleRate,
+    name: `${clip.name} (comp)`,
+  };
 }
 
 /** Renders/saves all inputs, then drops every take lane in one command. */

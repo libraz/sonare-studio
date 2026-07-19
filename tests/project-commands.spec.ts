@@ -771,6 +771,32 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       ]);
     });
 
+    it('glueMidiClips keeps undo aligned with the Project history for earlier edits', () => {
+      // glueMidiClips adds a MIDI clip, whose backing source and clip are two
+      // Project history entries. If the glue command undercounts them, undoing
+      // the glue rewinds the Project by one edit too few, and every earlier
+      // undo then reads a misaligned Project and restores corrupt state.
+      const trackId = store.tracks[0].id;
+      const firstId = store.clipId;
+      addNote({ pitch: 60, startPpq: 0.25, durationPpq: 0.5 });
+
+      const secondId = addMidiClip({ trackId, startPpq: 2, lengthPpq: 2, name: 'Second' });
+      setActiveClip(secondId);
+      addNote({ pitch: 64, startPpq: 0.5, durationPpq: 0.5 });
+
+      const joinedId = glueMidiClips([firstId, secondId]);
+      expect(store.clips.map((clip) => clip.id)).toEqual([joinedId]);
+
+      expect(undo()).toBe(true); // glue
+      expect(undo()).toBe(true); // addNote on second
+      expect(undo()).toBe(true); // addMidiClip second
+      expect(undo()).toBe(true); // addNote on first
+
+      // Back at the initial project: exactly the original empty clip.
+      expect(store.clips.map((clip) => clip.id)).toEqual([firstId]);
+      expect(store.clips.find((clip) => clip.id === firstId)?.notes).toEqual([]);
+    });
+
     it('glueMidiClips validates clip count, kind and track', () => {
       const firstId = store.clipId;
       const otherTrackId = addTrack({ name: 'Other' });
@@ -1115,6 +1141,18 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
     it('detectChordsForClip rejects a non-MIDI clip', () => {
       expect(() => detectChordsForClip(9999)).toThrow(RangeError);
     });
+
+    it('detectChordsForClip detects nothing on a percussion clip', () => {
+      const drumTrack = addTrack({ name: 'Drums' });
+      const drumClip = addMidiClip({ trackId: drumTrack, lengthPpq: 4 });
+      setActiveClip(drumClip);
+      // Drum hits would otherwise pool into a spurious chord.
+      addNote({ pitch: 36, startPpq: 0, durationPpq: 1, channel: 9 });
+      addNote({ pitch: 42, startPpq: 1, durationPpq: 1, channel: 9 });
+
+      expect(detectChordsForClip(drumClip)).toBe(0);
+      expect(store.chords).toEqual([]);
+    });
   });
 
   describe('splitNote', () => {
@@ -1145,6 +1183,34 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(() => splitNote(id, 1)).toThrow(RangeError);
       expect(() => splitNote(id, 3)).toThrow(RangeError);
       expect(() => splitNote(9999, 1)).toThrow();
+    });
+  });
+
+  describe('note edit atomicity', () => {
+    it('rolls back a clip resize when the note write throws in the same transaction', () => {
+      const clipId = store.clipId;
+      const originalLength = store.clips.find((c) => c.id === clipId)?.lengthPpq ?? 0;
+      addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+      const project = getProject();
+      const nativeBefore = project.toJson();
+      // trimClip (resize) lands first, then the note write fails; the resize
+      // must be undone with it so the Project history stays aligned.
+      const spy = vi.spyOn(project, 'setMidiEvents').mockImplementationOnce(() => {
+        throw new Error('native write failed');
+      });
+      expect(() =>
+        applyNoteEdits({
+          additions: [{ pitch: 64, startPpq: 2, durationPpq: 1 }],
+          clipWindow: { lengthPpq: originalLength + 16 },
+        }),
+      ).toThrow('native write failed');
+      spy.mockRestore();
+
+      expect(store.clips.find((c) => c.id === clipId)?.lengthPpq).toBe(originalLength);
+      expect(project.toJson()).toBe(nativeBefore);
+      // The earlier addNote still undoes cleanly.
+      expect(undo()).toBe(true);
+      expect(store.notes).toEqual([]);
     });
   });
 

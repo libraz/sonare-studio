@@ -1,5 +1,20 @@
 import type { EditorClip, EditorNote } from './types';
 
+/**
+ * Minimum looped-window length (a 64th note; a quarter note is 1 PPQ). A
+ * degenerate sub-tick loop length would otherwise expand into a runaway number
+ * of occurrences and hang the tab, so the loop window is floored here — the
+ * single source of truth every consumer (engine, analysis, score) reads.
+ */
+export const MIN_LOOP_WINDOW_PPQ = 1 / 16;
+
+/**
+ * Hard cap on loop occurrences per clip. Backstops the minimum-window floor for
+ * a pathologically long clip; far beyond any musical use (65536 quarter-note
+ * loops span 16384 bars of 4/4).
+ */
+export const MAX_LOOP_OCCURRENCES = 1 << 16;
+
 /** Minimum note shape accepted by the shared audible MIDI projector. */
 export interface MidiProjectionNote {
   id?: number;
@@ -80,10 +95,13 @@ export function audibleMidiSourceWindow(
   clip: Pick<MidiProjectionClip, 'lengthPpq' | 'sourceOffsetPpq' | 'loopEnabled' | 'loopLengthPpq'>,
 ): AudibleMidiSourceWindow {
   const loopLength = clip.loopLengthPpq ?? 0;
+  const clipLength = Math.max(0, clip.lengthPpq);
   const lengthPpq =
     clip.loopEnabled === true && loopLength > 0
-      ? Math.min(loopLength, Math.max(0, clip.lengthPpq))
-      : Math.max(0, clip.lengthPpq);
+      ? // Floor a sub-tick loop window (bounded above by the clip length) so a
+        // degenerate loop cannot expand into a runaway number of occurrences.
+        Math.min(clipLength, Math.max(loopLength, MIN_LOOP_WINDOW_PPQ))
+      : clipLength;
   return {
     startPpq: clip.sourceOffsetPpq,
     endPpq: clip.sourceOffsetPpq + lengthPpq,
@@ -118,7 +136,9 @@ export function audibleMidiProjector<T extends MidiProjectionNote>(
         note.startPpq + note.durationPpq > sourceWindow.startPpq,
     );
   const repeatCount =
-    looping && options.expandLoops !== false ? Math.ceil(clip.lengthPpq / sourceWindowLength) : 1;
+    looping && options.expandLoops !== false
+      ? Math.min(Math.ceil(clip.lengthPpq / sourceWindowLength), MAX_LOOP_OCCURRENCES)
+      : 1;
   const clipId = clip.id ?? 0;
   const projected: AudibleMidiOccurrence<T>[] = [];
   for (let occurrence = 0; occurrence < repeatCount; occurrence += 1) {

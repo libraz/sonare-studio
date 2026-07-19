@@ -1,5 +1,12 @@
+import { audioAssetUri } from '@/persistence/assets';
 import { sanitizeCompSegments } from '../comping';
-import { getProject, useProjectStore } from '../store';
+import {
+  getAudioSourceId,
+  getProject,
+  placeholderSourceAudio,
+  setAudioSourceId,
+  useProjectStore,
+} from '../store';
 import type { ClipCompSegment, ClipTake, EditorClip } from '../types';
 import { clearProjectClipWarp } from '../warp';
 import { execute, executeAtomic } from './history';
@@ -120,10 +127,10 @@ export function setClipTakes(
  * be a single segment (the clip keeps that take's asset); with one — see
  * flattenClipComp (src/project/comp-flatten.ts), which stitches the comp
  * into a new asset first — the clip is rebased onto the baked asset. The
- * The baked asset contains the complete audible clip-local window plus leading
- * silence for the native source offset (which has no setter). Looping and warp
- * are reset when rebasing; outer clip fades remain metadata because
- * flattenClipComp deliberately does not bake them.
+ * baked asset is exactly the audible clip window, so the clip is rebased to
+ * source offset 0 rather than baking leading silence for the original offset.
+ * Looping and warp are reset when rebasing; outer clip fades remain metadata
+ * because flattenClipComp deliberately does not bake them.
  *
  * @param clipId Id of the clip to flatten.
  * @param bakedAssetId Asset holding the stitched comp at the clip's source window.
@@ -170,23 +177,59 @@ export function dropClipTakesBatch(inputs: ReadonlyArray<DropClipTakesInput>): v
     }
     replacements.set(input.clipId, input.bakedAssetId);
   }
+  // Old clip id -> rebased clip id for baked clips. The native source offset
+  // has no setter, so rebasing to offset 0 means recreating the clip over the
+  // baked asset (which is exactly the audible window) and dropping the old one.
+  const rebased = new Map<number, number>();
   executeAtomic((edit) => {
     for (const input of inputs) {
-      if (input.bakedAssetId === undefined) continue;
+      const bakedAssetId = replacements.get(input.clipId);
+      if (bakedAssetId === undefined) continue;
       const clip = store.clips.find((entry) => entry.id === input.clipId);
       if (!clip) continue;
-      if (clip.loopEnabled) edit(1, () => project.setClipLoop(input.clipId, 'off'));
+      const known = getAudioSourceId(bakedAssetId);
+      const sourceId =
+        known !== undefined && known >= 1 && known <= project.sourceCount() ? known : undefined;
+      const newClipId = edit(2, () =>
+        project.addClip({
+          trackId: clip.trackId,
+          isMidi: false,
+          startPpq: clip.startPpq,
+          lengthPpq: clip.lengthPpq,
+          sourceOffsetPpq: 0,
+          gain: clip.gain,
+          ...placeholderSourceAudio(),
+          ...(sourceId === undefined ? { sourceUri: audioAssetUri(bakedAssetId) } : {}),
+        }),
+      );
+      if (sourceId === undefined) setAudioSourceId(bakedAssetId, project.sourceCount());
+      else edit(1, () => project.setClipSource(newClipId, sourceId));
+      if ((clip.fadeInPpq ?? 0) > 0 || (clip.fadeOutPpq ?? 0) > 0) {
+        edit(1, () =>
+          project.setClipFade(
+            newClipId,
+            { lengthPpq: clip.fadeInPpq ?? 0 },
+            { lengthPpq: clip.fadeOutPpq ?? 0 },
+          ),
+        );
+      }
+      // Destructive step last: the replacement clip is fully valid by now.
       if (clip.warp !== undefined) {
         clearProjectClipWarp(project, input.clipId, (mutation) => edit(1, mutation));
       }
+      edit(1, () => project.removeClip(input.clipId));
+      rebased.set(input.clipId, newClipId);
     }
-    store.refresh();
     store.clips = store.clips.map((entry) => {
       if (!replacements.has(entry.id)) return entry;
-      const next: EditorClip = { ...entry };
       const bakedAssetId = replacements.get(entry.id);
+      const newId = rebased.get(entry.id);
+      const next: EditorClip = { ...entry, ...(newId !== undefined ? { id: newId } : {}) };
       if (bakedAssetId !== undefined) {
         next.assetId = bakedAssetId;
+        // The baked asset is exactly the audible clip window, so the clip is
+        // rebased to source offset 0 rather than prepending leading silence.
+        next.sourceOffsetPpq = 0;
         next.loopEnabled = false;
         next.loopLengthPpq = 0;
         delete next.warp;
@@ -195,6 +238,9 @@ export function dropClipTakesBatch(inputs: ReadonlyArray<DropClipTakesInput>): v
       delete next.compSegments;
       return next;
     });
+    for (const [oldId, newId] of rebased) {
+      if (store.clipId === oldId) store.clipId = newId;
+    }
     store.refresh();
   });
 }

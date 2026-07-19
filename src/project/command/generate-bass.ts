@@ -15,13 +15,8 @@ import { editorChordToChord } from '@/compose/chord-io';
 import { effectiveKeyScale } from '@/compose/key';
 import { noteEventsToNewEditorNotes } from '@/compose/notes-io';
 import { useProjectStore } from '../store';
-import {
-  addGeneratedTrack,
-  EDITS_PER_TRACK,
-  materializeNote,
-  type TrackPlan,
-} from './generate-track';
-import { execute } from './history';
+import { addGeneratedTrack, materializeNote, type TrackPlan } from './generate-track';
+import { executeAtomic } from './history';
 
 /** NativeSynth preset for generated bass tracks. */
 const BASS_PRESET = 'sub-bass';
@@ -79,14 +74,18 @@ export function generateBassLineCommand(params: GenerateBassParams = {}): number
   const plan = buildBassPlan(store, params);
   if (plan === null) return 0;
 
-  execute(EDITS_PER_TRACK, () =>
-    addGeneratedTrack(store, {
-      name: plan.name,
-      notes: plan.notes,
-      startPpq: 0,
-      lengthPpq: plan.lengthPpq,
-      preset: plan.preset,
-    }),
+  executeAtomic((edit) =>
+    addGeneratedTrack(
+      store,
+      {
+        name: plan.name,
+        notes: plan.notes,
+        startPpq: 0,
+        lengthPpq: plan.lengthPpq,
+        preset: plan.preset,
+      },
+      edit,
+    ),
   );
   return plan.notes.length;
 }

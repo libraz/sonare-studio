@@ -141,6 +141,46 @@ describe('track freeze and bounce-in-place', () => {
       expect(ingest).not.toHaveBeenCalled();
       expect(store.tracks[0].frozen).toBeUndefined();
     });
+
+    it('passes a cooperative yield so a long render can repaint the main thread', async () => {
+      const voxId = addAudioTrack({ name: 'Vox' });
+      await freezeTrack(voxId, { render, ingest });
+      expect(typeof render.mock.calls[0][1]?.yieldBetweenBlocks).toBe('function');
+    });
+
+    it('supersedes the freeze when the target track is edited mid-render', async () => {
+      const voxId = addAudioTrack({ name: 'Vox' });
+      const pending = deferred<MixdownResult>();
+      render.mockImplementationOnce(async () => pending.promise);
+
+      const freezing = freezeTrack(voxId, { render, ingest });
+      await vi.waitFor(() => expect(render).toHaveBeenCalledTimes(1));
+      // Editing the frozen track's own content invalidates the in-flight render.
+      await addAudioClip({ trackId: voxId, assetId: 'asset-late', startPpq: 0, lengthPpq: 8 });
+      pending.resolve(renderResult);
+
+      await expect(freezing).rejects.toMatchObject({ name: 'AbortError' });
+      expect(store.tracks.find((track) => track.id === voxId)?.frozen).toBeUndefined();
+    });
+
+    it('keeps the freeze when only an unrelated track changes mid-render', async () => {
+      const voxId = addAudioTrack({ name: 'Vox' });
+      const otherId = addAudioTrack({ name: 'Other' });
+      const pending = deferred<MixdownResult>();
+      render.mockImplementationOnce(async () => pending.promise);
+
+      const freezing = freezeTrack(voxId, { render, ingest });
+      await vi.waitFor(() => expect(render).toHaveBeenCalledTimes(1));
+      // A change to a different track does not affect the isolated pre-fader
+      // render, so the cheap track-scoped revision must not cancel the freeze.
+      await addAudioClip({ trackId: otherId, assetId: 'asset-other', startPpq: 0, lengthPpq: 8 });
+      pending.resolve(renderResult);
+
+      await expect(freezing).resolves.toBe('baked-1');
+      expect(store.tracks.find((track) => track.id === voxId)?.frozen).toEqual({
+        assetId: 'baked-1',
+      });
+    });
   });
 
   describe('bounceTrackRange', () => {

@@ -141,14 +141,16 @@ export function clipPlaybackNotes(clip: ClipNoteWindow): MidiNote[] {
 }
 
 /**
- * Converts a PPQ span to seconds at a constant tempo.
+ * Converts a PPQ span to seconds at a constant tempo. Distinct from the
+ * tempo-map `ppqToSeconds(map, ppq)`, which resolves an absolute position under
+ * a variable-tempo map; this one takes a bare span and a single BPM.
  *
- * @param ppq Span in quarter-note PPQ.
+ * @param spanPpq Span in quarter-note PPQ.
  * @param tempoBpm Tempo in BPM (> 0).
  * @returns Span in seconds.
  */
-export function ppqToSeconds(ppq: number, tempoBpm: number): number {
-  return (ppq * 60) / tempoBpm;
+export function ppqSpanToSeconds(spanPpq: number, tempoBpm: number): number {
+  return (spanPpq * 60) / tempoBpm;
 }
 
 /** Tempo source used when cutting PPQ windows into audio-source frames. */
@@ -179,12 +181,12 @@ export function sliceAudioClipWindow(
   const frames = channels[0]?.length ?? 0;
   const startFrame =
     typeof tempo === 'number'
-      ? Math.round(ppqToSeconds(sourceOffsetPpq, tempo) * sampleRate)
+      ? Math.round(ppqSpanToSeconds(sourceOffsetPpq, tempo) * sampleRate)
       : ppqToSamples(tempo, timelineOriginPpq + sourceOffsetPpq, sampleRate) -
         ppqToSamples(tempo, timelineOriginPpq, sampleRate);
   const endFrame =
     typeof tempo === 'number'
-      ? startFrame + Math.round(ppqToSeconds(lengthPpq, tempo) * sampleRate)
+      ? startFrame + Math.round(ppqSpanToSeconds(lengthPpq, tempo) * sampleRate)
       : ppqToSamples(tempo, timelineOriginPpq + sourceOffsetPpq + lengthPpq, sampleRate) -
         ppqToSamples(tempo, timelineOriginPpq, sampleRate);
   const start = Math.min(frames, Math.max(0, startFrame));
@@ -224,7 +226,7 @@ export function applyAudioClipFades(
     Math.max(
       0,
       typeof tempo === 'number'
-        ? Math.round(ppqToSeconds(fadeInPpq, tempo) * sampleRate)
+        ? Math.round(ppqSpanToSeconds(fadeInPpq, tempo) * sampleRate)
         : ppqDurationSamples(tempo, timelineStartPpq, fadeInPpq, sampleRate),
     ),
   );
@@ -233,7 +235,7 @@ export function applyAudioClipFades(
     Math.max(
       0,
       typeof tempo === 'number'
-        ? Math.round(ppqToSeconds(fadeOutPpq, tempo) * sampleRate)
+        ? Math.round(ppqSpanToSeconds(fadeOutPpq, tempo) * sampleRate)
         : ppqDurationSamples(
             tempo,
             timelineStartPpq + Math.max(0, (timelineLengthPpq ?? fadeOutPpq) - fadeOutPpq),
@@ -377,7 +379,7 @@ function audioSpanSamples(
   sampleRate: number,
 ): number {
   return typeof tempo === 'number'
-    ? Math.max(0, Math.round(ppqToSeconds(lengthPpq, tempo) * sampleRate))
+    ? Math.max(0, Math.round(ppqSpanToSeconds(lengthPpq, tempo) * sampleRate))
     : Math.max(0, ppqDurationSamples(tempo, startPpq, lengthPpq, sampleRate));
 }
 

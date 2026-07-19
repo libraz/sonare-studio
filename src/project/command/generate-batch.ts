@@ -21,7 +21,7 @@ import { buildCounterPlan, type GenerateCounterMelodyParams } from './generate-c
 import { buildDrumsPlan, type GenerateDrumsParams } from './generate-drums';
 import { buildMotifClipMerge, buildMotifPlan, type GenerateMotifParams } from './generate-motif';
 import { addGeneratedTrack, EDITS_PER_TRACK, type TrackPlan } from './generate-track';
-import { execute } from './history';
+import { type AtomicProjectEdit, executeAtomic } from './history';
 import { requireEditableClip, requireEditableTrack } from './utils';
 
 /** The five instrumental parts the batch command can generate. */
@@ -70,7 +70,7 @@ export type BatchPartSpec =
 /** One deferred write plus the number of wasm-Project edits it performs. */
 interface BatchOp {
   edits: number;
-  apply: () => void;
+  apply: (edit: AtomicProjectEdit) => void;
 }
 
 /** Builds the new-track plan for a part spec (motif's clip target excluded). */
@@ -100,20 +100,23 @@ function replaceTrack(
   store: ReturnType<typeof useProjectStore>,
   trackId: number,
   plan: TrackPlan,
+  edit: AtomicProjectEdit,
 ): void {
   const track = requireEditableTrack(store, trackId);
   if (track.kind !== 'midi') {
     throw new RangeError(`Generated content can only replace an existing MIDI track: ${trackId}`);
   }
   const oldClips = store.clips.filter((clip) => clip.trackId === trackId);
-  for (const clip of oldClips) getProject().removeClip(clip.id);
-  const clipId = getProject().addClip({
-    trackId,
-    isMidi: true,
-    startPpq: 0,
-    lengthPpq: plan.lengthPpq,
-  });
-  getProject().setMidiEvents(clipId, notesToProjectEvents(plan.notes));
+  for (const clip of oldClips) edit(1, () => getProject().removeClip(clip.id));
+  const clipId = edit(2, () =>
+    getProject().addClip({
+      trackId,
+      isMidi: true,
+      startPpq: 0,
+      lengthPpq: plan.lengthPpq,
+    }),
+  );
+  edit(1, () => getProject().setMidiEvents(clipId, notesToProjectEvents(plan.notes)));
   store.refresh();
   store.clips = store.clips.map((clip) =>
     clip.id === clipId ? { ...clip, name: track.name } : clip,
@@ -143,8 +146,8 @@ export function generateTracksBatchCommand(specs: ReadonlyArray<BatchPartSpec>):
       if (merged === null) continue;
       ops.push({
         edits: 1,
-        apply: () => {
-          project.setMidiEvents(clip.id, notesToProjectEvents(merged));
+        apply: (edit) => {
+          edit(1, () => project.setMidiEvents(clip.id, notesToProjectEvents(merged)));
         },
       });
       continue;
@@ -165,16 +168,20 @@ export function generateTracksBatchCommand(specs: ReadonlyArray<BatchPartSpec>):
       const oldClipCount = store.clips.filter((clip) => clip.trackId === trackId).length;
       ops.push({
         edits: existing ? oldClipCount + 3 : EDITS_PER_TRACK,
-        apply: () => {
-          if (existing) replaceTrack(store, trackId, plan);
+        apply: (edit) => {
+          if (existing) replaceTrack(store, trackId, plan, edit);
           else
-            addGeneratedTrack(store, {
-              name: plan.name,
-              notes: plan.notes,
-              startPpq: 0,
-              lengthPpq: plan.lengthPpq,
-              preset: plan.preset,
-            });
+            addGeneratedTrack(
+              store,
+              {
+                name: plan.name,
+                notes: plan.notes,
+                startPpq: 0,
+                lengthPpq: plan.lengthPpq,
+                preset: plan.preset,
+              },
+              edit,
+            );
         },
       });
       continue;
@@ -182,22 +189,26 @@ export function generateTracksBatchCommand(specs: ReadonlyArray<BatchPartSpec>):
 
     ops.push({
       edits: EDITS_PER_TRACK,
-      apply: () =>
-        addGeneratedTrack(store, {
-          name: plan.name,
-          notes: plan.notes,
-          startPpq: 0,
-          lengthPpq: plan.lengthPpq,
-          preset: plan.preset,
-        }),
+      apply: (edit) =>
+        addGeneratedTrack(
+          store,
+          {
+            name: plan.name,
+            notes: plan.notes,
+            startPpq: 0,
+            lengthPpq: plan.lengthPpq,
+            preset: plan.preset,
+          },
+          edit,
+        ),
     });
   }
 
   const totalEdits = ops.reduce((sum, op) => sum + op.edits, 0);
   if (totalEdits === 0) return 0;
 
-  execute(totalEdits, () => {
-    for (const op of ops) op.apply();
+  executeAtomic((edit) => {
+    for (const op of ops) op.apply(edit);
     store.refresh();
   });
   return ops.length;

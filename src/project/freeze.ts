@@ -27,13 +27,39 @@ export interface FreezeRenderOptions {
   render?: typeof renderProjectWithEngine;
   /** Asset ingester override for tests; production uses a leased asset transaction. */
   ingest?: (channels: Float32Array[], sampleRate: number, name: string) => Promise<{ id: string }>;
+  /**
+   * Cooperative yield awaited between render checkpoints; defaults to a
+   * macrotask so the main thread can repaint and land pending edits (which the
+   * cancellation check then observes) during a long freeze/bounce.
+   */
+  yieldBetweenBlocks?: () => Promise<void>;
 }
 
 const freezeOperations = new OperationGeneration();
 
-function currentDocumentRevision(): string | null {
+/** Yields a macrotask so the browser can repaint mid-render. */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise<void>((resolve) => setTimeout(resolve, 0));
+}
+
+/**
+ * Cheap change signal for a freeze/bounce: only the target track's own content
+ * plus tempo/meter affect its isolated pre-fader render, so hashing just those
+ * — instead of the whole document on every render checkpoint — keeps the
+ * cancellation check O(one track) on large projects. Document-level swaps
+ * (new/load/dispose) are caught separately by the operation's documentGeneration
+ * identity, so they need not appear here.
+ */
+function trackRenderRevision(trackId: number): string | null {
   try {
-    return JSON.stringify(serializeProject());
+    const store = useProjectStore();
+    return JSON.stringify({
+      tempo: store.tempoSegments,
+      meter: store.timeSignatures,
+      pickup: store.pickupLengthPpq,
+      track: store.tracks.find((entry) => entry.id === trackId) ?? null,
+      clips: store.clips.filter((clip) => clip.trackId === trackId),
+    });
   } catch {
     return null;
   }
@@ -42,6 +68,7 @@ function currentDocumentRevision(): string | null {
 function resolveSeams(options: FreezeRenderOptions) {
   return {
     render: options.render ?? renderProjectWithEngine,
+    yieldBetweenBlocks: options.yieldBetweenBlocks ?? yieldToEventLoop,
   };
 }
 
@@ -53,7 +80,7 @@ async function renderFrozen(
   options: FreezeRenderOptions,
   shouldCancel: () => boolean,
 ) {
-  const { render } = resolveSeams(options);
+  const { render, yieldBetweenBlocks } = resolveSeams(options);
   const wasm = await ensureWasm();
   if (shouldCancel()) throw new DOMException('Freeze render was superseded.', 'AbortError');
   return render(doc, {
@@ -61,6 +88,7 @@ async function renderFrozen(
     deps: null,
     resolvePreset: (preset) => resolvePresetName(wasm, preset),
     shouldCancel,
+    yieldBetweenBlocks,
     ...(range !== null ? { range } : {}),
   });
 }
@@ -87,8 +115,12 @@ export async function freezeTrack(
   }
   const trackIndex = store.tracks.findIndex((entry) => entry.id === trackId);
   const doc = serializeProject();
-  const revision = JSON.stringify(doc);
-  const operation = beginProjectOperation(freezeOperations, store, `freeze:${trackId}`, revision);
+  const operation = beginProjectOperation(
+    freezeOperations,
+    store,
+    `freeze:${trackId}`,
+    trackRenderRevision(trackId),
+  );
   const assets = options.ingest ? null : createAudioAssetTransaction();
   const isReferenced = (assetId: string): boolean =>
     collectReferencedAudioAssetIds(store.clips, store.tracks).has(assetId);
@@ -104,7 +136,7 @@ export async function freezeTrack(
           operation,
           store,
           `freeze:${trackId}`,
-          currentDocumentRevision(),
+          trackRenderRevision(trackId),
         ),
     );
     assertProjectOperationCurrent(
@@ -112,7 +144,7 @@ export async function freezeTrack(
       operation,
       store,
       `freeze:${trackId}`,
-      currentDocumentRevision(),
+      trackRenderRevision(trackId),
     );
     const meta = options.ingest
       ? await options.ingest(
@@ -129,7 +161,7 @@ export async function freezeTrack(
       operation,
       store,
       `freeze:${trackId}`,
-      currentDocumentRevision(),
+      trackRenderRevision(trackId),
     );
     setTrackFrozen(trackId, { assetId: meta.id });
     assets?.commit();
@@ -182,8 +214,12 @@ export async function bounceTrackRange(
   }
   const trackIndex = store.tracks.findIndex((entry) => entry.id === trackId);
   const doc = serializeProject();
-  const revision = JSON.stringify(doc);
-  const operation = beginProjectOperation(freezeOperations, store, `bounce:${trackId}`, revision);
+  const operation = beginProjectOperation(
+    freezeOperations,
+    store,
+    `bounce:${trackId}`,
+    trackRenderRevision(trackId),
+  );
   const assets = options.ingest ? null : createAudioAssetTransaction();
   const isReferenced = (assetId: string): boolean =>
     collectReferencedAudioAssetIds(store.clips, store.tracks).has(assetId);
@@ -199,7 +235,7 @@ export async function bounceTrackRange(
           operation,
           store,
           `bounce:${trackId}`,
-          currentDocumentRevision(),
+          trackRenderRevision(trackId),
         ),
     );
     assertProjectOperationCurrent(
@@ -207,7 +243,7 @@ export async function bounceTrackRange(
       operation,
       store,
       `bounce:${trackId}`,
-      currentDocumentRevision(),
+      trackRenderRevision(trackId),
     );
     const meta = options.ingest
       ? await options.ingest(
@@ -224,7 +260,7 @@ export async function bounceTrackRange(
       operation,
       store,
       `bounce:${trackId}`,
-      currentDocumentRevision(),
+      trackRenderRevision(trackId),
     );
     // One undoable edit: a single undo removes the clip AND its new track.
     const clipId = addBouncedClip({
