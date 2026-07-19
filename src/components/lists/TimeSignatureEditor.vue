@@ -10,6 +10,7 @@ import { formatMessage, useI18n } from '@/ui/i18n';
 import { barBeatFromPpq, formatBarBeat, parseBarBeat } from './bar-beat';
 import ListIcon from './ListIcon.vue';
 import {
+  formatRowIssue,
   MAX_TIME_SIGNATURE_NUMERATOR,
   mergeTimeSignatureSegments,
   TIME_SIGNATURE_DENOMINATORS,
@@ -175,13 +176,14 @@ function apply(): void {
   });
   if (issues.length === 0) {
     for (const issue of validateTimeSignatureRows(parsed)) {
+      const message = formatRowIssue(issue.issue, t.value.shell.lists.common.validation);
       issues.push(
         issue.row >= 0
           ? formatMessage(t.value.shell.lists.common.rowIssue, {
               row: issue.row + 1,
-              message: issue.message,
+              message,
             })
-          : issue.message,
+          : message,
       );
     }
   }

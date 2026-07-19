@@ -120,6 +120,35 @@ export function barBeatFromPpq(
 }
 
 /**
+ * Fractional number of bars spanned by a PPQ range, honoring meter changes
+ * within the range (each portion is measured against its own bar length). This
+ * is the meter-aware generalization of `(endPpq - startPpq) / barLength` and is
+ * meant for seeding a bar-count field, so callers typically round the result.
+ *
+ * @param startPpq Range start in quarter-note PPQ.
+ * @param endPpq Range end in quarter-note PPQ.
+ * @param signatures Project time-signature map (any order; empty = 4/4).
+ * @returns Bar count as a real number (0 when the range is empty or inverted).
+ */
+export function fractionalBarsBetween(
+  startPpq: number,
+  endPpq: number,
+  signatures: ReadonlyArray<TimeSignatureSegment>,
+): number {
+  if (!(endPpq > startPpq)) return 0;
+  const table = segmentTable(signatures);
+  let bars = 0;
+  for (let i = 0; i < table.length; i++) {
+    const segStart = table[i].startPpq;
+    const segEnd = i + 1 < table.length ? table[i + 1].startPpq : Number.POSITIVE_INFINITY;
+    const lo = Math.max(startPpq, segStart);
+    const hi = Math.min(endPpq, segEnd);
+    if (hi > lo) bars += (hi - lo) / barLengthPpq(table[i]);
+  }
+  return bars;
+}
+
+/**
  * Converts a bar.beat position to absolute PPQ.
  *
  * @param position 1-based bar and beat (beat may be fractional).

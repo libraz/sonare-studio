@@ -5,6 +5,7 @@ import {
   beatLengthPpq,
   formatBarBeat,
   formatBarBeatTick,
+  fractionalBarsBetween,
   parseBarBeat,
   parseBarBeatTick,
   ppqFromBarBeat,
@@ -52,6 +53,35 @@ describe('barBeatFromPpq', () => {
 
   it('clamps negative positions to 1.1', () => {
     expect(barBeatFromPpq(-3, FOUR_FOUR)).toEqual({ bar: 1, beat: 1 });
+  });
+});
+
+describe('fractionalBarsBetween', () => {
+  const THREE_FOUR: TimeSignatureSegment[] = [{ startPpq: 0, numerator: 3, denominator: 4 }];
+
+  it('counts whole and fractional bars in 4/4', () => {
+    expect(fractionalBarsBetween(0, 8, FOUR_FOUR)).toBe(2);
+    expect(fractionalBarsBetween(0, 4, FOUR_FOUR)).toBe(1);
+    expect(fractionalBarsBetween(0, 6, FOUR_FOUR)).toBe(1.5);
+  });
+
+  it('respects a non-4/4 meter instead of a fixed 4 beats per bar', () => {
+    // 3 bars of 3/4 span 9 PPQ; dividing by a fixed 4 would misread this as 2.
+    expect(fractionalBarsBetween(0, 9, THREE_FOUR)).toBe(3);
+    expect(fractionalBarsBetween(0, 6, THREE_FOUR)).toBe(2);
+  });
+
+  it('measures each portion against its own meter across a change', () => {
+    // 2 bars of 4/4 (0..8) then 1 bar of 6/8 (8..11) = 3 bars.
+    expect(fractionalBarsBetween(0, 11, MIXED)).toBe(3);
+    expect(fractionalBarsBetween(8, 11, MIXED)).toBe(1);
+    // Half a 6/8 bar (1.5 PPQ) past the change adds 0.5.
+    expect(fractionalBarsBetween(0, 9.5, MIXED)).toBe(2.5);
+  });
+
+  it('returns 0 for an empty or inverted range', () => {
+    expect(fractionalBarsBetween(5, 5, FOUR_FOUR)).toBe(0);
+    expect(fractionalBarsBetween(8, 4, FOUR_FOUR)).toBe(0);
   });
 });
 

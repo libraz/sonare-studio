@@ -17,6 +17,7 @@ import {
   formatChordName,
 } from '@/project/chords';
 import {
+  arrangementMelodyPitchClasses,
   clearProjectChords,
   detectChordsForClip,
   detectChordsFromAudioClip,
@@ -28,7 +29,7 @@ import {
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
-import { barLengthPpq, formatBarBeat, parseBarBeat } from './bar-beat';
+import { barLengthPpq, formatBarBeat, fractionalBarsBetween, parseBarBeat } from './bar-beat';
 import ListIcon from './ListIcon.vue';
 
 /** Pitch-class options for the root / slash-bass pickers (value = pitch class). */
@@ -183,8 +184,15 @@ function onInsertDominant(index: number): void {
   errorMessage.value = inserted ? '' : t.value.shell.lists.chords.insertDominantTooShort;
 }
 
-/** Roman-numeral degree label for a chord in the prevailing key. */
+/** Whether a key is set; roman numerals and reharmonization need one to be meaningful. */
+const keySet = computed(() => store.scaleHighlight.enabled);
+
+/**
+ * Roman-numeral degree label for a chord in the prevailing key, or blank when no
+ * key is set — a degree read against the silent C-major fallback would be wrong.
+ */
 function romanFor(chord: EditorChordSymbol): string {
+  if (!keySet.value) return '';
   return chordToRoman(editorChordToChord(chord), effectiveKeyScale(store.scaleHighlight));
 }
 
@@ -319,19 +327,18 @@ const selectionRangePpq = computed(() => {
   return { startPpq, endPpq };
 });
 
-const PROGRESSION_BEATS_PER_BAR = 4;
-
 const rangeStyle = ref<ProgStyle>('idol');
 const rangePreset = ref('');
 const rangeBars = ref(4);
 
 // Re-seed the bar count from the selection's own width whenever it changes,
 // so the field starts at a sensible value but stays user-editable afterward.
+// Uses the active meter (not a fixed 4 beats/bar) so 3/4, 6/8, etc. seed right.
 watch(selectionRangePpq, (range) => {
   if (range) {
     rangeBars.value = Math.max(
       1,
-      Math.round((range.endPpq - range.startPpq) / PROGRESSION_BEATS_PER_BAR),
+      Math.round(fractionalBarsBetween(range.startPpq, range.endPpq, store.timeSignatures)),
     );
   }
 });
@@ -355,13 +362,25 @@ function applyToSelection(): void {
 /** Index of the chord whose reharmonization palette is open, or null. */
 const reharmIndex = ref<number | null>(null);
 
-/** Substitute candidates for the chord whose palette is currently open. */
+/**
+ * Substitute candidates for the chord whose palette is currently open. Empty
+ * without a key: substitutes are chosen relative to the key, so offering
+ * C-major-based ones under an unset key would mislead (see {@link keySet}).
+ */
 const reharmCandidates = computed(() => {
   const index = reharmIndex.value;
-  if (index === null) return [];
+  if (index === null || !keySet.value) return [];
   const chord = store.chords[index];
   if (!chord) return [];
-  return reharmCandidatesFor(chord, effectiveKeyScale(store.scaleHighlight));
+  // Constrain to substitutes that keep the melody sounding over this chord as a
+  // chord tone; without this the "safe" palette can create clashes under a
+  // sustained melody note.
+  const melodyPcs = arrangementMelodyPitchClasses(chord.startPpq, chord.endPpq);
+  return reharmCandidatesFor(
+    chord,
+    effectiveKeyScale(store.scaleHighlight),
+    melodyPcs.length > 0 ? melodyPcs : undefined,
+  );
 });
 
 /** Opens (or closes) the reharmonization palette for a chord row. */
@@ -628,7 +647,8 @@ function clearAll(): void {
         </tr>
         <tr v-if="reharmIndex === item.index" class="reharm-row">
           <td colspan="9">
-            <div v-if="reharmCandidates.length > 0" class="reharm-palette">
+            <p v-if="!keySet" class="reharm-empty">{{ t.shell.lists.chords.reharmKeyRequired }}</p>
+            <div v-else-if="reharmCandidates.length > 0" class="reharm-palette">
               <button
                 v-for="candidate in reharmCandidates"
                 :key="`${candidate.kind}:${candidate.symbol.rootPc}:${candidate.symbol.quality}`"

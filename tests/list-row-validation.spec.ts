@@ -1,13 +1,47 @@
 import { describe, expect, it } from 'vitest';
 import {
+  formatRowIssue,
   MAX_BPM,
   MIN_BPM,
   mergeTempoSegments,
   mergeTimeSignatureSegments,
+  type RowIssueStrings,
   sortSegments,
   validateTempoRows,
   validateTimeSignatureRows,
 } from '@/components/lists/row-validation';
+
+const ISSUE_STRINGS: RowIssueStrings = {
+  positionBeforeStart: 'Position must be at or after 1.1',
+  firstEntryNotAtStart: 'The first entry must start at 1.1',
+  positionsNotAscending: 'Positions must be strictly ascending',
+  tempoMapEmpty: 'The tempo map needs at least one entry',
+  bpmOutOfRange: 'BPM must be between {min} and {max}',
+  rampBpmOutOfRange: 'Ramp target BPM must be between {min} and {max}',
+  timeSignatureMapEmpty: 'The time-signature map needs at least one entry',
+  beatsPerBarOutOfRange: 'Beats per bar must be an integer between 1 and {max}',
+  beatUnitInvalid: 'Beat unit must be one of {allowed}',
+};
+
+describe('formatRowIssue', () => {
+  it('formats parameterless issues verbatim', () => {
+    expect(formatRowIssue({ kind: 'positions-not-ascending' }, ISSUE_STRINGS)).toBe(
+      'Positions must be strictly ascending',
+    );
+  });
+
+  it('interpolates range and list parameters', () => {
+    expect(formatRowIssue({ kind: 'bpm-out-of-range', min: 20, max: 400 }, ISSUE_STRINGS)).toBe(
+      'BPM must be between 20 and 400',
+    );
+    expect(formatRowIssue({ kind: 'beats-per-bar-out-of-range', max: 32 }, ISSUE_STRINGS)).toBe(
+      'Beats per bar must be an integer between 1 and 32',
+    );
+    expect(
+      formatRowIssue({ kind: 'beat-unit-invalid', allowed: [1, 2, 4, 8, 16] }, ISSUE_STRINGS),
+    ).toBe('Beat unit must be one of 1, 2, 4, 8, 16');
+  });
+});
 
 describe('validateTempoRows', () => {
   it('accepts a valid ascending map anchored at 1.1', () => {
@@ -28,7 +62,7 @@ describe('validateTempoRows', () => {
 
   it('requires the first entry to start at PPQ 0', () => {
     const issues = validateTempoRows([{ startPpq: 4, bpm: 120 }]);
-    expect(issues).toEqual([{ row: 0, message: 'The first entry must start at 1.1' }]);
+    expect(issues).toEqual([{ row: 0, issue: { kind: 'first-entry-not-at-start' } }]);
   });
 
   it('rejects duplicate and descending positions', () => {
@@ -104,7 +138,7 @@ describe('validateTimeSignatureRows', () => {
       { startPpq: 0, numerator: 4, denominator: 4 },
       { startPpq: 0, numerator: 3, denominator: 4 },
     ]);
-    expect(issues).toEqual([{ row: 1, message: 'Positions must be strictly ascending' }]);
+    expect(issues).toEqual([{ row: 1, issue: { kind: 'positions-not-ascending' } }]);
   });
 });
 

@@ -22,27 +22,80 @@ export const TIME_SIGNATURE_DENOMINATORS = [1, 2, 4, 8, 16] as const;
 /** Largest beats-per-bar count the editor accepts. */
 export const MAX_TIME_SIGNATURE_NUMERATOR = 32;
 
+/** Structured validation problem, localized at the editor (see {@link formatRowIssue}). */
+export type RowIssueCode =
+  | { kind: 'position-before-start' }
+  | { kind: 'first-entry-not-at-start' }
+  | { kind: 'positions-not-ascending' }
+  | { kind: 'tempo-map-empty' }
+  | { kind: 'bpm-out-of-range'; min: number; max: number }
+  | { kind: 'ramp-bpm-out-of-range'; min: number; max: number }
+  | { kind: 'time-signature-map-empty' }
+  | { kind: 'beats-per-bar-out-of-range'; max: number }
+  | { kind: 'beat-unit-invalid'; allowed: readonly number[] };
+
 /** One validation finding addressed to a row (-1 = the whole list). */
 export interface RowIssue {
   /** 0-based row index, or -1 for list-level issues. */
   row: number;
-  /** Human-readable problem description. */
-  message: string;
+  /** Structured problem code, formatted to a message at the UI. */
+  issue: RowIssueCode;
+}
+
+/** Localized templates for each {@link RowIssueCode} kind. */
+export interface RowIssueStrings {
+  positionBeforeStart: string;
+  firstEntryNotAtStart: string;
+  positionsNotAscending: string;
+  tempoMapEmpty: string;
+  bpmOutOfRange: string;
+  rampBpmOutOfRange: string;
+  timeSignatureMapEmpty: string;
+  beatsPerBarOutOfRange: string;
+  beatUnitInvalid: string;
+}
+
+/** Formats a structured row issue into a localized message. */
+export function formatRowIssue(issue: RowIssueCode, strings: RowIssueStrings): string {
+  switch (issue.kind) {
+    case 'position-before-start':
+      return strings.positionBeforeStart;
+    case 'first-entry-not-at-start':
+      return strings.firstEntryNotAtStart;
+    case 'positions-not-ascending':
+      return strings.positionsNotAscending;
+    case 'tempo-map-empty':
+      return strings.tempoMapEmpty;
+    case 'bpm-out-of-range':
+      return strings.bpmOutOfRange
+        .replace('{min}', String(issue.min))
+        .replace('{max}', String(issue.max));
+    case 'ramp-bpm-out-of-range':
+      return strings.rampBpmOutOfRange
+        .replace('{min}', String(issue.min))
+        .replace('{max}', String(issue.max));
+    case 'time-signature-map-empty':
+      return strings.timeSignatureMapEmpty;
+    case 'beats-per-bar-out-of-range':
+      return strings.beatsPerBarOutOfRange.replace('{max}', String(issue.max));
+    case 'beat-unit-invalid':
+      return strings.beatUnitInvalid.replace('{allowed}', issue.allowed.join(', '));
+  }
 }
 
 /** Checks that positions are finite, anchored at 1.1 and strictly ascending. */
 function validatePositions(rows: ReadonlyArray<{ startPpq: number }>, issues: RowIssue[]): void {
   rows.forEach((row, index) => {
     if (!Number.isFinite(row.startPpq) || row.startPpq < 0) {
-      issues.push({ row: index, message: 'Position must be at or after 1.1' });
+      issues.push({ row: index, issue: { kind: 'position-before-start' } });
     }
   });
   if (rows.length > 0 && rows[0].startPpq !== 0) {
-    issues.push({ row: 0, message: 'The first entry must start at 1.1' });
+    issues.push({ row: 0, issue: { kind: 'first-entry-not-at-start' } });
   }
   for (let i = 1; i < rows.length; i++) {
     if (rows[i].startPpq <= rows[i - 1].startPpq) {
-      issues.push({ row: i, message: 'Positions must be strictly ascending' });
+      issues.push({ row: i, issue: { kind: 'positions-not-ascending' } });
     }
   }
 }
@@ -58,13 +111,13 @@ function validatePositions(rows: ReadonlyArray<{ startPpq: number }>, issues: Ro
  */
 export function validateTempoRows(rows: ReadonlyArray<TempoSegment>): RowIssue[] {
   if (rows.length === 0) {
-    return [{ row: -1, message: 'The tempo map needs at least one entry' }];
+    return [{ row: -1, issue: { kind: 'tempo-map-empty' } }];
   }
   const issues: RowIssue[] = [];
   validatePositions(rows, issues);
   rows.forEach((row, index) => {
     if (!Number.isFinite(row.bpm) || row.bpm < MIN_BPM || row.bpm > MAX_BPM) {
-      issues.push({ row: index, message: `BPM must be between ${MIN_BPM} and ${MAX_BPM}` });
+      issues.push({ row: index, issue: { kind: 'bpm-out-of-range', min: MIN_BPM, max: MAX_BPM } });
     }
     if (
       row.endBpm !== undefined &&
@@ -72,7 +125,7 @@ export function validateTempoRows(rows: ReadonlyArray<TempoSegment>): RowIssue[]
     ) {
       issues.push({
         row: index,
-        message: `Ramp target BPM must be between ${MIN_BPM} and ${MAX_BPM}`,
+        issue: { kind: 'ramp-bpm-out-of-range', min: MIN_BPM, max: MAX_BPM },
       });
     }
   });
@@ -91,7 +144,7 @@ export function validateTempoRows(rows: ReadonlyArray<TempoSegment>): RowIssue[]
  */
 export function validateTimeSignatureRows(rows: ReadonlyArray<TimeSignatureSegment>): RowIssue[] {
   if (rows.length === 0) {
-    return [{ row: -1, message: 'The time-signature map needs at least one entry' }];
+    return [{ row: -1, issue: { kind: 'time-signature-map-empty' } }];
   }
   const issues: RowIssue[] = [];
   validatePositions(rows, issues);
@@ -103,13 +156,13 @@ export function validateTimeSignatureRows(rows: ReadonlyArray<TimeSignatureSegme
     ) {
       issues.push({
         row: index,
-        message: `Beats per bar must be an integer between 1 and ${MAX_TIME_SIGNATURE_NUMERATOR}`,
+        issue: { kind: 'beats-per-bar-out-of-range', max: MAX_TIME_SIGNATURE_NUMERATOR },
       });
     }
     if (!(TIME_SIGNATURE_DENOMINATORS as ReadonlyArray<number>).includes(row.denominator)) {
       issues.push({
         row: index,
-        message: `Beat unit must be one of ${TIME_SIGNATURE_DENOMINATORS.join(', ')}`,
+        issue: { kind: 'beat-unit-invalid', allowed: TIME_SIGNATURE_DENOMINATORS },
       });
     }
   });
