@@ -28,7 +28,11 @@ import {
   type ProjectReharmonizationProposal,
   proposeReharmonizationForActiveClip,
 } from '@/project/commands';
-import { midiSourcePpqToTimeline } from '@/project/midi-projection';
+import {
+  audibleMidiSourceWindow,
+  MAX_LOOP_OCCURRENCES,
+  midiSourcePpqToTimeline,
+} from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
 
 /** Quiet period after the last note edit before a proposal is computed. */
@@ -132,14 +136,29 @@ export function useReactiveReharmonization(): ReactiveReharmonization {
     if (span === null || !reharmonizeActive.value) return;
     const clip = store.activeClip;
     if (clip === null) return;
-    const startPpq = Math.max(clip.startPpq, midiSourcePpqToTimeline(clip, span.startPpq));
-    const endPpq = Math.min(
-      clip.startPpq + clip.lengthPpq,
-      midiSourcePpqToTimeline(clip, span.endPpq),
-    );
-    if (!(endPpq > startPpq)) return;
+    // A looping clip repeats the edited source region at every occurrence on the
+    // timeline; reharmonize all of them, not just the first window, so later
+    // repetitions do not keep stale chords.
+    const clipEnd = clip.startPpq + clip.lengthPpq;
+    const window = audibleMidiSourceWindow(clip);
+    const looping =
+      clip.loopEnabled === true && (clip.loopLengthPpq ?? 0) > 0 && window.lengthPpq > 0;
+    const occurrences = looping
+      ? Math.min(Math.ceil(clip.lengthPpq / window.lengthPpq), MAX_LOOP_OCCURRENCES)
+      : 1;
+    const editedSpans: { startPpq: number; endPpq: number }[] = [];
+    for (let occurrence = 0; occurrence < occurrences; occurrence += 1) {
+      const repeatOffset = occurrence * window.lengthPpq;
+      const startPpq = Math.max(
+        clip.startPpq,
+        midiSourcePpqToTimeline(clip, span.startPpq) + repeatOffset,
+      );
+      const endPpq = Math.min(clipEnd, midiSourcePpqToTimeline(clip, span.endPpq) + repeatOffset);
+      if (endPpq > startPpq) editedSpans.push({ startPpq, endPpq });
+    }
+    if (editedSpans.length === 0) return;
     const proposal = proposeReharmonizationForActiveClip({
-      editedSpan: { startPpq, endPpq },
+      editedSpan: editedSpans,
       locked: [...lockedRegions.value],
     });
     if (proposal === null || !proposal.changed) return;

@@ -9,7 +9,7 @@
  * Pure module.
  */
 
-import type { TimeSignature } from '@libraz/libcantus';
+import { isStrongBeat, type TimeSignature } from '@libraz/libcantus';
 import type { TimeSignatureSegment } from '@/project/types';
 
 /** 4/4 fallback used when the project has no meter map. */
@@ -45,4 +45,23 @@ export function timeSignatureAtPpq(
   ppq: number,
 ): TimeSignature {
   return segmentToTimeSignature(segmentAtPpq(segments, ppq));
+}
+
+/**
+ * Whether an absolute beat is metrically strong under its governing meter. The
+ * beat is measured from the segment's own start so bar lines follow meter
+ * changes rather than assuming bars anchored at beat 0. A failed libcantus
+ * evaluation degrades to `false` (not strong) rather than throwing.
+ */
+export function strongBeatAt(
+  segments: ReadonlyArray<TimeSignatureSegment>,
+  absBeat: number,
+): boolean {
+  const segment = segmentAtPpq(segments, absBeat);
+  const inSegmentBeat = Math.max(0, absBeat - segment.startPpq);
+  try {
+    return isStrongBeat(inSegmentBeat, segmentToTimeSignature(segment));
+  } catch {
+    return false;
+  }
 }

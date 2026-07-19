@@ -590,6 +590,7 @@ export const useProjectStore = defineStore('project', () => {
           if (!isMidiFxNoop(midiFx)) mirrorEntry.midiFx = midiFx;
         }
         if (track.soloSafe === true) mirrorEntry.soloSafe = true;
+        if (typeof track.percussion === 'boolean') mirrorEntry.percussion = track.percussion;
         // Restore the VCA assignment only when the referenced group survives in
         // the document mixer, so dangling ids never leak into the session.
         if (

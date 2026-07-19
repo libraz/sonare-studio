@@ -93,6 +93,7 @@ export function useCompositionGuidance(): CompositionGuidance {
       notes: activeNotes,
       clipStartPpq: clip.startPpq,
       clipLengthPpq: clip.lengthPpq,
+      sourceOffsetPpq: clip.sourceOffsetPpq,
       chordSymbols: store.chords,
       key: store.scaleHighlight,
       timeSignatures: store.timeSignatures,
@@ -134,6 +135,8 @@ export function useCompositionGuidance(): CompositionGuidance {
     return buildTheoryCard(analysis, ctx, cardLabels.value);
   }
 
+  // buildGuidance already emits segments in the clip's source frame (see its
+  // sourceOffsetPpq input), matching the notes the piano roll draws.
   const guidanceSegments = computed(() => guidance.value?.segments);
   // Re-emit the resolver identity when the level changes too, so consumers that
   // key off `noteCard` re-render the currently shown card at the new level.
@@ -147,6 +150,10 @@ export function useCompositionGuidance(): CompositionGuidance {
     const clip = store.activeClip;
     if (result === null || clip === null) return undefined;
     const arrows: ResolutionArrow[] = [];
+    // Arrow origins are the notes' right edges in the same source-relative frame
+    // the piano roll draws in, so add the clip's trim offset to the projector's
+    // window-relative positions (see guidanceSegments).
+    const sourceOffsetPpq = clip.sourceOffsetPpq ?? 0;
     for (const occurrence of audibleMidiProjector(clip, { expandLoops: false })) {
       const note = occurrence.note;
       const analysis = result.byNoteId.get(note.id);
@@ -155,7 +162,7 @@ export function useCompositionGuidance(): CompositionGuidance {
       if (toPitch === undefined) continue;
       arrows.push({
         noteId: note.id,
-        endBeat: occurrence.clipStartPpq + occurrence.durationPpq,
+        endBeat: occurrence.clipStartPpq + sourceOffsetPpq + occurrence.durationPpq,
         fromPitch: note.pitch,
         toPitch,
       });

@@ -29,7 +29,12 @@ const GM_PERCUSSION_CHANNEL = 9;
 /** Fraction of a track's notes on channel 10 above which it reads as percussion. */
 const PERCUSSION_CHANNEL_FRACTION = 0.5;
 
-/** Track names that conventionally denote a percussion/drum track. */
+/**
+ * Track names that conventionally denote a percussion/drum track. This is only
+ * a seed hint for the default classification; a language-agnostic override lives
+ * in the explicit per-track {@link EditorTrack.percussion} flag, so this pattern
+ * is deliberately not grown per natural language.
+ */
 const DRUM_NAME_PATTERN = /\b(drums?|perc(?:ussion)?|kit|cajon|conga|bongo|timbale)\b/i;
 
 /** A track paired with the editor notes it currently carries (across its clips). */
@@ -40,8 +45,9 @@ export interface TrackWithNotes {
 
 /**
  * Whether a track should be treated as percussion and excluded from harmonic
- * analysis. Any of the following makes it percussion:
- *  - its name matches a drum/percussion convention;
+ * analysis. The explicit {@link EditorTrack.percussion} override wins when set;
+ * otherwise the heuristic flags the track when either:
+ *  - its name matches a drum/percussion convention; or
  *  - the majority of its notes sit on the GM percussion channel (10).
  *
  * @param track Track to classify.
@@ -49,6 +55,7 @@ export interface TrackWithNotes {
  *   empty or absent).
  */
 export function isDrumTrack(track: EditorTrack, notes?: ReadonlyArray<EditorNote>): boolean {
+  if (track.percussion !== undefined) return track.percussion;
   if (DRUM_NAME_PATTERN.test(track.name)) return true;
   if (notes && notes.length > 0) {
     let onPercussion = 0;

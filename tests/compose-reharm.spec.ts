@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  melodyPitchClassesInRegion,
   modalInterchangeFor,
   negativeHarmonyFor,
   reharmCandidatesFor,
@@ -38,6 +39,35 @@ describe('substitutionsFor', () => {
     // Constrain to candidates that keep B (pc 11), the third of G7.
     const constrained = substitutionsFor(g7, C_MAJOR, [11]);
     expect(constrained.length).toBeLessThanOrEqual(all.length);
+  });
+});
+
+describe('melodyPitchClassesInRegion', () => {
+  const note = (pitch: number, startPpq: number, durationPpq: number) => ({
+    pitch,
+    startPpq,
+    durationPpq,
+  });
+
+  it('takes the top voice at each onset within the region', () => {
+    // Two onsets: at 0 (C3 48 vs E4 64 -> top E) and at 2 (G4 67).
+    const notes = [note(48, 0, 2), note(64, 0, 2), note(67, 2, 2)];
+    expect(melodyPitchClassesInRegion(notes, 0, 4)).toEqual([4, 7]);
+  });
+
+  it('includes a note sustained from before the region', () => {
+    // A melody note beginning before the chord but still sounding into it.
+    expect(melodyPitchClassesInRegion([note(60, -2, 4)], 0, 4)).toEqual([0]);
+  });
+
+  it('excludes notes that end at or before the region and start at or after it', () => {
+    const notes = [note(62, -4, 4), note(65, 4, 2)];
+    expect(melodyPitchClassesInRegion(notes, 0, 4)).toEqual([]);
+  });
+
+  it('folds octaves into distinct pitch classes', () => {
+    const notes = [note(60, 0, 1), note(72, 1, 1)];
+    expect(melodyPitchClassesInRegion(notes, 0, 4)).toEqual([0]);
   });
 });
 

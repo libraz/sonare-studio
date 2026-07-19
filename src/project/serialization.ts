@@ -266,6 +266,11 @@ export interface DocumentTrack {
   groupIndex?: number;
   /** Solo-safe flag; absent = not solo-safe. */
   soloSafe?: boolean;
+  /**
+   * Explicit percussion override; absent = classify by heuristic. Persists both
+   * `true` (force percussion) and `false` (force harmonic).
+   */
+  percussion?: boolean;
   /** Id of the VCA control group this track belongs to; absent = unassigned. */
   vcaId?: string;
   /** Frozen state: the track's baked pre-fader render; absent = not frozen. */
@@ -706,6 +711,9 @@ export function serializeProject(): ProjectDocument {
         if (groupIndex >= 0) out.groupIndex = groupIndex;
       }
       if (track.soloSafe === true) out.soloSafe = true;
+      // Persist both true and false: false is a meaningful "not percussion"
+      // override, distinct from an absent flag (fall back to the heuristic).
+      if (track.percussion !== undefined) out.percussion = track.percussion;
       // VCA group ids are app-level strings, stable within a document, so they
       // round-trip directly (dangling ids are dropped on load).
       if (track.vcaId !== undefined) out.vcaId = track.vcaId;

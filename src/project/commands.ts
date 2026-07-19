@@ -9,6 +9,7 @@ export {
 } from './command/automation';
 export type { EstimatedChordSummary } from './command/chords';
 export {
+  arrangementMelodyPitchClasses,
   clearProjectChords,
   detectChordsForClip,
   detectChordsFromAudioClip,
@@ -234,6 +235,7 @@ export {
   setTrackGroup,
   setTrackMute,
   setTrackPan,
+  setTrackPercussion,
   setTrackRecordInputChannel,
   setTrackRecordInputDeviceId,
   setTrackSolo,

@@ -3,10 +3,31 @@ import {
   chordsFromAnnotation,
   type EditorChordSymbol,
   formatChordName,
+  sameChord,
   sanitizeChordSymbols,
   toProjectChordSymbol,
   toProjectChordSymbols,
 } from '@/project/chords';
+
+describe('sameChord', () => {
+  const base: EditorChordSymbol = { startPpq: 0, endPpq: 4, rootPc: 0, quality: 4 };
+
+  it('ignores the timeline region when comparing identity', () => {
+    expect(sameChord(base, { ...base, startPpq: 100, endPpq: 108 })).toBe(true);
+  });
+
+  it('distinguishes root, quality, and bass', () => {
+    expect(sameChord(base, { ...base, rootPc: 7 })).toBe(false);
+    expect(sameChord(base, { ...base, quality: 6 })).toBe(false);
+    expect(sameChord(base, { ...base, bassPc: 7 })).toBe(false);
+    expect(sameChord({ ...base, bassPc: 7 }, { ...base, bassPc: 7 })).toBe(true);
+  });
+
+  it('treats an absent bass as equal only to another absent bass', () => {
+    expect(sameChord(base, { ...base, bassPc: undefined })).toBe(true);
+    expect(sameChord({ ...base, bassPc: 0 }, base)).toBe(false);
+  });
+});
 
 describe('formatChordName', () => {
   it('formats root + quality suffix', () => {

@@ -22,11 +22,51 @@ import {
   type SubstitutionType,
   substituteChord,
 } from '@libraz/libcantus';
-import { chordExtensionSignature, type EditorChordSymbol } from '@/project/chords';
+import { type EditorChordSymbol, sameChord } from '@/project/chords';
 import { chordSpanToEditorChord, editorChordToChord } from './chord-io';
 
 /** Where a reharmonization candidate comes from. */
 export type ReharmKind = SubstitutionType | 'borrowed' | 'negative';
+
+/** Minimal note shape for melody extraction (absolute timeline PPQ). */
+export interface RegionNote {
+  pitch: number;
+  startPpq: number;
+  durationPpq: number;
+}
+
+/**
+ * Distinct pitch classes of the melody (top voice) sounding within a chord
+ * region, for melody-preserving reharmonization. Notes overlapping
+ * `[startPpq, endPpq)` are grouped by onset and the highest pitch at each onset
+ * is taken as the melody; the result is the set of those pitch classes. Empty
+ * when nothing overlaps, which leaves reharmonization unconstrained.
+ *
+ * @param notes Arrangement notes at absolute timeline PPQ (percussion excluded
+ *   by the caller).
+ * @param startPpq Region start (inclusive).
+ * @param endPpq Region end (exclusive).
+ * @param epsilon Onset-grouping tolerance in PPQ (default 1e-6).
+ */
+export function melodyPitchClassesInRegion(
+  notes: ReadonlyArray<RegionNote>,
+  startPpq: number,
+  endPpq: number,
+  epsilon = 1e-6,
+): number[] {
+  const overlapping = notes
+    .filter((note) => note.startPpq < endPpq && note.startPpq + note.durationPpq > startPpq)
+    .sort((a, b) => a.startPpq - b.startPpq || b.pitch - a.pitch);
+  const pcs = new Set<number>();
+  let groupStart = Number.NEGATIVE_INFINITY;
+  for (const note of overlapping) {
+    if (note.startPpq - groupStart > epsilon) {
+      pcs.add(((note.pitch % 12) + 12) % 12);
+      groupStart = note.startPpq;
+    }
+  }
+  return [...pcs].sort((a, b) => a - b);
+}
 
 /** One reharmonization candidate placed over a chord region. */
 export interface ReharmCandidate {
@@ -117,16 +157,6 @@ export function negativeHarmonyFor(symbol: EditorChordSymbol, key: KeyScale): Re
     roman: '',
     kind: 'negative',
   };
-}
-
-/** Two candidates that replace a chord with the same root/quality/bass. */
-function sameChord(a: EditorChordSymbol, b: EditorChordSymbol): boolean {
-  return (
-    a.rootPc === b.rootPc &&
-    a.quality === b.quality &&
-    chordExtensionSignature(a) === chordExtensionSignature(b) &&
-    (a.bassPc ?? -1) === (b.bassPc ?? -1)
-  );
 }
 
 /**

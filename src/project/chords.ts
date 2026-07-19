@@ -139,6 +139,20 @@ export function chordExtensionSignature(symbol: EditorChordSymbol): string {
   return normalizedChordExtensions(symbol).join(',');
 }
 
+/**
+ * Whether two chord symbols denote the same chord (root, quality, extension
+ * signature, and bass), ignoring their timeline region. An absent bass compares
+ * equal only to another absent bass.
+ */
+export function sameChord(a: EditorChordSymbol, b: EditorChordSymbol): boolean {
+  return (
+    a.rootPc === b.rootPc &&
+    a.quality === b.quality &&
+    chordExtensionSignature(a) === chordExtensionSignature(b) &&
+    (a.bassPc ?? -1) === (b.bassPc ?? -1)
+  );
+}
+
 /** Generic readable label for an extension without a named quality mapping. */
 function extensionLabel(pc: number): string {
   return (

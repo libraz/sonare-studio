@@ -231,6 +231,31 @@ export function setTrackSolo(trackId: number, solo: boolean): void {
 }
 
 /**
+ * Sets or clears a track's explicit percussion override as one undoable edit.
+ * `true` forces percussion, `false` forces harmonic, and `null` clears the
+ * override so the drum heuristic classifies the track again. App-level metadata
+ * used by harmonic analysis (chord/key estimation); it does not affect playback.
+ *
+ * @param trackId Id of the track.
+ * @param percussion `true`/`false` to override, `null` to fall back to the heuristic.
+ */
+export function setTrackPercussion(trackId: number, percussion: boolean | null): void {
+  const store = useProjectStore();
+  const track = requireTrack(store, trackId);
+  if ((track.percussion ?? null) === percussion) return;
+  execute(0, () => {
+    store.tracks = store.tracks.map((t) => {
+      if (t.id !== trackId) return t;
+      const next = { ...t };
+      if (percussion === null) delete next.percussion;
+      else next.percussion = percussion;
+      return next;
+    });
+    store.refresh();
+  });
+}
+
+/**
  * Sets a track's linear volume as one undoable edit. Volume is mirrored to
  * the engine lane fader in realtime (no re-scheduling).
  *

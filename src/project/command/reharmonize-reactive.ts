@@ -26,8 +26,13 @@ import { requireEditableClip } from './utils';
 
 /** Options for {@link proposeReharmonizationForActiveClip}. */
 export interface ReactiveReharmonizeParams {
-  /** Region touched by the edit that triggered the pass, in absolute PPQ. */
-  editedSpan: { startPpq: number; endPpq: number };
+  /**
+   * Region(s) touched by the edit that triggered the pass, in absolute PPQ. A
+   * looping clip passes one span per loop occurrence.
+   */
+  editedSpan:
+    | { startPpq: number; endPpq: number }
+    | ReadonlyArray<{ startPpq: number; endPpq: number }>;
   /** Progression spans the composer has locked (inviolable). */
   locked?: ReadonlyArray<LockedRegion>;
   /** Candidate-pool strength (default 'diatonic'). */

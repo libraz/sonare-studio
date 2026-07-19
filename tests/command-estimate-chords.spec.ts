@@ -4,7 +4,7 @@ import { estimateChordsFromArrangement } from '@/project/command/chords';
 import { addMidiClip, setActiveClip } from '@/project/command/clips';
 import { clearHistory, undo } from '@/project/command/history';
 import { addNote } from '@/project/command/notes';
-import { addTrack } from '@/project/command/tracks';
+import { addTrack, setTrackPercussion } from '@/project/command/tracks';
 import { useProjectStore } from '@/project/store';
 import { MAJOR_MODE_MASK } from '@/project/types';
 
@@ -58,6 +58,36 @@ describe('estimateChordsFromArrangement', () => {
   });
 
   it('is a no-op when there are no harmonic notes', () => {
+    const summary = estimateChordsFromArrangement();
+    expect(summary.count).toBe(0);
+    expect(store.chords).toEqual([]);
+  });
+
+  it('honors an explicit percussion override that forces harmonic', () => {
+    // A "Drums"-named track carrying a real triad: the name heuristic would
+    // exclude it, but an explicit false override keeps it in the estimate.
+    for (const pitch of [60, 64, 67]) {
+      addNote({ pitch, startPpq: 0, durationPpq: 4 });
+    }
+    const drumTrackId = store.tracks[0].id;
+    // Force the seeding heuristic to exclude, then override it back to harmonic.
+    setTrackPercussion(drumTrackId, false);
+    store.tracks = store.tracks.map((track) =>
+      track.id === drumTrackId ? { ...track, name: 'Drums' } : track,
+    );
+
+    const summary = estimateChordsFromArrangement();
+    expect(summary.excludedTrackNames).not.toContain('Drums');
+    expect(summary.count).toBeGreaterThan(0);
+    expect(store.chords[0].rootPc).toBe(0);
+  });
+
+  it('honors an explicit percussion override that forces exclusion', () => {
+    for (const pitch of [60, 64, 67]) {
+      addNote({ pitch, startPpq: 0, durationPpq: 4 });
+    }
+    setTrackPercussion(store.tracks[0].id, true);
+
     const summary = estimateChordsFromArrangement();
     expect(summary.count).toBe(0);
     expect(store.chords).toEqual([]);

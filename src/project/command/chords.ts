@@ -1,7 +1,8 @@
 import { estimateChordsFromTracks } from '@/compose/estimate-chords';
 import { effectiveKeyScale } from '@/compose/key';
 import { timeSignatureAtPpq } from '@/compose/meter';
-import type { TrackWithNotes } from '@/compose/tracks';
+import { melodyPitchClassesInRegion } from '@/compose/reharm';
+import { harmonicTracksOnly, isDrumTrack, type TrackWithNotes } from '@/compose/tracks';
 import { ensureWasm } from '@/lib/wasm';
 import { estimateChordSymbols } from '@/notation/chords';
 import { loadAsset } from '@/persistence/assets';
@@ -78,6 +79,23 @@ function harmonicTrackNotes(store: ReturnType<typeof useProjectStore>): TrackWit
 }
 
 /**
+ * Melody (top-voice) pitch classes sounding within a timeline PPQ region,
+ * pooled across the arrangement's harmonic tracks (percussion excluded). Used
+ * to constrain melody-preserving reharmonization so a substitute never turns a
+ * sustained melody note into a non-chord tone.
+ *
+ * @param startPpq Region start (inclusive), absolute timeline PPQ.
+ * @param endPpq Region end (exclusive), absolute timeline PPQ.
+ * @returns Distinct melody pitch classes, or [] when nothing overlaps.
+ */
+export function arrangementMelodyPitchClasses(startPpq: number, endPpq: number): number[] {
+  const store = useProjectStore();
+  const { harmonic } = harmonicTracksOnly(harmonicTrackNotes(store));
+  const notes = harmonic.flatMap((item) => item.notes);
+  return melodyPitchClassesInRegion(notes, startPpq, endPpq);
+}
+
+/**
  * Infers a chord progression from the whole arrangement's note content and
  * writes it to the chord track (one undoable entry), replacing any existing
  * symbols. Intended for projects with no chord track (e.g. classical scores or
@@ -124,6 +142,11 @@ export function detectChordsForClip(clipId: number): number {
     throw new RangeError(`Clip ${clipId} is not a MIDI clip`);
   }
   const notes = projectMidiClipNoteOccurrences(clip);
+  // Percussion clips carry drum hits, not harmony; pooling them into chord
+  // estimation yields nonsense symbols, so a drum clip detects nothing (the
+  // arrangement-wide estimate excludes the same tracks via harmonicTracksOnly).
+  const track = store.tracks.find((entry) => entry.id === clip.trackId);
+  if (track && isDrumTrack(track, notes)) return 0;
   const detected = estimateChordSymbols(notes, {
     clipStartPpq: clip.startPpq,
     clipLengthPpq: clip.lengthPpq,

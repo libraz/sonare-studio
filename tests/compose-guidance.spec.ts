@@ -152,6 +152,23 @@ describe('buildGuidance', () => {
     expect(result.segments[0].endBeat).toBe(4);
   });
 
+  it('shifts segment beats into the source frame for a trimmed clip', () => {
+    // A clip trimmed so its left edge shows source PPQ 2: the note-editing
+    // surfaces draw notes in that source frame, so a chord sounding at the
+    // clip's start must tint from beat 2 (source), not 0 (window).
+    const result = buildGuidance(
+      guidanceInput({
+        notes: [note({ id: 51, pitch: 60, startPpq: 0, durationPpq: 4 })],
+        clipStartPpq: 8,
+        sourceOffsetPpq: 2,
+        chordSymbols: [chordSymbol({ startPpq: 8, endPpq: 12, rootPc: 0, quality: 0 })],
+      }),
+    );
+    expect(result.segments).toHaveLength(1);
+    expect(result.segments[0].startBeat).toBe(2);
+    expect(result.segments[0].endBeat).toBe(6);
+  });
+
   it('tints the full explicit window of a long empty clip', () => {
     const result = buildGuidance(
       guidanceInput({

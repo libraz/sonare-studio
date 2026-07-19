@@ -19,7 +19,7 @@ import {
   scaleHighlightToKeyScale,
   tonicPcFromKeyFifths,
 } from '@/compose/key';
-import { segmentAtPpq, timeSignatureAtPpq } from '@/compose/meter';
+import { segmentAtPpq, strongBeatAt, timeSignatureAtPpq } from '@/compose/meter';
 import {
   editorNotesToNoteEvents,
   editorNoteToNoteEvent,
@@ -201,6 +201,20 @@ describe('meter adapter', () => {
   it('falls back to 4/4 for an empty map', () => {
     expect(timeSignatureAtPpq([], 0)).toEqual({ numerator: 4, denominator: 4 });
   });
+
+  it('measures strong beats from each segment start, tolerating unsorted maps', () => {
+    // Downbeats of both segments are strong; the second bar of the 3/4 segment
+    // starts at beat 16 + 3 = 19. Passing the map out of order exercises the
+    // shared helper's internal sort so both callers see the same verdict.
+    const unsorted = [
+      { startPpq: 16, numerator: 3, denominator: 4 },
+      { startPpq: 0, numerator: 4, denominator: 4 },
+    ];
+    expect(strongBeatAt(unsorted, 0)).toBe(true);
+    expect(strongBeatAt(unsorted, 1)).toBe(false);
+    expect(strongBeatAt(unsorted, 16)).toBe(true);
+    expect(strongBeatAt(unsorted, 19)).toBe(true);
+  });
 });
 
 describe('chord-at-tick adapter', () => {
@@ -255,6 +269,14 @@ describe('track hygiene', () => {
     expect(isDrumTrack(track({ name: 'Kick' }), drumNotes)).toBe(true);
     const pitched = [note({ channel: 0 }), note({ channel: 0 }), note({ channel: 9 })];
     expect(isDrumTrack(track({ name: 'Bass' }), pitched)).toBe(false);
+  });
+
+  it('lets the explicit percussion flag override the heuristic', () => {
+    const drumNotes = [note({ channel: 9 }), note({ channel: 9 })];
+    // false forces harmonic even for a drum name on channel 10.
+    expect(isDrumTrack(track({ name: 'Drums', percussion: false }), drumNotes)).toBe(false);
+    // true forces percussion even for a harmonic name with no drum notes.
+    expect(isDrumTrack(track({ name: 'Piano', percussion: true }))).toBe(true);
   });
 
   it('splits harmonic from percussion tracks', () => {

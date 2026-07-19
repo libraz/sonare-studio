@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { harmonizeMelody } from '@libraz/libcantus';
+import { describe, expect, it, vi } from 'vitest';
 import {
   proposeReactiveReharmonization,
   type ReactiveMelodyNote,
@@ -9,6 +10,13 @@ import {
   type ScaleHighlightConfig,
   type TimeSignatureSegment,
 } from '@/project/types';
+
+// Spy on the harmonizer while keeping its real behavior, so a test can inspect
+// the harmonic-rhythm argument the reactive pass derives from the meter.
+vi.mock('@libraz/libcantus', async (importActual) => {
+  const actual = await importActual<typeof import('@libraz/libcantus')>();
+  return { ...actual, harmonizeMelody: vi.fn(actual.harmonizeMelody) };
+});
 
 const C_MAJOR: ScaleHighlightConfig = { enabled: true, rootPc: 0, modeMask: MAJOR_MODE_MASK };
 const FOUR_FOUR: TimeSignatureSegment[] = [{ startPpq: 0, numerator: 4, denominator: 4 }];
@@ -56,6 +64,30 @@ describe('proposeReactiveReharmonization', () => {
     });
     expect(noChords.changed).toBe(false);
     expect(noChords.proposal).toEqual([]);
+  });
+
+  it('defaults the harmonic rhythm to one bar of the governing meter', () => {
+    /** Runs a fresh pass under `meter` and returns the harmonicRhythm libcantus saw. */
+    function harmonicRhythmFor(meter: TimeSignatureSegment): number {
+      vi.mocked(harmonizeMelody).mockClear();
+      const barBeats = (meter.numerator * 4) / meter.denominator;
+      proposeReactiveReharmonization({
+        current: [chord(0, barBeats, 0)],
+        // A clash forces the fresh harmonization pass to actually run.
+        melody: clashBar(0),
+        editedSpan: { startPpq: 0, endPpq: barBeats },
+        key: C_MAJOR,
+        timeSignatures: [meter],
+      });
+      expect(vi.mocked(harmonizeMelody)).toHaveBeenCalled();
+      return vi.mocked(harmonizeMelody).mock.calls[0][0].harmonicRhythm as number;
+    }
+
+    // Quarter-note bar length, not a fixed 4 and not the compound beat count:
+    // 4/4 → 4, 3/4 → 3, and 6/8 → 3 (would be 2 under beatsPerBar).
+    expect(harmonicRhythmFor({ startPpq: 0, numerator: 4, denominator: 4 })).toBe(4);
+    expect(harmonicRhythmFor({ startPpq: 0, numerator: 3, denominator: 4 })).toBe(3);
+    expect(harmonicRhythmFor({ startPpq: 0, numerator: 6, denominator: 8 })).toBe(3);
   });
 
   it('keeps a chord that still fits its melody (hysteresis)', () => {
@@ -123,6 +155,45 @@ describe('proposeReactiveReharmonization', () => {
     expect(result.proposal[2]).toMatchObject({ rootPc: 11 });
     expect(result.changedIndices).not.toContain(2);
     expect(result.proposal).toHaveLength(3);
+  });
+
+  it('reharmonizes every occurrence a looping edit lands on (span list)', () => {
+    // A looping clip repeats one source edit at several timeline windows, so the
+    // caller passes one span per occurrence. Five bars are all B major and clash
+    // with the C-major arpeggio; only the first and last windows are in the edit
+    // list, spaced so their neighbour extension cannot reach the middle bar.
+    const current = [
+      chord(0, 4, 11),
+      chord(4, 8, 11),
+      chord(8, 12, 11),
+      chord(12, 16, 11),
+      chord(16, 20, 11),
+    ];
+    const melody = [
+      ...cMajorBar(0),
+      ...cMajorBar(4),
+      ...cMajorBar(8),
+      ...cMajorBar(12),
+      ...cMajorBar(16),
+    ];
+    const result = proposeReactiveReharmonization({
+      current,
+      melody,
+      editedSpan: [
+        { startPpq: 0, endPpq: 2 },
+        { startPpq: 16, endPpq: 18 },
+      ],
+      key: C_MAJOR,
+      timeSignatures: FOUR_FOUR,
+    });
+    // Both listed windows reharmonize, not just the first.
+    expect(result.changedIndices).toContain(0);
+    expect(result.changedIndices).toContain(4);
+    expect(result.proposal[0].rootPc).not.toBe(11);
+    expect(result.proposal[4].rootPc).not.toBe(11);
+    // The unlisted middle bar (out of every span's neighbour reach) is kept.
+    expect(result.proposal[2]).toMatchObject({ rootPc: 11 });
+    expect(result.changedIndices).not.toContain(2);
   });
 
   it('preserves every region and the track length', () => {

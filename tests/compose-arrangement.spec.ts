@@ -75,6 +75,17 @@ describe('analyzeArrangementTracks', () => {
     expect(report.conflicts).toEqual([]);
   });
 
+  it('falls back to a valid key when no harmonic material remains and none is given', () => {
+    const perc: TrackWithNotes = {
+      track: track({ id: 3, name: 'Kit A' }),
+      notes: [note({ id: 20, pitch: 38, startPpq: 0, durationPpq: 1, channel: 9 })],
+    };
+    const report = analyzeArrangementTracks([perc]);
+    // A default C-major scale, never an empty (degree-less) mask of 0.
+    expect(report.key).toEqual({ rootPc: 0, modeMask12: MAJOR_MODE_MASK });
+    expect(report.key.modeMask12).not.toBe(0);
+  });
+
   it('flags a note that clashes with the inferred harmony', () => {
     // A held C-major triad plus a sustained C# that clashes against it.
     const harmony: TrackWithNotes = {

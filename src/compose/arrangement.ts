@@ -30,6 +30,7 @@ import {
   tensionCurve,
 } from '@libraz/libcantus';
 import type { TimeSignatureSegment } from '@/project/types';
+import { DEFAULT_KEY_SCALE } from './key';
 import { timeSignatureAtPpq } from './meter';
 import { editorNotesToNoteEvents } from './notes-io';
 import { harmonicTracksOnly, type TrackWithNotes } from './tracks';
@@ -120,7 +121,10 @@ export function analyzeArrangementTracks(
   const { harmonic, excluded } = harmonicTracksOnly(tracks);
   const excludedTrackNames = excluded.map((item) => item.track.name);
   if (harmonic.length === 0) {
-    return { key: key ?? { rootPc: 0, modeMask12: 0 }, conflicts: [], excludedTrackNames };
+    // No harmonic material to infer from: fall back to a valid key (C major)
+    // rather than an empty scale mask, which downstream scale math reads as a
+    // scale with no degrees.
+    return { key: key ?? DEFAULT_KEY_SCALE, conflicts: [], excludedTrackNames };
   }
   const analysis = analyzeArrangement(
     toArrangementTracks(harmonic),

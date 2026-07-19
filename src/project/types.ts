@@ -124,6 +124,15 @@ export interface EditorTrack {
    */
   soloSafe?: boolean;
   /**
+   * Explicit percussion override (app-level): `true` forces the track to be
+   * treated as percussion (excluded from harmonic analysis), `false` forces it
+   * to be treated as harmonic even when the drum heuristic would flag it.
+   * Absent = fall back to the {@link isDrumTrack} heuristic (GM channel-10 usage
+   * plus name hint). This is the language-agnostic, durable classifier; the name
+   * heuristic is only its seed.
+   */
+  percussion?: boolean;
+  /**
    * VCA control-group membership (app-level): id of the {@link VcaGroup} whose
    * fader offsets this track's gain. Absent = unassigned. The VCA fader makes
    * no audio of its own; it shifts member lane gains in dB.

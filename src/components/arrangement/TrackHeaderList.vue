@@ -25,6 +25,7 @@ import {
   setTrackColor,
   setTrackGroup,
   setTrackMute,
+  setTrackPercussion,
   setTrackRecordInputChannel,
   setTrackRecordInputDeviceId,
   setTrackSolo,
@@ -636,6 +637,28 @@ function onContextMenu(track: EditorTrack, event: MouseEvent): void {
       label: t.value.shell.arrangement.trackHeader.changeInstrument,
       run: () => emit('changeInstrument', track.id),
     });
+    const header = t.value.shell.arrangement.trackHeader;
+    items.push(
+      { id: 'sep-percussion', separator: true },
+      {
+        id: 'percussion-auto',
+        label: `${header.percussion}: ${header.percussionAuto}`,
+        checked: track.percussion === undefined,
+        run: () => setTrackPercussion(track.id, null),
+      },
+      {
+        id: 'percussion-on',
+        label: `${header.percussion}: ${header.percussionOn}`,
+        checked: track.percussion === true,
+        run: () => setTrackPercussion(track.id, true),
+      },
+      {
+        id: 'percussion-off',
+        label: `${header.percussion}: ${header.percussionOff}`,
+        checked: track.percussion === false,
+        run: () => setTrackPercussion(track.id, false),
+      },
+    );
   }
   items.push(
     { id: 'sep-2', separator: true },

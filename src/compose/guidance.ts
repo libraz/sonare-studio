@@ -21,7 +21,6 @@ import {
   evaluateSafety,
   IntervalQuality,
   isScaleTone,
-  isStrongBeat,
   NoteSafety,
   pitchToScaleDegree,
   roleOf,
@@ -35,7 +34,7 @@ import type { EditorChordSymbol } from '@/project/chords';
 import type { EditorNote, ScaleHighlightConfig, TimeSignatureSegment } from '@/project/types';
 import { buildChordTimeline } from './chord-at-tick';
 import { effectiveKeyScale } from './key';
-import { segmentAtPpq, segmentToTimeSignature } from './meter';
+import { strongBeatAt } from './meter';
 import { harmonicTracksOnly, type TrackWithNotes } from './tracks';
 
 /** Representative octave anchor: pitch class pc is evaluated as MIDI 60 + pc. */
@@ -48,6 +47,13 @@ export interface GuidanceInput {
   clipStartPpq: number;
   /** Full active clip window length in PPQ, including empty space. */
   clipLengthPpq: number;
+  /**
+   * Clip trim offset (the source PPQ shown at the clip's left edge). Emitted
+   * segment beats are shifted by it so they land in the clip's source-relative
+   * frame — the frame the note-editing surfaces draw notes in — rather than a
+   * window-relative one, keeping tints aligned on a trimmed clip. Defaults to 0.
+   */
+  sourceOffsetPpq?: number;
   /** Project chord track (absolute PPQ regions); empty = no progression. */
   chordSymbols: ReadonlyArray<EditorChordSymbol>;
   /** Store scale-highlight config (key context). */
@@ -66,7 +72,11 @@ export interface GuidanceInput {
 
 /** Per chord segment: safety of each pitch class, for background row tint. */
 export interface GuidanceSegment {
-  /** Clip-relative beat span the segment covers (for drawing on the grid). */
+  /**
+   * Source-relative beat span the segment covers (for drawing on the grid): 0
+   * is the clip's source origin, matching the note-editing surfaces' PPQ, so a
+   * trimmed clip's tints still line up under its notes.
+   */
   startBeat: number;
   endBeat: number;
   /** NoteSafety (0/1/2) per pitch class 0..11 for a placed note there. */
@@ -150,17 +160,6 @@ function tryEval<T>(fn: () => T): T | undefined {
   } catch {
     return undefined;
   }
-}
-
-/**
- * Whether an absolute beat is metrically strong under the governing meter
- * segment. The beat is measured from the segment's own start so bar lines
- * follow meter changes rather than assuming bars anchored at beat 0.
- */
-function strongBeatAt(segments: ReadonlyArray<TimeSignatureSegment>, absBeat: number): boolean {
-  const segment = segmentAtPpq(segments, absBeat);
-  const inSegmentBeat = Math.max(0, absBeat - segment.startPpq);
-  return tryEval(() => isStrongBeat(inSegmentBeat, segmentToTimeSignature(segment))) ?? false;
 }
 
 /**
@@ -304,13 +303,16 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
     (segment) => segment.endBeat > windowStart && segment.startBeat < windowEnd,
   );
   const chordPresent = overlapping.length > 0;
+  // Segment beats are emitted in the clip's source frame: window-relative
+  // (position − clipStart) plus the trim offset shown at the clip's left edge.
+  const sourceOffset = input.sourceOffsetPpq ?? 0;
   const segments: GuidanceSegment[] = [];
   if (chordPresent) {
     for (const segment of overlapping) {
       const absStart = Math.max(segment.startBeat, windowStart);
       segments.push({
-        startBeat: absStart - input.clipStartPpq,
-        endBeat: Math.min(segment.endBeat, windowEnd) - input.clipStartPpq,
+        startBeat: absStart - input.clipStartPpq + sourceOffset,
+        endBeat: Math.min(segment.endBeat, windowEnd) - input.clipStartPpq + sourceOffset,
         safetyByPc: safetyRow(
           segment.chord,
           key,
@@ -321,8 +323,8 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
     }
   } else {
     segments.push({
-      startBeat: 0,
-      endBeat: windowEnd - windowStart,
+      startBeat: sourceOffset,
+      endBeat: windowEnd - windowStart + sourceOffset,
       safetyByPc: safetyRow(null, key, profile, strongBeatAt(input.timeSignatures, windowStart)),
     });
   }

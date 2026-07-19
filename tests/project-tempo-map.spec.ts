@@ -136,4 +136,72 @@ describe('tempo map conversions', () => {
       expect(secondsToPpq(map, -1)).toBe(-2);
     });
   });
+
+  describe('corrupt segment input', () => {
+    it('drops entries with a non-finite startPpq', () => {
+      const map = normalizeTempoMap([
+        { startPpq: Number.NaN, bpm: 200 },
+        { startPpq: Number.POSITIVE_INFINITY, bpm: 30 },
+        { startPpq: 0, bpm: 120 },
+      ]);
+      expect(map.segments).toHaveLength(1);
+      expect(ppqToSeconds(map, 1)).toBe(0.5);
+    });
+
+    it('falls back to 120 BPM when every entry is unusable', () => {
+      const map = normalizeTempoMap([{ startPpq: Number.NaN, bpm: 200 }]);
+      expect(tempoAtPpq(map, 0)).toBe(120);
+      expect(ppqToSeconds(map, 1)).toBe(0.5);
+    });
+
+    it('replaces a non-finite bpm with the fallback tempo', () => {
+      expect(tempoAtPpq(normalizeTempoMap([{ startPpq: 0, bpm: Number.NaN }]), 0)).toBe(120);
+      expect(
+        tempoAtPpq(normalizeTempoMap([{ startPpq: 0, bpm: Number.POSITIVE_INFINITY }], 90), 0),
+      ).toBe(90);
+    });
+
+    it('reverts an invalid fallback tempo to 120 BPM', () => {
+      expect(ppqToSeconds(normalizeTempoMap([], Number.NaN), 1)).toBe(0.5);
+      expect(ppqToSeconds(normalizeTempoMap([], -5), 1)).toBe(0.5);
+    });
+
+    it('clamps a non-positive bpm to the engine floor instead of dividing by zero', () => {
+      const zero = normalizeTempoMap([{ startPpq: 0, bpm: 0 }]);
+      const negative = normalizeTempoMap([{ startPpq: 0, bpm: -50 }]);
+      expect(tempoAtPpq(zero, 0)).toBe(1e-6);
+      expect(tempoAtPpq(negative, 0)).toBe(1e-6);
+      expect(Number.isFinite(ppqToSeconds(zero, 1))).toBe(true);
+    });
+
+    it('treats a non-finite or non-positive endBpm as a constant segment', () => {
+      for (const endBpm of [Number.POSITIVE_INFINITY, Number.NaN, -10, 0]) {
+        const map = normalizeTempoMap([
+          { startPpq: 0, bpm: 120, endBpm },
+          { startPpq: 4, bpm: 60 },
+        ]);
+        expect(tempoAtPpq(map, 2)).toBe(120);
+        expect(ppqToSeconds(map, 4)).toBe(2);
+      }
+    });
+
+    it('sorts segments given out of order', () => {
+      const map = normalizeTempoMap([
+        { startPpq: 4, bpm: 60 },
+        { startPpq: 0, bpm: 120 },
+      ]);
+      expect(ppqToSeconds(map, 4)).toBe(2);
+      expect(ppqToSeconds(map, 6)).toBe(4);
+    });
+
+    it('does not divide by zero when two segments share a startPpq', () => {
+      const map = normalizeTempoMap([
+        { startPpq: 0, bpm: 120, endBpm: 60 },
+        { startPpq: 0, bpm: 90 },
+      ]);
+      const seconds = ppqToSeconds(map, 4);
+      expect(Number.isNaN(seconds)).toBe(false);
+      expect(Number.isFinite(seconds)).toBe(true);
+    });
+  });
 });

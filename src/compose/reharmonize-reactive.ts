@@ -25,17 +25,17 @@ import {
   type ChordSpan,
   evaluateSafety,
   harmonizeMelody,
-  isStrongBeat,
   type MelodyNote,
   NoteSafety,
   type SafetyProfile,
 } from '@libraz/libcantus';
-import { chordExtensionSignature, type EditorChordSymbol } from '@/project/chords';
+import { type EditorChordSymbol, sameChord } from '@/project/chords';
 import type { ReharmonizeStrength } from '@/project/command/generate-harmonize';
+import { meterBarLengthPpq, timeSignatureAt } from '@/project/time-signature';
 import type { ScaleHighlightConfig, TimeSignatureSegment } from '@/project/types';
 import { chordSpanToEditorChord, editorChordToChord } from './chord-io';
 import { effectiveKeyScale, scaleHighlightToKeyScale } from './key';
-import { segmentAtPpq, segmentToTimeSignature } from './meter';
+import { strongBeatAt } from './meter';
 
 /** A single melody note on the absolute timeline (PPQ == quarter-note beats). */
 export interface ReactiveMelodyNote {
@@ -56,15 +56,26 @@ export interface ReactiveReharmonizeInput {
   current: ReadonlyArray<EditorChordSymbol>;
   /** The melody driving the harmony, on the absolute timeline. */
   melody: ReadonlyArray<ReactiveMelodyNote>;
-  /** The region touched by the edit that triggered this pass, in absolute PPQ. */
-  editedSpan: { startPpq: number; endPpq: number };
+  /**
+   * The region(s) touched by the edit that triggered this pass, in absolute
+   * PPQ. A looping clip repeats one source edit at several timeline positions,
+   * so this accepts either one span or the list of per-occurrence spans; the
+   * eligibility set is the union across them.
+   */
+  editedSpan:
+    | { startPpq: number; endPpq: number }
+    | ReadonlyArray<{ startPpq: number; endPpq: number }>;
   /** Spans the composer has locked; chords overlapping these are never changed. */
   locked?: ReadonlyArray<LockedRegion>;
   /** Project key context; drives both the fresh harmonization and the fit test. */
   key: ScaleHighlightConfig;
   /** Meter, for strong-beat weighting of the fit test. */
   timeSignatures: ReadonlyArray<TimeSignatureSegment>;
-  /** Beats per segment for the fresh harmonization pass (default 4). */
+  /**
+   * Chord-slot length in quarter-note beats for the fresh harmonization pass.
+   * Defaults to one bar of the meter governing the melody's start, so the
+   * harmonic grid lines up with bar lines under any meter (not a fixed 4).
+   */
   harmonicRhythm?: number;
   /** Candidate-pool strength for the fresh harmonization (default 'diatonic'). */
   reharmonize?: ReharmonizeStrength;
@@ -85,30 +96,9 @@ export interface ReharmonizationProposal {
 /** Safety profile used for the melody-fit test (matches the guidance default). */
 const FIT_PROFILE: SafetyProfile = 'pop';
 
-/** Whether two chord symbols denote the same chord (region ignored). */
-function sameChord(a: EditorChordSymbol, b: EditorChordSymbol): boolean {
-  return (
-    a.rootPc === b.rootPc &&
-    a.quality === b.quality &&
-    chordExtensionSignature(a) === chordExtensionSignature(b) &&
-    (a.bassPc ?? -1) === (b.bassPc ?? -1)
-  );
-}
-
 /** Whether a chord region overlaps any locked span. */
 function isLocked(chord: EditorChordSymbol, locked: ReadonlyArray<LockedRegion>): boolean {
   return locked.some((region) => chord.endPpq > region.startPpq && chord.startPpq < region.endPpq);
-}
-
-/** Whether an absolute beat is metrically strong under the governing meter. */
-function strongBeatAt(segments: ReadonlyArray<TimeSignatureSegment>, absBeat: number): boolean {
-  const segment = segmentAtPpq(segments, absBeat);
-  const inSegmentBeat = Math.max(0, absBeat - segment.startPpq);
-  try {
-    return isStrongBeat(inSegmentBeat, segmentToTimeSignature(segment));
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -119,19 +109,21 @@ function strongBeatAt(segments: ReadonlyArray<TimeSignatureSegment>, absBeat: nu
  */
 function eligibleIndices(
   current: ReadonlyArray<EditorChordSymbol>,
-  editedSpan: { startPpq: number; endPpq: number },
+  editedSpans: ReadonlyArray<{ startPpq: number; endPpq: number }>,
 ): Set<number> {
-  const touched: number[] = [];
-  for (let i = 0; i < current.length; i++) {
-    const chord = current[i];
-    if (chord.endPpq > editedSpan.startPpq && chord.startPpq < editedSpan.endPpq) touched.push(i);
-  }
   const eligible = new Set<number>();
-  if (touched.length === 0) return eligible;
-  const first = touched[0];
-  const last = touched[touched.length - 1];
-  for (let i = Math.max(0, first - 1); i <= Math.min(current.length - 1, last + 1); i++) {
-    eligible.add(i);
+  for (const span of editedSpans) {
+    const touched: number[] = [];
+    for (let i = 0; i < current.length; i++) {
+      const chord = current[i];
+      if (chord.endPpq > span.startPpq && chord.startPpq < span.endPpq) touched.push(i);
+    }
+    if (touched.length === 0) continue;
+    const first = touched[0];
+    const last = touched[touched.length - 1];
+    for (let i = Math.max(0, first - 1); i <= Math.min(current.length - 1, last + 1); i++) {
+      eligible.add(i);
+    }
   }
   return eligible;
 }
@@ -215,7 +207,8 @@ export function proposeReactiveReharmonization(
   };
   if (current.length === 0 || input.melody.length === 0) return unchanged;
 
-  const eligible = eligibleIndices(current, input.editedSpan);
+  const editedSpans = Array.isArray(input.editedSpan) ? input.editedSpan : [input.editedSpan];
+  const eligible = eligibleIndices(current, editedSpans);
   if (eligible.size === 0) return unchanged;
 
   const melodyNotes: MelodyNote[] = input.melody.map((note) => ({
@@ -223,12 +216,19 @@ export function proposeReactiveReharmonization(
     startBeat: note.startPpq,
     durationBeat: note.durationPpq,
   }));
+  // Anchor the harmonic grid at one bar of the meter governing the melody's
+  // start (quarter-note beats), matching generateHarmonization; a fixed 4 would
+  // cross bar lines under 3/4, 6/8, etc.
+  const melodyStartPpq = Math.min(...input.melody.map((note) => note.startPpq));
+  const harmonicRhythm =
+    input.harmonicRhythm ??
+    meterBarLengthPpq(timeSignatureAt(input.timeSignatures, melodyStartPpq));
   let spans: ChordSpan[];
   try {
     const result = harmonizeMelody({
       melody: melodyNotes,
       key: input.key.enabled ? scaleHighlightToKeyScale(input.key) : 'infer',
-      harmonicRhythm: input.harmonicRhythm ?? 4,
+      harmonicRhythm,
       reharmonize: input.reharmonize ?? 'diatonic',
       placement: { transposeSearch: false, octaveSearch: false },
       seed: input.seed ?? 0,
