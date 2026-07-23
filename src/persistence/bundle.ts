@@ -284,28 +284,34 @@ async function restoreProjectBundleUnlocked(
 ): Promise<void> {
   const referencedAssets = collectReferencedAssetIds(doc);
   const referencedFonts = collectReferencedFontIds(doc);
-  const assets = bundle.assets
-    .filter((entry) => referencedAssets.has(entry.id))
-    .map(prepareAssetRestore);
-  const fonts = bundle.fonts
-    .filter((entry) => referencedFonts.has(entry.id))
-    .map(prepareFontRestore);
-  if (new Set(assets.map((entry) => entry.id)).size !== assets.length) {
+  const assetEntries = bundle.assets.filter((entry) => referencedAssets.has(entry.id));
+  const fontEntries = bundle.fonts.filter((entry) => referencedFonts.has(entry.id));
+  if (new Set(assetEntries.map((entry) => entry.id)).size !== assetEntries.length) {
     throw new Error('Bundled project contains duplicate referenced asset ids');
   }
-  if (new Set(fonts.map((entry) => entry.id)).size !== fonts.length) {
+  if (new Set(fontEntries.map((entry) => entry.id)).size !== fontEntries.length) {
     throw new Error('Bundled project contains duplicate referenced font ids');
   }
 
   const existingAssets = new Set<string>();
   const existingFonts = new Set<string>();
-  for (const entry of assets) if (await preflightAssetRestore(entry)) existingAssets.add(entry.id);
-  for (const entry of fonts) if (await preflightFontRestore(entry)) existingFonts.add(entry.id);
+  // Decode one PCM entry for preflight, then immediately release it before
+  // touching the next. A large .szd must not retain Float32 copies for every
+  // bundled asset at once merely to establish conflict-free atomicity.
+  for (const rawEntry of assetEntries) {
+    const entry = prepareAssetRestore(rawEntry);
+    if (await preflightAssetRestore(entry)) existingAssets.add(entry.id);
+  }
+  for (const rawEntry of fontEntries) {
+    const entry = prepareFontRestore(rawEntry);
+    if (await preflightFontRestore(entry)) existingFonts.add(entry.id);
+  }
 
   const createdAssets: string[] = [];
   const createdFonts: string[] = [];
   try {
-    for (const entry of assets) {
+    for (const rawEntry of assetEntries) {
+      const entry = prepareAssetRestore(rawEntry);
       if (existingAssets.has(entry.id)) continue;
       createdAssets.push(entry.id);
       await saveAssetWithStatusUnlocked(
@@ -319,7 +325,8 @@ async function restoreProjectBundleUnlocked(
         entry.audio,
       );
     }
-    for (const entry of fonts) {
+    for (const rawEntry of fontEntries) {
+      const entry = prepareFontRestore(rawEntry);
       if (existingFonts.has(entry.id)) continue;
       createdFonts.push(entry.id);
       await saveFontWithStatusUnlocked({ id: entry.id, name: entry.meta.name }, entry.data);

@@ -8,6 +8,7 @@ import {
   reclaimOrphanedRestoreStages,
   reclaimOrphanedRestoreStagesAtStartup,
   restoreBrowserBackup,
+  setBrowserBackupRestoreFaultInjectorForTests,
 } from '@/persistence/backup';
 import { loadProject, saveProject } from '@/persistence/opfs';
 import { encodeSzd } from '@/persistence/szd';
@@ -76,6 +77,7 @@ describe('browser backup archives', () => {
   });
 
   afterEach(() => {
+    setBrowserBackupRestoreFaultInjectorForTests(null);
     uninstallMockOpfs();
     clearAudioAssetCache();
     clearFontCache();
@@ -425,6 +427,134 @@ describe('browser backup archives', () => {
 
     // A second sweep with nothing left is a no-op.
     expect(await reclaimOrphanedRestoreStages()).toBe(0);
+  });
+
+  it('rolls an interrupted project publish back from its durable pre-image', async () => {
+    const previous = encodeSzd(makeDocument('Song A'));
+    const replacement = encodeSzd(makeDocument('Song A', { assetId: 'newAsset' }));
+    await saveProject('Song A', replacement); // state left by the crashed publish
+
+    const root = await navigator.storage.getDirectory();
+    const staging = await root.getDirectoryHandle('restore-staging', { create: true });
+    const stage = await staging.getDirectoryHandle('interrupted-publish', { create: true });
+    const previousHandle = await stage.getFileHandle('previous-Song%20A.szd', { create: true });
+    const previousWritable = await previousHandle.createWritable();
+    await previousWritable.write(previous);
+    await previousWritable.close();
+    const manifestHandle = await stage.getFileHandle('manifest.json', { create: true });
+    const manifestWritable = await manifestHandle.createWritable();
+    await manifestWritable.write(
+      new TextEncoder().encode(
+        JSON.stringify({
+          version: 2,
+          state: 'publishing',
+          projects: [
+            {
+              name: 'Song A',
+              file: 'Song%20A.szd',
+              previousFile: 'previous-Song%20A.szd',
+              revision: 'replacement',
+            },
+          ],
+          assetIds: [],
+          fontIds: [],
+          projectPublishIntents: ['Song A'],
+          assetPublishIntents: [],
+          fontPublishIntents: [],
+        }),
+      ),
+    );
+    await manifestWritable.close();
+
+    expect(await reclaimOrphanedRestoreStages()).toBe(1);
+    expect(await loadProject('Song A')).toEqual(previous);
+    await expect(staging.getDirectoryHandle('interrupted-publish')).rejects.toThrow();
+  });
+
+  it('removes media and a newly-created project named by an interrupted publish journal', async () => {
+    const created = encodeSzd(
+      makeDocument('Created', { assetId: 'crashAsset', fontId: 'crashFont' }),
+    );
+    await saveProject('Created', created);
+    await saveAsset({ id: 'crashAsset', name: 'Crash asset', sampleRate: 48000 }, stereo());
+    await saveFont({ id: 'crashFont', name: 'Crash font' }, new Uint8Array([1, 2, 3]));
+
+    const root = await navigator.storage.getDirectory();
+    const staging = await root.getDirectoryHandle('restore-staging', { create: true });
+    const stage = await staging.getDirectoryHandle('interrupted-create', { create: true });
+    const manifestHandle = await stage.getFileHandle('manifest.json', { create: true });
+    const manifestWritable = await manifestHandle.createWritable();
+    await manifestWritable.write(
+      new TextEncoder().encode(
+        JSON.stringify({
+          version: 2,
+          state: 'publishing',
+          projects: [
+            {
+              name: 'Created',
+              file: 'Created.szd',
+              revision: 'created',
+            },
+          ],
+          assetIds: ['crashAsset'],
+          fontIds: ['crashFont'],
+          projectPublishIntents: ['Created'],
+          assetPublishIntents: ['crashAsset'],
+          fontPublishIntents: ['crashFont'],
+        }),
+      ),
+    );
+    await manifestWritable.close();
+
+    expect(await reclaimOrphanedRestoreStages()).toBe(1);
+    await expect(loadProject('Created')).rejects.toThrow();
+    await expect(loadAsset('crashAsset')).rejects.toThrow();
+    await expect(loadFont('crashFont')).rejects.toThrow();
+  });
+
+  it('recovers a complete old or new namespace after a crash at every publish boundary', async () => {
+    const replacement = encodeSzd(
+      makeDocument('Song A', { assetId: 'restoreAsset', fontId: 'restoreFont' }),
+    );
+    await saveProject('Song A', replacement);
+    await saveAsset({ id: 'restoreAsset', name: 'Restored audio', sampleRate: 48000 }, stereo());
+    await saveFont({ id: 'restoreFont', name: 'Restored font' }, new Uint8Array([4, 5, 6]));
+    const backup = await createBrowserBackup('2026-07-23T00:00:00.000Z');
+    const previous = encodeSzd(makeDocument('Song A'));
+    const points = [
+      'asset-intent',
+      'asset-published',
+      'font-intent',
+      'font-published',
+      'project-intent',
+      'project-published',
+      'finalized',
+    ] as const;
+
+    for (const point of points) {
+      uninstallMockOpfs();
+      installMockOpfs();
+      clearAudioAssetCache();
+      clearFontCache();
+      await saveProject('Song A', previous);
+      setBrowserBackupRestoreFaultInjectorForTests((candidate) => candidate === point);
+
+      await expect(restoreBrowserBackup(backup)).rejects.toThrow(
+        `Simulated browser backup restore crash after ${point}`,
+      );
+      setBrowserBackupRestoreFaultInjectorForTests(null);
+
+      expect(await reclaimOrphanedRestoreStages()).toBe(1);
+      if (point === 'finalized') {
+        expect(await loadProject('Song A')).toEqual(replacement);
+        expect((await loadAsset('restoreAsset')).channels).toEqual(stereo());
+        expect(await loadFont('restoreFont')).toEqual(new Uint8Array([4, 5, 6]));
+      } else {
+        expect(await loadProject('Song A')).toEqual(previous);
+        await expect(loadAsset('restoreAsset')).rejects.toThrow();
+        await expect(loadFont('restoreFont')).rejects.toThrow();
+      }
+    }
   });
 
   it('reclaims orphaned staging namespaces through the startup maintenance entrypoint', async () => {

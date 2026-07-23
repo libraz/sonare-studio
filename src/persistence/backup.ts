@@ -25,7 +25,7 @@ import {
   prepareAssetRestore,
   prepareFontRestore,
 } from '@/persistence/bundle';
-import { MEDIA_ID_PATTERN } from '@/persistence/fs-utils';
+import { isNotFoundError, MEDIA_ID_PATTERN } from '@/persistence/fs-utils';
 import { withPersistenceMutationLock } from '@/persistence/mutation-lock';
 import {
   deleteProjectUnlocked,
@@ -149,9 +149,72 @@ export class BrowserBackupRecoveryError extends Error {
   }
 }
 
+/** Durable publish boundaries exposed only to the backup-restore fault tests. */
+export type BrowserBackupRestoreFaultPoint =
+  | 'asset-intent'
+  | 'asset-published'
+  | 'font-intent'
+  | 'font-published'
+  | 'project-intent'
+  | 'project-published'
+  | 'finalized';
+
+type BrowserBackupRestoreFaultInjector = (
+  point: BrowserBackupRestoreFaultPoint,
+) => boolean | Promise<boolean>;
+
+let restoreFaultInjector: BrowserBackupRestoreFaultInjector | null = null;
+
+class SimulatedBrowserBackupCrash extends Error {
+  constructor(readonly point: BrowserBackupRestoreFaultPoint) {
+    super(`Simulated browser backup restore crash after ${point}`);
+    this.name = 'SimulatedBrowserBackupCrash';
+  }
+}
+
+/**
+ * Installs a test-only crash hook immediately after a durable live-namespace
+ * write. Production code never sets this hook; it lets the persistence spec
+ * model a tab/process death without running the normal in-process rollback.
+ */
+export function setBrowserBackupRestoreFaultInjectorForTests(
+  injector: BrowserBackupRestoreFaultInjector | null,
+): void {
+  restoreFaultInjector = injector;
+}
+
+async function injectRestoreCrash(point: BrowserBackupRestoreFaultPoint): Promise<void> {
+  if (await restoreFaultInjector?.(point)) throw new SimulatedBrowserBackupCrash(point);
+}
+
 interface BrowserRestoreStage {
   loadProject(name: string): Promise<Uint8Array>;
+  /** Write-ahead intent records make a crashed publish safe to roll back. */
+  beginProjectPublish(name: string): Promise<void>;
+  beginAssetPublish(id: string): Promise<void>;
+  beginFontPublish(id: string): Promise<void>;
+  finalize(): Promise<void>;
   cleanup(): Promise<void>;
+}
+
+interface BrowserRestoreStageProject {
+  name: string;
+  file: string;
+  revision: string;
+  /** Absent when the restore creates a previously nonexistent project. */
+  previousFile?: string;
+}
+
+interface BrowserRestoreStageManifest {
+  version: 2;
+  /** `publishing` is a durable rollback point; `finalized` commits the restore. */
+  state: 'prepared' | 'publishing' | 'finalized';
+  projects: BrowserRestoreStageProject[];
+  assetIds: string[];
+  fontIds: string[];
+  projectPublishIntents: string[];
+  assetPublishIntents: string[];
+  fontPublishIntents: string[];
 }
 
 async function writeStageFile(
@@ -176,6 +239,7 @@ async function writeStageFile(
 
 async function prepareBrowserRestoreStage(
   projects: readonly { name: string; bytes: Uint8Array }[],
+  previousProjects: ReadonlyMap<string, Uint8Array | null>,
   assetIds: readonly string[],
   fontIds: readonly string[],
   signal?: AbortSignal,
@@ -188,22 +252,32 @@ async function prepareBrowserRestoreStage(
       : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   const directory = await stagingRoot.getDirectoryHandle(transactionId, { create: true });
   const fileName = (name: string): string => `${encodeURIComponent(name)}.szd`;
+  const previousFileName = (name: string): string => `previous-${encodeURIComponent(name)}.szd`;
   const cleanup = (): Promise<void> => stagingRoot.removeEntry(transactionId, { recursive: true });
+  let manifest!: BrowserRestoreStageManifest;
   try {
     for (const project of projects) {
       signal?.throwIfAborted();
       await writeStageFile(directory, fileName(project.name), project.bytes);
+      const previous = previousProjects.get(project.name);
+      if (previous) await writeStageFile(directory, previousFileName(project.name), previous);
     }
-    const manifest = {
-      version: 1,
+    manifest = {
+      version: 2,
       state: 'prepared',
       projects: projects.map((project) => ({
         name: project.name,
         file: fileName(project.name),
         revision: projectBytesRevision(project.bytes),
+        ...(previousProjects.get(project.name)
+          ? { previousFile: previousFileName(project.name) }
+          : {}),
       })),
-      assetIds,
-      fontIds,
+      assetIds: [...assetIds],
+      fontIds: [...fontIds],
+      projectPublishIntents: [],
+      assetPublishIntents: [],
+      fontPublishIntents: [],
     };
     // The manifest is the staging publish marker and is deliberately written
     // only after every incoming project archive is durable.
@@ -220,20 +294,120 @@ async function prepareBrowserRestoreStage(
     }
     throw error;
   }
+  const writeManifest = (manifest: BrowserRestoreStageManifest): Promise<void> =>
+    writeStageFile(
+      directory,
+      RESTORE_MANIFEST_FILE,
+      new TextEncoder().encode(JSON.stringify(manifest)),
+    );
+  const addIntent = async (
+    field: 'projectPublishIntents' | 'assetPublishIntents' | 'fontPublishIntents',
+    id: string,
+  ): Promise<void> => {
+    if (manifest[field].includes(id)) return;
+    // This write is deliberately before the corresponding live-namespace
+    // mutation. A restart can therefore restore every project that may have
+    // changed, even if the tab dies between the mutation and its completion.
+    manifest.state = 'publishing';
+    manifest[field].push(id);
+    await writeManifest(manifest);
+  };
   return {
     async loadProject(name): Promise<Uint8Array> {
       const file = await (await directory.getFileHandle(fileName(name))).getFile();
       return new Uint8Array(await file.arrayBuffer());
     },
+    beginProjectPublish: (name) => addIntent('projectPublishIntents', name),
+    beginAssetPublish: (id) => addIntent('assetPublishIntents', id),
+    beginFontPublish: (id) => addIntent('fontPublishIntents', id),
+    async finalize(): Promise<void> {
+      manifest.state = 'finalized';
+      await writeManifest(manifest);
+    },
     cleanup,
   };
 }
 
+async function readStageFile(
+  directory: FileSystemDirectoryHandle,
+  name: string,
+): Promise<Uint8Array> {
+  const file = await (await directory.getFileHandle(name)).getFile();
+  return new Uint8Array(await file.arrayBuffer());
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+function isRecoverableRestoreStageManifest(value: unknown): value is BrowserRestoreStageManifest {
+  if (!value || typeof value !== 'object') return false;
+  const manifest = value as Partial<BrowserRestoreStageManifest>;
+  if (
+    manifest.version !== 2 ||
+    (manifest.state !== 'prepared' &&
+      manifest.state !== 'publishing' &&
+      manifest.state !== 'finalized') ||
+    !Array.isArray(manifest.projects) ||
+    !isStringArray(manifest.assetIds) ||
+    !isStringArray(manifest.fontIds) ||
+    !isStringArray(manifest.projectPublishIntents) ||
+    !isStringArray(manifest.assetPublishIntents) ||
+    !isStringArray(manifest.fontPublishIntents)
+  ) {
+    return false;
+  }
+  return manifest.projects.every(
+    (project): project is BrowserRestoreStageProject =>
+      !!project &&
+      typeof project.name === 'string' &&
+      typeof project.file === 'string' &&
+      typeof project.revision === 'string' &&
+      (project.previousFile === undefined || typeof project.previousFile === 'string'),
+  );
+}
+
+/** Rolls an interrupted restore back to the complete pre-restore project set. */
+async function rollbackRestoreStage(
+  directory: FileSystemDirectoryHandle,
+  manifest: BrowserRestoreStageManifest,
+): Promise<void> {
+  const byName = new Map(manifest.projects.map((project) => [project.name, project]));
+  for (const name of manifest.projectPublishIntents) {
+    const project = byName.get(name);
+    if (!project) continue;
+    if (project.previousFile) {
+      await saveProjectUnlocked(name, await readStageFile(directory, project.previousFile));
+    } else {
+      try {
+        await deleteProjectUnlocked(name);
+      } catch (error) {
+        if (!isNotFoundError(error)) throw error;
+      }
+    }
+  }
+  // Assets and SoundFonts are additive during a backup restore. Intent records
+  // identify only content created by this interrupted transaction.
+  await Promise.all(
+    [
+      ...manifest.assetPublishIntents.map((id) => deleteAssetUnlocked(id)),
+      ...manifest.fontPublishIntents.map((id) => deleteFontUnlocked(id)),
+    ].map(async (operation) => {
+      try {
+        await operation;
+      } catch (error) {
+        if (!isNotFoundError(error)) throw error;
+      }
+    }),
+  );
+}
+
 /**
- * Removes restore-staging namespaces orphaned by a crashed restore. A restore
+ * Recovers restore-staging namespaces orphaned by a crashed restore. A restore
  * that finishes — whether it publishes or cleanly rolls back — always removes
- * its own staging directory, so anything left under {@link RESTORE_STAGING_DIR}
- * belongs to a run whose process died mid-restore (tab closed, browser killed).
+ * its own staging directory. A `publishing` journal is rolled back from the
+ * durable pre-image; a `finalized` journal is already committed and is simply
+ * reclaimed.
  *
  * Restore holds the persistence mutation lock, so no staging directory can be
  * live when this runs under that lock: every one present is reclaimable. Called
@@ -251,13 +425,17 @@ export async function reclaimOrphanedRestoreStages(): Promise<number> {
     // No staging root has ever been created; nothing to reclaim.
     return 0;
   }
-  const orphans: string[] = [];
-  for await (const [name, handle] of stagingRoot.entries()) {
-    if (handle.kind === 'directory') orphans.push(name);
-  }
   let reclaimed = 0;
-  for (const name of orphans) {
+  for await (const [name, handle] of stagingRoot.entries()) {
+    if (handle.kind !== 'directory') continue;
     try {
+      const stage = await stagingRoot.getDirectoryHandle(name);
+      const parsed: unknown = JSON.parse(
+        new TextDecoder().decode(await readStageFile(stage, RESTORE_MANIFEST_FILE)),
+      );
+      if (isRecoverableRestoreStageManifest(parsed) && parsed.state === 'publishing') {
+        await rollbackRestoreStage(stage, parsed);
+      }
       await stagingRoot.removeEntry(name, { recursive: true });
       reclaimed += 1;
     } catch {
@@ -733,43 +911,48 @@ async function restoreBrowserBackupUnlocked(
       ),
     ].sort();
   const skippedAssetIds: string[] = [];
-  const assets = mediaIds(ASSETS_PREFIX, '.pcm').flatMap((id) => {
+  const assets: Array<{ id: string; meta: Uint8Array; pcm: Uint8Array }> = [];
+  for (const id of mediaIds(ASSETS_PREFIX, '.pcm')) {
     const pcm = entries[`${ASSETS_PREFIX}${id}.pcm`];
-    const meta = entries[`${ASSETS_PREFIX}${id}.json`];
-    if (!pcm || !meta) {
+    const assetMeta = entries[`${ASSETS_PREFIX}${id}.json`];
+    if (!pcm || !assetMeta) {
       skippedAssetIds.push(id);
-      return [];
+      continue;
     }
     try {
-      return [prepareAssetRestore({ id, meta, pcm })];
+      // Validate the entry without retaining its PCM-to-Float32 allocation.
+      prepareAssetRestore({ id, meta: assetMeta, pcm });
+      assets.push({ id, meta: assetMeta, pcm });
     } catch {
       skippedAssetIds.push(id);
-      return [];
     }
-  });
+  }
   const skippedFontIds: string[] = [];
-  const fonts = mediaIds(FONTS_PREFIX, '.sf2').flatMap((id) => {
+  const fonts: Array<{ id: string; meta: Uint8Array; sf2: Uint8Array }> = [];
+  for (const id of mediaIds(FONTS_PREFIX, '.sf2')) {
     const sf2 = entries[`${FONTS_PREFIX}${id}.sf2`];
-    const meta = entries[`${FONTS_PREFIX}${id}.json`];
-    if (!sf2 || !meta) {
+    const fontMeta = entries[`${FONTS_PREFIX}${id}.json`];
+    if (!sf2 || !fontMeta) {
       skippedFontIds.push(id);
-      return [];
+      continue;
     }
     try {
-      return [prepareFontRestore({ id, meta, sf2 })];
+      prepareFontRestore({ id, meta: fontMeta, sf2 });
+      fonts.push({ id, meta: fontMeta, sf2 });
     } catch {
       skippedFontIds.push(id);
-      return [];
     }
-  });
+  }
 
   const existingAssets = new Set<string>();
   const existingFonts = new Set<string>();
-  for (const entry of assets) {
+  for (const rawEntry of assets) {
+    const entry = prepareAssetRestore(rawEntry);
     if (await preflightAssetRestore(entry)) existingAssets.add(entry.id);
     signal?.throwIfAborted();
   }
-  for (const entry of fonts) {
+  for (const rawEntry of fonts) {
+    const entry = prepareFontRestore(rawEntry);
     if (await preflightFontRestore(entry)) existingFonts.add(entry.id);
     signal?.throwIfAborted();
   }
@@ -786,6 +969,7 @@ async function restoreBrowserBackupUnlocked(
 
   const stage = await prepareBrowserRestoreStage(
     projects,
+    previousProjects,
     assets.map((entry) => entry.id),
     fonts.map((entry) => entry.id),
     signal,
@@ -794,8 +978,11 @@ async function restoreBrowserBackupUnlocked(
   const createdAssets: string[] = [];
   const createdFonts: string[] = [];
   try {
-    for (const entry of assets) {
+    for (const rawEntry of assets) {
+      const entry = prepareAssetRestore(rawEntry);
       if (existingAssets.has(entry.id)) continue;
+      await stage.beginAssetPublish(entry.id);
+      await injectRestoreCrash('asset-intent');
       createdAssets.push(entry.id);
       await saveAssetWithStatusUnlocked(
         {
@@ -807,19 +994,34 @@ async function restoreBrowserBackupUnlocked(
         },
         entry.audio,
       );
+      await injectRestoreCrash('asset-published');
       signal?.throwIfAborted();
     }
-    for (const entry of fonts) {
+    for (const rawEntry of fonts) {
+      const entry = prepareFontRestore(rawEntry);
       if (existingFonts.has(entry.id)) continue;
+      await stage.beginFontPublish(entry.id);
+      await injectRestoreCrash('font-intent');
       createdFonts.push(entry.id);
       await saveFontWithStatusUnlocked({ id: entry.id, name: entry.meta.name }, entry.data);
+      await injectRestoreCrash('font-published');
       signal?.throwIfAborted();
     }
     for (const project of projects) {
+      await stage.beginProjectPublish(project.name);
+      await injectRestoreCrash('project-intent');
       await saveProjectUnlocked(project.name, await stage.loadProject(project.name));
+      await injectRestoreCrash('project-published');
       signal?.throwIfAborted();
     }
+    // The final marker is the one commit point: a restart before it rolls
+    // every intended live mutation back to its staged pre-image.
+    await stage.finalize();
+    await injectRestoreCrash('finalized');
   } catch (error) {
+    // A fault-injection crash intentionally represents process death, so no
+    // in-process cleanup runs. The next startup must use the durable journal.
+    if (error instanceof SimulatedBrowserBackupCrash) throw error;
     const rollback = await Promise.allSettled([
       ...projects.map(async (project) => {
         const previous = previousProjects.get(project.name);

@@ -16,6 +16,7 @@ import type {
   ClipPolyPressureLane,
   ClipProgramChangeLane,
   EditorClip,
+  SmfSysExPacket,
 } from './types';
 import { sanitizeClipWarp } from './warp';
 
@@ -200,6 +201,26 @@ export function applyDocumentClipMetadata(
         lanes.sort((a, b) => a.channel - b.channel || a.pitch - b.pitch);
         next.polyPressureLanes = lanes;
       }
+    }
+    if (kind === 'midi' && Array.isArray(meta.smfSysEx) && meta.smfSysEx.length > 0) {
+      const packets: SmfSysExPacket[] = [];
+      let totalBytes = 0;
+      for (const packet of meta.smfSysEx) {
+        if (
+          !Number.isFinite(packet.ppq) ||
+          packet.ppq < 0 ||
+          (packet.status !== 0xf0 && packet.status !== 0xf7) ||
+          !Array.isArray(packet.data) ||
+          packet.data.length > 0x0fffffff
+        )
+          continue;
+        const data = packet.data.map((byte) => Math.round(Number(byte)));
+        if (data.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 0xff)) continue;
+        totalBytes += data.length;
+        if (packets.length >= 4096 || totalBytes > 1024 * 1024) break;
+        packets.push({ ppq: packet.ppq, status: packet.status, data });
+      }
+      if (packets.length > 0) next.smfSysEx = packets;
     }
     return next;
   });

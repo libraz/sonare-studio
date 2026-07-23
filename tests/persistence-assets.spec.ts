@@ -16,6 +16,7 @@ import {
   loadAsset,
   loadAssetMeta,
   saveAsset,
+  validateAssetPayload,
 } from '@/persistence/assets';
 import { OpfsUnavailableError } from '@/persistence/opfs';
 import {
@@ -334,6 +335,20 @@ describe('audio asset store', () => {
     const dir = await assetsDir(root);
     dir.files.set(`${meta.id}.pcm`, { data: new Uint8Array(4), lastModified: 1 });
     await expect(loadAsset(meta.id)).rejects.toThrow(InvalidAssetError);
+  });
+
+  it('validates missing, truncated, and oversized PCM payloads without decoding them', async () => {
+    const meta = await saveAsset({ name: 'T', sampleRate: 48000 }, stereo());
+    const dir = await assetsDir(root);
+
+    dir.files.delete(`${meta.id}.pcm`);
+    await expect(validateAssetPayload(meta.id)).rejects.toThrow(AssetNotFoundError);
+
+    dir.files.set(`${meta.id}.pcm`, { data: new Uint8Array(4), lastModified: 1 });
+    await expect(validateAssetPayload(meta.id)).rejects.toThrow(/4 bytes, expected 32/);
+
+    dir.files.set(`${meta.id}.pcm`, { data: new Uint8Array(36), lastModified: 1 });
+    await expect(validateAssetPayload(meta.id)).rejects.toThrow(/36 bytes, expected 32/);
   });
 
   it('deleteAsset removes both files and is idempotent', async () => {

@@ -6,7 +6,7 @@ import {
   projectBytesRevision,
   saveProjectUnlocked,
 } from './opfs';
-import { decodeSzd } from './szd';
+import { decodeSzd, readSzdMeta } from './szd';
 
 const RECOVERY_DIR = 'recovery';
 const MANIFEST_FILE = 'autosave-manifest.json';
@@ -145,33 +145,44 @@ export function saveAutosaveSessionRevision(
   });
 }
 
-/** Loads the newest valid per-session autosave, falling back across corrupt revisions. */
+/**
+ * Loads the newest valid autosave across the shared slot and all per-session
+ * revisions. A save publishes the shared archive before its session manifest;
+ * treating the session copy as unconditionally preferred would silently roll
+ * back the newest edit if the tab crashed in that interval.
+ */
 export function loadLatestAutosaveSessionRevision(): Promise<Uint8Array | null> {
   return withPersistenceMutationLock(async () => {
     const manifest = await readManifest();
     const listed = (await listProjects())
       .filter((info) => isAutosaveRecoverySlot(info.name))
       .sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0));
-    const candidates = [
-      ...manifest.sessions
-        .sort((a, b) => b.savedAt.localeCompare(a.savedAt))
-        .map((entry) => entry.slot),
+    const manifestBySlot = new Map(manifest.sessions.map((entry) => [entry.slot, entry]));
+    const modifiedAtBySlot = new Map(listed.map((info) => [info.name, info.lastModified ?? 0]));
+    const candidates = new Set([
+      'autosave',
+      ...manifest.sessions.map((entry) => entry.slot),
       ...listed.map((info) => info.name),
-    ];
-    for (const slot of new Set(candidates)) {
+    ]);
+    let newest: { bytes: Uint8Array; savedAt: number } | null = null;
+    for (const slot of candidates) {
       try {
         const bytes = await loadProject(slot);
-        const entry = manifest.sessions.find((candidate) => candidate.slot === slot);
+        const entry = manifestBySlot.get(slot);
         if (entry && projectBytesRevision(bytes) !== entry.archiveRevision) continue;
         // A valid archive revision alone is insufficient: schema changes or a
         // partially written payload can still fail to decode. Validate inside
         // the candidate loop so an older independent tab revision recovers.
         decodeSzd(bytes);
-        return bytes;
+        const savedAt =
+          Date.parse(entry?.savedAt ?? readSzdMeta(bytes)?.savedAt ?? '') ||
+          modifiedAtBySlot.get(slot) ||
+          0;
+        if (!newest || savedAt > newest.savedAt) newest = { bytes, savedAt };
       } catch {
         // Try the next independently-written session revision.
       }
     }
-    return null;
+    return newest?.bytes ?? null;
   });
 }

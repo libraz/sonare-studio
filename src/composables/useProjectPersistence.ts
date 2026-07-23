@@ -539,6 +539,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
         const details = imported.losses.slice(0, 3).map((loss) => {
           if (loss.kind === 'unsupported-time-unit') return `${loss.attribute}=${loss.unit}`;
           if (loss.kind === 'unsupported-warp') return `${loss.clipName}: warp ${loss.reason}`;
+          if (loss.kind === 'disabled-clip') return `${loss.clipName}: disabled clip skipped`;
           return `${loss.clipName}: nested clip ${loss.reason}`;
         });
         const onlyTimeUnits = imported.losses.every(
@@ -709,6 +710,23 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     closeProjectMenu();
     void runAction(async () => {
       const result = await exportProjectSmf();
+      const loss = result.smfLoss;
+      if (
+        loss !== undefined &&
+        (loss.emptyMidiClips > 0 || loss.emptyMidiTracks > 0) &&
+        !(await confirmAction(
+          formatMessage(t.value.dialogs.prompts.exportSmfLossMessage, {
+            clips: String(loss.emptyMidiClips),
+            tracks: String(loss.emptyMidiTracks),
+          }),
+          {
+            title: t.value.dialogs.prompts.exportSmfLossTitle,
+            confirmLabel: t.value.dialogs.prompts.exportSmfLossConfirm,
+          },
+        ))
+      ) {
+        return;
+      }
       downloadBlobFile(
         new Blob([new Uint8Array(result.bytes)], { type: 'audio/midi' }),
         result.filename,

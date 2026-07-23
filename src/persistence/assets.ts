@@ -748,6 +748,35 @@ export async function loadAssetMeta(
   return validateMeta(parsed, id);
 }
 
+/**
+ * Validates that an asset's PCM payload exists and matches its sidecar without
+ * reading or decoding the PCM bytes. Use this before expensive offline work so
+ * a missing/truncated payload cannot silently become rendered silence.
+ */
+export async function validateAssetPayload(id: string): Promise<AudioAssetMeta> {
+  validateAssetId(id);
+  const meta = await loadAssetMeta(id);
+  const dir = await assetsDirectory();
+  let file: File;
+  try {
+    const handle = await dir.getFileHandle(id + PCM_EXTENSION);
+    file = await handle.getFile();
+  } catch (error) {
+    if (isNotFoundError(error)) throw new AssetNotFoundError(id);
+    throw error;
+  }
+  const expectedBytes = meta.numFrames * meta.numChannels * BYTES_PER_SAMPLE;
+  if (expectedBytes > MAX_AUDIO_SAMPLE_BYTES || file.size > MAX_AUDIO_SAMPLE_BYTES) {
+    throw new InvalidAssetError(`Asset "${id}": PCM payload exceeds the audio resource limit`);
+  }
+  if (file.size !== expectedBytes) {
+    throw new InvalidAssetError(
+      `Asset "${id}": PCM payload is ${file.size} bytes, expected ${expectedBytes}`,
+    );
+  }
+  return meta;
+}
+
 /** Lists every preserved user-facing alias for one immutable content id. */
 export async function listAssetAliases(id: string): Promise<AudioAssetAlias[]> {
   validateAssetId(id);

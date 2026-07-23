@@ -665,13 +665,18 @@ describe('useProjectPersistence autosave refresh after load', () => {
     expect(store.notes.some((note) => note.pitch === 67)).toBe(true);
   });
 
-  it('marks persisted score layout and pickup changes dirty', async () => {
+  it('marks persisted score layout, scale, and pickup changes dirty', async () => {
     const store = useProjectStore();
     await store.init();
     const { persistence } = setup();
     await persistence.markClean();
 
     store.scoreDisplaySettings = { ...store.scoreDisplaySettings, viewZoom: 1.25 };
+    await flushPromises();
+    expect(persistence.dirty.value).toBe(true);
+
+    await persistence.markClean();
+    store.scaleHighlight = { ...store.scaleHighlight, enabled: false, rootPc: 7 };
     await flushPromises();
     expect(persistence.dirty.value).toBe(true);
 

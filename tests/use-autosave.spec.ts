@@ -228,6 +228,17 @@ describe('useAutosave', () => {
     expect(autosave.lastSavedDocumentKey.value).toBe(JSON.stringify(doc));
   });
 
+  it('autosaves a scale-highlight-only edit and preserves it for reload', async () => {
+    createAutosave();
+    store.scaleHighlight = { enabled: true, rootPc: 9, modeMask: 0b101011010101 };
+    await flushWatchers();
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(opfsMocks.saveProject).toHaveBeenCalledTimes(1);
+    const saved = decodeSzd(opfsMocks.saveProject.mock.calls[0][1]);
+    expect(saved.scaleHighlight).toEqual(store.scaleHighlight);
+  });
+
   it('saveNow flushes the pending debounce and saves immediately', async () => {
     const autosave = createAutosave();
     addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
