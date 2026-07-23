@@ -1,18 +1,26 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   applyPwaUpdateAndReload,
   canRegisterServiceWorker,
   dismissPwaUpdateNotice,
+  installPwaReloadPreparation,
   pwaUpdateNotice,
   registerServiceWorker,
   requestPwaEngineRecovery,
   SERVICE_WORKER_URL,
 } from '@/pwa';
 
+let removePreparation: (() => void) | null = null;
+
 beforeEach(() => {
   dismissPwaUpdateNotice();
+});
+
+afterEach(() => {
+  removePreparation?.();
+  removePreparation = null;
 });
 
 describe('PWA registration', () => {
@@ -98,7 +106,10 @@ describe('PWA registration', () => {
     installing.dispatchEvent(new Event('statechange'));
     expect(pwaUpdateNotice.value).toBe('update');
 
+    const prepare = vi.fn(async () => {});
+    removePreparation = installPwaReloadPreparation(prepare);
     await applyPwaUpdateAndReload();
+    expect(prepare).toHaveBeenCalledTimes(1);
     expect(waiting.postMessage).toHaveBeenCalledWith({ type: 'SKIP_WAITING' });
     expect(reload).not.toHaveBeenCalled();
     container.dispatchEvent(new Event('controllerchange'));

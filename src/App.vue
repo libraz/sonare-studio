@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, provide, ref, shallowRef, watch } from 'vue';
+import { computed, nextTick, onScopeDispose, provide, ref, shallowRef, watch } from 'vue';
 import ArrangementView from '@/components/arrangement/ArrangementView.vue';
 import ClipInspector from '@/components/arrangement/ClipInspector.vue';
 import ChordGenerateDialog from '@/components/compose/ChordGenerateDialog.vue';
@@ -78,10 +78,12 @@ import {
   undo,
 } from '@/project/commands';
 import { unfreezeTrack } from '@/project/freeze';
+import { persistedProjectStateKey } from '@/project/persisted-state';
 import { evaluateProjectCapacity, formatProjectCapacityIssue } from '@/project/project-capacity';
 import { serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { isAudioClip } from '@/project/types';
+import { installPwaReloadPreparation } from '@/pwa';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { useContextMenuState } from '@/ui/menu/context-menu';
 import { disengageAutomationWriteModes } from '@/ui/mixer/automation-mode';
@@ -216,7 +218,18 @@ const localizedTourSteps = computed(() =>
 store.snapEnabled = appSettings.settings.snapDefault;
 
 // The autosave quiet period follows the preference live (read per schedule).
-const autosave = useAutosave({ intervalMs: () => appSettings.settings.autosaveIntervalMs });
+const persistedStateKey = computed(() => persistedProjectStateKey(store));
+const autosave = useAutosave({
+  intervalMs: () => appSettings.settings.autosaveIntervalMs,
+  persistedStateKey,
+});
+// Service-worker activation/recovery may reload the page. Flush the current
+// document first so OPFS writes cannot be abandoned mid-update.
+onScopeDispose(
+  installPwaReloadPreparation(async () => {
+    await autosave.saveNow();
+  }),
+);
 
 // Surface a failed background autosave: the user's recent edits are not on
 // disk, so warn them to save manually rather than failing silently.
@@ -318,6 +331,7 @@ const {
   downloadBlobFile,
   errorMessage,
   runAction,
+  persistedStateKey,
 });
 
 // --- Audio export / DAWproject ---------------------------------------------------
@@ -770,6 +784,7 @@ useAppLifecycle({
   setBootPromise: (promise) => {
     bootPromise = promise;
   },
+  flushAutosave: autosave.saveNow,
   shouldBlockUnload: () => dirty.value || autosave.saving.value,
 });
 </script>

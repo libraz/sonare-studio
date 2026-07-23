@@ -116,7 +116,7 @@ export const en = {
       exportBackup: 'Export browser backup',
       exportSmf: 'Export SMF',
       exportMidi2: 'Export MIDI 2.0 clip file',
-      exportMusicXml: 'Export MusicXML',
+      exportMusicXml: 'Export clip as MusicXML...',
       exportAudio: 'Export Audio...',
       exportDawproject: 'Export DAWproject',
       unsavedChanges: 'Unsaved changes',
@@ -1942,6 +1942,10 @@ export const en = {
       restoreBackupTitle: 'Restore browser backup',
       restoreBackupMessage:
         'Restore all named projects, audio assets and SoundFonts from a browser backup? Existing project names are replaced; the open project and local autosave recovery remain unchanged. A conflicting media id cancels the restore without changing stored data.',
+      restoreBackupMediaSkippedTitle: 'Some backup media was skipped',
+      restoreBackupMediaSkippedMessage:
+        'The backup was restored, but these invalid or incomplete media entries could not be recovered:\n{items}',
+      restoreBackupMediaSkippedConfirm: 'OK',
       saveProjectAsTitle: 'Save project as',
       saveProjectAsMessage: 'Enter a name for the saved project.',
       saveProjectOverwriteTitle: 'Replace saved project?',
@@ -2043,6 +2047,11 @@ export const en = {
       truePeak: 'True peak',
       loudness: 'Loudness',
       limitations: 'Limitations',
+      memoryBudget: 'Memory limit',
+      memoryBudgetWarningTitle: 'Use a larger export memory limit?',
+      memoryBudgetWarningMessage:
+        '{amount} may exceed the browser memory available to this tab. Export can fail or the tab can be closed.',
+      memoryBudgetWarningContinue: 'Use larger limit',
       mediaIssue: 'Missing or unreadable {kind}: {id}',
       mediaIssueKind: {
         'audio-asset': 'audio asset',

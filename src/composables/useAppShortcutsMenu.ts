@@ -291,7 +291,7 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
   function fileItems(): MenuBarItem[] {
     const m = t.value.shell.project;
     const noOpfs = !options.opfsAvailable;
-    const noMidiClip = !store.activeClip || clipKind(store.activeClip) !== 'midi';
+    const noMidiClip = !store.clips.some((clip) => clipKind(clip) === 'midi');
     const items: MenuBarItem[] = [
       commandItem('file.startScreen', m.startScreen, options.openStartScreen),
       commandItem('file.new', m.new, options.openNewDialog),

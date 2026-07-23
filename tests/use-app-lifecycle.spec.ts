@@ -19,6 +19,7 @@ describe('useAppLifecycle', () => {
     const setBootPromise = vi.fn();
     const onGlobalKeyDown = vi.fn();
     const onWindowPointerDown = vi.fn();
+    const flushAutosave = vi.fn(async () => true);
     const version = ref('');
     const disposeProjectPersistence = vi.fn();
 
@@ -39,6 +40,7 @@ describe('useAppLifecycle', () => {
             onGlobalKeyDown,
             onWindowPointerDown,
             setBootPromise,
+            flushAutosave,
             shouldBlockUnload: options.shouldBlockUnload,
           });
           return () => null;
@@ -51,6 +53,7 @@ describe('useAppLifecycle', () => {
       disposeProjectPersistence,
       onGlobalKeyDown,
       onWindowPointerDown,
+      flushAutosave,
       setBootPromise,
       version,
       wrapper,
@@ -96,5 +99,23 @@ describe('useAppLifecycle', () => {
     const event = new Event('beforeunload', { cancelable: true });
     window.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(false);
+  });
+
+  it('flushes autosave when the page is hidden or placed in the back-forward cache', async () => {
+    const { flushAutosave, wrapper } = mountLifecycle();
+    await flushPromises();
+
+    window.dispatchEvent(new Event('pagehide'));
+    await flushPromises();
+    expect(flushAutosave).toHaveBeenCalledTimes(1);
+
+    const descriptor = Object.getOwnPropertyDescriptor(Document.prototype, 'visibilityState');
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+    document.dispatchEvent(new Event('visibilitychange'));
+    await flushPromises();
+    expect(flushAutosave).toHaveBeenCalledTimes(2);
+    if (descriptor) Object.defineProperty(document, 'visibilityState', descriptor);
+    else delete (document as { visibilityState?: string }).visibilityState;
+    wrapper.unmount();
   });
 });

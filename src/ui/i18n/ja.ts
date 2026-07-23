@@ -116,7 +116,7 @@ export const ja = {
       exportBackup: 'ブラウザバックアップを書き出し',
       exportSmf: 'SMFを書き出し',
       exportMidi2: 'MIDI 2.0クリップファイルを書き出し',
-      exportMusicXml: 'MusicXMLを書き出し',
+      exportMusicXml: 'クリップをMusicXMLとして書き出し...',
       exportAudio: 'オーディオを書き出し...',
       exportDawproject: 'DAWprojectを書き出し',
       unsavedChanges: '未保存の変更',
@@ -1938,6 +1938,10 @@ export const ja = {
       restoreBackupTitle: 'ブラウザバックアップを復元',
       restoreBackupMessage:
         'バックアップから名前付きプロジェクト、オーディオアセット、SoundFontを復元しますか？同名プロジェクトは置き換えられますが、現在開いているプロジェクトとローカルの自動保存リカバリーは変更しません。内容が異なるmedia IDがある場合は保存済みデータを変更せず復元を中止します。',
+      restoreBackupMediaSkippedTitle: '一部のバックアップメディアを復元できませんでした',
+      restoreBackupMediaSkippedMessage:
+        'バックアップは復元されましたが、次の不正または不完全なメディアは復元できませんでした。\n{items}',
+      restoreBackupMediaSkippedConfirm: 'OK',
       saveProjectAsTitle: '別名で保存',
       saveProjectAsMessage: '保存するプロジェクト名を入力してください。',
       saveProjectOverwriteTitle: '保存済みプロジェクトを置き換えますか？',
@@ -2041,6 +2045,11 @@ export const ja = {
       truePeak: 'トゥルーピーク',
       loudness: 'ラウドネス',
       limitations: '制限事項',
+      memoryBudget: 'メモリ上限',
+      memoryBudgetWarningTitle: 'より大きい書き出しメモリ上限を使用しますか？',
+      memoryBudgetWarningMessage:
+        '{amount} はこのタブで利用可能なブラウザメモリを超える可能性があります。書き出しに失敗するか、タブが閉じることがあります。',
+      memoryBudgetWarningContinue: '大きい上限を使用',
       mediaIssue: '{kind} が見つからないか読み取れません: {id}',
       mediaIssueKind: {
         'audio-asset': 'オーディオアセット',

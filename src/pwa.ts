@@ -11,6 +11,7 @@ export const pwaUpdateNotice = readonly(updateNoticeState);
 let pendingRegistration: ServiceWorkerRegistration | null = null;
 let reloadAfterControllerChange = false;
 let reloadPage = (): void => window.location.reload();
+let prepareReload: (() => Promise<void>) | null = null;
 
 type ServiceWorkerNavigator = Navigator & {
   serviceWorker?: ServiceWorkerContainer;
@@ -40,6 +41,18 @@ export function requestPwaEngineRecovery(): void {
 
 export function dismissPwaUpdateNotice(): void {
   updateNoticeState.value = null;
+}
+
+/**
+ * Installs the app-level durability barrier run before a PWA-triggered reload.
+ * Returns an idempotent cleanup so test/app lifecycles cannot retain a stale
+ * project scope.
+ */
+export function installPwaReloadPreparation(prepare: () => Promise<void>): () => void {
+  prepareReload = prepare;
+  return () => {
+    if (prepareReload === prepare) prepareReload = null;
+  };
 }
 
 function observeRegistration(
@@ -73,6 +86,9 @@ async function clearAppCaches(): Promise<void> {
 
 /** Activates a waiting worker, or clears stale app caches before a recovery reload. */
 export async function applyPwaUpdateAndReload(): Promise<void> {
+  // A worker activation/recovery reload must never strand an autosave write.
+  // The app supplies this hook after persistence is initialized.
+  await prepareReload?.();
   const container = window.navigator.serviceWorker;
   const registration =
     pendingRegistration ?? (container ? await container.getRegistration('/') : undefined);

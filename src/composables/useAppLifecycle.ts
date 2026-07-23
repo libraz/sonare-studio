@@ -23,6 +23,8 @@ export interface AppLifecycleOptions {
   onWindowPointerDown: (event: PointerEvent) => void;
   setBootPromise: (promise: Promise<void> | null) => void;
   shouldBlockUnload?: () => boolean;
+  /** Best-effort autosave flush used when the page is backgrounded or closed. */
+  flushAutosave?: () => Promise<unknown>;
 }
 
 export function useAppLifecycle(options: AppLifecycleOptions) {
@@ -31,11 +33,19 @@ export function useAppLifecycle(options: AppLifecycleOptions) {
     event.preventDefault();
     event.returnValue = '';
   };
+  const flushAutosave = (): void => {
+    void options.flushAutosave?.();
+  };
+  const onVisibilityChange = (): void => {
+    if (document.visibilityState === 'hidden') flushAutosave();
+  };
 
   onMounted(async () => {
     window.addEventListener('keydown', options.onGlobalKeyDown);
     window.addEventListener('pointerdown', options.onWindowPointerDown);
     window.addEventListener('beforeunload', onBeforeUnload);
+    window.addEventListener('pagehide', flushAutosave);
+    document.addEventListener('visibilitychange', onVisibilityChange);
     // Best-effort: keep the browser from evicting the project store. Never
     // blocks boot — a denied or unsupported grant just leaves storage default.
     void requestPersistentStorage();
@@ -54,6 +64,8 @@ export function useAppLifecycle(options: AppLifecycleOptions) {
     window.removeEventListener('keydown', options.onGlobalKeyDown);
     window.removeEventListener('pointerdown', options.onWindowPointerDown);
     window.removeEventListener('beforeunload', onBeforeUnload);
+    window.removeEventListener('pagehide', flushAutosave);
+    document.removeEventListener('visibilitychange', onVisibilityChange);
     options.disposeProjectPersistence();
     options.disposeLayout();
     await options.disposeEngineLifecycle?.();
