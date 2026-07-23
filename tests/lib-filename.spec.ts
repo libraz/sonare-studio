@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { projectFilename } from '@/lib/filename';
+import { ensureFileExtension, projectFilename, sanitizeFilenameBase } from '@/lib/filename';
 
 describe('projectFilename', () => {
   it('appends the extension to the project name', () => {
@@ -19,5 +19,15 @@ describe('projectFilename', () => {
   it('uses the fallback when the name sanitizes to nothing', () => {
     expect(projectFilename('', '.pdf')).toBe('project.pdf');
     expect(projectFilename('   ', '.musicxml', 'score')).toBe('score.musicxml');
+  });
+
+  it('does not duplicate an extension already present on the project name', () => {
+    expect(projectFilename('Mix.MP3', '.mp3')).toBe('Mix.MP3');
+    expect(ensureFileExtension('score.MUSICXML', '.musicxml')).toBe('score.MUSICXML');
+  });
+
+  it('shares the filename sanitation pipeline used by export option models', () => {
+    expect(sanitizeFilenameBase('  a/b  ')).toBe('a_b');
+    expect(sanitizeFilenameBase('  ', 'mixdown')).toBe('mixdown');
   });
 });

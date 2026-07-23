@@ -252,6 +252,20 @@ describe('encodeFlac', () => {
     expect(second).toEqual(first);
   });
 
+  it('applies reproducible TPDF dither only to 16-bit output', () => {
+    const silence = [new Float32Array(64)];
+    const plain = encodeFlac(silence, 48000, { bitDepth: 16, blockSize: 64 });
+    const dithered = encodeFlac(silence, 48000, { bitDepth: 16, dither: true, blockSize: 64 });
+
+    expect(dithered).not.toEqual(plain);
+    expect(encodeFlac(silence, 48000, { bitDepth: 16, dither: true, blockSize: 64 })).toEqual(
+      dithered,
+    );
+    expect(encodeFlac(silence, 48000, { bitDepth: 24, dither: true, blockSize: 64 })).toEqual(
+      encodeFlac(silence, 48000, { bitDepth: 24, blockSize: 64 }),
+    );
+  });
+
   it('reports monotonic frame progress that ends at a full bar', () => {
     // Five blocks worth of audio drives several ticks before completion.
     const channels = [Float32Array.from({ length: 160 }, (_, index) => Math.sin(index / 4) * 0.5)];

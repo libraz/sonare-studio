@@ -29,4 +29,10 @@ describe('quantizePcmSample', () => {
   it('rounds half-up', () => {
     expect(quantizePcmSample(0.25, 0x7fff, 0x8000)).toBe(Math.round(0.25 * 0x7fff));
   });
+
+  it('treats non-finite source samples as silence', () => {
+    for (const value of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      expect(quantizePcmSample(value, 0x7fff, 0x8000)).toBe(0);
+    }
+  });
 });

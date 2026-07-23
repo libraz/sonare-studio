@@ -23,6 +23,8 @@ export type FlacBitDepth = 16 | 24;
 export interface EncodeFlacOptions {
   /** Integer PCM bit depth stored in FLAC subframes (default 24). */
   bitDepth?: FlacBitDepth;
+  /** Apply deterministic TPDF dither before 16-bit quantization (default false). */
+  dither?: boolean;
   /** Samples per FLAC frame; clamped by validation to [16, 65535] (default 4096). */
   blockSize?: number;
 }
@@ -247,10 +249,29 @@ function utf8Uint(value: number): number[] {
   throw new RangeError(`FLAC frame number too large: ${value}`);
 }
 
-function quantizeSample(sample: number, bitDepth: FlacBitDepth): number {
+function quantizeSample(sample: number, bitDepth: FlacBitDepth, ditherLsb = 0): number {
   const positiveMax = bitDepth === 16 ? 0x7fff : 0x7fffff;
   const negativeMax = bitDepth === 16 ? 0x8000 : 0x800000;
-  return quantizePcmSample(sample, positiveMax, negativeMax);
+  return quantizePcmSample(sample, positiveMax, negativeMax, ditherLsb);
+}
+
+/**
+ * A stateless TPDF source keeps FLAC dither reproducible without retaining a
+ * second quantized PCM buffer merely to make STREAMINFO's MD5 match frames.
+ */
+function ditherUnit(index: number, salt: number): number {
+  let value = (index + salt) >>> 0;
+  value ^= value >>> 16;
+  value = Math.imul(value, 0x7feb352d);
+  value ^= value >>> 15;
+  value = Math.imul(value, 0x846ca68b);
+  value ^= value >>> 16;
+  return (value >>> 0) / 0x100000000;
+}
+
+function tpdfDitherLsb(frame: number, channel: number): number {
+  const index = frame * 31 + channel;
+  return ditherUnit(index, 0x9e3779b9) - ditherUnit(index, 0x85ebca6b);
 }
 
 function writeSigned(writer: BitWriter, value: number, bits: number): void {
@@ -274,12 +295,17 @@ function pcmMd5(
   channels: ReadonlyArray<Float32Array>,
   frames: number,
   bitDepth: FlacBitDepth,
+  dither: boolean,
 ): Uint8Array {
   const md5 = new Md5();
   const bytesPerSample = bitDepth / 8;
   for (let frame = 0; frame < frames; frame += 1) {
-    for (const channel of channels) {
-      const sample = quantizeSample(channel[frame], bitDepth);
+    for (let channelIndex = 0; channelIndex < channels.length; channelIndex += 1) {
+      const sample = quantizeSample(
+        channels[channelIndex][frame],
+        bitDepth,
+        dither ? tpdfDitherLsb(frame, channelIndex) : 0,
+      );
       const unsigned = sample < 0 ? 2 ** bitDepth + sample : sample;
       for (let byte = 0; byte < bytesPerSample; byte += 1) {
         md5.updateByte(unsigned >>> (byte * 8));
@@ -342,13 +368,21 @@ function frameHeader(frameNumber: number, blockSize: number, channels: number): 
 
 function quantizeBlock(
   channel: Float32Array,
+  channelIndex: number,
   offset: number,
   blockSize: number,
   bitDepth: FlacBitDepth,
+  dither: boolean,
 ): number[] {
   const samples: number[] = [];
   for (let index = 0; index < blockSize; index += 1) {
-    samples.push(quantizeSample(channel[offset + index], bitDepth));
+    samples.push(
+      quantizeSample(
+        channel[offset + index],
+        bitDepth,
+        dither ? tpdfDitherLsb(offset + index, channelIndex) : 0,
+      ),
+    );
   }
   return samples;
 }
@@ -667,12 +701,17 @@ function encodeFrame(
   offset: number,
   blockSize: number,
   bitDepth: FlacBitDepth,
+  dither: boolean,
   frameNumber: number,
 ): Uint8Array {
   const writer = new BitWriter();
   writer.writeBytes(frameHeader(frameNumber, blockSize, channels.length));
-  for (const channel of channels) {
-    writeBestSubframe(writer, quantizeBlock(channel, offset, blockSize, bitDepth), bitDepth);
+  for (let channelIndex = 0; channelIndex < channels.length; channelIndex += 1) {
+    writeBestSubframe(
+      writer,
+      quantizeBlock(channels[channelIndex], channelIndex, offset, blockSize, bitDepth, dither),
+      bitDepth,
+    );
   }
   writer.alignZero();
   const withoutFooter = writer.toUint8Array();
@@ -705,6 +744,7 @@ export function encodeFlac(
   if (bitDepth !== 16 && bitDepth !== 24) {
     throw new RangeError(`Unsupported FLAC bit depth: ${String(bitDepth)}`);
   }
+  const dither = options.dither === true && bitDepth === 16;
   const blockSize = options.blockSize ?? DEFAULT_BLOCK_SIZE;
   if (
     !Number.isInteger(blockSize) ||
@@ -730,7 +770,7 @@ export function encodeFlac(
   const progressStride = totalBlocks > 0 ? Math.max(1, Math.floor(totalBlocks / 100)) : 0;
   for (let offset = 0; offset < frames; offset += effectiveBlockSize) {
     const size = Math.min(effectiveBlockSize, frames - offset);
-    const frame = encodeFrame(channels, offset, size, bitDepth, frameNumber);
+    const frame = encodeFrame(channels, offset, size, bitDepth, dither, frameNumber);
     encodedFrames.push(frame);
     minFrameSize = minFrameSize === 0 ? frame.length : Math.min(minFrameSize, frame.length);
     maxFrameSize = Math.max(maxFrameSize, frame.length);
@@ -749,7 +789,7 @@ export function encodeFlac(
     channels.length,
     bitDepth,
     effectiveBlockSize,
-    pcmMd5(channels, frames, bitDepth),
+    pcmMd5(channels, frames, bitDepth, dither),
     minFrameSize,
     maxFrameSize,
   );
@@ -774,6 +814,7 @@ function toFlacOptions(options: AudioEncodeOptions = {}): EncodeFlacOptions {
   const out: EncodeFlacOptions = {};
   const bitDepth = options['bitDepth'];
   if (bitDepth === 16 || bitDepth === 24) out.bitDepth = bitDepth;
+  if (options['dither'] === true) out.dither = true;
   const blockSize = options['blockSize'];
   if (typeof blockSize === 'number') out.blockSize = blockSize;
   return out;

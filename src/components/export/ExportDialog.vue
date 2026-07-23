@@ -22,6 +22,7 @@ import {
   assertCodecPayloadMemory,
   DEFAULT_EXPORT_MEMORY_BUDGET_BYTES,
   estimateCodecPayloadMemory,
+  MEBIBYTE,
 } from '@/export/memory-budget';
 import {
   MixdownCancelledError,
@@ -35,6 +36,7 @@ import {
   COMPRESSED_EXPORT_BITRATES,
   createDefaultExportOptions,
   createStemsZipWriter,
+  EXPORT_MEMORY_BUDGET_MIB,
   EXPORT_SAMPLE_RATES,
   type ExportOptionsModel,
   encodeOptionsForModel,
@@ -46,6 +48,8 @@ import {
   validateExportOptions,
 } from '@/export/options';
 import type { WavBitDepth } from '@/export/wav';
+import { createWavStreamWriter, type WavStreamWriter } from '@/export/wav-stream';
+import { downloadBlob } from '@/lib/download';
 import { PayloadMemoryMeter } from '@/lib/payload-memory';
 import type { ProjectDocument } from '@/project/serialization';
 import { useI18n } from '@/ui/i18n';
@@ -66,6 +70,11 @@ type RenderFn = (
   options: ExportRenderOptions,
   onProgress?: MixdownProgressFn,
   onStem?: (stem: MixdownStem, index: number, total: number) => Promise<void> | void,
+  onMixdownChunk?: (
+    channels: readonly [Float32Array, Float32Array],
+    offsetFrames: number,
+    totalFrames: number,
+  ) => Promise<void> | void,
 ) => ExportRenderHandle;
 
 const props = withDefaults(
@@ -240,6 +249,11 @@ const sampleRateOptions = EXPORT_SAMPLE_RATES.map((rate) => ({
   label: `${(rate / 1000).toLocaleString('en-US')} kHz`,
 }));
 
+const memoryBudgetOptions = EXPORT_MEMORY_BUDGET_MIB.map((mib) => ({
+  value: mib,
+  label: `${(mib / 1024).toLocaleString('en-US', { maximumFractionDigits: 1 })} GiB`,
+}));
+
 const progressStageLabel = computed(() =>
   formatExportStage(stage.value, t.value.dialogs.exportAudio.stage),
 );
@@ -258,14 +272,7 @@ function formatLevel(value: number): string {
 
 /** Default download seam: transient anchor around an object URL. */
 function downloadViaAnchor(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
+  downloadBlob(blob, filename);
 }
 
 async function encodeAudio(
@@ -291,7 +298,11 @@ async function encodeAudio(
       onProgress,
     );
   }
-  return await encoder.encode(channels, sampleRate, options);
+  return await encoder.encode(
+    channels,
+    sampleRate,
+    isBrowserMediaEncoderId(encoder.id) ? { ...options, signal, onProgress } : options,
+  );
 }
 
 async function onExport(): Promise<void> {
@@ -308,6 +319,7 @@ async function onExport(): Promise<void> {
   const downloadFn = props.download ?? downloadViaAnchor;
   const controller = new AbortController();
   let handle: ExportRenderHandle | null = null;
+  let wavStream: WavStreamWriter | null = null;
   cancelRender = () => {
     controller.abort(new MixdownCancelledError());
     handle?.cancel();
@@ -315,6 +327,7 @@ async function onExport(): Promise<void> {
   try {
     const doc = structuredClone(props.getDocument()) as ProjectDocument;
     const exportModel: ExportOptionsModel = { ...model.value };
+    const memoryBudgetBytes = exportModel.memoryBudgetMiB * MEBIBYTE;
     stage.value = 'preflight';
     const preflight = await audioExportPreflight(doc, {
       range: exportModel.range,
@@ -344,6 +357,18 @@ async function onExport(): Promise<void> {
       if (!proceed) return;
       controller.signal.throwIfAborted();
     }
+    if (memoryBudgetBytes > DEFAULT_EXPORT_MEMORY_BUDGET_BYTES) {
+      const proceed = await confirmDialog({
+        title: t.value.dialogs.exportAudio.memoryBudgetWarningTitle,
+        message: t.value.dialogs.exportAudio.memoryBudgetWarningMessage.replace(
+          '{amount}',
+          `${exportModel.memoryBudgetMiB} MiB`,
+        ),
+        confirmLabel: t.value.dialogs.exportAudio.memoryBudgetWarningContinue,
+      });
+      if (!proceed) return;
+      controller.signal.throwIfAborted();
+    }
     const encodeOptions = encodeOptionsForModel(exportModel, {
       compressedEncoderIds: compressedEncoderIds.value,
     });
@@ -354,12 +379,27 @@ async function onExport(): Promise<void> {
     const targetLufs = appSettings.settings.loudnessTargetLufs;
     const stemMemory = new PayloadMemoryMeter({
       label: 'Stem export',
-      budgetBytes: DEFAULT_EXPORT_MEMORY_BUDGET_BYTES,
+      budgetBytes: memoryBudgetBytes,
     });
     const stemsWriter =
       exportModel.mode === 'stems'
         ? createStemsZipWriter(controller.signal, { meter: stemMemory })
         : null;
+    const streamWav =
+      exportModel.mode === 'mixdown' &&
+      encoder.id === WAV_ENCODER_ID &&
+      !exportModel.normalizeLoudness;
+    if (streamWav) {
+      wavStream = createWavStreamWriter({
+        sampleRate: exportModel.sampleRate,
+        bitDepth: exportModel.wavBitDepth,
+        encodeOptions: { dither: exportModel.wavDither },
+        meter: new PayloadMemoryMeter({
+          label: 'Streaming WAV export',
+          budgetBytes: memoryBudgetBytes,
+        }),
+      });
+    }
     let consumedStemCount = 0;
     const consumeStem = async (stem: MixdownStem, index: number, total: number): Promise<void> => {
       controller.signal.throwIfAborted();
@@ -371,7 +411,7 @@ async function onExport(): Promise<void> {
           inputBytes: rawBytes,
           retainedBytes: stemMemory.snapshot().activeBytes,
         }),
-        DEFAULT_EXPORT_MEMORY_BUDGET_BYTES,
+        memoryBudgetBytes,
       );
       const releaseRaw = stemMemory.retain(rawBytes, `raw stem ${index + 1}/${total}`);
       try {
@@ -415,6 +455,14 @@ async function onExport(): Promise<void> {
         stage.value = s;
       },
       exportModel.mode === 'stems' ? consumeStem : undefined,
+      wavStream
+        ? async (channels, offsetFrames, totalFrames) => {
+            controller.signal.throwIfAborted();
+            wavStream!.add(channels, offsetFrames);
+            stage.value = 'encode';
+            progress.value = Math.max(progress.value, 0.9 + (offsetFrames / totalFrames) * 0.1);
+          }
+        : undefined,
     );
     const result = await handle.result;
     controller.signal.throwIfAborted();
@@ -443,31 +491,42 @@ async function onExport(): Promise<void> {
       filename = stemsZipFileName(exportModel.baseName);
       downloadFn(zip, filename);
     } else {
-      assertCodecPayloadMemory(
-        estimateCodecPayloadMemory({
-          encoderId: encoder.id,
-          inputBytes: result.channels[0].byteLength + result.channels[1].byteLength,
-        }),
-        DEFAULT_EXPORT_MEMORY_BUDGET_BYTES,
-      );
-      const bytes = await encodeAudio(
-        encoder,
-        result.channels,
-        result.sampleRate,
-        encodeOptions,
-        controller.signal,
-        (fraction) => {
-          if (controller.signal.aborted) return;
-          progress.value = fraction;
-        },
-      );
-      controller.signal.throwIfAborted();
-      filename = exportFileName(exportModel.baseName, encoder.extension);
-      downloadFn(new Blob([new Uint8Array(bytes)], { type: encoder.mime }), filename);
+      if (wavStream && result.channels[0].length === 0) {
+        controller.signal.throwIfAborted();
+        filename = exportFileName(exportModel.baseName, encoder.extension);
+        downloadFn(wavStream.close(result.totalFrames), filename);
+        wavStream = null;
+      } else {
+        wavStream?.abort();
+        wavStream = null;
+        assertCodecPayloadMemory(
+          estimateCodecPayloadMemory({
+            encoderId: encoder.id,
+            inputBytes: result.channels[0].byteLength + result.channels[1].byteLength,
+          }),
+          memoryBudgetBytes,
+        );
+        progress.value = 0;
+        const bytes = await encodeAudio(
+          encoder,
+          result.channels,
+          result.sampleRate,
+          encodeOptions,
+          controller.signal,
+          (fraction) => {
+            if (controller.signal.aborted) return;
+            progress.value = fraction;
+          },
+        );
+        controller.signal.throwIfAborted();
+        filename = exportFileName(exportModel.baseName, encoder.extension);
+        downloadFn(new Blob([new Uint8Array(bytes)], { type: encoder.mime }), filename);
+      }
     }
     report.value = normalizedReport;
     emit('exported', { filename, report: normalizedReport });
   } catch (error) {
+    wavStream?.abort();
     if (!controller.signal.aborted) controller.abort(error);
     if (
       error instanceof MixdownCancelledError ||
@@ -552,6 +611,13 @@ function onKeydown(event: KeyboardEvent): void {
               :disabled="busy"
               :aria-label="t.dialogs.exportAudio.bitDepth"
             />
+            <ToggleButton
+              v-model="model.flacDither"
+              class="flac-dither"
+              size="sm"
+              :label="t.dialogs.exportAudio.dither"
+              :disabled="busy || model.flacBitDepth !== 16"
+            />
           </div>
           <div v-if="model.encoderId === MP3_ENCODER_ID" class="format-options mp3-options">
             <SelectMenu
@@ -595,6 +661,19 @@ function onKeydown(event: KeyboardEvent): void {
             :options="sampleRateOptions"
             :disabled="busy"
             :aria-label="t.dialogs.exportAudio.sampleRate"
+          />
+        </div>
+
+        <label class="field-label" for="export-memory-budget">
+          {{ t.dialogs.exportAudio.memoryBudget }}
+        </label>
+        <div class="field">
+          <SelectMenu
+            v-model="model.memoryBudgetMiB"
+            class="memory-budget-select"
+            :options="memoryBudgetOptions"
+            :disabled="busy"
+            :aria-label="t.dialogs.exportAudio.memoryBudget"
           />
         </div>
 

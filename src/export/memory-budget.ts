@@ -33,6 +33,8 @@ export function estimateRenderPayloadMemory(options: {
   totalFrames: number;
   stemCount: number;
   streamingStems: boolean;
+  /** The final master is delivered incrementally instead of retained. */
+  streamingMixdown?: boolean;
   retainedAuxiliaryStereoBuffers?: number;
   transientStereoBuffers?: number;
   sourceAudioBytes?: number;
@@ -62,11 +64,12 @@ export function estimateRenderPayloadMemory(options: {
     'Prepared audio clips',
   );
   const soundFontBytes = safePayloadBytes(options.soundFontBytes ?? 0, 'SoundFont payload');
-  // One final mix is always retained. Streaming retains at most the current
-  // stem; legacy collection retains every stem. Auxiliary bounces include
+  // A streamed master retains no full final mix. Streaming stems retain at
+  // most the current stem; legacy collection retains every stem. Auxiliary bounces include
   // SoundFont pre-renders that must remain live through later passes.
   const stemBuffers = stemCount === 0 ? 0 : streamingStems ? 1 : stemCount;
-  const retainedStereoBuffers = 1 + stemBuffers + auxiliary;
+  const retainedStereoBuffers =
+    (options.streamingMixdown === true ? 0 : 1) + stemBuffers + auxiliary;
   const fullStereoBuffers = retainedStereoBuffers + transientStereoBuffers;
   const fullWindowBytes = safePayloadBytes(
     totalFrames * Float32Array.BYTES_PER_ELEMENT * 2 * fullStereoBuffers,

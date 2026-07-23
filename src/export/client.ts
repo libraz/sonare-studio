@@ -40,6 +40,11 @@ interface PendingRequest {
   reject: (error: Error) => void;
   onProgress?: MixdownProgressFn;
   onStem?: (stem: MixdownStem, index: number, total: number) => Promise<void> | void;
+  onMixdownChunk?: (
+    channels: readonly [Float32Array, Float32Array],
+    offsetFrames: number,
+    totalFrames: number,
+  ) => Promise<void> | void;
   cancelRequested: boolean;
 }
 
@@ -110,6 +115,11 @@ export class ExportClient {
     options: ExportRenderOptions = {},
     onProgress?: MixdownProgressFn,
     onStem?: (stem: MixdownStem, index: number, total: number) => Promise<void> | void,
+    onMixdownChunk?: (
+      channels: readonly [Float32Array, Float32Array],
+      offsetFrames: number,
+      totalFrames: number,
+    ) => Promise<void> | void,
   ): ExportRenderHandle {
     if (this.disposed) {
       return {
@@ -134,6 +144,7 @@ export class ExportClient {
       };
       if (onProgress) entry.onProgress = onProgress;
       if (onStem) entry.onStem = onStem;
+      if (onMixdownChunk) entry.onMixdownChunk = onMixdownChunk;
       this.pending.set(id, entry);
       const request: ExportRequest = {
         id,
@@ -141,6 +152,7 @@ export class ExportClient {
         doc,
         options,
         ...(onStem ? { streamStems: true } : {}),
+        ...(onMixdownChunk ? { streamMixdown: true } : {}),
       };
       this.worker.postMessage(request);
     });
@@ -215,6 +227,42 @@ export class ExportClient {
         });
       return;
     }
+    if (response.type === 'mixdown-chunk') {
+      if (!entry.onMixdownChunk) {
+        this.pending.delete(response.id);
+        entry.reject(new Error('Export worker streamed mixdown PCM without a consumer'));
+        return;
+      }
+      void Promise.resolve(
+        entry.onMixdownChunk(
+          [response.left, response.right],
+          response.offsetFrames,
+          response.totalFrames,
+        ),
+      )
+        .then(() => {
+          if (this.disposed) return;
+          const acknowledgement: ExportRequest = {
+            id: this.nextId++,
+            type: 'mixdown-consumed',
+            targetId: response.id,
+            offsetFrames: response.offsetFrames,
+          };
+          this.worker.postMessage(acknowledgement);
+        })
+        .catch((error: unknown) => {
+          if (this.pending.get(response.id) !== entry) return;
+          this.pending.delete(response.id);
+          entry.reject(error instanceof Error ? error : new Error(String(error)));
+          const cancelRequest: ExportRequest = {
+            id: this.nextId++,
+            type: 'cancel',
+            targetId: response.id,
+          };
+          this.worker.postMessage(cancelRequest);
+        });
+      return;
+    }
     this.pending.delete(response.id);
     if (response.type === 'error') {
       entry.reject(new Error(response.error));
@@ -272,6 +320,11 @@ export function renderMixdownInWorker(
   options: ExportRenderOptions = {},
   onProgress?: MixdownProgressFn,
   onStem?: (stem: MixdownStem, index: number, total: number) => Promise<void> | void,
+  onMixdownChunk?: (
+    channels: readonly [Float32Array, Float32Array],
+    offsetFrames: number,
+    totalFrames: number,
+  ) => Promise<void> | void,
 ): ExportRenderHandle {
-  return getExportClient().renderMixdown(doc, options, onProgress, onStem);
+  return getExportClient().renderMixdown(doc, options, onProgress, onStem, onMixdownChunk);
 }

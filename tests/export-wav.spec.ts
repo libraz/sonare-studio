@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { encodeWav, wavFileSize } from '@/export/wav';
+import { encodeWav, wavFileSize, wavLayout } from '@/export/wav';
 
 /** Reads an ASCII four-character tag at an offset. */
 function tag(bytes: Uint8Array, offset: number): string {
@@ -18,6 +18,18 @@ function readInt24(bytes: Uint8Array, offset: number): number {
 }
 
 describe('encodeWav', () => {
+  it('uses one resolved layout for header fields and allocation', () => {
+    expect(wavLayout(1, 1, 24)).toMatchObject({
+      sampleBytes: 3,
+      blockAlign: 3,
+      dataSize: 3,
+      dataPad: 1,
+      fmtSize: 16,
+      riffSize: 40,
+      fileSize: 48,
+    });
+  });
+
   describe('16-bit PCM (default)', () => {
     const left = new Float32Array([0, 0.5, 1, -1]);
     const right = new Float32Array([0.25, -0.5, 0.75, 0]);
@@ -61,6 +73,24 @@ describe('encodeWav', () => {
       const v = view(bytes);
       expect(v.getInt16(44, true)).toBe(0x7fff);
       expect(v.getInt16(46, true)).toBe(-0x8000);
+    });
+
+    it('encodes non-finite samples as silence in every WAV format', () => {
+      const signal = [new Float32Array([Number.NaN, Number.POSITIVE_INFINITY])];
+      for (const bitDepth of [16, 24, '32f'] as const) {
+        const bytes = encodeWav(signal, 44100, { bitDepth });
+        const output = view(bytes);
+        if (bitDepth === 16) {
+          expect(output.getInt16(44, true)).toBe(0);
+          expect(output.getInt16(46, true)).toBe(0);
+        } else if (bitDepth === 24) {
+          expect(readInt24(bytes, 44)).toBe(0);
+          expect(readInt24(bytes, 47)).toBe(0);
+        } else {
+          expect(output.getFloat32(58, true)).toBe(0);
+          expect(output.getFloat32(62, true)).toBe(0);
+        }
+      }
     });
 
     it('supports mono', () => {

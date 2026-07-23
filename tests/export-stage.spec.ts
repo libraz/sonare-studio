@@ -29,8 +29,9 @@ describe('formatExportStage', () => {
 
   it('interpolates parameterized stem and mastering codes', () => {
     expect(formatExportStage('encode:stem:1/4', LABELS)).toBe('encoding stem 1/4');
-    expect(formatExportStage('engine.stem:3', LABELS)).toBe('rendering stem 3');
-    expect(formatExportStage('engine.busStem:2', LABELS)).toBe('rendering bus stem 2');
+    expect(formatExportStage('engine.stem:3', LABELS)).toBe('rendering stem 4');
+    expect(formatExportStage('engine.busStem:2', LABELS)).toBe('rendering bus stem 3');
+    expect(formatExportStage('engine.sf2:0', LABELS)).toBe('rendering stem 1');
     expect(formatExportStage('mastering.preset:warm', LABELS)).toBe('mastering preset: warm');
     expect(formatExportStage('mastering.limiter', LABELS)).toBe('mastering: limiter');
   });

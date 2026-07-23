@@ -77,9 +77,12 @@ export type ExportRequestBody =
       options?: ExportRenderOptions;
       /** Transfer one stem at a time and wait for a consumer acknowledgement. */
       streamStems?: boolean;
+      /** Transfer master PCM blocks instead of retaining a full mixdown. */
+      streamMixdown?: boolean;
     }
   | { type: 'cancel'; targetId: number }
   | { type: 'stem-consumed'; targetId: number; index: number }
+  | { type: 'mixdown-consumed'; targetId: number; offsetFrames: number }
   | { type: 'destroy' };
 
 /** A request message: payload plus caller-generated correlation id. */
@@ -89,6 +92,14 @@ export type ExportRequest = ExportRequestBody & { id: number };
 export type ExportResponse =
   | { id: number; type: 'progress'; progress: number; stage: string }
   | { id: number; type: 'stem'; stem: ExportWorkerStem; index: number; total: number }
+  | {
+      id: number;
+      type: 'mixdown-chunk';
+      left: Float32Array;
+      right: Float32Array;
+      offsetFrames: number;
+      totalFrames: number;
+    }
   | { id: number; type: 'render'; result: ExportWorkerResult }
   | { id: number; type: 'cancelled' }
   | { id: number; type: 'destroy' }
@@ -98,7 +109,13 @@ const scope = self as unknown as DedicatedWorkerGlobalScope;
 
 /** Render ids flagged for cancellation ('cancel' bypasses the queue). */
 const cancelled = new Set<number>();
+/** Render ids received by this worker but not yet terminally handled. */
+const pendingRenderIds = new Set<number>();
 const stemWaiters = new Map<number, { index: number; resolve: (consumed: boolean) => void }>();
+const mixdownWaiters = new Map<
+  number,
+  { offsetFrames: number; resolve: (consumed: boolean) => void }
+>();
 
 function post(message: ExportResponse, transfer: Transferable[] = []): void {
   scope.postMessage(message, transfer);
@@ -116,6 +133,7 @@ async function handleRender(
   doc: ProjectDocument,
   options: ExportRenderOptions = {},
   streamStems = false,
+  streamMixdown = false,
 ): Promise<void> {
   if (cancelled.has(id)) {
     cancelled.delete(id);
@@ -164,6 +182,34 @@ async function handleRender(
             },
           }
         : {}),
+      ...(streamMixdown
+        ? {
+            onMixdownChunk: async (
+              channels: readonly [Float32Array, Float32Array],
+              offsetFrames: number,
+              totalFrames: number,
+            ): Promise<void> => {
+              if (cancelled.has(id)) throw new MixdownCancelledError();
+              const consumed = new Promise<boolean>((resolve) => {
+                mixdownWaiters.set(id, { offsetFrames, resolve });
+              });
+              post(
+                {
+                  id,
+                  type: 'mixdown-chunk',
+                  left: channels[0],
+                  right: channels[1],
+                  offsetFrames,
+                  totalFrames,
+                },
+                [channels[0].buffer, channels[1].buffer],
+              );
+              const wasConsumed = await consumed;
+              mixdownWaiters.delete(id);
+              if (!wasConsumed || cancelled.has(id)) throw new MixdownCancelledError();
+            },
+          }
+        : {}),
     });
     const payload: ExportWorkerResult = {
       left: result.channels[0],
@@ -198,6 +244,8 @@ async function handleRender(
   } finally {
     stemWaiters.get(id)?.resolve(false);
     stemWaiters.delete(id);
+    mixdownWaiters.get(id)?.resolve(false);
+    mixdownWaiters.delete(id);
     cancelled.delete(id);
   }
 }
@@ -205,7 +253,17 @@ async function handleRender(
 async function handle(request: ExportRequest): Promise<void> {
   switch (request.type) {
     case 'render': {
-      await handleRender(request.id, request.doc, request.options, request.streamStems);
+      try {
+        await handleRender(
+          request.id,
+          request.doc,
+          request.options,
+          request.streamStems,
+          request.streamMixdown,
+        );
+      } finally {
+        pendingRenderIds.delete(request.id);
+      }
       return;
     }
     case 'cancel': {
@@ -214,6 +272,10 @@ async function handle(request: ExportRequest): Promise<void> {
       return;
     }
     case 'stem-consumed': {
+      // Handled out of band below so the running render can resume.
+      return;
+    }
+    case 'mixdown-consumed': {
       // Handled out of band below so the running render can resume.
       return;
     }
@@ -232,8 +294,13 @@ scope.onmessage = (event: MessageEvent<ExportRequest>) => {
   const request = event.data;
   if (request.type === 'cancel') {
     // Bypass the queue: the flag must be visible to the render in flight.
+    // Ignore a late/unknown cancel instead of retaining its id forever. A
+    // queued render is added to pendingRenderIds as soon as its message is
+    // received, so legitimate pre-start cancellation still works.
+    if (!pendingRenderIds.has(request.targetId)) return;
     cancelled.add(request.targetId);
     stemWaiters.get(request.targetId)?.resolve(false);
+    mixdownWaiters.get(request.targetId)?.resolve(false);
     return;
   }
   if (request.type === 'stem-consumed') {
@@ -241,6 +308,12 @@ scope.onmessage = (event: MessageEvent<ExportRequest>) => {
     if (waiter?.index === request.index) waiter.resolve(true);
     return;
   }
+  if (request.type === 'mixdown-consumed') {
+    const waiter = mixdownWaiters.get(request.targetId);
+    if (waiter?.offsetFrames === request.offsetFrames) waiter.resolve(true);
+    return;
+  }
+  if (request.type === 'render') pendingRenderIds.add(request.id);
   queue = queue.then(async () => {
     try {
       await handle(request);

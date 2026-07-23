@@ -101,6 +101,29 @@ describe('useProjectExport', () => {
     await expect(blob.text()).resolves.toContain('<score-partwise version="4.0">');
   });
 
+  it('uses the same key-aware score artifact settings as the score panel', async () => {
+    await loadProjectDocument(makeDoc('midi'));
+    const store = useProjectStore();
+    store.scaleHighlight = { enabled: true, rootPc: 5, modeMask: 0b101010110101 }; // F major
+    store.scoreDisplaySettings = {
+      ...store.scoreDisplaySettings,
+      displayQuantizeKey: '8',
+      chordsEnabled: true,
+    };
+    store.sections = [{ id: 1, name: 'Verse', startPpq: 0, color: '#000000' }];
+    store.markers = [{ id: 1, name: 'Intro', ppq: 0 }];
+    const { downloadBlobFile, projectExport } = setup();
+
+    projectExport.exportMusicXmlAction();
+    await vi.waitFor(() => expect(downloadBlobFile).toHaveBeenCalledTimes(1));
+
+    const [blob] = downloadBlobFile.mock.calls[0] as [Blob, string];
+    const xml = await blob.text();
+    expect(xml).toContain('<fifths>-1</fifths>');
+    expect(xml).toContain('<rehearsal default-y="40">Verse</rehearsal>');
+    expect(xml).toContain('<words default-y="24">Intro</words>');
+  });
+
   it('does not export MusicXML when the active clip is audio', async () => {
     await loadProjectDocument(makeDoc('audio'));
     const { downloadBlobFile, projectExport } = setup();
@@ -345,7 +368,7 @@ describe('useProjectExport', () => {
     expect(prompt.message).toContain('frozen track render reference');
     expect(prompt.message).toContain('recording input channel');
     expect(prompt.message).toContain('solo-safe track');
-    expect(prompt.message).toContain('automation lane');
+    expect(prompt.message).not.toContain('automation lane');
     expect(prompt.message).toContain('channel strip EQ');
     expect(prompt.message).toContain('advanced channel strip DSP');
     expect(prompt.message).not.toContain('insert sidechain key');

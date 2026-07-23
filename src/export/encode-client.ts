@@ -46,6 +46,22 @@ function transferableChannels(channels: ReadonlyArray<Float32Array>): {
   return { channels: output, transfer };
 }
 
+/** Selects the cloneable codec options that form the worker protocol. */
+function workerOptions(
+  encoderId: WorkerAudioEncoderId,
+  options: Record<string, unknown>,
+): Record<string, unknown> {
+  const allowed =
+    encoderId === WAV_ENCODER_ID
+      ? ['bitDepth', 'dither']
+      : encoderId === FLAC_ENCODER_ID
+        ? ['bitDepth', 'blockSize']
+        : ['bitrate'];
+  return Object.fromEntries(
+    allowed.flatMap((key) => (options[key] === undefined ? [] : [[key, options[key]]])),
+  );
+}
+
 /**
  * Encodes in a disposable worker. Transferrable input channel buffers are
  * consumed; cancellation terminates synchronous codec work immediately.
@@ -102,10 +118,9 @@ export function encodeAudioInWorker(
       encoderId,
       channels: input.channels,
       sampleRate,
-      // AbortSignal and test-only functions are intentionally not cloned.
-      options: Object.fromEntries(
-        Object.entries(options).filter(([, value]) => typeof value !== 'function'),
-      ),
+      // The protocol is deliberately whitelisted: AbortSignal, callbacks and
+      // future main-thread-only options never cross structured-clone bounds.
+      options: workerOptions(encoderId, options),
     };
     worker.postMessage(request, input.transfer);
     if (signal?.aborted) onAbort();

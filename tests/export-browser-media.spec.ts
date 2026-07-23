@@ -165,6 +165,20 @@ describe('browser MediaRecorder export encoders', () => {
     expect(FakeSource.last?.listenerCounts.get('ended')).toBe(0);
   });
 
+  it('reports browser-encoder progress from start through recorder completion', async () => {
+    vi.stubGlobal('AudioContext', FakeAudioContext);
+    vi.stubGlobal('MediaRecorder', FakeMediaRecorder);
+    FakeMediaRecorder.supported = new Set(['audio/webm;codecs=opus']);
+    const progress = vi.fn();
+
+    await encodeBrowserMedia('audio/webm;codecs=opus', [new Float32Array([0, 0.25])], 48000, {
+      onProgress: progress,
+    });
+
+    expect(progress).toHaveBeenCalledWith(0);
+    expect(progress).toHaveBeenLastCalledWith(1);
+  });
+
   it('cleans up MediaRecorder listeners and closes the context after encoder errors', async () => {
     class ErroringSource extends FakeSource {
       override start(): void {
@@ -220,6 +234,9 @@ describe('browser MediaRecorder export encoders', () => {
       48_000,
       { signal: controller.signal },
     );
+    // Let the async AudioContext resume path install recorder listeners before
+    // exercising cancellation during an active encode.
+    await Promise.resolve();
     controller.abort(new DOMException('user cancelled', 'AbortError'));
 
     await expect(encoding).rejects.toMatchObject({ name: 'AbortError' });

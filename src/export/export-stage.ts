@@ -27,6 +27,7 @@ export interface ExportStageLabels {
 const ENCODE_STEM = /^encode:stem:(\d+)\/(\d+)$/;
 const RENDER_STEM = /^engine\.stem:(-?\d+)$/;
 const RENDER_BUS_STEM = /^engine\.busStem:(-?\d+)$/;
+const RENDER_SF2 = /^engine\.sf2:(-?\d+)$/;
 const MASTERING_PRESET = /^mastering\.preset:(.+)$/;
 const MASTERING_PROCESSOR = /^mastering\.(.+)$/;
 
@@ -59,12 +60,20 @@ export function formatExportStage(stage: string, labels: ExportStageLabels): str
     return labels.encodeStem.replace('{index}', encodeStem[1]).replace('{total}', encodeStem[2]);
   }
   const renderStem = RENDER_STEM.exec(stage);
-  if (renderStem) return labels.renderStem.replace('{index}', renderStem[1]);
+  if (renderStem) return labels.renderStem.replace('{index}', ordinal(renderStem[1]));
   const renderBusStem = RENDER_BUS_STEM.exec(stage);
-  if (renderBusStem) return labels.renderBusStem.replace('{index}', renderBusStem[1]);
+  if (renderBusStem) return labels.renderBusStem.replace('{index}', ordinal(renderBusStem[1]));
+  const renderSf2 = RENDER_SF2.exec(stage);
+  if (renderSf2) return labels.renderStem.replace('{index}', ordinal(renderSf2[1]));
   const masteringPreset = MASTERING_PRESET.exec(stage);
   if (masteringPreset) return labels.masteringPreset.replace('{name}', masteringPreset[1]);
   const mastering = MASTERING_PROCESSOR.exec(stage);
   if (mastering) return labels.mastering.replace('{name}', mastering[1]);
   return stage;
+}
+
+/** Machine stage indexes are zero-based; labels shown to people are not. */
+function ordinal(index: string): string {
+  const parsed = Number(index);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? String(parsed + 1) : index;
 }

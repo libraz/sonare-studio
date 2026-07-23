@@ -4,7 +4,7 @@
  * performance lanes) is not lost.
  */
 
-import { ensureFileExtension } from '@/notation/io';
+import { ensureFileExtension, sanitizeFilenameBase } from '@/lib/filename';
 import {
   type DocumentClip,
   PROJECT_DOCUMENT_SCHEMA_VERSION,
@@ -23,8 +23,7 @@ export interface MidiExportResult {
 
 /** Replaces characters that are unsafe in filenames and trims whitespace. */
 function sanitizeBaseName(name: string, fallback: string): string {
-  const cleaned = name.replace(/[\\/:*?"<>|]/g, '_').trim();
-  return cleaned.length > 0 ? cleaned : fallback;
+  return sanitizeFilenameBase(name, fallback);
 }
 
 /** Copies a wasm-owned byte buffer into JS-owned memory. */

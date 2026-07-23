@@ -343,6 +343,17 @@ export async function renderProjectWithEngine(
       : [];
   const stemCount =
     stemTracks.length + stemBuses.length + (options.stems && options.masterStem === true ? 1 : 0);
+  const chain = doc.mixer?.masteringChain;
+  const hasFullBufferMastering =
+    includeMasterChain &&
+    chain !== undefined &&
+    masteringChainIsActive(chain) &&
+    (deps?.mastering ?? null) !== null;
+  const streamingMixdownEligible =
+    options.onMixdownChunk !== undefined &&
+    stemCount === 0 &&
+    conflictingSf2TrackIndices.size === 0 &&
+    !hasFullBufferMastering;
 
   const audioMemory = loadAudioMeta
     ? await preflightAudioClipMemory(doc, {
@@ -369,6 +380,8 @@ export async function renderProjectWithEngine(
         totalFrames: preflightWindow.totalFrames,
         stemCount,
         streamingStems: options.onStem !== undefined,
+        streamingMixdown: streamingMixdownEligible,
+        transientStereoBuffers: streamingMixdownEligible ? 0 : undefined,
         retainedAuxiliaryStereoBuffers: conflictingSf2TrackIndices.size,
         sourceAudioBytes: audioMemory.sourceAudioBytes,
         preparedClipBytes: audioMemory.preparedClipBytes,
@@ -389,6 +402,8 @@ export async function renderProjectWithEngine(
         totalFrames: preflightWindow.totalFrames,
         stemCount,
         streamingStems: options.onStem !== undefined,
+        streamingMixdown: streamingMixdownEligible,
+        transientStereoBuffers: streamingMixdownEligible ? 0 : undefined,
         retainedAuxiliaryStereoBuffers: conflictingSf2TrackIndices.size,
         sourceAudioBytes: audioMemory.sourceAudioBytes,
         preparedClipBytes: audioMemory.preparedClipBytes,
@@ -433,6 +448,8 @@ export async function renderProjectWithEngine(
         totalFrames,
         stemCount,
         streamingStems: options.onStem !== undefined,
+        streamingMixdown: streamingMixdownEligible,
+        transientStereoBuffers: streamingMixdownEligible ? 0 : undefined,
         retainedAuxiliaryStereoBuffers: conflictingSf2TrackIndices.size,
         sourceAudioBytes: audioMemory.sourceAudioBytes,
         preparedClipBytes,
@@ -825,6 +842,10 @@ export async function renderProjectWithEngine(
     progressStart: number,
     progressSpan: number,
     capturePreroll = false,
+    onChunk?: (
+      channels: readonly [Float32Array, Float32Array],
+      offsetFrames: number,
+    ) => Promise<void> | void,
   ): Promise<[Float32Array, Float32Array]> => {
     // Roll (and discard) a pre-roll up to the window start so stateful DSP
     // and the content before the window (sustained clips, sidechain keys)
@@ -832,8 +853,8 @@ export async function renderProjectWithEngine(
     // start have nothing before them and start cold by definition.
     const prerollFrames = Math.min(startSample, Math.round(PREROLL_SECONDS * sampleRate));
     const captureOffset = capturePreroll ? prerollFrames : 0;
-    const left = new Float32Array(totalFrames + captureOffset);
-    const right = new Float32Array(totalFrames + captureOffset);
+    const left = onChunk ? null : new Float32Array(totalFrames + captureOffset);
+    const right = onChunk ? null : new Float32Array(totalFrames + captureOffset);
     engine.seekSample(startSample - prerollFrames);
     engine.process([new Float32Array(RENDER_BLOCK_FRAMES), new Float32Array(RENDER_BLOCK_FRAMES)]);
     engine.settleParameters();
@@ -842,7 +863,7 @@ export async function renderProjectWithEngine(
     while (prerollDone < prerollFrames) {
       const blockFrames = Math.min(RENDER_BLOCK_FRAMES, prerollFrames - prerollDone);
       const out = engine.process([new Float32Array(blockFrames), new Float32Array(blockFrames)]);
-      if (capturePreroll) {
+      if (capturePreroll && left && right) {
         left.set(out[0].subarray(0, blockFrames), prerollDone);
         right.set((out[1] ?? out[0]).subarray(0, blockFrames), prerollDone);
       }
@@ -853,8 +874,17 @@ export async function renderProjectWithEngine(
     while (framesDone < totalFrames) {
       const blockFrames = Math.min(RENDER_BLOCK_FRAMES, totalFrames - framesDone);
       const out = engine.process([new Float32Array(blockFrames), new Float32Array(blockFrames)]);
-      left.set(out[0].subarray(0, blockFrames), captureOffset + framesDone);
-      right.set((out[1] ?? out[0]).subarray(0, blockFrames), captureOffset + framesDone);
+      if (onChunk) {
+        // process() may reuse its output storage on the next block; each
+        // consumer receives ownership of a compact transferable copy.
+        await onChunk(
+          [out[0].slice(0, blockFrames), (out[1] ?? out[0]).slice(0, blockFrames)],
+          framesDone,
+        );
+      } else {
+        left!.set(out[0].subarray(0, blockFrames), captureOffset + framesDone);
+        right!.set((out[1] ?? out[0]).subarray(0, blockFrames), captureOffset + framesDone);
+      }
       framesDone += blockFrames;
       if (++blocksSinceCheckpoint >= BLOCKS_PER_CHECKPOINT) {
         blocksSinceCheckpoint = 0;
@@ -867,7 +897,7 @@ export async function renderProjectWithEngine(
       }
     }
     engine.stop();
-    return [left, right];
+    return [left ?? new Float32Array(0), right ?? new Float32Array(0)];
   };
 
   /** Runs one configured pass on a fresh engine, destroying it afterwards. */
@@ -877,6 +907,10 @@ export async function renderProjectWithEngine(
     progressStart: number,
     progressSpan: number,
     capturePreroll = false,
+    onChunk?: (
+      channels: readonly [Float32Array, Float32Array],
+      offsetFrames: number,
+    ) => Promise<void> | void,
   ): Promise<[Float32Array, Float32Array]> => {
     const engine = (createEngine as NonNullable<typeof createEngine>)(
       sampleRate,
@@ -884,7 +918,14 @@ export async function renderProjectWithEngine(
     );
     try {
       configureEngine(engine, pass);
-      return await renderWindow(engine, stage, progressStart, progressSpan, capturePreroll);
+      return await renderWindow(
+        engine,
+        stage,
+        progressStart,
+        progressSpan,
+        capturePreroll,
+        onChunk,
+      );
     } finally {
       engine.destroy();
     }
@@ -940,6 +981,47 @@ export async function renderProjectWithEngine(
   const sf2PreRenderCount = conflictingSf2TrackIndices.size;
   const passSpan = 0.9 / (1 + stemPassCount + sf2PreRenderCount);
   let passIndex = 0;
+  const mastering = deps?.mastering ?? null;
+
+  // A plain master pass can be delivered block by block. Do not take this
+  // path when any later stage needs the complete waveform (mastering chain,
+  // stems, or multi-SF2 pre-renders), as preserving those semantics wins over
+  // reducing retained memory.
+  if (streamingMixdownEligible) {
+    let streamPeak = 0;
+    await runPass(
+      {
+        masterStrip: includeMasterChain,
+        masterLevels: true,
+        stemIndices: null,
+        busStemId: null,
+        freezeIndex: null,
+        sf2TrackIndices: activeSf2TrackIndices,
+        usePreRenderedSf2: false,
+      },
+      'engine.render',
+      0,
+      0.9,
+      false,
+      async (channels, offsetFrames) => {
+        for (const channel of channels) {
+          for (const value of channel) streamPeak = Math.max(streamPeak, Math.abs(value));
+        }
+        await options.onMixdownChunk!(channels, offsetFrames, totalFrames);
+      },
+    );
+    const report: MixdownReport = { peakDb: peakDb(streamPeak) };
+    const limitations = offlineAutomationLimitations(doc);
+    if (limitations.length > 0) report.limitations = limitations;
+    if (mediaIssues.length > 0) report.mediaIssues = mediaIssues;
+    options.onProgress?.(1, 'done');
+    return {
+      channels: [new Float32Array(0), new Float32Array(0)],
+      sampleRate,
+      totalFrames,
+      report,
+    };
+  }
 
   if (sf2PreRenderCount > 0) {
     const prerollFrames = Math.min(startSample, Math.round(PREROLL_SECONDS * sampleRate));
@@ -1079,8 +1161,6 @@ export async function renderProjectWithEngine(
   }
 
   // Mastering chain: export-only stage on the bounced stereo, as before.
-  const chain = doc.mixer?.masteringChain;
-  const mastering = deps?.mastering ?? null;
   if (includeMasterChain && chain && masteringChainIsActive(chain) && mastering) {
     const automatedParams = masteringParamsAtRenderStart(
       chain,

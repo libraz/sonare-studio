@@ -1,11 +1,17 @@
 import { computed, type Ref, ref } from 'vue';
+import { matchModeChoiceId, modeOrdinalForChoice } from '@/components/lists/key-modes';
 import { confirmDialog } from '@/composables/useDialogs';
 import { dawprojectFilename, exportDawprojectWithReport } from '@/export/dawproject';
 import type { MixdownRangePpq } from '@/export/mixdown';
 import { projectFilename } from '@/lib/filename';
+import { timeSigLengthPpq } from '@/notation/model';
 import { serializeMusicXml } from '@/notation/musicxml';
-import { quantizeToScore } from '@/notation/quantize';
-import { parseInsertAutomationParam } from '@/project/automation';
+import { keyToKeyFifths } from '@/notation/pitch-spelling';
+import {
+  parseInsertAutomationParam,
+  parseInstrumentAutomationParam,
+  parseMasteringAutomationParam,
+} from '@/project/automation';
 import { insertIndexForAutomationRef } from '@/project/automation-insert';
 import { formatMediaCompletenessReport } from '@/project/media-completeness';
 import {
@@ -19,11 +25,22 @@ import { useProjectStore } from '@/project/store';
 import { timeSignatureAt } from '@/project/time-signature';
 import { clipKind } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { buildProjectScore } from '@/ui/score/use-score-notation';
+import type { Key } from '@/wasm/index.js';
 
 type RunAction = (action: () => Promise<void>) => Promise<void>;
 type DownloadBlobFile = (blob: Blob, filename: string) => void;
 
 const MUSICXML_MIME = 'application/vnd.recordare.musicxml+xml';
+
+const SCORE_DIVISION_PPQ: Readonly<Record<string, number>> = {
+  '4': 1,
+  '8': 0.5,
+  '16': 0.25,
+  '32': 0.125,
+  '8t': 1 / 3,
+  '16t': 1 / 6,
+};
 
 export interface ProjectExportOptions {
   closeProjectMenu: () => void;
@@ -76,6 +93,12 @@ export function useProjectExport(options: ProjectExportOptions) {
     ): boolean => {
       if (!lane.enabled || lane.points.length === 0) return false;
       if (lane.param === 'faderDb' || lane.param === 'pan') return true;
+      if (
+        parseInstrumentAutomationParam(lane.param) !== undefined ||
+        parseMasteringAutomationParam(lane.param) !== undefined
+      ) {
+        return true;
+      }
       const insertRef = parseInsertAutomationParam(lane.param);
       if (!insertRef) return false;
       const insertIndex = strip ? insertIndexForAutomationRef(strip.inserts, insertRef) : undefined;
@@ -272,21 +295,52 @@ export function useProjectExport(options: ProjectExportOptions) {
     options.closeProjectMenu();
     void options.runAction(async () => {
       const clip = store.activeClip;
-      if (!clip || clipKind(clip) !== 'midi' || store.clipLengthPpq <= 0) return;
+      const fullScore = store.scoreDisplaySettings.fullScoreEnabled;
+      const hasMidiTrack = store.tracks.some((track) => track.kind === 'midi');
+      if (
+        !clip ||
+        store.clipLengthPpq <= 0 ||
+        (!fullScore && clipKind(clip) !== 'midi') ||
+        (fullScore && !hasMidiTrack)
+      ) {
+        return;
+      }
       const meter = timeSignatureAt(store.timeSignatures, store.clipStartPpq);
-      const score = quantizeToScore(store.notes, {
-        divisionPpq: 0.25,
-        timeSig: { beats: meter.numerator, beatUnit: meter.denominator },
-        keyFifths: 0,
-        clipStartPpq: store.clipStartPpq,
-        clipLengthPpq: store.clipLengthPpq,
-        timeSignatures: store.timeSignatures,
-        clef: 'grand',
-        partName: store.activeTrack?.name ?? 'Piano',
-        displayTransposeSemitones: store.displayTransposeSemitones,
+      const measureLenPpq = timeSigLengthPpq({
+        beats: meter.numerator,
+        beatUnit: meter.denominator,
       });
-      const title = store.projectName.trim();
-      if (title) score.metadata = { title };
+      const actualMeasures = Math.max(1, Math.ceil(store.clipLengthPpq / measureLenPpq));
+      const pickup = store.clipStartPpq === 0 ? store.pickupLengthPpq : 0;
+      const clipLengthPpq =
+        pickup <= 0 || pickup >= store.clipLengthPpq
+          ? actualMeasures * measureLenPpq
+          : pickup +
+            Math.max(1, Math.ceil((store.clipLengthPpq - pickup) / measureLenPpq)) * measureLenPpq;
+      const scale = store.scaleHighlight;
+      const modeId = scale.enabled ? matchModeChoiceId(scale.modeMask) : null;
+      const keyFifths =
+        modeId === null
+          ? 0
+          : keyToKeyFifths({
+              root: (((scale.rootPc % 12) + 12) % 12) as Key['root'],
+              mode: modeOrdinalForChoice(modeId) as Key['mode'],
+            });
+      const score = await buildProjectScore(store, {
+        divisionPpq: SCORE_DIVISION_PPQ[store.scoreDisplaySettings.displayQuantizeKey] ?? 0.25,
+        timeSig: { beats: meter.numerator, beatUnit: meter.denominator },
+        measureLenPpq,
+        clipLengthPpq,
+        timeSignatures: store.timeSignatures,
+        pickupLengthPpq: store.pickupLengthPpq,
+        keyFifths,
+        chordsEnabled: store.scoreDisplaySettings.chordsEnabled,
+        fullScoreEnabled: fullScore,
+        estimateFingering: store.scoreDisplaySettings.estimateFingering,
+        grandStaffSplitPitch: store.scoreDisplaySettings.grandStaffSplitPitch,
+        layoutSettings: store.scoreDisplaySettings,
+        loopRegion: exportLoopRegion.value,
+      });
       options.downloadBlobFile(
         new Blob([serializeMusicXml(score)], { type: MUSICXML_MIME }),
         projectFilename(store.projectName, '.musicxml', 'score'),

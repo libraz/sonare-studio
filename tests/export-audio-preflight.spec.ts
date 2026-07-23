@@ -157,6 +157,44 @@ describe('audioExportPreflight', () => {
     expect(load).toHaveBeenCalledWith('ok');
   });
 
+  it('uses metadata validation ahead of the legacy full-PCM loader', async () => {
+    const source = doc();
+    source.tracks.push({
+      name: 'Audio',
+      color: '#000',
+      kind: 'audio',
+      mute: false,
+      solo: false,
+      volume: 1,
+      pan: 0,
+      clips: [
+        {
+          name: 'Clip',
+          startPpq: 0,
+          lengthPpq: 4,
+          sourceOffsetPpq: 0,
+          gain: 1,
+          loopEnabled: false,
+          loopLengthPpq: 0,
+          kind: 'audio',
+          notes: [],
+          assetId: 'asset-1',
+        },
+      ],
+    });
+    const meta = vi.fn(async (id: string) => loaded(id).meta);
+    const full = vi.fn(async (id: string) => loaded(id));
+    const result = await audioExportPreflight(source, {
+      range: 'project',
+      releaseTailSeconds: 0,
+      loadAudioAssetMeta: meta,
+      loadAudioAsset: full,
+    });
+    expect(result.blockers).toEqual([]);
+    expect(meta).toHaveBeenCalledWith('asset-1');
+    expect(full).not.toHaveBeenCalled();
+  });
+
   it('ignores missing media on muted, solo-excluded and loop-excluded tracks', async () => {
     const source = doc();
     const audioTrack = (

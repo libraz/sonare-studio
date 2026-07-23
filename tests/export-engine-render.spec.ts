@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { linearToDb } from '@/engine/mixer-sync';
 import type { OfflineRenderEngine } from '@/export/engine-render';
 import { renderProjectWithEngine } from '@/export/engine-render';
+import { buildMidiSchedules } from '@/export/engine-render-context';
 import { MixdownCancelledError } from '@/export/mixdown';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import {
@@ -623,6 +624,25 @@ function defaultAudioLevel(
 }
 
 describe('renderProjectWithEngine', () => {
+  it('assigns collision-free synthetic ids beyond 10,000 MIDI clips per track', () => {
+    const doc = makeDoc();
+    const source = doc.tracks[0].clips[0];
+    doc.tracks[0].clips = Array.from({ length: 10_001 }, (_, index) => ({
+      ...source,
+      name: `Track one ${index}`,
+      notes: index === 10_000 ? source.notes : [],
+    }));
+    doc.tracks[1] = {
+      ...doc.tracks[0],
+      name: 'Track two',
+      clips: [{ ...source, name: 'Track two note' }],
+    };
+
+    const schedules = buildMidiSchedules(doc, [1, 2], doc.tempoSegments, doc.sampleRate);
+
+    expect(schedules.map((schedule) => schedule.id)).toEqual([10_001, 10_002]);
+  });
+
   it('renders audible MIDI notes and audio clips through the master fader', async () => {
     const engine = new AudibilityEngine();
     const result = await renderProjectWithEngine(makeDoc(), renderOptions(engine));
@@ -2142,6 +2162,43 @@ describe('renderProjectWithEngine', () => {
       { index: 1, total: 2, name: 'Drums' },
     ]);
     expect(result.stems).toBeUndefined();
+  });
+
+  it('streams eligible master PCM blocks without retaining a full mixdown', async () => {
+    const chunks: Array<{ offset: number; frames: number }> = [];
+    const result = await renderProjectWithEngine(makeDoc(), {
+      deps: null,
+      loadAudioAsset: async () => fakeAsset(),
+      createEngine: () => new FakeEngine(),
+      onMixdownChunk: async (channels, offsetFrames, totalFrames) => {
+        expect(totalFrames).toBeGreaterThan(0);
+        chunks.push({ offset: offsetFrames, frames: channels[0].length });
+        expect(channels[1]).toHaveLength(channels[0].length);
+      },
+    });
+
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks[0]).toEqual({ offset: 0, frames: 1024 });
+    expect(chunks.at(-1)!.offset + chunks.at(-1)!.frames).toBe(result.totalFrames);
+    expect(result.channels[0]).toHaveLength(0);
+    expect(result.channels[1]).toHaveLength(0);
+  });
+
+  it('permits a long plain streamed master under a budget that rejects full buffers', async () => {
+    const doc = makeDoc();
+    doc.tracks = doc.tracks.filter((track) => track.kind === 'midi');
+    const chunks: number[] = [];
+    await expect(
+      renderProjectWithEngine(doc, {
+        deps: null,
+        createEngine: () => new FakeEngine(),
+        memoryBudgetBytes: 1,
+        onMixdownChunk: (channels) => {
+          chunks.push(channels[0].length);
+        },
+      }),
+    ).resolves.toMatchObject({ channels: [expect.any(Float32Array), expect.any(Float32Array)] });
+    expect(chunks.length).toBeGreaterThan(0);
   });
 
   it('rejects an over-budget render before creating full-length engine passes', async () => {

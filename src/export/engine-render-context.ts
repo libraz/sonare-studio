@@ -310,11 +310,12 @@ export function buildMidiSchedules(
     ...(track.frozen !== undefined ? { frozen: { ...track.frozen } } : {}),
   }));
   const midiClips: EditorClip[] = [];
+  let nextMidiClipId = 1;
   doc.tracks.forEach((track, trackIndex) => {
-    track.clips.forEach((clip, clipIndex) => {
+    track.clips.forEach((clip) => {
       if ((clip.kind ?? 'midi') !== 'midi') return;
       midiClips.push({
-        id: trackIndex * 10_000 + clipIndex + 1,
+        id: nextMidiClipId++,
         trackId: trackIds[trackIndex],
         name: clip.name,
         startPpq: clip.startPpq,

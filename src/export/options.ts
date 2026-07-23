@@ -5,11 +5,13 @@
  * unit-testable in isolation; the dialog component is a thin view over it.
  */
 
-import { AsyncZipDeflate, Zip, zipSync } from 'fflate';
-import { DEFAULT_EXPORT_MEMORY_BUDGET_BYTES } from '@/export/memory-budget';
+import { zipSync } from 'fflate';
+import { DEFAULT_EXPORT_MEMORY_BUDGET_BYTES, MEBIBYTE } from '@/export/memory-budget';
 import type { MixdownRangePpq, MixdownReport } from '@/export/mixdown';
 import { dbToLinear } from '@/lib/db';
+import { ensureFileExtension, sanitizeFilenameBase } from '@/lib/filename';
 import { PayloadMemoryMeter, type PayloadMemorySample } from '@/lib/payload-memory';
+import { createStreamingZipWriter } from '@/lib/streaming-zip';
 import type { ExportRenderOptions } from '@/workers/export.worker';
 import { isBrowserMediaEncoderId } from './browser-media';
 import { WAV_ENCODER_ID } from './codecs';
@@ -34,6 +36,14 @@ export type ExportRangeChoice = 'project' | 'loop';
 
 /** Export mode: one stereo mixdown file, or stems zipped. */
 export type ExportMode = 'mixdown' | 'stems';
+
+/** Explicit user-selectable caps for retained render/encode payloads. */
+export const EXPORT_MEMORY_BUDGET_MIB = [512, 1024, 2048, 4096] as const;
+export type ExportMemoryBudgetMiB = (typeof EXPORT_MEMORY_BUDGET_MIB)[number];
+
+export function isExportMemoryBudgetMiB(value: number): value is ExportMemoryBudgetMiB {
+  return (EXPORT_MEMORY_BUDGET_MIB as ReadonlyArray<number>).includes(value);
+}
 
 /** Selectable compressed browser-encoder bitrates in kbps. */
 export const COMPRESSED_EXPORT_BITRATES = [128, 192, 256, 320] as const;
@@ -74,10 +84,14 @@ export interface ExportOptionsModel {
   wavDither: boolean;
   /** FLAC: output integer PCM sample depth. */
   flacBitDepth: FlacBitDepth;
+  /** FLAC: apply TPDF dither before 16-bit quantization. */
+  flacDither: boolean;
   /** MP3: constant bitrate in kbps. */
   mp3Bitrate: Mp3Bitrate;
   /** Browser AAC/Opus: requested MediaRecorder audio bitrate in kbps. */
   compressedBitrateKbps: CompressedExportBitrate;
+  /** Cap for all retained render and encode payloads, in MiB. */
+  memoryBudgetMiB: ExportMemoryBudgetMiB;
 }
 
 /** Fallback base name when the project name sanitizes to nothing. */
@@ -102,8 +116,10 @@ export function createDefaultExportOptions(projectName = FALLBACK_BASE_NAME): Ex
     wavBitDepth: 16,
     wavDither: false,
     flacBitDepth: 24,
+    flacDither: false,
     mp3Bitrate: DEFAULT_MP3_BITRATE,
     compressedBitrateKbps: 256,
+    memoryBudgetMiB: (DEFAULT_EXPORT_MEMORY_BUDGET_BYTES / MEBIBYTE) as ExportMemoryBudgetMiB,
   };
 }
 
@@ -210,6 +226,9 @@ export function validateExportOptions(
   ) {
     errors.push('Release tail must be between 0 and 120 seconds');
   }
+  if (!isExportMemoryBudgetMiB(model.memoryBudgetMiB)) {
+    errors.push(`Unsupported export memory budget: ${String(model.memoryBudgetMiB)} MiB`);
+  }
   if (model.encoderId === MP3_ENCODER_ID) {
     if (!isMp3SampleRate(model.sampleRate)) {
       errors.push('MP3 supports 44.1 kHz and 48 kHz only');
@@ -244,7 +263,7 @@ export function encodeOptionsForModel(
     return { bitrate: model.mp3Bitrate };
   }
   if (model.encoderId === FLAC_ENCODER_ID) {
-    return { bitDepth: model.flacBitDepth };
+    return { bitDepth: model.flacBitDepth, dither: model.flacDither };
   }
   if (isCompressedEncoderId(model.encoderId, context)) {
     return { bitrate: model.compressedBitrateKbps };
@@ -270,6 +289,7 @@ export function toRenderOptions(
     busStems: model.mode === 'stems' && model.includeBusStems,
     masterStem: model.mode === 'stems' && model.includeMasterStem,
     releaseTailSeconds: model.releaseTailSeconds,
+    memoryBudgetBytes: model.memoryBudgetMiB * MEBIBYTE,
   };
   if (model.range === 'loop') {
     if (!loopRegion) {
@@ -283,13 +303,12 @@ export function toRenderOptions(
 
 /** Replaces characters that are unsafe in filenames and trims whitespace. */
 export function sanitizeFileBaseName(name: string, fallback = FALLBACK_BASE_NAME): string {
-  const cleaned = name.replace(/[\\/:*?"<>|]/g, '_').trim();
-  return cleaned.length > 0 ? cleaned : fallback;
+  return sanitizeFilenameBase(name, fallback);
 }
 
 /** Appends an extension unless the name already ends with it. */
 function withExtension(name: string, extension: string): string {
-  return name.toLowerCase().endsWith(extension.toLowerCase()) ? name : `${name}${extension}`;
+  return ensureFileExtension(name, extension);
 }
 
 /** Derives the mixdown download filename (sanitized base + extension). */
@@ -366,8 +385,6 @@ export function createStemsZipWriter(
     meter?: PayloadMemoryMeter;
   } = {},
 ): StemsZipWriter {
-  const chunks: Uint8Array<ArrayBuffer>[] = [];
-  const chunkReleases: Array<() => void> = [];
   const meter =
     memory.meter ??
     new PayloadMemoryMeter({
@@ -375,119 +392,26 @@ export function createStemsZipWriter(
       budgetBytes: memory.budgetBytes ?? DEFAULT_EXPORT_MEMORY_BUDGET_BYTES,
       onSample: memory.onSample,
     });
-  const releaseChunks = () => {
-    chunks.length = 0;
-    while (chunkReleases.length > 0) chunkReleases.pop()?.();
-  };
-  const names = new Set<string>();
-  const pendingEntries = new Set<Promise<void>>();
-  let entryCount = 0;
-  let chunkBytes = 0;
-  let closed = false;
-  let resolveResult!: (blob: Blob) => void;
-  let rejectResult!: (error: unknown) => void;
-  let settled = false;
-  const result = new Promise<Blob>((resolve, reject) => {
-    resolveResult = resolve;
-    rejectResult = reject;
+  const writer = createStreamingZipWriter({
+    mtime: STEMS_ZIP_MTIME,
+    signal,
+    meter,
   });
-  // Cancellation can arrive before the caller reaches close(); keep that
-  // intentional early rejection from becoming an unhandled Promise.
-  void result.catch(() => {});
-  const zip = new Zip((error, chunk, final) => {
-    if (settled) return;
-    if (error) {
-      settled = true;
-      signal?.removeEventListener('abort', onAbort);
-      releaseChunks();
-      rejectResult(error);
-      return;
-    }
-    try {
-      const releaseCopyPeak = meter.retain(
-        chunk.byteLength * 2,
-        `compressed chunk copy ${chunks.length + 1}`,
-      );
-      const copy = new Uint8Array(chunk.byteLength);
-      copy.set(chunk);
-      releaseCopyPeak();
-      const release = meter.retain(copy.byteLength, `compressed chunk ${chunks.length + 1}`);
-      chunks.push(copy);
-      chunkBytes += copy.byteLength;
-      chunkReleases.push(release);
-    } catch (memoryError) {
-      settled = true;
-      signal?.removeEventListener('abort', onAbort);
-      releaseChunks();
-      rejectResult(memoryError);
-      return;
-    }
-    if (final) {
-      settled = true;
-      signal?.removeEventListener('abort', onAbort);
-      const releasePublishPeak = meter.retain(chunkBytes, 'ZIP Blob publish');
-      const blob = new Blob(chunks, { type: 'application/zip' });
-      releasePublishPeak();
-      releaseChunks();
-      resolveResult(blob);
-    }
-  });
-  const abortError = (): unknown =>
-    signal?.reason ?? new DOMException('Stems ZIP creation cancelled.', 'AbortError');
-  function onAbort(): void {
-    if (settled) return;
-    settled = true;
-    zip.terminate();
-    releaseChunks();
-    rejectResult(abortError());
-  }
-  signal?.addEventListener('abort', onAbort, { once: true });
-  if (signal?.aborted) onAbort();
   return {
     add(entry): Promise<void> {
-      signal?.throwIfAborted();
-      if (closed) throw new Error('Stems zip writer is closed');
-      if (names.has(entry.name)) throw new Error(`Duplicate stems zip entry: ${entry.name}`);
-      names.add(entry.name);
-      entryCount += 1;
-      const file = new AsyncZipDeflate(entry.name, { level: 6 });
-      file.mtime = new Date(STEMS_ZIP_MTIME);
-      zip.add(file);
-      const downstream = file.ondata;
-      const completion = new Promise<void>((resolve, reject) => {
-        file.ondata = (error, chunk, final) => {
-          downstream(error, chunk, final);
-          if (error) reject(error);
-          else if (final) resolve();
-        };
-        try {
-          file.push(entry.bytes, true);
-        } catch (error) {
-          reject(error);
-        }
-      });
-      pendingEntries.add(completion);
-      void completion.then(
-        () => pendingEntries.delete(completion),
-        () => pendingEntries.delete(completion),
-      );
-      return completion;
+      return writer.add(entry.name, entry.bytes);
     },
     async close(): Promise<Blob> {
-      if (signal?.aborted) return Promise.reject(abortError());
-      if (closed) return result;
-      if (entryCount === 0) {
-        closed = true;
-        zip.terminate();
-        releaseChunks();
-        rejectResult(new RangeError('Stems zip requires at least one entry'));
-        return result;
+      if (writer.stats().entries === 0) {
+        writer.abort(new RangeError('Stems zip requires at least one entry'));
       }
-      closed = true;
-      await Promise.all(pendingEntries);
-      signal?.throwIfAborted();
-      zip.end();
-      return result;
+      const bytes = await writer.close();
+      const releasePublishPeak = meter.retain(bytes.byteLength, 'ZIP Blob publish');
+      const publish = new Uint8Array(bytes.byteLength);
+      publish.set(bytes);
+      const blob = new Blob([publish], { type: 'application/zip' });
+      releasePublishPeak();
+      return blob;
     },
   };
 }

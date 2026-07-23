@@ -187,6 +187,52 @@ describe('ExportClient', () => {
     expect(result.stems).toBeUndefined();
   });
 
+  it('acknowledges streamed mixdown PCM only after its consumer completes', async () => {
+    let releaseConsumer!: () => void;
+    const consumerGate = new Promise<void>((resolve) => {
+      releaseConsumer = resolve;
+    });
+    const onChunk = vi.fn(async () => consumerGate);
+    const handle = client.renderMixdown(makeDoc(), {}, undefined, undefined, onChunk);
+    expect(worker.posted[0]).toMatchObject({ type: 'render', streamMixdown: true });
+
+    worker.emit({
+      id: 1,
+      type: 'mixdown-chunk',
+      left: new Float32Array([0.25]),
+      right: new Float32Array([0.5]),
+      offsetFrames: 0,
+      totalFrames: 1,
+    });
+    await Promise.resolve();
+    expect(worker.posted).toHaveLength(1);
+    releaseConsumer();
+    await vi.waitFor(() => {
+      expect(worker.posted[1]).toMatchObject({
+        type: 'mixdown-consumed',
+        targetId: 1,
+        offsetFrames: 0,
+      });
+    });
+    expect(onChunk).toHaveBeenCalledWith(
+      [expect.any(Float32Array), expect.any(Float32Array)],
+      0,
+      1,
+    );
+    worker.emit({
+      id: 1,
+      type: 'render',
+      result: {
+        left: new Float32Array(0),
+        right: new Float32Array(0),
+        sampleRate: 48000,
+        totalFrames: 1,
+        report: { peakDb: -6 },
+      },
+    });
+    await expect(handle.result).resolves.toMatchObject({ totalFrames: 1 });
+  });
+
   it('cancels the worker when a streamed stem consumer fails', async () => {
     const handle = client.renderMixdown(makeDoc(), { stems: true }, undefined, async () => {
       throw new Error('encoder out of memory');

@@ -127,6 +127,16 @@ export interface EngineRenderOptions {
    * the returned result.
    */
   onStem?: (stem: MixdownStem, index: number, total: number) => Promise<void> | void;
+  /**
+   * Sequential mixdown PCM consumer. When eligible (no full-buffer mastering
+   * stage or stems), the engine invokes this once per render block and does
+   * not retain the complete master PCM result.
+   */
+  onMixdownChunk?: (
+    channels: readonly [Float32Array, Float32Array],
+    offsetFrames: number,
+    totalFrames: number,
+  ) => Promise<void> | void;
   /** Maximum retained full-length audio payload before allocation. */
   memoryBudgetBytes?: number;
   /**

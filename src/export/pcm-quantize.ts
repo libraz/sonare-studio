@@ -30,7 +30,16 @@ export function scalePcmSample(clamped: number, positiveMax: number, negativeMax
  * @param negativeMax Magnitude of the negative full-scale code (e.g. 0x8000).
  * @returns The quantized signed integer sample.
  */
-export function quantizePcmSample(value: number, positiveMax: number, negativeMax: number): number {
-  const clamped = Math.min(1, Math.max(-1, value));
-  return Math.round(scalePcmSample(clamped, positiveMax, negativeMax));
+export function quantizePcmSample(
+  value: number,
+  positiveMax: number,
+  negativeMax: number,
+  ditherLsb = 0,
+): number {
+  // `Math.min/max` preserves NaN, which becomes an invalid BigInt in FLAC.
+  // Treat malformed source samples as silence consistently in every integer
+  // codec before scaling or adding optional dither.
+  const clamped = Number.isFinite(value) ? Math.min(1, Math.max(-1, value)) : 0;
+  const quantized = Math.round(scalePcmSample(clamped, positiveMax, negativeMax) + ditherLsb);
+  return Math.min(positiveMax, Math.max(-negativeMax, quantized));
 }

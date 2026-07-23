@@ -42,8 +42,10 @@ describe('createDefaultExportOptions', () => {
       wavBitDepth: 16,
       wavDither: false,
       flacBitDepth: 24,
+      flacDither: false,
       mp3Bitrate: 320,
       compressedBitrateKbps: 256,
+      memoryBudgetMiB: 1024,
     });
     expect(createDefaultExportOptions().baseName).toBe('project');
   });
@@ -121,6 +123,12 @@ describe('validateExportOptions', () => {
     );
     expect(errors).toEqual(['Unsupported FLAC bit depth: 32']);
   });
+
+  it('rejects an unsupported retained-payload memory budget', () => {
+    expect(validateExportOptions(model({ memoryBudgetMiB: 768 as never }), CONTEXT)).toEqual([
+      'Unsupported export memory budget: 768 MiB',
+    ]);
+  });
 });
 
 describe('encodeOptionsForModel', () => {
@@ -138,9 +146,11 @@ describe('encodeOptionsForModel', () => {
   });
 
   it('maps FLAC options', () => {
-    expect(encodeOptionsForModel(model({ encoderId: FLAC_ENCODER_ID, flacBitDepth: 16 }))).toEqual({
-      bitDepth: 16,
-    });
+    expect(
+      encodeOptionsForModel(
+        model({ encoderId: FLAC_ENCODER_ID, flacBitDepth: 16, flacDither: true }),
+      ),
+    ).toEqual({ bitDepth: 16, dither: true });
   });
 
   it('maps browser compressed encoder bitrate options', () => {
@@ -270,7 +280,14 @@ describe('toRenderOptions', () => {
       busStems: false,
       masterStem: false,
       releaseTailSeconds: 2,
+      memoryBudgetBytes: 1024 * 1024 * 1024,
     });
+  });
+
+  it('threads the selected memory budget to the worker preflight', () => {
+    expect(toRenderOptions(model({ memoryBudgetMiB: 2048 })).memoryBudgetBytes).toBe(
+      2048 * 1024 * 1024,
+    );
   });
 
   it('maps stems mode', () => {

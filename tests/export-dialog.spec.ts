@@ -83,6 +83,11 @@ interface RenderControl {
     index: number,
     total: number,
   ) => Promise<void>;
+  emitMixdown: (
+    channels: readonly [Float32Array, Float32Array],
+    offsetFrames: number,
+    totalFrames: number,
+  ) => Promise<void>;
 }
 
 /** A controllable render seam: one deferred handle shared by all calls. */
@@ -97,6 +102,13 @@ function makeRender(): RenderControl {
         total: number,
       ) => Promise<void> | void)
     | undefined;
+  let onMixdownFn:
+    | ((
+        channels: readonly [Float32Array, Float32Array],
+        offsetFrames: number,
+        totalFrames: number,
+      ) => Promise<void> | void)
+    | undefined;
   const render = vi.fn(
     (
       _doc: ProjectDocument,
@@ -107,8 +119,14 @@ function makeRender(): RenderControl {
         index: number,
         total: number,
       ) => Promise<void> | void,
+      onMixdownChunk?: (
+        channels: readonly [Float32Array, Float32Array],
+        offsetFrames: number,
+        totalFrames: number,
+      ) => Promise<void> | void,
     ): ExportRenderHandle => {
       onStemFn = onStem;
+      onMixdownFn = onMixdownChunk;
       const result = new Promise<MixdownResult>((resolve, reject) => {
         resolveFn = resolve;
         rejectFn = reject;
@@ -126,6 +144,10 @@ function makeRender(): RenderControl {
     emitStem: async (stem, index, total) => {
       if (!onStemFn) throw new Error('Stem consumer was not registered');
       await onStemFn(stem, index, total);
+    },
+    emitMixdown: async (channels, offsetFrames, totalFrames) => {
+      if (!onMixdownFn) throw new Error('Mixdown consumer was not registered');
+      await onMixdownFn(channels, offsetFrames, totalFrames);
     },
   };
 }
@@ -202,6 +224,23 @@ afterEach(() => {
 });
 
 describe('ExportDialog', () => {
+  it('confirms a user-selected large memory budget before rendering', async () => {
+    const control = makeRender();
+    mountDialog(control);
+
+    await selectOption('.memory-budget-select', '2 GiB');
+    await clickExport();
+    await flushPromises();
+
+    expect(control.render).not.toHaveBeenCalled();
+    expect(dialogQueue[0]?.message).toContain('2048 MiB');
+    resolveDialog(dialogQueue[0].id, true);
+    await flushPromises();
+    expect(control.options().memoryBudgetBytes).toBe(2048 * 1024 * 1024);
+    control.resolve(makeResult());
+    await flushPromises();
+  });
+
   it('requires confirmation before rendering time-varying unsupported automation', async () => {
     const control = makeRender();
     const doc = makeDocument();
@@ -285,6 +324,7 @@ describe('ExportDialog', () => {
     await selectOption('.format-select', 'FLAC (lossless)');
     expect(q('.wav-bit-depth')).toBeNull();
     expect(q('.flac-bit-depth')).not.toBeNull();
+    expect(q('.flac-dither')).not.toBeNull();
     expect(await readOptionLabels('.flac-bit-depth')).toEqual(['16-bit PCM', '24-bit PCM']);
     expect(q('.mp3-bitrate')).toBeNull();
     expect(q('.compressed-bitrate')).toBeNull();
@@ -392,6 +432,7 @@ describe('ExportDialog', () => {
       busStems: false,
       masterStem: false,
       releaseTailSeconds: 2,
+      memoryBudgetBytes: 1024 * 1024 * 1024,
     });
 
     control.progress()?.(0.5, 'clip:0:0');
@@ -512,7 +553,7 @@ describe('ExportDialog', () => {
     control.resolve(result);
     await flushPromises();
 
-    expect(encode).toHaveBeenCalledWith(result.channels, 48000, { bitDepth: 16 });
+    expect(encode).toHaveBeenCalledWith(result.channels, 48000, { bitDepth: 16, dither: false });
     expect(download.mock.calls[0][1]).toBe('My Song.flac');
   });
 
@@ -593,6 +634,7 @@ describe('ExportDialog', () => {
       busStems: false,
       masterStem: false,
       releaseTailSeconds: 2,
+      memoryBudgetBytes: 1024 * 1024 * 1024,
     });
   });
 
@@ -684,6 +726,27 @@ describe('ExportDialog', () => {
     const entries = unzipSync(await downloadedBytes(download));
     expect(entries['01 Drums.wav']).toEqual(new Uint8Array([10]));
     expect(entries['02 Bass.wav']).toEqual(new Uint8Array([30]));
+  });
+
+  it('writes eligible WAV mixdowns from streamed PCM blocks without calling the one-shot encoder', async () => {
+    const control = makeRender();
+    const encode = vi.fn(() => new Uint8Array([99]));
+    const { download } = mountDialog(control, {
+      encoders: [{ id: 'wav', label: 'WAV', extension: '.wav', mime: 'audio/wav', encode }],
+    });
+    await clickExport();
+
+    await control.emitMixdown([new Float32Array([0.25]), new Float32Array([-0.25])], 0, 2);
+    await control.emitMixdown([new Float32Array([0.5]), new Float32Array([-0.5])], 1, 2);
+    control.resolve(makeResult({ channels: [new Float32Array(0), new Float32Array(0)] }));
+
+    await vi.waitFor(() => expect(download).toHaveBeenCalledTimes(1));
+    expect(encode).not.toHaveBeenCalled();
+    expect(await downloadedBytes(download)).toEqual(
+      encodeWav([new Float32Array([0.25, 0.5]), new Float32Array([-0.25, -0.5])], 48_000, {
+        bitDepth: 16,
+      }),
+    );
   });
 
   it('exports stems at unity even when normalization is on, preserving mix balance', async () => {

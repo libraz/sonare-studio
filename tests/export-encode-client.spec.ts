@@ -96,4 +96,21 @@ describe('encodeAudioInWorker', () => {
     await expect(result).rejects.toMatchObject({ name: 'AbortError' });
     expect(worker.terminate).toHaveBeenCalledOnce();
   });
+
+  it('omits non-protocol options such as signals and callbacks from worker messages', async () => {
+    const worker = new FakeWorker();
+    const controller = new AbortController();
+    const result = encodeAudioInWorker(
+      'wav',
+      [new Float32Array(1)],
+      48_000,
+      { bitDepth: 16, signal: controller.signal, random: () => 0.5 },
+      undefined,
+      () => worker as unknown as Worker,
+    );
+
+    expect(worker.posted[0]?.options).toEqual({ bitDepth: 16 });
+    worker.emit({ type: 'encoded', bytes: new Uint8Array([1]) });
+    await expect(result).resolves.toEqual(new Uint8Array([1]));
+  });
 });

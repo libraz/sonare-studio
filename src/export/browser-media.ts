@@ -84,6 +84,7 @@ export async function encodeBrowserMedia(
   options: AudioEncodeOptions = {},
 ): Promise<Uint8Array> {
   const signal = options['signal'] as AbortSignal | undefined;
+  const onProgress = options['onProgress'] as ((fraction: number) => void) | undefined;
   signal?.throwIfAborted();
   const frames = assertPlanar(channels);
   const AudioContextCtor = globalThis.AudioContext;
@@ -103,6 +104,8 @@ export async function encodeBrowserMedia(
 
   const context = new AudioContextCtor({ sampleRate });
   try {
+    await context.resume?.();
+    signal?.throwIfAborted();
     const destination = context.createMediaStreamDestination();
     const buffer = context.createBuffer(channels.length, frames, sampleRate);
     for (let index = 0; index < channels.length; index += 1) {
@@ -119,6 +122,8 @@ export async function encodeBrowserMedia(
       recorderOptions.audioBitsPerSecond = bitrate * 1000;
     }
     const recorder = new RecorderCtor(destination.stream, recorderOptions);
+    const durationSeconds = frames / sampleRate;
+    let progressTimer: ReturnType<typeof setInterval> | null = null;
     let cleanupRecorderListeners = (): void => {};
     const done = new Promise<Uint8Array>((resolve, reject) => {
       let settled = false;
@@ -138,7 +143,10 @@ export async function encodeBrowserMedia(
         );
       };
       const onStop = (): void => {
-        settle(() => resolve(toBlobBytes(new Blob(chunks, { type: mimeType }))));
+        settle(() => {
+          onProgress?.(1);
+          resolve(toBlobBytes(new Blob(chunks, { type: mimeType })));
+        });
       };
       const onEnded = (): void => {
         if (recorder.state === 'recording') recorder.stop();
@@ -159,6 +167,8 @@ export async function encodeBrowserMedia(
         if (recorder.state === 'recording') recorder.stop();
       };
       cleanupRecorderListeners = () => {
+        if (progressTimer !== null) clearInterval(progressTimer);
+        progressTimer = null;
         recorder.removeEventListener('dataavailable', onDataAvailable);
         recorder.removeEventListener('error', onError);
         recorder.removeEventListener('stop', onStop);
@@ -172,7 +182,13 @@ export async function encodeBrowserMedia(
       signal?.addEventListener('abort', onAbort, { once: true });
     });
     recorder.start();
-    source.start();
+    source.start(context.currentTime);
+    onProgress?.(0);
+    if (durationSeconds > 0 && Number.isFinite(context.currentTime)) {
+      progressTimer = setInterval(() => {
+        onProgress?.(Math.min(0.99, Math.max(0, context.currentTime / durationSeconds)));
+      }, 100);
+    }
     if (signal?.aborted) {
       try {
         source.stop();
