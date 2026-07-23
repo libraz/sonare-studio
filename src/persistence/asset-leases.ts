@@ -34,7 +34,10 @@ const fontLeaseCounts = new Map<string, number>();
 const deletingFontIds = new Set<string>();
 const remoteFontLeaseIds = new Map<string, Set<string>>();
 const LEASE_CHANNEL_NAME = 'sonare-studio:audio-asset-leases:v1';
-const LEASE_SYNC_MS = 30;
+// Give a backgrounded peer a realistic window to service the BroadcastChannel
+// message. More importantly, its last advertised lease remains authoritative
+// if it does not answer this particular sync request.
+const LEASE_SYNC_MS = 1000;
 const leaseSessionId =
   typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
@@ -251,9 +254,14 @@ export function isFontLeased(fontId: string): boolean {
  */
 export async function synchronizeMediaLeases(): Promise<void> {
   if (!leaseChannel) return;
-  remoteLeaseIds.clear();
-  remoteFontLeaseIds.clear();
   postLeaseMessage({ type: 'hello', sessionId: leaseSessionId });
+  // An unknown peer can answer this first hello, but local-only deletion
+  // should not pay the full cross-tab timeout. One task turn admits immediate
+  // BroadcastChannel replies; known peers retain the conservative 1s window.
+  if (remoteLeaseIds.size === 0 && remoteFontLeaseIds.size === 0) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    return;
+  }
   await new Promise<void>((resolve) => setTimeout(resolve, LEASE_SYNC_MS));
 }
 

@@ -84,4 +84,24 @@ describe('cross-tab audio asset leases', () => {
     await vi.waitFor(() => expect(leases.isFontLeased('remote-only-font')).toBe(false));
     remote.close();
   });
+
+  it('retains a known peer lease when that peer misses a later sync reply', async () => {
+    vi.stubGlobal('BroadcastChannel', FakeBroadcastChannel);
+    vi.resetModules();
+    const leases = await import('@/persistence/asset-leases');
+    const remote = new FakeBroadcastChannel('sonare-studio:audio-asset-leases:v1');
+
+    remote.postMessage({
+      type: 'leases',
+      sessionId: 'paused-tab',
+      assetIds: ['asset-being-imported'],
+    });
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    expect(leases.isAudioAssetLeased('asset-being-imported')).toBe(true);
+
+    // The peer receives hello but does not reply, as a backgrounded tab can.
+    await leases.synchronizeMediaLeases();
+    expect(leases.isAudioAssetLeased('asset-being-imported')).toBe(true);
+    remote.close();
+  });
 });

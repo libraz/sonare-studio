@@ -6,6 +6,7 @@ import {
   projectBytesRevision,
   saveProjectUnlocked,
 } from './opfs';
+import { decodeSzd } from './szd';
 
 const RECOVERY_DIR = 'recovery';
 const MANIFEST_FILE = 'autosave-manifest.json';
@@ -162,6 +163,10 @@ export function loadLatestAutosaveSessionRevision(): Promise<Uint8Array | null> 
         const bytes = await loadProject(slot);
         const entry = manifest.sessions.find((candidate) => candidate.slot === slot);
         if (entry && projectBytesRevision(bytes) !== entry.archiveRevision) continue;
+        // A valid archive revision alone is insufficient: schema changes or a
+        // partially written payload can still fail to decode. Validate inside
+        // the candidate loop so an older independent tab revision recovers.
+        decodeSzd(bytes);
         return bytes;
       } catch {
         // Try the next independently-written session revision.

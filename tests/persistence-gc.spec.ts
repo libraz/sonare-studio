@@ -219,6 +219,20 @@ describe('media garbage collection', () => {
     expect(assetsDir.files.has('crash-leftover.pcm')).toBe(false);
   });
 
+  it('removes orphan SF2 payloads that have no metadata sidecar', async () => {
+    const fontsDir = await root.getDirectoryHandle('fonts', { create: true });
+    fontsDir.files.set('crash-leftover.sf2', {
+      data: new Uint8Array([1, 2, 3, 4, 5]),
+      lastModified: 1,
+    });
+
+    const result = await garbageCollectMedia();
+
+    expect(result.removedFontIds).toEqual(['crash-leftover']);
+    expect(result.reclaimedBytes).toBe(5);
+    expect(fontsDir.files.has('crash-leftover.sf2')).toBe(false);
+  });
+
   it('deletes nothing when a stored project cannot be decoded', async () => {
     await saveAsset({ id: 'orphan', name: 'Orphan', sampleRate: 48000 }, mono());
     // A corrupt .szd leaves its references unknown.

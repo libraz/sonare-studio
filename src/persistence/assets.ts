@@ -14,6 +14,7 @@
  * project archive (see src/project/serialization.ts).
  */
 
+import { bytesEqual, isNotFoundError } from './fs-utils';
 import { withPersistenceMutationLock } from './mutation-lock';
 import { isOpfsAvailable, OpfsUnavailableError } from './opfs';
 import {
@@ -404,15 +405,6 @@ export function deinterleaveChannels(
   return channels;
 }
 
-/** True when an error is a DOMException-style NotFoundError. */
-function isNotFoundError(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    (error as { name?: unknown }).name === 'NotFoundError'
-  );
-}
-
 /** Resolves (creating on demand) the "assets/" directory handle. */
 async function assetsDirectory(): Promise<FileSystemDirectoryHandle> {
   if (!isOpfsAvailable()) throw new OpfsUnavailableError();
@@ -563,14 +555,6 @@ async function readOptionalFile(
     if (isNotFoundError(error)) return null;
     throw error;
   }
-}
-
-function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.byteLength !== b.byteLength) return false;
-  for (let i = 0; i < a.byteLength; i++) {
-    if (a[i] !== b[i]) return false;
-  }
-  return true;
 }
 
 /**

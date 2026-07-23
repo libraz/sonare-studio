@@ -21,7 +21,7 @@
  * collector deletes nothing and reports {@link MediaGcResult.incompleteReferences}.
  */
 
-import { listFonts } from '@/project/fonts';
+import { listFontPayloads, listFonts } from '@/project/fonts';
 import type { ProjectDocument } from '@/project/serialization';
 import {
   deleteAudioAssetGuarded,
@@ -32,11 +32,36 @@ import {
 import { type AudioAssetMeta, listAssetPayloads, listAssets } from './assets';
 import { collectReferencedAssetIds, collectReferencedFontIds } from './bundle';
 import { withPersistenceMutationLock } from './mutation-lock';
-import { isOpfsAvailable, listProjects, loadProject } from './opfs';
-import { decodeSzd } from './szd';
+import { isOpfsAvailable, listProjects, loadProject, type StoredProjectInfo } from './opfs';
+import { decodeSzdInWorker } from './szd';
 
 /** Bytes per stored PCM sample (32-bit float). */
 const BYTES_PER_SAMPLE = 4;
+
+interface CachedProjectReferences {
+  fingerprint: string;
+  assetIds: ReadonlySet<string>;
+  fontIds: ReadonlySet<string>;
+}
+
+interface ReferencedMediaScan {
+  assetIds: Set<string>;
+  fontIds: Set<string>;
+  complete: boolean;
+  projects: StoredProjectInfo[];
+}
+
+/**
+ * Project-reference scans are often repeated after adjacent saves. Cache the
+ * small id sets by OPFS file identity; media payloads are never retained.
+ */
+const projectReferenceCache = new Map<string, CachedProjectReferences>();
+
+function projectFingerprint(info: StoredProjectInfo): string | null {
+  // Without a modification time, a same-sized replacement cannot be proven
+  // unchanged, so deliberately skip the cache rather than risk an unsafe GC.
+  return Number.isFinite(info.lastModified) ? `${info.size}:${info.lastModified}` : null;
+}
 
 /** Options for {@link garbageCollectMedia}. */
 export interface MediaGcOptions {
@@ -83,10 +108,10 @@ function assetBytes(meta: Pick<AudioAssetMeta, 'numFrames' | 'numChannels'>): nu
  * @returns The referenced id sets, plus whether any project was unreadable
  *   (`complete` is false when a `.szd` could not be loaded or decoded).
  */
-export async function collectReferencedMediaIds(
+async function scanReferencedMediaIds(
   liveDocument?: ProjectDocument,
   extra?: { assetIds?: Iterable<string>; fontIds?: Iterable<string> },
-): Promise<{ assetIds: Set<string>; fontIds: Set<string>; complete: boolean }> {
+): Promise<ReferencedMediaScan> {
   const assetIds = new Set<string>();
   const fontIds = new Set<string>();
   let complete = true;
@@ -100,9 +125,32 @@ export async function collectReferencedMediaIds(
   for (const id of extra?.assetIds ?? []) assetIds.add(id);
   for (const id of extra?.fontIds ?? []) fontIds.add(id);
 
-  for (const info of await listProjects()) {
+  const projects = await listProjects();
+  const projectNames = new Set<string>();
+  for (const info of projects) {
+    projectNames.add(info.name);
     try {
-      fold(decodeSzd(await loadProject(info.name)));
+      const fingerprint = projectFingerprint(info);
+      const cached = fingerprint ? projectReferenceCache.get(info.name) : undefined;
+      if (cached?.fingerprint === fingerprint) {
+        for (const id of cached.assetIds) assetIds.add(id);
+        for (const id of cached.fontIds) fontIds.add(id);
+        continue;
+      }
+      // ZIP expansion is intentionally kept off the UI thread. Only the
+      // document's tiny reference sets are cached, never decoded media bytes.
+      const document = await decodeSzdInWorker(await loadProject(info.name));
+      const projectAssetIds = collectReferencedAssetIds(document);
+      const projectFontIds = collectReferencedFontIds(document);
+      for (const id of projectAssetIds) assetIds.add(id);
+      for (const id of projectFontIds) fontIds.add(id);
+      if (fingerprint) {
+        projectReferenceCache.set(info.name, {
+          fingerprint,
+          assetIds: projectAssetIds,
+          fontIds: projectFontIds,
+        });
+      }
     } catch {
       // An unreadable or malformed project leaves its references unknown; mark
       // the set incomplete so the caller refuses to delete.
@@ -110,7 +158,37 @@ export async function collectReferencedMediaIds(
     }
   }
 
+  for (const name of projectReferenceCache.keys()) {
+    if (!projectNames.has(name)) projectReferenceCache.delete(name);
+  }
+
+  return { assetIds, fontIds, complete, projects };
+}
+
+export async function collectReferencedMediaIds(
+  liveDocument?: ProjectDocument,
+  extra?: { assetIds?: Iterable<string>; fontIds?: Iterable<string> },
+): Promise<{ assetIds: Set<string>; fontIds: Set<string>; complete: boolean }> {
+  const { assetIds, fontIds, complete } = await scanReferencedMediaIds(liveDocument, extra);
   return { assetIds, fontIds, complete };
+}
+
+/** True only when no project changed between an unlocked scan and the lock. */
+async function projectInventoryMatches(previous: readonly StoredProjectInfo[]): Promise<boolean> {
+  const current = await listProjects();
+  if (current.length !== previous.length) return false;
+  return current.every((info, index) => {
+    const before = previous[index];
+    // Missing modification timestamps cannot establish an unchanged file.
+    return (
+      before !== undefined &&
+      info.name === before.name &&
+      info.size === before.size &&
+      info.lastModified !== undefined &&
+      before.lastModified !== undefined &&
+      info.lastModified === before.lastModified
+    );
+  });
 }
 
 /**
@@ -124,7 +202,10 @@ export async function collectReferencedMediaIds(
  * @param options Live document to preserve and an optional dry-run flag.
  * @returns What was removed (or would be), and the reclaimed byte count.
  */
-async function garbageCollectMediaUnlocked(options: MediaGcOptions = {}): Promise<MediaGcResult> {
+async function garbageCollectMediaUnlocked(
+  options: MediaGcOptions = {},
+  preparedScan?: ReferencedMediaScan,
+): Promise<MediaGcResult> {
   const empty: MediaGcResult = {
     removedAssetIds: [],
     removedFontIds: [],
@@ -140,23 +221,32 @@ async function garbageCollectMediaUnlocked(options: MediaGcOptions = {}): Promis
   // Fold every live tab's leased fonts in, so another tab's unsaved SoundFont
   // (autosave writes no media bundle, and may be up to 30s behind) is preserved.
   const protectedFontIds = (): Set<string> => new Set([...extraFontIds, ...leasedFontIds()]);
-  const { assetIds, fontIds, complete } = await collectReferencedMediaIds(options.liveDocument, {
-    assetIds: protectedAssetIds(),
-    fontIds: protectedFontIds(),
-  });
+  let scan = preparedScan;
+  if (!scan || !(await projectInventoryMatches(scan.projects))) {
+    scan = await scanReferencedMediaIds(options.liveDocument, {
+      assetIds: protectedAssetIds(),
+      fontIds: protectedFontIds(),
+    });
+  }
+  const { assetIds, fontIds, complete } = scan;
   if (!complete) return { ...empty, incompleteReferences: true };
 
-  const [assets, assetPayloads, fonts] = await Promise.all([
+  const [assets, assetPayloads, fonts, fontPayloads] = await Promise.all([
     listAssets(),
     listAssetPayloads(),
     listFonts(),
+    listFontPayloads(),
   ]);
   const assetMetaIds = new Set(assets.map((meta) => meta.id));
   const orphanAssets = assets.filter((meta) => !assetIds.has(meta.id));
   const orphanPayloads = assetPayloads.filter(
     (payload) => !assetMetaIds.has(payload.id) && !assetIds.has(payload.id),
   );
+  const fontMetaIds = new Set(fonts.map((meta) => meta.id));
   const orphanFonts = fonts.filter((meta) => !fontIds.has(meta.id));
+  const orphanFontPayloads = fontPayloads.filter(
+    (payload) => !fontMetaIds.has(payload.id) && !fontIds.has(payload.id),
+  );
 
   if (options.dryRun) {
     return {
@@ -164,11 +254,15 @@ async function garbageCollectMediaUnlocked(options: MediaGcOptions = {}): Promis
         ...orphanAssets.map((meta) => meta.id),
         ...orphanPayloads.map((payload) => payload.id),
       ].sort(),
-      removedFontIds: orphanFonts.map((meta) => meta.id).sort(),
+      removedFontIds: [
+        ...orphanFonts.map((meta) => meta.id),
+        ...orphanFontPayloads.map((payload) => payload.id),
+      ].sort(),
       reclaimedBytes:
         orphanAssets.reduce((total, meta) => total + assetBytes(meta), 0) +
         orphanPayloads.reduce((total, payload) => total + payload.byteLength, 0) +
-        orphanFonts.reduce((total, meta) => total + meta.byteLength, 0),
+        orphanFonts.reduce((total, meta) => total + meta.byteLength, 0) +
+        orphanFontPayloads.reduce((total, payload) => total + payload.byteLength, 0),
       incompleteReferences: false,
     };
   }
@@ -181,15 +275,11 @@ async function garbageCollectMediaUnlocked(options: MediaGcOptions = {}): Promis
     const deleted = await deleteAudioAssetGuarded(
       assetId,
       async () => {
-        const current = await collectReferencedMediaIds(options.liveDocument, {
-          assetIds: protectedAssetIds(),
-          fontIds: protectedFontIds(),
-        });
-        if (!current.complete) {
+        if (!complete) {
           incompleteReferences = true;
           return true;
         }
-        return current.assetIds.has(assetId);
+        return assetIds.has(assetId) || protectedAssetIds().has(assetId);
       },
       true,
     );
@@ -204,21 +294,34 @@ async function garbageCollectMediaUnlocked(options: MediaGcOptions = {}): Promis
     const deleted = await deleteFontGuarded(
       meta.id,
       async () => {
-        const current = await collectReferencedMediaIds(options.liveDocument, {
-          assetIds: protectedAssetIds(),
-          fontIds: protectedFontIds(),
-        });
-        if (!current.complete) {
+        if (!complete) {
           incompleteReferences = true;
           return true;
         }
-        return current.fontIds.has(meta.id);
+        return fontIds.has(meta.id) || protectedFontIds().has(meta.id);
       },
       true,
     );
     if (deleted) {
       removedFontIds.push(meta.id);
       reclaimedBytes += meta.byteLength;
+    }
+  }
+  for (const payload of orphanFontPayloads) {
+    const deleted = await deleteFontGuarded(
+      payload.id,
+      async () => {
+        if (!complete) {
+          incompleteReferences = true;
+          return true;
+        }
+        return fontIds.has(payload.id) || protectedFontIds().has(payload.id);
+      },
+      true,
+    );
+    if (deleted) {
+      removedFontIds.push(payload.id);
+      reclaimedBytes += payload.byteLength;
     }
   }
   return {
@@ -230,5 +333,15 @@ async function garbageCollectMediaUnlocked(options: MediaGcOptions = {}): Promis
 }
 
 export function garbageCollectMedia(options: MediaGcOptions = {}): Promise<MediaGcResult> {
-  return withPersistenceMutationLock(() => garbageCollectMediaUnlocked(options));
+  return (async () => {
+    if (!isOpfsAvailable()) return garbageCollectMediaUnlocked(options);
+    // Archive reads/decompression are intentionally outside the origin-wide
+    // mutation lock. Once acquired, the project inventory is rechecked before
+    // any deletion, falling back to an in-lock scan only after a real change.
+    const scan = await scanReferencedMediaIds(options.liveDocument, {
+      assetIds: [...new Set(options.referencedAssetIds ?? []), ...leasedAudioAssetIds()],
+      fontIds: [...new Set(options.referencedFontIds ?? []), ...leasedFontIds()],
+    });
+    return withPersistenceMutationLock(() => garbageCollectMediaUnlocked(options, scan));
+  })();
 }

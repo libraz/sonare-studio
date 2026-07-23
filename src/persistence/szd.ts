@@ -14,6 +14,7 @@ import {
   preflightAndUnzip,
   preflightAndUnzipInWorker,
 } from '@/persistence/archive-preflight';
+import { MEDIA_ID_PATTERN } from '@/persistence/fs-utils';
 import {
   MAX_PROJECT_ARCHIVE_COMPRESSED_BYTES,
   MAX_PROJECT_ARCHIVE_ENTRIES,
@@ -85,9 +86,6 @@ export interface SzdMediaBundle {
   fonts: ReadonlyArray<SzdFontEntry>;
 }
 
-/** Base name pattern shared with the asset/font stores (safe zip entry names). */
-const MEDIA_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-
 /** Shape of the meta.json entry inside a .szd archive. */
 export interface SzdMetaDocument {
   /** Project document schema version, duplicated for cheap inspection. */
@@ -123,7 +121,10 @@ export class SzdSizeError extends Error {
  * decoding share one budget (resource-limits.ts): without this an oversized
  * bundle produces a .szd this app can save but never open again.
  */
-function assertSzdEncodeBudget(entries: Record<string, Uint8Array>, compressedBytes: number): void {
+function assertSzdEncodeBudget(
+  entries: Record<string, Uint8Array>,
+  compressedBytes?: number,
+): void {
   const names = Object.keys(entries);
   if (names.length > MAX_PROJECT_ARCHIVE_ENTRIES) {
     throw new SzdSizeError(
@@ -148,7 +149,7 @@ function assertSzdEncodeBudget(entries: Record<string, Uint8Array>, compressedBy
         `limit ${MAX_PROJECT_ARCHIVE_EXPANDED_BYTES})`,
     );
   }
-  if (compressedBytes > MAX_PROJECT_ARCHIVE_COMPRESSED_BYTES) {
+  if (compressedBytes !== undefined && compressedBytes > MAX_PROJECT_ARCHIVE_COMPRESSED_BYTES) {
     throw new SzdSizeError(
       `Exported project archive is too large (${compressedBytes} bytes; ` +
         `limit ${MAX_PROJECT_ARCHIVE_COMPRESSED_BYTES})`,
@@ -236,6 +237,10 @@ export function encodeSzd(
     entries[`${FONTS_PREFIX}${font.id}.json`] = font.meta;
     entries[`${FONTS_PREFIX}${font.id}.sf2`] = font.sf2;
   }
+  // Reject entry-count and expanded-payload violations before zipSync creates
+  // a potentially huge compressed archive. The compressed-size ceiling still
+  // needs the completed archive and is checked immediately afterwards.
+  assertSzdEncodeBudget(entries);
   const archive = zipSync(entries, { mtime: meta.savedAt ?? DEFAULT_ZIP_MTIME });
   assertSzdEncodeBudget(entries, archive.byteLength);
   return archive;
@@ -342,6 +347,16 @@ function decodeSzdEntries(entries: Record<string, Uint8Array>): ProjectDocument 
 
 export function decodeSzd(bytes: Uint8Array): ProjectDocument {
   return decodeSzdEntries(unzipSzd(bytes));
+}
+
+/** Parses a project document through fflate's worker path. */
+export async function decodeSzdInWorker(
+  bytes: Uint8Array,
+  signal?: AbortSignal,
+): Promise<ProjectDocument> {
+  const entries = await unzipSzdInWorker(bytes, signal);
+  signal?.throwIfAborted();
+  return decodeSzdEntries(entries);
 }
 
 /** Decodes with a caller-provided cumulative budget and reports retained expansion. */

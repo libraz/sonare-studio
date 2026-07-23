@@ -6,6 +6,7 @@ import {
   createBrowserBackup,
   createBrowserBackupWithReport,
   reclaimOrphanedRestoreStages,
+  reclaimOrphanedRestoreStagesAtStartup,
   restoreBrowserBackup,
 } from '@/persistence/backup';
 import { loadProject, saveProject } from '@/persistence/opfs';
@@ -271,7 +272,13 @@ describe('browser backup archives', () => {
 
     const restored = await restoreBrowserBackup(backup);
 
-    expect(restored).toEqual({ projects: 1, assets: 1, fonts: 1 });
+    expect(restored).toEqual({
+      projects: 1,
+      assets: 1,
+      fonts: 1,
+      skippedAssetIds: ['bad-meta', 'bad-pcm'],
+      skippedFontIds: ['badFont'],
+    });
     expect(await loadProject('Song A')).toEqual(projectBytes);
     expect((await loadAssetMeta('good')).name).toBe('Good audio');
     expect(await loadFont('goodFont')).toEqual(new Uint8Array([1, 2, 3]));
@@ -418,6 +425,12 @@ describe('browser backup archives', () => {
 
     // A second sweep with nothing left is a no-op.
     expect(await reclaimOrphanedRestoreStages()).toBe(0);
+  });
+
+  it('reclaims orphaned staging namespaces through the startup maintenance entrypoint', async () => {
+    await seedOrphanStage('startup-orphan');
+
+    expect(await reclaimOrphanedRestoreStagesAtStartup()).toBe(1);
   });
 
   it('returns zero when no staging root was ever created', async () => {

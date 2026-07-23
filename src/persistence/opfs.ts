@@ -8,6 +8,7 @@
  * {@link OpfsUnavailableError} the UI can present.
  */
 
+import { isNotFoundError } from './fs-utils';
 import { withPersistenceMutationLock } from './mutation-lock';
 
 /** Directory under the OPFS root that holds the project files. */
@@ -144,15 +145,6 @@ export function sanitizeProjectName(name: string): string {
 export function isReservedProjectName(name: string): boolean {
   const sanitized = sanitizeProjectName(name).toLowerCase();
   return sanitized === 'autosave' || sanitized.startsWith('autosave-session-');
-}
-
-/** True when an error is a DOMException-style NotFoundError. */
-function isNotFoundError(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    (error as { name?: unknown }).name === 'NotFoundError'
-  );
 }
 
 /** Resolves (creating on demand) the "projects/" directory handle. */

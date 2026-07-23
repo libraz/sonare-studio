@@ -1,11 +1,26 @@
-import { computed, nextTick, onScopeDispose, type Ref, ref, watch, watchEffect } from 'vue';
+import {
+  type ComputedRef,
+  computed,
+  nextTick,
+  onScopeDispose,
+  type Ref,
+  ref,
+  watch,
+  watchEffect,
+} from 'vue';
 import type { useAutosave } from '@/composables/useAutosave';
 import { promptDialog } from '@/composables/useDialogs';
 import { importDawprojectWithMediaResult } from '@/export/dawproject';
 import { describeError } from '@/lib/errors';
+import { preflightXmlBytes } from '@/lib/xml-preflight';
 import { importMusicXmlInWorker } from '@/notation/musicxml-import-client';
+import { extractMusicXmlFromMxl } from '@/notation/musicxml-mxl';
 import { leaseAudioAssets, leaseFonts } from '@/persistence/asset-leases';
-import { createBrowserBackupWithReport, restoreBrowserBackup } from '@/persistence/backup';
+import {
+  createBrowserBackupWithReport,
+  reclaimOrphanedRestoreStagesAtStartup,
+  restoreBrowserBackup,
+} from '@/persistence/backup';
 import { gatherProjectBundleWithReport, restoreProjectBundle } from '@/persistence/bundle';
 import { garbageCollectMedia } from '@/persistence/gc';
 import {
@@ -17,6 +32,7 @@ import {
   pickAndReadExternalAudioFiles,
   pickAndReadSzd,
   pickViaInputElement,
+  readFileBytesBounded,
 } from '@/persistence/local-file';
 import {
   deleteProject,
@@ -28,6 +44,7 @@ import {
   sanitizeProjectName,
   saveProjectChecked,
 } from '@/persistence/opfs';
+import { MAX_SMF_FILE_BYTES } from '@/persistence/resource-limits';
 import {
   decodeSzd,
   decodeSzdWithBundleInWorker,
@@ -73,6 +90,8 @@ export interface ProjectPersistenceOptions {
   downloadBlobFile: DownloadBlobFile;
   errorMessage: Ref<string>;
   runAction: RunAction;
+  /** Shared persisted-state revision, avoiding duplicate full-document hashes. */
+  persistedStateKey?: ComputedRef<string>;
 }
 
 export function useProjectPersistence(options: ProjectPersistenceOptions) {
@@ -97,7 +116,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   const recentProjects = ref<string[]>(loadRecentProjects());
 
   watch(
-    () => persistedProjectStateKey(store),
+    () => options.persistedStateKey?.value ?? persistedProjectStateKey(store),
     () => {
       if (store.initialized) dirty.value = true;
     },
@@ -210,6 +229,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     let autosavePresent = false;
     if (isOpfsAvailable()) {
       try {
+        await reclaimOrphanedRestoreStagesAtStartup();
         const stored = await listProjects();
         autosavePresent = stored.some((info) => isReservedProjectName(info.name));
         storedProjects.value = stored.filter((info) => !isReservedProjectName(info.name));
@@ -401,11 +421,18 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     void runAction(async () => {
       if (!(await confirmDiscard())) return;
       const picked = await pickViaInputElement({
-        accept: '.musicxml,.xml',
+        accept: '.musicxml,.xml,.mxl',
         read: async (files) => {
           const file = files[0];
           if (!file) return null;
-          return { name: file.name, text: await file.text() };
+          preflightXmlBytes(file.size, file.name);
+          const isMxl = file.name.toLowerCase().endsWith('.mxl');
+          return {
+            name: file.name,
+            text: isMxl
+              ? extractMusicXmlFromMxl(new Uint8Array(await file.arrayBuffer()), file.name)
+              : await file.text(),
+          };
         },
       });
       if (!picked) return;
@@ -531,7 +558,10 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     if (!file) return;
     void runAction(async () => {
       if (!(await confirmDiscard())) return;
-      const doc = await smfToProjectDocument(await file.arrayBuffer(), file.name);
+      const doc = await smfToProjectDocument(
+        await readFileBytesBounded(file, MAX_SMF_FILE_BYTES),
+        file.name,
+      );
       await loadProjectDocument(doc);
       savedProjectSlot.value = null;
       savedProjectRevision.value = null;
@@ -654,9 +684,24 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
         return;
       const picked = await pickAndReadBrowserBackup();
       if (!picked) return;
-      await restoreBrowserBackup(picked.bytes);
+      const restored = await restoreBrowserBackup(picked.bytes);
       await refreshStoredProjects();
       await reclaimUnusedMedia();
+      const skipped = [
+        ...(restored.skippedAssetIds ?? []).map((id) => `Audio: ${id}`),
+        ...(restored.skippedFontIds ?? []).map((id) => `SoundFont: ${id}`),
+      ];
+      if (skipped.length > 0) {
+        await confirmAction(
+          formatMessage(t.value.dialogs.prompts.restoreBackupMediaSkippedMessage, {
+            items: skipped.map((id) => `• ${id}`).join('\n'),
+          }),
+          {
+            title: t.value.dialogs.prompts.restoreBackupMediaSkippedTitle,
+            confirmLabel: t.value.dialogs.prompts.restoreBackupMediaSkippedConfirm,
+          },
+        );
+      }
     });
   }
 

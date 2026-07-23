@@ -5,12 +5,14 @@ import { ref } from 'vue';
 import { promptDialog } from '@/composables/useDialogs';
 import { useProjectPersistence } from '@/composables/useProjectPersistence';
 import { importDawprojectWithMediaResult } from '@/export/dawproject';
+import { DEFAULT_XML_LIMITS } from '@/lib/xml-preflight';
 import { importMusicXmlInWorker } from '@/notation/musicxml-import-client';
-import { createBrowserBackupWithReport } from '@/persistence/backup';
+import { createBrowserBackupWithReport, restoreBrowserBackup } from '@/persistence/backup';
 import { gatherProjectBundleWithReport } from '@/persistence/bundle';
 import {
   downloadBrowserBackup,
   downloadSzd,
+  pickAndReadBrowserBackup,
   pickAndReadDawproject,
   pickAndReadExternalAudioFiles,
   pickAndReadSzd,
@@ -22,6 +24,7 @@ import {
   loadProjectWithRevision,
   saveProjectChecked,
 } from '@/persistence/opfs';
+import { MAX_SMF_FILE_BYTES } from '@/persistence/resource-limits';
 import { encodeSzd } from '@/persistence/szd';
 import {
   addNote,
@@ -98,6 +101,7 @@ vi.mock('@/persistence/backup', () => ({
     bytes: new Uint8Array([1, 2, 3]),
     completeness: { complete: true, issues: [] },
   })),
+  reclaimOrphanedRestoreStagesAtStartup: vi.fn(async () => 0),
   restoreBrowserBackup: vi.fn(async () => ({ projects: 1, assets: 1, fonts: 1 })),
 }));
 
@@ -180,6 +184,7 @@ describe('useProjectPersistence autosave refresh after load', () => {
     vi.mocked(importDawprojectWithMediaResult).mockClear();
     vi.mocked(listProjects).mockResolvedValue([]);
     vi.mocked(pickAndReadDawproject).mockReset();
+    vi.mocked(pickAndReadBrowserBackup).mockReset();
     vi.mocked(pickAndReadExternalAudioFiles).mockReset();
     vi.mocked(pickAndReadSzd).mockReset();
     vi.mocked(pickViaInputElement).mockReset();
@@ -191,6 +196,8 @@ describe('useProjectPersistence autosave refresh after load', () => {
       bytes: new Uint8Array([1, 2, 3]),
       completeness: { complete: true, issues: [] },
     });
+    vi.mocked(restoreBrowserBackup).mockReset();
+    vi.mocked(restoreBrowserBackup).mockResolvedValue({ projects: 1, assets: 1, fonts: 1 });
     vi.mocked(gatherProjectBundleWithReport).mockReset();
     vi.mocked(gatherProjectBundleWithReport).mockResolvedValue({
       bundle: { assets: [], fonts: [] },
@@ -229,6 +236,31 @@ describe('useProjectPersistence autosave refresh after load', () => {
     expect(confirmAction.mock.calls[0][0]).toContain('missing-audio');
     expect(downloadSzd).not.toHaveBeenCalled();
     expect(downloadBrowserBackup).not.toHaveBeenCalled();
+  });
+
+  it('reports media ids skipped while restoring a browser backup', async () => {
+    vi.mocked(pickAndReadBrowserBackup).mockResolvedValue({
+      name: 'backup.sonare-backup',
+      bytes: new Uint8Array([1, 2, 3]),
+    });
+    vi.mocked(restoreBrowserBackup).mockResolvedValue({
+      projects: 1,
+      assets: 0,
+      fonts: 0,
+      skippedAssetIds: ['bad-audio'],
+      skippedFontIds: ['bad-font'],
+    });
+    const { confirmAction, persistence } = setup();
+
+    persistence.importBrowserBackupAction();
+    await flushPromises();
+
+    expect(confirmAction).toHaveBeenCalledTimes(2);
+    expect(confirmAction.mock.calls[1][0]).toContain('Audio: bad-audio');
+    expect(confirmAction.mock.calls[1][0]).toContain('SoundFont: bad-font');
+    expect(confirmAction.mock.calls[1][1]).toMatchObject({
+      title: 'Some backup media was skipped',
+    });
   });
 
   it('refreshes the autosave slot after opening a stored project', async () => {
@@ -365,6 +397,41 @@ describe('useProjectPersistence autosave refresh after load', () => {
     );
     expect(store.projectName).toBe('Current Project');
     expect(autosave.saveNow).not.toHaveBeenCalled();
+  });
+
+  it('rejects an oversized MusicXML file before reading it into a string', async () => {
+    const text = vi.fn(async () => '<score-partwise version="4.0"/>');
+    vi.mocked(pickViaInputElement).mockImplementationOnce(async (options) =>
+      options.read([
+        {
+          name: 'too-large.musicxml',
+          size: DEFAULT_XML_LIMITS.maxBytes + 1,
+          text,
+        } as File,
+      ]),
+    );
+    const { errorMessage, persistence } = setup();
+
+    persistence.importMusicXmlAction();
+    await flushPromises();
+
+    expect(text).not.toHaveBeenCalled();
+    expect(importMusicXmlInWorker).not.toHaveBeenCalled();
+    expect(errorMessage.value).toMatch(/too-large\.musicxml exceeds the .*XML limit/);
+  });
+
+  it('rejects an oversized MIDI file before invoking the wasm importer', async () => {
+    const input = {
+      files: [{ name: 'too-large.mid', size: MAX_SMF_FILE_BYTES + 1 } as File],
+      value: 'chosen',
+    } as unknown as HTMLInputElement;
+    const { errorMessage, persistence } = setup();
+
+    persistence.onMidiImportChange({ target: input } as unknown as Event);
+    await flushPromises();
+
+    expect(errorMessage.value).toMatch(/too-large\.mid.*too large.*limit 33554432/);
+    expect(input.value).toBe('');
   });
 
   it('passes a resolver for DAWproject external audio file selection', async () => {

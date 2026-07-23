@@ -7,6 +7,8 @@
  * the PDF toolchain that the notation download helpers pull in.
  */
 
+import { downloadBlob } from '@/lib/download';
+import { ensureFileExtension } from '@/lib/filename';
 import {
   MAX_BACKUP_ARCHIVE_COMPRESSED_BYTES,
   MAX_DAWPROJECT_ARCHIVE_BYTES,
@@ -131,13 +133,6 @@ export class LocalFileSizeError extends Error {
   }
 }
 
-/** Appends the extension unless the filename already ends with it. */
-function withExtension(filename: string, extension: string): string {
-  return filename.toLowerCase().endsWith(extension.toLowerCase())
-    ? filename
-    : `${filename}${extension}`;
-}
-
 /**
  * Triggers a browser download of .szd project bytes via a transient object
  * URL and anchor element.
@@ -147,27 +142,13 @@ function withExtension(filename: string, extension: string): string {
  */
 export function downloadSzd(filename: string, bytes: Uint8Array): void {
   const blob = new Blob([new Uint8Array(bytes)], { type: SZD_MIME });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = withExtension(filename, SZD_FILE_EXTENSION);
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
+  downloadBlob(blob, ensureFileExtension(filename, SZD_FILE_EXTENSION));
 }
 
 /** Triggers a browser download for a whole-browser backup archive. */
 export function downloadBrowserBackup(filename: string, bytes: Uint8Array): void {
   const blob = new Blob([new Uint8Array(bytes)], { type: SZD_MIME });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = withExtension(filename, BACKUP_FILE_EXTENSION);
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
+  downloadBlob(blob, ensureFileExtension(filename, BACKUP_FILE_EXTENSION));
 }
 
 /** Reads one size-bounded file into a single owned allocation. */

@@ -7,7 +7,8 @@
  * recover after clearing site data or moving to a new browser profile.
  */
 
-import { AsyncZipDeflate, strToU8, Zip } from 'fflate';
+import { strToU8 } from 'fflate';
+import { createStreamingZipWriter } from '@/lib/streaming-zip';
 import { preflightAndUnzipInWorker } from '@/persistence/archive-preflight';
 import {
   deleteAssetUnlocked,
@@ -24,6 +25,7 @@ import {
   prepareAssetRestore,
   prepareFontRestore,
 } from '@/persistence/bundle';
+import { MEDIA_ID_PATTERN } from '@/persistence/fs-utils';
 import { withPersistenceMutationLock } from '@/persistence/mutation-lock';
 import {
   deleteProjectUnlocked,
@@ -67,7 +69,6 @@ const META_ENTRY = 'meta.json';
 const PROJECTS_PREFIX = 'projects/';
 const ASSETS_PREFIX = 'assets/';
 const FONTS_PREFIX = 'fonts/';
-const MEDIA_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const RESTORE_STAGING_DIR = 'restore-staging';
 const RESTORE_MANIFEST_FILE = 'manifest.json';
 
@@ -128,6 +129,10 @@ export interface BrowserBackupRestoreResult {
   projects: number;
   assets: number;
   fonts: number;
+  /** Valid media ids skipped because the backup omitted or corrupted their pair. */
+  skippedAssetIds?: readonly string[];
+  /** Valid SoundFont ids skipped because the backup omitted or corrupted their pair. */
+  skippedFontIds?: readonly string[];
 }
 
 export class BrowserBackupRecoveryError extends Error {
@@ -262,6 +267,11 @@ export async function reclaimOrphanedRestoreStages(): Promise<number> {
   return reclaimed;
 }
 
+/** Reclaims crashed-restore staging directories during application startup. */
+export function reclaimOrphanedRestoreStagesAtStartup(): Promise<number> {
+  return withPersistenceMutationLock(() => reclaimOrphanedRestoreStages());
+}
+
 /** Raw interleaved-PCM bytes view of planar channels (a fresh copy). */
 function pcmBytes(channels: ReadonlyArray<Float32Array>): Uint8Array {
   const interleaved = interleaveChannels(channels);
@@ -290,16 +300,6 @@ function parseJson<T>(bytes: Uint8Array): T | null {
   }
 }
 
-function concatZipChunks(chunks: readonly Uint8Array[], totalBytes: number): Uint8Array {
-  const output = new Uint8Array(totalBytes);
-  let offset = 0;
-  for (const chunk of chunks) {
-    output.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return output;
-}
-
 function payloadChecksum(...parts: readonly Uint8Array[]): string {
   return parts.map((part) => projectBytesRevision(part)).join(':');
 }
@@ -318,81 +318,32 @@ function createBackupZipWriter(
   signal?: AbortSignal,
   limits: BrowserBackupExportLimits = DEFAULT_EXPORT_LIMITS,
 ): {
-  add(name: string, bytes: Uint8Array): void;
+  add(name: string, bytes: Uint8Array): Promise<void>;
   abort(): void;
   close(): Promise<Uint8Array>;
   stats(): { entries: number; uncompressedBytes: number };
 } {
-  const chunks: Uint8Array[] = [];
-  let totalBytes = 0;
-  let entries = 0;
-  let uncompressedBytes = 0;
-  let failed = false;
-  let resolveResult!: (bytes: Uint8Array) => void;
-  let rejectResult!: (error: Error) => void;
-  const result = new Promise<Uint8Array>((resolve, reject) => {
-    resolveResult = resolve;
-    rejectResult = reject;
-  });
-  const zip = new Zip((error, chunk, final) => {
-    if (failed) return;
-    if (error) {
-      failed = true;
-      rejectResult(error);
-      return;
-    }
-    const copy = new Uint8Array(chunk);
-    chunks.push(copy);
-    totalBytes += copy.byteLength;
-    if (totalBytes > limits.maxCompressedBytes) {
-      failed = true;
-      zip.terminate();
-      rejectResult(
-        new BrowserBackupSizeError('Browser backup compressed size exceeds its restore limit'),
-      );
-      return;
-    }
-    if (final) resolveResult(concatZipChunks(chunks, totalBytes));
+  const writer = createStreamingZipWriter({
+    mtime: savedAt,
+    signal,
+    maxEntries: limits.maxEntries,
+    maxEntryBytes: limits.maxEntryBytes,
+    maxUncompressedBytes: limits.maxOuterExpandedBytes,
+    maxCompressedBytes: limits.maxCompressedBytes,
+    createLimitError: (message) => new BrowserBackupSizeError(message),
   });
   return {
     abort(): void {
-      if (failed) return;
-      failed = true;
-      zip.terminate();
+      writer.abort();
     },
-    add(name, bytes): void {
-      signal?.throwIfAborted();
-      const byteLength = bytes.byteLength;
-      if (byteLength > limits.maxEntryBytes) {
-        throw new BrowserBackupSizeError(
-          `Browser backup entry "${name}" exceeds its restore limit`,
-        );
-      }
-      if (entries + 1 > limits.maxEntries) {
-        throw new BrowserBackupSizeError('Browser backup entry count exceeds its restore limit');
-      }
-      if (uncompressedBytes + byteLength > limits.maxOuterExpandedBytes) {
-        throw new BrowserBackupSizeError('Browser backup expanded size exceeds its restore limit');
-      }
-      const file = new AsyncZipDeflate(name, { level: 6 });
-      file.mtime = new Date(savedAt);
-      zip.add(file);
-      file.push(bytes, true);
-      entries += 1;
-      uncompressedBytes += byteLength;
+    add(name, bytes): Promise<void> {
+      return writer.add(name, bytes);
     },
     async close(): Promise<Uint8Array> {
-      try {
-        signal?.throwIfAborted();
-        zip.end();
-        return await result;
-      } catch (error) {
-        zip.terminate();
-        throw error;
-      }
+      return writer.close();
     },
     stats(): { entries: number; uncompressedBytes: number } {
-      return { entries, uncompressedBytes };
+      return writer.stats();
     },
   };
 }
@@ -478,7 +429,7 @@ async function createBrowserBackupLocked(
       nested.uncompressedBytes += decoded.report.uncompressedBytes;
       const payloadBytes = bytes.byteLength;
       const checksum = payloadChecksum(bytes);
-      zip.add(projectEntryName(project.name), bytes);
+      await zip.add(projectEntryName(project.name), bytes);
       assertNestedBackupBudget(zip.stats(), nested, limits);
       inventory.projects.push({
         id: project.name,
@@ -499,8 +450,8 @@ async function createBrowserBackupLocked(
         const pcm = pcmBytes(loaded.channels);
         const payloadBytes = meta.byteLength + pcm.byteLength;
         const checksum = payloadChecksum(meta, pcm);
-        zip.add(`${ASSETS_PREFIX}${asset.id}.json`, meta);
-        zip.add(`${ASSETS_PREFIX}${asset.id}.pcm`, pcm);
+        await zip.add(`${ASSETS_PREFIX}${asset.id}.json`, meta);
+        await zip.add(`${ASSETS_PREFIX}${asset.id}.pcm`, pcm);
         assertNestedBackupBudget(zip.stats(), nested, limits);
         successfulAssets.add(asset.id);
         inventory.assets.push({
@@ -526,8 +477,8 @@ async function createBrowserBackupLocked(
         signal?.throwIfAborted();
         const payloadBytes = meta.byteLength + sf2.byteLength;
         const checksum = payloadChecksum(meta, sf2);
-        zip.add(`${FONTS_PREFIX}${font.id}.json`, meta);
-        zip.add(`${FONTS_PREFIX}${font.id}.sf2`, sf2);
+        await zip.add(`${FONTS_PREFIX}${font.id}.json`, meta);
+        await zip.add(`${FONTS_PREFIX}${font.id}.sf2`, sf2);
         assertNestedBackupBudget(zip.stats(), nested, limits);
         successfulFonts.add(font.id);
         inventory.fonts.push({
@@ -561,7 +512,7 @@ async function createBrowserBackupLocked(
         ...inventory,
       },
     };
-    zip.add(META_ENTRY, strToU8(JSON.stringify(meta)));
+    await zip.add(META_ENTRY, strToU8(JSON.stringify(meta)));
     assertNestedBackupBudget(zip.stats(), nested, limits);
     return { bytes: await zip.close(), completeness };
   };
@@ -766,27 +717,48 @@ async function restoreBrowserBackupUnlocked(
     projects.push({ name, bytes: data });
   }
 
-  const assets = Object.entries(entries).flatMap(([entryName, data]) => {
-    if (!entryName.startsWith(ASSETS_PREFIX) || !entryName.endsWith('.pcm')) return [];
-    const id = entryName.slice(ASSETS_PREFIX.length, -'.pcm'.length);
-    if (!MEDIA_ID_PATTERN.test(id)) return [];
-    const metaBytes = entries[`${ASSETS_PREFIX}${id}.json`];
-    if (!metaBytes) return [];
+  const mediaIds = (prefix: string, payloadExtension: string): string[] =>
+    [
+      ...new Set(
+        Object.keys(entries).flatMap((entryName) => {
+          if (!entryName.startsWith(prefix)) return [];
+          const basename = entryName.slice(prefix.length);
+          const id = basename.endsWith(payloadExtension)
+            ? basename.slice(0, -payloadExtension.length)
+            : basename.endsWith('.json')
+              ? basename.slice(0, -'.json'.length)
+              : null;
+          return id !== null && MEDIA_ID_PATTERN.test(id) ? [id] : [];
+        }),
+      ),
+    ].sort();
+  const skippedAssetIds: string[] = [];
+  const assets = mediaIds(ASSETS_PREFIX, '.pcm').flatMap((id) => {
+    const pcm = entries[`${ASSETS_PREFIX}${id}.pcm`];
+    const meta = entries[`${ASSETS_PREFIX}${id}.json`];
+    if (!pcm || !meta) {
+      skippedAssetIds.push(id);
+      return [];
+    }
     try {
-      return [prepareAssetRestore({ id, meta: metaBytes, pcm: data })];
+      return [prepareAssetRestore({ id, meta, pcm })];
     } catch {
+      skippedAssetIds.push(id);
       return [];
     }
   });
-  const fonts = Object.entries(entries).flatMap(([entryName, data]) => {
-    if (!entryName.startsWith(FONTS_PREFIX) || !entryName.endsWith('.sf2')) return [];
-    const id = entryName.slice(FONTS_PREFIX.length, -'.sf2'.length);
-    if (!MEDIA_ID_PATTERN.test(id)) return [];
-    const metaBytes = entries[`${FONTS_PREFIX}${id}.json`];
-    if (!metaBytes) return [];
+  const skippedFontIds: string[] = [];
+  const fonts = mediaIds(FONTS_PREFIX, '.sf2').flatMap((id) => {
+    const sf2 = entries[`${FONTS_PREFIX}${id}.sf2`];
+    const meta = entries[`${FONTS_PREFIX}${id}.json`];
+    if (!sf2 || !meta) {
+      skippedFontIds.push(id);
+      return [];
+    }
     try {
-      return [prepareFontRestore({ id, meta: metaBytes, sf2: data })];
+      return [prepareFontRestore({ id, meta, sf2 })];
     } catch {
+      skippedFontIds.push(id);
       return [];
     }
   });
@@ -874,7 +846,13 @@ async function restoreBrowserBackupUnlocked(
     // a later maintenance pass; the live publish already completed.
   }
 
-  return { projects: projects.length, assets: assets.length, fonts: fonts.length };
+  return {
+    projects: projects.length,
+    assets: assets.length,
+    fonts: fonts.length,
+    ...(skippedAssetIds.length > 0 ? { skippedAssetIds } : {}),
+    ...(skippedFontIds.length > 0 ? { skippedFontIds } : {}),
+  };
 }
 
 export function restoreBrowserBackup(

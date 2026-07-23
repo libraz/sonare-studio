@@ -4,9 +4,25 @@ import {
   loadLatestAutosaveSessionRevision,
   saveAutosaveSessionRevision,
 } from '@/persistence/recovery';
+import { encodeSzd } from '@/persistence/szd';
+import { PROJECT_DOCUMENT_SCHEMA_VERSION, type ProjectDocument } from '@/project/serialization';
 import { installMockOpfs, type MemoryDirectoryHandle, uninstallMockOpfs } from './opfs-mock';
 
 const SESSION_KEY = 'sonare-studio:autosave-session:v1';
+
+function archive(name: string): Uint8Array {
+  const doc: ProjectDocument = {
+    schemaVersion: PROJECT_DOCUMENT_SCHEMA_VERSION,
+    name,
+    sampleRate: 48000,
+    tempoSegments: [{ startPpq: 0, bpm: 120 }],
+    timeSignatures: [{ startPpq: 0, numerator: 4, denominator: 4 }],
+    tracks: [],
+    markers: [],
+    sections: [],
+  };
+  return encodeSzd(doc);
+}
 
 describe('per-session autosave recovery', () => {
   let root: MemoryDirectoryHandle;
@@ -22,8 +38,8 @@ describe('per-session autosave recovery', () => {
   });
 
   it('keeps independent tab revisions and restores the newest valid one', async () => {
-    const first = new Uint8Array([1, 2, 3]);
-    const second = new Uint8Array([4, 5, 6]);
+    const first = archive('A');
+    const second = archive('B');
     sessionStorage.setItem(SESSION_KEY, 'tab-a');
     await saveAutosaveSessionRevision(first, '{"name":"A"}', '2026-07-16T00:00:00.000Z');
     sessionStorage.setItem(SESSION_KEY, 'tab-b');

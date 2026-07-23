@@ -1,4 +1,4 @@
-import type { MaybeRefOrGetter, Ref } from 'vue';
+import type { ComputedRef, MaybeRefOrGetter, Ref } from 'vue';
 import { getCurrentScope, onScopeDispose, ref, toValue, watch } from 'vue';
 import {
   loadProject,
@@ -30,6 +30,8 @@ export interface UseAutosaveOptions {
   intervalMs?: MaybeRefOrGetter<number>;
   /** OPFS project name used as the autosave slot. */
   slotName?: string;
+  /** Shared persisted-state revision, avoiding duplicate full-document hashes. */
+  persistedStateKey?: ComputedRef<string>;
 }
 
 /** Reactive autosave state and actions returned by {@link useAutosave}. */
@@ -154,7 +156,7 @@ export function useAutosave(options: UseAutosaveOptions = {}): UseAutosaveReturn
   };
 
   const stopWatch = watch(
-    () => persistedProjectStateKey(store),
+    () => options.persistedStateKey?.value ?? persistedProjectStateKey(store),
     () => {
       if (store.initialized) scheduleSave();
     },
