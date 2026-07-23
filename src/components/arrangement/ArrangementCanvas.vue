@@ -428,6 +428,7 @@ watch(
     props.loopEndPpq,
     props.tempoBpm,
     props.interactions.previewClip.value,
+    props.interactions.previewDraft?.value,
     props.interactions.previewFades.value,
     props.automationExpandedIds,
     props.automationParams,

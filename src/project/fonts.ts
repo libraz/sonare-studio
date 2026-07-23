@@ -13,6 +13,7 @@
  * (TrackInstrument 'sf2' variant); the bytes never enter the project archive.
  */
 
+import { bytesEqual, isNotFoundError } from '@/persistence/fs-utils';
 import { withPersistenceMutationLock } from '@/persistence/mutation-lock';
 import { isOpfsAvailable, OpfsUnavailableError } from '@/persistence/opfs';
 
@@ -266,15 +267,6 @@ export function computeFontId(data: Uint8Array): string {
   return a.toString(16).padStart(8, '0') + b.toString(16).padStart(8, '0');
 }
 
-/** True when an error is a DOMException-style NotFoundError. */
-function isNotFoundError(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    (error as { name?: unknown }).name === 'NotFoundError'
-  );
-}
-
 /** Resolves (creating on demand) the "fonts/" directory handle. */
 async function fontsDirectory(): Promise<FileSystemDirectoryHandle> {
   if (!isOpfsAvailable()) throw new OpfsUnavailableError();
@@ -386,14 +378,6 @@ async function readOptionalFile(
     if (isNotFoundError(error)) return null;
     throw error;
   }
-}
-
-function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.byteLength !== b.byteLength) return false;
-  for (let index = 0; index < a.byteLength; index++) {
-    if (a[index] !== b[index]) return false;
-  }
-  return true;
 }
 
 /**
@@ -583,6 +567,35 @@ export async function listFonts(): Promise<SoundFontMeta[]> {
   }
   out.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   return out;
+}
+
+/** One raw SF2 payload file stored under fonts/. */
+export interface SoundFontPayloadInfo {
+  /** Font id derived from `<id>.sf2`. */
+  id: string;
+  /** Payload byte length. */
+  byteLength: number;
+}
+
+/**
+ * Lists stored raw SF2 payloads, including files whose metadata sidecar is
+ * missing. This gives GC a way to recover storage after an interrupted import.
+ */
+export async function listFontPayloads(): Promise<SoundFontPayloadInfo[]> {
+  const dir = await fontsDirectory();
+  const out: SoundFontPayloadInfo[] = [];
+  for await (const [entryName, handle] of dir.entries()) {
+    if (handle.kind !== 'file' || !entryName.endsWith(SF2_EXTENSION)) continue;
+    const id = entryName.slice(0, -SF2_EXTENSION.length);
+    try {
+      validateFontId(id);
+      const file = await handle.getFile();
+      out.push({ id, byteLength: file.size });
+    } catch {
+      // Skip invalid ids or unreadable files; GC/listing should remain usable.
+    }
+  }
+  return out.sort((a, b) => a.id.localeCompare(b.id));
 }
 
 /**

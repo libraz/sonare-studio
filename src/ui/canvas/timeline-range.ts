@@ -58,6 +58,12 @@ export function gridStepPpq(division: SnapDivision): number {
  */
 export function snapPpq(ppq: number, division: SnapDivision): number {
   const step = gridStepPpq(division);
+  return snapPpqToStep(ppq, step);
+}
+
+/** Snaps a PPQ position to a numeric grid step, clamped to the timeline origin. */
+export function snapPpqToStep(ppq: number, step: number): number {
+  if (!(step > 0)) return Math.max(0, ppq);
   return Math.max(0, Math.round(ppq / step) * step);
 }
 

@@ -12,17 +12,14 @@
 
 import { type Ref, ref } from 'vue';
 import type { AutomationCurve, AutomationParam, AutomationPoint } from '@/project/automation';
+import { snapPpqToStep } from '@/ui/canvas/timeline-range';
 import {
   type AutomationValueDomain,
   automationValueToY,
   automationYToValue,
 } from './automation-rows';
 import type { ClipPoint } from './clip-hit';
-import {
-  type ClipModifiers,
-  DEFAULT_CLIP_DRAG_THRESHOLD_PX,
-  snapToStep,
-} from './use-clip-interactions';
+import { type ClipModifiers, DEFAULT_CLIP_DRAG_THRESHOLD_PX } from './use-clip-interactions';
 
 /** Px radius around a breakpoint center that counts as a hit. */
 export const AUTOMATION_POINT_HIT_RADIUS_PX = 6;
@@ -187,7 +184,8 @@ export function useAutomationInteractions(
     modifiers: ClipModifiers,
   ): { ppq: number; value: number } {
     const raw = view.xToPpq(point.x);
-    const ppq = modifiers.meta === true ? Math.max(0, raw) : snapToStep(raw, options.getGridPpq());
+    const ppq =
+      modifiers.meta === true ? Math.max(0, raw) : snapPpqToStep(raw, options.getGridPpq());
     return {
       ppq,
       value: automationYToValue(

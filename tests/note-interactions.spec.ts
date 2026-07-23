@@ -80,6 +80,15 @@ function makeHarness(
 const mocked = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
 
 describe('useNoteInteractions', () => {
+  it('keeps an off-grid note start during a vertical-only drag', () => {
+    const { interactions } = makeHarness([makeNote({ id: 1, startPpq: 1.1 })]);
+
+    interactions.onPointerDown({ x: 150, y: 675 });
+    interactions.onPointerMove({ x: 150, y: 665 });
+
+    expect(interactions.previewNotes.value).toMatchObject([{ id: 1, startPpq: 1.1, pitch: 61 }]);
+  });
+
   it('allows selection but blocks note mutation in read-only mode', () => {
     const { commands, interactions } = makeHarness(
       [makeNote({ id: 1 })],
@@ -534,6 +543,19 @@ describe('useNoteInteractions', () => {
         pitch: 60,
         startPpq: 3,
         durationPpq: 0.75,
+      });
+    });
+
+    it('keeps a drawn note inside the clip source window at its right edge', () => {
+      const { commands, interactions, setTool } = makeHarness([], [], 4);
+      setTool('draw');
+      interactions.onPointerDown({ x: 390, y: 675 }); // snaps to start PPQ 3.75
+      interactions.onPointerMove({ x: 600, y: 675 });
+      interactions.onPointerUp({ x: 600, y: 675 });
+      expect(commands.addNote).toHaveBeenCalledWith({
+        pitch: 60,
+        startPpq: 3.75,
+        durationPpq: 0.25,
       });
     });
 

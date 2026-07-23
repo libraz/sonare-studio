@@ -78,6 +78,12 @@ export function applyDocumentClipMetadata(
           {
             enabled: meta.warp.enabled,
             sourceBpm: meta.warp.sourceBpm,
+            ...(Number.isFinite(meta.warp.sourceStartSeconds)
+              ? { sourceStartSeconds: Number(meta.warp.sourceStartSeconds) }
+              : {}),
+            ...(Number.isFinite(meta.warp.sourceEndSeconds)
+              ? { sourceEndSeconds: Number(meta.warp.sourceEndSeconds) }
+              : {}),
             ...(Array.isArray(meta.warp.anchors)
               ? {
                   anchors: meta.warp.anchors.map((anchor) => ({

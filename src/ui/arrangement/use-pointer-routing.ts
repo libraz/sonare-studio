@@ -174,6 +174,9 @@ export function usePointerRouting(options: PointerRoutingOptions): PointerRoutin
     const point = localPoint(event);
     if (point.y < RULER_HEIGHT_PX) return;
     if (automation.onDoubleClick(point)) return;
+    // Take sub-rows are editing-only surfaces: treating their empty space as
+    // a track lane would create a new clip beneath an expanded comp lane.
+    if (takes.isTakeRowAt(point)) return;
     interactions.onDoubleClick(point, modifiers(event));
   }
 

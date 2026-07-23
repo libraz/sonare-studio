@@ -50,6 +50,13 @@ describe('formatChordName', () => {
     );
   });
 
+  it('uses flat spellings for flat-key display, including slash basses', () => {
+    expect(formatChordName({ startPpq: 0, endPpq: 4, rootPc: 10, quality: 0, bassPc: 3 }, -2)).toBe(
+      'Bb/Eb',
+    );
+    expect(formatChordName({ startPpq: 0, endPpq: 4, rootPc: 10, quality: 0 }, 2)).toBe('A#');
+  });
+
   it('formats normalized extensions as their complete chord quality', () => {
     expect(
       formatChordName({ startPpq: 0, endPpq: 4, rootPc: 0, quality: 1, extensions: [14] }),

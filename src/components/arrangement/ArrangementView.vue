@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, markRaw, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { keyFifthsForScaleHighlight } from '@/components/lists/key-modes';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { promptDialog } from '@/composables/useDialogs';
 import { useEditorTool } from '@/composables/useEditorTool';
@@ -52,12 +53,11 @@ import { barRangeAt } from '@/ui/arrangement/ruler';
 import { useAutomationInteractions } from '@/ui/arrangement/use-automation-interactions';
 import {
   type ClipInteractionsView,
-  snapToStep,
   useClipInteractions,
 } from '@/ui/arrangement/use-clip-interactions';
 import { useTakeInteractions } from '@/ui/arrangement/use-take-interactions';
 import { createPainter } from '@/ui/canvas/painter';
-import { TimelineRange } from '@/ui/canvas/timeline-range';
+import { snapPpqToStep, TimelineRange } from '@/ui/canvas/timeline-range';
 import { useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 import ArrangementAnalysisPanel from './ArrangementAnalysisPanel.vue';
@@ -125,6 +125,7 @@ const appSettings = useAppSettings();
 const store = useProjectStore();
 const { t } = useI18n();
 const { downloadBlobFile } = useFileDownloads();
+const chordKeyFifths = computed(() => keyFifthsForScaleHighlight(store.scaleHighlight));
 
 /** Initialization/runtime error surfaced above the view. */
 const error = ref('');
@@ -648,7 +649,7 @@ function onClipContext(payload: {
   if (!clip) return;
   setActiveClip(clip.id);
   const end = clip.startPpq + clip.lengthPpq;
-  const splitPpq = snapToStep(payload.ppq, gridPpq.value);
+  const splitPpq = snapPpqToStep(payload.ppq, gridPpq.value);
   const splitBlocked = clipSplitBlockReason(clip, splitPpq);
   const glueIds = glueClusterClipIds(clip.id);
   const consolidateIds = audioConsolidateClipIds(clip.id);
@@ -919,6 +920,7 @@ onBeforeUnmount(() => {
         :revision="revision"
         :chords="store.chords"
         :time-signatures="store.timeSignatures"
+        :key-fifths="chordKeyFifths"
         :has-content="hasContent"
         show-hints
         @seek="onSeek"

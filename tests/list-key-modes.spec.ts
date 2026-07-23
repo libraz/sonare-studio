@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   KEY_MODE_CHOICES,
+  keyFifthsForScaleHighlight,
   keyLabel,
   matchModeChoiceId,
   modeMaskForChoice,
@@ -64,6 +65,30 @@ describe('modeMaskForChoice / matchModeChoiceId', () => {
 
   it('rejects unknown mode ids for ordinal conversion', () => {
     expect(() => modeOrdinalForChoice('bebop')).toThrow(RangeError);
+  });
+});
+
+describe('keyFifthsForScaleHighlight', () => {
+  it('uses the same signatures as score spelling for diatonic scale highlights', () => {
+    expect(
+      keyFifthsForScaleHighlight({
+        enabled: true,
+        rootPc: 10,
+        modeMask: modeMaskForChoice('major'),
+      }),
+    ).toBe(-2);
+    expect(
+      keyFifthsForScaleHighlight({
+        enabled: true,
+        rootPc: 4,
+        modeMask: modeMaskForChoice('minor'),
+      }),
+    ).toBe(1);
+  });
+
+  it('uses neutral spelling for disabled and custom scale highlights', () => {
+    expect(keyFifthsForScaleHighlight({ enabled: false, rootPc: 10, modeMask: 0 })).toBe(0);
+    expect(keyFifthsForScaleHighlight({ enabled: true, rootPc: 10, modeMask: 1 })).toBe(0);
   });
 });
 

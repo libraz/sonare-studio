@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import ChordLane from '@/components/arrangement/ChordLane.vue';
+import { keyFifthsForScaleHighlight } from '@/components/lists/key-modes';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { useCompositionGuidance } from '@/composables/useCompositionGuidance';
@@ -115,6 +116,7 @@ const emit = defineEmits<{
 const store = useProjectStore();
 const { t } = useI18n();
 const appSettings = useAppSettings();
+const chordKeyFifths = computed(() => keyFifthsForScaleHighlight(store.scaleHighlight));
 
 /** Whether the MIDI-FX transform popover is open. */
 const fxPanelOpen = ref(false);
@@ -1061,6 +1063,7 @@ onBeforeUnmount(() => {
         :chords="store.chords"
         :time-signatures="localTimeSignatures"
         :origin-ppq="timeSignatureOriginPpq"
+        :key-fifths="chordKeyFifths"
         @seek="(ppq) => emit('seek', Math.max(0, ppq))"
         @open-chords="emit('openChords')"
       />
@@ -1099,6 +1102,7 @@ onBeforeUnmount(() => {
           :revision="revision"
           :chords="store.chords"
           :origin-ppq="timeSignatureOriginPpq"
+          :key-fifths="chordKeyFifths"
           :locks="lockedRegions"
           @toggle="toggleLock"
         />

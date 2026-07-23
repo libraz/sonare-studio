@@ -12,7 +12,12 @@ import { clipSplitBlockReason, LOOP_CLIP_SPLIT_ERROR } from '../clip-split';
 import { audioClipSegments } from '../comping';
 import { sanitizeCcPoints, sanitizePitchBendPoints, sanitizePressurePoints } from '../midi-cc';
 import type { RawNote } from '../midi-events';
-import { type ProjectedMidiNote, projectMidiNoteOccurrences } from '../midi-projection';
+import {
+  MAX_LOOP_OCCURRENCES,
+  MIN_LOOP_WINDOW_PPQ,
+  type ProjectedMidiNote,
+  projectMidiNoteOccurrences,
+} from '../midi-projection';
 import {
   assertProjectOperationCurrent,
   beginProjectOperation,
@@ -171,7 +176,8 @@ export function duplicateClip(clipId: number, newStartPpq: number): number {
 type PpqPoint = { ppq: number };
 
 function clipLoopWindowPpq(clip: EditorClip): number {
-  return clip.loopEnabled ? clip.loopLengthPpq || clip.lengthPpq : clip.lengthPpq;
+  if (!clip.loopEnabled || !(clip.loopLengthPpq > 0)) return clip.lengthPpq;
+  return Math.min(clip.lengthPpq, Math.max(clip.loopLengthPpq, MIN_LOOP_WINDOW_PPQ));
 }
 
 function clipRepeatOffsets(clip: EditorClip): number[] {
@@ -179,8 +185,9 @@ function clipRepeatOffsets(clip: EditorClip): number[] {
   const windowPpq = clipLoopWindowPpq(clip);
   if (!Number.isFinite(windowPpq) || windowPpq <= 0) return [0];
   const offsets: number[] = [];
-  for (let offset = 0; offset < clip.lengthPpq - 1e-9; offset += windowPpq) {
-    offsets.push(offset);
+  const repeatCount = Math.min(Math.ceil(clip.lengthPpq / windowPpq), MAX_LOOP_OCCURRENCES);
+  for (let occurrence = 0; occurrence < repeatCount; occurrence++) {
+    offsets.push(occurrence * windowPpq);
   }
   return offsets.length > 0 ? offsets : [0];
 }
@@ -194,8 +201,8 @@ function offsetPoints<T extends PpqPoint>(
   const windowPpq = clipLoopWindowPpq(clip);
   return clipRepeatOffsets(clip).flatMap((repeatOffset) =>
     (points ?? [])
-      .filter((point) => point.ppq >= 0 && point.ppq < windowPpq)
-      .filter((point) => repeatOffset + point.ppq < clip.lengthPpq)
+      .filter((point) => point.ppq >= 0 && point.ppq <= windowPpq)
+      .filter((point) => repeatOffset + point.ppq <= clip.lengthPpq)
       .map((point) => ({ ...point, ppq: point.ppq + offset + repeatOffset })),
   );
 }
@@ -643,10 +650,14 @@ export async function consolidateAudioClips(
       const asset = await loadAudio(clip.assetId as string);
       assertCurrent();
       if (sampleRate === 0) sampleRate = asset.meta.sampleRate;
-      const loopWindowPpq =
+      const requestedLoopWindowPpq =
         clip.loopEnabled && Number.isFinite(clip.loopLengthPpq) && clip.loopLengthPpq > 0
           ? clip.loopLengthPpq
           : clip.lengthPpq;
+      const loopWindowPpq =
+        clip.loopEnabled && requestedLoopWindowPpq < clip.lengthPpq
+          ? Math.max(requestedLoopWindowPpq, MIN_LOOP_WINDOW_PPQ)
+          : requestedLoopWindowPpq;
       const clipFrames = ppqRangeSamples(
         tempoMap,
         clip.startPpq,
@@ -666,7 +677,12 @@ export async function consolidateAudioClips(
           { length: Math.max(1, asset.channels.length) },
           () => new Float32Array(clipFrames),
         );
-        for (let offsetPpq = 0; offsetPpq < clip.lengthPpq - 1e-9; offsetPpq += loopWindowPpq) {
+        const repeatCount = Math.min(
+          Math.ceil(clip.lengthPpq / loopWindowPpq),
+          MAX_LOOP_OCCURRENCES,
+        );
+        for (let occurrence = 0; occurrence < repeatCount; occurrence++) {
+          const offsetPpq = occurrence * loopWindowPpq;
           const segmentLengthPpq = Math.min(loopWindowPpq, clip.lengthPpq - offsetPpq);
           let slice = sliceAudioClipWindow(
             asset.channels,
@@ -727,7 +743,13 @@ export async function consolidateAudioClips(
       for (let c = 0; c < stitched.length; c++) {
         const source = render.channels[c] ?? render.channels[0];
         if (!source || writable <= 0) continue;
-        stitched[c].set(source.subarray(0, writable), render.offsetFrames);
+        // Consolidate renders every source clip into the same timeline.  Clips
+        // may overlap, in which case the audible result is their sum rather
+        // than whichever source happened to be rendered last.
+        const target = stitched[c];
+        for (let frame = 0; frame < writable; frame++) {
+          target[render.offsetFrames + frame] += source[frame];
+        }
       }
     }
 

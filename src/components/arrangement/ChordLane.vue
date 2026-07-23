@@ -34,6 +34,8 @@ const props = defineProps<{
   chords: ReadonlyArray<EditorChordSymbol>;
   /** Time-signature map in the same PPQ frame as `chords`/`originPpq`. */
   timeSignatures: ReadonlyArray<MeterSegment>;
+  /** MusicXML key-signature fifths used for root and slash-bass spelling. */
+  keyFifths?: number;
   /** Absolute PPQ the lane's local frame is shifted by (default 0). */
   originPpq?: number;
   /** Whether any track carries audible content (arrangement only; drives the tracks-empty hint). */
@@ -118,7 +120,7 @@ const bands = computed<ChordBand[]>(() => {
     if (x1 <= 0 || x0 >= props.range.widthPx) continue;
     out.push({
       key: chord.startPpq,
-      name: formatChordName(chord),
+      name: formatChordName(chord, props.keyFifths ?? 0),
       startPpq: chord.startPpq,
       leftPx: x0,
       widthPx: Math.max(2, x1 - x0),

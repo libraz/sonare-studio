@@ -17,7 +17,7 @@ import {
   type NoteHitZone,
   type NoteRect,
 } from '@/ui/canvas/hit-test';
-import { MAX_PITCH, MIN_PITCH } from '@/ui/canvas/timeline-range';
+import { MAX_PITCH, MIN_PITCH, snapPpqToStep } from '@/ui/canvas/timeline-range';
 import type { EditorToolId } from '@/ui/editor/tools';
 
 /** Px a pointer must travel from its down point before a drag gesture starts. */
@@ -227,10 +227,9 @@ type Gesture =
   | DrawNoteGesture
   | EraseGesture;
 
-/** Rounds a PPQ position to the nearest multiple of `step`, clamped to >= 0. */
-function snapToStep(ppq: number, step: number): number {
-  if (!(step > 0)) return Math.max(0, ppq);
-  return Math.max(0, Math.round(ppq / step) * step);
+/** Snaps a displacement without clamping negative movement to the clip origin. */
+function snapDeltaToStep(deltaPpq: number, step: number): number {
+  return step > 0 ? Math.round(deltaPpq / step) * step : deltaPpq;
 }
 
 /** Projects editor notes into the string-id rectangles the hit-test consumes. */
@@ -365,9 +364,13 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
   function drawStartPpq(point: InteractionPoint, modifiers: InteractionModifiers): number {
     const step = options.getGridPpq();
     const ppq = view.xToPpq(point.x);
-    return modifiers.meta === true || !(step > 0)
-      ? clampStartPpq(ppq)
-      : clampStartPpq(Math.floor(ppq / step) * step);
+    const minLen = step > 0 ? step : DEFAULT_MIN_DURATION_PPQ;
+    const snapped = modifiers.meta === true || !(step > 0) ? ppq : Math.floor(ppq / step) * step;
+    const rawMin = options.getMinPpq?.();
+    const min = rawMin !== undefined && Number.isFinite(rawMin) ? rawMin : 0;
+    const rawMax = options.getMaxPpq?.();
+    const max = rawMax !== undefined && Number.isFinite(rawMax) ? rawMax : Number.POSITIVE_INFINITY;
+    return Math.max(min, Math.min(max - minLen, snapped));
   }
 
   /** Resolves the snapped length of an in-flight draw, kept at >= one grid cell. */
@@ -379,8 +382,10 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     const step = options.getGridPpq();
     const minLen = step > 0 ? step : DEFAULT_MIN_DURATION_PPQ;
     const raw = view.xToPpq(point.x);
-    const end = modifiers.meta === true ? raw : snapToStep(raw, step);
-    return Math.max(minLen, clampPpq(end) - g.startPpq);
+    const end = modifiers.meta === true ? raw : snapPpqToStep(raw, step);
+    const max = options.getMaxPpq?.();
+    const maxEnd = max !== undefined && Number.isFinite(max) ? max : Number.POSITIVE_INFINITY;
+    return Math.min(maxEnd - g.startPpq, Math.max(minLen, clampPpq(end) - g.startPpq));
   }
 
   /** Builds the rendered note list for an in-flight draw (draft note id -1). */
@@ -423,7 +428,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     if (!note) return;
     const step = options.getGridPpq();
     const raw = view.xToPpq(point.x);
-    const splitPpq = modifiers.meta === true ? raw : snapToStep(raw, step);
+    const splitPpq = modifiers.meta === true ? raw : snapPpqToStep(raw, step);
     if (splitPpq <= note.startPpq || splitPpq >= note.startPpq + note.durationPpq) return;
     const newId = split(note.id, splitPpq);
     commands.setSelection([newId]);
@@ -447,7 +452,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     const rawDelta = view.xToPpq(point.x) - view.xToPpq(g.start.x);
     const targetStart = bypass
       ? clampStartPpq(grabbed.startPpq + rawDelta)
-      : clampStartPpq(snapToStep(grabbed.startPpq + rawDelta, step));
+      : clampStartPpq(grabbed.startPpq + snapDeltaToStep(rawDelta, step));
     let deltaPpq = targetStart - grabbed.startPpq;
     let minStart = Number.POSITIVE_INFINITY;
     let minPitch = Number.POSITIVE_INFINITY;
@@ -489,7 +494,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     const rawDelta = view.xToPpq(point.x) - view.xToPpq(g.start.x);
     if (g.edge === 'end') {
       const end = grabbed.startPpq + grabbed.durationPpq;
-      const targetEnd = clampPpq(bypass ? end + rawDelta : snapToStep(end + rawDelta, step));
+      const targetEnd = clampPpq(bypass ? end + rawDelta : snapPpqToStep(end + rawDelta, step));
       let delta = targetEnd - end;
       for (const origin of g.origins.values()) {
         delta = Math.max(delta, minDuration - origin.durationPpq);
@@ -506,7 +511,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     }
     const targetStart = bypass
       ? clampPpq(grabbed.startPpq + rawDelta)
-      : clampPpq(snapToStep(grabbed.startPpq + rawDelta, step));
+      : clampPpq(snapPpqToStep(grabbed.startPpq + rawDelta, step));
     let delta = targetStart - grabbed.startPpq;
     const rawMinPpq = options.getMinPpq?.();
     const minPpq = rawMinPpq !== undefined && Number.isFinite(rawMinPpq) ? rawMinPpq : 0;

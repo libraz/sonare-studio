@@ -12,6 +12,7 @@ import {
   getFontCacheStats,
   InvalidFontError,
   listFontAliases,
+  listFontPayloads,
   listFonts,
   loadFont,
   loadFontMeta,
@@ -108,6 +109,13 @@ describe('SoundFont store', () => {
     await saveFont({ id: 'alpha', name: 'Alpha' }, new Uint8Array([9]));
     const listed = await listFonts();
     expect(listed.map((f) => f.name)).toEqual(['Alpha', 'Zeta']);
+  });
+
+  it('lists payloads even when their metadata sidecar is missing', async () => {
+    const dir = await root.getDirectoryHandle('fonts', { create: true });
+    dir.files.set('orphan.sf2', { data: new Uint8Array([1, 2, 3]), lastModified: 1 });
+
+    expect(await listFontPayloads()).toEqual([{ id: 'orphan', byteLength: 3 }]);
   });
 
   it('throws FontNotFoundError for unknown ids', async () => {

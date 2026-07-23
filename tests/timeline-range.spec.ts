@@ -6,6 +6,7 @@ import {
   PITCH_ROW_COUNT,
   type SnapDivision,
   snapPpq,
+  snapPpqToStep,
   TimelineRange,
 } from '@/ui/canvas/timeline-range';
 
@@ -74,6 +75,12 @@ describe('snapPpq', () => {
   it('never returns a negative position', () => {
     expect(snapPpq(-0.4, div(4))).toBe(0);
     expect(snapPpq(-100, div(16, 'triplet'))).toBe(0);
+  });
+
+  it('shares numeric-step snapping with arrangement and piano-roll gestures', () => {
+    expect(snapPpqToStep(1.13, 0.25)).toBe(1.25);
+    expect(snapPpqToStep(-0.2, 0.25)).toBe(0);
+    expect(snapPpqToStep(-0.2, 0)).toBe(0);
   });
 });
 

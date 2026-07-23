@@ -32,6 +32,7 @@ import {
   moveClip,
   normalizeSelectionVelocity,
   nudgeSelectionVelocity,
+  quantizeSelection,
   quantizeSelectionEnds,
   quantizeSelectionLengths,
   redo,
@@ -698,6 +699,20 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(store.clips.some((clip) => clip.id === joinedId)).toBe(false);
     });
 
+    it('keeps expression points exactly at a glued clip boundary', () => {
+      const trackId = store.tracks[0].id;
+      const firstId = store.clipId;
+      trimClip(firstId, 0, 2);
+      setClipCcLane(firstId, 1, 0, [{ ppq: 2, value: 64 }]);
+      const secondId = addMidiClip({ trackId, startPpq: 2, lengthPpq: 2 });
+
+      const joinedId = glueMidiClips([firstId, secondId]);
+
+      expect(store.clips.find((clip) => clip.id === joinedId)?.ccLanes).toEqual([
+        { controller: 1, channel: 0, points: [{ ppq: 2, value: 64 }] },
+      ]);
+    });
+
     it('glueMidiClips projects trimmed source notes into the audible clip window', () => {
       const trackId = store.tracks[0].id;
       const firstId = store.clipId;
@@ -1138,6 +1153,19 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(store.chords.length).toBe(before);
     });
 
+    it('replaces a chord that crosses the detected clip boundary', () => {
+      const clipId = store.clipId;
+      moveClip(clipId, 4);
+      addNote({ pitch: 60, startPpq: 0, durationPpq: 4 });
+      addNote({ pitch: 64, startPpq: 0, durationPpq: 4 });
+      addNote({ pitch: 67, startPpq: 0, durationPpq: 4 });
+      setProjectChords([{ startPpq: 0, endPpq: 8, rootPc: 7, quality: 4 }]);
+
+      detectChordsForClip(clipId);
+
+      expect(store.chords.some((chord) => chord.startPpq < 4)).toBe(false);
+    });
+
     it('detectChordsForClip rejects a non-MIDI clip', () => {
       expect(() => detectChordsForClip(9999)).toThrow(RangeError);
     });
@@ -1301,6 +1329,18 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       quantizeSelectionLengths();
       // duration 2 -> nearest multiple of 4, min one grid step = 4.
       expect(noteById(a)?.durationPpq).toBe(4);
+    });
+
+    it('quantizes selected note starts against the timeline grid for off-grid clips', () => {
+      const id = addNote({ pitch: 60, startPpq: 0.2, durationPpq: 1 });
+      moveClip(store.clipId, 0.4);
+      store.snapDivision = 4; // grid = 1 PPQ
+      setSelection([id]);
+
+      quantizeSelection();
+
+      // Timeline 0.6 snaps to 1.0, which is 0.6 PPQ inside the clip.
+      expect(noteById(id)?.startPpq).toBeCloseTo(0.6, 9);
     });
 
     it('quantizes sub-PPQ note lengths without rounding them up to one PPQ', () => {

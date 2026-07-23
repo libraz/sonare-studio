@@ -444,17 +444,20 @@ export function quantizeSelection(strength = 1): void {
   const store = useProjectStore();
   if (store.selection.size === 0) return;
   const project = getProject();
+  const clip = requireEditableClip(store, store.clipId);
   const gridPpq = 4 / store.snapDivision;
   let changed = false;
   const next = store.notes.map((note) => {
     if (!store.selection.has(note.id)) return { ...note };
+    const timelinePpq = clip.startPpq + note.startPpq;
     const snapped =
       gridPpq === 1
-        ? project.snapToGrid(note.startPpq, strength)
-        : snapPpqToLocalGrid(note.startPpq, gridPpq, strength);
-    if (snapped === note.startPpq) return { ...note };
+        ? project.snapToGrid(timelinePpq, strength)
+        : snapPpqToLocalGrid(timelinePpq, gridPpq, strength);
+    const localPpq = snapped - clip.startPpq;
+    if (localPpq === note.startPpq) return { ...note };
     changed = true;
-    return { ...note, startPpq: Math.max(0, snapped) };
+    return { ...note, startPpq: Math.max(0, localPpq) };
   });
   if (changed) commit(next, { writeNotes: true });
 }

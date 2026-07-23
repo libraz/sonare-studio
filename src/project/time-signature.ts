@@ -22,6 +22,12 @@ export interface MeasureRange {
   index: number;
 }
 
+/** One contiguous range governed by a single time signature. */
+export interface TimeSignatureRange extends TimeSignatureSegment {
+  /** Exclusive end of this governing range. */
+  endPpq: number;
+}
+
 /** Length of one bar for a meter segment in quarter-note PPQ. */
 export function meterBarLengthPpq(
   meter: Pick<TimeSignatureSegment, 'numerator' | 'denominator'>,
@@ -73,13 +79,51 @@ export function timeSignatureAt(
   segments: readonly TimeSignatureSegment[],
   ppq: number,
 ): { numerator: number; denominator: number } {
-  let current = { ...DEFAULT_TIME_SIGNATURE };
-  for (const segment of segments) {
-    if (segment.startPpq <= ppq) {
-      current = { numerator: segment.numerator, denominator: segment.denominator };
-    } else break;
+  const segment = timeSignatureSegmentAt(segments, ppq);
+  return { numerator: segment.numerator, denominator: segment.denominator };
+}
+
+/** Resolves the complete meter-map segment governing an absolute PPQ position. */
+export function timeSignatureSegmentAt(
+  segments: readonly TimeSignatureSegment[],
+  ppq: number,
+): TimeSignatureSegment {
+  const normalized = normalizeTimeSignatureMap(segments);
+  let current = normalized[0];
+  for (const segment of normalized) {
+    if (segment.startPpq > ppq) break;
+    current = segment;
   }
-  return current;
+  return { ...current };
+}
+
+/**
+ * Resolves contiguous, non-empty time-signature ranges intersecting a PPQ
+ * window. Ranges are clipped to the requested window, so callers can split a
+ * batch operation at every meter change without inventing their own map walk.
+ */
+export function timeSignatureRanges(
+  segments: readonly TimeSignatureSegment[],
+  startPpq: number,
+  endPpq: number,
+): TimeSignatureRange[] {
+  if (!Number.isFinite(startPpq) || !Number.isFinite(endPpq) || endPpq <= startPpq) return [];
+  const normalized = normalizeTimeSignatureMap(segments);
+  const ranges: TimeSignatureRange[] = [];
+  for (let index = 0; index < normalized.length; index += 1) {
+    const segment = normalized[index];
+    const segmentEnd = normalized[index + 1]?.startPpq ?? Number.POSITIVE_INFINITY;
+    const rangeStart = Math.max(startPpq, segment.startPpq);
+    const rangeEnd = Math.min(endPpq, segmentEnd);
+    if (rangeEnd <= rangeStart) continue;
+    ranges.push({
+      startPpq: rangeStart,
+      endPpq: rangeEnd,
+      numerator: segment.numerator,
+      denominator: segment.denominator,
+    });
+  }
+  return ranges;
 }
 
 /** Returns the variable-meter bar containing an absolute PPQ position. */

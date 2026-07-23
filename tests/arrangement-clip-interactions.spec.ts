@@ -140,6 +140,17 @@ describe('useClipInteractions move', () => {
     expect(commands.moveClip).toHaveBeenCalledWith(1, 4, 20);
   });
 
+  it('keeps an off-grid clip position during a vertical-only drag', () => {
+    const { clips, interactions, commands } = makeSetup();
+    clips[0].startPpq = 4.4;
+
+    interactions.onPointerDown({ x: 80, y: 25 });
+    interactions.onPointerMove({ x: 80, y: 75 });
+    interactions.onPointerUp({ x: 80, y: 75 });
+
+    expect(commands.moveClip).toHaveBeenCalledWith(1, 4.4, 20);
+  });
+
   it('does not commit when the source freezes during a drag', () => {
     const state = { readOnly: false };
     const { interactions, commands } = makeSetup(state);
@@ -340,6 +351,14 @@ describe('useClipInteractions audio trim bounds', () => {
     interactions.onPointerMove({ x: 0, y: 25 });
     interactions.onPointerUp({ x: 0, y: 25 });
     expect(commands.trimClip).toHaveBeenCalledWith(2, 2, 10);
+  });
+
+  it('keeps a minimum-length trim inside a narrower source window', () => {
+    const { interactions, commands } = makeAudioSetup({ minStartPpq: 4, maxEndPpq: 4.1 });
+    interactions.onPointerDown({ x: 119, y: 25 }); // trim-end zone
+    interactions.onPointerMove({ x: 0, y: 25 }); // minimum length would pass the source end
+    interactions.onPointerUp({ x: 0, y: 25 });
+    expect(commands.trimClip).toHaveBeenCalledWith(2, 4, expect.closeTo(0.1, 9));
   });
 
   it('trims freely when no bounds are provided', () => {

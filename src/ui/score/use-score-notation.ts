@@ -247,6 +247,142 @@ export async function consumeScorePagesSnapshot(
   return count;
 }
 
+/** Snapshot inputs shared by screen transcription and File-menu MusicXML export. */
+export interface ProjectScoreBuildOptions {
+  divisionPpq: number;
+  timeSig: { beats: number; beatUnit: number };
+  measureLenPpq: number;
+  clipLengthPpq: number;
+  timeSignatures?: ReadonlyArray<TimeSignatureSegment>;
+  pickupLengthPpq?: number;
+  keyFifths: number;
+  chordsEnabled: boolean;
+  fullScoreEnabled: boolean;
+  estimateFingering?: boolean;
+  grandStaffSplitPitch?: number;
+  layoutSettings: Pick<ScoreLayoutSettings, 'barsPerSystem' | 'barsPerPage'>;
+  loopRegion?: { startPpq: number; endPpq: number } | null;
+}
+
+/**
+ * Builds the canonical project score used by every MusicXML surface. This is
+ * intentionally independent of Verovio, so File-menu export and the visible
+ * score share quantization, annotations, marks and chord spelling exactly.
+ */
+export async function buildProjectScore(
+  store: ProjectStore,
+  options: ProjectScoreBuildOptions,
+): Promise<NotatedScore> {
+  const fullScore = options.fullScoreEnabled;
+  const scoreProjection = fullScore
+    ? buildFullScoreProjection(store, store.clipStartPpq, options.clipLengthPpq)
+    : buildScoreProjection(
+        store.activeClip && clipKind(store.activeClip) === 'midi' ? [store.activeClip] : [],
+        store.scoreAnnotations,
+      );
+  const score = fullScore
+    ? buildFullScore(
+        store,
+        {
+          divisionPpq: options.divisionPpq,
+          timeSig: { ...options.timeSig },
+          keyFifths: options.keyFifths,
+          clipStartPpq: store.clipStartPpq,
+          clipLengthPpq: options.clipLengthPpq,
+          timeSignatures: options.timeSignatures,
+          pickupLengthPpq: options.pickupLengthPpq,
+          displayTransposeSemitones: store.displayTransposeSemitones,
+          grandStaffSplitPitch: options.grandStaffSplitPitch,
+          estimateFingering: options.estimateFingering,
+        },
+        scoreProjection,
+      )
+    : quantizeToScore(scoreProjection.notes, {
+        divisionPpq: options.divisionPpq,
+        timeSig: { ...options.timeSig },
+        keyFifths: options.keyFifths,
+        clipStartPpq: store.clipStartPpq,
+        clipLengthPpq: options.clipLengthPpq,
+        timeSignatures: options.timeSignatures,
+        pickupLengthPpq: options.pickupLengthPpq,
+        clef: 'grand',
+        partName: 'Piano',
+        grandStaffSplitPitch: options.grandStaffSplitPitch,
+        estimateFingering: options.estimateFingering,
+        displayTransposeSemitones: store.displayTransposeSemitones,
+      });
+  if (!fullScore && Object.keys(scoreProjection.annotations).length > 0) {
+    score.noteAnnotations = scoreProjection.annotations;
+  }
+  const title = store.projectName.trim();
+  if (title) score.metadata = { title };
+  applySectionMarks(
+    score,
+    store.sections,
+    store.clipStartPpq,
+    options.clipLengthPpq,
+    options.measureLenPpq,
+  );
+  applyLayoutBreaks(
+    score,
+    store.sections,
+    store.clipStartPpq,
+    options.measureLenPpq,
+    options.layoutSettings,
+  );
+  applyMarkerTexts(
+    score,
+    store.markers,
+    store.clipStartPpq,
+    options.clipLengthPpq,
+    options.measureLenPpq,
+  );
+  applyLyricMarks(score, store.markers, store.clipStartPpq, options.clipLengthPpq);
+  applyKeySignatureMarks(
+    score,
+    store.markers,
+    store.clipStartPpq,
+    options.clipLengthPpq,
+    options.measureLenPpq,
+  );
+  applyTempoMarks(
+    score,
+    store.tempoSegments,
+    store.tempoBpm,
+    store.clipStartPpq,
+    options.clipLengthPpq,
+    options.measureLenPpq,
+  );
+  if (options.loopRegion) {
+    applyLoopMarks(
+      score,
+      options.loopRegion.startPpq,
+      options.loopRegion.endPpq,
+      store.clipStartPpq,
+      options.clipLengthPpq,
+      options.measureLenPpq,
+    );
+  }
+  applyMultiMeasureRests(score);
+  if (options.chordsEnabled) {
+    try {
+      const estimated: EstimatedChordSymbol[] = estimateChordSymbols(scoreProjection.notes, {
+        clipStartPpq: store.clipStartPpq,
+        clipLengthPpq: options.clipLengthPpq,
+        measureLengthPpq: options.measureLenPpq,
+        measures: score.parts[0]?.measures,
+        keyFifths: options.keyFifths,
+      });
+      const symbols = await canonicalizeChordSymbols(estimated);
+      if (symbols.length > 0) score.chordSymbols = symbols;
+    } catch {
+      // Chord symbols are supplementary display data; a wasm failure must not
+      // prevent export of the score itself.
+    }
+  }
+  return score;
+}
+
 /** Wires the non-destructive notation pipeline for the score panel. */
 export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
   const { store, client } = options;
@@ -390,121 +526,25 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
     loading.value = true;
     error.value = '';
     try {
-      const fifths = options.getKeyFifths();
       const fullScore = fullScoreRequested;
       const partTrackIds = fullScore
         ? store.tracks.filter((track) => track.kind === 'midi').map((track) => track.id)
         : [store.activeClip.trackId];
-      const scoreProjection = fullScore
-        ? buildFullScoreProjection(store, store.clipStartPpq, options.getScreenClipLengthPpq())
-        : buildScoreProjection(
-            store.activeClip && clipKind(store.activeClip) === 'midi' ? [store.activeClip] : [],
-            store.scoreAnnotations,
-          );
-      const score = fullScore
-        ? buildFullScore(
-            store,
-            {
-              divisionPpq: options.getDivisionPpq(),
-              timeSig: { ...options.getTimeSig() },
-              keyFifths: fifths,
-              clipStartPpq: store.clipStartPpq,
-              clipLengthPpq: options.getScreenClipLengthPpq(),
-              timeSignatures: options.getTimeSignatures?.(),
-              pickupLengthPpq: options.getPickupLengthPpq?.(),
-              displayTransposeSemitones: store.displayTransposeSemitones,
-              grandStaffSplitPitch: options.getGrandStaffSplitPitch?.(),
-              estimateFingering: options.getEstimateFingering?.(),
-            },
-            scoreProjection,
-          )
-        : quantizeToScore(scoreProjection.notes, {
-            divisionPpq: options.getDivisionPpq(),
-            timeSig: { ...options.getTimeSig() },
-            keyFifths: fifths,
-            clipStartPpq: store.clipStartPpq,
-            clipLengthPpq: options.getScreenClipLengthPpq(),
-            timeSignatures: options.getTimeSignatures?.(),
-            pickupLengthPpq: options.getPickupLengthPpq?.(),
-            clef: 'grand',
-            partName: 'Piano',
-            grandStaffSplitPitch: options.getGrandStaffSplitPitch?.(),
-            estimateFingering: options.getEstimateFingering?.(),
-            // Engraving-only transpose; the underlying MIDI notes never change.
-            displayTransposeSemitones: store.displayTransposeSemitones,
-          });
-      if (!fullScore && Object.keys(scoreProjection.annotations).length > 0) {
-        score.noteAnnotations = scoreProjection.annotations;
-      }
-      const title = store.projectName.trim();
-      if (title) score.metadata = { title };
-      applySectionMarks(
-        score,
-        store.sections,
-        store.clipStartPpq,
-        store.clipLengthPpq,
-        options.getMeasureLenPpq(),
-      );
-      applyLayoutBreaks(
-        score,
-        store.sections,
-        store.clipStartPpq,
-        options.getMeasureLenPpq(),
-        options.getLayoutSettings(),
-      );
-      applyMarkerTexts(
-        score,
-        store.markers,
-        store.clipStartPpq,
-        store.clipLengthPpq,
-        options.getMeasureLenPpq(),
-      );
-      applyLyricMarks(score, store.markers, store.clipStartPpq, store.clipLengthPpq);
-      applyKeySignatureMarks(
-        score,
-        store.markers,
-        store.clipStartPpq,
-        store.clipLengthPpq,
-        options.getMeasureLenPpq(),
-      );
-      applyTempoMarks(
-        score,
-        store.tempoSegments,
-        store.tempoBpm,
-        store.clipStartPpq,
-        store.clipLengthPpq,
-        options.getMeasureLenPpq(),
-      );
-      const loopRegion = options.getLoopRegion?.() ?? null;
-      if (loopRegion) {
-        applyLoopMarks(
-          score,
-          loopRegion.startPpq,
-          loopRegion.endPpq,
-          store.clipStartPpq,
-          store.clipLengthPpq,
-          options.getMeasureLenPpq(),
-        );
-      }
-      applyMultiMeasureRests(score);
-      if (options.getChordsEnabled()) {
-        // Chord symbols are best-effort: any wasm failure degrades silently to
-        // a score without harmony instead of failing the whole render.
-        try {
-          const estimated: EstimatedChordSymbol[] = estimateChordSymbols(scoreProjection.notes, {
-            clipStartPpq: store.clipStartPpq,
-            clipLengthPpq: options.getScreenClipLengthPpq(),
-            measureLengthPpq: options.getMeasureLenPpq(),
-            measures: score.parts[0]?.measures,
-            keyFifths: fifths,
-          });
-          const symbols = await canonicalizeChordSymbols(estimated);
-          if (!screenOperationIsCurrent(token, verovio)) return;
-          if (symbols.length > 0) score.chordSymbols = symbols;
-        } catch {
-          // Degrade silently: render the score without chord symbols.
-        }
-      }
+      const score = await buildProjectScore(store, {
+        divisionPpq: options.getDivisionPpq(),
+        timeSig: options.getTimeSig(),
+        measureLenPpq: options.getMeasureLenPpq(),
+        clipLengthPpq: options.getScreenClipLengthPpq(),
+        timeSignatures: options.getTimeSignatures?.(),
+        pickupLengthPpq: options.getPickupLengthPpq?.(),
+        keyFifths: options.getKeyFifths(),
+        chordsEnabled: options.getChordsEnabled(),
+        fullScoreEnabled: fullScore,
+        estimateFingering: options.getEstimateFingering?.(),
+        grandStaffSplitPitch: options.getGrandStaffSplitPitch?.(),
+        layoutSettings: options.getLayoutSettings(),
+        loopRegion: options.getLoopRegion?.() ?? null,
+      });
       if (!screenOperationIsCurrent(token, verovio)) return;
       const xml = serializeMusicXml(score);
       const count = await verovio.load(xml, screenLayoutOptions());

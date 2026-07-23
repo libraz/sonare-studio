@@ -110,6 +110,11 @@ function resolveStripSidechainSourceIds(
 /** Default project sample rate used until an AudioContext provides the real one. */
 const DEFAULT_SAMPLE_RATE = 48000;
 
+/** Keeps malformed persisted numeric fields from reaching the wasm ABI. */
+function finiteAtLeast(value: unknown, minimum: number, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= minimum ? value : fallback;
+}
+
 /** Default name of the track created by init(). */
 const DEFAULT_TRACK_NAME = 'Piano';
 
@@ -574,7 +579,7 @@ export const useProjectStore = defineStore('project', () => {
           kind: track.kind,
           mute: track.mute,
           solo: track.solo,
-          volume: track.volume,
+          volume: finiteAtLeast(track.volume, 0, 1),
           pan: audiblePan,
           order: index,
         };
@@ -636,6 +641,17 @@ export const useProjectStore = defineStore('project', () => {
         }
         trackMirror.push(mirrorEntry);
         for (const clip of track.clips) {
+          const startPpq = finiteAtLeast(clip.startPpq, 0, 0);
+          const lengthPpq = finiteAtLeast(clip.lengthPpq, Number.EPSILON, 1);
+          const sourceOffsetPpq = finiteAtLeast(clip.sourceOffsetPpq, 0, 0);
+          const gain = finiteAtLeast(clip.gain, 0, 1);
+          const safeClip: DocumentClip = {
+            ...clip,
+            startPpq,
+            lengthPpq,
+            sourceOffsetPpq,
+            gain,
+          };
           const isAudio = clip.kind === 'audio' && typeof clip.assetId === 'string';
           let newClipId: number;
           if (isAudio) {
@@ -647,10 +663,10 @@ export const useProjectStore = defineStore('project', () => {
               newClipId = created.addClip({
                 trackId,
                 isMidi: false,
-                startPpq: clip.startPpq,
-                lengthPpq: clip.lengthPpq,
-                sourceOffsetPpq: clip.sourceOffsetPpq,
-                gain: clip.gain,
+                startPpq,
+                lengthPpq,
+                sourceOffsetPpq,
+                gain,
                 ...placeholderSourceAudio(),
                 sourceUri: audioAssetUri(assetId),
               });
@@ -661,10 +677,10 @@ export const useProjectStore = defineStore('project', () => {
               newClipId = created.addClip({
                 trackId,
                 isMidi: false,
-                startPpq: clip.startPpq,
-                lengthPpq: clip.lengthPpq,
-                sourceOffsetPpq: clip.sourceOffsetPpq,
-                gain: clip.gain,
+                startPpq,
+                lengthPpq,
+                sourceOffsetPpq,
+                gain,
                 ...placeholderSourceAudio(),
               });
               created.setClipSource(newClipId, existingSource);
@@ -680,10 +696,10 @@ export const useProjectStore = defineStore('project', () => {
             newClipId = created.addClip({
               trackId,
               isMidi: true,
-              startPpq: clip.startPpq,
-              lengthPpq: clip.lengthPpq,
-              sourceOffsetPpq: clip.sourceOffsetPpq,
-              gain: clip.gain,
+              startPpq,
+              lengthPpq,
+              sourceOffsetPpq,
+              gain,
             });
             if (clip.notes.length > 0) {
               // notesToProjectEvents reads the module-scope wasm handle, which
@@ -692,7 +708,11 @@ export const useProjectStore = defineStore('project', () => {
             }
           }
           if (clip.loopEnabled) {
-            created.setClipLoop(newClipId, 'loop', clip.loopLengthPpq || clip.lengthPpq);
+            created.setClipLoop(
+              newClipId,
+              'loop',
+              finiteAtLeast(clip.loopLengthPpq, Number.EPSILON, lengthPpq),
+            );
           }
           if (
             isAudio &&
@@ -705,15 +725,15 @@ export const useProjectStore = defineStore('project', () => {
               created,
               {
                 id: newClipId,
-                startPpq: clip.startPpq,
-                lengthPpq: clip.lengthPpq,
-                sourceOffsetPpq: clip.sourceOffsetPpq,
-                warp: sanitizeClipWarp(clip.warp, clip.lengthPpq),
+                startPpq,
+                lengthPpq,
+                sourceOffsetPpq,
+                warp: sanitizeClipWarp(clip.warp, lengthPpq),
               },
               normalizedTempo,
             );
           }
-          clipMeta.set(newClipId, clip);
+          clipMeta.set(newClipId, safeClip);
           if (firstClipId < 0) firstClipId = newClipId;
         }
       });
@@ -964,6 +984,18 @@ export const useProjectStore = defineStore('project', () => {
         doc.pickupLengthPpq > 0
           ? doc.pickupLengthPpq
           : 0;
+      const scale = doc.scaleHighlight;
+      scaleHighlight.value =
+        scale !== undefined &&
+        typeof scale.enabled === 'boolean' &&
+        Number.isInteger(scale.rootPc) &&
+        scale.rootPc >= 0 &&
+        scale.rootPc < 12 &&
+        Number.isInteger(scale.modeMask) &&
+        scale.modeMask >= 0 &&
+        scale.modeMask < 1 << 12
+          ? { enabled: scale.enabled, rootPc: scale.rootPc, modeMask: scale.modeMask }
+          : { enabled: true, rootPc: 0, modeMask: MAJOR_MODE_MASK };
       documentGeneration.value += 1;
       restorePreviousState = null;
       try {

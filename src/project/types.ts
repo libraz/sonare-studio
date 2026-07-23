@@ -335,6 +335,10 @@ export interface ClipWarp {
   enabled: boolean;
   /** Tempo of the source material in BPM (> 0). */
   sourceBpm: number;
+  /** Source-media time at the clip window start when a trim crosses a curved warp. */
+  sourceStartSeconds?: number;
+  /** Source-media time at the clip window end when a trim crosses a curved warp. */
+  sourceEndSeconds?: number;
   /** Optional warp anchors bending the beat-to-source mapping; sorted by ppq. */
   anchors?: WarpAnchor[];
 }

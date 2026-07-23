@@ -12,7 +12,7 @@ import type {
   EditorClip,
   EditorTrack,
 } from '../types';
-import { sanitizeWarpAnchors } from '../warp';
+import { sanitizeWarpAnchors, warpSourceSecondsAt } from '../warp';
 
 /** Throws RangeError when a PPQ value is not finite or negative. */
 export function validatePpq(value: number, label: string): void {
@@ -147,13 +147,19 @@ function transformCompSegments(
 }
 
 function transformWarp(
-  warp: ClipWarp | undefined,
+  source: EditorClip,
+  target: EditorClip,
   windowStartPpq: number,
   windowLengthPpq: number,
 ): ClipWarp | undefined {
+  const warp = source.warp;
   if (warp === undefined) return undefined;
   const secondsPerSourcePpq = warp.sourceBpm > 0 ? 60 / warp.sourceBpm : 0;
-  const sourceShiftSeconds = windowStartPpq * secondsPerSourcePpq;
+  const sourceStartSeconds = warpSourceSecondsAt(source, windowStartPpq);
+  const sourceEndSeconds = warpSourceSecondsAt(source, windowStartPpq + windowLengthPpq);
+  const linearStartSeconds = target.sourceOffsetPpq * secondsPerSourcePpq;
+  const linearEndSeconds = (target.sourceOffsetPpq + windowLengthPpq) * secondsPerSourcePpq;
+  const shiftSeconds = sourceStartSeconds ?? linearStartSeconds;
   const anchors = sanitizeWarpAnchors(
     (warp.anchors ?? [])
       .filter(
@@ -161,13 +167,22 @@ function transformWarp(
       )
       .map((anchor) => ({
         ppq: anchor.ppq - windowStartPpq,
-        sourceSeconds: anchor.sourceSeconds - sourceShiftSeconds,
+        sourceSeconds:
+          anchor.sourceSeconds +
+          (source.warp?.sourceStartSeconds ?? source.sourceOffsetPpq * secondsPerSourcePpq) -
+          shiftSeconds,
       })),
     windowLengthPpq,
   );
   return {
     enabled: warp.enabled,
     sourceBpm: warp.sourceBpm,
+    ...(sourceStartSeconds !== null && Math.abs(sourceStartSeconds - linearStartSeconds) > 1e-9
+      ? { sourceStartSeconds }
+      : {}),
+    ...(sourceEndSeconds !== null && Math.abs(sourceEndSeconds - linearEndSeconds) > 1e-9
+      ? { sourceEndSeconds }
+      : {}),
     ...(anchors.length > 0 ? { anchors } : {}),
   };
 }
@@ -198,7 +213,7 @@ export function withDerivedClipMetadata(
     delete next.takes;
     delete next.compSegments;
   }
-  const warp = transformWarp(source.warp, windowStartPpq, windowLengthPpq);
+  const warp = transformWarp(source, target, windowStartPpq, windowLengthPpq);
   if (warp !== undefined) next.warp = warp;
   else delete next.warp;
 

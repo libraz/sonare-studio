@@ -44,6 +44,7 @@ import {
 } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { createTemplate } from '@/project/templates';
+import { MAJOR_MODE_MASK } from '@/project/types';
 import { midiLearnMasteringTargetId } from '@/ui/midi/midi-learn';
 
 vi.mock('@/lib/wasm', async () => {
@@ -107,6 +108,20 @@ describe('project serialization', () => {
     expect(JSON.parse(JSON.stringify(doc))).toEqual(doc);
   });
 
+  it('round-trips the project scale and resets it for legacy documents', async () => {
+    store.scaleHighlight = { enabled: true, rootPc: 10, modeMask: 0b010110101101 };
+    const keyed = serializeProject();
+    expect(keyed.scaleHighlight).toEqual(store.scaleHighlight);
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(keyed)) as ProjectDocument);
+    expect(store.scaleHighlight).toEqual({ enabled: true, rootPc: 10, modeMask: 0b010110101101 });
+
+    delete keyed.scaleHighlight;
+    store.scaleHighlight = { enabled: false, rootPc: 7, modeMask: 0 };
+    await loadProjectDocument(keyed);
+    expect(store.scaleHighlight).toEqual({ enabled: true, rootPc: 0, modeMask: MAJOR_MODE_MASK });
+  });
+
   it('captures tracks, clips, notes, markers, sections, tempo and meter', () => {
     buildSampleProject(store);
     const doc = serializeProject();
@@ -164,6 +179,28 @@ describe('project serialization', () => {
     await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
     expect(store.pickupLengthPpq).toBe(1);
     expect(serializeProject()).toEqual(doc);
+  });
+
+  it('sanitizes malformed track and clip playback numbers during load', async () => {
+    buildSampleProject(store);
+    const doc = serializeProject();
+    const clip = doc.tracks[0].clips[0];
+    doc.tracks[0].volume = Number.NaN;
+    clip.startPpq = Number.NaN;
+    clip.lengthPpq = Number.NEGATIVE_INFINITY;
+    clip.sourceOffsetPpq = Number.NaN;
+    clip.gain = Number.NEGATIVE_INFINITY;
+    clip.loopLengthPpq = Number.NaN;
+
+    await loadProjectDocument(doc);
+
+    expect(store.tracks[0].volume).toBe(1);
+    expect(store.clips[0]).toMatchObject({
+      startPpq: 0,
+      lengthPpq: 1,
+      sourceOffsetPpq: 0,
+      gain: 1,
+    });
   });
 
   it('round-trips clip CC lanes through the document', async () => {

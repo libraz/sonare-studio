@@ -7,7 +7,7 @@ import {
   setAudioSourceId,
   useProjectStore,
 } from '../store';
-import { normalizeTempoMap } from '../tempo-map';
+import { normalizeTempoMap, ppqToSeconds, secondsToPpq } from '../tempo-map';
 import { type ClipCompSegment, type ClipTake, type ClipWarp, TRACK_COLOR_PALETTE } from '../types';
 import { installProjectClipWarp, sanitizeClipWarp } from '../warp';
 import { execute, executeAtomic } from './history';
@@ -148,9 +148,12 @@ export async function addAudioClip(input: AddAudioClipInput): Promise<number> {
   }
   let lengthPpq = input.lengthPpq;
   if (lengthPpq === undefined) {
-    // Default length: the asset's duration in beats at the current tempo.
+    // Default length: preserve the asset duration at this timeline position,
+    // including any later tempo-map segment or ramp.
     const meta = await loadAssetMeta(input.assetId);
-    lengthPpq = (meta.numFrames / meta.sampleRate) * (store.tempoBpm / 60);
+    const tempoMap = normalizeTempoMap(store.tempoSegments, store.tempoBpm);
+    const startSeconds = ppqToSeconds(tempoMap, startPpq);
+    lengthPpq = secondsToPpq(tempoMap, startSeconds + meta.numFrames / meta.sampleRate) - startPpq;
   }
   if (!Number.isFinite(lengthPpq) || lengthPpq <= 0) {
     throw new RangeError(`Clip lengthPpq must be finite and > 0, got ${lengthPpq}`);

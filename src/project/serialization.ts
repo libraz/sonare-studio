@@ -54,7 +54,14 @@ import {
 } from './mixer';
 import { getProject, useProjectStore } from './store';
 import { normalizeProcessorMidiLearnTarget } from './target-reference-registry';
-import type { ClipExpressionCurve, ClipKind, EditorClip, EditorNote, TrackKind } from './types';
+import {
+  type ClipExpressionCurve,
+  type ClipKind,
+  type EditorClip,
+  type EditorNote,
+  MAJOR_MODE_MASK,
+  type TrackKind,
+} from './types';
 
 /**
  * Current schema version written by {@link serializeProject}.
@@ -163,6 +170,8 @@ export interface DocumentClip {
   warp?: {
     enabled: boolean;
     sourceBpm: number;
+    sourceStartSeconds?: number;
+    sourceEndSeconds?: number;
     anchors?: Array<{ ppq: number; sourceSeconds: number }>;
   };
   /**
@@ -375,6 +384,8 @@ export interface ProjectDocument {
   timeSignatures: DocumentTimeSignature[];
   /** Length of an opening anacrusis/pickup measure in PPQ; absent = full first bar. */
   pickupLengthPpq?: number;
+  /** Project key/scale highlight; absent means the C-major default. */
+  scaleHighlight?: { enabled: boolean; rootPc: number; modeMask: number };
   /** Tracks in display order, each with its clips and notes. */
   tracks: DocumentTrack[];
   /** Timeline markers ordered by position. */
@@ -592,6 +603,12 @@ function toDocumentClip(
     out.warp = {
       enabled: clip.warp.enabled,
       sourceBpm: clip.warp.sourceBpm,
+      ...(clip.warp.sourceStartSeconds !== undefined
+        ? { sourceStartSeconds: clip.warp.sourceStartSeconds }
+        : {}),
+      ...(clip.warp.sourceEndSeconds !== undefined
+        ? { sourceEndSeconds: clip.warp.sourceEndSeconds }
+        : {}),
       ...(clip.warp.anchors !== undefined && clip.warp.anchors.length > 0
         ? { anchors: clip.warp.anchors.map((anchor) => ({ ...anchor })) }
         : {}),
@@ -750,6 +767,13 @@ export function serializeProject(): ProjectDocument {
     })),
   };
   if (store.pickupLengthPpq > 0) doc.pickupLengthPpq = store.pickupLengthPpq;
+  if (
+    !store.scaleHighlight.enabled ||
+    store.scaleHighlight.rootPc !== 0 ||
+    store.scaleHighlight.modeMask !== MAJOR_MODE_MASK
+  ) {
+    doc.scaleHighlight = { ...store.scaleHighlight };
+  }
   // Master automation lanes are omitted while there are none, so documents
   // from automation-less sessions look exactly like older ones. Numeric-target
   // lanes were captured on their track entries above (lanes whose track no

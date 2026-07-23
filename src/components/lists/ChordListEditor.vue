@@ -2,6 +2,7 @@
 import { chordToRoman, type ProgStyle } from '@libraz/libcantus';
 import { computed, ref, watch } from 'vue';
 import ProgressionPresetPicker from '@/components/compose/ProgressionPresetPicker.vue';
+import { keyFifthsForScaleHighlight } from '@/components/lists/key-modes';
 import EmptyState from '@/components/shell/EmptyState.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { confirmDialog } from '@/composables/useDialogs';
@@ -186,6 +187,12 @@ function onInsertDominant(index: number): void {
 
 /** Whether a key is set; roman numerals and reharmonization need one to be meaningful. */
 const keySet = computed(() => store.scaleHighlight.enabled);
+const chordKeyFifths = computed(() => keyFifthsForScaleHighlight(store.scaleHighlight));
+
+/** Formats symbols with the same accidental convention as the score. */
+function chordName(chord: EditorChordSymbol): string {
+  return formatChordName(chord, chordKeyFifths.value);
+}
 
 /**
  * Roman-numeral degree label for a chord in the prevailing key, or blank when no
@@ -544,7 +551,7 @@ function clearAll(): void {
               type="checkbox"
               :checked="selectedIndices.has(item.index)"
               :aria-label="
-                formatMessage(t.shell.lists.chords.selectRow, { name: formatChordName(item.chord) })
+                formatMessage(t.shell.lists.chords.selectRow, { name: chordName(item.chord) })
               "
               @click="onSelectClick(item.index, $event)"
             />
@@ -554,7 +561,7 @@ function clearAll(): void {
               type="button"
               class="row-button"
               :aria-label="
-                formatMessage(t.shell.lists.chords.seekTo, { name: formatChordName(item.chord) })
+                formatMessage(t.shell.lists.chords.seekTo, { name: chordName(item.chord) })
               "
               @click="onSeek(item.chord)"
             >
@@ -570,7 +577,7 @@ function clearAll(): void {
                 type="text"
                 inputmode="decimal"
                 :aria-label="
-                  formatMessage(t.shell.lists.chords.positionOf, { name: formatChordName(item.chord) })
+                  formatMessage(t.shell.lists.chords.positionOf, { name: chordName(item.chord) })
                 "
                 @change="onPositionChange(item.index, item.chord, $event)"
               />
@@ -606,7 +613,7 @@ function clearAll(): void {
               @change="onBassChange(item.index, item.chord, $event)"
             />
           </td>
-          <td class="cell-name">{{ formatChordName(item.chord) }}</td>
+          <td class="cell-name">{{ chordName(item.chord) }}</td>
           <td class="cell-roman">{{ romanFor(item.chord) }}</td>
           <td class="cell-actions">
             <button
@@ -614,7 +621,7 @@ function clearAll(): void {
               class="row-button"
               v-tooltip="insertDominantTooltip(item.chord)"
               :aria-label="
-                formatMessage(t.shell.lists.chords.insertDominant, { name: formatChordName(item.chord) })
+                formatMessage(t.shell.lists.chords.insertDominant, { name: chordName(item.chord) })
               "
               @click="onInsertDominant(item.index)"
             >
@@ -627,7 +634,7 @@ function clearAll(): void {
               :aria-expanded="reharmIndex === item.index"
               v-tooltip="t.shell.lists.chords.reharmonizeTitle"
               :aria-label="
-                formatMessage(t.shell.lists.chords.reharmonize, { name: formatChordName(item.chord) })
+                formatMessage(t.shell.lists.chords.reharmonize, { name: chordName(item.chord) })
               "
               @click="toggleReharm(item.index)"
             >
@@ -637,7 +644,7 @@ function clearAll(): void {
               type="button"
               class="row-button"
               :aria-label="
-                formatMessage(t.shell.lists.chords.delete, { name: formatChordName(item.chord) })
+                formatMessage(t.shell.lists.chords.delete, { name: chordName(item.chord) })
               "
               @click="onDelete(item.index)"
             >
@@ -656,12 +663,12 @@ function clearAll(): void {
                 class="reharm-option"
                 :aria-label="
                   formatMessage(t.shell.lists.chords.applyReharm, {
-                    name: formatChordName(candidate.symbol),
+                    name: chordName(candidate.symbol),
                   })
                 "
                 @click="applyReharm(candidate)"
               >
-                <span class="reharm-name">{{ formatChordName(candidate.symbol) }}</span>
+                <span class="reharm-name">{{ chordName(candidate.symbol) }}</span>
                 <span v-if="candidate.roman" class="reharm-roman">{{ candidate.roman }}</span>
                 <span class="reharm-kind">{{ t.shell.lists.chords.reharmKinds[candidate.kind] }}</span>
               </button>

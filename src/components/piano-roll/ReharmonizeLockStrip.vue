@@ -24,6 +24,8 @@ const props = defineProps<{
   chords: ReadonlyArray<EditorChordSymbol>;
   /** Absolute PPQ of the active clip's start (chord-to-grid frame shift). */
   originPpq: number;
+  /** MusicXML key-signature fifths used for chord-name spelling. */
+  keyFifths?: number;
   /** Session-locked progression spans, in absolute PPQ. */
   locks: ReadonlyArray<LockedRegion>;
 }>();
@@ -61,7 +63,7 @@ const segments = computed<StripSegment[]>(() => {
     const region: LockedRegion = { startPpq: chord.startPpq, endPpq: chord.endPpq };
     out.push({
       key: chord.startPpq,
-      name: formatChordName(chord),
+      name: formatChordName(chord, props.keyFifths ?? 0),
       region,
       locked: isRegionLocked(props.locks, region),
       leftPx,

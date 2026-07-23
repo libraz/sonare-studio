@@ -5,7 +5,10 @@
  */
 
 import { PITCH_CLASS_NAMES } from '@/lib/pitch';
+import { keyToKeyFifths } from '@/notation/pitch-spelling';
+import type { ScaleHighlightConfig } from '@/project/types';
 import { MAJOR_MODE_MASK } from '@/project/types';
+import type { Key } from '@/wasm/index.js';
 
 export { PITCH_CLASS_NAMES };
 
@@ -94,6 +97,21 @@ export function modeOrdinalForChoice(id: string): number {
   const ordinal = MODE_ORDINAL_BY_ID[id];
   if (ordinal === undefined) throw new RangeError(`Unknown key mode: ${id}`);
   return ordinal;
+}
+
+/**
+ * Converts a configured diatonic scale to the MusicXML key-signature fifths
+ * used by score and chord-symbol spelling. Disabled or custom scales have no
+ * unambiguous signature, so they retain the neutral C-major spelling.
+ */
+export function keyFifthsForScaleHighlight(config: ScaleHighlightConfig): number {
+  if (!config.enabled) return 0;
+  const modeId = matchModeChoiceId(config.modeMask);
+  if (modeId === null) return 0;
+  return keyToKeyFifths({
+    root: (((config.rootPc % 12) + 12) % 12) as Key['root'],
+    mode: modeOrdinalForChoice(modeId) as Key['mode'],
+  });
 }
 
 /**

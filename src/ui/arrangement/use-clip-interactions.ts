@@ -11,6 +11,7 @@
 
 import { type Ref, ref } from 'vue';
 import { type ClipSplitBlockReason, clipSplitBlockReason } from '@/project/clip-split';
+import { snapPpqToStep } from '@/ui/canvas/timeline-range';
 import type { EditorToolId } from '@/ui/editor/tools';
 import { clampFadePpq, type FadeEdge, hitTestFadeHandles } from './audio-fades';
 import {
@@ -237,10 +238,9 @@ type Gesture =
   | FadeGesture
   | DrawClipGesture;
 
-/** Rounds a PPQ position to the nearest multiple of `step`, clamped to >= 0. */
-export function snapToStep(ppq: number, step: number): number {
-  if (!(step > 0)) return Math.max(0, ppq);
-  return Math.max(0, Math.round(ppq / step) * step);
+/** Snaps a displacement without clamping negative movement to the timeline origin. */
+function snapDeltaToStep(deltaPpq: number, step: number): number {
+  return step > 0 ? Math.round(deltaPpq / step) * step : deltaPpq;
 }
 
 /**
@@ -287,7 +287,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
   function drawClipLength(g: DrawClipGesture, point: ClipPoint, modifiers: ClipModifiers): number {
     const step = options.getGridPpq();
     const raw = view.xToPpq(point.x);
-    const end = modifiers.meta === true ? raw : snapToStep(raw, step);
+    const end = modifiers.meta === true ? raw : snapPpqToStep(raw, step);
     const bar = options.getBarRange(g.startPpq).lengthPpq;
     return Math.max(bar, end - g.startPpq);
   }
@@ -308,7 +308,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     if (!clip || options.canEditClip?.(clip.id) === false) return;
     const step = options.getGridPpq();
     const raw = view.xToPpq(point.x);
-    const splitPpq = modifiers.meta === true ? raw : snapToStep(raw, step);
+    const splitPpq = modifiers.meta === true ? raw : snapPpqToStep(raw, step);
     const blocked = clipSplitBlockReason(clip, splitPpq);
     if (blocked !== null) {
       options.onSplitBlocked?.(clip.id, blocked);
@@ -385,7 +385,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     // The fade boundary (not the fade length) snaps to the grid.
     if (g.edge === 'in') {
       const boundary = g.origin.startPpq + originIn + delta;
-      const snapped = bypass ? boundary : snapToStep(boundary, step);
+      const snapped = bypass ? boundary : snapPpqToStep(boundary, step);
       return {
         fadeInPpq: clampFadePpq(snapped - g.origin.startPpq, length, originOut),
         fadeOutPpq: originOut,
@@ -393,7 +393,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     }
     const endPpq = g.origin.startPpq + length;
     const boundary = endPpq - originOut + delta;
-    const snapped = bypass ? boundary : snapToStep(boundary, step);
+    const snapped = bypass ? boundary : snapPpqToStep(boundary, step);
     return {
       fadeInPpq: originIn,
       fadeOutPpq: clampFadePpq(endPpq - snapped, length, originIn),
@@ -410,7 +410,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     const startPpq =
       modifiers.meta === true
         ? Math.max(0, g.origin.startPpq + rawDelta)
-        : snapToStep(g.origin.startPpq + rawDelta, options.getGridPpq());
+        : Math.max(0, g.origin.startPpq + snapDeltaToStep(rawDelta, options.getGridPpq()));
     // Duplicates stay on the source track; plain moves follow the pointer lane.
     if (g.duplicate) return { startPpq, trackId: g.origin.trackId };
     const trackIds = options.getTrackIds();
@@ -436,16 +436,19 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     const originEnd = g.origin.startPpq + g.origin.lengthPpq;
     const bounds = options.getSourceBounds?.(g.origin.id) ?? null;
     if (g.edge === 'end') {
-      let target = bypass ? originEnd + rawDelta : snapToStep(originEnd + rawDelta, step);
+      let target = bypass ? originEnd + rawDelta : snapPpqToStep(originEnd + rawDelta, step);
       if (bounds) target = Math.min(target, bounds.maxEndPpq);
-      const end = Math.max(g.origin.startPpq + minLength, target);
+      const end = bounds
+        ? Math.min(bounds.maxEndPpq, Math.max(g.origin.startPpq + minLength, target))
+        : Math.max(g.origin.startPpq + minLength, target);
       return { startPpq: g.origin.startPpq, lengthPpq: end - g.origin.startPpq };
     }
-    let target = bypass
+    const target = bypass
       ? Math.max(0, g.origin.startPpq + rawDelta)
-      : snapToStep(g.origin.startPpq + rawDelta, step);
-    if (bounds) target = Math.max(target, bounds.minStartPpq);
-    const startPpq = Math.min(originEnd - minLength, target);
+      : snapPpqToStep(g.origin.startPpq + rawDelta, step);
+    const startPpq = bounds
+      ? Math.max(bounds.minStartPpq, Math.min(originEnd - minLength, target))
+      : Math.min(originEnd - minLength, target);
     return { startPpq, lengthPpq: originEnd - startPpq };
   }
 

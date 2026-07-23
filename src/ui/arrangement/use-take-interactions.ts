@@ -85,6 +85,8 @@ export interface TakeInteractions {
   preview: Ref<TakeDragPreview | null>;
   /** Cursor to show while the pointer is over a take sub-row; null = not ours. */
   cursor: Ref<string | null>;
+  /** True when a point belongs to an expanded take sub-row, even outside a clip span. */
+  isTakeRowAt(point: ClipPoint): boolean;
   /** Handles pointerdown; true when the press landed on a take sub-row. */
   onPointerDown(point: ClipPoint): boolean;
   /** Handles pointermove; true while a gesture runs or a take sub-row is hovered. */
@@ -204,5 +206,13 @@ export function useTakeInteractions(options: UseTakeInteractionsOptions): TakeIn
     cursor.value = null;
   }
 
-  return { preview, cursor, onPointerDown, onPointerMove, onPointerUp, cancel };
+  return {
+    preview,
+    cursor,
+    isTakeRowAt: (point) => view.takeRowAt(point) !== null,
+    onPointerDown,
+    onPointerMove,
+    onPointerUp,
+    cancel,
+  };
 }

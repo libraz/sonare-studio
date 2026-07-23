@@ -6,6 +6,7 @@ import {
   isFourFourBarRange,
   measureGrid,
   timeSignatureAt,
+  timeSignatureRanges,
 } from '@/project/time-signature';
 import type { TimeSignatureSegment } from '@/project/types';
 
@@ -61,5 +62,32 @@ describe('variable-meter measure grid', () => {
     expect(advanceBarsPpq(meter, 3, 3)).toBe(11);
     expect(isFourFourBarRange(meter, 0, 1)).toBe(false);
     expect(isFourFourBarRange([], 0, 4)).toBe(true);
+  });
+});
+
+describe('timeSignatureRanges', () => {
+  it('clips a batch window at every governing meter boundary', () => {
+    expect(
+      timeSignatureRanges(
+        [
+          { startPpq: 0, numerator: 4, denominator: 4 },
+          { startPpq: 6, numerator: 3, denominator: 4 },
+          { startPpq: 11, numerator: 5, denominator: 8 },
+        ],
+        2,
+        14,
+      ),
+    ).toEqual([
+      { startPpq: 2, endPpq: 6, numerator: 4, denominator: 4 },
+      { startPpq: 6, endPpq: 11, numerator: 3, denominator: 4 },
+      { startPpq: 11, endPpq: 14, numerator: 5, denominator: 8 },
+    ]);
+  });
+
+  it('supplies the 4/4 fallback before a late first map entry', () => {
+    expect(timeSignatureRanges([{ startPpq: 8, numerator: 3, denominator: 4 }], 2, 10)).toEqual([
+      { startPpq: 2, endPpq: 8, numerator: 4, denominator: 4 },
+      { startPpq: 8, endPpq: 10, numerator: 3, denominator: 4 },
+    ]);
   });
 });
