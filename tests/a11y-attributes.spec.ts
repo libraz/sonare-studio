@@ -153,6 +153,50 @@ describe('Canvas editor live regions', () => {
     document.body.innerHTML = '';
   });
 
+  it('redraws the clip layer when a draw-tool draft changes', async () => {
+    stubCanvasEnvironment();
+    const schedule = vi.fn();
+    const previewDraft = ref(null);
+    const wrapper = mount(ArrangementCanvas, {
+      props: {
+        range: new TimelineRange({ widthPx: 800, heightPx: 480, pxPerPpq: 100, rowHeight: 10 }),
+        revision: 0,
+        painter: { schedule, dispose: () => {} },
+        tracks: [{ id: 1, name: 'Piano', color: '#60a5fa' }],
+        clips: [],
+        markers: [],
+        activeTrackId: 1,
+        activeClipId: -1,
+        timeSignatures: [{ startPpq: 0, numerator: 4, denominator: 4 }],
+        scrollY: 0,
+        laneHeight: 80,
+        loopEnabled: false,
+        loopStartPpq: 0,
+        loopEndPpq: 4,
+        interactions: {
+          previewClip: ref(null),
+          previewDraft,
+          previewFades: ref(null),
+          cursor: ref('default'),
+          cancel: vi.fn(),
+        },
+        automationExpandedIds: [],
+        automationParams: {},
+        automationLanes: [],
+        automation: { preview: ref(null), hover: ref(null), cursor: ref(null) },
+        takesExpandedIds: [],
+        takes: { preview: ref(null), cursor: ref(null) },
+      },
+    });
+
+    schedule.mockClear();
+    previewDraft.value = { trackId: 1, startPpq: 1, lengthPpq: 2 };
+    await nextTick();
+
+    expect(schedule).toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
   it('announces piano-roll note selection through a polite status region', () => {
     stubCanvasEnvironment();
     const wrapper = mount(NoteGridCanvas, {
