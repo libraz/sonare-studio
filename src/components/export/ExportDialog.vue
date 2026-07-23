@@ -466,6 +466,16 @@ async function onExport(): Promise<void> {
     );
     const result = await handle.result;
     controller.signal.throwIfAborted();
+    const mediaIssues = result.report.mediaIssues ?? [];
+    if (mediaIssues.length > 0) {
+      const exportStrings = t.value.dialogs.exportAudio;
+      const problems = mediaIssues.map((issue) =>
+        exportStrings.mediaIssue
+          .replace('{kind}', exportStrings.mediaIssueKind[issue.kind] ?? issue.kind)
+          .replace('{id}', issue.id),
+      );
+      throw new Error(`${exportStrings.preflightBlocked}\n${problems.join('\n')}`);
+    }
     progress.value = 1;
     stage.value = 'encode';
     const normalizedReport =

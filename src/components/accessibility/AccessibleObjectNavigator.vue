@@ -62,7 +62,6 @@ function openContext(): void {
 }
 
 function onKeyDown(event: KeyboardEvent): void {
-  if (event.target !== event.currentTarget) return;
   const direction =
     event.key === 'ArrowLeft'
       ? 'left'
@@ -139,27 +138,32 @@ watch(
 <template>
   <div
     class="accessible-object-navigator"
-    role="listbox"
-    tabindex="0"
+    role="region"
     :aria-label="props.label"
-    :aria-activedescendant="activeDescendant"
-    @keydown="onKeyDown"
-    @focus="activeItem && announce(activeItem.label)"
   >
     <span class="navigator-summary" aria-hidden="true">
       {{ activeItem?.label ?? props.emptyLabel }}
     </span>
     <span class="navigator-instructions" aria-hidden="true">{{ props.instructions }}</span>
-
-    <div class="navigator-virtual-options">
-      <div
-        v-for="item in props.items"
-        :id="optionDomId(item.id)"
-        :key="item.id"
-        role="option"
-        :aria-selected="item.selected"
-      >
-        {{ item.label }}
+    <div
+      class="navigator-listbox"
+      role="listbox"
+      tabindex="0"
+      :aria-label="props.label"
+      :aria-activedescendant="activeDescendant"
+      @keydown="onKeyDown"
+      @focus="activeItem && announce(activeItem.label)"
+    >
+      <div class="navigator-virtual-options">
+        <div
+          v-for="item in props.items"
+          :id="optionDomId(item.id)"
+          :key="item.id"
+          role="option"
+          :aria-selected="item.selected"
+        >
+          {{ item.label }}
+        </div>
       </div>
     </div>
 
@@ -200,7 +204,6 @@ watch(
   white-space: nowrap;
 }
 
-.accessible-object-navigator:focus,
 .accessible-object-navigator:focus-within {
   width: min(440px, calc(100% - 8px));
   height: auto;

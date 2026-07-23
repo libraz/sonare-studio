@@ -231,6 +231,70 @@ describe('buildFullScore', () => {
     ]);
   });
 
+  it('preserves imported MusicXML part ids when rebuilding a full score', () => {
+    const out = buildFullScore(
+      {
+        tracks: [
+          { ...track(1), name: 'Flute', musicXmlPartId: 'flute-01' },
+          { ...track(2), name: 'Cello', musicXmlPartId: 'cello-01' },
+        ],
+        clips: [
+          midiClip({
+            id: 1,
+            trackId: 1,
+            notes: [{ id: 1, pitch: 72, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 }],
+          }),
+          midiClip({
+            id: 2,
+            trackId: 2,
+            notes: [{ id: 2, pitch: 48, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 }],
+          }),
+        ],
+      } as never,
+      {
+        divisionPpq: 1,
+        timeSig: { beats: 4, beatUnit: 4 },
+        keyFifths: 0,
+        clipStartPpq: 0,
+        clipLengthPpq: 4,
+        displayTransposeSemitones: 0,
+      },
+    );
+
+    expect(out.parts.map((part) => part.id)).toEqual(['flute-01', 'cello-01']);
+  });
+
+  it('exports both pitched and percussion parts for one imported hybrid track', () => {
+    const out = buildFullScore(
+      {
+        tracks: [{ ...track(1), name: 'Hybrid', musicXmlPartId: 'hybrid-01' }],
+        clips: [
+          midiClip({
+            id: 1,
+            trackId: 1,
+            startPpq: 0,
+            sourceOffsetPpq: 0,
+            lengthPpq: 4,
+            notes: [
+              { id: 1, pitch: 60, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 },
+              { id: 2, pitch: 36, velocity: 96, startPpq: 1, durationPpq: 1, channel: 9 },
+            ],
+          }),
+        ],
+      } as never,
+      {
+        divisionPpq: 1,
+        timeSig: { beats: 4, beatUnit: 4 },
+        keyFifths: 0,
+        clipStartPpq: 0,
+        clipLengthPpq: 4,
+        displayTransposeSemitones: 0,
+      },
+    );
+
+    expect(out.parts.map((part) => part.id)).toEqual(['hybrid-01', 'hybrid-01-percussion']);
+  });
+
   it('applies the production full-score fingering option to every part', () => {
     const out = buildFullScore(
       {

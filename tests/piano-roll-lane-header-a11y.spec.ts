@@ -22,4 +22,10 @@ describe('piano roll lane header accessibility', () => {
     expect(pianoRollEditor).not.toContain('lane-tab-active');
     expect(pianoRollEditor).not.toContain('.lane-tab ');
   });
+
+  it('does not route form-control keyboard events into note editing shortcuts', () => {
+    expect(pianoRollEditor).toContain(
+      'input, textarea, select, button, [contenteditable="true"], [contenteditable=""]',
+    );
+  });
 });

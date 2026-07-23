@@ -6,6 +6,7 @@ import {
   canRegisterServiceWorker,
   dismissPwaUpdateNotice,
   installPwaReloadPreparation,
+  pwaUpdateFailure,
   pwaUpdateNotice,
   registerServiceWorker,
   requestPwaEngineRecovery,
@@ -106,7 +107,7 @@ describe('PWA registration', () => {
     installing.dispatchEvent(new Event('statechange'));
     expect(pwaUpdateNotice.value).toBe('update');
 
-    const prepare = vi.fn(async () => {});
+    const prepare = vi.fn(async () => true);
     removePreparation = installPwaReloadPreparation(prepare);
     await applyPwaUpdateAndReload();
     expect(prepare).toHaveBeenCalledTimes(1);
@@ -114,6 +115,70 @@ describe('PWA registration', () => {
     expect(reload).not.toHaveBeenCalled();
     container.dispatchEvent(new Event('controllerchange'));
     expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the update notice and does not activate a worker when preparation fails', async () => {
+    const waiting = { postMessage: vi.fn() };
+    const registration = Object.assign(new EventTarget(), {
+      scope: '/',
+      installing: null,
+      waiting,
+      update: vi.fn(async () => undefined),
+    });
+    const container = Object.assign(new EventTarget(), {
+      controller: {},
+      register: vi.fn(async () => registration),
+      getRegistration: vi.fn(async () => registration),
+    });
+    const reload = vi.fn();
+    await registerServiceWorker({
+      environment: { PROD: true },
+      location: { protocol: 'https:' },
+      navigator: { serviceWorker: container } as unknown as Navigator,
+      reload,
+    });
+    requestPwaEngineRecovery();
+    removePreparation = installPwaReloadPreparation(vi.fn(async () => false));
+
+    await applyPwaUpdateAndReload();
+
+    expect(pwaUpdateNotice.value).toBe('engine-version');
+    expect(pwaUpdateFailure.value).toBe('autosave');
+    expect(waiting.postMessage).not.toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('keeps the update notice and does not reload when preparation throws', async () => {
+    const registration = Object.assign(new EventTarget(), {
+      scope: '/',
+      installing: null,
+      waiting: null,
+      update: vi.fn(async () => undefined),
+    });
+    const container = Object.assign(new EventTarget(), {
+      controller: {},
+      register: vi.fn(async () => registration),
+      getRegistration: vi.fn(async () => registration),
+    });
+    const reload = vi.fn();
+    await registerServiceWorker({
+      environment: { PROD: true },
+      location: { protocol: 'https:' },
+      navigator: { serviceWorker: container } as unknown as Navigator,
+      reload,
+    });
+    requestPwaEngineRecovery();
+    removePreparation = installPwaReloadPreparation(
+      vi.fn(async () => {
+        throw new Error('autosave unavailable');
+      }),
+    );
+
+    await expect(applyPwaUpdateAndReload()).resolves.toBeUndefined();
+
+    expect(pwaUpdateNotice.value).toBe('engine-version');
+    expect(pwaUpdateFailure.value).toBe('autosave');
+    expect(reload).not.toHaveBeenCalled();
   });
 
   it('clears app caches before an ABI recovery reload when no worker is waiting', async () => {

@@ -426,6 +426,11 @@ function onDragEnd(): void {
   dragOverIndex.value = null;
 }
 
+function onMoveProcessor(from: number, to: number): void {
+  runCommand(() => reorderMasteringProcessor(from, to));
+  expandedIndex.value = null;
+}
+
 // --- Add processor popover -------------------------------------------------------
 
 const processorRackRef = ref<InstanceType<typeof ProcessorRack> | null>(null);
@@ -702,6 +707,7 @@ onBeforeUnmount(() => {
         @drag-over="onDragOver"
         @drop="onDrop"
         @drag-end="onDragEnd"
+        @move="onMoveProcessor"
         @toggle-add-menu="toggleAddMenu"
         @add-processor="onAddProcessor"
       />

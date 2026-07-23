@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import { applyPwaUpdateAndReload, dismissPwaUpdateNotice, pwaUpdateNotice } from '@/pwa';
+import {
+  applyPwaUpdateAndReload,
+  dismissPwaUpdateNotice,
+  pwaUpdateFailure,
+  pwaUpdateNotice,
+} from '@/pwa';
 import { useI18n } from '@/ui/i18n';
 
 const { t } = useI18n();
@@ -19,13 +24,18 @@ async function reload(): Promise<void> {
 
 <template>
   <aside v-if="pwaUpdateNotice" class="pwa-update" role="status" aria-live="polite">
-    <span>
-      {{
-        pwaUpdateNotice === 'engine-version'
-          ? t.shell.pwaUpdate.engineVersion
-          : t.shell.pwaUpdate.available
-      }}
-    </span>
+    <div class="pwa-update-message">
+      <span>
+        {{
+          pwaUpdateNotice === 'engine-version'
+            ? t.shell.pwaUpdate.engineVersion
+            : t.shell.pwaUpdate.available
+        }}
+      </span>
+      <span v-if="pwaUpdateFailure" class="pwa-update-error" role="alert">
+        {{ t.shell.pwaUpdate.autosaveFailed }}
+      </span>
+    </div>
     <button type="button" :disabled="applying" @click="reload">
       {{ applying ? t.shell.pwaUpdate.applying : t.shell.pwaUpdate.reload }}
     </button>
@@ -54,8 +64,14 @@ async function reload(): Promise<void> {
   font-size: var(--fs-sm);
 }
 
-.pwa-update span {
+.pwa-update-message {
   flex: 1;
+}
+
+.pwa-update-error {
+  display: block;
+  margin-top: var(--sp-1);
+  color: var(--danger);
 }
 
 .pwa-update button {

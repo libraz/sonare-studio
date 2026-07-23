@@ -227,7 +227,8 @@ const autosave = useAutosave({
 // document first so OPFS writes cannot be abandoned mid-update.
 onScopeDispose(
   installPwaReloadPreparation(async () => {
-    await autosave.saveNow();
+    const saved = await autosave.saveNow();
+    return saved;
   }),
 );
 

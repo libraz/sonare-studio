@@ -29,6 +29,10 @@ const props = defineProps<{
   dragging: boolean;
   /** True when this slot is the current drop target. */
   dropTarget: boolean;
+  /** Whether the slot can move one place toward the chain input. */
+  canMoveUp: boolean;
+  /** Whether the slot can move one place toward the chain output. */
+  canMoveDown: boolean;
   /** Parameter controls for the expanded knobs (empty unless expanded). */
   controls: ReadonlyArray<MasteringControl>;
 }>();
@@ -48,6 +52,7 @@ const emit = defineEmits<{
   (event: 'drag-over', index: number, dragEvent: DragEvent): void;
   (event: 'drop', index: number): void;
   (event: 'drag-end'): void;
+  (event: 'move', index: number, delta: -1 | 1): void;
 }>();
 
 const { t } = useI18n();
@@ -134,6 +139,24 @@ function onMidiForgetMastering(index: number, control: MasteringControl): void {
       {{ humanizeInsertName(slot.processor) }}
     </button>
     <span class="chain-badge">{{ categoryLabel(processorCategory(slot.processor)) }}</span>
+    <button
+      type="button"
+      class="chain-move"
+      :disabled="!canMoveUp"
+      :aria-label="formatMessage(t.shell.mastering.moveUp, { name: humanizeInsertName(slot.processor) })"
+      @click="emit('move', index, -1)"
+    >
+      ↑
+    </button>
+    <button
+      type="button"
+      class="chain-move"
+      :disabled="!canMoveDown"
+      :aria-label="formatMessage(t.shell.mastering.moveDown, { name: humanizeInsertName(slot.processor) })"
+      @click="emit('move', index, 1)"
+    >
+      ↓
+    </button>
     <button
       type="button"
       class="chain-remove"

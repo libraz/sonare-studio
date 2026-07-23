@@ -27,6 +27,7 @@ describe('AccessibleObjectNavigator', () => {
   it('uses aria-activedescendant and activates the explored object', async () => {
     const wrapper = mountNavigator();
     const listbox = wrapper.get('[role="listbox"]');
+    expect(wrapper.get('[role="region"]').attributes('aria-label')).toBe('Object navigator');
     expect(listbox.attributes('aria-activedescendant')).toContain('one');
     expect(wrapper.findAll('[role="option"]')).toHaveLength(2);
     expect(wrapper.findAll('[role="option"]')[0].attributes('aria-selected')).toBe('true');
@@ -54,5 +55,7 @@ describe('AccessibleObjectNavigator', () => {
     expect(slider.attributes('max')).toBe('10');
     await slider.setValue('7');
     expect(wrapper.emitted('set-value')).toEqual([[{ id: 'two', controlId: 'value', value: 7 }]]);
+    await slider.trigger('keydown', { key: 'ArrowUp', ctrlKey: true });
+    expect(wrapper.emitted('adjust')).toHaveLength(1);
   });
 });

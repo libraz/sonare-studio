@@ -80,6 +80,28 @@
   padding: 1px 3px;
 }
 
+.chain-move {
+  flex: none;
+  width: 16px;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-3);
+  font: 700 var(--fs-2xs) var(--font-sans);
+  line-height: 1;
+  padding: 1px;
+  cursor: pointer;
+}
+
+.chain-move:hover:not(:disabled) {
+  color: var(--text-1);
+}
+
+.chain-move:disabled {
+  color: var(--text-4);
+  cursor: default;
+}
+
 .chain-remove {
   flex: none;
   border: none;

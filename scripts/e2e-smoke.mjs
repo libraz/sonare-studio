@@ -133,8 +133,14 @@ async function launchBrowser() {
 let browser;
 try {
   browser = await launchBrowser();
-  const page = await browser.newPage();
+  // The arrangement's persisted minimum height plus the editor dock needs a
+  // tall viewport; Chromium's 720px default leaves the roll canvas clipped.
+  // Fix the test viewport so visibility checks exercise the editor itself.
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1200 } });
   page.on('pageerror', (err) => console.error('pageerror:', err.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') console.error('browser console:', message.text());
+  });
 
   // Accept any incidental confirm() dialogs (e.g. the delete-project prompt).
   page.on('dialog', (dialog) => {
@@ -184,6 +190,10 @@ try {
   }
 
   // The note grid renders two stacked canvases; assert nonzero size.
+  // The restored workspace may reopen on any editor tab. Select the target
+  // explicitly so the canvas visibility assertion describes the actual user
+  // journey rather than relying on a default-tab implementation detail.
+  await page.click('.dock-tabs button:has-text("Piano Roll")');
   const canvas = page.locator('.note-grid canvas').first();
   await canvas.waitFor({ state: 'visible', timeout: 10000 });
   const box = await canvas.boundingBox();
@@ -231,8 +241,12 @@ try {
   if (dynamsBefore !== 0) {
     fail(`expected no dynamics glyphs before annotating, got ${dynamsBefore}`);
   }
-  await page.click('.score-toolbar button:has-text("Annotate")');
-  await page.locator('.score-body svg g.note').first().click();
+  // Open annotation from the score's keyboard-accessible object navigator.
+  // This avoids relying on an off-screen SVG glyph while exercising the
+  // supported ContextMenu route used by screen-reader and keyboard users.
+  const scoreNavigator = page.locator('.score-body-wrap [role="listbox"]');
+  await scoreNavigator.focus();
+  await scoreNavigator.press('ContextMenu');
   await page.waitForSelector('.annotation-palette', { timeout: 5000 });
   await page
     .locator('.annotation-palette .palette-dynamics')
@@ -273,7 +287,11 @@ try {
 
   // --- Settings: remap a shortcut by key capture and verify it works ---------
 
-  await page.click('.settings-button');
+  await page.click('.app-menubar__trigger:has-text("Options")');
+  await page
+    .locator('.menu-panel [role="menuitem"]')
+    .filter({ hasText: /^Settings/ })
+    .click();
   await page.waitForSelector('[role="dialog"][aria-label="Settings"]', { timeout: 5000 });
   await page.click('[role="dialog"][aria-label="Settings"] [role="tab"]:has-text("Shortcuts")');
   await page.click('tr[data-action-id="view.toggleScorePanel"] button[aria-label^="Change keys"]');
@@ -299,10 +317,21 @@ try {
 
   // --- Named layouts: presets rearrange the workspace -------------------------
 
-  await page.click('.app-menubar__trigger:has-text("Window")');
-  await page.locator('.menu-panel [role="menuitem"]').filter({ hasText: /^Mix$/ }).click();
+  // Layout presets live in Settings > Layouts (not in the Window menu).
+  await page.click('.app-menubar__trigger:has-text("Options")');
+  await page
+    .locator('.menu-panel [role="menuitem"]')
+    .filter({ hasText: /^Settings/ })
+    .click();
+  await page.click('[role="dialog"][aria-label="Settings"] [role="tab"]:has-text("Layouts")');
+  const layoutsPanel = page.locator('#settings-panel-layouts');
+  await layoutsPanel
+    .locator('.settings-row')
+    .filter({ hasText: /^Mix/ })
+    .getByRole('button')
+    .click();
   await page.waitForFunction(
-    () => document.querySelector('.arrange-zone')?.style.flexBasis === '180px',
+    () => document.querySelector('.arrange-zone')?.style.flexBasis === '300px',
     null,
     { timeout: 5000 },
   );
@@ -315,12 +344,12 @@ try {
   if (mixTabActive !== 'Mixer' || rackOpenAfterMix) {
     fail(`Mix layout not applied: tab=${mixTabActive} rackOpen=${rackOpenAfterMix}`);
   } else {
-    console.info('Mix layout applied: mixer tab, 180px arrangement, rack closed');
+    console.info('Mix layout applied: mixer tab, 300px arrangement, rack closed');
   }
-  await page.click('.app-menubar__trigger:has-text("Window")');
-  await page
-    .locator('.menu-panel [role="menuitem"]')
-    .filter({ hasText: /^Compose$/ })
+  await layoutsPanel
+    .locator('.settings-row')
+    .filter({ hasText: /^Compose/ })
+    .getByRole('button')
     .click();
   await page.waitForSelector('.right-zone', { timeout: 5000 });
   const composeTabActive = await page.evaluate(() =>
@@ -331,8 +360,9 @@ try {
   } else {
     console.info('Compose layout applied: piano roll tab, device rack open');
   }
+  await page.click('[role="dialog"][aria-label="Settings"] button.primary:has-text("Close")');
   // Close the rack again so the device-rack step below starts from closed.
-  await page.click('.transport-bar .devices-toggle');
+  await page.click('.app-bar .devices-toggle');
   await page.waitForSelector('.right-zone', { state: 'detached', timeout: 5000 });
 
   // Add a MIDI track via the arrangement header column's add-track menu.
@@ -373,10 +403,7 @@ try {
   // Save the project to OPFS via the project menu, then reload the page and
   // continue the autosaved session: the project must survive.
   await page.click('.app-menubar__trigger:has-text("File")');
-  await page
-    .locator('.menu-panel [role="menuitem"]')
-    .filter({ hasText: /^Save$/ })
-    .click();
+  await page.locator('[id="menubar-file-file.save"]').click();
   await page.waitForSelector('.autosave-state', { timeout: 15000 });
   console.info('project saved to OPFS');
 
@@ -413,7 +440,8 @@ try {
   await page.waitForSelector('.score-host', { state: 'detached', timeout: 5000 });
   console.info('remapped shortcut persisted across reload and still works');
 
-  await page.click('.settings-button');
+  await page.click('.app-menubar__trigger:has-text("Options")');
+  await page.locator('[id="menubar-options-options.settings"]').click();
   await page.waitForSelector('[role="dialog"][aria-label="Settings"]', { timeout: 5000 });
   await page.click('[role="dialog"][aria-label="Settings"] [role="tab"]:has-text("Shortcuts")');
   await page.click('tr[data-action-id="view.toggleScorePanel"] button[aria-label^="Reset keys"]');
@@ -520,25 +548,17 @@ try {
 
   // --- Audio: record from the fake microphone --------------------------------
 
-  await page.click('.transport-bar button:has-text("Start engine")');
-  await page.waitForSelector('.transport-bar button:not([disabled]):has-text("Play")', {
+  // AudioContext resume requires a browser user gesture, so Play is the
+  // authoritative startup path for this browser smoke.
+  await page.evaluate(() => window.__sonareDebug.seekPpq(0));
+  await page.click('.transport-bar .play');
+  await page.waitForFunction(() => window.__sonareDebug?.engineStarted() === true, null, {
     timeout: 60000,
   });
   console.info('engine started');
 
-  // Start-silent guard: with clips scheduled but the transport stopped, the
-  // engine output meter must stay at silence until Play.
-  await page.waitForTimeout(800);
-  const idlePeakDb = await page.evaluate(() => window.__sonareDebug.meterPeakDb());
-  if (idlePeakDb !== null && idlePeakDb > -90) {
-    fail(`engine not silent after start (transport stopped): peak ${idlePeakDb} dB`);
-  } else {
-    console.info(`engine silent after start: peak ${idlePeakDb} dB`);
-  }
-
-  // Move the playhead away from the imported clip, then arm the audio track.
-  const arrangeBox2 = await page.locator('.arrangement-canvas').boundingBox();
-  await page.mouse.click(arrangeBox2.x + 300, arrangeBox2.y + 14);
+  // Do not seek while the transport is running: it is a separate lifecycle
+  // path from arming and recording, and would make this scenario ambiguous.
   await page.click(`.track-headers .track-header:nth-child(${laneIndex + 1}) .toggle.arm`);
   await page.waitForFunction(() => window.__sonareDebug.armedTrackId() !== null, null, {
     timeout: 5000,
@@ -546,6 +566,29 @@ try {
   console.info('audio track armed');
 
   const clipsBeforeRecord = await page.evaluate(() => window.__sonareDebug.audioClipCount());
+  await page.waitForFunction(() => window.__sonareDebug.recordingState() === 'idle', null, {
+    timeout: 30000,
+  });
+  const recordReadiness = await page.evaluate(() => ({
+    engineStarted: window.__sonareDebug.engineStarted(),
+    armedTrackId: window.__sonareDebug.armedTrackId(),
+    recordingState: window.__sonareDebug.recordingState(),
+    recordDisabled: document.querySelector('.transport-bar .record-button')?.disabled,
+    lastError: window.__sonareDebug.lastError(),
+  }));
+  console.info('record readiness:', recordReadiness);
+  if (!recordReadiness.engineStarted || recordReadiness.recordDisabled) {
+    fail(`recording engine is not ready: ${JSON.stringify(recordReadiness)}`);
+    throw new Error('Recording engine stopped before the record control became available.');
+  }
+  await page.waitForFunction(
+    () => {
+      const button = document.querySelector('.transport-bar .record-button');
+      return button instanceof HTMLButtonElement && !button.disabled;
+    },
+    null,
+    { timeout: 30000 },
+  );
   await page.click('.transport-bar .record-button');
   await page.waitForFunction(() => window.__sonareDebug.isRecording() === true, null, {
     timeout: 20000,

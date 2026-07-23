@@ -913,7 +913,7 @@ export function buildFullScore(
         clipLengthPpq: options.clipLengthPpq,
         timeSignatures: options.timeSignatures,
         pickupLengthPpq: options.pickupLengthPpq,
-        partId: `P${index + 1}`,
+        partId: track.musicXmlPartId?.trim() || `P${index + 1}`,
         partName: track.name || `Track ${index + 1}`,
         displayTransposeSemitones: options.displayTransposeSemitones,
         grandStaffSplitPitch: options.grandStaffSplitPitch,

@@ -4,14 +4,18 @@ export const SERVICE_WORKER_URL = '/sw.js';
 const CACHE_PREFIX = 'sonare-studio-';
 
 export type PwaUpdateReason = 'update' | 'engine-version';
+export type PwaUpdateFailure = 'autosave';
 
 const updateNoticeState = ref<PwaUpdateReason | null>(null);
 export const pwaUpdateNotice = readonly(updateNoticeState);
+const updateFailureState = ref<PwaUpdateFailure | null>(null);
+/** A preparation failure; the visible update action doubles as a retry. */
+export const pwaUpdateFailure = readonly(updateFailureState);
 
 let pendingRegistration: ServiceWorkerRegistration | null = null;
 let reloadAfterControllerChange = false;
 let reloadPage = (): void => window.location.reload();
-let prepareReload: (() => Promise<void>) | null = null;
+let prepareReload: (() => Promise<boolean>) | null = null;
 
 type ServiceWorkerNavigator = Navigator & {
   serviceWorker?: ServiceWorkerContainer;
@@ -32,15 +36,18 @@ let recoveryCacheStorage: CacheStorage | undefined;
 function publishUpdate(registration: ServiceWorkerRegistration, reason: PwaUpdateReason): void {
   pendingRegistration = registration;
   updateNoticeState.value = reason;
+  updateFailureState.value = null;
 }
 
 /** Requests the same reload affordance when mixed app/engine versions are detected. */
 export function requestPwaEngineRecovery(): void {
   updateNoticeState.value = 'engine-version';
+  updateFailureState.value = null;
 }
 
 export function dismissPwaUpdateNotice(): void {
   updateNoticeState.value = null;
+  updateFailureState.value = null;
 }
 
 /**
@@ -48,7 +55,7 @@ export function dismissPwaUpdateNotice(): void {
  * Returns an idempotent cleanup so test/app lifecycles cannot retain a stale
  * project scope.
  */
-export function installPwaReloadPreparation(prepare: () => Promise<void>): () => void {
+export function installPwaReloadPreparation(prepare: () => Promise<boolean>): () => void {
   prepareReload = prepare;
   return () => {
     if (prepareReload === prepare) prepareReload = null;
@@ -88,7 +95,18 @@ async function clearAppCaches(): Promise<void> {
 export async function applyPwaUpdateAndReload(): Promise<void> {
   // A worker activation/recovery reload must never strand an autosave write.
   // The app supplies this hook after persistence is initialized.
-  await prepareReload?.();
+  if (prepareReload) {
+    try {
+      if (!(await prepareReload())) {
+        updateFailureState.value = 'autosave';
+        return;
+      }
+    } catch {
+      updateFailureState.value = 'autosave';
+      return;
+    }
+  }
+  updateFailureState.value = null;
   const container = window.navigator.serviceWorker;
   const registration =
     pendingRegistration ?? (container ? await container.getRegistration('/') : undefined);

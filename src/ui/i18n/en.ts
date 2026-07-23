@@ -89,6 +89,8 @@ export const en = {
     pwaUpdate: {
       available: 'A new Sonare Studio version is ready.',
       engineVersion: 'The audio engine and app are from different versions. Reload to recover.',
+      autosaveFailed:
+        'The project could not be saved. Save it manually, then try the update again.',
       reload: 'Reload and update',
       applying: 'Updating...',
       later: 'Later',
@@ -1354,6 +1356,10 @@ export const en = {
       searchPresets: 'Search presets...',
       noMatches: 'No matches',
       dragReorder: 'Drag to reorder',
+      moveUp: 'Move {name} up',
+      moveDown: 'Move {name} down',
+      movedUp: 'Processor moved up',
+      movedDown: 'Processor moved down',
       bypassProcessor: 'Bypass processor',
       enableProcessor: 'Enable processor',
       processorPower: '{name} power',
@@ -1946,6 +1952,10 @@ export const en = {
       restoreBackupMediaSkippedMessage:
         'The backup was restored, but these invalid or incomplete media entries could not be recovered:\n{items}',
       restoreBackupMediaSkippedConfirm: 'OK',
+      exportSmfLossTitle: 'SMF export omits empty structure',
+      exportSmfLossMessage:
+        'SMF cannot represent {clips} empty MIDI clip(s) and may omit {tracks} empty MIDI track(s). Export the remaining MIDI events?',
+      exportSmfLossConfirm: 'Export SMF',
       saveProjectAsTitle: 'Save project as',
       saveProjectAsMessage: 'Enter a name for the saved project.',
       saveProjectOverwriteTitle: 'Replace saved project?',

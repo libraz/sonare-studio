@@ -800,6 +800,16 @@ const interactions = useNoteInteractions({
 });
 
 function onKeyDown(event: KeyboardEvent): void {
+  const target = event.target;
+  if (
+    target instanceof HTMLElement &&
+    target !== event.currentTarget &&
+    target.closest(
+      'input, textarea, select, button, [contenteditable="true"], [contenteditable=""]',
+    )
+  ) {
+    return;
+  }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
     event.preventDefault();
     if (event.shiftKey) redo();

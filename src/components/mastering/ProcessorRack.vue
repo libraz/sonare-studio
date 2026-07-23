@@ -46,6 +46,7 @@ const emit = defineEmits<{
   (event: 'drag-over', index: number, dragEvent: DragEvent): void;
   (event: 'drop', index: number): void;
   (event: 'drag-end'): void;
+  (event: 'move', from: number, to: number): void;
   (event: 'toggle-add-menu'): void;
   (event: 'add-processor', processorId: string): void;
 }>();
@@ -53,10 +54,21 @@ const emit = defineEmits<{
 const { t } = useI18n();
 
 const addMenuEl = ref<HTMLDivElement | null>(null);
+const moveAnnouncement = ref('');
 
 /** Controls passed to a slot: only the expanded slot receives them. */
 function controlsFor(index: number): ReadonlyArray<MasteringControl> {
   return index === props.expandedIndex ? props.expandedControls : [];
+}
+
+function moveProcessor(index: number, delta: -1 | 1): void {
+  const target = index + delta;
+  if (target < 0 || target >= props.processors.length) return;
+  const slot = props.processors[index];
+  if (!slot) return;
+  moveAnnouncement.value =
+    delta < 0 ? t.value.shell.mastering.movedUp : t.value.shell.mastering.movedDown;
+  emit('move', index, target);
 }
 
 defineExpose({ addMenuEl });
@@ -72,6 +84,8 @@ defineExpose({ addMenuEl });
       :expanded="expandedIndex === index"
       :dragging="dragIndex === index"
       :drop-target="dragOverIndex === index && dragIndex !== index"
+      :can-move-up="index > 0"
+      :can-move-down="index < processors.length - 1"
       :controls="controlsFor(index)"
       @toggle-enabled="emit('toggle-enabled', $event)"
       @toggle-expanded="emit('toggle-expanded', $event)"
@@ -84,7 +98,9 @@ defineExpose({ addMenuEl });
       @drag-over="(slotIndex, dragEvent) => emit('drag-over', slotIndex, dragEvent)"
       @drop="emit('drop', $event)"
       @drag-end="emit('drag-end')"
+      @move="moveProcessor"
     />
+    <p class="sr-only" role="status" aria-live="polite">{{ moveAnnouncement }}</p>
     <div ref="addMenuEl" class="chain-add-wrap">
       <button
         type="button"

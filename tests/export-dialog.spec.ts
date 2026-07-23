@@ -475,9 +475,9 @@ describe('ExportDialog', () => {
     ]);
   });
 
-  it('formats media issues in the report through localized labels', async () => {
+  it('blocks download when the render discovers media issues after preflight', async () => {
     const control = makeRender();
-    const { wrapper } = mountDialog(control);
+    const { download } = mountDialog(control);
     await clickExport();
     control.resolve(
       makeResult({
@@ -493,12 +493,12 @@ describe('ExportDialog', () => {
     );
     await flushPromises();
 
-    const text = q('.report-limitations')?.textContent ?? '';
+    const text = q('.dialog-error')?.textContent ?? '';
     // The raw machine kind never leaks; it is replaced with a localized label.
     expect(text).toContain('Missing or unreadable audio asset: clip-7');
     expect(text).toContain('Missing or unreadable SoundFont: piano.sf2');
     expect(text).not.toContain('audio-asset');
-    wrapper.unmount();
+    expect(download).not.toHaveBeenCalled();
   });
 
   it('passes WAV dither to the encoder when the dither toggle is enabled', async () => {

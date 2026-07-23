@@ -89,6 +89,8 @@ export const ja = {
     pwaUpdate: {
       available: '新しいSonare Studioを利用できます。',
       engineVersion: 'オーディオエンジンとアプリの版が一致しません。再読み込みして復旧します。',
+      autosaveFailed:
+        'プロジェクトを保存できませんでした。手動で保存してから、もう一度更新してください。',
       reload: '更新して再読み込み',
       applying: '更新中...',
       later: '後で',
@@ -1351,6 +1353,10 @@ export const ja = {
       searchPresets: 'プリセットを検索...',
       noMatches: '一致なし',
       dragReorder: 'ドラッグして並べ替え',
+      moveUp: '{name} を上へ移動',
+      moveDown: '{name} を下へ移動',
+      movedUp: 'プロセッサーを上へ移動しました',
+      movedDown: 'プロセッサーを下へ移動しました',
       bypassProcessor: 'プロセッサーをバイパス',
       enableProcessor: 'プロセッサーを有効化',
       processorPower: '{name} の電源',
@@ -1942,6 +1948,10 @@ export const ja = {
       restoreBackupMediaSkippedMessage:
         'バックアップは復元されましたが、次の不正または不完全なメディアは復元できませんでした。\n{items}',
       restoreBackupMediaSkippedConfirm: 'OK',
+      exportSmfLossTitle: 'SMF 書き出しで空の構造が失われます',
+      exportSmfLossMessage:
+        'SMF は空の MIDI クリップ {clips} 件を表現できず、空の MIDI トラック {tracks} 件を省略する場合があります。残りの MIDI イベントを書き出しますか？',
+      exportSmfLossConfirm: 'SMFを書き出し',
       saveProjectAsTitle: '別名で保存',
       saveProjectAsMessage: '保存するプロジェクト名を入力してください。',
       saveProjectOverwriteTitle: '保存済みプロジェクトを置き換えますか？',

@@ -277,6 +277,23 @@ describe('MasteringPanel.vue', () => {
     expect(names).toEqual(['Tape', 'Tilt']);
   });
 
+  it('reorders processors with labelled keyboard-accessible move buttons', async () => {
+    addMasteringProcessor('eq.tilt');
+    addMasteringProcessor('saturation.tape');
+    const wrapper = mount(MasteringPanel);
+    const moveButtons = wrapper.findAll<HTMLButtonElement>('.chain-move');
+
+    expect(moveButtons[0].attributes('disabled')).toBeDefined();
+    expect(moveButtons[3].attributes('disabled')).toBeDefined();
+    await moveButtons[1].trigger('click');
+
+    expect(store.mixer.masteringChain?.processors.map((slot) => slot.processor)).toEqual([
+      'saturation.tape',
+      'eq.tilt',
+    ]);
+    expect(wrapper.find('[role="status"]').text()).toBe('Processor moved down');
+  });
+
   it('renders a preview over the first 8 bars and shows the loudness readout', async () => {
     addMasteringProcessor('eq.tilt');
     const fake = makeFakeRender();
