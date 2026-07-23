@@ -42,6 +42,23 @@ describe('export payload memory benchmarks', () => {
     );
   });
 
+  it('rejects a thirty-minute stereo export with several retained assets before encoding', () => {
+    // Three source assets (120 + 96 + 84 MiB) remain available while the
+    // mix, the current streamed stem, and metering scratch are live.
+    const estimate = estimateRenderPayloadMemory({
+      totalFrames: 30 * 60 * 48_000,
+      stemCount: 3,
+      streamingStems: true,
+      sourceAudioBytes: (120 + 96 + 84) * MEBIBYTE,
+    });
+
+    expect(estimate.fullStereoBuffers).toBe(3);
+    expect(estimate.peakPayloadBytes).toBeGreaterThan(512 * MEBIBYTE);
+    expect(() => assertRenderPayloadMemory(estimate, 512 * MEBIBYTE)).toThrow(
+      /exceeding the 512 MiB browser budget/,
+    );
+  });
+
   it('counts source PCM, transformed schedules, fonts, and transient metering scratch', () => {
     const estimate = estimateRenderPayloadMemory({
       totalFrames: 48_000,
@@ -72,6 +89,28 @@ describe('export payload memory benchmarks', () => {
     expect(() => assertCodecPayloadMemory(estimate, 512 * MEBIBYTE)).toThrow(
       /Audio encoding needs about/,
     );
+  });
+
+  it('counts MediaRecorder PCM and encoded copies before AAC or Opus starts', () => {
+    const inputBytes = 100 * MEBIBYTE;
+    const estimate = estimateCodecPayloadMemory({ encoderId: 'aac', inputBytes });
+
+    expect(estimate).toMatchObject({
+      inputGenerations: 2,
+      encodedGenerations: 2,
+      codecScratchBytes: inputBytes,
+      outputUpperBoundBytes: 2 * (inputBytes + 64 * 1024),
+    });
+    expect(() => assertCodecPayloadMemory(estimate, 400 * MEBIBYTE)).toThrow(
+      /Audio encoding needs about/,
+    );
+  });
+
+  it('counts FLAC frame chunks and final concatenation as separate outputs', () => {
+    const estimate = estimateCodecPayloadMemory({ encoderId: 'flac', inputBytes: 100 * MEBIBYTE });
+
+    expect(estimate.encodedGenerations).toBe(2);
+    expect(estimate.outputUpperBoundBytes).toBe(2 * (100 * MEBIBYTE + 64 * 1024));
   });
 
   it('tracks and releases one consumer payload at a time', () => {

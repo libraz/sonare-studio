@@ -1,6 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ProjectDocument } from '@/project/serialization';
-import { projectDocumentToSmf, smfToProjectDocument } from '@/project/smf';
+import {
+  extractSmfSysEx,
+  inspectSmfExportLoss,
+  inspectSmfSysEx,
+  projectDocumentToSmf,
+  SMF_TEMPO_RAMP_MAX_ERROR_BPM,
+  sampleTempoRampsForSmf,
+  smfToProjectDocument,
+} from '@/project/smf';
 
 vi.mock('@/lib/wasm', async () => {
   const [wasm, fs] = await Promise.all([import('@/wasm/index.js'), import('node:fs')]);
@@ -61,6 +69,143 @@ function eot(delta = 0): number[] {
 }
 
 describe('smfToProjectDocument', () => {
+  it('approximates tempo ramps with bounded instantaneous SMF tempos', () => {
+    const sampled = sampleTempoRampsForSmf({
+      schemaVersion: 3,
+      name: 'Ramp',
+      sampleRate: 48000,
+      tempoSegments: [
+        { startPpq: 0, bpm: 100, endBpm: 110 },
+        { startPpq: 4, bpm: 110 },
+      ],
+      timeSignatures: [],
+      tracks: [],
+      markers: [],
+      sections: [],
+    });
+
+    expect(sampled).toHaveLength(101);
+    expect(sampled[0]).toEqual({ startPpq: 0, bpm: 100 });
+    expect(sampled.at(-1)).toEqual({ startPpq: 4, bpm: 110 });
+    expect(sampled.every((segment) => segment.endBpm === undefined)).toBe(true);
+    expect(
+      Math.max(...sampled.slice(1).map((segment, index) => segment.bpm - sampled[index].bpm)),
+    ).toBeLessThanOrEqual(SMF_TEMPO_RAMP_MAX_ERROR_BPM + 1e-9);
+  });
+
+  it('reports empty MIDI clips and tracks before a lossy SMF export', () => {
+    expect(
+      inspectSmfExportLoss({
+        schemaVersion: 3,
+        name: 'Empty structures',
+        sampleRate: 48000,
+        tempoSegments: [{ startPpq: 0, bpm: 120 }],
+        timeSignatures: [],
+        tracks: [
+          {
+            name: 'Empty track',
+            color: '#000',
+            kind: 'midi',
+            mute: false,
+            solo: false,
+            volume: 1,
+            pan: 0,
+            clips: [],
+          },
+          {
+            name: 'Mixed',
+            color: '#111',
+            kind: 'midi',
+            mute: false,
+            solo: false,
+            volume: 1,
+            pan: 0,
+            clips: [
+              {
+                name: 'Empty clip',
+                startPpq: 0,
+                lengthPpq: 1,
+                sourceOffsetPpq: 0,
+                gain: 1,
+                loopEnabled: false,
+                loopLengthPpq: 0,
+                notes: [],
+              },
+              {
+                name: 'Eventful',
+                startPpq: 1,
+                lengthPpq: 1,
+                sourceOffsetPpq: 0,
+                gain: 1,
+                loopEnabled: false,
+                loopLengthPpq: 0,
+                notes: [{ pitch: 60, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 }],
+              },
+            ],
+          },
+        ],
+        markers: [],
+        sections: [],
+      }),
+    ).toEqual({ emptyMidiClips: 1, emptyMidiTracks: 1 });
+  });
+
+  it('writes sampled tempo events that survive an SMF round trip', async () => {
+    const source: ProjectDocument = {
+      schemaVersion: 3,
+      name: 'Ramp export',
+      sampleRate: 48000,
+      tempoSegments: [
+        { startPpq: 0, bpm: 100, endBpm: 101 },
+        { startPpq: 4, bpm: 101 },
+      ],
+      timeSignatures: [],
+      tracks: [
+        {
+          name: 'Lead',
+          color: '#000',
+          kind: 'midi',
+          mute: false,
+          solo: false,
+          volume: 1,
+          pan: 0,
+          clips: [
+            {
+              name: 'Lead',
+              startPpq: 0,
+              lengthPpq: 4,
+              sourceOffsetPpq: 0,
+              gain: 1,
+              loopEnabled: false,
+              loopLengthPpq: 0,
+              kind: 'midi',
+              notes: [{ pitch: 60, velocity: 96, startPpq: 0, durationPpq: 4, channel: 0 }],
+            },
+          ],
+        },
+      ],
+      markers: [],
+      sections: [],
+    };
+
+    const imported = await smfToProjectDocument(
+      await projectDocumentToSmf(source),
+      'ramp-export.mid',
+    );
+
+    expect(imported.tempoSegments).toHaveLength(11);
+    expect(imported.tempoSegments[0].bpm).toBeCloseTo(100, 4);
+    expect(imported.tempoSegments.at(-1)?.startPpq).toBe(4);
+    expect(imported.tempoSegments.at(-1)?.bpm).toBeCloseTo(101, 3);
+    expect(
+      Math.max(
+        ...imported.tempoSegments
+          .slice(1)
+          .map((segment, index) => Math.abs(segment.bpm - imported.tempoSegments[index].bpm)),
+      ),
+    ).toBeLessThanOrEqual(SMF_TEMPO_RAMP_MAX_ERROR_BPM + 1e-3);
+  });
+
   it('imports format 1 tracks with tempo, meter, notes and CC lanes', async () => {
     const bytes = smf(1, 480, [
       [
@@ -306,6 +451,63 @@ describe('smfToProjectDocument', () => {
     await expect(smfToProjectDocument(new Uint8Array())).rejects.toThrow(/SMF|MIDI|import|header/i);
   });
 
+  it('round-trips F0 and F7 SysEx packets through an opaque SMF sidecar', async () => {
+    const bytes = smf(0, 96, [
+      [
+        ...varLen(96),
+        0xf0,
+        ...varLen(4),
+        0x43,
+        0x10,
+        0x4c,
+        0x00,
+        ...varLen(48),
+        0xf7,
+        ...varLen(3),
+        0x7e,
+        0x7f,
+        0x09,
+        ...eot(),
+      ],
+    ]);
+
+    expect(inspectSmfSysEx(bytes)).toEqual({ packets: 2, payloadBytes: 7 });
+    const document = await smfToProjectDocument(bytes, 'xg.mid');
+    const packets = document.tracks.flatMap((track) =>
+      track.clips.flatMap((clip) => clip.smfSysEx ?? []),
+    );
+    expect(packets).toEqual([
+      { ppq: 1, status: 0xf0, data: [0x43, 0x10, 0x4c, 0x00] },
+      { ppq: 1.5, status: 0xf7, data: [0x7e, 0x7f, 0x09] },
+    ]);
+
+    const exported = await projectDocumentToSmf(document);
+    expect(extractSmfSysEx(exported)).toEqual(packets);
+    expect(inspectSmfSysEx(exported)).toEqual({ packets: 2, payloadBytes: 7 });
+  });
+
+  it('rejects oversized SysEx before handing bytes to the native importer', async () => {
+    const payload = new Uint8Array(1024 * 1024 + 1).fill(0x7d);
+    const bytes = smf(0, 96, [
+      [...varLen(0), 0xf0, ...varLen(payload.length), ...payload, ...eot()],
+    ]);
+
+    await expect(smfToProjectDocument(bytes)).rejects.toThrow(/SysEx exceeds/);
+  });
+
+  it('preserves a GS reset fixture byte-for-byte', async () => {
+    // Roland GS Reset: F0 41 10 42 12 40 00 7F 00 41 F7.
+    const gsReset = [0x41, 0x10, 0x42, 0x12, 0x40, 0x00, 0x7f, 0x00, 0x41, 0xf7];
+    const bytes = smf(0, 96, [
+      [...varLen(0), 0xf0, ...varLen(gsReset.length), ...gsReset, ...eot()],
+    ]);
+
+    const document = await smfToProjectDocument(bytes, 'gs-reset.mid');
+    expect(extractSmfSysEx(await projectDocumentToSmf(document))).toEqual([
+      { ppq: 0, status: 0xf0, data: gsReset },
+    ]);
+  });
+
   it('exports track instruments as program changes', async () => {
     const source: ProjectDocument = {
       schemaVersion: 3,
@@ -363,6 +565,62 @@ describe('smfToProjectDocument', () => {
     ]);
     expect(roundTrip.tracks[0].clips[0].polyPressureLanes).toEqual([
       { channel: 0, pitch: 36, points: [{ ppq: 0.75, value: 90 }] },
+    ]);
+  });
+
+  it('merges clips into one SMF track per project track', async () => {
+    const source: ProjectDocument = {
+      schemaVersion: 3,
+      name: 'Track structure',
+      sampleRate: 48000,
+      tempoSegments: [{ startPpq: 0, bpm: 120 }],
+      timeSignatures: [],
+      tracks: [
+        {
+          name: 'Two clips',
+          color: '#000',
+          kind: 'midi',
+          mute: false,
+          solo: false,
+          volume: 1,
+          pan: 0,
+          clips: [
+            {
+              name: 'First',
+              startPpq: 0,
+              lengthPpq: 1,
+              sourceOffsetPpq: 0,
+              gain: 1,
+              loopEnabled: false,
+              loopLengthPpq: 0,
+              kind: 'midi',
+              notes: [{ pitch: 60, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 }],
+            },
+            {
+              name: 'Second',
+              startPpq: 4,
+              lengthPpq: 1,
+              sourceOffsetPpq: 0,
+              gain: 1,
+              loopEnabled: false,
+              loopLengthPpq: 0,
+              kind: 'midi',
+              notes: [{ pitch: 64, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 }],
+            },
+          ],
+        },
+      ],
+      markers: [],
+      sections: [],
+    };
+
+    const roundTrip = await smfToProjectDocument(await projectDocumentToSmf(source), 'tracks.mid');
+
+    expect(roundTrip.tracks.map((track) => track.name)).toEqual(['Two clips']);
+    expect(roundTrip.tracks[0].clips).toHaveLength(1);
+    expect(roundTrip.tracks[0].clips[0].notes.map((note) => [note.pitch, note.startPpq])).toEqual([
+      [60, 0],
+      [64, 4],
     ]);
   });
 

@@ -591,6 +591,19 @@ describe('importDawproject', () => {
     ]);
   });
 
+  it('skips disabled arrangement clips and records an explicit loss', async () => {
+    const exported = await exportDawproject(makeDoc(), { includeAudio: false });
+    const rewritten = rewriteProjectXml(exported, (project) => {
+      const element = project.querySelector('Arrangement Clip');
+      if (!element) throw new Error('missing test clip');
+      element.setAttribute('enable', '0');
+    });
+
+    const result = await importDawprojectWithMediaResult(rewritten);
+    expect(result.document.tracks[0]?.clips).toEqual([]);
+    expect(result.losses).toEqual([{ kind: 'disabled-clip', clipName: 'Phrase' }]);
+  });
+
   it('recursively composes nested clip placement and imports Warps', async () => {
     const result = await importDawprojectWithMediaResult(makeNestedWarpDawproject(), {
       ingestAudio: async () => ({ id: 'nested-asset' }),
@@ -662,6 +675,53 @@ describe('importDawproject', () => {
       },
     ]);
     expect(result.document.tracks[0].clips[0].warp).toBeUndefined();
+  });
+
+  it('refuses a seconds-based arrangement before media ingestion, including tempo changes', async () => {
+    const exported = await exportDawproject(
+      makeDoc({
+        tempoSegments: [
+          { startPpq: 0, bpm: 120 },
+          { startPpq: 16, bpm: 90, endBpm: 60 },
+        ],
+      }),
+      { includeAudio: false },
+    );
+    const secondsBased = rewriteProjectXml(exported, (project) => {
+      project.querySelector('Arrangement > Lanes')?.setAttribute('timeUnit', 'seconds');
+    });
+    const ingestAudio = vi.fn(async () => ({ id: 'should-not-import' }));
+
+    expect(() => importDawproject(secondsBased)).toThrow(
+      /Unsupported DAWproject arrangement timeUnit "seconds"/,
+    );
+    await expect(importDawprojectWithMediaResult(secondsBased, { ingestAudio })).rejects.toThrow(
+      /import refused to preserve timing/,
+    );
+    expect(ingestAudio).not.toHaveBeenCalled();
+  });
+
+  it('rejects a seconds time context at every arrangement boundary', async () => {
+    const exported = await exportDawproject(makeDoc(), { includeAudio: false });
+    for (const selector of ['Arrangement', 'Arrangement > Lanes']) {
+      const rewritten = rewriteProjectXml(exported, (project) => {
+        project.querySelector(selector)?.setAttribute('timeUnit', 'seconds');
+      });
+      expect(() => importDawproject(rewritten)).toThrow(/import refused to preserve timing/);
+    }
+  });
+
+  it('inherits a disabled parent clip when flattening nested events', async () => {
+    const disabledParent = rewriteProjectXml(makeNestedWarpDawproject(), (project) => {
+      project.querySelector('Arrangement Clip')?.setAttribute('enable', 'false');
+    });
+
+    const result = await importDawprojectWithMediaResult(disabledParent, {
+      ingestAudio: async () => ({ id: 'must-not-import' }),
+    });
+
+    expect(result.document.tracks[0]?.clips).toEqual([]);
+    expect(result.losses).toEqual([{ kind: 'disabled-clip', clipName: 'Outer event' }]);
   });
 
   it('round-trips Sonare audio Warp points without changing their mapping', async () => {
@@ -875,6 +935,40 @@ describe('importDawproject', () => {
       assetId: 'external-asset',
       sourceOffsetPpq: 1,
     });
+  });
+
+  it('accepts XSD 1/0 boolean attributes for audio files, channels, and devices', async () => {
+    const externalArchive = rewriteProjectXml(
+      makeExternalAudioDawproject('/Session Audio/Vox.wav'),
+      (project) => project.querySelector('File')?.setAttribute('external', '1'),
+    );
+    const resolveExternalAudio = vi.fn(async () => new Uint8Array([9]));
+    await importDawprojectWithMedia(externalArchive, {
+      resolveExternalAudio,
+      ingestAudio: async () => ({ id: 'external-asset' }),
+    });
+    expect(resolveExternalAudio).toHaveBeenCalledWith('/Session Audio/Vox.wav');
+
+    const channelArchive = rewriteProjectXml(
+      makeUnsupportedInsertAutomationDawproject(),
+      (project) => {
+        project.querySelector('Channel')?.setAttribute('solo', '1');
+        project.querySelector('Mute')?.setAttribute('value', '1');
+        project.querySelector('Enabled')?.setAttribute('value', '0');
+        project.querySelector('BoolParameter')?.setAttribute('value', '1');
+      },
+    );
+    const imported = importDawproject(channelArchive);
+
+    expect(imported.tracks[0]).toMatchObject({ mute: true, solo: true });
+    expect(imported.tracks[0].mixer?.inserts).toEqual([
+      {
+        processor: 'dynamics.compressor',
+        params: { autoMakeup: true },
+        enabled: false,
+        sidechainSourceIndex: 0,
+      },
+    ]);
   });
 
   it('imports effect-channel destinations as mixer bus output routing', () => {

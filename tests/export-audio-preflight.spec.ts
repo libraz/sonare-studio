@@ -157,7 +157,7 @@ describe('audioExportPreflight', () => {
     expect(load).toHaveBeenCalledWith('ok');
   });
 
-  it('uses metadata validation ahead of the legacy full-PCM loader', async () => {
+  it('uses payload validation ahead of the legacy metadata and full-PCM loaders', async () => {
     const source = doc();
     source.tracks.push({
       name: 'Audio',
@@ -184,15 +184,60 @@ describe('audioExportPreflight', () => {
     });
     const meta = vi.fn(async (id: string) => loaded(id).meta);
     const full = vi.fn(async (id: string) => loaded(id));
+    const payload = vi.fn(async (id: string) => loaded(id).meta);
     const result = await audioExportPreflight(source, {
       range: 'project',
       releaseTailSeconds: 0,
+      validateAudioAssetPayload: payload,
       loadAudioAssetMeta: meta,
       loadAudioAsset: full,
     });
     expect(result.blockers).toEqual([]);
-    expect(meta).toHaveBeenCalledWith('asset-1');
+    expect(payload).toHaveBeenCalledWith('asset-1');
+    expect(meta).not.toHaveBeenCalled();
     expect(full).not.toHaveBeenCalled();
+  });
+
+  it('blocks a valid sidecar whose PCM payload is missing or has the wrong size', async () => {
+    const source = doc();
+    source.tracks.push({
+      name: 'Audio',
+      color: '#000',
+      kind: 'audio',
+      mute: false,
+      solo: false,
+      volume: 1,
+      pan: 0,
+      clips: [
+        {
+          name: 'Clip',
+          startPpq: 0,
+          lengthPpq: 4,
+          sourceOffsetPpq: 0,
+          gain: 1,
+          loopEnabled: false,
+          loopLengthPpq: 0,
+          kind: 'audio',
+          notes: [],
+          assetId: 'asset-1',
+        },
+      ],
+    });
+    const result = await audioExportPreflight(source, {
+      range: 'project',
+      releaseTailSeconds: 0,
+      validateAudioAssetPayload: async () => {
+        throw new Error('PCM payload is 12 bytes, expected 16');
+      },
+    });
+    expect(result.blockers).toEqual([
+      {
+        kind: 'media-missing',
+        labels: [{ kind: 'audio-clip', name: 'Clip' }],
+        assetId: 'asset-1',
+        reason: 'PCM payload is 12 bytes, expected 16',
+      },
+    ]);
   });
 
   it('ignores missing media on muted, solo-excluded and loop-excluded tracks', async () => {

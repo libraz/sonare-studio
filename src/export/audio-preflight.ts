@@ -1,6 +1,10 @@
 /** Audio-export preflight for omissions that would otherwise become silence. */
 
-import { type AudioAssetMeta, type LoadedAudioAsset, loadAssetMeta } from '@/persistence/assets';
+import {
+  type AudioAssetMeta,
+  type LoadedAudioAsset,
+  validateAssetPayload,
+} from '@/persistence/assets';
 import { audioClipSegments } from '@/project/comping';
 import { effectiveTrackInstrument } from '@/project/instrument';
 import type { InsertSlot } from '@/project/mixer';
@@ -41,7 +45,9 @@ export interface AudioExportPreflightOptions {
   range: 'project' | 'loop';
   /** Required PPQ window when range is `loop`. */
   loopRegion?: MixdownRangePpq | null;
-  /** Injectable metadata validation seam; defaults to the OPFS sidecar reader. */
+  /** Injectable payload validation seam; defaults to an OPFS size/sidecar check. */
+  validateAudioAssetPayload?: (assetId: string) => Promise<AudioAssetMeta>;
+  /** @deprecated Payload validation is required; retained only as a test seam. */
   loadAudioAssetMeta?: (assetId: string) => Promise<AudioAssetMeta>;
   /** @deprecated Use loadAudioAssetMeta; retained for callers that need a custom seam. */
   loadAudioAsset?: (assetId: string) => Promise<LoadedAudioAsset>;
@@ -128,9 +134,9 @@ function suggestedTailSeconds(slots: ReadonlyArray<InsertSlot>): number {
 
 /**
  * Validates media referenced by audible audio/frozen content and reports
- * offline-only losses before rendering. It reads only the lightweight asset
- * sidecar by default; the renderer remains responsible for its worker-side
- * PCM decode.
+ * offline-only losses before rendering. It checks both the lightweight asset
+ * sidecar and the PCM file size, without decoding PCM; the renderer remains
+ * responsible for its worker-side decode.
  */
 export async function audioExportPreflight(
   doc: ProjectDocument,
@@ -189,11 +195,15 @@ export async function audioExportPreflight(
     }
   }
 
-  const loadAudio = options.loadAudioAssetMeta ?? options.loadAudioAsset ?? loadAssetMeta;
+  const validateAudio =
+    options.validateAudioAssetPayload ??
+    options.loadAudioAssetMeta ??
+    options.loadAudioAsset ??
+    validateAssetPayload;
   for (const use of uses.values()) {
     options.signal?.throwIfAborted();
     try {
-      await loadAudio(use.id);
+      await validateAudio(use.id);
     } catch (error) {
       options.signal?.throwIfAborted();
       const reason = error instanceof Error ? error.message : String(error);

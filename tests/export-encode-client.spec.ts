@@ -113,4 +113,20 @@ describe('encodeAudioInWorker', () => {
     worker.emit({ type: 'encoded', bytes: new Uint8Array([1]) });
     await expect(result).resolves.toEqual(new Uint8Array([1]));
   });
+
+  it('forwards FLAC dither to the worker protocol', async () => {
+    const worker = new FakeWorker();
+    const result = encodeAudioInWorker(
+      'flac',
+      [new Float32Array(1)],
+      48_000,
+      { bitDepth: 16, blockSize: 512, dither: true },
+      undefined,
+      () => worker as unknown as Worker,
+    );
+
+    expect(worker.posted[0]?.options).toEqual({ bitDepth: 16, blockSize: 512, dither: true });
+    worker.emit({ type: 'encoded', bytes: new Uint8Array([1]) });
+    await expect(result).resolves.toEqual(new Uint8Array([1]));
+  });
 });

@@ -132,6 +132,11 @@ export type DawprojectImportLoss =
       kind: 'unsupported-nested-clip';
       clipName: string;
       reason: 'mixed-time-units' | 'loop-with-multiple-events' | 'missing-content';
+    }
+  | {
+      /** Sonare has no disabled-clip model, so disabled content is skipped. */
+      kind: 'disabled-clip';
+      clipName: string;
     };
 
 function parseXml(bytes: Uint8Array, entryName: string): Document {
@@ -167,7 +172,8 @@ function numberAttr(element: Element | null | undefined, name: string): number |
 }
 
 function boolAttr(element: Element | null | undefined, name: string): boolean {
-  return element?.getAttribute(name) === 'true';
+  const raw = element?.getAttribute(name);
+  return raw === 'true' || raw === '1';
 }
 
 function clampInt(value: number, min: number, max: number): number {
@@ -618,6 +624,24 @@ function readTimeSignatures(project: Document): DocumentTimeSignature[] {
   ];
 }
 
+/**
+ * Sonare's arrangement positions are PPQ. A seconds-based arrangement needs
+ * a full tempo-map conversion (including ramps), so accepting it as PPQ would
+ * silently move clips and automation. Reject it before any media is ingested.
+ */
+function assertBeatBasedArrangement(project: Document): void {
+  const timedElements = project.querySelectorAll(
+    'Arrangement[timeUnit], Arrangement Lanes[timeUnit], Arrangement > TempoAutomation[timeUnit], Arrangement > TimeSignatureAutomation[timeUnit], Arrangement > Markers[timeUnit]',
+  );
+  for (const element of timedElements) {
+    const timeUnit = element.getAttribute('timeUnit')?.trim() || 'beats';
+    if (timeUnit === 'beats') continue;
+    throw new DawprojectImportError(
+      `Unsupported DAWproject arrangement timeUnit "${timeUnit}" on ${element.tagName}; import refused to preserve timing`,
+    );
+  }
+}
+
 interface FlattenedClipPlacement {
   startPpq: number;
   lengthPpq: number;
@@ -660,6 +684,12 @@ function clipLoopState(
     : {};
 }
 
+/** XSD boolean `enable` defaults to true when absent. */
+function clipEnabled(clip: Element): boolean {
+  const value = clip.getAttribute('enable');
+  return value === null || boolAttr(clip, 'enable');
+}
+
 /**
  * Flattens nested DAWproject clip timelines by recursively composing each
  * parent's visible content window with its child event placement. DAWproject
@@ -668,6 +698,10 @@ function clipLoopState(
  * events as ordinary flat clips.
  */
 function flattenClipLeaves(root: Element, losses: DawprojectImportLoss[]): FlattenedClipLeaf[] {
+  if (!clipEnabled(root)) {
+    losses.push({ kind: 'disabled-clip', clipName: root.getAttribute('name') || 'Clip' });
+    return [];
+  }
   const rootStart = numberAttr(root, 'time') ?? 0;
   const rootLength = Math.max(0.0001, numberAttr(root, 'duration') ?? 4);
   const rootName = root.getAttribute('name') || 'Audio clip';
@@ -709,6 +743,13 @@ function flattenClipLeaves(root: Element, losses: DawprojectImportLoss[]): Flatt
     const windowStart = placement.contentWindowStart;
     const windowEnd = windowStart + placement.lengthPpq;
     return nested.flatMap((child): FlattenedClipLeaf[] => {
+      if (!clipEnabled(child)) {
+        losses.push({
+          kind: 'disabled-clip',
+          clipName: child.getAttribute('name') || placement.name,
+        });
+        return [];
+      }
       const childTime = numberAttr(child, 'time') ?? 0;
       const childLength = Math.max(0.0001, numberAttr(child, 'duration') ?? placement.lengthPpq);
       const visibleStart = Math.max(windowStart, childTime);
@@ -855,7 +896,7 @@ function audioFileRef(clip: Element): DawprojectAudioFileRef | null {
   const file = children(audio, 'File')[0];
   if (!file) return null;
   const path = file.getAttribute('path')?.trim();
-  const external = file.getAttribute('external') === 'true';
+  const external = boolAttr(file, 'external');
   if (!path) return null;
   if (!external && path.startsWith('/')) return null;
   return { path, external };
@@ -1295,6 +1336,7 @@ function importDawprojectDocuments(
   mediaAssets: ReadonlyMap<string, string>,
   sonareMetadata: SonareDawprojectMetadata = { schemaVersion: 1 },
 ): { document: ProjectDocument; losses: DawprojectImportLoss[] } {
+  assertBeatBasedArrangement(project);
   const losses: DawprojectImportLoss[] = [];
   const vcaGroups = readSonareVcaGroups(project, sonareMetadata);
   const tracks = readTracks(project, new Set(vcaGroups.map((group) => group.id)), sonareMetadata);
@@ -1419,6 +1461,7 @@ export async function importDawprojectWithMediaResult(
 ): Promise<DawprojectImportResult> {
   options.signal?.throwIfAborted();
   const { entries, project, metadata } = await parseArchiveInWorker(bytes, options.signal);
+  assertBeatBasedArrangement(project);
   const sonareMetadata = parseSonareDawprojectMetadata(entries[SONARE_DAWPROJECT_METADATA_ENTRY]);
   const ingestAudio =
     options.ingestAudio ??

@@ -10,6 +10,10 @@ import type { InsertSlot, VcaGroup } from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
 
 export const SONARE_DAWPROJECT_METADATA_ENTRY = 'sonare-studio.json';
+/** Dedicated bound for the optional vendor extension, below generic ZIP limits. */
+export const MAX_SONARE_DAWPROJECT_METADATA_BYTES = 4 * 1024 * 1024;
+const MAX_METADATA_OBJECT_ENTRIES = 4096;
+const MAX_METADATA_STRING_LENGTH = 1024;
 
 export interface SonareTrackMetadata {
   kind?: 'aux';
@@ -101,21 +105,32 @@ function optionalFinite(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
+function boundedEntries(value: Record<string, unknown>): Array<[string, unknown]> {
+  return Object.entries(value)
+    .filter(([key]) => key.length <= MAX_METADATA_STRING_LENGTH)
+    .slice(0, MAX_METADATA_OBJECT_ENTRIES);
+}
+
 /** Parses an untrusted extension entry; malformed fields are discarded. */
 export function parseSonareDawprojectMetadata(
   bytes: Uint8Array | undefined,
 ): SonareDawprojectMetadata {
-  if (!bytes) return { schemaVersion: 1 };
+  if (!bytes || bytes.byteLength > MAX_SONARE_DAWPROJECT_METADATA_BYTES)
+    return { schemaVersion: 1 };
   try {
     const root = object(JSON.parse(new TextDecoder().decode(bytes)));
     if (root?.schemaVersion !== 1) return { schemaVersion: 1 };
     const tracks = Object.fromEntries(
-      Object.entries(object(root.tracks) ?? {}).flatMap(([id, value]) => {
+      boundedEntries(object(root.tracks) ?? {}).flatMap(([id, value]) => {
         const entry = object(value);
         if (!entry) return [];
         const track: SonareTrackMetadata = {
           ...(entry.kind === 'aux' ? { kind: 'aux' } : {}),
-          ...(typeof entry.vcaId === 'string' && entry.vcaId ? { vcaId: entry.vcaId } : {}),
+          ...(typeof entry.vcaId === 'string' &&
+          entry.vcaId &&
+          entry.vcaId.length <= MAX_METADATA_STRING_LENGTH
+            ? { vcaId: entry.vcaId }
+            : {}),
           ...(optionalFinite(entry.volume) !== undefined ? { volume: entry.volume as number } : {}),
           ...(optionalFinite(entry.stripGainDb) !== undefined
             ? { stripGainDb: entry.stripGainDb as number }
@@ -125,23 +140,36 @@ export function parseSonareDawprojectMetadata(
       }),
     );
     const sidechainSources = Object.fromEntries(
-      Object.entries(object(root.sidechainSources) ?? {}).flatMap(([id, value]) =>
+      boundedEntries(object(root.sidechainSources) ?? {}).flatMap(([id, value]) =>
         typeof value === 'number' && Number.isInteger(value) && value >= 0 ? [[id, value]] : [],
       ),
     );
-    const vcaGroups = (Array.isArray(root.vcaGroups) ? root.vcaGroups : []).flatMap((value) => {
-      const group = object(value);
-      if (!group || typeof group.id !== 'string' || !group.id) return [];
-      return [
-        {
-          id: group.id,
-          name: typeof group.name === 'string' && group.name ? group.name : group.id,
-          gainDb: optionalFinite(group.gainDb) ?? 0,
-          ...(group.mute === true ? { mute: true } : {}),
-          ...(group.solo === true ? { solo: true } : {}),
-        },
-      ];
-    });
+    const vcaGroups = (Array.isArray(root.vcaGroups) ? root.vcaGroups : [])
+      .slice(0, MAX_METADATA_OBJECT_ENTRIES)
+      .flatMap((value) => {
+        const group = object(value);
+        if (
+          !group ||
+          typeof group.id !== 'string' ||
+          !group.id ||
+          group.id.length > MAX_METADATA_STRING_LENGTH
+        )
+          return [];
+        return [
+          {
+            id: group.id,
+            name:
+              typeof group.name === 'string' &&
+              group.name &&
+              group.name.length <= MAX_METADATA_STRING_LENGTH
+                ? group.name
+                : group.id,
+            gainDb: optionalFinite(group.gainDb) ?? 0,
+            ...(group.mute === true ? { mute: true } : {}),
+            ...(group.solo === true ? { solo: true } : {}),
+          },
+        ];
+      });
     return {
       schemaVersion: 1,
       ...(Object.keys(tracks).length ? { tracks } : {}),

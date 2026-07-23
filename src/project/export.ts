@@ -10,7 +10,7 @@ import {
   PROJECT_DOCUMENT_SCHEMA_VERSION,
   serializeProject,
 } from './serialization';
-import { projectDocumentToSmf } from './smf';
+import { inspectSmfExportLoss, projectDocumentToSmf, type SmfExportLossReport } from './smf';
 import { getProject, useProjectStore } from './store';
 
 /** Bytes plus suggested filename produced by the export commands. */
@@ -19,6 +19,8 @@ export interface MidiExportResult {
   bytes: Uint8Array;
   /** Suggested filename including the extension. */
   filename: string;
+  /** SMF structure losses that require explicit user confirmation. */
+  smfLoss?: SmfExportLossReport;
 }
 
 /** Replaces characters that are unsafe in filenames and trims whitespace. */
@@ -41,9 +43,11 @@ function copyBytes(bytes: Uint8Array): Uint8Array {
 export async function exportProjectSmf(baseName?: string): Promise<MidiExportResult> {
   const store = useProjectStore();
   const name = sanitizeBaseName(baseName ?? store.projectName, 'project');
+  const document = serializeProject();
   return {
-    bytes: await projectDocumentToSmf(serializeProject()),
+    bytes: await projectDocumentToSmf(document),
     filename: ensureFileExtension(name, '.mid'),
+    smfLoss: inspectSmfExportLoss(document),
   };
 }
 

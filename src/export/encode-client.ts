@@ -55,7 +55,7 @@ function workerOptions(
     encoderId === WAV_ENCODER_ID
       ? ['bitDepth', 'dither']
       : encoderId === FLAC_ENCODER_ID
-        ? ['bitDepth', 'blockSize']
+        ? ['bitDepth', 'blockSize', 'dither']
         : ['bitrate'];
   return Object.fromEntries(
     allowed.flatMap((key) => (options[key] === undefined ? [] : [[key, options[key]]])),

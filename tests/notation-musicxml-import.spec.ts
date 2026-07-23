@@ -250,6 +250,50 @@ describe('importMusicXml global maps', () => {
     expect(trackNotes(importMusicXml(xml), 0)[0].pitch).toBe(58);
   });
 
+  it('applies octave-change together with chromatic transpose', () => {
+    const xml =
+      '<score-partwise><part-list><score-part id="P1"><part-name>Piccolo</part-name></score-part></part-list>' +
+      '<part id="P1"><measure><attributes><divisions>1</divisions>' +
+      '<transpose><chromatic>0</chromatic><octave-change>1</octave-change></transpose></attributes>' +
+      '<note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration></note>' +
+      '</measure></part></score-partwise>';
+    expect(trackNotes(importMusicXml(xml), 0)[0].pitch).toBe(72);
+  });
+
+  it('applies octave transpose for guitar and bass written pitch', () => {
+    const xml =
+      '<score-partwise><part-list>' +
+      '<score-part id="G"><part-name>Guitar</part-name></score-part>' +
+      '<score-part id="B"><part-name>Bass</part-name></score-part>' +
+      '</part-list>' +
+      '<part id="G"><measure><attributes><divisions>1</divisions>' +
+      '<transpose><chromatic>0</chromatic><octave-change>-1</octave-change></transpose>' +
+      '</attributes><note><pitch><step>E</step><octave>4</octave></pitch><duration>1</duration></note>' +
+      '</measure></part>' +
+      '<part id="B"><measure><attributes><divisions>1</divisions>' +
+      '<transpose><chromatic>0</chromatic><octave-change>-1</octave-change></transpose>' +
+      '</attributes><note><pitch><step>E</step><octave>3</octave></pitch><duration>1</duration></note>' +
+      '</measure></part></score-partwise>';
+
+    const doc = importMusicXml(xml);
+    expect(trackNotes(doc, 0)[0]?.pitch).toBe(52);
+    expect(trackNotes(doc, 1)[0]?.pitch).toBe(40);
+  });
+
+  it('preserves empty and trailing-rest measures in the imported clip length', () => {
+    const xml =
+      '<score-partwise><part-list><score-part id="P1"/></part-list><part id="P1">' +
+      '<measure number="1"><attributes><divisions>1</divisions>' +
+      '<time><beats>4</beats><beat-type>4</beat-type></time></attributes>' +
+      '<note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration></note>' +
+      '<note><rest/><duration>3</duration></note></measure>' +
+      '<measure number="2"><note><rest/><duration>4</duration></note></measure>' +
+      '</part></score-partwise>';
+    const clip = importMusicXml(xml).tracks[0].clips[0];
+    expect(clip.notes).toHaveLength(1);
+    expect(clip.lengthPpq).toBe(8);
+  });
+
   it('preserves an implicit opening pickup length and following measure origin', () => {
     const xml =
       '<score-partwise><part-list><score-part id="P1"/></part-list><part id="P1">' +
@@ -291,6 +335,31 @@ describe('importMusicXml global maps', () => {
     const doc = importMusicXml(xml);
     expect(doc.tempoSegments).toEqual([{ startPpq: 0, bpm: 90 }]);
     expect(doc.timeSignatures).toEqual([{ startPpq: 0, numerator: 3, denominator: 4 }]);
+  });
+
+  it('sums MusicXML additive meter pairs with a common denominator', () => {
+    const xml =
+      '<score-partwise><part-list><score-part id="P1"/></part-list><part id="P1">' +
+      '<measure number="1"><attributes><divisions>1</divisions><time>' +
+      '<beats>3+2</beats><beat-type>8</beat-type></time></attributes>' +
+      '<note><pitch><step>C</step><octave>4</octave></pitch><duration>5</duration></note>' +
+      '</measure></part></score-partwise>';
+
+    const doc = importMusicXml(xml);
+    expect(doc.timeSignatures).toEqual([{ startPpq: 0, numerator: 5, denominator: 8 }]);
+  });
+
+  it('sums multiple MusicXML beats and beat-type pairs with a common denominator', () => {
+    const xml =
+      '<score-partwise><part-list><score-part id="P1"/></part-list><part id="P1">' +
+      '<measure number="1"><attributes><divisions>1</divisions><time>' +
+      '<beats>3</beats><beat-type>8</beat-type><beats>2</beats><beat-type>8</beat-type>' +
+      '</time></attributes><note><pitch><step>C</step><octave>4</octave></pitch>' +
+      '<duration>5</duration></note></measure></part></score-partwise>';
+
+    expect(importMusicXml(xml).timeSignatures).toEqual([
+      { startPpq: 0, numerator: 5, denominator: 8 },
+    ]);
   });
 
   it('derives tempo from a metronome mark with a dotted beat unit', () => {
@@ -420,6 +489,7 @@ describe('importMusicXml multi-part', () => {
       '</score-partwise>';
     const doc = importMusicXml(xml);
     expect(doc.tracks.map((t) => t.name)).toEqual(['Flute', 'Cello']);
+    expect(doc.tracks.map((t) => t.musicXmlPartId)).toEqual(['P1', 'P2']);
     expect(trackNotes(doc, 0)[0].pitch).toBe(72);
     expect(trackNotes(doc, 1)[0].pitch).toBe(48);
   });

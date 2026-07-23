@@ -107,8 +107,10 @@ export function assertRenderPayloadMemory(
 
 export interface CodecPayloadMemoryEstimate {
   inputBytes: number;
+  inputGenerations: number;
   retainedBytes: number;
   outputUpperBoundBytes: number;
+  encodedGenerations: number;
   codecScratchBytes: number;
   peakPayloadBytes: number;
 }
@@ -121,23 +123,36 @@ export function estimateCodecPayloadMemory(options: {
 }): CodecPayloadMemoryEstimate {
   const inputBytes = safePayloadBytes(options.inputBytes, 'Audio codec input');
   const retainedBytes = safePayloadBytes(options.retainedBytes ?? 0, 'Retained export payload');
-  // WAV is never larger than Float32 input plus headers; FLAC can expand
-  // incompressible integer PCM slightly; MP3 is much smaller. One raw-sized
-  // output plus a bounded header allowance safely covers all three.
-  const outputUpperBoundBytes = safePayloadBytes(inputBytes + 64 * 1024, 'Encoded audio');
+  const mediaRecorder = new Set(['aac', 'opus-webm', 'opus-ogg']).has(options.encoderId);
+  // MediaRecorder first copies the planar Float32 input into an AudioBuffer,
+  // then retains Blob chunks while `toBlobBytes()` allocates the final encoded
+  // Uint8Array. FLAC likewise keeps frame chunks until its final concatenation.
+  // Account for both encoded generations even when the output is smaller in a
+  // particular file; incompressible PCM is the safe upper bound.
+  const inputGenerations = mediaRecorder ? 2 : 1;
+  const encodedGenerations = mediaRecorder || options.encoderId === 'flac' ? 2 : 1;
+  const encodedOneGenerationBytes = safePayloadBytes(inputBytes + 64 * 1024, 'Encoded audio');
+  const outputUpperBoundBytes = safePayloadBytes(
+    encodedOneGenerationBytes * encodedGenerations,
+    'Encoded audio',
+  );
   // MP3 converts one 1152-frame block after the bounded-block rewrite. FLAC
   // works on at most one configured frame block at a time; reserve 16 MiB for
-  // predictor/residual arrays. WAV writes directly into its final output.
+  // predictor/residual arrays. MediaRecorder's second PCM generation is its
+  // AudioBuffer copy, not scratch.
   const codecScratchBytes =
-    options.encoderId === 'flac' ? 16 * MEBIBYTE : options.encoderId === 'mp3' ? 64 * 1024 : 0;
+    (inputGenerations - 1) * inputBytes +
+    (options.encoderId === 'flac' ? 16 * MEBIBYTE : options.encoderId === 'mp3' ? 64 * 1024 : 0);
   const peakPayloadBytes = safePayloadBytes(
     retainedBytes + inputBytes + outputUpperBoundBytes + codecScratchBytes,
     'Audio encoding',
   );
   return {
     inputBytes,
+    inputGenerations,
     retainedBytes,
     outputUpperBoundBytes,
+    encodedGenerations,
     codecScratchBytes,
     peakPayloadBytes,
   };

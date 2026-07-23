@@ -498,6 +498,43 @@ class TieTracker {
   }
 }
 
+/** Reads MusicXML additive meter pairs (for example `3+2/8` or `3/8 + 2/8`). */
+function additiveTimeSignature(
+  time: XmlElement,
+  maxNumericAbs: number,
+): { numerator: number; denominator: number } | null {
+  const beats = childElements(time, 'beats');
+  const beatTypes = childElements(time, 'beat-type');
+  if (beats.length === 0 || beats.length !== beatTypes.length) return null;
+  const denominators = beatTypes.map((element) => {
+    const raw = elementText(element).trim();
+    if (!/^\d+$/.test(raw)) return null;
+    const value = Number(raw);
+    return Number.isSafeInteger(value) && value <= maxNumericAbs ? value : null;
+  });
+  const denominator = denominators[0];
+  if (
+    denominator === null ||
+    denominator <= 0 ||
+    denominators.some((value) => value !== denominator)
+  )
+    return null;
+  let numerator = 0;
+  for (const element of beats) {
+    const raw = elementText(element).trim();
+    const terms = raw.split('+');
+    if (terms.length === 0) return null;
+    for (const term of terms) {
+      if (!/^\d+$/.test(term)) return null;
+      const value = Number(term);
+      if (!Number.isSafeInteger(value) || value <= 0 || value > maxNumericAbs) return null;
+      numerator += value;
+      if (numerator > maxNumericAbs) return null;
+    }
+  }
+  return { numerator, denominator };
+}
+
 /** Reads `<attributes>` into the part cursor and the shared global maps. */
 function applyAttributes(
   attributes: XmlElement,
@@ -510,12 +547,11 @@ function applyAttributes(
   if (divisions !== null && divisions > 0) state.divisions = divisions;
   const time = childElements(attributes, 'time')[0];
   if (time !== undefined) {
-    const numerator = childInt(time, 'beats', maxNumericAbs);
-    const denominator = childInt(time, 'beat-type', maxNumericAbs);
-    if (numerator !== null && denominator !== null && numerator > 0 && denominator > 0) {
-      state.timeSigLengthPpq = numerator * (4 / denominator);
+    const signature = additiveTimeSignature(time, maxNumericAbs);
+    if (signature !== null) {
+      state.timeSigLengthPpq = signature.numerator * (4 / signature.denominator);
       if (captureGlobal) {
-        global.timeSignatures.push({ ppq: state.measureStartPpq, numerator, denominator });
+        global.timeSignatures.push({ ppq: state.measureStartPpq, ...signature });
       }
     }
   }
@@ -531,8 +567,9 @@ function applyAttributes(
   }
   const transpose = childElements(attributes, 'transpose')[0];
   if (transpose !== undefined) {
-    const chromatic = childInt(transpose, 'chromatic', maxNumericAbs);
-    if (chromatic !== null) state.chromaticTranspose = clampInt(chromatic, -127, 127);
+    const chromatic = childInt(transpose, 'chromatic', maxNumericAbs) ?? 0;
+    const octaveChange = childInt(transpose, 'octave-change', maxNumericAbs) ?? 0;
+    state.chromaticTranspose = clampInt(chromatic + octaveChange * 12, -127, 127);
   }
 }
 
@@ -615,7 +652,7 @@ function importPartNotes(
   tempoConflicts: Set<string>,
   partId: string,
   maxNumericAbs: number,
-): DocumentNote[] {
+): { notes: DocumentNote[]; endPpq: number } {
   const notes: DocumentNote[] = [];
   const ties = new TieTracker();
   const state: PartState = {
@@ -708,7 +745,7 @@ function importPartNotes(
         ? measureLength
         : Math.max(measureLength, state.timeSigLengthPpq);
   }
-  return notes;
+  return { notes, endPpq: state.measureStartPpq };
 }
 
 /** Rounds a raw clip end up to an integral PPQ length, floored at the minimum. */
@@ -721,8 +758,11 @@ function clipLengthPpq(maxEndPpq: number): number {
 }
 
 /** Builds a single MIDI clip covering a part's imported notes. */
-function clipFromNotes(name: string, notes: DocumentNote[]): DocumentClip {
-  const maxEnd = notes.reduce((end, note) => Math.max(end, note.startPpq + note.durationPpq), 0);
+function clipFromNotes(name: string, notes: DocumentNote[], scoreEndPpq: number): DocumentClip {
+  const maxEnd = notes.reduce(
+    (end, note) => Math.max(end, note.startPpq + note.durationPpq),
+    scoreEndPpq,
+  );
   return {
     name,
     startPpq: 0,
@@ -835,7 +875,7 @@ export function importMusicXmlWithReport(
   partElements.forEach((partEl, index) => {
     const id = partEl.attributes.id ?? `P${index + 1}`;
     const info = partInfos.get(id) ?? { name: id, instruments: new Map() };
-    const notes = importPartNotes(
+    const imported = importPartNotes(
       partEl,
       info,
       global,
@@ -849,13 +889,14 @@ export function importMusicXmlWithReport(
     const name = info.name || `Part ${index + 1}`;
     tracks.push({
       name,
+      musicXmlPartId: id,
       color: TRACK_COLOR_PALETTE[index % TRACK_COLOR_PALETTE.length],
       kind: 'midi',
       mute: false,
       solo: false,
       volume: 1,
       pan: 0,
-      clips: [clipFromNotes(name, notes)],
+      clips: [clipFromNotes(name, imported.notes, imported.endPpq)],
     });
   });
 

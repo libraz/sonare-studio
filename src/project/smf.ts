@@ -10,17 +10,59 @@ import { audibleMidiProjector } from './midi-projection';
 import {
   type DocumentClip,
   type DocumentMarker,
+  type DocumentTempoSegment,
   type DocumentTrack,
   PROJECT_DOCUMENT_SCHEMA_VERSION,
   type ProjectDocument,
 } from './serialization';
-import { TRACK_COLOR_PALETTE } from './types';
+import { type SmfSysExPacket, TRACK_COLOR_PALETTE } from './types';
 
 const DEFAULT_SAMPLE_RATE = 48000;
 const DEFAULT_BPM = 120;
 const DEFAULT_CLIP_LENGTH_PPQ = 1;
 const SMF_EDGE_PAD_PPQ = 1 / 480;
 const PPQ_INTEGER_EPSILON = 1 / 256;
+/** Largest permitted instantaneous tempo error while approximating a ramp. */
+export const SMF_TEMPO_RAMP_MAX_ERROR_BPM = 0.1;
+/** Prevent pathological documents from creating an unbounded SMF meta stream. */
+const MAX_SMF_TEMPO_RAMP_STEPS = 4096;
+/** Bound opaque sidecar data so an imported SMF cannot bloat a project document. */
+export const MAX_SMF_SYSEX_PACKETS = 4096;
+export const MAX_SMF_SYSEX_BYTES = 1024 * 1024;
+
+/** SMF features that cannot preserve Sonare's clip-container structure. */
+export interface SmfExportLossReport {
+  /** MIDI clips containing no events; SMF has no empty-clip construct. */
+  emptyMidiClips: number;
+  /** MIDI tracks containing no events; native SMF writers may omit them. */
+  emptyMidiTracks: number;
+}
+
+function clipHasMidiEvents(clip: DocumentClip): boolean {
+  return (
+    clip.notes.length > 0 ||
+    (clip.ccLanes?.some((lane) => lane.points.length > 0) ?? false) ||
+    (clip.pitchBendLanes?.some((lane) => lane.points.length > 0) ?? false) ||
+    (clip.programChangeLanes?.some((lane) => lane.points.length > 0) ?? false) ||
+    (clip.channelPressureLanes?.some((lane) => lane.points.length > 0) ?? false) ||
+    (clip.polyPressureLanes?.some((lane) => lane.points.length > 0) ?? false) ||
+    (clip.smfSysEx?.length ?? 0) > 0
+  );
+}
+
+/** Counts intentional SMF-structure losses so the UI can obtain consent. */
+export function inspectSmfExportLoss(doc: ProjectDocument): SmfExportLossReport {
+  let emptyMidiClips = 0;
+  let emptyMidiTracks = 0;
+  for (const track of doc.tracks) {
+    if (track.kind !== 'midi') continue;
+    const clips = track.clips.filter((clip) => (clip.kind ?? 'midi') === 'midi');
+    const eventful = clips.filter(clipHasMidiEvents);
+    emptyMidiClips += clips.length - eventful.length;
+    if (eventful.length === 0) emptyMidiTracks += 1;
+  }
+  return { emptyMidiClips, emptyMidiTracks };
+}
 
 const STATUS_POLY_PRESSURE = 0xa;
 const STATUS_NOTE_OFF = 0x8;
@@ -100,6 +142,141 @@ function projectNameFromFileName(fileName?: string): string {
   const trimmed = (fileName ?? '').trim();
   if (!trimmed) return 'Imported MIDI';
   return trimmed.replace(/\.(midi?|smf)$/i, '') || 'Imported MIDI';
+}
+
+function readSmfVlq(bytes: Uint8Array, offset: number, end: number): [number, number] | null {
+  let value = 0;
+  for (let index = 0; index < 4; index += 1) {
+    if (offset >= end) return null;
+    const byte = bytes[offset++];
+    value = (value << 7) | (byte & 0x7f);
+    if ((byte & 0x80) === 0) return [value, offset];
+  }
+  return null;
+}
+
+function smfFourCC(bytes: Uint8Array, offset: number): string {
+  return String.fromCharCode(...bytes.subarray(offset, offset + 4));
+}
+
+function smfU16(bytes: Uint8Array, offset: number): number {
+  return (bytes[offset] << 8) | bytes[offset + 1];
+}
+
+function smfU32(bytes: Uint8Array, offset: number): number {
+  return (
+    (bytes[offset] * 0x1000000 +
+      ((bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3])) >>>
+    0
+  );
+}
+
+interface SmfHeader {
+  headerLength: number;
+  format: number;
+  tracks: number;
+  ticksPerQuarter: number;
+  dataOffset: number;
+}
+
+function parseSmfHeader(bytes: Uint8Array): SmfHeader | null {
+  if (bytes.length < 14 || String.fromCharCode(...bytes.subarray(0, 4)) !== 'MThd') {
+    return null;
+  }
+  const headerLength = smfU32(bytes, 4);
+  const dataOffset = 8 + headerLength;
+  if (headerLength < 6 || dataOffset > bytes.length) return null;
+  const ticksPerQuarter = smfU16(bytes, 12);
+  // SMPTE division has no fixed PPQ mapping; libsonare rejects it too.
+  if ((ticksPerQuarter & 0x8000) !== 0 || ticksPerQuarter === 0) return null;
+  return {
+    headerLength,
+    format: smfU16(bytes, 8),
+    tracks: smfU16(bytes, 10),
+    ticksPerQuarter,
+    dataOffset,
+  };
+}
+
+/** Reads bounded opaque SysEx packets without decoding unrelated MIDI events. */
+export function extractSmfSysEx(bytes: Uint8Array): SmfSysExPacket[] {
+  const header = parseSmfHeader(bytes);
+  if (!header) return [];
+  let offset = header.dataOffset;
+  const packets: SmfSysExPacket[] = [];
+  let payloadBytes = 0;
+  while (offset + 8 <= bytes.length) {
+    if (smfFourCC(bytes, offset) !== 'MTrk') break;
+    const length = smfU32(bytes, offset + 4);
+    offset += 8;
+    const end = offset + length;
+    if (end > bytes.length) break;
+    let runningStatus: number | null = null;
+    let absoluteTicks = 0;
+    while (offset < end) {
+      const delta = readSmfVlq(bytes, offset, end);
+      if (!delta) break;
+      offset = delta[1];
+      absoluteTicks += delta[0];
+      if (offset >= end) break;
+      let status = bytes[offset++];
+      let dataBytesAlreadyRead = 0;
+      if (status < 0x80) {
+        if (runningStatus === null) break;
+        dataBytesAlreadyRead = 1;
+        status = runningStatus;
+      } else if (status < 0xf0) {
+        runningStatus = status;
+      } else {
+        runningStatus = null;
+      }
+      if (status === 0xf0 || status === 0xf7) {
+        const size = readSmfVlq(bytes, offset, end);
+        if (!size || size[1] + size[0] > end) break;
+        payloadBytes += size[0];
+        if (packets.length >= MAX_SMF_SYSEX_PACKETS || payloadBytes > MAX_SMF_SYSEX_BYTES) {
+          throw new RangeError(
+            `SMF SysEx exceeds ${MAX_SMF_SYSEX_PACKETS} packets or ${MAX_SMF_SYSEX_BYTES} bytes`,
+          );
+        }
+        packets.push({
+          ppq: absoluteTicks / header.ticksPerQuarter,
+          status: status as 0xf0 | 0xf7,
+          data: [...bytes.subarray(size[1], size[1] + size[0])],
+        });
+        offset = size[1] + size[0];
+        continue;
+      }
+      if (status === 0xff) {
+        if (offset >= end) break;
+        offset += 1; // meta type
+        const size = readSmfVlq(bytes, offset, end);
+        if (!size || size[1] + size[0] > end) break;
+        offset = size[1] + size[0];
+        continue;
+      }
+      const kind = status >> 4;
+      const dataBytes = kind === STATUS_PROGRAM_CHANGE || kind === STATUS_CHANNEL_PRESSURE ? 1 : 2;
+      if (
+        kind < STATUS_NOTE_OFF ||
+        kind > STATUS_PITCH_BEND ||
+        offset + dataBytes - dataBytesAlreadyRead > end
+      )
+        break;
+      offset += dataBytes - dataBytesAlreadyRead;
+    }
+    offset = end;
+  }
+  return packets;
+}
+
+/** Returns SysEx packet and payload counts without exposing packet bodies. */
+export function inspectSmfSysEx(bytes: Uint8Array): { packets: number; payloadBytes: number } {
+  const packets = extractSmfSysEx(bytes);
+  return {
+    packets: packets.length,
+    payloadBytes: packets.reduce((total, packet) => total + packet.data.length, 0),
+  };
 }
 
 function eventWord(event: SerializedMidiEvent): number {
@@ -603,7 +780,11 @@ function splitTrackByChannelAndProgram(
     });
 }
 
-function documentFromProjectJson(json: string, fileName?: string): ProjectDocument {
+function documentFromProjectJson(
+  json: string,
+  fileName?: string,
+  sysEx: ReadonlyArray<SmfSysExPacket> = [],
+): ProjectDocument {
   const parsed = JSON.parse(json) as SerializedProjectDoc;
   const tracksById = new Map((parsed.tracks ?? []).map((track) => [track.id, track]));
   const tracks: DocumentTrack[] = [];
@@ -612,6 +793,39 @@ function documentFromProjectJson(json: string, fileName?: string): ProjectDocume
     if (track?.kind !== 1) continue;
     const events = extractEvents(parsed.midi_content?.[String(clip.id)]);
     tracks.push(...splitTrackByChannelAndProgram(track, clip, events, tracks.length));
+  }
+  const documentTracks: DocumentTrack[] =
+    tracks.length > 0
+      ? tracks
+      : [
+          {
+            name: 'MIDI',
+            color: TRACK_COLOR_PALETTE[0],
+            kind: 'midi',
+            mute: false,
+            solo: false,
+            volume: 1,
+            pan: 0,
+            clips: [clipFromEvents('MIDI Clip', 1, [])],
+          },
+        ];
+  if (sysEx.length > 0) {
+    const lastPpq = Math.max(0, ...sysEx.map((packet) => packet.ppq));
+    documentTracks.push({
+      name: 'SMF SysEx',
+      color: TRACK_COLOR_PALETTE[documentTracks.length % TRACK_COLOR_PALETTE.length],
+      kind: 'midi',
+      mute: false,
+      solo: false,
+      volume: 1,
+      pan: 0,
+      clips: [
+        {
+          ...clipFromEvents('SMF SysEx', Math.max(DEFAULT_CLIP_LENGTH_PPQ, lastPpq + 1), []),
+          smfSysEx: sysEx.map((packet) => ({ ...packet, data: [...packet.data] })),
+        },
+      ],
+    });
   }
   return {
     schemaVersion: PROJECT_DOCUMENT_SCHEMA_VERSION,
@@ -628,21 +842,7 @@ function documentFromProjectJson(json: string, fileName?: string): ProjectDocume
         numerator: signature.numerator,
         denominator: signature.denominator,
       })) ?? [],
-    tracks:
-      tracks.length > 0
-        ? tracks
-        : [
-            {
-              name: 'MIDI',
-              color: TRACK_COLOR_PALETTE[0],
-              kind: 'midi',
-              mute: false,
-              solo: false,
-              volume: 1,
-              pan: 0,
-              clips: [clipFromEvents('MIDI Clip', 1, [])],
-            },
-          ],
+    tracks: documentTracks,
     markers:
       parsed.markers
         ?.map((marker) => ({ ppq: marker.ppq, name: markerName(marker) }))
@@ -793,6 +993,61 @@ function scratchClipLength(clip: DocumentClip): number {
   return hasEndpointEvent ? lengthPpq + SMF_EDGE_PAD_PPQ : lengthPpq;
 }
 
+function documentEndPpq(doc: ProjectDocument): number {
+  return Math.max(
+    DEFAULT_CLIP_LENGTH_PPQ,
+    ...doc.tracks.flatMap((track) =>
+      track.clips.map((clip) => finiteNonNegative(clip.startPpq) + scratchClipLength(clip)),
+    ),
+  );
+}
+
+/**
+ * SMF stores tempo as instantaneous events, while Sonare supports linear
+ * ramps. Approximate each ramp with held tempo steps whose maximum deviation
+ * is bounded by {@link SMF_TEMPO_RAMP_MAX_ERROR_BPM}.
+ */
+export function sampleTempoRampsForSmf(doc: ProjectDocument): DocumentTempoSegment[] {
+  const input = (
+    doc.tempoSegments.length > 0 ? doc.tempoSegments : [{ startPpq: 0, bpm: DEFAULT_BPM }]
+  )
+    .map((segment) => ({
+      startPpq: finiteNonNegative(segment.startPpq),
+      bpm: Number.isFinite(segment.bpm) && segment.bpm > 0 ? segment.bpm : DEFAULT_BPM,
+      ...(segment.endBpm !== undefined && Number.isFinite(segment.endBpm) && segment.endBpm > 0
+        ? { endBpm: segment.endBpm }
+        : {}),
+    }))
+    .sort((a, b) => a.startPpq - b.startPpq);
+  const result: DocumentTempoSegment[] = [];
+  const projectEnd = documentEndPpq(doc);
+  for (let index = 0; index < input.length; index += 1) {
+    const segment = input[index];
+    const endPpq = input[index + 1]?.startPpq ?? projectEnd;
+    const endBpm = segment.endBpm;
+    if (endBpm === undefined || endPpq <= segment.startPpq || endBpm === segment.bpm) {
+      result.push({ startPpq: segment.startPpq, bpm: segment.bpm });
+      continue;
+    }
+    const steps = Math.ceil(Math.abs(endBpm - segment.bpm) / SMF_TEMPO_RAMP_MAX_ERROR_BPM);
+    if (steps > MAX_SMF_TEMPO_RAMP_STEPS) {
+      throw new RangeError(
+        `SMF tempo ramp requires ${steps} tempo events; maximum is ${MAX_SMF_TEMPO_RAMP_STEPS}`,
+      );
+    }
+    for (let step = 0; step <= steps; step += 1) {
+      // The following document segment, if any, owns the exact endpoint.
+      if (step === steps && input[index + 1] !== undefined) continue;
+      const fraction = step / steps;
+      result.push({
+        startPpq: segment.startPpq + (endPpq - segment.startPpq) * fraction,
+        bpm: segment.bpm + (endBpm - segment.bpm) * fraction,
+      });
+    }
+  }
+  return result;
+}
+
 async function projectFromDocument(
   doc: ProjectDocument,
 ): Promise<InstanceType<WasmModule['Project']>> {
@@ -800,16 +1055,11 @@ async function projectFromDocument(
   const project = new wasm.Project();
   project.setSampleRate(doc.sampleRate > 0 ? doc.sampleRate : DEFAULT_SAMPLE_RATE);
   project.setTempoSegments(
-    (doc.tempoSegments.length > 0 ? doc.tempoSegments : [{ startPpq: 0, bpm: DEFAULT_BPM }]).map(
-      (segment) => ({
-        startPpq: Number.isFinite(segment.startPpq) ? Math.max(0, segment.startPpq) : 0,
-        bpm: Number.isFinite(segment.bpm) && segment.bpm > 0 ? segment.bpm : DEFAULT_BPM,
-        endBpm:
-          segment.endBpm && Number.isFinite(segment.endBpm) && segment.endBpm > 0
-            ? segment.endBpm
-            : 0,
-      }),
-    ),
+    sampleTempoRampsForSmf(doc).map((segment) => ({
+      startPpq: segment.startPpq,
+      bpm: segment.bpm,
+      endBpm: 0,
+    })),
   );
   if (doc.timeSignatures.length > 0) {
     project.setTimeSignatures(
@@ -850,64 +1100,75 @@ async function projectFromDocument(
   }
   for (const track of doc.tracks.filter((entry) => entry.kind === 'midi')) {
     const trackId = project.addTrack({ kind: 'midi', name: track.name });
-    for (const clip of track.clips.filter((entry) => (entry.kind ?? 'midi') === 'midi')) {
-      const lengthPpq = scratchClipLength(clip);
-      const clipId = project.addClip({
-        trackId,
-        isMidi: true,
-        startPpq: finiteNonNegative(clip.startPpq),
-        lengthPpq,
-        sourceOffsetPpq: 0,
-        gain: Number.isFinite(clip.gain) && clip.gain >= 0 ? clip.gain : 1,
-      });
-      const events = clipEvents(clip, wasm);
-      const instrument = track.instrument;
-      const preset =
-        instrument?.kind === 'synth-preset'
-          ? instrument.preset
-          : instrument?.kind === 'synth-patch' && instrument.patch.preset
-            ? instrument.patch.preset
-            : undefined;
-      if (preset) {
-        const importedBank =
-          instrument?.kind === 'synth-preset' && instrument.gmBank !== undefined
-            ? clampInt(instrument.gmBank, 0, 16383)
-            : undefined;
-        const program =
-          instrument?.kind === 'synth-preset' && instrument.gmProgram !== undefined
-            ? clampInt(instrument.gmProgram, 0, 127)
-            : clampInt(gmProgramForPreset(preset), 0, 127);
-        const channels = usedMidiChannels(clip);
-        for (const ch of channels) {
-          if (importedBank !== undefined) {
-            events.unshift(
-              ...wasm.Project.midiBankProgram(
-                0,
-                0,
-                ch,
-                importedBank >> 7,
-                importedBank & 0x7f,
-                program,
-              ),
-            );
-          } else if (preset === 'drum-kit') {
-            events.unshift(...wasm.Project.midiBankProgram(0, 0, ch, 1, 0, program));
-          } else {
-            events.unshift(wasm.Project.midiProgram(0, 0, ch, program));
-          }
-        }
-      } else if (instrument?.kind === 'sf2') {
-        const bank = clampInt(instrument.bank ?? 0, 0, 16383);
-        const program = clampInt(instrument.program ?? 0, 0, 127);
-        const channels = usedMidiChannels(clip);
-        for (const ch of channels) {
+    const clips = track.clips.filter((entry) => (entry.kind ?? 'midi') === 'midi');
+    // SMF tracks are linear event streams, not arrangement clip containers.
+    // Materialize all clips from one project track into one spanning scratch
+    // clip so libsonare writes one MTrk and a later import retains track count.
+    // SMF has no separate empty-clip representation. The scratch clip gives
+    // native exporters a bounded timeline, but an event-free track can still
+    // be omitted by an SMF writer; callers must treat it as a lossy boundary.
+    const startPpq = clips.length
+      ? Math.min(...clips.map((clip) => finiteNonNegative(clip.startPpq)))
+      : 0;
+    const endPpq = clips.length
+      ? Math.max(...clips.map((clip) => finiteNonNegative(clip.startPpq) + scratchClipLength(clip)))
+      : DEFAULT_CLIP_LENGTH_PPQ;
+    const clipId = project.addClip({
+      trackId,
+      isMidi: true,
+      startPpq,
+      lengthPpq: Math.max(DEFAULT_CLIP_LENGTH_PPQ, endPpq - startPpq),
+      sourceOffsetPpq: 0,
+      gain: 1,
+    });
+    const events = clips.flatMap((clip) => {
+      const offset = finiteNonNegative(clip.startPpq) - startPpq;
+      return clipEvents(clip, wasm).map((event) => ({ ...event, ppq: event.ppq + offset }));
+    });
+    const instrument = track.instrument;
+    const preset =
+      instrument?.kind === 'synth-preset'
+        ? instrument.preset
+        : instrument?.kind === 'synth-patch' && instrument.patch.preset
+          ? instrument.patch.preset
+          : undefined;
+    const channels = new Set(clips.flatMap((clip) => [...usedMidiChannels(clip)]));
+    if (preset) {
+      const importedBank =
+        instrument?.kind === 'synth-preset' && instrument.gmBank !== undefined
+          ? clampInt(instrument.gmBank, 0, 16383)
+          : undefined;
+      const program =
+        instrument?.kind === 'synth-preset' && instrument.gmProgram !== undefined
+          ? clampInt(instrument.gmProgram, 0, 127)
+          : clampInt(gmProgramForPreset(preset), 0, 127);
+      for (const ch of channels) {
+        if (importedBank !== undefined) {
           events.unshift(
-            ...wasm.Project.midiBankProgram(0, 0, ch, bank >> 7, bank & 0x7f, program),
+            ...wasm.Project.midiBankProgram(
+              0,
+              0,
+              ch,
+              importedBank >> 7,
+              importedBank & 0x7f,
+              program,
+            ),
           );
+        } else if (preset === 'drum-kit') {
+          events.unshift(...wasm.Project.midiBankProgram(0, 0, ch, 1, 0, program));
+        } else {
+          events.unshift(wasm.Project.midiProgram(0, 0, ch, program));
         }
       }
-      project.setMidiEvents(clipId, events);
+    } else if (instrument?.kind === 'sf2') {
+      const bank = clampInt(instrument.bank ?? 0, 0, 16383);
+      const program = clampInt(instrument.program ?? 0, 0, 127);
+      for (const ch of channels) {
+        events.unshift(...wasm.Project.midiBankProgram(0, 0, ch, bank >> 7, bank & 0x7f, program));
+      }
     }
+    events.sort((a, b) => a.ppq - b.ppq);
+    project.setMidiEvents(clipId, events);
   }
   return project;
 }
@@ -917,21 +1178,123 @@ export async function smfToProjectDocument(
   bytes: ArrayBuffer | Uint8Array,
   fileName?: string,
 ): Promise<ProjectDocument> {
+  const smfBytes = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const sysEx = extractSmfSysEx(smfBytes);
   const wasm = await ensureWasm();
   const project = new wasm.Project();
   try {
-    project.importSmf(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
-    return documentFromProjectJson(project.toJson(), fileName);
+    project.importSmf(smfBytes);
+    return documentFromProjectJson(project.toJson(), fileName, sysEx);
   } finally {
     project.delete();
   }
+}
+
+function writeSmfVlq(value: number): number[] {
+  if (!Number.isSafeInteger(value) || value < 0 || value > 0x0fffffff) {
+    throw new RangeError(`SMF delta time is outside the four-byte VLQ range: ${value}`);
+  }
+  const bytes = [value & 0x7f];
+  for (let remaining = value >>> 7; remaining > 0; remaining >>>= 7) {
+    bytes.unshift((remaining & 0x7f) | 0x80);
+  }
+  return bytes;
+}
+
+function writeSmfU16(value: number): [number, number] {
+  return [(value >>> 8) & 0xff, value & 0xff];
+}
+
+function writeSmfU32(value: number): [number, number, number, number] {
+  return [(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff];
+}
+
+interface TimelineSysExPacket extends SmfSysExPacket {
+  timelinePpq: number;
+  order: number;
+}
+
+function documentSysExPackets(doc: ProjectDocument): TimelineSysExPacket[] {
+  const packets: TimelineSysExPacket[] = [];
+  let totalBytes = 0;
+  for (const track of doc.tracks) {
+    if (track.kind !== 'midi') continue;
+    for (const clip of track.clips) {
+      if ((clip.kind ?? 'midi') !== 'midi') continue;
+      for (const packet of clip.smfSysEx ?? []) {
+        if (
+          !Number.isFinite(packet.ppq) ||
+          packet.ppq < 0 ||
+          (packet.status !== 0xf0 && packet.status !== 0xf7) ||
+          !Array.isArray(packet.data) ||
+          !packet.data.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 0xff)
+        ) {
+          throw new RangeError('Project contains an invalid SMF SysEx packet');
+        }
+        totalBytes += packet.data.length;
+        if (packets.length >= MAX_SMF_SYSEX_PACKETS || totalBytes > MAX_SMF_SYSEX_BYTES) {
+          throw new RangeError(
+            `SMF SysEx exceeds ${MAX_SMF_SYSEX_PACKETS} packets or ${MAX_SMF_SYSEX_BYTES} bytes`,
+          );
+        }
+        packets.push({
+          ppq: packet.ppq,
+          status: packet.status,
+          data: [...packet.data],
+          timelinePpq: finiteNonNegative(clip.startPpq) + packet.ppq,
+          order: packets.length,
+        });
+      }
+    }
+  }
+  return packets.sort((a, b) => a.timelinePpq - b.timelinePpq || a.order - b.order);
+}
+
+/**
+ * Adds an opaque, standards-compliant SysEx-only MTrk to native SMF output.
+ * The native Project ABI cannot create SysEx events, but a separate SMF track
+ * carries the original F0/F7 stream at the same musical times without altering
+ * notes, channels, or the native writer's track layout.
+ */
+function appendDocumentSysEx(nativeSmf: Uint8Array, doc: ProjectDocument): Uint8Array {
+  const packets = documentSysExPackets(doc);
+  if (packets.length === 0) return nativeSmf;
+  const header = parseSmfHeader(nativeSmf);
+  if (!header || header.tracks >= 0xffff) {
+    throw new RangeError('Cannot append SysEx to an invalid or track-saturated SMF');
+  }
+  const trackData: number[] = [];
+  let previousTick = 0;
+  for (const packet of packets) {
+    const tick = Math.max(0, Math.round(packet.timelinePpq * header.ticksPerQuarter));
+    trackData.push(
+      ...writeSmfVlq(tick - previousTick),
+      packet.status,
+      ...writeSmfVlq(packet.data.length),
+      ...packet.data,
+    );
+    previousTick = tick;
+  }
+  trackData.push(0, 0xff, 0x2f, 0);
+  const appended = new Uint8Array(8 + trackData.length);
+  appended.set([0x4d, 0x54, 0x72, 0x6b, ...writeSmfU32(trackData.length)]);
+  appended.set(trackData, 8);
+
+  const output = new Uint8Array(nativeSmf.length + appended.length);
+  output.set(nativeSmf);
+  output.set(appended, nativeSmf.length);
+  // Multiple tracks require format 1; preserve format 1/2 output unchanged.
+  output.set(writeSmfU16(header.format === 0 ? 1 : header.format), 8);
+  output.set(writeSmfU16(header.tracks + 1), 10);
+  return output;
 }
 
 /** Exports an app project document as SMF through libsonare. */
 export async function projectDocumentToSmf(doc: ProjectDocument): Promise<Uint8Array> {
   const project = await projectFromDocument(doc);
   try {
-    return new Uint8Array(project.exportSmf());
+    const nativeSmf = new Uint8Array(project.exportSmf());
+    return appendDocumentSysEx(nativeSmf, doc);
   } finally {
     project.delete();
   }
