@@ -29,9 +29,21 @@ export interface XmlElement {
  */
 const NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9._-]*$/;
 
+function isXml10Control(char: string): boolean {
+  const code = char.charCodeAt(0);
+  return (code >= 0 && code <= 8) || code === 11 || code === 12 || (code >= 14 && code <= 31);
+}
+
 /** Escapes a string for use as XML text content. */
 export function escapeXmlText(value: string): string {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // XML 1.0 forbids C0 controls other than TAB, LF and CR. Drop them rather
+  // than emitting an archive that downstream XML parsers cannot open.
+  return [...value]
+    .filter((char) => !isXml10Control(char))
+    .join('')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 /** Escapes a string for use inside a double-quoted XML attribute. */

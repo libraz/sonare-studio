@@ -11,7 +11,12 @@
 
 import { strFromU8 } from 'fflate';
 import { linearToDb } from '@/lib/db';
-import { preflightXmlBytes, preflightXmlDocument, XmlPreflightError } from '@/lib/xml-preflight';
+import {
+  preflightXmlBytes,
+  preflightXmlDocument,
+  preflightXmlMarkupDepth,
+  XmlPreflightError,
+} from '@/lib/xml-preflight';
 import {
   ArchivePreflightError,
   preflightAndUnzip,
@@ -23,7 +28,12 @@ import {
   MAX_PROJECT_ARCHIVE_EXPANDED_BYTES,
 } from '@/persistence/resource-limits';
 import { decodeAndIngest } from '@/project/audio-import';
-import { type AutomationParam, insertAutomationParam } from '@/project/automation';
+import {
+  type AutomationParam,
+  insertAutomationParam,
+  parseInstrumentAutomationParam,
+  parseMasteringAutomationParam,
+} from '@/project/automation';
 import {
   createDefaultStrip,
   type InsertSlot,
@@ -47,6 +57,11 @@ import {
   audioContentSecondsToPpq,
   audioFadeSecondsToPpq,
 } from './audio-time';
+import {
+  parseSonareDawprojectMetadata,
+  SONARE_DAWPROJECT_METADATA_ENTRY,
+  type SonareDawprojectMetadata,
+} from './sonare-metadata';
 
 const DEFAULT_SAMPLE_RATE = 48000;
 const DEFAULT_TEMPO = 120;
@@ -123,7 +138,9 @@ function parseXml(bytes: Uint8Array, entryName: string): Document {
   let doc: Document;
   try {
     preflightXmlBytes(bytes.byteLength, entryName);
-    doc = new DOMParser().parseFromString(strFromU8(bytes), 'application/xml');
+    const xml = strFromU8(bytes);
+    preflightXmlMarkupDepth(xml, entryName);
+    doc = new DOMParser().parseFromString(xml, 'application/xml');
     preflightXmlDocument(doc, entryName);
   } catch (error) {
     if (error instanceof XmlPreflightError) {
@@ -191,6 +208,7 @@ interface ImportedTrack {
   solo: boolean;
   volume: number;
   sonareVolume?: number;
+  sonareStripGainDb?: number;
   pan: number;
   clips: DocumentClip[];
   groupIndex?: number;
@@ -241,6 +259,7 @@ function readSendRefs(channel: Element | null | undefined): DawprojectSendRef[] 
 function readInsertDevices(
   channel: Element | null | undefined,
   allowSidechain = true,
+  sidechainSources: ReadonlyMap<string, number> = new Map(),
 ): InsertSlot[] {
   return children(children(channel, 'Devices')[0])
     .map((device): InsertSlot | null => {
@@ -265,7 +284,12 @@ function readInsertDevices(
         enabled:
           !device.querySelector('Enabled') || boolAttr(device.querySelector('Enabled'), 'value'),
       };
-      const sidechainSourceIndex = numberAttr(device, 'sonareSidechainSourceIndex');
+      // Older Sonare archives kept this as a non-standard XML attribute. The
+      // current format stores it in sonare-studio.json so project.xml remains
+      // valid against the official DAWproject schema.
+      const deviceId = device.getAttribute('id') ?? '';
+      const sidechainSourceIndex =
+        sidechainSources.get(deviceId) ?? numberAttr(device, 'sonareSidechainSourceIndex');
       if (
         allowSidechain &&
         typeof sidechainSourceIndex === 'number' &&
@@ -279,7 +303,12 @@ function readInsertDevices(
     .filter((slot): slot is InsertSlot => slot !== null);
 }
 
-function readSonareVcaGroups(project: Document): VcaGroup[] {
+function readSonareVcaGroups(
+  project: Document,
+  sonareMetadata: SonareDawprojectMetadata,
+): VcaGroup[] {
+  if (sonareMetadata.vcaGroups) return sonareMetadata.vcaGroups;
+  // Compatibility with pre-schema-validation Sonare archives.
   return children(project.querySelector('Structure > SonareVcaGroups'), 'SonareVcaGroup')
     .map((group): VcaGroup | null => {
       const id = group.getAttribute('id')?.trim();
@@ -339,6 +368,7 @@ function readAutomationParameterRefs(
 function readTracks(
   project: Document,
   validVcaIds: ReadonlySet<string> = new Set(),
+  sonareMetadata: SonareDawprojectMetadata = { schemaVersion: 1 },
 ): ImportedTrack[] {
   const tracks: ImportedTrack[] = [];
   let fallbackIndex = 0;
@@ -347,7 +377,8 @@ function readTracks(
     const channel = children(track, 'Channel')[0];
     const contentType = track.getAttribute('contentType');
     const role = channel?.getAttribute('role');
-    const sonareTrackKind = track.getAttribute('sonareTrackKind');
+    const extension = sonareMetadata.tracks?.[track.getAttribute('id') ?? ''];
+    const sonareTrackKind = extension?.kind ?? track.getAttribute('sonareTrackKind');
     if (role === 'master') return;
     const pan = numberAttr(children(channel, 'Pan')[0], 'value');
     const kind: TrackKind =
@@ -363,9 +394,10 @@ function readTracks(
     // Direct child only: a Send nested inside <Sends> also carries a <Volume>,
     // and querySelector would return that send level as the track's fader gain.
     const channelVolume = Math.max(0, numberAttr(children(channel, 'Volume')[0], 'value') ?? 1);
-    const sonareVcaId = track.getAttribute('sonareVcaId')?.trim();
+    const sonareVcaId = extension?.vcaId ?? track.getAttribute('sonareVcaId')?.trim();
     const vcaId = sonareVcaId && validVcaIds.has(sonareVcaId) ? sonareVcaId : undefined;
-    const sonareVolume = numberAttr(track, 'sonareVolume');
+    const sonareVolume = extension?.volume ?? numberAttr(track, 'sonareVolume');
+    const sonareStripGainDb = extension?.stripGainDb ?? numberAttr(track, 'sonareStripGainDb');
     tracks.push({
       id: track.getAttribute('id') || `track-${index}`,
       channelId: channel?.getAttribute('id') || `channel-${index}`,
@@ -379,16 +411,22 @@ function readTracks(
         TRACK_COLOR_PALETTE[tracks.length % TRACK_COLOR_PALETTE.length],
       mute: boolAttr(children(channel, 'Mute')[0], 'value'),
       solo: boolAttr(channel, 'solo'),
-      volume:
-        vcaId !== undefined && sonareVolume !== null ? Math.max(0, sonareVolume) : channelVolume,
+      volume: sonareVolume !== null ? Math.max(0, sonareVolume) : channelVolume,
       ...(sonareVolume !== null ? { sonareVolume } : {}),
+      ...(sonareStripGainDb !== null && sonareStripGainDb !== undefined
+        ? { sonareStripGainDb }
+        : {}),
       // Group-channel pan cannot be represented by Sonare's current group-bus
       // DSP. Center it at the import boundary instead of persisting a silent
       // control. Regular track pan is promoted into MixerStrip.pan on load.
       pan: kind === 'group' || pan === null ? 0 : Math.min(1, Math.max(-1, pan * 2 - 1)),
       clips: [],
       sendRefs: readSendRefs(channel),
-      inserts: readInsertDevices(channel, kind !== 'group'),
+      inserts: readInsertDevices(
+        channel,
+        kind !== 'group',
+        new Map(Object.entries(sonareMetadata.sidechainSources ?? {})),
+      ),
       automation: [],
       automationRefs: readAutomationParameterRefs(channel),
       ...(groupIndex !== undefined ? { groupIndex } : {}),
@@ -406,13 +444,21 @@ function readTracks(
   return tracks;
 }
 
-function readMaster(project: Document): ImportedMaster {
+function readMaster(project: Document, sonareMetadata: SonareDawprojectMetadata): ImportedMaster {
   const masterTrack = Array.from(project.querySelectorAll('Structure Track')).find((track) => {
     return children(track, 'Channel')[0]?.getAttribute('role') === 'master';
   });
   const masterChannel = children(masterTrack, 'Channel')[0];
   const strip = createDefaultStrip();
-  strip.inserts = readInsertDevices(masterChannel);
+  const volume = numberAttr(children(masterChannel, 'Volume')[0], 'value');
+  if (volume !== null) strip.gainDb = linearToDb(Math.max(0, volume));
+  const pan = numberAttr(children(masterChannel, 'Pan')[0], 'value');
+  if (pan !== null) strip.pan = Math.min(1, Math.max(-1, pan * 2 - 1));
+  strip.inserts = readInsertDevices(
+    masterChannel,
+    true,
+    new Map(Object.entries(sonareMetadata.sidechainSources ?? {})),
+  );
   return {
     trackId: masterTrack?.getAttribute('id') || 'master-track',
     strip,
@@ -464,7 +510,7 @@ function applyMixerRouting(
       ...(track.pan !== 0 || track.inserts.length > 0 ? { strip } : {}),
     });
   }
-  const hasMasterState = master.inserts.length > 0;
+  const hasMasterState = master.inserts.length > 0 || master.gainDb !== 0 || master.pan !== 0;
   if (buses.length === 0 && !hasMasterState && vcaGroups.length === 0) return undefined;
   for (const track of tracks) {
     if (track.isEffectBus) continue;
@@ -497,11 +543,13 @@ function importedTrackMixer(track: ImportedTrack): {
     track.isEffectBus ||
     (track.mixerOutputBusId === undefined &&
       track.mixerSends === undefined &&
-      track.inserts.length === 0)
+      track.inserts.length === 0 &&
+      (track.sonareStripGainDb === undefined || track.sonareStripGainDb === 0))
   ) {
     return {};
   }
   const mixer = createDefaultStrip();
+  if (track.sonareStripGainDb !== undefined) mixer.gainDb = track.sonareStripGainDb;
   if (track.mixerOutputBusId !== undefined) mixer.outputBusId = track.mixerOutputBusId;
   if (track.mixerSends !== undefined) mixer.sends = track.mixerSends;
   mixer.inserts = track.inserts;
@@ -720,17 +768,6 @@ function readMidiClip(clip: Element, placement?: FlattenedClipPlacement): Docume
   return out;
 }
 
-function readRealPoints(points: Element): Array<{ ppq: number; value: number }> {
-  return children(points, 'RealPoint')
-    .map((point) => ({
-      ppq: numberAttr(point, 'time'),
-      value: numberAttr(point, 'value'),
-    }))
-    .filter((point): point is { ppq: number; value: number } => {
-      return point.ppq !== null && point.value !== null;
-    });
-}
-
 function readMidiExpressionPoints(clipElement: Element, clip: DocumentClip): void {
   const ccLanes: NonNullable<DocumentClip['ccLanes']> = [];
   const pitchBendLanes: NonNullable<DocumentClip['pitchBendLanes']> = [];
@@ -741,7 +778,16 @@ function readMidiExpressionPoints(clipElement: Element, clip: DocumentClip): voi
     const target = points.querySelector('Target')?.getAttribute('parameter')?.trim() ?? '';
     const parts = target.split('.');
     if (parts[0] !== 'midi') continue;
-    const realPoints = readRealPoints(points);
+    const realPoints = children(points, 'RealPoint')
+      .map((point) => ({
+        ppq: numberAttr(point, 'time'),
+        value: numberAttr(point, 'value'),
+        curve: point.getAttribute('interpolation') === 'linear' ? ('linear' as const) : undefined,
+      }))
+      .filter(
+        (point): point is { ppq: number; value: number; curve: 'linear' | undefined } =>
+          point.ppq !== null && point.value !== null,
+      );
     if (realPoints.length === 0) continue;
     if (parts[1] === 'cc' && parts.length === 4) {
       ccLanes.push({
@@ -750,6 +796,7 @@ function readMidiExpressionPoints(clipElement: Element, clip: DocumentClip): voi
         points: realPoints.map((point) => ({
           ppq: point.ppq,
           value: clampInt(point.value, 0, 127),
+          ...(point.curve !== undefined ? { curve: point.curve } : {}),
         })),
       });
     } else if (parts[1] === 'pitchBend' && parts.length === 3) {
@@ -758,6 +805,7 @@ function readMidiExpressionPoints(clipElement: Element, clip: DocumentClip): voi
         points: realPoints.map((point) => ({
           ppq: point.ppq,
           value: clampInt(point.value, 0, 16383),
+          ...(point.curve !== undefined ? { curve: point.curve } : {}),
         })),
       });
     } else if (parts[1] === 'program' && parts.length === 3) {
@@ -774,6 +822,7 @@ function readMidiExpressionPoints(clipElement: Element, clip: DocumentClip): voi
         points: realPoints.map((point) => ({
           ppq: point.ppq,
           value: clampInt(point.value, 0, 127),
+          ...(point.curve !== undefined ? { curve: point.curve } : {}),
         })),
       });
     } else if (parts[1] === 'polyPressure' && parts.length === 4) {
@@ -783,6 +832,7 @@ function readMidiExpressionPoints(clipElement: Element, clip: DocumentClip): voi
         points: realPoints.map((point) => ({
           ppq: point.ppq,
           value: clampInt(point.value, 0, 127),
+          ...(point.curve !== undefined ? { curve: point.curve } : {}),
         })),
       });
     }
@@ -1050,7 +1100,7 @@ function readAutomationLane(
 ): DocumentAutomationLane | null {
   const parameter = points.querySelector('Target')?.getAttribute('parameter')?.trim();
   if (!parameter) return null;
-  const ref = refs.get(parameter);
+  const ref = refs.get(parameter) ?? sonareAutomationParameterRef(parameter);
   if (!ref) return null;
   const automationPoints: DocumentAutomationLane['points'] = [];
   for (const point of children(points, 'RealPoint')) {
@@ -1068,6 +1118,25 @@ function readAutomationLane(
   return automationPoints.length > 0
     ? { param: ref.param, points: automationPoints, enabled: true }
     : null;
+}
+
+/** Restores vendor-scoped instrument/mastering automation emitted by sonare. */
+function sonareAutomationParameterRef(parameter: string): AutomationParameterRef | undefined {
+  const prefix = 'sonare-automation:';
+  if (!parameter.startsWith(prefix)) return undefined;
+  let param: string;
+  try {
+    param = decodeURIComponent(parameter.slice(prefix.length));
+  } catch {
+    return undefined;
+  }
+  if (
+    parseInstrumentAutomationParam(param) === undefined &&
+    parseMasteringAutomationParam(param) === undefined
+  ) {
+    return undefined;
+  }
+  return { param: param as AutomationParam, fromDawValue: (value) => value };
 }
 
 function attachArrangementAutomation(
@@ -1134,6 +1203,7 @@ function parseArchive(
   entries: Record<string, Uint8Array>;
   project: Document;
   metadata: Document | null;
+  sonareMetadata: SonareDawprojectMetadata;
 } {
   let entries: Record<string, Uint8Array>;
   try {
@@ -1163,7 +1233,12 @@ function parseArchive(
   const metadata = entries['metadata.xml']
     ? parseXml(entries['metadata.xml'], 'metadata.xml')
     : null;
-  return { entries, project, metadata };
+  return {
+    entries,
+    project,
+    metadata,
+    sonareMetadata: parseSonareDawprojectMetadata(entries[SONARE_DAWPROJECT_METADATA_ENTRY]),
+  };
 }
 
 async function parseArchiveInWorker(
@@ -1210,19 +1285,20 @@ function importDawprojectParsed(
   bytes: Uint8Array,
   mediaAssets: ReadonlyMap<string, string>,
 ): ProjectDocument {
-  const { project, metadata } = parseArchive(bytes);
-  return importDawprojectDocuments(project, metadata, mediaAssets).document;
+  const { project, metadata, sonareMetadata } = parseArchive(bytes);
+  return importDawprojectDocuments(project, metadata, mediaAssets, sonareMetadata).document;
 }
 
 function importDawprojectDocuments(
   project: Document,
   metadata: Document | null,
   mediaAssets: ReadonlyMap<string, string>,
+  sonareMetadata: SonareDawprojectMetadata = { schemaVersion: 1 },
 ): { document: ProjectDocument; losses: DawprojectImportLoss[] } {
   const losses: DawprojectImportLoss[] = [];
-  const vcaGroups = readSonareVcaGroups(project);
-  const tracks = readTracks(project, new Set(vcaGroups.map((group) => group.id)));
-  const master = readMaster(project);
+  const vcaGroups = readSonareVcaGroups(project, sonareMetadata);
+  const tracks = readTracks(project, new Set(vcaGroups.map((group) => group.id)), sonareMetadata);
+  const master = readMaster(project, sonareMetadata);
   scrubImportedSidechainSourceIndexes(tracks, master.strip);
   const mixer = applyMixerRouting(tracks, master.strip, vcaGroups);
   const tempoSegments = readTempo(project);
@@ -1343,6 +1419,7 @@ export async function importDawprojectWithMediaResult(
 ): Promise<DawprojectImportResult> {
   options.signal?.throwIfAborted();
   const { entries, project, metadata } = await parseArchiveInWorker(bytes, options.signal);
+  const sonareMetadata = parseSonareDawprojectMetadata(entries[SONARE_DAWPROJECT_METADATA_ENTRY]);
   const ingestAudio =
     options.ingestAudio ??
     (async (media: DawprojectAudioMedia) =>
@@ -1355,7 +1432,7 @@ export async function importDawprojectWithMediaResult(
     options.signal,
   );
   options.signal?.throwIfAborted();
-  const parsed = importDawprojectDocuments(project, metadata, media.assets);
+  const parsed = importDawprojectDocuments(project, metadata, media.assets, sonareMetadata);
   return {
     document: parsed.document,
     media: { imported: media.imported, issues: media.issues },

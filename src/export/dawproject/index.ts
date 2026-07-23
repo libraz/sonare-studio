@@ -35,16 +35,21 @@
  *   media), converted through the project tempo map.
  */
 
-import { AsyncZipDeflate, strToU8, Zip } from 'fflate';
+import { strToU8 } from 'fflate';
 import { encodeWav } from '@/export/wav';
 import { projectFilename } from '@/lib/filename';
+import { createStreamingZipWriter } from '@/lib/streaming-zip';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import {
   MAX_DAWPROJECT_ARCHIVE_BYTES,
   MAX_PROJECT_ARCHIVE_ENTRY_BYTES,
   MAX_PROJECT_ARCHIVE_EXPANDED_BYTES,
 } from '@/persistence/resource-limits';
-import { parseInsertAutomationParam } from '@/project/automation';
+import {
+  parseInsertAutomationParam,
+  parseInstrumentAutomationParam,
+  parseMasteringAutomationParam,
+} from '@/project/automation';
 import { insertIndexForAutomationRef } from '@/project/automation-insert';
 import {
   createMediaCompletenessReport,
@@ -58,7 +63,6 @@ import {
   type InsertSlot,
   type MixerStrip,
   type StripSend,
-  type VcaGroup,
 } from '@/project/mixer';
 import type {
   DocumentAutomationLane,
@@ -67,7 +71,12 @@ import type {
   ProjectDocument,
 } from '@/project/serialization';
 import { type NormalizedTempoMap, normalizeTempoMap } from '@/project/tempo-map';
+import { sanitizeWarpAnchors } from '@/project/warp';
 import { audioContentOriginPpq, audioContentPpqToSeconds } from './audio-time';
+import {
+  createSonareDawprojectMetadata,
+  SONARE_DAWPROJECT_METADATA_ENTRY,
+} from './sonare-metadata';
 import { serializeXml, type XmlElement } from './xml';
 
 export {
@@ -111,6 +120,9 @@ const MASTER_CHANNEL_ID = 'master-channel';
 
 /** Vendor marker used for generic BuiltinDevice insert round-trips. */
 const SONARE_DEVICE_VENDOR = 'sonare-studio';
+
+/** Vendor-scoped Target prefix for automation DAWproject cannot name natively. */
+const SONARE_AUTOMATION_PARAMETER_PREFIX = 'sonare-automation:';
 
 /** Options for {@link exportDawproject}. */
 export interface DawprojectExportOptions {
@@ -318,52 +330,19 @@ async function collectAudioAssets(
   return { assets, missingAssetIds };
 }
 
-function concatChunks(chunks: readonly Uint8Array[], totalBytes: number): Uint8Array {
-  const output = new Uint8Array(totalBytes);
-  let offset = 0;
-  for (const chunk of chunks) {
-    output.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return output;
-}
-
 /** Compresses entries incrementally so encoded media can be released immediately. */
 async function buildDawprojectZip(
   entries: Iterable<readonly [string, Uint8Array]>,
   signal?: AbortSignal,
 ): Promise<Uint8Array> {
-  const chunks: Uint8Array[] = [];
-  let totalBytes = 0;
-  let resolveResult!: (bytes: Uint8Array) => void;
-  let rejectResult!: (error: Error) => void;
-  const result = new Promise<Uint8Array>((resolve, reject) => {
-    resolveResult = resolve;
-    rejectResult = reject;
-  });
-  const zip = new Zip((error, chunk, final) => {
-    if (error) {
-      rejectResult(error);
-      return;
-    }
-    const copy = new Uint8Array(chunk);
-    chunks.push(copy);
-    totalBytes += copy.byteLength;
-    if (final) resolveResult(concatChunks(chunks, totalBytes));
-  });
+  const zip = createStreamingZipWriter({ mtime: ZIP_MTIME, signal });
   try {
     for (const [name, bytes] of entries) {
-      signal?.throwIfAborted();
-      const file = new AsyncZipDeflate(name, { level: 6 });
-      file.mtime = new Date(ZIP_MTIME);
-      zip.add(file);
-      file.push(bytes, true);
+      await zip.add(name, bytes);
     }
-    signal?.throwIfAborted();
-    zip.end();
-    return await result;
+    return await zip.close();
   } catch (error) {
-    zip.terminate();
+    zip.abort(error);
     throw error;
   }
 }
@@ -381,11 +360,7 @@ function realParameter(
 }
 
 /** Builds one generic DAWproject device for a sonare insert slot. */
-function insertDeviceElement(
-  slot: InsertSlot,
-  id: string,
-  sidechainSourceIndex?: number,
-): XmlElement {
+function insertDeviceElement(slot: InsertSlot, id: string): XmlElement {
   const parameters = Object.entries(slot.params).flatMap(([name, value]): XmlElement[] => {
     if (typeof value === 'number' && Number.isFinite(value)) {
       return [
@@ -413,7 +388,6 @@ function insertDeviceElement(
       deviceRole: 'audioFX',
       deviceVendor: SONARE_DEVICE_VENDOR,
       loaded: true,
-      sonareSidechainSourceIndex: sidechainSourceIndex,
     },
     children: [
       ...(parameters.length > 0 ? [{ name: 'Parameters', children: parameters }] : []),
@@ -423,43 +397,13 @@ function insertDeviceElement(
 }
 
 /** Builds the Channel/Devices element for one sonare insert chain. */
-function devicesElement(
-  inserts: ReadonlyArray<InsertSlot>,
-  idPrefix: string,
-  trackCount?: number,
-  allowSidechain = true,
-): XmlElement | null {
+function devicesElement(inserts: ReadonlyArray<InsertSlot>, idPrefix: string): XmlElement | null {
   if (inserts.length === 0) return null;
-  const sidechainSourceIndex = (slot: InsertSlot): number | undefined => {
-    if (!allowSidechain) return undefined;
-    if (trackCount === undefined) return undefined;
-    const index = (slot as { sidechainSourceIndex?: unknown }).sidechainSourceIndex;
-    return typeof index === 'number' && Number.isInteger(index) && index >= 0 && index < trackCount
-      ? index
-      : undefined;
-  };
   return {
     name: 'Devices',
     children: inserts.map((slot, index) =>
-      insertDeviceElement(slot, `${idPrefix}-insert-${index}`, sidechainSourceIndex(slot)),
+      insertDeviceElement(slot, `${idPrefix}-insert-${index}`),
     ),
-  };
-}
-
-function sonareVcaGroupsElement(groups: ReadonlyArray<VcaGroup> | undefined): XmlElement | null {
-  if (!groups || groups.length === 0) return null;
-  return {
-    name: 'SonareVcaGroups',
-    children: groups.map((group) => ({
-      name: 'SonareVcaGroup',
-      attributes: {
-        id: group.id,
-        name: group.name,
-        gainDb: group.gainDb,
-        mute: group.mute,
-        solo: group.solo,
-      },
-    })),
   };
 }
 
@@ -562,9 +506,6 @@ function structureElement(doc: ProjectDocument): XmlElement {
         loaded: true,
         name: track.name,
         color: hexColor(track.color),
-        sonareTrackKind: track.kind === 'aux' ? 'aux' : undefined,
-        sonareVcaId: track.vcaId,
-        sonareVolume: track.vcaId !== undefined ? track.volume : undefined,
       },
       children: [
         channelElement(
@@ -576,7 +517,7 @@ function structureElement(doc: ProjectDocument): XmlElement {
           track.solo,
           destination,
           sendsElement(strip.sends ?? [], busChannelIdByBusId, channelId),
-          devicesElement(strip.inserts, channelId, doc.tracks.length, track.kind !== 'group'),
+          devicesElement(strip.inserts, channelId),
         ),
       ],
     };
@@ -615,17 +556,15 @@ function structureElement(doc: ProjectDocument): XmlElement {
           false,
           MASTER_CHANNEL_ID,
           null,
-          devicesElement(strip.inserts, channelId, doc.tracks.length),
+          devicesElement(strip.inserts, channelId),
         ),
       ],
     };
   });
   const master = doc.mixer?.master ?? NEUTRAL_STRIP;
-  const vcaGroups = sonareVcaGroupsElement(doc.mixer?.vcaGroups);
   return {
     name: 'Structure',
     children: [
-      ...(vcaGroups ? [vcaGroups] : []),
       ...topLevelTracks,
       ...busTracks,
       {
@@ -641,7 +580,7 @@ function structureElement(doc: ProjectDocument): XmlElement {
             false,
             undefined,
             null,
-            devicesElement(master.inserts, MASTER_CHANNEL_ID, doc.tracks.length),
+            devicesElement(master.inserts, MASTER_CHANNEL_ID),
           ),
         ],
       },
@@ -769,14 +708,28 @@ function channelAutomationPointsElement(
     pointValue = panToNormalized;
   } else {
     const insertRef = parseInsertAutomationParam(lane.param);
-    if (!insertRef) return null;
-    const insertIndex = strip ? insertIndexForAutomationRef(strip.inserts, insertRef) : undefined;
-    const slot = insertIndex === undefined ? undefined : strip?.inserts[insertIndex];
-    const param = slot?.params[insertRef.paramName];
-    if (typeof param !== 'number' && typeof param !== 'boolean') return null;
-    parameter = `${channelId}-insert-${insertIndex}-param-${xmlIdSegment(insertRef.paramName)}`;
-    unit = typeof param === 'boolean' ? 'bool' : 'normalized';
-    pointValue = typeof param === 'boolean' ? (value) => (value >= 0.5 ? 1 : 0) : (value) => value;
+    if (insertRef) {
+      const insertIndex = strip ? insertIndexForAutomationRef(strip.inserts, insertRef) : undefined;
+      const slot = insertIndex === undefined ? undefined : strip?.inserts[insertIndex];
+      const param = slot?.params[insertRef.paramName];
+      if (typeof param !== 'number' && typeof param !== 'boolean') return null;
+      parameter = `${channelId}-insert-${insertIndex}-param-${xmlIdSegment(insertRef.paramName)}`;
+      unit = typeof param === 'boolean' ? 'bool' : 'normalized';
+      pointValue =
+        typeof param === 'boolean' ? (value) => (value >= 0.5 ? 1 : 0) : (value) => value;
+    } else if (
+      parseInstrumentAutomationParam(lane.param) !== undefined ||
+      parseMasteringAutomationParam(lane.param) !== undefined
+    ) {
+      // DAWproject has no portable parameter identity for sonare synth patches
+      // or mastering processors. Keep their exact token in a vendor Target so
+      // sonare can round-trip it; other hosts may safely ignore this lane.
+      parameter = `${SONARE_AUTOMATION_PARAMETER_PREFIX}${encodeURIComponent(lane.param)}`;
+      unit = 'normalized';
+      pointValue = (value) => value;
+    } else {
+      return null;
+    }
   }
   return {
     name: 'Points',
@@ -1033,16 +986,22 @@ function audioClipElement(
   if (!enabledWarp) return { name: 'Clip', attributes, children: [audio] };
 
   const secondsPerSourcePpq = 60 / enabledWarp.sourceBpm;
-  const sourceStartSeconds = clip.sourceOffsetPpq * secondsPerSourcePpq;
+  const sourceStartSeconds =
+    enabledWarp.sourceStartSeconds ?? clip.sourceOffsetPpq * secondsPerSourcePpq;
+  const anchors = sanitizeWarpAnchors(enabledWarp.anchors ?? [], clip.lengthPpq);
+  const sourceEndSeconds = Math.max(
+    enabledWarp.sourceEndSeconds ?? (clip.sourceOffsetPpq + clip.lengthPpq) * secondsPerSourcePpq,
+    sourceStartSeconds + (anchors[anchors.length - 1]?.sourceSeconds ?? 0) + 1e-9,
+  );
   const warpPoints = [
     { ppq: 0, sourceSeconds: sourceStartSeconds },
-    ...(enabledWarp.anchors ?? []).map((anchor) => ({
+    ...anchors.map((anchor) => ({
       ppq: anchor.ppq,
       sourceSeconds: sourceStartSeconds + anchor.sourceSeconds,
     })),
     {
       ppq: clip.lengthPpq,
-      sourceSeconds: sourceStartSeconds + clip.lengthPpq * secondsPerSourcePpq,
+      sourceSeconds: sourceEndSeconds,
     },
   ];
   return {
@@ -1236,10 +1195,12 @@ export async function exportDawprojectWithReport(
     serializeXml(projectElement(doc, assets, applicationVersion, tempoMap)),
   );
   const metadataXml = strToU8(serializeXml(metadataElement(doc)));
+  const sonareMetadata = strToU8(JSON.stringify(createSonareDawprojectMetadata(doc)));
   const embeddedAssetIds: string[] = [];
   function* zipEntries(): Generator<readonly [string, Uint8Array]> {
     yield ['project.xml', projectXml];
     yield ['metadata.xml', metadataXml];
+    yield [SONARE_DAWPROJECT_METADATA_ENTRY, sonareMetadata];
     for (const [id, asset] of assets) {
       const payload = asset.bytes;
       if (payload !== null) {

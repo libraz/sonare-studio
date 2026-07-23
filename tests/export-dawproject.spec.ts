@@ -7,6 +7,7 @@ import {
   dawprojectFilename,
   exportDawproject,
   exportDawprojectWithReport,
+  importDawproject,
 } from '@/export/dawproject';
 import { dbToLinear, type InsertSlot } from '@/project/mixer';
 import type { DocumentClip, DocumentTrack, ProjectDocument } from '@/project/serialization';
@@ -104,6 +105,19 @@ function parseEntry(entries: Record<string, Uint8Array>, name: string): Document
   return parsed;
 }
 
+function parseSonareMetadata(entries: Record<string, Uint8Array>) {
+  const bytes = entries['sonare-studio.json'];
+  expect(bytes).toBeDefined();
+  return JSON.parse(new TextDecoder().decode(bytes)) as {
+    sidechainSources?: Record<string, number>;
+    tracks?: Record<
+      string,
+      { kind?: string; stripGainDb?: number; vcaId?: string; volume?: number }
+    >;
+    vcaGroups?: Array<{ gainDb: number; id: string; name: string }>;
+  };
+}
+
 async function exportProjectXml(
   doc: ProjectDocument,
   options: DawprojectExportOptions = { includeAudio: false },
@@ -123,9 +137,13 @@ function floatAttr(element: Element | null | undefined, name: string): number {
 }
 
 describe('exportDawproject structure', () => {
-  it('writes project.xml and metadata.xml into the archive', async () => {
+  it('writes standard XML plus a separate Sonare extension entry into the archive', async () => {
     const entries = await exportAndUnzip(makeDoc([]), { includeAudio: false });
-    expect(Object.keys(entries).sort()).toEqual(['metadata.xml', 'project.xml']);
+    expect(Object.keys(entries).sort()).toEqual([
+      'metadata.xml',
+      'project.xml',
+      'sonare-studio.json',
+    ]);
   });
 
   it('rejects the reserved renderMidiTracks option instead of ignoring it', async () => {
@@ -180,7 +198,8 @@ describe('exportDawproject structure', () => {
       ],
       { mixer: { master: { gainDb: -6, pan: -1, inserts: [], sends: [] }, buses: [] } },
     );
-    const project = await exportProjectXml(doc);
+    const entries = await exportAndUnzip(doc, { includeAudio: false });
+    const project = parseEntry(entries, 'project.xml');
     const tracks = [...project.querySelectorAll('Structure > Track')];
     expect(tracks).toHaveLength(3);
 
@@ -219,7 +238,8 @@ describe('exportDawproject structure', () => {
     const doc = makeDoc([
       makeTrack([], { volume: 1, mixer: { gainDb: 24, pan: 0, inserts: [], sends: [] } }),
     ]);
-    const project = await exportProjectXml(doc);
+    const entries = await exportAndUnzip(doc, { includeAudio: false });
+    const project = parseEntry(entries, 'project.xml');
     const volume = project.querySelector('Structure > Track Volume');
     // +24 dB ≈ 15.85 linear must not be clamped to the conventional [0, 2] cap.
     expect(floatAttr(volume, 'value')).toBeCloseTo(dbToLinear(24), 5);
@@ -230,7 +250,8 @@ describe('exportDawproject structure', () => {
     const doc = makeDoc([
       makeTrack([], { volume: 1, mixer: { gainDb: 0, pan: 0, inserts: [], sends: [] } }),
     ]);
-    const project = await exportProjectXml(doc);
+    const entries = await exportAndUnzip(doc, { includeAudio: false });
+    const project = parseEntry(entries, 'project.xml');
     const volume = project.querySelector('Structure > Track Volume');
     expect(floatAttr(volume, 'value')).toBe(1);
     expect(floatAttr(volume, 'max')).toBe(2);
@@ -250,30 +271,32 @@ describe('exportDawproject structure', () => {
         },
       },
     );
-    const project = await exportProjectXml(doc);
+    const entries = await exportAndUnzip(doc, { includeAudio: false });
+    const project = parseEntry(entries, 'project.xml');
+    const sonareMetadata = parseSonareMetadata(entries);
     const tracks = project.querySelectorAll('Structure > Track');
     const memberVolume = tracks[0].querySelector('Channel > Volume');
     const nonMemberVolume = tracks[1].querySelector('Channel > Volume');
     expect(floatAttr(memberVolume, 'value')).toBeCloseTo(dbToLinear(-6), 5);
     expect(floatAttr(nonMemberVolume, 'value')).toBeCloseTo(0.5, 5);
-    expect(attr(tracks[0], 'sonareVcaId')).toBe('vca-1');
-    expect(floatAttr(tracks[0], 'sonareVolume')).toBe(1);
-    const vca = project.querySelector('Structure > SonareVcaGroups > SonareVcaGroup');
-    expect(attr(vca, 'id')).toBe('vca-1');
-    expect(attr(vca, 'name')).toBe('Group');
-    expect(floatAttr(vca, 'gainDb')).toBe(-6);
+    expect(sonareMetadata.tracks?.['track-0']).toMatchObject({ vcaId: 'vca-1', volume: 1 });
+    expect(sonareMetadata.vcaGroups).toContainEqual({ id: 'vca-1', name: 'Group', gainDb: -6 });
   });
 
   it('maps aux tracks to effect channels', async () => {
-    const project = await exportProjectXml(makeDoc([makeTrack([], { kind: 'aux' })]));
+    const entries = await exportAndUnzip(makeDoc([makeTrack([], { kind: 'aux' })]), {
+      includeAudio: false,
+    });
+    const project = parseEntry(entries, 'project.xml');
+    const sonareMetadata = parseSonareMetadata(entries);
     const channel = project.querySelector('Structure > Track > Channel');
     expect(attr(channel, 'role')).toBe('effect');
     expect(attr(project.querySelector('Structure > Track'), 'contentType')).toBe('audio');
-    expect(attr(project.querySelector('Structure > Track'), 'sonareTrackKind')).toBe('aux');
+    expect(sonareMetadata.tracks?.['track-0']?.kind).toBe('aux');
   });
 
   it('exports mixer buses as effect channels with output and send routing', async () => {
-    const project = await exportProjectXml(
+    const entries = await exportAndUnzip(
       makeDoc(
         [
           makeTrack([], {
@@ -302,7 +325,9 @@ describe('exportDawproject structure', () => {
           },
         },
       ),
+      { includeAudio: false },
     );
+    const project = parseEntry(entries, 'project.xml');
     const tracks = [...project.querySelectorAll('Structure > Track')];
     expect(tracks).toHaveLength(3);
     const dryChannel = tracks[0].querySelector('Channel');
@@ -322,7 +347,7 @@ describe('exportDawproject structure', () => {
   });
 
   it('exports sonare insert slots as generic BuiltinDevice entries', async () => {
-    const project = await exportProjectXml(
+    const entries = await exportAndUnzip(
       makeDoc([
         makeTrack([], {
           mixer: {
@@ -341,7 +366,10 @@ describe('exportDawproject structure', () => {
         }),
         makeTrack([], { name: 'Key Source' }),
       ]),
+      { includeAudio: false },
     );
+    const project = parseEntry(entries, 'project.xml');
+    const sonareMetadata = parseSonareMetadata(entries);
     const device = project.querySelector('Structure > Track > Channel > Devices > BuiltinDevice');
 
     expect(attr(device, 'deviceVendor')).toBe('sonare-studio');
@@ -352,11 +380,11 @@ describe('exportDawproject structure', () => {
       -18,
     );
     expect(attr(device?.querySelector('BoolParameter[name="autoMakeup"]'), 'value')).toBe('true');
-    expect(attr(device, 'sonareSidechainSourceIndex')).toBe('1');
+    expect(sonareMetadata.sidechainSources?.['channel-0-insert-0']).toBe(1);
   });
 
   it('exports bus and master insert sidechain source indexes as sonare metadata', async () => {
-    const project = await exportProjectXml(
+    const entries = await exportAndUnzip(
       makeDoc([makeTrack([], { name: 'Key Source' })], {
         mixer: {
           master: {
@@ -394,22 +422,31 @@ describe('exportDawproject structure', () => {
           ],
         },
       }),
+      { includeAudio: false },
     );
+    const project = parseEntry(entries, 'project.xml');
+    const sonareMetadata = parseSonareMetadata(entries);
 
     const busDevice = project.querySelector('Channel[role="effect"] BuiltinDevice');
     const masterDevice = project.querySelector('Channel[role="master"] BuiltinDevice');
 
-    expect(attr(busDevice, 'sonareSidechainSourceIndex')).toBe('0');
-    expect(attr(masterDevice, 'sonareSidechainSourceIndex')).toBe('0');
+    expect(attr(busDevice, 'id')).toBe('bus-channel-0-insert-0');
+    expect(attr(masterDevice, 'id')).toBe('master-channel-insert-0');
+    expect(sonareMetadata.sidechainSources).toMatchObject({
+      'bus-channel-0-insert-0': 0,
+      'master-channel-insert-0': 0,
+    });
   });
 
   it('exports grouped tracks as nested Structure tracks', async () => {
-    const project = await exportProjectXml(
+    const entries = await exportAndUnzip(
       makeDoc([
         makeTrack([], { name: 'Drum Bus', kind: 'group' }),
         makeTrack([], { name: 'Kick', kind: 'audio', groupIndex: 0 }),
       ]),
+      { includeAudio: false },
     );
+    const project = parseEntry(entries, 'project.xml');
     const topLevelTracks = [...(project.querySelector('Structure')?.children ?? [])].filter(
       (element) => element.tagName === 'Track',
     );
@@ -425,7 +462,7 @@ describe('exportDawproject structure', () => {
   });
 
   it('does not export group track target insert sidechain metadata', async () => {
-    const project = await exportProjectXml(
+    const entries = await exportAndUnzip(
       makeDoc([
         makeTrack([], {
           name: 'Drum Bus',
@@ -446,13 +483,16 @@ describe('exportDawproject structure', () => {
         }),
         makeTrack([], { name: 'Key Source', kind: 'audio' }),
       ]),
+      { includeAudio: false },
     );
+    const project = parseEntry(entries, 'project.xml');
+    const sonareMetadata = parseSonareMetadata(entries);
     const device = project.querySelector(
       'Structure > Track[contentType="tracks"] > Channel > Devices > BuiltinDevice',
     );
 
     expect(attr(device, 'deviceName')).toBe('dynamics.compressor');
-    expect(attr(device, 'sonareSidechainSourceIndex')).toBeNull();
+    expect(sonareMetadata.sidechainSources?.['channel-0-insert-0']).toBeUndefined();
   });
 });
 
@@ -711,6 +751,31 @@ describe('exportDawproject audio', () => {
     expect(attr(audio?.querySelector('File'), 'path')).toBe('audio/asset-1.wav');
   });
 
+  it('emits strictly monotonic source times for a warp whose last anchor exceeds the linear tail', async () => {
+    const project = await exportProjectXml(
+      makeDoc([
+        makeTrack(
+          [
+            makeAudioClip({
+              warp: {
+                enabled: true,
+                sourceBpm: 120,
+                anchors: [{ ppq: 3, sourceSeconds: 10 }],
+              },
+            }),
+          ],
+          { kind: 'audio' },
+        ),
+      ]),
+    );
+    const sourceTimes = [...project.querySelectorAll('Arrangement Warps > Warp')].map((point) =>
+      floatAttr(point, 'contentTime'),
+    );
+
+    expect(sourceTimes).toHaveLength(3);
+    expect(sourceTimes[2]).toBeGreaterThan(sourceTimes[1]);
+  });
+
   it('uses the tempo map for audio content seconds', async () => {
     const doc = makeDoc([makeTrack([makeAudioClip()], { kind: 'audio' })], {
       tempoSegments: [
@@ -890,6 +955,60 @@ describe('exportDawproject audio', () => {
     expect(attr(pan, 'unit')).toBe('normalized');
     expect(attr(pan.querySelector('Target'), 'parameter')).toBe('channel-0-pan');
     expect(floatAttr(pan.querySelector('RealPoint'), 'value')).toBe(0.75);
+  });
+
+  it('round-trips instrument and mastering automation in sonare-scoped Points', async () => {
+    const doc = makeDoc(
+      [
+        makeTrack([], {
+          automation: [
+            {
+              param: 'instrument:cutoffHz',
+              enabled: true,
+              points: [
+                { ppq: 0, value: 0.2, curve: 'hold' },
+                { ppq: 4, value: 0.8 },
+              ],
+            },
+          ],
+        }),
+      ],
+      {
+        masterAutomation: [
+          {
+            param: 'mastering:0:ceilingDb',
+            enabled: true,
+            points: [{ ppq: 2, value: -1 }],
+          },
+        ],
+      },
+    );
+    const bytes = await exportDawproject(doc, { includeAudio: false });
+    const project = parseEntry(unzipSync(bytes), 'project.xml');
+    const targets = [...project.querySelectorAll('Arrangement Points Target')].map((target) =>
+      target.getAttribute('parameter'),
+    );
+    expect(targets).toContain('sonare-automation:instrument%3AcutoffHz');
+    expect(targets).toContain('sonare-automation:mastering%3A0%3AceilingDb');
+
+    const imported = importDawproject(bytes);
+    expect(imported.tracks[0].automation).toEqual([
+      {
+        param: 'instrument:cutoffHz',
+        enabled: true,
+        points: [
+          { ppq: 0, value: 0.2, curve: 'hold' },
+          { ppq: 4, value: 0.8, curve: 'linear' },
+        ],
+      },
+    ]);
+    expect(imported.masterAutomation).toEqual([
+      {
+        param: 'mastering:0:ceilingDb',
+        enabled: true,
+        points: [{ ppq: 2, value: -1, curve: 'linear' }],
+      },
+    ]);
   });
 
   it('exports track insert automation to the matching device parameter', async () => {

@@ -14,6 +14,10 @@ describe('escapeXmlText', () => {
   it('leaves quotes alone in text content', () => {
     expect(escapeXmlText(`"quoted" and 'single'`)).toBe(`"quoted" and 'single'`);
   });
+
+  it('removes XML 1.0-invalid controls while preserving tab and line breaks', () => {
+    expect(escapeXmlText('a\u0000b\u0008c\t d\ne\rf\u001f')).toBe('abc\t d\ne\rf');
+  });
 });
 
 describe('escapeXmlAttribute', () => {

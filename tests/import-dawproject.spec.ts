@@ -273,6 +273,15 @@ function makeNestedWarpDawproject(
 }
 
 describe('importDawproject', () => {
+  it('rejects deeply nested project XML before constructing a DOM tree', () => {
+    const depth = 129;
+    const archive = zipSync({
+      'project.xml': strToU8(`${'<Node>'.repeat(depth)}${'</Node>'.repeat(depth)}`),
+    });
+
+    expect(() => importDawproject(archive)).toThrow(/depth XML limit/);
+  });
+
   it('imports the portable subset from a sonare-exported DAWproject archive', async () => {
     const exported = await exportDawproject(makeDoc(), { includeAudio: false });
     const imported = importDawproject(exported);
@@ -371,7 +380,7 @@ describe('importDawproject', () => {
                   controller: 11,
                   points: [
                     { ppq: 0, value: 32 },
-                    { ppq: 2, value: 96 },
+                    { ppq: 2, value: 96, curve: 'linear' },
                   ],
                 },
               ],
@@ -394,7 +403,7 @@ describe('importDawproject', () => {
         controller: 11,
         points: [
           { ppq: 0, value: 32 },
-          { ppq: 2, value: 96 },
+          { ppq: 2, value: 96, curve: 'linear' },
         ],
       },
     ]);
@@ -968,7 +977,12 @@ describe('importDawproject', () => {
     const exported = await exportDawproject(
       makeDoc({
         tracks: [
-          makeTrack([], { name: 'Member', volume: 0.75, vcaId: 'vca-1' }),
+          makeTrack([], {
+            name: 'Member',
+            volume: 0.75,
+            vcaId: 'vca-1',
+            mixer: { gainDb: -3, pan: 0, inserts: [], sends: [] },
+          }),
           makeTrack([], { name: 'Dry', volume: 0.5 }),
         ],
         mixer: {
@@ -989,6 +1003,7 @@ describe('importDawproject', () => {
       name: 'Member',
       volume: 0.75,
       vcaId: 'vca-1',
+      mixer: { gainDb: -3 },
     });
     expect(imported.tracks[1]).toMatchObject({
       name: 'Dry',
@@ -1134,6 +1149,17 @@ describe('importDawproject', () => {
       { param: 'pan', enabled: true, points: [{ ppq: 6, value: -0.5, curve: 'linear' }] },
       { param: 'insert:0:tiltDb', enabled: true, points: [{ ppq: 7, value: -1, curve: 'linear' }] },
     ]);
+  });
+
+  it('preserves a master fader and pan even when it has no inserts', async () => {
+    const source = makeDoc({
+      mixer: { master: { gainDb: -6, pan: -0.5, inserts: [], sends: [] }, buses: [] },
+    });
+
+    const imported = importDawproject(await exportDawproject(source, { includeAudio: false }));
+
+    expect(imported.mixer?.master.gainDb).toBeCloseTo(-6, 8);
+    expect(imported.mixer?.master.pan).toBe(-0.5);
   });
 
   it('ignores external insert devices and imports sonare boolean insert automation', () => {
