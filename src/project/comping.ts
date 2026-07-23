@@ -7,6 +7,7 @@
  * in exports.
  */
 
+import { MAX_LOOP_OCCURRENCES, MIN_LOOP_WINDOW_PPQ } from './midi-projection';
 import type { ClipCompSegment, ClipTake } from './types';
 
 /** Default short comp-boundary crossfade used to avoid clicks at hard edits. */
@@ -221,11 +222,17 @@ function audioClipSegmentsInWindow(clip: CompableClipFields): AudioClipSegment[]
  * edges of the whole clip, not every repeat.
  */
 export function audioClipSegments(clip: CompableClipFields): AudioClipSegment[] {
-  const loopLengthPpq =
+  const requestedLoopLengthPpq =
     clip.loopEnabled === true &&
     Number.isFinite(clip.loopLengthPpq) &&
     (clip.loopLengthPpq ?? 0) > 0
       ? (clip.loopLengthPpq as number)
+      : 0;
+  // Match MIDI projection's safety contract: malformed sub-tick loops are
+  // floored and a pathological clip cannot materialize unbounded segments.
+  const loopLengthPpq =
+    requestedLoopLengthPpq > 0
+      ? Math.min(clip.lengthPpq, Math.max(requestedLoopLengthPpq, MIN_LOOP_WINDOW_PPQ))
       : 0;
   if (loopLengthPpq <= 0 || loopLengthPpq >= clip.lengthPpq) {
     return audioClipSegmentsInWindow(clip);
@@ -241,7 +248,9 @@ export function audioClipSegments(clip: CompableClipFields): AudioClipSegment[] 
   };
   const base = audioClipSegmentsInWindow(loopWindow);
   const result: AudioClipSegment[] = [];
-  for (let repeatOffset = 0; repeatOffset < clip.lengthPpq - 1e-9; repeatOffset += loopLengthPpq) {
+  const repeatCount = Math.min(Math.ceil(clip.lengthPpq / loopLengthPpq), MAX_LOOP_OCCURRENCES);
+  for (let occurrence = 0; occurrence < repeatCount; occurrence++) {
+    const repeatOffset = occurrence * loopLengthPpq;
     const remaining = clip.lengthPpq - repeatOffset;
     for (const segment of base) {
       if (segment.offsetPpq >= remaining) continue;

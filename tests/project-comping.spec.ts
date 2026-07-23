@@ -25,6 +25,7 @@ import {
   sanitizeCompSegments,
   takeIndexAtPpq,
 } from '@/project/comping';
+import { MAX_LOOP_OCCURRENCES, MIN_LOOP_WINDOW_PPQ } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
 import type { ClipTake } from '@/project/types';
 
@@ -221,6 +222,22 @@ describe('compSegmentsWithRange', () => {
 });
 
 describe('audioClipSegments', () => {
+  it('floors sub-tick loop windows and caps their expansion', () => {
+    const segments = audioClipSegments({
+      lengthPpq: MIN_LOOP_WINDOW_PPQ * (MAX_LOOP_OCCURRENCES + 10),
+      sourceOffsetPpq: 0,
+      assetId: 'asset-x',
+      loopEnabled: true,
+      loopLengthPpq: Number.MIN_VALUE,
+    });
+
+    expect(segments).toHaveLength(MAX_LOOP_OCCURRENCES);
+    expect(segments[1]).toMatchObject({
+      offsetPpq: MIN_LOOP_WINDOW_PPQ,
+      lengthPpq: MIN_LOOP_WINDOW_PPQ,
+    });
+  });
+
   it('expands a clip without takes into one segment over its own asset', () => {
     const clip: CompableClipFields = {
       lengthPpq: 4,

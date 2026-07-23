@@ -8,6 +8,7 @@
 
 import { resolvePresetName } from '@/engine/instruments';
 import { renderProjectWithEngine } from '@/export/engine-render';
+import { DEFAULT_EXPORT_MEMORY_BUDGET_BYTES } from '@/export/memory-budget';
 import { OperationGeneration } from '@/lib/operation-generation';
 import { ensureWasm } from '@/lib/wasm';
 import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
@@ -87,6 +88,7 @@ async function renderFrozen(
     freezeTrackIndex: trackIndex,
     deps: null,
     resolvePreset: (preset) => resolvePresetName(wasm, preset),
+    memoryBudgetBytes: DEFAULT_EXPORT_MEMORY_BUDGET_BYTES,
     shouldCancel,
     yieldBetweenBlocks,
     ...(range !== null ? { range } : {}),

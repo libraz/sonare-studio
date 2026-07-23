@@ -1,6 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EngineRenderOptions } from '@/export/engine-render';
+import { DEFAULT_EXPORT_MEMORY_BUDGET_BYTES } from '@/export/memory-budget';
 import type { MixdownResult } from '@/export/mixdown';
 import {
   addAudioClip,
@@ -75,7 +76,11 @@ describe('track freeze and bounce-in-place', () => {
       expect(doc.tracks[1].name).toBe('Vox');
       // Whole-project freeze: no range, isolated pre-fader pass, default deps
       // disabled (no wasm mastering/metering seams needed for a freeze).
-      expect(options).toMatchObject({ freezeTrackIndex: 1, deps: null });
+      expect(options).toMatchObject({
+        freezeTrackIndex: 1,
+        deps: null,
+        memoryBudgetBytes: DEFAULT_EXPORT_MEMORY_BUDGET_BYTES,
+      });
       expect(options?.resolvePreset?.('unknown-preset')).toBe('e-piano');
 
       expect(ingest).toHaveBeenCalledTimes(1);

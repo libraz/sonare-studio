@@ -342,6 +342,9 @@ describe('useEngineProjectSync', () => {
     vi.mocked(midiSync.sync).mockClear();
     transport.positionPpq.value = 4;
     await nextTick();
+    expect(midiSync.sync).not.toHaveBeenCalled();
+    transport.positionPpq.value = 5;
+    await nextTick();
     await vi.waitFor(() => expect(midiSync.sync).toHaveBeenCalledTimes(1));
     expect(midiSync.sync).toHaveBeenLastCalledWith(
       store.tracks,
@@ -349,7 +352,7 @@ describe('useEngineProjectSync', () => {
       [{ startPpq: 0, bpm: store.tempoBpm }],
       store.projectExternalMidi,
       store.automationLanes,
-      4,
+      5,
     );
 
     vi.mocked(midiSync.sync).mockClear();

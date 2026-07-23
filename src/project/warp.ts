@@ -93,9 +93,24 @@ export function sanitizeClipWarp(warp: ClipWarp, lengthPpq: number): ClipWarp {
     throw new RangeError(`Warp sourceBpm must be finite and > 0, got ${warp.sourceBpm}`);
   }
   const anchors = sanitizeWarpAnchors(warp.anchors ?? [], lengthPpq);
+  const defaultStartSeconds = 0;
+  const startSeconds =
+    warp.sourceStartSeconds !== undefined && Number.isFinite(warp.sourceStartSeconds)
+      ? warp.sourceStartSeconds
+      : defaultStartSeconds;
+  const endSeconds =
+    warp.sourceEndSeconds !== undefined && Number.isFinite(warp.sourceEndSeconds)
+      ? warp.sourceEndSeconds
+      : undefined;
   return {
     enabled: warp.enabled,
     sourceBpm: warp.sourceBpm,
+    ...(warp.sourceStartSeconds !== undefined && startSeconds >= 0
+      ? { sourceStartSeconds: startSeconds }
+      : {}),
+    ...(endSeconds !== undefined && endSeconds > startSeconds
+      ? { sourceEndSeconds: endSeconds }
+      : {}),
     ...(anchors.length > 0 ? { anchors } : {}),
   };
 }
@@ -115,7 +130,10 @@ export function projectWarpMapDesc(
   const warp = clip.warp;
   if (!warp || !(warp.sourceBpm > 0) || !(clip.lengthPpq > 0) || !(sampleRate > 0)) return null;
   const secondsPerSourcePpq = 60 / warp.sourceBpm;
-  const sourceStartSeconds = clip.sourceOffsetPpq * secondsPerSourcePpq;
+  const sourceStartSeconds =
+    clip.warp?.sourceStartSeconds ?? clip.sourceOffsetPpq * secondsPerSourcePpq;
+  const sourceEndSeconds =
+    clip.warp?.sourceEndSeconds ?? (clip.sourceOffsetPpq + clip.lengthPpq) * secondsPerSourcePpq;
   const clipStartPpq = clip.startPpq ?? 0;
   const clipStartSample = ppqToSamples(tempo, clipStartPpq, sampleRate);
   const points: WarpAnchor[] = [
@@ -126,7 +144,7 @@ export function projectWarpMapDesc(
     })),
     {
       ppq: clip.lengthPpq,
-      sourceSeconds: (clip.sourceOffsetPpq + clip.lengthPpq) * secondsPerSourcePpq,
+      sourceSeconds: sourceEndSeconds,
     },
   ];
   const anchors = points.map((anchor) => ({
@@ -230,14 +248,16 @@ export function warpSegments(clip: WarpableClipFields): WarpSegment[] {
   const warp = clip.warp;
   if (!warp?.enabled || !(warp.sourceBpm > 0) || !(clip.lengthPpq > 0)) return [];
   const secondsPerSourcePpq = 60 / warp.sourceBpm;
-  const startSeconds = clip.sourceOffsetPpq * secondsPerSourcePpq;
+  const startSeconds = warp.sourceStartSeconds ?? clip.sourceOffsetPpq * secondsPerSourcePpq;
+  const endSeconds =
+    warp.sourceEndSeconds ?? (clip.sourceOffsetPpq + clip.lengthPpq) * secondsPerSourcePpq;
   const points: WarpAnchor[] = [
     { ppq: 0, sourceSeconds: startSeconds },
     ...sanitizeWarpAnchors(warp.anchors ?? [], clip.lengthPpq).map((anchor) => ({
       ppq: anchor.ppq,
       sourceSeconds: startSeconds + anchor.sourceSeconds,
     })),
-    { ppq: clip.lengthPpq, sourceSeconds: startSeconds + clip.lengthPpq * secondsPerSourcePpq },
+    { ppq: clip.lengthPpq, sourceSeconds: endSeconds },
   ];
   const segments: WarpSegment[] = [];
   for (let i = 0; i + 1 < points.length; i++) {

@@ -112,6 +112,52 @@ describe('createAutomationSync', () => {
     expect(sync.installedParamIds()).toEqual([3001]);
   });
 
+  it('does not clear an unchanged track fader lane when only bus ids are reassigned', () => {
+    const { handle, engine } = makeHandle();
+    let generation = 1;
+    let busId = 2;
+    const busLane = makeLane(busAutomationTarget('fx'), [{ ppq: 0, value: -9 }]);
+    const trackLane = makeLane(7, [{ ppq: 0, value: -6 }]);
+    const sync = createAutomationSync(handle, {
+      knownTrackIds: () => [7],
+      busIdFor: () => busId,
+      busMappingGeneration: () => generation,
+      restoreParam: vi.fn(),
+    });
+    sync.sync([busLane, trackLane]);
+    engine.setAutomationLane.mockClear();
+
+    busId = 1;
+    generation += 1;
+    sync.sync([busLane, trackLane]);
+
+    expect(engine.setAutomationLane.mock.calls).toEqual([
+      [3002, []],
+      [3001, [{ ppq: 0, value: -9, curveToNext: 0 }]],
+    ]);
+  });
+
+  it('clears an installed lane and restores the temporary mixer value when PFL suppresses it', () => {
+    const { handle, engine } = makeHandle();
+    const restoreParam = vi.fn();
+    let pflActive = false;
+    const sync = createAutomationSync(handle, {
+      knownTrackIds: () => [7],
+      suppressParam: (target, param) => pflActive && target === 7 && param === 'faderDb',
+      restoreParam,
+    });
+    const lane = makeLane(7, [{ ppq: 0, value: -6 }]);
+
+    sync.sync([lane]);
+    engine.setAutomationLane.mockClear();
+    pflActive = true;
+    sync.sync([lane]);
+
+    expect(engine.setAutomationLane).toHaveBeenCalledWith(1007, []);
+    expect(restoreParam).toHaveBeenCalledWith(7, 'faderDb');
+    expect(sync.installedParamIds()).toEqual([]);
+  });
+
   it('maps group-track fader automation to the group bus parameter id', () => {
     const { handle, engine } = makeHandle();
     const sync = createAutomationSync(handle, {

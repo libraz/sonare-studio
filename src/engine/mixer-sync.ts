@@ -86,6 +86,28 @@ export interface MixerSyncOptions {
 const zeroInsertLatency: InsertLatencyResolver = () => 0;
 
 /**
+ * Resolves the lanes that PFL auditions before their fader and pan controls.
+ * Shared with automation wiring so an installed automation lane cannot undo
+ * the unity/center PFL override on the next audio block.
+ */
+export function pflAuditionStates(
+  tracks: ReadonlyArray<EditorTrack>,
+  vcaControls: ReadonlyMap<string, VcaControlState> | undefined,
+  soloMode: MixerSoloMode | undefined,
+): boolean[] {
+  if (normalizeMixerSoloMode(soloMode) !== 'pfl') return [];
+  const tracksForSolo = tracksWithVcaSolo(tracks, vcaControls);
+  return expandedSoloStates(
+    tracksForSolo.map((track) => ({ ...track, soloSafe: false })),
+    {
+      isGroup: (track) => track.kind === 'group',
+      groupKey: (track) => track.id,
+      memberGroupKey: (track) => track.groupId,
+    },
+  );
+}
+
+/**
  * Creates a mixer sync bound to one engine handle. Create a fresh instance
  * per engine start: the lane registry restarts with the engine.
  *
@@ -119,17 +141,7 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
       groupKey: (track) => track.id,
       memberGroupKey: (track) => track.groupId,
     });
-    const auditionSoloStates =
-      normalizeMixerSoloMode(soloMode) === 'pfl'
-        ? expandedSoloStates(
-            tracksForSolo.map((track) => ({ ...track, soloSafe: false })),
-            {
-              isGroup: (track) => track.kind === 'group',
-              groupKey: (track) => track.id,
-              memberGroupKey: (track) => track.groupId,
-            },
-          )
-        : [];
+    const auditionSoloStates = pflAuditionStates(tracks, vcaControls, soloMode);
     const maxInsertLatency = maxTrackInsertLatencySamples(tracks, resolveInsertLatency);
     for (const track of tracks) {
       const trackIndex = tracks.indexOf(track);

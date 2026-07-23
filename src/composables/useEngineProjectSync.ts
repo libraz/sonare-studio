@@ -120,6 +120,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
   let applyGeneration = 0;
   let applyController: AbortController | null = null;
   let applyTimer: ReturnType<typeof setTimeout> | null = null;
+  let instrumentScrubTimer: ReturnType<typeof setTimeout> | null = null;
   let engineRebuildHandler: (() => void | Promise<void>) | null = null;
   let midiSyncQueue: Promise<void> = Promise.resolve();
   let audioMediaIssues: MediaCompletenessIssue[] = [];
@@ -129,6 +130,9 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
   const applyPending = ref(false);
   const engineRebuildRequired = ref(false);
   const mediaReport = ref<MediaCompletenessReport>(createMediaCompletenessReport());
+
+  /** Collapses parked pointer scrubs to one instrument-automation re-bake. */
+  const INSTRUMENT_SCRUB_DEBOUNCE_MS = 100;
 
   function publishMediaReport(): void {
     mediaReport.value = createMediaCompletenessReport([...audioMediaIssues, ...midiMediaIssues]);
@@ -217,6 +221,14 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
       applyTimer = null;
       void applyToEngine();
     }, APPLY_DEBOUNCE_MS);
+  }
+
+  function scheduleInstrumentScrubSync(): void {
+    if (instrumentScrubTimer !== null) clearTimeout(instrumentScrubTimer);
+    instrumentScrubTimer = setTimeout(() => {
+      instrumentScrubTimer = null;
+      void syncMidiState();
+    }, INSTRUMENT_SCRUB_DEBOUNCE_MS);
   }
 
   function syncMixerState(syncOptions: InitialEngineSyncOptions = {}): void {
@@ -388,6 +400,10 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
       clearTimeout(applyTimer);
       applyTimer = null;
     }
+    if (instrumentScrubTimer !== null) {
+      clearTimeout(instrumentScrubTimer);
+      instrumentScrubTimer = null;
+    }
     scheduledClips = [];
     scheduledCount.value = 0;
     mixerSync = null;
@@ -447,7 +463,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
         transport.isPlaying?.value !== true &&
         hasInstrumentAutomation(store.automationLanes)
       ) {
-        syncMidiState();
+        scheduleInstrumentScrubSync();
       }
     },
     { flush: 'sync' },

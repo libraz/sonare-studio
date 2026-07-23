@@ -57,6 +57,8 @@ export interface AutomationSyncOptions {
   vcaOffsetFor?: (trackId: number) => number;
   /** Effective track/VCA mute for a numeric fader target. */
   effectiveMuteFor?: (trackId: number) => boolean;
+  /** True when a temporary mixer mode must override this lane (for example PFL). */
+  suppressParam?: (target: AutomationTarget, param: AutomationParam) => boolean;
   /** Re-pushes the manual strip value after a lane has been cleared. */
   restoreParam: (target: AutomationTarget, param: AutomationParam) => void;
 }
@@ -124,7 +126,7 @@ export function createAutomationSync(
         previous &&
         (previous.target !== lane.target ||
           previous.param !== lane.param ||
-          previous.mappingGeneration !== busMappingGeneration)
+          (previous.mappingSensitive && previous.mappingGeneration !== busMappingGeneration))
       ) {
         handle.engine.setAutomationLane(paramId, []);
         options.restoreParam(previous.target, previous.param);
@@ -143,6 +145,7 @@ export function createAutomationSync(
     };
     for (const lane of lanes) {
       if (!lane.enabled) continue;
+      if (options.suppressParam?.(lane.target, lane.param)) continue;
       let paramId: number | undefined;
       let mappingSensitive = false;
       const masteringRef = parseMasteringAutomationParam(lane.param);

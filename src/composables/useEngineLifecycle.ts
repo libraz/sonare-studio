@@ -11,7 +11,7 @@ import { createEngine, type EngineHandle } from '@/engine/engine';
 import { resolvePresetName } from '@/engine/instruments';
 import { createMeterBridge, type MeterBridge } from '@/engine/meters';
 import { createMidiSync } from '@/engine/midi-sync';
-import { createMixerSync } from '@/engine/mixer-sync';
+import { createMixerSync, pflAuditionStates } from '@/engine/mixer-sync';
 import { createScopeBridge, type ScopeBridge } from '@/engine/scope';
 import { createStripSync, groupBusGainDb } from '@/engine/strip-sync';
 import { createTransportSync } from '@/engine/transport-sync';
@@ -44,6 +44,31 @@ import type { EditorTrack } from '@/project/types';
 
 type Transport = ReturnType<typeof useTransport>;
 type RunAction = (action: () => Promise<void>) => Promise<void>;
+
+/** Replays UI-owned transport state after a fresh engine becomes current. */
+export function restoreEngineTransportState(
+  transport: Pick<
+    Transport,
+    | 'loopEnabled'
+    | 'loopStartPpq'
+    | 'loopEndPpq'
+    | 'metronomeEnabled'
+    | 'setLoop'
+    | 'toggleMetronome'
+  >,
+): void {
+  transport.setLoop(
+    transport.loopStartPpq.value,
+    transport.loopEndPpq.value,
+    transport.loopEnabled.value,
+  );
+  transport.toggleMetronome(transport.metronomeEnabled.value);
+}
+
+/** Drops playback state when its engine is torn down. */
+export function resetEngineTransportState(transport: Pick<Transport, 'isPlaying'>): void {
+  transport.isPlaying.value = false;
+}
 
 interface AudioContextStateLike {
   readonly state: string;
@@ -147,6 +172,7 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
       }
     };
     cleanup('transport', () => options.transport.dispose?.());
+    resetEngineTransportState(options.transport);
     cleanup('scope', () => previousScope?.dispose());
     cleanup('analyser', () => previousAnalyser?.dispose());
     cleanup('meter', () => previousBridge?.dispose());
@@ -308,6 +334,20 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
             );
             return effectiveTrackMute(track.mute, track.vcaId, vcaControls);
           },
+          suppressParam: (target, param) => {
+            if (typeof target !== 'number' || (param !== 'faderDb' && param !== 'pan'))
+              return false;
+            const vcaControls = new Map(
+              (store.mixer.vcaGroups ?? []).map((group) => [group.id, group]),
+            );
+            const trackIndex = store.tracks.findIndex((track) => track.id === target);
+            return (
+              trackIndex >= 0 &&
+              store.tracks[trackIndex]?.kind !== 'group' &&
+              pflAuditionStates(store.tracks, vcaControls, store.mixer.soloMode)[trackIndex] ===
+                true
+            );
+          },
           restoreParam: (target, param) => {
             const masteringRef = parseMasteringAutomationParam(param);
             if (masteringRef) {
@@ -424,6 +464,19 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
             }
             const track = store.tracks.find((entry) => entry.id === target);
             if (!track) return;
+            const vcaControls = new Map(
+              (store.mixer.vcaGroups ?? []).map((group) => [group.id, group]),
+            );
+            const trackIndex = store.tracks.indexOf(track);
+            const pflAudition =
+              track.kind !== 'group' &&
+              pflAuditionStates(store.tracks, vcaControls, store.mixer.soloMode)[trackIndex] ===
+                true;
+            if (pflAudition) {
+              if (param === 'faderDb') stagedHandle.engine.setStripGain(target, 0);
+              else if (param === 'pan') stagedHandle.engine.setStripPan(target, 0);
+              return;
+            }
             const groupBusId =
               typeof target === 'number' ? nextStripSync.groupBusIdFor(target) : undefined;
             if (groupBusId !== undefined) {
@@ -508,6 +561,7 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
         options.bridge.value = nextBridge;
         options.analyser.value = nextAnalyser;
         options.scope.value = nextScope;
+        restoreEngineTransportState(options.transport);
         clearAudioContextStateBinding();
         disposeCtxState = bindAudioContextState(stagedHandle.ctx, options.ctxState);
         published = true;

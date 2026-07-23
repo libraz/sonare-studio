@@ -390,8 +390,17 @@ export function evaluateAutomationValue(
   if (ppq <= points[0].ppq) return points[0].value;
   const last = points[points.length - 1];
   if (ppq >= last.ppq) return last.value;
-  let index = 0;
-  while (index + 1 < points.length && points[index + 1].ppq <= ppq) index++;
+  // Curves are sampled once per a few screen pixels. A linear scan here made
+  // dense lanes O(samples × points) on every repaint; find the enclosing
+  // segment in logarithmic time instead.
+  let lower = 0;
+  let upper = points.length - 1;
+  while (lower + 1 < upper) {
+    const middle = lower + Math.floor((upper - lower) / 2);
+    if (points[middle].ppq <= ppq) lower = middle;
+    else upper = middle;
+  }
+  const index = lower;
   const a = points[index];
   const b = points[index + 1];
   const span = b.ppq - a.ppq;

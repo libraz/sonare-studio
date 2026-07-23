@@ -165,6 +165,12 @@ describe('automation model', () => {
       expect(evaluateAutomationValue(points, 4)).toBe(3);
     });
 
+    it('finds the correct segment in a dense lane', () => {
+      const points = Array.from({ length: 1_024 }, (_, ppq) => ({ ppq, value: ppq }));
+      expect(evaluateAutomationValue(points, 777.25)).toBeCloseTo(777.25, 12);
+      expect(evaluateAutomationValue(points, 1_022.75)).toBeCloseTo(1_022.75, 12);
+    });
+
     it('interpolates linearly by default and for the linear curve', () => {
       const points: AutomationPoint[] = [
         { ppq: 0, value: 0, curve: 'linear' },

@@ -104,7 +104,16 @@ function setupLifecycle() {
     syncMidiState,
     syncMixerState,
     syncTransportState,
-    transport: { setTempo: vi.fn() } as never,
+    transport: {
+      isPlaying: ref(false),
+      loopEnabled: ref(false),
+      loopStartPpq: ref(0),
+      loopEndPpq: ref(4),
+      metronomeEnabled: ref(false),
+      setLoop: vi.fn(),
+      setTempo: vi.fn(),
+      toggleMetronome: vi.fn(),
+    } as never,
   });
   return {
     analyser,
