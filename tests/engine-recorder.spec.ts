@@ -602,6 +602,28 @@ describe('createRecorder capture', () => {
     expect(channel[19]).toBe(29);
   });
 
+  it('extends an auto-punch by the latency offset so the trimmed take keeps its tail', async () => {
+    const { handle, configureCapture, punch, setStatus, setAudio } = makeHandle(100);
+    const { deps } = makeDeps();
+    const recorder = createRecorder(handle, deps);
+    await recorder.requestMicrophone();
+    recorder.arm(7);
+
+    await recorder.start({ startPpq: 0, endPpq: 1, tempoBpm: 120, recordOffsetSamples: 10 });
+    // One PPQ at 120 BPM is 50 frames; capture ten lead-in frames as well.
+    expect(configureCapture).toHaveBeenLastCalledWith(
+      expect.objectContaining({ bufferFrames: 60, recordOffsetSamples: 10 }),
+    );
+    expect(punch).toHaveBeenLastCalledWith(0, 1.2);
+    setStatus({ capturedFrames: 60 });
+    setAudio([Float32Array.from({ length: 60 }, (_, index) => index)]);
+
+    const result = await recorder.stop();
+    expect(Array.from(result?.channels[0] ?? [])).toEqual(
+      Array.from({ length: 50 }, (_, index) => index + 10),
+    );
+  });
+
   it('derives the default latency offset from the context latency', async () => {
     // baseLatency 0.1 s at 100 Hz = 10 frames trimmed.
     const { handle, setStatus, setAudio } = makeHandle(100, 0.1);

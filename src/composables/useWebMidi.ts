@@ -161,9 +161,11 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
   let detachListeners: Array<() => void> = [];
   let generation = 0;
   let disposed = false;
-  const ccTracker = new MidiCc14BitTracker();
+  // CC14/RPN/NRPN selection is stateful. Keep it isolated per physical input
+  // so messages from two controllers on the same MIDI channel cannot combine.
+  const ccTrackers = new Map<string, MidiCc14BitTracker>();
 
-  function handleMessage(event: MidiMessageEventLike): void {
+  function handleMessage(inputId: string, event: MidiMessageEventLike): void {
     const data = event.data;
     if (!data || data.length < 2) return;
     const status = data[0] & 0xf0;
@@ -182,7 +184,12 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
         timeStampMs,
       });
     } else if (status === STATUS_CONTROL_CHANGE) {
-      options.onControlChange?.({ ...ccTracker.decode(channel, pitch, velocity), timeStampMs });
+      let tracker = ccTrackers.get(inputId);
+      if (!tracker) {
+        tracker = new MidiCc14BitTracker();
+        ccTrackers.set(inputId, tracker);
+      }
+      options.onControlChange?.({ ...tracker.decode(channel, pitch, velocity), timeStampMs });
     } else if (status === STATUS_PROGRAM_CHANGE) {
       options.onProgramChange?.({ program: pitch, channel, timeStampMs });
     } else if (status === STATUS_POLY_PRESSURE) {
@@ -203,6 +210,7 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
       }
     }
     detachListeners = [];
+    ccTrackers.clear();
   }
 
   /** (Re-)attaches midimessage listeners to the inputs matching the selection. */
@@ -212,15 +220,16 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
     for (const [id, input] of target.access.inputs) {
       if (selectedInputId.value !== null && id !== selectedInputId.value) continue;
       if (input.addEventListener && input.removeEventListener) {
-        input.addEventListener('midimessage', handleMessage);
+        const listener = (event: MidiMessageEventLike): void => handleMessage(id, event);
+        input.addEventListener('midimessage', listener);
         const remove = input.removeEventListener;
-        detachListeners.push(() => remove.call(input, 'midimessage', handleMessage));
+        detachListeners.push(() => remove.call(input, 'midimessage', listener));
       } else {
         // No EventTarget API: chain onto the handler the binding installed.
         const previous = input.onmidimessage;
         input.onmidimessage = (event) => {
           previous?.(event);
-          handleMessage(event);
+          handleMessage(id, event);
         };
         detachListeners.push(() => {
           input.onmidimessage = previous;

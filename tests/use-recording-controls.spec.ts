@@ -92,6 +92,7 @@ describe('useRecordingControls', () => {
       setVoiceChangerPreset: vi.fn(),
       setStreamingRetuneSemitones: vi.fn(),
       setTrackArmed: vi.fn(),
+      requestMic: vi.fn(async () => true),
       record: vi.fn(async () => true),
       stopRecord: vi.fn(async () => null),
     };
@@ -140,6 +141,7 @@ describe('useRecordingControls', () => {
       setVoiceChangerPreset: vi.fn(),
       setStreamingRetuneSemitones: vi.fn(),
       setTrackArmed: vi.fn(),
+      requestMic: vi.fn(async () => true),
       record: vi.fn(async () => true),
       stopRecord: vi.fn(async () => null),
     };
@@ -210,6 +212,7 @@ describe('useRecordingControls', () => {
       setVoiceChangerPreset: vi.fn(),
       setStreamingRetuneSemitones: vi.fn(),
       setTrackArmed: vi.fn(),
+      requestMic: vi.fn(async () => true),
       record: vi.fn(async () => true),
       stopRecord: vi.fn(async () => null),
     };
@@ -269,6 +272,7 @@ describe('useRecordingControls', () => {
       setVoiceChangerPreset: vi.fn(),
       setStreamingRetuneSemitones: vi.fn(),
       setTrackArmed: vi.fn(),
+      requestMic: vi.fn(async () => true),
       record: vi.fn(async () => true),
       stopRecord: vi.fn(async () => null),
     };
@@ -291,13 +295,65 @@ describe('useRecordingControls', () => {
     });
 
     controls.toggleRecord();
-    await Promise.resolve();
+    await vi.waitFor(() => expect(recording.record).toHaveBeenCalledOnce());
 
     expect(recording.record).toHaveBeenCalledOnce();
     expect(midiRecording.record).toHaveBeenCalledWith(8);
   });
 
-  it('starts MIDI recording independently when audio recording fails before shared count-in', async () => {
+  it('waits for delayed audio prewarm and starts audio and MIDI at one no-count-in tick', async () => {
+    const audioTrackId = addAudioTrack({ name: 'Vox' });
+    const midiTrackId = store.tracks.find((track) => track.kind === 'midi')?.id;
+    if (midiTrackId === undefined) throw new Error('missing MIDI track');
+    const micReady = deferred<boolean>();
+    const transport = makeTransport();
+    const recording = {
+      armedTrackId: ref<number | null>(audioTrackId),
+      armedTrackIds: ref<readonly number[]>([audioTrackId]),
+      isRecording: ref(false),
+      countInBars: ref(0),
+      voiceChangerPreset: ref('off'),
+      streamingRetuneSemitones: ref(0),
+      inputDeviceId: ref(''),
+      error: ref<string | null>(null),
+      setMonitor: vi.fn(),
+      setCaptureSource: vi.fn(),
+      setInputDeviceId: vi.fn(),
+      setVoiceChangerPreset: vi.fn(),
+      setStreamingRetuneSemitones: vi.fn(),
+      setTrackArmed: vi.fn(),
+      requestMic: vi.fn(() => micReady.promise),
+      record: vi.fn(async () => true),
+      stopRecord: vi.fn(async () => null),
+    };
+    const midiRecording = {
+      armedTrackId: ref<number | null>(midiTrackId),
+      isRecording: ref(false),
+      countInBars: ref(0),
+      inputQuantizeDenominator: ref(0),
+      error: ref<string | null>(null),
+      arm: vi.fn(),
+      record: vi.fn(() => true),
+      stopRecord: vi.fn(() => null),
+    };
+    const controls = useRecordingControls({
+      appSettings: makeAppSettings(0) as never,
+      errorMessage: ref(''),
+      recording: recording as never,
+      midiRecording: midiRecording as never,
+      transport,
+    });
+
+    controls.toggleRecord();
+    expect(midiRecording.record).not.toHaveBeenCalled();
+    micReady.resolve(true);
+    await vi.waitFor(() => expect(recording.record).toHaveBeenCalledOnce());
+
+    expect(recording.record).toHaveBeenCalledWith(8);
+    expect(midiRecording.record).toHaveBeenCalledWith(8);
+  });
+
+  it('does not start MIDI recording when audio prewarm fails before shared count-in', async () => {
     const audioTrackId = addAudioTrack({ name: 'Vox' });
     const midiTrackId = store.tracks.find((track) => track.kind === 'midi')?.id;
     if (midiTrackId === undefined) throw new Error('missing MIDI track');
@@ -318,6 +374,7 @@ describe('useRecordingControls', () => {
       setVoiceChangerPreset: vi.fn(),
       setStreamingRetuneSemitones: vi.fn(),
       setTrackArmed: vi.fn(),
+      requestMic: vi.fn(async () => false),
       record: vi.fn(async () => false),
       stopRecord: vi.fn(async () => null),
     };
@@ -342,8 +399,8 @@ describe('useRecordingControls', () => {
     controls.toggleRecord();
     await Promise.resolve();
 
-    expect(recording.record).toHaveBeenCalledOnce();
-    expect(midiRecording.record).toHaveBeenCalledWith();
+    expect(recording.record).not.toHaveBeenCalled();
+    expect(midiRecording.record).not.toHaveBeenCalled();
   });
 
   it('does not start MIDI after shared count-in audio setup resolves post-dispose', async () => {
@@ -366,6 +423,7 @@ describe('useRecordingControls', () => {
       setVoiceChangerPreset: vi.fn(),
       setStreamingRetuneSemitones: vi.fn(),
       setTrackArmed: vi.fn(),
+      requestMic: vi.fn(async () => true),
       record: vi.fn(() => pendingRecord.promise),
       stopRecord: vi.fn(async () => null),
     };
@@ -392,6 +450,7 @@ describe('useRecordingControls', () => {
     if (!controls) throw new Error('effect scope did not run');
 
     controls.toggleRecord();
+    await vi.waitFor(() => expect(recording.record).toHaveBeenCalledOnce());
     scope.stop();
     pendingRecord.resolve(true);
     await Promise.resolve();

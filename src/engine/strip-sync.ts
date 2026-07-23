@@ -372,6 +372,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     busId: number,
     strip: MixerStrip | undefined,
     memory: StripMemory | undefined,
+    forceScene = false,
   ): StripMemory | undefined => {
     const supportsBypass = typeof busInsertBypass === 'function';
     const supportsBusEq = typeof busEq === 'function';
@@ -383,11 +384,11 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     const effectiveEqBands = supportsBusEq ? engineEqBands(strip) : [];
     const hasSceneDsp = stripSceneFieldsHaveDsp(strip) || effectiveEqBands.length > 0;
 
-    if (!memory && !hasSceneDsp && sceneInserts.length === 0) {
+    if (!memory && !hasSceneDsp && sceneInserts.length === 0 && !forceScene) {
       return undefined;
     }
 
-    if (!memory || memory.structureKey !== structureKey) {
+    if (forceScene || !memory || memory.structureKey !== structureKey) {
       handle.engine.setBusStripJson(
         busId,
         busSceneJson(busId, sceneStrip, insertCatalog, { includeEq: supportsBusEq }),
@@ -457,6 +458,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       ...mixer.buses.map((bus) => bus.id),
       ...groupTracks.map((group) => `group:${group.id}`),
     ];
+    const hadBusMapping = busNumberByStoreId.size > 0;
     const busMappingChanged =
       busNumberByStoreId.size !== busKeys.length ||
       busKeys.some((key, index) => busNumberByStoreId.get(key) !== index + 1);
@@ -470,6 +472,10 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       lastBusGain.clear();
       lastBusStrip.clear();
     }
+    // A logical bus can inherit a compacted engine number. Re-send a complete
+    // (including neutral) scene for every surviving target so prior inserts or
+    // EQ from the bus formerly using that number cannot remain in the worklet.
+    const reapplyBusScenes = hadBusMapping && busMappingChanged;
     const groupBusByTrackId = new Map(
       groupTracks.map((group) => [group.id, busNumberByStoreId.get(`group:${group.id}`) as number]),
     );
@@ -591,15 +597,15 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     // instead of the silent lane strip), then return-bus strips and master.
     for (const bus of mixer.buses) {
       const busId = busNumberByStoreId.get(bus.id) as number;
-      if (!bus.strip && !lastBusStrip.has(busId)) continue;
-      const memory = syncBusStrip(busId, bus.strip, lastBusStrip.get(busId));
+      if (!bus.strip && !lastBusStrip.has(busId) && !reapplyBusScenes) continue;
+      const memory = syncBusStrip(busId, bus.strip, lastBusStrip.get(busId), reapplyBusScenes);
       if (memory) lastBusStrip.set(busId, memory);
     }
 
     for (const track of tracks) {
       if (track.kind === 'group') {
         const busId = groupBusByTrackId.get(track.id) as number;
-        const memory = syncBusStrip(busId, track.mixer, lastBusStrip.get(busId));
+        const memory = syncBusStrip(busId, track.mixer, lastBusStrip.get(busId), reapplyBusScenes);
         if (memory) lastBusStrip.set(busId, memory);
         continue;
       }

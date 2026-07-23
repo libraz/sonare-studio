@@ -194,6 +194,11 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
   }
 
   function disposeEngineLifecycle(expected?: EngineHandle): Promise<void> {
+    // Teardown clears the public handle before awaiting its disposers. Every
+    // concurrent caller must therefore share the in-flight promise; otherwise
+    // a second caller sees no handle and can race the same disposer/close.
+    if (engineTeardownPromise) return engineTeardownPromise;
+    if (expected && options.handle.value !== expected) return Promise.resolve();
     const task = teardownEngine(expected);
     const tracked = task.finally(() => {
       if (engineTeardownPromise === tracked) engineTeardownPromise = null;

@@ -33,7 +33,11 @@ import {
 } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
 import { type EditorClip, type EditorTrack, isAudioClip } from '@/project/types';
-import { automationStripMode, automationStripModeRevision } from '@/ui/mixer/automation-mode';
+import {
+  automationStripModeRevision,
+  isAutomationStripPlaybackEnabled,
+  resetAutomationStripModes,
+} from '@/ui/mixer/automation-mode';
 
 const APPLY_DEBOUNCE_MS = 400;
 
@@ -259,7 +263,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     try {
       if (!automationSync || !store.initialized) return;
       automationSync.sync(
-        store.automationLanes.filter((lane) => automationStripMode(lane.target) !== 'off'),
+        store.automationLanes.filter((lane) => isAutomationStripPlaybackEnabled(lane.target)),
       );
     } catch (err) {
       errorMessage.value = describeError(err);
@@ -499,6 +503,12 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     () => automationStripModeRevision(),
     (next, prev) => {
       if (next !== prev) syncAutomationState();
+    },
+  );
+  watch(
+    () => store.documentGeneration,
+    (next, previous) => {
+      if (next !== previous) resetAutomationStripModes();
     },
   );
   watch(

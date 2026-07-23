@@ -907,12 +907,26 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
       );
     }
     const sampleRate = handle.ctx.sampleRate;
+    const requestedPunchOutPpq =
+      (hasEndPpq ? endPpq : startOptions.punchOutPpq) ??
+      (startOptions.tempoMap
+        ? secondsToPpq(startOptions.tempoMap, startSeconds + maxDurationSeconds)
+        : startPpq + (maxDurationSeconds * tempoBpm) / 60);
+    const requestedPunchDurationSeconds = ppqToCaptureSeconds(requestedPunchOutPpq);
+    // Capture must remain open for the latency lead-in beyond the musical
+    // punch boundary. We trim that lead-in on stop; closing at the requested
+    // boundary would therefore discard the same number of real tail frames.
+    const captureDurationSeconds =
+      Math.max(maxDurationSeconds, requestedPunchDurationSeconds) + offsetSamples / sampleRate;
+    const capturePunchOutPpq = startOptions.tempoMap
+      ? secondsToPpq(startOptions.tempoMap, startSeconds + captureDurationSeconds)
+      : startPpq + (captureDurationSeconds * tempoBpm) / 60;
     const trackId = armedTrack;
     const generation = ++operationGeneration;
     let engineArmed = false;
     phase = 'starting';
     try {
-      sendCaptureConfig(Math.max(1, Math.ceil(maxDurationSeconds * sampleRate)), offsetSamples);
+      sendCaptureConfig(Math.max(1, Math.ceil(captureDurationSeconds * sampleRate)), offsetSamples);
       await handle.engine.resetCapture();
       if (disposed || generation !== operationGeneration) {
         throw new RecorderStateError('Recorder startup was cancelled');
@@ -922,15 +936,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
       // Punch-out = explicit endPpq or the max-duration bound; stop() disarms
       // earlier as needed. The half-open window keeps any count-in pre-roll out
       // of the buffer and lets auto-punch close sample-accurately at R.
-      handle.engine.punch(
-        startPpq,
-        hasEndPpq
-          ? endPpq
-          : (startOptions.punchOutPpq ??
-              (startOptions.tempoMap
-                ? secondsToPpq(startOptions.tempoMap, startSeconds + maxDurationSeconds)
-                : startPpq + (maxDurationSeconds * tempoBpm) / 60)),
-      );
+      handle.engine.punch(startPpq, capturePunchOutPpq);
       take = { trackId, startPpq, offsetSamples, sampleRate };
       phase = 'recording';
     } catch (error) {

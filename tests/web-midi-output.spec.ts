@@ -240,6 +240,60 @@ describe('createWebMidiOutput', () => {
     bridge.dispose();
   });
 
+  it('releases only the changed track notes when another route shares its output channel', async () => {
+    const oldPort = fakePort('p1');
+    const newPort = fakePort('p2');
+    const { handle, emit } = setup([oldPort, newPort]);
+    const bridge = createWebMidiOutput(handle);
+    await bridge.start();
+    bridge.setRoutes([
+      { destinationId: 2, outputPortId: 'p1', channel: 5 },
+      { destinationId: 3, outputPortId: 'p1', channel: 5 },
+    ]);
+    emit([
+      { destinationId: 2, bytes: [0x90, 60, 100] },
+      { destinationId: 3, bytes: [0x90, 64, 100] },
+    ]);
+    oldPort.sent.length = 0;
+
+    bridge.setRoutes([
+      { destinationId: 2, outputPortId: 'p2', channel: 1 },
+      { destinationId: 3, outputPortId: 'p1', channel: 5 },
+    ]);
+
+    expect(oldPort.sent).toEqual([[0x85, 60, 0]]);
+    expect(oldPort.sent).not.toContainEqual([0xb5, 123, 0]);
+    bridge.dispose();
+  });
+
+  it('forgets disconnected note ownership before a shared-channel route change', async () => {
+    const port = fakePort('p1');
+    const { access, handle, emit } = setupEventTargetStateChange([port]);
+    const bridge = createWebMidiOutput(handle);
+    await bridge.start();
+    bridge.setRoutes([
+      { destinationId: 2, outputPortId: 'p1', channel: 5 },
+      { destinationId: 3, outputPortId: 'p1', channel: 5 },
+    ]);
+    emit([
+      { destinationId: 2, bytes: [0x90, 60, 100] },
+      // Destination 3 holds notes under sustain on the shared channel.
+      { destinationId: 3, bytes: [0xb0, 64, 127] },
+    ]);
+    port.sent.length = 0;
+
+    access.outputs.delete('p1');
+    access.emitStateChange({ type: 'statechange' });
+    access.outputs.set('p1', port);
+    access.emitStateChange({ type: 'statechange' });
+    bridge.setRoutes([{ destinationId: 3, outputPortId: 'p1', channel: 5 }]);
+
+    // The old note died with the device; reconnecting must not send a stale
+    // note-off or channel panic that would stop destination 3's sustain.
+    expect(port.sent).toEqual([]);
+    bridge.dispose();
+  });
+
   it('broadcasts transport/clock bytes only to clock-enabled ports', async () => {
     const clockPort = fakePort('p1');
     const plainPort = fakePort('p2');

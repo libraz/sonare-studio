@@ -51,6 +51,20 @@ export interface EngineHandle {
   cleanupState?(): EngineCleanupState;
 }
 
+interface WorkletRuntimeErrorMessage {
+  type: 'runtimeError';
+  message: string;
+}
+
+function isWorkletRuntimeErrorMessage(value: unknown): value is WorkletRuntimeErrorMessage {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    (value as { type?: unknown }).type === 'runtimeError' &&
+    typeof (value as { message?: unknown }).message === 'string'
+  );
+}
+
 export interface EngineCleanupState {
   nodeDetached: boolean;
   engineDestroyed: boolean;
@@ -308,12 +322,26 @@ export async function createEngine(options: CreateEngineOptions = {}): Promise<E
   }
 
   const resourceDisposer = createEngineResourceDisposer(engine, ctx);
+  // Worklet `process()` exceptions normally surface only as a generic
+  // AudioWorkletNode `processorerror`. The entry module sends an explanatory
+  // runtimeError first; re-dispatch it through the standard processorerror
+  // path so lifecycle ownership and cleanup remain centralized.
+  const onWorkletRuntimeError = (event: MessageEvent) => {
+    if (!isWorkletRuntimeErrorMessage(event.data)) return;
+    console.error(`Engine worklet runtime error: ${event.data.message}`);
+    engine.node.dispatchEvent(new Event('processorerror'));
+  };
+  engine.node.port.addEventListener('message', onWorkletRuntimeError);
+  engine.node.port.start?.();
 
   return {
     engine,
     ctx,
     capabilities: engine.capabilities,
-    dispose: resourceDisposer.dispose,
+    dispose: async () => {
+      engine.node.port.removeEventListener('message', onWorkletRuntimeError);
+      await resourceDisposer.dispose();
+    },
     cleanupState: resourceDisposer.state,
   };
 }

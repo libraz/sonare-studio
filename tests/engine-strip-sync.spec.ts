@@ -608,6 +608,23 @@ describe('createStripSync', () => {
     expect(sync.busIdFor('B')).toBe(1);
   });
 
+  it('replaces a renumbered bus with a neutral scene instead of retaining prior DSP', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const processed = makeBus('processed');
+    processed.strip = makeStrip({
+      inserts: [{ processor: 'saturation.tape', params: { drive: 0.8 }, enabled: true }],
+    });
+    const clean = makeBus('clean');
+
+    sync.sync([], makeMixer({ buses: [processed, clean] }));
+    clearCalls(engine);
+    sync.sync([], makeMixer({ buses: [clean] }));
+
+    expect(sync.busIdFor('clean')).toBe(1);
+    expect(engine.setBusStripJson).toHaveBeenCalledWith(1, busSceneJson(1, undefined));
+  });
+
   it('rejects more buses than the engine supports', () => {
     const { handle } = makeHandle();
     const sync = createStripSync(handle);

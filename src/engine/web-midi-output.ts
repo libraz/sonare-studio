@@ -162,6 +162,7 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
   let startGeneration = 0;
   let startPromise: Promise<boolean> | null = null;
   const routeByDestination = new Map<number, ExternalMidiRoute>();
+  const activeNotesByDestination = new Map<number, Set<number>>();
   let clockPortIds: string[] = [];
 
   const rebuildRouteIndex = (): void => {
@@ -178,6 +179,13 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
     outputsList = access
       ? [...access.outputs.values()].map((port) => ({ id: port.id, name: port.name ?? port.id }))
       : [];
+    // A disconnected device has already lost every note it was sustaining.
+    // Forget its ownership ledger so a later hot-plug cannot receive stale
+    // note-offs that might cut a new performer's notes on the same channel.
+    const connected = new Set(outputsList.map((port) => port.id));
+    for (const [destinationId, route] of routeByDestination) {
+      if (!connected.has(route.outputPortId)) activeNotesByDestination.delete(destinationId);
+    }
   };
 
   const sendToPort = (
@@ -203,10 +211,47 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
     ]);
   };
 
+  const rememberChannelVoice = (destinationId: number, bytes: ReadonlyArray<number>): void => {
+    const status = bytes[0] ?? 0;
+    const type = status & 0xf0;
+    if ((type !== 0x80 && type !== 0x90) || bytes.length < 3) return;
+    const pitch = (bytes[1] ?? 0) & 0x7f;
+    const velocity = (bytes[2] ?? 0) & 0x7f;
+    if (type === 0x90 && velocity > 0) {
+      const notes = activeNotesByDestination.get(destinationId) ?? new Set<number>();
+      notes.add(pitch);
+      activeNotesByDestination.set(destinationId, notes);
+      return;
+    }
+    const notes = activeNotesByDestination.get(destinationId);
+    notes?.delete(pitch);
+    if (notes?.size === 0) activeNotesByDestination.delete(destinationId);
+  };
+
+  const releaseChangedRoute = (
+    destinationId: number,
+    route: ExternalMidiRoute,
+    routeKeyStillShared: boolean,
+  ): void => {
+    const notes = activeNotesByDestination.get(destinationId);
+    if (notes && notes.size > 0) {
+      const port = access?.outputs.get(route.outputPortId);
+      for (const pitch of notes) {
+        sendToPort(port, [0x80 | (route.channel & 0x0f), pitch, 0]);
+      }
+    } else if (!routeKeyStillShared) {
+      // A route that owns its physical channel alone may still contain notes
+      // emitted before this bridge started, so retain the standard panic only
+      // when it cannot cut another track sharing that channel.
+      sendAllNotesOff(route);
+    }
+    activeNotesByDestination.delete(destinationId);
+  };
+
   const panicChangedRoutes = (next: readonly ExternalMidiRoute[]): void => {
     if (!access || routes.length === 0) return;
     const nextByDestination = new Map(next.map((route) => [route.destinationId, route]));
-    const panickedOutputs = new Set<string>();
+    const panickedRouteKeys = new Set<string>();
     for (const route of routes) {
       const nextRoute = nextByDestination.get(route.destinationId);
       if (
@@ -217,9 +262,14 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
         continue;
       }
       const key = outputChannelKey(route);
-      if (panickedOutputs.has(key)) continue;
-      sendAllNotesOff(route);
-      panickedOutputs.add(key);
+      const routeKeyStillShared = next.some(
+        (candidate) =>
+          candidate.destinationId !== route.destinationId && outputChannelKey(candidate) === key,
+      );
+      const hasTrackedNotes = (activeNotesByDestination.get(route.destinationId)?.size ?? 0) > 0;
+      if (!hasTrackedNotes && !routeKeyStillShared && panickedRouteKeys.has(key)) continue;
+      releaseChangedRoute(route.destinationId, route, routeKeyStillShared);
+      if (!hasTrackedNotes && !routeKeyStillShared) panickedRouteKeys.add(key);
     }
   };
 
@@ -233,7 +283,9 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
     const port = access?.outputs.get(route.outputPortId);
     if (!port) return false;
     const routed = withChannel([...bytes], route.channel);
-    return sendToPort(port, routed, timestampMs);
+    const sent = sendToPort(port, routed, timestampMs);
+    if (sent) rememberChannelVoice(destinationId, bytes);
+    return sent;
   };
 
   const deliver = (

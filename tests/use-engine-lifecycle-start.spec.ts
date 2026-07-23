@@ -230,6 +230,32 @@ describe('useEngineLifecycle startup transaction', () => {
     expect(state.handle.value).toBe(second.handle);
   });
 
+  it('shares one in-flight teardown and delays a replacement until it completes', async () => {
+    const pendingDispose = deferred<void>();
+    const first = makeHandle();
+    first.dispose.mockReturnValue(pendingDispose.promise);
+    const second = makeHandle();
+    mocks.createEngine.mockResolvedValueOnce(first.handle).mockResolvedValueOnce(second.handle);
+    const state = setupLifecycle();
+    await state.lifecycle.startEngine();
+
+    const firstTeardown = state.lifecycle.disposeEngineLifecycle();
+    const secondTeardown = state.lifecycle.disposeEngineLifecycle();
+    const replacement = state.lifecycle.ensureEngineStarted();
+
+    expect(secondTeardown).toBe(firstTeardown);
+    expect(first.dispose).toHaveBeenCalledTimes(1);
+    expect(mocks.createEngine).toHaveBeenCalledTimes(1);
+
+    pendingDispose.resolve();
+    await expect(Promise.all([firstTeardown, secondTeardown])).resolves.toEqual([
+      undefined,
+      undefined,
+    ]);
+    await expect(replacement).resolves.toBe(second.handle);
+    expect(mocks.createEngine).toHaveBeenCalledTimes(2);
+  });
+
   it('tears down a crashed published worklet and starts a clean replacement', async () => {
     const first = makeHandle();
     const second = makeHandle();

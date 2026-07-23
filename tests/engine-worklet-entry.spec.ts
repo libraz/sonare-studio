@@ -14,6 +14,7 @@ const {
   retuneReset,
   retuneDelete,
   retuneProcessMono,
+  bridgeProcess,
 } = vi.hoisted(() => ({
   init: vi.fn(() => Promise.resolve()),
   isInitialized: vi.fn(() => false),
@@ -28,6 +29,7 @@ const {
   retuneReset: vi.fn(),
   retuneDelete: vi.fn(),
   retuneProcessMono: vi.fn((samples: Float32Array) => samples),
+  bridgeProcess: vi.fn(() => true),
 }));
 
 vi.mock('@/wasm/worklet.js', () => ({
@@ -38,9 +40,7 @@ vi.mock('@/wasm/worklet.js', () => ({
     receiveCommand = receiveCommand;
     receiveCaptureRequest = receiveCaptureRequest;
     receiveTransportRequest = receiveTransportRequest;
-    process(): boolean {
-      return true;
-    }
+    process = bridgeProcess;
   },
   SonareRealtimeVoiceChangerWorkletProcessor: class {
     receiveMessage = voiceReceiveMessage;
@@ -113,6 +113,8 @@ beforeEach(() => {
   retuneDelete.mockClear();
   retuneProcessMono.mockClear();
   retuneProcessMono.mockImplementation((samples: Float32Array) => samples);
+  bridgeProcess.mockClear();
+  bridgeProcess.mockReturnValue(true);
   delete (globalThis as Record<string, unknown>).SonareEmbindInitPromise;
   delete (globalThis as Record<string, unknown>).SonareEmbindModuleFactory;
 });
@@ -139,6 +141,21 @@ describe('worklet-entry dispatch', () => {
     expect(instance.port.postMessage).toHaveBeenCalledWith({
       type: 'ready',
       runtimeTarget: 'embind',
+    });
+  });
+
+  it('reports a runtime bridge exception before stopping the processor', async () => {
+    bridgeProcess.mockImplementationOnce(() => {
+      throw new Error('native process failed');
+    });
+    const instance = await createReadyProcessor();
+    const output = new Float32Array(8).fill(1);
+
+    expect(instance.process([[]], [[output]])).toBe(false);
+    expect(output).toEqual(new Float32Array(8));
+    expect(instance.port.postMessage).toHaveBeenCalledWith({
+      type: 'runtimeError',
+      message: 'native process failed',
     });
   });
 

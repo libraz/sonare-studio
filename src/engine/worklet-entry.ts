@@ -166,7 +166,20 @@ class SonareEngineWorklet extends AudioWorkletProcessor {
 
   process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
     if (this.bridge) {
-      return this.bridge.process(inputs, outputs);
+      try {
+        return this.bridge.process(inputs, outputs);
+      } catch (error) {
+        // A thrown AudioWorklet `process()` exception is otherwise reduced to
+        // the browser's opaque `processorerror` event. Send the native/error
+        // message across the port first so the host can surface it, then end
+        // this processor; the host tears the engine down on that message.
+        this.port.postMessage({
+          type: 'runtimeError',
+          message: error instanceof Error ? error.message : String(error),
+        });
+        for (const channel of outputs[0] ?? []) channel.fill(0);
+        return false;
+      }
     }
     for (const channel of outputs[0] ?? []) {
       channel.fill(0);

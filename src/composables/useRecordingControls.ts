@@ -197,23 +197,25 @@ export function useRecordingControls(options: RecordingControlsOptions) {
     }
     const midiArmed = midiRecording.armedTrackId.value !== null;
     const audioArmed = recording.armedTrackId.value !== null;
-    if (
-      midiArmed &&
-      audioArmed &&
-      !transport.isPlaying.value &&
-      appSettings.settings.countInBars > 0
-    ) {
-      const startPpq = Math.max(0, transport.positionPpq.value);
+    if (midiArmed && audioArmed) {
       const generation = ++sharedRecordGeneration;
-      void recording.record().then((started) => {
+      void (async () => {
+        // Permission/device opening must finish before either recorder owns
+        // transport time. This makes first-use microphone prompts harmless to
+        // the MIDI onset and prevents a failed audio arm from starting MIDI
+        // alone.
+        if (!(await recording.requestMic())) return;
         if (disposed || generation !== sharedRecordGeneration) return;
-        if (started) midiRecording.record(startPpq);
-        else midiRecording.record();
-      });
+        const startPpq = Math.max(0, transport.positionPpq.value);
+        const preserveCountIn = !transport.isPlaying.value && appSettings.settings.countInBars > 0;
+        const started = preserveCountIn
+          ? await recording.record()
+          : await recording.record(startPpq);
+        if (disposed || generation !== sharedRecordGeneration || !started) return;
+        midiRecording.record(startPpq);
+      })();
       return;
     }
-    // MIDI starts first so it owns the transport punch-in when there is no
-    // shared count-in; audio then records from the rolling transport.
     if (midiArmed) midiRecording.record();
     if (audioArmed) void recording.record();
   }

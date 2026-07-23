@@ -109,6 +109,55 @@ describe('useWebMidi', () => {
     expect(wasmMock.close).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps 14-bit CC and RPN state isolated per MIDI input and resets it on reconnect', async () => {
+    const first = new FakeMidiInput();
+    const second = new FakeMidiInput();
+    const onControlChange = vi.fn();
+    wasmMock.bindWebMidi.mockResolvedValue({
+      access: {
+        inputs: new Map([
+          ['first', first],
+          ['second', second],
+        ]),
+      },
+      inputs: () => [
+        { id: 'first', name: 'First' },
+        { id: 'second', name: 'Second' },
+      ],
+      close: wasmMock.close,
+    });
+    const webMidi = useWebMidi({ onControlChange });
+
+    await webMidi.connect({} as never);
+    first.send([0xb0, 1, 64], 10);
+    second.send([0xb0, 33, 5], 11);
+    expect(onControlChange).toHaveBeenLastCalledWith({
+      channel: 0,
+      controller: 33,
+      value: 5,
+      timeStampMs: 11,
+    });
+    first.send([0xb0, 101, 0], 12);
+    first.send([0xb0, 100, 2], 13);
+    second.send([0xb0, 6, 64], 14);
+    expect(onControlChange).toHaveBeenLastCalledWith({
+      channel: 0,
+      controller: 6,
+      value: 64,
+      timeStampMs: 14,
+    });
+
+    webMidi.disconnect();
+    await webMidi.connect({} as never);
+    first.send([0xb0, 33, 5], 15);
+    expect(onControlChange).toHaveBeenLastCalledWith({
+      channel: 0,
+      controller: 33,
+      value: 5,
+      timeStampMs: 15,
+    });
+  });
+
   it('decodes RPN data entry with parameter and high-resolution value', async () => {
     const onControlChange = vi.fn();
     const webMidi = useWebMidi({ onControlChange });

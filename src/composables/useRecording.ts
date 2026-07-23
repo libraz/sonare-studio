@@ -216,6 +216,8 @@ export function useRecording(
   let recordingTrackIds: number[] = [];
   let recordingTempoBpm = 120;
   let recordingCaptureSource: RecordingCaptureSource = 'input';
+  let recordingInputDeviceKeys: string[] = [];
+  let recordingInputChannels: Array<number | undefined> = [];
   let recordingCounter = 0;
   let recordingLoop: { startPpq: number; endPpq: number } | null = null;
   const recordingOperations = new OperationGeneration();
@@ -225,7 +227,9 @@ export function useRecording(
 
   interface RecordingOperation {
     token: OperationToken;
+    identity: OperationIdentity;
     recorder: Recorder;
+    handle: EngineHandle;
     targetTrackIds: readonly number[];
     startAtPpq?: number;
     endAtPpq?: number;
@@ -283,15 +287,15 @@ export function useRecording(
   const operationIsCurrent = (operation: RecordingOperation): boolean =>
     activeOperation === operation &&
     recorder === operation.recorder &&
-    recorderHandle === resolveHandle() &&
-    recordingOperations.isCurrent(
-      operation.token,
-      recordingIdentity(operation.targetTrackIds, operation.startAtPpq, operation.endAtPpq),
-    );
+    recorderHandle === operation.handle &&
+    resolveHandle() === operation.handle &&
+    recordingOperations.isCurrent(operation.token, operation.identity);
 
   const clearTakeState = (): void => {
     recordingTrackIds = [];
     recordingCaptureSource = captureSource.value;
+    recordingInputDeviceKeys = [];
+    recordingInputChannels = [];
     recordingLoop = null;
     isRecording.value = false;
   };
@@ -534,15 +538,21 @@ export function useRecording(
     trackIds: ReadonlyArray<number>,
     source: RecordingCaptureSource,
     channelCount: number,
+    inputDeviceKeys?: ReadonlyArray<string>,
+    inputChannels?: ReadonlyArray<number | undefined>,
   ): RecordingChannelRoute[] => {
     if (source !== 'input') {
       return trackIds.map((trackId) => ({ trackId, channelIndex: null }));
     }
-    const fallbackDevice = inputDeviceId.value.trim();
-    const deviceKeys = trackIds.map((trackId) => {
-      const track = store.tracks.find((entry) => entry.id === trackId);
-      return track?.kind === 'audio' ? track.recordInputDeviceId?.trim() || fallbackDevice : '';
-    });
+    const deviceKeys =
+      inputDeviceKeys?.length === trackIds.length
+        ? [...inputDeviceKeys]
+        : trackIds.map((trackId) => {
+            const track = store.tracks.find((entry) => entry.id === trackId);
+            return track?.kind === 'audio'
+              ? track.recordInputDeviceId?.trim() || inputDeviceId.value.trim()
+              : '';
+          });
     const distinctDevices = [...new Set(deviceKeys)];
     if (distinctDevices.length >= 2) {
       return trackIds.map((trackId, trackIndex) => ({
@@ -553,10 +563,13 @@ export function useRecording(
         ),
       }));
     }
-    const requestedChannels = trackIds.map((trackId) => {
-      const track = store.tracks.find((entry) => entry.id === trackId);
-      return track?.kind === 'audio' ? track.recordInputChannel : undefined;
-    });
+    const requestedChannels =
+      inputChannels?.length === trackIds.length
+        ? [...inputChannels]
+        : trackIds.map((trackId) => {
+            const track = store.tracks.find((entry) => entry.id === trackId);
+            return track?.kind === 'audio' ? track.recordInputChannel : undefined;
+          });
     if (
       requestedChannels.every((requested) => requested === undefined) &&
       (trackIds.length <= 1 || channelCount < trackIds.length)
@@ -602,12 +615,13 @@ export function useRecording(
       error.value = 'Recording requires an audio track.';
       return false;
     }
-    const token = recordingOperations.begin(
-      recordingIdentity(targetTrackIds, startAtPpq, endAtPpq),
-    );
+    const identity = recordingIdentity(targetTrackIds, startAtPpq, endAtPpq);
+    const token = recordingOperations.begin(identity);
     const operation: RecordingOperation = {
       token,
+      identity,
       recorder: rec,
+      handle: recorderHandle as EngineHandle,
       targetTrackIds,
       ...(startAtPpq !== undefined ? { startAtPpq } : {}),
       ...(endAtPpq !== undefined ? { endAtPpq } : {}),
@@ -707,6 +721,16 @@ export function useRecording(
     recordingTrackIds = targetTrackIds;
     recordingTempoBpm = tempoBpm;
     recordingCaptureSource = captureSource.value;
+    recordingInputDeviceKeys = targetTrackIds.map((trackId) => {
+      const track = store.tracks.find((entry) => entry.id === trackId);
+      return track?.kind === 'audio'
+        ? track.recordInputDeviceId?.trim() || inputDeviceId.value.trim()
+        : '';
+    });
+    recordingInputChannels = targetTrackIds.map((trackId) => {
+      const track = store.tracks.find((entry) => entry.id === trackId);
+      return track?.kind === 'audio' ? track.recordInputChannel : undefined;
+    });
     // Cycle mode: loop enabled and the capture starts at the loop start (a
     // punch-in elsewhere, or an explicit auto-punch, records one linear take).
     const loopStart = transport.loopStartPpq.value;
@@ -837,6 +861,8 @@ export function useRecording(
             targetTrackIds,
             recordSource,
             result.channels.length,
+            recordingInputDeviceKeys,
+            recordingInputChannels,
           );
           const clipInputs: AddRecordedAudioClipInput[] = [];
           for (const route of routes) {
@@ -870,7 +896,13 @@ export function useRecording(
       const recordedSeconds = result.channels[0].length / result.sampleRate;
       const startSeconds = ppqToSecondsMap(tempoMap, result.startPpq);
       const lengthPpq = secondsToPpqMap(tempoMap, startSeconds + recordedSeconds) - result.startPpq;
-      const routes = recordingChannelRoutes(targetTrackIds, recordSource, result.channels.length);
+      const routes = recordingChannelRoutes(
+        targetTrackIds,
+        recordSource,
+        result.channels.length,
+        recordingInputDeviceKeys,
+        recordingInputChannels,
+      );
       const sharedMeta = routes.some((route) => route.channelIndex !== null)
         ? null
         : await stageAsset(result.channels, result.sampleRate, name);

@@ -577,9 +577,9 @@ describe('useRecording', () => {
     expect(recording.state.value).toBe('recording');
     expect(recording.error.value).toBe('Input device changes will apply to the next take.');
     expect(factory).toHaveBeenCalledOnce();
-    // The changed binding invalidates the in-flight take, but it must release
-    // the state machine so a subsequent take can start with the new device.
-    await expect(recording.stopRecord()).resolves.toBeNull();
+    // The active recorder and its route snapshot remain authoritative until
+    // this take is saved; the new device is used by the next take only.
+    await expect(recording.stopRecord()).resolves.not.toBeNull();
     expect(recording.state.value).toBe('idle');
 
     await recording.record();

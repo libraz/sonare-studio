@@ -528,9 +528,10 @@ describe('useEngineProjectSync', () => {
     });
 
     projectSync.syncAutomationState();
-    expect(automationSync.sync).toHaveBeenLastCalledWith([]);
+    expect(automationSync.sync).toHaveBeenLastCalledWith(store.automationLanes);
 
-    setAutomationStripMode(1, 'read');
+    setAutomationStripMode(1, 'touch');
+    store.documentGeneration += 1;
     await nextTick();
 
     expect(automationSync.sync).toHaveBeenLastCalledWith(store.automationLanes);
