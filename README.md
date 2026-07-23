@@ -1,7 +1,7 @@
 # sonare studio
 
 A digital audio workstation that runs entirely in the browser, built on the
-[libsonare](../libsonare) WebAssembly engine.
+[libsonare](https://github.com/libraz/libsonare) WebAssembly engine.
 
 - Multi-track sequencing with MIDI and audio clips, markers and sections
 - Piano roll with snap grid, velocity/controller lanes, ghost notes and
@@ -17,12 +17,13 @@ A digital audio workstation that runs entirely in the browser, built on the
 - Microphone recording with monitoring, count-in and metronome
 - Sample editor for audio clip content
 - Mastering chain (e.g. brickwall limiter, tape) on the master bus
-- Export: WAV / FLAC / MP3 mixdown (plus AAC / Opus where the browser
-  provides them) with loudness report, DAWproject, Standard MIDI File, MusicXML
+- Import/export: `.szd` projects, DAWproject, Standard MIDI File (SMF),
+  MusicXML, and WAV / FLAC / MP3 mixdown (plus AAC / Opus where the browser
+  provides them), with loudness reports for audio exports
 - Projects persist as `.szd` files (zip-packed JSON + assets) in the browser's
-  origin-private file system (OPFS), with autosave and local file
-  import/export; Web MIDI input, and output to external devices via a shared
-  project-default route, are supported where available
+  origin-private file system (OPFS), with autosave; Web MIDI input, and output
+  to external devices via a shared project-default route, are supported where
+  available
 - Display-only score annotations (dynamics, articulations, slurs) and an
   engraving-only transpose, applied from the score panel's Annotate palette
 - A unified menu bar (including Window and Options menus) with a header
@@ -170,7 +171,7 @@ The app is a static site, but it must be served cross-origin isolated:
   scripts or cross-origin fonts.
 - Keep every deployed file under 25 MiB (the Cloudflare Pages per-file
   limit); the largest artifact today is the bundled Verovio engraving worker
-  at roughly 8 MiB (`sonare.wasm` is just under 3 MiB).
+  at roughly 8 MiB (`sonare.wasm` is currently about 3.72 MiB).
 
 ## License
 

@@ -3,7 +3,7 @@
 `Mod` is `Cmd` on macOS and `Ctrl` elsewhere. Shortcuts are ignored while an
 input, textarea, select or contenteditable element has focus.
 
-> **Keep in sync:** the customizable shortcuts below are declared in the
+> **Registry source:** the customizable shortcuts below are declared in the
 > registry at [`src/ui/settings/shortcuts.ts`](../src/ui/settings/shortcuts.ts)
 > (`SHORTCUT_ACTIONS`); user overrides replace an action's default keys per
 > action. When you add or change an action there, update this table.
@@ -13,13 +13,20 @@ input, textarea, select or contenteditable element has focus.
 | Keys | Action | Scope |
 | --- | --- | --- |
 | `Space` | Play / Stop | global |
-| `L` | Toggle loop (whole project range) | global |
+| `L` | Toggle loop between the left and right locators | global |
+| `R` | Record | global |
+| `Home` | Go to project start | global |
+| `End` | Go to project end | global |
+| `,` / `.` | Nudge playhead back / forward one bar | global |
+| `[` / `]` | Set left / right locator at the playhead | global |
 
 ## Project
 
 | Keys | Action | Scope |
 | --- | --- | --- |
 | `Mod+S` | Save project (OPFS; also refreshes the autosave slot) | global |
+| `Mod+Shift+S` | Save project as… | global |
+| `Mod+O` | Open project | global |
 
 ## Editing
 
@@ -30,6 +37,8 @@ input, textarea, select or contenteditable element has focus.
 | `Mod+A` | Select all notes in the active clip | global |
 | `Q` | Quantize selected notes | global |
 | `Backspace` / `Delete` | Delete selected notes | editor dock |
+| `Shift+ArrowUp` / `Shift+ArrowDown` | Transpose selected notes up / down a semitone | editor dock |
+| `Mod+Shift+ArrowUp` / `Mod+Shift+ArrowDown` | Transpose selected notes up / down an octave | editor dock |
 | `Escape` | Cancel an in-flight drag gesture (piano roll) | editor dock |
 
 ## Arrangement
@@ -49,11 +58,21 @@ These fire when the arrangement zone has focus (last pointer-down).
 | `Mod+G` | Toggle snap grid | global |
 | `Mod+E` | Toggle the score panel (switches the dock to the piano roll) | global |
 
+## Tools
+
+| Keys | Action | Scope |
+| --- | --- | --- |
+| `1` | Select tool | global |
+| `2` | Draw tool | global |
+| `3` | Split tool | global |
+| `4` | Erase tool | global |
+
 ## Application
 
 | Keys | Action | Scope |
 | --- | --- | --- |
 | `Mod+,` | Open settings | global |
+| `Mod+K` | Open command palette | global |
 | `?` | Show shortcut help | global |
 
 ## Music typing (fixed, not remappable)
