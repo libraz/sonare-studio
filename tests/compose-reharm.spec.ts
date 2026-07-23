@@ -1,4 +1,6 @@
+import { chordPitchClasses } from '@libraz/libcantus';
 import { describe, expect, it } from 'vitest';
+import { editorChordToChord } from '@/compose/chord-io';
 import {
   melodyPitchClassesInRegion,
   modalInterchangeFor,
@@ -86,11 +88,12 @@ describe('modalInterchangeFor', () => {
 });
 
 describe('reharmCandidatesFor', () => {
-  it('combines substitutions with the negative-harmony reflection', () => {
+  it('combines substitutions, modal interchange and negative harmony', () => {
     const g7 = chord({ rootPc: 7, quality: 4 });
     const candidates = reharmCandidatesFor(g7, C_MAJOR);
     expect(candidates.length).toBeGreaterThan(0);
     expect(candidates.some((c) => c.kind === 'negative')).toBe(true);
+    expect(candidates.some((c) => c.kind === 'borrowed')).toBe(true);
     // Every candidate keeps the source region and differs from the source chord.
     for (const candidate of candidates) {
       expect(candidate.symbol.startPpq).toBe(0);
@@ -108,6 +111,17 @@ describe('reharmCandidatesFor', () => {
       (c) => `${c.symbol.rootPc}:${c.symbol.quality}:${c.symbol.bassPc ?? -1}`,
     );
     expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it('filters every palette, including negative harmony, to melody chord tones', () => {
+    // G major mirrors to F minor, which does not contain B. The prior
+    // implementation leaked that negative candidate despite melodyPcs.
+    const g = chord({ rootPc: 7, quality: 0 });
+    const candidates = reharmCandidatesFor(g, C_MAJOR, [11]);
+    expect(candidates.some((candidate) => candidate.kind === 'negative')).toBe(false);
+    for (const candidate of candidates) {
+      expect(chordPitchClasses(editorChordToChord(candidate.symbol))).toContain(11);
+    }
   });
 });
 

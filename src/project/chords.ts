@@ -15,6 +15,7 @@
  */
 
 import { PITCH_CLASS_NAMES } from '@/lib/pitch';
+import { spellPitch } from '@/notation/pitch-spelling';
 
 /** Sentinel used by the Project annotation encoding for "no pitch class". */
 const PC_NONE = 255;
@@ -213,13 +214,24 @@ function clampPitchClass(value: number): number | null {
   return pc >= 0 && pc <= 11 ? pc : null;
 }
 
-/** Formats a chord symbol for display, e.g. "Cmaj7", "Am7/G". */
-export function formatChordName(symbol: EditorChordSymbol): string {
-  const root = CHORD_PITCH_CLASS_NAMES[((symbol.rootPc % 12) + 12) % 12] ?? '?';
+/**
+ * Formats a chord symbol for display, e.g. "Cmaj7", "Am7/G".
+ *
+ * `keyFifths` uses the MusicXML convention. A negative value selects flat
+ * spellings, matching score and MusicXML chord symbols; the default preserves
+ * the sharp spelling used before key-aware display was introduced.
+ */
+export function formatChordName(symbol: EditorChordSymbol, keyFifths = 0): string {
+  const pitchClassName = (pc: number): string => {
+    const normalized = ((pc % 12) + 12) % 12;
+    const spelled = spellPitch(60 + normalized, keyFifths);
+    return `${spelled.step}${spelled.alter === 1 ? '#' : spelled.alter === -1 ? 'b' : ''}`;
+  };
+  const root = pitchClassName(symbol.rootPc);
   const suffix = chordSuffix(symbol);
   const name = `${root}${suffix}`;
   if (symbol.bassPc === undefined || symbol.bassPc === symbol.rootPc) return name;
-  const bass = CHORD_PITCH_CLASS_NAMES[((symbol.bassPc % 12) + 12) % 12] ?? '?';
+  const bass = pitchClassName(symbol.bassPc);
   return `${name}/${bass}`;
 }
 

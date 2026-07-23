@@ -13,6 +13,7 @@
  */
 
 import { type ComputedRef, computed, onScopeDispose, type Ref, ref, watch } from 'vue';
+import { keyFifthsForScaleHighlight } from '@/components/lists/key-modes';
 import { useAppSettings } from '@/composables/useAppSettings';
 import type { LockedRegion } from '@/compose/reharmonize-reactive';
 import {
@@ -195,6 +196,19 @@ export function useReactiveReharmonization(): ReactiveReharmonization {
     },
   );
 
+  // A loaded/initialized project can reuse the same editor clip id. Session
+  // locks and proposals belong to the old document nevertheless, so the
+  // store's monotonic document generation is the lifecycle boundary.
+  watch(
+    () => store.documentGeneration,
+    () => {
+      clearSettleTimer();
+      dismissPendingProposal();
+      lockedRegions.value = [];
+      resyncSnapshot();
+    },
+  );
+
   // Any chord-track change invalidates a pending proposal computed against the
   // old track (applying our own proposal clears pending first, so this only
   // catches external edits).
@@ -226,7 +240,13 @@ export function useReactiveReharmonization(): ReactiveReharmonization {
       const from = current[index];
       const to = proposal.proposal[index];
       return from !== undefined && to !== undefined
-        ? [{ index, from: formatChordName(from), to: formatChordName(to) }]
+        ? [
+            {
+              index,
+              from: formatChordName(from, keyFifthsForScaleHighlight(store.scaleHighlight)),
+              to: formatChordName(to, keyFifthsForScaleHighlight(store.scaleHighlight)),
+            },
+          ]
         : [];
     });
   });

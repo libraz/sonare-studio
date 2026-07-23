@@ -15,6 +15,7 @@
  */
 
 import {
+  chordPitchClasses,
   type HarmonicFunction,
   type KeyScale,
   modalInterchangePalette,
@@ -161,8 +162,9 @@ export function negativeHarmonyFor(symbol: EditorChordSymbol, key: KeyScale): Re
 
 /**
  * The full palette of substitutes for a single chord: functional/tritone/etc.
- * substitutions plus the negative-harmony reflection, de-duplicated and with the
- * source chord itself removed (so every entry is an actual alternative).
+ * substitutions, modal-interchange and negative-harmony candidates,
+ * de-duplicated and with the source chord itself removed (so every entry is an
+ * actual alternative).
  *
  * @param symbol The chord to reharmonize.
  * @param key The prevailing key.
@@ -173,10 +175,24 @@ export function reharmCandidatesFor(
   key: KeyScale,
   melodyPcs?: number[],
 ): ReharmCandidate[] {
-  const candidates = [...substitutionsFor(symbol, key, melodyPcs), negativeHarmonyFor(symbol, key)];
+  const candidates = [
+    ...substitutionsFor(symbol, key, melodyPcs),
+    ...modalInterchangeFor(key, symbol),
+    negativeHarmonyFor(symbol, key),
+  ];
   const seen: EditorChordSymbol[] = [];
   const unique: ReharmCandidate[] = [];
   for (const candidate of candidates) {
+    // libcantus applies this constraint to substitution candidates, but the
+    // modal-interchange and negative-harmony palettes are assembled here.
+    // Filter every source uniformly so the selected melody never becomes a
+    // non-chord tone merely because it came from a different palette.
+    if (
+      melodyPcs !== undefined &&
+      !melodyPcs.every((pc) => chordPitchClasses(editorChordToChord(candidate.symbol)).includes(pc))
+    ) {
+      continue;
+    }
     if (sameChord(candidate.symbol, symbol)) continue;
     if (seen.some((prior) => sameChord(prior, candidate.symbol))) continue;
     seen.push(candidate.symbol);

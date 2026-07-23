@@ -15,6 +15,8 @@
 
 import type { ChordData, ChordSpan, KeyScale, TimeSignature } from '@libraz/libcantus';
 import type { EditorChordSymbol } from '@/project/chords';
+import { meterBarLengthPpq, timeSignatureRanges } from '@/project/time-signature';
+import type { TimeSignatureSegment } from '@/project/types';
 import { inferChordTimelineFromNotes } from './chord-at-tick';
 import { chordSpanToEditorChord } from './chord-io';
 import { DEFAULT_KEY_SCALE } from './key';
@@ -31,6 +33,8 @@ export interface EstimateChordsOptions {
   harmonicRhythm?: number;
   /** End of the analyzed span in beats; defaults to the last note's end. */
   totalBeats?: number;
+  /** Full project meter map; when supplied, analysis is split at each change. */
+  timeSignatures?: ReadonlyArray<TimeSignatureSegment>;
 }
 
 /** The estimated chord track plus the analysis context that produced it. */
@@ -74,6 +78,42 @@ export function estimateChordsFromTracks(
       confidence: [],
       excludedTrackNames,
     };
+  }
+  if (options?.timeSignatures !== undefined) {
+    const startPpq = Math.min(...notes.map((note) => note.startBeat));
+    const endPpq = Math.max(...notes.map((note) => note.startBeat + note.durationBeat));
+    const ranges = timeSignatureRanges(options.timeSignatures, startPpq, endPpq);
+    const symbols: EditorChordSymbol[] = [];
+    const confidence: number[] = [];
+    let resolvedKey = options.key ?? DEFAULT_KEY_SCALE;
+    for (const range of ranges) {
+      const localTracks = harmonic.map((item) => ({
+        track: item.track,
+        notes: item.notes.flatMap((note) => {
+          const start = Math.max(note.startPpq, range.startPpq);
+          const end = Math.min(note.startPpq + note.durationPpq, range.endPpq);
+          return end > start
+            ? [{ ...note, startPpq: start - range.startPpq, durationPpq: end - start }]
+            : [];
+        }),
+      }));
+      const local = estimateChordsFromTracks(localTracks, {
+        key: options.key ?? resolvedKey,
+        ts: { numerator: range.numerator, denominator: range.denominator },
+        harmonicRhythm: meterBarLengthPpq(range),
+        totalBeats: range.endPpq - range.startPpq,
+      });
+      resolvedKey = local.key;
+      symbols.push(
+        ...local.symbols.map((symbol) => ({
+          ...symbol,
+          startPpq: symbol.startPpq + range.startPpq,
+          endPpq: symbol.endPpq + range.startPpq,
+        })),
+      );
+      confidence.push(...local.confidence);
+    }
+    return { symbols, key: resolvedKey, confidence, excludedTrackNames };
   }
   const result = inferChordTimelineFromNotes(notes, options);
   const symbols = result.timeline.segments.map((segment) =>

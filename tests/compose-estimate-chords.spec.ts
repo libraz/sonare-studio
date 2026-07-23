@@ -51,6 +51,32 @@ describe('estimateChordsFromTracks', () => {
     expect(result.symbols[0].rootPc).toBe(0);
   });
 
+  it('splits a batch estimate at meter changes instead of carrying the first bar length forward', () => {
+    const tracks: TrackWithNotes[] = [
+      {
+        track: track(1, 'Piano'),
+        notes: [
+          note(60, 0, 4),
+          note(64, 0, 4),
+          note(67, 0, 4),
+          note(62, 4, 3),
+          note(65, 4, 3),
+          note(69, 4, 3),
+        ],
+      },
+    ];
+    const result = estimateChordsFromTracks(tracks, {
+      key: C_MAJOR,
+      timeSignatures: [
+        { startPpq: 0, numerator: 4, denominator: 4 },
+        { startPpq: 4, numerator: 3, denominator: 4 },
+      ],
+    });
+
+    expect(result.symbols.some((symbol) => symbol.startPpq < 4 && symbol.endPpq > 4)).toBe(false);
+    expect(result.symbols.some((symbol) => symbol.startPpq >= 4 && symbol.endPpq <= 7)).toBe(true);
+  });
+
   it('returns nothing for an empty (or drums-only) arrangement', () => {
     const tracks: TrackWithNotes[] = [{ track: track(1, 'Drums'), notes: [note(36, 0, 1, 9)] }];
     const result = estimateChordsFromTracks(tracks, { key: C_MAJOR });

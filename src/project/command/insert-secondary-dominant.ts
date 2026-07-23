@@ -28,8 +28,8 @@ function insertAt(
  *
  * The new chord's region comes from whichever region abuts the target on its
  * left: a pre-existing gap is filled entirely; otherwise the second half of
- * the preceding chord's region is donated (or, for the first chord, the
- * second half of its own region). Total timeline coverage is unchanged —
+ * the preceding chord's region is donated (or, for the first chord, the first
+ * half of its own region). Total timeline coverage is unchanged —
  * nothing after the target moves.
  *
  * @returns True if a chord was inserted; false when the abutting region is

@@ -90,6 +90,43 @@ describe('proposeReactiveReharmonization', () => {
     expect(harmonicRhythmFor({ startPpq: 0, numerator: 6, denominator: 8 })).toBe(3);
   });
 
+  it('rebases the reactive harmonic grid to the active clip origin', () => {
+    vi.mocked(harmonizeMelody).mockClear();
+    proposeReactiveReharmonization({
+      current: [chord(10, 13, 11)],
+      melody: clashBar(10),
+      editedSpan: { startPpq: 10, endPpq: 13 },
+      key: C_MAJOR,
+      timeSignatures: [
+        { startPpq: 0, numerator: 4, denominator: 4 },
+        { startPpq: 8, numerator: 3, denominator: 4 },
+      ],
+      harmonicGridOriginPpq: 10,
+    });
+
+    const input = vi.mocked(harmonizeMelody).mock.calls[0][0];
+    expect(input.harmonicRhythm).toBe(3);
+    expect(input.melody[0]?.startBeat).toBe(0);
+  });
+
+  it('restarts fresh reactive harmonization at every meter boundary', () => {
+    vi.mocked(harmonizeMelody).mockClear();
+    proposeReactiveReharmonization({
+      current: [chord(0, 4, 11), chord(4, 7, 11)],
+      melody: [...clashBar(0), ...clashBar(4).slice(0, 3)],
+      editedSpan: { startPpq: 0, endPpq: 7 },
+      key: C_MAJOR,
+      timeSignatures: [
+        { startPpq: 0, numerator: 4, denominator: 4 },
+        { startPpq: 4, numerator: 3, denominator: 4 },
+      ],
+    });
+
+    expect(vi.mocked(harmonizeMelody).mock.calls.map(([input]) => input.harmonicRhythm)).toEqual([
+      4, 3,
+    ]);
+  });
+
   it('keeps a chord that still fits its melody (hysteresis)', () => {
     // A C-major chord under a C-major arpeggio fits perfectly; even though it is
     // in scope, the pass must not disturb it.

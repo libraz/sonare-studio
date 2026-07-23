@@ -26,7 +26,7 @@ import {
   noteEventsToNewEditorNotes,
   noteEventToNewEditorNote,
 } from '@/compose/notes-io';
-import { harmonicTracksOnly, isDrumTrack, topVoiceOnly } from '@/compose/tracks';
+import { harmonicTracksOnly, isDrumTrack, isMelodyTrack, topVoiceOnly } from '@/compose/tracks';
 import type { EditorChordSymbol } from '@/project/chords';
 import type { EditorNote, EditorTrack, ScaleHighlightConfig } from '@/project/types';
 import { MAJOR_MODE_MASK } from '@/project/types';
@@ -262,6 +262,12 @@ describe('track hygiene', () => {
     expect(isDrumTrack(track({ name: 'Drums' }))).toBe(true);
     expect(isDrumTrack(track({ name: 'Percussion' }))).toBe(true);
     expect(isDrumTrack(track({ name: 'Lead Synth' }))).toBe(false);
+  });
+
+  it('recognizes explicitly named melody tracks without classifying accompaniment', () => {
+    expect(isMelodyTrack(track({ name: 'Lead Vocal' }))).toBe(true);
+    expect(isMelodyTrack(track({ name: 'Topline' }))).toBe(true);
+    expect(isMelodyTrack(track({ name: 'Piano Comp' }))).toBe(false);
   });
 
   it('classifies drum tracks by channel-10 majority', () => {

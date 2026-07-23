@@ -31,7 +31,7 @@ import {
 } from '@libraz/libcantus';
 import { type EditorChordSymbol, sameChord } from '@/project/chords';
 import type { ReharmonizeStrength } from '@/project/command/generate-harmonize';
-import { meterBarLengthPpq, timeSignatureAt } from '@/project/time-signature';
+import { meterBarLengthPpq, timeSignatureAt, timeSignatureRanges } from '@/project/time-signature';
 import type { ScaleHighlightConfig, TimeSignatureSegment } from '@/project/types';
 import { chordSpanToEditorChord, editorChordToChord } from './chord-io';
 import { effectiveKeyScale, scaleHighlightToKeyScale } from './key';
@@ -71,6 +71,12 @@ export interface ReactiveReharmonizeInput {
   key: ScaleHighlightConfig;
   /** Meter, for strong-beat weighting of the fit test. */
   timeSignatures: ReadonlyArray<TimeSignatureSegment>;
+  /**
+   * Absolute PPQ origin of the active clip's harmonic grid. The harmonizer
+   * receives clip-relative beats, matching the explicit Harmonize command;
+   * omitted preserves the project-origin grid used by standalone callers.
+   */
+  harmonicGridOriginPpq?: number;
   /**
    * Chord-slot length in quarter-note beats for the fresh harmonization pass.
    * Defaults to one bar of the meter governing the melody's start, so the
@@ -211,29 +217,62 @@ export function proposeReactiveReharmonization(
   const eligible = eligibleIndices(current, editedSpans);
   if (eligible.size === 0) return unchanged;
 
+  const gridOriginPpq = input.harmonicGridOriginPpq ?? 0;
   const melodyNotes: MelodyNote[] = input.melody.map((note) => ({
     pitch: note.pitch,
-    startBeat: note.startPpq,
+    startBeat: note.startPpq - gridOriginPpq,
     durationBeat: note.durationPpq,
   }));
   // Anchor the harmonic grid at one bar of the meter governing the melody's
   // start (quarter-note beats), matching generateHarmonization; a fixed 4 would
   // cross bar lines under 3/4, 6/8, etc.
-  const melodyStartPpq = Math.min(...input.melody.map((note) => note.startPpq));
-  const harmonicRhythm =
-    input.harmonicRhythm ??
-    meterBarLengthPpq(timeSignatureAt(input.timeSignatures, melodyStartPpq));
   let spans: ChordSpan[];
   try {
-    const result = harmonizeMelody({
-      melody: melodyNotes,
-      key: input.key.enabled ? scaleHighlightToKeyScale(input.key) : 'infer',
-      harmonicRhythm,
-      reharmonize: input.reharmonize ?? 'diatonic',
-      placement: { transposeSearch: false, octaveSearch: false },
-      seed: input.seed ?? 0,
-    });
-    spans = result.chords;
+    const startPpq = Math.min(...input.melody.map((note) => note.startPpq));
+    const endPpq = Math.max(...input.melody.map((note) => note.startPpq + note.durationPpq));
+    const meterRanges = timeSignatureRanges(input.timeSignatures, startPpq, endPpq);
+    if (input.harmonicRhythm === undefined && meterRanges.length > 1) {
+      let segmentKey: ReturnType<typeof scaleHighlightToKeyScale> | 'infer' = input.key.enabled
+        ? scaleHighlightToKeyScale(input.key)
+        : 'infer';
+      spans = [];
+      for (const range of meterRanges) {
+        const segmentMelody = input.melody.flatMap((note) => {
+          const start = Math.max(note.startPpq, range.startPpq);
+          const end = Math.min(note.startPpq + note.durationPpq, range.endPpq);
+          return end > start
+            ? [{ pitch: note.pitch, startBeat: start - range.startPpq, durationBeat: end - start }]
+            : [];
+        });
+        if (segmentMelody.length === 0) continue;
+        const result = harmonizeMelody({
+          melody: segmentMelody,
+          key: segmentKey,
+          harmonicRhythm: meterBarLengthPpq(range),
+          reharmonize: input.reharmonize ?? 'diatonic',
+          placement: { transposeSearch: false, octaveSearch: false },
+          seed: input.seed ?? 0,
+        });
+        segmentKey = result.key;
+        const offset = range.startPpq - gridOriginPpq;
+        spans.push(
+          ...result.chords.map((span) => ({ ...span, startBeat: span.startBeat + offset })),
+        );
+      }
+    } else {
+      const harmonicRhythm =
+        input.harmonicRhythm ??
+        meterBarLengthPpq(timeSignatureAt(input.timeSignatures, gridOriginPpq));
+      const result = harmonizeMelody({
+        melody: melodyNotes,
+        key: input.key.enabled ? scaleHighlightToKeyScale(input.key) : 'infer',
+        harmonicRhythm,
+        reharmonize: input.reharmonize ?? 'diatonic',
+        placement: { transposeSearch: false, octaveSearch: false },
+        seed: input.seed ?? 0,
+      });
+      spans = result.chords;
+    }
   } catch {
     return unchanged;
   }
@@ -256,7 +295,7 @@ export function proposeReactiveReharmonization(
       continue;
     }
     const mid = (chord.startPpq + chord.endPpq) / 2;
-    const freshSpan = freshAt(mid);
+    const freshSpan = freshAt(mid - gridOriginPpq);
     if (freshSpan === null) {
       proposal.push({ ...chord });
       continue;

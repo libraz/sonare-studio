@@ -28,7 +28,7 @@ import { type EditorChordSymbol, sanitizeChordSymbols, toProjectChordSymbols } f
 import type { RawNote } from '../midi-events';
 import { audibleMidiProjector, projectMidiClipNoteOccurrences } from '../midi-projection';
 import { getProject, notesToProjectEvents, useProjectStore } from '../store';
-import { meterBarLengthPpq, timeSignatureAt } from '../time-signature';
+import { meterBarLengthPpq, timeSignatureAt, timeSignatureRanges } from '../time-signature';
 import { execute } from './history';
 import { requireEditableClip } from './utils';
 
@@ -116,32 +116,77 @@ export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {
     params.key ??
     (store.scaleHighlight.enabled ? scaleHighlightToKeyScale(store.scaleHighlight) : 'infer');
   const transpose = params.transpose ?? false;
-  const harmonicRhythm =
-    params.harmonicRhythm ??
-    meterBarLengthPpq(timeSignatureAt(target.timeSignatures, target.startPpq));
-
-  const result = harmonizeMelody({
-    melody,
-    key,
-    harmonicRhythm,
-    reharmonize: params.reharmonize ?? 'diatonic',
-    placement: { transposeSearch: transpose, octaveSearch: transpose },
-    seed: params.seed ?? 0,
-  });
-
-  const generated = sanitizeChordSymbols(
-    spansToChordSymbols(result, melodyEndBeat, target.startPpq).map((chord) => ({
-      ...chord,
-      startPpq: Math.max(target.startPpq, chord.startPpq),
-      endPpq: Math.min(target.endPpq, chord.endPpq),
-    })),
-  );
+  const meterRanges = timeSignatureRanges(target.timeSignatures, target.startPpq, target.endPpq);
+  const shouldSplitForMeter = params.harmonicRhythm === undefined && meterRanges.length > 1;
+  let shift = 0;
+  let generated: EditorChordSymbol[];
+  if (shouldSplitForMeter) {
+    let segmentKey = key;
+    const segmentShifts: number[] = [];
+    const symbols: EditorChordSymbol[] = [];
+    for (const range of meterRanges) {
+      const localStart = range.startPpq - target.startPpq;
+      const localEnd = range.endPpq - target.startPpq;
+      const segmentMelody = melody.flatMap((note) => {
+        const start = Math.max(note.startBeat, localStart);
+        const end = Math.min(note.startBeat + note.durationBeat, localEnd);
+        return end > start
+          ? [{ ...note, startBeat: start - localStart, durationBeat: end - start }]
+          : [];
+      });
+      if (segmentMelody.length === 0) continue;
+      const result = harmonizeMelody({
+        melody: segmentMelody,
+        key: segmentKey,
+        harmonicRhythm: meterBarLengthPpq(range),
+        reharmonize: params.reharmonize ?? 'diatonic',
+        placement: { transposeSearch: transpose, octaveSearch: transpose },
+        seed: params.seed ?? 0,
+      });
+      segmentKey = result.key;
+      segmentShifts.push(result.transposeSemitones);
+      symbols.push(
+        ...spansToChordSymbols(result, localEnd - localStart, range.startPpq).map((chord) => ({
+          ...chord,
+          startPpq: Math.max(range.startPpq, chord.startPpq),
+          endPpq: Math.min(range.endPpq, chord.endPpq),
+        })),
+      );
+    }
+    generated = sanitizeChordSymbols(symbols);
+    if (
+      transpose &&
+      segmentShifts.length > 0 &&
+      segmentShifts.every((value) => value === segmentShifts[0])
+    ) {
+      shift = segmentShifts[0];
+    }
+  } else {
+    const harmonicRhythm =
+      params.harmonicRhythm ??
+      meterBarLengthPpq(timeSignatureAt(target.timeSignatures, target.startPpq));
+    const result = harmonizeMelody({
+      melody,
+      key,
+      harmonicRhythm,
+      reharmonize: params.reharmonize ?? 'diatonic',
+      placement: { transposeSearch: transpose, octaveSearch: transpose },
+      seed: params.seed ?? 0,
+    });
+    generated = sanitizeChordSymbols(
+      spansToChordSymbols(result, melodyEndBeat, target.startPpq).map((chord) => ({
+        ...chord,
+        startPpq: Math.max(target.startPpq, chord.startPpq),
+        endPpq: Math.min(target.endPpq, chord.endPpq),
+      })),
+    );
+    shift = transpose ? result.transposeSemitones : 0;
+  }
   const clipEndPpq = target.endPpq;
   const keptChords = store.chords.filter(
     (chord) => chord.endPpq <= clip.startPpq || chord.startPpq >= clipEndPpq,
   );
   const sanitized = sanitizeChordSymbols([...keptChords, ...generated]);
-  const shift = transpose ? result.transposeSemitones : 0;
   const project = getProject();
 
   if (shift === 0) {

@@ -29,20 +29,18 @@ import {
   type TensionPoint,
   tensionCurve,
 } from '@libraz/libcantus';
+import { timeSignatureRanges } from '@/project/time-signature';
 import type { TimeSignatureSegment } from '@/project/types';
 import { DEFAULT_KEY_SCALE } from './key';
 import { timeSignatureAtPpq } from './meter';
 import { editorNotesToNoteEvents } from './notes-io';
-import { harmonicTracksOnly, type TrackWithNotes } from './tracks';
+import { harmonicTracksOnly, isMelodyTrack, type TrackWithNotes } from './tracks';
 
 /** A track's notes already flattened to absolute timeline PPQ. */
 export type { TrackWithNotes };
 
 /** Track-name conventions that hint at a bass part. */
 const BASS_NAME_PATTERN = /\b(bass|sub|808|low)\b/i;
-
-/** Track-name conventions that hint at a lead/melody part. */
-const MELODY_NAME_PATTERN = /\b(lead|melody|vocal|vox|topline|solo)\b/i;
 
 /** Track-name conventions that hint at a harmony/backing part. */
 const HARMONY_NAME_PATTERN = /\b(chord|harmony|backing|pad|keys?|piano|rhythm|comp)\b/i;
@@ -76,7 +74,7 @@ export interface ArrangementReport {
 function inferRole(track: TrackWithNotes): 'melody' | 'harmony' | 'bass' | 'other' {
   const name = track.track.name;
   if (BASS_NAME_PATTERN.test(name)) return 'bass';
-  if (MELODY_NAME_PATTERN.test(name)) return 'melody';
+  if (isMelodyTrack(track.track)) return 'melody';
   if (HARMONY_NAME_PATTERN.test(name)) return 'harmony';
   if (track.notes.length > 0) {
     const avg = track.notes.reduce((sum, note) => sum + note.pitch, 0) / track.notes.length;
@@ -105,6 +103,34 @@ function toArrangementTracks(harmonic: ReadonlyArray<TrackWithNotes>) {
   }));
 }
 
+/** Clips tracks to a meter range and re-bases them for libcantus's local meter. */
+function tracksInMeterRange(
+  tracks: ReadonlyArray<TrackWithNotes>,
+  startPpq: number,
+  endPpq: number,
+): TrackWithNotes[] {
+  return tracks.map((item) => ({
+    track: item.track,
+    notes: item.notes.flatMap((note) => {
+      const start = Math.max(note.startPpq, startPpq);
+      const end = Math.min(note.startPpq + note.durationPpq, endPpq);
+      return end > start ? [{ ...note, startPpq: start - startPpq, durationPpq: end - start }] : [];
+    }),
+  }));
+}
+
+function analysisRanges(
+  harmonic: ReadonlyArray<TrackWithNotes>,
+  timeSignatures: ReadonlyArray<TimeSignatureSegment> | undefined,
+) {
+  const notes = harmonic.flatMap((item) => item.notes);
+  const start = Math.min(...notes.map((note) => note.startPpq));
+  const end = Math.max(...notes.map((note) => note.startPpq + note.durationPpq));
+  return timeSignatures === undefined
+    ? [{ startPpq: start, endPpq: end, numerator: 4, denominator: 4 }]
+    : timeSignatureRanges(timeSignatures, start, end);
+}
+
 /**
  * Analyzes an arrangement, returning the clashing notes and the tracks that
  * were excluded as percussion.
@@ -126,19 +152,28 @@ export function analyzeArrangementTracks(
     // scale with no degrees.
     return { key: key ?? DEFAULT_KEY_SCALE, conflicts: [], excludedTrackNames };
   }
-  const analysis = analyzeArrangement(
-    toArrangementTracks(harmonic),
-    optionsFor(key, timeSignatures),
-  );
-  const conflicts = analysis.conflicts.map<ArrangementConflict>((conflict) => ({
-    ppq: conflict.beat,
-    trackName: conflict.trackName,
-    pitch: conflict.pitch,
-    safety: conflict.safety,
-    reasons: conflict.reasons,
-    ...(conflict.rationale !== undefined ? { rationale: conflict.rationale } : {}),
-  }));
-  return { key: analysis.key, conflicts, excludedTrackNames };
+  let resolvedKey: KeyScale | undefined = key;
+  const conflicts: ArrangementConflict[] = [];
+  for (const range of analysisRanges(harmonic, timeSignatures)) {
+    const local = tracksInMeterRange(harmonic, range.startPpq, range.endPpq);
+    if (local.every((track) => track.notes.length === 0)) continue;
+    const analysis = analyzeArrangement(toArrangementTracks(local), {
+      ...optionsFor(resolvedKey, undefined),
+      ts: { numerator: range.numerator, denominator: range.denominator },
+    });
+    resolvedKey = analysis.key;
+    conflicts.push(
+      ...analysis.conflicts.map<ArrangementConflict>((conflict) => ({
+        ppq: conflict.beat + range.startPpq,
+        trackName: conflict.trackName,
+        pitch: conflict.pitch,
+        safety: conflict.safety,
+        reasons: conflict.reasons,
+        ...(conflict.rationale !== undefined ? { rationale: conflict.rationale } : {}),
+      })),
+    );
+  }
+  return { key: resolvedKey ?? DEFAULT_KEY_SCALE, conflicts, excludedTrackNames };
 }
 
 /**
@@ -159,5 +194,11 @@ export function arrangementTensionCurve(
 ): TensionPoint[] {
   const { harmonic } = harmonicTracksOnly(tracks);
   if (harmonic.length === 0) return [];
-  return tensionCurve(toArrangementTracks(harmonic), { ...optionsFor(key, timeSignatures), step });
+  return analysisRanges(harmonic, timeSignatures).flatMap((range) =>
+    tensionCurve(toArrangementTracks(tracksInMeterRange(harmonic, range.startPpq, range.endPpq)), {
+      ...optionsFor(key, undefined),
+      ts: { numerator: range.numerator, denominator: range.denominator },
+      step,
+    }).map((point) => ({ ...point, beat: point.beat + range.startPpq })),
+  );
 }

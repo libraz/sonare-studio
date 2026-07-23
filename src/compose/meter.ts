@@ -10,10 +10,8 @@
  */
 
 import { isStrongBeat, type TimeSignature } from '@libraz/libcantus';
+import { timeSignatureSegmentAt } from '@/project/time-signature';
 import type { TimeSignatureSegment } from '@/project/types';
-
-/** 4/4 fallback used when the project has no meter map. */
-const DEFAULT_SEGMENT: TimeSignatureSegment = { startPpq: 0, numerator: 4, denominator: 4 };
 
 /** Converts a project meter segment to a libcantus time signature. */
 export function segmentToTimeSignature(segment: TimeSignatureSegment): TimeSignature {
@@ -29,14 +27,7 @@ export function segmentAtPpq(
   segments: ReadonlyArray<TimeSignatureSegment>,
   ppq: number,
 ): TimeSignatureSegment {
-  if (segments.length === 0) return DEFAULT_SEGMENT;
-  const sorted = [...segments].sort((a, b) => a.startPpq - b.startPpq);
-  let governing = sorted[0];
-  for (const segment of sorted) {
-    if (segment.startPpq <= ppq) governing = segment;
-    else break;
-  }
-  return governing;
+  return timeSignatureSegmentAt(segments, ppq);
 }
 
 /** Resolves the libcantus time signature governing an absolute PPQ position. */

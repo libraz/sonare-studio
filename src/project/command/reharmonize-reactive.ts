@@ -105,6 +105,7 @@ export function proposeReharmonizationForActiveClip(
     ...(params.locked !== undefined ? { locked: params.locked } : {}),
     key: store.scaleHighlight,
     timeSignatures: store.timeSignatures,
+    harmonicGridOriginPpq: clip.startPpq,
     ...(params.reharmonize !== undefined ? { reharmonize: params.reharmonize } : {}),
   });
   return { ...proposal, contextHash: reharmonizationContextHash(locked) };

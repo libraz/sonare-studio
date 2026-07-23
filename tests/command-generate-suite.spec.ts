@@ -119,6 +119,19 @@ describe('generation command suite', () => {
       expect(store.chords[0]).toMatchObject({ startPpq: 0, endPpq: 3 });
       expect(store.chords.at(-1)?.endPpq).toBe(store.activeClip?.lengthPpq);
     });
+
+    it('restarts the default harmonization grid at a meter change', () => {
+      addCMajorMelody();
+      store.timeSignatures = [
+        { startPpq: 0, numerator: 4, denominator: 4 },
+        { startPpq: 4, numerator: 3, denominator: 4 },
+      ];
+
+      harmonizeFromMelodyCommand({ seed: 0 });
+
+      expect(store.chords.some((chord) => chord.startPpq < 4 && chord.endPpq > 4)).toBe(false);
+      expect(store.chords.some((chord) => chord.startPpq >= 4 && chord.endPpq <= 7)).toBe(true);
+    });
   });
 
   describe('generateMotifCommand', () => {

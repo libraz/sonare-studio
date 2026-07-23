@@ -37,6 +37,9 @@ const PERCUSSION_CHANNEL_FRACTION = 0.5;
  */
 const DRUM_NAME_PATTERN = /\b(drums?|perc(?:ussion)?|kit|cajon|conga|bongo|timbale)\b/i;
 
+/** Conventional names that explicitly identify a melodic/top-line track. */
+const MELODY_NAME_PATTERN = /\b(lead|melody|vocal|vox|topline|solo)\b/i;
+
 /** A track paired with the editor notes it currently carries (across its clips). */
 export interface TrackWithNotes {
   track: EditorTrack;
@@ -65,6 +68,11 @@ export function isDrumTrack(track: EditorTrack, notes?: ReadonlyArray<EditorNote
     if (onPercussion / notes.length > PERCUSSION_CHANNEL_FRACTION) return true;
   }
   return false;
+}
+
+/** True when a track name explicitly declares it as the melodic/top voice. */
+export function isMelodyTrack(track: EditorTrack): boolean {
+  return MELODY_NAME_PATTERN.test(track.name);
 }
 
 /**

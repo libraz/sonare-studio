@@ -1,8 +1,12 @@
 import { estimateChordsFromTracks } from '@/compose/estimate-chords';
 import { effectiveKeyScale } from '@/compose/key';
-import { timeSignatureAtPpq } from '@/compose/meter';
 import { melodyPitchClassesInRegion } from '@/compose/reharm';
-import { harmonicTracksOnly, isDrumTrack, type TrackWithNotes } from '@/compose/tracks';
+import {
+  harmonicTracksOnly,
+  isDrumTrack,
+  isMelodyTrack,
+  type TrackWithNotes,
+} from '@/compose/tracks';
 import { ensureWasm } from '@/lib/wasm';
 import { estimateChordSymbols } from '@/notation/chords';
 import { loadAsset } from '@/persistence/assets';
@@ -10,23 +14,14 @@ import { type AudioChordDetector, analyzeAudioClipChords } from '../audio-chords
 import { type EditorChordSymbol, sanitizeChordSymbols, toProjectChordSymbols } from '../chords';
 import { projectMidiClipNoteOccurrences, projectMidiNoteOccurrences } from '../midi-projection';
 import { getProject, useProjectStore } from '../store';
+import { meterBarLengthPpq, timeSignatureAt } from '../time-signature';
 import { clipKind } from '../types';
 import { execute } from './history';
 import { requireClip } from './utils';
 
-/** PPQ length of a whole note (one PPQ unit = one quarter note). */
-const PPQ_PER_WHOLE_NOTE = 4;
-
 /** Measure length in PPQ at a position, from the active time signature. */
 function measureLengthAtPpq(store: ReturnType<typeof useProjectStore>, ppq: number): number {
-  let numerator = 4;
-  let denominator = 4;
-  for (const signature of store.timeSignatures) {
-    if (signature.startPpq > ppq) break;
-    numerator = signature.numerator;
-    denominator = signature.denominator;
-  }
-  return (numerator * PPQ_PER_WHOLE_NOTE) / denominator;
+  return meterBarLengthPpq(timeSignatureAt(store.timeSignatures, ppq));
 }
 
 /**
@@ -79,10 +74,10 @@ function harmonicTrackNotes(store: ReturnType<typeof useProjectStore>): TrackWit
 }
 
 /**
- * Melody (top-voice) pitch classes sounding within a timeline PPQ region,
- * pooled across the arrangement's harmonic tracks (percussion excluded). Used
- * to constrain melody-preserving reharmonization so a substitute never turns a
- * sustained melody note into a non-chord tone.
+ * Melody (top-voice) pitch classes sounding within a timeline PPQ region.
+ * Explicitly named melody tracks take precedence; otherwise the active MIDI
+ * clip is the only source. This avoids treating accompaniment voicings across
+ * every harmonic track as mandatory melody tones.
  *
  * @param startPpq Region start (inclusive), absolute timeline PPQ.
  * @param endPpq Region end (exclusive), absolute timeline PPQ.
@@ -91,7 +86,14 @@ function harmonicTrackNotes(store: ReturnType<typeof useProjectStore>): TrackWit
 export function arrangementMelodyPitchClasses(startPpq: number, endPpq: number): number[] {
   const store = useProjectStore();
   const { harmonic } = harmonicTracksOnly(harmonicTrackNotes(store));
-  const notes = harmonic.flatMap((item) => item.notes);
+  const namedMelody = harmonic.filter((item) => isMelodyTrack(item.track));
+  const active = store.activeClip;
+  const notes =
+    namedMelody.length > 0
+      ? namedMelody.flatMap((item) => item.notes)
+      : active && clipKind(active) === 'midi'
+        ? projectMidiClipNoteOccurrences(active)
+        : [];
   return melodyPitchClassesInRegion(notes, startPpq, endPpq);
 }
 
@@ -113,7 +115,7 @@ export function estimateChordsFromArrangement(): EstimatedChordSummary {
   const key = store.scaleHighlight.enabled ? effectiveKeyScale(store.scaleHighlight) : undefined;
   const estimate = estimateChordsFromTracks(tracks, {
     ...(key !== undefined ? { key } : {}),
-    ts: timeSignatureAtPpq(store.timeSignatures, 0),
+    timeSignatures: store.timeSignatures,
   });
   if (estimate.symbols.length > 0) setProjectChords(estimate.symbols);
   return {
@@ -164,7 +166,7 @@ export function detectChordsForClip(clipId: number): number {
   });
   const clipEnd = clip.startPpq + clip.lengthPpq;
   const kept = store.chords.filter(
-    (chord) => chord.startPpq < clip.startPpq || chord.startPpq >= clipEnd,
+    (chord) => chord.endPpq <= clip.startPpq || chord.startPpq >= clipEnd,
   );
   setProjectChords([...kept, ...detected]);
   return detected.length;
@@ -212,7 +214,7 @@ export async function detectChordsFromAudioClip(clipId: number): Promise<number>
   }
   const clipEnd = clip.startPpq + clip.lengthPpq;
   const kept = store.chords.filter(
-    (chord) => chord.startPpq < clip.startPpq || chord.startPpq >= clipEnd,
+    (chord) => chord.endPpq <= clip.startPpq || chord.startPpq >= clipEnd,
   );
   setProjectChords([...kept, ...detected]);
   return detected.length;
