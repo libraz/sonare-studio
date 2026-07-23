@@ -13,6 +13,7 @@
 import { getCurrentScope, onScopeDispose, type Ref, ref, watch } from 'vue';
 import { describeError } from '@/lib/errors';
 import { addRecordedMidiClip as addRecordedMidiClipCommand } from '@/project/commands';
+import { snapLoopRecordingStartPpq } from '@/project/loop-recording';
 import {
   sanitizeCcPoints,
   sanitizePitchBendPoints,
@@ -566,6 +567,15 @@ export function useMidiRecording(
     const explicit = startAtPpq !== undefined && Number.isFinite(startAtPpq) && startAtPpq >= 0;
     let startPpq = explicit ? (startAtPpq as number) : Math.max(0, transport.positionPpq.value);
     const wasRolling = transport.isPlaying.value;
+    if (!explicit) {
+      startPpq = snapLoopRecordingStartPpq(startPpq, {
+        explicit: false,
+        wasRolling,
+        loopEnabled: transport.loopEnabled.value,
+        loopStartPpq: transport.loopStartPpq.value,
+        loopEndPpq: transport.loopEndPpq.value,
+      });
+    }
     let countInPpq = 0;
     const tempoBpm = transport.tempo.value;
     const tempoMap = normalizeTempoMap(store.tempoSegments, tempoBpm);

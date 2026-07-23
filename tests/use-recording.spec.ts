@@ -475,7 +475,7 @@ describe('useRecording', () => {
     expect(fake.rec.arm).toHaveBeenCalledWith(trackId);
     // Open-ended: the safety punch-out is the 300 s buffer resolved to PPQ
     // (300 s = 600 PPQ at 120 BPM, added to startPpq).
-    expect(fake.getLastStart()).toEqual({
+    expect(fake.getLastStart()).toMatchObject({
       startPpq: 8,
       tempoBpm: 120,
       maxDurationSeconds: 300,
@@ -566,6 +566,27 @@ describe('useRecording', () => {
     );
   });
 
+  it('keeps an active recorder binding when the selected input device changes', async () => {
+    const { recording, fake, factory } = setup();
+    const trackId = addAudioTrack({ name: 'Vox' });
+    recording.arm(trackId);
+
+    await recording.record();
+    recording.setInputDeviceId('usb-mic');
+
+    expect(recording.state.value).toBe('recording');
+    expect(recording.error.value).toBe('Input device changes will apply to the next take.');
+    expect(factory).toHaveBeenCalledOnce();
+    // The changed binding invalidates the in-flight take, but it must release
+    // the state machine so a subsequent take can start with the new device.
+    await expect(recording.stopRecord()).resolves.toBeNull();
+    expect(recording.state.value).toBe('idle');
+
+    await recording.record();
+    expect(factory).toHaveBeenCalledTimes(2);
+    expect(fake.rec.start).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps default and explicit armed-track devices as separate capture routes', async () => {
     const { recording, factory, fake } = setup();
     const defaultTrackId = addAudioTrack({ name: 'Default Mic' });
@@ -629,7 +650,7 @@ describe('useRecording', () => {
     expect(toggleMetronome).toHaveBeenCalledWith(true);
     expect(seekPpq).toHaveBeenCalledWith(4); // startPpq - countInPpq
     // The capture still starts at startPpq; the pre-roll is transport-only.
-    expect(fake.getLastStart()).toEqual({
+    expect(fake.getLastStart()).toMatchObject({
       startPpq: 8,
       tempoBpm: 120,
       maxDurationSeconds: 300,
@@ -653,7 +674,7 @@ describe('useRecording', () => {
 
     await recording.record();
     expect(seekPpq).toHaveBeenCalledWith(0);
-    expect(fake.getLastStart()).toEqual({
+    expect(fake.getLastStart()).toMatchObject({
       startPpq: 2,
       tempoBpm: 120,
       maxDurationSeconds: 300,
@@ -702,7 +723,7 @@ describe('useRecording', () => {
     expect(await recording.record()).toBe(true);
     expect(seekPpq).not.toHaveBeenCalled();
     expect(play).not.toHaveBeenCalled();
-    expect(fake.getLastStart()).toEqual({
+    expect(fake.getLastStart()).toMatchObject({
       startPpq: 16,
       tempoBpm: 120,
       maxDurationSeconds: 300,
@@ -726,7 +747,7 @@ describe('useRecording', () => {
     expect(await recording.record(4)).toBe(true);
     expect(seekPpq).not.toHaveBeenCalled();
     expect(play).not.toHaveBeenCalled();
-    expect(fake.getLastStart()).toEqual({
+    expect(fake.getLastStart()).toMatchObject({
       startPpq: 4,
       tempoBpm: 120,
       maxDurationSeconds: 300,
@@ -754,7 +775,7 @@ describe('useRecording', () => {
     transport.positionSeconds.value = 0;
 
     expect(await recording.record()).toBe(true);
-    expect(fake.getLastStart()).toEqual({
+    expect(fake.getLastStart()).toMatchObject({
       startPpq: 0,
       tempoBpm: 120,
       maxDurationSeconds: 300,
@@ -771,7 +792,7 @@ describe('useRecording', () => {
     transport.positionSeconds.value = 6;
 
     expect(await recording.record(4, 12)).toBe(true);
-    expect(fake.getLastStart()).toEqual({
+    expect(fake.getLastStart()).toMatchObject({
       startPpq: 4,
       tempoBpm: 120,
       endPpq: 12,
@@ -790,7 +811,7 @@ describe('useRecording', () => {
     transport.isPlaying.value = true;
 
     expect(await recording.record(1, 3)).toBe(true);
-    expect(fake.getLastStart()).toEqual({
+    expect(fake.getLastStart()).toMatchObject({
       startPpq: 1,
       tempoBpm: 120,
       endPpq: 3,
@@ -1063,6 +1084,30 @@ describe('useRecording', () => {
         streamingRetuneSemitones: 24,
       }),
     );
+  });
+
+  it('explicitly suppresses voice processing when multiple devices are merged', async () => {
+    const { recording, factory } = setup();
+    const first = addAudioTrack({ name: 'Vox A' });
+    const second = addAudioTrack({ name: 'Vox B' });
+    setTrackRecordInputDeviceId(first, 'device-a');
+    setTrackRecordInputDeviceId(second, 'device-b');
+    recording.setTrackArmed(first, true);
+    recording.setTrackArmed(second, true);
+    recording.setVoiceChangerPreset('bright-idol');
+    recording.setStreamingRetuneSemitones(7);
+
+    await recording.requestMic();
+
+    expect(factory).toHaveBeenLastCalledWith(
+      fakeHandle,
+      expect.objectContaining({
+        inputDeviceIds: ['device-a', 'device-b'],
+        voiceChangerPreset: null,
+        streamingRetuneSemitones: 0,
+      }),
+    );
+    expect(recording.error.value).toContain('multiple recording devices');
   });
 
   it('hot-swaps realtime voice changer changes while recording when the binding supports it', async () => {

@@ -11,6 +11,11 @@
 
 import { ensureWasm } from '@/lib/wasm';
 import { type AudioAssetMeta, type AudioAssetTags, saveAsset } from '@/persistence/assets';
+import {
+  MAX_AUDIO_CHANNELS,
+  MAX_AUDIO_SAMPLE_RATE,
+  MAX_AUDIO_SAMPLES,
+} from '@/persistence/resource-limits';
 
 /**
  * The analysis functions consumed on import. Matches the libsonare module
@@ -123,6 +128,30 @@ export interface DecodeAndIngestOptions extends IngestAudioOptions {
    * resamples to the context rate, so this is the stored asset rate.
    */
   sampleRate?: number;
+}
+
+/** Rejects an oversized browser decode before copying any channel buffers. */
+function preflightDecodedAudio(decoded: AudioBuffer): void {
+  const { numberOfChannels, length, sampleRate } = decoded;
+  const totalSamples = numberOfChannels * length;
+  if (
+    !Number.isInteger(numberOfChannels) ||
+    numberOfChannels < 1 ||
+    numberOfChannels > MAX_AUDIO_CHANNELS ||
+    !Number.isInteger(length) ||
+    length < 1 ||
+    !Number.isSafeInteger(totalSamples) ||
+    totalSamples > MAX_AUDIO_SAMPLES
+  ) {
+    throw new RangeError(
+      `Decoded audio sample count must be between 1 and ${MAX_AUDIO_SAMPLES}, got ${totalSamples}`,
+    );
+  }
+  if (!Number.isFinite(sampleRate) || sampleRate <= 0 || sampleRate > MAX_AUDIO_SAMPLE_RATE) {
+    throw new RangeError(
+      `Decoded audio sample rate must be between 1 and ${MAX_AUDIO_SAMPLE_RATE}, got ${sampleRate}`,
+    );
+  }
 }
 
 /**
@@ -435,6 +464,7 @@ export async function decodeAndIngest(
   }
   const ctx = new OfflineCtx(2, 1, options.sampleRate ?? 48000);
   const decoded = await ctx.decodeAudioData(bytes.slice(0));
+  preflightDecodedAudio(decoded);
   const channels: Float32Array[] = [];
   for (let c = 0; c < decoded.numberOfChannels; c++) {
     channels.push(new Float32Array(decoded.getChannelData(c)));

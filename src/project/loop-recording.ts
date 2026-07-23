@@ -29,6 +29,36 @@ export interface NativeLoopRecordingDesc {
   audioSampleRate: number;
 }
 
+/** Ruler seeks may land fractionally near a cycle boundary. */
+export const LOOP_RECORDING_START_SNAP_TOLERANCE_PPQ = 0.5;
+
+/**
+ * Aligns a non-explicit, stopped recording start to the active cycle boundary.
+ * Audio and MIDI recording must share this rule or their takes begin on
+ * different PPQ positions after the same ruler seek.
+ */
+export function snapLoopRecordingStartPpq(
+  startPpq: number,
+  options: {
+    explicit: boolean;
+    wasRolling: boolean;
+    loopEnabled: boolean;
+    loopStartPpq: number;
+    loopEndPpq: number;
+  },
+): number {
+  if (
+    options.explicit ||
+    options.wasRolling ||
+    !options.loopEnabled ||
+    options.loopEndPpq <= options.loopStartPpq ||
+    Math.abs(startPpq - options.loopStartPpq) >= LOOP_RECORDING_START_SNAP_TOLERANCE_PPQ
+  ) {
+    return startPpq;
+  }
+  return options.loopStartPpq;
+}
+
 /**
  * Splits a linear capture into completed loop passes.
  *

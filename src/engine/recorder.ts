@@ -29,6 +29,7 @@
 
 import { dbToLinear } from '@/lib/db';
 import { ensureWasm } from '@/lib/wasm';
+import { type NormalizedTempoMap, ppqToSeconds, secondsToPpq } from '@/project/tempo-map';
 import type { EngineCaptureStatus, RealtimeVoiceChangerConfigInput } from '@/wasm/index.js';
 import type { EngineHandle } from './engine';
 import {
@@ -143,6 +144,13 @@ export interface StartRecordingOptions {
   /** Tempo in BPM used for all PPQ/time conversions (> 0). */
   tempoBpm: number;
   /**
+   * Normalized project tempo map for resolving a duration to PPQ. When
+   * present, it keeps implicit punch-out positions aligned with the capture
+   * buffer across tempo changes. `tempoBpm` remains the constant-tempo
+   * fallback for direct callers that do not have a project map.
+   */
+  tempoMap?: NormalizedTempoMap;
+  /**
    * Record-latency compensation in samples (>= 0): the first that many
    * captured frames are dropped when the take is assembled. A sound played
    * at timeline position T reaches the capture input roughly this many
@@ -160,10 +168,8 @@ export interface StartRecordingOptions {
    * Timeline position in PPQ where an open-ended (no `endPpq`) capture auto
    * punches out (> startPpq). It bounds the same real-time span as
    * `maxDurationSeconds`, but resolved through the project tempo map so the
-   * punch-out lands exactly when the preallocated buffer fills. When omitted,
-   * the recorder derives the bound from `tempoBpm`, which only matches a
-   * constant-tempo project — under a tempo map that estimate drifts, closing
-   * the window early or overrunning the buffer.
+   * punch-out lands exactly when the preallocated buffer fills. Supplying it
+   * overrides the implicit calculation from `tempoMap` (or `tempoBpm`).
    */
   punchOutPpq?: number;
 }
@@ -871,8 +877,14 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
         `Recording punchOutPpq must be finite and greater than startPpq, got ${startOptions.punchOutPpq}`,
       );
     }
+    const startSeconds = startOptions.tempoMap
+      ? ppqToSeconds(startOptions.tempoMap, startPpq)
+      : (startPpq * 60) / tempoBpm;
+    const ppqToCaptureSeconds = (ppq: number): number =>
+      (startOptions.tempoMap ? ppqToSeconds(startOptions.tempoMap, ppq) : (ppq * 60) / tempoBpm) -
+      startSeconds;
     const punchDurationSeconds = hasEndPpq
-      ? ((endPpq - startPpq) * 60) / tempoBpm
+      ? ppqToCaptureSeconds(endPpq)
       : DEFAULT_MAX_DURATION_SECONDS;
     const maxDurationSeconds = startOptions.maxDurationSeconds ?? punchDurationSeconds;
     if (!Number.isFinite(maxDurationSeconds) || maxDurationSeconds <= 0) {
@@ -914,7 +926,10 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
         startPpq,
         hasEndPpq
           ? endPpq
-          : (startOptions.punchOutPpq ?? startPpq + (maxDurationSeconds * tempoBpm) / 60),
+          : (startOptions.punchOutPpq ??
+              (startOptions.tempoMap
+                ? secondsToPpq(startOptions.tempoMap, startSeconds + maxDurationSeconds)
+                : startPpq + (maxDurationSeconds * tempoBpm) / 60)),
       );
       take = { trackId, startPpq, offsetSamples, sampleRate };
       phase = 'recording';

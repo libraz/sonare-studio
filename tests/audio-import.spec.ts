@@ -276,4 +276,27 @@ describe('decodeAndIngest', () => {
   it('fails with a clear error when OfflineAudioContext is unavailable (jsdom)', async () => {
     await expect(decodeAndIngest(new ArrayBuffer(8))).rejects.toThrow(/OfflineAudioContext/);
   });
+
+  it('rejects an oversized decoded buffer before copying channel data', async () => {
+    const getChannelData = vi.fn();
+    const decodeAudioData = vi.fn(
+      async () =>
+        ({
+          numberOfChannels: 2,
+          length: 33_554_433,
+          sampleRate: 48_000,
+          getChannelData,
+        }) as AudioBuffer,
+    );
+    vi.stubGlobal(
+      'OfflineAudioContext',
+      class {
+        decodeAudioData = decodeAudioData;
+      },
+    );
+
+    await expect(decodeAndIngest(new ArrayBuffer(8))).rejects.toThrow(/Decoded audio sample count/);
+    expect(getChannelData).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
 });

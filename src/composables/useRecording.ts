@@ -36,7 +36,11 @@ import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
 import type { AudioAssetMeta } from '@/persistence/assets';
 import { collectReferencedAudioAssetIds } from '@/project/asset-references';
 import { type AddRecordedAudioClipInput, addRecordedAudioClips } from '@/project/commands';
-import { loopRecordingSplits, loopRecordingTakeSlices } from '@/project/loop-recording';
+import {
+  loopRecordingSplits,
+  loopRecordingTakeSlices,
+  snapLoopRecordingStartPpq,
+} from '@/project/loop-recording';
 import { useProjectStore } from '@/project/store';
 import {
   normalizeTempoMap,
@@ -302,6 +306,9 @@ export function useRecording(
 
   /** Lazily (re)creates the recorder for the current engine handle. */
   const ensureRecorder = (): Recorder | null => {
+    // A live take owns its recorder binding. Replacing it mid-take makes the
+    // stop path stale and can leave the recording state stuck indefinitely.
+    if (state.value !== 'idle') return recorder;
     const handle = resolveHandle();
     if (!handle) return null;
     const deviceIds = armedInputDeviceIds();
@@ -314,12 +321,21 @@ export function useRecording(
     recorder?.dispose();
     micReady.value = false;
     inputLevel.value = 0;
+    const distinctDevices = new Set(deviceIds.map((id) => id.trim()));
+    const suppressInputEffects = captureSource.value === 'input' && distinctDevices.size >= 2;
+    if (
+      suppressInputEffects &&
+      (voiceChangerPreset.value !== 'off' || streamingRetuneSemitones.value !== 0)
+    ) {
+      error.value =
+        'Voice changer and retune are unavailable for multiple recording devices; record with a single or aggregate device to enable them.';
+    }
     recorder = recorderFactory(handle, {
       voiceChangerPreset:
-        voiceChangerPreset.value === 'off'
+        suppressInputEffects || voiceChangerPreset.value === 'off'
           ? null
           : (voiceChangerPreset.value as RealtimeVoiceChangerConfigInput),
-      streamingRetuneSemitones: streamingRetuneSemitones.value,
+      streamingRetuneSemitones: suppressInputEffects ? 0 : streamingRetuneSemitones.value,
       captureSource: captureSource.value,
       inputDeviceId: inputDeviceId.value,
       inputDeviceIds: deviceIds,
@@ -505,6 +521,7 @@ export function useRecording(
     error.value = null;
     const next = deviceId.trim();
     if (state.value !== 'idle') {
+      inputDeviceId.value = next;
       error.value = 'Input device changes will apply to the next take.';
       return;
     }
@@ -622,16 +639,14 @@ export function useRecording(
       // Auto-punch: the engine punch window opens exactly at this position;
       // no loop-snap, count-in or cycle-split applies.
       startPpq = startAtPpq as number;
-    } else if (
-      // Cycle recording: starting from stop with the loop on and the playhead
-      // near the loop start snaps the capture to the exact loop start, so the
-      // takes align with the loop window (ruler seeks land on fractional ppq).
-      !wasRolling &&
-      transport.loopEnabled.value &&
-      transport.loopEndPpq.value > transport.loopStartPpq.value &&
-      Math.abs(startPpq - transport.loopStartPpq.value) < 0.5
-    ) {
-      startPpq = transport.loopStartPpq.value;
+    } else {
+      startPpq = snapLoopRecordingStartPpq(startPpq, {
+        explicit: false,
+        wasRolling,
+        loopEnabled: transport.loopEnabled.value,
+        loopStartPpq: transport.loopStartPpq.value,
+        loopEndPpq: transport.loopEndPpq.value,
+      });
     }
     const endPpq = explicitEnd ? (endAtPpq as number) : undefined;
     if (endPpq !== undefined && endPpq <= startPpq) {
@@ -651,7 +666,7 @@ export function useRecording(
       }
       transport.seekPpq(startPpq - countInPpq);
     }
-    const startOptions: Parameters<Recorder['start']>[0] = { startPpq, tempoBpm };
+    const startOptions: Parameters<Recorder['start']>[0] = { startPpq, tempoBpm, tempoMap };
     if (endPpq !== undefined) {
       const startSeconds = ppqToSecondsMap(tempoMap, startPpq);
       const endSeconds = ppqToSecondsMap(tempoMap, endPpq);
@@ -727,7 +742,13 @@ export function useRecording(
 
   const stopRecord = async (): Promise<number | null> => {
     const operation = activeOperation;
-    if (state.value !== 'recording' || !operation || recorder !== operation.recorder) return null;
+    if (state.value !== 'recording' || !operation) return null;
+    if (recorder !== operation.recorder) {
+      finishOperation(operation);
+      error.value =
+        'Recording input changed before the take could be stopped. The take was discarded.';
+      return null;
+    }
     const rec = operation.recorder;
     const current = (): boolean => operationIsCurrent(operation);
     const complete = (clipId: number | null): number | null => {
@@ -750,7 +771,11 @@ export function useRecording(
       }
       return null;
     }
-    if (!current()) return complete(null);
+    if (!current()) {
+      error.value =
+        'Recording input changed before the take could be saved. The take was discarded.';
+      return complete(null);
+    }
     isRecording.value = false;
     state.value = 'ingesting';
     if (!result || result.channels.length === 0 || result.channels[0].length === 0) {

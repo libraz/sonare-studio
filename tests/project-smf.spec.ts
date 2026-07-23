@@ -342,12 +342,13 @@ describe('smfToProjectDocument', () => {
         },
       ],
       markers: [],
-      sections: [],
+      sections: [{ name: 'Verse', color: '#60a5fa', startPpq: 0, endPpq: 1 }],
     };
 
     const roundTrip = await smfToProjectDocument(await projectDocumentToSmf(source), 'export.mid');
 
     expect(roundTrip.tempoSegments).toEqual([{ startPpq: 0, bpm: 100 }]);
+    expect(roundTrip.markers).toEqual([{ ppq: 0, name: 'Cue: Verse' }]);
     expect(roundTrip.tracks[0].instrument).toEqual({
       kind: 'synth-preset',
       preset: 'sub-bass',
@@ -363,6 +364,48 @@ describe('smfToProjectDocument', () => {
     expect(roundTrip.tracks[0].clips[0].polyPressureLanes).toEqual([
       { channel: 0, pitch: 36, points: [{ ppq: 0.75, value: 90 }] },
     ]);
+  });
+
+  it('does not add a channel-0 program change to a channel-1-only track', async () => {
+    const source: ProjectDocument = {
+      schemaVersion: 3,
+      name: 'Channel one',
+      sampleRate: 48000,
+      tempoSegments: [{ startPpq: 0, bpm: 120 }],
+      timeSignatures: [{ startPpq: 0, numerator: 4, denominator: 4 }],
+      tracks: [
+        {
+          name: 'Lead',
+          color: '#000',
+          kind: 'midi',
+          mute: false,
+          solo: false,
+          volume: 1,
+          pan: 0,
+          instrument: { kind: 'synth-preset', preset: 'e-piano' },
+          clips: [
+            {
+              name: 'Lead',
+              startPpq: 0,
+              lengthPpq: 1,
+              sourceOffsetPpq: 0,
+              gain: 1,
+              loopEnabled: false,
+              loopLengthPpq: 0,
+              kind: 'midi',
+              notes: [{ pitch: 60, velocity: 100, startPpq: 0, durationPpq: 1, channel: 1 }],
+            },
+          ],
+        },
+      ],
+      markers: [],
+      sections: [],
+    };
+
+    const roundTrip = await smfToProjectDocument(await projectDocumentToSmf(source), 'lead.mid');
+
+    expect(roundTrip.tracks).toHaveLength(1);
+    expect(roundTrip.tracks[0].clips[0].notes).toEqual(source.tracks[0].clips[0].notes);
   });
 
   it('materializes MIDI clip loops, expression and the final partial repeat in SMF', async () => {

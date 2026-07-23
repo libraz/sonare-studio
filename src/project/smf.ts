@@ -747,6 +747,27 @@ function clipEvents(clip: DocumentClip, wasm: WasmModule): ProjectMidiEvent[] {
   return events;
 }
 
+/** MIDI channels that carry audible/event data in a clip.
+ *
+ * Instrument preludes must only be emitted on channels that are actually
+ * represented by notes or expression.  Emitting a default channel 0 program
+ * change creates an otherwise empty channel when a format-0 SMF is imported
+ * again.
+ */
+function usedMidiChannels(clip: DocumentClip): Set<number> {
+  const channels = new Set<number>();
+  const add = (channel: number, points: ReadonlyArray<unknown>): void => {
+    if (points.length > 0) channels.add(clampInt(channel, 0, 15));
+  };
+  for (const note of clip.notes) channels.add(clampInt(note.channel, 0, 15));
+  for (const lane of clip.ccLanes ?? []) add(lane.channel, lane.points);
+  for (const lane of clip.pitchBendLanes ?? []) add(lane.channel, lane.points);
+  for (const lane of clip.programChangeLanes ?? []) add(lane.channel, lane.points);
+  for (const lane of clip.channelPressureLanes ?? []) add(lane.channel, lane.points);
+  for (const lane of clip.polyPressureLanes ?? []) add(lane.channel, lane.points);
+  return channels;
+}
+
 function scratchClipLength(clip: DocumentClip): number {
   const lengthPpq = Math.max(
     DEFAULT_CLIP_LENGTH_PPQ,
@@ -815,6 +836,18 @@ async function projectFromDocument(
       keyMinor: meta.keyMinor,
     });
   }
+  // SMF has no native section-range construct. Preserve each section's cue at
+  // its start as a marker so external DAWs and a later SMF import still expose
+  // the arrangement landmarks.
+  for (const section of doc.sections) {
+    if (!section.name.trim()) continue;
+    project.setMarkerEx({
+      id: 0,
+      ppq: finiteNonNegative(section.startPpq),
+      name: section.name,
+      kind: MARKER_KIND_CUE_POINT,
+    });
+  }
   for (const track of doc.tracks.filter((entry) => entry.kind === 'midi')) {
     const trackId = project.addTrack({ kind: 'midi', name: track.name });
     for (const clip of track.clips.filter((entry) => (entry.kind ?? 'midi') === 'midi')) {
@@ -844,7 +877,7 @@ async function projectFromDocument(
           instrument?.kind === 'synth-preset' && instrument.gmProgram !== undefined
             ? clampInt(instrument.gmProgram, 0, 127)
             : clampInt(gmProgramForPreset(preset), 0, 127);
-        const channels = new Set([0, ...clip.notes.map((note) => clampInt(note.channel, 0, 15))]);
+        const channels = usedMidiChannels(clip);
         for (const ch of channels) {
           if (importedBank !== undefined) {
             events.unshift(
@@ -866,7 +899,7 @@ async function projectFromDocument(
       } else if (instrument?.kind === 'sf2') {
         const bank = clampInt(instrument.bank ?? 0, 0, 16383);
         const program = clampInt(instrument.program ?? 0, 0, 127);
-        const channels = new Set([0, ...clip.notes.map((note) => clampInt(note.channel, 0, 15))]);
+        const channels = usedMidiChannels(clip);
         for (const ch of channels) {
           events.unshift(
             ...wasm.Project.midiBankProgram(0, 0, ch, bank >> 7, bank & 0x7f, program),

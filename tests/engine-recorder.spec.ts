@@ -14,6 +14,7 @@ import {
   RecorderStateError,
 } from '@/engine/recorder';
 import { STREAMING_RETUNE_PROCESSOR } from '@/engine/streaming-retune';
+import { normalizeTempoMap } from '@/project/tempo-map';
 
 /** Builds a full meter snapshot; only targetId and the peak fields matter here. */
 function meterSnapshot(targetId: number, peakDbL: number, peakDbR = peakDbL) {
@@ -541,6 +542,30 @@ describe('createRecorder capture', () => {
     // start tempo; the explicit punchOutPpq must win over the constant-BPM math.
     await recorder.start({ startPpq: 4, tempoBpm: 120, punchOutPpq: 900 });
     expect(punch).toHaveBeenCalledWith(4, 900);
+  });
+
+  it('derives an implicit punch-out through the supplied tempo map', async () => {
+    const { handle, configureCapture, punch } = makeHandle(100);
+    const { deps } = makeDeps();
+    const recorder = createRecorder(handle, deps);
+    await recorder.requestMicrophone();
+    recorder.arm(1);
+
+    await recorder.start({
+      startPpq: 8,
+      tempoBpm: 120,
+      maxDurationSeconds: 30,
+      tempoMap: normalizeTempoMap([
+        { startPpq: 0, bpm: 120 },
+        { startPpq: 8, bpm: 60 },
+      ]),
+    });
+
+    expect(configureCapture).toHaveBeenLastCalledWith(
+      expect.objectContaining({ bufferFrames: 3000 }),
+    );
+    // The 30-second buffer starts at 60 BPM, therefore spans 30 PPQ, not 60.
+    expect(punch).toHaveBeenCalledWith(8, 38);
   });
 
   it('rejects a punch-out position at or before the start', async () => {

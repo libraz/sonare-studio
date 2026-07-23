@@ -3,6 +3,7 @@ import {
   loopRecordingSplits,
   loopRecordingTakeSlices,
   nativeLoopRecordingDesc,
+  snapLoopRecordingStartPpq,
 } from '@/project/loop-recording';
 
 describe('loopRecordingSplits', () => {
@@ -25,6 +26,34 @@ describe('loopRecordingSplits', () => {
     expect(loopRecordingSplits(0, 100)).toEqual([]);
     expect(loopRecordingSplits(100, 0)).toEqual([]);
     expect(loopRecordingSplits(Number.NaN, 100)).toEqual([]);
+  });
+});
+
+describe('snapLoopRecordingStartPpq', () => {
+  const loop = { loopEnabled: true, loopStartPpq: 8, loopEndPpq: 12 };
+
+  it('aligns stopped non-explicit recording near the cycle start', () => {
+    expect(snapLoopRecordingStartPpq(8.4, { ...loop, explicit: false, wasRolling: false })).toBe(8);
+  });
+
+  it('keeps rolling, explicit, distant, and invalid-loop starts unchanged', () => {
+    expect(snapLoopRecordingStartPpq(8.4, { ...loop, explicit: true, wasRolling: false })).toBe(
+      8.4,
+    );
+    expect(snapLoopRecordingStartPpq(8.4, { ...loop, explicit: false, wasRolling: true })).toBe(
+      8.4,
+    );
+    expect(snapLoopRecordingStartPpq(8.5, { ...loop, explicit: false, wasRolling: false })).toBe(
+      8.5,
+    );
+    expect(
+      snapLoopRecordingStartPpq(8.1, {
+        ...loop,
+        explicit: false,
+        wasRolling: false,
+        loopEndPpq: 8,
+      }),
+    ).toBe(8.1);
   });
 });
 

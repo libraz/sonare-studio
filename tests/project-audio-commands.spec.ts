@@ -26,6 +26,7 @@ import {
 } from '@/project/commands';
 import { getProject, useProjectStore } from '@/project/store';
 import { MAJOR_MODE_MASK } from '@/project/types';
+import { warpSourceSecondsAt } from '@/project/warp';
 import { installMockOpfs, MemoryFileHandle, uninstallMockOpfs } from './opfs-mock';
 
 const wasmModule = vi.hoisted(() => ({
@@ -269,6 +270,21 @@ describe('audio track and clip commands', () => {
     expect(store.clips.find((c) => c.id === clipId)?.lengthPpq).toBeCloseTo(1, 10);
   });
 
+  it('derives the default clip length from the tempo-map position', async () => {
+    installMockOpfs();
+    await saveAsset({ id: 'one-second', name: 'Hit', sampleRate: 4 }, [new Float32Array(4)]);
+    setTempoSegments([
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 4, bpm: 60 },
+    ]);
+    const trackId = addAudioTrack();
+
+    const clipId = await addAudioClip({ trackId, assetId: 'one-second', startPpq: 4 });
+
+    // One second at the 60 BPM segment occupies one quarter note, not two.
+    expect(store.clips.find((clip) => clip.id === clipId)?.lengthPpq).toBeCloseTo(1, 10);
+  });
+
   it('extracts audio melody with detected-key pitch quantize and snap-grid rhythm quantize', async () => {
     installMockOpfs();
     await saveAsset({ id: 'melody-source', name: 'Melody', sampleRate: 48000 }, [
@@ -346,6 +362,30 @@ describe('audio track and clip commands', () => {
     expect(store.clips.some((clip) => clip.id === consolidatedId)).toBe(false);
     expect(store.clips.find((clip) => clip.id === first)?.assetId).toBe('clip-a');
     expect(store.clips.find((clip) => clip.id === second)?.assetId).toBe('clip-b');
+  });
+
+  it('mixes overlapping audio clips when consolidating', async () => {
+    installMockOpfs();
+    await saveAsset({ id: 'overlap-a', name: 'A', sampleRate: 4 }, [
+      new Float32Array([1, 1, 1, 1]),
+    ]);
+    await saveAsset({ id: 'overlap-b', name: 'B', sampleRate: 4 }, [
+      new Float32Array([2, 2, 2, 2]),
+    ]);
+    const trackId = addAudioTrack({ name: 'Audio' });
+    const first = await addAudioClip({ trackId, assetId: 'overlap-a', startPpq: 0, lengthPpq: 1 });
+    const second = await addAudioClip({
+      trackId,
+      assetId: 'overlap-b',
+      startPpq: 0.5,
+      lengthPpq: 1,
+    });
+
+    const consolidatedId = await consolidateAudioClips([first, second], { tempoBpm: 60 });
+    const consolidated = store.clips.find((clip) => clip.id === consolidatedId);
+    const baked = await loadAsset(consolidated?.assetId ?? '');
+
+    expect(Array.from(baked.channels[0])).toEqual([1, 1, 3, 3, 2, 2]);
   });
 
   it('skips applying a consolidated asset when source clips changed during ingest', async () => {
@@ -999,6 +1039,53 @@ describe('audio track and clip commands', () => {
     });
     expect(readDoc().clips.find((clip) => clip.id === copyId)?.warp_ref_id).toBe(copyId);
     expect(readDoc().warp_maps?.find((map) => map.id === copyId)?.anchors).toHaveLength(3);
+  });
+
+  it('keeps curved warp source times continuous across split and trim boundaries', async () => {
+    const trackId = addAudioTrack();
+    const clipId = await addAudioClip({ trackId, assetId: 'asset-x', lengthPpq: 8 });
+    setClipWarp(clipId, {
+      enabled: true,
+      sourceBpm: 120,
+      anchors: [
+        { ppq: 2, sourceSeconds: 0.5 },
+        { ppq: 6, sourceSeconds: 3.2 },
+      ],
+    });
+    const sourceClip = store.clips.find((clip) => clip.id === clipId)!;
+    const source = {
+      sourceOffsetPpq: sourceClip.sourceOffsetPpq,
+      lengthPpq: sourceClip.lengthPpq,
+      warp: {
+        ...sourceClip.warp!,
+        ...(sourceClip.warp?.anchors
+          ? { anchors: sourceClip.warp.anchors.map((anchor) => ({ ...anchor })) }
+          : {}),
+      },
+    };
+    const rightId = splitClip(clipId, 4);
+    const right = store.clips.find((clip) => clip.id === rightId)!;
+    const left = store.clips.find((clip) => clip.id === clipId)!;
+
+    // The midpoint lies on a curved segment: its source time is 1.85 s,
+    // not the linear source-offset value of 2 s that Project.trimClip uses.
+    expect(right.warp?.sourceStartSeconds).toBeCloseTo(1.85, 8);
+    expect(left.warp?.sourceEndSeconds).toBeCloseTo(1.85, 8);
+    for (const ppq of [0, 1, 2, 4]) {
+      expect(warpSourceSecondsAt(right, ppq)).toBeCloseTo(warpSourceSecondsAt(source, ppq + 4)!, 8);
+    }
+    for (const ppq of [0, 1, 2, 4]) {
+      expect(warpSourceSecondsAt(left, ppq)).toBeCloseTo(warpSourceSecondsAt(source, ppq)!, 8);
+    }
+
+    trimClip(rightId, 5, 2);
+    const trimmed = store.clips.find((clip) => clip.id === rightId)!;
+    for (const ppq of [0, 1, 2]) {
+      expect(warpSourceSecondsAt(trimmed, ppq)).toBeCloseTo(
+        warpSourceSecondsAt(source, ppq + 5)!,
+        8,
+      );
+    }
   });
 
   it('clears warp failure-atomically and skips a missing map', async () => {
