@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { MusicXmlImportError } from '@/notation/musicxml-import';
 import { importMusicXmlInWorker } from '@/notation/musicxml-import-client';
 import type {
   MusicXmlImportWorkerRequest,
@@ -76,6 +77,23 @@ describe('importMusicXmlInWorker', () => {
     );
     controller.abort(new DOMException('cancelled', 'AbortError'));
     await expect(promise).rejects.toMatchObject({ name: 'AbortError' });
+    expect(worker.terminated).toBe(true);
+  });
+
+  it('restores MusicXmlImportError across the worker boundary', async () => {
+    const worker = new MockWorker();
+    const promise = importMusicXmlInWorker(
+      '<score-partwise>',
+      undefined,
+      undefined,
+      () => worker as unknown as Worker,
+    );
+    worker.respond({
+      type: 'error',
+      error: { kind: 'musicxml-import', message: 'MusicXML is not well-formed XML' },
+    });
+
+    await expect(promise).rejects.toBeInstanceOf(MusicXmlImportError);
     expect(worker.terminated).toBe(true);
   });
 });

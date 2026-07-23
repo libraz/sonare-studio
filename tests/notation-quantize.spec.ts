@@ -451,6 +451,19 @@ describe('quantizeToScore: voice separation', () => {
     expect(score.parts[0].measures[0].voices.map((v) => v.voice)).toEqual([1, 3]);
     expect(voiceEvents(score, 0, 1)).toEqual([r(0, 4, 'whole')]);
     expect(voiceEvents(score, 0, 3)[0]).toEqual(n([43], 0, 1, 'quarter'));
+    expect(
+      score.parts[0].measures[0].voices.find((voice) => voice.voice === 1)?.events[0].staff,
+    ).toBe(1);
+  });
+
+  it('fills the silent lower staff with a rest voice in an upper-only grand-staff score', () => {
+    const score = quantize([makeNote(72, 0, 1)], baseOptions({ clef: 'grand' }));
+
+    expect(score.parts[0].measures[0].voices.map((voice) => voice.voice)).toEqual([1, 3]);
+    expect(voiceEvents(score, 0, 3)).toEqual([r(0, 4, 'whole')]);
+    expect(
+      score.parts[0].measures[0].voices.find((voice) => voice.voice === 3)?.events[0].staff,
+    ).toBe(2);
   });
 
   it('uses the configured grand-staff split pitch for voice and staff assignment', () => {
@@ -463,7 +476,7 @@ describe('quantizeToScore: voice separation', () => {
       [makeNote(55, 0, 1)],
       baseOptions({ clef: 'grand', grandStaffSplitPitch: 50 }),
     );
-    expect(lowerSplit.parts[0].measures[0].voices.map((v) => v.voice)).toEqual([1]);
+    expect(lowerSplit.parts[0].measures[0].voices.map((v) => v.voice)).toEqual([1, 3]);
     expect(voiceEvents(lowerSplit, 0, 1)[0]).toEqual(n([55], 0, 1, 'quarter'));
     expect(lowerSplit.parts[0].measures[0].voices[0].events[0].staff).toBe(1);
   });
@@ -474,7 +487,7 @@ describe('quantizeToScore: voice separation', () => {
       baseOptions({ clef: 'grand' }),
     );
 
-    expect(score.parts[0].measures[0].voices.map((v) => v.voice)).toEqual([1]);
+    expect(score.parts[0].measures[0].voices.map((v) => v.voice)).toEqual([1, 3]);
     expect(voiceEvents(score, 0, 1).slice(0, 2)).toEqual([
       n([72], 0, 1, 'quarter'),
       n([58], 1, 1, 'quarter'),

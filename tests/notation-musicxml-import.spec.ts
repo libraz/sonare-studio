@@ -132,6 +132,31 @@ describe('importMusicXml error handling', () => {
     );
     const huge = noteXml.replace('<duration>1</duration>', '<duration>999999999999</duration>');
     expect(() => importMusicXml(huge)).toThrow(/numeric value/);
+    const strictNumeric = noteXml.replace('<duration>1</duration>', '<duration>11</duration>');
+    expect(() => importMusicXmlWithReport(strictNumeric, undefined, { maxNumericAbs: 10 })).toThrow(
+      /numeric value/,
+    );
+    const dynamics =
+      '<score-partwise><part-list/><part id="P1"><measure><attributes><divisions>1</divisions>' +
+      '</attributes><note dynamics="11"><pitch><step>C</step><octave>4</octave></pitch>' +
+      '<duration>1</duration></note></measure></part></score-partwise>';
+    expect(() => importMusicXmlWithReport(dynamics, undefined, { maxNumericAbs: 10 })).toThrow(
+      /dynamics value/,
+    );
+  });
+
+  it('collects nested loss-report elements without recursive traversal', () => {
+    const wrappers = '<wrapper>'.repeat(100);
+    const closes = '</wrapper>'.repeat(100);
+    const xml =
+      '<score-partwise><part-list/><part id="P1"><measure><direction>' +
+      `${wrappers}<harmony/>${closes}` +
+      '</direction></measure></part></score-partwise>';
+
+    expect(importMusicXmlWithReport(xml).report.issues).toContainEqual({
+      feature: 'harmony',
+      count: 1,
+    });
   });
 });
 
@@ -349,6 +374,23 @@ describe('importMusicXml global maps', () => {
     ]);
   });
 
+  it('advances a non-opening implicit split measure by its actual partial length', () => {
+    const xml =
+      '<score-partwise version="4.0"><part-list><score-part id="P1"/></part-list><part id="P1">' +
+      '<measure number="1"><attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes>' +
+      '<note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration></note></measure>' +
+      '<measure number="2" implicit="yes">' +
+      '<note><pitch><step>D</step><octave>4</octave></pitch><duration>1</duration></note></measure>' +
+      '<measure number="3"><attributes><key><fifths>1</fifths></key></attributes>' +
+      '<note><pitch><step>E</step><octave>4</octave></pitch><duration>4</duration></note></measure>' +
+      '</part></score-partwise>';
+
+    const doc = importMusicXml(xml);
+
+    expect(doc.markers).toEqual([{ ppq: 5, name: 'Key: G major' }]);
+    expect(trackNotes(doc, 0).map((note) => note.startPpq)).toEqual([0, 4, 5]);
+  });
+
   it('maps an unpitched note onto the percussion channel', () => {
     const xml =
       '<score-partwise version="4.0"><part-list><score-part id="P1">' +
@@ -494,5 +536,41 @@ describe('importMusicXml round-trip with the serializer', () => {
     };
     const doc = importMusicXml(serializeMusicXml(score));
     expect(trackNotes(doc, 0)).toEqual([]);
+  });
+
+  it('marks an opening pickup implicit so its following measure keeps its timing', () => {
+    const score: NotatedScore = {
+      parts: [
+        {
+          id: 'P1',
+          name: 'Pickup',
+          clef: 'treble',
+          measures: [
+            {
+              index: 0,
+              startPpq: 0,
+              lengthPpq: 1,
+              timeSig: { beats: 4, beatUnit: 4 },
+              voices: [{ voice: 1, events: [note([67], 1, 0, 1, QUARTER)] }],
+            },
+            {
+              index: 1,
+              startPpq: 1,
+              lengthPpq: 4,
+              timeSig: { beats: 4, beatUnit: 4 },
+              voices: [{ voice: 1, events: [note([60], 1, 1, 4, WHOLE)] }],
+            },
+          ],
+        },
+      ],
+      keyFifths: 0,
+      divisions: 960,
+    };
+
+    const xml = serializeMusicXml(score);
+    expect(xml).toContain('<measure number="0" implicit="yes">');
+    const doc = importMusicXml(xml);
+    expect(doc.pickupLengthPpq).toBe(1);
+    expect(trackNotes(doc, 0).map((event) => event.startPpq)).toEqual([0, 1]);
   });
 });

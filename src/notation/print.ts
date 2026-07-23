@@ -365,19 +365,5 @@ function appendPdfPageOverlay(
   }
 }
 
-/**
- * Triggers a browser download of a Blob via a transient anchor element.
- *
- * @param blob Data to download.
- * @param filename Suggested file name (including extension).
- */
-export function downloadBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
-}
+/** @deprecated Import {@link downloadBlob} from `@/lib/download` in new code. */
+export { downloadBlob } from '@/lib/download';

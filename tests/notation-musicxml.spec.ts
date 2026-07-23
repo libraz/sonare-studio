@@ -1432,6 +1432,49 @@ describe('serializeMusicXml percussion', () => {
     expect(q(doc, 'direction words').textContent).toContain('Drum map:');
   });
 
+  it('keeps an inferred percussion dynamic across measure boundaries', () => {
+    const quarter: NoteValue = { base: 'quarter', dots: 0 };
+    const score: NotatedScore = {
+      parts: [
+        {
+          id: 'P1',
+          name: 'Drums',
+          clef: 'treble',
+          measures: [
+            {
+              index: 0,
+              startPpq: 0,
+              lengthPpq: 1,
+              timeSig: { beats: 1, beatUnit: 4 },
+              voices: [
+                {
+                  voice: 1,
+                  events: [{ ...note([36], 1, 0, 1, quarter), midiChannels: [9], velocity: 100 }],
+                },
+              ],
+            },
+            {
+              index: 1,
+              startPpq: 1,
+              lengthPpq: 1,
+              timeSig: { beats: 1, beatUnit: 4 },
+              voices: [
+                {
+                  voice: 1,
+                  events: [{ ...note([36], 1, 1, 1, quarter), midiChannels: [9], velocity: 100 }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      keyFifths: 0,
+      divisions: 960,
+    };
+
+    expect(qa(parse(serializeMusicXml(score)), 'direction dynamics > mf')).toHaveLength(1);
+  });
+
   it('does not turn a named drum part into percussion when MIDI channel data says melodic', () => {
     const quarter: NoteValue = { base: 'quarter', dots: 0 };
     const score: NotatedScore = {
@@ -2125,6 +2168,52 @@ describe('serializeMusicXml accidentals', () => {
                   ],
                 },
               ],
+            },
+          ],
+        },
+      ],
+      keyFifths: 0,
+      divisions: 960,
+    };
+    expect(qa(parse(serializeMusicXml(score)), 'accidental').map((el) => el.textContent)).toEqual([
+      'sharp',
+    ]);
+  });
+
+  it('does not restate accidentals on an intermediate tied fragment', () => {
+    const half: NoteValue = { base: 'half', dots: 0 };
+    const score: NotatedScore = {
+      parts: [
+        {
+          id: 'P1',
+          name: 'Lead',
+          clef: 'treble',
+          measures: [
+            {
+              index: 0,
+              startPpq: 0,
+              lengthPpq: 2,
+              timeSig: { beats: 2, beatUnit: 4 },
+              voices: [{ voice: 1, events: [note([61], 1, 0, 2, half, { tieStart: true })] }],
+            },
+            {
+              index: 1,
+              startPpq: 2,
+              lengthPpq: 2,
+              timeSig: { beats: 2, beatUnit: 4 },
+              voices: [
+                {
+                  voice: 1,
+                  events: [note([61], 1, 2, 2, half, { tieStart: true, tieStop: true })],
+                },
+              ],
+            },
+            {
+              index: 2,
+              startPpq: 4,
+              lengthPpq: 2,
+              timeSig: { beats: 2, beatUnit: 4 },
+              voices: [{ voice: 1, events: [note([61], 1, 4, 2, half, { tieStop: true })] }],
             },
           ],
         },

@@ -903,9 +903,21 @@ function assignVoiceUnits(
     [2, lower],
   ] as const) {
     const voices = separateVoices(staffUnits, perStaffVoices);
+    // A grand staff must have a complete rest voice on both staves even when
+    // one hand is silent for the entire clip. This keeps the MusicXML part
+    // structurally complete and gives the serializer an explicit staff target.
+    if (voices.length === 0) {
+      assignments.push({ voice: grandStaffVoiceNumber(staff, 0), staff, units: [] });
+      continue;
+    }
     voices.forEach((voiceUnits, index) => {
       assignments.push({ voice: grandStaffVoiceNumber(staff, index), staff, units: voiceUnits });
     });
+  }
+  for (const staff of [1, 2] as const) {
+    if (!assignments.some((assignment) => assignment.staff === staff)) {
+      assignments.push({ voice: grandStaffVoiceNumber(staff, 0), staff, units: [] });
+    }
   }
   assignments.sort((a, b) => a.voice - b.voice);
   return assignments;
@@ -1284,10 +1296,11 @@ export function quantizeToScore(
     const voices: NotatedVoice[] = [];
     for (const entry of perVoiceMeasureEvents) {
       const events = entry.measures[measure.index];
+      const staff = clef === 'grand' ? (entry.voice <= 2 ? 1 : 2) : entry.staff;
       // Voice 1 is always present; higher voices only where they sound.
-      if (entry.voice > 1 && events.length === 0) continue;
+      if (entry.voice > 1 && events.length === 0 && clef !== 'grand') continue;
       voices.push(
-        fillVoiceMeasure(measure, events, beatGroupPpq(measure.timeSig), entry.voice, entry.staff),
+        fillVoiceMeasure(measure, events, beatGroupPpq(measure.timeSig), entry.voice, staff),
       );
     }
     if (voices[0]?.voice !== 1) {

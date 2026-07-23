@@ -21,6 +21,7 @@ import type { EditorNote } from '@/project/types';
 
 /** Sentinel used by the Project annotation encoding for "no pitch class". */
 const PC_NONE = 255;
+const GM_PERCUSSION_CHANNEL = 9;
 
 /** Estimation options for {@link estimateChordSymbols}. */
 export interface ChordEstimateOptions {
@@ -152,6 +153,9 @@ export function estimateChordSymbols(
     const weights = new Array<number>(12).fill(0);
     let bassPitch = Number.POSITIVE_INFINITY;
     for (const note of notes) {
+      // GM channel 10 (zero-based channel 9) is percussion. Its drum-map
+      // pitches are not harmonic material and must not produce score chords.
+      if (note.channel === GM_PERCUSSION_CHANNEL) continue;
       const overlap =
         Math.min(note.startPpq + note.durationPpq, end) - Math.max(note.startPpq, start);
       if (overlap <= 0) continue;

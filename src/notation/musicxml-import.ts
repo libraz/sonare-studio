@@ -73,6 +73,10 @@ export const DEFAULT_MUSICXML_IMPORT_LIMITS: Readonly<MusicXmlImportLimits> = Ob
   maxNumericAbs: 1_000_000_000,
 });
 
+function resolveImportLimits(limits: Partial<MusicXmlImportLimits> = {}): MusicXmlImportLimits {
+  return { ...DEFAULT_MUSICXML_IMPORT_LIMITS, ...limits };
+}
+
 interface XmlElement {
   tagName: string;
   attributes: Record<string, string>;
@@ -212,15 +216,12 @@ function childText(parent: XmlElement, tag: string): string | null {
 }
 
 /** Parses the first `tag` child as an integer, or null when absent/invalid. */
-function childInt(parent: XmlElement, tag: string): number | null {
+function childInt(parent: XmlElement, tag: string, maxNumericAbs: number): number | null {
   const text = childText(parent, tag);
   if (text === null) return null;
   if (!/^[+-]?\d+$/.test(text)) return null;
   const value = Number(text);
-  if (
-    !Number.isSafeInteger(value) ||
-    Math.abs(value) > DEFAULT_MUSICXML_IMPORT_LIMITS.maxNumericAbs
-  ) {
+  if (!Number.isSafeInteger(value) || Math.abs(value) > maxNumericAbs) {
     throw new MusicXmlImportError(`MusicXML numeric value exceeds the safe limit: ${text}`);
   }
   return value;
@@ -228,9 +229,14 @@ function childInt(parent: XmlElement, tag: string): number | null {
 
 function descendants(parent: XmlElement, tag: string): XmlElement[] {
   const out: XmlElement[] = [];
-  for (const child of parent.children) {
+  const pending = [...parent.children].reverse();
+  while (pending.length > 0) {
+    const child = pending.pop();
+    if (child === undefined) continue;
     if (child.tagName === tag) out.push(child);
-    out.push(...descendants(child, tag));
+    for (let index = child.children.length - 1; index >= 0; index -= 1) {
+      pending.push(child.children[index]);
+    }
   }
   return out;
 }
@@ -324,20 +330,20 @@ function parseScoreRoot(xml: string, limits: Partial<MusicXmlImportLimits> = {})
 }
 
 /** MIDI note number for a `<pitch>` element, or null when it is incomplete. */
-function pitchToMidi(pitch: XmlElement): number | null {
+function pitchToMidi(pitch: XmlElement, maxNumericAbs: number): number | null {
   const step = childText(pitch, 'step');
-  const octave = childInt(pitch, 'octave');
+  const octave = childInt(pitch, 'octave', maxNumericAbs);
   if (step === null || octave === null) return null;
   const semitone = STEP_SEMITONES[step.toUpperCase()];
   if (semitone === undefined) return null;
-  const alter = childInt(pitch, 'alter') ?? 0;
+  const alter = childInt(pitch, 'alter', maxNumericAbs) ?? 0;
   return (octave + 1) * 12 + semitone + alter;
 }
 
 /** MIDI note number for an `<unpitched>` display position, or null. */
-function unpitchedToMidi(unpitched: XmlElement): number | null {
+function unpitchedToMidi(unpitched: XmlElement, maxNumericAbs: number): number | null {
   const step = childText(unpitched, 'display-step');
-  const octave = childInt(unpitched, 'display-octave');
+  const octave = childInt(unpitched, 'display-octave', maxNumericAbs);
   if (step === null || octave === null) return null;
   const semitone = STEP_SEMITONES[step.toUpperCase()];
   if (semitone === undefined) return null;
@@ -345,7 +351,7 @@ function unpitchedToMidi(unpitched: XmlElement): number | null {
 }
 
 /** Reads the `<part-list>` into per-part names and instrument mappings. */
-function readPartList(root: XmlElement): Map<string, PartInfo> {
+function readPartList(root: XmlElement, maxNumericAbs: number): Map<string, PartInfo> {
   const parts = new Map<string, PartInfo>();
   const partList = childElements(root, 'part-list')[0];
   if (partList === undefined) return parts;
@@ -356,8 +362,8 @@ function readPartList(root: XmlElement): Map<string, PartInfo> {
     for (const midiInstrument of childElements(scorePart, 'midi-instrument')) {
       const instrumentId = midiInstrument.attributes.id;
       if (instrumentId === null) continue;
-      const midiChannel = childInt(midiInstrument, 'midi-channel');
-      const midiUnpitched = childInt(midiInstrument, 'midi-unpitched');
+      const midiChannel = childInt(midiInstrument, 'midi-channel', maxNumericAbs);
+      const midiUnpitched = childInt(midiInstrument, 'midi-unpitched', maxNumericAbs);
       instruments.set(instrumentId, {
         ...(midiChannel !== null ? { channel: midiChannel - 1 } : {}),
         ...(midiUnpitched !== null ? { unpitched: midiUnpitched - 1 } : {}),
@@ -397,27 +403,26 @@ function tempoFromDirection(element: XmlElement): number | null {
   return null;
 }
 
-function dynamicsPercentToVelocity(value: string | undefined): number | null {
+function dynamicsPercentToVelocity(
+  value: string | undefined,
+  maxNumericAbs: number,
+): number | null {
   if (value === undefined || value.trim() === '') return null;
   const percent = Number(value);
-  if (
-    !Number.isFinite(percent) ||
-    percent < 0 ||
-    Math.abs(percent) > DEFAULT_MUSICXML_IMPORT_LIMITS.maxNumericAbs
-  ) {
+  if (!Number.isFinite(percent) || percent < 0 || Math.abs(percent) > maxNumericAbs) {
     throw new MusicXmlImportError(`Invalid MusicXML dynamics value: ${value}`);
   }
   return clampInt((percent * 90) / 100, 1, 127);
 }
 
-function noteVelocity(value: string | undefined, current: number): number {
-  return dynamicsPercentToVelocity(value) ?? current;
+function noteVelocity(value: string | undefined, current: number, maxNumericAbs: number): number {
+  return dynamicsPercentToVelocity(value, maxNumericAbs) ?? current;
 }
 
-function dynamicsFromDirection(element: XmlElement): number | null {
+function dynamicsFromDirection(element: XmlElement, maxNumericAbs: number): number | null {
   const sound =
     element.tagName === 'sound' ? element : (descendants(element, 'sound')[0] ?? undefined);
-  return dynamicsPercentToVelocity(sound?.attributes.dynamics);
+  return dynamicsPercentToVelocity(sound?.attributes.dynamics, maxNumericAbs);
 }
 
 function collectLossReport(root: XmlElement, tempoConflictCount = 0): MusicXmlImportReport {
@@ -499,13 +504,14 @@ function applyAttributes(
   state: PartState,
   global: GlobalMaps,
   captureGlobal: boolean,
+  maxNumericAbs: number,
 ): void {
-  const divisions = childInt(attributes, 'divisions');
+  const divisions = childInt(attributes, 'divisions', maxNumericAbs);
   if (divisions !== null && divisions > 0) state.divisions = divisions;
   const time = childElements(attributes, 'time')[0];
   if (time !== undefined) {
-    const numerator = childInt(time, 'beats');
-    const denominator = childInt(time, 'beat-type');
+    const numerator = childInt(time, 'beats', maxNumericAbs);
+    const denominator = childInt(time, 'beat-type', maxNumericAbs);
     if (numerator !== null && denominator !== null && numerator > 0 && denominator > 0) {
       state.timeSigLengthPpq = numerator * (4 / denominator);
       if (captureGlobal) {
@@ -516,7 +522,7 @@ function applyAttributes(
   if (captureGlobal) {
     const key = childElements(attributes, 'key')[0];
     if (key !== undefined) {
-      const fifths = childInt(key, 'fifths');
+      const fifths = childInt(key, 'fifths', maxNumericAbs);
       if (fifths !== null) {
         const minor = childText(key, 'mode')?.toLowerCase() === 'minor';
         global.keys.push({ ppq: state.measureStartPpq, name: keyMarkerName(fifths, minor) });
@@ -525,7 +531,7 @@ function applyAttributes(
   }
   const transpose = childElements(attributes, 'transpose')[0];
   if (transpose !== undefined) {
-    const chromatic = childInt(transpose, 'chromatic');
+    const chromatic = childInt(transpose, 'chromatic', maxNumericAbs);
     if (chromatic !== null) state.chromaticTranspose = clampInt(chromatic, -127, 127);
   }
 }
@@ -542,28 +548,29 @@ function importNote(
   part: PartInfo,
   ties: TieTracker,
   notes: DocumentNote[],
+  maxNumericAbs: number,
 ): number {
   // Grace notes carry no duration and never advance the cursor.
   if (childElements(noteEl, 'grace').length > 0) return 0;
-  const durationDivisions = childInt(noteEl, 'duration') ?? 0;
+  const durationDivisions = childInt(noteEl, 'duration', maxNumericAbs) ?? 0;
   const durationPpq = durationDivisions / state.divisions;
   const advance = isChord ? 0 : durationPpq;
   if (childElements(noteEl, 'rest').length > 0) return advance;
 
-  const voice = childInt(noteEl, 'voice') ?? 1;
-  const staff = childInt(noteEl, 'staff') ?? 1;
+  const voice = childInt(noteEl, 'voice', maxNumericAbs) ?? 1;
+  const staff = childInt(noteEl, 'staff', maxNumericAbs) ?? 1;
   let pitch: number | null = null;
   let channel = 0;
   const pitchEl = childElements(noteEl, 'pitch')[0];
   if (pitchEl !== undefined) {
-    pitch = pitchToMidi(pitchEl);
+    pitch = pitchToMidi(pitchEl, maxNumericAbs);
   } else {
     const unpitchedEl = childElements(noteEl, 'unpitched')[0];
     if (unpitchedEl !== undefined) {
       channel = GM_PERCUSSION_CHANNEL;
       const instrumentId = childElements(noteEl, 'instrument')[0]?.attributes.id;
       const mapped = instrumentId !== undefined ? part.instruments.get(instrumentId) : undefined;
-      pitch = mapped?.unpitched ?? unpitchedToMidi(unpitchedEl);
+      pitch = mapped?.unpitched ?? unpitchedToMidi(unpitchedEl, maxNumericAbs);
       if (mapped?.channel !== undefined) channel = mapped.channel;
     }
   }
@@ -588,7 +595,7 @@ function importNote(
   }
   const note: DocumentNote = {
     pitch: clampInt(pitch, 0, 127),
-    velocity: noteVelocity(noteEl.attributes.dynamics, state.velocity),
+    velocity: noteVelocity(noteEl.attributes.dynamics, state.velocity, maxNumericAbs),
     startPpq: onsetPpq,
     durationPpq,
     channel,
@@ -607,6 +614,7 @@ function importPartNotes(
   canonicalTempos: ReadonlyArray<DocumentTempoSegment> | null,
   tempoConflicts: Set<string>,
   partId: string,
+  maxNumericAbs: number,
 ): DocumentNote[] {
   const notes: DocumentNote[] = [];
   const ties = new TieTracker();
@@ -624,24 +632,33 @@ function importPartNotes(
     for (const element of childElements(measure)) {
       switch (element.tagName) {
         case 'attributes':
-          applyAttributes(element, state, global, captureGlobal);
+          applyAttributes(element, state, global, captureGlobal, maxNumericAbs);
           break;
         case 'note': {
           const isChord = childElements(element, 'chord').length > 0;
           const onset = isChord ? chordHeadPpq : cursorPpq;
-          const advance = importNote(element, onset, isChord, state, part, ties, notes);
+          const advance = importNote(
+            element,
+            onset,
+            isChord,
+            state,
+            part,
+            ties,
+            notes,
+            maxNumericAbs,
+          );
           if (!isChord) chordHeadPpq = cursorPpq;
           cursorPpq += advance;
           if (cursorPpq > measureMaxPpq) measureMaxPpq = cursorPpq;
           break;
         }
         case 'backup': {
-          const duration = childInt(element, 'duration') ?? 0;
+          const duration = childInt(element, 'duration', maxNumericAbs) ?? 0;
           cursorPpq = Math.max(state.measureStartPpq, cursorPpq - duration / state.divisions);
           break;
         }
         case 'forward': {
-          const duration = childInt(element, 'duration') ?? 0;
+          const duration = childInt(element, 'duration', maxNumericAbs) ?? 0;
           cursorPpq += duration / state.divisions;
           if (cursorPpq > measureMaxPpq) measureMaxPpq = cursorPpq;
           break;
@@ -650,7 +667,7 @@ function importPartNotes(
         case 'sound': {
           const bpm = tempoFromDirection(element);
           if (bpm !== null && bpm > 0) {
-            const offset = childInt(element, 'offset') ?? 0;
+            const offset = childInt(element, 'offset', maxNumericAbs) ?? 0;
             const ppq = Math.max(0, cursorPpq + offset / state.divisions);
             if (captureGlobal) {
               global.tempos.set(ppq, bpm);
@@ -661,7 +678,7 @@ function importPartNotes(
               tempoConflicts.add(`${partId}:${ppq}:${bpm}`);
             }
           }
-          const dynamics = dynamicsFromDirection(element);
+          const dynamics = dynamicsFromDirection(element, maxNumericAbs);
           if (dynamics !== null) state.velocity = dynamics;
           break;
         }
@@ -807,8 +824,9 @@ export function importMusicXmlWithReport(
   fileName?: string,
   limits: Partial<MusicXmlImportLimits> = {},
 ): MusicXmlImportResult {
-  const root = parseScoreRoot(xml, limits);
-  const partInfos = readPartList(root);
+  const resolved = resolveImportLimits(limits);
+  const root = parseScoreRoot(xml, resolved);
+  const partInfos = readPartList(root, resolved.maxNumericAbs);
   const global: GlobalMaps = { tempos: new Map(), timeSignatures: [], keys: [] };
   const tracks: ProjectDocument['tracks'] = [];
   const partElements = childElements(root, 'part');
@@ -825,6 +843,7 @@ export function importMusicXmlWithReport(
       canonicalTempos,
       tempoConflicts,
       id,
+      resolved.maxNumericAbs,
     );
     if (index === 0) canonicalTempos = tempoSegments(global.tempos);
     const name = info.name || `Part ${index + 1}`;

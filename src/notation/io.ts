@@ -6,8 +6,11 @@
  * module deliberately stays focused on MusicXML and filename handling.
  */
 
+import { ensureFileExtension } from '@/lib/filename';
+import { preflightXmlBytes } from '@/lib/xml-preflight';
 import type { ProjectDocument } from '@/project/serialization';
 import { importMusicXmlInWorker } from './musicxml-import-client';
+import { extractMusicXmlFromMxl } from './musicxml-mxl';
 import { downloadBlob } from './print';
 
 export {
@@ -27,11 +30,7 @@ const MUSICXML_MIME = 'application/vnd.recordare.musicxml+xml';
  * @param extension Extension including the leading dot, e.g. ".musicxml".
  * @returns File name guaranteed to end with the extension.
  */
-export function ensureFileExtension(filename: string, extension: string): string {
-  return filename.toLowerCase().endsWith(extension.toLowerCase())
-    ? filename
-    : `${filename}${extension}`;
-}
+export { ensureFileExtension } from '@/lib/filename';
 
 /**
  * Downloads a MusicXML document as a .musicxml file.
@@ -47,10 +46,14 @@ export function exportMusicXml(xml: string, filename: string): void {
 /**
  * Reads a MusicXML file into a project document.
  *
- * @param file A `.musicxml` / `.xml` file chosen by the user.
+ * @param file A `.musicxml`, `.xml`, or compressed `.mxl` file chosen by the user.
  * @returns The imported project document.
  * @throws MusicXmlImportError When the file is not well-formed or supported.
  */
 export async function importMusicXmlFile(file: Blob & { name?: string }): Promise<ProjectDocument> {
-  return (await importMusicXmlInWorker(await file.text(), file.name)).document;
+  preflightXmlBytes(file.size, file.name ?? 'MusicXML file');
+  const xml = file.name?.toLowerCase().endsWith('.mxl')
+    ? extractMusicXmlFromMxl(new Uint8Array(await file.arrayBuffer()), file.name)
+    : await file.text();
+  return (await importMusicXmlInWorker(xml, file.name)).document;
 }

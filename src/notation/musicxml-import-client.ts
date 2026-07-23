@@ -1,6 +1,6 @@
 /** Cancellable main-thread facade for the one-shot MusicXML SAX worker. */
 
-import type { MusicXmlImportResult } from '@/notation/musicxml-import';
+import { MusicXmlImportError, type MusicXmlImportResult } from '@/notation/musicxml-import';
 import type {
   MusicXmlImportWorkerRequest,
   MusicXmlImportWorkerResponse,
@@ -44,7 +44,14 @@ export function importMusicXmlInWorker(
     const onMessage = (event: MessageEvent<MusicXmlImportWorkerResponse>): void => {
       const response = event.data;
       if (response.type === 'imported') settle(() => resolve(response.result));
-      else settle(() => reject(new Error(response.error)));
+      else
+        settle(() =>
+          reject(
+            response.error.kind === 'musicxml-import'
+              ? new MusicXmlImportError(response.error.message)
+              : new Error(response.error.message),
+          ),
+        );
     };
     const onError = (event: ErrorEvent): void => {
       settle(() => reject(new Error(event.message || 'MusicXML import worker failed')));

@@ -1,6 +1,10 @@
 /** One-shot SAX MusicXML parser worker. */
 
-import { importMusicXmlWithReport, type MusicXmlImportResult } from '@/notation/musicxml-import';
+import {
+  importMusicXmlWithReport,
+  MusicXmlImportError,
+  type MusicXmlImportResult,
+} from '@/notation/musicxml-import';
 
 export interface MusicXmlImportWorkerRequest {
   type: 'import';
@@ -10,7 +14,7 @@ export interface MusicXmlImportWorkerRequest {
 
 export type MusicXmlImportWorkerResponse =
   | { type: 'imported'; result: MusicXmlImportResult }
-  | { type: 'error'; error: string };
+  | { type: 'error'; error: { message: string; kind: 'musicxml-import' | 'unknown' } };
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -25,7 +29,10 @@ scope.addEventListener('message', (event: MessageEvent<MusicXmlImportWorkerReque
   } catch (error) {
     const response: MusicXmlImportWorkerResponse = {
       type: 'error',
-      error: error instanceof Error ? error.message : String(error),
+      error: {
+        message: error instanceof Error ? error.message : String(error),
+        kind: error instanceof MusicXmlImportError ? 'musicxml-import' : 'unknown',
+      },
     };
     scope.postMessage(response);
   }

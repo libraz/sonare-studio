@@ -180,6 +180,17 @@ describe('estimateChordSymbols', () => {
     expect(symbols).toHaveLength(0);
   });
 
+  it('does not infer chords from GM percussion-channel notes', () => {
+    const symbols = estimateChordSymbols(
+      [note(36, 0, 4), note(40, 0, 4), note(43, 0, 4)].map((drum) => ({
+        ...drum,
+        channel: 9,
+      })),
+      OPTIONS,
+    );
+    expect(symbols).toEqual([]);
+  });
+
   it('throws on a non-positive clip window', () => {
     expect(() => estimateChordSymbols([], { ...OPTIONS, clipLengthPpq: 0 })).toThrow(RangeError);
   });

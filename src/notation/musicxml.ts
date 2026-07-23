@@ -43,6 +43,7 @@ import {
   ppqToDivisions,
   ppqToNoteValue,
   type ScoreMetadata,
+  timeSigLengthPpq,
 } from './model';
 import { type SpelledPitch, type Step, spellPitch } from './pitch-spelling';
 import { staffForMeanPitch } from './quantize';
@@ -786,6 +787,10 @@ function serializePart(
   let prevTimeSig: NotatedTimeSig | undefined;
   let prevClef: NotatedClef | undefined;
   let activeKeyFifths = score.keyFifths;
+  // Percussion velocity directions are inferred display metadata. Keep the
+  // previous value per voice across measure boundaries so a steady groove
+  // does not print the same dynamic at the start of every measure.
+  const inferredDynamicsByVoice = new Map<NotatedVoiceNumber, NoteDynamics>();
   for (const [measureIndex, measure] of part.measures.entries()) {
     const measureClef = clefForMeasure(part.clef, measure, prevClef);
     const keyFifths = score.measureKeyFifths?.[measure.index];
@@ -827,6 +832,7 @@ function serializePart(
       tempoTexts,
       score.measureTexts?.[measure.index],
       score.multiMeasureRests?.[measure.index],
+      inferredDynamicsByVoice,
     );
     prevTimeSig = measure.timeSig;
     prevClef = measureClef;
@@ -861,8 +867,13 @@ function serializeMeasure(
   tempoTexts: ReadonlyArray<NotatedTempoText>,
   measureTexts: ReadonlyArray<NotatedMeasureText> | undefined,
   multiMeasureRest: NotatedMultiMeasureRest | undefined,
+  inferredDynamicsByVoice: Map<NotatedVoiceNumber, NoteDynamics>,
 ): void {
-  lines.push(`<measure number="${measure.index + 1}">`);
+  const isPickup =
+    measure.index === 0 && measure.lengthPpq < timeSigLengthPpq(measure.timeSig) - PPQ_EPSILON;
+  lines.push(
+    isPickup ? '<measure number="0" implicit="yes">' : `<measure number="${measure.index + 1}">`,
+  );
   const printXml = measurePrintXml(measureBreak, prevTimeSig === undefined);
   if (printXml !== '') {
     lines.push(printXml);
@@ -932,6 +943,7 @@ function serializeMeasure(
         accidentals,
         percussion,
         activeKeyFifths,
+        inferredDynamicsByVoice,
       );
     });
   }
@@ -1171,10 +1183,11 @@ function serializeVoice(
   accidentals: AccidentalIndex,
   percussion: boolean,
   keyFifths: number,
+  inferredDynamicsByVoice: Map<NotatedVoiceNumber, NoteDynamics>,
 ): void {
   const measureRest = isWholeMeasureRest(voice, measure);
   const beams = buildBeamIndex(voice, measure, staffMap);
-  let lastInferredDynamic: NoteDynamics | undefined;
+  let lastInferredDynamic = inferredDynamicsByVoice.get(voice.voice);
   for (const event of voice.events) {
     const staff = staffMap?.get(event);
     if (event.kind === 'rest') {
@@ -1225,6 +1238,7 @@ function serializeVoice(
             `<direction placement="${placement}"><direction-type><dynamics><${inferred}/></dynamics></direction-type>${staffXml}</direction>`,
           );
           lastInferredDynamic = inferred;
+          inferredDynamicsByVoice.set(voice.voice, inferred);
         }
       }
       pushNoteEvent(
@@ -1309,7 +1323,7 @@ function buildAccidentalIndex(
     .filter((event) => event.kind === 'note')
     .sort((a, b) => a.startPpq - b.startPpq || a.voice - b.voice);
   for (const event of noteEvents) {
-    const suppressDisplay = event.tieStop && !event.tieStart;
+    const suppressDisplay = event.tieStop;
     const staff = staffMap?.get(event) ?? 1;
     event.pitches.forEach((midi, pitchIndex) => {
       const pitch = spellPitch(midi, keyFifths);
