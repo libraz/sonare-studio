@@ -12,11 +12,10 @@
  */
 
 import { type ComputedRef, computed, type Ref, ref } from 'vue';
-import { linearToDb } from '@/engine/mixer-sync';
 import type { AutomationParam } from '@/project/automation';
 import { evaluateAutomationValue } from '@/project/automation';
 import { setAutomationLanePoints } from '@/project/commands';
-import { type MixerStrip, vcaOffsetDb } from '@/project/mixer';
+import type { MixerStrip } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
 import {
@@ -64,7 +63,7 @@ export interface StripAutomation {
   displayedGainDb: ComputedRef<number>;
   /** Pan value shown on the knob: write drag > lane follow > strip state. */
   displayedPan: ComputedRef<number>;
-  /** dB offset between the strip fader domain and the engine lane domain. */
+  /** dB offset between the displayed strip fader and persisted lane domain. */
   laneOffsetDb: ComputedRef<number>;
   /** Live drag value during a write-mode fader gesture (display only), or null. */
   writeGainDb: Ref<number | null>;
@@ -81,7 +80,7 @@ export interface StripAutomation {
  */
 export function useStripAutomation(options: StripAutomationOptions): StripAutomation {
   const store = useProjectStore();
-  const { isMaster, track, strip, positionPpq, isPlaying } = options;
+  const { strip, positionPpq, isPlaying } = options;
 
   const autoMode = computed(() => automationStripMode(options.target()));
 
@@ -96,18 +95,11 @@ export function useStripAutomation(options: StripAutomationOptions): StripAutoma
   const panLane = computed(() => laneFor('pan'));
 
   /**
-   * dB offset between the strip fader domain and the engine lane fader domain
-   * (the engine lane fader is linearToDb(track.volume) + strip.gainDb +
-   * vcaOffsetDb(track.vcaId); the master strip has no track/VCA term).
+   * Automation is stored in the pre-VCA strip fader domain. The engine and
+   * offline renderer add the VCA offset once when compiling playback, so the
+   * UI must never bake it into a written lane.
    */
-  const laneOffsetDb = computed(() => {
-    if (isMaster.value) return 0;
-    const currentTrack = track.value;
-    const vcaGainDb = new Map(
-      (store.mixer.vcaGroups ?? []).map((group) => [group.id, group.gainDb]),
-    );
-    return linearToDb(currentTrack?.volume ?? 1) + vcaOffsetDb(currentTrack?.vcaId, vcaGainDb);
-  });
+  const laneOffsetDb = computed(() => 0);
 
   /** True when the fader display follows the lane (read mode, usable lane). */
   const followsFader = computed(

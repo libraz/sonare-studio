@@ -226,6 +226,18 @@ describe('project serialization', () => {
     expect(store.activeClip?.ccLanes).toEqual(doc.tracks[0].clips[0].ccLanes);
   });
 
+  it('round-trips opaque SMF SysEx clip sidecars through a saved document', async () => {
+    store.clips[0].smfSysEx = [
+      { ppq: 0, status: 0xf0, data: [0x41, 0x10, 0x42, 0x12] },
+      { ppq: 3.5, status: 0xf7, data: [0x7e, 0x7f, 0x09, 0x01] },
+    ];
+    const document = serializeProject();
+    expect(document.tracks[0].clips[0].smfSysEx).toEqual(store.clips[0].smfSysEx);
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(document)) as ProjectDocument);
+    expect(serializeProject()).toEqual(document);
+  });
+
   it('round-trips a track live MIDI-FX transform through the document', async () => {
     const trackId = store.tracks[0].id;
     setTrackMidiFx(trackId, sanitizeMidiFxConfig({ transposeSemitones: 12, velocityScale: 1.5 }));
@@ -627,6 +639,8 @@ describe('project serialization', () => {
     const doc = serializeProject();
     const bad = { ...doc, schemaVersion: 0 };
     await expect(loadProjectDocument(bad)).rejects.toThrow(/schema version/);
+    const future = { ...doc, schemaVersion: PROJECT_DOCUMENT_SCHEMA_VERSION + 1 };
+    await expect(loadProjectDocument(future)).rejects.toThrow(/schema version/);
     // The previous project is untouched.
     expect(serializeProject()).toEqual(doc);
   });

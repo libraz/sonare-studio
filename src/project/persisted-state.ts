@@ -26,6 +26,7 @@ export function persistedProjectStateKey(store: ProjectStore) {
       scoreAnnotations: store.scoreAnnotations,
       displayTransposeSemitones: store.displayTransposeSemitones,
       scoreDisplaySettings: store.scoreDisplaySettings,
+      scaleHighlight: store.scaleHighlight,
       pickupLengthPpq: store.pickupLengthPpq,
       automationLanes: store.automationLanes,
       chords: store.chords,

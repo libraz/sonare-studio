@@ -776,6 +776,26 @@ describe('mixer commands', () => {
   });
 
   describe('mixer snapshots', () => {
+    it('restores the active slot together with the recalled mix on undo and redo', () => {
+      setStripGain(trackId, -9);
+      saveMixerSnapshot('A');
+      setStripGain(trackId, 3);
+      saveMixerSnapshot('B');
+      clearHistory();
+
+      expect(recallMixerSnapshot('A')).toBe(true);
+      expect(store.tracks[0].mixer?.gainDb).toBe(-9);
+      expect(activeMixerSnapshotSlot()).toBe('A');
+
+      expect(undo()).toBe(true);
+      expect(store.tracks[0].mixer?.gainDb).toBe(3);
+      expect(activeMixerSnapshotSlot()).toBe('B');
+
+      expect(redo()).toBe(true);
+      expect(store.tracks[0].mixer?.gainDb).toBe(-9);
+      expect(activeMixerSnapshotSlot()).toBe('A');
+    });
+
     it('recalls processor automation atomically, prunes new-chain targets, and restores them on undo', () => {
       addInsert(trackId, 'saturation.tape', { drive: 0.4 });
       addInsert('master', 'eq.tilt', { tiltDb: 1 });

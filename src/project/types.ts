@@ -109,6 +109,8 @@ export interface EditorTrack {
   id: number;
   /** Track display name (stored in the Project, renameTrack). */
   name: string;
+  /** Stable MusicXML `<part>` id this track originated from, when available. */
+  musicXmlPartId?: string;
   /** Display color as a CSS color string (app-level metadata). */
   color: string;
   /** Track content kind; only 'midi' tracks carry editable clips today. */
@@ -419,6 +421,23 @@ export interface EditorClip {
    * clip sends no per-key pressure.
    */
   polyPressureLanes?: ClipPolyPressureLane[];
+  /**
+   * SMF System Exclusive packets preserved as opaque data. The native Project
+   * event ABI has no SysEx payload representation, so these are deliberately
+   * kept out of the realtime note schedule and re-emitted by the SMF exporter.
+   * Positions are source-relative PPQ, like notes and expression lanes.
+   */
+  smfSysEx?: SmfSysExPacket[];
+}
+
+/** One bounded opaque SMF System Exclusive event. */
+export interface SmfSysExPacket {
+  /** Source-relative event time in quarter-note PPQ. */
+  ppq: number;
+  /** Original SMF status: a start packet (F0) or escaped continuation (F7). */
+  status: 0xf0 | 0xf7;
+  /** Exact bytes after the SMF length VLQ (including a terminal F7 when present). */
+  data: number[];
 }
 
 /** One timeline marker (app-level; the Project has no marker removal API). */

@@ -48,7 +48,11 @@ import {
   normalizeMixerSoloMode,
   type ProjectMixerState,
 } from './mixer';
-import type { DocumentClip, ProjectDocument } from './serialization';
+import {
+  type DocumentClip,
+  PROJECT_DOCUMENT_SCHEMA_VERSION,
+  type ProjectDocument,
+} from './serialization';
 import { applyDocumentClipMetadata, restoreDocumentScoreAnnotations } from './store-load';
 import {
   buildClipMirror,
@@ -141,7 +145,12 @@ let audioSourceIds = new Map<string, number>();
 // Optional hook the command layer registers so disposing the store also drops
 // the undo/redo history; without it, history snapshots would dangle against a
 // deleted Project. Kept as a hook to avoid a store -> command-layer import.
-let historyResetHook: (() => void) | null = null;
+// `history.ts` can register while this module is still evaluating through a
+// command-module import cycle. `var` is deliberately used here so that early
+// registration observes `undefined` rather than the temporal dead zone, and
+// the later declaration does not overwrite the registered callback.
+// biome-ignore lint/suspicious/noVar: this module-cycle boundary requires a hoisted binding.
+var historyResetHook: (() => void) | null | undefined;
 
 /**
  * Registers a callback invoked by {@link dispose} to clear the command-layer
@@ -513,7 +522,11 @@ export const useProjectStore = defineStore('project', () => {
    * @param doc Document produced by serializeProject() or a template.
    */
   async function loadDocument(doc: ProjectDocument): Promise<void> {
-    if (!Number.isInteger(doc.schemaVersion) || doc.schemaVersion < 1) {
+    if (
+      !Number.isInteger(doc.schemaVersion) ||
+      doc.schemaVersion < 1 ||
+      doc.schemaVersion > PROJECT_DOCUMENT_SCHEMA_VERSION
+    ) {
       throw new Error(`Unsupported project document schema version: ${doc.schemaVersion}`);
     }
     const engineBusTotal = engineBusCount(doc.mixer?.buses.length ?? 0, doc.tracks);
@@ -583,6 +596,9 @@ export const useProjectStore = defineStore('project', () => {
           pan: audiblePan,
           order: index,
         };
+        if (typeof track.musicXmlPartId === 'string' && track.musicXmlPartId.length > 0) {
+          mirrorEntry.musicXmlPartId = track.musicXmlPartId;
+        }
         // Instrument and mixer strip are app metadata introduced by schema
         // version 3; older documents simply have neither (defaults apply).
         if (track.instrument !== undefined)

@@ -233,10 +233,11 @@ export function captureMixerSnapshot(): MixerSnapshot {
  *
  * @param snapshot The snapshot to restore.
  */
-export function applyMixerSnapshot(snapshot: MixerSnapshot): void {
+export function applyMixerSnapshot(snapshot: MixerSnapshot, onApply?: () => void): void {
   const store = useProjectStore();
   const plan = mergeMixerSnapshot(snapshot, store.tracks, store.automationLanes);
   executeApp(() => {
+    onApply?.();
     store.mixer = plan.mixer;
     store.tracks = plan.tracks;
     store.automationLanes = plan.automationLanes;
@@ -305,8 +306,11 @@ export function saveMixerSnapshot(slot: MixerSnapshotSlot): void {
 export function recallMixerSnapshot(slot: MixerSnapshotSlot): boolean {
   const snapshot = slots.snapshots[slot];
   if (!snapshot) return false;
-  applyMixerSnapshot(snapshot);
-  slots.active = slot;
+  // Set the active slot inside the history transaction so undo/redo restores
+  // the highlight alongside the audible mixer state.
+  applyMixerSnapshot(snapshot, () => {
+    slots.active = slot;
+  });
   return true;
 }
 

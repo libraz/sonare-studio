@@ -49,16 +49,12 @@ export interface HarmonizeFromMelodyParams {
   /**
    * Search transposes/octave-shifts of the melody for a better-fitting
    * placement and applies the chosen shift to the clip (default false, i.e. the
-   * melody is left untouched and chords match it as played).
+   * melody is left untouched and chords match it as played). A single safe
+   * shift is selected for the complete melody before any meter-range analysis.
    */
   transpose?: boolean;
   /** Deterministic tie-break seed (default 0). */
   seed?: number;
-}
-
-/** Clamps a MIDI pitch to the representable range. */
-function clampPitch(pitch: number): number {
-  return Math.max(0, Math.min(127, Math.round(pitch)));
 }
 
 /**
@@ -119,15 +115,45 @@ export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {
   const meterRanges = timeSignatureRanges(target.timeSignatures, target.startPpq, target.endPpq);
   const shouldSplitForMeter = params.harmonicRhythm === undefined && meterRanges.length > 1;
   let shift = 0;
+  let analysisKey = key;
+  let analysisMelody = melody;
+  const audibleOccurrences = audibleMidiProjector(clip, { expandLoops: false });
+  if (transpose) {
+    // Meter splits used to perform independent transpose searches. That can
+    // make adjacent chord regions analyse different pitches while the clip is
+    // either transposed once or not at all. Probe the full target first, then
+    // keep one range-safe shift for every subsequent analysis.
+    const probe = harmonizeMelody({
+      melody,
+      key,
+      harmonicRhythm:
+        params.harmonicRhythm ??
+        meterBarLengthPpq(timeSignatureAt(target.timeSignatures, target.startPpq)),
+      reharmonize: params.reharmonize ?? 'diatonic',
+      placement: { transposeSearch: true, octaveSearch: true },
+      seed: params.seed ?? 0,
+    });
+    const candidate = probe.transposeSemitones;
+    if (
+      Number.isInteger(candidate) &&
+      audibleOccurrences.every(
+        (entry) => entry.note.pitch + candidate >= 0 && entry.note.pitch + candidate <= 127,
+      )
+    ) {
+      shift = candidate;
+      analysisKey = probe.key;
+      if (shift !== 0)
+        analysisMelody = melody.map((note) => ({ ...note, pitch: note.pitch + shift }));
+    }
+  }
   let generated: EditorChordSymbol[];
   if (shouldSplitForMeter) {
-    let segmentKey = key;
-    const segmentShifts: number[] = [];
+    let segmentKey = analysisKey;
     const symbols: EditorChordSymbol[] = [];
     for (const range of meterRanges) {
       const localStart = range.startPpq - target.startPpq;
       const localEnd = range.endPpq - target.startPpq;
-      const segmentMelody = melody.flatMap((note) => {
+      const segmentMelody = analysisMelody.flatMap((note) => {
         const start = Math.max(note.startBeat, localStart);
         const end = Math.min(note.startBeat + note.durationBeat, localEnd);
         return end > start
@@ -140,11 +166,10 @@ export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {
         key: segmentKey,
         harmonicRhythm: meterBarLengthPpq(range),
         reharmonize: params.reharmonize ?? 'diatonic',
-        placement: { transposeSearch: transpose, octaveSearch: transpose },
+        placement: { transposeSearch: false, octaveSearch: false },
         seed: params.seed ?? 0,
       });
       segmentKey = result.key;
-      segmentShifts.push(result.transposeSemitones);
       symbols.push(
         ...spansToChordSymbols(result, localEnd - localStart, range.startPpq).map((chord) => ({
           ...chord,
@@ -154,23 +179,16 @@ export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {
       );
     }
     generated = sanitizeChordSymbols(symbols);
-    if (
-      transpose &&
-      segmentShifts.length > 0 &&
-      segmentShifts.every((value) => value === segmentShifts[0])
-    ) {
-      shift = segmentShifts[0];
-    }
   } else {
     const harmonicRhythm =
       params.harmonicRhythm ??
       meterBarLengthPpq(timeSignatureAt(target.timeSignatures, target.startPpq));
     const result = harmonizeMelody({
-      melody,
-      key,
+      melody: analysisMelody,
+      key: analysisKey,
       harmonicRhythm,
       reharmonize: params.reharmonize ?? 'diatonic',
-      placement: { transposeSearch: transpose, octaveSearch: transpose },
+      placement: { transposeSearch: false, octaveSearch: false },
       seed: params.seed ?? 0,
     });
     generated = sanitizeChordSymbols(
@@ -180,7 +198,6 @@ export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {
         endPpq: Math.min(target.endPpq, chord.endPpq),
       })),
     );
-    shift = transpose ? result.transposeSemitones : 0;
   }
   const clipEndPpq = target.endPpq;
   const keptChords = store.chords.filter(
@@ -199,12 +216,10 @@ export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {
 
   // Transpose the clip to match the harmonization, and write both the shifted
   // notes and the chords in one undoable edit (setMidiEvents + annotateChords).
-  const audibleNoteIds = new Set(
-    audibleMidiProjector(clip, { expandLoops: false }).map((entry) => entry.sourceIdentity.noteId),
-  );
+  const audibleNoteIds = new Set(audibleOccurrences.map((entry) => entry.sourceIdentity.noteId));
   const shifted: RawNote[] = clip.notes.map(({ id, ...note }) => ({
     ...note,
-    pitch: audibleNoteIds.has(id) ? clampPitch(note.pitch + shift) : note.pitch,
+    pitch: audibleNoteIds.has(id) ? note.pitch + shift : note.pitch,
   }));
   execute(2, () => {
     project.setMidiEvents(clip.id, notesToProjectEvents(shifted));

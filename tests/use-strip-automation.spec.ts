@@ -52,7 +52,7 @@ describe('useStripAutomation', () => {
     });
   }
 
-  it('subtracts the current VCA offset when displaying fader automation', () => {
+  it('keeps fader automation in the pre-VCA strip domain', () => {
     store.automationLanes = [
       {
         target: 1,
@@ -65,19 +65,19 @@ describe('useStripAutomation', () => {
 
     const stripAutomation = automation();
 
-    expect(stripAutomation.laneOffsetDb.value).toBe(-6);
-    expect(stripAutomation.displayedGainDb.value).toBe(-3);
+    expect(stripAutomation.laneOffsetDb.value).toBe(0);
+    expect(stripAutomation.displayedGainDb.value).toBe(-9);
 
     store.mixer = {
       ...store.mixer,
       vcaGroups: [{ id: 'vca-1', name: 'Drums', gainDb: -12 }],
     };
 
-    expect(stripAutomation.laneOffsetDb.value).toBe(-12);
-    expect(stripAutomation.displayedGainDb.value).toBe(3);
+    expect(stripAutomation.laneOffsetDb.value).toBe(0);
+    expect(stripAutomation.displayedGainDb.value).toBe(-9);
   });
 
-  it('records touch fader automation in the VCA-compensated lane domain', () => {
+  it('records touch fader automation in the pre-VCA strip domain', () => {
     setAutomationStripMode(1, 'touch');
     const stripAutomation = automation();
     const gestures = useStripGestures({
@@ -93,7 +93,7 @@ describe('useStripAutomation', () => {
         target: 1,
         param: 'faderDb',
         enabled: true,
-        points: [{ ppq: 0, value: -9 }],
+        points: [{ ppq: 0, value: -3 }],
       },
     ]);
   });
@@ -125,8 +125,8 @@ describe('useStripAutomation', () => {
     gestures.onGainChange(-2, true);
 
     expect(scheduled).toEqual([
-      [1, 'faderDb', { ppq: 4, samplePos: 192000, value: -9 }],
-      [1, 'faderDb', { ppq: 4.25, samplePos: 204000, value: -8 }],
+      [1, 'faderDb', { ppq: 4, samplePos: 192000, value: -3 }],
+      [1, 'faderDb', { ppq: 4.25, samplePos: 204000, value: -2 }],
     ]);
   });
 });

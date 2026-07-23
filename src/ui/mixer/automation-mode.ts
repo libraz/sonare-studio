@@ -1,9 +1,9 @@
 /**
  * Per-strip automation R/T/L modes and the touch-record write gesture.
  *
- * The mode map is session-only module state (never persisted): channel strips
- * toggle it from their R/T/L buttons and the app shell drops the write-class
- * modes (touch/latch) back to 'read' when the transport stops. A write gesture
+ * The mode map is session-only UI state. Channel strips toggle their R/T/L
+ * buttons and the app shell drops the write-class
+ * modes (touch/latch) back to `read` when the transport stops. A write gesture
  * turns a fader/pan drag into automation breakpoints: while playing it records
  * a throttled point stream, stationary it moves a single breakpoint at the
  * playhead, and gesture end merges the recording into the lane's existing
@@ -40,7 +40,7 @@ export function isAutomationWriteMode(mode: AutomationStripMode): mode is Automa
   return mode === 'touch' || mode === 'latch';
 }
 
-/** Session-only mode per strip target; absent entries mean 'off'. */
+/** Session-only mode per strip target; absent entries mean UI-off. */
 const modes = reactive(new Map<AutomationTarget, AutomationStripMode>());
 const revision = ref(0);
 
@@ -59,6 +59,14 @@ export function automationStripMode(target: AutomationTarget): AutomationStripMo
 }
 
 /**
+ * Whether a persisted lane may be sent to playback. An absent UI mode is a
+ * safe read default after loading; only an explicit off suppresses playback.
+ */
+export function isAutomationStripPlaybackEnabled(target: AutomationTarget): boolean {
+  return modes.get(target) !== 'off';
+}
+
+/**
  * Toggles a strip's automation mode. Activating one mode deactivates the
  * others (read/touch/latch are mutually exclusive); toggling the active mode
  * turns it off.
@@ -70,13 +78,13 @@ export function toggleAutomationStripMode(
   target: AutomationTarget,
   mode: 'read' | AutomationWriteMode,
 ): void {
-  if (modes.get(target) === mode) modes.delete(target);
+  if (modes.get(target) === mode) modes.set(target, 'off');
   else modes.set(target, mode);
   revision.value += 1;
 }
 
 /**
- * Sets a strip's automation mode directly ('off' clears the entry).
+ * Sets a strip's automation mode directly.
  *
  * @param target Strip target: a track id, 'master', or a mixer bus target.
  * @param mode New mode.
@@ -84,8 +92,7 @@ export function toggleAutomationStripMode(
 export function setAutomationStripMode(target: AutomationTarget, mode: AutomationStripMode): void {
   const current = automationStripMode(target);
   if (current === mode) return;
-  if (mode === 'off') modes.delete(target);
-  else modes.set(target, mode);
+  modes.set(target, mode);
   revision.value += 1;
 }
 

@@ -60,6 +60,7 @@ import {
   type EditorClip,
   type EditorNote,
   MAJOR_MODE_MASK,
+  type SmfSysExPacket,
   type TrackKind,
 } from './types';
 
@@ -207,6 +208,8 @@ export interface DocumentClip {
     pitch: number;
     points: Array<{ ppq: number; value: number; curve?: ClipExpressionCurve }>;
   }>;
+  /** Opaque SMF SysEx packets, preserved for later SMF re-export only. */
+  smfSysEx?: SmfSysExPacket[];
   /**
    * Display-only score annotations of this clip's notes, content-addressed
    * (editor note ids are session-scoped); omitted when the clip has none.
@@ -244,6 +247,8 @@ export type DocumentMixerState = Omit<ProjectMixerState, 'buses'> & {
 export interface DocumentTrack {
   /** Track display name. */
   name: string;
+  /** Stable MusicXML `<part>` id this track originated from, when imported. */
+  musicXmlPartId?: string;
   /** Display color as a CSS color string. */
   color: string;
   /** Track content kind. */
@@ -641,6 +646,9 @@ function toDocumentClip(
       points: lane.points.map((point) => ({ ...point })),
     }));
   }
+  if (clip.smfSysEx !== undefined && clip.smfSysEx.length > 0) {
+    out.smfSysEx = clip.smfSysEx.map((packet) => ({ ...packet, data: [...packet.data] }));
+  }
   if (annotations !== undefined) {
     // Annotations are re-addressed by note content (orphans drop out here).
     const entries = annotationsToDocument(annotations, clip.notes);
@@ -704,6 +712,7 @@ export function serializeProject(): ProjectDocument {
           .filter((clip) => clip.trackId === track.id)
           .map((clip) => toDocumentClip(clip, store.scoreAnnotations[clip.id])),
       };
+      if (track.musicXmlPartId !== undefined) out.musicXmlPartId = track.musicXmlPartId;
       if (track.instrument !== undefined) out.instrument = cloneInstrument(track.instrument);
       if (track.externalMidiMode === 'project' && store.projectExternalMidi !== null) {
         out.externalMidiMode = 'project';

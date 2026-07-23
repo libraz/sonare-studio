@@ -52,14 +52,24 @@ interface HistoryStateContributor<T> {
   restore(state: T): void;
 }
 
-const historyStateContributors = new Map<string, HistoryStateContributor<unknown>>();
+// This registry can be populated while `history.ts` is still evaluating:
+// store -> serialization -> mixer snapshots imports this module and registers
+// its state contributor. Keep the binding hoisted and initialize lazily so the
+// registration path is safe across that module cycle.
+// biome-ignore lint/suspicious/noVar: this module-cycle boundary requires a hoisted binding.
+var historyStateContributors: Map<string, HistoryStateContributor<unknown>> | undefined;
+
+function registeredHistoryStateContributors(): Map<string, HistoryStateContributor<unknown>> {
+  historyStateContributors ??= new Map<string, HistoryStateContributor<unknown>>();
+  return historyStateContributors;
+}
 
 /** Registers non-store persisted state that must follow command undo/redo. */
 export function registerHistoryStateContributor<T>(
   id: string,
   contributor: HistoryStateContributor<T>,
 ): void {
-  historyStateContributors.set(id, contributor as HistoryStateContributor<unknown>);
+  registeredHistoryStateContributors().set(id, contributor as HistoryStateContributor<unknown>);
 }
 
 /** Deep-copies the MIDI-learn binding map into a detached plain map. */
@@ -319,7 +329,7 @@ function captureSnapshot(
   previous: MirrorSnapshot | null = lastSnapshot,
 ): MirrorSnapshot {
   const contributedState = new Map<string, unknown>();
-  for (const [id, contributor] of historyStateContributors) {
+  for (const [id, contributor] of registeredHistoryStateContributors()) {
     contributedState.set(id, contributor.capture());
   }
   return shareSnapshot(previous, {
@@ -405,7 +415,7 @@ function restoreSnapshot(
   store.scoreAnnotations = cloneScoreAnnotations(snapshot.scoreAnnotations);
   store.displayTransposeSemitones = snapshot.displayTransposeSemitones;
   for (const [id, state] of snapshot.contributedState) {
-    historyStateContributors.get(id)?.restore(state);
+    registeredHistoryStateContributors().get(id)?.restore(state);
   }
   // Keep the requested view when it still exists; otherwise fall back to the
   // snapshot's own (always-consistent) active ids.
