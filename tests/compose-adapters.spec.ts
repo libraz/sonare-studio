@@ -90,7 +90,7 @@ describe('key adapter', () => {
 });
 
 describe('chord-io adapter', () => {
-  const exactOrdinals = [0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 13, 14, 15];
+  const exactOrdinals = [0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15];
 
   it('round-trips every exact quality ordinal edit -> libcantus -> edit', () => {
     for (const quality of exactOrdinals) {
@@ -110,8 +110,8 @@ describe('chord-io adapter', () => {
     expect(editor.extensions).toEqual([2]);
   });
 
-  it('maps the m(add9) ordinal to a plain minor libcantus quality', () => {
-    expect(audioQualityToLibcantus(11)).toBe('min');
+  it('maps the m(add9) ordinal to the exact libcantus quality', () => {
+    expect(audioQualityToLibcantus(11)).toBe('minAdd9');
   });
 
   it('builds a libcantus chord with the expected pitch classes', () => {
@@ -120,7 +120,7 @@ describe('chord-io adapter', () => {
   });
 
   it.each([
-    ['m(add9)', chordSymbol({ quality: 11 }), 'min', [0, 2, 3, 7]],
+    ['m(add9)', chordSymbol({ quality: 11 }), 'minAdd9', [0, 2, 3, 7]],
     ['min9', chordSymbol({ quality: 6, extensions: [14] }), 'min9', [0, 2, 3, 7, 10]],
     ['7b9', chordSymbol({ quality: 4, extensions: [13] }), '7b9', [0, 1, 4, 7, 10]],
     ['13', chordSymbol({ quality: 4, extensions: [21] }), '13', [0, 2, 4, 7, 9, 10]],
@@ -136,6 +136,28 @@ describe('chord-io adapter', () => {
     [chordSymbol({ quality: 4, extensions: [9] }), '13'],
   ])('promotes known extensions in ChordSpan conversion', (symbol, quality) => {
     expect(editorChordToChordSpan(symbol, 0).quality).toBe(quality);
+  });
+
+  it.each([
+    ['7sus4'],
+    ['7alt'],
+    ['13b9'],
+    ['maj13'],
+    ['maj7#11'],
+    ['min11'],
+    ['min13'],
+    ['min6/9'],
+  ] as const)('round-trips the degraded %s quality through the editor', (quality) => {
+    const editor = chordSpanToEditorChord({ rootPc: 0, quality, startBeat: 0 }, 0, 4);
+    expect(editorChordToChordSpan(editor, 0).quality).toBe(quality);
+  });
+
+  it('degrades a lowered fifth to the pitch class the editor spells as #11', () => {
+    // The editor has no ordinal for an altered fifth, so 7b5 and 7#11 share the
+    // same extension pitch class and the round trip settles on 7#11.
+    const editor = chordSpanToEditorChord({ rootPc: 0, quality: '7b5', startBeat: 0 }, 0, 4);
+    expect(editor).toMatchObject({ quality: 4, extensions: [6] });
+    expect(editorChordToChordSpan(editor, 0).quality).toBe('7#11');
   });
 
   it('preserves a slash bass when it differs from the root', () => {

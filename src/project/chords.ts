@@ -86,6 +86,7 @@ const SUFFIX_BY_QUALITY_EXTENSIONS: Readonly<Record<string, string>> = {
   '1:2': 'm(add9)',
   '1:9': 'm6',
   '1:11': 'm(maj7)',
+  '1:2,9': 'm6/9',
   '3:10': 'aug7',
   '3:11': 'aug(maj7)',
   '4:1': '7b9',
@@ -94,7 +95,14 @@ const SUFFIX_BY_QUALITY_EXTENSIONS: Readonly<Record<string, string>> = {
   '4:6': '7#11',
   '4:8': '7b13',
   '4:9': '13',
+  '4:1,9': '13b9',
+  '4:3,8': '7alt',
+  '5:6': 'maj7#11',
   '6:2': 'm9',
+  '6:2,5': 'm11',
+  '6:2,9': 'm13',
+  '8:10': '7sus4',
+  '14:9': 'maj13',
 };
 
 /** Reduces an integer semitone offset to pitch-class space. */

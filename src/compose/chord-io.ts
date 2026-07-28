@@ -6,7 +6,7 @@
  * audio-domain quality ordinal (Major = 0), matching the templates in
  * src/notation/chords.ts and the wasm annotation encoding — a fixed set of ~15
  * qualities plus a free `extensions` list of semitone offsets. libcantus uses a
- * 30-member string union covering richer qualities (`7#9`, `min6`, `6/9`, ...).
+ * 40-member string union covering richer qualities (`7#9`, `min6`, `6/9`, ...).
  *
  * Mapping is therefore asymmetric:
  *   - editor -> libcantus promotes known base-plus-extension combinations to
@@ -26,10 +26,8 @@ import { type ChordData, type ChordQuality, type ChordSpan, makeChord } from '@l
 import { type EditorChordSymbol, normalizedChordExtensions } from '@/project/chords';
 
 /**
- * Audio-domain quality ordinal -> libcantus quality. Ordinals map to an exact
- * libcantus quality where one exists. Ordinal 11 (`m(add9)`, a minor triad plus
- * a 9th with no 7th) has no exact libcantus member and degrades to `min`; its
- * added 9th is preserved on the editor side by the symbol's `extensions`.
+ * Audio-domain quality ordinal -> libcantus quality. Every ordinal maps to an
+ * exact libcantus quality.
  */
 const AUDIO_QUALITY_TO_LIBCANTUS: Readonly<Record<number, ChordQuality>> = {
   0: 'maj',
@@ -42,7 +40,7 @@ const AUDIO_QUALITY_TO_LIBCANTUS: Readonly<Record<number, ChordQuality>> = {
   7: 'sus2',
   8: 'sus4',
   10: 'add9',
-  11: 'min', // m(add9) degrades to a minor triad
+  11: 'minAdd9',
   12: 'dim7',
   13: 'm7b5',
   14: 'maj9',
@@ -57,6 +55,7 @@ const EDITOR_EXTENSIONS_TO_LIBCANTUS: Readonly<Record<string, ChordQuality>> = {
   '0:2,9': '6/9',
   '1:9': 'min6',
   '1:11': 'minMaj7',
+  '1:2,9': 'min6/9',
   '3:10': 'aug7',
   '3:11': 'augMaj7',
   '4:1': '7b9',
@@ -65,7 +64,14 @@ const EDITOR_EXTENSIONS_TO_LIBCANTUS: Readonly<Record<string, ChordQuality>> = {
   '4:6': '7#11',
   '4:8': '7b13',
   '4:9': '13',
+  '4:1,9': '13b9',
+  '4:3,8': '7alt',
+  '5:6': 'maj7#11',
   '6:2': 'min9',
+  '6:2,5': 'min11',
+  '6:2,9': 'min13',
+  '8:10': '7sus4',
+  '14:9': 'maj13',
 };
 
 /** Editor-side ordinal plus optional color-tone extensions (semitone offsets). */
@@ -95,6 +101,7 @@ const LIBCANTUS_QUALITY_TO_EDITOR: Readonly<Record<ChordQuality, EditorQuality>>
   m7b5: { quality: 13 },
   maj9: { quality: 14 },
   dom9: { quality: 15 },
+  minAdd9: { quality: 11 },
   minMaj7: { quality: 1, extensions: [11] },
   aug7: { quality: 3, extensions: [10] },
   augMaj7: { quality: 3, extensions: [11] },
@@ -102,14 +109,25 @@ const LIBCANTUS_QUALITY_TO_EDITOR: Readonly<Record<ChordQuality, EditorQuality>>
   '6': { quality: 0, extensions: [9] },
   min6: { quality: 1, extensions: [9] },
   '6/9': { quality: 0, extensions: [9, 2] },
+  'min6/9': { quality: 1, extensions: [9, 2] },
   add11: { quality: 0, extensions: [5] },
   min9: { quality: 6, extensions: [2] },
+  min11: { quality: 6, extensions: [2, 5] },
+  min13: { quality: 6, extensions: [2, 9] },
   '7b9': { quality: 4, extensions: [1] },
   '7#9': { quality: 4, extensions: [3] },
   '7#11': { quality: 4, extensions: [6] },
   '7b13': { quality: 4, extensions: [8] },
+  '7sus4': { quality: 8, extensions: [10] },
+  // A lowered fifth has no editor ordinal; it degrades to the same #11/b5
+  // pitch class the editor already uses for majb5.
+  '7b5': { quality: 4, extensions: [6] },
+  '7alt': { quality: 4, extensions: [3, 8] },
   '11': { quality: 4, extensions: [5] },
   '13': { quality: 4, extensions: [9] },
+  '13b9': { quality: 4, extensions: [9, 1] },
+  maj13: { quality: 14, extensions: [9] },
+  'maj7#11': { quality: 5, extensions: [6] },
   '5': { quality: 0 }, // power chord: no third to name, nearest is a bare major
 };
 
@@ -165,9 +183,6 @@ export function editorChordToChord(symbol: EditorChordSymbol): ChordData {
   const chord = makeChord(rootPc, quality, bassPc);
   if (exactExtensionQuality !== undefined) return chord;
   const extensions = normalizedChordExtensions(symbol);
-  // Audio quality 11 is intrinsically m(add9), but libcantus has no exact
-  // quality for a minor triad with a ninth and no seventh.
-  if (symbol.quality === 11) extensions.push(2);
   chord.intervals = appendExtensionIntervals(chord.intervals, extensions);
   return chord;
 }

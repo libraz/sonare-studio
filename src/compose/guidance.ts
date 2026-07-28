@@ -16,10 +16,10 @@ import {
   type AnalyzedNote,
   analyzeVoice,
   type ChordData,
+  ConsonanceClass,
   chordScaleReport,
   classifyInterval,
   evaluateSafety,
-  IntervalQuality,
   isScaleTone,
   NoteSafety,
   pitchToScaleDegree,
@@ -287,11 +287,11 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
       bass = bass === undefined ? voice.pitch : Math.min(bass, voice.pitch);
     if (bass === undefined || bass >= pitch) return undefined;
     const semitones = pitch - bass;
-    const quality = tryEval(() => classifyInterval(semitones, others.length === 1));
+    const consonanceClass = tryEval(() => classifyInterval(semitones, others.length === 1));
     const consonance =
-      quality === IntervalQuality.PerfectConsonance
+      consonanceClass === ConsonanceClass.PerfectConsonance
         ? 'perfect'
-        : quality === IntervalQuality.ImperfectConsonance
+        : consonanceClass === ConsonanceClass.ImperfectConsonance
           ? 'imperfect'
           : 'dissonant';
     return { toBass: semitones, consonance };
