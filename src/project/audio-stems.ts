@@ -55,8 +55,8 @@ export interface AudioStemEnhancers {
    */
   phaseVocoder?: (
     samples: Float32Array,
+    sampleRate: number,
     rate: number,
-    sampleRate?: number,
     nFft?: number,
     hopLength?: number,
   ) => Float32Array;
@@ -133,7 +133,7 @@ function fitStemLength(
   if (typeof phaseVocoder === 'function' && samples.length > 0) {
     const rate = samples.length / targetFrames;
     if (Number.isFinite(rate) && rate > 0) {
-      repaired = phaseVocoder(samples, rate, sampleRate);
+      repaired = phaseVocoder(samples, sampleRate, rate);
     }
   }
   if (repaired.length === targetFrames) return repaired;

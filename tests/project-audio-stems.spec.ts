@@ -291,7 +291,7 @@ describe('separateAudioClipStems', () => {
   });
 
   it('repairs separator output length drift with phaseVocoder when available', async () => {
-    const phaseCalls: Array<{ length: number; rate: number; sampleRate?: number }> = [];
+    const phaseCalls: Array<{ length: number; sampleRate: number; rate: number }> = [];
     const stems = await separateAudioClipStems(clipWindow({ lengthPpq: 2 }), 120, {
       loadAudioAsset: async () => asset([0.5], WINDOW_FRAMES),
       separateStems: (samples, sampleRate) => ({
@@ -301,16 +301,16 @@ describe('separateAudioClipStems', () => {
         sampleRate: sampleRate ?? 0,
       }),
       enhancers: {
-        phaseVocoder: (samples, rate, sampleRate) => {
-          phaseCalls.push({ length: samples.length, rate, sampleRate });
+        phaseVocoder: (samples, sampleRate, rate) => {
+          phaseCalls.push({ length: samples.length, sampleRate, rate });
           return new Float32Array(48000).fill(samples[0] ?? 0);
         },
       },
     });
 
     expect(phaseCalls).toEqual([
-      { length: 48100, rate: 48100 / 48000, sampleRate: 48000 },
-      { length: 47900, rate: 47900 / 48000, sampleRate: 48000 },
+      { length: 48100, sampleRate: 48000, rate: 48100 / 48000 },
+      { length: 47900, sampleRate: 48000, rate: 47900 / 48000 },
     ]);
     expect(stems.map((stem) => stem.channels[0].length)).toEqual([48000, 48000, 48000]);
     expect(stems[0].channels[0][0]).toBe(1);
