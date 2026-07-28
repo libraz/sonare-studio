@@ -292,7 +292,7 @@ describe('project serialization with instruments and mixer (schema v3)', () => {
     expect(store.mixer.buses[0].strip?.inserts[0].sidechainSourceTrackId).toBe(reloadedSourceId);
     expect(store.mixer.master.inserts[0].sidechainSourceTrackId).toBe(reloadedSourceId);
     expect(
-      (store.mixer.buses[0].strip?.inserts[0] as InsertSlot & { sidechainSourceIndex?: number })
+      (store.mixer.buses[0].strip!.inserts[0] as InsertSlot & { sidechainSourceIndex?: number })
         .sidechainSourceIndex,
     ).toBeUndefined();
     expect(
@@ -318,7 +318,7 @@ describe('project serialization with instruments and mixer (schema v3)', () => {
     expect(store.mixer.buses[0].strip?.inserts[0].sidechainSourceTrackId).toBe(reloadedSourceId);
     expect(store.mixer.master.inserts[0].sidechainSourceTrackId).toBe(reloadedSourceId);
     expect(
-      (store.mixer.buses[0].strip?.inserts[0] as InsertSlot & { sidechainSourceIndex?: number })
+      (store.mixer.buses[0].strip!.inserts[0] as InsertSlot & { sidechainSourceIndex?: number })
         .sidechainSourceIndex,
     ).toBeUndefined();
     expect(
@@ -394,7 +394,7 @@ describe('project serialization with instruments and mixer (schema v3)', () => {
       mute: false,
       solo: false,
     });
-    expect((doc.mixerSnapshots?.slots.D?.tracks[0] as { id?: unknown }).id).toBeUndefined();
+    expect((doc.mixerSnapshots!.slots.D!.tracks[0] as { id?: unknown }).id).toBeUndefined();
     expect(doc.mixerSnapshots?.slots.D?.automationLanes?.[0]).toMatchObject({
       target: 0,
       param: insertAutomationParam(processorId, 'drive'),

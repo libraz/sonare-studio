@@ -1209,13 +1209,13 @@ describe('importDawproject', () => {
     expect(imported.mixer?.master.inserts[0].sidechainSourceTrackId).toBeUndefined();
     expect(
       (
-        imported.mixer?.buses[0].strip?.inserts[0] as InsertSlot & {
+        imported.mixer!.buses[0].strip!.inserts[0] as InsertSlot & {
           sidechainSourceIndex?: number;
         }
       ).sidechainSourceIndex,
     ).toBe(0);
     expect(
-      (imported.mixer?.master.inserts[0] as InsertSlot & { sidechainSourceIndex?: number })
+      (imported.mixer!.master.inserts[0] as InsertSlot & { sidechainSourceIndex?: number })
         .sidechainSourceIndex,
     ).toBe(0);
     expect(imported.tracks[0].automation).toEqual([

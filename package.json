@@ -4,7 +4,7 @@
   "license": "AGPL-3.0-or-later",
   "private": true,
   "type": "module",
-  "packageManager": "yarn@4.15.0",
+  "packageManager": "yarn@4.17.1",
   "scripts": {
     "dev": "vite",
     "build": "yarn build:worklet && vue-tsc --noEmit && vite build",
@@ -16,16 +16,19 @@
     "test:watch": "vitest",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
+    "ncu": "NO_UPDATE_NOTIFIER=1 ncu",
+    "ncu:update": "NO_UPDATE_NOTIFIER=1 ncu -u",
     "typecheck": "vue-tsc --noEmit",
     "verify": "yarn lint && yarn test && yarn test:external-formats && yarn build"
   },
   "dependencies": {
     "@breezystack/lamejs": "^1.2.7",
-    "@fontsource-variable/bricolage-grotesque": "^5.2.10",
-    "@libraz/libcantus": "0.9.3",
+    "@fontsource-variable/bricolage-grotesque": "^5.3.0",
+    "@libraz/libcantus": "0.9.4",
+    "@vue/devtools-api": "^8.2.1",
     "fflate": "^0.8",
     "jspdf": "^4.2.1",
-    "pinia": "^3",
+    "pinia": "^4",
     "saxes": "^6.0.0",
     "svg2pdf.js": "^2.7.0",
     "verovio": "^6",
@@ -36,6 +39,7 @@
     "@vitejs/plugin-vue": "^6",
     "@vue/test-utils": "^2.4",
     "jsdom": "^29",
+    "npm-check-updates": "^23.0.0",
     "typescript": "^6",
     "vite": "^8",
     "vitest": "^4",
@@ -43,6 +47,6 @@
   },
   "volta": {
     "node": "24.0.0",
-    "yarn": "4.15.0"
+    "yarn": "4.17.1"
   }
 }
