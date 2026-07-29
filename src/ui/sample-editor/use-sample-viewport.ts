@@ -12,7 +12,7 @@ import { markRaw, onBeforeUnmount, onMounted, type Ref, ref, watch } from 'vue';
 import { setupCanvas } from '@/components/piano-roll/theme';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { colorWithAlpha, TOKENS } from '@/ui/theme/tokens';
-import { computePeaks } from '@/ui/waveform/peaks';
+import { type ChannelPeaks, computePeaks } from '@/ui/waveform/peaks';
 import { snapFrameToOnsets } from './onsets';
 import type { SampleRange } from './ops';
 import type { SelectionDraft } from './selection';
@@ -24,6 +24,8 @@ export const LANE_HEIGHT_PX = 96;
 const WHEEL_ZOOM_SENSITIVITY = 0.01;
 /** Pointer distance (CSS px) within which a selection edge snaps to an onset. */
 const ONSET_SNAP_PX = 6;
+/** Visible waveform snapshots retained while scrubbing or redrawing overlays. */
+export const MAX_VISIBLE_PEAK_CACHE_ENTRIES = 24;
 
 /** Canvas color tokens, derived from the dark palette mirror in tokens.ts. */
 const COLORS = {
@@ -48,6 +50,31 @@ export interface UseSampleViewportOptions {
   selRange: () => SampleRange | null;
 }
 
+/** Small LRU cache for an exact visible waveform window. */
+export class VisiblePeaksCache {
+  private readonly entries = new Map<string, ChannelPeaks[]>();
+
+  getOrCompute(key: string, compute: () => ChannelPeaks[]): ChannelPeaks[] {
+    const cached = this.entries.get(key);
+    if (cached) {
+      this.entries.delete(key);
+      this.entries.set(key, cached);
+      return cached;
+    }
+    const peaks = compute();
+    this.entries.set(key, peaks);
+    if (this.entries.size > MAX_VISIBLE_PEAK_CACHE_ENTRIES) {
+      const oldest = this.entries.keys().next().value as string;
+      this.entries.delete(oldest);
+    }
+    return peaks;
+  }
+
+  clear(): void {
+    this.entries.clear();
+  }
+}
+
 /** Viewport rendering/navigation surface returned by {@link useSampleViewport}. */
 export function useSampleViewport(options: UseSampleViewportOptions) {
   const { asset, selection, onsetFrames, selRange } = options;
@@ -60,6 +87,7 @@ export function useSampleViewport(options: UseSampleViewportOptions) {
   let resizeObserver: ResizeObserver | null = null;
   let drawQueued = false;
   let drawFrame: number | null = null;
+  const visiblePeaks = new VisiblePeaksCache();
 
   function scheduleDraw(): void {
     if (drawQueued) return;
@@ -89,8 +117,11 @@ export function useSampleViewport(options: UseSampleViewportOptions) {
     const startFrame = Math.max(0, Math.floor(view.startFrame));
     const endFrame = Math.min(loaded.meta.numFrames, Math.ceil(view.endFrame));
     if (endFrame > startFrame) {
-      const windows = loaded.channels.map((channel) => channel.subarray(startFrame, endFrame));
-      const peaks = computePeaks(windows, widthPx);
+      const key = `${loaded.meta.id}:${startFrame}:${endFrame}:${widthPx}`;
+      const peaks = visiblePeaks.getOrCompute(key, () => {
+        const windows = loaded.channels.map((channel) => channel.subarray(startFrame, endFrame));
+        return computePeaks(windows, widthPx);
+      });
       for (let c = 0; c < peaks.length; c++) {
         const laneTop = c * LANE_HEIGHT_PX;
         const mid = laneTop + LANE_HEIGHT_PX / 2;
@@ -136,6 +167,7 @@ export function useSampleViewport(options: UseSampleViewportOptions) {
   }
 
   watch([selection, asset, onsetFrames], scheduleDraw);
+  watch(asset, () => visiblePeaks.clear());
 
   /** Current viewport instance (null before the first load). */
   function getViewport(): SampleViewport | null {
@@ -210,6 +242,7 @@ export function useSampleViewport(options: UseSampleViewportOptions) {
     }
     resizeObserver?.disconnect();
     resizeObserver = null;
+    visiblePeaks.clear();
   });
 
   return {

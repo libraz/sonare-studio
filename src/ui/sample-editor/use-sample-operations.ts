@@ -41,6 +41,7 @@ import {
   silence,
   trimToRange,
 } from './ops';
+import { runSampleOperationInWorker, type SampleOperation } from './ops-client';
 import { modeMaskFor, scaleName } from './scales';
 import {
   type AcousticAnalysisSummary,
@@ -397,7 +398,10 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
    */
   async function runOp(
     label: string,
-    produce: (channels: Float32Array[], range: SampleRange) => Float32Array[],
+    produce: (
+      channels: Float32Array[],
+      range: SampleRange,
+    ) => Float32Array[] | Promise<Float32Array[]>,
   ): Promise<boolean> {
     const loaded = asset.value;
     if (!loaded || busy.value || isDisposed()) return false;
@@ -409,7 +413,8 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     try {
       const range = resolveRange(loaded.channels, token.range);
       // Asset channels are cached and shared: operations copy, never mutate.
-      const channels = produce(loaded.channels, range);
+      const result = produce(loaded.channels, range);
+      const channels = result instanceof Promise ? await result : result;
       const meta = await assets.save(
         {
           name: editedAssetName(loaded.meta.name),
@@ -445,14 +450,25 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     return asset.value?.meta.sampleRate ?? 48000;
   }
 
+  function runBuiltinOp(
+    operation: SampleOperation,
+    fallback: (channels: Float32Array[], range: SampleRange) => Float32Array[],
+  ): (channels: Float32Array[], range: SampleRange) => Promise<Float32Array[]> | Float32Array[] {
+    return (channels, range) =>
+      typeof Worker === 'undefined'
+        ? fallback(channels, range)
+        : runSampleOperationInWorker(operation, channels, range);
+  }
+
   async function onGain(): Promise<void> {
     const db = parseNumber(gainDbInput.value);
     if (db === null) {
       error.value = t.value.shell.sampleEditor.errors.gain;
       return;
     }
-    await runOp(formatMessage(t.value.shell.sampleEditor.ops.gain, { db }), (channels, range) =>
-      applyGainDb(channels, db, range),
+    await runOp(
+      formatMessage(t.value.shell.sampleEditor.ops.gain, { db }),
+      runBuiltinOp({ type: 'gain', db }, (channels, range) => applyGainDb(channels, db, range)),
     );
   }
 
@@ -460,31 +476,37 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     const target = parseNumber(normalizeTargetInput.value) ?? -1;
     await runOp(
       formatMessage(t.value.shell.sampleEditor.ops.normalize, { target }),
-      (channels, range) => normalizeToDb(channels, target, range),
+      runBuiltinOp({ type: 'normalize', targetDb: target }, (channels, range) =>
+        normalizeToDb(channels, target, range),
+      ),
     );
   }
 
   async function onFadeIn(): Promise<void> {
-    await runOp(t.value.shell.sampleEditor.ops.fadeIn, (channels, range) =>
-      fadeInLinear(channels, range),
+    await runOp(
+      t.value.shell.sampleEditor.ops.fadeIn,
+      runBuiltinOp({ type: 'fade-in' }, (channels, range) => fadeInLinear(channels, range)),
     );
   }
 
   async function onFadeOut(): Promise<void> {
-    await runOp(t.value.shell.sampleEditor.ops.fadeOut, (channels, range) =>
-      fadeOutLinear(channels, range),
+    await runOp(
+      t.value.shell.sampleEditor.ops.fadeOut,
+      runBuiltinOp({ type: 'fade-out' }, (channels, range) => fadeOutLinear(channels, range)),
     );
   }
 
   async function onReverse(): Promise<void> {
-    await runOp(t.value.shell.sampleEditor.ops.reverse, (channels, range) =>
-      reverse(channels, range),
+    await runOp(
+      t.value.shell.sampleEditor.ops.reverse,
+      runBuiltinOp({ type: 'reverse' }, (channels, range) => reverse(channels, range)),
     );
   }
 
   async function onSilence(): Promise<void> {
-    await runOp(t.value.shell.sampleEditor.ops.silence, (channels, range) =>
-      silence(channels, range),
+    await runOp(
+      t.value.shell.sampleEditor.ops.silence,
+      runBuiltinOp({ type: 'silence' }, (channels, range) => silence(channels, range)),
     );
   }
 
@@ -492,7 +514,10 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     const range = selRange();
     if (!range) return;
     if (
-      await runOp(t.value.shell.sampleEditor.ops.trim, (channels) => trimToRange(channels, range))
+      await runOp(
+        t.value.shell.sampleEditor.ops.trim,
+        runBuiltinOp({ type: 'trim' }, (channels) => trimToRange(channels, range)),
+      )
     ) {
       clearSelection();
     }
