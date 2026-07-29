@@ -12,5 +12,5 @@ describe('component template import gate', () => {
       expect(path).toMatch(/\.vue$/);
       expect(module).toHaveProperty('default');
     }
-  });
+  }, 15_000);
 });

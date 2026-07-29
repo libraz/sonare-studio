@@ -104,6 +104,7 @@ interface FakeState {
   warpMaps: Map<number, FakeWarpMap>;
 }
 
+/** Complete native-history state, including the allocator cursors. */
 /** Packs a UMP MIDI 1.0 channel-voice word with the real binding layout. */
 function pack(
   group: number,
@@ -162,6 +163,7 @@ export class FakeProject {
   };
   private history: FakeState[] = [];
   private future: FakeState[] = [];
+  private maxUndoDepth = Number.POSITIVE_INFINITY;
   private nextTrackId = 1;
   private nextClipId = 1;
   private nextMarkerId = 1;
@@ -266,6 +268,7 @@ export class FakeProject {
   /** Pushes one history entry, then applies the mutation. */
   private edit<T>(mutate: () => T): T {
     this.history.push(cloneState(this.state));
+    while (this.history.length > this.maxUndoDepth) this.history.shift();
     this.future.length = 0;
     return mutate();
   }
@@ -748,6 +751,11 @@ export class FakeProject {
     this.state = next;
   }
 
+  setMaxUndoDepth(depth: number): void {
+    this.maxUndoDepth = Math.max(1, Math.floor(depth));
+    while (this.history.length > this.maxUndoDepth) this.history.shift();
+  }
+
   snapToGrid(ppq: number, strength = 1): number {
     const target = Math.round(ppq);
     return ppq + (target - ppq) * strength;
@@ -831,8 +839,13 @@ export class FakeProject {
   }
 
   exportSmf(): Uint8Array {
-    // Deterministic placeholder: a MIDI header chunk tag plus content counts.
-    return new Uint8Array([0x4d, 0x54, 0x68, 0x64, this.state.clips.length & 0xff]);
+    // Small but structurally valid SMF: format 0, one empty track, 480 PPQ.
+    // Keeping this valid lets app-level export sidecars exercise the same
+    // header/track handling as the native writer.
+    return new Uint8Array([
+      0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 0, 0, 1, 0x01, 0xe0, 0x4d, 0x54, 0x72, 0x6b, 0, 0, 0,
+      4, 0, 0xff, 0x2f, 0,
+    ]);
   }
 
   exportClipFile(): Uint8Array {
@@ -963,15 +976,22 @@ export const FAKE_INSERT_PARAMS: Record<string, string[]> = {
     'kneeDb',
     'makeupGainDb',
   ],
-  'dynamics.deesser': ['thresholdDb', 'frequencyHz'],
+  'dynamics.limiter': ['thresholdDb', 'lookaheadMs', 'releaseMs'],
+  'dynamics.brickwallLimiter': ['ceilingDb', 'lookaheadMs', 'releaseMs'],
+  'dynamics.gate': ['thresholdDb', 'attackMs', 'releaseMs', 'rangeDb', 'holdMs'],
+  'dynamics.deesser': ['thresholdDb', 'frequencyHz', 'ratio'],
   'dynamics.parallelComp': ['thresholdDb', 'mix'],
   'dynamics.sidechainRouter': ['rangeDb'],
   'eq.tilt': ['tiltDb', 'pivotHz'],
+  'effects.reverb.plate': ['mix', 'preDelayMs'],
   'modulation.chorus': ['rateHz', 'depth', 'mix'],
   'modulation.flanger': ['rateHz', 'depth', 'feedback', 'mix'],
   'modulation.rotary': ['speed', 'drive', 'mix'],
   'saturation.tape': ['driveDb', 'saturation', 'outputGainDb'],
-  'stereo.imager': ['width', 'outputGainDb'],
+  'saturation.softClipper': ['driveDb', 'ceiling', 'mix'],
+  'saturation.waveshaper': ['driveDb', 'mix', 'outputGainDb'],
+  'stereo.imager': ['width', 'decorrelationAmount', 'outputGainDb'],
+  'stereo.monoMaker': ['amount'],
 };
 
 /** Mastering preset names the fake catalog reports (subset of the real build). */

@@ -12,6 +12,7 @@
     "preview": "vite preview",
     "copy:wasm": "./scripts/copy-wasm.sh",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:external-formats": "EXTERNAL_VALIDATORS=1 vitest run tests/external-format-validators.spec.ts tests/external-format-fuzz.spec.ts tests/archive-preflight.spec.ts tests/persistence-szd.spec.ts tests/persistence-backup.spec.ts tests/export-dawproject.spec.ts tests/import-dawproject.spec.ts tests/project-smf.spec.ts tests/notation-musicxml.spec.ts tests/notation-musicxml-import.spec.ts tests/export-wav.spec.ts",
     "test:watch": "vitest",
     "lint": "biome check .",
@@ -37,6 +38,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5",
     "@vitejs/plugin-vue": "^6",
+    "@vitest/coverage-v8": "^4.1.10",
     "@vue/test-utils": "^2.4",
     "jsdom": "^29",
     "npm-check-updates": "^23.0.0",

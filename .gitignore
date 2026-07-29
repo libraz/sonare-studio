@@ -3,6 +3,7 @@ node_modules
 .yarn/unplugged/*
 .yarn/install-state.gz
 dist
+coverage/
 *.local
 .claude
 .serena/
