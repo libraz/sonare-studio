@@ -54,6 +54,9 @@ export interface ClipPoint {
 /** Default px distance from a clip edge that still counts as a trim handle. */
 export const DEFAULT_TRIM_TOLERANCE_PX = 5;
 
+/** Minimum clip width used by arrangement rendering and hit-testing. */
+export const MIN_CLIP_WIDTH_PX = 2;
+
 /** Options for {@link hitTestClip}. */
 export interface ClipHitTestOptions {
   /** Px distance from a clip edge treated as a trim handle. Default {@link DEFAULT_TRIM_TOLERANCE_PX}. */
@@ -88,7 +91,7 @@ export function hitTestClip(
     const top = view.laneTop(clip.laneIndex);
     if (point.y < top || point.y >= top + view.laneHeight) continue;
     const left = view.ppqToX(clip.startPpq);
-    const right = view.ppqToX(clip.startPpq + clip.lengthPpq);
+    const right = Math.max(left + MIN_CLIP_WIDTH_PX, view.ppqToX(clip.startPpq + clip.lengthPpq));
     if (point.x < left || point.x >= right) continue;
     return { id: clip.id, zone: resolveZone(point.x, left, right, tolerance) };
   }
@@ -98,10 +101,8 @@ export function hitTestClip(
 /** Resolves the interaction zone for an x position inside a clip rectangle. */
 function resolveZone(x: number, left: number, right: number, tolerance: number): ClipHitZone {
   const width = right - left;
-  if (width <= tolerance * 2) {
-    return x < left + width / 2 ? 'trim-start' : 'trim-end';
-  }
-  if (x - left <= tolerance) return 'trim-start';
-  if (right - x <= tolerance) return 'trim-end';
+  const edgeTolerance = Math.min(tolerance, width / 3);
+  if (x - left <= edgeTolerance) return 'trim-start';
+  if (right - x <= edgeTolerance) return 'trim-end';
   return 'body';
 }

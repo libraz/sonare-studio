@@ -11,7 +11,7 @@
  * before any ruler offset or scroll is applied by the caller.
  */
 
-import type { AutomationParam } from '@/project/automation';
+import { type AutomationParam, clampAutomationValue } from '@/project/automation';
 
 /** Height of one expanded automation sublane in px. */
 export const AUTOMATION_LANE_HEIGHT_PX = 56;
@@ -230,8 +230,11 @@ export function automationValueToY(
 }
 
 /**
- * Maps a viewport y inside a sublane back to an automation value, clamped to
- * the parameter's display domain (the inverse of {@link automationValueToY}).
+ * Maps a viewport y inside a sublane back to an automation value. The display
+ * domain sets the scale, but does not clamp the result: a drag may extend past
+ * the visual window, and the model's parameter domain is the only input
+ * constraint. This pairs with {@link automationValueToY}, which intentionally
+ * pins out-of-window values to a visual edge.
  *
  * @param param Automated parameter (selects the display domain).
  * @param y Y in viewport px.
@@ -250,6 +253,7 @@ export function automationYToValue(
   const domain = automationValueDomain(param, insertDomain);
   const innerTop = top + AUTOMATION_LANE_PAD_PX;
   const innerHeight = Math.max(1, height - 2 * AUTOMATION_LANE_PAD_PX);
-  const t = clamp01((y - innerTop) / innerHeight);
-  return domain.min + (1 - t) * (domain.max - domain.min);
+  const t = (y - innerTop) / innerHeight;
+  const value = domain.min + (1 - t) * (domain.max - domain.min);
+  return clampAutomationValue(param, value);
 }

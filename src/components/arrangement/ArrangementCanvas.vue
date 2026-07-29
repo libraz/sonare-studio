@@ -15,11 +15,7 @@ import type {
   AccessibleObjectAdjustment,
   AccessibleObjectItem,
 } from '@/ui/accessibility/object-navigation';
-import {
-  AUTOMATION_LANE_HEIGHT_PX,
-  buildRowLayout,
-  trackTakeRowCount,
-} from '@/ui/arrangement/automation-rows';
+import { type ArrangementRowLayout } from '@/ui/arrangement/automation-rows';
 import { barLengthPpq, createRulerTickCache } from '@/ui/arrangement/ruler';
 import type { AutomationInteractions } from '@/ui/arrangement/use-automation-interactions';
 import { drawAutomationLanes } from '@/ui/arrangement/use-automation-sublane';
@@ -75,6 +71,8 @@ const props = defineProps<{
   scrollY: number;
   /** Height of one track lane in px. */
   laneHeight: number;
+  /** Shared row geometry from the arrangement container. */
+  rowLayout: ArrangementRowLayout;
   /** Whether the transport loop range is shown on the ruler. */
   loopEnabled: boolean;
   /** Loop start in PPQ. */
@@ -152,20 +150,6 @@ const trackIndexById = computed(() => {
 const barPpq = computed(() => {
   const segment = props.timeSignatures[0];
   return segment ? barLengthPpq(segment) : 4;
-});
-
-/** Row layout reflecting which tracks show take sub-rows or an automation sublane. */
-const rowLayout = computed(() => {
-  const expanded = new Set(props.automationExpandedIds);
-  const takesExpanded = new Set(props.takesExpandedIds);
-  return buildRowLayout(
-    props.tracks.map((track) => expanded.has(track.id)),
-    props.laneHeight,
-    AUTOMATION_LANE_HEIGHT_PX,
-    props.tracks.map((track) =>
-      takesExpanded.has(track.id) ? trackTakeRowCount(props.clips, track.id) : 0,
-    ),
-  );
 });
 
 const activeClip = computed(() => props.clips.find((clip) => clip.id === props.activeClipId));
@@ -276,7 +260,7 @@ function onAccessibleClipValue(payload: { id: string; controlId: string; value: 
 }
 
 function laneTopFor(index: number): number {
-  return RULER_HEIGHT_PX + rowLayout.value.rowTop(index) - props.scrollY;
+  return RULER_HEIGHT_PX + props.rowLayout.rowTop(index) - props.scrollY;
 }
 
 function scheduleBase(): void {
@@ -314,7 +298,7 @@ function drawBase(): void {
     activeTrackId: props.activeTrackId,
     laneHeight: props.laneHeight,
     laneTop: laneTopFor,
-    rowHeight: rowLayout.value.rowHeight,
+    rowHeight: props.rowLayout.rowHeight,
     colors: COLORS,
   });
   drawGrid(ctx, h, {
@@ -331,7 +315,7 @@ function drawBase(): void {
     takesExpandedIds: props.takesExpandedIds,
     takes: props.takes,
     scrollY: props.scrollY,
-    takeTop: rowLayout.value.takeTop,
+    takeTop: props.rowLayout.takeTop,
     colors: COLORS,
   });
   drawAutomationLanes(ctx, w, h, {
@@ -342,7 +326,7 @@ function drawBase(): void {
     automationLanes: props.automationLanes,
     automation: props.automation,
     scrollY: props.scrollY,
-    automationTop: rowLayout.value.automationTop,
+    automationTop: props.rowLayout.automationTop,
     colors: COLORS,
   });
   drawRuler(ctx, w, {

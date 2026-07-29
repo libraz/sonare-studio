@@ -92,8 +92,12 @@ function computePeaksWasm(
   const fn = mod.waveformPeaks;
   if (typeof fn !== 'function') return null;
   const frames = channels[0]?.length ?? 0;
-  if (frames === 0) return null;
-  const samplesPerBucket = Math.max(1, Math.ceil(frames / bucketCount));
+  // The delegate derives bucket count by ceil(frames / samplesPerBucket). A
+  // floor keeps that count at or above our requested resolution; when audio is
+  // sparser than pixels, skip the delegate before allocating an interleaved
+  // copy because it cannot supply every bucket anyway.
+  if (frames < bucketCount) return null;
+  const samplesPerBucket = Math.max(1, Math.floor(frames / bucketCount));
   let report: WaveformPeaksReportLike;
   try {
     report = fn(interleave(channels), channels.length, { samplesPerBucket, validate: false });

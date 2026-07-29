@@ -4,6 +4,7 @@ import {
   clearAudioClipData,
   getLoadedAudioAsset,
   invalidateAudioAsset,
+  MAX_AUDIO_CLIP_CACHE_BYTES,
   requestAudioAsset,
 } from '@/ui/arrangement/audio-clip-data';
 
@@ -91,5 +92,25 @@ describe('audio clip data cache', () => {
     expect(getLoadedAudioAsset('asset-a')?.meta.id).toBe('asset-a');
     expect(staleSettled).not.toHaveBeenCalled();
     expect(freshSettled).toHaveBeenCalledOnce();
+  });
+
+  it('evicts older decoded PCM when the bounded render cache is full', async () => {
+    const oversized = {
+      ...loaded('asset-a'),
+      channels: [{ byteLength: MAX_AUDIO_CLIP_CACHE_BYTES }],
+    } as unknown as LoadedAudioAsset;
+    const next = {
+      ...loaded('asset-b'),
+      channels: [{ byteLength: 1 }],
+    } as unknown as LoadedAudioAsset;
+    assetStore.loadAsset.mockResolvedValueOnce(oversized).mockResolvedValueOnce(next);
+
+    requestAudioAsset('asset-a');
+    await flushLoadChain();
+    requestAudioAsset('asset-b');
+    await flushLoadChain();
+
+    expect(getLoadedAudioAsset('asset-a')).toBeNull();
+    expect(getLoadedAudioAsset('asset-b')).toBe(next);
   });
 });

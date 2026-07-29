@@ -15,6 +15,7 @@ import {
   setTrackFrozen,
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
+import { buildRowLayout } from '@/ui/arrangement/automation-rows';
 import { closeContextMenu, useContextMenuState } from '@/ui/menu/context-menu';
 import { selectOption, selectValueText } from './helpers/select-menu';
 
@@ -39,6 +40,10 @@ function mountHeaders(loop?: { enabled: boolean; startPpq: number; endPpq: numbe
       laneHeight: 48,
       scrollY: 0,
       rulerOffset: 24,
+      rowLayout: buildRowLayout(
+        useProjectStore().tracks.map(() => false),
+        48,
+      ),
       ...(loop
         ? { loopEnabled: loop.enabled, loopStartPpq: loop.startPpq, loopEndPpq: loop.endPpq }
         : {}),
@@ -102,6 +107,10 @@ describe('track freeze / bounce UI', () => {
           laneHeight: 48,
           scrollY: 0,
           rulerOffset: 24,
+          rowLayout: buildRowLayout(
+            store.tracks.map((track) => track.id === groupId),
+            48,
+          ),
           automationExpandedIds: [groupId],
           automationParams: { [groupId]: 'pan' },
         },

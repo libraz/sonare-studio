@@ -39,8 +39,8 @@ import { MAX_VCA_GROUPS } from '@/project/mixer';
 import { getWasmModule, useProjectStore } from '@/project/store';
 import { type EditorTrack, TRACK_COLOR_PALETTE, type TrackKind } from '@/project/types';
 import {
+  type ArrangementRowLayout,
   AUTOMATION_LANE_HEIGHT_PX,
-  buildRowLayout,
   reorderRowIndexForDelta,
   TAKE_LANE_HEIGHT_PX,
   trackActiveTakeIndex,
@@ -84,6 +84,8 @@ const props = defineProps<{
   scrollY: number;
   /** Top spacer height aligning the first lane with the canvas ruler, in px. */
   rulerOffset: number;
+  /** Shared row geometry from the arrangement container. */
+  rowLayout: ArrangementRowLayout;
   /** Ids of record-armed tracks (recording state is owned by the shell). */
   armedTrackIds?: readonly number[];
   /**
@@ -366,13 +368,8 @@ function automationLaneFor(track: EditorTrack): AutomationLaneState | null {
 }
 
 /** Full header row height: lane plus take rows and the automation strip when expanded. */
-function rowHeight(track: EditorTrack): number {
-  const takeRows = isTakesExpanded(track) ? takeRowCount(track) : 0;
-  return (
-    props.laneHeight +
-    takeRows * TAKE_LANE_HEIGHT_PX +
-    (isAutomationExpanded(track) ? AUTOMATION_LANE_HEIGHT_PX : 0)
-  );
+function rowHeight(index: number): number {
+  return props.rowLayout.rowHeight(index);
 }
 
 function onToggleAutomation(track: EditorTrack): void {
@@ -565,15 +562,8 @@ function onGripPointerDown(track: EditorTrack, index: number, event: PointerEven
 function onGripPointerMove(event: PointerEvent): void {
   const drag = reorderDrag.value;
   if (!drag) return;
-  const layout = buildRowLayout(
-    store.tracks.map((track) => isAutomationExpanded(track)),
-    props.laneHeight,
-    AUTOMATION_LANE_HEIGHT_PX,
-    store.tracks.map((track) => (isTakesExpanded(track) ? takeRowCount(track) : 0)),
-    TAKE_LANE_HEIGHT_PX,
-  );
   const toIndex = reorderRowIndexForDelta(
-    layout,
+    props.rowLayout,
     drag.fromIndex,
     event.clientY - drag.startClientY,
   );
@@ -759,7 +749,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
           :key="track.id"
           class="track-header"
           :class="rowClass(track, index)"
-          :style="{ height: `${rowHeight(track)}px` }"
+          :style="{ height: `${rowHeight(index)}px` }"
           @click="activate(track)"
           @contextmenu.prevent="onContextMenu(track, $event)"
         >

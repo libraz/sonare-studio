@@ -7,6 +7,7 @@ import MixerKnob from '@/components/mixer/MixerKnob.vue';
 import NoteGridCanvas from '@/components/piano-roll/NoteGridCanvas.vue';
 import NewProjectDialog from '@/components/project/NewProjectDialog.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
+import { buildRowLayout } from '@/ui/arrangement/automation-rows';
 import type { Painter } from '@/ui/canvas/painter';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
 import { FADER_MAX_DB, FADER_MIN_DB } from '@/ui/mixer/db-scale';
@@ -170,6 +171,7 @@ describe('Canvas editor live regions', () => {
         timeSignatures: [{ startPpq: 0, numerator: 4, denominator: 4 }],
         scrollY: 0,
         laneHeight: 80,
+        rowLayout: buildRowLayout([false], 80),
         loopEnabled: false,
         loopStartPpq: 0,
         loopEndPpq: 4,
@@ -279,6 +281,7 @@ describe('Canvas editor live regions', () => {
         timeSignatures: [{ startPpq: 0, numerator: 4, denominator: 4 }],
         scrollY: 0,
         laneHeight: 80,
+        rowLayout: buildRowLayout([false], 80),
         loopEnabled: false,
         loopStartPpq: 0,
         loopEndPpq: 4,
@@ -318,6 +321,7 @@ describe('Canvas editor live regions', () => {
         timeSignatures: [{ startPpq: 0, numerator: 4, denominator: 4 }],
         scrollY: 0,
         laneHeight: 80,
+        rowLayout: buildRowLayout([false], 80),
         loopEnabled: false,
         loopStartPpq: 0,
         loopEndPpq: 4,

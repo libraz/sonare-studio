@@ -28,6 +28,7 @@ import {
 import { audioAssetMergedPeaks, requestAudioAsset } from '@/ui/arrangement/audio-clip-data';
 import { FADE_HANDLE_SIZE_PX, fadeHandleXs } from '@/ui/arrangement/audio-fades';
 import {
+  arrangementMidiNoteSpans,
   type ClipNoteSpan,
   clipContentMode,
   densityBuckets,
@@ -93,6 +94,44 @@ function cachedDensityBuckets(
   const densities = densityBuckets(notes, windowStartPpq, windowLengthPpq, bucketPpq);
   densityBucketsCache.set(notes, { windowStartPpq, windowLengthPpq, bucketPpq, densities });
   return densities;
+}
+
+interface ArrangementNoteSpanCacheEntry {
+  sourceNotes: EditorClip['notes'];
+  startPpq: number;
+  lengthPpq: number;
+  sourceOffsetPpq: number;
+  loopEnabled: boolean;
+  loopLengthPpq: number;
+  spans: ClipNoteSpan[];
+}
+const arrangementNoteSpanCache = new WeakMap<EditorClip, ArrangementNoteSpanCacheEntry>();
+
+/** Memoizes the shared-projector result across playhead-driven repaints. */
+function cachedArrangementMidiNoteSpans(source: EditorClip): ClipNoteSpan[] {
+  const hit = arrangementNoteSpanCache.get(source);
+  if (
+    hit &&
+    hit.sourceNotes === source.notes &&
+    hit.startPpq === source.startPpq &&
+    hit.lengthPpq === source.lengthPpq &&
+    hit.sourceOffsetPpq === source.sourceOffsetPpq &&
+    hit.loopEnabled === source.loopEnabled &&
+    hit.loopLengthPpq === source.loopLengthPpq
+  ) {
+    return hit.spans;
+  }
+  const spans = arrangementMidiNoteSpans(source);
+  arrangementNoteSpanCache.set(source, {
+    sourceNotes: source.notes,
+    startPpq: source.startPpq,
+    lengthPpq: source.lengthPpq,
+    sourceOffsetPpq: source.sourceOffsetPpq,
+    loopEnabled: source.loopEnabled,
+    loopLengthPpq: source.loopLengthPpq,
+    spans,
+  });
+  return spans;
 }
 
 /** Minimum clip width in px before the name label is drawn. */
@@ -181,13 +220,10 @@ export function drawClip(
   if (contentH > 2 && isAudioClip(source)) {
     drawAudioWaveform(ctx, source, track.color, x, wPx, contentTop, contentH, context);
   } else if (contentH > 2 && source.notes.length > 0) {
+    const noteSpans = cachedArrangementMidiNoteSpans(source);
     if (clipContentMode(range.pxPerPpq) === 'mini-notes') {
       ctx.fillStyle = colorWithAlpha(track.color, 0.95);
-      for (const rect of cachedMiniNoteRects(
-        source.notes,
-        source.sourceOffsetPpq,
-        source.lengthPpq,
-      )) {
+      for (const rect of cachedMiniNoteRects(noteSpans, 0, source.lengthPpq)) {
         ctx.fillRect(
           x + rect.u * wPx,
           contentTop + rect.v * contentH,
@@ -196,12 +232,7 @@ export function drawClip(
         );
       }
     } else {
-      const buckets = cachedDensityBuckets(
-        source.notes,
-        source.sourceOffsetPpq,
-        source.lengthPpq,
-        barPpq,
-      );
+      const buckets = cachedDensityBuckets(noteSpans, 0, source.lengthPpq, barPpq);
       const bucketW = barPpq * range.pxPerPpq;
       for (let i = 0; i < buckets.length; i++) {
         if (buckets[i] <= 0) continue;

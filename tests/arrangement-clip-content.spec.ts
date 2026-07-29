@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  arrangementMidiNoteSpans,
   type ClipNoteSpan,
   clipContentMode,
   densityBuckets,
@@ -64,6 +65,22 @@ describe('miniNoteRects', () => {
   it('returns nothing for an empty note list or degenerate window', () => {
     expect(miniNoteRects([], 0, 8)).toEqual([]);
     expect(miniNoteRects([note(0, 1, 60)], 0, 0)).toEqual([]);
+  });
+});
+
+describe('arrangementMidiNoteSpans', () => {
+  it('repeats the canonical audible loop window and clips the final occurrence', () => {
+    const spans = arrangementMidiNoteSpans({
+      id: 8,
+      startPpq: 12,
+      lengthPpq: 5,
+      sourceOffsetPpq: 1,
+      loopEnabled: true,
+      loopLengthPpq: 2,
+      notes: [{ id: 4, startPpq: 1.5, durationPpq: 1, pitch: 64, velocity: 100, channel: 0 }],
+    });
+
+    expect(spans).toEqual([note(0.5, 1, 64), note(2.5, 1, 64), note(4.5, 0.5, 64)]);
   });
 });
 

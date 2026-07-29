@@ -217,9 +217,13 @@ describe('arrangement automation rows', () => {
       }
     });
 
-    it('clamps y positions outside the padded band to the domain edges', () => {
+    it('clamps y positions to the model domain rather than the display domain', () => {
       expect(automationYToValue('pan', top - 50, top, height)).toBe(1);
       expect(automationYToValue('pan', top + height + 50, top, height)).toBe(-1);
+      // Fader drawing uses the narrower [-60, +12] dB window, but an editing
+      // drag beyond it must retain the full model range [-120, +24] dB.
+      expect(automationYToValue('faderDb', innerTop - 100, top, height)).toBe(24);
+      expect(automationYToValue('faderDb', innerBottom + 100, top, height)).toBe(-120);
     });
 
     it('threads an insert domain through y conversion and back', () => {

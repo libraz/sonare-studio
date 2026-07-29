@@ -26,6 +26,28 @@ const assetVersions = new Map<string, number>();
 let peaksCache: WaveformPeaksCache | null = null;
 let cacheEpoch = 0;
 
+/** Decoded PCM held by this render cache must never outlive a bounded budget. */
+export const MAX_AUDIO_CLIP_CACHE_BYTES = 128 * 1024 * 1024;
+
+function assetByteLength(asset: LoadedAudioAsset): number {
+  return asset.channels.reduce((total, channel) => total + channel.byteLength, 0);
+}
+
+function cacheAsset(assetId: string, asset: LoadedAudioAsset): void {
+  // Map insertion order is our LRU order. A cache hit refreshes the entry.
+  loadedAssets.delete(assetId);
+  loadedAssets.set(assetId, asset);
+  let bytes = 0;
+  for (const cached of loadedAssets.values()) bytes += assetByteLength(cached);
+  while (bytes > MAX_AUDIO_CLIP_CACHE_BYTES && loadedAssets.size > 1) {
+    const oldestId = loadedAssets.keys().next().value as string;
+    const oldest = loadedAssets.get(oldestId);
+    loadedAssets.delete(oldestId);
+    if (oldest) bytes -= assetByteLength(oldest);
+    peaksCache?.invalidate(oldestId);
+  }
+}
+
 /** Builds the peaks cache lazily so the wasm delegate is picked up once ready. */
 function ensurePeaksCache(): WaveformPeaksCache {
   if (!peaksCache) {
@@ -47,7 +69,10 @@ function ensurePeaksCache(): WaveformPeaksCache {
  * @returns The cached asset, or null when it has not been loaded (yet).
  */
 export function getLoadedAudioAsset(assetId: string): LoadedAudioAsset | null {
-  return loadedAssets.get(assetId) ?? null;
+  const asset = loadedAssets.get(assetId);
+  if (!asset) return null;
+  cacheAsset(assetId, asset);
+  return asset;
 }
 
 /**
@@ -66,7 +91,10 @@ export function requestAudioAsset(
   onSettled?: () => void,
 ): LoadedAudioAsset | null {
   const cached = loadedAssets.get(assetId);
-  if (cached) return cached;
+  if (cached) {
+    cacheAsset(assetId, cached);
+    return cached;
+  }
   if (failedAssets.has(assetId)) return null;
   const existing = pendingListeners.get(assetId);
   if (existing) {
@@ -80,7 +108,7 @@ export function requestAudioAsset(
   void loadAsset(assetId)
     .then((asset) => {
       if (epoch !== cacheEpoch || version !== (assetVersions.get(assetId) ?? 0)) return;
-      loadedAssets.set(assetId, asset);
+      cacheAsset(assetId, asset);
     })
     .catch(() => {
       if (epoch !== cacheEpoch || version !== (assetVersions.get(assetId) ?? 0)) return;

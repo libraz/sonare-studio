@@ -27,4 +27,11 @@ describe('arrangement loop split entry-point wiring', () => {
       'error.value = t.value.shell.arrangement.loopSplitUnavailable;',
     );
   });
+
+  it('routes wheel input from the track-header column through the shared viewport handler', () => {
+    expect(arrangementView).toContain(
+      '<TrackHeaderList\n        class="cell-headers"\n        @wheel.prevent="onWheel"',
+    );
+    expect(arrangementView).toContain('event.currentTarget instanceof HTMLElement');
+  });
 });

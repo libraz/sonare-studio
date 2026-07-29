@@ -85,6 +85,16 @@ describe('computePeaks (wasm delegation)', () => {
     ]);
   });
 
+  it('avoids interleaving when sparse audio cannot fill the requested bucket count', () => {
+    const waveformPeaks = vi.fn();
+    const channel = new Float32Array([1, -1]);
+
+    expect(computePeaks([channel], 4, { wasm: { waveformPeaks } })).toEqual([
+      peaks([0, 1, 0, -1], [0, 1, 0, -1]),
+    ]);
+    expect(waveformPeaks).not.toHaveBeenCalled();
+  });
+
   it('falls back to the pure path when the delegate throws or is absent', () => {
     const throwing: WaveformPeaksModule = {
       waveformPeaks: () => {

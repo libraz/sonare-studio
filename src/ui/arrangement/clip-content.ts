@@ -7,6 +7,9 @@
  * [windowStartPpq, windowStartPpq + windowLengthPpq).
  */
 
+import { projectMidiClipNoteOccurrences } from '@/project/midi-projection';
+import type { EditorClip } from '@/project/types';
+
 /** Minimum px per beat (quarter note) before mini-notes are rendered. */
 export const MINI_NOTES_MIN_PX_PER_BEAT = 10;
 
@@ -32,6 +35,27 @@ export interface ClipNoteSpan {
   durationPpq: number;
   /** MIDI pitch (0..127). */
   pitch: number;
+}
+
+/**
+ * Expands the audible MIDI content that belongs in an arrangement clip body.
+ *
+ * The engine, score, and other timeline consumers all use the shared MIDI
+ * projector for trim and loop semantics. Keeping this adapter here means the
+ * arrangement canvas uses those exact occurrences instead of visualizing only
+ * the first source window.
+ */
+export function arrangementMidiNoteSpans(
+  clip: Pick<
+    EditorClip,
+    'id' | 'notes' | 'startPpq' | 'lengthPpq' | 'sourceOffsetPpq' | 'loopEnabled' | 'loopLengthPpq'
+  >,
+): ClipNoteSpan[] {
+  return projectMidiClipNoteOccurrences(clip).map(({ startPpq, durationPpq, pitch }) => ({
+    startPpq,
+    durationPpq,
+    pitch,
+  }));
 }
 
 /** A rectangle in clip-body unit coordinates ([0, 1] on both axes, v down). */

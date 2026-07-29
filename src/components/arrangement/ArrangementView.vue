@@ -444,9 +444,10 @@ const takes = useTakeInteractions({
 const canvasCell = ref<HTMLDivElement | null>(null);
 
 function onWheel(event: WheelEvent): void {
-  const anchorEl = canvasCell.value;
-  if (!anchorEl) return;
   if (event.metaKey || event.ctrlKey) {
+    const anchorEl =
+      event.currentTarget instanceof HTMLElement ? event.currentTarget : canvasCell.value;
+    if (!anchorEl) return;
     const anchorX = event.clientX - anchorEl.getBoundingClientRect().left;
     range.zoomAt(anchorX, Math.exp(-event.deltaY * ZOOM_WHEEL_SENSITIVITY));
   } else if (event.shiftKey) {
@@ -928,6 +929,7 @@ onBeforeUnmount(() => {
       />
       <TrackHeaderList
         class="cell-headers"
+        @wheel.prevent="onWheel"
         :lane-height="LANE_HEIGHT_PX"
         :scroll-y="scrollY"
         :ruler-offset="RULER_HEIGHT_PX"
@@ -936,6 +938,7 @@ onBeforeUnmount(() => {
         :automation-expanded-ids="automationExpandedIds"
         :automation-params="automationParams"
         :takes-expanded-ids="takesExpandedIds"
+        :row-layout="rowLayout"
         :loop-enabled="props.loopEnabled ?? false"
         :loop-start-ppq="props.loopStartPpq ?? 0"
         :loop-end-ppq="props.loopEndPpq ?? 0"
@@ -971,6 +974,7 @@ onBeforeUnmount(() => {
           :automation-lanes="store.automationLanes"
           :automation="automation"
           :takes-expanded-ids="takesExpandedIds"
+          :row-layout="rowLayout"
           :takes="takes"
           :position-ppq="props.positionPpq"
           :anchored-local-x="followAnchorLocalX"

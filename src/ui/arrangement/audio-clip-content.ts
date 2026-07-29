@@ -139,6 +139,28 @@ export interface WaveformColumn {
   max: number;
 }
 
+/** Aggregates one source window directly, without allocating a one-column array. */
+function waveformColumn(peaks: PeakEnvelope, startFrac: number, endFrac: number): WaveformColumn {
+  const bucketCount = peaks.min.length;
+  if (bucketCount === 0 || !(endFrac > startFrac) || endFrac <= 0 || startFrac >= 1) {
+    return { min: 0, max: 0 };
+  }
+  let b0 = Math.max(0, Math.floor(startFrac * bucketCount));
+  let b1 = Math.min(bucketCount, Math.ceil(endFrac * bucketCount));
+  if (b1 <= b0) {
+    // Sub-bucket columns sample the bucket under their start edge.
+    b0 = Math.min(bucketCount - 1, b0);
+    b1 = b0 + 1;
+  }
+  let min = peaks.min[b0];
+  let max = peaks.max[b0];
+  for (let bucket = b0 + 1; bucket < b1; bucket += 1) {
+    if (peaks.min[bucket] < min) min = peaks.min[bucket];
+    if (peaks.max[bucket] > max) max = peaks.max[bucket];
+  }
+  return { min, max };
+}
+
 /**
  * Maps a source window of a peak envelope onto fixed pixel columns. Each
  * column aggregates the min/max of every bucket it overlaps; columns mapping
@@ -164,24 +186,7 @@ export function waveformColumns(
   for (let j = 0; j < columnCount; j++) {
     const f0 = startFrac + (j / columnCount) * span;
     const f1 = startFrac + ((j + 1) / columnCount) * span;
-    if (f1 <= 0 || f0 >= 1) {
-      columns[j] = { min: 0, max: 0 };
-      continue;
-    }
-    let b0 = Math.max(0, Math.floor(f0 * bucketCount));
-    let b1 = Math.min(bucketCount, Math.ceil(f1 * bucketCount));
-    if (b1 <= b0) {
-      // Sub-bucket column: sample the bucket under the column start.
-      b0 = Math.min(bucketCount - 1, b0);
-      b1 = b0 + 1;
-    }
-    let lo = peaks.min[b0];
-    let hi = peaks.max[b0];
-    for (let b = b0 + 1; b < b1; b++) {
-      if (peaks.min[b] < lo) lo = peaks.min[b];
-      if (peaks.max[b] > hi) hi = peaks.max[b];
-    }
-    columns[j] = { min: lo, max: hi };
+    columns[j] = waveformColumn(peaks, f0, f1);
   }
   return columns;
 }
@@ -205,19 +210,14 @@ export function warpedWaveformColumns(
     return [];
   }
   const durationSeconds = numFrames / sampleRate;
-  const result: WaveformColumn[] = [];
+  const result: WaveformColumn[] = new Array(columnCount);
   for (let column = 0; column < columnCount; column += 1) {
     const ppq0 = startLocalPpq + ((endLocalPpq - startLocalPpq) * column) / columnCount;
     const ppq1 = startLocalPpq + ((endLocalPpq - startLocalPpq) * (column + 1)) / columnCount;
     const seconds0 = warpSourceSecondsAt(clip, ppq0);
     const seconds1 = warpSourceSecondsAt(clip, ppq1);
     if (seconds0 === null || seconds1 === null) return [];
-    result.push(
-      waveformColumns(peaks, seconds0 / durationSeconds, seconds1 / durationSeconds, 1)[0] ?? {
-        min: 0,
-        max: 0,
-      },
-    );
+    result[column] = waveformColumn(peaks, seconds0 / durationSeconds, seconds1 / durationSeconds);
   }
   return result;
 }

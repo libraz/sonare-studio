@@ -59,10 +59,11 @@ describe('hitTestClip', () => {
     expect(hitTestClip(clips, { x: 108, y: 25 }, view, opts)?.zone).toBe('trim-end');
   });
 
-  it('splits a narrow clip at its center so both handles stay reachable', () => {
+  it('keeps a body zone on a narrow clip while both trim handles stay reachable', () => {
     const narrow = [clip(3, 0, 0, 0.8)]; // 8 px wide, below 2 * tolerance
-    expect(hitTestClip(narrow, { x: 3, y: 25 }, view)?.zone).toBe('trim-start');
-    expect(hitTestClip(narrow, { x: 5, y: 25 }, view)?.zone).toBe('trim-end');
+    expect(hitTestClip(narrow, { x: 1, y: 25 }, view)?.zone).toBe('trim-start');
+    expect(hitTestClip(narrow, { x: 3, y: 25 }, view)?.zone).toBe('body');
+    expect(hitTestClip(narrow, { x: 7, y: 25 }, view)?.zone).toBe('trim-end');
   });
 
   it('prefers the topmost (last drawn) clip when clips overlap', () => {
