@@ -3,8 +3,8 @@
  *
  * Combos are stored as canonical lower-case strings like `mod+shift+z` where
  * `mod` is the platform command key (Cmd on macOS, Ctrl elsewhere). Matching
- * accepts Cmd and Ctrl interchangeably for `mod`, mirroring how the shell's
- * keydown handlers have always treated `metaKey || ctrlKey`.
+ * maps `mod` to Cmd on macOS and Ctrl everywhere else. In particular, the
+ * Windows key (`metaKey`) is never treated as a command modifier on Windows.
  */
 
 /** Platform flavor used for combo display (and for documentation of `mod`). */
@@ -173,17 +173,17 @@ export function formatKeyCombo(combo: KeyCombo | string, platform: Platform): st
 /**
  * Builds a combo from a keyboard event.
  *
- * `mod` is set when either Cmd or Ctrl is held (matching the shell's
- * historical `metaKey || ctrlKey` behavior on every platform).
+ * `mod` is set from the command modifier of the supplied platform: Cmd on
+ * macOS and Ctrl everywhere else.
  *
  * @returns The combo, or null when the pressed key is itself a modifier.
  */
-export function comboFromEvent(event: KeyboardEvent): KeyCombo | null {
+export function comboFromEvent(event: KeyboardEvent, platform = detectPlatform()): KeyCombo | null {
   const key = normalizeKey(event.key);
   if (MODIFIER_KEYS.has(key)) return null;
   return {
     key,
-    mod: event.metaKey || event.ctrlKey,
+    mod: platform === 'mac' ? event.metaKey : event.ctrlKey,
     shift: event.shiftKey,
     alt: event.altKey,
   };
@@ -212,10 +212,14 @@ export function combosMatch(a: KeyCombo, b: KeyCombo): boolean {
  * @returns True when the combo matches; false for unparseable combos or
  *   modifier-only events.
  */
-export function comboMatchesEvent(comboText: string, event: KeyboardEvent): boolean {
+export function comboMatchesEvent(
+  comboText: string,
+  event: KeyboardEvent,
+  platform = detectPlatform(),
+): boolean {
   const combo = parseKeyCombo(comboText);
   if (combo === null) return false;
-  const pressed = comboFromEvent(event);
+  const pressed = comboFromEvent(event, platform);
   if (pressed === null) return false;
   return combosMatch(combo, pressed);
 }

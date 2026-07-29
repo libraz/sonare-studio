@@ -32,7 +32,7 @@ describe('useAppShortcutsMenu', () => {
       loopEnabled: ref(false),
       opfsAvailable: true,
       recentNames: ref([]),
-      recording: {} as never,
+      recording: { armedTrackId: ref<number | null>(null), isRecording: ref(false) } as never,
       scoreVisible: ref(false),
       settingsOpen: ref(false),
       shortcuts: {
@@ -181,6 +181,23 @@ describe('useAppShortcutsMenu', () => {
     expect(event.defaultPrevented).toBe(true);
   });
 
+  it('exposes the command palette in the Options menu', () => {
+    const commandPaletteOpen = ref(false);
+    const { menu } = harness(
+      { value: false },
+      {
+        commandPaletteOpen,
+        shortcuts: { match: vi.fn(), keysFor: vi.fn(() => ['mod+k']) } as never,
+      },
+    );
+    const optionsMenu = menu.menuBarModel.value.find((entry) => entry.id === 'options');
+    const item = optionsMenu?.items.find((entry) => entry.id === 'options.commandPalette');
+
+    expect(item?.hint).toBeTruthy();
+    item?.run?.();
+    expect(commandPaletteOpen.value).toBe(true);
+  });
+
   it('ignores the record shortcut when no track is armed, but fires it once armed', () => {
     const armedTrackId = ref<number | null>(null);
     const toggleRecord = vi.fn();
@@ -206,6 +223,35 @@ describe('useAppShortcutsMenu', () => {
     armedTrackId.value = 3;
     menu.onGlobalKeyDown(new KeyboardEvent('keydown', { key: 'r', cancelable: true }));
     expect(toggleRecord).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the same unavailable guards for Save and Quantize as their menu items', () => {
+    const saveProjectAction = vi.fn();
+    const { menu: saveMenu } = harness(
+      { value: false },
+      {
+        opfsAvailable: false,
+        saveProjectAction,
+        shortcuts: { match: vi.fn(() => 'project.save'), keysFor: vi.fn(() => ['mod+s']) } as never,
+      },
+    );
+    const save = new KeyboardEvent('keydown', { key: 's', cancelable: true });
+    saveMenu.onGlobalKeyDown(save);
+    expect(saveProjectAction).not.toHaveBeenCalled();
+    expect(save.defaultPrevented).toBe(false);
+
+    const { menu: quantizeMenu } = harness(
+      { value: false },
+      {
+        shortcuts: {
+          match: vi.fn(() => 'edit.quantizeSelection'),
+          keysFor: vi.fn(() => ['q']),
+        } as never,
+      },
+    );
+    const quantize = new KeyboardEvent('keydown', { key: 'q', cancelable: true });
+    quantizeMenu.onGlobalKeyDown(quantize);
+    expect(quantize.defaultPrevented).toBe(false);
   });
 
   it('lists saved layouts only once, in the dedicated Layout menu', () => {

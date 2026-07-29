@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
+import { confirmDialog } from '@/composables/useDialogs';
 import { useI18n } from '@/ui/i18n';
 import {
   type AppLanguage,
@@ -67,6 +68,22 @@ const EXPLAIN_LEVEL_OPTIONS = computed<ReadonlyArray<{ value: ExplainLevel; labe
 
 function onEditorDensityChange(value: 'comfortable' | 'compact'): void {
   appSettings.set('editorDensity', value);
+}
+
+function resetDefaults(): void {
+  void (async () => {
+    if (
+      appSettings.settings.confirmDestructive &&
+      !(await confirmDialog({
+        title: t.value.settings.general.resetTitle,
+        message: t.value.settings.general.resetMessage,
+        danger: true,
+        confirmLabel: t.value.settings.general.resetDefaults,
+      }))
+    )
+      return;
+    appSettings.reset();
+  })();
 }
 
 function onThemeChange(value: AppTheme): void {
@@ -299,7 +316,7 @@ function onLoudnessTargetInput(event: Event): void {
     </section>
 
     <div class="panel-actions">
-      <button type="button" @click="appSettings.reset()">
+      <button type="button" @click="resetDefaults">
         {{ t.settings.general.resetDefaults }}
       </button>
     </div>

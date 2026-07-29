@@ -146,6 +146,7 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
         options.toggleRecord();
         return true;
       case 'project.save':
+        if (!options.opfsAvailable) return false;
         options.saveProjectAction();
         return true;
       case 'project.saveAs':
@@ -166,7 +167,7 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
         selectAllNotes();
         return true;
       case 'edit.quantizeSelection':
-        if (activeContentReadOnly()) return false;
+        if (activeContentReadOnly() || store.selection.size === 0) return false;
         quantizeSelection();
         return true;
       case 'edit.deleteSelectedNotes':
@@ -449,6 +450,14 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
   function optionsItems(): MenuBarItem[] {
     const h = t.value.shell.help;
     return [
+      commandItem(
+        'options.commandPalette',
+        t.value.shell.commandPalette.title,
+        () => {
+          options.commandPaletteOpen.value = true;
+        },
+        { hintFor: 'app.commandPalette' },
+      ),
       commandItem(
         'options.settings',
         t.value.settings.title,

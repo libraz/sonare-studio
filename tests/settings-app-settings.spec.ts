@@ -125,6 +125,10 @@ describe('sanitizeAppSettings', () => {
     expect(
       sanitizeAppSettings({ recordingVoiceChangerPreset: 'chipmunk' }).recordingVoiceChangerPreset,
     ).toBe(DEFAULT_APP_SETTINGS.recordingVoiceChangerPreset);
+    const custom = { schemaVersion: 1, macros: {}, dsp: {} };
+    expect(
+      sanitizeAppSettings({ recordingVoiceChangerPreset: custom }).recordingVoiceChangerPreset,
+    ).toEqual(custom);
   });
 
   it('defaults invalid recording capture sources', () => {

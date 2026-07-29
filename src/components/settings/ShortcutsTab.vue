@@ -2,6 +2,8 @@
 import { onBeforeUnmount, ref } from 'vue';
 import SearchField from '@/components/shell/SearchField.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
+import { useAppSettings } from '@/composables/useAppSettings';
+import { confirmDialog } from '@/composables/useDialogs';
 import { useShortcuts } from '@/composables/useShortcuts';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { comboFromEvent, comboToString, detectPlatform } from '@/ui/settings/key-combo';
@@ -11,8 +13,8 @@ import { useShortcutFilter } from '@/ui/settings/use-shortcut-filter';
 /**
  * Shortcut remapping panel: search/category filtering, conflict highlighting
  * and inline key capture. While capturing, a window-level keydown listener
- * (registered in the capture phase) consumes every key so the press rebinds
- * the action without leaking to the rest of the app.
+ * (registered in the capture phase) consumes every key so the press adds a
+ * binding without leaking to the rest of the app.
  */
 
 const emit = defineEmits<{
@@ -21,6 +23,7 @@ const emit = defineEmits<{
 }>();
 
 const shortcuts = useShortcuts();
+const appSettings = useAppSettings();
 const { t } = useI18n();
 const platform = detectPlatform();
 
@@ -49,7 +52,15 @@ function onCaptureKeydown(event: KeyboardEvent): void {
   if (combo === null) return; // Modifier alone; keep listening.
   const actionId = capturingId.value;
   stopCapture();
-  if (actionId !== null) shortcuts.setKeys(actionId, [comboToString(combo)]);
+  if (actionId !== null) {
+    shortcuts.setKeys(actionId, [...shortcuts.keysFor(actionId), comboToString(combo)]);
+  }
+}
+
+/** Explicitly stores an empty binding list, disabling the shortcut. */
+function clearActionKeys(actionId: string): void {
+  shortcuts.setKeys(actionId, []);
+  emit('request-focus');
 }
 
 /** Resets one action's keys; the reset button unmounts itself, so focus is
@@ -57,6 +68,22 @@ function onCaptureKeydown(event: KeyboardEvent): void {
 function resetActionKeys(actionId: string): void {
   shortcuts.resetKeys(actionId);
   emit('request-focus');
+}
+
+function resetAll(): void {
+  void (async () => {
+    if (
+      appSettings.settings.confirmDestructive &&
+      !(await confirmDialog({
+        title: t.value.settings.shortcuts.resetAllTitle,
+        message: t.value.settings.shortcuts.resetAllMessage,
+        danger: true,
+        confirmLabel: t.value.settings.shortcuts.resetAll,
+      }))
+    )
+      return;
+    shortcuts.resetAll();
+  })();
 }
 
 function startCapture(actionId: string): void {
@@ -164,6 +191,19 @@ onBeforeUnmount(stopCapture);
               >
                 {{ t.settings.shortcuts.reset }}
               </button>
+              <button
+                v-if="shortcuts.keysFor(action.id).length > 0"
+                type="button"
+                class="small"
+                :aria-label="
+                  formatMessage(t.settings.shortcuts.clearKeys, {
+                    action: filter.actionLabel(action),
+                  })
+                "
+                @click="clearActionKeys(action.id)"
+              >
+                {{ t.settings.shortcuts.clear }}
+              </button>
             </template>
           </td>
         </tr>
@@ -171,7 +211,7 @@ onBeforeUnmount(stopCapture);
     </table>
     </div>
     <div class="panel-actions">
-      <button type="button" @click="shortcuts.resetAll()">
+      <button type="button" @click="resetAll">
         {{ t.settings.shortcuts.resetAll }}
       </button>
     </div>

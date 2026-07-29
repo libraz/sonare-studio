@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
-import { promptDialog } from '@/composables/useDialogs';
+import { useAppSettings } from '@/composables/useAppSettings';
+import { confirmDialog, promptDialog } from '@/composables/useDialogs';
 import { useLayouts } from '@/composables/useLayouts';
-import { useI18n } from '@/ui/i18n';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import type { LayoutBindings } from '@/ui/settings/layouts';
 
 /**
@@ -22,7 +23,13 @@ const props = withDefaults(
 );
 
 const namedLayouts = useLayouts();
+const appSettings = useAppSettings();
 const { t } = useI18n();
+
+function presetLabel(name: string): string {
+  const names = t.value.settings.layouts.presetNames as Readonly<Record<string, string>>;
+  return names[name] ?? name;
+}
 
 const newLayoutName = ref('');
 const layoutError = ref('');
@@ -49,7 +56,19 @@ function saveCurrentLayout(): void {
 }
 
 function deleteLayout(name: string): void {
-  namedLayouts.remove(name);
+  void (async () => {
+    if (
+      appSettings.settings.confirmDestructive &&
+      !(await confirmDialog({
+        title: t.value.settings.layouts.deleteTitle,
+        message: formatMessage(t.value.settings.layouts.deleteMessage, { name }),
+        danger: true,
+        confirmLabel: t.value.settings.layouts.delete,
+      }))
+    )
+      return;
+    namedLayouts.remove(name);
+  })();
 }
 
 function renameLayout(name: string): void {
@@ -86,7 +105,7 @@ function renameLayout(name: string): void {
           :key="layout.name"
           class="settings-row"
         >
-          <span class="settings-row__label layout-name">{{ layout.name }}</span>
+          <span class="settings-row__label layout-name">{{ presetLabel(layout.name) }}</span>
           <span class="settings-row__control">
             <button
               type="button"

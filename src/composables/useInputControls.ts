@@ -4,6 +4,7 @@ import { useMusicTyping } from '@/composables/useMusicTyping';
 import type { LiveMidiChannelVoiceMessage } from '@/composables/useNotePreview';
 import type { useStepInput } from '@/composables/useStepInput';
 import { useWebMidi } from '@/composables/useWebMidi';
+import { useI18n } from '@/ui/i18n';
 import type { RealtimeEngine } from '@/wasm/index.js';
 
 type StepInput = ReturnType<typeof useStepInput>;
@@ -68,6 +69,7 @@ export interface InputControlsOptions {
 const MIDI_INPUT_ALL = '';
 
 export function useInputControls(options: InputControlsOptions) {
+  const { t } = useI18n();
   const {
     errorMessage,
     positionPpq,
@@ -132,7 +134,7 @@ export function useInputControls(options: InputControlsOptions) {
   });
 
   const midiInputChoices = computed(() => [
-    { value: MIDI_INPUT_ALL, label: 'All inputs' },
+    { value: MIDI_INPUT_ALL, label: t.value.shell.transport.midiInputAll },
     ...webMidi.inputs.value.map((input) => ({ value: input.id, label: input.name ?? input.id })),
   ]);
 

@@ -4,6 +4,7 @@ import type { useMidiRecording } from '@/composables/useMidiRecording';
 import type { useRecording } from '@/composables/useRecording';
 import type { UseTransportReturn } from '@/composables/useTransport';
 import { useProjectStore } from '@/project/store';
+import { formatMessage, useI18n } from '@/ui/i18n';
 
 type AppSettings = ReturnType<typeof useAppSettings>;
 type Recording = ReturnType<typeof useRecording>;
@@ -25,6 +26,7 @@ export interface RecordingControlsOptions {
 
 export function useRecordingControls(options: RecordingControlsOptions) {
   const { appSettings, errorMessage, recording, midiRecording, transport } = options;
+  const { t } = useI18n();
   const store = useProjectStore();
   const recordMenuOpen = ref(false);
   const recordMenuRoot = ref<HTMLElement | null>(null);
@@ -35,14 +37,20 @@ export function useRecordingControls(options: RecordingControlsOptions) {
   const recordingInputDeviceOptions = computed<RecordingInputDeviceOption[]>(() => {
     const selected = appSettings.settings.recordingInputDeviceId;
     const options: RecordingInputDeviceOption[] = [
-      { value: '', label: 'Default input' },
+      { value: '', label: t.value.shell.transport.recordingInputDefault },
       ...inputDevices.value.map((device, index) => ({
         value: device.deviceId,
-        label: device.label || `Input ${index + 1}`,
+        label:
+          device.label ||
+          formatMessage(t.value.shell.transport.recordingInputFallback, { index: index + 1 }),
       })),
     ];
     if (selected && !options.some((option) => option.value === selected)) {
-      options.push({ value: selected, label: 'Selected input (unavailable)', disabled: true });
+      options.push({
+        value: selected,
+        label: t.value.shell.transport.recordingInputUnavailable,
+        disabled: true,
+      });
     }
     return options;
   });
@@ -106,6 +114,19 @@ export function useRecordingControls(options: RecordingControlsOptions) {
       recording.setStreamingRetuneSemitones(semitones);
     },
   );
+  // Transport controls edit the live recorder directly. Mirror those changes
+  // back into app settings so the advertised persistent input effects survive
+  // the next session as well as settings-panel edits.
+  watch(recording.voiceChangerPreset, (preset) => {
+    if (preset !== appSettings.settings.recordingVoiceChangerPreset) {
+      appSettings.set('recordingVoiceChangerPreset', preset);
+    }
+  });
+  watch(recording.streamingRetuneSemitones, (semitones) => {
+    if (semitones !== appSettings.settings.recordingRetuneSemitones) {
+      appSettings.set('recordingRetuneSemitones', semitones);
+    }
+  });
 
   // Both an audio and a MIDI track can be armed at once (they share one
   // transport); the meter highlights every armed destination.

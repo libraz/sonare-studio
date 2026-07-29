@@ -97,12 +97,14 @@ describe('formatKeyCombo', () => {
 
 describe('comboFromEvent', () => {
   it('captures key and modifiers', () => {
-    const combo = comboFromEvent(keydown({ key: 'Z', metaKey: true, shiftKey: true }));
+    const combo = comboFromEvent(keydown({ key: 'Z', ctrlKey: true, shiftKey: true }), 'other');
     expect(combo).toEqual({ key: 'z', mod: true, shift: true, alt: false });
   });
 
-  it('treats ctrl as mod too', () => {
-    expect(comboFromEvent(keydown({ key: 'd', ctrlKey: true }))?.mod).toBe(true);
+  it('uses Cmd on macOS and Ctrl elsewhere for mod', () => {
+    expect(comboFromEvent(keydown({ key: 'd', metaKey: true }), 'mac')?.mod).toBe(true);
+    expect(comboFromEvent(keydown({ key: 'd', ctrlKey: true }), 'other')?.mod).toBe(true);
+    expect(comboFromEvent(keydown({ key: 'd', metaKey: true }), 'other')?.mod).toBe(false);
   });
 
   it('returns null for modifier-only presses', () => {
@@ -116,18 +118,22 @@ describe('comboFromEvent', () => {
 });
 
 describe('comboMatchesEvent / combosMatch', () => {
-  it('matches mod against either Cmd or Ctrl', () => {
-    expect(comboMatchesEvent('mod+s', keydown({ key: 's', metaKey: true }))).toBe(true);
-    expect(comboMatchesEvent('mod+s', keydown({ key: 's', ctrlKey: true }))).toBe(true);
-    expect(comboMatchesEvent('mod+s', keydown({ key: 's' }))).toBe(false);
+  it('matches mod against the platform command modifier only', () => {
+    expect(comboMatchesEvent('mod+s', keydown({ key: 's', metaKey: true }), 'mac')).toBe(true);
+    expect(comboMatchesEvent('mod+s', keydown({ key: 's', ctrlKey: true }), 'other')).toBe(true);
+    expect(comboMatchesEvent('mod+s', keydown({ key: 's', metaKey: true }), 'other')).toBe(false);
   });
 
   it('distinguishes shift on letters', () => {
-    expect(comboMatchesEvent('mod+z', keydown({ key: 'z', metaKey: true, shiftKey: true }))).toBe(
-      false,
-    );
     expect(
-      comboMatchesEvent('mod+shift+z', keydown({ key: 'z', metaKey: true, shiftKey: true })),
+      comboMatchesEvent('mod+z', keydown({ key: 'z', ctrlKey: true, shiftKey: true }), 'other'),
+    ).toBe(false);
+    expect(
+      comboMatchesEvent(
+        'mod+shift+z',
+        keydown({ key: 'z', ctrlKey: true, shiftKey: true }),
+        'other',
+      ),
     ).toBe(true);
   });
 

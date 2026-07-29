@@ -52,11 +52,11 @@ describe('shortcut registry', () => {
 
   it('matches the new project and locator combos', () => {
     const bindings = resolveBindings();
-    expect(matchShortcut(keydown({ key: 'o', metaKey: true }), 'editor', bindings)).toBe(
+    expect(matchShortcut(keydown({ key: 'o', ctrlKey: true }), 'editor', bindings)).toBe(
       'project.open',
     );
     expect(
-      matchShortcut(keydown({ key: 's', metaKey: true, shiftKey: true }), 'editor', bindings),
+      matchShortcut(keydown({ key: 's', ctrlKey: true, shiftKey: true }), 'editor', bindings),
     ).toBe('project.saveAs');
     expect(matchShortcut(keydown({ key: '[' }), 'arrangement', bindings)).toBe(
       'transport.setLeftLocator',
@@ -151,13 +151,13 @@ describe('matchShortcut', () => {
     expect(matchShortcut(keydown({ key: ' ' }), 'editor', bindings)).toBe(
       'transport.togglePlayback',
     );
-    expect(matchShortcut(keydown({ key: 's', metaKey: true }), 'arrangement', bindings)).toBe(
+    expect(matchShortcut(keydown({ key: 's', ctrlKey: true }), 'arrangement', bindings)).toBe(
       'project.save',
     );
   });
 
   it('matches scoped actions only in their scope', () => {
-    const event = keydown({ key: 'd', metaKey: true });
+    const event = keydown({ key: 'd', ctrlKey: true });
     expect(matchShortcut(event, 'arrangement', bindings)).toBe('arrange.duplicateClip');
     expect(matchShortcut(event, 'editor', bindings)).toBeNull();
   });
@@ -212,8 +212,8 @@ describe('useShortcuts', () => {
   it('matches through user overrides', () => {
     const shortcuts = useShortcuts();
     shortcuts.setKeys('edit.undo', ['mod+u']);
-    expect(shortcuts.match(keydown({ key: 'u', metaKey: true }), 'editor')).toBe('edit.undo');
-    expect(shortcuts.match(keydown({ key: 'z', metaKey: true }), 'editor')).toBeNull();
+    expect(shortcuts.match(keydown({ key: 'u', ctrlKey: true }), 'editor')).toBe('edit.undo');
+    expect(shortcuts.match(keydown({ key: 'z', ctrlKey: true }), 'editor')).toBeNull();
   });
 
   it('resets a single action and all actions', () => {

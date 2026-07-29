@@ -84,6 +84,7 @@ import { serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { isAudioClip } from '@/project/types';
 import { installPwaReloadPreparation } from '@/pwa';
+import { clearAudioClipData } from '@/ui/arrangement/audio-clip-data';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { useContextMenuState } from '@/ui/menu/context-menu';
 import { disengageAutomationWriteModes } from '@/ui/mixer/automation-mode';
@@ -231,6 +232,7 @@ onScopeDispose(
     return saved;
   }),
 );
+onScopeDispose(clearAudioClipData);
 
 // Surface a failed background autosave: the user's recent edits are not on
 // disk, so warn them to save manually rather than failing silently.
@@ -239,7 +241,11 @@ watch(autosave.lastError, (error) => {
 });
 const { downloadBlobFile, lastDownload } = useFileDownloads();
 
-const { confirmAction, runAction } = useActionGuards({ appSettings, busy, errorMessage });
+const { confirmAction, confirmLossAction, runAction } = useActionGuards({
+  appSettings,
+  busy,
+  errorMessage,
+});
 const commandPaletteOpen = ref(false);
 const chordGenerateDialogOpen = ref(false);
 const trackGenerateDialogOpen = ref(false);
@@ -313,6 +319,7 @@ const {
   openStoredProject,
   openRecentProject,
   deleteStoredProject,
+  renameStoredProject,
   importSzdFile,
   importDawprojectAction,
   importMusicXmlAction,
@@ -329,10 +336,12 @@ const {
 } = useProjectPersistence({
   autosave,
   confirmAction,
+  confirmLossAction,
   downloadBlobFile,
   errorMessage,
   runAction,
   persistedStateKey,
+  onProjectDocumentWillLoad: clearAudioClipData,
 });
 
 // --- Audio export / DAWproject ---------------------------------------------------
@@ -544,6 +553,7 @@ const {
   scoreHeight,
   scoreResized,
   scoreHeightMin,
+  scoreHeightMax,
   layoutBindings,
   onDividerPointerDown,
   onDividerPointerMove,
@@ -592,39 +602,6 @@ function dockTabId(tab: DockTab): string {
 
 function dockPanelId(tab: DockTab): string {
   return `editor-dock-panel-${tab}`;
-}
-
-async function focusDockTab(tab: DockTab): Promise<void> {
-  await nextTick();
-  document.getElementById(dockTabId(tab))?.focus();
-}
-
-function selectDockTabByKey(tab: DockTab): void {
-  selectDockTab(tab);
-  void focusDockTab(tab);
-}
-
-function moveDockTab(delta: number): void {
-  const index = EDITOR_DOCK_TABS.indexOf(dockTab.value);
-  const current = index === -1 ? 0 : index;
-  const next = (current + delta + EDITOR_DOCK_TABS.length) % EDITOR_DOCK_TABS.length;
-  selectDockTabByKey(EDITOR_DOCK_TABS[next]);
-}
-
-function onDockTabKeydown(event: KeyboardEvent): void {
-  if (event.key === 'ArrowRight') {
-    event.preventDefault();
-    moveDockTab(1);
-  } else if (event.key === 'ArrowLeft') {
-    event.preventDefault();
-    moveDockTab(-1);
-  } else if (event.key === 'Home') {
-    event.preventDefault();
-    selectDockTabByKey(EDITOR_DOCK_TABS[0]);
-  } else if (event.key === 'End') {
-    event.preventDefault();
-    selectDockTabByKey(EDITOR_DOCK_TABS[EDITOR_DOCK_TABS.length - 1]);
-  }
 }
 
 const instrumentPickerRequest = ref(0);
@@ -884,12 +861,7 @@ useAppLifecycle({
         @focusin="focusZone = 'editor'"
       >
         <div class="dock-tabs">
-          <div
-            class="dock-tab-scroll"
-            role="tablist"
-            :aria-label="t.shell.editor.panels"
-            @keydown="onDockTabKeydown"
-          >
+          <div v-tablist class="dock-tab-scroll" role="tablist" :aria-label="t.shell.editor.panels">
             <button
               :id="dockTabId('roll')"
               type="button"
@@ -898,7 +870,6 @@ useAppLifecycle({
               role="tab"
               :aria-selected="dockTab === 'roll'"
               :aria-controls="dockPanelId('roll')"
-              :tabindex="dockTab === 'roll' ? 0 : -1"
               @click="selectDockTab('roll')"
             >
               {{ t.shell.editor.tabs.pianoRoll }}
@@ -911,7 +882,6 @@ useAppLifecycle({
               role="tab"
               :aria-selected="dockTab === 'mixer'"
               :aria-controls="dockPanelId('mixer')"
-              :tabindex="dockTab === 'mixer' ? 0 : -1"
               @click="selectDockTab('mixer')"
             >
               {{ t.shell.editor.tabs.mixer }}
@@ -924,7 +894,6 @@ useAppLifecycle({
               role="tab"
               :aria-selected="dockTab === 'mastering'"
               :aria-controls="dockPanelId('mastering')"
-              :tabindex="dockTab === 'mastering' ? 0 : -1"
               @click="selectDockTab('mastering')"
             >
               {{ t.shell.editor.tabs.mastering }}
@@ -937,7 +906,6 @@ useAppLifecycle({
               role="tab"
               :aria-selected="dockTab === 'steps'"
               :aria-controls="dockPanelId('steps')"
-              :tabindex="dockTab === 'steps' ? 0 : -1"
               @click="selectDockTab('steps')"
             >
               {{ t.shell.editor.tabs.steps }}
@@ -950,7 +918,6 @@ useAppLifecycle({
               role="tab"
               :aria-selected="dockTab === 'lists'"
               :aria-controls="dockPanelId('lists')"
-              :tabindex="dockTab === 'lists' ? 0 : -1"
               @click="selectDockTab('lists')"
             >
               {{ t.shell.editor.tabs.lists }}
@@ -963,7 +930,6 @@ useAppLifecycle({
               role="tab"
               :aria-selected="dockTab === 'media'"
               :aria-controls="dockPanelId('media')"
-              :tabindex="dockTab === 'media' ? 0 : -1"
               @click="selectDockTab('media')"
             >
               {{ t.shell.editor.tabs.media }}
@@ -976,7 +942,6 @@ useAppLifecycle({
               role="tab"
               :aria-selected="dockTab === 'sample'"
               :aria-controls="dockPanelId('sample')"
-              :tabindex="dockTab === 'sample' ? 0 : -1"
               @click="selectDockTab('sample')"
             >
               {{ t.shell.editor.tabs.sample }}
@@ -1151,6 +1116,7 @@ useAppLifecycle({
             :aria-label="t.shell.editor.resizeScore"
             :aria-valuenow="Math.round(scoreHeight)"
             :aria-valuemin="scoreHeightMin"
+            :aria-valuemax="scoreHeightMax"
             tabindex="0"
             v-tooltip="t.shell.editor.resizeScoreTitle"
             @pointerdown="onScoreDividerPointerDown"
@@ -1189,6 +1155,7 @@ useAppLifecycle({
             :bus-scope-for="busScopeSource"
             :position-ppq="() => positionPpq"
             :is-playing="isPlaying"
+            :visible="dockTab === 'mixer'"
           />
         </section>
         <section
@@ -1363,6 +1330,7 @@ useAppLifecycle({
       @delete-project="deleteStoredProject"
       @import-szd="importSzdFile"
       @open-project="openStoredProject"
+      @rename-project="renameStoredProject"
     />
 
     <SettingsDialog

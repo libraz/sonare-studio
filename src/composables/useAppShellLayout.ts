@@ -9,7 +9,9 @@ const ARRANGE_HEIGHT_KEY = 'sonare-studio.arrangeHeightPx';
 const ARRANGE_DEFAULT_HEIGHT = 440;
 const DEVICE_RACK_OPEN_KEY = 'sonare-studio.deviceRackOpen';
 const DOCK_COLLAPSED_KEY = 'sonare-studio.dockCollapsed';
+const DOCK_TAB_KEY = 'sonare-studio.dockTab';
 const SCORE_HEIGHT_KEY = 'sonare-studio.scoreHeightPx';
+const SCORE_VISIBLE_KEY = 'sonare-studio.scoreVisible';
 /** The score is a single continuous line, so it needs only a modest height. */
 const SCORE_HEIGHT_MIN_PX = 120;
 const SCORE_DEFAULT_HEIGHT = 240;
@@ -17,6 +19,16 @@ const ARRANGE_VIEWPORT_RESERVE_PX = 240;
 const SCORE_VIEWPORT_RESERVE_PX = 360;
 
 export type DockTab = 'roll' | 'mixer' | 'mastering' | 'steps' | 'lists' | 'media' | 'sample';
+
+const DOCK_TABS: ReadonlySet<DockTab> = new Set([
+  'roll',
+  'mixer',
+  'mastering',
+  'steps',
+  'lists',
+  'media',
+  'sample',
+]);
 
 /** Viewport-aware upper bound that always leaves the editor dock reachable. */
 export function maximumArrangementHeight(viewportHeight: number): number {
@@ -72,6 +84,24 @@ function writeStoredFlag(key: string, value: boolean): void {
   }
 }
 
+function readStoredDockTab(): DockTab {
+  try {
+    const tab = window.localStorage.getItem(DOCK_TAB_KEY);
+    if (tab !== null && DOCK_TABS.has(tab as DockTab)) return tab as DockTab;
+  } catch {
+    // Storage access can be denied; use the default tab.
+  }
+  return 'roll';
+}
+
+function persistDockTab(tab: DockTab): void {
+  try {
+    window.localStorage.setItem(DOCK_TAB_KEY, tab);
+  } catch {
+    // Persisting the selected tab is best-effort only.
+  }
+}
+
 export function useAppShellLayout() {
   const arrangeHeight = ref(
     clampArrangementHeight(
@@ -80,9 +110,9 @@ export function useAppShellLayout() {
     ),
   );
   const deviceRackOpen = ref(readStoredFlag(DEVICE_RACK_OPEN_KEY, false));
-  const dockTab = ref<DockTab>('roll');
+  const dockTab = ref<DockTab>(readStoredDockTab());
   const dockCollapsed = ref(readStoredFlag(DOCK_COLLAPSED_KEY, false));
-  const scoreVisible = ref(false);
+  const scoreVisible = ref(readStoredFlag(SCORE_VISIBLE_KEY, false));
   // Until the user drags the splitter, the score uses a 40% CSS default (tracks
   // the window). The first drag captures the current pixel height and switches
   // to pixel sizing (persisted), so "40%" holds across window sizes.
@@ -146,12 +176,14 @@ export function useAppShellLayout() {
 
   function onDividerKeydown(event: KeyboardEvent): void {
     const step = event.shiftKey ? 4 : 16;
-    let delta = 0;
-    if (event.key === 'ArrowUp') delta = -step;
-    else if (event.key === 'ArrowDown') delta = step;
+    let next: number;
+    if (event.key === 'Home') next = ARRANGE_HEIGHT_MIN_PX;
+    else if (event.key === 'End') next = maximumArrangementHeight(window.innerHeight);
+    else if (event.key === 'ArrowUp') next = arrangeHeight.value - step;
+    else if (event.key === 'ArrowDown') next = arrangeHeight.value + step;
     else return;
     event.preventDefault();
-    arrangeHeight.value = clampArrangeHeight(arrangeHeight.value + delta);
+    arrangeHeight.value = clampArrangeHeight(next);
     persistArrangeHeight();
   }
 
@@ -216,7 +248,21 @@ export function useAppShellLayout() {
 
   function onScoreDividerKeydown(event: KeyboardEvent): void {
     const step = event.shiftKey ? 4 : 16;
-    let delta = 0;
+    if (event.key === 'Home') {
+      event.preventDefault();
+      scoreResized.value = true;
+      scoreHeight.value = SCORE_HEIGHT_MIN_PX;
+      persistScoreHeight();
+      return;
+    }
+    if (event.key === 'End') {
+      event.preventDefault();
+      scoreResized.value = true;
+      scoreHeight.value = maxScoreHeight();
+      persistScoreHeight();
+      return;
+    }
+    let delta: number;
     if (event.key === 'ArrowUp') delta = step;
     else if (event.key === 'ArrowDown') delta = -step;
     else return;
@@ -247,6 +293,7 @@ export function useAppShellLayout() {
 
   function selectDockTab(tab: DockTab): void {
     dockTab.value = tab;
+    persistDockTab(tab);
     if (dockCollapsed.value) {
       dockCollapsed.value = false;
       persistDockCollapsed();
@@ -255,6 +302,7 @@ export function useAppShellLayout() {
 
   function toggleScorePanel(): void {
     scoreVisible.value = !scoreVisible.value;
+    writeStoredFlag(SCORE_VISIBLE_KEY, scoreVisible.value);
     if (scoreVisible.value) selectDockTab('roll');
   }
 
@@ -319,6 +367,7 @@ export function useAppShellLayout() {
     scoreHeight,
     scoreResized,
     scoreHeightMin: SCORE_HEIGHT_MIN_PX,
+    scoreHeightMax: computed(() => maxScoreHeight()),
     layoutBindings,
     onDividerPointerDown,
     onDividerPointerMove,

@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { effectScope, reactive, ref } from 'vue';
+import { effectScope, nextTick, reactive, ref } from 'vue';
 import { useRecordingControls } from '@/composables/useRecordingControls';
 import type { UseTransportReturn } from '@/composables/useTransport';
 import { addAudioTrack, clearHistory } from '@/project/commands';
@@ -124,7 +124,7 @@ describe('useRecordingControls', () => {
     expect(recording.setStreamingRetuneSemitones).toHaveBeenCalledWith(0);
   });
 
-  it('persists recording capture source changes through app settings', () => {
+  it('persists recording input settings changed by controls or the transport', async () => {
     const appSettings = makeAppSettings();
     const recording = {
       armedTrackId: ref<number | null>(null),
@@ -178,6 +178,15 @@ describe('useRecordingControls', () => {
 
     expect(appSettings.set).toHaveBeenCalledWith('midiInputQuantizeDenominator', 16);
     expect(appSettings.settings.midiInputQuantizeDenominator).toBe(16);
+
+    recording.voiceChangerPreset.value = 'bright-idol';
+    recording.streamingRetuneSemitones.value = 7;
+    await nextTick();
+
+    expect(appSettings.set).toHaveBeenCalledWith('recordingVoiceChangerPreset', 'bright-idol');
+    expect(appSettings.set).toHaveBeenCalledWith('recordingRetuneSemitones', 7);
+    expect(appSettings.settings.recordingVoiceChangerPreset).toBe('bright-idol');
+    expect(appSettings.settings.recordingRetuneSemitones).toBe(7);
   });
 
   it('refreshes input devices through legacy ondevicechange handlers', async () => {

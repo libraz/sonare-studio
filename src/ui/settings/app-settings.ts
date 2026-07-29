@@ -7,6 +7,8 @@
  * boot.
  */
 
+import type { RealtimeVoiceChangerConfigInput } from '@/wasm/index.js';
+
 /** Storage schema version of the settings envelope. */
 export const APP_SETTINGS_VERSION = 1;
 
@@ -32,14 +34,7 @@ export type PianoRollGhostMode = 'all' | 'active-track' | 'none';
 export type PianoRollNoteColorMode = 'track' | 'velocity' | 'channel';
 
 /** Realtime voice changer preset for microphone recording/monitoring. */
-export type RecordingVoiceChangerPreset =
-  | 'off'
-  | 'neutral-monitor'
-  | 'bright-idol'
-  | 'soft-whisper'
-  | 'deep-narrator'
-  | 'robot-mascot'
-  | 'dark-villain';
+export type RecordingVoiceChangerPreset = 'off' | RealtimeVoiceChangerConfigInput;
 
 /** Audio source captured by the recording workflow. */
 export type RecordingCaptureSource = 'input' | 'output';
@@ -195,14 +190,21 @@ function asRecordingVoiceChangerPreset(
   value: unknown,
   fallback: RecordingVoiceChangerPreset,
 ): RecordingVoiceChangerPreset {
-  return value === 'off' ||
+  if (
+    value === 'off' ||
     value === 'neutral-monitor' ||
     value === 'bright-idol' ||
     value === 'soft-whisper' ||
     value === 'deep-narrator' ||
     value === 'robot-mascot' ||
     value === 'dark-villain'
-    ? value
+  ) {
+    return value;
+  }
+  // Custom presets are validated by the transport editor before being set;
+  // preserve their JSON shape across a reload rather than silently disabling it.
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as RealtimeVoiceChangerConfigInput)
     : fallback;
 }
 

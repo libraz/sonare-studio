@@ -48,24 +48,6 @@ function close(): void {
   emit('close');
 }
 
-/** Moves the tab selection by `delta`, wrapping around. */
-function moveTab(delta: number): void {
-  const tabs = TABS.value;
-  const index = tabs.findIndex((tab) => tab.id === activeTab.value);
-  const next = (index + delta + tabs.length) % tabs.length;
-  activeTab.value = tabs[next].id;
-}
-
-function onTabKeydown(event: KeyboardEvent): void {
-  if (event.key === 'ArrowRight') {
-    event.preventDefault();
-    moveTab(1);
-  } else if (event.key === 'ArrowLeft') {
-    event.preventDefault();
-    moveTab(-1);
-  }
-}
-
 /** Reclaims focus onto the dialog body after a tab removes a focused control. */
 function focusDialog(): void {
   bodyRef.value?.focus();
@@ -89,12 +71,7 @@ onBeforeUnmount(() => {
   <AppModal :open="props.open" :aria-label="t.settings.title" @close="close">
     <template #title>{{ t.settings.title }}</template>
     <div ref="bodyRef" class="dialog-body" tabindex="-1">
-      <div
-        class="tabs"
-        role="tablist"
-        :aria-label="t.settings.sectionsLabel"
-        @keydown="onTabKeydown"
-      >
+      <div v-tablist class="tabs" role="tablist" :aria-label="t.settings.sectionsLabel">
         <button
           v-for="tab in TABS"
           :key="tab.id"
@@ -104,7 +81,6 @@ onBeforeUnmount(() => {
           role="tab"
           :aria-selected="activeTab === tab.id"
           :aria-controls="`settings-panel-${tab.id}`"
-          :tabindex="activeTab === tab.id ? 0 : -1"
           @click="activeTab = tab.id"
         >
           {{ tab.label }}

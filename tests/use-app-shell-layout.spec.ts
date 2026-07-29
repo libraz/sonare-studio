@@ -51,6 +51,23 @@ describe('useAppShellLayout', () => {
     layout.disposeLayout();
   });
 
+  it('restores the selected dock tab and score panel visibility', () => {
+    window.localStorage.setItem('sonare-studio.dockTab', 'mixer');
+    window.localStorage.setItem('sonare-studio.scoreVisible', '1');
+
+    const restored = useAppShellLayout();
+    expect(restored.dockTab.value).toBe('mixer');
+    expect(restored.scoreVisible.value).toBe(true);
+    restored.disposeLayout();
+
+    const layout = useAppShellLayout();
+    layout.selectDockTab('media');
+    layout.toggleScorePanel();
+    expect(window.localStorage.getItem('sonare-studio.dockTab')).toBe('media');
+    expect(window.localStorage.getItem('sonare-studio.scoreVisible')).toBe('0');
+    layout.disposeLayout();
+  });
+
   it('clamps a named layout when applied', () => {
     const layout = useAppShellLayout();
 
@@ -108,5 +125,23 @@ describe('useAppShellLayout', () => {
     expect(cancelAnimationFrame).toHaveBeenCalledTimes(1);
     expect(rafCallbacks.size).toBe(0);
     expect(layout.scoreHeight.value).toBe(300);
+  });
+
+  it('supports Home and End for both keyboard-resizable splitters', () => {
+    const layout = useAppShellLayout();
+    const arrangeHome = { key: 'Home', shiftKey: false, preventDefault: vi.fn() } as KeyboardEvent;
+    const arrangeEnd = { key: 'End', shiftKey: false, preventDefault: vi.fn() } as KeyboardEvent;
+    layout.onDividerKeydown(arrangeHome);
+    expect(layout.arrangeHeight.value).toBe(layout.arrangeHeightMin);
+    layout.onDividerKeydown(arrangeEnd);
+    expect(layout.arrangeHeight.value).toBe(maximumArrangementHeight(window.innerHeight));
+
+    const scoreHome = { key: 'Home', shiftKey: false, preventDefault: vi.fn() } as KeyboardEvent;
+    const scoreEnd = { key: 'End', shiftKey: false, preventDefault: vi.fn() } as KeyboardEvent;
+    layout.onScoreDividerKeydown(scoreHome);
+    expect(layout.scoreHeight.value).toBe(layout.scoreHeightMin);
+    layout.onScoreDividerKeydown(scoreEnd);
+    expect(layout.scoreHeight.value).toBe(layout.scoreHeightMax.value);
+    layout.disposeLayout();
   });
 });

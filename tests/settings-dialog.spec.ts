@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick, ref } from 'vue';
 import SettingsDialog from '@/components/settings/SettingsDialog.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
+import { dialogQueue, resolveDialog } from '@/composables/useDialogs';
 import { useLayouts } from '@/composables/useLayouts';
 import { useShortcuts } from '@/composables/useShortcuts';
 import type { DockTabId, LayoutBindings } from '@/ui/settings/layouts';
@@ -146,15 +147,27 @@ describe('SettingsDialog', () => {
     expect(useAppSettings().settings.recordingCaptureSource).toBe('output');
   });
 
-  it('rebinds a shortcut by capturing a key press', async () => {
+  it('adds a captured shortcut without discarding existing bindings', async () => {
     open();
     await clickTab(1);
     const row = q('[data-action-id="edit.quantizeSelection"]');
     row?.querySelector('button')?.click();
     await nextTick();
     expect(row?.textContent).toContain('Press keys');
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', metaKey: true }));
-    expect(useShortcuts().keysFor('edit.quantizeSelection')).toEqual(['mod+j']);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', ctrlKey: true }));
+    expect(useShortcuts().keysFor('edit.quantizeSelection')).toEqual(['q', 'mod+j']);
+  });
+
+  it('can clear a shortcut binding entirely', async () => {
+    open();
+    await clickTab(1);
+    const row = q('[data-action-id="edit.quantizeSelection"]');
+    const clear = Array.from(row?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
+      (button) => button.textContent?.trim() === 'Clear',
+    );
+    clear?.click();
+    await nextTick();
+    expect(useShortcuts().keysFor('edit.quantizeSelection')).toEqual([]);
   });
 
   it('cancels capture with Escape without closing the dialog', async () => {
@@ -278,9 +291,36 @@ describe('SettingsDialog', () => {
     const del = Array.from(row?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
       (button) => button.textContent?.trim() === 'Delete',
     );
+    useAppSettings().set('confirmDestructive', false);
     del?.click();
     await nextTick();
     expect(useLayouts().userLayouts.value).toEqual([]);
+  });
+
+  it('keeps a saved layout when destructive-confirmation is cancelled', async () => {
+    const bindings = makeBindings();
+    open(bindings);
+    await clickTab(2);
+    const nameInput = q<HTMLInputElement>('.layout-save input');
+    if (!nameInput) throw new Error('layout name input not found');
+    nameInput.value = 'Keep me';
+    nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+    q('.layout-save button')?.click();
+    await nextTick();
+
+    const row = qa('.settings-row').find(
+      (item) => item.querySelector('.layout-name')?.textContent?.trim() === 'Keep me',
+    );
+    Array.from(row?.querySelectorAll<HTMLButtonElement>('button') ?? [])
+      .find((button) => button.textContent?.trim() === 'Delete')
+      ?.click();
+    await nextTick();
+    const request = dialogQueue[0];
+    if (!request) throw new Error('expected destructive confirmation');
+    resolveDialog(request.id, false);
+    await flushPromises();
+
+    expect(useLayouts().userLayouts.value.map((layout) => layout.name)).toEqual(['Keep me']);
   });
 
   it('reports an error when saving under a preset name', async () => {
