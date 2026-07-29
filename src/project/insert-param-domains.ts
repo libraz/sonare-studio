@@ -29,6 +29,12 @@ export interface InsertParamDomain {
 /** Neutral fallback domain used when a parameter is not catalogued. */
 export const INSERT_PARAM_DOMAIN_FALLBACK: InsertParamDomain = { min: 0, max: 1, unit: '' };
 
+/** One app-side display-domain key, exposed for runtime-catalog contract checks. */
+export interface InsertParamDomainEntry {
+  processor: string;
+  paramName: string;
+}
+
 /**
  * Per-(processor, parameter) display domains. Keyed by the processor catalog
  * name, then by the parameter's JSON-key name (see `masteringInsertParamInfo`).
@@ -68,6 +74,14 @@ const INSERT_PARAM_DOMAINS: Record<string, Record<string, InsertParamDomain>> = 
     tiltDb: { min: -12, max: 12, unit: 'dB' },
     pivotHz: { min: 20, max: 20000, unit: 'Hz' },
   },
+  // LFO rate is Hz, not an audio-frequency cutoff. The generic `*Hz`
+  // heuristic's 20–20,000 Hz range leaves this control effectively unusable.
+  'modulation.chorus': {
+    rateHz: { min: 0, max: 10, unit: 'Hz' },
+  },
+  'modulation.flanger': {
+    rateHz: { min: 0, max: 10, unit: 'Hz' },
+  },
   'saturation.tape': {
     driveDb: { min: -12, max: 24, unit: 'dB' },
     saturation: { min: 0, max: 1, unit: '' },
@@ -97,6 +111,13 @@ const INSERT_PARAM_DOMAINS: Record<string, Record<string, InsertParamDomain>> = 
     releaseMs: { min: 0, max: 1000, unit: 'ms' },
   },
 };
+
+/** Lists every display-domain key for comparison with the engine parameter catalog. */
+export function insertParamDomainEntries(): InsertParamDomainEntry[] {
+  return Object.entries(INSERT_PARAM_DOMAINS).flatMap(([processor, params]) =>
+    Object.keys(params).map((paramName) => ({ processor, paramName })),
+  );
+}
 
 /**
  * Resolves the display domain of an insert parameter, falling back to a

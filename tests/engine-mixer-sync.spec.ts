@@ -97,24 +97,24 @@ describe('createMixerSync', () => {
     expect(engine.setTrackLanes).toHaveBeenCalledTimes(1);
   });
 
-  it('mutes a deleted track lane once and keeps it in the registry', () => {
+  it('reclaims a deleted track lane and replays the surviving lane state', () => {
     const { handle, engine } = makeHandle();
     const sync = createMixerSync(handle);
 
-    // Track 2 is soloed, then removed: its lane must fall silent so the stale
-    // solo cannot duck the surviving track.
+    // Track 2 is soloed, then removed. The new complete declaration drops its
+    // lane rather than consuming a meter slot forever.
     sync.sync([makeTrack(1), makeTrack(2, { solo: true })], neutralMaster());
     engine.setSoloMute.mockClear();
 
     sync.sync([makeTrack(1)], neutralMaster());
-    expect(engine.setSoloMute).toHaveBeenCalledWith(2, false, true);
-    // The lane index is retained (append-only contract).
-    expect(sync.laneTrackIds()).toEqual([1, 2]);
+    expect(sync.laneTrackIds()).toEqual([1]);
+    expect(engine.setTrackLanes).toHaveBeenLastCalledWith([1]);
+    expect(engine.setSoloMute).toHaveBeenCalledWith(1, false, false);
 
-    // A subsequent unchanged sync does not re-issue the mute.
-    engine.setSoloMute.mockClear();
+    // An unchanged sync does not redeclare or replay the lane.
+    engine.setTrackLanes.mockClear();
     sync.sync([makeTrack(1)], neutralMaster());
-    expect(engine.setSoloMute).not.toHaveBeenCalledWith(2, false, true);
+    expect(engine.setTrackLanes).not.toHaveBeenCalled();
   });
 
   it('sends gain, pan and solo/mute per track on the first sync', () => {
@@ -208,6 +208,29 @@ describe('createMixerSync', () => {
     expect(engine.setTrackStripChannelDelaySamples).toHaveBeenCalledWith(3, 136);
   });
 
+  it('includes return-bus insert latency when synchronizing PDC', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMixerSync(handle, {
+      insertLatency: (slot) => (slot.processor === 'linear.return' ? 96 : 0),
+    });
+    const routed = makeTrack(1, {
+      mixer: { ...createDefaultStrip(), outputBusId: 'return-fx' },
+    });
+    const dry = makeTrack(2);
+
+    sync.sync([routed, dry], neutralMaster(), undefined, undefined, undefined, [
+      {
+        id: 'return-fx',
+        strip: {
+          ...createDefaultStrip(),
+          inserts: [{ processor: 'linear.return', params: {}, enabled: true }],
+        },
+      },
+    ]);
+
+    expect(engine.setTrackStripChannelDelaySamples).toHaveBeenCalledWith(2, 96);
+  });
+
   it('mirrors pan law, pan mode and dual pan, resending only on change', () => {
     const { handle, engine } = makeHandle();
     const sync = createMixerSync(handle);
@@ -249,16 +272,16 @@ describe('createMixerSync', () => {
     expect(engine.setTrackStripDualPan).toHaveBeenCalledWith(1, -1, 1);
   });
 
-  it('treats a missing strip as neutral and clamps the strip pan', () => {
+  it('uses legacy track pan without a strip and clamps strip pan', () => {
     const { handle, engine } = makeHandle();
     const sync = createMixerSync(handle);
 
     sync.sync(
-      [makeTrack(1), makeTrack(2, { mixer: { ...createDefaultStrip(), pan: 2 } })],
+      [makeTrack(1, { pan: -0.4 }), makeTrack(2, { mixer: { ...createDefaultStrip(), pan: 2 } })],
       neutralMaster(),
     );
     expect(engine.setStripGain).toHaveBeenCalledWith(1, 0);
-    expect(engine.setStripPan).toHaveBeenCalledWith(1, 0);
+    expect(engine.setStripPan).toHaveBeenCalledWith(1, -0.4);
     expect(engine.setStripPan).toHaveBeenCalledWith(2, 1);
   });
 
@@ -389,7 +412,7 @@ describe('createMixerSync', () => {
     expect(engine.setStripGain).toHaveBeenCalledWith(1, 0);
   });
 
-  it('keeps the lane of a removed track, redeclaring nothing but muting it', () => {
+  it('removes a deleted lane and redeclares the surviving mixer lanes', () => {
     const { handle, engine } = makeHandle();
     const sync = createMixerSync(handle);
 
@@ -400,12 +423,12 @@ describe('createMixerSync', () => {
     engine.setSoloMute.mockClear();
 
     sync.sync([makeTrack(1)], neutralMaster());
-    expect(sync.laneTrackIds()).toEqual([1, 2]);
-    expect(engine.setTrackLanes).not.toHaveBeenCalled();
-    // The removed lane gets only a one-time silencing mute, no level changes.
+    expect(sync.laneTrackIds()).toEqual([1]);
+    expect(engine.setTrackLanes).toHaveBeenCalledWith([1]);
+    // The deleted lane receives no further strip commands.
     expect(engine.setStripGain.mock.calls.map((call) => call[0])).not.toContain(2);
     expect(engine.setStripPan.mock.calls.map((call) => call[0])).not.toContain(2);
-    expect(engine.setSoloMute).toHaveBeenCalledWith(2, false, true);
+    expect(engine.setSoloMute.mock.calls.map((call) => call[0])).not.toContain(2);
   });
 });
 

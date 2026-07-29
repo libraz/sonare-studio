@@ -176,6 +176,21 @@ describe('quick controls', () => {
       expect(controls.find((c) => c.id === 'mix')).toMatchObject({ min: 0, max: 1, value: 0.4 });
     });
 
+    it('uses the modulation-rate domain and engine-provided unit metadata', () => {
+      addInsert(trackId, 'modulation.chorus', { rateHz: 0.8 });
+      const controls = listQuickControls(
+        { type: 'insert', trackId, index: 0 },
+        {
+          resolveInsertParams: () => ['rateHz'],
+          resolveInsertParamInfo: () => [{ name: 'rateHz', unit: 'Hz' }],
+        },
+      );
+
+      expect(controls).toEqual([
+        expect.objectContaining({ id: 'rateHz', value: 0.8, min: 0, max: 10, unit: 'Hz' }),
+      ]);
+    });
+
     it('infers the Q-factor range only for a real Q parameter', () => {
       addInsert(trackId, 'custom.filter');
       const controls = listQuickControls(

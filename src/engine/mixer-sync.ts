@@ -3,18 +3,15 @@
  * state onto the engine's per-track lanes (fader, pan, solo/mute) and the
  * master strip, so level changes apply immediately without re-scheduling.
  *
- * Lane order contract (engine side): lane indices are append-only — once a
- * track id occupies a lane its index is fixed for the engine's lifetime. The
- * sync therefore keeps already-declared lanes in place (tracks deleted from
- * the project keep their lane, muted) and appends new track ids in store
- * order. The declared order is exposed via laneTrackIds() so meter target ids
- * can be mapped back to project tracks.
+ * The engine accepts a complete lane declaration, so the sync reuses lane
+ * indices after track deletion. This prevents deleted tracks from exhausting
+ * the fixed meter/parameter lane range during a long editing session.
  */
 
 import {
+  createInsertPdcPlan,
   type InsertLatencyResolver,
-  maxTrackInsertLatencySamples,
-  trackPdcDelaySamples,
+  type InsertPdcBus,
 } from '@/project/insert-latency';
 import {
   clampPan,
@@ -65,6 +62,7 @@ export interface MixerSync {
    * @param vcaControls VCA group id -> mute/solo state folded into member lanes.
    * @param soloMode Solo audition tap. PFL auditions soloed lanes before their
    *   fader/pan; in-place/AFL keep the normal lane fader/pan.
+   * @param pdcBuses Return buses whose insert latency contributes to PDC.
    */
   sync(
     tracks: ReadonlyArray<EditorTrack>,
@@ -72,8 +70,9 @@ export interface MixerSync {
     vcaGainDb?: ReadonlyMap<string, number>,
     vcaControls?: ReadonlyMap<string, VcaControlState>,
     soloMode?: MixerSoloMode,
+    pdcBuses?: ReadonlyArray<InsertPdcBus>,
   ): void;
-  /** Lane order as declared so far (lane index -> project track id). */
+  /** Current lane order (lane index -> project track id). */
   laneTrackIds(): readonly number[];
 }
 
@@ -126,12 +125,22 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
     vcaGainDb?: ReadonlyMap<string, number>,
     vcaControls?: ReadonlyMap<string, VcaControlState>,
     soloMode?: MixerSoloMode,
+    pdcBuses?: ReadonlyArray<InsertPdcBus>,
   ): void => {
-    const known = new Set(laneIds);
-    const appended = tracks.filter((track) => !known.has(track.id)).map((track) => track.id);
-    if (appended.length > 0) {
-      laneIds.push(...appended);
+    const currentIds = new Set(tracks.map((track) => track.id));
+    const nextLaneIds = [
+      ...laneIds.filter((id) => currentIds.has(id)),
+      ...tracks.filter((track) => !laneIds.includes(track.id)).map((track) => track.id),
+    ];
+    if (
+      nextLaneIds.some((id, index) => laneIds[index] !== id) ||
+      laneIds.length !== nextLaneIds.length
+    ) {
+      laneIds.splice(0, laneIds.length, ...nextLaneIds);
       handle.engine.setTrackLanes([...laneIds]);
+      // A new lane declaration replaces the engine's lane state, so all live
+      // values must be replayed even when the track mirror itself is unchanged.
+      laneStates.clear();
     }
     // Solo-safe tracks join the solo group whenever any solo is active, and a
     // soloed group track expands to the members whose lanes feed that group.
@@ -142,19 +151,21 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
       memberGroupKey: (track) => track.groupId,
     });
     const auditionSoloStates = pflAuditionStates(tracks, vcaControls, soloMode);
-    const maxInsertLatency = maxTrackInsertLatencySamples(tracks, resolveInsertLatency);
+    const pdc = createInsertPdcPlan(tracks, pdcBuses ?? [], resolveInsertLatency);
     for (const track of tracks) {
       const trackIndex = tracks.indexOf(track);
       const strip = track.mixer;
       const vcaOffset = vcaOffsetDb(track.vcaId, vcaGainDb);
       const pflAudition = auditionSoloStates[trackIndex] === true;
-      const pan = pflAudition ? 0 : clampPan(strip?.pan ?? 0);
+      // Older documents may have only the legacy track-level pan. Keep that
+      // fallback aligned with the offline renderer until a strip is written.
+      const pan = pflAudition ? 0 : clampPan(strip?.pan ?? track.pan ?? 0);
       const next: LaneState = {
         gainDb: pflAudition ? 0 : laneGainDb(track.volume, strip?.gainDb, vcaOffset),
         pan,
         solo: soloStates[trackIndex] ?? false,
         mute: effectiveTrackMute(track.mute, track.vcaId, vcaControls),
-        channelDelaySamples: trackPdcDelaySamples(track, maxInsertLatency, resolveInsertLatency),
+        channelDelaySamples: pdc.delayFor(track),
         panLaw: strip?.panLaw ?? DEFAULT_PAN_LAW,
         panMode: strip?.panMode ?? DEFAULT_PAN_MODE,
         // Dual pan defaults to the strip pan position on both channels.
@@ -188,32 +199,6 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
         }
       }
       laneStates.set(track.id, next);
-    }
-    // Lanes whose track was deleted keep their (fixed) index but must fall
-    // silent, or stale content would still play — most dangerously, a leftover
-    // solo would duck every live track. Mute each once and remember it.
-    const currentIds = new Set(tracks.map((track) => track.id));
-    for (const laneId of laneIds) {
-      if (currentIds.has(laneId)) continue;
-      const prev = laneStates.get(laneId);
-      if (prev?.mute && !prev.solo) continue;
-      handle.engine.setSoloMute(laneId, false, true);
-      laneStates.set(
-        laneId,
-        prev
-          ? { ...prev, solo: false, mute: true }
-          : {
-              gainDb: 0,
-              pan: 0,
-              solo: false,
-              mute: true,
-              channelDelaySamples: 0,
-              panLaw: DEFAULT_PAN_LAW,
-              panMode: DEFAULT_PAN_MODE,
-              dualPanLeft: 0,
-              dualPanRight: 0,
-            },
-      );
     }
     const masterNext = { gainDb: master.gainDb, pan: clampPan(master.pan) };
     if (masterState?.gainDb !== masterNext.gainDb) {

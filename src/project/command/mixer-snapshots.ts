@@ -46,6 +46,8 @@ import { executeApp, registerHistoryStateContributor } from './history';
 export interface MixerSnapshotTrack {
   /** Track id the entry restores onto (matched by id; missing tracks skipped). */
   id: number;
+  /** Captured linear track level (1 = unity); absent in snapshots written before this field. */
+  volume?: number;
   /** Captured channel strip (gain/pan/inserts/EQ/sends/output routing). */
   mixer: MixerStrip;
   /** Captured mute flag. */
@@ -109,6 +111,7 @@ export function buildMixerSnapshot(
       if (track.kind === 'group') mixerStrip.pan = 0;
       const entry: MixerSnapshotTrack = {
         id: track.id,
+        volume: track.volume,
         mixer: mixerStrip,
         mute: track.mute,
         solo: track.solo,
@@ -165,6 +168,10 @@ export function mergeMixerSnapshot(
       next.mixer = cloneStrip(entry.mixer);
       if (track.kind === 'group') next.mixer.pan = 0;
       next.pan = track.kind === 'group' ? 0 : next.mixer.pan;
+      const snapshotVolume = entry.volume;
+      if (snapshotVolume !== undefined && Number.isFinite(snapshotVolume) && snapshotVolume >= 0) {
+        next.volume = snapshotVolume;
+      }
       next.mute = entry.mute;
       next.solo = entry.solo;
       if (entry.soloSafe !== undefined) next.soloSafe = entry.soloSafe;

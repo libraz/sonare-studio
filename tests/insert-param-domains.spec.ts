@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   INSERT_PARAM_DOMAIN_FALLBACK,
   insertParamDomain,
+  insertParamDomainEntries,
   insertParamDomainForStrip,
 } from '@/project/insert-param-domains';
 import type { InsertSlot } from '@/project/mixer';
+import { FAKE_INSERT_PARAMS } from './fake-wasm';
 
 /** Strip-shaped value carrying a single insert slot. */
 function stripWith(processor: string): { inserts: InsertSlot[] } {
@@ -12,6 +14,14 @@ function stripWith(processor: string): { inserts: InsertSlot[] } {
 }
 
 describe('insertParamDomain', () => {
+  it('only declares domains for parameter names the engine catalog exposes', () => {
+    for (const { processor, paramName } of insertParamDomainEntries().filter(
+      (entry) => FAKE_INSERT_PARAMS[entry.processor] !== undefined,
+    )) {
+      expect(FAKE_INSERT_PARAMS[processor], `${processor}.${paramName}`).toContain(paramName);
+    }
+  });
+
   it('returns the catalogued domain for a known processor parameter', () => {
     expect(insertParamDomain('dynamics.compressor', 'thresholdDb')).toEqual({
       min: -60,

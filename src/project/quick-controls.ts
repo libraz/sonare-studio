@@ -56,6 +56,16 @@ export interface QuickControlResolvers {
   resolvePresetPatch?: (preset: string) => SynthPatch | null;
   /** Resolves an insert processor name to its parameter names. */
   resolveInsertParams?: (processor: string) => string[];
+  /** Resolves engine-provided parameter metadata, including an optional unit. */
+  resolveInsertParamInfo?: (processor: string) => QuickControlParamInfo[];
+}
+
+/** Minimal engine parameter metadata needed by the quick-control UI. */
+export interface QuickControlParamInfo {
+  /** JSON-key parameter name. */
+  name: string;
+  /** Engine-provided physical unit, when it declares one. */
+  unit?: string;
 }
 
 /** Maximum number of controls a target exposes. */
@@ -162,18 +172,22 @@ const PARAM_RANGE_RULES: ReadonlyArray<ParamRangeRule> = [
 const DEFAULT_PARAM_RULE: Omit<ParamRangeRule, 'test'> = { min: 0, max: 1, fallback: 0 };
 
 /** Returns the range rule for an insert parameter, preferring the shared domain catalog. */
-function paramRule(processor: string, name: string): Omit<ParamRangeRule, 'test'> {
+function paramRule(
+  processor: string,
+  name: string,
+  engineUnit?: string,
+): Omit<ParamRangeRule, 'test'> {
   const heuristic = PARAM_RANGE_RULES.find((rule) => rule.test.test(name)) ?? DEFAULT_PARAM_RULE;
   const domain = insertParamDomain(processor, name);
   if (domain !== INSERT_PARAM_DOMAIN_FALLBACK) {
     return {
       min: domain.min,
       max: domain.max,
-      ...(domain.unit ? { unit: domain.unit } : {}),
+      ...(engineUnit || domain.unit ? { unit: engineUnit || domain.unit } : {}),
       fallback: Math.min(domain.max, Math.max(domain.min, heuristic.fallback)),
     };
   }
-  return heuristic;
+  return { ...heuristic, ...(engineUnit ? { unit: engineUnit } : {}) };
 }
 
 /** Splits a camelCase parameter name into a capitalized display name. */
@@ -211,6 +225,19 @@ function defaultResolveInsertParams(processor: string): string[] {
     };
     if (typeof wasm.masteringInsertParamNames !== 'function') return [];
     return wasm.masteringInsertParamNames(processor);
+  } catch {
+    return [];
+  }
+}
+
+/** Default insert-metadata resolver: uses the loaded engine catalog when available. */
+function defaultResolveInsertParamInfo(processor: string): QuickControlParamInfo[] {
+  try {
+    const wasm = getWasmModule() as unknown as {
+      masteringInsertParamInfo?: (name: string) => QuickControlParamInfo[];
+    };
+    if (typeof wasm.masteringInsertParamInfo !== 'function') return [];
+    return wasm.masteringInsertParamInfo(processor);
   } catch {
     return [];
   }
@@ -291,10 +318,15 @@ export function listQuickControls(
   const slot = requireInsertSlot(target);
   const resolveParams = resolvers.resolveInsertParams ?? defaultResolveInsertParams;
   const catalogNames = resolveParams(slot.processor);
+  const resolveInfo = resolvers.resolveInsertParamInfo ?? defaultResolveInsertParamInfo;
+  const paramInfo = new Map(resolveInfo(slot.processor).map((info) => [info.name, info]));
   const setNames = Object.keys(slot.params).filter((name) => typeof slot.params[name] === 'number');
-  const names = [...new Set([...catalogNames, ...setNames])].slice(0, MAX_QUICK_CONTROLS);
+  const names = [...new Set([...catalogNames, ...paramInfo.keys(), ...setNames])].slice(
+    0,
+    MAX_QUICK_CONTROLS,
+  );
   return names.map((name) => {
-    const rule = paramRule(slot.processor, name);
+    const rule = paramRule(slot.processor, name, paramInfo.get(name)?.unit);
     const raw = slot.params[name];
     const control: QuickControl = {
       id: name,

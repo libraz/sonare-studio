@@ -1,3 +1,4 @@
+import { parseMidiLearnBusStripControlTargetId } from '@/ui/midi/midi-learn';
 import { busAutomationTarget } from '../automation';
 import {
   assertCanAddEngineBus,
@@ -91,6 +92,13 @@ export function removeMixerBus(busId: string): void {
     };
     const target = busAutomationTarget(busId);
     store.automationLanes = store.automationLanes.filter((lane) => lane.target !== target);
+    // Bus-strip learn targets embed a stable bus id, so remove only bindings
+    // belonging to the bus that has just been removed.
+    for (const targetId of store.midiCcBindings.keys()) {
+      if (parseMidiLearnBusStripControlTargetId(targetId)?.busId === busId) {
+        store.midiCcBindings.delete(targetId);
+      }
+    }
     store.refresh();
   });
 }

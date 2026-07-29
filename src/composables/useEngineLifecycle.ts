@@ -329,7 +329,9 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
             const vcaGainDb = vcaGroups.length
               ? new Map(vcaGroups.map((group) => [group.id, group.gainDb]))
               : undefined;
-            return vcaOffsetDb(track?.vcaId, vcaGainDb);
+            return track
+              ? laneGainDb(track.volume, track.mixer?.gainDb, vcaOffsetDb(track.vcaId, vcaGainDb))
+              : 0;
           },
           effectiveMuteFor: (trackId) => {
             const track = store.tracks.find((entry) => entry.id === trackId);

@@ -1,8 +1,4 @@
-import {
-  isBusAutomationTarget,
-  parseInsertAutomationParam,
-  parseMasteringAutomationParam,
-} from '../automation';
+import { isBusAutomationTarget, parseInsertAutomationParam } from '../automation';
 import {
   assertEngineBusCapacity,
   cloneStrip,
@@ -423,7 +419,15 @@ export function applyMixerSceneJson(sceneJson: string): ApplyMixerSceneResult {
     store.tracks.slice(0, plan.result.trackCount).map((track) => track.id),
   );
   return executeApp(() => {
-    store.mixer = plan.mixer;
+    // Scene templates replace routing and strip state, not project-wide
+    // monitoring/mastering preferences that the scene format cannot express.
+    store.mixer = {
+      ...plan.mixer,
+      ...(store.mixer.soloMode !== undefined ? { soloMode: store.mixer.soloMode } : {}),
+      ...(store.mixer.masteringChain !== undefined
+        ? { masteringChain: store.mixer.masteringChain }
+        : {}),
+    };
     store.tracks = plan.tracks;
     store.automationLanes = store.automationLanes.filter((lane) => {
       // A scene replaces every bus and the master strip/chain. It also
@@ -432,10 +436,7 @@ export function applyMixerSceneJson(sceneJson: string): ApplyMixerSceneResult {
       // numeric index; executeApp keeps them in the undo snapshot.
       if (isBusAutomationTarget(lane.target)) return false;
       if (lane.target === 'master') {
-        return (
-          parseInsertAutomationParam(lane.param) === undefined &&
-          parseMasteringAutomationParam(lane.param) === undefined
-        );
+        return parseInsertAutomationParam(lane.param) === undefined;
       }
       if (replacedTrackIds.has(lane.target)) {
         return parseInsertAutomationParam(lane.param) === undefined;

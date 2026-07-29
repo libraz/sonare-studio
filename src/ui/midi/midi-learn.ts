@@ -506,8 +506,16 @@ export type MidiLearnStripControlParam =
   | 'dualPanLeft'
   | 'dualPanRight';
 
+/** Strip-local controls that a send/return bus exposes. */
+export type MidiLearnBusStripControlParam =
+  | 'inputTrimDb'
+  | 'width'
+  | 'polarityLeft'
+  | 'polarityRight';
+
 /** Prefix marking a strip-local control learn target id. */
 const STRIP_CONTROL_TARGET_PREFIX = 'strip:';
+const BUS_STRIP_CONTROL_TARGET_PREFIX = 'bus-strip:';
 
 /** A decoded strip-local control target. */
 export interface MidiLearnStripControlTarget {
@@ -515,6 +523,12 @@ export interface MidiLearnStripControlTarget {
   scope: MidiLearnScope;
   /** Strip-local continuous control id. */
   param: MidiLearnStripControlParam;
+}
+
+/** A decoded send/return-bus strip-control target. */
+export interface MidiLearnBusStripControlTarget {
+  busId: string;
+  param: MidiLearnBusStripControlParam;
 }
 
 /**
@@ -529,6 +543,39 @@ export function midiLearnStripControlTargetId(
   param: MidiLearnStripControlParam,
 ): string {
   return `${STRIP_CONTROL_TARGET_PREFIX}${scope}:${param}`;
+}
+
+/** Encodes one MIDI-learnable send/return-bus strip control. */
+export function midiLearnBusStripControlTargetId(
+  busId: string,
+  param: MidiLearnBusStripControlParam,
+): string {
+  return `${BUS_STRIP_CONTROL_TARGET_PREFIX}${encodeURIComponent(busId)}:${param}`;
+}
+
+/** Decodes a send/return-bus strip-control target. */
+export function parseMidiLearnBusStripControlTargetId(
+  id: string,
+): MidiLearnBusStripControlTarget | null {
+  if (!id.startsWith(BUS_STRIP_CONTROL_TARGET_PREFIX)) return null;
+  const rest = id.slice(BUS_STRIP_CONTROL_TARGET_PREFIX.length);
+  const sep = rest.lastIndexOf(':');
+  if (sep <= 0) return null;
+  const param = rest.slice(sep + 1);
+  if (
+    param !== 'inputTrimDb' &&
+    param !== 'width' &&
+    param !== 'polarityLeft' &&
+    param !== 'polarityRight'
+  ) {
+    return null;
+  }
+  try {
+    const busId = decodeURIComponent(rest.slice(0, sep));
+    return busId.length > 0 ? { busId, param } : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Decodes a strip-local control target id, or null when it is malformed. */
@@ -622,7 +669,8 @@ export function isMidiLearnTargetId(id: string): boolean {
     parseMidiLearnVcaTargetId(id) !== null ||
     parseMidiLearnEqTargetId(id) !== null ||
     parseMidiLearnMasteringTargetId(id) !== null ||
-    parseMidiLearnStripControlTargetId(id) !== null
+    parseMidiLearnStripControlTargetId(id) !== null ||
+    parseMidiLearnBusStripControlTargetId(id) !== null
   );
 }
 
@@ -653,6 +701,9 @@ export function midiLearnTargetScope(id: string): MidiLearnTargetScope | null {
   if (mastering) return 'global';
   const stripControl = parseMidiLearnStripControlTargetId(id);
   if (stripControl) return stripControl.scope;
+  // Bus ids are document-stable identifiers, unlike session-assigned track
+  // ids. Keep their bindings verbatim across a save/load cycle.
+  if (parseMidiLearnBusStripControlTargetId(id)) return 'global';
   return null;
 }
 

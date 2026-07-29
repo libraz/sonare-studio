@@ -292,18 +292,18 @@ describe('createAutomationSync', () => {
     expect(restoreParam).not.toHaveBeenCalled();
   });
 
-  it('adds the current VCA offset to track fader automation values', () => {
+  it('adds the current fader baseline to track fader automation values', () => {
     const { handle, engine } = makeHandle();
     const sync = createAutomationSync(handle, {
       knownTrackIds: () => [1],
       restoreParam: vi.fn(),
-      vcaOffsetFor: (trackId) => (trackId === 1 ? -6 : 0),
+      vcaOffsetFor: (trackId) => (trackId === 1 ? -10 : 0),
     });
 
     sync.sync([makeLane(1, [{ ppq: 0, value: -12 }])]);
 
     expect(engine.setAutomationLane).toHaveBeenCalledWith(stubParamId(1, 'faderDb'), [
-      { ppq: 0, value: -18, curveToNext: 0 },
+      { ppq: 0, value: -22, curveToNext: 0 },
     ]);
   });
 

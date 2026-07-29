@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createInsertPdcPlan,
   insertChainLatencySamples,
   insertLatencyResolverFromCatalog,
   maxTrackInsertLatencySamples,
@@ -79,5 +80,60 @@ describe('insert latency helpers', () => {
     expect(trackPdcDelaySamples(tracks[1], maxLatency, resolve)).toBe(72);
     expect(trackPdcDelaySamples(tracks[2], maxLatency, resolve)).toBe(128);
     expect(trackPdcDelaySamples(tracks[3], maxLatency, resolve)).toBe(128);
+  });
+
+  it('includes return and group-bus insert latency in the routed signal path', () => {
+    const resolve = insertLatencyResolverFromCatalog([
+      { id: 'track.linear', latencySamples: 32 },
+      { id: 'return.linear', latencySamples: 96 },
+      { id: 'group.linear', latencySamples: 64 },
+    ]);
+    const tracks = [
+      {
+        id: 1,
+        kind: 'audio',
+        mixer: { ...createDefaultStrip(), outputBusId: 'return-fx' },
+      },
+      {
+        id: 2,
+        kind: 'audio',
+        mixer: {
+          ...createDefaultStrip(),
+          inserts: [{ processor: 'track.linear', params: {}, enabled: true }],
+        },
+      },
+      {
+        id: 3,
+        kind: 'audio',
+        groupId: 4,
+        mixer: createDefaultStrip(),
+      },
+      {
+        id: 4,
+        kind: 'group',
+        mixer: {
+          ...createDefaultStrip(),
+          inserts: [{ processor: 'group.linear', params: {}, enabled: true }],
+        },
+      },
+    ];
+    const pdc = createInsertPdcPlan(
+      tracks,
+      [
+        {
+          id: 'return-fx',
+          strip: {
+            ...createDefaultStrip(),
+            inserts: [{ processor: 'return.linear', params: {}, enabled: true }],
+          },
+        },
+      ],
+      resolve,
+    );
+
+    expect(pdc.maxLatencySamples).toBe(96);
+    expect(pdc.delayFor(tracks[0])).toBe(0);
+    expect(pdc.delayFor(tracks[1])).toBe(64);
+    expect(pdc.delayFor(tracks[2])).toBe(32);
   });
 });

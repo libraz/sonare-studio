@@ -53,7 +53,7 @@ export interface AutomationSyncOptions {
   masteringProcessorIndexFor?: (processorId: string) => number | undefined;
   /** Current store insert index for a stable processor identity on a lane target. */
   insertStoreIndexFor?: (target: AutomationTarget, processorId: string) => number | undefined;
-  /** Current VCA gain offset for a track/group target, in dB. */
+  /** Current fader baseline (track volume + trim + VCA) for a numeric target, in dB. */
   vcaOffsetFor?: (trackId: number) => number;
   /** Effective track/VCA mute for a numeric fader target. */
   effectiveMuteFor?: (trackId: number) => boolean;

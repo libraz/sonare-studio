@@ -340,6 +340,7 @@ describe('target scope helpers', () => {
     expect(midiLearnTargetScope('mastering:0:tiltDb')).toBe('global');
     expect(midiLearnTargetScope('strip:6:inputTrimDb')).toBe(6);
     expect(midiLearnTargetScope('strip:master:width')).toBe('master');
+    expect(midiLearnTargetScope('bus-strip:bus-1:width')).toBe('global');
     expect(midiLearnTargetScope('nonsense')).toBeNull();
   });
 

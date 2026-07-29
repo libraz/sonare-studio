@@ -15,6 +15,29 @@ export interface InsertLatencyResolverOptions {
 /** Resolves one insert slot's latency in samples. */
 export type InsertLatencyResolver = (slot: Pick<InsertSlot, 'processor' | 'params'>) => number;
 
+/** A return bus whose strip contributes latency to every routed signal. */
+export interface InsertPdcBus {
+  id: string;
+  strip?: Pick<MixerStrip, 'inserts'>;
+}
+
+/** A precomputed PDC plan shared by the live and offline engine paths. */
+export interface InsertPdcPlan {
+  /** Largest signal-path latency before master processing. */
+  maxLatencySamples: number;
+  /** Returns one lane's manual delay plus its required automatic compensation. */
+  delayFor(track: InsertPdcTrack): number;
+}
+
+/** Minimal track routing shape needed to calculate pre-master insert latency. */
+export interface InsertPdcTrack {
+  id?: number;
+  kind?: string;
+  frozen?: unknown;
+  groupId?: number;
+  mixer?: Pick<MixerStrip, 'inserts' | 'channelDelaySamples' | 'outputBusId'>;
+}
+
 /** Returns a non-negative whole-sample latency, tolerating missing/invalid metadata. */
 function sanitizeLatencySamples(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.round(value) : 0;
@@ -73,6 +96,66 @@ export function stripInsertLatencySamples(
   resolveLatency: InsertLatencyResolver,
 ): number {
   return insertChainLatencySamples(strip?.inserts ?? [], resolveLatency);
+}
+
+/**
+ * Builds a PDC plan from primary output routes. A content lane reaches either
+ * its parent group bus, its selected return bus, or the master directly; the
+ * destination bus's inserts are therefore part of that lane's audible path.
+ * Return-bus latency is also included in the project maximum so send returns
+ * cannot be ignored when they are the longest live signal path.
+ */
+export function createInsertPdcPlan(
+  tracks: ReadonlyArray<InsertPdcTrack>,
+  buses: ReadonlyArray<InsertPdcBus>,
+  resolveLatency: InsertLatencyResolver,
+): InsertPdcPlan {
+  const tracksById = new Map(
+    tracks.flatMap((track) => (typeof track.id === 'number' ? [[track.id, track] as const] : [])),
+  );
+  const busLatencyById = new Map(
+    buses.map((bus) => [bus.id, stripInsertLatencySamples(bus.strip, resolveLatency)]),
+  );
+
+  /** Latency of the bus path downstream from a track's own lane strip. */
+  function routeLatency(track: InsertPdcTrack, seenGroups = new Set<number>()): number {
+    if (track.groupId !== undefined) {
+      if (seenGroups.has(track.groupId)) return 0;
+      const group = tracksById.get(track.groupId);
+      if (group?.kind !== 'group') return 0;
+      const nextSeen = new Set(seenGroups).add(track.groupId);
+      return stripInsertLatencySamples(group.mixer, resolveLatency) + routeLatency(group, nextSeen);
+    }
+    const outputBusId = track.mixer?.outputBusId;
+    return outputBusId === undefined ? 0 : (busLatencyById.get(outputBusId) ?? 0);
+  }
+
+  /** Content lane latency; group tracks themselves are silent routing busses. */
+  function signalLatency(track: InsertPdcTrack): number {
+    const ownLatency =
+      track.kind === 'group' || track.frozen !== undefined
+        ? 0
+        : stripInsertLatencySamples(track.mixer, resolveLatency);
+    return ownLatency + routeLatency(track);
+  }
+
+  let maxLatencySamples = 0;
+  for (const busLatency of busLatencyById.values()) {
+    maxLatencySamples = Math.max(maxLatencySamples, busLatency);
+  }
+  for (const track of tracks) {
+    if (track.kind !== 'group') {
+      maxLatencySamples = Math.max(maxLatencySamples, signalLatency(track));
+    }
+  }
+
+  return {
+    maxLatencySamples,
+    delayFor(track): number {
+      const manualDelay = Math.max(0, Math.round(track.mixer?.channelDelaySamples ?? 0));
+      return manualDelay + Math.max(0, maxLatencySamples - signalLatency(track));
+    },
+  };
 }
 
 /**

@@ -677,19 +677,34 @@ export function setSend(
     throw new RangeError(`Send level must be finite, got ${send.levelDb}`);
   }
   const key = `strip-send:${String(target)}:${busId}`;
+  const existing = strip.sends.find((entry) => entry.busId === busId);
+  if (send === null) {
+    if (existing === undefined && !hasPendingGesture(key)) return;
+  } else {
+    const timing = send.timing ?? existing?.timing;
+    if (
+      existing !== undefined &&
+      existing.levelDb === send.levelDb &&
+      existing.enabled === (send.enabled ?? true) &&
+      existing.timing === (timing === 'postFader' ? undefined : timing) &&
+      !hasPendingGesture(key)
+    ) {
+      return;
+    }
+  }
   executeApp(
     () => {
       const next = cloneStrip(strip);
-      const existing = next.sends.findIndex((s) => s.busId === busId);
+      const existingIndex = next.sends.findIndex((s) => s.busId === busId);
       if (send === null) {
-        if (existing >= 0) next.sends = next.sends.filter((s) => s.busId !== busId);
+        if (existingIndex >= 0) next.sends = next.sends.filter((s) => s.busId !== busId);
       } else {
-        const prevTiming = existing >= 0 ? next.sends[existing].timing : undefined;
+        const prevTiming = existingIndex >= 0 ? next.sends[existingIndex].timing : undefined;
         const timing = send.timing ?? prevTiming;
         const entry: StripSend = { busId, levelDb: send.levelDb, enabled: send.enabled ?? true };
         // Keep the field absent for the default (post-fader) so neutral strips stay neutral.
         if (timing !== undefined && timing !== 'postFader') entry.timing = timing;
-        if (existing >= 0) next.sends[existing] = entry;
+        if (existingIndex >= 0) next.sends[existingIndex] = entry;
         else next.sends = [...next.sends, entry];
       }
       writeStrip(store, target, next);
@@ -771,7 +786,15 @@ export function setStripPanMode(trackId: number, mode: PanModeId): void {
     const next = cloneStrip(strip);
     // Keep the field absent at the default so neutral strips stay neutral.
     if (mode === DEFAULT_PAN_MODE) delete next.panMode;
-    else next.panMode = mode;
+    else {
+      next.panMode = mode;
+      // Persist the dual-pan default at the point the mode changes.  The
+      // realtime and offline engines both receive explicit L/R values, and
+      // loading the saved document produces the same panner state.
+      if (mode === 'dualPan' && next.dualPan === undefined) {
+        next.dualPan = { left: next.pan, right: next.pan };
+      }
+    }
     writeStrip(store, trackId, next);
     store.refresh();
   });

@@ -1,5 +1,6 @@
 import type { InjectionKey, Ref } from 'vue';
 import { getCurrentScope, onScopeDispose, ref } from 'vue';
+import { mixerBusStripTarget } from '@/project/command/mixer-internal';
 import {
   clearAllMidiCcBindings,
   clearMidiCcBinding,
@@ -51,6 +52,7 @@ import {
   midiCcBindingMatches,
   midiCcMessageValue,
   midiLearnTargetId,
+  parseMidiLearnBusStripControlTargetId,
   parseMidiLearnEqTargetId,
   parseMidiLearnInsertTargetId,
   parseMidiLearnInstrumentTargetId,
@@ -368,6 +370,35 @@ export function useMidiLearn(): MidiLearnHandle {
               setStripDualPan(stripControl.scope, left, right);
             }
           }
+        }
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    const busStripControl = parseMidiLearnBusStripControlTargetId(id);
+    if (busStripControl) {
+      try {
+        const target = mixerBusStripTarget(busStripControl.busId);
+        if (busStripControl.param === 'inputTrimDb') {
+          setStripInputTrim(target, ccToRange(value, MIN_INPUT_TRIM_DB, MAX_INPUT_TRIM_DB), {
+            commit,
+          });
+        } else if (busStripControl.param === 'width') {
+          setStripWidth(target, ccToRange(value, MIN_STRIP_WIDTH, MAX_STRIP_WIDTH), { commit });
+        } else {
+          const strip = useProjectStore().mixer.buses.find(
+            (bus) => bus.id === busStripControl.busId,
+          )?.strip;
+          if (!strip) return false;
+          const enabled = value >= 64;
+          setStripPolarityInvert(
+            target,
+            busStripControl.param === 'polarityLeft' ? enabled : strip.polarityInvertLeft === true,
+            busStripControl.param === 'polarityRight'
+              ? enabled
+              : strip.polarityInvertRight === true,
+          );
         }
         return true;
       } catch {

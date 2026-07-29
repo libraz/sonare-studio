@@ -62,6 +62,7 @@ import type { TrackInstrument } from '@/project/instrument';
 import { MAX_MIXER_BUSES, MAX_VCA_GROUPS } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import {
+  midiLearnBusStripControlTargetId,
   midiLearnInsertTargetId,
   midiLearnMasteringTargetId,
   midiLearnTargetId,
@@ -259,13 +260,16 @@ describe('mixer commands', () => {
       expect(() => setStripPanLaw(trackId, 'bogus' as 'const3dB')).toThrow(RangeError);
     });
 
-    it('sets pan mode, clearing the field at the default, undoably', () => {
+    it('persists dual-pan defaults when changing mode, undoably', () => {
+      setStripPan(trackId, 0.4);
       setStripPanMode(trackId, 'dualPan');
       expect(store.tracks[0].mixer?.panMode).toBe('dualPan');
+      expect(store.tracks[0].mixer?.dualPan).toEqual({ left: 0.4, right: 0.4 });
       setStripPanMode(trackId, 'balance');
       expect(store.tracks[0].mixer?.panMode).toBeUndefined();
       undo();
       expect(store.tracks[0].mixer?.panMode).toBe('dualPan');
+      expect(store.tracks[0].mixer?.dualPan).toEqual({ left: 0.4, right: 0.4 });
       expect(() => setStripPanMode(trackId, 'bogus' as 'balance')).toThrow(RangeError);
     });
 
@@ -476,6 +480,16 @@ describe('mixer commands', () => {
       expect(undo()).toBe(false);
     });
 
+    it('does not create an undo entry when a send is already in the requested state', () => {
+      const busId = addMixerBus({ name: 'FX' });
+      setSend(trackId, busId, { levelDb: -12, timing: 'preFader' });
+      clearHistory();
+
+      setSend(trackId, busId, { levelDb: -12 });
+
+      expect(canUndo()).toBe(false);
+    });
+
     it('sets and preserves the send tap point (pre/post-fader)', () => {
       const busId = addMixerBus({ name: 'FX' });
       // Default send omits timing (post-fader).
@@ -519,16 +533,20 @@ describe('mixer commands', () => {
 
     it('removing a bus cascades the sends referencing it', () => {
       const busId = addMixerBus();
+      const busBinding = midiLearnBusStripControlTargetId(busId, 'width');
+      store.midiCcBindings.set(busBinding, { channel: 0, controller: 74 });
       setSend(trackId, busId, { levelDb: -9 });
       store.mixer.master.sends = [{ busId, levelDb: -3, enabled: true }];
       removeMixerBus(busId);
       expect(store.mixer.buses).toEqual([]);
+      expect(store.midiCcBindings.has(busBinding)).toBe(false);
       expect(store.tracks[0].mixer?.sends).toEqual([]);
       expect(store.mixer.master.sends).toEqual([]);
       undo();
       expect(store.mixer.buses).toHaveLength(1);
       expect(store.tracks[0].mixer?.sends).toHaveLength(1);
       expect(store.mixer.master.sends).toHaveLength(1);
+      expect(store.midiCcBindings.get(busBinding)).toEqual({ channel: 0, controller: 74 });
       expect(() => removeMixerBus('nope')).toThrow(RangeError);
     });
 
@@ -776,6 +794,16 @@ describe('mixer commands', () => {
   });
 
   describe('mixer snapshots', () => {
+    it('captures and restores the linear track volume with the strip state', () => {
+      store.tracks[0].volume = 0.5;
+      saveMixerSnapshot('A');
+      store.tracks[0].volume = 1.5;
+      clearHistory();
+
+      expect(recallMixerSnapshot('A')).toBe(true);
+      expect(store.tracks[0].volume).toBe(0.5);
+    });
+
     it('restores the active slot together with the recalled mix on undo and redo', () => {
       setStripGain(trackId, -9);
       saveMixerSnapshot('A');
@@ -908,6 +936,8 @@ describe('mixer commands', () => {
     });
 
     it('applies a mixer scene preset as one undoable template', () => {
+      setMixerSoloMode('pfl');
+      setMasteringPreset('club');
       const result = applyMixerSceneJson(fakeMixingScenePresetJson('vocalReverbSend'));
 
       expect(result).toEqual({ trackCount: 1, busCount: 1, vcaCount: 0 });
@@ -928,6 +958,8 @@ describe('mixer commands', () => {
           enabled: true,
         },
       ]);
+      expect(store.mixer.soloMode).toBe('pfl');
+      expect(store.mixer.masteringChain?.preset).toBe('club');
 
       expect(undo()).toBe(true);
       expect(store.mixer.buses).toEqual([]);
@@ -1005,8 +1037,10 @@ describe('mixer commands', () => {
       clearHistory();
 
       applyMixerSceneJson(fakeMixingScenePresetJson('vocalReverbSend'));
-      expect(store.automationLanes).toEqual([before[1]]);
-      expect(processorMidiTargets.every((target) => !store.midiCcBindings.has(target))).toBe(true);
+      expect(store.automationLanes).toEqual([before[1], before[3]]);
+      expect(store.midiCcBindings.has(processorMidiTargets[0])).toBe(false);
+      expect(store.midiCcBindings.has(processorMidiTargets[1])).toBe(false);
+      expect(store.midiCcBindings.has(processorMidiTargets[2])).toBe(true);
 
       expect(undo()).toBe(true);
       expect(store.automationLanes).toEqual(before);
@@ -1117,7 +1151,7 @@ describe('mixer commands', () => {
               role: 'master',
               inserts: [
                 { processor: 'dynamics.compressor', params: { thresholdDb: -18 } },
-                { processor: 'effects.reverb.plate', params: { decaySec: 1.8 } },
+                { processor: 'made.up.reverb', params: { decaySec: 1.8 } },
               ],
             },
             { id: 'room', role: 'aux' },
@@ -1139,7 +1173,7 @@ describe('mixer commands', () => {
               id: 'room-return',
               inserts: [
                 { processor: 'saturation.tape', params: { driveDb: 2 } },
-                { processor: 'effects.reverb.plate', params: { decaySec: 2 } },
+                { processor: 'made.up.reverb', params: { decaySec: 2 } },
               ],
             },
           ],
