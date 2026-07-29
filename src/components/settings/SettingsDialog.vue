@@ -142,24 +142,12 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--border);
 }
 
+/* Face, active underline and focus underline all come from the canonical `.tab`
+ * in controls.css; only the wider gutter for this dialog's tab strip is local.
+ * Redeclaring the underline with a border-bottom here would offset it from the
+ * inset-shadow focus underline by the border's own 2px. */
 .tab {
-  background: none;
-  border: none;
-  box-shadow: none;
-  border-radius: 0;
-  border-bottom: 2px solid transparent;
-  color: var(--text-3);
   padding: var(--sp-3) var(--sp-5);
-  cursor: pointer;
-  font-size: var(--fs-sm);
-  transition:
-    color var(--dur-1) var(--ease-out),
-    border-color var(--dur-1) var(--ease-out);
-}
-
-.tab.active {
-  color: var(--text-1);
-  border-bottom-color: var(--accent);
 }
 
 /* The panel root lives in each tab component; this rule reaches it because a
