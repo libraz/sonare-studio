@@ -464,7 +464,7 @@ onBeforeUnmount(() => {
   padding: var(--sp-1) var(--sp-3);
   background: var(--danger-surface);
   color: var(--danger-text);
-  font: var(--fs-2xs)/1.4 system-ui, sans-serif;
+  font: var(--fs-2xs)/1.4 var(--font-sans);
   border-radius: var(--radius-xs);
 }
 
@@ -522,14 +522,14 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font: 600 9px system-ui, sans-serif;
+  font: var(--fw-semibold) 9px var(--font-sans);
   color: var(--text-3);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 
 .qc-value {
-  font: var(--fs-2xs) system-ui, sans-serif;
+  font: var(--fs-2xs) var(--font-sans);
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
 }

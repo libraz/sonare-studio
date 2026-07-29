@@ -221,14 +221,14 @@ watch(
 
 .navigator-summary {
   display: block;
-  font: 600 var(--fs-sm, 13px) / 1.35 var(--font-sans, sans-serif);
+  font: var(--fw-semibold) var(--fs-sm, 13px) / 1.35 var(--font-sans, sans-serif);
 }
 
 .navigator-instructions {
   display: block;
   margin-top: 4px;
   color: var(--text-3, #bbb);
-  font: var(--fs-xs, 11px) / 1.35 var(--font-sans, sans-serif);
+  font: var(--fs-xs) / 1.35 var(--font-sans, sans-serif);
 }
 
 .navigator-virtual-options,
@@ -254,7 +254,7 @@ watch(
   grid-template-columns: minmax(5rem, auto) 1fr;
   align-items: center;
   gap: 8px;
-  font-size: var(--fs-xs, 11px);
+  font-size: var(--fs-xs);
 }
 
 .navigator-context {

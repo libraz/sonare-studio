@@ -21,7 +21,7 @@
 
 .chain-add {
   width: 100%;
-  font: 600 var(--fs-2xs) var(--font-sans);
+  font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
   color: var(--text-3);
   background: transparent;
   border: 1px dashed var(--border);
@@ -53,7 +53,7 @@
 }
 
 .catalog-category {
-  font: 700 var(--fs-2xs) var(--font-sans);
+  font: var(--fw-bold) var(--fs-2xs) var(--font-sans);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-4);

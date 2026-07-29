@@ -679,7 +679,7 @@ function onQChange(bandIndex: number, value: number, commit: boolean): void {
   border-radius: var(--radius-sm);
   background: var(--surface-3);
   color: var(--text-3);
-  font: var(--fw-bold) 10px var(--font-sans);
+  font: var(--fw-bold) var(--fs-2xs) var(--font-sans);
   line-height: 1;
   cursor: pointer;
   box-shadow: var(--control-lift);

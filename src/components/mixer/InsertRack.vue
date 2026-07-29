@@ -496,7 +496,7 @@ onBeforeUnmount(() => {
   background: transparent;
   box-shadow: none;
   color: var(--text-4);
-  font: 10px var(--font-sans);
+  font: var(--fs-2xs) var(--font-sans);
   line-height: 1;
   padding: 0 1px;
   cursor: pointer;
@@ -569,7 +569,7 @@ onBeforeUnmount(() => {
   gap: var(--sp-2);
   width: 100%;
   text-align: left;
-  font: 10px var(--font-sans);
+  font: var(--fs-2xs) var(--font-sans);
   color: var(--text-2);
   background: transparent;
   border: none;

@@ -649,7 +649,7 @@ function onKeydown(event: KeyboardEvent): void {
   padding: var(--sp-1) var(--sp-3);
   background: var(--danger-surface);
   color: var(--danger-text);
-  font: var(--fs-2xs)/1.4 system-ui, sans-serif;
+  font: var(--fs-2xs)/1.4 var(--font-sans);
   border-radius: var(--radius-xs);
 }
 
@@ -770,7 +770,7 @@ function onKeydown(event: KeyboardEvent): void {
   color: var(--text-2);
   border-radius: var(--radius-sm);
   box-shadow: var(--control-lift);
-  font: 600 var(--fs-2xs) system-ui, sans-serif;
+  font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
   padding: var(--sp-1) var(--sp-4);
   cursor: pointer;
 }

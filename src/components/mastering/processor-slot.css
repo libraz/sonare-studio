@@ -70,7 +70,7 @@
 
 .chain-badge {
   flex: none;
-  font: 700 var(--fs-2xs) var(--font-sans);
+  font: var(--fw-bold) var(--fs-2xs) var(--font-sans);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-4);
@@ -87,7 +87,7 @@
   background: transparent;
   box-shadow: none;
   color: var(--text-3);
-  font: 700 var(--fs-2xs) var(--font-sans);
+  font: var(--fw-bold) var(--fs-2xs) var(--font-sans);
   line-height: 1;
   padding: 1px;
   cursor: pointer;

@@ -16,7 +16,7 @@
 .preview-cancel,
 .play-button,
 .targets-button {
-  font: 600 var(--fs-2xs) var(--font-sans);
+  font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
   color: var(--text-2);
   background: var(--surface-3);
   border: none;
@@ -47,7 +47,7 @@
 }
 
 .ab-button {
-  font: 700 10px system-ui, sans-serif;
+  font: var(--fw-bold) var(--fs-2xs) var(--font-sans);
   color: var(--text-3);
   background: var(--surface-3);
   border: 1px solid var(--border);
@@ -75,7 +75,7 @@
 }
 
 .preview-stale {
-  font: 600 9px system-ui, sans-serif;
+  font: var(--fw-semibold) 9px var(--font-sans);
   color: var(--warning);
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -99,7 +99,7 @@
 }
 
 .targets-editor-head {
-  font: 700 var(--fs-2xs) var(--font-sans);
+  font: var(--fw-bold) var(--fs-2xs) var(--font-sans);
   color: var(--text-2);
 }
 
@@ -128,7 +128,7 @@
   border-radius: var(--radius-sm);
   color: var(--text-1);
   background: var(--surface-1);
-  font: 600 var(--fs-2xs) var(--font-sans);
+  font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
   padding: 0 6px;
 }
 
@@ -159,7 +159,7 @@
 
 .progress-stage {
   flex: none;
-  font: 9px system-ui, sans-serif;
+  font: 9px var(--font-sans);
   color: var(--text-4);
   min-width: 80px;
 }

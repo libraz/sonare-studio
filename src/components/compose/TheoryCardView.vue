@@ -62,7 +62,7 @@ watch(
   max-width: 230px;
   padding: 6px 9px;
   border-radius: 5px;
-  font: 11px / 1.45 system-ui, sans-serif;
+  font: var(--fs-xs) / 1.45 var(--font-sans);
   background: var(--surface-3);
   color: var(--text-1);
   border: 1px solid var(--border-strong);

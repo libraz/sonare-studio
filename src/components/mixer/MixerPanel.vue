@@ -374,7 +374,7 @@ onBeforeUnmount(() => {
 }
 
 .toolbar-button {
-  font: var(--fw-semibold) 10px var(--font-sans);
+  font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
   color: var(--text-2);
   background: var(--surface-3);
   border-radius: var(--radius-sm);
@@ -420,7 +420,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 5px;
   padding: 2px 10px;
-  font: 10px var(--font-sans);
+  font: var(--fs-2xs) var(--font-sans);
   color: var(--text-2);
   cursor: pointer;
   transition: background var(--dur-1) var(--ease-out);
@@ -449,7 +449,7 @@ onBeforeUnmount(() => {
   display: block;
   width: 100%;
   text-align: left;
-  font: var(--fw-semibold) 10px var(--font-sans);
+  font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
   color: #9fc4f5;
   background: transparent;
   border: none;
@@ -467,7 +467,7 @@ onBeforeUnmount(() => {
   padding: 2px var(--sp-4);
   background: var(--danger-surface);
   color: var(--danger-text);
-  font: 10px/1.4 var(--font-sans);
+  font: var(--fs-2xs)/1.4 var(--font-sans);
   flex: none;
 }
 

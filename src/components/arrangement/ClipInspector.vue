@@ -209,7 +209,7 @@ function onLoopToggle(): void {
 .ci-redetect {
   /* Compact face matching the inspector density; lift comes from the button baseline. */
   margin-left: auto;
-  font: var(--fw-semibold) 10px var(--font-sans);
+  font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
   padding: 2px var(--sp-3);
   border-radius: var(--radius-sm);
 }

@@ -299,13 +299,13 @@ function onLaneDoubleClick(event: MouseEvent): void {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font: var(--fw-semibold) 10px var(--font-sans);
+  font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
   color: var(--text-1);
 }
 
 .section-name-input {
   width: 100%;
-  font: var(--fw-semibold) 10px var(--font-sans);
+  font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
   color: var(--text-1);
   background: var(--surface-0);
   border: 1px solid var(--accent);

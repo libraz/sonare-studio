@@ -92,7 +92,7 @@ function storeTitle(slot: MixerSnapshotSlot): string {
 
 .snapshot-recall,
 .snapshot-store {
-  font: var(--fw-semibold) 10px var(--font-sans);
+  font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
   color: var(--text-2);
   background: var(--surface-3);
   padding: 2px var(--sp-2);

@@ -250,7 +250,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   padding: 0 var(--sp-2);
-  font: var(--fw-semibold) 10px var(--font-sans);
+  font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
   color: var(--text-1);
   white-space: nowrap;
   overflow: hidden;

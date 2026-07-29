@@ -1,13 +1,13 @@
 .targets-table {
   margin-top: 6px;
   border-collapse: collapse;
-  font: 10px system-ui, sans-serif;
+  font: var(--fs-2xs) var(--font-sans);
   font-variant-numeric: tabular-nums;
   color: var(--text-2);
 }
 
 .targets-table th {
-  font: 600 9px system-ui, sans-serif;
+  font: var(--fw-semibold) 9px var(--font-sans);
   color: var(--text-3);
   text-transform: uppercase;
   letter-spacing: 0.04em;

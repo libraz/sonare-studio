@@ -937,7 +937,7 @@ function onContextMenu(event: MouseEvent): void {
   max-width: 230px;
   padding: 6px 9px;
   border-radius: 5px;
-  font: 11px / 1.45 system-ui, sans-serif;
+  font: var(--fs-xs) / 1.45 var(--font-sans);
   pointer-events: none;
 }
 

@@ -533,13 +533,13 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: left;
-  font: 600 var(--fs-2xs) var(--font-sans);
+  font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
   color: var(--text-2);
 }
 
 .strip-group-tag {
   flex: none;
-  font: 700 7px var(--font-sans);
+  font: var(--fw-bold) 7px var(--font-sans);
   letter-spacing: 0.06em;
   color: var(--surface-0);
   background: #a78bfa;
@@ -562,7 +562,7 @@ onBeforeUnmount(() => {
   max-width: 4rem;
   overflow: hidden;
   text-overflow: ellipsis;
-  font: 700 7px var(--font-sans);
+  font: var(--fw-bold) 7px var(--font-sans);
   letter-spacing: 0.04em;
   color: var(--surface-0);
   background: var(--warning);
@@ -620,7 +620,7 @@ onBeforeUnmount(() => {
 .toggle {
   width: 16px;
   height: 14px;
-  font: 700 9px var(--font-sans);
+  font: var(--fw-bold) 9px var(--font-sans);
   line-height: 1;
   color: var(--text-3);
   background: var(--surface-3);

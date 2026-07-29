@@ -267,7 +267,7 @@ async function onRename(): Promise<void> {
   box-shadow: none;
   padding: 0;
   text-align: left;
-  font: var(--fw-semibold) 10px var(--font-sans);
+  font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
   color: var(--text-2);
   cursor: pointer;
 }
@@ -282,7 +282,7 @@ async function onRename(): Promise<void> {
   background: transparent;
   box-shadow: none;
   color: var(--text-4);
-  font: 11px var(--font-sans);
+  font: var(--fs-xs) var(--font-sans);
   line-height: 1;
   padding: 0 1px;
   cursor: pointer;
@@ -307,7 +307,7 @@ async function onRename(): Promise<void> {
   border: 1px solid var(--border);
   background: var(--surface-1);
   color: var(--text-3);
-  font: var(--fw-bold) 10px var(--font-sans);
+  font: var(--fw-bold) var(--fs-2xs) var(--font-sans);
   line-height: 1;
 }
 
