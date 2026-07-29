@@ -30,4 +30,10 @@ describe('XML preflight', () => {
       ),
     ).not.toThrow();
   });
+
+  it('rejects excessive element markup before DOM allocation', () => {
+    expect(() =>
+      preflightXmlMarkupDepth('<score><part/><part/></score>', 'score.xml', { maxElements: 2 }),
+    ).toThrow(/element XML limit/);
+  });
 });

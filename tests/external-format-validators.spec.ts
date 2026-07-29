@@ -104,6 +104,148 @@ function scoreFixture(): NotatedScore {
   };
 }
 
+/** Representative engraved score: grand staff, two voices, chords, and ties. */
+function richScoreFixture(): NotatedScore {
+  const quarter = { base: 'quarter' as const, dots: 0 };
+  const half = { base: 'half' as const, dots: 0 };
+  const whole = { base: 'whole' as const, dots: 0 };
+  return {
+    title: 'Validator rich score',
+    divisions: 960,
+    keyFifths: 1,
+    chordSymbols: [
+      { ppq: 0, text: 'G', rootPc: 7, quality: 0 },
+      { ppq: 2, text: 'Cmaj7', rootPc: 0, quality: 5 },
+      { ppq: 4, text: 'D/F#', rootPc: 2, quality: 0, bassPc: 6 },
+    ],
+    parts: [
+      {
+        id: 'P1',
+        name: 'Piano',
+        clef: 'grand',
+        measures: [
+          {
+            index: 0,
+            startPpq: 0,
+            lengthPpq: 4,
+            timeSig: { beats: 4, beatUnit: 4 },
+            voices: [
+              {
+                voice: 1,
+                events: [
+                  {
+                    kind: 'note',
+                    pitches: [67, 71],
+                    voice: 1,
+                    startPpq: 0,
+                    durationPpq: 1,
+                    value: quarter,
+                    tieStart: false,
+                    tieStop: false,
+                  },
+                  {
+                    kind: 'note',
+                    pitches: [71],
+                    voice: 1,
+                    startPpq: 1,
+                    durationPpq: 1,
+                    value: quarter,
+                    tieStart: false,
+                    tieStop: false,
+                  },
+                  {
+                    kind: 'note',
+                    pitches: [74],
+                    voice: 1,
+                    startPpq: 2,
+                    durationPpq: 2,
+                    value: half,
+                    tieStart: true,
+                    tieStop: false,
+                  },
+                ],
+              },
+              {
+                voice: 2,
+                events: [
+                  {
+                    kind: 'note',
+                    pitches: [48],
+                    voice: 2,
+                    startPpq: 0,
+                    durationPpq: 2,
+                    value: half,
+                    tieStart: false,
+                    tieStop: false,
+                  },
+                  {
+                    kind: 'rest',
+                    pitches: [],
+                    voice: 2,
+                    startPpq: 2,
+                    durationPpq: 2,
+                    value: half,
+                    tieStart: false,
+                    tieStop: false,
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            index: 1,
+            startPpq: 4,
+            lengthPpq: 4,
+            timeSig: { beats: 4, beatUnit: 4 },
+            voices: [
+              {
+                voice: 1,
+                events: [
+                  {
+                    kind: 'note',
+                    pitches: [74],
+                    voice: 1,
+                    startPpq: 4,
+                    durationPpq: 2,
+                    value: half,
+                    tieStart: false,
+                    tieStop: true,
+                  },
+                  {
+                    kind: 'rest',
+                    pitches: [],
+                    voice: 1,
+                    startPpq: 6,
+                    durationPpq: 2,
+                    value: half,
+                    tieStart: false,
+                    tieStop: false,
+                  },
+                ],
+              },
+              {
+                voice: 2,
+                events: [
+                  {
+                    kind: 'rest',
+                    pitches: [],
+                    voice: 2,
+                    startPpq: 4,
+                    durationPpq: 4,
+                    value: whole,
+                    tieStart: false,
+                    tieStop: false,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+}
+
 function projectFixture(): ProjectDocument {
   return {
     schemaVersion: 3,
@@ -138,6 +280,22 @@ function projectFixture(): ProjectDocument {
   };
 }
 
+describe('rich external-format fixtures', () => {
+  it('serializes the multi-voice MusicXML fixture before the networked schema gate', () => {
+    const document = new DOMParser().parseFromString(
+      serializeMusicXml(richScoreFixture()),
+      'text/xml',
+    );
+
+    expect(document.querySelector('parsererror')).toBeNull();
+    expect(document.querySelectorAll('part > measure')).toHaveLength(2);
+    expect(document.querySelectorAll('note chord')).toHaveLength(1);
+    expect(document.querySelectorAll('tie[type="start"]')).toHaveLength(1);
+    expect(document.querySelectorAll('tie[type="stop"]')).toHaveLength(1);
+    expect(document.querySelectorAll('harmony')).toHaveLength(3);
+  });
+});
+
 describe.skipIf(!ENABLED)('external format schema release gate', () => {
   beforeAll(async () => {
     workDir = mkdtempSync(join(tmpdir(), 'sonare-external-validators-'));
@@ -169,6 +327,21 @@ describe.skipIf(!ENABLED)('external format schema release gate', () => {
     const xml = serializeMusicXml(scoreFixture());
     validateXml(join(musicXmlSchemaDir, 'musicxml.xsd'), xml, 'score.musicxml');
     const xmlPath = join(workDir, 'score.musicxml');
+    expect(() =>
+      execFileSync('xmllint', ['--nonet', '--noout', '--valid', xmlPath], {
+        env: {
+          ...process.env,
+          XML_CATALOG_FILES: join(musicXmlSchemaDir, 'catalog.xml'),
+        },
+        stdio: 'pipe',
+      }),
+    ).not.toThrow();
+  });
+
+  it('validates rich multi-voice MusicXML against the pinned W3C 4.0 XSD and DTD', () => {
+    const xml = serializeMusicXml(richScoreFixture());
+    validateXml(join(musicXmlSchemaDir, 'musicxml.xsd'), xml, 'rich-score.musicxml');
+    const xmlPath = join(workDir, 'rich-score.musicxml');
     expect(() =>
       execFileSync('xmllint', ['--nonet', '--noout', '--valid', xmlPath], {
         env: {

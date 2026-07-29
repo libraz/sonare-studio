@@ -99,7 +99,11 @@ const barsPerPageModel = computed<number>({
 
 const grandStaffSplitPitchModel = computed<number>({
   get: () => props.grandStaffSplitPitch,
-  set: (value) => emit('update:grandStaffSplitPitch', value),
+  set: (value) => {
+    if (Number.isInteger(value) && value >= 0 && value <= 127) {
+      emit('update:grandStaffSplitPitch', value);
+    }
+  },
 });
 
 /** Display transpose options for the popover select (semitones). */

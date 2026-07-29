@@ -65,7 +65,10 @@ export interface MusicXmlImportLimits {
 
 export const DEFAULT_MUSICXML_IMPORT_LIMITS: Readonly<MusicXmlImportLimits> = Object.freeze({
   maxBytes: 32 * 1024 * 1024,
-  maxElements: 250_000,
+  // A normal detailed score uses roughly 9--15 XML elements per note. Keep
+  // this comfortably above the documented note limit while the byte limit
+  // remains the primary protection against hostile input.
+  maxElements: 5_000_000,
   maxDepth: 128,
   maxParts: 1_024,
   maxMeasures: 100_000,
@@ -183,6 +186,12 @@ interface InstrumentMapping {
   channel?: number;
   /** 0-based MIDI pitch for an unpitched note, when declared. */
   unpitched?: number;
+  /** 0-based General MIDI program, when declared. */
+  program?: number;
+  /** Linear track volume converted from MusicXML's 0--100 range. */
+  volume?: number;
+  /** Track pan normalized from MusicXML's -90--90 degree range. */
+  pan?: number;
 }
 
 /** Parsed `<score-part>` metadata used while importing its `<part>`. */
@@ -225,6 +234,34 @@ function childInt(parent: XmlElement, tag: string, maxNumericAbs: number): numbe
     throw new MusicXmlImportError(`MusicXML numeric value exceeds the safe limit: ${text}`);
   }
   return value;
+}
+
+/** Parses the first `tag` child as a bounded finite number. */
+function childNumber(parent: XmlElement, tag: string, maxNumericAbs: number): number | null {
+  const text = childText(parent, tag);
+  if (text === null) return null;
+  const value = Number(text);
+  if (!Number.isFinite(value) || Math.abs(value) > maxNumericAbs) return null;
+  return value;
+}
+
+/** Maps a GM program to the closest built-in synth preset. */
+function presetForGmProgram(program: number, channel: number): string {
+  if (channel === GM_PERCUSSION_CHANNEL) return 'drum-kit';
+  if (program < 8) return 'acoustic-piano';
+  if (program < 16) return 'e-piano';
+  if (program < 24) return 'organ';
+  if (program < 32) return 'electric-guitar';
+  if (program < 40) return 'sub-bass';
+  if (program < 56) return 'warm-pad';
+  if (program < 64) return 'brass';
+  if (program < 80) return 'organ';
+  if (program === 80) return 'square-lead';
+  if (program < 88) return 'saw-lead';
+  if (program < 96) return 'warm-pad';
+  if (program < 112) return 'pluck';
+  if (program < 120) return 'drum-kit';
+  return 'sine';
 }
 
 function descendants(parent: XmlElement, tag: string): XmlElement[] {
@@ -275,7 +312,7 @@ function parseScoreRoot(xml: string, limits: Partial<MusicXmlImportLimits> = {})
     if (tag.name === 'note') notes += 1;
     if (elements > resolved.maxElements) {
       throw new MusicXmlImportError(
-        `MusicXML exceeds the ${resolved.maxElements}-element XML limit`,
+        `MusicXML is too complex to import (more than ${resolved.maxElements.toLocaleString()} structural entries)`,
       );
     }
     if (stack.length + 1 > resolved.maxDepth) {
@@ -355,18 +392,26 @@ function readPartList(root: XmlElement, maxNumericAbs: number): Map<string, Part
   const parts = new Map<string, PartInfo>();
   const partList = childElements(root, 'part-list')[0];
   if (partList === undefined) return parts;
-  for (const scorePart of childElements(partList, 'score-part')) {
-    const id = scorePart.attributes.id;
-    if (id === null) continue;
+  for (const [index, scorePart] of childElements(partList, 'score-part').entries()) {
+    // Some exporters omit the optional score-part id. Match the same ordinal
+    // fallback used for a <part> without id so its name/instrument metadata is
+    // still applied instead of being stored under an unreachable undefined key.
+    const id = scorePart.attributes.id || `P${index + 1}`;
     const instruments = new Map<string, InstrumentMapping>();
     for (const midiInstrument of childElements(scorePart, 'midi-instrument')) {
       const instrumentId = midiInstrument.attributes.id;
-      if (instrumentId === null) continue;
+      if (instrumentId === undefined || instrumentId === '') continue;
       const midiChannel = childInt(midiInstrument, 'midi-channel', maxNumericAbs);
       const midiUnpitched = childInt(midiInstrument, 'midi-unpitched', maxNumericAbs);
+      const midiProgram = childInt(midiInstrument, 'midi-program', maxNumericAbs);
+      const volume = childNumber(midiInstrument, 'volume', maxNumericAbs);
+      const pan = childNumber(midiInstrument, 'pan', maxNumericAbs);
       instruments.set(instrumentId, {
         ...(midiChannel !== null ? { channel: midiChannel - 1 } : {}),
         ...(midiUnpitched !== null ? { unpitched: midiUnpitched - 1 } : {}),
+        ...(midiProgram !== null ? { program: clampInt(midiProgram - 1, 0, 127) } : {}),
+        ...(volume !== null ? { volume: Math.min(1, Math.max(0, volume / 100)) } : {}),
+        ...(pan !== null ? { pan: Math.min(1, Math.max(-1, pan / 90)) } : {}),
       });
     }
     parts.set(id, {
@@ -410,7 +455,9 @@ function dynamicsPercentToVelocity(
   if (value === undefined || value.trim() === '') return null;
   const percent = Number(value);
   if (!Number.isFinite(percent) || percent < 0 || Math.abs(percent) > maxNumericAbs) {
-    throw new MusicXmlImportError(`Invalid MusicXML dynamics value: ${value}`);
+    // Dynamics is an optional playback hint. A malformed attribute must not
+    // reject an otherwise importable score; retain the current/default velocity.
+    return null;
   }
   return clampInt((percent * 90) / 100, 1, 127);
 }
@@ -887,6 +934,17 @@ export function importMusicXmlWithReport(
     );
     if (index === 0) canonicalTempos = tempoSegments(global.tempos);
     const name = info.name || `Part ${index + 1}`;
+    const primaryInstrument = info.instruments.values().next().value as
+      | InstrumentMapping
+      | undefined;
+    const instrument =
+      primaryInstrument?.program === undefined
+        ? undefined
+        : {
+            kind: 'synth-preset' as const,
+            preset: presetForGmProgram(primaryInstrument.program, primaryInstrument.channel ?? 0),
+            gmProgram: primaryInstrument.program,
+          };
     tracks.push({
       name,
       musicXmlPartId: id,
@@ -894,8 +952,9 @@ export function importMusicXmlWithReport(
       kind: 'midi',
       mute: false,
       solo: false,
-      volume: 1,
-      pan: 0,
+      volume: primaryInstrument?.volume ?? 1,
+      pan: primaryInstrument?.pan ?? 0,
+      ...(instrument !== undefined ? { instrument } : {}),
       clips: [clipFromNotes(name, imported.notes, imported.endPpq)],
     });
   });

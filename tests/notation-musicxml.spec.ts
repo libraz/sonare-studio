@@ -1120,6 +1120,32 @@ describe('serializeMusicXml beams', () => {
     ).toEqual(['start', 'stop', 'start', 'stop']);
   });
 
+  it('keeps mixed-duration triplets under one bracket', () => {
+    const score = quantizeToScore(
+      [
+        { id: 1, pitch: 60, velocity: 96, startPpq: 0, durationPpq: 2 / 3, channel: 0 },
+        { id: 2, pitch: 64, velocity: 96, startPpq: 2 / 3, durationPpq: 1 / 3, channel: 0 },
+      ],
+      {
+        divisionPpq: 1 / 3,
+        timeSig: { beats: 1, beatUnit: 4 },
+        keyFifths: 0,
+        clipStartPpq: 0,
+        clipLengthPpq: 1,
+      },
+    );
+    const events = score.parts[0].measures[0].voices[0].events.filter(
+      (event) => event.kind === 'note',
+    );
+    expect(events.map((event) => event.tupletGroupId)).toEqual([
+      events[0].tupletGroupId,
+      events[0].tupletGroupId,
+    ]);
+    expect(
+      qa(parse(serializeMusicXml(score)), 'tuplet').map((element) => element.getAttribute('type')),
+    ).toEqual(['start', 'stop']);
+  });
+
   it('emits balanced triplet bracket notations when rests start or end the group', () => {
     const triplet: NoteValue = { base: 'eighth', dots: 0, tuplet: { actual: 3, normal: 2 } };
     const score: NotatedScore = {

@@ -14,6 +14,9 @@ import {
   applyTempoMarks,
   buildFullScore,
   buildFullScoreProjection,
+  fullScorePartTrackIds,
+  transposeChordSymbols,
+  transposeKeyFifths,
 } from '@/ui/score/use-score-notation';
 
 function measure(index: number): NotatedMeasure {
@@ -293,6 +296,39 @@ describe('buildFullScore', () => {
     );
 
     expect(out.parts.map((part) => part.id)).toEqual(['hybrid-01', 'hybrid-01-percussion']);
+  });
+
+  it('maps every hybrid Full Score part back to its source track', () => {
+    const store = {
+      tracks: [
+        { ...track(1), name: 'Hybrid' },
+        { ...track(2), name: 'Lead' },
+      ],
+      clips: [
+        midiClip({
+          id: 1,
+          trackId: 1,
+          startPpq: 0,
+          sourceOffsetPpq: 0,
+          lengthPpq: 4,
+          notes: [
+            { id: 1, pitch: 60, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 },
+            { id: 2, pitch: 36, velocity: 96, startPpq: 1, durationPpq: 1, channel: 9 },
+          ],
+        }),
+        midiClip({
+          id: 2,
+          trackId: 2,
+          startPpq: 0,
+          sourceOffsetPpq: 0,
+          lengthPpq: 4,
+          notes: [{ id: 3, pitch: 72, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 }],
+        }),
+      ],
+      scoreAnnotations: {},
+    } as never;
+
+    expect(fullScorePartTrackIds(store, 0, 4)).toEqual([1, 1, 2]);
   });
 
   it('applies the production full-score fingering option to every part', () => {
@@ -732,6 +768,20 @@ describe('applyLyricMarks', () => {
 });
 
 describe('applyKeySignatureMarks', () => {
+  it('transposes key signatures and chord pitch classes together', () => {
+    expect(transposeKeyFifths(-1, 2)).toBe(1); // F major -> G major
+    expect(transposeChordSymbols([{ ppq: 0, text: 'F/C', rootPc: 5, bassPc: 0 }], 2)).toEqual([
+      { ppq: 0, text: 'F/C', rootPc: 7, bassPc: 2 },
+    ]);
+  });
+
+  it('transposes key markers by the display transposition', () => {
+    const out = score();
+    applyKeySignatureMarks(out, [{ id: 1, ppq: 4, name: 'Key: F major' }], 0, 12, 4, 2);
+
+    expect(out.measureKeyFifths).toEqual({ 1: 1 }); // F + whole step = G major
+  });
+
   it('adds measure-aligned key signature changes from key markers', () => {
     const out = score();
     applyKeySignatureMarks(
@@ -766,6 +816,13 @@ describe('applyKeySignatureMarks', () => {
     expect(out.measureKeyFifths).toEqual({ 1: -5 });
   });
 
+  it('normalizes the selectable Db minor marker to its MusicXML-safe enharmonic key', () => {
+    const out = score();
+    applyKeySignatureMarks(out, [{ id: 1, ppq: 4, name: 'Key: Db minor' }], 0, 12, 4);
+
+    expect(out.measureKeyFifths).toEqual({ 1: 4 });
+  });
+
   it('uses the latest preceding key marker at the score window start', () => {
     const out = score();
     applyKeySignatureMarks(
@@ -788,9 +845,60 @@ describe('applyKeySignatureMarks', () => {
     applyKeySignatureMarks(out, [{ id: 1, ppq: 7, name: 'Key: Bb major' }], 0, 10, 4);
     expect(out.measureKeyFifths).toEqual({ 2: -2 });
   });
+
+  it('keeps key changes after an opening pickup on the variable measure grid', () => {
+    const out: NotatedScore = {
+      parts: [
+        {
+          id: 'P1',
+          name: 'Pickup',
+          clef: 'treble',
+          measures: [
+            meterMeasure(0, 0, 1, 4, 4),
+            meterMeasure(1, 1, 3, 3, 4),
+            meterMeasure(2, 4, 3, 3, 4),
+          ],
+        },
+      ],
+      keyFifths: 0,
+      divisions: 960,
+    };
+
+    applyKeySignatureMarks(out, [{ id: 1, ppq: 4, name: 'Key: D major' }], 0, 7, 4);
+    expect(out.measureKeyFifths).toEqual({ 2: 2 });
+  });
 });
 
 describe('applyMultiMeasureRests', () => {
+  it('marks consecutive silent grand-staff measures as a multi-measure rest', () => {
+    const whole = { base: 'whole' as const, dots: 0 };
+    const fullRest = (voice: 1 | 2, startPpq: number) => ({
+      kind: 'rest' as const,
+      voice,
+      startPpq,
+      durationPpq: 4,
+      value: whole,
+    });
+    const measures = [0, 1].map((index) => ({
+      index,
+      startPpq: index * 4,
+      lengthPpq: 4,
+      timeSig: { beats: 4, beatUnit: 4 },
+      voices: [
+        { voice: 1 as const, staff: 1 as const, events: [fullRest(1, index * 4)] },
+        { voice: 2 as const, staff: 2 as const, events: [fullRest(2, index * 4)] },
+      ],
+    }));
+    const out: NotatedScore = {
+      parts: [{ id: 'P1', name: 'Piano', clef: 'grand', measures }],
+      keyFifths: 0,
+      divisions: 960,
+    };
+
+    applyMultiMeasureRests(out);
+    expect(out.multiMeasureRests).toEqual({ 0: { count: 2 } });
+  });
+
   it('marks consecutive empty measures in a single-part score', () => {
     const out: NotatedScore = {
       ...score(),

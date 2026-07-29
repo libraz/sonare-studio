@@ -80,6 +80,26 @@ describe('importMusicXmlInWorker', () => {
     expect(worker.terminated).toBe(true);
   });
 
+  it('forwards caller-supplied parsing limits to the worker', () => {
+    const worker = new MockWorker();
+    void importMusicXmlInWorker(
+      '<score-partwise/>',
+      undefined,
+      undefined,
+      () => worker as unknown as Worker,
+      { maxElements: 8_000_000 },
+    );
+
+    expect(worker.posted).toEqual([
+      {
+        type: 'import',
+        xml: '<score-partwise/>',
+        fileName: undefined,
+        limits: { maxElements: 8_000_000 },
+      },
+    ]);
+  });
+
   it('restores MusicXmlImportError across the worker boundary', async () => {
     const worker = new MockWorker();
     const promise = importMusicXmlInWorker(

@@ -7,10 +7,6 @@
  */
 
 import { ensureFileExtension } from '@/lib/filename';
-import { preflightXmlBytes } from '@/lib/xml-preflight';
-import type { ProjectDocument } from '@/project/serialization';
-import { importMusicXmlInWorker } from './musicxml-import-client';
-import { extractMusicXmlFromMxl } from './musicxml-mxl';
 import { downloadBlob } from './print';
 
 export {
@@ -41,19 +37,4 @@ export { ensureFileExtension } from '@/lib/filename';
 export function exportMusicXml(xml: string, filename: string): void {
   const blob = new Blob([xml], { type: MUSICXML_MIME });
   downloadBlob(blob, ensureFileExtension(filename, '.musicxml'));
-}
-
-/**
- * Reads a MusicXML file into a project document.
- *
- * @param file A `.musicxml`, `.xml`, or compressed `.mxl` file chosen by the user.
- * @returns The imported project document.
- * @throws MusicXmlImportError When the file is not well-formed or supported.
- */
-export async function importMusicXmlFile(file: Blob & { name?: string }): Promise<ProjectDocument> {
-  preflightXmlBytes(file.size, file.name ?? 'MusicXML file');
-  const xml = file.name?.toLowerCase().endsWith('.mxl')
-    ? extractMusicXmlFromMxl(new Uint8Array(await file.arrayBuffer()), file.name)
-    : await file.text();
-  return (await importMusicXmlInWorker(xml, file.name)).document;
 }

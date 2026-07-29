@@ -28,4 +28,14 @@ describe('extractMusicXmlFromMxl', () => {
     });
     expect(() => extractMusicXmlFromMxl(archive)).toThrow(MusicXmlImportError);
   });
+
+  it('accepts a highly-compressible score within the shared archive safety limit', () => {
+    const score = `<score-partwise version="4.0"><part-list/>${' '.repeat(20_000)}</score-partwise>`;
+    const archive = zipSync({
+      'META-INF/container.xml': strToU8(CONTAINER),
+      'score.xml': strToU8(score),
+    });
+
+    expect(extractMusicXmlFromMxl(archive)).toBe(score);
+  });
 });

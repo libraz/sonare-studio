@@ -1,6 +1,10 @@
 /** Cancellable main-thread facade for the one-shot MusicXML SAX worker. */
 
-import { MusicXmlImportError, type MusicXmlImportResult } from '@/notation/musicxml-import';
+import {
+  MusicXmlImportError,
+  type MusicXmlImportLimits,
+  type MusicXmlImportResult,
+} from '@/notation/musicxml-import';
 import type {
   MusicXmlImportWorkerRequest,
   MusicXmlImportWorkerResponse,
@@ -19,6 +23,7 @@ export function importMusicXmlInWorker(
   fileName?: string,
   signal?: AbortSignal,
   workerFactory: MusicXmlImportWorkerFactory = createMusicXmlImportWorker,
+  limits?: Partial<MusicXmlImportLimits>,
 ): Promise<MusicXmlImportResult> {
   signal?.throwIfAborted();
   const worker = workerFactory();
@@ -60,6 +65,7 @@ export function importMusicXmlInWorker(
     worker.addEventListener('message', onMessage as EventListener);
     worker.addEventListener('error', onError as EventListener);
     const request: MusicXmlImportWorkerRequest = { type: 'import', xml, fileName };
+    if (limits !== undefined) request.limits = limits;
     worker.postMessage(request);
     if (signal?.aborted) onAbort();
   });

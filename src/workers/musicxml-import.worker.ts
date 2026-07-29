@@ -3,6 +3,7 @@
 import {
   importMusicXmlWithReport,
   MusicXmlImportError,
+  type MusicXmlImportLimits,
   type MusicXmlImportResult,
 } from '@/notation/musicxml-import';
 
@@ -10,6 +11,7 @@ export interface MusicXmlImportWorkerRequest {
   type: 'import';
   xml: string;
   fileName?: string;
+  limits?: Partial<MusicXmlImportLimits>;
 }
 
 export type MusicXmlImportWorkerResponse =
@@ -23,7 +25,7 @@ scope.addEventListener('message', (event: MessageEvent<MusicXmlImportWorkerReque
   try {
     const response: MusicXmlImportWorkerResponse = {
       type: 'imported',
-      result: importMusicXmlWithReport(event.data.xml, event.data.fileName),
+      result: importMusicXmlWithReport(event.data.xml, event.data.fileName, event.data.limits),
     };
     scope.postMessage(response);
   } catch (error) {

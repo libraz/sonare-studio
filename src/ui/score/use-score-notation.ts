@@ -32,6 +32,7 @@ import { exportMusicXml } from '@/notation/io';
 import {
   DEFAULT_DIVISIONS,
   measureHasMultiRestStructure,
+  type NotatedChordSymbol,
   type NotatedLyric,
   type NotatedLyricSyllabic,
   type NotatedMeasure,
@@ -72,6 +73,8 @@ type ProjectStore = ReturnType<typeof useProjectStore>;
 
 /** Tolerance for matching section starts to engraved measure boundaries. */
 const PPQ_EPSILON = 1e-6;
+/** Zero-based General MIDI percussion channel. */
+const GM_PERCUSSION_CHANNEL = 9;
 
 /** Reactive inputs and collaborators the pipeline reads on every transcription. */
 export interface ScoreNotationOptions {
@@ -274,6 +277,8 @@ export async function buildProjectScore(
   options: ProjectScoreBuildOptions,
 ): Promise<NotatedScore> {
   const fullScore = options.fullScoreEnabled;
+  const displayTransposeSemitones = store.displayTransposeSemitones;
+  const displayKeyFifths = transposeKeyFifths(options.keyFifths, displayTransposeSemitones);
   const scoreProjection = fullScore
     ? buildFullScoreProjection(store, store.clipStartPpq, options.clipLengthPpq)
     : buildScoreProjection(
@@ -286,30 +291,30 @@ export async function buildProjectScore(
         {
           divisionPpq: options.divisionPpq,
           timeSig: { ...options.timeSig },
-          keyFifths: options.keyFifths,
+          keyFifths: displayKeyFifths,
           clipStartPpq: store.clipStartPpq,
           clipLengthPpq: options.clipLengthPpq,
           timeSignatures: options.timeSignatures,
           pickupLengthPpq: options.pickupLengthPpq,
-          displayTransposeSemitones: store.displayTransposeSemitones,
+          displayTransposeSemitones,
           grandStaffSplitPitch: options.grandStaffSplitPitch,
           estimateFingering: options.estimateFingering,
         },
         scoreProjection,
       )
-    : quantizeToScore(scoreProjection.notes, {
+    : buildScorePart(scoreProjection.notes, {
         divisionPpq: options.divisionPpq,
-        timeSig: { ...options.timeSig },
-        keyFifths: options.keyFifths,
+        timeSig: options.timeSig,
+        keyFifths: displayKeyFifths,
         clipStartPpq: store.clipStartPpq,
         clipLengthPpq: options.clipLengthPpq,
         timeSignatures: options.timeSignatures,
         pickupLengthPpq: options.pickupLengthPpq,
-        clef: 'grand',
         partName: 'Piano',
+        clef: 'grand',
         grandStaffSplitPitch: options.grandStaffSplitPitch,
         estimateFingering: options.estimateFingering,
-        displayTransposeSemitones: store.displayTransposeSemitones,
+        displayTransposeSemitones,
       });
   if (!fullScore && Object.keys(scoreProjection.annotations).length > 0) {
     score.noteAnnotations = scoreProjection.annotations;
@@ -344,6 +349,7 @@ export async function buildProjectScore(
     store.clipStartPpq,
     options.clipLengthPpq,
     options.measureLenPpq,
+    displayTransposeSemitones,
   );
   applyTempoMarks(
     score,
@@ -371,10 +377,12 @@ export async function buildProjectScore(
         clipLengthPpq: options.clipLengthPpq,
         measureLengthPpq: options.measureLenPpq,
         measures: score.parts[0]?.measures,
-        keyFifths: options.keyFifths,
+        keyFifths: displayKeyFifths,
       });
       const symbols = await canonicalizeChordSymbols(estimated);
-      if (symbols.length > 0) score.chordSymbols = symbols;
+      if (symbols.length > 0) {
+        score.chordSymbols = transposeChordSymbols(symbols, displayTransposeSemitones);
+      }
     } catch {
       // Chord symbols are supplementary display data; a wasm failure must not
       // prevent export of the score itself.
@@ -527,9 +535,6 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
     error.value = '';
     try {
       const fullScore = fullScoreRequested;
-      const partTrackIds = fullScore
-        ? store.tracks.filter((track) => track.kind === 'midi').map((track) => track.id)
-        : [store.activeClip.trackId];
       const score = await buildProjectScore(store, {
         divisionPpq: options.getDivisionPpq(),
         timeSig: options.getTimeSig(),
@@ -545,6 +550,9 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
         layoutSettings: options.getLayoutSettings(),
         loopRegion: options.getLoopRegion?.() ?? null,
       });
+      const partTrackIds = fullScore
+        ? fullScorePartTrackIds(store, store.clipStartPpq, options.getScreenClipLengthPpq())
+        : [store.activeClip.trackId];
       if (!screenOperationIsCurrent(token, verovio)) return;
       const xml = serializeMusicXml(score);
       const count = await verovio.load(xml, screenLayoutOptions());
@@ -811,6 +819,38 @@ interface FullScoreBuildOptions {
   estimateFingering?: boolean;
 }
 
+/** Inputs shared by active-clip and full-arrangement part transcription. */
+export interface ScorePartBuildOptions extends FullScoreBuildOptions {
+  partId?: string;
+  partName: string;
+  clef?: 'treble' | 'bass' | 'grand';
+}
+
+/**
+ * Transcribes one project part. Keeping this as the single quantization path
+ * prevents full-score parts from drifting from the active-clip score.
+ */
+export function buildScorePart(
+  notes: ReadonlyArray<ScoreInputNote>,
+  options: ScorePartBuildOptions,
+): NotatedScore {
+  return quantizeToScore(notes, {
+    divisionPpq: options.divisionPpq,
+    timeSig: { ...options.timeSig },
+    keyFifths: options.keyFifths,
+    clipStartPpq: options.clipStartPpq,
+    clipLengthPpq: options.clipLengthPpq,
+    timeSignatures: options.timeSignatures,
+    pickupLengthPpq: options.pickupLengthPpq,
+    partId: options.partId,
+    partName: options.partName,
+    clef: options.clef,
+    displayTransposeSemitones: options.displayTransposeSemitones,
+    grandStaffSplitPitch: options.grandStaffSplitPitch,
+    estimateFingering: options.estimateFingering,
+  });
+}
+
 export interface ScoreProjection {
   annotations: Record<number, ScoreNoteAnnotation>;
   notes: ScoreInputNote[];
@@ -896,6 +936,23 @@ export function buildFullScoreProjection(
   return buildScoreProjection(relevantClips, store.scoreAnnotations ?? {});
 }
 
+/** Maps every emitted Full Score part back to its source MIDI track. */
+export function fullScorePartTrackIds(
+  store: Pick<ProjectStore, 'tracks' | 'clips' | 'scoreAnnotations'>,
+  clipStartPpq: number,
+  clipLengthPpq: number,
+): number[] {
+  const projection = buildFullScoreProjection(store, clipStartPpq, clipLengthPpq);
+  return store.tracks
+    .filter((track) => track.kind === 'midi')
+    .flatMap((track) => {
+      const notes = projection.notesByTrack.get(track.id) ?? [];
+      const hasPitched = notes.some((note) => note.channel !== GM_PERCUSSION_CHANNEL);
+      const hasPercussion = notes.some((note) => note.channel === GM_PERCUSSION_CHANNEL);
+      return hasPitched && hasPercussion ? [track.id, track.id] : [track.id];
+    });
+}
+
 export function buildFullScore(
   store: ProjectStore,
   options: FullScoreBuildOptions,
@@ -905,7 +962,7 @@ export function buildFullScore(
     .filter((track) => track.kind === 'midi')
     .flatMap((track, index) => {
       const notes = projection.notesByTrack.get(track.id) ?? [];
-      const score = quantizeToScore(notes, {
+      const score = buildScorePart(notes, {
         divisionPpq: options.divisionPpq,
         timeSig: options.timeSig,
         keyFifths: options.keyFifths,
@@ -922,7 +979,7 @@ export function buildFullScore(
       return score.parts;
     });
   if (parts.length === 0) {
-    return quantizeToScore([], {
+    return buildScorePart([], {
       divisionPpq: options.divisionPpq,
       timeSig: options.timeSig,
       keyFifths: options.keyFifths,
@@ -1180,6 +1237,29 @@ export function applyLyricMarks(
   if (lyrics.length > 0) score.lyrics = lyrics;
 }
 
+/** Transposes a MusicXML fifths value while keeping an enharmonic conventional spelling. */
+export function transposeKeyFifths(fifths: number, semitones: number): number {
+  const shifted = fifths + semitones * 7;
+  const modulo = ((shifted % 12) + 12) % 12;
+  return modulo > 6 ? modulo - 12 : modulo;
+}
+
+/** Moves root and slash-bass pitch classes alongside display-transposed notes. */
+export function transposeChordSymbols(
+  symbols: ReadonlyArray<NotatedChordSymbol>,
+  semitones: number,
+): NotatedChordSymbol[] {
+  const shift = ((semitones % 12) + 12) % 12;
+  if (shift === 0) return [...symbols];
+  const transposePitchClass = (pitchClass: number | undefined): number | undefined =>
+    pitchClass === undefined ? undefined : (pitchClass + shift) % 12;
+  return symbols.map((symbol) => ({
+    ...symbol,
+    rootPc: transposePitchClass(symbol.rootPc),
+    bassPc: transposePitchClass(symbol.bassPc),
+  }));
+}
+
 /** Adds MusicXML key-signature changes from measure-aligned "Key: ..." markers. */
 export function applyKeySignatureMarks(
   score: NotatedScore,
@@ -1187,6 +1267,7 @@ export function applyKeySignatureMarks(
   clipStartPpq: number,
   clipLengthPpq: number,
   measureLenPpq: number,
+  displayTransposeSemitones = 0,
 ): void {
   if (markers.length === 0 || measureLenPpq <= 0 || score.parts.length === 0) return;
   const clipEndPpq = clipStartPpq + clipLengthPpq;
@@ -1200,7 +1281,9 @@ export function applyKeySignatureMarks(
 
   let activeFifths = score.keyFifths;
   for (const { marker, key } of keyMarkers) {
-    if (marker.ppq <= clipStartPpq + PPQ_EPSILON) activeFifths = key.fifths;
+    if (marker.ppq <= clipStartPpq + PPQ_EPSILON) {
+      activeFifths = transposeKeyFifths(key.fifths, displayTransposeSemitones);
+    }
   }
 
   const changes: Record<number, number> = {};
@@ -1211,9 +1294,10 @@ export function applyKeySignatureMarks(
     }
     const measureIndex = measureIndexForPpq(score, marker.ppq, clipStartPpq, measureLenPpq);
     if (measureIndex === undefined) continue;
-    if (key.fifths === activeFifths) continue;
-    activeFifths = key.fifths;
-    changes[measureIndex] = key.fifths;
+    const fifths = transposeKeyFifths(key.fifths, displayTransposeSemitones);
+    if (fifths === activeFifths) continue;
+    activeFifths = fifths;
+    changes[measureIndex] = fifths;
   }
   if (Object.keys(changes).length > 0) score.measureKeyFifths = changes;
 }
@@ -1355,6 +1439,10 @@ function keySignaturePayload(name: string): { fifths: number } | null {
     ['C#', 7],
   ]);
   const minor = new Map([
+    // Db minor needs eight flats, outside MusicXML's conventional -7..7
+    // fifths range. The key editor still permits it, so emit its enharmonic
+    // C# minor signature rather than silently dropping the marker.
+    ['Db', 4],
     ['Ab', -7],
     ['Eb', -6],
     ['Bb', -5],

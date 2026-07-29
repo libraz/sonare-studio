@@ -635,6 +635,20 @@ describe('quantizeToScore: barlines and ties', () => {
 });
 
 describe('quantizeToScore: duration decomposition', () => {
+  it('keeps a non-binary pickup on the display grid without mixing tuplets into rests', () => {
+    const score = quantize(
+      [],
+      baseOptions({ divisionPpq: 1 / 6, clipLengthPpq: 5, pickupLengthPpq: 0.6875 }),
+    );
+
+    expect(score.parts[0].measures.map((measure) => measure.lengthPpq)).toEqual([
+      2 / 3,
+      4,
+      expect.closeTo(1 / 3, 12),
+    ]);
+    expect(voiceEvents(score, 0, 1)).toEqual([r(0, 2 / 3, 'quartert3:2')]);
+  });
+
   it('keeps exactly representable dotted durations whole', () => {
     const score = quantize([makeNote(60, 0, 3)], baseOptions());
     expect(voiceEvents(score, 0, 1)[0]).toEqual(n([60], 0, 3, 'half.'));

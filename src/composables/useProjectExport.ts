@@ -1,12 +1,11 @@
 import { computed, type Ref, ref } from 'vue';
-import { matchModeChoiceId, modeOrdinalForChoice } from '@/components/lists/key-modes';
+import { keyFifthsForScaleHighlight } from '@/components/lists/key-modes';
 import { confirmDialog } from '@/composables/useDialogs';
 import { dawprojectFilename, exportDawprojectWithReport } from '@/export/dawproject';
 import type { MixdownRangePpq } from '@/export/mixdown';
 import { projectFilename } from '@/lib/filename';
-import { timeSigLengthPpq } from '@/notation/model';
 import { serializeMusicXml } from '@/notation/musicxml';
-import { keyToKeyFifths } from '@/notation/pitch-spelling';
+import { scoreClipWindow } from '@/notation/score-clip-window';
 import {
   parseInsertAutomationParam,
   parseInstrumentAutomationParam,
@@ -22,11 +21,9 @@ import {
 } from '@/project/mixer';
 import { type ProjectDocument, serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
-import { timeSignatureAt } from '@/project/time-signature';
 import { clipKind } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { buildProjectScore } from '@/ui/score/use-score-notation';
-import type { Key } from '@/wasm/index.js';
 
 type RunAction = (action: () => Promise<void>) => Promise<void>;
 type DownloadBlobFile = (blob: Blob, filename: string) => void;
@@ -305,32 +302,18 @@ export function useProjectExport(options: ProjectExportOptions) {
       ) {
         return;
       }
-      const meter = timeSignatureAt(store.timeSignatures, store.clipStartPpq);
-      const measureLenPpq = timeSigLengthPpq({
-        beats: meter.numerator,
-        beatUnit: meter.denominator,
+      const scoreWindow = scoreClipWindow({
+        clipStartPpq: store.clipStartPpq,
+        clipLengthPpq: store.clipLengthPpq,
+        pickupLengthPpq: store.pickupLengthPpq,
+        timeSignatures: store.timeSignatures,
       });
-      const actualMeasures = Math.max(1, Math.ceil(store.clipLengthPpq / measureLenPpq));
-      const pickup = store.clipStartPpq === 0 ? store.pickupLengthPpq : 0;
-      const clipLengthPpq =
-        pickup <= 0 || pickup >= store.clipLengthPpq
-          ? actualMeasures * measureLenPpq
-          : pickup +
-            Math.max(1, Math.ceil((store.clipLengthPpq - pickup) / measureLenPpq)) * measureLenPpq;
-      const scale = store.scaleHighlight;
-      const modeId = scale.enabled ? matchModeChoiceId(scale.modeMask) : null;
-      const keyFifths =
-        modeId === null
-          ? 0
-          : keyToKeyFifths({
-              root: (((scale.rootPc % 12) + 12) % 12) as Key['root'],
-              mode: modeOrdinalForChoice(modeId) as Key['mode'],
-            });
+      const keyFifths = keyFifthsForScaleHighlight(store.scaleHighlight);
       const score = await buildProjectScore(store, {
         divisionPpq: SCORE_DIVISION_PPQ[store.scoreDisplaySettings.displayQuantizeKey] ?? 0.25,
-        timeSig: { beats: meter.numerator, beatUnit: meter.denominator },
-        measureLenPpq,
-        clipLengthPpq,
+        timeSig: scoreWindow.timeSig,
+        measureLenPpq: scoreWindow.measureLenPpq,
+        clipLengthPpq: scoreWindow.clipLengthPpq,
         timeSignatures: store.timeSignatures,
         pickupLengthPpq: store.pickupLengthPpq,
         keyFifths,

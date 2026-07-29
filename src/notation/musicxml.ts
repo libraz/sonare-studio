@@ -871,8 +871,17 @@ function serializeMeasure(
 ): void {
   const isPickup =
     measure.index === 0 && measure.lengthPpq < timeSigLengthPpq(measure.timeSig) - PPQ_EPSILON;
+  const scoreHasOpeningPickup = score.parts.some((part) => {
+    const firstMeasure = part.measures[0];
+    return (
+      firstMeasure !== undefined &&
+      firstMeasure.index === 0 &&
+      firstMeasure.lengthPpq < timeSigLengthPpq(firstMeasure.timeSig) - PPQ_EPSILON
+    );
+  });
+  const measureNumber = measure.index + (scoreHasOpeningPickup ? 0 : 1);
   lines.push(
-    isPickup ? '<measure number="0" implicit="yes">' : `<measure number="${measure.index + 1}">`,
+    isPickup ? '<measure number="0" implicit="yes">' : `<measure number="${measureNumber}">`,
   );
   const printXml = measurePrintXml(measureBreak, prevTimeSig === undefined);
   if (printXml !== '') {

@@ -51,9 +51,9 @@ function markupEnd(xml: string, start: number, declaration: boolean): number {
 }
 
 /**
- * Rejects deeply nested XML markup before DOMParser allocates a document tree.
- * Comments, CDATA, processing instructions and declarations are skipped rather
- * than treated as elements; malformed XML is still left to the XML parser.
+ * Rejects overly deep or broad XML markup before DOMParser allocates a document
+ * tree. Comments, CDATA, processing instructions and declarations are skipped
+ * rather than treated as elements; malformed XML is still left to the parser.
  */
 export function preflightXmlMarkupDepth(
   xml: string,
@@ -62,6 +62,7 @@ export function preflightXmlMarkupDepth(
 ): void {
   const resolved = { ...DEFAULT_XML_LIMITS, ...limits };
   let depth = 0;
+  let elements = 0;
   let cursor = 0;
   while (cursor < xml.length) {
     const start = xml.indexOf('<', cursor);
@@ -94,6 +95,10 @@ export function preflightXmlMarkupDepth(
     if (tag.startsWith('/')) {
       depth = Math.max(0, depth - 1);
       continue;
+    }
+    elements += 1;
+    if (elements > resolved.maxElements) {
+      throw new XmlPreflightError(`${label} exceeds the ${resolved.maxElements}-element XML limit`);
     }
     if (tag.endsWith('/')) continue;
     depth += 1;

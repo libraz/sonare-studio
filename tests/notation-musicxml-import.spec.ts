@@ -8,6 +8,7 @@ import type {
 } from '@/notation/model';
 import { serializeMusicXml } from '@/notation/musicxml';
 import {
+  DEFAULT_MUSICXML_IMPORT_LIMITS,
   importMusicXml,
   importMusicXmlWithReport,
   MusicXmlImportError,
@@ -140,8 +141,16 @@ describe('importMusicXml error handling', () => {
       '<score-partwise><part-list/><part id="P1"><measure><attributes><divisions>1</divisions>' +
       '</attributes><note dynamics="11"><pitch><step>C</step><octave>4</octave></pitch>' +
       '<duration>1</duration></note></measure></part></score-partwise>';
-    expect(() => importMusicXmlWithReport(dynamics, undefined, { maxNumericAbs: 10 })).toThrow(
-      /dynamics value/,
+    expect(
+      trackNotes(importMusicXmlWithReport(dynamics, undefined, { maxNumericAbs: 10 }).document, 0),
+    ).toEqual([{ pitch: 60, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 }]);
+  });
+
+  it('allows large scores by default and reports a friendly complexity limit', () => {
+    expect(DEFAULT_MUSICXML_IMPORT_LIMITS.maxElements).toBe(5_000_000);
+    const xml = '<score-partwise><part-list/></score-partwise>';
+    expect(() => importMusicXmlWithReport(xml, undefined, { maxElements: 1 })).toThrow(
+      /too complex to import/,
     );
   });
 
@@ -192,6 +201,19 @@ describe('importMusicXml note timing', () => {
     const notes = trackNotes(importMusicXml(xml), 0);
     expect(notes.map((n) => n.pitch)).toEqual([60, 64, 67]);
     expect(notes.every((n) => n.startPpq === 0 && n.durationPpq === 4)).toBe(true);
+  });
+
+  it('preserves score-part metadata when the optional part ids are absent', () => {
+    const xml =
+      '<score-partwise version="4.0"><part-list><score-part><part-name>Lead</part-name></score-part></part-list>' +
+      '<part><measure number="1"><attributes><divisions>1</divisions></attributes>' +
+      '<note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration></note>' +
+      '</measure></part></score-partwise>';
+
+    const doc = importMusicXml(xml);
+
+    expect(doc.tracks[0].name).toBe('Lead');
+    expect(doc.tracks[0].musicXmlPartId).toBe('P1');
   });
 
   it('merges tied notes into one sustained note', () => {
@@ -322,6 +344,23 @@ describe('importMusicXml global maps', () => {
       { pitch: 60, velocity: 45, startPpq: 0, durationPpq: 1, channel: 2 },
       { pitch: 62, velocity: 90, startPpq: 1, durationPpq: 1, channel: 2 },
     ]);
+  });
+
+  it('imports MIDI program, volume, and pan into the track strip', () => {
+    const xml =
+      '<score-partwise><part-list><score-part id="P1"><part-name>Organ</part-name>' +
+      '<midi-instrument id="P1-I1"><midi-channel>2</midi-channel><midi-program>20</midi-program>' +
+      '<volume>75</volume><pan>-45</pan></midi-instrument></score-part></part-list>' +
+      '<part id="P1"><measure><attributes><divisions>1</divisions></attributes>' +
+      '<note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration>' +
+      '<instrument id="P1-I1"/></note></measure></part></score-partwise>';
+
+    const [track] = importMusicXml(xml).tracks;
+    expect(track).toMatchObject({
+      volume: 0.75,
+      pan: -0.5,
+      instrument: { kind: 'synth-preset', preset: 'organ', gmProgram: 19 },
+    });
   });
 
   it('reads tempo from a sound direction and time signature from attributes', () => {
@@ -496,6 +535,29 @@ describe('importMusicXml multi-part', () => {
 });
 
 describe('importMusicXml round-trip with the serializer', () => {
+  it('engraves and re-exports an imported pickup on a triplet display grid', () => {
+    const xml =
+      '<score-partwise version="4.0"><part-list><score-part id="P1"/></part-list><part id="P1">' +
+      '<measure number="0" implicit="yes"><attributes><divisions>48</divisions>' +
+      '<time><beats>4</beats><beat-type>4</beat-type></time></attributes>' +
+      '<note><pitch><step>G</step><octave>4</octave></pitch><duration>33</duration></note></measure>' +
+      '<measure number="1"><note><pitch><step>C</step><octave>4</octave></pitch>' +
+      '<duration>192</duration></note></measure></part></score-partwise>';
+    const document = importMusicXml(xml);
+    const clip = document.tracks[0].clips[0];
+    const score = quantizeToScore(clip.notes, {
+      divisionPpq: 1 / 6,
+      timeSig: { beats: 4, beatUnit: 4 },
+      keyFifths: 0,
+      clipStartPpq: 0,
+      clipLengthPpq: clip.lengthPpq,
+      pickupLengthPpq: document.pickupLengthPpq,
+    });
+
+    expect(() => serializeMusicXml(score)).not.toThrow();
+    expect(score.parts[0].measures[0].lengthPpq).toBeCloseTo(2 / 3, 12);
+  });
+
   it('round-trips Sonare pitched channel and velocity metadata', () => {
     const score = quantizeToScore(
       [
@@ -639,6 +701,7 @@ describe('importMusicXml round-trip with the serializer', () => {
 
     const xml = serializeMusicXml(score);
     expect(xml).toContain('<measure number="0" implicit="yes">');
+    expect(xml).toContain('<measure number="1">');
     const doc = importMusicXml(xml);
     expect(doc.pickupLengthPpq).toBe(1);
     expect(trackNotes(doc, 0).map((event) => event.startPpq)).toEqual([0, 1]);

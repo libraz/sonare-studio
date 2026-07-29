@@ -14,7 +14,9 @@ const MXL_LIMITS = {
   maxUncompressedBytes: DEFAULT_XML_LIMITS.maxBytes,
   maxEntries: 64,
   maxEntryBytes: DEFAULT_XML_LIMITS.maxBytes,
-  maxCompressionRatio: 100,
+  // Match the archive-wide safety limit. MusicXML often compresses unusually
+  // well because long runs of rests/layout markup repeat verbatim.
+  maxCompressionRatio: 2000,
   maxPathLength: 512,
 } as const;
 

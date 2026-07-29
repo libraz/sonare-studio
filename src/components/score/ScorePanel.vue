@@ -2,7 +2,11 @@
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import AccessibleObjectNavigator from '@/components/accessibility/AccessibleObjectNavigator.vue';
 import TheoryCardView from '@/components/compose/TheoryCardView.vue';
-import { matchModeChoiceId, modeOrdinalForChoice } from '@/components/lists/key-modes';
+import {
+  keyFifthsForScaleHighlight,
+  matchModeChoiceId,
+  modeOrdinalForChoice,
+} from '@/components/lists/key-modes';
 import ScoreAnnotationPalette from '@/components/score/ScoreAnnotationPalette.vue';
 import ScoreToolbar from '@/components/score/ScoreToolbar.vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
@@ -10,8 +14,7 @@ import { useAppSettings } from '@/composables/useAppSettings';
 import { useCompositionGuidance } from '@/composables/useCompositionGuidance';
 import type { TheoryCard } from '@/compose/explain';
 import { formatPitch } from '@/lib/pitch';
-import { timeSigLengthPpq } from '@/notation/model';
-import { keyToKeyFifths } from '@/notation/pitch-spelling';
+import { scoreClipWindow } from '@/notation/score-clip-window';
 import { VerovioClient } from '@/notation/verovio';
 import type {
   NoteHairpin,
@@ -30,7 +33,6 @@ import {
 } from '@/project/commands';
 import { projectMidiNoteOccurrences } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
-import { timeSignatureAt } from '@/project/time-signature';
 import { clipKind } from '@/project/types';
 import type { AccessibleObjectItem } from '@/ui/accessibility/object-navigation';
 import { formatMessage, useI18n } from '@/ui/i18n';
@@ -50,7 +52,6 @@ import { scoreOmitsMidiFx } from '@/ui/score/midi-fx-notice';
 import { type PlayheadSync, usePlayheadSync } from '@/ui/score/use-playhead-sync';
 import { useScoreInteractions } from '@/ui/score/use-score-interactions';
 import { useScoreNotation } from '@/ui/score/use-score-notation';
-import type { Key } from '@/wasm/index.js';
 
 /**
  * Read-only engraved score view over the piano-roll clip.
@@ -196,31 +197,22 @@ const VIEW_ZOOM_STEP = 1.2;
  * map (4/4 fallback when none is modelled). The score is notated in this
  * meter so bar lines, beaming, rests and chord placement match the project.
  */
-const clipTimeSig = computed<{ beats: number; beatUnit: number }>(() => {
-  const meter = timeSignatureAt(store.timeSignatures, store.clipStartPpq);
-  return { beats: meter.numerator, beatUnit: meter.denominator };
-});
-
-/** Engraved measure length in PPQ for the clip's time signature. */
-const measureLenPpq = computed(() => timeSigLengthPpq(clipTimeSig.value));
-
-/** Whole measures the real clip content spans. */
-const actualMeasures = computed(() =>
-  Math.max(1, Math.ceil(store.clipLengthPpq / measureLenPpq.value)),
+const clipScoreWindow = computed(() =>
+  scoreClipWindow({
+    clipStartPpq: store.clipStartPpq,
+    clipLengthPpq: store.clipLengthPpq,
+    pickupLengthPpq: store.pickupLengthPpq,
+    timeSignatures: store.timeSignatures,
+  }),
 );
 
+const clipTimeSig = computed(() => clipScoreWindow.value.timeSig);
+
+/** Engraved measure length in PPQ for the clip's time signature. */
+const measureLenPpq = computed(() => clipScoreWindow.value.measureLenPpq);
+
 /** Clip length fed to the transcriber, preserving an opening pickup boundary. */
-const screenClipLengthPpq = computed(() => {
-  const pickup = store.clipStartPpq === 0 ? store.pickupLengthPpq : 0;
-  if (pickup <= 0 || pickup >= store.clipLengthPpq) {
-    return actualMeasures.value * measureLenPpq.value;
-  }
-  return (
-    pickup +
-    Math.max(1, Math.ceil((store.clipLengthPpq - pickup) / measureLenPpq.value)) *
-      measureLenPpq.value
-  );
-});
+const screenClipLengthPpq = computed(() => clipScoreWindow.value.clipLengthPpq);
 
 /** On-screen zoom as a rounded percentage for the toolbar readout. */
 const zoomPercent = computed(() => Math.round(viewZoom.value * 100));
@@ -338,12 +330,7 @@ function divisionPpq(): number {
  * masks fall back to C major.
  */
 function keyFifths(): number {
-  const cfg = store.scaleHighlight;
-  if (!cfg.enabled) return 0;
-  const modeId = matchModeChoiceId(cfg.modeMask);
-  if (modeId === null) return 0;
-  const root = (((cfg.rootPc % 12) + 12) % 12) as Key['root'];
-  return keyToKeyFifths({ root, mode: modeOrdinalForChoice(modeId) as Key['mode'] });
+  return keyFifthsForScaleHighlight(store.scaleHighlight);
 }
 
 function layoutSettings(): ScoreLayoutSettings {
@@ -416,6 +403,8 @@ const interactions = useScoreInteractions({
 const guidance = useCompositionGuidance();
 /** Theory card for the note under the pointer, or null when none is hovered. */
 const hoverCard = ref<TheoryCard | null>(null);
+/** Note whose card is currently resolved, avoiding repeated theory work on pointermove. */
+const hoverCardNoteId = ref<number | null>(null);
 /** Position of the hover card within the score body wrap, in px. */
 const hoverCardPos = ref({ x: 0, y: 0 });
 
@@ -431,9 +420,12 @@ function onScorePointerMove(event: PointerEvent): void {
   }
   const resolve = guidance.noteCard.value;
   const ids = resolve ? interactions.noteIdsAtEvent(event) : [];
-  const card = resolve && ids.length > 0 ? resolve(ids[0]) : null;
-  hoverCard.value = card;
-  if (card !== null) {
+  const noteId = ids[0] ?? null;
+  if (noteId !== hoverCardNoteId.value) {
+    hoverCardNoteId.value = noteId;
+    hoverCard.value = resolve && noteId !== null ? resolve(noteId) : null;
+  }
+  if (hoverCard.value !== null) {
     const rect = svgHost.value?.parentElement?.getBoundingClientRect();
     hoverCardPos.value = {
       x: event.clientX - (rect?.left ?? 0) + 12,
@@ -444,6 +436,7 @@ function onScorePointerMove(event: PointerEvent): void {
 
 /** Clears the theory hover card when the pointer leaves the score body. */
 function onScorePointerLeave(): void {
+  hoverCardNoteId.value = null;
   hoverCard.value = null;
 }
 

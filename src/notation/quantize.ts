@@ -244,6 +244,16 @@ const VALUES_DESC: ReadonlyArray<{ value: NoteValue; ppq: number }> = (() => {
   return all;
 })();
 
+/**
+ * Binary note values only, longest first.  Tuplets are valid *exact* spellings,
+ * but mixing them into greedy fallback can strand an unspellable remainder
+ * (for example 11/16 after picking a quarter-note triplet).
+ */
+const BINARY_VALUES_DESC = VALUES_DESC.filter(({ value }) => value.tuplet === undefined);
+
+/** Tuplet values only, used as a second exact-cover family when binary fails. */
+const TUPLET_VALUES_DESC = VALUES_DESC.filter(({ value }) => value.tuplet !== undefined);
+
 /** Returns true when `value` is an integral multiple of `step` within tolerance. */
 function isMultipleOf(value: number, step: number): boolean {
   const ratio = value / step;
@@ -335,7 +345,10 @@ function resolveOptions(options: QuantizeOptions): ResolvedOptions {
     ? snapToStep(divisionPpq, SIXTY_FOURTH_PPQ)
     : divisionPpq;
   const start = snapToStep(clipStartPpq, SIXTY_FOURTH_PPQ);
-  const length = snapToStep(clipLengthPpq, SIXTY_FOURTH_PPQ);
+  // The display grid governs every engraved boundary.  Keeping the clip end
+  // only on the 64th lattice can leave a sub-grid tail after a triplet pickup,
+  // which no note value can cover.
+  const length = snapToStep(clipLengthPpq, grid);
   if (length <= 0) {
     throw new RangeError(
       `quantizeToScore: clipLengthPpq rounds to zero on the 64th-note lattice, got ${clipLengthPpq}`,
@@ -356,7 +369,7 @@ function resolveOptions(options: QuantizeOptions): ResolvedOptions {
     estimateFingering: options.estimateFingering ?? false,
     pickupLengthPpq:
       Number.isFinite(options.pickupLengthPpq) && (options.pickupLengthPpq ?? 0) > 0
-        ? Math.min(length, snapToStep(options.pickupLengthPpq ?? 0, SIXTY_FOURTH_PPQ))
+        ? Math.min(length, snapToStep(options.pickupLengthPpq ?? 0, grid))
         : 0,
     timeSignatures: options.timeSignatures ?? [],
   };
@@ -1014,22 +1027,39 @@ function buildMeasureGrid(
  * every greedy pick. All boundaries are 64th-note multiples by construction,
  * so the loop always terminates exactly.
  */
-function greedyPieces(start: number, end: number): DurationPiece[] {
+function greedyPiecesForValues(
+  start: number,
+  end: number,
+  values: ReadonlyArray<{ value: NoteValue; ppq: number }>,
+): DurationPiece[] | undefined {
   const out: DurationPiece[] = [];
   let cursor = start;
   while (end - cursor > EPSILON) {
     const remaining = end - cursor;
-    const exact = exactNoteValue(remaining);
-    const value = exact ?? VALUES_DESC.find((c) => c.ppq <= remaining + EPSILON)?.value;
+    const value = values.find((candidate) => candidate.ppq <= remaining + EPSILON)?.value;
     if (!value) {
-      // Unreachable with validated inputs (all durations are 64th multiples).
-      throw new RangeError(`quantizeToScore: cannot notate residual duration ${remaining}`);
+      return undefined;
     }
     const durationPpq = noteValueToPpq(value);
     out.push({ startPpq: cursor, durationPpq, value });
     cursor += durationPpq;
   }
   return out;
+}
+
+function greedyPieces(start: number, end: number): DurationPiece[] {
+  const exact = exactNoteValue(end - start);
+  if (exact) return [{ startPpq: start, durationPpq: end - start, value: exact }];
+
+  // Keep each fallback decomposition within a single rhythmic family.  Trying
+  // binary values first preserves conventional spelling, while the tuplet
+  // family covers valid triplet-grid durations such as 5/6.
+  const binary = greedyPiecesForValues(start, end, BINARY_VALUES_DESC);
+  if (binary) return binary;
+  const tuplet = greedyPiecesForValues(start, end, TUPLET_VALUES_DESC);
+  if (tuplet) return tuplet;
+
+  throw new RangeError(`quantizeToScore: cannot notate duration ${end - start}`);
 }
 
 /**
@@ -1199,7 +1229,8 @@ function assignTupletGroupIds(
 ): void {
   let previous: NotatedEvent | undefined;
   let activeId: string | undefined;
-  let activeCount = 0;
+  let activeDuration = 0;
+  let shortestDuration = Number.POSITIVE_INFINITY;
   let groupOrdinal = 0;
   for (const event of events) {
     const tuplet = event.value.tuplet;
@@ -1210,19 +1241,27 @@ function assignTupletGroupIds(
       previous?.value.tuplet !== undefined &&
       tuplet !== undefined &&
       previous.value.tuplet.actual === tuplet.actual &&
-      previous.value.tuplet.normal === tuplet.normal &&
-      previous.value.base === event.value.base;
+      previous.value.tuplet.normal === tuplet.normal;
     if (tuplet === undefined) {
       activeId = undefined;
-      activeCount = 0;
+      activeDuration = 0;
+      shortestDuration = Number.POSITIVE_INFINITY;
     } else {
-      if (!contiguous || !sameRatio || activeId === undefined || activeCount >= tuplet.actual) {
+      if (!contiguous || !sameRatio || activeId === undefined) {
         activeId = `m${Math.round(measureStartPpq * DEFAULT_DIVISIONS)}-v${voice}-t${groupOrdinal}`;
         groupOrdinal += 1;
-        activeCount = 0;
+        activeDuration = 0;
+        shortestDuration = Number.POSITIVE_INFINITY;
       }
       event.tupletGroupId = activeId;
-      activeCount += 1;
+      activeDuration += event.durationPpq;
+      shortestDuration = Math.min(shortestDuration, event.durationPpq);
+      // A tuplet group spans `actual` copies of its shortest written value.
+      // This lets a quarter-triplet plus an eighth-triplet share one bracket,
+      // while still separating adjacent runs of three equal eighth-triplets.
+      if (Math.abs(activeDuration - shortestDuration * tuplet.actual) <= EPSILON) {
+        activeId = undefined;
+      }
     }
     previous = event;
   }
