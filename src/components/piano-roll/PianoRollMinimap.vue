@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { EditorNote } from '@/project/types';
+import { observeDevicePixelRatio } from '@/ui/canvas/device-pixel-ratio';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 import { getCanvasContext, PIANO_ROLL_COLORS, setupCanvas } from './theme';
@@ -26,13 +27,16 @@ const COLORS = PIANO_ROLL_COLORS;
 let widthPx = 0;
 let heightPx = 0;
 let resizeObserver: ResizeObserver | null = null;
+let stopDprObserver: (() => void) | null = null;
 
 function contentEndPpq(): number {
   const noteEnd = props.notes.reduce(
     (end, note) => Math.max(end, note.startPpq + note.durationPpq),
     0,
   );
-  return Math.max(1, props.clipLengthPpq, noteEnd, props.range.endPpq);
+  // The viewport is deliberately excluded: scrolling it while dragging this
+  // minimap must not alter the time-to-x scale beneath the pointer.
+  return Math.max(1, props.clipLengthPpq, noteEnd);
 }
 
 function yForPitch(pitch: number): number {
@@ -41,6 +45,12 @@ function yForPitch(pitch: number): number {
 
 function schedule(): void {
   props.painter.schedule(`piano-roll-minimap-${layerId}`, draw);
+}
+
+function refreshForDevicePixelRatio(): void {
+  if (widthPx <= 0 || heightPx <= 0) return;
+  if (canvas.value) setupCanvas(canvas.value, widthPx, heightPx);
+  schedule();
 }
 
 function draw(): void {
@@ -77,16 +87,21 @@ function localX(event: PointerEvent): number {
   return event.clientX - (rect?.left ?? 0);
 }
 
-function onPointer(event: PointerEvent): void {
-  if (event.button !== 0 && event.type === 'pointerdown') return;
+function scrollToPointer(event: PointerEvent): void {
   const ppq =
     (Math.max(0, Math.min(widthPx, localX(event))) / Math.max(1, widthPx)) * contentEndPpq();
   emit('scrollTo', ppq);
 }
 
+function onPointerDown(event: PointerEvent): void {
+  if (event.button !== 0) return;
+  (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  scrollToPointer(event);
+}
+
 function onPointerMove(event: PointerEvent): void {
   if ((event.buttons & 1) === 0) return;
-  onPointer(event);
+  scrollToPointer(event);
 }
 
 onMounted(() => {
@@ -101,10 +116,13 @@ onMounted(() => {
     schedule();
   });
   resizeObserver.observe(el);
+  stopDprObserver = observeDevicePixelRatio(refreshForDevicePixelRatio);
 });
 
 onBeforeUnmount(() => {
   resizeObserver?.disconnect();
+  stopDprObserver?.();
+  stopDprObserver = null;
 });
 
 watch(
@@ -117,7 +135,7 @@ watch(
   <div
     ref="wrapper"
     class="piano-roll-minimap"
-    @pointerdown="onPointer"
+    @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
   >
     <canvas ref="canvas" class="piano-roll-minimap__canvas" aria-hidden="true" />

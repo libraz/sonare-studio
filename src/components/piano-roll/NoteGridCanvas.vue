@@ -12,6 +12,7 @@ import type {
   AccessibleObjectItem,
 } from '@/ui/accessibility/object-navigation';
 import { localizeMeter, rulerTicks } from '@/ui/arrangement/ruler';
+import { observeDevicePixelRatio } from '@/ui/canvas/device-pixel-ratio';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 import { formatMessage, useI18n } from '@/ui/i18n';
@@ -694,6 +695,16 @@ function playheadTick(): void {
 }
 
 let resizeObserver: ResizeObserver | null = null;
+let stopDprObserver: (() => void) | null = null;
+
+function refreshForDevicePixelRatio(): void {
+  const { widthPx, heightPx } = props.range;
+  if (widthPx <= 0 || heightPx <= 0) return;
+  if (backgroundCanvas.value) setupCanvas(backgroundCanvas.value, widthPx, heightPx);
+  if (notesCanvas.value) setupCanvas(notesCanvas.value, widthPx, heightPx);
+  if (overlayCanvas.value) setupCanvas(overlayCanvas.value, widthPx, heightPx);
+  scheduleAll();
+}
 
 onMounted(() => {
   const el = wrapper.value;
@@ -711,12 +722,15 @@ onMounted(() => {
     scheduleAll();
   });
   resizeObserver.observe(el);
+  stopDprObserver = observeDevicePixelRatio(refreshForDevicePixelRatio);
   playheadRaf = requestAnimationFrame(playheadTick);
 });
 
 onBeforeUnmount(() => {
   resizeObserver?.disconnect();
   resizeObserver = null;
+  stopDprObserver?.();
+  stopDprObserver = null;
   if (playheadRaf !== null) cancelAnimationFrame(playheadRaf);
 });
 

@@ -60,6 +60,51 @@ const { t } = useI18n();
 
 /** The editable pattern (replaced wholesale by every pure operation). */
 const pattern = ref<StepPattern>(createDrumPattern());
+interface PatternHistoryEntry {
+  pattern: StepPattern;
+  rootPitch: number;
+}
+
+const undoStack = ref<PatternHistoryEntry[]>([]);
+const redoStack = ref<PatternHistoryEntry[]>([]);
+const MAX_PATTERN_HISTORY = 100;
+
+function snapshot(value: StepPattern): StepPattern {
+  return JSON.parse(JSON.stringify(value)) as StepPattern;
+}
+
+function setPattern(next: StepPattern, previousRootPitch = rootPitch.value): void {
+  undoStack.value = [
+    ...undoStack.value.slice(-(MAX_PATTERN_HISTORY - 1)),
+    { pattern: snapshot(pattern.value), rootPitch: previousRootPitch },
+  ];
+  redoStack.value = [];
+  pattern.value = next;
+}
+
+function undoPattern(): void {
+  const previous = undoStack.value.at(-1);
+  if (!previous) return;
+  redoStack.value = [
+    ...redoStack.value,
+    { pattern: snapshot(pattern.value), rootPitch: rootPitch.value },
+  ];
+  undoStack.value = undoStack.value.slice(0, -1);
+  pattern.value = previous.pattern;
+  rootPitch.value = previous.rootPitch;
+}
+
+function redoPattern(): void {
+  const next = redoStack.value.at(-1);
+  if (!next) return;
+  undoStack.value = [
+    ...undoStack.value,
+    { pattern: snapshot(pattern.value), rootPitch: rootPitch.value },
+  ];
+  redoStack.value = redoStack.value.slice(0, -1);
+  pattern.value = next.pattern;
+  rootPitch.value = next.rootPitch;
+}
 
 /** Row whose parameters are edited in the lane and targeted by row ops. */
 const selectedRow = ref(0);
@@ -157,7 +202,7 @@ function setMode(mode: SequencerMode): void {
       : createPitchPattern(rootPitch.value, stepCount, resolution);
   next.swing = swing;
   next.seed = seed;
-  pattern.value = next;
+  setPattern(next);
   selectedRow.value = 0;
   status.value = '';
   statusType.value = 'info';
@@ -165,36 +210,37 @@ function setMode(mode: SequencerMode): void {
 
 function onRootPitchChange(event: Event): void {
   const value = clampInt(Number((event.target as HTMLInputElement).value), 0, 115, 48);
+  const previousRootPitch = rootPitch.value;
   rootPitch.value = value;
   if (pattern.value.mode === 'pitch') {
     const { stepCount, resolution, swing, seed } = pattern.value;
     const next = createPitchPattern(value, stepCount, resolution);
     next.swing = swing;
     next.seed = seed;
-    pattern.value = next;
+    setPattern(next, previousRootPitch);
   }
 }
 
 function onStepCountChange(value: StepCount): void {
   if ((STEP_COUNTS as ReadonlyArray<number>).includes(value)) {
-    pattern.value = withStepCount(pattern.value, value);
+    setPattern(withStepCount(pattern.value, value));
   }
 }
 
 function onResolutionChange(value: StepResolution): void {
   if (STEP_RESOLUTIONS.includes(value)) {
-    pattern.value = { ...pattern.value, resolution: value };
+    setPattern({ ...pattern.value, resolution: value });
   }
 }
 
 function onSwingChange(event: Event): void {
   const value = Number((event.target as HTMLInputElement).value);
-  pattern.value = withSwing(pattern.value, Number.isFinite(value) ? value : 0);
+  setPattern(withSwing(pattern.value, Number.isFinite(value) ? value : 0));
 }
 
 function onSeedChange(event: Event): void {
   const value = Number((event.target as HTMLInputElement).value);
-  pattern.value = { ...pattern.value, seed: Number.isFinite(value) ? Math.trunc(value) : 1 };
+  setPattern({ ...pattern.value, seed: Number.isFinite(value) ? Math.trunc(value) : 1 });
 }
 
 // --- Grid / lane handlers ---------------------------------------------------
@@ -202,7 +248,7 @@ function onSeedChange(event: Event): void {
 function onSetStep(rowIndex: number, stepIndex: number, active: boolean): void {
   const current = pattern.value.rows[rowIndex]?.steps[stepIndex];
   if (!current || current.active === active) return;
-  pattern.value = withStep(pattern.value, rowIndex, stepIndex, { active });
+  setPattern(withStep(pattern.value, rowIndex, stepIndex, { active }));
 }
 
 function onSetStepVelocity(rowIndex: number, stepIndex: number, velocity: number): void {
@@ -210,7 +256,7 @@ function onSetStepVelocity(rowIndex: number, stepIndex: number, velocity: number
   if (!current) return;
   const next = Math.min(127, Math.max(1, Math.round(velocity)));
   if (current.velocity !== next) {
-    pattern.value = withStep(pattern.value, rowIndex, stepIndex, { velocity: next });
+    setPattern(withStep(pattern.value, rowIndex, stepIndex, { velocity: next }));
   }
 }
 
@@ -221,45 +267,54 @@ function onSetParamValue(stepIndex: number, value: number): void {
       : paramTab.value === 'gate'
         ? { gate: value }
         : { offset: value };
-  pattern.value = withStep(pattern.value, selectedRow.value, stepIndex, patch);
+  setPattern(withStep(pattern.value, selectedRow.value, stepIndex, patch));
 }
 
 // --- Row operations ---------------------------------------------------------
 
 function toggleRowMute(): void {
-  pattern.value = withRowMuted(pattern.value, selectedRow.value, !selectedRowMuted.value);
+  setPattern(withRowMuted(pattern.value, selectedRow.value, !selectedRowMuted.value));
 }
 
 function clearSelectedRow(): void {
-  pattern.value = clearedRow(pattern.value, selectedRow.value);
+  setPattern(clearedRow(pattern.value, selectedRow.value));
 }
 
 function shiftSelectedRow(delta: number): void {
-  pattern.value = shiftedRow(pattern.value, selectedRow.value, delta);
+  setPattern(shiftedRow(pattern.value, selectedRow.value, delta));
 }
 
 function applyEuclid(): void {
   const pulses = clampInt(euclidPulses.value, 0, pattern.value.stepCount, 0);
   const rotation = clampInt(euclidRotation.value, -64, 64, 0);
   const flags = euclideanRhythm(pulses, pattern.value.stepCount, rotation);
-  pattern.value = withRowFill(pattern.value, selectedRow.value, flags);
+  setPattern(withRowFill(pattern.value, selectedRow.value, flags));
   euclidOpen.value = false;
 }
 
 // --- Randomize ---------------------------------------------------------------
 
 function applyJitter(): void {
-  pattern.value = jitterVelocities(pattern.value, {
-    seed: pattern.value.seed,
+  const current = pattern.value;
+  const next = jitterVelocities(current, {
+    seed: current.seed,
     amount: clampInt(jitterAmount.value, 0, 64, 12),
   });
+  // jitterVelocities consumes exactly one mulberry32 value per grid cell.
+  // Continue from that point so repeated clicks produce fresh deviations while
+  // remaining deterministic from the seed input.
+  const draws = current.rows.reduce((count, row) => count + row.steps.length, 0);
+  next.seed = (Math.trunc(current.seed) + Math.imul(draws, 0x6d2b79f5)) >>> 0;
+  setPattern(next);
 }
 
 function applyFill(): void {
-  pattern.value = sparseFill(pattern.value, {
-    seed: pattern.value.seed,
-    density: clampInt(fillDensity.value, 0, 100, 25) / 100,
-  });
+  setPattern(
+    sparseFill(pattern.value, {
+      seed: pattern.value.seed,
+      density: clampInt(fillDensity.value, 0, 100, 25) / 100,
+    }),
+  );
 }
 
 // --- Bake / unbake -----------------------------------------------------------
@@ -319,6 +374,20 @@ async function applyToClip(): Promise<void> {
     ...planNoteReplacement(store.notes, baked),
     ...(clipWindow ? { clipWindow } : {}),
   };
+  if (plan.deleteIds.length > 0) {
+    const proceed = await confirmDialog({
+      title: t.value.shell.stepSequencer.replace.confirmTitle,
+      message: formatMessage(t.value.shell.stepSequencer.replace.confirmMessage, {
+        count: plan.deleteIds.length,
+      }),
+      confirmLabel: t.value.shell.stepSequencer.replace.confirmApply,
+    });
+    if (!proceed) {
+      status.value = t.value.shell.stepSequencer.replace.cancelled;
+      statusType.value = 'warning';
+      return;
+    }
+  }
   if (isEmptyPlan(plan) && !clipWindow) {
     status.value = t.value.shell.stepSequencer.status.alreadyMatches;
     statusType.value = 'info';
@@ -354,7 +423,7 @@ function pullFromClip(): void {
     statusType.value = 'error';
     return;
   }
-  pattern.value = result.pattern;
+  setPattern(result.pattern);
   const captured = store.notes.length - result.droppedNotes;
   if (result.droppedNotes > 0) {
     status.value = formatMessage(t.value.shell.stepSequencer.status.pulledDropped, {
@@ -372,12 +441,40 @@ function pullFromClip(): void {
   emit('pulled', captured);
 }
 
-defineExpose({ pattern, selectedRow, overflowPolicy, applyToClip, pullFromClip });
+defineExpose({
+  pattern,
+  selectedRow,
+  overflowPolicy,
+  applyToClip,
+  pullFromClip,
+  undoPattern,
+  redoPattern,
+});
 </script>
 
 <template>
   <div class="step-sequencer">
     <div class="seq-toolbar">
+      <div class="tool-group">
+        <button
+          type="button"
+          class="tool-button"
+          data-test="pattern-undo"
+          :disabled="undoStack.length === 0"
+          @click="undoPattern"
+        >
+          {{ t.shortcuts.actions['edit.undo'] }}
+        </button>
+        <button
+          type="button"
+          class="tool-button"
+          data-test="pattern-redo"
+          :disabled="redoStack.length === 0"
+          @click="redoPattern"
+        >
+          {{ t.shortcuts.actions['edit.redo'] }}
+        </button>
+      </div>
       <div class="tool-group">
         <SelectMenu
           class="tool-select"
@@ -575,7 +672,7 @@ defineExpose({ pattern, selectedRow, overflowPolicy, applyToClip, pullFromClip }
       @set-velocity="onSetStepVelocity"
       @select-row="selectedRow = $event"
     />
-    <div class="param-tabs" role="tablist">
+    <div v-tablist class="param-tabs" role="tablist">
       <button
         v-for="kind in STEP_PARAM_KINDS"
         :key="kind"

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { setSelection, updateNotes } from '@/project/commands';
 import type { EditorNote, EditorNoteUpdate } from '@/project/types';
+import { observeDevicePixelRatio } from '@/ui/canvas/device-pixel-ratio';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 import { useI18n } from '@/ui/i18n';
@@ -52,6 +53,11 @@ const props = defineProps<{
   noteColor?: NoteColorFn;
   /** Note field shown by the bars; defaults to note-on velocity. */
   param?: LaneParamId;
+  /** Inclusive source-coordinate bounds of the editable clip window. */
+  minPpq?: number;
+  maxPpq?: number;
+  /** Disables mutations while the owning track is frozen. */
+  readOnly?: boolean;
 }>();
 
 const { t } = useI18n();
@@ -205,7 +211,7 @@ function applyLine(state: Extract<DragState, { mode: 'line' }>, x: number, value
 }
 
 function onPointerDown(event: PointerEvent): void {
-  if (event.button !== 0) return;
+  if (event.button !== 0 || props.readOnly) return;
   const point = localPoint(event);
   const value = laneValueFromY(paramId.value, point.y, heightPx);
   if (event.altKey) {
@@ -233,7 +239,7 @@ function onPointerDown(event: PointerEvent): void {
 }
 
 function onPointerMove(event: PointerEvent): void {
-  if (!drag) return;
+  if (!drag || props.readOnly) return;
   const point = localPoint(event);
   const value = laneValueFromY(paramId.value, point.y, heightPx);
   if (drag.mode === 'uniform') {
@@ -249,6 +255,10 @@ function onPointerMove(event: PointerEvent): void {
 
 function onPointerUp(): void {
   if (!drag) return;
+  if (props.readOnly) {
+    onPointerCancel();
+    return;
+  }
   const param = paramId.value;
   const overrides = preview.value;
   drag = null;
@@ -260,7 +270,14 @@ function onPointerUp(): void {
     for (const [id, value] of overrides) {
       const note = byId.get(id);
       if (!note) continue;
-      const update = laneUpdateForValue(param, note, value);
+      const update = laneUpdateForValue(
+        param,
+        note,
+        value,
+        props.minPpq === undefined || props.maxPpq === undefined
+          ? undefined
+          : { minStartPpq: props.minPpq, maxEndPpq: props.maxPpq },
+      );
       if (update) updates.push(update);
     }
     if (updates.length > 0) updateNotes(updates);
@@ -276,6 +293,13 @@ function onPointerCancel(): void {
 }
 
 let resizeObserver: ResizeObserver | null = null;
+let stopDprObserver: (() => void) | null = null;
+
+function refreshForDevicePixelRatio(): void {
+  if (widthPx <= 0 || heightPx <= 0) return;
+  if (canvas.value) setupCanvas(canvas.value, widthPx, heightPx);
+  schedule();
+}
 
 onMounted(() => {
   const el = wrapper.value;
@@ -289,11 +313,14 @@ onMounted(() => {
     schedule();
   });
   resizeObserver.observe(el);
+  stopDprObserver = observeDevicePixelRatio(refreshForDevicePixelRatio);
 });
 
 onBeforeUnmount(() => {
   resizeObserver?.disconnect();
   resizeObserver = null;
+  stopDprObserver?.();
+  stopDprObserver = null;
 });
 
 // Switching tabs discards any in-flight gesture preview.
@@ -302,6 +329,13 @@ watch(paramId, () => {
   dragValue = null;
   preview.value = null;
 });
+
+watch(
+  () => props.readOnly,
+  (readOnly) => {
+    if (readOnly) onPointerCancel();
+  },
+);
 
 watch(
   () => [props.revision, props.notes, props.selection, paramId.value] as const,

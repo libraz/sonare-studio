@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { TimeSignatureSegment } from '@/project/types';
 import { localizeMeter, rulerTicks } from '@/ui/arrangement/ruler';
+import { observeDevicePixelRatio } from '@/ui/canvas/device-pixel-ratio';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 import { getCanvasContext, PIANO_ROLL_COLORS, setupCanvas } from './theme';
@@ -60,9 +61,16 @@ const localTimeSignatures = computed(() =>
 let widthPx = 0;
 let heightPx = 0;
 let resizeObserver: ResizeObserver | null = null;
+let stopDprObserver: (() => void) | null = null;
 
 function schedule(): void {
   props.painter.schedule(`piano-roll-ruler-${layerId}`, draw);
+}
+
+function refreshForDevicePixelRatio(): void {
+  if (widthPx <= 0 || heightPx <= 0) return;
+  if (canvas.value) setupCanvas(canvas.value, widthPx, heightPx);
+  schedule();
 }
 
 function draw(): void {
@@ -115,10 +123,13 @@ onMounted(() => {
     schedule();
   });
   resizeObserver.observe(el);
+  stopDprObserver = observeDevicePixelRatio(refreshForDevicePixelRatio);
 });
 
 onBeforeUnmount(() => {
   resizeObserver?.disconnect();
+  stopDprObserver?.();
+  stopDprObserver = null;
 });
 
 watch(

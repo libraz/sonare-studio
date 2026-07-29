@@ -12,6 +12,7 @@ import {
 import { DEFAULT_NOTE_COLOR } from '@/components/piano-roll/theme';
 import type { EditorClip, EditorNote, EditorTrack } from '@/project/types';
 import type { NoteView } from '@/ui/canvas/hit-test';
+import { TimelineRange } from '@/ui/canvas/timeline-range';
 
 let nextId = 1;
 
@@ -261,6 +262,27 @@ describe('hitTestGhost', () => {
   it('returns null on empty space and for an empty ghost list', () => {
     expect(hitTestGhost([], [ghost()], { x: 200, y: 5 }, view)).toBeNull();
     expect(hitTestGhost([], [], inside, view)).toBeNull();
+  });
+
+  // The app passes a TimelineRange, whose projections are prototype methods
+  // reading private fields. A candidate filter that detaches one of them from
+  // the range throws, and the grid's pointer handlers call this first — so a
+  // failure here takes note editing and the hover readout down with it.
+  it('works with the live TimelineRange projection the grid passes in', () => {
+    const range = new TimelineRange({
+      widthPx: 400,
+      heightPx: 300,
+      pxPerPpq: 10,
+      rowHeight: 10,
+    });
+    const g = ghost({ pitch: 60, startPpq: 4, durationPpq: 2 });
+    const point = { x: range.ppqToX(5), y: range.pitchToY(60) + 5 };
+
+    expect(hitTestGhost([], [g], point, range)).toBe(g);
+    expect(
+      hitTestGhost([makeNote({ pitch: 60, startPpq: 4, durationPpq: 2 })], [g], point, range),
+    ).toBeNull();
+    expect(hitTestGhost([], [g], { x: range.ppqToX(40), y: point.y }, range)).toBeNull();
   });
 });
 

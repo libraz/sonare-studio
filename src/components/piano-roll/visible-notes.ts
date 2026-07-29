@@ -1,10 +1,20 @@
-import type { NoteViewWindow } from './overlay';
-
 /** Minimal note shape needed for viewport culling. */
 export interface VisibleNoteLike {
   startPpq: number;
   durationPpq: number;
   pitch: number;
+}
+
+/** Visible musical window of a note-grid viewport, for culling. */
+export interface NoteViewWindow {
+  /** Left edge of the viewport in PPQ. */
+  startPpq: number;
+  /** Exclusive right edge of the viewport in PPQ. */
+  endPpq: number;
+  /** Lowest (at least partially) visible pitch row. */
+  minPitch: number;
+  /** Highest (at least partially) visible pitch row. */
+  maxPitch: number;
 }
 
 interface IndexedNote<T extends VisibleNoteLike> {

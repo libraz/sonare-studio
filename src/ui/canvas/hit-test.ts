@@ -4,9 +4,9 @@
  */
 
 /** A note's musical extent, used to derive its on-screen rectangle. */
-export interface NoteRect {
+export interface NoteRect<TId = string> {
   /** Stable note identifier. */
-  id: string;
+  id: TId;
   /** Note start in PPQ (quarter note = 1.0). */
   startPpq: number;
   /** Note duration in PPQ. */
@@ -32,9 +32,9 @@ export interface NoteView {
 export type NoteHitZone = 'body' | 'resize-start' | 'resize-end';
 
 /** Result of a successful point hit-test. */
-export interface NoteHit {
+export interface NoteHit<TId = string> {
   /** Id of the hit note. */
-  id: string;
+  id: TId;
   /** Which interaction zone of the note was hit. */
   zone: NoteHitZone;
 }
@@ -59,10 +59,19 @@ export interface MarqueeRect {
 /** Default px distance from a note edge that still counts as a resize zone. */
 export const DEFAULT_RESIZE_TOLERANCE_PX = 4;
 
+/** Minimum note width used by canvas rendering and hit-testing. */
+export const MIN_NOTE_WIDTH_PX = 2;
+
 /** Options for {@link hitTestNote}. */
 export interface HitTestOptions {
   /** Px distance from a note edge treated as a resize handle. Default {@link DEFAULT_RESIZE_TOLERANCE_PX}. */
   resizeTolerancePx?: number;
+}
+
+/** A hit result that refers to the note's position in the candidate list. */
+export interface NoteHitIndex {
+  index: number;
+  zone: NoteHitZone;
 }
 
 /**
@@ -81,21 +90,36 @@ export interface HitTestOptions {
  * @param options - Tolerance configuration.
  * @returns The topmost hit and its zone, or null when nothing is hit.
  */
-export function hitTestNote(
-  notes: readonly NoteRect[],
+export function hitTestNote<TId>(
+  notes: readonly NoteRect<TId>[],
   point: Point,
   view: NoteView,
   options: HitTestOptions = {},
-): NoteHit | null {
+): NoteHit<TId> | null {
+  const hit = hitTestNoteIndex(notes, point, view, options);
+  return hit ? { id: notes[hit.index].id, zone: hit.zone } : null;
+}
+
+/**
+ * Finds the topmost hit by candidate index without requiring a separate
+ * projected rectangle array. This is useful for notes whose stable identity
+ * belongs to another object (for example, ghost notes).
+ */
+export function hitTestNoteIndex(
+  notes: readonly Omit<NoteRect<unknown>, 'id'>[],
+  point: Point,
+  view: NoteView,
+  options: HitTestOptions = {},
+): NoteHitIndex | null {
   const tolerance = options.resizeTolerancePx ?? DEFAULT_RESIZE_TOLERANCE_PX;
   for (let i = notes.length - 1; i >= 0; i--) {
     const note = notes[i];
     const top = view.pitchToY(note.pitch);
     if (point.y < top || point.y >= top + view.rowHeight) continue;
     const left = view.ppqToX(note.startPpq);
-    const right = view.ppqToX(note.startPpq + note.durationPpq);
+    const right = Math.max(left + MIN_NOTE_WIDTH_PX, view.ppqToX(note.startPpq + note.durationPpq));
     if (point.x < left || point.x >= right) continue;
-    return { id: note.id, zone: resolveZone(point.x, left, right, tolerance) };
+    return { index: i, zone: resolveZone(point.x, left, right, tolerance) };
   }
   return null;
 }
@@ -113,21 +137,21 @@ export function hitTestNote(
  * @param view - Projection from musical coordinates to px.
  * @returns Ids of intersecting notes in input order.
  */
-export function marqueeSelect(
-  notes: readonly NoteRect[],
+export function marqueeSelect<TId>(
+  notes: readonly NoteRect<TId>[],
   marquee: MarqueeRect,
   view: NoteView,
-): string[] {
+): TId[] {
   const mLeft = Math.min(marquee.x, marquee.x + marquee.width);
   const mRight = Math.max(marquee.x, marquee.x + marquee.width);
   const mTop = Math.min(marquee.y, marquee.y + marquee.height);
   const mBottom = Math.max(marquee.y, marquee.y + marquee.height);
   // A degenerate marquee (no drag) selects nothing; clicks use hitTestNote.
   if (mLeft === mRight || mTop === mBottom) return [];
-  const selected: string[] = [];
+  const selected: TId[] = [];
   for (const note of notes) {
     const left = view.ppqToX(note.startPpq);
-    const right = view.ppqToX(note.startPpq + note.durationPpq);
+    const right = Math.max(left + MIN_NOTE_WIDTH_PX, view.ppqToX(note.startPpq + note.durationPpq));
     const top = view.pitchToY(note.pitch);
     const bottom = top + view.rowHeight;
     if (left < mRight && right > mLeft && top < mBottom && bottom > mTop) {
@@ -142,10 +166,8 @@ export function marqueeSelect(
  */
 function resolveZone(x: number, left: number, right: number, tolerance: number): NoteHitZone {
   const width = right - left;
-  if (width <= tolerance * 2) {
-    return x < left + width / 2 ? 'resize-start' : 'resize-end';
-  }
-  if (x - left <= tolerance) return 'resize-start';
-  if (right - x <= tolerance) return 'resize-end';
+  const edgeTolerance = Math.min(tolerance, width / 3);
+  if (x - left <= edgeTolerance) return 'resize-start';
+  if (right - x <= edgeTolerance) return 'resize-end';
   return 'body';
 }

@@ -486,6 +486,34 @@ describe('useNoteInteractions', () => {
       interactions.onPointerMove({ x: 600, y: 50 });
       expect(interactions.cursor.value).toBe('default');
     });
+
+    it('reuses the visible-note index instead of scanning every note on each hover', () => {
+      let startReads = 0;
+      const notes = Array.from({ length: 10_000 }, (_, index) => {
+        const startPpq = index === 0 ? 1 : 1_000 + index;
+        const note = makeNote({ id: index + 1, startPpq, pitch: index === 0 ? 60 : 61 });
+        Object.defineProperty(note, 'startPpq', {
+          configurable: true,
+          enumerable: true,
+          get: () => {
+            startReads += 1;
+            return startPpq;
+          },
+        });
+        return note;
+      });
+      const { interactions } = makeHarness(notes);
+
+      // The first lookup builds the cache. Subsequent pointer moves inspect
+      // only the small candidate window around the pointer.
+      interactions.onPointerMove({ x: 150, y: 675 });
+      startReads = 0;
+      interactions.onPointerMove({ x: 150, y: 675 });
+      interactions.onPointerMove({ x: 151, y: 675 });
+
+      expect(startReads).toBeLessThan(100);
+      expect(interactions.cursor.value).toBe('pointer');
+    });
   });
 
   describe('draw tool', () => {

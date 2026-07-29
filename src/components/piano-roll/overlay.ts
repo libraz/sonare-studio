@@ -13,11 +13,13 @@ import type { EditorClip, EditorNote, EditorTrack } from '@/project/types';
 import {
   type HitTestOptions,
   hitTestNote,
-  type NoteRect,
+  hitTestNoteIndex,
+  MIN_NOTE_WIDTH_PX,
   type NoteView,
   type Point,
 } from '@/ui/canvas/hit-test';
 import { DEFAULT_NOTE_COLOR } from './theme';
+import { type NoteViewWindow, visibleNotesInWindow } from './visible-notes';
 
 /** Clip fields needed to convert between source-relative and timeline PPQ. */
 export type ClipFrame = Pick<EditorClip, 'startPpq' | 'sourceOffsetPpq'>;
@@ -153,17 +155,7 @@ export function buildGhostNotes(options: BuildGhostNotesOptions): GhostNote[] {
   return out;
 }
 
-/** Visible musical window of a note grid viewport, for culling. */
-export interface NoteViewWindow {
-  /** Left edge of the viewport in PPQ. */
-  startPpq: number;
-  /** Exclusive right edge of the viewport in PPQ. */
-  endPpq: number;
-  /** Lowest (at least partially) visible pitch row. */
-  minPitch: number;
-  /** Highest (at least partially) visible pitch row. */
-  maxPitch: number;
-}
+export type { NoteViewWindow } from './visible-notes';
 
 /**
  * Returns true when a note's rectangle intersects the visible window.
@@ -183,16 +175,38 @@ export function isNoteInView(
   return note.pitch >= view.minPitch && note.pitch <= view.maxPitch;
 }
 
-/** Projects editor notes into the string-id rectangles the hit-test consumes. */
-function toRects(
-  notes: ReadonlyArray<Pick<EditorNote, 'id' | 'startPpq' | 'durationPpq' | 'pitch'>>,
-): NoteRect[] {
-  return notes.map((note) => ({
-    id: String(note.id),
-    startPpq: note.startPpq,
-    durationPpq: note.durationPpq,
-    pitch: note.pitch,
-  }));
+/** Inverse projections a view may offer, used to narrow the hit-test candidates. */
+type InverseProjection = Partial<{
+  xToPpq(x: number): number;
+  yToPitch(y: number): number;
+}>;
+
+/**
+ * Narrows the candidate list to notes that can cover the pointer pixel.
+ *
+ * `NoteView` only guarantees the forward projections, so a view without the
+ * inverses (a plain test double) falls back to the full list. The inverses must
+ * be called *through* the view: the app passes a `TimelineRange`, whose
+ * projections are prototype methods reading private fields, so a detached
+ * reference would throw.
+ */
+function notesAtPoint<T extends { startPpq: number; durationPpq: number; pitch: number }>(
+  notes: readonly T[],
+  point: Point,
+  view: NoteView,
+): readonly T[] {
+  const projection = view as NoteView & InverseProjection;
+  if (!projection.xToPpq || !projection.yToPitch) return notes;
+  const left = projection.xToPpq(point.x - MIN_NOTE_WIDTH_PX);
+  const right = projection.xToPpq(point.x + MIN_NOTE_WIDTH_PX);
+  const pitch = Math.round(projection.yToPitch(point.y));
+  if (!Number.isFinite(left) || !Number.isFinite(right) || !Number.isFinite(pitch)) return notes;
+  return visibleNotesInWindow(notes, {
+    startPpq: Math.min(left, right),
+    endPpq: Math.max(left, right),
+    minPitch: pitch,
+    maxPitch: pitch,
+  });
 }
 
 /**
@@ -217,15 +231,10 @@ export function hitTestGhost(
   options: HitTestOptions = {},
 ): GhostNote | null {
   if (ghosts.length === 0) return null;
-  if (hitTestNote(toRects(editableNotes), point, view, options)) return null;
-  const rects: NoteRect[] = ghosts.map((ghost, index) => ({
-    id: String(index),
-    startPpq: ghost.startPpq,
-    durationPpq: ghost.durationPpq,
-    pitch: ghost.pitch,
-  }));
-  const hit = hitTestNote(rects, point, view, { resizeTolerancePx: 0 });
-  return hit ? ghosts[Number(hit.id)] : null;
+  if (hitTestNote(notesAtPoint(editableNotes, point, view), point, view, options)) return null;
+  const candidates = notesAtPoint(ghosts, point, view);
+  const hit = hitTestNoteIndex(candidates, point, view, { resizeTolerancePx: 0 });
+  return hit ? candidates[hit.index] : null;
 }
 
 /**

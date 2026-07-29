@@ -13,12 +13,13 @@ import type { EditorNote, EditorNoteUpdate, NewEditorNote } from '@/project/type
 import {
   hitTestNote,
   type MarqueeRect,
+  MIN_NOTE_WIDTH_PX,
   marqueeSelect,
   type NoteHitZone,
-  type NoteRect,
 } from '@/ui/canvas/hit-test';
 import { MAX_PITCH, MIN_PITCH, snapPpqToStep } from '@/ui/canvas/timeline-range';
 import type { EditorToolId } from '@/ui/editor/tools';
+import { visibleNotesInWindow } from './visible-notes';
 
 /** Px a pointer must travel from its down point before a drag gesture starts. */
 export const DEFAULT_DRAG_THRESHOLD_PX = 3;
@@ -232,16 +233,6 @@ function snapDeltaToStep(deltaPpq: number, step: number): number {
   return step > 0 ? Math.round(deltaPpq / step) * step : deltaPpq;
 }
 
-/** Projects editor notes into the string-id rectangles the hit-test consumes. */
-function toRects(notes: ReadonlyArray<EditorNote>): NoteRect[] {
-  return notes.map((note) => ({
-    id: String(note.id),
-    startPpq: note.startPpq,
-    durationPpq: note.durationPpq,
-    pitch: note.pitch,
-  }));
-}
-
 /** Appends ids not already present, preserving base order. */
 function unionIds(base: ReadonlyArray<number>, extra: ReadonlyArray<number>): number[] {
   const seen = new Set(base);
@@ -265,6 +256,23 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
   const { view, commands } = options;
   const threshold = options.dragThresholdPx ?? DEFAULT_DRAG_THRESHOLD_PX;
   const minDuration = options.minDurationPpq ?? DEFAULT_MIN_DURATION_PPQ;
+
+  /** Returns only notes that can cover the current pointer pixel. */
+  function notesAtPoint(point: InteractionPoint): EditorNote[] {
+    const left = view.xToPpq(point.x - MIN_NOTE_WIDTH_PX);
+    const right = view.xToPpq(point.x + MIN_NOTE_WIDTH_PX);
+    const pitch = view.yToPitch(point.y);
+    return visibleNotesInWindow(options.getNotes(), {
+      startPpq: Math.min(left, right),
+      endPpq: Math.max(left, right),
+      minPitch: pitch,
+      maxPitch: pitch,
+    });
+  }
+
+  function hitAt(point: InteractionPoint) {
+    return hitTestNote(notesAtPoint(point), point, view, hitOptions());
+  }
 
   const marquee = ref<MarqueeRect | null>(null);
   const previewNotes = ref<EditorNote[] | null>(null);
@@ -422,7 +430,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
   function splitAt(point: InteractionPoint, modifiers: InteractionModifiers): void {
     const split = commands.splitNote;
     if (!split) return;
-    const hit = hitTestNote(toRects(options.getNotes()), point, view, hitOptions());
+    const hit = hitAt(point);
     if (!hit) return;
     const note = options.getNotes().find((n) => n.id === Number(hit.id));
     if (!note) return;
@@ -581,13 +589,13 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
       height: point.y - g.start.y,
     };
     marquee.value = rect;
-    const ids = marqueeSelect(toRects(options.getNotes()), rect, view).map(Number);
+    const ids = marqueeSelect(options.getNotes(), rect, view).map(Number);
     commands.setSelection(g.additive ? unionIds(g.baseSelection, ids) : ids);
   }
 
   function onPointerDown(point: InteractionPoint, modifiers: InteractionModifiers = {}): void {
     if (options.isReadOnly?.() === true) {
-      const hit = hitTestNote(toRects(options.getNotes()), point, view, hitOptions());
+      const hit = hitAt(point);
       if (hit) commands.setSelection([Number(hit.id)]);
       gesture = { kind: 'none' };
       return;
@@ -609,7 +617,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     }
     if (tool === 'erase') {
       const ids = new Set<number>();
-      const eraseHit = hitTestNote(toRects(options.getNotes()), point, view, hitOptions());
+      const eraseHit = hitAt(point);
       if (eraseHit) ids.add(Number(eraseHit.id));
       gesture = { kind: 'erase', ids };
       previewNotes.value = buildErasePreview(ids);
@@ -622,7 +630,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
       return;
     }
     const notes = options.getNotes();
-    const hit = hitTestNote(toRects(notes), point, view, hitOptions());
+    const hit = hitAt(point);
     if (!hit) {
       gesture = {
         kind: 'pending-marquee',
@@ -690,9 +698,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
   function onPointerMove(point: InteractionPoint, modifiers: InteractionModifiers = {}): void {
     if (gesture.kind === 'none') {
       if (options.isReadOnly?.() === true) {
-        cursor.value = hitTestNote(toRects(options.getNotes()), point, view, hitOptions())
-          ? 'pointer'
-          : 'default';
+        cursor.value = hitAt(point) ? 'pointer' : 'default';
         return;
       }
       const tool = currentTool();
@@ -700,7 +706,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
         cursor.value = toolCursor(tool);
         return;
       }
-      const hit = hitTestNote(toRects(options.getNotes()), point, view, hitOptions());
+      const hit = hitAt(point);
       cursor.value = hit ? (hit.zone === 'body' ? 'pointer' : 'ew-resize') : 'default';
       return;
     }
@@ -710,7 +716,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
       return;
     }
     if (gesture.kind === 'erase') {
-      const hit = hitTestNote(toRects(options.getNotes()), point, view, hitOptions());
+      const hit = hitAt(point);
       if (hit) gesture.ids.add(Number(hit.id));
       previewNotes.value = buildErasePreview(gesture.ids);
       if (gesture.ids.size > 0) setReadout(point, `Erase ${gesture.ids.size}`);
@@ -851,8 +857,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
 
   function onDoubleClick(point: InteractionPoint, modifiers: InteractionModifiers = {}): void {
     if (options.isReadOnly?.() === true) return;
-    const notes = options.getNotes();
-    if (hitTestNote(toRects(notes), point, view, hitOptions())) return;
+    if (hitAt(point)) return;
     const step = options.getGridPpq();
     // Snap to the grid cell containing the click (floor), so the note starts
     // where the user clicked rather than rounding to the next line.
@@ -881,7 +886,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
 
   /** Returns the topmost note id under a point, or null when none is hit. */
   function hitNoteAt(point: InteractionPoint): number | null {
-    const hit = hitTestNote(toRects(options.getNotes()), point, view, hitOptions());
+    const hit = hitAt(point);
     return hit ? Number(hit.id) : null;
   }
 

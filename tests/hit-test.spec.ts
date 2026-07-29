@@ -69,13 +69,18 @@ describe('hitTestNote', () => {
     expect(hitTestNote(notes, { x: 200, y: 669.999 }, view)?.id).toBe('c');
   });
 
-  it('splits a note narrower than twice the tolerance into start/end halves', () => {
+  it('keeps a body zone on a narrow note while both resize handles remain reachable', () => {
     // 0.05 PPQ -> 5 px wide, x [100, 105), tolerance 4 px.
     const narrow = [note('n', 1, 0.05, 60)];
     expect(hitTestNote(narrow, { x: 101, y: 675 }, view)?.zone).toBe('resize-start');
-    expect(hitTestNote(narrow, { x: 102.4, y: 675 }, view)?.zone).toBe('resize-start');
-    expect(hitTestNote(narrow, { x: 102.5, y: 675 }, view)?.zone).toBe('resize-end');
+    expect(hitTestNote(narrow, { x: 102.4, y: 675 }, view)?.zone).toBe('body');
+    expect(hitTestNote(narrow, { x: 102.5, y: 675 }, view)?.zone).toBe('body');
     expect(hitTestNote(narrow, { x: 104.9, y: 675 }, view)?.zone).toBe('resize-end');
+  });
+
+  it('hits the minimum two-pixel width used for an almost zero-duration note', () => {
+    const tiny = [note('tiny', 1, 0.001, 60)];
+    expect(hitTestNote(tiny, { x: 101.5, y: 675 }, view)).not.toBeNull();
   });
 
   it('returns the topmost (last drawn) note when notes overlap', () => {

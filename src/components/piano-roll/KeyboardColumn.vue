@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { observeDevicePixelRatio } from '@/ui/canvas/device-pixel-ratio';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 import { useI18n } from '@/ui/i18n';
@@ -18,6 +19,8 @@ const props = defineProps<{
   revision: number;
   /** Shared frame batcher for canvas redraws. */
   painter: Painter;
+  /** Plays a short preview for a clicked key. */
+  audition?: (pitch: number, velocity: number) => void;
 }>();
 
 const wrapper = ref<HTMLDivElement | null>(null);
@@ -36,6 +39,16 @@ const MIN_LABEL_ROW_HEIGHT = 8;
 
 let widthPx = 0;
 let heightPx = 0;
+
+function onPointerDown(event: PointerEvent): void {
+  if (event.button !== 0 || !props.audition) return;
+  const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  const pitch = Math.max(
+    0,
+    Math.min(127, Math.round(props.range.yToPitch(event.clientY - bounds.top))),
+  );
+  props.audition(pitch, 96);
+}
 
 function schedule(): void {
   props.painter.schedule(`keyboard-column-${layerId}`, draw);
@@ -88,6 +101,13 @@ function draw(): void {
 }
 
 let resizeObserver: ResizeObserver | null = null;
+let stopDprObserver: (() => void) | null = null;
+
+function refreshForDevicePixelRatio(): void {
+  if (widthPx <= 0 || heightPx <= 0) return;
+  if (canvas.value) setupCanvas(canvas.value, widthPx, heightPx);
+  schedule();
+}
 
 onMounted(() => {
   const el = wrapper.value;
@@ -101,11 +121,14 @@ onMounted(() => {
     schedule();
   });
   resizeObserver.observe(el);
+  stopDprObserver = observeDevicePixelRatio(refreshForDevicePixelRatio);
 });
 
 onBeforeUnmount(() => {
   resizeObserver?.disconnect();
   resizeObserver = null;
+  stopDprObserver?.();
+  stopDprObserver = null;
 });
 
 watch(
@@ -115,7 +138,12 @@ watch(
 </script>
 
 <template>
-  <div ref="wrapper" class="keyboard-column">
+  <div
+    ref="wrapper"
+    class="keyboard-column"
+    :class="{ auditionable: audition !== undefined }"
+    @pointerdown="onPointerDown"
+  >
     <canvas ref="canvas" class="keyboard-canvas" role="img" :aria-label="t.shell.pianoRoll.keyboard" />
   </div>
 </template>
@@ -126,6 +154,12 @@ watch(
   width: 100%;
   height: 100%;
   overflow: hidden;
+}
+
+/* The column plays the key under the pointer once the editor supplies an
+ * audition hook. Nothing else on a painted canvas says it is interactive. */
+.keyboard-column.auditionable {
+  cursor: pointer;
 }
 
 .keyboard-canvas {

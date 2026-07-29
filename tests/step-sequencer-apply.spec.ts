@@ -78,6 +78,18 @@ describe('StepSequencer (apply / pull integration)', () => {
     expect(wrapper.find('[data-test="status"]').text()).toContain('Applied 2 notes');
   });
 
+  it('undoes and redoes session-local pattern edits before Apply', async () => {
+    const wrapper = await mountSequencer();
+    await pressCell(wrapper, 0, 0);
+
+    const vm = wrapper.vm as unknown as SequencerVm;
+    expect(vm.pattern.rows[0].steps[0].active).toBe(true);
+    await wrapper.get('[data-test="pattern-undo"]').trigger('click');
+    expect(vm.pattern.rows[0].steps[0].active).toBe(false);
+    await wrapper.get('[data-test="pattern-redo"]').trigger('click');
+    expect(vm.pattern.rows[0].steps[0].active).toBe(true);
+  });
+
   it('keeps Apply disabled on a frozen track and exposes the unfreeze reason', async () => {
     setTrackFrozen(store.activeTrackId, { assetId: 'frozen-step-target' });
     clearHistory();
@@ -95,6 +107,25 @@ describe('StepSequencer (apply / pull integration)', () => {
     expect(wrapper.find('[data-test="status"]').text()).toContain('Unfreeze');
     expect(JSON.stringify(store.clips)).toBe(before);
     expect(canUndo()).toBe(false);
+  });
+
+  it('asks before replacing and deleting notes outside the pattern', async () => {
+    addNote({ pitch: 36, velocity: 96, startPpq: 0, durationPpq: 0.125, channel: 9 });
+    addNote({ pitch: 38, velocity: 96, startPpq: 6, durationPpq: 0.125, channel: 9 });
+    const wrapper = await mountSequencer();
+    const vm = wrapper.vm as unknown as SequencerVm;
+    const kickRow = vm.pattern.rows.length - 1;
+    vm.pattern = withStep(vm.pattern, kickRow, 0, { active: true });
+
+    const applying = vm.applyToClip();
+    await flushPromises();
+    expect(dialogQueue).toHaveLength(1);
+    expect(dialogQueue[0].message).toContain('remove 1 existing clip notes');
+    resolveDialog(dialogQueue[0].id, false);
+    await applying;
+
+    expect(store.notes).toHaveLength(2);
+    expect(wrapper.find('[data-test="status"]').text()).toContain('cancelled');
   });
 
   it('re-applies count-stable edits as a single undo entry', async () => {
@@ -189,7 +220,10 @@ describe('StepSequencer (apply / pull integration)', () => {
 
     clearHistory();
     vm.pattern = withStep(vm.pattern, kickRow, 8, { active: false });
-    vm.applyToClip();
+    const applying = vm.applyToClip();
+    await flushPromises();
+    resolveDialog(dialogQueue[0].id, true);
+    await applying;
     expect(store.notes).toHaveLength(2);
     expect(undo()).toBe(true);
     expect(store.notes).toHaveLength(3);
@@ -300,5 +334,16 @@ describe('StepSequencer (apply / pull integration)', () => {
     await wrapper.find('[data-test="fill"]').trigger('click');
     const second = JSON.stringify((wrapper.vm as unknown as SequencerVm).pattern.rows);
     expect(second).toBe(first);
+  });
+
+  it('advances the random seed after jitter so repeated jitter uses a fresh stream', async () => {
+    const wrapper = await mountSequencer();
+    const vm = wrapper.vm as unknown as SequencerVm;
+    const initialSeed = vm.pattern.seed;
+    const draws = vm.pattern.rows.reduce((count, row) => count + row.steps.length, 0);
+
+    await wrapper.find('[data-test="jitter"]').trigger('click');
+
+    expect(vm.pattern.seed).toBe((initialSeed + Math.imul(draws, 0x6d2b79f5)) >>> 0);
   });
 });

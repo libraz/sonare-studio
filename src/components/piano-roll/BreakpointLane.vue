@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { isClipExpressionCurve } from '@/project/midi-cc';
 import type { ClipCcPoint, ClipExpressionCurve } from '@/project/types';
+import { observeDevicePixelRatio } from '@/ui/canvas/device-pixel-ratio';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 import { useI18n } from '@/ui/i18n';
@@ -12,10 +13,11 @@ import { DEFAULT_NOTE_COLOR, getCanvasContext, PIANO_ROLL_COLORS, setupCanvas } 
  * clip's {ppq, value} breakpoints sharing the grid's horizontal TimelineRange.
  * The value axis runs 0..`valueMax` (bottom to top). Drag a breakpoint to move
  * it, click empty space to add one, drag across empty space to draw a freehand
- * curve, and alt-click or right-click a breakpoint to delete it. Each gesture
- * commits as one undo step via the `commit` callback; the host wires it to the
- * matching command (CC, pitch bend, ...) and the points feed the realtime MIDI
- * schedule (src/engine/midi-sync.ts), so the curve is audible.
+ * curve, double-click a breakpoint to delete it, and right-click one to cycle
+ * its curve. These gestures match arrangement automation. Each gesture commits
+ * as one undo step via the `commit` callback; the host wires it to the matching
+ * command (CC, pitch bend, ...) and the points feed the realtime MIDI schedule
+ * (src/engine/midi-sync.ts), so the curve is audible.
  *
  * When `centerValue` is set, a center rule is drawn and the corner readout
  * shows the signed offset from it (used by bipolar lanes like pitch bend).
@@ -75,6 +77,12 @@ const COLORS = PIANO_ROLL_COLORS;
 const HIT_RADIUS = 7;
 /** Minimum horizontal px between samples while drawing a freehand curve. */
 const DRAW_MIN_PX = 6;
+
+const NEXT_CURVE: Record<ClipExpressionCurve, ClipExpressionCurve> = {
+  hold: 'linear',
+  linear: 's-curve',
+  's-curve': 'hold',
+};
 
 /** In-flight working copy of the points while a gesture runs. */
 const preview = shallowRef<ClipCcPoint[] | null>(null);
@@ -248,15 +256,6 @@ function onPointerDown(event: PointerEvent): void {
   const value = valueFromY(point.y);
   const hit = hitPoint(point.x, point.y);
 
-  // Alt-click or right-click a breakpoint deletes it (one undo step).
-  if (event.button === 2 || event.altKey) {
-    if (hit >= 0) {
-      event.preventDefault();
-      const next = props.points.filter((_, i) => i !== hit);
-      props.commit(next);
-    }
-    return;
-  }
   if (event.button !== 0) return;
   (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
 
@@ -320,7 +319,36 @@ function onPointerCancel(): void {
   schedule();
 }
 
+/** Deletes a hit breakpoint, matching the arrangement automation gesture. */
+function onDoubleClick(event: MouseEvent): void {
+  if (props.clipId < 0 || props.readOnly) return;
+  const point = localPoint(event as PointerEvent);
+  const hit = hitPoint(point.x, point.y);
+  if (hit < 0) return;
+  props.commit(props.points.filter((_, index) => index !== hit));
+}
+
+/** Cycles a hit point's curve, matching arrangement automation right-click. */
+function onContextMenu(event: MouseEvent): void {
+  if (props.clipId < 0 || props.readOnly) return;
+  const point = localPoint(event as PointerEvent);
+  const hit = hitPoint(point.x, point.y);
+  if (hit < 0) return;
+  props.commit(
+    props.points.map((item, index) =>
+      index === hit ? pointWithCurve(item.ppq, item.value, NEXT_CURVE[effectiveCurve(item)]) : item,
+    ),
+  );
+}
+
 let resizeObserver: ResizeObserver | null = null;
+let stopDprObserver: (() => void) | null = null;
+
+function refreshForDevicePixelRatio(): void {
+  if (widthPx <= 0 || heightPx <= 0) return;
+  if (canvas.value) setupCanvas(canvas.value, widthPx, heightPx);
+  schedule();
+}
 
 onMounted(() => {
   const el = wrapper.value;
@@ -334,11 +362,14 @@ onMounted(() => {
     schedule();
   });
   resizeObserver.observe(el);
+  stopDprObserver = observeDevicePixelRatio(refreshForDevicePixelRatio);
 });
 
 onBeforeUnmount(() => {
   resizeObserver?.disconnect();
   resizeObserver = null;
+  stopDprObserver?.();
+  stopDprObserver = null;
 });
 
 watch(
@@ -355,7 +386,8 @@ watch(
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
     @pointercancel="onPointerCancel"
-    @contextmenu.prevent
+    @dblclick="onDoubleClick"
+    @contextmenu.prevent="onContextMenu"
   >
     <canvas
       ref="canvas"

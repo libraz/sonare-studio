@@ -54,7 +54,7 @@ import {
   PLAYHEAD_FOLLOW_ANCHOR_X,
   revealPlayheadStart,
 } from '@/ui/arrangement/playhead-follow';
-import { beatLengthPpq, localizeMeter, rulerTicks } from '@/ui/arrangement/ruler';
+import { localizeMeter } from '@/ui/arrangement/ruler';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 import BreakpointLane from './BreakpointLane.vue';
@@ -67,6 +67,7 @@ import PianoRollRuler from './PianoRollRuler.vue';
 import PianoRollToolbar from './PianoRollToolbar.vue';
 import ReharmonizeLockStrip from './ReharmonizeLockStrip.vue';
 import ReharmonizeSuggestion from './ReharmonizeSuggestion.vue';
+import { pianoRollStatusLocation } from './status-location';
 import { DEFAULT_NOTE_COLOR, KEYBOARD_COLUMN_WIDTH_PX, type NoteColorFn } from './theme';
 import { useNoteInteractions } from './use-note-interactions';
 import { usePianoRollCcLanes } from './use-piano-roll-cc-lanes';
@@ -902,18 +903,8 @@ const statusText = computed(() => {
   if (!hover) {
     return `${selection} selected · Snap ${snap}`;
   }
-  const ticks = rulerTicks(localTimeSignatures.value, 0, hover.ppq + 0.001, 100);
-  const bar = [...ticks].reverse().find((tick) => tick.kind === 'bar');
-  const beatLength = beatLengthPpq(
-    [...localTimeSignatures.value].reverse().find((segment) => segment.startPpq <= hover.ppq) ?? {
-      startPpq: 0,
-      numerator: 4,
-      denominator: 4,
-    },
-  );
-  const beat = bar ? Math.floor((hover.ppq - bar.ppq) / beatLength) + 1 : 1;
-  const barLabel = bar?.barNumber ?? 1;
-  return `${formatPitch(hover.pitch)} · ${barLabel}.${beat} · ${hover.ppq.toFixed(3)} ppq · ${selection} selected · Snap ${snap}`;
+  const location = pianoRollStatusLocation(localTimeSignatures.value, hover.ppq);
+  return `${formatPitch(hover.pitch)} · ${location.bar}.${location.beat} · ${hover.ppq.toFixed(3)} ppq · ${selection} selected · Snap ${snap}`;
 });
 
 /** Focuses the editor so keyboard shortcuts work after any click inside it. */
@@ -1078,7 +1069,13 @@ onBeforeUnmount(() => {
         @open-chords="emit('openChords')"
       />
       <div class="cell-chord-spacer" />
-      <KeyboardColumn class="cell-keyboard" :range="range" :revision="revision" :painter="painter" />
+      <KeyboardColumn
+        class="cell-keyboard"
+        :range="range"
+        :revision="revision"
+        :painter="painter"
+        :audition="audition"
+      />
       <div ref="gridCell" class="cell-grid">
         <NoteGridCanvas
           :range="range"
@@ -1175,6 +1172,9 @@ onBeforeUnmount(() => {
         :notes="audibleSourceNotes"
         :selection="store.selection"
         :param="laneParam"
+        :min-ppq="sourceWindowStartPpq"
+        :max-ppq="sourceWindowEndPpq"
+        :read-only="contentReadOnly"
       />
       <BreakpointLane
         v-else-if="laneCc !== null"

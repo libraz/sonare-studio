@@ -51,6 +51,8 @@ const MIN_LENGTH_PPQ = 0.0625;
 const MAX_LENGTH_PPQ = 16;
 /** Start-offset range: one eighth note either side of the nearest beat. */
 const MAX_OFFSET_PPQ = 0.5;
+/** Offset lane anchors note edits to the sixteenth-note grid. */
+const OFFSET_GRID_PPQ = 0.25;
 /** Tolerance below which fractional PPQ values count as unchanged. */
 const PPQ_EPSILON = 1e-9;
 
@@ -145,7 +147,7 @@ function clamp01(value: number): number {
 /**
  * Reads a note's current value for a lane parameter.
  *
- * Offset is the signed deviation of the note start from the nearest beat
+ * Offset is the signed deviation of the note start from its nearest sixteenth
  * (quarter note); off-velocity falls back to {@link DEFAULT_OFF_VELOCITY}
  * when the note omits the field.
  *
@@ -159,7 +161,7 @@ export function noteLaneValue(id: LaneParamId, note: EditorNote): number {
     case 'length':
       return note.durationPpq;
     case 'offset':
-      return note.startPpq - Math.round(note.startPpq);
+      return note.startPpq - Math.round(note.startPpq / OFFSET_GRID_PPQ) * OFFSET_GRID_PPQ;
     case 'offVelocity':
       return note.offVelocity ?? DEFAULT_OFF_VELOCITY;
     case 'channel':
@@ -282,6 +284,7 @@ export function laneUpdateForValue(
   id: LaneParamId,
   note: EditorNote,
   value: number,
+  bounds?: { minStartPpq: number; maxEndPpq: number },
 ): EditorNoteUpdate | null {
   const next = quantizeLaneValue(id, value);
   switch (id) {
@@ -292,7 +295,13 @@ export function laneUpdateForValue(
         ? null
         : { id: note.id, durationPpq: next };
     case 'offset': {
-      const startPpq = Math.max(0, Math.round(note.startPpq) + next);
+      const anchor = Math.round(note.startPpq / OFFSET_GRID_PPQ) * OFFSET_GRID_PPQ;
+      const minStartPpq = bounds?.minStartPpq ?? 0;
+      const maxStartPpq = Math.max(
+        minStartPpq,
+        (bounds?.maxEndPpq ?? Number.POSITIVE_INFINITY) - note.durationPpq,
+      );
+      const startPpq = clamp(anchor + next, minStartPpq, maxStartPpq);
       return Math.abs(startPpq - note.startPpq) <= PPQ_EPSILON ? null : { id: note.id, startPpq };
     }
     case 'offVelocity':

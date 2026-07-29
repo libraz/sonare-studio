@@ -70,9 +70,9 @@ describe('noteLaneValue', () => {
     expect(noteLaneValue('channel', note)).toBe(9);
   });
 
-  it('reads offset as the signed deviation from the nearest beat', () => {
-    expect(noteLaneValue('offset', makeNote({ id: 1, startPpq: 4.125 }))).toBeCloseTo(0.125, 9);
-    expect(noteLaneValue('offset', makeNote({ id: 1, startPpq: 3.75 }))).toBeCloseTo(-0.25, 9);
+  it('reads offset as the signed deviation from the nearest sixteenth', () => {
+    expect(noteLaneValue('offset', makeNote({ id: 1, startPpq: 4.125 }))).toBeCloseTo(-0.125, 9);
+    expect(noteLaneValue('offset', makeNote({ id: 1, startPpq: 3.75 }))).toBe(0);
     expect(noteLaneValue('offset', makeNote({ id: 1, startPpq: 2 }))).toBe(0);
   });
 
@@ -232,10 +232,10 @@ describe('laneUpdateForValue', () => {
     expect(laneUpdateForValue('length', note, 100)).toEqual({ id: 7, durationPpq: 16 });
   });
 
-  it('rewrites the note start relative to the nearest beat for offset', () => {
+  it('rewrites the note start relative to the nearest sixteenth for offset', () => {
     const note = makeNote({ id: 7, startPpq: 4.125 });
-    expect(laneUpdateForValue('offset', note, 0.25)).toEqual({ id: 7, startPpq: 4.25 });
-    expect(laneUpdateForValue('offset', note, 0.125)).toBeNull();
+    expect(laneUpdateForValue('offset', note, 0.25)).toEqual({ id: 7, startPpq: 4.5 });
+    expect(laneUpdateForValue('offset', note, -0.125)).toBeNull();
   });
 
   it('clamps offset targets at the timeline origin', () => {
@@ -243,6 +243,14 @@ describe('laneUpdateForValue', () => {
     expect(laneUpdateForValue('offset', note, -0.5)).toEqual({ id: 7, startPpq: 0 });
     const atZero = makeNote({ id: 8, startPpq: 0 });
     expect(laneUpdateForValue('offset', atZero, -0.5)).toBeNull();
+  });
+
+  it('keeps offset edits inside the audible source window', () => {
+    const note = makeNote({ id: 7, startPpq: 1.1, durationPpq: 0.5 });
+    expect(laneUpdateForValue('offset', note, 0.5, { minStartPpq: 1, maxEndPpq: 1.5 })).toEqual({
+      id: 7,
+      startPpq: 1,
+    });
   });
 
   it('treats the default off-velocity as unchanged on notes without the field', () => {
