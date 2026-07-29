@@ -3,6 +3,22 @@ import { readonly, ref } from 'vue';
 export const SERVICE_WORKER_URL = '/sw.js';
 const CACHE_PREFIX = 'sonare-studio-';
 
+/** Session key shared with the inline app-shell recovery guard in index.html. */
+export const SHELL_RECOVERY_KEY = 'sonare-shell-recovery';
+
+/**
+ * Clears the one-shot recovery marker now that the entry module has actually
+ * run. Without this a session that recovered once could never recover again.
+ */
+export function markAppShellLoaded(): void {
+  try {
+    window.sessionStorage?.removeItem(SHELL_RECOVERY_KEY);
+  } catch {
+    // Session storage can be unavailable (private mode, blocked cookies). The
+    // guard then allows no retry at all, which is the safe direction.
+  }
+}
+
 export type PwaUpdateReason = 'update' | 'engine-version';
 export type PwaUpdateFailure = 'autosave';
 
@@ -76,9 +92,16 @@ function observeRegistration(
     });
   });
   container.addEventListener?.('controllerchange', () => {
-    if (!reloadAfterControllerChange) return;
-    reloadAfterControllerChange = false;
-    reloadPage();
+    if (reloadAfterControllerChange) {
+      reloadAfterControllerChange = false;
+      reloadPage();
+      return;
+    }
+    // Another client activated a newer release. Activation deletes the cache
+    // this document was loaded from, so every chunk this build has not loaded
+    // yet is now unreachable. Offer the reload affordance — which runs the
+    // autosave barrier — instead of waiting for a lazy import to fail.
+    publishUpdate(registration, 'update');
   });
 }
 
@@ -124,6 +147,11 @@ export async function applyPwaUpdateAndReload(): Promise<void> {
     return;
   }
   await clearAppCaches();
+  // Leaving the worker installed would let it refill its emptied release cache
+  // one opportunistic response at a time. Dropping it makes the next load come
+  // straight from the network — what a forced reload does by hand — after
+  // which a fresh worker installs a complete release.
+  await registration?.unregister().catch(() => undefined);
   updateNoticeState.value = null;
   reloadPage();
 }

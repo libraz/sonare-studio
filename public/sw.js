@@ -86,21 +86,41 @@ self.addEventListener('message', (event) => {
   if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
+/**
+ * Serves the document that belongs to this release.
+ *
+ * A release cache can lose its shell while this worker stays active — storage
+ * eviction, or the in-app recovery clear. Repairing it by re-running the whole
+ * precache keeps the cache all-or-nothing. Caching a single network-fetched
+ * document here instead would pin whatever the HTTP cache or an edge happened
+ * to return, and a document from another release points at hashed assets this
+ * release does not hold: the app then fails to boot, and because the document
+ * is served cache-first no ordinary reload can escape it.
+ */
+const serveAppShell = async () => {
+  const cache = await caches.open(CACHE_VERSION);
+  // Keep the active release internally consistent while an updated worker
+  // waits. The new index becomes visible only after activation.
+  const cached = await cache.match('/index.html');
+  if (cached) return cached;
+  try {
+    await precacheAppShell();
+    const repaired = await (await caches.open(CACHE_VERSION)).match('/index.html');
+    if (repaired) return repaired;
+  } catch {
+    // The deployed release has moved past this worker; serve the live document
+    // without caching it, and let the newer worker install as usual.
+  }
+  return fetch(new Request('/index.html', { cache: 'reload' }));
+};
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (!isCacheableRequest(request)) return;
 
   const url = new URL(request.url);
   if (request.mode === 'navigate') {
-    event.respondWith(
-      caches.open(CACHE_VERSION).then(async (cache) => {
-        // Keep the active release internally consistent while an updated
-        // worker waits. The new index becomes visible only after activation.
-        const cached = await cache.match('/index.html');
-        if (cached) return cached;
-        return putIfCacheable(cache, '/index.html', await fetch(request));
-      }),
-    );
+    event.respondWith(serveAppShell());
     return;
   }
 
@@ -109,7 +129,12 @@ self.addEventListener('fetch', (event) => {
       caches.open(CACHE_VERSION).then(async (cache) => {
         const cached = await cache.match(request);
         if (cached) return cached;
-        return putIfCacheable(cache, request, await fetch(request));
+        const response = await fetch(request);
+        // Only content-addressed assets may join the release cache on a miss:
+        // their URL implies their bytes, so a response from another release
+        // cannot occupy a name this release also serves.
+        if (url.pathname.startsWith('/assets/')) return putIfCacheable(cache, request, response);
+        return response;
       }),
     );
     return;

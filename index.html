@@ -3,6 +3,78 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      /*
+       * App-shell recovery guard.
+       *
+       * The document is served from a versioned Service Worker cache. Should it
+       * ever pair with a hashed entry module from another release, that module
+       * 404s and no application code runs at all — so the recovery has to live
+       * inline in the document. It drops the release caches and the worker once
+       * per session and reloads uncontrolled, which is what a user otherwise
+       * has to reach for a forced reload to achieve. main.ts clears the marker
+       * as soon as it runs, so a later mismatch can still recover.
+       *
+       * It has to stay at the top of <head>: the build hoists the entry module
+       * and the stylesheet into <head>, and the listener must already be
+       * registered when their loads fail.
+       */
+      (() => {
+        const MARKER = 'sonare-shell-recovery';
+
+        function alreadyAttempted() {
+          try {
+            return sessionStorage.getItem(MARKER) === '1';
+          } catch (_error) {
+            /* Without session storage a retry cannot be bounded — do nothing. */
+            return true;
+          }
+        }
+
+        function recover() {
+          const pending = [];
+          if (window.caches) {
+            pending.push(
+              caches.keys().then((keys) => Promise.all(
+                  keys
+                    .filter((key) => key.indexOf('sonare-studio-') === 0)
+                    .map((key) => caches.delete(key))
+                ))
+            );
+          }
+          if (navigator.serviceWorker) {
+            pending.push(
+              navigator.serviceWorker.getRegistrations().then((registrations) => Promise.all(
+                  registrations.map((registration) => registration.unregister())
+                ))
+            );
+          }
+          Promise.all(pending)
+            .catch(() => {})
+            .then(() => {
+              location.reload();
+            });
+        }
+
+        addEventListener(
+          'error',
+          (event) => {
+            const target = event.target;
+            /* Resource errors do not bubble; only script and stylesheet loads
+             * can leave the shell unable to boot. */
+            if (!target || (target.tagName !== 'SCRIPT' && target.tagName !== 'LINK')) return;
+            if (alreadyAttempted()) return;
+            try {
+              sessionStorage.setItem(MARKER, '1');
+            } catch (_error) {
+              return;
+            }
+            recover();
+          },
+          true
+        );
+      })();
+    </script>
     <meta name="description" content="sonare studio — a digital audio workstation that runs entirely in the browser" />
     <meta name="theme-color" content="#0b0d10" />
     <link rel="manifest" href="/manifest.webmanifest" />

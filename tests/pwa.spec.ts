@@ -181,12 +181,39 @@ describe('PWA registration', () => {
     expect(reload).not.toHaveBeenCalled();
   });
 
+  it('offers the reload affordance when another client activates a release', async () => {
+    const registration = Object.assign(new EventTarget(), {
+      scope: '/',
+      installing: null,
+      waiting: null,
+      update: vi.fn(async () => undefined),
+    });
+    const container = Object.assign(new EventTarget(), {
+      controller: {},
+      register: vi.fn(async () => registration),
+      getRegistration: vi.fn(async () => registration),
+    });
+    const reload = vi.fn();
+    await registerServiceWorker({
+      environment: { PROD: true },
+      location: { protocol: 'https:' },
+      navigator: { serviceWorker: container } as unknown as Navigator,
+      reload,
+    });
+
+    container.dispatchEvent(new Event('controllerchange'));
+
+    expect(pwaUpdateNotice.value).toBe('update');
+    expect(reload).not.toHaveBeenCalled();
+  });
+
   it('clears app caches before an ABI recovery reload when no worker is waiting', async () => {
     const registration = Object.assign(new EventTarget(), {
       scope: '/',
       installing: null,
       waiting: null,
       update: vi.fn(async () => undefined),
+      unregister: vi.fn(async () => true),
     });
     const container = Object.assign(new EventTarget(), {
       controller: {},
@@ -212,6 +239,9 @@ describe('PWA registration', () => {
 
     expect(cacheStorage.delete).toHaveBeenCalledWith('sonare-studio-v1');
     expect(cacheStorage.delete).not.toHaveBeenCalledWith('unrelated-cache');
+    // The emptied worker must go too, or it refills its release cache one
+    // opportunistic response at a time and mixes releases.
+    expect(registration.unregister).toHaveBeenCalledTimes(1);
     expect(reload).toHaveBeenCalledTimes(1);
   });
 });
@@ -237,17 +267,24 @@ describe('PWA assets', () => {
     });
   });
 
-  it('pre-caches the app shell and handles navigation fallbacks', async () => {
-    const serviceWorker = await readFile(resolve(process.cwd(), 'public/sw.js'), 'utf8');
+  it('recovers a shell that cannot load its entry module without a forced reload', async () => {
+    const document = await readFile(resolve(process.cwd(), 'index.html'), 'utf8');
 
-    expect(serviceWorker).toContain("const CACHE_VERSION = '__SONARE_CACHE_VERSION__'");
-    expect(serviceWorker).toContain("const PRECACHE_MANIFEST_URL = '/precache-manifest.json'");
-    expect(serviceWorker).toContain('await cache.addAll(assets.map');
-    expect(serviceWorker).toContain("event.data?.type === 'SKIP_WAITING'");
-    expect(serviceWorker).toContain("request.mode === 'navigate'");
-    expect(serviceWorker).toContain("cache.match('/index.html')");
-    expect(serviceWorker).not.toContain("caches.match('/index.html')");
-    expect(serviceWorker).toContain('caches.delete(key)');
+    expect(document).toContain("const MARKER = 'sonare-shell-recovery'");
+    // Resource load errors do not bubble, so the listener must capture.
+    expect(document).toContain("addEventListener(\n          'error',");
+    expect(document).toContain("target.tagName !== 'SCRIPT' && target.tagName !== 'LINK'");
+    expect(document).toContain("key.indexOf('sonare-studio-') === 0");
+    expect(document).toContain('registration.unregister()');
+    expect(document).toContain('location.reload()');
+    // The build hoists the entry module and the stylesheet into <head>, so the
+    // guard only sees their load failures while it stays the first script and
+    // link of the document.
+    const guard = document.indexOf('sonare-shell-recovery');
+    expect(guard).toBeLessThan(document.indexOf('</head>'));
+    const tags = [...document.matchAll(/<(?:script|link)\b/g)].map((match) => match.index);
+    expect(guard).toBeGreaterThan(tags[0]);
+    expect(guard).toBeLessThan(tags[1]);
   });
 
   it('builds a content-addressed AudioWorklet and injects its URL into the app bundle', async () => {
@@ -502,5 +539,62 @@ describe('Service Worker release isolation', () => {
     await expect(waitingB.fetch('/next', 'navigate')).resolves.toMatchObject({
       body: 'release-b:/index.html',
     });
+  });
+
+  it('repairs a release cache that lost its shell instead of pinning one document', async () => {
+    const template = await readFile(resolve(process.cwd(), 'public/sw.js'), 'utf8');
+    const manifest = releaseManifest('a');
+    const fetcher = async (request: SwRequest): Promise<SwResponse> => {
+      const path = cacheKey(request);
+      if (path === '/precache-manifest.json') return new SwResponse(JSON.stringify(manifest));
+      return new SwResponse(`release-a:${path}`);
+    };
+    const caches = new SwCacheStorage(fetcher);
+    const worker = evaluateServiceWorker(
+      template.replaceAll('__SONARE_CACHE_VERSION__', manifest.cacheVersion),
+      caches,
+      fetcher,
+    );
+    await worker.install();
+    await worker.activate();
+
+    // Storage eviction, or the in-app recovery clear, can empty the cache of a
+    // worker that stays active.
+    caches.stores.delete(manifest.cacheVersion);
+
+    await expect(worker.fetch('/anything', 'navigate')).resolves.toMatchObject({
+      body: 'release-a:/index.html',
+    });
+    const repaired = caches.stores.get(manifest.cacheVersion);
+    expect([...repaired!.entries.keys()].sort()).toEqual([...manifest.assets].sort());
+  });
+
+  it('admits only content-addressed assets into the release cache on a miss', async () => {
+    const template = await readFile(resolve(process.cwd(), 'public/sw.js'), 'utf8');
+    const manifest = releaseManifest('a');
+    const fetcher = async (request: SwRequest): Promise<SwResponse> => {
+      const path = cacheKey(request);
+      if (path === '/precache-manifest.json') return new SwResponse(JSON.stringify(manifest));
+      return new SwResponse(`release-a:${path}`);
+    };
+    const caches = new SwCacheStorage(fetcher);
+    const worker = evaluateServiceWorker(
+      template.replaceAll('__SONARE_CACHE_VERSION__', manifest.cacheVersion),
+      caches,
+      fetcher,
+    );
+    await worker.install();
+    await worker.activate();
+    const cache = caches.stores.get(manifest.cacheVersion);
+
+    await expect(worker.fetch('/late-icon.svg')).resolves.toMatchObject({
+      body: 'release-a:/late-icon.svg',
+    });
+    expect(cache!.entries.has('/late-icon.svg')).toBe(false);
+
+    await expect(worker.fetch('/assets/late-a.js')).resolves.toMatchObject({
+      body: 'release-a:/assets/late-a.js',
+    });
+    expect(cache!.entries.has('/assets/late-a.js')).toBe(true);
   });
 });
