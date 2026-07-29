@@ -90,6 +90,7 @@ interface FakeWarpMap {
   anchors: Array<{ warpSample: number; sourceSample: number }>;
 }
 
+/** Complete native-history state, including the allocator cursors. */
 interface FakeState {
   tempoSegments: Array<{ startPpq: number; bpm: number; endBpm: number }>;
   timeSignatures: Array<{ startPpq: number; numerator: number; denominator: number }>;
@@ -104,7 +105,6 @@ interface FakeState {
   warpMaps: Map<number, FakeWarpMap>;
 }
 
-/** Complete native-history state, including the allocator cursors. */
 /** Packs a UMP MIDI 1.0 channel-voice word with the real binding layout. */
 function pack(
   group: number,
