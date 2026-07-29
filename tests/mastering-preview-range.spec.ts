@@ -4,6 +4,7 @@ import {
   formatLevel,
   isClippingRisk,
   loudnessBarFraction,
+  rangeBarFraction,
 } from '@/ui/mastering/loudness';
 import {
   barLengthPpq,
@@ -80,6 +81,14 @@ describe('loudness readout helpers', () => {
     expect(loudnessBarFraction(6)).toBe(1);
     expect(loudnessBarFraction(undefined)).toBe(0);
     expect(loudnessBarFraction(Number.NEGATIVE_INFINITY)).toBe(0);
+  });
+
+  it('maps LRA and dynamic-range values from a positive comparison scale', () => {
+    expect(rangeBarFraction(0)).toBe(0);
+    expect(rangeBarFraction(4.5)).toBeCloseTo(0.225, 5);
+    expect(rangeBarFraction(9.1)).toBeCloseTo(0.455, 5);
+    expect(rangeBarFraction(20)).toBe(1);
+    expect(rangeBarFraction(30)).toBe(1);
   });
 
   it('formats levels with infinity and missing-value fallbacks', () => {

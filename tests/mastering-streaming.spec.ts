@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  invalidStreamingPlatformCount,
   normalizeStreamingPlatforms,
   parseStreamingPreview,
   streamingTargetsFromReport,
@@ -92,6 +93,15 @@ describe('streaming target helpers', () => {
         { name: 'Bad Ceiling', targetLufs: -14, ceilingDb: -99 },
       ]),
     ).toEqual([{ name: 'Bandcamp', targetLufs: -18, ceilingDb: -2 }]);
+  });
+
+  it('identifies invalid editor rows without silently submitting a subset', () => {
+    expect(
+      invalidStreamingPlatformCount([
+        { name: 'Bandcamp', targetLufs: -18, ceilingDb: -2 },
+        { name: '', targetLufs: -14, ceilingDb: -1 },
+      ]),
+    ).toBe(1);
   });
 
   it('computes platform verdicts from the panel mixdown report', () => {

@@ -51,6 +51,18 @@ describe('mastering chain controls', () => {
     expect(controls.find((c) => c.id === 'quality')).toMatchObject({ min: 0, max: 1 });
   });
 
+  it('shows every catalog parameter and prioritizes explicitly saved values', () => {
+    const catalog = Array.from({ length: 12 }, (_, index) => `param${index + 1}`);
+    const controls = masteringProcessorControls(
+      slot('custom.wide', { customGain: 0.5 }),
+      () => catalog,
+    );
+
+    expect(controls).toHaveLength(13);
+    expect(controls.map((control) => control.id)).toEqual(['customGain', ...catalog]);
+    expect(controls[0]).toMatchObject({ value: 0.5 });
+  });
+
   it('uses the resolved control range for clamping', () => {
     const [control] = masteringProcessorControls(slot('dynamics.compressor'), () => ['attackMs']);
 

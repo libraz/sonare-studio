@@ -8,6 +8,8 @@ export const CLIP_WARN_TRUE_PEAK_DB = -0.3;
 
 /** Bottom of the loudness bar scale in dB. */
 export const LOUDNESS_BAR_MIN_DB = -60;
+/** Useful upper bound for LRA and dynamic-range comparison bars. */
+export const RANGE_BAR_MAX_DB = 20;
 
 /**
  * Maps a dB value onto a 0..1 bar fraction over [minDb, maxDb].
@@ -25,6 +27,16 @@ export function loudnessBarFraction(
 ): number {
   if (valueDb === undefined || !Number.isFinite(valueDb) || maxDb <= minDb) return 0;
   return Math.min(1, Math.max(0, (valueDb - minDb) / (maxDb - minDb)));
+}
+
+/**
+ * Maps a non-negative variation metric (LRA or dynamic range) to a comparison
+ * bar. These metrics are not dBFS levels, so treating zero as the top of a
+ * level meter made every positive reading appear full scale.
+ */
+export function rangeBarFraction(value: number | undefined, max = RANGE_BAR_MAX_DB): number {
+  if (value === undefined || !Number.isFinite(value) || max <= 0) return 0;
+  return Math.min(1, Math.max(0, value / max));
 }
 
 /**

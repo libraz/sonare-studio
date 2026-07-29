@@ -49,6 +49,7 @@ import {
 } from '@/ui/mastering/stereo-analysis';
 import {
   createDefaultStreamingPlatforms,
+  invalidStreamingPlatformCount,
   normalizeStreamingPlatforms,
   parseStreamingPreview,
   type StreamingPlatformConfig,
@@ -266,15 +267,19 @@ async function onCheckTargets(): Promise<void> {
   checkingTargets.value = true;
   error.value = '';
   try {
+    const platforms = normalizeStreamingPlatforms(streamingPlatforms.value);
+    if (invalidStreamingPlatformCount(streamingPlatforms.value) > 0) {
+      error.value = t.value.shell.mastering.streaming.invalidTargets;
+      return;
+    }
+    if (platforms.length === 0) {
+      error.value = t.value.shell.mastering.streaming.noTargets;
+      return;
+    }
     if (!previewState.value?.processed || previewStale.value) await onPreview();
     const source = previewState.value?.processed;
     if (!source) {
       if (!error.value) error.value = t.value.shell.mastering.assistant.needsPreview;
-      return;
-    }
-    const platforms = normalizeStreamingPlatforms(streamingPlatforms.value);
-    if (platforms.length === 0) {
-      error.value = t.value.shell.mastering.streaming.noTargets;
       return;
     }
     const reportTargets = streamingTargetsFromReport(source.report, platforms);
@@ -621,12 +626,14 @@ const loudnessRows = computed<LoudnessRow[]>(() => {
       unit: 'LU',
       a: a?.loudnessRange,
       b: b?.loudnessRange,
+      barScale: 'range' as const,
     },
     {
       label: t.value.shell.mastering.loudness.dynamicRange,
       unit: 'dB',
       a: a?.dynamicRangeDb,
       b: b?.dynamicRangeDb,
+      barScale: 'range' as const,
     },
   ];
 });
@@ -657,6 +664,8 @@ const renderError = computed(() =>
 
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', onDocumentPointerDown, true);
+  for (const gesture of gestures.values()) gesture.end();
+  gestures.clear();
   controller.dispose();
   audioPreview.dispose();
 });

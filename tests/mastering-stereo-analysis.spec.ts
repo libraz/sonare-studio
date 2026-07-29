@@ -22,11 +22,8 @@ describe('parseMonoCompatibility', () => {
 
   it('tolerates malformed payloads', () => {
     expect(parseMonoCompatibility('not json')).toBeNull();
-    expect(parseMonoCompatibility('[]')).toEqual({
-      correlation: 0,
-      width: 0,
-      monoPeakDb: Number.NEGATIVE_INFINITY,
-      compatible: false,
-    });
+    expect(parseMonoCompatibility('[]')).toBeNull();
+    expect(parseMonoCompatibility('{}')).toBeNull();
+    expect(parseMonoCompatibility('{"correlation": 0}')).toBeNull();
   });
 });

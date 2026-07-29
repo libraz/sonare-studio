@@ -31,9 +31,6 @@ export interface MasteringControl {
 /** Resolves a processor name to its parameter names (injectable for tests). */
 export type MasteringParamResolver = (processor: string) => string[];
 
-/** Maximum number of controls a processor row exposes. */
-const MAX_CHAIN_CONTROLS = 8;
-
 /** One parameter range heuristic, matched by name pattern. */
 interface ParamRangeRule {
   test: RegExp;
@@ -90,7 +87,8 @@ function defaultResolveParams(processor: string): string[] {
 
 /**
  * Lists the parameter controls of a mastering chain slot: the catalog names
- * merged with any explicitly set numeric params, capped at eight controls.
+ * merged with any explicitly set numeric params. Explicit values come first
+ * so a saved parameter is never hidden by a long processor catalog.
  *
  * @param slot The chain processor slot.
  * @param resolveParams Optional catalog resolver (tests, custom catalogs).
@@ -102,7 +100,7 @@ export function masteringProcessorControls(
 ): MasteringControl[] {
   const catalogNames = resolveParams(slot.processor);
   const setNames = Object.keys(slot.params).filter((name) => typeof slot.params[name] === 'number');
-  const names = [...new Set([...catalogNames, ...setNames])].slice(0, MAX_CHAIN_CONTROLS);
+  const names = [...new Set([...setNames, ...catalogNames])];
   return names.map((name) => {
     const rule = paramRule(slot.processor, name);
     const raw = slot.params[name];

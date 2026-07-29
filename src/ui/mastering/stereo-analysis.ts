@@ -14,9 +14,9 @@ export interface MonoCompatibilityReport {
   compatible: boolean;
 }
 
-function finiteField(record: Record<string, unknown>, key: string, fallback: number): number {
+function finiteField(record: Record<string, unknown>, key: string): number | null {
   const value = record[key];
-  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 export function parseMonoCompatibility(json: string): MonoCompatibilityReport | null {
@@ -26,12 +26,23 @@ export function parseMonoCompatibility(json: string): MonoCompatibilityReport | 
   } catch {
     return null;
   }
-  if (typeof root !== 'object' || root === null) return null;
+  if (typeof root !== 'object' || root === null || Array.isArray(root)) return null;
   const record = root as Record<string, unknown>;
+  const correlation = finiteField(record, 'correlation');
+  const width = finiteField(record, 'monoCompatWidth');
+  const monoPeakDb = finiteField(record, 'monoCompatPeak');
+  if (
+    correlation === null ||
+    width === null ||
+    monoPeakDb === null ||
+    typeof record.likelyMonoCompatible !== 'boolean'
+  ) {
+    return null;
+  }
   return {
-    correlation: finiteField(record, 'correlation', 0),
-    width: finiteField(record, 'monoCompatWidth', 0),
-    monoPeakDb: finiteField(record, 'monoCompatPeak', Number.NEGATIVE_INFINITY),
-    compatible: record.likelyMonoCompatible === true,
+    correlation,
+    width,
+    monoPeakDb,
+    compatible: record.likelyMonoCompatible,
   };
 }

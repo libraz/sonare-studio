@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from '@/ui/i18n';
-import { formatLevel, loudnessBarFraction } from '@/ui/mastering/loudness';
+import { formatLevel, loudnessBarFraction, rangeBarFraction } from '@/ui/mastering/loudness';
 
 defineProps<{
   rows: ReadonlyArray<{
@@ -8,6 +8,8 @@ defineProps<{
     unit: string;
     a: number | undefined;
     b: number | undefined;
+    /** LRA / dynamic-range bars use a positive range scale, not dBFS. */
+    barScale?: 'level' | 'range';
   }>;
   clipWarning: boolean;
 }>();
@@ -26,13 +28,23 @@ const { t } = useI18n();
       <span class="loudness-label">{{ row.label }}</span>
       <span class="loudness-cell">
         <span class="loudness-bar">
-          <span class="loudness-fill" :style="{ width: `${loudnessBarFraction(row.a) * 100}%` }" />
+          <span
+            class="loudness-fill"
+            :style="{
+              width: `${(row.barScale === 'range' ? rangeBarFraction(row.a) : loudnessBarFraction(row.a)) * 100}%`,
+            }"
+          />
         </span>
         <span class="loudness-value">{{ formatLevel(row.a) }} {{ row.unit }}</span>
       </span>
       <span class="loudness-cell">
         <span class="loudness-bar">
-          <span class="loudness-fill" :style="{ width: `${loudnessBarFraction(row.b) * 100}%` }" />
+          <span
+            class="loudness-fill"
+            :style="{
+              width: `${(row.barScale === 'range' ? rangeBarFraction(row.b) : loudnessBarFraction(row.b)) * 100}%`,
+            }"
+          />
         </span>
         <span class="loudness-value">{{ formatLevel(row.b) }} {{ row.unit }}</span>
       </span>

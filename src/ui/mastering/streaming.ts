@@ -40,22 +40,36 @@ export function normalizeStreamingPlatforms(
   platforms: ReadonlyArray<StreamingPlatformConfig>,
 ): StreamingPlatformConfig[] {
   return platforms.flatMap((platform) => {
-    const name = platform.name.trim();
-    const targetLufs = Number(platform.targetLufs);
-    const ceilingDb = Number(platform.ceilingDb);
-    if (
-      name.length === 0 ||
-      !Number.isFinite(targetLufs) ||
-      !Number.isFinite(ceilingDb) ||
-      targetLufs > 0 ||
-      targetLufs < -80 ||
-      ceilingDb > 6 ||
-      ceilingDb < -24
-    ) {
-      return [];
-    }
-    return [{ name, targetLufs, ceilingDb }];
+    const normalized = normalizeStreamingPlatform(platform);
+    return normalized ? [normalized] : [];
   });
+}
+
+/** Counts editor rows that cannot be submitted to the streaming preview. */
+export function invalidStreamingPlatformCount(
+  platforms: ReadonlyArray<StreamingPlatformConfig>,
+): number {
+  return platforms.filter((platform) => normalizeStreamingPlatform(platform) === null).length;
+}
+
+function normalizeStreamingPlatform(
+  platform: StreamingPlatformConfig,
+): StreamingPlatformConfig | null {
+  const name = platform.name.trim();
+  const targetLufs = Number(platform.targetLufs);
+  const ceilingDb = Number(platform.ceilingDb);
+  if (
+    name.length === 0 ||
+    !Number.isFinite(targetLufs) ||
+    !Number.isFinite(ceilingDb) ||
+    targetLufs > 0 ||
+    targetLufs < -80 ||
+    ceilingDb > 6 ||
+    ceilingDb < -24
+  ) {
+    return null;
+  }
+  return { name, targetLufs, ceilingDb };
 }
 
 /** One platform's loudness verdict for the analyzed master. */

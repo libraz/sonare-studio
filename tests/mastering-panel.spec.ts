@@ -190,6 +190,7 @@ describe('MasteringPanel.vue', () => {
       'Modulation',
       'Saturation',
       'Stereo',
+      'Effects',
     ]);
 
     await wrapper.find('.catalog-item').trigger('click');
@@ -220,6 +221,20 @@ describe('MasteringPanel.vue', () => {
     // The whole drag coalesced into one history entry.
     undo();
     expect(store.mixer.masteringChain?.processors[0]?.params.tiltDb).toBeUndefined();
+  });
+
+  it('commits an active parameter gesture when unmounted', async () => {
+    addMasteringProcessor('eq.tilt');
+    clearHistory();
+    const wrapper = mount(MasteringPanel);
+    await wrapper.find('.chain-name').trigger('click');
+
+    wrapper.findComponent({ name: 'MixerKnob' }).vm.$emit('change', 3.5, false);
+    expect(store.mixer.masteringChain?.processors[0].params.tiltDb).toBe(3.5);
+
+    wrapper.unmount();
+    undo();
+    expect(store.mixer.masteringChain?.processors[0].params.tiltDb).toBeUndefined();
   });
 
   it('arms and clears mastering processor MIDI learn targets', async () => {
@@ -390,6 +405,16 @@ describe('MasteringPanel.vue', () => {
     const tableText = wrapper.find('.targets-table').text();
     expect(tableText).toContain('Bandcamp');
     expect(tableText).toContain('-4.0');
+  });
+
+  it('keeps invalid streaming target rows visible and reports them before checking', async () => {
+    const wrapper = mount(MasteringPanel);
+    const firstTarget = wrapper.find('.targets-editor-row');
+    await firstTarget.findAll('input')[1].setValue('4');
+    await wrapper.find('.targets-button').trigger('click');
+
+    expect(wrapper.find('.mastering-error').text()).toContain('Correct or remove invalid');
+    expect(firstTarget.findAll('input')[1].element.value).toBe('4');
   });
 
   it('surfaces render failures and recovers on the next preview', async () => {
