@@ -17,6 +17,7 @@
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
 import TransportIcon from '@/components/shell/TransportIcon.vue';
 import { cleanMenuItems, isNavigable, type MenuBarMenu } from '@/ui/menu/menu-bar';
+import { useShortcutBlockingOverlay } from '@/ui/overlay-registry';
 
 const props = withDefaults(
   defineProps<{
@@ -31,6 +32,7 @@ const props = withDefaults(
 );
 
 const openId = ref<string | null>(null);
+useShortcutBlockingOverlay(computed(() => openId.value !== null));
 /** Id of the row highlighted for keyboard activation, if any. */
 const activeRowId = ref<string | null>(null);
 

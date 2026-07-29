@@ -16,7 +16,10 @@ export function useShortcutBlockingOverlay(open: MaybeRef<boolean>): void {
     if (active) shortcutBlockingOverlays.add(token);
     else shortcutBlockingOverlays.delete(token);
   };
-  const stop = watch(() => unref(open), setActive, { immediate: true });
+  // A menu can close immediately before the next key event. Keep the global
+  // shortcut guard in lockstep with its visibility instead of waiting for
+  // Vue's normal pre-render watcher queue.
+  const stop = watch(() => unref(open), setActive, { flush: 'sync', immediate: true });
   if (getCurrentScope()) {
     onScopeDispose(() => {
       stop();

@@ -55,12 +55,13 @@ watch(
 
 <template>
   <section class="project-lists">
-    <div class="list-tabs" role="tablist" :aria-label="t.shell.lists.label">
+    <div v-tablist class="list-tabs" role="tablist" :aria-label="t.shell.lists.label">
       <button
         v-for="tab in TABS"
         :key="tab.id"
         type="button"
         class="list-tab"
+        :data-tab-id="tab.id"
         :class="{ active: activeTab === tab.id }"
         role="tab"
         :aria-selected="activeTab === tab.id"
@@ -70,15 +71,19 @@ watch(
       </button>
     </div>
     <div class="list-tab-body" role="tabpanel">
-      <TempoMapEditor v-if="activeTab === 'tempo'" />
-      <TimeSignatureEditor v-else-if="activeTab === 'meter'" />
-      <KeyListEditor v-else-if="activeTab === 'key'" />
+      <TempoMapEditor v-show="activeTab === 'tempo'" />
+      <TimeSignatureEditor v-show="activeTab === 'meter'" />
+      <KeyListEditor v-show="activeTab === 'key'" />
       <ChordListEditor
-        v-else-if="activeTab === 'chords'"
+        v-show="activeTab === 'chords'"
         :position-ppq="props.positionPpq"
         @seek="emit('seek', $event)"
       />
-      <MarkerListEditor v-else :position-ppq="props.positionPpq" @seek="emit('seek', $event)" />
+      <MarkerListEditor
+        v-show="activeTab === 'markers'"
+        :position-ppq="props.positionPpq"
+        @seek="emit('seek', $event)"
+      />
     </div>
   </section>
 </template>

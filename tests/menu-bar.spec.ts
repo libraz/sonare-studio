@@ -1,8 +1,17 @@
 import { mount } from '@vue/test-utils';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 import MenuBar from '@/components/shell/MenuBar.vue';
 import type { MenuBarMenu } from '@/ui/menu/menu-bar';
+import {
+  resetShortcutBlockingOverlaysForTest,
+  shortcutBlockingOverlayOpen,
+} from '@/ui/overlay-registry';
+
+afterEach(() => {
+  resetShortcutBlockingOverlaysForTest();
+  document.body.replaceChildren();
+});
 
 describe('MenuBar', () => {
   const menus: MenuBarMenu[] = [
@@ -30,6 +39,20 @@ describe('MenuBar', () => {
     expect(add).toHaveBeenCalledWith('pointerdown', expect.any(Function), true);
     wrapper.unmount();
     expect(remove).toHaveBeenCalledWith('pointerdown', expect.any(Function), true);
+  });
+
+  it('blocks global shortcuts only while a menu is open', async () => {
+    const wrapper = mount(MenuBar, {
+      props: { menus },
+      global: { stubs: { TransportIcon: true } },
+    });
+
+    expect(shortcutBlockingOverlayOpen.value).toBe(false);
+    await wrapper.find('.app-menubar__trigger').trigger('click');
+    expect(shortcutBlockingOverlayOpen.value).toBe(true);
+    await wrapper.find('.app-menubar__trigger').trigger('click');
+    expect(shortcutBlockingOverlayOpen.value).toBe(false);
+    wrapper.unmount();
   });
 
   it('exposes toggleable rows as menuitemcheckbox with aria-checked', async () => {

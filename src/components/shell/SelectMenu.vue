@@ -1,5 +1,6 @@
 <script setup lang="ts" generic="T extends string | number">
 import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue';
+import { useShortcutBlockingOverlay } from '@/ui/overlay-registry';
 
 /**
  * Accessible, frosted-glass replacement for the native <select>. Drop-in: bind
@@ -41,6 +42,7 @@ const emit = defineEmits<{
 }>();
 
 const open = ref(false);
+useShortcutBlockingOverlay(open);
 const triggerRef = ref<HTMLButtonElement | null>(null);
 const listRef = ref<HTMLElement | null>(null);
 const activeIndex = ref(-1);
@@ -146,6 +148,14 @@ function onTypeahead(key: string): void {
   }
 }
 
+/** Returns the first enabled option index from the requested edge. */
+function enabledEdgeIndex(fromEnd: boolean): number {
+  const options = fromEnd ? [...props.options].reverse() : props.options;
+  const offset = options.findIndex((option) => !option.disabled);
+  if (offset < 0) return activeIndex.value;
+  return fromEnd ? props.options.length - 1 - offset : offset;
+}
+
 function onKeydown(event: KeyboardEvent): void {
   switch (event.key) {
     case 'ArrowDown':
@@ -161,15 +171,15 @@ function onKeydown(event: KeyboardEvent): void {
     case 'Home':
       if (open.value) {
         event.preventDefault();
-        activeIndex.value = 0;
-        move(0);
+        activeIndex.value = enabledEdgeIndex(false);
+        scrollActiveIntoView();
       }
       break;
     case 'End':
       if (open.value) {
         event.preventDefault();
-        activeIndex.value = props.options.length - 1;
-        move(0);
+        activeIndex.value = enabledEdgeIndex(true);
+        scrollActiveIntoView();
       }
       break;
     case 'Enter':

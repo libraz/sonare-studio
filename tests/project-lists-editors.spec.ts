@@ -169,6 +169,22 @@ describe('project list editors', () => {
     });
   });
 
+  describe('ProjectListsPanel', () => {
+    it('keeps an uncommitted editor draft while switching list tabs', async () => {
+      const wrapper = mount(ProjectListsPanel);
+      const tempo = wrapper.findComponent(TempoMapEditor);
+      await buttonByText(tempo, 'Add tempo').trigger('click');
+      expect(tempo.findAll('tbody tr')).toHaveLength(2);
+
+      await wrapper.get('[data-tab-id="meter"]').trigger('click');
+      await wrapper.get('[data-tab-id="tempo"]').trigger('click');
+
+      expect(tempo.findAll('tbody tr')).toHaveLength(2);
+      expect(store.tempoSegments).toHaveLength(1);
+      wrapper.unmount();
+    });
+  });
+
   describe('KeyListEditor', () => {
     it('shows and toggles the scale highlight control', async () => {
       const wrapper = mount(KeyListEditor);
@@ -433,12 +449,25 @@ describe('project list editors', () => {
       wrapper.unmount();
     });
 
+    it('switches tabs with arrow keys and keeps focus on the selected tab', async () => {
+      const wrapper = mount(ProjectListsPanel, { attachTo: document.body });
+      const tablist = wrapper.find('[role="tablist"]');
+      await tablist.trigger('keydown', { key: 'ArrowRight' });
+      expect(wrapper.findComponent(TimeSignatureEditor).exists()).toBe(true);
+      expect(document.activeElement).toBe(wrapper.find('[data-tab-id="meter"]').element);
+      await tablist.trigger('keydown', { key: 'End' });
+      expect(wrapper.findComponent(MarkerListEditor).exists()).toBe(true);
+      expect(document.activeElement).toBe(wrapper.find('[data-tab-id="markers"]').element);
+      wrapper.unmount();
+    });
+
     it('forwards the playhead getter and seek events for markers', async () => {
       const wrapper = mount(ProjectListsPanel, { props: { positionPpq: () => 4 } });
       await buttonByText(wrapper, 'Markers').trigger('click');
-      await buttonByText(wrapper, 'Add at playhead').trigger('click');
+      const markers = wrapper.findComponent(MarkerListEditor);
+      await buttonByText(markers, 'Add at playhead').trigger('click');
       expect(store.markers[0].ppq).toBe(4);
-      await wrapper.find('tbody tr').trigger('click');
+      await markers.find('tbody tr').trigger('click');
       expect(wrapper.emitted('seek')).toEqual([[4]]);
       wrapper.unmount();
     });

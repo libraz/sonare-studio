@@ -50,6 +50,9 @@ describe('NewProjectDialog', () => {
 
   it('lists every built-in template', () => {
     open();
+    const listbox = q<HTMLElement>('[role="listbox"]');
+    expect(listbox?.tabIndex).toBe(0);
+    expect(listbox?.getAttribute('aria-activedescendant')).toBe('new-project-template-empty');
     const options = qa('[role="option"]');
     expect(options).toHaveLength(TEMPLATE_NAMES.length);
     expect(options.map((o) => o.querySelector('.template-label')?.textContent)).toEqual([
@@ -117,6 +120,15 @@ describe('NewProjectDialog', () => {
 
     const emitted = wrapper?.emitted('create') as Array<[{ template: string }]>;
     expect(emitted[0][0].template).toBe('band');
+  });
+
+  it('updates the template listbox active descendant during keyboard selection', async () => {
+    open();
+    const listbox = q<HTMLElement>('[role="listbox"]')!;
+    listbox.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    await nextTick();
+
+    expect(listbox.getAttribute('aria-activedescendant')).toBe('new-project-template-band');
   });
 
   it('does not turn Enter on Cancel into the dialog default action', async () => {

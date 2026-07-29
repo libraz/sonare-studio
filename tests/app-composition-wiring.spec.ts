@@ -11,6 +11,7 @@ describe('application composition wiring', () => {
     expect(main).toContain('.use(createPinia())');
     expect(main).toContain(".directive('tooltip', vTooltip)");
     expect(main).toContain(".directive('radiogroup', vRadioGroup)");
+    expect(main).toContain(".directive('tablist', vTabList)");
     expect(main).toContain(".mount('#app')");
     expect(main).toContain('void registerServiceWorker().catch');
   });

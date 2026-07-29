@@ -3,6 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 import ContextMenu from '@/components/shell/ContextMenu.vue';
 import { closeContextMenu, openContextMenu, useContextMenuState } from '@/ui/menu/context-menu';
+import {
+  resetShortcutBlockingOverlaysForTest,
+  shortcutBlockingOverlayOpen,
+} from '@/ui/overlay-registry';
 
 let wrapper: VueWrapper | null = null;
 
@@ -16,6 +20,7 @@ async function mountOpenMenu(items: Parameters<typeof openContextMenu>[2]): Prom
 
 afterEach(() => {
   closeContextMenu();
+  resetShortcutBlockingOverlaysForTest();
   useContextMenuState().error = '';
   wrapper?.unmount();
   wrapper = null;
@@ -23,6 +28,13 @@ afterEach(() => {
 });
 
 describe('ContextMenu keyboard navigation', () => {
+  it('blocks global shortcuts while the context menu is open', async () => {
+    await mountOpenMenu([{ id: 'first', label: 'First', run: vi.fn() }]);
+    expect(shortcutBlockingOverlayOpen.value).toBe(true);
+    closeContextMenu();
+    expect(shortcutBlockingOverlayOpen.value).toBe(false);
+  });
+
   it('focuses the first enabled item when opened', async () => {
     await mountOpenMenu([
       { id: 'disabled', label: 'Disabled', disabled: true, run: vi.fn() },

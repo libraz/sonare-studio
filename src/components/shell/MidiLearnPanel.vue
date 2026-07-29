@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { useAppSettings } from '@/composables/useAppSettings';
+import { confirmDialog } from '@/composables/useDialogs';
 import type { MidiLearnHandle } from '@/composables/useMidiLearn';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
@@ -32,7 +34,29 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const appSettings = useAppSettings();
 const store = useProjectStore();
+const panel = ref<HTMLElement | null>(null);
+
+function close(): void {
+  emit('close');
+}
+
+function onDocumentPointerDown(event: PointerEvent): void {
+  if (!panel.value?.contains(event.target as Node)) close();
+}
+
+onMounted(() => {
+  document.addEventListener('pointerdown', onDocumentPointerDown, true);
+  // Focus the dialog itself, not its dismiss action: a screen reader then
+  // announces the panel's name, and the first Tab reaches the bindings rather
+  // than leaving the close button pre-armed under Enter.
+  void nextTick(() => panel.value?.focus());
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onDocumentPointerDown, true);
+});
 
 /** The two bindable parameters per strip, in column order. */
 const PARAMS: ReadonlyArray<{ param: MidiLearnParam; labelKey: 'volume' | 'pan' }> = [
@@ -109,13 +133,41 @@ const deviceBindings = computed<DeviceBindingRow[]>(() => {
   }
   return rows.sort((a, b) => a.label.localeCompare(b.label));
 });
+
+function clearAll(): void {
+  void (async () => {
+    if (
+      appSettings.settings.confirmDestructive &&
+      !(await confirmDialog({
+        title: t.value.shell.midiLearn.clearAllTitle,
+        message: t.value.shell.midiLearn.clearAllMessage,
+        danger: true,
+        confirmLabel: t.value.shell.midiLearn.clearAll,
+      }))
+    )
+      return;
+    props.learn.clearAll();
+  })();
+}
 </script>
 
 <template>
-  <div class="midi-learn-panel" role="dialog" :aria-label="t.shell.midiLearn.label">
+  <div
+    ref="panel"
+    class="midi-learn-panel"
+    role="dialog"
+    tabindex="-1"
+    :aria-label="t.shell.midiLearn.label"
+    @keydown.escape.stop.prevent="close"
+  >
     <header class="ml-head">
       <h2 class="ml-title">{{ t.shell.midiLearn.title }}</h2>
-      <button type="button" class="ml-close" :aria-label="t.shell.midiLearn.close" @click="emit('close')">
+      <button
+        type="button"
+        class="ml-close"
+        :aria-label="t.shell.midiLearn.close"
+        @click="close"
+      >
         ×
       </button>
     </header>
@@ -209,7 +261,7 @@ const deviceBindings = computed<DeviceBindingRow[]>(() => {
         type="button"
         class="ml-btn"
         :disabled="learn.bindings.size === 0 && learn.armed.value === null"
-        @click="learn.clearAll()"
+        @click="clearAll"
       >
         {{ t.shell.midiLearn.clearAll }}
       </button>

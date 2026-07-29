@@ -9,9 +9,8 @@ describe('editor dock tab strip', () => {
   it('keeps dock tabs in a dedicated scrollable tablist', () => {
     expect(appVue).toContain('<div class="dock-tabs">');
     expect(appVue).toContain(
-      'class="dock-tab-scroll"\n            role="tablist"\n            :aria-label="t.shell.editor.panels"',
+      '<div v-tablist class="dock-tab-scroll" role="tablist" :aria-label="t.shell.editor.panels">',
     );
-    expect(appVue).toContain('@keydown="onDockTabKeydown"');
   });
 
   it('allows the tab list to scroll horizontally instead of clipping narrow viewports', () => {
@@ -26,7 +25,6 @@ describe('editor dock tab strip', () => {
     for (const tab of tabs) {
       expect(appVue).toContain(`:id="dockTabId('${tab}')"`);
       expect(appVue).toContain(`:aria-controls="dockPanelId('${tab}')"`);
-      expect(appVue).toContain(`:tabindex="dockTab === '${tab}' ? 0 : -1"`);
       expect(appVue).toContain(`:id="dockPanelId('${tab}')"`);
       expect(appVue).toContain('role="tabpanel"');
       expect(appVue).toContain(`:aria-labelledby="dockTabId('${tab}')"`);
@@ -43,13 +41,12 @@ describe('editor dock tab strip', () => {
     expect(scoreToggle).toBeGreaterThan(tablistEnd);
   });
 
-  it('supports roving keyboard navigation across dock tabs', () => {
-    expect(appVue).toContain('function onDockTabKeydown(event: KeyboardEvent)');
-    expect(appVue).toContain("event.key === 'ArrowRight'");
-    expect(appVue).toContain("event.key === 'ArrowLeft'");
-    expect(appVue).toContain("event.key === 'Home'");
-    expect(appVue).toContain("event.key === 'End'");
-    expect(appVue).toContain('function moveDockTab(delta: number)');
-    expect(appVue).toContain('document.getElementById(dockTabId(tab))?.focus()');
+  it('takes roving keyboard navigation from the shared tablist directive', () => {
+    // Arrow/Home/End navigation, the single tab stop and focus movement are the
+    // directive's contract (tests/roving-directives.spec.ts). A hand-rolled
+    // handler here would be a fourth copy of the same index arithmetic.
+    expect(appVue).toContain('v-tablist');
+    expect(appVue).not.toContain('onDockTabKeydown');
+    expect(appVue).not.toContain('moveDockTab');
   });
 });

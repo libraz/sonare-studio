@@ -55,6 +55,13 @@ const templateInfo = computed<Record<TemplateName, { label: string; description:
 
 const selected = ref<TemplateName>('empty');
 
+/** Stable option id used by the focused listbox's active-descendant relation. */
+function templateId(name: TemplateName): string {
+  return `new-project-template-${name}`;
+}
+
+const activeTemplateId = computed(() => templateId(selected.value));
+
 /** Fresh document of the selected template, used for the track preview. */
 const preview = computed<ProjectDocument>(() => createTemplate(selected.value));
 
@@ -113,9 +120,17 @@ function templateDescription(name: TemplateName): string {
     <template #title>{{ t.dialogs.newProject.title }}</template>
     <div class="dialog-body">
       <div class="dialog-columns">
-        <ul class="template-list" role="listbox" :aria-label="t.dialogs.newProject.templates">
+        <ul
+          class="template-list"
+          role="listbox"
+          tabindex="0"
+          :aria-label="t.dialogs.newProject.templates"
+          :aria-activedescendant="activeTemplateId"
+          @keydown.stop="onKeydown"
+        >
           <li
             v-for="name in TEMPLATE_NAMES"
+            :id="templateId(name)"
             :key="name"
             class="template-item"
             :class="{ selected: selected === name }"

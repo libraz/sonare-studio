@@ -1,12 +1,14 @@
 import { mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
 import { defineComponent, nextTick, ref } from 'vue';
-import { nextRadioIndex, vRadioGroup } from '@/ui/accessibility/radiogroup';
+import { vRadioGroup } from '@/ui/accessibility/radiogroup';
+import { nextRovingIndex } from '@/ui/accessibility/roving';
+import { vTabList } from '@/ui/accessibility/tablist';
 
 /**
- * Keyboard contract of the segmented controls: a `role="radiogroup"` is a single
- * tab stop whose options are reached with the arrow keys, not by tabbing through
- * every segment.
+ * Keyboard contract shared by segmented controls and tab strips: the widget is a
+ * single tab stop whose options are reached with the arrow keys, not by tabbing
+ * through every option.
  */
 
 /** Minimal three-option segmented control wired the way the app wires them. */
@@ -31,25 +33,47 @@ const Segmented = defineComponent({
   `,
 });
 
-describe('nextRadioIndex', () => {
+/** Minimal three-tab strip wired the way the app wires them. */
+const TabStrip = defineComponent({
+  directives: { tablist: vTabList },
+  setup() {
+    const active = ref('b');
+    return { active, tabs: ['a', 'b', 'c'] };
+  },
+  template: `
+    <div role="tablist" v-tablist aria-label="test">
+      <button
+        v-for="tab in tabs"
+        :key="tab"
+        type="button"
+        role="tab"
+        :aria-selected="active === tab"
+        @click="active = tab"
+      >{{ tab }}</button>
+      <span class="strip-caption">not a tab</span>
+    </div>
+  `,
+});
+
+describe('nextRovingIndex', () => {
   it('wraps forward and backward', () => {
-    expect(nextRadioIndex('ArrowRight', 2, 3)).toBe(0);
-    expect(nextRadioIndex('ArrowLeft', 0, 3)).toBe(2);
-    expect(nextRadioIndex('ArrowDown', 0, 3)).toBe(1);
-    expect(nextRadioIndex('ArrowUp', 1, 3)).toBe(0);
+    expect(nextRovingIndex('ArrowRight', 2, 3)).toBe(0);
+    expect(nextRovingIndex('ArrowLeft', 0, 3)).toBe(2);
+    expect(nextRovingIndex('ArrowDown', 0, 3)).toBe(1);
+    expect(nextRovingIndex('ArrowUp', 1, 3)).toBe(0);
   });
 
-  it('jumps to the ends and enters an unfocused group', () => {
-    expect(nextRadioIndex('Home', 2, 3)).toBe(0);
-    expect(nextRadioIndex('End', 0, 3)).toBe(2);
-    expect(nextRadioIndex('ArrowRight', -1, 3)).toBe(0);
-    expect(nextRadioIndex('ArrowLeft', -1, 3)).toBe(2);
+  it('jumps to the ends and enters an unfocused widget', () => {
+    expect(nextRovingIndex('Home', 2, 3)).toBe(0);
+    expect(nextRovingIndex('End', 0, 3)).toBe(2);
+    expect(nextRovingIndex('ArrowRight', -1, 3)).toBe(0);
+    expect(nextRovingIndex('ArrowLeft', -1, 3)).toBe(2);
   });
 
-  it('ignores keys it does not own and empty groups', () => {
-    expect(nextRadioIndex('Enter', 0, 3)).toBeNull();
-    expect(nextRadioIndex(' ', 0, 3)).toBeNull();
-    expect(nextRadioIndex('ArrowRight', 0, 0)).toBeNull();
+  it('ignores keys it does not own and empty widgets', () => {
+    expect(nextRovingIndex('Enter', 0, 3)).toBeNull();
+    expect(nextRovingIndex(' ', 0, 3)).toBeNull();
+    expect(nextRovingIndex('ArrowRight', 0, 0)).toBeNull();
   });
 });
 
@@ -117,6 +141,44 @@ describe('v-radiogroup', () => {
     await group.trigger('keydown', { key: 'ArrowRight' });
     await nextTick();
     expect(wrapper.findAll('[role="radio"]')[2].attributes('aria-checked')).toBe('true');
+    wrapper.unmount();
+  });
+});
+
+describe('v-tablist', () => {
+  it('makes the selected tab the only tab stop in the strip', () => {
+    const wrapper = mount(TabStrip, { attachTo: document.body });
+    const tabs = wrapper.findAll('[role="tab"]');
+    expect(tabs.map((tab) => (tab.element as HTMLElement).tabIndex)).toEqual([-1, 0, -1]);
+    wrapper.unmount();
+  });
+
+  it('moves the selection with the arrow keys and follows focus', async () => {
+    const wrapper = mount(TabStrip, { attachTo: document.body });
+    const strip = wrapper.get('[role="tablist"]');
+    (wrapper.findAll('[role="tab"]')[1].element as HTMLElement).focus();
+
+    await strip.trigger('keydown', { key: 'ArrowRight' });
+    await nextTick();
+    const tabs = wrapper.findAll('[role="tab"]');
+    expect(tabs.map((tab) => tab.attributes('aria-selected'))).toEqual(['false', 'false', 'true']);
+    expect(document.activeElement).toBe(tabs[2].element);
+
+    await strip.trigger('keydown', { key: 'Home' });
+    await nextTick();
+    expect(wrapper.findAll('[role="tab"]')[0].attributes('aria-selected')).toBe('true');
+    wrapper.unmount();
+  });
+
+  it('ignores non-tab children of the strip', async () => {
+    const wrapper = mount(TabStrip, { attachTo: document.body });
+    const strip = wrapper.get('[role="tablist"]');
+    (wrapper.findAll('[role="tab"]')[2].element as HTMLElement).focus();
+
+    // Wrapping past the last tab reaches the first, not the trailing caption.
+    await strip.trigger('keydown', { key: 'ArrowRight' });
+    await nextTick();
+    expect(document.activeElement).toBe(wrapper.findAll('[role="tab"]')[0].element);
     wrapper.unmount();
   });
 });

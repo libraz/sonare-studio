@@ -5,15 +5,17 @@
  * drives via `openContextMenu`. After mounting it clamps itself to the viewport
  * so a menu opened near an edge stays fully visible.
  */
-import { nextTick, reactive, ref, watch } from 'vue';
+import { computed, nextTick, reactive, ref, watch } from 'vue';
 import {
   type ContextMenuItem,
   closeContextMenu,
   reportContextMenuError,
   useContextMenuState,
 } from '@/ui/menu/context-menu';
+import { useShortcutBlockingOverlay } from '@/ui/overlay-registry';
 
 const state = useContextMenuState();
+useShortcutBlockingOverlay(computed(() => state.open));
 const menuEl = ref<HTMLElement | null>(null);
 const submenuEl = ref<HTMLElement | null>(null);
 const activeSubmenuId = ref<string | null>(null);

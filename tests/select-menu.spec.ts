@@ -1,6 +1,10 @@
 import { mount } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
+import {
+  resetShortcutBlockingOverlaysForTest,
+  shortcutBlockingOverlayOpen,
+} from '@/ui/overlay-registry';
 
 describe('SelectMenu', () => {
   beforeEach(() => {
@@ -9,6 +13,7 @@ describe('SelectMenu', () => {
   });
 
   afterEach(() => {
+    resetShortcutBlockingOverlaysForTest();
     vi.useRealTimers();
     document.body.innerHTML = '';
     vi.restoreAllMocks();
@@ -48,6 +53,16 @@ describe('SelectMenu', () => {
     expect(removeWindow).toHaveBeenCalledWith('scroll', expect.any(Function), true);
   });
 
+  it('blocks global shortcuts while its listbox is open', async () => {
+    const wrapper = mountMenu();
+    expect(shortcutBlockingOverlayOpen.value).toBe(false);
+    await wrapper.find('button').trigger('click');
+    expect(shortcutBlockingOverlayOpen.value).toBe(true);
+    await wrapper.find('button').trigger('click');
+    expect(shortcutBlockingOverlayOpen.value).toBe(false);
+    wrapper.unmount();
+  });
+
   it('announces the active option through aria-activedescendant on the combobox', async () => {
     const wrapper = mountMenu();
     const trigger = wrapper.find('button');
@@ -85,5 +100,28 @@ describe('SelectMenu', () => {
     vi.advanceTimersByTime(600);
 
     expect(document.body.querySelector('.select-list')).toBeNull();
+  });
+
+  it('skips disabled options for Home and End navigation', async () => {
+    const wrapper = mount(SelectMenu, {
+      props: {
+        ariaLabel: 'Mode',
+        modelValue: 'b',
+        options: [
+          { value: 'a', label: 'Alpha', disabled: true },
+          { value: 'b', label: 'Beta' },
+          { value: 'c', label: 'Charlie' },
+          { value: 'd', label: 'Delta', disabled: true },
+        ],
+      },
+      attachTo: document.body,
+    });
+    const trigger = wrapper.find('button');
+
+    await trigger.trigger('click');
+    await trigger.trigger('keydown', { key: 'End' });
+    expect(trigger.attributes('aria-activedescendant')).toMatch(/option-2$/);
+    await trigger.trigger('keydown', { key: 'Home' });
+    expect(trigger.attributes('aria-activedescendant')).toMatch(/option-1$/);
   });
 });

@@ -1,4 +1,12 @@
 import { config } from '@vue/test-utils';
+import { vRadioGroup } from '@/ui/accessibility/radiogroup';
+import { vTabList } from '@/ui/accessibility/tablist';
+
+// Segmented controls and tab strips get their keyboard behaviour from directives
+// main.ts registers app-wide. Registering them here too lets a mounted component
+// behave the way it does in the running app.
+config.global.directives.radiogroup = vRadioGroup;
+config.global.directives.tablist = vTabList;
 
 function createMemoryStorage(): Storage {
   const values = new Map<string, string>();

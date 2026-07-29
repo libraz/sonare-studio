@@ -46,7 +46,7 @@ afterEach(() => {
 /** Mounts the panel with a fresh learn handle. */
 function mountPanel() {
   const learn = useMidiLearn();
-  wrapper = mount(MidiLearnPanel, { props: { learn, tracks: TRACKS } });
+  wrapper = mount(MidiLearnPanel, { attachTo: document.body, props: { learn, tracks: TRACKS } });
   return learn;
 }
 
@@ -116,5 +116,20 @@ describe('MidiLearnPanel', () => {
     learn.arm('pan', 2);
     await (wrapper as VueWrapper).vm.$nextTick();
     expect(clearAll.attributes('disabled')).toBeUndefined();
+  });
+
+  it('focuses itself and requests close on Escape or an outside click', async () => {
+    mountPanel();
+    await (wrapper as VueWrapper).vm.$nextTick();
+    // The dialog takes focus, not its dismiss action, so the name is announced
+    // and the first Tab reaches the bindings.
+    expect(document.activeElement).toBe((wrapper as VueWrapper).find('.midi-learn-panel').element);
+
+    const close = (wrapper as VueWrapper).find('.ml-close');
+    await close.trigger('keydown', { key: 'Escape' });
+    expect((wrapper as VueWrapper).emitted('close')).toHaveLength(1);
+
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    expect((wrapper as VueWrapper).emitted('close')).toHaveLength(2);
   });
 });

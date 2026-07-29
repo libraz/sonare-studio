@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { computed } from 'vue';
+import { useI18n } from '@/ui/i18n';
+
 /**
  * Native-app search field — a single inset well that frames a leading magnifier
  * glyph, the query input and a clear button that fades in once there is text.
@@ -13,7 +16,7 @@
 
 const model = defineModel<string>({ required: true });
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     /** Placeholder shown when empty. */
     placeholder?: string;
@@ -32,8 +35,10 @@ withDefaults(
     ariaExpanded?: boolean;
     ariaAutocomplete?: 'none' | 'inline' | 'list' | 'both';
   }>(),
-  { clearLabel: 'Clear', disabled: false, size: 'md' },
+  { disabled: false, size: 'md' },
 );
+const { t } = useI18n();
+const localizedClearLabel = computed(() => props.clearLabel ?? t.value.shell.clearSearch);
 
 /** Empties the query. */
 function clear(): void {
@@ -73,7 +78,7 @@ function clear(): void {
         v-if="model && !disabled"
         type="button"
         class="search-clear"
-        :aria-label="clearLabel"
+        :aria-label="localizedClearLabel"
         @click="clear"
       >
         <svg viewBox="0 0 14 14" width="11" height="11" aria-hidden="true">
