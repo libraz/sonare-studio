@@ -690,13 +690,21 @@ function onKeydown(event: KeyboardEvent): void {
         <span class="field-label">{{ t.dialogs.exportAudio.range }}</span>
         <div class="field radio-row" role="radiogroup" :aria-label="t.dialogs.exportAudio.range">
           <label class="check-label">
-            <input v-model="model.range" type="radio" value="project" class="range-project" :disabled="busy" />
+            <input
+              v-model="model.range"
+              type="radio"
+              name="export-range"
+              value="project"
+              class="range-project"
+              :disabled="busy"
+            />
             {{ t.dialogs.exportAudio.wholeProject }}
           </label>
           <label class="check-label" :class="{ disabled: !props.hasLoop }">
             <input
               v-model="model.range"
               type="radio"
+              name="export-range"
               value="loop"
               class="range-loop"
               :disabled="busy || !props.hasLoop"
@@ -708,11 +716,25 @@ function onKeydown(event: KeyboardEvent): void {
         <span class="field-label">{{ t.dialogs.exportAudio.mode }}</span>
         <div class="field radio-row" role="radiogroup" :aria-label="t.dialogs.exportAudio.mode">
           <label class="check-label">
-            <input v-model="model.mode" type="radio" value="mixdown" class="mode-mixdown" :disabled="busy" />
+            <input
+              v-model="model.mode"
+              type="radio"
+              name="export-mode"
+              value="mixdown"
+              class="mode-mixdown"
+              :disabled="busy"
+            />
             {{ t.dialogs.exportAudio.mixdown }}
           </label>
           <label class="check-label">
-            <input v-model="model.mode" type="radio" value="stems" class="mode-stems" :disabled="busy" />
+            <input
+              v-model="model.mode"
+              type="radio"
+              name="export-mode"
+              value="stems"
+              class="mode-stems"
+              :disabled="busy"
+            />
             {{ t.dialogs.exportAudio.stems }}
           </label>
         </div>

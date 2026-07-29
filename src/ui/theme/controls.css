@@ -427,6 +427,63 @@
 }
 
 /*
+ * Canonical segmented control — the iOS/macOS "pick one of N" picker.
+ *
+ * Segments are ALWAYS equal width (flex: 1 1 0 on a full-width root): a picker
+ * whose segments breathe with their label length reads as unpolished, and label
+ * lengths differ sharply between languages. Markup pairs role="radiogroup" on
+ * the root with role="radio" + aria-checked on each `.segment` button.
+ *
+ * `.dense` tightens the padding for legends and inline lanes; it is the only
+ * sanctioned variation, so every picker in the app still reads as one control.
+ */
+.segmented {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--surface-inset);
+  border-radius: var(--radius-md);
+  box-shadow: var(--control-edge), var(--inset-well);
+}
+
+.segment {
+  flex: 1 1 0;
+  padding: var(--sp-2) var(--sp-3);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  transition:
+    background var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-1) var(--ease-out);
+}
+
+.segmented.dense .segment {
+  padding: var(--sp-1) var(--sp-2);
+}
+
+.segment:hover:not(.active) {
+  background: none;
+  color: var(--text-1);
+}
+
+.segment.active {
+  background: var(--surface-2);
+  color: var(--text-1);
+  box-shadow: var(--control-edge), var(--shadow-1);
+}
+
+.segment:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+/*
  * Floating right-click menu shared by the mixer knob and fader (and any other
  * control using useControlInteractions). Frosted glass popover.
  */

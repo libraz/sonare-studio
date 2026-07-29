@@ -517,7 +517,7 @@ function toggleExpanded(part: TrackPart): void {
           <div v-if="parts[part].expanded" class="part-params">
             <template v-if="part === 'motif'">
               <span class="field-label">{{ g.contour }}</span>
-              <div class="segmented" role="radiogroup" :aria-label="g.contour">
+              <div class="segmented" role="radiogroup" v-radiogroup :aria-label="g.contour">
                 <button
                   v-for="option in CONTOURS"
                   :key="option.id"
@@ -594,7 +594,7 @@ function toggleExpanded(part: TrackPart): void {
 
             <template v-else-if="part === 'bass'">
               <span class="field-label">{{ g.bassStyle }}</span>
-              <div class="segmented" role="radiogroup" :aria-label="g.bassStyle">
+              <div class="segmented" role="radiogroup" v-radiogroup :aria-label="g.bassStyle">
                 <button
                   v-for="option in BASS_STYLES"
                   :key="option.id"
@@ -616,7 +616,7 @@ function toggleExpanded(part: TrackPart): void {
 
             <template v-else-if="part === 'counter'">
               <span class="field-label">{{ g.register }}</span>
-              <div class="segmented" role="radiogroup" :aria-label="g.register">
+              <div class="segmented" role="radiogroup" v-radiogroup :aria-label="g.register">
                 <button
                   type="button"
                   class="segment"
@@ -639,7 +639,7 @@ function toggleExpanded(part: TrackPart): void {
                 </button>
               </div>
               <span class="field-label">{{ g.rhythm }}</span>
-              <div class="segmented" role="radiogroup" :aria-label="g.rhythm">
+              <div class="segmented" role="radiogroup" v-radiogroup :aria-label="g.rhythm">
                 <button
                   type="button"
                   class="segment"
@@ -872,49 +872,6 @@ function toggleExpanded(part: TrackPart): void {
   margin-top: var(--sp-3);
   padding-top: var(--sp-3);
   border-top: 1px solid var(--border);
-}
-
-/* iOS/macOS segmented control (shared with the chord dialog). */
-.segmented {
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  background: var(--surface-inset);
-  border-radius: var(--radius-md);
-  box-shadow: var(--control-edge), var(--inset-well);
-}
-
-.segment {
-  flex: 1 1 0;
-  padding: var(--sp-2) var(--sp-3);
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  box-shadow: none;
-  color: var(--text-2);
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-medium);
-  cursor: pointer;
-  transition:
-    background var(--dur-1) var(--ease-out),
-    color var(--dur-1) var(--ease-out),
-    box-shadow var(--dur-1) var(--ease-out);
-}
-
-.segment:hover:not(.active) {
-  color: var(--text-1);
-  background: none;
-}
-
-.segment.active {
-  background: var(--surface-2);
-  color: var(--text-1);
-  box-shadow: var(--control-edge), var(--shadow-1);
-}
-
-.segment:focus-visible {
-  outline: none;
-  box-shadow: var(--ring);
 }
 
 .number-row {

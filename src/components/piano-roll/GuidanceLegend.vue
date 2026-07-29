@@ -47,7 +47,7 @@ function setLevel(level: ExplainLevel): void {
     </header>
     <div class="legend-level">
       <span class="legend-level-label">{{ t.shell.pianoRoll.guideLevel }}</span>
-      <div class="segmented" role="radiogroup" :aria-label="t.shell.pianoRoll.guideLevel">
+      <div class="segmented dense" role="radiogroup" v-radiogroup :aria-label="t.shell.pianoRoll.guideLevel">
         <button
           v-for="level in LEVELS"
           :key="level"
@@ -147,48 +147,6 @@ function setLevel(level: ExplainLevel): void {
 
 .legend-level-label {
   color: var(--text-2);
-}
-
-/* Equal-width three-way level picker, matching the generate-dialog segmented
-   control so the app's segmented affordances read the same everywhere. */
-.segmented {
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  background: var(--surface-inset);
-  border-radius: var(--radius-md);
-  box-shadow: var(--control-edge), var(--inset-well);
-}
-
-.segment {
-  flex: 1 1 0;
-  padding: var(--sp-1) var(--sp-2);
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--text-2);
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-medium);
-  cursor: pointer;
-  transition:
-    background var(--dur-1) var(--ease-out),
-    color var(--dur-1) var(--ease-out),
-    box-shadow var(--dur-1) var(--ease-out);
-}
-
-.segment:hover:not(.active) {
-  color: var(--text-1);
-}
-
-.segment.active {
-  background: var(--surface-2);
-  color: var(--text-1);
-  box-shadow: var(--control-edge), var(--shadow-1);
-}
-
-.segment:focus-visible {
-  outline: none;
-  box-shadow: var(--ring);
 }
 
 .legend-items {

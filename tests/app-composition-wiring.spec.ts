@@ -6,10 +6,12 @@ const app = readFileSync(resolve(process.cwd(), 'src/App.vue'), 'utf8');
 const main = readFileSync(resolve(process.cwd(), 'src/main.ts'), 'utf8');
 
 describe('application composition wiring', () => {
-  it('boots the App with Pinia, the global tooltip directive, and resilient PWA registration', () => {
-    expect(main).toContain(
-      "createApp(App).use(createPinia()).directive('tooltip', vTooltip).mount('#app')",
-    );
+  it('boots the App with Pinia, the global directives, and resilient PWA registration', () => {
+    expect(main).toContain('createApp(App)');
+    expect(main).toContain('.use(createPinia())');
+    expect(main).toContain(".directive('tooltip', vTooltip)");
+    expect(main).toContain(".directive('radiogroup', vRadioGroup)");
+    expect(main).toContain(".mount('#app')");
     expect(main).toContain('void registerServiceWorker().catch');
   });
 

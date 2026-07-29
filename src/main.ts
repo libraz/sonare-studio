@@ -1,5 +1,6 @@
 import { createPinia } from 'pinia';
 import { createApp } from 'vue';
+import { vRadioGroup } from '@/ui/accessibility/radiogroup';
 import { vTooltip } from '@/ui/tooltip';
 import App from './App.vue';
 import { registerServiceWorker } from './pwa';
@@ -20,7 +21,11 @@ import '@/ui/theme/focus-visible.css';
 import '@/ui/theme/motion.css';
 import '@/ui/theme/tooltip.css';
 
-createApp(App).use(createPinia()).directive('tooltip', vTooltip).mount('#app');
+createApp(App)
+  .use(createPinia())
+  .directive('tooltip', vTooltip)
+  .directive('radiogroup', vRadioGroup)
+  .mount('#app');
 
 void registerServiceWorker().catch((error) => {
   console.warn('Service Worker registration failed', error);

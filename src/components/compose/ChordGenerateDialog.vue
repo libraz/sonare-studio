@@ -232,7 +232,7 @@ function onKeydown(event: KeyboardEvent): void {
     </div>
 
     <div v-else class="chord-fields">
-      <div class="segmented mode-select" role="radiogroup" :aria-label="g.title">
+      <div class="segmented mode-select" role="radiogroup" v-radiogroup :aria-label="g.title">
         <button
           v-for="option in MODES"
           :key="option.id"
@@ -307,7 +307,7 @@ function onKeydown(event: KeyboardEvent): void {
 
           <template v-if="hasChords">
             <span class="field-label">{{ g.mode }}</span>
-            <div class="segmented" role="radiogroup" :aria-label="g.mode">
+            <div class="segmented" role="radiogroup" v-radiogroup :aria-label="g.mode">
               <button
                 type="button"
                 class="segment"
@@ -337,7 +337,7 @@ function onKeydown(event: KeyboardEvent): void {
           <p v-if="harmonizeBlocked" class="mode-hint">{{ g.harmonizeEmpty }}</p>
           <template v-else>
             <span class="field-label">{{ g.harmonizeStrength }}</span>
-            <div class="segmented" role="radiogroup" :aria-label="g.harmonizeStrength">
+            <div class="segmented" role="radiogroup" v-radiogroup :aria-label="g.harmonizeStrength">
               <button
                 v-for="option in STRENGTHS"
                 :key="option.id"
@@ -404,50 +404,6 @@ function onKeydown(event: KeyboardEvent): void {
   font-size: var(--fs-sm);
   font-weight: var(--fw-medium);
   color: var(--text-3);
-}
-
-/* iOS/macOS segmented control: an inset track holding equal-width segments; the
- * active segment reads as a raised pill lifted off the groove. */
-.segmented {
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  background: var(--surface-inset);
-  border-radius: var(--radius-md);
-  box-shadow: var(--control-edge), var(--inset-well);
-}
-
-.segment {
-  flex: 1 1 0;
-  padding: var(--sp-2) var(--sp-3);
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  box-shadow: none;
-  color: var(--text-2);
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-medium);
-  cursor: pointer;
-  transition:
-    background var(--dur-1) var(--ease-out),
-    color var(--dur-1) var(--ease-out),
-    box-shadow var(--dur-1) var(--ease-out);
-}
-
-.segment:hover:not(.active) {
-  color: var(--text-1);
-  background: none;
-}
-
-.segment.active {
-  background: var(--surface-2);
-  color: var(--text-1);
-  box-shadow: var(--control-edge), var(--shadow-1);
-}
-
-.segment:focus-visible {
-  outline: none;
-  box-shadow: var(--ring);
 }
 
 /* Fixed-height body so switching modes never resizes the modal; sized to the
