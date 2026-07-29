@@ -401,6 +401,81 @@ export function buildMidiClipSchedules(
   return schedules;
 }
 
+/** One channel-voice state message to inject when playback enters mid-timeline. */
+export interface MidiStateEvent {
+  destinationId: number;
+  word0: number;
+}
+
+/**
+ * Collects the last stateful MIDI messages at or before a timeline position.
+ *
+ * The live engine schedules clip events only once, so a seek skips their prior
+ * bank/program and expression messages. Replaying the final value of each
+ * state key (CC, program, bend and pressure) recreates the instrument state
+ * without retriggering notes.
+ */
+export function midiStateAtPpq(
+  tracks: ReadonlyArray<EditorTrack>,
+  clips: ReadonlyArray<EditorClip>,
+  tempoSegments: ReadonlyArray<TempoSegment>,
+  sampleRate: number,
+  ppq: number,
+  projectExternalMidi?: ExternalMidiInstrument | null,
+  midiDestinationForTrack?: (track: EditorTrack) => number,
+): MidiStateEvent[] {
+  if (!Number.isFinite(ppq)) return [];
+  const tempoMap = normalizeTempoMap(tempoSegments);
+  const targetFrame = ppqToSamples(tempoMap, Math.max(0, ppq), sampleRate);
+  const schedules = buildMidiClipSchedules(
+    tracks,
+    clips,
+    tempoSegments,
+    sampleRate,
+    projectExternalMidi,
+    midiDestinationForTrack,
+  );
+  const latest = new Map<string, MidiStateEvent & { frame: number; sequence: number }>();
+  let sequence = 0;
+  for (const schedule of schedules) {
+    for (const event of schedule.events) {
+      if (event.renderFrame > targetFrame) continue;
+      if (event.word0 === undefined) continue;
+      const destinationId = schedule.destinationId ?? schedule.trackId ?? 0;
+      const word0 = event.word0 >>> 0;
+      const status = (word0 >>> 20) & 0xf;
+      const channel = (word0 >>> 16) & 0xf;
+      const data0 = (word0 >>> 8) & 0x7f;
+      let key: string | null = null;
+      switch (status) {
+        case STATUS_CONTROL_CHANGE:
+          key = `cc:${destinationId}:${channel}:${data0}`;
+          break;
+        case STATUS_PROGRAM_CHANGE:
+        case STATUS_PITCH_BEND:
+        case STATUS_CHANNEL_PRESSURE:
+          key = `channel:${status}:${destinationId}:${channel}`;
+          break;
+        case STATUS_POLY_PRESSURE:
+          key = `poly:${destinationId}:${channel}:${data0}`;
+          break;
+        default:
+          continue;
+      }
+      latest.set(key, {
+        destinationId,
+        word0,
+        frame: event.renderFrame,
+        sequence,
+      });
+      sequence += 1;
+    }
+  }
+  return [...latest.values()]
+    .sort((a, b) => a.frame - b.frame || a.sequence - b.sequence)
+    .map(({ destinationId, word0 }) => ({ destinationId, word0 }));
+}
+
 /** Options for {@link createMidiSync}. */
 export interface MidiSyncOptions {
   /** Loads SoundFont bytes by font id; defaults to the OPFS font store's loadFont. */
@@ -431,6 +506,8 @@ export interface MidiSync {
   ): Promise<void>;
   /** Number of MIDI clip schedules in the last setMidiClips call (0 before any). */
   scheduledClipCount(): number;
+  /** Replays the current bank/program/expression state after a seek or parked play. */
+  restoreStateAtPpq(ppq: number, renderFrame?: number): void;
   /** Missing/unreadable SoundFonts encountered during the latest sync. */
   mediaIssues?(): readonly MediaCompletenessIssue[];
 }
@@ -456,6 +533,15 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
   let lastClockEnabled: boolean | undefined;
   let clipCount = 0;
   let currentMediaIssues: MediaCompletenessIssue[] = [];
+  let lastStateSource:
+    | {
+        tracks: ReadonlyArray<EditorTrack>;
+        clips: ReadonlyArray<EditorClip>;
+        tempoSegments: ReadonlyArray<TempoSegment>;
+        projectExternalMidi?: ExternalMidiInstrument | null;
+        destinationByTrack: Map<number, number>;
+      }
+    | undefined;
 
   function midiDestinationAssignments(
     tracks: ReadonlyArray<EditorTrack>,
@@ -689,11 +775,32 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
       lastClipsKey = clipsKey;
       clipCount = schedules.length;
     }
+    lastStateSource = {
+      tracks,
+      clips,
+      tempoSegments,
+      projectExternalMidi,
+      destinationByTrack,
+    };
   };
 
   return {
     sync,
     scheduledClipCount: () => clipCount,
+    restoreStateAtPpq: (ppq, renderFrame = -1) => {
+      if (!lastStateSource) return;
+      const events = midiStateAtPpq(
+        lastStateSource.tracks,
+        lastStateSource.clips,
+        lastStateSource.tempoSegments,
+        handle.ctx.sampleRate,
+        ppq,
+        lastStateSource.projectExternalMidi,
+        (track) => lastStateSource?.destinationByTrack.get(track.id) ?? track.id,
+      );
+      for (const event of events)
+        handle.engine.pushMidiUmp(event.destinationId, event.word0, renderFrame);
+    },
     mediaIssues: () => currentMediaIssues.map((issue) => ({ ...issue })),
   };
 }

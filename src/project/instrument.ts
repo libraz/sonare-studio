@@ -143,7 +143,7 @@ export function instrumentDedupeKey(instrument: TrackInstrument): string {
           : '';
       return `sf2:${instrument.fontId}:${instrument.bank ?? 'bank-default'}:${
         instrument.program ?? 'program-default'
-      }${channelMap}`;
+      }:gain=${instrument.gain ?? 'gain-default'}:polyphony=${instrument.polyphony ?? 'polyphony-default'}${channelMap}`;
     }
     case 'external-midi':
       return `external-midi:${instrument.outputPortId}:ch${instrument.channel + 1}`;
@@ -318,9 +318,9 @@ export function sf2PlaybackConfig(instrument: Sf2Instrument): {
 } {
   const config: { gain?: number; polyphony?: number } = {};
   // The native player reserves exact 0 as “use default 0.5”. Preserve the
-  // model/UI meaning of zero (mute) with the smallest positive JS value.
+  // model/UI meaning of zero (mute) with a float32-representable floor.
   if (instrument.gain !== undefined) {
-    config.gain = instrument.gain === 0 ? Number.MIN_VALUE : instrument.gain;
+    config.gain = instrument.gain === 0 ? 1e-6 : instrument.gain;
   }
   if (instrument.polyphony !== undefined) config.polyphony = instrument.polyphony;
   return config;

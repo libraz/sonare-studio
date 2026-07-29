@@ -40,6 +40,8 @@ import {
 } from '@/ui/mixer/automation-mode';
 
 const APPLY_DEBOUNCE_MS = 400;
+/** Collapse continuous MIDI editing before rebuilding the engine's full MIDI state. */
+const MIDI_SYNC_DEBOUNCE_MS = 100;
 
 type Transport = ReturnType<typeof useTransport>;
 
@@ -124,6 +126,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
   let applyGeneration = 0;
   let applyController: AbortController | null = null;
   let applyTimer: ReturnType<typeof setTimeout> | null = null;
+  let midiSyncTimer: ReturnType<typeof setTimeout> | null = null;
   let instrumentScrubTimer: ReturnType<typeof setTimeout> | null = null;
   let engineRebuildHandler: (() => void | Promise<void>) | null = null;
   let midiSyncQueue: Promise<void> = Promise.resolve();
@@ -235,6 +238,16 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     }, INSTRUMENT_SCRUB_DEBOUNCE_MS);
   }
 
+  /** Collapses a burst of MIDI content edits into one full engine sync. */
+  function scheduleMidiSync(): void {
+    if (!midiSync || !store.initialized) return;
+    if (midiSyncTimer !== null) clearTimeout(midiSyncTimer);
+    midiSyncTimer = setTimeout(() => {
+      midiSyncTimer = null;
+      void syncMidiState();
+    }, MIDI_SYNC_DEBOUNCE_MS);
+  }
+
   function syncMixerState(syncOptions: InitialEngineSyncOptions = {}): void {
     try {
       if (!mixerSync || !stripSync || !store.initialized) return;
@@ -251,6 +264,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
         vcaGainDb,
         vcaControls,
         store.mixer.soloMode,
+        store.mixer.buses,
       );
       stripSync.sync(store.tracks, store.mixer);
     } catch (err) {
@@ -375,6 +389,10 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
       clearTimeout(applyTimer);
       applyTimer = null;
     }
+    if (midiSyncTimer !== null) {
+      clearTimeout(midiSyncTimer);
+      midiSyncTimer = null;
+    }
     void applyToEngine();
   }
 
@@ -392,6 +410,11 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     stripSync = handles.stripSync;
     automationSync = handles.automationSync;
     midiSync = handles.midiSync;
+    transport.setMidiStateRestorer?.(
+      midiSync === null
+        ? null
+        : (ppq, renderFrame) => midiSync?.restoreStateAtPpq(ppq, renderFrame),
+    );
     transportSync = handles.transportSync;
     webMidiOutput = handles.webMidiOutput;
   }
@@ -414,6 +437,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     stripSync = null;
     automationSync = null;
     midiSync = null;
+    transport.setMidiStateRestorer?.(null);
     transportSync = null;
     webMidiOutput?.dispose();
     webMidiOutput = null;
@@ -447,7 +471,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
         JSON.stringify(effectiveTempoSegments()),
       ].join('\0'),
     (next, prev) => {
-      if (next !== prev) syncMidiState();
+      if (next !== prev) scheduleMidiSync();
     },
     { flush: 'sync' },
   );
@@ -477,7 +501,9 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     (next, prev) => {
       if (next !== prev) syncMidiState();
     },
-    { flush: 'sync' },
+    // Commands refresh the mirror synchronously after changing this route;
+    // wait for that refresh so the route sees the same tracks as the UI.
+    { flush: 'post' },
   );
   watch(
     () => store.tracks,

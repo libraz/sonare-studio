@@ -379,7 +379,17 @@ export async function prerenderMidiClip(
       project.loadSoundFont(fontData as Uint8Array);
       const usedChannels = [...new Set(events.map((e) => e.channel))];
       const programEvents = sf2ProgramEvents(wasm, instrument, usedChannels);
-      project.setMidiEvents(clipId, [...programEvents, ...noteEvents]);
+      // The engine orders same-frame events non-stably.  A bank/program
+      // prelude at PPQ 0 must therefore precede a phrase that starts at 0,
+      // just as the realtime scheduler shifts its frame-zero phrase events.
+      // One sample is inaudible and remains accurate for the configured tempo.
+      const preludeSafeNoteEvents =
+        programEvents.length === 0
+          ? noteEvents
+          : noteEvents.map((event) =>
+              event.ppq === 0 ? { ...event, ppq: tempoBpm / (60 * options.sampleRate) } : event,
+            );
+      project.setMidiEvents(clipId, [...programEvents, ...preludeSafeNoteEvents]);
       interleaved = project.bounceWithSf2Instrument(sf2PlaybackConfig(instrument), {
         numChannels: 2,
       });

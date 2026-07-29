@@ -72,6 +72,8 @@ export interface UseTransportReturn {
    * @returns False when the engine is unavailable or the command was rejected.
    */
   seekPpq(ppq: number, sampleTime?: number): boolean;
+  /** Registers the engine-specific MIDI-state recovery hook used after seeks. */
+  setMidiStateRestorer(restorer: ((ppq: number, renderFrame?: number) => void) | null): void;
   /**
    * Updates the local `tempo` ref only (display and metronome conversions
    * depend on it). The engine's tempo is owned by the transport sync
@@ -163,6 +165,7 @@ export function useTransport(
     sequence: number;
     commit: () => void;
   }> = [];
+  let restoreMidiState: ((ppq: number, renderFrame?: number) => void) | null = null;
 
   const telemetryPositionSample = (telemetry: SonareEngineTelemetryRecord): number => {
     if (Number.isFinite(telemetry.timelineSample)) return telemetry.timelineSample;
@@ -248,6 +251,7 @@ export function useTransport(
     const handle = resolveHandle();
     if (!handle) return false;
     ensureTelemetrySubscription(handle);
+    restoreMidiState?.(positionPpq.value, sampleTime);
     const ok = handle.engine.transport.play(sampleTime);
     if (ok) {
       commitAtSampleTime(handle, sampleTime, () => {
@@ -279,6 +283,7 @@ export function useTransport(
     ensureTelemetrySubscription(handle);
     const ok = handle.engine.transport.seekSeconds(seconds, sampleTime);
     if (ok) {
+      restoreMidiState?.(secondsToPpq(tempoMap, seconds), sampleTime);
       commitAtSampleTime(handle, sampleTime, () => {
         positionSeconds.value = seconds;
         positionPpq.value = secondsToPpq(tempoMap, seconds);
@@ -293,6 +298,7 @@ export function useTransport(
     ensureTelemetrySubscription(handle);
     const ok = handle.engine.transport.seekPpq(ppq, sampleTime);
     if (ok) {
+      restoreMidiState?.(ppq, sampleTime);
       commitAtSampleTime(handle, sampleTime, () => {
         positionPpq.value = ppq;
         positionSeconds.value = ppqToSeconds(tempoMap, ppq);
@@ -358,6 +364,9 @@ export function useTransport(
     stop,
     seek,
     seekPpq,
+    setMidiStateRestorer: (restorer) => {
+      restoreMidiState = restorer;
+    },
     setTempo,
     setTempoMap,
     setLoop,

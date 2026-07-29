@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
-import { buildMidiClipSchedules, createMidiSync } from '@/engine/midi-sync';
+import { buildMidiClipSchedules, createMidiSync, midiStateAtPpq } from '@/engine/midi-sync';
 import { instrumentAutomationParam } from '@/project/automation';
 import { DEFAULT_SYNTH_PRESET } from '@/project/instrument';
 import { DEFAULT_MIDI_FX_CONFIG, midiFxConfigJson } from '@/project/midi-fx';
@@ -100,6 +100,7 @@ function makeHandle(): {
   handle: EngineHandle;
   engine: {
     setMidiClips: ReturnType<typeof vi.fn>;
+    pushMidiUmp: ReturnType<typeof vi.fn>;
     setSynthInstrument: ReturnType<typeof vi.fn>;
     loadSoundFont: ReturnType<typeof vi.fn>;
     setSf2Instrument: ReturnType<typeof vi.fn>;
@@ -111,6 +112,7 @@ function makeHandle(): {
 } {
   const engine = {
     setMidiClips: vi.fn(),
+    pushMidiUmp: vi.fn(),
     setSynthInstrument: vi.fn(),
     loadSoundFont: vi.fn(),
     setSf2Instrument: vi.fn(),
@@ -652,7 +654,67 @@ describe('buildMidiClipSchedules', () => {
   });
 });
 
+describe('midiStateAtPpq', () => {
+  it('restores the final bank/program and expression state without replaying notes', () => {
+    const track = makeTrack(1, {
+      instrument: { kind: 'sf2', fontId: 'font-a', bank: 257, program: 5 },
+    });
+    const clip = makeClip(1, 1, {
+      notes: [makeNote({ startPpq: 0, durationPpq: 4 })],
+      ccLanes: [
+        {
+          controller: 11,
+          channel: 2,
+          points: [
+            { ppq: 0, value: 20 },
+            { ppq: 2, value: 90 },
+          ],
+        },
+      ],
+      pitchBendLanes: [{ channel: 2, points: [{ ppq: 1, value: 4096 }] }],
+      programChangeLanes: [{ channel: 2, points: [{ ppq: 1.5, program: 12 }] }],
+      channelPressureLanes: [{ channel: 2, points: [{ ppq: 2, value: 70 }] }],
+      polyPressureLanes: [{ channel: 2, pitch: 64, points: [{ ppq: 2, value: 80 }] }],
+    });
+
+    const state = midiStateAtPpq([track], [clip], TEMPO_120, SAMPLE_RATE, 3);
+
+    expect(state.map((event) => event.word0)).toEqual(
+      expect.arrayContaining([
+        ccWord(0, 0, 2),
+        ccWord(0, 32, 1),
+        pcWord(0, 5),
+        ccWord(2, 11, 90),
+        pitchBendWord(2, 4096),
+        pcWord(2, 12),
+        channelPressureWord(2, 70),
+        polyPressureWord(2, 64, 80),
+      ]),
+    );
+    expect(state.some((event) => event.word0 === noteOnWord(0, 60, 100))).toBe(false);
+  });
+});
+
 describe('createMidiSync', () => {
+  it('injects restored state through the immediate UMP path after sync', async () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMidiSync(handle, { loadFont: async () => new Uint8Array([1]) });
+    const track = makeTrack(1, {
+      instrument: { kind: 'sf2', fontId: 'font-a', bank: 0, program: 8 },
+    });
+    const clip = makeClip(1, 1, {
+      notes: [],
+      programChangeLanes: [{ channel: 0, points: [{ ppq: 1, program: 12 }] }],
+      pitchBendLanes: [{ channel: 0, points: [{ ppq: 1, value: 4096 }] }],
+    });
+
+    await sync.sync([track], [clip], TEMPO_120);
+    sync.restoreStateAtPpq(2, 1234);
+
+    expect(engine.pushMidiUmp).toHaveBeenCalledWith(1, pcWord(0, 12), 1234);
+    expect(engine.pushMidiUmp).toHaveBeenCalledWith(1, pitchBendWord(0, 4096), 1234);
+  });
+
   it('binds the default synth preset to instrument-less midi tracks only', async () => {
     const { handle, engine } = makeHandle();
     const sync = createMidiSync(handle);

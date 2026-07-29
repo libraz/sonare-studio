@@ -99,6 +99,7 @@ describe('bindRealtimeVoiceChangerInput', () => {
     });
     expect(source.connect).toHaveBeenCalledWith(voiceNode);
     expect(voiceNode.connect).toHaveBeenCalledWith(engineNode);
+    expect(voiceNode.port.start).toHaveBeenCalledTimes(1);
 
     binding.setVoiceChangerPreset?.('dark-villain');
     binding.close();
@@ -208,6 +209,8 @@ describe('bindRealtimeVoiceChangerInput', () => {
     expect(source.connect).toHaveBeenCalledWith(voiceNode);
     expect(voiceNode.connect).toHaveBeenCalledWith(retuneNode);
     expect(retuneNode.connect).toHaveBeenCalledWith(engineNode);
+    expect(voiceNode.port.start).toHaveBeenCalledTimes(1);
+    expect(retuneNode.port.start).toHaveBeenCalledTimes(1);
 
     binding.setVoiceChangerPreset?.('dark-villain');
     binding.setStreamingRetuneConfig?.({ semitones: -7, mix: 1 });

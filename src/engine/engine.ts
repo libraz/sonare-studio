@@ -146,6 +146,8 @@ interface WorkletReadyPort {
   addEventListener(type: 'messageerror', listener: (event: MessageEvent) => void): void;
   removeEventListener(type: 'message', listener: (event: MessageEvent) => void): void;
   removeEventListener(type: 'messageerror', listener: (event: MessageEvent) => void): void;
+  /** Required when readiness is observed with addEventListener rather than onmessage. */
+  start?(): void;
 }
 
 interface WorkletProcessorErrorTarget {
@@ -245,6 +247,9 @@ export function waitForWorkletReady(
     port.addEventListener('messageerror', onMessageError);
     options.processor?.addEventListener('processorerror', onProcessorError);
     options.signal?.addEventListener('abort', onAbort, { once: true });
+    // MessagePort only starts delivery implicitly through `onmessage`; this
+    // path deliberately uses addEventListener so explicit activation is needed.
+    port.start?.();
     if (options.signal?.aborted) onAbort();
   });
 }

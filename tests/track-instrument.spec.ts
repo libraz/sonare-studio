@@ -9,6 +9,7 @@ import {
   cloneInstrument,
   defaultTrackInstrument,
   instrumentCacheSegment,
+  instrumentDedupeKey,
   instrumentEquals,
   isDefaultInstrument,
   sf2ChannelProgram,
@@ -17,6 +18,19 @@ import {
   trackInstrument,
   validateTrackInstrument,
 } from '@/project/instrument';
+
+describe('instrumentDedupeKey', () => {
+  it('keeps SF2 gain and polyphony variants on separate playback destinations', () => {
+    const base = { kind: 'sf2', fontId: 'gm', bank: 0, program: 1 } as const;
+
+    expect(instrumentDedupeKey({ ...base, gain: 0.5 })).not.toBe(
+      instrumentDedupeKey({ ...base, gain: 1 }),
+    );
+    expect(instrumentDedupeKey({ ...base, polyphony: 24 })).not.toBe(
+      instrumentDedupeKey({ ...base, polyphony: 48 }),
+    );
+  });
+});
 
 const wasmMock = vi.hoisted(() => {
   const bounceWithSynthInstrument = vi.fn(
@@ -366,8 +380,11 @@ describe('instrument helpers', () => {
     expect(sf2PlaybackConfig({ kind: 'sf2', fontId: 'gm', bank: 1, program: 4 })).toEqual({});
     expect(sf2PlaybackConfig({ kind: 'sf2', fontId: 'gm', gain: 1.25 })).toEqual({ gain: 1.25 });
     expect(sf2PlaybackConfig({ kind: 'sf2', fontId: 'gm', gain: 0 })).toEqual({
-      gain: Number.MIN_VALUE,
+      gain: 1e-6,
     });
+    expect(
+      Math.fround(sf2PlaybackConfig({ kind: 'sf2', fontId: 'gm', gain: 0 }).gain ?? 0),
+    ).toBeCloseTo(1e-6, 12);
     expect(sf2PlaybackConfig({ kind: 'sf2', fontId: 'gm', polyphony: 24 })).toEqual({
       polyphony: 24,
     });
@@ -422,6 +439,16 @@ describe('prerenderMidiClip per instrument kind', () => {
     expect(wasmMock.bounceWithSf2Instrument.mock.calls[0][0]).toEqual({ gain: 1.5, polyphony: 24 });
   });
 
+  it('forwards a float32-representable mute gain to the SF2 bounce', async () => {
+    await prerenderMidiClip(NOTES, {
+      ...OPTS,
+      instrument: { kind: 'sf2', fontId: 'my-font', gain: 0 },
+      loadFont: async () => new Uint8Array([4]),
+    });
+
+    expect(wasmMock.bounceWithSf2Instrument.mock.calls[0][0]).toEqual({ gain: 1e-6 });
+  });
+
   it('prepends bank/program select events per used channel', async () => {
     const loadFont = vi.fn(async () => new Uint8Array([9]));
     await prerenderMidiClip(NOTES, {
@@ -434,6 +461,10 @@ describe('prerenderMidiClip per instrument kind', () => {
     expect(events.length).toBe(NOTES.length * 2 + 2 * 3);
     const statusNibbles = events.slice(0, 6).map((e) => (e.data0 >>> 20) & 0xf);
     expect(statusNibbles).toEqual([0xb, 0xb, 0xc, 0xb, 0xb, 0xc]);
+    // The PPQ-zero note starts one sample later than the bank/program prelude
+    // so libsonare's unstable same-frame ordering cannot select the wrong patch.
+    expect(events.slice(0, 6).every((event) => event.ppq === 0)).toBe(true);
+    expect(events[6].ppq).toBeCloseTo(1 / 24000);
   });
 
   it('caches sf2 renders by font/bank/program identity', async () => {

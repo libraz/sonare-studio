@@ -283,6 +283,53 @@ describe('useEngineProjectSync', () => {
     scope.stop();
   });
 
+  it('debounces consecutive MIDI content edits into one engine sync', async () => {
+    vi.useFakeTimers();
+    const store = useProjectStore();
+    store.dispose();
+    await store.init();
+    store.tracks = [track(1)];
+    store.clips = [clip(1)];
+    const midiSync: MidiSync = { sync: vi.fn(async () => undefined), scheduledClipCount: () => 1 };
+    const scope = effectScope();
+    const projectSync = scope.run(() =>
+      useEngineProjectSync({
+        bridge: shallowRef(null),
+        scope: shallowRef(null),
+        errorMessage: ref(''),
+        handle: shallowRef(null),
+        transport: { setTempoMap: vi.fn(), setTempo: vi.fn() } as never,
+      }),
+    );
+    if (!projectSync) throw new Error('effect scope did not run');
+    projectSync.setEngineSyncHandles({
+      mixerSync: { sync: vi.fn(), laneTrackIds: () => [1] },
+      stripSync: { sync: vi.fn() } as unknown as StripSync,
+      automationSync: null,
+      midiSync,
+      transportSync: null,
+      webMidiOutput: null,
+    });
+    await projectSync.syncMidiState();
+    vi.mocked(midiSync.sync).mockClear();
+
+    store.clips = store.clips.map((item) =>
+      item.id === 1 ? { ...item, notes: [{ ...item.notes[0], pitch: 61 }] } : item,
+    );
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(99);
+    expect(midiSync.sync).not.toHaveBeenCalled();
+
+    store.clips = store.clips.map((item) =>
+      item.id === 1 ? { ...item, notes: [{ ...item.notes[0], pitch: 62 }] } : item,
+    );
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(midiSync.sync).toHaveBeenCalledTimes(1);
+    scope.stop();
+    vi.useRealTimers();
+  });
+
   it('passes instrument automation lanes and the current PPQ to MIDI sync', async () => {
     const store = useProjectStore();
     store.dispose();
