@@ -12,6 +12,7 @@
 
 import type { HarmonyRole, LockLevel, TheoryLabel } from '@libraz/libcantus';
 import { NoteSafety, ReasonFlag } from '@libraz/libcantus';
+import { spellPitch } from '@/notation/pitch-spelling';
 import type { NoteAnalysis, VerticalInfo } from './guidance';
 
 /** A glossary term: a short display name and its plain-language definition. */
@@ -183,8 +184,10 @@ const SAFETY_KEY: Readonly<Record<NoteSafety, 'safe' | 'warning' | 'dissonant'>>
 };
 
 /** Joins pitch classes into a sharp-spelled name list (e.g. "D, A"). */
-function pitchClassList(pitchClasses: ReadonlyArray<number>): string {
-  return pitchClasses.map((pc) => PITCH_CLASS_NAMES[((pc % 12) + 12) % 12]).join(', ');
+function pitchClassList(pitchClasses: ReadonlyArray<number>, keyFifths?: number): string {
+  return pitchClasses
+    .map((pc) => pitchName(60 + (((pc % 12) + 12) % 12), keyFifths).replace(/4$/, ''))
+    .join(', ');
 }
 
 /**
@@ -192,15 +195,19 @@ function pitchClassList(pitchClasses: ReadonlyArray<number>): string {
  * tensions and avoid notes. Returns undefined when neither is present (a plain
  * triad in its own scale has nothing extra to say).
  */
-function chordScaleText(analysis: NoteAnalysis, labels: TheoryLabels): string | undefined {
+function chordScaleText(
+  analysis: NoteAnalysis,
+  labels: TheoryLabels,
+  keyFifths?: number,
+): string | undefined {
   const chordScale = analysis.chordScale;
   if (chordScale === undefined) return undefined;
   const parts: string[] = [];
   if (chordScale.tensions.length > 0) {
-    parts.push(`${labels.chordScale.tensions} ${pitchClassList(chordScale.tensions)}`);
+    parts.push(`${labels.chordScale.tensions} ${pitchClassList(chordScale.tensions, keyFifths)}`);
   }
   if (chordScale.avoid.length > 0) {
-    parts.push(`${labels.chordScale.avoid} ${pitchClassList(chordScale.avoid)}`);
+    parts.push(`${labels.chordScale.avoid} ${pitchClassList(chordScale.avoid, keyFifths)}`);
   }
   return parts.length > 0 ? parts.join(' · ') : undefined;
 }
@@ -272,9 +279,13 @@ function nctLine(
 }
 
 /** Sharp-spelled pitch name with octave, e.g. 63 -> "D#4". */
-function pitchName(midi: number): string {
-  const pc = ((midi % 12) + 12) % 12;
-  return `${PITCH_CLASS_NAMES[pc]}${Math.floor(midi / 12) - 1}`;
+function pitchName(midi: number, keyFifths?: number): string {
+  if (keyFifths === undefined) {
+    const pc = ((midi % 12) + 12) % 12;
+    return `${PITCH_CLASS_NAMES[pc]}${Math.floor(midi / 12) - 1}`;
+  }
+  const pitch = spellPitch(midi, keyFifths);
+  return `${pitch.step}${pitch.alter === 0 ? '' : pitch.alter === 1 ? '#' : 'b'}${pitch.octave}`;
 }
 
 /**
@@ -342,14 +353,14 @@ export function buildTheoryCard(
     pitch: number;
     velocity?: number;
     keySet: boolean;
+    /** MusicXML key fifths used for enharmonic spelling in the card. */
+    keyFifths?: number;
     chordRoman?: string;
     chordFunction?: string;
   },
   labels: TheoryLabels,
 ): TheoryCard {
-  const pc = ((ctx.pitch % 12) + 12) % 12;
-  const octave = Math.floor(ctx.pitch / 12) - 1;
-  let title = `${PITCH_CLASS_NAMES[pc]}${octave}`;
+  let title = pitchName(ctx.pitch, ctx.keyFifths);
   if (ctx.velocity !== undefined) title += ` · vel ${ctx.velocity}`;
   if (analysis.role !== undefined) title += ` — ${labels.roles[analysis.role.role]}`;
 
@@ -380,7 +391,7 @@ export function buildTheoryCard(
         : labels.nonScaleTone;
     lines.push({ label: labels.lines.scale, text });
   }
-  const colorTones = chordScaleText(analysis, labels);
+  const colorTones = chordScaleText(analysis, labels, ctx.keyFifths);
   if (colorTones !== undefined) lines.push({ label: labels.lines.chordScale, text: colorTones });
   lines.push(...counterpointLines(analysis, labels));
   const nct = nctLine(analysis, labels);

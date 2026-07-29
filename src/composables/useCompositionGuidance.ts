@@ -12,6 +12,7 @@
 
 import { chordToRoman, functionOf } from '@libraz/libcantus';
 import { type ComputedRef, computed } from 'vue';
+import { keyFifthsForScaleHighlight } from '@/components/lists/key-modes';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { buildChordTimeline } from '@/compose/chord-at-tick';
 import {
@@ -28,11 +29,7 @@ import {
 } from '@/compose/guidance';
 import { effectiveKeyScale } from '@/compose/key';
 import type { TrackWithNotes } from '@/compose/tracks';
-import {
-  audibleMidiProjector,
-  projectMidiClipNoteOccurrences,
-  projectMidiNoteOccurrences,
-} from '@/project/midi-projection';
+import { audibleMidiProjector } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
 import { useI18n } from '@/ui/i18n';
 
@@ -72,10 +69,27 @@ export function useCompositionGuidance(): CompositionGuidance {
     theoryLabelsFor(t.value.theory, appSettings.settings.explainLevel),
   );
 
+  /** The active source window is all editor guidance needs; loops are rendered by playback. */
+  const activeOccurrences = computed(() => {
+    const clip = store.activeClip;
+    return clip ? audibleMidiProjector(clip, { expandLoops: false }) : [];
+  });
+
+  const activeNotes = computed(() =>
+    activeOccurrences.value.map((entry) => ({
+      ...entry.note,
+      startPpq: entry.clipStartPpq,
+      durationPpq: entry.durationPpq,
+    })),
+  );
+
+  const activeOccurrenceByNoteId = computed(
+    () => new Map(activeOccurrences.value.map((entry) => [entry.note.id, entry])),
+  );
+
   const guidance = computed<GuidanceResult | null>(() => {
     const clip = store.activeClip;
     if (!clip) return null;
-    const activeNotes = projectMidiClipNoteOccurrences(clip, { expandLoops: false });
     // Voice context: every non-active track, its notes flattened across the
     // track's clips and shifted to absolute timeline PPQ (guidance drops
     // percussion tracks itself).
@@ -85,12 +99,18 @@ export function useCompositionGuidance(): CompositionGuidance {
       const clips = store.clipsByTrack.get(track.id) ?? [];
       let syntheticId = -1;
       const notes = clips.flatMap((other) =>
-        projectMidiNoteOccurrences(other).map((note) => ({ ...note, id: syntheticId-- })),
+        audibleMidiProjector(other, { expandLoops: false }).map((entry) => ({
+          ...entry.note,
+          startPpq: entry.timelineStartPpq,
+          durationPpq: entry.durationPpq,
+          sourceIdentity: entry.sourceIdentity,
+          id: syntheticId--,
+        })),
       );
       otherTracks.push({ track, notes });
     }
     return buildGuidance({
-      notes: activeNotes,
+      notes: activeNotes.value,
       clipStartPpq: clip.startPpq,
       clipLengthPpq: clip.lengthPpq,
       sourceOffsetPpq: clip.sourceOffsetPpq,
@@ -111,16 +131,13 @@ export function useCompositionGuidance(): CompositionGuidance {
     if (result === null || clip === null) return null;
     const analysis = result.byNoteId.get(noteId);
     if (analysis === undefined) return null;
-    const note = clip.notes.find((candidate) => candidate.id === noteId);
-    if (note === undefined) return null;
-    const occurrence = audibleMidiProjector(clip, { expandLoops: false }).find(
-      (entry) => entry.sourceIdentity.noteId === noteId,
-    );
+    const occurrence = activeOccurrenceByNoteId.value.get(noteId);
     if (!occurrence) return null;
     const ctx: Parameters<typeof buildTheoryCard>[1] = {
-      pitch: note.pitch,
-      velocity: note.velocity,
+      pitch: occurrence.note.pitch,
+      velocity: occurrence.note.velocity,
       keySet: result.keySet,
+      ...(result.keySet ? { keyFifths: keyFifthsForScaleHighlight(store.scaleHighlight) } : {}),
     };
     const chord = chordTimeline.value.at(occurrence.timelineStartPpq);
     if (chord !== null) {
@@ -154,7 +171,7 @@ export function useCompositionGuidance(): CompositionGuidance {
     // the piano roll draws in, so add the clip's trim offset to the projector's
     // window-relative positions (see guidanceSegments).
     const sourceOffsetPpq = clip.sourceOffsetPpq ?? 0;
-    for (const occurrence of audibleMidiProjector(clip, { expandLoops: false })) {
+    for (const occurrence of activeOccurrences.value) {
       const note = occurrence.note;
       const analysis = result.byNoteId.get(note.id);
       if (analysis === undefined) continue;

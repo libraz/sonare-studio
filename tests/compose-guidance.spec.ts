@@ -314,6 +314,20 @@ describe('resolutionTargetOf', () => {
 });
 
 describe('buildTheoryCard', () => {
+  it('spells hover pitches with the active key signature', () => {
+    const result = buildGuidance(guidanceInput({ notes: [note({ id: 59, pitch: 70 })] }));
+    const analysis = result.byNoteId.get(59);
+    expect(analysis).toBeDefined();
+    if (analysis === undefined) return;
+
+    const card = buildTheoryCard(
+      analysis,
+      { pitch: 70, keySet: true, keyFifths: -3 },
+      theoryLabelsFor(MESSAGES.en.theory, 'normal'),
+    );
+    expect(card.title).toMatch(/^Bb4/);
+  });
+
   it('builds a titled card with a scale-degree line', () => {
     const result = buildGuidance(
       guidanceInput({
