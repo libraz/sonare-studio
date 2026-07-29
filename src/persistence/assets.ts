@@ -35,6 +35,8 @@ const META_EXTENSION = '.json';
 
 /** Bytes per sample (32-bit float). */
 const BYTES_PER_SAMPLE = 4;
+/** Comparison chunk prevents an immutable-content check from duplicating whole PCM files. */
+const PCM_COMPARE_CHUNK_BYTES = 4 * 1024 * 1024;
 
 /** Allowed shape of an asset id (safe as an OPFS file base name). */
 const ASSET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -370,6 +372,15 @@ export function interleaveChannels(channels: ReadonlyArray<Float32Array>): Float
 }
 
 /**
+ * Produces an owned byte representation of planar PCM suitable for archive
+ * entries and byte-for-byte conflict checks.
+ */
+export function interleavedPcmBytes(channels: ReadonlyArray<Float32Array>): Uint8Array {
+  const interleaved = interleaveChannels(channels);
+  return new Uint8Array(interleaved.buffer, interleaved.byteOffset, interleaved.byteLength).slice();
+}
+
+/**
  * Splits an interleaved buffer into planar per-channel buffers.
  *
  * @param interleaved Interleaved samples (frame-major).
@@ -558,6 +569,35 @@ async function readOptionalFile(
 }
 
 /**
+ * Compares an existing PCM file without materializing its whole contents.
+ * Returns null when no payload exists, otherwise whether every chunk matches.
+ */
+async function pcmFileMatches(
+  dir: FileSystemDirectoryHandle,
+  fileName: string,
+  expected: Uint8Array,
+): Promise<boolean | null> {
+  try {
+    const handle = await dir.getFileHandle(fileName);
+    const file = await handle.getFile();
+    if (file.size !== expected.byteLength) return false;
+    if (typeof file.slice !== 'function') {
+      // Minimal OPFS mocks and a few legacy File implementations omit slice.
+      return bytesEqual(new Uint8Array(await file.arrayBuffer()), expected);
+    }
+    for (let offset = 0; offset < expected.byteLength; offset += PCM_COMPARE_CHUNK_BYTES) {
+      const end = Math.min(expected.byteLength, offset + PCM_COMPARE_CHUNK_BYTES);
+      const actual = new Uint8Array(await file.slice(offset, end).arrayBuffer());
+      if (!bytesEqual(actual, expected.subarray(offset, end))) return false;
+    }
+    return true;
+  } catch (error) {
+    if (isNotFoundError(error)) return null;
+    throw error;
+  }
+}
+
+/**
  * Stores an audio asset (PCM payload + metadata sidecar), replacing any
  * previous asset of the same id. Saving identical audio without an explicit
  * id is idempotent because the default id is a content hash.
@@ -644,12 +684,12 @@ export async function saveAssetWithStatusUnlocked(
     interleaved.byteOffset,
     interleaved.byteLength,
   );
-  const existingPcm = await readOptionalFile(dir, id + PCM_EXTENSION);
+  const existingPcmMatches = await pcmFileMatches(dir, id + PCM_EXTENSION, pcmBytes);
   const existingSidecar = await readOptionalFile(dir, id + META_EXTENSION);
-  if (existingPcm !== null && !bytesEqual(existingPcm, pcmBytes)) {
+  if (existingPcmMatches === false) {
     throw new InvalidAssetError(`Asset "${id}": immutable PCM content collision`);
   }
-  if (existingPcm === null && existingSidecar !== null) {
+  if (existingPcmMatches === null && existingSidecar !== null) {
     throw new InvalidAssetError(`Asset "${id}": metadata exists without its PCM payload`);
   }
 
@@ -674,7 +714,7 @@ export async function saveAssetWithStatusUnlocked(
   }
   const record = recordFromMeta(requestedMeta, aliases);
   const latestMeta = validatedContentMeta(record.content, id, aliases[aliases.length - 1]);
-  const created = existingPcm === null;
+  const created = existingPcmMatches === null;
   if (created) await writeFile(dir, id + PCM_EXTENSION, pcmBytes);
   try {
     await writeFile(dir, id + META_EXTENSION, new TextEncoder().encode(JSON.stringify(record)));

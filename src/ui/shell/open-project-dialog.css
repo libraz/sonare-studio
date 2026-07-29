@@ -16,8 +16,9 @@
 }
 
 /* Selection reads as an accent ring + tint on the row's load button — no
- * one-sided stripe clashing with the rounded corner. */
-.stored-row.selected .stored-load {
+ * one-sided stripe clashing with the rounded corner. The listbox option is the
+ * button itself, so the marker sits on it rather than on the row. */
+.stored-load.selected {
   background: var(--accent-muted);
   box-shadow: inset 0 0 0 1px var(--accent);
   color: var(--text-1);
@@ -50,13 +51,21 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Row actions stay quiet so the project name keeps the row's weight: a raised
+ * control face here would outrank the entry it acts on. */
+.stored-rename,
 .stored-delete {
   background: none;
   border: none;
   box-shadow: none;
   color: var(--text-3);
   font-size: var(--fs-xs);
+  padding: 0.35rem var(--sp-2);
   cursor: pointer;
+}
+
+.stored-rename:hover {
+  color: var(--text-1);
 }
 
 .stored-delete:hover {

@@ -22,6 +22,16 @@ describe('streaming ZIP writer', () => {
     expect(writer.stats().compressedBytes).toBeGreaterThan(0);
   });
 
+  it('does not detach caller-owned entry bytes while compression runs', async () => {
+    const writer = createStreamingZipWriter({ mtime: '2000-01-01T12:00:00Z' });
+    const source = new Uint8Array([1, 2, 3, 4]);
+
+    await writer.add('source.bin', source);
+    await writer.close();
+
+    expect(source).toEqual(new Uint8Array([1, 2, 3, 4]));
+  });
+
   it('enforces format-provided entry limits before accepting more input', async () => {
     const writer = createStreamingZipWriter({
       mtime: '2000-01-01T12:00:00Z',
@@ -32,5 +42,18 @@ describe('streaming ZIP writer', () => {
     await writer.add('one.txt', strToU8('one'));
     expect(() => writer.add('two.txt', strToU8('two'))).toThrow('limited: ZIP entry count');
     await expect(writer.close()).resolves.toBeInstanceOf(Uint8Array);
+  });
+
+  it('rejects an in-flight entry and close when its signal aborts', async () => {
+    const controller = new AbortController();
+    const writer = createStreamingZipWriter({
+      mtime: '2000-01-01T12:00:00Z',
+      signal: controller.signal,
+    });
+    const pending = writer.add('large.bin', new Uint8Array(4 * 1024 * 1024));
+    controller.abort(new DOMException('cancelled', 'AbortError'));
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(writer.close()).rejects.toMatchObject({ name: 'AbortError' });
   });
 });

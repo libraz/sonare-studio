@@ -198,4 +198,28 @@ describe('cross-tab audio asset leases', () => {
     await expect(loadAsset('late-joiner')).resolves.toBeDefined();
     remote.close();
   });
+
+  it('synchronizes peer leases once for a multi-file GC batch', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('BroadcastChannel', FakeBroadcastChannel);
+    vi.resetModules();
+    installMockOpfs();
+    const { saveAsset: saveBatchAsset } = await import('@/persistence/assets');
+    const { garbageCollectMedia } = await import('@/persistence/gc');
+    await saveBatchAsset({ id: 'orphan-a', name: 'A', sampleRate: 48000 }, [new Float32Array(1)]);
+    await saveBatchAsset({ id: 'orphan-b', name: 'B', sampleRate: 48000 }, [new Float32Array(1)]);
+
+    const remote = new FakeBroadcastChannel('sonare-studio:audio-asset-leases:v1');
+    let helloCount = 0;
+    remote.addEventListener('message', (event) => {
+      if ((event.data as { type?: string }).type === 'hello') helloCount += 1;
+    });
+
+    const collecting = garbageCollectMedia();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(helloCount).toBe(1);
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(collecting).resolves.toMatchObject({ removedAssetIds: ['orphan-a', 'orphan-b'] });
+    remote.close();
+  });
 });

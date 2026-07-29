@@ -398,7 +398,7 @@ describe('browser backup archives', () => {
       'assets/newAsset.pcm': new Uint8Array(audio.buffer).slice(),
     });
 
-    await expect(restoreBrowserBackup(backup)).rejects.toThrow('quota');
+    await expect(restoreBrowserBackup(backup)).rejects.toThrow('Project storage is full');
     await expect(loadProject('Song A')).rejects.toThrow();
     await expect(loadAsset('newAsset')).rejects.toThrow();
   });
@@ -417,13 +417,15 @@ describe('browser backup archives', () => {
   it('reclaims staging namespaces orphaned by a crashed restore', async () => {
     await seedOrphanStage('dead-txn-1');
     await seedOrphanStage('dead-txn-2');
+    await seedOrphanStage('dead-txn-3');
 
-    expect(await reclaimOrphanedRestoreStages()).toBe(2);
+    expect(await reclaimOrphanedRestoreStages()).toBe(3);
 
     const root = await navigator.storage.getDirectory();
     const staging = await root.getDirectoryHandle('restore-staging');
     await expect(staging.getDirectoryHandle('dead-txn-1')).rejects.toThrow();
     await expect(staging.getDirectoryHandle('dead-txn-2')).rejects.toThrow();
+    await expect(staging.getDirectoryHandle('dead-txn-3')).rejects.toThrow();
 
     // A second sweep with nothing left is a no-op.
     expect(await reclaimOrphanedRestoreStages()).toBe(0);
@@ -555,6 +557,33 @@ describe('browser backup archives', () => {
         await expect(loadFont('restoreFont')).rejects.toThrow();
       }
     }
+  });
+
+  it('keeps pre-images distinct from projects whose names start with previous-', async () => {
+    const oldMix = encodeSzd(makeDocument('Mix'));
+    const oldPreviousMix = encodeSzd(makeDocument('previous-Mix'));
+    await saveProject('Mix', oldMix);
+    await saveProject('previous-Mix', oldPreviousMix);
+
+    const replacementMix = encodeSzd(makeDocument('Mix', { assetId: 'replacement-mix' }));
+    const replacementPreviousMix = encodeSzd(
+      makeDocument('previous-Mix', { assetId: 'replacement-previous-mix' }),
+    );
+    await saveProject('Mix', replacementMix);
+    await saveProject('previous-Mix', replacementPreviousMix);
+    const backup = await createBrowserBackup('2026-07-29T00:00:00.000Z');
+    await saveProject('Mix', oldMix);
+    await saveProject('previous-Mix', oldPreviousMix);
+
+    setBrowserBackupRestoreFaultInjectorForTests((point) => point === 'project-published');
+    await expect(restoreBrowserBackup(backup)).rejects.toThrow(
+      'Simulated browser backup restore crash after project-published',
+    );
+    setBrowserBackupRestoreFaultInjectorForTests(null);
+
+    expect(await reclaimOrphanedRestoreStages()).toBe(1);
+    expect(await loadProject('Mix')).toEqual(oldMix);
+    expect(await loadProject('previous-Mix')).toEqual(oldPreviousMix);
   });
 
   it('reclaims orphaned staging namespaces through the startup maintenance entrypoint', async () => {

@@ -6,7 +6,7 @@ import {
   projectBytesRevision,
   saveProjectUnlocked,
 } from './opfs';
-import { decodeSzd, readSzdMeta } from './szd';
+import { decodeSzdWithMetaInWorker } from './szd';
 
 const RECOVERY_DIR = 'recovery';
 const MANIFEST_FILE = 'autosave-manifest.json';
@@ -171,11 +171,12 @@ export function loadLatestAutosaveSessionRevision(): Promise<Uint8Array | null> 
         const entry = manifestBySlot.get(slot);
         if (entry && projectBytesRevision(bytes) !== entry.archiveRevision) continue;
         // A valid archive revision alone is insufficient: schema changes or a
-        // partially written payload can still fail to decode. Validate inside
-        // the candidate loop so an older independent tab revision recovers.
-        decodeSzd(bytes);
+        // partially written payload can still fail to decode. Decode each
+        // candidate off the main thread and reuse that one ZIP expansion for
+        // its advisory saved timestamp.
+        const decoded = await decodeSzdWithMetaInWorker(bytes);
         const savedAt =
-          Date.parse(entry?.savedAt ?? readSzdMeta(bytes)?.savedAt ?? '') ||
+          Date.parse(entry?.savedAt ?? decoded.meta?.savedAt ?? '') ||
           modifiedAtBySlot.get(slot) ||
           0;
         if (!newest || savedAt > newest.savedAt) newest = { bytes, savedAt };

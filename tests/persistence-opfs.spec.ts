@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   deleteProject,
   InvalidProjectNameError,
@@ -7,10 +7,12 @@ import {
   listProjects,
   loadProject,
   loadProjectWithRevision,
+  OpfsQuotaExceededError,
   OpfsUnavailableError,
   ProjectAlreadyExistsError,
   ProjectNotFoundError,
   ProjectRevisionConflictError,
+  projectBytesRevision,
   renameProject,
   requestPersistentStorage,
   sanitizeProjectName,
@@ -18,7 +20,12 @@ import {
   saveProjectChecked,
 } from '@/persistence/opfs';
 
-import { installMockOpfs, type MemoryDirectoryHandle, uninstallMockOpfs } from './opfs-mock';
+import {
+  installMockOpfs,
+  type MemoryDirectoryHandle,
+  MemoryFileHandle,
+  uninstallMockOpfs,
+} from './opfs-mock';
 
 /** Reads the projects/ directory of the mock root (creating it on demand). */
 async function projectsDir(root: MemoryDirectoryHandle): Promise<MemoryDirectoryHandle> {
@@ -43,10 +50,36 @@ describe('opfs project storage', () => {
     expect(await loadProject('My Song')).toEqual(bytes);
   });
 
+  it('derives a stable byte revision without retaining input buffers', () => {
+    const bytes = new Uint8Array([0, 1, 2, 3, 255]);
+    expect(projectBytesRevision(bytes)).toBe(projectBytesRevision(new Uint8Array(bytes)));
+    expect(projectBytesRevision(bytes)).not.toBe(
+      projectBytesRevision(new Uint8Array([0, 1, 2, 3])),
+    );
+  });
+
   it('overwrites an existing project of the same name', async () => {
     await saveProject('slot', new Uint8Array([1, 2, 3]));
     await saveProject('slot', new Uint8Array([9]));
     expect(await loadProject('slot')).toEqual(new Uint8Array([9]));
+  });
+
+  it('keeps a quota error when closing the failed writable stream also errors', async () => {
+    const quota = new DOMException('storage quota exhausted', 'QuotaExceededError');
+    const abort = vi.fn(async () => undefined);
+    const writableSpy = vi.spyOn(MemoryFileHandle.prototype, 'createWritable').mockResolvedValue({
+      write: vi.fn(async () => {
+        throw quota;
+      }),
+      close: vi.fn(async () => {
+        throw Error('stream is already closed');
+      }),
+      abort,
+    } as unknown as FileSystemWritableFileStream);
+
+    await expect(saveProject('quota', new Uint8Array([1]))).rejects.toThrow(OpfsQuotaExceededError);
+    expect(abort).toHaveBeenCalledOnce();
+    writableSpy.mockRestore();
   });
 
   it('rejects a named save when another window changed the loaded revision', async () => {

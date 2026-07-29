@@ -121,6 +121,15 @@ describe('useActionGuards', () => {
     (appSettings.settings as { confirmDestructive: boolean }).confirmDestructive = false;
     await expect(guards.confirmAction('Skip dialog')).resolves.toBe(true);
     expect(dialogMocks.confirmDialog).toHaveBeenCalledTimes(1);
+
+    await expect(guards.confirmLossAction('Explain a lossy export')).resolves.toBe(true);
+    expect(dialogMocks.confirmDialog).toHaveBeenCalledTimes(2);
+    expect(dialogMocks.confirmDialog).toHaveBeenLastCalledWith({
+      title: undefined,
+      message: 'Explain a lossy export',
+      danger: false,
+      confirmLabel: 'Continue',
+    });
   });
 
   it('does not start a second action while the first one is busy', async () => {

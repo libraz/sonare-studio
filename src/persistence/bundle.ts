@@ -31,7 +31,7 @@ import {
   type AudioAssetMeta,
   computeAssetId,
   deleteAssetUnlocked,
-  interleaveChannels,
+  interleavedPcmBytes,
   loadAsset,
   saveAssetWithStatusUnlocked,
 } from './assets';
@@ -66,12 +66,6 @@ export function collectReferencedFontIds(doc: ProjectDocument): Set<string> {
   return ids;
 }
 
-/** Raw interleaved-PCM bytes view of planar channels (a fresh copy). */
-function pcmBytes(channels: ReadonlyArray<Float32Array>): Uint8Array {
-  const interleaved = interleaveChannels(channels);
-  return new Uint8Array(interleaved.buffer, interleaved.byteOffset, interleaved.byteLength).slice();
-}
-
 /**
  * Gathers the OPFS media referenced by a document into a bundle for
  * {@link encodeSzd}. Ids that are not stored (or unreadable) are skipped, so a
@@ -91,7 +85,7 @@ export async function gatherProjectBundleWithReport(
       assets.push({
         id,
         meta: textEncoder.encode(JSON.stringify(loaded.meta)),
-        pcm: pcmBytes(loaded.channels),
+        pcm: interleavedPcmBytes(loaded.channels),
       });
     } catch (error) {
       issues.push(...mediaFailureIssues(doc, 'audio-asset', id, 'unreadable', error));
@@ -134,7 +128,8 @@ export class MediaRestoreConflictError extends Error {
 export interface PreparedAssetRestore {
   id: string;
   meta: AudioAssetMeta;
-  audio: Float32Array;
+  /** Validated interleaved PCM bytes retained without a second Float32 copy. */
+  pcm: Uint8Array;
 }
 
 /** Validated SoundFont entry ready for conflict preflight and commit. */
@@ -205,8 +200,13 @@ export function prepareAssetRestore(entry: SzdMediaBundle['assets'][number]): Pr
       numFrames,
       ...(parsed.tags ? { tags: parsed.tags } : {}),
     },
-    audio,
+    pcm: entry.pcm,
   };
+}
+
+/** Reconstructs planar-ready Float32 PCM only when a new asset must be written. */
+export function audioFromPreparedAssetRestore(entry: PreparedAssetRestore): Float32Array {
+  return floatsFromPcm(entry.pcm);
 }
 
 /** Parses and validates one bundled SoundFont pair without touching storage. */
@@ -236,16 +236,11 @@ export function prepareFontRestore(entry: SzdMediaBundle['fonts'][number]): Prep
 export async function preflightAssetRestore(entry: PreparedAssetRestore): Promise<boolean> {
   try {
     const existing = await loadAsset(entry.id);
-    const existingBytes = pcmBytes(existing.channels);
-    const incomingBytes = new Uint8Array(
-      entry.audio.buffer,
-      entry.audio.byteOffset,
-      entry.audio.byteLength,
-    );
+    const existingBytes = interleavedPcmBytes(existing.channels);
     if (
       existing.meta.sampleRate !== entry.meta.sampleRate ||
       existing.meta.numChannels !== entry.meta.numChannels ||
-      !equalBytes(existingBytes, incomingBytes)
+      !equalBytes(existingBytes, entry.pcm)
     ) {
       throw new MediaRestoreConflictError('asset', entry.id);
     }
@@ -284,8 +279,12 @@ async function restoreProjectBundleUnlocked(
 ): Promise<void> {
   const referencedAssets = collectReferencedAssetIds(doc);
   const referencedFonts = collectReferencedFontIds(doc);
-  const assetEntries = bundle.assets.filter((entry) => referencedAssets.has(entry.id));
-  const fontEntries = bundle.fonts.filter((entry) => referencedFonts.has(entry.id));
+  const assetEntries = bundle.assets
+    .filter((entry) => referencedAssets.has(entry.id))
+    .map(prepareAssetRestore);
+  const fontEntries = bundle.fonts
+    .filter((entry) => referencedFonts.has(entry.id))
+    .map(prepareFontRestore);
   if (new Set(assetEntries.map((entry) => entry.id)).size !== assetEntries.length) {
     throw new Error('Bundled project contains duplicate referenced asset ids');
   }
@@ -298,20 +297,17 @@ async function restoreProjectBundleUnlocked(
   // Decode one PCM entry for preflight, then immediately release it before
   // touching the next. A large .szd must not retain Float32 copies for every
   // bundled asset at once merely to establish conflict-free atomicity.
-  for (const rawEntry of assetEntries) {
-    const entry = prepareAssetRestore(rawEntry);
+  for (const entry of assetEntries) {
     if (await preflightAssetRestore(entry)) existingAssets.add(entry.id);
   }
-  for (const rawEntry of fontEntries) {
-    const entry = prepareFontRestore(rawEntry);
+  for (const entry of fontEntries) {
     if (await preflightFontRestore(entry)) existingFonts.add(entry.id);
   }
 
   const createdAssets: string[] = [];
   const createdFonts: string[] = [];
   try {
-    for (const rawEntry of assetEntries) {
-      const entry = prepareAssetRestore(rawEntry);
+    for (const entry of assetEntries) {
       if (existingAssets.has(entry.id)) continue;
       createdAssets.push(entry.id);
       await saveAssetWithStatusUnlocked(
@@ -322,11 +318,10 @@ async function restoreProjectBundleUnlocked(
           numChannels: entry.meta.numChannels,
           ...(entry.meta.tags ? { tags: entry.meta.tags } : {}),
         },
-        entry.audio,
+        audioFromPreparedAssetRestore(entry),
       );
     }
-    for (const rawEntry of fontEntries) {
-      const entry = prepareFontRestore(rawEntry);
+    for (const entry of fontEntries) {
       if (existingFonts.has(entry.id)) continue;
       createdFonts.push(entry.id);
       await saveFontWithStatusUnlocked({ id: entry.id, name: entry.meta.name }, entry.data);

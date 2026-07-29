@@ -159,15 +159,27 @@ export function createStreamingZipWriter(options: StreamingZipWriterOptions): St
       file.mtime = new Date(options.mtime);
       zip.add(file);
       const downstream = file.ondata;
+      // fflate may transfer the buffer supplied to push() to its compression
+      // worker. Preserve the caller-owned entry bytes (asset PCM/SF2 data is
+      // often reused after a portable export) and transfer only this copy.
+      const input = new Uint8Array(bytes);
       const completion = new Promise<void>((resolve, reject) => {
+        const onEntryAbort = (): void => reject(abortError());
+        options.signal?.addEventListener('abort', onEntryAbort, { once: true });
         file.ondata = (error, chunk, final) => {
           downstream(error, chunk, final);
-          if (error) reject(error);
-          else if (final) resolve();
+          if (error) {
+            options.signal?.removeEventListener('abort', onEntryAbort);
+            reject(error);
+          } else if (final) {
+            options.signal?.removeEventListener('abort', onEntryAbort);
+            resolve();
+          }
         };
         try {
-          file.push(bytes, true);
+          file.push(input, true);
         } catch (error) {
+          options.signal?.removeEventListener('abort', onEntryAbort);
           reject(error);
         }
       });

@@ -12,6 +12,11 @@ export const RECENT_PROJECTS_STORAGE_KEY = 'sonare-studio.recentProjects';
 /** Most recent project names kept. */
 export const MAX_RECENT_PROJECTS = 8;
 
+/** True when a name can be passed to the OPFS project-name sanitizer safely. */
+function isValidRecentProjectName(name: string): boolean {
+  return name.length > 0 && name !== '.' && name !== '..';
+}
+
 /**
  * Returns the list with `name` moved to the front, de-duplicated and capped.
  *
@@ -25,7 +30,7 @@ export function withRecent(
   max = MAX_RECENT_PROJECTS,
 ): string[] {
   const trimmed = name.trim();
-  if (trimmed.length === 0) return existing.slice(0, max);
+  if (!isValidRecentProjectName(trimmed)) return existing.slice(0, max);
   return [trimmed, ...existing.filter((entry) => entry !== trimmed)].slice(0, max);
 }
 
@@ -39,7 +44,9 @@ export function parseRecent(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
   const out: string[] = [];
   for (const item of raw) {
-    if (typeof item === 'string' && item.length > 0 && !out.includes(item)) out.push(item);
+    if (typeof item !== 'string') continue;
+    const name = item.trim();
+    if (isValidRecentProjectName(name) && !out.includes(name)) out.push(name);
   }
   return out.slice(0, MAX_RECENT_PROJECTS);
 }

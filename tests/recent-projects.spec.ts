@@ -37,7 +37,7 @@ describe('withoutRecent', () => {
 
 describe('parseRecent', () => {
   it('keeps only non-empty unique strings, capped', () => {
-    expect(parseRecent(['a', 'a', '', 2, 'b', null])).toEqual(['a', 'b']);
+    expect(parseRecent(['a', ' a ', '', ' ', '.', '..', 2, 'b', null])).toEqual(['a', 'b']);
     expect(parseRecent('nope')).toEqual([]);
     expect(parseRecent(Array.from({ length: 20 }, (_, i) => `p${i}`))).toHaveLength(
       MAX_RECENT_PROJECTS,

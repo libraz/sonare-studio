@@ -12,14 +12,17 @@ import { createStreamingZipWriter } from '@/lib/streaming-zip';
 import { preflightAndUnzipInWorker } from '@/persistence/archive-preflight';
 import {
   deleteAssetUnlocked,
-  interleaveChannels,
+  interleavedPcmBytes,
   listAssets,
   loadAsset,
   saveAssetWithStatusUnlocked,
 } from '@/persistence/assets';
 import {
+  audioFromPreparedAssetRestore,
   collectReferencedAssetIds,
   collectReferencedFontIds,
+  type PreparedAssetRestore,
+  type PreparedFontRestore,
   preflightAssetRestore,
   preflightFontRestore,
   prepareAssetRestore,
@@ -251,7 +254,9 @@ async function prepareBrowserRestoreStage(
       ? crypto.randomUUID()
       : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   const directory = await stagingRoot.getDirectoryHandle(transactionId, { create: true });
-  const fileName = (name: string): string => `${encodeURIComponent(name)}.szd`;
+  // Namespace incoming archives separately from rollback pre-images. A user
+  // project named `previous-X` must never collide with the pre-image for `X`.
+  const fileName = (name: string): string => `incoming-${encodeURIComponent(name)}.szd`;
   const previousFileName = (name: string): string => `previous-${encodeURIComponent(name)}.szd`;
   const cleanup = (): Promise<void> => stagingRoot.removeEntry(transactionId, { recursive: true });
   let manifest!: BrowserRestoreStageManifest;
@@ -425,9 +430,15 @@ export async function reclaimOrphanedRestoreStages(): Promise<number> {
     // No staging root has ever been created; nothing to reclaim.
     return 0;
   }
-  let reclaimed = 0;
+  // Directory iteration is not specified to remain stable when entries are
+  // removed. Snapshot the stage names before deleting any so one orphan cannot
+  // make the next one invisible until a later startup pass.
+  const stageNames: string[] = [];
   for await (const [name, handle] of stagingRoot.entries()) {
-    if (handle.kind !== 'directory') continue;
+    if (handle.kind === 'directory') stageNames.push(name);
+  }
+  let reclaimed = 0;
+  for (const name of stageNames) {
     try {
       const stage = await stagingRoot.getDirectoryHandle(name);
       const parsed: unknown = JSON.parse(
@@ -448,12 +459,6 @@ export async function reclaimOrphanedRestoreStages(): Promise<number> {
 /** Reclaims crashed-restore staging directories during application startup. */
 export function reclaimOrphanedRestoreStagesAtStartup(): Promise<number> {
   return withPersistenceMutationLock(() => reclaimOrphanedRestoreStages());
-}
-
-/** Raw interleaved-PCM bytes view of planar channels (a fresh copy). */
-function pcmBytes(channels: ReadonlyArray<Float32Array>): Uint8Array {
-  const interleaved = interleaveChannels(channels);
-  return new Uint8Array(interleaved.buffer, interleaved.byteOffset, interleaved.byteLength).slice();
 }
 
 function projectEntryName(name: string): string {
@@ -625,7 +630,7 @@ async function createBrowserBackupLocked(
         const loaded = await loadAsset(asset.id, { cache: false });
         signal?.throwIfAborted();
         const meta = strToU8(JSON.stringify(loaded.meta));
-        const pcm = pcmBytes(loaded.channels);
+        const pcm = interleavedPcmBytes(loaded.channels);
         const payloadBytes = meta.byteLength + pcm.byteLength;
         const checksum = payloadChecksum(meta, pcm);
         await zip.add(`${ASSETS_PREFIX}${asset.id}.json`, meta);
@@ -911,7 +916,7 @@ async function restoreBrowserBackupUnlocked(
       ),
     ].sort();
   const skippedAssetIds: string[] = [];
-  const assets: Array<{ id: string; meta: Uint8Array; pcm: Uint8Array }> = [];
+  const assets: PreparedAssetRestore[] = [];
   for (const id of mediaIds(ASSETS_PREFIX, '.pcm')) {
     const pcm = entries[`${ASSETS_PREFIX}${id}.pcm`];
     const assetMeta = entries[`${ASSETS_PREFIX}${id}.json`];
@@ -920,15 +925,13 @@ async function restoreBrowserBackupUnlocked(
       continue;
     }
     try {
-      // Validate the entry without retaining its PCM-to-Float32 allocation.
-      prepareAssetRestore({ id, meta: assetMeta, pcm });
-      assets.push({ id, meta: assetMeta, pcm });
+      assets.push(prepareAssetRestore({ id, meta: assetMeta, pcm }));
     } catch {
       skippedAssetIds.push(id);
     }
   }
   const skippedFontIds: string[] = [];
-  const fonts: Array<{ id: string; meta: Uint8Array; sf2: Uint8Array }> = [];
+  const fonts: PreparedFontRestore[] = [];
   for (const id of mediaIds(FONTS_PREFIX, '.sf2')) {
     const sf2 = entries[`${FONTS_PREFIX}${id}.sf2`];
     const fontMeta = entries[`${FONTS_PREFIX}${id}.json`];
@@ -937,8 +940,7 @@ async function restoreBrowserBackupUnlocked(
       continue;
     }
     try {
-      prepareFontRestore({ id, meta: fontMeta, sf2 });
-      fonts.push({ id, meta: fontMeta, sf2 });
+      fonts.push(prepareFontRestore({ id, meta: fontMeta, sf2 }));
     } catch {
       skippedFontIds.push(id);
     }
@@ -946,13 +948,11 @@ async function restoreBrowserBackupUnlocked(
 
   const existingAssets = new Set<string>();
   const existingFonts = new Set<string>();
-  for (const rawEntry of assets) {
-    const entry = prepareAssetRestore(rawEntry);
+  for (const entry of assets) {
     if (await preflightAssetRestore(entry)) existingAssets.add(entry.id);
     signal?.throwIfAborted();
   }
-  for (const rawEntry of fonts) {
-    const entry = prepareFontRestore(rawEntry);
+  for (const entry of fonts) {
     if (await preflightFontRestore(entry)) existingFonts.add(entry.id);
     signal?.throwIfAborted();
   }
@@ -978,8 +978,7 @@ async function restoreBrowserBackupUnlocked(
   const createdAssets: string[] = [];
   const createdFonts: string[] = [];
   try {
-    for (const rawEntry of assets) {
-      const entry = prepareAssetRestore(rawEntry);
+    for (const entry of assets) {
       if (existingAssets.has(entry.id)) continue;
       await stage.beginAssetPublish(entry.id);
       await injectRestoreCrash('asset-intent');
@@ -992,13 +991,12 @@ async function restoreBrowserBackupUnlocked(
           numChannels: entry.meta.numChannels,
           ...(entry.meta.tags ? { tags: entry.meta.tags } : {}),
         },
-        entry.audio,
+        audioFromPreparedAssetRestore(entry),
       );
       await injectRestoreCrash('asset-published');
       signal?.throwIfAborted();
     }
-    for (const rawEntry of fonts) {
-      const entry = prepareFontRestore(rawEntry);
+    for (const entry of fonts) {
       if (existingFonts.has(entry.id)) continue;
       await stage.beginFontPublish(entry.id);
       await injectRestoreCrash('font-intent');

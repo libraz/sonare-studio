@@ -22,6 +22,7 @@ import {
   isReservedProjectName,
   listProjects,
   loadProjectWithRevision,
+  renameProject,
   saveProjectChecked,
 } from '@/persistence/opfs';
 import { MAX_SMF_FILE_BYTES } from '@/persistence/resource-limits';
@@ -30,6 +31,7 @@ import {
   addNote,
   clearMixerSnapshots,
   saveMixerSnapshot,
+  setClipCcLane,
   setProjectExternalMidiDefault,
 } from '@/project/commands';
 import {
@@ -51,6 +53,7 @@ vi.mock('@/persistence/opfs', () => ({
   isReservedProjectName: vi.fn(() => false),
   listProjects: vi.fn(async () => []),
   loadProjectWithRevision: vi.fn(),
+  renameProject: vi.fn(),
   sanitizeProjectName: (name: string) =>
     name
       .trim()
@@ -139,6 +142,7 @@ function setup(options: { autosaveResult?: boolean; autosaveError?: Error } = {}
   });
   const errorMessage = ref('');
   const confirmAction = vi.fn(async () => true);
+  const downloadBlobFile = vi.fn();
   const autosave = {
     lastSavedAt: ref<Date | null>(null),
     lastSavedDocumentKey,
@@ -152,7 +156,8 @@ function setup(options: { autosaveResult?: boolean; autosaveError?: Error } = {}
   const persistence = useProjectPersistence({
     autosave,
     confirmAction,
-    downloadBlobFile: vi.fn(),
+    confirmLossAction: confirmAction,
+    downloadBlobFile,
     errorMessage,
     runAction: async (action) => {
       try {
@@ -162,7 +167,7 @@ function setup(options: { autosaveResult?: boolean; autosaveError?: Error } = {}
       }
     },
   });
-  return { autosave, confirmAction, errorMessage, persistence };
+  return { autosave, confirmAction, downloadBlobFile, errorMessage, persistence };
 }
 
 describe('useProjectPersistence autosave refresh after load', () => {
@@ -172,6 +177,7 @@ describe('useProjectPersistence autosave refresh after load', () => {
     store.dispose();
     clearMixerSnapshots();
     vi.mocked(loadProjectWithRevision).mockReset();
+    vi.mocked(renameProject).mockReset();
     vi.mocked(loadProjectWithRevision).mockResolvedValue({
       bytes: encodeSzd(makeDocument('Stored Project')),
       revision: 'revision-1',
@@ -236,6 +242,23 @@ describe('useProjectPersistence autosave refresh after load', () => {
     expect(confirmAction.mock.calls[0][0]).toContain('missing-audio');
     expect(downloadSzd).not.toHaveBeenCalled();
     expect(downloadBrowserBackup).not.toHaveBeenCalled();
+  });
+
+  it('requires loss consent before exporting a MIDI 2.0 clip that omits expression data', async () => {
+    const store = useProjectStore();
+    await store.init();
+    setClipCcLane(store.clipId, 1, 0, [{ ppq: 0, value: 64 }]);
+    const { confirmAction, downloadBlobFile, persistence } = setup();
+    confirmAction.mockResolvedValue(false);
+
+    persistence.exportMidi2Action();
+    await flushPromises();
+
+    expect(confirmAction).toHaveBeenCalledWith(
+      expect.stringContaining('expression'),
+      expect.objectContaining({ confirmLabel: expect.any(String) }),
+    );
+    expect(downloadBlobFile).not.toHaveBeenCalled();
   });
 
   it('reports media ids skipped while restoring a browser backup', async () => {
@@ -522,6 +545,7 @@ describe('useProjectPersistence autosave refresh after load', () => {
     const persistence = useProjectPersistence({
       autosave,
       confirmAction: vi.fn(async () => true),
+      confirmLossAction: vi.fn(async () => true),
       downloadBlobFile: vi.fn(),
       errorMessage,
       runAction: async (action) => {
@@ -582,6 +606,36 @@ describe('useProjectPersistence autosave refresh after load', () => {
       'revision-1',
     );
     expect(store.projectName).toBe('Taken:Song');
+  });
+
+  it('uses the Save As overwrite path when an unsaved project uses an existing name', async () => {
+    const store = useProjectStore();
+    await store.init();
+    store.projectName = 'Taken Song';
+    vi.mocked(listProjects).mockResolvedValue([{ name: 'Taken Song', size: 10 }]);
+    const { confirmAction, persistence } = setup();
+    confirmAction.mockResolvedValueOnce(false);
+
+    persistence.saveProjectAction();
+    await flushPromises();
+    await nextTask();
+
+    expect(confirmAction).toHaveBeenCalledWith(
+      expect.stringContaining('Taken Song'),
+      expect.any(Object),
+    );
+    expect(saveProjectChecked).not.toHaveBeenCalled();
+
+    confirmAction.mockResolvedValueOnce(true);
+    persistence.saveProjectAction();
+    await flushPromises();
+    await nextTask();
+
+    expect(saveProjectChecked).toHaveBeenCalledWith(
+      'Taken Song',
+      expect.any(Uint8Array),
+      'revision-1',
+    );
   });
 
   it('keeps saving to the opened slot when the document title later changes', async () => {
@@ -755,5 +809,15 @@ describe('useProjectPersistence autosave refresh after load', () => {
     // slot that no longer exists.
     expect(saveProjectChecked).toHaveBeenCalled();
     expect(vi.mocked(saveProjectChecked).mock.calls.at(-1)?.[2]).toBeNull();
+  });
+
+  it('renames a saved project through the persistence UI action', async () => {
+    const { persistence } = setup();
+    vi.mocked(promptDialog).mockResolvedValueOnce('Renamed Project');
+
+    await persistence.renameStoredProject('Stored Project');
+    await flushPromises();
+
+    expect(renameProject).toHaveBeenCalledWith('Stored Project', 'Renamed Project');
   });
 });

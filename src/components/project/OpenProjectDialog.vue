@@ -13,6 +13,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: [];
   deleteProject: [name: string];
+  renameProject: [name: string];
   importSzd: [];
   openProject: [name: string];
 }>();
@@ -95,27 +96,38 @@ function onKeydown(event: KeyboardEvent): void {
         ref="listRef"
         class="stored-list"
         role="listbox"
+        tabindex="0"
         :aria-label="t.dialogs.openProject.projectsList"
         :aria-activedescendant="activeRowId"
       >
         <li
           v-for="(info, index) in storedProjects"
-          :id="rowId(index)"
           :key="info.name"
           class="stored-row"
-          :class="{ selected: index === selectedIndex }"
-          role="option"
-          :aria-selected="index === selectedIndex"
+          role="presentation"
         >
           <button
+            :id="rowId(index)"
             type="button"
             class="stored-load"
+            :class="{ selected: index === selectedIndex }"
+            role="option"
+            :aria-selected="index === selectedIndex"
             v-tooltip="formatMessage(t.dialogs.openProject.loadProject, { name: info.name })"
+            @focus="selectedIndex = index"
             @click="emit('openProject', info.name)"
           >
             {{ info.name }}
           </button>
           <span class="stored-size">{{ formatSize(info.size) }}</span>
+          <button
+            type="button"
+            class="stored-rename"
+            v-tooltip="formatMessage(t.dialogs.openProject.renameProject, { name: info.name })"
+            @click="emit('renameProject', info.name)"
+          >
+            {{ t.dialogs.openProject.rename }}
+          </button>
           <button
             type="button"
             class="stored-delete"

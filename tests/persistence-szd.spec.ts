@@ -4,8 +4,10 @@ import { MAX_PROJECT_ARCHIVE_ENTRIES } from '@/persistence/resource-limits';
 import {
   decodeSzd,
   decodeSzdBundle,
+  decodeSzdWithMetaInWorker,
   decodeSzdWithResourceReport,
   encodeSzd,
+  encodeSzdStreaming,
   readSzdMeta,
   SZD_APP_ID,
   SzdFormatError,
@@ -121,6 +123,64 @@ describe('szd encode/decode', () => {
     expect(encodeSzd(doc, stamped)).toEqual(encodeSzd(doc, stamped));
   });
 
+  it('streams a portable media bundle without changing its decoded contents', async () => {
+    const portableBundle: SzdMediaBundle = {
+      assets: [
+        {
+          id: 'streamedasset',
+          meta: strToU8('{"id":"streamedasset"}'),
+          pcm: new Uint8Array([1, 2, 3, 4]),
+        },
+      ],
+      fonts: [
+        {
+          id: 'streamedfont',
+          meta: strToU8('{"id":"streamedfont"}'),
+          sf2: new Uint8Array([5, 6, 7, 8]),
+        },
+      ],
+    };
+    const bytes = await encodeSzdStreaming(
+      makeDocument(),
+      { savedAt: '2026-01-02T03:04:05.000Z' },
+      portableBundle,
+    );
+
+    expect(decodeSzd(bytes)).toEqual(makeDocument());
+    const decoded = decodeSzdBundle(bytes);
+    expect(
+      decoded.assets.map((asset) => ({
+        ...asset,
+        meta: strFromU8(asset.meta),
+        pcm: [...asset.pcm],
+      })),
+    ).toEqual(
+      portableBundle.assets.map((asset) => ({
+        ...asset,
+        meta: strFromU8(asset.meta),
+        pcm: [...asset.pcm],
+      })),
+    );
+    expect(
+      decoded.fonts.map((font) => ({ ...font, meta: strFromU8(font.meta), sf2: [...font.sf2] })),
+    ).toEqual(
+      portableBundle.fonts.map((font) => ({
+        ...font,
+        meta: strFromU8(font.meta),
+        sf2: [...font.sf2],
+      })),
+    );
+  });
+
+  it('stops a streaming archive export when cancelled before compression', async () => {
+    const controller = new AbortController();
+    controller.abort(new DOMException('cancelled', 'AbortError'));
+
+    await expect(
+      encodeSzdStreaming(makeDocument(), {}, undefined, controller.signal),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
   it('writes project.json and meta.json with the caller-provided timestamp', () => {
     const doc = makeDocument();
     const entries = unzipSync(encodeSzd(doc, { savedAt: '2026-01-02T03:04:05.000Z' }));
@@ -149,6 +209,19 @@ describe('szd encode/decode', () => {
       savedAt: '2026-01-02T03:04:05.000Z',
     });
     expect(readSzdMeta(new Uint8Array([1, 2, 3]))).toBeNull();
+  });
+
+  it('decodes a document and its metadata through one worker expansion', async () => {
+    const bytes = encodeSzd(makeDocument(), { savedAt: '2026-01-02T03:04:05.000Z' });
+
+    await expect(decodeSzdWithMetaInWorker(bytes)).resolves.toMatchObject({
+      document: { name: 'Round Trip' },
+      meta: {
+        schemaVersion: PROJECT_DOCUMENT_SCHEMA_VERSION,
+        app: SZD_APP_ID,
+        savedAt: '2026-01-02T03:04:05.000Z',
+      },
+    });
   });
 
   it('rejects schema version 0', () => {

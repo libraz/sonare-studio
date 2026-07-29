@@ -40,15 +40,17 @@ import {
   isReservedProjectName,
   listProjects,
   loadProjectWithRevision,
+  renameProject,
   type StoredProjectInfo,
   sanitizeProjectName,
   saveProjectChecked,
 } from '@/persistence/opfs';
 import { MAX_SMF_FILE_BYTES } from '@/persistence/resource-limits';
 import {
-  decodeSzd,
+  decodeSzdInWorker,
   decodeSzdWithBundleInWorker,
   encodeSzd,
+  encodeSzdStreaming,
   SZD_FILE_EXTENSION,
 } from '@/persistence/szd';
 import { collectReferencedAudioAssetIds } from '@/project/asset-references';
@@ -87,15 +89,19 @@ type DownloadBlobFile = (blob: Blob, filename: string) => void;
 export interface ProjectPersistenceOptions {
   autosave: Autosave;
   confirmAction: ConfirmAction;
+  confirmLossAction: ConfirmAction;
   downloadBlobFile: DownloadBlobFile;
   errorMessage: Ref<string>;
   runAction: RunAction;
   /** Shared persisted-state revision, avoiding duplicate full-document hashes. */
   persistedStateKey?: ComputedRef<string>;
+  /** Releases project-scoped render caches before replacing the document. */
+  onProjectDocumentWillLoad?: () => void;
 }
 
 export function useProjectPersistence(options: ProjectPersistenceOptions) {
-  const { autosave, confirmAction, downloadBlobFile, errorMessage, runAction } = options;
+  const { autosave, confirmAction, confirmLossAction, downloadBlobFile, errorMessage, runAction } =
+    options;
   const store = useProjectStore();
   const { t } = useI18n();
 
@@ -114,6 +120,11 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   const hasAutosave = ref(false);
   const storedProjects = ref<StoredProjectInfo[]>([]);
   const recentProjects = ref<string[]>(loadRecentProjects());
+
+  async function replaceProjectDocument(document: ProjectDocument): Promise<void> {
+    options.onProjectDocumentWillLoad?.();
+    await loadProjectDocument(document);
+  }
 
   watch(
     () => options.persistedStateKey?.value ?? persistedProjectStateKey(store),
@@ -141,8 +152,12 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
         fontIds.add(track.instrument.fontId);
       }
     }
+    const historyRefs = collectHistoryReferencedMediaIds();
+    const assetIds = collectReferencedAudioAssetIds(store.clips, store.tracks);
+    for (const assetId of historyRefs.assetIds) assetIds.add(assetId);
+    for (const fontId of historyRefs.fontIds) fontIds.add(fontId);
     try {
-      liveAssetLease.update(collectReferencedAudioAssetIds(store.clips, store.tracks));
+      liveAssetLease.update(assetIds);
       liveFontLease.update(fontIds);
     } catch {
       // A concurrent delete of a now-referenced id is a transient race; the
@@ -203,7 +218,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     report: MediaCompletenessReport,
   ): Promise<boolean> {
     if (report.complete) return true;
-    return confirmAction(
+    return confirmLossAction(
       formatMessage(t.value.shell.project.mediaCompleteness.message, {
         items: formatMediaCompletenessReport(report),
       }),
@@ -222,7 +237,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
    * landing in an unfamiliar project they never created.
    */
   async function bootProject(): Promise<void> {
-    await loadProjectDocument(createTemplate('empty'));
+    await replaceProjectDocument(createTemplate('empty'));
     savedProjectSlot.value = null;
     savedProjectRevision.value = null;
     await markClean();
@@ -275,7 +290,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     closeProjectMenu();
     void runAction(async () => {
       if (!(await confirmDiscard())) return;
-      await loadProjectDocument(await makeBwv565Document());
+      await replaceProjectDocument(await makeBwv565Document());
       savedProjectSlot.value = null;
       savedProjectRevision.value = null;
       const documentKey = await saveLoadedProjectToAutosave();
@@ -301,7 +316,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   function onCreateProject(payload: { document: ProjectDocument; template: TemplateName }): void {
     newDialogOpen.value = false;
     void runAction(async () => {
-      await loadProjectDocument(payload.document);
+      await replaceProjectDocument(payload.document);
       savedProjectSlot.value = null;
       savedProjectRevision.value = null;
       const documentKey = await saveLoadedProjectToAutosave();
@@ -338,7 +353,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     if (!(await confirmDiscard())) return;
     void runAction(async () => {
       const stored = await loadProjectWithRevision(name);
-      await loadProjectDocument(decodeSzd(stored.bytes));
+      await replaceProjectDocument(await decodeSzdInWorker(stored.bytes));
       store.projectName = name;
       savedProjectSlot.value = sanitizeProjectName(name);
       savedProjectRevision.value = stored.revision;
@@ -380,6 +395,32 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     });
   }
 
+  async function renameStoredProject(name: string): Promise<void> {
+    const next = await promptDialog({
+      title: t.value.dialogs.openProject.renameTitle,
+      message: formatMessage(t.value.dialogs.openProject.renameMessage, { name }),
+      defaultValue: name,
+      placeholder: name,
+      confirmLabel: t.value.dialogs.openProject.rename,
+    });
+    if (next === null) return;
+    const safeName = sanitizeProjectName(next);
+    if (safeName === '') return;
+    if (isReservedProjectName(safeName)) {
+      throw new RangeError(`${safeName} is reserved`);
+    }
+    void runAction(async () => {
+      await renameProject(name, safeName);
+      if (sanitizeProjectName(name) === savedProjectSlot.value) {
+        savedProjectSlot.value = safeName;
+        store.projectName = safeName;
+      }
+      recentProjects.value = withoutRecent(recentProjects.value, name);
+      rememberRecentProject(safeName);
+      await refreshStoredProjects();
+    });
+  }
+
   async function importSzdFile(): Promise<void> {
     if (!(await confirmDiscard())) return;
     void runAction(async () => {
@@ -401,7 +442,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       if (opfsAvailable) {
         await restoreProjectBundle(doc, decoded.bundle);
       }
-      await loadProjectDocument(doc);
+      await replaceProjectDocument(doc);
       savedProjectSlot.value = null;
       savedProjectRevision.value = null;
       const documentKey = await saveLoadedProjectToAutosave();
@@ -446,7 +487,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
           )
           .map((item) => `• ${item}`)
           .join('\n');
-        const confirmed = await confirmAction(
+        const confirmed = await confirmLossAction(
           formatMessage(t.value.shell.project.musicXmlLoss.message, { items }),
           {
             title: t.value.shell.project.musicXmlLoss.title,
@@ -455,7 +496,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
         );
         if (!confirmed) return;
       }
-      await loadProjectDocument(imported.document);
+      await replaceProjectDocument(imported.document);
       savedProjectSlot.value = null;
       savedProjectRevision.value = null;
       const documentKey = await saveLoadedProjectToAutosave();
@@ -525,7 +566,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       const imported = await importDawprojectWithMediaResult(picked.bytes, {
         resolveExternalAudio: createExternalAudioResolver(),
       });
-      await loadProjectDocument(imported.document);
+      await replaceProjectDocument(imported.document);
       savedProjectSlot.value = null;
       savedProjectRevision.value = null;
       const documentKey = await saveLoadedProjectToAutosave();
@@ -534,7 +575,10 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       startScreenOpen.value = false;
       if (imported.media.issues.length > 0) {
         const paths = imported.media.issues.slice(0, 3).map((issue) => issue.path);
-        errorMessage.value = `DAWproject imported with ${imported.media.issues.length} missing or failed audio file(s): ${paths.join(', ')}`;
+        errorMessage.value = formatMessage(t.value.shell.project.importDawprojectMediaIssues, {
+          count: imported.media.issues.length,
+          paths: paths.join(', '),
+        });
       } else if (imported.losses.length > 0) {
         const details = imported.losses.slice(0, 3).map((loss) => {
           if (loss.kind === 'unsupported-time-unit') return `${loss.attribute}=${loss.unit}`;
@@ -546,8 +590,14 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
           (loss) => loss.kind === 'unsupported-time-unit',
         );
         errorMessage.value = onlyTimeUnits
-          ? `DAWproject imported with ${imported.losses.length} unsupported time unit(s): ${details.join(', ')}`
-          : `DAWproject imported with ${imported.losses.length} unsupported structure(s): ${details.join(', ')}`;
+          ? formatMessage(t.value.shell.project.importDawprojectTimeUnitIssues, {
+              count: imported.losses.length,
+              details: details.join(', '),
+            })
+          : formatMessage(t.value.shell.project.importDawprojectStructureIssues, {
+              count: imported.losses.length,
+              details: details.join(', '),
+            });
       }
     });
   }
@@ -563,7 +613,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
         await readFileBytesBounded(file, MAX_SMF_FILE_BYTES),
         file.name,
       );
-      await loadProjectDocument(doc);
+      await replaceProjectDocument(doc);
       savedProjectSlot.value = null;
       savedProjectRevision.value = null;
       const documentKey = await saveLoadedProjectToAutosave();
@@ -600,7 +650,24 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
 
   async function saveToOpfs(name: string): Promise<void> {
     const slot = sanitizeProjectName(name);
-    const expectedRevision = slot === savedProjectSlot.value ? savedProjectRevision.value : null;
+    let expectedRevision = slot === savedProjectSlot.value ? savedProjectRevision.value : null;
+    // A new/imported document has no loaded revision. Saving it under an
+    // existing name is an intentional overwrite, not a cross-tab conflict;
+    // use the same explicit confirmation path as Save As.
+    if (savedProjectSlot.value === null) {
+      const exists = (await listProjects()).some((project) => project.name === slot);
+      if (exists) {
+        expectedRevision = (await loadProjectWithRevision(slot)).revision;
+        const confirmed = await confirmAction(
+          formatMessage(t.value.dialogs.prompts.saveProjectOverwriteMessage, { name: slot }),
+          {
+            title: t.value.dialogs.prompts.saveProjectOverwriteTitle,
+            confirmLabel: t.value.dialogs.prompts.save,
+          },
+        );
+        if (!confirmed) return;
+      }
+    }
     const saved = await writeProjectToOpfs(name, store.projectName, expectedRevision);
     savedProjectSlot.value = saved.slot;
     savedProjectRevision.value = saved.revision;
@@ -659,7 +726,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       const gathered = opfsAvailable ? await gatherProjectBundleWithReport(doc) : undefined;
       if (gathered && !(await confirmIncompletePortableExport(gathered.report))) return;
       const bundle = gathered?.bundle;
-      const bytes = encodeSzd(doc, { savedAt: new Date().toISOString() }, bundle);
+      const bytes = await encodeSzdStreaming(doc, { savedAt: new Date().toISOString() }, bundle);
       downloadSzd(store.projectName, bytes);
     });
   }
@@ -693,7 +760,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
         ...(restored.skippedFontIds ?? []).map((id) => `SoundFont: ${id}`),
       ];
       if (skipped.length > 0) {
-        await confirmAction(
+        await confirmLossAction(
           formatMessage(t.value.dialogs.prompts.restoreBackupMediaSkippedMessage, {
             items: skipped.map((id) => `• ${id}`).join('\n'),
           }),
@@ -713,11 +780,12 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       const loss = result.smfLoss;
       if (
         loss !== undefined &&
-        (loss.emptyMidiClips > 0 || loss.emptyMidiTracks > 0) &&
-        !(await confirmAction(
+        (loss.emptyMidiClips > 0 || loss.emptyMidiTracks > 0 || loss.mutedMidiTracks > 0) &&
+        !(await confirmLossAction(
           formatMessage(t.value.dialogs.prompts.exportSmfLossMessage, {
             clips: String(loss.emptyMidiClips),
             tracks: String(loss.emptyMidiTracks),
+            mutedTracks: String(loss.mutedMidiTracks),
           }),
           {
             title: t.value.dialogs.prompts.exportSmfLossTitle,
@@ -738,6 +806,23 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     closeProjectMenu();
     void runAction(async () => {
       const result = exportProjectClipFile();
+      const loss = result.midi2ClipLoss;
+      if (
+        loss !== undefined &&
+        (loss.expressionLanes > 0 || loss.sysExPackets > 0) &&
+        !(await confirmLossAction(
+          formatMessage(t.value.dialogs.prompts.exportMidi2LossMessage, {
+            expressionLanes: String(loss.expressionLanes),
+            sysExPackets: String(loss.sysExPackets),
+          }),
+          {
+            title: t.value.dialogs.prompts.exportMidi2LossTitle,
+            confirmLabel: t.value.dialogs.prompts.exportMidi2LossConfirm,
+          },
+        ))
+      ) {
+        return;
+      }
       downloadBlobFile(
         new Blob([new Uint8Array(result.bytes)], { type: 'audio/midi' }),
         result.filename,
@@ -774,6 +859,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     openStoredProject,
     openRecentProject,
     deleteStoredProject,
+    renameStoredProject,
     importSzdFile,
     importDawprojectAction,
     importMusicXmlAction,

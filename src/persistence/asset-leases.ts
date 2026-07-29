@@ -255,6 +255,54 @@ export interface FontLease {
   release(): void;
 }
 
+/**
+ * Reserves a group of media ids for one destructive operation. Callers must
+ * synchronize leases after reserving and release the reservation when their
+ * final reference checks and mutations finish.
+ *
+ * This is intentionally separate from the single-id guarded deletion helpers:
+ * a collector can announce every candidate once, wait for peers once, then
+ * perform many independent OPFS deletions without holding the mutation lock
+ * through a grace period per file.
+ */
+export interface MediaDeletionReservation {
+  audioAssetIds: ReadonlySet<string>;
+  fontIds: ReadonlySet<string>;
+  release(): void;
+}
+
+export function reserveMediaDeletion(
+  audioAssetIds: Iterable<string>,
+  fontIds: Iterable<string>,
+): MediaDeletionReservation {
+  const reservedAudioAssetIds = new Set(
+    [...new Set(audioAssetIds)].filter((assetId) => !deletingIds.has(assetId)),
+  );
+  const reservedFontIds = new Set(
+    [...new Set(fontIds)].filter((fontId) => !deletingFontIds.has(fontId)),
+  );
+  for (const assetId of reservedAudioAssetIds) deletingIds.add(assetId);
+  for (const fontId of reservedFontIds) deletingFontIds.add(fontId);
+  if (reservedAudioAssetIds.size > 0 || reservedFontIds.size > 0) {
+    publishDeleteIntent([...reservedAudioAssetIds], [...reservedFontIds]);
+  }
+
+  let released = false;
+  return {
+    audioAssetIds: reservedAudioAssetIds,
+    fontIds: reservedFontIds,
+    release(): void {
+      if (released) return;
+      released = true;
+      for (const assetId of reservedAudioAssetIds) deletingIds.delete(assetId);
+      for (const fontId of reservedFontIds) deletingFontIds.delete(fontId);
+      if (reservedAudioAssetIds.size > 0 || reservedFontIds.size > 0) {
+        publishDeleteComplete([...reservedAudioAssetIds], [...reservedFontIds]);
+      }
+    },
+  };
+}
+
 /** Acquires a mutable lease over one or more SoundFont ids. */
 export function leaseFonts(fontIds: Iterable<string>): FontLease {
   let held = new Set(fontIds);

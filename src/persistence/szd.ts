@@ -7,6 +7,7 @@
  */
 
 import { strFromU8, strToU8, zipSync } from 'fflate';
+import { createStreamingZipWriter } from '@/lib/streaming-zip';
 import {
   type ArchiveLimits,
   ArchivePreflightError,
@@ -157,6 +158,34 @@ function assertSzdEncodeBudget(
   }
 }
 
+/** Builds the canonical archive entry set, omitting unsafe media ids. */
+function szdEntries(
+  doc: ProjectDocument,
+  meta: SzdEncodeMeta,
+  bundle: SzdMediaBundle | undefined,
+): Record<string, Uint8Array> {
+  const metaDoc: SzdMetaDocument = {
+    schemaVersion: doc.schemaVersion,
+    app: SZD_APP_ID,
+  };
+  if (meta.savedAt !== undefined) metaDoc.savedAt = meta.savedAt;
+  const entries: Record<string, Uint8Array> = {
+    [PROJECT_ENTRY]: strToU8(JSON.stringify(doc)),
+    [META_ENTRY]: strToU8(JSON.stringify(metaDoc)),
+  };
+  for (const asset of bundle?.assets ?? []) {
+    if (!MEDIA_ID_PATTERN.test(asset.id)) continue;
+    entries[`${ASSETS_PREFIX}${asset.id}.json`] = asset.meta;
+    entries[`${ASSETS_PREFIX}${asset.id}.pcm`] = asset.pcm;
+  }
+  for (const font of bundle?.fonts ?? []) {
+    if (!MEDIA_ID_PATTERN.test(font.id)) continue;
+    entries[`${FONTS_PREFIX}${font.id}.json`] = font.meta;
+    entries[`${FONTS_PREFIX}${font.id}.sf2`] = font.sf2;
+  }
+  return entries;
+}
+
 function szdLimits(overrides: Partial<ArchiveLimits> = {}): Partial<ArchiveLimits> {
   return {
     maxCompressedBytes: MAX_PROJECT_ARCHIVE_COMPRESSED_BYTES,
@@ -218,25 +247,7 @@ export function encodeSzd(
   meta: SzdEncodeMeta = {},
   bundle?: SzdMediaBundle,
 ): Uint8Array {
-  const metaDoc: SzdMetaDocument = {
-    schemaVersion: doc.schemaVersion,
-    app: SZD_APP_ID,
-  };
-  if (meta.savedAt !== undefined) metaDoc.savedAt = meta.savedAt;
-  const entries: Record<string, Uint8Array> = {
-    [PROJECT_ENTRY]: strToU8(JSON.stringify(doc)),
-    [META_ENTRY]: strToU8(JSON.stringify(metaDoc)),
-  };
-  for (const asset of bundle?.assets ?? []) {
-    if (!MEDIA_ID_PATTERN.test(asset.id)) continue;
-    entries[`${ASSETS_PREFIX}${asset.id}.json`] = asset.meta;
-    entries[`${ASSETS_PREFIX}${asset.id}.pcm`] = asset.pcm;
-  }
-  for (const font of bundle?.fonts ?? []) {
-    if (!MEDIA_ID_PATTERN.test(font.id)) continue;
-    entries[`${FONTS_PREFIX}${font.id}.json`] = font.meta;
-    entries[`${FONTS_PREFIX}${font.id}.sf2`] = font.sf2;
-  }
+  const entries = szdEntries(doc, meta, bundle);
   // Reject entry-count and expanded-payload violations before zipSync creates
   // a potentially huge compressed archive. The compressed-size ceiling still
   // needs the completed archive and is checked immediately afterwards.
@@ -244,6 +255,43 @@ export function encodeSzd(
   const archive = zipSync(entries, { mtime: meta.savedAt ?? DEFAULT_ZIP_MTIME });
   assertSzdEncodeBudget(entries, archive.byteLength);
   return archive;
+}
+
+/**
+ * Asynchronously encodes a portable .szd archive without monopolizing the
+ * main thread while compressing bundled media. The returned bytes are still
+ * retained for the browser download Blob; compression itself is incremental
+ * and observes cancellation between entries.
+ */
+export async function encodeSzdStreaming(
+  doc: ProjectDocument,
+  meta: SzdEncodeMeta = {},
+  bundle?: SzdMediaBundle,
+  signal?: AbortSignal,
+): Promise<Uint8Array> {
+  const entries = szdEntries(doc, meta, bundle);
+  // Match the synchronous encoder's early rejection, before handing an
+  // over-limit archive to the compressor.
+  assertSzdEncodeBudget(entries);
+  const writer = createStreamingZipWriter({
+    mtime: meta.savedAt ?? DEFAULT_ZIP_MTIME,
+    signal,
+    maxEntries: MAX_PROJECT_ARCHIVE_ENTRIES,
+    maxEntryBytes: MAX_PROJECT_ARCHIVE_ENTRY_BYTES,
+    maxUncompressedBytes: MAX_PROJECT_ARCHIVE_EXPANDED_BYTES,
+    maxCompressedBytes: MAX_PROJECT_ARCHIVE_COMPRESSED_BYTES,
+    createLimitError: (message) => new SzdSizeError(`Exported project ${message}`),
+  });
+  try {
+    for (const [name, bytes] of Object.entries(entries)) {
+      signal?.throwIfAborted();
+      await writer.add(name, bytes);
+    }
+    return await writer.close();
+  } catch (error) {
+    writer.abort(error);
+    throw error;
+  }
 }
 
 /** Parses a zip entry as JSON, mapping failures to {@link SzdFormatError}. */
@@ -319,23 +367,30 @@ function validateDocument(value: unknown): ProjectDocument {
  *   entry is missing or malformed, the schema version is unsupported, or the
  *   archive was written by a different application.
  */
+function readSzdMetaValue(entries: Record<string, Uint8Array>): Partial<SzdMetaDocument> | null {
+  const metaBytes = entries[META_ENTRY];
+  if (!metaBytes) return null;
+  try {
+    const value = JSON.parse(strFromU8(metaBytes)) as unknown;
+    if (typeof value !== 'object' || value === null) return null;
+    return value as Partial<SzdMetaDocument>;
+  } catch {
+    return null;
+  }
+}
+
+function readSzdMetaEntries(entries: Record<string, Uint8Array>): SzdMetaDocument | null {
+  const meta = readSzdMetaValue(entries);
+  if (!meta || typeof meta.schemaVersion !== 'number' || typeof meta.app !== 'string') return null;
+  return meta as SzdMetaDocument;
+}
+
 function decodeSzdEntries(entries: Record<string, Uint8Array>): ProjectDocument {
   // Reject archives written by other apps when their metadata says so; absent
   // or unreadable metadata is tolerated (project.json alone is sufficient).
-  const metaBytes = entries[META_ENTRY];
-  if (metaBytes) {
-    let metaDoc: unknown = null;
-    try {
-      metaDoc = JSON.parse(strFromU8(metaBytes));
-    } catch {
-      // Tolerated: meta.json is advisory.
-    }
-    if (typeof metaDoc === 'object' && metaDoc !== null) {
-      const app = (metaDoc as Partial<SzdMetaDocument>).app;
-      if (typeof app === 'string' && app !== SZD_APP_ID) {
-        throw new SzdFormatError(`Invalid project file: written by another application (${app})`);
-      }
-    }
+  const meta = readSzdMetaValue(entries);
+  if (typeof meta?.app === 'string' && meta.app !== SZD_APP_ID) {
+    throw new SzdFormatError(`Invalid project file: written by another application (${meta.app})`);
   }
 
   const projectBytes = entries[PROJECT_ENTRY];
@@ -357,6 +412,20 @@ export async function decodeSzdInWorker(
   const entries = await unzipSzdInWorker(bytes, signal);
   signal?.throwIfAborted();
   return decodeSzdEntries(entries);
+}
+
+/**
+ * Parses a project and its advisory metadata through one worker ZIP expansion.
+ * Useful when a caller needs both validity and the saved timestamp, such as
+ * autosave recovery candidate selection.
+ */
+export async function decodeSzdWithMetaInWorker(
+  bytes: Uint8Array,
+  signal?: AbortSignal,
+): Promise<{ document: ProjectDocument; meta: SzdMetaDocument | null }> {
+  const entries = await unzipSzdInWorker(bytes, signal);
+  signal?.throwIfAborted();
+  return { document: decodeSzdEntries(entries), meta: readSzdMetaEntries(entries) };
 }
 
 /** Decodes with a caller-provided cumulative budget and reports retained expansion. */
@@ -439,15 +508,5 @@ export function readSzdMeta(bytes: Uint8Array): SzdMetaDocument | null {
   } catch {
     return null;
   }
-  const metaBytes = entries[META_ENTRY];
-  if (!metaBytes) return null;
-  try {
-    const value = JSON.parse(strFromU8(metaBytes)) as unknown;
-    if (typeof value !== 'object' || value === null) return null;
-    const meta = value as Partial<SzdMetaDocument>;
-    if (typeof meta.schemaVersion !== 'number' || typeof meta.app !== 'string') return null;
-    return meta as SzdMetaDocument;
-  } catch {
-    return null;
-  }
+  return readSzdMetaEntries(entries);
 }

@@ -57,8 +57,13 @@ describe('OpenProjectDialog', () => {
 
   it('exposes the saved projects as a listbox of options', () => {
     open(projects);
-    expect(q('[role="listbox"]')).not.toBeNull();
-    expect(qa('[role="option"]')).toHaveLength(projects.length);
+    const listbox = q<HTMLElement>('[role="listbox"]');
+    expect(listbox).not.toBeNull();
+    expect(listbox?.tabIndex).toBe(0);
+    const options = qa<HTMLButtonElement>('[role="option"]');
+    expect(options).toHaveLength(projects.length);
+    expect(options.every((option) => option.tagName === 'BUTTON')).toBe(true);
+    expect(options.every((option) => option.querySelector('button') === null)).toBe(true);
   });
 
   it('tracks the keyboard selection via aria-activedescendant', async () => {
@@ -96,6 +101,14 @@ describe('OpenProjectDialog', () => {
     const emitted = wrapper?.emitted('openProject') as Array<[string]>;
     expect(emitted).toHaveLength(1);
     expect(emitted[0][0]).toBe('Beta');
+  });
+
+  it('emits a rename request for the selected saved project row', async () => {
+    open(projects);
+    q<HTMLButtonElement>('.stored-rename')?.click();
+    await nextTick();
+
+    expect(wrapper?.emitted('renameProject')).toEqual([['Alpha']]);
   });
 
   it('does not turn Enter on Delete into opening the highlighted project', async () => {

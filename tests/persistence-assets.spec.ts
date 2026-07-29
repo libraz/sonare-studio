@@ -11,6 +11,7 @@ import {
   deleteAsset,
   InvalidAssetError,
   interleaveChannels,
+  interleavedPcmBytes,
   listAssetAliases,
   listAssets,
   loadAsset,
@@ -395,6 +396,12 @@ describe('audio asset helpers', () => {
     const interleaved = interleaveChannels(channels);
     expect(interleaved).toEqual(new Float32Array([0.1, -0.1, 0.2, -0.2, 0.3, -0.3, 0.4, -0.4]));
     expect(deinterleaveChannels(interleaved, 2)).toEqual(channels);
+  });
+
+  it('returns owned interleaved PCM bytes for archive writers', () => {
+    const bytes = interleavedPcmBytes(stereo());
+    const samples = new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
+    expect(samples).toEqual(new Float32Array([0.1, -0.1, 0.2, -0.2, 0.3, -0.3, 0.4, -0.4]));
   });
 
   it('deinterleaveChannels validates the channel count', () => {

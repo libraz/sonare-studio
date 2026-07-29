@@ -21,15 +21,17 @@
  * collector deletes nothing and reports {@link MediaGcResult.incompleteReferences}.
  */
 
-import { listFontPayloads, listFonts } from '@/project/fonts';
+import { deleteFontUnlocked, listFontPayloads, listFonts } from '@/project/fonts';
 import type { ProjectDocument } from '@/project/serialization';
 import {
-  deleteAudioAssetGuarded,
-  deleteFontGuarded,
+  isAudioAssetLeased,
+  isFontLeased,
   leasedAudioAssetIds,
   leasedFontIds,
+  reserveMediaDeletion,
+  synchronizeMediaLeases,
 } from './asset-leases';
-import { type AudioAssetMeta, listAssetPayloads, listAssets } from './assets';
+import { type AudioAssetMeta, deleteAssetUnlocked, listAssetPayloads, listAssets } from './assets';
 import { collectReferencedAssetIds, collectReferencedFontIds } from './bundle';
 import { withPersistenceMutationLock } from './mutation-lock';
 import { isOpfsAvailable, listProjects, loadProject, type StoredProjectInfo } from './opfs';
@@ -271,58 +273,47 @@ async function garbageCollectMediaUnlocked(
   const removedFontIds: string[] = [];
   let reclaimedBytes = 0;
   let incompleteReferences = false;
+  // Reserve every candidate before asking peers for their latest lease set.
+  // A peer that receives this intent cannot acquire one of these ids after the
+  // synchronization window opens, so one shared synchronization safely covers
+  // the entire batch.
+  const deletionReservation = reserveMediaDeletion(
+    [...orphanAssets, ...orphanPayloads].map((entry) => entry.id),
+    [...orphanFonts, ...orphanFontPayloads].map((entry) => entry.id),
+  );
   const deleteCandidate = async (assetId: string, byteLength: number): Promise<void> => {
-    const deleted = await deleteAudioAssetGuarded(
-      assetId,
-      async () => {
-        if (!complete) {
-          incompleteReferences = true;
-          return true;
-        }
-        return assetIds.has(assetId) || protectedAssetIds().has(assetId);
-      },
-      true,
-    );
-    if (deleted) {
-      removedAssetIds.push(assetId);
-      reclaimedBytes += byteLength;
+    if (!deletionReservation.audioAssetIds.has(assetId)) return;
+    if (!complete) {
+      incompleteReferences = true;
+      return;
     }
+    if (isAudioAssetLeased(assetId) || assetIds.has(assetId) || protectedAssetIds().has(assetId)) {
+      return;
+    }
+    await deleteAssetUnlocked(assetId);
+    removedAssetIds.push(assetId);
+    reclaimedBytes += byteLength;
   };
-  for (const meta of orphanAssets) await deleteCandidate(meta.id, assetBytes(meta));
-  for (const payload of orphanPayloads) await deleteCandidate(payload.id, payload.byteLength);
-  for (const meta of orphanFonts) {
-    const deleted = await deleteFontGuarded(
-      meta.id,
-      async () => {
-        if (!complete) {
-          incompleteReferences = true;
-          return true;
-        }
-        return fontIds.has(meta.id) || protectedFontIds().has(meta.id);
-      },
-      true,
-    );
-    if (deleted) {
-      removedFontIds.push(meta.id);
-      reclaimedBytes += meta.byteLength;
+  const deleteFontCandidate = async (fontId: string, byteLength: number): Promise<void> => {
+    if (!deletionReservation.fontIds.has(fontId)) return;
+    if (!complete) {
+      incompleteReferences = true;
+      return;
     }
-  }
-  for (const payload of orphanFontPayloads) {
-    const deleted = await deleteFontGuarded(
-      payload.id,
-      async () => {
-        if (!complete) {
-          incompleteReferences = true;
-          return true;
-        }
-        return fontIds.has(payload.id) || protectedFontIds().has(payload.id);
-      },
-      true,
-    );
-    if (deleted) {
-      removedFontIds.push(payload.id);
-      reclaimedBytes += payload.byteLength;
-    }
+    if (isFontLeased(fontId) || fontIds.has(fontId) || protectedFontIds().has(fontId)) return;
+    await deleteFontUnlocked(fontId);
+    removedFontIds.push(fontId);
+    reclaimedBytes += byteLength;
+  };
+  try {
+    await synchronizeMediaLeases();
+    for (const meta of orphanAssets) await deleteCandidate(meta.id, assetBytes(meta));
+    for (const payload of orphanPayloads) await deleteCandidate(payload.id, payload.byteLength);
+    for (const meta of orphanFonts) await deleteFontCandidate(meta.id, meta.byteLength);
+    for (const payload of orphanFontPayloads)
+      await deleteFontCandidate(payload.id, payload.byteLength);
+  } finally {
+    deletionReservation.release();
   }
   return {
     removedAssetIds: removedAssetIds.sort(),

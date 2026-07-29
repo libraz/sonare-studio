@@ -25,6 +25,23 @@ export class OpfsUnavailableError extends Error {
   }
 }
 
+/** Thrown when an OPFS project write runs out of origin storage quota. */
+export class OpfsQuotaExceededError extends Error {
+  constructor() {
+    super('Project storage is full. Free browser storage space and try saving again.');
+    this.name = 'OpfsQuotaExceededError';
+  }
+}
+
+function isQuotaExceededError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'name' in error &&
+    (error as { name?: unknown }).name === 'QuotaExceededError'
+  );
+}
+
 /** Thrown when a stored project with the requested name does not exist. */
 export class ProjectNotFoundError extends Error {
   constructor(name: string) {
@@ -76,7 +93,10 @@ export interface StoredProjectSnapshot {
 export function projectBytesRevision(bytes: Uint8Array): string {
   let first = 0x811c9dc5;
   let second = 0x9e3779b9;
-  for (const byte of bytes) {
+  // Indexed typed-array access stays on the fast path for multi-megabyte
+  // archives; `for…of` creates an iterator step for every byte.
+  for (let index = 0; index < bytes.length; index += 1) {
+    const byte = bytes[index];
     first = Math.imul(first ^ byte, 0x01000193) >>> 0;
     second = Math.imul(second ^ byte, 0x85ebca6b) >>> 0;
   }
@@ -168,8 +188,15 @@ export async function saveProjectUnlocked(name: string, bytes: Uint8Array): Prom
   try {
     // Copy so wasm-backed or shared buffers are never handed to the stream.
     await writable.write(new Uint8Array(bytes));
-  } finally {
     await writable.close();
+  } catch (error) {
+    try {
+      await writable.abort?.();
+    } catch {
+      // Preserve the original write/close failure.
+    }
+    if (isQuotaExceededError(error)) throw new OpfsQuotaExceededError();
+    throw error;
   }
 }
 

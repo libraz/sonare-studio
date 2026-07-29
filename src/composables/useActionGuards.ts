@@ -27,6 +27,19 @@ export function useActionGuards(options: ActionGuardsOptions) {
     });
   }
 
+  /** Confirms a lossy format operation even when destructive confirmations are off. */
+  function confirmLossAction(
+    message: string,
+    opts?: { danger?: boolean; confirmLabel?: string; title?: string },
+  ): Promise<boolean> {
+    return confirmDialog({
+      title: opts?.title,
+      message,
+      danger: opts?.danger ?? false,
+      confirmLabel: opts?.confirmLabel ?? 'Continue',
+    });
+  }
+
   async function runAction(action: () => Promise<void>): Promise<void> {
     if (busy.value) return;
     busy.value = true;
@@ -42,6 +55,7 @@ export function useActionGuards(options: ActionGuardsOptions) {
 
   return {
     confirmAction,
+    confirmLossAction,
     runAction,
   };
 }
