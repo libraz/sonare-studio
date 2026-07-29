@@ -99,7 +99,7 @@ onBeforeUnmount(() => {
   top: 0;
   bottom: 0;
   right: 0;
-  background: #f59e0b;
+  background: var(--meter-yellow);
 }
 
 .strip-gr-value {

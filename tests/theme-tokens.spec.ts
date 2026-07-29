@@ -39,6 +39,12 @@ const CSS_VAR_BY_TOKEN: Record<keyof typeof TOKENS, string> = {
   meterGreen: '--meter-green',
   meterYellow: '--meter-yellow',
   meterRed: '--meter-red',
+  meterWell: '--meter-well',
+  meterPeakCool: '--meter-peak-cool',
+  meterPeakWarm: '--meter-peak-warm',
+  meterPeakHot: '--meter-peak-hot',
+  meterHold: '--meter-hold',
+  meterClipOff: '--meter-clip-off',
   playhead: '--playhead',
 };
 

@@ -68,10 +68,21 @@
   --success: #34c759;
   --success-strong: #28a745;
 
-  /* --- Meter ramp (unchanged — drawn over dark canvas) ------------------ */
+  /* --- Meter ramp + metering chrome (drawn over dark canvas) ------------
+   * The single ramp every level meter reads: master meter, per-strip meter,
+   * gain-reduction bar, spectrum trace and the readout LEDs all resolve here,
+   * so the mixer's instruments read as one family. The dimmed zone backdrop
+   * behind a bar is DERIVED from this ramp (tokens.ts METER_ZONE_ALPHA), never
+   * hand-picked per component. */
   --meter-green: #34d399;
   --meter-yellow: #fbbf24;
   --meter-red: #ef4444;
+  --meter-well: #111418; /* recessed groove behind the bars */
+  --meter-peak-cool: #4ade80; /* peak cap inside the green zone */
+  --meter-peak-warm: #facc15; /* peak cap inside the yellow zone */
+  --meter-peak-hot: #f87171; /* peak cap inside the red zone */
+  --meter-hold: #e5e7eb; /* peak-hold marker */
+  --meter-clip-off: #27272a; /* unlit clip LED */
   --playhead: #ff6e6e;
 
   /* --- Canvas editor palette (DARK) ------------------------------------

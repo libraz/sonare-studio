@@ -3,6 +3,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { METER_SILENCE_DB, type MeterBridge } from '@/engine/meters';
 import { useI18n } from '@/ui/i18n';
 import { isMeterAtFloor } from '@/ui/mixer/meter-model';
+import { colorWithAlpha, METER_ZONE_ALPHA, TOKENS } from '@/ui/theme/tokens';
 
 const props = withDefaults(
   defineProps<{
@@ -32,6 +33,11 @@ const PEAK_HOLD_DECAY_DB_PER_S = 12;
 const GREEN_BELOW_DB = -12;
 const YELLOW_BELOW_DB = -6;
 const TICK_DBS = [0, -6, -12, -24, -48];
+
+/** Dimmed scale backdrop, derived from the ramp so every meter matches. */
+const ZONE_GREEN = colorWithAlpha(TOKENS.meterGreen, METER_ZONE_ALPHA);
+const ZONE_YELLOW = colorWithAlpha(TOKENS.meterYellow, METER_ZONE_ALPHA);
+const ZONE_RED = colorWithAlpha(TOKENS.meterRed, METER_ZONE_ALPHA);
 
 interface ChannelState {
   peak: number;
@@ -100,11 +106,11 @@ function drawBar(
   // Zone backdrop (dimmed) so the scale is visible even when silent.
   const yYellow = dbToY(GREEN_BELOW_DB, h);
   const yRed = dbToY(YELLOW_BELOW_DB, h);
-  ctx.fillStyle = '#0c2a12';
+  ctx.fillStyle = ZONE_GREEN;
   ctx.fillRect(x, yYellow, barW, h - yYellow);
-  ctx.fillStyle = '#2a260a';
+  ctx.fillStyle = ZONE_YELLOW;
   ctx.fillRect(x, yRed, barW, yYellow - yRed);
-  ctx.fillStyle = '#2a0c0c';
+  ctx.fillStyle = ZONE_RED;
   ctx.fillRect(x, 0, barW, yRed);
 
   // RMS fill, clipped per zone for green/yellow/red coloring.
@@ -116,26 +122,26 @@ function drawBar(
       ctx.fillRect(x, top, barW, zoneBottom - top);
     }
   };
-  fillZone('#22c55e', yYellow, h);
-  fillZone('#eab308', yRed, yYellow);
-  fillZone('#ef4444', 0, yRed);
+  fillZone(TOKENS.meterGreen, yYellow, h);
+  fillZone(TOKENS.meterYellow, yRed, yYellow);
+  fillZone(TOKENS.meterRed, 0, yRed);
 
   // Peak cap line (color follows its own zone).
   if (state.peak > props.minDb) {
     const yPeak = dbToY(state.peak, h);
     ctx.fillStyle =
       state.peak >= YELLOW_BELOW_DB
-        ? '#f87171'
+        ? TOKENS.meterPeakHot
         : state.peak >= GREEN_BELOW_DB
-          ? '#facc15'
-          : '#4ade80';
+          ? TOKENS.meterPeakWarm
+          : TOKENS.meterPeakCool;
     ctx.fillRect(x, Math.max(0, yPeak - 1), barW, 2);
   }
 
   // Peak-hold marker.
   if (state.hold > props.minDb) {
     const yHold = dbToY(state.hold, h);
-    ctx.fillStyle = '#e5e7eb';
+    ctx.fillStyle = TOKENS.meterHold;
     ctx.fillRect(x, Math.max(0, yHold - 0.5), barW, 1);
   }
 }
@@ -166,7 +172,7 @@ function draw(ts: number): void {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const w = props.width;
   const h = props.height;
-  ctx.fillStyle = '#111418';
+  ctx.fillStyle = TOKENS.meterWell;
   ctx.fillRect(0, 0, w, h);
 
   const scaleW = 22;
@@ -186,11 +192,11 @@ function draw(ts: number): void {
   for (const db of TICK_DBS) {
     if (db < props.minDb) continue;
     const y = Math.min(h - 4, Math.max(4, dbToY(db, h)));
-    ctx.fillStyle = '#374151';
+    ctx.fillStyle = TOKENS.text4;
     ctx.fillRect(2 * barW + gap + 1, y, 4, 1);
     if (y - lastLabelY < labelGap) continue;
     lastLabelY = y;
-    ctx.fillStyle = '#9ca3af';
+    ctx.fillStyle = TOKENS.text3;
     ctx.fillText(`${db}`, 2 * barW + gap + 7, y);
   }
 }
@@ -214,8 +220,19 @@ watch(
 <template>
   <canvas
     ref="canvasRef"
-    style="display: block; background: #111418; border-radius: 3px"
+    class="level-meter"
     :aria-label="t.shell.meters.stereo"
     role="img"
   />
 </template>
+
+<style scoped>
+/* Same recessed framing as the per-strip meter, so the two read as one
+   instrument family rather than two differently-mounted widgets. */
+.level-meter {
+  display: block;
+  background: var(--meter-well);
+  border-radius: var(--radius-xs);
+  box-shadow: var(--inset-well);
+}
+</style>

@@ -36,8 +36,25 @@ export const TOKENS = {
   meterGreen: '#34d399',
   meterYellow: '#fbbf24',
   meterRed: '#ef4444',
+
+  /* Metering chrome shared by every level meter and scope. The zone backdrops
+   * are NOT listed: they are derived from the ramp above via colorWithAlpha so
+   * two meters drawn by different components cannot drift apart. */
+  meterWell: '#111418',
+  meterPeakCool: '#4ade80',
+  meterPeakWarm: '#facc15',
+  meterPeakHot: '#f87171',
+  meterHold: '#e5e7eb',
+  meterClipOff: '#27272a',
+
   playhead: '#ff6e6e',
 } as const;
+
+/**
+ * Opacity of the dimmed zone backdrop painted behind a meter bar, so the
+ * green/yellow/red scale stays readable while the meter is silent.
+ */
+export const METER_ZONE_ALPHA = 0.12;
 
 /** Token key set, for the sync test. */
 export type TokenName = keyof typeof TOKENS;

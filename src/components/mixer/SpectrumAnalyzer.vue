@@ -11,6 +11,13 @@ import {
   SPECTRUM_MIN_FREQ,
   spectrumDbToFraction,
 } from '@/ui/mixer/spectrum-model';
+import { colorWithAlpha, TOKENS } from '@/ui/theme/tokens';
+
+/** Scope chrome shared with the goniometer: canvas well and graticule lines. */
+const SCOPE_WELL = TOKENS.meterWell;
+const SCOPE_GRID = colorWithAlpha(TOKENS.border, 0.7);
+/** Magnitude curve — the meter ramp's green, so scopes match the meters. */
+const TRACE_FILL = colorWithAlpha(TOKENS.meterGreen, 0.22);
 
 /**
  * Spectrum analyzer: a log-frequency, dB-magnitude curve. Prefers the engine
@@ -59,9 +66,9 @@ function resizeCanvas(): void {
 function drawGrid(ctx: CanvasRenderingContext2D): void {
   const w = props.width;
   const h = props.height;
-  ctx.fillStyle = '#0c0f14';
+  ctx.fillStyle = SCOPE_WELL;
   ctx.fillRect(0, 0, w, h);
-  ctx.strokeStyle = '#1c2230';
+  ctx.strokeStyle = SCOPE_GRID;
   ctx.lineWidth = 1;
   for (const freq of GRID_FREQS) {
     const x = Math.round(frequencyToFraction(freq, SPECTRUM_MIN_FREQ, SPECTRUM_MAX_FREQ) * w) + 0.5;
@@ -90,9 +97,9 @@ function strokeCurve(
   }
   ctx.lineTo(w, h);
   ctx.closePath();
-  ctx.fillStyle = 'rgba(34, 197, 94, 0.22)';
+  ctx.fillStyle = TRACE_FILL;
   ctx.fill();
-  ctx.strokeStyle = '#22c55e';
+  ctx.strokeStyle = TOKENS.meterGreen;
   ctx.lineWidth = 1;
   ctx.stroke();
 }
@@ -202,8 +209,8 @@ watch(
 .spectrum {
   display: block;
   width: 100%;
-  background: var(--surface-inset);
-  border-radius: 2px;
+  background: var(--meter-well);
+  border-radius: var(--radius-xs);
   box-shadow: var(--inset-well);
 }
 </style>

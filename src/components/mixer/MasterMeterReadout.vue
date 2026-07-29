@@ -183,7 +183,7 @@ onBeforeUnmount(() => {
 }
 
 .mm-target .mm-value {
-  color: var(--success, #22c55e);
+  color: var(--success);
 }
 
 .mm-target.over .mm-value {
@@ -200,7 +200,7 @@ onBeforeUnmount(() => {
 }
 
 .mm-tp.risk .mm-value {
-  color: var(--danger-text, #ef4444);
+  color: var(--danger-text);
   font-weight: 700;
 }
 
@@ -230,7 +230,7 @@ onBeforeUnmount(() => {
   top: 0;
   bottom: 0;
   right: 0;
-  background: var(--warning);
+  background: var(--meter-yellow);
 }
 
 .mm-corr {
@@ -262,10 +262,10 @@ onBeforeUnmount(() => {
   position: absolute;
   top: 0;
   bottom: 0;
-  background: #22c55e;
+  background: var(--meter-green);
 }
 
 .mm-corr-fill.neg {
-  background: #ef4444;
+  background: var(--meter-red);
 }
 </style>

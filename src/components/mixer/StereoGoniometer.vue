@@ -4,6 +4,13 @@ import type { AnalyserBridge } from '@/engine/analyser';
 import type { ScopeSource } from '@/engine/scope';
 import { useI18n } from '@/ui/i18n';
 import { goniometerXY } from '@/ui/mixer/spectrum-model';
+import { colorWithAlpha, TOKENS } from '@/ui/theme/tokens';
+
+/** Scope chrome shared with the spectrum analyzer. */
+const SCOPE_WELL = TOKENS.meterWell;
+const SCOPE_GRID = colorWithAlpha(TOKENS.border, 0.7);
+/** Plotted sample dots — the meter ramp's green at scope weight. */
+const TRACE_DOT = colorWithAlpha(TOKENS.meterGreen, 0.7);
 
 /**
  * Goniometer (vectorscope): plots the stereo signal in rotated mid/side space
@@ -50,10 +57,10 @@ function resizeCanvas(): void {
 
 function drawGraticule(ctx: CanvasRenderingContext2D): void {
   const s = props.size;
-  ctx.fillStyle = '#0c0f14';
+  ctx.fillStyle = SCOPE_WELL;
   ctx.fillRect(0, 0, s, s);
   // Diagonal axes: vertical-ish = mono (L=R), the two diagonals = hard L / R.
-  ctx.strokeStyle = '#1c2230';
+  ctx.strokeStyle = SCOPE_GRID;
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(0, 0);
@@ -76,7 +83,7 @@ function plotInterleaved(ctx: CanvasRenderingContext2D, points: Float32Array): b
   if (!active && idleFrameDrawn) return true;
   idleFrameDrawn = !active;
   drawGraticule(ctx);
-  ctx.fillStyle = 'rgba(34, 197, 94, 0.7)';
+  ctx.fillStyle = TRACE_DOT;
   for (let i = 0; i + 1 < points.length; i += 2) {
     const { x, y } = goniometerXY(points[i], points[i + 1]);
     ctx.fillRect(radius + x * radius, radius - y * radius, 1, 1);
@@ -154,8 +161,8 @@ watch(
 <style scoped>
 .goniometer {
   display: block;
-  background: var(--surface-inset);
-  border-radius: 2px;
+  background: var(--meter-well);
+  border-radius: var(--radius-xs);
   box-shadow: var(--inset-well);
 }
 </style>

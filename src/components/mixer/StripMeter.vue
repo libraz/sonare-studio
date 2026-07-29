@@ -11,6 +11,7 @@ import {
   meterFraction,
   resetMeterClip,
 } from '@/ui/mixer/meter-model';
+import { colorWithAlpha, METER_ZONE_ALPHA, TOKENS } from '@/ui/theme/tokens';
 
 /**
  * Compact per-strip stereo meter: peak + RMS bars with a latched clip LED
@@ -39,6 +40,13 @@ const CLIP_LED_H = 7;
 
 const GREEN_BELOW_DB = -12;
 const YELLOW_BELOW_DB = -6;
+
+/** Dimmed scale backdrop, derived from the ramp so every meter matches. */
+const ZONE_GREEN = colorWithAlpha(TOKENS.meterGreen, METER_ZONE_ALPHA);
+const ZONE_YELLOW = colorWithAlpha(TOKENS.meterYellow, METER_ZONE_ALPHA);
+const ZONE_RED = colorWithAlpha(TOKENS.meterRed, METER_ZONE_ALPHA);
+/** Placeholder groove: the well lifted just enough to read as a dead channel. */
+const PLACEHOLDER_GROOVE = colorWithAlpha(TOKENS.text4, 0.12);
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 let canvasCtx: CanvasRenderingContext2D | null = null;
@@ -91,11 +99,11 @@ function drawBar(
   const yYellow = dbToY(GREEN_BELOW_DB, barsH);
   const yRed = dbToY(YELLOW_BELOW_DB, barsH);
   // Dim zone backdrop.
-  ctx.fillStyle = '#0c2012';
+  ctx.fillStyle = ZONE_GREEN;
   ctx.fillRect(x, yYellow, barW, bottom - yYellow);
-  ctx.fillStyle = '#221f0a';
+  ctx.fillStyle = ZONE_YELLOW;
   ctx.fillRect(x, yRed, barW, yYellow - yRed);
-  ctx.fillStyle = '#220c0c';
+  ctx.fillStyle = ZONE_RED;
   ctx.fillRect(x, CLIP_LED_H, barW, yRed - CLIP_LED_H);
   // RMS fill per zone.
   const yRms = dbToY(model.rmsDb, barsH);
@@ -106,19 +114,24 @@ function drawBar(
       ctx.fillRect(x, top, barW, zoneBottom - top);
     }
   };
-  fillZone('#22c55e', yYellow, bottom);
-  fillZone('#eab308', yRed, yYellow);
-  fillZone('#ef4444', CLIP_LED_H, yRed);
-  // Peak cap.
+  fillZone(TOKENS.meterGreen, yYellow, bottom);
+  fillZone(TOKENS.meterYellow, yRed, yYellow);
+  fillZone(TOKENS.meterRed, CLIP_LED_H, yRed);
+  // Peak cap — zone-coloured, matching the master meter's cap exactly.
   if (model.peakDb > props.minDb) {
     const yPeak = dbToY(model.peakDb, barsH);
-    ctx.fillStyle = model.peakDb >= YELLOW_BELOW_DB ? '#f87171' : '#cbd5e1';
+    ctx.fillStyle =
+      model.peakDb >= YELLOW_BELOW_DB
+        ? TOKENS.meterPeakHot
+        : model.peakDb >= GREEN_BELOW_DB
+          ? TOKENS.meterPeakWarm
+          : TOKENS.meterPeakCool;
     ctx.fillRect(x, Math.max(CLIP_LED_H, yPeak - 1), barW, 1.5);
   }
   // Peak-hold marker.
   if (model.holdDb > props.minDb) {
     const yHold = dbToY(model.holdDb, barsH);
-    ctx.fillStyle = '#e5e7eb';
+    ctx.fillStyle = TOKENS.meterHold;
     ctx.fillRect(x, Math.max(CLIP_LED_H, yHold - 0.5), barW, 1);
   }
 }
@@ -127,14 +140,14 @@ function drawFrame(ctx: CanvasRenderingContext2D): void {
   const w = props.width;
   const h = props.height;
   const barsH = h - CLIP_LED_H - 1;
-  ctx.fillStyle = '#111418';
+  ctx.fillStyle = TOKENS.meterWell;
   ctx.fillRect(0, 0, w, h);
   const gap = 2;
   const barW = (w - gap) / 2;
   drawBar(ctx, 0, barW, barsH, channels[0]);
   drawBar(ctx, barW + gap, barW, barsH, channels[1]);
   // Clip LED.
-  ctx.fillStyle = clipped.value ? '#ef4444' : '#27272a';
+  ctx.fillStyle = clipped.value ? TOKENS.meterRed : TOKENS.meterClipOff;
   ctx.fillRect(0, 0, w, CLIP_LED_H - 2);
 }
 
@@ -145,11 +158,11 @@ function drawPlaceholder(): void {
   if (!canvas || !ctx) return;
   const dpr = window.devicePixelRatio || 1;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.fillStyle = '#111418';
+  ctx.fillStyle = TOKENS.meterWell;
   ctx.fillRect(0, 0, props.width, props.height);
   const gap = 2;
   const barW = (props.width - gap) / 2;
-  ctx.fillStyle = '#1a1d23';
+  ctx.fillStyle = PLACEHOLDER_GROOVE;
   ctx.fillRect(0, CLIP_LED_H, barW, props.height - CLIP_LED_H - 1);
   ctx.fillRect(barW + gap, CLIP_LED_H, barW, props.height - CLIP_LED_H - 1);
 }
@@ -232,8 +245,8 @@ watch(
 <style scoped>
 .strip-meter {
   display: block;
-  background: var(--surface-inset);
-  border-radius: 2px;
+  background: var(--meter-well);
+  border-radius: var(--radius-xs);
   box-shadow: var(--inset-well);
   cursor: pointer;
 }
