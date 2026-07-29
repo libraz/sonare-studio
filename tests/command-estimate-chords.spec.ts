@@ -36,7 +36,8 @@ describe('estimateChordsFromArrangement', () => {
     const summary = estimateChordsFromArrangement();
     expect(summary.count).toBeGreaterThan(0);
     expect(store.chords.length).toBe(summary.count);
-    expect(summary.confidence.length).toBe(summary.count);
+    expect(summary.confidenceByStartPpq.size).toBe(summary.count);
+    expect(summary.confidenceByStartPpq.get(store.chords[0].startPpq)).toBeDefined();
     expect(store.chords[0].rootPc).toBe(0);
 
     undo();

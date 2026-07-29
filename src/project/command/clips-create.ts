@@ -200,13 +200,12 @@ export async function addAudioClip(input: AddAudioClipInput): Promise<number> {
   const fadeIn = input.fadeInPpq ?? 0;
   const fadeOut = input.fadeOutPpq ?? 0;
   validateClipFadePair(fadeIn, fadeOut, finalLengthPpq);
-  const projectSteps =
-    (sourceId === undefined ? 2 : 3) +
-    (fadeIn > 0 || fadeOut > 0 ? 1 : 0) +
-    (input.loopEnabled ? 1 : 0);
   return executeAtomic((edit) => {
-    const newClipId = edit(projectSteps, () => {
-      const id = project.addClip({
+    // addClip registers an inline source and creates a clip (two native
+    // history entries). It must be reported before any follow-up mutation so
+    // executeAtomic can undo it when a later source/fade/loop call fails.
+    const newClipId = edit(2, () =>
+      project.addClip({
         trackId: input.trackId,
         isMidi: false,
         startPpq,
@@ -218,20 +217,19 @@ export async function addAudioClip(input: AddAudioClipInput): Promise<number> {
         // by-reference via its "asset:<id>" URI).
         ...placeholderSourceAudio(),
         ...(sourceId === undefined ? { sourceUri: audioAssetUri(input.assetId) } : {}),
-      });
-      if (sourceId === undefined) {
-        setAudioSourceId(input.assetId, project.sourceCount());
-      } else {
-        project.setClipSource(id, sourceId);
-      }
-      if (fadeIn > 0 || fadeOut > 0) {
-        project.setClipFade(id, { lengthPpq: fadeIn }, { lengthPpq: fadeOut });
-      }
-      if (input.loopEnabled) {
-        project.setClipLoop(id, 'loop', loopLengthPpq || finalLengthPpq);
-      }
-      return id;
-    });
+      }),
+    );
+    if (sourceId === undefined) {
+      setAudioSourceId(input.assetId, project.sourceCount());
+    } else {
+      edit(1, () => project.setClipSource(newClipId, sourceId));
+    }
+    if (fadeIn > 0 || fadeOut > 0) {
+      edit(1, () => project.setClipFade(newClipId, { lengthPpq: fadeIn }, { lengthPpq: fadeOut }));
+    }
+    if (input.loopEnabled) {
+      edit(1, () => project.setClipLoop(newClipId, 'loop', loopLengthPpq || finalLengthPpq));
+    }
     if (preparedWarp !== undefined) {
       installProjectClipWarp(
         project,

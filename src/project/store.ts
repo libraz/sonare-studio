@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { computed, ref } from 'vue';
+import { computed, ref, shallowRef } from 'vue';
 import { ensureWasm } from '@/lib/wasm';
 import { audioAssetUri } from '@/persistence/assets';
 import {
@@ -89,6 +89,42 @@ const DEFAULT_TEMPO_BPM = 120;
 
 /** Default clip length: eight 4/4 bars expressed in quarter-note PPQ. */
 const DEFAULT_CLIP_LENGTH_PPQ = 32;
+
+function isDocumentMarker(value: unknown): value is { ppq: number; name: string } {
+  if (typeof value !== 'object' || value === null) return false;
+  const marker = value as Record<string, unknown>;
+  return (
+    typeof marker.ppq === 'number' &&
+    Number.isFinite(marker.ppq) &&
+    marker.ppq >= 0 &&
+    typeof marker.name === 'string'
+  );
+}
+
+function isDocumentSection(
+  value: unknown,
+): value is { name: string; color: string; startPpq: number; endPpq: number } {
+  if (typeof value !== 'object' || value === null) return false;
+  const section = value as Record<string, unknown>;
+  return (
+    typeof section.name === 'string' &&
+    typeof section.color === 'string' &&
+    typeof section.startPpq === 'number' &&
+    Number.isFinite(section.startPpq) &&
+    section.startPpq >= 0 &&
+    typeof section.endPpq === 'number' &&
+    Number.isFinite(section.endPpq) &&
+    section.endPpq > section.startPpq
+  );
+}
+
+/**
+ * Mirrors libsonare's bounded Project history rather than relying on its
+ * engine default. The command layer retains at most 100 user operations, some
+ * of which expand into multiple Project edits, so this leaves ample headroom
+ * while keeping native undo memory bounded.
+ */
+export const PROJECT_MAX_UNDO_DEPTH = 512;
 
 /** Default snap grid: divisions per whole note (16 = sixteenth-note grid). */
 const DEFAULT_SNAP_DIVISION = 16;
@@ -255,9 +291,9 @@ export const useProjectStore = defineStore('project', () => {
   /** Project display name (app-level metadata, used by persistence). */
   const projectName = ref(DEFAULT_PROJECT_NAME);
   /** Track mirror in display order. */
-  const tracks = ref<EditorTrack[]>([]);
+  const tracks = shallowRef<EditorTrack[]>([]);
   /** Clip mirror, ordered by (track order, startPpq, id). */
-  const clips = ref<EditorClip[]>([]);
+  const clips = shallowRef<EditorClip[]>([]);
   /** Timeline markers (app-level). */
   const markers = ref<EditorMarker[]>([]);
   /** Chord-track symbols, mirroring the Project's annotation stream. */
@@ -285,7 +321,7 @@ export const useProjectStore = defineStore('project', () => {
   /** Length of the active clip, in PPQ. */
   const clipLengthPpq = ref(0);
   /** Mirror of the active clip's note content, with editor-assigned ids. */
-  const notes = ref<EditorNote[]>([]);
+  const notes = shallowRef<EditorNote[]>([]);
   /** Ids of currently selected notes (within the active clip). */
   const selection = ref<Set<number>>(new Set());
   /** Project tempo in BPM (first tempo segment). */
@@ -461,6 +497,7 @@ export const useProjectStore = defineStore('project', () => {
     if (applySampleRateIfProvided(options)) return;
     wasmModule = mod;
     const created = new mod.Project();
+    created.setMaxUndoDepth(PROJECT_MAX_UNDO_DEPTH);
     created.setSampleRate(options.sampleRate ?? DEFAULT_SAMPLE_RATE);
     created.setTempoSegments([{ startPpq: 0, bpm: DEFAULT_TEMPO_BPM }]);
     const trackId = created.addTrack({ kind: 'midi', name: DEFAULT_TRACK_NAME });
@@ -539,6 +576,7 @@ export const useProjectStore = defineStore('project', () => {
     wasmModule = mod;
     const created = new mod.Project();
     try {
+      created.setMaxUndoDepth(PROJECT_MAX_UNDO_DEPTH);
       created.setSampleRate(doc.sampleRate > 0 ? doc.sampleRate : DEFAULT_SAMPLE_RATE);
       const tempo =
         doc.tempoSegments.length > 0
@@ -907,12 +945,13 @@ export const useProjectStore = defineStore('project', () => {
         : null;
       tracks.value = trackMirror;
       clips.value = [];
-      markers.value = doc.markers.map((marker) => ({
+      markers.value = doc.markers.filter(isDocumentMarker).map((marker) => ({
         id: nextMarkerId++,
         ppq: marker.ppq,
         name: marker.name,
       }));
       sections.value = doc.sections
+        .filter(isDocumentSection)
         .map((section) => ({
           id: nextSectionId++,
           name: section.name,

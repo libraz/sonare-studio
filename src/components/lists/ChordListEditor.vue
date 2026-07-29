@@ -444,13 +444,7 @@ async function estimateProgression(): Promise<void> {
       estimateConfidence.value = new Map();
       return;
     }
-    // Confidence is returned in written order, matching the sorted chord track.
-    const map = new Map<number, number>();
-    store.chords.forEach((chord, index) => {
-      const confidence = summary.confidence[index];
-      if (confidence !== undefined) map.set(chord.startPpq, confidence);
-    });
-    estimateConfidence.value = map;
+    estimateConfidence.value = new Map(summary.confidenceByStartPpq);
   } finally {
     isEstimating.value = false;
   }

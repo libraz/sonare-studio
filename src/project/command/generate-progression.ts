@@ -79,9 +79,20 @@ export function generateProgressionCommand(params: GenerateProgressionParams = {
   } else if (mode === 'range') {
     startPpq = params.startPpq ?? 0;
     const rangeEnd = startPpq + bars * BEATS_PER_BAR;
-    existing = store.chords.filter(
-      (chord) => chord.endPpq <= startPpq || chord.startPpq >= rangeEnd,
-    );
+    // Preserve the parts of a chord that lie outside the replaced range. This
+    // matters for manually entered chords that cross either boundary: dropping
+    // the whole symbol would erase harmonic context the user did not replace.
+    existing = store.chords.flatMap((chord) => {
+      if (chord.endPpq <= startPpq || chord.startPpq >= rangeEnd) return [chord];
+      const preserved: EditorChordSymbol[] = [];
+      if (chord.startPpq < startPpq) {
+        preserved.push({ ...chord, endPpq: startPpq });
+      }
+      if (chord.endPpq > rangeEnd) {
+        preserved.push({ ...chord, startPpq: rangeEnd });
+      }
+      return preserved;
+    });
   } else {
     existing = [];
     startPpq = params.startPpq ?? 0;

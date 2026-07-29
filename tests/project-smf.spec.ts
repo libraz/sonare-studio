@@ -147,7 +147,7 @@ describe('smfToProjectDocument', () => {
         markers: [],
         sections: [],
       }),
-    ).toEqual({ emptyMidiClips: 1, emptyMidiTracks: 1 });
+    ).toEqual({ emptyMidiClips: 1, emptyMidiTracks: 1, mutedMidiTracks: 0 });
   });
 
   it('writes sampled tempo events that survive an SMF round trip', async () => {
@@ -522,8 +522,8 @@ describe('smfToProjectDocument', () => {
           kind: 'midi',
           mute: false,
           solo: false,
-          volume: 1,
-          pan: 0,
+          volume: 0.5,
+          pan: -0.5,
           instrument: { kind: 'synth-preset', preset: 'sub-bass' },
           clips: [
             {
@@ -566,6 +566,12 @@ describe('smfToProjectDocument', () => {
     expect(roundTrip.tracks[0].clips[0].polyPressureLanes).toEqual([
       { channel: 0, pitch: 36, points: [{ ppq: 0.75, value: 90 }] },
     ]);
+    expect(roundTrip.tracks[0].clips[0].ccLanes).toEqual(
+      expect.arrayContaining([
+        { controller: 7, channel: 0, points: [{ ppq: 0, value: 64 }] },
+        { controller: 10, channel: 0, points: [{ ppq: 0, value: 32 }] },
+      ]),
+    );
   });
 
   it('merges clips into one SMF track per project track', async () => {
@@ -720,6 +726,49 @@ describe('smfToProjectDocument', () => {
         ],
       },
     ]);
+  });
+
+  it('floors sub-tick SMF loop windows before materializing expression lanes', async () => {
+    const source: ProjectDocument = {
+      schemaVersion: 3,
+      name: 'Safe loop export',
+      sampleRate: 48000,
+      tempoSegments: [{ startPpq: 0, bpm: 120 }],
+      timeSignatures: [],
+      tracks: [
+        {
+          name: 'Loop',
+          color: '#000',
+          kind: 'midi',
+          mute: false,
+          solo: false,
+          volume: 1,
+          pan: 0,
+          clips: [
+            {
+              name: 'Malformed loop',
+              startPpq: 0,
+              lengthPpq: 1,
+              sourceOffsetPpq: 0,
+              gain: 1,
+              loopEnabled: true,
+              loopLengthPpq: Number.MIN_VALUE,
+              kind: 'midi',
+              notes: [],
+              ccLanes: [{ controller: 1, channel: 0, points: [{ ppq: 0, value: 64 }] }],
+            },
+          ],
+        },
+      ],
+      markers: [],
+      sections: [],
+    };
+
+    const roundTrip = await smfToProjectDocument(
+      await projectDocumentToSmf(source),
+      'safe-loop.mid',
+    );
+    expect(roundTrip.tracks[0].clips[0].ccLanes?.[0].points).toHaveLength(16);
   });
 
   it('round-trips clip program-change lanes through SMF events', async () => {

@@ -11,6 +11,7 @@ import type {
   ClipWarp,
   EditorClip,
   EditorTrack,
+  SmfSysExPacket,
 } from '../types';
 import { sanitizeWarpAnchors, warpSourceSecondsAt } from '../warp';
 
@@ -275,5 +276,18 @@ export function withDerivedClipMetadata(
   } else {
     delete next.polyPressureLanes;
   }
+  const windowEndPpq = windowStartPpq + windowLengthPpq;
+  const smfSysEx = source.smfSysEx
+    ?.filter(
+      (packet) =>
+        Number.isFinite(packet.ppq) && packet.ppq >= windowStartPpq && packet.ppq < windowEndPpq,
+    )
+    .map<SmfSysExPacket>((packet) => ({
+      ...packet,
+      ppq: packet.ppq - windowStartPpq,
+      data: [...packet.data],
+    }));
+  if (smfSysEx !== undefined && smfSysEx.length > 0) next.smfSysEx = smfSysEx;
+  else delete next.smfSysEx;
   return next;
 }

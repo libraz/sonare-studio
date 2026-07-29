@@ -10,6 +10,7 @@ import { type AudioAssetMeta, listAssets, loadAsset } from '@/persistence/assets
 import { collectReferencedMediaIds } from '@/persistence/gc';
 import { isOpfsAvailable } from '@/persistence/opfs';
 import { decodeAndIngest } from '@/project/audio-import';
+import { collectHistoryReferencedMediaIds } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { setAssetDragData } from '@/ui/media/asset-drag';
@@ -131,6 +132,17 @@ const displayedAssets = computed(() =>
 /** Asset ids referenced by clips, comp takes or frozen tracks; deletion is blocked. */
 const referencedIds = computed(() => referencedAssetIds(store.clips, store.tracks));
 
+/** Includes snapshots reachable through undo/redo, not only the live mirror. */
+function isReferenced(assetId: string): boolean {
+  return (
+    referencedIds.value.has(assetId) || collectHistoryReferencedMediaIds().assetIds.has(assetId)
+  );
+}
+
+function protectedAssetIds(): Set<string> {
+  return new Set([...referencedIds.value, ...collectHistoryReferencedMediaIds().assetIds]);
+}
+
 // --- Import ----------------------------------------------------------------
 
 const fileInput = ref<HTMLInputElement | null>(null);
@@ -244,7 +256,7 @@ const pendingDeleteId = ref<string | null>(null);
 const deleteError = ref<string | null>(null);
 
 function requestDelete(assetId: string): void {
-  if (referencedIds.value.has(assetId)) return;
+  if (isReferenced(assetId)) return;
   deleteError.value = null;
   pendingDeleteId.value = assetId;
 }
@@ -256,22 +268,20 @@ function cancelDelete(): void {
 async function confirmDelete(assetId: string): Promise<void> {
   pendingDeleteId.value = null;
   // Re-check: a clip may have started referencing the asset meanwhile.
-  if (referencedIds.value.has(assetId)) return;
+  if (isReferenced(assetId)) return;
   if (playingId.value === assetId) preview.stop();
   try {
     await deleteAudioAssetGuarded(assetId, async () => {
-      if (referencedIds.value.has(assetId)) return true;
+      if (isReferenced(assetId)) return true;
       // The media store is shared by every project. Re-scan saved documents at
       // the mutation boundary so a project saved after confirmation cannot
       // lose its source asset. The live document's refs are folded in through
       // the current strip snapshot.
       if (!isOpfsAvailable()) return false;
       const references = await collectReferencedMediaIds(undefined, {
-        assetIds: referencedIds.value,
+        assetIds: protectedAssetIds(),
       });
-      return (
-        !references.complete || references.assetIds.has(assetId) || referencedIds.value.has(assetId)
-      );
+      return !references.complete || references.assetIds.has(assetId) || isReferenced(assetId);
     });
   } catch (error) {
     deleteError.value = errorMessage(error);
@@ -512,9 +522,9 @@ onBeforeUnmount(() => {
           <button
             type="button"
             class="delete-button"
-            :disabled="referencedIds.has(asset.id)"
+            :disabled="isReferenced(asset.id)"
             v-tooltip="
-              referencedIds.has(asset.id)
+              isReferenced(asset.id)
                 ? t.shell.media.deleteBlocked
                 : t.shell.media.deleteAsset
             "

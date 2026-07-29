@@ -320,6 +320,11 @@ function cloneClip(clip: EditorClip): EditorClip {
   } else {
     delete next.polyPressureLanes;
   }
+  if (clip.smfSysEx !== undefined && clip.smfSysEx.length > 0) {
+    next.smfSysEx = clip.smfSysEx.map((packet) => ({ ...packet, data: [...packet.data] }));
+  } else {
+    delete next.smfSysEx;
+  }
   return next;
 }
 

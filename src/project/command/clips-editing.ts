@@ -765,8 +765,8 @@ export async function consolidateAudioClips(
       const sourceId = getAudioSourceId(assetId);
       let registeredSourceId: number | null = null;
       const newClipId = executeAtomic((edit) => {
-        const createdClipId = edit(sourceId === undefined ? 2 : 3, () => {
-          const id = project.addClip({
+        const createdClipId = edit(2, () =>
+          project.addClip({
             trackId,
             isMidi: false,
             startPpq,
@@ -775,11 +775,10 @@ export async function consolidateAudioClips(
             gain: 1,
             ...placeholderSourceAudio(),
             ...(sourceId === undefined ? { sourceUri: audioAssetUri(assetId) } : {}),
-          });
-          if (sourceId === undefined) registeredSourceId = project.sourceCount();
-          else project.setClipSource(id, sourceId);
-          return id;
-        });
+          }),
+        );
+        if (sourceId === undefined) registeredSourceId = project.sourceCount();
+        else edit(1, () => project.setClipSource(createdClipId, sourceId));
         for (const id of uniqueIds) {
           clearProjectClipWarp(project, id, (mutation) => edit(1, mutation));
           edit(1, () => project.removeClip(id));

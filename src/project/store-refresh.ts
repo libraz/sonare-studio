@@ -302,6 +302,12 @@ export function buildClipMirror(
           points: lane.points.map((point) => ({ ...point })),
         }));
       }
+      if (previous?.smfSysEx !== undefined && previous.smfSysEx.length > 0) {
+        entry.smfSysEx = previous.smfSysEx.map((packet) => ({
+          ...packet,
+          data: [...packet.data],
+        }));
+      }
       const fadeIn =
         serializedFadePpq(serialized.fade_in_ppq, serialized.fade_in) ?? previous?.fadeInPpq ?? 0;
       if (fadeIn > 0) entry.fadeInPpq = fadeIn;

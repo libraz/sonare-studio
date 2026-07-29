@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearAudioAssetCache, loadAsset } from '@/persistence/assets';
+import { MAX_EXTERNAL_AUDIO_FILE_BYTES } from '@/persistence/resource-limits';
 import {
   analyzeAudioTags,
   decodeAndIngest,
@@ -224,6 +225,19 @@ describe('ingestAudioBuffer', () => {
       analysis: null,
     });
     expect(meta.id).toBe('fixed-id');
+  });
+});
+
+describe('decodeAndIngest', () => {
+  it('rejects an oversized compressed input before reading it into memory', async () => {
+    const arrayBuffer = vi.fn();
+    const file = {
+      size: MAX_EXTERNAL_AUDIO_FILE_BYTES + 1,
+      arrayBuffer,
+    } as unknown as Blob;
+
+    await expect(decodeAndIngest(file)).rejects.toThrow(/compressed-file limit/);
+    expect(arrayBuffer).not.toHaveBeenCalled();
   });
 });
 

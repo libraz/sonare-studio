@@ -422,6 +422,21 @@ describe('scheduleProjectClips with audio clips', () => {
     expect(asset.channels[0]).toEqual(new Float32Array(10).fill(1));
   });
 
+  it('leaves a rounded one-frame fade unchanged instead of silencing a clip edge', async () => {
+    store.tracks = [makeTrack(1)];
+    // At 120 BPM and 10 Hz, 0.1 PPQ rounds to one frame and cannot form a ramp.
+    store.clips = [makeAudioClip(10, 1, { lengthPpq: 2, fadeInPpq: 0.1, fadeOutPpq: 0.1 })];
+    const { handle, addClip } = makeHandle(10);
+    const asset: LoadedAudioAsset = {
+      meta: { id: 'asset-x', name: 'A', sampleRate: 10, numChannels: 1, numFrames: 10 },
+      channels: [new Float32Array(10).fill(1)],
+    };
+
+    await scheduleProjectClips(handle, { loadAudioAsset: async () => asset });
+
+    expect(addClip.mock.calls[0][1]).toEqual([new Float32Array(10).fill(1)]);
+  });
+
   it('resamples to the engine rate when the asset rate differs', async () => {
     store.tracks = [makeTrack(1)];
     store.clips = [makeAudioClip(10, 1, { lengthPpq: 2 })]; // 1 s at 120 BPM
@@ -614,7 +629,7 @@ describe('scheduleProjectClips with audio clips', () => {
     const rendered = addClip.mock.calls.map((call) => (call[1] as Float32Array[])[0]);
     // 0..2 PPQ at 120 BPM, 2..4 at 60 BPM, then a partial 1-PPQ repeat.
     expect(rendered.map((channel) => channel.length)).toEqual([10, 20, 10]);
-    expect(Array.from(rendered[0])).toEqual([0, 3, 5, 7, 9, 11, 13, 15, 17, 19]);
+    expect(Array.from(rendered[0])).toEqual([1, 3, 5, 7, 9, 11, 13, 15, 17, 19]);
     expect(Array.from(rendered[1])).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
     expect(Array.from(rendered[2])).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 4.5, 0]);
     // The clip-edge fades apply only to the first/last occurrences.

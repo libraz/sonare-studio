@@ -6,7 +6,11 @@ import {
   pairEventsIntoNotes,
   type SerializedMidiEvent,
 } from './midi-events';
-import { audibleMidiProjector } from './midi-projection';
+import {
+  audibleMidiProjector,
+  audibleMidiSourceWindow,
+  MAX_LOOP_OCCURRENCES,
+} from './midi-projection';
 import {
   type DocumentClip,
   type DocumentMarker,
@@ -36,6 +40,8 @@ export interface SmfExportLossReport {
   emptyMidiClips: number;
   /** MIDI tracks containing no events; native SMF writers may omit them. */
   emptyMidiTracks: number;
+  /** SMF has no interoperable per-track mute state. */
+  mutedMidiTracks: number;
 }
 
 function clipHasMidiEvents(clip: DocumentClip): boolean {
@@ -54,14 +60,16 @@ function clipHasMidiEvents(clip: DocumentClip): boolean {
 export function inspectSmfExportLoss(doc: ProjectDocument): SmfExportLossReport {
   let emptyMidiClips = 0;
   let emptyMidiTracks = 0;
+  let mutedMidiTracks = 0;
   for (const track of doc.tracks) {
     if (track.kind !== 'midi') continue;
     const clips = track.clips.filter((clip) => (clip.kind ?? 'midi') === 'midi');
     const eventful = clips.filter(clipHasMidiEvents);
     emptyMidiClips += clips.length - eventful.length;
     if (eventful.length === 0) emptyMidiTracks += 1;
+    if (track.mute) mutedMidiTracks += 1;
   }
-  return { emptyMidiClips, emptyMidiTracks };
+  return { emptyMidiClips, emptyMidiTracks, mutedMidiTracks };
 }
 
 const STATUS_POLY_PRESSURE = 0xa;
@@ -879,14 +887,21 @@ function clipEvents(clip: DocumentClip, wasm: WasmModule): ProjectMidiEvent[] {
       : {}),
   }));
   const events: ProjectMidiEvent[] = [...notesToProjectMidiEvents(notes, wasm)];
-  const loopLength = finiteNonNegative(clip.loopLengthPpq);
-  const looping = clip.loopEnabled === true && loopLength > 0 && loopLength < lengthPpq;
-  const expressionLength = looping ? loopLength : lengthPpq;
+  // Use the shared loop window so SMF materialization has the same minimum
+  // length and source-offset semantics as playback. This also prevents a
+  // malformed sub-tick loop length from expanding indefinitely on export.
+  const sourceWindow = audibleMidiSourceWindow(exportClip);
+  const expressionLength = sourceWindow.lengthPpq;
+  const looping = clip.loopEnabled === true && expressionLength < lengthPpq;
   const repeatExpression = <T extends { ppq: number }>(points: ReadonlyArray<T>): T[] => {
     if (!looping) return [...points];
     const base = points.filter((point) => point.ppq >= 0 && point.ppq < expressionLength);
     const repeated: T[] = [];
-    for (let offset = 0; offset < lengthPpq; offset += expressionLength) {
+    for (
+      let offset = 0, occurrence = 0;
+      offset < lengthPpq && occurrence < MAX_LOOP_OCCURRENCES;
+      offset += expressionLength, occurrence += 1
+    ) {
       for (const point of base) {
         const ppq = offset + point.ppq;
         if (ppq <= lengthPpq) repeated.push({ ...point, ppq });
@@ -1133,6 +1148,21 @@ async function projectFromDocument(
           ? instrument.patch.preset
           : undefined;
     const channels = new Set(clips.flatMap((clip) => [...usedMidiChannels(clip)]));
+    // CC7 and CC10 are the interoperable SMF equivalents of Sonare's static
+    // track gain/pan. Emit them before program and note events so external
+    // sequencers reproduce the mix balance even though SMF has no strip model.
+    if (track.volume !== 1 || track.pan !== 0) {
+      for (const ch of channels) {
+        if (track.pan !== 0) {
+          events.unshift(
+            wasm.Project.midiCc(0, 0, ch, 10, clampInt((track.pan + 1) * 63.5, 0, 127)),
+          );
+        }
+        if (track.volume !== 1) {
+          events.unshift(wasm.Project.midiCc(0, 0, ch, 7, clampInt(track.volume * 127, 0, 127)));
+        }
+      }
+    }
     if (preset) {
       const importedBank =
         instrument?.kind === 'synth-preset' && instrument.gmBank !== undefined

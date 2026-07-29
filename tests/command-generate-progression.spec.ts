@@ -99,17 +99,20 @@ describe('generateProgressionCommand', () => {
       expect(store.chords[2]).toMatchObject({ startPpq: 8, endPpq: 12, rootPc: 4 });
     });
 
-    it('drops a chord that only partially overlaps the range', () => {
+    it('trims chords that cross either range boundary', () => {
       setProjectChords([
-        { startPpq: 0, endPpq: 6, rootPc: 0, quality: 0 }, // overlaps [4, 8): dropped
+        { startPpq: 0, endPpq: 6, rootPc: 0, quality: 0 }, // keep [0, 4)
+        { startPpq: 6, endPpq: 10, rootPc: 2, quality: 0 }, // keep [8, 10)
         { startPpq: 8, endPpq: 12, rootPc: 4, quality: 0 }, // outside: kept
       ]);
 
       generateProgressionCommand({ bars: 1, seed: 0, mode: 'range', startPpq: 4 });
 
-      expect(store.chords).toHaveLength(2);
-      expect(store.chords[0].startPpq).toBe(4);
-      expect(store.chords[1]).toMatchObject({ startPpq: 8, endPpq: 12, rootPc: 4 });
+      expect(store.chords).toHaveLength(4);
+      expect(store.chords[0]).toMatchObject({ startPpq: 0, endPpq: 4, rootPc: 0 });
+      expect(store.chords[1]).toMatchObject({ startPpq: 4, endPpq: 8 });
+      expect(store.chords[2]).toMatchObject({ startPpq: 8, endPpq: 10, rootPc: 2 });
+      expect(store.chords[3]).toMatchObject({ startPpq: 8, endPpq: 12, rootPc: 4 });
     });
 
     it('is a single undoable edit', () => {

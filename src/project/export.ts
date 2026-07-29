@@ -8,6 +8,7 @@ import { ensureFileExtension, sanitizeFilenameBase } from '@/lib/filename';
 import {
   type DocumentClip,
   PROJECT_DOCUMENT_SCHEMA_VERSION,
+  type ProjectDocument,
   serializeProject,
 } from './serialization';
 import { inspectSmfExportLoss, projectDocumentToSmf, type SmfExportLossReport } from './smf';
@@ -21,6 +22,38 @@ export interface MidiExportResult {
   filename: string;
   /** SMF structure losses that require explicit user confirmation. */
   smfLoss?: SmfExportLossReport;
+  /** App-level MIDI data omitted by the native SMF2CLIP exporter. */
+  midi2ClipLoss?: Midi2ClipExportLossReport;
+}
+
+/**
+ * MIDI data retained by Sonare's document but unavailable to the native
+ * SMF2CLIP export ABI.
+ */
+export interface Midi2ClipExportLossReport {
+  /** Expression lanes omitted from the exported clip file. */
+  expressionLanes: number;
+  /** Opaque SMF SysEx packets omitted from the exported clip file. */
+  sysExPackets: number;
+}
+
+/** Counts document MIDI data that Project.exportClipFile cannot receive. */
+export function inspectMidi2ClipExportLoss(document: ProjectDocument): Midi2ClipExportLossReport {
+  let expressionLanes = 0;
+  let sysExPackets = 0;
+  for (const track of document.tracks) {
+    for (const clip of track.clips) {
+      if ((clip.kind ?? 'midi') !== 'midi') continue;
+      expressionLanes +=
+        (clip.ccLanes?.length ?? 0) +
+        (clip.pitchBendLanes?.length ?? 0) +
+        (clip.programChangeLanes?.length ?? 0) +
+        (clip.channelPressureLanes?.length ?? 0) +
+        (clip.polyPressureLanes?.length ?? 0);
+      sysExPackets += clip.smfSysEx?.length ?? 0;
+    }
+  }
+  return { expressionLanes, sysExPackets };
 }
 
 /** Replaces characters that are unsafe in filenames and trims whitespace. */
@@ -65,6 +98,7 @@ export function exportProjectClipFile(baseName?: string): MidiExportResult {
   return {
     bytes: copyBytes(project.exportClipFile()),
     filename: ensureFileExtension(name, '.midi2'),
+    midi2ClipLoss: inspectMidi2ClipExportLoss(serializeProject()),
   };
 }
 
@@ -126,6 +160,13 @@ export async function exportClipSmf(clipId: number, baseName?: string): Promise<
       channel: lane.channel,
       pitch: lane.pitch,
       points: lane.points.map((point) => ({ ...point })),
+    }));
+  }
+  if (clip.smfSysEx !== undefined && clip.smfSysEx.length > 0) {
+    documentClip.smfSysEx = clip.smfSysEx.map((packet) => ({
+      ppq: packet.ppq,
+      status: packet.status,
+      data: [...packet.data],
     }));
   }
 

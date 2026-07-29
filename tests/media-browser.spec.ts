@@ -24,6 +24,11 @@ vi.mock('@/persistence/assets', () => assetStore);
 const decodeAndIngestMock = vi.hoisted(() => vi.fn());
 vi.mock('@/project/audio-import', () => ({ decodeAndIngest: decodeAndIngestMock }));
 
+const historyRefs = vi.hoisted(() => ({ assetIds: new Set<string>() }));
+vi.mock('@/project/commands', () => ({
+  collectHistoryReferencedMediaIds: () => ({ assetIds: historyRefs.assetIds, fontIds: new Set() }),
+}));
+
 /** Module returned by the mocked ensureWasm; tests add timeStretch here. */
 const wasmModule = vi.hoisted(() => ({ current: {} as Record<string, unknown> }));
 vi.mock('@/lib/wasm', () => ({ ensureWasm: vi.fn(async () => wasmModule.current) }));
@@ -113,6 +118,7 @@ describe('MediaBrowser', () => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
     clearAudioAssetLeases();
+    historyRefs.assetIds.clear();
     wasmModule.current = {};
     assetStore.listAssets.mockResolvedValue([]);
     assetStore.deleteAsset.mockResolvedValue();
@@ -325,6 +331,19 @@ describe('MediaBrowser', () => {
 
     const wrapper = await mountBrowser();
     const button = rowButton(wrapper, 'Take A', '.delete-button');
+
+    expect(button.attributes('disabled')).toBeDefined();
+    await button.trigger('click');
+    expect(wrapper.find('.danger').exists()).toBe(false);
+    expect(assetStore.deleteAsset).not.toHaveBeenCalled();
+  });
+
+  it('blocks deleting an asset retained only by undo or redo history', async () => {
+    assetStore.listAssets.mockResolvedValue([meta({ id: 'undo-a', name: 'Undo take' })]);
+    historyRefs.assetIds.add('undo-a');
+
+    const wrapper = await mountBrowser();
+    const button = rowButton(wrapper, 'Undo take', '.delete-button');
 
     expect(button.attributes('disabled')).toBeDefined();
     await button.trigger('click');

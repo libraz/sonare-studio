@@ -15,6 +15,7 @@ import {
   MAX_AUDIO_CHANNELS,
   MAX_AUDIO_SAMPLE_RATE,
   MAX_AUDIO_SAMPLES,
+  MAX_EXTERNAL_AUDIO_FILE_BYTES,
 } from '@/persistence/resource-limits';
 
 /**
@@ -452,6 +453,12 @@ export async function decodeAndIngest(
   file: File | Blob | ArrayBuffer,
   options: DecodeAndIngestOptions = {},
 ): Promise<AudioAssetMeta> {
+  const inputByteLength = file instanceof ArrayBuffer ? file.byteLength : file.size;
+  if (inputByteLength > MAX_EXTERNAL_AUDIO_FILE_BYTES) {
+    throw new RangeError(
+      `Audio import exceeds the ${MAX_EXTERNAL_AUDIO_FILE_BYTES} byte compressed-file limit`,
+    );
+  }
   const bytes = file instanceof ArrayBuffer ? file : await file.arrayBuffer();
   const name =
     options.name ??

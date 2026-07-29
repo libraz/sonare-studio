@@ -557,6 +557,7 @@ function fromDocumentMixerSnapshotSlots(
             ),
             mute: entry.mute,
             solo: entry.solo,
+            ...(entry.volume !== undefined ? { volume: entry.volume } : {}),
             ...(entry.soloSafe !== undefined ? { soloSafe: entry.soloSafe } : {}),
             ...(entry.vcaId !== undefined ? { vcaId: entry.vcaId } : {}),
           },

@@ -1,3 +1,4 @@
+import { midiSourcePpqToTimeline } from '../midi-projection';
 import {
   allocateNoteId,
   getProject,
@@ -449,15 +450,15 @@ export function quantizeSelection(strength = 1): void {
   let changed = false;
   const next = store.notes.map((note) => {
     if (!store.selection.has(note.id)) return { ...note };
-    const timelinePpq = clip.startPpq + note.startPpq;
+    const timelinePpq = midiSourcePpqToTimeline(clip, note.startPpq);
     const snapped =
       gridPpq === 1
         ? project.snapToGrid(timelinePpq, strength)
         : snapPpqToLocalGrid(timelinePpq, gridPpq, strength);
-    const localPpq = snapped - clip.startPpq;
-    if (localPpq === note.startPpq) return { ...note };
+    const sourcePpq = snapped - clip.startPpq + clip.sourceOffsetPpq;
+    if (sourcePpq === note.startPpq) return { ...note };
     changed = true;
-    return { ...note, startPpq: Math.max(0, localPpq) };
+    return { ...note, startPpq: Math.max(0, sourcePpq) };
   });
   if (changed) commit(next, { writeNotes: true });
 }
@@ -612,14 +613,20 @@ export function quantizeSelectionLengths(strength = 1): void {
 export function quantizeSelectionEnds(strength = 1): void {
   const store = useProjectStore();
   if (store.selection.size === 0) return;
+  const clip = requireEditableClip(store, store.clipId);
   const gridPpq = 4 / store.snapDivision;
   const updates: EditorNoteUpdate[] = [];
   for (const note of store.notes) {
     if (!store.selection.has(note.id)) continue;
-    const end = note.startPpq + note.durationPpq;
-    const target = Math.max(note.startPpq + MIN_DURATION_PPQ, Math.round(end / gridPpq) * gridPpq);
-    const nextEnd = end + (target - end) * strength;
-    const durationPpq = Math.max(MIN_DURATION_PPQ, nextEnd - note.startPpq);
+    const sourceEnd = note.startPpq + note.durationPpq;
+    const timelineEnd = midiSourcePpqToTimeline(clip, sourceEnd);
+    const target = Math.max(
+      midiSourcePpqToTimeline(clip, note.startPpq + MIN_DURATION_PPQ),
+      Math.round(timelineEnd / gridPpq) * gridPpq,
+    );
+    const nextTimelineEnd = timelineEnd + (target - timelineEnd) * strength;
+    const nextSourceEnd = nextTimelineEnd - clip.startPpq + clip.sourceOffsetPpq;
+    const durationPpq = Math.max(MIN_DURATION_PPQ, nextSourceEnd - note.startPpq);
     if (durationPpq !== note.durationPpq) updates.push({ id: note.id, durationPpq });
   }
   updateNotes(updates);

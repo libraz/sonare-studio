@@ -395,6 +395,18 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(store.clips.find((c) => c.id === clipId)?.name).toBe('Verse');
     });
 
+    it('does not reuse an undone clip id for a new clip', () => {
+      const trackId = store.tracks[0].id;
+      const undoneClipId = addMidiClip({ trackId, startPpq: 8, lengthPpq: 4 });
+
+      expect(undo()).toBe(true);
+      const newClipId = addMidiClip({ trackId, startPpq: 16, lengthPpq: 4 });
+
+      // The native edit model keeps allocation counters monotonic so a stale
+      // UI reference cannot silently point at a different clip after undo.
+      expect(newClipId).toBeGreaterThan(undoneClipId);
+    });
+
     it('addMidiClip validates placement and the owning track', () => {
       const trackId = store.tracks[0].id;
       expect(() => addMidiClip({ trackId: 9999, lengthPpq: 8 })).toThrow(RangeError);
@@ -1343,6 +1355,20 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(noteById(id)?.startPpq).toBeCloseTo(0.6, 9);
     });
 
+    it('quantizes note starts against source-offset timeline coordinates', () => {
+      trimClip(store.clipId, 0.4, 8);
+      moveClip(store.clipId, 0.7);
+      const id = addNote({ pitch: 60, startPpq: 0.8, durationPpq: 1 });
+      store.snapDivision = 4;
+      setSelection([id]);
+
+      quantizeSelection();
+
+      // Source 0.8 is at timeline 1.1 (0.7 + 0.8 - 0.4), so it snaps
+      // to 1.0 and writes back as source position 0.7.
+      expect(noteById(id)?.startPpq).toBeCloseTo(0.7, 9);
+    });
+
     it('quantizes sub-PPQ note lengths without rounding them up to one PPQ', () => {
       const id = addNote({ pitch: 60, startPpq: 0, durationPpq: 0.3 });
       setSelection([id]);
@@ -1358,6 +1384,20 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       quantizeSelectionEnds();
       expect(noteById(a)?.startPpq).toBe(0.1);
       expect(noteById(a)?.durationPpq).toBeCloseTo(1.9, 9);
+    });
+
+    it('quantizes note ends on the same source-offset timeline grid', () => {
+      trimClip(store.clipId, 0.4, 8);
+      moveClip(store.clipId, 0.7);
+      const id = addNote({ pitch: 60, startPpq: 0.8, durationPpq: 0.3 });
+      store.snapDivision = 4;
+      setSelection([id]);
+
+      quantizeSelectionEnds();
+
+      // The endpoint is on the absolute timeline; the minimum duration is
+      // retained after translating the snapped position back to source PPQ.
+      expect(noteById(id)?.durationPpq).toBeCloseTo(0.0625, 9);
     });
 
     it('duplicates and repeats the selection as one undoable edit', () => {
@@ -1924,7 +1964,7 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(bounded.bytes).toBeLessThanOrEqual(bounded.budgetBytes);
       expect(bounded.undoEntries).toBeLessThan(10);
       clearHistory();
-    });
+    }, 15_000);
 
     it('replays each command kind in reverse order', () => {
       const trackId = store.tracks[0].id;

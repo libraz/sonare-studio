@@ -58,8 +58,8 @@ export function clearProjectChords(): void {
 export interface EstimatedChordSummary {
   /** Number of chord symbols written to the chord track. */
   count: number;
-  /** One confidence value in [0, 1] per written symbol, in order. */
-  confidence: number[];
+  /** Confidence in [0, 1], keyed by the written chord's start PPQ. */
+  confidenceByStartPpq: ReadonlyMap<number, number>;
   /** Names of percussion tracks excluded from the estimate. */
   excludedTrackNames: string[];
 }
@@ -118,9 +118,14 @@ export function estimateChordsFromArrangement(): EstimatedChordSummary {
     timeSignatures: store.timeSignatures,
   });
   if (estimate.symbols.length > 0) setProjectChords(estimate.symbols);
+  const confidenceByStartPpq = new Map<number, number>();
+  estimate.symbols.forEach((symbol, index) => {
+    const confidence = estimate.confidence[index];
+    if (confidence !== undefined) confidenceByStartPpq.set(symbol.startPpq, confidence);
+  });
   return {
     count: estimate.symbols.length,
-    confidence: estimate.confidence,
+    confidenceByStartPpq,
     excludedTrackNames: estimate.excludedTrackNames,
   };
 }

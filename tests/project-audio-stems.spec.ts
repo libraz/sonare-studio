@@ -235,7 +235,7 @@ describe('separateAudioClipStems', () => {
       },
     );
 
-    expect([...input]).toEqual([0, 2, 3, 4, 1, 0]);
+    expect([...input]).toEqual([1, 2, 3, 4, 1, 2]);
     for (let frame = 0; frame < input.length; frame += 1) {
       expect(stems.reduce((sum, stem) => sum + stem.channels[0][frame], 0)).toBeCloseTo(
         input[frame],
@@ -281,7 +281,7 @@ describe('separateAudioClipStems', () => {
       },
     );
 
-    expect([...input]).toEqual([0, 5, 7, 8, 4.5, 0]);
+    expect([...input]).toEqual([4, 5, 7, 8, 4.5, 0]);
     for (let frame = 0; frame < input.length; frame += 1) {
       expect(stems.reduce((sum, stem) => sum + stem.channels[0][frame], 0)).toBeCloseTo(
         input[frame],

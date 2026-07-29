@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { clampClipFadePpq, validateClipFadePair } from '@/project/clip-fades';
 import { clipSplitBlockReason, LOOP_CLIP_SPLIT_ERROR } from '@/project/clip-split';
+import { withDerivedClipMetadata } from '@/project/command/utils';
 import { canonicalJson, fnv1a32Hex } from '@/project/hash';
 import {
   createMediaCompletenessReport,
@@ -10,7 +11,7 @@ import {
 } from '@/project/media-completeness';
 import type { DocumentClip, ProjectDocument } from '@/project/serialization';
 import { applyDocumentClipMetadata } from '@/project/store-load';
-import { buildTrackMirror, refreshTempoMeter } from '@/project/store-refresh';
+import { buildClipMirror, buildTrackMirror, refreshTempoMeter } from '@/project/store-refresh';
 import type { EditorClip } from '@/project/types';
 
 function projectFixture(): ProjectDocument {
@@ -208,5 +209,49 @@ describe('project store mirror boundaries', () => {
       takes: [{ assetId: 'take-1', name: 'Main' }],
       compSegments: [{ startPpq: 0, takeIndex: 0, crossfadePpq: 0.5 }],
     });
+  });
+
+  it('retains opaque SMF SysEx through refresh and transforms it for a derived window', () => {
+    const previous = [
+      {
+        ...clip(),
+        smfSysEx: [
+          { ppq: 1, status: 0xf0 as const, data: [0x41, 0x10] },
+          { ppq: 2.5, status: 0xf7 as const, data: [0x7e, 0x7f] },
+        ],
+      },
+    ];
+    const [refreshed] = buildClipMirror(
+      {
+        tracks: [{ id: 1, kind: 1, name: 'MIDI' }],
+        clips: [
+          {
+            id: 1,
+            track_id: 1,
+            start_ppq: 0,
+            length_ppq: 4,
+            source_offset_ppq: 0,
+            gain: 1,
+            loop_mode: 0,
+            loop_length_ppq: 0,
+          },
+        ],
+      },
+      previous,
+      new Map([[1, 0]]),
+      -1,
+      undefined,
+      () => 1,
+    );
+    expect(refreshed.smfSysEx).toEqual(previous[0].smfSysEx);
+    expect(refreshed.smfSysEx?.[0].data).not.toBe(previous[0].smfSysEx?.[0].data);
+
+    const derived = withDerivedClipMetadata(
+      { ...clip(), lengthPpq: 1, sourceOffsetPpq: 2 },
+      refreshed,
+      { windowStartPpq: 2, windowLengthPpq: 1 },
+    );
+    expect(derived.smfSysEx).toEqual([{ ppq: 0.5, status: 0xf7, data: [0x7e, 0x7f] }]);
+    expect(derived.smfSysEx?.[0].data).not.toBe(refreshed.smfSysEx?.[1].data);
   });
 });

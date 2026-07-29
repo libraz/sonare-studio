@@ -200,8 +200,10 @@ export function sliceAudioClipWindow(
  * The engine clip options for fades are not part of the typed API, so fades
  * are baked into the scheduled buffer instead: the first fade-in frame is
  * silent and the ramp reaches unity right after the fade (multiplier i/n for
- * frame i of n); the fade-out mirrors that (the last frame is silent). Fades
- * longer than the buffer are clamped to its length.
+ * frame i of n); the fade-out mirrors that (the last frame is silent). A
+ * rounded one-frame fade is treated as no fade: it cannot form a ramp and
+ * would otherwise silence a clip edge. Fades longer than the buffer are
+ * clamped to its length.
  *
  * @param channels Planar buffers to modify (typically fresh slices).
  * @param sampleRate Buffer sample rate in Hz.
@@ -244,12 +246,18 @@ export function applyAudioClipFades(
           ),
     ),
   );
-  for (const channel of channels) {
-    for (let i = 0; i < inFrames; i++) {
-      channel[i] *= i / inFrames;
-    }
-    for (let i = 0; i < outFrames; i++) {
-      channel[frames - 1 - i] *= i / outFrames;
+  if (inFrames > 1 || outFrames > 1) {
+    for (const channel of channels) {
+      if (inFrames > 1) {
+        for (let i = 0; i < inFrames; i++) {
+          channel[i] *= i / inFrames;
+        }
+      }
+      if (outFrames > 1) {
+        for (let i = 0; i < outFrames; i++) {
+          channel[frames - 1 - i] *= i / outFrames;
+        }
+      }
     }
   }
   return channels;

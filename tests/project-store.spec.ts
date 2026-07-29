@@ -13,8 +13,9 @@ import {
   undo,
   updateNotes,
 } from '@/project/commands';
-import { getProject, useProjectStore } from '@/project/store';
+import { getProject, PROJECT_MAX_UNDO_DEPTH, useProjectStore } from '@/project/store';
 import { MAJOR_MODE_MASK } from '@/project/types';
+import { FakeProject } from './fake-wasm';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -47,6 +48,31 @@ describe('project store', () => {
     expect(store.tempoBpm).toBe(120);
     expect(store.notes).toEqual([]);
     expect(store.selection.size).toBe(0);
+  });
+
+  it('configures the bounded wasm undo depth for every new project', async () => {
+    const setMaxUndoDepth = vi.spyOn(FakeProject.prototype, 'setMaxUndoDepth');
+    store.dispose();
+
+    await store.init();
+
+    expect(setMaxUndoDepth).toHaveBeenCalledWith(PROJECT_MAX_UNDO_DEPTH);
+  });
+
+  it('makes the fake project evict undo entries at the configured depth', () => {
+    const project = new FakeProject();
+    project.setMaxUndoDepth(2);
+    project.setTempoSegments([{ startPpq: 0, bpm: 100 }]);
+    project.setTempoSegments([{ startPpq: 0, bpm: 110 }]);
+    project.setTempoSegments([{ startPpq: 0, bpm: 120 }]);
+
+    project.undo();
+    project.undo();
+    project.undo();
+
+    expect(JSON.parse(project.toJson()).tempo_segments).toEqual([
+      { start_ppq: 0, bpm: 100, end_bpm: 0, start_sample: 0 },
+    ]);
   });
 
   it('updates the Project sample rate when init is called after engine startup', async () => {

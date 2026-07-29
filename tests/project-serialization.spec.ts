@@ -5,6 +5,7 @@ import { formatChordName } from '@/project/chords';
 import {
   addMasteringProcessor,
   addMidiClip,
+  addMixerBus,
   addNote,
   addTrack,
   canUndo,
@@ -42,10 +43,11 @@ import {
   type ProjectDocument,
   serializeProject,
 } from '@/project/serialization';
+import { extractSmfSysEx } from '@/project/smf';
 import { useProjectStore } from '@/project/store';
 import { createTemplate } from '@/project/templates';
 import { MAJOR_MODE_MASK } from '@/project/types';
-import { midiLearnMasteringTargetId } from '@/ui/midi/midi-learn';
+import { midiLearnBusStripControlTargetId, midiLearnMasteringTargetId } from '@/ui/midi/midi-learn';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -531,11 +533,15 @@ describe('project serialization', () => {
       channel: 8,
       controller: 41,
     });
+    const busId = addMixerBus({ name: 'FX' });
+    const busStripTarget = midiLearnBusStripControlTargetId(busId, 'width');
+    store.midiCcBindings.set(busStripTarget, { channel: 9, controller: 43 });
     // A binding to a track that no longer exists must drop out on serialize.
     store.midiCcBindings.set('pan:99999', { channel: 2, controller: 20 });
 
     const doc = serializeProject();
     expect(doc.midiCcBindings).toEqual([
+      { target: busStripTarget, channel: 9, controller: 43 },
       { target: 'eq:0:0:frequencyHz', channel: 7, controller: 38, trackScoped: true },
       { target: 'gain:0', channel: 0, controller: 7, trackScoped: true },
       { target: 'gain:master', channel: 1, controller: 10 },
@@ -587,7 +593,8 @@ describe('project serialization', () => {
       channel: 8,
       controller: 41,
     });
-    expect(store.midiCcBindings.size).toBe(9);
+    expect(store.midiCcBindings.get(busStripTarget)).toEqual({ channel: 9, controller: 43 });
+    expect(store.midiCcBindings.size).toBe(10);
     // Re-serializing the loaded project yields the same document.
     expect(serializeProject()).toEqual(doc);
   });
@@ -632,6 +639,37 @@ describe('project serialization', () => {
         enabled: true,
       },
     ]);
+  });
+
+  it('drops malformed document markers and sections before publishing the mirror', async () => {
+    buildSampleProject(store);
+    const doc = serializeProject();
+    doc.markers = [
+      { ppq: 4, name: 'Valid' },
+      { ppq: -1, name: 'Before start' },
+      { ppq: Number.NaN, name: 'Not finite' },
+      { ppq: 8, name: 42 },
+    ] as unknown as typeof doc.markers;
+    doc.sections = [
+      { name: 'Verse', color: '#112233', startPpq: 0, endPpq: 8 },
+      { name: 'Reversed', color: '#112233', startPpq: 8, endPpq: 8 },
+      { name: 'Negative', color: '#112233', startPpq: -1, endPpq: 4 },
+      { name: 'Bad color', color: 1, startPpq: 8, endPpq: 16 },
+    ] as unknown as typeof doc.sections;
+
+    await loadProjectDocument(doc);
+
+    expect(store.markers.map(({ ppq, name }) => ({ ppq, name }))).toEqual([
+      { ppq: 4, name: 'Valid' },
+    ]);
+    expect(
+      store.sections.map(({ name, color, startPpq, endPpq }) => ({
+        name,
+        color,
+        startPpq,
+        endPpq,
+      })),
+    ).toEqual([{ name: 'Verse', color: '#112233', startPpq: 0, endPpq: 8 }]);
   });
 
   it('rejects unsupported schema versions and keeps the open project alive', async () => {
@@ -689,9 +727,16 @@ describe('MIDI export commands', () => {
   });
 
   it('exportProjectClipFile returns SMF2CLIP bytes with a .midi2 filename', () => {
+    setClipCcLane(store.clipId, 1, 0, [{ ppq: 0, value: 64 }]);
+    store.clips = store.clips.map((clip) =>
+      clip.id === store.clipId
+        ? { ...clip, smfSysEx: [{ ppq: 0, status: 0xf0, data: [0x7e, 0xf7] }] }
+        : clip,
+    );
     const result = exportProjectClipFile('demo');
     expect(result.filename).toBe('demo.midi2');
     expect(result.bytes.length).toBeGreaterThan(0);
+    expect(result.midi2ClipLoss).toEqual({ expressionLanes: 1, sysExPackets: 1 });
   });
 
   it('exportClipSmf preserves one clip with app-level MIDI metadata', async () => {
@@ -705,6 +750,7 @@ describe('MIDI export commands', () => {
             pitchBendLanes: [{ channel: 0, points: [{ ppq: 0.5, value: 4096 }] }],
             channelPressureLanes: [{ channel: 0, points: [{ ppq: 0.75, value: 70 }] }],
             polyPressureLanes: [{ channel: 0, pitch: 60, points: [{ ppq: 0.9, value: 80 }] }],
+            smfSysEx: [{ ppq: 0.25, status: 0xf0, data: [0x7e, 0x7f, 0x09] }],
           }
         : clip,
     );
@@ -712,6 +758,9 @@ describe('MIDI export commands', () => {
     const result = await exportClipSmf(store.clipId);
     expect(result.filename).toBe('Lead line.mid');
     expect(Array.from(result.bytes.subarray(0, 4))).toEqual([0x4d, 0x54, 0x68, 0x64]);
+    expect(extractSmfSysEx(result.bytes)).toEqual([
+      { ppq: 0.25, status: 0xf0, data: [0x7e, 0x7f, 0x09] },
+    ]);
     await expect(exportClipSmf(9999)).rejects.toThrow(RangeError);
   });
 });

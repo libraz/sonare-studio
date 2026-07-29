@@ -176,6 +176,24 @@ describe('audio track and clip commands', () => {
     expect(docSecond?.source_id).toBe(docFirst?.source_id);
   });
 
+  it('rolls back a created audio clip when rebinding its known source throws', async () => {
+    const trackId = addAudioTrack({ name: 'Audio' });
+    await addAudioClip({ trackId, assetId: 'asset-x', lengthPpq: 8 });
+    const before = getProject().toJson();
+    const clipCount = store.clips.length;
+    const sourceSpy = vi.spyOn(getProject(), 'setClipSource').mockImplementation(() => {
+      throw Error('source binding failed');
+    });
+
+    await expect(
+      addAudioClip({ trackId, assetId: 'asset-x', startPpq: 8, lengthPpq: 8 }),
+    ).rejects.toThrow('source binding failed');
+    sourceSpy.mockRestore();
+
+    expect(getProject().toJson()).toBe(before);
+    expect(store.clips).toHaveLength(clipCount);
+  });
+
   it('addAudioClip can seed preserved audio clip attributes when rebasing an asset', async () => {
     const trackId = addAudioTrack({ name: 'Audio' });
     const clipId = await addAudioClip({
