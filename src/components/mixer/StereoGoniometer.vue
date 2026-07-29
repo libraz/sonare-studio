@@ -28,8 +28,10 @@ const props = withDefaults(
     scope?: ScopeSource | null;
     /** Square edge length in CSS px. */
     size?: number;
+    /** Whether the mixer dock is visible and this analyzer should animate. */
+    visible?: boolean;
   }>(),
-  { analyser: null, scope: null, size: 48 },
+  { analyser: null, scope: null, size: 48, visible: true },
 );
 
 const { t } = useI18n();
@@ -43,6 +45,16 @@ let right: Float32Array | null = null;
 let interleaved: Float32Array | null = null;
 /** True once a silent frame was painted; idle frames are then skipped. */
 let idleFrameDrawn = false;
+
+function stopAnimation(): void {
+  if (rafId !== 0) cancelAnimationFrame(rafId);
+  rafId = 0;
+}
+
+function startAnimation(): void {
+  if (!props.visible || rafId !== 0) return;
+  rafId = requestAnimationFrame(draw);
+}
 
 function resizeCanvas(): void {
   const canvas = canvasRef.value;
@@ -92,6 +104,10 @@ function plotInterleaved(ctx: CanvasRenderingContext2D, points: Float32Array): b
 }
 
 function draw(): void {
+  if (!props.visible) {
+    rafId = 0;
+    return;
+  }
   rafId = requestAnimationFrame(draw);
   const canvas = canvasRef.value;
   const ctx = canvas?.getContext('2d');
@@ -133,12 +149,24 @@ function draw(): void {
 
 onMounted(() => {
   resizeCanvas();
-  rafId = requestAnimationFrame(draw);
+  startAnimation();
 });
 
 onBeforeUnmount(() => {
-  cancelAnimationFrame(rafId);
+  stopAnimation();
 });
+
+watch(
+  () => props.visible,
+  (visible) => {
+    if (visible) {
+      idleFrameDrawn = false;
+      startAnimation();
+    } else {
+      stopAnimation();
+    }
+  },
+);
 
 watch(
   () => props.size,

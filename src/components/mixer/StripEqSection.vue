@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, ref, watch } from 'vue';
+import { confirmDialog } from '@/composables/useDialogs';
 import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
 import type { ScopeFrame, ScopeSource } from '@/engine/scope';
 import type { CommandGestureOptions, MixerStripTarget } from '@/project/commands';
@@ -247,10 +248,25 @@ function onTogglePower(): void {
 }
 
 function onMatchFlat(): void {
+  void applyMatchFlat();
+}
+
+async function applyMatchFlat(): Promise<void> {
   if (!canMatchFlat.value || !scopeFrame.value || !props.scope) return;
+  if (
+    (eq.value?.bands.length ?? 0) > 0 &&
+    !(await confirmDialog({
+      title: t.value.shell.mixer.eq.matchFlatConfirmTitle,
+      message: t.value.shell.mixer.eq.matchFlatConfirmMessage,
+      danger: true,
+      confirmLabel: t.value.shell.mixer.eq.matchFlat,
+    }))
+  )
+    return;
   const bands = matchFlatEqBands(scopeFrame.value.bands, {
     sampleRate: props.scope.sampleRate,
     maxBands: MAX_BANDS,
+    existingBands: eq.value?.bands,
   });
   if (bands.length === 0) return;
   setStripEq(props.target, { enabled: true, bands });

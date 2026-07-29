@@ -77,6 +77,12 @@ describe('useStripAutomation', () => {
     expect(stripAutomation.displayedGainDb.value).toBe(-9);
   });
 
+  it('shows the combined static track volume and strip gain', () => {
+    store.tracks[0] = track({ volume: 0.5, mixer: { ...createDefaultStrip(), gainDb: -3 } });
+
+    expect(automation().displayedGainDb.value).toBeCloseTo(-3 - 6.020599913, 8);
+  });
+
   it('records touch fader automation in the pre-VCA strip domain', () => {
     setAutomationStripMode(1, 'touch');
     const stripAutomation = automation();

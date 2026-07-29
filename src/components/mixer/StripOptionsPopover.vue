@@ -2,6 +2,7 @@
 import { computed, inject, onBeforeUnmount, ref, watch } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
+import { currentStrip, type MixerStripTarget } from '@/project/command/mixer-internal';
 import {
   setStripChannelDelaySamples,
   setStripDualPan,
@@ -12,7 +13,6 @@ import {
   setStripWidth,
 } from '@/project/commands';
 import {
-  createDefaultStrip,
   DEFAULT_PAN_LAW,
   DEFAULT_PAN_MODE,
   DEFAULT_STRIP_WIDTH,
@@ -30,7 +30,9 @@ import {
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import {
+  type MidiLearnBusStripControlParam,
   type MidiLearnStripControlParam,
+  midiLearnBusStripControlTargetId,
   midiLearnStripControlTargetId,
 } from '@/ui/midi/midi-learn';
 import { formatDb, formatPan } from '@/ui/mixer/db-scale';
@@ -47,8 +49,8 @@ import { formatDb, formatPan } from '@/ui/mixer/db-scale';
  */
 
 const props = defineProps<{
-  /** Strip target: a track id or 'master'. */
-  target: number | 'master';
+  /** Strip target: a track, master, or send/return bus. */
+  target: MixerStripTarget;
   /** Strip display name (for the accessible button label). */
   name: string;
 }>();
@@ -57,11 +59,7 @@ const store = useProjectStore();
 const { t } = useI18n();
 const midiLearn = inject(MIDI_LEARN_KEY, null);
 
-const strip = computed<MixerStrip>(() => {
-  if (props.target === 'master') return store.mixer.master;
-  const track = store.tracks.find((entry) => entry.id === props.target);
-  return track?.mixer ?? createDefaultStrip();
-});
+const strip = computed<MixerStrip>(() => currentStrip(store, props.target));
 
 /** Panner detail controls are track-lane features (not the master strip). */
 const canTrackPannerOptions = computed(() => typeof props.target === 'number');
@@ -158,6 +156,12 @@ function onDualPanInput(channel: 'left' | 'right', event: Event): void {
 }
 
 function learnTargetId(param: MidiLearnStripControlParam): string {
+  if (typeof props.target !== 'number' && props.target !== 'master') {
+    return midiLearnBusStripControlTargetId(
+      props.target.slice('bus:'.length),
+      param as MidiLearnBusStripControlParam,
+    );
+  }
   return midiLearnStripControlTargetId(props.target, param);
 }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { MeterSource, StereoMeterLevels } from '@/engine/meters';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { formatLevel, isClippingRisk } from '@/ui/mastering/loudness';
@@ -26,8 +26,10 @@ const props = withDefaults(
     bridge?: MeterSource | null;
     /** Integrated-loudness target in LUFS the readout shows the delta against. */
     targetLufs?: number;
+    /** Whether the mixer dock is visible and this readout should refresh. */
+    visible?: boolean;
   }>(),
-  { bridge: null, targetLufs: -14 },
+  { bridge: null, targetLufs: -14, visible: true },
 );
 
 const { t } = useI18n();
@@ -60,7 +62,22 @@ const loudnessDeltaText = computed(() => {
 let rafId = 0;
 let lastTs = 0;
 
+function stopRefresh(): void {
+  if (rafId !== 0) cancelAnimationFrame(rafId);
+  rafId = 0;
+  lastTs = 0;
+}
+
+function startRefresh(): void {
+  if (!props.visible || rafId !== 0) return;
+  rafId = requestAnimationFrame(tick);
+}
+
 function tick(ts: number): void {
+  if (!props.visible) {
+    rafId = 0;
+    return;
+  }
   rafId = requestAnimationFrame(tick);
   if (ts - lastTs < REFRESH_MS) return;
   lastTs = ts;
@@ -69,12 +86,20 @@ function tick(ts: number): void {
 }
 
 onMounted(() => {
-  rafId = requestAnimationFrame(tick);
+  startRefresh();
 });
 
 onBeforeUnmount(() => {
-  cancelAnimationFrame(rafId);
+  stopRefresh();
 });
+
+watch(
+  () => props.visible,
+  (visible) => {
+    if (visible) startRefresh();
+    else stopRefresh();
+  },
+);
 </script>
 
 <template>

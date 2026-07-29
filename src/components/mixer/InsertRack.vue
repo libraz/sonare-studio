@@ -275,6 +275,8 @@ watch(addMenuOpen, (open) => {
 
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', onDocumentPointerDown, true);
+  for (const gesture of gestures.values()) gesture.end();
+  gestures.clear();
 });
 </script>
 

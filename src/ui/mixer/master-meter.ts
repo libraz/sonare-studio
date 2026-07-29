@@ -94,12 +94,12 @@ export function gainReductionFraction(amountDb: number): number {
 }
 
 /**
- * True when the snapshot carries the full loudness record (LUFS + true peak),
- * which only the master output target publishes. Lane and bus records omit
- * these fields, so the loudness readout stays hidden for them.
+ * True when the snapshot carries any loudness or true-peak field. Lane and
+ * bus records omit all of them, so the loudness readout stays hidden there;
+ * partial master snapshots remain displayable while their other values arrive.
  *
  * @param levels Latest meter levels.
- * @returns True when momentary LUFS and at least one true-peak channel exist.
+ * @returns True when momentary LUFS or either true-peak channel exists.
  */
 export function hasLoudnessData(
   levels: Pick<StereoMeterLevels, 'momentaryLufs' | 'truePeakDbL' | 'truePeakDbR'>,

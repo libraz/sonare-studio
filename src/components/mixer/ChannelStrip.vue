@@ -83,6 +83,8 @@ const props = withDefaults(
     positionSample?: () => number;
     /** True while the transport runs (continuous touch recording). */
     isPlaying?: boolean;
+    /** Whether the mixer dock is visible and realtime displays should run. */
+    visible?: boolean;
     /** Optional realtime automation scheduler for write-mode fader/pan drags. */
     scheduleAutomationWrite?: (
       target: number | 'master',
@@ -97,6 +99,7 @@ const props = withDefaults(
     positionPpq: undefined,
     positionSample: undefined,
     isPlaying: false,
+    visible: true,
   },
 );
 
@@ -465,6 +468,7 @@ onBeforeUnmount(() => {
         :placeholder="!props.bridge"
         :width="12"
         :height="132"
+        :visible="props.visible"
       />
     </div>
 
@@ -476,11 +480,22 @@ onBeforeUnmount(() => {
       v-if="isMaster"
       :bridge="props.bridge"
       :target-lufs="appSettings.settings.loudnessTargetLufs"
+      :visible="props.visible"
     />
 
     <div v-if="isMaster || props.scope?.available" class="strip-analyzers">
-      <SpectrumAnalyzer :analyser="props.analyser" :scope="props.scope" :height="isMaster ? 48 : 32" />
-      <StereoGoniometer :analyser="props.analyser" :scope="props.scope" :size="isMaster ? 88 : 64" />
+      <SpectrumAnalyzer
+        :analyser="props.analyser"
+        :scope="props.scope"
+        :height="isMaster ? 48 : 32"
+        :visible="props.visible"
+      />
+      <StereoGoniometer
+        :analyser="props.analyser"
+        :scope="props.scope"
+        :size="isMaster ? 88 : 64"
+        :visible="props.visible"
+      />
     </div>
   </div>
 </template>

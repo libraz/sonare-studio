@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref } from 'vue';
 import { promptDialog } from '@/composables/useDialogs';
 import type { MeterSource } from '@/engine/meters';
 import type { ScopeSource } from '@/engine/scope';
@@ -14,18 +14,8 @@ import {
   renameMixerBus,
   setAutomationLanePoints,
   setMixerBusGain,
-  setStripInputTrim,
-  setStripPolarityInvert,
-  setStripWidth,
 } from '@/project/commands';
-import {
-  DEFAULT_STRIP_WIDTH,
-  MAX_INPUT_TRIM_DB,
-  MAX_STRIP_WIDTH,
-  MIN_INPUT_TRIM_DB,
-  MIN_STRIP_WIDTH,
-  type MixerBus,
-} from '@/project/mixer';
+import type { MixerBus } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import {
@@ -43,6 +33,7 @@ import SpectrumAnalyzer from './SpectrumAnalyzer.vue';
 import StereoGoniometer from './StereoGoniometer.vue';
 import StripGrMeter from './StripGrMeter.vue';
 import StripMeter from './StripMeter.vue';
+import StripOptionsPopover from './StripOptionsPopover.vue';
 
 /**
  * Compact mixer strip for a send/return bus: a name header, an insert rack, the
@@ -67,6 +58,8 @@ const props = withDefaults(
     positionSample?: () => number;
     /** True while the transport runs (automation touch recording). */
     isPlaying?: boolean;
+    /** Whether the mixer dock is visible and realtime displays should run. */
+    visible?: boolean;
     /** Optional realtime automation scheduler for write-mode bus fader drags. */
     scheduleAutomationWrite?: (
       target: BusAutomationTarget,
@@ -80,6 +73,7 @@ const props = withDefaults(
     positionPpq: undefined,
     positionSample: undefined,
     isPlaying: false,
+    visible: true,
   },
 );
 
@@ -153,62 +147,12 @@ async function onRename(): Promise<void> {
   if (next && next !== props.bus.name) renameMixerBus(props.bus.id, next);
 }
 
-// --- Output shaping popover (trim, width, polarity) ---------------------------
-
-const optionsOpen = ref(false);
-const optionsMenu = ref<HTMLDivElement | null>(null);
-
-/** Current bus output trim in dB (0 when unset). */
-const inputTrimDb = computed(() => props.bus.strip?.inputTrimDb ?? 0);
-/** Current bus stereo width multiplier (1 when unset). */
-const stripWidth = computed(() => props.bus.strip?.width ?? DEFAULT_STRIP_WIDTH);
-const polarityLeft = computed(() => props.bus.strip?.polarityInvertLeft === true);
-const polarityRight = computed(() => props.bus.strip?.polarityInvertRight === true);
-
-/** True when any output-shaping control deviates from neutral. */
-const hasStripOptions = computed(
-  () =>
-    inputTrimDb.value !== 0 ||
-    stripWidth.value !== DEFAULT_STRIP_WIDTH ||
-    polarityLeft.value ||
-    polarityRight.value,
-);
-
-function onInputTrimInput(event: Event, commit: boolean): void {
-  const raw = Number.parseFloat((event.target as HTMLInputElement).value);
-  const value = Number.isFinite(raw)
-    ? Math.min(MAX_INPUT_TRIM_DB, Math.max(MIN_INPUT_TRIM_DB, raw))
-    : 0;
-  setStripInputTrim(stripTarget.value, value, { commit });
-}
-
-function onWidthInput(event: Event, commit: boolean): void {
-  const raw = Number.parseFloat((event.target as HTMLInputElement).value);
-  const value = Number.isFinite(raw)
-    ? Math.min(MAX_STRIP_WIDTH, Math.max(MIN_STRIP_WIDTH, raw))
-    : DEFAULT_STRIP_WIDTH;
-  setStripWidth(stripTarget.value, value, { commit });
-}
-
-function onPolarityToggle(channel: 'left' | 'right'): void {
-  const left = channel === 'left' ? !polarityLeft.value : polarityLeft.value;
-  const right = channel === 'right' ? !polarityRight.value : polarityRight.value;
-  setStripPolarityInvert(stripTarget.value, left, right);
-}
-
-function onOptionsPointerDown(event: PointerEvent): void {
-  if (!(event.target instanceof Node) || !optionsMenu.value?.contains(event.target)) {
-    optionsOpen.value = false;
-  }
-}
-
-watch(optionsOpen, (open) => {
-  if (open) document.addEventListener('pointerdown', onOptionsPointerDown, true);
-  else document.removeEventListener('pointerdown', onOptionsPointerDown, true);
-});
-
 onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', onOptionsPointerDown, true);
+  // A strip can disappear while its fader is held (for example when its bus is
+  // removed). Close the write gesture so its pending automation is retained.
+  writeFaderGesture?.end();
+  writeFaderGesture = null;
+  writeGainDb.value = null;
 });
 </script>
 
@@ -224,85 +168,7 @@ onBeforeUnmount(() => {
       >
         {{ props.bus.name }}
       </button>
-      <div ref="optionsMenu" class="strip-options">
-        <button
-          type="button"
-          class="strip-options-btn"
-          :class="{ on: hasStripOptions }"
-          v-tooltip="t.shell.mixer.strip.options"
-          :aria-label="formatMessage(t.shell.mixer.strip.optionsNamed, { name: props.bus.name })"
-          aria-haspopup="menu"
-          :aria-expanded="optionsOpen"
-          @click="optionsOpen = !optionsOpen"
-        >
-          <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor"
-            stroke-width="1.3" aria-hidden="true">
-            <circle cx="8" cy="8" r="2.1" />
-            <path d="M8 1.4v2M8 12.6v2M1.4 8h2M12.6 8h2M3.3 3.3l1.4 1.4M11.3 11.3l1.4 1.4M12.7 3.3l-1.4 1.4M4.7 11.3l-1.4 1.4" />
-          </svg>
-        </button>
-        <Transition name="pop">
-        <div v-if="optionsOpen" class="strip-options-popover" role="menu">
-          <label class="strip-options-row">
-            <span class="strip-options-label">{{ t.shell.mixer.strip.inputTrim }}</span>
-            <span class="strip-options-field">
-              <input
-                type="range"
-                :min="MIN_INPUT_TRIM_DB"
-                :max="MAX_INPUT_TRIM_DB"
-                step="0.5"
-                :value="inputTrimDb"
-                :aria-label="t.shell.mixer.strip.inputTrim"
-                @input="onInputTrimInput($event, false)"
-                @change="onInputTrimInput($event, true)"
-              />
-              <span class="strip-options-unit">{{ formatDb(inputTrimDb) }}</span>
-            </span>
-          </label>
-          <label class="strip-options-row">
-            <span class="strip-options-label">{{ t.shell.mixer.strip.width }}</span>
-            <span class="strip-options-field">
-              <input
-                type="range"
-                :min="MIN_STRIP_WIDTH"
-                :max="MAX_STRIP_WIDTH"
-                step="0.01"
-                :value="stripWidth"
-                :aria-label="t.shell.mixer.strip.width"
-                @input="onWidthInput($event, false)"
-                @change="onWidthInput($event, true)"
-              />
-              <span class="strip-options-unit">{{ stripWidth.toFixed(2) }}</span>
-            </span>
-          </label>
-          <div class="strip-options-row">
-            <span class="strip-options-label">{{ t.shell.mixer.strip.polarity }}</span>
-            <span class="strip-options-field strip-options-toggles">
-              <button
-                type="button"
-                class="toggle"
-                :class="{ on: polarityLeft }"
-                :aria-pressed="polarityLeft"
-                :aria-label="t.shell.mixer.strip.polarityLeft"
-                @click="onPolarityToggle('left')"
-              >
-                L
-              </button>
-              <button
-                type="button"
-                class="toggle"
-                :class="{ on: polarityRight }"
-                :aria-pressed="polarityRight"
-                :aria-label="t.shell.mixer.strip.polarityRight"
-                @click="onPolarityToggle('right')"
-              >
-                R
-              </button>
-            </span>
-          </div>
-        </div>
-        </Transition>
-      </div>
+      <StripOptionsPopover :target="stripTarget" :name="props.bus.name" />
       <button
         type="button"
         class="bus-remove"
@@ -353,14 +219,19 @@ onBeforeUnmount(() => {
     </div>
     <div class="bus-fader-row">
       <MixerFader :value-db="gainDb" :height="120" @change="onFaderChange" />
-      <StripMeter :bridge="props.bridge" :placeholder="!props.bridge" :height="120" />
+      <StripMeter
+        :bridge="props.bridge"
+        :placeholder="!props.bridge"
+        :height="120"
+        :visible="props.visible"
+      />
     </div>
     <span class="bus-readout">{{ formatDb(gainDb) }} dB</span>
     <StripGrMeter :bridge="props.bridge" />
 
     <div v-if="props.scope?.available" class="strip-analyzers">
-      <SpectrumAnalyzer :scope="props.scope" :height="32" />
-      <StereoGoniometer :scope="props.scope" :size="64" />
+      <SpectrumAnalyzer :scope="props.scope" :height="32" :visible="props.visible" />
+      <StereoGoniometer :scope="props.scope" :size="64" :visible="props.visible" />
     </div>
   </div>
 </template>
@@ -490,105 +361,4 @@ onBeforeUnmount(() => {
   border-top: 1px solid var(--border-subtle);
 }
 
-/* Output-shaping popover (trim, width, polarity) — mirrors the channel strip. */
-.strip-options {
-  position: relative;
-  flex: none;
-}
-
-.strip-options-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 14px;
-  line-height: 1;
-  color: var(--text-4);
-  background: transparent;
-  border: none;
-  box-shadow: none;
-  padding: 0;
-  cursor: pointer;
-}
-
-.strip-options-btn.on {
-  color: var(--accent);
-}
-
-.strip-options-popover {
-  position: absolute;
-  top: calc(100% + 2px);
-  right: 0;
-  z-index: 20;
-  min-width: 132px;
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-  padding: var(--sp-2);
-  background: var(--surface-2);
-  border: 1px solid var(--border-raised);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-pop);
-  transform-origin: top right;
-}
-
-.strip-options-row {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.strip-options-label {
-  font: var(--fw-semibold) 8px var(--font-sans);
-  letter-spacing: 0.04em;
-  color: var(--text-3);
-}
-
-.strip-options-field {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.strip-options-toggles {
-  gap: var(--sp-1);
-}
-
-.strip-options-field input {
-  width: 64px;
-  font: var(--fs-2xs) var(--font-sans);
-  color: var(--text-2);
-  background: var(--surface-inset);
-  border: none;
-  border-radius: var(--radius-sm);
-  box-shadow: var(--control-edge), var(--inset-well);
-  padding: 1px 4px;
-}
-
-.strip-options-unit {
-  font: 8px var(--font-sans);
-  color: var(--text-4);
-}
-
-.toggle {
-  width: 16px;
-  height: 14px;
-  font: var(--fw-bold) 9px var(--font-sans);
-  line-height: 1;
-  color: var(--text-3);
-  background: var(--surface-3);
-  border: none;
-  border-radius: 3px;
-  padding: 0;
-  cursor: pointer;
-  box-shadow: var(--control-lift);
-  transition:
-    background var(--dur-1) var(--ease-out),
-    color var(--dur-1) var(--ease-out);
-}
-
-.toggle.on {
-  color: var(--surface-0);
-  background: var(--accent);
-}
 </style>

@@ -36,8 +36,10 @@ const props = withDefaults(
     width?: number;
     /** Canvas height in CSS px. */
     height?: number;
+    /** Whether the mixer dock is visible and this analyzer should animate. */
+    visible?: boolean;
   }>(),
-  { analyser: null, scope: null, width: 90, height: 48 },
+  { analyser: null, scope: null, width: 90, height: 48, visible: true },
 );
 
 const { t } = useI18n();
@@ -51,6 +53,16 @@ let rafId = 0;
 let bins: Float32Array | null = null;
 /** True once a silent frame was painted; idle frames are then skipped. */
 let idleFrameDrawn = false;
+
+function stopAnimation(): void {
+  if (rafId !== 0) cancelAnimationFrame(rafId);
+  rafId = 0;
+}
+
+function startAnimation(): void {
+  if (!props.visible || rafId !== 0) return;
+  rafId = requestAnimationFrame(draw);
+}
 
 function resizeCanvas(): void {
   const canvas = canvasRef.value;
@@ -160,6 +172,10 @@ function drawAnalyser(ctx: CanvasRenderingContext2D, analyser: AnalyserBridge): 
 }
 
 function draw(): void {
+  if (!props.visible) {
+    rafId = 0;
+    return;
+  }
   rafId = requestAnimationFrame(draw);
   const canvas = canvasRef.value;
   const ctx = canvas?.getContext('2d');
@@ -180,12 +196,24 @@ function draw(): void {
 
 onMounted(() => {
   resizeCanvas();
-  rafId = requestAnimationFrame(draw);
+  startAnimation();
 });
 
 onBeforeUnmount(() => {
-  cancelAnimationFrame(rafId);
+  stopAnimation();
 });
+
+watch(
+  () => props.visible,
+  (visible) => {
+    if (visible) {
+      idleFrameDrawn = false;
+      startAnimation();
+    } else {
+      stopAnimation();
+    }
+  },
+);
 
 watch(
   () => [props.width, props.height] as const,

@@ -15,7 +15,7 @@ import { type ComputedRef, computed, type Ref, ref } from 'vue';
 import type { AutomationParam } from '@/project/automation';
 import { evaluateAutomationValue } from '@/project/automation';
 import { setAutomationLanePoints } from '@/project/commands';
-import type { MixerStrip } from '@/project/mixer';
+import { laneGainDb, type MixerStrip } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
 import {
@@ -59,7 +59,7 @@ export interface StripAutomation {
   followsFader: ComputedRef<boolean>;
   /** True when the pan display follows the lane (read mode, usable lane). */
   followsPan: ComputedRef<boolean>;
-  /** Fader value shown on the throw: write drag > lane follow > strip state. */
+  /** Fader value shown on the throw: write drag > lane follow > audible static level. */
   displayedGainDb: ComputedRef<number>;
   /** Pan value shown on the knob: write drag > lane follow > strip state. */
   displayedPan: ComputedRef<number>;
@@ -123,7 +123,7 @@ export function useStripAutomation(options: StripAutomationOptions): StripAutoma
   const writeGainDb = ref<number | null>(null);
   const writePan = ref<number | null>(null);
 
-  /** Fader value shown on the throw: write drag > lane follow > strip state. */
+  /** Fader value shown on the throw: write drag > lane follow > audible static level. */
   const displayedGainDb = computed(() => {
     if (writeGainDb.value !== null) return writeGainDb.value;
     const lane = faderLane.value;
@@ -131,7 +131,12 @@ export function useStripAutomation(options: StripAutomationOptions): StripAutoma
       const db = evaluateAutomationValue(lane.points, positionPpq()) - laneOffsetDb.value;
       return Math.min(FADER_MAX_DB, Math.max(FADER_MIN_DB, db));
     }
-    return strip.value.gainDb;
+    // `volume` is a separate (linear) gain stage in the project model. The
+    // strip fader must report the same pre-VCA level the engine receives,
+    // rather than showing only the strip trim.
+    return options.isMaster.value
+      ? strip.value.gainDb
+      : laneGainDb(options.track.value?.volume ?? 1, strip.value.gainDb, 0);
   });
 
   /** Pan value shown on the knob: write drag > lane follow > strip state. */

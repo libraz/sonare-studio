@@ -3,10 +3,12 @@ import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import BusStrip from '@/components/mixer/BusStrip.vue';
 import MixerFader from '@/components/mixer/MixerFader.vue';
+import { MIDI_LEARN_KEY, useMidiLearn } from '@/composables/useMidiLearn';
 import type { MeterSource, StereoMeterLevels } from '@/engine/meters';
 import { busAutomationTarget } from '@/project/automation';
 import { addMixerBus, clearHistory, setAutomationLanePoints } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
+import { midiLearnBusStripControlTargetId } from '@/ui/midi/midi-learn';
 import { resetAutomationStripModes } from '@/ui/mixer/automation-mode';
 
 vi.mock('@/lib/wasm', async () => {
@@ -106,6 +108,27 @@ describe('BusStrip automation UI', () => {
     expect(store.mixer.buses[0].strip?.polarityInvertLeft).toBe(true);
   });
 
+  it('learns and applies bus strip controls through the shared popover', async () => {
+    const learn = useMidiLearn();
+    const wrapper = mount(BusStrip, {
+      props: { bus: store.mixer.buses[0] },
+      global: {
+        provide: { [MIDI_LEARN_KEY as symbol]: learn },
+        stubs: { InsertRack: true, StripMeter: true },
+      },
+    });
+    const targetId = midiLearnBusStripControlTargetId(busId, 'inputTrimDb');
+
+    await wrapper.find('.strip-options-btn').trigger('click');
+    await wrapper.find('.strip-midi-learn').trigger('click');
+    expect(learn.isArmedId(targetId)).toBe(true);
+
+    learn.handleCc({ channel: 0, controller: 31, value: 127 });
+    await wrapper.vm.$nextTick();
+    expect(learn.bindingForId(targetId)).toEqual({ channel: 0, controller: 31 });
+    expect(store.mixer.buses[0].strip?.inputTrimDb).toBe(48);
+  });
+
   it('removes the options popover outside-click listener on unmount', async () => {
     const add = vi.spyOn(document, 'addEventListener');
     const remove = vi.spyOn(document, 'removeEventListener');
@@ -146,6 +169,26 @@ describe('BusStrip automation UI', () => {
     expect(scheduled).toEqual([
       [busAutomationTarget(busId), 'faderDb', { ppq: 960, samplePos: 384000, value: -9 }],
       [busAutomationTarget(busId), 'faderDb', { ppq: 960, samplePos: 384000, value: -9 }],
+    ]);
+  });
+
+  it('commits an active automation write when the bus strip unmounts', async () => {
+    const wrapper = mountStrip(960);
+    await wrapper
+      .findAll('.bus-auto-button')
+      .find((button) => button.text() === 'T')
+      ?.trigger('click');
+
+    wrapper.getComponent(MixerFader).vm.$emit('change', -9, false);
+    wrapper.unmount();
+
+    expect(store.automationLanes).toEqual([
+      {
+        target: busAutomationTarget(busId),
+        param: 'faderDb',
+        enabled: true,
+        points: [{ ppq: 960, value: -9 }],
+      },
     ]);
   });
 });

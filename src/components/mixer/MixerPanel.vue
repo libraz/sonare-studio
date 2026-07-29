@@ -62,6 +62,8 @@ const props = withDefaults(
     positionSample?: () => number;
     /** True while the transport runs (strip automation touch recording). */
     isPlaying?: boolean;
+    /** Whether this v-show-backed dock panel is currently visible. */
+    visible?: boolean;
     /** Optional realtime automation scheduler for write-mode strip drags. */
     scheduleAutomationWrite?: (
       target: AutomationTarget,
@@ -80,6 +82,7 @@ const props = withDefaults(
     positionPpq: undefined,
     positionSample: undefined,
     isPlaying: false,
+    visible: true,
   },
 );
 
@@ -293,6 +296,7 @@ onBeforeUnmount(() => {
           :position-ppq="props.positionPpq"
           :position-sample="props.positionSample"
           :is-playing="props.isPlaying"
+          :visible="props.visible"
           :schedule-automation-write="props.scheduleAutomationWrite"
         />
         <BusStrip
@@ -304,6 +308,7 @@ onBeforeUnmount(() => {
           :position-ppq="props.positionPpq"
           :position-sample="props.positionSample"
           :is-playing="props.isPlaying"
+          :visible="props.visible"
           :schedule-automation-write="props.scheduleAutomationWrite"
         />
         <VcaStrip v-for="group in store.mixer.vcaGroups ?? []" :key="group.id" :group="group" />
@@ -318,6 +323,7 @@ onBeforeUnmount(() => {
         :position-ppq="props.positionPpq"
         :position-sample="props.positionSample"
         :is-playing="props.isPlaying"
+        :visible="props.visible"
         :schedule-automation-write="props.scheduleAutomationWrite"
       />
     </div>

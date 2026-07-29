@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { eqBandResponseDb } from '@/ui/mixer/eq-curve';
 import { matchFlatEqBands } from '@/ui/mixer/match-eq';
 
 describe('matchFlatEqBands', () => {
@@ -26,5 +27,22 @@ describe('matchFlatEqBands', () => {
   it('returns no bands for silence or invalid sample rates', () => {
     expect(matchFlatEqBands(new Float32Array(16).fill(-120), { sampleRate: 48000 })).toEqual([]);
     expect(matchFlatEqBands(new Float32Array(16).fill(-48), { sampleRate: 0 })).toEqual([]);
+  });
+
+  it('removes a post-EQ response before deriving a replacement correction', () => {
+    const sampleRate = 48000;
+    const existingBands = [
+      { type: 'Peak' as const, frequencyHz: 1000, gainDb: 8, q: 1, enabled: true },
+      { type: 'Peak' as const, frequencyHz: 5000, gainDb: -7, q: 1, enabled: true },
+    ];
+    const spectrum = new Float32Array(256);
+    for (let index = 0; index < spectrum.length; index += 1) {
+      const hz = ((index + 0.5) / spectrum.length) * (sampleRate / 2);
+      spectrum[index] =
+        -48 +
+        existingBands.reduce((total, band) => total + eqBandResponseDb(band, hz, sampleRate), 0);
+    }
+
+    expect(matchFlatEqBands(spectrum, { sampleRate, existingBands })).toEqual([]);
   });
 });

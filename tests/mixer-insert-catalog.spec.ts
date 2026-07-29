@@ -12,6 +12,7 @@ describe('humanizeInsertName', () => {
     expect(humanizeInsertName('dynamics.brickwallLimiter')).toBe('Brickwall Limiter');
     expect(humanizeInsertName('dynamics.compressor')).toBe('Compressor');
     expect(humanizeInsertName('maximizer.truePeakLimiter')).toBe('True Peak Limiter');
+    expect(humanizeInsertName('effects.reverb.plate')).toBe('Reverb Plate');
   });
 
   it('handles ids without a category prefix', () => {
@@ -40,6 +41,17 @@ describe('groupInsertCatalog', () => {
     ]);
     expect(groups.map((group) => group.category)).toEqual(['dynamics', 'eq', 'stereo']);
     expect(groups[0].processors.map((p) => p.id)).toEqual(['dynamics.compressor', 'dynamics.gate']);
+  });
+
+  it('keeps a real multi-segment processor id under its top-level category', () => {
+    const groups = groupInsertCatalog(['effects.reverb.plate']);
+    expect(groups).toEqual([
+      {
+        category: 'effects',
+        label: 'Effects',
+        processors: [{ id: 'effects.reverb.plate', label: 'Reverb Plate' }],
+      },
+    ]);
   });
 
   it('keeps processor input order within a group', () => {

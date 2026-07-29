@@ -140,7 +140,7 @@ function spaceCamelCase(text: string): string {
  * @returns Display name (e.g. 'Brickwall Limiter').
  */
 export function humanizeInsertName(id: string): string {
-  const name = id.includes('.') ? id.slice(id.indexOf('.') + 1) : id;
+  const name = id.includes('.') ? id.split('.').slice(1).join(' ') : id;
   return spaceCamelCase(name).split(' ').map(capitalize).join(' ');
 }
 

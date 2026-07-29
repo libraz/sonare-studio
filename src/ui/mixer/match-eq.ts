@@ -1,4 +1,5 @@
 import type { EqBand } from '@/wasm/index.js';
+import { eqBandResponseDb } from './eq-curve';
 
 const MATCH_POINTS_HZ = [80, 160, 315, 630, 1250, 2500, 5000, 10000] as const;
 const MIN_USABLE_DB = -90;
@@ -11,6 +12,12 @@ export interface MatchFlatEqOptions {
   sampleRate: number;
   /** Maximum number of generated EQ bands. */
   maxBands?: number;
+  /**
+   * EQ already processing the measured signal. Its response is removed from
+   * the scope data before deriving a replacement, so Match flat converges
+   * when the scope tap is post-EQ.
+   */
+  existingBands?: ReadonlyArray<EqBand>;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -35,6 +42,7 @@ function localSpectrumDb(
   bands: ArrayLike<number>,
   sampleRate: number,
   centerHz: number,
+  existingBands: ReadonlyArray<EqBand>,
 ): number | null {
   const values: number[] = [];
   for (let index = 0; index < bands.length; index += 1) {
@@ -42,7 +50,11 @@ function localSpectrumDb(
     if (!Number.isFinite(value) || value < MIN_USABLE_DB) continue;
     const hz = bandFrequency(index, bands.length, sampleRate);
     if (hz <= 0 || octaveDistance(hz, centerHz) > 0.45) continue;
-    values.push(value);
+    const existingResponseDb = existingBands.reduce(
+      (total, band) => total + eqBandResponseDb(band, hz, sampleRate),
+      0,
+    );
+    values.push(value - existingResponseDb);
   }
   return values.length > 0 ? median(values) : null;
 }
@@ -55,10 +67,11 @@ function localSpectrumDb(
 export function matchFlatEqBands(bands: ArrayLike<number>, options: MatchFlatEqOptions): EqBand[] {
   const sampleRate = options.sampleRate;
   if (!Number.isFinite(sampleRate) || sampleRate <= 0 || bands.length === 0) return [];
+  const existingBands = options.existingBands ?? [];
   const nyquist = sampleRate / 2;
   const points = MATCH_POINTS_HZ.flatMap((hz): Array<{ hz: number; db: number }> => {
     if (hz >= nyquist * 0.9) return [];
-    const db = localSpectrumDb(bands, sampleRate, hz);
+    const db = localSpectrumDb(bands, sampleRate, hz, existingBands);
     return db === null ? [] : [{ hz, db }];
   });
   if (points.length < 3) return [];

@@ -2,6 +2,7 @@ import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import StripEqSection from '@/components/mixer/StripEqSection.vue';
+import { dialogQueue, resolveDialog } from '@/composables/useDialogs';
 import { MIDI_LEARN_KEY, useMidiLearn } from '@/composables/useMidiLearn';
 import type { ScopeFrame, ScopeListener, ScopeSource } from '@/engine/scope';
 import { clearHistory, setStripEq } from '@/project/commands';
@@ -178,6 +179,24 @@ describe('StripEqSection', () => {
     expect(wrapper.get('.eq-spectrum').attributes('d')).not.toBe(initialPath);
     wrapper.unmount();
     expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps existing EQ bands when Match flat confirmation is cancelled', async () => {
+    const existing = { type: 'Peak' as const, frequencyHz: 1000, gainDb: 4, q: 1, enabled: true };
+    setStripEq(trackId, { enabled: true, bands: [existing] });
+    const spectrum = new Array<number>(64).fill(-56);
+    spectrum[2] = -30;
+    spectrum[3] = -31;
+    const { scope } = makeScope(frame(spectrum));
+    const wrapper = mountEq({ scope });
+
+    await wrapper.get('.eq-match').trigger('click');
+    const request = dialogQueue[0];
+    if (!request) throw new Error('expected Match flat confirmation');
+    resolveDialog(request.id, false);
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
+
+    expect(store.tracks[0].mixer?.eq?.bands).toEqual([existing]);
   });
 
   it('creates corrective EQ bands from the current live spectrum', async () => {

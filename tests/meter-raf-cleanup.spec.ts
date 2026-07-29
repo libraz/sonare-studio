@@ -1,6 +1,8 @@
 import { mount } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { nextTick } from 'vue';
 import LevelMeter from '@/components/LevelMeter.vue';
+import MasterMeterReadout from '@/components/mixer/MasterMeterReadout.vue';
 import SpectrumAnalyzer from '@/components/mixer/SpectrumAnalyzer.vue';
 import StereoGoniometer from '@/components/mixer/StereoGoniometer.vue';
 import StripMeter from '@/components/mixer/StripMeter.vue';
@@ -60,5 +62,44 @@ describe('meter and analyzer RAF cleanup', () => {
     expect(requestAnimationFrame).toHaveBeenCalledTimes(1);
     wrapper.unmount();
     expect(cancelAnimationFrame).toHaveBeenCalledWith(frameId);
+  });
+
+  it('starts animation when a mounted placeholder receives a live meter', async () => {
+    const wrapper = mount(StripMeter, {
+      props: { placeholder: true },
+      global: { directives: { tooltip: {} } },
+    });
+
+    expect(requestAnimationFrame).not.toHaveBeenCalled();
+    await wrapper.setProps({ placeholder: false });
+    await nextTick();
+    expect(requestAnimationFrame).toHaveBeenCalledTimes(1);
+
+    await wrapper.setProps({ placeholder: true });
+    await nextTick();
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(1);
+    wrapper.unmount();
+  });
+
+  it.each([
+    ['StripMeter', StripMeter],
+    ['MasterMeterReadout', MasterMeterReadout],
+    ['SpectrumAnalyzer', SpectrumAnalyzer],
+    ['StereoGoniometer', StereoGoniometer],
+  ])('%s does not schedule frames while its mixer dock is hidden', async (_name, component) => {
+    const wrapper = mount(component, {
+      props: { visible: false },
+      global: { directives: { tooltip: {} } },
+    });
+
+    expect(requestAnimationFrame).not.toHaveBeenCalled();
+    await wrapper.setProps({ visible: true });
+    await nextTick();
+    expect(requestAnimationFrame).toHaveBeenCalledTimes(1);
+
+    await wrapper.setProps({ visible: false });
+    await nextTick();
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(1);
+    wrapper.unmount();
   });
 });

@@ -2,7 +2,7 @@ import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { describe, expect, it, vi } from 'vitest';
 import InsertRack from '@/components/mixer/InsertRack.vue';
-import { addAudioTrack, addGroupTrack, addInsert, clearHistory } from '@/project/commands';
+import { addAudioTrack, addGroupTrack, addInsert, clearHistory, undo } from '@/project/commands';
 import { createDefaultStrip, type InsertSlot } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import {
@@ -150,6 +150,31 @@ describe('InsertRack sidechain source options', () => {
     expect(add).toHaveBeenCalledWith('pointerdown', expect.any(Function), true);
     wrapper.unmount();
     expect(remove).toHaveBeenCalledWith('pointerdown', expect.any(Function), true);
+  });
+
+  it('commits an active parameter gesture when unmounted', async () => {
+    setActivePinia(createPinia());
+    const store = useProjectStore();
+    store.dispose();
+    await store.init();
+    const targetId = store.tracks[0].id;
+    store.tracks = store.tracks.map((track) =>
+      track.id === targetId ? { ...track, mixer: createDefaultStrip() } : track,
+    );
+    addInsert(targetId, 'eq.tilt');
+    clearHistory();
+
+    const wrapper = mount(InsertRack, {
+      props: { target: targetId },
+      global: { directives: { tooltip: () => undefined } },
+    });
+    await wrapper.find('.insert-name').trigger('click');
+    wrapper.findComponent({ name: 'MixerKnob' }).vm.$emit('change', 3.5, false);
+    expect(store.tracks[0].mixer?.inserts[0].params.tiltDb).toBe(3.5);
+
+    wrapper.unmount();
+    undo();
+    expect(store.tracks[0].mixer?.inserts[0].params.tiltDb).toBeUndefined();
   });
 
   it('lists group tracks as sidechain key sources for track inserts', async () => {

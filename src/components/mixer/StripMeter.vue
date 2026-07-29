@@ -31,8 +31,10 @@ const props = withDefaults(
     height?: number;
     /** Bottom of the visible dB range. */
     minDb?: number;
+    /** Whether the mixer dock is visible and this meter should animate. */
+    visible?: boolean;
   }>(),
-  { bridge: null, placeholder: false, width: 12, height: 132, minDb: METER_MIN_DB },
+  { bridge: null, placeholder: false, width: 12, height: 132, minDb: METER_MIN_DB, visible: true },
 );
 
 /** Height of the clip LED row at the top, in px. */
@@ -167,7 +169,22 @@ function drawPlaceholder(): void {
   ctx.fillRect(barW + gap, CLIP_LED_H, barW, props.height - CLIP_LED_H - 1);
 }
 
+function stopAnimation(): void {
+  if (rafId !== 0) cancelAnimationFrame(rafId);
+  rafId = 0;
+  lastTs = 0;
+}
+
+function startAnimation(): void {
+  if (!props.visible || rafId !== 0) return;
+  rafId = requestAnimationFrame(draw);
+}
+
 function draw(ts: number): void {
+  if (!props.visible) {
+    rafId = 0;
+    return;
+  }
   rafId = requestAnimationFrame(draw);
   const canvas = canvasRef.value;
   const ctx = canvasCtx;
@@ -213,13 +230,39 @@ function onClick(): void {
 onMounted(() => {
   resizeCanvas();
   if (props.placeholder) drawPlaceholder();
-  else rafId = requestAnimationFrame(draw);
+  else startAnimation();
 });
 
 onBeforeUnmount(() => {
-  cancelAnimationFrame(rafId);
+  stopAnimation();
   canvasCtx = null;
 });
+
+watch(
+  () => props.placeholder,
+  (placeholder) => {
+    if (placeholder) {
+      stopAnimation();
+      drawPlaceholder();
+    } else {
+      idleFrameDrawn = false;
+      startAnimation();
+    }
+  },
+);
+
+watch(
+  () => props.visible,
+  (visible) => {
+    if (!visible) {
+      stopAnimation();
+      return;
+    }
+    idleFrameDrawn = false;
+    if (props.placeholder) drawPlaceholder();
+    else startAnimation();
+  },
+);
 
 watch(
   () => [props.width, props.height] as const,
