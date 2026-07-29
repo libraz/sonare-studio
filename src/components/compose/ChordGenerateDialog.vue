@@ -60,7 +60,11 @@ watch(
 
 /** Read-only display of the project's current key/scale, e.g. "C Dorian". */
 const keyReadout = computed(() =>
-  keyLabel(store.scaleHighlight.rootPc, matchModeChoiceId(store.scaleHighlight.modeMask)),
+  keyLabel(
+    store.scaleHighlight.rootPc,
+    matchModeChoiceId(store.scaleHighlight.modeMask),
+    t.value.shell.lists.key,
+  ),
 );
 
 /** Whether the active clip carries a melody the harmonizer can read. */
@@ -161,7 +165,7 @@ function onCancel(): void {
 function validBars(value: number): number | null {
   const barCount = Math.round(value);
   if (!Number.isFinite(barCount) || barCount <= 0) {
-    error.value = 'Bars must be a positive number.';
+    error.value = g.value.invalidBars;
     return null;
   }
   return barCount;
@@ -199,8 +203,8 @@ function onGenerate(): void {
     if (written === null) return;
     if (written > 0) phase.value = 'done';
     else error.value = g.value.noChanges;
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
+  } catch {
+    error.value = g.value.generationFailed;
   }
 }
 

@@ -53,7 +53,11 @@ const modeId = computed({
 });
 
 const currentLabel = computed(() =>
-  keyLabel(rootPc.value, modeId.value === CUSTOM_MODE ? null : modeId.value),
+  keyLabel(
+    rootPc.value,
+    modeId.value === CUSTOM_MODE ? null : modeId.value,
+    t.value.shell.lists.key,
+  ),
 );
 
 /** Root pitch-class choices, numeric to match the stored root pitch class. */
@@ -67,7 +71,10 @@ const rootOptions = computed(() =>
  */
 const modeOptions = computed(() => {
   const choices: Array<{ value: string; label: string; disabled?: boolean }> = KEY_MODE_CHOICES.map(
-    (choice) => ({ value: choice.id, label: choice.label }),
+    (choice) => ({
+      value: choice.id,
+      label: t.value.shell.lists.key.modes[choice.id] ?? choice.id,
+    }),
   );
   if (modeId.value === CUSTOM_MODE) {
     choices.push({

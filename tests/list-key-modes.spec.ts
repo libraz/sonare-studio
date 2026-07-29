@@ -93,12 +93,17 @@ describe('keyFifthsForScaleHighlight', () => {
 });
 
 describe('keyLabel', () => {
+  const labels = {
+    modes: { major: 'Major (Ionian)', minor: 'Minor (Aeolian)' },
+    customScale: 'Custom scale',
+  };
+
   it('labels diatonic keys with root and mode', () => {
-    expect(keyLabel(0, 'major')).toBe('C Major (Ionian)');
-    expect(keyLabel(9, 'minor')).toBe('A Minor (Aeolian)');
+    expect(keyLabel(0, 'major', labels)).toBe('C Major (Ionian)');
+    expect(keyLabel(9, 'minor', labels)).toBe('A Minor (Aeolian)');
   });
 
   it('labels unmatched masks as custom', () => {
-    expect(keyLabel(2, null)).toBe('D Custom scale');
+    expect(keyLabel(2, null, labels)).toBe('D Custom scale');
   });
 });

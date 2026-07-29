@@ -12,29 +12,36 @@ import type { Key } from '@/wasm/index.js';
 
 export { PITCH_CLASS_NAMES };
 
+export type KeyModeId =
+  | 'major'
+  | 'dorian'
+  | 'phrygian'
+  | 'lydian'
+  | 'mixolydian'
+  | 'minor'
+  | 'locrian';
+
 /** One selectable diatonic mode. */
 export interface KeyModeChoice {
   /** Stable identifier used as the select value. */
-  id: string;
-  /** Display label. */
-  label: string;
+  id: KeyModeId;
   /** Semitone offset of the mode's tonic above the major-scale tonic. */
   semitoneOffset: number;
 }
 
 /** The seven diatonic modes, each derived from the major mask by rotation. */
 export const KEY_MODE_CHOICES: ReadonlyArray<KeyModeChoice> = [
-  { id: 'major', label: 'Major (Ionian)', semitoneOffset: 0 },
-  { id: 'dorian', label: 'Dorian', semitoneOffset: 2 },
-  { id: 'phrygian', label: 'Phrygian', semitoneOffset: 4 },
-  { id: 'lydian', label: 'Lydian', semitoneOffset: 5 },
-  { id: 'mixolydian', label: 'Mixolydian', semitoneOffset: 7 },
-  { id: 'minor', label: 'Minor (Aeolian)', semitoneOffset: 9 },
-  { id: 'locrian', label: 'Locrian', semitoneOffset: 11 },
+  { id: 'major', semitoneOffset: 0 },
+  { id: 'dorian', semitoneOffset: 2 },
+  { id: 'phrygian', semitoneOffset: 4 },
+  { id: 'lydian', semitoneOffset: 5 },
+  { id: 'mixolydian', semitoneOffset: 7 },
+  { id: 'minor', semitoneOffset: 9 },
+  { id: 'locrian', semitoneOffset: 11 },
 ];
 
 /** libsonare `Mode` ordinal by UI mode id. */
-const MODE_ORDINAL_BY_ID: Readonly<Record<string, number>> = {
+const MODE_ORDINAL_BY_ID: Readonly<Record<KeyModeId, number>> = {
   major: 0,
   minor: 1,
   dorian: 2,
@@ -94,7 +101,7 @@ export function matchModeChoiceId(mask: number): string | null {
  * @returns Mode ordinal (Major = 0, Minor = 1, Dorian = 2, ...).
  */
 export function modeOrdinalForChoice(id: string): number {
-  const ordinal = MODE_ORDINAL_BY_ID[id];
+  const ordinal = MODE_ORDINAL_BY_ID[id as KeyModeId];
   if (ordinal === undefined) throw new RangeError(`Unknown key mode: ${id}`);
   return ordinal;
 }
@@ -121,8 +128,12 @@ export function keyFifthsForScaleHighlight(config: ScaleHighlightConfig): number
  * @param modeId Mode id, or null for a non-diatonic (custom) mask.
  * @returns The label string.
  */
-export function keyLabel(rootPc: number, modeId: string | null): string {
+export function keyLabel(
+  rootPc: number,
+  modeId: string | null,
+  labels: Readonly<{ modes: Readonly<Record<string, string>>; customScale: string }>,
+): string {
   const root = PITCH_CLASS_NAMES[((rootPc % 12) + 12) % 12];
   const mode = KEY_MODE_CHOICES.find((c) => c.id === modeId);
-  return `${root} ${mode ? mode.label : 'Custom scale'}`;
+  return `${root} ${mode ? (labels.modes[mode.id] ?? mode.id) : labels.customScale}`;
 }
