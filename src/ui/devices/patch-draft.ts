@@ -4,10 +4,8 @@
  * The editor keeps a local draft the user mutates freely; Apply sanitizes it
  * back into a SynthPatch and commits a single undoable setTrackInstrument.
  * The frozen patch ABI treats numeric 0 / omitted fields as "keep the base
- * preset value", so the sanitizer normally drops zeros. Sustain is the
- * exception: users need a real silent sustain, so editor zero is encoded as a
- * tiny positive value that avoids the ABI sentinel while remaining effectively
- * silent.
+ * preset value", so every user-facing zero is encoded as a tiny positive
+ * value that avoids the ABI sentinel while remaining inaudible.
  */
 
 import type { TrackInstrument } from '@/project/instrument';
@@ -156,23 +154,34 @@ export const PATCH_FIELD_SPECS: ReadonlyArray<PatchFieldSpec> = [
   { id: 'busDrive', label: 'Bus Drive', section: 'global', min: 0, max: 1, step: 0.01 },
 ];
 
-/** Smallest positive sustain override the native patch ABI can distinguish from the 0 sentinel. */
-export const EXPLICIT_ZERO_SUSTAIN = 0.0001;
+/** Smallest positive normalized/Hz override distinguishable from the ABI sentinel. */
+export const EXPLICIT_ZERO_AMOUNT = 0.0001;
+
+/** Smallest positive cents/milliseconds override distinguishable from the sentinel. */
+export const EXPLICIT_ZERO_TIME_OR_CENTS = 0.001;
+
+/** @deprecated Use {@link EXPLICIT_ZERO_AMOUNT}. */
+export const EXPLICIT_ZERO_SUSTAIN = EXPLICIT_ZERO_AMOUNT;
 
 export function isSustainField(id: string): id is 'ampSustain' | 'filterSustain' {
   return id === 'ampSustain' || id === 'filterSustain';
 }
 
-/** Encodes a UI sustain value for the ABI, where literal 0 means "keep base". */
+function explicitZeroForField(id: NumericPatchField): number {
+  const unit = patchFieldSpec(id)?.unit;
+  return unit === 'ct' || unit === 'ms' ? EXPLICIT_ZERO_TIME_OR_CENTS : EXPLICIT_ZERO_AMOUNT;
+}
+
+/** Encodes a UI numeric value for the ABI, where literal 0 means "keep base". */
 export function encodePatchFieldValue(id: NumericPatchField, value: number): number {
   if (!Number.isFinite(value)) return 0;
-  if (isSustainField(id) && value === 0) return EXPLICIT_ZERO_SUSTAIN;
+  if (value === 0 && (patchFieldSpec(id)?.min ?? 0) <= 0) return explicitZeroForField(id);
   return value;
 }
 
-/** Decodes stored ABI sustain epsilon back to the user's requested zero. */
+/** Decodes stored ABI epsilon back to the user's requested zero. */
 export function decodePatchFieldValue(id: NumericPatchField, value: number): number {
-  if (isSustainField(id) && value > 0 && value <= EXPLICIT_ZERO_SUSTAIN) return 0;
+  if (value > 0 && value <= explicitZeroForField(id)) return 0;
   return value;
 }
 
@@ -341,9 +350,8 @@ export function createPatchDraft(
 
 /**
  * Sanitizes a draft into a SynthPatch ready to commit: numeric fields are
- * clamped to their spec ranges (zeros and non-finite values dropped — both
- * mean "keep the base value" in the ABI — except sustain zero, encoded as a
- * tiny positive override), enum fields are kept as strings, mod routings are
+ * clamped to their spec ranges (non-finite values are dropped; UI zeros are
+ * encoded as tiny positive overrides), enum fields are kept as strings, mod routings are
  * filtered/clamped/capped, and binding-internal fields (destinationId) are
  * never emitted.
  *
@@ -368,7 +376,8 @@ export function sanitizePatchDraft(draft: SynthPatch): SynthPatch {
   }
   if (Array.isArray(draft.modRoutings)) {
     const routings = modRowsToRoutings(modMatrixRows(draft));
-    if (routings.length > 0) out.modRoutings = routings;
+    out.modRoutings =
+      routings.length > 0 ? routings : [{ source: 'none', destination: 'none', depth: 0 }];
   }
   return out;
 }

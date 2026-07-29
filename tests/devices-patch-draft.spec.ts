@@ -169,6 +169,7 @@ describe('sanitizePatchDraft', () => {
     expect(patch).toEqual({
       preset: 'saw-lead',
       cutoffHz: 20000,
+      drive: 0.0001,
       lfo2RateHz: 20,
       bodyMix: 0.4,
       busDrive: 0.7,
@@ -177,13 +178,21 @@ describe('sanitizePatchDraft', () => {
     });
   });
 
-  it('keeps explicit zero sustain instead of dropping it as a sentinel', () => {
+  it('keeps explicit zero numeric fields instead of dropping them as ABI sentinels', () => {
     const patch = sanitizePatchDraft({
       ampSustain: 0,
       filterSustain: 0,
       drive: 0,
+      envToCutoffCents: 0,
+      glideMs: 0,
     });
-    expect(patch).toEqual({ ampSustain: 0.0001, filterSustain: 0.0001 });
+    expect(patch).toEqual({
+      ampSustain: 0.0001,
+      filterSustain: 0.0001,
+      drive: 0.0001,
+      envToCutoffCents: 0.001,
+      glideMs: 0.001,
+    });
   });
 
   it('filters and clamps mod routings', () => {
@@ -196,11 +205,11 @@ describe('sanitizePatchDraft', () => {
     expect(patch.modRoutings).toEqual([{ source: 'lfo1', destination: 'pitch-cents', depth: -1 }]);
   });
 
-  it('emits no modRoutings key when every row is inert', () => {
+  it('uses an inert routing to explicitly replace inherited modulations', () => {
     const patch = sanitizePatchDraft({
       modRoutings: [{ source: 'none', destination: 'none', depth: 0 }],
     });
-    expect('modRoutings' in patch).toBe(false);
+    expect(patch.modRoutings).toEqual([{ source: 'none', destination: 'none', depth: 0 }]);
   });
 });
 

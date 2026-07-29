@@ -94,10 +94,40 @@
   color: var(--text-3);
 }
 
+/* Caption and audition share one line under the picker: a block button of its
+ * own would compete with the picker for the slot's visual weight. */
+.instrument-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin-top: var(--sp-1);
+}
+
 .instrument-source {
-  margin: var(--sp-1) 0 0;
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--fs-2xs);
   color: var(--text-4);
+}
+
+.instrument-audition {
+  flex: none;
+  padding: 1px var(--sp-2);
+  background: none;
+  box-shadow: none;
+  border-radius: var(--radius-xs);
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+}
+
+.instrument-audition:hover:not(:disabled) {
+  background: var(--surface-4);
+  box-shadow: none;
+  color: var(--text-1);
 }
 
 .instrument-kind {

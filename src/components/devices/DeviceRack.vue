@@ -35,6 +35,7 @@ import {
   hasSoundFontSlotConflict,
 } from '@/project/soundfont-conflicts';
 import { getWasmModule, useProjectStore } from '@/project/store';
+import { createPatchAudition, type PatchAudition } from '@/ui/devices/audition';
 import { instrumentLabel, patchBaseLabel } from '@/ui/devices/device-labels';
 import { patchEditCount } from '@/ui/devices/patch-draft';
 import { groupPresets, type PresetCategory } from '@/ui/devices/preset-filter';
@@ -100,6 +101,8 @@ const { t } = useI18n();
 
 /** Surfaced when a command or font operation rejects. */
 const error = ref('');
+let rackAudition: PatchAudition | null = null;
+let auditionGeneration = 0;
 
 const activeTrack = computed(() => {
   return store.tracks.find((track) => track.id === store.activeTrackId) ?? null;
@@ -126,6 +129,23 @@ function run(action: () => void): void {
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   }
+}
+
+function auditionInstrument(): void {
+  const current = instrument.value;
+  if (!current) return;
+  if (!rackAudition) rackAudition = createPatchAudition();
+  const generation = ++auditionGeneration;
+  rackAudition.play(current).then(
+    () => {
+      if (disposed || generation !== auditionGeneration) return;
+      error.value = '';
+    },
+    (err: unknown) => {
+      if (disposed || generation !== auditionGeneration) return;
+      error.value = err instanceof Error ? err.message : String(err);
+    },
+  );
 }
 
 // --- Instrument label / font name resolution ----------------------------------
@@ -272,6 +292,9 @@ watch(pickerOpen, (open) => {
 
 onBeforeUnmount(() => {
   disposed = true;
+  auditionGeneration++;
+  rackAudition?.dispose();
+  rackAudition = null;
   sf2ManifestRequest += 1;
   if (sf2ManifestTimer !== undefined) clearTimeout(sf2ManifestTimer);
   document.removeEventListener('pointerdown', onDocumentPointerDown, true);
@@ -902,7 +925,12 @@ const instrumentSourceCaption = computed(() => {
           <span class="instrument-name">{{ instrumentCaption }}</span>
           <span class="instrument-caret" aria-hidden="true">▾</span>
         </button>
-        <p class="instrument-source">{{ instrumentSourceCaption }}</p>
+        <div class="instrument-meta">
+          <p class="instrument-source">{{ instrumentSourceCaption }}</p>
+          <button type="button" class="instrument-audition" @click="auditionInstrument">
+            {{ t.shell.patchEditor.audition }}
+          </button>
+        </div>
         <p v-if="transportPlaying" class="instrument-gate-hint">
           {{ t.shell.devicesPanel.instrumentGateHint }}
         </p>
@@ -914,7 +942,7 @@ const instrumentSourceCaption = computed(() => {
           role="dialog"
           :aria-label="t.shell.devicesPanel.instrumentPicker"
         >
-          <div class="picker-tabs" role="tablist">
+          <div v-tablist class="picker-tabs" role="tablist">
             <button
               type="button"
               class="picker-tab"
@@ -1154,6 +1182,7 @@ const instrumentSourceCaption = computed(() => {
               <Sf2ChannelMap
                 v-if="sf2MultiTimbral"
                 :model-value="sf2Selection.channelMap"
+                :default-bank="sf2Selection.bank"
                 @update:model-value="onChannelMapUpdate"
               />
             </div>

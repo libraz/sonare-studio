@@ -16,6 +16,8 @@ import { GM2_DRUM_BANK_MSB, gm2DrumBank } from '@/ui/step-sequencer/drum-map';
 const props = defineProps<{
   /** Current per-channel program overrides. */
   modelValue: Sf2ChannelProgram[];
+  /** Track-level bank inherited by newly enabled melodic channels. */
+  defaultBank: number;
 }>();
 
 const emit = defineEmits<{
@@ -90,12 +92,21 @@ function toggleChannel(channel: number, enabled: boolean): void {
   if (channel === SF2_DRUM_CHANNEL) {
     commit(channel, { channel, bank: gm2DrumBank(0), program: 0 });
   } else {
-    commit(channel, { channel, program: 0 });
+    commit(channel, { channel, bank: props.defaultBank, program: 0 });
   }
 }
 
 function setProgram(channel: number, raw: number): void {
-  commit(channel, { channel, program: clampProgram(raw) });
+  commit(channel, {
+    channel,
+    bank: entryFor(channel)?.bank ?? props.defaultBank,
+    program: clampProgram(raw),
+  });
+}
+
+function setBank(channel: number, raw: number): void {
+  const bank = Number.isFinite(raw) ? Math.max(0, Math.min(16383, Math.round(raw))) : 0;
+  commit(channel, { channel, bank, program: entryFor(channel)?.program ?? 0 });
 }
 
 function setDrumKit(channel: number, kitLsbValue: string): void {
@@ -144,6 +155,15 @@ function channelLabel(channel: number): string {
             />
           </div>
           <div v-else class="sf2-channel-control">
+            <input
+              class="sf2-channel-bank"
+              type="number"
+              min="0"
+              max="16383"
+              :value="entryFor(channel)?.bank ?? defaultBank"
+              :aria-label="t.shell.devicesPanel.bank"
+              @input="setBank(channel, Number(($event.target as HTMLInputElement).value))"
+            />
             <input
               class="sf2-channel-program"
               type="number"
@@ -249,10 +269,21 @@ function channelLabel(channel: number): string {
   min-inline-size: 0;
 }
 
+/* Bank and program sit side by side in one row, so they share a treatment;
+ * only the width differs, sized to each field's digit count (bank 0–16383,
+ * program 0–127). */
+.sf2-channel-bank,
 .sf2-channel-program {
-  inline-size: 3.4rem;
   padding: 0.2rem 0.3rem;
   font-variant-numeric: tabular-nums;
+}
+
+.sf2-channel-bank {
+  inline-size: 4.2rem;
+}
+
+.sf2-channel-program {
+  inline-size: 3.4rem;
 }
 
 .sf2-channel-program-name {

@@ -1,6 +1,6 @@
-import { flushPromises, mount } from '@vue/test-utils';
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import DeviceRack from '@/components/devices/DeviceRack.vue';
 import {
   addAudioTrack,
@@ -46,6 +46,19 @@ const fontsMock = vi.hoisted(() => {
 });
 
 vi.mock('@/project/fonts', () => fontsMock);
+
+const auditionMock = vi.hoisted(() => ({
+  dispose: vi.fn(),
+  play: vi.fn(async () => {}),
+  stop: vi.fn(),
+}));
+
+vi.mock('@/ui/devices/audition', () => ({ createPatchAudition: vi.fn(() => auditionMock) }));
+
+// Every picker mount owns an async SF2-manifest debounce. Unmount after each
+// case so a previous case cannot call a freshly-reset mock while a later one
+// is asserting its own request count.
+enableAutoUnmount(afterEach);
 
 /** Creates a manually-resolved promise for async race tests. */
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -93,6 +106,16 @@ describe('DeviceRack.vue', () => {
     expect(wrapper.find('.instrument-name').text()).toBe('e-piano');
     expect(wrapper.find('.instrument-kind').text()).toBe('Preset');
     expect(wrapper.find('.instrument-source').text()).toBe('Built-in NativeSynth fallback preset');
+  });
+
+  it('auditions the active instrument directly from the rack', async () => {
+    const wrapper = mount(DeviceRack);
+    await wrapper.find('.instrument-audition').trigger('click');
+    await flushPromises();
+
+    expect(auditionMock.play).toHaveBeenCalledWith({ kind: 'synth-preset', preset: 'e-piano' });
+    wrapper.unmount();
+    expect(auditionMock.dispose).toHaveBeenCalledOnce();
   });
 
   it('hides the instrument slot for audio tracks but keeps the insert chain', () => {
@@ -176,13 +199,14 @@ describe('DeviceRack.vue', () => {
     });
   });
 
-  it('commits a multi-timbral channel map with a drum kit and a melodic program', async () => {
+  it('commits a multi-timbral channel map with a drum kit and melodic bank/program', async () => {
     const wrapper = mount(DeviceRack);
     await wrapper.find('.instrument-button').trigger('click');
     const sf2Tab = wrapper.findAll('.picker-tab').find((tab) => tab.text() === 'SF2');
     await sf2Tab?.trigger('click');
     await flushPromises();
     await wrapper.findAll('.font-option')[0].trigger('click');
+    await wrapper.find('.sf2-bank').setValue('3');
 
     // Enable the multi-timbral channel map.
     await wrapper.find('.sf2-multitimbral-toggle input').setValue(true);
@@ -195,14 +219,16 @@ describe('DeviceRack.vue', () => {
     // Enable channel 1 (first row) and give it a melodic program.
     const firstRow = wrapper.findAll('.sf2-channel-row')[0];
     await firstRow.find('.sf2-channel-toggle input').setValue(true);
+    await firstRow.find('.sf2-channel-bank').setValue('7');
     await firstRow.find('.sf2-channel-program').setValue('40');
 
     await wrapper.find('.use-sf2').trigger('click');
     expect(store.tracks[0].instrument).toEqual({
       kind: 'sf2',
       fontId: 'fontaaaa00000001',
+      bank: 3,
       channelMap: [
-        { channel: 0, program: 40 },
+        { channel: 0, bank: 7, program: 40 },
         { channel: 9, bank: 120 << 7, program: 0 },
       ],
     });
@@ -228,56 +254,71 @@ describe('DeviceRack.vue', () => {
   });
 
   it('checks the selected SF2 program against the SoundFont manifest', async () => {
-    const wrapper = mount(DeviceRack);
-    await wrapper.find('.instrument-button').trigger('click');
-    const sf2Tab = wrapper.findAll('.picker-tab').find((tab) => tab.text() === 'SF2');
-    await sf2Tab?.trigger('click');
-    await flushPromises();
+    vi.useFakeTimers();
+    let wrapper: ReturnType<typeof mount> | undefined;
+    try {
+      wrapper = mount(DeviceRack);
+      await wrapper.find('.instrument-button').trigger('click');
+      const sf2Tab = wrapper.findAll('.picker-tab').find((tab) => tab.text() === 'SF2');
+      await sf2Tab?.trigger('click');
+      await flushPromises();
 
-    await wrapper.findAll('.font-option')[0].trigger('click');
-    await wrapper.find('.sf2-bank').setValue('1');
-    await wrapper.find('.sf2-program').setValue('24');
-    await new Promise((resolve) => setTimeout(resolve, 80));
-    await flushPromises();
-    await flushPromises();
+      await wrapper.findAll('.font-option')[0].trigger('click');
+      await wrapper.find('.sf2-bank').setValue('1');
+      await wrapper.find('.sf2-program').setValue('24');
+      await vi.advanceTimersByTimeAsync(75);
+      await flushPromises();
+      await flushPromises();
 
-    expect(fontsMock.loadFont).toHaveBeenCalledWith('fontaaaa00000001');
-    expect(wrapper.find('.sf2-manifest-status').text()).toBe('SF2 preset: SF2 1:24 (1:24)');
+      expect(fontsMock.loadFont).toHaveBeenCalledWith('fontaaaa00000001');
+      expect(wrapper.find('.sf2-manifest-status').text()).toBe('SF2 preset: SF2 1:24 (1:24)');
+    } finally {
+      wrapper?.unmount();
+      vi.useRealTimers();
+    }
   });
 
   it('lists SoundFont manifest presets and commits the selected bank/program', async () => {
-    const wrapper = mount(DeviceRack);
-    await wrapper.find('.instrument-button').trigger('click');
-    const sf2Tab = wrapper.findAll('.picker-tab').find((tab) => tab.text() === 'SF2');
-    await sf2Tab?.trigger('click');
-    await flushPromises();
+    vi.useFakeTimers();
+    let wrapper: ReturnType<typeof mount> | undefined;
+    try {
+      wrapper = mount(DeviceRack);
+      await wrapper.find('.instrument-button').trigger('click');
+      const sf2Tab = wrapper.findAll('.picker-tab').find((tab) => tab.text() === 'SF2');
+      await sf2Tab?.trigger('click');
+      await flushPromises();
 
-    await wrapper.findAll('.font-option')[0].trigger('click');
-    await wrapper.find('.sf2-bank').setValue('1');
-    await new Promise((resolve) => setTimeout(resolve, 80));
-    await flushPromises();
-    await flushPromises();
+      await wrapper.findAll('.font-option')[0].trigger('click');
+      await wrapper.find('.sf2-bank').setValue('1');
+      await vi.advanceTimersByTimeAsync(75);
+      await flushPromises();
+      await flushPromises();
 
-    const manifestOptions = wrapper.findAll('.sf2-manifest-option');
-    expect(manifestOptions).toHaveLength(128);
-    const preset = manifestOptions.find((option) => option.text().includes('SF2 1:42'));
-    expect(preset).toBeTruthy();
+      const manifestOptions = wrapper.findAll('.sf2-manifest-option');
+      expect(manifestOptions).toHaveLength(128);
+      const preset = manifestOptions.find((option) => option.text().includes('SF2 1:42'));
+      expect(preset).toBeTruthy();
 
-    await preset?.trigger('click');
-    await wrapper.find('.use-sf2').trigger('click');
+      await preset?.trigger('click');
+      await wrapper.find('.use-sf2').trigger('click');
 
-    expect(store.tracks[0].instrument).toEqual({
-      kind: 'sf2',
-      fontId: 'fontaaaa00000001',
-      bank: 1,
-      program: 42,
-    });
+      expect(store.tracks[0].instrument).toEqual({
+        kind: 'sf2',
+        fontId: 'fontaaaa00000001',
+        bank: 1,
+        program: 42,
+      });
+    } finally {
+      wrapper?.unmount();
+      vi.useRealTimers();
+    }
   });
 
   it('debounces rapid program changes and reuses the resolved bank manifest', async () => {
     vi.useFakeTimers();
+    let wrapper: ReturnType<typeof mount> | undefined;
     try {
-      const wrapper = mount(DeviceRack);
+      wrapper = mount(DeviceRack);
       await wrapper.find('.instrument-button').trigger('click');
       const sf2Tab = wrapper.findAll('.picker-tab').find((tab) => tab.text() === 'SF2');
       await sf2Tab?.trigger('click');
@@ -287,7 +328,7 @@ describe('DeviceRack.vue', () => {
       await wrapper.find('.sf2-program').setValue('21');
       await wrapper.find('.sf2-program').setValue('22');
 
-      await vi.advanceTimersByTimeAsync(80);
+      await vi.advanceTimersByTimeAsync(75);
       await flushPromises();
       expect(fontsMock.loadFont).toHaveBeenCalledTimes(1);
 
@@ -295,6 +336,7 @@ describe('DeviceRack.vue', () => {
       await flushPromises();
       expect(fontsMock.loadFont).toHaveBeenCalledTimes(1);
     } finally {
+      wrapper?.unmount();
       vi.useRealTimers();
     }
   });

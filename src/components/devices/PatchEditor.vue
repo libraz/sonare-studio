@@ -292,8 +292,8 @@ watch([draft, modRows], () => {
 function buildPatch(): SynthPatch {
   const merged: SynthPatch = { ...draft.value };
   const routings = modRowsToRoutings(modRows.value);
-  if (routings.length > 0) merged.modRoutings = routings;
-  else merged.modRoutings = undefined;
+  merged.modRoutings =
+    routings.length > 0 ? routings : [{ source: 'none', destination: 'none', depth: 0 }];
   return sanitizePatchDraft(merged);
 }
 
