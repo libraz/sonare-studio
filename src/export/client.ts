@@ -4,9 +4,9 @@
  * Wraps the worker message protocol in promise-returning methods with
  * request-id correlation: every render gets a unique id, progress responses
  * are routed to the caller's progress callback, and the terminal response
- * settles the promise. Cancellation posts an out-of-band 'cancel' message the
- * worker checks between clips and stages; a cancelled render rejects with
- * {@link MixdownCancelledError}.
+ * settles the promise. Cancellation immediately settles the caller while also
+ * posting an out-of-band 'cancel' message the worker checks between clips and
+ * stages.
  */
 
 import type { ProjectDocument } from '@/project/serialization';
@@ -27,11 +27,19 @@ import {
 
 export type { ExportRenderOptions };
 
+/** A fatal worker failure; callers may offer retry without exposing browser internals. */
+export class ExportWorkerError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ExportWorkerError';
+  }
+}
+
 /** A render in flight: its result promise plus a cancellation hook. */
 export interface ExportRenderHandle {
   /** Resolves with the mixdown; rejects with MixdownCancelledError on cancel. */
   result: Promise<MixdownResult>;
-  /** Requests cancellation (effective between clips/stages; idempotent). */
+  /** Cancels immediately and requests worker cancellation (idempotent). */
   cancel(): void;
 }
 
@@ -163,6 +171,10 @@ export class ExportClient {
         const entry = this.pending.get(id);
         if (!entry || entry.cancelRequested) return;
         entry.cancelRequested = true;
+        // Do not leave the dialog blocked if a worker is stuck before it can
+        // echo `cancelled`; the worker message is only best-effort cleanup.
+        this.pending.delete(id);
+        entry.reject(new MixdownCancelledError());
         const cancelRequest: ExportRequest = { id: this.nextId++, type: 'cancel', targetId: id };
         this.worker.postMessage(cancelRequest);
       },
@@ -275,7 +287,8 @@ export class ExportClient {
     // A worker-level script error is fatal for all in-flight renders.
     this.disposed = true;
     this.teardownWorker();
-    this.rejectAll(new Error(event.message || 'Export worker error'));
+    if (sharedClient === this) sharedClient = null;
+    this.rejectAll(new ExportWorkerError(event.message || 'Export worker error'));
   };
 
   private teardownWorker(): void {

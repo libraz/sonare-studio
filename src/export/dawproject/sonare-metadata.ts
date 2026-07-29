@@ -7,7 +7,7 @@
  */
 
 import type { InsertSlot, VcaGroup } from '@/project/mixer';
-import type { ProjectDocument } from '@/project/serialization';
+import type { DocumentClip, DocumentSection, ProjectDocument } from '@/project/serialization';
 
 export const SONARE_DAWPROJECT_METADATA_ENTRY = 'sonare-studio.json';
 /** Dedicated bound for the optional vendor extension, below generic ZIP limits. */
@@ -22,11 +22,19 @@ export interface SonareTrackMetadata {
   volume?: number;
 }
 
+type SonareMidiExpression = Pick<
+  DocumentClip,
+  'ccLanes' | 'pitchBendLanes' | 'programChangeLanes' | 'channelPressureLanes' | 'polyPressureLanes'
+>;
+
 export interface SonareDawprojectMetadata {
   schemaVersion: 1;
   sidechainSources?: Record<string, number>;
   tracks?: Record<string, SonareTrackMetadata>;
   vcaGroups?: VcaGroup[];
+  sections?: DocumentSection[];
+  /** MIDI expression is vendor data: DAWproject has no portable clip lane. */
+  midiExpressions?: Record<string, SonareMidiExpression>;
 }
 
 function finite(value: number | undefined): number | undefined {
@@ -52,10 +60,34 @@ function collectSidechains(
   });
 }
 
+const midiExpressionKeys = [
+  'ccLanes',
+  'pitchBendLanes',
+  'programChangeLanes',
+  'channelPressureLanes',
+  'polyPressureLanes',
+] as const;
+
+function midiExpression(clip: DocumentClip): SonareMidiExpression | undefined {
+  const out: SonareMidiExpression = {};
+  for (const key of midiExpressionKeys) {
+    const lanes = clip[key];
+    if (lanes?.length)
+      Object.assign(out, {
+        [key]: lanes.map((lane) => ({
+          ...lane,
+          points: lane.points.map((point) => ({ ...point })),
+        })),
+      });
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 /** Builds the optional vendor extension entry for a Sonare DAWproject export. */
 export function createSonareDawprojectMetadata(doc: ProjectDocument): SonareDawprojectMetadata {
   const tracks: Record<string, SonareTrackMetadata> = {};
   const sidechainSources: Record<string, number> = {};
+  const midiExpressions: Record<string, SonareMidiExpression> = {};
   doc.tracks.forEach((track, index) => {
     const strip = track.mixer;
     tracks[`track-${index}`] = {
@@ -72,6 +104,11 @@ export function createSonareDawprojectMetadata(doc: ProjectDocument): SonareDawp
         doc.tracks.length,
       );
     }
+    track.clips.forEach((clip, clipIndex) => {
+      if (clip.kind === 'audio') return;
+      const expression = midiExpression(clip);
+      if (expression) midiExpressions[`track-${index}-clip-${clipIndex}`] = expression;
+    });
   });
   (doc.mixer?.buses ?? []).forEach((bus, index) => {
     collectSidechains(
@@ -92,6 +129,8 @@ export function createSonareDawprojectMetadata(doc: ProjectDocument): SonareDawp
     ...(Object.keys(tracks).length > 0 ? { tracks } : {}),
     ...(doc.mixer?.vcaGroups?.length ? { vcaGroups: doc.mixer.vcaGroups } : {}),
     ...(Object.keys(sidechainSources).length > 0 ? { sidechainSources } : {}),
+    ...(doc.sections.length > 0 ? { sections: doc.sections } : {}),
+    ...(Object.keys(midiExpressions).length ? { midiExpressions } : {}),
   };
 }
 
@@ -105,10 +144,109 @@ function optionalFinite(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
+function sections(value: unknown): DocumentSection[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, MAX_METADATA_OBJECT_ENTRIES).flatMap((item) => {
+    const section = object(item);
+    const name = section?.name;
+    const color = section?.color;
+    const startPpq = optionalFinite(section?.startPpq);
+    const endPpq = optionalFinite(section?.endPpq);
+    if (
+      typeof name !== 'string' ||
+      name.length === 0 ||
+      name.length > MAX_METADATA_STRING_LENGTH ||
+      typeof color !== 'string' ||
+      color.length === 0 ||
+      color.length > MAX_METADATA_STRING_LENGTH ||
+      startPpq === undefined ||
+      startPpq < 0 ||
+      endPpq === undefined ||
+      endPpq <= startPpq
+    ) {
+      return [];
+    }
+    return [{ name, color, startPpq, endPpq }];
+  });
+}
+
 function boundedEntries(value: Record<string, unknown>): Array<[string, unknown]> {
   return Object.entries(value)
     .filter(([key]) => key.length <= MAX_METADATA_STRING_LENGTH)
     .slice(0, MAX_METADATA_OBJECT_ENTRIES);
+}
+
+function integer(value: unknown, min: number, max: number): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max
+    ? value
+    : undefined;
+}
+
+function expressionPoints(value: unknown, field: 'value' | 'program', max: number) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, MAX_METADATA_OBJECT_ENTRIES).flatMap((item) => {
+    const point = object(item);
+    const ppq = optionalFinite(point?.ppq);
+    const amount = integer(point?.[field], 0, max);
+    if (ppq === undefined || ppq < 0 || amount === undefined) return [];
+    const curve = point?.curve;
+    return [
+      {
+        ppq,
+        [field]: amount,
+        ...(curve === 'linear' || curve === 's-curve' ? { curve } : {}),
+      },
+    ];
+  });
+}
+
+function expressionLanes(
+  value: unknown,
+  kind: keyof SonareMidiExpression,
+): SonareMidiExpression[typeof kind] {
+  if (!Array.isArray(value)) return undefined;
+  return value.slice(0, MAX_METADATA_OBJECT_ENTRIES).flatMap((item) => {
+    const lane = object(item);
+    const channel = integer(lane?.channel, 0, 15);
+    if (channel === undefined) return [];
+    if (kind === 'ccLanes') {
+      const controller = integer(lane?.controller, 0, 127);
+      const points = expressionPoints(lane?.points, 'value', 127);
+      return controller === undefined || points.length === 0
+        ? []
+        : [{ channel, controller, points }];
+    }
+    if (kind === 'pitchBendLanes') {
+      const points = expressionPoints(lane?.points, 'value', 16383);
+      return points.length ? [{ channel, points }] : [];
+    }
+    if (kind === 'programChangeLanes') {
+      const points = expressionPoints(lane?.points, 'program', 127);
+      return points.length ? [{ channel, points }] : [];
+    }
+    if (kind === 'channelPressureLanes') {
+      const points = expressionPoints(lane?.points, 'value', 127);
+      return points.length ? [{ channel, points }] : [];
+    }
+    const pitch = integer(lane?.pitch, 0, 127);
+    const points = expressionPoints(lane?.points, 'value', 127);
+    return pitch === undefined || points.length === 0 ? [] : [{ channel, pitch, points }];
+  }) as SonareMidiExpression[typeof kind];
+}
+
+function midiExpressions(value: unknown): Record<string, SonareMidiExpression> {
+  return Object.fromEntries(
+    boundedEntries(object(value) ?? {}).flatMap(([id, value]) => {
+      const entry = object(value);
+      if (!entry) return [];
+      const expression: SonareMidiExpression = {};
+      for (const key of midiExpressionKeys) {
+        const lanes = expressionLanes(entry[key], key);
+        if (lanes?.length) Object.assign(expression, { [key]: lanes });
+      }
+      return Object.keys(expression).length ? [[id, expression]] : [];
+    }),
+  );
 }
 
 /** Parses an untrusted extension entry; malformed fields are discarded. */
@@ -170,11 +308,17 @@ export function parseSonareDawprojectMetadata(
           },
         ];
       });
+    const parsedSections = sections(root.sections);
+    const parsedMidiExpressions = midiExpressions(root.midiExpressions);
     return {
       schemaVersion: 1,
       ...(Object.keys(tracks).length ? { tracks } : {}),
       ...(Object.keys(sidechainSources).length ? { sidechainSources } : {}),
       ...(vcaGroups.length ? { vcaGroups } : {}),
+      ...(parsedSections.length ? { sections: parsedSections } : {}),
+      ...(Object.keys(parsedMidiExpressions).length
+        ? { midiExpressions: parsedMidiExpressions }
+        : {}),
     };
   } catch {
     return { schemaVersion: 1 };

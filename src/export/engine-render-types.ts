@@ -158,6 +158,11 @@ export interface EngineRenderOptions {
   resolvePreset?: (preset: string) => string;
   /** Optional processor-latency resolver used for automatic track PDC. */
   insertLatency?: InsertLatencyResolver;
+  /**
+   * Realtime-insertable mastering processor ids. Normally derived from the
+   * wasm catalog; injectable for alternate engine hosts and tests.
+   */
+  realtimeMasteringInsertCatalog?: ReadonlySet<string>;
   /** Progress callback: fraction in [0, 1] plus the stage being entered. */
   onProgress?: (progress: number, stage: string) => void;
   /** Cancellation flag, checked between render checkpoints. */

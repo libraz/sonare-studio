@@ -61,6 +61,9 @@ function assertPlanar(channels: ReadonlyArray<Float32Array>): number {
     throw new RangeError(`Browser media encoding supports 1 or 2 channels, got ${channels.length}`);
   }
   const frames = channels[0]?.length ?? 0;
+  if (frames === 0) {
+    throw new RangeError('Browser media encoding requires at least one audio frame');
+  }
   if (channels.some((channel) => channel.length !== frames)) {
     throw new RangeError('Browser media encoder channel buffers must have equal lengths');
   }

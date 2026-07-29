@@ -550,11 +550,13 @@ function importedTrackMixer(track: ImportedTrack): {
     (track.mixerOutputBusId === undefined &&
       track.mixerSends === undefined &&
       track.inserts.length === 0 &&
-      (track.sonareStripGainDb === undefined || track.sonareStripGainDb === 0))
+      (track.sonareStripGainDb === undefined || track.sonareStripGainDb === 0) &&
+      track.pan === 0)
   ) {
     return {};
   }
   const mixer = createDefaultStrip();
+  mixer.pan = track.isEffectBus ? 0 : track.pan;
   if (track.sonareStripGainDb !== undefined) mixer.gainDb = track.sonareStripGainDb;
   if (track.mixerOutputBusId !== undefined) mixer.outputBusId = track.mixerOutputBusId;
   if (track.mixerSends !== undefined) mixer.sends = track.mixerSends;
@@ -1347,6 +1349,7 @@ function importDawprojectDocuments(
   attachArrangementClips(project, tracks, normalizeTempoMap(tempoSegments), mediaAssets, losses);
   const masterAutomation = attachArrangementAutomation(project, tracks, mixer, master);
   const documentTracks = tracks.filter((track) => !track.isEffectBus);
+  const sections = sonareMetadata.sections ?? [];
   const documentIndexByImportedIndex = new Map<number, number>();
   tracks.forEach((track, importedIndex) => {
     if (track.isEffectBus) return;
@@ -1375,11 +1378,26 @@ function importDawprojectDocuments(
       ...(track.automation.length > 0 ? { automation: track.automation } : {}),
       ...importedTrackMixer(track),
     })),
-    markers: readMarkers(project),
-    sections: [],
+    // Sonare exports sections as portable cue markers too. The metadata entry
+    // preserves their end/color, so do not also restore those cues as markers.
+    markers: readMarkers(project).filter(
+      (marker) =>
+        !sections.some(
+          (section) =>
+            marker.ppq === section.startPpq && marker.name === `Section: ${section.name}`,
+        ),
+    ),
+    sections,
   };
   if (mixer) doc.mixer = mixer;
   if (masterAutomation.length > 0) doc.masterAutomation = masterAutomation;
+  doc.tracks.forEach((track, trackIndex) => {
+    track.clips.forEach((clip, clipIndex) => {
+      if (clip.kind === 'audio') return;
+      const expression = sonareMetadata.midiExpressions?.[`track-${trackIndex}-clip-${clipIndex}`];
+      if (expression) Object.assign(clip, expression);
+    });
+  });
   return { document: doc, losses };
 }
 

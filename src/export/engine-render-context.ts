@@ -256,12 +256,14 @@ export function buildBusRouting(doc: ProjectDocument, trackIds: number[]): BusRo
  *
  * @param doc Plain project document.
  * @param loadFontBytes Resolves a font id to its raw bytes.
+ * @param onLoadError Receives non-fatal font-loading errors for the export report.
  * @returns Font bytes keyed by font id.
  */
 export async function preloadSoundFonts(
   doc: ProjectDocument,
   loadFontBytes: (fontId: string) => Promise<Uint8Array>,
   activeTrackIndices?: ReadonlySet<number>,
+  onLoadError?: (fontId: string, error: unknown) => void,
 ): Promise<Map<string, Uint8Array>> {
   const fontBytesById = new Map<string, Uint8Array>();
   const activeTracks = doc.tracks.filter(
@@ -272,7 +274,11 @@ export async function preloadSoundFonts(
   );
   for (const fontId of soundFontUsage.fontIds) {
     if (!fontBytesById.has(fontId)) {
-      fontBytesById.set(fontId, await loadFontBytes(fontId));
+      try {
+        fontBytesById.set(fontId, await loadFontBytes(fontId));
+      } catch (error) {
+        onLoadError?.(fontId, error);
+      }
     }
   }
   return fontBytesById;

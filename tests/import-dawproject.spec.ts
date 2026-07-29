@@ -368,7 +368,7 @@ describe('importDawproject', () => {
     expect(readTempoPoints(exported2)).toEqual(readTempoPoints(exported1));
   });
 
-  it('round-trips MIDI expression lanes from clip-local Points', async () => {
+  it('keeps MIDI expression out of portable XML and round-trips it in vendor metadata', async () => {
     const exported = await exportDawproject(
       makeDoc({
         tracks: [
@@ -394,6 +394,15 @@ describe('importDawproject', () => {
       }),
       { includeAudio: false },
     );
+
+    const projectXml = strFromU8(unzipSync(exported)['project.xml']);
+    expect(projectXml).not.toContain('midi-7bit');
+    expect(projectXml).not.toContain('midi-14bit');
+    expect(projectXml).not.toContain('midi-program');
+    expect(projectXml).not.toContain('midi.cc.');
+    expect(
+      new DOMParser().parseFromString(projectXml, 'application/xml').querySelector('Clip > Points'),
+    ).toBeNull();
 
     const clip = importDawproject(exported).tracks[0].clips[0];
 
@@ -898,6 +907,22 @@ describe('importDawproject', () => {
     });
   });
 
+  it('round-trips Sonare arrangement sections without polluting markers', async () => {
+    const imported = importDawproject(
+      await exportDawproject(
+        makeDoc({
+          sections: [{ name: 'Chorus', color: '#123456', startPpq: 4, endPpq: 12 }],
+        }),
+        { includeAudio: false },
+      ),
+    );
+
+    expect(imported.sections).toEqual([
+      { name: 'Chorus', color: '#123456', startPpq: 4, endPpq: 12 },
+    ]);
+    expect(imported.markers).toEqual([{ ppq: 8, name: 'Drop' }]);
+  });
+
   it('returns structured media failures instead of silently reporting full success', async () => {
     const result = await importDawprojectWithMediaResult(
       makeExternalAudioDawproject('/Missing/Vox.wav'),
@@ -1254,6 +1279,27 @@ describe('importDawproject', () => {
 
     expect(imported.mixer?.master.gainDb).toBeCloseTo(-6, 8);
     expect(imported.mixer?.master.pan).toBe(-0.5);
+  });
+
+  it('keeps a routed track strip pan aligned with the track pan', async () => {
+    const source = makeDoc({
+      tracks: [
+        makeTrack([makeMidiClip()], {
+          pan: 0.6,
+          mixer: {
+            gainDb: 0,
+            pan: 0.6,
+            inserts: [{ processor: 'eq.tilt', params: { tiltDb: 1 }, enabled: true }],
+            sends: [],
+          },
+        }),
+      ],
+    });
+
+    const imported = importDawproject(await exportDawproject(source, { includeAudio: false }));
+
+    expect(imported.tracks[0].pan).toBeCloseTo(0.6, 8);
+    expect(imported.tracks[0].mixer?.pan).toBeCloseTo(0.6, 8);
   });
 
   it('ignores external insert devices and imports sonare boolean insert automation', () => {

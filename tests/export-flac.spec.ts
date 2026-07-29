@@ -229,16 +229,20 @@ describe('encodeFlac', () => {
     );
   });
 
-  it('selects block sizes that avoid undersized final frames', () => {
+  it('encodes short streams and short final frames', () => {
     const oneFrame = encodeFlac([new Float32Array(17)], 44100, { blockSize: 4096 });
     expect(u16(oneFrame, 8)).toBe(17);
     expect(u16(oneFrame, 10)).toBe(17);
 
     const adjusted = encodeFlac([new Float32Array(4097)], 44100, { blockSize: 4096 });
-    expect(u16(adjusted, 10)).toBeLessThan(4096);
-    expect(4097 % u16(adjusted, 10)).toBeGreaterThanOrEqual(16);
+    expect(u16(adjusted, 8)).toBe(1);
+    expect(u16(adjusted, 10)).toBe(4096);
 
-    expect(() => encodeFlac([new Float32Array(15)], 44100)).toThrow(RangeError);
+    for (let frames = 1; frames < 16; frames += 1) {
+      const short = encodeFlac([new Float32Array(frames)], 44100);
+      expect(u16(short, 8)).toBe(frames);
+      expect(Number(streamInfoPacked(short) & 0xfffffffffn)).toBe(frames);
+    }
   });
 
   it('is byte-deterministic for identical PCM and options', () => {

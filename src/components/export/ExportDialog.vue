@@ -7,7 +7,7 @@ import { useAppSettings } from '@/composables/useAppSettings';
 import { confirmDialog } from '@/composables/useDialogs';
 import { audioExportPreflight } from '@/export/audio-preflight';
 import { isBrowserMediaEncoderId, registerBrowserMediaEncoders } from '@/export/browser-media';
-import { type ExportRenderHandle, renderMixdownInWorker } from '@/export/client';
+import { type ExportRenderHandle, ExportWorkerError, renderMixdownInWorker } from '@/export/client';
 import { type AudioEncoder, listEncoders, WAV_ENCODER_ID } from '@/export/codecs';
 import { encodeAudioInWorker, isWorkerAudioEncoderId } from '@/export/encode-client';
 import { offlineAutomationLimitations } from '@/export/engine-render';
@@ -354,7 +354,10 @@ async function onExport(): Promise<void> {
         message: `${t.value.dialogs.exportAudio.preflightWarningMessage}\n\n${acceptedLimitations.join('\n')}`,
         confirmLabel: t.value.dialogs.exportAudio.automationWarningContinue,
       });
-      if (!proceed) return;
+      if (!proceed) {
+        cancelled.value = true;
+        return;
+      }
       controller.signal.throwIfAborted();
     }
     if (memoryBudgetBytes > DEFAULT_EXPORT_MEMORY_BUDGET_BYTES) {
@@ -366,7 +369,10 @@ async function onExport(): Promise<void> {
         ),
         confirmLabel: t.value.dialogs.exportAudio.memoryBudgetWarningContinue,
       });
-      if (!proceed) return;
+      if (!proceed) {
+        cancelled.value = true;
+        return;
+      }
       controller.signal.throwIfAborted();
     }
     const encodeOptions = encodeOptionsForModel(exportModel, {
@@ -543,6 +549,8 @@ async function onExport(): Promise<void> {
       (error instanceof DOMException && error.name === 'AbortError')
     ) {
       cancelled.value = true;
+    } else if (error instanceof ExportWorkerError) {
+      errorMessage.value = t.value.dialogs.exportAudio.workerError;
     } else {
       errorMessage.value = error instanceof Error ? error.message : String(error);
     }

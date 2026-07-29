@@ -1,5 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ExportClient } from '@/export/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  disposeExportClient,
+  ExportClient,
+  ExportWorkerError,
+  getExportClient,
+} from '@/export/client';
 import { MixdownCancelledError } from '@/export/mixdown';
 import type { ProjectDocument } from '@/project/serialization';
 import type { ExportRequest, ExportResponse } from '@/workers/export.worker';
@@ -60,6 +65,11 @@ describe('ExportClient', () => {
   beforeEach(() => {
     worker = new FakeWorker();
     client = new ExportClient(worker as unknown as Worker);
+  });
+
+  afterEach(() => {
+    disposeExportClient();
+    vi.unstubAllGlobals();
   });
 
   it('posts a render request with a correlation id and options', () => {
@@ -274,12 +284,12 @@ describe('ExportClient', () => {
     await expect(handle.result).resolves.toMatchObject({ totalFrames: 0 });
   });
 
-  it('rejects a cancelled render with MixdownCancelledError', async () => {
+  it('rejects a cancelled render without waiting for a worker echo', async () => {
     const handle = client.renderMixdown(makeDoc());
+    const rejected = expect(handle.result).rejects.toBeInstanceOf(MixdownCancelledError);
     handle.cancel();
     expect(worker.posted[1]).toMatchObject({ type: 'cancel', targetId: 1 });
-    worker.emit({ id: 1, type: 'cancelled' });
-    await expect(handle.result).rejects.toBeInstanceOf(MixdownCancelledError);
+    await rejected;
   });
 
   it('posts at most one cancel request per in-flight render', async () => {
@@ -358,6 +368,28 @@ describe('ExportClient', () => {
     expect(worker.listenerCount('message')).toBe(0);
     expect(worker.listenerCount('error')).toBe(0);
     await expect(client.renderMixdown(makeDoc()).result).rejects.toThrow('disposed');
+  });
+
+  it('recreates the shared client after a worker-level failure', async () => {
+    const createdWorkers: FakeWorker[] = [];
+    vi.stubGlobal(
+      'Worker',
+      // biome-ignore lint/complexity/useArrowFunction: Worker is called with `new`.
+      vi.fn(function () {
+        const created = new FakeWorker();
+        createdWorkers.push(created);
+        return created as unknown as Worker;
+      }),
+    );
+
+    const first = getExportClient();
+    const pending = first.renderMixdown(makeDoc());
+    createdWorkers[0].emitError('worker crashed');
+
+    await expect(pending.result).rejects.toBeInstanceOf(ExportWorkerError);
+    const replacement = getExportClient();
+    expect(replacement).not.toBe(first);
+    expect(Worker).toHaveBeenCalledTimes(2);
   });
 
   it('dispose terminates the worker and rejects pending and future renders', async () => {

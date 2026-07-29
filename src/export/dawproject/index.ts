@@ -15,9 +15,9 @@
  * - Enabled audio warps are exported as standard beats-to-seconds Warps;
  *   disabled warp metadata remains a plain file reference.
  * - Per-clip gain has no DAWproject attribute and is dropped.
- * - Per-clip MIDI expression lanes are exported as sonare-scoped Points inside
- *   the clip so sonare-to-sonare round-trips preserve performance data. Other
- *   DAWs may ignore these clip-local Points.
+ * - Per-clip MIDI expression lanes have no portable DAWproject representation.
+ *   They are kept in the separate Sonare metadata entry so project.xml remains
+ *   schema-valid for other DAWs.
  * - A VCA group's own fader is not a DAWproject concept; its dB offset is
  *   folded into each member track's channel volume for portable playback, and
  *   sonare-scoped metadata preserves VCA groups/membership for round-trips.
@@ -794,105 +794,6 @@ function noteElement(note: DocumentClip['notes'][number]): XmlElement {
   };
 }
 
-function midiExpressionPoint(point: {
-  ppq: number;
-  value?: number;
-  program?: number;
-  curve?: string;
-}): XmlElement {
-  return {
-    name: 'RealPoint',
-    attributes: {
-      time: point.ppq,
-      value: point.value ?? point.program ?? 0,
-      interpolation: point.curve === 'linear' || point.curve === 's-curve' ? 'linear' : 'hold',
-    },
-  };
-}
-
-function midiExpressionPointsElements(
-  clip: DocumentClip,
-  trackIndex: number,
-  clipIndex: number,
-): XmlElement[] {
-  const prefix = `midi-expression-${trackIndex}-${clipIndex}`;
-  const elements: XmlElement[] = [];
-  for (const lane of clip.ccLanes ?? []) {
-    if (lane.points.length === 0) continue;
-    elements.push({
-      name: 'Points',
-      attributes: {
-        id: `${prefix}-cc-${lane.channel}-${lane.controller}`,
-        unit: 'midi-7bit',
-      },
-      children: [
-        { name: 'Target', attributes: { parameter: `midi.cc.${lane.channel}.${lane.controller}` } },
-        ...lane.points.map(midiExpressionPoint),
-      ],
-    });
-  }
-  for (const lane of clip.pitchBendLanes ?? []) {
-    if (lane.points.length === 0) continue;
-    elements.push({
-      name: 'Points',
-      attributes: {
-        id: `${prefix}-pitchBend-${lane.channel}`,
-        unit: 'midi-14bit',
-      },
-      children: [
-        { name: 'Target', attributes: { parameter: `midi.pitchBend.${lane.channel}` } },
-        ...lane.points.map(midiExpressionPoint),
-      ],
-    });
-  }
-  for (const lane of clip.programChangeLanes ?? []) {
-    if (lane.points.length === 0) continue;
-    elements.push({
-      name: 'Points',
-      attributes: {
-        id: `${prefix}-program-${lane.channel}`,
-        unit: 'midi-program',
-      },
-      children: [
-        { name: 'Target', attributes: { parameter: `midi.program.${lane.channel}` } },
-        ...lane.points.map(midiExpressionPoint),
-      ],
-    });
-  }
-  for (const lane of clip.channelPressureLanes ?? []) {
-    if (lane.points.length === 0) continue;
-    elements.push({
-      name: 'Points',
-      attributes: {
-        id: `${prefix}-channelPressure-${lane.channel}`,
-        unit: 'midi-7bit',
-      },
-      children: [
-        { name: 'Target', attributes: { parameter: `midi.channelPressure.${lane.channel}` } },
-        ...lane.points.map(midiExpressionPoint),
-      ],
-    });
-  }
-  for (const lane of clip.polyPressureLanes ?? []) {
-    if (lane.points.length === 0) continue;
-    elements.push({
-      name: 'Points',
-      attributes: {
-        id: `${prefix}-polyPressure-${lane.channel}-${lane.pitch}`,
-        unit: 'midi-7bit',
-      },
-      children: [
-        {
-          name: 'Target',
-          attributes: { parameter: `midi.polyPressure.${lane.channel}.${lane.pitch}` },
-        },
-        ...lane.points.map(midiExpressionPoint),
-      ],
-    });
-  }
-  return elements;
-}
-
 /** Builds one MIDI clip element wrapping its Notes lane (all in beats). */
 function midiClipElement(clip: DocumentClip, trackIndex: number, clipIndex: number): XmlElement {
   const attributes: Record<string, string | number | boolean | undefined> = {
@@ -916,7 +817,6 @@ function midiClipElement(clip: DocumentClip, trackIndex: number, clipIndex: numb
         attributes: { id: `notes-${trackIndex}-${clipIndex}` },
         children: clip.notes.map(noteElement),
       },
-      ...midiExpressionPointsElements(clip, trackIndex, clipIndex),
     ],
   };
 }

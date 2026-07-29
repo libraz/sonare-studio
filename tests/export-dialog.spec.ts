@@ -281,6 +281,20 @@ describe('ExportDialog', () => {
     await flushPromises();
   });
 
+  it('shows cancellation feedback when a preflight confirmation is declined', async () => {
+    const control = makeRender();
+    mountDialog(control);
+
+    await selectOption('.memory-budget-select', '2 GiB');
+    await clickExport();
+    await flushPromises();
+    resolveDialog(dialogQueue[0].id, false);
+    await flushPromises();
+
+    expect(control.render).not.toHaveBeenCalled();
+    expect(q('.export-cancelled')).not.toBeNull();
+  });
+
   it('renders nothing while closed', () => {
     track(
       mount(ExportDialog, {

@@ -541,8 +541,8 @@ describe('exportDawproject arrangement', () => {
     expect(floatAttr(fullWindow.querySelector('Arrangement Clip'), 'loopEnd')).toBe(10);
   });
 
-  it('exports MIDI expression lanes as clip-local Points', async () => {
-    const project = await exportProjectXml(
+  it('keeps MIDI expression out of portable XML and writes it to vendor metadata', async () => {
+    const entries = await exportAndUnzip(
       makeDoc([
         makeTrack([
           makeMidiClip({
@@ -563,41 +563,14 @@ describe('exportDawproject arrangement', () => {
           }),
         ]),
       ]),
+      { includeAudio: false },
     );
 
+    const project = parseEntry(entries, 'project.xml');
     const clip = project.querySelector('Arrangement Clip');
-    const cc = clip?.querySelector('Points[id="midi-expression-0-0-cc-1-11"]');
-    expect(attr(cc, 'unit')).toBe('midi-7bit');
-    expect(attr(cc?.querySelector('Target'), 'parameter')).toBe('midi.cc.1.11');
-    const ccPoints = [...(cc?.querySelectorAll('RealPoint') ?? [])];
-    expect(ccPoints).toHaveLength(2);
-    expect(floatAttr(ccPoints[0], 'time')).toBe(0);
-    expect(floatAttr(ccPoints[0], 'value')).toBe(32);
-    expect(attr(ccPoints[0], 'interpolation')).toBe('hold');
-    expect(floatAttr(ccPoints[1], 'time')).toBe(2);
-    expect(floatAttr(ccPoints[1], 'value')).toBe(96);
-
-    const pitchBend = clip?.querySelector('Points[id="midi-expression-0-0-pitchBend-2"]');
-    expect(attr(pitchBend, 'unit')).toBe('midi-14bit');
-    expect(attr(pitchBend?.querySelector('Target'), 'parameter')).toBe('midi.pitchBend.2');
-    expect(floatAttr(pitchBend?.querySelector('RealPoint'), 'value')).toBe(8192);
-
-    const program = clip?.querySelector('Points[id="midi-expression-0-0-program-3"]');
-    expect(attr(program, 'unit')).toBe('midi-program');
-    expect(attr(program?.querySelector('Target'), 'parameter')).toBe('midi.program.3');
-    expect(floatAttr(program?.querySelector('RealPoint'), 'value')).toBe(24);
-
-    const channelPressure = clip?.querySelector(
-      'Points[id="midi-expression-0-0-channelPressure-4"]',
-    );
-    expect(attr(channelPressure?.querySelector('Target'), 'parameter')).toBe(
-      'midi.channelPressure.4',
-    );
-    expect(floatAttr(channelPressure?.querySelector('RealPoint'), 'value')).toBe(80);
-
-    const polyPressure = clip?.querySelector('Points[id="midi-expression-0-0-polyPressure-5-64"]');
-    expect(attr(polyPressure?.querySelector('Target'), 'parameter')).toBe('midi.polyPressure.5.64');
-    expect(floatAttr(polyPressure?.querySelector('RealPoint'), 'value')).toBe(70);
+    expect(clip?.querySelector('Points')).toBeNull();
+    expect(strFromU8(entries['sonare-studio.json'])).toContain('"ccLanes"');
+    expect(strFromU8(entries['sonare-studio.json'])).toContain('"pitchBendLanes"');
   });
 
   it('exports markers and sections as cue markers ordered by time', async () => {

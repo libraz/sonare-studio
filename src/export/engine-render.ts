@@ -47,7 +47,7 @@ import {
   engineFaderAutomationPoints,
 } from '@/engine/engine-declaration';
 import { resolvePresetName } from '@/engine/instruments';
-import { busSceneJson, stripSceneJson } from '@/engine/strip-sync';
+import { busSceneJson, liveMasterStrip, stripSceneJson } from '@/engine/strip-sync';
 import { assertRenderPayloadMemory, estimateRenderPayloadMemory } from '@/export/memory-budget';
 import {
   type ExportLimitation,
@@ -72,13 +72,12 @@ import {
 } from '@/project/automation-insert';
 import { loadFont } from '@/project/fonts';
 import {
+  createInsertPdcPlan,
   type InsertLatencyCatalogEntry,
   type InsertLatencyResolver,
   insertLatencyResolverFromCatalog,
-  maxTrackInsertLatencySamples,
-  trackPdcDelaySamples,
 } from '@/project/insert-latency';
-import { DEFAULT_SYNTH_PRESET, sf2PlaybackConfig } from '@/project/instrument';
+import { effectiveTrackInstrument, sf2PlaybackConfig } from '@/project/instrument';
 import { midiFxConfigJson } from '@/project/midi-fx';
 import {
   clampPan,
@@ -225,6 +224,8 @@ export async function renderProjectWithEngine(
   const loadFontBytes = options.loadFont ?? loadFont;
   let resolvePreset = options.resolvePreset ?? ((preset: string) => preset);
   let resolveInsertLatency: InsertLatencyResolver = options.insertLatency ?? (() => 0);
+  let realtimeMasteringInsertCatalog: ReadonlySet<string> =
+    options.realtimeMasteringInsertCatalog ?? new Set<string>();
   const checkCancel = () => {
     if (options.shouldCancel?.()) throw new MixdownCancelledError();
   };
@@ -244,9 +245,16 @@ export async function renderProjectWithEngine(
     if (!options.insertLatency) {
       const catalog = (
         wasm as unknown as {
+          masteringInsertNames?: () => string[];
           masteringProcessorCatalog?: () => InsertLatencyCatalogEntry[];
         }
       ).masteringProcessorCatalog?.();
+      const insertNames = (
+        wasm as unknown as { masteringInsertNames?: () => string[] }
+      ).masteringInsertNames?.();
+      if (Array.isArray(insertNames)) {
+        realtimeMasteringInsertCatalog = new Set(insertNames);
+      }
       resolveInsertLatency = insertLatencyResolverFromCatalog(catalog, { sampleRate });
     }
     if (!createEngine) {
@@ -293,15 +301,19 @@ export async function renderProjectWithEngine(
     midiRangeStartSample,
     midiRangeEndSample,
   );
+  const effectiveInstruments = doc.tracks.map((track) =>
+    track.kind === 'midi' ? effectiveTrackInstrument(track, doc.externalMidiDefault) : undefined,
+  );
   const soundFontUsage = collectActiveSoundFontUsage(
-    doc.tracks.filter((_track, index) => activeMidiTrackIndices.has(index)),
+    doc.tracks
+      .map((track, index) => ({ ...track, instrument: effectiveInstruments[index] }))
+      .filter((_track, index) => activeMidiTrackIndices.has(index)),
   );
   const activeSf2TrackIndices = new Set(
     doc.tracks.flatMap((track, index) =>
       activeMidiTrackIndices.has(index) &&
-      track.kind === 'midi' &&
       track.frozen === undefined &&
-      track.instrument?.kind === 'sf2'
+      effectiveInstruments[index]?.kind === 'sf2'
         ? [index]
         : [],
     ),
@@ -349,11 +361,15 @@ export async function renderProjectWithEngine(
     chain !== undefined &&
     masteringChainIsActive(chain) &&
     (deps?.mastering ?? null) !== null;
+  // Integrated loudness and dynamic-range measurement require the complete
+  // deliverable. The streaming WAV path otherwise returns only peakDb.
+  const hasFullBufferMetering = (deps?.metering ?? null) !== null;
   const streamingMixdownEligible =
     options.onMixdownChunk !== undefined &&
     stemCount === 0 &&
     conflictingSf2TrackIndices.size === 0 &&
-    !hasFullBufferMastering;
+    !hasFullBufferMastering &&
+    !hasFullBufferMetering;
 
   const audioMemory = loadAudioMeta
     ? await preflightAudioClipMemory(doc, {
@@ -390,8 +406,23 @@ export async function renderProjectWithEngine(
     );
   }
 
+  const mediaIssues: NonNullable<MixdownReport['mediaIssues']> = [];
   // Pre-load instrument fonts only after the metadata-only audio preflight.
-  const fontBytesById = await preloadSoundFonts(doc, loadFontBytes, activeMidiTrackIndices);
+  // A missing font must not turn into a raw storage error: finish the render
+  // with a structured issue so the export dialog can explain and block it.
+  const fontBytesById = await preloadSoundFonts(
+    doc,
+    loadFontBytes,
+    activeMidiTrackIndices,
+    (id, error) => {
+      mediaIssues.push({
+        kind: 'soundfont',
+        id,
+        reason: 'missing-or-unreadable',
+        message: error instanceof Error ? error.message : String(error),
+      });
+    },
+  );
   const soundFontBytes = [...fontBytesById.values()].reduce(
     (sum, bytes) => sum + bytes.byteLength,
     0,
@@ -415,7 +446,6 @@ export async function renderProjectWithEngine(
 
   // Audio clips: the live scheduling transforms (slice window, baked fades,
   // linear resample to the render rate), placed at their timeline PPQ.
-  const mediaIssues: NonNullable<MixdownReport['mediaIssues']> = [];
   const sourceAudioClips = await buildAudioClips(doc, {
     trackIds,
     tempoMap,
@@ -458,7 +488,7 @@ export async function renderProjectWithEngine(
       options.memoryBudgetBytes,
     );
   }
-  const maxInsertLatency = maxTrackInsertLatencySamples(doc.tracks, resolveInsertLatency);
+  const pdc = createInsertPdcPlan(doc.tracks, doc.mixer?.buses ?? [], resolveInsertLatency);
   let renderAudioClips: EngineClipSpec[] = sourceAudioClips;
 
   /** Replays the pre-built program onto a fresh engine (synchronous). */
@@ -614,7 +644,7 @@ export async function renderProjectWithEngine(
         // The pre-rendered SF2 PCM contains the insert processor's own
         // latency, but not the live PDC channel delay (freeze passes keep it
         // outside the bake), so the final lane still receives normal PDC.
-        const channelDelay = trackPdcDelaySamples(track, maxInsertLatency, resolveInsertLatency);
+        const channelDelay = pdc.delayFor(track);
         if (channelDelay > 0) engine.setTrackStripChannelDelaySamples(trackId, channelDelay);
       }
     });
@@ -641,12 +671,20 @@ export async function renderProjectWithEngine(
     // Master strip: inserts/EQ only with the chain enabled; gain/pan whenever
     // the pass renders master levels (stems are pre-master).
     const master = doc.mixer?.master;
-    if (pass.masterStrip && master && stripHasDsp(master)) {
-      engine.setMasterStripJson(stripSceneJson('master', master));
-      master.inserts.forEach((slot, insertIndex) => {
+    const masterStrip =
+      pass.masterStrip && master
+        ? liveMasterStrip(
+            master,
+            includeMasterChain ? chain : undefined,
+            realtimeMasteringInsertCatalog,
+          )
+        : master;
+    if (pass.masterStrip && masterStrip && stripHasDsp(masterStrip)) {
+      engine.setMasterStripJson(stripSceneJson('master', masterStrip));
+      masterStrip.inserts.forEach((slot, insertIndex) => {
         if (!slot.enabled) engine.setMasterStripInsertBypassed(insertIndex, true);
       });
-      engineEqBands(master).forEach((band, bandIndex) => {
+      engineEqBands(masterStrip).forEach((band, bandIndex) => {
         engine.setMasterStripEqBandJson(bandIndex, JSON.stringify(band));
       });
     }
@@ -667,7 +705,11 @@ export async function renderProjectWithEngine(
           lane.param === 'faderDb'
             ? engineFaderAutomationPoints(
                 lane.points,
-                vcaOffsetDb(track.vcaId, vcaGainDbById),
+                laneGainDb(
+                  track.volume,
+                  track.mixer?.gainDb,
+                  vcaOffsetDb(track.vcaId, vcaGainDbById),
+                ),
                 effectiveTrackMute(track.mute, track.vcaId, vcaControlsById),
               )
             : engineAutomationPoints(lane.points);
@@ -780,18 +822,16 @@ export async function renderProjectWithEngine(
       const track = doc.tracks[index];
       if (track.kind !== 'midi') continue;
       if (track.frozen !== undefined) continue;
-      const instrument = track.instrument;
+      const instrument = effectiveInstruments[index];
       const destinationId = trackIds[index];
-      if (instrument === undefined) {
-        engine.setSynthInstrument(resolvePreset(DEFAULT_SYNTH_PRESET), destinationId);
-      } else if (instrument.kind === 'synth-preset') {
+      if (instrument?.kind === 'synth-preset') {
         engine.setSynthInstrument(resolvePreset(instrument.preset), destinationId);
-      } else if (instrument.kind === 'synth-patch') {
+      } else if (instrument?.kind === 'synth-patch') {
         engine.setSynthInstrument(
           instrumentPatchAtRenderStart(track, range.startPpq) ?? instrument.patch,
           destinationId,
         );
-      } else if (instrument.kind === 'sf2') {
+      } else if (instrument?.kind === 'sf2') {
         if (pass.sf2TrackIndices !== null && !pass.sf2TrackIndices.has(index)) continue;
         const bytes = fontBytesById.get(instrument.fontId);
         if (bytes && instrument.fontId !== loadedFontId) {
@@ -816,13 +856,18 @@ export async function renderProjectWithEngine(
       }
     }
 
-    const passMidiSchedules = pass.usePreRenderedSf2
-      ? midiSchedules.filter(
-          (schedule) =>
-            schedule.destinationId === undefined ||
-            !conflictingSf2TrackIndices.has(schedule.destinationId - 1),
-        )
-      : midiSchedules;
+    const passMidiSchedules = midiSchedules.filter((schedule) => {
+      const trackIndex =
+        schedule.destinationId === undefined ? undefined : schedule.destinationId - 1;
+      if (trackIndex !== undefined && effectiveInstruments[trackIndex]?.kind === 'external-midi') {
+        return false;
+      }
+      return (
+        !pass.usePreRenderedSf2 ||
+        trackIndex === undefined ||
+        !conflictingSf2TrackIndices.has(trackIndex)
+      );
+    });
     if (passMidiSchedules.length > 0) engine.setMidiClips(passMidiSchedules);
     if (renderAudioClips.length > 0) engine.setClips(renderAudioClips);
   };
@@ -1182,7 +1227,10 @@ export async function renderProjectWithEngine(
     }
     for (let processorIndex = 0; processorIndex < chain.processors.length; processorIndex += 1) {
       const slot = chain.processors[processorIndex];
-      if (!slot.enabled) continue;
+      // Realtime-safe slots already run inside the master strip before its
+      // fader, matching live playback. Only whole-buffer processors remain
+      // for the export-only post-fader stage.
+      if (!slot.enabled || realtimeMasteringInsertCatalog.has(slot.processor)) continue;
       checkCancel();
       options.onProgress?.(0.94, `mastering.${slot.processor}`);
       const params = { ...slot.params, ...(automatedParams.get(processorIndex) ?? {}) };

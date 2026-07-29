@@ -185,20 +185,7 @@ function assertPlanar(channels: ReadonlyArray<Float32Array>): number {
 
 function chooseBlockSize(frames: number, requestedBlockSize: number): number {
   if (frames === 0) return requestedBlockSize;
-  if (frames < FLAC_MIN_BLOCK_SIZE) {
-    throw new RangeError(
-      `FLAC encoding requires at least ${FLAC_MIN_BLOCK_SIZE} samples or empty input, got ${frames}`,
-    );
-  }
   if (frames <= requestedBlockSize) return frames;
-  const shortFinalBlockSize = frames % requestedBlockSize;
-  if (shortFinalBlockSize === 0 || shortFinalBlockSize >= FLAC_MIN_BLOCK_SIZE) {
-    return requestedBlockSize;
-  }
-  for (let candidate = requestedBlockSize - 1; candidate >= FLAC_MIN_BLOCK_SIZE; candidate -= 1) {
-    const remainder = frames % candidate;
-    if (remainder === 0 || remainder >= FLAC_MIN_BLOCK_SIZE) return candidate;
-  }
   return requestedBlockSize;
 }
 
@@ -320,18 +307,17 @@ function streamInfo(
   sampleRate: number,
   channels: number,
   bitDepth: FlacBitDepth,
-  blockSize: number,
+  minBlockSize: number,
+  maxBlockSize: number,
   md5: Uint8Array,
   minFrameSize: number,
   maxFrameSize: number,
 ): Uint8Array {
   const body = new Uint8Array(34);
-  const minBlockSize =
-    frames === 0 ? blockSize : Math.min(blockSize, Math.max(FLAC_MIN_BLOCK_SIZE, frames));
   body[0] = (minBlockSize >>> 8) & 0xff;
   body[1] = minBlockSize & 0xff;
-  body[2] = (blockSize >>> 8) & 0xff;
-  body[3] = blockSize & 0xff;
+  body[2] = (maxBlockSize >>> 8) & 0xff;
+  body[3] = maxBlockSize & 0xff;
   writeUint24(body, 4, minFrameSize);
   writeUint24(body, 7, maxFrameSize);
 
@@ -781,6 +767,9 @@ export function encodeFlac(
   }
   // Always resolve to a full bar, even for empty input where the loop never ran.
   onProgress?.(1);
+  const finalBlockSize = frames % effectiveBlockSize || effectiveBlockSize;
+  const minBlockSize =
+    frames === 0 ? effectiveBlockSize : Math.min(effectiveBlockSize, finalBlockSize);
 
   const signature = new Uint8Array([0x66, 0x4c, 0x61, 0x43]); // fLaC
   const info = streamInfo(
@@ -788,6 +777,7 @@ export function encodeFlac(
     sampleRate,
     channels.length,
     bitDepth,
+    minBlockSize,
     effectiveBlockSize,
     pcmMd5(channels, frames, bitDepth, dither),
     minFrameSize,

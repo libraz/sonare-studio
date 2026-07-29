@@ -262,5 +262,11 @@ describe('browser MediaRecorder export encoders', () => {
         48000,
       ),
     ).rejects.toThrow(RangeError);
+
+    await expect(
+      encodeBrowserMedia('audio/webm;codecs=opus', [new Float32Array()], 48000),
+    ).rejects.toThrow('requires at least one audio frame');
+    expect(FakeAudioContext.last).toBeNull();
+    expect(FakeMediaRecorder.last).toBeNull();
   });
 });

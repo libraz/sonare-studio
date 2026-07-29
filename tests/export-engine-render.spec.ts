@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { linearToDb } from '@/engine/mixer-sync';
+import type { EngineHandle } from '@/engine/engine';
+import { createMixerSync, linearToDb } from '@/engine/mixer-sync';
 import type { OfflineRenderEngine } from '@/export/engine-render';
 import { renderProjectWithEngine } from '@/export/engine-render';
 import { buildMidiSchedules } from '@/export/engine-render-context';
@@ -11,6 +12,7 @@ import {
   masteringAutomationParam,
 } from '@/project/automation';
 import type { ProjectDocument } from '@/project/serialization';
+import type { EditorTrack } from '@/project/types';
 import { clearWarpBakeCache } from '@/project/warp';
 
 // The warp bake resolves its stretch through ensureWasm: provide a
@@ -169,6 +171,7 @@ const SAMPLES_PER_PPQ = 24000;
 const MASTER_FADER_PARAM_ID = 0x4d58ff01;
 const ENGINE_MIXER_TARGET_BASE = 0x4d580000;
 const ENGINE_MIXER_PARAM_FADER_DB = 1;
+const ENGINE_MIXER_PARAM_PAN = 2;
 const ENGINE_MIXER_LANE_MASTER = 0xff;
 const BUS_1_FADER_PARAM_ID = 0x4d58fd01;
 
@@ -201,6 +204,11 @@ class AudibilityEngine extends FakeEngine {
   private laneSoloMute = new Map<number, { solo: boolean; mute: boolean }>();
   private laneGainByIndex = new Map<number, number>();
   private laneGainAutomation = new Map<number, Array<{ sample: number; value: number }>>();
+  private lanePanByIndex = new Map<number, number>();
+  private lanePanLawByTrack = new Map<number, string>();
+  private lanePanModeByTrack = new Map<number, string>();
+  private laneDualPanByTrack = new Map<number, { left: number; right: number }>();
+  private laneDelayByTrack = new Map<number, number>();
   private masterGain = 1;
   private masterGainAutomation: Array<{ sample: number; value: number }> = [];
   private audioClips: Array<{
@@ -236,6 +244,29 @@ class AudibilityEngine extends FakeEngine {
     if (laneIndex !== ENGINE_MIXER_LANE_MASTER && kind === ENGINE_MIXER_PARAM_FADER_DB) {
       this.laneGainByIndex.set(laneIndex, 10 ** (value / 20));
     }
+    if (laneIndex !== ENGINE_MIXER_LANE_MASTER && kind === ENGINE_MIXER_PARAM_PAN) {
+      this.lanePanByIndex.set(laneIndex, value);
+    }
+  }
+
+  setTrackStripPanLaw(trackId: number, panLaw: string): void {
+    super.setTrackStripPanLaw(trackId, panLaw);
+    this.lanePanLawByTrack.set(trackId, panLaw);
+  }
+
+  setTrackStripPanMode(trackId: number, panMode: string): void {
+    super.setTrackStripPanMode(trackId, panMode);
+    this.lanePanModeByTrack.set(trackId, panMode);
+  }
+
+  setTrackStripDualPan(trackId: number, left: number, right: number): void {
+    super.setTrackStripDualPan(trackId, left, right);
+    this.laneDualPanByTrack.set(trackId, { left, right });
+  }
+
+  setTrackStripChannelDelaySamples(trackId: number, delaySamples: number): void {
+    super.setTrackStripChannelDelaySamples(trackId, delaySamples);
+    this.laneDelayByTrack.set(trackId, delaySamples);
   }
 
   private ppqToSample(ppq: number): number {
@@ -399,6 +430,25 @@ class AudibilityEngine extends FakeEngine {
         .find((point) => frame >= point.sample)?.value;
       return automated ?? this.laneGainByIndex.get(laneIndex) ?? 1;
     };
+    const stereoForTrack = (trackId: number, left: number, right: number): [number, number] => {
+      const laneIndex = this.laneIds.indexOf(trackId);
+      const pan = this.lanePanByIndex.get(laneIndex) ?? 0;
+      const mode = this.lanePanModeByTrack.get(trackId) ?? 'balance';
+      const dual = this.laneDualPanByTrack.get(trackId);
+      if (mode === 'dualPan' && dual) {
+        return [
+          left * (dual.left > 0 ? 1 - dual.left : 1),
+          right * (dual.right < 0 ? 1 + dual.right : 1),
+        ];
+      }
+      if (pan === 0) return [left, right];
+      // The fake needs a deterministic audible pan model, not a DSP-perfect
+      // implementation. Its neutral position remains unity to keep the rest
+      // of this suite focused on routing and scheduling.
+      const leftGain = pan > 0 ? 1 - pan : 1;
+      const rightGain = pan < 0 ? 1 + pan : 1;
+      return [left * leftGain, right * rightGain];
+    };
     for (let frameOffset = 0; frameOffset < channels[0].length; frameOffset++) {
       const frame = this.cursor + frameOffset;
       const masterGain =
@@ -408,22 +458,34 @@ class AudibilityEngine extends FakeEngine {
       let rightSample = 0;
       for (const clip of this.audioClips) {
         if (!audibleTrackIds.has(clip.trackId)) continue;
-        if (frame >= clip.startSample && frame < clip.startSample + clip.lengthSamples) {
-          const clipFrame = frame - clip.startSample;
-          const laneGain = laneGainForTrack(clip.trackId, frame);
+        const sourceFrame = frame - (this.laneDelayByTrack.get(clip.trackId) ?? 0);
+        if (
+          sourceFrame >= clip.startSample &&
+          sourceFrame < clip.startSample + clip.lengthSamples
+        ) {
+          const clipFrame = sourceFrame - clip.startSample;
+          const laneGain = laneGainForTrack(clip.trackId, sourceFrame);
           const left = clip.channels[0]?.[clipFrame] ?? 1;
           const right = (clip.channels[1] ?? clip.channels[0])?.[clipFrame] ?? left;
-          leftSample += left * clip.gain * laneGain;
-          rightSample += right * clip.gain * laneGain;
+          const panned = stereoForTrack(
+            clip.trackId,
+            left * clip.gain * laneGain,
+            right * clip.gain * laneGain,
+          );
+          leftSample += panned[0];
+          rightSample += panned[1];
         }
       }
       for (const note of this.midiNotes) {
         if (!audibleTrackIds.has(note.trackId)) continue;
-        if (frame >= note.startFrame && frame < note.endFrame) {
+        const sourceFrame = frame - (this.laneDelayByTrack.get(note.trackId) ?? 0);
+        if (sourceFrame >= note.startFrame && sourceFrame < note.endFrame) {
           const value =
-            this.midiSample(note.trackId, note.velocity) * laneGainForTrack(note.trackId, frame);
-          leftSample += value;
-          rightSample += value;
+            this.midiSample(note.trackId, note.velocity) *
+            laneGainForTrack(note.trackId, sourceFrame);
+          const panned = stereoForTrack(note.trackId, value, value);
+          leftSample += panned[0];
+          rightSample += panned[1];
         }
       }
       channels[0][frameOffset] = leftSample * masterGain;
@@ -604,7 +666,7 @@ function defaultMasterGain(): number {
 }
 
 function defaultMidiLaneGain(): number {
-  return dbGain(-24);
+  return dbGain(-24 + linearToDb(0.5));
 }
 
 function defaultAudioLaneGain(): number {
@@ -784,7 +846,11 @@ describe('renderProjectWithEngine', () => {
       defaultAudioLevel(0.5, 0.8, masterGain);
 
     expect(result.channels[0][0]).toBeCloseTo(expected, 5);
-    expect(result.channels[1][0]).toBeCloseTo(expected, 5);
+    expect(result.channels[1][0]).toBeCloseTo(
+      midiAmplitude(96) * defaultMidiLaneGain() * masterGain +
+        defaultAudioLevel(0.5, 0.8, masterGain) * 0.75,
+      5,
+    );
   });
 
   it('renders a range starting inside a sustained MIDI note from output frame zero', async () => {
@@ -851,7 +917,10 @@ describe('renderProjectWithEngine', () => {
 
     expect(result.totalFrames).toBe(SAMPLES_PER_PPQ);
     expect(result.channels[0][0]).toBeCloseTo(expected, 5);
-    expect(result.channels[1][0]).toBeCloseTo(expected, 5);
+    expect(result.channels[1][0]).toBeCloseTo(
+      defaultMidiLevel(96) + defaultAudioLevel(0.5) * 0.75,
+      5,
+    );
   });
 
   it('renders range stems from the matching MIDI and audio frame zero', async () => {
@@ -1164,9 +1233,12 @@ describe('renderProjectWithEngine', () => {
     const slowPpqFrames = 2 * SAMPLES_PER_PPQ;
 
     expect(result.channels[0][noteStart - 1]).toBeCloseTo(0, 5);
-    expect(result.channels[0][noteStart]).toBeCloseTo(midiAmplitude(96) * defaultMasterGain(), 5);
+    expect(result.channels[0][noteStart]).toBeCloseTo(
+      midiAmplitude(96) * 0.5 * defaultMasterGain(),
+      5,
+    );
     expect(result.channels[0][noteStart + slowPpqFrames - 2]).toBeCloseTo(
-      midiAmplitude(96) * defaultMasterGain(),
+      midiAmplitude(96) * 0.5 * defaultMasterGain(),
       5,
     );
     expect(result.channels[0][noteStart + slowPpqFrames - 1]).toBeCloseTo(0, 5);
@@ -1311,7 +1383,10 @@ describe('renderProjectWithEngine', () => {
     const masterGain = 10 ** (-3 / 20);
     const audioStart = 2 * SAMPLES_PER_PPQ;
     expect(result.channels[0][audioStart]).toBeCloseTo(defaultAudioLevel(0.25, 0.8, masterGain), 5);
-    expect(result.channels[1][audioStart]).toBeCloseTo(defaultAudioLevel(0.75, 0.8, masterGain), 5);
+    expect(result.channels[1][audioStart]).toBeCloseTo(
+      defaultAudioLevel(0.75, 0.8, masterGain) * 0.75,
+      5,
+    );
   });
 
   it('keeps gain-zero audio clips silent and out of the engine clip list', async () => {
@@ -1351,7 +1426,7 @@ describe('renderProjectWithEngine', () => {
     const expected = defaultAudioLevel(0.6);
     const audioStart = 2 * SAMPLES_PER_PPQ;
     expect(result.channels[0][audioStart]).toBeCloseTo(expected, 5);
-    expect(result.channels[1][audioStart]).toBeCloseTo(expected, 5);
+    expect(result.channels[1][audioStart]).toBeCloseTo(expected * 0.75, 5);
   });
 
   it('renders baked audio clip fades in the audible output', async () => {
@@ -1402,7 +1477,7 @@ describe('renderProjectWithEngine', () => {
     const fadeMid = audioStart + SAMPLES_PER_PPQ / 2;
 
     expect(result.channels[0][fadeMid]).toBeCloseTo(defaultAudioLevel(0.25 * 0.5), 5);
-    expect(result.channels[1][fadeMid]).toBeCloseTo(defaultAudioLevel(0.75 * 0.5), 5);
+    expect(result.channels[1][fadeMid]).toBeCloseTo(defaultAudioLevel(0.75 * 0.5) * 0.75, 5);
     expect(result.channels[0][audioStart + 2 * SAMPLES_PER_PPQ - 1]).toBeCloseTo(0, 5);
     expect(result.channels[1][audioStart + 2 * SAMPLES_PER_PPQ - 1]).toBeCloseTo(0, 5);
   });
@@ -1479,8 +1554,8 @@ describe('renderProjectWithEngine', () => {
     // Automation: enabled lanes only, engine curve codes applied.
     const lanes = new Map(engine.named('setAutomationLane').map(([, id, points]) => [id, points]));
     expect(lanes.get(0x4d580001)).toEqual([
-      { ppq: 0, value: -24, curveToNext: 0 },
-      { ppq: 4, value: 0, curveToNext: 2 },
+      { ppq: 0, value: -24 + linearToDb(0.5), curveToNext: 0 },
+      { ppq: 4, value: linearToDb(0.5), curveToNext: 2 },
     ]);
     expect(lanes.get(0x4d58ff02)).toEqual([{ ppq: 1, value: -1, curveToNext: 0 }]);
     expect(lanes.has(0x4d58ff01)).toBe(false);
@@ -1675,6 +1750,18 @@ describe('renderProjectWithEngine', () => {
       word0: noteOnWord(0, 60, 96),
       wordCount: 1,
     });
+  });
+
+  it('keeps project-inherited external MIDI tracks out of the offline synth renderer', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].externalMidiMode = 'project';
+    doc.externalMidiDefault = { kind: 'external-midi', outputPortId: 'port-a', channel: 0 };
+
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    expect(engine.named('setSynthInstrument')).toEqual([]);
+    expect(engine.named('setMidiClips')).toEqual([]);
   });
 
   it('does not load or bind an SF2 for empty, muted, or range-excluded MIDI', async () => {
@@ -2396,6 +2483,40 @@ describe('renderProjectWithEngine', () => {
     expect(result.report.peakDb).toBeCloseTo(20 * Math.log10(0.0625), 5);
   });
 
+  it('places realtime-safe mastering processors before the master fader', async () => {
+    const doc = makeDoc();
+    doc.mixer = {
+      ...doc.mixer,
+      master: { ...doc.mixer.master, gainDb: -6 },
+      masteringChain: {
+        processors: [
+          { processor: 'maximizer.truePeakLimiter', params: { ceilingDb: -1 }, enabled: true },
+          { processor: 'repair.declick', params: {}, enabled: true },
+        ],
+      },
+    };
+    const engine = new FakeEngine();
+    const processStereo = vi.fn((_: string, left: Float32Array, right: Float32Array) => ({
+      left,
+      right,
+    }));
+
+    await renderProjectWithEngine(doc, {
+      ...renderOptions(engine),
+      deps: { mastering: { processStereo }, metering: null },
+      realtimeMasteringInsertCatalog: new Set(['maximizer.truePeakLimiter']),
+    });
+
+    const scene = JSON.parse(engine.named('setMasterStripJson')[0][1] as string) as {
+      strips: Array<{ inserts: Array<{ processor: string }> }>;
+    };
+    expect(scene.strips[0].inserts.map((slot) => slot.processor)).toEqual([
+      'maximizer.truePeakLimiter',
+    ]);
+    expect(processStereo.mock.calls.map(([name]) => name)).toEqual(['repair.declick']);
+    expect(engine.named('setParameter')).toContainEqual(['setParameter', 0x4d58ff01, -6]);
+  });
+
   it('applies static mastering processor automation to offline mastering params', async () => {
     const doc = makeDoc();
     doc.mixer = {
@@ -2734,6 +2855,29 @@ describe('renderProjectWithEngine', () => {
         id: 'asset-1',
         reason: 'missing-or-unreadable',
         message: 'missing asset',
+      },
+    ]);
+  });
+
+  it('reports missing SoundFonts as structured export media issues', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].instrument = { kind: 'sf2', fontId: 'missing-piano' };
+
+    const result = await renderProjectWithEngine(doc, {
+      deps: null,
+      createEngine: () => new AudibilityEngine(),
+      loadFont: async () => {
+        throw new Error('font store is unavailable');
+      },
+      loadAudioAsset: async () => fakeAsset(),
+    });
+
+    expect(result.report.mediaIssues).toEqual([
+      {
+        kind: 'soundfont',
+        id: 'missing-piano',
+        reason: 'missing-or-unreadable',
+        message: 'font store is unavailable',
       },
     ]);
   });
@@ -3570,7 +3714,7 @@ describe('renderProjectWithEngine with group tracks and sidechains', () => {
     expect(engine.named('setAutomationLane')).toContainEqual([
       'setAutomationLane',
       0x4d58fc01,
-      [{ ppq: 0, value: -10, curveToNext: 0 }],
+      [{ ppq: 0, value: -12 + linearToDb(0.5), curveToNext: 0 }],
     ]);
     expect(engine.named('resolveBusInsertAutomationId')).toContainEqual([
       'resolveBusInsertAutomationId',
@@ -3801,6 +3945,114 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
   /** Drums lane (track index 1) fader/pan parameter ids. */
   const drumsFader = 0x4d580101;
 
+  it('normalizes the same document into equivalent live and offline mixer commands', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].volume = 0.5;
+    doc.tracks[0].mixer = {
+      gainDb: 0,
+      pan: 0.25,
+      inserts: [],
+      sends: [],
+      panLaw: 'const6dB',
+      panMode: 'dualPan',
+      dualPan: { left: -0.5, right: 0.75 },
+      channelDelaySamples: 12,
+    };
+    const liveEngine = {
+      setTrackLanes: vi.fn(),
+      setStripGain: vi.fn(),
+      setStripPan: vi.fn(),
+      setSoloMute: vi.fn(),
+      setTrackStripChannelDelaySamples: vi.fn(),
+      setTrackStripPanLaw: vi.fn(),
+      setTrackStripPanMode: vi.fn(),
+      setTrackStripDualPan: vi.fn(),
+    };
+    const liveTracks: EditorTrack[] = doc.tracks.map((track, index) => ({
+      id: index + 1,
+      name: track.name,
+      color: track.color,
+      kind: track.kind,
+      mute: track.mute,
+      solo: track.solo,
+      soloSafe: track.soloSafe,
+      vcaId: track.vcaId,
+      volume: track.volume,
+      pan: track.pan,
+      order: index,
+      mixer: track.mixer,
+      ...(track.groupIndex === undefined ? {} : { groupId: track.groupIndex + 1 }),
+    }));
+    createMixerSync({ engine: liveEngine } as unknown as EngineHandle).sync(
+      liveTracks,
+      doc.mixer!.master,
+    );
+
+    const offline = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(offline));
+    const offlineLanes = offline.named('setTrackLanes')[0][1] as Array<{ trackId: number }>;
+    const offlineTrackId = (laneIndex: number) => offlineLanes[laneIndex].trackId;
+    const offlineState = new Map<number, Record<string, unknown>>();
+    const liveState = new Map<number, Record<string, unknown>>();
+    const stateFor = (map: Map<number, Record<string, unknown>>, trackId: number) => {
+      const state = map.get(trackId) ?? {};
+      map.set(trackId, state);
+      return state;
+    };
+    for (const [trackId, gainDb] of liveEngine.setStripGain.mock.calls) {
+      if (typeof trackId === 'number') stateFor(liveState, trackId).gainDb = gainDb;
+    }
+    for (const [trackId, pan] of liveEngine.setStripPan.mock.calls) {
+      if (typeof trackId === 'number') stateFor(liveState, trackId).pan = pan;
+    }
+    for (const [trackId, solo, mute] of liveEngine.setSoloMute.mock.calls) {
+      stateFor(liveState, trackId).soloMute = [solo, mute];
+    }
+    for (const [trackId, delay] of liveEngine.setTrackStripChannelDelaySamples.mock.calls) {
+      stateFor(liveState, trackId).delay = delay;
+    }
+    for (const [trackId, panLaw] of liveEngine.setTrackStripPanLaw.mock.calls) {
+      stateFor(liveState, trackId).panLaw = panLaw;
+    }
+    for (const [trackId, panMode] of liveEngine.setTrackStripPanMode.mock.calls) {
+      stateFor(liveState, trackId).panMode = panMode;
+    }
+    for (const [trackId, left, right] of liveEngine.setTrackStripDualPan.mock.calls) {
+      stateFor(liveState, trackId).dualPan = [left, right];
+    }
+    for (const [, paramId, value] of offline.named('setParameter')) {
+      const id = paramId as number;
+      const laneIndex = (id >>> 8) & 0xff;
+      const kind = id & 0xff;
+      if (
+        (id & 0xffff0000) !== ENGINE_MIXER_TARGET_BASE ||
+        laneIndex === ENGINE_MIXER_LANE_MASTER
+      ) {
+        continue;
+      }
+      const state = stateFor(offlineState, offlineTrackId(laneIndex));
+      if (kind === ENGINE_MIXER_PARAM_FADER_DB) state.gainDb = value;
+      if (kind === 2) state.pan = value;
+    }
+    for (const [, laneIndex, solo, mute] of offline.named('setSoloMute')) {
+      stateFor(offlineState, offlineTrackId(laneIndex as number)).soloMute = [solo, mute];
+    }
+    for (const [, trackId, delay] of offline.named('setTrackStripChannelDelaySamples')) {
+      stateFor(offlineState, trackId as number).delay = delay;
+    }
+    for (const [, trackId, panLaw] of offline.named('setTrackStripPanLaw')) {
+      stateFor(offlineState, trackId as number).panLaw = panLaw;
+    }
+    for (const [, trackId, panMode] of offline.named('setTrackStripPanMode')) {
+      stateFor(offlineState, trackId as number).panMode = panMode;
+    }
+    for (const [, trackId, left, right] of offline.named('setTrackStripDualPan')) {
+      stateFor(offlineState, trackId as number).dualPan = [left, right];
+    }
+
+    expect([...offlineState.entries()].sort()).toEqual([...liveState.entries()].sort());
+  });
+
   it('folds a VCA group offset into the member lane fader', async () => {
     const doc = makeDoc();
     (doc.mixer as { vcaGroups?: unknown }).vcaGroups = [{ id: 'vca-1', name: 'Drums', gainDb: -6 }];
@@ -3812,6 +4064,25 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
     const params = new Map(engine.named('setParameter').map(([, id, value]) => [id, value]));
     // Drums: unity volume + 2 dB strip trim - 6 dB VCA offset.
     expect(params.get(drumsFader)).toBeCloseTo(linearToDb(1) + 2 - 6, 5);
+  });
+
+  it('folds track volume, trim and VCA into fader automation', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].volume = 0.5;
+    (doc.mixer as { vcaGroups?: unknown }).vcaGroups = [{ id: 'vca-1', name: 'Drums', gainDb: -6 }];
+    (doc.tracks[1] as { vcaId?: string }).vcaId = 'vca-1';
+    doc.tracks[1].automation = [
+      { param: 'faderDb', enabled: true, points: [{ ppq: 0, value: -12 }] },
+    ];
+
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    expect(engine.named('setAutomationLane')).toContainEqual([
+      'setAutomationLane',
+      drumsFader,
+      [{ ppq: 0, value: -12 + linearToDb(0.5) + 2 - 6, curveToNext: 0 }],
+    ]);
   });
 
   it('keeps a solo-safe lane audible while another track is soloed', async () => {
@@ -4107,7 +4378,7 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
     expect(engine.named('setAutomationLane')).toContainEqual([
       'setAutomationLane',
       0x4d580001,
-      [{ ppq: 0, value: -12, curveToNext: 0 }],
+      [{ ppq: 0, value: -12 + linearToDb(0.5), curveToNext: 0 }],
     ]);
     expect(engine.named('setAutomationLane')).toContainEqual([
       'setAutomationLane',
