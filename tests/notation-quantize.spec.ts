@@ -54,8 +54,17 @@ function assertInvariants(score: NotatedScore): void {
           expect(event.voice).toBe(voice.voice);
           // Gap-free: each event starts where the previous one ended.
           expect(event.startPpq).toBeCloseTo(cursor, 6);
-          // Stored duration always matches the notated value.
-          expect(event.durationPpq).toBeCloseTo(noteValueToPpq(event.value), 9);
+          // Stored duration normally matches the notated value. A full-measure
+          // rest may use a placeholder value because MusicXML writes it as
+          // `<rest measure="yes"/>` without a `<type>`.
+          const measureRest =
+            event.kind === 'rest' &&
+            voice.events.length === 1 &&
+            event.startPpq === measure.startPpq &&
+            event.durationPpq === measure.lengthPpq;
+          if (!measureRest) {
+            expect(event.durationPpq).toBeCloseTo(noteValueToPpq(event.value), 9);
+          }
           if (event.kind === 'note') {
             expect(event.pitches.length).toBeGreaterThan(0);
             for (let i = 1; i < event.pitches.length; i++) {
@@ -133,6 +142,15 @@ describe('quantizeToScore: score shell', () => {
     expect(score.parts[0].measures).toHaveLength(2);
     expect(voiceEvents(score, 0, 1)).toEqual([r(0, 4, 'whole')]);
     expect(voiceEvents(score, 1, 1)).toEqual([r(4, 4, 'whole')]);
+  });
+
+  it('uses one measure rest for an unrepresentable 5/4 empty measure', () => {
+    const score = quantize(
+      [],
+      baseOptions({ timeSig: { beats: 5, beatUnit: 4 }, clipLengthPpq: 5 }),
+    );
+
+    expect(voiceEvents(score, 0, 1)).toEqual([r(0, 5, 'whole')]);
   });
 
   it('passes through keyFifths, divisions, part id/name, and time signature', () => {
@@ -337,6 +355,34 @@ describe('quantizeToScore: chords', () => {
     expect(voiceEvents(score, 0, 2)[0]).toEqual(n([36], 0, 0.5, 'eighth'));
   });
 
+  it('uses single-staff voices for percussion requested with a grand staff', () => {
+    const score = quantize(
+      [
+        makeNote(36, 0, 0.5, nextId++, { channel: 9 }),
+        makeNote(42, 0, 0.5, nextId++, { channel: 9 }),
+      ],
+      baseOptions({ clef: 'grand', clipLengthPpq: 4 }),
+    );
+
+    expect(score.parts[0].clef).toBe('treble');
+    expect(score.parts[0].measures[0].voices.map((voice) => voice.voice)).toEqual([1, 2]);
+    expect(voiceEvents(score, 0, 1)[0]).toEqual(n([42], 0, 0.5, 'eighth'));
+    expect(voiceEvents(score, 0, 2)[0]).toEqual(n([36], 0, 0.5, 'eighth'));
+  });
+
+  it('keeps kicks in voice 2 even when they do not overlap upper-kit notes', () => {
+    const score = quantize(
+      [
+        makeNote(36, 0, 0.5, nextId++, { channel: 9 }),
+        makeNote(42, 1, 0.5, nextId++, { channel: 9 }),
+      ],
+      baseOptions({ clipLengthPpq: 4 }),
+    );
+
+    expect(voiceEvents(score, 0, 1)).toContainEqual(n([42], 1, 0.5, 'eighth'));
+    expect(voiceEvents(score, 0, 2)).toContainEqual(n([36], 0, 0.5, 'eighth'));
+  });
+
   it('splits simultaneous notes wider than an octave into voices', () => {
     const score = quantize([makeNote(48, 0, 1), makeNote(72, 0, 1)], baseOptions());
     expect(voiceEvents(score, 0, 1)[0]).toEqual(n([72], 0, 1, 'quarter'));
@@ -443,6 +489,23 @@ describe('quantizeToScore: voice separation', () => {
       r(2, 1, 'quarter'),
       r(3, 1, 'quarter'),
     ]);
+  });
+
+  it('omits empty secondary grand-staff voices in later measures', () => {
+    const score = quantize(
+      [
+        makeNote(72, 0, 2),
+        makeNote(76, 1, 1),
+        makeNote(48, 0, 2),
+        makeNote(52, 1, 1),
+        makeNote(74, 4, 1),
+        makeNote(50, 4, 1),
+      ],
+      baseOptions({ clef: 'grand' }),
+    );
+
+    expect(score.parts[0].measures[0].voices.map((voice) => voice.voice)).toEqual([1, 2, 3, 4]);
+    expect(score.parts[0].measures[1].voices.map((voice) => voice.voice)).toEqual([1, 3]);
   });
 
   it('keeps voice 1 present when a grand-staff measure only contains lower staff notes', () => {
@@ -652,6 +715,15 @@ describe('quantizeToScore: duration decomposition', () => {
   it('keeps exactly representable dotted durations whole', () => {
     const score = quantize([makeNote(60, 0, 3)], baseOptions());
     expect(voiceEvents(score, 0, 1)[0]).toEqual(n([60], 0, 3, 'half.'));
+  });
+
+  it('ties an off-beat half note across the 4/4 middle beat', () => {
+    const score = quantize([makeNote(60, 0.5, 2)], baseOptions());
+
+    expect(voiceEvents(score, 0, 1).slice(1, 3)).toEqual([
+      n([60], 0.5, 1.5, 'quarter.', 'start'),
+      n([60], 2, 0.5, 'eighth', 'stop'),
+    ]);
   });
 
   it('splits five 16ths into quarter + 16th at the beat boundary', () => {

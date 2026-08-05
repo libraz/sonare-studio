@@ -731,6 +731,38 @@ describe('serializeMusicXml structure', () => {
     expect(q(add9, 'degree > degree-type').textContent).toBe('add');
   });
 
+  it('preserves extended and altered chord tones as MusicXML kinds and degrees', () => {
+    const score: NotatedScore = {
+      ...grandStaffFixture(),
+      chordSymbols: [
+        { ppq: 0, text: 'C13', rootPc: 0, quality: 4, extensions: [2, 9] },
+        { ppq: 2, text: 'G7(b9,#11)', rootPc: 7, quality: 4, extensions: [1, 6] },
+      ],
+    };
+    const harmonies = qa(parse(serializeMusicXml(score)), 'measure:first-of-type harmony');
+
+    expect(q(harmonies[0], 'kind').getAttribute('text')).toBe('13');
+    expect(
+      qa(harmonies[0], 'degree').map((degree) => [
+        q(degree, 'degree-value').textContent,
+        q(degree, 'degree-alter').textContent,
+      ]),
+    ).toEqual([
+      ['9', '0'],
+      ['13', '0'],
+    ]);
+    expect(q(harmonies[1], 'kind').getAttribute('text')).toBe('7(b9,#11)');
+    expect(
+      qa(harmonies[1], 'degree').map((degree) => [
+        q(degree, 'degree-value').textContent,
+        q(degree, 'degree-alter').textContent,
+      ]),
+    ).toEqual([
+      ['9', '-1'],
+      ['11', '1'],
+    ]);
+  });
+
   it('spells slash-chord basses with the key signature', () => {
     const second = qa(doc, 'measure')[1];
     const slash = qa(second, 'harmony')[1];
@@ -738,6 +770,20 @@ describe('serializeMusicXml structure', () => {
     expect(q(slash, 'bass > bass-step').textContent).toBe('F');
     expect(q(slash, 'bass > bass-alter').textContent).toBe('1');
     expect(q(slash, 'offset').textContent).toBe('1920');
+  });
+
+  it('uses functional flat spellings for borrowed MusicXML chord roots and basses', () => {
+    const score: NotatedScore = {
+      ...grandStaffFixture(),
+      keyFifths: 0,
+      chordSymbols: [{ ppq: 0, text: 'Bb/Ab', rootPc: 10, quality: 0, bassPc: 8 }],
+    };
+    const harmony = q(parse(serializeMusicXml(score)), 'harmony');
+
+    expect(q(harmony, 'root > root-step').textContent).toBe('B');
+    expect(q(harmony, 'root > root-alter').textContent).toBe('-1');
+    expect(q(harmony, 'bass > bass-step').textContent).toBe('A');
+    expect(q(harmony, 'bass > bass-alter').textContent).toBe('-1');
   });
 
   it('preserves roman numerals as alternate functional harmony', () => {
@@ -1329,6 +1375,42 @@ describe('serializeMusicXml beams', () => {
     expect(beams).toEqual(['begin', 'continue', 'end', 'begin', 'continue', 'end']);
   });
 
+  it('uses additive beam groups in 7/8', () => {
+    const eighth: NoteValue = { base: 'eighth', dots: 0 };
+    const score: NotatedScore = {
+      parts: [
+        {
+          id: 'P1',
+          name: 'Lead',
+          clef: 'treble',
+          measures: [
+            {
+              index: 0,
+              startPpq: 0,
+              lengthPpq: 3.5,
+              timeSig: { beats: 7, beatUnit: 8 },
+              voices: [
+                {
+                  voice: 1,
+                  events: [0, 0.5, 1, 1.5, 2, 2.5, 3].map((startPpq, index) =>
+                    note([60 + index], 1, startPpq, 0.5, eighth),
+                  ),
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      keyFifths: 0,
+      divisions: 960,
+    };
+
+    const beams = qa(parse(serializeMusicXml(score)), 'beam[number="1"]').map(
+      (beam) => beam.textContent,
+    );
+    expect(beams).toEqual(['begin', 'continue', 'end', 'begin', 'end', 'begin', 'end']);
+  });
+
   it('keeps a short rest inside a beamed beat group', () => {
     const eighth: NoteValue = { base: 'eighth', dots: 0 };
     const score: NotatedScore = {
@@ -1499,6 +1581,25 @@ describe('serializeMusicXml percussion', () => {
     };
 
     expect(qa(parse(serializeMusicXml(score)), 'direction dynamics > mf')).toHaveLength(1);
+  });
+
+  it('does not repeat the percussion clef when drum-map pitches change register', () => {
+    const score = quantizeToScore(
+      [
+        { id: 1, pitch: 36, velocity: 96, startPpq: 0, durationPpq: 1, channel: 9 },
+        { id: 2, pitch: 42, velocity: 96, startPpq: 4, durationPpq: 1, channel: 9 },
+      ],
+      {
+        divisionPpq: 0.5,
+        timeSig: { beats: 4, beatUnit: 4 },
+        keyFifths: 0,
+        clipStartPpq: 0,
+        clipLengthPpq: 8,
+        clef: 'treble',
+      },
+    );
+
+    expect(qa(parse(serializeMusicXml(score)), 'clef > sign')).toHaveLength(1);
   });
 
   it('does not turn a named drum part into percussion when MIDI channel data says melodic', () => {
@@ -1994,6 +2095,50 @@ describe('serializeMusicXml dynamics', () => {
 });
 
 describe('serializeMusicXml accidentals', () => {
+  it('uses contextual spellings for leading tones, secondary dominants and double sharps', () => {
+    const quarter: NoteValue = { base: 'quarter', dots: 0 };
+    const score: NotatedScore = {
+      parts: [
+        {
+          id: 'P1',
+          name: 'Lead',
+          clef: 'treble',
+          measures: [
+            {
+              index: 0,
+              startPpq: 0,
+              lengthPpq: 4,
+              timeSig: { beats: 4, beatUnit: 4 },
+              voices: [
+                {
+                  voice: 1,
+                  events: [
+                    note([61], 1, 0, 1, quarter), // C# resolving to D
+                    note([62], 1, 1, 1, quarter),
+                    note([57, 60, 62, 66], 1, 2, 1, quarter), // D7 inversion = A–C–D–F#
+                    note([67], 1, 3, 0.5, { base: 'eighth', dots: 0 }), // F## to G#
+                    note([68], 1, 3.5, 0.5, { base: 'eighth', dots: 0 }),
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      keyFifths: -1,
+      divisions: 960,
+    };
+    const document = parse(serializeMusicXml(score));
+    const pitches = qa(document, 'note > pitch');
+    expect(q(pitches[0], 'step').textContent).toBe('C');
+    expect(q(pitches[0], 'alter').textContent).toBe('1');
+    expect(q(pitches[5], 'step').textContent).toBe('F');
+    expect(q(pitches[5], 'alter').textContent).toBe('1');
+    expect(q(pitches[6], 'step').textContent).toBe('F');
+    expect(q(pitches[6], 'alter').textContent).toBe('2');
+    expect(qa(document, 'accidental').map((el) => el.textContent)).toContain('double-sharp');
+  });
+
   it('emits accidentals when a pitch leaves and returns to the measure state', () => {
     const quarter: NoteValue = { base: 'quarter', dots: 0 };
     const score: NotatedScore = {
@@ -2163,7 +2308,7 @@ describe('serializeMusicXml accidentals', () => {
     ]);
   });
 
-  it('uses tied continuations to seed the measure accidental state', () => {
+  it('prints an accidental on a new attack after a tied continuation', () => {
     const half: NoteValue = { base: 'half', dots: 0 };
     const quarter: NoteValue = { base: 'quarter', dots: 0 };
     const score: NotatedScore = {
@@ -2202,6 +2347,7 @@ describe('serializeMusicXml accidentals', () => {
       divisions: 960,
     };
     expect(qa(parse(serializeMusicXml(score)), 'accidental').map((el) => el.textContent)).toEqual([
+      'sharp',
       'sharp',
     ]);
   });

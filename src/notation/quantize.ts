@@ -570,6 +570,23 @@ function separateVoices(units: VoiceUnit[], maxVoices: number): VoiceUnit[][] {
 }
 
 /**
+ * Assigns a drum-set part to its conventional two voices: upper kit material
+ * is voice 1 and kick/low-foot material is voice 2. Each group remains
+ * monophonic, so overlapping notes in one group retain the normal overflow
+ * handling instead of moving between the two engraved voices.
+ */
+function separatePercussionVoices(units: VoiceUnit[]): AssignedVoiceUnits[] {
+  const byGroup: Record<1 | 2, VoiceUnit[]> = { 1: [], 2: [] };
+  for (const unit of units) {
+    byGroup[percussionVoiceGroup(unit.pitches[0])].push(unit);
+  }
+  return ([1, 2] as const).flatMap((group) => {
+    const groupUnits = separateVoices(byGroup[group], 1)[0];
+    return groupUnits ? [{ voice: group as NotatedVoiceNumber, units: groupUnits }] : [];
+  });
+}
+
+/**
  * Grand-staff split rule: a mean pitch at or above the split engraves to the
  * upper staff (1 = treble), below it to the lower staff (2 = bass).
  *
@@ -902,6 +919,10 @@ function assignVoiceUnits(
   grandStaffSplitPitch: number,
 ): AssignedVoiceUnits[] {
   if (clef !== 'grand') {
+    const percussionOnly = units.every(
+      (unit) => unit.channels.length === 1 && unit.channels[0] === GM_PERCUSSION_CHANNEL,
+    );
+    if (percussionOnly && maxVoices >= 2) return separatePercussionVoices(units);
     return separateVoices(units, maxVoices).map((voiceUnits, index) => ({
       voice: (index + 1) as NotatedVoiceNumber,
       units: voiceUnits,
@@ -1066,10 +1087,13 @@ function greedyPieces(start: number, end: number): DurationPiece[] {
  * Pipeline step 5 (notes): decompose one within-measure note segment into
  * tied representable values.
  *
- * Exactly-representable durations stay whole even when they cross beat
- * groups (syncopation is kept, dotted values used when exact); otherwise the
- * segment splits at the next beat-group boundary and both halves recurse,
- * falling back to greedy largest-first packing inside a single group.
+ * Exactly-representable durations stay whole when they are no longer than one
+ * beat group or begin on a group boundary. Longer off-beat durations are tied
+ * at the last group boundary before their end, preserving the central beat of
+ * the measure while avoiding an unnecessarily short first fragment.
+ * Otherwise the segment splits at the next beat-group boundary and both
+ * halves recurse, falling back to greedy largest-first packing inside a
+ * single group.
  */
 function decomposeNote(
   start: number,
@@ -1079,7 +1103,19 @@ function decomposeNote(
 ): DurationPiece[] {
   const exact = exactNoteValue(end - start);
   if (exact) {
-    return [{ startPpq: start, durationPpq: end - start, value: exact }];
+    const groupPosition = (start - measureStartPpq) / groupLen;
+    const startsOnGroupBoundary = Math.abs(groupPosition - Math.round(groupPosition)) <= EPSILON;
+    if (end - start <= groupLen + EPSILON || startsOnGroupBoundary) {
+      return [{ startPpq: start, durationPpq: end - start, value: exact }];
+    }
+    const lastBoundaryIndex = Math.floor((end - measureStartPpq) / groupLen - EPSILON);
+    const boundary = measureStartPpq + lastBoundaryIndex * groupLen;
+    if (boundary > start + EPSILON) {
+      return [
+        ...greedyPieces(start, boundary),
+        ...decomposeNote(boundary, end, measureStartPpq, groupLen),
+      ];
+    }
   }
   const boundary = nextGroupBoundary(start, measureStartPpq, groupLen);
   if (boundary < end - EPSILON) {
@@ -1096,8 +1132,8 @@ function decomposeNote(
  *
  * Unlike notes, rests split at beat-group boundaries even when the total gap
  * is exactly representable (no syncopated rests), except that a gap covering
- * the whole measure becomes a single rest when the measure length is
- * representable.
+ * the whole measure always becomes one measure rest. Its nominal note value
+ * is ignored by the MusicXML serializer, which emits `<rest measure="yes"/>`.
  */
 function decomposeRest(
   start: number,
@@ -1109,10 +1145,15 @@ function decomposeRest(
   const coversMeasure =
     start <= measureStartPpq + EPSILON && end >= measureStartPpq + measureLengthPpq - EPSILON;
   if (coversMeasure) {
-    const exact = exactNoteValue(end - start);
-    if (exact) {
-      return [{ startPpq: start, durationPpq: end - start, value: exact }];
-    }
+    return [
+      {
+        startPpq: start,
+        durationPpq: end - start,
+        // A 5/4 or 5/8 measure has no ordinary single notehead value, but
+        // measure rests deliberately omit `<type>` in MusicXML.
+        value: exactNoteValue(end - start) ?? { base: 'whole', dots: 0 },
+      },
+    ];
   }
   const boundary = nextGroupBoundary(start, measureStartPpq, groupLen);
   if (boundary < end - EPSILON) {
@@ -1315,11 +1356,11 @@ export function quantizeToScore(
   const opts = resolveOptions(options);
   const gridNotes = quantizeToGrid(notes, opts);
   const units = clusterChords(gridNotes);
-  const voiceUnits = assignVoiceUnits(units, opts.clef, opts.maxVoices, opts.grandStaffSplitPitch);
   const clef =
     percussionNotes.length > 0 && pitchedNotes.length === 0
       ? 'treble'
       : (opts.clef ?? chooseClef(gridNotes));
+  const voiceUnits = assignVoiceUnits(units, clef, opts.maxVoices, opts.grandStaffSplitPitch);
   if (opts.estimateFingering) {
     estimateFingeringForUnits(voiceUnits, clef, opts.grandStaffSplitPitch);
   }
@@ -1336,8 +1377,11 @@ export function quantizeToScore(
     for (const entry of perVoiceMeasureEvents) {
       const events = entry.measures[measure.index];
       const staff = clef === 'grand' ? (entry.voice <= 2 ? 1 : 2) : entry.staff;
-      // Voice 1 is always present; higher voices only where they sound.
-      if (entry.voice > 1 && events.length === 0 && clef !== 'grand') continue;
+      // Keep a rest voice for the primary voice of each grand-staff stave
+      // (1 = upper, 3 = lower). Secondary voices only exist where they sound.
+      const primaryVoice =
+        clef === 'grand' ? entry.voice === 1 || entry.voice === 3 : entry.voice === 1;
+      if (!primaryVoice && events.length === 0) continue;
       voices.push(
         fillVoiceMeasure(measure, events, beatGroupPpq(measure.timeSig), entry.voice, staff),
       );

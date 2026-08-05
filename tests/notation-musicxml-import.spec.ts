@@ -513,6 +513,18 @@ describe('importMusicXml global maps', () => {
     const notes = trackNotes(importMusicXml(xml), 0);
     expect(notes).toEqual([{ pitch: 36, velocity: 96, startPpq: 0, durationPpq: 1, channel: 9 }]);
   });
+
+  it('uses the display-position drum map without midi-unpitched metadata', () => {
+    const xml =
+      '<score-partwise version="4.0"><part-list><score-part id="P1"><part-name>Drums</part-name></score-part></part-list>' +
+      '<part id="P1"><measure number="1"><attributes><divisions>1</divisions></attributes>' +
+      '<note><unpitched><display-step>G</display-step><display-octave>5</display-octave></unpitched>' +
+      '<duration>1</duration></note></measure></part></score-partwise>';
+
+    expect(trackNotes(importMusicXml(xml), 0)).toEqual([
+      { pitch: 42, velocity: 96, startPpq: 0, durationPpq: 1, channel: 9 },
+    ]);
+  });
 });
 
 describe('importMusicXml multi-part', () => {

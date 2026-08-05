@@ -377,14 +377,35 @@ function pitchToMidi(pitch: XmlElement, maxNumericAbs: number): number | null {
   return (octave + 1) * 12 + semitone + alter;
 }
 
-/** MIDI note number for an `<unpitched>` display position, or null. */
+/** Common Sonare MusicXML drum display positions, reversed to GM note numbers. */
+const GM_DRUM_BY_DISPLAY_POSITION: Readonly<Record<string, number>> = {
+  F4: 36,
+  G4: 43,
+  A4: 45,
+  B4: 37,
+  C5: 38,
+  D5: 48,
+  E5: 50,
+  F5: 44,
+  G5: 42,
+  A5: 46,
+  B5: 54,
+  C6: 49,
+  D6: 51,
+};
+
+/**
+ * MIDI note number for an `<unpitched>` display position, or null when the
+ * position is malformed. Valid but unmapped positions fall back to snare:
+ * staff placement is a notation convention, not a chromatic MIDI pitch.
+ */
 function unpitchedToMidi(unpitched: XmlElement, maxNumericAbs: number): number | null {
   const step = childText(unpitched, 'display-step');
   const octave = childInt(unpitched, 'display-octave', maxNumericAbs);
   if (step === null || octave === null) return null;
-  const semitone = STEP_SEMITONES[step.toUpperCase()];
-  if (semitone === undefined) return null;
-  return (octave + 1) * 12 + semitone;
+  const normalizedStep = step.toUpperCase();
+  if (STEP_SEMITONES[normalizedStep] === undefined) return null;
+  return GM_DRUM_BY_DISPLAY_POSITION[`${normalizedStep}${octave}`] ?? 38;
 }
 
 /** Reads the `<part-list>` into per-part names and instrument mappings. */

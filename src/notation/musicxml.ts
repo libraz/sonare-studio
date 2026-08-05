@@ -45,7 +45,13 @@ import {
   type ScoreMetadata,
   timeSigLengthPpq,
 } from './model';
-import { type SpelledPitch, type Step, spellPitch } from './pitch-spelling';
+import {
+  type SpelledPitch,
+  type Step,
+  spellChordPitchClass,
+  spellPitch,
+  spellPitchWithContext,
+} from './pitch-spelling';
 import { staffForMeanPitch } from './quantize';
 import { scoreNoteXmlId } from './source-identity';
 
@@ -168,6 +174,27 @@ type BeamIndex = ReadonlyMap<NotatedEvent, ReadonlyArray<string>>;
 
 /** Explicit accidental text by event and pitch index within a note/chord. */
 type AccidentalIndex = ReadonlyMap<NotatedEvent, ReadonlyMap<number, string>>;
+type PitchSpellingIndex = ReadonlyMap<NotatedEvent, ReadonlyArray<SpelledPitch>>;
+
+/** Prefers a tertian root over the lowest pitch so inversions spell correctly. */
+function inferChordRootMidi(pitches: readonly number[]): number | undefined {
+  if (pitches.length < 2) return undefined;
+  const chordIntervals = new Set([0, 3, 4, 6, 7, 8, 10, 11]);
+  let root = pitches[0];
+  let bestScore = -1;
+  for (const candidate of pitches) {
+    const score = pitches.reduce(
+      (total, pitch) =>
+        total + (chordIntervals.has((((pitch - candidate) % 12) + 12) % 12) ? 1 : 0),
+      0,
+    );
+    if (score > bestScore) {
+      root = candidate;
+      bestScore = score;
+    }
+  }
+  return root;
+}
 
 /** Lyric syllables resolved onto note attack events. */
 type LyricIndex = ReadonlyMap<NotatedEvent, ReadonlyArray<NotatedLyric>>;
@@ -792,7 +819,9 @@ function serializePart(
   // does not print the same dynamic at the start of every measure.
   const inferredDynamicsByVoice = new Map<NotatedVoiceNumber, NoteDynamics>();
   for (const [measureIndex, measure] of part.measures.entries()) {
-    const measureClef = clefForMeasure(part.clef, measure, prevClef);
+    // Drum notation keeps one percussion clef; MIDI pitches are drum-map
+    // identities, not a reason to switch between pitched clefs per measure.
+    const measureClef = percussion ? part.clef : clefForMeasure(part.clef, measure, prevClef);
     const keyFifths = score.measureKeyFifths?.[measure.index];
     if (keyFifths !== undefined) activeKeyFifths = keyFifths;
     const percussionLegend =
@@ -924,7 +953,8 @@ function serializeMeasure(
       '<barline location="left"><bar-style>heavy-light</bar-style><repeat direction="forward"/></barline>',
     );
   }
-  const accidentals = buildAccidentalIndex(measure, activeKeyFifths, staffMap);
+  const spellings = buildPitchSpellingIndex(measure, activeKeyFifths);
+  const accidentals = buildAccidentalIndex(measure, activeKeyFifths, staffMap, spellings);
   for (const symbol of chordSymbols) {
     for (const harmony of harmonyXml(symbol, measure, score, activeKeyFifths)) {
       lines.push(harmony);
@@ -950,6 +980,7 @@ function serializeMeasure(
         annotations,
         lyrics,
         accidentals,
+        spellings,
         percussion,
         activeKeyFifths,
         inferredDynamicsByVoice,
@@ -1190,6 +1221,7 @@ function serializeVoice(
   annotations: AnnotationIndex,
   lyrics: LyricIndex,
   accidentals: AccidentalIndex,
+  spellings: PitchSpellingIndex,
   percussion: boolean,
   keyFifths: number,
   inferredDynamicsByVoice: Map<NotatedVoiceNumber, NoteDynamics>,
@@ -1260,6 +1292,7 @@ function serializeVoice(
         lyrics,
         beams,
         accidentals,
+        spellings,
         percussion,
         keyFifths,
       );
@@ -1319,11 +1352,33 @@ function lineSpanDirectionXml(
   return `<direction placement="${placement}"><direction-type><octave-shift type="${type}" size="${size}" number="${lineSpan.number}"/></direction-type>${staffXml}</direction>`;
 }
 
+/** Derives one contextual spelling per sounding event/pitch in a measure. */
+function buildPitchSpellingIndex(measure: NotatedMeasure, keyFifths: number): PitchSpellingIndex {
+  const spellings = new Map<NotatedEvent, ReadonlyArray<SpelledPitch>>();
+  for (const voice of measure.voices) {
+    const events = voice.events.filter((event) => event.kind === 'note');
+    for (let index = 0; index < events.length; index += 1) {
+      const event = events[index];
+      const previousMidi = events[index - 1]?.pitches[0];
+      const nextMidi = events[index + 1]?.pitches[0];
+      const chordRootMidi = inferChordRootMidi(event.pitches);
+      spellings.set(
+        event,
+        event.pitches.map((midi) =>
+          spellPitchWithContext(midi, keyFifths, { previousMidi, nextMidi, chordRootMidi }),
+        ),
+      );
+    }
+  }
+  return spellings;
+}
+
 /** Builds explicit accidentals only when the visible pitch state changes. */
 function buildAccidentalIndex(
   measure: NotatedMeasure,
   keyFifths: number,
   staffMap: ReadonlyMap<NotatedEvent, StaffNumber> | undefined,
+  spellings: PitchSpellingIndex,
 ): AccidentalIndex {
   const accidentals = new Map<NotatedEvent, Map<number, string>>();
   const state = new Map<string, number>();
@@ -1335,7 +1390,7 @@ function buildAccidentalIndex(
     const suppressDisplay = event.tieStop;
     const staff = staffMap?.get(event) ?? 1;
     event.pitches.forEach((midi, pitchIndex) => {
-      const pitch = spellPitch(midi, keyFifths);
+      const pitch = spellings.get(event)?.[pitchIndex] ?? spellPitch(midi, keyFifths);
       const key = `${staff}:${pitch.step}:${pitch.octave}`;
       const current = state.get(key) ?? keySignatureAlter(pitch.step, keyFifths);
       if (!suppressDisplay && pitch.alter !== current) {
@@ -1344,7 +1399,9 @@ function buildAccidentalIndex(
         eventAccidentals.set(pitchIndex, value);
         accidentals.set(event, eventAccidentals);
       }
-      if (pitch.alter !== current) state.set(key, pitch.alter);
+      // A tied continuation belongs to the prior measure's accidental state;
+      // it must not suppress the first newly attacked matching pitch here.
+      if (!suppressDisplay && pitch.alter !== current) state.set(key, pitch.alter);
     });
   }
   return accidentals;
@@ -1361,7 +1418,9 @@ function keySignatureAlter(step: Step, fifths: number): number {
 
 /** MusicXML accidental name for supported spellings. */
 function accidentalName(alter: number): string {
+  if (alter >= 2) return 'double-sharp';
   if (alter > 0) return 'sharp';
+  if (alter <= -2) return 'flat-flat';
   if (alter < 0) return 'flat';
   return 'natural';
 }
@@ -1377,7 +1436,7 @@ function buildBeamIndex(
   staffMap: ReadonlyMap<NotatedEvent, StaffNumber> | undefined,
 ): BeamIndex {
   const beams = new Map<NotatedEvent, string[]>();
-  const groupLen = beatGroupPpq(measure.timeSig);
+  const groupLengths = beamGroupLengthsPpq(measure.timeSig);
   let group: NotatedEvent[] = [];
   let groupStaff: StaffNumber | undefined;
   const flush = () => {
@@ -1388,7 +1447,7 @@ function buildBeamIndex(
   for (const event of voice.events) {
     const staff = staffMap?.get(event);
     const startsNewBeatGroup =
-      group.length > 0 && isBeatGroupBoundary(event.startPpq, measure.startPpq, groupLen);
+      group.length > 0 && isBeamGroupBoundary(event.startPpq, measure.startPpq, groupLengths);
     if (beamLevel(event) === 0 || staff !== groupStaff || startsNewBeatGroup) {
       flush();
       if (beamLevel(event) > 0) {
@@ -1404,20 +1463,55 @@ function buildBeamIndex(
 }
 
 /**
- * Beat-group length used for beaming: denominator beats in simple meters and
- * dotted beats in compound meters such as 6/8.
+ * Returns additive beam-group lengths. Compound meters group by dotted beats;
+ * irregular x/8 and x/16 meters prefer a leading group of three, then groups
+ * of two (for example 5/8 = 3+2 and 7/8 = 3+2+2).
  */
+function beamGroupLengthsPpq(timeSig: NotatedTimeSig): number[] {
+  const beatLen = 4 / timeSig.beatUnit;
+  if (timeSig.beatUnit < 8) return Array.from({ length: timeSig.beats }, () => beatLen);
+
+  const groups: number[] = [];
+  let remaining = timeSig.beats;
+  while (remaining > 0) {
+    if (remaining === 4) {
+      groups.push(2, 2);
+      remaining = 0;
+    } else if (remaining === 2) {
+      groups.push(2);
+      remaining = 0;
+    } else if (remaining >= 3) {
+      groups.push(3);
+      remaining -= 3;
+    } else {
+      groups.push(1);
+      remaining--;
+    }
+  }
+  return groups.map((beats) => beats * beatLen);
+}
+
+/** Returns the conventional beat length used by tempo and roll analysis. */
 function beatGroupPpq(timeSig: NotatedTimeSig): number {
   const beatLen = 4 / timeSig.beatUnit;
   const compound = timeSig.beatUnit >= 8 && timeSig.beats % 3 === 0;
   return compound ? beatLen * 3 : beatLen;
 }
 
-/** Returns true for beat-group boundaries after the measure start. */
-function isBeatGroupBoundary(ppq: number, measureStartPpq: number, groupLen: number): boolean {
+/** Returns true for additive beam-group boundaries after the measure start. */
+function isBeamGroupBoundary(
+  ppq: number,
+  measureStartPpq: number,
+  groupLengths: readonly number[],
+): boolean {
   if (ppq <= measureStartPpq + PPQ_EPSILON) return false;
-  const rel = (ppq - measureStartPpq) / groupLen;
-  return Math.abs(rel - Math.round(rel)) < PPQ_EPSILON;
+  let boundary = measureStartPpq;
+  for (const length of groupLengths) {
+    boundary += length;
+    if (Math.abs(ppq - boundary) < PPQ_EPSILON) return true;
+    if (ppq < boundary) return false;
+  }
+  return false;
 }
 
 /** Returns the number of beams required by an event's notated value. */
@@ -1537,6 +1631,7 @@ function pushNoteEvent(
   lyrics: LyricIndex,
   beams: BeamIndex,
   accidentals: AccidentalIndex,
+  spellings: PitchSpellingIndex,
   percussion: boolean,
   keyFifths: number,
 ): void {
@@ -1563,7 +1658,7 @@ function pushNoteEvent(
         : '';
     const pitch = eventPercussion
       ? unpitchedXml(display ?? percussionDisplay(midi))
-      : pitchXml(spellPitch(midi, keyFifths));
+      : pitchXml(spellings.get(event)?.[pitchIndex] ?? spellPitch(midi, keyFifths));
     const accidental = eventPercussion
       ? ''
       : accidentalXml(accidentals.get(event)?.get(pitchIndex));
@@ -1940,14 +2035,14 @@ function harmonyXml(
   if (!isPitchClass(symbol.rootPc)) {
     return [];
   }
-  const root = spellPitch(GRAND_STAFF_SPLIT_MIDI + symbol.rootPc, keyFifths);
+  const root = spellChordPitchClass(symbol.rootPc, keyFifths);
   const rootAlter = root.alter === 0 ? '' : `<root-alter>${root.alter}</root-alter>`;
   const rootXml = `<root><root-step>${root.step}</root-step>${rootAlter}</root>`;
   const kindXml = chordKindXml(symbol);
   const degreeXml = chordDegreeXml(symbol);
   let bassXml = '';
   if (isPitchClass(symbol.bassPc)) {
-    const bass = spellPitch(GRAND_STAFF_SPLIT_MIDI + symbol.bassPc, keyFifths);
+    const bass = spellChordPitchClass(symbol.bassPc, keyFifths);
     const bassAlter = bass.alter === 0 ? '' : `<bass-alter>${bass.alter}</bass-alter>`;
     bassXml = `<bass><bass-step>${bass.step}</bass-step>${bassAlter}</bass>`;
   }
@@ -1972,15 +2067,88 @@ function chordKindXml(symbol: NotatedChordSymbol): string {
   if (kindName === undefined) {
     return `<kind text="${escapeXml(symbol.text)}">other</kind>`;
   }
-  const text = quality === undefined ? undefined : CHORD_QUALITY_TEXT.get(quality);
+  const text =
+    chordKindText(symbol) ?? (quality === undefined ? undefined : CHORD_QUALITY_TEXT.get(quality));
   const textXml = text === undefined ? '' : ` text="${escapeXml(text)}"`;
   return `<kind${textXml}>${kindName}</kind>`;
 }
 
-/** Adds explicit MusicXML degree data for add9 chord qualities. */
+/** Returns a conventional visible suffix for a base quality plus extensions. */
+function chordKindText(symbol: NotatedChordSymbol): string | undefined {
+  const extensions = normalizedChordExtensions(symbol.extensions);
+  if (extensions.length === 0) return undefined;
+  const key = `${symbol.quality ?? -1}:${extensions.join(',')}`;
+  return (
+    (
+      {
+        '0:9': '6',
+        '1:9': 'm6',
+        '4:1,6': '7(b9,#11)',
+        '4:1,9': '13b9',
+        '4:2,5': '11',
+        '4:2,9': '13',
+        '4:3,8': '7(#9,b13)',
+        '4:9': '13',
+        '8:10': '7sus4',
+        '8:2,10': '9sus4',
+      } as Readonly<Record<string, string>>
+    )[key] ?? undefined
+  );
+}
+
+/** Keeps extension pitch classes in deterministic, valid MusicXML order. */
+function normalizedChordExtensions(extensions: ReadonlyArray<number> | undefined): number[] {
+  if (extensions === undefined) return [];
+  return [
+    ...new Set(
+      extensions.filter(
+        (extension) => Number.isInteger(extension) && extension > 0 && extension < 12,
+      ),
+    ),
+  ].sort((a, b) => a - b);
+}
+
+/** Adds explicit MusicXML degree data for non-intrinsic chord tones. */
 function chordDegreeXml(symbol: NotatedChordSymbol): string {
-  if (symbol.quality !== 10 && symbol.quality !== 11) return '';
-  return '<degree><degree-value>9</degree-value><degree-alter>0</degree-alter><degree-type>add</degree-type></degree>';
+  const extensions = new Set(normalizedChordExtensions(symbol.extensions));
+  if (symbol.quality === 10 || symbol.quality === 11) extensions.add(2);
+  return [...extensions]
+    .map((extension) => chordDegreeForExtension(extension, symbol.quality))
+    .filter((degree): degree is { value: number; alter: number } => degree !== undefined)
+    .map(
+      ({ value, alter }) =>
+        `<degree><degree-value>${value}</degree-value><degree-alter>${alter}</degree-alter><degree-type>add</degree-type></degree>`,
+    )
+    .join('');
+}
+
+/** Maps a root-relative extension pitch class to a conventional chord degree. */
+function chordDegreeForExtension(
+  extension: number,
+  quality: number | undefined,
+): { value: number; alter: number } | undefined {
+  switch (extension) {
+    case 1:
+      return { value: 9, alter: -1 };
+    case 2:
+      return { value: 9, alter: 0 };
+    case 3:
+      return { value: 9, alter: 1 };
+    case 5:
+      return { value: 11, alter: 0 };
+    case 6:
+      return { value: 11, alter: 1 };
+    case 8:
+      return { value: 13, alter: -1 };
+    case 9:
+      return { value: quality === 0 || quality === 1 ? 6 : 13, alter: 0 };
+    case 10:
+      return { value: 7, alter: -1 };
+    case 11:
+      return { value: 7, alter: 0 };
+    default:
+      return undefined;
+  }
 }
 
 /**
