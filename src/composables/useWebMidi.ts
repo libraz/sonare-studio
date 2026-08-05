@@ -118,6 +118,13 @@ export interface WebMidiHandle {
    * connected rebinds automatically.
    */
   selectedInputId: Ref<string | null>;
+  /**
+   * Input ids handled elsewhere and kept out of the musical path — a control
+   * surface reports its buttons as note-ons, which would otherwise both play
+   * the instrument and land in a recording take. Changing this while connected
+   * rebinds automatically.
+   */
+  excludedInputIds: Ref<readonly string[]>;
   /** True while a binding to the engine is active. */
   connected: Ref<boolean>;
   /** Message of the last connect failure, or null. */
@@ -153,11 +160,19 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
   const available = ref<boolean | null>(null);
   const inputs = ref<WebMidiInputInfo[]>([]);
   const selectedInputId = ref<string | null>(null);
+  const excludedInputIds = ref<readonly string[]>([]);
   const connected = ref(false);
   const error = ref<string | null>(null);
 
   let binding: WebMidiBinding | null = null;
   let boundEngine: RealtimeEngine | null = null;
+  // Survives disconnect so a rebind can be driven by a port becoming musical
+  // again, which is the one transition that starts from a closed binding.
+  let lastEngine: RealtimeEngine | null = null;
+  // Exclusion set the in-flight or current binding was built for. Recorded
+  // synchronously so the watcher below cannot restart a connect that is already
+  // being made for the very same set.
+  let boundExclusionKey = '';
   let detachListeners: Array<() => void> = [];
   let generation = 0;
   let disposed = false;
@@ -217,8 +232,10 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
   function attachNoteListeners(target = binding): void {
     removeNoteListeners();
     if (!target || disposed) return;
+    const excluded = new Set(excludedInputIds.value);
     for (const [id, input] of target.access.inputs) {
       if (selectedInputId.value !== null && id !== selectedInputId.value) continue;
+      if (excluded.has(id)) continue;
       if (input.addEventListener && input.removeEventListener) {
         const listener = (event: MidiMessageEventLike): void => handleMessage(id, event);
         input.addEventListener('midimessage', listener);
@@ -253,9 +270,43 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
     }
   }
 
+  /** Stable key of the current exclusion set, for change detection. */
+  function exclusionKey(): string {
+    return [...excludedInputIds.value].join('|');
+  }
+
+  /**
+   * Input ids to bind, or null to bind every input.
+   *
+   * `bindWebMidi` treats an empty id list as "bind everything", so an exclusion
+   * can never be expressed as `[]` — the caller must skip binding instead. The
+   * port list is read through a fresh access request, which needs no new
+   * permission prompt once one has been granted.
+   */
+  async function boundInputIds(): Promise<string[] | null> {
+    const selectedId = selectedInputId.value;
+    const excluded = new Set(excludedInputIds.value);
+    if (selectedId !== null) return excluded.has(selectedId) ? [] : [selectedId];
+    if (excluded.size === 0) return null;
+    const nav = navigator as unknown as {
+      requestMIDIAccess?(options?: { sysex?: boolean }): Promise<{
+        inputs: Iterable<readonly [string, { name?: string | null; manufacturer?: string | null }]>;
+      }>;
+    };
+    if (typeof nav.requestMIDIAccess !== 'function') return null;
+    const access = await nav.requestMIDIAccess({ sysex: false });
+    const ids: string[] = [];
+    for (const [id] of access.inputs) {
+      if (!excluded.has(id)) ids.push(id);
+    }
+    return ids;
+  }
+
   async function connect(engine: RealtimeEngine): Promise<boolean> {
     if (disposed) return false;
     error.value = null;
+    lastEngine = engine;
+    boundExclusionKey = exclusionKey();
     disconnect();
     const connectGeneration = generation;
     const selectedId = selectedInputId.value;
@@ -269,10 +320,19 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
       if (!active()) return false;
       available.value = wasm.isWebMidiAvailable();
       if (!available.value) return false;
+      const inputIds = await boundInputIds();
+      if (!active()) return false;
+      if (inputIds !== null && inputIds.length === 0) {
+        // Every port belongs to a control surface (or the selected one does):
+        // there is no musical input to route, which is a valid state, not a
+        // failure.
+        connected.value = false;
+        return false;
+      }
       let createdBinding: WebMidiBinding | null = null;
       const created = await wasm.bindWebMidi(engine, {
         destinationId: options.destinationId,
-        ...(selectedId !== null ? { inputIds: [selectedId] } : {}),
+        ...(inputIds !== null ? { inputIds } : {}),
         onInputsChanged: (list) => {
           if (!active() || !createdBinding || binding !== createdBinding) return;
           inputs.value = list;
@@ -310,12 +370,29 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
     }
   });
 
+  // Assigning or releasing a control surface changes which ports are musical;
+  // the engine route has to follow, so rebind against the surviving engine.
+  watch(exclusionKey, (key) => {
+    if (key === boundExclusionKey) return;
+    if (lastEngine) void connect(lastEngine);
+  });
+
   if (getCurrentScope()) {
     onScopeDispose(() => {
       disposed = true;
+      lastEngine = null;
       disconnect();
     });
   }
 
-  return { available, inputs, selectedInputId, connected, error, connect, disconnect };
+  return {
+    available,
+    inputs,
+    selectedInputId,
+    excludedInputIds,
+    connected,
+    error,
+    connect,
+    disconnect,
+  };
 }

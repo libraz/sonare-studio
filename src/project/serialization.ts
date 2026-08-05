@@ -37,6 +37,7 @@ import {
   type MixerSnapshotTrack,
 } from './command/mixer-snapshots';
 import { clearHistory } from './commands';
+import { type ControlSurfaceSettings, controlSurfaceSettingsAreDefault } from './control-surface';
 import type { TrackExpressionMap } from './expression-map';
 import {
   cloneInstrument,
@@ -425,6 +426,8 @@ export interface ProjectDocument {
   score?: DocumentScoreSettings;
   /** MIDI-learn CC bindings; absent/empty = none. */
   midiCcBindings?: DocumentMidiCcBinding[];
+  /** Control-surface configuration; absent = defaults (no surface). */
+  controlSurface?: ControlSurfaceSettings;
   /** Persisted mixer snapshot slots; absent/empty = none. */
   mixerSnapshots?: DocumentMixerSnapshotSlots;
 }
@@ -978,6 +981,11 @@ export function serializeProject(): ProjectDocument {
         a.target < b.target ? -1 : a.target > b.target ? 1 : 0,
       );
     }
+  }
+  // The surface configuration is rig-shaped rather than musical, so an
+  // all-default one is omitted to keep untouched documents byte-identical.
+  if (!controlSurfaceSettingsAreDefault(store.controlSurface)) {
+    doc.controlSurface = { ...store.controlSurface };
   }
   const mixerSnapshots = toDocumentMixerSnapshotSlots(exportMixerSnapshotSlots(), store.tracks);
   if (mixerSnapshots) doc.mixerSnapshots = mixerSnapshots;

@@ -3,12 +3,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { effectScope } from 'vue';
 import { useMidiLearn } from '@/composables/useMidiLearn';
 import { useProjectStore } from '@/project/store';
+import type { EditorTrack } from '@/project/types';
 import {
   ccToGainDb,
   ccToLogRange,
   ccToPan,
   ccToRange,
   type MidiCcBinding,
+  midiLearnBankActionTargetId,
+  midiLearnBankTargetId,
   midiLearnEqTargetId,
   midiLearnInsertTargetId,
   midiLearnInstrumentTargetId,
@@ -113,6 +116,21 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
 });
+
+/** Builds `count` mirror tracks with ids 100, 101, ... in display order. */
+function trackList(count: number): EditorTrack[] {
+  return Array.from({ length: count }, (_, index) => ({
+    id: 100 + index,
+    name: `Track ${index + 1}`,
+    color: '#60a5fa',
+    kind: 'midi' as const,
+    mute: false,
+    solo: false,
+    volume: 1,
+    pan: 0,
+    order: index,
+  }));
+}
 
 describe('useMidiLearn', () => {
   it('binds the next CC to the armed target and applies it audibly', () => {
@@ -245,6 +263,75 @@ describe('useMidiLearn', () => {
     learn.handleCc({ channel: 0, controller: 118, value: 0 });
     expect(play).toHaveBeenCalledTimes(1);
     expect(stop).not.toHaveBeenCalled();
+  });
+
+  it('drives the track a bank slot currently points at', () => {
+    const store = useProjectStore();
+    store.tracks = trackList(4);
+    store.controlSurface = { ...store.controlSurface, bankSize: 2, bankOffset: 0 };
+    const learn = useMidiLearn();
+    learn.armId(midiLearnBankTargetId(1, 'gain'));
+
+    learn.handleCc({ channel: 0, controller: 81, value: 100 });
+    expect(setStripGain).toHaveBeenCalledWith(101, ccToGainDb(100), { commit: false });
+
+    // Paging the bank re-points the same physical fader at another track,
+    // without re-learning the binding.
+    store.controlSurface = { ...store.controlSurface, bankOffset: 2 };
+    learn.handleCc({ channel: 0, controller: 81, value: 100 });
+    expect(setStripGain).toHaveBeenLastCalledWith(103, ccToGainDb(100), { commit: false });
+  });
+
+  it('pages the bank window from bound navigation buttons', () => {
+    const store = useProjectStore();
+    store.tracks = trackList(10);
+    store.controlSurface = { ...store.controlSurface, bankSize: 8, bankOffset: 0 };
+    const learn = useMidiLearn();
+    learn.armId(midiLearnBankActionTargetId('next'));
+    learn.handleCc({ channel: 0, controller: 47, value: 127 });
+    // Ten tracks over eight strips: the last full page starts at track 2.
+    expect(store.controlSurface.bankOffset).toBe(2);
+
+    // The release must not page a second time.
+    learn.handleCc({ channel: 0, controller: 47, value: 0 });
+    expect(store.controlSurface.bankOffset).toBe(2);
+
+    learn.armId(midiLearnBankActionTargetId('home'));
+    learn.handleCc({ channel: 0, controller: 48, value: 127 });
+    expect(store.controlSurface.bankOffset).toBe(0);
+  });
+
+  it('leaves a slot past the last track inert without dropping its binding', () => {
+    const store = useProjectStore();
+    store.tracks = trackList(2);
+    store.controlSurface = { ...store.controlSurface, bankSize: 8, bankOffset: 0 };
+    const learn = useMidiLearn();
+    const id = midiLearnBankTargetId(6, 'mute');
+    learn.armId(id);
+
+    learn.handleCc({ channel: 0, controller: 90, value: 127 });
+
+    expect(setTrackMute).not.toHaveBeenCalled();
+    // The strip is simply unused at this bank position; the binding stays so it
+    // works again once the window moves.
+    expect(learn.bindingForId(id)).toEqual({ channel: 0, controller: 90 });
+  });
+
+  it('routes slot arm and select through the session handlers', () => {
+    const store = useProjectStore();
+    store.tracks = trackList(4);
+    store.controlSurface = { ...store.controlSurface, bankSize: 8, bankOffset: 0 };
+    const toggleTrackArm = vi.fn();
+    const selectTrack = vi.fn();
+    const learn = useMidiLearn({ toggleTrackArm, selectTrack });
+
+    learn.armId(midiLearnBankTargetId(2, 'arm'));
+    learn.handleCc({ channel: 0, controller: 60, value: 127 });
+    learn.armId(midiLearnBankTargetId(3, 'select'));
+    learn.handleCc({ channel: 0, controller: 61, value: 127 });
+
+    expect(toggleTrackArm).toHaveBeenCalledWith(102);
+    expect(selectTrack).toHaveBeenCalledWith(103);
   });
 
   it('keeps a transport binding when no handler is wired', () => {

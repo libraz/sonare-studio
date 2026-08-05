@@ -300,6 +300,57 @@ describe('useWebMidi', () => {
     expect(webMidi.error.value).toBe('close failed');
   });
 
+  it('keeps a control-surface port out of the engine binding and the callbacks', async () => {
+    const surface = new FakeMidiInput();
+    const keyboard = wasmMock.input as FakeMidiInput;
+    wasmMock.bindWebMidi.mockImplementation(async () => ({
+      access: {
+        inputs: new Map([
+          ['input-1', keyboard],
+          ['surface-1', surface],
+        ]),
+      },
+      inputs: () => [
+        { id: 'input-1', name: 'Controller' },
+        { id: 'surface-1', name: 'MCU' },
+      ],
+      close: wasmMock.close,
+    }));
+    (navigator as unknown as Record<string, unknown>).requestMIDIAccess = async () => ({
+      inputs: new Map([
+        ['input-1', keyboard],
+        ['surface-1', surface],
+      ]),
+    });
+    const onNoteOn = vi.fn();
+    const webMidi = useWebMidi({ onNoteOn });
+    webMidi.excludedInputIds.value = ['surface-1'];
+    await webMidi.connect({} as never);
+
+    // The engine only sees the musical port, so a surface button never reaches
+    // the instrument.
+    expect(wasmMock.bindWebMidi.mock.calls[0][1]).toMatchObject({ inputIds: ['input-1'] });
+    // ...and its note-ons never reach preview / step input / recording either.
+    surface.send([0x90, 60, 100]);
+    expect(onNoteOn).not.toHaveBeenCalled();
+    keyboard.send([0x90, 60, 100]);
+    expect(onNoteOn).toHaveBeenCalledTimes(1);
+  });
+
+  it('binds nothing rather than everything when the surface owns the only port', async () => {
+    (navigator as unknown as Record<string, unknown>).requestMIDIAccess = async () => ({
+      inputs: new Map([['input-1', wasmMock.input as FakeMidiInput]]),
+    });
+    const webMidi = useWebMidi();
+    webMidi.excludedInputIds.value = ['input-1'];
+
+    // An empty id list means "bind every input" to the library, so the binding
+    // has to be skipped instead.
+    await expect(webMidi.connect({} as never)).resolves.toBe(false);
+    expect(wasmMock.bindWebMidi).not.toHaveBeenCalled();
+    expect(webMidi.error.value).toBeNull();
+  });
+
   it('never publishes a permission result that resolves after scope disposal', async () => {
     const pending = deferred<ReturnType<typeof makeBinding>>();
     wasmMock.bindWebMidi.mockReturnValue(pending.promise);

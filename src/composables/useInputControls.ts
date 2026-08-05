@@ -1,4 +1,5 @@
-import { computed, getCurrentScope, onScopeDispose, type Ref, ref } from 'vue';
+import { computed, getCurrentScope, onScopeDispose, type Ref, ref, watch } from 'vue';
+import { useControlSurface } from '@/composables/useControlSurface';
 import { useMidiLearn } from '@/composables/useMidiLearn';
 import { useMusicTyping } from '@/composables/useMusicTyping';
 import type { LiveMidiChannelVoiceMessage } from '@/composables/useNotePreview';
@@ -69,6 +70,22 @@ export interface InputControlsOptions {
    * transport bindings inert (they still persist with the project).
    */
   transportActions?: Partial<Record<MidiLearnTransportAction, () => void>>;
+  /** Moves the playhead back (a surface REWIND button). */
+  rewind?: () => void;
+  /** Moves the playhead forward (a surface FAST-FORWARD button). */
+  forward?: () => void;
+  /** Toggles a track's record arm from a surface or a learned button. */
+  toggleTrackArm?: (trackId: number) => void;
+  /** Focuses a track from a surface SELECT button. */
+  selectTrack?: (trackId: number) => void;
+  /** True while the transport rolls; lights a surface's PLAY lamp. */
+  isPlaying?: Ref<boolean>;
+  /** True while recording; lights a surface's RECORD lamp. */
+  isRecording?: Ref<boolean>;
+  /** True while cycle is enabled; lights a surface's CYCLE lamp. */
+  isLooping?: Ref<boolean>;
+  /** Record-armed tracks; lights a surface's ARM lamps. */
+  armedTrackIds?: Ref<readonly number[]>;
   runAction: RunAction;
 }
 
@@ -93,9 +110,23 @@ export function useInputControls(options: InputControlsOptions) {
     stepInput,
   });
 
-  const midiLearn = useMidiLearn(
-    options.transportActions === undefined ? {} : { transport: options.transportActions },
-  );
+  const midiLearn = useMidiLearn({
+    ...(options.transportActions === undefined ? {} : { transport: options.transportActions }),
+    ...(options.toggleTrackArm === undefined ? {} : { toggleTrackArm: options.toggleTrackArm }),
+    ...(options.selectTrack === undefined ? {} : { selectTrack: options.selectTrack }),
+  });
+  const controlSurface = useControlSurface({
+    learn: midiLearn,
+    ...(options.transportActions === undefined ? {} : { transport: options.transportActions }),
+    ...(options.rewind === undefined ? {} : { rewind: options.rewind }),
+    ...(options.forward === undefined ? {} : { forward: options.forward }),
+    ...(options.toggleTrackArm === undefined ? {} : { toggleTrackArm: options.toggleTrackArm }),
+    ...(options.selectTrack === undefined ? {} : { selectTrack: options.selectTrack }),
+    ...(options.isPlaying === undefined ? {} : { isPlaying: options.isPlaying }),
+    ...(options.isRecording === undefined ? {} : { isRecording: options.isRecording }),
+    ...(options.isLooping === undefined ? {} : { isLooping: options.isLooping }),
+    ...(options.armedTrackIds === undefined ? {} : { armedTrackIds: options.armedTrackIds }),
+  });
   const midiLearnOpen = ref(false);
   const webMidi = useWebMidi({
     // Live MIDI keys sustain through the audible engine: note-on rings until the
@@ -153,6 +184,17 @@ export function useInputControls(options: InputControlsOptions) {
     },
   });
 
+  // A surface's buttons arrive as note-ons. Keeping its port out of the engine
+  // binding is what stops every button press from playing the instrument and
+  // landing in a recording take.
+  watch(
+    controlSurface.excludedInputIds,
+    (next) => {
+      webMidi.excludedInputIds.value = next;
+    },
+    { immediate: true },
+  );
+
   let midiRoutingEngine: RealtimeEngine | null = null;
 
   function toggleMusicTyping(): void {
@@ -169,8 +211,14 @@ export function useInputControls(options: InputControlsOptions) {
     return runAction(async () => {
       const wasm = await options.ensureWasm();
       if (!midiRoutingEngine) midiRoutingEngine = new wasm.RealtimeEngine();
+      // The surface claims its port first so the musical binding can exclude it
+      // in the same pass instead of briefly routing it to the instrument.
+      await controlSurface.refresh();
       const ok = await webMidi.connect(midiRoutingEngine);
-      if (!ok) {
+      // A surface that owns the only port leaves nothing musical to bind, which
+      // reports as `false` with no failure recorded — not something to surface
+      // as an error.
+      if (!ok && (webMidi.error.value !== null || webMidi.available.value === false)) {
         errorMessage.value = webMidi.error.value ?? 'Web MIDI is unavailable in this browser.';
       }
     });
@@ -193,6 +241,7 @@ export function useInputControls(options: InputControlsOptions) {
     midiLearnOpen,
     musicTyping,
     webMidi,
+    controlSurface,
     connectWebMidi,
     toggleMusicTyping,
     toggleStepInput,

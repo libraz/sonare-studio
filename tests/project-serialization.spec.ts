@@ -48,7 +48,13 @@ import { extractSmfSysEx } from '@/project/smf';
 import { useProjectStore } from '@/project/store';
 import { createTemplate } from '@/project/templates';
 import { MAJOR_MODE_MASK } from '@/project/types';
-import { midiLearnBusStripControlTargetId, midiLearnMasteringTargetId } from '@/ui/midi/midi-learn';
+import {
+  midiLearnBankActionTargetId,
+  midiLearnBankTargetId,
+  midiLearnBusStripControlTargetId,
+  midiLearnMasteringTargetId,
+  midiLearnTransportTargetId,
+} from '@/ui/midi/midi-learn';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -629,6 +635,69 @@ describe('project serialization', () => {
     expect(store.midiCcBindings.size).toBe(10);
     // Re-serializing the loaded project yields the same document.
     expect(serializeProject()).toEqual(doc);
+  });
+
+  it('round-trips session-wide transport and bank-slot bindings', async () => {
+    buildSampleProject(store);
+    store.midiCcBindings.set(midiLearnTransportTargetId('play'), { channel: 0, controller: 118 });
+    store.midiCcBindings.set(midiLearnBankTargetId(2, 'gain'), { channel: 0, controller: 22 });
+    store.midiCcBindings.set(midiLearnBankActionTargetId('next'), { channel: 0, controller: 47 });
+
+    const doc = serializeProject();
+    // These drive the session rather than a strip, so they are stored verbatim
+    // instead of being rewritten to a positional track index.
+    expect(doc.midiCcBindings).toContainEqual({
+      target: 'transport:play',
+      channel: 0,
+      controller: 118,
+    });
+    expect(doc.midiCcBindings).toContainEqual({
+      target: 'bank:2:gain',
+      channel: 0,
+      controller: 22,
+    });
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+
+    expect(store.midiCcBindings.get('transport:play')).toEqual({ channel: 0, controller: 118 });
+    expect(store.midiCcBindings.get('bank:2:gain')).toEqual({ channel: 0, controller: 22 });
+    expect(store.midiCcBindings.get('bank:next')).toEqual({ channel: 0, controller: 47 });
+  });
+
+  it('omits a default control surface and restores a configured one', async () => {
+    buildSampleProject(store);
+    // A third track leaves room for a two-strip window to sit off the first
+    // track, which is what the offset round-trip has to prove.
+    addTrack({ name: 'Keys' });
+    expect(serializeProject().controlSurface).toBeUndefined();
+
+    store.controlSurface = {
+      protocol: 'mcu',
+      bankSize: 2,
+      bankOffset: 1,
+      inputPortId: 'in-1',
+      outputPortId: 'out-1',
+      feedback: true,
+    };
+    const doc = serializeProject();
+    expect(doc.controlSurface).toEqual(store.controlSurface);
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    expect(store.controlSurface).toEqual({
+      protocol: 'mcu',
+      bankSize: 2,
+      bankOffset: 1,
+      inputPortId: 'in-1',
+      outputPortId: 'out-1',
+      feedback: true,
+    });
+
+    // A window saved on a larger session clamps onto a track that exists here.
+    await loadProjectDocument({
+      ...(JSON.parse(JSON.stringify(doc)) as ProjectDocument),
+      controlSurface: { ...store.controlSurface, bankOffset: 400 },
+    });
+    expect(store.controlSurface.bankOffset).toBe(1);
   });
 
   it('loading defaults absent automation to [] and drops malformed entries', async () => {

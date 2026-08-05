@@ -4,7 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import MidiLearnPanel from '@/components/shell/MidiLearnPanel.vue';
 import { useMidiLearn } from '@/composables/useMidiLearn';
 import { useProjectStore } from '@/project/store';
-import { midiLearnTransportTargetId } from '@/ui/midi/midi-learn';
+import { en } from '@/ui/i18n/en';
+import { ja } from '@/ui/i18n/ja';
+import { midiLearnBankTargetId, midiLearnTransportTargetId } from '@/ui/midi/midi-learn';
 
 vi.mock('@/project/commands', () => ({
   setStripGain: vi.fn(),
@@ -59,7 +61,11 @@ describe('MidiLearnPanel', () => {
     expect(names.some((n) => n.includes('Drums'))).toBe(true);
     expect(names.some((n) => n.includes('Bass'))).toBe(true);
     // Master + 2 tracks, two bind buttons each (transport rows bind separately).
-    expect((wrapper as VueWrapper).findAll('.ml-bind:not(.ml-bind-transport)')).toHaveLength(6);
+    expect(
+      (wrapper as VueWrapper).findAll(
+        '.ml-bind:not(.ml-bind-transport):not(.ml-bind-bank):not(.ml-bind-bank-nav)',
+      ),
+    ).toHaveLength(6);
   });
 
   it('exposes every transport action as its own bindable row', async () => {
@@ -73,7 +79,9 @@ describe('MidiLearnPanel', () => {
 
   it('arms a target on click and shows it listening', async () => {
     const learn = mountPanel();
-    const masterVol = (wrapper as VueWrapper).findAll('.ml-bind:not(.ml-bind-transport)')[0];
+    const masterVol = (wrapper as VueWrapper).findAll(
+      '.ml-bind:not(.ml-bind-transport):not(.ml-bind-bank):not(.ml-bind-bank-nav)',
+    )[0];
     expect(masterVol.text()).toBe('learn');
 
     await masterVol.trigger('click');
@@ -106,7 +114,9 @@ describe('MidiLearnPanel', () => {
     store.midiCcBindings.set('instrument:2:cutoffHz', { channel: 1, controller: 74 });
     await (wrapper as VueWrapper).vm.$nextTick();
 
-    const rows = (wrapper as VueWrapper).findAll('.ml-device-row:not(.ml-transport-row)');
+    const rows = (wrapper as VueWrapper).findAll(
+      '.ml-device-row:not(.ml-transport-row):not(.ml-bank-nav-row)',
+    );
     expect(rows).toHaveLength(2);
     const devices = (wrapper as VueWrapper).find('.ml-devices:not(.ml-transport)').text();
     expect(devices).toContain('Drums · Insert 1 · Threshold Db');
@@ -120,7 +130,7 @@ describe('MidiLearnPanel', () => {
 
   it('disables Clear all until something is bound or armed', async () => {
     const learn = mountPanel();
-    const clearAll = (wrapper as VueWrapper).find('.ml-btn');
+    const clearAll = (wrapper as VueWrapper).find('.ml-foot .ml-btn');
     expect(clearAll.attributes('disabled')).toBeDefined();
 
     learn.arm('pan', 2);
@@ -141,5 +151,90 @@ describe('MidiLearnPanel', () => {
 
     document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
     expect((wrapper as VueWrapper).emitted('close')).toHaveLength(2);
+  });
+});
+
+describe('MidiLearnPanel control surface', () => {
+  it('selects the surface protocol into the project', async () => {
+    mountPanel();
+    const store = useProjectStore();
+    const select = (wrapper as VueWrapper).find('.ml-surface select');
+
+    await select.setValue('mcu');
+
+    expect(store.controlSurface.protocol).toBe('mcu');
+  });
+
+  it('warns that the HUI mapping is unverified', async () => {
+    mountPanel();
+    const store = useProjectStore();
+    expect((wrapper as VueWrapper).find('.ml-surface-warning').exists()).toBe(false);
+
+    store.controlSurface = { ...store.controlSurface, protocol: 'hui' };
+    await (wrapper as VueWrapper).vm.$nextTick();
+
+    expect((wrapper as VueWrapper).find('.ml-surface-warning').exists()).toBe(true);
+  });
+
+  it('learns a bank slot rather than a fixed track', async () => {
+    const learn = mountPanel();
+    const slotButton = (wrapper as VueWrapper).findAll('.ml-bind-bank')[0];
+
+    await slotButton.trigger('click');
+    expect(learn.isArmedId(midiLearnBankTargetId(0, 'gain'))).toBe(true);
+
+    learn.handleCc({ channel: 0, controller: 20, value: 64 });
+    await (wrapper as VueWrapper).vm.$nextTick();
+    expect(learn.bindingForId(midiLearnBankTargetId(0, 'gain'))).toEqual({
+      channel: 0,
+      controller: 20,
+    });
+  });
+
+  it('shows one row per surface strip', async () => {
+    mountPanel();
+    const store = useProjectStore();
+    expect((wrapper as VueWrapper).findAll('.ml-bank-row')).toHaveLength(8);
+
+    store.controlSurface = { ...store.controlSurface, bankSize: 4 };
+    await (wrapper as VueWrapper).vm.$nextTick();
+
+    expect((wrapper as VueWrapper).findAll('.ml-bank-row')).toHaveLength(4);
+  });
+
+  it('pages the bank window from the panel', async () => {
+    mountPanel();
+    const store = useProjectStore();
+    store.tracks = [
+      ...TRACKS.map((track) => ({
+        ...track,
+        kind: 'midi' as const,
+        mute: false,
+        solo: false,
+        volume: 1,
+        pan: 0,
+        order: 0,
+      })),
+    ];
+    store.controlSurface = { ...store.controlSurface, bankSize: 1 };
+    await (wrapper as VueWrapper).vm.$nextTick();
+
+    const [prev, next] = (wrapper as VueWrapper).findAll('.ml-bank-step');
+    await next.trigger('click');
+    expect(store.controlSurface.bankOffset).toBe(1);
+    await prev.trigger('click');
+    expect(store.controlSurface.bankOffset).toBe(0);
+  });
+
+  it('labels the surface section in every locale', () => {
+    for (const bundle of [en, ja]) {
+      expect(bundle.shell.midiLearn.surface.length).toBeGreaterThan(0);
+      expect(bundle.shell.midiLearn.surfaceProtocols.mcu.length).toBeGreaterThan(0);
+      expect(bundle.shell.midiLearn.surfaceFeedback.length).toBeGreaterThan(0);
+      expect(bundle.shell.midiLearn.surfaceHuiNote.length).toBeGreaterThan(0);
+      expect(bundle.shell.midiLearn.bank.length).toBeGreaterThan(0);
+      expect(bundle.shell.midiLearn.bankActions.next.length).toBeGreaterThan(0);
+      expect(bundle.shell.midiLearn.bankParams.solo.length).toBeGreaterThan(0);
+    }
   });
 });

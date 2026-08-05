@@ -527,6 +527,7 @@ const {
   midiLearnOpen,
   musicTyping,
   webMidi,
+  controlSurface,
   connectWebMidi,
   toggleMusicTyping,
   toggleStepInput,
@@ -555,6 +556,20 @@ const {
     record: () => toggleRecord(),
     loop: () => toggleLoop(),
   },
+  rewind: () => seekToStart(),
+  forward: () => seekToEnd(),
+  // A surface ARM button is momentary, so it toggles whatever the track's
+  // current arm state is; SELECT focuses the track the strip points at.
+  toggleTrackArm: (trackId: number) => {
+    onArmTrack(trackId, !armedTrackIds.value.includes(trackId));
+  },
+  selectTrack: (trackId: number) => {
+    store.activeTrackId = trackId;
+  },
+  isPlaying,
+  isRecording: midiRecording.isRecording,
+  isLooping: loopEnabled,
+  armedTrackIds,
   runAction,
 });
 
@@ -1182,6 +1197,7 @@ onMounted(installLaunchQueueConsumer);
                   v-if="midiLearnOpen"
                   :learn="midiLearn"
                   :tracks="store.tracks"
+                  :surface="controlSurface"
                   @close="midiLearnOpen = false"
                 />
               </Transition>

@@ -34,6 +34,12 @@ import {
   sanitizeChordSymbols,
   toProjectChordSymbols,
 } from './chords';
+import {
+  type ControlSurfaceSettings,
+  clampBankOffset,
+  defaultControlSurfaceSettings,
+  sanitizeControlSurfaceSettings,
+} from './control-surface';
 import { sanitizeExpressionMap } from './expression-map';
 import type { GrooveTemplate } from './groove';
 import { cloneInstrument, type ExternalMidiInstrument } from './instrument';
@@ -311,6 +317,12 @@ export const useProjectStore = defineStore('project', () => {
    * MIDI-learn handle can hold a long-lived reference.
    */
   const midiCcBindings = ref(new Map<string, MidiCcBinding>());
+  /**
+   * Control-surface configuration (app-level): protocol, ports and the bank
+   * window that bank-slot bindings resolve through. Persisted with the project
+   * so a surface layout survives a reload.
+   */
+  const controlSurface = ref<ControlSurfaceSettings>(defaultControlSurfaceSettings());
   /** Project mixer state: master strip + buses (app-level metadata). */
   const mixer = ref<ProjectMixerState>(createDefaultMixerState());
   /** Shared External MIDI route tracks can opt into. */
@@ -553,6 +565,7 @@ export const useProjectStore = defineStore('project', () => {
     sections.value = [];
     automationLanes.value = [];
     midiCcBindings.value.clear();
+    controlSurface.value = defaultControlSurfaceSettings();
     activeTrackId.value = trackId;
     clipId.value = newClipId;
     clipStartPpq.value = 0;
@@ -889,6 +902,7 @@ export const useProjectStore = defineStore('project', () => {
         chords: chords.value,
         sections: sections.value,
         automationLanes: automationLanes.value,
+        controlSurface: controlSurface.value,
         mixer: mixer.value,
         projectExternalMidi: projectExternalMidi.value,
         activeTrackId: activeTrackId.value,
@@ -926,6 +940,7 @@ export const useProjectStore = defineStore('project', () => {
         chords.value = previousState.chords;
         sections.value = previousState.sections;
         automationLanes.value = previousState.automationLanes;
+        controlSurface.value = previousState.controlSurface;
         mixer.value = previousState.mixer;
         projectExternalMidi.value = previousState.projectExternalMidi;
         activeTrackId.value = previousState.activeTrackId;
@@ -1057,6 +1072,14 @@ export const useProjectStore = defineStore('project', () => {
           ...(binding.parameter !== undefined ? { parameter: binding.parameter } : {}),
         });
       }
+      // The bank offset is stored as written but clamped against the loaded
+      // track count, so a window saved on a bigger session still lands on a
+      // real track here.
+      const surface = sanitizeControlSurfaceSettings(doc.controlSurface);
+      controlSurface.value = {
+        ...surface,
+        bankOffset: clampBankOffset(surface.bankOffset, trackMirror.length, surface.bankSize),
+      };
       activeTrackId.value = trackMirror[0]?.id ?? -1;
       clipId.value = firstClipId;
       selection.value = new Set();
@@ -1140,6 +1163,7 @@ export const useProjectStore = defineStore('project', () => {
     sections.value = [];
     automationLanes.value = [];
     midiCcBindings.value.clear();
+    controlSurface.value = defaultControlSurfaceSettings();
     mixer.value = createDefaultMixerState();
     projectExternalMidi.value = null;
     activeTrackId.value = -1;
@@ -1175,6 +1199,7 @@ export const useProjectStore = defineStore('project', () => {
     sections,
     automationLanes,
     midiCcBindings,
+    controlSurface,
     mixer,
     projectExternalMidi,
     activeTrackId,

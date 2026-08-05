@@ -25,6 +25,12 @@ import {
   setVcaGroupSolo,
 } from '@/project/commands';
 import {
+  bankSlotTrackId,
+  clampBankOffset,
+  nextBankOffset,
+  previousBankOffset,
+} from '@/project/control-surface';
+import {
   MAX_CHANNEL_DELAY_SAMPLES,
   MAX_INPUT_TRIM_DB,
   MAX_STRIP_WIDTH,
@@ -42,17 +48,23 @@ import { useProjectStore } from '@/project/store';
 import { masteringProcessorControls } from '@/ui/mastering/chain-controls';
 import {
   ccToGainDb,
+  ccToGainDbFine,
   ccToLogRange,
   ccToPan,
+  ccToPanFine,
   ccToRange,
   type MidiCcBinding,
   type MidiCcMessage,
+  type MidiLearnBankAction,
+  type MidiLearnBankTarget,
   type MidiLearnParam,
   type MidiLearnScope,
   type MidiLearnTransportAction,
   midiCcBindingMatches,
   midiCcMessageValue,
   midiLearnTargetId,
+  parseMidiLearnBankActionTargetId,
+  parseMidiLearnBankTargetId,
   parseMidiLearnBusStripControlTargetId,
   parseMidiLearnEqTargetId,
   parseMidiLearnInsertTargetId,
@@ -110,6 +122,20 @@ export interface MidiLearnHandle {
    * every target bound to that channel + controller.
    */
   handleCc(message: MidiCcMessage): void;
+  /**
+   * Applies a value to a target without a binding, for a surface whose layout
+   * is fixed by its protocol rather than learned. Coalesces into one undo entry
+   * exactly like a learned controller sweep does.
+   *
+   * @param id Target id to drive.
+   * @param value Control value in the 0..127 range; fractional values keep a
+   *   14-bit fader's resolution.
+   */
+  applyTarget(id: string, value: number): void;
+  /** Pages the bank window, clamped to the current track count. */
+  moveBank(action: MidiLearnBankAction): void;
+  /** Shifts the bank window by whole tracks (a surface CHANNEL button). */
+  shiftBank(delta: number): void;
 }
 
 /** Session actions a control surface can drive through learned bindings. */
@@ -120,6 +146,14 @@ export interface MidiLearnOptions {
    * with transport control still loads elsewhere.
    */
   transport?: Partial<Record<MidiLearnTransportAction, () => void>>;
+  /**
+   * Toggles a track's record arm. Arming is session state owned by the
+   * recording controls rather than the document, so it arrives as a handler
+   * like the transport actions.
+   */
+  toggleTrackArm?: (trackId: number) => void;
+  /** Focuses a track (a surface SELECT button). */
+  selectTrack?: (trackId: number) => void;
 }
 
 /** Injection key sharing the app's single MIDI-learn handle with descendants. */
@@ -206,6 +240,80 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
     }
   }
 
+  /** Moves the bank window, clamped to the current track count. */
+  function moveBank(action: MidiLearnBankAction): void {
+    const store = useProjectStore();
+    const surface = store.controlSurface;
+    const count = store.tracks.length;
+    const offset =
+      action === 'home'
+        ? 0
+        : action === 'next'
+          ? nextBankOffset(surface.bankOffset, count, surface.bankSize)
+          : previousBankOffset(surface.bankOffset, count, surface.bankSize);
+    store.controlSurface = { ...surface, bankOffset: offset };
+  }
+
+  /** Shifts the bank window by whole tracks (a surface CHANNEL button). */
+  function shiftBank(delta: number): void {
+    const store = useProjectStore();
+    const surface = store.controlSurface;
+    store.controlSurface = {
+      ...surface,
+      bankOffset: clampBankOffset(
+        surface.bankOffset + Math.round(delta),
+        store.tracks.length,
+        surface.bankSize,
+      ),
+    };
+  }
+
+  /**
+   * Applies a value to the track a bank slot currently points at. A slot past
+   * the end of the track list is inert: the surface strip simply does nothing
+   * until the bank moves, which is not a reason to drop the binding.
+   */
+  function dispatchBankSlot(target: MidiLearnBankTarget, value: number, commit: boolean): boolean {
+    const store = useProjectStore();
+    const surface = store.controlSurface;
+    const trackId = bankSlotTrackId(
+      store.tracks.map((track) => track.id),
+      surface.bankOffset,
+      surface.bankSize,
+      target.slot,
+    );
+    if (trackId === null) return true;
+    try {
+      switch (target.param) {
+        case 'gain':
+          // The fine mappers keep a 14-bit surface fader's resolution; for the
+          // integer values a learned CC sends they are identical.
+          setStripGain(trackId, ccToGainDbFine(value), { commit });
+          break;
+        case 'pan':
+          setStripPan(trackId, ccToPanFine(value), { commit });
+          break;
+        case 'mute':
+          setTrackMute(trackId, value >= 64);
+          break;
+        case 'solo':
+          setTrackSolo(trackId, value >= 64);
+          break;
+        case 'arm':
+          if (value >= 64) options.toggleTrackArm?.(trackId);
+          break;
+        default:
+          if (value >= 64) options.selectTrack?.(trackId);
+          break;
+      }
+      return true;
+    } catch {
+      // The window pointed at a track that has since been removed; the binding
+      // itself stays valid for whatever the slot resolves to next.
+      return true;
+    }
+  }
+
   /** Applies a value to the bound command, returning false on a stale target. */
   function dispatch(id: string, value: number, commit: boolean): boolean {
     const transportAction = parseMidiLearnTransportTargetId(id);
@@ -215,6 +323,13 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
       if (value >= 64) options.transport?.[transportAction]?.();
       return true;
     }
+    const bankAction = parseMidiLearnBankActionTargetId(id);
+    if (bankAction !== null) {
+      if (value >= 64) moveBank(bankAction);
+      return true;
+    }
+    const bankSlot = parseMidiLearnBankTargetId(id);
+    if (bankSlot !== null) return dispatchBankSlot(bankSlot, value, commit);
     const quickControl = quickControlOf(id);
     if (quickControl) {
       return dispatchQuickControl(quickControl.target, quickControl.paramId, value, commit);
@@ -498,6 +613,10 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
     return bindingForId(midiLearnTargetId(param, scope));
   }
 
+  function applyTarget(id: string, value: number): void {
+    apply(id, value);
+  }
+
   function handleCc(message: MidiCcMessage): void {
     const value = midiCcMessageValue(message);
     if (armed.value !== null) {
@@ -539,5 +658,8 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
     isArmedId,
     bindingForId,
     handleCc,
+    applyTarget,
+    moveBank,
+    shiftBank,
   };
 }

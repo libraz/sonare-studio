@@ -1,20 +1,32 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useAppSettings } from '@/composables/useAppSettings';
+import type { ControlSurfaceHandle } from '@/composables/useControlSurface';
 import { confirmDialog } from '@/composables/useDialogs';
 import type { MidiLearnHandle } from '@/composables/useMidiLearn';
+import {
+  CONTROL_SURFACE_PROTOCOLS,
+  type ControlSurfaceProtocol,
+  nextBankOffset,
+  previousBankOffset,
+} from '@/project/control-surface';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import {
   formatMidiCcBinding,
+  MIDI_LEARN_BANK_ACTIONS,
   MIDI_LEARN_TRANSPORT_ACTIONS,
   type MidiCcBinding,
+  type MidiLearnBankParam,
   type MidiLearnParam,
   type MidiLearnScope,
+  midiLearnBankActionTargetId,
+  midiLearnBankTargetId,
   midiLearnTransportTargetId,
   parseMidiLearnInsertTargetId,
   parseMidiLearnInstrumentTargetId,
 } from '@/ui/midi/midi-learn';
+import { SURFACE_STRIP_COUNT } from '@/ui/midi/surface-protocol';
 
 /**
  * MIDI-learn popover: binds hardware CC controllers to mixer strip gain/pan for
@@ -28,6 +40,8 @@ const props = defineProps<{
   learn: MidiLearnHandle;
   /** Tracks to expose as bindable strips, in display order. */
   tracks: ReadonlyArray<{ id: number; name: string; color: string }>;
+  /** Control-surface ports and status; omitted when Web MIDI is unavailable. */
+  surface?: ControlSurfaceHandle;
 }>();
 
 const emit = defineEmits<{
@@ -149,6 +163,83 @@ const transportRows = computed(() =>
   }),
 );
 
+// --- Control surface ---------------------------------------------------------
+
+/** Live surface settings; every setter writes the whole record back. */
+const surfaceSettings = computed(() => store.controlSurface);
+
+function updateSurface(patch: Partial<typeof store.controlSurface>): void {
+  store.controlSurface = { ...store.controlSurface, ...patch };
+}
+
+const protocolChoices = computed(() =>
+  CONTROL_SURFACE_PROTOCOLS.map((protocol) => ({
+    value: protocol,
+    label: t.value.shell.midiLearn.surfaceProtocols[protocol],
+  })),
+);
+
+/** Slots the bank grid exposes: the surface width, capped at one bank. */
+const bankSlots = computed(() =>
+  Array.from(
+    { length: Math.min(SURFACE_STRIP_COUNT, surfaceSettings.value.bankSize) },
+    (_, i) => i,
+  ),
+);
+
+/**
+ * Bank-slot controls shown in the grid. Arm and select are driven by a surface
+ * protocol rather than learned, so they are not offered here.
+ */
+type BankGridParam = Extract<MidiLearnBankParam, 'gain' | 'pan' | 'mute' | 'solo'>;
+const BANK_PARAMS: ReadonlyArray<BankGridParam> = ['gain', 'pan', 'mute', 'solo'];
+
+/** Human-readable description of which tracks the bank currently covers. */
+const bankRange = computed(() => {
+  const total = props.tracks.length;
+  if (total === 0) return '';
+  const from = Math.min(total, surfaceSettings.value.bankOffset + 1);
+  const to = Math.min(total, surfaceSettings.value.bankOffset + surfaceSettings.value.bankSize);
+  return formatMessage(t.value.shell.midiLearn.surfaceBankRange, {
+    from: String(from),
+    to: String(to),
+    total: String(total),
+  });
+});
+
+function moveBank(action: 'prev' | 'next' | 'home'): void {
+  const { bankOffset, bankSize } = surfaceSettings.value;
+  const total = props.tracks.length;
+  updateSurface({
+    bankOffset:
+      action === 'home'
+        ? 0
+        : action === 'next'
+          ? nextBankOffset(bankOffset, total, bankSize)
+          : previousBankOffset(bankOffset, total, bankSize),
+  });
+}
+
+/** Bank navigation buttons a generic controller can learn. */
+const bankNavRows = computed(() =>
+  MIDI_LEARN_BANK_ACTIONS.map((action) => {
+    const id = midiLearnBankActionTargetId(action);
+    return {
+      id,
+      label: t.value.shell.midiLearn.bankActions[action],
+      binding: props.learn.bindingForId(id),
+    };
+  }),
+);
+
+/** Caption for a bank-slot button: its binding, listening, or "learn". */
+function bankCaption(slot: number, param: BankGridParam): string {
+  const id = midiLearnBankTargetId(slot, param);
+  if (props.learn.isArmedId(id)) return t.value.shell.midiLearn.listening;
+  const binding = props.learn.bindingForId(id);
+  return binding ? formatMidiCcBinding(binding) : t.value.shell.midiLearn.learn;
+}
+
 function clearAll(): void {
   void (async () => {
     if (
@@ -250,6 +341,168 @@ function clearAll(): void {
         </span>
       </div>
 
+      <div class="ml-surface">
+        <div class="ml-row-head ml-devices-head">
+          <span class="ml-col-head">{{ t.shell.midiLearn.surface }}</span>
+        </div>
+        <label class="ml-field">
+          <span>{{ t.shell.midiLearn.surfaceProtocol }}</span>
+          <select
+            class="ml-select"
+            :value="surfaceSettings.protocol"
+            @change="
+              updateSurface({
+                protocol: ($event.target as HTMLSelectElement).value as ControlSurfaceProtocol,
+              })
+            "
+          >
+            <option v-for="choice in protocolChoices" :key="choice.value" :value="choice.value">
+              {{ choice.label }}
+            </option>
+          </select>
+        </label>
+        <template v-if="surface">
+          <label class="ml-field">
+            <span>{{ t.shell.midiLearn.surfaceInput }}</span>
+            <select
+              class="ml-select ml-surface-input"
+              :value="surfaceSettings.inputPortId ?? ''"
+              @change="
+                updateSurface({
+                  inputPortId: ($event.target as HTMLSelectElement).value || null,
+                })
+              "
+            >
+              <option value="">{{ t.shell.midiLearn.surfacePortNone }}</option>
+              <option v-for="port in surface.inputs.value" :key="port.id" :value="port.id">
+                {{ port.name }}
+              </option>
+            </select>
+          </label>
+          <label class="ml-field">
+            <span>{{ t.shell.midiLearn.surfaceOutput }}</span>
+            <select
+              class="ml-select ml-surface-output"
+              :value="surfaceSettings.outputPortId ?? ''"
+              @change="
+                updateSurface({
+                  outputPortId: ($event.target as HTMLSelectElement).value || null,
+                })
+              "
+            >
+              <option value="">{{ t.shell.midiLearn.surfacePortNone }}</option>
+              <option v-for="port in surface.outputs.value" :key="port.id" :value="port.id">
+                {{ port.name }}
+              </option>
+            </select>
+          </label>
+        </template>
+        <label class="ml-field ml-field-check" :title="t.shell.midiLearn.surfaceFeedbackTitle">
+          <input
+            type="checkbox"
+            class="ml-surface-feedback"
+            :checked="surfaceSettings.feedback"
+            @change="updateSurface({ feedback: ($event.target as HTMLInputElement).checked })"
+          />
+          <span>{{ t.shell.midiLearn.surfaceFeedback }}</span>
+        </label>
+        <label class="ml-field">
+          <span>{{ t.shell.midiLearn.surfaceBankSize }}</span>
+          <input
+            type="number"
+            class="ml-number ml-surface-bank-size"
+            min="1"
+            :max="SURFACE_STRIP_COUNT"
+            :value="surfaceSettings.bankSize"
+            @change="
+              updateSurface({ bankSize: Number(($event.target as HTMLInputElement).value) || 1 })
+            "
+          />
+        </label>
+        <div class="ml-field ml-bank-nav">
+          <span>{{ t.shell.midiLearn.surfaceBank }}</span>
+          <button
+            type="button"
+            class="ml-btn ml-bank-step"
+            :aria-label="t.shell.midiLearn.surfaceBankPrev"
+            @click="moveBank('prev')"
+          >
+            ◀
+          </button>
+          <button
+            type="button"
+            class="ml-btn ml-bank-step"
+            :aria-label="t.shell.midiLearn.surfaceBankNext"
+            @click="moveBank('next')"
+          >
+            ▶
+          </button>
+          <span class="ml-bank-range">{{ bankRange }}</span>
+        </div>
+        <p class="ml-surface-note">{{ t.shell.midiLearn.surfaceNote }}</p>
+        <p v-if="surfaceSettings.protocol === 'hui'" class="ml-surface-note ml-surface-warning">
+          {{ t.shell.midiLearn.surfaceHuiNote }}
+        </p>
+      </div>
+
+      <div class="ml-bank">
+        <div class="ml-row-head ml-devices-head">
+          <span class="ml-col-head">{{ t.shell.midiLearn.bank }}</span>
+        </div>
+        <div class="ml-row ml-bank-head">
+          <span class="ml-row-head" />
+          <span v-for="param in BANK_PARAMS" :key="param" class="ml-col-head">
+            {{ t.shell.midiLearn.bankParams[param] }}
+          </span>
+        </div>
+        <div v-for="slot in bankSlots" :key="slot" class="ml-row ml-bank-row">
+          <span class="ml-row-head">
+            {{ formatMessage(t.shell.midiLearn.bankSlot, { index: String(slot + 1) }) }}
+          </span>
+          <span v-for="param in BANK_PARAMS" :key="param" class="ml-cell">
+            <button
+              type="button"
+              class="ml-bind ml-bind-bank"
+              :class="{ 'ml-bind-armed': learn.isArmedId(midiLearnBankTargetId(slot, param)) }"
+              :aria-pressed="learn.isArmedId(midiLearnBankTargetId(slot, param))"
+              @click="learn.armId(midiLearnBankTargetId(slot, param))"
+            >
+              {{ bankCaption(slot, param) }}
+            </button>
+            <button
+              type="button"
+              class="ml-clear"
+              :disabled="!learn.bindingForId(midiLearnBankTargetId(slot, param))"
+              :aria-label="t.shell.midiLearn.clearBinding"
+              @click="learn.clearId(midiLearnBankTargetId(slot, param))"
+            >
+              ×
+            </button>
+          </span>
+        </div>
+        <div v-for="row in bankNavRows" :key="row.id" class="ml-device-row ml-bank-nav-row">
+          <span class="ml-device-name" v-tooltip="row.label">{{ row.label }}</span>
+          <button
+            type="button"
+            class="ml-bind ml-bind-bank-nav"
+            :class="{ 'ml-bind-armed': learn.isArmedId(row.id) }"
+            :aria-pressed="learn.isArmedId(row.id)"
+            @click="learn.armId(row.id)"
+          >
+            {{ row.binding ? formatMidiCcBinding(row.binding) : t.shell.midiLearn.learn }}
+          </button>
+          <button
+            type="button"
+            class="ml-clear"
+            :disabled="!row.binding"
+            :aria-label="t.shell.midiLearn.clearBinding"
+            @click="learn.clearId(row.id)"
+          >
+            ×
+          </button>
+        </div>
+      </div>
+
       <div class="ml-devices ml-transport">
         <div class="ml-row-head ml-devices-head">
           <span class="ml-col-head">{{ t.shell.midiLearn.transport }}</span>
@@ -312,6 +565,87 @@ function clearAll(): void {
 </template>
 
 <style scoped>
+.ml-surface {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin-top: var(--sp-2);
+}
+
+.ml-field {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.ml-field > span:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.ml-field-check {
+  justify-content: flex-start;
+}
+
+.ml-field-check > span {
+  flex: 1;
+}
+
+.ml-select,
+.ml-number {
+  min-width: 0;
+  width: 11rem;
+  font-size: var(--fs-xs);
+  font-family: inherit;
+}
+
+.ml-number {
+  width: 4rem;
+}
+
+.ml-bank-nav {
+  gap: var(--sp-1);
+}
+
+.ml-bank-step {
+  padding: 0 var(--sp-2);
+  line-height: 1.6;
+}
+
+.ml-bank-range {
+  flex: 2;
+  text-align: right;
+  color: var(--text-4);
+}
+
+.ml-surface-note {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-4);
+}
+
+.ml-surface-warning {
+  color: var(--warning, var(--text-3));
+}
+
+.ml-bank {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: var(--sp-2);
+}
+
+.ml-bank-head,
+.ml-bank-row {
+  grid-template-columns: 1fr repeat(4, 4.5rem);
+}
+
+.ml-bank-nav-row {
+  margin-top: var(--sp-1);
+}
+
 .midi-learn-panel {
   position: absolute;
   right: 0;

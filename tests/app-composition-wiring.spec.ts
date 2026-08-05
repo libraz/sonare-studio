@@ -45,4 +45,14 @@ describe('application composition wiring', () => {
     expect(app).toContain('@export-backup="exportBrowserBackupAction"');
     expect(app).toContain('@import-midi="importMidiAction"');
   });
+
+  it('gives the control surface the session state its lamps and buttons need', () => {
+    expect(app).toContain('rewind: () => seekToStart(),');
+    expect(app).toContain('toggleTrackArm: (trackId: number) => {');
+    expect(app).toContain('selectTrack: (trackId: number) => {');
+    expect(app).toContain('isRecording: midiRecording.isRecording,');
+    expect(app).toContain('isLooping: loopEnabled,');
+    expect(app).toContain('armedTrackIds,');
+    expect(app).toContain(':surface="controlSurface"');
+  });
 });

@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { effectScope, ref } from 'vue';
+import { computed, effectScope, ref } from 'vue';
 
 const handleCc = vi.fn();
 const webMidiConnect = vi.fn(async () => true);
 const webMidiDisconnect = vi.fn();
+const surfaceRefresh = vi.fn(async () => true);
 let webMidiOptions: Parameters<typeof import('@/composables/useWebMidi').useWebMidi>[0] | null =
   null;
 let musicTypingOptions:
@@ -24,6 +25,20 @@ vi.mock('@/composables/useMusicTyping', () => ({
   },
 }));
 
+vi.mock('@/composables/useControlSurface', () => ({
+  useControlSurface: () => ({
+    available: ref(null),
+    inputs: ref([]),
+    outputs: ref([]),
+    error: ref<string | null>(null),
+    connected: ref(false),
+    excludedInputIds: computed(() => []),
+    refresh: surfaceRefresh,
+    handleMessage: vi.fn(),
+    refreshFeedback: vi.fn(),
+  }),
+}));
+
 vi.mock('@/composables/useWebMidi', () => ({
   useWebMidi: (options: Parameters<typeof import('@/composables/useWebMidi').useWebMidi>[0]) => {
     webMidiOptions = options;
@@ -31,6 +46,7 @@ vi.mock('@/composables/useWebMidi', () => ({
       available: ref(null),
       inputs: ref([]),
       selectedInputId: ref<string | null>(null),
+      excludedInputIds: ref<readonly string[]>([]),
       connected: ref(false),
       error: ref<string | null>(null),
       connect: webMidiConnect,
