@@ -9,6 +9,7 @@ import {
 import { clearAudioAssetCache, listAssets, saveAsset } from '@/persistence/assets';
 import { collectReferencedMediaIds, garbageCollectMedia } from '@/persistence/gc';
 import { saveProject } from '@/persistence/opfs';
+import { saveProjectRevision } from '@/persistence/revisions';
 import { encodeSzd } from '@/persistence/szd';
 import { clearFontCache, listFonts, saveFont } from '@/project/fonts';
 import { PROJECT_DOCUMENT_SCHEMA_VERSION, type ProjectDocument } from '@/project/serialization';
@@ -193,6 +194,24 @@ describe('media garbage collection', () => {
     expect(result.removedFontIds).toEqual([]);
     expect((await listAssets()).map((a) => a.id)).toEqual(['slotAsset']);
     expect((await listFonts()).map((f) => f.id)).toEqual(['slotFont']);
+  });
+
+  it('preserves media a saved revision is the last reference to', async () => {
+    await saveAsset({ id: 'revAsset', name: 'Rev', sampleRate: 48000 }, mono());
+    await saveFont({ id: 'revFont', name: 'Rev' }, new Uint8Array([1, 2, 3]));
+    await saveProjectRevision(
+      'Song',
+      'before the rewrite',
+      encodeSzd(makeDocument('Song', 'revAsset', 'revFont')),
+      1000,
+    );
+
+    const result = await garbageCollectMedia();
+
+    expect(result.removedAssetIds).toEqual([]);
+    expect(result.removedFontIds).toEqual([]);
+    expect((await listAssets()).map((a) => a.id)).toEqual(['revAsset']);
+    expect((await listFonts()).map((f) => f.id)).toEqual(['revFont']);
   });
 
   it('does not delete when a dry run is requested', async () => {

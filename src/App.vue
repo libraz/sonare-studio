@@ -28,6 +28,7 @@ import InfoLine from '@/components/piano-roll/InfoLine.vue';
 import PianoRollEditor from '@/components/piano-roll/PianoRollEditor.vue';
 import NewProjectDialog from '@/components/project/NewProjectDialog.vue';
 import OpenProjectDialog from '@/components/project/OpenProjectDialog.vue';
+import RevisionsDialog from '@/components/project/RevisionsDialog.vue';
 import SampleEditor from '@/components/sample-editor/SampleEditor.vue';
 import ScorePanel from '@/components/score/ScorePanel.vue';
 import SettingsDialog from '@/components/settings/SettingsDialog.vue';
@@ -342,6 +343,12 @@ const {
   midiImportInput,
   newDialogOpen,
   openDialogOpen,
+  revisions,
+  revisionsDialogOpen,
+  saveRevisionAction,
+  openRevisionsDialog,
+  restoreRevision,
+  deleteRevision,
   startScreenOpen,
   hasAutosave,
   storedProjects,
@@ -540,6 +547,14 @@ const {
   onRecordProgramChange: midiRecording.captureProgramChange,
   onRecordChannelPressure: midiRecording.captureChannelPressure,
   onRecordPolyPressure: midiRecording.capturePolyPressure,
+  // Learned control-surface buttons drive the same actions as the transport
+  // bar; the thunks defer to the transport controls created below.
+  transportActions: {
+    play: () => togglePlayback(),
+    stop: () => stopPlayback(),
+    record: () => toggleRecord(),
+    loop: () => toggleLoop(),
+  },
   runAction,
 });
 
@@ -762,6 +777,7 @@ const {
   openTrackGenerateDialog: () => openTrackGenerateDialog(),
   openNewDialog,
   openOpenDialog,
+  openRevisionsDialog,
   openRecentProject,
   openStartScreen,
   openDemo,
@@ -1414,6 +1430,15 @@ onMounted(installLaunchQueueConsumer);
       :loop-region="exportLoopRegion"
       :download="downloadBlobFile"
       @close="exportDialogOpen = false"
+    />
+
+    <RevisionsDialog
+      :open="revisionsDialogOpen"
+      :revisions="revisions"
+      @close="revisionsDialogOpen = false"
+      @restore-revision="restoreRevision"
+      @delete-revision="deleteRevision"
+      @save-revision="saveRevisionAction"
     />
 
     <OpenProjectDialog

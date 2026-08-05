@@ -38,6 +38,7 @@ import {
 } from '@/persistence/local-file';
 import {
   deleteProject,
+  isAutosaveProjectName,
   isOpfsAvailable,
   isReservedProjectName,
   listProjects,
@@ -48,6 +49,14 @@ import {
   saveProjectChecked,
 } from '@/persistence/opfs';
 import { MAX_SMF_FILE_BYTES } from '@/persistence/resource-limits';
+import {
+  deleteProjectRevision,
+  deleteProjectRevisions,
+  listProjectRevisions,
+  loadProjectRevision,
+  type ProjectRevision,
+  saveProjectRevision,
+} from '@/persistence/revisions';
 import {
   decodeSzdInWorker,
   decodeSzdWithBundleInWorker,
@@ -121,6 +130,9 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   const startScreenOpen = ref(false);
   const hasAutosave = ref(false);
   const storedProjects = ref<StoredProjectInfo[]>([]);
+  /** Named revisions of the project the document is saved under. */
+  const revisions = ref<ProjectRevision[]>([]);
+  const revisionsDialogOpen = ref(false);
   const recentProjects = ref<string[]>(loadRecentProjects());
 
   async function replaceProjectDocument(document: ProjectDocument): Promise<void> {
@@ -248,7 +260,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       try {
         await reclaimOrphanedRestoreStagesAtStartup();
         const stored = await listProjects();
-        autosavePresent = stored.some((info) => isReservedProjectName(info.name));
+        autosavePresent = stored.some((info) => isAutosaveProjectName(info.name));
         storedProjects.value = stored.filter((info) => !isReservedProjectName(info.name));
       } catch (err) {
         errorMessage.value = describeError(err);
@@ -264,7 +276,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     if (isOpfsAvailable()) {
       try {
         const stored = await listProjects();
-        hasAutosave.value = stored.some((info) => isReservedProjectName(info.name));
+        hasAutosave.value = stored.some((info) => isAutosaveProjectName(info.name));
         storedProjects.value = stored.filter((info) => !isReservedProjectName(info.name));
       } catch (err) {
         errorMessage.value = describeError(err);
@@ -392,6 +404,16 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       recentProjects.value = withoutRecent(recentProjects.value, name);
       saveRecentProjects(recentProjects.value);
       await refreshStoredProjects();
+      // Revisions belong to the project; keeping them would pin its media in
+      // storage forever with no way to reach them. A revision-store failure
+      // must not undo the deletion that already succeeded, so it is reported
+      // rather than thrown.
+      try {
+        await deleteProjectRevisions(name);
+        await refreshRevisions();
+      } catch (err) {
+        errorMessage.value = describeError(err);
+      }
       // Deleting a project may strand media only it referenced.
       await reclaimUnusedMedia();
     });
@@ -723,6 +745,75 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     })();
   }
 
+  /** Snapshots the current document under a user-supplied label. */
+  function saveRevisionAction(): void {
+    closeProjectMenu();
+    void (async () => {
+      const label = await promptDialog({
+        title: t.value.dialogs.prompts.saveRevisionTitle,
+        message: t.value.dialogs.prompts.saveRevisionMessage,
+        defaultValue: '',
+        placeholder: t.value.dialogs.prompts.revisionLabelPlaceholder,
+        confirmLabel: t.value.dialogs.prompts.save,
+      });
+      if (!label) return;
+      void runAction(async () => {
+        const doc = serializeProject();
+        doc.name = store.projectName;
+        const bytes = encodeSzd(doc, { savedAt: new Date().toISOString() });
+        await saveProjectRevision(
+          savedProjectSlot.value ?? store.projectName,
+          label,
+          bytes,
+          Date.now(),
+        );
+        await refreshRevisions();
+      });
+    })();
+  }
+
+  /** Reloads the revision list of the project the document is saved under. */
+  async function refreshRevisions(): Promise<void> {
+    if (!opfsAvailable) {
+      revisions.value = [];
+      return;
+    }
+    revisions.value = await listProjectRevisions(savedProjectSlot.value ?? store.projectName);
+  }
+
+  function openRevisionsDialog(): void {
+    closeProjectMenu();
+    revisionsDialogOpen.value = true;
+    void runAction(refreshRevisions);
+  }
+
+  /** Replaces the live document with a stored revision (discard confirmed). */
+  function restoreRevision(slot: string): void {
+    void (async () => {
+      if (!(await confirmDiscard())) return;
+      void runAction(async () => {
+        const bytes = await loadProjectRevision(slot);
+        await replaceProjectDocument(await decodeSzdInWorker(bytes));
+        // The restored document is unsaved work against the project slot: the
+        // stored project keeps whatever it had until the user saves.
+        savedProjectRevision.value = null;
+        const documentKey = await saveLoadedProjectToAutosave();
+        await markClean(documentKey);
+        revisionsDialogOpen.value = false;
+        startScreenOpen.value = false;
+      });
+    })();
+  }
+
+  function deleteRevision(slot: string): void {
+    void runAction(async () => {
+      await deleteProjectRevision(slot);
+      await refreshRevisions();
+      // A dropped revision can be the last reference to imported media.
+      await reclaimUnusedMedia();
+    });
+  }
+
   function exportSzdAction(): void {
     closeProjectMenu();
     void runAction(async () => {
@@ -849,6 +940,12 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     midiImportInput,
     newDialogOpen,
     openDialogOpen,
+    revisions,
+    revisionsDialogOpen,
+    saveRevisionAction,
+    openRevisionsDialog,
+    restoreRevision,
+    deleteRevision,
     startScreenOpen,
     hasAutosave,
     storedProjects,

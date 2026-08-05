@@ -161,10 +161,23 @@ export function sanitizeProjectName(name: string): string {
   return cleaned;
 }
 
-/** True when a sanitized project name is reserved for internal storage slots. */
-export function isReservedProjectName(name: string): boolean {
+/** Slot-name prefix of the revision snapshots (see src/persistence/revisions.ts). */
+const REVISION_SLOT_PREFIX = 'revision-';
+
+/** True when a stored name is an autosave slot (the crash-recovery snapshot). */
+export function isAutosaveProjectName(name: string): boolean {
   const sanitized = sanitizeProjectName(name).toLowerCase();
   return sanitized === 'autosave' || sanitized.startsWith('autosave-session-');
+}
+
+/**
+ * True when a sanitized project name is reserved for internal storage slots.
+ * Reserved slots are real stored projects — which keeps them inside the media
+ * garbage collector's reference scan — but never appear in the project list.
+ */
+export function isReservedProjectName(name: string): boolean {
+  const sanitized = sanitizeProjectName(name).toLowerCase();
+  return isAutosaveProjectName(sanitized) || sanitized.startsWith(REVISION_SLOT_PREFIX);
 }
 
 /** Resolves (creating on demand) the "projects/" directory handle. */

@@ -93,6 +93,7 @@ export interface AppShortcutsMenuOptions {
   openTrackGenerateDialog: () => void;
   openNewDialog: () => void;
   openOpenDialog: () => void;
+  openRevisionsDialog: () => void;
   openRecentProject: (name: string) => void;
   openStartScreen: () => void;
   openDemo: () => void;
@@ -382,6 +383,9 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
       commandItem('file.saveAs', m.saveAs, options.saveProjectAsAction, {
         disabled: noOpfs,
         hintFor: 'project.saveAs',
+      }),
+      commandItem('file.revisions', m.revisions, options.openRevisionsDialog, {
+        disabled: noOpfs,
       }),
     ];
     const recent = options.recentNames.value;
