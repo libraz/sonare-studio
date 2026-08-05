@@ -1,4 +1,5 @@
 import { type NoteBoundaryEvent, pairNoteBoundariesIntoNotes, type RawNote } from './midi-events';
+import { snapPpqToSwingMeterGrid } from './time-signature';
 
 /**
  * Snaps each note's start to the nearest grid line, preserving its length.
@@ -12,11 +13,22 @@ import { type NoteBoundaryEvent, pairNoteBoundariesIntoNotes, type RawNote } fro
  *   no-op (returns the notes unchanged).
  * @returns Notes with quantized starts, sorted by start position.
  */
-export function quantizeRecordedNotes(notes: ReadonlyArray<RawNote>, gridPpq: number): RawNote[] {
+export function quantizeRecordedNotes(
+  notes: ReadonlyArray<RawNote>,
+  gridPpq: number,
+  strength = 1,
+  swingPercent = 0,
+): RawNote[] {
   if (!Number.isFinite(gridPpq) || gridPpq <= 0) return notes.slice();
+  const amount = Math.min(1, Math.max(0, strength));
   const quantized = notes.map((note) => ({
     ...note,
-    startPpq: Math.max(0, Math.round(note.startPpq / gridPpq) * gridPpq),
+    startPpq: Math.max(
+      0,
+      note.startPpq +
+        (snapPpqToSwingMeterGrid([], note.startPpq, gridPpq, swingPercent) - note.startPpq) *
+          amount,
+    ),
   }));
   quantized.sort((a, b) => a.startPpq - b.startPpq || a.pitch - b.pitch || a.channel - b.channel);
   return quantized;
@@ -58,6 +70,149 @@ export function foldRecordedNotesIntoLoop(
   return out;
 }
 
+/** Returns the absolute start of the most recently touched loop pass, or null. */
+export function lastCompleteLoopPassStartPpq(
+  recordingStartPpq: number,
+  stopPpq: number,
+  loopLengthPpq: number,
+): number | null {
+  if (
+    !Number.isFinite(recordingStartPpq) ||
+    !Number.isFinite(stopPpq) ||
+    !Number.isFinite(loopLengthPpq) ||
+    loopLengthPpq <= 0
+  ) {
+    return null;
+  }
+  const elapsedPpq = stopPpq - recordingStartPpq;
+  if (elapsedPpq < -1e-9) return null;
+  return (
+    recordingStartPpq +
+    Math.max(0, Math.ceil(elapsedPpq / loopLengthPpq - 1e-9) - 1) * loopLengthPpq
+  );
+}
+
+/** Returns the loop-pass start containing the latest captured event, or null. */
+export function lastLoopPassWithEventsStartPpq<T extends { ppq: number }>(
+  events: ReadonlyArray<T>,
+  recordingStartPpq: number,
+  loopLengthPpq: number,
+): number | null {
+  if (
+    !Number.isFinite(recordingStartPpq) ||
+    !Number.isFinite(loopLengthPpq) ||
+    loopLengthPpq <= 0
+  ) {
+    return null;
+  }
+  let latestPpq = Number.NEGATIVE_INFINITY;
+  let latestEvent: T | undefined;
+  for (const event of events) {
+    if (Number.isFinite(event.ppq) && event.ppq >= recordingStartPpq - 1e-9) {
+      if (event.ppq >= latestPpq) {
+        latestPpq = event.ppq;
+        latestEvent = event;
+      }
+    }
+  }
+  if (!Number.isFinite(latestPpq)) return null;
+  const closesAtBoundary =
+    latestEvent !== undefined &&
+    'kind' in latestEvent &&
+    (latestEvent as { kind?: unknown }).kind === 'off' &&
+    Math.abs((latestPpq - recordingStartPpq) % loopLengthPpq) < 1e-9;
+  const offset = closesAtBoundary ? 1e-9 : 0;
+  return (
+    recordingStartPpq +
+    Math.max(0, Math.floor((latestPpq - recordingStartPpq - offset) / loopLengthPpq)) *
+      loopLengthPpq
+  );
+}
+
+/**
+ * Lists the loop passes that contain captured events, in chronological order.
+ * Each pass is reported once even when it contains several MIDI event kinds,
+ * allowing note and expression buffers to share an identical take boundary.
+ */
+export function loopPassStartsWithEvents<T extends { ppq: number }>(
+  events: ReadonlyArray<T>,
+  recordingStartPpq: number,
+  loopLengthPpq: number,
+): number[] {
+  if (
+    !Number.isFinite(recordingStartPpq) ||
+    !Number.isFinite(loopLengthPpq) ||
+    loopLengthPpq <= 0
+  ) {
+    return [];
+  }
+  const starts = new Set<number>();
+  for (const event of events) {
+    if (!Number.isFinite(event.ppq) || event.ppq < recordingStartPpq - 1e-9) continue;
+    const closesAtBoundary =
+      'kind' in event &&
+      (event as { kind?: unknown }).kind === 'off' &&
+      Math.abs((event.ppq - recordingStartPpq) % loopLengthPpq) < 1e-9;
+    const offset = closesAtBoundary ? 1e-9 : 0;
+    const pass = Math.max(0, Math.floor((event.ppq - recordingStartPpq - offset) / loopLengthPpq));
+    starts.add(recordingStartPpq + pass * loopLengthPpq);
+  }
+  return [...starts].sort((left, right) => left - right);
+}
+
+/**
+ * Selects and rebases the most recently touched pass of a loop take.
+ *
+ * The returned events retain their shape but use the original recording-start
+ * timeline so existing clip builders can continue to derive clip-relative PPQ
+ * normally. This preserves a musician's final partial pass while ensuring no
+ * expression lane can mix values from different passes.
+ */
+export function selectLastCompleteLoopPassEvents<T extends { ppq: number }>(
+  events: ReadonlyArray<T>,
+  recordingStartPpq: number,
+  stopPpq: number,
+  loopLengthPpq: number,
+  selectedPassStartPpq?: number | null,
+): T[] {
+  const passStart =
+    selectedPassStartPpq ?? lastCompleteLoopPassStartPpq(recordingStartPpq, stopPpq, loopLengthPpq);
+  if (passStart === null) return events.slice();
+  const passEnd = passStart + loopLengthPpq;
+  const offset = passStart - recordingStartPpq;
+  return events
+    .filter((event) => event.ppq >= passStart - 1e-9 && event.ppq < passEnd - 1e-9)
+    .map((event) => ({ ...event, ppq: event.ppq - offset }));
+}
+
+/**
+ * Clips notes to the most recently touched loop pass and makes that pass
+ * clip-relative. Notes spanning the pass boundary are retained as a segment,
+ * so sustained material never leaks into another take.
+ */
+export function selectLastCompleteLoopPassNotes(
+  notes: ReadonlyArray<RawNote>,
+  recordingStartPpq: number,
+  stopPpq: number,
+  loopLengthPpq: number,
+  selectedPassStartPpq?: number | null,
+): RawNote[] {
+  const passStart =
+    selectedPassStartPpq ?? lastCompleteLoopPassStartPpq(recordingStartPpq, stopPpq, loopLengthPpq);
+  if (passStart === null) return foldRecordedNotesIntoLoop(notes, loopLengthPpq);
+  const relativeStart = passStart - recordingStartPpq;
+  const relativeEnd = relativeStart + loopLengthPpq;
+  const out: RawNote[] = [];
+  for (const note of notes) {
+    const start = Math.max(note.startPpq, relativeStart);
+    const end = Math.min(note.startPpq + note.durationPpq, relativeEnd);
+    if (end <= start + 1e-9) continue;
+    out.push({ ...note, startPpq: start - relativeStart, durationPpq: end - start });
+  }
+  out.sort((a, b) => a.startPpq - b.startPpq || a.pitch - b.pitch || a.channel - b.channel);
+  return out;
+}
+
 /** Result of finalizing a captured performance into a placeable clip. */
 export interface FinalizedRecording {
   /** Notes relative to the clip window (startPpq from 0). */
@@ -74,6 +229,10 @@ export interface FinalizeRecordingOptions {
   stopPpq: number;
   /** Quantize grid in PPQ for note starts; <= 0 disables quantizing. */
   gridPpq?: number;
+  /** Quantize interpolation 0..1; defaults to full snap. */
+  quantizeStrength?: number;
+  /** Straight-grid swing amount 0..100; triplet grids ignore it. */
+  quantizeSwingPercent?: number;
 }
 
 /**
@@ -92,7 +251,13 @@ export function finalizeRecording(
   boundaries: ReadonlyArray<NoteBoundaryEvent>,
   options: FinalizeRecordingOptions,
 ): FinalizedRecording | null {
-  const { startPpq, stopPpq, gridPpq = 0 } = options;
+  const {
+    startPpq,
+    stopPpq,
+    gridPpq = 0,
+    quantizeStrength = 1,
+    quantizeSwingPercent = 0,
+  } = options;
   const paired = pairNoteBoundariesIntoNotes(boundaries);
   const relative: RawNote[] = [];
   for (const note of paired) {
@@ -101,7 +266,7 @@ export function finalizeRecording(
     if (relStart < -1e-9) continue;
     relative.push({ ...note, startPpq: Math.max(0, relStart) });
   }
-  const notes = quantizeRecordedNotes(relative, gridPpq);
+  const notes = quantizeRecordedNotes(relative, gridPpq, quantizeStrength, quantizeSwingPercent);
   if (notes.length === 0) return null;
   const lastEnd = notes.reduce((max, note) => Math.max(max, note.startPpq + note.durationPpq), 0);
   const lengthPpq = Math.max(stopPpq - startPpq, lastEnd);

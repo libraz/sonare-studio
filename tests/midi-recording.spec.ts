@@ -3,7 +3,11 @@ import type { NoteBoundaryEvent, RawNote } from '@/project/midi-events';
 import {
   finalizeRecording,
   foldRecordedNotesIntoLoop,
+  lastCompleteLoopPassStartPpq,
+  loopPassStartsWithEvents,
   quantizeRecordedNotes,
+  selectLastCompleteLoopPassEvents,
+  selectLastCompleteLoopPassNotes,
 } from '@/project/midi-recording';
 
 /** A clip-relative note with neutral defaults. */
@@ -29,6 +33,15 @@ describe('quantizeRecordedNotes', () => {
     ]);
     const original = [note({ startPpq: 0.37, durationPpq: 1 })];
     expect(quantizeRecordedNotes(original, 0)).toEqual(original);
+  });
+
+  it('applies shared strength and swing while leaving triplet grids ternary', () => {
+    expect(
+      quantizeRecordedNotes([note({ startPpq: 0.5, durationPpq: 1 })], 0.5, 0.5, 100)[0].startPpq,
+    ).toBeCloseTo(0.5 + 0.5 / 6, 12);
+    expect(
+      quantizeRecordedNotes([note({ startPpq: 0.62, durationPpq: 1 })], 1 / 3, 1, 100)[0].startPpq,
+    ).toBeCloseTo(2 / 3, 12);
   });
 });
 
@@ -96,5 +109,42 @@ describe('foldRecordedNotesIntoLoop', () => {
       note({ startPpq: 0, durationPpq: 0.5 }),
       note({ startPpq: 3.5, durationPpq: 0.5 }),
     ]);
+  });
+});
+
+describe('last loop pass selection', () => {
+  it('groups captured event kinds into ordered loop-pass starts', () => {
+    expect(
+      loopPassStartsWithEvents(
+        [{ ppq: 4.25 }, { ppq: 12.75 }, { ppq: 8.1 }, { ppq: 11.5 }, { ppq: 3.9 }],
+        4,
+        4,
+      ),
+    ).toEqual([4, 8, 12]);
+  });
+
+  it('rebases only the latest expression pass, including a final partial pass', () => {
+    expect(lastCompleteLoopPassStartPpq(4, 14.5, 4)).toBe(12);
+    const selected = selectLastCompleteLoopPassEvents(
+      [
+        { ppq: 7.5, value: 10 },
+        { ppq: 11.5, value: 20 },
+        { ppq: 12.5, value: 30 },
+        { ppq: 14.2, value: 40 },
+      ],
+      4,
+      14.5,
+      4,
+    );
+    expect(selected).toHaveLength(2);
+    expect(selected[0]).toEqual({ ppq: 4.5, value: 30 });
+    expect(selected[1]?.ppq).toBeCloseTo(6.2, 9);
+    expect(selected[1]?.value).toBe(40);
+  });
+
+  it('clips a sustained note to the selected pass instead of folding every pass together', () => {
+    expect(
+      selectLastCompleteLoopPassNotes([note({ startPpq: 6.5, durationPpq: 7 })], 4, 14.5, 4),
+    ).toEqual([note({ startPpq: 0, durationPpq: 4 })]);
   });
 });

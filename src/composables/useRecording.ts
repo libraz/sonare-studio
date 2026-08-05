@@ -31,11 +31,13 @@ import {
   type OperationIdentity,
   type OperationToken,
 } from '@/lib/operation-generation';
+import { ensureWasm } from '@/lib/wasm';
 import { leaseAudioAssets } from '@/persistence/asset-leases';
 import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
 import type { AudioAssetMeta } from '@/persistence/assets';
 import { collectReferencedAudioAssetIds } from '@/project/asset-references';
 import { type AddRecordedAudioClipInput, addRecordedAudioClips } from '@/project/commands';
+import { createInsertPdcPlan, insertLatencyResolverFromCatalog } from '@/project/insert-latency';
 import {
   loopRecordingSplits,
   loopRecordingTakeSlices,
@@ -590,6 +592,15 @@ export function useRecording(
     });
   };
 
+  /** Current primary-output PDC, added only to microphone takes. */
+  const playbackPdcSamples = async (handle: EngineHandle): Promise<number> => {
+    const wasm = await ensureWasm();
+    const resolveLatency = insertLatencyResolverFromCatalog(wasm.masteringProcessorCatalog(), {
+      sampleRate: handle.ctx.sampleRate,
+    });
+    return createInsertPdcPlan(store.tracks, store.mixer.buses, resolveLatency).maxLatencySamples;
+  };
+
   const record = async (startAtPpq?: number, endAtPpq?: number): Promise<boolean> => {
     error.value = null;
     if (recordingOperations.disposed || state.value !== 'idle') return false;
@@ -703,6 +714,9 @@ export function useRecording(
         tempoMap,
         startSeconds + DEFAULT_MAX_DURATION_SECONDS,
       );
+    }
+    if (captureSource.value === 'input') {
+      startOptions.playbackLatencySamples = await playbackPdcSamples(operation.handle);
     }
     try {
       rec.arm(targetTrackIds[0]);

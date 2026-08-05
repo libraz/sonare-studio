@@ -660,6 +660,24 @@ describe('createRecorder capture', () => {
     expect(channel[0]).toBe(15);
   });
 
+  it('adds project playback PDC to the device record offset', async () => {
+    const { handle, configureCapture, setStatus, setAudio } = makeHandle(100, 0.1);
+    const { deps } = makeDeps({ trackLatencySeconds: 0.05 });
+    const recorder = createRecorder(handle, deps);
+    await recorder.requestMicrophone();
+    recorder.arm(1);
+
+    await recorder.start({ startPpq: 0, tempoBpm: 120, playbackLatencySamples: 24 });
+    expect(configureCapture).toHaveBeenLastCalledWith(
+      expect.objectContaining({ recordOffsetSamples: 39 }),
+    );
+    setAudio(rampChannels(1, 100));
+    setStatus({ capturedFrames: 50 });
+    const channel = (await recorder.stop())?.channels[0] as Float32Array;
+    expect(channel.length).toBe(11);
+    expect(channel[0]).toBe(39);
+  });
+
   it('preserves stereo channels independently', async () => {
     const { handle, setStatus, setAudio } = makeHandle(100);
     const { deps } = makeDeps();

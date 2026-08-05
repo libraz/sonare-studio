@@ -26,6 +26,7 @@ const props = defineProps<{
   isPlaying: boolean;
   loopEnabled: boolean;
   metronomeEnabled: boolean;
+  metronomeVolume: number;
   positionSeconds: number;
   recording: Recording;
   recordingInputDeviceOptions: readonly RecordingInputDeviceOption[];
@@ -55,6 +56,7 @@ const emit = defineEmits<{
   toggleAutoPunch: [];
   toggleLoop: [];
   toggleMetronome: [];
+  metronomeVolumeChange: [value: number];
   toggleRecord: [];
   updateBbtDraft: [value: string];
   updateRecordMenuOpen: [open: boolean];
@@ -101,6 +103,23 @@ const midiInputQuantizeOptions = computed(() => [
   { value: 16, label: t.value.shell.transport.midiInputQuantizeSixteenth },
   { value: 32, label: t.value.shell.transport.midiInputQuantizeThirtySecond },
 ]);
+
+const midiCycleRecordModeOptions = computed(() => [
+  { value: 'takes', label: t.value.shell.transport.midiCycleRecordTakes },
+  { value: 'overdub', label: t.value.shell.transport.midiCycleRecordOverdub },
+  { value: 'keep-last', label: t.value.shell.transport.midiCycleRecordKeepLast },
+  { value: 'overwrite', label: t.value.shell.transport.midiCycleRecordOverwrite },
+]);
+
+const midiCycleRecordMode = computed(() => props.midiRecording.cycleRecordMode?.value ?? 'takes');
+
+function setMidiCycleRecordMode(value: string | number): void {
+  if (props.midiRecording.cycleRecordMode !== undefined) {
+    props.midiRecording.cycleRecordMode.value = String(
+      value,
+    ) as typeof props.midiRecording.cycleRecordMode.value;
+  }
+}
 
 const customVoiceOpen = ref(false);
 const customVoiceJson = ref('{\n  "schemaVersion": 1,\n  "macros": {},\n  "dsp": {}\n}');
@@ -331,6 +350,17 @@ function onRetuneInput(event: Event): void {
             />
           </label>
           <label class="bar-field">
+            {{ t.shell.transport.midiCycleRecordMode }}
+            <SelectMenu
+              :model-value="midiCycleRecordMode"
+              :options="midiCycleRecordModeOptions"
+              size="sm"
+              :disabled="midiRecording.isRecording.value"
+              :aria-label="t.shell.transport.midiCycleRecordMode"
+              @change="setMidiCycleRecordMode($event)"
+            />
+          </label>
+          <label class="bar-field">
             {{ t.shell.transport.voiceChanger }}
             <SelectMenu
               :model-value="voiceChangerSelectValue"
@@ -431,6 +461,18 @@ function onRetuneInput(event: Event): void {
       >
         <TransportIcon name="metronome" />
       </button>
+      <label class="metronome-volume" :aria-label="t.shell.transport.metronomeVolume">
+        <input
+          class="metronome-volume-input"
+          :value="metronomeVolume"
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          :disabled="!handle"
+          @input="emit('metronomeVolumeChange', Number(($event.target as HTMLInputElement).value))"
+        />
+      </label>
     </div>
 
     <div class="transport-module" role="group" :aria-label="t.shell.transport.locatorsGroup">

@@ -357,6 +357,16 @@
   cursor: default;
 }
 
+.metronome-volume {
+  display: inline-flex;
+  align-items: center;
+}
+
+.metronome-volume-input {
+  width: 56px;
+  accent-color: var(--accent);
+}
+
 .time-display {
   display: inline-flex;
   align-items: stretch;

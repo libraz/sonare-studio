@@ -48,7 +48,7 @@ function createMockHandle(sampleRate = 48000): MockHandle {
   };
   const handle = {
     engine,
-    ctx: { sampleRate },
+    ctx: { sampleRate, baseLatency: 0.01, outputLatency: 0.02 },
     capabilities: { mode: 'postMessage' },
     dispose: vi.fn(),
   } as unknown as EngineHandle;
@@ -90,6 +90,17 @@ describe('useTransport', () => {
     expect(mock.transport.play).toHaveBeenCalledTimes(1);
     expect(mock.transport.play).toHaveBeenCalledWith(undefined);
     expect(transport.isPlaying.value).toBe(true);
+    expect(transport.playbackLatencySeconds.value).toBeCloseTo(0.03);
+  });
+
+  it('tracks the audible telemetry position separately from the render timeline', () => {
+    const mock = createMockHandle(48000);
+    const { transport } = setup(mock.handle);
+    transport.play();
+    mock.emitTelemetry({ timelineSample: 96000, audibleTimelineSample: 93000 });
+
+    expect(transport.positionPpq.value).toBe(4);
+    expect(transport.audiblePositionPpq.value).toBeCloseTo(3.875);
   });
 
   it('play(sampleTime) commits only when process telemetry reaches the future frame', () => {
@@ -156,6 +167,7 @@ describe('useTransport', () => {
     const { transport } = setup(mock.handle);
     expect(transport.seek(2.5)).toBe(true);
     expect(mock.transport.seekSeconds).toHaveBeenCalledWith(2.5, undefined);
+    expect(mock.pushMidiPanic).toHaveBeenCalledWith();
     expect(transport.positionSeconds.value).toBe(2.5);
   });
 
@@ -164,6 +176,7 @@ describe('useTransport', () => {
     const { transport } = setup(mock.handle);
     expect(transport.seek(2.5, 1000)).toBe(true);
     expect(mock.transport.seekSeconds).toHaveBeenCalledWith(2.5, 1000);
+    expect(mock.pushMidiPanic).toHaveBeenCalledWith(1000);
     expect(transport.positionSeconds.value).toBe(0);
     mock.emitTelemetry({ renderFrame: 999, timelineSample: 0 });
     expect(transport.positionSeconds.value).toBe(0);
@@ -177,6 +190,7 @@ describe('useTransport', () => {
     // Default map is a single constant 120 BPM segment: 2 ppq = 1 second.
     expect(transport.seekPpq(2)).toBe(true);
     expect(mock.transport.seekPpq).toHaveBeenCalledWith(2, undefined);
+    expect(mock.pushMidiPanic).toHaveBeenCalledWith();
     expect(transport.positionPpq.value).toBe(2);
     expect(transport.positionSeconds.value).toBe(1);
   });
@@ -281,6 +295,18 @@ describe('useTransport', () => {
     expect(mock.setMetronome).toHaveBeenLastCalledWith({ enabled: false });
     expect(transport.toggleMetronome(false)).toBe(false);
     expect(mock.setMetronome).toHaveBeenLastCalledWith({ enabled: false });
+  });
+
+  it('updates the metronome beat and accent gains without changing its state', () => {
+    const mock = createMockHandle();
+    const { transport } = setup(mock.handle);
+
+    expect(transport.toggleMetronome(false, 0.4)).toBe(false);
+    expect(mock.setMetronome).toHaveBeenCalledWith({
+      enabled: false,
+      beatGain: 0.4,
+      accentGain: 0.8,
+    });
   });
 
   it('updates positionSeconds from the non-latency-compensated timeline telemetry', () => {

@@ -20,7 +20,15 @@ import {
   sanitizePressurePoints,
 } from '@/project/midi-cc';
 import type { NoteBoundaryEvent } from '@/project/midi-events';
-import { finalizeRecording, foldRecordedNotesIntoLoop } from '@/project/midi-recording';
+import {
+  finalizeRecording,
+  foldRecordedNotesIntoLoop,
+  lastCompleteLoopPassStartPpq,
+  lastLoopPassWithEventsStartPpq,
+  loopPassStartsWithEvents,
+  selectLastCompleteLoopPassEvents,
+  selectLastCompleteLoopPassNotes,
+} from '@/project/midi-recording';
 import { useProjectStore } from '@/project/store';
 import {
   type NormalizedTempoMap,
@@ -36,8 +44,12 @@ import type {
   ClipPitchBendLane,
   ClipPolyPressureLane,
   ClipProgramChangeLane,
+  MidiClipTake,
 } from '@/project/types';
 import type { UseTransportReturn } from './useTransport';
+
+/** How a MIDI performance recorded through a transport cycle is committed. */
+export type MidiCycleRecordMode = 'takes' | 'overdub' | 'keep-last' | 'overwrite';
 
 /** A note-on/note-off received from a MIDI input (channel-voice, 7-bit). */
 export interface CapturedNoteEvent {
@@ -105,6 +117,8 @@ export interface UseMidiRecordingReturn {
    * 0 disables quantizing. Applied to note starts when a take is committed.
    */
   inputQuantizeDenominator: Ref<number>;
+  /** How a loop recording is committed; ignored when transport cycle is off. */
+  cycleRecordMode: Ref<MidiCycleRecordMode>;
   /**
    * Arms a MIDI track as the recording destination (null disarms).
    * Non-MIDI tracks are rejected with `error` set.
@@ -165,6 +179,7 @@ export function useMidiRecording(
   const countInBars = ref(0);
   const error = ref<string | null>(null);
   const inputQuantizeDenominator = ref(0);
+  const cycleRecordMode = ref<MidiCycleRecordMode>('takes');
 
   let buffer: NoteBoundaryEvent[] = [];
   let ccBuffer: Array<CapturedControlChangeEvent & { ppq: number }> = [];
@@ -233,7 +248,7 @@ export function useMidiRecording(
       if (ppq > lastCapturePpq) lastCapturePpq = ppq;
       return ppq;
     }
-    const raw = Math.max(0, transport.positionPpq.value);
+    const raw = Math.max(0, transport.audiblePositionPpq.value);
     if (raw < recordingStartPpq - 1e-9) return raw;
     let ppq = raw + recordingWrapOffsetPpq;
     if (recordingLoopLengthPpq > 0 && ppq < lastCapturePpq - 1e-9) {
@@ -258,7 +273,7 @@ export function useMidiRecording(
     ) {
       return timeStampMs < recordingStartTimestampMs - 1e-6;
     }
-    return transport.positionPpq.value < recordingStartPpq - 1e-9;
+    return transport.audiblePositionPpq.value < recordingStartPpq - 1e-9;
   }
 
   function activatePreRollHeld(key?: string): void {
@@ -565,8 +580,10 @@ export function useMidiRecording(
       return false;
     }
     const explicit = startAtPpq !== undefined && Number.isFinite(startAtPpq) && startAtPpq >= 0;
-    let startPpq = explicit ? (startAtPpq as number) : Math.max(0, transport.positionPpq.value);
     const wasRolling = transport.isPlaying.value;
+    let startPpq = explicit
+      ? (startAtPpq as number)
+      : Math.max(0, (wasRolling ? transport.audiblePositionPpq : transport.positionPpq).value);
     if (!explicit) {
       startPpq = snapLoopRecordingStartPpq(startPpq, {
         explicit: false,
@@ -595,7 +612,7 @@ export function useMidiRecording(
       }
     } else if (!explicit) {
       // Punch-in on a rolling transport: capture from where it is now.
-      startPpq = Math.max(0, transport.positionPpq.value);
+      startPpq = Math.max(0, transport.audiblePositionPpq.value);
     }
     buffer = [];
     ccBuffer = [];
@@ -614,13 +631,16 @@ export function useMidiRecording(
         ? Math.max(
             0,
             recordingStartSeconds -
-              ppqToSecondsMap(recordingTempoMap, Math.max(0, transport.positionPpq.value)),
+              ppqToSecondsMap(recordingTempoMap, Math.max(0, transport.audiblePositionPpq.value)),
           ) * 1000
         : 0;
+    const stoppedStartLatencyMs = !wasRolling ? transport.playbackLatencySeconds.value * 1000 : 0;
     recordingStartTimestampMs =
       !wasRolling && countInPpq > 0
-        ? recordStartTimestampMs + ppqRangeSeconds(tempoMap, startPpq - countInPpq, startPpq) * 1000
-        : recordStartTimestampMs + rollingPrerollMs;
+        ? recordStartTimestampMs +
+          ppqRangeSeconds(tempoMap, startPpq - countInPpq, startPpq) * 1000 +
+          stoppedStartLatencyMs
+        : recordStartTimestampMs + rollingPrerollMs + stoppedStartLatencyMs;
     lastCaptureTimestampMs = null;
     recordingLoopLengthPpq =
       transport.loopEnabled.value && transport.loopEndPpq.value > transport.loopStartPpq.value
@@ -643,7 +663,7 @@ export function useMidiRecording(
           activatePreRollHeld();
           finishCountIn();
         },
-        ppqRangeSeconds(tempoMap, startPpq - countInPpq, startPpq) * 1000,
+        ppqRangeSeconds(tempoMap, startPpq - countInPpq, startPpq) * 1000 + stoppedStartLatencyMs,
       );
     }
     return true;
@@ -701,53 +721,259 @@ export function useMidiRecording(
       startPpq: recordingStartPpq,
       stopPpq,
       gridPpq,
+      quantizeStrength: store.quantizeStrength,
+      quantizeSwingPercent: store.quantizeSwing,
     });
     try {
       recordingCounter += 1;
-      const notes =
-        finalized && loopLengthPpq > 0
-          ? foldRecordedNotesIntoLoop(finalized.notes, loopLengthPpq)
-          : (finalized?.notes ?? []);
-      const capturedExpression = [
+      const capturedLoopEvents = [
+        ...captured,
         ...capturedCc,
         ...capturedPitchBend,
         ...capturedProgramChange,
         ...capturedChannelPressure,
         ...capturedPolyPressure,
       ];
-      const lengthPpq = expressionLengthPpq(
-        capturedExpression,
-        recordingStartPpq,
-        stopPpq,
-        loopLengthPpq,
-        finalized?.lengthPpq ?? 0,
-      );
+      const completedLoopPassStart =
+        loopLengthPpq > 0
+          ? (lastLoopPassWithEventsStartPpq(capturedLoopEvents, recordingStartPpq, loopLengthPpq) ??
+            lastCompleteLoopPassStartPpq(recordingStartPpq, stopPpq, loopLengthPpq))
+          : null;
+      let notes =
+        finalized && loopLengthPpq > 0
+          ? selectLastCompleteLoopPassNotes(
+              finalized.notes,
+              recordingStartPpq,
+              stopPpq,
+              loopLengthPpq,
+              completedLoopPassStart,
+            )
+          : (finalized?.notes ?? []);
+      const loopCc =
+        completedLoopPassStart !== null
+          ? selectLastCompleteLoopPassEvents(
+              capturedCc,
+              recordingStartPpq,
+              stopPpq,
+              loopLengthPpq,
+              completedLoopPassStart,
+            )
+          : capturedCc;
+      const loopPitchBend =
+        completedLoopPassStart !== null
+          ? selectLastCompleteLoopPassEvents(
+              capturedPitchBend,
+              recordingStartPpq,
+              stopPpq,
+              loopLengthPpq,
+              completedLoopPassStart,
+            )
+          : capturedPitchBend;
+      const loopProgramChange =
+        completedLoopPassStart !== null
+          ? selectLastCompleteLoopPassEvents(
+              capturedProgramChange,
+              recordingStartPpq,
+              stopPpq,
+              loopLengthPpq,
+              completedLoopPassStart,
+            )
+          : capturedProgramChange;
+      const loopChannelPressure =
+        completedLoopPassStart !== null
+          ? selectLastCompleteLoopPassEvents(
+              capturedChannelPressure,
+              recordingStartPpq,
+              stopPpq,
+              loopLengthPpq,
+              completedLoopPassStart,
+            )
+          : capturedChannelPressure;
+      const loopPolyPressure =
+        completedLoopPassStart !== null
+          ? selectLastCompleteLoopPassEvents(
+              capturedPolyPressure,
+              recordingStartPpq,
+              stopPpq,
+              loopLengthPpq,
+              completedLoopPassStart,
+            )
+          : capturedPolyPressure;
+      const capturedExpression = [
+        ...loopCc,
+        ...loopPitchBend,
+        ...loopProgramChange,
+        ...loopChannelPressure,
+        ...loopPolyPressure,
+      ];
+      const expressionLoopLengthPpq = completedLoopPassStart !== null ? 0 : loopLengthPpq;
+      let lengthPpq =
+        completedLoopPassStart !== null
+          ? loopLengthPpq
+          : expressionLengthPpq(
+              capturedExpression,
+              recordingStartPpq,
+              stopPpq,
+              loopLengthPpq,
+              finalized?.lengthPpq ?? 0,
+            );
       if (lengthPpq <= 0) return null;
-      const ccLanes = buildCcLanes(capturedCc, recordingStartPpq, loopLengthPpq, lengthPpq);
-      const pitchBendLanes = buildPitchBendLanes(
-        capturedPitchBend,
+      let ccLanes = buildCcLanes(loopCc, recordingStartPpq, expressionLoopLengthPpq, lengthPpq);
+      let pitchBendLanes = buildPitchBendLanes(
+        loopPitchBend,
         recordingStartPpq,
-        loopLengthPpq,
+        expressionLoopLengthPpq,
         lengthPpq,
       );
-      const programChangeLanes = buildProgramChangeLanes(
-        capturedProgramChange,
+      let programChangeLanes = buildProgramChangeLanes(
+        loopProgramChange,
         recordingStartPpq,
-        loopLengthPpq,
+        expressionLoopLengthPpq,
         lengthPpq,
       );
-      const channelPressureLanes = buildChannelPressureLanes(
-        capturedChannelPressure,
+      let channelPressureLanes = buildChannelPressureLanes(
+        loopChannelPressure,
         recordingStartPpq,
-        loopLengthPpq,
+        expressionLoopLengthPpq,
         lengthPpq,
       );
-      const polyPressureLanes = buildPolyPressureLanes(
-        capturedPolyPressure,
+      let polyPressureLanes = buildPolyPressureLanes(
+        loopPolyPressure,
         recordingStartPpq,
-        loopLengthPpq,
+        expressionLoopLengthPpq,
         lengthPpq,
       );
+      const midiTakes: MidiClipTake[] = [];
+      if (loopLengthPpq > 0) {
+        const passStarts = loopPassStartsWithEvents(
+          capturedLoopEvents,
+          recordingStartPpq,
+          loopLengthPpq,
+        );
+        for (let takeIndex = 0; takeIndex < passStarts.length; takeIndex++) {
+          const passStart = passStarts[takeIndex];
+          const takeNotes = finalized
+            ? selectLastCompleteLoopPassNotes(
+                finalized.notes,
+                recordingStartPpq,
+                stopPpq,
+                loopLengthPpq,
+                passStart,
+              )
+            : [];
+          const takeCc = selectLastCompleteLoopPassEvents(
+            capturedCc,
+            recordingStartPpq,
+            stopPpq,
+            loopLengthPpq,
+            passStart,
+          );
+          const takePitchBend = selectLastCompleteLoopPassEvents(
+            capturedPitchBend,
+            recordingStartPpq,
+            stopPpq,
+            loopLengthPpq,
+            passStart,
+          );
+          const takeProgramChange = selectLastCompleteLoopPassEvents(
+            capturedProgramChange,
+            recordingStartPpq,
+            stopPpq,
+            loopLengthPpq,
+            passStart,
+          );
+          const takeChannelPressure = selectLastCompleteLoopPassEvents(
+            capturedChannelPressure,
+            recordingStartPpq,
+            stopPpq,
+            loopLengthPpq,
+            passStart,
+          );
+          const takePolyPressure = selectLastCompleteLoopPassEvents(
+            capturedPolyPressure,
+            recordingStartPpq,
+            stopPpq,
+            loopLengthPpq,
+            passStart,
+          );
+          midiTakes.push({
+            name: `Take ${takeIndex + 1}`,
+            notes: takeNotes,
+            ...(takeCc.length > 0
+              ? { ccLanes: buildCcLanes(takeCc, recordingStartPpq, 0, loopLengthPpq) }
+              : {}),
+            ...(takePitchBend.length > 0
+              ? {
+                  pitchBendLanes: buildPitchBendLanes(
+                    takePitchBend,
+                    recordingStartPpq,
+                    0,
+                    loopLengthPpq,
+                  ),
+                }
+              : {}),
+            ...(takeProgramChange.length > 0
+              ? {
+                  programChangeLanes: buildProgramChangeLanes(
+                    takeProgramChange,
+                    recordingStartPpq,
+                    0,
+                    loopLengthPpq,
+                  ),
+                }
+              : {}),
+            ...(takeChannelPressure.length > 0
+              ? {
+                  channelPressureLanes: buildChannelPressureLanes(
+                    takeChannelPressure,
+                    recordingStartPpq,
+                    0,
+                    loopLengthPpq,
+                  ),
+                }
+              : {}),
+            ...(takePolyPressure.length > 0
+              ? {
+                  polyPressureLanes: buildPolyPressureLanes(
+                    takePolyPressure,
+                    recordingStartPpq,
+                    0,
+                    loopLengthPpq,
+                  ),
+                }
+              : {}),
+          });
+        }
+      }
+      if (loopLengthPpq > 0 && cycleRecordMode.value === 'overdub') {
+        notes = finalized ? foldRecordedNotesIntoLoop(finalized.notes, loopLengthPpq) : [];
+        lengthPpq = loopLengthPpq;
+        ccLanes = buildCcLanes(capturedCc, recordingStartPpq, loopLengthPpq, lengthPpq);
+        pitchBendLanes = buildPitchBendLanes(
+          capturedPitchBend,
+          recordingStartPpq,
+          loopLengthPpq,
+          lengthPpq,
+        );
+        programChangeLanes = buildProgramChangeLanes(
+          capturedProgramChange,
+          recordingStartPpq,
+          loopLengthPpq,
+          lengthPpq,
+        );
+        channelPressureLanes = buildChannelPressureLanes(
+          capturedChannelPressure,
+          recordingStartPpq,
+          loopLengthPpq,
+          lengthPpq,
+        );
+        polyPressureLanes = buildPolyPressureLanes(
+          capturedPolyPressure,
+          recordingStartPpq,
+          loopLengthPpq,
+          lengthPpq,
+        );
+      }
       if (
         notes.length === 0 &&
         ccLanes.length === 0 &&
@@ -768,6 +994,9 @@ export function useMidiRecording(
         ...(programChangeLanes.length > 0 ? { programChangeLanes } : {}),
         ...(channelPressureLanes.length > 0 ? { channelPressureLanes } : {}),
         ...(polyPressureLanes.length > 0 ? { polyPressureLanes } : {}),
+        ...(cycleRecordMode.value === 'takes' && midiTakes.length > 1
+          ? { midiTakes, activeMidiTakeIndex: midiTakes.length - 1 }
+          : {}),
         name: `MIDI Recording ${recordingCounter}`,
       });
     } catch (err) {
@@ -812,6 +1041,7 @@ export function useMidiRecording(
     countInBars,
     error,
     inputQuantizeDenominator,
+    cycleRecordMode,
     arm,
     captureNoteOn,
     captureNoteOff,

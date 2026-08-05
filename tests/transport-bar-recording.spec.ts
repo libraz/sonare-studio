@@ -28,6 +28,7 @@ function makeMidiRecording(overrides: Record<string, unknown> = {}) {
   return {
     isRecording: ref(false),
     inputQuantizeDenominator: ref(0),
+    cycleRecordMode: ref('takes'),
     ...overrides,
   };
 }
@@ -47,6 +48,7 @@ function mountBar(props: Record<string, unknown> = {}): VueWrapper {
       isPlaying: false,
       loopEnabled: false,
       metronomeEnabled: false,
+      metronomeVolume: 0.35,
       positionSeconds: 0,
       recording: makeRecording(),
       recordingInputDeviceOptions: [
@@ -76,6 +78,13 @@ function menuButton(wrapper: VueWrapper, label: string) {
 }
 
 describe('TransportBar recording settings', () => {
+  it('emits metronome-volume changes from the transport control', async () => {
+    const wrapper = mountBar();
+    await wrapper.find('.metronome-volume-input').setValue('0.6');
+
+    expect(wrapper.emitted('metronomeVolumeChange')).toEqual([[0.6]]);
+  });
+
   it('updates the recording capture source from the recording settings', async () => {
     const recording = makeRecording();
     const wrapper = mountBar({ recording });
@@ -104,6 +113,15 @@ describe('TransportBar recording settings', () => {
     expect(wrapper.emitted('midiInputQuantizeChange')).toEqual([[16]]);
   });
 
+  it('updates MIDI cycle-record mode from the recording settings', () => {
+    const midiRecording = makeMidiRecording();
+    const wrapper = mountBar({ midiRecording });
+
+    wrapper.findAllComponents(SelectMenu)[4].vm.$emit('change', 'overdub');
+
+    expect(midiRecording.cycleRecordMode.value).toBe('overdub');
+  });
+
   it('toggles input monitoring through the recording controller', async () => {
     const recording = makeRecording();
     const wrapper = mountBar({ recording });
@@ -120,7 +138,7 @@ describe('TransportBar recording settings', () => {
     const wrapper = mountBar({ recording });
 
     const selects = wrapper.findAllComponents(SelectMenu);
-    selects[4].vm.$emit('change', 'bright-idol');
+    selects[5].vm.$emit('change', 'bright-idol');
 
     expect(recording.setVoiceChangerPreset).toHaveBeenCalledWith('bright-idol');
   });
@@ -130,7 +148,7 @@ describe('TransportBar recording settings', () => {
     const wrapper = mountBar({ recording });
 
     const selects = wrapper.findAllComponents(SelectMenu);
-    selects[4].vm.$emit('change', 'custom-json');
+    selects[5].vm.$emit('change', 'custom-json');
     await wrapper.vm.$nextTick();
 
     await wrapper.get('textarea[aria-label="Voice preset JSON"]').setValue(

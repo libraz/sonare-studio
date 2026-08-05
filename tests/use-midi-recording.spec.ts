@@ -14,9 +14,10 @@ vi.mock('@/lib/wasm', async () => {
 });
 
 /** A transport double with a directly writable playhead. */
-function makeTransport() {
+function makeTransport(playbackLatency = 0, audiblePosition?: number) {
   const isPlaying = ref(false);
   const positionPpq = ref(0);
+  const audiblePositionPpq = audiblePosition === undefined ? positionPpq : ref(audiblePosition);
   const play = vi.fn(() => {
     isPlaying.value = true;
     return true;
@@ -29,11 +30,14 @@ function makeTransport() {
     isPlaying,
     positionSeconds: ref(0),
     positionPpq,
+    audiblePositionSeconds: ref(0),
+    audiblePositionPpq,
     tempo: ref(120),
     loopEnabled: ref(false),
     loopStartPpq: ref(0),
     loopEndPpq: ref(0),
     metronomeEnabled: ref(false),
+    playbackLatencySeconds: ref(playbackLatency),
     play,
     stop: vi.fn(() => {
       isPlaying.value = false;
@@ -46,13 +50,15 @@ function makeTransport() {
     toggleMetronome: vi.fn(() => false),
     dispose: vi.fn(),
   };
-  return { transport, isPlaying, positionPpq, play, seekPpq };
+  return { transport, isPlaying, positionPpq, audiblePositionPpq, play, seekPpq };
 }
 
 /** A recording handle whose clip command records its input instead of editing. */
-function setup(options: { now?: () => number } = {}) {
+function setup(
+  options: { now?: () => number; playbackLatency?: number; audiblePosition?: number } = {},
+) {
   const calls: AddRecordedMidiClipInput[] = [];
-  const t = makeTransport();
+  const t = makeTransport(options.playbackLatency, options.audiblePosition);
   const recording = useMidiRecording(t.transport, {
     now: options.now,
     addRecordedMidiClip: (input) => {
@@ -256,11 +262,40 @@ describe('useMidiRecording', () => {
     expect(calls[0]).toMatchObject({
       startPpq: 4,
       lengthPpq: 4,
-      notes: [
-        { pitch: 60, velocity: 96, startPpq: 0, durationPpq: 0.5, channel: 0 },
-        { pitch: 60, velocity: 96, startPpq: 3.5, durationPpq: 0.5, channel: 0 },
-      ],
+      notes: [{ pitch: 60, velocity: 96, startPpq: 0, durationPpq: 0.5, channel: 0 }],
     });
+  });
+
+  it('offers overdub and keep-last cycle-recording modes', () => {
+    const recordTwoPasses = (mode: 'overdub' | 'keep-last') => {
+      const setupResult = setup();
+      const { recording, positionPpq, transport, calls } = setupResult;
+      recording.arm(store.tracks[0].id);
+      recording.cycleRecordMode.value = mode;
+      transport.loopEnabled.value = true;
+      transport.loopStartPpq.value = 4;
+      transport.loopEndPpq.value = 8;
+      positionPpq.value = 4;
+      recording.record();
+      positionPpq.value = 4.5;
+      recording.captureNoteOn({ pitch: 60, velocity: 90, channel: 0 });
+      positionPpq.value = 5;
+      recording.captureNoteOff({ pitch: 60, velocity: 0, channel: 0 });
+      positionPpq.value = 4.5;
+      recording.captureNoteOn({ pitch: 64, velocity: 90, channel: 0 });
+      positionPpq.value = 5;
+      recording.captureNoteOff({ pitch: 64, velocity: 0, channel: 0 });
+      recording.stopRecord();
+      return calls[0];
+    };
+
+    const overdub = recordTwoPasses('overdub');
+    expect(overdub.notes.map((note) => note.pitch)).toEqual([60, 64]);
+    expect(overdub.midiTakes).toBeUndefined();
+
+    const keepLast = recordTwoPasses('keep-last');
+    expect(keepLast.notes.map((note) => note.pitch)).toEqual([64]);
+    expect(keepLast.midiTakes).toBeUndefined();
   });
 
   it('closes held notes on the timestamp clock after three or more loop passes', () => {
@@ -344,7 +379,7 @@ describe('useMidiRecording', () => {
     });
   });
 
-  it('folds recorded expression lanes into the active cycle window', () => {
+  it('keeps only the final complete pass of recorded expression lanes', () => {
     const { recording, positionPpq, transport, calls } = setup();
     recording.arm(store.tracks[0].id);
     transport.loopEnabled.value = true;
@@ -365,10 +400,22 @@ describe('useMidiRecording', () => {
     expect(calls[0]).toMatchObject({
       startPpq: 4,
       lengthPpq: 4,
-      ccLanes: [{ controller: 1, channel: 0, points: [{ ppq: 3.5, value: 64 }] }],
       pitchBendLanes: [{ channel: 0, points: [{ ppq: 0.5, value: 8192 }] }],
       programChangeLanes: [{ channel: 0, points: [{ ppq: 1.5, program: 12 }] }],
     });
+    expect(calls[0].ccLanes).toBeUndefined();
+    expect(calls[0].midiTakes).toMatchObject([
+      {
+        name: 'Take 1',
+        ccLanes: [{ controller: 1, channel: 0, points: [{ ppq: 3.5, value: 64 }] }],
+      },
+      {
+        name: 'Take 2',
+        pitchBendLanes: [{ channel: 0, points: [{ ppq: 0.5, value: 8192 }] }],
+        programChangeLanes: [{ channel: 0, points: [{ ppq: 1.5, program: 12 }] }],
+      },
+    ]);
+    expect(calls[0].activeMidiTakeIndex).toBe(1);
   });
 
   it('applies the input-quantize grid to captured note starts', () => {
@@ -397,6 +444,38 @@ describe('useMidiRecording', () => {
 
     expect(calls[0].notes[0].startPpq).toBeCloseTo(0.02, 6);
     expect(calls[0].notes[0].durationPpq).toBeCloseTo(0.05, 6);
+  });
+
+  it('aligns MIDI timestamps to the audible start when playback begins from rest', () => {
+    const { recording, positionPpq, calls } = setup({ now: () => 1000, playbackLatency: 0.05 });
+    recording.arm(store.tracks[0].id);
+    recording.record();
+    recording.captureNoteOn({ pitch: 60, velocity: 90, channel: 0, timeStampMs: 1050 });
+    recording.captureNoteOff({ pitch: 60, velocity: 0, channel: 0, timeStampMs: 1100 });
+    positionPpq.value = 1;
+    recording.stopRecord();
+
+    expect(calls[0].notes[0]).toMatchObject({ startPpq: 0, durationPpq: 0.1 });
+  });
+
+  it('does not add playback latency when punching into an already rolling transport', () => {
+    const { recording, positionPpq, isPlaying, calls } = setup({
+      now: () => 1000,
+      playbackLatency: 0.05,
+      audiblePosition: 3.9,
+    });
+    recording.arm(store.tracks[0].id);
+    isPlaying.value = true;
+    positionPpq.value = 4;
+    recording.record();
+    recording.captureNoteOn({ pitch: 60, velocity: 90, channel: 0, timeStampMs: 1010 });
+    recording.captureNoteOff({ pitch: 60, velocity: 0, channel: 0, timeStampMs: 1060 });
+    positionPpq.value = 1;
+    recording.stopRecord();
+
+    expect(calls[0].startPpq).toBeCloseTo(3.9, 6);
+    expect(calls[0].notes[0].startPpq).toBeCloseTo(0.02, 6);
+    expect(calls[0].notes[0].durationPpq).toBeCloseTo(0.1, 6);
   });
 
   it('anchors explicit punch-in timestamps after a rolling count-in pre-roll', () => {

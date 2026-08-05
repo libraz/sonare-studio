@@ -10,6 +10,7 @@ import type { AudioAssetMeta } from '@/persistence/assets';
 import { clearAudioAssetCache, listAssets } from '@/persistence/assets';
 import {
   addAudioTrack,
+  addInsert,
   clearHistory,
   redo,
   setTempoSegments,
@@ -53,11 +54,14 @@ function makeTransport(tempoBpm = 120) {
     isPlaying,
     positionSeconds,
     positionPpq,
+    audiblePositionSeconds: ref(0),
+    audiblePositionPpq: positionPpq,
     tempo,
     loopEnabled: ref(false),
     loopStartPpq: ref(0),
     loopEndPpq: ref(0),
     metronomeEnabled,
+    playbackLatencySeconds: ref(0),
     play,
     stop,
     seek: vi.fn(() => true),
@@ -208,6 +212,16 @@ describe('useRecording', () => {
 
     expect(await recording.requestMic()).toBe(false);
     expect(recording.error.value).toBe('Start the engine before recording.');
+  });
+
+  it('passes the current insert PDC to microphone recording', async () => {
+    const { recording, fake } = setup();
+    const trackId = addAudioTrack({ name: 'PDC input' });
+    addInsert(trackId, 'dynamics.limiter', { latencySamples: 64 });
+    recording.arm(trackId);
+
+    expect(await recording.record()).toBe(true);
+    expect(fake.getLastStart()).toMatchObject({ playbackLatencySamples: 64 });
   });
 
   it('arm() accepts audio tracks only and supports disarming', () => {

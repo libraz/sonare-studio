@@ -160,6 +160,12 @@ export interface StartRecordingOptions {
    */
   recordOffsetSamples?: number;
   /**
+   * Additional playback-path latency in samples (>= 0), such as the current
+   * project insert PDC. This is added to the device record offset for input
+   * capture, so a new take is aligned with PDC-delayed playback lanes.
+   */
+  playbackLatencySamples?: number;
+  /**
    * Maximum take length in seconds (> 0, default 300). Sizes the engine
    * capture buffer, so the whole span is allocated up front.
    */
@@ -892,15 +898,22 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
         `Recording maxDurationSeconds must be finite and > 0, got ${maxDurationSeconds}`,
       );
     }
-    // The default offset compensates both the playback path (base + output
-    // latency) and the capture path (the device's reported input latency), so
-    // a take lands on its start position rather than a few ms late. An explicit
-    // override replaces the whole estimate.
-    const offsetSamples =
+    // The base offset compensates device playback/capture latency. Project PDC
+    // is a separate playback-path delay, so add it even when a caller supplies
+    // an explicit per-device calibration override.
+    const baseOffsetSamples =
       startOptions.recordOffsetSamples ??
       (captureSource === 'input' && binding
         ? defaultRecordOffsetSamples(handle.ctx) + maxInputLatencySamples()
         : 0);
+    const requestedPlaybackLatencySamples = startOptions.playbackLatencySamples ?? 0;
+    if (!Number.isFinite(requestedPlaybackLatencySamples) || requestedPlaybackLatencySamples < 0) {
+      throw new RangeError(
+        `Recording playbackLatencySamples must be finite and >= 0, got ${requestedPlaybackLatencySamples}`,
+      );
+    }
+    const playbackLatencySamples = captureSource === 'input' ? requestedPlaybackLatencySamples : 0;
+    const offsetSamples = baseOffsetSamples + playbackLatencySamples;
     if (!Number.isFinite(offsetSamples) || offsetSamples < 0) {
       throw new RangeError(
         `Recording recordOffsetSamples must be finite and >= 0, got ${offsetSamples}`,
