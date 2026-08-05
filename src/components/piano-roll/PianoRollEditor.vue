@@ -11,6 +11,8 @@ import { formatPitch } from '@/lib/pitch';
 import {
   addNote,
   addNotes,
+  applyGrooveToSelection,
+  captureGrooveFromSelection,
   cleanupOverlaps,
   copySelectedNotes,
   cutSelectedNotes,
@@ -43,6 +45,7 @@ import {
   updateNotes,
 } from '@/project/commands';
 import { unfreezeTrack } from '@/project/freeze';
+import { grooveTemplateIsUsable } from '@/project/groove';
 import {
   CLIP_EXPRESSION_CURVES,
   MIDI_PITCH_BEND_CENTER,
@@ -566,6 +569,33 @@ function selectionOpItems(): ContextMenuItem[] {
             quantizeSelection();
           },
         })),
+        { id: 'sep-groove', separator: true },
+        {
+          id: 'groove-capture',
+          label: t.value.shell.pianoRoll.context.grooveCapture,
+          run: () => {
+            store.grooveTemplate = captureGrooveFromSelection();
+          },
+        },
+        {
+          id: 'groove-apply',
+          label: grooveTemplateIsUsable(store.grooveTemplate)
+            ? t.value.shell.pianoRoll.context.grooveApply
+            : `${t.value.shell.pianoRoll.context.grooveApply} — ${t.value.shell.pianoRoll.context.grooveEmpty}`,
+          disabled: !grooveTemplateIsUsable(store.grooveTemplate),
+          run: () => {
+            const groove = store.grooveTemplate;
+            if (groove) applyGrooveToSelection(groove, store.quantizeStrength);
+          },
+        },
+        {
+          id: 'groove-clear',
+          label: t.value.shell.pianoRoll.context.grooveClear,
+          disabled: store.grooveTemplate === null,
+          run: () => {
+            store.grooveTemplate = null;
+          },
+        },
       ],
     },
     {

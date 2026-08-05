@@ -1,4 +1,9 @@
-import { applyGrooveTemplate, type GrooveTemplate } from '../groove';
+import {
+  applyGrooveToPosition,
+  DEFAULT_GROOVE_STEPS,
+  extractGrooveTemplate,
+  type GrooveTemplate,
+} from '../groove';
 import { midiSourcePpqToTimeline } from '../midi-projection';
 import {
   allocateNoteId,
@@ -7,7 +12,11 @@ import {
   notesToProjectEvents,
   useProjectStore,
 } from '../store';
-import { snapPpqToMeterGrid, snapPpqToSwingMeterGrid } from '../time-signature';
+import {
+  snapPpqToMeterGrid,
+  snapPpqToSwingMeterGrid,
+  timeSignatureSegmentAt,
+} from '../time-signature';
 import { clipKind, type EditorNote, type EditorNoteUpdate, type NewEditorNote } from '../types';
 import { cloneNotes, executeAtomic } from './history';
 import { requireEditableClip } from './utils';
@@ -269,14 +278,80 @@ export function addNote(input: NewEditorNote): number {
   return id;
 }
 
+/**
+ * Captures a groove from notes, measured against the editor's note-division
+ * grid. Bar snapping has no groove meaning, so the numeric division is used
+ * even while Bar snap is selected. Positions are taken relative to the meter
+ * segment each note falls in, so a template captured in one meter still lines
+ * up after a meter change.
+ *
+ * @param notes Reference performance; the selection or a whole clip.
+ * @param steps Template period in grid steps.
+ * @returns The template, or null when there is nothing to measure.
+ */
+function captureGroove(notes: readonly EditorNote[], steps: number): GrooveTemplate | null {
+  const store = useProjectStore();
+  const clip = store.activeClip;
+  if (!clip || notes.length === 0) return null;
+  const gridPpq = 4 / store.snapDivision;
+  if (!(gridPpq > 0) || !Number.isFinite(gridPpq)) return null;
+  const positions = notes.map((note) => {
+    const timelinePpq = midiSourcePpqToTimeline(clip, note.startPpq);
+    const meter = timeSignatureSegmentAt(store.timeSignatures, timelinePpq);
+    return timelinePpq - meter.startPpq;
+  });
+  return extractGrooveTemplate(positions, gridPpq, steps);
+}
+
+/** Captures a groove template from the selected notes. */
+export function captureGrooveFromSelection(steps = DEFAULT_GROOVE_STEPS): GrooveTemplate | null {
+  const store = useProjectStore();
+  return captureGroove(
+    store.notes.filter((note) => store.selection.has(note.id)),
+    steps,
+  );
+}
+
+/** Captures a groove template from every note of the active clip. */
+export function captureGrooveFromActiveClip(steps = DEFAULT_GROOVE_STEPS): GrooveTemplate | null {
+  const store = useProjectStore();
+  return captureGroove(store.notes, steps);
+}
+
+/** Moves note starts onto a groove, keeping pitch and duration. */
+function applyGroove(notes: readonly EditorNote[], groove: GrooveTemplate, strength: number): void {
+  const store = useProjectStore();
+  if (notes.length === 0) return;
+  const clip = requireEditableClip(store, store.clipId);
+  const amount = Math.min(1, Math.max(0, strength));
+  const updates: EditorNoteUpdate[] = [];
+  for (const note of notes) {
+    const timelinePpq = midiSourcePpqToTimeline(clip, note.startPpq);
+    const meter = timeSignatureSegmentAt(store.timeSignatures, timelinePpq);
+    const grooved =
+      meter.startPpq + applyGrooveToPosition(groove, timelinePpq - meter.startPpq, amount);
+    const sourcePpq = Math.max(0, grooved - clip.startPpq + clip.sourceOffsetPpq);
+    if (Math.abs(sourcePpq - note.startPpq) < 1e-9) continue;
+    updates.push({ id: note.id, startPpq: sourcePpq });
+  }
+  if (updates.length === 0) return;
+  applyNoteEdits({ updates });
+}
+
 /** Applies a timing groove to the selected notes as one undoable edit. */
 export function applyGrooveToSelection(groove: GrooveTemplate, strength = 1): void {
   const store = useProjectStore();
-  const selected = store.notes.filter((note) => store.selection.has(note.id));
-  const grooved = applyGrooveTemplate(selected, groove, strength);
-  applyNoteEdits({
-    updates: grooved.map((note) => ({ id: note.id, startPpq: note.startPpq })),
-  });
+  applyGroove(
+    store.notes.filter((note) => store.selection.has(note.id)),
+    groove,
+    strength,
+  );
+}
+
+/** Applies a timing groove to every note of the active clip as one undoable edit. */
+export function applyGrooveToActiveClip(groove: GrooveTemplate, strength = 1): void {
+  const store = useProjectStore();
+  applyGroove(store.notes, groove, strength);
 }
 
 /**

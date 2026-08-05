@@ -1,19 +1,32 @@
 import { describe, expect, it } from 'vitest';
-import { applyGrooveTemplate, extractGrooveTemplate } from '@/project/groove';
+import {
+  applyGrooveToPosition,
+  extractGrooveTemplate,
+  grooveOffsetPpq,
+  grooveTemplateIsUsable,
+} from '@/project/groove';
 
 describe('groove templates', () => {
-  it('extracts repeating grid offsets and applies them by strength', () => {
-    const groove = extractGrooveTemplate(
-      [{ startPpq: 0 }, { startPpq: 0.6 }, { startPpq: 1 }],
-      0.5,
-      4,
-    );
+  it('averages the onset offset of every step of the period', () => {
+    const groove = extractGrooveTemplate([0, 0.6, 1, 1.4], 0.5, 4);
+    expect(groove.offsetsPpq[0]).toBeCloseTo(0);
     expect(groove.offsetsPpq[1]).toBeCloseTo(0.1);
-    const out = applyGrooveTemplate(
-      [{ id: 1, pitch: 60, velocity: 96, channel: 0, startPpq: 0.5, durationPpq: 0.5 }],
-      groove,
-      0.5,
-    );
-    expect(out[0].startPpq).toBeCloseTo(0.55);
+    expect(groove.offsetsPpq[2]).toBeCloseTo(0);
+    // 1.4 sits on step 3 (1.5) and drags it 0.1 early.
+    expect(groove.offsetsPpq[3]).toBeCloseTo(-0.1);
+  });
+
+  it('repeats the template beyond one period and scales by strength', () => {
+    const groove = { gridPpq: 0.5, offsetsPpq: [0, 0.1] };
+    expect(grooveOffsetPpq(groove, 2.5)).toBeCloseTo(0.1);
+    expect(applyGrooveToPosition(groove, 2.5, 0.5)).toBeCloseTo(2.55);
+    expect(applyGrooveToPosition(groove, 2.5, 0)).toBe(2.5);
+  });
+
+  it('reports templates that cannot move anything as unusable', () => {
+    expect(grooveTemplateIsUsable(null)).toBe(false);
+    expect(grooveTemplateIsUsable({ gridPpq: 0.5, offsetsPpq: [0, 0] })).toBe(false);
+    expect(grooveTemplateIsUsable({ gridPpq: 0, offsetsPpq: [0.1] })).toBe(false);
+    expect(grooveTemplateIsUsable({ gridPpq: 0.5, offsetsPpq: [0, 0.1] })).toBe(true);
   });
 });

@@ -10,11 +10,13 @@ import {
   addNote,
   addNotes,
   addTrack,
+  applyGrooveToActiveClip,
   applyGrooveToSelection,
   applyNoteEdits,
   bakeClipMidiFx,
   canRedo,
   canUndo,
+  captureGrooveFromSelection,
   cleanupOverlaps,
   clearHistory,
   clearProjectChords,
@@ -1496,6 +1498,50 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
 
       // Timeline 0.6 snaps to 1.0, which is 0.6 PPQ inside the clip.
       expect(noteById(id)?.startPpq).toBeCloseTo(0.6, 9);
+    });
+
+    it('captures the feel of a reference phrase and transfers it to another part', () => {
+      // Reference: every off-sixteenth is played 0.05 PPQ late.
+      const reference = [0, 0.3, 0.5, 0.8].map((startPpq) =>
+        addNote({ pitch: 36, startPpq, durationPpq: 0.25 }),
+      );
+      setSelection(reference);
+      store.snapDivision = 16; // grid = 0.25 PPQ
+
+      const groove = captureGrooveFromSelection(4);
+      expect(groove).not.toBeNull();
+      expect(groove?.offsetsPpq[1]).toBeCloseTo(0.05);
+      expect(groove?.offsetsPpq[3]).toBeCloseTo(0.05);
+      expect(groove?.offsetsPpq[0]).toBeCloseTo(0);
+
+      const target = addNote({ pitch: 60, startPpq: 0.25, durationPpq: 0.25 });
+      const straight = addNote({ pitch: 62, startPpq: 0.5, durationPpq: 0.25 });
+      setSelection([target, straight]);
+      if (groove) applyGrooveToSelection(groove);
+
+      expect(noteById(target)?.startPpq).toBeCloseTo(0.3, 9);
+      expect(noteById(straight)?.startPpq).toBeCloseTo(0.5, 9);
+      expect(noteById(target)?.durationPpq).toBe(0.25);
+    });
+
+    it('grooves a whole clip and anchors the template at the meter segment', () => {
+      setTimeSignatures([
+        { startPpq: 0, numerator: 4, denominator: 4 },
+        { startPpq: 4, numerator: 3, denominator: 4 },
+      ]);
+      const inFour = addNote({ pitch: 60, startPpq: 0.25, durationPpq: 0.25 });
+      const inThree = addNote({ pitch: 62, startPpq: 4.25, durationPpq: 0.25 });
+      store.snapDivision = 16;
+      setSelection([]);
+
+      applyGrooveToActiveClip({ gridPpq: 0.25, offsetsPpq: [0, 0.05] }, 1);
+
+      // Both notes are one grid step into their own meter segment, so both
+      // take the same template step.
+      expect(noteById(inFour)?.startPpq).toBeCloseTo(0.3, 9);
+      expect(noteById(inThree)?.startPpq).toBeCloseTo(4.3, 9);
+      expect(undo()).toBe(true);
+      expect(noteById(inFour)?.startPpq).toBeCloseTo(0.25, 9);
     });
 
     it('applies a groove only to the selected notes and undoes it', () => {

@@ -34,6 +34,8 @@ import {
   sanitizeChordSymbols,
   toProjectChordSymbols,
 } from './chords';
+import { sanitizeExpressionMap } from './expression-map';
+import type { GrooveTemplate } from './groove';
 import { cloneInstrument, type ExternalMidiInstrument } from './instrument';
 import { notesToProjectMidiEvents, type RawNote } from './midi-events';
 import { isMidiFxNoop, sanitizeMidiFxConfig } from './midi-fx';
@@ -345,6 +347,11 @@ export const useProjectStore = defineStore('project', () => {
   const quantizeStrength = ref(1);
   /** Straight-grid swing applied by selection quantize, in percent (0-100). */
   const quantizeSwing = ref(0);
+  /**
+   * Groove captured from a reference performance (editor-only, not undoable
+   * and not part of the Project document).
+   */
+  const grooveTemplate = ref<GrooveTemplate | null>(null);
   /** Whether grid snapping is applied to note edits (editor-only, not undoable). */
   const snapEnabled = ref(true);
   /** Scale highlight configuration (defaults to C major). */
@@ -675,6 +682,11 @@ export const useProjectStore = defineStore('project', () => {
         }
         if (track.soloSafe === true) mirrorEntry.soloSafe = true;
         if (typeof track.percussion === 'boolean') mirrorEntry.percussion = track.percussion;
+        if (track.chordFollow === 'chordTones' || track.chordFollow === 'root') {
+          mirrorEntry.chordFollow = track.chordFollow;
+        }
+        const expressionMap = sanitizeExpressionMap(track.expressionMap);
+        if (expressionMap !== undefined) mirrorEntry.expressionMap = expressionMap;
         // Restore the VCA assignment only when the referenced group survives in
         // the document mixer, so dangling ids never leak into the session.
         if (
@@ -1146,6 +1158,7 @@ export const useProjectStore = defineStore('project', () => {
     snapBar.value = false;
     quantizeStrength.value = 1;
     quantizeSwing.value = 0;
+    grooveTemplate.value = null;
     snapEnabled.value = true;
     scaleHighlight.value = { enabled: true, rootPc: 0, modeMask: MAJOR_MODE_MASK };
     scoreAnnotations.value = {};
@@ -1180,6 +1193,7 @@ export const useProjectStore = defineStore('project', () => {
     snapBar,
     quantizeStrength,
     quantizeSwing,
+    grooveTemplate,
     snapEnabled,
     scaleHighlight,
     scoreAnnotations,
