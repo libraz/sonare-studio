@@ -1,4 +1,6 @@
+import { downmixToMono } from '@/lib/audio-channels';
 import { OperationGeneration } from '@/lib/operation-generation';
+import { ensureWasm } from '@/lib/wasm';
 import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
 import { audioAssetUri, type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import {
@@ -8,6 +10,7 @@ import {
 } from '../annotations';
 import { collectReferencedAudioAssetIds } from '../asset-references';
 import { ingestAudioBuffer } from '../audio-import';
+import { MIN_SLICE_PPQ, quantizeSlices, transientCutsPpq } from '../audio-slice';
 import { clipSplitBlockReason, LOOP_CLIP_SPLIT_ERROR } from '../clip-split';
 import { audioClipSegments } from '../comping';
 import { sanitizeCcPoints, sanitizePitchBendPoints, sanitizePressurePoints } from '../midi-cc';
@@ -32,7 +35,7 @@ import {
   setAudioSourceId,
   useProjectStore,
 } from '../store';
-import { normalizeTempoMap, ppqRangeSamples } from '../tempo-map';
+import { normalizeTempoMap, ppqRangeSamples, ppqToSeconds, secondsToPpq } from '../tempo-map';
 import type {
   ClipCcLane,
   ClipChannelPressureLane,
@@ -49,6 +52,7 @@ import {
   installProjectClipWarp,
   type StretchFn,
 } from '../warp';
+import { moveClipWithin, splitClipWithin, trimClipWithin } from './clips-internal';
 import { execute, executeAtomic } from './history';
 import {
   requireEditableClip,
@@ -851,6 +855,102 @@ export async function consolidateAudioClips(
   } finally {
     if (consolidateOperations.isCurrent(operation.token)) consolidateOperations.invalidate();
   }
+}
+
+/** Inputs of {@link sliceAudioClipAtTransients}. */
+export interface SliceAudioClipOptions {
+  /** Move every slice onto the editor grid after cutting. */
+  quantize?: boolean;
+  /** Grid snap for a timeline position; required to quantize. */
+  snap?: (ppq: number) => number;
+  /** Asset loader override (tests). */
+  loadAudioAsset?: (assetId: string) => Promise<LoadedAudioAsset>;
+  /** Onset detector override; defaults to the wasm detector. */
+  detectOnsets?: (samples: Float32Array, sampleRate: number) => ArrayLike<number>;
+}
+
+/**
+ * Cuts an audio clip at its transients as one undoable edit, optionally
+ * placing the resulting slices on the editor grid.
+ *
+ * Quantizing moves each slice to its nearest grid position and closes the
+ * length up to the next slice, so a loosely played take lines up without gaps
+ * or doubled material. A slice is never lengthened past the source material it
+ * has left, so a gap can remain where the recording itself ends.
+ *
+ * @param clipId Editor id of a non-looping audio clip.
+ * @param options Quantize behaviour and injectable dependencies.
+ * @returns Ids of the resulting slices in timeline order (the original clip
+ * first); a single-element array when no usable transient was found.
+ */
+export async function sliceAudioClipAtTransients(
+  clipId: number,
+  options: SliceAudioClipOptions = {},
+): Promise<number[]> {
+  const store = useProjectStore();
+  const clip = requireEditableClip(store, clipId);
+  if (!isAudioClip(clip) || clip.assetId === undefined) {
+    throw new RangeError(`Clip ${clipId} is not an audio clip with an asset`);
+  }
+  if (clip.loopEnabled) throw new Error(LOOP_CLIP_SPLIT_ERROR);
+  const detect =
+    options.detectOnsets ??
+    (
+      (await ensureWasm()) as unknown as {
+        detectOnsets?: (samples: Float32Array, sampleRate: number) => ArrayLike<number>;
+      }
+    ).detectOnsets ??
+    null;
+  if (detect === null) throw new Error('Onset detection is unavailable in this libsonare build');
+  const asset = await (options.loadAudioAsset ?? loadAsset)(clip.assetId);
+  const current = requireEditableClip(store, clipId);
+  const tempo = normalizeTempoMap(store.tempoSegments, store.tempoBpm);
+  const cuts = transientCutsPpq(
+    detect(downmixToMono(asset.channels), asset.meta.sampleRate),
+    current,
+    tempo,
+  );
+  if (cuts.length === 0) return [clipId];
+
+  const sourceStartPpq = current.startPpq - current.sourceOffsetPpq;
+  const assetSeconds = asset.meta.numFrames / asset.meta.sampleRate;
+  const sourceEndPpq = secondsToPpq(
+    tempo,
+    ppqToSeconds(tempo, Math.max(0, sourceStartPpq)) + assetSeconds,
+  );
+
+  return executeAtomic((edit) => {
+    const ids = [clipId];
+    let tailId = clipId;
+    for (const cutPpq of cuts) {
+      tailId = splitClipWithin(edit, tailId, cutPpq);
+      ids.push(tailId);
+    }
+    const snap = options.snap;
+    if (options.quantize !== true || snap === undefined) return ids;
+    const sliced = ids.map((id) => {
+      const slice = store.clips.find((entry) => entry.id === id);
+      if (slice === undefined) throw new Error(`Slice ${id} disappeared while slicing`);
+      return {
+        id,
+        startPpq: slice.startPpq,
+        lengthPpq: slice.lengthPpq,
+        maxLengthPpq: Math.max(MIN_SLICE_PPQ, sourceEndPpq - slice.startPpq),
+      };
+    });
+    const placed = quantizeSlices(sliced, snap);
+    for (const [index, target] of placed.entries()) {
+      const source = sliced[index];
+      if (Math.abs(target.startPpq - source.startPpq) > 1e-9) {
+        moveClipWithin(edit, source.id, target.startPpq);
+      }
+      if (Math.abs(target.lengthPpq - source.lengthPpq) > 1e-9) {
+        trimClipWithin(edit, source.id, target.startPpq, target.lengthPpq, true);
+      }
+    }
+    store.refresh();
+    return ids;
+  });
 }
 
 /**

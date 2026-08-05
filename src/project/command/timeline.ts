@@ -30,7 +30,13 @@ import {
   type TempoSegment,
   type TimeSignatureSegment,
 } from '../types';
-import { clearProjectClipWarp, installProjectClipWarp } from '../warp';
+import { installProjectClipWarp } from '../warp';
+import {
+  moveClipWithin,
+  removeClipWithin,
+  splitClipWithin,
+  trimClipWithin,
+} from './clips-internal';
 import { type AtomicProjectEdit, execute, executeAtomic } from './history';
 import { requireClip, requireEditableClip, validatePpq, withDerivedClipMetadata } from './utils';
 
@@ -74,108 +80,6 @@ function tempoSegmentChanged(
       (existing.endBpm ?? 0) !== (segment.endBpm ?? 0)
     );
   });
-}
-
-/** Reinstalls derived app metadata after a native timeline split. */
-function splitClipForTimeline(edit: AtomicProjectEdit, clipId: number, splitPpq: number): number {
-  const store = useProjectStore();
-  const project = getProject();
-  const source = requireEditableClip(store, clipId);
-  const blocked = clipSplitBlockReason(source, splitPpq);
-  if (blocked === 'loop') throw new Error(LOOP_CLIP_SPLIT_ERROR);
-  if (blocked === 'position') {
-    throw new RangeError(`Split position ${splitPpq} must lie strictly inside clip ${clipId}`);
-  }
-  const sourceMeta = { ...source };
-  const sourceAnnotations = store.scoreAnnotations[clipId];
-  const rightId = edit(1, () => project.splitClip(clipId, splitPpq));
-  store.refresh();
-  const splitOffsetPpq = splitPpq - source.startPpq;
-  store.clips = store.clips.map((clip) => {
-    if (clip.id === clipId) {
-      return withDerivedClipMetadata(clip, sourceMeta, {
-        windowStartPpq: 0,
-        windowLengthPpq: clip.lengthPpq,
-      });
-    }
-    if (clip.id === rightId) {
-      return withDerivedClipMetadata({ ...clip, name: source.name }, sourceMeta, {
-        windowStartPpq: splitOffsetPpq,
-        windowLengthPpq: clip.lengthPpq,
-      });
-    }
-    return clip;
-  });
-  const annotations = { ...store.scoreAnnotations };
-  delete annotations[clipId];
-  for (const id of [clipId, rightId]) {
-    const derived = store.clips.find((clip) => clip.id === id);
-    if (derived === undefined) continue;
-    const mapped = remapClipScoreAnnotations(sourceAnnotations, source.notes, derived.notes);
-    if (Object.keys(mapped).length > 0) annotations[id] = mapped;
-  }
-  store.scoreAnnotations = annotations;
-  const tempo = normalizeTempoMap(store.tempoSegments, store.tempoBpm);
-  for (const id of [clipId, rightId]) {
-    const derived = store.clips.find((clip) => clip.id === id);
-    if (derived?.warp !== undefined) {
-      installProjectClipWarp(project, derived, tempo, (mutation) => edit(1, mutation));
-    }
-  }
-  return rightId;
-}
-
-/** Trims a clip within the current atomic edit and preserves its app metadata. */
-function trimClipForTimeline(
-  edit: AtomicProjectEdit,
-  clipId: number,
-  newStartPpq: number,
-  newLengthPpq: number,
-): void {
-  const store = useProjectStore();
-  const project = getProject();
-  const source = requireEditableClip(store, clipId);
-  if (
-    !(newStartPpq >= source.startPpq) ||
-    !(newStartPpq + newLengthPpq <= source.startPpq + source.lengthPpq)
-  ) {
-    throw new RangeError(`Timeline trim must remain inside clip ${clipId}`);
-  }
-  const sourceMeta = { ...source };
-  edit(1, () => project.trimClip(clipId, newStartPpq, newLengthPpq));
-  store.refresh();
-  store.clips = store.clips.map((clip) =>
-    clip.id === clipId
-      ? withDerivedClipMetadata(clip, sourceMeta, {
-          windowStartPpq: newStartPpq - source.startPpq,
-          windowLengthPpq: clip.lengthPpq,
-        })
-      : clip,
-  );
-  const trimmed = store.clips.find((clip) => clip.id === clipId);
-  if (trimmed?.warp !== undefined) {
-    installProjectClipWarp(
-      project,
-      trimmed,
-      normalizeTempoMap(store.tempoSegments, store.tempoBpm),
-      (mutation) => edit(1, mutation),
-    );
-  }
-}
-
-/** Moves clip starts in bulk after all structural edits have completed. */
-function moveClipForTimeline(edit: AtomicProjectEdit, clipId: number, newStartPpq: number): void {
-  const project = getProject();
-  edit(1, () => project.moveClip(clipId, newStartPpq));
-}
-
-/** Removes a clip, first releasing any native warp map it owns. */
-function removeClipForTimeline(edit: AtomicProjectEdit, clipId: number): void {
-  const store = useProjectStore();
-  const project = getProject();
-  clearProjectClipWarp(project, clipId, (mutation) => edit(1, mutation));
-  edit(1, () => project.removeClip(clipId));
-  delete store.scoreAnnotations[clipId];
 }
 
 /** Rejects frozen clips and looped clips that would need structural splitting. */
@@ -599,10 +503,10 @@ export function insertTime(atPpq: number, lengthPpq: number): void {
     for (const clip of clips) {
       const endPpq = clip.startPpq + clip.lengthPpq;
       if (clip.startPpq >= atPpq) {
-        moveClipForTimeline(edit, clip.id, clip.startPpq + lengthPpq);
+        moveClipWithin(edit, clip.id, clip.startPpq + lengthPpq);
       } else if (endPpq > atPpq) {
-        const rightId = splitClipForTimeline(edit, clip.id, atPpq);
-        moveClipForTimeline(edit, rightId, atPpq + lengthPpq);
+        const rightId = splitClipWithin(edit, clip.id, atPpq);
+        moveClipWithin(edit, rightId, atPpq + lengthPpq);
       }
     }
     applyTimelineMetadata(edit, 'insert', atPpq, lengthPpq);
@@ -662,10 +566,10 @@ export function duplicateTime(startPpq: number, endPpq: number): void {
     for (const clip of clips) {
       const end = clip.startPpq + clip.lengthPpq;
       if (clip.startPpq >= endPpq) {
-        moveClipForTimeline(edit, clip.id, clip.startPpq + lengthPpq);
+        moveClipWithin(edit, clip.id, clip.startPpq + lengthPpq);
       } else if (end > endPpq) {
-        const rightId = splitClipForTimeline(edit, clip.id, endPpq);
-        moveClipForTimeline(edit, rightId, endPpq + lengthPpq);
+        const rightId = splitClipWithin(edit, clip.id, endPpq);
+        moveClipWithin(edit, rightId, endPpq + lengthPpq);
       }
     }
     applyTimelineMetadata(edit, 'insert', endPpq, lengthPpq);
@@ -731,7 +635,7 @@ export function duplicateTime(startPpq: number, endPpq: number): void {
         })),
       ),
     );
-    for (const copy of copies) moveClipForTimeline(edit, copy.id, copy.targetStartPpq);
+    for (const copy of copies) moveClipWithin(edit, copy.id, copy.targetStartPpq);
     store.refresh();
     reinstallTimelineWarps(edit);
     store.refresh();
@@ -765,18 +669,18 @@ export function deleteTime(startPpq: number, endPpq: number): void {
       const clipEndPpq = clip.startPpq + clip.lengthPpq;
       if (clipEndPpq <= startPpq) continue;
       if (clip.startPpq >= endPpq) {
-        moveClipForTimeline(edit, clip.id, clip.startPpq - lengthPpq);
+        moveClipWithin(edit, clip.id, clip.startPpq - lengthPpq);
       } else if (clip.startPpq >= startPpq && clipEndPpq <= endPpq) {
-        removeClipForTimeline(edit, clip.id);
+        removeClipWithin(edit, clip.id);
       } else if (clip.startPpq < startPpq && clipEndPpq <= endPpq) {
-        trimClipForTimeline(edit, clip.id, clip.startPpq, startPpq - clip.startPpq);
+        trimClipWithin(edit, clip.id, clip.startPpq, startPpq - clip.startPpq);
       } else if (clip.startPpq >= startPpq && clipEndPpq > endPpq) {
-        trimClipForTimeline(edit, clip.id, endPpq, clipEndPpq - endPpq);
-        moveClipForTimeline(edit, clip.id, startPpq);
+        trimClipWithin(edit, clip.id, endPpq, clipEndPpq - endPpq);
+        moveClipWithin(edit, clip.id, startPpq);
       } else {
-        const rightId = splitClipForTimeline(edit, clip.id, startPpq);
-        trimClipForTimeline(edit, rightId, endPpq, clipEndPpq - endPpq);
-        moveClipForTimeline(edit, rightId, startPpq);
+        const rightId = splitClipWithin(edit, clip.id, startPpq);
+        trimClipWithin(edit, rightId, endPpq, clipEndPpq - endPpq);
+        moveClipWithin(edit, rightId, startPpq);
       }
     }
     applyTimelineMetadata(edit, 'delete', startPpq, endPpq);
