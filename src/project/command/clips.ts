@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 export { replaceAudioClipAsset } from './clips-asset';
+export { copyActiveClip, cutActiveClip, pasteClipAt } from './clips-clipboard';
 export type { DropClipTakesInput } from './clips-comp';
 export {
   dropClipTakes,
@@ -23,6 +24,7 @@ export {
   duplicateClip,
   glueMidiClips,
   moveClip,
+  moveClips,
   renameClip,
   splitClip,
   trimClip,
@@ -42,6 +44,8 @@ export {
   setClipFades,
   setClipGain,
   setClipLoop,
+  setClipSelection,
   setClipWarp,
   setTrackFrozen,
+  setTrackSelection,
 } from './clips-state';
