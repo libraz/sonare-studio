@@ -56,6 +56,12 @@ describe('createPatchAudition', () => {
     expect(cached[0][0]).toBeCloseTo(0.25);
   });
 
+  it('preserves the rendered peak when normalization is disabled', async () => {
+    const { context, audition } = setup([new Float32Array([0.25, -0.25])]);
+    await audition.play(INSTRUMENT, undefined, undefined, { normalize: false });
+    expect(context.sources[0].buffer?.channelData[0][0]).toBeCloseTo(0.25);
+  });
+
   it('plays a custom pitch when given', async () => {
     const { render, audition } = setup();
     await audition.play(INSTRUMENT, 72, 64);

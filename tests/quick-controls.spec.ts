@@ -163,6 +163,7 @@ describe('quick controls', () => {
         max: 200,
         unit: 'ms',
         value: 10,
+        defaultValue: 10,
       });
     });
 
@@ -197,8 +198,12 @@ describe('quick controls', () => {
         { type: 'insert', trackId, index: 0 },
         { resolveInsertParams: () => ['resonanceQ', 'q'] },
       );
-      expect(controls.find((c) => c.id === 'resonanceQ')).toMatchObject({ min: 0.1, max: 18 });
-      expect(controls.find((c) => c.id === 'q')).toMatchObject({ min: 0.1, max: 18 });
+      expect(controls.find((c) => c.id === 'resonanceQ')).toMatchObject({
+        min: 0.1,
+        max: 18,
+        scale: 'log',
+      });
+      expect(controls.find((c) => c.id === 'q')).toMatchObject({ min: 0.1, max: 18, scale: 'log' });
     });
 
     it('does not misread a param merely starting with q as a Q factor', () => {
@@ -212,14 +217,14 @@ describe('quick controls', () => {
       expect(controls.find((c) => c.id === 'quality')).toMatchObject({ min: 0, max: 1 });
     });
 
-    it('caps the listing at eight controls', () => {
+    it('exposes every catalog and explicitly saved parameter', () => {
       const names = Array.from({ length: 12 }, (_, i) => `param${i}`);
-      addInsert(trackId, 'custom.many');
+      addInsert(trackId, 'custom.many', { savedParam: 0.75 });
       const controls = listQuickControls(
         { type: 'insert', trackId, index: 0 },
         { resolveInsertParams: () => names },
       );
-      expect(controls).toHaveLength(8);
+      expect(controls.map((control) => control.id)).toEqual([...names, 'savedParam']);
     });
 
     it('addresses master inserts too', () => {
@@ -265,6 +270,14 @@ describe('quick controls', () => {
       expect(store.tracks[0].mixer?.inserts[0].params.thresholdDb).toBe(-60);
       setQuickControl({ type: 'insert', trackId, index: 0 }, 'attackMs', 900);
       expect(store.tracks[0].mixer?.inserts[0].params.attackMs).toBe(200);
+    });
+
+    it('does not clamp an un-catalogued processor parameter to a display heuristic', () => {
+      addInsert(trackId, 'custom.tremolo', { rateHz: 0.8 });
+
+      setQuickControl({ type: 'insert', trackId, index: 0 }, 'rateHz', 2);
+
+      expect(store.tracks[0].mixer?.inserts[0].params.rateHz).toBe(2);
     });
 
     it('coalesces a knob drag into one undo step', () => {

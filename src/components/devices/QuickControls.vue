@@ -21,7 +21,13 @@ import {
   setQuickControl,
 } from '@/project/quick-controls';
 import { useProjectStore } from '@/project/store';
-import { formatControlValue, knobRotationDeg, knobValueForDrag } from '@/ui/devices/knob-math';
+import {
+  controlPercent,
+  formatControlValue,
+  knobRotationDeg,
+  knobValueForDrag,
+  valueAtControlPercent,
+} from '@/ui/devices/knob-math';
 import { useI18n } from '@/ui/i18n';
 import { midiLearnInsertTargetId, midiLearnInstrumentTargetId } from '@/ui/midi/midi-learn';
 import {
@@ -34,10 +40,10 @@ import {
 } from '@/ui/mixer/automation-mode';
 
 /**
- * Quick Controls: up to eight knobs for the selected device (instrument or
- * insert slot). Knob values come from the pure quick-control listing over the
- * store mirror; drags apply live values through setQuickControl with gesture
- * coalescing, so one knob drag lands as a single undo entry.
+ * Quick Controls for the selected device (instrument or insert slot). Knob
+ * values come from the pure quick-control listing over the store mirror;
+ * drags apply live values through setQuickControl with gesture coalescing, so
+ * one knob drag lands as a single undo entry.
  */
 
 const props = defineProps<{
@@ -180,6 +186,7 @@ interface KnobDrag {
   lastValue: number;
   min: number;
   max: number;
+  scale: 'linear' | 'log';
   moved: boolean;
 }
 
@@ -197,6 +204,7 @@ function onKnobPointerDown(control: QuickControl, event: PointerEvent): void {
     lastValue: control.value,
     min: control.min,
     max: control.max,
+    scale: control.scale ?? 'linear',
     moved: false,
   };
   // A write-mode strip turns this drag into a touch-recording of the lane
@@ -213,6 +221,7 @@ function onKnobPointerMove(event: PointerEvent): void {
     active.min,
     active.max,
     event.shiftKey,
+    active.scale,
   );
   if (value === active.lastValue) return;
   drag.value = { ...active, lastValue: value, moved: true };
@@ -251,9 +260,11 @@ function onKnobKeydown(control: QuickControl, event: KeyboardEvent): void {
   else return;
   event.preventDefault();
   const scale = event.shiftKey ? KEY_STEP_FRACTION / 10 : KEY_STEP_FRACTION;
-  const next = Math.min(
+  const next = valueAtControlPercent(
+    controlPercent(control.value, control.min, control.max, control.scale) + direction * scale,
+    control.min,
     control.max,
-    Math.max(control.min, control.value + direction * (control.max - control.min) * scale),
+    control.scale,
   );
   if (next !== control.value) apply(control.id, next, true);
 }
@@ -399,7 +410,7 @@ onBeforeUnmount(() => {
           <div
             class="qc-knob-indicator"
             :style="{
-              transform: `rotate(${knobRotationDeg(shownValue(control), control.min, control.max)}deg)`,
+              transform: `rotate(${knobRotationDeg(shownValue(control), control.min, control.max, control.scale)}deg)`,
             }"
           />
         </div>

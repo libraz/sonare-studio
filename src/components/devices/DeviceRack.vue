@@ -6,6 +6,7 @@ import EmptyState from '@/components/shell/EmptyState.vue';
 import SearchField from '@/components/shell/SearchField.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useWebMidiOutputs } from '@/composables/useWebMidiOutputs';
+import { deleteFontGuarded } from '@/persistence/asset-leases';
 import type { AutomationParam, AutomationTarget } from '@/project/automation';
 import {
   addInsert,
@@ -98,6 +99,7 @@ const props = withDefaults(
 
 const store = useProjectStore();
 const { t } = useI18n();
+const normalizeAudition = ref(true);
 
 /** Surfaced when a command or font operation rejects. */
 const error = ref('');
@@ -134,9 +136,14 @@ function run(action: () => void): void {
 function auditionInstrument(): void {
   const current = instrument.value;
   if (!current) return;
+  audition(current);
+}
+
+/** Plays an instrument candidate without changing the active track. */
+function audition(candidate: NonNullable<typeof instrument.value>): void {
   if (!rackAudition) rackAudition = createPatchAudition();
   const generation = ++auditionGeneration;
-  rackAudition.play(current).then(
+  rackAudition.play(candidate, undefined, undefined, { normalize: normalizeAudition.value }).then(
     () => {
       if (disposed || generation !== auditionGeneration) return;
       error.value = '';
@@ -352,6 +359,33 @@ function selectFont(id: string): void {
   sf2Selection.value = { ...sf2Selection.value, fontId: id };
 }
 
+function fontIsReferenced(fontId: string): boolean {
+  return store.tracks.some(
+    (track) => track.instrument?.kind === 'sf2' && track.instrument.fontId === fontId,
+  );
+}
+
+function formatFontBytes(byteLength: number): string {
+  if (byteLength < 1024 * 1024) return `${Math.round(byteLength / 1024)} KB`;
+  return `${(byteLength / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+async function removeFont(fontId: string): Promise<void> {
+  try {
+    const removed = await deleteFontGuarded(fontId, () => fontIsReferenced(fontId));
+    if (!removed) {
+      error.value = 'This SoundFont is still used by a project.';
+      return;
+    }
+    if (sf2Selection.value.fontId === fontId) {
+      sf2Selection.value = { ...sf2Selection.value, fontId: null };
+    }
+    await refreshFonts();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
+}
+
 function onBankInput(event: Event): void {
   const raw = Number((event.target as HTMLInputElement).value);
   sf2Selection.value = { ...sf2Selection.value, bank: clampBank(raw) };
@@ -364,6 +398,8 @@ function onProgramInput(event: Event): void {
 
 function selectSf2Program(program: number): void {
   sf2Selection.value = { ...sf2Selection.value, program: clampProgram(program) };
+  const candidate = buildSf2Instrument(sf2Selection.value);
+  if (candidate) audition(candidate);
 }
 
 function setMultiTimbral(enabled: boolean): void {
@@ -930,6 +966,10 @@ const instrumentSourceCaption = computed(() => {
           <button type="button" class="instrument-audition" @click="auditionInstrument">
             {{ t.shell.patchEditor.audition }}
           </button>
+          <label class="audition-normalize">
+            <input v-model="normalizeAudition" type="checkbox" />
+            {{ t.shell.devicesPanel.normalizeAudition }}
+          </label>
         </div>
         <p v-if="transportPlaying" class="instrument-gate-hint">
           {{ t.shell.devicesPanel.instrumentGateHint }}
@@ -1048,6 +1088,16 @@ const instrumentSourceCaption = computed(() => {
                   @click="selectFont(font.id)"
                 >
                   {{ font.name }}
+                </button>
+                <span class="font-size">{{ formatFontBytes(font.byteLength) }}</span>
+                <button
+                  type="button"
+                  class="font-remove"
+                  :disabled="fontIsReferenced(font.id)"
+                  :aria-label="`Remove ${font.name}`"
+                  @click="removeFont(font.id)"
+                >
+                  ×
                 </button>
               </li>
             </ul>

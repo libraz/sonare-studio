@@ -41,6 +41,10 @@ export interface QuickControl {
   min: number;
   /** Upper bound of the control range. */
   max: number;
+  /** Value mapping across the knob travel (logarithmic when min > 0). */
+  scale?: 'linear' | 'log';
+  /** Value restored by the knob's double-click and Reset menu action. */
+  defaultValue?: number;
   /** Display unit (e.g. 'Hz', 'ms', 'dB'); omitted for unitless values. */
   unit?: string;
 }
@@ -68,15 +72,13 @@ export interface QuickControlParamInfo {
   unit?: string;
 }
 
-/** Maximum number of controls a target exposes. */
-const MAX_QUICK_CONTROLS = 8;
-
 /** One entry of the NativeSynth quick-control table. */
 interface SynthControlSpec {
   id: keyof SynthPatch & string;
   name: string;
   min: number;
   max: number;
+  scale?: 'linear' | 'log';
   unit?: string;
   /** Value shown when neither patch nor preset defines the field. */
   fallback: number;
@@ -89,8 +91,23 @@ interface SynthControlSpec {
  * engine default.
  */
 const SYNTH_QUICK_CONTROLS: ReadonlyArray<SynthControlSpec> = [
-  { id: 'cutoffHz', name: 'Cutoff', min: 20, max: 20000, unit: 'Hz', fallback: 18000 },
-  { id: 'resonanceQ', name: 'Resonance', min: 0.1, max: 20, fallback: Math.SQRT1_2 },
+  {
+    id: 'cutoffHz',
+    name: 'Cutoff',
+    min: 20,
+    max: 20000,
+    scale: 'log',
+    unit: 'Hz',
+    fallback: 18000,
+  },
+  {
+    id: 'resonanceQ',
+    name: 'Resonance',
+    min: 0.1,
+    max: 20,
+    scale: 'log',
+    fallback: Math.SQRT1_2,
+  },
   { id: 'drive', name: 'Drive', min: 0, max: 1, fallback: 0 },
   { id: 'ampAttackMs', name: 'Attack', min: 0, max: 5000, unit: 'ms', fallback: 5 },
   { id: 'ampDecayMs', name: 'Decay', min: 0, max: 5000, unit: 'ms', fallback: 60 },
@@ -105,8 +122,23 @@ const PLUCKED_STRING_QUICK_CONTROLS: ReadonlyArray<SynthControlSpec> = [
   { id: 'bodyMix', name: 'Body', min: 0, max: 1, fallback: 0.35 },
   { id: 'busDrive', name: 'Amp Drive', min: 0, max: 1, fallback: 0 },
   { id: 'gain', name: 'Output', min: 0, max: 2, fallback: 1 },
-  { id: 'cutoffHz', name: 'Tone', min: 20, max: 20000, unit: 'Hz', fallback: 18000 },
-  { id: 'resonanceQ', name: 'Cab Q', min: 0.1, max: 20, fallback: Math.SQRT1_2 },
+  {
+    id: 'cutoffHz',
+    name: 'Tone',
+    min: 20,
+    max: 20000,
+    scale: 'log',
+    unit: 'Hz',
+    fallback: 18000,
+  },
+  {
+    id: 'resonanceQ',
+    name: 'Cab Q',
+    min: 0.1,
+    max: 20,
+    scale: 'log',
+    fallback: Math.SQRT1_2,
+  },
   { id: 'ampAttackMs', name: 'Pick', min: 0, max: 5000, unit: 'ms', fallback: 5 },
   { id: 'ampReleaseMs', name: 'Damp', min: 0, max: 5000, unit: 'ms', fallback: 120 },
 ];
@@ -147,6 +179,7 @@ interface ParamRangeRule {
   test: RegExp;
   min: number;
   max: number;
+  scale?: 'linear' | 'log';
   unit?: string;
   fallback: number;
 }
@@ -161,11 +194,11 @@ const PARAM_RANGE_RULES: ReadonlyArray<ParamRangeRule> = [
   { test: /Db$/, min: -24, max: 24, unit: 'dB', fallback: 0 },
   { test: /ratio$/i, min: 1, max: 20, fallback: 4 },
   { test: /Ms$/, min: 0, max: 5000, unit: 'ms', fallback: 10 },
-  { test: /Hz$/, min: 20, max: 20000, unit: 'Hz', fallback: 1000 },
+  { test: /Hz$/, min: 20, max: 20000, scale: 'log', unit: 'Hz', fallback: 1000 },
   // Filter Q factor: a standalone 'q' or a name ending in 'Q' (e.g.
   // 'resonanceQ', 'bandQ'). The start anchor must also end the string, or any
   // name merely starting with 'q' (e.g. 'quantize') would be misread as a Q.
-  { test: /^q$|Q$/, min: 0.1, max: 18, fallback: Math.SQRT1_2 },
+  { test: /^q$|Q$/, min: 0.1, max: 18, scale: 'log', fallback: Math.SQRT1_2 },
 ];
 
 /** Fallback range for parameters no rule matches (normalized amounts). */
@@ -183,6 +216,7 @@ function paramRule(
     return {
       min: domain.min,
       max: domain.max,
+      ...(heuristic.scale !== undefined && domain.min > 0 ? { scale: heuristic.scale } : {}),
       ...(engineUnit || domain.unit ? { unit: engineUnit || domain.unit } : {}),
       fallback: Math.min(domain.max, Math.max(domain.min, heuristic.fallback)),
     };
@@ -276,7 +310,7 @@ function requireInsertSlot(target: { trackId: MixerStripTarget; index: number })
  * patch fields to the resolved preset base to documented defaults. SF2
  * instruments expose no quick controls in this iteration.
  *
- * Insert targets expose up to eight parameters: the names come from the
+ * Insert targets expose every available parameter: the names come from the
  * resolver (wasm masteringInsertParamNames by default) merged with any
  * explicitly set params; ranges prefer the shared processor-param domain
  * catalog and fall back to naming conventions for unknown custom processors.
@@ -310,7 +344,9 @@ export function listQuickControls(
         value,
         min: spec.min,
         max: spec.max,
+        defaultValue: spec.fallback,
       };
+      if (spec.scale !== undefined) control.scale = spec.scale;
       if (spec.unit !== undefined) control.unit = spec.unit;
       return control;
     });
@@ -321,10 +357,7 @@ export function listQuickControls(
   const resolveInfo = resolvers.resolveInsertParamInfo ?? defaultResolveInsertParamInfo;
   const paramInfo = new Map(resolveInfo(slot.processor).map((info) => [info.name, info]));
   const setNames = Object.keys(slot.params).filter((name) => typeof slot.params[name] === 'number');
-  const names = [...new Set([...catalogNames, ...paramInfo.keys(), ...setNames])].slice(
-    0,
-    MAX_QUICK_CONTROLS,
-  );
+  const names = [...new Set([...catalogNames, ...paramInfo.keys(), ...setNames])];
   return names.map((name) => {
     const rule = paramRule(slot.processor, name, paramInfo.get(name)?.unit);
     const raw = slot.params[name];
@@ -334,7 +367,9 @@ export function listQuickControls(
       value: typeof raw === 'number' ? raw : rule.fallback,
       min: rule.min,
       max: rule.max,
+      defaultValue: rule.fallback,
     };
+    if (rule.scale !== undefined && rule.min > 0) control.scale = rule.scale;
     if (rule.unit !== undefined) control.unit = rule.unit;
     return control;
   });
@@ -389,6 +424,10 @@ export function setQuickControl(
   }
   const slot = requireInsertSlot(target);
   const rule = paramRule(slot.processor, id);
-  const clamped = Math.min(rule.max, Math.max(rule.min, value));
-  setInsertParam(target.trackId, target.index, id, clamped, options);
+  // The app-side range catalog is a drawing/interaction convenience, not an
+  // engine contract. Preserve values for an unknown processor parameter so a
+  // harmless LFO rate such as 2 Hz is not silently turned into 20 Hz.
+  const hasExplicitDomain = insertParamDomain(slot.processor, id) !== INSERT_PARAM_DOMAIN_FALLBACK;
+  const next = hasExplicitDomain ? Math.min(rule.max, Math.max(rule.min, value)) : value;
+  setInsertParam(target.trackId, target.index, id, next, options);
 }

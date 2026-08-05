@@ -113,7 +113,12 @@ describe('DeviceRack.vue', () => {
     await wrapper.find('.instrument-audition').trigger('click');
     await flushPromises();
 
-    expect(auditionMock.play).toHaveBeenCalledWith({ kind: 'synth-preset', preset: 'e-piano' });
+    expect(auditionMock.play).toHaveBeenCalledWith(
+      { kind: 'synth-preset', preset: 'e-piano' },
+      undefined,
+      undefined,
+      { normalize: true },
+    );
     wrapper.unmount();
     expect(auditionMock.dispose).toHaveBeenCalledOnce();
   });
@@ -251,6 +256,26 @@ describe('DeviceRack.vue', () => {
       'This project uses 2 SoundFonts, but playback and export share one global SF2 slot. The last SF2 track wins: GM Bank.sf2.',
     );
     expect(store.tracks[0].instrument).not.toEqual({ kind: 'sf2', fontId: 'fontbbbb00000002' });
+  });
+
+  it('auditions a SoundFont program selection before committing it to the track', async () => {
+    const wrapper = mount(DeviceRack);
+    await wrapper.find('.instrument-button').trigger('click');
+    const sf2Tab = wrapper.findAll('.picker-tab').find((tab) => tab.text() === 'SF2');
+    await sf2Tab?.trigger('click');
+    await flushPromises();
+
+    await wrapper.findAll('.font-option')[0].trigger('click');
+    await wrapper.findAll('.sf2-program-option')[2].trigger('click');
+    await flushPromises();
+
+    expect(auditionMock.play).toHaveBeenCalledWith(
+      { kind: 'sf2', fontId: 'fontaaaa00000001', program: 2 },
+      undefined,
+      undefined,
+      { normalize: true },
+    );
+    expect(store.tracks[0].instrument).toBeUndefined();
   });
 
   it('checks the selected SF2 program against the SoundFont manifest', async () => {

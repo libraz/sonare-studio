@@ -11,6 +11,21 @@ export const KNOB_FINE_SCALE = 0.1;
 /** Rotation of the knob indicator at range extremes, in degrees. */
 export const KNOB_ROTATION_MAX_DEG = 135;
 
+/** Value mapping across a knob's travel. Logarithmic ranges require min > 0. */
+export type KnobScale = 'linear' | 'log';
+
+/** Maps a normalized control position onto a value under the chosen scale. */
+export function valueAtControlPercent(
+  percent: number,
+  min: number,
+  max: number,
+  scale: KnobScale = 'linear',
+): number {
+  const normalized = Math.min(1, Math.max(0, percent));
+  if (scale === 'log' && min > 0 && max > min) return min * (max / min) ** normalized;
+  return min + normalized * (max - min);
+}
+
 /**
  * Maps a vertical pointer drag onto a knob value: dragging up increases,
  * a full {@link KNOB_DRAG_RANGE_PX} sweep covers the whole range.
@@ -19,6 +34,7 @@ export const KNOB_ROTATION_MAX_DEG = 135;
  * @param deltaY Pointer y displacement since drag start (down positive).
  * @param min Range lower bound.
  * @param max Range upper bound.
+ * @param valueScale Value mapping across the travel.
  * @param fine Fine-adjust modifier held (scales the sweep by 0.1).
  * @returns The new value, clamped to [min, max].
  */
@@ -28,21 +44,40 @@ export function knobValueForDrag(
   min: number,
   max: number,
   fine = false,
+  valueScale: KnobScale = 'linear',
 ): number {
-  const scale = fine ? KNOB_FINE_SCALE : 1;
-  const value = startValue + (-deltaY / KNOB_DRAG_RANGE_PX) * (max - min) * scale;
-  return Math.min(max, Math.max(min, value));
+  const fineScale = fine ? KNOB_FINE_SCALE : 1;
+  return valueAtControlPercent(
+    controlPercent(startValue, min, max, valueScale) + (-deltaY / KNOB_DRAG_RANGE_PX) * fineScale,
+    min,
+    max,
+    valueScale,
+  );
 }
 
 /** Normalized position of a value within its range, in [0, 1]. */
-export function controlPercent(value: number, min: number, max: number): number {
+export function controlPercent(
+  value: number,
+  min: number,
+  max: number,
+  scale: KnobScale = 'linear',
+): number {
   if (!(max > min)) return 0;
+  if (scale === 'log' && min > 0) {
+    const clamped = Math.min(max, Math.max(min, value));
+    return Math.log(clamped / min) / Math.log(max / min);
+  }
   return Math.min(1, Math.max(0, (value - min) / (max - min)));
 }
 
 /** Indicator rotation for a value, in degrees (-135 at min, +135 at max). */
-export function knobRotationDeg(value: number, min: number, max: number): number {
-  return (controlPercent(value, min, max) * 2 - 1) * KNOB_ROTATION_MAX_DEG;
+export function knobRotationDeg(
+  value: number,
+  min: number,
+  max: number,
+  scale: KnobScale = 'linear',
+): number {
+  return (controlPercent(value, min, max, scale) * 2 - 1) * KNOB_ROTATION_MAX_DEG;
 }
 
 /**

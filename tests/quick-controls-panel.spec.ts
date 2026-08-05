@@ -81,9 +81,10 @@ describe('QuickControls.vue', () => {
     firePointer(knob, 'pointerup', { pointerId: 1, clientY: 150 });
     await wrapper.vm.$nextTick();
 
-    // 50px up over a 150px sweep of the 19980 Hz range from the 12000 base.
+    // Cutoff uses a logarithmic sweep; the 50px upward drag from 12 kHz
+    // reaches the 20 kHz upper bound.
     const instrument = store.tracks[0].instrument as { patch: { cutoffHz?: number } };
-    expect(instrument.patch.cutoffHz).toBeCloseTo(12000 + (50 / 150) * 19980, 3);
+    expect(instrument.patch.cutoffHz).toBe(20_000);
 
     // The whole drag is one history entry; undoing it restores the default.
     expect(undo()).toBe(true);

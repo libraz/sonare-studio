@@ -52,7 +52,12 @@ export interface PatchAuditionOptions {
 /** One-shot audition player. */
 export interface PatchAudition {
   /** Renders and plays a single note through the instrument. */
-  play(instrument: TrackInstrument, note?: number, velocity?: number): Promise<void>;
+  play(
+    instrument: TrackInstrument,
+    note?: number,
+    velocity?: number,
+    options?: { normalize?: boolean },
+  ): Promise<void>;
   /** Stops any sounding audition. */
   stop(): void;
   /** Stops and releases the AudioContext (if one was created). */
@@ -81,6 +86,7 @@ export function createPatchAudition(options: PatchAuditionOptions = {}): PatchAu
     instrument: TrackInstrument,
     note = DEFAULT_AUDITION_NOTE,
     velocity = DEFAULT_AUDITION_VELOCITY,
+    playOptions: { normalize?: boolean } = {},
   ): Promise<void> {
     if (disposed) return;
     const myGeneration = ++generation;
@@ -90,7 +96,8 @@ export function createPatchAudition(options: PatchAuditionOptions = {}): PatchAu
     const channels = await render(phrase, { sampleRate, instrument });
     if (disposed || myGeneration !== generation) return;
     if (channels.length === 0 || channels[0].length === 0) return;
-    const gain = normalizeGain(peakAmplitude(channels), targetPeak);
+    const gain =
+      playOptions.normalize === false ? 1 : normalizeGain(peakAmplitude(channels), targetPeak);
     // Scale a copy: the renderer's buffers are shared via the prerender cache.
     const scaled = channels.map((channel) => {
       const out = new Float32Array(channel.length);
