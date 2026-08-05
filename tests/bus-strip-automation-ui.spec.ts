@@ -8,6 +8,7 @@ import { MIDI_LEARN_KEY, useMidiLearn } from '@/composables/useMidiLearn';
 import type { MeterSource, StereoMeterLevels } from '@/engine/meters';
 import { busAutomationTarget } from '@/project/automation';
 import { addMixerBus, clearHistory, setAutomationLanePoints } from '@/project/commands';
+import { MAX_MIXER_BUSES } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import { midiLearnBusStripControlTargetId } from '@/ui/midi/midi-learn';
 import { resetAutomationStripModes } from '@/ui/mixer/automation-mode';
@@ -92,6 +93,24 @@ describe('BusStrip automation UI', () => {
     expect(store.mixer.buses[0]).toMatchObject({ gainDb: 0, mute: true });
     await wrapper.setProps({ bus: store.mixer.buses[0] });
     expect(wrapper.get('.bus-toggle.mute').attributes('aria-pressed')).toBe('true');
+  });
+
+  it('solos the return from its own strip', async () => {
+    const wrapper = mountStrip();
+    await wrapper.get('.bus-toggle.solo').trigger('click');
+
+    expect(store.mixer.buses[0]).toMatchObject({ solo: true });
+    await wrapper.setProps({ bus: store.mixer.buses[0] });
+    expect(wrapper.get('.bus-toggle.solo').attributes('aria-pressed')).toBe('true');
+  });
+
+  it('disables return solo when no engine bus slot is free', async () => {
+    for (let index = store.mixer.buses.length; index < MAX_MIXER_BUSES; index += 1) {
+      addMixerBus();
+    }
+    const wrapper = mountStrip();
+
+    expect(wrapper.get('.bus-toggle.solo').attributes('disabled')).toBeDefined();
   });
 
   it('shows bus gain reduction when the bus meter reports dynamics GR', async () => {

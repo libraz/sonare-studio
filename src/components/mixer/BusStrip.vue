@@ -15,8 +15,10 @@ import {
   setAutomationLanePoints,
   setMixerBusGain,
   setMixerBusMute,
+  setMixerBusSolo,
 } from '@/project/commands';
 import type { MixerBus } from '@/project/mixer';
+import { canRouteReturnSolo } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import {
@@ -107,6 +109,11 @@ const gainDb = computed(() =>
       : props.bus.gainDb,
 );
 const muted = computed(() => props.bus.mute === true);
+const soloed = computed(() => props.bus.solo === true);
+/** A return solo parks the silenced direct outputs on one extra engine bus. */
+const canSolo = computed(
+  () => soloed.value || canRouteReturnSolo(store.mixer.buses.length, store.tracks),
+);
 
 function beginWriteGesture(): AutomationWriteGesture {
   return createAutomationWriteGesture({
@@ -196,6 +203,18 @@ onBeforeUnmount(() => {
         @click="setMixerBusMute(props.bus.id, !muted)"
       >
         M
+      </button>
+      <button
+        type="button"
+        class="bus-toggle solo"
+        :class="{ on: soloed }"
+        :disabled="!canSolo"
+        v-tooltip="canSolo ? t.shell.mixer.strip.solo : t.shell.mixer.returnSoloUnavailable"
+        :aria-label="formatMessage(t.shell.mixer.strip.soloNamed, { name: props.bus.name })"
+        :aria-pressed="soloed"
+        @click="setMixerBusSolo(props.bus.id, !soloed)"
+      >
+        S
       </button>
     </div>
     <div class="bus-auto">

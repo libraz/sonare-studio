@@ -113,7 +113,9 @@ const soloModeOptions = computed(() => [
 
 const hasSolo = computed(
   () =>
-    store.tracks.some((track) => track.solo) || (store.mixer.vcaGroups ?? []).some((g) => g.solo),
+    store.tracks.some((track) => track.solo) ||
+    (store.mixer.vcaGroups ?? []).some((g) => g.solo) ||
+    store.mixer.buses.some((bus) => bus.solo === true),
 );
 
 function toggleTrackVisible(trackId: number): void {

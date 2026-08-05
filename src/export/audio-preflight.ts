@@ -32,6 +32,7 @@ export type AudioExportWarning =
   | { kind: 'external-midi-silent'; track: string }
   | { kind: 'release-tail-short'; currentSeconds: number; suggestedSeconds: number }
   | { kind: 'solo-active'; tracks: string[] }
+  | { kind: 'return-solo-active'; buses: string[] }
   | { kind: 'pfl-mode-active' }
   | { kind: 'silent-mixdown' };
 
@@ -175,6 +176,10 @@ export async function audioExportPreflight(
     if (normalizeMixerSoloMode(doc.mixer?.soloMode) === 'pfl') {
       warnings.push({ kind: 'pfl-mode-active' });
     }
+  }
+  const soloBuses = (doc.mixer?.buses ?? []).filter((bus) => bus.solo === true);
+  if (soloBuses.length > 0) {
+    warnings.push({ kind: 'return-solo-active', buses: soloBuses.map((bus) => bus.name) });
   }
   if (doc.tracks.length > 0 && audibleTrackIndices.size === 0) {
     warnings.push({ kind: 'silent-mixdown' });

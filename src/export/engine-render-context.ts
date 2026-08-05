@@ -6,11 +6,13 @@
  */
 
 import { buildMidiClipSchedules } from '@/engine/midi-sync';
-import { groupBusGainDb } from '@/engine/strip-sync';
+import { groupBusGainDb, MAX_ENGINE_BUSES } from '@/engine/strip-sync';
+import { SILENCE_DB } from '@/lib/db';
+import { annotationsFromDocument, type NoteArticulation } from '@/project/annotations';
 import { effectiveTrackInstrument } from '@/project/instrument';
 import {
-  effectiveMixerBusGainDb,
   effectiveTrackMute,
+  returnSoloRouting,
   tracksWithVcaSolo,
   type VcaControlState,
   vcaOffsetDb,
@@ -188,9 +190,13 @@ export function buildBusRouting(doc: ProjectDocument, trackIds: number[]): BusRo
   // Buses first (sends must reference declared buses): the document's send
   // buses in order, then one bus per group track (matching live strip-sync).
   const busNumberById = new Map<string, number>();
+  // A soloed return auditions alone: direct outputs are parked on a silent
+  // discard bus and every other bus is floored, exactly as live strip-sync
+  // does, so an export made while a return is soloed sounds like the audition.
+  const returnSolo = returnSoloRouting(doc.mixer?.buses ?? []);
   const buses = (doc.mixer?.buses ?? []).map((bus, index) => {
     busNumberById.set(bus.id, index + 1);
-    return { busId: index + 1, gainDb: effectiveMixerBusGainDb(bus) };
+    return { busId: index + 1, gainDb: returnSolo.busGainDb(bus) };
   });
   const groupBusByTrackIndex = new Map<number, number>();
   doc.tracks.forEach((track, index) => {
@@ -199,16 +205,24 @@ export function buildBusRouting(doc: ProjectDocument, trackIds: number[]): BusRo
     groupBusByTrackIndex.set(index, busId);
     buses.push({
       busId,
-      gainDb: groupBusGainDb(
-        {
-          volume: track.volume,
-          mute: effectiveTrackMute(track.mute, track.vcaId, vcaControlsById),
-          ...(track.mixer !== undefined ? { mixer: track.mixer } : {}),
-        } as Parameters<typeof groupBusGainDb>[0],
-        vcaOffsetDb(track.vcaId, vcaGainDbById),
-      ),
+      gainDb: returnSolo.active
+        ? SILENCE_DB
+        : groupBusGainDb(
+            {
+              volume: track.volume,
+              mute: effectiveTrackMute(track.mute, track.vcaId, vcaControlsById),
+              ...(track.mixer !== undefined ? { mixer: track.mixer } : {}),
+            } as Parameters<typeof groupBusGainDb>[0],
+            vcaOffsetDb(track.vcaId, vcaGainDbById),
+          ),
     });
   });
+  // One extra silent bus parks the direct outputs during a return solo. The
+  // command layer refuses to solo a return when no engine bus slot is free, so
+  // a document that overflows the limit here simply keeps its normal routing.
+  const discardBusId =
+    returnSolo.active && buses.length < MAX_ENGINE_BUSES ? buses.length + 1 : undefined;
+  if (discardBusId !== undefined) buses.push({ busId: discardBusId, gainDb: SILENCE_DB });
   const lanes = doc.tracks.map((track, index) => {
     const sends: SendSpec[] = (track.mixer?.sends ?? [])
       .filter((send) => busNumberById.has(send.busId))
@@ -225,7 +239,9 @@ export function buildBusRouting(doc: ProjectDocument, trackIds: number[]): BusRo
     // honored only when the bus was actually declared (matches live
     // strip-sync, which the engine requires).
     let outputBus: number | undefined;
-    if (track.groupIndex !== undefined) {
+    if (discardBusId !== undefined && track.kind !== 'group') {
+      outputBus = discardBusId;
+    } else if (track.groupIndex !== undefined) {
       outputBus = groupBusByTrackIndex.get(track.groupIndex);
     } else if (track.kind !== 'group' && track.mixer?.outputBusId !== undefined) {
       const busNumber = busNumberById.get(track.mixer.outputBusId);
@@ -315,12 +331,17 @@ export function buildMidiSchedules(
     ...(track.instrument !== undefined ? { instrument: track.instrument } : {}),
     ...(track.mixer !== undefined ? { mixer: track.mixer } : {}),
     ...(track.frozen !== undefined ? { frozen: { ...track.frozen } } : {}),
+    ...(track.expressionMap !== undefined ? { expressionMap: track.expressionMap } : {}),
   }));
   const midiClips: EditorClip[] = [];
+  // Articulations only matter for tracks that map them, but the lookup is
+  // built for every clip so the scheduler can stay ignorant of the mapping.
+  const articulations = new Map<number, Map<number, NoteArticulation>>();
   let nextMidiClipId = 1;
   doc.tracks.forEach((track, trackIndex) => {
     track.clips.forEach((clip) => {
       if ((clip.kind ?? 'midi') !== 'midi') return;
+      const clipId = nextMidiClipId;
       midiClips.push({
         id: nextMidiClipId++,
         trackId: trackIds[trackIndex],
@@ -345,10 +366,28 @@ export function buildMidiSchedules(
           ? { polyPressureLanes: clip.polyPressureLanes }
           : {}),
       });
+      if (clip.scoreAnnotations !== undefined && clip.scoreAnnotations.length > 0) {
+        const notes = midiClips[midiClips.length - 1].notes;
+        const byNote = annotationsFromDocument(clip.scoreAnnotations, notes);
+        const marked = new Map<number, NoteArticulation>();
+        for (const [noteKey, annotation] of Object.entries(byNote)) {
+          if (annotation.articulation === undefined) continue;
+          marked.set(Number(noteKey), annotation.articulation);
+        }
+        if (marked.size > 0) articulations.set(clipId, marked);
+      }
     });
   });
   return midiClips.length > 0
-    ? buildMidiClipSchedules(midiTracks, midiClips, tempoSegments, sampleRate)
+    ? buildMidiClipSchedules(
+        midiTracks,
+        midiClips,
+        tempoSegments,
+        sampleRate,
+        undefined,
+        undefined,
+        articulations,
+      )
     : [];
 }
 

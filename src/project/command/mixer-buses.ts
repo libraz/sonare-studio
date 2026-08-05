@@ -2,6 +2,7 @@ import { parseMidiLearnBusStripControlTargetId } from '@/ui/midi/midi-learn';
 import { busAutomationTarget } from '../automation';
 import {
   assertCanAddEngineBus,
+  canRouteReturnSolo,
   cloneStrip,
   MAX_MIXER_BUSES,
   MAX_STRIP_GAIN_DB,
@@ -155,6 +156,49 @@ export function setMixerBusMute(busId: string, mute: boolean): void {
         if (mute) return { ...entry, mute: true };
         const { mute: _mute, ...unmuted } = entry;
         return unmuted;
+      }),
+    };
+    store.refresh();
+  });
+}
+
+/**
+ * Solos (auditions) a return bus as one undoable edit.
+ *
+ * A return has no lane of its own, so the audition is a routing override
+ * instead of a lane mute: direct track outputs move to a silent discard bus
+ * while their sends keep feeding the soloed return (see
+ * {@link returnSoloRouting}). That discard bus occupies one engine bus slot,
+ * so soloing is refused when the project already uses them all.
+ *
+ * @param busId Target bus id.
+ * @param solo True to audition this return alone.
+ * @throws RangeError for an unknown bus, or when no engine bus slot is free.
+ */
+export function setMixerBusSolo(busId: string, solo: boolean): void {
+  const store = useProjectStore();
+  const bus = store.mixer.buses.find((entry) => entry.id === busId);
+  if (!bus) throw new RangeError(`Unknown mixer bus id: ${busId}`);
+  if ((bus.solo ?? false) === solo) return;
+  if (solo && !canRouteReturnSolo(store.mixer.buses.length, store.tracks)) {
+    throw new RangeError(
+      'Return solo needs one free engine bus for the silenced direct outputs; ' +
+        'remove a bus or a group track first',
+    );
+  }
+  executeApp(() => {
+    store.mixer = {
+      ...store.mixer,
+      buses: store.mixer.buses.map((entry) => {
+        // Auditioning one return at a time keeps the audition meaningful.
+        if (entry.id !== busId) {
+          if (entry.solo !== true) return entry;
+          const { solo: _solo, ...cleared } = entry;
+          return cleared;
+        }
+        if (solo) return { ...entry, solo: true };
+        const { solo: _solo, ...unsoloed } = entry;
+        return unsoloed;
       }),
     };
     store.refresh();

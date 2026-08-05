@@ -485,6 +485,46 @@ describe('createStripSync', () => {
     expect(engine.setTrackBuses).toHaveBeenCalledWith([{ busId: 1, gainDb: -120 }]);
   });
 
+  it('auditions a soloed return by parking direct outputs on a silent bus', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const track = makeTrack(1, makeStrip({ sends: [{ busId: 'A', levelDb: -6, enabled: true }] }));
+    const group = makeGroupTrack(2);
+    const member = { ...makeTrack(3), groupId: 2 };
+
+    sync.sync(
+      [track, group, member],
+      makeMixer({ buses: [{ ...makeBus('A', -3), solo: true }, makeBus('B')] }),
+    );
+
+    // Buses 1-2 are the returns, 3 is the group submix and 4 the discard bus.
+    expect(engine.setTrackBuses).toHaveBeenCalledWith([
+      { busId: 1, gainDb: -3 },
+      { busId: 2, gainDb: -120 },
+      { busId: 3, gainDb: -120 },
+      { busId: 4, gainDb: -120 },
+    ]);
+    // Direct outputs go to the discard bus; the send into the soloed return
+    // is a separate tap and stays.
+    expect(engine.setTrackOutputBus).toHaveBeenCalledWith(1, 4);
+    expect(engine.setTrackOutputBus).toHaveBeenCalledWith(3, 4);
+    expect(engine.setSends).toHaveBeenCalledWith(1, [{ busId: 1, levelDb: -6, enabled: true }]);
+  });
+
+  it('restores normal routing when the return solo is released', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const track = makeTrack(1);
+
+    sync.sync([track], makeMixer({ buses: [{ ...makeBus('A', -3), solo: true }] }));
+    clearCalls(engine);
+
+    sync.sync([track], makeMixer({ buses: [makeBus('A', -3)] }));
+
+    expect(engine.setTrackBuses).toHaveBeenCalledWith([{ busId: 1, gainDb: -3 }]);
+    expect(engine.setTrackOutputBus).toHaveBeenCalledWith(1, 0);
+  });
+
   it('marks a pre-fader send explicitly and leaves post-fader sends bare', () => {
     const { handle, engine } = makeHandle();
     const sync = createStripSync(handle);

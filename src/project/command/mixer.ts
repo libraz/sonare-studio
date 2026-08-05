@@ -12,6 +12,7 @@ export {
   renameMixerBus,
   setMixerBusGain,
   setMixerBusMute,
+  setMixerBusSolo,
   setTrackSoloSafe,
 } from './mixer-buses';
 export type {

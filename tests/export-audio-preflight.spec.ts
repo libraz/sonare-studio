@@ -195,6 +195,22 @@ describe('audioExportPreflight', () => {
     expect(silent.warnings).toContainEqual({ kind: 'silent-mixdown' });
   });
 
+  it('warns that an export made with a soloed return contains only that return', async () => {
+    const source = doc();
+    source.mixer = {
+      master: { gainDb: 0, pan: 0, inserts: [], sends: [] },
+      buses: [{ id: 'bus-a', name: 'Reverb', gainDb: 0, solo: true }],
+    };
+
+    const result = await audioExportPreflight(source, {
+      range: 'project',
+      releaseTailSeconds: 10,
+      loadAudioAsset: async (id) => loaded(id),
+    });
+
+    expect(result.warnings).toContainEqual({ kind: 'return-solo-active', buses: ['Reverb'] });
+  });
+
   it('uses payload validation ahead of the legacy metadata and full-PCM loaders', async () => {
     const source = doc();
     source.tracks.push({

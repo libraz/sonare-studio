@@ -1682,6 +1682,49 @@ describe('renderProjectWithEngine', () => {
     ]);
   });
 
+  it('injects the expression map of a track into the exported schedule', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].expressionMap = { entries: [{ articulation: 'staccato', keySwitch: 24 }] };
+    doc.tracks[0].clips[0].scoreAnnotations = [
+      { pitch: 60, startPpq: 0, channel: 0, articulation: 'staccato' },
+    ];
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    const schedules = engine.named('setMidiClips')[0][1] as Array<{
+      events: Array<{ renderFrame: number; word0: number }>;
+    }>;
+    const events = schedules.flatMap((schedule) => schedule.events);
+    const keySwitchOn = events.find(
+      (event) => ((event.word0 >>> 16) & 0xf0) === 0x90 && ((event.word0 >>> 8) & 0x7f) === 24,
+    );
+    const noteOn = events.find(
+      (event) => ((event.word0 >>> 16) & 0xf0) === 0x90 && ((event.word0 >>> 8) & 0x7f) === 60,
+    );
+
+    expect(keySwitchOn).toBeDefined();
+    expect(keySwitchOn?.renderFrame).toBeLessThan(noteOn?.renderFrame ?? 0);
+  });
+
+  it('exports a soloed return the way it auditions', async () => {
+    const doc = makeDoc();
+    const buses = doc.mixer?.buses as Array<Record<string, unknown>>;
+    buses[0].solo = true;
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    // Bus 1 is the soloed return; bus 2 is the silent bus the direct outputs
+    // are parked on, so only the send-fed return reaches the master.
+    expect(engine.named('setTrackBuses')[0][1]).toEqual([
+      { busId: 1, gainDb: -6 },
+      { busId: 2, gainDb: -120 },
+    ]);
+    expect(engine.named('setTrackLanes')[0][1]).toEqual([
+      { trackId: 1, outputBusId: 2 },
+      { trackId: 2, sends: [{ busId: 1, levelDb: -9, enabled: true }], outputBusId: 2 },
+    ]);
+  });
+
   it('preserves MIDI performance lanes from document clips in offline schedules', async () => {
     const doc = makeDoc();
     const clip = doc.tracks[0].clips[0];

@@ -246,6 +246,12 @@ export interface MixerBus {
   gainDb: number;
   /** True silences this return without changing its fader value. */
   mute?: boolean;
+  /**
+   * True auditions this return alone: direct track outputs and every other
+   * bus fall silent while the sends feeding this return keep running (see
+   * {@link returnSoloRouting}).
+   */
+  solo?: boolean;
   /** Optional return-bus insert strip. Sends sum through this chain. */
   strip?: MixerStrip;
 }
@@ -400,6 +406,20 @@ export function assertCanAddEngineBus(
   }
 }
 
+/**
+ * Whether a return solo can be routed: it parks the silenced direct outputs on
+ * an extra engine bus, so one slot must be free.
+ *
+ * @param sendBusCount Number of user send buses in the project.
+ * @param tracks Project tracks (group tracks consume engine buses too).
+ */
+export function canRouteReturnSolo(
+  sendBusCount: number,
+  tracks: ReadonlyArray<{ kind: string }>,
+): boolean {
+  return engineBusCount(sendBusCount, tracks) < MAX_MIXER_BUSES;
+}
+
 /** Maximum number of VCA control groups (UI/sanity bound, not an engine limit). */
 export const MAX_VCA_GROUPS = 8;
 
@@ -416,6 +436,40 @@ export const MAX_STRIP_GAIN_DB = 24;
  */
 export function effectiveMixerBusGainDb(bus: Pick<MixerBus, 'gainDb' | 'mute'>): number {
   return bus.mute === true ? SILENCE_DB : bus.gainDb;
+}
+
+/**
+ * Routing overrides that audition the soloed return buses alone.
+ *
+ * A return carries no lane of its own, so the track-solo mechanism (muting
+ * lanes) would also kill the sends that feed the return. Instead every direct
+ * output is parked on a silent discard bus while the sends keep running, and
+ * every bus except the soloed returns is floored to silence. Group buses are
+ * silenced the same way, which takes their member tracks with them.
+ */
+export interface ReturnSoloRouting {
+  /** True while at least one return bus is soloed. */
+  active: boolean;
+  /** Whether a bus (by store id) stays audible. */
+  isSoloed: (busId: string) => boolean;
+  /** Gain for a return bus under the current solo state. */
+  busGainDb: (bus: Pick<MixerBus, 'id' | 'gainDb' | 'mute' | 'solo'>) => number;
+}
+
+/** Builds the {@link ReturnSoloRouting} for a project's bus set. */
+export function returnSoloRouting(
+  buses: ReadonlyArray<Pick<MixerBus, 'id' | 'gainDb' | 'mute' | 'solo'>>,
+): ReturnSoloRouting {
+  const soloed = new Set(buses.filter((bus) => bus.solo === true).map((bus) => bus.id));
+  const active = soloed.size > 0;
+  return {
+    active,
+    isSoloed: (busId) => soloed.has(busId),
+    busGainDb: (bus) => {
+      if (!active) return effectiveMixerBusGainDb(bus);
+      return soloed.has(bus.id) ? effectiveMixerBusGainDb(bus) : SILENCE_DB;
+    },
+  };
 }
 
 /** Highest accepted channel alignment delay in samples (2 s at 48 kHz). */

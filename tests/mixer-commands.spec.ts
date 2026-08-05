@@ -41,6 +41,7 @@ import {
   setMasteringPreset,
   setMixerBusGain,
   setMixerBusMute,
+  setMixerBusSolo,
   setMixerSoloMode,
   setSend,
   setStripChannelDelaySamples,
@@ -66,7 +67,13 @@ import {
   undo,
 } from '@/project/commands';
 import type { TrackInstrument } from '@/project/instrument';
-import { createDefaultStrip, MAX_MIXER_BUSES, MAX_VCA_GROUPS } from '@/project/mixer';
+import {
+  canRouteReturnSolo,
+  createDefaultStrip,
+  MAX_MIXER_BUSES,
+  MAX_VCA_GROUPS,
+  returnSoloRouting,
+} from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import {
   midiLearnBusStripControlTargetId,
@@ -447,6 +454,43 @@ describe('mixer commands', () => {
       expect(store.mixer.buses[0]).toMatchObject({ gainDb: -7.5 });
       expect(store.mixer.buses[0]?.mute).toBeUndefined();
       expect(() => setMixerBusMute('nope', true)).toThrow(RangeError);
+    });
+
+    it('solos one return at a time, undoably', () => {
+      const first = addMixerBus({ name: 'Reverb' });
+      const second = addMixerBus({ name: 'Delay' });
+
+      setMixerBusSolo(first, true);
+      expect(store.mixer.buses[0]).toMatchObject({ solo: true });
+
+      setMixerBusSolo(second, true);
+      expect(store.mixer.buses[0]?.solo).toBeUndefined();
+      expect(store.mixer.buses[1]).toMatchObject({ solo: true });
+
+      undo();
+      expect(store.mixer.buses[0]).toMatchObject({ solo: true });
+      expect(store.mixer.buses[1]?.solo).toBeUndefined();
+      expect(() => setMixerBusSolo('nope', true)).toThrow(RangeError);
+    });
+
+    it('refuses a return solo when no engine bus slot is free', () => {
+      const ids = Array.from({ length: MAX_MIXER_BUSES }, () => addMixerBus());
+
+      expect(() => setMixerBusSolo(ids[0], true)).toThrow(/free engine bus|engine bus/);
+      removeMixerBus(ids[MAX_MIXER_BUSES - 1]);
+      expect(() => setMixerBusSolo(ids[0], true)).not.toThrow();
+    });
+
+    it('clears return solos together with track and VCA solos', () => {
+      const busId = addMixerBus();
+      const trackId = addTrack({ name: 'Keys' });
+      setTrackSolo(trackId, true);
+      setMixerBusSolo(busId, true);
+
+      clearAllSolo();
+
+      expect(store.mixer.buses[0]?.solo).toBeUndefined();
+      expect(store.tracks.find((track) => track.id === trackId)?.solo).toBe(false);
     });
 
     it('renames a bus undoably without changing its id', () => {
@@ -1343,5 +1387,39 @@ describe('mixer commands', () => {
       expect(store.tracks.find((t) => t.id === otherId)?.vcaId).toBeUndefined();
       expect(() => removeVcaGroup('nope')).toThrow(RangeError);
     });
+  });
+});
+
+describe('return solo routing', () => {
+  it('silences every other bus while a return is soloed', () => {
+    const buses = [
+      { id: 'a', name: 'Reverb', gainDb: -3, solo: true },
+      { id: 'b', name: 'Delay', gainDb: -6 },
+      { id: 'c', name: 'Muted', gainDb: -6, mute: true },
+    ];
+    const routing = returnSoloRouting(buses);
+
+    expect(routing.active).toBe(true);
+    expect(routing.isSoloed('a')).toBe(true);
+    expect(routing.busGainDb(buses[0])).toBe(-3);
+    expect(routing.busGainDb(buses[1])).toBe(-120);
+  });
+
+  it('keeps mute behaviour untouched when nothing is soloed', () => {
+    const buses = [
+      { id: 'a', name: 'Reverb', gainDb: -3 },
+      { id: 'b', name: 'Delay', gainDb: -6, mute: true },
+    ];
+    const routing = returnSoloRouting(buses);
+
+    expect(routing.active).toBe(false);
+    expect(routing.busGainDb(buses[0])).toBe(-3);
+    expect(routing.busGainDb(buses[1])).toBe(-120);
+  });
+
+  it('needs one free engine bus slot to route the audition', () => {
+    expect(canRouteReturnSolo(0, [])).toBe(true);
+    expect(canRouteReturnSolo(MAX_MIXER_BUSES, [])).toBe(false);
+    expect(canRouteReturnSolo(MAX_MIXER_BUSES - 1, [{ kind: 'group' }])).toBe(false);
   });
 });

@@ -18,6 +18,7 @@ const STRINGS: ExportIssueStrings = {
     releaseTailShort:
       'Release tail is {current}s, but active reverb/delay settings suggest at least {suggested}s',
     soloActive: 'Solo is active for: {tracks}. The export omits other tracks.',
+    returnSoloActive: 'A return bus is soloed: {buses}. The export contains only that return.',
     pflModeActive: 'PFL solo mode is active.',
     silentMixdown: 'The export will be silent.',
   },
@@ -75,6 +76,10 @@ describe('export issue formatter', () => {
     expect(
       formatPreflightWarning({ kind: 'solo-active', tracks: ['Kick', 'Snare'] }, STRINGS),
     ).toBe('Solo is active for: Kick, Snare. The export omits other tracks.');
+
+    expect(formatPreflightWarning({ kind: 'return-solo-active', buses: ['Reverb'] }, STRINGS)).toBe(
+      'A return bus is soloed: Reverb. The export contains only that return.',
+    );
   });
 
   it('formats render limitations, joining instrument track names', () => {

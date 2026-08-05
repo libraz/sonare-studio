@@ -28,14 +28,15 @@
  * - The master strip has no engine-side sends; mixer.master.sends is ignored.
  */
 
+import { SILENCE_DB } from '@/lib/db';
 import {
-  effectiveMixerBusGainDb,
   effectiveTrackMute,
   type InsertSlot,
   laneGainDb,
   type MasteringChainState,
   type MixerStrip,
   type ProjectMixerState,
+  returnSoloRouting,
   type VcaControlState,
   vcaOffsetDb,
 } from '@/project/mixer';
@@ -51,6 +52,9 @@ import {
 
 /** Maximum number of mixer buses the realtime engine supports. */
 export const MAX_ENGINE_BUSES = 8;
+
+/** Bus-map key of the silent bus that parks direct outputs during a return solo. */
+const RETURN_SOLO_DISCARD_BUS_KEY = 'return-solo-discard';
 
 /** Options for {@link createStripSync}. */
 export interface StripSyncOptions {
@@ -446,7 +450,12 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     const vcaControls: ReadonlyMap<string, VcaControlState> = new Map(
       (mixer.vcaGroups ?? []).map((group) => [group.id, group]),
     );
-    if (mixer.buses.length + groupTracks.length > MAX_ENGINE_BUSES) {
+    // A soloed return needs one spare engine bus to park the silenced direct
+    // outputs on; the command layer refuses to solo when none is free.
+    const returnSolo = returnSoloRouting(mixer.buses);
+    const soloDiscardBus =
+      returnSolo.active && mixer.buses.length + groupTracks.length < MAX_ENGINE_BUSES;
+    if (mixer.buses.length + groupTracks.length + (soloDiscardBus ? 1 : 0) > MAX_ENGINE_BUSES) {
       throw new Error(
         `Too many mixer buses for the engine: ${mixer.buses.length} send buses + ` +
           `${groupTracks.length} group tracks > ${MAX_ENGINE_BUSES}`,
@@ -458,6 +467,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     const busKeys = [
       ...mixer.buses.map((bus) => bus.id),
       ...groupTracks.map((group) => `group:${group.id}`),
+      ...(soloDiscardBus ? [RETURN_SOLO_DISCARD_BUS_KEY] : []),
     ];
     const hadBusMapping = busNumberByStoreId.size > 0;
     const busMappingChanged =
@@ -480,24 +490,33 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     const groupBusByTrackId = new Map(
       groupTracks.map((group) => [group.id, busNumberByStoreId.get(`group:${group.id}`) as number]),
     );
+    const discardBusNumber = soloDiscardBus
+      ? (busNumberByStoreId.get(RETURN_SOLO_DISCARD_BUS_KEY) as number)
+      : undefined;
     const newBusIds = [
       ...mixer.buses.map((bus) => busNumberByStoreId.get(bus.id) as number),
       ...groupTracks.map((group) => groupBusByTrackId.get(group.id) as number),
+      ...(discardBusNumber === undefined ? [] : [discardBusNumber]),
     ];
     const newBusIdSet = new Set(newBusIds);
     const busGainEntries: Array<{ busId: number; gainDb: number }> = [
       ...mixer.buses.map((bus) => ({
         busId: busNumberByStoreId.get(bus.id) as number,
-        gainDb: effectiveMixerBusGainDb(bus),
+        gainDb: returnSolo.busGainDb(bus),
       })),
       ...groupTracks.map((group) => ({
         busId: groupBusByTrackId.get(group.id) as number,
-        gainDb: groupBusGainDb(
-          group,
-          vcaOffsetDb(group.vcaId, vcaGainDb),
-          effectiveTrackMute(group.mute, group.vcaId, vcaControls),
-        ),
+        // A soloed return auditions alone, so group submixes fall silent with
+        // the direct outputs of their members.
+        gainDb: returnSolo.active
+          ? SILENCE_DB
+          : groupBusGainDb(
+              group,
+              vcaOffsetDb(group.vcaId, vcaGainDb),
+              effectiveTrackMute(group.mute, group.vcaId, vcaControls),
+            ),
       })),
+      ...(discardBusNumber === undefined ? [] : [{ busId: discardBusNumber, gainDb: SILENCE_DB }]),
     ];
 
     // A deleted track keeps its (now muted) engine lane, but muting only
@@ -559,7 +578,11 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     // falls back to the master mix.
     for (const track of tracks) {
       let outputBus = 0;
-      if (track.groupId !== undefined) {
+      if (discardBusNumber !== undefined && track.kind !== 'group') {
+        // Park the direct output on the silent bus; the track's sends into the
+        // soloed return are separate taps and keep feeding it.
+        outputBus = discardBusNumber;
+      } else if (track.groupId !== undefined) {
         outputBus = groupBusByTrackId.get(track.groupId) ?? 0;
       } else if (track.kind !== 'group') {
         const userBusId = track.mixer?.outputBusId;
