@@ -39,6 +39,10 @@ export interface ScoreInteractionsOptions {
   onAnnotateClick?: (event: MouseEvent, ids: number[]) => void;
   /** Annotate-mode hook invoked when a note is dragged vertically between staves. */
   onAnnotateStaffDrag?: (ids: number[], staff: 1 | 2) => void;
+  /** Normal-mode vertical drag writes a semitone delta back to source notes. */
+  onNotePitchDrag?: (ids: number[], semitones: number[]) => void;
+  /** Double-click insertion target resolved from the nearest engraved onset. */
+  onInsertAt?: (ppq: number) => void;
   /** True while the annotate tool is active. */
   isAnnotateEnabled: () => boolean;
 }
@@ -55,6 +59,8 @@ export interface ScoreInteractions {
   onSvgPointerUp: (event: PointerEvent) => void;
   /** Bound to `@pointercancel`: aborts an annotate-mode staff drag. */
   onSvgPointerCancel: (event: PointerEvent) => void;
+  /** Bound to double-click: inserts at the nearest notated onset. */
+  onSvgDoubleClick: (event: MouseEvent) => void;
   /** Resolves the editor note ids standing at a quarter-note PPQ position. */
   noteIdsAt: (ppq: number) => number[];
   /** Resolves the editor note ids under an event's engraved-note target. */
@@ -148,8 +154,24 @@ export function useScoreInteractions(options: ScoreInteractionsOptions): ScoreIn
     setSelection(source.ids);
   }
 
+  function onSvgDoubleClick(event: MouseEvent): void {
+    let nearest: { ppq: number; distance: number } | undefined;
+    for (const entry of options.getTimemap()) {
+      for (const id of entry.on ?? []) {
+        const element = document.getElementById(id);
+        if (!element) continue;
+        const rect = element.getBoundingClientRect();
+        const distance = Math.abs(event.clientX - (rect.left + rect.width / 2));
+        if (nearest === undefined || distance < nearest.distance) {
+          nearest = { ppq: store.clipStartPpq + entry.qstamp, distance };
+        }
+      }
+    }
+    if (nearest !== undefined) options.onInsertAt?.(nearest.ppq);
+  }
+
   function onSvgPointerDown(event: PointerEvent): void {
-    if (!options.isAnnotateEnabled() || event.button !== 0) return;
+    if (event.button !== 0) return;
     const source = noteSourceFromEventTarget(event.target);
     if (!source || source.ids.length === 0) return;
     staffDrag = {
@@ -184,7 +206,16 @@ export function useScoreInteractions(options: ScoreInteractionsOptions): ScoreIn
     const deltaY = event.clientY - drag.startY;
     if (!drag.dragging || Math.abs(deltaY) < STAFF_DRAG_THRESHOLD_PX) return;
     if (drag.clipId !== undefined && drag.clipId !== store.clipId) setActiveClip(drag.clipId);
-    options.onAnnotateStaffDrag?.(drag.ids, deltaY < 0 ? 1 : 2);
+    if (options.isAnnotateEnabled()) {
+      options.onAnnotateStaffDrag?.(drag.ids, deltaY < 0 ? 1 : 2);
+    } else {
+      const semitones = Math.round(-deltaY / STAFF_DRAG_THRESHOLD_PX);
+      if (semitones !== 0)
+        options.onNotePitchDrag?.(
+          drag.ids,
+          drag.ids.map(() => semitones),
+        );
+    }
     suppressNextClick = true;
     event.preventDefault();
     event.stopPropagation();
@@ -197,6 +228,7 @@ export function useScoreInteractions(options: ScoreInteractionsOptions): ScoreIn
 
   return {
     onSvgClick,
+    onSvgDoubleClick,
     onSvgPointerDown,
     onSvgPointerMove,
     onSvgPointerUp,

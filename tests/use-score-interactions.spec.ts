@@ -116,16 +116,22 @@ describe('useScoreInteractions', () => {
     expect(setSelection).not.toHaveBeenCalled();
   });
 
-  it('does not start staff drags outside annotate mode', () => {
+  it('writes a semitone delta for a normal-mode vertical drag', () => {
     const { path } = fixtureDom();
     const onAnnotateStaffDrag = vi.fn();
-    const score = interactions({ isAnnotateEnabled: () => false, onAnnotateStaffDrag });
+    const onNotePitchDrag = vi.fn();
+    const score = interactions({
+      isAnnotateEnabled: () => false,
+      onAnnotateStaffDrag,
+      onNotePitchDrag,
+    });
 
-    score.onSvgPointerDown(pointerEvent('pointerdown', path, { clientY: 80 }));
-    score.onSvgPointerMove(pointerEvent('pointermove', path, { clientY: 120 }));
-    score.onSvgPointerUp(pointerEvent('pointerup', path, { clientY: 120 }));
+    score.onSvgPointerDown(pointerEvent('pointerdown', path, { clientY: 120 }));
+    score.onSvgPointerMove(pointerEvent('pointermove', path, { clientY: 80 }));
+    score.onSvgPointerUp(pointerEvent('pointerup', path, { clientY: 80 }));
 
     expect(onAnnotateStaffDrag).not.toHaveBeenCalled();
+    expect(onNotePitchDrag).toHaveBeenCalledWith([11], [2]);
   });
 
   it('resolves the note ids under an engraved note from an event target', () => {

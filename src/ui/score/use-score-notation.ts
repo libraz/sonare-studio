@@ -548,7 +548,9 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
         estimateFingering: options.getEstimateFingering?.(),
         grandStaffSplitPitch: options.getGrandStaffSplitPitch?.(),
         layoutSettings: options.getLayoutSettings(),
-        loopRegion: options.getLoopRegion?.() ?? null,
+        // Transport looping is playback state, not score form. Keeping it out
+        // of the cached artifact also keeps PDF and MusicXML exports clean.
+        loopRegion: null,
       });
       const partTrackIds = fullScore
         ? fullScorePartTrackIds(store, store.clipStartPpq, options.getScreenClipLengthPpq())

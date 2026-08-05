@@ -23,6 +23,8 @@ import type {
   ScoreNoteAnnotation,
 } from '@/project/annotations';
 import {
+  addNote,
+  applyNoteEdits,
   clearNoteAnnotation,
   type NoteAnnotationUpdate,
   setActiveClip,
@@ -396,6 +398,28 @@ const interactions = useScoreInteractions({
   isAnnotateEnabled: () => annotateEnabled.value,
   onAnnotateClick,
   onAnnotateStaffDrag,
+  onNotePitchDrag: (ids, semitones) => {
+    const clip = store.activeClip;
+    if (!clip) return;
+    applyNoteEdits({
+      updates: ids.map((id, index) => {
+        const note = clip.notes.find((entry) => entry.id === id);
+        return note === undefined
+          ? { id }
+          : { id, pitch: Math.min(127, Math.max(0, note.pitch + semitones[index])) };
+      }),
+    });
+  },
+  onInsertAt: (startPpq) => {
+    const source = store.notes.find((note) => store.selection.has(note.id));
+    addNote({
+      pitch: source?.pitch ?? 60,
+      velocity: source?.velocity ?? 96,
+      channel: source?.channel ?? 0,
+      startPpq,
+      durationPpq: source?.durationPpq ?? divisionPpq(),
+    });
+  },
 });
 
 // --- Theory hover card -------------------------------------------------------------
@@ -511,6 +535,40 @@ function onAnnotateStaffDrag(ids: number[], staff: 1 | 2): void {
   } catch (err) {
     notation.setError(err instanceof Error ? err.message : String(err));
   }
+}
+
+/** Score-local duration editing for the currently selected source notes. */
+function onScoreKeyDown(event: KeyboardEvent): void {
+  if (event.metaKey || event.ctrlKey || event.altKey) return;
+  const selected = store.notes.filter((note) => store.selection.has(note.id));
+  if (selected.length === 0) return;
+  if (event.key.toLowerCase() === 'n') {
+    const source = selected[selected.length - 1];
+    event.preventDefault();
+    addNote({
+      pitch: source.pitch,
+      velocity: source.velocity,
+      channel: source.channel,
+      startPpq: source.startPpq + source.durationPpq,
+      durationPpq: source.durationPpq,
+      ...(source.offVelocity !== undefined ? { offVelocity: source.offVelocity } : {}),
+    });
+    return;
+  }
+  if (event.key === 'Delete' || event.key === 'Backspace') {
+    event.preventDefault();
+    applyNoteEdits({ deleteIds: selected.map((note) => note.id) });
+    return;
+  }
+  const factor = event.key === '[' ? 0.5 : event.key === ']' ? 2 : null;
+  if (factor === null) return;
+  event.preventDefault();
+  applyNoteEdits({
+    updates: selected.map((note) => ({
+      id: note.id,
+      durationPpq: Math.max(1 / 64, note.durationPpq * factor),
+    })),
+  });
 }
 
 /** Applies a field-wise annotation edit to the palette's target note. */
@@ -819,6 +877,7 @@ onBeforeUnmount(() => {
       <div
         ref="svgHost"
         class="score-body"
+        tabindex="0"
         role="img"
         :aria-label="t.shell.score.engravedScore"
         :style="{ '--score-svg-height': `${scoreSvgHeightPx * viewZoom}px` }"
@@ -828,6 +887,8 @@ onBeforeUnmount(() => {
         @pointercancel="interactions.onSvgPointerCancel"
         @pointerleave="onScorePointerLeave"
         @click="interactions.onSvgClick"
+        @dblclick.prevent="interactions.onSvgDoubleClick"
+        @keydown="onScoreKeyDown"
         v-html="notation.svg.value"
       />
       <AccessibleObjectNavigator
