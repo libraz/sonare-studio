@@ -28,12 +28,16 @@ export {
   addMidiClip,
   clearActiveClipSelection,
   consolidateAudioClips,
+  copyActiveClip,
+  cutActiveClip,
   deleteClip,
   dropClipTakes,
   dropClipTakesBatch,
   duplicateClip,
   glueMidiClips,
   moveClip,
+  moveClips,
+  pasteClipAt,
   renameClip,
   replaceAudioClipAsset,
   setActiveClip,
@@ -49,9 +53,11 @@ export {
   setClipPolyPressure,
   setClipPolyPressureForPitches,
   setClipPolyPressureForPitchPoints,
+  setClipSelection,
   setClipTakes,
   setClipWarp,
   setTrackFrozen,
+  setTrackSelection,
   splitClip,
   trimClip,
 } from './command/clips';
@@ -109,7 +115,12 @@ export {
 } from './command/midi-bindings';
 export { bakeClipMidiFx, clearTrackMidiFx, setTrackMidiFx } from './command/midi-fx';
 export type { AddRecordedMidiClipInput } from './command/midi-recording';
-export { addRecordedMidiClip } from './command/midi-recording';
+export {
+  addRecordedMidiClip,
+  flattenClipMidiComp,
+  setClipMidiActiveTake,
+  setClipMidiCompSegments,
+} from './command/midi-recording';
 export type { MixerSnapshot, MixerSnapshotTrack, MixerStripTarget } from './command/mixer';
 export {
   addInsert,
@@ -127,10 +138,12 @@ export {
   renameMixerBus,
   renameVcaGroup,
   reorderInsert,
+  replaceInsert,
   setInsertEnabled,
   setInsertParam,
   setInsertSidechain,
   setMixerBusGain,
+  setMixerBusMute,
   setMixerSoloMode,
   setProjectExternalMidiDefault,
   setProjectExternalMidiDefaultForTracks,
@@ -171,8 +184,11 @@ export type { NoteEditPlan } from './command/notes';
 export {
   addNote,
   addNotes,
+  applyGrooveToSelection,
   applyNoteEdits,
   cleanupOverlaps,
+  copySelectedNotes,
+  cutSelectedNotes,
   deleteNotes,
   duplicateSelection,
   fadeSelectionVelocity,
@@ -181,6 +197,7 @@ export {
   mergeSelection,
   normalizeSelectionVelocity,
   nudgeSelectionVelocity,
+  pasteNotesAt,
   quantizeSelection,
   quantizeSelectionEnds,
   quantizeSelectionLengths,
@@ -216,21 +233,33 @@ export {
 export { splitAudioClipToStems } from './command/stems';
 export type { SectionInput } from './command/timeline';
 export {
+  deleteTime,
   detectSectionsFromAudioClip,
+  duplicateTime,
+  insertTime,
   removeMarker,
   setMarker,
   setSections,
   setTempoSegments,
   setTimeSignatures,
 } from './command/timeline';
+export {
+  applyTrackChannelPreset,
+  copyTrackChannelPreset,
+  hasCopiedTrackChannelPreset,
+  pasteTrackChannelPreset,
+} from './command/track-presets';
 export type { AddTrackInput } from './command/tracks';
 export {
   addAudioTrack,
   addGroupTrack,
   addTrack,
+  clearAllSolo,
   removeTrack,
+  removeTracks,
   renameTrack,
   reorderTracks,
+  setExclusiveTrackSolo,
   setTrackColor,
   setTrackGroup,
   setTrackMute,
@@ -239,5 +268,8 @@ export {
   setTrackRecordInputChannel,
   setTrackRecordInputDeviceId,
   setTrackSolo,
+  setTracksColor,
+  setTracksGroup,
   setTrackVolume,
 } from './command/tracks';
+export type { TrackChannelPreset } from './track-preset';

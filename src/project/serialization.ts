@@ -9,6 +9,7 @@
  * (addTrack/addClip/setMidiEvents/...), which rebuilds an equivalent Project.
  */
 
+import { linearToDb } from '@/lib/db';
 import { midiLearnTargetScope, withMidiLearnTargetScope } from '@/ui/midi/midi-learn';
 import {
   annotationsToDocument,
@@ -47,6 +48,7 @@ import { isMidiFxNoop, type MidiFxConfig, sanitizeMidiFxConfig } from './midi-fx
 import {
   cloneMixerState,
   cloneStrip,
+  createDefaultStrip,
   isDefaultMixerState,
   type MixerBus,
   type MixerStrip,
@@ -60,6 +62,7 @@ import {
   type EditorClip,
   type EditorNote,
   MAJOR_MODE_MASK,
+  type MidiClipTake,
   type SmfSysExPacket,
   type TrackKind,
 } from './types';
@@ -167,6 +170,12 @@ export interface DocumentClip {
   takes?: Array<{ assetId: string; name: string }>;
   /** Comp selection over `takes` (clip-window-relative); omitted when absent. */
   compSegments?: Array<{ startPpq: number; takeIndex: number; crossfadePpq?: number }>;
+  /** Alternative MIDI performances captured during cycle recording. */
+  midiTakes?: MidiClipTake[];
+  /** Index into `midiTakes` represented by this clip's playable content. */
+  midiActiveTakeIndex?: number;
+  /** Range selection over MIDI takes, clip-window-relative. */
+  midiCompSegments?: Array<{ startPpq: number; takeIndex: number }>;
   /** Tempo-follow (warp) state; omitted when the clip plays at its recorded rate. */
   warp?: {
     enabled: boolean;
@@ -333,6 +342,8 @@ export interface DocumentTimeSignature {
   numerator: number;
   /** Beat unit (e.g. 4 or 8). */
   denominator: number;
+  /** Optional additive beat groups, e.g. `[2, 2, 3]` for 7/8. */
+  grouping?: number[];
 }
 
 /** One persisted MIDI-learn CC binding of the document. */
@@ -605,6 +616,62 @@ function toDocumentClip(
       out.compSegments = clip.compSegments.map((segment) => ({ ...segment }));
     }
   }
+  if (clip.midiTakes !== undefined && clip.midiTakes.length > 0) {
+    out.midiTakes = clip.midiTakes.map((take) => ({
+      name: take.name,
+      notes: take.notes.map((note) => ({ ...note })),
+      ...(take.ccLanes !== undefined
+        ? {
+            ccLanes: take.ccLanes.map((lane) => ({
+              ...lane,
+              points: lane.points.map((point) => ({ ...point })),
+            })),
+          }
+        : {}),
+      ...(take.pitchBendLanes !== undefined
+        ? {
+            pitchBendLanes: take.pitchBendLanes.map((lane) => ({
+              ...lane,
+              points: lane.points.map((point) => ({ ...point })),
+            })),
+          }
+        : {}),
+      ...(take.programChangeLanes !== undefined
+        ? {
+            programChangeLanes: take.programChangeLanes.map((lane) => ({
+              ...lane,
+              points: lane.points.map((point) => ({ ...point })),
+            })),
+          }
+        : {}),
+      ...(take.channelPressureLanes !== undefined
+        ? {
+            channelPressureLanes: take.channelPressureLanes.map((lane) => ({
+              ...lane,
+              points: lane.points.map((point) => ({ ...point })),
+            })),
+          }
+        : {}),
+      ...(take.polyPressureLanes !== undefined
+        ? {
+            polyPressureLanes: take.polyPressureLanes.map((lane) => ({
+              ...lane,
+              points: lane.points.map((point) => ({ ...point })),
+            })),
+          }
+        : {}),
+    }));
+    out.midiActiveTakeIndex = Math.min(
+      Math.max(0, clip.midiActiveTakeIndex ?? clip.midiTakes.length - 1),
+      clip.midiTakes.length - 1,
+    );
+    if (clip.midiCompSegments !== undefined && clip.midiCompSegments.length > 0) {
+      out.midiCompSegments = clip.midiCompSegments.map((segment) => ({
+        startPpq: segment.startPpq,
+        takeIndex: segment.takeIndex,
+      }));
+    }
+  }
   if (clip.warp !== undefined) {
     out.warp = {
       enabled: clip.warp.enabled,
@@ -699,13 +766,18 @@ export function serializeProject(): ProjectDocument {
     timeSignatures: store.timeSignatures.map((segment) => ({ ...segment })),
     tracks: store.tracks.map((track) => {
       const audiblePan = track.kind === 'group' ? 0 : (track.mixer?.pan ?? track.pan);
+      const legacyVolume = Number.isFinite(track.volume) && track.volume >= 0 ? track.volume : 1;
+      const needsVolumeMigration = legacyVolume !== 1;
       const out: DocumentTrack = {
         name: track.name,
         color: track.color,
         kind: track.kind,
         mute: track.mute,
         solo: track.solo,
-        volume: track.volume,
+        // v4 canonical form: the audible fader lives in mixer.gainDb. Keep a
+        // unity value only because the v3 document shape is still consumed by
+        // older readers.
+        volume: 1,
         // Compatibility mirror for older readers. MixerStrip.pan is the
         // canonical audible value in current projects.
         pan: audiblePan,
@@ -724,11 +796,13 @@ export function serializeProject(): ProjectDocument {
         const midiFx = sanitizeMidiFxConfig(track.midiFx);
         if (!isMidiFxNoop(midiFx)) out.midiFx = midiFx;
       }
-      if (track.mixer !== undefined) {
+      if (track.mixer !== undefined || needsVolumeMigration) {
+        const baseMixer = track.mixer ?? createDefaultStrip();
         const mixer =
-          track.kind === 'group' && track.mixer.pan !== 0
-            ? { ...cloneStrip(track.mixer), pan: 0 }
-            : track.mixer;
+          track.kind === 'group' && baseMixer.pan !== 0
+            ? { ...cloneStrip(baseMixer), pan: 0 }
+            : cloneStrip(baseMixer);
+        if (needsVolumeMigration) mixer.gainDb += linearToDb(legacyVolume);
         // Insert sidechain sources are session track ids; store them as
         // positional indices (dangling references drop out).
         out.mixer = stripWithSidechainSourceIndices(mixer, store.tracks, track.kind !== 'group');

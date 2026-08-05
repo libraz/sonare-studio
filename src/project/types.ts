@@ -212,6 +212,20 @@ export interface ClipTake {
   name: string;
 }
 
+/** One alternative MIDI performance captured during cycle recording. */
+export interface MidiClipTake {
+  /** Take display name (e.g. "Take 2"). */
+  name: string;
+  /** Source-relative MIDI notes, without editor-session ids. */
+  notes: Array<Omit<EditorNote, 'id'>>;
+  /** Optional expression recorded during this same pass. */
+  ccLanes?: ClipCcLane[];
+  pitchBendLanes?: ClipPitchBendLane[];
+  programChangeLanes?: ClipProgramChangeLane[];
+  channelPressureLanes?: ClipChannelPressureLane[];
+  polyPressureLanes?: ClipPolyPressureLane[];
+}
+
 /**
  * One comp selection segment of an audio clip with takes. Segments are
  * sorted by start, the first starts at 0, and each one selects which take
@@ -390,6 +404,12 @@ export interface EditorClip {
   takes?: ClipTake[];
   /** Comp selection over {@link takes}; absent with takes = take 0 throughout. */
   compSegments?: ClipCompSegment[];
+  /** Alternative MIDI cycle-recording performances; absent for ordinary clips. */
+  midiTakes?: MidiClipTake[];
+  /** Index into {@link midiTakes} currently mirrored into the playable clip. */
+  midiActiveTakeIndex?: number;
+  /** Range selections across {@link midiTakes}; absent selects the active take throughout. */
+  midiCompSegments?: ClipCompSegment[];
   /**
    * Tempo-follow state (audio clips without takes); absent = the clip plays
    * at its recorded rate. Baked offline on schedule (src/project/warp.ts).
@@ -482,6 +502,8 @@ export interface TimeSignatureSegment {
   numerator: number;
   /** Beat unit (positive integer, e.g. 4 or 8). */
   denominator: number;
+  /** Optional additive beat groups, e.g. `[2, 2, 3]` for 7/8. */
+  grouping?: number[];
 }
 
 /** Default colors cycled through when tracks are created without one. */

@@ -145,7 +145,10 @@ export interface TempoMeterMirror {
 }
 
 /** Parses tempo and meter mirror values from the Project document. */
-export function refreshTempoMeter(doc: SerializedProjectDoc): TempoMeterMirror {
+export function refreshTempoMeter(
+  doc: SerializedProjectDoc,
+  previousTimeSignatures: ReadonlyArray<TimeSignatureSegment> = [],
+): TempoMeterMirror {
   const tempoDoc = Array.isArray(doc.tempo_segments) ? doc.tempo_segments : [];
   const tempoSegments = tempoDoc.map((s) => {
     const segment: TempoSegment = { startPpq: s.start_ppq, bpm: s.bpm };
@@ -155,11 +158,24 @@ export function refreshTempoMeter(doc: SerializedProjectDoc): TempoMeterMirror {
   const bpm = tempoDoc[0]?.bpm;
   const tempoBpm = typeof bpm === 'number' && Number.isFinite(bpm) && bpm > 0 ? bpm : null;
   const meterDoc = Array.isArray(doc.time_signatures) ? doc.time_signatures : [];
-  const timeSignatures = meterDoc.map((s) => ({
-    startPpq: s.start_ppq,
-    numerator: s.numerator,
-    denominator: s.denominator,
-  }));
+  const groupingByMeter = new Map(
+    previousTimeSignatures
+      .filter((segment) => segment.grouping !== undefined)
+      .map((segment) => [
+        `${segment.startPpq}:${segment.numerator}:${segment.denominator}`,
+        segment.grouping,
+      ]),
+  );
+  const timeSignatures = meterDoc.map((s) => {
+    const segment: TimeSignatureSegment = {
+      startPpq: s.start_ppq,
+      numerator: s.numerator,
+      denominator: s.denominator,
+    };
+    const grouping = groupingByMeter.get(`${s.start_ppq}:${s.numerator}:${s.denominator}`);
+    if (grouping !== undefined) segment.grouping = [...grouping];
+    return segment;
+  });
   return { tempoSegments, tempoBpm, timeSignatures };
 }
 
@@ -261,6 +277,59 @@ export function buildClipMirror(
         entry.takes = previous.takes.map((take) => ({ ...take }));
         if (previous.compSegments !== undefined) {
           entry.compSegments = previous.compSegments.map((segment) => ({ ...segment }));
+        }
+      }
+      if (previous?.midiTakes !== undefined && previous.midiTakes.length > 0) {
+        entry.midiTakes = previous.midiTakes.map((take) => ({
+          name: take.name,
+          notes: take.notes.map((note) => ({ ...note })),
+          ...(take.ccLanes !== undefined
+            ? {
+                ccLanes: take.ccLanes.map((lane) => ({
+                  ...lane,
+                  points: lane.points.map((point) => ({ ...point })),
+                })),
+              }
+            : {}),
+          ...(take.pitchBendLanes !== undefined
+            ? {
+                pitchBendLanes: take.pitchBendLanes.map((lane) => ({
+                  ...lane,
+                  points: lane.points.map((point) => ({ ...point })),
+                })),
+              }
+            : {}),
+          ...(take.programChangeLanes !== undefined
+            ? {
+                programChangeLanes: take.programChangeLanes.map((lane) => ({
+                  ...lane,
+                  points: lane.points.map((point) => ({ ...point })),
+                })),
+              }
+            : {}),
+          ...(take.channelPressureLanes !== undefined
+            ? {
+                channelPressureLanes: take.channelPressureLanes.map((lane) => ({
+                  ...lane,
+                  points: lane.points.map((point) => ({ ...point })),
+                })),
+              }
+            : {}),
+          ...(take.polyPressureLanes !== undefined
+            ? {
+                polyPressureLanes: take.polyPressureLanes.map((lane) => ({
+                  ...lane,
+                  points: lane.points.map((point) => ({ ...point })),
+                })),
+              }
+            : {}),
+        }));
+        entry.midiActiveTakeIndex = Math.min(
+          Math.max(0, previous.midiActiveTakeIndex ?? previous.midiTakes.length - 1),
+          previous.midiTakes.length - 1,
+        );
+        if (previous.midiCompSegments !== undefined) {
+          entry.midiCompSegments = previous.midiCompSegments.map((segment) => ({ ...segment }));
         }
       }
       if (previous?.warp !== undefined) {

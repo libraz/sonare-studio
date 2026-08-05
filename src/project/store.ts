@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { computed, ref, shallowRef } from 'vue';
+import { linearToDb } from '@/lib/db';
 import { ensureWasm } from '@/lib/wasm';
 import { audioAssetUri } from '@/persistence/assets';
 import {
@@ -314,8 +315,12 @@ export const useProjectStore = defineStore('project', () => {
   const projectExternalMidi = ref<ExternalMidiInstrument | null>(null);
   /** Id of the active (focused) track (-1 when there is none). */
   const activeTrackId = ref(-1);
+  /** Arrangement tracks selected together for bulk header operations. */
+  const trackSelection = ref<Set<number>>(new Set());
   /** Id of the active MIDI clip edited by the piano roll (-1 when none). */
   const clipId = ref(-1);
+  /** Arrangement clip ids selected together; the active clip is included when present. */
+  const clipSelection = ref<Set<number>>(new Set());
   /** Timeline start of the active clip, in PPQ. */
   const clipStartPpq = ref(0);
   /** Length of the active clip, in PPQ. */
@@ -334,6 +339,12 @@ export const useProjectStore = defineStore('project', () => {
   const pickupLengthPpq = ref(0);
   /** Snap grid divisions per whole note (16 = sixteenth-note grid). */
   const snapDivision = ref(DEFAULT_SNAP_DIVISION);
+  /** Whether snapping targets complete meter-aware bars instead of note divisions. */
+  const snapBar = ref(false);
+  /** Quantize strength, from 0 (no move) to 1 (full snap). */
+  const quantizeStrength = ref(1);
+  /** Straight-grid swing applied by selection quantize, in percent (0-100). */
+  const quantizeSwing = ref(0);
   /** Whether grid snapping is applied to note edits (editor-only, not undoable). */
   const snapEnabled = ref(true);
   /** Scale highlight configuration (defaults to C major). */
@@ -426,7 +437,7 @@ export const useProjectStore = defineStore('project', () => {
     const doc = JSON.parse(project.toJson()) as SerializedProjectDoc;
 
     // Tempo and meter mirrors.
-    const tempoMeter = refreshTempoMeter(doc);
+    const tempoMeter = refreshTempoMeter(doc, timeSignatures.value);
     tempoSegments.value = tempoMeter.tempoSegments;
     if (tempoMeter.tempoBpm !== null) tempoBpm.value = tempoMeter.tempoBpm;
     timeSignatures.value = tempoMeter.timeSignatures;
@@ -439,6 +450,7 @@ export const useProjectStore = defineStore('project', () => {
     // current mirror; tracks first seen in the Project are appended.
     const { tracks: nextTracks, trackOrder } = buildTrackMirror(doc, tracks.value);
     tracks.value = nextTracks;
+    trackSelection.value = new Set([...trackSelection.value].filter((id) => trackOrder.has(id)));
 
     // Clip mirror: structure from the Project, names from the current mirror,
     // notes recovered per clip with id hints.
@@ -463,6 +475,9 @@ export const useProjectStore = defineStore('project', () => {
       }
       const fallback = nextClips.find((clip) => clip.trackId === activeTrackId.value) ?? null;
       clipId.value = fallback?.id ?? -1;
+    }
+    if (trackSelection.value.size === 0 && activeTrackId.value >= 0) {
+      trackSelection.value = new Set([activeTrackId.value]);
     }
     const current = nextClips.find((clip) => clip.id === clipId.value) ?? null;
     clipStartPpq.value = current?.startPpq ?? 0;
@@ -618,11 +633,19 @@ export const useProjectStore = defineStore('project', () => {
                 : documentPan;
         }
         const audiblePan = track.kind === 'group' ? 0 : (importedStrip?.pan ?? documentPan);
-        const migratedStrip =
+        let migratedStrip =
           importedStrip ??
           (track.kind !== 'group' && audiblePan !== 0
             ? { ...createDefaultStrip(), pan: audiblePan }
             : undefined);
+        // `volume` was the pre-v4 linear fader field. Keep accepting it from
+        // old documents, but fold it into the canonical dB strip gain before
+        // exposing the mirror so a later fader edit cannot double-count it.
+        const legacyVolume = finiteAtLeast(track.volume, 0, 1);
+        if (legacyVolume !== 1) {
+          migratedStrip = cloneStrip(migratedStrip ?? createDefaultStrip());
+          migratedStrip.gainDb += linearToDb(legacyVolume);
+        }
         const mirrorEntry: EditorTrack = {
           id: trackId,
           name: track.name,
@@ -630,7 +653,9 @@ export const useProjectStore = defineStore('project', () => {
           kind: track.kind,
           mute: track.mute,
           solo: track.solo,
-          volume: finiteAtLeast(track.volume, 0, 1),
+          // Retained only as a v3 document compatibility mirror. New runtime
+          // state and all subsequent saves keep it at unity.
+          volume: 1,
           pan: audiblePan,
           order: index,
         };
@@ -865,6 +890,9 @@ export const useProjectStore = defineStore('project', () => {
         timeSignatures: timeSignatures.value,
         pickupLengthPpq: pickupLengthPpq.value,
         snapDivision: snapDivision.value,
+        snapBar: snapBar.value,
+        quantizeStrength: quantizeStrength.value,
+        quantizeSwing: quantizeSwing.value,
         snapEnabled: snapEnabled.value,
         scaleHighlight: scaleHighlight.value,
         scoreAnnotations: scoreAnnotations.value,
@@ -899,6 +927,9 @@ export const useProjectStore = defineStore('project', () => {
         timeSignatures.value = previousState.timeSignatures;
         pickupLengthPpq.value = previousState.pickupLengthPpq;
         snapDivision.value = previousState.snapDivision;
+        snapBar.value = previousState.snapBar;
+        quantizeStrength.value = previousState.quantizeStrength;
+        quantizeSwing.value = previousState.quantizeSwing;
         snapEnabled.value = previousState.snapEnabled;
         scaleHighlight.value = previousState.scaleHighlight;
         scoreAnnotations.value = previousState.scoreAnnotations;
@@ -1017,6 +1048,12 @@ export const useProjectStore = defineStore('project', () => {
       activeTrackId.value = trackMirror[0]?.id ?? -1;
       clipId.value = firstClipId;
       selection.value = new Set();
+      // The native Project does not serialize additive groups. Seed its
+      // read-back with the document's app-side meter metadata.
+      timeSignatures.value = doc.timeSignatures.map((segment) => ({
+        ...segment,
+        ...(segment.grouping !== undefined ? { grouping: [...segment.grouping] } : {}),
+      }));
       initialized.value = true;
       refresh();
       // Clip names, kinds and asset references are app metadata: apply them
@@ -1094,7 +1131,9 @@ export const useProjectStore = defineStore('project', () => {
     mixer.value = createDefaultMixerState();
     projectExternalMidi.value = null;
     activeTrackId.value = -1;
+    trackSelection.value = new Set();
     clipId.value = -1;
+    clipSelection.value = new Set();
     clipStartPpq.value = 0;
     clipLengthPpq.value = 0;
     notes.value = [];
@@ -1104,6 +1143,9 @@ export const useProjectStore = defineStore('project', () => {
     timeSignatures.value = [];
     pickupLengthPpq.value = 0;
     snapDivision.value = DEFAULT_SNAP_DIVISION;
+    snapBar.value = false;
+    quantizeStrength.value = 1;
+    quantizeSwing.value = 0;
     snapEnabled.value = true;
     scaleHighlight.value = { enabled: true, rootPc: 0, modeMask: MAJOR_MODE_MASK };
     scoreAnnotations.value = {};
@@ -1123,7 +1165,9 @@ export const useProjectStore = defineStore('project', () => {
     mixer,
     projectExternalMidi,
     activeTrackId,
+    trackSelection,
     clipId,
+    clipSelection,
     clipStartPpq,
     clipLengthPpq,
     notes,
@@ -1133,6 +1177,9 @@ export const useProjectStore = defineStore('project', () => {
     timeSignatures,
     pickupLengthPpq,
     snapDivision,
+    snapBar,
+    quantizeStrength,
+    quantizeSwing,
     snapEnabled,
     scaleHighlight,
     scoreAnnotations,

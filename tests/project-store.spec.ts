@@ -10,6 +10,7 @@ import {
   quantizeSelection,
   redo,
   setSelection,
+  setTimeSignatures,
   undo,
   updateNotes,
 } from '@/project/commands';
@@ -211,14 +212,26 @@ describe('project store', () => {
     expect(store.notes[0].startPpq).toBeCloseTo(1.25, 10);
   });
 
-  it('quantizeSelection delegates to Project.snapToGrid on the beat grid', () => {
+  it('quantizeSelection snaps the beat grid without delegating to WASM', () => {
     const id = addNote({ pitch: 60, startPpq: 1.3, durationPpq: 1 });
     setSelection([id]);
     store.snapDivision = 4; // quarter-note grid = the project beat grid
-    const spy = vi.spyOn(getProject(), 'snapToGrid');
     quantizeSelection();
-    expect(spy).toHaveBeenCalledWith(1.3, 1);
     expect(store.notes[0].startPpq).toBe(1);
+  });
+
+  it('quantizeSelection follows actual bar starts when Bar snap is selected', () => {
+    setTimeSignatures([
+      { startPpq: 0, numerator: 3, denominator: 4 },
+      { startPpq: 6, numerator: 5, denominator: 8 },
+    ]);
+    store.snapBar = true;
+    const id = addNote({ pitch: 60, startPpq: 7.1, durationPpq: 0.5 });
+    setSelection([id]);
+
+    quantizeSelection();
+
+    expect(store.notes.find((note) => note.id === id)?.startPpq).toBe(6);
   });
 
   it('quantizeSelection supports partial strength and is undoable', () => {
@@ -229,6 +242,40 @@ describe('project store', () => {
     expect(store.notes[0].startPpq).toBeCloseTo(1.05, 10);
     undo();
     expect(store.notes[0].startPpq).toBeCloseTo(1.1, 10);
+  });
+
+  it('uses the selected swing and strength for selection quantize', () => {
+    store.snapDivision = 8; // 1/8 straight grid
+    store.quantizeSwing = 100;
+    store.quantizeStrength = 0.5;
+    const id = addNote({ pitch: 60, startPpq: 0.5, durationPpq: 1 });
+    setSelection([id]);
+
+    quantizeSelection();
+
+    // The swung offbeat is 0.5 + 0.5 / 3; at 50% strength, move half way.
+    expect(store.notes.find((note) => note.id === id)?.startPpq).toBeCloseTo(0.5 + 0.5 / 6, 12);
+  });
+
+  it('keeps triplet grids ternary when swing is enabled', () => {
+    store.snapDivision = 12; // 1/8T = 1/3 PPQ
+    store.quantizeSwing = 100;
+    const id = addNote({ pitch: 60, startPpq: 0.62, durationPpq: 1 });
+    setSelection([id]);
+
+    quantizeSelection();
+
+    expect(store.notes.find((note) => note.id === id)?.startPpq).toBeCloseTo(2 / 3, 12);
+  });
+
+  it('quantizes to the selected dotted grid', () => {
+    store.snapDivision = 16 / 3; // dotted eighth-note grid = 0.75 PPQ
+    const id = addNote({ pitch: 60, startPpq: 0.82, durationPpq: 1 });
+    setSelection([id]);
+
+    quantizeSelection();
+
+    expect(store.notes.find((note) => note.id === id)?.startPpq).toBeCloseTo(0.75, 12);
   });
 
   it('highlightedPitchClasses delegates to scalePitchClassEnabled', () => {

@@ -5,7 +5,14 @@ import { cloneInstrument, type ExternalMidiInstrument } from '../instrument';
 import { cloneCcLanes } from '../midi-cc';
 import { cloneMixerState, cloneStrip, type ProjectMixerState } from '../mixer';
 import { getProject, setHistoryResetHook, useProjectStore } from '../store';
-import type { EditorClip, EditorMarker, EditorNote, EditorSection, EditorTrack } from '../types';
+import type {
+  EditorClip,
+  EditorMarker,
+  EditorNote,
+  EditorSection,
+  EditorTrack,
+  TimeSignatureSegment,
+} from '../types';
 
 /**
  * Maximum number of edits kept in the local history. When it overflows, the
@@ -40,9 +47,12 @@ interface MirrorSnapshot {
   projectExternalMidi: ExternalMidiInstrument | null;
   mixer: ProjectMixerState;
   scoreAnnotations: ScoreAnnotations;
+  /** App-only additive grouping metadata for the WASM-owned meter map. */
+  timeSignatures: TimeSignatureSegment[];
   displayTransposeSemitones: number;
   activeTrackId: number;
   activeClipId: number;
+  selection: number[];
   /** State owned outside Pinia but participating in command undo/redo. */
   contributedState: Map<string, unknown>;
 }
@@ -188,11 +198,15 @@ function shareSnapshot(previous: MirrorSnapshot | null, next: MirrorSnapshot): M
     next.automationLanes,
     (lane) => `${lane.target}|${lane.param}`,
   );
+  if (deepEqual(previous.timeSignatures, next.timeSignatures)) {
+    next.timeSignatures = previous.timeSignatures;
+  }
   for (const key of [
     'midiCcBindings',
     'projectExternalMidi',
     'mixer',
     'scoreAnnotations',
+    'selection',
     'contributedState',
   ] as const) {
     if (deepEqual(previous[key], next[key])) next[key] = previous[key] as never;
@@ -276,6 +290,48 @@ function cloneClip(clip: EditorClip): EditorClip {
   if (clip.compSegments !== undefined) {
     next.compSegments = clip.compSegments.map((segment) => ({ ...segment }));
   }
+  if (clip.midiTakes !== undefined) {
+    next.midiTakes = clip.midiTakes.map((take) => ({
+      name: take.name,
+      notes: take.notes.map((note) => ({ ...note })),
+      ...(take.ccLanes !== undefined ? { ccLanes: cloneCcLanes(take.ccLanes) } : {}),
+      ...(take.pitchBendLanes !== undefined
+        ? {
+            pitchBendLanes: take.pitchBendLanes.map((lane) => ({
+              ...lane,
+              points: lane.points.map((point) => ({ ...point })),
+            })),
+          }
+        : {}),
+      ...(take.programChangeLanes !== undefined
+        ? {
+            programChangeLanes: take.programChangeLanes.map((lane) => ({
+              ...lane,
+              points: lane.points.map((point) => ({ ...point })),
+            })),
+          }
+        : {}),
+      ...(take.channelPressureLanes !== undefined
+        ? {
+            channelPressureLanes: take.channelPressureLanes.map((lane) => ({
+              ...lane,
+              points: lane.points.map((point) => ({ ...point })),
+            })),
+          }
+        : {}),
+      ...(take.polyPressureLanes !== undefined
+        ? {
+            polyPressureLanes: take.polyPressureLanes.map((lane) => ({
+              ...lane,
+              points: lane.points.map((point) => ({ ...point })),
+            })),
+          }
+        : {}),
+    }));
+  }
+  if (clip.midiCompSegments !== undefined) {
+    next.midiCompSegments = clip.midiCompSegments.map((segment) => ({ ...segment }));
+  }
   if (clip.warp !== undefined) {
     next.warp = {
       ...clip.warp,
@@ -350,9 +406,14 @@ function captureSnapshot(
         : (cloneInstrument(store.projectExternalMidi) as ExternalMidiInstrument),
     mixer: cloneMixerState(store.mixer),
     scoreAnnotations: cloneScoreAnnotations(store.scoreAnnotations),
+    timeSignatures: store.timeSignatures.map((segment) => ({
+      ...segment,
+      ...(segment.grouping !== undefined ? { grouping: [...segment.grouping] } : {}),
+    })),
     displayTransposeSemitones: store.displayTransposeSemitones,
     activeTrackId: store.activeTrackId,
     activeClipId: store.clipId,
+    selection: [...store.selection],
     contributedState,
   });
 }
@@ -418,6 +479,12 @@ function restoreSnapshot(
       : (cloneInstrument(snapshot.projectExternalMidi) as ExternalMidiInstrument);
   store.mixer = cloneMixerState(snapshot.mixer);
   store.scoreAnnotations = cloneScoreAnnotations(snapshot.scoreAnnotations);
+  // The Project keeps numerator/denominator but not app-level additive beat
+  // groups. Seed its read-back with the snapshot so refresh can retain them.
+  store.timeSignatures = snapshot.timeSignatures.map((segment) => ({
+    ...segment,
+    ...(segment.grouping !== undefined ? { grouping: [...segment.grouping] } : {}),
+  }));
   store.displayTransposeSemitones = snapshot.displayTransposeSemitones;
   for (const [id, state] of snapshot.contributedState) {
     registeredHistoryStateContributors().get(id)?.restore(state);
@@ -430,6 +497,8 @@ function restoreSnapshot(
   store.clipId = clipExists ? view.activeClipId : snapshot.activeClipId;
   const hints = new Map(snapshot.clips.map((clip) => [clip.id, clip.notes]));
   store.refresh(hints);
+  const alive = new Set(store.notes.map((note) => note.id));
+  store.selection = new Set(snapshot.selection.filter((id) => alive.has(id)));
 }
 
 function foldSnapshotMediaIds(snapshot: MirrorSnapshot, refs: HistoryReferencedMediaIds): void {

@@ -16,6 +16,7 @@ import type {
   ClipPolyPressureLane,
   ClipProgramChangeLane,
   EditorClip,
+  MidiClipTake,
   SmfSysExPacket,
 } from './types';
 import { sanitizeClipWarp } from './warp';
@@ -96,6 +97,103 @@ export function applyDocumentClipMetadata(
           },
           clip.lengthPpq,
         );
+      }
+    }
+    if (kind === 'midi' && Array.isArray(meta.midiTakes) && meta.midiTakes.length > 0) {
+      const takes: MidiClipTake[] = [];
+      for (const take of meta.midiTakes) {
+        if (typeof take?.name !== 'string' || !Array.isArray(take.notes)) continue;
+        const notes = take.notes
+          .map((note) => ({
+            pitch: Math.round(Number(note.pitch)),
+            velocity: Math.round(Number(note.velocity)),
+            startPpq: Number(note.startPpq),
+            durationPpq: Number(note.durationPpq),
+            channel: Math.round(Number(note.channel)),
+            ...(Number.isFinite(note.offVelocity)
+              ? { offVelocity: Math.round(Number(note.offVelocity)) }
+              : {}),
+          }))
+          .filter(
+            (note) =>
+              Number.isInteger(note.pitch) &&
+              note.pitch >= 0 &&
+              note.pitch <= 127 &&
+              Number.isInteger(note.velocity) &&
+              note.velocity >= 1 &&
+              note.velocity <= 127 &&
+              Number.isFinite(note.startPpq) &&
+              note.startPpq >= 0 &&
+              note.startPpq < clip.lengthPpq &&
+              Number.isFinite(note.durationPpq) &&
+              note.durationPpq > 0 &&
+              isValidChannel(note.channel) &&
+              (note.offVelocity === undefined ||
+                (Number.isInteger(note.offVelocity) &&
+                  note.offVelocity >= 1 &&
+                  note.offVelocity <= 127)),
+          );
+        takes.push({
+          name: take.name,
+          notes,
+          ...(take.ccLanes !== undefined
+            ? {
+                ccLanes: take.ccLanes.map((lane) => ({
+                  ...lane,
+                  points: lane.points.map((point) => ({ ...point })),
+                })),
+              }
+            : {}),
+          ...(take.pitchBendLanes !== undefined
+            ? {
+                pitchBendLanes: take.pitchBendLanes.map((lane) => ({
+                  ...lane,
+                  points: lane.points.map((point) => ({ ...point })),
+                })),
+              }
+            : {}),
+          ...(take.programChangeLanes !== undefined
+            ? {
+                programChangeLanes: take.programChangeLanes.map((lane) => ({
+                  ...lane,
+                  points: lane.points.map((point) => ({ ...point })),
+                })),
+              }
+            : {}),
+          ...(take.channelPressureLanes !== undefined
+            ? {
+                channelPressureLanes: take.channelPressureLanes.map((lane) => ({
+                  ...lane,
+                  points: lane.points.map((point) => ({ ...point })),
+                })),
+              }
+            : {}),
+          ...(take.polyPressureLanes !== undefined
+            ? {
+                polyPressureLanes: take.polyPressureLanes.map((lane) => ({
+                  ...lane,
+                  points: lane.points.map((point) => ({ ...point })),
+                })),
+              }
+            : {}),
+        });
+      }
+      if (takes.length > 0) {
+        next.midiTakes = takes;
+        next.midiActiveTakeIndex = Math.min(
+          Math.max(0, Math.floor(Number(meta.midiActiveTakeIndex) || 0)),
+          takes.length - 1,
+        );
+        if (Array.isArray(meta.midiCompSegments) && meta.midiCompSegments.length > 0) {
+          next.midiCompSegments = sanitizeCompSegments(
+            meta.midiCompSegments.map((segment) => ({
+              startPpq: Number(segment.startPpq),
+              takeIndex: Number(segment.takeIndex),
+            })),
+            takes.length,
+            clip.lengthPpq,
+          );
+        }
       }
     }
     // CC lanes are MIDI-clip metadata; hydrate and re-sanitize them against

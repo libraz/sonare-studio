@@ -1,5 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { linearToDb } from '@/lib/db';
 import { decodeSzd, encodeSzd } from '@/persistence/szd';
 import { formatChordName } from '@/project/chords';
 import {
@@ -140,8 +141,9 @@ describe('project serialization', () => {
       color: '#22cc88',
       mute: true,
       solo: true,
-      volume: 0.5,
+      volume: 1,
       pan: -0.4,
+      mixer: expect.objectContaining({ gainDb: linearToDb(0.5) }),
     });
 
     const pianoClip = doc.tracks[0].clips[0];
@@ -170,6 +172,19 @@ describe('project serialization', () => {
     expect(doc.sections).toEqual([
       { name: 'Verse', color: '#334455', startPpq: 0, endPpq: 16 },
       { name: 'Chorus', color: expect.any(String), startPpq: 16, endPpq: 32 },
+    ]);
+  });
+
+  it('round-trips additive time-signature grouping outside the native meter map', async () => {
+    setTimeSignatures([{ startPpq: 0, numerator: 7, denominator: 8, grouping: [2, 2, 3] }]);
+    const doc = serializeProject();
+    expect(doc.timeSignatures).toEqual([
+      { startPpq: 0, numerator: 7, denominator: 8, grouping: [2, 2, 3] },
+    ]);
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    expect(store.timeSignatures).toEqual([
+      { startPpq: 0, numerator: 7, denominator: 8, grouping: [2, 2, 3] },
     ]);
   });
 
@@ -202,6 +217,23 @@ describe('project serialization', () => {
       lengthPpq: 1,
       sourceOffsetPpq: 0,
       gain: 1,
+    });
+  });
+
+  it('migrates legacy track volume into strip gain and re-saves unity volume', async () => {
+    const doc = serializeProject();
+    doc.tracks[0].volume = 0.5;
+    doc.tracks[0].mixer = { gainDb: -3, pan: 0, inserts: [], sends: [] };
+
+    await loadProjectDocument(doc);
+
+    expect(store.tracks[0]).toMatchObject({
+      volume: 1,
+      mixer: expect.objectContaining({ gainDb: -3 + linearToDb(0.5) }),
+    });
+    expect(serializeProject().tracks[0]).toMatchObject({
+      volume: 1,
+      mixer: expect.objectContaining({ gainDb: -3 + linearToDb(0.5) }),
     });
   });
 
