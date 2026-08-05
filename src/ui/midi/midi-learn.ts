@@ -119,6 +119,39 @@ export function gainDbToCc(gainDb: number): number {
   return clampCcValue(t * MIDI_VALUE_MAX);
 }
 
+/**
+ * Like {@link ccToGainDb} but without the 7-bit rounding, for a surface whose
+ * fader is 14-bit. Integer inputs give exactly the same result, so a learned
+ * controller and a native surface land on the same dB for the same step.
+ */
+export function ccToGainDbFine(value: number): number {
+  const t = clamp(Number.isFinite(value) ? value : 0, 0, MIDI_VALUE_MAX) / MIDI_VALUE_MAX;
+  return MIDI_FADER_MIN_DB + t * (MIDI_FADER_MAX_DB - MIDI_FADER_MIN_DB);
+}
+
+/** Like {@link ccToPan} but without the 7-bit rounding. */
+export function ccToPanFine(value: number): number {
+  const raw = clamp(Number.isFinite(value) ? value : 0, 0, MIDI_VALUE_MAX);
+  return clamp((raw - MIDI_VALUE_CENTER) / (MIDI_VALUE_MAX - MIDI_VALUE_CENTER), -1, 1);
+}
+
+/**
+ * Maps gain in dB to a normalized 0..1 fader position. Exactly inverts
+ * {@link ccToGainDbFine} scaled by 127, so echoing a surface's own fader move
+ * back to it lands on the position it already holds instead of nudging the
+ * motor by a quantization step.
+ */
+export function gainDbToFaderPosition(gainDb: number): number {
+  if (!Number.isFinite(gainDb)) return 0;
+  return clamp((gainDb - MIDI_FADER_MIN_DB) / (MIDI_FADER_MAX_DB - MIDI_FADER_MIN_DB), 0, 1);
+}
+
+/** Maps a pan position in [-1, 1] to a normalized 0..1 encoder-ring position. */
+export function panToRingPosition(pan: number): number {
+  if (!Number.isFinite(pan)) return 0.5;
+  return (clamp(pan, -1, 1) + 1) / 2;
+}
+
 /** Maps a CC value (0-127) to a pan position in [-1, 1] (64 = center). */
 export function ccToPan(value: number): number {
   return clamp(
@@ -384,6 +417,94 @@ export function parseMidiLearnTransportTargetId(id: string): MidiLearnTransportA
   const action = id.slice(TRANSPORT_TARGET_PREFIX.length);
   return MIDI_LEARN_TRANSPORT_ACTIONS.includes(action as MidiLearnTransportAction)
     ? (action as MidiLearnTransportAction)
+    : null;
+}
+
+/**
+ * Controls one bank slot exposes. A bank slot is a physical strip on a control
+ * surface rather than a track: the binding is learned once and follows whichever
+ * track the bank window currently points at, so eight faders can drive any
+ * number of tracks.
+ */
+export type MidiLearnBankParam = 'gain' | 'pan' | 'mute' | 'solo' | 'arm' | 'select';
+
+/** All bank-slot controls, in strip order. */
+export const MIDI_LEARN_BANK_PARAMS: ReadonlyArray<MidiLearnBankParam> = [
+  'gain',
+  'pan',
+  'mute',
+  'solo',
+  'arm',
+  'select',
+];
+
+/**
+ * Bank navigation actions. Like transport buttons these are momentary: the
+ * action fires on press and ignores the release.
+ */
+export type MidiLearnBankAction = 'prev' | 'next' | 'home';
+
+/** All bank navigation actions. */
+export const MIDI_LEARN_BANK_ACTIONS: ReadonlyArray<MidiLearnBankAction> = ['prev', 'next', 'home'];
+
+/**
+ * Highest addressable bank slot. Eight is the usual surface width; extenders
+ * chain up to this many strips.
+ */
+export const MAX_CONTROL_SURFACE_SLOTS = 32;
+
+/** Prefix marking a bank-slot or bank-navigation learn target id. */
+const BANK_TARGET_PREFIX = 'bank:';
+
+/** A decoded bank-slot target. */
+export interface MidiLearnBankTarget {
+  /** Zero-based slot index on the surface. */
+  slot: number;
+  /** Slot control id. */
+  param: MidiLearnBankParam;
+}
+
+/**
+ * Encodes a bank-slot learn target, e.g. `bank:0:gain`.
+ *
+ * @param slot Zero-based slot index on the surface.
+ * @param param Slot control id.
+ * @returns The encoded target id.
+ */
+export function midiLearnBankTargetId(slot: number, param: MidiLearnBankParam): string {
+  return `${BANK_TARGET_PREFIX}${slot}:${param}`;
+}
+
+/** Decodes a bank-slot target id, or null when it is malformed. */
+export function parseMidiLearnBankTargetId(id: string): MidiLearnBankTarget | null {
+  if (!id.startsWith(BANK_TARGET_PREFIX)) return null;
+  const rest = id.slice(BANK_TARGET_PREFIX.length);
+  const sep = rest.indexOf(':');
+  if (sep <= 0) return null;
+  const slot = Number(rest.slice(0, sep));
+  if (!Number.isInteger(slot) || slot < 0 || slot >= MAX_CONTROL_SURFACE_SLOTS) return null;
+  const param = rest.slice(sep + 1);
+  return MIDI_LEARN_BANK_PARAMS.includes(param as MidiLearnBankParam)
+    ? { slot, param: param as MidiLearnBankParam }
+    : null;
+}
+
+/**
+ * Encodes a bank navigation target, e.g. `bank:next`. Navigation ids carry no
+ * slot segment, which is what distinguishes them from slot ids.
+ *
+ * @param action Navigation action driven by the binding.
+ */
+export function midiLearnBankActionTargetId(action: MidiLearnBankAction): string {
+  return `${BANK_TARGET_PREFIX}${action}`;
+}
+
+/** Decodes a bank navigation target id, or null when it is malformed. */
+export function parseMidiLearnBankActionTargetId(id: string): MidiLearnBankAction | null {
+  if (!id.startsWith(BANK_TARGET_PREFIX)) return null;
+  const action = id.slice(BANK_TARGET_PREFIX.length);
+  return MIDI_LEARN_BANK_ACTIONS.includes(action as MidiLearnBankAction)
+    ? (action as MidiLearnBankAction)
     : null;
 }
 
@@ -694,7 +815,11 @@ export function midiCcBindingMatches(
   return binding.controller === message.controller;
 }
 
-/** True when an id decodes to any known learn target (strip / insert / instrument). */
+/**
+ * True when an id decodes to any known learn target. Every family a binding can
+ * point at must be listed here: persistence sanitizes a loaded document against
+ * this predicate, so a family missing from it round-trips to nothing.
+ */
 export function isMidiLearnTargetId(id: string): boolean {
   return (
     parseMidiLearnTargetId(id) !== null ||
@@ -706,7 +831,10 @@ export function isMidiLearnTargetId(id: string): boolean {
     parseMidiLearnEqTargetId(id) !== null ||
     parseMidiLearnMasteringTargetId(id) !== null ||
     parseMidiLearnStripControlTargetId(id) !== null ||
-    parseMidiLearnBusStripControlTargetId(id) !== null
+    parseMidiLearnBusStripControlTargetId(id) !== null ||
+    parseMidiLearnTransportTargetId(id) !== null ||
+    parseMidiLearnBankTargetId(id) !== null ||
+    parseMidiLearnBankActionTargetId(id) !== null
   );
 }
 
@@ -733,6 +861,10 @@ export function midiLearnTargetScope(id: string): MidiLearnTargetScope | null {
   if (vca) return 'global';
   // Transport bindings drive the session, not a strip.
   if (parseMidiLearnTransportTargetId(id) !== null) return 'global';
+  // Bank bindings address a surface slot; the track they reach is resolved
+  // through the bank window at dispatch time, so nothing here is track-scoped.
+  if (parseMidiLearnBankTargetId(id) !== null) return 'global';
+  if (parseMidiLearnBankActionTargetId(id) !== null) return 'global';
   const eq = parseMidiLearnEqTargetId(id);
   if (eq) return eq.scope;
   const mastering = parseMidiLearnMasteringTargetId(id);
