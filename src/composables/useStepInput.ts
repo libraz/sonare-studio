@@ -2,6 +2,7 @@ import type { ComputedRef, Ref } from 'vue';
 import { computed, ref } from 'vue';
 import { addNote } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
+import { meterBarLengthPpq, timeSignatureAt } from '@/project/time-signature';
 
 /** Step-input state and actions returned by {@link useStepInput}. */
 export interface StepInputHandle {
@@ -9,7 +10,7 @@ export interface StepInputHandle {
   armed: Ref<boolean>;
   /** Cursor position in PPQ where the next entered note will be written. */
   cursorPpq: Ref<number>;
-  /** Current grid step in PPQ, derived from the project store's snapDivision. */
+  /** Current grid step in PPQ, derived from the selected numeric grid or active bar. */
   stepPpq: ComputedRef<number>;
   /**
    * Arms step input.
@@ -48,8 +49,8 @@ export interface StepInputHandle {
  * While armed, each entered note (from music typing or a MIDI input) is
  * written into the edited clip at the cursor through the project commands
  * (each note = one undoable edit) and the cursor advances by the current
- * grid step. The step tracks the project store's `snapDivision` reactively
- * (divisions per whole note, so stepPpq = 4 / snapDivision).
+ * grid step. The step tracks the project store's numeric snap division, or
+ * the active meter's complete bar while Bar snap is selected.
  *
  * @returns Reactive step-input state and actions.
  */
@@ -58,7 +59,11 @@ export function useStepInput(): StepInputHandle {
   const armed = ref(false);
   const cursorPpq = ref(0);
 
-  const stepPpq = computed(() => 4 / store.snapDivision);
+  const stepPpq = computed(() =>
+    store.snapBar
+      ? meterBarLengthPpq(timeSignatureAt(store.timeSignatures, cursorPpq.value))
+      : 4 / store.snapDivision,
+  );
 
   function setCursor(ppq: number): void {
     cursorPpq.value = Math.max(0, ppq);

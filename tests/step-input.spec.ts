@@ -32,6 +32,8 @@ describe('useStepInput', () => {
     expect(step.stepPpq.value).toBe(1); // beat grid
     store.snapDivision = 8;
     expect(step.stepPpq.value).toBe(0.5);
+    store.snapDivision = 16 / 3;
+    expect(step.stepPpq.value).toBeCloseTo(0.75, 12);
   });
 
   it('writes a note at the cursor and advances one step when armed', () => {
@@ -135,6 +137,19 @@ describe('useStepInput', () => {
       durationPpq: 1,
     });
     expect(step.cursorPpq.value).toBe(10);
+  });
+
+  it('uses the active meter bar as the step while Bar snap is selected', () => {
+    const store = useProjectStore();
+    store.snapBar = true;
+    store.timeSignatures = [{ startPpq: 0, numerator: 3, denominator: 4 }];
+    const step = useStepInput();
+    step.arm();
+
+    step.enterNote(60);
+
+    expect(addNoteMock).toHaveBeenCalledWith({ pitch: 60, startPpq: 0, durationPpq: 3 });
+    expect(step.cursorPpq.value).toBe(3);
   });
 
   it('does not write and returns null while disarmed', () => {

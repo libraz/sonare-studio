@@ -34,6 +34,7 @@ function makeHarness(
   resolvePitch?: (pitch: number) => number,
   readOnly: boolean | (() => boolean) = false,
   minPpq?: number,
+  snapPpq?: (ppq: number) => number,
 ) {
   const view = new TimelineRange({ widthPx: 800, heightPx: 1280, pxPerPpq: 100, rowHeight: 10 });
   let selection = new Set<number>(initialSelection);
@@ -59,6 +60,7 @@ function makeHarness(
     isReadOnly: () => (typeof readOnly === 'function' ? readOnly() : readOnly),
     ...(minPpq === undefined ? {} : { getMinPpq: () => minPpq }),
     ...(maxPpq === undefined ? {} : { getMaxPpq: () => maxPpq }),
+    ...(snapPpq === undefined ? {} : { snapPpq }),
     ...(resolvePitch === undefined
       ? {}
       : { resolveCreatedPitch: resolvePitch, resolveEditedPitch: resolvePitch }),
@@ -228,6 +230,23 @@ describe('useNoteInteractions', () => {
       expect(commands.updateNotes).toHaveBeenCalledWith([{ id: 1, startPpq: 1.5, pitch: 63 }]);
     });
 
+    it('uses the supplied meter-aware grid for move targets', () => {
+      const { commands, interactions } = makeHarness(
+        [makeNote({ id: 1, startPpq: 6.2 })],
+        [],
+        undefined,
+        undefined,
+        false,
+        undefined,
+        (ppq) => (ppq < 7.25 ? 6 : 8.5),
+      );
+      interactions.onPointerDown({ x: 650, y: 675 });
+      interactions.onPointerMove({ x: 850, y: 675 });
+      interactions.onPointerUp({ x: 850, y: 675 });
+
+      expect(commands.updateNotes).toHaveBeenCalledWith([{ id: 1, startPpq: 8.5, pitch: 60 }]);
+    });
+
     it('bypasses snap while meta is held', () => {
       const { commands, interactions } = makeHarness([makeNote({ id: 1 })]);
       interactions.onPointerDown({ x: 150, y: 675 });
@@ -261,6 +280,24 @@ describe('useNoteInteractions', () => {
       expect(commands.updateNotes).toHaveBeenCalledWith([
         { id: 1, startPpq: 1.5, pitch: 60 },
         { id: 2, startPpq: 3, pitch: 62 },
+      ]);
+    });
+
+    it('locks a Shift-drag to the dominant screen axis', () => {
+      const { commands, interactions } = makeHarness([makeNote({ id: 1 })]);
+      interactions.onPointerDown({ x: 150, y: 675 });
+      interactions.onPointerMove({ x: 200, y: 665 }, { shift: true });
+      interactions.onPointerUp({ x: 200, y: 665 }, { shift: true });
+
+      expect(commands.updateNotes).toHaveBeenLastCalledWith([{ id: 1, startPpq: 1.5, pitch: 60 }]);
+
+      const vertical = makeHarness([makeNote({ id: 1 })]);
+      vertical.interactions.onPointerDown({ x: 150, y: 675 });
+      vertical.interactions.onPointerMove({ x: 155, y: 625 }, { shift: true });
+      vertical.interactions.onPointerUp({ x: 155, y: 625 }, { shift: true });
+
+      expect(vertical.commands.updateNotes).toHaveBeenLastCalledWith([
+        { id: 1, startPpq: 1, pitch: 65 },
       ]);
     });
 

@@ -70,6 +70,8 @@ export interface MelodyExtractOptions {
   usePyin?: boolean;
   /** Quantize note starts/ends to this clip-relative PPQ grid. Omit/0 to keep raw rhythm. */
   rhythmQuantizePpq?: number;
+  /** Snap detected pitches to the estimated key scale. Default false to preserve chromatic detail. */
+  pitchQuantizeToScale?: boolean;
 }
 
 interface MelodyScale {
@@ -250,7 +252,9 @@ export async function analyzeAudioClipMelody(
   const points =
     deps.analyzeMelody(mono, asset.meta.sampleRate, { usePyin: options.usePyin ?? true }).points ??
     [];
-  const scale = detectMelodyScale(mono, asset.meta.sampleRate, deps);
+  const scale = options.pitchQuantizeToScale
+    ? detectMelodyScale(mono, asset.meta.sampleRate, deps)
+    : null;
   const minNoteSeconds = options.minNoteSeconds ?? 0.05;
   // Map window-relative frame seconds to clip-relative PPQ through the tempo
   // map (the inverse of how the new MIDI clip plays back), so the transcription

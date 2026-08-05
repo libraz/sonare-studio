@@ -61,6 +61,8 @@ export interface UsePianoRollCcLanesOptions {
   lanes: PianoRollLanes;
   /** Current snap grid step in PPQ (the configured division). */
   gridPpq: Ref<number>;
+  /** Optionally resolves a point on the piano roll's meter-aware snap grid. */
+  snapPpq?(ppq: number): number;
 }
 
 /**
@@ -188,7 +190,8 @@ export function usePianoRollCcLanes(options: UsePianoRollCcLanesOptions): PianoR
     const clamped = window ? Math.min(window.endPpq, Math.max(window.startPpq, ppq)) : ppq;
     if (!store.snapEnabled) return clamped;
     const step = gridPpq.value;
-    const snapped = step > 0 ? Math.round(clamped / step) * step : clamped;
+    const snapped =
+      step > 0 ? (options.snapPpq?.(clamped) ?? Math.round(clamped / step) * step) : clamped;
     return window ? Math.min(window.endPpq, Math.max(window.startPpq, snapped)) : snapped;
   }
 

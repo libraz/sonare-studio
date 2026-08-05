@@ -28,4 +28,9 @@ describe('piano roll lane header accessibility', () => {
       'input, textarea, select, button, [contenteditable="true"], [contenteditable=""]',
     );
   });
+
+  it('makes the MIDI 1.0 expression limitation explicit beside expression controls', () => {
+    expect(pianoRollEditor).toContain('t.shell.pianoRoll.mpeUnsupported');
+    expect(pianoRollEditor).toContain('class="mpe-unsupported-note"');
+  });
 });

@@ -25,7 +25,6 @@ import {
   undo,
 } from '@/project/commands';
 import { getProject, useProjectStore } from '@/project/store';
-import { MAJOR_MODE_MASK } from '@/project/types';
 import { warpSourceSecondsAt } from '@/project/warp';
 import { installMockOpfs, MemoryFileHandle, uninstallMockOpfs } from './opfs-mock';
 
@@ -328,11 +327,11 @@ describe('audio track and clip commands', () => {
     const midiClipId = await extractMelodyFromAudioClip(clipId);
 
     expect(midiClipId).not.toBe(-1);
-    expect(detectKey).toHaveBeenCalledWith(expect.any(Float32Array), 48000);
-    expect(scaleQuantizeMidi).toHaveBeenCalledWith(0, MAJOR_MODE_MASK, 66);
+    expect(detectKey).not.toHaveBeenCalled();
+    expect(scaleQuantizeMidi).not.toHaveBeenCalled();
     const midiEvents = readDoc().midi_content[String(midiClipId)];
     expect(midiEvents.map((event) => event.ppq)).toEqual([0, 1]);
-    expect(midiEvents.map((event) => (event.data0 >>> 8) & 0x7f)).toEqual([65, 65]);
+    expect(midiEvents.map((event) => (event.data0 >>> 8) & 0x7f)).toEqual([66, 66]);
   });
 
   it('consolidates audio clips into one baked asset with gaps, gain and fades', async () => {

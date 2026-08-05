@@ -1,3 +1,4 @@
+import { applyGrooveTemplate, type GrooveTemplate } from '../groove';
 import { midiSourcePpqToTimeline } from '../midi-projection';
 import {
   allocateNoteId,
@@ -6,13 +7,17 @@ import {
   notesToProjectEvents,
   useProjectStore,
 } from '../store';
-import type { EditorNote, EditorNoteUpdate, NewEditorNote } from '../types';
+import { snapPpqToMeterGrid, snapPpqToSwingMeterGrid } from '../time-signature';
+import { clipKind, type EditorNote, type EditorNoteUpdate, type NewEditorNote } from '../types';
 import { cloneNotes, executeAtomic } from './history';
 import { requireEditableClip } from './utils';
 
 /** Default note-on velocity for newly created notes. */
 const DEFAULT_VELOCITY = 96;
 const MIN_DURATION_PPQ = 0.0625;
+
+/** Process-local note clipboard; entries stay detached from mutable store notes. */
+let noteClipboard: Array<Omit<EditorNote, 'id'>> = [];
 
 /** Throws RangeError when a note has out-of-range or non-finite fields. */
 function validateNote(note: Omit<EditorNote, 'id'>): void {
@@ -92,6 +97,60 @@ function commit(
 function selectedNotes(): EditorNote[] {
   const store = useProjectStore();
   return store.notes.filter((note) => store.selection.has(note.id));
+}
+
+/** Copies the current note selection with its earliest onset rebased to PPQ 0. */
+export function copySelectedNotes(): boolean {
+  const selected = selectedNotes();
+  if (selected.length === 0) return false;
+  const originPpq = Math.min(...selected.map((note) => note.startPpq));
+  noteClipboard = selected
+    .map((note) => ({
+      pitch: note.pitch,
+      velocity: note.velocity,
+      startPpq: note.startPpq - originPpq,
+      durationPpq: note.durationPpq,
+      channel: note.channel,
+      ...(note.offVelocity === undefined ? {} : { offVelocity: note.offVelocity }),
+    }))
+    .sort((a, b) => a.startPpq - b.startPpq || a.pitch - b.pitch || a.channel - b.channel);
+  return true;
+}
+
+/** Copies the selected notes and removes them only after the copy succeeds. */
+export function cutSelectedNotes(): boolean {
+  const ids = [...useProjectStore().selection];
+  if (!copySelectedNotes()) return false;
+  deleteNotes(ids);
+  return true;
+}
+
+/**
+ * Pastes the copied notes with their selection origin aligned to a timeline
+ * PPQ position. The active MIDI clip grows to keep every pasted note audible.
+ *
+ * @returns Editor ids assigned to the pasted notes; empty when no MIDI clip or
+ * clipboard content is available.
+ */
+export function pasteNotesAt(positionPpq: number): number[] {
+  const store = useProjectStore();
+  if (noteClipboard.length === 0 || !Number.isFinite(positionPpq) || positionPpq < 0) return [];
+  if (store.clipId < 0) return [];
+  const clip = requireEditableClip(store, store.clipId);
+  if (clipKind(clip) !== 'midi') return [];
+  const sourceStartPpq = Math.max(0, positionPpq - clip.startPpq + clip.sourceOffsetPpq);
+  const additions = noteClipboard.map((note) => ({
+    ...note,
+    startPpq: sourceStartPpq + note.startPpq,
+  }));
+  const finalEndPpq = Math.max(...additions.map((note) => note.startPpq + note.durationPpq));
+  const requiredLengthPpq = Math.max(clip.lengthPpq, finalEndPpq - clip.sourceOffsetPpq);
+  const ids = applyNoteEdits({
+    additions,
+    ...(requiredLengthPpq > clip.lengthPpq ? { clipWindow: { lengthPpq: requiredLengthPpq } } : {}),
+  });
+  setSelection(ids);
+  return ids;
 }
 
 /** Builds and validates a detached new-note payload before allocating its editor id. */
@@ -208,6 +267,16 @@ export function addNotes(inputs: ReadonlyArray<NewEditorNote>): number[] {
 export function addNote(input: NewEditorNote): number {
   const [id] = addNotes([input]);
   return id;
+}
+
+/** Applies a timing groove to the selected notes as one undoable edit. */
+export function applyGrooveToSelection(groove: GrooveTemplate, strength = 1): void {
+  const store = useProjectStore();
+  const selected = store.notes.filter((note) => store.selection.has(note.id));
+  const grooved = applyGrooveTemplate(selected, groove, strength);
+  applyNoteEdits({
+    updates: grooved.map((note) => ({ id: note.id, startPpq: note.startPpq })),
+  });
 }
 
 /**
@@ -421,40 +490,29 @@ export function setSelection(ids: Iterable<number>): void {
 }
 
 /**
- * Snaps a PPQ position to a regular local grid with adjustable strength.
- *
- * @param ppq Position to snap.
- * @param gridPpq Grid step in PPQ (> 0).
- * @param strength 0..1 interpolation toward the grid line.
- * @returns The (partially) snapped position.
- */
-function snapPpqToLocalGrid(ppq: number, gridPpq: number, strength: number): number {
-  const target = Math.round(ppq / gridPpq) * gridPpq;
-  return ppq + (target - ppq) * strength;
-}
-
-/**
  * Quantizes the start positions of the selected notes to the snap grid as one
- * undoable edit. Project.snapToGrid only snaps to the project's beat grid, so
- * it is used when the editor grid is exactly one beat (snapDivision = 4);
- * finer or coarser grids use equivalent local snap math.
+ * undoable edit. The grid is locally anchored at every meter segment and can
+ * also target complete bars when the editor's Bar snap mode is selected.
  *
  * @param strength 0..1 interpolation toward the grid (default 1 = full snap).
  */
-export function quantizeSelection(strength = 1): void {
+export function quantizeSelection(strength?: number): void {
   const store = useProjectStore();
   if (store.selection.size === 0) return;
-  const project = getProject();
   const clip = requireEditableClip(store, store.clipId);
-  const gridPpq = 4 / store.snapDivision;
+  const gridPpq = store.snapBar ? 'bar' : 4 / store.snapDivision;
+  const amount = Math.min(1, Math.max(0, strength ?? store.quantizeStrength));
   let changed = false;
   const next = store.notes.map((note) => {
     if (!store.selection.has(note.id)) return { ...note };
     const timelinePpq = midiSourcePpqToTimeline(clip, note.startPpq);
-    const snapped =
-      gridPpq === 1
-        ? project.snapToGrid(timelinePpq, strength)
-        : snapPpqToLocalGrid(timelinePpq, gridPpq, strength);
+    const target = snapPpqToSwingMeterGrid(
+      store.timeSignatures,
+      timelinePpq,
+      gridPpq,
+      store.quantizeSwing,
+    );
+    const snapped = timelinePpq + (target - timelinePpq) * amount;
     const sourcePpq = snapped - clip.startPpq + clip.sourceOffsetPpq;
     if (sourcePpq === note.startPpq) return { ...note };
     changed = true;
@@ -596,10 +654,20 @@ export function quantizeSelectionLengths(strength = 1): void {
   const store = useProjectStore();
   if (store.selection.size === 0) return;
   const gridPpq = 4 / store.snapDivision;
+  const clip = requireEditableClip(store, store.clipId);
   let changed = false;
   const next = store.notes.map((note) => {
     if (!store.selection.has(note.id)) return { ...note };
-    const target = Math.max(MIN_DURATION_PPQ, Math.round(note.durationPpq / gridPpq) * gridPpq);
+    const target = store.snapBar
+      ? Math.max(
+          MIN_DURATION_PPQ,
+          snapPpqToMeterGrid(
+            store.timeSignatures,
+            midiSourcePpqToTimeline(clip, note.startPpq + note.durationPpq),
+            'bar',
+          ) - midiSourcePpqToTimeline(clip, note.startPpq),
+        )
+      : Math.max(MIN_DURATION_PPQ, Math.round(note.durationPpq / gridPpq) * gridPpq);
     const snapped = note.durationPpq + (target - note.durationPpq) * strength;
     const durationPpq = Math.max(MIN_DURATION_PPQ, snapped);
     if (durationPpq === note.durationPpq) return { ...note };
@@ -614,7 +682,7 @@ export function quantizeSelectionEnds(strength = 1): void {
   const store = useProjectStore();
   if (store.selection.size === 0) return;
   const clip = requireEditableClip(store, store.clipId);
-  const gridPpq = 4 / store.snapDivision;
+  const gridPpq = store.snapBar ? 'bar' : 4 / store.snapDivision;
   const updates: EditorNoteUpdate[] = [];
   for (const note of store.notes) {
     if (!store.selection.has(note.id)) continue;
@@ -622,7 +690,7 @@ export function quantizeSelectionEnds(strength = 1): void {
     const timelineEnd = midiSourcePpqToTimeline(clip, sourceEnd);
     const target = Math.max(
       midiSourcePpqToTimeline(clip, note.startPpq + MIN_DURATION_PPQ),
-      Math.round(timelineEnd / gridPpq) * gridPpq,
+      snapPpqToMeterGrid(store.timeSignatures, timelineEnd, gridPpq),
     );
     const nextTimelineEnd = timelineEnd + (target - timelineEnd) * strength;
     const nextSourceEnd = nextTimelineEnd - clip.startPpq + clip.sourceOffsetPpq;

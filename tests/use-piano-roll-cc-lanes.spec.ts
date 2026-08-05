@@ -50,6 +50,16 @@ describe('usePianoRollCcLanes channel routing', () => {
     expect(cc.activePitchBendPoints.value).toEqual([]);
   });
 
+  it('uses the supplied meter-aware grid to snap expression breakpoints', () => {
+    const cc = usePianoRollCcLanes({
+      lanes: makeLanes(),
+      gridPpq: ref(1),
+      snapPpq: (ppq) => (ppq < 7.25 ? 6 : 8.5),
+    });
+
+    expect(cc.ccSnap(8.2)).toBe(8.5);
+  });
+
   it('keeps CC lanes on distinct channels independent', () => {
     const laneChannel = ref(2);
     const lanes = makeLanes({ laneCc: ref(11), laneChannel });

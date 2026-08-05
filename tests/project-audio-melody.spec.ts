@@ -127,16 +127,38 @@ describe('analyzeAudioClipMelody', () => {
       midi === 66 ? 65 : midi,
     );
 
-    const notes = await analyzeAudioClipMelody(clipWindow(), 120, {
-      loadAudioAsset: async () => asset(WINDOW_FRAMES),
-      analyzeMelody: fn,
-      detectKey,
-      scaleQuantizeMidi,
-    });
+    const notes = await analyzeAudioClipMelody(
+      clipWindow(),
+      120,
+      {
+        loadAudioAsset: async () => asset(WINDOW_FRAMES),
+        analyzeMelody: fn,
+        detectKey,
+        scaleQuantizeMidi,
+      },
+      { pitchQuantizeToScale: true },
+    );
 
     expect(notes).toEqual([{ pitch: 65, startPpq: 0, durationPpq: 1, velocity: 127 }]);
     expect(detectKey).toHaveBeenCalledWith(expect.any(Float32Array), 48000);
     expect(scaleQuantizeMidi).toHaveBeenCalledWith(0, MAJOR_MODE_MASK, 66);
+  });
+
+  it('preserves chromatic detected pitches unless scale quantization is requested', async () => {
+    const { fn } = analyzer([
+      { time: 0.0, frequency: midiToHz(66), confidence: 1 },
+      { time: 0.5, frequency: 0, confidence: 0 },
+    ]);
+    const scaleQuantizeMidi = vi.fn(() => 65);
+    const notes = await analyzeAudioClipMelody(clipWindow(), 120, {
+      loadAudioAsset: async () => asset(WINDOW_FRAMES),
+      analyzeMelody: fn,
+      detectKey: () => ({ name: 'C major' }),
+      scaleQuantizeMidi,
+    });
+
+    expect(notes[0]?.pitch).toBe(66);
+    expect(scaleQuantizeMidi).not.toHaveBeenCalled();
   });
 
   it('derives relative note velocities from the audio envelope', async () => {

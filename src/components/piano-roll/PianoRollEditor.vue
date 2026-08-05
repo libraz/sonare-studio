@@ -12,6 +12,8 @@ import {
   addNote,
   addNotes,
   cleanupOverlaps,
+  copySelectedNotes,
+  cutSelectedNotes,
   deleteNotes,
   duplicateSelection,
   fadeSelectionVelocity,
@@ -19,6 +21,7 @@ import {
   legatoSelection,
   mergeSelection,
   normalizeSelectionVelocity,
+  pasteNotesAt,
   quantizeSelection,
   quantizeSelectionEnds,
   quantizeSelectionLengths,
@@ -46,8 +49,13 @@ import {
   MIDI_PITCH_BEND_MAX,
   PIANO_ROLL_CC_LANES,
 } from '@/project/midi-cc';
-import { audibleMidiSourceNotes, audibleMidiSourceWindow } from '@/project/midi-projection';
+import {
+  audibleMidiSourceNotes,
+  audibleMidiSourceWindow,
+  midiSourcePpqToTimeline,
+} from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
+import { measureRangeAt, snapPpqToMeterGrid } from '@/project/time-signature';
 import type { AccessibleObjectAdjustment } from '@/ui/accessibility/object-navigation';
 import {
   anchoredPlayheadFollowStart,
@@ -278,7 +286,7 @@ const laneMode = computed({
   },
 });
 
-const ccLanes = usePianoRollCcLanes({ lanes, gridPpq });
+const ccLanes = usePianoRollCcLanes({ lanes, gridPpq, snapPpq: (ppq) => snapPianoRollPpq(ppq) });
 const {
   polyPressurePitch,
   polyPressurePitches,
@@ -467,8 +475,19 @@ function fitSelection(): void {
   bump();
 }
 
+defineExpose({ fitSelection, zoomHorizontal });
+
 /** Maximum per-note random velocity jitter applied by the Humanize action. */
 const HUMANIZE_VELOCITY_AMOUNT = 12;
+
+/** Timeline span occupied by the selected phrase, used as its repeat interval. */
+function selectionSpanPpq(): number {
+  const selected = store.selectedNotes;
+  if (selected.length === 0) return 0;
+  const start = Math.min(...selected.map((note) => note.startPpq));
+  const end = Math.max(...selected.map((note) => note.startPpq + note.durationPpq));
+  return Math.max(0, end - start);
+}
 
 /** Selection-wide note operations shared by the note and empty-space menus. */
 function selectionOpItems(): ContextMenuItem[] {
@@ -482,12 +501,12 @@ function selectionOpItems(): ContextMenuItem[] {
           id: 'duplicate-grid',
           label: t.value.shell.pianoRoll.context.duplicateByGrid,
           hint: '⌥→',
-          run: () => duplicateSelection(gridPpq.value),
+          run: () => duplicateSelection(selectionSpanPpq()),
         },
         {
           id: 'repeat-bar',
           label: t.value.shell.pianoRoll.context.repeatBar,
-          run: () => repeatSelection(3, 4),
+          run: () => repeatSelection(3, selectionSpanPpq()),
         },
         { id: 'sep-edit-tools', separator: true },
         {
@@ -528,6 +547,25 @@ function selectionOpItems(): ContextMenuItem[] {
           label: t.value.shell.pianoRoll.context.quantizeEnds,
           run: () => quantizeSelectionEnds(),
         },
+        { id: 'sep-quantize-feel', separator: true },
+        ...[0.25, 0.5, 0.75, 1].map((strength) => ({
+          id: `quantize-strength-${strength}`,
+          label: `${t.value.shell.pianoRoll.midiTransform.strength} ${Math.round(strength * 100)}%`,
+          checked: Math.abs(store.quantizeStrength - strength) < 1e-9,
+          run: () => {
+            store.quantizeStrength = strength;
+            quantizeSelection();
+          },
+        })),
+        ...[0, 25, 50, 75, 100].map((swing) => ({
+          id: `quantize-swing-${swing}`,
+          label: `${t.value.shell.editor.swing} ${swing}%`,
+          checked: store.quantizeSwing === swing,
+          run: () => {
+            store.quantizeSwing = swing;
+            quantizeSelection();
+          },
+        })),
       ],
     },
     {
@@ -644,12 +682,17 @@ function onNoteContext(payload: {
   ppq: number;
 }): void {
   const items: ContextMenuItem[] = [];
+  const activeClip = store.activeClip;
+  const pasteAtCursor = () => {
+    if (activeClip === null) return;
+    pasteNotesAt(midiSourcePpqToTimeline(activeClip, payload.ppq));
+  };
   if (payload.noteId !== null) {
     const note = store.notes.find((n) => n.id === payload.noteId);
     if (note) {
       if (!store.selection.has(note.id)) setSelection([note.id]);
       const step = store.snapEnabled ? gridPpq.value : 0;
-      const splitPpq = step > 0 ? Math.round(payload.ppq / step) * step : payload.ppq;
+      const splitPpq = step > 0 ? snapPianoRollPpq(payload.ppq) : payload.ppq;
       const canSplit = splitPpq > note.startPpq && splitPpq < note.startPpq + note.durationPpq;
       items.push(
         {
@@ -659,6 +702,28 @@ function onNoteContext(payload: {
           disabled: contentReadOnly.value || !canSplit,
           run: () => setSelection([splitNote(note.id, splitPpq)]),
         },
+        { id: 'sep-clipboard', separator: true },
+        {
+          id: 'copy',
+          label: t.value.shell.pianoRoll.context.copy,
+          hint: '⌘C',
+          run: () => copySelectedNotes(),
+        },
+        {
+          id: 'cut',
+          label: t.value.shell.pianoRoll.context.cut,
+          hint: '⌘X',
+          disabled: contentReadOnly.value,
+          run: () => cutSelectedNotes(),
+        },
+        {
+          id: 'paste',
+          label: t.value.shell.pianoRoll.context.paste,
+          hint: '⌘V',
+          disabled: contentReadOnly.value,
+          run: pasteAtCursor,
+        },
+        { id: 'sep-selection', separator: true },
         ...selectionOpItems(),
         { id: 'sep-1', separator: true },
         {
@@ -672,7 +737,38 @@ function onNoteContext(payload: {
       );
     }
   } else if (store.selection.size > 0) {
-    items.push(...selectionOpItems());
+    items.push(
+      {
+        id: 'copy',
+        label: t.value.shell.pianoRoll.context.copy,
+        hint: '⌘C',
+        run: () => copySelectedNotes(),
+      },
+      {
+        id: 'cut',
+        label: t.value.shell.pianoRoll.context.cut,
+        hint: '⌘X',
+        disabled: contentReadOnly.value,
+        run: () => cutSelectedNotes(),
+      },
+      {
+        id: 'paste',
+        label: t.value.shell.pianoRoll.context.paste,
+        hint: '⌘V',
+        disabled: contentReadOnly.value,
+        run: pasteAtCursor,
+      },
+      { id: 'sep-selection', separator: true },
+      ...selectionOpItems(),
+    );
+  } else {
+    items.push({
+      id: 'paste',
+      label: t.value.shell.pianoRoll.context.paste,
+      hint: '⌘V',
+      disabled: contentReadOnly.value,
+      run: pasteAtCursor,
+    });
   }
   openContextMenu(payload.x, payload.y, items);
 }
@@ -721,7 +817,12 @@ function onNoteKeyboardAction(payload: NoteKeyboardAction): void {
     updateNotes([{ id: note.id, pitch: Math.min(127, Math.max(0, note.pitch + delta)) }]);
     return;
   }
-  const delta = direction === 'left' ? -step : step;
+  const delta =
+    store.snapEnabled && store.snapBar
+      ? barKeyboardDelta(note.startPpq, direction, coarse)
+      : direction === 'left'
+        ? -step
+        : step;
   if (resize) {
     updateNotes([
       {
@@ -768,6 +869,26 @@ function onRulerSeek(localPpq: number): void {
 const localTimeSignatures = computed(() =>
   localizeMeter(store.timeSignatures, timeSignatureOriginPpq.value),
 );
+const snapPianoRollPpq = (ppq: number): number =>
+  snapPpqToMeterGrid(localTimeSignatures.value, ppq, store.snapBar ? 'bar' : gridPpq.value);
+
+/** Moves a piano-roll position to the adjacent real bar boundary in Bar mode. */
+function barKeyboardDelta(ppq: number, direction: 'left' | 'right', coarse: boolean): number {
+  let cursor = Math.max(0, ppq);
+  const steps = coarse ? 4 : 1;
+  for (let index = 0; index < steps; index += 1) {
+    const current = measureRangeAt(localTimeSignatures.value, cursor);
+    if (direction === 'right') {
+      cursor = current.startPpq + current.lengthPpq;
+      continue;
+    }
+    cursor =
+      cursor > current.startPpq + 1e-9
+        ? current.startPpq
+        : measureRangeAt(localTimeSignatures.value, Math.max(0, cursor - 1e-6)).startPpq;
+  }
+  return cursor - ppq;
+}
 
 function resolveScalePitch(pitch: number): number {
   if (!snapToScaleEnabled.value) return pitch;
@@ -789,6 +910,7 @@ const interactions = useNoteInteractions({
   // A non-positive step disables snapping in the gesture state machine while
   // the drawn gridlines keep following the configured division.
   getGridPpq: () => (store.snapEnabled ? gridPpq.value : 0),
+  snapPpq: snapPianoRollPpq,
   getTool: () => tool.value,
   isReadOnly: () => contentReadOnly.value,
   getMinPpq: () => sourceWindowStartPpq.value,
@@ -828,9 +950,15 @@ function handleKeyboardEdit(event: KeyboardEvent): boolean {
   const step = store.snapEnabled ? gridPpq.value : 0.0625;
   let updates: Parameters<typeof updateNotes>[0] = [];
   if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-    const requestedDelta = event.key === 'ArrowLeft' ? -step : step;
+    const direction = event.key === 'ArrowLeft' ? 'left' : 'right';
     const minStart = Math.min(...selected.map((note) => note.startPpq));
     const maxEnd = Math.max(...selected.map((note) => note.startPpq + note.durationPpq));
+    const requestedDelta =
+      store.snapEnabled && store.snapBar
+        ? barKeyboardDelta(minStart, direction, event.shiftKey)
+        : direction === 'left'
+          ? -step
+          : step;
     const delta = Math.min(
       sourceWindowEndPpq.value - maxEnd,
       Math.max(sourceWindowStartPpq.value - minStart, requestedDelta),
@@ -851,27 +979,6 @@ function handleKeyboardEdit(event: KeyboardEvent): boolean {
       updates = selected.map((note) => ({
         id: note.id,
         startPpq: Math.max(sourceWindowStartPpq.value, note.startPpq + delta),
-      }));
-    }
-  } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
-    const semitones = event.shiftKey ? 12 : 1;
-    const delta = event.key === 'ArrowUp' ? semitones : -semitones;
-    if (event.altKey) {
-      const ids = addNotes(
-        selected.map((note) => ({
-          pitch: Math.min(127, Math.max(0, note.pitch + delta)),
-          startPpq: note.startPpq,
-          durationPpq: note.durationPpq,
-          velocity: note.velocity,
-          channel: note.channel,
-          ...(note.offVelocity !== undefined ? { offVelocity: note.offVelocity } : {}),
-        })),
-      );
-      setSelection(ids);
-    } else {
-      updates = selected.map((note) => ({
-        id: note.id,
-        pitch: Math.min(127, Math.max(0, note.pitch + delta)),
       }));
     }
   } else if (event.key === '[' || event.key === ']') {
@@ -899,7 +1006,11 @@ function scrollMinimapTo(centerPpq: number): void {
 const statusText = computed(() => {
   const hover = hoverStatus.value;
   const selection = store.selection.size;
-  const snap = store.snapEnabled ? `${Math.round(4 / gridPpq.value)}` : 'off';
+  const snap = store.snapEnabled
+    ? store.snapBar
+      ? 'Bar'
+      : `${Math.round(4 / gridPpq.value)}`
+    : 'off';
   if (!hover) {
     return `${selection} selected · Snap ${snap}`;
   }
@@ -1162,6 +1273,9 @@ onBeforeUnmount(() => {
           :aria-label="t.shell.pianoRoll.expressionCurveTitle"
           :title="t.shell.pianoRoll.expressionCurveTitle"
         />
+        <p v-if="!noteLaneActive" class="mpe-unsupported-note" role="note">
+          {{ t.shell.pianoRoll.mpeUnsupported }}
+        </p>
       </div>
       <VelocityLane
         v-if="noteLaneActive"
@@ -1401,6 +1515,13 @@ onBeforeUnmount(() => {
 .lane-mode-select {
   flex: none;
   min-width: 0;
+}
+
+.mpe-unsupported-note {
+  margin: 2px 3px;
+  color: var(--text-3);
+  font: var(--fs-2xs) var(--font-sans);
+  line-height: 1.25;
 }
 
 .cell-velocity {

@@ -9,11 +9,17 @@ export const COUNT_IN_CHOICES = [
 ] as const;
 
 export const SNAP_CHOICES = [
+  { value: 'bar', label: 'Bar' },
   { value: 1, label: '1/1' },
   { value: 2, label: '1/2' },
   { value: 4, label: '1/4' },
+  { value: 8 / 3, label: '1/4.' },
   { value: 8, label: '1/8' },
+  { value: 12, label: '1/8T' },
+  { value: 16 / 3, label: '1/8.' },
   { value: 16, label: '1/16' },
+  { value: 24, label: '1/16T' },
+  { value: 32 / 3, label: '1/16.' },
   { value: 32, label: '1/32' },
 ] as const;
 

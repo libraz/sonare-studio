@@ -12,6 +12,7 @@ import {
   StaleProjectOperationError,
 } from '../operation';
 import { getProject, notesToProjectEvents, useProjectStore } from '../store';
+import { meterBarLengthPpq, timeSignatureAt } from '../time-signature';
 import { clipKind, TRACK_COLOR_PALETTE } from '../types';
 import { executeAtomic } from './history';
 import { requireClip } from './utils';
@@ -43,6 +44,7 @@ function melodySourceRevision(
     tempoSegments: store.tempoSegments,
     snapEnabled: store.snapEnabled,
     snapDivision: store.snapDivision,
+    snapBar: store.snapBar,
   });
 }
 
@@ -92,7 +94,11 @@ export async function extractMelodyFromAudioClip(clipId: number): Promise<number
     };
     assertCurrent();
     if (typeof wasm.analyzeMelody !== 'function') return -1;
-    const rhythmQuantizePpq = store.snapEnabled ? 4 / store.snapDivision : undefined;
+    const rhythmQuantizePpq = store.snapEnabled
+      ? store.snapBar
+        ? meterBarLengthPpq(timeSignatureAt(store.timeSignatures, clip.startPpq))
+        : 4 / store.snapDivision
+      : undefined;
     const notes = await analyzeAudioClipMelody(
       clip,
       store.tempoBpm,
