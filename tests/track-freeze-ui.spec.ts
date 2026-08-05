@@ -13,10 +13,12 @@ import {
   renameTrack,
   setStripPan,
   setTrackFrozen,
+  setTrackGroup,
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { buildRowLayout } from '@/ui/arrangement/automation-rows';
 import { closeContextMenu, useContextMenuState } from '@/ui/menu/context-menu';
+import { dbToFaderPosition } from '@/ui/mixer/db-scale';
 import { selectOption, selectValueText } from './helpers/select-menu';
 
 vi.mock('@/lib/wasm', async () => {
@@ -127,6 +129,92 @@ describe('track freeze / bounce UI', () => {
       const groupStrip = mount(ChannelStrip, { props: { target: groupId }, shallow: true });
       expect(groupStrip.find('.strip-pan').exists()).toBe(false);
       expect(groupStrip.findComponent({ name: 'MixerKnob' }).exists()).toBe(false);
+    });
+  });
+
+  describe('TrackHeaderList multi-track selection', () => {
+    it('range-selects headers and applies header color actions to the selection', async () => {
+      const second = addTrack({ name: 'Strings 1' });
+      const third = addTrack({ name: 'Strings 2' });
+      const wrapper = mountHeaders();
+      const headers = wrapper.findAll('.track-header');
+
+      await headers[0].trigger('click');
+      await headers[2].trigger('click', { shiftKey: true });
+      expect(store.trackSelection).toEqual(new Set([trackId, second, third]));
+      expect(headers.map((header) => header.attributes('aria-selected'))).toEqual([
+        'true',
+        'true',
+        'true',
+      ]);
+
+      await headers[1].find('.track-swatch').trigger('click');
+      expect(store.tracks.map((track) => track.color)).toEqual(['#34d399', '#34d399', '#34d399']);
+    });
+
+    it('applies group assignment and deletion to selected headers', async () => {
+      const second = addTrack({ name: 'Strings 1' });
+      const group = addGroupTrack({ name: 'Strings' });
+      const wrapper = mountHeaders();
+      const headers = wrapper.findAll('.track-header');
+      await headers[0].trigger('click');
+      await headers[1].trigger('click', { metaKey: true });
+
+      await selectOption(wrapper, '.track-group-select', 'Strings');
+      expect(store.tracks.find((track) => track.id === trackId)?.groupId).toBe(group);
+      expect(store.tracks.find((track) => track.id === second)?.groupId).toBe(group);
+
+      await headers[0].trigger('contextmenu', { clientX: 10, clientY: 10 });
+      const remove = useContextMenuState().items.find((item) => item.id === 'delete');
+      remove?.run?.();
+      expect(store.tracks.map((track) => track.id)).toEqual([group]);
+    });
+
+    it('collapses group members and can select a group as one batch', async () => {
+      const group = addGroupTrack({ name: 'Strings' });
+      setTrackGroup(trackId, group);
+      const groupTrack = store.tracks.find((track) => track.id === group)!;
+      const wrapper = mount(TrackHeaderList, {
+        props: {
+          laneHeight: 48,
+          scrollY: 0,
+          rulerOffset: 24,
+          rowLayout: buildRowLayout([false], 48),
+          tracks: [groupTrack],
+          collapsedGroupIds: [group],
+        },
+      });
+
+      expect(wrapper.findAll('.track-header')).toHaveLength(1);
+      await wrapper.find('.group-collapse').trigger('click');
+      expect(wrapper.emitted('toggleGroupCollapse')).toEqual([[group, false]]);
+
+      await wrapper.find('.track-header').trigger('contextmenu', { clientX: 10, clientY: 10 });
+      useContextMenuState()
+        .items.find((item) => item.id === 'select-group-members')
+        ?.run?.();
+      expect(store.trackSelection).toEqual(new Set([group, trackId]));
+    });
+  });
+
+  describe('track header volume', () => {
+    it('uses the shared dB fader taper and writes the canonical strip gain', async () => {
+      store.tracks[0] = { ...store.tracks[0], volume: 0.5 };
+      const headers = mountHeaders();
+      const volume = headers.find<HTMLInputElement>('.mini-slider');
+
+      expect(Number(volume.element.value)).toBeCloseTo(dbToFaderPosition(-6.020599913), 2);
+      await volume.setValue('0.75');
+      expect(store.tracks[0]).toMatchObject({
+        volume: 1,
+        mixer: expect.objectContaining({ gainDb: 0 }),
+      });
+
+      await volume.setValue('0');
+      expect(store.tracks[0]).toMatchObject({
+        volume: 1,
+        mixer: expect.objectContaining({ gainDb: -120 }),
+      });
     });
   });
 

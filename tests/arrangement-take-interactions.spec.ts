@@ -27,6 +27,7 @@ function at(ppq: number, takeIndex: number): ClipPoint {
 describe('useTakeInteractions', () => {
   let clips: TakeLaneClip[];
   let activeTakeCalls: Array<{ clipId: number; takeIndex: number }>;
+  let activeMidiTakeCalls: Array<{ clipId: number; takeIndex: number }>;
   let segmentCalls: Array<{ clipId: number; segments: ClipCompSegment[] }>;
 
   function create() {
@@ -40,6 +41,7 @@ describe('useTakeInteractions', () => {
       commands: {
         setActiveTake: (clipId, takeIndex) => activeTakeCalls.push({ clipId, takeIndex }),
         setCompSegments: (clipId, segments) => segmentCalls.push({ clipId, segments }),
+        setActiveMidiTake: (clipId, takeIndex) => activeMidiTakeCalls.push({ clipId, takeIndex }),
       },
     });
   }
@@ -67,6 +69,7 @@ describe('useTakeInteractions', () => {
       },
     ];
     activeTakeCalls = [];
+    activeMidiTakeCalls = [];
     segmentCalls = [];
   });
 
@@ -83,6 +86,22 @@ describe('useTakeInteractions', () => {
     expect(takes.onPointerDown(at(12, 1))).toBe(true);
     expect(takes.onPointerUp(at(12, 1))).toBe(true);
     expect(activeTakeCalls).toEqual([{ clipId: 7, takeIndex: 1 }]);
+    expect(segmentCalls).toEqual([]);
+  });
+
+  it('selects a whole MIDI cycle take on a plain click', () => {
+    clips[0] = {
+      id: 7,
+      trackId: 1,
+      startPpq: 8,
+      lengthPpq: 16,
+      sourceOffsetPpq: 0,
+      midiTakes: [{}, {}],
+    };
+    const takes = create();
+    takes.onPointerDown(at(12, 1));
+    takes.onPointerUp(at(12, 1));
+    expect(activeMidiTakeCalls).toEqual([{ clipId: 7, takeIndex: 1 }]);
     expect(segmentCalls).toEqual([]);
   });
 

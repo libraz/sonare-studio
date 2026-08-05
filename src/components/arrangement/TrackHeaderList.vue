@@ -1,9 +1,17 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import AddTrackMenu from '@/components/arrangement/track-header/AddTrackMenu.vue';
 import TrackAutomationStrip from '@/components/arrangement/track-header/TrackAutomationStrip.vue';
 import TrackTakeRows from '@/components/arrangement/track-header/TrackTakeRows.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
+import { promptDialog } from '@/composables/useDialogs';
+import { dbToLinear, linearToDb } from '@/lib/db';
+import { isOpfsAvailable } from '@/persistence/opfs';
+import {
+  deleteTrackChannelPreset,
+  listTrackChannelPresets,
+  saveTrackChannelPreset,
+} from '@/persistence/track-presets';
 import {
   type AutomationLaneState,
   type AutomationParam,
@@ -15,8 +23,14 @@ import {
   addGroupTrack,
   addTrack,
   addVcaGroup,
+  applyTrackChannelPreset,
+  copyTrackChannelPreset,
+  flattenClipMidiComp,
+  hasCopiedTrackChannelPreset,
   partForTrackName,
+  pasteTrackChannelPreset,
   removeTrack,
+  removeTracks,
   renameTrack,
   reorderTracks,
   setActiveTrack,
@@ -28,7 +42,10 @@ import {
   setTrackPercussion,
   setTrackRecordInputChannel,
   setTrackRecordInputDeviceId,
+  setTrackSelection,
   setTrackSolo,
+  setTracksColor,
+  setTracksGroup,
   setTrackVca,
   setTrackVolume,
   type TrackPart,
@@ -37,6 +54,7 @@ import { flattenTrackComps } from '@/project/comp-flatten';
 import { bounceTrackRange, freezeTrack, unfreezeTrack } from '@/project/freeze';
 import { MAX_VCA_GROUPS } from '@/project/mixer';
 import { getWasmModule, useProjectStore } from '@/project/store';
+import { type TrackChannelPreset, trackChannelPresetFromTrack } from '@/project/track-preset';
 import { type EditorTrack, TRACK_COLOR_PALETTE, type TrackKind } from '@/project/types';
 import {
   type ArrangementRowLayout,
@@ -48,6 +66,7 @@ import {
 } from '@/ui/arrangement/automation-rows';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
+import { dbToFaderPosition, faderPositionToDb, formatDb } from '@/ui/mixer/db-scale';
 
 /**
  * Track header column of the arrangement view: one header per track lane with
@@ -86,6 +105,10 @@ const props = defineProps<{
   rulerOffset: number;
   /** Shared row geometry from the arrangement container. */
   rowLayout: ArrangementRowLayout;
+  /** Tracks currently visible in the arrangement (collapsed group members omitted). */
+  tracks?: readonly EditorTrack[];
+  /** Group-track ids whose member rows are currently hidden. */
+  collapsedGroupIds?: readonly number[];
   /** Ids of record-armed tracks (recording state is owned by the shell). */
   armedTrackIds?: readonly number[];
   /**
@@ -120,10 +143,13 @@ const emit = defineEmits<{
   toggleTakes: [trackId: number, expanded: boolean];
   /** Request to regenerate this generated track (replacing it). */
   regenerateTrack: [trackId: number, part: TrackPart];
+  /** Request to toggle visibility of one group track's member rows. */
+  toggleGroupCollapse: [trackId: number, collapsed: boolean];
 }>();
 
 const store = useProjectStore();
 const { t } = useI18n();
+const displayTracks = computed(() => props.tracks ?? store.tracks);
 
 /** Glyph shown in front of the track name per track kind. */
 const TRACK_KIND_GLYPHS: Record<TrackKind, string> = {
@@ -142,6 +168,18 @@ const trackKindLabel = computed<Record<TrackKind, string>>(() => ({
 
 /** Surfaced when a command rejects (e.g. empty rename). */
 const error = ref('');
+const savedTrackPresets = ref<TrackChannelPreset[]>([]);
+
+async function refreshSavedTrackPresets(): Promise<void> {
+  savedTrackPresets.value = await listTrackChannelPresets();
+}
+
+onMounted(() => {
+  if (!isOpfsAvailable()) return;
+  void refreshSavedTrackPresets().catch((reason: unknown) => {
+    error.value = reason instanceof Error ? reason.message : String(reason);
+  });
+});
 
 // --- Inline rename ---------------------------------------------------------
 
@@ -195,23 +233,66 @@ onBeforeUnmount(() => {
 
 // --- Per-track controls ----------------------------------------------------
 
-function activate(track: EditorTrack): void {
+const selectionAnchorTrackId = ref<number | null>(null);
+
+function selectedTrackIds(fallbackTrackId: number): number[] {
+  return store.trackSelection.has(fallbackTrackId) ? [...store.trackSelection] : [fallbackTrackId];
+}
+
+function activate(track: EditorTrack, event?: MouseEvent): void {
   if (editingTrackId.value === track.id) return;
-  setActiveTrack(track.id);
+  const index = displayTracks.value.findIndex((entry) => entry.id === track.id);
+  if (event?.metaKey || event?.ctrlKey) {
+    const next = new Set(store.trackSelection);
+    if (next.has(track.id)) next.delete(track.id);
+    else next.add(track.id);
+    setTrackSelection(next, next.has(track.id) ? track.id : undefined);
+  } else if (event?.shiftKey && selectionAnchorTrackId.value !== null) {
+    const anchor = displayTracks.value.findIndex(
+      (entry) => entry.id === selectionAnchorTrackId.value,
+    );
+    const [start, end] = anchor <= index ? [anchor, index] : [index, anchor];
+    setTrackSelection(
+      displayTracks.value.slice(start, end + 1).map((entry) => entry.id),
+      track.id,
+    );
+  } else {
+    setActiveTrack(track.id);
+  }
+  if (index >= 0) selectionAnchorTrackId.value = track.id;
 }
 
 /** Advances the track to the next palette color. */
 function cycleColor(track: EditorTrack): void {
   const index = TRACK_COLOR_PALETTE.indexOf(track.color);
   const next = TRACK_COLOR_PALETTE[(index + 1) % TRACK_COLOR_PALETTE.length];
-  setTrackColor(track.id, next);
+  const ids = selectedTrackIds(track.id);
+  if (ids.length === 1) setTrackColor(track.id, next);
+  else setTracksColor(ids, next);
 }
 
 function onVolumeChange(track: EditorTrack, event: Event): void {
-  const value = Number((event.target as HTMLInputElement).value);
-  if (Number.isFinite(value) && value >= 0 && value !== track.volume) {
-    setTrackVolume(track.id, value);
+  const position = Number((event.target as HTMLInputElement).value);
+  if (Number.isFinite(position) && position >= 0 && position <= 1) {
+    // Preserve exact silence at the bottom rather than turning a zero legacy
+    // volume into a merely very quiet −96 dB value.
+    const value = position === 0 ? 0 : dbToLinear(faderPositionToDb(position));
+    if (linearToDb(value) !== trackFaderDb(track)) setTrackVolume(track.id, value);
   }
+}
+
+/** Maps the canonical fader dB value to the shared fader taper. */
+function trackVolumeFaderPosition(track: EditorTrack): number {
+  return dbToFaderPosition(trackFaderDb(track));
+}
+
+/** Formats the canonical fader dB value. */
+function trackVolumeLabel(track: EditorTrack): string {
+  return `${formatDb(trackFaderDb(track))} dB`;
+}
+
+function trackFaderDb(track: EditorTrack): number {
+  return linearToDb(track.volume) + (track.mixer?.gainDb ?? 0);
 }
 
 function onPanChange(track: EditorTrack, event: Event): void {
@@ -228,7 +309,40 @@ function trackPan(track: EditorTrack): number {
 }
 
 function onDelete(track: EditorTrack): void {
-  removeTrack(track.id);
+  const ids = selectedTrackIds(track.id);
+  if (ids.length === 1) removeTrack(track.id);
+  else removeTracks(ids);
+}
+
+function isGroupCollapsed(track: EditorTrack): boolean {
+  return track.kind === 'group' && (props.collapsedGroupIds?.includes(track.id) ?? false);
+}
+
+async function savePreset(track: EditorTrack): Promise<void> {
+  const name = await promptDialog({
+    title: t.value.shell.arrangement.trackHeader.saveChannelPreset,
+    message: t.value.shell.arrangement.trackHeader.saveChannelPresetMessage,
+    defaultValue: track.name,
+    confirmLabel: t.value.shell.arrangement.trackHeader.savePreset,
+  });
+  if (!name) return;
+  try {
+    await saveTrackChannelPreset(trackChannelPresetFromTrack(track, name));
+    await refreshSavedTrackPresets();
+    error.value = '';
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : String(reason);
+  }
+}
+
+async function deletePreset(name: string): Promise<void> {
+  try {
+    await deleteTrackChannelPreset(name);
+    await refreshSavedTrackPresets();
+    error.value = '';
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : String(reason);
+  }
 }
 
 // --- Group membership --------------------------------------------------------
@@ -249,7 +363,10 @@ const groupOptions = computed<{ value: string | number; label: string }[]>(() =>
 
 function onGroupChange(track: EditorTrack, value: string | number): void {
   try {
-    setTrackGroup(track.id, value === GROUP_NONE ? null : Number(value));
+    const ids = selectedTrackIds(track.id);
+    const groupId = value === GROUP_NONE ? null : Number(value);
+    if (ids.length === 1) setTrackGroup(track.id, groupId);
+    else setTracksGroup(ids, groupId);
     error.value = '';
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
@@ -400,7 +517,15 @@ function onToggleTakes(track: EditorTrack): void {
 /** Bakes every comped clip first, then commits the whole track as one undo step. */
 async function onFlattenTakes(track: EditorTrack): Promise<void> {
   try {
-    await flattenTrackComps(track.id);
+    if (track.kind === 'midi') {
+      for (const clip of store.clips) {
+        if (clip.trackId === track.id && (clip.midiTakes?.length ?? 0) > 0) {
+          flattenClipMidiComp(clip.id);
+        }
+      }
+    } else {
+      await flattenTrackComps(track.id);
+    }
   } catch (err) {
     console.warn(`Flattening track ${track.id} failed`, err);
   }
@@ -575,8 +700,13 @@ function onGripPointerUp(): void {
   reorderDrag.value = null;
   if (!drag || drag.toIndex === drag.fromIndex) return;
   const ids = store.tracks.map((track) => track.id);
-  ids.splice(drag.fromIndex, 1);
-  ids.splice(drag.toIndex, 0, drag.trackId);
+  const fromIndex = ids.indexOf(drag.trackId);
+  const destinationId = displayTracks.value[drag.toIndex]?.id;
+  if (fromIndex < 0 || destinationId === undefined) return;
+  ids.splice(fromIndex, 1);
+  const destinationIndex = ids.indexOf(destinationId);
+  if (destinationIndex < 0) return;
+  ids.splice(destinationIndex + (drag.fromIndex < drag.toIndex ? 1 : 0), 0, drag.trackId);
   reorderTracks(ids);
 }
 
@@ -588,7 +718,12 @@ function onGripPointerCancel(): void {
 
 /** Builds and opens the track header's right-click action menu. */
 function onContextMenu(track: EditorTrack, event: MouseEvent): void {
-  setActiveTrack(track.id);
+  if (store.trackSelection.has(track.id)) {
+    setTrackSelection(store.trackSelection, track.id);
+  } else {
+    setActiveTrack(track.id);
+  }
+  selectionAnchorTrackId.value = track.id;
   const items: ContextMenuItem[] = [
     {
       id: 'rename',
@@ -650,6 +785,56 @@ function onContextMenu(track: EditorTrack, event: MouseEvent): void {
       },
     );
   }
+  if (track.kind === 'group') {
+    const memberIds = store.tracks
+      .filter((entry) => entry.groupId === track.id)
+      .map((entry) => entry.id);
+    items.push({ id: 'sep-group-members', separator: true });
+    items.push({
+      id: 'select-group-members',
+      label: t.value.shell.arrangement.trackHeader.selectGroupMembers,
+      disabled: memberIds.length === 0,
+      run: () => setTrackSelection([track.id, ...memberIds], track.id),
+    });
+  }
+  items.push(
+    { id: 'sep-channel-preset', separator: true },
+    {
+      id: 'copy-channel-settings',
+      label: t.value.shell.arrangement.trackHeader.copyChannelSettings,
+      run: () => copyTrackChannelPreset(track.id),
+    },
+    {
+      id: 'paste-channel-settings',
+      label: t.value.shell.arrangement.trackHeader.pasteChannelSettings,
+      disabled: !hasCopiedTrackChannelPreset(),
+      run: () => pasteTrackChannelPreset(track.id),
+    },
+    {
+      id: 'save-channel-preset',
+      label: t.value.shell.arrangement.trackHeader.savePreset,
+      run: () => savePreset(track),
+    },
+    {
+      id: 'apply-channel-preset',
+      label: t.value.shell.arrangement.trackHeader.applyPreset,
+      children: savedTrackPresets.value.map((preset) => ({
+        id: `apply-channel-preset-${preset.name}`,
+        label: preset.name,
+        run: () => applyTrackChannelPreset(track.id, preset),
+      })),
+    },
+    {
+      id: 'delete-channel-preset',
+      label: t.value.shell.arrangement.trackHeader.deletePreset,
+      children: savedTrackPresets.value.map((preset) => ({
+        id: `delete-channel-preset-${preset.name}`,
+        label: preset.name,
+        danger: true,
+        run: () => deletePreset(preset.name),
+      })),
+    },
+  );
   items.push(
     { id: 'sep-2', separator: true },
     {
@@ -729,6 +914,8 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
   const drag = reorderDrag.value;
   return {
     active: track.id === store.activeTrackId,
+    selected: store.trackSelection.has(track.id),
+    'group-member': track.groupId !== undefined,
     'track-frozen': track.frozen !== undefined,
     dragging: drag?.trackId === track.id,
     'drop-target': drag !== null && drag.toIndex === index && drag.trackId !== track.id,
@@ -737,7 +924,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
 </script>
 
 <template>
-  <div class="track-headers">
+  <div class="track-headers" role="listbox" aria-multiselectable="true">
     <div class="headers-top" :style="{ height: `${props.rulerOffset}px` }">
       <AddTrackMenu @add="onAddTrack" />
     </div>
@@ -745,12 +932,14 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
     <div class="headers-viewport">
       <div class="headers-rows" :style="{ transform: `translateY(${-props.scrollY}px)` }">
         <div
-          v-for="(track, index) in store.tracks"
+          v-for="(track, index) in displayTracks"
           :key="track.id"
           class="track-header"
           :class="rowClass(track, index)"
           :style="{ height: `${rowHeight(index)}px` }"
-          @click="activate(track)"
+          role="option"
+          :aria-selected="store.trackSelection.has(track.id)"
+          @click="activate(track, $event)"
           @contextmenu.prevent="onContextMenu(track, $event)"
         >
           <div class="track-row" :style="{ height: `${props.laneHeight}px` }">
@@ -781,6 +970,24 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                 <span class="track-kind" v-tooltip="trackKindLabel[track.kind]">
                   {{ TRACK_KIND_GLYPHS[track.kind] }}
                 </span>
+                <button
+                  v-if="track.kind === 'group'"
+                  type="button"
+                  class="group-collapse"
+                  :aria-label="
+                    isGroupCollapsed(track)
+                      ? t.shell.arrangement.trackHeader.expandGroup
+                      : t.shell.arrangement.trackHeader.collapseGroup
+                  "
+                  v-tooltip="
+                    isGroupCollapsed(track)
+                      ? t.shell.arrangement.trackHeader.expandGroup
+                      : t.shell.arrangement.trackHeader.collapseGroup
+                  "
+                  @click.stop="emit('toggleGroupCollapse', track.id, !isGroupCollapsed(track))"
+                >
+                  {{ isGroupCollapsed(track) ? '›' : '⌄' }}
+                </button>
                 <input
                   v-if="editingTrackId === track.id"
                   ref="nameInput"
@@ -934,12 +1141,12 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   class="mini-slider"
                   type="range"
                   min="0"
-                  max="2"
+                  max="1"
                   step="0.01"
-                  :value="track.volume"
+                  :value="trackVolumeFaderPosition(track)"
                   v-tooltip="
                     formatMessage(t.shell.arrangement.trackHeader.volumeTitle, {
-                      value: track.volume.toFixed(2),
+                      value: trackVolumeLabel(track),
                     })
                   "
                   :aria-label="

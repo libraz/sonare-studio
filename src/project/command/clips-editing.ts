@@ -125,6 +125,39 @@ export function moveClip(clipId: number, newStartPpq: number, newTrackId?: numbe
   });
 }
 
+/** Moves several clips as one undoable arrangement edit. */
+export function moveClips(
+  moves: ReadonlyArray<{ clipId: number; newStartPpq: number; newTrackId?: number }>,
+): void {
+  if (moves.length === 0) return;
+  const store = useProjectStore();
+  const project = getProject();
+  const ids = new Set<number>();
+  for (const move of moves) {
+    if (ids.has(move.clipId)) throw new RangeError(`Duplicate clip move ${move.clipId}`);
+    ids.add(move.clipId);
+    const clip = requireEditableClip(store, move.clipId);
+    validatePpq(move.newStartPpq, 'Clip startPpq');
+    if (move.newTrackId !== undefined) {
+      const destination = requireEditableTrack(store, move.newTrackId);
+      if (!canTrackContainClip(destination.kind, clipKind(clip))) {
+        throw new RangeError(
+          `Cannot move ${clipKind(clip)} clip ${move.clipId} to ${destination.kind}`,
+        );
+      }
+    }
+  }
+  executeAtomic((edit) => {
+    for (const move of moves) {
+      edit(1, () => {
+        if (move.newTrackId === undefined) project.moveClip(move.clipId, move.newStartPpq);
+        else project.moveClip(move.clipId, move.newStartPpq, move.newTrackId);
+      });
+    }
+    store.refresh();
+  });
+}
+
 /**
  * Duplicates a clip at a new timeline start on the same track as one undoable
  * edit (delegates to Project.duplicateClip; MIDI content is copied by the
@@ -615,7 +648,7 @@ export async function consolidateAudioClips(
     let channelCount = 0;
     for (const clip of ordered) {
       if ((clip.takes?.length ?? 0) > 0) {
-        for (const segment of audioClipSegments(clip)) {
+        for (const segment of audioClipSegments(clip, { tempoMap, clipStartPpq: clip.startPpq })) {
           const asset = await loadAudio(segment.assetId);
           assertCurrent();
           const timelineStartPpq = clip.startPpq + segment.offsetPpq;

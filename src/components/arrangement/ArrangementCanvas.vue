@@ -65,6 +65,8 @@ const props = defineProps<{
   activeTrackId: number;
   /** Id of the active clip (rendered with a selection border). */
   activeClipId: number;
+  /** Arrangement clips selected together (all render with a selection border). */
+  selectedClipIds?: ReadonlySet<number>;
   /** Time-signature map driving the bar/beat ruler (4/4 when empty). */
   timeSignatures: TimeSignatureSegment[];
   /** Vertical scroll offset of the lane area in px. */
@@ -83,6 +85,8 @@ const props = defineProps<{
   interactions: ClipInteractions;
   /** Keyboard/slider movement increment in PPQ. */
   gridPpq?: number;
+  /** Resolves ruler seeks on the arrangement's meter-aware snap grid. */
+  snapPpq?: (ppq: number) => number;
   /** Ids of tracks whose automation sublane is expanded. */
   automationExpandedIds: readonly number[];
   /** Selected automation parameter per track id (absent = 'faderDb'). */
@@ -112,6 +116,8 @@ const emit = defineEmits<{
   'view-resize': [widthPx: number, heightPx: number];
   /** Request to move the transport playhead (press or scrub on the ruler). */
   'ruler-seek': [ppq: number];
+  /** Request to set and enable a loop range from an upper-ruler drag. */
+  'loop-range': [startPpq: number, endPpq: number];
   /** Right-click on a clip lane: clipId is null when no clip was hit. */
   'clip-context': [payload: { x: number; y: number; clipId: number | null; ppq: number }];
   /** Right-click on the bar/beat ruler. */
@@ -307,7 +313,7 @@ function drawBase(): void {
     ticks: cachedRulerTicks,
     colors: COLORS,
   });
-  drawClips(ctx, props.clips, props.activeClipId, clipRenderContext());
+  drawClips(ctx, props.clips, props.activeClipId, clipRenderContext(), props.selectedClipIds);
   drawTakeLanes(ctx, w, h, {
     range: props.range,
     tracks: props.tracks,
@@ -405,6 +411,7 @@ watch(
     props.markers,
     props.activeTrackId,
     props.activeClipId,
+    props.selectedClipIds,
     props.timeSignatures,
     props.scrollY,
     props.loopEnabled,
@@ -412,6 +419,8 @@ watch(
     props.loopEndPpq,
     props.tempoBpm,
     props.interactions.previewClip.value,
+    props.interactions.previewClips?.value,
+    props.interactions.previewMarquee?.value,
     props.interactions.previewDraft?.value,
     props.interactions.previewFades.value,
     props.automationExpandedIds,
@@ -440,16 +449,27 @@ const {
   automation: props.automation,
   takes: props.takes,
   interactions: props.interactions,
-  onRulerSeek: (ppq) => emit('ruler-seek', ppq),
+  onRulerSeek: (ppq, bypassSnap) =>
+    emit('ruler-seek', bypassSnap ? ppq : (props.snapPpq?.(ppq) ?? ppq)),
+  onRulerLoopRange: (startPpq, endPpq, bypassSnap) => {
+    const start = bypassSnap ? startPpq : (props.snapPpq?.(startPpq) ?? startPpq);
+    const end = bypassSnap ? endPpq : (props.snapPpq?.(endPpq) ?? endPpq);
+    if (end > start) emit('loop-range', start, end);
+  },
   onRulerContext: (request) => emit('ruler-context', request),
   onClipContext: (request) => emit('clip-context', request),
 });
+
+function onEscape(): void {
+  props.interactions.cancel();
+}
 </script>
 
 <template>
   <div
     ref="wrapper"
     class="arrangement-canvas"
+    tabindex="0"
     :style="{ cursor: laneCursor }"
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
@@ -457,6 +477,7 @@ const {
     @pointercancel="onPointerCancel"
     @dblclick="onDoubleClick"
     @contextmenu="onContextMenu"
+    @keydown.escape.prevent="onEscape"
   >
     <canvas
       ref="baseCanvas"

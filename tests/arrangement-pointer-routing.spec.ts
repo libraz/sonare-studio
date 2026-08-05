@@ -33,4 +33,33 @@ describe('usePointerRouting double-clicks', () => {
 
     expect(onDoubleClick).not.toHaveBeenCalled();
   });
+
+  it('uses the upper ruler band to create a loop range without seeking', () => {
+    const onRulerSeek = vi.fn();
+    const onRulerLoopRange = vi.fn();
+    const routing = usePointerRouting({
+      wrapper: ref({ getBoundingClientRect: () => ({ left: 0, top: 0 }) } as HTMLElement),
+      range: () => ({ xToPpq: (x: number) => x / 10 }) as never,
+      automation: { cursor: ref(null) } as never,
+      takes: {} as never,
+      interactions: { cursor: ref('default') } as never,
+      onRulerSeek,
+      onRulerLoopRange,
+      onRulerContext: vi.fn(),
+      onClipContext: vi.fn(),
+    });
+    const target = { setPointerCapture: vi.fn() } as unknown as HTMLElement;
+
+    routing.onPointerDown({
+      button: 0,
+      clientX: 80,
+      clientY: 4,
+      currentTarget: target,
+      pointerId: 1,
+    } as PointerEvent);
+    routing.onPointerUp({ button: 0, clientX: 20, clientY: 4 } as PointerEvent);
+
+    expect(onRulerLoopRange).toHaveBeenCalledWith(2, 8, false);
+    expect(onRulerSeek).not.toHaveBeenCalled();
+  });
 });

@@ -25,6 +25,9 @@ export interface TakeLaneClip extends CompableClipFields {
   id: number;
   /** Id of the owning track. */
   trackId: number;
+  /** MIDI cycle takes; these are selected as whole takes rather than ranged comps. */
+  midiTakes?: ReadonlyArray<unknown>;
+  midiCompSegments?: ClipCompSegment[];
   /** Timeline start of the clip, in PPQ. */
   startPpq: number;
 }
@@ -53,6 +56,9 @@ export interface TakeInteractionCommands {
   setActiveTake(clipId: number, takeIndex: number): void;
   /** Replaces a clip's comp selection (range drag). */
   setCompSegments(clipId: number, segments: ClipCompSegment[]): void;
+  /** Selects one complete MIDI cycle take. */
+  setActiveMidiTake?(clipId: number, takeIndex: number): void;
+  setMidiCompSegments?(clipId: number, segments: ClipCompSegment[]): void;
 }
 
 /** Configuration for {@link useTakeInteractions}. */
@@ -127,7 +133,11 @@ export function useTakeInteractions(options: UseTakeInteractionsOptions): TakeIn
   /** Comped clip on the track whose span contains `ppq` and that has the take. */
   function clipAt(trackId: number, takeIndex: number, ppq: number): TakeLaneClip | null {
     for (const clip of options.getClips()) {
-      if (clip.trackId !== trackId || (clip.takes?.length ?? 0) <= takeIndex) continue;
+      if (
+        clip.trackId !== trackId ||
+        Math.max(clip.takes?.length ?? 0, clip.midiTakes?.length ?? 0) <= takeIndex
+      )
+        continue;
       if (ppq >= clip.startPpq && ppq < clip.startPpq + clip.lengthPpq) return clip;
     }
     return null;
@@ -191,7 +201,20 @@ export function useTakeInteractions(options: UseTakeInteractionsOptions): TakeIn
     const current = clipRelativePpq(g.clip, point.x);
     const start = Math.min(g.downPpq, current);
     const end = Math.max(g.downPpq, current);
-    if (end - start < MIN_COMP_DRAG_PPQ) {
+    if (g.clip.midiTakes !== undefined) {
+      if (end - start < MIN_COMP_DRAG_PPQ) commands.setActiveMidiTake?.(g.clip.id, g.takeIndex);
+      else {
+        commands.setMidiCompSegments?.(
+          g.clip.id,
+          compSegmentsWithRange(
+            { ...g.clip, compSegments: g.clip.midiCompSegments ?? [{ startPpq: 0, takeIndex: 0 }] },
+            start,
+            end,
+            g.takeIndex,
+          ),
+        );
+      }
+    } else if (end - start < MIN_COMP_DRAG_PPQ) {
       commands.setActiveTake(g.clip.id, g.takeIndex);
     } else {
       commands.setCompSegments(g.clip.id, compSegmentsWithRange(g.clip, start, end, g.takeIndex));

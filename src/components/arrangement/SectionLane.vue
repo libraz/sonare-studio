@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue';
-import { setSections } from '@/project/commands';
+import { duplicateTime, setSections } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { type EditorSection, TRACK_COLOR_PALETTE } from '@/project/types';
 import { barRangeAt, nearestBarPpq } from '@/ui/arrangement/ruler';
 import { clampSectionEdge, newSectionSpan, sectionIndexAt } from '@/ui/arrangement/sections';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 import { useI18n } from '@/ui/i18n';
+import { openContextMenu } from '@/ui/menu/context-menu';
 import { colorWithAlpha } from './theme';
 
 /**
@@ -70,6 +71,7 @@ interface SectionBand {
   name: string;
   color: string;
   startPpq: number;
+  endPpq: number;
   leftPx: number;
   widthPx: number;
 }
@@ -89,6 +91,7 @@ const bands = computed<SectionBand[]>(() => {
       name: section.name,
       color: section.color,
       startPpq,
+      endPpq,
       leftPx,
       widthPx,
     });
@@ -171,6 +174,17 @@ function onBandClick(band: SectionBand, event: MouseEvent): void {
   emit('seek', Math.max(0, band.startPpq));
 }
 
+function onBandContextMenu(band: SectionBand, event: MouseEvent): void {
+  event.preventDefault();
+  openContextMenu(event.clientX, event.clientY, [
+    {
+      id: 'duplicate-section',
+      label: t.value.shell.arrangement.duplicateSection,
+      run: () => duplicateTime(band.startPpq, band.endPpq),
+    },
+  ]);
+}
+
 function startRename(band: SectionBand): void {
   editingSectionId.value = band.id;
   editName.value = band.name;
@@ -245,6 +259,7 @@ function onLaneDoubleClick(event: MouseEvent): void {
       @pointerup="onBandPointerUp"
       @pointercancel="onBandPointerCancel"
       @click="onBandClick(band, $event)"
+      @contextmenu="onBandContextMenu(band, $event)"
       @dblclick.stop="startRename(band)"
     >
       <input

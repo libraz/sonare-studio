@@ -1,4 +1,5 @@
-import { assertCanAddEngineBus } from '../mixer';
+import { linearToDb } from '@/lib/db';
+import { assertCanAddEngineBus, createDefaultStrip } from '../mixer';
 import { getProject, useProjectStore } from '../store';
 import { pruneTrackTargetReferences } from '../target-reference-registry';
 import { type EditorTrack, TRACK_COLOR_PALETTE, type TrackKind } from '../types';
@@ -114,6 +115,23 @@ export function removeTrack(trackId: number): void {
   });
 }
 
+/** Removes several tracks (and their clips) as one undoable operation. */
+export function removeTracks(trackIds: Iterable<number>): void {
+  const store = useProjectStore();
+  const ids = [...new Set(trackIds)];
+  for (const id of ids) requireTrack(store, id);
+  if (ids.length === 0) return;
+  const selected = new Set(ids);
+  const project = getProject();
+  executeAtomic((edit) => {
+    for (const clip of store.clips.filter((entry) => selected.has(entry.trackId))) {
+      clearProjectClipWarp(project, clip.id, (mutation) => edit(1, mutation));
+    }
+    for (const id of ids) edit(1, () => applyTrackRemoval(store, id));
+  });
+  store.trackSelection = new Set(store.activeTrackId >= 0 ? [store.activeTrackId] : []);
+}
+
 /**
  * Adds a group (folder/submix) track as one undoable edit. Group tracks have
  * no clips; member tracks assigned via {@link setTrackGroup} route their
@@ -196,6 +214,44 @@ export function setTrackColor(trackId: number, color: string): void {
   });
 }
 
+/** Applies one display color to several tracks as one undoable operation. */
+export function setTracksColor(trackIds: Iterable<number>, color: string): void {
+  const store = useProjectStore();
+  const ids = new Set(trackIds);
+  for (const id of ids) requireTrack(store, id);
+  if (color.length === 0) throw new RangeError('Track color must not be empty');
+  if (ids.size === 0 || [...ids].every((id) => requireTrack(store, id).color === color)) return;
+  execute(0, () => {
+    store.tracks = store.tracks.map((track) => (ids.has(track.id) ? { ...track, color } : track));
+    store.refresh();
+  });
+}
+
+/** Assigns several non-group tracks to the same output group in one undo step. */
+export function setTracksGroup(trackIds: Iterable<number>, groupId: number | null): void {
+  const store = useProjectStore();
+  const ids = new Set(trackIds);
+  const tracks = [...ids].map((id) => requireTrack(store, id));
+  if (tracks.some((track) => track.kind === 'group')) {
+    throw new RangeError('Group tracks cannot be nested into another group');
+  }
+  if (groupId !== null) {
+    const group = requireTrack(store, groupId);
+    if (group.kind !== 'group') throw new RangeError(`Track ${groupId} is not a group track`);
+  }
+  if (tracks.length === 0 || tracks.every((track) => (track.groupId ?? null) === groupId)) return;
+  execute(0, () => {
+    store.tracks = store.tracks.map((track) => {
+      if (!ids.has(track.id)) return track;
+      const next = { ...track };
+      if (groupId === null) delete next.groupId;
+      else next.groupId = groupId;
+      return next;
+    });
+    store.refresh();
+  });
+}
+
 /**
  * Sets a track's mute flag as one undoable edit. Mute is mirrored to the
  * engine mixer lane in realtime (no re-scheduling).
@@ -230,6 +286,38 @@ export function setTrackSolo(trackId: number, solo: boolean): void {
   });
 }
 
+/** Makes one track the only soloed source, clearing track and VCA solos atomically. */
+export function setExclusiveTrackSolo(trackId: number): void {
+  const store = useProjectStore();
+  requireTrack(store, trackId);
+  execute(0, () => {
+    store.tracks = store.tracks.map((track) => ({ ...track, solo: track.id === trackId }));
+    store.mixer = {
+      ...store.mixer,
+      vcaGroups: (store.mixer.vcaGroups ?? []).map((group) => ({ ...group, solo: false })),
+    };
+    store.refresh();
+  });
+}
+
+/** Clears every track and VCA solo state as one undoable edit. */
+export function clearAllSolo(): void {
+  const store = useProjectStore();
+  if (
+    !store.tracks.some((track) => track.solo) &&
+    !(store.mixer.vcaGroups ?? []).some((g) => g.solo)
+  )
+    return;
+  execute(0, () => {
+    store.tracks = store.tracks.map((track) => ({ ...track, solo: false }));
+    store.mixer = {
+      ...store.mixer,
+      vcaGroups: (store.mixer.vcaGroups ?? []).map((group) => ({ ...group, solo: false })),
+    };
+    store.refresh();
+  });
+}
+
 /**
  * Sets or clears a track's explicit percussion override as one undoable edit.
  * `true` forces percussion, `false` forces harmonic, and `null` clears the
@@ -256,8 +344,9 @@ export function setTrackPercussion(trackId: number, percussion: boolean | null):
 }
 
 /**
- * Sets a track's linear volume as one undoable edit. Volume is mirrored to
- * the engine lane fader in realtime (no re-scheduling).
+ * Compatibility entry point for callers that still provide a linear fader
+ * value. The value is immediately converted to the canonical strip dB gain;
+ * the legacy `track.volume` mirror remains unity.
  *
  * @param trackId Id of the track.
  * @param volume New linear volume (finite, >= 0; 1 = unity).
@@ -268,9 +357,14 @@ export function setTrackVolume(trackId: number, volume: number): void {
   if (!Number.isFinite(volume) || volume < 0) {
     throw new RangeError(`Track volume must be finite and >= 0, got ${volume}`);
   }
-  if (track.volume === volume) return;
+  const gainDb = linearToDb(volume);
+  if (track.volume === 1 && track.mixer?.gainDb === gainDb) return;
   execute(0, () => {
-    store.tracks = store.tracks.map((t) => (t.id === trackId ? { ...t, volume } : t));
+    store.tracks = store.tracks.map((t) =>
+      t.id === trackId
+        ? { ...t, volume: 1, mixer: { ...(t.mixer ?? createDefaultStrip()), gainDb } }
+        : t,
+    );
     store.refresh();
   });
 }

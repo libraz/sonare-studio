@@ -41,7 +41,9 @@ export interface PointerRoutingOptions {
   /** Clip gesture state machine. */
   interactions: ClipInteractions;
   /** Requests a transport seek to a timeline position (ruler press/scrub). */
-  onRulerSeek: (ppq: number) => void;
+  onRulerSeek: (ppq: number, bypassSnap: boolean) => void;
+  /** Requests a loop range after dragging in the ruler's upper loop band. */
+  onRulerLoopRange: (startPpq: number, endPpq: number, bypassSnap: boolean) => void;
   /** Requests the ruler context menu. */
   onRulerContext: (request: ContextMenuRequest) => void;
   /** Requests the clip context menu (clipId null = no clip hit). */
@@ -74,12 +76,15 @@ export function usePointerRouting(options: PointerRoutingOptions): PointerRoutin
     takes,
     interactions,
     onRulerSeek,
+    onRulerLoopRange,
     onRulerContext,
     onClipContext,
   } = options;
 
   /** True while a ruler press scrubs the transport. */
   let rulerScrub = false;
+  /** PPQ at which an upper-ruler loop-range drag began, otherwise null. */
+  let rulerLoopStartPpq: number | null = null;
 
   /** Which gesture machine consumed the current press. */
   let pressTarget: 'none' | 'automation' | 'takes' | 'clips' = 'none';
@@ -95,7 +100,7 @@ export function usePointerRouting(options: PointerRoutingOptions): PointerRoutin
   }
 
   function modifiers(event: MouseEvent): ClipModifiers {
-    return { alt: event.altKey, meta: event.metaKey || event.ctrlKey };
+    return { alt: event.altKey, meta: event.metaKey || event.ctrlKey, shift: event.shiftKey };
   }
 
   function onPointerDown(event: PointerEvent): void {
@@ -103,8 +108,12 @@ export function usePointerRouting(options: PointerRoutingOptions): PointerRoutin
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
     const point = localPoint(event);
     if (point.y < RULER_HEIGHT_PX) {
+      if (point.y < RULER_HEIGHT_PX / 2) {
+        rulerLoopStartPpq = Math.max(0, range().xToPpq(point.x));
+        return;
+      }
       rulerScrub = true;
-      onRulerSeek(Math.max(0, range().xToPpq(point.x)));
+      onRulerSeek(Math.max(0, range().xToPpq(point.x)), modifiers(event).meta === true);
       return;
     }
     if (automation.onPointerDown(point, modifiers(event))) {
@@ -121,8 +130,9 @@ export function usePointerRouting(options: PointerRoutingOptions): PointerRoutin
 
   function onPointerMove(event: PointerEvent): void {
     const point = localPoint(event);
+    if (rulerLoopStartPpq !== null) return;
     if (rulerScrub) {
-      onRulerSeek(Math.max(0, range().xToPpq(point.x)));
+      onRulerSeek(Math.max(0, range().xToPpq(point.x)), modifiers(event).meta === true);
       return;
     }
     // While a press is in flight, only its own machine sees the moves.
@@ -145,6 +155,19 @@ export function usePointerRouting(options: PointerRoutingOptions): PointerRoutin
 
   function onPointerUp(event: PointerEvent): void {
     if (event.button !== 0) return;
+    if (rulerLoopStartPpq !== null) {
+      const start = rulerLoopStartPpq;
+      rulerLoopStartPpq = null;
+      const end = Math.max(0, range().xToPpq(localPoint(event).x));
+      if (Math.abs(end - start) > Number.EPSILON) {
+        onRulerLoopRange(
+          Math.min(start, end),
+          Math.max(start, end),
+          modifiers(event).meta === true,
+        );
+      }
+      return;
+    }
     if (rulerScrub) {
       rulerScrub = false;
       return;
@@ -164,6 +187,7 @@ export function usePointerRouting(options: PointerRoutingOptions): PointerRoutin
 
   function onPointerCancel(): void {
     rulerScrub = false;
+    rulerLoopStartPpq = null;
     pressTarget = 'none';
     automation.cancel();
     takes.cancel();

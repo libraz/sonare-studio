@@ -77,7 +77,11 @@ export function drawTakeLanes(
       ctx.fillRect(0, top + k * TAKE_LANE_HEIGHT_PX, w, 1);
     }
     for (const clip of clips) {
-      if (clip.trackId !== track.id || (clip.takes?.length ?? 0) === 0) continue;
+      if (
+        clip.trackId !== track.id ||
+        Math.max(clip.takes?.length ?? 0, clip.midiTakes?.length ?? 0) === 0
+      )
+        continue;
       drawClipTakeBlocks(ctx, clip, track, top, context);
     }
   }
@@ -103,17 +107,32 @@ export function drawClipTakeBlocks(
   context: TakeLanesContext,
 ): void {
   const { range, takes, colors } = context;
-  const clipTakes = clip.takes ?? [];
+  const clipTakes = clip.takes ?? clip.midiTakes ?? [];
   const x = range.ppqToX(clip.startPpq);
   const wPx = Math.max(2, clip.lengthPpq * range.pxPerPpq - 1);
   if (x + wPx < 0 || x > range.widthPx) return;
-  const selection = sanitizeCompSegments(
-    clip.compSegments && clip.compSegments.length > 0
-      ? clip.compSegments
-      : [{ startPpq: 0, takeIndex: 0 }],
-    clipTakes.length,
-    clip.lengthPpq,
-  );
+  const selection =
+    clip.midiTakes !== undefined
+      ? sanitizeCompSegments(
+          clip.midiCompSegments ?? [
+            {
+              startPpq: 0,
+              takeIndex: Math.min(
+                Math.max(0, clip.midiActiveTakeIndex ?? clip.midiTakes.length - 1),
+                clip.midiTakes.length - 1,
+              ),
+            },
+          ],
+          clip.midiTakes.length,
+          clip.lengthPpq,
+        )
+      : sanitizeCompSegments(
+          clip.compSegments && clip.compSegments.length > 0
+            ? clip.compSegments
+            : [{ startPpq: 0, takeIndex: 0 }],
+          clipTakes.length,
+          clip.lengthPpq,
+        );
   const preview = takes.preview.value;
   for (let k = 0; k < clipTakes.length; k++) {
     const y = top + k * TAKE_LANE_HEIGHT_PX + TAKE_BLOCK_PAD_PX;

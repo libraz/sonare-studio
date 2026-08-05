@@ -34,6 +34,8 @@ export interface ClipModifiers {
   alt?: boolean;
   /** Cmd (or Ctrl): bypasses grid snapping while held. */
   meta?: boolean;
+  /** Shift: extend the arrangement selection. */
+  shift?: boolean;
 }
 
 /** A clip's arrangement extent as the gestures need it. */
@@ -72,9 +74,12 @@ export interface ClipBarRange {
 export interface ClipInteractionCommands {
   /** Makes a clip the active (selected) clip. */
   selectClip(clipId: number): void;
+  selectClips?(clipIds: readonly number[], activeClipId?: number): void;
   /** Clears the active clip after a select-tool click on an empty lane. */
   clearClipSelection?(trackId?: number): void;
   moveClip(clipId: number, newStartPpq: number, newTrackId?: number): void;
+  /** Moves several selected clips together as one undoable edit. */
+  moveClips?(moves: readonly { clipId: number; newStartPpq: number; newTrackId?: number }[]): void;
   trimClip(clipId: number, newStartPpq: number, newLengthPpq: number): void;
   duplicateClip(clipId: number, newStartPpq: number): number;
   /** Creates an empty clip and returns its id (null = creation not allowed). */
@@ -101,6 +106,7 @@ export interface UseClipInteractionsOptions {
   view: ClipInteractionsView;
   /** Returns the current clip list (draw order, last = topmost). */
   getClips(): ReadonlyArray<ArrangeClip>;
+  getSelectedClipIds?(): ReadonlySet<number>;
   /** Returns track ids in lane order (index = lane index). */
   getTrackIds(): ReadonlyArray<number>;
   /** Returns true when this clip may be moved to the target track. */
@@ -111,6 +117,8 @@ export interface UseClipInteractionsOptions {
   canEditTrack?(trackId: number): boolean;
   /** Returns the current snap grid step in PPQ (<= 0 disables snapping). */
   getGridPpq(): number;
+  /** Optionally resolves a PPQ position on a meter-aware grid. */
+  snapPpq?(ppq: number): number;
   /** Returns the bar containing a PPQ position (for double-click creation). */
   getBarRange(ppq: number): ClipBarRange;
   /** Returns the active editor tool (absent = always the select tool). */
@@ -166,6 +174,18 @@ export interface ClipDraftPreview {
   lengthPpq: number;
 }
 
+/** Pixel rectangle of an in-flight empty-area selection drag. */
+export interface ClipMarqueePreview {
+  /** Left edge in canvas-local pixels. */
+  left: number;
+  /** Top edge in canvas-local pixels. */
+  top: number;
+  /** Width in pixels. */
+  width: number;
+  /** Height in pixels. */
+  height: number;
+}
+
 /** CSS cursor reflecting what a pointer press at the hovered point would do. */
 export type ClipCursor = 'default' | 'pointer' | 'move' | 'copy' | 'ew-resize' | 'crosshair';
 
@@ -177,6 +197,10 @@ export interface ClipInteractions {
   previewFades: Ref<ClipFadePreview | null>;
   /** In-flight draw-tool draft outline, or null when no draw is running. */
   previewDraft: Ref<ClipDraftPreview | null>;
+  /** In-flight empty-area selection rectangle, or null when not selecting. */
+  previewMarquee: Ref<ClipMarqueePreview | null>;
+  /** In-flight geometry for every clip in a grouped move. */
+  previewClips: Ref<ClipDragPreview[]>;
   /** Cursor to show over the arrangement lanes. */
   cursor: Ref<ClipCursor>;
   /** Handles pointerdown on the lane area (point in local px). */
@@ -199,13 +223,23 @@ interface PendingGesture {
   clip: ArrangeClip;
   zone: ClipHitZone;
   duplicate: boolean;
+  origins: ArrangeClip[];
 }
 
 interface MoveGesture {
   kind: 'move';
   start: ClipPoint;
   origin: ArrangeClip;
+  origins: ArrangeClip[];
   duplicate: boolean;
+}
+
+interface MarqueeGesture {
+  kind: 'marquee';
+  start: ClipPoint;
+  /** Shift extends instead of replacing the existing selection. */
+  additive: boolean;
+  moved: boolean;
 }
 
 interface TrimGesture {
@@ -236,12 +270,8 @@ type Gesture =
   | MoveGesture
   | TrimGesture
   | FadeGesture
+  | MarqueeGesture
   | DrawClipGesture;
-
-/** Snaps a displacement without clamping negative movement to the timeline origin. */
-function snapDeltaToStep(deltaPpq: number, step: number): number {
-  return step > 0 ? Math.round(deltaPpq / step) * step : deltaPpq;
-}
 
 /**
  * Creates the clip interaction state machine for one arrangement surface.
@@ -255,8 +285,10 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
   const minLength = options.minLengthPpq ?? DEFAULT_MIN_CLIP_LENGTH_PPQ;
 
   const previewClip = ref<ClipDragPreview | null>(null);
+  const previewClips = ref<ClipDragPreview[]>([]);
   const previewFades = ref<ClipFadePreview | null>(null);
   const previewDraft = ref<ClipDraftPreview | null>(null);
+  const previewMarquee = ref<ClipMarqueePreview | null>(null);
   const cursor = ref<ClipCursor>('default');
 
   let gesture: Gesture = { kind: 'none' };
@@ -264,6 +296,10 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
   /** The active tool ('select' when no tool getter is wired). */
   function currentTool(): EditorToolId {
     return options.getTool?.() ?? 'select';
+  }
+
+  function snapPosition(ppq: number, step: number): number {
+    return step > 0 ? (options.snapPpq?.(ppq) ?? snapPpqToStep(ppq, step)) : Math.max(0, ppq);
   }
 
   /** Resolves the lane and track under a point (track id null when off-lane). */
@@ -287,7 +323,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
   function drawClipLength(g: DrawClipGesture, point: ClipPoint, modifiers: ClipModifiers): number {
     const step = options.getGridPpq();
     const raw = view.xToPpq(point.x);
-    const end = modifiers.meta === true ? raw : snapPpqToStep(raw, step);
+    const end = modifiers.meta === true ? raw : snapPosition(raw, step);
     const bar = options.getBarRange(g.startPpq).lengthPpq;
     return Math.max(bar, end - g.startPpq);
   }
@@ -308,7 +344,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     if (!clip || options.canEditClip?.(clip.id) === false) return;
     const step = options.getGridPpq();
     const raw = view.xToPpq(point.x);
-    const splitPpq = modifiers.meta === true ? raw : snapPpqToStep(raw, step);
+    const splitPpq = modifiers.meta === true ? raw : snapPosition(raw, step);
     const blocked = clipSplitBlockReason(clip, splitPpq);
     if (blocked !== null) {
       options.onSplitBlocked?.(clip.id, blocked);
@@ -339,6 +375,47 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
       });
     }
     return rects;
+  }
+
+  /** Clips whose screen rectangle overlaps the given selection rectangle. */
+  function marqueeClipIds(start: ClipPoint, end: ClipPoint): number[] {
+    const left = Math.min(start.x, end.x);
+    const right = Math.max(start.x, end.x);
+    const top = Math.min(start.y, end.y);
+    const bottom = Math.max(start.y, end.y);
+    const laneByTrack = new Map(options.getTrackIds().map((id, index) => [id, index]));
+    return options
+      .getClips()
+      .filter((clip) => {
+        const lane = laneByTrack.get(clip.trackId);
+        if (lane === undefined) return false;
+        const clipLeft = view.ppqToX(clip.startPpq);
+        const clipRight = view.ppqToX(clip.startPpq + clip.lengthPpq);
+        const clipTop = view.laneTop(lane);
+        const clipBottom = clipTop + view.laneHeight;
+        return clipRight >= left && clipLeft <= right && clipBottom >= top && clipTop <= bottom;
+      })
+      .map((clip) => clip.id);
+  }
+
+  function marqueePreview(start: ClipPoint, end: ClipPoint): ClipMarqueePreview {
+    return {
+      left: Math.min(start.x, end.x),
+      top: Math.min(start.y, end.y),
+      width: Math.abs(end.x - start.x),
+      height: Math.abs(end.y - start.y),
+    };
+  }
+
+  /** Snapshots the selected group only when the pressed clip belongs to it. */
+  function moveOrigins(clip: ArrangeClip, duplicate: boolean): ArrangeClip[] {
+    if (duplicate || !options.getSelectedClipIds?.().has(clip.id)) return [{ ...clip }];
+    const selected = options.getSelectedClipIds();
+    const origins = options
+      .getClips()
+      .filter((candidate) => selected.has(candidate.id))
+      .map((candidate) => ({ ...candidate }));
+    return origins.length > 0 ? origins : [{ ...clip }];
   }
 
   /**
@@ -385,7 +462,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     // The fade boundary (not the fade length) snaps to the grid.
     if (g.edge === 'in') {
       const boundary = g.origin.startPpq + originIn + delta;
-      const snapped = bypass ? boundary : snapPpqToStep(boundary, step);
+      const snapped = bypass ? boundary : snapPosition(boundary, step);
       return {
         fadeInPpq: clampFadePpq(snapped - g.origin.startPpq, length, originOut),
         fadeOutPpq: originOut,
@@ -393,7 +470,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     }
     const endPpq = g.origin.startPpq + length;
     const boundary = endPpq - originOut + delta;
-    const snapped = bypass ? boundary : snapPpqToStep(boundary, step);
+    const snapped = bypass ? boundary : snapPosition(boundary, step);
     return {
       fadeInPpq: originIn,
       fadeOutPpq: clampFadePpq(endPpq - snapped, length, originIn),
@@ -410,7 +487,9 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     const startPpq =
       modifiers.meta === true
         ? Math.max(0, g.origin.startPpq + rawDelta)
-        : Math.max(0, g.origin.startPpq + snapDeltaToStep(rawDelta, options.getGridPpq()));
+        : rawDelta === 0
+          ? g.origin.startPpq
+          : snapPosition(g.origin.startPpq + rawDelta, options.getGridPpq());
     // Duplicates stay on the source track; plain moves follow the pointer lane.
     if (g.duplicate) return { startPpq, trackId: g.origin.trackId };
     const trackIds = options.getTrackIds();
@@ -422,6 +501,41 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
         ? candidateTrackId
         : g.origin.trackId;
     return { startPpq, trackId };
+  }
+
+  /** Resolves all destinations for a group, retaining relative timing and lane offsets. */
+  function moveTargets(
+    g: MoveGesture,
+    point: ClipPoint,
+    modifiers: ClipModifiers,
+  ): { clipId: number; newStartPpq: number; newTrackId?: number }[] {
+    const primary = moveTarget(g, point, modifiers);
+    const horizontalDelta = primary.startPpq - g.origin.startPpq;
+    const trackIds = options.getTrackIds();
+    const sourceLane = trackIds.indexOf(g.origin.trackId);
+    const targetLane = trackIds.indexOf(primary.trackId);
+    const laneDelta = g.duplicate || sourceLane < 0 || targetLane < 0 ? 0 : targetLane - sourceLane;
+    const canMoveAllLanes = g.origins.every((origin) => {
+      const originLane = trackIds.indexOf(origin.trackId);
+      const destination = trackIds[originLane + laneDelta];
+      return (
+        destination !== undefined &&
+        (destination === origin.trackId ||
+          options.canMoveClipToTrack?.(origin.id, destination) !== false)
+      );
+    });
+    const effectiveLaneDelta = canMoveAllLanes ? laneDelta : 0;
+    const minStart = Math.min(...g.origins.map((origin) => origin.startPpq));
+    const effectiveHorizontalDelta = Math.max(-minStart, horizontalDelta);
+    return g.origins.map((origin) => {
+      const originLane = trackIds.indexOf(origin.trackId);
+      const destination = trackIds[originLane + effectiveLaneDelta] ?? origin.trackId;
+      return {
+        clipId: origin.id,
+        newStartPpq: origin.startPpq + effectiveHorizontalDelta,
+        ...(destination === origin.trackId ? {} : { newTrackId: destination }),
+      };
+    });
   }
 
   /** Resolves the snapped, clamped trim extent for the dragged edge. */
@@ -436,7 +550,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     const originEnd = g.origin.startPpq + g.origin.lengthPpq;
     const bounds = options.getSourceBounds?.(g.origin.id) ?? null;
     if (g.edge === 'end') {
-      let target = bypass ? originEnd + rawDelta : snapPpqToStep(originEnd + rawDelta, step);
+      let target = bypass ? originEnd + rawDelta : snapPosition(originEnd + rawDelta, step);
       if (bounds) target = Math.min(target, bounds.maxEndPpq);
       const end = bounds
         ? Math.min(bounds.maxEndPpq, Math.max(g.origin.startPpq + minLength, target))
@@ -445,7 +559,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     }
     const target = bypass
       ? Math.max(0, g.origin.startPpq + rawDelta)
-      : snapPpqToStep(g.origin.startPpq + rawDelta, step);
+      : snapPosition(g.origin.startPpq + rawDelta, step);
     const startPpq = bounds
       ? Math.max(bounds.minStartPpq, Math.min(originEnd - minLength, target))
       : Math.min(originEnd - minLength, target);
@@ -498,14 +612,24 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     }
     const hit = hitTestClip(toRects(), point, view, hitOptions());
     if (!hit) {
-      const { trackId } = laneAt(point);
-      commands.clearClipSelection?.(trackId ?? undefined);
-      gesture = { kind: 'none' };
+      gesture = { kind: 'marquee', start: point, additive: modifiers.shift === true, moved: false };
       return;
     }
     const clip = options.getClips().find((c) => c.id === hit.id);
     if (!clip) return;
-    commands.selectClip(clip.id);
+    if (modifiers.shift === true && commands.selectClips) {
+      const next = new Set(options.getSelectedClipIds?.() ?? []);
+      if (next.has(clip.id)) next.delete(clip.id);
+      else next.add(clip.id);
+      commands.selectClips([...next], next.has(clip.id) ? clip.id : undefined);
+      gesture = { kind: 'none' };
+      return;
+    }
+    const alreadySelected = options.getSelectedClipIds?.().has(clip.id) === true;
+    if (commands.selectClips) {
+      const ids = alreadySelected ? [...(options.getSelectedClipIds?.() ?? [])] : [clip.id];
+      commands.selectClips(ids, clip.id);
+    } else commands.selectClip(clip.id);
     if (options.canEditClip?.(clip.id) === false) {
       gesture = { kind: 'none' };
       return;
@@ -516,6 +640,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
       clip: { ...clip },
       zone: hit.zone,
       duplicate: modifiers.alt === true,
+      origins: moveOrigins(clip, modifiers.alt === true),
     };
   }
 
@@ -527,6 +652,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
         kind: 'move',
         start: pending.start,
         origin: pending.clip,
+        origins: pending.origins,
         duplicate: pending.duplicate,
       };
     }
@@ -562,6 +688,14 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
       };
       return;
     }
+    if (gesture.kind === 'marquee') {
+      if (Math.hypot(point.x - gesture.start.x, point.y - gesture.start.y) >= threshold) {
+        gesture.moved = true;
+        previewMarquee.value = marqueePreview(gesture.start, point);
+        cursor.value = 'default';
+      }
+      return;
+    }
     if (gesture.kind === 'fade') {
       const fades = fadeTarget(gesture, point, modifiers);
       previewFades.value = { clipId: gesture.origin.id, ...fades };
@@ -572,14 +706,20 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
       gesture = promotePending(gesture);
     }
     if (gesture.kind === 'move') {
-      const target = moveTarget(gesture, point, modifiers);
-      previewClip.value = {
-        clipId: gesture.origin.id,
-        trackId: target.trackId,
-        startPpq: target.startPpq,
-        lengthPpq: gesture.origin.lengthPpq,
-        copy: gesture.duplicate,
-      };
+      const move = gesture;
+      const targets = moveTargets(move, point, modifiers);
+      previewClips.value = targets.map((target) => {
+        const origin =
+          move.origins.find((candidate) => candidate.id === target.clipId) ?? move.origin;
+        return {
+          clipId: target.clipId,
+          trackId: target.newTrackId ?? origin.trackId,
+          startPpq: target.newStartPpq,
+          lengthPpq: origin.lengthPpq,
+          copy: move.duplicate,
+        };
+      });
+      previewClip.value = previewClips.value[0] ?? null;
       return;
     }
     if (gesture.kind === 'trim') {
@@ -598,14 +738,31 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     const g = gesture;
     gesture = { kind: 'none' };
     previewClip.value = null;
+    previewClips.value = [];
     previewFades.value = null;
     previewDraft.value = null;
+    previewMarquee.value = null;
     cursor.value = 'default';
     if (g.kind === 'draw-clip') {
       if (options.canEditTrack?.(g.trackId) === false) return;
       const lengthPpq = drawClipLength(g, point, modifiers);
       const id = commands.createClip(g.trackId, g.startPpq, lengthPpq);
       if (id !== null) commands.selectClip(id);
+      return;
+    }
+    if (g.kind === 'marquee') {
+      if (!g.moved) {
+        const { trackId } = laneAt(point);
+        commands.clearClipSelection?.(trackId ?? undefined);
+        return;
+      }
+      const next = new Set(g.additive ? (options.getSelectedClipIds?.() ?? []) : []);
+      const hitIds = marqueeClipIds(g.start, point);
+      for (const clipId of hitIds) next.add(clipId);
+      if (commands.selectClips) {
+        const ids = [...next];
+        commands.selectClips(ids, hitIds.at(-1) ?? ids.at(-1));
+      } else if (hitIds.length > 0) commands.selectClip(hitIds[hitIds.length - 1]);
       return;
     }
     if (g.kind === 'fade') {
@@ -619,24 +776,26 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
       return;
     }
     if (g.kind === 'move') {
-      if (options.canEditClip?.(g.origin.id) === false) return;
-      const target = moveTarget(g, point, modifiers);
-      if (
-        target.trackId !== g.origin.trackId &&
-        options.canMoveClipToTrack?.(g.origin.id, target.trackId) === false
-      )
-        return;
-      const moved = target.startPpq !== g.origin.startPpq;
-      const trackChanged = target.trackId !== g.origin.trackId;
+      if (g.origins.some((origin) => options.canEditClip?.(origin.id) === false)) return;
+      const targets = moveTargets(g, point, modifiers);
+      const moved = targets.some(
+        (target, index) => target.newStartPpq !== g.origins[index].startPpq,
+      );
+      const trackChanged = targets.some((target) => target.newTrackId !== undefined);
       if (g.duplicate) {
         if (moved) {
-          const duplicateId = commands.duplicateClip(g.origin.id, target.startPpq);
+          const duplicateId = commands.duplicateClip(g.origin.id, targets[0].newStartPpq);
           commands.selectClip(duplicateId);
         }
         return;
       }
       if (!moved && !trackChanged) return;
-      commands.moveClip(g.origin.id, target.startPpq, trackChanged ? target.trackId : undefined);
+      if (targets.length > 1 && commands.moveClips) commands.moveClips(targets);
+      else {
+        for (const target of targets) {
+          commands.moveClip(target.clipId, target.newStartPpq, target.newTrackId);
+        }
+      }
       return;
     }
     if (g.kind === 'trim') {
@@ -668,15 +827,19 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
   function cancel(): void {
     gesture = { kind: 'none' };
     previewClip.value = null;
+    previewClips.value = [];
     previewFades.value = null;
     previewDraft.value = null;
+    previewMarquee.value = null;
     cursor.value = 'default';
   }
 
   return {
     previewClip,
+    previewClips,
     previewFades,
     previewDraft,
+    previewMarquee,
     cursor,
     onPointerDown,
     onPointerMove,

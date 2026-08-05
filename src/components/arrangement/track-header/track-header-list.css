@@ -113,6 +113,11 @@
   background: var(--surface-selected);
 }
 
+.track-header.selected:not(.active) {
+  background: color-mix(in srgb, var(--surface-selected), var(--surface-1) 45%);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
 .track-header.track-frozen {
   /* Cool, theme-aware tint marking a baked/frozen lane. */
   background: color-mix(in srgb, var(--surface-1), var(--accent) 12%);
@@ -179,6 +184,28 @@
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.group-collapse {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  color: var(--text-3);
+  font: inherit;
+  line-height: 1;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.group-collapse:hover {
+  color: var(--text-2);
+  background: var(--surface-4);
+}
+
+.track-header.group-member .track-name {
+  padding-left: var(--sp-2);
 }
 
 .track-kind {

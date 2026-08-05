@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, markRaw, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { keyFifthsForScaleHighlight } from '@/components/lists/key-modes';
+import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { promptDialog } from '@/composables/useDialogs';
 import { useEditorTool } from '@/composables/useEditorTool';
@@ -11,12 +12,18 @@ import {
   addMidiClip,
   clearActiveClipSelection,
   consolidateAudioClips,
+  copyActiveClip,
+  cutActiveClip,
   deleteClip,
+  deleteTime,
   detectSectionsFromAudioClip,
   duplicateClip,
   extractMelodyFromAudioClip,
   glueMidiClips,
+  insertTime,
   moveClip,
+  moveClips,
+  pasteClipAt,
   renameClip,
   setActiveClip,
   setAutomationLanePoints,
@@ -24,6 +31,9 @@ import {
   setClipCompSegments,
   setClipFades,
   setClipLoop,
+  setClipMidiActiveTake,
+  setClipMidiCompSegments,
+  setClipSelection,
   setMarker,
   splitAudioClipToStems,
   splitClip,
@@ -35,6 +45,7 @@ import { unfreezeTrack } from '@/project/freeze';
 import { insertParamDomainForStrip } from '@/project/insert-param-domains';
 import { useProjectStore } from '@/project/store';
 import { normalizeTempoMap } from '@/project/tempo-map';
+import { snapPpqToMeterGrid } from '@/project/time-signature';
 import { canTrackContainClip, clipKind, isAudioClip } from '@/project/types';
 import type { AccessibleObjectAdjustment } from '@/ui/accessibility/object-navigation';
 import { assetLengthPpq, audioClipSourceBounds } from '@/ui/arrangement/audio-clip-content';
@@ -44,6 +55,7 @@ import {
   buildRowLayout,
   trackTakeRowCount,
 } from '@/ui/arrangement/automation-rows';
+import { visibleGroupRows } from '@/ui/arrangement/group-rows';
 import {
   anchoredPlayheadFollowStart,
   PLAYHEAD_FOLLOW_ANCHOR_X,
@@ -57,9 +69,10 @@ import {
 } from '@/ui/arrangement/use-clip-interactions';
 import { useTakeInteractions } from '@/ui/arrangement/use-take-interactions';
 import { createPainter } from '@/ui/canvas/painter';
-import { snapPpqToStep, TimelineRange } from '@/ui/canvas/timeline-range';
+import { TimelineRange } from '@/ui/canvas/timeline-range';
 import { useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
+import { SNAP_CHOICES } from '@/ui/shell/app-shell-options';
 import ArrangementAnalysisPanel from './ArrangementAnalysisPanel.vue';
 import ArrangementCanvas from './ArrangementCanvas.vue';
 import ChordLane from './ChordLane.vue';
@@ -109,6 +122,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   /** Request to move the transport playhead to an absolute PPQ position. */
   seek: [ppq: number];
+  /** Request to set and enable a loop range. */
+  loopRange: [startPpq: number, endPpq: number];
   /** Request to (dis)arm a track for recording (re-emitted from the headers). */
   arm: [trackId: number, armed: boolean];
   /** Request to open a MIDI track's instrument picker. */
@@ -124,6 +139,13 @@ const emit = defineEmits<{
 const appSettings = useAppSettings();
 const store = useProjectStore();
 const { t } = useI18n();
+const snapChoice = computed<number | 'bar'>({
+  get: () => (store.snapBar ? 'bar' : store.snapDivision),
+  set: (value) => {
+    store.snapBar = value === 'bar';
+    if (value !== 'bar') store.snapDivision = value;
+  },
+});
 const { downloadBlobFile } = useFileDownloads();
 const chordKeyFifths = computed(() => keyFifthsForScaleHighlight(store.scaleHighlight));
 
@@ -220,6 +242,11 @@ function splitToStems(): void {
 const DEFAULT_PX_PER_PPQ = 10;
 /** Wheel-to-zoom sensitivity for ⌘wheel / pinch gestures. */
 const ZOOM_WHEEL_SENSITIVITY = 0.0035;
+/** Per-click multiplier for the arrangement's vertical track zoom. */
+const VERTICAL_ZOOM_STEP = 1.2;
+/** Bounds that keep compact overviews useful without making clips illegible. */
+const MIN_LANE_HEIGHT_PX = 28;
+const MAX_LANE_HEIGHT_PX = 112;
 
 /** Per-frame horizontal follow interpolation for arrangement playback. */
 const PLAYHEAD_FOLLOW_SMOOTHING = 0.42;
@@ -246,6 +273,8 @@ function bump(): void {
 
 /** Vertical scroll offset of the track lanes in px (shared with the headers). */
 const scrollY = ref(0);
+/** View-local track-row height, shared by the canvas and track-header column. */
+const laneHeight = ref(LANE_HEIGHT_PX);
 
 // --- Automation sublane state ----------------------------------------------
 
@@ -258,19 +287,52 @@ const automationParams = ref<Record<number, AutomationParam>>({});
 /** Ids of tracks whose take sub-rows are expanded (view-local state). */
 const takesExpandedIds = ref<number[]>([]);
 
+/** Group tracks whose member rows are hidden in this arrangement view. */
+const collapsedGroupIds = ref<number[]>([]);
+
+/** Tracks participating in the current visual row layout. */
+const visibleTracks = computed(() => {
+  return visibleGroupRows(store.tracks, new Set(collapsedGroupIds.value));
+});
+
+/** Clips drawn and hit-tested in the currently visible track rows. */
+const visibleClips = computed(() => {
+  const ids = new Set(visibleTracks.value.map((track) => track.id));
+  return store.clips.filter((clip) => ids.has(clip.trackId));
+});
+
 /** Row layout reflecting which tracks show take sub-rows or an automation sublane. */
 const rowLayout = computed(() => {
   const expanded = new Set(automationExpandedIds.value);
   const takesExpanded = new Set(takesExpandedIds.value);
   return buildRowLayout(
-    store.tracks.map((track) => expanded.has(track.id)),
-    LANE_HEIGHT_PX,
+    visibleTracks.value.map((track) => expanded.has(track.id)),
+    laneHeight.value,
     AUTOMATION_LANE_HEIGHT_PX,
-    store.tracks.map((track) =>
+    visibleTracks.value.map((track) =>
       takesExpanded.has(track.id) ? trackTakeRowCount(store.clips, track.id) : 0,
     ),
   );
 });
+
+function onToggleGroupCollapse(trackId: number, collapsed: boolean): void {
+  const ids = collapsedGroupIds.value.filter((id) => id !== trackId);
+  if (collapsed) ids.push(trackId);
+  collapsedGroupIds.value = ids;
+  scrollY.value = clampScrollY(scrollY.value);
+  bump();
+}
+
+watch(
+  () => store.tracks.map((track) => ({ id: track.id, kind: track.kind })),
+  (tracks) => {
+    const groupIds = new Set(
+      tracks.filter((track) => track.kind === 'group').map((track) => track.id),
+    );
+    const next = collapsedGroupIds.value.filter((id) => groupIds.has(id));
+    if (next.length !== collapsedGroupIds.value.length) collapsedGroupIds.value = next;
+  },
+);
 
 function onToggleAutomation(trackId: number, expanded: boolean): void {
   const ids = automationExpandedIds.value.filter((id) => id !== trackId);
@@ -303,6 +365,26 @@ function clampScrollY(y: number): number {
 
 /** Snap grid step in PPQ derived from the store (0 when snapping is off). */
 const gridPpq = computed(() => (store.snapEnabled ? 4 / store.snapDivision : 0));
+const snapArrangementPpq = (ppq: number): number =>
+  snapPpqToMeterGrid(store.timeSignatures, ppq, store.snapBar ? 'bar' : gridPpq.value);
+
+/** Moves an arrangement position to the adjacent meter-defined bar boundary. */
+function barKeyboardDelta(ppq: number, direction: 'left' | 'right', coarse: boolean): number {
+  let cursor = Math.max(0, ppq);
+  const steps = coarse ? 4 : 1;
+  for (let index = 0; index < steps; index += 1) {
+    const current = barRangeAt(store.timeSignatures, cursor);
+    if (direction === 'right') {
+      cursor = current.startPpq + current.lengthPpq;
+      continue;
+    }
+    cursor =
+      cursor > current.startPpq + 1e-9
+        ? current.startPpq
+        : barRangeAt(store.timeSignatures, Math.max(0, cursor - 1e-6)).startPpq;
+  }
+  return cursor - ppq;
+}
 
 // Lane view contract for the clip gestures: horizontal mapping from the
 // shared range, vertical mapping from the row layout and scroll offset.
@@ -314,15 +396,15 @@ const laneView: ClipInteractionsView = {
   laneTop: (index) => RULER_HEIGHT_PX + rowLayout.value.rowTop(index) - scrollY.value,
   laneIndexAtY: (y) => {
     const contentY = y - RULER_HEIGHT_PX + scrollY.value;
-    if (contentY < 0) return Math.floor(contentY / LANE_HEIGHT_PX);
+    if (contentY < 0) return Math.floor(contentY / laneHeight.value);
     const hit = rowLayout.value.hitTest(contentY);
-    return hit ? hit.index : store.tracks.length;
+    return hit ? hit.index : visibleTracks.value.length;
   },
   get laneHeight() {
-    return LANE_HEIGHT_PX;
+    return laneHeight.value;
   },
   get laneCount() {
-    return store.tracks.length;
+    return visibleTracks.value.length;
   },
 };
 
@@ -348,8 +430,8 @@ const { tool } = useEditorTool();
 
 const interactions = useClipInteractions({
   view: laneView,
-  getClips: () => store.clips,
-  getTrackIds: () => store.tracks.map((track) => track.id),
+  getClips: () => visibleClips.value,
+  getTrackIds: () => visibleTracks.value.map((track) => track.id),
   canMoveClipToTrack: (clipId, trackId) => {
     const clip = store.clips.find((entry) => entry.id === clipId);
     const track = store.tracks.find((entry) => entry.id === trackId);
@@ -367,6 +449,8 @@ const interactions = useClipInteractions({
   canEditTrack: (trackId) =>
     store.tracks.find((track) => track.id === trackId)?.frozen === undefined,
   getGridPpq: () => gridPpq.value,
+  getSelectedClipIds: () => store.clipSelection,
+  snapPpq: snapArrangementPpq,
   getBarRange: (ppq) => barRangeAt(store.timeSignatures, ppq),
   getSourceBounds: sourceBoundsFor,
   getTool: () => tool.value,
@@ -375,8 +459,10 @@ const interactions = useClipInteractions({
   },
   commands: {
     selectClip: (clipId) => setActiveClip(clipId),
+    selectClips: (clipIds, activeClipId) => setClipSelection(clipIds, activeClipId),
     clearClipSelection: (trackId) => clearActiveClipSelection(trackId),
     moveClip,
+    moveClips,
     trimClip,
     duplicateClip,
     // Double-click and draw-tool creation make empty MIDI clips; audio clips
@@ -400,7 +486,7 @@ const automation = useAutomationInteractions({
       if (point.y < RULER_HEIGHT_PX) return null;
       const hit = rowLayout.value.hitTest(point.y - RULER_HEIGHT_PX + scrollY.value);
       if (hit?.zone !== 'automation') return null;
-      const track = store.tracks[hit.index];
+      const track = visibleTracks.value[hit.index];
       const param = automationParams.value[track.id] ?? 'faderDb';
       const insertDomain = insertParamDomainForStrip(track.mixer, param);
       return {
@@ -416,6 +502,7 @@ const automation = useAutomationInteractions({
     store.automationLanes.find((lane) => lane.target === trackId && lane.param === param)?.points ??
     [],
   getGridPpq: () => gridPpq.value,
+  snapPpq: snapArrangementPpq,
   commands: {
     setPoints: (trackId, param, points) => setAutomationLanePoints(trackId, param, points),
   },
@@ -429,7 +516,7 @@ const takes = useTakeInteractions({
       if (point.y < RULER_HEIGHT_PX) return null;
       const hit = rowLayout.value.hitTest(point.y - RULER_HEIGHT_PX + scrollY.value);
       if (hit?.zone !== 'take' || hit.takeIndex === undefined) return null;
-      return { trackId: store.tracks[hit.index].id, takeIndex: hit.takeIndex };
+      return { trackId: visibleTracks.value[hit.index].id, takeIndex: hit.takeIndex };
     },
   },
   getClips: () => store.clips,
@@ -438,6 +525,8 @@ const takes = useTakeInteractions({
   commands: {
     setActiveTake: setClipActiveTake,
     setCompSegments: setClipCompSegments,
+    setActiveMidiTake: setClipMidiActiveTake,
+    setMidiCompSegments: setClipMidiCompSegments,
   },
 });
 
@@ -450,12 +539,41 @@ function onWheel(event: WheelEvent): void {
     if (!anchorEl) return;
     const anchorX = event.clientX - anchorEl.getBoundingClientRect().left;
     range.zoomAt(anchorX, Math.exp(-event.deltaY * ZOOM_WHEEL_SENSITIVITY));
+  } else if (event.altKey) {
+    zoomVertical(Math.exp(-event.deltaY * ZOOM_WHEEL_SENSITIVITY));
   } else if (event.shiftKey) {
     range.scrollByPx(event.deltaY + event.deltaX);
   } else {
     range.scrollByPx(event.deltaX);
     scrollY.value = clampScrollY(scrollY.value + event.deltaY);
   }
+  bump();
+}
+
+/** Zooms the arrangement horizontally around its viewport center. */
+function zoomHorizontal(factor: number): void {
+  range.zoomAt(range.widthPx / 2, factor);
+  bump();
+}
+
+/** Zooms track rows vertically while keeping the current viewport position stable. */
+function zoomVertical(factor: number): void {
+  const previous = laneHeight.value;
+  const next = Math.min(
+    MAX_LANE_HEIGHT_PX,
+    Math.max(MIN_LANE_HEIGHT_PX, Math.round(previous * factor)),
+  );
+  if (next === previous) return;
+  laneHeight.value = next;
+  scrollY.value = clampScrollY(scrollY.value * (next / previous));
+  bump();
+}
+
+/** Fits the full arranged clip range into the timeline viewport. */
+function zoomToFit(): void {
+  const endPpq = Math.max(4, ...store.clips.map((clip) => clip.startPpq + clip.lengthPpq));
+  range.zoomAt(0, range.widthPx / endPpq / range.pxPerPpq);
+  range.setStartPpq(0);
   bump();
 }
 
@@ -548,7 +666,12 @@ function onClipKeyboardAction(payload: ClipKeyboardAction): void {
     const { direction, resize, coarse } = payload.adjustment;
     const step = Math.max(0.0625, gridPpq.value) * (coarse ? 4 : 1);
     if (direction === 'left' || direction === 'right') {
-      const delta = direction === 'left' ? -step : step;
+      const delta =
+        store.snapEnabled && store.snapBar
+          ? barKeyboardDelta(clip.startPpq, direction, coarse)
+          : direction === 'left'
+            ? -step
+            : step;
       if (resize) {
         const bounds = sourceBoundsFor(clip.id);
         const maximum = bounds ? bounds.maxEndPpq - clip.startPpq : Number.POSITIVE_INFINITY;
@@ -650,7 +773,7 @@ function onClipContext(payload: {
   if (!clip) return;
   setActiveClip(clip.id);
   const end = clip.startPpq + clip.lengthPpq;
-  const splitPpq = snapPpqToStep(payload.ppq, gridPpq.value);
+  const splitPpq = snapArrangementPpq(payload.ppq);
   const splitBlocked = clipSplitBlockReason(clip, splitPpq);
   const glueIds = glueClusterClipIds(clip.id);
   const consolidateIds = audioConsolidateClipIds(clip.id);
@@ -682,6 +805,28 @@ function onClipContext(payload: {
       disabled: frozen,
       run: () => setActiveClip(duplicateClip(clip.id, end)),
     },
+    { id: 'sep-clipboard', separator: true },
+    {
+      id: 'copy',
+      label: t.value.shell.arrangement.clipActions.copy,
+      hint: '⌘C',
+      run: () => copyActiveClip(),
+    },
+    {
+      id: 'cut',
+      label: t.value.shell.arrangement.clipActions.cut,
+      hint: '⌘X',
+      disabled: frozen,
+      run: () => cutActiveClip(),
+    },
+    {
+      id: 'paste',
+      label: t.value.shell.arrangement.clipActions.paste,
+      hint: '⌘V',
+      disabled: frozen,
+      run: () => pasteClipAt(clip.trackId, Math.max(0, payload.ppq)),
+    },
+    { id: 'sep-clip-edit', separator: true },
     {
       id: 'glue',
       label: t.value.shell.arrangement.clipActions.glue,
@@ -737,6 +882,18 @@ function onRulerContext(payload: { x: number; y: number; ppq: number }): void {
       label: t.value.shell.arrangement.clipActions.addMarker,
       run: () => addMarkerFromPrompt(payload.ppq),
     },
+    { id: 'sep-ripple', separator: true },
+    {
+      id: 'insert-time',
+      label: t.value.shell.arrangement.clipActions.insertTime,
+      run: () => rippleTimeFromPrompt('insert', payload.ppq),
+    },
+    {
+      id: 'delete-time',
+      label: t.value.shell.arrangement.clipActions.deleteTime,
+      danger: true,
+      run: () => rippleTimeFromPrompt('delete', payload.ppq),
+    },
   ];
   openContextMenu(payload.x, payload.y, items);
 }
@@ -783,6 +940,40 @@ function addMarkerFromPrompt(ppq: number): void {
   })();
 }
 
+/** Prompts for a PPQ duration and performs a ripple insert or delete at the ruler point. */
+function rippleTimeFromPrompt(mode: 'insert' | 'delete', ppq: number): void {
+  void (async () => {
+    const range = barRangeAt(store.timeSignatures, ppq);
+    const defaultLength = String(range.lengthPpq);
+    const isInsert = mode === 'insert';
+    const lengthText = await promptDialog({
+      title: isInsert
+        ? t.value.shell.arrangement.clipActions.insertTimeTitle
+        : t.value.shell.arrangement.clipActions.deleteTimeTitle,
+      message: isInsert
+        ? t.value.shell.arrangement.clipActions.insertTimeMessage
+        : t.value.shell.arrangement.clipActions.deleteTimeMessage,
+      defaultValue: defaultLength,
+      placeholder: t.value.shell.arrangement.clipActions.timeLength,
+      confirmLabel: isInsert
+        ? t.value.shell.arrangement.clipActions.insertTimeConfirm
+        : t.value.shell.arrangement.clipActions.deleteTimeConfirm,
+    });
+    if (lengthText === null) return;
+    const lengthPpq = Number(lengthText);
+    if (!Number.isFinite(lengthPpq) || lengthPpq <= 0) {
+      error.value = t.value.shell.arrangement.clipActions.invalidTimeLength;
+      return;
+    }
+    try {
+      if (isInsert) insertTime(ppq, lengthPpq);
+      else deleteTime(ppq, ppq + lengthPpq);
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : String(err);
+    }
+  })();
+}
+
 /**
  * Splits a clip at the playhead position: the active clip when the playhead
  * is strictly inside it, otherwise the first clip on the active track under
@@ -813,7 +1004,7 @@ function cutAtPlayhead(): void {
   }
 }
 
-defineExpose({ cutAtPlayhead });
+defineExpose({ cutAtPlayhead, zoomHorizontal, zoomToFit });
 
 // Track removal or take-lane changes (e.g. flattening a comp) can shrink the
 // content extent below the current scroll.
@@ -875,6 +1066,33 @@ onBeforeUnmount(() => {
     >
       <div class="cell-corner">
         <span class="cell-corner-label">{{ t.shell.arrangement.sections }}</span>
+        <SelectMenu
+          v-model="snapChoice"
+          class="arrangement-snap"
+          size="sm"
+          :options="SNAP_CHOICES"
+          :aria-label="t.shell.editor.snap"
+        />
+        <span class="arrangement-zoom" role="group" :aria-label="t.shell.arrangement.verticalZoom">
+          <button
+            type="button"
+            class="arrangement-zoom-button"
+            v-tooltip="t.shell.arrangement.zoomOutTracks"
+            :aria-label="t.shell.arrangement.zoomOutTracks"
+            @click="zoomVertical(1 / VERTICAL_ZOOM_STEP)"
+          >
+            −
+          </button>
+          <button
+            type="button"
+            class="arrangement-zoom-button"
+            v-tooltip="t.shell.arrangement.zoomInTracks"
+            :aria-label="t.shell.arrangement.zoomInTracks"
+            @click="zoomVertical(VERTICAL_ZOOM_STEP)"
+          >
+            +
+          </button>
+        </span>
         <button
           type="button"
           class="section-detect"
@@ -930,7 +1148,7 @@ onBeforeUnmount(() => {
       <TrackHeaderList
         class="cell-headers"
         @wheel.prevent="onWheel"
-        :lane-height="LANE_HEIGHT_PX"
+        :lane-height="laneHeight"
         :scroll-y="scrollY"
         :ruler-offset="RULER_HEIGHT_PX"
         :armed-track-ids="props.armedTrackIds ?? []"
@@ -938,6 +1156,8 @@ onBeforeUnmount(() => {
         :automation-expanded-ids="automationExpandedIds"
         :automation-params="automationParams"
         :takes-expanded-ids="takesExpandedIds"
+        :tracks="visibleTracks"
+        :collapsed-group-ids="collapsedGroupIds"
         :row-layout="rowLayout"
         :loop-enabled="props.loopEnabled ?? false"
         :loop-start-ppq="props.loopStartPpq ?? 0"
@@ -948,26 +1168,29 @@ onBeforeUnmount(() => {
         @toggle-automation="onToggleAutomation"
         @automation-param="onAutomationParamChange"
         @toggle-takes="onToggleTakes"
+        @toggle-group-collapse="onToggleGroupCollapse"
       />
       <div ref="canvasCell" class="cell-canvas" @wheel.prevent="onWheel">
         <ArrangementCanvas
           :range="range"
           :revision="revision"
           :painter="painter"
-          :tracks="store.tracks"
-          :clips="store.clips"
+          :tracks="visibleTracks"
+          :clips="visibleClips"
           :markers="store.markers"
           :active-track-id="store.activeTrackId"
           :active-clip-id="store.clipId"
+          :selected-clip-ids="store.clipSelection"
           :time-signatures="store.timeSignatures"
           :scroll-y="scrollY"
-          :lane-height="LANE_HEIGHT_PX"
+          :lane-height="laneHeight"
           :loop-enabled="props.loopEnabled ?? false"
           :loop-start-ppq="props.loopStartPpq ?? 0"
           :loop-end-ppq="props.loopEndPpq ?? 0"
           :tempo-bpm="store.tempoBpm"
           :tempo-segments="store.tempoSegments"
           :grid-ppq="gridPpq"
+          :snap-ppq="snapArrangementPpq"
           :interactions="interactions"
           :automation-expanded-ids="automationExpandedIds"
           :automation-params="automationParams"
@@ -980,6 +1203,7 @@ onBeforeUnmount(() => {
           :anchored-local-x="followAnchorLocalX"
           @view-resize="onCanvasResize"
           @ruler-seek="onSeek"
+          @loop-range="(startPpq, endPpq) => emit('loopRange', startPpq, endPpq)"
           @clip-context="onClipContext"
           @clip-keyboard-action="onClipKeyboardAction"
           @ruler-context="onRulerContext"
@@ -1036,6 +1260,32 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.arrangement-snap {
+  flex: none;
+}
+
+.arrangement-zoom {
+  display: flex;
+  flex: none;
+  gap: 2px;
+}
+
+.arrangement-zoom-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.35rem;
+  padding: 1px 3px;
+  color: var(--text-3);
+  font: var(--fw-semibold) var(--fs-xs) var(--font-sans);
+  background: var(--surface-3);
+  border-radius: var(--radius-sm);
+}
+
+.arrangement-zoom-button:hover {
+  color: var(--text-1);
 }
 
 .section-detect {

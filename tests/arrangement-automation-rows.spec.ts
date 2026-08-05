@@ -128,9 +128,19 @@ describe('arrangement automation rows', () => {
       expect(trackTakeRowCount(clips, 2)).toBe(1);
       expect(trackTakeRowCount(clips, 3)).toBe(0);
     });
+
+    it('includes MIDI cycle takes in the expanded row count', () => {
+      expect(trackTakeRowCount([{ trackId: 1, midiTakes: [{}, {}, {}] }], 1)).toBe(3);
+    });
   });
 
   describe('trackActiveTakeIndex', () => {
+    it('reads the active MIDI cycle take', () => {
+      expect(
+        trackActiveTakeIndex([{ trackId: 1, midiTakes: [{}, {}], midiActiveTakeIndex: 1 }], 1),
+      ).toBe(1);
+    });
+
     it('treats a comp-less clip as playing take 0', () => {
       expect(trackActiveTakeIndex([{ trackId: 1, takes: [{}, {}] }], 1)).toBe(0);
     });

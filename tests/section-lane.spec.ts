@@ -5,6 +5,7 @@ import SectionLane from '@/components/arrangement/SectionLane.vue';
 import { clearHistory } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
+import { useContextMenuState } from '@/ui/menu/context-menu';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -44,5 +45,18 @@ describe('SectionLane', () => {
 
     wrapper.unmount();
     expect(cancelAnimationFrame).toHaveBeenCalledWith(33);
+  });
+
+  it('offers a section duplication action from the context menu', async () => {
+    const wrapper = mount(SectionLane, {
+      props: {
+        range: new TimelineRange({ widthPx: 400, heightPx: 24, pxPerPpq: 80 }),
+        revision: 0,
+      },
+    });
+
+    await wrapper.find('.section-band').trigger('contextmenu', { clientX: 12, clientY: 20 });
+
+    expect(useContextMenuState().items).toMatchObject([{ id: 'duplicate-section' }]);
   });
 });

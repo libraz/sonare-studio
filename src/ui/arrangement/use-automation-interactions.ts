@@ -70,6 +70,8 @@ export interface UseAutomationInteractionsOptions {
   getLanePoints(trackId: number, param: AutomationParam): ReadonlyArray<AutomationPoint>;
   /** Returns the current snap grid step in PPQ (<= 0 disables snapping). */
   getGridPpq(): number;
+  /** Optionally resolves a PPQ position on a meter-aware snap grid. */
+  snapPpq?(ppq: number): number;
   /** Mutation commands invoked when gestures commit. */
   commands: AutomationInteractionCommands;
   /** Drag start threshold in px. Default {@link DEFAULT_CLIP_DRAG_THRESHOLD_PX}. */
@@ -185,7 +187,9 @@ export function useAutomationInteractions(
   ): { ppq: number; value: number } {
     const raw = view.xToPpq(point.x);
     const ppq =
-      modifiers.meta === true ? Math.max(0, raw) : snapPpqToStep(raw, options.getGridPpq());
+      modifiers.meta === true
+        ? Math.max(0, raw)
+        : (options.snapPpq?.(raw) ?? snapPpqToStep(raw, options.getGridPpq()));
     return {
       ppq,
       value: automationYToValue(

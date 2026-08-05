@@ -188,7 +188,30 @@ export function setActiveClip(clipId: number): void {
   const clip = requireClip(store, clipId);
   if (store.clipId === clipId) return;
   store.clipId = clipId;
+  store.clipSelection = new Set([clipId]);
   store.activeTrackId = clip.trackId;
+  store.trackSelection = new Set([clip.trackId]);
+  store.selection = new Set();
+  store.refresh();
+}
+
+/** Sets the arrangement selection without creating an undo-history entry. */
+export function setClipSelection(clipIds: Iterable<number>, activeClipId?: number): void {
+  const store = useProjectStore();
+  const ids = new Set(clipIds);
+  for (const id of ids) requireClip(store, id);
+  const active = activeClipId ?? (ids.size === 0 ? -1 : [...ids][ids.size - 1]);
+  if (active !== -1 && !ids.has(active))
+    throw new RangeError(`Active clip ${active} is not selected`);
+  store.clipSelection = ids;
+  if (active === -1) {
+    clearActiveClipSelection();
+    return;
+  }
+  const clip = requireClip(store, active);
+  store.clipId = active;
+  store.activeTrackId = clip.trackId;
+  store.trackSelection = new Set([clip.trackId]);
   store.selection = new Set();
   store.refresh();
 }
@@ -206,8 +229,10 @@ export function clearActiveClipSelection(trackId?: number): void {
   if (trackId !== undefined) {
     requireTrack(store, trackId);
     store.activeTrackId = trackId;
+    store.trackSelection = new Set([trackId]);
   }
   store.clipId = -1;
+  store.clipSelection = new Set();
   store.clipStartPpq = 0;
   store.clipLengthPpq = 0;
   store.notes = [];
@@ -221,9 +246,7 @@ export function clearActiveClipSelection(trackId?: number): void {
  *
  * @param trackId Id of the track to activate.
  */
-export function setActiveTrack(trackId: number): void {
-  const store = useProjectStore();
-  requireTrack(store, trackId);
+function activateTrack(store: ReturnType<typeof useProjectStore>, trackId: number): void {
   // Anchor the new active clip to the outgoing clip's timeline window rather
   // than always taking the track's first clip. Switching tracks during playback
   // otherwise strands the score/piano-roll on a clip that does not contain the
@@ -245,4 +268,28 @@ export function setActiveTrack(trackId: number): void {
   store.clipId = (overlapping ?? candidates[0])?.id ?? -1;
   store.selection = new Set();
   store.refresh();
+}
+
+/**
+ * Selects arrangement tracks without creating an undo entry. The active track
+ * remains the piano-roll target while every selected track is available to
+ * header bulk operations.
+ */
+export function setTrackSelection(trackIds: Iterable<number>, activeTrackId?: number): void {
+  const store = useProjectStore();
+  const ids = new Set(trackIds);
+  for (const id of ids) requireTrack(store, id);
+  const active = activeTrackId ?? (ids.size === 0 ? -1 : [...ids][ids.size - 1]);
+  if (active !== -1 && !ids.has(active)) {
+    throw new RangeError(`Active track ${active} is not selected`);
+  }
+  store.trackSelection = ids;
+  if (active !== -1) activateTrack(store, active);
+}
+
+export function setActiveTrack(trackId: number): void {
+  const store = useProjectStore();
+  requireTrack(store, trackId);
+  store.trackSelection = new Set([trackId]);
+  activateTrack(store, trackId);
 }

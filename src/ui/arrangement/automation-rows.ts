@@ -63,6 +63,10 @@ export interface TakeRowClip {
   trackId: number;
   /** Alternative recordings of the clip; absent or empty = no take rows. */
   takes?: ReadonlyArray<unknown>;
+  /** Alternative MIDI performances; absent or empty = no take rows. */
+  midiTakes?: ReadonlyArray<unknown>;
+  /** Currently playable MIDI take. */
+  midiActiveTakeIndex?: number;
   /** Comp selection over the takes; absent/empty = take 0 throughout. */
   compSegments?: ReadonlyArray<TakeRowCompSegment>;
 }
@@ -78,7 +82,9 @@ export interface TakeRowClip {
 export function trackTakeRowCount(clips: ReadonlyArray<TakeRowClip>, trackId: number): number {
   let count = 0;
   for (const clip of clips) {
-    if (clip.trackId === trackId) count = Math.max(count, clip.takes?.length ?? 0);
+    if (clip.trackId === trackId) {
+      count = Math.max(count, clip.takes?.length ?? 0, clip.midiTakes?.length ?? 0);
+    }
   }
   return count;
 }
@@ -97,7 +103,17 @@ export function trackTakeRowCount(clips: ReadonlyArray<TakeRowClip>, trackId: nu
 export function trackActiveTakeIndex(clips: ReadonlyArray<TakeRowClip>, trackId: number): number {
   let active = -1;
   for (const clip of clips) {
-    if (clip.trackId !== trackId || (clip.takes?.length ?? 0) === 0) continue;
+    if (clip.trackId !== trackId) continue;
+    if ((clip.midiTakes?.length ?? 0) > 0) {
+      const index = Math.min(
+        Math.max(0, clip.midiActiveTakeIndex ?? clip.midiTakes!.length - 1),
+        clip.midiTakes!.length - 1,
+      );
+      if (active === -1) active = index;
+      else if (active !== index) return -1;
+      continue;
+    }
+    if ((clip.takes?.length ?? 0) === 0) continue;
     const segments = clip.compSegments ?? [];
     const index = segments.length > 0 ? segments[0].takeIndex : 0;
     // A clip comped across several takes has no single live take.

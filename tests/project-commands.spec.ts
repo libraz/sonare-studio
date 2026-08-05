@@ -4,11 +4,13 @@ import { busAutomationTarget } from '@/project/automation';
 import { executeApp } from '@/project/command/history';
 import {
   addAudioClip,
+  addGroupTrack,
   addMidiClip,
   addMixerBus,
   addNote,
   addNotes,
   addTrack,
+  applyGrooveToSelection,
   applyNoteEdits,
   bakeClipMidiFx,
   canRedo,
@@ -19,19 +21,29 @@ import {
   clearTrackMidiFx,
   collectHistoryReferencedMediaIds,
   configureHistoryByteBudget,
+  copyActiveClip,
+  copySelectedNotes,
+  cutActiveClip,
+  cutSelectedNotes,
   deleteClip,
+  deleteTime,
   detectChordsForClip,
   duplicateClip,
   duplicateSelection,
+  duplicateTime,
   fadeSelectionVelocity,
   glueMidiClips,
   historyBudgetStats,
   humanizeSelectionVelocity,
+  insertTime,
   legatoSelection,
   mergeSelection,
   moveClip,
+  moveClips,
   normalizeSelectionVelocity,
   nudgeSelectionVelocity,
+  pasteClipAt,
+  pasteNotesAt,
   quantizeSelection,
   quantizeSelectionEnds,
   quantizeSelectionLengths,
@@ -40,6 +52,7 @@ import {
   removeMarker,
   removeMixerBus,
   removeTrack,
+  removeTracks,
   renameClip,
   renameTrack,
   reorderTracks,
@@ -61,6 +74,7 @@ import {
   setClipPitchBend,
   setClipPolyPressure,
   setClipPolyPressureForPitches,
+  setClipSelection,
   setMarker,
   setProjectChords,
   setProjectExternalMidiDefault,
@@ -75,7 +89,10 @@ import {
   setTrackMidiFx,
   setTrackMute,
   setTrackPan,
+  setTrackSelection,
   setTrackSolo,
+  setTracksColor,
+  setTracksGroup,
   setTrackVolume,
   snapSelectionToScale,
   splitClip,
@@ -189,7 +206,8 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
         color: '#ff0000',
         mute: true,
         solo: true,
-        volume: 0.5,
+        volume: 1,
+        mixer: expect.objectContaining({ gainDb: -6.020599913279624 }),
         pan: -0.25,
       });
 
@@ -201,6 +219,44 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       undo(); // color
       expect(store.tracks[0].mute).toBe(false);
       expect(store.tracks[0].color).not.toBe('#ff0000');
+    });
+
+    it('selects tracks and applies color, group and deletion in single undo steps', () => {
+      const first = store.tracks[0].id;
+      const second = addTrack({ name: 'Strings 1' });
+      const third = addTrack({ name: 'Strings 2' });
+      const group = addGroupTrack({ name: 'Strings' });
+      clearHistory();
+
+      setTrackSelection([first, second, third], second);
+      expect(store.trackSelection).toEqual(new Set([first, second, third]));
+      expect(store.activeTrackId).toBe(second);
+
+      setTracksColor([first, second, third], '#123456');
+      expect(
+        store.tracks.filter((track) => track.id !== group).map((track) => track.color),
+      ).toEqual(['#123456', '#123456', '#123456']);
+      expect(undo()).toBe(true);
+      expect(store.tracks.some((track) => track.color === '#123456')).toBe(false);
+
+      setTracksGroup([first, second, third], group);
+      expect(
+        store.tracks
+          .filter((track) => track.id !== group)
+          .every((track) => track.groupId === group),
+      ).toBe(true);
+      expect(undo()).toBe(true);
+      expect(
+        store.tracks
+          .filter((track) => track.id !== group)
+          .every((track) => track.groupId === undefined),
+      ).toBe(true);
+      expect(() => setTracksGroup([first, group], group)).toThrow('cannot be nested');
+
+      removeTracks([first, second]);
+      expect(store.tracks.map((track) => track.id)).toEqual([third, group]);
+      expect(undo()).toBe(true);
+      expect(store.tracks.map((track) => track.id)).toEqual([first, second, third, group]);
     });
 
     it('setTrackVolume and setTrackPan validate their ranges', () => {
@@ -449,7 +505,10 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(store.tracks[0].volume).toBe(1);
       expect(store.clipId).toBe(secondClipId);
       expect(redo()).toBe(true);
-      expect(store.tracks[0].volume).toBe(0.5);
+      expect(store.tracks[0]).toMatchObject({
+        volume: 1,
+        mixer: expect.objectContaining({ gainDb: -6.020599913279624 }),
+      });
       expect(store.clipId).toBe(secondClipId);
     });
 
@@ -473,6 +532,25 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(store.activeClip).toMatchObject({ startPpq: 4 });
       expect(() => moveClip(clipId, -1)).toThrow(RangeError);
       expect(() => moveClip(clipId, 0, 9999)).toThrow(RangeError);
+    });
+
+    it('moveClips preserves relative placement and undoes the whole group together', () => {
+      const trackId = store.tracks[0].id;
+      const firstClipId = store.clipId;
+      const secondClipId = addMidiClip({ trackId, startPpq: 8, lengthPpq: 4 });
+      clearHistory();
+
+      moveClips([
+        { clipId: firstClipId, newStartPpq: 4 },
+        { clipId: secondClipId, newStartPpq: 12 },
+      ]);
+      expect(store.clips.find((clip) => clip.id === firstClipId)?.startPpq).toBe(4);
+      expect(store.clips.find((clip) => clip.id === secondClipId)?.startPpq).toBe(12);
+
+      expect(undo()).toBe(true);
+      expect(store.clips.find((clip) => clip.id === firstClipId)?.startPpq).toBe(0);
+      expect(store.clips.find((clip) => clip.id === secondClipId)?.startPpq).toBe(8);
+      expect(canUndo()).toBe(false);
     });
 
     it('moveClip rejects MIDI clips on non-MIDI tracks without mutating history', () => {
@@ -545,6 +623,71 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(undo()).toBe(true);
       expect(store.clips.some((c) => c.id === copyId)).toBe(false);
       expect(store.clipId).toBe(clipId);
+    });
+
+    it('copies, cuts and pastes an active MIDI clip on another track', () => {
+      const clipId = store.clipId;
+      const sourceTrackId = store.tracks[0].id;
+      const destinationTrackId = addTrack({ name: 'Verse copy' });
+      addNote({ pitch: 60, startPpq: 1, durationPpq: 0.5, channel: 2 });
+      renameClip(clipId, 'Lead phrase');
+      setClipCcLane(clipId, 11, 2, [{ ppq: 1, value: 80 }]);
+
+      expect(copyActiveClip()).toBe(true);
+      const copiedId = pasteClipAt(destinationTrackId, 24);
+      const copied = store.clips.find((clip) => clip.id === copiedId);
+      expect(copied).toMatchObject({
+        trackId: destinationTrackId,
+        startPpq: 24,
+        name: 'Lead phrase',
+      });
+      expect(copied?.notes).toMatchObject([
+        { pitch: 60, startPpq: 1, durationPpq: 0.5, channel: 2 },
+      ]);
+      expect(copied?.ccLanes).toEqual([
+        { controller: 11, channel: 2, points: [{ ppq: 1, value: 80 }] },
+      ]);
+
+      setActiveClip(clipId);
+      expect(cutActiveClip()).toBe(true);
+      expect(store.clips.some((clip) => clip.id === clipId)).toBe(false);
+      const cutPasteId = pasteClipAt(sourceTrackId, 8);
+      expect(store.clips.find((clip) => clip.id === cutPasteId)).toMatchObject({
+        trackId: sourceTrackId,
+        startPpq: 8,
+        name: 'Lead phrase',
+      });
+      expect(undo()).toBe(true);
+      expect(store.clips.some((clip) => clip.id === cutPasteId)).toBe(false);
+    });
+
+    it('pastes an audio clip by sharing its asset reference', async () => {
+      const sourceTrackId = addTrack({ name: 'Recorded', kind: 'audio' });
+      const destinationTrackId = addTrack({ name: 'Double', kind: 'audio' });
+      const sourceClipId = await addAudioClip({
+        trackId: sourceTrackId,
+        assetId: 'shared-recording',
+        startPpq: 2,
+        lengthPpq: 6,
+        gain: 0.8,
+        fadeInPpq: 0.25,
+        loopEnabled: true,
+        loopLengthPpq: 3,
+      });
+      setActiveClip(sourceClipId);
+
+      expect(copyActiveClip()).toBe(true);
+      const copiedId = pasteClipAt(destinationTrackId, 16);
+      expect(store.clips.find((clip) => clip.id === copiedId)).toMatchObject({
+        trackId: destinationTrackId,
+        startPpq: 16,
+        assetId: 'shared-recording',
+        gain: 0.8,
+        fadeInPpq: 0.25,
+        loopEnabled: true,
+        loopLengthPpq: 3,
+      });
+      expect(store.clips.filter((clip) => clip.assetId === 'shared-recording')).toHaveLength(2);
     });
 
     it('keeps frozen track content read-only until it is unfrozen', () => {
@@ -1355,6 +1498,17 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(noteById(id)?.startPpq).toBeCloseTo(0.6, 9);
     });
 
+    it('applies a groove only to the selected notes and undoes it', () => {
+      const first = addNote({ pitch: 60, startPpq: 0.5, durationPpq: 1 });
+      const second = addNote({ pitch: 64, startPpq: 1, durationPpq: 1 });
+      setSelection([first]);
+      applyGrooveToSelection({ gridPpq: 0.5, offsetsPpq: [0, 0.1] });
+      expect(noteById(first)?.startPpq).toBeCloseTo(0.6);
+      expect(noteById(second)?.startPpq).toBe(1);
+      expect(undo()).toBe(true);
+      expect(noteById(first)?.startPpq).toBe(0.5);
+    });
+
     it('quantizes note starts against source-offset timeline coordinates', () => {
       trimClip(store.clipId, 0.4, 8);
       moveClip(store.clipId, 0.7);
@@ -1409,10 +1563,56 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       undo();
       expect(noteById(a)).toBeDefined();
       expect(store.notes).toHaveLength(3);
+      expect(store.selection).toEqual(new Set([a, b]));
       setSelection([a, b]);
       const repeated = repeatSelection(2, 4);
       expect(repeated).toHaveLength(4);
       expect(store.notes).toHaveLength(7);
+    });
+
+    it('copies selected notes relative to their first onset and pastes at the requested playhead', () => {
+      const [first, second] = addNotes([
+        { pitch: 60, velocity: 72, startPpq: 1, durationPpq: 0.5, channel: 2 },
+        { pitch: 64, velocity: 96, startPpq: 2.5, durationPpq: 1, channel: 2, offVelocity: 45 },
+      ]);
+      setSelection([first, second]);
+
+      expect(copySelectedNotes()).toBe(true);
+      const pasted = pasteNotesAt(36);
+
+      expect(pasted).toHaveLength(2);
+      expect(store.selection).toEqual(new Set(pasted));
+      expect(pasted.map((id) => noteById(id))).toEqual([
+        expect.objectContaining({
+          pitch: 60,
+          velocity: 72,
+          startPpq: 36,
+          durationPpq: 0.5,
+          channel: 2,
+        }),
+        expect.objectContaining({
+          pitch: 64,
+          velocity: 96,
+          startPpq: 37.5,
+          durationPpq: 1,
+          channel: 2,
+          offVelocity: 45,
+        }),
+      ]);
+      expect(store.activeClip?.lengthPpq).toBeCloseTo(38.5, 8);
+    });
+
+    it('cuts only after copying the selected notes and leaves the clipboard pasteable', () => {
+      const [first, second] = addNotes([
+        { pitch: 60, startPpq: 1, durationPpq: 1 },
+        { pitch: 67, startPpq: 2, durationPpq: 1 },
+      ]);
+      setSelection([first, second]);
+
+      expect(cutSelectedNotes()).toBe(true);
+      expect(store.notes).toEqual([]);
+      const pasted = pasteNotesAt(6);
+      expect(pasted.map((id) => noteById(id)?.startPpq)).toEqual([6, 7]);
     });
 
     it('applies legato, merge, and overlap cleanup', () => {
@@ -1547,6 +1747,18 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
   });
 
   describe('active track / clip selection', () => {
+    it('setClipSelection keeps all selected ids while making one clip active', () => {
+      const trackId = store.tracks[0].id;
+      const firstClipId = store.clipId;
+      const secondClipId = addMidiClip({ trackId, startPpq: 8, lengthPpq: 4 });
+      clearHistory();
+
+      setClipSelection([firstClipId, secondClipId], secondClipId);
+      expect([...store.clipSelection]).toEqual([firstClipId, secondClipId]);
+      expect(store.clipId).toBe(secondClipId);
+      expect(canUndo()).toBe(false);
+    });
+
     it('setActiveClip retargets the note mirror without touching the history', () => {
       const trackId = store.tracks[0].id;
       const firstClipId = store.clipId;
@@ -1887,6 +2099,190 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       ]);
       expect(undo()).toBe(true);
       expect(store.timeSignatures).toEqual([]);
+    });
+
+    it('insertTime ripples clips and all timeline metadata as one undoable edit', () => {
+      const crossingId = store.clipId;
+      const trackId = store.tracks[0].id;
+      const followingId = addMidiClip({ trackId, startPpq: 16, lengthPpq: 4 });
+      setMarker(null, 8, 'Boundary');
+      setSections([
+        { name: 'Intro', startPpq: 0, endPpq: 16 },
+        { name: 'Verse', startPpq: 16, endPpq: 24 },
+      ]);
+      setAutomationLanePoints('master', 'faderDb', [
+        { ppq: 0, value: -6 },
+        { ppq: 8, value: -3 },
+      ]);
+      setTempoSegments([
+        { startPpq: 0, bpm: 120 },
+        { startPpq: 8, bpm: 140 },
+      ]);
+      setTimeSignatures([
+        { startPpq: 0, numerator: 4, denominator: 4 },
+        { startPpq: 8, numerator: 7, denominator: 8, grouping: [2, 2, 3] },
+      ]);
+      clearHistory();
+
+      insertTime(8, 4);
+
+      const crossing = store.clips.find((clip) => clip.id === crossingId);
+      const right = store.clips.find((clip) => clip.id !== crossingId && clip.startPpq === 12);
+      expect(crossing).toMatchObject({ startPpq: 0, lengthPpq: 8 });
+      expect(right).toMatchObject({ sourceOffsetPpq: 8, lengthPpq: 24 });
+      expect(store.clips.find((clip) => clip.id === followingId)).toMatchObject({ startPpq: 20 });
+      expect(store.markers).toMatchObject([{ ppq: 12, name: 'Boundary' }]);
+      expect(store.sections.map((section) => [section.startPpq, section.endPpq])).toEqual([
+        [0, 20],
+        [20, 28],
+      ]);
+      expect(store.automationLanes[0].points.map((point) => point.ppq)).toEqual([0, 12]);
+      expect(store.tempoSegments).toEqual([
+        { startPpq: 0, bpm: 120 },
+        { startPpq: 12, bpm: 140 },
+      ]);
+      expect(store.timeSignatures).toEqual([
+        { startPpq: 0, numerator: 4, denominator: 4 },
+        { startPpq: 12, numerator: 7, denominator: 8, grouping: [2, 2, 3] },
+      ]);
+
+      expect(undo()).toBe(true);
+      expect(store.clips.find((clip) => clip.id === crossingId)).toMatchObject({
+        startPpq: 0,
+        lengthPpq: 32,
+      });
+      expect(store.clips.find((clip) => clip.id === followingId)).toMatchObject({ startPpq: 16 });
+      expect(store.markers).toMatchObject([{ ppq: 8, name: 'Boundary' }]);
+    });
+
+    it('duplicateTime copies a section window and all timeline metadata in one undo step', () => {
+      const sourceId = store.clipId;
+      const trackId = store.tracks[0].id;
+      const followingId = addMidiClip({ trackId, startPpq: 16, lengthPpq: 4 });
+      setMarker(null, 4, 'Hit');
+      setSections([
+        { name: 'Intro', startPpq: 0, endPpq: 8 },
+        { name: 'Verse', startPpq: 8, endPpq: 16 },
+      ]);
+      setAutomationLanePoints('master', 'faderDb', [
+        { ppq: 4, value: -6 },
+        { ppq: 6, value: -3 },
+      ]);
+      setTempoSegments([
+        { startPpq: 0, bpm: 120 },
+        { startPpq: 4, bpm: 130 },
+        { startPpq: 8, bpm: 140 },
+      ]);
+      setTimeSignatures([
+        { startPpq: 0, numerator: 4, denominator: 4 },
+        { startPpq: 4, numerator: 7, denominator: 8, grouping: [2, 2, 3] },
+        { startPpq: 8, numerator: 3, denominator: 4 },
+      ]);
+      clearHistory();
+
+      duplicateTime(4, 8);
+
+      const copy = store.clips.find(
+        (clip) => clip.id !== sourceId && clip.startPpq === 8 && clip.lengthPpq === 4,
+      );
+      expect(copy).toBeDefined();
+      expect(store.clips.find((clip) => clip.id === followingId)).toMatchObject({ startPpq: 20 });
+      expect(store.markers.map((marker) => marker.ppq)).toEqual([4, 8]);
+      expect(store.sections.map((section) => [section.startPpq, section.endPpq])).toEqual([
+        [0, 8],
+        [8, 12],
+        [12, 20],
+      ]);
+      expect(store.automationLanes[0]?.points.map((point) => point.ppq)).toEqual([4, 6, 8, 10]);
+      expect(store.tempoSegments).toEqual([
+        { startPpq: 0, bpm: 120 },
+        { startPpq: 4, bpm: 130 },
+        { startPpq: 8, bpm: 130 },
+        { startPpq: 12, bpm: 140 },
+      ]);
+      expect(store.timeSignatures).toEqual([
+        { startPpq: 0, numerator: 4, denominator: 4 },
+        { startPpq: 4, numerator: 7, denominator: 8, grouping: [2, 2, 3] },
+        { startPpq: 8, numerator: 7, denominator: 8, grouping: [2, 2, 3] },
+        { startPpq: 12, numerator: 3, denominator: 4 },
+      ]);
+
+      expect(undo()).toBe(true);
+      expect(store.clips.find((clip) => clip.id === sourceId)).toMatchObject({
+        startPpq: 0,
+        lengthPpq: 32,
+      });
+      expect(store.clips.find((clip) => clip.id === followingId)).toMatchObject({ startPpq: 16 });
+      expect(store.markers.map((marker) => marker.ppq)).toEqual([4]);
+    });
+
+    it('deleteTime removes the deleted source window and keeps held automation at the join', () => {
+      const crossingId = store.clipId;
+      const trackId = store.tracks[0].id;
+      const removedId = addMidiClip({ trackId, startPpq: 5, lengthPpq: 1 });
+      const followingId = addMidiClip({ trackId, startPpq: 12, lengthPpq: 2 });
+      setMarker(null, 5, 'Drop');
+      setMarker(null, 12, 'After');
+      setSections([{ name: 'Song', startPpq: 0, endPpq: 16 }]);
+      setAutomationLanePoints('master', 'faderDb', [
+        { ppq: 0, value: -6 },
+        { ppq: 3, value: -3 },
+        { ppq: 5, value: 0 },
+        { ppq: 12, value: -9 },
+      ]);
+      setTempoSegments([
+        { startPpq: 0, bpm: 120 },
+        { startPpq: 6, bpm: 140 },
+        { startPpq: 12, bpm: 100 },
+      ]);
+      setTimeSignatures([
+        { startPpq: 0, numerator: 4, denominator: 4 },
+        { startPpq: 6, numerator: 7, denominator: 8, grouping: [2, 2, 3] },
+      ]);
+      clearHistory();
+
+      deleteTime(4, 8);
+
+      const crossing = store.clips.find((clip) => clip.id === crossingId);
+      const right = store.clips.find((clip) => clip.id !== crossingId && clip.startPpq === 4);
+      expect(crossing).toMatchObject({ startPpq: 0, lengthPpq: 4 });
+      expect(right).toMatchObject({ sourceOffsetPpq: 8, lengthPpq: 24 });
+      expect(store.clips.some((clip) => clip.id === removedId)).toBe(false);
+      expect(store.clips.find((clip) => clip.id === followingId)).toMatchObject({ startPpq: 8 });
+      expect(store.markers).toMatchObject([{ ppq: 8, name: 'After' }]);
+      expect(store.sections).toMatchObject([{ startPpq: 0, endPpq: 12 }]);
+      expect(store.automationLanes[0].points).toEqual([
+        { ppq: 0, value: -6 },
+        { ppq: 3, value: -3 },
+        { ppq: 4, value: -3 },
+        { ppq: 8, value: -9 },
+      ]);
+      expect(store.tempoSegments).toEqual([
+        { startPpq: 0, bpm: 120 },
+        { startPpq: 8, bpm: 100 },
+      ]);
+      expect(store.timeSignatures).toEqual([{ startPpq: 0, numerator: 4, denominator: 4 }]);
+
+      expect(undo()).toBe(true);
+      expect(store.clips.find((clip) => clip.id === crossingId)).toMatchObject({
+        startPpq: 0,
+        lengthPpq: 32,
+      });
+      expect(store.clips.find((clip) => clip.id === removedId)).toBeDefined();
+      expect(store.clips.find((clip) => clip.id === followingId)).toMatchObject({ startPpq: 12 });
+    });
+
+    it('rejects a ripple operation that would split a looped clip without mutating history', () => {
+      const clipId = store.clipId;
+      setClipLoop(clipId, true, 4);
+      clearHistory();
+      const nativeBefore = getProject().toJson();
+      const mirrorBefore = JSON.stringify(store.clips);
+
+      expect(() => insertTime(8, 2)).toThrow(/Turn Loop off/);
+      expect(getProject().toJson()).toBe(nativeBefore);
+      expect(JSON.stringify(store.clips)).toBe(mirrorBefore);
+      expect(canUndo()).toBe(false);
     });
 
     it('setTimeSignatures validates its input', () => {

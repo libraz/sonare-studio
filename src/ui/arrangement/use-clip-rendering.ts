@@ -443,14 +443,22 @@ export function drawClips(
   clips: EditorClip[],
   activeClipId: number,
   context: ClipRenderContext,
+  selectedClipIds: ReadonlySet<number> = new Set(),
 ): void {
   const { interactions, colors } = context;
   const preview = interactions.previewClip.value;
+  const previews = new Map(
+    (interactions.previewClips?.value ?? (preview ? [preview] : [])).map((entry) => [
+      entry.clipId,
+      entry,
+    ]),
+  );
   for (const clip of clips) {
     let geometry: ClipGeometry = clip;
-    let selected = clip.id === activeClipId;
-    if (preview && !preview.copy && preview.clipId === clip.id) {
-      geometry = preview;
+    let selected = clip.id === activeClipId || selectedClipIds.has(clip.id);
+    const clipPreview = previews.get(clip.id);
+    if (clipPreview && !clipPreview.copy) {
+      geometry = clipPreview;
       selected = true;
     }
     drawClip(ctx, clip, geometry, selected, context);
@@ -461,6 +469,29 @@ export function drawClips(
   }
   const draft = interactions.previewDraft.value;
   if (draft) drawDraft(ctx, draft, context, colors);
+  const marquee = interactions.previewMarquee?.value;
+  if (marquee) drawMarquee(ctx, marquee, context, colors);
+}
+
+/** Draws the in-flight empty-area selection rectangle above the lane content. */
+function drawMarquee(
+  ctx: CanvasRenderingContext2D,
+  marquee: { left: number; top: number; width: number; height: number },
+  context: ClipRenderContext,
+  colors: ArrangementColors,
+): void {
+  const { range } = context;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, RULER_HEIGHT_PX, range.widthPx, range.heightPx - RULER_HEIGHT_PX);
+  ctx.clip();
+  ctx.fillStyle = colors.draftFill;
+  ctx.fillRect(marquee.left, marquee.top, marquee.width, marquee.height);
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = colors.draftStroke;
+  ctx.setLineDash([3, 2]);
+  ctx.strokeRect(marquee.left + 0.5, marquee.top + 0.5, marquee.width, marquee.height);
+  ctx.restore();
 }
 
 /**

@@ -25,7 +25,9 @@ interface Setup {
   setTool: (tool: EditorToolId) => void;
 }
 
-function makeSetup(options: { readOnly?: boolean; loopEnabled?: boolean } = {}): Setup {
+function makeSetup(
+  options: { readOnly?: boolean; loopEnabled?: boolean; snapPpq?: (ppq: number) => number } = {},
+): Setup {
   // Clip 1: x [40, 120) on lane 0 (track 10).
   const clips: ArrangeClip[] = [
     {
@@ -56,6 +58,7 @@ function makeSetup(options: { readOnly?: boolean; loopEnabled?: boolean } = {}):
     canEditClip: () => options.readOnly !== true,
     canEditTrack: () => options.readOnly !== true,
     getGridPpq: () => 1,
+    ...(options.snapPpq ? { snapPpq: options.snapPpq } : {}),
     getBarRange: (ppq) => ({ startPpq: Math.floor(ppq / 4) * 4, lengthPpq: 4 }),
     getTool: () => tool,
     onSplitBlocked,
@@ -107,6 +110,92 @@ describe('useClipInteractions selection', () => {
   });
 });
 
+interface MultiSelectionSetup {
+  interactions: ReturnType<typeof useClipInteractions>;
+  commands: {
+    selectClips: ReturnType<typeof vi.fn>;
+    clearClipSelection: ReturnType<typeof vi.fn>;
+    moveClips: ReturnType<typeof vi.fn>;
+  };
+  selected: () => ReadonlySet<number>;
+}
+
+/** Three clips across two lanes for marquee and grouped-move coverage. */
+function makeMultiSelectionSetup(initialSelection: number[] = []): MultiSelectionSetup {
+  const clips: ArrangeClip[] = [
+    { id: 1, trackId: 10, startPpq: 4, lengthPpq: 4 },
+    { id: 2, trackId: 10, startPpq: 10, lengthPpq: 4 },
+    { id: 3, trackId: 20, startPpq: 5, lengthPpq: 4 },
+  ];
+  let selection = new Set(initialSelection);
+  const commands = {
+    selectClips: vi.fn((ids: readonly number[]) => {
+      selection = new Set(ids);
+    }),
+    clearClipSelection: vi.fn(() => {
+      selection = new Set();
+    }),
+    moveClips: vi.fn(),
+  };
+  const interactions = useClipInteractions({
+    view,
+    getClips: () => clips,
+    getSelectedClipIds: () => selection,
+    getTrackIds: () => [10, 20],
+    getGridPpq: () => 1,
+    getBarRange: (ppq) => ({ startPpq: Math.floor(ppq / 4) * 4, lengthPpq: 4 }),
+    commands: {
+      selectClip: vi.fn(),
+      ...commands,
+      moveClip: vi.fn(),
+      trimClip: vi.fn(),
+      duplicateClip: vi.fn(() => 99),
+      createClip: vi.fn(() => null),
+    },
+  });
+  return { interactions, commands, selected: () => selection };
+}
+
+describe('useClipInteractions multi-selection', () => {
+  it('marquee-selects every clip intersecting an empty-area drag', () => {
+    const { interactions, commands, selected } = makeMultiSelectionSetup();
+    interactions.onPointerDown({ x: 10, y: 5 });
+    interactions.onPointerMove({ x: 145, y: 95 });
+    expect(interactions.previewMarquee.value).toEqual({ left: 10, top: 5, width: 135, height: 90 });
+    interactions.onPointerUp({ x: 145, y: 95 });
+
+    expect(commands.selectClips).toHaveBeenLastCalledWith([1, 2, 3], 3);
+    expect([...selected()]).toEqual([1, 2, 3]);
+    expect(interactions.previewMarquee.value).toBeNull();
+  });
+
+  it('extends the existing selection when Shift-marqueeing', () => {
+    const { interactions, commands, selected } = makeMultiSelectionSetup([1]);
+    interactions.onPointerDown({ x: 90, y: 5 }, { shift: true });
+    interactions.onPointerMove({ x: 145, y: 45 }, { shift: true });
+    interactions.onPointerUp({ x: 145, y: 45 }, { shift: true });
+
+    expect(commands.selectClips).toHaveBeenLastCalledWith([1, 2], 2);
+    expect([...selected()]).toEqual([1, 2]);
+  });
+
+  it('keeps a selected group together when dragging one of its clips', () => {
+    const { interactions, commands } = makeMultiSelectionSetup([1, 2]);
+    interactions.onPointerDown({ x: 110, y: 25 }); // clip 2
+    interactions.onPointerMove({ x: 130, y: 75 }); // +2 PPQ, one lane down
+    expect(interactions.previewClips.value).toEqual([
+      { clipId: 1, trackId: 20, startPpq: 6, lengthPpq: 4, copy: false },
+      { clipId: 2, trackId: 20, startPpq: 12, lengthPpq: 4, copy: false },
+    ]);
+    interactions.onPointerUp({ x: 130, y: 75 });
+
+    expect(commands.moveClips).toHaveBeenCalledWith([
+      { clipId: 1, newStartPpq: 6, newTrackId: 20 },
+      { clipId: 2, newStartPpq: 12, newTrackId: 20 },
+    ]);
+  });
+});
+
 describe('useClipInteractions move', () => {
   it('moves a clip horizontally with grid snapping', () => {
     const { interactions, commands } = makeSetup();
@@ -129,6 +218,15 @@ describe('useClipInteractions move', () => {
     interactions.onPointerMove({ x: 104, y: 25 }, { meta: true });
     interactions.onPointerUp({ x: 104, y: 25 }, { meta: true });
     expect(commands.moveClip).toHaveBeenCalledWith(1, 6.4, undefined);
+  });
+
+  it('uses the supplied meter-aware snap position for a move', () => {
+    const { interactions, commands } = makeSetup({ snapPpq: () => 6.5 });
+    interactions.onPointerDown({ x: 80, y: 25 });
+    interactions.onPointerMove({ x: 104, y: 25 });
+    interactions.onPointerUp({ x: 104, y: 25 });
+
+    expect(commands.moveClip).toHaveBeenCalledWith(1, 6.5, undefined);
   });
 
   it('moves a clip to another lane and passes the new track id', () => {
