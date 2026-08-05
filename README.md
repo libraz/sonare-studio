@@ -107,17 +107,23 @@ batcher (`src/ui/canvas/`).
 
 ### Two-layer engine
 
-libsonare ships as two wasm builds, copied into `src/wasm/` (generated,
-read-only):
+libsonare ships as `sonare.wasm`, copied into `src/wasm/` (generated,
+read-only) and instantiated twice from the same bytes:
 
-- `sonare.wasm` — the full project model and offline renderer. It runs on the
-  main thread (and in workers for export) and owns the musical source of
-  truth: tracks, clips, notes, tempo, SMF/MIDI codecs.
-- `sonare-rt.wasm` — a lean realtime runtime loaded inside an AudioWorklet
-  (`public/sonare-engine-worklet.js`, built by `yarn build:worklet`). It
-  plays scheduled PCM against the transport and reports meters/telemetry.
-  Control traffic uses SharedArrayBuffer when cross-origin isolation is
-  available and degrades to postMessage otherwise (`src/engine/engine.ts`).
+- On the main thread (and in workers for export) it is the full project model
+  and offline renderer, owning the musical source of truth: tracks, clips,
+  notes, tempo, SMF/MIDI codecs.
+- Inside an AudioWorklet it is the realtime engine: it plays scheduled PCM
+  against the transport and reports meters/telemetry. Control traffic uses
+  SharedArrayBuffer when cross-origin isolation is available and degrades to
+  postMessage otherwise (`src/engine/engine.ts`).
+
+The worklet scope cannot fetch, so the main thread passes the wasm bytes in
+through `processorOptions.wasmBinary`. Its module bundle is content-addressed
+(`public/assets/sonare-engine-worklet-<hash>.js`, built by
+`yarn build:worklet`) and its URL reaches the app through
+`.worklet-build/manifest.json`, so a refreshed engine can never be paired with
+a stale worklet.
 
 Playback uses a prerender path: MIDI clips are bounced offline to stereo PCM
 with the track's instrument (`src/engine/instruments.ts`, content-keyed
