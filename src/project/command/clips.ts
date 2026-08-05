@@ -18,6 +18,7 @@ export type {
   AddMidiClipInput,
 } from './clips-create';
 export { addAudioClip, addBouncedClip, addMidiClip } from './clips-create';
+export type { SliceAudioClipOptions } from './clips-editing';
 export {
   consolidateAudioClips,
   deleteClip,
@@ -26,6 +27,7 @@ export {
   moveClip,
   moveClips,
   renameClip,
+  sliceAudioClipAtTransients,
   splitClip,
   trimClip,
 } from './clips-editing';
@@ -39,6 +41,7 @@ export {
 } from './clips-expression';
 export {
   clearActiveClipSelection,
+  crossfadeClips,
   setActiveClip,
   setActiveTrack,
   setClipFades,

@@ -1,3 +1,4 @@
+import { planClipCrossfade } from '../clip-crossfade';
 import { validateClipFadePair } from '../clip-fades';
 import { getProject, useProjectStore } from '../store';
 import { normalizeTempoMap } from '../tempo-map';
@@ -175,6 +176,67 @@ export function setClipFades(clipId: number, fadeInPpq?: number, fadeOutPpq?: nu
       };
     });
   });
+}
+
+/**
+ * Crossfades two neighbouring audio clips as one undoable edit: the earlier
+ * clip fades out and the later one fades in over the region where both sound.
+ * Clips that only touch are extended into their remaining source material when
+ * the caller supplies where that material ends.
+ *
+ * @param clipIdA One clip of the pair (order does not matter).
+ * @param clipIdB The other clip.
+ * @param options.lengthPpq Crossfade length used when the clips only touch.
+ * @param options.leftSourceEndPpq Timeline position where the earlier clip's
+ * source material ends; without it a touching pair cannot be crossfaded.
+ * @returns The applied crossfade length in PPQ.
+ * @throws RangeError when the pair cannot be crossfaded (the message carries
+ * the reason from src/project/clip-crossfade.ts).
+ */
+export function crossfadeClips(
+  clipIdA: number,
+  clipIdB: number,
+  options: { lengthPpq?: number; leftSourceEndPpq?: number } = {},
+): number {
+  const store = useProjectStore();
+  const project = getProject();
+  const a = requireEditableClip(store, clipIdA);
+  const b = requireEditableClip(store, clipIdB);
+  const plan = planClipCrossfade(a, b, options);
+  if ('reason' in plan) {
+    throw new RangeError(`Clips ${clipIdA} and ${clipIdB} cannot be crossfaded: ${plan.reason}`);
+  }
+  const left = plan.leftClipId === a.id ? a : b;
+  const right = plan.rightClipId === a.id ? a : b;
+  const leftFadeIn = left.fadeInPpq ?? 0;
+  const rightFadeOut = right.fadeOutPpq ?? 0;
+  validateClipFadePair(leftFadeIn, plan.lengthPpq, plan.leftLengthPpq);
+  validateClipFadePair(plan.lengthPpq, rightFadeOut, right.lengthPpq);
+  executeAtomic((edit) => {
+    if (Math.abs(plan.leftLengthPpq - left.lengthPpq) > 1e-9) {
+      edit(1, () => project.trimClip(left.id, left.startPpq, plan.leftLengthPpq));
+    }
+    edit(1, () =>
+      project.setClipFade(left.id, { lengthPpq: leftFadeIn }, { lengthPpq: plan.lengthPpq }),
+    );
+    edit(1, () =>
+      project.setClipFade(right.id, { lengthPpq: plan.lengthPpq }, { lengthPpq: rightFadeOut }),
+    );
+    store.refresh();
+    // Mirror fallback for bindings that do not serialize fades in toJson().
+    store.clips = store.clips.map((clip) => {
+      if (clip.id !== left.id && clip.id !== right.id) return clip;
+      const { fadeInPpq: _in, fadeOutPpq: _out, ...rest } = clip;
+      const fadeIn = clip.id === left.id ? leftFadeIn : plan.lengthPpq;
+      const fadeOut = clip.id === left.id ? plan.lengthPpq : rightFadeOut;
+      return {
+        ...rest,
+        ...(fadeIn > 0 ? { fadeInPpq: fadeIn } : {}),
+        ...(fadeOut > 0 ? { fadeOutPpq: fadeOut } : {}),
+      };
+    });
+  });
+  return plan.lengthPpq;
 }
 
 /**

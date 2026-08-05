@@ -7,12 +7,21 @@ import { promptDialog } from '@/composables/useDialogs';
 import { useEditorTool } from '@/composables/useEditorTool';
 import { useFileDownloads } from '@/composables/useFileDownloads';
 import type { AutomationParam } from '@/project/automation';
+import {
+  type CrossfadeBlockReason,
+  crossfadePartner,
+  DEFAULT_CLIP_CROSSFADE_PPQ,
+  planClipCrossfade,
+} from '@/project/clip-crossfade';
 import { clipSplitBlockReason } from '@/project/clip-split';
 import {
   addMidiClip,
+  applyGrooveToActiveClip,
+  captureGrooveFromActiveClip,
   clearActiveClipSelection,
   consolidateAudioClips,
   copyActiveClip,
+  crossfadeClips,
   cutActiveClip,
   deleteClip,
   deleteTime,
@@ -35,6 +44,7 @@ import {
   setClipMidiCompSegments,
   setClipSelection,
   setMarker,
+  sliceAudioClipAtTransients,
   splitAudioClipToStems,
   splitClip,
   type TrackPart,
@@ -42,6 +52,7 @@ import {
 } from '@/project/commands';
 import { exportClipSmf } from '@/project/export';
 import { unfreezeTrack } from '@/project/freeze';
+import { grooveTemplateIsUsable } from '@/project/groove';
 import { insertParamDomainForStrip } from '@/project/insert-param-domains';
 import { useProjectStore } from '@/project/store';
 import { normalizeTempoMap } from '@/project/tempo-map';
@@ -757,6 +768,75 @@ function audioConsolidateClipIds(clipId: number): number[] {
   return candidates.slice(first, last + 1).map((entry) => entry.id);
 }
 
+/**
+ * Resolves the crossfade the clip's right edge would form: which clip it pairs
+ * with and why it is unavailable, so the menu can show the reason instead of a
+ * silently disabled action.
+ */
+function crossfadeStateFor(clipId: number): {
+  partnerId: number | null;
+  reason: CrossfadeBlockReason | null;
+} {
+  const clip = store.clips.find((entry) => entry.id === clipId);
+  if (!clip) return { partnerId: null, reason: null };
+  const partner = crossfadePartner(clip, store.clips);
+  if (!partner) return { partnerId: null, reason: null };
+  const plan = planClipCrossfade(clip, partner, crossfadeOptionsFor(clip, partner));
+  return {
+    partnerId: partner.id,
+    reason: 'reason' in plan ? plan.reason : null,
+  };
+}
+
+/** Default crossfade length and the source limit that lets touching clips overlap. */
+function crossfadeOptionsFor(
+  a: { id: number; startPpq: number },
+  b: { id: number; startPpq: number },
+): { lengthPpq: number; leftSourceEndPpq?: number } {
+  const leftId = a.startPpq <= b.startPpq ? a.id : b.id;
+  const bounds = sourceBoundsFor(leftId);
+  return {
+    lengthPpq: gridPpq.value > 0 ? gridPpq.value : DEFAULT_CLIP_CROSSFADE_PPQ,
+    ...(bounds === null ? {} : { leftSourceEndPpq: bounds.maxEndPpq }),
+  };
+}
+
+/** Localized explanation for a blocked crossfade. */
+function crossfadeReasonText(reason: CrossfadeBlockReason): string {
+  return t.value.shell.arrangement.clipActions.crossfadeReasons[reason];
+}
+
+/** Crossfades the clip with its right-hand neighbour, reporting refusals inline. */
+function runCrossfade(clipId: number): void {
+  const clip = store.clips.find((entry) => entry.id === clipId);
+  if (!clip) return;
+  const partner = crossfadePartner(clip, store.clips);
+  if (!partner) return;
+  try {
+    crossfadeClips(clip.id, partner.id, crossfadeOptionsFor(clip, partner));
+  } catch {
+    const plan = planClipCrossfade(clip, partner, crossfadeOptionsFor(clip, partner));
+    error.value = 'reason' in plan ? crossfadeReasonText(plan.reason) : '';
+  }
+}
+
+/**
+ * Cuts an audio clip at its transients, optionally snapping the slices to the
+ * arrangement grid. Failures surface in the view's error line instead of
+ * leaving the clip half-sliced (the command itself is atomic).
+ */
+async function runTransientSlice(clipId: number, quantize: boolean): Promise<void> {
+  try {
+    const ids = await sliceAudioClipAtTransients(clipId, {
+      quantize,
+      snap: snapArrangementPpq,
+    });
+    if (ids.length < 2) error.value = t.value.shell.arrangement.clipActions.sliceNoTransients;
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : String(cause);
+  }
+}
+
 async function consolidateAudioCluster(clipIds: number[]): Promise<void> {
   const id = await consolidateAudioClips(clipIds);
   if (id !== null) setActiveClip(id);
@@ -778,6 +858,7 @@ function onClipContext(payload: {
   const glueIds = glueClusterClipIds(clip.id);
   const consolidateIds = audioConsolidateClipIds(clip.id);
   const frozen = store.tracks.find((track) => track.id === clip.trackId)?.frozen !== undefined;
+  const crossfade = crossfadeStateFor(clip.id);
   const items: ContextMenuItem[] = [
     ...(frozen
       ? [
@@ -840,6 +921,27 @@ function onClipContext(payload: {
       run: () => consolidateAudioCluster(consolidateIds),
     },
     {
+      id: 'slice-transients',
+      label: t.value.shell.arrangement.clipActions.sliceTransients,
+      disabled: frozen || !isAudioClip(clip) || clip.loopEnabled,
+      run: () => runTransientSlice(clip.id, false),
+    },
+    {
+      id: 'slice-transients-quantize',
+      label: t.value.shell.arrangement.clipActions.sliceTransientsQuantize,
+      disabled: frozen || !isAudioClip(clip) || clip.loopEnabled,
+      run: () => runTransientSlice(clip.id, true),
+    },
+    {
+      id: 'crossfade',
+      label:
+        crossfade.reason === null
+          ? t.value.shell.arrangement.clipActions.crossfade
+          : `${t.value.shell.arrangement.clipActions.crossfade} — ${crossfadeReasonText(crossfade.reason)}`,
+      disabled: frozen || crossfade.partnerId === null || crossfade.reason !== null,
+      run: () => runCrossfade(clip.id),
+    },
+    {
       id: 'rename',
       label: t.value.shell.arrangement.clipActions.rename,
       disabled: frozen,
@@ -855,11 +957,32 @@ function onClipContext(payload: {
     },
   ];
   if (!isAudioClip(clip)) {
-    items.push({
-      id: 'export-midi',
-      label: t.value.shell.arrangement.clipActions.exportMidi,
-      run: () => exportClipToSmf(clip.id),
-    });
+    items.push(
+      { id: 'sep-groove', separator: true },
+      {
+        id: 'groove-capture',
+        label: t.value.shell.arrangement.clipActions.grooveCapture,
+        run: () => {
+          store.grooveTemplate = captureGrooveFromActiveClip();
+        },
+      },
+      {
+        id: 'groove-apply',
+        label: grooveTemplateIsUsable(store.grooveTemplate)
+          ? t.value.shell.arrangement.clipActions.grooveApply
+          : `${t.value.shell.arrangement.clipActions.grooveApply} — ${t.value.shell.pianoRoll.context.grooveEmpty}`,
+        disabled: frozen || !grooveTemplateIsUsable(store.grooveTemplate),
+        run: () => {
+          const groove = store.grooveTemplate;
+          if (groove) applyGrooveToActiveClip(groove, store.quantizeStrength);
+        },
+      },
+      {
+        id: 'export-midi',
+        label: t.value.shell.arrangement.clipActions.exportMidi,
+        run: () => exportClipToSmf(clip.id),
+      },
+    );
   }
   items.push(
     { id: 'sep-1', separator: true },
