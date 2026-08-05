@@ -94,6 +94,36 @@ describe('estimateChordSymbols', () => {
     expect(symbols[1]).toMatchObject({ ppq: 4, text: 'G9', rootPc: 7, quality: 15 });
   });
 
+  it('detects sixth, suspended and extended dominant chord vocabularies', () => {
+    const symbols = estimateChordSymbols(
+      [
+        // C6
+        note(60, 0, 4),
+        note(64, 0, 4),
+        note(67, 0, 4),
+        note(69, 0, 4),
+        // G7sus4
+        note(55, 4, 4),
+        note(60, 4, 4),
+        note(62, 4, 4),
+        note(65, 4, 4),
+        // C13 (the fifth may be omitted in common voicings)
+        note(60, 8, 4),
+        note(64, 8, 4),
+        note(70, 8, 4),
+        note(62, 8, 4),
+        note(69, 8, 4),
+      ],
+      { ...OPTIONS, clipLengthPpq: 12 },
+    );
+
+    expect(symbols).toMatchObject([
+      { ppq: 0, text: 'C6', rootPc: 0, quality: 0, extensions: [9] },
+      { ppq: 4, text: 'G7sus4', rootPc: 7, quality: 8, extensions: [10] },
+      { ppq: 8, text: 'C13', rootPc: 0, quality: 4, extensions: [2, 9] },
+    ]);
+  });
+
   it('detects minor add9 and major ninth qualities', () => {
     const symbols = estimateChordSymbols(
       [
@@ -165,6 +195,16 @@ describe('estimateChordSymbols', () => {
       OPTIONS,
     );
     expect(symbols[0]).toMatchObject({ text: 'C/E', rootPc: 0, bassPc: 4 });
+  });
+
+  it('uses the opening bass instead of a later passing low note for inversions', () => {
+    const symbols = estimateChordSymbols(
+      [note(53, 0, 4), note(57, 0, 4), note(60, 0, 4), note(48, 2, 1)],
+      OPTIONS,
+    );
+
+    expect(symbols[0]).toMatchObject({ text: 'F', rootPc: 5 });
+    expect(symbols[0].bassPc).toBeUndefined();
   });
 
   it('spells roots with flats in flat keys', () => {
@@ -242,6 +282,34 @@ describe('canonicalizeChordSymbols', () => {
       { ppq: 4, text: 'G7/B', rootPc: 7, quality: 4, bassPc: 11 },
     ]);
     expect(wasmState.deleted).toBe(1);
+  });
+
+  it('round-trips extension tones through the Project annotation encoding', async () => {
+    const extended: EstimatedChordSymbol[] = [
+      { ppq: 0, endPpq: 4, text: 'C13', rootPc: 0, quality: 4, extensions: [2, 9] },
+    ];
+    wasmState.json = JSON.stringify({
+      annotation: {
+        chords: [
+          {
+            start_ppq: 0,
+            end_ppq: 4,
+            root_pc: 0,
+            quality: 5,
+            slash_bass_pc: 255,
+            roman_numeral: '',
+            extensions: [2, 9],
+          },
+        ],
+      },
+    });
+
+    await expect(canonicalizeChordSymbols(extended)).resolves.toEqual([
+      { ppq: 0, text: 'C13', rootPc: 0, quality: 4, extensions: [2, 9] },
+    ]);
+    expect(wasmState.annotated).toEqual([
+      { startPpq: 0, endPpq: 4, rootPc: 0, quality: 5, slashBassPc: 255, extensions: [2, 9] },
+    ]);
   });
 
   it('drops entries with sentinel roots', async () => {

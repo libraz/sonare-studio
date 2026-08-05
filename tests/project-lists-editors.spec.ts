@@ -235,6 +235,27 @@ describe('project list editors', () => {
       wrapper.unmount();
     });
 
+    it('edits and preserves additive beat grouping through undo and refresh', async () => {
+      const wrapper = mount(TimeSignatureEditor);
+      await buttonByText(wrapper, 'Add meter').trigger('click');
+      const row = wrapper.find('tbody tr');
+      await row.find('input[type="number"]').setValue('7');
+      await selectOption(row as unknown as VueWrapper, '.cell-input', '8');
+      await row.find('.cell-grouping').setValue('2+2+3');
+      await buttonByText(wrapper, 'Apply').trigger('click');
+
+      expect(store.timeSignatures).toEqual([
+        { startPpq: 0, numerator: 7, denominator: 8, grouping: [2, 2, 3] },
+      ]);
+      expect(undo()).toBe(true);
+      expect(store.timeSignatures).toEqual([]);
+      expect(redo()).toBe(true);
+      expect(store.timeSignatures).toEqual([
+        { startPpq: 0, numerator: 7, denominator: 8, grouping: [2, 2, 3] },
+      ]);
+      wrapper.unmount();
+    });
+
     it('ignores a stale meter detection after the active clip changes', async () => {
       const pending =
         deferred<Array<{ startPpq: number; numerator: number; denominator: number }>>();
@@ -346,6 +367,20 @@ describe('project list editors', () => {
       await chooseOption('C');
       expect(store.chords[0].bassPc).toBe(0);
       expect(wrapper.find('.cell-name').text()).toBe('G7/C');
+      wrapper.unmount();
+    });
+
+    it('offers extended and altered chord vocabularies for manual entry', async () => {
+      setProjectChords([{ startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 }]);
+      const wrapper = mount(ChordListEditor);
+      const qualityTrigger = wrapper
+        .findAll('tbody tr')[0]
+        .findAll('.cell-select .select-trigger')[1];
+      await qualityTrigger.trigger('click');
+      await flushPromises();
+      await chooseOption('Dominant 13');
+      expect(store.chords[0]).toMatchObject({ quality: 4, extensions: [2, 9] });
+      expect(wrapper.find('.cell-name').text()).toBe('C13');
       wrapper.unmount();
     });
 

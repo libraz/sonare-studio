@@ -15,7 +15,7 @@
  */
 
 import { PITCH_CLASS_NAMES } from '@/lib/pitch';
-import { spellPitch } from '@/notation/pitch-spelling';
+import { chordPitchClassName } from '@/notation/pitch-spelling';
 
 /** Sentinel used by the Project annotation encoding for "no pitch class". */
 const PC_NONE = 255;
@@ -31,6 +31,8 @@ export interface ChordQualityChoice {
   suffix: string;
   /** Human-readable label for the editor dropdown. */
   label: string;
+  /** Non-intrinsic root-relative tones selected with this quality. */
+  extensions?: ReadonlyArray<number>;
 }
 
 /**
@@ -48,6 +50,14 @@ export const CHORD_QUALITY_CHOICES: ReadonlyArray<ChordQualityChoice> = [
   { quality: 11, suffix: 'm(add9)', label: 'Minor add 9' },
   { quality: 14, suffix: 'maj9', label: 'Major 9' },
   { quality: 15, suffix: '9', label: 'Dominant 9' },
+  { quality: 0, suffix: '6', label: 'Major 6', extensions: [9] },
+  { quality: 1, suffix: 'm6', label: 'Minor 6', extensions: [9] },
+  { quality: 8, suffix: '7sus4', label: 'Dominant 7 sus4', extensions: [10] },
+  { quality: 8, suffix: '9sus4', label: 'Dominant 9 sus4', extensions: [2, 10] },
+  { quality: 4, suffix: '11', label: 'Dominant 11', extensions: [2, 5] },
+  { quality: 4, suffix: '13', label: 'Dominant 13', extensions: [2, 9] },
+  { quality: 4, suffix: '7(b9,#11)', label: 'Dominant 7 b9 #11', extensions: [1, 6] },
+  { quality: 4, suffix: '7(#9,b13)', label: 'Dominant 7 #9 b13', extensions: [3, 8] },
   { quality: 2, suffix: 'dim', label: 'Diminished' },
   { quality: 3, suffix: 'aug', label: 'Augmented' },
   { quality: 8, suffix: 'sus4', label: 'Sus4' },
@@ -56,7 +66,12 @@ export const CHORD_QUALITY_CHOICES: ReadonlyArray<ChordQualityChoice> = [
   { quality: 13, suffix: 'm7b5', label: 'Half-diminished' },
 ];
 
-const SUFFIX_BY_QUALITY = new Map(CHORD_QUALITY_CHOICES.map((c) => [c.quality, c.suffix]));
+const SUFFIX_BY_QUALITY = new Map(
+  CHORD_QUALITY_CHOICES.filter((choice) => choice.extensions === undefined).map((choice) => [
+    choice.quality,
+    choice.suffix,
+  ]),
+);
 
 /** Intrinsic pitch classes for each editor quality, used to discard redundant extensions. */
 const TONE_PCS_BY_QUALITY: Readonly<Record<number, ReadonlyArray<number>>> = {
@@ -96,12 +111,15 @@ const SUFFIX_BY_QUALITY_EXTENSIONS: Readonly<Record<string, string>> = {
   '4:8': '7b13',
   '4:9': '13',
   '4:1,9': '13b9',
+  '4:2,5': '11',
+  '4:2,9': '13',
   '4:3,8': '7alt',
   '5:6': 'maj7#11',
   '6:2': 'm9',
   '6:2,5': 'm11',
   '6:2,9': 'm13',
   '8:10': '7sus4',
+  '8:2,10': '9sus4',
   '14:9': 'maj13',
 };
 
@@ -225,21 +243,15 @@ function clampPitchClass(value: number): number | null {
 /**
  * Formats a chord symbol for display, e.g. "Cmaj7", "Am7/G".
  *
- * `keyFifths` uses the MusicXML convention. A negative value selects flat
- * spellings, matching score and MusicXML chord symbols; the default preserves
- * the sharp spelling used before key-aware display was introduced.
+ * `keyFifths` uses the MusicXML convention. Borrowed chord degrees use the
+ * conventional flat spelling while #I/#IV use sharps, matching score export.
  */
 export function formatChordName(symbol: EditorChordSymbol, keyFifths = 0): string {
-  const pitchClassName = (pc: number): string => {
-    const normalized = ((pc % 12) + 12) % 12;
-    const spelled = spellPitch(60 + normalized, keyFifths);
-    return `${spelled.step}${spelled.alter === 1 ? '#' : spelled.alter === -1 ? 'b' : ''}`;
-  };
-  const root = pitchClassName(symbol.rootPc);
+  const root = chordPitchClassName(symbol.rootPc, keyFifths);
   const suffix = chordSuffix(symbol);
   const name = `${root}${suffix}`;
   if (symbol.bassPc === undefined || symbol.bassPc === symbol.rootPc) return name;
-  const bass = pitchClassName(symbol.bassPc);
+  const bass = chordPitchClassName(symbol.bassPc, keyFifths);
   return `${name}/${bass}`;
 }
 

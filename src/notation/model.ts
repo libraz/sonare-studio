@@ -288,6 +288,8 @@ export interface NotatedChordSymbol {
   quality?: number;
   /** Slash-bass pitch class 0-11, present only for slash chords. */
   bassPc?: number;
+  /** Non-intrinsic root-relative chord tones (0-11), such as 9, 11 and 13. */
+  extensions?: number[];
   /** Optional roman-numeral label (e.g. "V") from functional analysis. */
   romanNumeral?: string;
 }

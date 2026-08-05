@@ -50,11 +50,14 @@ describe('formatChordName', () => {
     );
   });
 
-  it('uses flat spellings for flat-key display, including slash basses', () => {
+  it('uses functional flat spellings for borrowed chord degrees, including slash basses', () => {
     expect(formatChordName({ startPpq: 0, endPpq: 4, rootPc: 10, quality: 0, bassPc: 3 }, -2)).toBe(
       'Bb/Eb',
     );
-    expect(formatChordName({ startPpq: 0, endPpq: 4, rootPc: 10, quality: 0 }, 2)).toBe('A#');
+    expect(formatChordName({ startPpq: 0, endPpq: 4, rootPc: 10, quality: 0 }, 2)).toBe('Bb');
+    expect(formatChordName({ startPpq: 0, endPpq: 4, rootPc: 8, quality: 0 }, 0)).toBe('Ab');
+    expect(formatChordName({ startPpq: 0, endPpq: 4, rootPc: 1, quality: 0 }, 0)).toBe('Db');
+    expect(formatChordName({ startPpq: 0, endPpq: 4, rootPc: 6, quality: 0 }, 0)).toBe('F#');
   });
 
   it('formats normalized extensions as their complete chord quality', () => {

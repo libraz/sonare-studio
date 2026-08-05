@@ -10,7 +10,10 @@ import { editorChordToChord } from '@/compose/chord-io';
 import { effectiveKeyScale } from '@/compose/key';
 import { detectProgressionGroups, type PatternGroup } from '@/compose/progression-groups';
 import { reharmCandidatesFor } from '@/compose/reharm';
-import { secondaryDominantLabel } from '@/compose/secondary-dominant';
+import {
+  canTonicizeWithSecondaryDominant,
+  secondaryDominantLabel,
+} from '@/compose/secondary-dominant';
 import {
   CHORD_PITCH_CLASS_NAMES,
   CHORD_QUALITY_CHOICES,
@@ -44,9 +47,14 @@ const BASS_OPTIONS = [{ value: -1, label: '—' }, ...PITCH_CLASS_OPTIONS];
 
 /** Chord-quality options. */
 const QUALITY_OPTIONS = CHORD_QUALITY_CHOICES.map((choice) => ({
-  value: choice.quality,
+  value: qualityChoiceKey(choice),
   label: choice.label,
 }));
+
+/** Stable select-menu key for a quality and its optional color tones. */
+function qualityChoiceKey(choice: { quality: number; extensions?: ReadonlyArray<number> }): string {
+  return `${choice.quality}:${choice.extensions?.join(',') ?? ''}`;
+}
 
 /**
  * Chord-track editor: one row per chord symbol on the project's annotation
@@ -154,8 +162,17 @@ function onRootChange(index: number, chord: EditorChordSymbol, value: number): v
   commitAt(index, { ...chord, rootPc: value });
 }
 
-function onQualityChange(index: number, chord: EditorChordSymbol, value: number): void {
-  commitAt(index, { ...chord, quality: value });
+function qualityChoiceKeyFor(chord: EditorChordSymbol): string {
+  return qualityChoiceKey(chord);
+}
+
+function onQualityChange(index: number, chord: EditorChordSymbol, value: string): void {
+  const choice = CHORD_QUALITY_CHOICES.find((candidate) => qualityChoiceKey(candidate) === value);
+  if (choice === undefined) return;
+  const next: EditorChordSymbol = { ...chord, quality: choice.quality };
+  if (choice.extensions === undefined || choice.extensions.length === 0) delete next.extensions;
+  else next.extensions = [...choice.extensions];
+  commitAt(index, next);
 }
 
 /** A bass select value of -1 clears the slash bass. */
@@ -179,6 +196,7 @@ function insertDominantTooltip(chord: EditorChordSymbol): string {
 
 /** Inserts the secondary dominant of a chord before it (see {@link insertSecondaryDominantBefore}). */
 function onInsertDominant(index: number): void {
+  if (!canTonicizeWithSecondaryDominant(store.chords[index])) return;
   estimateConfidence.value = new Map();
   reharmIndex.value = null;
   const inserted = insertSecondaryDominantBefore(index);
@@ -589,7 +607,7 @@ function clearAll(): void {
           </td>
           <td>
             <SelectMenu
-              :model-value="item.chord.quality"
+              :model-value="qualityChoiceKeyFor(item.chord)"
               class="cell-input cell-select"
               size="sm"
               :options="QUALITY_OPTIONS"
@@ -617,6 +635,7 @@ function clearAll(): void {
               :aria-label="
                 formatMessage(t.shell.lists.chords.insertDominant, { name: chordName(item.chord) })
               "
+              :disabled="!canTonicizeWithSecondaryDominant(item.chord)"
               @click="onInsertDominant(item.index)"
             >
               <ListIcon name="insertDominant" />

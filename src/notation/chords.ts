@@ -16,7 +16,7 @@
 
 import { ensureWasm } from '@/lib/wasm';
 import type { NotatedChordSymbol } from '@/notation/model';
-import { spellPitch } from '@/notation/pitch-spelling';
+import { chordPitchClassName } from '@/notation/pitch-spelling';
 import type { EditorNote } from '@/project/types';
 
 /** Sentinel used by the Project annotation encoding for "no pitch class". */
@@ -48,6 +48,8 @@ interface ChordTemplate {
   quality: number;
   intervals: ReadonlyArray<number>;
   suffix: string;
+  /** Non-intrinsic tones retained in the project annotation and MusicXML. */
+  extensions?: ReadonlyArray<number>;
 }
 
 /** One absolute PPQ region used for chord estimation. */
@@ -61,8 +63,16 @@ interface ChordWindow {
  * audio-domain ChordQuality ordinals (Major = 0).
  */
 const CHORD_TEMPLATES: ReadonlyArray<ChordTemplate> = [
+  { quality: 4, intervals: [0, 4, 7, 10, 2, 9], suffix: '13', extensions: [2, 9] }, // dominant 13
+  { quality: 4, intervals: [0, 4, 7, 10, 2, 5], suffix: '11', extensions: [2, 5] }, // dominant 11
+  { quality: 8, intervals: [0, 5, 7, 10, 2], suffix: '9sus4', extensions: [2, 10] },
+  { quality: 8, intervals: [0, 5, 7, 10], suffix: '7sus4', extensions: [10] },
+  { quality: 4, intervals: [0, 4, 7, 10, 1, 6], suffix: '7(b9,#11)', extensions: [1, 6] },
+  { quality: 4, intervals: [0, 4, 7, 10, 3, 8], suffix: '7(#9,b13)', extensions: [3, 8] },
   { quality: 14, intervals: [0, 4, 7, 11, 2], suffix: 'maj9' }, // major 9
   { quality: 15, intervals: [0, 4, 7, 10, 2], suffix: '9' }, // dominant 9
+  { quality: 0, intervals: [0, 4, 7, 9], suffix: '6', extensions: [9] }, // major 6
+  { quality: 1, intervals: [0, 3, 7, 9], suffix: 'm6', extensions: [9] }, // minor 6
   { quality: 10, intervals: [0, 4, 7, 2], suffix: 'add9' }, // add 9
   { quality: 11, intervals: [0, 3, 7, 2], suffix: 'm(add9)' }, // minor add 9
   { quality: 0, intervals: [0, 4, 7], suffix: '' }, // major
@@ -111,9 +121,7 @@ function chordWindows(options: ChordEstimateOptions): ChordWindow[] {
 
 /** Spells a pitch class as a chord-symbol token, e.g. 'C#', 'Bb', 'F'. */
 function pitchClassName(pc: number, keyFifths: number): string {
-  const spelled = spellPitch(60 + (((pc % 12) + 12) % 12), keyFifths);
-  const accidental = spelled.alter === 1 ? '#' : spelled.alter === -1 ? 'b' : '';
-  return `${spelled.step}${accidental}`;
+  return chordPitchClassName(pc, keyFifths);
 }
 
 /**
@@ -151,7 +159,9 @@ export function estimateChordSymbols(
 
   for (const { start, end } of chordWindows(options)) {
     const weights = new Array<number>(12).fill(0);
-    let bassPitch = Number.POSITIVE_INFINITY;
+    let bassAtWindowStart = Number.POSITIVE_INFINITY;
+    let firstOnset = Number.POSITIVE_INFINITY;
+    let bassAtFirstOnset = Number.POSITIVE_INFINITY;
     for (const note of notes) {
       // GM channel 10 (zero-based channel 9) is percussion. Its drum-map
       // pitches are not harmonic material and must not produce score chords.
@@ -160,7 +170,14 @@ export function estimateChordSymbols(
         Math.min(note.startPpq + note.durationPpq, end) - Math.max(note.startPpq, start);
       if (overlap <= 0) continue;
       weights[note.pitch % 12] += overlap;
-      if (note.pitch < bassPitch) bassPitch = note.pitch;
+      if (note.startPpq <= start + PRESENCE_EPSILON) {
+        bassAtWindowStart = Math.min(bassAtWindowStart, note.pitch);
+      } else if (note.startPpq < firstOnset - PRESENCE_EPSILON) {
+        firstOnset = note.startPpq;
+        bassAtFirstOnset = note.pitch;
+      } else if (Math.abs(note.startPpq - firstOnset) <= PRESENCE_EPSILON) {
+        bassAtFirstOnset = Math.min(bassAtFirstOnset, note.pitch);
+      }
     }
     const distinct = weights.filter((w) => w > PRESENCE_EPSILON).length;
     if (distinct < 2) continue;
@@ -187,6 +204,7 @@ export function estimateChordSymbols(
     if (!best) continue;
 
     const rootPc = best.root;
+    const bassPitch = Number.isFinite(bassAtWindowStart) ? bassAtWindowStart : bassAtFirstOnset;
     const bassPc = Number.isFinite(bassPitch) ? bassPitch % 12 : rootPc;
     const rootName = pitchClassName(rootPc, keyFifths);
     let text = `${rootName}${best.template.suffix}`;
@@ -197,6 +215,7 @@ export function estimateChordSymbols(
       rootPc,
       quality: best.template.quality,
     };
+    if (best.template.extensions !== undefined) symbol.extensions = [...best.template.extensions];
     if (bassPc !== rootPc) {
       text = `${text}/${pitchClassName(bassPc, keyFifths)}`;
       symbol.text = text;
@@ -215,6 +234,7 @@ interface SerializedAnnotationChord {
   quality: number;
   slash_bass_pc: number;
   roman_numeral: string;
+  extensions?: number[];
 }
 
 /** PPQ keys are rounded at micro-PPQ resolution to absorb float round-trips. */
@@ -249,6 +269,7 @@ export async function canonicalizeChordSymbols(
         rootPc: chord.rootPc ?? PC_NONE,
         quality: chord.quality === undefined ? 0 : chord.quality + 1,
         slashBassPc: chord.bassPc ?? PC_NONE,
+        ...(chord.extensions !== undefined ? { extensions: chord.extensions } : {}),
         ...(chord.romanNumeral !== undefined ? { romanNumeral: chord.romanNumeral } : {}),
       })),
     );
@@ -257,17 +278,24 @@ export async function canonicalizeChordSymbols(
     };
     const stored = doc.annotation?.chords;
     if (!Array.isArray(stored)) return [];
-    const textByStart = new Map(
-      chords.map((chord) => [Math.round(chord.ppq * KEY_PPQ_SCALE), chord.text]),
+    const chordByStart = new Map(
+      chords.map((chord) => [Math.round(chord.ppq * KEY_PPQ_SCALE), chord]),
     );
     const out: NotatedChordSymbol[] = [];
     for (const raw of stored) {
       if (typeof raw.root_pc !== 'number' || raw.root_pc < 0 || raw.root_pc > 11) continue;
-      const text = textByStart.get(Math.round(raw.start_ppq * KEY_PPQ_SCALE));
-      if (!text) continue;
-      const symbol: NotatedChordSymbol = { ppq: raw.start_ppq, text, rootPc: raw.root_pc };
+      const original = chordByStart.get(Math.round(raw.start_ppq * KEY_PPQ_SCALE));
+      if (original === undefined) continue;
+      const symbol: NotatedChordSymbol = {
+        ppq: raw.start_ppq,
+        text: original.text,
+        rootPc: raw.root_pc,
+      };
       if (raw.quality >= 1) symbol.quality = raw.quality - 1;
       if (raw.slash_bass_pc >= 0 && raw.slash_bass_pc <= 11) symbol.bassPc = raw.slash_bass_pc;
+      if (Array.isArray(raw.extensions) && raw.extensions.length > 0) {
+        symbol.extensions = raw.extensions.filter((extension) => Number.isInteger(extension));
+      }
       if (raw.roman_numeral) symbol.romanNumeral = raw.roman_numeral;
       out.push(symbol);
     }

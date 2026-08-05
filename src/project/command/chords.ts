@@ -1,5 +1,6 @@
 import { estimateChordsFromTracks } from '@/compose/estimate-chords';
 import { effectiveKeyScale } from '@/compose/key';
+import { strongBeatAt } from '@/compose/meter';
 import { melodyPitchClassesInRegion } from '@/compose/reharm';
 import {
   harmonicTracksOnly,
@@ -94,7 +95,9 @@ export function arrangementMelodyPitchClasses(startPpq: number, endPpq: number):
       : active && clipKind(active) === 'midi'
         ? projectMidiClipNoteOccurrences(active)
         : [];
-  return melodyPitchClassesInRegion(notes, startPpq, endPpq);
+  return melodyPitchClassesInRegion(notes, startPpq, endPpq, 1e-6, {
+    isStrongBeat: (ppq) => strongBeatAt(store.timeSignatures, ppq),
+  });
 }
 
 /**
@@ -167,6 +170,7 @@ export function detectChordsForClip(clipId: number): number {
       quality: symbol.quality ?? 0,
     };
     if (symbol.bassPc !== undefined) next.bassPc = symbol.bassPc;
+    if (symbol.extensions !== undefined) next.extensions = symbol.extensions;
     return next;
   });
   const clipEnd = clip.startPpq + clip.lengthPpq;

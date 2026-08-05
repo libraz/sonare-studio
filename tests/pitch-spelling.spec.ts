@@ -5,6 +5,7 @@ import {
   modeToProjectMode,
   projectModeToMode,
   spellPitch,
+  spellPitchWithContext,
 } from '@/notation/pitch-spelling';
 
 describe('spellPitch', () => {
@@ -39,6 +40,40 @@ describe('spellPitch', () => {
     expect(spellPitch(66, -5)).toEqual({ step: 'G', alter: -1, octave: 4 });
     expect(spellPitch(68, -5)).toEqual({ step: 'A', alter: -1, octave: 4 });
     expect(spellPitch(70, -5)).toEqual({ step: 'B', alter: -1, octave: 4 });
+  });
+
+  it('uses signature spellings across E#/Cb octave boundaries', () => {
+    // F# major's leading tone is E#, not F natural.
+    expect(spellPitch(65, 6)).toEqual({ step: 'E', alter: 1, octave: 4 });
+    // Gb major's fourth degree is Cb; Cb4 is MIDI 59 rather than Cb3.
+    expect(spellPitch(59, -6)).toEqual({ step: 'C', alter: -1, octave: 4 });
+  });
+
+  it('uses melodic and harmonic context for chromatic spellings and double sharps', () => {
+    // D minor: C# rises to D as the raised leading tone, rather than Db.
+    expect(spellPitchWithContext(61, -1, { nextMidi: 62 })).toMatchObject({
+      step: 'C',
+      alter: 1,
+    });
+    expect(spellPitchWithContext(61, -1, { previousMidi: 62 })).toMatchObject({
+      step: 'C',
+      alter: 1,
+    });
+    // F major: D7 is D–F#–A–C, not D–Gb–A–C.
+    expect(spellPitchWithContext(66, -1, { chordRootMidi: 62 })).toMatchObject({
+      step: 'F',
+      alter: 1,
+    });
+    // A raised seventh can require F## when it resolves to G#.
+    expect(spellPitchWithContext(67, 5, { nextMidi: 68 })).toMatchObject({
+      step: 'F',
+      alter: 2,
+    });
+    // G major's borrowed bVI is Eb, not D#.
+    expect(spellPitchWithContext(63, 1, { chordRootMidi: 63 })).toMatchObject({
+      step: 'E',
+      alter: -1,
+    });
   });
 
   it('uses MusicXML octaves (C4 = MIDI 60)', () => {

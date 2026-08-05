@@ -147,6 +147,9 @@ describe('chord-io adapter', () => {
     ['min11'],
     ['min13'],
     ['min6/9'],
+    ['minMaj9'],
+    ['minMaj11'],
+    ['minMaj13'],
   ] as const)('round-trips the degraded %s quality through the editor', (quality) => {
     const editor = chordSpanToEditorChord({ rootPc: 0, quality, startBeat: 0 }, 0, 4);
     expect(editorChordToChordSpan(editor, 0).quality).toBe(quality);
@@ -236,6 +239,16 @@ describe('meter adapter', () => {
     expect(strongBeatAt(unsorted, 1)).toBe(false);
     expect(strongBeatAt(unsorted, 16)).toBe(true);
     expect(strongBeatAt(unsorted, 19)).toBe(true);
+  });
+
+  it('treats additive-group starts as strong beats', () => {
+    const additive = [{ startPpq: 0, numerator: 7, denominator: 8, grouping: [2, 2, 3] }];
+    // Eighth-note units are 0.5 PPQ: 2+2+3 starts at 0, 1, and 2 PPQ.
+    expect(strongBeatAt(additive, 0)).toBe(true);
+    expect(strongBeatAt(additive, 1)).toBe(true);
+    expect(strongBeatAt(additive, 2)).toBe(true);
+    expect(strongBeatAt(additive, 0.5)).toBe(false);
+    expect(strongBeatAt(additive, 1.5)).toBe(false);
   });
 });
 

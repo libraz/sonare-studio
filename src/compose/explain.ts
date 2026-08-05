@@ -297,7 +297,11 @@ function pitchName(midi: number, keyFifths?: number): string {
  * surfaced as its own verdict — the interval line already says "dissonant".
  * Returns an empty array when the note sounds alone or against no other voice.
  */
-function counterpointLines(analysis: NoteAnalysis, labels: TheoryLabels): TheoryCardLine[] {
+function counterpointLines(
+  analysis: NoteAnalysis,
+  labels: TheoryLabels,
+  keyFifths: number | undefined,
+): TheoryCardLine[] {
   const out: TheoryCardLine[] = [];
   const vertical: VerticalInfo | undefined = analysis.vertical;
   if (vertical !== undefined) {
@@ -318,7 +322,10 @@ function counterpointLines(analysis: NoteAnalysis, labels: TheoryLabels): Theory
   if (reasons & ReasonFlag.Suspension) {
     const target = analysis.safety?.resolveTo;
     verdict = {
-      text: cp.suspension.replace('{target}', target !== undefined ? pitchName(target) : ''),
+      text: cp.suspension.replace(
+        '{target}',
+        target !== undefined ? pitchName(target, keyFifths) : '',
+      ),
       term: labels.glossary.suspension,
     };
   } else if (reasons & ReasonFlag.ParallelPerfect) {
@@ -393,7 +400,7 @@ export function buildTheoryCard(
   }
   const colorTones = chordScaleText(analysis, labels, ctx.keyFifths);
   if (colorTones !== undefined) lines.push({ label: labels.lines.chordScale, text: colorTones });
-  lines.push(...counterpointLines(analysis, labels));
+  lines.push(...counterpointLines(analysis, labels, ctx.keyFifths));
   const nct = nctLine(analysis, labels);
   if (nct !== undefined) {
     lines.push({
