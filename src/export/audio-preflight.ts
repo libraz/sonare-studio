@@ -7,8 +7,9 @@ import {
 } from '@/persistence/assets';
 import { audioClipSegments } from '@/project/comping';
 import { effectiveTrackInstrument } from '@/project/instrument';
-import type { InsertSlot } from '@/project/mixer';
+import { type InsertSlot, normalizeMixerSoloMode, tracksWithVcaSolo } from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
+import { normalizeTempoMap } from '@/project/tempo-map';
 import {
   documentAudibleTrackIndices,
   ppqSpanIntersectsRange,
@@ -29,7 +30,10 @@ export type AudioExportBlocker =
 /** A fidelity limitation the user may explicitly accept (localized at the UI). */
 export type AudioExportWarning =
   | { kind: 'external-midi-silent'; track: string }
-  | { kind: 'release-tail-short'; currentSeconds: number; suggestedSeconds: number };
+  | { kind: 'release-tail-short'; currentSeconds: number; suggestedSeconds: number }
+  | { kind: 'solo-active'; tracks: string[] }
+  | { kind: 'pfl-mode-active' }
+  | { kind: 'silent-mixdown' };
 
 export interface AudioExportPreflightResult {
   /** Conditions that must be fixed before starting the expensive render. */
@@ -64,10 +68,22 @@ function isMidiClip(clip: ProjectDocument['tracks'][number]['clips'][number]): b
   return (clip.kind ?? 'midi') === 'midi';
 }
 
-function activeTimeEffectSlots(
+export interface TimeEffectSlotOptions {
+  /** Include return/output-bus inserts that belong to an audible route. */
+  includeBuses?: boolean;
+  /** Include master-strip inserts. */
+  includeMaster?: boolean;
+  /** Include the offline mastering-chain processors. */
+  includeMastering?: boolean;
+}
+
+/** Returns enabled reverb/delay-like slots that can produce a release tail. */
+export function activeTimeEffectSlots(
   doc: ProjectDocument,
   audibleTrackIndices: ReadonlySet<number>,
+  options: TimeEffectSlotOptions = {},
 ): InsertSlot[] {
+  const { includeBuses = true, includeMaster = true, includeMastering = true } = options;
   const slots: InsertSlot[] = [];
   const activeBusIds = new Set<string>();
   doc.tracks.forEach((track, index) => {
@@ -79,16 +95,20 @@ function activeTimeEffectSlots(
       );
     if (!audibleTrackIndices.has(index) && !carriesAudibleMember) return;
     slots.push(...(track.mixer?.inserts ?? []));
-    if (track.mixer?.outputBusId) activeBusIds.add(track.mixer.outputBusId);
-    for (const send of track.mixer?.sends ?? []) {
-      if (send.enabled) activeBusIds.add(send.busId);
+    if (includeBuses) {
+      if (track.mixer?.outputBusId) activeBusIds.add(track.mixer.outputBusId);
+      for (const send of track.mixer?.sends ?? []) {
+        if (send.enabled) activeBusIds.add(send.busId);
+      }
     }
   });
-  slots.push(...(doc.mixer?.master.inserts ?? []));
-  for (const bus of doc.mixer?.buses ?? []) {
-    if (activeBusIds.has(bus.id)) slots.push(...(bus.strip?.inserts ?? []));
+  if (includeMaster) slots.push(...(doc.mixer?.master.inserts ?? []));
+  if (includeBuses) {
+    for (const bus of doc.mixer?.buses ?? []) {
+      if (activeBusIds.has(bus.id)) slots.push(...(bus.strip?.inserts ?? []));
+    }
   }
-  slots.push(...(doc.mixer?.masteringChain?.processors ?? []));
+  if (includeMastering) slots.push(...(doc.mixer?.masteringChain?.processors ?? []));
   return slots.filter((slot) => slot.enabled && /(?:reverb|delay|echo)/i.test(slot.processor));
 }
 
@@ -117,7 +137,8 @@ function trackTimelineIntersectsRange(
   );
 }
 
-function suggestedTailSeconds(slots: ReadonlyArray<InsertSlot>): number {
+/** Returns a conservative release-tail duration for active time effects. */
+export function suggestedTailSeconds(slots: ReadonlyArray<InsertSlot>): number {
   let suggested = slots.length > 0 ? 5 : 0;
   for (const slot of slots) {
     for (const [name, value] of Object.entries(slot.params)) {
@@ -145,7 +166,19 @@ export async function audioExportPreflight(
   const blockers: AudioExportBlocker[] = [];
   const warnings: AudioExportWarning[] = [];
   const range = resolvePreflightRange(options);
+  const tempoMap = normalizeTempoMap(doc.tempoSegments);
   const audibleTrackIndices = documentAudibleTrackIndices(doc);
+  const vcaControls = new Map((doc.mixer?.vcaGroups ?? []).map((group) => [group.id, group]));
+  const soloTracks = tracksWithVcaSolo(doc.tracks, vcaControls).filter((track) => track.solo);
+  if (soloTracks.length > 0) {
+    warnings.push({ kind: 'solo-active', tracks: soloTracks.map((track) => track.name) });
+    if (normalizeMixerSoloMode(doc.mixer?.soloMode) === 'pfl') {
+      warnings.push({ kind: 'pfl-mode-active' });
+    }
+  }
+  if (doc.tracks.length > 0 && audibleTrackIndices.size === 0) {
+    warnings.push({ kind: 'silent-mixdown' });
+  }
   const uses = new Map<string, AssetUse>();
   const addUse = (id: string, label: AudioAssetLabel): void => {
     const use = uses.get(id) ?? { id, labels: new Map<string, AudioAssetLabel>() };
@@ -182,7 +215,7 @@ export async function audioExportPreflight(
     for (const clip of track.clips) {
       if ((clip.kind ?? 'midi') !== 'audio' || clip.gain <= 0 || clip.lengthPpq <= 0) continue;
       if (!ppqSpanIntersectsRange(clip.startPpq, clip.lengthPpq, range)) continue;
-      const segments = audioClipSegments(clip);
+      const segments = audioClipSegments(clip, { tempoMap, clipStartPpq: clip.startPpq });
       if (segments.length === 0) {
         blockers.push({ kind: 'audio-clip-no-media', clip: clip.name, track: track.name });
         continue;

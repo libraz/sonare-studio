@@ -9,6 +9,7 @@ import { buildMidiClipSchedules } from '@/engine/midi-sync';
 import { groupBusGainDb } from '@/engine/strip-sync';
 import { effectiveTrackInstrument } from '@/project/instrument';
 import {
+  effectiveMixerBusGainDb,
   effectiveTrackMute,
   tracksWithVcaSolo,
   type VcaControlState,
@@ -189,7 +190,7 @@ export function buildBusRouting(doc: ProjectDocument, trackIds: number[]): BusRo
   const busNumberById = new Map<string, number>();
   const buses = (doc.mixer?.buses ?? []).map((bus, index) => {
     busNumberById.set(bus.id, index + 1);
-    return { busId: index + 1, gainDb: bus.gainDb };
+    return { busId: index + 1, gainDb: effectiveMixerBusGainDb(bus) };
   });
   const groupBusByTrackIndex = new Map<number, number>();
   doc.tracks.forEach((track, index) => {
@@ -366,7 +367,8 @@ export interface RenderWindow {
  * @param tempoMap Normalized tempo map for PPQ-to-sample conversion.
  * @param range Resolved PPQ range (endPpq null = up to content end).
  * @param sampleRate Render sample rate in Hz.
- * @param releaseTailSeconds Tail appended after content for open project renders.
+ * @param releaseTailSeconds Tail appended after content for eligible renders.
+ * @param appendReleaseTailForExplicitRange Whether an explicit range gets a tail too.
  * @returns The window's start/end samples and total frame count.
  */
 export function resolveRenderWindow(
@@ -377,11 +379,16 @@ export function resolveRenderWindow(
   releaseTailSeconds = RELEASE_TAIL_SECONDS,
   audioClips: ReadonlyArray<Pick<EngineClipSpec, 'startPpq' | 'lengthSamples'>> = [],
   audibleTrackIndices?: ReadonlySet<number>,
+  appendReleaseTailForExplicitRange = false,
 ): RenderWindow {
   const startSample = ppqToSamples(tempoMap, range.startPpq, sampleRate);
   let endSample: number;
   if (range.endPpq !== null) {
-    endSample = ppqToSamples(tempoMap, range.endPpq, sampleRate);
+    endSample =
+      ppqToSamples(tempoMap, range.endPpq, sampleRate) +
+      (appendReleaseTailForExplicitRange
+        ? Math.round(Math.max(0, releaseTailSeconds) * sampleRate)
+        : 0);
   } else {
     let contentEndPpq = 0;
     for (let trackIndex = 0; trackIndex < doc.tracks.length; trackIndex += 1) {

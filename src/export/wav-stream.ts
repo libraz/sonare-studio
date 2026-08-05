@@ -1,7 +1,13 @@
 /** Incremental WAV payload writer for long mixdowns. */
 
 import type { PayloadMemoryMeter } from '@/lib/payload-memory';
-import { type EncodeWavOptions, encodeWavChunk, type WavBitDepth, wavHeader } from './wav';
+import {
+  type EncodeWavOptions,
+  encodeWavChunk,
+  type WavBitDepth,
+  wavHeader,
+  wavTrailingMetadata,
+} from './wav';
 
 export interface WavStreamWriter {
   add(channels: readonly [Float32Array, Float32Array], offsetFrames: number): void;
@@ -51,14 +57,33 @@ export function createWavStreamWriter(options: {
         );
       }
       closed = true;
-      const header = wavHeader(totalFrames, 2, options.sampleRate, options.bitDepth);
-      const releasePublish = options.meter.retain(header.byteLength, 'WAV header');
+      const header = wavHeader(
+        totalFrames,
+        2,
+        options.sampleRate,
+        options.bitDepth,
+        options.encodeOptions,
+      );
+      const trailing = wavTrailingMetadata(options.encodeOptions?.metadata);
+      const releasePublish = options.meter.retain(
+        header.byteLength + trailing.byteLength,
+        'WAV header and metadata',
+      );
       try {
         const publishHeader = new Uint8Array(header.byteLength);
         publishHeader.set(header);
-        return new Blob([publishHeader.buffer, ...chunks.map((chunk) => chunk.buffer)], {
-          type: 'audio/wav',
-        });
+        const publishTrailing = new Uint8Array(trailing.byteLength);
+        publishTrailing.set(trailing);
+        return new Blob(
+          [
+            publishHeader.buffer,
+            ...chunks.map((chunk) => new Uint8Array(chunk).buffer),
+            publishTrailing.buffer,
+          ],
+          {
+            type: 'audio/wav',
+          },
+        );
       } finally {
         releasePublish();
         releaseChunks();

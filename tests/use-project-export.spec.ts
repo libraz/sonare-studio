@@ -64,15 +64,15 @@ function makeDoc(kind: 'midi' | 'audio' = 'midi'): ProjectDocument {
   };
 }
 
-function setup() {
+function setup(loop = { enabled: false, startPpq: 0, endPpq: 0 }) {
   const downloadBlobFile = vi.fn();
   const closeProjectMenu = vi.fn();
   const projectExport = useProjectExport({
     closeProjectMenu,
     downloadBlobFile,
-    loopEnabled: ref(false),
-    loopStartPpq: ref(0),
-    loopEndPpq: ref(0),
+    loopEnabled: ref(loop.enabled),
+    loopStartPpq: ref(loop.startPpq),
+    loopEndPpq: ref(loop.endPpq),
     runAction: async (action) => {
       await action();
     },
@@ -122,6 +122,17 @@ describe('useProjectExport', () => {
     expect(xml).toContain('<fifths>-1</fifths>');
     expect(xml).toContain('<rehearsal default-y="40">Verse</rehearsal>');
     expect(xml).toContain('<words default-y="24">Intro</words>');
+  });
+
+  it('does not turn the transport loop into MusicXML repeat barlines', async () => {
+    await loadProjectDocument(makeDoc('midi'));
+    const { downloadBlobFile, projectExport } = setup({ enabled: true, startPpq: 0, endPpq: 4 });
+
+    projectExport.exportMusicXmlAction();
+    await vi.waitFor(() => expect(downloadBlobFile).toHaveBeenCalledTimes(1));
+
+    const [blob] = downloadBlobFile.mock.calls[0] as [Blob, string];
+    await expect(blob.text()).resolves.not.toContain('<repeat ');
   });
 
   it('does not export MusicXML when the active clip is audio', async () => {

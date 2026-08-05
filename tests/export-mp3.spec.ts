@@ -30,6 +30,25 @@ function expectMpegSync(bytes: Uint8Array): void {
   expect(bytes[1] & 0xe0).toBe(0xe0);
 }
 
+function synchsafe(bytes: Uint8Array, offset: number): number {
+  return (
+    (bytes[offset] << 21) | (bytes[offset + 1] << 14) | (bytes[offset + 2] << 7) | bytes[offset + 3]
+  );
+}
+
+function mpegFrameInfo(bytes: Uint8Array, offset: number): { size: number; infoOffset: number } {
+  const bitrateIndex = (bytes[offset + 2] >> 4) & 0xf;
+  const sampleRateIndex = (bytes[offset + 2] >> 2) & 0x3;
+  const bitrates = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
+  const sampleRates = [44100, 48000, 32000];
+  const size =
+    Math.floor((144000 * bitrates[bitrateIndex]) / sampleRates[sampleRateIndex]) +
+    ((bytes[offset + 2] >> 1) & 1);
+  const hasCrc = (bytes[offset + 1] & 1) === 0;
+  const mono = bytes[offset + 3] >> 6 === 3;
+  return { size, infoOffset: offset + 4 + (hasCrc ? 2 : 0) + (mono ? 17 : 32) };
+}
+
 describe('mp3 encoder registration', () => {
   it('registers once and is idempotent afterwards', () => {
     const hadMp3 = listEncoders().some((encoder) => encoder.id === MP3_ENCODER_ID);
@@ -96,6 +115,32 @@ describe('encodeMp3', () => {
   it('handles empty input (header/flush only)', async () => {
     const bytes = await encodeMp3([new Float32Array(0), new Float32Array(0)], 44100);
     expect(bytes).toBeInstanceOf(Uint8Array);
+  });
+
+  it('adds ID3v2 and CBR Info/LAME gapless metadata for a delivery', async () => {
+    const input = makeStereo(4 * 1152);
+    const bytes = await encodeMp3(input, 44100, {
+      bitrate: 128,
+      metadata: { title: 'Mix', originator: 'Sonare Studio' },
+    });
+    expect(String.fromCharCode(...bytes.slice(0, 3))).toBe('ID3');
+    const audioOffset = 10 + synchsafe(bytes, 6);
+    expectMpegSync(bytes.slice(audioOffset));
+    const { size, infoOffset } = mpegFrameInfo(bytes, audioOffset);
+    expect(size).toBeGreaterThan(0);
+    expect(String.fromCharCode(...bytes.slice(infoOffset, infoOffset + 4))).toBe('Info');
+    const lameOffset = infoOffset + 16;
+    expect(String.fromCharCode(...bytes.slice(lameOffset, lameOffset + 9))).toBe('LAME3.100');
+    const delay = (bytes[lameOffset + 21] << 4) | (bytes[lameOffset + 22] >> 4);
+    const padding = ((bytes[lameOffset + 22] & 0xf) << 8) | bytes[lameOffset + 23];
+    expect(delay).toBe(576);
+    expect(padding).toBeGreaterThanOrEqual(576);
+    expect(padding).toBeLessThanOrEqual(1728);
+    const tags = new TextDecoder().decode(bytes.slice(10, audioOffset));
+    expect(tags).toContain('TIT2');
+    expect(tags).toContain('Mix');
+    expect(tags).toContain('TPE1');
+    expect(tags).toContain('Sonare Studio');
   });
 });
 

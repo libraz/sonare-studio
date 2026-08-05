@@ -322,7 +322,9 @@ export function useProjectExport(options: ProjectExportOptions) {
         estimateFingering: store.scoreDisplaySettings.estimateFingering,
         grandStaffSplitPitch: store.scoreDisplaySettings.grandStaffSplitPitch,
         layoutSettings: store.scoreDisplaySettings,
-        loopRegion: exportLoopRegion.value,
+        // Transport looping is not a notated repeat and must never be baked
+        // into the exported MusicXML score.
+        loopRegion: null,
       });
       options.downloadBlobFile(
         new Blob([serializeMusicXml(score)], { type: MUSICXML_MIME }),

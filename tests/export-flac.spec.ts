@@ -27,6 +27,19 @@ function hex(bytes: Uint8Array): string {
   return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+function metadataBlocks(
+  bytes: Uint8Array,
+): Array<{ type: number; last: boolean; offset: number; size: number }> {
+  const blocks: Array<{ type: number; last: boolean; offset: number; size: number }> = [];
+  for (let offset = 4; ; ) {
+    const header = bytes[offset];
+    const size = u24(bytes, offset + 1);
+    blocks.push({ type: header & 0x7f, last: (header & 0x80) !== 0, offset: offset + 4, size });
+    offset += 4 + size;
+    if ((header & 0x80) !== 0) return blocks;
+  }
+}
+
 function quantizeSample(sample: number, bitDepth: 16 | 24): number {
   const value = Math.min(1, Math.max(-1, sample));
   const positiveMax = bitDepth === 16 ? 0x7fff : 0x7fffff;
@@ -125,6 +138,31 @@ describe('encodeFlac', () => {
     expect(bytes[firstFrame + 1] & 0xfe).toBe(0xf8);
     expect(bytes[firstFrame + 2] >> 4).toBe(7);
     expect(bytes.length - firstFrame).toBeGreaterThanOrEqual(minFrameSize * 2);
+  });
+
+  it('adds a seek table and Vorbis comments for delivery metadata', () => {
+    const bytes = encodeFlac([new Float32Array(32)], 48_000, {
+      bitDepth: 16,
+      blockSize: 16,
+      metadata: {
+        title: 'Mix',
+        originator: 'Sonare Studio',
+        originationDate: '2026-08-05',
+        originationTime: '12:34:56',
+      },
+    });
+    const blocks = metadataBlocks(bytes);
+    expect(blocks.map((block) => block.type)).toEqual([0, 3, 4]);
+    expect(blocks.map((block) => block.last)).toEqual([false, false, true]);
+    expect(blocks[1].size).toBe(36); // two 18-byte seek points
+    const seek = new DataView(bytes.buffer, bytes.byteOffset + blocks[1].offset, blocks[1].size);
+    expect(seek.getBigUint64(0, false)).toBe(0n);
+    expect(seek.getBigUint64(8, false)).toBe(0n);
+    const comment = new TextDecoder().decode(
+      bytes.slice(blocks[2].offset, blocks[2].offset + blocks[2].size),
+    );
+    expect(comment).toContain('Sonare Studio');
+    expect(comment).toContain('TITLE=Mix');
   });
 
   it('uses fixed-predictor Rice subframes when they are smaller than verbatim PCM', () => {

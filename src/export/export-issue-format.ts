@@ -20,6 +20,9 @@ export interface ExportIssueStrings {
   warning: {
     externalMidiSilent: string;
     releaseTailShort: string;
+    soloActive: string;
+    pflModeActive: string;
+    silentMixdown: string;
   };
   label: {
     frozenTrack: string;
@@ -74,6 +77,12 @@ export function formatPreflightWarning(
       return strings.warning.releaseTailShort
         .replace('{current}', String(warning.currentSeconds))
         .replace('{suggested}', String(warning.suggestedSeconds));
+    case 'solo-active':
+      return strings.warning.soloActive.replace('{tracks}', warning.tracks.join(', '));
+    case 'pfl-mode-active':
+      return strings.warning.pflModeActive;
+    case 'silent-mixdown':
+      return strings.warning.silentMixdown;
   }
 }
 

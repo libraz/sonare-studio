@@ -47,7 +47,8 @@ import {
   engineFaderAutomationPoints,
 } from '@/engine/engine-declaration';
 import { resolvePresetName } from '@/engine/instruments';
-import { busSceneJson, liveMasterStrip, stripSceneJson } from '@/engine/strip-sync';
+import { busSceneJson, stripSceneJson } from '@/engine/strip-sync';
+import { activeTimeEffectSlots, suggestedTailSeconds } from '@/export/audio-preflight';
 import { assertRenderPayloadMemory, estimateRenderPayloadMemory } from '@/export/memory-budget';
 import {
   type ExportLimitation,
@@ -117,6 +118,7 @@ import {
   type EngineClipSpec,
   type EngineRenderOptions,
   laneParamId,
+  MAX_PREROLL_SECONDS,
   masterParamId,
   type OfflineRenderEngine,
   PREROLL_SECONDS,
@@ -224,8 +226,6 @@ export async function renderProjectWithEngine(
   const loadFontBytes = options.loadFont ?? loadFont;
   let resolvePreset = options.resolvePreset ?? ((preset: string) => preset);
   let resolveInsertLatency: InsertLatencyResolver = options.insertLatency ?? (() => 0);
-  let realtimeMasteringInsertCatalog: ReadonlySet<string> =
-    options.realtimeMasteringInsertCatalog ?? new Set<string>();
   const checkCancel = () => {
     if (options.shouldCancel?.()) throw new MixdownCancelledError();
   };
@@ -237,24 +237,17 @@ export async function renderProjectWithEngine(
 
   let createEngine = options.createEngine;
   let deps = options.deps;
+  let resampleAudio = options.resampleAudio;
   if (!createEngine || deps === undefined) {
     const wasm = await ensureWasm();
+    resampleAudio ??= wasm.resample;
     if (!options.resolvePreset) {
       resolvePreset = (preset: string) => resolvePresetName(wasm, preset);
     }
     if (!options.insertLatency) {
       const catalog = (
-        wasm as unknown as {
-          masteringInsertNames?: () => string[];
-          masteringProcessorCatalog?: () => InsertLatencyCatalogEntry[];
-        }
+        wasm as unknown as { masteringProcessorCatalog?: () => InsertLatencyCatalogEntry[] }
       ).masteringProcessorCatalog?.();
-      const insertNames = (
-        wasm as unknown as { masteringInsertNames?: () => string[] }
-      ).masteringInsertNames?.();
-      if (Array.isArray(insertNames)) {
-        realtimeMasteringInsertCatalog = new Set(insertNames);
-      }
       resolveInsertLatency = insertLatencyResolverFromCatalog(catalog, { sampleRate });
     }
     if (!createEngine) {
@@ -284,6 +277,18 @@ export async function renderProjectWithEngine(
   };
   const audibleTrackIndices = documentAudibleTrackIndices(doc);
   if (options.freezeTrackIndex !== undefined) audibleTrackIndices.add(options.freezeTrackIndex);
+  const prerollSeconds = Math.min(
+    MAX_PREROLL_SECONDS,
+    Math.max(
+      PREROLL_SECONDS,
+      suggestedTailSeconds(
+        activeTimeEffectSlots(doc, audibleTrackIndices, {
+          includeMaster: includeMasterChain,
+          includeMastering: includeMasterChain,
+        }),
+      ),
+    ),
+  );
 
   // Build the MIDI program before loading any SoundFont. Exact compiled note
   // intervals plus the shared audible/range plan determine which fonts can
@@ -339,10 +344,30 @@ export async function renderProjectWithEngine(
       audibleStemTrackIndices.add(trackIndex);
     }
   });
+  const groupStemIndices = new Set(
+    doc.tracks.flatMap((track, trackIndex) =>
+      track.kind === 'group' && audibleStemTrackIndices.has(trackIndex) ? [trackIndex] : [],
+    ),
+  );
   const stemTracks = options.stems
     ? doc.tracks
         .map((track, trackIndex) => ({ track, trackIndex }))
-        .filter(({ trackIndex }) => audibleStemTrackIndices.has(trackIndex))
+        .filter(({ track, trackIndex }) => {
+          if (!audibleStemTrackIndices.has(trackIndex)) return false;
+          // A group stem owns all of its member lanes. Emitting both would
+          // duplicate the same routed signal when the stems are re-summed.
+          if (track.groupIndex !== undefined && groupStemIndices.has(track.groupIndex)) {
+            return false;
+          }
+          // When return stems are requested, a track whose primary output is a
+          // return bus is represented by that bus stem rather than a bypassed
+          // duplicate of it.
+          return !(
+            options.busStems === true &&
+            track.kind !== 'group' &&
+            track.mixer?.outputBusId !== undefined
+          );
+        })
     : [];
   const stemBuses =
     options.stems && options.busStems === true
@@ -362,14 +387,12 @@ export async function renderProjectWithEngine(
     masteringChainIsActive(chain) &&
     (deps?.mastering ?? null) !== null;
   // Integrated loudness and dynamic-range measurement require the complete
-  // deliverable. The streaming WAV path otherwise returns only peakDb.
-  const hasFullBufferMetering = (deps?.metering ?? null) !== null;
+  // deliverable. The streaming WAV path deliberately reports peakDb only.
   const streamingMixdownEligible =
     options.onMixdownChunk !== undefined &&
     stemCount === 0 &&
     conflictingSf2TrackIndices.size === 0 &&
-    !hasFullBufferMastering &&
-    !hasFullBufferMetering;
+    !hasFullBufferMastering;
 
   const audioMemory = loadAudioMeta
     ? await preflightAudioClipMemory(doc, {
@@ -389,6 +412,7 @@ export async function renderProjectWithEngine(
     options.releaseTailSeconds,
     audioMemory.audioWindowClips,
     audibleTrackIndices,
+    options.appendReleaseTailForExplicitRange,
   );
   if (options.memoryBudgetBytes !== undefined) {
     assertRenderPayloadMemory(
@@ -444,13 +468,17 @@ export async function renderProjectWithEngine(
     );
   }
 
-  // Audio clips: the live scheduling transforms (slice window, baked fades,
-  // linear resample to the render rate), placed at their timeline PPQ.
+  // Audio clips: the live scheduling transforms (slice window, baked fades),
+  // then WASM's offline-quality resample to the render rate, at their timeline PPQ.
   const sourceAudioClips = await buildAudioClips(doc, {
     trackIds,
     tempoMap,
     sampleRate,
     loadAudio,
+    resampleAudio: async (samples, sourceRate, targetRate) => {
+      resampleAudio ??= (await ensureWasm()).resample;
+      return resampleAudio(samples, sourceRate, targetRate);
+    },
     checkCancel,
     mediaIssues,
     range,
@@ -466,6 +494,7 @@ export async function renderProjectWithEngine(
     options.releaseTailSeconds,
     sourceAudioClips,
     audibleTrackIndices,
+    options.appendReleaseTailForExplicitRange,
   );
   if (options.memoryBudgetBytes !== undefined) {
     const preparedClipBytes = sourceAudioClips.reduce(
@@ -521,7 +550,18 @@ export async function renderProjectWithEngine(
                 outputBusId,
               };
             })
-          : lanes;
+          : pass.stemIndices !== null && pass.stemRouting !== 'document'
+            ? lanes.map((lane, index) => {
+                if (!pass.stemIndices?.has(index)) return lane;
+                return {
+                  trackId: lane.trackId,
+                  ...(!pass.separateReturnStems && lane.sends?.length ? { sends: lane.sends } : {}),
+                  ...(pass.stemRouting === 'group' && lane.outputBusId !== undefined
+                    ? { outputBusId: lane.outputBusId }
+                    : {}),
+                };
+              })
+            : lanes;
     engine.setTrackLanes(passLanes);
 
     for (const bus of doc.mixer?.buses ?? []) {
@@ -671,14 +711,10 @@ export async function renderProjectWithEngine(
     // Master strip: inserts/EQ only with the chain enabled; gain/pan whenever
     // the pass renders master levels (stems are pre-master).
     const master = doc.mixer?.master;
-    const masterStrip =
-      pass.masterStrip && master
-        ? liveMasterStrip(
-            master,
-            includeMasterChain ? chain : undefined,
-            realtimeMasteringInsertCatalog,
-          )
-        : master;
+    // `liveMasterStrip` is strictly a preview optimization. Offline export
+    // keeps the master strip independent, then applies the entire mastering
+    // rack after its preset in declared order below.
+    const masterStrip = master;
     if (pass.masterStrip && masterStrip && stripHasDsp(masterStrip)) {
       engine.setMasterStripJson(stripSceneJson('master', masterStrip));
       masterStrip.inserts.forEach((slot, insertIndex) => {
@@ -705,11 +741,7 @@ export async function renderProjectWithEngine(
           lane.param === 'faderDb'
             ? engineFaderAutomationPoints(
                 lane.points,
-                laneGainDb(
-                  track.volume,
-                  track.mixer?.gainDb,
-                  vcaOffsetDb(track.vcaId, vcaGainDbById),
-                ),
+                vcaOffsetDb(track.vcaId, vcaGainDbById),
                 effectiveTrackMute(track.mute, track.vcaId, vcaControlsById),
               )
             : engineAutomationPoints(lane.points);
@@ -786,6 +818,9 @@ export async function renderProjectWithEngine(
       const busId = busNumberById.get(bus.id);
       if (busId === undefined) continue;
       for (const lane of bus.automation ?? []) {
+        // A return mute must override fader automation for the whole render.
+        // The stored lane remains intact and resumes after unmuting.
+        if (bus.mute === true && lane.param === 'faderDb') continue;
         if (!lane.enabled || lane.points.length === 0) continue;
         const points = engineAutomationPoints(lane.points);
         if (points.length === 0) continue;
@@ -896,7 +931,7 @@ export async function renderProjectWithEngine(
     // and the content before the window (sustained clips, sidechain keys)
     // are already in motion when capture begins. Renders from the timeline
     // start have nothing before them and start cold by definition.
-    const prerollFrames = Math.min(startSample, Math.round(PREROLL_SECONDS * sampleRate));
+    const prerollFrames = Math.min(startSample, Math.round(prerollSeconds * sampleRate));
     const captureOffset = capturePreroll ? prerollFrames : 0;
     const left = onChunk ? null : new Float32Array(totalFrames + captureOffset);
     const right = onChunk ? null : new Float32Array(totalFrames + captureOffset);
@@ -991,6 +1026,8 @@ export async function renderProjectWithEngine(
         masterStrip: false,
         masterLevels: false,
         stemIndices: new Set([freezeIndex]),
+        stemRouting: 'document',
+        separateReturnStems: false,
         busStemId: null,
         freezeIndex,
         sf2TrackIndices: activeSf2TrackIndices.has(freezeIndex)
@@ -1039,6 +1076,8 @@ export async function renderProjectWithEngine(
         masterStrip: includeMasterChain,
         masterLevels: true,
         stemIndices: null,
+        stemRouting: 'document',
+        separateReturnStems: false,
         busStemId: null,
         freezeIndex: null,
         sf2TrackIndices: activeSf2TrackIndices,
@@ -1069,7 +1108,7 @@ export async function renderProjectWithEngine(
   }
 
   if (sf2PreRenderCount > 0) {
-    const prerollFrames = Math.min(startSample, Math.round(PREROLL_SECONDS * sampleRate));
+    const prerollFrames = Math.min(startSample, Math.round(prerollSeconds * sampleRate));
     const clipStartPpq = samplesToPpq(tempoMap, startSample - prerollFrames, sampleRate);
     const sf2Clips: EngineClipSpec[] = [];
     for (const trackIndex of conflictingSf2TrackIndices) {
@@ -1079,6 +1118,8 @@ export async function renderProjectWithEngine(
           masterStrip: false,
           masterLevels: false,
           stemIndices: new Set([trackIndex]),
+          stemRouting: 'document',
+          separateReturnStems: false,
           busStemId: null,
           freezeIndex: trackIndex,
           sf2TrackIndices: new Set([trackIndex]),
@@ -1106,6 +1147,8 @@ export async function renderProjectWithEngine(
       masterStrip: includeMasterChain,
       masterLevels: true,
       stemIndices: null,
+      stemRouting: 'document',
+      separateReturnStems: false,
       busStemId: null,
       freezeIndex: null,
       sf2TrackIndices: sf2PreRenderCount > 0 ? new Set() : activeSf2TrackIndices,
@@ -1146,6 +1189,13 @@ export async function renderProjectWithEngine(
         masterStrip: false,
         masterLevels: false,
         stemIndices,
+        stemRouting:
+          track.kind === 'group'
+            ? 'group'
+            : options.busStems === true || track.mixer?.outputBusId === undefined
+              ? 'direct'
+              : 'document',
+        separateReturnStems: options.busStems === true,
         busStemId: null,
         freezeIndex: null,
         sf2TrackIndices: sf2PreRenderCount > 0 ? new Set() : activeSf2TrackIndices,
@@ -1178,6 +1228,8 @@ export async function renderProjectWithEngine(
         masterStrip: false,
         masterLevels: false,
         stemIndices: null,
+        stemRouting: 'document',
+        separateReturnStems: false,
         busStemId: busNumber,
         freezeIndex: null,
         sf2TrackIndices: sf2PreRenderCount > 0 ? new Set() : activeSf2TrackIndices,
@@ -1227,10 +1279,7 @@ export async function renderProjectWithEngine(
     }
     for (let processorIndex = 0; processorIndex < chain.processors.length; processorIndex += 1) {
       const slot = chain.processors[processorIndex];
-      // Realtime-safe slots already run inside the master strip before its
-      // fader, matching live playback. Only whole-buffer processors remain
-      // for the export-only post-fader stage.
-      if (!slot.enabled || realtimeMasteringInsertCatalog.has(slot.processor)) continue;
+      if (!slot.enabled) continue;
       checkCancel();
       options.onProgress?.(0.94, `mastering.${slot.processor}`);
       const params = { ...slot.params, ...(automatedParams.get(processorIndex) ?? {}) };

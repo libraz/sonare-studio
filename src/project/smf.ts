@@ -1,3 +1,4 @@
+import { dbToLinear, linearToDb } from '@/lib/db';
 import { ensureWasm } from '@/lib/wasm';
 import type { ProjectMidiEvent } from '@/wasm/index.js';
 import { expandExpressionPoints, MIDI_PITCH_BEND_MAX } from './midi-cc';
@@ -1008,15 +1009,6 @@ function scratchClipLength(clip: DocumentClip): number {
   return hasEndpointEvent ? lengthPpq + SMF_EDGE_PAD_PPQ : lengthPpq;
 }
 
-function documentEndPpq(doc: ProjectDocument): number {
-  return Math.max(
-    DEFAULT_CLIP_LENGTH_PPQ,
-    ...doc.tracks.flatMap((track) =>
-      track.clips.map((clip) => finiteNonNegative(clip.startPpq) + scratchClipLength(clip)),
-    ),
-  );
-}
-
 /**
  * SMF stores tempo as instantaneous events, while Sonare supports linear
  * ramps. Approximate each ramp with held tempo steps whose maximum deviation
@@ -1035,10 +1027,17 @@ export function sampleTempoRampsForSmf(doc: ProjectDocument): DocumentTempoSegme
     }))
     .sort((a, b) => a.startPpq - b.startPpq);
   const result: DocumentTempoSegment[] = [];
-  const projectEnd = documentEndPpq(doc);
   for (let index = 0; index < input.length; index += 1) {
     const segment = input[index];
-    const endPpq = input[index + 1]?.startPpq ?? projectEnd;
+    const next = input[index + 1];
+    // Playback has no finite endpoint for a final tempo row, so its endBpm is
+    // intentionally ignored. Keep SMF export identical rather than exporting
+    // a ramp the project itself cannot play.
+    if (next === undefined) {
+      result.push({ startPpq: segment.startPpq, bpm: segment.bpm });
+      continue;
+    }
+    const endPpq = next.startPpq;
     const endBpm = segment.endBpm;
     if (endBpm === undefined || endPpq <= segment.startPpq || endBpm === segment.bpm) {
       result.push({ startPpq: segment.startPpq, bpm: segment.bpm });
@@ -1052,10 +1051,13 @@ export function sampleTempoRampsForSmf(doc: ProjectDocument): DocumentTempoSegme
     }
     for (let step = 0; step <= steps; step += 1) {
       // The following document segment, if any, owns the exact endpoint.
-      if (step === steps && input[index + 1] !== undefined) continue;
-      const fraction = step / steps;
+      if (step === steps) continue;
+      // Each emitted tempo is held until the next event, so use the interval
+      // midpoint rather than its left endpoint to avoid a one-sided timing
+      // bias over an accelerating or decelerating ramp.
+      const fraction = (step + 0.5) / steps;
       result.push({
-        startPpq: segment.startPpq + (endPpq - segment.startPpq) * fraction,
+        startPpq: segment.startPpq + (endPpq - segment.startPpq) * (step / steps),
         bpm: segment.bpm + (endBpm - segment.bpm) * fraction,
       });
     }
@@ -1151,15 +1153,17 @@ async function projectFromDocument(
     // CC7 and CC10 are the interoperable SMF equivalents of Sonare's static
     // track gain/pan. Emit them before program and note events so external
     // sequencers reproduce the mix balance even though SMF has no strip model.
-    if (track.volume !== 1 || track.pan !== 0) {
+    const staticVolume = dbToLinear(linearToDb(track.volume) + (track.mixer?.gainDb ?? 0));
+    const staticPan = track.mixer?.pan ?? track.pan;
+    if (staticVolume !== 1 || staticPan !== 0) {
       for (const ch of channels) {
-        if (track.pan !== 0) {
+        if (staticPan !== 0) {
           events.unshift(
-            wasm.Project.midiCc(0, 0, ch, 10, clampInt((track.pan + 1) * 63.5, 0, 127)),
+            wasm.Project.midiCc(0, 0, ch, 10, clampInt((staticPan + 1) * 63.5, 0, 127)),
           );
         }
-        if (track.volume !== 1) {
-          events.unshift(wasm.Project.midiCc(0, 0, ch, 7, clampInt(track.volume * 127, 0, 127)));
+        if (staticVolume !== 1) {
+          events.unshift(wasm.Project.midiCc(0, 0, ch, 7, clampInt(staticVolume * 127, 0, 127)));
         }
       }
     }

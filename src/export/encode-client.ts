@@ -53,10 +53,10 @@ function workerOptions(
 ): Record<string, unknown> {
   const allowed =
     encoderId === WAV_ENCODER_ID
-      ? ['bitDepth', 'dither']
+      ? ['bitDepth', 'dither', 'metadata']
       : encoderId === FLAC_ENCODER_ID
-        ? ['bitDepth', 'blockSize', 'dither']
-        : ['bitrate'];
+        ? ['bitDepth', 'blockSize', 'dither', 'metadata']
+        : ['bitrate', 'metadata'];
   return Object.fromEntries(
     allowed.flatMap((key) => (options[key] === undefined ? [] : [[key, options[key]]])),
   );

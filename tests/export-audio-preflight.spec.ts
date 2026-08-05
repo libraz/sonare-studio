@@ -157,6 +157,44 @@ describe('audioExportPreflight', () => {
     expect(load).toHaveBeenCalledWith('ok');
   });
 
+  it('warns before exporting an active solo, PFL monitor mix, or silent project', async () => {
+    const source = doc();
+    source.tracks.push({
+      name: 'Lead',
+      color: '#000',
+      kind: 'midi',
+      mute: false,
+      solo: true,
+      volume: 1,
+      pan: 0,
+      clips: [],
+    });
+    source.mixer = {
+      master: { gainDb: 0, pan: 0, inserts: [], sends: [] },
+      buses: [],
+      soloMode: 'pfl',
+    };
+    const soloed = await audioExportPreflight(source, {
+      range: 'project',
+      releaseTailSeconds: 10,
+      loadAudioAsset: async (id) => loaded(id),
+    });
+    expect(soloed.warnings).toContainEqual({
+      kind: 'solo-active',
+      tracks: [source.tracks[0].name],
+    });
+    expect(soloed.warnings).toContainEqual({ kind: 'pfl-mode-active' });
+
+    source.tracks[0].solo = false;
+    source.tracks[0].mute = true;
+    const silent = await audioExportPreflight(source, {
+      range: 'project',
+      releaseTailSeconds: 10,
+      loadAudioAsset: async (id) => loaded(id),
+    });
+    expect(silent.warnings).toContainEqual({ kind: 'silent-mixdown' });
+  });
+
   it('uses payload validation ahead of the legacy metadata and full-PCM loaders', async () => {
     const source = doc();
     source.tracks.push({
@@ -285,7 +323,10 @@ describe('audioExportPreflight', () => {
       loadAudioAsset: load,
     });
 
-    expect(result).toEqual({ blockers: [], warnings: [] });
+    expect(result).toEqual({
+      blockers: [],
+      warnings: [{ kind: 'solo-active', tracks: ['Audible solo'] }],
+    });
     expect(load).toHaveBeenCalledTimes(1);
     expect(load).toHaveBeenCalledWith('inside');
   });

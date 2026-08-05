@@ -459,6 +459,34 @@ describe('exportDawproject structure', () => {
     expect(nestedTracks).toHaveLength(1);
     expect(attr(nestedTracks[0], 'name')).toBe('Kick');
     expect(attr(nestedTracks[0], 'id')).toBe('track-1');
+    expect(attr(nestedTracks[0].querySelector('Channel'), 'destination')).toBe('channel-0');
+  });
+
+  it('routes group members through the group ahead of an explicit return-bus route', async () => {
+    const entries = await exportAndUnzip(
+      makeDoc(
+        [
+          makeTrack([], { name: 'Drum Bus', kind: 'group' }),
+          makeTrack([], {
+            name: 'Kick',
+            kind: 'audio',
+            groupIndex: 0,
+            mixer: { gainDb: 0, pan: 0, inserts: [], sends: [], outputBusId: 'bus-1' },
+          }),
+        ],
+        {
+          mixer: {
+            master: { gainDb: 0, pan: 0, inserts: [], sends: [] },
+            buses: [{ id: 'bus-1', name: 'FX', gainDb: 0 }],
+          },
+        },
+      ),
+      { includeAudio: false },
+    );
+    const project = parseEntry(entries, 'project.xml');
+    const kick = project.querySelector('Track[id="track-1"] > Channel');
+
+    expect(attr(kick, 'destination')).toBe('channel-0');
   });
 
   it('does not export group track target insert sidechain metadata', async () => {
@@ -928,6 +956,31 @@ describe('exportDawproject audio', () => {
     expect(attr(pan, 'unit')).toBe('normalized');
     expect(attr(pan.querySelector('Target'), 'parameter')).toBe('channel-0-pan');
     expect(floatAttr(pan.querySelector('RealPoint'), 'value')).toBe(0.75);
+  });
+
+  it('folds only a member VCA offset into track fader automation', async () => {
+    const project = await exportProjectXml(
+      makeDoc(
+        [
+          makeTrack([], {
+            volume: 0.5,
+            mixer: { gainDb: -6, pan: 0, inserts: [], sends: [] },
+            vcaId: 'vca-1',
+            automation: [{ param: 'faderDb', enabled: true, points: [{ ppq: 0, value: -10 }] }],
+          }),
+        ],
+        {
+          mixer: {
+            master: { gainDb: 0, pan: 0, inserts: [], sends: [] },
+            buses: [],
+            vcaGroups: [{ id: 'vca-1', name: 'Mix VCA', gainDb: -3 }],
+          },
+        },
+      ),
+    );
+
+    const volume = project.querySelector('Points[id="automation-0-faderDb"] RealPoint');
+    expect(floatAttr(volume, 'value')).toBeCloseTo(dbToLinear(-13), 5);
   });
 
   it('round-trips instrument and mastering automation in sonare-scoped Points', async () => {

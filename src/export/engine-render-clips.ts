@@ -1,14 +1,14 @@
 /**
  * Audio clip scheduling for the engine-backed offline renderer: loads each
  * clip's asset, expands comp segments, applies the live offline transforms
- * (warp/slice window, baked fades, linear resample to the render rate) and
+ * (warp/slice window, baked fades, high-quality resample to the render rate) and
  * emits engine clip specs placed at their timeline PPQ. Frozen tracks play
  * their baked pre-fader render from the timeline start instead of their clips.
  */
 
 import type { AudioAssetMeta, LoadedAudioAsset } from '@/persistence/assets';
 import { audioClipSegments } from '@/project/comping';
-import { renderAudioClipSegment, resampleChannelsLinear } from '@/project/scheduling';
+import { renderAudioClipSegment } from '@/project/scheduling';
 import type { DocumentClip, ProjectDocument } from '@/project/serialization';
 import { type NormalizedTempoMap, ppqDurationSamples } from '@/project/tempo-map';
 import type { EngineClipSpec } from './engine-render-types';
@@ -24,6 +24,12 @@ export interface AudioClipBuildContext {
   sampleRate: number;
   /** Audio asset loader. */
   loadAudio: (assetId: string) => Promise<LoadedAudioAsset>;
+  /** Offline-quality mono resampler supplied by the WASM module. */
+  resampleAudio: (
+    samples: Float32Array,
+    sourceRate: number,
+    targetRate: number,
+  ) => Float32Array | Promise<Float32Array>;
   /** Throws MixdownCancelledError when the render was cancelled. */
   checkCancel: () => void;
   /** Structured non-fatal omissions returned in the final render report. */
@@ -111,7 +117,10 @@ export async function preflightAudioClipMemory(
     }
     for (const clip of track.clips) {
       if ((clip.kind ?? 'midi') !== 'audio' || clip.gain <= 0) continue;
-      for (const segment of audioClipSegments(clip)) {
+      for (const segment of audioClipSegments(clip, {
+        tempoMap: context.tempoMap,
+        clipStartPpq: clip.startPpq,
+      })) {
         const startPpq = clip.startPpq + segment.offsetPpq;
         if (!segmentIntersectsRange(startPpq, segment.lengthPpq, context.range)) continue;
         const meta = await getMeta(segment.assetId);
@@ -146,13 +155,23 @@ export async function buildAudioClips(
   doc: ProjectDocument,
   context: AudioClipBuildContext,
 ): Promise<EngineClipSpec[]> {
-  const { trackIds, tempoMap, sampleRate, loadAudio, checkCancel } = context;
+  const { trackIds, tempoMap, sampleRate, loadAudio, checkCancel, resampleAudio } = context;
   const audioClips: EngineClipSpec[] = [];
+  const resampleChannels = async (
+    channels: Float32Array[],
+    sourceRate: number,
+  ): Promise<Float32Array[]> => {
+    if (sourceRate === sampleRate) return channels;
+    return Promise.all(channels.map((channel) => resampleAudio(channel, sourceRate, sampleRate)));
+  };
   const renderAudioClip = async (clip: DocumentClip, trackId: number): Promise<void> => {
     if (clip.gain <= 0) return;
     // A clip expands to one engine clip per comp segment (one segment for
     // clips without takes), matching live scheduling exactly.
-    for (const segment of audioClipSegments(clip)) {
+    for (const segment of audioClipSegments(clip, {
+      tempoMap,
+      clipStartPpq: clip.startPpq,
+    })) {
       const segmentStartPpq = clip.startPpq + segment.offsetPpq;
       if (!segmentIntersectsRange(segmentStartPpq, segment.lengthPpq, context.range)) continue;
       checkCancel();
@@ -174,7 +193,7 @@ export async function buildAudioClips(
       checkCancel();
       let channels = await renderAudioClipSegment(asset, clip, segment, tempoMap);
       checkCancel();
-      channels = resampleChannelsLinear(channels, asset.meta.sampleRate, sampleRate);
+      channels = await resampleChannels(channels, asset.meta.sampleRate);
       checkCancel();
       if (channels.length === 0 || channels[0].length === 0) continue;
       audioClips.push({
@@ -196,10 +215,9 @@ export async function buildAudioClips(
         checkCancel();
         const asset = await loadAudio(track.frozen.assetId);
         checkCancel();
-        const channels = resampleChannelsLinear(
+        const channels = await resampleChannels(
           asset.channels.map((channel) => channel.slice()),
           asset.meta.sampleRate,
-          sampleRate,
         );
         checkCancel();
         if (channels.length > 0 && channels[0].length > 0) {

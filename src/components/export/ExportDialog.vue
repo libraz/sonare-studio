@@ -5,6 +5,7 @@ import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { confirmDialog } from '@/composables/useDialogs';
+import { audioFileMetadataForDocument } from '@/export/audio-file-metadata';
 import { audioExportPreflight } from '@/export/audio-preflight';
 import { isBrowserMediaEncoderId, registerBrowserMediaEncoders } from '@/export/browser-media';
 import { type ExportRenderHandle, ExportWorkerError, renderMixdownInWorker } from '@/export/client';
@@ -42,6 +43,7 @@ import {
   encodeOptionsForModel,
   exportFileName,
   normalizeMixdownLoudness,
+  selectedEncoderIds as selectedModelEncoderIds,
   stemEntryName,
   stemsZipFileName,
   toRenderOptions,
@@ -141,6 +143,9 @@ const reportLimitations = computed(() => {
     ),
   ];
 });
+const reportClipping = computed(
+  () => Math.max(report.value?.peakDb ?? -Infinity, report.value?.truePeakDb ?? -Infinity) > 0,
+);
 let cancelRender: (() => void) | null = null;
 
 /** Encoder list: the injected override or the live codec registry. */
@@ -173,8 +178,12 @@ watch(
   },
 );
 
-const selectedEncoder = computed<AudioEncoder | null>(
-  () => encoderList.value.find((encoder) => encoder.id === model.value.encoderId) ?? null,
+const selectedEncoderIds = computed(() => selectedModelEncoderIds(model.value));
+const selectedEncoders = computed(() =>
+  selectedEncoderIds.value.flatMap((id) => {
+    const encoder = encoderList.value.find((candidate) => candidate.id === id);
+    return encoder ? [encoder] : [];
+  }),
 );
 
 const compressedEncoderIds = computed(() =>
@@ -183,10 +192,10 @@ const compressedEncoderIds = computed(() =>
     .map((encoder) => encoder.id),
 );
 
-const selectedEncoderUsesCompressedBitrate = computed(
-  () =>
-    isBrowserMediaEncoderId(model.value.encoderId) ||
-    compressedEncoderIds.value.includes(model.value.encoderId),
+const selectedEncoderUsesCompressedBitrate = computed(() =>
+  selectedEncoderIds.value.some(
+    (id) => isBrowserMediaEncoderId(id) || compressedEncoderIds.value.includes(id),
+  ),
 );
 
 const errors = computed<string[]>(() =>
@@ -201,15 +210,57 @@ const canExport = computed(() => !busy.value && errors.value.length === 0);
 
 /** Full output filename shown next to the base-name field. */
 const filenamePreview = computed(() => {
-  if (model.value.mode === 'stems') return stemsZipFileName(model.value.baseName);
-  return exportFileName(model.value.baseName, selectedEncoder.value?.extension ?? '');
+  const filenames = selectedEncoders.value.map((encoder) =>
+    model.value.mode === 'stems'
+      ? stemsZipFileNameForEncoder(model.value.baseName, encoder, selectedEncoders.value.length)
+      : exportFileName(model.value.baseName, encoder.extension),
+  );
+  return filenames.join(', ');
 });
+
+function stemsZipFileNameForEncoder(
+  baseName: string,
+  encoder: AudioEncoder,
+  selectedCount: number,
+): string {
+  return selectedCount === 1
+    ? stemsZipFileName(baseName)
+    : `${stemsZipFileName(baseName).slice(0, -4)} ${encoder.id}.zip`;
+}
+
+function toggleAdditionalEncoder(encoderId: string, selected: boolean): void {
+  const additional = new Set(model.value.additionalEncoderIds ?? []);
+  if (selected) additional.add(encoderId);
+  else additional.delete(encoderId);
+  additional.delete(model.value.encoderId);
+  model.value.additionalEncoderIds = [...additional];
+}
+
+watch(
+  () => model.value.encoderId,
+  (encoderId) => {
+    const additional = new Set(model.value.additionalEncoderIds ?? []);
+    additional.delete(encoderId);
+    model.value.additionalEncoderIds = [...additional];
+  },
+);
 
 /** String proxy because '32f' cannot ride a numeric select binding. */
 const wavBitDepthProxy = computed({
   get: () => String(model.value.wavBitDepth),
   set: (value: string) => {
-    model.value.wavBitDepth = value === '32f' ? '32f' : (Number(value) as WavBitDepth);
+    const bitDepth = value === '32f' ? '32f' : (Number(value) as WavBitDepth);
+    if (bitDepth === 16 && model.value.wavBitDepth !== 16) model.value.wavDither = true;
+    model.value.wavBitDepth = bitDepth;
+  },
+});
+
+/** Choosing a 16-bit FLAC starts with TPDF dither enabled. */
+const flacBitDepthProxy = computed({
+  get: () => model.value.flacBitDepth,
+  set: (bitDepth: FlacBitDepth) => {
+    if (bitDepth === 16 && model.value.flacBitDepth !== 16) model.value.flacDither = true;
+    model.value.flacBitDepth = bitDepth;
   },
 });
 
@@ -270,6 +321,14 @@ function formatLevel(value: number): string {
   return Number.isFinite(value) ? value.toFixed(1) : '-inf';
 }
 
+function isIntegerPcmExport(encoderId: string, model: ExportOptionsModel): boolean {
+  return (
+    (encoderId === WAV_ENCODER_ID && model.wavBitDepth !== '32f') ||
+    encoderId === FLAC_ENCODER_ID ||
+    encoderId === MP3_ENCODER_ID
+  );
+}
+
 /** Default download seam: transient anchor around an object URL. */
 function downloadViaAnchor(blob: Blob, filename: string): void {
   downloadBlob(blob, filename);
@@ -307,8 +366,9 @@ async function encodeAudio(
 
 async function onExport(): Promise<void> {
   if (!canExport.value) return;
-  const encoder = selectedEncoder.value;
-  if (!encoder) return;
+  const encoders = selectedEncoders.value;
+  const primaryEncoder = encoders[0];
+  if (!primaryEncoder) return;
   busy.value = true;
   errorMessage.value = '';
   cancelled.value = false;
@@ -375,31 +435,56 @@ async function onExport(): Promise<void> {
       }
       controller.signal.throwIfAborted();
     }
-    const encodeOptions = encodeOptionsForModel(exportModel, {
-      compressedEncoderIds: compressedEncoderIds.value,
-    });
-    Object.defineProperty(encodeOptions, 'signal', {
-      value: controller.signal,
-      enumerable: false,
+    const range =
+      exportModel.range === 'loop' && props.loopRegion
+        ? props.loopRegion
+        : { startPpq: 0, endPpq: Number.POSITIVE_INFINITY };
+    const targets = encoders.map((encoder) => {
+      const targetModel = { ...exportModel, encoderId: encoder.id };
+      const encodeOptions = encodeOptionsForModel(targetModel, {
+        compressedEncoderIds: compressedEncoderIds.value,
+      });
+      if (
+        encoder.id === WAV_ENCODER_ID ||
+        encoder.id === FLAC_ENCODER_ID ||
+        encoder.id === MP3_ENCODER_ID
+      ) {
+        encodeOptions.metadata = audioFileMetadataForDocument(doc, {
+          sampleRate: exportModel.sampleRate,
+          startPpq: range.startPpq,
+          endPpq: range.endPpq,
+        });
+      }
+      Object.defineProperty(encodeOptions, 'signal', {
+        value: controller.signal,
+        enumerable: false,
+      });
+      return { encoder, encodeOptions };
     });
     const targetLufs = appSettings.settings.loudnessTargetLufs;
+    const primaryTarget = targets[0]!;
     const stemMemory = new PayloadMemoryMeter({
       label: 'Stem export',
       budgetBytes: memoryBudgetBytes,
     });
     const stemsWriter =
-      exportModel.mode === 'stems'
+      exportModel.mode === 'stems' && targets.length === 1
         ? createStemsZipWriter(controller.signal, { meter: stemMemory })
         : null;
     const streamWav =
       exportModel.mode === 'mixdown' &&
-      encoder.id === WAV_ENCODER_ID &&
+      targets.length === 1 &&
+      primaryEncoder.id === WAV_ENCODER_ID &&
       !exportModel.normalizeLoudness;
     if (streamWav) {
       wavStream = createWavStreamWriter({
         sampleRate: exportModel.sampleRate,
         bitDepth: exportModel.wavBitDepth,
-        encodeOptions: { dither: exportModel.wavDither },
+        encodeOptions: {
+          dither: exportModel.wavDither,
+          metadata: primaryTarget.encodeOptions
+            .metadata as import('@/export/audio-file-metadata').AudioFileMetadata,
+        },
         meter: new PayloadMemoryMeter({
           label: 'Streaming WAV export',
           budgetBytes: memoryBudgetBytes,
@@ -407,19 +492,25 @@ async function onExport(): Promise<void> {
       });
     }
     let consumedStemCount = 0;
-    const consumeStem = async (stem: MixdownStem, index: number, total: number): Promise<void> => {
+    const consumeStem = async (
+      stem: MixdownStem,
+      index: number,
+      total: number,
+      target: (typeof targets)[number],
+      writer: ReturnType<typeof createStemsZipWriter>,
+      meter: PayloadMemoryMeter,
+    ): Promise<void> => {
       controller.signal.throwIfAborted();
-      if (!stemsWriter) throw new Error('Stem consumer is unavailable');
       const rawBytes = stem.channels[0].byteLength + stem.channels[1].byteLength;
       assertCodecPayloadMemory(
         estimateCodecPayloadMemory({
-          encoderId: encoder.id,
+          encoderId: target.encoder.id,
           inputBytes: rawBytes,
-          retainedBytes: stemMemory.snapshot().activeBytes,
+          retainedBytes: meter.snapshot().activeBytes,
         }),
         memoryBudgetBytes,
       );
-      const releaseRaw = stemMemory.retain(rawBytes, `raw stem ${index + 1}/${total}`);
+      const releaseRaw = meter.retain(rawBytes, `raw stem ${index + 1}/${total}`);
       try {
         stage.value = `encode:stem:${index + 1}/${total}`;
         // Stems are deliberately NOT loudness-normalized: normalizing each stem
@@ -427,20 +518,17 @@ async function onExport(): Promise<void> {
         // the relative balance so they no longer sum back to the mix. Loudness
         // normalization stays a mixdown-only operation; stems export at unity.
         const bytes = await encodeAudio(
-          encoder,
+          target.encoder,
           stem.channels,
           exportModel.sampleRate,
-          encodeOptions,
+          target.encodeOptions,
           controller.signal,
         );
         controller.signal.throwIfAborted();
-        const releaseEncoded = stemMemory.retain(
-          bytes.byteLength,
-          `encoded stem ${index + 1}/${total}`,
-        );
+        const releaseEncoded = meter.retain(bytes.byteLength, `encoded stem ${index + 1}/${total}`);
         try {
-          await stemsWriter.add({
-            name: stemEntryName(stem.name, index, total, encoder.extension),
+          await writer.add({
+            name: stemEntryName(stem.name, index, total, target.encoder.extension),
             bytes,
           });
         } finally {
@@ -460,7 +548,10 @@ async function onExport(): Promise<void> {
         progress.value = p;
         stage.value = s;
       },
-      exportModel.mode === 'stems' ? consumeStem : undefined,
+      exportModel.mode === 'stems' && stemsWriter
+        ? (stem, index, total) =>
+            consumeStem(stem, index, total, primaryTarget, stemsWriter, stemMemory)
+        : undefined,
       wavStream
         ? async (channels, offsetFrames, totalFrames) => {
             controller.signal.throwIfAborted();
@@ -488,59 +579,110 @@ async function onExport(): Promise<void> {
       exportModel.mode === 'mixdown' && exportModel.normalizeLoudness
         ? normalizeMixdownLoudness(result.channels, result.report, targetLufs)
         : result.report;
-    let filename: string;
+    const clippingPeak = Math.max(
+      normalizedReport.peakDb,
+      normalizedReport.truePeakDb ?? -Infinity,
+    );
+    if (
+      exportModel.mode === 'mixdown' &&
+      targets.some((target) => isIntegerPcmExport(target.encoder.id, exportModel)) &&
+      clippingPeak > 0
+    ) {
+      const proceed = await confirmDialog({
+        title: t.value.dialogs.exportAudio.clippingWarningTitle,
+        message: t.value.dialogs.exportAudio.clippingWarningMessage.replace(
+          '{peak}',
+          formatLevel(clippingPeak),
+        ),
+        confirmLabel: t.value.dialogs.exportAudio.clippingWarningContinue,
+      });
+      if (!proceed) {
+        cancelled.value = true;
+        return;
+      }
+      controller.signal.throwIfAborted();
+    }
+    const filenames: string[] = [];
     if (exportModel.mode === 'stems') {
       const stems: Array<MixdownStem | null> = result.stems ? [...result.stems] : [];
       result.stems = undefined;
-      for (let i = 0; i < stems.length; i++) {
-        controller.signal.throwIfAborted();
-        const stem = stems[i];
-        if (!stem) continue;
-        await consumeStem(stem, i, stems.length);
-        stems[i] = null;
+      if (targets.length === 1 && stemsWriter) {
+        if (consumedStemCount === 0) {
+          for (let i = 0; i < stems.length; i++) {
+            controller.signal.throwIfAborted();
+            const stem = stems[i];
+            if (!stem) continue;
+            await consumeStem(stem, i, stems.length, primaryTarget, stemsWriter, stemMemory);
+            stems[i] = null;
+          }
+        }
+        if (consumedStemCount === 0) throw new Error(t.value.dialogs.exportAudio.noStems);
+        const filename = stemsZipFileNameForEncoder(exportModel.baseName, primaryEncoder, 1);
+        downloadFn(await stemsWriter.close(), filename);
+        filenames.push(filename);
+      } else {
+        if (stems.length === 0) throw new Error(t.value.dialogs.exportAudio.noStems);
+        for (const target of targets) {
+          const meter = new PayloadMemoryMeter({
+            label: `Stem export (${target.encoder.id})`,
+            budgetBytes: memoryBudgetBytes,
+          });
+          const writer = createStemsZipWriter(controller.signal, { meter });
+          for (let i = 0; i < stems.length; i++) {
+            controller.signal.throwIfAborted();
+            const stem = stems[i];
+            if (!stem) continue;
+            await consumeStem(stem, i, stems.length, target, writer, meter);
+          }
+          const filename = stemsZipFileNameForEncoder(
+            exportModel.baseName,
+            target.encoder,
+            targets.length,
+          );
+          downloadFn(await writer.close(), filename);
+          filenames.push(filename);
+        }
       }
-      if (consumedStemCount === 0 || !stemsWriter) {
-        throw new Error(t.value.dialogs.exportAudio.noStems);
-      }
-      const zip = await stemsWriter.close();
-      controller.signal.throwIfAborted();
-      filename = stemsZipFileName(exportModel.baseName);
-      downloadFn(zip, filename);
     } else {
       if (wavStream && result.channels[0].length === 0) {
         controller.signal.throwIfAborted();
-        filename = exportFileName(exportModel.baseName, encoder.extension);
+        const filename = exportFileName(exportModel.baseName, primaryEncoder.extension);
         downloadFn(wavStream.close(result.totalFrames), filename);
         wavStream = null;
+        filenames.push(filename);
       } else {
         wavStream?.abort();
         wavStream = null;
-        assertCodecPayloadMemory(
-          estimateCodecPayloadMemory({
-            encoderId: encoder.id,
-            inputBytes: result.channels[0].byteLength + result.channels[1].byteLength,
-          }),
-          memoryBudgetBytes,
-        );
-        progress.value = 0;
-        const bytes = await encodeAudio(
-          encoder,
-          result.channels,
-          result.sampleRate,
-          encodeOptions,
-          controller.signal,
-          (fraction) => {
-            if (controller.signal.aborted) return;
-            progress.value = fraction;
-          },
-        );
-        controller.signal.throwIfAborted();
-        filename = exportFileName(exportModel.baseName, encoder.extension);
-        downloadFn(new Blob([new Uint8Array(bytes)], { type: encoder.mime }), filename);
+        for (let index = 0; index < targets.length; index++) {
+          const target = targets[index]!;
+          assertCodecPayloadMemory(
+            estimateCodecPayloadMemory({
+              encoderId: target.encoder.id,
+              inputBytes: result.channels[0].byteLength + result.channels[1].byteLength,
+            }),
+            memoryBudgetBytes,
+          );
+          progress.value = 0;
+          const bytes = await encodeAudio(
+            target.encoder,
+            result.channels,
+            result.sampleRate,
+            target.encodeOptions,
+            controller.signal,
+            (fraction) => {
+              if (controller.signal.aborted) return;
+              progress.value = (index + fraction) / targets.length;
+            },
+          );
+          controller.signal.throwIfAborted();
+          const filename = exportFileName(exportModel.baseName, target.encoder.extension);
+          downloadFn(new Blob([new Uint8Array(bytes)], { type: target.encoder.mime }), filename);
+          filenames.push(filename);
+        }
       }
     }
     report.value = normalizedReport;
-    emit('exported', { filename, report: normalizedReport });
+    for (const filename of filenames) emit('exported', { filename, report: normalizedReport });
   } catch (error) {
     wavStream?.abort();
     if (!controller.signal.aborted) controller.abort(error);
@@ -603,7 +745,28 @@ function onKeydown(event: KeyboardEvent): void {
             :disabled="busy"
             :aria-label="t.dialogs.exportAudio.format"
           />
-          <div v-if="model.encoderId === WAV_ENCODER_ID" class="format-options wav-options">
+          <div class="additional-format-list" :aria-label="t.dialogs.exportAudio.additionalFormats">
+            <label
+              v-for="encoder in encoderList"
+              :key="encoder.id"
+              class="check-label additional-format"
+              :class="{ disabled: encoder.id === model.encoderId }"
+            >
+              <input
+                class="additional-format-input"
+                :data-encoder-id="encoder.id"
+                type="checkbox"
+                :checked="selectedEncoderIds.includes(encoder.id)"
+                :disabled="busy || encoder.id === model.encoderId"
+                @change="toggleAdditionalEncoder(encoder.id, ($event.target as HTMLInputElement).checked)"
+              />
+              {{ encoder.label }}
+            </label>
+          </div>
+          <div
+            v-if="selectedEncoderIds.includes(WAV_ENCODER_ID)"
+            class="format-options wav-options"
+          >
             <SelectMenu
               v-model="wavBitDepthProxy"
               class="wav-bit-depth"
@@ -620,9 +783,12 @@ function onKeydown(event: KeyboardEvent): void {
               :disabled="busy || model.wavBitDepth !== 16"
             />
           </div>
-          <div v-if="model.encoderId === FLAC_ENCODER_ID" class="format-options flac-options">
+          <div
+            v-if="selectedEncoderIds.includes(FLAC_ENCODER_ID)"
+            class="format-options flac-options"
+          >
             <SelectMenu
-              v-model="model.flacBitDepth"
+              v-model="flacBitDepthProxy"
               class="flac-bit-depth"
               size="sm"
               :options="FLAC_BIT_DEPTH_OPTIONS"
@@ -637,7 +803,10 @@ function onKeydown(event: KeyboardEvent): void {
               :disabled="busy || model.flacBitDepth !== 16"
             />
           </div>
-          <div v-if="model.encoderId === MP3_ENCODER_ID" class="format-options mp3-options">
+          <div
+            v-if="selectedEncoderIds.includes(MP3_ENCODER_ID)"
+            class="format-options mp3-options"
+          >
             <SelectMenu
               v-model="model.mp3Bitrate"
               class="mp3-bitrate"
@@ -661,7 +830,7 @@ function onKeydown(event: KeyboardEvent): void {
             />
           </div>
           <p
-            v-if="selectedEncoder?.deterministic === false"
+            v-if="selectedEncoders.some((encoder) => encoder.deterministic === false)"
             class="encoder-notice"
             role="note"
           >
@@ -873,6 +1042,9 @@ function onKeydown(event: KeyboardEvent): void {
             </li>
           </ul>
         </div>
+        <p v-if="reportClipping" class="report-clipping" role="alert">
+          {{ t.dialogs.exportAudio.clippingReport }}
+        </p>
       </div>
 
       <p v-if="errorMessage" class="dialog-error" role="alert">{{ errorMessage }}</p>
@@ -923,6 +1095,18 @@ function onKeydown(event: KeyboardEvent): void {
   display: flex;
   align-items: center;
   gap: var(--sp-3);
+}
+
+.additional-format-list {
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-4);
+}
+
+.additional-format.disabled {
+  color: var(--text-4);
+  cursor: default;
 }
 
 .encoder-notice {

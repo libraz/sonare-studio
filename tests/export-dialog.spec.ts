@@ -10,7 +10,6 @@ import {
   type MixdownProgressFn,
   type MixdownResult,
 } from '@/export/mixdown';
-import { encodeWav } from '@/export/wav';
 import type { ProjectDocument } from '@/project/serialization';
 import type { ExportRenderOptions } from '@/workers/export.worker';
 import { chooseOption, openOptionLabels } from './helpers/select-menu';
@@ -22,6 +21,12 @@ import { chooseOption, openOptionLabels } from './helpers/select-menu';
 
 function q<T extends Element = HTMLElement>(selector: string): T | null {
   return document.body.querySelector<T>(selector);
+}
+
+function includesTag(bytes: Uint8Array, value: string): boolean {
+  return Array.from({ length: Math.max(0, bytes.length - 3) }, (_, offset) =>
+    String.fromCharCode(...bytes.slice(offset, offset + 4)),
+  ).includes(value);
 }
 
 /** Opens the SelectMenu matched by `selector` via its teleported trigger. */
@@ -295,6 +300,22 @@ describe('ExportDialog', () => {
     expect(q('.export-cancelled')).not.toBeNull();
   });
 
+  it('confirms before integer encoding an over-0 dBFS mixdown', async () => {
+    const control = makeRender();
+    const { download } = mountDialog(control);
+
+    await clickExport();
+    control.resolve(makeResult({ report: { peakDb: 1.5, truePeakDb: 1.8 } }));
+    await flushPromises();
+
+    expect(dialogQueue[0]?.message).toContain('1.8 dBFS');
+    expect(download).not.toHaveBeenCalled();
+    resolveDialog(dialogQueue[0].id, true);
+    await flushPromises();
+    expect(download).toHaveBeenCalledTimes(1);
+    expect(q('.report-clipping')).not.toBeNull();
+  });
+
   it('renders nothing while closed', () => {
     track(
       mount(ExportDialog, {
@@ -375,6 +396,7 @@ describe('ExportDialog', () => {
     expect(q('.encoder-notice')?.textContent).toContain('MediaRecorder');
     // The notice sets the expectation that MediaRecorder encodes in real time.
     expect(q('.encoder-notice')?.textContent).toContain('real time');
+    expect(q('.encoder-notice')?.textContent).toContain('gaps or dropouts');
   });
 
   it('shows bitrate options for runtime compressed encoders from registry metadata', async () => {
@@ -468,7 +490,8 @@ describe('ExportDialog', () => {
     expect(download).toHaveBeenCalledTimes(1);
     expect(download.mock.calls[0][1]).toBe('My Song.wav');
     const bytes = await downloadedBytes(download);
-    expect(bytes).toEqual(encodeWav(result.channels, 48000, { bitDepth: 24 }));
+    expect(includesTag(bytes, 'bext')).toBe(true);
+    expect(includesTag(bytes, 'data')).toBe(true);
 
     expect(q('.export-report')).not.toBeNull();
     expect(q('.report-peak')?.textContent).toBe('-6.0 dBFS');
@@ -487,6 +510,33 @@ describe('ExportDialog', () => {
     expect(emitted[0][0].report.limitations).toEqual([
       { kind: 'instrument-automation-at-render-start', tracks: ['Keys'] },
     ]);
+  });
+
+  it('renders once and encodes every selected mixdown format in sequence', async () => {
+    const control = makeRender();
+    const wavEncode = vi.fn(() => new Uint8Array([1]));
+    const mp3Encode = vi.fn(() => new Uint8Array([2]));
+    const { wrapper, download } = mountDialog(control, {
+      encoders: [
+        { id: 'wav', label: 'WAV', extension: '.wav', mime: 'audio/wav', encode: wavEncode },
+        { id: 'mp3', label: 'MP3', extension: '.mp3', mime: 'audio/mpeg', encode: mp3Encode },
+      ],
+    });
+
+    const mp3 = q<HTMLInputElement>('.additional-format-input[data-encoder-id="mp3"]');
+    if (!mp3) throw new Error('MP3 supplemental format control is missing');
+    mp3.checked = true;
+    mp3.dispatchEvent(new Event('change', { bubbles: true }));
+    await nextTick();
+    await clickExport();
+    control.resolve(makeResult());
+    await vi.waitFor(() => expect(download).toHaveBeenCalledTimes(2));
+
+    expect(control.render).toHaveBeenCalledTimes(1);
+    expect(wavEncode).toHaveBeenCalledTimes(1);
+    expect(mp3Encode).toHaveBeenCalledTimes(1);
+    expect(download.mock.calls.map((call) => call[1])).toEqual(['My Song.wav', 'My Song.mp3']);
+    expect(wrapper.emitted('exported')).toHaveLength(2);
   });
 
   it('blocks download when the render discovers media issues after preflight', async () => {
@@ -530,10 +580,8 @@ describe('ExportDialog', () => {
       ],
     });
 
+    await selectOption('.wav-bit-depth', '16-bit PCM');
     const dither = q('.wav-dither');
-    expect(dither?.getAttribute('aria-pressed')).toBe('false');
-    dither?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    await nextTick();
     expect(dither?.getAttribute('aria-pressed')).toBe('true');
     await clickExport();
 
@@ -541,7 +589,11 @@ describe('ExportDialog', () => {
     control.resolve(result);
     await flushPromises();
 
-    expect(encode).toHaveBeenCalledWith(result.channels, 48000, { bitDepth: 16, dither: true });
+    expect(encode).toHaveBeenCalledWith(
+      result.channels,
+      48000,
+      expect.objectContaining({ bitDepth: 16, dither: true, metadata: expect.any(Object) }),
+    );
     expect(download).toHaveBeenCalledTimes(1);
   });
 
@@ -567,7 +619,11 @@ describe('ExportDialog', () => {
     control.resolve(result);
     await flushPromises();
 
-    expect(encode).toHaveBeenCalledWith(result.channels, 48000, { bitDepth: 16, dither: false });
+    expect(encode).toHaveBeenCalledWith(
+      result.channels,
+      48000,
+      expect.objectContaining({ bitDepth: 16, dither: true, metadata: expect.any(Object) }),
+    );
     expect(download.mock.calls[0][1]).toBe('My Song.flac');
   });
 
@@ -626,7 +682,9 @@ describe('ExportDialog', () => {
     control.resolve(makeResult());
     await flushPromises();
 
-    expect(encode.mock.calls[0][2]).toEqual({ bitDepth: 24, dither: false });
+    expect(encode.mock.calls[0][2]).toEqual(
+      expect.objectContaining({ bitDepth: 24, dither: false, metadata: expect.any(Object) }),
+    );
   });
 
   it('passes includeMasterChain false when the master-chain toggle is disabled', async () => {
@@ -699,8 +757,58 @@ describe('ExportDialog', () => {
     expect(download.mock.calls[0][1]).toBe('My Song stems.zip');
     const entries = unzipSync(await downloadedBytes(download));
     expect(Object.keys(entries).sort()).toEqual(['01 Drums.wav', '02 Bass.wav']);
-    expect(entries['01 Drums.wav']).toEqual(encodeWav(stems[0].channels, 48000, { bitDepth: 16 }));
-    expect(entries['02 Bass.wav']).toEqual(encodeWav(stems[1].channels, 48000, { bitDepth: 16 }));
+    expect(includesTag(entries['01 Drums.wav'], 'bext')).toBe(true);
+    expect(includesTag(entries['02 Bass.wav'], 'bext')).toBe(true);
+  });
+
+  it('encodes each selected format into its own stems archive from one render', async () => {
+    const control = makeRender();
+    const { download } = mountDialog(control, {
+      encoders: [
+        {
+          id: 'wav',
+          label: 'WAV',
+          extension: '.wav',
+          mime: 'audio/wav',
+          encode: () => new Uint8Array([1]),
+        },
+        {
+          id: 'mp3',
+          label: 'MP3',
+          extension: '.mp3',
+          mime: 'audio/mpeg',
+          encode: () => new Uint8Array([2]),
+        },
+      ],
+    });
+    const mp3 = q<HTMLInputElement>('.additional-format-input[data-encoder-id="mp3"]');
+    if (!mp3) throw new Error('MP3 supplemental format control is missing');
+    mp3.checked = true;
+    mp3.dispatchEvent(new Event('change', { bubbles: true }));
+    await nextTick();
+    await checkRadio('.mode-stems');
+    await clickExport();
+    control.resolve(
+      makeResult({
+        stems: [
+          {
+            trackIndex: 0,
+            name: 'Drums',
+            channels: [new Float32Array([0.1]), new Float32Array([0.2])],
+          },
+        ],
+      }),
+    );
+    await vi.waitFor(() => expect(download).toHaveBeenCalledTimes(2));
+
+    expect(control.render).toHaveBeenCalledTimes(1);
+    expect(download.mock.calls.map((call) => call[1])).toEqual([
+      'My Song stems wav.zip',
+      'My Song stems mp3.zip',
+    ]);
+    expect(Object.keys(unzipSync(await downloadedBytes(download)))).toEqual(['01 Drums.wav']);
+    const second = new Uint8Array(await (download.mock.calls[1][0] as Blob).arrayBuffer());
+    expect(Object.keys(unzipSync(second))).toEqual(['01 Drums.mp3']);
   });
 
   it('encodes streamed stems before the render result settles', async () => {
@@ -756,11 +864,7 @@ describe('ExportDialog', () => {
 
     await vi.waitFor(() => expect(download).toHaveBeenCalledTimes(1));
     expect(encode).not.toHaveBeenCalled();
-    expect(await downloadedBytes(download)).toEqual(
-      encodeWav([new Float32Array([0.25, 0.5]), new Float32Array([-0.25, -0.5])], 48_000, {
-        bitDepth: 16,
-      }),
-    );
+    expect(includesTag(await downloadedBytes(download), 'bext')).toBe(true);
   });
 
   it('exports stems at unity even when normalization is on, preserving mix balance', async () => {

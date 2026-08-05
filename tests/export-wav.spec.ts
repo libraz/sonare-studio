@@ -17,6 +17,17 @@ function readInt24(bytes: Uint8Array, offset: number): number {
   return raw >= 0x800000 ? raw - 0x1000000 : raw;
 }
 
+function riffChunks(bytes: Uint8Array): Array<{ tag: string; offset: number; size: number }> {
+  const chunks: Array<{ tag: string; offset: number; size: number }> = [];
+  const output = view(bytes);
+  for (let offset = 12; offset + 8 <= bytes.length; ) {
+    const size = output.getUint32(offset + 4, true);
+    chunks.push({ tag: tag(bytes, offset), offset, size });
+    offset += 8 + size + (size & 1);
+  }
+  return chunks;
+}
+
 describe('encodeWav', () => {
   it('uses one resolved layout for header fields and allocation', () => {
     expect(wavLayout(1, 1, 24)).toMatchObject({
@@ -101,6 +112,35 @@ describe('encodeWav', () => {
       expect(v.getUint32(40, true)).toBe(2);
       expect(bytes.length).toBe(46);
     });
+  });
+
+  it('writes BWF origin data and named cue labels when delivery metadata is supplied', () => {
+    const bytes = encodeWav([new Float32Array([0, 0])], 48_000, {
+      metadata: {
+        title: 'Mix',
+        originator: 'Sonare Studio',
+        originatorReference: 'session-7',
+        originationDate: '2026-08-05',
+        originationTime: '12:34:56',
+        timeReference: 0,
+        markers: [{ sampleOffset: 1, name: 'Drop' }],
+      },
+    });
+    const chunks = riffChunks(bytes);
+    expect(chunks.map((chunk) => chunk.tag)).toEqual(['fmt ', 'bext', 'data', 'cue ', 'LIST']);
+    const bext = chunks[1];
+    expect(bext.size).toBe(602);
+    expect(String.fromCharCode(...bytes.slice(bext.offset + 8, bext.offset + 11))).toBe('Mix');
+    expect(String.fromCharCode(...bytes.slice(bext.offset + 8 + 256, bext.offset + 8 + 269))).toBe(
+      'Sonare Studio',
+    );
+    const cue = chunks[3];
+    const output = view(bytes);
+    expect(output.getUint32(cue.offset + 8, true)).toBe(1);
+    expect(output.getUint32(cue.offset + 8 + 4 + 20, true)).toBe(1);
+    const labels = new TextDecoder().decode(bytes.slice(chunks[4].offset + 12));
+    expect(labels).toContain('Drop');
+    expect(output.getUint32(4, true) + 8).toBe(bytes.length);
   });
 
   describe('TPDF dither', () => {

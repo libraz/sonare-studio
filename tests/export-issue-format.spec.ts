@@ -17,6 +17,9 @@ const STRINGS: ExportIssueStrings = {
     externalMidiSilent: 'External MIDI track "{track}" is silent in audio export',
     releaseTailShort:
       'Release tail is {current}s, but active reverb/delay settings suggest at least {suggested}s',
+    soloActive: 'Solo is active for: {tracks}. The export omits other tracks.',
+    pflModeActive: 'PFL solo mode is active.',
+    silentMixdown: 'The export will be silent.',
   },
   label: {
     frozenTrack: 'frozen track "{name}"',
@@ -68,6 +71,10 @@ describe('export issue formatter', () => {
     expect(formatPreflightWarning(tail, STRINGS)).toBe(
       'Release tail is 2s, but active reverb/delay settings suggest at least 8s',
     );
+
+    expect(
+      formatPreflightWarning({ kind: 'solo-active', tracks: ['Kick', 'Snare'] }, STRINGS),
+    ).toBe('Solo is active for: Kick, Snare. The export omits other tracks.');
   });
 
   it('formats render limitations, joining instrument track names', () => {

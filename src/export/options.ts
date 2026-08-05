@@ -60,6 +60,8 @@ export function isCompressedExportBitrate(value: number): value is CompressedExp
 export interface ExportOptionsModel {
   /** Codec registry id of the chosen format. */
   encoderId: string;
+  /** Extra codec registry ids to encode from the same rendered PCM. */
+  additionalEncoderIds?: string[];
   /** Output sample rate in Hz. */
   sampleRate: ExportSampleRate;
   /** Render range choice. */
@@ -100,10 +102,11 @@ const FALLBACK_BASE_NAME = 'project';
 /** Fixed zip timestamp so identical inputs produce identical archives. */
 const STEMS_ZIP_MTIME = '2000-01-01T12:00:00Z';
 
-/** Creates the dialog defaults: 16-bit WAV mixdown of the whole project. */
+/** Creates the dialog defaults: 24-bit WAV mixdown of the whole project. */
 export function createDefaultExportOptions(projectName = FALLBACK_BASE_NAME): ExportOptionsModel {
   return {
     encoderId: WAV_ENCODER_ID,
+    additionalEncoderIds: [],
     sampleRate: 48000,
     range: 'project',
     mode: 'mixdown',
@@ -113,7 +116,7 @@ export function createDefaultExportOptions(projectName = FALLBACK_BASE_NAME): Ex
     normalizeLoudness: false,
     releaseTailSeconds: 2,
     baseName: projectName,
-    wavBitDepth: 16,
+    wavBitDepth: 24,
     wavDither: false,
     flacBitDepth: 24,
     flacDither: false,
@@ -207,8 +210,10 @@ export function validateExportOptions(
   context: ExportValidationContext,
 ): string[] {
   const errors: string[] = [];
-  if (!context.encoderIds.includes(model.encoderId)) {
-    errors.push(`Unknown export format: ${model.encoderId}`);
+  for (const encoderId of selectedEncoderIds(model)) {
+    if (!context.encoderIds.includes(encoderId)) {
+      errors.push(`Unknown export format: ${encoderId}`);
+    }
   }
   if (!(EXPORT_SAMPLE_RATES as ReadonlyArray<number>).includes(model.sampleRate)) {
     errors.push(`Unsupported sample rate: ${model.sampleRate} Hz`);
@@ -229,7 +234,7 @@ export function validateExportOptions(
   if (!isExportMemoryBudgetMiB(model.memoryBudgetMiB)) {
     errors.push(`Unsupported export memory budget: ${String(model.memoryBudgetMiB)} MiB`);
   }
-  if (model.encoderId === MP3_ENCODER_ID) {
+  if (selectedEncoderIds(model).includes(MP3_ENCODER_ID)) {
     if (!isMp3SampleRate(model.sampleRate)) {
       errors.push('MP3 supports 44.1 kHz and 48 kHz only');
     }
@@ -237,18 +242,27 @@ export function validateExportOptions(
       errors.push(`Unsupported MP3 bitrate: ${String(model.mp3Bitrate)} kbps`);
     }
   }
-  if (model.encoderId === FLAC_ENCODER_ID) {
+  if (selectedEncoderIds(model).includes(FLAC_ENCODER_ID)) {
     if (model.flacBitDepth !== 16 && model.flacBitDepth !== 24) {
       errors.push(`Unsupported FLAC bit depth: ${String(model.flacBitDepth)}`);
     }
   }
   if (
-    isCompressedEncoderId(model.encoderId, context) &&
+    selectedEncoderIds(model).some((encoderId) => isCompressedEncoderId(encoderId, context)) &&
     !isCompressedExportBitrate(model.compressedBitrateKbps)
   ) {
     errors.push(`Unsupported compressed bitrate: ${String(model.compressedBitrateKbps)} kbps`);
   }
   return errors;
+}
+
+/**
+ * Returns the selected codecs in stable user order, with the primary format
+ * first and duplicate/blank supplemental selections removed.
+ */
+export function selectedEncoderIds(model: ExportOptionsModel): string[] {
+  const ids = [model.encoderId, ...(model.additionalEncoderIds ?? [])];
+  return [...new Set(ids.filter((id): id is string => typeof id === 'string' && id.length > 0))];
 }
 
 /** Maps the model to the encoder-specific option bag for `encoder.encode`. */

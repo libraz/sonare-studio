@@ -7,6 +7,7 @@ import {
   addAudioClip,
   addAudioTrack,
   addGroupTrack,
+  addInsert,
   clearHistory,
   redo,
   undo,
@@ -101,6 +102,15 @@ describe('track freeze and bounce-in-place', () => {
       expect(render.mock.calls[0][1]).toMatchObject({ freezeTrackIndex: 0, deps: null });
       expect(ingest.mock.calls[0][2]).toBe(`${store.tracks[0].name} (frozen)`);
       expect(store.tracks[0].frozen).toEqual({ assetId: 'baked-1' });
+    });
+
+    it('uses the target track release time instead of a fixed freeze tail', async () => {
+      const voxId = addAudioTrack({ name: 'Vox' });
+      addInsert(voxId, 'effects.reverb.plate', { decaySeconds: 6 });
+
+      await freezeTrack(voxId, { render, ingest });
+
+      expect(render.mock.calls[0][1]).toMatchObject({ releaseTailSeconds: 6 });
     });
 
     it('is one undoable edit and unfreezeTrack reverts it', async () => {
@@ -205,6 +215,7 @@ describe('track freeze and bounce-in-place', () => {
         freezeTrackIndex: 1,
         deps: null,
         range: { startPpq: 4, endPpq: 12 },
+        appendReleaseTailForExplicitRange: true,
       });
       expect(ingest).toHaveBeenCalledTimes(1);
       expect(ingest.mock.calls[0][2]).toBe('Gtr (bounce)');
@@ -228,6 +239,19 @@ describe('track freeze and bounce-in-place', () => {
       expect(store.clips.filter((c) => c.trackId === gtrId).map((c) => c.id)).toEqual([
         sourceClipId,
       ]);
+    });
+
+    it('keeps the requested clip length while rendering a reverb tail', async () => {
+      const gtrId = addAudioTrack({ name: 'Gtr' });
+      addInsert(gtrId, 'effects.reverb.plate', { decaySeconds: 6 });
+
+      const clipId = await bounceTrackRange(gtrId, 4, 12, { render, ingest });
+
+      expect(render.mock.calls[0][1]).toMatchObject({
+        releaseTailSeconds: 6,
+        appendReleaseTailForExplicitRange: true,
+      });
+      expect(store.clips.find((clip) => clip.id === clipId)?.lengthPpq).toBe(8);
     });
 
     it('rejects invalid ranges before rendering', async () => {

@@ -10,6 +10,7 @@
  * is applied to 16-bit output only.
  */
 
+import type { AudioFileMetadata } from './audio-file-metadata';
 import { quantizePcmSample } from './pcm-quantize';
 
 /** Output sample format: integer bit depth, or '32f' for IEEE float. */
@@ -23,6 +24,8 @@ export interface EncodeWavOptions {
   dither?: boolean;
   /** Uniform [0, 1) noise source for the dither (default Math.random; injectable for tests). */
   random?: () => number;
+  /** BWF/cue metadata for a rendered delivery. Omitted for plain asset WAVs. */
+  metadata?: AudioFileMetadata;
 }
 
 /** Bytes per sample for each supported format. */
@@ -101,23 +104,123 @@ function writeTag(view: DataView, offset: number, tag: string): void {
   }
 }
 
+function textBytes(value: string, length: number): Uint8Array {
+  const out = new Uint8Array(length);
+  for (let index = 0; index < Math.min(value.length, length); index += 1) {
+    const code = value.charCodeAt(index);
+    out[index] = code >= 0x20 && code <= 0x7e ? code : 0x3f;
+  }
+  return out;
+}
+
+function utf8(value: string): Uint8Array {
+  return new TextEncoder().encode(value);
+}
+
+function chunk(tag: string, payload: Uint8Array): Uint8Array {
+  const out = new Uint8Array(8 + payload.length + (payload.length & 1));
+  const view = new DataView(out.buffer);
+  writeTag(view, 0, tag);
+  view.setUint32(4, payload.length, true);
+  out.set(payload, 8);
+  return out;
+}
+
+function bextChunk(metadata: AudioFileMetadata | undefined): Uint8Array | null {
+  if (!metadata) return null;
+  const payload = new Uint8Array(602);
+  payload.set(textBytes(metadata.title ?? '', 256), 0);
+  payload.set(textBytes(metadata.originator ?? 'Sonare Studio', 32), 256);
+  payload.set(textBytes(metadata.originatorReference ?? '', 32), 288);
+  payload.set(textBytes(metadata.originationDate ?? '', 10), 320);
+  payload.set(textBytes(metadata.originationTime ?? '', 8), 330);
+  const reference = Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, metadata.timeReference ?? 0));
+  const view = new DataView(payload.buffer);
+  view.setUint32(338, reference >>> 0, true);
+  view.setUint32(342, Math.floor(reference / 0x1_0000_0000), true);
+  view.setUint16(346, 2, true); // BWF v2
+  return chunk('bext', payload);
+}
+
+function cueChunks(metadata: AudioFileMetadata | undefined): Uint8Array {
+  const markers = (metadata?.markers ?? []).filter(
+    (marker) =>
+      Number.isSafeInteger(marker.sampleOffset) &&
+      marker.sampleOffset >= 0 &&
+      marker.sampleOffset <= 0xffff_ffff,
+  );
+  if (markers.length === 0) return new Uint8Array();
+  const cue = new Uint8Array(4 + markers.length * 24);
+  const cueView = new DataView(cue.buffer);
+  cueView.setUint32(0, markers.length, true);
+  const labels: Uint8Array[] = [];
+  for (let index = 0; index < markers.length; index += 1) {
+    const offset = 4 + index * 24;
+    cueView.setUint32(offset, index + 1, true);
+    cueView.setUint32(offset + 4, markers[index].sampleOffset, true);
+    writeTag(cueView, offset + 8, 'data');
+    cueView.setUint32(offset + 20, markers[index].sampleOffset, true);
+    const label = utf8(markers[index].name);
+    const labl = new Uint8Array(4 + label.length + 1);
+    new DataView(labl.buffer).setUint32(0, index + 1, true);
+    labl.set(label, 4);
+    labels.push(chunk('labl', labl));
+  }
+  const adtlLength = 4 + labels.reduce((length, label) => length + label.length, 0);
+  const adtl = new Uint8Array(adtlLength);
+  const adtlView = new DataView(adtl.buffer);
+  writeTag(adtlView, 0, 'adtl');
+  let offset = 4;
+  for (const label of labels) {
+    adtl.set(label, offset);
+    offset += label.length;
+  }
+  const cueChunk = chunk('cue ', cue);
+  const listChunk = chunk('LIST', adtl);
+  const out = new Uint8Array(cueChunk.length + listChunk.length);
+  out.set(cueChunk);
+  out.set(listChunk, cueChunk.length);
+  return out;
+}
+
+function wavMetadataChunks(metadata: AudioFileMetadata | undefined): {
+  beforeData: Uint8Array;
+  afterData: Uint8Array;
+} {
+  const beforeData = bextChunk(metadata) ?? new Uint8Array();
+  return { beforeData, afterData: cueChunks(metadata) };
+}
+
+/** Returns the chunks written after a WAV data payload (cue/list labels). */
+export function wavTrailingMetadata(metadata: AudioFileMetadata | undefined): Uint8Array {
+  return wavMetadataChunks(metadata).afterData;
+}
+
 /** Builds the RIFF/fmt/(fact)/data prefix for a known-length WAV stream. */
 export function wavHeader(
   frames: number,
   numChannels: number,
   sampleRate: number,
   bitDepth: WavBitDepth,
+  options: Pick<EncodeWavOptions, 'metadata'> = {},
 ): Uint8Array {
   if (!Number.isInteger(sampleRate) || sampleRate <= 0) {
     throw new RangeError(`WAV sample rate must be a positive integer, got ${sampleRate}`);
   }
   const layout = wavLayout(frames, numChannels, bitDepth);
-  const header = new Uint8Array(layout.fileSize - layout.dataSize - layout.dataPad);
+  const metadata = wavMetadataChunks(options.metadata);
+  const header = new Uint8Array(
+    layout.fileSize - layout.dataSize - layout.dataPad + metadata.beforeData.length,
+  );
   const view = new DataView(header.buffer);
   const isFloat = bitDepth === '32f';
   let offset = 0;
   writeTag(view, offset, 'RIFF');
-  view.setUint32(offset + 4, layout.riffSize, true);
+  view.setUint32(
+    offset + 4,
+    layout.riffSize + metadata.beforeData.length + metadata.afterData.length,
+    true,
+  );
   writeTag(view, offset + 8, 'WAVE');
   offset += 12;
   writeTag(view, offset, 'fmt ');
@@ -135,7 +238,10 @@ export function wavHeader(
     view.setUint32(offset + 4, 4, true);
     view.setUint32(offset + 8, frames, true);
   }
-  const dataOffset = header.length - 8;
+  offset += isFloat ? 12 : 0;
+  header.set(metadata.beforeData, offset);
+  offset += metadata.beforeData.length;
+  const dataOffset = offset;
   writeTag(view, dataOffset, 'data');
   view.setUint32(dataOffset + 4, layout.dataSize, true);
   return header;
@@ -213,38 +319,15 @@ export function encodeWav(
   }
 
   const numChannels = channels.length;
-  const isFloat = bitDepth === '32f';
   const layout = wavLayout(frames, numChannels, bitDepth);
-  const out = new Uint8Array(layout.fileSize);
+  const metadata = wavMetadataChunks(options.metadata);
+  const header = wavHeader(frames, numChannels, sampleRate, bitDepth, options);
+  const out = new Uint8Array(
+    header.length + layout.dataSize + layout.dataPad + metadata.afterData.length,
+  );
+  out.set(header);
   const view = new DataView(out.buffer);
-
-  let offset = 0;
-  writeTag(view, offset, 'RIFF');
-  view.setUint32(offset + 4, layout.riffSize, true);
-  writeTag(view, offset + 8, 'WAVE');
-  offset += 12;
-
-  writeTag(view, offset, 'fmt ');
-  view.setUint32(offset + 4, layout.fmtSize, true);
-  view.setUint16(offset + 8, isFloat ? 3 : 1, true); // format tag: 1 = PCM, 3 = IEEE float
-  view.setUint16(offset + 10, numChannels, true);
-  view.setUint32(offset + 12, sampleRate, true);
-  view.setUint32(offset + 16, sampleRate * layout.blockAlign, true); // byte rate
-  view.setUint16(offset + 20, layout.blockAlign, true);
-  view.setUint16(offset + 22, isFloat ? 32 : bitDepth, true);
-  if (isFloat) view.setUint16(offset + 24, 0, true); // cbSize: no extension bytes
-  offset += 8 + layout.fmtSize;
-
-  if (isFloat) {
-    writeTag(view, offset, 'fact');
-    view.setUint32(offset + 4, 4, true);
-    view.setUint32(offset + 8, frames, true);
-    offset += 12;
-  }
-
-  writeTag(view, offset, 'data');
-  view.setUint32(offset + 4, layout.dataSize, true);
-  offset += 8;
+  let offset = header.length;
 
   const dither = options.dither === true && bitDepth === 16;
   const random = options.random ?? Math.random;
@@ -266,5 +349,6 @@ export function encodeWav(
     }
   }
   // The optional pad byte is already zero-initialized.
+  out.set(metadata.afterData, offset + layout.dataPad);
   return out;
 }

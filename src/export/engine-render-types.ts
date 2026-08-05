@@ -36,6 +36,9 @@ export const RELEASE_TAIL_SECONDS = 2;
  */
 export const PREROLL_SECONDS = 0.5;
 
+/** Maximum stateful-DSP history rendered before a windowed export begins. */
+export const MAX_PREROLL_SECONDS = 10;
+
 /** Tempo assumed when the document carries no tempo segment. */
 export const DEFAULT_TEMPO_BPM = 120;
 
@@ -107,6 +110,8 @@ export interface EngineRenderOptions {
   range?: MixdownRange;
   /** Release tail appended after the final clip for project-range renders (default 2 seconds). */
   releaseTailSeconds?: number;
+  /** Also append the release tail to an explicit PPQ range (used by bounce-in-place). */
+  appendReleaseTailForExplicitRange?: boolean;
   /** Loop window used when range is 'loop'. */
   loopRegion?: MixdownRangePpq;
   /**
@@ -115,9 +120,16 @@ export interface EngineRenderOptions {
    * apply, as they are audible in live playback).
    */
   includeMasterChain?: boolean;
-  /** True also returns one stereo stem per track (post-strip, pre-master). */
+  /**
+   * True returns pre-master stems for exclusive source domains: standalone
+   * tracks plus group submixes (not both a group and each of its members).
+   */
   stems?: boolean;
-  /** When stems are enabled, also render one pre-master stem per mixer bus/return. */
+  /**
+   * When stems are enabled, render one pre-master return/output-bus stem per
+   * mixer bus. Its routed sources and sends are omitted from track/group stems
+   * so the complete stem set can be re-summed before master processing.
+   */
   busStems?: boolean;
   /** When stems are enabled, also include the final stereo master as a stem. */
   masterStem?: boolean;
@@ -156,13 +168,14 @@ export interface EngineRenderOptions {
   loadFont?: (fontId: string) => Promise<Uint8Array>;
   /** Synth preset name resolver (defaults to identity). */
   resolvePreset?: (preset: string) => string;
+  /**
+   * Offline-quality planar resampling seam. Defaults to libsonare WASM's
+   * band-limited resampler and is intentionally separate from live playback's
+   * lightweight linear conversion.
+   */
+  resampleAudio?: (samples: Float32Array, sourceRate: number, targetRate: number) => Float32Array;
   /** Optional processor-latency resolver used for automatic track PDC. */
   insertLatency?: InsertLatencyResolver;
-  /**
-   * Realtime-insertable mastering processor ids. Normally derived from the
-   * wasm catalog; injectable for alternate engine hosts and tests.
-   */
-  realtimeMasteringInsertCatalog?: ReadonlySet<string>;
   /** Progress callback: fraction in [0, 1] plus the stage being entered. */
   onProgress?: (progress: number, stage: string) => void;
   /** Cancellation flag, checked between render checkpoints. */
@@ -185,6 +198,14 @@ export interface RenderPass {
    * its member indices so the submix renders through the group bus.
    */
   stemIndices: ReadonlySet<number> | null;
+  /**
+   * Routing policy for an isolated track stem. `direct` removes the selected
+   * lane's output-bus assignment; `group` preserves member-to-group routing
+   * while optionally stripping sends when return stems are rendered.
+   */
+  stemRouting: 'document' | 'direct' | 'group';
+  /** True when return-bus stems carry all send/output-bus contributions. */
+  separateReturnStems: boolean;
   /**
    * Non-null renders only this engine bus/return: source lanes keep their
    * document mute/solo state, sends/output routing to the selected bus stay

@@ -85,12 +85,26 @@ describe('smfToProjectDocument', () => {
     });
 
     expect(sampled).toHaveLength(101);
-    expect(sampled[0]).toEqual({ startPpq: 0, bpm: 100 });
+    expect(sampled[0]).toEqual({ startPpq: 0, bpm: 100.05 });
     expect(sampled.at(-1)).toEqual({ startPpq: 4, bpm: 110 });
     expect(sampled.every((segment) => segment.endBpm === undefined)).toBe(true);
     expect(
       Math.max(...sampled.slice(1).map((segment, index) => segment.bpm - sampled[index].bpm)),
     ).toBeLessThanOrEqual(SMF_TEMPO_RAMP_MAX_ERROR_BPM + 1e-9);
+  });
+
+  it('does not export a final open-ended ramp that playback ignores', () => {
+    const sampled = sampleTempoRampsForSmf({
+      schemaVersion: 3,
+      name: 'Final ramp',
+      sampleRate: 48000,
+      tempoSegments: [{ startPpq: 0, bpm: 120, endBpm: 72 }],
+      timeSignatures: [],
+      tracks: [],
+      markers: [],
+      sections: [],
+    });
+    expect(sampled).toEqual([{ startPpq: 0, bpm: 120 }]);
   });
 
   it('reports empty MIDI clips and tracks before a lossy SMF export', () => {
@@ -194,7 +208,7 @@ describe('smfToProjectDocument', () => {
     );
 
     expect(imported.tempoSegments).toHaveLength(11);
-    expect(imported.tempoSegments[0].bpm).toBeCloseTo(100, 4);
+    expect(imported.tempoSegments[0].bpm).toBeCloseTo(100.05, 3);
     expect(imported.tempoSegments.at(-1)?.startPpq).toBe(4);
     expect(imported.tempoSegments.at(-1)?.bpm).toBeCloseTo(101, 3);
     expect(

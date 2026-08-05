@@ -494,10 +494,16 @@ function structureElement(doc: ProjectDocument): XmlElement {
     const audiblePan = track.kind === 'group' ? 0 : (track.mixer?.pan ?? track.pan);
     const vcaOffsetDb = track.vcaId !== undefined ? (vcaGainDbById.get(track.vcaId) ?? 0) : 0;
     const channelId = `channel-${index}`;
+    // DAWproject nesting alone does not route audio in every host. Mirror the
+    // engine's priority: a valid group owns its member output, ahead of any
+    // explicit return-bus route, so the group's fader and inserts stay audible.
+    const group = track.groupIndex !== undefined ? doc.tracks[track.groupIndex] : undefined;
     const destination =
-      strip.outputBusId !== undefined
-        ? (busChannelIdByBusId.get(strip.outputBusId) ?? MASTER_CHANNEL_ID)
-        : MASTER_CHANNEL_ID;
+      group?.kind === 'group'
+        ? `channel-${track.groupIndex}`
+        : strip.outputBusId !== undefined
+          ? (busChannelIdByBusId.get(strip.outputBusId) ?? MASTER_CHANNEL_ID)
+          : MASTER_CHANNEL_ID;
     return {
       name: 'Track',
       attributes: {
@@ -693,6 +699,7 @@ function channelAutomationPointsElement(
   idPrefix: string,
   channelId: string,
   strip: MixerStrip | undefined,
+  faderOffsetDb = 0,
 ): XmlElement | null {
   if (!lane.enabled || lane.points.length === 0) return null;
   let parameter: string;
@@ -701,7 +708,7 @@ function channelAutomationPointsElement(
   if (lane.param === 'faderDb') {
     parameter = `${channelId}-volume`;
     unit = 'linear';
-    pointValue = dbToLinear;
+    pointValue = (value) => dbToLinear(value + faderOffsetDb);
   } else if (lane.param === 'pan') {
     parameter = `${channelId}-pan`;
     unit = 'normalized';
@@ -933,6 +940,9 @@ function arrangementElement(
   assets: Map<string, AudioAssetEntry>,
   tempoMap: NormalizedTempoMap,
 ): XmlElement {
+  const vcaGainDbById = new Map(
+    (doc.mixer?.vcaGroups ?? []).map((group) => [group.id, group.gainDb]),
+  );
   const children: XmlElement[] = [];
   if (doc.timeSignatures.length > 1) {
     children.push(timeSignatureAutomationElement(doc));
@@ -957,6 +967,7 @@ function arrangementElement(
           String(trackIndex),
           `channel-${trackIndex}`,
           track.mixer,
+          track.vcaId === undefined ? 0 : (vcaGainDbById.get(track.vcaId) ?? 0),
         ),
       )
       .filter((element): element is XmlElement => element !== null);

@@ -8,6 +8,7 @@
  * covers the common low-order predictor path without adding deployment assets.
  */
 
+import type { AudioFileMetadata } from './audio-file-metadata';
 import {
   type AudioEncodeOptions,
   type AudioEncoder,
@@ -27,6 +28,8 @@ export interface EncodeFlacOptions {
   dither?: boolean;
   /** Samples per FLAC frame; clamped by validation to [16, 65535] (default 4096). */
   blockSize?: number;
+  /** Vorbis comments and frame seek points for a rendered delivery. */
+  metadata?: AudioFileMetadata;
 }
 
 const DEFAULT_FLAC_BIT_DEPTH: FlacBitDepth = 24;
@@ -215,6 +218,68 @@ function writeUint24(out: Uint8Array, offset: number, value: number): void {
   out[offset] = (value >>> 16) & 0xff;
   out[offset + 1] = (value >>> 8) & 0xff;
   out[offset + 2] = value & 0xff;
+}
+
+function flacMetadataBlock(type: number, payload: Uint8Array, last: boolean): Uint8Array {
+  const out = new Uint8Array(4 + payload.length);
+  out[0] = (last ? 0x80 : 0) | type;
+  writeUint24(out, 1, payload.length);
+  out.set(payload, 4);
+  return out;
+}
+
+function vorbisComment(metadata: AudioFileMetadata): Uint8Array {
+  const encode = (value: string) => new TextEncoder().encode(value);
+  const vendor = encode('Sonare Studio');
+  const comments = [
+    ...(metadata.title ? [`TITLE=${metadata.title}`] : []),
+    ...(metadata.originator ? [`ORIGINATOR=${metadata.originator}`] : []),
+    ...(metadata.originationDate ? [`DATE=${metadata.originationDate}`] : []),
+    ...(metadata.originationTime ? [`TIME=${metadata.originationTime}`] : []),
+  ].map(encode);
+  const out = new Uint8Array(
+    4 + vendor.length + 4 + comments.reduce((size, comment) => size + 4 + comment.length, 0),
+  );
+  const view = new DataView(out.buffer);
+  view.setUint32(0, vendor.length, true);
+  out.set(vendor, 4);
+  let offset = 4 + vendor.length;
+  view.setUint32(offset, comments.length, true);
+  offset += 4;
+  for (const comment of comments) {
+    view.setUint32(offset, comment.length, true);
+    offset += 4;
+    out.set(comment, offset);
+    offset += comment.length;
+  }
+  return out;
+}
+
+function seekTable(
+  encodedFrames: readonly Uint8Array[],
+  frames: number,
+  blockSize: number,
+): Uint8Array {
+  // A compact table of up to 100 evenly spaced frame starts materially speeds
+  // seeking without letting long exports gain a large metadata allocation.
+  const count = encodedFrames.length;
+  const stride = Math.max(1, Math.ceil(count / 100));
+  const selected = Array.from({ length: Math.ceil(count / stride) }, (_, index) => index * stride);
+  const out = new Uint8Array(selected.length * 18);
+  const view = new DataView(out.buffer);
+  let frameOffset = 0;
+  let selectedIndex = 0;
+  for (let index = 0; index < count; index += 1) {
+    if (selected[selectedIndex] === index) {
+      const offset = selectedIndex * 18;
+      view.setBigUint64(offset, BigInt(index * blockSize), false);
+      view.setBigUint64(offset + 8, BigInt(frameOffset), false);
+      view.setUint16(offset + 16, Math.min(blockSize, frames - index * blockSize), false);
+      selectedIndex += 1;
+    }
+    frameOffset += encodedFrames[index].length;
+  }
+  return out;
 }
 
 function utf8Uint(value: number): number[] {
@@ -783,11 +848,14 @@ export function encodeFlac(
     minFrameSize,
     maxFrameSize,
   );
-  const metadata = new Uint8Array(4 + info.length);
-  metadata[0] = 0x80; // last metadata block, STREAMINFO
-  writeUint24(metadata, 1, info.length);
-  metadata.set(info, 4);
-  const chunks = [signature, metadata, ...encodedFrames];
+  const metadata = options.metadata
+    ? [
+        flacMetadataBlock(0, info, false),
+        flacMetadataBlock(3, seekTable(encodedFrames, frames, effectiveBlockSize), false),
+        flacMetadataBlock(4, vorbisComment(options.metadata), true),
+      ]
+    : [flacMetadataBlock(0, info, true)];
+  const chunks = [signature, ...metadata, ...encodedFrames];
 
   let total = 0;
   for (const chunk of chunks) total += chunk.length;
@@ -807,6 +875,8 @@ function toFlacOptions(options: AudioEncodeOptions = {}): EncodeFlacOptions {
   if (options['dither'] === true) out.dither = true;
   const blockSize = options['blockSize'];
   if (typeof blockSize === 'number') out.blockSize = blockSize;
+  const metadata = options['metadata'];
+  if (metadata && typeof metadata === 'object') out.metadata = metadata as AudioFileMetadata;
   return out;
 }
 

@@ -85,6 +85,9 @@ function toWavOptions(options: AudioEncodeOptions = {}): EncodeWavOptions {
   }
   if (typeof options['dither'] === 'boolean') out.dither = options['dither'];
   if (typeof options['random'] === 'function') out.random = options['random'] as () => number;
+  if (options['metadata'] && typeof options['metadata'] === 'object') {
+    out.metadata = options['metadata'] as EncodeWavOptions['metadata'];
+  }
   return out;
 }
 

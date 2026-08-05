@@ -13,6 +13,7 @@ import {
   exportFileName,
   normalizeMixdownLoudness,
   sanitizeFileBaseName,
+  selectedEncoderIds,
   stemEntryNames,
   stemsZipFileName,
   toRenderOptions,
@@ -26,10 +27,11 @@ function model(overrides: Partial<ExportOptionsModel> = {}): ExportOptionsModel 
 }
 
 describe('createDefaultExportOptions', () => {
-  it('defaults to a 16-bit WAV mixdown of the whole project', () => {
+  it('defaults to a 24-bit WAV mixdown of the whole project', () => {
     const defaults = createDefaultExportOptions('My Song');
     expect(defaults).toEqual({
       encoderId: 'wav',
+      additionalEncoderIds: [],
       sampleRate: 48000,
       range: 'project',
       mode: 'mixdown',
@@ -39,7 +41,7 @@ describe('createDefaultExportOptions', () => {
       normalizeLoudness: false,
       releaseTailSeconds: 2,
       baseName: 'My Song',
-      wavBitDepth: 16,
+      wavBitDepth: 24,
       wavDither: false,
       flacBitDepth: 24,
       flacDither: false,
@@ -59,6 +61,14 @@ describe('validateExportOptions', () => {
   it('rejects unknown encoders', () => {
     const errors = validateExportOptions(model({ encoderId: 'flac' }), CONTEXT);
     expect(errors.some((e) => e.includes('flac'))).toBe(true);
+  });
+
+  it('validates every supplemental format', () => {
+    const errors = validateExportOptions(
+      model({ additionalEncoderIds: [MP3_ENCODER_ID, 'unknown-format'] }),
+      CONTEXT,
+    );
+    expect(errors).toEqual(['Unknown export format: unknown-format']);
   });
 
   it('rejects a sample rate outside the selectable list', () => {
@@ -128,6 +138,16 @@ describe('validateExportOptions', () => {
     expect(validateExportOptions(model({ memoryBudgetMiB: 768 as never }), CONTEXT)).toEqual([
       'Unsupported export memory budget: 768 MiB',
     ]);
+  });
+});
+
+describe('selectedEncoderIds', () => {
+  it('keeps primary order and removes duplicate or blank supplemental formats', () => {
+    expect(
+      selectedEncoderIds(
+        model({ additionalEncoderIds: [MP3_ENCODER_ID, WAV_ENCODER_ID, '', MP3_ENCODER_ID] }),
+      ),
+    ).toEqual([WAV_ENCODER_ID, MP3_ENCODER_ID]);
   });
 });
 
