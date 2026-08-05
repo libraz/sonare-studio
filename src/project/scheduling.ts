@@ -405,7 +405,9 @@ export async function renderAudibleAudioClipWindow(
   options: { stretch?: StretchFn } = {},
 ): Promise<RenderedAudibleAudioClip | null> {
   if (!(clip.lengthPpq > 0) || (typeof tempo === 'number' && !(tempo > 0))) return null;
-  const segments = audioClipSegments(clip);
+  const tempoMap =
+    typeof tempo === 'number' ? normalizeTempoMap([{ startPpq: 0, bpm: tempo }], tempo) : tempo;
+  const segments = audioClipSegments(clip, { tempoMap, clipStartPpq: clip.startPpq });
   if (segments.length === 0) return null;
   const renderedAssets = await Promise.all(
     segments.map(async (segment) => ({ segment, asset: await loadAudioAsset(segment.assetId) })),
@@ -607,7 +609,7 @@ async function preflightLiveScheduleMemory(
     }
     for (const clip of store.clips) {
       if (clip.trackId !== track.id || clipKind(clip) !== 'audio' || clip.gain <= 0) continue;
-      for (const segment of audioClipSegments(clip)) {
+      for (const segment of audioClipSegments(clip, { tempoMap, clipStartPpq: clip.startPpq })) {
         const meta = await metaFor(segment.assetId);
         if (!meta) continue;
         preparedBytes +=
@@ -755,7 +757,7 @@ export async function scheduleProjectClips(
       if (gain <= 0) continue;
       // A clip expands to one engine clip per comp segment (one segment for
       // clips without takes); each slice loads its segment's asset.
-      for (const segment of audioClipSegments(clip)) {
+      for (const segment of audioClipSegments(clip, { tempoMap, clipStartPpq: clip.startPpq })) {
         let asset: LoadedAudioAsset;
         try {
           asset = await loadAudio(segment.assetId);

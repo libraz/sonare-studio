@@ -8,10 +8,17 @@
  */
 
 import { MAX_LOOP_OCCURRENCES, MIN_LOOP_WINDOW_PPQ } from './midi-projection';
+import { type NormalizedTempoMap, ppqToSeconds, secondsToPpq } from './tempo-map';
 import type { ClipCompSegment, ClipTake } from './types';
 
-/** Default short comp-boundary crossfade used to avoid clicks at hard edits. */
+/**
+ * Legacy PPQ fallback used only when no tempo map is available. At 120 BPM it
+ * matches {@link DEFAULT_COMP_CROSSFADE_SECONDS}.
+ */
 export const DEFAULT_COMP_CROSSFADE_PPQ = 0.02;
+
+/** Default real-time comp-boundary crossfade used to avoid clicks at hard edits. */
+export const DEFAULT_COMP_CROSSFADE_SECONDS = 0.01;
 
 /** The clip fields the comping helpers read (Editor and Document clips both fit). */
 export interface CompableClipFields {
@@ -24,6 +31,14 @@ export interface CompableClipFields {
   fadeOutPpq?: number;
   takes?: ReadonlyArray<ClipTake>;
   compSegments?: ReadonlyArray<ClipCompSegment>;
+}
+
+/** Timeline context needed to turn the default real-time fade into PPQ. */
+export interface AudioClipSegmentOptions {
+  /** Project tempo map. Without it the legacy PPQ fallback is used. */
+  tempoMap?: NormalizedTempoMap;
+  /** Absolute project PPQ at the start of the clip (default 0). */
+  clipStartPpq?: number;
 }
 
 /** One playable slice of an audio clip (a whole clip when it has no takes). */
@@ -138,13 +153,14 @@ function compBoundaryCrossfadePpq(
   selection: ReadonlyArray<ClipCompSegment>,
   boundaryIndex: number,
   clipLengthPpq: number,
+  options: AudioClipSegmentOptions,
 ): number {
   const boundary = selection[boundaryIndex];
   const previous = selection[boundaryIndex - 1];
   if (!boundary || !previous) return 0;
-  const requested = boundary.crossfadePpq ?? DEFAULT_COMP_CROSSFADE_PPQ;
-  if (requested <= 0) return 0;
   const boundaryPpq = boundary.startPpq;
+  const requested = boundary.crossfadePpq ?? defaultCompCrossfadePpq(options, boundaryPpq);
+  if (requested <= 0) return 0;
   const previousLength = boundaryPpq - previous.startPpq;
   const nextStart =
     boundaryIndex + 1 < selection.length ? selection[boundaryIndex + 1].startPpq : clipLengthPpq;
@@ -159,6 +175,46 @@ function compBoundaryCrossfadePpq(
   return half * 2;
 }
 
+function defaultCompCrossfadePpq(options: AudioClipSegmentOptions, boundaryPpq: number): number {
+  const tempoMap = options.tempoMap;
+  if (!tempoMap) return DEFAULT_COMP_CROSSFADE_PPQ;
+  const absoluteBoundaryPpq = (options.clipStartPpq ?? 0) + boundaryPpq;
+  const centerSeconds = ppqToSeconds(tempoMap, absoluteBoundaryPpq);
+  // The renderer extends the outgoing and incoming segments by the same PPQ
+  // amount. On a ramp, equal elapsed-time offsets are not equal PPQ offsets,
+  // so solve the actual symmetric PPQ interval instead of simply converting
+  // two timestamps around the boundary.
+  let upper = Math.max(
+    DEFAULT_COMP_CROSSFADE_PPQ / 2,
+    Math.abs(
+      secondsToPpq(tempoMap, centerSeconds + DEFAULT_COMP_CROSSFADE_SECONDS) - absoluteBoundaryPpq,
+    ),
+    Math.abs(
+      absoluteBoundaryPpq - secondsToPpq(tempoMap, centerSeconds - DEFAULT_COMP_CROSSFADE_SECONDS),
+    ),
+  );
+  for (let i = 0; i < 16; i += 1) {
+    if (
+      ppqToSeconds(tempoMap, absoluteBoundaryPpq + upper) -
+        ppqToSeconds(tempoMap, absoluteBoundaryPpq - upper) >=
+      DEFAULT_COMP_CROSSFADE_SECONDS
+    ) {
+      break;
+    }
+    upper *= 2;
+  }
+  let lower = 0;
+  for (let i = 0; i < 40; i += 1) {
+    const half = (lower + upper) / 2;
+    const seconds =
+      ppqToSeconds(tempoMap, absoluteBoundaryPpq + half) -
+      ppqToSeconds(tempoMap, absoluteBoundaryPpq - half);
+    if (seconds < DEFAULT_COMP_CROSSFADE_SECONDS) lower = half;
+    else upper = half;
+  }
+  return upper * 2;
+}
+
 /**
  * Expands an audio clip into its playable segments. A clip without takes is
  * one segment over its own asset; a clip with takes follows its comp
@@ -166,7 +222,10 @@ function compBoundaryCrossfadePpq(
  * apply only at the clip edges: fade-in on the first segment, fade-out on
  * the last.
  */
-function audioClipSegmentsInWindow(clip: CompableClipFields): AudioClipSegment[] {
+function audioClipSegmentsInWindow(
+  clip: CompableClipFields,
+  options: AudioClipSegmentOptions,
+): AudioClipSegment[] {
   const takes = clip.takes ?? [];
   if (takes.length === 0) {
     if (clip.assetId === undefined) return [];
@@ -189,7 +248,7 @@ function audioClipSegmentsInWindow(clip: CompableClipFields): AudioClipSegment[]
     clip.lengthPpq,
   );
   const boundaryCrossfades = selection.map((_, index) =>
-    compBoundaryCrossfadePpq(selection, index, clip.lengthPpq),
+    compBoundaryCrossfadePpq(selection, index, clip.lengthPpq, options),
   );
   const result: AudioClipSegment[] = [];
   for (let i = 0; i < selection.length; i++) {
@@ -221,7 +280,10 @@ function audioClipSegmentsInWindow(clip: CompableClipFields): AudioClipSegment[]
  * window and are placed later in the clip timeline; clip fade-in/out remain
  * edges of the whole clip, not every repeat.
  */
-export function audioClipSegments(clip: CompableClipFields): AudioClipSegment[] {
+export function audioClipSegments(
+  clip: CompableClipFields,
+  options: AudioClipSegmentOptions = {},
+): AudioClipSegment[] {
   const requestedLoopLengthPpq =
     clip.loopEnabled === true &&
     Number.isFinite(clip.loopLengthPpq) &&
@@ -235,7 +297,7 @@ export function audioClipSegments(clip: CompableClipFields): AudioClipSegment[] 
       ? Math.min(clip.lengthPpq, Math.max(requestedLoopLengthPpq, MIN_LOOP_WINDOW_PPQ))
       : 0;
   if (loopLengthPpq <= 0 || loopLengthPpq >= clip.lengthPpq) {
-    return audioClipSegmentsInWindow(clip);
+    return audioClipSegmentsInWindow(clip, options);
   }
 
   const loopWindow: CompableClipFields = {
@@ -246,12 +308,15 @@ export function audioClipSegments(clip: CompableClipFields): AudioClipSegment[] 
     fadeInPpq: 0,
     fadeOutPpq: 0,
   };
-  const base = audioClipSegmentsInWindow(loopWindow);
   const result: AudioClipSegment[] = [];
   const repeatCount = Math.min(Math.ceil(clip.lengthPpq / loopLengthPpq), MAX_LOOP_OCCURRENCES);
   for (let occurrence = 0; occurrence < repeatCount; occurrence++) {
     const repeatOffset = occurrence * loopLengthPpq;
     const remaining = clip.lengthPpq - repeatOffset;
+    const base = audioClipSegmentsInWindow(loopWindow, {
+      ...options,
+      clipStartPpq: (options.clipStartPpq ?? 0) + repeatOffset,
+    });
     for (const segment of base) {
       if (segment.offsetPpq >= remaining) continue;
       const lengthPpq = Math.min(segment.lengthPpq, remaining - segment.offsetPpq);

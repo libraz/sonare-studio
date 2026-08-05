@@ -132,7 +132,10 @@ async function flattenCompClips(
   try {
     const plans: Array<{ clipId: number; assetId: string; bakedAssetId?: string }> = [];
     for (const { clip } of inputs) {
-      const segments = audioClipSegments(clip);
+      const tempo = resolveTempo();
+      const tempoMap =
+        typeof tempo === 'number' ? normalizeTempoMap([{ startPpq: 0, bpm: tempo }], tempo) : tempo;
+      const segments = audioClipSegments(clip, { tempoMap, clipStartPpq: clip.startPpq });
       if (segments.length <= 1) {
         const assetId = segments[0]?.assetId ?? clip.assetId;
         if (!assetId) throw new Error(`Clip ${clip.id} selected take has no audio asset`);

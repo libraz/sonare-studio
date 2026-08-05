@@ -27,6 +27,7 @@ import {
 } from '@/project/comping';
 import { MAX_LOOP_OCCURRENCES, MIN_LOOP_WINDOW_PPQ } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
+import { normalizeTempoMap, ppqRangeSeconds } from '@/project/tempo-map';
 import type { ClipTake } from '@/project/types';
 
 vi.mock('@/lib/wasm', async () => {
@@ -385,6 +386,43 @@ describe('audioClipSegments', () => {
         fadeOutPpq: 0,
       },
     ]);
+  });
+
+  it('keeps the default comp crossfade at 10 ms across tempo changes', () => {
+    const clip = makeCompClip({
+      compSegments: [
+        { startPpq: 0, takeIndex: 0 },
+        { startPpq: 2, takeIndex: 1 },
+      ],
+    });
+    const slowMap = normalizeTempoMap([{ startPpq: 0, bpm: 120 }]);
+    const fastMap = normalizeTempoMap([{ startPpq: 0, bpm: 240 }]);
+    const rampMap = normalizeTempoMap([
+      { startPpq: 0, bpm: 120, endBpm: 240 },
+      { startPpq: 4, bpm: 240 },
+    ]);
+    const crossfadeAt = (tempoMap: typeof slowMap): number =>
+      audioClipSegments(clip, { tempoMap, clipStartPpq: 0 })[0].fadeOutPpq;
+
+    expect(crossfadeAt(slowMap)).toBeCloseTo(0.02, 8);
+    expect(crossfadeAt(fastMap)).toBeCloseTo(0.04, 8);
+    const rampCrossfade = crossfadeAt(rampMap);
+    expect(ppqRangeSeconds(rampMap, 2 - rampCrossfade / 2, 2 + rampCrossfade / 2)).toBeCloseTo(
+      0.01,
+      8,
+    );
+  });
+
+  it('keeps an explicitly requested PPQ crossfade musical', () => {
+    const clip = makeCompClip({
+      compSegments: [
+        { startPpq: 0, takeIndex: 0 },
+        { startPpq: 2, takeIndex: 1, crossfadePpq: 0.5 },
+      ],
+    });
+    const fastMap = normalizeTempoMap([{ startPpq: 0, bpm: 240 }]);
+
+    expect(audioClipSegments(clip, { tempoMap: fastMap, clipStartPpq: 0 })[0].fadeOutPpq).toBe(0.5);
   });
 });
 
