@@ -31,7 +31,12 @@ import {
 } from '@libraz/libcantus';
 import { type EditorChordSymbol, sameChord } from '@/project/chords';
 import type { ReharmonizeStrength } from '@/project/command/generate-harmonize';
-import { meterBarLengthPpq, timeSignatureAt, timeSignatureRanges } from '@/project/time-signature';
+import {
+  measureRangeAt,
+  meterBarLengthPpq,
+  timeSignatureAt,
+  timeSignatureRanges,
+} from '@/project/time-signature';
 import type { ScaleHighlightConfig, TimeSignatureSegment } from '@/project/types';
 import { chordSpanToEditorChord, editorChordToChord } from './chord-io';
 import { effectiveKeyScale, scaleHighlightToKeyScale } from './key';
@@ -137,12 +142,15 @@ function eligibleIndices(
 /**
  * Whether the chord still fits the melody in its region. A chord fits when it
  * actually supports the segment's melody: at least one overlapping melody note
- * is a chord tone and none clashes (is dissonant). A chord that shares no tone
- * with the melody — even if nothing outright clashes — is a poor harmonization
- * and is open to replacement; one that still supports the melody is kept
- * (hysteresis), so a small edit that leaves the harmony working does not flip
- * the chord. A segment with no melody note is treated as fitting (nothing to
- * reharmonize), and an evaluation failure never condemns the chord.
+ * is a chord tone and no structurally significant note clashes (is dissonant).
+ * A dissonance is significant when it starts on a strong beat or spans at least
+ * one quarter of the chord region; short weak-beat chromatic passing tones do
+ * not cause a needless replacement. A chord that shares no tone with the melody
+ * — even if nothing outright clashes — is a poor harmonization and is open to
+ * replacement; one that still supports the melody is kept (hysteresis), so a
+ * small edit that leaves the harmony working does not flip the chord. A segment
+ * with no melody note is treated as fitting (nothing to reharmonize), and an
+ * evaluation failure never condemns the chord.
  */
 function chordFitsMelody(
   chord: EditorChordSymbol,
@@ -151,6 +159,7 @@ function chordFitsMelody(
   timeSignatures: ReadonlyArray<TimeSignatureSegment>,
 ): boolean {
   const chordData = editorChordToChord(chord);
+  const chordDurationPpq = chord.endPpq - chord.startPpq;
   let hasNote = false;
   let hasChordTone = false;
   for (const note of melody) {
@@ -158,6 +167,10 @@ function chordFitsMelody(
       continue;
     }
     hasNote = true;
+    const overlapPpq =
+      Math.min(note.startPpq + note.durationPpq, chord.endPpq) -
+      Math.max(note.startPpq, chord.startPpq);
+    const strongBeat = strongBeatAt(timeSignatures, note.startPpq);
     try {
       const result = evaluateSafety({
         profile: FIT_PROFILE,
@@ -165,9 +178,14 @@ function chordFitsMelody(
         chord: chordData,
         key,
         otherVoices: [],
-        strongBeat: strongBeatAt(timeSignatures, note.startPpq),
+        strongBeat,
       });
-      if (result.safety === NoteSafety.Dissonant) return false;
+      if (
+        result.safety === NoteSafety.Dissonant &&
+        (strongBeat || overlapPpq >= chordDurationPpq / 4)
+      ) {
+        return false;
+      }
       if (result.safety === NoteSafety.Safe) hasChordTone = true;
     } catch {
       // An unevaluable note neither supports nor condemns the chord.
@@ -227,10 +245,12 @@ export function proposeReactiveReharmonization(
   // start (quarter-note beats), matching generateHarmonization; a fixed 4 would
   // cross bar lines under 3/4, 6/8, etc.
   let spans: ChordSpan[];
+  let inferredKey: ReturnType<typeof effectiveKeyScale> | undefined;
   try {
     const startPpq = Math.min(...input.melody.map((note) => note.startPpq));
     const endPpq = Math.max(...input.melody.map((note) => note.startPpq + note.durationPpq));
-    const meterRanges = timeSignatureRanges(input.timeSignatures, startPpq, endPpq);
+    const meterStartPpq = measureRangeAt(input.timeSignatures, startPpq).startPpq;
+    const meterRanges = timeSignatureRanges(input.timeSignatures, meterStartPpq, endPpq);
     if (input.harmonicRhythm === undefined && meterRanges.length > 1) {
       let segmentKey: ReturnType<typeof scaleHighlightToKeyScale> | 'infer' = input.key.enabled
         ? scaleHighlightToKeyScale(input.key)
@@ -254,6 +274,7 @@ export function proposeReactiveReharmonization(
           seed: input.seed ?? 0,
         });
         segmentKey = result.key;
+        if (!input.key.enabled) inferredKey ??= result.key;
         const offset = range.startPpq - gridOriginPpq;
         spans.push(
           ...result.chords.map((span) => ({ ...span, startBeat: span.startBeat + offset })),
@@ -272,12 +293,15 @@ export function proposeReactiveReharmonization(
         seed: input.seed ?? 0,
       });
       spans = result.chords;
+      if (!input.key.enabled) inferredKey = result.key;
     }
   } catch {
     return unchanged;
   }
   const freshAt = freshChordSampler(spans);
-  const key = effectiveKeyScale(input.key);
+  const key = input.key.enabled
+    ? effectiveKeyScale(input.key)
+    : (inferredKey ?? effectiveKeyScale(input.key));
   const locked = input.locked ?? [];
 
   const proposal: EditorChordSymbol[] = [];

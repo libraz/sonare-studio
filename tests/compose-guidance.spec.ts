@@ -128,11 +128,8 @@ describe('buildGuidance', () => {
       }),
     );
     expect(result.chordPresent).toBe(false);
-    expect(result.segments.length).toBeGreaterThanOrEqual(1);
-    const segment = result.segments[0];
-    expect(segment.startBeat).toBe(0);
-    expect(segment.endBeat).toBeGreaterThan(0);
-    expect(segment.safetyByPc).toHaveLength(12);
+    expect(result.segments).toHaveLength(1);
+    expect([...result.segments[0].safetyByPc]).toEqual(new Array<number>(12).fill(NoteSafety.Safe));
     const analysis = result.byNoteId.get(40);
     expect(analysis?.degree).toBe(1); // D is the second degree of C major
     expect(analysis?.isScaleTone).toBe(true);
@@ -147,9 +144,18 @@ describe('buildGuidance', () => {
       }),
     );
     expect(result.chordPresent).toBe(true);
-    expect(result.segments).toHaveLength(1);
+    expect(result.segments).toHaveLength(4);
     expect(result.segments[0].startBeat).toBe(0);
-    expect(result.segments[0].endBeat).toBe(4);
+    expect(result.segments[0].endBeat).toBe(1);
+    expect(result.segments[3].endBeat).toBe(4);
+  });
+
+  it('emits one independently evaluated tint row per metric pulse', () => {
+    const result = buildGuidance(
+      guidanceInput({ chordSymbols: [chordSymbol({ rootPc: 0, quality: 0 })] }),
+    );
+    expect(result.segments).toHaveLength(4);
+    expect(result.segments[0].safetyByPc).not.toBe(result.segments[1].safetyByPc);
   });
 
   it('shifts segment beats into the source frame for a trimmed clip', () => {
@@ -164,9 +170,10 @@ describe('buildGuidance', () => {
         chordSymbols: [chordSymbol({ startPpq: 8, endPpq: 12, rootPc: 0, quality: 0 })],
       }),
     );
-    expect(result.segments).toHaveLength(1);
+    expect(result.segments).toHaveLength(4);
     expect(result.segments[0].startBeat).toBe(2);
-    expect(result.segments[0].endBeat).toBe(6);
+    expect(result.segments[0].endBeat).toBe(3);
+    expect(result.segments[3].endBeat).toBe(6);
   });
 
   it('tints the full explicit window of a long empty clip', () => {
@@ -178,8 +185,9 @@ describe('buildGuidance', () => {
         chordSymbols: [chordSymbol({ startPpq: 8, endPpq: 32 })],
       }),
     );
-    expect(result.segments).toHaveLength(1);
-    expect(result.segments[0]).toMatchObject({ startBeat: 0, endBeat: 16 });
+    expect(result.segments).toHaveLength(16);
+    expect(result.segments[0]).toMatchObject({ startBeat: 0, endBeat: 1 });
+    expect(result.segments[15]).toMatchObject({ startBeat: 15, endBeat: 16 });
   });
 
   it('clamps a chord tint at the clip end', () => {
@@ -189,7 +197,8 @@ describe('buildGuidance', () => {
         chordSymbols: [chordSymbol({ startPpq: 0, endPpq: 8 })],
       }),
     );
-    expect(result.segments[0].endBeat).toBe(3);
+    expect(result.segments).toHaveLength(3);
+    expect(result.segments[2].endBeat).toBe(3);
   });
 });
 
@@ -206,6 +215,20 @@ describe('counterpoint (voice-relative, no chord progression)', () => {
     expect(result.chordPresent).toBe(false);
     const analysis = result.byNoteId.get(80);
     expect(analysis?.vertical).toEqual({ toBass: 7, consonance: 'perfect' });
+  });
+
+  it('treats a perfect fourth above the bass as dissonant in three voices', () => {
+    const result = buildGuidance(
+      guidanceInput({
+        notes: [note({ id: 81, pitch: 65, startPpq: 0, durationPpq: 1 })],
+        otherTracks: [
+          { track: track({ id: 2, name: 'Bass' }), notes: [note({ id: 201, pitch: 60 })] },
+          { track: track({ id: 3, name: 'Alto' }), notes: [note({ id: 202, pitch: 69 })] },
+        ],
+      }),
+    );
+
+    expect(result.byNoteId.get(81)?.vertical).toEqual({ toBass: 5, consonance: 'dissonant' });
   });
 
   it('flags parallel perfect fifths between two voices with no chord', () => {
@@ -326,6 +349,38 @@ describe('buildTheoryCard', () => {
       theoryLabelsFor(MESSAGES.en.theory, 'normal'),
     );
     expect(card.title).toMatch(/^Bb4/);
+  });
+
+  it('spells suspension resolution targets with the active key signature', () => {
+    const analysis = {
+      degree: 0,
+      isScaleTone: true,
+      safety: { reasons: ReasonFlag.Suspension, resolveTo: 70 },
+    } as NoteAnalysis;
+
+    const card = buildTheoryCard(
+      analysis,
+      { pitch: 72, keySet: true, keyFifths: -3 },
+      theoryLabelsFor(MESSAGES.en.theory, 'normal'),
+    );
+
+    expect(card.lines.some((line) => line.text.includes('Bb4'))).toBe(true);
+  });
+
+  it('uses a spelling-neutral Japanese name for a six-semitone interval', () => {
+    const analysis = {
+      degree: 0,
+      isScaleTone: true,
+      vertical: { toBass: 6, consonance: 'dissonant' },
+    } as NoteAnalysis;
+
+    const card = buildTheoryCard(
+      analysis,
+      { pitch: 66, keySet: true },
+      theoryLabelsFor(MESSAGES.ja.theory, 'normal'),
+    );
+
+    expect(card.lines.some((line) => line.text.includes('三全音'))).toBe(true);
   });
 
   it('builds a titled card with a scale-degree line', () => {

@@ -5,7 +5,10 @@
  * clips it annotates.
  */
 
-import { secondaryDominantOf } from '@/compose/secondary-dominant';
+import {
+  canTonicizeWithSecondaryDominant,
+  secondaryDominantOf,
+} from '@/compose/secondary-dominant';
 import type { EditorChordSymbol } from '../chords';
 import { useProjectStore } from '../store';
 import { setProjectChords } from './chords';
@@ -38,7 +41,7 @@ function insertAt(
 export function insertSecondaryDominantBefore(index: number): boolean {
   const store = useProjectStore();
   const target = store.chords[index];
-  if (!target) return false;
+  if (!target || !canTonicizeWithSecondaryDominant(target)) return false;
   const preceding = index > 0 ? store.chords[index - 1] : undefined;
 
   if (preceding && preceding.endPpq < target.startPpq) {

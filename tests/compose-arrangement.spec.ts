@@ -133,6 +133,17 @@ describe('arrangementTensionCurve', () => {
     }
   });
 
+  it('anchors meter-aware analysis to the enclosing bar rather than the first note', () => {
+    const upbeat: TrackWithNotes = {
+      track: track({ id: 1, name: 'Lead' }),
+      notes: [note({ id: 1, pitch: 60, startPpq: 2, durationPpq: 1 })],
+    };
+    const curve = arrangementTensionCurve([upbeat], 1, C_MAJOR, [
+      { startPpq: 0, numerator: 4, denominator: 4 },
+    ]);
+    expect(curve[0]?.beat).toBe(0);
+  });
+
   it('is empty without harmonic tracks', () => {
     const drums: TrackWithNotes = {
       track: track({ id: 1, name: 'Drums' }),

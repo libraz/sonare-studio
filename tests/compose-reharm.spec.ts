@@ -1,6 +1,7 @@
 import { chordPitchClasses } from '@libraz/libcantus';
 import { describe, expect, it } from 'vitest';
 import { editorChordToChord } from '@/compose/chord-io';
+import { presetNotation } from '@/compose/preset-notation';
 import {
   melodyPitchClassesInRegion,
   modalInterchangeFor,
@@ -71,6 +72,15 @@ describe('melodyPitchClassesInRegion', () => {
     const notes = [note(60, 0, 1), note(72, 1, 1)];
     expect(melodyPitchClassesInRegion(notes, 0, 4)).toEqual([0]);
   });
+
+  it('uses strong-beat melody notes rather than weak passing tones as constraints', () => {
+    // E–F–G–A over one 4/4 chord: F and A are weak-beat passing tones, while
+    // the downbeat E and beat-three G are the structural melody.
+    const notes = [note(64, 0, 1), note(65, 1, 1), note(67, 2, 1), note(69, 3, 1)];
+    expect(
+      melodyPitchClassesInRegion(notes, 0, 4, 1e-6, { isStrongBeat: (ppq) => ppq % 2 === 0 }),
+    ).toEqual([4, 7]);
+  });
 });
 
 describe('modalInterchangeFor', () => {
@@ -123,6 +133,13 @@ describe('reharmCandidatesFor', () => {
       expect(chordPitchClasses(editorChordToChord(candidate.symbol))).toContain(11);
     }
   });
+
+  it('keeps a usable palette when weak passing tones surround structural chord tones', () => {
+    const c = chord({ rootPc: 0, quality: 0 });
+    // This is the structural subset of the E–F–G–A phrase above. Passing F/A
+    // must not require every substitute to contain four pitch classes.
+    expect(reharmCandidatesFor(c, C_MAJOR, [4, 7]).length).toBeGreaterThan(0);
+  });
 });
 
 describe('negativeHarmonyFor', () => {
@@ -133,5 +150,18 @@ describe('negativeHarmonyFor', () => {
     expect(mirror.kind).toBe('negative');
     expect(mirror.symbol.rootPc).toBe(5);
     expect(mirror.symbol.quality).toBe(1);
+  });
+});
+
+describe('presetNotation', () => {
+  it('uses borrowed Roman numerals and flat spellings for Neapolitan presets', () => {
+    const preset = {
+      id: 'neapolitanPop',
+      name: 'Neapolitan Pop',
+      degrees: [5, 12, 13, 4, 0],
+      functional: 'cadenceStrong',
+      styles: ['minimal'],
+    } as const;
+    expect(presetNotation(preset, 'minimal', C_MAJOR)).toBe('vi–iv–♭II–V–I (Am–Fm–D♭–G–C)');
   });
 });

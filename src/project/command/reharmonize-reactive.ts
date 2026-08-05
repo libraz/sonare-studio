@@ -20,6 +20,7 @@ import { topVoiceOnly } from '@/compose/tracks';
 import { canonicalJson, fnv1a32Hex } from '../hash';
 import { projectMidiNoteOccurrences } from '../midi-projection';
 import { useProjectStore } from '../store';
+import { measureRangeAt } from '../time-signature';
 import { setProjectChords } from './chords';
 import type { ReharmonizeStrength } from './generate-harmonize';
 import { requireEditableClip } from './utils';
@@ -105,7 +106,9 @@ export function proposeReharmonizationForActiveClip(
     ...(params.locked !== undefined ? { locked: params.locked } : {}),
     key: store.scaleHighlight,
     timeSignatures: store.timeSignatures,
-    harmonicGridOriginPpq: clip.startPpq,
+    // Keep generated slots on the project's bar grid even when the active clip
+    // starts on an upbeat or in the middle of a bar.
+    harmonicGridOriginPpq: measureRangeAt(store.timeSignatures, clip.startPpq).startPpq,
     ...(params.reharmonize !== undefined ? { reharmonize: params.reharmonize } : {}),
   });
   return { ...proposal, contextHash: reharmonizationContextHash(locked) };

@@ -15,7 +15,7 @@
 
 import type { ChordData, ChordSpan, KeyScale, TimeSignature } from '@libraz/libcantus';
 import type { EditorChordSymbol } from '@/project/chords';
-import { meterBarLengthPpq, timeSignatureRanges } from '@/project/time-signature';
+import { measureRangeAt, meterBarLengthPpq, timeSignatureRanges } from '@/project/time-signature';
 import type { TimeSignatureSegment } from '@/project/types';
 import { inferChordTimelineFromNotes } from './chord-at-tick';
 import { chordSpanToEditorChord } from './chord-io';
@@ -80,7 +80,8 @@ export function estimateChordsFromTracks(
     };
   }
   if (options?.timeSignatures !== undefined) {
-    const startPpq = Math.min(...notes.map((note) => note.startBeat));
+    const firstNotePpq = Math.min(...notes.map((note) => note.startBeat));
+    const startPpq = measureRangeAt(options.timeSignatures, firstNotePpq).startPpq;
     const endPpq = Math.max(...notes.map((note) => note.startBeat + note.durationBeat));
     const ranges = timeSignatureRanges(options.timeSignatures, startPpq, endPpq);
     const symbols: EditorChordSymbol[] = [];

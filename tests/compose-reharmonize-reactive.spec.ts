@@ -19,6 +19,11 @@ vi.mock('@libraz/libcantus', async (importActual) => {
 });
 
 const C_MAJOR: ScaleHighlightConfig = { enabled: true, rootPc: 0, modeMask: MAJOR_MODE_MASK };
+const KEY_INFERENCE: ScaleHighlightConfig = {
+  enabled: false,
+  rootPc: 0,
+  modeMask: MAJOR_MODE_MASK,
+};
 const FOUR_FOUR: TimeSignatureSegment[] = [{ startPpq: 0, numerator: 4, denominator: 4 }];
 
 /** A chord symbol over a PPQ region (quality 0 = major triad). */
@@ -127,6 +132,24 @@ describe('proposeReactiveReharmonization', () => {
     ]);
   });
 
+  it('starts a meter-changing reharmonization at the enclosing bar line', () => {
+    vi.mocked(harmonizeMelody).mockClear();
+    proposeReactiveReharmonization({
+      current: [chord(0, 4, 11), chord(4, 7, 11)],
+      melody: [mel(61, 2), mel(66, 3), ...clashBar(4).slice(0, 3)],
+      editedSpan: { startPpq: 2, endPpq: 7 },
+      key: C_MAJOR,
+      timeSignatures: [
+        { startPpq: 0, numerator: 4, denominator: 4 },
+        { startPpq: 4, numerator: 3, denominator: 4 },
+      ],
+    });
+
+    // The first melody note is on beat three, but libcantus receives its
+    // absolute position relative to bar 1 (2), not a synthetic downbeat (0).
+    expect(vi.mocked(harmonizeMelody).mock.calls[0]?.[0].melody[0]?.startBeat).toBe(2);
+  });
+
   it('keeps a chord that still fits its melody (hysteresis)', () => {
     // A C-major chord under a C-major arpeggio fits perfectly; even though it is
     // in scope, the pass must not disturb it.
@@ -141,6 +164,34 @@ describe('proposeReactiveReharmonization', () => {
     expect(result.changed).toBe(false);
     expect(result.changedIndices).toEqual([]);
     expect(result.proposal[0]).toMatchObject({ rootPc: 0, quality: 0 });
+  });
+
+  it('keeps a fitting chord under a short weak-beat chromatic passing tone', () => {
+    const result = proposeReactiveReharmonization({
+      current: [chord(0, 4, 0)],
+      melody: [mel(60, 0, 1), mel(66, 1, 0.25), mel(67, 2, 1)],
+      editedSpan: { startPpq: 0, endPpq: 4 },
+      key: C_MAJOR,
+      timeSignatures: FOUR_FOUR,
+    });
+
+    expect(result.changed).toBe(false);
+    expect(result.proposal[0]).toMatchObject({ rootPc: 0 });
+  });
+
+  it('uses the inferred key for hysteresis when key highlighting is disabled', () => {
+    const current = [chord(0, 4, 4)]; // E major
+    const eMajorMelody = [mel(64, 0), mel(68, 1), mel(71, 2), mel(76, 3)];
+    const result = proposeReactiveReharmonization({
+      current,
+      melody: eMajorMelody,
+      editedSpan: { startPpq: 0, endPpq: 4 },
+      key: KEY_INFERENCE,
+      timeSignatures: FOUR_FOUR,
+    });
+
+    expect(result.changed).toBe(false);
+    expect(result.proposal[0]).toMatchObject({ rootPc: 4, quality: 0 });
   });
 
   it('replaces an in-scope chord whose melody no longer fits it', () => {

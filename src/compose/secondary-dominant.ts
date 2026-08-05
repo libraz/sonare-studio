@@ -28,7 +28,18 @@ export function secondaryDominantOf(
   );
 }
 
+/** Whether the target can function as a temporary tonic. */
+export function canTonicizeWithSecondaryDominant(target: EditorChordSymbol): boolean {
+  // Diminished, half-diminished, diminished-seventh, and augmented chords do
+  // not function as temporary tonic targets in this insertion workflow.
+  return ![2, 3, 12, 13].includes(target.quality);
+}
+
 /** Display label for a secondary dominant, e.g. "V7/V". */
 export function secondaryDominantLabel(target: EditorChordSymbol, key: KeyScale): string {
-  return `V7/${chordToRoman(editorChordToChord(target), key)}`;
+  const roman = chordToRoman(editorChordToChord(target), key);
+  // The target is named by scale degree only: quality suffixes and inversion
+  // figures belong to the target chord, not to the V7/x function.
+  const degree = roman.match(/^[b♭#]?[-+]?([ivIV]+)/)?.[0] ?? roman;
+  return `V7/${degree}`;
 }

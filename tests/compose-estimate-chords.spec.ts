@@ -77,6 +77,21 @@ describe('estimateChordsFromTracks', () => {
     expect(result.symbols.some((symbol) => symbol.startPpq >= 4 && symbol.endPpq <= 7)).toBe(true);
   });
 
+  it('anchors an estimate with an opening rest to the containing measure boundary', () => {
+    const tracks: TrackWithNotes[] = [
+      {
+        track: track(1, 'Piano'),
+        notes: [note(60, 2, 2), note(64, 2, 2), note(67, 2, 2)],
+      },
+    ];
+    const result = estimateChordsFromTracks(tracks, {
+      key: C_MAJOR,
+      timeSignatures: [{ startPpq: 0, numerator: 4, denominator: 4 }],
+    });
+
+    expect(result.symbols[0]).toMatchObject({ startPpq: 0, endPpq: 4, rootPc: 0 });
+  });
+
   it('returns nothing for an empty (or drums-only) arrangement', () => {
     const tracks: TrackWithNotes[] = [{ track: track(1, 'Drums'), notes: [note(36, 0, 1, 9)] }];
     const result = estimateChordsFromTracks(tracks, { key: C_MAJOR });

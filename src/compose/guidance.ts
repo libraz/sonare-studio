@@ -31,6 +31,7 @@ import {
   type VoiceSnapshot,
 } from '@libraz/libcantus';
 import type { EditorChordSymbol } from '@/project/chords';
+import { timeSignatureAt } from '@/project/time-signature';
 import type { EditorNote, ScaleHighlightConfig, TimeSignatureSegment } from '@/project/types';
 import { buildChordTimeline } from './chord-at-tick';
 import { effectiveKeyScale } from './key';
@@ -192,7 +193,7 @@ function safetyRow(
 
 /**
  * Builds the full guidance for one active clip: background tint segments per
- * sounding chord and a per-note theory analysis map.
+ * sounding chord and meter pulse, plus a per-note theory analysis map.
  */
 export function buildGuidance(input: GuidanceInput): GuidanceResult {
   const profile: SafetyProfile = input.profile ?? 'pop';
@@ -287,7 +288,9 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
       bass = bass === undefined ? voice.pitch : Math.min(bass, voice.pitch);
     if (bass === undefined || bass >= pitch) return undefined;
     const semitones = pitch - bass;
-    const consonanceClass = tryEval(() => classifyInterval(semitones, others.length === 1));
+    // This is explicitly the interval *to the bass*. A perfect fourth above
+    // the bass is dissonant regardless of how many other voices are present.
+    const consonanceClass = tryEval(() => classifyInterval(semitones, true));
     const consonance =
       consonanceClass === ConsonanceClass.PerfectConsonance
         ? 'perfect'
@@ -297,8 +300,8 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
     return { toBass: semitones, consonance };
   };
 
-  // Background tint segments: one per chord segment overlapping the clip
-  // window, or a single null-chord segment so scale membership still tints.
+  // Without a chord, keep the one window segment the UI uses for its grid but
+  // mark every pitch class Safe: harmonic safety has no context to evaluate.
   const overlapping = timeline.segments.filter(
     (segment) => segment.endBeat > windowStart && segment.startBeat < windowEnd,
   );
@@ -310,22 +313,32 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
   if (chordPresent) {
     for (const segment of overlapping) {
       const absStart = Math.max(segment.startBeat, windowStart);
-      segments.push({
-        startBeat: absStart - input.clipStartPpq + sourceOffset,
-        endBeat: Math.min(segment.endBeat, windowEnd) - input.clipStartPpq + sourceOffset,
-        safetyByPc: safetyRow(
-          segment.chord,
-          key,
-          profile,
-          strongBeatAt(input.timeSignatures, absStart),
-        ),
-      });
+      const absEnd = Math.min(segment.endBeat, windowEnd);
+      // A chord can span several strong and weak metric positions. Split it at
+      // the active meter's beat unit so background tint uses the same context
+      // as the per-note analysis rather than inheriting the chord's first beat.
+      for (let cursor = absStart; cursor < absEnd - 1e-6; ) {
+        const meter = timeSignatureAt(input.timeSignatures, cursor);
+        const meterUnitPpq = 4 / meter.denominator;
+        const end = Math.min(absEnd, cursor + meterUnitPpq);
+        segments.push({
+          startBeat: cursor - input.clipStartPpq + sourceOffset,
+          endBeat: end - input.clipStartPpq + sourceOffset,
+          safetyByPc: safetyRow(
+            segment.chord,
+            key,
+            profile,
+            strongBeatAt(input.timeSignatures, cursor),
+          ),
+        });
+        cursor = end;
+      }
     }
   } else {
     segments.push({
       startBeat: sourceOffset,
       endBeat: windowEnd - windowStart + sourceOffset,
-      safetyByPc: safetyRow(null, key, profile, strongBeatAt(input.timeSignatures, windowStart)),
+      safetyByPc: new Uint8Array(12),
     });
   }
 

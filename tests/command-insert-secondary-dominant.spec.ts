@@ -1,9 +1,11 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { secondaryDominantLabel } from '@/compose/secondary-dominant';
 import { setProjectChords } from '@/project/command/chords';
 import { clearHistory, undo } from '@/project/command/history';
 import { insertSecondaryDominantBefore } from '@/project/command/insert-secondary-dominant';
 import { useProjectStore } from '@/project/store';
+import { MAJOR_MODE_MASK } from '@/project/types';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -72,6 +74,22 @@ describe('insertSecondaryDominantBefore', () => {
     const inserted = insertSecondaryDominantBefore(1);
     expect(inserted).toBe(false);
     expect(store.chords).toHaveLength(2);
+  });
+
+  it('does not tonicize a diminished target', () => {
+    setProjectChords([{ startPpq: 0, endPpq: 4, rootPc: 11, quality: 2 }]);
+
+    expect(insertSecondaryDominantBefore(0)).toBe(false);
+    expect(store.chords).toEqual([{ startPpq: 0, endPpq: 4, rootPc: 11, quality: 2 }]);
+  });
+
+  it('labels the target by its root degree without quality or inversion figures', () => {
+    expect(
+      secondaryDominantLabel(
+        { startPpq: 0, endPpq: 4, rootPc: 5, quality: 5, bassPc: 9 },
+        { rootPc: 0, modeMask12: MAJOR_MODE_MASK },
+      ),
+    ).toBe('V7/IV');
   });
 
   it('is a single undoable edit', () => {

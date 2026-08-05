@@ -36,37 +36,62 @@ export interface RegionNote {
   durationPpq: number;
 }
 
+/** Options for selecting the structural melody tones that constrain a palette. */
+export interface MelodyPitchClassOptions {
+  /** Returns whether a note onset is metrically strong in the project timeline. */
+  isStrongBeat?: (ppq: number) => boolean;
+}
+
 /**
- * Distinct pitch classes of the melody (top voice) sounding within a chord
- * region, for melody-preserving reharmonization. Notes overlapping
- * `[startPpq, endPpq)` are grouped by onset and the highest pitch at each onset
- * is taken as the melody; the result is the set of those pitch classes. Empty
- * when nothing overlaps, which leaves reharmonization unconstrained.
+ * Structural pitch classes of the melody (top voice) sounding within a chord
+ * region, for melody-preserving reharmonization. A note sustained into the
+ * region and notes beginning on strong beats are structural; if no meter is
+ * available, or neither is present, the one or two longest top-voice notes are
+ * used. This deliberately excludes weak, short passing tones from the hard
+ * chord-tone constraint.
  *
  * @param notes Arrangement notes at absolute timeline PPQ (percussion excluded
  *   by the caller).
  * @param startPpq Region start (inclusive).
  * @param endPpq Region end (exclusive).
  * @param epsilon Onset-grouping tolerance in PPQ (default 1e-6).
+ * @param options Meter-aware structural-note selection.
  */
 export function melodyPitchClassesInRegion(
   notes: ReadonlyArray<RegionNote>,
   startPpq: number,
   endPpq: number,
   epsilon = 1e-6,
+  options: MelodyPitchClassOptions = {},
 ): number[] {
   const overlapping = notes
     .filter((note) => note.startPpq < endPpq && note.startPpq + note.durationPpq > startPpq)
     .sort((a, b) => a.startPpq - b.startPpq || b.pitch - a.pitch);
-  const pcs = new Set<number>();
+  const melodyNotes: Array<{ pc: number; startPpq: number; overlapPpq: number }> = [];
   let groupStart = Number.NEGATIVE_INFINITY;
   for (const note of overlapping) {
     if (note.startPpq - groupStart > epsilon) {
-      pcs.add(((note.pitch % 12) + 12) % 12);
+      melodyNotes.push({
+        pc: ((note.pitch % 12) + 12) % 12,
+        startPpq: note.startPpq,
+        overlapPpq:
+          Math.min(note.startPpq + note.durationPpq, endPpq) - Math.max(note.startPpq, startPpq),
+      });
       groupStart = note.startPpq;
     }
   }
-  return [...pcs].sort((a, b) => a - b);
+  const structural = melodyNotes.filter(
+    (note) =>
+      note.startPpq < startPpq ||
+      options.isStrongBeat?.(Math.max(startPpq, note.startPpq)) === true,
+  );
+  const selected =
+    structural.length > 0
+      ? structural
+      : [...melodyNotes]
+          .sort((a, b) => b.overlapPpq - a.overlapPpq || a.startPpq - b.startPpq)
+          .slice(0, 2);
+  return [...new Set(selected.map((note) => note.pc))].sort((a, b) => a - b);
 }
 
 /** One reharmonization candidate placed over a chord region. */

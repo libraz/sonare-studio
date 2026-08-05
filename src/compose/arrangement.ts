@@ -29,7 +29,7 @@ import {
   type TensionPoint,
   tensionCurve,
 } from '@libraz/libcantus';
-import { timeSignatureRanges } from '@/project/time-signature';
+import { measureRangeAt, timeSignatureRanges } from '@/project/time-signature';
 import type { TimeSignatureSegment } from '@/project/types';
 import { DEFAULT_KEY_SCALE } from './key';
 import { timeSignatureAtPpq } from './meter';
@@ -126,9 +126,16 @@ function analysisRanges(
   const notes = harmonic.flatMap((item) => item.notes);
   const start = Math.min(...notes.map((note) => note.startPpq));
   const end = Math.max(...notes.map((note) => note.startPpq + note.durationPpq));
-  return timeSignatures === undefined
-    ? [{ startPpq: start, endPpq: end, numerator: 4, denominator: 4 }]
-    : timeSignatureRanges(timeSignatures, start, end);
+  if (timeSignatures !== undefined) {
+    const firstMeasure = measureRangeAt(timeSignatures, start);
+    const lastMeasure = measureRangeAt(timeSignatures, Math.max(start, end - 1e-6));
+    return timeSignatureRanges(
+      timeSignatures,
+      firstMeasure.startPpq,
+      lastMeasure.startPpq + lastMeasure.lengthPpq,
+    );
+  }
+  return [{ startPpq: start, endPpq: end, numerator: 4, denominator: 4 }];
 }
 
 /**
