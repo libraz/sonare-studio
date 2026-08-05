@@ -1312,6 +1312,17 @@ export function createFakeWasmModule(): typeof import('@/wasm/index.js') {
           ceilingRisk: -0.8 + platform.targetLufs + 13 > platform.ceilingDb,
         })),
       }),
+    masteringPairAnalyze: (name: string) => {
+      if (name === 'match.matchEqCurve') {
+        return JSON.stringify({ frequencies: [100, 1000], gainDb: [1, -2] });
+      }
+      if (name === 'match.tonalBalance') {
+        return JSON.stringify({
+          bands: [{ lowHz: 100, highHz: 1000, sourceDb: -12, referenceDb: -14, deviationDb: 2 }],
+        });
+      }
+      return JSON.stringify({ sourceLufs: -12, referenceLufs: -14, gainToMatchDb: -2 });
+    },
     masteringStereoAnalyze: (
       _analysisName: string,
       _left: Float32Array,

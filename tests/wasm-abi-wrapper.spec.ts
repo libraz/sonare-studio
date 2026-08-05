@@ -96,7 +96,7 @@ describe('wasm ABI wrapper declarations', () => {
     engine.setTrackStripPanLaw(11, 'const6dB');
 
     expect(calls).toEqual([
-      ['constructor', 44100, 256, 32, 64],
+      ['constructor', 44100, 256, 32, 64, 64],
       [11, 1],
       [11, 2],
     ]);
