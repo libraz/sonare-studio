@@ -45,7 +45,7 @@ A digital audio workstation that runs entirely in the browser, built on the
   requires. Without isolation the engine falls back to a postMessage
   transport.
 - Node 24 and Yarn 4 (pinned via [mise](https://mise.jdx.dev) in
-  `package.json`).
+  `mise.toml`).
 
 ## Quickstart
 
