@@ -2,6 +2,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ref, shallowRef } from 'vue';
 import { useAppShortcutsMenu } from '@/composables/useAppShortcutsMenu';
+import { useProjectStore } from '@/project/store';
 import {
   resetShortcutBlockingOverlaysForTest,
   shortcutBlockingOverlayOpen,
@@ -31,7 +32,9 @@ describe('useAppShortcutsMenu', () => {
       layouts: ref([]),
       loopEnabled: ref(false),
       opfsAvailable: true,
+      pianoRollRef: ref(null),
       recentNames: ref([]),
+      midiRecording: { armedTrackId: ref<number | null>(null), arm: vi.fn() } as never,
       recording: { armedTrackId: ref<number | null>(null), isRecording: ref(false) } as never,
       scoreVisible: ref(false),
       settingsOpen: ref(false),
@@ -129,7 +132,9 @@ describe('useAppShortcutsMenu', () => {
       layouts: ref([]),
       loopEnabled: ref(false),
       opfsAvailable: true,
+      pianoRollRef: ref(null),
       recentNames: ref([]),
+      midiRecording: {} as never,
       recording: {} as never,
       scoreVisible: ref(false),
       settingsOpen: ref(false),
@@ -178,6 +183,53 @@ describe('useAppShortcutsMenu', () => {
     menu.onGlobalKeyDown(event);
 
     expect(commandPaletteOpen.value).toBe(true);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('arms the active MIDI track from an arrangement shortcut', () => {
+    const midiArm = vi.fn();
+    const { match, menu } = harness(
+      { value: false },
+      { midiRecording: { armedTrackId: ref<number | null>(null), arm: midiArm } as never },
+    );
+    match.mockReturnValue('track.toggleArm');
+    const store = useProjectStore();
+    store.tracks = [
+      {
+        id: 17,
+        name: 'Keys',
+        color: '#123456',
+        kind: 'midi',
+        mute: false,
+        solo: false,
+        volume: 1,
+        pan: 0,
+        order: 0,
+      },
+    ];
+    store.activeTrackId = 17;
+    menu.focusZone.value = 'arrange';
+    const event = new KeyboardEvent('keydown', { key: 'a', cancelable: true });
+
+    menu.onGlobalKeyDown(event);
+
+    expect(match).toHaveBeenCalledWith(event, 'arrangement');
+    expect(midiArm).toHaveBeenCalledWith(17);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('routes editor zoom shortcuts to the piano-roll viewport', () => {
+    const zoomHorizontal = vi.fn();
+    const { match, menu } = harness(
+      { value: false },
+      { pianoRollRef: ref({ zoomHorizontal, fitSelection: vi.fn() }) },
+    );
+    match.mockReturnValue('view.zoomIn');
+    const event = new KeyboardEvent('keydown', { key: '=', ctrlKey: true, cancelable: true });
+
+    menu.onGlobalKeyDown(event);
+
+    expect(zoomHorizontal).toHaveBeenCalledWith(1.2);
     expect(event.defaultPrevented).toBe(true);
   });
 

@@ -7,6 +7,7 @@
  * an action's default keys wholesale (an empty list unbinds the action).
  */
 
+import { MUSIC_TYPING_RESERVED_KEYS } from '@/composables/useMusicTyping';
 import {
   comboMatchesEvent,
   combosMatch,
@@ -175,6 +176,30 @@ export const SHORTCUT_ACTIONS: ReadonlyArray<ShortcutActionDef> = [
     customizable: true,
   },
   {
+    id: 'edit.copy',
+    label: 'Copy selection',
+    defaultKeys: ['mod+c'],
+    when: 'global',
+    group: 'Editing',
+    customizable: true,
+  },
+  {
+    id: 'edit.cut',
+    label: 'Cut selection',
+    defaultKeys: ['mod+x'],
+    when: 'global',
+    group: 'Editing',
+    customizable: true,
+  },
+  {
+    id: 'edit.paste',
+    label: 'Paste at playhead',
+    defaultKeys: ['mod+v'],
+    when: 'global',
+    group: 'Editing',
+    customizable: true,
+  },
+  {
     id: 'edit.selectAllNotes',
     label: 'Select all notes',
     defaultKeys: ['mod+a'],
@@ -255,6 +280,31 @@ export const SHORTCUT_ACTIONS: ReadonlyArray<ShortcutActionDef> = [
     group: 'Arrangement',
     customizable: true,
   },
+  // Track
+  {
+    id: 'track.toggleMute',
+    label: 'Toggle active track mute',
+    defaultKeys: ['alt+m'],
+    when: 'arrangement',
+    group: 'Track',
+    customizable: true,
+  },
+  {
+    id: 'track.toggleSolo',
+    label: 'Toggle active track solo',
+    defaultKeys: ['alt+s'],
+    when: 'arrangement',
+    group: 'Track',
+    customizable: true,
+  },
+  {
+    id: 'track.toggleArm',
+    label: 'Toggle active track record arm',
+    defaultKeys: ['alt+a'],
+    when: 'arrangement',
+    group: 'Track',
+    customizable: true,
+  },
   // View
   {
     id: 'view.toggleSnap',
@@ -268,6 +318,30 @@ export const SHORTCUT_ACTIONS: ReadonlyArray<ShortcutActionDef> = [
     id: 'view.toggleScorePanel',
     label: 'Toggle score panel',
     defaultKeys: ['mod+e'],
+    when: 'global',
+    group: 'View',
+    customizable: true,
+  },
+  {
+    id: 'view.zoomIn',
+    label: 'Zoom in',
+    defaultKeys: ['mod+='],
+    when: 'global',
+    group: 'View',
+    customizable: true,
+  },
+  {
+    id: 'view.zoomOut',
+    label: 'Zoom out',
+    defaultKeys: ['mod+-'],
+    when: 'global',
+    group: 'View',
+    customizable: true,
+  },
+  {
+    id: 'view.zoomToFit',
+    label: 'Zoom to fit',
+    defaultKeys: ['mod+shift+f'],
     when: 'global',
     group: 'View',
     customizable: true,
@@ -452,6 +526,16 @@ export function findConflicts(bindings: ShortcutBindings): ShortcutConflict[] {
       }
     }
     if (ids.size >= 2) conflicts.push({ keys, actionIds: [...ids] });
+  }
+  for (const action of SHORTCUT_ACTIONS) {
+    if (!action.customizable) continue;
+    for (const keys of bindings.get(action.id) ?? []) {
+      const combo = parseKeyCombo(keys);
+      if (combo === null || combo.mod || combo.alt) continue;
+      const typingAction = MUSIC_TYPING_RESERVED_KEYS[combo.key];
+      if (typingAction === undefined) continue;
+      conflicts.push({ keys, actionIds: [action.id, typingAction] });
+    }
   }
   return conflicts;
 }

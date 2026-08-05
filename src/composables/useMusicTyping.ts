@@ -31,6 +31,20 @@ const VELOCITY_DOWN_KEY = 'c';
 const VELOCITY_UP_KEY = 'v';
 const REST_KEY = 'tab';
 
+/**
+ * Plain and Shift-modified versions of these keys are consumed while music
+ * typing is enabled. The shortcuts settings use this to flag unreachable
+ * user bindings before they are saved.
+ */
+export const MUSIC_TYPING_RESERVED_KEYS: Readonly<Record<string, string>> = {
+  ...Object.fromEntries(Object.keys(KEY_TO_OFFSET).map((key) => [key, 'typing.notes'])),
+  [OCTAVE_DOWN_KEY]: 'typing.octave',
+  [OCTAVE_UP_KEY]: 'typing.octave',
+  [VELOCITY_DOWN_KEY]: 'typing.velocity',
+  [VELOCITY_UP_KEY]: 'typing.velocity',
+  [REST_KEY]: 'typing.rest',
+};
+
 /** Lowest selectable base octave ('a' = C-1 = MIDI 0). */
 export const MIN_BASE_OCTAVE = -1;
 /** Highest selectable base octave (keys above G9 = MIDI 127 are ignored). */

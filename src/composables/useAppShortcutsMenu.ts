@@ -1,16 +1,26 @@
 import { type ComputedRef, computed, type Ref, ref, type ShallowRef } from 'vue';
+import type { useMidiRecording } from '@/composables/useMidiRecording';
 import type { useRecording } from '@/composables/useRecording';
 import type { useShortcuts } from '@/composables/useShortcuts';
 import type { EngineHandle } from '@/engine/engine';
 import {
   canRedo,
   canUndo,
+  copyActiveClip,
+  copySelectedNotes,
+  cutActiveClip,
+  cutSelectedNotes,
   deleteClip,
   deleteNotes,
   duplicateClip,
+  pasteClipAt,
+  pasteNotesAt,
   quantizeSelection,
   redo,
+  setActiveClip,
   setSelection,
+  setTrackMute,
+  setTrackSolo,
   transposeSelection,
   undo,
 } from '@/project/commands';
@@ -28,11 +38,19 @@ import {
 import { detectPlatform, formatKeyCombo } from '@/ui/settings/key-combo';
 
 type Recording = ReturnType<typeof useRecording>;
+type MidiRecording = ReturnType<typeof useMidiRecording>;
 type Shortcuts = ReturnType<typeof useShortcuts>;
 type FocusZone = 'arrange' | 'editor';
 
 interface ArrangementCommands {
   cutAtPlayhead: () => void;
+  zoomHorizontal: (factor: number) => void;
+  zoomToFit: () => void;
+}
+
+interface PianoRollCommands {
+  fitSelection: () => void;
+  zoomHorizontal: (factor: number) => void;
 }
 
 export interface AppShortcutsMenuOptions {
@@ -45,8 +63,12 @@ export interface AppShortcutsMenuOptions {
   isGlobalShortcutBlocked?: () => boolean;
   layouts: Ref<readonly { name: string }[]>;
   loopEnabled: Ref<boolean>;
+  pianoRollRef: Ref<PianoRollCommands | null>;
   opfsAvailable: boolean;
+  /** Current transport playhead, used to place pasted note selections. */
+  positionPpq?: Ref<number>;
   recentNames: Ref<readonly string[]>;
+  midiRecording: MidiRecording;
   recording: Recording;
   scoreVisible: Ref<boolean>;
   settingsOpen: Ref<boolean>;
@@ -163,6 +185,19 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
       case 'edit.redo':
         redo();
         return true;
+      case 'edit.copy':
+        return focusZone.value === 'arrange' ? copyActiveClip() : copySelectedNotes();
+      case 'edit.cut':
+        if (activeContentReadOnly()) return false;
+        return focusZone.value === 'arrange' ? cutActiveClip() : cutSelectedNotes();
+      case 'edit.paste':
+        if (activeContentReadOnly()) return false;
+        if (focusZone.value === 'arrange') {
+          return (
+            pasteClipAt(store.activeTrackId, Math.max(0, options.positionPpq?.value ?? 0)) !== null
+          );
+        }
+        return pasteNotesAt(Math.max(0, options.positionPpq?.value ?? 0)).length > 0;
       case 'edit.selectAllNotes':
         selectAllNotes();
         return true;
@@ -193,7 +228,7 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
       case 'arrange.duplicateClip': {
         const clip = store.activeClip;
         if (!clip || activeContentReadOnly()) return false;
-        duplicateClip(clip.id, clip.startPpq + clip.lengthPpq);
+        setActiveClip(duplicateClip(clip.id, clip.startPpq + clip.lengthPpq));
         return true;
       }
       case 'arrange.splitClipAtPlayhead':
@@ -203,17 +238,55 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
       case 'arrange.deleteClip':
         if (activeContentReadOnly()) return false;
         if (store.clipId === -1) {
+          if (focusZone.value === 'arrange') return false;
           if (store.selection.size === 0) return false;
           deleteSelectedNotes();
           return true;
         }
         deleteClip(store.clipId);
         return true;
+      case 'track.toggleMute': {
+        const track = store.activeTrack;
+        if (!track || track.frozen !== undefined) return false;
+        setTrackMute(track.id, !track.mute);
+        return true;
+      }
+      case 'track.toggleSolo': {
+        const track = store.activeTrack;
+        if (!track || track.frozen !== undefined) return false;
+        setTrackSolo(track.id, !track.solo);
+        return true;
+      }
+      case 'track.toggleArm': {
+        const track = store.activeTrack;
+        if (
+          !track ||
+          track.frozen !== undefined ||
+          (track.kind !== 'audio' && track.kind !== 'midi')
+        ) {
+          return false;
+        }
+        const recorder = track.kind === 'audio' ? options.recording : options.midiRecording;
+        recorder.arm(recorder.armedTrackId.value === track.id ? null : track.id);
+        return true;
+      }
       case 'view.toggleSnap':
         store.snapEnabled = !store.snapEnabled;
         return true;
       case 'view.toggleScorePanel':
         options.toggleScorePanel();
+        return true;
+      case 'view.zoomIn':
+        if (focusZone.value === 'arrange') arrangementRef.value?.zoomHorizontal(1.2);
+        else options.pianoRollRef.value?.zoomHorizontal(1.2);
+        return true;
+      case 'view.zoomOut':
+        if (focusZone.value === 'arrange') arrangementRef.value?.zoomHorizontal(1 / 1.2);
+        else options.pianoRollRef.value?.zoomHorizontal(1 / 1.2);
+        return true;
+      case 'view.zoomToFit':
+        if (focusZone.value === 'arrange') arrangementRef.value?.zoomToFit();
+        else options.pianoRollRef.value?.fitSelection();
         return true;
       case 'tool.select':
         options.setEditorTool('select');
@@ -355,6 +428,9 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
     return [
       actionItem('edit.undo', a['edit.undo'], { disabled: !canUndo() }),
       actionItem('edit.redo', a['edit.redo'], { disabled: !canRedo() }),
+      actionItem('edit.copy', a['edit.copy'], { disabled: noSelection }),
+      actionItem('edit.cut', a['edit.cut'], { disabled: readOnly || noSelection }),
+      actionItem('edit.paste', a['edit.paste'], { disabled: readOnly || noClip }),
       sep('edit.sep-select'),
       actionItem('edit.selectAllNotes', a['edit.selectAllNotes']),
       actionItem('edit.quantizeSelection', a['edit.quantizeSelection'], {

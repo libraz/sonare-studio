@@ -27,8 +27,14 @@ describe('shortcut registry', () => {
       'arrange.duplicateClip',
       'arrange.splitClipAtPlayhead',
       'arrange.deleteClip',
+      'track.toggleMute',
+      'track.toggleSolo',
+      'track.toggleArm',
       'view.toggleSnap',
       'view.toggleScorePanel',
+      'view.zoomIn',
+      'view.zoomOut',
+      'view.zoomToFit',
       'app.settings',
       'help.shortcuts',
     ]) {
@@ -141,6 +147,17 @@ describe('findConflicts', () => {
 
     expect(conflicts).toHaveLength(1);
     expect([...conflicts[0].actionIds].sort()).toEqual(['project.open', 'project.save']);
+  });
+
+  it('reports bindings swallowed by music typing, including Shift-modified keys', () => {
+    const conflicts = findConflicts(
+      resolveBindings({ 'arrange.splitClipAtPlayhead': ['shift+s'] }),
+    );
+
+    expect(conflicts).toContainEqual({
+      keys: 'shift+s',
+      actionIds: ['arrange.splitClipAtPlayhead', 'typing.notes'],
+    });
   });
 });
 

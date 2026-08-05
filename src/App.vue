@@ -1,5 +1,14 @@
 <script setup lang="ts">
-import { computed, nextTick, onScopeDispose, provide, ref, shallowRef, watch } from 'vue';
+import {
+  computed,
+  nextTick,
+  onMounted,
+  onScopeDispose,
+  provide,
+  ref,
+  shallowRef,
+  watch,
+} from 'vue';
 import ArrangementView from '@/components/arrangement/ArrangementView.vue';
 import ClipInspector from '@/components/arrangement/ClipInspector.vue';
 import ChordGenerateDialog from '@/components/compose/ChordGenerateDialog.vue';
@@ -56,6 +65,7 @@ import { useOutsidePopovers } from '@/composables/useOutsidePopovers';
 import { useProjectAudioAssets } from '@/composables/useProjectAudioAssets';
 import { useProjectExport } from '@/composables/useProjectExport';
 import { useProjectPersistence } from '@/composables/useProjectPersistence';
+import { usePwaInstallPrompt } from '@/composables/usePwaInstallPrompt';
 import { useRecording } from '@/composables/useRecording';
 import { useRecordingControls } from '@/composables/useRecordingControls';
 import { useShellPanels } from '@/composables/useShellPanels';
@@ -84,6 +94,7 @@ import { serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { isAudioClip } from '@/project/types';
 import { installPwaReloadPreparation } from '@/pwa';
+import { installPwaLaunchQueue, type PwaLaunchQueue } from '@/pwa-launch';
 import { clearAudioClipData } from '@/ui/arrangement/audio-clip-data';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { useContextMenuState } from '@/ui/menu/context-menu';
@@ -122,6 +133,10 @@ const analyser = shallowRef<AnalyserBridge | null>(null);
 const scope = shallowRef<ScopeBridge | null>(null);
 
 const transport = useTransport(() => handle.value);
+const pianoRollRef = ref<{
+  fitSelection: () => void;
+  zoomHorizontal: (factor: number) => void;
+} | null>(null);
 const {
   isPlaying,
   positionSeconds,
@@ -135,9 +150,27 @@ const {
 
 const renderInfo = ref('');
 const ctxState = ref('');
+const metronomeVolume = ref(0.35);
+
+function setMetronomeVolume(value: number): void {
+  const next = Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : metronomeVolume.value;
+  metronomeVolume.value = next;
+  transport.toggleMetronome(metronomeEnabled.value, next);
+}
+
+function setLoopRange(startPpq: number, endPpq: number): void {
+  if (endPpq > startPpq) transport.setLoop(startPpq, endPpq, true);
+}
 
 /** Genuine audio-engine status once running: sample rate and transport mode. */
 const store = useProjectStore();
+const snapChoice = computed<number | 'bar'>({
+  get: () => (store.snapBar ? 'bar' : store.snapDivision),
+  set: (value) => {
+    store.snapBar = value === 'bar';
+    if (value !== 'bar') store.snapDivision = value;
+  },
+});
 const stepInput = useStepInput();
 const historyCanUndo = computed(() => {
   store.tracks.length;
@@ -294,6 +327,12 @@ const {
 } = useRecordingControls({ appSettings, errorMessage, recording, midiRecording, transport });
 
 let bootPromise: Promise<void> | null = null;
+let resolveBootStart: (() => void) | null = null;
+const bootStarted = new Promise<void>((resolve) => {
+  resolveBootStart = resolve;
+});
+
+const { canInstall: canInstallPwa, requestInstall: requestPwaInstall } = usePwaInstallPrompt();
 
 // --- Project menu / persistence -------------------------------------------------
 
@@ -321,6 +360,7 @@ const {
   deleteStoredProject,
   renameStoredProject,
   importSzdFile,
+  importLaunchedSzdFile,
   importDawprojectAction,
   importMusicXmlAction,
   importMidiAction,
@@ -343,6 +383,20 @@ const {
   persistedStateKey,
   onProjectDocumentWillLoad: clearAudioClipData,
 });
+
+function installLaunchQueueConsumer(): void {
+  const queue = (globalThis as { launchQueue?: PwaLaunchQueue }).launchQueue;
+  installPwaLaunchQueue(queue, {
+    importFile: importLaunchedSzdFile,
+    onError: (reason) => {
+      errorMessage.value = reason instanceof Error ? reason.message : String(reason);
+    },
+    waitForBoot: async () => {
+      await bootStarted;
+      await bootPromise;
+    },
+  });
+}
 
 // --- Audio export / DAWproject ---------------------------------------------------
 
@@ -680,6 +734,9 @@ const {
   layouts: namedLayouts.layouts,
   loopEnabled,
   opfsAvailable,
+  pianoRollRef,
+  positionPpq,
+  midiRecording,
   recentNames: recentMenuNames,
   recording,
   scoreVisible,
@@ -761,10 +818,18 @@ useAppLifecycle({
   onWindowPointerDown,
   setBootPromise: (promise) => {
     bootPromise = promise;
+    if (promise) {
+      resolveBootStart?.();
+      resolveBootStart = null;
+    }
   },
   flushAutosave: autosave.saveNow,
   shouldBlockUnload: () => dirty.value || autosave.saving.value,
 });
+
+// Register after the lifecycle hook so a launchQueue delivery always observes
+// the boot promise created during the same mounted pass.
+onMounted(installLaunchQueueConsumer);
 </script>
 
 <template>
@@ -773,6 +838,7 @@ useAppLifecycle({
       :autosave-last-saved-at="autosave.lastSavedAt.value"
       :can-redo="historyCanRedo"
       :can-undo="historyCanUndo"
+      :can-install-pwa="canInstallPwa"
       :device-rack-open="deviceRackOpen"
       :dirty="dirty"
       :menus="menuBarModel"
@@ -782,6 +848,7 @@ useAppLifecycle({
       @audio-import-input-ref="(el) => (audioImportInput = el)"
       @midi-import-change="onMidiImportChange"
       @midi-import-input-ref="(el) => (midiImportInput = el)"
+      @install-pwa="requestPwaInstall"
       @redo="redo"
       @toggle-theme="toggleTheme"
       @toggle-device-rack="toggleDeviceRack"
@@ -822,6 +889,7 @@ useAppLifecycle({
           :armed-track-ids="armedTrackIds"
           :record-input-devices="recordingInputDeviceOptions"
           @seek="onSeek"
+          @loop-range="setLoopRange"
           @arm="onArmTrack"
           @change-instrument="openTrackInstrumentPicker"
           @generate="openChordGenerateDialog"
@@ -981,7 +1049,7 @@ useAppLifecycle({
               <label class="bar-field">
                 {{ t.shell.editor.snap }}
                 <SelectMenu
-                  v-model="store.snapDivision"
+                  v-model="snapChoice"
                   :options="SNAP_CHOICES"
                   size="sm"
                   :aria-label="t.shell.editor.snap"
@@ -1001,6 +1069,28 @@ useAppLifecycle({
             >
               {{ t.shell.editor.quantize }}
             </button>
+            <label class="bar-field">
+              {{ t.shell.editor.quantizeStrength }}
+              <input
+                v-model.number="store.quantizeStrength"
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                :aria-label="t.shell.editor.quantizeStrength"
+              />
+            </label>
+            <label class="bar-field">
+              {{ t.shell.editor.swing }}
+              <input
+                v-model.number="store.quantizeSwing"
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                :aria-label="t.shell.editor.swing"
+              />
+            </label>
             <ToggleButton
               v-model="store.scaleHighlight.enabled"
               size="sm"
@@ -1100,6 +1190,7 @@ useAppLifecycle({
           </div>
           <InfoLine />
           <PianoRollEditor
+            ref="pianoRollRef"
             class="piano-roll-host"
             :position-ppq="() => positionPpq"
             :is-playing="isPlaying"
@@ -1260,6 +1351,7 @@ useAppLifecycle({
       :is-playing="isPlaying"
       :loop-enabled="loopEnabled"
       :metronome-enabled="metronomeEnabled"
+      :metronome-volume="metronomeVolume"
       :position-seconds="positionSeconds"
       :recording="recording"
       :recording-input-device-options="recordingInputDeviceOptions"
@@ -1286,6 +1378,7 @@ useAppLifecycle({
       @toggle-auto-punch="toggleAutoPunch"
       @toggle-loop="toggleLoop"
       @toggle-metronome="transport.toggleMetronome()"
+      @metronome-volume-change="setMetronomeVolume"
       @toggle-record="toggleRecord"
       @update-bbt-draft="(value) => (bbtDraft = value)"
       @update-record-menu-open="(open) => (recordMenuOpen = open)"
