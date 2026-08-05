@@ -10,7 +10,7 @@
 //
 //   jsdom — the vitest DOM environment. jsdom 30 requires Node
 //     ^22.22.2 || ^24.15.0 || >=26.0.0, which the Node version pinned in
-//     `volta.node` does not satisfy. Release the pin when that Node pin moves.
+//     `mise.toml` does not satisfy. Release the pin when that Node pin moves.
 const HELD_ON_CURRENT_MAJOR = ['typescript', 'jsdom'];
 
 module.exports = {

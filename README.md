@@ -23,7 +23,8 @@ A digital audio workstation that runs entirely in the browser, built on the
 - Projects persist as `.szd` files (zip-packed JSON + assets) in the browser's
   origin-private file system (OPFS), with autosave; Web MIDI input, and output
   to external devices via a shared project-default route, are supported where
-  available
+  available. MPE is not supported: expression lanes use MIDI 1.0 channels, and
+  polyphonic pressure is stored per pitch rather than per individual note.
 - Display-only score annotations (dynamics, articulations, slurs) and an
   engraving-only transpose, applied from the score panel's Annotate palette
 - A unified menu bar (including Window and Options menus) with a header
@@ -43,7 +44,7 @@ A digital audio workstation that runs entirely in the browser, built on the
   `Cross-Origin-Embedder-Policy: require-corp`, which SharedArrayBuffer
   requires. Without isolation the engine falls back to a postMessage
   transport.
-- Node 24 and Yarn 4 (pinned via [Volta](https://volta.sh) in
+- Node 24 and Yarn 4 (pinned via [mise](https://mise.jdx.dev) in
   `package.json`).
 
 ## Quickstart
