@@ -1,7 +1,10 @@
 import { OperationGeneration } from '@/lib/operation-generation';
 import { ensureWasm } from '@/lib/wasm';
 import { loadAsset } from '@/persistence/assets';
+import { remapClipScoreAnnotations } from '../annotations';
 import { type AudioSectionAnalyzer, analyzeAudioClipSections } from '../audio-sections';
+import type { AutomationLaneState } from '../automation';
+import { clipSplitBlockReason, LOOP_CLIP_SPLIT_ERROR } from '../clip-split';
 import {
   assertProjectOperationCurrent,
   beginProjectOperation,
@@ -10,14 +13,26 @@ import {
 import { allocateMarkerId, allocateSectionId, getProject, useProjectStore } from '../store';
 import { normalizeTempoMap } from '../tempo-map';
 import {
+  deleteAutomationLanes,
+  deleteMarkers,
+  deleteSections,
+  deleteTimelineSegments,
+  insertAutomationLanes,
+  insertMarkers,
+  insertSections,
+  insertTimelineSegments,
+  validateTimelineRange,
+} from '../timeline-edit';
+import {
   clipKind,
   DEFAULT_SECTION_COLOR,
+  type EditorClip,
   type TempoSegment,
   type TimeSignatureSegment,
 } from '../types';
-import { installProjectClipWarp } from '../warp';
-import { execute, executeAtomic } from './history';
-import { requireClip, validatePpq } from './utils';
+import { clearProjectClipWarp, installProjectClipWarp } from '../warp';
+import { type AtomicProjectEdit, execute, executeAtomic } from './history';
+import { requireClip, requireEditableClip, validatePpq, withDerivedClipMetadata } from './utils';
 
 const sectionAnalysisOperations = new OperationGeneration();
 
@@ -59,6 +74,268 @@ function tempoSegmentChanged(
       (existing.endBpm ?? 0) !== (segment.endBpm ?? 0)
     );
   });
+}
+
+/** Reinstalls derived app metadata after a native timeline split. */
+function splitClipForTimeline(edit: AtomicProjectEdit, clipId: number, splitPpq: number): number {
+  const store = useProjectStore();
+  const project = getProject();
+  const source = requireEditableClip(store, clipId);
+  const blocked = clipSplitBlockReason(source, splitPpq);
+  if (blocked === 'loop') throw new Error(LOOP_CLIP_SPLIT_ERROR);
+  if (blocked === 'position') {
+    throw new RangeError(`Split position ${splitPpq} must lie strictly inside clip ${clipId}`);
+  }
+  const sourceMeta = { ...source };
+  const sourceAnnotations = store.scoreAnnotations[clipId];
+  const rightId = edit(1, () => project.splitClip(clipId, splitPpq));
+  store.refresh();
+  const splitOffsetPpq = splitPpq - source.startPpq;
+  store.clips = store.clips.map((clip) => {
+    if (clip.id === clipId) {
+      return withDerivedClipMetadata(clip, sourceMeta, {
+        windowStartPpq: 0,
+        windowLengthPpq: clip.lengthPpq,
+      });
+    }
+    if (clip.id === rightId) {
+      return withDerivedClipMetadata({ ...clip, name: source.name }, sourceMeta, {
+        windowStartPpq: splitOffsetPpq,
+        windowLengthPpq: clip.lengthPpq,
+      });
+    }
+    return clip;
+  });
+  const annotations = { ...store.scoreAnnotations };
+  delete annotations[clipId];
+  for (const id of [clipId, rightId]) {
+    const derived = store.clips.find((clip) => clip.id === id);
+    if (derived === undefined) continue;
+    const mapped = remapClipScoreAnnotations(sourceAnnotations, source.notes, derived.notes);
+    if (Object.keys(mapped).length > 0) annotations[id] = mapped;
+  }
+  store.scoreAnnotations = annotations;
+  const tempo = normalizeTempoMap(store.tempoSegments, store.tempoBpm);
+  for (const id of [clipId, rightId]) {
+    const derived = store.clips.find((clip) => clip.id === id);
+    if (derived?.warp !== undefined) {
+      installProjectClipWarp(project, derived, tempo, (mutation) => edit(1, mutation));
+    }
+  }
+  return rightId;
+}
+
+/** Trims a clip within the current atomic edit and preserves its app metadata. */
+function trimClipForTimeline(
+  edit: AtomicProjectEdit,
+  clipId: number,
+  newStartPpq: number,
+  newLengthPpq: number,
+): void {
+  const store = useProjectStore();
+  const project = getProject();
+  const source = requireEditableClip(store, clipId);
+  if (
+    !(newStartPpq >= source.startPpq) ||
+    !(newStartPpq + newLengthPpq <= source.startPpq + source.lengthPpq)
+  ) {
+    throw new RangeError(`Timeline trim must remain inside clip ${clipId}`);
+  }
+  const sourceMeta = { ...source };
+  edit(1, () => project.trimClip(clipId, newStartPpq, newLengthPpq));
+  store.refresh();
+  store.clips = store.clips.map((clip) =>
+    clip.id === clipId
+      ? withDerivedClipMetadata(clip, sourceMeta, {
+          windowStartPpq: newStartPpq - source.startPpq,
+          windowLengthPpq: clip.lengthPpq,
+        })
+      : clip,
+  );
+  const trimmed = store.clips.find((clip) => clip.id === clipId);
+  if (trimmed?.warp !== undefined) {
+    installProjectClipWarp(
+      project,
+      trimmed,
+      normalizeTempoMap(store.tempoSegments, store.tempoBpm),
+      (mutation) => edit(1, mutation),
+    );
+  }
+}
+
+/** Moves clip starts in bulk after all structural edits have completed. */
+function moveClipForTimeline(edit: AtomicProjectEdit, clipId: number, newStartPpq: number): void {
+  const project = getProject();
+  edit(1, () => project.moveClip(clipId, newStartPpq));
+}
+
+/** Removes a clip, first releasing any native warp map it owns. */
+function removeClipForTimeline(edit: AtomicProjectEdit, clipId: number): void {
+  const store = useProjectStore();
+  const project = getProject();
+  clearProjectClipWarp(project, clipId, (mutation) => edit(1, mutation));
+  edit(1, () => project.removeClip(clipId));
+  delete store.scoreAnnotations[clipId];
+}
+
+/** Rejects frozen clips and looped clips that would need structural splitting. */
+function validateRippleClips(
+  clips: ReadonlyArray<EditorClip>,
+  splitPositions: (clip: EditorClip) => ReadonlyArray<number>,
+): void {
+  const store = useProjectStore();
+  for (const clip of clips) {
+    requireEditableClip(store, clip.id);
+    for (const splitPpq of splitPositions(clip)) {
+      if (clipSplitBlockReason(clip, splitPpq) === 'loop') throw new Error(LOOP_CLIP_SPLIT_ERROR);
+    }
+  }
+}
+
+/** Commits app-owned timeline metadata after native clip operations. */
+function applyTimelineMetadata(
+  edit: AtomicProjectEdit,
+  mode: 'insert' | 'delete',
+  firstPpq: number,
+  secondPpq: number,
+): void {
+  const store = useProjectStore();
+  const project = getProject();
+  const lengthPpq = mode === 'insert' ? secondPpq : secondPpq - firstPpq;
+  if (mode === 'insert') {
+    store.markers = insertMarkers(store.markers, firstPpq, lengthPpq);
+    store.sections = insertSections(store.sections, firstPpq, lengthPpq);
+    store.automationLanes = insertAutomationLanes(store.automationLanes, firstPpq, lengthPpq);
+    store.tempoSegments = insertTimelineSegments(store.tempoSegments, firstPpq, lengthPpq);
+    store.timeSignatures = insertTimelineSegments(store.timeSignatures, firstPpq, lengthPpq);
+  } else {
+    store.markers = deleteMarkers(store.markers, firstPpq, secondPpq);
+    store.sections = deleteSections(store.sections, firstPpq, secondPpq);
+    store.automationLanes = deleteAutomationLanes(store.automationLanes, firstPpq, secondPpq);
+    store.tempoSegments = deleteTimelineSegments(store.tempoSegments, firstPpq, secondPpq);
+    store.timeSignatures = deleteTimelineSegments(store.timeSignatures, firstPpq, secondPpq);
+  }
+  store.markers.sort((a, b) => a.ppq - b.ppq || a.id - b.id);
+  store.sections.sort((a, b) => a.startPpq - b.startPpq || a.endPpq - b.endPpq || a.id - b.id);
+  if (store.tempoSegments.length > 0) {
+    edit(1, () =>
+      project.setTempoSegments(
+        store.tempoSegments.map((segment) => ({
+          startPpq: segment.startPpq,
+          bpm: segment.bpm,
+          endBpm: segment.endBpm ?? 0,
+        })),
+      ),
+    );
+  }
+  if (store.timeSignatures.length > 0) {
+    edit(1, () =>
+      project.setTimeSignatures(
+        store.timeSignatures.map((segment) => ({
+          startPpq: segment.startPpq,
+          numerator: segment.numerator,
+          denominator: segment.denominator,
+        })),
+      ),
+    );
+  }
+  store.tracks = store.tracks.map((track) => {
+    if (track.frozen === undefined) return track;
+    const next = { ...track };
+    delete next.frozen;
+    return next;
+  });
+}
+
+/** Rebuilds every native warp map after clip starts and the tempo map move together. */
+function reinstallTimelineWarps(edit: AtomicProjectEdit): void {
+  const store = useProjectStore();
+  const project = getProject();
+  const tempo = normalizeTempoMap(store.tempoSegments, store.tempoBpm);
+  for (const clip of store.clips) {
+    if (clip.warp === undefined) continue;
+    installProjectClipWarp(project, clip, tempo, (mutation) => edit(1, mutation));
+  }
+}
+
+function automationLaneKey(lane: AutomationLaneState): string {
+  return `${typeof lane.target === 'object' ? JSON.stringify(lane.target) : lane.target}:${lane.param}`;
+}
+
+/** Appends the source-window automation points after an inserted copy of that window. */
+function duplicateAutomationWindow(
+  lanes: ReadonlyArray<AutomationLaneState>,
+  sourceLanes: ReadonlyArray<AutomationLaneState>,
+  startPpq: number,
+  endPpq: number,
+): AutomationLaneState[] {
+  const lengthPpq = endPpq - startPpq;
+  const sourceByKey = new Map(sourceLanes.map((lane) => [automationLaneKey(lane), lane]));
+  return lanes.map((lane) => {
+    const source = sourceByKey.get(automationLaneKey(lane));
+    if (!source) return lane;
+    const copied = source.points
+      .filter((point) => point.ppq >= startPpq && point.ppq < endPpq)
+      .map((point) => ({ ...point, ppq: point.ppq + lengthPpq }));
+    if (copied.length === 0) return lane;
+    return { ...lane, points: [...lane.points, ...copied].sort((a, b) => a.ppq - b.ppq) };
+  });
+}
+
+/** Restores the source tempo/meter context at the start of a duplicated window. */
+function duplicateTimelineMapWindow<T extends TempoSegment | TimeSignatureSegment>(
+  segments: ReadonlyArray<T>,
+  sourceSegments: ReadonlyArray<T>,
+  startPpq: number,
+  endPpq: number,
+): T[] {
+  const lengthPpq = endPpq - startPpq;
+  const active = [...sourceSegments].reverse().find((segment) => segment.startPpq <= startPpq);
+  const copied = [
+    ...(active ? [{ ...active, startPpq: endPpq }] : []),
+    ...sourceSegments
+      .filter((segment) => segment.startPpq > startPpq && segment.startPpq < endPpq)
+      .map((segment) => ({ ...segment, startPpq: segment.startPpq + lengthPpq })),
+  ] as T[];
+  const byPosition = new Map(segments.map((segment) => [segment.startPpq, { ...segment }]));
+  for (const segment of copied) byPosition.set(segment.startPpq, segment);
+  return [...byPosition.values()].sort((left, right) => left.startPpq - right.startPpq);
+}
+
+/** Duplicates an intersecting clip window before the timeline gap is inserted. */
+function duplicateClipWindowForTimeline(
+  edit: AtomicProjectEdit,
+  source: EditorClip,
+  windowStartPpq: number,
+  windowEndPpq: number,
+): number {
+  const store = useProjectStore();
+  const project = getProject();
+  const windowOffsetPpq = windowStartPpq - source.startPpq;
+  const windowLengthPpq = windowEndPpq - windowStartPpq;
+  const copyId = edit(1, () => project.duplicateClip(source.id, source.startPpq));
+  edit(1, () => project.trimClip(copyId, windowStartPpq, windowLengthPpq));
+  store.refresh();
+  store.clips = store.clips.map((clip) =>
+    clip.id === copyId
+      ? withDerivedClipMetadata({ ...clip, name: source.name }, source, {
+          windowStartPpq: windowOffsetPpq,
+          windowLengthPpq,
+        })
+      : clip,
+  );
+  const copy = store.clips.find((clip) => clip.id === copyId);
+  if (copy) {
+    const annotations = remapClipScoreAnnotations(
+      store.scoreAnnotations[source.id],
+      source.notes,
+      copy.notes,
+    );
+    if (Object.keys(annotations).length > 0) {
+      store.scoreAnnotations = { ...store.scoreAnnotations, [copyId]: annotations };
+    }
+  }
+  return copyId;
 }
 
 /**
@@ -287,6 +564,225 @@ export function setTimeSignatures(segments: ReadonlyArray<TimeSignatureSegment>)
   });
   execute(1, () => {
     project.setTimeSignatures(segments.map((s) => ({ ...s })));
+    // The wasm Project currently stores only numerator/denominator. Seed the
+    // app-side additive groups before refresh so its meter read-back can
+    // re-associate them with the matching persisted segment.
+    store.timeSignatures = segments.map((segment) => ({
+      ...segment,
+      ...(segment.grouping !== undefined ? { grouping: [...segment.grouping] } : {}),
+    }));
     store.refresh();
+  });
+}
+
+/**
+ * Inserts empty timeline space and ripples all following project content.
+ *
+ * Clips spanning the boundary are split so their right-hand content moves
+ * with the insertion; markers, sections, automation, tempo and meter maps
+ * use the same coordinate transform and are committed as one undoable edit.
+ */
+export function insertTime(atPpq: number, lengthPpq: number): void {
+  validatePpq(atPpq, 'Insert position');
+  if (!Number.isFinite(lengthPpq) || lengthPpq <= 0) {
+    throw new RangeError(`Insert lengthPpq must be finite and > 0, got ${lengthPpq}`);
+  }
+  const store = useProjectStore();
+  const clips = store.clips.map((clip) => ({ ...clip }));
+  const impacted = clips.filter(
+    (clip) => clip.startPpq >= atPpq || clip.startPpq + clip.lengthPpq > atPpq,
+  );
+  validateRippleClips(impacted, (clip) =>
+    clip.startPpq < atPpq && clip.startPpq + clip.lengthPpq > atPpq ? [atPpq] : [],
+  );
+  executeAtomic((edit) => {
+    for (const clip of clips) {
+      const endPpq = clip.startPpq + clip.lengthPpq;
+      if (clip.startPpq >= atPpq) {
+        moveClipForTimeline(edit, clip.id, clip.startPpq + lengthPpq);
+      } else if (endPpq > atPpq) {
+        const rightId = splitClipForTimeline(edit, clip.id, atPpq);
+        moveClipForTimeline(edit, rightId, atPpq + lengthPpq);
+      }
+    }
+    applyTimelineMetadata(edit, 'insert', atPpq, lengthPpq);
+    store.refresh();
+    reinstallTimelineWarps(edit);
+    store.refresh();
+    store.selection = new Set(store.selection);
+  });
+}
+
+/**
+ * Duplicates a timeline window directly after itself, rippling later content
+ * right. The copied arrangement includes every clip intersection plus markers,
+ * sections, automation and tempo/meter context, and is one undoable operation.
+ */
+export function duplicateTime(startPpq: number, endPpq: number): void {
+  validateTimelineRange(startPpq, endPpq);
+  const store = useProjectStore();
+  const lengthPpq = endPpq - startPpq;
+  const sourceClips = store.clips
+    .filter((clip) => clip.startPpq < endPpq && clip.startPpq + clip.lengthPpq > startPpq)
+    .map((clip) => ({ ...clip }));
+  const impacted = store.clips.filter(
+    (clip) => clip.startPpq >= endPpq || clip.startPpq + clip.lengthPpq > endPpq,
+  );
+  validateRippleClips(impacted, (clip) =>
+    clip.startPpq < endPpq && clip.startPpq + clip.lengthPpq > endPpq ? [endPpq] : [],
+  );
+  for (const clip of sourceClips) requireEditableClip(store, clip.id);
+
+  const sourceMarkers = store.markers.map((marker) => ({ ...marker }));
+  const sourceSections = store.sections.map((section) => ({ ...section }));
+  const sourceAutomation = store.automationLanes.map((lane) => ({
+    ...lane,
+    points: lane.points.map((point) => ({ ...point })),
+  }));
+  const sourceTempo = store.tempoSegments.map((segment) => ({ ...segment }));
+  const sourceMeters = store.timeSignatures.map((segment) => ({
+    ...segment,
+    ...(segment.grouping ? { grouping: [...segment.grouping] } : {}),
+  }));
+
+  executeAtomic((edit) => {
+    const copies = sourceClips.map((source) => {
+      const windowStartPpq = Math.max(startPpq, source.startPpq);
+      const windowEndPpq = Math.min(endPpq, source.startPpq + source.lengthPpq);
+      return {
+        id: duplicateClipWindowForTimeline(edit, source, windowStartPpq, windowEndPpq),
+        targetStartPpq: windowStartPpq + lengthPpq,
+      };
+    });
+
+    // The freshly-created copies occupy the source window, so this same ripple
+    // pass shifts the original later content while leaving each trimmed copy
+    // anchored until it is moved into the newly inserted gap below.
+    const clips = store.clips.map((clip) => ({ ...clip }));
+    for (const clip of clips) {
+      const end = clip.startPpq + clip.lengthPpq;
+      if (clip.startPpq >= endPpq) {
+        moveClipForTimeline(edit, clip.id, clip.startPpq + lengthPpq);
+      } else if (end > endPpq) {
+        const rightId = splitClipForTimeline(edit, clip.id, endPpq);
+        moveClipForTimeline(edit, rightId, endPpq + lengthPpq);
+      }
+    }
+    applyTimelineMetadata(edit, 'insert', endPpq, lengthPpq);
+    store.markers = [
+      ...store.markers,
+      ...sourceMarkers
+        .filter((marker) => marker.ppq >= startPpq && marker.ppq < endPpq)
+        .map((marker) => ({ ...marker, id: allocateMarkerId(), ppq: marker.ppq + lengthPpq })),
+    ].sort((left, right) => left.ppq - right.ppq || left.id - right.id);
+    store.sections = [
+      ...store.sections,
+      ...sourceSections.flatMap((section) => {
+        const copiedStartPpq = Math.max(startPpq, section.startPpq);
+        const copiedEndPpq = Math.min(endPpq, section.endPpq);
+        return copiedEndPpq > copiedStartPpq
+          ? [
+              {
+                ...section,
+                id: allocateSectionId(),
+                startPpq: copiedStartPpq + lengthPpq,
+                endPpq: copiedEndPpq + lengthPpq,
+              },
+            ]
+          : [];
+      }),
+    ].sort(
+      (left, right) =>
+        left.startPpq - right.startPpq || left.endPpq - right.endPpq || left.id - right.id,
+    );
+    store.automationLanes = duplicateAutomationWindow(
+      store.automationLanes,
+      sourceAutomation,
+      startPpq,
+      endPpq,
+    );
+    store.tempoSegments = duplicateTimelineMapWindow(
+      store.tempoSegments,
+      sourceTempo,
+      startPpq,
+      endPpq,
+    );
+    store.timeSignatures = duplicateTimelineMapWindow(
+      store.timeSignatures,
+      sourceMeters,
+      startPpq,
+      endPpq,
+    );
+    edit(1, () =>
+      getProject().setTempoSegments(
+        store.tempoSegments.map((segment) => ({
+          startPpq: segment.startPpq,
+          bpm: segment.bpm,
+          endBpm: segment.endBpm ?? 0,
+        })),
+      ),
+    );
+    edit(1, () =>
+      getProject().setTimeSignatures(
+        store.timeSignatures.map((segment) => ({
+          startPpq: segment.startPpq,
+          numerator: segment.numerator,
+          denominator: segment.denominator,
+        })),
+      ),
+    );
+    for (const copy of copies) moveClipForTimeline(edit, copy.id, copy.targetStartPpq);
+    store.refresh();
+    reinstallTimelineWarps(edit);
+    store.refresh();
+    store.selection = new Set(copies.map((copy) => copy.id));
+    if (copies[0]) {
+      store.clipId = copies[0].id;
+      store.activeTrackId = store.clips.find((clip) => clip.id === copies[0]?.id)?.trackId ?? -1;
+    }
+  });
+}
+
+/**
+ * Removes a timeline range and ripples following project content left.
+ *
+ * A clip spanning both boundaries is split into its surviving left/right
+ * source windows. The right window is moved to the deletion start, avoiding
+ * a false source-contiguous trim that would replay deleted material.
+ */
+export function deleteTime(startPpq: number, endPpq: number): void {
+  validateTimelineRange(startPpq, endPpq);
+  const store = useProjectStore();
+  const lengthPpq = endPpq - startPpq;
+  const clips = store.clips.map((clip) => ({ ...clip }));
+  const impacted = clips.filter((clip) => clip.startPpq + clip.lengthPpq > startPpq);
+  validateRippleClips(impacted, (clip) => {
+    const end = clip.startPpq + clip.lengthPpq;
+    return clip.startPpq < startPpq && end > endPpq ? [startPpq] : [];
+  });
+  executeAtomic((edit) => {
+    for (const clip of clips) {
+      const clipEndPpq = clip.startPpq + clip.lengthPpq;
+      if (clipEndPpq <= startPpq) continue;
+      if (clip.startPpq >= endPpq) {
+        moveClipForTimeline(edit, clip.id, clip.startPpq - lengthPpq);
+      } else if (clip.startPpq >= startPpq && clipEndPpq <= endPpq) {
+        removeClipForTimeline(edit, clip.id);
+      } else if (clip.startPpq < startPpq && clipEndPpq <= endPpq) {
+        trimClipForTimeline(edit, clip.id, clip.startPpq, startPpq - clip.startPpq);
+      } else if (clip.startPpq >= startPpq && clipEndPpq > endPpq) {
+        trimClipForTimeline(edit, clip.id, endPpq, clipEndPpq - endPpq);
+        moveClipForTimeline(edit, clip.id, startPpq);
+      } else {
+        const rightId = splitClipForTimeline(edit, clip.id, startPpq);
+        trimClipForTimeline(edit, rightId, endPpq, clipEndPpq - endPpq);
+        moveClipForTimeline(edit, rightId, startPpq);
+      }
+    }
+    applyTimelineMetadata(edit, 'delete', startPpq, endPpq);
+    store.refresh();
+    reinstallTimelineWarps(edit);
+    store.refresh();
+    store.selection = new Set(store.selection);
   });
 }

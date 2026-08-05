@@ -1,0 +1,119 @@
+import { describe, expect, it } from 'vitest';
+import {
+  deleteAutomationLanes,
+  deleteMarkers,
+  deleteSections,
+  deleteTimelineSegments,
+  insertAutomationLanes,
+  insertMarkers,
+  insertSections,
+  insertTimelineSegments,
+} from '@/project/timeline-edit';
+
+describe('timeline metadata transforms', () => {
+  it('shifts markers and expands sections across inserted time', () => {
+    expect(insertMarkers([{ id: 1, ppq: 4, name: 'Verse' }], 4, 2)).toEqual([
+      { id: 1, ppq: 6, name: 'Verse' },
+    ]);
+    expect(
+      insertSections(
+        [
+          { id: 1, name: 'Intro', color: '#111', startPpq: 0, endPpq: 4 },
+          { id: 2, name: 'Verse', color: '#222', startPpq: 4, endPpq: 8 },
+        ],
+        2,
+        2,
+      ),
+    ).toEqual([
+      { id: 1, name: 'Intro', color: '#111', startPpq: 0, endPpq: 6 },
+      { id: 2, name: 'Verse', color: '#222', startPpq: 6, endPpq: 10 },
+    ]);
+  });
+
+  it('clips, drops and shifts section and marker regions on deletion', () => {
+    expect(
+      deleteMarkers(
+        [
+          { id: 1, ppq: 1, name: 'A' },
+          { id: 2, ppq: 3, name: 'B' },
+          { id: 3, ppq: 7, name: 'C' },
+        ],
+        2,
+        6,
+      ),
+    ).toEqual([
+      { id: 1, ppq: 1, name: 'A' },
+      { id: 3, ppq: 3, name: 'C' },
+    ]);
+    expect(
+      deleteSections(
+        [
+          { id: 1, name: 'Left', color: '#111', startPpq: 0, endPpq: 3 },
+          { id: 2, name: 'Inside', color: '#222', startPpq: 3, endPpq: 5 },
+          { id: 3, name: 'Across', color: '#333', startPpq: 1, endPpq: 8 },
+          { id: 4, name: 'Right', color: '#444', startPpq: 7, endPpq: 9 },
+        ],
+        2,
+        6,
+      ),
+    ).toEqual([
+      { id: 1, name: 'Left', color: '#111', startPpq: 0, endPpq: 2 },
+      { id: 3, name: 'Across', color: '#333', startPpq: 1, endPpq: 4 },
+      { id: 4, name: 'Right', color: '#444', startPpq: 3, endPpq: 5 },
+    ]);
+  });
+
+  it('preserves the held automation value at a ripple-delete boundary', () => {
+    const lanes = [
+      {
+        target: 'master' as const,
+        param: 'faderDb' as const,
+        enabled: true,
+        points: [
+          { ppq: 0, value: -6 },
+          { ppq: 3, value: -3, curve: 's-curve' as const },
+          { ppq: 5, value: 0 },
+          { ppq: 8, value: -9 },
+        ],
+      },
+    ];
+    expect(insertAutomationLanes(lanes, 4, 2)[0].points.map((point) => point.ppq)).toEqual([
+      0, 3, 7, 10,
+    ]);
+    expect(deleteAutomationLanes(lanes, 4, 7)[0].points).toEqual([
+      { ppq: 0, value: -6 },
+      { ppq: 3, value: -3, curve: 's-curve' },
+      { ppq: 4, value: -3, curve: 's-curve' },
+      { ppq: 5, value: -9 },
+    ]);
+  });
+
+  it('retains active tempo/meter values through a deleted map boundary', () => {
+    const tempo = [
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 4, bpm: 90 },
+      { startPpq: 6, bpm: 140 },
+      { startPpq: 10, bpm: 110 },
+    ];
+    expect(insertTimelineSegments(tempo, 4, 2)).toEqual([
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 6, bpm: 90 },
+      { startPpq: 8, bpm: 140 },
+      { startPpq: 12, bpm: 110 },
+    ]);
+    expect(deleteTimelineSegments(tempo, 5, 9)).toEqual([
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 4, bpm: 90 },
+      { startPpq: 6, bpm: 110 },
+    ]);
+
+    const meter = [
+      { startPpq: 0, numerator: 7, denominator: 8, grouping: [2, 2, 3] },
+      { startPpq: 4, numerator: 4, denominator: 4 },
+    ];
+    expect(deleteTimelineSegments(meter, 0, 2)).toEqual([
+      { startPpq: 0, numerator: 7, denominator: 8, grouping: [2, 2, 3] },
+      { startPpq: 2, numerator: 4, denominator: 4 },
+    ]);
+  });
+});
