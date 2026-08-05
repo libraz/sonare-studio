@@ -5,6 +5,7 @@ import type { LiveMidiChannelVoiceMessage } from '@/composables/useNotePreview';
 import type { useStepInput } from '@/composables/useStepInput';
 import { useWebMidi } from '@/composables/useWebMidi';
 import { useI18n } from '@/ui/i18n';
+import type { MidiLearnTransportAction } from '@/ui/midi/midi-learn';
 import type { RealtimeEngine } from '@/wasm/index.js';
 
 type StepInput = ReturnType<typeof useStepInput>;
@@ -63,6 +64,11 @@ export interface InputControlsOptions {
   onRecordChannelPressure?: (event: RecordChannelPressureEvent) => void;
   /** Captures incoming polyphonic key pressure for MIDI recording (when armed/rolling). */
   onRecordPolyPressure?: (event: RecordPolyPressureEvent) => void;
+  /**
+   * Transport actions a learned control-surface button drives. Omit to leave
+   * transport bindings inert (they still persist with the project).
+   */
+  transportActions?: Partial<Record<MidiLearnTransportAction, () => void>>;
   runAction: RunAction;
 }
 
@@ -87,7 +93,9 @@ export function useInputControls(options: InputControlsOptions) {
     stepInput,
   });
 
-  const midiLearn = useMidiLearn();
+  const midiLearn = useMidiLearn(
+    options.transportActions === undefined ? {} : { transport: options.transportActions },
+  );
   const midiLearnOpen = ref(false);
   const webMidi = useWebMidi({
     // Live MIDI keys sustain through the audible engine: note-on rings until the

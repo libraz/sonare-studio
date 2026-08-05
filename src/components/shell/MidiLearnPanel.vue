@@ -7,9 +7,11 @@ import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import {
   formatMidiCcBinding,
+  MIDI_LEARN_TRANSPORT_ACTIONS,
   type MidiCcBinding,
   type MidiLearnParam,
   type MidiLearnScope,
+  midiLearnTransportTargetId,
   parseMidiLearnInsertTargetId,
   parseMidiLearnInstrumentTargetId,
 } from '@/ui/midi/midi-learn';
@@ -134,6 +136,19 @@ const deviceBindings = computed<DeviceBindingRow[]>(() => {
   return rows.sort((a, b) => a.label.localeCompare(b.label));
 });
 
+/** Transport buttons a control surface can drive, with their current binding. */
+const transportRows = computed(() =>
+  MIDI_LEARN_TRANSPORT_ACTIONS.map((action) => {
+    const id = midiLearnTransportTargetId(action);
+    return {
+      id,
+      action,
+      label: t.value.shell.midiLearn.transportActions[action],
+      binding: props.learn.bindingForId(id),
+    };
+  }),
+);
+
 function clearAll(): void {
   void (async () => {
     if (
@@ -233,6 +248,33 @@ function clearAll(): void {
             ×
           </button>
         </span>
+      </div>
+
+      <div class="ml-devices ml-transport">
+        <div class="ml-row-head ml-devices-head">
+          <span class="ml-col-head">{{ t.shell.midiLearn.transport }}</span>
+        </div>
+        <div v-for="row in transportRows" :key="row.id" class="ml-device-row ml-transport-row">
+          <span class="ml-device-name" v-tooltip="row.label">{{ row.label }}</span>
+          <button
+            type="button"
+            class="ml-bind ml-bind-transport"
+            :class="{ 'ml-bind-armed': learn.isArmedId(row.id) }"
+            :aria-pressed="learn.isArmedId(row.id)"
+            @click="learn.armId(row.id)"
+          >
+            {{ row.binding ? formatMidiCcBinding(row.binding) : t.shell.midiLearn.learn }}
+          </button>
+          <button
+            type="button"
+            class="ml-clear"
+            :disabled="!row.binding"
+            :aria-label="t.shell.midiLearn.clearBinding"
+            @click="learn.clearId(row.id)"
+          >
+            ×
+          </button>
+        </div>
       </div>
 
       <div v-if="deviceBindings.length > 0" class="ml-devices">

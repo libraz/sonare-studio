@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import MidiLearnPanel from '@/components/shell/MidiLearnPanel.vue';
 import { useMidiLearn } from '@/composables/useMidiLearn';
 import { useProjectStore } from '@/project/store';
+import { midiLearnTransportTargetId } from '@/ui/midi/midi-learn';
 
 vi.mock('@/project/commands', () => ({
   setStripGain: vi.fn(),
@@ -57,13 +58,22 @@ describe('MidiLearnPanel', () => {
     expect(names.some((n) => n.includes('Master'))).toBe(true);
     expect(names.some((n) => n.includes('Drums'))).toBe(true);
     expect(names.some((n) => n.includes('Bass'))).toBe(true);
-    // Master + 2 tracks, two bind buttons each.
-    expect((wrapper as VueWrapper).findAll('.ml-bind')).toHaveLength(6);
+    // Master + 2 tracks, two bind buttons each (transport rows bind separately).
+    expect((wrapper as VueWrapper).findAll('.ml-bind:not(.ml-bind-transport)')).toHaveLength(6);
+  });
+
+  it('exposes every transport action as its own bindable row', async () => {
+    const learn = mountPanel();
+    const transportButtons = (wrapper as VueWrapper).findAll('.ml-bind-transport');
+    expect(transportButtons).toHaveLength(4);
+
+    await transportButtons[0].trigger('click');
+    expect(learn.isArmedId(midiLearnTransportTargetId('play'))).toBe(true);
   });
 
   it('arms a target on click and shows it listening', async () => {
     const learn = mountPanel();
-    const masterVol = (wrapper as VueWrapper).findAll('.ml-bind')[0];
+    const masterVol = (wrapper as VueWrapper).findAll('.ml-bind:not(.ml-bind-transport)')[0];
     expect(masterVol.text()).toBe('learn');
 
     await masterVol.trigger('click');
@@ -96,9 +106,9 @@ describe('MidiLearnPanel', () => {
     store.midiCcBindings.set('instrument:2:cutoffHz', { channel: 1, controller: 74 });
     await (wrapper as VueWrapper).vm.$nextTick();
 
-    const rows = (wrapper as VueWrapper).findAll('.ml-device-row');
+    const rows = (wrapper as VueWrapper).findAll('.ml-device-row:not(.ml-transport-row)');
     expect(rows).toHaveLength(2);
-    const devices = (wrapper as VueWrapper).find('.ml-devices').text();
+    const devices = (wrapper as VueWrapper).find('.ml-devices:not(.ml-transport)').text();
     expect(devices).toContain('Drums · Insert 1 · Threshold Db');
     expect(devices).toContain('Bass · Instrument · Cutoff Hz');
 

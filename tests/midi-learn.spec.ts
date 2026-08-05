@@ -9,6 +9,7 @@ import {
   gainDbToCc,
   MIDI_FADER_MAX_DB,
   MIDI_FADER_MIN_DB,
+  MIDI_LEARN_TRANSPORT_ACTIONS,
   midiLearnEqTargetId,
   midiLearnInsertTargetId,
   midiLearnInstrumentTargetId,
@@ -18,6 +19,7 @@ import {
   midiLearnTargetId,
   midiLearnTargetScope,
   midiLearnTrackStateTargetId,
+  midiLearnTransportTargetId,
   midiLearnVcaTargetId,
   panToCc,
   parseMidiLearnEqTargetId,
@@ -28,6 +30,7 @@ import {
   parseMidiLearnStripControlTargetId,
   parseMidiLearnTargetId,
   parseMidiLearnTrackStateTargetId,
+  parseMidiLearnTransportTargetId,
   parseMidiLearnVcaTargetId,
   rangeToCc,
   sanitizeMidiCcBindings,
@@ -88,6 +91,23 @@ describe('target ids', () => {
     expect(parseMidiLearnTargetId('nope')).toBeNull();
     expect(parseMidiLearnTargetId('mute:1')).toBeNull();
     expect(parseMidiLearnTargetId('gain:abc')).toBeNull();
+  });
+});
+
+describe('transport target ids', () => {
+  it('round-trips every learnable transport action', () => {
+    for (const action of MIDI_LEARN_TRANSPORT_ACTIONS) {
+      const id = midiLearnTransportTargetId(action);
+      expect(parseMidiLearnTransportTargetId(id)).toBe(action);
+      // Transport bindings belong to the session, not to a strip, so they
+      // survive a track-scope rewrite untouched.
+      expect(midiLearnTargetScope(id)).toBe('global');
+    }
+  });
+
+  it('rejects ids that are not transport targets', () => {
+    expect(parseMidiLearnTransportTargetId('transport:rewind')).toBeNull();
+    expect(parseMidiLearnTransportTargetId('gain:master')).toBeNull();
   });
 });
 

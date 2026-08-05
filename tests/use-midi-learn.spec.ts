@@ -16,6 +16,7 @@ import {
   midiLearnSendTargetId,
   midiLearnStripControlTargetId,
   midiLearnTrackStateTargetId,
+  midiLearnTransportTargetId,
   midiLearnVcaTargetId,
 } from '@/ui/midi/midi-learn';
 
@@ -229,6 +230,35 @@ describe('useMidiLearn', () => {
       parameter: 2,
     });
     expect(setStripGain).toHaveBeenCalledWith('master', ccToGainDb(127), { commit: false });
+  });
+
+  it('drives transport actions from a learned surface button', () => {
+    const play = vi.fn();
+    const stop = vi.fn();
+    const learn = useMidiLearn({ transport: { play, stop } });
+    learn.armId(midiLearnTransportTargetId('play'));
+
+    learn.handleCc({ channel: 0, controller: 118, value: 127 });
+
+    expect(play).toHaveBeenCalledTimes(1);
+    // A button release must not toggle back.
+    learn.handleCc({ channel: 0, controller: 118, value: 0 });
+    expect(play).toHaveBeenCalledTimes(1);
+    expect(stop).not.toHaveBeenCalled();
+  });
+
+  it('keeps a transport binding when no handler is wired', () => {
+    const learn = useMidiLearn();
+    learn.armId(midiLearnTransportTargetId('record'));
+
+    learn.handleCc({ channel: 0, controller: 119, value: 127 });
+
+    // The binding survives (the project may move to a rig that has transport
+    // control) instead of being dropped as a stale target.
+    expect(learn.bindingForId(midiLearnTransportTargetId('record'))).toEqual({
+      channel: 0,
+      controller: 119,
+    });
   });
 
   it('clears one binding and all bindings', () => {

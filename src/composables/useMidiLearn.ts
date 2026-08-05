@@ -49,6 +49,7 @@ import {
   type MidiCcMessage,
   type MidiLearnParam,
   type MidiLearnScope,
+  type MidiLearnTransportAction,
   midiCcBindingMatches,
   midiCcMessageValue,
   midiLearnTargetId,
@@ -61,6 +62,7 @@ import {
   parseMidiLearnStripControlTargetId,
   parseMidiLearnTargetId,
   parseMidiLearnTrackStateTargetId,
+  parseMidiLearnTransportTargetId,
   parseMidiLearnVcaTargetId,
 } from '@/ui/midi/midi-learn';
 
@@ -110,6 +112,16 @@ export interface MidiLearnHandle {
   handleCc(message: MidiCcMessage): void;
 }
 
+/** Session actions a control surface can drive through learned bindings. */
+export interface MidiLearnOptions {
+  /**
+   * Transport actions invoked by a bound button press. Absent handlers make
+   * their bindings inert rather than an error, so a project learned on a rig
+   * with transport control still loads elsewhere.
+   */
+  transport?: Partial<Record<MidiLearnTransportAction, () => void>>;
+}
+
 /** Injection key sharing the app's single MIDI-learn handle with descendants. */
 export const MIDI_LEARN_KEY: InjectionKey<MidiLearnHandle> = Symbol('midiLearn');
 
@@ -127,7 +139,7 @@ export const MIDI_LEARN_KEY: InjectionKey<MidiLearnHandle> = Symbol('midiLearn')
  *
  * @returns Reactive MIDI-learn state and arm/clear/handle controls.
  */
-export function useMidiLearn(): MidiLearnHandle {
+export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
   // Bindings are the store's persisted map (stable identity across loads); arm
   // state and pending-commit timers are transient session state.
   const bindings = useProjectStore().midiCcBindings as Map<string, MidiCcBinding>;
@@ -196,6 +208,13 @@ export function useMidiLearn(): MidiLearnHandle {
 
   /** Applies a value to the bound command, returning false on a stale target. */
   function dispatch(id: string, value: number, commit: boolean): boolean {
+    const transportAction = parseMidiLearnTransportTargetId(id);
+    if (transportAction !== null) {
+      // Momentary button: act on press, ignore the release so one push does
+      // not toggle twice.
+      if (value >= 64) options.transport?.[transportAction]?.();
+      return true;
+    }
     const quickControl = quickControlOf(id);
     if (quickControl) {
       return dispatchQuickControl(quickControl.target, quickControl.paramId, value, commit);

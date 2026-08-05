@@ -351,6 +351,42 @@ export function parseMidiLearnTrackStateTargetId(id: string): MidiLearnTrackStat
   return { trackId, param };
 }
 
+/**
+ * Transport actions a control surface can drive. These are momentary buttons:
+ * the action fires on press (value >= 64) and ignores the release, matching
+ * how transport buttons on a surface behave.
+ */
+export type MidiLearnTransportAction = 'play' | 'stop' | 'record' | 'loop';
+
+/** All learnable transport actions, in transport-bar order. */
+export const MIDI_LEARN_TRANSPORT_ACTIONS: ReadonlyArray<MidiLearnTransportAction> = [
+  'play',
+  'stop',
+  'record',
+  'loop',
+];
+
+/** Prefix marking a transport learn target id. */
+const TRANSPORT_TARGET_PREFIX = 'transport:';
+
+/**
+ * Encodes a transport learn target, e.g. `transport:play`.
+ *
+ * @param action Transport action driven by the binding.
+ */
+export function midiLearnTransportTargetId(action: MidiLearnTransportAction): string {
+  return `${TRANSPORT_TARGET_PREFIX}${action}`;
+}
+
+/** Decodes a transport target id, or null when it is malformed. */
+export function parseMidiLearnTransportTargetId(id: string): MidiLearnTransportAction | null {
+  if (!id.startsWith(TRANSPORT_TARGET_PREFIX)) return null;
+  const action = id.slice(TRANSPORT_TARGET_PREFIX.length);
+  return MIDI_LEARN_TRANSPORT_ACTIONS.includes(action as MidiLearnTransportAction)
+    ? (action as MidiLearnTransportAction)
+    : null;
+}
+
 /** VCA group controls exposed to MIDI Learn. */
 export type MidiLearnVcaParam = 'gain' | 'mute' | 'solo';
 
@@ -695,6 +731,8 @@ export function midiLearnTargetScope(id: string): MidiLearnTargetScope | null {
   if (trackState) return trackState.trackId;
   const vca = parseMidiLearnVcaTargetId(id);
   if (vca) return 'global';
+  // Transport bindings drive the session, not a strip.
+  if (parseMidiLearnTransportTargetId(id) !== null) return 'global';
   const eq = parseMidiLearnEqTargetId(id);
   if (eq) return eq.scope;
   const mastering = parseMidiLearnMasteringTargetId(id);
