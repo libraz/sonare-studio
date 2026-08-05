@@ -1,6 +1,7 @@
 import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import NumericReadout from '@/components/mixer/NumericReadout.vue';
 import VcaStrip from '@/components/mixer/VcaStrip.vue';
 import { MIDI_LEARN_KEY, useMidiLearn } from '@/composables/useMidiLearn';
 import { addVcaGroup, clearHistory } from '@/project/commands';
@@ -58,5 +59,16 @@ describe('VcaStrip MIDI learn', () => {
     learn.handleCc({ channel: 0, controller: 35, value: 127 });
     expect(learn.bindingForId(gainId)).toEqual({ channel: 0, controller: 35 });
     expect(store.mixer.vcaGroups?.[0]?.gainDb).toBe(6);
+  });
+
+  it('commits an exact VCA gain from its numeric readout', async () => {
+    const wrapper = mount(VcaStrip, {
+      props: { group: store.mixer.vcaGroups![0] },
+      global: { stubs: { MixerFader: true } },
+    });
+    wrapper.getComponent(NumericReadout).vm.$emit('change', -4.5);
+    await wrapper.vm.$nextTick();
+
+    expect(store.mixer.vcaGroups?.[0]?.gainDb).toBe(-4.5);
   });
 });

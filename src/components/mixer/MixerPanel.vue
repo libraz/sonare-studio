@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
+import { useAppSettings } from '@/composables/useAppSettings';
 import type { AnalyserBridge } from '@/engine/analyser';
 import type { MeterSource } from '@/engine/meters';
 import type { ScopeSource } from '@/engine/scope';
@@ -9,6 +10,7 @@ import {
   addMixerBus,
   addVcaGroup,
   applyMixerSceneJson,
+  clearAllSolo,
   setMixerSoloMode,
 } from '@/project/commands';
 import { MAX_VCA_GROUPS, type MixerSoloMode, normalizeMixerSoloMode } from '@/project/mixer';
@@ -87,10 +89,11 @@ const props = withDefaults(
 );
 
 const store = useProjectStore();
+const appSettings = useAppSettings();
 const { t } = useI18n();
 
-/** Track ids hidden from the mixer view (panel-local, not persisted). */
-const hiddenTrackIds = ref<ReadonlySet<number>>(new Set());
+/** Track ids hidden from the mixer view (persisted as a user layout preference). */
+const hiddenTrackIds = computed(() => new Set(appSettings.settings.mixerHiddenTrackIds));
 
 const visibleTracks = computed<EditorTrack[]>(() =>
   store.tracks.filter((track) => !hiddenTrackIds.value.has(track.id)),
@@ -105,19 +108,23 @@ const soloMode = computed<MixerSoloMode>({
 
 const soloModeOptions = computed(() => [
   { value: 'inPlace', label: t.value.shell.mixer.soloMode.inPlace },
-  { value: 'afl', label: t.value.shell.mixer.soloMode.afl },
   { value: 'pfl', label: t.value.shell.mixer.soloMode.pfl },
 ]);
+
+const hasSolo = computed(
+  () =>
+    store.tracks.some((track) => track.solo) || (store.mixer.vcaGroups ?? []).some((g) => g.solo),
+);
 
 function toggleTrackVisible(trackId: number): void {
   const next = new Set(hiddenTrackIds.value);
   if (next.has(trackId)) next.delete(trackId);
   else next.add(trackId);
-  hiddenTrackIds.value = next;
+  appSettings.set('mixerHiddenTrackIds', [...next]);
 }
 
 function showAllTracks(): void {
-  hiddenTrackIds.value = new Set();
+  appSettings.set('mixerHiddenTrackIds', []);
 }
 
 // --- View menu (visibility + buses) -------------------------------------------
@@ -200,6 +207,15 @@ onBeforeUnmount(() => {
       </span>
       <span class="toolbar-spacer" />
       <MixerSnapshots />
+      <button
+        v-if="hasSolo"
+        type="button"
+        class="toolbar-button solo-clear"
+        v-tooltip="t.shell.mixer.clearSolo"
+        @click="clearAllSolo"
+      >
+        {{ t.shell.mixer.clearSolo }}
+      </button>
       <SelectMenu
         v-model="soloMode"
         class="solo-mode-select"

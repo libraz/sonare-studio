@@ -41,9 +41,11 @@ export function engineAutomationPointsWithValueOffset(
 }
 
 /**
- * Encodes fader automation after applying its VCA offset and independent mute
- * stage. Muted lanes retain their timeline points/curve ids but every value is
- * pinned to the engine silence floor, so block automation cannot reopen them.
+ * Encodes absolute fader automation after applying only its VCA offset and
+ * independent mute stage. Track volume and strip trim are part of the manual
+ * fader baseline, not of an enabled automation lane. Muted lanes retain their
+ * timeline points/curve ids but every value is pinned to the engine silence
+ * floor, so block automation cannot reopen them.
  */
 export function engineFaderAutomationPoints(
   points: ReadonlyArray<{ ppq: number; value: number; curve?: AutomationCurve }>,

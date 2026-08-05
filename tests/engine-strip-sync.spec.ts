@@ -475,6 +475,16 @@ describe('createStripSync', () => {
     expect(engine.setBusGain).not.toHaveBeenCalled();
   });
 
+  it('silences a muted return bus while retaining its stored fader value', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const bus = { ...makeBus('A', -3), mute: true };
+
+    sync.sync([makeTrack(1)], makeMixer({ buses: [bus] }));
+
+    expect(engine.setTrackBuses).toHaveBeenCalledWith([{ busId: 1, gainDb: -120 }]);
+  });
+
   it('marks a pre-fader send explicitly and leaves post-fader sends bare', () => {
     const { handle, engine } = makeHandle();
     const sync = createStripSync(handle);

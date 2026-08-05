@@ -71,9 +71,10 @@ export function insertLatencyResolverFromCatalog(
   }
   return (slot) => {
     const catalogLatency = byProcessor.get(slot.processor) ?? 0;
-    return catalogLatency > 0
-      ? catalogLatency
-      : paramsLatencyHintSamples(slot.params, options.sampleRate);
+    // Catalog metadata describes the processor default, while a slot may opt
+    // into a longer lookahead/delay. Compensation must cover the longest of
+    // the two rather than silently discarding the user-selected value.
+    return Math.max(catalogLatency, paramsLatencyHintSamples(slot.params, options.sampleRate));
   };
 }
 
@@ -102,8 +103,8 @@ export function stripInsertLatencySamples(
  * Builds a PDC plan from primary output routes. A content lane reaches either
  * its parent group bus, its selected return bus, or the master directly; the
  * destination bus's inserts are therefore part of that lane's audible path.
- * Return-bus latency is also included in the project maximum so send returns
- * cannot be ignored when they are the longest live signal path.
+ * Only buses selected as a primary output route contribute to the project
+ * maximum; an un-routed return cannot delay unrelated lanes.
  */
 export function createInsertPdcPlan(
   tracks: ReadonlyArray<InsertPdcTrack>,
@@ -115,6 +116,13 @@ export function createInsertPdcPlan(
   );
   const busLatencyById = new Map(
     buses.map((bus) => [bus.id, stripInsertLatencySamples(bus.strip, resolveLatency)]),
+  );
+  // An un-routed return bus contributes no audible primary signal path. Do
+  // not let a dormant high-latency effect increase every track's PDC delay.
+  const usedOutputBusIds = new Set(
+    tracks.flatMap((track) =>
+      track.mixer?.outputBusId === undefined ? [] : [track.mixer.outputBusId],
+    ),
   );
 
   /** Latency of the bus path downstream from a track's own lane strip. */
@@ -132,16 +140,17 @@ export function createInsertPdcPlan(
 
   /** Content lane latency; group tracks themselves are silent routing busses. */
   function signalLatency(track: InsertPdcTrack): number {
+    // A frozen asset already contains its own strip's processing latency.
+    // Count that baked delay as part of the signal path so PDC adds only the
+    // remaining difference, rather than delaying the frozen lane a second time.
     const ownLatency =
-      track.kind === 'group' || track.frozen !== undefined
-        ? 0
-        : stripInsertLatencySamples(track.mixer, resolveLatency);
+      track.kind === 'group' ? 0 : stripInsertLatencySamples(track.mixer, resolveLatency);
     return ownLatency + routeLatency(track);
   }
 
   let maxLatencySamples = 0;
-  for (const busLatency of busLatencyById.values()) {
-    maxLatencySamples = Math.max(maxLatencySamples, busLatency);
+  for (const busId of usedOutputBusIds) {
+    maxLatencySamples = Math.max(maxLatencySamples, busLatencyById.get(busId) ?? 0);
   }
   for (const track of tracks) {
     if (track.kind !== 'group') {
@@ -164,8 +173,8 @@ export function createInsertPdcPlan(
  * The engine-side channel delay is the only host-controlled per-track delay
  * stage. Keep the user's manual channel alignment delay and add the difference
  * between the project-wide maximum insert latency and this track's insert
- * latency. Frozen tracks bypass their own strip DSP, so their insert latency is
- * zero but they still receive compensation for other tracks' latency.
+ * latency. Frozen tracks bypass live strip DSP, but their baked PCM already
+ * contains the strip latency, which still participates in compensation.
  */
 export function trackPdcDelaySamples(
   track: {
@@ -178,13 +187,11 @@ export function trackPdcDelaySamples(
 ): number {
   const manualDelay = Math.max(0, Math.round(track.mixer?.channelDelaySamples ?? 0));
   const ownLatency =
-    track.kind === 'group' || track.frozen !== undefined
-      ? 0
-      : stripInsertLatencySamples(track.mixer, resolveLatency);
+    track.kind === 'group' ? 0 : stripInsertLatencySamples(track.mixer, resolveLatency);
   return manualDelay + Math.max(0, Math.round(maxInsertLatencySamples) - ownLatency);
 }
 
-/** Returns the largest active, non-frozen, non-group track insert latency. */
+/** Returns the largest active non-group track insert latency, including frozen bakes. */
 export function maxTrackInsertLatencySamples(
   tracks: ReadonlyArray<{
     kind?: string;
@@ -195,7 +202,7 @@ export function maxTrackInsertLatencySamples(
 ): number {
   let max = 0;
   for (const track of tracks) {
-    if (track.kind === 'group' || track.frozen !== undefined) continue;
+    if (track.kind === 'group') continue;
     max = Math.max(max, stripInsertLatencySamples(track.mixer, resolveLatency));
   }
   return max;

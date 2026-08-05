@@ -1,6 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { computed } from 'vue';
+import { linearToDb } from '@/lib/db';
 import { createDefaultStrip } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
@@ -81,6 +82,21 @@ describe('useStripAutomation', () => {
     store.tracks[0] = track({ volume: 0.5, mixer: { ...createDefaultStrip(), gainDb: -3 } });
 
     expect(automation().displayedGainDb.value).toBeCloseTo(-3 - 6.020599913, 8);
+  });
+
+  it('writes the strip trim corresponding to the displayed static fader value', () => {
+    store.tracks[0] = track({ volume: 0.5, mixer: { ...createDefaultStrip(), gainDb: -3 } });
+    const gestures = useStripGestures({
+      target: () => 1,
+      strip: computed(() => store.tracks[0].mixer ?? createDefaultStrip()),
+      automation: automation(),
+    });
+
+    gestures.onGainChange(-9, true);
+
+    const stripGainDb = store.tracks[0].mixer?.gainDb;
+    expect(stripGainDb).toBeCloseTo(-9 - linearToDb(0.5), 8);
+    expect(linearToDb(store.tracks[0].volume) + (stripGainDb ?? 0)).toBeCloseTo(-9, 8);
   });
 
   it('records touch fader automation in the pre-VCA strip domain', () => {

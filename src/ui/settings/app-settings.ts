@@ -7,6 +7,11 @@
  * boot.
  */
 
+import {
+  createDefaultStreamingPlatforms,
+  normalizeStreamingPlatforms,
+  type StreamingPlatformConfig,
+} from '@/ui/mastering/streaming';
 import type { RealtimeVoiceChangerConfigInput } from '@/wasm/index.js';
 
 /** Storage schema version of the settings envelope. */
@@ -97,6 +102,10 @@ export interface AppSettings {
    * (e.g. -14 for most streaming services, -23 for EBU R128 broadcast).
    */
   loudnessTargetLufs: number;
+  /** Streaming loudness targets remembered across mastering sessions. */
+  streamingPlatforms: StreamingPlatformConfig[];
+  /** Track ids hidden in the mixer view; empty displays every track. */
+  mixerHiddenTrackIds: number[];
 }
 
 /** Count-in bounds in bars. */
@@ -142,6 +151,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   // preference (beginner/normal soften the same card lines).
   explainLevel: 'theory',
   loudnessTargetLufs: -14,
+  streamingPlatforms: createDefaultStreamingPlatforms(),
+  mixerHiddenTrackIds: [],
 };
 
 /** Clamps a number to [lo, hi]. */
@@ -221,6 +232,17 @@ function asExplainLevel(value: unknown, fallback: ExplainLevel): ExplainLevel {
 
 function asString(value: unknown, fallback: string): string {
   return typeof value === 'string' ? value : fallback;
+}
+
+function asTrackIds(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  const ids = new Set<number>();
+  for (const raw of value) {
+    if (!Number.isInteger(raw) || raw < 0) continue;
+    ids.add(raw);
+    if (ids.size >= 256) break;
+  }
+  return [...ids];
 }
 
 /**
@@ -304,6 +326,10 @@ export function sanitizeAppSettings(raw: unknown): AppSettings {
       LOUDNESS_TARGET_MAX_LUFS,
       defaults.loudnessTargetLufs,
     ),
+    streamingPlatforms: Array.isArray(source.streamingPlatforms)
+      ? normalizeStreamingPlatforms(source.streamingPlatforms)
+      : createDefaultStreamingPlatforms(),
+    mixerHiddenTrackIds: asTrackIds(source.mixerHiddenTrackIds),
   };
 }
 

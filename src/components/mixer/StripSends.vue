@@ -3,12 +3,17 @@ import { computed, inject, ref } from 'vue';
 import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
 import type { MixerStripTarget } from '@/project/commands';
 import { setSend } from '@/project/commands';
+import {
+  insertLatencyResolverFromCatalog,
+  stripInsertLatencySamples,
+} from '@/project/insert-latency';
 import { createDefaultStrip, type MixerStrip, type StripSend } from '@/project/mixer';
-import { useProjectStore } from '@/project/store';
+import { getProject, getWasmModule, useProjectStore } from '@/project/store';
 import { useI18n } from '@/ui/i18n';
 import { midiLearnSendTargetId } from '@/ui/midi/midi-learn';
 import { formatDb } from '@/ui/mixer/db-scale';
 import MixerKnob from './MixerKnob.vue';
+import NumericReadout from './NumericReadout.vue';
 
 /**
  * Send section of a channel strip: one level knob per project bus, with a
@@ -42,6 +47,24 @@ const strip = computed<MixerStrip>(() => {
 });
 
 const buses = computed(() => store.mixer.buses);
+
+/** Buses whose enabled inserts can delay a send without a compensating stage. */
+const latencySamplesByBus = computed(() => {
+  try {
+    const resolver = insertLatencyResolverFromCatalog(getWasmModule().masteringProcessorCatalog(), {
+      sampleRate: getProject().getSampleRate(),
+    });
+    return new Map(
+      buses.value.map((bus) => [bus.id, stripInsertLatencySamples(bus.strip, resolver)]),
+    );
+  } catch {
+    return new Map<string, number>();
+  }
+});
+
+function busHasUncompensatedLatency(busId: string): boolean {
+  return (latencySamplesByBus.value.get(busId) ?? 0) > 0;
+}
 
 /** Local knob values while dragging (busId -> dB), cleared on commit. */
 const preview = ref<Record<string, number>>({});
@@ -147,6 +170,15 @@ function onMidiForget(busId: string, param: 'level' | 'enabled' | 'timing' = 'le
       >
         {{ bus.name }}
       </button>
+      <span
+        v-if="!isMaster && sendFor(bus.id)?.enabled !== false && busHasUncompensatedLatency(bus.id)"
+        class="send-latency-warning"
+        v-tooltip="t.shell.mixer.sends.latencyWarning"
+        role="img"
+        :aria-label="t.shell.mixer.sends.latencyWarning"
+      >
+        ⚠
+      </span>
       <button
         v-if="learnState(bus.id, 'enabled')"
         type="button"
@@ -220,6 +252,16 @@ function onMidiForget(busId: string, param: 'level' | 'enabled' | 'timing' = 'le
         @midi-learn="onMidiLearn(bus.id)"
         @midi-forget="onMidiForget(bus.id)"
       />
+      <NumericReadout
+        class="send-readout"
+        :value="levelFor(bus.id)"
+        :min="SEND_MIN_DB"
+        :max="SEND_MAX_DB"
+        :display="formatDb(levelFor(bus.id))"
+        unit="dB"
+        :ariaLabel="`${bus.name} ${t.shell.mixer.sends.title}`"
+        @change="(value) => onLevelChange(bus.id, value, true)"
+      />
       <button
         v-if="sendFor(bus.id)"
         type="button"
@@ -262,10 +304,24 @@ function onMidiForget(busId: string, param: 'level' | 'enabled' | 'timing' = 'le
   gap: 2px;
 }
 
+.send-latency-warning {
+  color: var(--warning, #fbbf24);
+  font-size: 10px;
+  line-height: 1;
+}
+
 .send-row {
   display: flex;
   align-items: center;
   gap: 3px;
+}
+
+.send-readout {
+  width: 2.8rem;
+  flex: none;
+  text-align: right;
+  font: var(--fs-2xs) var(--font-mono);
+  color: var(--text-3);
 }
 
 .send-name {

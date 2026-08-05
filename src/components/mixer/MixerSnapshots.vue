@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useAppSettings } from '@/composables/useAppSettings';
+import { confirmDialog } from '@/composables/useDialogs';
 import {
   activeMixerSnapshotSlot,
   type MixerSnapshotSlot,
@@ -19,6 +21,7 @@ import { formatMessage, useI18n } from '@/ui/i18n';
  */
 
 const { t } = useI18n();
+const appSettings = useAppSettings();
 
 const SLOTS = mixerSnapshotSlots();
 
@@ -40,6 +43,23 @@ function recallTitle(slot: MixerSnapshotSlot): string {
 
 function storeTitle(slot: MixerSnapshotSlot): string {
   return formatMessage(t.value.shell.mixer.snapshots.store, { slot });
+}
+
+function storeSnapshot(slot: MixerSnapshotSlot): void {
+  void (async () => {
+    if (
+      filled.value[slot] &&
+      appSettings.settings.confirmDestructive &&
+      !(await confirmDialog({
+        title: t.value.shell.mixer.snapshots.overwriteTitle,
+        message: formatMessage(t.value.shell.mixer.snapshots.overwriteMessage, { slot }),
+        danger: true,
+        confirmLabel: t.value.shell.mixer.snapshots.overwrite,
+      }))
+    )
+      return;
+    saveMixerSnapshot(slot);
+  })();
 }
 </script>
 
@@ -63,7 +83,7 @@ function storeTitle(slot: MixerSnapshotSlot): string {
         class="snapshot-store"
         v-tooltip="storeTitle(slot)"
         :aria-label="storeTitle(slot)"
-        @click="saveMixerSnapshot(slot)"
+        @click="storeSnapshot(slot)"
       >
         ⤓
       </button>

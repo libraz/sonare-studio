@@ -12,7 +12,7 @@
 export const FADER_MIN_DB = -96;
 
 /** Top of the fader throw in dB. */
-export const FADER_MAX_DB = 12;
+export const FADER_MAX_DB = 24;
 
 /** Gain at or below this many dB is displayed as -inf. */
 export const SILENCE_DISPLAY_DB = -90;

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { MeterSource } from '@/engine/meters';
 import { useI18n } from '@/ui/i18n';
+import { formatDb } from '@/ui/mixer/db-scale';
 import {
   advanceMeterChannel,
   createMeterChannel,
@@ -62,6 +63,7 @@ const channels: MeterChannelModel[] = [
 ];
 
 const clipped = ref(false);
+const peakHoldDb = ref(props.minDb);
 const { t } = useI18n();
 
 const title = computed(() =>
@@ -207,6 +209,7 @@ function draw(ts: number): void {
     props.minDb,
   );
   clipped.value = channels[0].clipped || channels[1].clipped;
+  peakHoldDb.value = Math.max(channels[0].holdDb, channels[1].holdDb);
   // Silent meters render identically every frame: paint the floor state once,
   // then skip the canvas work until levels rise again.
   const atFloor = channels.every((model) =>
@@ -221,8 +224,13 @@ function draw(ts: number): void {
 
 function onClick(): void {
   if (props.placeholder) return;
-  for (const channel of channels) resetMeterClip(channel);
+  for (const channel of channels) {
+    resetMeterClip(channel);
+    channel.holdDb = props.minDb;
+    channel.holdAtMs = 0;
+  }
   clipped.value = false;
+  peakHoldDb.value = props.minDb;
   // The clip LED changed; force a repaint even when the bars are at rest.
   idleFrameDrawn = false;
 }
@@ -274,15 +282,18 @@ watch(
 </script>
 
 <template>
-  <canvas
-    ref="canvasRef"
-    class="strip-meter"
-    :class="{ placeholder: props.placeholder }"
-    role="img"
-    :aria-label="t.shell.mixer.meter.strip"
-    v-tooltip="title"
-    @click="onClick"
-  />
+  <div class="strip-meter-wrap">
+    <canvas
+      ref="canvasRef"
+      class="strip-meter"
+      :class="{ placeholder: props.placeholder }"
+      role="img"
+      :aria-label="t.shell.mixer.meter.strip"
+      v-tooltip="title"
+      @click="onClick"
+    />
+    <span class="strip-meter-peak">{{ formatDb(peakHoldDb) }}</span>
+  </div>
 </template>
 
 <style scoped>
@@ -293,6 +304,9 @@ watch(
   box-shadow: var(--inset-well);
   cursor: pointer;
 }
+
+.strip-meter-wrap { display: flex; flex-direction: column; align-items: center; gap: 1px; }
+.strip-meter-peak { font: var(--fw-medium) var(--fs-2xs) var(--font-mono); color: var(--text-4); }
 
 .strip-meter.placeholder {
   cursor: default;

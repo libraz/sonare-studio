@@ -69,9 +69,11 @@ describe('advanceMeterChannel', () => {
     expect(model.holdAtMs).toBe(16);
   });
 
-  it('latches the clip flag at the threshold and keeps it latched', () => {
+  it('latches the clip flag only above the threshold and keeps it latched', () => {
     const model = createMeterChannel();
     advanceMeterChannel(model, { peakDb: CLIP_THRESHOLD_DB, rmsDb: -3 }, 0.016, 0);
+    expect(model.clipped).toBe(false);
+    advanceMeterChannel(model, { peakDb: CLIP_THRESHOLD_DB + 0.1, rmsDb: -3 }, 0.016, 16);
     expect(model.clipped).toBe(true);
     advanceMeterChannel(model, SILENT, 5, 5000);
     expect(model.clipped).toBe(true);

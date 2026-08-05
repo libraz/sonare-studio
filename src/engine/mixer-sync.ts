@@ -84,10 +84,13 @@ export interface MixerSyncOptions {
 
 const zeroInsertLatency: InsertLatencyResolver = () => 0;
 
+/** Safety trim for PFL, which is auditioned through the main output bus. */
+export const PFL_AUDITION_GAIN_DB = -12;
+
 /**
  * Resolves the lanes that PFL auditions before their fader and pan controls.
  * Shared with automation wiring so an installed automation lane cannot undo
- * the unity/center PFL override on the next audio block.
+ * the attenuated/centered PFL override on the next audio block.
  */
 export function pflAuditionStates(
   tracks: ReadonlyArray<EditorTrack>,
@@ -161,7 +164,9 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
       // fallback aligned with the offline renderer until a strip is written.
       const pan = pflAudition ? 0 : clampPan(strip?.pan ?? track.pan ?? 0);
       const next: LaneState = {
-        gainDb: pflAudition ? 0 : laneGainDb(track.volume, strip?.gainDb, vcaOffset),
+        gainDb: pflAudition
+          ? PFL_AUDITION_GAIN_DB
+          : laneGainDb(track.volume, strip?.gainDb, vcaOffset),
         pan,
         solo: soloStates[trackIndex] ?? false,
         mute: effectiveTrackMute(track.mute, track.vcaId, vcaControls),

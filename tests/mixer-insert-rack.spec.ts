@@ -2,6 +2,7 @@ import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { describe, expect, it, vi } from 'vitest';
 import InsertRack from '@/components/mixer/InsertRack.vue';
+import MixerKnob from '@/components/mixer/MixerKnob.vue';
 import { addAudioTrack, addGroupTrack, addInsert, clearHistory, undo } from '@/project/commands';
 import { createDefaultStrip, type InsertSlot } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
@@ -123,6 +124,26 @@ describe('reorderInsertSlots', () => {
 });
 
 describe('InsertRack sidechain source options', () => {
+  it('passes logarithmic scale and a reset default to insert parameter knobs', async () => {
+    setActivePinia(createPinia());
+    const store = useProjectStore();
+    store.dispose();
+    clearHistory();
+    await store.init();
+    const targetId = store.tracks[0].id;
+    addInsert(targetId, 'eq.tilt');
+    const wrapper = mount(InsertRack, {
+      props: { target: targetId },
+      global: { directives: { tooltip: () => undefined } },
+    });
+
+    await wrapper.find('.insert-name').trigger('click');
+    const pivot = wrapper
+      .findAllComponents(MixerKnob)
+      .find((knob) => knob.props('label') === 'Pivot Hz');
+    expect(pivot?.props()).toMatchObject({ scale: 'log', defaultValue: 1000 });
+  });
+
   it('removes the add-menu outside-click listener on unmount', async () => {
     setActivePinia(createPinia());
     const store = useProjectStore();

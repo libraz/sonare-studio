@@ -29,6 +29,7 @@
  */
 
 import {
+  effectiveMixerBusGainDb,
   effectiveTrackMute,
   type InsertSlot,
   laneGainDb,
@@ -487,7 +488,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     const busGainEntries: Array<{ busId: number; gainDb: number }> = [
       ...mixer.buses.map((bus) => ({
         busId: busNumberByStoreId.get(bus.id) as number,
-        gainDb: bus.gainDb,
+        gainDb: effectiveMixerBusGainDb(bus),
       })),
       ...groupTracks.map((group) => ({
         busId: groupBusByTrackId.get(group.id) as number,

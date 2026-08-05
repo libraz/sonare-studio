@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
-import { createMixerSync, linearToDb, SILENCE_DB } from '@/engine/mixer-sync';
+import { createMixerSync, linearToDb, PFL_AUDITION_GAIN_DB, SILENCE_DB } from '@/engine/mixer-sync';
 import { createDefaultStrip, laneGainDb, type MixerStrip, vcaOffsetDb } from '@/project/mixer';
 import type { EditorTrack } from '@/project/types';
 
@@ -133,7 +133,7 @@ describe('createMixerSync', () => {
     expect(engine.setSoloMute).toHaveBeenCalledWith(1, true, false);
   });
 
-  it('uses unity centered lane gain for PFL solo audition only', () => {
+  it('uses a safety-trimmed centered lane gain for PFL solo audition only', () => {
     const { handle, engine } = makeHandle();
     const sync = createMixerSync(handle);
     const soloed = makeTrack(1, {
@@ -149,7 +149,7 @@ describe('createMixerSync', () => {
 
     sync.sync([soloed, soloSafe], neutralMaster(), undefined, undefined, 'pfl');
 
-    expect(engine.setStripGain).toHaveBeenCalledWith(1, 0);
+    expect(engine.setStripGain).toHaveBeenCalledWith(1, PFL_AUDITION_GAIN_DB);
     expect(engine.setStripPan).toHaveBeenCalledWith(1, 0);
     expect(engine.setStripGain).toHaveBeenCalledWith(2, linearToDb(0.5) - 6);
     expect(engine.setStripPan).toHaveBeenCalledWith(2, -0.5);

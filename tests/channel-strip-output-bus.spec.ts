@@ -2,6 +2,7 @@ import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import ChannelStrip from '@/components/mixer/ChannelStrip.vue';
+import NumericReadout from '@/components/mixer/NumericReadout.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import type { MeterSource, StereoMeterLevels } from '@/engine/meters';
 import {
@@ -127,6 +128,18 @@ describe('ChannelStrip output-bus selector', () => {
     select.vm.$emit('change', '');
     await wrapper.vm.$nextTick();
     expect(store.tracks[0].mixer?.outputBusId).toBeUndefined();
+  });
+
+  it('commits exact gain and pan values from the numeric readouts', async () => {
+    const wrapper = mountStrip(trackId);
+    const readouts = wrapper.findAllComponents(NumericReadout);
+    expect(readouts).toHaveLength(2);
+
+    readouts[0].vm.$emit('change', -0.25);
+    readouts[1].vm.$emit('change', -6);
+    await wrapper.vm.$nextTick();
+
+    expect(store.tracks[0].mixer).toMatchObject({ pan: -0.25, gainDb: -6 });
   });
 
   it('reflects an external routing change in the selected value', async () => {

@@ -29,13 +29,14 @@ describe('insert latency helpers', () => {
     ).toBe(128);
   });
 
-  it('falls back to explicit slot latency and lookahead params when catalog metadata is missing', () => {
+  it('uses the larger of catalog and explicit slot latency hints', () => {
     const resolve = insertLatencyResolverFromCatalog(
       [{ id: 'catalog.wins', latencySamples: 256 }, { id: 'param.fallback' }],
       { sampleRate: 48000 },
     );
 
-    expect(resolve({ processor: 'catalog.wins', params: { lookaheadMs: 10 } })).toBe(256);
+    expect(resolve({ processor: 'catalog.wins', params: { lookaheadMs: 10 } })).toBe(480);
+    expect(resolve({ processor: 'catalog.wins', params: { lookaheadMs: 2 } })).toBe(256);
     expect(resolve({ processor: 'param.fallback', params: { lookaheadMs: 2.5 } })).toBe(120);
     expect(resolve({ processor: 'unknown.samples', params: { latencySamples: 33.4 } })).toBe(33);
     expect(resolve({ processor: 'unknown.delay', params: { delaySamples: 12 } })).toBe(12);
@@ -70,7 +71,14 @@ describe('insert latency helpers', () => {
           inserts: [{ processor: 'lookahead.limiter', params: {}, enabled: true }],
         },
       },
-      { kind: 'audio', frozen: { assetId: 'frozen' }, mixer: createDefaultStrip() },
+      {
+        kind: 'audio',
+        frozen: { assetId: 'frozen' },
+        mixer: {
+          ...createDefaultStrip(),
+          inserts: [{ processor: 'lookahead.limiter', params: {}, enabled: true }],
+        },
+      },
       { kind: 'group', mixer: createDefaultStrip() },
     ];
 
@@ -78,14 +86,17 @@ describe('insert latency helpers', () => {
     expect(maxLatency).toBe(128);
     expect(trackPdcDelaySamples(tracks[0], maxLatency, resolve)).toBe(0);
     expect(trackPdcDelaySamples(tracks[1], maxLatency, resolve)).toBe(72);
-    expect(trackPdcDelaySamples(tracks[2], maxLatency, resolve)).toBe(128);
+    // The frozen PCM already contains the limiter's 64 samples. PDC must add
+    // only the remaining 64 samples, not a second full 128-sample delay.
+    expect(trackPdcDelaySamples(tracks[2], maxLatency, resolve)).toBe(64);
     expect(trackPdcDelaySamples(tracks[3], maxLatency, resolve)).toBe(128);
   });
 
-  it('includes return and group-bus insert latency in the routed signal path', () => {
+  it('includes routed return/group latency while excluding an unused return bus', () => {
     const resolve = insertLatencyResolverFromCatalog([
       { id: 'track.linear', latencySamples: 32 },
       { id: 'return.linear', latencySamples: 96 },
+      { id: 'unused.linear', latencySamples: 4096 },
       { id: 'group.linear', latencySamples: 64 },
     ]);
     const tracks = [
@@ -125,6 +136,13 @@ describe('insert latency helpers', () => {
           strip: {
             ...createDefaultStrip(),
             inserts: [{ processor: 'return.linear', params: {}, enabled: true }],
+          },
+        },
+        {
+          id: 'unused-latent-return',
+          strip: {
+            ...createDefaultStrip(),
+            inserts: [{ processor: 'unused.linear', params: {}, enabled: true }],
           },
         },
       ],

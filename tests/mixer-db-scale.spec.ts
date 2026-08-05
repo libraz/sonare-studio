@@ -13,6 +13,7 @@ import {
 
 describe('faderPositionToDb / dbToFaderPosition', () => {
   it('maps the throw extremes to the fader range', () => {
+    expect(FADER_MAX_DB).toBe(24);
     expect(faderPositionToDb(0)).toBe(FADER_MIN_DB);
     expect(faderPositionToDb(1)).toBe(FADER_MAX_DB);
     expect(dbToFaderPosition(FADER_MIN_DB)).toBe(0);
@@ -34,7 +35,7 @@ describe('faderPositionToDb / dbToFaderPosition', () => {
   });
 
   it('round-trips dB values through positions', () => {
-    for (const db of [-96, -72, -48, -24, -12, -6, -3, 0, 3, 6, 12]) {
+    for (const db of [-96, -72, -48, -24, -12, -6, -3, 0, 3, 6, 12, 18, 24]) {
       expect(faderPositionToDb(dbToFaderPosition(db))).toBeCloseTo(db, 9);
     }
   });

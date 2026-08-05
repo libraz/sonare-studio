@@ -10,6 +10,7 @@
  */
 
 import { markRaw, reactive } from 'vue';
+import { linearToDb } from '@/lib/db';
 import {
   type AutomationLaneState,
   busAutomationTarget,
@@ -111,7 +112,7 @@ export function buildMixerSnapshot(
       if (track.kind === 'group') mixerStrip.pan = 0;
       const entry: MixerSnapshotTrack = {
         id: track.id,
-        volume: track.volume,
+        volume: 1,
         mixer: mixerStrip,
         mute: track.mute,
         solo: track.solo,
@@ -166,12 +167,13 @@ export function mergeMixerSnapshot(
     const next: EditorTrack = { ...track };
     if (entry) {
       next.mixer = cloneStrip(entry.mixer);
-      if (track.kind === 'group') next.mixer.pan = 0;
-      next.pan = track.kind === 'group' ? 0 : next.mixer.pan;
       const snapshotVolume = entry.volume;
       if (snapshotVolume !== undefined && Number.isFinite(snapshotVolume) && snapshotVolume >= 0) {
-        next.volume = snapshotVolume;
+        next.mixer.gainDb += linearToDb(snapshotVolume);
       }
+      if (track.kind === 'group') next.mixer.pan = 0;
+      next.pan = track.kind === 'group' ? 0 : next.mixer.pan;
+      next.volume = 1;
       next.mute = entry.mute;
       next.solo = entry.solo;
       if (entry.soloSafe !== undefined) next.soloSafe = entry.soloSafe;
@@ -298,9 +300,11 @@ export function activeMixerSnapshotSlot(): MixerSnapshotSlot | null {
  * @param slot Destination slot.
  */
 export function saveMixerSnapshot(slot: MixerSnapshotSlot): void {
-  // markRaw: the snapshot is plain data we never mutate, so skip deep proxying.
-  slots.snapshots[slot] = markRaw(captureMixerSnapshot());
-  slots.active = slot;
+  executeApp(() => {
+    // markRaw: the snapshot is plain data we never mutate, so skip deep proxying.
+    slots.snapshots[slot] = markRaw(captureMixerSnapshot());
+    slots.active = slot;
+  });
 }
 
 /**

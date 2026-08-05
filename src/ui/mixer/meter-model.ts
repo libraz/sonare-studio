@@ -3,14 +3,14 @@
  *
  * Keeps the ballistics of the existing transport meter (peak/RMS falloff and
  * a peak-hold marker) and adds a clip indicator that latches when the peak
- * reaches 0 dBFS until explicitly reset. The model is canvas-free so it can
+ * exceeds 0 dBFS until explicitly reset. The model is canvas-free so it can
  * be unit-tested; the drawing component advances it once per animation frame.
  */
 
 /** Bottom of the visible meter range in dB. */
 export const METER_MIN_DB = -60;
 
-/** Peak level at or above this many dBFS latches the clip indicator. */
+/** Peak level above this many dBFS latches the clip indicator. */
 export const CLIP_THRESHOLD_DB = 0;
 
 /** Displayed-peak falloff in dB per second. */
@@ -35,7 +35,7 @@ export interface MeterChannelModel {
   holdDb: number;
   /** Timestamp (ms) the hold marker was last raised. */
   holdAtMs: number;
-  /** True once the peak reached {@link CLIP_THRESHOLD_DB}; latched. */
+  /** True once the peak exceeded {@link CLIP_THRESHOLD_DB}; latched. */
   clipped: boolean;
 }
 
@@ -79,7 +79,7 @@ export function advanceMeterChannel(
   } else if (nowMs - model.holdAtMs > PEAK_HOLD_MS) {
     model.holdDb = Math.max(model.holdDb - PEAK_HOLD_DECAY_DB_PER_S * dtSec, minDb);
   }
-  if (targets.peakDb >= CLIP_THRESHOLD_DB) model.clipped = true;
+  if (targets.peakDb > CLIP_THRESHOLD_DB) model.clipped = true;
   return model;
 }
 

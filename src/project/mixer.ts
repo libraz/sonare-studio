@@ -21,7 +21,7 @@
  * chain is an additional export-only stage.
  */
 
-import { linearToDb } from '@/lib/db';
+import { linearToDb, SILENCE_DB } from '@/lib/db';
 import type { EqBand, SendTiming } from '@/wasm/index.js';
 import { canonicalJson, fnv1a32Hex } from './hash';
 
@@ -244,12 +244,14 @@ export interface MixerBus {
   name: string;
   /** Bus gain in dB (0 = unity). */
   gainDb: number;
+  /** True silences this return without changing its fader value. */
+  mute?: boolean;
   /** Optional return-bus insert strip. Sends sum through this chain. */
   strip?: MixerStrip;
 }
 
 /** Solo audition tap mode. In-place is the historical main-mix solo behavior. */
-export type MixerSoloMode = 'inPlace' | 'afl' | 'pfl';
+export type MixerSoloMode = 'inPlace' | 'pfl';
 
 /** Default solo mode: existing in-place after-fader solo in the main mix. */
 export const DEFAULT_MIXER_SOLO_MODE: MixerSoloMode = 'inPlace';
@@ -407,6 +409,15 @@ export const MIN_STRIP_GAIN_DB = -96;
 /** Highest accepted strip gain in dB. */
 export const MAX_STRIP_GAIN_DB = 24;
 
+/**
+ * Gain sent to an engine return-bus lane. A muted return must use the engine's
+ * silence floor rather than changing its stored fader value, so undo and an
+ * unmute restore the exact previous mix level.
+ */
+export function effectiveMixerBusGainDb(bus: Pick<MixerBus, 'gainDb' | 'mute'>): number {
+  return bus.mute === true ? SILENCE_DB : bus.gainDb;
+}
+
 /** Highest accepted channel alignment delay in samples (2 s at 48 kHz). */
 export const MAX_CHANNEL_DELAY_SAMPLES = 96000;
 
@@ -422,7 +433,7 @@ export function createDefaultMixerState(): ProjectMixerState {
 
 /** Normalizes a mixer solo mode from untrusted documents/UI input. */
 export function normalizeMixerSoloMode(mode: unknown): MixerSoloMode {
-  return mode === 'afl' || mode === 'pfl' || mode === 'inPlace' ? mode : DEFAULT_MIXER_SOLO_MODE;
+  return mode === 'pfl' || mode === 'inPlace' ? mode : DEFAULT_MIXER_SOLO_MODE;
 }
 
 /** Builds an empty mastering chain: no preset, no processors. */

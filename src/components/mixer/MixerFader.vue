@@ -49,6 +49,7 @@ const trackEl = ref<HTMLDivElement | null>(null);
 const dragging = ref(false);
 let dragDb = 0;
 let lastY = 0;
+let relativeGrab = false;
 
 /** Thumb center offset from the top of the throw, in px. */
 const thumbTopPx = computed(() => (1 - dbToFaderPosition(props.valueDb)) * props.height);
@@ -87,15 +88,16 @@ function onPointerDown(event: PointerEvent): void {
   if (props.disabled || event.button !== 0) return;
   (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
   dragging.value = true;
-  dragDb = dbFromPointer(event);
+  relativeGrab = event.target instanceof Element && event.target.closest('.fader-thumb') !== null;
+  dragDb = relativeGrab ? props.valueDb : dbFromPointer(event);
   lastY = event.clientY;
-  emit('change', dragDb, false);
+  if (!relativeGrab) emit('change', dragDb, false);
   event.preventDefault();
 }
 
 function onPointerMove(event: PointerEvent): void {
   if (!dragging.value) return;
-  if (event.shiftKey) {
+  if (relativeGrab || event.shiftKey) {
     // Fine drag: move relative to the current value in tapered position space.
     const deltaUp = lastY - event.clientY;
     const position = dbToFaderPosition(dragDb) + (deltaUp / props.height) * FINE_FACTOR;
@@ -110,6 +112,7 @@ function onPointerMove(event: PointerEvent): void {
 function onPointerUp(): void {
   if (!dragging.value) return;
   dragging.value = false;
+  relativeGrab = false;
   emit('change', dragDb, true);
 }
 

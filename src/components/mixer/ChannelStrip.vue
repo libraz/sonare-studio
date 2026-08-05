@@ -12,6 +12,7 @@ import {
   addVcaGroup,
   renameTrack,
   setActiveTrack,
+  setExclusiveTrackSolo,
   setStripGain,
   setStripOutputBus,
   setStripPan,
@@ -27,13 +28,14 @@ import { formatMessage, useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 import { type MidiLearnTrackStateParam, midiLearnTrackStateTargetId } from '@/ui/midi/midi-learn';
 import type { AutomationWriteScheduleEvent } from '@/ui/mixer/automation-mode';
-import { formatDb, formatPan } from '@/ui/mixer/db-scale';
+import { FADER_MAX_DB, FADER_MIN_DB, formatDb, formatPan } from '@/ui/mixer/db-scale';
 import { useStripAutomation } from '@/ui/mixer/use-strip-automation';
 import { useStripGestures } from '@/ui/mixer/use-strip-gestures';
 import InsertRack from './InsertRack.vue';
 import MasterMeterReadout from './MasterMeterReadout.vue';
 import MixerFader from './MixerFader.vue';
 import MixerKnob from './MixerKnob.vue';
+import NumericReadout from './NumericReadout.vue';
 import SpectrumAnalyzer from './SpectrumAnalyzer.vue';
 import StereoGoniometer from './StereoGoniometer.vue';
 import StripAutomationControls from './StripAutomationControls.vue';
@@ -138,6 +140,11 @@ const vcaGroupName = computed<string | null>(() => {
 
 /** True when the track is flagged solo-safe (stays audible during solos). */
 const isSoloSafe = computed(() => track.value?.soloSafe === true);
+
+function onSoloClick(track: EditorTrack, event: MouseEvent): void {
+  if (event.altKey || event.metaKey || event.ctrlKey) setExclusiveTrackSolo(track.id);
+  else setTrackSolo(track.id, !track.solo);
+}
 
 /**
  * Output-bus selector is offered on non-group track strips that have at least
@@ -377,6 +384,16 @@ onBeforeUnmount(() => {
           :disabled="followsPan"
           @change="onPanChange"
         />
+        <NumericReadout
+          :value="displayedPan"
+          :min="-1"
+          :max="1"
+          :step="0.01"
+          :display="formatPan(displayedPan)"
+          :ariaLabel="t.shell.mixer.strip.pan"
+          :disabled="followsPan"
+          @change="(value) => onPanChange(value, true)"
+        />
         <StripOptionsPopover v-if="canStripOptions" :target="props.target" :name="name" />
       </div>
       <div v-if="track" class="strip-toggles">
@@ -424,7 +441,7 @@ onBeforeUnmount(() => {
           v-tooltip="isSoloSafe ? t.shell.mixer.strip.soloSafeTitle : t.shell.mixer.strip.solo"
           :aria-label="formatMessage(t.shell.mixer.strip.soloNamed, { name })"
           :aria-pressed="track.solo"
-          @click="setTrackSolo(track.id, !track.solo)"
+          @click="onSoloClick(track, $event)"
         >
           S
         </button>
@@ -472,7 +489,17 @@ onBeforeUnmount(() => {
       />
     </div>
 
-    <div class="strip-readout">{{ formatDb(displayedGainDb) }} dB</div>
+    <NumericReadout
+      class="strip-readout"
+      :value="displayedGainDb"
+      :min="FADER_MIN_DB"
+      :max="FADER_MAX_DB"
+      :display="formatDb(displayedGainDb)"
+      unit="dB"
+      :ariaLabel="t.shell.mixer.controls.stripGain"
+      :disabled="followsFader"
+      @change="(value) => onGainChange(value, true)"
+    />
 
     <StripGrMeter v-if="!isMaster" :bridge="props.bridge" />
 

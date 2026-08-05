@@ -141,6 +141,26 @@ export function setMixerBusGain(
   );
 }
 
+/** Sets a return-bus mute as one undoable edit without changing its fader. */
+export function setMixerBusMute(busId: string, mute: boolean): void {
+  const store = useProjectStore();
+  const bus = store.mixer.buses.find((entry) => entry.id === busId);
+  if (!bus) throw new RangeError(`Unknown mixer bus id: ${busId}`);
+  if ((bus.mute ?? false) === mute) return;
+  executeApp(() => {
+    store.mixer = {
+      ...store.mixer,
+      buses: store.mixer.buses.map((entry) => {
+        if (entry.id !== busId) return entry;
+        if (mute) return { ...entry, mute: true };
+        const { mute: _mute, ...unmuted } = entry;
+        return unmuted;
+      }),
+    };
+    store.refresh();
+  });
+}
+
 /**
  * Renames a mixer bus as one undoable edit. The id stays stable, so sends and
  * output-bus routes keep working.

@@ -11,7 +11,7 @@ import { createEngine, type EngineHandle } from '@/engine/engine';
 import { resolvePresetName } from '@/engine/instruments';
 import { createMeterBridge, type MeterBridge } from '@/engine/meters';
 import { createMidiSync } from '@/engine/midi-sync';
-import { createMixerSync, pflAuditionStates } from '@/engine/mixer-sync';
+import { createMixerSync, PFL_AUDITION_GAIN_DB, pflAuditionStates } from '@/engine/mixer-sync';
 import { createScopeBridge, type ScopeBridge } from '@/engine/scope';
 import { createStripSync, groupBusGainDb } from '@/engine/strip-sync';
 import { createTransportSync } from '@/engine/transport-sync';
@@ -34,6 +34,7 @@ import {
 } from '@/project/insert-latency';
 import {
   clampPan,
+  effectiveMixerBusGainDb,
   effectiveTrackMute,
   laneGainDb,
   type MixerStrip,
@@ -329,9 +330,7 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
             const vcaGainDb = vcaGroups.length
               ? new Map(vcaGroups.map((group) => [group.id, group.gainDb]))
               : undefined;
-            return track
-              ? laneGainDb(track.volume, track.mixer?.gainDb, vcaOffsetDb(track.vcaId, vcaGainDb))
-              : 0;
+            return track ? vcaOffsetDb(track.vcaId, vcaGainDb) : 0;
           },
           effectiveMuteFor: (trackId) => {
             const track = store.tracks.find((entry) => entry.id === trackId);
@@ -342,6 +341,13 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
             return effectiveTrackMute(track.mute, track.vcaId, vcaControls);
           },
           suppressParam: (target, param) => {
+            if (isBusAutomationTarget(target)) {
+              return (
+                param === 'faderDb' &&
+                store.mixer.buses.find((bus) => bus.id === busIdFromAutomationTarget(target))
+                  ?.mute === true
+              );
+            }
             if (typeof target !== 'number' || (param !== 'faderDb' && param !== 'pan'))
               return false;
             const vcaControls = new Map(
@@ -458,7 +464,9 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
               const storeBusId = busIdFromAutomationTarget(target);
               const busId = nextStripSync.busIdFor(storeBusId);
               const bus = store.mixer.buses.find((entry) => entry.id === storeBusId);
-              if (busId !== undefined && bus) stagedHandle.engine.setBusGain(busId, bus.gainDb);
+              if (busId !== undefined && bus) {
+                stagedHandle.engine.setBusGain(busId, effectiveMixerBusGainDb(bus));
+              }
               return;
             }
             if (target === 'master') {
@@ -480,7 +488,8 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
               pflAuditionStates(store.tracks, vcaControls, store.mixer.soloMode)[trackIndex] ===
                 true;
             if (pflAudition) {
-              if (param === 'faderDb') stagedHandle.engine.setStripGain(target, 0);
+              if (param === 'faderDb')
+                stagedHandle.engine.setStripGain(target, PFL_AUDITION_GAIN_DB);
               else if (param === 'pan') stagedHandle.engine.setStripPan(target, 0);
               return;
             }

@@ -13,8 +13,9 @@ import type { VcaGroup } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { type MidiLearnVcaParam, midiLearnVcaTargetId } from '@/ui/midi/midi-learn';
-import { formatDb } from '@/ui/mixer/db-scale';
+import { FADER_MAX_DB, FADER_MIN_DB, formatDb } from '@/ui/mixer/db-scale';
 import MixerFader from './MixerFader.vue';
+import NumericReadout from './NumericReadout.vue';
 
 /**
  * Compact strip for a VCA control group: a name header, the offset fader, and a
@@ -217,7 +218,16 @@ async function onRename(): Promise<void> {
         </button>
       </div>
     </div>
-    <span class="vca-readout">{{ formatDb(gainDb) }} dB</span>
+    <NumericReadout
+      class="vca-readout"
+      :value="gainDb"
+      :min="FADER_MIN_DB"
+      :max="FADER_MAX_DB"
+      :display="formatDb(gainDb)"
+      unit="dB"
+      :ariaLabel="t.shell.mixer.controls.stripGain"
+      @change="(value) => onFaderChange(value, true)"
+    />
     <span class="vca-members">
       {{ formatMessage(t.shell.mixer.strip.channelCount, { count: memberCount }) }}
     </span>

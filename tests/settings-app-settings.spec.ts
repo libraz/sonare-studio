@@ -65,6 +65,8 @@ describe('sanitizeAppSettings', () => {
       confirmDestructive: false,
       explainLevel: DEFAULT_APP_SETTINGS.explainLevel,
       loudnessTargetLufs: DEFAULT_APP_SETTINGS.loudnessTargetLufs,
+      streamingPlatforms: DEFAULT_APP_SETTINGS.streamingPlatforms,
+      mixerHiddenTrackIds: [],
     });
   });
 
@@ -75,6 +77,12 @@ describe('sanitizeAppSettings', () => {
       DEFAULT_APP_SETTINGS.explainLevel,
     );
     expect(DEFAULT_APP_SETTINGS.explainLevel).toBe('theory');
+  });
+
+  it('persists only valid unique mixer visibility ids', () => {
+    expect(sanitizeAppSettings({ mixerHiddenTrackIds: [4, 2, 4, -1, 1.5, 'x'] })).toMatchObject({
+      mixerHiddenTrackIds: [4, 2],
+    });
   });
 
   it('keeps a valid loudness target and clamps out-of-range ones', () => {

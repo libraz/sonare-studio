@@ -11,6 +11,7 @@ export {
   removeMixerBus,
   renameMixerBus,
   setMixerBusGain,
+  setMixerBusMute,
   setTrackSoloSafe,
 } from './mixer-buses';
 export type {
@@ -41,6 +42,7 @@ export {
   addInsert,
   removeInsert,
   reorderInsert,
+  replaceInsert,
   setInsertEnabled,
   setInsertParam,
   setInsertSidechain,

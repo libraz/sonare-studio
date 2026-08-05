@@ -17,9 +17,12 @@ import {
   addVcaGroup,
   applyMixerSceneJson,
   canUndo,
+  clearAllSolo,
   clearHistory,
+  clearMixerSnapshots,
   exportMixerSnapshotSlots,
   mixerBusStripTarget,
+  mixerSnapshotFilled,
   recallMixerSnapshot,
   redo,
   removeInsert,
@@ -29,12 +32,15 @@ import {
   removeVcaGroup,
   renameMixerBus,
   renameVcaGroup,
+  replaceInsert,
   saveMixerSnapshot,
+  setExclusiveTrackSolo,
   setInsertEnabled,
   setInsertParam,
   setInsertSidechain,
   setMasteringPreset,
   setMixerBusGain,
+  setMixerBusMute,
   setMixerSoloMode,
   setSend,
   setStripChannelDelaySamples,
@@ -51,6 +57,7 @@ import {
   setTrackFrozen,
   setTrackGroup,
   setTrackInstrument,
+  setTrackSolo,
   setTrackSoloSafe,
   setTrackVca,
   setVcaGroupGain,
@@ -59,7 +66,7 @@ import {
   undo,
 } from '@/project/commands';
 import type { TrackInstrument } from '@/project/instrument';
-import { MAX_MIXER_BUSES, MAX_VCA_GROUPS } from '@/project/mixer';
+import { createDefaultStrip, MAX_MIXER_BUSES, MAX_VCA_GROUPS } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import {
   midiLearnBusStripControlTargetId,
@@ -111,6 +118,23 @@ describe('mixer commands', () => {
     });
   });
 
+  describe('solo shortcuts', () => {
+    it('makes one track exclusively soloed and clears every solo atomically', () => {
+      const secondTrackId = addAudioTrack({ name: 'Snare' });
+      setTrackSolo(trackId, true);
+      setTrackSolo(secondTrackId, true);
+      clearHistory();
+
+      setExclusiveTrackSolo(secondTrackId);
+      expect(store.tracks.map((track) => track.solo)).toEqual([false, true]);
+      expect(undo()).toBe(true);
+      expect(store.tracks.map((track) => track.solo)).toEqual([true, true]);
+
+      clearAllSolo();
+      expect(store.tracks.every((track) => !track.solo)).toBe(true);
+    });
+  });
+
   describe('setTrackInstrument', () => {
     it('sets, undoes and redoes as one edit', () => {
       const instrument: TrackInstrument = { kind: 'synth-preset', preset: 'saw-lead' };
@@ -154,16 +178,16 @@ describe('mixer commands', () => {
   });
 
   describe('setMixerSoloMode', () => {
-    it('stores AFL/PFL modes and clears the default in-place mode undoably', () => {
+    it('stores PFL and clears the default in-place mode undoably', () => {
       setMixerSoloMode('pfl');
       expect(store.mixer.soloMode).toBe('pfl');
-      setMixerSoloMode('afl');
-      expect(store.mixer.soloMode).toBe('afl');
+      setMixerSoloMode('inPlace');
+      expect(store.mixer.soloMode).toBeUndefined();
       setMixerSoloMode('inPlace');
       expect(store.mixer.soloMode).toBeUndefined();
 
       expect(undo()).toBe(true);
-      expect(store.mixer.soloMode).toBe('afl');
+      expect(store.mixer.soloMode).toBe('pfl');
     });
   });
 
@@ -411,6 +435,18 @@ describe('mixer commands', () => {
       expect(store.mixer.buses[0].gainDb).toBe(0);
       expect(() => setMixerBusGain('nope', 0)).toThrow(RangeError);
       expect(() => setMixerBusGain(busId, Number.POSITIVE_INFINITY)).toThrow(RangeError);
+    });
+
+    it('mutes a bus undoably without losing its fader value', () => {
+      const busId = addMixerBus();
+      setMixerBusGain(busId, -7.5);
+      setMixerBusMute(busId, true);
+      expect(store.mixer.buses[0]).toMatchObject({ gainDb: -7.5, mute: true });
+
+      undo();
+      expect(store.mixer.buses[0]).toMatchObject({ gainDb: -7.5 });
+      expect(store.mixer.buses[0]?.mute).toBeUndefined();
+      expect(() => setMixerBusMute('nope', true)).toThrow(RangeError);
     });
 
     it('renames a bus undoably without changing its id', () => {
@@ -793,15 +829,59 @@ describe('mixer commands', () => {
     });
   });
 
+  describe('insert copy and paste', () => {
+    it('replaces settings atomically while retaining the destination processor id', () => {
+      addInsert(trackId, 'dynamics.compressor', { thresholdDb: -18, ratio: 4 });
+      const destinationTrackId = addAudioTrack({ name: 'Snare' });
+      addInsert(destinationTrackId, 'saturation.tape', { drive: 0.4 });
+      const source = store.tracks[0].mixer!.inserts[0];
+      const destinationId = store.tracks[1].mixer!.inserts[0].id;
+      const { id: _sourceId, ...copied } = source;
+      clearHistory();
+
+      replaceInsert(destinationTrackId, 0, copied);
+
+      expect(store.tracks[1].mixer!.inserts[0]).toMatchObject({
+        id: destinationId,
+        processor: 'dynamics.compressor',
+        params: { thresholdDb: -18, ratio: 4 },
+      });
+      expect(undo()).toBe(true);
+      expect(store.tracks[1].mixer!.inserts[0]).toMatchObject({
+        id: destinationId,
+        processor: 'saturation.tape',
+        params: { drive: 0.4 },
+      });
+    });
+  });
+
   describe('mixer snapshots', () => {
-    it('captures and restores the linear track volume with the strip state', () => {
-      store.tracks[0].volume = 0.5;
+    it('stores a snapshot as an undoable slot edit', () => {
+      clearMixerSnapshots();
       saveMixerSnapshot('A');
-      store.tracks[0].volume = 1.5;
+      expect(mixerSnapshotFilled('A')).toBe(true);
+      expect(activeMixerSnapshotSlot()).toBe('A');
+
+      expect(undo()).toBe(true);
+      expect(mixerSnapshotFilled('A')).toBe(false);
+      expect(activeMixerSnapshotSlot()).toBeNull();
+
+      expect(redo()).toBe(true);
+      expect(mixerSnapshotFilled('A')).toBe(true);
+      expect(activeMixerSnapshotSlot()).toBe('A');
+    });
+
+    it('captures and restores the canonical strip gain with the strip state', () => {
+      store.tracks[0].mixer = { ...createDefaultStrip(), gainDb: -6 };
+      saveMixerSnapshot('A');
+      store.tracks[0].mixer.gainDb = 3;
       clearHistory();
 
       expect(recallMixerSnapshot('A')).toBe(true);
-      expect(store.tracks[0].volume).toBe(0.5);
+      expect(store.tracks[0]).toMatchObject({
+        volume: 1,
+        mixer: expect.objectContaining({ gainDb: -6 }),
+      });
     });
 
     it('restores the active slot together with the recalled mix on undo and redo', () => {

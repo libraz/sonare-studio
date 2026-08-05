@@ -39,6 +39,30 @@ describe('MixerFader accessibility', () => {
     expect(emitted?.[0]).toEqual([-5, true]);
   });
 
+  it('uses a relative grab when pressing the fader thumb', async () => {
+    const wrapper = mount(MixerFader, { props: { valueDb: -6, height: 100 } });
+    const slider = wrapper.find('[role="slider"]');
+    Object.defineProperty(slider.element, 'setPointerCapture', { value: () => undefined });
+    Object.defineProperty(slider.element, 'getBoundingClientRect', {
+      value: () => ({ top: 0, height: 100 }),
+    });
+
+    wrapper
+      .find('.fader-thumb')
+      .element.dispatchEvent(
+        new MouseEvent('pointerdown', { bubbles: true, button: 0, clientY: 50 }),
+      );
+    await nextTick();
+    expect(wrapper.emitted('change')).toBeUndefined();
+
+    slider.element.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientY: 40 }));
+    await nextTick();
+    expect(wrapper.emitted('change')?.[0]?.[1]).toBe(false);
+    slider.element.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }));
+    await nextTick();
+    expect(wrapper.emitted('change')?.at(-1)?.[1]).toBe(true);
+  });
+
   it('removes itself from the tab order when disabled', () => {
     const wrapper = mount(MixerFader, { props: { valueDb: 0, disabled: true } });
     expect(wrapper.find('[role="slider"]').attributes('tabindex')).toBe('-1');

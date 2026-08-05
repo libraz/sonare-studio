@@ -1,9 +1,16 @@
 import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import NumericReadout from '@/components/mixer/NumericReadout.vue';
 import StripSends from '@/components/mixer/StripSends.vue';
 import { MIDI_LEARN_KEY, useMidiLearn } from '@/composables/useMidiLearn';
-import { addMixerBus, clearHistory, setSend } from '@/project/commands';
+import {
+  addInsert,
+  addMixerBus,
+  clearHistory,
+  mixerBusStripTarget,
+  setSend,
+} from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { midiLearnSendTargetId } from '@/ui/midi/midi-learn';
 
@@ -68,6 +75,28 @@ describe('StripSends MIDI learn', () => {
     await wrapper.find('.knob').trigger('contextmenu', { clientX: 5, clientY: 5 });
 
     expect(wrapper.findAll('.control-menu button')).toHaveLength(2);
+  });
+
+  it('creates a send at an exact level from its numeric readout', async () => {
+    const busId = addMixerBus({ name: 'Verb' });
+    const wrapper = mount(StripSends, { props: { target: trackId } });
+    wrapper.getComponent(NumericReadout).vm.$emit('change', -11.5);
+    await wrapper.vm.$nextTick();
+
+    expect(store.tracks[0].mixer?.sends).toEqual([{ busId, levelDb: -11.5, enabled: true }]);
+  });
+
+  it('warns when an active send targets a latency-bearing return', async () => {
+    const busId = addMixerBus({ name: 'Parallel comp' });
+    addInsert(mixerBusStripTarget(busId), 'dynamics.compressor', { latencySamples: 128 });
+    setSend(trackId, busId, { levelDb: -12 });
+
+    const wrapper = mount(StripSends, { props: { target: trackId } });
+
+    expect(wrapper.find('.send-latency-warning').exists()).toBe(true);
+    expect(wrapper.find('.send-latency-warning').attributes('aria-label')).toContain(
+      'Send delay compensation is unavailable',
+    );
   });
 
   it('arms send enabled and timing bindings from the row controls', async () => {

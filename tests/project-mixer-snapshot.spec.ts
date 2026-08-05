@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { linearToDb } from '@/lib/db';
 import {
   type AutomationLaneState,
   busAutomationTarget,
@@ -122,6 +123,18 @@ describe('mergeMixerSnapshot', () => {
     expect(tracks[0].mixer?.gainDb).toBe(4);
     expect(tracks[0].mixer?.pan).toBe(0.5);
     expect(tracks[0].mute).toBe(true);
+  });
+
+  it('folds a legacy snapshot volume into the restored strip gain', () => {
+    const snap = buildMixerSnapshot(mixer(), [track(1, { mixer: strip({ gainDb: -3 }) })]);
+    snap.tracks[0].volume = 0.5;
+
+    const { tracks } = mergeMixerSnapshot(snap, [track(1)]);
+
+    expect(tracks[0]).toMatchObject({
+      volume: 1,
+      mixer: expect.objectContaining({ gainDb: -3 + linearToDb(0.5) }),
+    });
   });
 
   it('leaves tracks added after the snapshot untouched (but routing-sanitized)', () => {

@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import BusStrip from '@/components/mixer/BusStrip.vue';
 import MixerFader from '@/components/mixer/MixerFader.vue';
+import NumericReadout from '@/components/mixer/NumericReadout.vue';
 import { MIDI_LEARN_KEY, useMidiLearn } from '@/composables/useMidiLearn';
 import type { MeterSource, StereoMeterLevels } from '@/engine/meters';
 import { busAutomationTarget } from '@/project/automation';
@@ -84,6 +85,15 @@ describe('BusStrip automation UI', () => {
     expect(wrapper.getComponent(MixerFader).props('valueDb')).toBe(-9);
   });
 
+  it('mutes the return without changing its fader value', async () => {
+    const wrapper = mountStrip();
+    await wrapper.get('.bus-toggle.mute').trigger('click');
+
+    expect(store.mixer.buses[0]).toMatchObject({ gainDb: 0, mute: true });
+    await wrapper.setProps({ bus: store.mixer.buses[0] });
+    expect(wrapper.get('.bus-toggle.mute').attributes('aria-pressed')).toBe('true');
+  });
+
   it('shows bus gain reduction when the bus meter reports dynamics GR', async () => {
     const wrapper = mountStrip(0, meterSource({ gainReductionDb: -5.5 }));
     await wrapper.vm.$nextTick();
@@ -106,6 +116,20 @@ describe('BusStrip automation UI', () => {
 
     await wrapper.findAll('.strip-options-toggles .toggle')[0].trigger('click');
     expect(store.mixer.buses[0].strip?.polarityInvertLeft).toBe(true);
+  });
+
+  it('commits exact bus gain, input trim, and width values from numeric readouts', async () => {
+    const wrapper = mountStrip();
+    wrapper.getComponent(NumericReadout).vm.$emit('change', -6);
+    await wrapper.vm.$nextTick();
+    expect(store.mixer.buses[0].gainDb).toBe(-6);
+
+    await wrapper.find('.strip-options-btn').trigger('click');
+    const readouts = wrapper.findAllComponents(NumericReadout);
+    readouts.find((readout) => readout.props('min') === -48)?.vm.$emit('change', -3.5);
+    readouts.find((readout) => readout.props('min') === 0)?.vm.$emit('change', 1.25);
+    await wrapper.vm.$nextTick();
+    expect(store.mixer.buses[0].strip).toMatchObject({ inputTrimDb: -3.5, width: 1.25 });
   });
 
   it('learns and applies bus strip controls through the shared popover', async () => {

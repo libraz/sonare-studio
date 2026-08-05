@@ -29,6 +29,8 @@ export interface StripGestureAutomation {
   autoMode: ComputedRef<'off' | 'read' | 'touch' | 'latch'>;
   /** dB offset between the strip fader domain and the engine lane domain. */
   laneOffsetDb: ComputedRef<number>;
+  /** Track-volume contribution included in a displayed static fader value. */
+  stripGainOffsetDb: ComputedRef<number>;
   /** Live drag value during a write-mode fader gesture (display only). */
   writeGainDb: Ref<number | null>;
   /** Live drag value during a write-mode pan gesture (display only). */
@@ -73,6 +75,9 @@ export function useStripGestures(options: StripGestureOptions): StripGestures {
   let writeFaderGesture: AutomationWriteGesture | null = null;
   let writePanGesture: AutomationWriteGesture | null = null;
 
+  /** Converts the displayed static fader value back to persisted strip trim. */
+  const stripGainDbForDisplay = (db: number): number => db - automation.stripGainOffsetDb.value;
+
   function onGainChange(db: number, commit: boolean): void {
     if (isAutomationWriteMode(automation.autoMode.value)) {
       // Touch recording: the drag writes lane breakpoints (in the engine lane
@@ -91,11 +96,11 @@ export function useStripGestures(options: StripGestureOptions): StripGestures {
     }
     if (!commit) {
       if (!activeGainGesture) activeGainGesture = gainGesture(options.target(), strip.value.gainDb);
-      activeGainGesture.update(db);
+      activeGainGesture.update(stripGainDbForDisplay(db));
       return;
     }
-    if (activeGainGesture) activeGainGesture.end(db);
-    else gainGesture(options.target(), strip.value.gainDb).end(db);
+    if (activeGainGesture) activeGainGesture.end(stripGainDbForDisplay(db));
+    else gainGesture(options.target(), strip.value.gainDb).end(stripGainDbForDisplay(db));
     activeGainGesture = null;
   }
 

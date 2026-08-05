@@ -7,6 +7,7 @@ import type { CommandGestureOptions, MixerStripTarget } from '@/project/commands
 import {
   isMixerBusStripTarget,
   mixerBusIdFromTarget,
+  replaceInsert,
   setInsertSidechain,
 } from '@/project/commands';
 import { createDefaultStrip, type InsertSlot, type MixerStrip } from '@/project/mixer';
@@ -14,6 +15,7 @@ import { listQuickControls, type QuickControl, setQuickControl } from '@/project
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { openContextMenu } from '@/ui/menu/context-menu';
 import { midiLearnInsertTargetId } from '@/ui/midi/midi-learn';
 import {
   groupInsertCatalogEntries,
@@ -64,6 +66,9 @@ const strip = computed<MixerStrip>(() => {
 
 /** Surfaced when a command rejects (e.g. unknown processor at apply time). */
 const error = ref('');
+
+/** Process-local insert clipboard; copied settings are detached from the source slot. */
+let insertClipboard: Omit<InsertSlot, 'id'> | null = null;
 
 // --- Expand / parameter knobs ------------------------------------------------
 
@@ -164,6 +169,36 @@ function insertPowerTooltip(slot: InsertSlot): string {
 function onRemove(index: number): void {
   removeInsertSlot(props.target, index);
   expandedIndex.value = adjustExpandedAfterRemove(expandedIndex.value, index);
+}
+
+function copySlot(index: number): void {
+  const slot = strip.value.inserts[index];
+  if (!slot) return;
+  const { id: _id, ...copy } = slot;
+  insertClipboard = JSON.parse(JSON.stringify(copy)) as Omit<InsertSlot, 'id'>;
+}
+
+function pasteSlot(index: number): void {
+  if (!insertClipboard) return;
+  try {
+    replaceInsert(props.target, index, insertClipboard);
+    expandedIndex.value = index;
+    error.value = '';
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
+}
+
+function onSlotContextMenu(index: number, event: MouseEvent): void {
+  openContextMenu(event.clientX, event.clientY, [
+    { id: 'copy-insert', label: t.value.shell.inserts.copy, run: () => copySlot(index) },
+    {
+      id: 'paste-insert',
+      label: t.value.shell.inserts.paste,
+      disabled: insertClipboard === null,
+      run: () => pasteSlot(index),
+    },
+  ]);
 }
 
 // --- Drag reorder ------------------------------------------------------------
@@ -289,6 +324,7 @@ onBeforeUnmount(() => {
         @dragover="onDragOver(index, $event)"
         @drop="onDrop(index)"
         @dragend="onDragEnd"
+        @contextmenu.prevent="onSlotContextMenu(index, $event)"
       >
         <span
           class="insert-drag"
@@ -361,6 +397,8 @@ onBeforeUnmount(() => {
           :value="control.value"
           :min="control.min"
           :max="control.max"
+          :scale="control.scale"
+          :default-value="control.defaultValue"
           :label="control.name"
           :display="controlDisplay(control)"
           :size="22"

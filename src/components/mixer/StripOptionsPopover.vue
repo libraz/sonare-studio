@@ -36,6 +36,7 @@ import {
   midiLearnStripControlTargetId,
 } from '@/ui/midi/midi-learn';
 import { formatDb, formatPan } from '@/ui/mixer/db-scale';
+import NumericReadout from './NumericReadout.vue';
 
 /**
  * Strip-local DSP options popover: a gear button that opens a menu of pre-fader
@@ -120,6 +121,16 @@ function onWidthInput(event: Event, commit: boolean): void {
     ? Math.min(MAX_STRIP_WIDTH, Math.max(MIN_STRIP_WIDTH, raw))
     : DEFAULT_STRIP_WIDTH;
   setStripWidth(props.target, value, { commit });
+}
+
+/** Commits a bounded value entered through the adjacent numeric readout. */
+function onInputTrimValue(value: number): void {
+  setStripInputTrim(props.target, value);
+}
+
+/** Commits a bounded width entered through the adjacent numeric readout. */
+function onWidthValue(value: number): void {
+  setStripWidth(props.target, value);
 }
 
 function onPolarityToggle(channel: 'left' | 'right'): void {
@@ -229,7 +240,17 @@ onBeforeUnmount(() => {
             @input="onInputTrimInput($event, false)"
             @change="onInputTrimInput($event, true)"
           />
-          <span class="strip-options-unit">{{ formatDb(inputTrimDb) }}</span>
+          <NumericReadout
+            class="strip-options-unit"
+            :value="inputTrimDb"
+            :min="MIN_INPUT_TRIM_DB"
+            :max="MAX_INPUT_TRIM_DB"
+            :step="0.1"
+            :display="formatDb(inputTrimDb)"
+            unit="dB"
+            :ariaLabel="t.shell.mixer.strip.inputTrim"
+            @change="onInputTrimValue"
+          />
           <button
             v-if="learnState('inputTrimDb')"
             type="button"
@@ -264,13 +285,22 @@ onBeforeUnmount(() => {
             type="range"
             :min="MIN_STRIP_WIDTH"
             :max="MAX_STRIP_WIDTH"
-            step="0.01"
+            :step="0.01"
             :value="stripWidth"
             :aria-label="t.shell.mixer.strip.width"
             @input="onWidthInput($event, false)"
             @change="onWidthInput($event, true)"
           />
-          <span class="strip-options-unit">{{ stripWidth.toFixed(2) }}</span>
+          <NumericReadout
+            class="strip-options-unit"
+            :value="stripWidth"
+            :min="MIN_STRIP_WIDTH"
+            :max="MAX_STRIP_WIDTH"
+            :step="0.01"
+            :display="stripWidth.toFixed(2)"
+            :ariaLabel="t.shell.mixer.strip.width"
+            @change="onWidthValue"
+          />
           <button
             v-if="learnState('width')"
             type="button"

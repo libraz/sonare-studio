@@ -13,6 +13,7 @@ import {
   DEFAULT_PAN_LAW,
   DEFAULT_PAN_MODE,
   DEFAULT_STRIP_WIDTH,
+  type InsertSlot,
   MAX_CHANNEL_DELAY_SAMPLES,
   MAX_INPUT_TRIM_DB,
   MAX_STRIP_GAIN_DB,
@@ -525,6 +526,39 @@ export function setInsertEnabled(target: MixerStripTarget, index: number, enable
   executeApp(() => {
     const next = cloneStrip(strip);
     next.inserts[index] = { ...next.inserts[index], enabled };
+    writeStrip(store, target, next);
+    store.refresh();
+  });
+}
+
+/**
+ * Replaces an insert's processor settings while retaining the destination
+ * processor id, so existing automation and MIDI bindings remain attached to
+ * the slot being pasted into.
+ */
+export function replaceInsert(
+  target: MixerStripTarget,
+  index: number,
+  source: Omit<InsertSlot, 'id'>,
+): void {
+  const store = useProjectStore();
+  const strip = currentStrip(store, target);
+  const destination = requireInsert(strip, index);
+  if (source.processor.length === 0)
+    throw new RangeError('Insert processor name must not be empty');
+  validateInsertParams(source.params);
+  executeApp(() => {
+    const next = cloneStrip(strip);
+    const slot: InsertSlot = {
+      id: destination.id,
+      processor: source.processor,
+      enabled: source.enabled,
+      params: { ...source.params },
+      ...(source.sidechainSourceTrackId !== undefined && source.sidechainSourceTrackId !== target
+        ? { sidechainSourceTrackId: source.sidechainSourceTrackId }
+        : {}),
+    };
+    next.inserts[index] = slot;
     writeStrip(store, target, next);
     store.refresh();
   });

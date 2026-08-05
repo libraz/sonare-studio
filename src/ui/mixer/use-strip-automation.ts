@@ -12,6 +12,7 @@
  */
 
 import { type ComputedRef, computed, type Ref, ref } from 'vue';
+import { linearToDb } from '@/lib/db';
 import type { AutomationParam } from '@/project/automation';
 import { evaluateAutomationValue } from '@/project/automation';
 import { setAutomationLanePoints } from '@/project/commands';
@@ -65,6 +66,8 @@ export interface StripAutomation {
   displayedPan: ComputedRef<number>;
   /** dB offset between the displayed strip fader and persisted lane domain. */
   laneOffsetDb: ComputedRef<number>;
+  /** Track-volume contribution to the displayed static fader value, in dB. */
+  stripGainOffsetDb: ComputedRef<number>;
   /** Live drag value during a write-mode fader gesture (display only), or null. */
   writeGainDb: Ref<number | null>;
   /** Live drag value during a write-mode pan gesture (display only), or null. */
@@ -100,6 +103,14 @@ export function useStripAutomation(options: StripAutomationOptions): StripAutoma
    * UI must never bake it into a written lane.
    */
   const laneOffsetDb = computed(() => 0);
+
+  // A static track fader displays the complete audible level (linear volume +
+  // strip trim), whereas the persisted strip field stores only the trim.
+  // Automation lanes use the displayed absolute fader domain and therefore do
+  // not use this offset.
+  const stripGainOffsetDb = computed(() =>
+    options.isMaster.value ? 0 : linearToDb(options.track.value?.volume ?? 1),
+  );
 
   /** True when the fader display follows the lane (read mode, usable lane). */
   const followsFader = computed(
@@ -172,6 +183,7 @@ export function useStripAutomation(options: StripAutomationOptions): StripAutoma
     displayedGainDb,
     displayedPan,
     laneOffsetDb,
+    stripGainOffsetDb,
     writeGainDb,
     writePan,
     beginWriteGesture,

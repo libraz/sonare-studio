@@ -14,6 +14,7 @@ import {
   renameMixerBus,
   setAutomationLanePoints,
   setMixerBusGain,
+  setMixerBusMute,
 } from '@/project/commands';
 import type { MixerBus } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
@@ -26,9 +27,10 @@ import {
   isAutomationWriteMode,
   toggleAutomationStripMode,
 } from '@/ui/mixer/automation-mode';
-import { formatDb } from '@/ui/mixer/db-scale';
+import { FADER_MAX_DB, FADER_MIN_DB, formatDb } from '@/ui/mixer/db-scale';
 import InsertRack from './InsertRack.vue';
 import MixerFader from './MixerFader.vue';
+import NumericReadout from './NumericReadout.vue';
 import SpectrumAnalyzer from './SpectrumAnalyzer.vue';
 import StereoGoniometer from './StereoGoniometer.vue';
 import StripGrMeter from './StripGrMeter.vue';
@@ -104,6 +106,7 @@ const gainDb = computed(() =>
       ? evaluateAutomationValue(faderLane.value.points, props.positionPpq?.() ?? 0)
       : props.bus.gainDb,
 );
+const muted = computed(() => props.bus.mute === true);
 
 function beginWriteGesture(): AutomationWriteGesture {
   return createAutomationWriteGesture({
@@ -182,6 +185,19 @@ onBeforeUnmount(() => {
     <div class="bus-inserts">
       <InsertRack :target="stripTarget" />
     </div>
+    <div class="bus-toggles">
+      <button
+        type="button"
+        class="bus-toggle mute"
+        :class="{ on: muted }"
+        v-tooltip="muted ? t.shell.mixer.strip.unmute : t.shell.mixer.strip.mute"
+        :aria-label="formatMessage(t.shell.mixer.strip.muteNamed, { name: props.bus.name })"
+        :aria-pressed="muted"
+        @click="setMixerBusMute(props.bus.id, !muted)"
+      >
+        M
+      </button>
+    </div>
     <div class="bus-auto">
       <button
         type="button"
@@ -226,7 +242,17 @@ onBeforeUnmount(() => {
         :visible="props.visible"
       />
     </div>
-    <span class="bus-readout">{{ formatDb(gainDb) }} dB</span>
+    <NumericReadout
+      class="bus-readout"
+      :value="gainDb"
+      :min="FADER_MIN_DB"
+      :max="FADER_MAX_DB"
+      :display="formatDb(gainDb)"
+      unit="dB"
+      :ariaLabel="t.shell.mixer.controls.stripGain"
+      :disabled="followsFader"
+      @change="(value) => onFaderChange(value, true)"
+    />
     <StripGrMeter :bridge="props.bridge" />
 
     <div v-if="props.scope?.available" class="strip-analyzers">
@@ -269,6 +295,31 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: var(--sp-1);
   width: 100%;
+}
+
+.bus-toggles {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
+.bus-toggle {
+  width: 16px;
+  height: 14px;
+  border: none;
+  border-radius: 3px;
+  padding: 0;
+  color: var(--text-3);
+  background: var(--surface-3);
+  font: var(--fw-bold) 9px var(--font-sans);
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: var(--control-lift);
+}
+
+.bus-toggle.mute.on {
+  color: var(--surface-0);
+  background: var(--warning);
 }
 
 .bus-auto-button {
