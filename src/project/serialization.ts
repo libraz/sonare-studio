@@ -37,6 +37,7 @@ import {
   type MixerSnapshotTrack,
 } from './command/mixer-snapshots';
 import { clearHistory } from './commands';
+import type { TrackExpressionMap } from './expression-map';
 import {
   cloneInstrument,
   type ExternalMidiInstrument,
@@ -296,6 +297,10 @@ export interface DocumentTrack {
   percussion?: boolean;
   /** Id of the VCA control group this track belongs to; absent = unassigned. */
   vcaId?: string;
+  /** Chord-track follow mode; absent = the track ignores the chord track. */
+  chordFollow?: 'chordTones' | 'root';
+  /** Articulation-to-MIDI map; absent = articulations stay display-only. */
+  expressionMap?: TrackExpressionMap;
   /** Frozen state: the track's baked pre-fader render; absent = not frozen. */
   frozen?: { assetId: string };
   /** Zero-based microphone input channel for multi-track audio recording. */
@@ -815,6 +820,8 @@ export function serializeProject(): ProjectDocument {
       // Persist both true and false: false is a meaningful "not percussion"
       // override, distinct from an absent flag (fall back to the heuristic).
       if (track.percussion !== undefined) out.percussion = track.percussion;
+      if (track.chordFollow !== undefined) out.chordFollow = track.chordFollow;
+      if (track.expressionMap !== undefined) out.expressionMap = track.expressionMap;
       // VCA group ids are app-level strings, stable within a document, so they
       // round-trip directly (dangling ids are dropped on load).
       if (track.vcaId !== undefined) out.vcaId = track.vcaId;

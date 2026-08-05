@@ -133,6 +133,27 @@ export type ClipScoreAnnotations = Record<number, ScoreNoteAnnotation>;
 /** All score annotations of a project, keyed by clip id then note id. */
 export type ScoreAnnotations = Record<number, ClipScoreAnnotations>;
 
+/**
+ * Reduces score annotations to the articulation lookup the MIDI scheduler
+ * needs (clip id -> note id -> articulation). Notes without an articulation
+ * and clips without any are dropped, so a project that never marks
+ * articulations produces an empty map.
+ */
+export function clipArticulations(
+  annotations: Readonly<ScoreAnnotations>,
+): Map<number, Map<number, NoteArticulation>> {
+  const out = new Map<number, Map<number, NoteArticulation>>();
+  for (const [clipKey, byNote] of Object.entries(annotations)) {
+    const clipOut = new Map<number, NoteArticulation>();
+    for (const [noteKey, annotation] of Object.entries(byNote)) {
+      if (annotation.articulation === undefined) continue;
+      clipOut.set(Number(noteKey), annotation.articulation);
+    }
+    if (clipOut.size > 0) out.set(Number(clipKey), clipOut);
+  }
+  return out;
+}
+
 /** Deep-copies a score-annotation state (plain records all the way down). */
 export function cloneScoreAnnotations(source: Readonly<ScoreAnnotations>): ScoreAnnotations {
   const out: ScoreAnnotations = {};

@@ -1,4 +1,6 @@
 import { linearToDb } from '@/lib/db';
+import type { ChordFollowMode } from '../chord-follow';
+import { sanitizeExpressionMap, type TrackExpressionMap } from '../expression-map';
 import { assertCanAddEngineBus, createDefaultStrip } from '../mixer';
 import { getProject, useProjectStore } from '../store';
 import { pruneTrackTargetReferences } from '../target-reference-registry';
@@ -300,12 +302,13 @@ export function setExclusiveTrackSolo(trackId: number): void {
   });
 }
 
-/** Clears every track and VCA solo state as one undoable edit. */
+/** Clears every track, VCA and return-bus solo state as one undoable edit. */
 export function clearAllSolo(): void {
   const store = useProjectStore();
   if (
     !store.tracks.some((track) => track.solo) &&
-    !(store.mixer.vcaGroups ?? []).some((g) => g.solo)
+    !(store.mixer.vcaGroups ?? []).some((g) => g.solo) &&
+    !store.mixer.buses.some((bus) => bus.solo === true)
   )
     return;
   execute(0, () => {
@@ -313,7 +316,63 @@ export function clearAllSolo(): void {
     store.mixer = {
       ...store.mixer,
       vcaGroups: (store.mixer.vcaGroups ?? []).map((group) => ({ ...group, solo: false })),
+      buses: store.mixer.buses.map((bus) => {
+        if (bus.solo !== true) return bus;
+        const { solo: _solo, ...cleared } = bus;
+        return cleared;
+      }),
     };
+    store.refresh();
+  });
+}
+
+/**
+ * Sets or clears a track's expression map as one undoable edit. The map is
+ * applied while the MIDI schedule is built, so stored notes never change and
+ * clearing it removes every injected key switch and controller.
+ *
+ * @param trackId Id of the track.
+ * @param map Articulation map, or null to stop mapping articulations.
+ */
+export function setTrackExpressionMap(trackId: number, map: TrackExpressionMap | null): void {
+  const store = useProjectStore();
+  const track = requireTrack(store, trackId);
+  const sanitized = map === null ? undefined : sanitizeExpressionMap(map);
+  const current = track.expressionMap;
+  if (JSON.stringify(current ?? null) === JSON.stringify(sanitized ?? null)) return;
+  execute(0, () => {
+    store.tracks = store.tracks.map((t) => {
+      if (t.id !== trackId) return t;
+      const next = { ...t };
+      if (sanitized === undefined) delete next.expressionMap;
+      else next.expressionMap = sanitized;
+      return next;
+    });
+    store.refresh();
+  });
+}
+
+/**
+ * Sets or clears a track's chord-track follow mode as one undoable edit.
+ * While a mode is set, chord-track edits re-voice the track's notes in the
+ * same undo entry (see src/project/chord-follow.ts). Switching the mode does
+ * not touch existing notes: the follow only reacts to chord changes.
+ *
+ * @param trackId Id of the track.
+ * @param mode Follow mode, or null to stop following.
+ */
+export function setTrackChordFollow(trackId: number, mode: ChordFollowMode | null): void {
+  const store = useProjectStore();
+  const track = requireTrack(store, trackId);
+  if ((track.chordFollow ?? null) === mode) return;
+  execute(0, () => {
+    store.tracks = store.tracks.map((t) => {
+      if (t.id !== trackId) return t;
+      const next = { ...t };
+      if (mode === null) delete next.chordFollow;
+      else next.chordFollow = mode;
+      return next;
+    });
     store.refresh();
   });
 }

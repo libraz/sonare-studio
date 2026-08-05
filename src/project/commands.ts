@@ -21,6 +21,7 @@ export type {
   AddBouncedClipInput,
   AddMidiClipInput,
   DropClipTakesInput,
+  SliceAudioClipOptions,
 } from './command/clips';
 export {
   addAudioClip,
@@ -29,6 +30,7 @@ export {
   clearActiveClipSelection,
   consolidateAudioClips,
   copyActiveClip,
+  crossfadeClips,
   cutActiveClip,
   deleteClip,
   dropClipTakes,
@@ -58,6 +60,7 @@ export {
   setClipWarp,
   setTrackFrozen,
   setTrackSelection,
+  sliceAudioClipAtTransients,
   splitClip,
   trimClip,
 } from './command/clips';
@@ -144,6 +147,7 @@ export {
   setInsertSidechain,
   setMixerBusGain,
   setMixerBusMute,
+  setMixerBusSolo,
   setMixerSoloMode,
   setProjectExternalMidiDefault,
   setProjectExternalMidiDefaultForTracks,
@@ -184,8 +188,11 @@ export type { NoteEditPlan } from './command/notes';
 export {
   addNote,
   addNotes,
+  applyGrooveToActiveClip,
   applyGrooveToSelection,
   applyNoteEdits,
+  captureGrooveFromActiveClip,
+  captureGrooveFromSelection,
   cleanupOverlaps,
   copySelectedNotes,
   cutSelectedNotes,
@@ -260,7 +267,9 @@ export {
   renameTrack,
   reorderTracks,
   setExclusiveTrackSolo,
+  setTrackChordFollow,
   setTrackColor,
+  setTrackExpressionMap,
   setTrackGroup,
   setTrackMute,
   setTrackPan,

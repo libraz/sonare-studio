@@ -12,12 +12,17 @@ import { ensureWasm } from '@/lib/wasm';
 import { estimateChordSymbols } from '@/notation/chords';
 import { loadAsset } from '@/persistence/assets';
 import { type AudioChordDetector, analyzeAudioClipChords } from '../audio-chords';
+import { chordFollowUpdates } from '../chord-follow';
 import { type EditorChordSymbol, sanitizeChordSymbols, toProjectChordSymbols } from '../chords';
-import { projectMidiClipNoteOccurrences, projectMidiNoteOccurrences } from '../midi-projection';
-import { getProject, useProjectStore } from '../store';
+import {
+  midiSourcePpqToTimeline,
+  projectMidiClipNoteOccurrences,
+  projectMidiNoteOccurrences,
+} from '../midi-projection';
+import { getProject, notesToProjectEvents, useProjectStore } from '../store';
 import { meterBarLengthPpq, timeSignatureAt } from '../time-signature';
-import { clipKind } from '../types';
-import { execute } from './history';
+import { clipKind, type EditorNote } from '../types';
+import { execute, executeAtomic } from './history';
 import { requireClip } from './utils';
 
 /** Measure length in PPQ at a position, from the active time signature. */
@@ -38,10 +43,69 @@ export function setProjectChords(symbols: ReadonlyArray<EditorChordSymbol>): voi
   const store = useProjectStore();
   const sanitized = sanitizeChordSymbols(symbols);
   const project = getProject();
-  execute(1, () => {
-    project.annotateChords(toProjectChordSymbols(sanitized));
-    store.refresh();
+  const before = store.chords.map((chord) => ({ ...chord }));
+  const followEdits = planChordFollowEdits(store, before, sanitized);
+  if (followEdits.length === 0) {
+    execute(1, () => {
+      project.annotateChords(toProjectChordSymbols(sanitized));
+      store.refresh();
+    });
+    return;
+  }
+  executeAtomic((edit) => {
+    edit(1, () => project.annotateChords(toProjectChordSymbols(sanitized)));
+    for (const clipEdit of followEdits) {
+      edit(1, () => project.setMidiEvents(clipEdit.clipId, notesToProjectEvents(clipEdit.notes)));
+    }
+    // Re-voiced notes keep their editor ids, so selection and score
+    // annotations survive the chord change.
+    store.refresh(new Map(followEdits.map((clipEdit) => [clipEdit.clipId, clipEdit.notes])));
   });
+}
+
+/** One clip's re-voiced note list, ready to write back to the Project. */
+interface ChordFollowClipEdit {
+  clipId: number;
+  notes: EditorNote[];
+}
+
+/**
+ * Works out how the tracks following the chord track must be re-voiced for a
+ * pending chord edit. Percussion tracks, frozen tracks and looping clips are
+ * skipped: a looping clip sounds one note under several chord regions, so no
+ * single pitch could follow them all.
+ */
+function planChordFollowEdits(
+  store: ReturnType<typeof useProjectStore>,
+  before: ReadonlyArray<EditorChordSymbol>,
+  after: ReadonlyArray<EditorChordSymbol>,
+): ChordFollowClipEdit[] {
+  const edits: ChordFollowClipEdit[] = [];
+  for (const track of store.tracks) {
+    const mode = track.chordFollow;
+    if (mode === undefined || track.frozen !== undefined || track.percussion === true) continue;
+    for (const clip of store.clips) {
+      if (clip.trackId !== track.id || clipKind(clip) !== 'midi') continue;
+      if (clip.loopEnabled || clip.notes.length === 0) continue;
+      const updates = chordFollowUpdates(
+        clip.notes.map((note) => ({
+          id: note.id,
+          pitch: note.pitch,
+          timelinePpq: midiSourcePpqToTimeline(clip, note.startPpq),
+        })),
+        before,
+        after,
+        mode,
+      );
+      if (updates.length === 0) continue;
+      const pitchById = new Map(updates.map((update) => [update.id, update.pitch]));
+      edits.push({
+        clipId: clip.id,
+        notes: clip.notes.map((note) => ({ ...note, pitch: pitchById.get(note.id) ?? note.pitch })),
+      });
+    }
+  }
+  return edits;
 }
 
 /** Clears the project chord track (one undoable entry); no-op when empty. */

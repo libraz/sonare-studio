@@ -161,6 +161,20 @@ export function normalizedChordExtensions(symbol: EditorChordSymbol): number[] {
   return [...extensions].sort((a, b) => a - b);
 }
 
+/**
+ * Absolute pitch classes a chord symbol asks for: its quality's intrinsic
+ * tones plus any extensions, transposed to the symbol's root, with the
+ * slash bass added when the symbol has one.
+ */
+export function chordTonePitchClasses(symbol: EditorChordSymbol): number[] {
+  const rootRelative = new Set<number>(TONE_PCS_BY_QUALITY[symbol.quality] ?? [0]);
+  for (const extension of normalizedChordExtensions(symbol)) rootRelative.add(extension);
+  const absolute = new Set<number>();
+  for (const offset of rootRelative) absolute.add((symbol.rootPc + offset) % 12);
+  if (symbol.bassPc !== undefined) absolute.add(symbol.bassPc % 12);
+  return [...absolute].sort((a, b) => a - b);
+}
+
 /** Stable semantic identity for a symbol's non-intrinsic extensions. */
 export function chordExtensionSignature(symbol: EditorChordSymbol): string {
   return normalizedChordExtensions(symbol).join(',');

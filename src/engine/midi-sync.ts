@@ -25,12 +25,18 @@
  *   scaling note-on velocities.
  */
 
+import type { NoteArticulation } from '@/project/annotations';
 import {
   type AutomationLaneState,
   evaluateAutomationValue,
   parseInstrumentAutomationParam,
   sanitizeAutomationPoints,
 } from '@/project/automation';
+import {
+  expressionMapEntryFor,
+  isExpressionMapEmpty,
+  KEY_SWITCH_VELOCITY,
+} from '@/project/expression-map';
 import { loadFont } from '@/project/fonts';
 import {
   DEFAULT_SYNTH_PRESET,
@@ -108,6 +114,13 @@ function voiceEvent(
 }
 
 /**
+ * Score articulations addressed the way the scheduler needs them: clip id ->
+ * editor note id -> articulation. Built from the store live and from the
+ * document's clip annotations offline.
+ */
+export type ClipArticulations = ReadonlyMap<number, ReadonlyMap<number, NoteArticulation>>;
+
+/**
  * Compiles the MIDI clips of the given tracks into engine clip schedules
  * (exported for tests). Only clips on 'midi' tracks with MIDI content, notes
  * and an audible gain are scheduled; clip gain is baked into the note-on
@@ -131,10 +144,18 @@ function voiceEvent(
  * prelude sits at frame 0 and the clip's own frame-0 note events are shifted
  * to frame 1 (one sample, inaudible) to keep the prelude strictly first.
  *
+ * A track with an expression map turns each annotated articulation into a key
+ * switch and/or controller placed just before the note it marks. Nothing is
+ * written back to the clip: removing the map removes the injected events.
+ *
  * @param tracks Project tracks (clip track lookup and instrument source).
  * @param clips Project clips to compile.
  * @param tempoSegments Project tempo segments (empty falls back to 120 BPM).
  * @param sampleRate Render sample rate in Hz (finite, > 0).
+ * @param projectExternalMidi Shared external-MIDI route, when configured.
+ * @param midiDestinationForTrack Maps a track to its engine MIDI destination.
+ * @param articulations Score articulations by clip id then editor note id;
+ * only consulted for tracks that carry an expression map.
  * @returns Schedules sorted by clip id, each with events sorted by frame.
  */
 export function buildMidiClipSchedules(
@@ -144,6 +165,7 @@ export function buildMidiClipSchedules(
   sampleRate: number,
   projectExternalMidi?: ExternalMidiInstrument | null,
   midiDestinationForTrack: (track: EditorTrack) => number = (track) => track.id,
+  articulations?: ClipArticulations,
 ): EngineMidiClipSchedule[] {
   if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
     throw new RangeError(`Sample rate must be finite and > 0, got ${sampleRate}`);
@@ -261,12 +283,62 @@ export function buildMidiClipSchedules(
     // under the engine's unstable same-frame sort.
     const shiftFrameZero = hasPrelude && startSample === 0;
 
+    // Articulation lookup for this clip; empty unless the track maps them.
+    const clipArticulations = isExpressionMapEmpty(track.expressionMap)
+      ? undefined
+      : articulations?.get(clip.id);
+
     for (const entry of notes) {
       const note = entry.note;
       const channel = clamp(note.channel ?? 0, 0, 15);
       const velocity = clamp(Math.round(note.velocity * clip.gain), 1, 127);
       let onFrame = ppqToSamples(tempoMap, entry.timelineStartPpq, sampleRate);
       if (shiftFrameZero && onFrame === 0) onFrame = 1;
+      const expression = expressionMapEntryFor(
+        track.expressionMap,
+        clipArticulations?.get(entry.note.id ?? -1),
+      );
+      if (expression !== undefined) {
+        // The injected events need two frames of headroom in front of the
+        // note (and must stay behind any SF2 prelude), so a note at the very
+        // start of the render moves by those few inaudible samples.
+        onFrame = Math.max(onFrame, (shiftFrameZero ? 1 : 0) + 2);
+        // Both land strictly before the note-on: the engine's same-frame order
+        // is undefined, so a key switch sharing the note's frame could arrive
+        // after it and select the wrong articulation.
+        if (expression.controller !== undefined) {
+          events.push(
+            voiceEvent(
+              Math.max(0, onFrame - 1),
+              STATUS_CONTROL_CHANGE,
+              channel,
+              expression.controller,
+              expression.value ?? 127,
+            ),
+          );
+        }
+        if (expression.keySwitch !== undefined) {
+          const switchOn = Math.max(0, onFrame - 2);
+          events.push(
+            voiceEvent(
+              switchOn,
+              STATUS_NOTE_ON,
+              channel,
+              expression.keySwitch,
+              KEY_SWITCH_VELOCITY,
+            ),
+          );
+          events.push(
+            voiceEvent(
+              Math.max(switchOn + 1, onFrame - 1),
+              STATUS_NOTE_OFF,
+              channel,
+              expression.keySwitch,
+              0,
+            ),
+          );
+        }
+      }
       // One sample before the nominal end keeps this note-off strictly before
       // a same-pitch note-on of the next note (legato) despite the engine's
       // unstable same-frame sort; the floor keeps the note at least 1 sample.
@@ -503,6 +575,7 @@ export interface MidiSync {
     projectExternalMidi?: ExternalMidiInstrument | null,
     automationLanes?: ReadonlyArray<AutomationLaneState>,
     automationPpq?: number,
+    articulations?: ClipArticulations,
   ): Promise<void>;
   /** Number of MIDI clip schedules in the last setMidiClips call (0 before any). */
   scheduledClipCount(): number;
@@ -652,6 +725,7 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
     projectExternalMidi?: ExternalMidiInstrument | null,
     automationLanes?: ReadonlyArray<AutomationLaneState>,
     automationPpq?: number,
+    articulations?: ClipArticulations,
   ): Promise<void> => {
     const sampleRate = handle.ctx.sampleRate;
     currentMediaIssues = [];
@@ -768,6 +842,7 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
       sampleRate,
       projectExternalMidi,
       (track) => destinationByTrack.get(track.id) ?? track.id,
+      articulations,
     );
     const clipsKey = JSON.stringify(schedules);
     if (clipsKey !== lastClipsKey) {

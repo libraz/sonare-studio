@@ -384,6 +384,8 @@ describe('useEngineProjectSync', () => {
       store.projectExternalMidi,
       store.automationLanes,
       3,
+      // Score articulations reach MIDI sync so expression maps can inject.
+      new Map(),
     );
 
     vi.mocked(midiSync.sync).mockClear();
@@ -400,6 +402,8 @@ describe('useEngineProjectSync', () => {
       store.projectExternalMidi,
       store.automationLanes,
       5,
+      // Score articulations reach MIDI sync so expression maps can inject.
+      new Map(),
     );
 
     vi.mocked(midiSync.sync).mockClear();
@@ -484,6 +488,8 @@ describe('useEngineProjectSync', () => {
       store.projectExternalMidi,
       store.automationLanes,
       5,
+      // Score articulations reach MIDI sync so expression maps can inject.
+      new Map(),
     );
     scope.stop();
   });

@@ -36,7 +36,9 @@ import {
   setActiveTrack,
   setAutomationLaneEnabled,
   setStripPan,
+  setTrackChordFollow,
   setTrackColor,
+  setTrackExpressionMap,
   setTrackGroup,
   setTrackMute,
   setTrackPercussion,
@@ -51,6 +53,7 @@ import {
   type TrackPart,
 } from '@/project/commands';
 import { flattenTrackComps } from '@/project/comp-flatten';
+import { EXPRESSION_MAP_PRESETS, matchingExpressionMapPreset } from '@/project/expression-map';
 import { bounceTrackRange, freezeTrack, unfreezeTrack } from '@/project/freeze';
 import { MAX_VCA_GROUPS } from '@/project/mixer';
 import { getWasmModule, useProjectStore } from '@/project/store';
@@ -782,6 +785,38 @@ function onContextMenu(track: EditorTrack, event: MouseEvent): void {
         label: `${header.percussion}: ${header.percussionOff}`,
         checked: track.percussion === false,
         run: () => setTrackPercussion(track.id, false),
+      },
+      { id: 'sep-expression-map', separator: true },
+      {
+        id: 'expression-map-off',
+        label: `${header.expressionMap}: ${header.expressionMapOff}`,
+        checked: track.expressionMap === undefined,
+        run: () => setTrackExpressionMap(track.id, null),
+      },
+      ...EXPRESSION_MAP_PRESETS.map((preset) => ({
+        id: `expression-map-${preset.id}`,
+        label: `${header.expressionMap}: ${header.expressionMapPresets[preset.id]}`,
+        checked: matchingExpressionMapPreset(track.expressionMap)?.id === preset.id,
+        run: () => setTrackExpressionMap(track.id, preset.map),
+      })),
+      { id: 'sep-chord-follow', separator: true },
+      {
+        id: 'chord-follow-off',
+        label: `${header.chordFollow}: ${header.chordFollowOff}`,
+        checked: track.chordFollow === undefined,
+        run: () => setTrackChordFollow(track.id, null),
+      },
+      {
+        id: 'chord-follow-tones',
+        label: `${header.chordFollow}: ${header.chordFollowChordTones}`,
+        checked: track.chordFollow === 'chordTones',
+        run: () => setTrackChordFollow(track.id, 'chordTones'),
+      },
+      {
+        id: 'chord-follow-root',
+        label: `${header.chordFollow}: ${header.chordFollowRoot}`,
+        checked: track.chordFollow === 'root',
+        run: () => setTrackChordFollow(track.id, 'root'),
       },
     );
   }

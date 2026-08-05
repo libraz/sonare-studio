@@ -1,4 +1,6 @@
 import type { MidiNote } from '@/engine/instruments';
+import type { ChordFollowMode } from './chord-follow';
+import type { TrackExpressionMap } from './expression-map';
 import type { TrackInstrument } from './instrument';
 import type { MidiFxConfig } from './midi-fx';
 import type { MixerStrip } from './mixer';
@@ -189,6 +191,20 @@ export interface EditorTrack {
    * using its own instrument for realtime MIDI output.
    */
   externalMidiMode?: 'project';
+  /**
+   * Articulation-to-MIDI map (app-level metadata; absent = score
+   * articulations stay display-only). Key switches and controllers are
+   * injected while the schedule is built, so stored notes never change (see
+   * src/project/expression-map.ts).
+   */
+  expressionMap?: TrackExpressionMap;
+  /**
+   * Chord-track follow mode (app-level metadata; absent = the track ignores
+   * the chord track). While set, chord-track edits re-voice the track's notes
+   * inside the same undo entry (see src/project/chord-follow.ts). Looping
+   * clips and percussion tracks are never followed.
+   */
+  chordFollow?: ChordFollowMode;
   /**
    * Live, non-destructive MIDI-FX transform applied to the track's MIDI before
    * synthesis (app-level metadata; absent = no transform). Unlike a clip bake

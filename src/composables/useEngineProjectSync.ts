@@ -17,6 +17,7 @@ import type { StripSync } from '@/engine/strip-sync';
 import type { TransportSync } from '@/engine/transport-sync';
 import type { WebMidiOutputBridge } from '@/engine/web-midi-output';
 import { describeError } from '@/lib/errors';
+import { clipArticulations } from '@/project/annotations';
 import { parseInstrumentAutomationParam } from '@/project/automation';
 import {
   createMediaCompletenessReport,
@@ -371,6 +372,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
         store.projectExternalMidi,
         store.automationLanes,
         transport.positionPpq?.value ?? 0,
+        clipArticulations(store.scoreAnnotations),
       );
       midiMediaIssues = (m.mediaIssues?.() ?? []).map((issue) => ({
         ...issue,
