@@ -109,7 +109,7 @@ describe('StepSequencer (apply / pull integration)', () => {
     expect(canUndo()).toBe(false);
   });
 
-  it('asks before replacing and deleting notes outside the pattern', async () => {
+  it('replaces and deletes notes outside the pattern without confirmation', async () => {
     addNote({ pitch: 36, velocity: 96, startPpq: 0, durationPpq: 0.125, channel: 9 });
     addNote({ pitch: 38, velocity: 96, startPpq: 6, durationPpq: 0.125, channel: 9 });
     const wrapper = await mountSequencer();
@@ -117,15 +117,11 @@ describe('StepSequencer (apply / pull integration)', () => {
     const kickRow = vm.pattern.rows.length - 1;
     vm.pattern = withStep(vm.pattern, kickRow, 0, { active: true });
 
-    const applying = vm.applyToClip();
-    await flushPromises();
-    expect(dialogQueue).toHaveLength(1);
-    expect(dialogQueue[0].message).toContain('remove 1 existing clip notes');
-    resolveDialog(dialogQueue[0].id, false);
-    await applying;
+    await vm.applyToClip();
 
-    expect(store.notes).toHaveLength(2);
-    expect(wrapper.find('[data-test="status"]').text()).toContain('cancelled');
+    expect(dialogQueue).toHaveLength(0);
+    expect(store.notes).toHaveLength(1);
+    expect(wrapper.find('[data-test="status"]').text()).toContain('Applied 1 note');
   });
 
   it('re-applies count-stable edits as a single undo entry', async () => {
@@ -220,10 +216,8 @@ describe('StepSequencer (apply / pull integration)', () => {
 
     clearHistory();
     vm.pattern = withStep(vm.pattern, kickRow, 8, { active: false });
-    const applying = vm.applyToClip();
-    await flushPromises();
-    resolveDialog(dialogQueue[0].id, true);
-    await applying;
+    await vm.applyToClip();
+    expect(dialogQueue).toHaveLength(0);
     expect(store.notes).toHaveLength(2);
     expect(undo()).toBe(true);
     expect(store.notes).toHaveLength(3);

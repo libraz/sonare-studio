@@ -374,20 +374,6 @@ async function applyToClip(): Promise<void> {
     ...planNoteReplacement(store.notes, baked),
     ...(clipWindow ? { clipWindow } : {}),
   };
-  if (plan.deleteIds.length > 0) {
-    const proceed = await confirmDialog({
-      title: t.value.shell.stepSequencer.replace.confirmTitle,
-      message: formatMessage(t.value.shell.stepSequencer.replace.confirmMessage, {
-        count: plan.deleteIds.length,
-      }),
-      confirmLabel: t.value.shell.stepSequencer.replace.confirmApply,
-    });
-    if (!proceed) {
-      status.value = t.value.shell.stepSequencer.replace.cancelled;
-      statusType.value = 'warning';
-      return;
-    }
-  }
   if (isEmptyPlan(plan) && !clipWindow) {
     status.value = t.value.shell.stepSequencer.status.alreadyMatches;
     statusType.value = 'info';
