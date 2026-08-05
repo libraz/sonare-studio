@@ -3,11 +3,15 @@ import sonareWasmUrl from '@/wasm/sonare.wasm?url';
 import type { SonareRealtimeEngineNodeCapabilities } from '@/wasm/worklet.js';
 import { init as initWorkletModule, SonareEngine } from '@/wasm/worklet.js';
 
-/** Content-addressed same-origin AudioWorklet bundle injected by the app build. */
+/**
+ * Content-addressed same-origin AudioWorklet bundle, injected from the
+ * build:worklet manifest in both dev and the app build. The fallback only
+ * applies outside Vite (unit tests), where no worklet is ever loaded.
+ */
 export const WORKLET_MODULE_URL =
   typeof __SONARE_WORKLET_MODULE_URL__ === 'string'
     ? __SONARE_WORKLET_MODULE_URL__
-    : '/sonare-engine-worklet.js';
+    : '/assets/sonare-engine-worklet.js';
 
 export function isEngineVersionMismatchError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);

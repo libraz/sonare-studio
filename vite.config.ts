@@ -17,10 +17,10 @@ const coiHeaders = {
   'Cross-Origin-Resource-Policy': 'cross-origin',
 };
 
-function productionWorkletUrl(): string {
+function workletModuleUrl(): string {
   const manifestPath = resolve('.worklet-build/manifest.json');
   if (!existsSync(manifestPath)) {
-    throw new Error('Missing AudioWorklet manifest. Run yarn build:worklet before the app build.');
+    throw new Error('Missing AudioWorklet manifest. Run yarn build:worklet first.');
   }
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { moduleUrl?: unknown };
   if (typeof manifest.moduleUrl !== 'string' || !manifest.moduleUrl.startsWith('/assets/')) {
@@ -46,7 +46,7 @@ function pwaPrecacheManifest(): Plugin {
     name: 'pwa-precache-manifest',
     enforce: 'post',
     generateBundle(_options, bundle) {
-      const workletUrl = productionWorkletUrl();
+      const workletUrl = workletModuleUrl();
       const assets = new Set([
         '/',
         '/index.html',
@@ -123,13 +123,14 @@ function buildCommit(): string {
   }
 }
 
-export default defineConfig(({ command }) => ({
+// The worklet URL comes from the manifest in dev as well as in the app build:
+// a fixed filename would let a stale worklet bundle survive an engine refresh
+// and fail at wasm instantiation with a missing-import LinkError.
+export default defineConfig({
   plugins: [vue(), pwaPrecacheManifest()],
   resolve: { alias: { '@': new URL('./src', import.meta.url).pathname } },
   define: {
-    __SONARE_WORKLET_MODULE_URL__: JSON.stringify(
-      command === 'build' ? productionWorkletUrl() : '/sonare-engine-worklet.js',
-    ),
+    __SONARE_WORKLET_MODULE_URL__: JSON.stringify(workletModuleUrl()),
     __SONARE_APP_VERSION__: JSON.stringify(appVersion()),
     __SONARE_BUILD_COMMIT__: JSON.stringify(buildCommit()),
     __SONARE_BUILD_TIME__: JSON.stringify(new Date().toISOString()),
@@ -140,4 +141,4 @@ export default defineConfig(({ command }) => ({
   // sonare.wasm is imported from src/wasm; exclude from optimization and serve as-is.
   optimizeDeps: { exclude: ['@/wasm/index.js'] },
   build: { target: 'esnext' },
-}));
+});

@@ -6,7 +6,7 @@
   "type": "module",
   "packageManager": "yarn@4.18.0",
   "scripts": {
-    "dev": "vite",
+    "dev": "yarn build:worklet && vite",
     "build": "yarn build:worklet && vue-tsc --noEmit && vite build",
     "build:worklet": "vite build --config vite.worklet.config.ts",
     "preview": "vite preview",

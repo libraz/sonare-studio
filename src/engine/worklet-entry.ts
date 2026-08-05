@@ -73,7 +73,8 @@ if (typeof (globalThis as { URL?: unknown }).URL === 'undefined') {
 
 /**
  * AudioWorklet module entry, bundled into the self-contained
- * public/sonare-engine-worklet.js (the worklet scope cannot load external imports).
+ * public/assets/sonare-engine-worklet-<hash>.js (the worklet scope cannot load
+ * external imports).
  *
  * The stock registerSonareRealtimeEngineWorkletProcessor() constructs the embind
  * bridge synchronously, but the embind runtime requires the sonare WASM module to
