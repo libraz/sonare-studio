@@ -28,6 +28,11 @@ describe('rotateModeMask', () => {
     expect(rotateModeMask(MAJOR_MODE_MASK, 2)).toBe(maskOf([0, 2, 3, 5, 7, 9, 10]));
   });
 
+  it('provides harmonic and melodic minor masks with a raised leading tone', () => {
+    expect(modeMaskForChoice('harmonicMinor')).toBe(maskOf([0, 2, 3, 5, 7, 8, 11]));
+    expect(modeMaskForChoice('melodicMinor')).toBe(maskOf([0, 2, 3, 5, 7, 9, 11]));
+  });
+
   it('normalizes negative offsets', () => {
     expect(rotateModeMask(MAJOR_MODE_MASK, -3)).toBe(rotateModeMask(MAJOR_MODE_MASK, 9));
   });
@@ -61,6 +66,8 @@ describe('modeMaskForChoice / matchModeChoiceId', () => {
     expect(modeOrdinalForChoice('lydian')).toBe(4);
     expect(modeOrdinalForChoice('mixolydian')).toBe(5);
     expect(modeOrdinalForChoice('locrian')).toBe(6);
+    expect(modeOrdinalForChoice('harmonicMinor')).toBe(1);
+    expect(modeOrdinalForChoice('melodicMinor')).toBe(1);
   });
 
   it('rejects unknown mode ids for ordinal conversion', () => {

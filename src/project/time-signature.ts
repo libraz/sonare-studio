@@ -28,6 +28,9 @@ export interface TimeSignatureRange extends TimeSignatureSegment {
   endPpq: number;
 }
 
+/** A local rhythmic step in PPQ, or the full bar of the active meter. */
+export type MeterGridStep = number | 'bar';
+
 /** Length of one bar for a meter segment in quarter-note PPQ. */
 export function meterBarLengthPpq(
   meter: Pick<TimeSignatureSegment, 'numerator' | 'denominator'>,
@@ -95,6 +98,63 @@ export function timeSignatureSegmentAt(
     current = segment;
   }
   return { ...current };
+}
+
+/**
+ * Snaps a timeline position to the active meter segment's local grid. Numeric
+ * steps are re-anchored at every meter change; `'bar'` follows the actual bar
+ * length, including compound and asymmetric meters.
+ */
+export function snapPpqToMeterGrid(
+  segments: readonly TimeSignatureSegment[],
+  ppq: number,
+  step: MeterGridStep,
+): number {
+  const position = Math.max(0, ppq);
+  const meter = timeSignatureSegmentAt(segments, position);
+  const localStep = step === 'bar' ? meterBarLengthPpq(meter) : step;
+  if (!(localStep > 0) || !Number.isFinite(localStep)) return position;
+  const relative = position - meter.startPpq;
+  return Math.max(meter.startPpq, meter.startPpq + Math.round(relative / localStep) * localStep);
+}
+
+/**
+ * Snaps to a locally anchored meter grid with optional straight-grid swing.
+ * Swing delays odd grid divisions by at most one third of a division; triplet
+ * grids and full-bar snapping deliberately ignore it.
+ */
+export function snapPpqToSwingMeterGrid(
+  segments: readonly TimeSignatureSegment[],
+  ppq: number,
+  step: MeterGridStep,
+  swingPercent = 0,
+): number {
+  if (step === 'bar') return snapPpqToMeterGrid(segments, ppq, step);
+  const position = Math.max(0, ppq);
+  if (!(step > 0) || !Number.isFinite(step)) return position;
+  // 1/8T and 1/16T are already ternary; applying swing would distort them.
+  if (Math.abs(step - 1 / 3) < PPQ_EPSILON || Math.abs(step - 1 / 6) < PPQ_EPSILON) {
+    return snapPpqToMeterGrid(segments, position, step);
+  }
+  const amount = Math.min(100, Math.max(0, swingPercent)) / 100;
+  if (amount <= 0) return snapPpqToMeterGrid(segments, position, step);
+  const meter = timeSignatureSegmentAt(segments, position);
+  const relative = position - meter.startPpq;
+  const nearestIndex = Math.round(relative / step);
+  let best = meter.startPpq;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (let index = Math.max(0, nearestIndex - 2); index <= nearestIndex + 2; index += 1) {
+    const candidate = meter.startPpq + index * step + (index % 2 === 0 ? 0 : (amount * step) / 3);
+    const distance = Math.abs(position - candidate);
+    if (
+      distance < bestDistance - PPQ_EPSILON ||
+      (Math.abs(distance - bestDistance) < PPQ_EPSILON && candidate < best)
+    ) {
+      best = candidate;
+      bestDistance = distance;
+    }
+  }
+  return best;
 }
 
 /**

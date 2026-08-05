@@ -5,6 +5,8 @@ import {
   DEFAULT_TIME_SIGNATURE,
   isFourFourBarRange,
   measureGrid,
+  snapPpqToMeterGrid,
+  snapPpqToSwingMeterGrid,
   timeSignatureAt,
   timeSignatureRanges,
 } from '@/project/time-signature';
@@ -54,6 +56,18 @@ describe('variable-meter measure grid', () => {
       { startPpq: 6, lengthPpq: 2.5, numerator: 5, denominator: 8, index: 2 },
       { startPpq: 8.5, lengthPpq: 2.5, numerator: 5, denominator: 8, index: 3 },
     ]);
+  });
+
+  it('reanchors numeric grids and supports full-bar snapping', () => {
+    expect(snapPpqToMeterGrid(meter, 6.8, 1)).toBe(7);
+    expect(snapPpqToMeterGrid(meter, 7.1, 'bar')).toBe(6);
+    expect(snapPpqToMeterGrid(meter, 8.2, 'bar')).toBe(8.5);
+  });
+
+  it('applies swing only to straight locally anchored grids', () => {
+    expect(snapPpqToSwingMeterGrid(meter, 6.6, 0.5, 100)).toBeCloseTo(6 + 0.5 + 0.5 / 3, 12);
+    expect(snapPpqToSwingMeterGrid(meter, 6.6, 1 / 3, 100)).toBeCloseTo(6 + 2 / 3, 12);
+    expect(snapPpqToSwingMeterGrid(meter, 8.2, 'bar', 100)).toBe(8.5);
   });
 
   it('walks count-in and generation bars over the real grid', () => {

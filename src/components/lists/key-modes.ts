@@ -19,6 +19,8 @@ export type KeyModeId =
   | 'lydian'
   | 'mixolydian'
   | 'minor'
+  | 'harmonicMinor'
+  | 'melodicMinor'
   | 'locrian';
 
 /** One selectable diatonic mode. */
@@ -27,6 +29,8 @@ export interface KeyModeChoice {
   id: KeyModeId;
   /** Semitone offset of the mode's tonic above the major-scale tonic. */
   semitoneOffset: number;
+  /** Explicit interval mask for modes not derived by major-scale rotation. */
+  modeMask?: number;
 }
 
 /** The seven diatonic modes, each derived from the major mask by rotation. */
@@ -37,6 +41,8 @@ export const KEY_MODE_CHOICES: ReadonlyArray<KeyModeChoice> = [
   { id: 'lydian', semitoneOffset: 5 },
   { id: 'mixolydian', semitoneOffset: 7 },
   { id: 'minor', semitoneOffset: 9 },
+  { id: 'harmonicMinor', semitoneOffset: 9, modeMask: 0b100110101101 },
+  { id: 'melodicMinor', semitoneOffset: 9, modeMask: 0b101010101101 },
   { id: 'locrian', semitoneOffset: 11 },
 ];
 
@@ -49,6 +55,9 @@ const MODE_ORDINAL_BY_ID: Readonly<Record<KeyModeId, number>> = {
   lydian: 4,
   mixolydian: 5,
   locrian: 6,
+  // These share the natural-minor key signature for score spelling.
+  harmonicMinor: 1,
+  melodicMinor: 1,
 };
 
 /**
@@ -78,7 +87,7 @@ export function rotateModeMask(mask: number, semitoneOffset: number): number {
 export function modeMaskForChoice(id: string): number {
   const choice = KEY_MODE_CHOICES.find((c) => c.id === id);
   if (!choice) throw new RangeError(`Unknown key mode: ${id}`);
-  return rotateModeMask(MAJOR_MODE_MASK, choice.semitoneOffset);
+  return choice.modeMask ?? rotateModeMask(MAJOR_MODE_MASK, choice.semitoneOffset);
 }
 
 /**
@@ -89,7 +98,7 @@ export function modeMaskForChoice(id: string): number {
  */
 export function matchModeChoiceId(mask: number): string | null {
   for (const choice of KEY_MODE_CHOICES) {
-    if (rotateModeMask(MAJOR_MODE_MASK, choice.semitoneOffset) === mask) return choice.id;
+    if (modeMaskForChoice(choice.id) === mask) return choice.id;
   }
   return null;
 }
