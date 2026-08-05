@@ -303,6 +303,23 @@ async function onSelectVersion(index: number): Promise<void> {
   await loadCurrent(version.assetId);
 }
 
+/** Handles waveform-local selection keys and version-history undo/redo. */
+function onWaveKeyDown(event: KeyboardEvent): void {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
+    // The sample editor's immutable asset history is deliberately separate
+    // from project history. Consume this even at either history boundary so a
+    // waveform-focused shortcut can never undo an unrelated arrangement edit.
+    event.preventDefault();
+    const delta = event.shiftKey ? 1 : -1;
+    const targetIndex = historyState.value.currentIndex + delta;
+    if (targetIndex >= 0 && targetIndex < historyState.value.versions.length) {
+      void onSelectVersion(targetIndex);
+    }
+    return;
+  }
+  onSelectionKeyDown(event);
+}
+
 function onApply(): void {
   if (asset.value) emit('apply-asset', currentAssetId.value);
 }
@@ -1066,7 +1083,7 @@ onBeforeUnmount(() => {
       @pointermove="onPointerMove"
       @pointerup="onPointerUp"
       @pointercancel="onPointerUp"
-      @keydown="onSelectionKeyDown"
+      @keydown="onWaveKeyDown"
       @wheel.prevent="onWheel"
     >
       <canvas ref="canvasRef" class="wave-canvas" role="img" :aria-label="t.shell.sampleEditor.waveform" />

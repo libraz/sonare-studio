@@ -143,4 +143,24 @@ describe('SampleEditor async loading', () => {
 
     expect(trim?.attributes('disabled')).toBeDefined();
   });
+
+  it('consumes waveform-focused undo and redo so they cannot reach project history', async () => {
+    assetStore.loadAsset.mockResolvedValue(asset('asset-a', 'Undo sample'));
+    const wrapper = mountEditor();
+    await flushPromises();
+    const waveform = wrapper.find('.wave-wrap');
+
+    const undo = new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, cancelable: true });
+    waveform.element.dispatchEvent(undo);
+    expect(undo.defaultPrevented).toBe(true);
+
+    const redo = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      shiftKey: true,
+      cancelable: true,
+    });
+    waveform.element.dispatchEvent(redo);
+    expect(redo.defaultPrevented).toBe(true);
+  });
 });
