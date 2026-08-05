@@ -24,6 +24,10 @@ export interface MasteringControl {
   min: number;
   /** Upper bound of the control range. */
   max: number;
+  /** Value mapping across the knob travel (logarithmic when min > 0). */
+  scale?: 'linear' | 'log';
+  /** Value restored by the knob's double-click and Reset menu action. */
+  defaultValue: number;
   /** Display unit (e.g. 'Hz', 'ms', 'dB'); omitted for unitless values. */
   unit?: string;
 }
@@ -36,6 +40,7 @@ interface ParamRangeRule {
   test: RegExp;
   min: number;
   max: number;
+  scale?: 'linear' | 'log';
   unit?: string;
   fallback: number;
 }
@@ -46,8 +51,8 @@ const PARAM_RANGE_RULES: ReadonlyArray<ParamRangeRule> = [
   { test: /Db$/, min: -24, max: 24, unit: 'dB', fallback: 0 },
   { test: /ratio$/i, min: 1, max: 20, fallback: 4 },
   { test: /Ms$/, min: 0, max: 5000, unit: 'ms', fallback: 10 },
-  { test: /Hz$/, min: 20, max: 20000, unit: 'Hz', fallback: 1000 },
-  { test: /^q$|Q$/, min: 0.1, max: 18, fallback: Math.SQRT1_2 },
+  { test: /Hz$/, min: 20, max: 20000, scale: 'log', unit: 'Hz', fallback: 1000 },
+  { test: /^q$|Q$/, min: 0.1, max: 18, scale: 'log', fallback: Math.SQRT1_2 },
 ];
 
 /** Fallback range for parameters no rule matches (normalized amounts). */
@@ -61,6 +66,7 @@ function paramRule(processor: string, name: string): Omit<ParamRangeRule, 'test'
   return {
     min: domain.min,
     max: domain.max,
+    ...(heuristic.scale !== undefined && domain.min > 0 ? { scale: heuristic.scale } : {}),
     ...(domain.unit ? { unit: domain.unit } : {}),
     fallback: Math.min(domain.max, Math.max(domain.min, heuristic.fallback)),
   };
@@ -110,7 +116,9 @@ export function masteringProcessorControls(
       value: typeof raw === 'number' ? raw : rule.fallback,
       min: rule.min,
       max: rule.max,
+      defaultValue: rule.fallback,
     };
+    if (rule.scale !== undefined && rule.min > 0) control.scale = rule.scale;
     if (rule.unit !== undefined) control.unit = rule.unit;
     return control;
   });

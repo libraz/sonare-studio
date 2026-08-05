@@ -182,6 +182,8 @@ function onMidiForgetMastering(index: number, control: MasteringControl): void {
         :value="control.value"
         :min="control.min"
         :max="control.max"
+        :scale="control.scale"
+        :default-value="control.defaultValue"
         :label="control.name"
         :display="controlDisplay(control)"
         :size="22"

@@ -4,6 +4,7 @@ import AssistantPanel from '@/components/mastering/AssistantPanel.vue';
 import PresetSelector from '@/components/mastering/PresetSelector.vue';
 import PreviewPane from '@/components/mastering/PreviewPane.vue';
 import ProcessorRack from '@/components/mastering/ProcessorRack.vue';
+import { useAppSettings } from '@/composables/useAppSettings';
 import { renderMixdownInWorker } from '@/export/client';
 import type { MixdownResult } from '@/export/mixdown';
 import { ensureWasm } from '@/lib/wasm';
@@ -44,6 +45,10 @@ import {
 } from '@/ui/mastering/preview';
 import { DEFAULT_PREVIEW_BARS, derivePreviewRange } from '@/ui/mastering/preview-range';
 import {
+  decodeMasteringReference,
+  type MasteringReferenceAudio,
+} from '@/ui/mastering/reference-audio';
+import {
   type MonoCompatibilityReport,
   parseMonoCompatibility,
 } from '@/ui/mastering/stereo-analysis';
@@ -63,6 +68,8 @@ import {
   loadInsertCatalogEntries,
 } from '@/ui/mixer/insert-catalog';
 import { createValueGesture, type ValueGesture } from '@/ui/mixer/strip-gestures';
+import type { MatchEqAnalysis } from '@/ui/sample-editor/match-eq-analysis';
+import { analyzeMatchEqToReference, type SampleEditorWasmOps } from '@/ui/sample-editor/wasm-ops';
 
 /**
  * Mastering panel for the editor dock: the project mastering chain as an
@@ -90,6 +97,8 @@ const props = withDefaults(
     previewBars?: number;
     /** Render function override (tests); null uses the export worker client. */
     renderMixdown?: PreviewRenderFn | null;
+    /** Browser decoder override for reference-comparison tests. */
+    decodeReference?: ((file: File) => Promise<MasteringReferenceAudio>) | null;
   }>(),
   {
     loopEnabled: false,
@@ -97,10 +106,12 @@ const props = withDefaults(
     loopEndPpq: 0,
     previewBars: DEFAULT_PREVIEW_BARS,
     renderMixdown: null,
+    decodeReference: null,
   },
 );
 
 const store = useProjectStore();
+const appSettings = useAppSettings();
 const { t } = useI18n();
 
 const chain = computed<MasteringChainState>(
@@ -151,6 +162,20 @@ function onSelectPreset(preset: string | null): void {
 
 const presetOverrideKey = ref('');
 const presetOverrideValue = ref('');
+
+/** Public, cross-preset override paths exposed by the mastering API. */
+const KNOWN_PRESET_OVERRIDE_KEYS = [
+  'loudness.enabled',
+  'loudness.targetLufs',
+  'loudness.ceilingDb',
+  'loudness.truePeakOversample',
+  'loudness.releaseMs',
+] as const;
+const presetOverrideKeyIsKnown = computed(() =>
+  KNOWN_PRESET_OVERRIDE_KEYS.includes(
+    presetOverrideKey.value.trim() as (typeof KNOWN_PRESET_OVERRIDE_KEYS)[number],
+  ),
+);
 
 const presetOverrideEntries = computed(() =>
   Object.entries(chain.value.presetOverrides ?? {}).sort(([a], [b]) => a.localeCompare(b)),
@@ -253,7 +278,20 @@ async function onAutoSuggest(): Promise<void> {
 // --- Streaming targets ----------------------------------------------------------
 
 const streamingTargets = ref<StreamingTarget[] | null>(null);
-const streamingPlatforms = ref<StreamingPlatformConfig[]>(createDefaultStreamingPlatforms());
+const streamingPlatforms = ref<StreamingPlatformConfig[]>([
+  ...appSettings.settings.streamingPlatforms,
+]);
+watch(
+  streamingPlatforms,
+  (platforms) => {
+    // Keep invalid rows editable so the panel can show its validation message;
+    // only durable, valid configurations replace the last saved preference.
+    if (invalidStreamingPlatformCount(platforms) === 0) {
+      appSettings.set('streamingPlatforms', normalizeStreamingPlatforms(platforms));
+    }
+  },
+  { deep: true },
+);
 const checkingTargets = ref(false);
 
 /**
@@ -642,6 +680,59 @@ const clipWarning = computed(() =>
   isClippingRisk(previewState.value?.processed?.report.truePeakDb),
 );
 
+// --- Reference comparison -------------------------------------------------------
+
+const referenceAudio = shallowRef<MasteringReferenceAudio | null>(null);
+const referenceAnalysis = ref<MatchEqAnalysis | null>(null);
+const analyzingReference = ref(false);
+
+async function onReferenceFile(event: Event): Promise<void> {
+  const file = (event.target as HTMLInputElement).files?.[0];
+  if (!file) return;
+  try {
+    referenceAudio.value = await (props.decodeReference ?? decodeMasteringReference)(file);
+    referenceAnalysis.value = null;
+    error.value = '';
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
+}
+
+async function onCompareReference(): Promise<void> {
+  const reference = referenceAudio.value;
+  if (!reference || analyzingReference.value) return;
+  analyzingReference.value = true;
+  error.value = '';
+  try {
+    if (!previewState.value?.processed || previewStale.value) await onPreview();
+    const source = previewState.value?.processed;
+    if (!source || previewStale.value) {
+      if (!error.value) error.value = t.value.shell.mastering.reference.needsPreview;
+      return;
+    }
+    const wasm = await ensureWasm();
+    referenceAnalysis.value = analyzeMatchEqToReference(
+      wasm as unknown as Pick<SampleEditorWasmOps, 'masteringPairAnalyze'>,
+      source.channels,
+      source.sampleRate,
+      downmixMono(reference.channels),
+      null,
+      reference.sampleRate,
+    );
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    analyzingReference.value = false;
+  }
+}
+
+watch(
+  () => previewState.value?.processed,
+  () => {
+    referenceAnalysis.value = null;
+  },
+);
+
 async function analyzeMonoCompatibility(): Promise<void> {
   const source = previewState.value?.processed;
   if (!source || source.channels.length < 2) return;
@@ -745,11 +836,15 @@ onBeforeUnmount(() => {
               v-model="presetOverrideKey"
               class="preset-override-key"
               type="text"
+              list="preset-override-key-suggestions"
               :disabled="!chain.preset"
               :placeholder="t.shell.mastering.presetOverrides.keyPlaceholder"
               :aria-label="t.shell.mastering.presetOverrides.key"
               @keydown.enter.prevent="onAddPresetOverride"
             />
+            <datalist id="preset-override-key-suggestions">
+              <option v-for="key in KNOWN_PRESET_OVERRIDE_KEYS" :key="key" :value="key" />
+            </datalist>
             <input
               v-model="presetOverrideValue"
               class="preset-override-value"
@@ -768,6 +863,13 @@ onBeforeUnmount(() => {
               {{ t.shell.mastering.presetOverrides.add }}
             </button>
           </div>
+          <p
+            v-if="presetOverrideKey.trim() && !presetOverrideKeyIsKnown"
+            class="preset-override-warning"
+            role="status"
+          >
+            {{ t.shell.mastering.presetOverrides.unknownKey }}
+          </p>
           <ul v-if="presetOverrideEntries.length > 0" class="preset-override-list">
             <li v-for="[key, value] in presetOverrideEntries" :key="key">
               <span class="preset-override-param">{{ key }}</span>
@@ -783,6 +885,37 @@ onBeforeUnmount(() => {
               </button>
             </li>
           </ul>
+        </section>
+        <section class="mastering-reference">
+          <div class="mastering-reference-head">
+            <span class="mastering-reference-title">{{ t.shell.mastering.reference.title }}</span>
+            <span class="mastering-reference-note">{{ t.shell.mastering.reference.note }}</span>
+          </div>
+          <div class="mastering-reference-controls">
+            <label class="mastering-reference-file">
+              <span>{{ referenceAudio?.name ?? t.shell.mastering.reference.choose }}</span>
+              <input type="file" accept="audio/*" @change="onReferenceFile" />
+            </label>
+            <button
+              type="button"
+              class="mastering-reference-compare"
+              :disabled="!referenceAudio || analyzingReference"
+              @click="onCompareReference"
+            >
+              {{ analyzingReference ? t.shell.mastering.reference.analyzing : t.shell.mastering.reference.compare }}
+            </button>
+          </div>
+          <div v-if="referenceAnalysis" class="mastering-reference-results" role="status">
+            <span v-if="referenceAnalysis.loudness">
+              {{ referenceAnalysis.loudness.sourceLufs.toFixed(1) }} →
+              {{ referenceAnalysis.loudness.referenceLufs.toFixed(1) }} LUFS
+              ({{ referenceAnalysis.loudness.gainToMatchDb >= 0 ? '+' : '' }}{{ referenceAnalysis.loudness.gainToMatchDb.toFixed(1) }} dB)
+            </span>
+            <span v-for="(band, index) in referenceAnalysis.tonalBalance" :key="index">
+              {{ Math.round(band.lowHz) }}–{{ Math.round(band.highHz) }} Hz:
+              {{ band.deviationDb >= 0 ? '+' : '' }}{{ band.deviationDb.toFixed(1) }} dB
+            </span>
+          </div>
         </section>
         <PreviewPane
           :rendering="previewState?.status === 'rendering'"

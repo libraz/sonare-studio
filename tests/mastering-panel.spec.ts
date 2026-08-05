@@ -162,6 +162,22 @@ describe('MasteringPanel.vue', () => {
     expect(store.mixer.masteringChain?.presetOverrides).toEqual({ 'loudness.targetLufs': -14 });
   });
 
+  it('suggests supported override keys and warns before accepting an unknown one', async () => {
+    setMasteringPreset('streaming');
+    const wrapper = mount(MasteringPanel);
+
+    expect(
+      wrapper
+        .findAll('#preset-override-key-suggestions option')
+        .map((option) => option.attributes('value')),
+    ).toContain('loudness.targetLufs');
+
+    await wrapper.find('.preset-override-key').setValue('loudness.targetLufs');
+    expect(wrapper.find('.preset-override-warning').exists()).toBe(false);
+    await wrapper.find('.preset-override-key').setValue('loudness.targetLuf');
+    expect(wrapper.get('.preset-override-warning').text()).toContain('Unknown override key');
+  });
+
   it('keeps preset override controls disabled until a preset is selected', async () => {
     const wrapper = mount(MasteringPanel);
 
@@ -355,6 +371,33 @@ describe('MasteringPanel.vue', () => {
     expect(abButtons[1].attributes('disabled')).toBeUndefined();
     expect(wrapper.find('.play-button').attributes('disabled')).toBeUndefined();
     expect(wrapper.find('.preview-stale').exists()).toBe(false);
+  });
+
+  it('compares a processed preview with a decoded reference track', async () => {
+    const fake = makeFakeRender();
+    const decodeReference = vi.fn(async () => ({
+      name: 'Reference.wav',
+      channels: [new Float32Array([0.25]), new Float32Array([0.25])],
+      sampleRate: 48000,
+    }));
+    const wrapper = mount(MasteringPanel, {
+      props: { renderMixdown: fake.render, decodeReference },
+    });
+    const input = wrapper.get<HTMLInputElement>('.mastering-reference-file input');
+    Object.defineProperty(input.element, 'files', {
+      value: [new File(['x'], 'Reference.wav')],
+    });
+    await input.trigger('change');
+    await flush();
+
+    expect(wrapper.text()).toContain('Reference.wav');
+    await wrapper.find('.mastering-reference-compare').trigger('click');
+    fake.calls[0].resolve(makeResult(0.5));
+    await flush();
+    await flush();
+
+    expect(wrapper.find('.mastering-reference-results').text()).toContain('-12.0 → -14.0 LUFS');
+    expect(wrapper.find('.mastering-reference-results').text()).toContain('100–1000 Hz: +2.0 dB');
   });
 
   it('uses the loop window as the preview range when a loop is active', async () => {

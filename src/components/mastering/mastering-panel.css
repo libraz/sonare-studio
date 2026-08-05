@@ -188,6 +188,31 @@
   border-bottom: 1px solid var(--border);
 }
 
+.mastering-reference {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding-bottom: var(--sp-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.mastering-reference-head,
+.mastering-reference-controls,
+.mastering-reference-results {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+
+.mastering-reference-title { font: var(--fw-bold) var(--fs-2xs) var(--font-sans); color: var(--text-2); }
+.mastering-reference-note { font: var(--fs-2xs) var(--font-sans); color: var(--text-4); }
+.mastering-reference-file,
+.mastering-reference-compare { font: var(--fs-2xs) var(--font-sans); color: var(--text-3); }
+.mastering-reference-file input { max-width: 190px; }
+.mastering-reference-compare { cursor: pointer; }
+.mastering-reference-results { font: var(--fs-2xs) var(--font-mono); color: var(--accent); }
+
 .preset-overrides.disabled {
   opacity: 0.72;
 }
@@ -258,6 +283,12 @@
 .preset-override-add:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.preset-override-warning {
+  margin: 0;
+  color: var(--warning-text);
+  font: var(--fs-2xs) var(--font-sans);
 }
 
 .preset-override-list {

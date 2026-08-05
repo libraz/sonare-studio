@@ -34,6 +34,7 @@ describe('mastering chain controls', () => {
       min: -12,
       max: 24,
       unit: 'dB',
+      defaultValue: 0,
     });
   });
 
@@ -45,8 +46,13 @@ describe('mastering chain controls', () => {
       'quality',
     ]);
 
-    expect(controls.find((c) => c.id === 'resonanceQ')).toMatchObject({ min: 0.1, max: 18 });
-    expect(controls.find((c) => c.id === 'q')).toMatchObject({ min: 0.1, max: 18 });
+    expect(controls.find((c) => c.id === 'resonanceQ')).toMatchObject({
+      min: 0.1,
+      max: 18,
+      scale: 'log',
+      defaultValue: Math.SQRT1_2,
+    });
+    expect(controls.find((c) => c.id === 'q')).toMatchObject({ min: 0.1, max: 18, scale: 'log' });
     expect(controls.find((c) => c.id === 'quantize')).toMatchObject({ min: 0, max: 1 });
     expect(controls.find((c) => c.id === 'quality')).toMatchObject({ min: 0, max: 1 });
   });
