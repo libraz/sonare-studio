@@ -1,5 +1,6 @@
 {
   "name": "sonare studio",
+  "id": "/",
   "short_name": "sonare",
   "description": "A digital audio workstation that runs entirely in the browser.",
   "start_url": "/",
@@ -9,7 +10,27 @@
   "theme_color": "#0b0d10",
   "orientation": "landscape",
   "categories": ["music", "productivity", "utilities"],
+  "file_handlers": [
+    {
+      "action": "/",
+      "accept": {
+        "application/x-sonare-studio": [".szd"]
+      }
+    }
+  ],
   "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
     {
       "src": "/icon.svg",
       "sizes": "any",

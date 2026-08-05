@@ -183,6 +183,11 @@ async function readPickedFile(file: File, maxBytes: number): Promise<PickedSzdFi
   return { name: file.name, bytes: await readFileBytesBounded(file, maxBytes) };
 }
 
+/** Reads an externally supplied .szd File with the same bounds as the picker. */
+export function readSzdFile(file: File): Promise<PickedSzdFile> {
+  return readPickedFile(file, MAX_PROJECT_ARCHIVE_COMPRESSED_BYTES);
+}
+
 async function readPickedExternalAudioFile(file: File): Promise<PickedExternalAudioFile> {
   const relativePath = (file as { webkitRelativePath?: string }).webkitRelativePath;
   return {
@@ -281,7 +286,7 @@ export async function pickAndReadSzd(): Promise<PickedSzdFile | null> {
         ],
       });
       if (!handle) return null;
-      return await readPickedFile(await handle.getFile(), MAX_PROJECT_ARCHIVE_COMPRESSED_BYTES);
+      return await readSzdFile(await handle.getFile());
     } catch (error) {
       // The picker rejects with AbortError when the user cancels.
       if (error instanceof Error && error.name === 'AbortError') return null;

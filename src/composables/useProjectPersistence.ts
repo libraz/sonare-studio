@@ -27,12 +27,14 @@ import {
   downloadBrowserBackup,
   downloadSzd,
   matchPickedExternalAudioFile,
+  type PickedSzdFile,
   pickAndReadBrowserBackup,
   pickAndReadDawproject,
   pickAndReadExternalAudioFiles,
   pickAndReadSzd,
   pickViaInputElement,
   readFileBytesBounded,
+  readSzdFile,
 } from '@/persistence/local-file';
 import {
   deleteProject,
@@ -421,10 +423,10 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     });
   }
 
-  async function importSzdFile(): Promise<void> {
+  async function importSzdFile(launched?: PickedSzdFile): Promise<void> {
     if (!(await confirmDiscard())) return;
     void runAction(async () => {
-      const picked = await pickAndReadSzd();
+      const picked = launched ?? (await pickAndReadSzd());
       if (!picked) return;
       // Guard against a non-project file slipping past the picker hint: the
       // archive must carry the .szd extension before we try to decode it.
@@ -450,6 +452,10 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       openDialogOpen.value = false;
       startScreenOpen.value = false;
     });
+  }
+
+  async function importLaunchedSzdFile(file: File): Promise<void> {
+    await importSzdFile(await readSzdFile(file));
   }
 
   function importMidiAction(): void {
@@ -861,6 +867,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     deleteStoredProject,
     renameStoredProject,
     importSzdFile,
+    importLaunchedSzdFile,
     importDawprojectAction,
     importMusicXmlAction,
     importMidiAction,

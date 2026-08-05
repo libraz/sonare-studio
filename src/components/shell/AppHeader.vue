@@ -11,6 +11,7 @@ defineProps<{
   autosaveLastSavedAt: Date | null;
   canRedo: boolean;
   canUndo: boolean;
+  canInstallPwa: boolean;
   deviceRackOpen: boolean;
   dirty: boolean;
   menus: readonly MenuBarMenu[];
@@ -23,6 +24,7 @@ const emit = defineEmits<{
   audioImportInputRef: [el: HTMLInputElement | null];
   midiImportChange: [event: Event];
   midiImportInputRef: [el: HTMLInputElement | null];
+  installPwa: [];
   redo: [];
   toggleTheme: [];
   toggleDeviceRack: [];
@@ -96,6 +98,17 @@ const { t } = useI18n();
     <span v-if="autosaveLastSavedAt" class="autosave-state">
       {{ formatMessage(t.shell.savedAt, { time: formatSavedAt(autosaveLastSavedAt) }) }}
     </span>
+
+    <button
+      v-if="canInstallPwa"
+      type="button"
+      class="header-tool install-toggle"
+      :aria-label="t.shell.installPwa"
+      v-tooltip="t.shell.installPwa"
+      @click="emit('installPwa')"
+    >
+      {{ t.shell.installPwa }}
+    </button>
 
     <button
       type="button"

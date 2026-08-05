@@ -1,7 +1,11 @@
 // @ts-expect-error Build config runs in Node; the browser app intentionally omits global Node types.
+import { execFileSync } from 'node:child_process';
+// @ts-expect-error Build config runs in Node; the browser app intentionally omits global Node types.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 // @ts-expect-error Build config runs in Node; the browser app intentionally omits global Node types.
 import { resolve } from 'node:path';
+// @ts-expect-error Build config runs in Node; the browser app intentionally omits global Node types.
+import { env } from 'node:process';
 import vue from '@vitejs/plugin-vue';
 import { defineConfig, type Plugin } from 'vite';
 
@@ -48,6 +52,8 @@ function pwaPrecacheManifest(): Plugin {
         '/index.html',
         '/manifest.webmanifest',
         '/icon.svg',
+        '/icon-192.png',
+        '/icon-512.png',
         '/worklet-manifest.json',
         workletUrl,
         '/precache-manifest.json',
@@ -61,7 +67,13 @@ function pwaPrecacheManifest(): Plugin {
         hash = hashBuildValue(hash, fileName);
         hash = hashBuildValue(hash, output.type === 'chunk' ? output.code : output.source);
       }
-      for (const path of ['manifest.webmanifest', 'icon.svg', 'worklet-manifest.json']) {
+      for (const path of [
+        'manifest.webmanifest',
+        'icon.svg',
+        'icon-192.png',
+        'icon-512.png',
+        'worklet-manifest.json',
+      ]) {
         hash = hashBuildValue(hash, readFileSync(resolve('public', path)));
       }
       hash = hashBuildValue(hash, workletUrl);
@@ -89,6 +101,28 @@ function pwaPrecacheManifest(): Plugin {
   };
 }
 
+/** Application version, taken from the manifest that the deploy is built from. */
+function appVersion(): string {
+  const pkg = JSON.parse(readFileSync(resolve('package.json'), 'utf8')) as { version?: unknown };
+  return typeof pkg.version === 'string' ? pkg.version : '';
+}
+
+/**
+ * Short commit of the deployed build. Deployments are untagged, so the commit
+ * plus the build time is the only identity a running deploy has. Cloudflare
+ * Pages exposes the full SHA; a local build falls back to the git checkout, and
+ * an unavailable commit degrades to an empty string rather than failing.
+ */
+function buildCommit(): string {
+  const deployed = env.CF_PAGES_COMMIT_SHA;
+  if (typeof deployed === 'string' && deployed.length > 0) return deployed.slice(0, 7);
+  try {
+    return execFileSync('git', ['rev-parse', '--short=7', 'HEAD'], { encoding: 'utf8' }).trim();
+  } catch {
+    return '';
+  }
+}
+
 export default defineConfig(({ command }) => ({
   plugins: [vue(), pwaPrecacheManifest()],
   resolve: { alias: { '@': new URL('./src', import.meta.url).pathname } },
@@ -96,6 +130,9 @@ export default defineConfig(({ command }) => ({
     __SONARE_WORKLET_MODULE_URL__: JSON.stringify(
       command === 'build' ? productionWorkletUrl() : '/sonare-engine-worklet.js',
     ),
+    __SONARE_APP_VERSION__: JSON.stringify(appVersion()),
+    __SONARE_BUILD_COMMIT__: JSON.stringify(buildCommit()),
+    __SONARE_BUILD_TIME__: JSON.stringify(new Date().toISOString()),
   },
   server: { headers: coiHeaders },
   preview: { headers: coiHeaders },

@@ -250,12 +250,15 @@ describe('PWA assets', () => {
   it('declares installable standalone app metadata', async () => {
     const manifestPath = resolve(process.cwd(), 'public/manifest.webmanifest');
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
+      id: string;
       display: string;
       start_url: string;
       scope: string;
       icons: Array<{ purpose: string; sizes: string; src: string; type: string }>;
+      file_handlers: Array<{ action: string; accept: Record<string, string[]> }>;
     };
 
+    expect(manifest.id).toBe('/');
     expect(manifest.display).toBe('standalone');
     expect(manifest.start_url).toBe('/');
     expect(manifest.scope).toBe('/');
@@ -264,6 +267,22 @@ describe('PWA assets', () => {
       sizes: 'any',
       type: 'image/svg+xml',
       purpose: 'any maskable',
+    });
+    expect(manifest.icons).toContainEqual({
+      src: '/icon-192.png',
+      sizes: '192x192',
+      type: 'image/png',
+      purpose: 'any maskable',
+    });
+    expect(manifest.icons).toContainEqual({
+      src: '/icon-512.png',
+      sizes: '512x512',
+      type: 'image/png',
+      purpose: 'any maskable',
+    });
+    expect(manifest.file_handlers).toContainEqual({
+      action: '/',
+      accept: { 'application/x-sonare-studio': ['.szd'] },
     });
   });
 
