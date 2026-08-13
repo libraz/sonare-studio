@@ -48,6 +48,14 @@ import {
   MAX_BACKUP_TOTAL_EXPANDED_BYTES,
   MAX_PROJECT_ARCHIVE_ENTRY_BYTES,
 } from '@/persistence/resource-limits';
+import {
+  deleteProjectRevisionIndexUnlocked,
+  isRevisionSlot,
+  type ProjectRevision,
+  type ProjectRevisionStoreSnapshot,
+  readProjectRevisionStoreUnlocked,
+  writeProjectRevisionIndexBytesUnlocked,
+} from '@/persistence/revisions';
 import { decodeSzdWithResourceReport } from '@/persistence/szd';
 import {
   deleteFontUnlocked,
@@ -70,6 +78,8 @@ const BACKUP_APP_ID = 'sonare-studio';
 const BACKUP_KIND = 'browser-backup';
 const META_ENTRY = 'meta.json';
 const PROJECTS_PREFIX = 'projects/';
+const REVISIONS_PREFIX = 'revisions/';
+const REVISION_INDEX_ENTRY = `${REVISIONS_PREFIX}index.json`;
 const ASSETS_PREFIX = 'assets/';
 const FONTS_PREFIX = 'fonts/';
 const RESTORE_STAGING_DIR = 'restore-staging';
@@ -87,6 +97,8 @@ interface BrowserBackupInventory {
   projects: BrowserBackupInventoryItem[];
   assets: BrowserBackupInventoryItem[];
   fonts: BrowserBackupInventoryItem[];
+  revisions: BrowserBackupInventoryItem[];
+  revisionIndex?: BrowserBackupInventoryItem;
 }
 
 interface BrowserBackupMeta {
@@ -97,6 +109,7 @@ interface BrowserBackupMeta {
   projects: number;
   assets: number;
   fonts: number;
+  revisions: number;
   inventory?: BrowserBackupInventory;
 }
 
@@ -160,6 +173,8 @@ export type BrowserBackupRestoreFaultPoint =
   | 'font-published'
   | 'project-intent'
   | 'project-published'
+  | 'revision-index-intent'
+  | 'revision-index-published'
   | 'finalized';
 
 type BrowserBackupRestoreFaultInjector = (
@@ -192,10 +207,13 @@ async function injectRestoreCrash(point: BrowserBackupRestoreFaultPoint): Promis
 
 interface BrowserRestoreStage {
   loadProject(name: string): Promise<Uint8Array>;
+  loadRevisionIndex(): Promise<Uint8Array>;
   /** Write-ahead intent records make a crashed publish safe to roll back. */
   beginProjectPublish(name: string): Promise<void>;
   beginAssetPublish(id: string): Promise<void>;
   beginFontPublish(id: string): Promise<void>;
+  beginRevisionIndexPublish(): Promise<void>;
+  rollbackRevisionIndex(): Promise<void>;
   finalize(): Promise<void>;
   cleanup(): Promise<void>;
 }
@@ -218,6 +236,9 @@ interface BrowserRestoreStageManifest {
   projectPublishIntents: string[];
   assetPublishIntents: string[];
   fontPublishIntents: string[];
+  revisionIndexFile?: string;
+  previousRevisionIndexFile?: string;
+  revisionIndexPublishIntent?: boolean;
 }
 
 async function writeStageFile(
@@ -245,6 +266,7 @@ async function prepareBrowserRestoreStage(
   previousProjects: ReadonlyMap<string, Uint8Array | null>,
   assetIds: readonly string[],
   fontIds: readonly string[],
+  revisionIndex: { bytes: Uint8Array; previousBytes: Uint8Array | null } | undefined,
   signal?: AbortSignal,
 ): Promise<BrowserRestoreStage> {
   const root = await navigator.storage.getDirectory();
@@ -258,6 +280,8 @@ async function prepareBrowserRestoreStage(
   // project named `previous-X` must never collide with the pre-image for `X`.
   const fileName = (name: string): string => `incoming-${encodeURIComponent(name)}.szd`;
   const previousFileName = (name: string): string => `previous-${encodeURIComponent(name)}.szd`;
+  const revisionIndexFileName = 'incoming-revisions-index.json';
+  const previousRevisionIndexFileName = 'previous-revisions-index.json';
   const cleanup = (): Promise<void> => stagingRoot.removeEntry(transactionId, { recursive: true });
   let manifest!: BrowserRestoreStageManifest;
   try {
@@ -266,6 +290,12 @@ async function prepareBrowserRestoreStage(
       await writeStageFile(directory, fileName(project.name), project.bytes);
       const previous = previousProjects.get(project.name);
       if (previous) await writeStageFile(directory, previousFileName(project.name), previous);
+    }
+    if (revisionIndex) {
+      await writeStageFile(directory, revisionIndexFileName, revisionIndex.bytes);
+      if (revisionIndex.previousBytes) {
+        await writeStageFile(directory, previousRevisionIndexFileName, revisionIndex.previousBytes);
+      }
     }
     manifest = {
       version: 2,
@@ -283,6 +313,14 @@ async function prepareBrowserRestoreStage(
       projectPublishIntents: [],
       assetPublishIntents: [],
       fontPublishIntents: [],
+      ...(revisionIndex
+        ? {
+            revisionIndexFile: revisionIndexFileName,
+            ...(revisionIndex.previousBytes
+              ? { previousRevisionIndexFile: previousRevisionIndexFileName }
+              : {}),
+          }
+        : {}),
     };
     // The manifest is the staging publish marker and is deliberately written
     // only after every incoming project archive is durable.
@@ -322,9 +360,27 @@ async function prepareBrowserRestoreStage(
       const file = await (await directory.getFileHandle(fileName(name))).getFile();
       return new Uint8Array(await file.arrayBuffer());
     },
+    async loadRevisionIndex(): Promise<Uint8Array> {
+      if (!revisionIndex) throw new Error('Browser backup has no revision index');
+      return readStageFile(directory, revisionIndexFileName);
+    },
     beginProjectPublish: (name) => addIntent('projectPublishIntents', name),
     beginAssetPublish: (id) => addIntent('assetPublishIntents', id),
     beginFontPublish: (id) => addIntent('fontPublishIntents', id),
+    async beginRevisionIndexPublish(): Promise<void> {
+      if (!revisionIndex) return;
+      manifest.state = 'publishing';
+      manifest.revisionIndexPublishIntent = true;
+      await writeManifest(manifest);
+    },
+    async rollbackRevisionIndex(): Promise<void> {
+      if (!revisionIndex) return;
+      if (revisionIndex.previousBytes) {
+        await writeProjectRevisionIndexBytesUnlocked(revisionIndex.previousBytes);
+      } else {
+        await deleteProjectRevisionIndexUnlocked();
+      }
+    },
     async finalize(): Promise<void> {
       manifest.state = 'finalized';
       await writeManifest(manifest);
@@ -358,7 +414,12 @@ function isRecoverableRestoreStageManifest(value: unknown): value is BrowserRest
     !isStringArray(manifest.fontIds) ||
     !isStringArray(manifest.projectPublishIntents) ||
     !isStringArray(manifest.assetPublishIntents) ||
-    !isStringArray(manifest.fontPublishIntents)
+    !isStringArray(manifest.fontPublishIntents) ||
+    (manifest.revisionIndexFile !== undefined && typeof manifest.revisionIndexFile !== 'string') ||
+    (manifest.previousRevisionIndexFile !== undefined &&
+      typeof manifest.previousRevisionIndexFile !== 'string') ||
+    (manifest.revisionIndexPublishIntent !== undefined &&
+      typeof manifest.revisionIndexPublishIntent !== 'boolean')
   ) {
     return false;
   }
@@ -389,6 +450,15 @@ async function rollbackRestoreStage(
       } catch (error) {
         if (!isNotFoundError(error)) throw error;
       }
+    }
+  }
+  if (manifest.revisionIndexPublishIntent) {
+    if (manifest.previousRevisionIndexFile) {
+      await writeProjectRevisionIndexBytesUnlocked(
+        await readStageFile(directory, manifest.previousRevisionIndexFile),
+      );
+    } else {
+      await deleteProjectRevisionIndexUnlocked();
     }
   }
   // Assets and SoundFonts are additive during a backup restore. Intent records
@@ -465,6 +535,27 @@ function projectEntryName(name: string): string {
   return `${PROJECTS_PREFIX}${encodeURIComponent(name)}.szd`;
 }
 
+function revisionEntryName(slot: string): string {
+  return `${REVISIONS_PREFIX}${encodeURIComponent(slot)}.szd`;
+}
+
+function revisionSlotFromEntry(entryName: string): string | null {
+  if (!entryName.startsWith(REVISIONS_PREFIX) || !entryName.endsWith('.szd')) return null;
+  const encoded = entryName.slice(REVISIONS_PREFIX.length, -'.szd'.length);
+  try {
+    const slot = decodeURIComponent(encoded);
+    return isRevisionSlot(slot) ? slot : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Accepts legacy archives that kept revision payloads under projects/. */
+function revisionSlotFromProjectEntry(entryName: string): string | null {
+  const name = projectNameFromEntry(entryName);
+  return name !== null && isRevisionSlot(name) ? name : null;
+}
+
 function projectNameFromEntry(entryName: string): string | null {
   if (!entryName.startsWith(PROJECTS_PREFIX) || !entryName.endsWith('.szd')) return null;
   const encoded = entryName.slice(PROJECTS_PREFIX.length, -'.szd'.length);
@@ -490,10 +581,13 @@ function payloadChecksum(...parts: readonly Uint8Array[]): string {
 function inventoryBytes(
   inventory: Omit<BrowserBackupInventory, 'complete' | 'totalBytes'>,
 ): number {
-  return [...inventory.projects, ...inventory.assets, ...inventory.fonts].reduce(
-    (total, item) => total + item.bytes,
-    0,
-  );
+  return [
+    ...inventory.projects,
+    ...inventory.assets,
+    ...inventory.fonts,
+    ...inventory.revisions,
+    ...(inventory.revisionIndex ? [inventory.revisionIndex] : []),
+  ].reduce((total, item) => total + item.bytes, 0);
 }
 
 function createBackupZipWriter(
@@ -595,7 +689,7 @@ async function createBrowserBackupLocked(
 ): Promise<BrowserBackupCreateResult> {
   const zip = createBackupZipWriter(savedAt, signal, limits);
   const build = async (): Promise<BrowserBackupCreateResult> => {
-    const inventory = { projects: [], assets: [], fonts: [] } as Omit<
+    const inventory = { projects: [], assets: [], fonts: [], revisions: [] } as Omit<
       BrowserBackupInventory,
       'complete' | 'totalBytes'
     >;
@@ -618,6 +712,43 @@ async function createBrowserBackupLocked(
         id: project.name,
         bytes: payloadBytes,
         checksum,
+      });
+    }
+
+    const revisionStore = await readProjectRevisionStoreUnlocked();
+    // Older revision indexes did not persist `size`.  When their payload is
+    // still present, publish the measured size into the portable index so the
+    // archive remains internally consistent with the payload it carries.
+    // Stale entries without a payload deliberately retain their legacy value:
+    // a backup may represent historical metadata whose slot was already
+    // pruned before export.
+    const revisionIndex = strToU8(
+      JSON.stringify(
+        revisionStore.index.map((entry) => {
+          const bytes = revisionStore.slots.get(entry.slot);
+          return bytes === undefined ? entry : { ...entry, size: bytes.byteLength };
+        }),
+      ),
+    );
+    await zip.add(REVISION_INDEX_ENTRY, revisionIndex);
+    inventory.revisionIndex = {
+      id: 'index',
+      bytes: revisionIndex.byteLength,
+      checksum: payloadChecksum(revisionIndex),
+    };
+    for (const [slot, bytes] of revisionStore.slots) {
+      signal?.throwIfAborted();
+      const decoded = decodeSzdWithResourceReport(bytes, {});
+      documents.push(decoded.document);
+      nested.entries += decoded.report.entries;
+      nested.uncompressedBytes += decoded.report.uncompressedBytes;
+      const payloadBytes = bytes.byteLength;
+      await zip.add(revisionEntryName(slot), bytes);
+      assertNestedBackupBudget(zip.stats(), nested, limits);
+      inventory.revisions.push({
+        id: slot,
+        bytes: payloadBytes,
+        checksum: payloadChecksum(bytes),
       });
     }
 
@@ -689,6 +820,7 @@ async function createBrowserBackupLocked(
       projects: inventory.projects.length,
       assets: inventory.assets.length,
       fonts: inventory.fonts.length,
+      revisions: inventory.revisions.length,
       inventory: {
         complete: completeness.complete,
         totalBytes: inventoryBytes(inventory),
@@ -779,21 +911,47 @@ function validateBrowserBackupInventory(
     projects: validatedInventoryItems(raw.projects),
     assets: validatedInventoryItems(raw.assets),
     fonts: validatedInventoryItems(raw.fonts),
+    // v2 backups created before revision-history support have no revision
+    // inventory. Treat that absence as an empty category for compatibility.
+    revisions: raw.revisions === undefined ? [] : validatedInventoryItems(raw.revisions),
+    revisionIndex:
+      raw.revisionIndex === undefined ? [] : validatedInventoryItems([raw.revisionIndex]),
   };
   if (
     meta.projects !== expected.projects.length ||
     meta.assets !== expected.assets.length ||
-    meta.fonts !== expected.fonts.length
+    meta.fonts !== expected.fonts.length ||
+    (meta.revisions !== undefined && meta.revisions !== expected.revisions.length)
   ) {
     invalidBackup();
   }
 
   const knownEntries = new Set([META_ENTRY]);
-  const actual = { projects: [], assets: [], fonts: [] } as Omit<
+  const actual = { projects: [], assets: [], fonts: [], revisions: [] } as Omit<
     BrowserBackupInventory,
     'complete' | 'totalBytes'
   >;
   for (const [entryName, data] of Object.entries(entries)) {
+    if (entryName === REVISION_INDEX_ENTRY) {
+      knownEntries.add(entryName);
+      actual.revisionIndex = {
+        id: 'index',
+        bytes: data.byteLength,
+        checksum: payloadChecksum(data),
+      };
+      continue;
+    }
+    const revisionSlot =
+      revisionSlotFromEntry(entryName) ?? revisionSlotFromProjectEntry(entryName);
+    if (revisionSlot !== null) {
+      knownEntries.add(entryName);
+      actual.revisions.push({
+        id: revisionSlot,
+        bytes: data.byteLength,
+        checksum: payloadChecksum(data),
+      });
+      continue;
+    }
     const projectName = projectNameFromEntry(entryName);
     if (projectName !== null) {
       knownEntries.add(entryName);
@@ -836,7 +994,127 @@ function validateBrowserBackupInventory(
   assertInventoryCategory(expected.projects, actual.projects);
   assertInventoryCategory(expected.assets, actual.assets);
   assertInventoryCategory(expected.fonts, actual.fonts);
+  assertInventoryCategory(expected.revisions, actual.revisions);
+  assertInventoryCategory(
+    expected.revisionIndex,
+    actual.revisionIndex ? [actual.revisionIndex] : [],
+  );
   if (raw.totalBytes !== inventoryBytes(actual)) invalidBackup();
+}
+
+function parseRevisionIndex(bytes: Uint8Array): ProjectRevision[] {
+  const raw = parseJson<unknown>(bytes);
+  if (!Array.isArray(raw)) invalidBackup();
+  const slots = new Set<string>();
+  const entries: ProjectRevision[] = [];
+  for (const candidate of raw) {
+    if (typeof candidate !== 'object' || candidate === null) invalidBackup();
+    const record = candidate as Record<string, unknown>;
+    if (
+      typeof record.slot !== 'string' ||
+      !isRevisionSlot(record.slot) ||
+      slots.has(record.slot) ||
+      typeof record.projectName !== 'string' ||
+      typeof record.label !== 'string' ||
+      typeof record.savedAt !== 'number' ||
+      !Number.isFinite(record.savedAt) ||
+      (record.size !== undefined &&
+        (!Number.isSafeInteger(record.size) || (record.size as number) < 0))
+    ) {
+      invalidBackup();
+    }
+    try {
+      sanitizeProjectName(record.projectName);
+    } catch {
+      invalidBackup();
+    }
+    slots.add(record.slot);
+    entries.push({
+      slot: record.slot,
+      projectName: record.projectName,
+      label: record.label,
+      savedAt: record.savedAt,
+      size: typeof record.size === 'number' ? record.size : 0,
+    });
+  }
+  return entries;
+}
+
+function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.byteLength !== right.byteLength) return false;
+  for (let index = 0; index < left.byteLength; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+}
+
+function sameProjectRevision(left: ProjectRevision, right: ProjectRevision): boolean {
+  return (
+    left.slot === right.slot &&
+    left.projectName === right.projectName &&
+    left.label === right.label &&
+    left.savedAt === right.savedAt &&
+    left.size === right.size
+  );
+}
+
+function revisionSlotConflict(slot: string): never {
+  throw new Error(`Browser backup revision slot conflicts with existing data: "${slot}"`);
+}
+
+/**
+ * Plans an additive revision restore before anything is published. Revision
+ * slots have global names, so a matching name is safe only when its bytes and
+ * metadata are identical; otherwise replacing it would silently corrupt a
+ * different local project's history. The merged index retains all local
+ * records and adds archive records that do not already exist.
+ */
+function planRevisionRestore(
+  archiveIndex: readonly ProjectRevision[] | undefined,
+  archiveSlots: readonly { name: string; bytes: Uint8Array }[],
+  existing: ProjectRevisionStoreSnapshot,
+): {
+  mergedIndex: ProjectRevision[] | undefined;
+  slotsToPublish: Array<{ name: string; bytes: Uint8Array }>;
+} {
+  const archiveBytesBySlot = new Map(archiveSlots.map((slot) => [slot.name, slot.bytes]));
+  for (const [slot, bytes] of archiveBytesBySlot) {
+    const current = existing.slots.get(slot);
+    if (current !== undefined && !sameBytes(current, bytes)) revisionSlotConflict(slot);
+  }
+
+  const slotsToPublish = archiveSlots.filter((slot) => !existing.slots.has(slot.name));
+  if (archiveIndex === undefined) {
+    return { mergedIndex: undefined, slotsToPublish };
+  }
+
+  const existingBySlot = new Map<string, ProjectRevision>();
+  for (const entry of existing.index) {
+    const previous = existingBySlot.get(entry.slot);
+    if (previous !== undefined && !sameProjectRevision(previous, entry)) {
+      revisionSlotConflict(entry.slot);
+    }
+    existingBySlot.set(entry.slot, entry);
+  }
+
+  const mergedIndex = [...existing.index];
+  for (const entry of archiveIndex) {
+    const incomingBytes = archiveBytesBySlot.get(entry.slot);
+    if (incomingBytes !== undefined && entry.size !== incomingBytes.byteLength) invalidBackup();
+    const existingEntry = existingBySlot.get(entry.slot);
+    if (existingEntry !== undefined) {
+      if (!sameProjectRevision(existingEntry, entry)) revisionSlotConflict(entry.slot);
+      continue;
+    }
+    // A stale archive index is valid, but it must not claim an unrelated
+    // local payload when the archive provides no bytes to prove identity.
+    if (incomingBytes === undefined && existing.slots.has(entry.slot)) {
+      revisionSlotConflict(entry.slot);
+    }
+    existingBySlot.set(entry.slot, entry);
+    mergedIndex.push(entry);
+  }
+  return { mergedIndex, slotsToPublish };
 }
 
 /** Restores a browser backup as one preflighted, rollback-capable transaction. */
@@ -900,6 +1178,31 @@ async function restoreBrowserBackupUnlocked(
     projects.push({ name, bytes: data });
   }
 
+  const revisionIndexBytes = entries[REVISION_INDEX_ENTRY];
+  const archiveRevisionIndex = revisionIndexBytes
+    ? parseRevisionIndex(revisionIndexBytes)
+    : undefined;
+  const revisionSlots: Array<{ name: string; bytes: Uint8Array }> = [];
+  const revisionSlotNames = new Set<string>();
+  for (const [entryName, data] of Object.entries(entries)) {
+    signal?.throwIfAborted();
+    const slot = revisionSlotFromEntry(entryName) ?? revisionSlotFromProjectEntry(entryName);
+    if (slot === null) continue;
+    if (revisionSlotNames.has(slot)) invalidBackup();
+    if (remainingExpandedBytes <= 0 || remainingEntries <= 0) {
+      throw new Error('Browser backup nested revision expansion exceeds the cumulative budget');
+    }
+    const decoded = decodeSzdWithResourceReport(data, {
+      maxEntries: remainingEntries,
+      maxEntryBytes: Math.min(MAX_PROJECT_ARCHIVE_ENTRY_BYTES, remainingExpandedBytes),
+      maxUncompressedBytes: remainingExpandedBytes,
+    });
+    remainingExpandedBytes -= decoded.report.uncompressedBytes;
+    remainingEntries -= decoded.report.entries;
+    revisionSlotNames.add(slot);
+    revisionSlots.push({ name: slot, bytes: data });
+  }
+
   const mediaIds = (prefix: string, payloadExtension: string): string[] =>
     [
       ...new Set(
@@ -956,8 +1259,15 @@ async function restoreBrowserBackupUnlocked(
     if (await preflightFontRestore(entry)) existingFonts.add(entry.id);
     signal?.throwIfAborted();
   }
+  const existingRevisionStore = await readProjectRevisionStoreUnlocked();
+  const revisionPlan = planRevisionRestore(
+    archiveRevisionIndex,
+    revisionSlots,
+    existingRevisionStore,
+  );
+  const stageProjects = [...projects, ...revisionPlan.slotsToPublish];
   const previousProjects = new Map<string, Uint8Array | null>();
-  for (const project of projects) {
+  for (const project of stageProjects) {
     try {
       previousProjects.set(project.name, await loadProject(project.name));
       signal?.throwIfAborted();
@@ -967,16 +1277,26 @@ async function restoreBrowserBackupUnlocked(
     }
   }
 
+  const revisionRestore =
+    revisionPlan.mergedIndex !== undefined
+      ? {
+          bytes: strToU8(JSON.stringify(revisionPlan.mergedIndex)),
+          previousBytes: existingRevisionStore.indexBytes,
+        }
+      : undefined;
+
   const stage = await prepareBrowserRestoreStage(
-    projects,
+    stageProjects,
     previousProjects,
     assets.map((entry) => entry.id),
     fonts.map((entry) => entry.id),
+    revisionRestore,
     signal,
   );
 
   const createdAssets: string[] = [];
   const createdFonts: string[] = [];
+  let revisionIndexIntentStarted = false;
   try {
     for (const entry of assets) {
       if (existingAssets.has(entry.id)) continue;
@@ -1005,11 +1325,19 @@ async function restoreBrowserBackupUnlocked(
       await injectRestoreCrash('font-published');
       signal?.throwIfAborted();
     }
-    for (const project of projects) {
+    for (const project of stageProjects) {
       await stage.beginProjectPublish(project.name);
       await injectRestoreCrash('project-intent');
       await saveProjectUnlocked(project.name, await stage.loadProject(project.name));
       await injectRestoreCrash('project-published');
+      signal?.throwIfAborted();
+    }
+    if (revisionRestore) {
+      revisionIndexIntentStarted = true;
+      await stage.beginRevisionIndexPublish();
+      await injectRestoreCrash('revision-index-intent');
+      await writeProjectRevisionIndexBytesUnlocked(await stage.loadRevisionIndex());
+      await injectRestoreCrash('revision-index-published');
       signal?.throwIfAborted();
     }
     // The final marker is the one commit point: a restart before it rolls
@@ -1021,11 +1349,12 @@ async function restoreBrowserBackupUnlocked(
     // in-process cleanup runs. The next startup must use the durable journal.
     if (error instanceof SimulatedBrowserBackupCrash) throw error;
     const rollback = await Promise.allSettled([
-      ...projects.map(async (project) => {
+      ...stageProjects.map(async (project) => {
         const previous = previousProjects.get(project.name);
         if (previous) await saveProjectUnlocked(project.name, previous);
         else await deleteProjectUnlocked(project.name);
       }),
+      ...(revisionIndexIntentStarted ? [stage.rollbackRevisionIndex()] : []),
       ...createdAssets.map((id) => deleteAssetUnlocked(id)),
       ...createdFonts.map((id) => deleteFontUnlocked(id)),
       stage.cleanup(),

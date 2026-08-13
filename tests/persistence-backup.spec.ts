@@ -11,6 +11,11 @@ import {
   setBrowserBackupRestoreFaultInjectorForTests,
 } from '@/persistence/backup';
 import { loadProject, saveProject } from '@/persistence/opfs';
+import {
+  listProjectRevisions,
+  loadProjectRevision,
+  saveProjectRevision,
+} from '@/persistence/revisions';
 import { encodeSzd } from '@/persistence/szd';
 import {
   clearFontCache,
@@ -20,7 +25,7 @@ import {
   saveFont,
 } from '@/project/fonts';
 import { PROJECT_DOCUMENT_SCHEMA_VERSION, type ProjectDocument } from '@/project/serialization';
-import { installMockOpfs, uninstallMockOpfs } from './opfs-mock';
+import { installMockOpfs, MemoryFileHandle, uninstallMockOpfs } from './opfs-mock';
 
 function makeDocument(
   name: string,
@@ -69,6 +74,11 @@ function stereo(): Float32Array[] {
   return [new Float32Array([0.1, 0.2]), new Float32Array([-0.1, -0.2])];
 }
 
+/** A minimal RIFF/sfbk prefix; payload contents are irrelevant to OPFS tests. */
+function sf2(...payload: number[]): Uint8Array {
+  return new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x73, 0x66, 0x62, 0x6b, ...payload]);
+}
+
 describe('browser backup archives', () => {
   beforeEach(() => {
     installMockOpfs();
@@ -90,9 +100,9 @@ describe('browser backup archives', () => {
       { id: 'assetA', name: 'Shared audio', sampleRate: 48000, tags: { bpm: 124 } },
       stereo(),
     );
-    await saveFont({ id: 'fontA', name: 'Shared font' }, new Uint8Array([1, 2, 3, 4]));
+    await saveFont({ id: 'fontA', name: 'Shared font' }, sf2(1, 2, 3, 4));
     await saveAsset({ id: 'libraryOnly', name: 'Library only audio', sampleRate: 48000 }, stereo());
-    await saveFont({ id: 'libraryOnlyFont', name: 'Library only font' }, new Uint8Array([9, 8, 7]));
+    await saveFont({ id: 'libraryOnlyFont', name: 'Library only font' }, sf2(9, 8, 7));
 
     const backup = await createBrowserBackup('2026-07-04T00:00:00.000Z');
     const entries = unzipSync(backup);
@@ -126,15 +136,198 @@ describe('browser backup archives', () => {
     expect(await loadProject('Song A')).toEqual(projectBytes);
     expect((await loadAsset('assetA')).channels).toEqual(stereo());
     expect((await loadAssetMeta('assetA')).tags).toEqual({ bpm: 124 });
-    expect(await loadFont('fontA')).toEqual(new Uint8Array([1, 2, 3, 4]));
+    expect(await loadFont('fontA')).toEqual(sf2(1, 2, 3, 4));
     expect((await loadFontMeta('fontA')).name).toBe('Shared font');
     expect((await loadAssetMeta('libraryOnly')).name).toBe('Library only audio');
-    expect(await loadFont('libraryOnlyFont')).toEqual(new Uint8Array([9, 8, 7]));
+    expect(await loadFont('libraryOnlyFont')).toEqual(sf2(9, 8, 7));
+  });
+
+  it('backs up and restores named revision history while excluding autosave slots', async () => {
+    const projectBytes = encodeSzd(makeDocument('Song A'));
+    const firstRevisionBytes = encodeSzd(makeDocument('Song A', { assetId: 'unused-a' }));
+    const secondRevisionBytes = encodeSzd(makeDocument('Song A', { assetId: 'unused-b' }));
+    await saveProject('Song A', projectBytes);
+    const first = await saveProjectRevision('Song A', 'before bridge', firstRevisionBytes, 1000);
+    const second = await saveProjectRevision('Song A', 'after bridge', secondRevisionBytes, 2000);
+    await saveProject('autosave', encodeSzd(makeDocument('Autosave')));
+    await saveProject('autosave-session-backup-tab', encodeSzd(makeDocument('Recovery')));
+
+    const entries = unzipSync(await createBrowserBackup('2026-07-04T00:00:00.000Z'));
+    expect(entries['revisions/index.json']).toBeDefined();
+    expect(entries[`revisions/${first.slot}.szd`]).toEqual(firstRevisionBytes);
+    expect(entries[`revisions/${second.slot}.szd`]).toEqual(secondRevisionBytes);
+    expect(entries['projects/autosave.szd']).toBeUndefined();
+    expect(entries['projects/autosave-session-backup-tab.szd']).toBeUndefined();
+
+    uninstallMockOpfs();
+    installMockOpfs();
+    await restoreBrowserBackup(zipSync(entries));
+
+    expect(await listProjectRevisions('Song A')).toEqual([second, first]);
+    expect(await loadProjectRevision(first.slot)).toEqual(firstRevisionBytes);
+    expect(await loadProjectRevision(second.slot)).toEqual(secondRevisionBytes);
+    await expect(loadProject('autosave')).rejects.toThrow();
+    await expect(loadProject('autosave-session-backup-tab')).rejects.toThrow();
+  });
+
+  it('normalizes a legacy revision size while backing up its stored slot', async () => {
+    const legacySlot = 'revision-legacy-size';
+    const revisionBytes = encodeSzd(makeDocument('Legacy Song'));
+    await saveProject(legacySlot, revisionBytes);
+    const root = await navigator.storage.getDirectory();
+    const revisions = await root.getDirectoryHandle('revisions', { create: true });
+    const index = await revisions.getFileHandle('index.json', { create: true });
+    const writable = await index.createWritable();
+    await writable.write(
+      new TextEncoder().encode(
+        JSON.stringify([
+          {
+            slot: legacySlot,
+            projectName: 'Legacy Song',
+            label: 'legacy checkpoint',
+            savedAt: 1000,
+          },
+        ]),
+      ),
+    );
+    await writable.close();
+
+    const backup = await createBrowserBackup('2026-08-13T00:00:00.000Z');
+    const entries = unzipSync(backup);
+    expect(JSON.parse(new TextDecoder().decode(entries['revisions/index.json']))).toEqual([
+      {
+        slot: legacySlot,
+        projectName: 'Legacy Song',
+        label: 'legacy checkpoint',
+        savedAt: 1000,
+        size: revisionBytes.byteLength,
+      },
+    ]);
+
+    uninstallMockOpfs();
+    installMockOpfs();
+
+    await restoreBrowserBackup(backup);
+
+    expect(await listProjectRevisions('Legacy Song')).toEqual([
+      expect.objectContaining({ slot: legacySlot, size: revisionBytes.byteLength }),
+    ]);
+    expect(await loadProjectRevision(legacySlot)).toEqual(revisionBytes);
+  });
+
+  it('adds archived revision history without dropping unrelated local history', async () => {
+    const archivedBytes = encodeSzd(makeDocument('Archived Song'));
+    await saveProject('Archived Song', archivedBytes);
+    const archived = await saveProjectRevision(
+      'Archived Song',
+      'archive checkpoint',
+      archivedBytes,
+      1000,
+    );
+    const backup = await createBrowserBackup('2026-07-04T00:00:00.000Z');
+
+    uninstallMockOpfs();
+    installMockOpfs();
+    const localBytes = encodeSzd(makeDocument('Local Song'));
+    await saveProject('Local Song', localBytes);
+    const local = await saveProjectRevision('Local Song', 'local checkpoint', localBytes, 2000);
+
+    await restoreBrowserBackup(backup);
+
+    expect(await listProjectRevisions('Archived Song')).toEqual([archived]);
+    expect(await listProjectRevisions('Local Song')).toEqual([local]);
+    expect(await loadProjectRevision(archived.slot)).toEqual(archivedBytes);
+    expect(await loadProjectRevision(local.slot)).toEqual(localBytes);
+  });
+
+  it('rejects a conflicting revision slot instead of overwriting local history', async () => {
+    const archivedBytes = encodeSzd(makeDocument('Archived Song'));
+    await saveProject('Archived Song', archivedBytes);
+    const archived = await saveProjectRevision(
+      'Archived Song',
+      'archive checkpoint',
+      archivedBytes,
+      1000,
+    );
+    const backup = await createBrowserBackup('2026-07-04T00:00:00.000Z');
+
+    uninstallMockOpfs();
+    installMockOpfs();
+    const localBytes = encodeSzd(makeDocument('Local Song', { assetId: 'local-only' }));
+    await saveProject('Local Song', localBytes);
+    const local = await saveProjectRevision('Local Song', 'local checkpoint', localBytes, 1000);
+    expect(local.slot).toBe(archived.slot);
+
+    await expect(restoreBrowserBackup(backup)).rejects.toThrow('revision slot conflicts');
+
+    expect(await listProjectRevisions('Local Song')).toEqual([local]);
+    expect(await loadProjectRevision(local.slot)).toEqual(localBytes);
+    await expect(loadProject('Archived Song')).rejects.toThrow();
+  });
+
+  it('accepts a stale revision index when an older slot payload is missing', async () => {
+    await saveProject('Song A', encodeSzd(makeDocument('Song A')));
+    const revision = await saveProjectRevision(
+      'Song A',
+      'old payload',
+      encodeSzd(makeDocument('Song A')),
+      1000,
+    );
+    const root = await navigator.storage.getDirectory();
+    const projects = await root.getDirectoryHandle('projects');
+    await projects.removeEntry(`${revision.slot}.szd`);
+
+    const backup = await createBrowserBackup('2026-07-04T00:00:00.000Z');
+    const entries = unzipSync(backup);
+    expect(entries[`revisions/${revision.slot}.szd`]).toBeUndefined();
+
+    uninstallMockOpfs();
+    installMockOpfs();
+    await restoreBrowserBackup(backup);
+
+    expect(await listProjectRevisions('Song A')).toEqual([revision]);
+    await expect(loadProjectRevision(revision.slot)).rejects.toThrow();
+  });
+
+  it('rolls back revision slots and index when revision-index publication fails', async () => {
+    const previousProject = encodeSzd(makeDocument('Song A'));
+    const previousRevisionBytes = encodeSzd(makeDocument('Song A'));
+    await saveProject('Song A', previousProject);
+    const previous = await saveProjectRevision('Song A', 'old', previousRevisionBytes, 1000);
+
+    const replacementProject = encodeSzd(makeDocument('Song A'));
+    const replacementRevisionBytes = encodeSzd(makeDocument('Song A'));
+    await saveProject('Song A', replacementProject);
+    await saveProjectRevision('Song A', 'new', replacementRevisionBytes, 2000);
+    const backup = await createBrowserBackup('2026-07-04T00:00:00.000Z');
+
+    uninstallMockOpfs();
+    installMockOpfs();
+    await saveProject('Song A', previousProject);
+    await saveProjectRevision('Song A', 'old', previousRevisionBytes, 1000);
+
+    const originalCreateWritable = MemoryFileHandle.prototype.createWritable;
+    let failOnce = true;
+    vi.spyOn(MemoryFileHandle.prototype, 'createWritable').mockImplementation(async function (
+      this: MemoryFileHandle,
+    ) {
+      if (this.name === 'index.json' && failOnce) {
+        failOnce = false;
+        throw new Error('revision index publication failed');
+      }
+      return originalCreateWritable.call(this);
+    });
+
+    await expect(restoreBrowserBackup(backup)).rejects.toThrow('revision index publication failed');
+
+    expect(await listProjectRevisions('Song A')).toMatchObject([previous]);
+    expect(await loadProjectRevision(previous.slot)).toEqual(previousRevisionBytes);
+    expect(await loadProject('Song A')).toEqual(previousProject);
   });
 
   it('does not retain every SoundFont in the playback cache while backing up', async () => {
-    await saveFont({ id: 'fontOne', name: 'One' }, new Uint8Array(64).fill(1));
-    await saveFont({ id: 'fontTwo', name: 'Two' }, new Uint8Array(64).fill(2));
+    await saveFont({ id: 'fontOne', name: 'One' }, sf2(...new Array(52).fill(1)));
+    await saveFont({ id: 'fontTwo', name: 'Two' }, sf2(...new Array(52).fill(2)));
     clearFontCache();
 
     await createBrowserBackup('2026-07-04T00:00:00.000Z');
@@ -265,9 +458,9 @@ describe('browser backup archives', () => {
       ),
       'assets/bad-pcm.pcm': new Uint8Array([1, 2, 3]),
       'fonts/goodFont.json': strToU8(
-        JSON.stringify({ id: 'goodFont', name: 'Good font', byteLength: 3 }),
+        JSON.stringify({ id: 'goodFont', name: 'Good font', byteLength: sf2(1, 2, 3).byteLength }),
       ),
-      'fonts/goodFont.sf2': new Uint8Array([1, 2, 3]),
+      'fonts/goodFont.sf2': sf2(1, 2, 3),
       'fonts/badFont.json': strToU8(JSON.stringify({ name: '' })),
       'fonts/badFont.sf2': new Uint8Array([4, 5, 6]),
     });
@@ -283,7 +476,7 @@ describe('browser backup archives', () => {
     });
     expect(await loadProject('Song A')).toEqual(projectBytes);
     expect((await loadAssetMeta('good')).name).toBe('Good audio');
-    expect(await loadFont('goodFont')).toEqual(new Uint8Array([1, 2, 3]));
+    expect(await loadFont('goodFont')).toEqual(sf2(1, 2, 3));
     await expect(loadAsset('bad-meta')).rejects.toThrow();
     await expect(loadAsset('bad-pcm')).rejects.toThrow();
     await expect(loadFont('badFont')).rejects.toThrow();
@@ -479,7 +672,7 @@ describe('browser backup archives', () => {
     );
     await saveProject('Created', created);
     await saveAsset({ id: 'crashAsset', name: 'Crash asset', sampleRate: 48000 }, stereo());
-    await saveFont({ id: 'crashFont', name: 'Crash font' }, new Uint8Array([1, 2, 3]));
+    await saveFont({ id: 'crashFont', name: 'Crash font' }, sf2(1, 2, 3));
 
     const root = await navigator.storage.getDirectory();
     const staging = await root.getDirectoryHandle('restore-staging', { create: true });
@@ -520,7 +713,13 @@ describe('browser backup archives', () => {
     );
     await saveProject('Song A', replacement);
     await saveAsset({ id: 'restoreAsset', name: 'Restored audio', sampleRate: 48000 }, stereo());
-    await saveFont({ id: 'restoreFont', name: 'Restored font' }, new Uint8Array([4, 5, 6]));
+    await saveFont({ id: 'restoreFont', name: 'Restored font' }, sf2(4, 5, 6));
+    const archivedRevision = await saveProjectRevision(
+      'Song A',
+      'restore checkpoint',
+      replacement,
+      1000,
+    );
     const backup = await createBrowserBackup('2026-07-23T00:00:00.000Z');
     const previous = encodeSzd(makeDocument('Song A'));
     const points = [
@@ -530,6 +729,8 @@ describe('browser backup archives', () => {
       'font-published',
       'project-intent',
       'project-published',
+      'revision-index-intent',
+      'revision-index-published',
       'finalized',
     ] as const;
 
@@ -550,11 +751,14 @@ describe('browser backup archives', () => {
       if (point === 'finalized') {
         expect(await loadProject('Song A')).toEqual(replacement);
         expect((await loadAsset('restoreAsset')).channels).toEqual(stereo());
-        expect(await loadFont('restoreFont')).toEqual(new Uint8Array([4, 5, 6]));
+        expect(await loadFont('restoreFont')).toEqual(sf2(4, 5, 6));
+        expect(await listProjectRevisions('Song A')).toEqual([archivedRevision]);
+        expect(await loadProjectRevision(archivedRevision.slot)).toEqual(replacement);
       } else {
         expect(await loadProject('Song A')).toEqual(previous);
         await expect(loadAsset('restoreAsset')).rejects.toThrow();
         await expect(loadFont('restoreFont')).rejects.toThrow();
+        expect(await listProjectRevisions('Song A')).toEqual([]);
       }
     }
   });
