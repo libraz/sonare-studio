@@ -5,8 +5,11 @@ import {
   type EncodeWavOptions,
   encodeWavChunk,
   type WavBitDepth,
+  wavChunkByteLength,
   wavHeader,
+  wavHeaderByteLength,
   wavTrailingMetadata,
+  wavTrailingMetadataByteLength,
 } from './wav';
 
 export interface WavStreamWriter {
@@ -42,11 +45,29 @@ export function createWavStreamWriter(options: {
           `WAV stream chunk offset ${offsetFrames} does not follow ${expectedOffset}`,
         );
       }
-      const encoded = encodeWavChunk(channels, options.bitDepth, options.encodeOptions);
-      const copy = new Uint8Array(encoded.byteLength);
-      copy.set(encoded);
-      releases.push(options.meter.retain(copy.byteLength, `WAV chunk ${chunks.length + 1}`));
-      chunks.push(copy);
+      const byteLength = wavChunkByteLength(channels[0].length, channels.length, options.bitDepth);
+      // Reserve before encoding so a chunk allocation can never outrun the
+      // meter. Keep the encoder's result directly; copying it would create an
+      // unmetered second full generation of PCM.
+      const release = options.meter.retain(byteLength, `WAV chunk ${chunks.length + 1}`);
+      try {
+        // `encodeWavChunk` allocates a fresh ordinary ArrayBuffer. Its public
+        // typed-array signature permits ArrayBufferLike for callers, so narrow
+        // that known allocation here without copying it for Blob publication.
+        const encoded = encodeWavChunk(
+          channels,
+          options.bitDepth,
+          options.encodeOptions,
+        ) as Uint8Array<ArrayBuffer>;
+        if (encoded.byteLength !== byteLength) {
+          throw new Error('WAV chunk size changed while encoding');
+        }
+        chunks.push(encoded);
+        releases.push(release);
+      } catch (error) {
+        release();
+        throw error;
+      }
       expectedOffset += channels[0].length;
     },
     close(totalFrames): Blob {
@@ -57,35 +78,51 @@ export function createWavStreamWriter(options: {
         );
       }
       closed = true;
-      const header = wavHeader(
-        totalFrames,
-        2,
-        options.sampleRate,
-        options.bitDepth,
-        options.encodeOptions,
-      );
-      const trailing = wavTrailingMetadata(options.encodeOptions?.metadata);
-      const releasePublish = options.meter.retain(
-        header.byteLength + trailing.byteLength,
-        'WAV header and metadata',
-      );
+      let releaseMetadata: (() => void) | undefined;
+      let releasePublish: (() => void) | undefined;
       try {
-        const publishHeader = new Uint8Array(header.byteLength);
-        publishHeader.set(header);
-        const publishTrailing = new Uint8Array(trailing.byteLength);
-        publishTrailing.set(trailing);
+        const metadata = options.encodeOptions?.metadata;
+        const headerBytes = wavHeaderByteLength(totalFrames, 2, options.bitDepth, metadata);
+        const trailingBytes = wavTrailingMetadataByteLength(metadata);
+        // Both parts allocate their own backing buffers. Reserve before
+        // constructing either one so the meter remains an upper bound during
+        // the final publish, not merely after it has already peaked.
+        releaseMetadata = options.meter.retain(
+          headerBytes + trailingBytes,
+          'WAV header and trailing metadata',
+        );
+        const header = wavHeader(
+          totalFrames,
+          2,
+          options.sampleRate,
+          options.bitDepth,
+          options.encodeOptions,
+        );
+        const trailing = wavTrailingMetadata(metadata);
+        if (header.byteLength !== headerBytes || trailing.byteLength !== trailingBytes) {
+          throw new Error('WAV metadata size changed while publishing');
+        }
+        // Blob construction retains a complete copy of the published parts while
+        // the incrementally encoded chunks are still held by this writer. Do not
+        // create an additional per-chunk copy; charge the full publish peak once.
+        const encodedBytes = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+        releasePublish = options.meter.retain(
+          headerBytes + encodedBytes + trailingBytes,
+          'WAV file publish',
+        );
+        // wavHeader/wavTrailingMetadata always allocate ordinary ArrayBuffers;
+        // narrow their generic ArrayBufferLike type without copying the parts.
         return new Blob(
           [
-            publishHeader.buffer,
-            ...chunks.map((chunk) => new Uint8Array(chunk).buffer),
-            publishTrailing.buffer,
+            header.buffer as ArrayBuffer,
+            ...chunks.map((chunk) => chunk.buffer),
+            trailing.buffer as ArrayBuffer,
           ],
-          {
-            type: 'audio/wav',
-          },
+          { type: 'audio/wav' },
         );
       } finally {
-        releasePublish();
+        releasePublish?.();
+        releaseMetadata?.();
         releaseChunks();
       }
     },

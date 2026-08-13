@@ -10,6 +10,7 @@
  * is applied to 16-bit output only.
  */
 
+import { utf8ByteLength } from '@/lib/payload-memory';
 import type { AudioFileMetadata } from './audio-file-metadata';
 import { quantizePcmSample } from './pcm-quantize';
 
@@ -97,6 +98,25 @@ export function wavFileSize(frames: number, numChannels: number, bitDepth: WavBi
   return wavLayout(frames, numChannels, bitDepth).fileSize;
 }
 
+/** Returns the encoded PCM byte count for one interleaved WAV stream block. */
+export function wavChunkByteLength(
+  frames: number,
+  numChannels: number,
+  bitDepth: WavBitDepth,
+): number {
+  if (!Number.isSafeInteger(frames) || frames < 0) {
+    throw new RangeError(`WAV frame count must be a non-negative safe integer, got ${frames}`);
+  }
+  if (!Number.isSafeInteger(numChannels) || numChannels <= 0) {
+    throw new RangeError(`WAV channel count must be a positive safe integer, got ${numChannels}`);
+  }
+  const byteLength = frames * numChannels * bytesPerSample(bitDepth);
+  if (!Number.isSafeInteger(byteLength)) {
+    throw new RangeError(`WAV chunk byte length exceeds safe integer range: ${byteLength}`);
+  }
+  return byteLength;
+}
+
 /** Writes an ASCII four-character chunk tag. */
 function writeTag(view: DataView, offset: number, tag: string): void {
   for (let i = 0; i < 4; i++) {
@@ -104,96 +124,148 @@ function writeTag(view: DataView, offset: number, tag: string): void {
   }
 }
 
-function textBytes(value: string, length: number): Uint8Array {
-  const out = new Uint8Array(length);
+function writeAscii(view: DataView, offset: number, value: string, length: number): void {
   for (let index = 0; index < Math.min(value.length, length); index += 1) {
     const code = value.charCodeAt(index);
-    out[index] = code >= 0x20 && code <= 0x7e ? code : 0x3f;
+    view.setUint8(offset + index, code >= 0x20 && code <= 0x7e ? code : 0x3f);
   }
-  return out;
 }
 
-function utf8(value: string): Uint8Array {
-  return new TextEncoder().encode(value);
-}
-
-function chunk(tag: string, payload: Uint8Array): Uint8Array {
-  const out = new Uint8Array(8 + payload.length + (payload.length & 1));
-  const view = new DataView(out.buffer);
-  writeTag(view, 0, tag);
-  view.setUint32(4, payload.length, true);
-  out.set(payload, 8);
-  return out;
-}
-
-function bextChunk(metadata: AudioFileMetadata | undefined): Uint8Array | null {
-  if (!metadata) return null;
-  const payload = new Uint8Array(602);
-  payload.set(textBytes(metadata.title ?? '', 256), 0);
-  payload.set(textBytes(metadata.originator ?? 'Sonare Studio', 32), 256);
-  payload.set(textBytes(metadata.originatorReference ?? '', 32), 288);
-  payload.set(textBytes(metadata.originationDate ?? '', 10), 320);
-  payload.set(textBytes(metadata.originationTime ?? '', 8), 330);
+/** Writes a BWF chunk directly into its final header buffer. */
+function writeBext(
+  view: DataView,
+  offset: number,
+  metadata: AudioFileMetadata | undefined,
+): number {
+  if (!metadata) return offset;
+  writeTag(view, offset, 'bext');
+  view.setUint32(offset + 4, 602, true);
+  const payloadOffset = offset + 8;
+  writeAscii(view, payloadOffset, metadata.title ?? '', 256);
+  writeAscii(view, payloadOffset + 256, metadata.originator ?? 'Sonare Studio', 32);
+  writeAscii(view, payloadOffset + 288, metadata.originatorReference ?? '', 32);
+  writeAscii(view, payloadOffset + 320, metadata.originationDate ?? '', 10);
+  writeAscii(view, payloadOffset + 330, metadata.originationTime ?? '', 8);
   const reference = Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, metadata.timeReference ?? 0));
-  const view = new DataView(payload.buffer);
-  view.setUint32(338, reference >>> 0, true);
-  view.setUint32(342, Math.floor(reference / 0x1_0000_0000), true);
-  view.setUint16(346, 2, true); // BWF v2
-  return chunk('bext', payload);
+  view.setUint32(payloadOffset + 338, reference >>> 0, true);
+  view.setUint32(payloadOffset + 342, Math.floor(reference / 0x1_0000_0000), true);
+  view.setUint16(payloadOffset + 346, 2, true); // BWF v2
+  return offset + 610;
 }
 
-function cueChunks(metadata: AudioFileMetadata | undefined): Uint8Array {
-  const markers = (metadata?.markers ?? []).filter(
-    (marker) =>
-      Number.isSafeInteger(marker.sampleOffset) &&
-      marker.sampleOffset >= 0 &&
-      marker.sampleOffset <= 0xffff_ffff,
+function isWavMarker(marker: { sampleOffset: number }): boolean {
+  return (
+    Number.isSafeInteger(marker.sampleOffset) &&
+    marker.sampleOffset >= 0 &&
+    marker.sampleOffset <= 0xffff_ffff
   );
-  if (markers.length === 0) return new Uint8Array();
-  const cue = new Uint8Array(4 + markers.length * 24);
-  const cueView = new DataView(cue.buffer);
-  cueView.setUint32(0, markers.length, true);
-  const labels: Uint8Array[] = [];
-  for (let index = 0; index < markers.length; index += 1) {
-    const offset = 4 + index * 24;
-    cueView.setUint32(offset, index + 1, true);
-    cueView.setUint32(offset + 4, markers[index].sampleOffset, true);
-    writeTag(cueView, offset + 8, 'data');
-    cueView.setUint32(offset + 20, markers[index].sampleOffset, true);
-    const label = utf8(markers[index].name);
-    const labl = new Uint8Array(4 + label.length + 1);
-    new DataView(labl.buffer).setUint32(0, index + 1, true);
-    labl.set(label, 4);
-    labels.push(chunk('labl', labl));
-  }
-  const adtlLength = 4 + labels.reduce((length, label) => length + label.length, 0);
-  const adtl = new Uint8Array(adtlLength);
-  const adtlView = new DataView(adtl.buffer);
-  writeTag(adtlView, 0, 'adtl');
-  let offset = 4;
-  for (const label of labels) {
-    adtl.set(label, offset);
-    offset += label.length;
-  }
-  const cueChunk = chunk('cue ', cue);
-  const listChunk = chunk('LIST', adtl);
-  const out = new Uint8Array(cueChunk.length + listChunk.length);
-  out.set(cueChunk);
-  out.set(listChunk, cueChunk.length);
-  return out;
 }
 
-function wavMetadataChunks(metadata: AudioFileMetadata | undefined): {
-  beforeData: Uint8Array;
-  afterData: Uint8Array;
-} {
-  const beforeData = bextChunk(metadata) ?? new Uint8Array();
-  return { beforeData, afterData: cueChunks(metadata) };
+/** Bytes occupied by the optional BWF chunk that precedes the WAV data payload. */
+function wavLeadingMetadataByteLength(metadata: AudioFileMetadata | undefined): number {
+  // `bextChunk()` always emits a 602-byte payload plus its eight-byte RIFF
+  // chunk header when metadata was requested, even if every field is empty.
+  return metadata === undefined ? 0 : 610;
+}
+
+/**
+ * Returns the byte length of the chunks written after a WAV data payload
+ * without allocating their marker-label payloads.
+ *
+ * Streaming writers use this to reserve memory before materializing the
+ * metadata. Keep its marker filtering and UTF-8 sizing in lockstep with
+ * `cueChunks()`.
+ */
+export function wavTrailingMetadataByteLength(metadata: AudioFileMetadata | undefined): number {
+  let markerCount = 0;
+  let labelsLength = 0;
+  for (const marker of metadata?.markers ?? []) {
+    if (!isWavMarker(marker)) continue;
+    markerCount += 1;
+    const labelPayloadLength = 4 + utf8ByteLength(marker.name) + 1;
+    labelsLength += 8 + labelPayloadLength + (labelPayloadLength & 1);
+  }
+  if (markerCount === 0) return 0;
+  const cuePayloadLength = 4 + markerCount * 24;
+  const cueLength = 8 + cuePayloadLength + (cuePayloadLength & 1);
+  const adtlPayloadLength = 4 + labelsLength;
+  const listLength = 8 + adtlPayloadLength + (adtlPayloadLength & 1);
+  return cueLength + listLength;
+}
+
+/**
+ * Returns the byte length of a WAV header before allocating it.
+ *
+ * The data payload is excluded; the result includes `fmt`, optional `fact`,
+ * optional BWF metadata, and the `data` chunk header.
+ */
+export function wavHeaderByteLength(
+  frames: number,
+  numChannels: number,
+  bitDepth: WavBitDepth,
+  metadata: AudioFileMetadata | undefined,
+): number {
+  const layout = wavLayout(frames, numChannels, bitDepth);
+  return (
+    layout.fileSize - layout.dataSize - layout.dataPad + wavLeadingMetadataByteLength(metadata)
+  );
 }
 
 /** Returns the chunks written after a WAV data payload (cue/list labels). */
 export function wavTrailingMetadata(metadata: AudioFileMetadata | undefined): Uint8Array {
-  return wavMetadataChunks(metadata).afterData;
+  const length = wavTrailingMetadataByteLength(metadata);
+  if (length === 0) return new Uint8Array();
+
+  // Build directly in the final output allocation. Streaming export keeps
+  // this buffer accounted for while publishing, so intermediate cue/list and
+  // label allocations would otherwise escape its memory meter.
+  const out = new Uint8Array(length);
+  const view = new DataView(out.buffer);
+  const markers = metadata?.markers ?? [];
+  let markerCount = 0;
+  let labelsLength = 0;
+  for (const marker of markers) {
+    if (!isWavMarker(marker)) continue;
+    markerCount += 1;
+    const payloadLength = 4 + utf8ByteLength(marker.name) + 1;
+    labelsLength += 8 + payloadLength + (payloadLength & 1);
+  }
+
+  const cuePayloadLength = 4 + markerCount * 24;
+  const cueLength = 8 + cuePayloadLength + (cuePayloadLength & 1);
+  writeTag(view, 0, 'cue ');
+  view.setUint32(4, cuePayloadLength, true);
+  view.setUint32(8, markerCount, true);
+
+  let markerIndex = 0;
+  let labelOffset = cueLength + 12;
+  for (const marker of markers) {
+    if (!isWavMarker(marker)) continue;
+    const cueOffset = 12 + markerIndex * 24;
+    view.setUint32(cueOffset, markerIndex + 1, true);
+    view.setUint32(cueOffset + 4, marker.sampleOffset, true);
+    writeTag(view, cueOffset + 8, 'data');
+    view.setUint32(cueOffset + 20, marker.sampleOffset, true);
+
+    const labelLength = utf8ByteLength(marker.name);
+    const labelPayloadLength = 4 + labelLength + 1;
+    writeTag(view, labelOffset, 'labl');
+    view.setUint32(labelOffset + 4, labelPayloadLength, true);
+    view.setUint32(labelOffset + 8, markerIndex + 1, true);
+    const written = new TextEncoder().encodeInto(
+      marker.name,
+      out.subarray(labelOffset + 12, labelOffset + 12 + labelLength),
+    );
+    if (written.written !== labelLength || written.read !== marker.name.length) {
+      throw new Error('Could not encode a WAV cue label');
+    }
+    labelOffset += 8 + labelPayloadLength + (labelPayloadLength & 1);
+    markerIndex += 1;
+  }
+  writeTag(view, cueLength, 'LIST');
+  view.setUint32(cueLength + 4, 4 + labelsLength, true);
+  writeTag(view, cueLength + 8, 'adtl');
+  return out;
 }
 
 /** Builds the RIFF/fmt/(fact)/data prefix for a known-length WAV stream. */
@@ -208,9 +280,8 @@ export function wavHeader(
     throw new RangeError(`WAV sample rate must be a positive integer, got ${sampleRate}`);
   }
   const layout = wavLayout(frames, numChannels, bitDepth);
-  const metadata = wavMetadataChunks(options.metadata);
   const header = new Uint8Array(
-    layout.fileSize - layout.dataSize - layout.dataPad + metadata.beforeData.length,
+    wavHeaderByteLength(frames, numChannels, bitDepth, options.metadata),
   );
   const view = new DataView(header.buffer);
   const isFloat = bitDepth === '32f';
@@ -218,7 +289,9 @@ export function wavHeader(
   writeTag(view, offset, 'RIFF');
   view.setUint32(
     offset + 4,
-    layout.riffSize + metadata.beforeData.length + metadata.afterData.length,
+    layout.riffSize +
+      wavLeadingMetadataByteLength(options.metadata) +
+      wavTrailingMetadataByteLength(options.metadata),
     true,
   );
   writeTag(view, offset + 8, 'WAVE');
@@ -239,8 +312,7 @@ export function wavHeader(
     view.setUint32(offset + 8, frames, true);
   }
   offset += isFloat ? 12 : 0;
-  header.set(metadata.beforeData, offset);
-  offset += metadata.beforeData.length;
+  offset = writeBext(view, offset, options.metadata);
   const dataOffset = offset;
   writeTag(view, dataOffset, 'data');
   view.setUint32(dataOffset + 4, layout.dataSize, true);
@@ -320,11 +392,9 @@ export function encodeWav(
 
   const numChannels = channels.length;
   const layout = wavLayout(frames, numChannels, bitDepth);
-  const metadata = wavMetadataChunks(options.metadata);
   const header = wavHeader(frames, numChannels, sampleRate, bitDepth, options);
-  const out = new Uint8Array(
-    header.length + layout.dataSize + layout.dataPad + metadata.afterData.length,
-  );
+  const trailing = wavTrailingMetadata(options.metadata);
+  const out = new Uint8Array(header.length + layout.dataSize + layout.dataPad + trailing.length);
   out.set(header);
   const view = new DataView(out.buffer);
   let offset = header.length;
@@ -349,6 +419,6 @@ export function encodeWav(
     }
   }
   // The optional pad byte is already zero-initialized.
-  out.set(metadata.afterData, offset + layout.dataPad);
+  out.set(trailing, offset + layout.dataPad);
   return out;
 }
