@@ -159,7 +159,12 @@ export interface ExportMediaIssue {
  */
 export type ExportLimitation =
   | { kind: 'mastering-automation-at-render-start' }
-  | { kind: 'instrument-automation-at-render-start'; tracks: string[] };
+  | { kind: 'instrument-automation-at-render-start'; tracks: string[] }
+  /** Streaming callbacks cannot retain the full waveform for post-render metering. */
+  | {
+      kind: 'streaming-metering-unavailable';
+      measurements: Array<'lufs' | 'true-peak'>;
+    };
 
 /** Result of an offline render. */
 export interface MixdownResult {

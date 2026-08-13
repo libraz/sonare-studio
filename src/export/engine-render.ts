@@ -47,6 +47,7 @@ import {
   engineFaderAutomationPoints,
 } from '@/engine/engine-declaration';
 import { resolvePresetName } from '@/engine/instruments';
+import { PFL_AUDITION_GAIN_DB } from '@/engine/mixer-sync';
 import { busSceneJson, stripSceneJson } from '@/engine/strip-sync';
 import { activeTimeEffectSlots, suggestedTailSeconds } from '@/export/audio-preflight';
 import { assertRenderPayloadMemory, estimateRenderPayloadMemory } from '@/export/memory-budget';
@@ -88,6 +89,7 @@ import {
   laneGainDb,
   masteringChainIsActive,
   normalizeMixerSoloMode,
+  returnSoloRouting,
   stripHasDsp,
   tracksWithVcaSolo,
   vcaOffsetDb,
@@ -171,7 +173,11 @@ function instrumentPatchAtRenderStart(
 function hasTimeVaryingPoints(points: DocumentAutomationLane['points']): boolean {
   if (points.length < 2) return false;
   const first = points[0];
-  return points.some((point) => point.ppq !== first.ppq && point.value !== first.value);
+  // A repeated breakpoint with the same value is observationally constant;
+  // its PPQ alone must not produce a misleading “frozen automation” warning.
+  // Conversely, same-PPQ values can differ in valid stored lanes, so compare
+  // the value independently of position.
+  return points.some((point) => point.value !== first.value);
 }
 
 export function offlineAutomationLimitations(doc: ProjectDocument): ExportLimitation[] {
@@ -289,12 +295,21 @@ export async function renderProjectWithEngine(
       ),
     ),
   );
+  // The capture range remains the user-selected window. Audio scheduling and
+  // metadata preflight additionally cover exactly the stateful-DSP preroll
+  // which is rendered and discarded before capture begins.
+  const renderStartSample = ppqToSamples(tempoMap, range.startPpq, sampleRate);
+  const prerollFrames = Math.min(renderStartSample, Math.round(prerollSeconds * sampleRate));
+  const contributionRange = {
+    startPpq: samplesToPpq(tempoMap, renderStartSample - prerollFrames, sampleRate),
+    endPpq: range.endPpq,
+  };
 
   // Build the MIDI program before loading any SoundFont. Exact compiled note
   // intervals plus the shared audible/range plan determine which fonts can
   // actually contribute to this render.
   const midiSchedules = buildMidiSchedules(doc, trackIds, tempoSegments, sampleRate);
-  const midiRangeStartSample = ppqToSamples(tempoMap, range.startPpq, sampleRate);
+  const midiRangeStartSample = renderStartSample - prerollFrames;
   const midiRangeEndSample =
     range.endPpq === null
       ? Number.POSITIVE_INFINITY
@@ -400,7 +415,7 @@ export async function renderProjectWithEngine(
         tempoMap,
         loadAudioMeta,
         checkCancel,
-        range,
+        range: contributionRange,
         audibleTrackIndices,
       })
     : { sourceAudioBytes: 0, preparedClipBytes: 0, audioWindowClips: [] };
@@ -481,7 +496,7 @@ export async function renderProjectWithEngine(
     },
     checkCancel,
     mediaIssues,
-    range,
+    range: contributionRange,
     audibleTrackIndices,
   });
 
@@ -517,7 +532,21 @@ export async function renderProjectWithEngine(
       options.memoryBudgetBytes,
     );
   }
-  const pdc = createInsertPdcPlan(doc.tracks, doc.mixer?.buses ?? [], resolveInsertLatency);
+  // Project documents use positional `groupIndex` membership while the live
+  // editor plan uses stable numeric track ids in `groupId`. Build the exact
+  // equivalent identity graph before deriving PDC, otherwise group-bus insert
+  // latency is silently omitted from offline compensation.
+  const pdcTracks = doc.tracks.map((track, index) => ({
+    id: trackIds[index],
+    kind: track.kind,
+    ...(track.frozen !== undefined ? { frozen: track.frozen } : {}),
+    ...(track.groupIndex !== undefined && trackIds[track.groupIndex] !== undefined
+      ? { groupId: trackIds[track.groupIndex] }
+      : {}),
+    ...(track.mixer !== undefined ? { mixer: track.mixer } : {}),
+  }));
+  const pdc = createInsertPdcPlan(pdcTracks, doc.mixer?.buses ?? [], resolveInsertLatency);
+  const returnSolo = returnSoloRouting(doc.mixer?.buses ?? []);
   let renderAudioClips: EngineClipSpec[] = sourceAudioClips;
 
   /** Replays the pre-built program onto a fresh engine (synchronous). */
@@ -657,7 +686,7 @@ export async function renderProjectWithEngine(
         engine.setParameter(
           laneParamId(index, ENGINE_MIXER_PARAM_FADER_DB),
           pflAudition
-            ? 0
+            ? PFL_AUDITION_GAIN_DB
             : laneGainDb(track.volume, strip?.gainDb, vcaOffsetDb(track.vcaId, vcaGainDbById)),
         );
         // MixerStrip.pan is canonical. Fall back to DocumentTrack.pan so
@@ -684,7 +713,7 @@ export async function renderProjectWithEngine(
         // The pre-rendered SF2 PCM contains the insert processor's own
         // latency, but not the live PDC channel delay (freeze passes keep it
         // outside the bake), so the final lane still receives normal PDC.
-        const channelDelay = pdc.delayFor(track);
+        const channelDelay = pdc.delayFor(pdcTracks[index]);
         if (channelDelay > 0) engine.setTrackStripChannelDelaySamples(trackId, channelDelay);
       }
     });
@@ -734,7 +763,11 @@ export async function renderProjectWithEngine(
       const usesPreRenderedSf2 = pass.usePreRenderedSf2 && conflictingSf2TrackIndices.has(index);
       for (const lane of track.automation ?? []) {
         if (!lane.enabled || lane.points.length === 0) continue;
-        if (pass.freezeIndex === index && (lane.param === 'faderDb' || lane.param === 'pan')) {
+        const pflAudition = pass.stemIndices === null && auditionSoloStates[index] === true;
+        if (
+          (pass.freezeIndex === index || pflAudition) &&
+          (lane.param === 'faderDb' || lane.param === 'pan')
+        ) {
           continue;
         }
         const points =
@@ -785,7 +818,13 @@ export async function renderProjectWithEngine(
         if (lane.param !== 'faderDb' && lane.param !== 'pan') continue;
         const groupBusId = track.kind === 'group' ? groupBusByTrackIndex.get(index) : undefined;
         if (groupBusId !== undefined) {
-          if (lane.param === 'faderDb') engine.setAutomationLane(busParamId(groupBusId), points);
+          if (
+            lane.param === 'faderDb' &&
+            !returnSolo.active &&
+            !effectiveTrackMute(track.mute, track.vcaId, vcaControlsById)
+          ) {
+            engine.setAutomationLane(busParamId(groupBusId), points);
+          }
           continue;
         }
         const kind = lane.param === 'pan' ? ENGINE_MIXER_PARAM_PAN : ENGINE_MIXER_PARAM_FADER_DB;
@@ -818,9 +857,14 @@ export async function renderProjectWithEngine(
       const busId = busNumberById.get(bus.id);
       if (busId === undefined) continue;
       for (const lane of bus.automation ?? []) {
-        // A return mute must override fader automation for the whole render.
-        // The stored lane remains intact and resumes after unmuting.
-        if (bus.mute === true && lane.param === 'faderDb') continue;
+        // A muted/non-selected return must override fader automation for the
+        // whole render. The stored lane remains intact and resumes when the
+        // temporary routing state is released.
+        if (
+          lane.param === 'faderDb' &&
+          (bus.mute === true || (returnSolo.active && !returnSolo.isSoloed(bus.id)))
+        )
+          continue;
         if (!lane.enabled || lane.points.length === 0) continue;
         const points = engineAutomationPoints(lane.points);
         if (points.length === 0) continue;
@@ -1095,7 +1139,13 @@ export async function renderProjectWithEngine(
       },
     );
     const report: MixdownReport = { peakDb: peakDb(streamPeak) };
-    const limitations = offlineAutomationLimitations(doc);
+    const limitations: ExportLimitation[] = [
+      ...offlineAutomationLimitations(doc),
+      {
+        kind: 'streaming-metering-unavailable',
+        measurements: ['lufs', 'true-peak'],
+      },
+    ];
     if (limitations.length > 0) report.limitations = limitations;
     if (mediaIssues.length > 0) report.mediaIssues = mediaIssues;
     options.onProgress?.(1, 'done');

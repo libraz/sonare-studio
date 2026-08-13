@@ -32,6 +32,7 @@ export interface ExportIssueStrings {
   limitation: {
     masteringAutomationAtStart: string;
     instrumentAutomationAtStart: string;
+    streamingMeteringUnavailable?: string;
   };
 }
 
@@ -102,5 +103,10 @@ export function formatExportLimitation(
         '{tracks}',
         limitation.tracks.join(', '),
       );
+    case 'streaming-metering-unavailable':
+      return (
+        strings.limitation.streamingMeteringUnavailable ??
+        'Streaming export could not measure: {measurements}'
+      ).replace('{measurements}', limitation.measurements.join(', '));
   }
 }
