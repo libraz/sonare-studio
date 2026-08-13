@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MESSAGES } from '@/ui/i18n';
+import { SHORTCUT_ACTIONS } from '@/ui/settings/shortcuts';
 
 type MessageNode = string | { readonly [key: string]: MessageNode };
 
@@ -48,6 +49,22 @@ describe('i18n messages', () => {
       const node = messages as MessageNode;
       expect(shapeErrors(reference, node, '', locale)).toEqual([]);
       expect(leafPaths(node)).toEqual(expectedPaths);
+    }
+  });
+
+  it('provides labels for every registered shortcut action and group', () => {
+    const groups = new Set(SHORTCUT_ACTIONS.map((action) => action.group));
+    for (const messages of Object.values(MESSAGES)) {
+      for (const group of groups) {
+        expect(
+          messages.shortcuts.groups[group as keyof typeof messages.shortcuts.groups],
+        ).toBeTruthy();
+      }
+      for (const action of SHORTCUT_ACTIONS) {
+        expect(
+          messages.shortcuts.actions[action.id as keyof typeof messages.shortcuts.actions],
+        ).toBeTruthy();
+      }
     }
   });
 });
