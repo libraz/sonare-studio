@@ -12,8 +12,18 @@ import {
 
 describe('timeline metadata transforms', () => {
   it('shifts markers and expands sections across inserted time', () => {
-    expect(insertMarkers([{ id: 1, ppq: 4, name: 'Verse' }], 4, 2)).toEqual([
-      { id: 1, ppq: 6, name: 'Verse' },
+    expect(
+      insertMarkers(
+        [
+          { id: 1, ppq: 0, name: 'Start' },
+          { id: 2, ppq: 4, name: 'Verse' },
+        ],
+        0,
+        2,
+      ),
+    ).toEqual([
+      { id: 1, ppq: 2, name: 'Start' },
+      { id: 2, ppq: 6, name: 'Verse' },
     ]);
     expect(
       insertSections(
@@ -80,6 +90,9 @@ describe('timeline metadata transforms', () => {
     expect(insertAutomationLanes(lanes, 4, 2)[0].points.map((point) => point.ppq)).toEqual([
       0, 3, 7, 10,
     ]);
+    expect(insertAutomationLanes(lanes, 0, 2)[0].points.map((point) => point.ppq)).toEqual([
+      0, 5, 7, 10,
+    ]);
     expect(deleteAutomationLanes(lanes, 4, 7)[0].points).toEqual([
       { ppq: 0, value: -6 },
       { ppq: 3, value: -3, curve: 's-curve' },
@@ -96,6 +109,12 @@ describe('timeline metadata transforms', () => {
       { startPpq: 10, bpm: 110 },
     ];
     expect(insertTimelineSegments(tempo, 4, 2)).toEqual([
+      { startPpq: 0, bpm: 120 },
+      { startPpq: 6, bpm: 90 },
+      { startPpq: 8, bpm: 140 },
+      { startPpq: 12, bpm: 110 },
+    ]);
+    expect(insertTimelineSegments(tempo, 0, 2)).toEqual([
       { startPpq: 0, bpm: 120 },
       { startPpq: 6, bpm: 90 },
       { startPpq: 8, bpm: 140 },

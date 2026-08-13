@@ -19,8 +19,13 @@ export function validateTimelineRange(startPpq: number, endPpq: number): void {
   }
 }
 
-/** Moves a point after an insertion boundary, keeping the origin anchored. */
+/** Moves a timeline point at or after an insertion boundary. */
 function shiftForInsert(ppq: number, atPpq: number, lengthPpq: number): number {
+  return ppq >= atPpq ? ppq + lengthPpq : ppq;
+}
+
+/** Moves a structural-map entry while keeping its required origin anchored. */
+function shiftStructuralMapForInsert(ppq: number, atPpq: number, lengthPpq: number): number {
   return ppq >= atPpq && !(atPpq === 0 && ppq === 0) ? ppq + lengthPpq : ppq;
 }
 
@@ -104,7 +109,10 @@ export function insertAutomationLanes(
     ...lane,
     points: lane.points.map((point) => ({
       ...point,
-      ppq: shiftForInsert(point.ppq, atPpq, lengthPpq),
+      // A point at the origin establishes the automation lane's initial
+      // value, like the origin entries in tempo and meter maps. Keep it
+      // anchored when inserting at 0; ordinary automation points still move.
+      ppq: shiftStructuralMapForInsert(point.ppq, atPpq, lengthPpq),
     })),
   }));
 }
@@ -163,7 +171,7 @@ function sameSegmentValue<T extends TimelineSegment>(left: T, right: T): boolean
   return false;
 }
 
-/** Moves all non-origin tempo/meter changes at and after an inserted boundary. */
+/** Moves tempo/meter changes at and after an inserted boundary, except the origin entry. */
 export function insertTimelineSegments<T extends TimelineSegment>(
   segments: ReadonlyArray<T>,
   atPpq: number,
@@ -171,7 +179,7 @@ export function insertTimelineSegments<T extends TimelineSegment>(
 ): T[] {
   return segments.map((segment) => ({
     ...segment,
-    startPpq: shiftForInsert(segment.startPpq, atPpq, lengthPpq),
+    startPpq: shiftStructuralMapForInsert(segment.startPpq, atPpq, lengthPpq),
   }));
 }
 
