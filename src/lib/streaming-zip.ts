@@ -81,9 +81,14 @@ export function createStreamingZipWriter(options: StreamingZipWriterOptions): St
   const finishError = (error: unknown): void => {
     if (settled) return;
     settled = true;
+    closed = true;
     options.signal?.removeEventListener('abort', onAbort);
     releaseChunks();
-    zip.terminate();
+    try {
+      zip.terminate();
+    } catch {
+      // Preserve the original compression or publish error.
+    }
     rejectResult(error);
   };
   const zip = new Zip((error, chunk, final) => {
@@ -118,13 +123,21 @@ export function createStreamingZipWriter(options: StreamingZipWriterOptions): St
       return;
     }
     if (final) {
-      settled = true;
-      options.signal?.removeEventListener('abort', onAbort);
-      const releasePublishPeak = options.meter?.retain(compressedBytes, 'ZIP archive publish');
-      const bytes = concatenate(chunks, compressedBytes);
-      releasePublishPeak?.();
-      releaseChunks();
-      resolveResult(bytes);
+      let releasePublishPeak: (() => void) | undefined;
+      try {
+        releasePublishPeak = options.meter?.retain(compressedBytes, 'ZIP archive publish');
+        if (settled) return;
+        const bytes = concatenate(chunks, compressedBytes);
+        releaseChunks();
+        settled = true;
+        closed = true;
+        options.signal?.removeEventListener('abort', onAbort);
+        resolveResult(bytes);
+      } catch (publishError) {
+        finishError(publishError);
+      } finally {
+        releasePublishPeak?.();
+      }
     }
   });
   const abortError = (): unknown =>
@@ -195,7 +208,18 @@ export function createStreamingZipWriter(options: StreamingZipWriterOptions): St
       closed = true;
       try {
         options.signal?.throwIfAborted();
-        await Promise.all(pendingEntries);
+        // A compression or publish callback can reject result before an
+        // in-flight entry reports its own completion. Race that result so close
+        // cannot remain pending after the writer has already failed.
+        await Promise.race([
+          Promise.all(pendingEntries),
+          result.then(
+            () => undefined,
+            (error) => {
+              throw error;
+            },
+          ),
+        ]);
         options.signal?.throwIfAborted();
         zip.end();
         return await result;

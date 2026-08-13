@@ -1,5 +1,6 @@
 import { strFromU8, strToU8, unzipSync } from 'fflate';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { PayloadMemoryMeter } from '@/lib/payload-memory';
 import { createStreamingZipWriter } from '@/lib/streaming-zip';
 
 describe('streaming ZIP writer', () => {
@@ -55,5 +56,24 @@ describe('streaming ZIP writer', () => {
 
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
     await expect(writer.close()).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('rejects close and releases chunks when the final archive publish fails', async () => {
+    const meter = new PayloadMemoryMeter({ label: 'test', budgetBytes: 1024 * 1024 });
+    const retain = meter.retain.bind(meter);
+    vi.spyOn(meter, 'retain').mockImplementation((bytes, unit) => {
+      if (unit === 'ZIP archive publish') throw new Error('publish accounting failed');
+      return retain(bytes, unit);
+    });
+    const writer = createStreamingZipWriter({
+      mtime: '2000-01-01T12:00:00Z',
+      meter,
+    });
+
+    await writer.add('entry.txt', strToU8('entry'));
+    await expect(writer.close()).rejects.toThrow('publish accounting failed');
+    expect(meter.snapshot().activeBytes).toBe(0);
+    expect(() => writer.add('later.txt', strToU8('later'))).toThrow('closed');
+    await expect(writer.close()).rejects.toThrow('publish accounting failed');
   });
 });
