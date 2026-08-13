@@ -294,6 +294,14 @@ describe('exportPdf', () => {
     ]);
   });
 
+  it('suppresses an unrepresentable core-font header while retaining ASCII page numbers', async () => {
+    await exportPdf(['<svg/>'], A4, { title: '譜面', pageNumbers: true });
+
+    expect(pdfState.instances[0].textCalls).toEqual([
+      { text: 'Page 1 / 1', x: 105, y: 290, options: { align: 'center' } },
+    ]);
+  });
+
   it('rejects malformed SVG markup', async () => {
     await expect(exportPdf(['<svg><unclosed'], A4)).rejects.toThrow('Invalid SVG page markup');
   });

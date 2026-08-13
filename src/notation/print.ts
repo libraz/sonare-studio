@@ -40,6 +40,69 @@ const PT_PER_MM = 72 / 25.4;
 const PDF_OVERLAY_MARGIN_MM = 7;
 export const MAX_SCORE_PAGE_SVG_BYTES = 32 * 1024 * 1024;
 
+/**
+ * Unicode code points that jsPDF maps to glyphs in its built-in WinAnsi core
+ * fonts in addition to the single-byte WinAnsi ranges. Keep this local and
+ * deterministic: the overlay deliberately does not load or embed a Unicode
+ * font just for optional metadata text.
+ */
+const CORE_FONT_WIN_ANSI_UNICODE = new Set([
+  0x0192, // Latin small letter f with hook
+  0x2013, // en dash
+  0x2014, // em dash
+  0x2018, // left single quotation mark
+  0x2019, // right single quotation mark
+  0x201a, // single low-9 quotation mark
+  0x201c, // left double quotation mark
+  0x201d, // right double quotation mark
+  0x201e, // double low-9 quotation mark
+  0x2020, // dagger
+  0x2021, // double dagger
+  0x2022, // bullet
+  0x2026, // horizontal ellipsis
+  0x2030, // per mille sign
+  0x2039, // single left-pointing angle quotation mark
+  0x203a, // single right-pointing angle quotation mark
+  0x0152, // Latin capital ligature OE
+  0x0153, // Latin small ligature oe
+  0x0160, // Latin capital letter S with caron
+  0x0161, // Latin small letter s with caron
+  0x0178, // Latin capital letter Y with diaeresis
+  0x017d, // Latin capital letter Z with caron
+  0x017e, // Latin small letter z with caron
+  0x02c6, // modifier letter circumflex accent
+  0x02dc, // small tilde
+  0x2122, // trade mark sign
+  0x20ac, // euro sign
+]);
+
+/** WinAnsi bytes whose code points are not printable ASCII/Latin-1. */
+const CORE_FONT_WIN_ANSI_BYTES = new Set([
+  0x80, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8e, 0x91, 0x92, 0x93,
+  0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9e, 0x9f,
+]);
+
+/** True when every character can be emitted by jsPDF's default core font. */
+function isCoreFontRepresentable(text: string): boolean {
+  for (const character of text) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint === undefined) continue;
+    if (
+      (codePoint >= 0x20 && codePoint <= 0x7e) ||
+      (codePoint >= 0xa0 && codePoint <= 0xff) ||
+      codePoint === 0x09 ||
+      codePoint === 0x0a ||
+      codePoint === 0x0d ||
+      CORE_FONT_WIN_ANSI_BYTES.has(codePoint) ||
+      CORE_FONT_WIN_ANSI_UNICODE.has(codePoint)
+    ) {
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
 export interface PdfPageWriter {
   /** Consumes one rendered SVG page; the caller may release the string after await. */
   addPage(svg: string, page: number): Promise<void>;
@@ -349,11 +412,14 @@ function appendPdfPageOverlay(
   headerTitle: string,
   pageNumbers: boolean,
 ): void {
-  if (headerTitle === '' && !pageNumbers) return;
+  const representableHeaderTitle = isCoreFontRepresentable(headerTitle) ? headerTitle : '';
+  if (representableHeaderTitle === '' && !pageNumbers) return;
   doc.setFontSize?.(8);
   doc.setTextColor?.(80);
-  if (headerTitle !== '') {
-    doc.text?.(headerTitle, PDF_OVERLAY_MARGIN_MM, PDF_OVERLAY_MARGIN_MM, { align: 'left' });
+  if (representableHeaderTitle !== '') {
+    doc.text?.(representableHeaderTitle, PDF_OVERLAY_MARGIN_MM, PDF_OVERLAY_MARGIN_MM, {
+      align: 'left',
+    });
   }
   if (pageNumbers) {
     doc.text?.(
