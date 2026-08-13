@@ -10,6 +10,7 @@ import {
   type ContextMenuItem,
   closeContextMenu,
   reportContextMenuError,
+  restoreContextMenuFocus,
   useContextMenuState,
 } from '@/ui/menu/context-menu';
 import { useShortcutBlockingOverlay } from '@/ui/overlay-registry';
@@ -83,11 +84,20 @@ function focusEdge(root: HTMLElement | null, edge: 'first' | 'last'): void {
 function run(item: ContextMenuItem): void {
   if (item.disabled || item.separator || !item.run) return;
   const action = item.run;
-  closeContextMenu();
+  // An action can synchronously remove the control that opened the menu (for
+  // example Delete track). Defer focus restoration until that DOM mutation has
+  // happened, then the shared helper can choose the app-shell fallback.
+  const closeGeneration = closeContextMenu({ restoreFocus: false });
   try {
+    // Do not wait for an async command to settle: a command may intentionally
+    // remain pending (for example while a file picker is open), but focus
+    // ownership must be restored after its synchronous DOM work. The
+    // generation check inside the helper leaves a newly opened menu alone.
     void Promise.resolve(action()).catch(reportContextMenuError);
+    queueMicrotask(() => restoreContextMenuFocus(closeGeneration));
   } catch (error) {
     reportContextMenuError(error);
+    restoreContextMenuFocus(closeGeneration);
   }
 }
 

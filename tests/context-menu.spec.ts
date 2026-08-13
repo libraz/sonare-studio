@@ -11,6 +11,7 @@ const noop = (): void => {};
 
 afterEach(() => {
   closeContextMenu();
+  document.body.textContent = '';
 });
 
 describe('cleanItems', () => {
@@ -94,16 +95,24 @@ describe('openContextMenu', () => {
 
   it('closes on Escape', () => {
     const state = useContextMenuState();
+    const trigger = document.createElement('button');
+    document.body.append(trigger);
+    trigger.focus();
     openContextMenu(10, 10, [{ id: 'a', label: 'A', run: noop }]);
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     expect(state.open).toBe(false);
+    expect(document.activeElement).toBe(trigger);
   });
 
   it('closes on a pointer press outside the menu', () => {
     const state = useContextMenuState();
+    const trigger = document.createElement('button');
+    document.body.append(trigger);
+    trigger.focus();
     openContextMenu(10, 10, [{ id: 'a', label: 'A', run: noop }]);
     window.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
     expect(state.open).toBe(false);
+    expect(document.activeElement).toBe(trigger);
   });
 });
 
@@ -128,5 +137,21 @@ describe('closeContextMenu', () => {
 
     expect(remove).toHaveBeenCalledWith('pointerdown', expect.any(Function), true);
     expect(remove).toHaveBeenCalledWith('keydown', expect.any(Function), true);
+  });
+
+  it('uses the app-shell fallback when the opener was removed', () => {
+    const shell = document.createElement('main');
+    shell.tabIndex = -1;
+    shell.dataset.appShellFocusFallback = '';
+    const trigger = document.createElement('button');
+    shell.append(trigger);
+    document.body.append(shell);
+    trigger.focus();
+
+    openContextMenu(10, 10, [{ id: 'a', label: 'A', run: noop }]);
+    trigger.remove();
+    closeContextMenu();
+
+    expect(document.activeElement).toBe(shell);
   });
 });

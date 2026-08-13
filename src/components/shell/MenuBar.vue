@@ -147,13 +147,27 @@ function focusedTriggerId(): string | null {
   return null;
 }
 
+/**
+ * Pointer opening leaves focus on the trigger. Move it to the panel before an
+ * arrow key changes `aria-activedescendant`, so assistive tech observes the
+ * active row on the element that owns the relationship.
+ */
+function focusOpenPanel(): void {
+  const id = openId.value;
+  if (!id) return;
+  const panel = panelEls.get(id);
+  if (panel && document.activeElement !== panel) panel.focus();
+}
+
 function onKeydown(event: KeyboardEvent): void {
   switch (event.key) {
     case 'ArrowLeft':
+      if (openId.value) focusOpenPanel();
       event.preventDefault();
       hopMenu(-1);
       return;
     case 'ArrowRight':
+      if (openId.value) focusOpenPanel();
       event.preventDefault();
       hopMenu(1);
       return;
@@ -178,10 +192,12 @@ function onKeydown(event: KeyboardEvent): void {
 
   switch (event.key) {
     case 'ArrowDown':
+      focusOpenPanel();
       event.preventDefault();
       moveActive(1);
       break;
     case 'ArrowUp':
+      focusOpenPanel();
       event.preventDefault();
       moveActive(-1);
       break;

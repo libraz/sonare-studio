@@ -111,4 +111,37 @@ describe('MenuBar', () => {
     wrapper.unmount();
     document.body.replaceChildren();
   });
+
+  it('focuses the panel before moving its active row after a pointer open', async () => {
+    const pointerMenus: MenuBarMenu[] = [
+      {
+        id: 'file',
+        label: 'File',
+        items: [
+          { id: 'new', label: 'New', run: vi.fn() },
+          { id: 'open', label: 'Open', run: vi.fn() },
+        ],
+      },
+    ];
+    const wrapper = mount(MenuBar, {
+      attachTo: document.body,
+      props: { menus: pointerMenus },
+      global: { stubs: { TransportIcon: true } },
+    });
+    const trigger = wrapper.find('.app-menubar__trigger');
+    (trigger.element as HTMLButtonElement).focus();
+
+    await trigger.trigger('click');
+    const panel = wrapper.find<HTMLElement>('[role="menu"]');
+    const firstItem = wrapper.find<HTMLElement>('.menu-panel__item');
+    expect(document.activeElement).toBe(trigger.element);
+    expect(panel.attributes('aria-activedescendant')).toBeUndefined();
+
+    await trigger.trigger('keydown', { key: 'ArrowDown' });
+
+    expect(document.activeElement).toBe(panel.element);
+    expect(panel.attributes('aria-activedescendant')).toBe(firstItem.element.id);
+    wrapper.unmount();
+    document.body.replaceChildren();
+  });
 });

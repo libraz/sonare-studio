@@ -58,6 +58,9 @@ export function reportContextMenuError(error: unknown): void {
 
 let outsideHandler: ((event: PointerEvent) => void) | null = null;
 let keyHandler: ((event: KeyboardEvent) => void) | null = null;
+/** Focused element before the current menu generation opened. */
+let previousFocus: HTMLElement | null = null;
+let openGeneration = 0;
 
 function detachListeners(): void {
   if (outsideHandler) {
@@ -68,6 +71,27 @@ function detachListeners(): void {
     window.removeEventListener('keydown', keyHandler, true);
     keyHandler = null;
   }
+}
+
+/**
+ * Returns keyboard focus to the invoking control, or to the app shell when
+ * that control was removed by the action that closed the menu.
+ */
+function restoreFocus(generation: number): void {
+  if (generation !== openGeneration) return;
+  const target = previousFocus;
+  previousFocus = null;
+  if (target?.isConnected) {
+    target.focus();
+    return;
+  }
+  const fallback = document.querySelector<HTMLElement>('[data-app-shell-focus-fallback]');
+  fallback?.focus();
+}
+
+/** Restores focus for a deferred action close, unless another menu superseded it. */
+export function restoreContextMenuFocus(generation: number | null): void {
+  if (generation !== null) restoreFocus(generation);
 }
 
 /**
@@ -91,12 +115,24 @@ export function cleanItems(items: readonly ContextMenuItem[]): ContextMenuItem[]
   return out;
 }
 
-/** Closes the menu and removes its global listeners. */
-export function closeContextMenu(): void {
-  if (!state.open) return;
+/** Options controlling focus ownership while closing a menu. */
+export interface CloseContextMenuOptions {
+  /**
+   * Restore focus immediately (the default). Actions defer this until after
+   * their synchronous DOM changes, so a deleted opener falls back correctly.
+   */
+  restoreFocus?: boolean;
+}
+
+/** Closes the menu, removes its listeners, and returns its close generation. */
+export function closeContextMenu(options: CloseContextMenuOptions = {}): number | null {
+  if (!state.open) return null;
+  const generation = openGeneration;
   state.open = false;
   state.items = [];
   detachListeners();
+  if (options.restoreFocus !== false) restoreFocus(generation);
+  return generation;
 }
 
 /**
@@ -116,6 +152,11 @@ export function openContextMenu(x: number, y: number, items: readonly ContextMen
     closeContextMenu();
     return;
   }
+  if (!state.open) {
+    const active = document.activeElement;
+    previousFocus = active instanceof HTMLElement ? active : null;
+  }
+  openGeneration += 1;
   state.items = cleaned;
   state.x = x;
   state.y = y;

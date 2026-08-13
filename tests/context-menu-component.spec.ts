@@ -129,4 +129,20 @@ describe('ContextMenu keyboard navigation', () => {
     await flushPromises();
     expect(useContextMenuState().error).toBe('async menu failure');
   });
+
+  it('uses the shell fallback when an action removes the opener', async () => {
+    const shell = document.createElement('main');
+    shell.tabIndex = -1;
+    shell.dataset.appShellFocusFallback = '';
+    const opener = document.createElement('button');
+    shell.append(opener);
+    document.body.append(shell);
+    opener.focus();
+
+    const w = await mountOpenMenu([{ id: 'remove', label: 'Remove', run: () => opener.remove() }]);
+    await w.get('[data-menu-item-id="remove"]').trigger('click');
+    await flushPromises();
+
+    expect(document.activeElement).toBe(shell);
+  });
 });
